@@ -1,0 +1,76 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform-next
+
+ ❯ tests/work-graph/C1-session-mailbox.test.ts (50 tests | 2 failed) 498ms
+     × declares recipient and sender Run lookup indexes with their frozen paths 4ms
+     × declares recipient and sender Run lookup indexes with their frozen paths 1ms
+ ❯ tests/work-graph/R4-control-intent.test.ts (18 tests | 1 failed) 214ms
+     × rejects a non-Host principal, a cross-scope context and malformed control input 9ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/work-graph/C1-session-mailbox.test.ts > C1 SessionMailbox real memory > declares recipient and sender Run lookup indexes with their frozen paths
+ FAIL  tests/work-graph/C1-session-mailbox.test.ts > C1 SessionMailbox real sqlite > declares recipient and sender Run lookup indexes with their frozen paths
+AssertionError: expected [ { …(3) }, { …(3) }, { …(3) }, …(1) ] to deeply equal [ { …(3) }, { …(3) }, { …(3) } ]
+
+- Expected
++ Received
+
+@@ -1,8 +1,17 @@
+  [
+    {
+      "aggregateType": "SessionMessage",
++     "name": "session-message-by-sender-session",
++     "paths": [
++       "ref.projectId",
++       "ref.workspaceId",
++       "sender.sessionRef.sessionId",
++     ],
++   },
++   {
++     "aggregateType": "SessionMessage",
+      "name": "session-message-by-recipient",
+      "paths": [
+        "ref.projectId",
+        "ref.workspaceId",
+        "recipient.sessionId",
+
+ ❯ tests/work-graph/C1-session-mailbox.test.ts:306:44
+    304|
+    305|   it('declares recipient and sender Run lookup indexes with their froz…
+    306|     expect(SESSION_MESSAGE_LOOKUP_INDEXES).toEqual([
+       |                                            ^
+    307|       { name: 'session-message-by-recipient', aggregateType: 'SessionM…
+    308|         paths: ['ref.projectId', 'ref.workspaceId', 'recipient.session…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  tests/work-graph/R4-control-intent.test.ts > R4.1 durable control intent > rejects a non-Host principal, a cross-scope context and malformed control input
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'rejected', code: 'invalid' }
+(1 matching property omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "invalid",
++   "code": "busy",
+    "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4-control-intent.test.ts:398:8
+    396|       .toMatchObject({ status: 'rejected', code: 'forbidden' });
+    397|     expect(await controls.submitControl(fixture.ctx, { input: badKind,…
+    398|       .toMatchObject({ status: 'rejected', code: 'invalid' });
+       |        ^
+    399|     expect(await controls.submitControl(fixture.ctx, { input: { ...bas…
+    400|       meta: { ...base.meta, requestId: 'r4-boundary-reason' } }))
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+
+ Test Files  2 failed | 9 passed (11)
+      Tests  3 failed | 105 passed (108)
+   Start at  18:51:08
+   Duration  11.45s (transform 940ms, setup 0ms, import 3.33s, tests 7.34s, environment 1ms)
+

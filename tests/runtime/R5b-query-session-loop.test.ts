@@ -1,3 +1,4 @@
+import { kernelRunLimits } from '../../src/core/agent-runtime/run-limits.js';
 /**
  * R5b.2 chain two: one real read-only Query session loop.
  *
@@ -27,6 +28,9 @@ import type { QueryJobAnswerRef, QueryJobIntentV1, QueryJobRef, QueryRunRef } fr
 import type { RuntimeHostBindings } from '../../src/core/agent-runtime/execution-contracts.js';
 import type { WorkspaceHostBindings } from '../../src/core/workspace/access.js';
 import { createTargetPlatform } from '../../src/composition/create-platform.js';
+import { DEFAULT_RUNTIME_BUDGET, type RuntimeBudget } from '../../src/contracts/runtime-budget.js';
+import { BudgetExceeded, ModelBudget, type ModelTokenBudget } from '../../src/core/agent-runtime/model-budget.js';
+import { LOCAL_WORKBENCH_BUDGET } from '../../src/app/runtime-configuration.js';
 import { createScriptedModel, digestOf } from '../helpers/B2-runtime-fixture.js';
 
 const AT = '2026-09-26T00:00:00.000Z';
@@ -39,28 +43,44 @@ const workspaceRef = { aggregateType: 'Workspace' as const, projectId, workspace
 const goalRef = { aggregateType: 'Goal' as const, projectId, goalId: 'r5b-loop-goal' };
 const queryJobRef: QueryJobRef = { aggregateType: 'QueryJob', projectId, workspaceId, queryJobId: 'r5b-loop-job' };
 const queryRunRef: QueryRunRef = { aggregateType: 'QueryRun', projectId, workspaceId, queryJobId: 'r5b-loop-job', runId: 'r5b-loop-run' };
+const queryJobRef2: QueryJobRef = { aggregateType: 'QueryJob', projectId, workspaceId, queryJobId: 'r5b-loop-job-2' };
+const queryRunRef2: QueryRunRef = { aggregateType: 'QueryRun', projectId, workspaceId, queryJobId: 'r5b-loop-job-2', runId: 'r5b-loop-run-2' };
 const roleBinding = { schemaVersion: 1 as const, bindingId: 'r5b-loop-binding', templateId: 'advisor', templateRevision: '1', bindingVersion: 1, policyRevision: '1' };
 const sessionRole = { kind: 'legacy_template' as const, templateId: 'advisor', templateRevision: '1' };
-const runtimeBudget = { contextWindowTokens: 200000, inputTokens: null, outputTokens: null, maxRequests: 8, maxToolCalls: 8, timeoutMs: 30000, perResponseTokens: 512 };
+const runtimeBudget: RuntimeBudget = { contextWindowTokens: 200000, inputTokens: null, outputTokens: null, maxRequests: 8, maxToolCalls: 8, timeoutMs: 30000, perResponseTokens: 512 };
+/** A real explicit test limit: two declared calls against a one-tool budget make
+ * the Kernel start the first and abandon the never-started second. */
+const limitRuntimeBudget: RuntimeBudget = { ...runtimeBudget, maxRequests: 4, maxToolCalls: 1 };
 const hostInstruction = 'R5b trusted read-only query guidance';
 
 function hostCtx(): CoreCallContext {
   return { projectId, workspaceId, principal: { kind: 'host', actor: human },
     materialReader: { kind: 'host', projectId, workspaceId, actor: human }, signal: new AbortController().signal };
 }
-function initialCoordinationIntent(): QueryJobIntentV1 {
+/**
+ * Query budget: `maxTokens: null` is the explicit no-cumulative-cap default and
+ * is NOT 0/Infinity; an explicit positive integer and a deadline stay real
+ * constraints. The production contract now declares `number | null`.
+ */
+const EXPLICIT_QUERY_BUDGET: QueryJobIntentV1['budget'] = { maxTokens: 4096, deadline: null };
+const NULL_QUERY_BUDGET: QueryJobIntentV1['budget'] = { maxTokens: null, deadline: null };
+function coordinationIntent(queryJobId: string, budget: RuntimeBudget = runtimeBudget,
+  queryBudget: QueryJobIntentV1['budget'] = EXPLICIT_QUERY_BUDGET): QueryJobIntentV1 {
   return {
-    schemaVersion: 1, intentId: queryJobRef.queryJobId, projectId, workspaceId, goalId: goalRef.goalId,
+    schemaVersion: 1, intentId: queryJobId, projectId, workspaceId, goalId: goalRef.goalId,
     question: 'Read the project sources and explain the goal',
-    focusTaskRefs: [], budget: { maxTokens: 4096, deadline: null }, multiTurn: { maxRounds: 1 },
-    correlationId: 'r5b-loop-corr', execution: { kind: 'initial_coordination', roleBinding, runtimeBudget },
+    focusTaskRefs: [], budget: queryBudget, multiTurn: { maxRounds: 1 },
+    correlationId: 'r5b-loop-corr', execution: { kind: 'initial_coordination', roleBinding, runtimeBudget: budget },
   };
 }
-function submitRequest(requestId: string) {
+function submitRequest(
+  requestId: string, jobRef: QueryJobRef = queryJobRef, runRef: QueryRunRef = queryRunRef, budget: RuntimeBudget = runtimeBudget,
+  queryBudget: QueryJobIntentV1['budget'] = EXPLICIT_QUERY_BUDGET,
+) {
   return { meta: { requestId, expected: [
     { ref: projectRef, revision: 1 }, { ref: workspaceRef, revision: 1 }, { ref: goalRef, revision: 1 },
-    { ref: queryJobRef, revision: 0 }, { ref: queryRunRef, revision: 0 },
-  ] }, input: { queryJobId: queryJobRef.queryJobId, runId: queryRunRef.runId, intent: initialCoordinationIntent() } };
+    { ref: jobRef, revision: 0 }, { ref: runRef, revision: 0 },
+  ] }, input: { queryJobId: jobRef.queryJobId, runId: runRef.runId, intent: coordinationIntent(jobRef.queryJobId, budget, queryBudget) } };
 }
 
 const directories: string[] = [];
@@ -145,7 +165,11 @@ it('drives project_source through the real Kernel and answers once on the origin
   let answerRef: QueryJobAnswerRef | undefined;
   try {
     await bootstrap(platform, state);
-    expect(await platform.queries.submitQueryJob(hostCtx(), submitRequest('r5b-loop-submit-1'))).toMatchObject({ status: 'committed', replayed: false });
+    // Frozen default: an explicit null cumulative Query budget still submits,
+    // claims, prepares, reads real sources and answers; it is not truncated.
+    expect(await platform.queries.submitQueryJob(hostCtx(),
+      submitRequest('r5b-loop-submit-1', queryJobRef, queryRunRef, runtimeBudget, NULL_QUERY_BUDGET)))
+      .toMatchObject({ status: 'committed', replayed: false });
 
     const created = await platform.runtime.createSession(hostCtx(), {
       workspace: scope, role: sessionRole, recommendedRefs: [], initialLinks: [],
@@ -236,4 +260,165 @@ it('drives project_source through the real Kernel and answers once on the origin
     }
     expect(scripted.calls()).toBe(reopenedCalls);
   } finally { await reopened.close(); }
+});
+
+it('terminalizes a real Kernel tool-budget limit whose never-started call is abandoned, releases the Session and lets the next Query reuse it', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'next-r5b-limit-'));
+  directories.push(directory);
+  await mkdir(join(directory, 'src'), { recursive: true });
+  await writeFile(join(directory, 'src', 'module.ts'), 'export const r5bLoopMarker = "R5B_LOOP_REAL_SOURCE";\n');
+  const skillRoot = join(directory, 'skills');
+  await mkdir(join(skillRoot, 'r5b-loop-skill'), { recursive: true });
+  await writeFile(join(skillRoot, 'r5b-loop-skill', 'skill.json'), JSON.stringify({ schemaVersion: 1, id: 'r5b-loop-skill', title: 'R5b loop skill', kind: 'instruction', priority: 10, contentFile: 'content.md' }));
+  await writeFile(join(skillRoot, 'r5b-loop-skill', 'content.md'), 'R5B_LOOP_SKILL_FROM_REAL_FILE');
+  const state: HostState = { revision: null };
+
+  // The provider first declares ONE real tool call, which genuinely settles
+  // under the explicit ONE-tool budget. On its second request it declares a
+  // SECOND call; the Kernel reaches the real tool cap before that call can
+  // start, so the reducer marks the never-started declaration `abandoned` with
+  // no result (not `outcome_unknown`). This is a genuine terminal, not a
+  // fabricated one.
+  const scripted = createScriptedModel([
+    { kind: 'calls', calls: [
+      { callId: 'r5b-loop-limit-1', name: 'project_source', args: { action: 'read', path: 'src/module.ts', maxBytes: 8192, version: { kind: 'working_tree' } } },
+    ] },
+    { kind: 'calls', calls: [
+      { callId: 'r5b-loop-limit-2', name: 'project_source', args: { action: 'read', path: 'src/module.ts', maxBytes: 8192, version: { kind: 'working_tree' } } },
+    ] },
+    { kind: 'text', text: 'R5b successor answer after the limited prefix' },
+  ]);
+  const host: RuntimeHostBindings = {
+    async resolveConfiguration() {
+      return { status: 'rejected', code: 'unsupported', reason: 'this chain never runs Work execution' };
+    },
+    async resolveQueryConfiguration() {
+      return { status: 'ready', value: {
+        configurationRevision: 'r5b-loop-limit-host@1',
+        model: { configuration: { revision: 'r5b-loop-limit-host@1', provider: 'deepseek', model: 'r5b-loop-scripted', baseUrl: 'http://127.0.0.1' }, client: scripted.client,
+          inputCounter: { count: () => ({ tokens: 256, method: 'model_tokenizer' as const, tokenizer: 'r5b-fixture-counter' }) } },
+        budget: limitRuntimeBudget,
+        tools: ['read', 'project_source'],
+        writeScope: [], skills: { resourceRoot: skillRoot, enabledIds: ['r5b-loop-skill'] },
+        systemInstruction: hostInstruction,
+        hostTemplate: { templateId: 'advisor', revision: '1', digest: digestOf(hostInstruction) },
+        deniedPrefixes: [], processSandboxOptions: {}, materialBasis: null,
+      } };
+    },
+  };
+
+  const options = {
+    storage: { kind: 'sqlite' as const, directory },
+    workspace: workspaceBindings(directory, state),
+    sourcePolicyFor: async (requestedProjectId: string, requestedWorkspaceId: string) =>
+      requestedProjectId === projectId && requestedWorkspaceId === workspaceId && state.revision !== null
+        ? { root: directory, permissionRevision: 'host-grant-1', allowsRead: () => true } : null,
+    runtime: host,
+    kernelStores: { entries: [{ adapterId: 'r5b-loop-kernel', storeKey: 'r5b-loop-kernel-store', workspace: scope, databasePath: join(directory, 'kernel.sqlite') }] },
+    now: () => AT,
+  };
+  const platform = await createTargetPlatform(options);
+  try {
+    await bootstrap(platform, state);
+    expect(await platform.queries.submitQueryJob(hostCtx(), submitRequest('r5b-loop-limit-submit-1', queryJobRef, queryRunRef, limitRuntimeBudget)))
+      .toMatchObject({ status: 'committed', replayed: false });
+
+    const created = await platform.runtime.createSession(hostCtx(), {
+      workspace: scope, role: sessionRole, recommendedRefs: [], initialLinks: [],
+      meta: { requestId: 'r5b-loop-limit-session-1', expected: [] },
+    });
+    expect(created).toMatchObject({ status: 'completed' });
+    if (created.status !== 'completed') throw new Error('Session creation did not complete');
+    const session = created.value.ref;
+
+    const claim = await platform.queries.claimQuery(hostCtx(), {
+      meta: { requestId: 'r5b-loop-limit-claim-1', expected: [
+        { ref: queryJobRef, revision: 1 }, { ref: queryRunRef, revision: 1 }, { ref: session, revision: created.value.revision }] },
+      input: { queryRunRef, sessionRef: session },
+    });
+    expect(claim).toMatchObject({ status: 'committed' });
+    if (claim.status !== 'committed') throw new Error('Query claim did not commit: ' + JSON.stringify(claim));
+
+    const prepared = await platform.runtime.prepareQuery(hostCtx(), { queryRunRef, requestId: 'r5b-loop-limit-prepare-1' });
+    expect(prepared).toMatchObject({ status: 'ready' });
+    if (prepared.status !== 'ready') throw new Error('Query preparation did not become ready');
+    const started = await platform.runtime.startQuery(hostCtx(), { prepared: prepared.value, consumerId: 'r5b-loop-limit-consumer', requestId: 'r5b-loop-limit-start-1' });
+    expect(started).toMatchObject({ status: 'ready' });
+    if (started.status !== 'ready') throw new Error('Query start did not become ready');
+    const record = started.value;
+
+    // Stage-one red target: the real Kernel limit is observed as a formal
+    // timeout, records NO answer and releases the original Session. The limited
+    // Query must not be observed as an answered success.
+    expect(scripted.calls(), 'the limited Query settles one call, then stops on the over-budget one').toBe(2);
+    expect(record.run.run).toMatchObject({ status: 'closed', outcome: 'timeout' });
+    expect(record.job.job).toMatchObject({ status: 'closed', closeReason: { code: 'timeout' } });
+    expect(record.answer).toBeNull();
+    expect(record.job.job.answerRefs).toEqual([]);
+    expect(record.session.occupancy).toBeNull();
+
+    // A later Query on the SAME released Session is claimable; its real Kernel
+    // Turn consumes the original projected prefix (the abandoned declaration is
+    // omitted, the settled first call/result remain) and answers normally.
+    const releasedRevision = record.session.revision;
+    expect(await platform.queries.submitQueryJob(hostCtx(), submitRequest('r5b-loop-limit-submit-2', queryJobRef2, queryRunRef2, limitRuntimeBudget)))
+      .toMatchObject({ status: 'committed', replayed: false });
+    const reuse = await platform.queries.claimQuery(hostCtx(), {
+      meta: { requestId: 'r5b-loop-limit-reuse-claim-1', expected: [
+        { ref: queryJobRef2, revision: 1 }, { ref: queryRunRef2, revision: 1 }, { ref: session, revision: releasedRevision }] },
+      input: { queryRunRef: queryRunRef2, sessionRef: session },
+    });
+    expect(reuse).toMatchObject({ status: 'committed' });
+    if (reuse.status !== 'committed') throw new Error('the released Session did not accept the next Query: ' + JSON.stringify(reuse));
+    expect(reuse.value.session.occupancy).toMatchObject({ kind: 'execution', executionRef: queryRunRef2, generation: releasedRevision + 1 });
+
+    const reusePrepared = await platform.runtime.prepareQuery(hostCtx(), { queryRunRef: queryRunRef2, requestId: 'r5b-loop-limit-reuse-prepare-1' });
+    expect(reusePrepared).toMatchObject({ status: 'ready' });
+    if (reusePrepared.status !== 'ready') throw new Error('the successor Query preparation did not become ready');
+    const reuseStarted = await platform.runtime.startQuery(hostCtx(), { prepared: reusePrepared.value, consumerId: 'r5b-loop-limit-consumer-2', requestId: 'r5b-loop-limit-reuse-start-1' });
+    expect(reuseStarted).toMatchObject({ status: 'ready' });
+    if (reuseStarted.status !== 'ready') throw new Error('the successor Query start did not become ready');
+    expect(reuseStarted.value.run.run).toMatchObject({ status: 'answered', outcome: 'answered' });
+    expect(reuseStarted.value.answer).not.toBeNull();
+    expect(reuseStarted.value.session.occupancy).toBeNull();
+    expect(scripted.calls(), 'the successor issues exactly one more provider call').toBe(3);
+    const successorRequest = scripted.requests[2];
+    expect(successorRequest).toBeDefined();
+    if (successorRequest !== undefined) {
+      const assistantCalls = successorRequest.messages.flatMap((message) =>
+        message.role === 'assistant' ? message.toolCalls.map((call) => call.callId) : []);
+      expect(assistantCalls).toContain('r5b-loop-limit-1');
+      expect(assistantCalls).not.toContain('r5b-loop-limit-2');
+    }
+  } finally { await platform.close(); }
+});
+it('keeps the local workbench budget at the no-cumulative-limit default', () => {
+  // Frozen contract: the local workbench reuses DEFAULT_RUNTIME_BUDGET, so an
+  // ordinary read is not truncated by hidden per-run request/tool/time caps and
+  // one response still carries the declared 4096 output tokens.
+  expect(LOCAL_WORKBENCH_BUDGET).toEqual(DEFAULT_RUNTIME_BUDGET);
+  expect(LOCAL_WORKBENCH_BUDGET.inputTokens).toBeNull();
+  expect(LOCAL_WORKBENCH_BUDGET.outputTokens).toBeNull();
+  expect(LOCAL_WORKBENCH_BUDGET.maxRequests).toBeNull();
+  expect(LOCAL_WORKBENCH_BUDGET.maxToolCalls).toBeNull();
+  expect(LOCAL_WORKBENCH_BUDGET.timeoutMs).toBeNull();
+  expect(LOCAL_WORKBENCH_BUDGET.perResponseTokens).toBe(4096);
+});
+
+it('keeps explicit numeric and deadline ModelBudget limits while a null token budget imposes no cumulative cap', () => {
+  // The frozen narrow persistent-budget shape: `tokenBudget: null` skips only
+  // the cumulative sum, never the deadline, and is not 0/Infinity.
+  const persist = async () => {};
+  const taskBudget = (tokenBudget: number | null, deadline: string | null): ModelTokenBudget =>
+    ({ tokenBudget, deadline });
+  const numeric = new ModelBudget(runtimeBudget, persist, undefined, taskBudget(512, null), () => AT);
+  expect(() => numeric.assertTaskBudgetAdmissible(256, 512)).toThrow(BudgetExceeded);
+  const deadline = new ModelBudget(runtimeBudget, persist, undefined,
+    taskBudget(null, '2026-09-26T00:00:00.000Z'), () => '2026-09-26T00:00:01.000Z');
+  expect(() => deadline.assertTaskBudgetAdmissible(1, 1)).toThrow(BudgetExceeded);
+  const uncapped = new ModelBudget(runtimeBudget, persist, undefined, taskBudget(null, null), () => AT);
+  expect(() => uncapped.assertTaskBudgetAdmissible(999_999, 999_999)).not.toThrow();
+  expect(uncapped.exhausted).toBe(false);
+  expect(kernelRunLimits(DEFAULT_RUNTIME_BUDGET, taskBudget(null, '2026-09-26T00:00:10.000Z'), () => AT))
+    .toMatchObject({ maxTotalTokens: null, deadlineMs: 10_000 });
 });

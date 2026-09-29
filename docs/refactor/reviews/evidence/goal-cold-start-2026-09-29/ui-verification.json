@@ -1,0 +1,40 @@
+{
+  "architecture": {
+    "withoutContainment": "real parallel module nodes, no invented edges",
+    "nodeClick": "module detail below graph",
+    "detailSections": [
+      "related sessions",
+      "files",
+      "diff",
+      "raw fields"
+    ],
+    "defaultCaption": "adopted module; active marker when formal active association",
+    "captionPostBuildVerified": true
+  },
+  "task": {
+    "realNodes": 4,
+    "dependencyEdges": 2,
+    "doubleClickPinned": "task-implement-normalize-label",
+    "futureNodePreserved": "task-future-i18n",
+    "timedLens": "existing continuous mapping unchanged",
+    "untimedZones": "compressed, no fabricated timestamp",
+    "finalState": "two Work and gate satisfied; future plan_only/deferred remains",
+    "futureCaptionPostBuildVerified": "未来意图"
+  },
+  "layout": {
+    "viewportHeight": 1286,
+    "documentHeight": 1286,
+    "detailClientHeight": 490,
+    "detailOverflowY": "auto",
+    "narrowCanvas": "horizontal scroll preserved",
+    "maximize": "verified through browser button"
+  },
+  "limits": "Small real graph only; not a large-repository or visual-performance benchmark.",
+  "completionUi": "目标整体 · 状态：completed / the Goal was formally completed",
+  "scopePreference": {
+    "twoTabs": true,
+    "steps": "A original goal/member; B other isolated project/member; reload A; switch back; original member history and Task graph ready",
+    "modelCallsAdded": 0,
+    "oldAlreadyOverwrittenSelection": "not guessed or reconstructed"
+  }
+}

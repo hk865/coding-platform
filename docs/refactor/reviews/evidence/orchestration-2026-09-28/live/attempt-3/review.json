@@ -1,0 +1,13 @@
+{
+  "verdict": "Engineering result completed; live qualification failed due to real root-directory tool summary inconsistency. Fixed existing directory prefix normalization and preserved per-file visibility filters; relevant regression/type/build passed before next live run.",
+  "streams": 16,
+  "goalPhase": "COMPLETED",
+  "acceptedReplies": 2,
+  "checkOutcomes": [
+    "PASS",
+    "PASS"
+  ],
+  "modelArgumentErrors": 1,
+  "rootPrefixDenials": 4,
+  "rootCause": "list_files/search prefix=. was passed as a file path into Kernel permission summary, while omitted prefix was allowed. Both now normalize to the same bounded directory enumeration; invalid .. and denied files remain rejected."
+}

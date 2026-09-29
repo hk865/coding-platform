@@ -1,0 +1,56 @@
+[
+  {
+    "path": "vendor/coding-agent/patches/app/composition/composition-contracts.ts",
+    "sourceMap": "vendor/coding-agent/dist/app/composition/composition-contracts.js.map",
+    "sha256": "432bdd26660841f5de1f51d2ed811f0161d54faad0698c1b6cf5b0ee2c17d9e7",
+    "lines": 50
+  },
+  {
+    "path": "vendor/coding-agent/patches/core/ports/session_store/session-store-port.ts",
+    "sourceMap": "vendor/coding-agent/dist/core/ports/session_store/session-store-port.js.map",
+    "sha256": "a666dcd03c2bb84024f52ed2b9c89eb1e43683faaead23a28dc221607cae8e56",
+    "lines": 335
+  },
+  {
+    "path": "vendor/coding-agent/patches/core/ports/session_store/session-projection.ts",
+    "sourceMap": "vendor/coding-agent/dist/core/ports/session_store/session-projection.js.map",
+    "sha256": "879966958692f4cc93b937e83a3a077a00f22bab5b331464e1600136a0a02c3e",
+    "lines": 51
+  },
+  {
+    "path": "vendor/coding-agent/patches/core/runtime/state/run-state.ts",
+    "sourceMap": "vendor/coding-agent/dist/core/runtime/state/run-state.js.map",
+    "sha256": "19164bece84621d6f1d5fd130b151b16cd4f57a58c2a568164159bc89c7a991e",
+    "lines": 433
+  },
+  {
+    "path": "vendor/coding-agent/patches/core/runtime/events/agent-events.ts",
+    "sourceMap": "vendor/coding-agent/dist/core/runtime/events/agent-events.js.map",
+    "sha256": "bd698b6fe37c4aae287d732a2d0f54a5288ad6dd51cb6c8c9bb7b562a7c76127",
+    "lines": 367
+  },
+  {
+    "path": "vendor/coding-agent/patches/core/runtime/reducer/run-state-reducer.ts",
+    "sourceMap": "vendor/coding-agent/dist/core/runtime/reducer/run-state-reducer.js.map",
+    "sha256": "4c71eb25c5ddbbb58f03acf6cd0b2a3e15d0707ff8f6bef4cb40f6dde8d451c5",
+    "lines": 283
+  },
+  {
+    "path": "vendor/coding-agent/patches/core/runtime/recovery/recovery-coordinator.ts",
+    "sourceMap": "vendor/coding-agent/dist/core/runtime/recovery/recovery-coordinator.js.map",
+    "sha256": "eb4fb252fec421c0b44d94782aede3b03fc935b2a27ac6824d72e10f185d7a97",
+    "lines": 471
+  },
+  {
+    "path": "vendor/coding-agent/patches/storage/session_event_sink/session-event-sink.ts",
+    "sourceMap": "vendor/coding-agent/dist/storage/session_event_sink/session-event-sink.js.map",
+    "sha256": "d1b21ab25a131cdfef39e0f9a717663c1613c8c9209baebfece08b7762c0ef21",
+    "lines": 82
+  },
+  {
+    "path": "vendor/coding-agent/patches/core/runtime/checkpointing/checkpointing-event-sink.ts",
+    "sourceMap": "vendor/coding-agent/dist/core/runtime/checkpointing/checkpointing-event-sink.js.map",
+    "sha256": "326b6e20c3763cfd9c4545ae355897381dd1d5da3ba4e34b3bbc65c61df05957",
+    "lines": 118
+  }
+]

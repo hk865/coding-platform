@@ -67,7 +67,9 @@ export type TaskBudgetV1 = {
 // ------------------------------------------------------------------------ //
 // Runtime event protocol                                                    //
 // ------------------------------------------------------------------------ //
-type RuntimeEventType = "run_started" | "run_completed" | "run_crashed" | "run_cancelled" | "run_budget_exhausted";
+type RuntimeEventType = "run_started" | "run_completed" | "run_crashed" | "run_cancelled" | "run_budget_exhausted" | "run_yielded";
+/** 明确的让出类别；只描述业务等待类别，具体等待/唤醒关联由平台侧建立。 */
+export type YieldReasonV1 = "reply_required" | "external_input_required" | "operator_requested";
 export type RuntimeEventV1 = {
     eventType: RuntimeEventType;
     schemaVersion: 1;
@@ -92,13 +94,21 @@ export type RuntimeEventV1 = {
     } | {
         kind: "budget_exhausted";
         exhaustedAt: string;
+    } | {
+        kind: "yielded";
+        yield: {
+            reason: YieldReasonV1;
+            requestedBy: "runtime" | "app";
+            yieldedAt: string;
+            pendingToolCallId: string | null;
+        };
     };
 };
 // ------------------------------------------------------------------------ //
 // Run / attempt / outbox status                                             //
 // ------------------------------------------------------------------------ //
 export type RunStatus = "starting" | "running" | "ended";
-export type RunOutcome = "completed" | "failed" | "cancelled" | "budget_exhausted" | "crashed" | "outcome_unknown";
+export type RunOutcome = "completed" | "failed" | "cancelled" | "budget_exhausted" | "crashed" | "outcome_unknown" | "yielded";
 export type ExecutionAuthorizationV1 = {
     generation: number;
     consumerId: string;
@@ -171,9 +181,37 @@ export type RunSnapshot = {
     lastFactEventId: string;
     /** The bounded envelope recorded at start (the Run input). */
     envelope: TaskEnvelopeV1 | null;
+    /** Set only by a real yielded terminal observation; absent on every other Run. */
+    continuation?: RunContinuationV1;
+    /** Set only on a continuation claim that consumes an earlier yielded wait. */
+    consumedWait?: ConsumedWaitV1;
+    /** Durable directional inputs; independent of pause/cancel fencing. */
+    controlInputs?: import("./control-intent.js").ControlIntentRef[];
     startedAt: string | null;
     endedAt: string | null;
 };
+/**
+ * The durable platform binding produced by a REAL yielded Run. It keeps the
+ * original Task/Session and the exact wait message that must be consumed by the
+ * next Attempt in the same Session; it is never a Kernel identity and never
+ * authorizes a new Run by itself.
+ */
+export type RunContinuationV1 = {
+  schemaVersion: 1;
+  kind: 'wait_reply';
+  task: TaskTriple;
+  sessionRef: import('./core/identity.js').SessionRef;
+  messageRef: import('./core/session-message.js').SessionMessageRef;
+};
+
+/** The exact prior yielded Run and saved wait message a continuing Run consumes. */
+export type ConsumedWaitV1 = {
+  runRef: RunRef;
+  messageRef: import('./core/session-message.js').SessionMessageRef;
+  /** The exact saved reply body artifact consumed as the continuing Run input. */
+  responseRef: import('./artifact.js').ArtifactRef;
+};
+
 export type RuntimeInputBindingV1 = {
     schemaVersion: 1;
     inputDigest: string;

@@ -13,7 +13,8 @@ import type { PreparedTaskExecution, PreparedTaskManifestV1 } from '../../../con
 import type { RoleConfigurationRef } from '../../../contracts/core/identity.js';
 import type { ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import type { TaskClaim } from '../../../contracts/core/task-claim.js';
-import type { ExecutionAuthorizationV2, RunSnapshot, RuntimeEventV1 } from '../../../contracts/dispatch.js';
+import type { ExecutionAuthorizationV2, RunContinuationV1, RunSnapshot, RuntimeEventV1 } from '../../../contracts/dispatch.js';
+import type { RoleSpecResolutionV1 } from '../../../contracts/role-spec-materials.js';
 import type { TaskEnvelopeV1 } from '../../../contracts/task-envelope.js';
 import type { RawArtifactStorePort } from '../../record-store/body-ports.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
@@ -56,6 +57,8 @@ export type TaskResultObservation = {
   kernelSource: KernelObservationSource | null;
   completedHistoryBoundary: CompletedHistoryBoundary | null;
   history: ObservedExecutionHistory | null;
+  /** Present only for a real yielded terminal; the original wait binding. */
+  continuation?: RunContinuationV1;
 };
 
 export interface ExecutionEntryPort {
@@ -82,6 +85,10 @@ export interface ExecutionEntryPort {
  */
 export type AuthorizeConfigurationInput = {
   run: RunSnapshot;
+  /** The exact current Role resolution the WorkGraph admission recheck already
+   * made and checked for this Run; it is trusted internal data, never a
+   * model/HTTP submittable field. */
+  roleResolution: RoleSpecResolutionV1;
   sessionRole: RoleConfigurationRef;
   configurationRevision: string;
   permissions: TaskEnvelopeV1['permissions'];

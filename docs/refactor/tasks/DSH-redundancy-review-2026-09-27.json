@@ -1,0 +1,4 @@
+{
+  "writableFiles": ["docs/refactor/reviews/dsh-long-context-review-2026-09-27.md"],
+  "dshStateDirectories": ["profiles", "sessions", "storages", "cache", "llm-deepseek", "attachments"]
+}

@@ -1,0 +1,8 @@
+{
+  "at": "2026-09-28T06:00:55.063897+00:00",
+  "path": "tests/helpers/AG2b-collaboration-fixture.ts",
+  "before": "c68af4bb09f7e535aad032f3272543b87fa06a82f7ab3df99708f00ab514993f",
+  "after": "77074e3509b58fa9e46e456337fc0d216702ef9a3e397cce2d8644ff236c9094",
+  "change": "Only controlled fixture Work cumulative tokenBudget 200000 -> 1000000; per-request context and production budgeting unchanged. Scripted provider omits usage, so reservations correctly accumulate; after five A requests reserved input160755+output2560 leaves less than next request.",
+  "laneAuditException": "Read-only fixture baseline amendment copied exactly into Stage2 lane; original manifest left unchanged, outsideScope fixture difference must be acknowledged explicitly."
+}

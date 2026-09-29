@@ -1,9 +1,14 @@
 import type { ArtifactRef } from '../../contracts/artifact.js';
 import type { CommandMeta, SessionRef } from '../../contracts/core/identity.js';
-import type { CoreRejection, WriteResult } from '../../contracts/core/results.js';
+import type { CoreRejection, ReadResult, WriteResult } from '../../contracts/core/results.js';
+import type { SessionMessageRef } from '../../contracts/core/session-message.js';
 import type { GoalRef } from '../../contracts/ledger.js';
 import type { PlanRevisionRef, PlanRevisionSnapshot } from '../../contracts/plan.js';
-import type { TaskTriple } from '../../contracts/dispatch.js';
+import type { QueryJobAnswerSnapshot, QueryJobIntentV1 } from '../../contracts/query-job.js';
+import type { RuntimeBudget } from '../../contracts/runtime-budget.js';
+import type { RoleBindingRefV1, TaskTriple } from '../../contracts/dispatch.js';
+import type { SessionMessage } from '../../core/work-graph/communication/contracts.js';
+import type { QueryJobRecord } from '../../core/work-graph/queries/contracts.js';
 import type { CreateGoalInput, GoalTaskPort } from '../../core/work-graph/tasks/contracts.js';
 import type { TaskClaimPort } from '../../core/work-graph/tasks/claim-contracts.js';
 import type { InitialPlanProposalResult, PlanTaskPort } from '../../core/work-graph/tasks/plan-contracts.js';
@@ -66,6 +71,12 @@ export type WorkflowAdvanceBase = {
   goalRef: GoalRef;
   flowId: string;
   sessionHint: SessionRef | null;
+  /**
+   * Explicit Task selection for `select_work`. Absent keeps the historical
+   * deterministic default selection; present makes the Host choice explicit and
+   * lets same-Goal independent Tasks advance on their own.
+   */
+  taskId?: string;
 };
 
 /** `select_work` is read-only; `perform` names one already-determined step. */
@@ -124,3 +135,40 @@ export type InitialPlanningGoalInputResult = CoreRejection | {
         | { kind: 'work'; input: WorkflowAdvanceInput } | null;
   };
 };
+
+/**
+ * The frozen explicit-consultation consumer input. The caller supplies only the
+ * original message ref, a real Goal, the already-selected read-only Query
+ * profile fields and a consumer id; there is no caller recipient, question,
+ * answer text, sender identity or terminal state.
+ */
+export type ConsultationInput = {
+  schemaVersion: 1;
+  part?: 'response';
+  messageRef: SessionMessageRef;
+  goalRef: GoalRef;
+  roleBinding: RoleBindingRefV1;
+  runtimeBudget: RuntimeBudget;
+  budget: QueryJobIntentV1['budget'];
+  consumerId: string;
+};
+
+/**
+ * The finite consultation result. `not_found`/`rejected` are reserved for
+ * failures BEFORE any action was accepted; once a Query was accepted the caller
+ * always receives `ready` with the real message/Query/Answer references it
+ * managed to obtain plus a concrete reason, so a later failure never looks like
+ * a safe fresh start.
+ */
+export type ConsultationResult = ReadResult<{
+  /**
+   * `ended` is the read-only consumer projection for a formally closed/settled
+   * Query with no Answer: it keeps the real message/Query facts and reason and
+   * never implies a rerun. It is not a new Agent/persisted lifecycle state.
+   */
+  state: 'waiting' | 'responded' | 'processed' | 'ended';
+  message: SessionMessage;
+  query: QueryJobRecord | null;
+  answer: QueryJobAnswerSnapshot | null;
+  reason: string | null;
+}>;

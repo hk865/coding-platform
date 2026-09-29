@@ -1,5 +1,52 @@
 # 当前已实现能力与复用入口
 
+**2026-09-29 文件资源管理器修复：** 普通目录浏览改用既有 Kernel 路径枚举，不再依赖完整文本 capture；二进制/大文件不阻断文件名展示。每次本地显示100项、可输入子目录、明确加载/错误/部分结果。13项、类型、构建、边界及真实ROS目录只读浏览/文件打开通过；未写项目文件、未调用模型。当前44797终端Host PID379878；未提交推送。[本批证据](reviews/evidence/ui-directory-inventory-2026-09-29/README.md)。
+
+**2026-09-29 正常 UI 冷启动与双图纠偏：** 隔离新项目已从主对话目标、只读调查、候选审阅和明确采用，进入两个同 Session Work；唯一预期源码变更、三轮正式检查 PASS、GoalPhase COMPLETED。双图恢复稀疏节点/真实连线、下方独立滚动详情、按需展开及固定，未来节点保留。检查恢复不重开模型、不把已 finalized 非 PASS 当成无结果。按工作区保存显示选择及两标签页切换/刷新恢复已通过浏览器复验；取消/失败后新 Attempt 等缺口仍保留，不能宣告整个 MVP。产品模型 10 次，曾有 2 次沙箱工具失败；正常终端 Host 保留沙箱后检查通过，用户级服务已停止。 [本批证据与边界](reviews/evidence/goal-cold-start-2026-09-29/README.md)。
+
+**历史核对（2026-09-29，本批冷启动接线之前）：当时仍有产品接线缺口。** 用户追问成员与双图后，只读核对 slam6_navigation (test) 当前项目：1 Goal（activePlanRevision=null）、1 active/available Session、3 QueryJob/QueryRun、1 Answer；无 Plan、Task 或正式架构 baseline。浏览器双图入口仍在，但分别返回“该 Goal 还没有已采用的 Plan”和“没有已采用的架构 baseline”。普通发送采用 semantic_query，回答后不进入 planning_answer；规划仍在更多菜单，初始架构仍依赖设置页材料/JSON采用，未形成调查结果→架构候选/采用→任务规划→按需分工的连续冷启动体验。主对话与 local-workbench 成员可指向同一 Session，不是两个 Agent。现有执行/通信闭环验收不能替代此缺口；不能用原型示例节点或固定增开四个成员掩盖。此次仅核对并记录，未启动规划/模型或更改真实项目状态。
+
+**Session 交互与思考配置更新（2026-09-29）：本批限定验收完成。** 对照 DSH 提炼正文主线、动作摘要及按需展开；同身份相邻活动分组，外层显示读取/搜索等动作和文件名，展开直接读工具结果，技术事件、参数和完整原记录继续可查。新增代码复制/换行、稳定展开与最新尾页读取，缩窄对话仍固定页面和输入框。原 72 条历史顺序/唯一性、read 输出、原文、复制粘贴、浅色/窄栏已实际操作；主审 28 项、独审另一重合集合 30 项及 AG6 3 项通过，构建/边界通过。用户指出 think 不可见后，查到当前模型配置为 thinking=disabled，已在本机设置改为 enabled，并删除实时 observer 裁剪 reasoningContent 的旧行；旧历史没有保存的思考不能补齐，新思考输出尚未发起模型调用验证。本批新增产品模型调用 0，工作台 44797（PID 3233874）已加载更新；未改真实项目、未提交推送，不宣告整个 MVP 完成。详见[本批证据](reviews/evidence/ui-progressive-session-2026-09-29/README.md)。
+
+**目标创建与对话恢复更新（2026-09-29）：本批限定验收通过。** 首次发送创建 Goal 后直接开始调查；未配置模型时保留 Goal/草稿并引导设置，设置保存不调用模型；已 claimed/prepared 的原 Query 可显式继续准备。草稿仅在原内容未变化时清理，成员目录与 Session 状态刷新。根集成 4 文件 29 项检查、类型、构建与边界通过；受控浏览器 4 calls / 3 Goal / 4 Session / 4 Job / 4 Run（含 1 个 HTTP 构造前态）。最终真实调查复用原 Goal/Session，2 次 provider 调用、4 次工具成功、0 失败，answered/settled 且占用释放；历史分页 50→72，Markdown 与原始记录入口正常。Query null 累计预算不限但 deadline 仍传入 Kernel，Work 预算未改；仅当前真实 scope 显式配置官方支持的 1M context，其他默认仍 128K，非自动容量发现。工作台 44797（PID 243350）继续运行；未提交推送、未写用户项目，不宣称流式或完整 MVP 完成。详见[本批证据](reviews/evidence/goal-conversation-start-2026-09-29/README.md)。
+
+**本机设置接线（2026-09-29）：本批集成、浏览器与常用启动器核验完成。** 左下角“设置”提供工作区与模型两类操作：空 Host 可打开第一个本机目录；选择新项目或向已有项目添加工作区，默认只读，文件写入与命令执行需显式勾选。模型支持新增、编辑和按工作区选择；API key 留空保留，输入的密钥只保存在本机私有配置，不返回 UI、不进入仓库，未另设密钥时可沿用 provider 原环境来源。新选择用于后续新运行，已开始的 Run 保持其固定配置；切换工作区保留各自草稿与 Session。设置保存不调用模型，本批未重测真实模型连接。根类型、构建与 2 文件 15 项检查通过；浏览器已验证 2 项目 3 工作区、草稿保留、模型选择隔离及重启恢复。常用 44797 已替换为正常启动器并复验，沿用原配置与数据库，没有验收调用上限或请求记录包装；本批实际模型调用为 0，未提交、未推送。操作与验收边界见[本批记录](reviews/evidence/host-settings-2026-09-29/README.md)；以下较早批次的“只能预配置目录”等限制保留其当时含义，不作为本批验收结论。
+
+**Session 渲染更新（2026-09-29）：本批限定实现与浏览器验收完成。** 保留原型布局，既有历史支持本地 Markdown、易读工具与计划、长输入/技术事件折叠及完整原文展开；历史分页从 50 条追加至 85 条，前缀保留且身份唯一。类型、构建与必要检查通过，详见[本批证据](reviews/evidence/session-rendering-2026-09-29/README.md)。没有新增产品模型调用或写入用户项目；既有模型输出不算本轮新执行。不含逐 token 流式或语法高亮；界面打开任意本机目录仍未实现，当前仅 Host 预配置绑定。本结果不等于整个 MVP 完成。
+
+**原型 UI 纠偏更新（2026-09-28）：已按原会话完成本批返修及实际浏览器核对。** 前批误将原型降格为风格参考，重组了项目导航、持续对话、辅助页和图交互；该交付口径已撤回。现恢复项目树、统一输入、项目共享辅助页、独立对话草稿、节点下方详情、双击固定/右键新页及 Task 图内连续纵向焦点。复用正式后端数据，未复制原型示例或新建业务机制；无时间 gate/未来节点仍在图上。四个前端文件及一处既有 UI 测试断言更新，类型、构建、2 文件 16 项检查通过。浏览器核对范围与限制见[纠偏记录](reviews/evidence/ui-prototype-correction-2026-09-28/README.md)；本批未触发模型执行，不宣告整个 MVP 或任意规模 UI 验收完成。工作台仍为 http://127.0.0.1:44797/workbench/ ，用户级服务继续运行；未提交、未推送。
+
+**此前 UI 后端接线验收（2026-09-28，保留原范围）：** 工作台使用真实 owner/Kernel 接口，已确认原型是界面与交互验收基线，示例数据不复制。FUGeXf 隔离 retry 工程沿原 Goal 与数据库，在 stage scope 修复后由界面点击“采用并执行”，最终正式 `complete_goal / COMPLETED`；Work、stage 与 Goal 三项 satisfied，三轮正式检查均 exit 0 / PASS，详见 [live-final](reviews/evidence/mvp-ui-2026-09-28/live-final.json)。
+
+最终验收轮 14 次模型调用（本批较早失败轮次另计，见证据），provider/transport 错误为 0；有 1 次模型猜错另一项目收件人的语义工具错误，后续已修正，不能写成零工具错误。普通读取、重开及继续 gate 未增加模型调用；此前失败保留。浏览器已核对文件保存与 CAS 冲突、命令隐藏保留/运行/取消、Git↔working tree 行级 diff、未保存选区进入真实请求并返回 marker、成员原 Session 咨询答复、双图节点/固定/新页、Task→Run→原历史，以及固定高度/调宽。[本批验收与失败记录](reviews/evidence/mvp-ui-2026-09-28/README.md)。
+
+边界：命令页无 PTY/stdin；架构初始化仍需人工审阅 JSON；Host 内存句柄不代表任意崩溃自动恢复；本次使用隔离 retry 工程，未修改三个候选真实仓库。无默认四 Agent 或 AG 专用生产流程。DSH 已停止，未提交或推送。临时工作台 [查看当前界面](http://127.0.0.1:44797/workbench/)（PID 2247899）保留运行供查看，启动本身不调用模型；这是临时地址，不承诺长期可用。
+
+以下较早条目保留各自当时范围，不覆盖上述最新状态。
+
+**2026-09-28 当前落点：共同机制已导入并通过本轮统一验收。** 100 个候选文件精确导入，后续必要修正后共 102 个代码/测试/资源/生成物路径。 DSH 已停止，主审与子代理已完成候选修正、独立复核和导入；不再等待候选导入。实现复用原 owner、Runtime 与 Kernel，包括隔离 A′、真实 yield 后同 Task/Session 新 Run 接续、Work 控制、同 Goal 独立 Task 推进、显式机械通知及生命周期入口。没有默认启动四个 Agent，也没有按 AG 场景划分的专用生产流程。
+
+**本轮限定验收通过。** 相关 15 文件/134 项检查中 3 项旧 AG2 fixture 迁移后通过，导入后 driver 与目录参数修正的必要复验、类型和构建通过。最终浏览器启动的 DeepSeek 链为 14 次请求、两次真实让出/回复/原 Session 新 Run 接续、实际改文件、Work 与 Goal gate 两次正式检查 PASS，Goal COMPLETED；网络、provider、工具错误均为 0。刷新和原历史展开未新增模型请求，临时 Host 已关闭；此前失败保留并记录根因。详见[统一验收记录](reviews/evidence/orchestration-2026-09-28/README.md)。通用决定提交、原生 compact、Query 公开控制及整个 MVP 未宣告完成。
+
+当前机制与能力边界详见[状态机 §0.3–0.7](ORCHESTRATION-STATE-MACHINES.md#shared-mechanism-review)。
+
+## 历史限定交付证据（不是当前实现缺口清单）
+
+**AG2b 原 Run 持续通信（2026-09-28）已导入并通过限定真实模型验收。** 显式 `send_session_message(replyMode: 'wait')` 经原 Run outbox 触发已有咨询消费者，B 在原收件 Session 产生正式 Answer，回复作为原 Kernel 工具结果让 A 继续并可再次咨询。Host 持有推进句柄，工作台查询状态与请求停止；普通消息不自动派发，busy/归档对象不被抢占或换成新 Session。正式 cancel 与原运行排空沿已有 owner 执行，queued 或未确认取消保留原因，不自行释放占用。
+
+隔离工程成功轮次13次 DeepSeek 调用，两轮回复均进入同一 A Run 后续请求，B 保持同一 Session；真实文件编辑、Work/gate 两个正式检查轮次 PASS、Goal COMPLETED，当前轮 transport/provider/tool errors 均为0。[AG2b 证据](reviews/evidence/agent-behavior-2026-09-28/ag2b/README.md)保留此前两次连接失败及一次模型调用前的 Node 环境失败，不以成功轮次抹掉这些记录。该结果只证明存活 Host 内的限定往返与执行链，不保证语义可靠，不包含 Host 崩溃、Run ended/pause 后自动续跑；重开读取持久事实不等于自动恢复执行。AG3、Reviewer/返工、并行、治理、完整恢复及整体 UI/真实项目验收继续，**不是整个 MVP 完成**。
+
+本批相关11文件/105项、Node/UI类型、边界及构建通过。实际浏览器启动后刷新读回相同flow，看到两条回复、正式Goal完成和可展开原历史；普通读取未新增模型。测试Host已正常关闭，未提交/推送。
+
+
+**显式咨询消费者 AG2a（2026-09-28）：** [consultation.ts](../../src/business/workflow/consultation.ts)由原 Workflow 暴露 `consumeConsultation`，经 `workflow/consultation` 和统一工作台消息详情可实际处理一次咨询。原消息/确定性 Query 身份、首次 claim 的收件 Session、正式 Answer 与回复来源由现有 owner 绑定；Query 只读，Host 仅机械关联真实答案，不能自填答复身份/内容。普通读取无模型；busy 等待，重复处理与已保存答案补挂不另建 Query。12 文件/115 项、类型/边界/构建通过；[证据与限定范围](reviews/evidence/agent-behavior-2026-09-28/ag2/README.md)。AG2a 本身未完成自动感知、原发信 Work 续接或完整多 Agent 调度；后续 AG2b 的原 Run 限定续接见上方。 真实模型与浏览器终验已通过限定接线：共7次模型调用，首条4次含2次参数错误后修正，浏览器第二条3次/2次成功工具/0失败；重放、重开和普通读取均无新增模型。该结果不保证语义可靠，也不宣称零工具错误。
+
+**Agent 行为装配 AG6（2026-09-28）：** [Host 配置](../../src/app/runtime-configuration.ts)已接受 `grant.skills = { bundle: 'platform', behaviors: [...] }`，解析为原 Runtime 的资源根/Skill ID。共同 `platform-work` 加按需秘书、参谋、书记、审查指令；数组为空只加载共同指令，原 `enabledIds: []` 仍是不加载指令。Work/Query 共用装配入口，Kernel 原有多 Skill 加载和模型循环直接复用，工具/写范围不变，选择行为不会创建或唤醒 Agent。统一 UI 按成员查看，不增加职责专属入口。[使用示例](../../README.md#按需装配-agent-行为)、[行为表](AGENT-ROLE-ACTIONS.md)、[验收与限制](reviews/evidence/agent-behavior-2026-09-28/ag6/README.md)。19 项及类型/边界/构建通过，提示词修正后 8 项与资产摘要复验通过；两轮共 8 次真实模型调用机械完成，但语义样本仍有推断过强等问题，不声明回答质量全面通过。AG2 回复/执行、正式 Reviewer 结果消费者、自动调度与原生压缩没有因此实现。
+
+**Agent 行为消费者 AG1（2026-09-27）：** 新增两个只读工具按现有 Task/Module/WorkContext 的当前开放关联查找 Session，并读取卡片；真实 Work Run 可据返回事实选择收件人，经原 mailbox 发送咨询。新工具须同时进入既有 Host/Role 有效工具集合，Skill 本身不授予能力。目录仅放开绑定 Work Run 的同工作区读取，创建/生命周期写仍 Host-only；没有重查每次工具的整条执行准入链。两阶段实现与独立6文件/42项、Node/UI类型、边界已通过，见[行为计划](AGENT-BEHAVIOR-PLAN.md)、[AG1证据](reviews/evidence/agent-behavior-2026-09-27/ag1/verification.json)。目标发现仍基于open links；消息入箱不代表回复、唤醒或委托执行，Query未因此开放邮箱写入。 [真实DeepSeek](reviews/evidence/agent-behavior-2026-09-27/ag1/live-result.json)随后完成4次模型/3次成功工具调用，接收者仍待命，读回不新增模型调用。
+
+**最新增量（2026-09-27）：用户已授权有界清理，首批同次准入角色解析复用已导入。** WorkGraph 将本次已检查的 Role resolution 传给组合根，Host 配置回调使用其副本，原权限检查与提交 guards 保留。已有正常执行/冷观察用例中的组合根重复解析从 4 次降为 0；相关 4 文件 / 41 项、Node/UI 类型、模块边界及构建通过。生产源码净行数不变，尚未提交或推送；见[任务与取舍](tasks/CLEANUP-role-admission-2026-09-27.md)及[本批证据](reviews/evidence/cleanup-2026-09-27/role-admission/verification.json)。下文“停止施工”描述此前模型接入验收轮次，旧全量快照不作为本次增量的验证证据；其它 MVP 余项未自动恢复施工。
+
 **最新独立仓库验收：124 文件 / 1,102 项通过（exit0）。** 本次包含最终 graph/history UI 和独立目录构建脚本；Kernel 补丁再生、边界、Node/UI 类型、构建、编译入口和受 token 保护的 Host smoke 均通过。[独立验收记录](reviews/evidence/standalone-2026-09-27/verification.json)。本轮[有界 completion audit](reviews/completion-audit-2026-09-27.md)已完成：仍有真实实现阻塞与验收缺证；下方较早报告保留其当时范围。
 
 > 独立仓库说明（2026-09-27）：本仓库根即原 `coding-platform/next`，文档位于 `docs/`；当前继续入口见根 `CONTINUE.md` 与 `AGENTS.md`。旧证据、任务书中的绝对路径和 scope 只描述当时工作区，不能直接执行。用户已从独立 main 恢复并完成有界审计；本轮真实模型接入的非语义错误修复已验收并停止，尚未宣告整个 MVP 完成。

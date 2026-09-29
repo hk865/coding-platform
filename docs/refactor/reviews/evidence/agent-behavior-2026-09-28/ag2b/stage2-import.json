@@ -1,0 +1,102 @@
+{
+  "lane": "ag2b-continuous-stage2-20260928",
+  "imported": [
+    {
+      "path": "src/app/collaboration-driver.ts",
+      "before": "4c1fff3e2df31ece718902b4e335a454cd924a090e688f70221114fe844920f0",
+      "after": "c335050dda860d7e37b91232a5144b4fe159417b965990a37a128f241458e6b9"
+    },
+    {
+      "path": "src/app/host.ts",
+      "before": "c1638768eb6a92ab4d29e37a270e09e176b269b1888d33d8f06e96d3a87dced0",
+      "after": "4d3e521c914bbc249f4757146fbc4b3065e6dba054c432144c2aedb66ad03e81"
+    },
+    {
+      "path": "src/app/core-routes.ts",
+      "before": "59dd752cf6bfac1a3614fe9ffce5474c37869ce9a0cd3433ed231ea72d390362",
+      "after": "f657eaabd8ceb42fc443cd2610ea3b711502064ee26061d7c9b3006c782a18da"
+    },
+    {
+      "path": "src/app/core-http-types.ts",
+      "before": "664dd7dbe06838719ebd842c2054b63db7df50e360fe0f1f037351aea7242a70",
+      "after": "361bdb6bf09cd87c391ca0d9b9494e3ab21311a2d8efe2485016ba74954802ac"
+    },
+    {
+      "path": "src/core/work-graph/communication/contracts.ts",
+      "before": "72e00256351b30bc8370e404f6ba2e4c620220affedf606ae71b38bb33d827cb",
+      "after": "2ec4e44dc3d50f767af430e83e292e33fa028c8902658f228d40e303ddc89b40"
+    },
+    {
+      "path": "src/core/work-graph/communication/message-record-codecs.ts",
+      "before": "1b0cb183f6f952507ce4f2f4ac7f7f6593a572b85c27965ffe8353f8d64ed6de",
+      "after": "123e25937de528eaf004cb9afc76c7f5472a454ab13264875101676ee06edb9b"
+    },
+    {
+      "path": "src/core/work-graph/communication/mailbox-service.ts",
+      "before": "fc0536b9df8d1685ece1181a313239a64b4ac0ba1dfec9fa807cd6eaacac98e1",
+      "after": "2f27d448de39a676f4294adbfad0ca5dbe53c4194a58b6eca6799a916291fcbb"
+    },
+    {
+      "path": "src/core/agent-runtime/communication-tools.ts",
+      "before": "b3ced82df2417d6e5e0af97ede7e50bbc8b9ace2599f0a6a9003ff38d791b194",
+      "after": "d17734b755bedd3f8bd734ad0506cbc692b32fc9af02bc995b23bbc9f82c736d"
+    },
+    {
+      "path": "src/core/agent-runtime/execution-driver.ts",
+      "before": "d201d4555408c92c82b070d2cd12d4ece9d8b19d22363c420212b315da54f4b4",
+      "after": "96f0647a1c62e336b0955acb0d2ebce9ab220cf5b7bf4f877850af4612e56dc9"
+    },
+    {
+      "path": "src/core/agent-runtime/execution-control.ts",
+      "before": "623d3e9ad78f457dca60bb0812260499bbbd3d6654334b398902d215563357cf",
+      "after": "4b89588dcda646f6de114a3ef2edc7fd24e8c98e34f237eb902aeb08a0205977"
+    },
+    {
+      "path": "src/composition/create-platform.ts",
+      "before": "52789b434260b4fd5556435e68313236555c0f345a61830b8ac20fedb32abe62",
+      "after": "61afba2acc624950cf4d8c86a3893263822f9933af7e159c4f1b83a567fc139f"
+    },
+    {
+      "path": "src/ui/main.ts",
+      "before": "058a36a15d8796066f5d57787fab09d3bb735d2736da7bba949604e2c7542031",
+      "after": "2092c66627dd36e6859c11167519e93cbdd5b0ba033812abc7d49ef0517617ea"
+    },
+    {
+      "path": "resources/skills/platform-work/content.md",
+      "before": "84d45d7255beb0c64d5fb831e7d58aa737beec479eea4c29f4e8d87e5e3a8887",
+      "after": "53352aec4f35a89bb124220d6e3eb14d41d32a538c0680d850c8a9e335b06f9f"
+    },
+    {
+      "path": "runtime-assets.json",
+      "before": "673756b3a478a885bb6578e73b330ea122baa9bcda459e37ae76a5104b0274a0",
+      "after": "7c68021793e2cd7f3361e76cc0e453f224213eec8336b67977d3de57e5f22248"
+    }
+  ],
+  "audit": {
+    "changed": [
+      "resources/skills/platform-work/content.md",
+      "runtime-assets.json",
+      "src/app/collaboration-driver.ts",
+      "src/app/core-http-types.ts",
+      "src/app/core-routes.ts",
+      "src/app/host.ts",
+      "src/composition/create-platform.ts",
+      "src/core/agent-runtime/communication-tools.ts",
+      "src/core/agent-runtime/execution-control.ts",
+      "src/core/agent-runtime/execution-driver.ts",
+      "src/core/work-graph/communication/contracts.ts",
+      "src/core/work-graph/communication/mailbox-service.ts",
+      "src/core/work-graph/communication/message-record-codecs.ts",
+      "src/ui/main.ts",
+      "tests/app/AG2b-collaboration.test.ts",
+      "tests/helpers/AG2b-collaboration-fixture.ts"
+    ],
+    "outsideScope": [
+      "tests/app/AG2b-collaboration.test.ts",
+      "tests/helpers/AG2b-collaboration-fixture.ts"
+    ],
+    "originalWorkspaceChanged": []
+  },
+  "acknowledgedOutsideScope": "Two exact primary-controlled fixture amendments documented in stage1-fixture-amendment*.json. DSH scope unchanged.",
+  "testsMatchedParent": true
+}

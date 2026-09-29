@@ -8,7 +8,7 @@ import type { ToolCall, ToolEffectClass, ToolExecutorPort } from "../../ports/to
 import type { EventSinkPort } from "../../ports/event_sink/event-sink-port.js";
 import type { CancellationReason } from "../cancellation/cancellation-controller.js";
 import type { RunLimits } from "../limits/limit-guard.js";
-import type { Run, RunState, TranscriptEntry } from "../state/run-state.js";
+import type { Run, RunState, TranscriptEntry, YieldReason } from "../state/run-state.js";
 export interface RuntimeClock {
     now(): Date;
 }
@@ -17,6 +17,25 @@ export interface RuntimeIdGenerator {
 }
 export interface RunnerContextInput {
     readonly run: Run;
+    /** The Kernel Session id this Turn belongs to (for the input-supply point). */
+    readonly sessionId?: string;
+    /**
+     * Reads applicable, not-yet-consumed inputs at a REAL safe point. It only
+     * reports candidates; acceptance is the Kernel run.input_accepted commit.
+     */
+    readonly inputSupply?: (point: {
+        readonly sessionId: string | null;
+        readonly runId: string;
+        readonly turnId: string;
+        readonly afterEventSequence: number;
+        readonly acceptedInputIds: readonly string[];
+    }, options: Readonly<{
+        signal: AbortSignal;
+    }>) => Promise<readonly {
+        readonly inputId: string;
+        readonly text: string;
+        readonly sourceRef: unknown;
+    }[]>;
     readonly baseSystemPrompt: string;
     readonly additionalInstructions?: readonly ContextFragment[];
     readonly tools?: readonly ModelToolSpec[];
@@ -52,6 +71,11 @@ export type ToolGroupBarrierDecision = {
     readonly kind: "continue";
 } | {
     readonly kind: "pause";
+} | {
+    /** 工具组已在真实边界排空，Agent 选择保存外部等待并退出活动执行；
+     * reason 只描述业务等待类别，具体等待/唤醒关联由平台侧观察该事实后建立。 */
+    readonly kind: "yield";
+    readonly reason: YieldReason;
 };
 export type ToolGroupBarrier = (invocation: Readonly<ToolGroupBarrierInvocation>, options: Readonly<{
     signal: AbortSignal;

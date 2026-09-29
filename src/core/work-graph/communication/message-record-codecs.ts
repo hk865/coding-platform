@@ -21,13 +21,14 @@ import type { ArtifactRef } from '../../../contracts/artifact.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { RoleBindingRefV1, RunRef, SourceRefV1 } from '../../../contracts/dispatch.js';
+import type { QueryJobAnswerRef, QueryRunRef } from '../../../contracts/query-job.js';
 import type { RecordLookupIndex } from '../../record-store/lookup-ports.js';
 import type {
   DecodeResult, EncodedDomainEvent, EncodedRecord, RecordBackendSchemas,
 } from '../../record-store/ports.js';
 import { isJsonObject, isNonEmptyString, parseJsonObject } from '../../record-store/record-codec.js';
 import { checkArtifactRef, checkPlainSessionRef } from '../sessions/session-record-codecs.js';
-import type { MessageSender, SessionMessage } from './contracts.js';
+import type { MessageQueryAnswerSender, MessageSender, SessionMessage } from './contracts.js';
 
 /** Encoding selector for the persisted message record. */
 export const SESSION_MESSAGE_SCHEMA_ID = 'SessionMessage@1';
@@ -36,11 +37,18 @@ export const SESSION_MESSAGE_SCHEMA_ID = 'SessionMessage@1';
 export const SESSION_MESSAGE_SENT_EVENT_TYPE = 'SessionMessageSent';
 export const SESSION_MESSAGE_READ_EVENT_TYPE = 'SessionMessageRead';
 export const SESSION_MESSAGE_RESPONDED_EVENT_TYPE = 'SessionMessageResponded';
+export const SESSION_MESSAGE_DERIVATION_EVENT_TYPE = 'SessionMessageConsultationDerived';
+export const SESSION_MESSAGE_INPUT_ACCEPTED_EVENT_TYPE = 'SessionMessageInputAccepted';
 export const SESSION_MESSAGE_EVENT_SCHEMA_VERSION = 1;
 
 /** Registered lookup index names (`core/record-store/lookup-ports.ts`). */
 export const SESSION_MESSAGE_BY_RECIPIENT_LOOKUP = 'session-message-by-recipient';
 export const SESSION_MESSAGE_BY_RECIPIENT_STATUS_LOOKUP = 'session-message-by-recipient-status';
+/** The sender Work Run outbox index: complete scope + the nested RunRef. A host
+ * sender has no `sender.runRef`, so its missing scalar paths are null and never
+ * become a candidate of a concrete Run query. */
+export const SESSION_MESSAGE_BY_SENDER_RUN_LOOKUP = 'session-message-by-sender-run';
+export const SESSION_MESSAGE_BY_SENDER_SESSION_LOOKUP = 'session-message-by-sender-session';
 
 /**
  * Fixed body contentType for the canonical JSON envelope:
@@ -55,6 +63,8 @@ export const SESSION_MESSAGE_MAX_TEXT_BYTES = 16 * 1024;
 
 /** One recipient and one recipient+status candidate index (frozen paths). */
 export const SESSION_MESSAGE_LOOKUP_INDEXES: readonly RecordLookupIndex[] = [
+  { name: SESSION_MESSAGE_BY_SENDER_SESSION_LOOKUP, aggregateType: 'SessionMessage',
+    paths: ['ref.projectId', 'ref.workspaceId', 'sender.sessionRef.sessionId'] },
   {
     name: SESSION_MESSAGE_BY_RECIPIENT_LOOKUP,
     aggregateType: 'SessionMessage',
@@ -64,6 +74,11 @@ export const SESSION_MESSAGE_LOOKUP_INDEXES: readonly RecordLookupIndex[] = [
     name: SESSION_MESSAGE_BY_RECIPIENT_STATUS_LOOKUP,
     aggregateType: 'SessionMessage',
     paths: ['ref.projectId', 'ref.workspaceId', 'recipient.sessionId', 'status'],
+  },
+  {
+    name: SESSION_MESSAGE_BY_SENDER_RUN_LOOKUP,
+    aggregateType: 'SessionMessage',
+    paths: ['ref.projectId', 'ref.workspaceId', 'sender.runRef.goalId', 'sender.runRef.runId'],
   },
 ];
 
@@ -84,11 +99,19 @@ type SentEventBase = {
 
 export type SessionMessageSentEventV1 = SentEventBase & { eventType: 'SessionMessageSent' };
 export type SessionMessageReadEventV1 = SentEventBase & { eventType: 'SessionMessageRead' };
-export type SessionMessageRespondedEventV1 = SentEventBase & { eventType: 'SessionMessageResponded' };
+export type SessionMessageConsultationDerivedEventV1 = SentEventBase & { eventType: 'SessionMessageConsultationDerived' };
+export type SessionMessageInputAcceptedEventV1 = SentEventBase & { eventType: 'SessionMessageInputAccepted' };
+export type SessionMessageRespondedEventV1 = Omit<SentEventBase, 'actor'> & {
+  eventType: 'SessionMessageResponded';
+  /** The formal responder identity: a work_run or a derived query_run Answer. */
+  actor: MessageSender | MessageQueryAnswerSender;
+};
 export type SessionMessageEventV1 =
   | SessionMessageSentEventV1
   | SessionMessageReadEventV1
-  | SessionMessageRespondedEventV1;
+  | SessionMessageRespondedEventV1
+  | SessionMessageConsultationDerivedEventV1
+  | SessionMessageInputAcceptedEventV1;
 
 // --------------------------------------------------------------------------
 // Pure shape helpers
@@ -197,15 +220,65 @@ export function checkMessageSender(value: unknown): Problem {
   return 'message sender kind must be host or work_run';
 }
 
+function checkQueryRunRef(value: unknown): Problem {
+  if (!isObject(value) || !hasOnlyKeys(value,
+    ['aggregateType', 'projectId', 'workspaceId', 'queryJobId', 'runId'])) {
+    return 'query_run sender run ref carries unknown fields';
+  }
+  if (value['aggregateType'] !== 'QueryRun' || !nonEmpty(value['projectId'])
+    || !nonEmpty(value['workspaceId']) || !nonEmpty(value['queryJobId']) || !nonEmpty(value['runId'])) {
+    return 'query_run sender run ref is not a valid QueryRunRef';
+  }
+  return null;
+}
+
+function checkQueryAnswerRef(value: unknown): Problem {
+  if (!isObject(value) || !hasOnlyKeys(value,
+    ['aggregateType', 'projectId', 'workspaceId', 'queryJobId', 'answerId'])) {
+    return 'query_run sender answer ref carries unknown fields';
+  }
+  if (value['aggregateType'] !== 'QueryJobAnswer' || !nonEmpty(value['projectId'])
+    || !nonEmpty(value['workspaceId']) || !nonEmpty(value['queryJobId']) || !nonEmpty(value['answerId'])) {
+    return 'query_run sender answer ref is not a valid QueryJobAnswerRef';
+  }
+  return null;
+}
+
+/** The derived formal Query Answer sender. It is never a caller-supplied text
+ * author: every identity field is a persisted Query fact. */
+export function checkQueryAnswerSender(value: unknown): Problem {
+  if (!isObject(value) || !hasOnlyKeys(value,
+    ['kind', 'sessionRef', 'queryRunRef', 'answerRef', 'generation'])) {
+    return 'query_run sender carries unknown fields';
+  }
+  if (value['kind'] !== 'query_run') return 'query_run sender kind must be query_run';
+  const session = checkPlainSessionRef(value['sessionRef']);
+  if (session !== null) return `query_run sender session: ${session}`;
+  const run = checkQueryRunRef(value['queryRunRef']);
+  if (run !== null) return `query_run sender run: ${run}`;
+  const answer = checkQueryAnswerRef(value['answerRef']);
+  if (answer !== null) return `query_run sender answer: ${answer}`;
+  if (!isPositiveInt(value['generation'])) return 'query_run sender generation must be a positive integer';
+  return null;
+}
+
+/** A response slot accepts the original work_run reply or the derived
+ * query_run Answer reply. The message `sender` itself stays host/work_run. */
+export function checkResponseSender(value: unknown): Problem {
+  if (!isObject(value)) return 'message response sender must be an object';
+  if (value['kind'] === 'query_run') return checkQueryAnswerSender(value);
+  const workRun = checkMessageSender(value);
+  if (workRun !== null) return workRun;
+  if (value['kind'] !== 'work_run') return 'message response sender must be a work_run or query_run sender';
+  return null;
+}
+
 function checkMessageResponse(value: unknown): Problem {
   if (!isObject(value) || !hasOnlyKeys(value, ['sender', 'bodyRef', 'sourceRef', 'respondedAt'])) {
     return 'message response carries unknown fields';
   }
-  const sender = checkMessageSender(value['sender']);
+  const sender = checkResponseSender(value['sender']);
   if (sender !== null) return `message response sender: ${sender}`;
-  if (!isObject(value['sender']) || value['sender']['kind'] !== 'work_run') {
-    return 'message response sender must be a work_run sender';
-  }
   const body = checkArtifactRef(value['bodyRef']);
   if (body !== null) return `message response body: ${body}`;
   const source = checkSourceRef(value['sourceRef']);
@@ -216,7 +289,8 @@ function checkMessageResponse(value: unknown): Problem {
 
 const MESSAGE_KEYS: readonly string[] = [
   'ref', 'schemaVersion', 'revision', 'sender', 'recipient', 'bodyRef', 'sourceRef',
-  'createdAt', 'status', 'readAt', 'response',
+  'createdAt', 'status', 'readAt', 'response', 'replyMode',
+  'intent', 'needsReply', 'waitAfterSend', 'consultationDerivation', 'acceptedInputs',
 ];
 
 export function checkSessionMessageBody(body: UnknownRecord): Problem {
@@ -240,6 +314,61 @@ export function checkSessionMessageBody(body: UnknownRecord): Problem {
   }
   const readAt = body['readAt'];
   if (!(readAt === null || nonEmpty(readAt))) return 'SessionMessage readAt must be null or a non-empty string';
+  const replyMode = body['replyMode'];
+  if (replyMode !== undefined && replyMode !== 'wait') return 'SessionMessage replyMode must be omitted or wait';
+  const intent = body['intent'];
+  if (intent !== undefined && intent !== 'notify' && intent !== 'inquiry' && intent !== 'action_request') {
+    return 'SessionMessage intent is not recognized';
+  }
+  if (body['needsReply'] !== undefined && typeof body['needsReply'] !== 'boolean') return 'SessionMessage needsReply must be boolean';
+  if (body['waitAfterSend'] !== undefined && typeof body['waitAfterSend'] !== 'boolean') return 'SessionMessage waitAfterSend must be boolean';
+  if (body['waitAfterSend'] === true && body['needsReply'] === false) {
+    return 'SessionMessage waitAfterSend cannot be set while needsReply is false';
+  }
+  const acceptedInputs = body['acceptedInputs'];
+  if (acceptedInputs !== undefined) {
+    if (!Array.isArray(acceptedInputs)) return 'SessionMessage acceptedInputs must be an array';
+    for (const entry of acceptedInputs) {
+      if (!isObject(entry) || !hasOnlyKeys(entry, ['inputId', 'part', 'executionRef', 'kernel', 'acceptedAt'])) {
+        return 'SessionMessage acceptedInputs entry carries unknown fields';
+      }
+      if (!nonEmpty(entry['inputId']) || (entry['part'] !== 'message' && entry['part'] !== 'response')) {
+        return 'SessionMessage acceptedInputs entry identity is invalid';
+      }
+      const executionRef = entry['executionRef'];
+      if (!isObject(executionRef) || !['Run', 'QueryRun'].includes(String(executionRef['aggregateType']))) {
+        return 'SessionMessage acceptedInputs executionRef must be a RunRef or QueryRunRef';
+      }
+      const kernel = entry['kernel'];
+      if (!isObject(kernel) || !hasOnlyKeys(kernel, ['adapterId', 'kernelSessionId', 'runId', 'turnId', 'position'])
+        || !nonEmpty(kernel['adapterId']) || !nonEmpty(kernel['kernelSessionId']) || !nonEmpty(kernel['runId'])
+        || !nonEmpty(kernel['turnId']) || !isPositiveInt(kernel['position'])) {
+        return 'SessionMessage acceptedInputs kernel identity is incomplete';
+      }
+      if (!nonEmpty(entry['acceptedAt'])) return 'SessionMessage acceptedInputs acceptedAt is required';
+    }
+  }
+  const derivation = body['consultationDerivation'];
+  if (derivation !== undefined) {
+    if (!isObject(derivation)
+      || !hasOnlyKeys(derivation, ['childSessionRef', 'sourceSessionRef', 'sourceKernel', 'throughPosition'])) {
+      return 'SessionMessage consultationDerivation carries unknown fields';
+    }
+    const child = derivation['childSessionRef'];
+    const source = derivation['sourceSessionRef'];
+    if (checkPlainSessionRef(child) !== null || checkPlainSessionRef(source) !== null) {
+      return 'SessionMessage consultationDerivation Session refs are incomplete';
+    }
+    const kernel = derivation['sourceKernel'];
+    if (!isObject(kernel) || !hasOnlyKeys(kernel, ['adapterId', 'kernelSessionId'])
+      || !nonEmpty(kernel['adapterId']) || !nonEmpty(kernel['kernelSessionId'])) {
+      return 'SessionMessage consultationDerivation sourceKernel is incomplete';
+    }
+    const through = derivation['throughPosition'];
+    if (!(through === null || (typeof through === 'number' && Number.isSafeInteger(through) && through >= 1))) {
+      return 'SessionMessage consultationDerivation throughPosition is invalid';
+    }
+  }
   const response = body['response'];
   if (response !== null) {
     const responseProblem = checkMessageResponse(response);
@@ -276,7 +405,9 @@ function checkEventBody(body: UnknownRecord, eventType: string): Problem {
   if (!nonEmpty(body['projectId']) || !nonEmpty(body['workspaceId']) || !nonEmpty(body['requestId'])) {
     return `${eventType} requires projectId, workspaceId and requestId`;
   }
-  const actor = checkMessageSender(body['actor']);
+  const actor = eventType === SESSION_MESSAGE_RESPONDED_EVENT_TYPE
+    ? checkResponseSender(body['actor'])
+    : checkMessageSender(body['actor']);
   if (actor !== null) return `${eventType} actor: ${actor}`;
   const message = body['message'];
   if (!isObject(message)) return `${eventType} requires the complete message`;
@@ -290,9 +421,21 @@ function checkEventBody(body: UnknownRecord, eventType: string): Problem {
     && canonicalOf(body['actor']) !== canonicalOf(message['sender'])) {
     return 'SessionMessageSent actor must be the message sender';
   }
-  if ((eventType === SESSION_MESSAGE_READ_EVENT_TYPE || eventType === SESSION_MESSAGE_RESPONDED_EVENT_TYPE)
+  if (eventType === SESSION_MESSAGE_READ_EVENT_TYPE
     && (!isObject(body['actor']) || body['actor']['kind'] !== 'work_run')) {
     return `${eventType} actor must be the formal work_run command identity`;
+  }
+  if (eventType === SESSION_MESSAGE_DERIVATION_EVENT_TYPE
+    && (!isObject(body['actor']) || body['actor']['kind'] !== 'host')) {
+    return `${eventType} actor must be the trusted Host identity`;
+  }
+  if (eventType === SESSION_MESSAGE_INPUT_ACCEPTED_EVENT_TYPE
+    && (!isObject(body['actor']) || (body['actor']['kind'] !== 'work_run' && body['actor']['kind'] !== 'host'))) {
+    return `${eventType} actor must be the observing Host or executing work_run identity`;
+  }
+  if (eventType === SESSION_MESSAGE_RESPONDED_EVENT_TYPE
+    && (!isObject(body['actor']) || (body['actor']['kind'] !== 'work_run' && body['actor']['kind'] !== 'query_run'))) {
+    return `${eventType} actor must be the formal work_run or query_run command identity`;
   }
   return null;
 }
@@ -357,6 +500,10 @@ export const SESSION_MESSAGE_RECORD_SCHEMAS: RecordBackendSchemas = {
       validate: (event) => validateEvent(event, SESSION_MESSAGE_READ_EVENT_TYPE) },
     { eventType: SESSION_MESSAGE_RESPONDED_EVENT_TYPE, schemaVersion: SESSION_MESSAGE_EVENT_SCHEMA_VERSION,
       validate: (event) => validateEvent(event, SESSION_MESSAGE_RESPONDED_EVENT_TYPE) },
+    { eventType: SESSION_MESSAGE_DERIVATION_EVENT_TYPE, schemaVersion: SESSION_MESSAGE_EVENT_SCHEMA_VERSION,
+      validate: (event) => validateEvent(event, SESSION_MESSAGE_DERIVATION_EVENT_TYPE) },
+    { eventType: SESSION_MESSAGE_INPUT_ACCEPTED_EVENT_TYPE, schemaVersion: SESSION_MESSAGE_EVENT_SCHEMA_VERSION,
+      validate: (event) => validateEvent(event, SESSION_MESSAGE_INPUT_ACCEPTED_EVENT_TYPE) },
   ],
   lookups: SESSION_MESSAGE_LOOKUP_INDEXES,
 };
@@ -398,6 +545,12 @@ export function encodeSessionMessageReadEvent(event: SessionMessageReadEventV1):
 export function encodeSessionMessageRespondedEvent(event: SessionMessageRespondedEventV1): EncodedDomainEvent {
   return encodeMessageEvent(event);
 }
+export function encodeSessionMessageConsultationDerivedEvent(event: SessionMessageConsultationDerivedEventV1): EncodedDomainEvent {
+  return encodeMessageEvent(event);
+}
+export function encodeSessionMessageInputAcceptedEvent(event: SessionMessageInputAcceptedEventV1): EncodedDomainEvent {
+  return encodeMessageEvent(event);
+}
 
 // --------------------------------------------------------------------------
 // Typed decoders (read/replay path)
@@ -418,7 +571,8 @@ export function decodeSessionMessageRecord(record: EncodedRecord): DecodeResult<
 export function sessionMessageFromEvent(event: EncodedDomainEvent): DecodeResult<SessionMessage> {
   const eventType = event.eventType;
   if (eventType !== SESSION_MESSAGE_SENT_EVENT_TYPE && eventType !== SESSION_MESSAGE_READ_EVENT_TYPE
-    && eventType !== SESSION_MESSAGE_RESPONDED_EVENT_TYPE) {
+    && eventType !== SESSION_MESSAGE_RESPONDED_EVENT_TYPE && eventType !== SESSION_MESSAGE_DERIVATION_EVENT_TYPE
+    && eventType !== SESSION_MESSAGE_INPUT_ACCEPTED_EVENT_TYPE) {
     return invalid(`eventType ${String(eventType)} is not a SessionMessage event`);
   }
   const checked = validateEvent(event, eventType);

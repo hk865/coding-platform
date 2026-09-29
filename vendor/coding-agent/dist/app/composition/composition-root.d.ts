@@ -46,6 +46,8 @@ export interface RunAppInput {
      * 只做类型与透传，实际决策归约在受管 Kernel 实现阶段接通。
      */
     readonly toolGroupBarrier?: ToolGroupBarrier;
+    /** Host input supply read at a real drained before_model boundary. */
+    readonly inputSupply?: import("./composition-contracts.js").AppInputSupply;
     readonly config: AppConfig;
     readonly workspaceRoot: string;
     readonly input: string;

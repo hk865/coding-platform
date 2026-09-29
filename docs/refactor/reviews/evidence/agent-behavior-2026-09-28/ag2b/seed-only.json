@@ -1,0 +1,240 @@
+{
+  "at": "2026-09-28T05:42:15.502Z",
+  "root": "/tmp/ag2b-live-ZhoERa/retry-project",
+  "seedOnly": true,
+  "seed": {
+    "goalRef": {
+      "aggregateType": "Goal",
+      "projectId": "ag2b-collab-project",
+      "goalId": "ag2b-goal"
+    },
+    "a": {
+      "projectId": "ag2b-collab-project",
+      "sessionId": "session-f2ec57e50ba66e1ade824e2432de0fac8945dac589e1aa82ecf79d89ad0a6c03"
+    },
+    "b": {
+      "projectId": "ag2b-collab-project",
+      "sessionId": "session-55c32473db89e6eecdad51a05838e88ce20f4aadfc4146672dfb9cefe9e9711e"
+    },
+    "bLink": {
+      "kind": "module",
+      "moduleId": "ag2b-work"
+    },
+    "graph": {
+      "status": "ready",
+      "value": {
+        "plan": {
+          "ref": {
+            "aggregateType": "PlanRevision",
+            "projectId": "ag2b-collab-project",
+            "planId": "ag2b-plan"
+          },
+          "revision": 1,
+          "goalRef": {
+            "aggregateType": "Goal",
+            "projectId": "ag2b-collab-project",
+            "goalId": "ag2b-goal"
+          },
+          "planId": "ag2b-plan",
+          "planRevision": 1,
+          "acceptedAt": "2026-09-28T05:42:15.411Z",
+          "effectiveCompletionPolicy": {
+            "ref": {
+              "aggregateType": "CompletionPolicyRevision",
+              "projectId": "ag2b-collab-project",
+              "policyId": "ag2b-policy",
+              "revision": 1
+            },
+            "digest": "3e71151b89a83c5e20bf58ea41b13104eee49963ec153a80dff3bd14cfc98297"
+          },
+          "effectiveArchitectureBaseline": {
+            "ref": {
+              "aggregateType": "ArchitectureBaselineRevision",
+              "projectId": "ag2b-collab-project",
+              "baselineId": "ag2b-baseline",
+              "revision": 1
+            },
+            "digest": "7799d4e834a4077dce5d1f44a74b3c5cfaa2275ad6e4b39490d54afef46469fa"
+          },
+          "stages": [
+            {
+              "stageId": "retry-stage",
+              "title": "Retry module"
+            }
+          ],
+          "tasks": [
+            {
+              "taskId": "ag2b-work",
+              "title": "Consult B then write the isolated project",
+              "requirementLevel": "required",
+              "taskKind": "work",
+              "disposition": "active",
+              "phase": "pending",
+              "scope": {
+                "kind": "module",
+                "stageId": "retry-stage",
+                "moduleRef": "ag2b-work"
+              },
+              "executionIntent": "request_execution"
+            },
+            {
+              "taskId": "ag2b-gate",
+              "title": "Goal gate",
+              "requirementLevel": "required",
+              "taskKind": "gate",
+              "disposition": "active",
+              "phase": "pending",
+              "scope": {
+                "kind": "goal"
+              }
+            }
+          ],
+          "assignments": [
+            {
+              "taskId": "ag2b-work",
+              "role": "builder",
+              "instruction": "Complete the retry-library task in the isolated workspace. First use query_task_graph and find_related_sessions to discover the related adviser Session from the real module/task association, then read its card. Ask that Session TWO separate substantive questions using send_session_message with replyMode=wait: first about delay and attempt semantics; after receiving its actual reply, ask about caller/error propagation and exhausted retries. Do not invent the recipient ID. Read the actual response before continuing each time. Then inspect src/retry.mjs, src/client.mjs and checks/retry.test.mjs, edit the implementation to satisfy the contract, and finish. Use the existing tools only. Your adviser is read-only, but you are the builder and must edit src/retry.mjs after both replies. Do not alter checks or contract.md. Do not claim a check passed merely from reasoning; formal checks run after the Work."
+            }
+          ],
+          "obligations": [
+            {
+              "obligationId": "ag2b-obligation",
+              "title": "Deliver the AG2b work",
+              "requirementLevel": "required",
+              "taskIds": [
+                "ag2b-work",
+                "ag2b-gate"
+              ],
+              "verificationRequirements": [
+                {
+                  "requirementId": "ag2b-static",
+                  "requirementLevel": "required",
+                  "kind": "static",
+                  "description": "Registered static command check"
+                }
+              ]
+            }
+          ],
+          "taskHierarchy": {
+            "parentOf": []
+          },
+          "executionDag": {
+            "dependsOn": []
+          },
+          "schemaVersion": 2,
+          "taskRelations": [],
+          "inputRequirements": []
+        },
+        "tasks": [
+          {
+            "ref": {
+              "projectId": "ag2b-collab-project",
+              "goalId": "ag2b-goal",
+              "taskId": "ag2b-work"
+            },
+            "definition": {
+              "taskId": "ag2b-work",
+              "title": "Consult B then write the isolated project",
+              "requirementLevel": "required",
+              "taskKind": "work",
+              "disposition": "active",
+              "phase": "pending",
+              "scope": {
+                "kind": "module",
+                "stageId": "retry-stage",
+                "moduleRef": "ag2b-work"
+              },
+              "executionIntent": "request_execution"
+            },
+            "effectivePhase": "pending",
+            "disposition": "active",
+            "currentAttempt": null,
+            "execution": null,
+            "eligibilityScope": "task_state",
+            "eligibility": {
+              "eligible": true,
+              "reasons": []
+            },
+            "relations": [],
+            "inputRequirements": [],
+            "legacyDependencies": [],
+            "planningDiagnostics": []
+          },
+          {
+            "ref": {
+              "projectId": "ag2b-collab-project",
+              "goalId": "ag2b-goal",
+              "taskId": "ag2b-gate"
+            },
+            "definition": {
+              "taskId": "ag2b-gate",
+              "title": "Goal gate",
+              "requirementLevel": "required",
+              "taskKind": "gate",
+              "disposition": "active",
+              "phase": "pending",
+              "scope": {
+                "kind": "goal"
+              }
+            },
+            "effectivePhase": "pending",
+            "disposition": "active",
+            "currentAttempt": null,
+            "execution": null,
+            "eligibilityScope": "task_state",
+            "eligibility": {
+              "eligible": false,
+              "reasons": [
+                {
+                  "code": "task_kind_not_work",
+                  "taskId": "ag2b-gate",
+                  "taskKind": "gate",
+                  "message": "only work tasks are dispatched; gate tasks are reduced by evidence"
+                }
+              ]
+            },
+            "relations": [],
+            "inputRequirements": [],
+            "legacyDependencies": [],
+            "planningDiagnostics": []
+          }
+        ],
+        "sourceCursor": "c0000000012",
+        "planning": {
+          "completionEvaluation": "not_evaluated",
+          "diagnostics": [
+            {
+              "code": "required_task_unfinished",
+              "taskId": "ag2b-gate",
+              "message": "required task ag2b-gate is not formally satisfied"
+            },
+            {
+              "code": "required_task_unfinished",
+              "taskId": "ag2b-work",
+              "message": "required task ag2b-work is not formally satisfied"
+            }
+          ]
+        },
+        "completion": {
+          "status": "not_recorded"
+        }
+      }
+    }
+  },
+  "before": {
+    "status": 1,
+    "stdout": "✖ success on third attempt keeps policy and delays (0.620662ms)\n✖ exhaustion preserves the exact error and does not sleep after final attempt (1.180204ms)\nℹ tests 2\nℹ suites 0\nℹ pass 0\nℹ fail 2\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 40.139745\n\n✖ failing tests:\n\ntest at checks/retry.test.mjs:4:1\n✖ success on third attempt keeps policy and delays (0.620662ms)\n  Error: transient\n      at callClient.maxAttempts (file:///tmp/ag2b-live-ZhoERa/retry-project/checks/retry.test.mjs:4:164)\n      at retry (file:///tmp/ag2b-live-ZhoERa/retry-project/src/retry.mjs:1:58)\n      at callClient (file:///tmp/ag2b-live-ZhoERa/retry-project/src/client.mjs:2:51)\n      at TestContext.<anonymous> (file:///tmp/ag2b-live-ZhoERa/retry-project/checks/retry.test.mjs:4:113)\n      at Test.runInAsyncScope (node:async_hooks:227:14)\n      at Test.run (node:internal/test_runner/test:1402:25)\n      at Test.start (node:internal/test_runner/test:1262:17)\n      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17)\n\ntest at checks/retry.test.mjs:5:1\n✖ exhaustion preserves the exact error and does not sleep after final attempt (1.180204ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:\n  + actual - expected\n  \n    [\n  +   0\n  -   1,\n  -   2\n    ]\n  \n      at TestContext.<anonymous> (file:///tmp/ag2b-live-ZhoERa/retry-project/checks/retry.test.mjs:5:315)\n      at async Test.run (node:internal/test_runner/test:1409:7)\n      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: [ 0 ],\n    expected: [ 1, 2 ],\n    operator: 'deepStrictEqual',\n    diff: 'simple'\n  }\n",
+    "stderr": ""
+  },
+  "after": {
+    "status": 1,
+    "stdout": "✖ success on third attempt keeps policy and delays (0.572381ms)\n✖ exhaustion preserves the exact error and does not sleep after final attempt (1.079764ms)\nℹ tests 2\nℹ suites 0\nℹ pass 0\nℹ fail 2\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 41.590251\n\n✖ failing tests:\n\ntest at checks/retry.test.mjs:4:1\n✖ success on third attempt keeps policy and delays (0.572381ms)\n  Error: transient\n      at callClient.maxAttempts (file:///tmp/ag2b-live-ZhoERa/retry-project/checks/retry.test.mjs:4:164)\n      at retry (file:///tmp/ag2b-live-ZhoERa/retry-project/src/retry.mjs:1:58)\n      at callClient (file:///tmp/ag2b-live-ZhoERa/retry-project/src/client.mjs:2:51)\n      at TestContext.<anonymous> (file:///tmp/ag2b-live-ZhoERa/retry-project/checks/retry.test.mjs:4:113)\n      at Test.runInAsyncScope (node:async_hooks:227:14)\n      at Test.run (node:internal/test_runner/test:1402:25)\n      at Test.start (node:internal/test_runner/test:1262:17)\n      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17)\n\ntest at checks/retry.test.mjs:5:1\n✖ exhaustion preserves the exact error and does not sleep after final attempt (1.079764ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:\n  + actual - expected\n  \n    [\n  +   0\n  -   1,\n  -   2\n    ]\n  \n      at TestContext.<anonymous> (file:///tmp/ag2b-live-ZhoERa/retry-project/checks/retry.test.mjs:5:315)\n      at async Test.run (node:internal/test_runner/test:1409:7)\n      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: [ 0 ],\n    expected: [ 1, 2 ],\n    operator: 'deepStrictEqual',\n    diff: 'simple'\n  }\n",
+    "stderr": ""
+  },
+  "streams": 0,
+  "toolnames": [],
+  "providerErrors": [],
+  "toolErrors": [],
+  "failure": null,
+  "requests": []
+}

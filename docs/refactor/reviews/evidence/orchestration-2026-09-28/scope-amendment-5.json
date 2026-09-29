@@ -1,0 +1,22 @@
+{
+  "at": "2026-09-28T11:10:34.772371+00:00",
+  "scopeCount": 200,
+  "newPaths": [
+    "tests/runtime/source-tool-lifecycle.test.ts"
+  ],
+  "reason": "Live provider passed a file as search directory prefix. Clarify the existing directory-only contract and return invalid_arguments only for directory enumeration ENOTDIR. No Kernel or orchestration branch added. Main review approved before edit.",
+  "files": [
+    {
+      "path": "src/core/agent-runtime/exploration-tools.ts",
+      "before": "0f44e2623cd2a62772e5f916e64eda2e86c302f7fb0965dc4a2f5c5b0adcbb3c",
+      "after": "3cbd3f177c87b2591a4a95bdd50fe6f01ec86d87730dc30f89b2f8389b24fa02"
+    },
+    {
+      "path": "tests/runtime/source-tool-lifecycle.test.ts",
+      "before": "264ff7ff67f6eabdbe8d5a7fe5d3794e7510770ec5c3e51711ef073c77a6b874",
+      "after": "26cbd76548a98bbbce2893198b0a8a4471bc0e32e079ecb5f093366dfef5018a"
+    }
+  ],
+  "verification": "source-tool-lifecycle.test.ts -t classifies a file: 1 passed, 14 skipped; Node 24, 615 ms",
+  "candidateLaneUnchanged": true
+}

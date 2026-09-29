@@ -29,10 +29,31 @@ export interface KernelStoreRegistry {
   withStore<T>(adapterId: string, use: (store: SqliteStores) => Promise<T>): Promise<T>;
   withLegacyReader<T>(adapterId: string, expectedSessionId: string,
     use: (reader: Pick<SqliteStores, 'get' | 'read'>) => Promise<T>): Promise<T>;
+  /**
+   * Register ONE additional CURRENT workspace location after startup (a newly
+   * opened directory). It performs the SAME canonical database-path and
+   * identity uniqueness checks as the constructor and throws on a duplicate
+   * adapterId, workspace or database path. Existing readers see the new location
+   * immediately; no Host restart and no second registry is created.
+   *
+   * Optional on the interface only so an existing narrow test double keeps
+   * compiling; the real composition always publishes it.
+   */
+  registerCurrent?(entry: KernelStoreEntry): Promise<KernelStoreLocation>;
 }
 
-/** Canonicalize existing Host-managed parent directories so aliases/symlinks to
- * one SQLite file cannot be registered under different adapter identities. */
+/** Canonicalize an EXISTING Host-managed parent directory so aliases/symlinks to
+ * one SQLite file cannot be registered under different adapter identities. The
+ * final file itself may not exist yet. */
+async function canonicalDatabasePath(databasePath: string): Promise<string> {
+  const parentPath = await realpath(path.dirname(databasePath));
+  const normalizedPath = path.join(parentPath, path.basename(databasePath));
+  return await realpath(normalizedPath).catch((error: unknown) => {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return normalizedPath;
+    throw error;
+  });
+}
+
 export async function createKernelStoreRegistry(input: {
   entries: readonly KernelStoreEntry[];
   legacyEntries?: readonly LegacyKernelStoreEntry[];
@@ -41,35 +62,42 @@ export async function createKernelStoreRegistry(input: {
   const legacy = new Map<string, LegacyKernelStoreLocation>();
   const workspaceOwners = new Map<string, string>();
   const pathOwners = new Map<string, string>();
+
+  const registerLegacy = (entry: LegacyKernelStoreEntry, databasePath: string): void => {
+    if (current.has(entry.adapterId) || legacy.has(entry.adapterId)) {
+      throw new Error(`duplicate Kernel adapterId ${entry.adapterId}`);
+    }
+    if (!entry.expectedSessionId) throw new Error('legacy Kernel locator requires expectedSessionId');
+    legacy.set(entry.adapterId, Object.freeze({ ...entry, databasePath }));
+  };
+
+  const registerCurrentEntry = (entry: KernelStoreEntry, databasePath: string): KernelStoreLocation => {
+    if (current.has(entry.adapterId) || legacy.has(entry.adapterId)) {
+      throw new Error(`duplicate Kernel adapterId ${entry.adapterId}`);
+    }
+    const prior = pathOwners.get(databasePath);
+    if (prior !== undefined) throw new Error(`Kernel database path already registered as ${prior}`);
+    if (!entry.workspace.projectId || !entry.workspace.workspaceId) throw new Error('Kernel workspace identity is incomplete');
+    const key = JSON.stringify([entry.workspace.projectId, entry.workspace.workspaceId]);
+    if (workspaceOwners.has(key)) throw new Error(`Kernel workspace already registered as ${workspaceOwners.get(key)}`);
+    pathOwners.set(databasePath, entry.adapterId);
+    workspaceOwners.set(key, entry.adapterId);
+    const location = Object.freeze({ ...entry, workspace: Object.freeze({ ...entry.workspace }), databasePath });
+    current.set(entry.adapterId, location);
+    return location;
+  };
+
   const all = [...input.entries.map(entry => ({ kind: 'current' as const, entry })),
     ...(input.legacyEntries ?? []).map(entry => ({ kind: 'legacy' as const, entry }))];
   for (const { kind, entry } of all) {
     if (!entry.adapterId || !entry.storeKey || !path.isAbsolute(entry.databasePath)) {
       throw new Error('Kernel Store registry requires non-empty IDs and an absolute Host database path');
     }
-    if (current.has(entry.adapterId) || legacy.has(entry.adapterId)) {
-      throw new Error(`duplicate Kernel adapterId ${entry.adapterId}`);
-    }
-    const parentPath = await realpath(path.dirname(entry.databasePath));
-    const normalizedPath = path.join(parentPath, path.basename(entry.databasePath));
-    const databasePath = await realpath(normalizedPath).catch((error: unknown) => {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return normalizedPath;
-      throw error;
-    });
-    const prior = pathOwners.get(databasePath);
-    if (prior !== undefined) throw new Error(`Kernel database path already registered as ${prior}`);
-    pathOwners.set(databasePath, entry.adapterId);
-    if (kind === 'current') {
-      if (!entry.workspace.projectId || !entry.workspace.workspaceId) throw new Error('Kernel workspace identity is incomplete');
-      const key = JSON.stringify([entry.workspace.projectId, entry.workspace.workspaceId]);
-      if (workspaceOwners.has(key)) throw new Error(`Kernel workspace already registered as ${workspaceOwners.get(key)}`);
-      workspaceOwners.set(key, entry.adapterId);
-      current.set(entry.adapterId, Object.freeze({ ...entry, workspace: Object.freeze({ ...entry.workspace }), databasePath }));
-    } else {
-      if (!entry.expectedSessionId) throw new Error('legacy Kernel locator requires expectedSessionId');
-      legacy.set(entry.adapterId, Object.freeze({ ...entry, databasePath }));
-    }
+    const databasePath = await canonicalDatabasePath(entry.databasePath);
+    if (kind === 'current') registerCurrentEntry(entry, databasePath);
+    else registerLegacy(entry, databasePath);
   }
+
   return Object.freeze({
     forWorkspace(workspace: WorkspaceScope) {
       const owner = workspaceOwners.get(JSON.stringify([workspace.projectId, workspace.workspaceId]));
@@ -105,6 +133,13 @@ export async function createKernelStoreRegistry(input: {
           },
         }));
       } finally { await store.close(); }
+    },
+    async registerCurrent(entry: KernelStoreEntry): Promise<KernelStoreLocation> {
+      if (!entry.adapterId || !entry.storeKey || !path.isAbsolute(entry.databasePath)) {
+        throw new Error('Kernel Store registry requires non-empty IDs and an absolute Host database path');
+      }
+      const databasePath = await canonicalDatabasePath(entry.databasePath);
+      return registerCurrentEntry(entry, databasePath);
     },
   });
 }

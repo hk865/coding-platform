@@ -1,3 +1,4 @@
+import type { RunControlPort } from '../core/work-graph/tasks/control-contracts.js';
 /**
  * R6.1a per-route parsing and explicit dispatch.
  *
@@ -20,6 +21,7 @@ import type {
   ProjectRegistrationPort,
 } from '../core/work-graph/configuration/project-bootstrap-contracts.js';
 import type { SessionDirectoryPort } from '../core/work-graph/sessions/contracts.js';
+import type { SessionLifecyclePort } from '../core/work-graph/sessions/lifecycle-contracts.js';
 import type { ExecutionReadPort } from '../core/work-graph/tasks/execution-read-contracts.js';
 import type { GoalTaskPort } from '../core/work-graph/tasks/contracts.js';
 import type { PlanTaskPort } from '../core/work-graph/tasks/plan-contracts.js';
@@ -27,6 +29,8 @@ import type { WorkspaceCapturePort, WorkspaceToolsPort } from '../core/workspace
 import type { MaterialPort } from '../core/work-graph/materials/contracts.js';
 import type { QueryJobPort } from '../core/work-graph/queries/contracts.js';
 import type { WorkflowPort } from '../business/workflow/ports.js';
+import type { CollaborationDriverPort } from './collaboration-driver.js';
+import type { WorkbenchToolsPort } from './workbench-tools.js';
 import {
   type CoreRouteKind,
   type CoreRouteSuffix,
@@ -36,10 +40,15 @@ import {
 /** One named binding per route. The types are the exact public port methods;
  * the names disambiguate the two `captureSourceChanges` owners. */
 export type CoreRouteBindings = {
+  submitControl: RunControlPort['submitControl'];
+  readControl: RunControlPort['readControl'];
+  deliverControl: NonNullable<RuntimeExecutionPort['deliverControl']>;
+  startRun: RuntimeExecutionPort['startRun'];
   createProject: ProjectRegistrationPort['createProject'];
   registerWorkspace: ProjectRegistrationPort['registerWorkspace'];
   installCompletionPolicy: CompletionPolicyConfigurationPort['installCompletionPolicy'];
   activateCompletionPolicy: CompletionPolicyConfigurationPort['activateCompletionPolicy'];
+  readCurrentCompletionPolicy: NonNullable<CompletionPolicyConfigurationPort['readCurrentCompletionPolicy']>;
   createGoal: GoalTaskPort['createGoal'];
   queryGoal: PlanTaskPort['queryGoal'];
   adoptInitialArchitecture: ArchitectureCatalogPort['adoptInitialArchitecture'];
@@ -59,10 +68,15 @@ export type CoreRouteBindings = {
   runtimeCapabilities: RuntimeExecutionPort['capabilities'];
   createSession: RuntimeExecutionPort['createSession'];
   readSessionHistory: RuntimeExecutionPort['readSessionHistory'];
+  // A1 session lifecycle: the real public archive/reactivate/link writers.
+  archiveSession: SessionLifecyclePort['archiveSession'];
+  reactivateSession: SessionLifecyclePort['reactivateSession'];
+  linkSessionWork: SessionLifecyclePort['linkSessionWork'];
   sendMessage: SessionMailboxPort['sendMessage'];
   readInbox: SessionMailboxPort['readInbox'];
   readMessage: SessionMailboxPort['readMessage'];
   readMessageBody: SessionMailboxPort['readMessageBody'];
+  readOutbox: NonNullable<SessionMailboxPort['readOutbox']>;
   // R6 execution-entry routes: one named binding per new suffix.
   readWorkspaceRegistration: ProjectRegistrationPort['readWorkspaceRegistration'];
   submitQueryJob: QueryJobPort['submitQueryJob'];
@@ -75,9 +89,28 @@ export type CoreRouteBindings = {
   openArtifact: MaterialPort['openArtifact'];
   handleGoalInput: WorkflowPort['handleGoalInput'];
   advanceWork: WorkflowPort['advanceWork'];
+  consumeConsultation: NonNullable<WorkflowPort['consumeConsultation']>;
+  // AG2b collaboration driver: the Host-layer handle lifetime, one binding per
+  // exact driver method. A Host without a driver keeps the routes published but
+  // explicitly unsupported.
+  driverStart: CollaborationDriverPort['start'];
+  driverRead: CollaborationDriverPort['read'];
+  driverStop: CollaborationDriverPort['stop'];
   // R6 Task-execution -> original Session/history reads: one binding per owner.
   readExecution: ExecutionReadPort['readExecution'];
   readTaskExecutionHistory: RuntimeExecutionPort['readTaskExecutionHistory'];
+  // MVP UI connection: one explicit binding per new suffix. `readProject` and
+  // `listExecutions` are the optional owner methods; the three command bindings
+  // and `saveWorkspaceFile` come from the Host workbench-tools adapter, and
+  // `compareWorkspaceFiles` forwards the EXISTING WorkspaceToolsPort method.
+  readProject: NonNullable<ProjectRegistrationPort['readProject']>;
+  listExecutions: NonNullable<ExecutionReadPort['listExecutions']>;
+  saveWorkspaceFile: WorkbenchToolsPort['saveFile'];
+  listWorkspaceFiles: WorkbenchToolsPort['listFiles'];
+  compareWorkspaceFiles: WorkspaceToolsPort['compareWorkspace'];
+  startCommand: WorkbenchToolsPort['startCommand'];
+  readCommand: WorkbenchToolsPort['readCommand'];
+  stopCommand: WorkbenchToolsPort['stopCommand'];
 };
 
 /**
@@ -87,21 +120,24 @@ export type CoreRouteBindings = {
  * service implementation or taking a dynamic method name.
  */
 export type CoreRoutePlatform = {
+  controls: RunControlPort;
   projects: ProjectRegistrationPort;
   completionPolicies: CompletionPolicyConfigurationPort;
   goals: GoalTaskPort;
   plans: PlanTaskPort;
   architecture: ArchitectureCatalogPort & ObservedArchitecturePort;
   workspace: WorkspaceToolsPort;
-  sessions: Pick<SessionDirectoryPort, 'findSessions' | 'readSession' | 'getSessionOperation'>;
-  executions: Pick<ExecutionReadPort, 'readExecution'>;
+  sessions: Pick<SessionDirectoryPort, 'findSessions' | 'readSession' | 'getSessionOperation'>
+    & Pick<SessionLifecyclePort, 'archiveSession' | 'reactivateSession' | 'linkSessionWork'>;
+  executions: Pick<ExecutionReadPort, 'readExecution'> & Required<Pick<ExecutionReadPort, 'listExecutions'>>;
   runtime: Pick<RuntimeExecutionPort,
-    'capabilities' | 'createSession' | 'readSessionHistory' | 'readTaskExecutionHistory'>
+    'capabilities' | 'createSession' | 'readSessionHistory' | 'readTaskExecutionHistory' | 'startRun' | 'deliverControl'>
     & Required<Pick<RuntimeExecutionPort, 'prepareQuery' | 'startQuery' | 'observeQuery'>>;
-  messages: Pick<SessionMailboxPort, 'sendMessage' | 'readInbox' | 'readMessage' | 'readMessageBody'>;
+  messages: Pick<SessionMailboxPort, 'sendMessage' | 'readInbox' | 'readMessage' | 'readMessageBody'>
+    & Required<Pick<SessionMailboxPort, 'readOutbox'>>;
   queries: QueryJobPort;
   materials: Pick<MaterialPort, 'openArtifact'>;
-  workflow: WorkflowPort;
+  workflow: WorkflowPort & Required<Pick<WorkflowPort, 'consumeConsultation'>>;
 };
 
 export type CoreRouteSpec = {
@@ -114,10 +150,15 @@ export type CoreRouteSpec = {
 
 /** The frozen R6.1a route table. Adding a suffix is a deliberate contract edit. */
 export const CORE_ROUTE_SPECS: Record<CoreRouteSuffix, CoreRouteSpec> = {
+  'controls/submit': { kind: 'graph_write', binding: 'submitControl', owner: 'controls.submitControl' },
+  'controls/read': { kind: 'plain', binding: 'readControl', owner: 'controls.readControl' },
+  'controls/deliver': { kind: 'plain', binding: 'deliverControl', owner: 'runtime.deliverControl' },
+  'executions/start': { kind: 'plain', binding: 'startRun', owner: 'runtime.startRun' },
   'projects/create': { kind: 'graph_write', binding: 'createProject', owner: 'projects.createProject' },
   'workspaces/register': { kind: 'graph_write', binding: 'registerWorkspace', owner: 'projects.registerWorkspace' },
   'completion-policies/install': { kind: 'graph_write', binding: 'installCompletionPolicy', owner: 'completionPolicies.installCompletionPolicy' },
   'completion-policies/activate': { kind: 'graph_write', binding: 'activateCompletionPolicy', owner: 'completionPolicies.activateCompletionPolicy' },
+  'completion-policies/read': { kind: 'plain', binding: 'readCurrentCompletionPolicy', owner: 'completionPolicies.readCurrentCompletionPolicy' },
   'goals/create': { kind: 'graph_write', binding: 'createGoal', owner: 'goals.createGoal' },
   'goals/read': { kind: 'plain', binding: 'queryGoal', owner: 'plans.queryGoal' },
   'architecture/adopt-initial': { kind: 'graph_write', binding: 'adoptInitialArchitecture', owner: 'architecture.adoptInitialArchitecture' },
@@ -137,8 +178,12 @@ export const CORE_ROUTE_SPECS: Record<CoreRouteSuffix, CoreRouteSpec> = {
   'runtime/capabilities': { kind: 'plain', binding: 'runtimeCapabilities', owner: 'runtime.capabilities' },
   'sessions/create': { kind: 'plain', binding: 'createSession', owner: 'runtime.createSession' },
   'sessions/history': { kind: 'plain', binding: 'readSessionHistory', owner: 'runtime.readSessionHistory' },
+  'sessions/archive': { kind: 'graph_write', binding: 'archiveSession', owner: 'sessions.archiveSession' },
+  'sessions/reactivate': { kind: 'graph_write', binding: 'reactivateSession', owner: 'sessions.reactivateSession' },
+  'sessions/link': { kind: 'graph_write', binding: 'linkSessionWork', owner: 'sessions.linkSessionWork' },
   'messages/send': { kind: 'graph_write', binding: 'sendMessage', owner: 'messages.sendMessage' },
   'messages/inbox': { kind: 'plain', binding: 'readInbox', owner: 'messages.readInbox' },
+  'messages/outbox': { kind: 'plain', binding: 'readOutbox', owner: 'messages.readOutbox' },
   'messages/read': { kind: 'plain', binding: 'readMessage', owner: 'messages.readMessage' },
   'messages/body': { kind: 'plain', binding: 'readMessageBody', owner: 'messages.readMessageBody' },
   'workspaces/registration': { kind: 'plain', binding: 'readWorkspaceRegistration', owner: 'projects.readWorkspaceRegistration' },
@@ -152,8 +197,22 @@ export const CORE_ROUTE_SPECS: Record<CoreRouteSuffix, CoreRouteSpec> = {
   'materials/open': { kind: 'plain', binding: 'openArtifact', owner: 'materials.openArtifact' },
   'workflow/goal-input': { kind: 'plain', binding: 'handleGoalInput', owner: 'workflow.handleGoalInput' },
   'workflow/advance': { kind: 'plain', binding: 'advanceWork', owner: 'workflow.advanceWork' },
+  'workflow/consultation': { kind: 'plain', binding: 'consumeConsultation', owner: 'workflow.consumeConsultation' },
+  'workflow/driver-start': { kind: 'plain', binding: 'driverStart', owner: 'collaboration.start' },
+  'workflow/driver-read': { kind: 'plain', binding: 'driverRead', owner: 'collaboration.read' },
+  'workflow/driver-stop': { kind: 'plain', binding: 'driverStop', owner: 'collaboration.stop' },
   'executions/read': { kind: 'plain', binding: 'readExecution', owner: 'executions.readExecution' },
   'executions/history': { kind: 'plain', binding: 'readTaskExecutionHistory', owner: 'runtime.readTaskExecutionHistory' },
+  // MVP UI connection: bounded execution list, narrow project read, Host CAS
+  // save / existing-port compare, and the explicit command handle routes.
+  'executions/list': { kind: 'plain', binding: 'listExecutions', owner: 'executions.listExecutions' },
+  'projects/read': { kind: 'plain', binding: 'readProject', owner: 'projects.readProject' },
+  'files/save': { kind: 'plain', binding: 'saveWorkspaceFile', owner: 'workbench.saveFile' },
+  'files/list': { kind: 'plain', binding: 'listWorkspaceFiles', owner: 'workbench.listFiles' },
+  'files/compare': { kind: 'plain', binding: 'compareWorkspaceFiles', owner: 'workspace.compareWorkspace' },
+  'commands/start': { kind: 'plain', binding: 'startCommand', owner: 'workbench.startCommand' },
+  'commands/read': { kind: 'plain', binding: 'readCommand', owner: 'workbench.readCommand' },
+  'commands/stop': { kind: 'plain', binding: 'stopCommand', owner: 'workbench.stopCommand' },
 };
 
 export type ParsedCoreRequest =
@@ -243,12 +302,36 @@ export function parseCoreRouteRequest(suffix: CoreRouteSuffix, raw: unknown): Pa
  * services; the Host `ctx` (fixed actor/scope/signal) is supplied by the
  * server, never by the request body.
  */
-export function createPlatformCoreRouteBindings(platform: CoreRoutePlatform): CoreRouteBindings {
+export function createPlatformCoreRouteBindings(
+  platform: CoreRoutePlatform,
+  driver?: CollaborationDriverPort,
+  workbenchTools?: WorkbenchToolsPort,
+): CoreRouteBindings {
+  // A Host that assembles no collaboration driver still publishes the exact
+  // routes, but every one answers an explicit `unsupported` instead of a fake
+  // success. The old composition never has to import the Host layer.
+  const unsupportedDriver = <T>(method: string): T => (async () => ({
+    status: 'rejected', code: 'unsupported',
+    reason: `the Host does not publish a collaboration driver (${method})`,
+  })) as unknown as T;
+  // A missing optional dependency (no workbench-tools adapter, or a narrow
+  // owner port without the new method) is an explicit `unsupported` gap, never
+  // a silently empty success.
+  const unsupported = <T>(reason: string): T => (async () => ({
+    status: 'rejected', code: 'unsupported', reason,
+  })) as unknown as T;
   return {
+    submitControl: platform.controls.submitControl.bind(platform.controls),
+    readControl: platform.controls.readControl.bind(platform.controls),
+    deliverControl: (ctx, request) => platform.runtime.deliverControl?.(ctx, request) ?? Promise.resolve({ status: 'rejected', code: 'unsupported', reason: 'Runtime control delivery unavailable' }),
+    startRun: platform.runtime.startRun.bind(platform.runtime),
     createProject: platform.projects.createProject.bind(platform.projects),
     registerWorkspace: platform.projects.registerWorkspace.bind(platform.projects),
     installCompletionPolicy: platform.completionPolicies.installCompletionPolicy.bind(platform.completionPolicies),
     activateCompletionPolicy: platform.completionPolicies.activateCompletionPolicy.bind(platform.completionPolicies),
+    readCurrentCompletionPolicy: platform.completionPolicies.readCurrentCompletionPolicy === undefined
+      ? unsupported('the Host does not publish the current completion policy read')
+      : platform.completionPolicies.readCurrentCompletionPolicy.bind(platform.completionPolicies),
     createGoal: platform.goals.createGoal.bind(platform.goals),
     queryGoal: platform.plans.queryGoal.bind(platform.plans),
     adoptInitialArchitecture: platform.architecture.adoptInitialArchitecture.bind(platform.architecture),
@@ -268,8 +351,12 @@ export function createPlatformCoreRouteBindings(platform: CoreRoutePlatform): Co
     runtimeCapabilities: platform.runtime.capabilities.bind(platform.runtime),
     createSession: platform.runtime.createSession.bind(platform.runtime),
     readSessionHistory: platform.runtime.readSessionHistory.bind(platform.runtime),
+    archiveSession: platform.sessions.archiveSession.bind(platform.sessions),
+    reactivateSession: platform.sessions.reactivateSession.bind(platform.sessions),
+    linkSessionWork: platform.sessions.linkSessionWork.bind(platform.sessions),
     sendMessage: platform.messages.sendMessage.bind(platform.messages),
     readInbox: platform.messages.readInbox.bind(platform.messages),
+    readOutbox: platform.messages.readOutbox.bind(platform.messages),
     readMessage: platform.messages.readMessage.bind(platform.messages),
     readMessageBody: platform.messages.readMessageBody.bind(platform.messages),
     readWorkspaceRegistration: platform.projects.readWorkspaceRegistration.bind(platform.projects),
@@ -283,8 +370,32 @@ export function createPlatformCoreRouteBindings(platform: CoreRoutePlatform): Co
     openArtifact: platform.materials.openArtifact.bind(platform.materials),
     handleGoalInput: platform.workflow.handleGoalInput.bind(platform.workflow),
     advanceWork: platform.workflow.advanceWork.bind(platform.workflow),
+    consumeConsultation: platform.workflow.consumeConsultation.bind(platform.workflow),
+    driverStart: driver === undefined ? unsupportedDriver('start') : driver.start.bind(driver),
+    driverRead: driver === undefined ? unsupportedDriver('read') : driver.read.bind(driver),
+    driverStop: driver === undefined ? unsupportedDriver('stop') : driver.stop.bind(driver),
     readExecution: platform.executions.readExecution.bind(platform.executions),
     readTaskExecutionHistory: platform.runtime.readTaskExecutionHistory.bind(platform.runtime),
+    readProject: platform.projects.readProject === undefined
+      ? unsupported('the Host does not publish the narrow project read')
+      : platform.projects.readProject.bind(platform.projects),
+    listExecutions: platform.executions.listExecutions.bind(platform.executions),
+    saveWorkspaceFile: workbenchTools === undefined
+      ? unsupported('the Host does not publish workbench tools (saveFile)')
+      : workbenchTools.saveFile.bind(workbenchTools),
+    listWorkspaceFiles: workbenchTools === undefined
+      ? unsupported('the Host does not publish workbench tools (listFiles)')
+      : workbenchTools.listFiles.bind(workbenchTools),
+    compareWorkspaceFiles: platform.workspace.compareWorkspace.bind(platform.workspace),
+    startCommand: workbenchTools === undefined
+      ? unsupported('the Host does not publish workbench tools (startCommand)')
+      : workbenchTools.startCommand.bind(workbenchTools),
+    readCommand: workbenchTools === undefined
+      ? unsupported('the Host does not publish workbench tools (readCommand)')
+      : workbenchTools.readCommand.bind(workbenchTools),
+    stopCommand: workbenchTools === undefined
+      ? unsupported('the Host does not publish workbench tools (stopCommand)')
+      : workbenchTools.stopCommand.bind(workbenchTools),
   };
 }
 
@@ -328,10 +439,15 @@ export async function dispatchCoreRoute(
   const plain = parsed as Extract<ParsedCoreRequest, { kind: 'plain' }>;
   const result: unknown = await (async (): Promise<unknown> => {
     switch (suffix) {
+      case 'controls/submit': return bindings.submitControl(ctx, graphWrite.request as never);
+      case 'controls/read': return bindings.readControl(ctx, plain.input as never);
+      case 'controls/deliver': return bindings.deliverControl(ctx, plain.input as never);
+      case 'executions/start': return bindings.startRun(ctx, plain.input as never);
       case 'projects/create': return bindings.createProject(ctx, graphWrite.request as never);
       case 'workspaces/register': return bindings.registerWorkspace(ctx, graphWrite.request as never);
       case 'completion-policies/install': return bindings.installCompletionPolicy(ctx, graphWrite.request as never);
       case 'completion-policies/activate': return bindings.activateCompletionPolicy(ctx, graphWrite.request as never);
+      case 'completion-policies/read': return bindings.readCurrentCompletionPolicy(ctx, plain.input as never);
       case 'goals/create': return bindings.createGoal(ctx, graphWrite.request as never);
       case 'goals/read': return bindings.queryGoal(ctx, plain.input as never);
       case 'architecture/adopt-initial': return bindings.adoptInitialArchitecture(ctx, graphWrite.request as never);
@@ -351,8 +467,12 @@ export async function dispatchCoreRoute(
       case 'runtime/capabilities': return bindings.runtimeCapabilities(ctx, plain.input as never);
       case 'sessions/create': return bindings.createSession(ctx, plain.input as never);
       case 'sessions/history': return bindings.readSessionHistory(ctx, plain.input as never);
+      case 'sessions/archive': return bindings.archiveSession(ctx, graphWrite.request as never);
+      case 'sessions/reactivate': return bindings.reactivateSession(ctx, graphWrite.request as never);
+      case 'sessions/link': return bindings.linkSessionWork(ctx, graphWrite.request as never);
       case 'messages/send': return bindings.sendMessage(ctx, graphWrite.request as never);
       case 'messages/inbox': return bindings.readInbox(ctx, plain.input as never);
+      case 'messages/outbox': return bindings.readOutbox(ctx, plain.input as never);
       case 'messages/read': return bindings.readMessage(ctx, plain.input as never);
       case 'messages/body': return bindings.readMessageBody(ctx, plain.input as never);
       case 'workspaces/registration': return bindings.readWorkspaceRegistration(ctx, plain.input as never);
@@ -366,8 +486,20 @@ export async function dispatchCoreRoute(
       case 'materials/open': return bindings.openArtifact(ctx, plain.input as never);
       case 'workflow/goal-input': return bindings.handleGoalInput(ctx, plain.input as never);
       case 'workflow/advance': return bindings.advanceWork(ctx, plain.input as never);
+      case 'workflow/consultation': return bindings.consumeConsultation(ctx, plain.input as never);
+      case 'workflow/driver-start': return bindings.driverStart(ctx, plain.input as never);
+      case 'workflow/driver-read': return bindings.driverRead(ctx, plain.input as never);
+      case 'workflow/driver-stop': return bindings.driverStop(ctx, plain.input as never);
       case 'executions/read': return bindings.readExecution(ctx, plain.input as never);
       case 'executions/history': return bindings.readTaskExecutionHistory(ctx, plain.input as never);
+      case 'executions/list': return bindings.listExecutions(ctx, plain.input as never);
+      case 'projects/read': return bindings.readProject(ctx, plain.input as never);
+      case 'files/save': return bindings.saveWorkspaceFile(ctx, plain.input as never);
+      case 'files/list': return bindings.listWorkspaceFiles(ctx, plain.input as never);
+      case 'files/compare': return bindings.compareWorkspaceFiles(ctx, plain.input as never);
+      case 'commands/start': return bindings.startCommand(ctx, plain.input as never);
+      case 'commands/read': return bindings.readCommand(ctx, plain.input as never);
+      case 'commands/stop': return bindings.stopCommand(ctx, plain.input as never);
     }
   })();
   // A GraphWrite rejection is a failed command: preserve its exact body but let

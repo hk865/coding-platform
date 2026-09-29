@@ -745,6 +745,9 @@ export type CanonicalTaskFacts = {
   runsByTaskId: ReadonlyMap<string, readonly RunSnapshot[]>;
   /** R3e.3 completion seam: the persisted TaskReduction parsed in THIS read. */
   reductionsByTaskId: ReadonlyMap<string, TaskReductionSnapshot>;
+  /** The persisted TaskLease per task (including a released lease), so a
+   * continuation claim can guard and update the SAME record revision. */
+  leasesByTaskId: ReadonlyMap<string, TaskLeaseSnapshot>;
   readThrough: CommitCursor;
   /** Complete exact versions/absences used by adoption or future claim CAS. */
   guards: readonly RecordGuard[];
@@ -786,6 +789,12 @@ function runIsActive(run: RunSnapshot): boolean {
 }
 function preferRun(candidate: RunSnapshot, current: RunSnapshot): boolean {
   if (runIsActive(candidate) !== runIsActive(current)) return runIsActive(candidate);
+  // A Task can legitimately have several ended Runs (yielded continuation + the
+  // real producing Run). The preferred Run must be the LATEST attempt, not the
+  // first record read; the real end/start instant is the honest ordering fact.
+  const candidateAt = candidate.endedAt ?? candidate.startedAt ?? '';
+  const currentAt = current.endedAt ?? current.startedAt ?? '';
+  if (candidateAt !== currentAt) return candidateAt > currentAt;
   return candidate.revision > current.revision;
 }
 function uniqueKeys(keys: readonly string[]): string[] {
@@ -1099,6 +1108,10 @@ export async function readCanonicalTaskFacts(
       if (selectedChain.status === 'unavailable') return unavailable(selectedChain.reason);
       let run: RunSnapshot | null = null;
       let unresolvable = false;
+      // The TaskLease holder is the LAST claimed Attempt; preferring it keeps the
+      // right Run when several ended Runs exist (yield continuations + producer),
+      // independent of clock granularity.
+      const leaseHolderRunId = leaseByTask.get(task.taskId)?.holderRunId;
       for (const candidate of runByTask.get(task.taskId) ?? []) {
         const entry = index.get(planRevisionRefKey(candidate.planRef));
         if (entry === undefined) { unresolvable = true; continue; }
@@ -1106,7 +1119,9 @@ export async function readCanonicalTaskFacts(
           selectedDefinition, taskId: task.taskId, index, goalRef });
         if (verdict.status === 'unavailable') return unavailable(verdict.reason);
         if (verdict.status === 'excluded') continue;
-        if (run === null || preferRun(candidate, run)) run = candidate;
+        if (run === null
+          || (candidate.ref.runId === leaseHolderRunId && run.ref.runId !== leaseHolderRunId)
+          || preferRun(candidate, run)) run = candidate;
       }
       const reduction = reductionByTask.get(task.taskId) ?? null;
       let reductionApplicable = false;
@@ -1127,11 +1142,14 @@ export async function readCanonicalTaskFacts(
       const lease = projectLease({ lease: leaseByTask.get(task.taskId) ?? null, taskId: task.taskId,
         runById, index, selected: selectedFacts, selectedBasis, selectedDefinition, goalRef });
       if (lease.status === 'unavailable') return unavailable(lease.reason);
-      // Active accepted Run => running. An ENDED accepted Run with no matching
-      // formal reduction is conservatively blocked. A Run that cannot be
-      // resolved to an origin Plan is never silently `pending`/free.
+      // Active accepted Run => running. A Run that really yielded on a wait with
+      // a durable continuation is continuable (`ready`), never `blocked`; only an
+      // ended Run with no such formal continuation stays conservatively blocked.
+      const continuable = run !== null && run.status === 'ended' && run.outcome === 'yielded'
+        && run.continuation !== undefined;
       const effectivePhase: Phase = reductionApplicable ? reduction!.phase
         : run !== null && runIsActive(run) ? 'running'
+        : continuable ? 'ready'
         : run !== null ? 'blocked'
         : unresolvable ? 'blocked' : 'pending';
       byTaskId.set(task.taskId, {
@@ -1149,7 +1167,7 @@ export async function readCanonicalTaskFacts(
     const runsByTaskId = new Map<string, readonly RunSnapshot[]>();
     for (const [candidateTaskId, runs] of runByTask) runsByTaskId.set(candidateTaskId, runs);
     return { status: 'ready', value: { goalRef, planRef: plan.ref, byTaskId, runsByTaskId,
-      reductionsByTaskId: reductionByTask, readThrough: watermark, guards,
+      reductionsByTaskId: reductionByTask, leasesByTaskId: leaseByTask, readThrough: watermark, guards,
       ...(directed ? { taskHasRun } : {}) } };
   }
   return { status: 'rejected', code: 'revision_conflict',

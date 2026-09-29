@@ -1,0 +1,15 @@
+{
+  "changed": [
+    "resources/skills/platform-adviser/content.md",
+    "resources/skills/platform-reviewer/content.md",
+    "resources/skills/platform-reviewer/skill.json",
+    "resources/skills/platform-scribe/content.md",
+    "resources/skills/platform-secretary/content.md",
+    "resources/skills/platform-work/content.md",
+    "resources/skills/platform-work/skill.json",
+    "runtime-assets.json",
+    "src/app/runtime-configuration.ts"
+  ],
+  "outsideScope": [],
+  "originalWorkspaceChanged": []
+}

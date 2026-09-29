@@ -1,0 +1,49 @@
+{
+  "at": "2026-09-28T11:18:42.762184+00:00",
+  "status": "bounded-common-mechanism-accepted",
+  "wholeMvpComplete": false,
+  "sourceHashes": "current-source-hashes.json",
+  "import": "import.json",
+  "engineering": {
+    "affectedSuite": "15 files / 134 cases: 131 passed in final-checks.log; three old AG2 fixtures migrated and all three passed separately before import",
+    "postImportDriver": "AG2b 3 passed after drain/waiting fixes; driver-final-review.md",
+    "sourceToolFixes": "2 targeted tests passed; final typecheck/build exit 0; source-tools-final-review.md",
+    "types": 0,
+    "build": 0,
+    "boundaries": 0,
+    "kernelGeneration": "kernel-check.json byte match; no Kernel changes after that check"
+  },
+  "live": {
+    "evidence": "live/live.json",
+    "harnessExit": 0,
+    "provider": "DeepSeek, deepseek-flash, thinking disabled",
+    "streams": 14,
+    "transportErrors": 0,
+    "providerErrors": 0,
+    "toolErrors": 0,
+    "waitingSenderRuns": 2,
+    "acceptedReplies": 2,
+    "goalPhase": "COMPLETED",
+    "checks": [
+      "PASS",
+      "PASS"
+    ],
+    "projectBeforeExit": 1,
+    "projectAfterExit": 0,
+    "checksAndContractUnmodified": true
+  },
+  "browser": "browser.json",
+  "priorFailures": [
+    "live/attempt-1/live.json",
+    "live/attempt-2/review.json",
+    "live/attempt-3/review.json"
+  ],
+  "boundaries": [
+    "Query has no public pause/resume/steer/cancel interface; Work does",
+    "Host in-memory drivers are not arbitrary process-crash recovery",
+    "No semantic importance polling, default four Agents, scale-based automatic staffing or native compression",
+    "Decision adoption/review governance and the whole MVP are not declared complete"
+  ],
+  "commitOrPush": false,
+  "candidateRealWorkspacesWritten": false
+}

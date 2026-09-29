@@ -8,7 +8,7 @@ import { z } from "zod";
 import { assistantMessageSchema, isoUtcDateTimeSchema, nonEmptyIdSchema, } from "../../context/types/context-types.js";
 import { modelUsageSchema } from "../../ports/model_client/model-client-port.js";
 import { cancelledToolResultSchema, failedToolResultSchema, toolCallSchema, toolEffectClassSchema, toolResultSchema, } from "../../ports/tool_executor/tool-executor-port.js";
-import { deriveRunPhase, pauseStateSchema, runFailureSchema, validateRunStateInvariants, } from "../state/run-state.js";
+import { deriveRunPhase, pauseStateSchema, runFailureSchema, validateRunStateInvariants, yieldStateSchema, } from "../state/run-state.js";
 export const eventMetaSchema = z
     .object({
     schemaVersion: z.literal(1),
@@ -99,6 +99,29 @@ const toolOutcomeUnknownEventSchema = event("tool.outcome_unknown", z
     (value.effectClass === "read_only" ? "none" : "possible"), {
     message: "合成结果 effects.sideEffect 必须与 effectClass 一致",
 }));
+/**
+ * 明确让出执行：工具组已在真实边界排空，Agent 选择保存等待并退出活动执行。
+ * 它在 reducer 中落为 terminal 的 run.yielded，与 paused（可 resume）和 run.completed
+ * 明确区分；等待条件与唤醒由平台侧观察该事实后建立。
+ */
+const runYieldedEventSchema = event("run.yielded", z.object({ yield: yieldStateSchema }).strict());
+/**
+ * A real input was accepted into the execution context at a drained before_model
+ * boundary. The Kernel persists the identity, exact text and original source; it
+ * does NOT claim the model understood it or that business work was processed.
+ */
+const inputAcceptedEventSchema = event("run.input_accepted", z
+    .object({
+    input: z
+        .object({
+        inputId: nonEmptyIdSchema,
+        messageId: nonEmptyIdSchema,
+        text: z.string().min(1),
+        sourceRef: z.unknown(),
+    })
+        .strict(),
+})
+    .strict());
 const runPausedEventSchema = event("run.paused", z.object({ pause: pauseStateSchema }).strict());
 const runResumedEventSchema = event("run.resumed", z.object({ resumedBy: z.enum(["runtime", "hook", "tool_executor", "app"]) }).strict());
 const runCompletedEventSchema = event("run.completed", z.object({ finalMessageId: nonEmptyIdSchema }).strict());
@@ -131,6 +154,8 @@ export const agentEventSchema = z.discriminatedUnion("type", [
     toolCancelledEventSchema,
     toolOutcomeUnknownEventSchema,
     runPausedEventSchema,
+    runYieldedEventSchema,
+    inputAcceptedEventSchema,
     runResumedEventSchema,
     runCompletedEventSchema,
     runCancelledEventSchema,
@@ -235,6 +260,26 @@ export function validateTransition(stateInput, eventInput) {
             const pendingCallId = currentEvent.payload.pause.pendingToolCallId;
             if (pendingCallId !== null && findTool(state, pendingCallId)?.status !== "pending") {
                 return rejected("operation_mismatch", "暂停引用的工具调用不是 pending 状态");
+            }
+            return { ok: true };
+        }
+        case "run.input_accepted": {
+            if (state.status !== "running" ||
+                phase !== "before_model" ||
+                state.activeModelRequest !== null ||
+                state.toolBatch !== null) {
+                return rejected("phase_disallows_event", "input 只能在已排空的 before_model 边界被接受");
+            }
+            return { ok: true };
+        }
+        case "run.yielded": {
+            if (state.status !== "running" ||
+                !["before_model", "before_tools", "ready_to_complete"].includes(phase)) {
+                return rejected("phase_disallows_event", "只能在无活动操作的稳定边界让出执行");
+            }
+            const pendingCallId = currentEvent.payload.yield.pendingToolCallId;
+            if (pendingCallId !== null && findTool(state, pendingCallId)?.status !== "pending") {
+                return rejected("operation_mismatch", "让出引用的工具调用不是 pending 状态");
             }
             return { ok: true };
         }

@@ -299,3 +299,53 @@ it('cancels and waits for an in-flight source handler without closing the extern
   await f.source.access.close();
   expect(f.source.close).toHaveBeenCalledTimes(1);
 });
+
+
+it('classifies a file used as search prefix and still searches it through explicit paths', async () => {
+  const f = await fixture();
+  await writeFile(join(f.root, 'contract.md'), 'original contract\n');
+  const workspace = await kernel.WorkspaceSandbox.create(f.root);
+  const group = createExplorationTools(workspace, { projectSource: { mode: 'legacy_live' } });
+  const tool = group.tools.find(tool => tool.name === 'search')!;
+  const execute = (args: { query: string; prefix?: string; paths?: string[] }) => tool.handler.execute(
+    { schemaVersion: 1, callId: 'prefix-contract', name: 'search', arguments: args },
+    { signal: new AbortController().signal },
+  );
+  try {
+    const invalid = await execute({ query: 'original', prefix: 'contract.md' });
+    expect(invalid).toMatchObject({ status: 'error', error: { code: 'invalid_arguments' } });
+    expect(JSON.stringify(invalid)).not.toContain('/proc/self/fd/');
+    const valid = await execute({ query: 'original', paths: ['contract.md'] });
+    expect(valid.status).toBe('success');
+    expect(JSON.stringify(valid.output)).toContain('original contract');
+  } finally { await group.close(); }
+});
+
+
+it('treats explicit root prefixes like omission without granting denied or escaping paths', async () => {
+  const f = await fixture();
+  await writeFile(join(f.root, 'contract.md'), 'root prefix marker\n');
+  await writeFile(join(f.root, 'secret.md'), 'root prefix marker secret\n');
+  const workspace = await kernel.WorkspaceSandbox.create(f.root);
+  const group = createExplorationTools(workspace, { allowedPath: path => path !== 'secret.md' });
+  const policy = new kernel.DefaultPermissionPolicy({ registeredReadOnlyTools: ['list_files', 'search'] });
+  try {
+    for (const name of ['list_files', 'search']) {
+      const tool = group.tools.find(tool => tool.name === name)!;
+      const args = name === 'search' ? { query: 'root prefix marker', prefix: '.' } : { prefix: '.' };
+      const summary = tool.summarize!(args);
+      const decision = policy.evaluate({ runId: 'r', callId: name, tool: name, effectClass: 'read_only',
+        arguments: args, ...summary, capabilities: ['workspace_read'], workspaceIdentity: 'w',
+        workspaceRevision: '1', sandboxProfileVersion: 'test' });
+      expect(decision.decision).toBe('allow');
+      const result = await tool.handler.execute({ schemaVersion: 1, callId: name, name, arguments: args },
+        { signal: new AbortController().signal });
+      expect(result.status).toBe('success');
+      expect(JSON.stringify(result.output)).toContain('contract.md');
+      expect(JSON.stringify(result.output)).not.toContain('secret.md');
+      const escaped = await tool.handler.execute({ schemaVersion: 1, callId: 'escape', name, arguments: { ...args, prefix: '..' } },
+        { signal: new AbortController().signal });
+      expect(escaped).toMatchObject({ status: 'error', error: { code: 'invalid_arguments' } });
+    }
+  } finally { await group.close(); }
+});

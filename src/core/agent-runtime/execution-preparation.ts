@@ -102,6 +102,8 @@ function buildInput(input: {
   workspaceRevision: number;
   permissions: TaskEnvelopeV1['permissions'];
   selectedInputs: { requirementId: string; ref: ArtifactRef; body: string }[];
+  /** The exact saved wait reply this continuation Run consumes; null on a first Run. */
+  consumedReply: string | null;
 }): string {
   const sections: string[] = [];
   sections.push('# Verified runtime task input');
@@ -127,6 +129,11 @@ function buildInput(input: {
   }
   for (const selected of input.selectedInputs) {
     sections.push(['## Exact task input', `requirement: ${selected.requirementId}`, `artifact: ${selected.ref.contentType} ${selected.ref.digest}`, '', selected.body].join('\n'));
+  }
+  if (input.consumedReply !== null) {
+    sections.push(['## Consumed wait reply',
+      'The original Run yielded on this exact saved reply; it is a received statement, not a current-source/evidence grant.',
+      '', input.consumedReply].join('\n'));
   }
   return sections.join('\n\n');
 }
@@ -265,10 +272,15 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
         { kind: 'plan-revision', refId: plan.ref.planId, revision: String(plan.revision) },
         { kind: 'workspace', refId: session.workspaceId, revision: String(run.workspaceSnapshot.revision) },
       ];
+      // The saved reply is NO LONGER concatenated into the prepared input: it is
+      // supplied through the unified Kernel input channel as its ORIGINAL source
+      // (messageRef+response), so the second delivery cannot bypass input_accepted.
+      const consumedReply: string | null = null;
+      const additionalMaterialRefs: ArtifactRef[] = [];
       const input = buildInput({
         roleResolution, assignmentInstruction: assignment.instruction, taskTitle: plan.tasks.find(task => task.taskId === claim.task.taskId)?.title ?? claim.task.taskId,
         taskId: claim.task.taskId, planRef: plan.ref, workspaceId: session.workspaceId, workspaceRevision: run.workspaceSnapshot.revision,
-        permissions, selectedInputs,
+        permissions, selectedInputs, consumedReply,
       });
       const inputDigest = sha256Hex(input);
       const manifest: PreparedTaskManifestV1 = {
@@ -277,7 +289,7 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
         roleBinding: run.roleBinding, hostConfigurationRevision: hostConfig.configurationRevision, sessionRole: session.role,
         workspaceSnapshot: { workspaceId: session.workspaceId, revision: run.workspaceSnapshot.revision },
         permissions, budget: run.budget, selectedTaskInputs, materialBasis: hostConfig.materialBasis,
-        materialAccessRefs: [], additionalMaterialRefs: [], deliveryRefs: [], sourceRefs, input, inputDigest,
+        materialAccessRefs: [], additionalMaterialRefs, deliveryRefs: [], sourceRefs, input, inputDigest,
       };
       const manifestJson = JSON.stringify(manifest);
       if (Buffer.byteLength(manifestJson, 'utf8') > MAX_PREPARED_MANIFEST_BYTES) {
@@ -305,7 +317,7 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
       };
       const inputBinding: RuntimeInputBindingV1 = {
         schemaVersion: 1, inputDigest, manifestDigest: bundleRef.digest,
-        materialAccessRefs: [], additionalMaterialRefs: [], deliveryRefs: [],
+        materialAccessRefs: [], additionalMaterialRefs, deliveryRefs: [],
       };
       return { status: 'ready', value: { kind: 'task', claim, envelope, inputBinding } };
     },

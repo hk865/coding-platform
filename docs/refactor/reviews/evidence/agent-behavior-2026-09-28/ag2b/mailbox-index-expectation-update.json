@@ -1,0 +1,6 @@
+{
+  "path": "tests/work-graph/C1-session-mailbox.test.ts",
+  "before": "9f550456faed1c2926f5c0b71e26a2ef143ac700da9733727a522502fe71e0d4",
+  "after": "2e5ef2e9d8073d813b32dfd9b21bd2e6ea6e6cf6aef972da387143788bec0578",
+  "reason": "Existing memory/sqlite exact-index expectation updated for the new sender-run index; no additional test scenarios."
+}

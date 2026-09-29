@@ -1,0 +1,86 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform-next
+
+ ❯ tests/app/AG2-consultation.test.ts (3 tests | 3 failed) 1716ms
+     × answers the original question from the saved formal Query answer and replies on the original message 204ms
+     × consults a busy source through an isolated child and refuses a non-recipient binding 28ms
+     × attaches a reply to an already-saved formal answer without re-running the model 78ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/app/AG2-consultation.test.ts > AG2 explicit consultation over the real Host HTTP > answers the original question from the saved formal Query answer and replies on the original message
+AssertionError: expected { state: 'processed', …(4) } to match object { state: 'responded', reason: null }
+(21 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+    "reason": null,
+-   "state": "responded",
++   "state": "processed",
+  }
+
+ ❯ tests/app/AG2-consultation.test.ts:379:21
+    377|       const value = asRecord(asRecord(body)['value']);
+    378|       expect(asRecord(body)).toMatchObject({ status: 'ready' });
+    379|       expect(value).toMatchObject({ state: 'responded', reason: null }…
+       |                     ^
+    380|
+    381|       const message = value['message'] as SessionMessage;
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  tests/app/AG2-consultation.test.ts > AG2 explicit consultation over the real Host HTTP > consults a busy source through an isolated child and refuses a non-recipient binding
+AssertionError: expected +0 to be 1 // Object.is equality
+
+- Expected
++ Received
+
+- 1
++ 0
+
+ ❯ tests/app/AG2-consultation.test.ts:488:40
+    486|       // The isolated A′ runs in its own child Session; the busy SOURC…
+    487|       // occupied, so the inquiry proceeds without waking or blocking …
+    488|       expect(started.scripted.calls()).toBe(1);
+       |                                        ^
+    489|       expect(await sessionCount(started)).toBe(sessionsBefore + 1);
+    490|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+ FAIL  tests/app/AG2-consultation.test.ts > AG2 explicit consultation over the real Host HTTP > attaches a reply to an already-saved formal answer without re-running the model
+AssertionError: expected { status: 'ready', value: { …(5) } } to match object { status: 'ready', value: { …(2) } }
+(17 matching properties omitted from actual)
+
+- Expected
++ Received
+
+@@ -8,8 +8,8 @@
+          "projectId": "ag2-consultation-project",
+          "queryJobId": "consultation-d5bf769f459ff3f5140c3fe64e4904b60fb2aed0ec4207c7b5898a0ee67527f1",
+          "workspaceId": "ag2-consultation-workspace",
+        },
+      },
+-     "state": "responded",
++     "state": "processed",
+    },
+  }
+
+ ❯ tests/app/AG2-consultation.test.ts:562:41
+    560|       // FIRST RED (Stage 1): the unpublished route answers 404.
+    561|       expect(consultation.status).toBe(200);
+    562|       expect(await consultation.json()).toMatchObject({ status: 'ready…
+       |                                         ^
+    563|         state: 'responded', answer: { ref: firstAnswerRef } } });
+    564|       expect(started.scripted.calls()).toBe(1);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯
+
+
+ Test Files  1 failed | 14 passed (15)
+      Tests  3 failed | 131 passed (134)
+   Start at  18:55:48
+   Duration  25.13s (transform 1.08s, setup 0ms, import 4.51s, tests 19.54s, environment 1ms)
+

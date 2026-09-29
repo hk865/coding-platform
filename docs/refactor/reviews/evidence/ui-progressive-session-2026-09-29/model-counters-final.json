@@ -1,0 +1,24 @@
+{
+  "recordedAt": "2026-09-29T04:28:54.585536+00:00",
+  "sessionId": "session-0394c756db5968b642e5f0d070348e61316476978ff6bfc390ce48e807e73ab2",
+  "recordCount": 72,
+  "lastPosition": 72,
+  "kernelRequestStarts": 9,
+  "usageEvents": 8,
+  "inputTokens": 249176,
+  "outputTokens": 3332,
+  "cachedInputTokens": 165504,
+  "modelFailures": 1,
+  "deltaFromBaseline": {
+    "recordCount": 0,
+    "lastPosition": 0,
+    "kernelRequestStarts": 0,
+    "usageEvents": 0,
+    "inputTokens": 0,
+    "outputTokens": 0,
+    "cachedInputTokens": 0,
+    "modelFailures": 0
+  },
+  "zeroNewModelActivity": true,
+  "method": "Read-only SQLite metadata after Host rebuild/restart and browser Session reread; no observe/start/model calls."
+}

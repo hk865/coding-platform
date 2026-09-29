@@ -1,0 +1,1 @@
+retry(operation,{maxAttempts,delayMs,sleep}) calls operation with 1-based attempt. maxAttempts includes the first attempt. On success return immediately; on failure sleep exactly delayMs only BETWEEN remaining attempts. Final failure throws the original Error object. callClient delegates the same policy unchanged; no wall-clock sleeps in checks.

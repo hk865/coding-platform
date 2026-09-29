@@ -1,0 +1,11 @@
+{
+  "changed": [
+    "resources/skills/platform-secretary/content.md",
+    "runtime-assets.json",
+    "src/core/agent-runtime/execution-driver.ts",
+    "src/core/agent-runtime/session-discovery-tools.ts",
+    "src/core/work-graph/sessions/session-directory.ts"
+  ],
+  "outsideScope": [],
+  "originalWorkspaceChanged": []
+}

@@ -18,7 +18,7 @@ const ALLOWED = {
   WorkspaceTools: new Set(), RecordStore: new Set(),
 };
 const sourceExtensions = new Set(['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs']);
-const APPROVED_NEXT_PACKAGES = new Set(['typescript', 'vitest', '@types/node']);
+const APPROVED_NEXT_PACKAGES = new Set(['typescript', 'vitest', '@types/node', 'marked', 'esbuild']);
 const APPROVED_KERNEL_PACKAGES = new Set(['openai', 'zod']);
 const inside = (root, path) => path === root || path.startsWith(root + sep);
 const owner = rel => rel.startsWith('contracts/') ? 'Contracts'
@@ -204,20 +204,22 @@ export async function inspectSourceTree(projectDir) {
     if (!from) issues.push(`${rel}: source file has no target module or contracts owner`);
     const content = await readFile(path, 'utf8');
     const file = ts.createSourceFile(rel, content, ts.ScriptTarget.Latest, true);
-    const uiDtoModule = resolve(sourceRoot, 'app', 'core-http-types');
+    const uiDtoModules = new Set(['core-http-types', 'host-settings-types'].map(name => resolve(sourceRoot, 'app', name)));
     const withoutJsExtension = candidate => candidate.replace(/\.(mjs|cjs|js|jsx)$/, '');
     // Browser rule, applied BEFORE the generic Node/Kernel/npm exemptions so a
     // `node:` builtin, the frozen Kernel entry, a bare package, or an arbitrary
     // Host/Contracts value import cannot be waived by an early return. The only
-    // non-UI import a UI file may make is a TYPE-ONLY view of the Host DTO.
+    // Host import remains TYPE-ONLY. The existing Markdown adapter alone may
+    // consume its bundled browser parser; no other bare-package exemption.
     function checkUiSpecifier(specifier, typeOnly) {
       if (typeof specifier !== 'string') { issues.push(`${rel}: computed import/require is forbidden`); return; }
       if (specifier.startsWith('node:')) { issues.push(`${rel}: the browser UI may not import a Node builtin (${specifier})`); return; }
+      if (rel === 'ui/markdown.ts' && specifier === 'marked') return;
       if (!specifier.startsWith('.')) { issues.push(`${rel}: the browser UI may not import a bare package (${specifier})`); return; }
       const target = resolve(dirname(path), specifier);
       if (!inside(sourceRoot, target)) { issues.push(`${rel}: the browser UI import escapes next/src: ${specifier}`); return; }
       if (owner(relative(sourceRoot, target).split(sep).join('/')) === 'UI') return;
-      if (withoutJsExtension(target) === uiDtoModule) {
+      if (uiDtoModules.has(withoutJsExtension(target))) {
         if (!typeOnly) issues.push(`${rel}: the browser UI may only type-only import app/core-http-types`);
         return;
       }

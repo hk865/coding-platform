@@ -94,7 +94,10 @@ function submitControlInputProblem(value: unknown): string | null {
     return 'the control submission carries unknown fields';
   }
   if (!isRunRef(value['runRef'])) return 'the control submission requires a complete RunRef';
-  if (value['kind'] !== 'pause' && value['kind'] !== 'cancel') return 'the control kind must be pause or cancel';
+  if (value['kind'] !== 'pause' && value['kind'] !== 'cancel'
+    && value['kind'] !== 'resume' && value['kind'] !== 'steer') {
+    return 'the control kind must be pause, cancel, resume or steer';
+  }
   return reasonProblem(value['reason']);
 }
 
@@ -121,12 +124,17 @@ function encodeRun(run: RunSnapshot): EncodedRecord {
  */
 function freshSubmitControlProblem(run: RunSnapshot, kind: ControlIntentKindV1): CoreRejection | null {
   const control = run.controlState;
-  if (control === undefined) return null;
+  if (control === undefined) return kind === 'resume' ? busy('resume requires a formal pause') : null;
   if (control.desiredState === 'cancelled') {
     return busy('the Run is already fenced by a queued cancel control intent');
   }
   if (control.desiredState === 'paused' && kind === 'pause') {
     return busy('the Run is already fenced by a queued pause control intent');
+  }
+  // An explicit resume is the ONLY thing that releases a formal pause hold; it
+  // is meaningless when the Run is not actually paused.
+  if (kind === 'resume' && control.desiredState !== 'paused') {
+    return busy('the Run is not fenced by a pause control intent');
   }
   return null;
 }
@@ -373,8 +381,19 @@ export function createRunControlService(deps: RunControlServiceDependencies): Ru
         return reject('revision_conflict', 'the Run changed since the caller read it',
           [{ ref: run.ref, revision: run.revision }]);
       }
-      if (run.status === 'ended' || run.outcome !== null) {
+      // A Run that really yielded on a wait is the ONE ended Run that accepts a
+      // formal wait-window control: the queued pause/cancel survives the yield
+      // and gates the continuation instead of being lost with the terminal.
+      const yieldedWait = run.status === 'ended' && run.outcome === 'yielded'
+        && run.continuation !== undefined;
+      if ((run.status === 'ended' || run.outcome !== null) && !yieldedWait) {
         return busy('the Run already ended; no new control intent is accepted');
+      }
+      if (input.kind === 'steer' && (input.reason === null || input.reason.trim().length === 0)) return invalid('steer requires the actual directional input text');
+      if (input.kind === 'resume' && !yieldedWait && run.controlState !== undefined) {
+        const pause = await readIntentRecord(records, run.controlState.intentRef);
+        if (!pause.ok) return pause.rejection;
+        if (pause.value.kind !== 'pause' || pause.value.status !== 'applied' || pause.value.observation?.kind !== 'paused') return busy('resume requires an observed paused original Turn');
       }
       const controlProblem = freshSubmitControlProblem(run, input.kind);
       if (controlProblem !== null) return controlProblem;
@@ -385,13 +404,13 @@ export function createRunControlService(deps: RunControlServiceDependencies): Ru
       if (!nonEmpty(nowIso) || !nonEmpty(eventId)) {
         return reject('unsupported', 'the injected id/clock source produced an empty value');
       }
-      const desiredState: 'paused' | 'cancelled' = input.kind === 'pause' ? 'paused' : 'cancelled';
+      const desiredState = input.kind === 'pause' ? 'paused' as const : input.kind === 'cancel' ? 'cancelled' as const : input.kind === 'resume' ? 'running' as const : 'steered' as const;
       const intent: ControlIntentSnapshotV1 = { schemaVersion: 1, ref: intentRef, revision: 1,
         runRef: input.runRef, kind: input.kind, desiredState, status: 'queued', reason: input.reason,
         requestedAt: nowIso, requestedBy: actor };
       // Only revision and controlState move; every other Run field is preserved.
       const nextRun: RunSnapshot = { ...run, revision: run.revision + 1,
-        controlState: { intentRef, desiredState } };
+        ...(input.kind === 'steer' ? { controlInputs: [...(run.controlInputs ?? []), intentRef] } : { controlState: { intentRef, desiredState } }) };
       const runRecord = encodeRun(nextRun);
       const intentRecord = encodeControlIntentSnapshot(intent);
       const event: ControlIntentSubmittedEvent = { eventId, eventType: CONTROL_INTENT_SUBMITTED_EVENT_TYPE,
@@ -556,7 +575,7 @@ export function createRunControlService(deps: RunControlServiceDependencies): Ru
       // A newer canonical pointer keeps the older observation as history but
       // marks it superseded; it never releases or rewrites the newer control.
       const pointer = run.controlState;
-      const superseded = pointer === undefined || !sameRef(pointer.intentRef, intentRef);
+      const superseded = intent.kind === 'steer' ? !(run.controlInputs ?? []).some(ref => sameRef(ref, intentRef)) : pointer === undefined || !sameRef(pointer.intentRef, intentRef);
       const status = superseded ? 'superseded' : observationStatusFor(observation.kind);
       const nextRevision = intent.revision + 1;
       if (!Number.isSafeInteger(nextRevision)) {

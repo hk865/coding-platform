@@ -1,0 +1,76 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-09-27T16:42:29.335341+00:00",
+  "status": "engineering_passed_semantic_issues",
+  "scope": "AG6 behavior instructions and trusted Host assembly only",
+  "checks": {
+    "tests": {
+      "files": 4,
+      "passed": 19,
+      "exitCode": 0
+    },
+    "nodeUiTypes": 0,
+    "architectureAndAssets": 0,
+    "isolatedPhysicalBuild": 0,
+    "postPromptCorrection": {
+      "testFiles": 2,
+      "passed": 8,
+      "exitCode": 0,
+      "architectureAndAssetsExitCode": 0,
+      "logs": [
+        "prompt-recheck.log",
+        "assets-recheck.log"
+      ]
+    },
+    "liveSamples": {
+      "rounds": 2,
+      "totalRequests": 8,
+      "completedSamples": 8,
+      "providerErrors": 0,
+      "toolCalls": 0,
+      "model": "deepseek-flash",
+      "thinking": "disabled",
+      "files": [
+        "live-round1.json",
+        "live-result.json"
+      ],
+      "semanticReview": "semantic-review.md",
+      "semanticStatus": "issues_remain"
+    }
+  },
+  "importedHashes": {
+    "src/app/runtime-configuration.ts": "f71298a526363ca312d941bb54497331ace04ca84c857758eca3818369b22ec7",
+    "resources/skills/platform-work/content.md": "2395297dd1b6e48b14020d54b0433e2dceeeaba0ac026ada0ffd669e2ceeb95b",
+    "resources/skills/platform-work/skill.json": "3c60ae2a1b09b0d7b1d034f5c40730b9762e0f53c5121266f620b3db37e1838c",
+    "resources/skills/platform-secretary/content.md": "1f10e321f8d8257bb4fbc4f7f787858be2571c85994f220ae34da0a222db5693",
+    "resources/skills/platform-adviser/content.md": "d69c1744cc4830643e90fc0b24f0a11e0fdc0262923e540fd67bfb9e220dd8c9",
+    "resources/skills/platform-scribe/content.md": "9ffa14d36134688a0513ca77043f0c4dbc017ed12bc01d03dd3ae64054133794",
+    "resources/skills/platform-reviewer/content.md": "9c2a7ca7c0ca8ce19c0756564dacf540c061c35dcce92938e0145daf61ba0550",
+    "resources/skills/platform-reviewer/skill.json": "103af01b9f1dd3b10a79cf5a1238dd2e132b455d64e9f23bed9069a1ed1eda49",
+    "runtime-assets.json": "f1e0127228917bb5ba419ec9c2daa974634d12f464db5b27a8b640ea4c5a9384"
+  },
+  "frozenTestHashes": {
+    "tests/app/AG6-agent-assembly.test.ts": "0be31c9d4dc352a7e81ce956b9a337cb350739bc1e36f9920dbdb8f8cb83f48b",
+    "tests/runtime/W2-role-skills.test.ts": "7c20191b464ffec35cc06fa5c48ce2d8efc95c84577d4c3cf041e7828629f8b3"
+  },
+  "review": "Two-stage DSH implementation independently reviewed and imported. Imported hashes identify the 19-test/type/build snapshot; current hashes identify the subsequent prompt-only evidence-grounding correction and asset update, verified by 8 tests and asset/boundary check. Production TS and frozen tests are unchanged after the first independent verification. Live samples confirm assembly/calls only; semantic overreach remains.",
+  "notCovered": [
+    "AG2 receiver consultation/reply consumer",
+    "Agent-driven dispatch",
+    "formal Reviewer completion consumer",
+    "automatic complexity scheduling",
+    "native compaction",
+    "full MVP"
+  ],
+  "currentHashes": {
+    "src/app/runtime-configuration.ts": "f71298a526363ca312d941bb54497331ace04ca84c857758eca3818369b22ec7",
+    "resources/skills/platform-work/content.md": "84d45d7255beb0c64d5fb831e7d58aa737beec479eea4c29f4e8d87e5e3a8887",
+    "resources/skills/platform-work/skill.json": "3c60ae2a1b09b0d7b1d034f5c40730b9762e0f53c5121266f620b3db37e1838c",
+    "resources/skills/platform-secretary/content.md": "7f1f78bd5160c48f16fdf57f6b6932c2b25ab690875fce09a833536fa0f15380",
+    "resources/skills/platform-adviser/content.md": "142e23fb980210a163b694a9e15e712b55415e70ce0ced8ca0f217a169f4fb69",
+    "resources/skills/platform-scribe/content.md": "032100ab57b8fc5d56267cb5a4197a73c34198afe84e2004cb09edda8aff9464",
+    "resources/skills/platform-reviewer/content.md": "a7e4ab9987ab8703399f3f9c7815e85b1b4bb7ced24ad9437d196c169ee63d6f",
+    "resources/skills/platform-reviewer/skill.json": "103af01b9f1dd3b10a79cf5a1238dd2e132b455d64e9f23bed9069a1ed1eda49",
+    "runtime-assets.json": "673756b3a478a885bb6578e73b330ea122baa9bcda459e37ae76a5104b0274a0"
+  }
+}

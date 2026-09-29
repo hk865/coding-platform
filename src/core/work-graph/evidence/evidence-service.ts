@@ -53,13 +53,13 @@ import { evidenceApplicabilityWithBasis, evidenceBindingFor, selectEffectiveEvid
 import {
     EVIDENCE_ADMITTED_EVENT_TYPE, VERIFICATION_CHECK_BEGUN_EVENT_TYPE,
     VERIFICATION_CHECK_RESULT_RECORDED_EVENT_TYPE, VERIFICATION_ROUND_FINALIZED_EVENT_TYPE,
-    VERIFICATION_ROUND_OPENED_EVENT_TYPE, checkObservationProblem, decodeVerificationRoundSnapshot,
+    VERIFICATION_ROUND_OPENED_EVENT_TYPE, VERIFICATION_ROUND_ORIGINAL_LOOKUP, checkObservationProblem, decodeVerificationRoundSnapshot,
     encodeEvidenceSnapshot, encodeTaskEvidenceIndexSnapshot, encodeVerificationRoundEvent,
     encodeVerificationRoundSnapshot, verificationRoundEventFromEvent, decodeTaskEvidenceIndexSnapshot,
     type VerificationRoundEvent,
 } from './evidence-record-codecs.js';
 import type {
-    EvidencePort, EvidenceServiceDependencies, FinalizedChecks,
+    EvidencePort, EvidenceServiceDependencies, FinalizedChecks, OriginalVerificationQuery,
 } from './contracts.js';
 import type { GraphWrite } from '../tasks/contracts.js';
 
@@ -336,7 +336,7 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
 
     async function openVerification(
         ctx: CoreCallContext,
-        request: GraphWrite<{ subjectRunRef: RunRef; subject: TaskTriple; planRef: PlanRevisionRef; gateSubject?: 'goal' }>,
+        request: GraphWrite<{ subjectRunRef: RunRef; subject: TaskTriple; planRef: PlanRevisionRef; gateSubject?: 'goal' | 'stage' | 'module' }>,
     ): Promise<WriteResult<RoundSnapshot>> {
         const ownedCtx = bindTrustedContext(ctx);
         if (!ownedCtx.ok) return ownedCtx.rejection;
@@ -350,7 +350,10 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         if (subjectProblem !== null) return invalid(subjectProblem);
         const planProblem = planRefProblem(input.planRef);
         if (planProblem !== null) return invalid(planProblem);
-        if (input.gateSubject !== undefined && input.gateSubject !== 'goal') return invalid('gateSubject must be goal when present');
+        if (input.gateSubject !== undefined && input.gateSubject !== 'goal'
+            && input.gateSubject !== 'stage' && input.gateSubject !== 'module') {
+            return invalid('gateSubject must be goal, stage or module when present');
+        }
         // Receipt-first: the ORIGINAL open result is restored by the stable
         // identity/fingerprint before any current configuration/source check, so
         // a later missing/changed trusted configuration cannot lose the receipt.
@@ -368,9 +371,14 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
             const replayed = await replayEvent(records, lookup.receipt, identity, fingerprint, VERIFICATION_ROUND_OPENED_EVENT_TYPE);
             return 'status' in replayed ? replayed as WriteResult<RoundSnapshot> : replayed;
         }
-        // Only a fresh open needs the current trusted configuration.
-        const configuration = deps.configuration;
-        if (configuration === undefined) return unsupported('no frozen trusted check configuration is registered; fresh round open is unsupported');
+        // R6 cold-start: a FRESH round resolves the CURRENT configuration for
+        // exactly its own scope. The scoped resolver takes precedence; the
+        // legacy static configuration stays a compatible fallback. Receipt
+        // replay above already ran before this current-configuration read.
+        const configuration = deps.configurationFor !== undefined
+            ? deps.configurationFor(scope)
+            : deps.configuration;
+        if (configuration === undefined) return unsupported('no trusted check configuration is registered for this workspace; fresh round open is unsupported');
         if (configuration.workspace.projectId !== scope.projectId || configuration.workspace.workspaceId !== scope.workspaceId) {
             return forbidden('the trusted check configuration belongs to another workspace');
         }
@@ -404,13 +412,16 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         if (execution.status !== 'ready') return mapRead(execution);
         const run = execution.value.run;
         if (!sameRef(run.ref, input.subjectRunRef)) return unavailable('the Run read returned a different aggregate');
-        if (input.gateSubject === 'goal') {
-            // A Goal gate is not claimable: its round is opened against a formal
+        if (input.gateSubject !== undefined) {
+            // A gate is not claimable: its round is opened against a formal
             // ended normal work Run of the SAME project/Goal/workspace while the
             // Round/VerificationPlan/taskBasis/Evidence subject stays the gate.
+            // The adopted node must be a gate whose ACTUAL scope kind equals the
+            // declared gateSubject; that actual kind is preserved unchanged in
+            // the round's VerificationRoundScope identity below.
             const gateNode = plan.tasks.find(task => task.taskId === input.subject.taskId);
-            if (gateNode === undefined || gateNode.taskKind !== 'gate' || gateNode.scope.kind !== 'goal') {
-                return invalid(`the gate subject ${input.subject.taskId} is not an adopted Goal gate`);
+            if (gateNode === undefined || gateNode.taskKind !== 'gate' || gateNode.scope.kind !== input.gateSubject) {
+                return invalid(`the gate subject ${input.subject.taskId} is not an adopted ${input.gateSubject} gate`);
             }
             if (run.task.projectId !== input.subject.projectId || run.task.goalId !== input.subject.goalId
                 || run.task.taskId === input.subject.taskId) {
@@ -561,6 +572,71 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         return { status: 'ready', value: loaded.round };
     }
 
+    /**
+     * The narrow formal read of the ONE original round for an ended subject Run,
+     * whether it is still open or already finalized. It uses the registered
+     * candidate lookup (formal scope + subject-Run identity, no status filter),
+     * then rechecks the decoded canonical round's scope, subject Run/task and
+     * adopted Plan. Zero candidates is exactly `not_found`; exactly one is the
+     * original round; more than one is `incomplete` (never a guessed latest). A
+     * lookup error or a mismatched/undecodable candidate is an unknown read
+     * (`unavailable`), never `not_found`, so the Workflow waits instead of
+     * opening a second round.
+     */
+    async function queryOriginalVerification(
+        ctx: CoreCallContext,
+        request: OriginalVerificationQuery,
+    ): Promise<ReadResult<RoundSnapshot>> {
+        const ownedCtx = bindTrustedContext(ctx);
+        if (!ownedCtx.ok) return ownedCtx.rejection;
+        const { scope } = ownedCtx;
+        const rawRunRef: unknown = request.subjectRunRef;
+        const rawSubject: unknown = request.subject;
+        const rawPlanRef: unknown = request.planRef;
+        if (!isRunRef(rawRunRef)) return invalid('the original-round query requires a complete subject RunRef');
+        const subjectProblem = taskTripleProblem(rawSubject);
+        if (subjectProblem !== null) return invalid(subjectProblem);
+        const planProblem = planRefProblem(rawPlanRef);
+        if (planProblem !== null) return invalid(planProblem);
+        const subject = rawSubject as TaskTriple;
+        const planRef = rawPlanRef as PlanRevisionRef;
+        if (rawRunRef.projectId !== scope.projectId || subject.projectId !== scope.projectId
+            || planRef.projectId !== scope.projectId) {
+            return forbidden('the original-round query is outside the trusted Host scope');
+        }
+        if (rawRunRef.goalId !== subject.goalId) {
+            return invalid('the original-round query subject Run and Task do not share a Goal');
+        }
+        let lookup;
+        try {
+            lookup = await records.lookup({
+                index: VERIFICATION_ROUND_ORIGINAL_LOOKUP,
+                values: [scope.projectId, scope.workspaceId, subject.goalId, subject.taskId, rawRunRef.runId],
+                limit: 2,
+            });
+        } catch (error) {
+            return unavailable(`the original-round lookup failed: ${messageOf(error)}`);
+        }
+        if (lookup.status !== 'ready') return mapStoreFailure(lookup);
+        const candidates = lookup.value.records;
+        if (candidates.length === 0) return { status: 'not_found' };
+        if (candidates.length > 1) {
+            return incomplete('more than one verification round matches the subject Run; refusing to guess the latest');
+        }
+        const decoded = decodeVerificationRoundSnapshot(candidates[0]!);
+        if (decoded.status !== 'decoded') {
+            return unavailable(`the original verification round is damaged: ${decoded.reason}`);
+        }
+        const round = decoded.value;
+        const inScope = round.ref.projectId === scope.projectId && round.ref.workspaceId === scope.workspaceId;
+        if (!inScope
+            || !sameRef(round.subjectRunRef, rawRunRef) || !sameRef(round.subject, subject)
+            || !sameRef(round.adoptedPlanRef, planRef)) {
+            return unavailable('the indexed verification round does not match the requested subject Run/task/plan');
+        }
+        return { status: 'ready', value: round };
+    }
+
     async function beginCheck(ctx: CoreCallContext, request: GraphWrite<{ roundRef: VerificationRoundRef; checkId: string }>):
     Promise<WriteResult<CheckExecutionTicket>> {
         const ownedCtx = bindTrustedContext(ctx);
@@ -586,8 +662,6 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         if (lookup.status === 'found') {
             return await replayEvent(records, lookup.receipt, identity, fingerprint, VERIFICATION_CHECK_BEGUN_EVENT_TYPE) as WriteResult<CheckExecutionTicket>;
         }
-        const configuration = deps.configuration;
-        if (configuration === undefined) return unsupported('no frozen trusted check configuration is registered; fresh begin is unsupported');
         const checked = checkRoundPin(owned.expected, input.roundRef);
         if ('status' in checked) return checked;
         const loaded = await readRoundRecord(records, input.roundRef);
@@ -595,17 +669,19 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         const round = loaded.round;
         if (round.status === 'finalized') return busy('the round is finalized; no fresh check may begin');
         if (round.executor.kind !== actor.kind || round.executor.id !== actor.id) return forbidden('the check executor is not the round executor');
-        if (round.configuration.configurationRevision !== configuration.configurationRevision) {
-            return forbidden('the current trusted configuration revision is not the round binding');
-        }
         const check = round.checks.find(candidate => candidate.checkId === input.checkId);
         if (check === undefined) return invalid(`the round has no registered check ${input.checkId}`);
         if (round.revision !== checked.revision) {
             return reject('revision_conflict', 'the round changed since the caller read it', [{ ref: round.ref, revision: round.revision }]);
         }
         if (check.phase !== 'pending') return busy(`the check ${input.checkId} is already ${check.phase}`);
-        // A fresh begin must still match the CURRENT trusted configuration's
-        // Host grant and exact source; otherwise no execution ticket is issued.
+        // R6 cold-start: the original round FROZE its trusted configuration when
+        // it opened. A later scope approval may never rewrite or re-key it, so
+        // this fresh begin and every ticket it issues use the round's frozen
+        // configuration, never the current resolver value.
+        const configuration = round.configuration;
+        // A fresh begin must still match the round's frozen Host grant and its
+        // exact frozen source; otherwise no execution ticket is issued.
         const resolved = await deps.workspaceHost.resolveRoot(configuration.workspace);
         if (resolved.status !== 'ready') return mapWorkspaceRejection(resolved);
         const authorized = await deps.workspaceHost.authorize(ownedCtx.ctx, configuration.workspace);
@@ -988,7 +1064,7 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         }
     }
 
-    return { openVerification, readVerification, beginCheck, recordCheckResult, submitEvidence, finalizeChecks };
+    return { openVerification, readVerification, queryOriginalVerification, beginCheck, recordCheckResult, submitEvidence, finalizeChecks };
 }
 
 // -------------------------------------------------------------------------- //

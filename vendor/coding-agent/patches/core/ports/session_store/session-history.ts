@@ -23,6 +23,7 @@ const TERMINAL_EVENT_TYPES = new Set([
   "run.cancelled",
   "run.limit_exceeded",
   "run.failed",
+  "run.yielded",
 ]);
 
 export interface SessionHistoryTurnIdentity {
@@ -41,6 +42,8 @@ export interface SessionHistoryRestoreInput {
   readonly sessionId: string;
   /** 开始当前 Turn 前最后已完成轮次的边界（Session 记录 position）。 */
   readonly throughPosition: number;
+  /** 派生隔离基线的真实源 Session；缺省表示前缀就是当前 Session 自身。 */
+  readonly sourceSessionId?: string;
   /** 当前 Turn 身份：前缀绝不允许包含它，避免把当前输入重复喂给模型。 */
   readonly currentTurn?: SessionHistoryTurnIdentity;
 }
@@ -77,6 +80,10 @@ export function parseContextBasis(value: unknown): ContextBasis {
     version: KERNEL_SESSION_HISTORY_VERSION,
     mode: SESSION_HISTORY_MODE,
     throughPosition: basis.throughPosition,
+    // A derived isolated basis must keep its real source Session through every
+    // parse/compare/checkpoint/resume replay; dropping it silently restores the
+    // wrong history.
+    ...(basis.sourceSessionId === undefined ? {} : { sourceSessionId: basis.sourceSessionId }),
   };
 }
 
@@ -266,7 +273,7 @@ export function restoreSessionHistory(
   records: readonly SessionRecord[],
   input: Readonly<SessionHistoryRestoreInput>,
 ): SessionHistoryRestore {
-  const { sessionId, throughPosition } = input;
+  const { sessionId, throughPosition, sourceSessionId } = input;
   const lastPosition = records.at(-1)?.position ?? 0;
   if (!Number.isSafeInteger(throughPosition) || throughPosition < 1) {
     throw new StoreError("invalid_record", `throughPosition 必须是正的安全整数`);
@@ -383,6 +390,7 @@ export function restoreSessionHistory(
       version: KERNEL_SESSION_HISTORY_VERSION,
       mode: SESSION_HISTORY_MODE,
       throughPosition,
+      ...(sourceSessionId === undefined ? {} : { sourceSessionId }),
     },
     sessionId,
     throughPosition,

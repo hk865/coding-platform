@@ -1,7 +1,6 @@
 import type { ModelClientPort, ModelRequest, ModelEvent } from '../../../vendor/coding-agent/dist/public-api.js';
 import { createHash } from 'node:crypto';
 import type { RuntimeBudget } from '../../contracts/runtime-budget.js';
-import type { TaskBudgetV1 } from '../../contracts/dispatch.js';
 export { DEFAULT_RUNTIME_BUDGET, validateRuntimeBudget, type RuntimeBudget } from '../../contracts/runtime-budget.js';
 export type InputTokenMeasurement = { tokens: number; method: 'model_tokenizer' | 'conservative_utf8_estimate'; tokenizer: string };
 export type ModelInputCounter = { count(request: ModelRequest): InputTokenMeasurement | Promise<InputTokenMeasurement> };
@@ -15,11 +14,19 @@ export class ContextCapacityExceeded extends Error {
 }
 
 /**
+ * The narrow persistent Query/model budget. `tokenBudget: null` imposes NO
+ * cumulative token cap and is NOT 0/Infinity; an explicit positive integer is a
+ * real cumulative constraint. The deadline is independent and always checked
+ * first. This deliberately does not widen the Work `TaskBudgetV1`.
+ */
+export type ModelTokenBudget = { tokenBudget: number | null; deadline: string | null };
+
+/**
  * The persistent Run deadline is an absolute instant on the trusted Host clock.
  * A missing clock cannot silently drop the constraint: the driver always supplies
  * the same `now()` it meters with, so a pinned deadline without it is refused.
  */
-export function taskBudgetDeadlineRemaining(taskBudget: TaskBudgetV1 | null | undefined, now: (() => string) | null): number | null {
+export function taskBudgetDeadlineRemaining(taskBudget: ModelTokenBudget | null | undefined, now: (() => string) | null): number | null {
   if (taskBudget === null || taskBudget === undefined || taskBudget.deadline === null) return null;
   if (now === null) throw new Error('unsupported: enforcing the persistent task deadline requires the trusted now() clock');
   const currentMs = Date.parse(now());
@@ -40,7 +47,7 @@ export class ModelBudget {
    * (unknown-usage) request is never freed, so a later request cannot borrow it.
    */
   constructor(readonly limits: RuntimeBudget, private readonly persist: (entries: MeterEntry[]) => Promise<void>,
-    private readonly counter?: ModelInputCounter, readonly taskBudget: TaskBudgetV1 | null = null,
+    private readonly counter?: ModelInputCounter, readonly taskBudget: ModelTokenBudget | null = null,
     private readonly now: (() => string) | null = null) {}
   totals() { return this.entries.reduce((a, e) => ({ input: a.input + (e.inputTokens ?? e.reservedInput), output: a.output + (e.outputTokens ?? e.reservedOutput) }), { input: 0, output: 0 }); }
   /** The persistent absolute deadline is re-checked at the real provider
@@ -59,6 +66,9 @@ export class ModelBudget {
   assertTaskBudgetAdmissible(inputReserve: number, outputReserve: number): void {
     if (this.taskBudget === null) return;
     this.assertTaskDeadline();
+    // `tokenBudget: null` is the explicit no-cumulative-cap default; the real
+    // deadline above stays enforced and no Infinity/0 sentinel is invented.
+    if (this.taskBudget.tokenBudget === null) return;
     const totals = this.totals();
     if (totals.input + totals.output + inputReserve + outputReserve > this.taskBudget.tokenBudget) {
       this.exhausted = true;

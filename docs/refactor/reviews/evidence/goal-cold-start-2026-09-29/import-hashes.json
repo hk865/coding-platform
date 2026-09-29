@@ -1,0 +1,116 @@
+{
+  "lane": ".toolchain/dsh-refactor-runs/goal-cold-start-20260929",
+  "manifestSha256": "562ee806a70c8cf719a6c5c1b6ae551b05bea7dfe4e7e0724c16997eabe483ac",
+  "files": [
+    {
+      "path": "src/contracts/initial-planning.ts",
+      "originalSha256": "5003a6050f979302f79daef3c57e8e1b31be6fccecb9eaa7725ce0b33c17822d",
+      "candidateSha256": "9156b7382f7723a6aac84f3ec3042a61ceebe9f770278a02268803d7650634f9"
+    },
+    {
+      "path": "src/core/agent-runtime/query-preparation.ts",
+      "originalSha256": "edabea10662bca5a6d09cc5180693e155bf51b5efb3fc1e1b6a16c58a4b2727e",
+      "candidateSha256": "cf367b5589893b18ed33f055b0d25560bd1878fdfd5d3be4d4e9e776a404d31b"
+    },
+    {
+      "path": "src/app/runtime-configuration.ts",
+      "originalSha256": "931e43c3f6b1cca27e2fa581b8a8340238f9ba9dcf1446353ee9ed8230e70393",
+      "candidateSha256": "8940656964867474180ff679d75be6ad2ff3d5d7a5b9fdce68df6ed18fae522c"
+    },
+    {
+      "path": "src/app/host-settings-types.ts",
+      "originalSha256": "350816094202820a14fc12225cfc9f540b7a52d8ca9e08375a940654944a45ce",
+      "candidateSha256": "8e017370cbf453058e31bf5b43cc6b4770ec6b0f2e5c4092a498a4bad956970b"
+    },
+    {
+      "path": "src/app/host-settings.ts",
+      "originalSha256": "2d1812c26fcd9dbd2c86eeb5104256efff9752a608e09b0a56f034b702772091",
+      "candidateSha256": "dc386a9c747626635910f5a152c4f550d13423dbba06ba7b02d0b16f599ed721"
+    },
+    {
+      "path": "src/app/host.ts",
+      "originalSha256": "3baf55e6beb344590f211c50eec2d7a2c2c3b8b67218f1b1337068f58692604d",
+      "candidateSha256": "3799803d706f187452a8ff682b8c3dc3657a7cb1daa6922ca1f1ae27cd5f616f"
+    },
+    {
+      "path": "src/composition/create-platform.ts",
+      "originalSha256": "da13e4af59a0a54f503b74fcb2bf3f3cdb24b8266693d66241a75320b0583727",
+      "candidateSha256": "78546a4d45063f499cb5183ddec90a64896d56191d5251b8abb8d2e422d50236"
+    },
+    {
+      "path": "src/core/work-graph/evidence/contracts.ts",
+      "originalSha256": "a91e63e7e599aac1551f90d94922c3d289663bb3c5c837c01de8dbeae3cff1d8",
+      "candidateSha256": "bbe2a3735e420bfa680114a64c372b9e21432483bb6e7d9538820451a32a91d4"
+    },
+    {
+      "path": "src/core/work-graph/evidence/evidence-service.ts",
+      "originalSha256": "44b5607e7a087677c75fbe98b136a327938a2ba5984e83fdb098965f6cbfc2d6",
+      "candidateSha256": "641bfb3b4ffb5a7e859c5526bbc69008505c2037275329482595818c2d0d6c61"
+    },
+    {
+      "path": "src/ui/main.ts",
+      "originalSha256": "455b3cfb35265f46ea2fd94023481b601f7d1f0332064d63ac2c5e43ae2ae7a5",
+      "candidateSha256": "185cbdaed353d749e7d187e8a494a23dabce1154f26a1867a5be9473e7cf7ff2"
+    },
+    {
+      "path": "src/ui/views.ts",
+      "originalSha256": "d1d4d103de45710e871b47994804955b0fb2f16e7c83e98ab9028865c22dbd16",
+      "candidateSha256": "c70602048a53b08755d1580e0922d5055da56031575e056cac77ebfbd0bc7b82"
+    },
+    {
+      "path": "src/ui/styles.css",
+      "originalSha256": "3e938474c8bec4b24c2cbcacdc65f1631c06fe6b546d2f07aa1f85e72e531737",
+      "candidateSha256": "d5be4e9a504886d04a0d86f477a546b9861877f297f6c4dd2329e47b1326699a"
+    },
+    {
+      "path": "tests/work-graph/R5b-initial-plan.test.ts",
+      "originalSha256": "12332e859824833eea1aaa26a8ff74d8c46eb325240b1d628b37e9f1f4d91f09",
+      "candidateSha256": "fa2c584d67ee4eea5588e5a4d8d5c8d8c055eda2665eeccb25f98a1d52605f83"
+    },
+    {
+      "path": "tests/app/host-settings.test.ts",
+      "originalSha256": "3d19c347a622ec6479e44ebbb776829a4a449ef8bb4c880b402b774c85551e35",
+      "candidateSha256": "e3723a11b9e418972794a768f9f7f411243d8fb7c78cbf7d9dece659d8baced1"
+    },
+    {
+      "path": "tests/work-graph/R3e-evidence.test.ts",
+      "originalSha256": "3eeb02064f326c31959b69c6f01cc8314577ecf5363ccf1081b67812ad78f352",
+      "candidateSha256": "652516cd2a16eb44066d5e008093d2a76dd4256790881bd1ba6adcabad1d8989"
+    },
+    {
+      "path": "tests/app/session-rendering.test.ts",
+      "originalSha256": "858e28de86f2e3b53b8cf180592ab245e6b8cbd1920ac54c052446db7b29e0aa",
+      "candidateSha256": "4f8c4ac505d7830db5c208fd7e56229ec0e13f99d9543227738f15bd62644241"
+    },
+    {
+      "path": "src/contracts/architecture-catalog.ts",
+      "originalSha256": "f8020d31f7689c152174aaac59c75c2188464d861d3ea7bfc577fcbec25b21c5",
+      "candidateSha256": "4be0751bc65aed0a8660e42dc9dde6efc1b831ca85555d395dbf1957d03c52b5"
+    },
+    {
+      "path": "src/core/work-graph/architecture/catalog-contracts.ts",
+      "originalSha256": "237e7423aa56b518b483320f1525555ecef4475a832260c775e16c4e2d2a1779",
+      "candidateSha256": "2c3ade60c05aa9d5d7846248d57cc4df69b7fb59f44d7276251b79bf24813f0b"
+    },
+    {
+      "path": "src/core/work-graph/configuration/project-bootstrap-contracts.ts",
+      "originalSha256": "e61dff2978a8cc3c41a1824f983c5519d5570113cc7fb0a8eab24281f5c86b0f",
+      "candidateSha256": "a2e30c52d6c1c83b980b9ca09171d0fad239b12b533ecb0dc203f2d427e454c5"
+    },
+    {
+      "path": "src/core/work-graph/configuration/project-bootstrap-service.ts",
+      "originalSha256": "b14505482ac2d880b7ab2f0271bde5e35e46466bf13916bb0a69eaceda5499f1",
+      "candidateSha256": "4694405ac76725b951499f65a53f8481ee25560e8b099f8ff4cbb54ff7e6106d"
+    },
+    {
+      "path": "src/app/core-routes.ts",
+      "originalSha256": "d852a834d4db137de53cf56c5757d0c51d1da134f44b8b2917eafd40462212a9",
+      "candidateSha256": "16180bc21101cf4b52f947a5ceb3be52560e0524f1ad91c0d76f4059ee0bc19c"
+    },
+    {
+      "path": "src/app/core-http-types.ts",
+      "originalSha256": "0d3b62e4a0de18ccb2546347c79e6ccf099e509f45ca6c32fa0e3966649d0c62",
+      "candidateSha256": "43df6ab6aa0a77bb2b05c83c03376ce6ffda4791779e53c34f5ffbbfd672ccfb"
+    }
+  ]
+}

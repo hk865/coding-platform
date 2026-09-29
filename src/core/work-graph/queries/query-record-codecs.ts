@@ -244,7 +244,7 @@ export function queryJobIntentIssues(value: unknown): string[] {
   const budget = value['budget'];
   if (!isRecord(budget)) issues.push('intent.budget must be an object');
   else {
-    if (!isPositiveRevision(budget['maxTokens'])) issues.push('intent.budget.maxTokens must be a positive integer');
+    if (budget['maxTokens'] !== null && !isPositiveRevision(budget['maxTokens'])) issues.push('intent.budget.maxTokens must be null or a positive integer');
     if (budget['deadline'] !== null && typeof budget['deadline'] !== 'string') {
       issues.push('intent.budget.deadline must be null or a string');
     }

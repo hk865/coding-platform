@@ -76,7 +76,7 @@ function aggregateRefOf(value: unknown): Record<string, unknown> | null {
 }
 
 const ATTEMPT_STATUSES: readonly string[] = ['claimed', 'started', 'ended'];
-const RUN_OUTCOMES: readonly string[] = ['completed', 'failed', 'cancelled', 'budget_exhausted', 'crashed', 'outcome_unknown'];
+const RUN_OUTCOMES: readonly string[] = ['completed', 'failed', 'cancelled', 'budget_exhausted', 'crashed', 'outcome_unknown', 'yielded'];
 
 /**
  * Pure TaskClaim cross-reference check. `task` is the scope anchor: every

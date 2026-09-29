@@ -1,5 +1,68 @@
 # 无对话记忆的 Agent 接手说明
 
+**2026-09-29 上传基线：** 本次按用户要求提交当前已验收的协作机制、工作台与目录浏览修复，源码目标为 `hk865/coding-platform` 的 `next-main`，文档同步到 `hk865/my-coding-platform-docs` 的 `next-main/docs`。下文“未提交/未推送”和临时进程信息保留其历史时点，不代表本次上传状态；当前缺口和验收边界继续有效，未宣告整个 MVP 完成。
+
+**2026-09-29 文件资源管理器修复：** 普通目录浏览改用既有 Kernel 路径枚举，不再依赖完整文本 capture；二进制/大文件不阻断文件名展示。每次本地显示100项、可输入子目录、明确加载/错误/部分结果。13项、类型、构建、边界及真实ROS目录只读浏览/文件打开通过；未写项目文件、未调用模型。当前44797终端Host PID379878；未提交推送。[本批证据](reviews/evidence/ui-directory-inventory-2026-09-29/README.md)。
+
+**2026-09-29 正常 UI 冷启动与双图纠偏：** 隔离新项目已从主对话目标、只读调查、候选审阅和明确采用，进入两个同 Session Work；唯一预期源码变更、三轮正式检查 PASS、GoalPhase COMPLETED。双图恢复稀疏节点/真实连线、下方独立滚动详情、按需展开及固定，未来节点保留。检查恢复不重开模型、不把已 finalized 非 PASS 当成无结果。按工作区保存显示选择及两标签页切换/刷新恢复已通过浏览器复验；取消/失败后新 Attempt 等缺口仍保留，不能宣告整个 MVP。产品模型 10 次，曾有 2 次沙箱工具失败；正常终端 Host 保留沙箱后检查通过，用户级服务已停止。 [本批证据与边界](reviews/evidence/goal-cold-start-2026-09-29/README.md)。
+
+**历史核对（2026-09-29，本批冷启动接线之前）：当时仍有产品接线缺口。** 用户追问成员与双图后，只读核对 slam6_navigation (test) 当前项目：1 Goal（activePlanRevision=null）、1 active/available Session、3 QueryJob/QueryRun、1 Answer；无 Plan、Task 或正式架构 baseline。浏览器双图入口仍在，但分别返回“该 Goal 还没有已采用的 Plan”和“没有已采用的架构 baseline”。普通发送采用 semantic_query，回答后不进入 planning_answer；规划仍在更多菜单，初始架构仍依赖设置页材料/JSON采用，未形成调查结果→架构候选/采用→任务规划→按需分工的连续冷启动体验。主对话与 local-workbench 成员可指向同一 Session，不是两个 Agent。现有执行/通信闭环验收不能替代此缺口；不能用原型示例节点或固定增开四个成员掩盖。此次仅核对并记录，未启动规划/模型或更改真实项目状态。
+
+**Session 交互与思考配置更新（2026-09-29）：本批限定验收完成。** 对照 DSH 提炼正文主线、动作摘要及按需展开；同身份相邻活动分组，外层显示读取/搜索等动作和文件名，展开直接读工具结果，技术事件、参数和完整原记录继续可查。新增代码复制/换行、稳定展开与最新尾页读取，缩窄对话仍固定页面和输入框。原 72 条历史顺序/唯一性、read 输出、原文、复制粘贴、浅色/窄栏已实际操作；主审 28 项、独审另一重合集合 30 项及 AG6 3 项通过，构建/边界通过。用户指出 think 不可见后，查到当前模型配置为 thinking=disabled，已在本机设置改为 enabled，并删除实时 observer 裁剪 reasoningContent 的旧行；旧历史没有保存的思考不能补齐，新思考输出尚未发起模型调用验证。本批新增产品模型调用 0，工作台 44797（PID 3233874）已加载更新；未改真实项目、未提交推送，不宣告整个 MVP 完成。详见[本批证据](reviews/evidence/ui-progressive-session-2026-09-29/README.md)。
+
+**目标创建与对话恢复更新（2026-09-29）：本批限定验收通过。** 首次发送创建 Goal 后直接开始调查；未配置模型时保留 Goal/草稿并引导设置，设置保存不调用模型；已 claimed/prepared 的原 Query 可显式继续准备。草稿仅在原内容未变化时清理，成员目录与 Session 状态刷新。根集成 4 文件 29 项检查、类型、构建与边界通过；受控浏览器 4 calls / 3 Goal / 4 Session / 4 Job / 4 Run（含 1 个 HTTP 构造前态）。最终真实调查复用原 Goal/Session，2 次 provider 调用、4 次工具成功、0 失败，answered/settled 且占用释放；历史分页 50→72，Markdown 与原始记录入口正常。Query null 累计预算不限但 deadline 仍传入 Kernel，Work 预算未改；仅当前真实 scope 显式配置官方支持的 1M context，其他默认仍 128K，非自动容量发现。工作台 44797（PID 243350）继续运行；未提交推送、未写用户项目，不宣称流式或完整 MVP 完成。详见[本批证据](reviews/evidence/goal-conversation-start-2026-09-29/README.md)。
+
+**本机设置接线（2026-09-29）：本批集成、浏览器与常用启动器核验完成。** 左下角“设置”提供工作区与模型两类操作：空 Host 可打开第一个本机目录；选择新项目或向已有项目添加工作区，默认只读，文件写入与命令执行需显式勾选。模型支持新增、编辑和按工作区选择；API key 留空保留，输入的密钥只保存在本机私有配置，不返回 UI、不进入仓库，未另设密钥时可沿用 provider 原环境来源。新选择用于后续新运行，已开始的 Run 保持其固定配置；切换工作区保留各自草稿与 Session。设置保存不调用模型，本批未重测真实模型连接。根类型、构建与 2 文件 15 项检查通过；浏览器已验证 2 项目 3 工作区、草稿保留、模型选择隔离及重启恢复。常用 44797 已替换为正常启动器并复验，沿用原配置与数据库，没有验收调用上限或请求记录包装；本批实际模型调用为 0，未提交、未推送。操作与验收边界见[本批记录](reviews/evidence/host-settings-2026-09-29/README.md)；以下较早批次的“只能预配置目录”等限制保留其当时含义，不作为本批验收结论。
+
+**Session 渲染更新（2026-09-29）：本批限定实现与浏览器验收完成。** 保留原型布局，既有历史支持本地 Markdown、易读工具与计划、长输入/技术事件折叠及完整原文展开；历史分页从 50 条追加至 85 条，前缀保留且身份唯一。类型、构建与必要检查通过，详见[本批证据](reviews/evidence/session-rendering-2026-09-29/README.md)。没有新增产品模型调用或写入用户项目；既有模型输出不算本轮新执行。不含逐 token 流式或语法高亮；界面打开任意本机目录仍未实现，当前仅 Host 预配置绑定。本结果不等于整个 MVP 完成。
+
+**原型 UI 纠偏更新（2026-09-28）：已按原会话完成本批返修及实际浏览器核对。** 前批误将原型降格为风格参考，重组了项目导航、持续对话、辅助页和图交互；该交付口径已撤回。现恢复项目树、统一输入、项目共享辅助页、独立对话草稿、节点下方详情、双击固定/右键新页及 Task 图内连续纵向焦点。复用正式后端数据，未复制原型示例或新建业务机制；无时间 gate/未来节点仍在图上。四个前端文件及一处既有 UI 测试断言更新，类型、构建、2 文件 16 项检查通过。浏览器核对范围与限制见[纠偏记录](reviews/evidence/ui-prototype-correction-2026-09-28/README.md)；本批未触发模型执行，不宣告整个 MVP 或任意规模 UI 验收完成。工作台仍为 http://127.0.0.1:44797/workbench/ ，用户级服务继续运行；未提交、未推送。
+
+**工作台可用性更新（2026-09-28）：** 上轮临时 Host 已退出，现已用相同配置和数据库恢复为用户级临时服务 `coding-platform-mvp-ui.service`，地址仍为 `http://127.0.0.1:44797/workbench/`。已核实服务 running、HTTP 200 和实际浏览器页面；恢复及读取后模型调用仍为 14。服务独立于工具会话运行，未配置开机自启；可用 `systemctl --user stop coding-platform-mvp-ui.service` 停止。下文 PID 2247899 属于先前验收进程，不再存活。
+
+**此前 UI 后端接线验收（2026-09-28，保留原范围）：** 工作台使用真实 owner/Kernel 接口，已确认原型是界面与交互验收基线，示例数据不复制。FUGeXf 隔离 retry 工程沿原 Goal 与数据库，在 stage scope 修复后由界面点击“采用并执行”，最终正式 `complete_goal / COMPLETED`；Work、stage 与 Goal 三项 satisfied，三轮正式检查均 exit 0 / PASS，详见 [live-final](reviews/evidence/mvp-ui-2026-09-28/live-final.json)。
+
+最终验收轮 14 次模型调用（本批较早失败轮次另计，见证据），provider/transport 错误为 0；有 1 次模型猜错另一项目收件人的语义工具错误，后续已修正，不能写成零工具错误。普通读取、重开及继续 gate 未增加模型调用；此前失败保留。浏览器已核对文件保存与 CAS 冲突、命令隐藏保留/运行/取消、Git↔working tree 行级 diff、未保存选区进入真实请求并返回 marker、成员原 Session 咨询答复、双图节点/固定/新页、Task→Run→原历史，以及固定高度/调宽。[本批验收与失败记录](reviews/evidence/mvp-ui-2026-09-28/README.md)。
+
+边界：命令页无 PTY/stdin；架构初始化仍需人工审阅 JSON；Host 内存句柄不代表任意崩溃自动恢复；本次使用隔离 retry 工程，未修改三个候选真实仓库。无默认四 Agent 或 AG 专用生产流程。DSH 已停止，未提交或推送。临时工作台 [查看当前界面](http://127.0.0.1:44797/workbench/)（PID 2247899）保留运行供查看，启动本身不调用模型；这是临时地址，不承诺长期可用。
+
+## 此前共同机制收口（历史结果）
+
+**2026-09-28 当前落点：共同机制已导入并通过本轮统一验收。** 100 个候选文件精确导入，后续必要修正后共 102 个代码/测试/资源/生成物路径。 DSH 已停止，主审与子代理已完成候选修正、独立复核和导入；不再等待候选导入。实现复用原 owner、Runtime 与 Kernel，包括隔离 A′、真实 yield 后同 Task/Session 新 Run 接续、Work 控制、同 Goal 独立 Task 推进、显式机械通知及生命周期入口。没有默认启动四个 Agent，也没有按 AG 场景划分的专用生产流程。
+
+**本轮限定验收通过。** 相关 15 文件/134 项检查中 3 项旧 AG2 fixture 迁移后通过，导入后 driver 与目录参数修正的必要复验、类型和构建通过。最终浏览器启动的 DeepSeek 链为 14 次请求、两次真实让出/回复/原 Session 新 Run 接续、实际改文件、Work 与 Goal gate 两次正式检查 PASS，Goal COMPLETED；网络、provider、工具错误均为 0。刷新和原历史展开未新增模型请求，临时 Host 已关闭；此前失败保留并记录根因。详见[统一验收记录](reviews/evidence/orchestration-2026-09-28/README.md)。通用决定提交、原生 compact、Query 公开控制及整个 MVP 未宣告完成。
+
+已认可机制及剩余边界见[状态机 §0.3–0.7](ORCHESTRATION-STATE-MACHINES.md#shared-mechanism-review)。先核本轮终验结果，不重启已停止的 DSH，也不因旧任务书存在自动派发。
+
+## 历史施工记录（以下状态仅限记录当时）
+
+候选审阅更新：独立候选仍**未导入、未完成统一验收**。DSH已停止；主审及独立子代理继续同一候选修正共同接口。此前“非空源历史A′失败”已定位为受控provider按全局次数误选回复的fixture问题，未因此放宽Kernel；原执行控制、同Goal真实并行、两轮让出续接至正式Goal完成已分别走通。当前收口迟到回复及attention共同输入确认，之后做统一检查、真实模型与浏览器。scope为199文件，保留原脏工作树。最新状态见[候选元数据](reviews/evidence/orchestration-2026-09-28/candidate.json)，较早审阅保留当时结论。
+
+2026-09-28 最新实施约束：用户要求直接整体实现共同状态机，不按AG场景或最小成功链分步堆处理器。[统一任务](tasks/ORCHESTRATION-common-mechanism-2026-09-28.md)以完整状态/事件/副作用为基线，DSH独立候选完成机制后统一验收，主审检查再导入。当前lane `orchestration-common-20260928` 已启动，Session为 `session-f1ce26f2-fcc9-4fe3-907f-171136051253`；候选未导入/验收。根工作树只准备任务/scope、五个候选文件占位及从冻结source map逐字恢复九个必要Kernel源码（2,190行已有源码，不是新增逻辑），未改变已运行生成物。[候选元数据](reviews/evidence/orchestration-2026-09-28/candidate.json)、[恢复记录](reviews/evidence/orchestration-2026-09-28/restored-kernel-sources.json)与[独审依据](reviews/evidence/orchestration-2026-09-28/review-basis.md)已落盘。不是生产完成或MVP完成；候选实际状态后续在此更新。
+
+2026-09-28 用户已认可[单张协作主图](ORCHESTRATION-STATE-MACHINES.md#shared-mechanism-review)，并补充[调查、全局判断和决定回流](ORCHESTRATION-STATE-MACHINES.md#project-guidance-loop)及[Agent状态/转换表](ORCHESTRATION-STATE-MACHINES.md#agent-state-transitions)。最新纠偏明确：由[心跳、文件增删行量、双图变化量及成员反馈](ORCHESTRATION-STATE-MACHINES.md#attention-triggers)触发，参谋收到线索后再作语义判断；不持续运行模型发现“关键变化”，项目概览是实际判断的产物。秘书帮助人理解与掌控，书记核查事实/历史和落实来源，职责按需组合。决定、正式采用和实际落实分别关联原事实与双图。各职责共用状态，表中列明标志、触发、条件及实际能力；AG2b执行中等回复仍非让出休眠，AG2a原Session咨询仍非A′。已有角色资源、Query/计划和图入口可复用，完整变化交付、决定落实与通用生命周期消费者仍有缺口。主图不重复审批；后续按最小真实缺口冻结接口并两阶段DSH施工。本轮只改文档，无生产/测试改动，未启动DSH/模型；下方证据保留原范围。
+
+**AG2b 原 Run 持续通信（2026-09-28）已导入并通过限定真实模型验收。** 显式 `send_session_message(replyMode: 'wait')` 经原 Run outbox 触发已有咨询消费者，B 在原收件 Session 产生正式 Answer，回复作为原 Kernel 工具结果让 A 继续并可再次咨询。Host 持有推进句柄，工作台查询状态与请求停止；普通消息不自动派发，busy/归档对象不被抢占或换成新 Session。正式 cancel 与原运行排空沿已有 owner 执行，queued 或未确认取消保留原因，不自行释放占用。
+
+隔离工程成功轮次13次 DeepSeek 调用，两轮回复均进入同一 A Run 后续请求，B 保持同一 Session；真实文件编辑、Work/gate 两个正式检查轮次 PASS、Goal COMPLETED，当前轮 transport/provider/tool errors 均为0。[AG2b 证据](reviews/evidence/agent-behavior-2026-09-28/ag2b/README.md)保留此前两次连接失败及一次模型调用前的 Node 环境失败，不以成功轮次抹掉这些记录。该结果只证明存活 Host 内的限定往返与执行链，不保证语义可靠，不包含 Host 崩溃、Run ended/pause 后自动续跑；重开读取持久事实不等于自动恢复执行。AG3、Reviewer/返工、并行、治理、完整恢复及整体 UI/真实项目验收继续，**不是整个 MVP 完成**。
+
+本批相关11文件/105项、Node/UI类型、边界及构建通过。实际浏览器启动后刷新读回相同flow，看到两条回复、正式Goal完成和可展开原历史；普通读取未新增模型。测试Host已正常关闭，未提交/推送。
+
+
+**当前增量（2026-09-28）：MVP 路线已整理，AG2a 显式咨询消费者已导入。** 本次[分享](https://chatgpt.com/share/6ab95058-2208-83ec-912a-0e1e11c74d0e)中的异步感知、上下文对齐、人回路及冷启动/重启/待命区别已纳入 [Agent 行为计划 §6–8](AGENT-BEHAVIOR-PLAN.md#6-对齐注意力与异步感知)，按 B01–B10/E01–E12 保留真实缺口。既有消息经同一工作台“处理咨询”→原 idle 收件 Session→正式 Query Answer→原消息回复，复用原 Kernel；Query 仍只读，无新常驻调度器、替代 Session 或 coding Task。busy 返回等待，已有 Answer 先恢复关联，不因之后忙碌或归档而重跑模型。
+
+两阶段 DSH、一次集中返修与独审后，12 文件/115 项、Node/UI 类型、边界和隔离构建通过；[本批证据](reviews/evidence/agent-behavior-2026-09-28/ag2/README.md)记录真实模型/浏览器最终状态、精确哈希与代码增量。AG2a 当时原发送方续接仍待接；现有 AG2b 限定结果见上方，完整中断恢复仍待补；AG3 派发、返工/Reviewer、并行、控制恢复、治理与完整 UI/真实项目验收继续，**不是整个 MVP 完成**。本批未提交/推送，保留此前全部工作树改动。 真实模型与浏览器终验已通过限定接线：共7次模型调用，首条4次含2次参数错误后修正，浏览器第二条3次/2次成功工具/0失败；重放、重开和普通读取均无新增模型。该结果不保证语义可靠，也不宣称零工具错误。
+
+**当前增量（2026-09-28）：AG6 提示词与显式装配已导入。** [任务与范围](tasks/AG6-behavior-assembly-2026-09-28.md)沿两阶段 DSH 完成，复用原 Host/Runtime/Kernel Skill 链；`grant.skills = { bundle: 'platform', behaviors: ['secretary', 'scribe'] }` 可组合共同工作原则与按需职责，原资源根配置保留。生产 TypeScript 只改 Host 配置文件，没有新建 Agent factory 或修改 Kernel。统一工作台只有一个通用交互面，可按成员查看 Session；配置职责不创建成员、不自动启动四个 Agent。生命周期 owner 执行动作并保存事实，何时/为何创建、复用、协调或交接归编排，自动规模调度/压缩仍是未来方向。
+
+装配相关 4 文件/19 项、Node/UI 类型、边界和隔离构建通过；一轮提示词修正后的 2 文件/8 项及资源摘要复验见[本批证据](reviews/evidence/agent-behavior-2026-09-28/ag6/README.md)。真实 DeepSeek 两轮各四个按需样本均完成、无工具/provider 错误；语义复核仍发现无来源图边、消费者数量的过强结论及额外授权/检查建议，**不据此宣称角色回答可靠、正式审查或完整 MVP 完成**。本批不再扩大模型评测循环；后续实际行为验收需核对这些具体问题。AG2–AG5 的咨询回复、Agent 派发、并行与恢复缺口保持原状态；未提交/推送。
+
+**当前推进顺序（2026-09-27）：** 用户已改为“先定义 Agent 职责和行为，再执行”。[Agent 行为计划](AGENT-BEHAVIOR-PLAN.md)已落盘，职责可组合，复用/派生由语义和双图事实判断，不按行数自动创建。[AG1](tasks/AG1-session-discovery-2026-09-27.md)已通过两阶段 DSH、独审并导入：Work Run 可用 `find_related_sessions` → `read_session_card` → 既有邮箱发送咨询，秘书 Skill 同步；忙碌对象可收异步消息，不并发启动同 Session。独立6文件/42项、Node/UI类型、边界通过，[证据](reviews/evidence/agent-behavior-2026-09-27/ag1/verification.json)。本批生产TS净+307、测试+151行，不把接线增量称为减行。回复、委托、复用/创建执行、并行和恢复按后续行为批次验证；此前冗余报告保留为候选，不再自动派发。 [真实DeepSeek](reviews/evidence/agent-behavior-2026-09-27/ag1/live-result.json)随后完成4次模型/3次成功工具调用，接收者仍待命，读回不新增模型调用。
+
+**新增代码明细（2026-09-27）：** [代码与逻辑清单](reviews/new-code-and-logic-2026-09-27.md)按完整哈希恢复的B1基线列出60个新生产路径、48个修改文件及58个变化测试文件，逐项给出增删、逻辑与消费者。生产净增33,161行；前轮450行清理候选均早于这次增长，不能据此解释新增体量。本次仅文档/统计，未继续改生产或测试。
+
+**最新清理进展（2026-09-27）：** 用户授权按“DSH探索→主审复核→DSH执行”清理冗余，范围不扩展到旧MVP任务。首批[角色准入复用](tasks/CLEANUP-role-admission-2026-09-27.md)已两阶段完成并精确导入：删除同次准入在组合根的重复角色解析，原guards/Host权限检查保留。限定执行路径额外解析4→0，独立4文件/41项、Node/UI类型、边界和物理构建通过，[证据](reviews/evidence/cleanup-2026-09-27/role-admission/verification.json)。源码物理行净变化0，未提交/推送。其余候选见[DSH对照及主审取舍](reviews/dsh-long-context-review-2026-09-27.md)，尚未执行；下文“停止施工”指此前真实模型验收轮，不撤销本次窄清理授权。
+
 **最新独立仓库验收：124 文件 / 1,102 项通过（exit0）。** 本次包含最终 graph/history UI 和独立目录构建脚本；Kernel 补丁再生、边界、Node/UI 类型、构建、编译入口和受 token 保护的 Host smoke 均通过。[独立验收记录](reviews/evidence/standalone-2026-09-27/verification.json)。本轮[有界 completion audit](reviews/completion-audit-2026-09-27.md)已完成：仍有真实实现阻塞与验收缺证；下方较早报告保留其当时范围。
 
 > 独立仓库说明（2026-09-27）：本仓库根即原 `coding-platform/next`，文档位于 `docs/`；当前继续入口见根 `CONTINUE.md` 与 `AGENTS.md`。旧证据、任务书中的绝对路径和 scope 只描述当时工作区，不能直接执行。用户已从独立 main 恢复并完成有界审计；本轮真实模型接入的非语义错误修复已验收并停止，尚未宣告整个 MVP 完成。

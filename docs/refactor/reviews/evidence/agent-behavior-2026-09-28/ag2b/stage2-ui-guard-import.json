@@ -1,0 +1,7 @@
+{
+  "path": "src/ui/main.ts",
+  "before": "2092c66627dd36e6859c11167519e93cbdd5b0ba033812abc7d49ef0517617ea",
+  "after": "6010a0746822e3cfbb827a4b82265486e28cb8fb14689b3f6d49c2383cdbb168",
+  "attempt": "1790576083138191408",
+  "otherImportedPathsUnchanged": true
+}

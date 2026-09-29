@@ -17,6 +17,7 @@
  *    open/begin are explicitly unsupported while history reads keep working).
  */
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
+import type { WorkspaceScope } from '../../../contracts/core/identity.js';
 import type { EvidenceOutcome, EvidenceRef, EvidenceSnapshot } from '../../../contracts/evidence.js';
 import type { ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import type { RunRef, TaskTriple } from '../../../contracts/dispatch.js';
@@ -46,6 +47,19 @@ export type FinalizedChecks = {
     gaps: RoundSnapshot['gaps'];
 };
 
+/**
+ * The narrow original-round query. It names exactly the subject Run, Task and
+ * adopted Plan of an already-ended Work Run so a caller can find the ONE round
+ * already produced for it — open or finalized — instead of opening a second
+ * round. It never accepts a caller-supplied round identity, digest or verdict;
+ * the lookup is a read over the existing RecordStore only.
+ */
+export type OriginalVerificationQuery = {
+    subjectRunRef: RunRef;
+    subject: TaskTriple;
+    planRef: PlanRevisionRef;
+};
+
 export interface EvidencePort {
     openVerification(
         ctx: CoreCallContext,
@@ -53,12 +67,25 @@ export interface EvidencePort {
             subjectRunRef: RunRef;
             subject: TaskTriple;
             planRef: PlanRevisionRef;
-            gateSubject?: 'goal';
+            gateSubject?: 'goal' | 'stage' | 'module';
         }>,
     ): Promise<WriteResult<RoundSnapshot>>;
     readVerification(
         ctx: CoreCallContext,
         ref: VerificationRoundRef,
+    ): Promise<ReadResult<RoundSnapshot>>;
+    /**
+     * Optional narrow read: the ONE original round (open or finalized) for
+     * exactly this subject Run/task/plan. A formal zero result is 'not_found',
+     * exactly one candidate is 'ready', and more than one candidate is
+     * 'incomplete' (never a guessed latest). An absent or unknown implementation
+     * is NOT 'not_found': a caller must wait rather than treat it as "no round".
+     * The service implements it as a candidate lookup over the existing
+     * RecordStore; no second store, table or manager is created.
+     */
+    queryOriginalVerification?(
+        ctx: CoreCallContext,
+        request: OriginalVerificationQuery,
     ): Promise<ReadResult<RoundSnapshot>>;
     beginCheck(
         ctx: CoreCallContext,
@@ -83,6 +110,16 @@ export interface EvidencePort {
     ): Promise<WriteResult<FinalizedChecks>>;
 }
 
+/**
+ * R6 cold-start scoped checks resolver. It returns the CURRENT trusted checks
+ * configuration for exactly one workspace scope, or `undefined` when that scope
+ * has none. A fresh round resolves and FREEZES its own configuration; an
+ * already-open round/ticket keeps the exact configuration it recorded. The
+ * resolver never crosses a workspace and never widens a permission: Stage 2
+ * reuses the existing Host workspace authorization to build the configuration.
+ */
+export type CheckConfigurationResolver = (scope: WorkspaceScope) => TrustedCheckConfiguration | undefined;
+
 export type EvidenceServiceDependencies = {
     records: GoalRecordTransactionPort & RecordLookupPort;
     materials: MaterialPort;
@@ -90,9 +127,13 @@ export type EvidenceServiceDependencies = {
     executions: ExecutionReadPort;
     workspaceHost: WorkspaceHostBindings;
     source: VerificationRoundSourcePort;
-    /** Frozen trusted checks configuration. Absent keeps history reads/receipts
+    /** Legacy frozen trusted checks configuration. Kept byte-compatible for
+     * existing callers; a scoped `configurationFor` takes precedence for a
+     * fresh round when both are supplied. Absent keeps history reads/receipts
      * but makes fresh open/begin explicitly unsupported. */
     configuration?: TrustedCheckConfiguration;
+    /** R6 scoped resolver; Stage 1 declares the seam only. */
+    configurationFor?: CheckConfigurationResolver;
     now(): string;
     newId(): string;
 };

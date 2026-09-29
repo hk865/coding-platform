@@ -1,0 +1,27 @@
+{
+  "writableFiles": [
+    "src/app/collaboration-driver.ts",
+    "src/app/host.ts",
+    "src/app/core-routes.ts",
+    "src/app/core-http-types.ts",
+    "src/core/work-graph/communication/contracts.ts",
+    "src/core/work-graph/communication/message-record-codecs.ts",
+    "src/core/work-graph/communication/mailbox-service.ts",
+    "src/core/agent-runtime/communication-tools.ts",
+    "src/core/agent-runtime/execution-driver.ts",
+    "src/core/agent-runtime/execution-control.ts",
+    "src/composition/create-platform.ts",
+    "src/ui/main.ts",
+    "src/ui/views.ts",
+    "resources/skills/platform-work/content.md",
+    "runtime-assets.json"
+  ],
+  "dshStateDirectories": [
+    "profiles",
+    "sessions",
+    "storages",
+    "cache",
+    "llm-deepseek",
+    "attachments"
+  ]
+}

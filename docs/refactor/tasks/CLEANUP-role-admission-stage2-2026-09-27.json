@@ -1,0 +1,4 @@
+{
+  "writableFiles": ["src/core/work-graph/tasks/execution-entry-contracts.ts", "src/core/work-graph/tasks/execution-entry-service.ts", "src/composition/create-platform.ts"],
+  "dshStateDirectories": ["profiles", "sessions", "storages", "cache", "llm-deepseek", "attachments"]
+}

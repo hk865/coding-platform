@@ -75,6 +75,8 @@ export const contextBasisSchema = z
     version: z.number().int().positive(),
     mode: z.string().min(1),
     throughPosition: z.number().int().positive(),
+    /** 派生隔离基线：前缀来自该源 Session；缺省表示当前 Session 自身。 */
+    sourceSessionId: z.string().min(1).optional(),
 })
     .strict();
 const recordBase = {

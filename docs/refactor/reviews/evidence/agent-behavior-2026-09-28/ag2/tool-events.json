@@ -1,0 +1,84 @@
+{
+  "scope": {
+    "projectId": "ag2-live-project",
+    "workspaceId": "ag2-live-workspace"
+  },
+  "sessionRef": {
+    "projectId": "ag2-live-project",
+    "sessionId": "session-c9b44e0ab20e012088c8276f83e5fd1211e3245f89a9bd92b5475b105bc57772"
+  },
+  "recordCount": 42,
+  "counts": {
+    "first": {
+      "requests": 4,
+      "completedTools": 3,
+      "failedTools": 2
+    },
+    "browser": {
+      "requests": 3,
+      "completedTools": 2,
+      "failedTools": 0
+    }
+  },
+  "failures": [
+    {
+      "position": 9,
+      "detail": {
+        "callId": "call_00_cjxZ8JVkT3oBYapfiOsj7944",
+        "phase": "execution",
+        "result": {
+          "schemaVersion": 1,
+          "callId": "call_00_cjxZ8JVkT3oBYapfiOsj7944",
+          "output": [
+            {
+              "kind": "text",
+              "text": "工具参数不符合 schema"
+            }
+          ],
+          "effects": {
+            "sideEffect": "none",
+            "changedPaths": [],
+            "workspaceRevision": null,
+            "artifactRefs": []
+          },
+          "status": "error",
+          "error": {
+            "code": "invalid_arguments",
+            "message": "工具参数不符合 schema",
+            "retryable": false
+          }
+        }
+      }
+    },
+    {
+      "position": 10,
+      "detail": {
+        "callId": "call_01_LffavCHos38z75FXsKSZ7423",
+        "phase": "execution",
+        "result": {
+          "schemaVersion": 1,
+          "callId": "call_01_LffavCHos38z75FXsKSZ7423",
+          "output": [
+            {
+              "kind": "text",
+              "text": "工具参数不符合 schema"
+            }
+          ],
+          "effects": {
+            "sideEffect": "none",
+            "changedPaths": [],
+            "workspaceRevision": null,
+            "artifactRefs": []
+          },
+          "status": "error",
+          "error": {
+            "code": "invalid_arguments",
+            "message": "工具参数不符合 schema",
+            "retryable": false
+          }
+        }
+      }
+    }
+  ],
+  "source": "formal sessions/history; tool/model event fields only; no private reasoning exported"
+}

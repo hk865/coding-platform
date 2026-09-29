@@ -63,8 +63,9 @@ import { createSessionLifecycleService } from '../core/work-graph/sessions/sessi
 import type { SessionLifecyclePort } from '../core/work-graph/sessions/lifecycle-contracts.js';
 import { SESSION_LIFECYCLE_RECORD_SCHEMAS } from '../core/work-graph/sessions/lifecycle-record-codecs.js';
 import { createKernelStoreRegistry } from '../core/agent-runtime/kernel-store-locator.js';
-import { createSessionOperations } from '../core/agent-runtime/session-operations.js';
+import { createSessionHistoryCursorOwner, createSessionOperations } from '../core/agent-runtime/session-operations.js';
 import type { CoreCallContext } from '../contracts/core/call-context.js';
+import type { SessionRef } from '../contracts/core/identity.js';
 import type { CoreRejection, ReadResult } from '../contracts/core/results.js';
 import { canonicalJson, type JsonValue } from '../contracts/fingerprint.js';
 import type { MaterialSourceScope } from '../contracts/material-access.js';
@@ -137,32 +138,26 @@ function sameJson(left: unknown, right: unknown): boolean {
 /**
  * The trusted Host projection consumed by the WorkGraph entry/model-call lanes.
  *
- * It re-resolves the current formal Role from the persisted Run roleBinding, then
- * calls the SAME `options.runtime.resolveConfiguration` binding the Runtime
+ * It consumes the exact Role resolution the WorkGraph admission recheck already
+ * made, then calls the SAME `options.runtime.resolveConfiguration` binding the Runtime
  * driver uses. The prepared manifest permissions are only accepted after the
  * current Host tools/writeScope/shell grant and the Role ceiling allow them; the
  * whole Host template is taken from the current configuration (never rebuilt
  * from fixture constants). The returned value must still satisfy WorkGraph's
  * exact configuration/permissions/template agreement check.
  */
-function createAuthorizeConfiguration(
-  host: RuntimeHostBindings,
-  roles: Pick<RoleConfigurationPort, 'resolveRoleBinding'>,
-): AuthorizeConfiguration {
+function createAuthorizeConfiguration(host: RuntimeHostBindings): AuthorizeConfiguration {
   return async (ctx, input) => {
-    const resolved = await roles.resolveRoleBinding(ctx, {
-      roleBinding: input.run.roleBinding,
-      declaredPermissions: input.permissions,
-    });
-    if (resolved.status !== 'ready') return resolved;
-    const resolution = resolved.value;
+    const resolution = input.roleResolution;
     if (resolution.status === 'inadmissible') {
       return { status: 'rejected', code: 'forbidden', reason: 'the current Role binding is inadmissible' };
     }
     const configured = await host.resolveConfiguration(ctx, {
       runRef: input.run.ref,
       role: input.sessionRole,
-      roleResolution: resolution,
+      // Isolate the reused entry resolution so handing it to the Host cannot
+      // couple the admission's already-checked facts to a Host mutation.
+      roleResolution: structuredClone(resolution),
     });
     if (configured.status !== 'ready') return configured;
     const current = configured.value;
@@ -310,7 +305,17 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // and the C1 mailbox admission share exactly this instance and this callback.
     const executionReader = createRunStateReader({ records: backend.records });
     const authorizeConfiguration = options.runtime === undefined
-      ? undefined : createAuthorizeConfiguration(options.runtime, roleService);
+      ? undefined : createAuthorizeConfiguration(options.runtime);
+    const sessionDirectory = createSessionDirectory({ records: backend.records, lookups: backend.records });
+    // The public mailbox is real even without a model Host binding; internal
+    // calls use the raw service so an in-flight operation is never rejected by
+    // the public tracked wrapper after close has already begun. It is built
+    // BEFORE the Query jobs so a consultation submit can use its read-only
+    // message seam; no second mailbox/service instance exists.
+    const mailbox = createSessionMailbox({ records: backend.records, sessions: sessionDirectory,
+      executions: executionReader, roles: roleService, materials: rawMaterials,
+      systemActor: SYSTEM_ACTOR, now, newId: randomUUID,
+      ...(authorizeConfiguration === undefined ? {} : { runtimeAdmission: { bodies, authorizeConfiguration } }) });
     // R5b.2: the ONE internal Query writer shares this records/roles/bodies
     // instance. It is injected into the QueryJob claim/read adapter and the
     // Runtime thin path, never published as a public terminal port. Without a
@@ -324,6 +329,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     const queryJobs = createQueryJobService({
       records: backend.records, now, eventId: randomUUID,
       ...(queryExecution === undefined ? {} : { execution: queryExecution }),
+      consultations: { readMessage: mailbox.readMessage.bind(mailbox), readMessageBody: mailbox.readMessageBody.bind(mailbox) },
     });
     const observed = createObservedArchitecture({ records: backend.records, bodies, access, workspace: workspace.tools,
       source: options.architectureSource ?? { provider: 'typescript', configPath: 'tsconfig.json' } });
@@ -336,7 +342,6 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       }) });
     const claimService = createTaskClaimService({ records: backend.records, roles: roleService,
       now, newId: randomUUID });
-    const sessionDirectory = createSessionDirectory({ records: backend.records, lookups: backend.records });
     const sessionLifecycle = createSessionLifecycleService({ records: backend.records, lookups: backend.records });
     const kernelStores = await createKernelStoreRegistry(options.kernelStores ?? { entries: [] });
     // Internal calls retain the raw directory. The outer Runtime operation is
@@ -355,21 +360,26 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // check runner share the existing records/material/execution instances. The
     // frozen checks configuration is optional; without it fresh open/begin stay
     // unsupported while existing history reads/receipts keep their behavior.
+    // R6 cold-start: the live per-workspace trusted checks configuration the
+    // Host registers after an explicit user approval. It is read by a FRESH
+    // round only; an already-open round keeps the configuration it froze. The
+    // legacy static `options.checks` remains a compatible same-scope fallback.
+    const registeredCheckConfigurations = new Map<string, TrustedCheckConfiguration>();
+    const checkScopeKey = (scope: { projectId: string; workspaceId: string }): string =>
+      `${scope.projectId}\u0000${scope.workspaceId}`;
     const rawEvidence = createEvidenceService({
       records: backend.records, materials: rawMaterials, materialFacts, executions: executionReader,
       workspaceHost: options.workspace, source: new VerificationWorkspaceReader(),
       ...(options.checks === undefined ? {} : { configuration: options.checks }),
+      configurationFor: (scope) => registeredCheckConfigurations.get(checkScopeKey(scope))
+        ?? (options.checks !== undefined
+          && options.checks.workspace.projectId === scope.projectId
+          && options.checks.workspace.workspaceId === scope.workspaceId
+          ? options.checks : undefined),
       now, newId: randomUUID,
     });
     const rawCheckRunner = createRegisteredCheckRunner({ evidence: rawEvidence,
       workspaceHost: options.workspace, kernel, now });
-    // The public mailbox is real even without a model Host binding; internal
-    // calls use the raw services so an in-flight operation is never rejected by
-    // the public tracked wrappers after close has already begun.
-    const mailbox = createSessionMailbox({ records: backend.records, sessions: sessionDirectory,
-      executions: executionReader, roles: roleService, materials: rawMaterials,
-      systemActor: SYSTEM_ACTOR, now, newId: randomUUID,
-      ...(authorizeConfiguration === undefined ? {} : { runtimeAdmission: { bodies, authorizeConfiguration } }) });
     let runtime = createAgentRuntime();
     if (options.runtime !== undefined) {
       const host = options.runtime;
@@ -430,9 +440,14 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       archiveSession: (...args) => trackedCall(() => sessionLifecycle.archiveSession(...args), unavailable),
       reactivateSession: (...args) => trackedCall(() => sessionLifecycle.reactivateSession(...args), unavailable),
     };
-    const executions: ExecutionReadPort & ExecutionHistoryWritePort = {
+    const executions: ExecutionReadPort & ExecutionHistoryWritePort
+      & Required<Pick<ExecutionReadPort, 'listExecutions'>> = {
       recordExecutionHistory: (...args) => trackedCall(() => historyWriter.recordExecutionHistory(...args), unavailable),
       readExecution: (...args) => trackedCall(() => executionReader.readExecution(...args), unavailable),
+      // MVP UI connection: the bounded execution list is assembled here so the
+      // route table never sees a missing method. The reader implementation is
+      // still an explicit stage-one gap.
+      listExecutions: (...args) => trackedCall(() => executionReader.listExecutions!(...args), unavailable),
     };
     const claims: TaskClaimPort = {
       claimTask: (...args) => trackedCall(() => claimService.claimTask(...args), unavailable),
@@ -452,10 +467,19 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       createProject: (...args) => trackedCall(() => bootstrap.projects.createProject(...args), unavailable),
       registerWorkspace: (...args) => trackedCall(() => bootstrap.projects.registerWorkspace(...args), unavailable),
       readWorkspaceRegistration: (...args) => trackedCall(() => bootstrap.projects.readWorkspaceRegistration(...args), unavailable),
+      // MVP UI connection: the narrow Project-only read is assembled here so a
+      // real composition never leaves it absent. The reader implementation is
+      // still an explicit stage-one gap.
+      readProject: (...args) => trackedCall(() => bootstrap.projects.readProject!(...args), unavailable),
     };
     const completionPolicies: CompletionPolicyConfigurationPort = {
       installCompletionPolicy: (...args) => trackedCall(() => bootstrap.completionPolicies.installCompletionPolicy(...args), unavailable),
       activateCompletionPolicy: (...args) => trackedCall(() => bootstrap.completionPolicies.activateCompletionPolicy(...args), unavailable),
+      // R6 cold-start: the independent current-policy read published as the
+      // original `completion-policies/read` core route. The real owner always
+      // publishes it; the optional cast keeps a narrow double compiling.
+      readCurrentCompletionPolicy: (...args) =>
+        trackedCall(() => bootstrap.completionPolicies.readCurrentCompletionPolicy!(...args), unavailable),
     };
     // R5b.1: the public pending QueryJob port depends only on the shared store;
     // it is real even without a Runtime Host binding and both operations are
@@ -492,11 +516,12 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       grantMaterialAccess: (...args) => trackedCall(() => grantService.grantMaterialAccess(...args), unavailable),
       revokeMaterialAccess: (...args) => trackedCall(() => grantService.revokeMaterialAccess(...args), unavailable),
     };
-    const messages: SessionMailboxPort = {
+    const messages: SessionMailboxPort & Required<Pick<SessionMailboxPort, 'readOutbox'>> = {
       sendMessage: (...args) => trackedCall(() => mailbox.sendMessage(...args), unavailable),
       readMessage: (...args) => trackedCall(() => mailbox.readMessage(...args), unavailable),
       readMessageBody: (...args) => trackedCall(() => mailbox.readMessageBody(...args), unavailable),
       readInbox: (...args) => trackedCall(() => mailbox.readInbox(...args), unavailable),
+      readOutbox: (...args) => trackedCall(() => mailbox.readOutbox(...args), unavailable),
       ackMessage: (...args) => trackedCall(() => mailbox.ackMessage(...args), unavailable),
       respondMessage: (...args) => trackedCall(() => mailbox.respondMessage(...args), unavailable),
     };
@@ -512,6 +537,9 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     const evidence: EvidencePort = {
       openVerification: (...args) => trackedCall(() => rawEvidence.openVerification(...args), unavailable),
       readVerification: (...args) => trackedCall(() => rawEvidence.readVerification(...args), unavailable),
+      // The narrow original-round read delegates to the raw Evidence owner's
+      // formal RecordStore candidate lookup; no second store, table or manager.
+      queryOriginalVerification: (...args) => trackedCall(() => rawEvidence.queryOriginalVerification!(...args), unavailable),
       beginCheck: (...args) => trackedCall(() => rawEvidence.beginCheck(...args), unavailable),
       recordCheckResult: (...args) => trackedCall(() => rawEvidence.recordCheckResult(...args), unavailable),
       submitEvidence: (...args) => trackedCall(() => rawEvidence.submitEvidence(...args), unavailable),
@@ -550,6 +578,19 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       },
       readSessionHistory(...args: Parameters<typeof sessionOperations.readSessionHistory>) {
         return sessionCall(() => sessionOperations.readSessionHistory(...args));
+      },
+      async readCompletedBoundary(ctx: CoreCallContext, request: { sessionRef: SessionRef }): Promise<ReadResult<{ cursor: string | null; position: number }>> {
+        if (isClosing) return { status: 'rejected', code: 'unavailable', reason: 'platform is closing' };
+        if (ctx.principal.kind !== 'host') return { status: 'rejected', code: 'forbidden', reason: 'the completed boundary read requires the Host principal' };
+        if (request.sessionRef.projectId !== ctx.projectId) return { status: 'rejected', code: 'forbidden', reason: 'the Session belongs to another project' };
+        const read = await sessionDirectory.readSession(ctx, request.sessionRef);
+        if (read.status !== 'ready') return read;
+        const owner = createSessionHistoryCursorOwner({ kernelStores });
+        const boundary = await owner.completedBoundary({ session: read.value.record, signal: ctx.signal });
+        if (boundary.status !== 'resolved') {
+          return { status: 'rejected', code: boundary.code, reason: boundary.reason };
+        }
+        return { status: 'ready', value: { cursor: boundary.cursor, position: boundary.position } };
       },
       prepareExecution(...args: Parameters<typeof runtime.port.prepareExecution>) {
         return sessionCall(() => runtime.port.prepareExecution(...args));
@@ -597,19 +638,58 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       executions: executionReader, runtime: rawRuntime, evidence: rawEvidence, checks: rawCheckRunner,
       sourceAuthority,
       ...(workflowConfiguration === undefined ? {} : { configuration: workflowConfiguration }),
+      // The explicit-consultation consumer reuses the SAME mailbox/Query/Project
+      // owners. The mailbox half is read-only plus the ONE Host-only answer
+      // association; it is never a second mailbox or a new service.
+      consultations: {
+        messages: { readMessage: mailbox.readMessage.bind(mailbox), readMessageBody: mailbox.readMessageBody.bind(mailbox),
+          respondFromQueryAnswer: mailbox.respondFromQueryAnswer.bind(mailbox),
+          recordConsultationDerivation: mailbox.recordConsultationDerivation!.bind(mailbox) },
+        queries: queryJobs,
+        projects: bootstrap.projects,
+      },
     };
     const rawWorkflow = createWorkflow(workflowDependencies);
     // The public advancement port drains the complete call before any owned
     // store closes; the in-flight raw workflow keeps the raw owner instances.
-    const workflow: WorkflowPort = {
+    const workflow: WorkflowPort & Required<Pick<WorkflowPort, 'consumeConsultation'>> = {
       handleGoalInput: (...args) => trackedCall(() => rawWorkflow.handleGoalInput(...args), unavailable),
       advanceWork: (...args) => trackedCall(() => rawWorkflow.advanceWork(...args), unavailable),
+      consumeConsultation: (...args) => trackedCall(() => rawWorkflow.consumeConsultation(...args), unavailable),
     };
     let closing: Promise<void> | undefined;
     return {
       goals, plans, claims, executions, sessions, materials, messages, controls, evidence, checks, roles, architecture, projects, completionPolicies,
       queries,
-      workspace: workspace.tools, runtime: runtimePort, workflow,
+      workspace: workspace.tools, runtime: runtimePort, workflow, kernelStores,
+      /**
+       * Extend the trusted Workflow configuration with one newly opened
+       * workspace binding. The existing Workflow reads `deps.configuration`
+       * live, so the binding takes effect without a restart; a binding for the
+       * exact workspace is upserted and never duplicated or widened.
+       */
+      /**
+       * R6 cold-start narrow seam: register the CURRENT Host-approved trusted
+       * checks configuration for exactly one workspace. It only replaces the
+       * registration map keyed by that workspace scope; a fresh round opened
+       * afterwards resolves it, while every already-open round keeps its own
+       * frozen configuration. It grants no model/tool permission of its own.
+       */
+      registerCheckConfiguration(input: { configuration: TrustedCheckConfiguration }): void {
+        registeredCheckConfigurations.set(checkScopeKey(input.configuration.workspace), structuredClone(input.configuration));
+      },
+      registerWorkflowBinding(input: { consumerId: string; binding: WorkflowHostConfiguration['bindings'][number] }): void {
+        const current = workflowDependencies.configuration;
+        if (current === undefined) {
+          workflowDependencies.configuration = { consumerId: input.consumerId, bindings: [structuredClone(input.binding)] };
+          return;
+        }
+        const bindings = current.bindings as WorkflowHostConfiguration['bindings'][number][];
+        const index = bindings.findIndex(existing => existing.workspace.projectId === input.binding.workspace.projectId
+          && existing.workspace.workspaceId === input.binding.workspace.workspaceId);
+        if (index >= 0) bindings[index] = structuredClone(input.binding);
+        else bindings.push(structuredClone(input.binding));
+      },
       close(): Promise<void> {
         isClosing = true;
         closing ??= (async () => {

@@ -20,6 +20,18 @@ import type { ReadResult, WriteResult } from '../../../contracts/core/results.js
 import type { RecordGuard } from '../../record-store/ports.js';
 import type { GraphWrite } from './contracts.js';
 
+import type {
+  AdoptInitialArchitectureInput,
+  AdoptedArchitecture,
+  ModuleDefinition,
+} from '../../../contracts/architecture-catalog.js';
+export type {
+  AdoptInitialArchitectureInput,
+  AdoptedArchitecture,
+  ModuleContainment,
+  ModuleDefinition,
+} from '../../../contracts/architecture-catalog.js';
+
 /**
  * Baseline body carried by an adopted revision. It mirrors the frozen
  * governance fixture exactly: the catalog must NOT add fields to this object or
@@ -47,34 +59,10 @@ export type ArchitectureBaselineRevisionSnapshot = {
   content: ArchitectureBaselineContentV1;
 };
 
-/** One formal module with its responsibility, path mapping and interfaces. */
-export type ModuleDefinition = {
-  ref: ModuleRef;
-  name: string;
-  responsibility: string;
-  paths: string[];
-  interfaces: { id: string; description: string; paths: string[] }[];
-};
-
-/**
- * Explicit formal containment declared by the adopter. Absence of the field on
- * an `AdoptedArchitecture` means that revision declared no containment at all;
- * an explicit `{parentOf: []}` means every module is flat. Containment is NOT
- * inferred from `paths` or `dependencies`.
- */
-export type ModuleContainment = {
-  parentOf: { parent: ModuleRef; child: ModuleRef }[];
-};
-
-/** The adopted module graph. `requireDag` is part of the adopted structure; a
- * caller cannot pass `false` to bypass the formal module DAG. `containment` is
- * additive and optional exactly as described above. */
-export type AdoptedArchitecture = {
-  modules: ModuleDefinition[];
-  dependencies: { from: ModuleRef; to: ModuleRef; reason: string }[];
-  requireDag: boolean;
-  containment?: ModuleContainment;
-};
+/* The pure ModuleDefinition/ModuleContainment/AdoptedArchitecture/
+ * AdoptInitialArchitectureInput DTOs are lifted to the shared Contracts layer
+ * (`src/contracts/architecture-catalog.ts`) as the ONE definition; this module
+ * imports and re-exports them so every existing caller stays compatible. */
 
 /** Same local identity as the baseline revision, different aggregate type. */
 export type ArchitectureCatalogRef = Omit<ArchitectureBaselineRevisionRef, 'aggregateType'> & {
@@ -95,13 +83,6 @@ export type ArchitectureRevision = {
   /** `null` means the baseline predates the catalog. It is never guessed as an
    * empty catalog. */
   catalog: ArchitectureCatalogRecord | null;
-};
-
-export type AdoptInitialArchitectureInput = {
-  baselineId: string;
-  catalog: AdoptedArchitecture;
-  description: string;
-  constraints: ArchitectureBaselineContentV1['constraints'];
 };
 
 /**

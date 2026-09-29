@@ -1,0 +1,885 @@
+{
+  "goal": [
+    {
+      "ref": {
+        "aggregateType": "Goal",
+        "projectId": "mvp-ui-live-project",
+        "goalId": "goal-mul9e1k0-1"
+      },
+      "workspaceRef": {
+        "aggregateType": "Workspace",
+        "projectId": "mvp-ui-live-project",
+        "workspaceId": "mvp-ui-live-workspace"
+      },
+      "objective": "实现 contract.md 的 retry 合约，仅修改 src/retry.mjs，通过既有检查，保留测试。",
+      "desiredState": "active",
+      "activePlanRevision": {
+        "aggregateType": "PlanRevision",
+        "projectId": "mvp-ui-live-project",
+        "planId": "initial-plan-443a2edd8da3c70b4f18f6aa46b35564"
+      },
+      "revision": 2
+    }
+  ],
+  "goalPhases": [
+    {
+      "ref": {
+        "aggregateType": "GoalPhase",
+        "projectId": "mvp-ui-live-project",
+        "goalId": "goal-mul9e1k0-1"
+      },
+      "revision": 1,
+      "schemaVersion": 1,
+      "planRef": {
+        "aggregateType": "PlanRevision",
+        "projectId": "mvp-ui-live-project",
+        "planId": "initial-plan-443a2edd8da3c70b4f18f6aa46b35564"
+      },
+      "planRevision": 1,
+      "phase": "COMPLETED",
+      "adoptedTaskReductions": [
+        {
+          "ref": {
+            "aggregateType": "TaskReduction",
+            "projectId": "mvp-ui-live-project",
+            "goalId": "goal-mul9e1k0-1",
+            "taskId": "work-retry-contract"
+          },
+          "revision": 1
+        },
+        {
+          "ref": {
+            "aggregateType": "TaskReduction",
+            "projectId": "mvp-ui-live-project",
+            "goalId": "goal-mul9e1k0-1",
+            "taskId": "gate-retry-contract"
+          },
+          "revision": 1
+        },
+        {
+          "ref": {
+            "aggregateType": "TaskReduction",
+            "projectId": "mvp-ui-live-project",
+            "goalId": "goal-mul9e1k0-1",
+            "taskId": "gate-retry-goal"
+          },
+          "revision": 1
+        }
+      ],
+      "satisfiedObligationIds": [
+        "obl-retry-contract"
+      ],
+      "reducedAt": "2026-09-28T13:19:58.645Z"
+    }
+  ],
+  "runs": [
+    {
+      "ref": {
+        "aggregateType": "Run",
+        "projectId": "mvp-ui-live-project",
+        "goalId": "goal-mul9e1k0-1",
+        "runId": "2d735a2f-a0bf-4c0e-8c3d-14ffe9844e77"
+      },
+      "task": {
+        "projectId": "mvp-ui-live-project",
+        "goalId": "goal-mul9e1k0-1",
+        "taskId": "work-retry-contract"
+      },
+      "planRef": {
+        "aggregateType": "PlanRevision",
+        "projectId": "mvp-ui-live-project",
+        "planId": "initial-plan-443a2edd8da3c70b4f18f6aa46b35564"
+      },
+      "status": "ended",
+      "outcome": "completed",
+      "executionHistory": {
+        "schemaVersion": 1,
+        "sessionRef": {
+          "projectId": "mvp-ui-live-project",
+          "sessionId": "session-42edfcd4e36ade6d8f26336a973e38e2bee06e88f610a397b0c76243a7c81190"
+        },
+        "kernel": {
+          "adapterId": "mvp-ui-kernel",
+          "kernelSessionId": "session-42edfcd4e36ade6d8f26336a973e38e2bee06e88f610a397b0c76243a7c81190",
+          "runId": "krun-b91875d94f646161522443851df70732d41cca25d7faf3ce0a2af1788eaa3655",
+          "turnId": "kturn-170eb66ea53e6d1e9a9cf88a1080a8955f3fb7d5d0c278ba65db985a4281d193"
+        },
+        "startPosition": 40,
+        "observedThroughPosition": 72,
+        "endPosition": 72
+      }
+    }
+  ],
+  "reductions": [
+    {
+      "ref": {
+        "aggregateType": "TaskReduction",
+        "projectId": "mvp-ui-live-project",
+        "goalId": "goal-mul9e1k0-1",
+        "taskId": "work-retry-contract"
+      },
+      "phase": "satisfied",
+      "taskKind": "work",
+      "planRef": {
+        "aggregateType": "PlanRevision",
+        "projectId": "mvp-ui-live-project",
+        "planId": "initial-plan-443a2edd8da3c70b4f18f6aa46b35564"
+      },
+      "completion": {
+        "schemaVersion": 1,
+        "roundRef": {
+          "aggregateType": "VerificationRound",
+          "projectId": "mvp-ui-live-project",
+          "workspaceId": "mvp-ui-live-workspace",
+          "goalId": "goal-mul9e1k0-1",
+          "taskId": "work-retry-contract",
+          "runId": "2d735a2f-a0bf-4c0e-8c3d-14ffe9844e77",
+          "roundId": "b6c8ff87-c77c-45c8-b1c7-4061e4a8e4c8"
+        },
+        "roundRevision": 4,
+        "taskBasisRef": {
+          "aggregateType": "PlanRevision",
+          "projectId": "mvp-ui-live-project",
+          "planId": "initial-plan-443a2edd8da3c70b4f18f6aa46b35564"
+        },
+        "verificationPlanRef": {
+          "planId": "680323c875af13744624b589069d04880d7c22ecf9b2243f0655d8d9c6ecb4e7",
+          "planDigest": "680323c875af13744624b589069d04880d7c22ecf9b2243f0655d8d9c6ecb4e7"
+        },
+        "configurationDigest": "be91e8c72106ece8a7409b5e7fd69adae405f7dd72f04a027d60546ff20dba8a",
+        "evidenceRefs": [
+          {
+            "aggregateType": "Evidence",
+            "projectId": "mvp-ui-live-project",
+            "evidenceId": "8ea1fa70-71b1-4dfe-8ee9-f6cfa5a19d57"
+          },
+          {
+            "aggregateType": "Evidence",
+            "projectId": "mvp-ui-live-project",
+            "evidenceId": "dda3e5db-0f27-446f-80d0-2315e3a585c8"
+          }
+        ]
+      }
+    },
+    {
+      "ref": {
+        "aggregateType": "TaskReduction",
+        "projectId": "mvp-ui-live-project",
+        "goalId": "goal-mul9e1k0-1",
+        "taskId": "gate-retry-contract"
+      },
+      "phase": "satisfied",
+      "taskKind": "gate",
+      "planRef": {
+        "aggregateType": "PlanRevision",
+        "projectId": "mvp-ui-live-project",
+        "planId": "initial-plan-443a2edd8da3c70b4f18f6aa46b35564"
+      },
+      "completion": {
+        "schemaVersion": 1,
+        "roundRef": {
+          "aggregateType": "VerificationRound",
+          "projectId": "mvp-ui-live-project",
+          "workspaceId": "mvp-ui-live-workspace",
+          "goalId": "goal-mul9e1k0-1",
+          "taskId": "gate-retry-contract",
+          "runId": "2d735a2f-a0bf-4c0e-8c3d-14ffe9844e77",
+          "roundId": "210d42b1-e4a6-4252-8b41-8ce2aceb9b90"
+        },
+        "roundRevision": 4,
+        "taskBasisRef": {
+          "aggregateType": "PlanRevision",
+          "projectId": "mvp-ui-live-project",
+          "planId": "initial-plan-443a2edd8da3c70b4f18f6aa46b35564"
+        },
+        "verificationPlanRef": {
+          "planId": "a90f7ca92b78e67389e73a993c8a49cc917bce3c2afbeb344b7f7223edc4b563",
+          "planDigest": "a90f7ca92b78e67389e73a993c8a49cc917bce3c2afbeb344b7f7223edc4b563"
+        },
+        "configurationDigest": "be91e8c72106ece8a7409b5e7fd69adae405f7dd72f04a027d60546ff20dba8a",
+        "evidenceRefs": [
+          {
+            "aggregateType": "Evidence",
+            "projectId": "mvp-ui-live-project",
+            "evidenceId": "00d0c3e4-7329-48f5-bef6-d7e308d0c247"
+          },
+          {
+            "aggregateType": "Evidence",
+            "projectId": "mvp-ui-live-project",
+            "evidenceId": "014b4ebd-614b-4ad7-a49d-214bbd9d0880"
+          }
+        ]
+      }
+    },
+    {
+      "ref": {
+        "aggregateType": "TaskReduction",
+        "projectId": "mvp-ui-live-project",
+        "goalId": "goal-mul9e1k0-1",
+        "taskId": "gate-retry-goal"
+      },
+      "phase": "satisfied",
+      "taskKind": "gate",
+      "planRef": {
+        "aggregateType": "PlanRevision",
+        "projectId": "mvp-ui-live-project",
+        "planId": "initial-plan-443a2edd8da3c70b4f18f6aa46b35564"
+      },
+      "completion": {
+        "schemaVersion": 1,
+        "roundRef": {
+          "aggregateType": "VerificationRound",
+          "projectId": "mvp-ui-live-project",
+          "workspaceId": "mvp-ui-live-workspace",
+          "goalId": "goal-mul9e1k0-1",
+          "taskId": "gate-retry-goal",
+          "runId": "2d735a2f-a0bf-4c0e-8c3d-14ffe9844e77",
+          "roundId": "9b867139-8cb1-47e7-aef2-9e7b5947e3dd"
+        },
+        "roundRevision": 4,
+        "taskBasisRef": {
+          "aggregateType": "PlanRevision",
+          "projectId": "mvp-ui-live-project",
+          "planId": "initial-plan-443a2edd8da3c70b4f18f6aa46b35564"
+        },
+        "verificationPlanRef": {
+          "planId": "0fe2ffd8239105fd508a80caf8164b2d9ce4062eba95cbafa25d9b1960bee1f9",
+          "planDigest": "0fe2ffd8239105fd508a80caf8164b2d9ce4062eba95cbafa25d9b1960bee1f9"
+        },
+        "configurationDigest": "be91e8c72106ece8a7409b5e7fd69adae405f7dd72f04a027d60546ff20dba8a",
+        "evidenceRefs": [
+          {
+            "aggregateType": "Evidence",
+            "projectId": "mvp-ui-live-project",
+            "evidenceId": "1253bb07-a663-430a-b9c9-a9a97b23d1f1"
+          },
+          {
+            "aggregateType": "Evidence",
+            "projectId": "mvp-ui-live-project",
+            "evidenceId": "56256797-eb44-4269-92a6-bd1eed3b5392"
+          }
+        ]
+      }
+    }
+  ],
+  "rounds": [
+    {
+      "ref": {
+        "aggregateType": "VerificationRound",
+        "projectId": "mvp-ui-live-project",
+        "workspaceId": "mvp-ui-live-workspace",
+        "goalId": "goal-mul9e1k0-1",
+        "taskId": "work-retry-contract",
+        "runId": "2d735a2f-a0bf-4c0e-8c3d-14ffe9844e77",
+        "roundId": "b6c8ff87-c77c-45c8-b1c7-4061e4a8e4c8"
+      },
+      "subject": {
+        "projectId": "mvp-ui-live-project",
+        "goalId": "goal-mul9e1k0-1",
+        "taskId": "work-retry-contract"
+      },
+      "subjectRunRef": {
+        "aggregateType": "Run",
+        "projectId": "mvp-ui-live-project",
+        "goalId": "goal-mul9e1k0-1",
+        "runId": "2d735a2f-a0bf-4c0e-8c3d-14ffe9844e77"
+      },
+      "adoptedPlanRef": {
+        "aggregateType": "PlanRevision",
+        "projectId": "mvp-ui-live-project",
+        "planId": "initial-plan-443a2edd8da3c70b4f18f6aa46b35564"
+      },
+      "identity": {
+        "schemaVersion": 1,
+        "scope": {
+          "projectId": "mvp-ui-live-project",
+          "workspaceId": "mvp-ui-live-workspace",
+          "goalId": "goal-mul9e1k0-1",
+          "runId": "2d735a2f-a0bf-4c0e-8c3d-14ffe9844e77",
+          "taskId": "work-retry-contract"
+        },
+        "runRef": {
+          "aggregateType": "Run",
+          "projectId": "mvp-ui-live-project",
+          "goalId": "goal-mul9e1k0-1",
+          "runId": "2d735a2f-a0bf-4c0e-8c3d-14ffe9844e77"
+        },
+        "runRevision": 5,
+        "runDigest": "fb8246c456449ed19000e9e340669692383d835ffb649f5df6e717739cfe7001",
+        "planRef": {
+          "aggregateType": "PlanRevision",
+          "projectId": "mvp-ui-live-project",
+          "planId": "initial-plan-443a2edd8da3c70b4f18f6aa46b35564"
+        },
+        "planRevision": 1,
+        "planDigest": "e7f4abbfd9ed79aeb868dd8e37d74eeb354bdca804276d95ac2f35d8af93666a",
+        "taskDigest": "32b19758c4e162e90d3dfcc34a0aca222a5f0cb4787ae99839f28af4677a20f2",
+        "goalRevision": 2,
+        "goalDigest": "9c5d6d6d328c6b6b9144d5688ba18322584a5b5a58cd0ebeb2954dde3dffe0a9",
+        "workspaceRevision": 1,
+        "workspaceDigest": "a3d76cd9013553df7f5d90d1e301b303f992b68f912aeab40e74d81e2992c7fd",
+        "workspaceRoot": "/tmp/mvp-ui-live-20260928/run-FUGeXf/project",
+        "policyPin": {
+          "ref": {
+            "aggregateType": "CompletionPolicyRevision",
+            "projectId": "mvp-ui-live-project",
+            "policyId": "mvp-ui-completion",
+            "revision": 1
+          },
+          "digest": "5108aaa3681b20006529a13c5509361608b621134c6341f99ba7bf4fa015a455"
+        },
+        "baselinePin": {
+          "ref": {
+            "aggregateType": "ArchitectureBaselineRevision",
+            "projectId": "mvp-ui-live-project",
+            "baselineId": "reviewed-retry-architecture",
+            "revision": 1
+          },
+          "digest": "286e36175e04c497d9c3ba0585f3ac83016d3ab80a8092acedd8d8892a4ea2d8"
+        },
+        "sourceDigest": "071366e7dafe7f39601055beee9ae186d6ef201c82598b6375038af3db1fea0c",
+        "sourceProofDigest": "6413f8c2de1313d5786780028de6b3cf3e5117ede6f746a79dddec967817c2a5"
+      },
+      "status": "finalized",
+      "outcome": "PASS",
+      "gaps": [],
+      "evidenceRefs": [
+        {
+          "aggregateType": "Evidence",
+          "projectId": "mvp-ui-live-project",
+          "evidenceId": "8ea1fa70-71b1-4dfe-8ee9-f6cfa5a19d57"
+        },
+        {
+          "aggregateType": "Evidence",
+          "projectId": "mvp-ui-live-project",
+          "evidenceId": "dda3e5db-0f27-446f-80d0-2315e3a585c8"
+        }
+      ],
+      "checks": [
+        {
+          "checkId": "retry-check",
+          "definition": {
+            "checkId": "retry-check",
+            "kind": "static",
+            "command": "/usr/bin/node --test checks/retry.test.mjs",
+            "cwd": ".",
+            "timeoutMs": 30000,
+            "taskIds": "all"
+          },
+          "coverage": [
+            {
+              "obligationId": "obl-retry-contract",
+              "requirementId": "req-static-contract-conformance"
+            },
+            {
+              "obligationId": "obl-retry-contract",
+              "requirementId": "req-static-scope-and-checks-preserved"
+            }
+          ],
+          "phase": "finished",
+          "invocationId": "fdb9dfa3-89ac-4931-8f59-b4ef0cb2f2e7",
+          "outcome": "PASS",
+          "reportRef": {
+            "kind": "artifact",
+            "contentType": "application/vnd.coding-platform.verification-check-report+json;version=1",
+            "digest": "0ef03f5702ddc6dcfaa9f5ece2c774fd47792eaa25b9dfa464623af3274c9133",
+            "sizeBytes": 1619,
+            "source": {
+              "kind": "plan-revision",
+              "refId": "initial-plan-443a2edd8da3c70b4f18f6aa46b35564",
+              "revision": "1"
+            }
+          },
+          "sourceStatus": "matched"
+        }
+      ]
+    },
+    {
+      "ref": {
+        "aggregateType": "VerificationRound",
+        "projectId": "mvp-ui-live-project",
+        "workspaceId": "mvp-ui-live-workspace",
+        "goalId": "goal-mul9e1k0-1",
+        "taskId": "gate-retry-contract",
+        "runId": "2d735a2f-a0bf-4c0e-8c3d-14ffe9844e77",
+        "roundId": "210d42b1-e4a6-4252-8b41-8ce2aceb9b90"
+      },
+      "subject": {
+        "projectId": "mvp-ui-live-project",
+        "goalId": "goal-mul9e1k0-1",
+        "taskId": "gate-retry-contract"
+      },
+      "subjectRunRef": {
+        "aggregateType": "Run",
+        "projectId": "mvp-ui-live-project",
+        "goalId": "goal-mul9e1k0-1",
+        "runId": "2d735a2f-a0bf-4c0e-8c3d-14ffe9844e77"
+      },
+      "adoptedPlanRef": {
+        "aggregateType": "PlanRevision",
+        "projectId": "mvp-ui-live-project",
+        "planId": "initial-plan-443a2edd8da3c70b4f18f6aa46b35564"
+      },
+      "identity": {
+        "schemaVersion": 1,
+        "scope": {
+          "projectId": "mvp-ui-live-project",
+          "workspaceId": "mvp-ui-live-workspace",
+          "goalId": "goal-mul9e1k0-1",
+          "runId": "2d735a2f-a0bf-4c0e-8c3d-14ffe9844e77",
+          "taskId": "gate-retry-contract",
+          "gateSubject": "stage"
+        },
+        "runRef": {
+          "aggregateType": "Run",
+          "projectId": "mvp-ui-live-project",
+          "goalId": "goal-mul9e1k0-1",
+          "runId": "2d735a2f-a0bf-4c0e-8c3d-14ffe9844e77"
+        },
+        "runRevision": 5,
+        "runDigest": "fb8246c456449ed19000e9e340669692383d835ffb649f5df6e717739cfe7001",
+        "planRef": {
+          "aggregateType": "PlanRevision",
+          "projectId": "mvp-ui-live-project",
+          "planId": "initial-plan-443a2edd8da3c70b4f18f6aa46b35564"
+        },
+        "planRevision": 1,
+        "planDigest": "e7f4abbfd9ed79aeb868dd8e37d74eeb354bdca804276d95ac2f35d8af93666a",
+        "taskDigest": "5b167d45f84c594f98a4382047ab31ffc81178fa92deac65e1cfc668a4d1feb1",
+        "goalRevision": 2,
+        "goalDigest": "9c5d6d6d328c6b6b9144d5688ba18322584a5b5a58cd0ebeb2954dde3dffe0a9",
+        "workspaceRevision": 1,
+        "workspaceDigest": "a3d76cd9013553df7f5d90d1e301b303f992b68f912aeab40e74d81e2992c7fd",
+        "workspaceRoot": "/tmp/mvp-ui-live-20260928/run-FUGeXf/project",
+        "policyPin": {
+          "ref": {
+            "aggregateType": "CompletionPolicyRevision",
+            "projectId": "mvp-ui-live-project",
+            "policyId": "mvp-ui-completion",
+            "revision": 1
+          },
+          "digest": "5108aaa3681b20006529a13c5509361608b621134c6341f99ba7bf4fa015a455"
+        },
+        "baselinePin": {
+          "ref": {
+            "aggregateType": "ArchitectureBaselineRevision",
+            "projectId": "mvp-ui-live-project",
+            "baselineId": "reviewed-retry-architecture",
+            "revision": 1
+          },
+          "digest": "286e36175e04c497d9c3ba0585f3ac83016d3ab80a8092acedd8d8892a4ea2d8"
+        },
+        "sourceDigest": "19a57dce70da81db35bc36cd918ef1d22be35de75f17007be19c5fab23110c20",
+        "sourceProofDigest": "9c4bd2c061c84075bbafd7d0df1a11d2ba38da16ab208c9a7a988bf6df8aecbd"
+      },
+      "status": "finalized",
+      "outcome": "PASS",
+      "gaps": [],
+      "evidenceRefs": [
+        {
+          "aggregateType": "Evidence",
+          "projectId": "mvp-ui-live-project",
+          "evidenceId": "00d0c3e4-7329-48f5-bef6-d7e308d0c247"
+        },
+        {
+          "aggregateType": "Evidence",
+          "projectId": "mvp-ui-live-project",
+          "evidenceId": "014b4ebd-614b-4ad7-a49d-214bbd9d0880"
+        }
+      ],
+      "checks": [
+        {
+          "checkId": "retry-check",
+          "definition": {
+            "checkId": "retry-check",
+            "kind": "static",
+            "command": "/usr/bin/node --test checks/retry.test.mjs",
+            "cwd": ".",
+            "timeoutMs": 30000,
+            "taskIds": "all"
+          },
+          "coverage": [
+            {
+              "obligationId": "obl-retry-contract",
+              "requirementId": "req-static-contract-conformance"
+            },
+            {
+              "obligationId": "obl-retry-contract",
+              "requirementId": "req-static-scope-and-checks-preserved"
+            }
+          ],
+          "phase": "finished",
+          "invocationId": "93a534b7-dec3-4282-bc54-88d85ba95696",
+          "outcome": "PASS",
+          "reportRef": {
+            "kind": "artifact",
+            "contentType": "application/vnd.coding-platform.verification-check-report+json;version=1",
+            "digest": "e5116482a774408b323994dafcc080d3cc70ae18064605efc43ba65dcd205c8b",
+            "sizeBytes": 1619,
+            "source": {
+              "kind": "plan-revision",
+              "refId": "initial-plan-443a2edd8da3c70b4f18f6aa46b35564",
+              "revision": "1"
+            }
+          },
+          "sourceStatus": "matched"
+        }
+      ]
+    },
+    {
+      "ref": {
+        "aggregateType": "VerificationRound",
+        "projectId": "mvp-ui-live-project",
+        "workspaceId": "mvp-ui-live-workspace",
+        "goalId": "goal-mul9e1k0-1",
+        "taskId": "gate-retry-goal",
+        "runId": "2d735a2f-a0bf-4c0e-8c3d-14ffe9844e77",
+        "roundId": "9b867139-8cb1-47e7-aef2-9e7b5947e3dd"
+      },
+      "subject": {
+        "projectId": "mvp-ui-live-project",
+        "goalId": "goal-mul9e1k0-1",
+        "taskId": "gate-retry-goal"
+      },
+      "subjectRunRef": {
+        "aggregateType": "Run",
+        "projectId": "mvp-ui-live-project",
+        "goalId": "goal-mul9e1k0-1",
+        "runId": "2d735a2f-a0bf-4c0e-8c3d-14ffe9844e77"
+      },
+      "adoptedPlanRef": {
+        "aggregateType": "PlanRevision",
+        "projectId": "mvp-ui-live-project",
+        "planId": "initial-plan-443a2edd8da3c70b4f18f6aa46b35564"
+      },
+      "identity": {
+        "schemaVersion": 1,
+        "scope": {
+          "projectId": "mvp-ui-live-project",
+          "workspaceId": "mvp-ui-live-workspace",
+          "goalId": "goal-mul9e1k0-1",
+          "runId": "2d735a2f-a0bf-4c0e-8c3d-14ffe9844e77",
+          "taskId": "gate-retry-goal",
+          "gateSubject": "goal"
+        },
+        "runRef": {
+          "aggregateType": "Run",
+          "projectId": "mvp-ui-live-project",
+          "goalId": "goal-mul9e1k0-1",
+          "runId": "2d735a2f-a0bf-4c0e-8c3d-14ffe9844e77"
+        },
+        "runRevision": 5,
+        "runDigest": "fb8246c456449ed19000e9e340669692383d835ffb649f5df6e717739cfe7001",
+        "planRef": {
+          "aggregateType": "PlanRevision",
+          "projectId": "mvp-ui-live-project",
+          "planId": "initial-plan-443a2edd8da3c70b4f18f6aa46b35564"
+        },
+        "planRevision": 1,
+        "planDigest": "e7f4abbfd9ed79aeb868dd8e37d74eeb354bdca804276d95ac2f35d8af93666a",
+        "taskDigest": "05c436b1f6f24b412ae4756c29ba85330c1d24a4646c3e73268d9f2035255309",
+        "goalRevision": 2,
+        "goalDigest": "9c5d6d6d328c6b6b9144d5688ba18322584a5b5a58cd0ebeb2954dde3dffe0a9",
+        "workspaceRevision": 1,
+        "workspaceDigest": "a3d76cd9013553df7f5d90d1e301b303f992b68f912aeab40e74d81e2992c7fd",
+        "workspaceRoot": "/tmp/mvp-ui-live-20260928/run-FUGeXf/project",
+        "policyPin": {
+          "ref": {
+            "aggregateType": "CompletionPolicyRevision",
+            "projectId": "mvp-ui-live-project",
+            "policyId": "mvp-ui-completion",
+            "revision": 1
+          },
+          "digest": "5108aaa3681b20006529a13c5509361608b621134c6341f99ba7bf4fa015a455"
+        },
+        "baselinePin": {
+          "ref": {
+            "aggregateType": "ArchitectureBaselineRevision",
+            "projectId": "mvp-ui-live-project",
+            "baselineId": "reviewed-retry-architecture",
+            "revision": 1
+          },
+          "digest": "286e36175e04c497d9c3ba0585f3ac83016d3ab80a8092acedd8d8892a4ea2d8"
+        },
+        "sourceDigest": "19a57dce70da81db35bc36cd918ef1d22be35de75f17007be19c5fab23110c20",
+        "sourceProofDigest": "9c4bd2c061c84075bbafd7d0df1a11d2ba38da16ab208c9a7a988bf6df8aecbd"
+      },
+      "status": "finalized",
+      "outcome": "PASS",
+      "gaps": [],
+      "evidenceRefs": [
+        {
+          "aggregateType": "Evidence",
+          "projectId": "mvp-ui-live-project",
+          "evidenceId": "1253bb07-a663-430a-b9c9-a9a97b23d1f1"
+        },
+        {
+          "aggregateType": "Evidence",
+          "projectId": "mvp-ui-live-project",
+          "evidenceId": "56256797-eb44-4269-92a6-bd1eed3b5392"
+        }
+      ],
+      "checks": [
+        {
+          "checkId": "retry-check",
+          "definition": {
+            "checkId": "retry-check",
+            "kind": "static",
+            "command": "/usr/bin/node --test checks/retry.test.mjs",
+            "cwd": ".",
+            "timeoutMs": 30000,
+            "taskIds": "all"
+          },
+          "coverage": [
+            {
+              "obligationId": "obl-retry-contract",
+              "requirementId": "req-static-contract-conformance"
+            },
+            {
+              "obligationId": "obl-retry-contract",
+              "requirementId": "req-static-scope-and-checks-preserved"
+            }
+          ],
+          "phase": "finished",
+          "invocationId": "06dc4461-b33e-4f21-b306-3f6dca660cf2",
+          "outcome": "PASS",
+          "reportRef": {
+            "kind": "artifact",
+            "contentType": "application/vnd.coding-platform.verification-check-report+json;version=1",
+            "digest": "aabd668ecd4418c69d39d85a18e030981183393894c4f9efdcbf6d6587cea9c0",
+            "sizeBytes": 1611,
+            "source": {
+              "kind": "plan-revision",
+              "refId": "initial-plan-443a2edd8da3c70b4f18f6aa46b35564",
+              "revision": "1"
+            }
+          },
+          "sourceStatus": "matched"
+        }
+      ]
+    }
+  ],
+  "changedTrackedPaths": [
+    "README.md",
+    "src/retry.mjs"
+  ],
+  "checksUnchanged": true,
+  "checksSha256": "0c3dc4c3a7c63633540e890019ed6b836d71df2198416c20ede45b43e9f872d4",
+  "sourceSha256": "5512ba15f4a8851761c022b3ba707e905673c01c3724271e650ded553d19346e",
+  "providerCalls": 14,
+  "providerErrors": [],
+  "transportErrors": [],
+  "httpErrors": [],
+  "toolErrors": [
+    {
+      "callId": "call_00_E6d02C0XOSXiTPBc9xfG4560",
+      "result": {
+        "schemaVersion": 1,
+        "callId": "call_00_E6d02C0XOSXiTPBc9xfG4560",
+        "output": [
+          {
+            "kind": "json",
+            "value": {
+              "status": "rejected",
+              "code": "forbidden",
+              "reason": "the recipient Session belongs to another project"
+            }
+          }
+        ],
+        "effects": {
+          "sideEffect": "none",
+          "changedPaths": [],
+          "workspaceRevision": null,
+          "artifactRefs": []
+        },
+        "status": "error",
+        "error": {
+          "code": "execution_failed",
+          "message": "the recipient Session belongs to another project",
+          "retryable": false
+        }
+      }
+    }
+  ],
+  "extractedAt": "2026-09-28T13:21:02.041985+00:00",
+  "checkObservations": [
+    {
+      "artifactRef": {
+        "kind": "artifact",
+        "contentType": "application/vnd.coding-platform.verification-check-report+json;version=1",
+        "digest": "0ef03f5702ddc6dcfaa9f5ece2c774fd47792eaa25b9dfa464623af3274c9133",
+        "sizeBytes": 1619,
+        "source": {
+          "kind": "plan-revision",
+          "refId": "initial-plan-443a2edd8da3c70b4f18f6aa46b35564",
+          "revision": "1"
+        }
+      },
+      "roundRef": {
+        "aggregateType": "VerificationRound",
+        "projectId": "mvp-ui-live-project",
+        "workspaceId": "mvp-ui-live-workspace",
+        "goalId": "goal-mul9e1k0-1",
+        "taskId": "work-retry-contract",
+        "runId": "2d735a2f-a0bf-4c0e-8c3d-14ffe9844e77",
+        "roundId": "b6c8ff87-c77c-45c8-b1c7-4061e4a8e4c8"
+      },
+      "checkId": "retry-check",
+      "invocationId": "fdb9dfa3-89ac-4931-8f59-b4ef0cb2f2e7",
+      "subjectRunRef": {
+        "aggregateType": "Run",
+        "projectId": "mvp-ui-live-project",
+        "goalId": "goal-mul9e1k0-1",
+        "runId": "2d735a2f-a0bf-4c0e-8c3d-14ffe9844e77"
+      },
+      "subject": {
+        "projectId": "mvp-ui-live-project",
+        "goalId": "goal-mul9e1k0-1",
+        "taskId": "work-retry-contract"
+      },
+      "observation": {
+        "kind": "executed",
+        "startedAt": "2026-09-28T13:05:53.288Z",
+        "finishedAt": "2026-09-28T13:05:53.448Z",
+        "exitCode": 0,
+        "signal": null,
+        "timedOut": false,
+        "cancelled": false,
+        "stdout": {
+          "text": "TAP version 13\n# Subtest: success and delays\nok 1 - success and delays\n  ---\n  duration_ms: 1.104849\n  ...\n# Subtest: final error identity\nok 2 - final error identity\n  ---\n  duration_ms: 0.282655\n  ...\n1..2\n# tests 2\n# suites 0\n# pass 2\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 80.602265\n",
+          "totalBytes": 306,
+          "truncated": false
+        },
+        "stderr": {
+          "text": "",
+          "totalBytes": 0,
+          "truncated": false
+        },
+        "effects": {
+          "workspaceRevision": "5df839e8e2553a15f1cca8509d9ab02c26b437afa35d929d11f9e2e081f2a68f",
+          "changedPaths": []
+        },
+        "sandboxProfileVersion": "bwrap-m3-v4:bubblewrap 0.9.0"
+      }
+    },
+    {
+      "artifactRef": {
+        "kind": "artifact",
+        "contentType": "application/vnd.coding-platform.verification-check-report+json;version=1",
+        "digest": "e5116482a774408b323994dafcc080d3cc70ae18064605efc43ba65dcd205c8b",
+        "sizeBytes": 1619,
+        "source": {
+          "kind": "plan-revision",
+          "refId": "initial-plan-443a2edd8da3c70b4f18f6aa46b35564",
+          "revision": "1"
+        }
+      },
+      "roundRef": {
+        "aggregateType": "VerificationRound",
+        "projectId": "mvp-ui-live-project",
+        "workspaceId": "mvp-ui-live-workspace",
+        "goalId": "goal-mul9e1k0-1",
+        "taskId": "gate-retry-contract",
+        "runId": "2d735a2f-a0bf-4c0e-8c3d-14ffe9844e77",
+        "roundId": "210d42b1-e4a6-4252-8b41-8ce2aceb9b90"
+      },
+      "checkId": "retry-check",
+      "invocationId": "93a534b7-dec3-4282-bc54-88d85ba95696",
+      "subjectRunRef": {
+        "aggregateType": "Run",
+        "projectId": "mvp-ui-live-project",
+        "goalId": "goal-mul9e1k0-1",
+        "runId": "2d735a2f-a0bf-4c0e-8c3d-14ffe9844e77"
+      },
+      "subject": {
+        "projectId": "mvp-ui-live-project",
+        "goalId": "goal-mul9e1k0-1",
+        "taskId": "gate-retry-contract"
+      },
+      "observation": {
+        "kind": "executed",
+        "startedAt": "2026-09-28T13:19:58.116Z",
+        "finishedAt": "2026-09-28T13:19:58.290Z",
+        "exitCode": 0,
+        "signal": null,
+        "timedOut": false,
+        "cancelled": false,
+        "stdout": {
+          "text": "TAP version 13\n# Subtest: success and delays\nok 1 - success and delays\n  ---\n  duration_ms: 1.151563\n  ...\n# Subtest: final error identity\nok 2 - final error identity\n  ---\n  duration_ms: 0.284031\n  ...\n1..2\n# tests 2\n# suites 0\n# pass 2\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 87.392134\n",
+          "totalBytes": 306,
+          "truncated": false
+        },
+        "stderr": {
+          "text": "",
+          "totalBytes": 0,
+          "truncated": false
+        },
+        "effects": {
+          "workspaceRevision": "124f8e7c4f5ee90fe1d7a31e254ba2a866513f007856b55552fe5d915f7340b6",
+          "changedPaths": []
+        },
+        "sandboxProfileVersion": "bwrap-m3-v4:bubblewrap 0.9.0"
+      }
+    },
+    {
+      "artifactRef": {
+        "kind": "artifact",
+        "contentType": "application/vnd.coding-platform.verification-check-report+json;version=1",
+        "digest": "aabd668ecd4418c69d39d85a18e030981183393894c4f9efdcbf6d6587cea9c0",
+        "sizeBytes": 1611,
+        "source": {
+          "kind": "plan-revision",
+          "refId": "initial-plan-443a2edd8da3c70b4f18f6aa46b35564",
+          "revision": "1"
+        }
+      },
+      "roundRef": {
+        "aggregateType": "VerificationRound",
+        "projectId": "mvp-ui-live-project",
+        "workspaceId": "mvp-ui-live-workspace",
+        "goalId": "goal-mul9e1k0-1",
+        "taskId": "gate-retry-goal",
+        "runId": "2d735a2f-a0bf-4c0e-8c3d-14ffe9844e77",
+        "roundId": "9b867139-8cb1-47e7-aef2-9e7b5947e3dd"
+      },
+      "checkId": "retry-check",
+      "invocationId": "06dc4461-b33e-4f21-b306-3f6dca660cf2",
+      "subjectRunRef": {
+        "aggregateType": "Run",
+        "projectId": "mvp-ui-live-project",
+        "goalId": "goal-mul9e1k0-1",
+        "runId": "2d735a2f-a0bf-4c0e-8c3d-14ffe9844e77"
+      },
+      "subject": {
+        "projectId": "mvp-ui-live-project",
+        "goalId": "goal-mul9e1k0-1",
+        "taskId": "gate-retry-goal"
+      },
+      "observation": {
+        "kind": "executed",
+        "startedAt": "2026-09-28T13:19:58.422Z",
+        "finishedAt": "2026-09-28T13:19:58.581Z",
+        "exitCode": 0,
+        "signal": null,
+        "timedOut": false,
+        "cancelled": false,
+        "stdout": {
+          "text": "TAP version 13\n# Subtest: success and delays\nok 1 - success and delays\n  ---\n  duration_ms: 1.100331\n  ...\n# Subtest: final error identity\nok 2 - final error identity\n  ---\n  duration_ms: 0.272656\n  ...\n1..2\n# tests 2\n# suites 0\n# pass 2\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 81.182469\n",
+          "totalBytes": 306,
+          "truncated": false
+        },
+        "stderr": {
+          "text": "",
+          "totalBytes": 0,
+          "truncated": false
+        },
+        "effects": {
+          "workspaceRevision": "124f8e7c4f5ee90fe1d7a31e254ba2a866513f007856b55552fe5d915f7340b6",
+          "changedPaths": []
+        },
+        "sandboxProfileVersion": "bwrap-m3-v4:bubblewrap 0.9.0"
+      }
+    }
+  ],
+  "scopeLimit": "Isolated UI acceptance, not whole MVP completion; registered command checks do not prove every semantic statement in the model-authored requirement descriptions."
+}

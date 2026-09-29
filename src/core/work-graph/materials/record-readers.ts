@@ -156,7 +156,10 @@ function isRunStatus(value: unknown): boolean {
 
 function isRunOutcome(value: unknown): boolean {
   return value === null || value === 'completed' || value === 'failed' || value === 'cancelled' ||
-    value === 'budget_exhausted' || value === 'crashed' || value === 'outcome_unknown';
+    value === 'budget_exhausted' || value === 'crashed' || value === 'outcome_unknown' ||
+    // The common orchestration mechanism: an explicit yielded terminal is a real
+    // RunOutcome, distinct from completed/cancelled and never a Task satisfaction.
+    value === 'yielded';
 }
 
 function isQueryRunStatus(value: unknown): boolean {
@@ -226,6 +229,25 @@ function isRevocation(value: unknown): boolean {
 // Record validators (pure encoding checks only, stored JSON is preserved)
 // --------------------------------------------------------------------------
 
+/** Optional yielded continuation shape; absent on every other Run. */
+function runContinuationShapeProblem(value: unknown, ref: RunRef, task: unknown): string | null {
+  if (value === undefined) return null;
+  if (!isJsonObject(value)) return 'the continuation must be an object';
+  if (value['schemaVersion'] !== 1 || value['kind'] !== 'wait_reply') return 'the continuation kind is not recognized';
+  const boundTask = value['task'];
+  if (!isJsonObject(boundTask) || !isJsonObject(task)
+    || boundTask['projectId'] !== task['projectId'] || boundTask['goalId'] !== task['goalId']
+    || boundTask['taskId'] !== task['taskId']) return 'the continuation Task is not the Run Task';
+  const sessionRef = value['sessionRef'];
+  if (!isJsonObject(sessionRef) || sessionRef['projectId'] !== ref.projectId
+    || !isNonEmptyString(sessionRef['sessionId'])) return 'the continuation Session is not the same project';
+  const messageRef = value['messageRef'];
+  if (!isJsonObject(messageRef) || messageRef['aggregateType'] !== 'SessionMessage'
+    || messageRef['projectId'] !== ref.projectId || !isNonEmptyString(messageRef['workspaceId'])
+    || !isNonEmptyString(messageRef['messageId'])) return 'the continuation messageRef is incomplete or outside the project';
+  return null;
+}
+
 function validateRunSnapshot(record: EncodedRecord): DecodeResult<EncodedRecord> {
   if (record.schemaId !== RUN_SNAPSHOT_SCHEMA_ID) {
     return invalid(`expected schemaId ${RUN_SNAPSHOT_SCHEMA_ID}, got ${record.schemaId}`);
@@ -284,6 +306,10 @@ function validateRunSnapshot(record: EncodedRecord): DecodeResult<EncodedRecord>
   if (controlStateProblem !== null) {
     return invalid(`Run controlState is malformed: ${controlStateProblem}`);
   }
+  // The optional yielded continuation is a binding, not a permission: when
+  // present it must name this Run's exact Task/Session and a complete message.
+  const continuationProblem = runContinuationShapeProblem(body['continuation'], ref, body['task']);
+  if (continuationProblem !== null) return invalid(`Run continuation is malformed: ${continuationProblem}`);
   if (!isRunStatus(body['status'])) return invalid('Run snapshot status is not a RunStatus');
   if (!isRunOutcome(body['outcome'])) return invalid('Run snapshot outcome is not a RunOutcome or null');
   if (!(body['exitCode'] === null || typeof body['exitCode'] === 'number')) {

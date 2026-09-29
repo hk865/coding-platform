@@ -19,6 +19,7 @@ import { createExecutionDriver } from './execution-driver.js';
 import { createExecutionObservation } from './execution-observation.js';
 import { createRuntimeControlCoordinator } from './execution-control.js';
 import { createExecutionPreparation } from './execution-preparation.js';
+import { createSessionHistoryCursorOwner } from './session-operations.js';
 import { createQueryPreparation } from './query-preparation.js';
 import { createQueryExecutionDriver } from './query-execution.js';
 import { createQueryObservation } from './query-observation.js';
@@ -89,6 +90,22 @@ export function createAgentRuntime(deps?: RuntimeExecutionDependencies): AgentRu
     ...(deps.controls === undefined ? {} : { controls: deps.controls }),
     sourceAuthority: deps.sourceAuthority,
   });
+  const historyCursorOwner = createSessionHistoryCursorOwner({ kernelStores: deps.kernelStores });
+  const readCompletedBoundary: NonNullable<RuntimeExecutionPort['readCompletedBoundary']> = async (ctx, request) => {
+    if (ctx.principal.kind !== 'host') {
+      return { status: 'rejected', code: 'forbidden', reason: 'the completed boundary read requires the Host principal' };
+    }
+    if (request.sessionRef.projectId !== ctx.projectId) {
+      return { status: 'rejected', code: 'forbidden', reason: 'the Session belongs to another project' };
+    }
+    const read = await deps.sessions.readSession(ctx, request.sessionRef);
+    if (read.status !== 'ready') return read;
+    const boundary = await historyCursorOwner.completedBoundary({ session: read.value.record, signal: ctx.signal });
+    if (boundary.status !== 'resolved') {
+      return { status: 'rejected', code: boundary.code, reason: boundary.reason };
+    }
+    return { status: 'ready', value: { cursor: boundary.cursor, position: boundary.position } };
+  };
   const observation = createExecutionObservation({ ...deps, control });
   const driver = createExecutionDriver({ ...deps, observation, control });
   const queryPreparation = createQueryPreparation(deps);
@@ -98,6 +115,7 @@ export function createAgentRuntime(deps?: RuntimeExecutionDependencies): AgentRu
   return {
     port: {
       ...base,
+      readCompletedBoundary,
       prepareExecution: (ctx, request) => preparation.prepare(ctx, request),
       startRun: (ctx, request) => driver.start(ctx, request),
       observeRun: (ctx, request) => observation.observe(ctx, request),

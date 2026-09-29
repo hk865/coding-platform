@@ -3,16 +3,16 @@
  *
  * Uses the REAL frozen Kernel `FileSkillLoader`/`SkillRegistry` over the real
  * `next/resources/skills` root and a REAL scripted Kernel model loop (the B1
- * `runObservedModel` seam). It proves three wiring facts: the three manifests
- * load with their content digests, an explicit enabled subset reaches the real
- * model request and nothing else does, and the resource content encodes the
- * phase-2 responsibility contract.
+ * `runObservedModel` seam). It proves three wiring facts: the five real
+ * manifests load with their content digests, an explicit enabled subset reaches
+ * the real model request and nothing else does, and the trusted root/id path
+ * fails closed.
  *
- * This is NOT a model-capability score: matching responsibility clauses prove
- * only that the static resource says the required thing. It never claims the
- * model is intelligent, and no clause check substitutes for a real role run.
- * The phase-1 content is an explicit placeholder, so the responsibility clauses
- * are RED for exactly that reason and are frozen for the implementation phase.
+ * This is NOT a model-capability score and its checks are NOT a prompt-copy
+ * word matrix: matching content clauses proved only that a static resource said
+ * the required thing and they would pin the pre-AG6 text. AG6 owns the behavior
+ * assembly checks, so this file keeps its real resource/digest, selection,
+ * tool-call and error-path checks only.
  */
 import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
@@ -29,7 +29,7 @@ import type { SkillRegistry } from '../../vendor/coding-agent/dist/skills/regist
 import { DEFAULT_RUNTIME_BUDGET, ModelBudget } from '../../src/core/agent-runtime/model-budget.js';
 import { runObservedModel, type ObservedModelRunOptions } from '../../src/core/agent-runtime/observed-model-run.js';
 
-const ROLE_IDS = ['platform-secretary', 'platform-adviser', 'platform-scribe'] as const;
+const ROLE_IDS = ['platform-work', 'platform-secretary', 'platform-adviser', 'platform-scribe', 'platform-reviewer'] as const;
 const RESOURCE_ROOT = resolve(import.meta.dirname, '../../resources/skills');
 const directories: string[] = [];
 afterEach(async () => {
@@ -48,41 +48,6 @@ async function readRoleResource(id: string): Promise<{ manifest: Record<string, 
 async function loadRegistry(): Promise<SkillRegistry> {
   const loader = await FileSkillLoader.create(RESOURCE_ROOT);
   return loader.load(signal());
-}
-
-// --------------------------------------------------------------------------
-// Phase-2 responsibility content contract. Alternatives are accepted per
-// requirement; the placeholder has none of them, which is the RED reason.
-// --------------------------------------------------------------------------
-
-type ContentRequirement = { what: string; any: readonly string[] };
-
-const SECRETARY_CONTRACT: readonly ContentRequirement[] = [
-  { what: 'secretary scope is the local task graph', any: ['局部任务图', '局部图', 'local task graph'] },
-  { what: 'secretary grounds on Session facts', any: ['Session', '会话'] },
-  { what: 'secretary distinguishes available work', any: ['可用', 'available'] },
-  { what: 'secretary reports what is still pending', any: ['待决', 'pending'] },
-  { what: 'secretary does not ingest all history', any: ['不汇入全部历史', '不加载全部历史', '不读取全部历史', 'not all history', 'not the whole history'] },
-];
-
-const ADVISER_CONTRACT: readonly ContentRequirement[] = [
-  { what: 'adviser names the concrete input dependency', any: ['输入依赖', '具体输入', 'input requirement', 'input dependency'] },
-  { what: 'adviser distinguishes overall task completion', any: ['整体任务完成', '整体完成', 'overall task completion', 'overall completion'] },
-  { what: 'adviser proposes first', any: ['propose', '提议', '建议'] },
-  { what: 'adviser applies only within the existing authorization', any: ['apply', '采用'] },
-  { what: 'adviser states the authorization boundary', any: ['授权', 'authorization', 'grant'] },
-];
-
-const SCRIBE_CONTRACT: readonly ContentRequirement[] = [
-  { what: 'scribe separates facts', any: ['事实', 'fact'] },
-  { what: 'scribe separates inference', any: ['推断', 'inference'] },
-  { what: 'scribe does not treat Run ended as completion', any: ['Run ended', 'run_ended', 'Run 结束'] },
-  { what: 'scribe does not treat a message reply as completion', any: ['消息回复', 'mail replied', 'message replied'] },
-  { what: 'scribe keeps Task completion a separate formal fact', any: ['Task 完成', '任务完成', 'task completion'] },
-];
-
-function missingRequirements(content: string, contract: readonly ContentRequirement[]): string[] {
-  return contract.filter(entry => !entry.any.some(pattern => content.includes(pattern))).map(entry => entry.what);
 }
 
 // --------------------------------------------------------------------------
@@ -134,9 +99,9 @@ function baseOptions(root: string, databasePath: string, sessionId: string, clie
 // --------------------------------------------------------------------------
 
 describe('W2 role skill resources through the real FileSkillLoader', () => {
-  it('loads exactly the three legal manifests with their content digests', async () => {
+  it('loads exactly the five real manifests with their content digests', async () => {
     const registry = await loadRegistry();
-    expect(registry.list().map(skill => skill.id)).toEqual(['platform-adviser', 'platform-scribe', 'platform-secretary']);
+    expect(registry.list().map(skill => skill.id)).toEqual(['platform-adviser', 'platform-reviewer', 'platform-scribe', 'platform-secretary', 'platform-work']);
     for (const id of ROLE_IDS) {
       const skill = registry.list().find(candidate => candidate.id === id);
       const { manifest, content } = await readRoleResource(id);
@@ -258,25 +223,4 @@ describe('W2 role skills in a real scripted Kernel request', () => {
     })).rejects.toBeDefined();
     expect(requests).toHaveLength(0);
   }, 60_000);
-});
-
-// --------------------------------------------------------------------------
-// 3. Phase-2 responsibility content (RED: phase-1 placeholder).
-// --------------------------------------------------------------------------
-
-describe('W2 role responsibility contract (frozen for phase 2)', () => {
-  it('secretary content must explain available vs pending from local graph/Session facts', async () => {
-    const { content } = await readRoleResource('platform-secretary');
-    expect(missingRequirements(content, SECRETARY_CONTRACT)).toEqual([]);
-  });
-
-  it('adviser content must separate concrete input dependency from overall completion and stay within authorization', async () => {
-    const { content } = await readRoleResource('platform-adviser');
-    expect(missingRequirements(content, ADVISER_CONTRACT)).toEqual([]);
-  });
-
-  it('scribe content must separate fact from inference and never equate Run ended / message reply with Task completion', async () => {
-    const { content } = await readRoleResource('platform-scribe');
-    expect(missingRequirements(content, SCRIBE_CONTRACT)).toEqual([]);
-  });
 });

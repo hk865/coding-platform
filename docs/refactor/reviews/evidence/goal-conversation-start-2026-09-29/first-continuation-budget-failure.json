@@ -1,0 +1,45 @@
+{
+  "recordedAt": "2026-09-28T19:18:34.678Z",
+  "queryRunRef": {
+    "aggregateType": "QueryRun",
+    "projectId": "48985e87e7697d72d7083396ecb8106b",
+    "workspaceId": "2e12a0a03b0839a8b84432b8291cfd94",
+    "queryJobId": "consultation-42f8fbe53b088425f6f8ff767f885d4b57de94500b34dd0c6542f2654bb60778",
+    "runId": "consultation-run-42f8fbe53b088425f6f8ff767f885d4b57de94500b34dd0c6542f2654bb60778"
+  },
+  "queryJobRef": {
+    "aggregateType": "QueryJob",
+    "projectId": "48985e87e7697d72d7083396ecb8106b",
+    "workspaceId": "2e12a0a03b0839a8b84432b8291cfd94",
+    "queryJobId": "consultation-42f8fbe53b088425f6f8ff767f885d4b57de94500b34dd0c6542f2654bb60778"
+  },
+  "goalId": "goal-mullar1o-1",
+  "originalGoal": true,
+  "sessionRef": {
+    "aggregateType": "Session",
+    "projectId": "48985e87e7697d72d7083396ecb8106b",
+    "sessionId": "session-0394c756db5968b642e5f0d070348e61316476978ff6bfc390ce48e807e73ab2"
+  },
+  "originalSession": true,
+  "path": "normal Session send → consultation",
+  "completedModelResponses": 2,
+  "modelFailures": 1,
+  "toolStarted": 5,
+  "toolCompleted": 5,
+  "toolFailed": 0,
+  "toolCancelled": 0,
+  "runStatus": "closed",
+  "outcome": "failed",
+  "phase": "settled",
+  "answerPresent": false,
+  "sessionOccupied": false,
+  "failure": {
+    "category": "model_protocol",
+    "code": "iterator_threw",
+    "retryable": false
+  },
+  "note": "Read-only ledger/Kernel metadata; no observer/start/model invocation. Failure message and all prompt/output/credentials omitted.",
+  "kernelStarts": 3,
+  "providerCalls": 2,
+  "failureCause": "Persistent Query tokenBudget=200000 rejected conservative reservation before the third provider request."
+}

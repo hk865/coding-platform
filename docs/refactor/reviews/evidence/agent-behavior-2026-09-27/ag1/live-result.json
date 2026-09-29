@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-09-27T07:06:40.068Z",
+  "model": "deepseek-flash",
+  "thinking": "disabled",
+  "requests": 4,
+  "toolCalls": [
+    "find_related_sessions",
+    "read_session_card",
+    "send_session_message"
+  ],
+  "toolResults": [
+    {
+      "callId": "call_00_g7Dh3b7rT3Nm0245Zdht5648",
+      "status": "success"
+    },
+    {
+      "callId": "call_00_zJ7t7AElrNTTSaoOKqcM9019",
+      "status": "success"
+    },
+    {
+      "callId": "call_00_ji8KXfGCB9DZPnVxjk6p5486",
+      "status": "success"
+    }
+  ],
+  "providerErrors": [],
+  "runRef": {
+    "aggregateType": "Run",
+    "projectId": "r4c-claim-project",
+    "goalId": "r4c-claim-goal",
+    "runId": "r4c-claim-id-1"
+  },
+  "sender": {
+    "projectId": "r4c-claim-project",
+    "sessionId": "session-242b83ffde93e5b776c405f8cfad229d99a1356c78f56bce604f051e0161037c"
+  },
+  "recipient": {
+    "projectId": "r4c-claim-project",
+    "sessionId": "session-9f7789b94af9429c4621d7c6a057d348e1220d5f3199ddfc64cb14af983b963f"
+  },
+  "messageRef": {
+    "aggregateType": "SessionMessage",
+    "projectId": "r4c-claim-project",
+    "workspaceId": "r4c-claim-workspace",
+    "messageId": "session-message-675e8f002dcfaca1d02ce67450394277227a809701874f2856baab40e55647fb"
+  },
+  "recipientAvailability": "idle",
+  "readOnlyProviderDelta": 0,
+  "status": "passed",
+  "notCovered": [
+    "receiving Agent reply",
+    "automatic wakeup",
+    "delegation",
+    "general model selection quality"
+  ],
+  "fixture": "Existing C2 real SQLite/Kernel, formal Role/Session/Plan/claim writers; coordination policy is a declared fixture seed"
+}

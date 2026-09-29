@@ -1,0 +1,28 @@
+{
+  "writableFiles": [
+    "src/contracts/query-job.ts",
+    "src/core/work-graph/queries/contracts.ts",
+    "src/core/work-graph/queries/query-job-service.ts",
+    "src/core/work-graph/queries/query-execution.ts",
+    "src/core/work-graph/communication/contracts.ts",
+    "src/core/work-graph/communication/message-record-codecs.ts",
+    "src/core/work-graph/communication/mailbox-service.ts",
+    "src/business/workflow/contracts.ts",
+    "src/business/workflow/ports.ts",
+    "src/business/workflow/workflow.ts",
+    "src/business/workflow/consultation.ts",
+    "src/composition/create-platform.ts",
+    "src/app/core-http-types.ts",
+    "src/app/core-routes.ts",
+    "src/ui/main.ts",
+    "src/ui/views.ts"
+  ],
+  "dshStateDirectories": [
+    "profiles",
+    "sessions",
+    "storages",
+    "cache",
+    "llm-deepseek",
+    "attachments"
+  ]
+}

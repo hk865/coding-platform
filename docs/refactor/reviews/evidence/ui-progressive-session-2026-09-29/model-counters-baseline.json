@@ -1,0 +1,12 @@
+{
+  "recordedAt": "2026-09-29T03:43:44.920Z",
+  "sessionId": "session-0394c756db5968b642e5f0d070348e61316476978ff6bfc390ce48e807e73ab2",
+  "recordCount": 72,
+  "lastPosition": 72,
+  "kernelRequestStarts": 9,
+  "usageEvents": 8,
+  "inputTokens": 249176,
+  "outputTokens": 3332,
+  "cachedInputTokens": 165504,
+  "modelFailures": 1
+}

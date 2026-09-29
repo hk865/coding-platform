@@ -1,0 +1,67 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform-next
+
+ ❯ tests/composition/AG1-session-discovery.test.ts (2 tests | 2 failed) 76ms
+   × discovers the task-linked Session, reads its card, and sends a consultation 53ms
+   × binds directory reads to the real Run workspace and keeps writes Host-only 22ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/composition/AG1-session-discovery.test.ts > discovers the task-linked Session, reads its card, and sends a consultation
+AssertionError: {"status":"rejected","code":"unsupported","reason":"the Run selects tool names this Runtime does not know: find_related_sessions, read_session_card"}: expected { status: 'rejected', …(2) } to match object { status: 'ready', value: { …(2) } }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "ready",
+-   "value": {
+-     "run": {
+-       "status": "ended",
+-     },
+-     "session": {
+-       "occupancy": null,
+-     },
+-   },
++   "status": "rejected",
+  }
+
+ ❯ tests/composition/AG1-session-discovery.test.ts:106:44
+    104|   // Phase-2 target: the entered Run performs find -> card -> consult …
+    105|   // two frozen discovery tools. Today the coordination assembly fails…
+    106|   expect(started, JSON.stringify(started)).toMatchObject({ status: 're…
+       |                                            ^
+    107|
+    108|   // The two reads issued no extra model call; the send landed in the …
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  tests/composition/AG1-session-discovery.test.ts > binds directory reads to the real Run workspace and keeps writes Host-only
+AssertionError: {"status":"rejected","code":"forbidden","reason":"a Session call requires a trusted Host principal"}: expected { status: 'rejected', …(2) } to match object { status: 'ready' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "ready",
++   "status": "rejected",
+  }
+
+ ❯ tests/composition/AG1-session-discovery.test.ts:136:40
+    134|   const request = { workspace: fx.scope, target, includeArchived: fals…
+    135|   const found = await fx.platform.sessions.findSessions(ctx, request);
+    136|   expect(found, JSON.stringify(found)).toMatchObject({ status: 'ready'…
+       |                                        ^
+    137|   if (found.status !== 'ready') return;
+    138|   expect(found.value.items).toHaveLength(1);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed (2)
+   Start at  14:54:28
+   Duration  1.33s (transform 817ms, setup 0ms, import 1.18s, tests 76ms, environment 0ms)
+

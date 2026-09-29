@@ -1,0 +1,8 @@
+{
+  "at": "2026-09-28T10:06:43.973703+00:00",
+  "path": "src/app/main.ts",
+  "sha256": "2f04b44324c1e844e3d341536c04dcf23365f16679a9605474046c69de953fc3",
+  "reason": "Wire explicit attention configuration through the real CLI loader to Host; constructor-only options are insufficient for the existing workbench entry.",
+  "originalMatchesSnapshot": true,
+  "totalWritableFiles": 197
+}

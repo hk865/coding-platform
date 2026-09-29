@@ -1,0 +1,9 @@
+{
+  "lane": "ag2b-continuous-stage1-20260928",
+  "session": "session-1fe21c75-22f8-4ecb-a742-ab1d5e85610d",
+  "files": {
+    "src/app/collaboration-driver.ts": "4c1fff3e2df31ece718902b4e335a454cd924a090e688f70221114fe844920f0",
+    "tests/app/AG2b-collaboration.test.ts": "ed1cec15df5c13510688147a1254f26708e17da155130abacf2fa3ac1c8a7fcf",
+    "tests/helpers/AG2b-collaboration-fixture.ts": "c68af4bb09f7e535aad032f3272543b87fa06a82f7ab3df99708f00ab514993f"
+  }
+}

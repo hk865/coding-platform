@@ -1,0 +1,8 @@
+{
+  "at": "2026-09-28T09:53:22.964717+00:00",
+  "path": "tests/app/AG2-consultation.test.ts",
+  "sha256": "0294946e0cff7b6109f013beba2d566e57c3a314fa3176980ce6560549bc9403",
+  "reason": "Migrate old busy-recipient no-child/no-model assertion to approved isolated consultation behavior; preserve mismatch/provenance/replay assertions.",
+  "originalMatchesSnapshot": true,
+  "totalWritableFiles": 196
+}

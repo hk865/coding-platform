@@ -1,0 +1,7 @@
+Real-provider opt-in harness, browser start and inspection.
+Final process exit code: 0
+Test Files 1 passed (1)
+Tests 1 passed (1)
+Start at 14:29:38
+Duration 279.34s (includes manual UI start and post-completion browser inspection)
+Host retained only until inspection; SIGINT to its test-worker handler released the hold, then host.close() and normal successful exit.

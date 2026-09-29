@@ -1,0 +1,22 @@
+{
+  "writableFiles": [
+    "src/app/host-settings.ts",
+    "src/app/host.ts",
+    "src/app/server.ts",
+    "src/app/main.ts",
+    "src/app/runtime-configuration.ts",
+    "src/app/workbench-tools.ts",
+    "src/app/collaboration-driver.ts",
+    "src/composition/create-platform.ts",
+    "src/core/agent-runtime/kernel-store-locator.ts",
+    "tests/app/host-settings.test.ts"
+  ],
+  "dshStateDirectories": [
+    "profiles",
+    "sessions",
+    "storages",
+    "cache",
+    "llm-deepseek",
+    "attachments"
+  ]
+}

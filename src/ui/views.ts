@@ -46,8 +46,14 @@ import type {
   TaskExecutionRecord,
   WorkflowAdvanceResult,
   WorkspaceFile,
+  WorkspaceComparison,
   WorkspaceResult,
+  WorkspaceVersion,
+  WorkbenchCommandSnapshot,
+  WorkbenchCommandState,
+  SaveWorkbenchFileResult,
 } from '../app/core-http-types.js';
+import { renderMarkdown } from './markdown.js';
 type WorkLinkTarget = SessionCard['links'][number]['ref']['target'];
 /** The exact original TaskTriple, derived from the public DTO so the UI never
  * value-imports a contract module. It is only a return target; no identity is
@@ -132,66 +138,38 @@ type GraphNodeSpec = {
   action?: string;
   data?: Record<string, string>;
   title: string;
+  /** Optional node-adjacent expand/collapse control (architecture containment). */
+  branch?: { expanded: boolean };
 };
 type GraphEdgeSpec = { from: string; to: string; label?: string };
 
-let graphArrowSeq = 0;
+/** Short human labels for real node facts. An unknown value always falls back to
+ * the raw field, never to an invented status. */
+const OBSERVED_KIND_LABEL: Record<string, string> = {
+  module: '模块', interface: '接口', type: '类型', function: '函数', file: '文件',
+};
+const TASK_PHASE_LABEL: Record<string, string> = {
+  pending: '待执行', ready: '就绪', running: '执行中', verifying: '验证中',
+  blocked: '受阻', satisfied: '已满足', failed: '失败',
+};
 
-/** Deterministic layered node-link canvas: real nodes and real connector lines,
- * no layout engine and no fabricated time. Nodes with an `action` are focusable
- * and clickable; `title` is the hover preview. A pinned node renders its full
- * label (its box grows so the text is not cropped) and the selected node is
- * marked: both are pure display state, never frozen domain data. */
+/** Deterministic dot-and-line canvas: real nodes and real connector lines, no
+ * layout engine and no fabricated time. Each node is a small focusable dot with
+ * its label inline (full when pinned, ellipsised otherwise); an architecture node
+ * may carry a node-adjacent expand/collapse control. Pinned/selected are pure
+ * display state, never frozen domain data. */
 function renderNodeLinkGraph(
   nodes: GraphNodeSpec[], edges: GraphEdgeSpec[], ariaLabel: string, display?: WorkbenchGraphDisplay,
 ): string {
   if (nodes.length === 0) return '';
-  const baseWidth = 200;
-  const nodeHeight = 48;
-  const gapX = 36;
-  const gapY = 66;
-  const margin = 16;
+  const nodeWidth = 150;
+  const nodeHeight = 54;
+  const gapX = 26;
+  const gapY = 28;
+  const margin = 36;
   const pinned = new Set(display?.pinned ?? []);
+  const labels = new Set(display?.labels ?? []);
   const selectedId = display?.selected?.nodeId;
-  // Deterministic text width: a CJK/full-width glyph is about two Latin glyphs.
-  // Counting glyph units keeps a full pinned label (Chinese or English) inside
-  // its own box without font measurement and without drawing past the box.
-  const glyphUnits = (text: string): number => {
-    let units = 0;
-    for (const char of text) units += (char.codePointAt(0) ?? 0) > 0x2e7f ? 2 : 1;
-    return units;
-  };
-  const textWidth = (text: string): number => glyphUnits(text) * 7.2;
-  // Caption text renders at 10px, so one glyph unit is about 6px there.
-  const captionWidth = (text: string): number => glyphUnits(text) * 6;
-  const widthOf = (node: GraphNodeSpec): number => {
-    if (!pinned.has(node.id)) return baseWidth;
-    const caption = node.caption === undefined ? 0 : captionWidth(node.caption) + 24;
-    return Math.max(baseWidth, Math.ceil(textWidth(node.label)) + 28, caption);
-  };
-  const fitLabel = (node: GraphNodeSpec): string => {
-    if (pinned.has(node.id) || textWidth(node.label) <= baseWidth - 28) return node.label;
-    const available = baseWidth - 28 - 7.2; // reserve one glyph for the ellipsis
-    let cut = '';
-    for (const char of node.label) {
-      if (textWidth(cut + char) > available) break;
-      cut += char;
-    }
-    return `${cut}…`;
-  };
-  const fitCaption = (node: GraphNodeSpec): string => {
-    const caption = node.caption;
-    if (caption === undefined) return '';
-    if (pinned.has(node.id) || captionWidth(caption) <= baseWidth - 24) return caption;
-    const available = baseWidth - 24 - 6; // reserve one glyph for the ellipsis
-    let cut = '';
-    for (const char of caption) {
-      if (captionWidth(cut + char) > available) break;
-      cut += char;
-    }
-    return `${cut}…`;
-  };
-  const widths = new Map(nodes.map(node => [node.id, widthOf(node)]));
   const known = new Set(nodes.map(node => node.id));
   const validEdges = edges.filter(edge => known.has(edge.from) && known.has(edge.to));
   const incoming = new Map<string, string[]>(nodes.map(node => [node.id, []]));
@@ -217,68 +195,64 @@ function renderNodeLinkGraph(
     if (bucket === undefined) layers.set(depth, [node]); else bucket.push(node);
   }
   const maxLayer = Math.max(0, ...layers.keys());
-  // One vertical band per depth; inside a band the real nodes sit next to each
-  // other by their own width, so same-depth nodes never overlap. Bands are
-  // centered on the widest band; the canvas grows to that band + margin.
-  const bandWidth = (depth: number): number => {
-    const bucket = layers.get(depth) ?? [];
-    return bucket.reduce((total, node, index) =>
-      total + (widths.get(node.id) ?? baseWidth) + (index === 0 ? 0 : gapX), 0);
-  };
   const depths: number[] = [];
   for (let depth = 0; depth <= maxLayer; depth += 1) depths.push(depth);
-  const contentWidth = Math.max(baseWidth, ...depths.map(bandWidth));
+  const bandWidth = (depth: number): number => {
+    const bucket = layers.get(depth) ?? [];
+    return bucket.length * nodeWidth + Math.max(0, bucket.length - 1) * gapX;
+  };
+  const contentWidth = Math.max(nodeWidth, ...depths.map(bandWidth));
   const canvasWidth = margin * 2 + contentWidth;
-  const canvasHeight = margin * 2 + (maxLayer + 1) * nodeHeight + maxLayer * gapY;
-  const position = new Map<string, { x: number; y: number; width: number }>();
+  const canvasHeight = margin + (maxLayer + 1) * nodeHeight + maxLayer * gapY;
+  const position = new Map<string, { x: number; y: number }>();
   for (const depth of depths) {
     const bucket = layers.get(depth) ?? [];
     let x = margin + (contentWidth - bandWidth(depth)) / 2;
     const y = margin + depth * (nodeHeight + gapY);
     for (const node of bucket) {
-      const width = widths.get(node.id) ?? baseWidth;
-      position.set(node.id, { x, y, width });
-      x += width + gapX;
+      position.set(node.id, { x: x + nodeWidth / 2, y: y + 14 });
+      x += nodeWidth + gapX;
     }
   }
-  const marker = `graph-arrow-${graphArrowSeq++}`;
   const edgeHtml = validEdges.map(edge => {
     const from = position.get(edge.from);
     const to = position.get(edge.to);
     if (from === undefined || to === undefined) return '';
-    const x1 = from.x + from.width / 2;
-    const y1 = from.y + nodeHeight;
-    const x2 = to.x + to.width / 2;
-    const y2 = to.y;
     const label = edge.label === undefined || edge.label.length === 0 ? ''
-      : `<text class="graph-edge-label" x="${(x1 + x2) / 2}" y="${(y1 + y2) / 2 - 3}">${escapeHtml(edge.label)}</text>`;
-    return `<g class="graph-edge-group"><line class="graph-edge" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" marker-end="url(#${marker})"/>${label}</g>`;
+      : `<text class="graph-edge-label" x="${(from.x + to.x) / 2}" y="${(from.y + to.y) / 2 - 4}" text-anchor="middle">${escapeHtml(edge.label)}</text>`;
+    return `<path d="M ${from.x} ${from.y + 10} C ${from.x} ${(from.y + to.y) / 2}, ${to.x} ${(from.y + to.y) / 2}, ${to.x} ${to.y - 10}"/>${label}`;
   }).join('');
   const nodeHtml = nodes.map(node => {
     const point = position.get(node.id);
     if (point === undefined) return '';
     const isPinned = pinned.has(node.id);
+    const selected = selectedId === node.id;
     const attributes = node.action === undefined ? '' : ` data-action="${escapeHtml(node.action)}" tabindex="0" role="button"`;
     const data = node.data === undefined ? ''
       : Object.entries(node.data).map(([key, value]) => ` data-${key}="${escapeHtml(value)}"`).join('');
-    const label = fitLabel(node);
-    const classes = `graph-node${selectedId === node.id ? ' selected' : ''}${isPinned ? ' pinned' : ''}`;
-    const captionText = fitCaption(node);
-    const caption = captionText.length === 0 ? ''
-      : `<text class="graph-node-caption" x="${point.x + point.width / 2}" y="${point.y + 36}" text-anchor="middle">${escapeHtml(captionText)}</text>`;
-    const pinBadge = isPinned
-      ? `<text class="graph-pin-badge" x="${point.x + point.width - 8}" y="${point.y + 13}" text-anchor="end">已固定</text>`
-      : '';
-    return `<g class="${classes}" data-node="${escapeHtml(node.id)}"${attributes}${data} aria-pressed="${String(isPinned)}">`
-      + `<title>${escapeHtml(node.title)}</title>`
-      + `<rect x="${point.x}" y="${point.y}" width="${point.width}" height="${nodeHeight}" rx="8"/>`
-      + `<text class="graph-node-label" x="${point.x + point.width / 2}" y="${point.y + 20}" text-anchor="middle">${escapeHtml(label)}</text>`
-      + caption + pinBadge + `</g>`;
+    const showLabel = isPinned || selected || labels.has(node.id);
+    const label = isPinned || node.label.length <= 16 ? node.label : `${node.label.slice(0, 16)}…`;
+    const caption = node.caption === undefined ? '' : `<small>${escapeHtml(node.caption)}</small>`;
+    return `<button class="q-graphnode${selected ? ' selected' : ''}${isPinned ? ' q-pinned' : ''}"`
+      + ` data-node="${escapeHtml(node.id)}" style="left:${point.x}px;top:${point.y}px"${attributes}${data}`
+      + ` aria-pressed="${String(selected || isPinned)}" title="${escapeHtml(node.title)}" aria-label="${escapeHtml(node.title)}">`
+      + `<span class="q-orb${selected ? ' active' : ''}"></span>`
+      + `<span class="q-nodelabel${showLabel ? '' : ' q-compact-label'}">${escapeHtml(node.label)}${caption}</span></button>`;
   }).join('');
-  return `<svg class="graph-canvas" viewBox="0 0 ${canvasWidth} ${canvasHeight}" width="${canvasWidth}" height="${canvasHeight}" role="group" aria-label="${escapeHtml(ariaLabel)}">`
-    + `<defs><marker id="${marker}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z"/></marker></defs>`
-    + edgeHtml + nodeHtml + `</svg>`;
+  const branchHtml = nodes.filter(node => node.branch !== undefined).map(node => {
+    const point = position.get(node.id);
+    if (point === undefined) return '';
+    const expanded = node.branch?.expanded === true;
+    return `<button class="q-branch-toggle" data-action="toggle-branch" data-module-id="${escapeHtml(node.id)}"`
+      + ` style="left:${point.x + 15}px;top:${point.y - 15}px"`
+      + ` aria-label="${expanded ? '折叠' : '展开'} ${escapeHtml(node.label)}" aria-expanded="${String(expanded)}"`
+      + `>${expanded ? '−' : '+'}</button>`;
+  }).join('');
+  return `<div class="q-graph" role="group" aria-label="${escapeHtml(ariaLabel)}" style="width:${canvasWidth}px;height:${canvasHeight}px">`
+    + `<svg class="q-edges" viewBox="0 0 ${canvasWidth} ${canvasHeight}" preserveAspectRatio="none" aria-hidden="true">${edgeHtml}</svg>`
+    + nodeHtml + branchHtml + `</div>`;
 }
+
 
 /** Adopted formal architecture. `catalog === null` is a real historical gap. */
 export function renderAdoptedGraph(result: ReadResult<ArchitectureRevision>, display?: WorkbenchGraphDisplay): string {
@@ -299,7 +273,7 @@ export function renderAdoptedGraph(result: ReadResult<ArchitectureRevision>, dis
     modules.map(module => ({
       id: module.ref.moduleId,
       label: module.name,
-      caption: module.ref.moduleId,
+      caption: '已采用模块',
       action: 'select-node',
       data: { 'target-kind': 'module', 'project-id': module.ref.projectId, 'module-id': module.ref.moduleId },
       title: `${module.name}（${module.ref.moduleId}）\n${module.responsibility}\npaths: ${module.paths.join(', ')}`,
@@ -330,7 +304,7 @@ export function renderObservedGraph(result: ReadResult<ObservedArchitectureNeigh
     neighborhood.nodes.map(node => ({
       id: node.nodeId,
       label: node.name.length > 0 ? node.name : node.nodeId,
-      caption: `${node.nodeId} · ${node.kind}`,
+      caption: OBSERVED_KIND_LABEL[node.kind] ?? node.kind,
       action: 'select-node',
       data: { 'target-kind': 'observed', 'node-label': node.name.length > 0 ? node.name : node.nodeId,
         'node-detail': `${node.kind}${node.path.length === 0 ? '' : ` · ${node.path}`}` },
@@ -788,7 +762,11 @@ export function renderRuntimeCapabilities(result: ReadResult<RuntimeCapabilities
 export type WorkbenchTabKind =
   | 'project_chat' | 'session_chat' | 'file' | 'directory'
   | 'task_detail' | 'module_detail' | 'history' | 'execution_history'
-  | 'setup' | 'task_graph' | 'architecture_graph';
+  | 'setup' | 'task_graph' | 'architecture_graph'
+  // MVP UI connection auxiliary pages: one real command handle and one real
+  // Workspace compare result. Identity is typed; the live snapshot/result lives
+  // in the browser state keyed by this tab.
+  | 'terminal' | 'diff';
 
 /** A selection keeps its exact text/lines and the file version it was based
  * on. Unsaved editor text is explicitly marked as a draft snapshot. */
@@ -814,7 +792,10 @@ export type WorkbenchNodeSelection =
 
 /** Pure per-graph-tab display state: which node is selected in place and which
  * node ids show their full label. It never freezes or writes domain data. */
-export type WorkbenchGraphDisplay = { selected: WorkbenchNodeSelection | null; pinned: string[] };
+export type WorkbenchGraphDisplay = { selected: WorkbenchNodeSelection | null; pinned: string[];
+  /** Node ids whose full label is shown by default (root/active/ancestors). All
+   * other nodes stay dots with a hover preview; selected/pinned always show. */
+  labels?: string[] };
 
 // tabId/title are presentation identifiers only. Object navigation uses the
 // full typed fields below; scope-only pages use their parent layout.scope.
@@ -832,6 +813,14 @@ export type WorkbenchTab = { tabId: string; title: string } & (
   | { kind: 'execution_history'; run: RunRef; task: TaskTriple | null }
   | { kind: 'task_detail'; target: Extract<WorkLinkTarget, { kind: 'task' }> }
   | { kind: 'module_detail'; target: Extract<WorkLinkTarget, { kind: 'module' }> }
+  // One real Kernel command handle; the snapshot is read back by commandId.
+  | { kind: 'terminal'; commandId: string; command: string; cwd: string }
+  // One real WorkspaceToolsPort.compareWorkspace request over two exact versions.
+  | { kind: 'diff'; before: WorkspaceVersion; after: WorkspaceVersion; prefix: string | null }
+  // Prototype `＋` chooser page (reads nothing until a type is chosen).
+  | { kind: 'blank' }
+  // The Diff entry page: real version pairs are chosen here before any request.
+  | { kind: 'compare' }
 );
 
 /** Display state for one scope and the exact SessionRef, or project composer
@@ -954,7 +943,7 @@ export function renderWorkbenchLayout(layout: WorkbenchLayout): string {
   }).join('');
   return `<section class="workbench-aux" data-view="workbench-layout" data-readonly="${String(layout.readOnly)}">`
     + `<div class="tabbar" role="tablist">${tabs}`
-    + `<button class="tab new" data-action="open-setup-tab" title="打开项目/计划辅助页">＋ 辅助页</button>`
+    + `<button class="tab new" data-action="open-page" data-page="blank" title="新建辅助页">＋</button>`
     + `</div></section>`;
 }
 
@@ -965,14 +954,112 @@ const HISTORY_BODY_LABEL = {
   artifact: '工件引用', unknown: '未识别记录',
 } as const;
 
+/** Real Kernel agent-event types → readable titles. An unlisted real type keeps
+ * its own type string; it is never flattened into a generic "未识别". */
+const EVENT_TYPE_LABEL: Record<string, string> = {
+  'assistant.message_completed': '助手正文',
+  'assistant.message_delta': '助手流式片段',
+  'tool.started': '工具开始',
+  'tool.completed': '工具完成',
+  'tool.failed': '工具失败',
+  'model.request_started': '模型请求',
+  'model.request_completed': '模型响应',
+  'model.request_failed': '模型请求失败',
+  'model.usage_recorded': '用量记录',
+  'turn.completed': '回合结束',
+  'turn.failed': '回合失败',
+  'run.started': 'Run 开始',
+  'run.completed': 'Run 完成',
+  'status.changed': '状态变更',
+};
+
+type ToolIdentity = { adapterId: string; kernelSessionId: string; runId: string; callId: string };
+type ToolStatus = 'completed' | 'failed' | 'cancelled' | 'outcome_unknown';
+
+/** Readable status label. A failed/cancelled/unknown result is NEVER shown as a
+ * success, and an unknown result is never turned into "still running". */
+const TOOL_STATUS_LABEL: Record<ToolStatus, string> = {
+  completed: '完成', failed: '失败', cancelled: '已取消', outcome_unknown: '结果未知',
+};
+
+type DeclaredToolCall = ToolIdentity & { name: string; argumentsJson: string };
+
 type ParsedHistoryBody =
-  | { kind: 'user_input' | 'assistant_text' | 'tool_result'; text: string }
+  | { kind: 'user_input'; text: string }
+  | { kind: 'assistant_text'; text: string; reasoning: string; declared: DeclaredToolCall[] }
+  | { kind: 'context_input'; text: string; sourceKind: string }
+  | { kind: 'tool_start'; identity: ToolIdentity; name: string; argumentsJson: string; json: string }
+  | { kind: 'tool_terminal'; identity: ToolIdentity; status: ToolStatus; name: string;
+      outputText: string; outputJson: string; errorText: string | null; json: string }
   | { kind: 'artifact'; contentType: string; digest: string; sizeBytes: number; sourceKind: string; refId: string; revision: string }
+  /** A recognized technical event: readable title + the exact event payload JSON. */
+  | { kind: 'technical'; label: string; eventType: string; text: string; json: string }
   | { kind: 'unknown'; recordType: string };
 
-/** Parse one raw entry into the segmented summary shown by default. The
- * summary only names the public message text; the complete saved record stays
- * reachable through `renderRawDisclosure`, which does not drop any field. */
+/** The full tool identity key: two Runs (or two kernel Sessions/adapters) that
+ * reuse a callId never collide, and adjacency is never used to pair events. */
+const toolKey = (identity: ToolIdentity): string =>
+  `${identity.adapterId}\u0000${identity.kernelSessionId}\u0000${identity.runId}\u0000${identity.callId}`;
+
+/** Identity of one event from the entry's own source + event meta runId + payload callId. */
+function toolIdentity(entry: SessionHistoryEntry, runId: string, callId: string): ToolIdentity {
+  return { adapterId: entry.source.adapterId, kernelSessionId: entry.source.kernelSessionId, runId, callId };
+}
+
+const toolArgumentsJson = (value: unknown): string => JSON.stringify(value ?? {}, null, 2);
+
+/** Text + JSON output parts of a tool result: text parts are the primary
+ * readable output, JSON parts stay an auxiliary detail. */
+function toolOutputParts(result: Record<string, unknown>): { text: string; json: string } {
+  const textParts: string[] = [];
+  const jsonParts: string[] = [];
+  for (const item of list(result.output)) {
+    const part = record(item);
+    if (part.kind === 'text' && typeof part.text === 'string') textParts.push(part.text);
+    else if (part.kind === 'json' && part.value !== undefined) jsonParts.push(JSON.stringify(part.value, null, 2));
+    else if (part.kind === 'artifact_ref') {
+      const uri = typeof part.uri === 'string' ? part.uri : '';
+      const summary = typeof part.summary === 'string' ? part.summary : '';
+      textParts.push(`工件 ${uri} ${summary}`.trim());
+    } else if (typeof part.text === 'string') { textParts.push(part.text); }
+  }
+  return { text: textParts.join('\n'), json: jsonParts.join('\n') };
+}
+
+function toolTerminalStatus(type: string, result: Record<string, unknown>): ToolStatus {
+  if (type === 'tool.failed') return 'failed';
+  if (type === 'tool.cancelled') return 'cancelled';
+  if (type === 'tool.outcome_unknown') return 'outcome_unknown';
+  if (result.status === 'cancelled') return 'cancelled';
+  if (result.status === 'error') return 'failed';
+  return 'completed';
+}
+
+function toolResultError(result: Record<string, unknown>): string | null {
+  const error = record(result.error);
+  if (typeof error.message === 'string' && error.message.length > 0) return error.message;
+  if (typeof result.reason === 'string' && result.reason.length > 0) return result.reason;
+  return null;
+}
+
+function declaredToolCalls(entry: SessionHistoryEntry, eventPayload: Record<string, unknown>, runId: string): DeclaredToolCall[] {
+  const calls: DeclaredToolCall[] = [];
+  for (const item of list(eventPayload.toolCalls)) {
+    const call = record(item);
+    const callId = typeof call.callId === 'string' ? call.callId : '';
+    if (callId.length === 0) continue;
+    calls.push({ ...toolIdentity(entry, runId, callId),
+      name: typeof call.name === 'string' ? call.name : '',
+      argumentsJson: toolArgumentsJson(call.arguments) });
+  }
+  return calls;
+}
+
+/** Parse one raw entry into the segmented summary shown by default. The public
+ * user/assistant prose is read directly; recognized tool events carry their real
+ * identity so the sequence can join start and terminal records; every other
+ * recognized event keeps its real type and complete payload JSON. The complete
+ * saved record is always reachable through `renderRawDisclosure`. */
 function parseHistoryBody(entry: SessionHistoryEntry): ParsedHistoryBody {
   const body = record(entry.body);
   if (body.kind === 'artifact') {
@@ -1004,30 +1091,415 @@ function parseHistoryBody(entry: SessionHistoryEntry): ParsedHistoryBody {
   if (recordType === 'agent.event') {
     const event = record(payload.event);
     const type = typeof event.type === 'string' ? event.type : '';
+    const meta = record(event.meta);
+    const runId = typeof meta.runId === 'string' ? meta.runId : '';
     const eventPayload = record(event.payload);
     if (type === 'assistant.message_completed') {
-      // The default summary names the public assistant text; the raw disclosure
-      // below carries the complete saved record (including reasoning fields).
       const message = record(eventPayload.message);
-      if (typeof message.content === 'string' && message.content.length > 0) {
-        return { kind: 'assistant_text', text: message.content };
+      return { kind: 'assistant_text', text: typeof message.content === 'string' ? message.content : '',
+        reasoning: typeof message.reasoningContent === 'string' ? message.reasoningContent : '',
+        declared: declaredToolCalls(entry, eventPayload, runId) };
+    }
+    if (type === 'run.input_accepted') {
+      const input = record(eventPayload.input);
+      const source = record(input.sourceRef);
+      if (typeof input.text === 'string') return { kind: 'context_input', text: input.text,
+        sourceKind: typeof source.kind === 'string' ? source.kind : '' };
+    }
+    if (type === 'tool.started') {
+      const call = record(eventPayload.call);
+      const callId = typeof call.callId === 'string' ? call.callId : '';
+      if (callId.length > 0) {
+        return { kind: 'tool_start', identity: toolIdentity(entry, runId, callId),
+          name: typeof call.name === 'string' ? call.name : '',
+          argumentsJson: toolArgumentsJson(call.arguments), json: JSON.stringify(eventPayload, null, 2) };
       }
     }
-    if (type === 'tool.completed') {
-      const result = record(eventPayload.result);
-      const output = list(result.output)
-        .map(item => { const text = record(item).text; return typeof text === 'string' ? text : ''; })
-        .filter(part => part.length > 0);
-      const status = typeof result.status === 'string' ? result.status : '';
-      return { kind: 'tool_result', text: output.join('\n') + (status.length === 0 ? '' : `\n[${status}]`) };
+    if (type === 'tool.completed' || type === 'tool.failed' || type === 'tool.cancelled' || type === 'tool.outcome_unknown') {
+      const callId = typeof eventPayload.callId === 'string' ? eventPayload.callId : '';
+      if (callId.length > 0) {
+        const result = record(eventPayload.result);
+        const status = toolTerminalStatus(type, result);
+        const outputs = toolOutputParts(result);
+        const synthesized = status === 'outcome_unknown' ? toolOutputParts(record(eventPayload.synthesizedResult)) : { text: '', json: '' };
+        const errorText = status === 'outcome_unknown'
+          ? ((typeof eventPayload.reason === 'string' && eventPayload.reason.length > 0) ? eventPayload.reason
+            : toolResultError(record(eventPayload.synthesizedResult)))
+          : toolResultError(result);
+        return { kind: 'tool_terminal', identity: toolIdentity(entry, runId, callId), status,
+          name: typeof eventPayload.toolName === 'string' ? eventPayload.toolName : '',
+          outputText: outputs.text.length > 0 ? outputs.text : synthesized.text,
+          outputJson: [outputs.json, synthesized.json].filter(part => part.length > 0).join('\n'),
+          errorText, json: JSON.stringify(eventPayload, null, 2) };
+      }
     }
+    const label = EVENT_TYPE_LABEL[type] ?? (type.length > 0 ? type : recordType);
+    const result = record(eventPayload.result);
+    const text = type === 'tool.completed'
+      ? (toolOutputParts(result).text + (typeof result.status === 'string' && result.status.length > 0 ? `\n[${result.status}]` : ''))
+      : '';
+    return { kind: 'technical', label, eventType: type.length > 0 ? type : recordType,
+      text, json: JSON.stringify(eventPayload, null, 2) };
   }
   return { kind: 'unknown', recordType };
 }
 
-/** Segmented default view of one original record. It names the public text; it
- * is NOT a substitute for the saved original, which the raw disclosure carries. */
-function renderParsedHistoryBody(parsed: ParsedHistoryBody): string {
+/** A page-local join of one tool's declared/started metadata and its terminal
+ * result, keyed strictly by the full identity. It is a display index over the
+ * SAME parsed entries, never a second history store. */
+type ToolIndexEntry = { identity: ToolIdentity; name: string; argumentsJson: string | null;
+  startRecordId: string | null; terminalRecordId: string | null };
+
+function buildToolIndex(entries: readonly SessionHistoryEntry[]): Map<string, ToolIndexEntry> {
+  const index = new Map<string, ToolIndexEntry>();
+  const ensure = (identity: ToolIdentity): ToolIndexEntry => {
+    const key = toolKey(identity);
+    let current = index.get(key);
+    if (current === undefined) {
+      current = { identity, name: '', argumentsJson: null, startRecordId: null, terminalRecordId: null };
+      index.set(key, current);
+    }
+    return current;
+  };
+  for (const entry of entries) {
+    const parsed = parseHistoryBody(entry);
+    if (parsed.kind === 'tool_start') {
+      const tool = ensure(parsed.identity);
+      if (parsed.name.length > 0) tool.name = parsed.name;
+      tool.argumentsJson = parsed.argumentsJson;
+      tool.startRecordId = entry.recordId;
+    } else if (parsed.kind === 'tool_terminal') {
+      const tool = ensure(parsed.identity);
+      tool.terminalRecordId = entry.recordId;
+      if (tool.name.length === 0 && parsed.name.length > 0) tool.name = parsed.name;
+    } else if (parsed.kind === 'assistant_text') {
+      for (const declared of parsed.declared) {
+        const tool = ensure(declared);
+        if (tool.name.length === 0) tool.name = declared.name;
+        if (tool.argumentsJson === null) tool.argumentsJson = declared.argumentsJson;
+      }
+    }
+  }
+  return index;
+}
+
+
+/** The real event meta used only to group adjacent activity. It reads the same
+ * saved record as parseHistoryBody; it is not a second history store. */
+type HistoryEntryMeta = { session: string; runId: string; turnId: string; position: number };
+type ActivityMember = { entry: SessionHistoryEntry; parsed: ParsedHistoryBody; meta: HistoryEntryMeta };
+
+function historyEntryMeta(entry: SessionHistoryEntry): HistoryEntryMeta {
+  let runId = '';
+  let turnId = '';
+  const body = record(entry.body);
+  if (body.encoding === 'kernel_session_record_json' && typeof body.text === 'string') {
+    try {
+      const parsed = record(JSON.parse(body.text));
+      if (parsed.recordType === 'agent.event') {
+        const event = record(record(parsed.payload).event);
+        const meta = record(event.meta);
+        if (typeof meta.runId === 'string') runId = meta.runId;
+        if (typeof meta.turnId === 'string') turnId = meta.turnId;
+      }
+    } catch { /* the entry's own source identity still groups it */ }
+  }
+  return { session: `${entry.source.adapterId}/${entry.source.kernelSessionId}`, runId, turnId, position: entry.source.position };
+}
+
+/** Prose/input keep the reading mainline and cut an activity group; tool and
+ * technical records collapse into one activity summary between them. */
+const isMessageBoundary = (parsed: ParsedHistoryBody): boolean =>
+  parsed.kind === 'user_input' || parsed.kind === 'assistant_text' || parsed.kind === 'context_input';
+
+const activityGroupKey = (meta: HistoryEntryMeta): string =>
+  `${meta.session}\u0000${meta.runId}\u0000${meta.turnId}`;
+
+/** One honest line for the collapsed process row: real tool names and real
+ * status counts, never an invented duration or task count. A failed/cancelled/
+ * unknown member is always named here, so it can never read as success. */
+function activitySummary(members: readonly ActivityMember[], tools: Map<string, ToolIndexEntry>): string {
+  const calls = new Map<string, { name: string; status: ToolStatus | null }>();
+  const events = new Set<string>();
+  let extraCount = 0;
+  for (const { parsed } of members) {
+    if (parsed.kind === 'tool_start' || parsed.kind === 'tool_terminal') {
+      const key = toolKey(parsed.identity);
+      const tool = tools.get(key);
+      const previous = calls.get(key);
+      calls.set(key, { name: tool?.name || parsed.name || previous?.name || '',
+        status: parsed.kind === 'tool_terminal' ? parsed.status : previous?.status ?? null });
+    } else {
+      extraCount += 1;
+      if (parsed.kind === 'technical') events.add(parsed.eventType);
+    }
+  }
+  const categories = new Map<string, number>();
+  let failed = 0, cancelled = 0, unknown = 0;
+  for (const call of calls.values()) {
+    const name = call.name.toLowerCase();
+    const category = /search|grep|find/.test(name) ? '搜索' : /list/.test(name) ? '浏览目录' : /read|source/.test(name) ? '读取文件'
+      : /write|edit|patch/.test(name) ? '编辑文件' : /shell|command|exec/.test(name) ? '运行命令' : '调用工具';
+    categories.set(category, (categories.get(category) ?? 0) + 1);
+    if (call.status === 'failed') failed += 1;
+    if (call.status === 'cancelled') cancelled += 1;
+    if (call.status === 'outcome_unknown') unknown += 1;
+  }
+  const parts = [...categories].slice(0, 3).map(([name, count]) => `${name} ${count} 次`);
+  if (categories.size > 3) parts.push('等活动');
+  if (parts.length === 0) parts.push(events.has('model.request_started') ? '模型请求'
+    : events.has('run.completed') ? '本轮结束' : '执行记录');
+  else if (extraCount > 0 && members.some(({ parsed }) => parsed.kind === 'unknown'
+    || (parsed.kind === 'technical' && !(parsed.eventType in EVENT_TYPE_LABEL)))) parts.push('执行记录');
+  if (failed > 0 || [...events].some(type => /(?:model|run)\..*fail/.test(type))) parts.push(failed > 0 ? `失败 ${failed}` : '执行失败');
+  if (cancelled > 0 || events.has('run.cancelled')) parts.push(cancelled > 0 ? `取消 ${cancelled}` : '已取消');
+  if (unknown > 0 || events.has('tool.outcome_unknown')) parts.push('结果未知');
+  if (events.has('run.limit_exceeded')) parts.push('达到运行限制');
+  return parts.join(' · ');
+}
+
+/** One default-closed activity group. It carries the real adapter+kernelSession
+ * +run identity, keeps every member's own original record and order, and never
+ * re-sorts parallel records. */
+function renderActivityGroup(members: readonly ActivityMember[], tools: Map<string, ToolIndexEntry>): string {
+  const meta = members[0]?.meta;
+  if (meta === undefined) return '';
+  const summary = activitySummary(members, tools);
+  const targets = [...new Set(members.flatMap(({ parsed }) => {
+    if (parsed.kind !== 'tool_start' && parsed.kind !== 'tool_terminal') return [];
+    const target = toolPrimaryTarget(tools.get(toolKey(parsed.identity))?.argumentsJson ?? null);
+    return target === null ? [] : [target];
+  }))];
+  const targetPreview = targets.slice(0, 2).map(target => target.startsWith('路径 ')
+    ? target.slice(3).split('/').at(-1) : target).join('、') + (targets.length > 2 ? ` 等 ${targets.length} 项` : '');
+  // Keep the exact event order while putting start/transport bookkeeping behind
+  // one local disclosure. The useful tool result rows remain directly visible
+  // when the user expands this activity.
+  let rows = '', bookkeeping: ActivityMember[] = [];
+  const flushBookkeeping = (): void => {
+    if (bookkeeping.length === 0) return;
+    const key = bookkeeping[0]!.entry.recordId;
+    rows += `<li><details class="history-bookkeeping" data-disclosure-key="events:${escapeHtml(key)}">`
+      + `<summary>执行细节 · ${bookkeeping.length} 条</summary><ol class="history">`
+      + bookkeeping.map(member => renderActivityMemberLi(member, tools)).join('') + '</ol></details></li>';
+    bookkeeping = [];
+  };
+  for (const member of members) {
+    const parsed = member.parsed;
+    const background = parsed.kind === 'technical'
+      || (parsed.kind === 'tool_start' && tools.get(toolKey(parsed.identity))?.terminalRecordId != null);
+    if (background) bookkeeping.push(member);
+    else { flushBookkeeping(); rows += renderActivityMemberLi(member, tools); }
+  }
+  flushBookkeeping();
+  const firstRecord = members[0]?.entry.recordId ?? '';
+  const stableKey = `${meta.session}|${meta.runId}|${meta.turnId}|${firstRecord}`;
+  const identity = ` data-activity-session="${escapeHtml(meta.session)}" data-activity-run="${escapeHtml(meta.runId)}"`
+    + (meta.turnId.length === 0 ? '' : ` data-activity-turn="${escapeHtml(meta.turnId)}"`)
+    + ` data-disclosure-key="${escapeHtml(stableKey)}"`;
+  return `<li class="history-activity"><details data-activity-group${identity}>`
+    + `<summary class="cursor-interaction"><span class="q-chevron">›</span><span>${escapeHtml(summary)}</span>`
+    + (targets.length === 0 ? '' : `<span class="history-activity-target" title="${escapeHtml(targets.join('\n'))}">${escapeHtml(targetPreview)}</span>`)
+    + `</summary>`
+    + `<ol class="history">${rows}</ol></details></li>`;
+}
+
+/** One activity member: a low-density tool row (or the technical/unknown/
+ * artifact fold) plus its own default-closed raw disclosure. */
+function renderActivityMemberLi(member: ActivityMember, tools: Map<string, ToolIndexEntry>): string {
+  const { entry, parsed } = member;
+  let inner: string;
+  let kind: string;
+  if (parsed.kind === 'tool_start') {
+    inner = renderToolStartEntry(parsed, tools.get(toolKey(parsed.identity))); kind = 'tool_start';
+  } else if (parsed.kind === 'tool_terminal') {
+    inner = renderToolTerminalEntry(entry, parsed, tools.get(toolKey(parsed.identity))); kind = 'tool_result';
+  } else {
+    inner = renderParsedHistoryBody(parsed); kind = parsed.kind;
+  }
+  return `<li data-history="${escapeHtml(entry.recordId)}" data-history-kind="${kind}">`
+    + `${inner}${parsed.kind === 'tool_terminal' ? '' : renderRawDisclosure(entry)}</li>`;
+}
+
+/** Short default timestamp; the ISO value and source position stay in raw. */
+function shortTime(iso: string): string {
+  const match = /^\d{4}-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(iso);
+  if (match === null) return iso;
+  return `${match[1]}-${match[2]} ${match[3]}:${match[4]}`;
+}
+
+const toolIdentityAttributes = (identity: ToolIdentity): string =>
+  ` data-tool-session="${escapeHtml(`${identity.adapterId}/${identity.kernelSessionId}`)}"`
+  + ` data-tool-run="${escapeHtml(identity.runId)}" data-tool-call="${escapeHtml(identity.callId)}"`;
+
+/** Main readable target of a tool call: its command or path when the real
+ * arguments carry one. Nothing is invented when they do not. */
+function toolPrimaryTarget(argumentsJson: string | null): string | null {
+  if (argumentsJson === null) return null;
+  let args: Record<string, unknown>;
+  try { args = record(JSON.parse(argumentsJson)); }
+  catch { return null; }
+  if (typeof args.command === 'string' && args.command.length > 0) return `命令 ${args.command}`;
+  const path = args.path ?? args.file_path ?? args.filePath;
+  if (typeof path === 'string' && path.length > 0) return `路径 ${path}`;
+  return null;
+}
+
+function toolArgumentsBlock(identity: ToolIdentity, argumentsJson: string | null): string {
+  return argumentsJson === null
+    ? '<p class="muted" data-tool-missing="arguments">本页未见参数</p>'
+    : `<pre class="q-tool-arguments" data-tool-arguments${toolIdentityAttributes(identity)}>${escapeHtml(argumentsJson)}</pre>`;
+}
+
+function toolOutputBlock(identity: ToolIdentity, parsed: Extract<ParsedHistoryBody, { kind: 'tool_terminal' }>): string {
+  const blocks: string[] = [];
+  if (parsed.outputText.length > 0) {
+    blocks.push(`<pre class="q-tool-output" data-tool-output${toolIdentityAttributes(identity)}>${escapeHtml(parsed.outputText)}</pre>`);
+  }
+  if (parsed.errorText !== null && parsed.errorText.length > 0) {
+    blocks.push(`<p class="q-tool-error" data-tool-error${toolIdentityAttributes(identity)}>${escapeHtml(parsed.errorText)}</p>`);
+  }
+  if (parsed.outputJson.length > 0) {
+    blocks.push(detailsFor('JSON 输出', `<pre data-tool-json-output${toolIdentityAttributes(identity)}>${escapeHtml(parsed.outputJson)}</pre>`));
+  }
+  if (blocks.length === 0) blocks.push('<p class="muted" data-tool-missing="output">本页未见输出</p>');
+  return blocks.join('');
+}
+
+/** A start whose terminal is on this page is one low-density line (the result
+ * is the single full card at its terminal). A start with no terminal on this
+ * page states the honest "本页未见结果" instead of pretending it is running. */
+function renderToolStartEntry(
+  parsed: Extract<ParsedHistoryBody, { kind: 'tool_start' }>, tool: ToolIndexEntry | undefined, declared = false,
+): string {
+  const name = tool !== undefined && tool.name.length > 0 ? tool.name : parsed.name;
+  const label = name.length > 0 ? name : '未知工具';
+  if (tool !== undefined && tool.terminalRecordId !== null) {
+    return `<div class="history-tool-line" data-tool-row="start"${toolIdentityAttributes(parsed.identity)}>`
+      + `<span class="phase muted">开始</span> <code>${escapeHtml(label)}</code></div>`;
+  }
+  return `<details class="history-tool-card is-pending" data-tool-card="pending" data-tool-name="${escapeHtml(label)}"${toolIdentityAttributes(parsed.identity)}>`
+    + `<summary><span class="q-chevron">›</span><strong>${escapeHtml(label)}</strong>`
+    + `<span class="muted">${declared ? '已请求' : '已开始'} · 本页未见结果</span></summary>`
+    + toolArgumentsBlock(parsed.identity, parsed.argumentsJson)
+    + '<p class="muted" data-tool-missing="terminal">本页未见结果（不据此推断仍在运行）</p></details>';
+}
+
+/** The one full card, placed at the terminal event's original position: action,
+ * target and status are visible; a failure brief is visible without expanding;
+ * arguments, output and the complete original record expand progressively. */
+function renderToolTerminalEntry(
+  entry: SessionHistoryEntry, parsed: Extract<ParsedHistoryBody, { kind: 'tool_terminal' }>,
+  tool: ToolIndexEntry | undefined,
+): string {
+  const name = tool !== undefined && tool.name.length > 0 ? tool.name
+    : parsed.name.length > 0 ? parsed.name : '未知工具';
+  const argumentsJson = tool?.argumentsJson ?? null;
+  const target = toolPrimaryTarget(argumentsJson);
+  const brief = parsed.status === 'completed' ? ''
+    : parsed.errorText !== null && parsed.errorText.length > 0 ? parsed.errorText
+      : parsed.status === 'cancelled' ? '已取消' : '结果未知';
+  return `<details class="history-tool-card is-${parsed.status}" data-tool-card="full" data-tool-name="${escapeHtml(name)}"`
+    + ` data-tool-status="${parsed.status}" data-tool-terminal="${escapeHtml(entry.recordId)}"${toolIdentityAttributes(parsed.identity)}>`
+    + `<summary><span class="q-chevron">›</span><strong>${escapeHtml(name)}</strong>`
+    + (target === null ? '' : `<span class="q-tool-target" title="${escapeHtml(target)}" data-tool-target>${escapeHtml(target)}</span>`)
+    + `<span class="phase" data-tool-status="${parsed.status}">${escapeHtml(TOOL_STATUS_LABEL[parsed.status])}</span>`
+    + (brief.length === 0 ? '' : `<span class="q-tool-brief" data-tool-brief>${escapeHtml(brief)}</span>`)
+    + `</summary>`
+    + toolOutputBlock(parsed.identity, parsed)
+    + detailsFor('调用参数', toolArgumentsBlock(parsed.identity, argumentsJson))
+    + renderRawDisclosure(entry)
+    + '</details>';
+}
+
+/**
+ * R6 cold-start: a READ-ONLY natural-language review of the optional `setup`
+ * candidate carried by a saved v2 plan answer. It is a projection of the saved
+ * model output and NEVER an adoption authority: `options.adopt` is set only by
+ * the caller that renders the CURRENT Goal pending candidate with a matching
+ * scope and saved Answer. Arbitrary history always renders the review without
+ * any adoption control.
+ */
+export function renderInitialPlanSetupReview(setup: unknown, options: { adopt?: boolean; plan?: unknown } = {}): string {
+  const value = record(setup);
+  const architecture = record(value.architecture);
+  const catalog = record(architecture.catalog);
+  const policy = record(value.completionPolicy);
+  const modules = list(catalog.modules);
+  const dependencies = list(catalog.dependencies);
+  const checks = list(value.checks);
+  const kinds = list(policy.requirementKinds).map(String);
+  const tasks = list(record(options.plan).tasks).map(item => {
+    const task = record(item);
+    const label = task.executionIntent === 'plan_only' ? '未来意图 · 不执行'
+      : task.taskKind === 'gate' ? '验收' : '执行';
+    return `<li><strong>${escapeHtml(task.title ?? '')}</strong> <span class="muted">${label}</span></li>`;
+  }).join('');
+  const moduleRows = modules.map(moduleValue => {
+    const module = record(moduleValue);
+    const ref = record(module.ref);
+    return `<li data-setup-module="${escapeHtml(ref.moduleId ?? '')}"><strong>${escapeHtml(module.name ?? '')}</strong>`
+      + ` <code>${escapeHtml(ref.projectId ?? '')}/${escapeHtml(ref.moduleId ?? '')}</code>`
+      + ` <span class="muted">${escapeHtml(module.responsibility ?? '')}</span></li>`;
+  }).join('');
+  const checkRows = checks.map(checkValue => {
+    const check = record(checkValue);
+    const taskIds = check.taskIds === 'all' ? 'all' : list(check.taskIds).map(String).join(', ');
+    return `<li data-setup-check="${escapeHtml(check.checkId ?? '')}"><code>${escapeHtml(check.command ?? '')}</code>`
+      + ` <span class="muted">kind ${escapeHtml(check.kind ?? '')} · cwd ${escapeHtml(check.cwd ?? '')}`
+      + ` · ${escapeHtml(String(check.timeoutMs ?? ''))}ms · tasks ${escapeHtml(taskIds)}</span></li>`;
+  }).join('');
+  return `<section class="initial-plan-review" data-initial-plan-review>`
+    + `<h3>候选初始方案（模型建议，尚未采用）</h3>`
+    + (tasks === '' ? '' : `<div data-setup-tasks><h4>工作安排</h4><ul>${tasks}</ul></div>`)
+    + `<div data-setup-architecture><h4>候选初始架构</h4>`
+    + `<p class="muted">baseline ${escapeHtml(architecture.baselineId ?? '')} · DAG ${String(catalog.requireDag === true)}`
+    + `${String(architecture.description ?? '') === '' ? '' : ` · ${escapeHtml(architecture.description ?? '')}`}</p>`
+    + (moduleRows === '' ? '<p class="muted">没有模块</p>' : `<ul>${moduleRows}</ul>`)
+    + (dependencies.length === 0 ? '' : `<p class="muted">依赖 ${dependencies.length} 条</p>`)
+    + `</div>`
+    + `<div data-setup-completion-policy><h4>候选完成策略</h4>`
+    + `<p>requirementKinds: ${escapeHtml(kinds.join(', ') || '(none)')}`
+    + ` · 每个必需义务最少 ${escapeHtml(String(policy.minimumRequiredRequirementsPerObligation ?? ''))} 条必需验证</p></div>`
+    + `<div data-setup-checks><h4>候选检查（若采用将会运行的真实命令）</h4>`
+    + (checkRows === '' ? '<p class="muted">没有注册检查</p>' : `<ul>${checkRows}</ul>`)
+    + `</div>`
+    + (options.adopt === true
+      ? '<div class="buttons"><button data-action="adopt-initial-plan" data-adopt-initial-plan>采用并执行</button></div>'
+      : '')
+    + `</section>`;
+}
+
+/** The planning model deliberately returns JSON. Present its known, saved
+ * prose and task titles without treating that model output as an adopted plan.
+ * Other messages keep ordinary Markdown; no JSON is repaired or acted upon. */
+function renderAssistantContent(text: string): string {
+  let value: Record<string, unknown>;
+  try { value = record(JSON.parse(text)); }
+  catch {
+    return /^\s*(?:\{\s*"|\[\s*\{)/.test(text)
+      ? detailsFor('结构化文本（未解析）', `<pre>${escapeHtml(text)}</pre>`)
+      : `<div class="q-message-text">${renderMarkdown(text)}</div>`;
+  }
+  if (value.schemaVersion !== 2 || (value.kind !== 'plan' && value.kind !== 'needs_decision')
+    || typeof value.summary !== 'string') return /^\s*[\[{]/.test(text)
+      ? detailsFor('结构化输出', `<pre>${escapeHtml(text)}</pre>`)
+      : `<div class="q-message-text">${renderMarkdown(text)}</div>`;
+  const planning = value.kind === 'plan';
+  const rows = planning ? list(record(value.plan).tasks) : list(value.questions);
+  const titles = rows.map(item => planning ? record(item).title : item)
+    .filter((title): title is string => typeof title === 'string');
+  return `<div data-planning-output="${escapeHtml(value.kind)}"><p class="muted">${planning ? '计划候选 · 模型输出' : '待决问题 · 模型输出'}</p>`
+    + `<div class="q-message-text">${renderMarkdown(value.summary)}</div>`
+    + (titles.length === 0 ? '' : `<div class="q-message-text"><h3>${planning ? '候选任务' : '需要确认'}</h3><ol>`
+      + titles.map(title => `<li>${escapeHtml(title)}</li>`).join('') + '</ol></div>')
+    + (planning && value.setup !== undefined ? renderInitialPlanSetupReview(value.setup, { plan: value.plan }) : '')
+    + detailsFor('完整结构化输出', `<pre>${escapeHtml(text)}</pre>`) + '</div>';
+}
+
+/** Segmented default view of one original record. A tool record falls back to
+ * its full payload JSON when it is rendered without page context. */
+function renderParsedHistoryBody(parsed: ParsedHistoryBody, inputRecord = ''): string {
   if (parsed.kind === 'artifact') {
     return `<div data-history-body="artifact"><p>工件 <code>${escapeHtml(parsed.refId)}</code>`
       + ` · ${escapeHtml(parsed.contentType)} · ${escapeHtml(parsed.sizeBytes)} 字节`
@@ -1035,13 +1507,37 @@ function renderParsedHistoryBody(parsed: ParsedHistoryBody): string {
       + `<p class="muted">正文未读取</p></div>`;
   }
   if (parsed.kind === 'unknown') {
-    return `<details class="history-body" data-history-body="unknown"><summary>未识别记录</summary>`
-      + `<p>记录类型 <code>${escapeHtml(parsed.recordType)}</code>；完整已保存原文见下方“原始记录”，此处不生成解释代替原文。</p>`
-      + `</details>`;
+    return `<details class="q-fold q-tool" data-history-body="unknown"><summary class="cursor-interaction">`
+      + `<span class="q-chevron">›</span>未识别记录 · <code>${escapeHtml(parsed.recordType)}</code></summary>`
+      + `<p class="muted">完整已保存原文见下方“原始记录”，此处不生成解释代替原文。</p></details>`;
   }
-  return `<details class="history-body" data-history-body="${parsed.kind}">`
-    + `<summary>${escapeHtml(HISTORY_BODY_LABEL[parsed.kind])}</summary>`
-    + `<pre>${escapeHtml(parsed.text)}</pre></details>`;
+  if (parsed.kind === 'tool_start' || parsed.kind === 'tool_terminal') {
+    const label = parsed.kind === 'tool_start' ? '工具开始' : TOOL_STATUS_LABEL[parsed.status];
+    const eventType = parsed.kind === 'tool_start' ? 'tool.started' : 'tool.result';
+    return `<details class="q-fold q-tool" data-history-body="technical" data-event-type="${escapeHtml(eventType)}">`
+      + `<summary class="cursor-interaction"><span class="q-chevron">›</span>${escapeHtml(label)}`
+      + ` <span class="muted">${escapeHtml(eventType)}</span></summary>`
+      + `<pre data-tool-json>${escapeHtml(parsed.json)}</pre></details>`;
+  }
+  if (parsed.kind === 'technical') {
+    return `<details class="q-fold q-tool" data-history-body="technical" data-event-type="${escapeHtml(parsed.eventType)}">`
+      + `<summary class="cursor-interaction"><span class="q-chevron">›</span>${escapeHtml(parsed.label)}`
+      + ` <span class="muted">${escapeHtml(parsed.eventType)}</span></summary>`
+      + (parsed.text.length === 0 ? '' : `<pre data-tool-text>${escapeHtml(parsed.text)}</pre>`)
+      + `<pre data-tool-json>${escapeHtml(parsed.json)}</pre></details>`;
+  }
+  const body = parsed.kind === 'assistant_text' ? renderAssistantContent(parsed.text)
+    : `<div class="q-message-text">${renderMarkdown(parsed.text)}</div>`;
+  if (parsed.kind === 'context_input') {
+    return `<details class="q-fold history-input" data-history-body="context_input"><summary><span class="q-chevron">›</span>上下文补充`
+      + `${parsed.sourceKind === '' ? '' : ` · ${escapeHtml(parsed.sourceKind)}`}</summary>${body}${inputRecord}</details>`;
+  }
+  if (parsed.kind === 'user_input') {
+    return `<details class="q-fold history-input" data-history-body="user_input"><summary><span class="q-chevron">›</span>执行上下文 · ${parsed.text.length} 字</summary>${body}${inputRecord}</details>`;
+  }
+  const reasoning = parsed.kind === 'assistant_text' && parsed.reasoning.length > 0
+    ? `<details class="history-reasoning"><summary title="展开模型已保存的推理原文"><span class="q-chevron">›</span>思考</summary><div class="q-message-text">${renderMarkdown(parsed.reasoning)}</div></details>` : '';
+  return `<div class="q-msg q-msg-assistant" data-history-body="${parsed.kind}">${reasoning}${body}</div>`;
 }
 
 /** The exact saved body text, or the ArtifactRef record for an artifact body.
@@ -1058,7 +1554,7 @@ function rawRecordBody(entry: SessionHistoryEntry): string {
  * event fields, in original order. */
 function renderRawDisclosure(entry: SessionHistoryEntry): string {
   return `<details class="history-raw" data-history-raw="${escapeHtml(entry.recordId)}">`
-    + `<summary>原始记录（完整保存原文）</summary>`
+    + `<summary aria-label="查看原始记录" title="原始记录 · 完整保存原文"><span aria-hidden="true">···</span></summary>`
     + `<p class="muted">recordId <code>${escapeHtml(entry.recordId)}</code>`
     + ` · kind ${escapeHtml(entry.kind)}`
     + ` · cursor <code>${escapeHtml(entry.cursor)}</code>`
@@ -1069,34 +1565,103 @@ function renderRawDisclosure(entry: SessionHistoryEntry): string {
     + `</details>`;
 }
 
-function renderHistoryEntry(entry: SessionHistoryEntry): string {
+/** Prose and input are the reading mainline and stay their own readable body. */
+function renderHistoryEntry(entry: SessionHistoryEntry, tools: Map<string, ToolIndexEntry>): string {
   const parsed = parseHistoryBody(entry);
-  // The always-visible line stays short: the exact recordId/cursor/position are
-  // long technical facts and live in the default-closed raw disclosure below,
-  // never widening the conversation column.
-  const identity = `<span class="muted">${escapeHtml(entry.recordedAt)} · position ${escapeHtml(entry.source.position)}</span>`;
-  const header = `<header><strong>${escapeHtml(HISTORY_BODY_LABEL[parsed.kind])}</strong> ${identity}</header>`;
+  const identity = `<span class="muted">${escapeHtml(shortTime(entry.recordedAt))}</span>`;
+  const title = parsed.kind === 'technical' ? parsed.label
+    : parsed.kind === 'user_input' ? '执行输入' : parsed.kind === 'assistant_text' ? 'Agent'
+      : parsed.kind === 'context_input' ? ''
+      : parsed.kind === 'artifact' ? HISTORY_BODY_LABEL.artifact
+        : parsed.kind === 'unknown' ? HISTORY_BODY_LABEL.unknown
+          : HISTORY_BODY_LABEL.tool_result;
+  const isInput = parsed.kind === 'user_input' || parsed.kind === 'context_input';
+  const header = isInput ? '' : title.length === 0
+    ? `<header class="q-msg-meta">${identity}</header>`
+    : `<header class="q-msg-meta"><strong>${escapeHtml(title)}</strong> ${identity}</header>`;
+  const declared = parsed.kind !== 'assistant_text' ? '' : parsed.declared.filter(call => {
+    const tool = tools.get(toolKey(call));
+    return tool !== undefined && tool.startRecordId === null && tool.terminalRecordId === null;
+  }).map(call => renderToolStartEntry({ kind: 'tool_start', identity: call, name: call.name,
+    argumentsJson: call.argumentsJson, json: '' }, tools.get(toolKey(call)), true)).join('');
   return `<li data-history="${escapeHtml(entry.recordId)}" data-history-kind="${parsed.kind}">`
-    + `${header}${renderParsedHistoryBody(parsed)}${renderRawDisclosure(entry)}</li>`;
+    + `${header}${renderParsedHistoryBody(parsed, isInput ? renderRawDisclosure(entry) : '')}${declared}${isInput ? '' : renderRawDisclosure(entry)}</li>`;
+}
+
+/** The reading sequence: prose/input stay inline, and each contiguous run of
+ * same identity (adapter+kernelSession+run+turn, adjacent positions) collapses
+ * into ONE activity group. A prose/input/source/identity change cuts the group;
+ * parallel records are never re-sorted. Every member keeps its own raw record. */
+function renderHistorySequence(entries: SessionHistoryEntry[]): string {
+  const tools = buildToolIndex(entries);
+  let html = '';
+  let index = 0;
+  while (index < entries.length) {
+    const entry = entries[index]!;
+    const parsed = parseHistoryBody(entry);
+    if (isMessageBoundary(parsed)) {
+      html += renderHistoryEntry(entry, tools);
+      index += 1;
+      continue;
+    }
+    const members: ActivityMember[] = [{ entry, parsed, meta: historyEntryMeta(entry) }];
+    const key = activityGroupKey(members[0]!.meta);
+    index += 1;
+    while (index < entries.length) {
+      const next = entries[index]!;
+      const nextParsed = parseHistoryBody(next);
+      if (isMessageBoundary(nextParsed)) break;
+      const nextMeta = historyEntryMeta(next);
+      if (activityGroupKey(nextMeta) !== key) break;
+      if (nextMeta.position !== members[members.length - 1]!.meta.position + 1) break;
+      members.push({ entry: next, parsed: nextParsed, meta: nextMeta });
+      index += 1;
+    }
+    html += renderActivityGroup(members, tools);
+  }
+  return html;
 }
 
 /** Original-history timeline. It preserves the exact recordId, cursor and
  * source.position order, keeps ArtifactRef unread, and never invents a public
  * summary or re-sorts parallel events into a causal chain. */
-export function renderSessionHistoryTimeline(result: ReadResult<Page<SessionHistoryEntry>>): string {
+export function renderSessionHistoryTimeline(result: ReadResult<Page<SessionHistoryEntry>>, executions?: readonly TaskExecutionRecord[]): string {
   if (result.status === 'rejected') return rejectionPanel(result);
   if (result.status === 'not_found') return renderGap('sessions/history', '该会话没有可读的原历史');
   if (result.status === 'not_ready') return renderGap('sessions/history', '原历史尚未就绪');
   const page = result.value;
-  const rows = page.items.map(renderHistoryEntry).join('');
-  return `<section class="panel history-timeline" data-view="history-timeline"><header><h3>原历史</h3>`
-    + `<p>共 ${page.items.length} 条 · ${page.nextCursor === null ? '没有更多' : '还有更多'}</p>`
-    + detailsFor('查看历史游标与依据', `<p>nextCursor ${escapeHtml(page.nextCursor ?? 'none')}</p>`
+  const sections: { key: string | null; label: string; entries: SessionHistoryEntry[] }[] = [];
+  for (const entry of page.items) {
+    const execution = executions?.find(candidate => {
+      const window = candidate.run.executionHistory;
+      return window !== undefined && window.kernel.adapterId === entry.source.adapterId
+        && window.kernel.kernelSessionId === entry.source.kernelSessionId
+        && entry.source.position >= window.startPosition
+        && entry.source.position <= (window.endPosition ?? window.observedThroughPosition);
+    });
+    const task = execution?.run.task;
+    const key = task === undefined ? null : JSON.stringify(task);
+    const previous = sections[sections.length - 1];
+    if (previous !== undefined && previous.key === key) previous.entries.push(entry);
+    else sections.push({ key, label: task?.taskId ?? '', entries: [entry] });
+  }
+  const rows = sections.map(section => {
+    const body = renderHistorySequence(section.entries);
+    return section.key === null ? body
+      : `<li class="history-task-group"><details><summary class="cursor-interaction"><span class="q-chevron">›</span>Task ${escapeHtml(section.label)} · ${section.entries.length} 条</summary><ol class="history">${body}</ol></details></li>`;
+  }).join('');
+  return `<section class="panel history-timeline" data-view="history-timeline">`
+    + detailsFor('历史详情', `<p>共 ${page.items.length} 条 · ${page.nextCursor === null ? '没有更多' : '还有更多'}</p><p>nextCursor ${escapeHtml(page.nextCursor ?? 'none')}</p>`
       + `<p>basis <code>${escapeHtml(JSON.stringify(page.basis))}</code></p>`)
-    + `</header>`
     + (page.items.length === 0 ? '<p class="muted">该页没有记录</p>' : `<ol class="history">${rows}</ol>`)
     + `</section>`;
 }
+
+/** Result state for one execution-history page. The exact scope + RunRef is the
+ * key, so a late response can never be shown under another Run. This is page
+ * display state, never a second domain index; refresh/pagination overwrite it
+ * with the latest real read result. */
+
 
 /** Result state for one execution-history page. The exact scope + RunRef is the
  * key, so a late response can never be shown under another Run. This is page
@@ -1158,79 +1723,169 @@ export function renderExecutionHistory(result: ReadResult<ExecutionHistoryPage> 
 
 // --- Task structure ------------------------------------------------------------
 
-function structureTaskRow(row: TaskRow): string {
-  const title = record(row.definition).title;
-  const intent = row.definition.executionIntent;
-  return `<li data-task="${escapeHtml(row.ref.taskId)}"><code>${escapeHtml(row.ref.taskId)}</code>`
-    + ` <strong>${escapeHtml(title ?? '')}</strong>`
-    + ` <span class="phase">${escapeHtml(row.effectivePhase)}</span>`
-    + ` <span class="muted">${escapeHtml(row.disposition)} · ${escapeHtml(row.definition.requirementLevel)}`
-    + ` · ${escapeHtml(row.definition.taskKind)} · ${escapeHtml(intent ?? '未标注执行意图')}</span>`
-    + ` <button class="link" data-action="open-task-detail"`
-    + ` data-project-id="${escapeHtml(row.ref.projectId)}" data-goal-id="${escapeHtml(row.ref.goalId)}"`
-    + ` data-task-id="${escapeHtml(row.ref.taskId)}">打开任务详情</button></li>`;
-}
-
-/** Work-breakdown (`taskHierarchy.parentOf`) and real execution dependencies
- * (`executionDag.dependsOn`) stay in separate sections; advisory relations are
- * a third list. Planning-only/optional/deferred/future rows are never filtered
- * and no execution time is invented. */
-export function renderTaskStructure(result: ReadResult<TaskGraph>, display?: WorkbenchGraphDisplay): string {
+// (removed) task rows are rendered by the structure lens sections.
+export function renderTaskStructure(
+  result: ReadResult<TaskGraph>,
+  page?: { items: TaskExecutionRecord[]; nextCursor: string | null; readThrough?: unknown },
+  lens?: { focus: number; zoom: number },
+  display?: WorkbenchGraphDisplay,
+  edgeMode: 'hierarchy' | 'dependency' = 'hierarchy',
+): string {
   if (result.status === 'rejected') return rejectionPanel(result);
   if (result.status === 'not_found') return renderGap('tasks/query', '该 Goal 还没有已采用的 Plan');
   if (result.status === 'not_ready') return renderGap('tasks/query', '任务图尚未就绪');
   const graph = result.value;
   const plan = graph.plan;
-  const tasks: { taskId: string; title: string; phase: string; disposition: string; intent: string }[] =
-    graph.tasks.length > 0
-      ? graph.tasks.map(row => ({ taskId: row.ref.taskId, title: String(record(row.definition).title ?? ''),
-          phase: row.effectivePhase, disposition: row.disposition, intent: row.definition.executionIntent ?? '未标注执行意图' }))
-      : plan.tasks.map(task => ({ taskId: task.taskId, title: task.title, phase: task.phase,
-          disposition: task.disposition, intent: task.executionIntent ?? '未标注执行意图' }));
-  const taskNode = (task: { taskId: string; title: string; phase: string; disposition: string; intent: string }): GraphNodeSpec => ({
-    id: task.taskId,
-    label: task.title.length > 0 ? task.title : task.taskId,
-    caption: `${task.taskId} · ${task.phase} · ${task.intent}`,
-    action: 'select-node',
-    data: { 'target-kind': 'task', 'project-id': plan.goalRef.projectId, 'goal-id': plan.goalRef.goalId, 'task-id': task.taskId },
-    title: `${task.title || task.taskId}（${task.taskId}）\nphase: ${task.phase}\ndisposition: ${task.disposition}\nintent: ${task.intent}`,
+  type LensRow = { taskId: string; title: string; phase: string; disposition: string; intent: string; taskKind: string; requirement: string };
+  const titleOf = (definition: unknown, taskId: string): string => {
+    const title = record(definition).title;
+    return typeof title === 'string' && title.length > 0 ? title : taskId;
+  };
+  const rows: LensRow[] = graph.tasks.length > 0
+    ? graph.tasks.map(row => ({
+        taskId: row.ref.taskId, title: titleOf(row.definition, row.ref.taskId),
+        phase: row.effectivePhase, disposition: row.disposition,
+        intent: row.definition.executionIntent ?? '未标注执行意图',
+        taskKind: row.definition.taskKind ?? '', requirement: row.definition.requirementLevel ?? '' }))
+    : plan.tasks.map(task => ({
+        taskId: task.taskId, title: task.title.length > 0 ? task.title : task.taskId,
+        phase: task.phase, disposition: task.disposition,
+        intent: task.executionIntent ?? '未标注执行意图',
+        taskKind: task.taskKind ?? '', requirement: task.requirementLevel ?? '' }));
+  const taskIds = new Set(rows.map(row => row.taskId));
+  const executions = (page?.items ?? []).filter(item =>
+    item.run.task.projectId === plan.goalRef.projectId
+    && item.run.task.goalId === plan.goalRef.goalId
+    && taskIds.has(item.run.task.taskId));
+  const focus = lens?.focus ?? 0.5;
+  const zoom = lens?.zoom ?? 0.5;
+  const pinned = new Set(display?.pinned ?? []);
+  const selectedId = display?.selected?.nodeId ?? null;
+  const parentOf = new Map<string, string>();
+  for (const edge of plan.taskHierarchy.parentOf) parentOf.set(edge.childTaskId, edge.parentTaskId);
+  const activeRunTasks = new Set(executions.filter(item => item.run.status !== 'ended').map(item => item.run.task.taskId));
+  // Real run windows only; no guessed time.
+  const known = executions.filter(item => MS(item.run.startedAt) !== null);
+  const minMs = known.length === 0 ? 0 : Math.min(...known.map(item => MS(item.run.startedAt)!));
+  const maxKnown = known.map(item => MS(item.run.endedAt)).filter((value): value is number => value !== null);
+  const maxMs = Math.max(minMs + 1, ...known.map(item => MS(item.run.startedAt)!), ...maxKnown);
+  const span = Math.max(1, maxMs - minMs);
+  const byTask = new Map<string, { startMs: number; endMs: number; running: boolean }[]>();
+  for (const item of known) {
+    const taskId = item.run.task.taskId;
+    const start = MS(item.run.startedAt)!;
+    const end = MS(item.run.endedAt) ?? (item.run.status !== 'ended' ? maxMs : start);
+    const segment = { startMs: Math.min(start, end), endMs: Math.max(start, end), running: item.run.status !== 'ended' };
+    const bucket = byTask.get(taskId);
+    if (bucket === undefined) byTask.set(taskId, [segment]); else bucket.push(segment);
+  }
+  const withRuns = rows.flatMap(row => {
+    const segments = byTask.get(row.taskId);
+    if (segments === undefined || segments.length === 0) return [];
+    return [{ row, start: Math.min(...segments.map(segment => segment.startMs)), end: Math.max(...segments.map(segment => segment.endMs)) }];
+  }).sort((left, right) => left.start - right.start);
+  const laneEnds: number[] = [];
+  const placed = withRuns.map(item => {
+    let lane = laneEnds.findIndex(last => last <= item.start);
+    if (lane === -1) { lane = laneEnds.length; laneEnds.push(item.end); } else laneEnds[lane] = item.end;
+    return { row: item.row, lane, startMs: item.start, endMs: item.end };
   });
-  const hierarchyGraph = renderNodeLinkGraph(tasks.map(taskNode),
-    plan.taskHierarchy.parentOf.map(edge => ({ from: edge.parentTaskId, to: edge.childTaskId })), '任务包含结构图', display);
-  const executionGraph = renderNodeLinkGraph(tasks.map(taskNode),
-    plan.executionDag.dependsOn.map(edge => ({ from: edge.dependsOnId, to: edge.taskId, label: edge.requires.kind })), '任务执行依赖图', display);
-  const hierarchy = plan.taskHierarchy.parentOf.map(edge =>
-    `<li>${escapeHtml(edge.parentTaskId)} → ${escapeHtml(edge.childTaskId)}</li>`).join('');
-  const execution = plan.executionDag.dependsOn.map(edge =>
-    `<li>${escapeHtml(edge.taskId)} 依赖 ${escapeHtml(edge.dependsOnId)} `
-    + `<span class="muted">${escapeHtml(edge.requires.kind)} · ${escapeHtml(edge.requires.label)}</span></li>`).join('');
+  const laneCount = Math.max(1, laneEnds.length);
+  const height = 460;
+  const width = Math.max(520, laneCount * 180 + 40);
+  const yOf = (ms: number): number => 22 + lensMap((ms - minMs) / span, focus, zoom) * (height - 44);
+  const xOf = (lane: number): number => 100 + lane * 180;
+  const focusY = yOf(minMs + focus * span);
+  const labelFor = (row: LensRow): string => `${row.title} · ${row.taskId} · ${row.phase} · ${row.intent}`;
+  // Untimed nodes share this canvas, but sit outside the time scale.
+  const noRun = rows.filter(row => !byTask.has(row.taskId));
+  const zoneOf = (row: LensRow): 'gate' | 'future' | 'unknown' => row.taskKind === 'gate' ? 'gate'
+    : row.intent === 'plan_only' || row.disposition === 'deferred' ? 'future' : 'unknown';
+  // Untimed classification keeps its real meaning: pending/time-unknown first,
+  // then acceptance, then future. The raw id/phase stay in the title/data.
+  const zones = [
+    { key: 'unknown' as const, title: '执行时间未加载或未记录' },
+    { key: 'gate' as const, title: '验收节点 · 未记录执行时间' },
+    { key: 'future' as const, title: '未来意图 · 未分配时间' },
+  ];
+  const positions = new Map(placed.map(item => [item.row.taskId, { x: xOf(item.lane), y: yOf(item.startMs) }]));
+  // The no-time regions are compact: a tight label row plus one 56px row per
+  // member, with no reserved blank band. The timed axis above keeps its existing
+  // focus/zoom and parallel-lane placement untouched.
+  let zoneTop = placed.length > 0 ? height + 20 : 20;
+  const zoneLabels: string[] = [];
+  for (const zone of zones) {
+    const members = noRun.filter(row => zoneOf(row) === zone.key);
+    if (members.length === 0) continue;
+    zoneLabels.push(`<div class="q-untimed-label" style="position:absolute;left:20px;top:${zoneTop}px">${escapeHtml(zone.title)}</div>`);
+    const columns = Math.max(1, Math.floor((width - 40) / 180));
+    members.forEach((row, index) => positions.set(row.taskId, {
+      x: 100 + (index % columns) * 180,
+      y: zoneTop + 34 + Math.floor(index / columns) * 56,
+    }));
+    zoneTop += 40 + Math.ceil(members.length / columns) * 56;
+  }
+  const canvasHeight = Math.max(placed.length > 0 ? height : 0, zoneTop + 8);
+  const edges = edgeMode === 'dependency'
+    ? plan.executionDag.dependsOn.map(edge => ({ from: edge.dependsOnId, to: edge.taskId }))
+    : plan.taskHierarchy.parentOf.map(edge => ({ from: edge.parentTaskId, to: edge.childTaskId }));
+  const edgePaths = edges.flatMap(edge => {
+    const from = positions.get(edge.from); const to = positions.get(edge.to);
+    if (from === undefined || to === undefined) return [];
+    return [`<path d="M ${from.x} ${from.y + 9} C ${from.x} ${(from.y + to.y) / 2}, ${to.x} ${(from.y + to.y) / 2}, ${to.x} ${to.y - 9}"/>`];
+  }).join('');
+  const barHtml = placed.flatMap(item => {
+    const segments = byTask.get(item.row.taskId) ?? [];
+    return segments.map(segment => {
+      const top = yOf(segment.startMs); const bottom = Math.max(top + 2, yOf(segment.endMs));
+      return `<div class="q-runbar${segment.running ? ' running' : ''}" title="${segment.running ? '执行中，尚无结束时间；延伸至当前显示窗口边界' : '已记录执行区间'}" style="left:${xOf(item.lane)}px;top:${top}px;height:${bottom - top}px" aria-hidden="true"></div>`;
+    });
+  }).join('');
+  const nodeHtml = [...placed, ...noRun.map(row => ({ row, lane: 0, startMs: minMs, endMs: minMs }))].map(item => {
+    const point = positions.get(item.row.taskId) ?? { x: xOf(item.lane), y: yOf(item.startMs) };
+    const isPinned = pinned.has(item.row.taskId);
+    const selected = selectedId === item.row.taskId;
+    const isRoot = !parentOf.has(item.row.taskId);
+    const isRunning = item.row.phase === 'running' || activeRunTasks.has(item.row.taskId);
+    const nearFocus = byTask.has(item.row.taskId) && Math.abs(point.y - focusY) < 64;
+    const showLabel = isPinned || selected || isRoot || isRunning || nearFocus || !byTask.has(item.row.taskId);
+    return `<button class="q-graphnode${selected ? ' selected' : ''}${isPinned ? ' q-pinned' : ''}"`
+      + ` data-node="${escapeHtml(item.row.taskId)}" style="left:${point.x}px;top:${point.y}px"`
+      + ` data-action="select-node" data-target-kind="task" data-project-id="${escapeHtml(plan.goalRef.projectId)}"`
+      + ` data-goal-id="${escapeHtml(plan.goalRef.goalId)}" data-task-id="${escapeHtml(item.row.taskId)}"`
+      + ` aria-pressed="${String(selected || isPinned)}" title="${escapeHtml(labelFor(item.row))}">`
+      + `<span class="q-orb${isRunning ? ' active' : ''}"></span>`
+      + `<span class="q-nodelabel${showLabel ? '' : ' q-compact-label'}">${escapeHtml(item.row.title)}<small>${escapeHtml(`${item.row.intent === 'plan_only' || item.row.disposition === 'deferred' ? '未来意图' : `${item.row.taskKind === 'gate' ? '验收 · ' : ''}${TASK_PHASE_LABEL[item.row.phase] ?? item.row.phase}`}`)}</small></span>`
+      + `</button>`;
+  }).join('');
+  const runSummary = page?.nextCursor == null
+    ? `已载执行记录 ${executions.length} 条`
+    : `已载执行记录 ${executions.length} 条（还有更多页，未判断不存在）`;
+  const canvas = `<div class="q-graph-layout"><div class="q-graph-scroll"><div class="q-graph" style="width:${width}px;height:${canvasHeight}px" role="group" aria-label="任务结构：时间焦点与无时间节点">`
+    + `<svg class="q-edges" viewBox="0 0 ${width} ${canvasHeight}" preserveAspectRatio="none" aria-hidden="true">${edgePaths}</svg>`
+    + zoneLabels.join('') + barHtml + nodeHtml
+    + (placed.length === 0 ? '' : `<div class="q-focus-band" style="top:${Math.max(0, focusY - 44)}px" aria-hidden="true"></div>`)
+    + `</div></div>`
+    + (placed.length === 0 ? '' : `<div class="q-vertical-lens" data-view="task-lens"><span>早</span>`
+      + `<input type="range" min="0" max="1" step="0.01" value="${focus}" data-field="timelineFocus" aria-label="连续纵向放大镜">`
+      + `<span>晚</span></div>`)
+    + `</div>`;
   const relations = ('taskRelations' in plan ? plan.taskRelations ?? [] : []).map(relation =>
     `<li>${escapeHtml(relation.kind)}: ${escapeHtml(relation.fromTaskId)} → ${escapeHtml(relation.toTaskId)} `
     + `<span class="muted">${escapeHtml(relation.note)}</span></li>`).join('');
-  return `<section class="panel" data-view="task-structure"><header><h3>任务结构</h3>`
-    + `<p>目标 <code>${escapeHtml(plan.goalRef.goalId)}</code> · 计划 <code>${escapeHtml(plan.ref.planId)}</code>`
-    + ` · 业务版本 ${escapeHtml(plan.planRevision)} · 任务 ${graph.tasks.length}</p></header>`
-    + `<section data-structure="hierarchy"><h4>包含结构（parent_of）</h4>`
-    + hierarchyGraph
-    + (hierarchy.length === 0 ? '<p class="muted">没有记录包含边</p>' : `<ul>${hierarchy}</ul>`)
-    + `<p class="muted">包含关系只表达工作分解，不代表执行依赖。</p></section>`
-    + `<section data-structure="execution"><h4>执行依赖（depends_on）</h4>`
-    + executionGraph
-    + (execution.length === 0 ? '<p class="muted">没有记录执行依赖</p>' : `<ul>${execution}</ul>`)
-    + `<p class="muted">依赖边来自已采用 Plan 的执行 DAG，与包含关系分开。</p></section>`
-    + `<section data-structure="relations"><h4>协作关系（advisory）</h4>`
-    + (relations.length === 0 ? '<p class="muted">没有记录协作关系</p>' : `<ul>${relations}</ul>`)
-    + `<p class="muted">协作关系只是建议，不构成调度前置。</p></section>`
-    + `<section data-structure="tasks"><h4>全部任务</h4>`
-    + (graph.tasks.length === 0 ? '<p class="muted">没有任务</p>' : `<ul class="tasks">${graph.tasks.map(structureTaskRow).join('')}</ul>`)
-    + `</section></section>`;
+  return `<section class="panel" data-view="task-structure">`
+    + `<div class="q-graphbar" data-view="task-structure-lens">`
+    + `<button data-action="set-graph-edges" data-edges="hierarchy" aria-pressed="${String(edgeMode === 'hierarchy')}">包含结构</button>`
+    + `<button data-action="set-graph-edges" data-edges="dependency" aria-pressed="${String(edgeMode === 'dependency')}">执行依赖</button>`
+    + `</div>`
+    + canvas
+    + `<details class="q-fold"><summary>图信息</summary><p>${escapeHtml(runSummary)} · ${rows.length} 个任务</p><p>计划 ${escapeHtml(plan.ref.planId)} · 版本 ${escapeHtml(plan.planRevision)}</p></details>`
+    + `<details class="q-fold"><summary class="cursor-interaction"><span class="q-chevron">›</span>协作关系（advisory）</summary>`
+    + (relations.length === 0 ? '<p class="muted">没有记录协作关系</p>' : `<ul>${relations}</ul>`) + `</details>`
+    + `</section>`;
 }
 
-// --- Work-link navigation ------------------------------------------------------
 
-/** Navigation from a real `WorkLinkTarget` to its related Sessions. The exact
- * typed ref travels in data attributes; nothing is parsed from a title/tabId and
- * no Task↔Kernel link is guessed. Archived sessions are included by the caller. */
 export function renderWorkLinkTarget(target: WorkLinkTarget): string {
   let label: string;
   let identity: string;
@@ -1403,7 +2058,472 @@ export function renderInitialPlanning(result: InitialPlanningGoalInputResult, or
   const next = value.next === null ? '<p class="muted">没有下一步</p>'
     : detailsFor('下一步原请求', `<pre>${escapeHtml(JSON.stringify(value.next.input, null, 2))}</pre>`);
   return `<section class="panel" data-view="initial-planning" data-state="${escapeHtml(value.state)}"`
-    + ` data-next-kind="${escapeHtml(nextKind)}"><header><h3>初始规划</h3></header>`
+    + ` data-next-kind="${escapeHtml(nextKind)}"><header><h3>初始规划</h3><p>${escapeHtml({ proposed: '候选待采用', needs_decision: '需要补充决定', advance: '已采用，可以执行', waiting: '等待处理' }[value.state])}</p></header>`
+    + (value.receipt.status === 'rejected' ? rejectionPanel(value.receipt) : '')
     + detailsFor('候选/采用回执', `<pre>${escapeHtml(JSON.stringify(value.receipt, null, 2))}</pre>`)
     + next + originalRequestHtml(originalRequest) + `</section>`;
+}
+
+// ---------------------------------------------------------------------------
+// MVP UI connection: pure renderers.
+//
+// Everything below is still pure text presentation over the exact public DTOs.
+// No DOM, no network, no fabricated timestamp, diff, receipt or completion. The
+// MVP flows (new Goal, member mail, Kernel file CAS, command handles and the two
+// execution-backed graphs) mount these functions from `main.ts`.
+// ---------------------------------------------------------------------------
+
+/** One plotted Run on the real execution timeline. The key uses the complete
+ * typed RunRef, never a bare runId, so two Goals never collide. */
+export type TaskTimelineDisplay = {
+  /** Strictly-monotonic vertical lens: normalized focus in [0,1] and a window. */
+  focus: number;
+  zoom: number;
+  pinned: string[];
+  selected: string | null;
+};
+
+export const taskTimelineRunKey = (run: RunRef): string =>
+  `run:${run.projectId}:${run.goalId}:${run.runId}`;
+
+type TimelinePlaced = {
+  record: TaskExecutionRecord;
+  key: string;
+  lane: number;
+  startMs: number;
+  endMs: number;
+  running: boolean;
+};
+
+const MS = (value: string | null): number | null => {
+  if (value === null || value.length === 0) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+/** Strictly monotonic lens over the normalized [0,1] time window. `tanh` is
+ * strictly increasing, so the mapped order is identical to the real event
+ * order: no crossing, no reordering, no fabricated timestamp. */
+function lensMap(u: number, focus: number, zoom: number): number {
+  const span = Math.max(0.02, Math.min(1, zoom));
+  const hi = Math.tanh((1 - focus) / span);
+  const lo = Math.tanh((0 - focus) / span);
+  const here = Math.tanh((u - focus) / span);
+  if (hi - lo === 0) return u;
+  return 0.2 * u + 0.8 * (here - lo) / (hi - lo);
+}
+
+function timelineInterval(lane: number, laneCount: number): { left: string; width: string } {
+  const slot = 100 / Math.max(1, laneCount);
+  return { left: `${lane * slot}%`, width: `${Math.max(4, slot - 3)}%` };
+}
+
+/** Real Run timeline. Only `run.startedAt`/`run.endedAt` are used; a Run with
+ * no `startedAt` is never plotted at a guessed time and is listed separately as
+ * time-unknown. A running Run is marked and has no invented end time. */
+export function renderTaskExecutionTimeline(
+  page: { items: TaskExecutionRecord[]; nextCursor: string | null; readThrough?: unknown },
+  display?: TaskTimelineDisplay,
+  tasks?: readonly TaskRow[],
+): string {
+  const items = page.items;
+
+  const known = items
+    .map(record => ({ record, startMs: MS(record.run.startedAt), endMs: MS(record.run.endedAt) }))
+    .filter((entry): entry is { record: TaskExecutionRecord; startMs: number; endMs: number | null } => entry.startMs !== null);
+  const unknown = items.filter(entry => MS(entry.run.startedAt) === null);
+  const minMs = known.length === 0 ? 0 : Math.min(...known.map(entry => entry.startMs));
+  const maxKnown = known
+    .map(entry => entry.endMs)
+    .filter((value): value is number => value !== null);
+  const maxMs = Math.max(minMs + 1, ...known.map(entry => entry.startMs), ...maxKnown);
+  const span = Math.max(1, maxMs - minMs);
+  const places: TimelinePlaced[] = [];
+  // Global interval partitioning: overlapping real intervals are placed in
+  // separate columns, and no bar is moved in time to make it fit.
+  const sorted = [...known].sort((a, b) => a.startMs - b.startMs);
+  const laneEnds: number[] = [];
+  for (const entry of sorted) {
+    const end = entry.endMs ?? maxMs;
+    let lane = laneEnds.findIndex(last => last <= entry.startMs);
+    if (lane === -1) { lane = laneEnds.length; laneEnds.push(entry.endMs ?? Infinity); } else laneEnds[lane] = entry.endMs ?? Infinity;
+    const running = entry.record.run.status !== 'ended';
+    places.push({ record: entry.record, key: taskTimelineRunKey(entry.record.run.ref), lane,
+      startMs: entry.startMs, endMs: end, running });
+  }
+  const laneCount = Math.max(1, laneEnds.length);
+  const focus = display?.focus ?? 0.5;
+  const zoom = display?.zoom ?? 0.5;
+  const pinned = new Set(display?.pinned ?? []);
+  const selected = display?.selected ?? null;
+  const bars = places.map(place => {
+    const u1 = (place.startMs - minMs) / span;
+    const u2 = (place.endMs - minMs) / span;
+    const top = lensMap(Math.min(u1, u2), focus, zoom) * 100;
+    const bottom = lensMap(Math.max(u1, u2), focus, zoom) * 100;
+    const slot = timelineInterval(place.lane, laneCount);
+    const ref = place.record.run.ref;
+    const task = place.record.run.task;
+    const isSelected = selected !== null && selected === place.key;
+    const isPinned = pinned.has(place.key);
+    const label = `${task.taskId} · ${place.record.run.status}`
+      + (place.record.run.outcome === null ? '' : ` / ${place.record.run.outcome}`);
+    const state = place.running ? '执行中' : (place.record.run.outcome ?? place.record.run.status);
+    return `<button class="timeline-run${isSelected ? ' selected' : ''}${isPinned ? ' pinned' : ''}${place.running ? ' running' : ''}"`
+      + ` style="top:${top.toFixed(3)}%;height:${Math.max(1.5, bottom - top).toFixed(3)}%;left:${slot.left};width:${slot.width}"`
+      + ` data-action="open-execution-history" data-timeline-run="${escapeHtml(place.key)}"`
+      + ` data-aggregate-type="${escapeHtml(ref.aggregateType)}" data-project-id="${escapeHtml(ref.projectId)}"`
+      + ` data-goal-id="${escapeHtml(ref.goalId)}" data-run-id="${escapeHtml(ref.runId)}"`
+      + ` data-task-id="${escapeHtml(task.taskId)}" title="${escapeHtml(label)}">`
+      + `<span class="timeline-run-label">${escapeHtml(task.taskId)} · ${escapeHtml(state)}${place.running ? ' \u25b6' : ''}`
+      + (place.running ? '<small>无结束时间</small>' : '') + `</span></button>`;
+  }).join('');
+  const unknownRows = unknown.map(entry => {
+    const ref = entry.run.ref;
+    const task = entry.run.task;
+    const running = entry.run.status !== 'ended';
+    return `<li data-timeline-unknown="${escapeHtml(taskTimelineRunKey(ref))}">`
+      + `<button class="link" data-action="open-execution-history"`
+      + ` data-aggregate-type="${escapeHtml(ref.aggregateType)}" data-project-id="${escapeHtml(ref.projectId)}"`
+      + ` data-goal-id="${escapeHtml(ref.goalId)}" data-run-id="${escapeHtml(ref.runId)}"`
+      + ` data-task-id="${escapeHtml(task.taskId)}">`
+      + `打开 ${escapeHtml(task.taskId)} · ${escapeHtml(ref.runId)}</button> `
+      + `<span class="muted">${running ? '正在执行 · ' : ''}未记录开始时间，不按猜测时间绘制</span></li>`;
+  }).join('');
+  return `<section class="panel" data-view="task-timeline" data-runs="${escapeHtml(items.length)}">`
+    + `<header><h3>执行时间线</h3>`
+    + `<p class="muted">真实 Run 起止 · 重叠区间分列 · 时间自上而下 · 连续纵向镜保持事件顺序</p>`
+    + detailsFor('查看读取水位', `<p>nextCursor ${escapeHtml(page.nextCursor ?? 'none')}</p>`
+      + `<p>readThrough ${escapeHtml(JSON.stringify(page.readThrough ?? null))}</p>`)
+    + `</header>`
+    + `<div class="timeline-lens" role="group" aria-label="时间线纵向放大镜">`
+    + `<span>早</span><input type="range" data-field="timelineFocus" min="0" max="1" step="0.01" value="${focus}" aria-label="时间线焦点">`
+    + `<span>晚</span><input type="range" data-field="timelineZoom" min="0.05" max="1" step="0.01" value="${zoom}" aria-label="时间线缩放">`
+    + `</div>`
+    + `<div class="timeline-track" role="list">${bars}</div>`
+    + `<section data-timeline="unknown"><h4>时间未知</h4>`
+    + (unknown.length === 0 ? '<p class="muted">没有缺少开始时间的 Run。</p>' : `<ul>${unknownRows}</ul>`)
+     + `<p class="muted">缺少 startedAt 的 Run 单独列出，不占用时间轴，也不生成时间戳。</p></section>`
+    + `<section data-timeline="future"><h4>尚无已加载执行记录的任务</h4><ul>`
+    + (tasks ?? []).filter(task => !items.some(item => item.run.task.taskId === task.ref.taskId))
+      .map(task => `<li>${escapeHtml(task.definition.title || task.ref.taskId)} · ${escapeHtml(task.effectivePhase)}${task.execution === null ? ' · 尚无当前执行' : ' · 执行记录尚未加载'}</li>`).join('')
+    + `</ul><p class="muted">未来意图不生成时间戳；分页未加载不等于从未执行。</p></section></section>`;
+}
+
+/** Task folding built from the SAME listExecutions page items and Run keys as
+ * the timeline. Each group opens the original execution window through the one
+ * `open-execution-history` entry; no history fact is copied or re-derived. */
+export function renderTaskExecutionFold(
+  page: { items: TaskExecutionRecord[]; nextCursor: string | null; readThrough?: unknown },
+): string {
+  if (page.items.length === 0) return '<p class="muted">没有可折叠的真实执行。</p>';
+  const groups = new Map<string, TaskExecutionRecord[]>();
+  for (const record of page.items) {
+    const taskId = record.run.task.taskId;
+    const bucket = groups.get(taskId);
+    if (bucket === undefined) groups.set(taskId, [record]); else bucket.push(record);
+  }
+  const sections = [...groups.entries()].map(([taskId, records]) => {
+    const rows = records.map(record => {
+      const ref = record.run.ref;
+      const running = record.run.status !== 'ended';
+      const start = record.run.startedAt ?? '未记录开始时间';
+      const end = record.run.endedAt ?? (running ? '进行中' : '未记录结束时间');
+      return `<li><button class="link" data-action="open-execution-history"`
+        + ` data-aggregate-type="${escapeHtml(ref.aggregateType)}" data-project-id="${escapeHtml(ref.projectId)}"`
+        + ` data-goal-id="${escapeHtml(ref.goalId)}" data-run-id="${escapeHtml(ref.runId)}"`
+        + ` data-task-id="${escapeHtml(taskId)}">Run ${escapeHtml(ref.runId)}</button>`
+        + ` <span class="muted">${escapeHtml(record.run.status)} · ${escapeHtml(String(start))} \u2192 ${escapeHtml(String(end))}`
+        + `${record.run.outcome === null ? '' : ` · ${escapeHtml(record.run.outcome)}`}</span></li>`;
+    }).join('');
+    return `<details class="task-fold" data-task-fold="${escapeHtml(taskId)}"><summary>`
+      + `<code>${escapeHtml(taskId)}</code> · ${records.length} 次执行</summary><ul>${rows}</ul></details>`;
+  }).join('');
+  return `<div class="task-fold-list" data-view="task-fold">${sections}</div>`;
+}
+
+export type ArchitectureContainmentDisplay = {
+  activeModuleIds: string[];
+  expanded: string[];
+  pinned: string[];
+  selected: string | null;
+};
+
+/** Formal containment tree. Containment comes ONLY from
+ * `catalog.catalog.containment.parentOf`; a missing `containment` is a real
+ * "not declared" gap and paths/dependencies are never used to infer a parent.
+ * Active modules expand the union of their ancestor paths (and their siblings),
+ * manual branches stay open and pinned nodes keep their ancestors open. */
+export function renderArchitectureContainment(
+  result: ReadResult<ArchitectureRevision>,
+  display?: ArchitectureContainmentDisplay,
+): string {
+  if (result.status === 'rejected') return rejectionPanel(result);
+  if (result.status === 'not_found') return renderGap('architecture/read', '没有已采用的架构 baseline');
+  if (result.status === 'not_ready') return renderGap('architecture/read', '采用架构尚未就绪');
+  const revision = result.value;
+  if (revision.catalog === null) {
+    return `<section class="panel" data-view="architecture-containment"><h3>架构包含结构</h3>`
+      + `<p class="muted">该 baseline 早于 catalog，未记录模块包含关系。</p></section>`;
+  }
+  const modules = revision.catalog.catalog.modules;
+  const containment = revision.catalog.catalog.containment;
+  // A missing containment declaration is not a guessed tree: an empty relation
+  // set makes every declared module a real parallel root on the SAME roots/graph
+  // path. Dependencies and paths never become edges.
+  const parentOf = containment?.parentOf ?? [];
+  const moduleById = new Map(modules.map(module => [module.ref.moduleId, module]));
+  const children = new Map<string, string[]>();
+  const parent = new Map<string, string>();
+  for (const edge of parentOf) {
+    const parentId = edge.parent.moduleId;
+    const childId = edge.child.moduleId;
+    if (!moduleById.has(parentId) || !moduleById.has(childId)) continue;
+    const bucket = children.get(parentId);
+    if (bucket === undefined) children.set(parentId, [childId]); else bucket.push(childId);
+    parent.set(childId, parentId);
+  }
+  const roots = modules.filter(module => !parent.has(module.ref.moduleId)).map(module => module.ref.moduleId);
+  const active = new Set(display?.activeModuleIds ?? []);
+  const manualExpanded = new Set(display?.expanded ?? []);
+  const pinned = new Set(display?.pinned ?? []);
+  const requiredOpen = new Set<string>(manualExpanded);
+  const markAncestors = (moduleId: string): void => {
+    let current = parent.get(moduleId);
+    let guard = 0;
+    while (current !== undefined && guard < 256) { requiredOpen.add(current); current = parent.get(current); guard += 1; }
+  };
+  for (const moduleId of active) markAncestors(moduleId);
+  for (const moduleId of pinned) markAncestors(moduleId);
+  const visible = new Set<string>();
+  const visit = (moduleId: string): void => {
+    visible.add(moduleId);
+    if (requiredOpen.has(moduleId)) for (const child of children.get(moduleId) ?? []) visit(child);
+  };
+  for (const root of roots) visit(root);
+  const graph = renderNodeLinkGraph(modules.filter(module => visible.has(module.ref.moduleId)).map(module => ({
+    id: module.ref.moduleId, label: module.name,
+    caption: active.has(module.ref.moduleId) ? '工作中' : '已采用模块',
+    action: 'select-node',
+    data: { 'target-kind': 'module', 'project-id': module.ref.projectId, 'module-id': module.ref.moduleId },
+    title: `${module.name}（${module.ref.moduleId}）\n${module.responsibility}`,
+    ...((children.get(module.ref.moduleId)?.length ?? 0) > 0 ? { branch: { expanded: requiredOpen.has(module.ref.moduleId) } } : {}),
+  })), parentOf.filter(edge => visible.has(edge.parent.moduleId) && visible.has(edge.child.moduleId))
+    .map(edge => ({ from: edge.parent.moduleId, to: edge.child.moduleId })), '架构包含结构图',
+    { pinned: [...pinned],
+      labels: [...new Set([...roots, ...active, ...requiredOpen, ...[...requiredOpen].flatMap(id => children.get(id) ?? []), ...pinned, ...(display?.selected !== null && display?.selected !== undefined ? [display.selected] : [])])],
+      selected: display?.selected !== undefined && display.selected !== null && moduleById.has(display.selected)
+        ? { kind: 'module', nodeId: display.selected, target: { kind: 'module', ref: moduleById.get(display.selected)!.ref } } : null });
+  return `<section class="panel" data-view="architecture-containment">`
+    + (containment === undefined
+      ? detailsFor('未声明包含关系（containment）',
+        `<p class="muted">该修订未声明包含关系；包含结构不从 paths 或 dependencies 推断，以上为真实并列根模块。</p>`)
+      : '')
+    + graph
+    + detailsFor('图信息与显示选项', `<p>${modules.length} 个模块 · 活跃 ${active.size}</p>`
+      + `<button data-action="expand-active-paths">展开活跃路径</button>`
+      + `<button data-action="collapse-branches">收起手动分支</button>`
+      + `<p>基线 ${escapeHtml(revision.baseline.baselineId)} · 版本 ${escapeHtml(revision.baseline.revision)}</p>`)
+    + `</section>`;
+}
+
+/** The independent dependency DAG. It reads only `catalog.dependencies` and is
+ * never derived from containment or paths. */
+export function renderArchitectureDependencies(
+  result: ReadResult<ArchitectureRevision>, display?: WorkbenchGraphDisplay,
+): string {
+  if (result.status === 'rejected') return rejectionPanel(result);
+  if (result.status === 'not_found') return renderGap('architecture/read', '没有已采用的架构 baseline');
+  if (result.status === 'not_ready') return renderGap('architecture/read', '采用架构尚未就绪');
+  const revision = result.value;
+  if (revision.catalog === null) return `<section class="panel" data-view="architecture-dependencies"><h3>模块依赖 DAG</h3><p class="muted">该 baseline 早于 catalog，未记录依赖。</p></section>`;
+  const modules = revision.catalog.catalog.modules;
+  const dependencies = revision.catalog.catalog.dependencies;
+  const html = renderNodeLinkGraph(
+    modules.map(module => ({
+      id: `dep:${module.ref.moduleId}`,
+      label: module.name,
+      caption: '已采用模块',
+      action: 'select-node',
+      data: { 'target-kind': 'module', 'project-id': module.ref.projectId, 'module-id': module.ref.moduleId,
+        'node-label': module.name, 'node-detail': module.responsibility },
+      title: `${module.name}（${module.ref.moduleId}）`,
+    })),
+    dependencies.map(dependency => ({ from: `dep:${dependency.from.moduleId}`, to: `dep:${dependency.to.moduleId}`, label: dependency.reason })),
+    '模块依赖 DAG', display,
+  );
+  const edges = dependencies.map(dependency =>
+    `<li>${escapeHtml(dependency.from.moduleId)} \u2192 ${escapeHtml(dependency.to.moduleId)} `
+    + `<span class="muted">${escapeHtml(dependency.reason)}</span></li>`).join('');
+  return `<section class="panel" data-view="architecture-dependencies">`
+    + html + (edges.length === 0 ? '<p class="muted">没有声明依赖</p>' : detailsFor('依赖依据', `<ul class="edges">${edges}</ul>`)) + `</section>`;
+}
+
+// --- File save / compare (real Kernel CAS) -----------------------------------
+
+/** Real CAS save receipt. A rejection is shown honestly and the draft stays. */
+export function renderFileSave(result: WorkspaceResult<SaveWorkbenchFileResult> | null, draftChanged: boolean): string {
+  if (result === null) {
+    return `<p class="muted" data-save-state="idle">${draftChanged ? '有未保存草稿。保存时会核对磁盘版本。' : '与已读取版本一致，尚无待保存内容。'}</p>`;
+  }
+  if (result.status !== 'ready') {
+    return `<div data-save-state="rejected"><p>保存未完成（${escapeHtml(result.code)}）：${escapeHtml(result.reason)}</p>`
+      + `<p class="muted">草稿保留在内存；不会自动覆盖。可重新读取当前版本并比较后再保存。</p></div>`;
+  }
+  return `<div data-save-state="saved"><p>已保存 <code>${escapeHtml(result.value.path)}</code>`
+    + ` · 新版本 <code>${escapeHtml(result.value.revision)}</code>`
+    + (result.value.oldRevision === null ? ' · 新建' : ` · 原版本 <code>${escapeHtml(result.value.oldRevision)}</code>`) + `</p></div>`;
+}
+
+/** One computed line diff. Lines come from the two real read bodies, so the
+ * result is derived, never a fabricated example diff. */
+export function renderTextDiff(before: string, after: string, path: string): string {
+  const beforeLines = before.split('\n');
+  const afterLines = after.split('\n');
+  const limit = 1200;
+  const a = beforeLines.slice(0, limit);
+  const b = afterLines.slice(0, limit);
+  const table: number[][] = Array.from({ length: a.length + 1 }, () => new Array<number>(b.length + 1).fill(0));
+  for (let i = a.length - 1; i >= 0; i -= 1) {
+    for (let j = b.length - 1; j >= 0; j -= 1) {
+      table[i]![j] = a[i] === b[j] ? (table[i + 1]![j + 1]! + 1) : Math.max(table[i + 1]![j]!, table[i]![j + 1]!);
+    }
+  }
+  const rows: string[] = [];
+  let i = 0; let j = 0;
+  let beforeNo = 1; let afterNo = 1;
+  while (i < a.length && j < b.length) {
+    if (a[i] === b[j]) {
+      rows.push(`<div class="diff-line context"><span class="ln">${beforeNo}</span><span class="ln">${afterNo}</span><code>${escapeHtml(a[i]!)}</code></div>`);
+      i += 1; j += 1; beforeNo += 1; afterNo += 1;
+    } else if (table[i + 1]![j]! >= table[i]![j + 1]!) {
+      rows.push(`<div class="diff-line removed"><span class="ln">${beforeNo}</span><span class="ln"></span><code>${escapeHtml(a[i]!)}</code></div>`);
+      i += 1; beforeNo += 1;
+    } else {
+      rows.push(`<div class="diff-line added"><span class="ln"></span><span class="ln">${afterNo}</span><code>${escapeHtml(b[j]!)}</code></div>`);
+      j += 1; afterNo += 1;
+    }
+    if (rows.length >= 6000) break;
+  }
+  while (i < a.length) { rows.push(`<div class="diff-line removed"><span class="ln">${beforeNo}</span><span class="ln"></span><code>${escapeHtml(a[i]!)}</code></div>`); i += 1; beforeNo += 1; }
+  while (j < b.length) { rows.push(`<div class="diff-line added"><span class="ln"></span><span class="ln">${afterNo}</span><code>${escapeHtml(b[j]!)}</code></div>`); j += 1; afterNo += 1; }
+  const truncated = beforeLines.length > limit || afterLines.length > limit;
+  return `<div class="text-diff" data-view="text-diff" data-path="${escapeHtml(path)}">`
+    + `<p class="muted">真实前后正文行级差异${truncated ? '（超出上限，仅显示前 1200 行）' : ''}</p>`
+    + `<div class="diff-body">${rows.join('')}</div></div>`;
+}
+
+/** `files/compare` forwards the existing WorkspaceToolsPort.compareWorkspace
+ * result. Changes are listed exactly; a real text diff is only added when both
+ * read bodies were actually supplied for the same path. */
+export function renderWorkspaceComparison(
+  result: WorkspaceResult<WorkspaceComparison> | null,
+  textDiff?: { path: string; before: string; after: string },
+): string {
+  const diffHtml = textDiff === undefined ? '' : renderTextDiff(textDiff.before, textDiff.after, textDiff.path);
+  if (result === null) {
+    return `<section class="panel" data-view="workspace-compare"><p class="muted">尚未执行比较；选择真实的前后版本后读取结果。</p>${diffHtml}</section>`;
+  }
+  if (result.status !== 'ready') {
+    return `<section class="panel rejected" data-view="workspace-compare"><h3>比较未完成</h3>`
+      + `<p>${escapeHtml(result.reason)}（${escapeHtml(result.code)}）</p></section>`;
+  }
+  const comparison = result.value;
+  const changes = comparison.changes.map(change => {
+    if (change.kind === 'added') return `<li data-change="added"><code>${escapeHtml(change.path)}</code> · 新增</li>`;
+    if (change.kind === 'deleted') return `<li data-change="deleted"><code>${escapeHtml(change.path)}</code> · 删除</li>`;
+    if (change.kind === 'modified') {
+      const before = 'beforeDigest' in change ? change.beforeDigest
+        : ('digest' in change.before ? change.before.digest : change.before.objectId);
+      const after = 'afterDigest' in change ? change.afterDigest
+        : ('digest' in change.after ? change.after.digest : change.after.objectId);
+      return `<li data-change="modified"><code>${escapeHtml(change.path)}</code> · 修改`
+        + ` <span class="muted">${escapeHtml(String(before).slice(0, 12))} \u2192 ${escapeHtml(String(after).slice(0, 12))}</span></li>`;
+    }
+    return `<li data-change="renamed"><code>${escapeHtml(change.beforePath)}</code> \u2192 <code>${escapeHtml(change.afterPath)}</code> · 重命名</li>`;
+  }).join('');
+  return `<section class="panel" data-view="workspace-compare">`
+    + `<header><h3>工作区比较</h3>`
+    + `<p class="muted">${escapeHtml(comparison.comparison)} · 变更 ${escapeHtml(comparison.changes.length)} 条</p>`
+    + detailsFor('查看比较范围与版本', `<p>scope <code>${escapeHtml(JSON.stringify(comparison.scope))}</code></p>`
+      + `<p>before <code>${escapeHtml(JSON.stringify(comparison.before))}</code></p>`
+      + `<p>after <code>${escapeHtml(JSON.stringify(comparison.after))}</code></p>`)
+    + `</header>`
+    + (comparison.changes.length === 0 ? '<p class="muted">两个版本没有差异。</p>' : `<ul class="changes">${changes}</ul>`)
+    + diffHtml + `</section>`;
+}
+
+// --- Command handles (real Kernel ProcessSandbox) -----------------------------
+
+/** One command handle's real snapshot. There is no interactive stdin and no
+ * PTY: stdout/stderr/exit/truncation are the Kernel's own facts. */
+export function renderWorkbenchCommand(
+  result: WorkspaceResult<WorkbenchCommandSnapshot> | null,
+  meta: { command: string; cwd: string; state?: WorkbenchCommandState | 'starting' },
+): string {
+  const header = `<header><h3>命令执行</h3>`
+    + `<p class="muted">无交互 stdin / 非 PTY · cwd <code>${escapeHtml(meta.cwd)}</code></p>`
+    + `<pre class="command-line">$ ${escapeHtml(meta.command)}</pre></header>`;
+  if (result === null) {
+    return `<section class="panel" data-view="command"><header><h3>命令执行</h3></header>`
+      + `<p data-command-state="starting">正在启动命令…</p></section>`;
+  }
+  if (result.status !== 'ready') {
+    return `<section class="panel rejected" data-view="command">${header}`
+      + `<p data-command-state="rejected">命令不可用（${escapeHtml(result.code)}）：${escapeHtml(result.reason)}</p></section>`;
+  }
+  const snapshot = result.value;
+  const state = meta.state ?? snapshot.state;
+  const facts = `<p data-command-state="${escapeHtml(state)}">状态 ${escapeHtml(state)}`
+    + ` · exit ${snapshot.exitCode === null ? '未产生' : escapeHtml(snapshot.exitCode)}`
+    + (snapshot.signal === null ? '' : ` · signal ${escapeHtml(snapshot.signal)}`)
+    + (snapshot.timedOut ? ' · 已超时' : '')
+    + (snapshot.cancelled ? ' · 已取消' : '')
+    + (snapshot.outputTruncated ? ' · 输出已截断' : '') + `</p>`;
+  const error = snapshot.error === null ? ''
+    : `<p data-command-error="${escapeHtml(snapshot.error.code)}">启动/执行失败：${escapeHtml(snapshot.error.reason)}</p>`;
+  return `<section class="panel" data-view="command" data-command-id="${escapeHtml(snapshot.commandId)}">${header}${facts}${error}`
+    + `<h4>stdout</h4><pre data-stream="stdout">${escapeHtml(snapshot.stdout)}</pre>`
+    + `<h4>stderr</h4><pre data-stream="stderr">${escapeHtml(snapshot.stderr)}</pre>`
+    + detailsFor('查看原始快照', `<pre>${escapeHtml(JSON.stringify(snapshot, null, 2))}</pre>`) + `</section>`;
+}
+
+// --- Project registration / new Goal -----------------------------------------
+
+export type ProjectReadState =
+  | { status: 'unread' }
+  | { status: 'ready'; projectId: string; revision: number }
+  | { status: 'not_found' }
+  | { status: 'rejected'; code: string; reason: string }
+  | { status: 'loading' };
+
+/** Narrow Project read projection used by the cold-start new-Goal entry. It
+ * shows the real revision or the real absence; revision 1 is never assumed. */
+export function renderProjectRead(state: ProjectReadState): string {
+  if (state.status === 'unread') return '<p class="muted" data-project-read="unread">尚未读取项目登记；新建目标会先正式读取。</p>';
+  if (state.status === 'loading') return '<p data-project-read="loading">正在读取项目登记…</p>';
+  if (state.status === 'not_found') return '<p data-project-read="not_found">项目尚未登记。新建目标时将完成登记。</p>';
+  if (state.status === 'rejected') return `<p data-project-read="rejected">项目读取失败（${escapeHtml(state.code)}）：${escapeHtml(state.reason)}</p>`;
+  return `<p data-project-read="ready">项目 <code>${escapeHtml(state.projectId)}</code> 已登记，正式版本 ${escapeHtml(state.revision)}。</p>`;
+}
+
+/** Read-only summary of the project main conversation: the current Goal text
+ * the user wrote (never an ID) and whether it is registered. */
+export function renderProjectConversation(input: {
+  scope: CoreScope;
+  workspaceName: string;
+  goalText: string;
+  goalId: string | null;
+  projectState: ProjectReadState;
+  hasProfile: boolean;
+}): string {
+  const goal = input.goalId === null
+    ? `<p class="muted">写下希望完成的目标，从这里开始。</p>`
+    : `<div class="chat-user" data-role="user"><p>${escapeHtml(input.goalText)}</p></div>`
+      + detailsFor('目标与项目详情', `<p>目标 <code>${escapeHtml(input.goalId)}</code></p>` + renderProjectRead(input.projectState));
+  return `<section class="conversation" data-view="project-conversation">`
+    + `<p class="muted">${escapeHtml(input.workspaceName)}</p>`
+    + `<div class="chat-stream">${goal}`
+    + (input.hasProfile ? '' : '<p class="muted">当前工作区没有可信模型配置；普通发送会保留草稿并说明缺口。</p>')
+    + `</div></section>`;
 }

@@ -40,8 +40,11 @@ import type { SessionMessageRef } from '../../../contracts/core/session-message.
 import type { SessionRecord } from '../../../contracts/core/session.js';
 import type { PreparedTaskManifestV1 } from '../../../contracts/core/prepared-execution.js';
 import type { CoreError, CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
-import type { RunSnapshot } from '../../../contracts/dispatch.js';
-import type { MessageSender, MessageWorkRunSender, SessionMailboxDependencies, SessionMailboxPort, SessionMessage, SessionMessageStatus } from './contracts.js';
+import type { RunRef, RunSnapshot } from '../../../contracts/dispatch.js';
+import { consultationQueryRefs } from '../../../contracts/query-job.js';
+import type { QueryJobAnswerRef, QueryJobAnswerSnapshot, QueryJobRef, QueryJobSnapshot, QueryRunRef, QueryRunSnapshot } from '../../../contracts/query-job.js';
+import type { MessageQueryAnswerSender, MessageSender, MessageWorkRunSender, SessionMailboxDependencies, SessionMailboxPort, SessionMessage, SessionMessageStatus } from './contracts.js';
+import { deriveSessionInputId } from './contracts.js';
 import { makeCommitCursor, seqOfCommitCursor } from '../../../contracts/ledger.js';
 import { canonicalRefKey, decodeWorkspaceSnapshot } from '../persistence/record-codecs.js';
 import { checkPlainSessionRef, decodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey } from '../sessions/session-record-codecs.js';
@@ -56,12 +59,17 @@ import { readBatch, type ReadBatch } from '../tasks/plan-readers.js';
 import { decodeRun } from '../tasks/run-state-service.js';
 import {
   SESSION_MESSAGE_BY_RECIPIENT_LOOKUP, SESSION_MESSAGE_BY_RECIPIENT_STATUS_LOOKUP,
+  SESSION_MESSAGE_BY_SENDER_RUN_LOOKUP, SESSION_MESSAGE_BY_SENDER_SESSION_LOOKUP,
   SESSION_MESSAGE_CONTENT_TYPE, SESSION_MESSAGE_MAX_TEXT_BYTES,
   checkMessageSender, checkSessionMessageRef, decodeSessionMessageRecord,
   encodeSessionMessageReadEvent, encodeSessionMessageRecord, encodeSessionMessageRespondedEvent,
   encodeSessionMessageSentEvent, sessionMessageFromEvent, sessionMessageRefKey,
+  encodeSessionMessageConsultationDerivedEvent, encodeSessionMessageInputAcceptedEvent,
   type SessionMessageReadEventV1, type SessionMessageRespondedEventV1, type SessionMessageSentEventV1,
 } from './message-record-codecs.js';
+import {
+  decodeQueryJobAnswerSnapshot, decodeQueryJobSnapshot, decodeQueryRunSnapshotRecord,
+} from '../queries/query-record-codecs.js';
 
 type Unknown = Record<string, unknown>;
 type WorkRunPrincipal = Extract<CorePrincipal, { kind: 'work_run' }>;
@@ -283,12 +291,21 @@ function normalizeMessagePin(expected: readonly VersionPin[], ref: SessionMessag
 // Identity, messageId and fingerprints
 // --------------------------------------------------------------------------
 
-function senderIdentityOf(sender: MessageSender): Unknown {
+function senderIdentityOf(sender: MessageSender | MessageQueryAnswerSender): Unknown {
   if (sender.kind === 'host') return { kind: 'host', actor: { ...sender.actor } };
+  if (sender.kind === 'work_run') {
+    return {
+      kind: 'work_run',
+      sessionRef: { ...sender.sessionRef },
+      runRef: { ...sender.runRef },
+      generation: sender.generation,
+    };
+  }
   return {
-    kind: 'work_run',
+    kind: 'query_run',
     sessionRef: { ...sender.sessionRef },
-    runRef: { ...sender.runRef },
+    queryRunRef: { ...sender.queryRunRef },
+    answerRef: { ...sender.answerRef },
     generation: sender.generation,
   };
 }
@@ -359,10 +376,46 @@ function decodeInboxCursor(raw: string): InboxCursorV1 | null {
 }
 
 // --------------------------------------------------------------------------
+// Outbox cursor: binds scope, the exact sender Run, the caller and the after
+// key only. It is a SEPARATE cursor namespace from the inbox.
+// --------------------------------------------------------------------------
+
+type OutboxCursorV1 = {
+  v: 1;
+  projectId: string;
+  workspaceId: string;
+  senderRun?: RunRef;
+  senderSession?: SessionRef;
+  callerKey: string;
+  after: string;
+};
+
+function encodeOutboxCursor(cursor: OutboxCursorV1): string {
+  return Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url');
+}
+function decodeOutboxCursor(raw: string): OutboxCursorV1 | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8'));
+  } catch {
+    return null;
+  }
+  if (!isObject(parsed) || parsed['v'] !== 1) return null;
+  const { projectId, workspaceId, senderRun, senderSession, callerKey, after } = parsed;
+  if (!nonEmpty(projectId) || !nonEmpty(workspaceId) || !nonEmpty(callerKey) || !nonEmpty(after)) return null;
+  if ((senderRun === undefined) === (senderSession === undefined)) return null;
+  if (senderRun !== undefined && !isRunRef(senderRun)) return null;
+  if (senderSession !== undefined && checkPlainSessionRef(senderSession) !== null) return null;
+  return { v: 1, projectId, workspaceId, callerKey, after,
+    ...(senderRun === undefined ? { senderSession: senderSession as SessionRef } : { senderRun: senderRun as RunRef }) };
+
+}
+
+// --------------------------------------------------------------------------
 // The factory
 // --------------------------------------------------------------------------
 
-export function createSessionMailbox(deps: SessionMailboxDependencies): SessionMailboxPort {
+export function createSessionMailbox(deps: SessionMailboxDependencies): SessionMailboxPort & Required<Pick<SessionMailboxPort, 'respondFromQueryAnswer' | 'readOutbox'>> {
   const records = deps.records;
   const MIN_CURSOR: CommitCursor = makeCommitCursor(1);
 
@@ -726,20 +779,76 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     return { ok: true, value: { kind: 'workspace', refId: owned.workspaceId, revision: String(decoded.value.revision) } };
   }
 
+  // ---- official Query answer reads (read-only, codec-owned) ----------------
+
+  type QueryRecordRead<T> = ReadResult<T>;
+
+  async function readEncoded(key: string): Promise<{ ok: true; record: EncodedRecord } | { ok: false; failure: CoreRejection | { missing: true } }> {
+    let read: StoreResult<RecordBatchRead>;
+    try {
+      read = await records.readMany([key]);
+    } catch {
+      return { ok: false, failure: reject('unavailable', 'the Query record could not be read') };
+    }
+    if (read.status !== 'ready') return { ok: false, failure: mapStoreFailure(read) };
+    const record = read.value.records.find((candidate) => candidate.refKey === key);
+    if (record === undefined) {
+      return { ok: false, failure: read.value.missing.includes(key) ? { missing: true } : reject('unavailable', 'the record store neither returned nor reported missing the Query record') };
+    }
+    return { ok: true, record };
+  }
+
+  async function loadQueryJob(owned: Owned, ref: QueryJobRef): Promise<QueryRecordRead<QueryJobSnapshot>> {
+    if (owned.signal.aborted) return reject('cancelled', 'the QueryJob read was cancelled');
+    const key = canonicalOf(ref);
+    if (key === null) return reject('invalid', 'the QueryJob ref is not canonicalizable JSON');
+    const read = await readEncoded(key);
+    if (!read.ok) return 'missing' in read.failure ? { status: 'not_found' } : read.failure;
+    const decoded = decodeQueryJobSnapshot(read.record);
+    if (decoded.status !== 'decoded') return reject('unavailable', `the QueryJob snapshot is damaged: ${decoded.reason}`);
+    return { status: 'ready', value: decoded.value };
+  }
+
+  async function loadQueryRun(owned: Owned, ref: QueryRunRef): Promise<QueryRecordRead<QueryRunSnapshot>> {
+    if (owned.signal.aborted) return reject('cancelled', 'the QueryRun read was cancelled');
+    const key = canonicalOf(ref);
+    if (key === null) return reject('invalid', 'the QueryRun ref is not canonicalizable JSON');
+    const read = await readEncoded(key);
+    if (!read.ok) return 'missing' in read.failure ? { status: 'not_found' } : read.failure;
+    const decoded = decodeQueryRunSnapshotRecord(read.record);
+    if (decoded.status !== 'decoded') return reject('unavailable', `the QueryRun snapshot is damaged: ${decoded.reason}`);
+    return { status: 'ready', value: decoded.value };
+  }
+
+  async function loadQueryAnswer(owned: Owned, ref: QueryJobAnswerRef): Promise<QueryRecordRead<QueryJobAnswerSnapshot>> {
+    if (owned.signal.aborted) return reject('cancelled', 'the QueryJobAnswer read was cancelled');
+    const key = canonicalOf(ref);
+    if (key === null) return reject('invalid', 'the QueryJobAnswer ref is not canonicalizable JSON');
+    const read = await readEncoded(key);
+    if (!read.ok) return 'missing' in read.failure ? { status: 'not_found' } : read.failure;
+    const decoded = decodeQueryJobAnswerSnapshot(read.record);
+    if (decoded.status !== 'decoded') return reject('unavailable', `the QueryJobAnswer snapshot is damaged: ${decoded.reason}`);
+    return { status: 'ready', value: decoded.value };
+  }
+
   // ---- body storage -------------------------------------------------------
 
   type BodyOutcome = { ok: true; ref: ArtifactRef } | { ok: false; rejection: CoreRejection };
 
   async function storeMessageBody(args: {
     owned: Owned;
-    sender: MessageSender;
+    sender: MessageSender | MessageQueryAnswerSender;
     part: 'message' | 'response';
     messageRef: SessionMessageRef;
     text: string;
     sourceRef: ArtifactRef['source'];
+    /** When set, the saved body provenance must equal this exact source instead
+     * of the generic current-workspace check. Used ONLY for a formal Query
+     * answer reply, whose original source may be an earlier workspace revision. */
+    expectedSource?: ArtifactRef['source'];
     bodyRequestId: string;
   }): Promise<BodyOutcome> {
-    const { owned, sender, part, messageRef, text, sourceRef, bodyRequestId } = args;
+    const { owned, sender, part, messageRef, text, sourceRef, expectedSource, bodyRequestId } = args;
     const envelope: Unknown = {
       schemaVersion: 1,
       projectId: messageRef.projectId,
@@ -782,19 +891,27 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     // content-addressed store may return an earlier writer's exact ref/source;
     // the message is not source evidence, so the ACTUAL stored provenance is
     // accepted once it is a legal workspace provenance for this workspace.
-    const verified = await verifyStoredBody(owned, stored.ref, body);
+    const verified = await verifyStoredBody(owned, stored.ref, body, expectedSource);
     if (!verified.ok) return { ok: false, rejection: verified.rejection };
     return { ok: true, ref: stored.ref };
   }
 
-  async function verifyStoredBody(owned: Owned, ref: ArtifactRef, expectedBody: string): Promise<{ ok: true } | { ok: false; rejection: CoreRejection }> {
+  async function verifyStoredBody(owned: Owned, ref: ArtifactRef, expectedBody: string,
+    expectedSource?: ArtifactRef['source']): Promise<{ ok: true } | { ok: false; rejection: CoreRejection }> {
     if (ref.contentType !== SESSION_MESSAGE_CONTENT_TYPE) {
       return { ok: false, rejection: reject('unavailable', 'the stored message body contentType disagrees with the expected envelope') };
     }
-    // The original body provenance is authoritative: it must be a legal
-    // workspace source for THIS workspace. It need not be the CURRENT revision,
-    // because a deduplicated body keeps its first writer's source.
-    if (ref.source.kind !== 'workspace' || ref.source.refId !== owned.workspaceId || !nonEmpty(ref.source.revision)) {
+    if (expectedSource !== undefined) {
+      // A formal Query answer reply keeps the ACTUAL source of the verified
+      // Answer body (possibly an earlier workspace revision); the generic
+      // current-workspace check must not rewrite that provenance.
+      if (canonicalOf(ref.source) !== canonicalOf(expectedSource)) {
+        return { ok: false, rejection: reject('unavailable', 'the stored message body provenance is not the verified Query answer source') };
+      }
+    } else if (ref.source.kind !== 'workspace' || ref.source.refId !== owned.workspaceId || !nonEmpty(ref.source.revision)) {
+      // The original body provenance is authoritative: it must be a legal
+      // workspace source for THIS workspace. It need not be the CURRENT revision,
+      // because a deduplicated body keeps its first writer's source.
       return { ok: false, rejection: reject('unavailable', 'the stored message body provenance is not a legal source for this workspace') };
     }
     if (ref.sizeBytes !== Buffer.byteLength(expectedBody, 'utf8')) {
@@ -920,7 +1037,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
 
   // ---- sendMessage --------------------------------------------------------
 
-  async function sendMessage(ctx: CoreCallContext, request: GraphWrite<{ recipient: SessionRef; text: string }>): Promise<WriteResult<SessionMessage>> {
+  async function sendMessage(ctx: CoreCallContext, request: GraphWrite<{ recipient: SessionRef; text: string; replyMode?: 'wait'; intent?: 'notify' | 'inquiry' | 'action_request'; needsReply?: boolean; waitAfterSend?: boolean }>): Promise<WriteResult<SessionMessage>> {
     const owned = ownContext(ctx);
     if (!owned.ok) return owned.rejection;
     if (owned.signal.aborted) return reject('cancelled', 'the send was cancelled before validation');
@@ -934,6 +1051,30 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     if (recipient.projectId !== owned.projectId) return reject('forbidden', 'the recipient Session belongs to another project');
     const text = normalizeText(raw['text']);
     if (!text.ok) return text.rejection;
+    const replyMode = raw['replyMode'];
+    if (replyMode !== undefined && replyMode !== 'wait') {
+      return reject('invalid', 'the send replyMode must be omitted or wait');
+    }
+    // Normalize the legacy `replyMode='wait'` into the explicit intent fields.
+    // Omitted fields keep the exact historical fire-and-forget fingerprint.
+    const intent = raw['intent'];
+    if (intent !== undefined && intent !== 'notify' && intent !== 'inquiry' && intent !== 'action_request') {
+      return reject('invalid', 'the send intent must be notify, inquiry or action_request');
+    }
+    const explicitNeedsReply = raw['needsReply'];
+    if (explicitNeedsReply !== undefined && typeof explicitNeedsReply !== 'boolean') {
+      return reject('invalid', 'the send needsReply must be a boolean');
+    }
+    const explicitWaitAfterSend = raw['waitAfterSend'];
+    if (explicitWaitAfterSend !== undefined && typeof explicitWaitAfterSend !== 'boolean') {
+      return reject('invalid', 'the send waitAfterSend must be a boolean');
+    }
+    const legacyWait = replyMode === 'wait';
+    const waitAfterSend = explicitWaitAfterSend === true || (explicitWaitAfterSend === undefined && legacyWait);
+    const needsReply = explicitNeedsReply === true || (explicitNeedsReply === undefined && (legacyWait || waitAfterSend));
+    if (waitAfterSend && explicitNeedsReply === false) {
+      return reject('invalid', 'waitAfterSend requires needsReply to be true or omitted');
+    }
     if (write.expected.length !== 0) return reject('invalid', 'sendSessionMessage must not carry version pins');
 
     let sender: MessageSender;
@@ -952,7 +1093,15 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     }
     const senderIdentity = senderIdentityOf(sender);
     const identityKey = identityKeyOf('send', owned, senderIdentity, write.requestId);
-    const fingerprint = fingerprintOf('send', owned, senderIdentity, { recipient, text: text.text }, write.expected);
+    // The reply expectation is part of the request identity ONLY when it is
+    // explicitly present: an omitted replyMode keeps the exact historical
+    // fingerprint, so every existing fire-and-forget send replays unchanged.
+    const fingerprint = fingerprintOf('send', owned, senderIdentity,
+      { recipient, text: text.text,
+        ...(replyMode === undefined ? {} : { replyMode }),
+        ...(intent === undefined ? {} : { intent }),
+        ...(explicitNeedsReply === undefined ? {} : { needsReply: explicitNeedsReply }),
+        ...(explicitWaitAfterSend === undefined ? {} : { waitAfterSend: explicitWaitAfterSend }) }, write.expected);
 
     if (owned.signal.aborted) return reject('cancelled', 'the send was cancelled before the idempotency lookup');
     const existing = await records.lookupCommit({ identityKey, fingerprint });
@@ -1009,6 +1158,10 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
       status: 'pending',
       readAt: null,
       response: null,
+      ...(replyMode === undefined ? {} : { replyMode }),
+      ...(intent === undefined ? {} : { intent }),
+      ...(needsReply ? { needsReply: true } : {}),
+      ...(waitAfterSend ? { waitAfterSend: true } : {}),
     };
     const event: SessionMessageSentEventV1 = {
       eventId: eventIdOf(identityKey, 'sent'),
@@ -1270,6 +1423,137 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     return { status: 'ready', value: { items, nextCursor, sourceCursor: readThrough } };
   }
 
+  // ---- readOutbox ---------------------------------------------------------
+
+  /**
+   * Read messages SENT BY one exact Work Run or Session. It mirrors `readInbox`'s
+   * keyset/atLeast contract over registered indexes: a Host caller may read its
+   * workspace, a work_run caller only its own Run or Session. It never
+   * acks, wakes or reorders a Session and never scans all Sessions.
+   */
+  async function readOutbox(ctx: CoreCallContext, input: {
+    senderRun?: RunRef;
+    senderSession?: SessionRef;
+    page: { limit: number; cursor?: string; atLeastCursor?: CommitCursor };
+  }): Promise<ReadResult<{ items: SessionMessage[]; nextCursor: string | null; sourceCursor: CommitCursor }>> {
+    const owned = ownContext(ctx);
+    if (!owned.ok) return owned.rejection;
+    const raw = input as unknown as Unknown | null | undefined;
+    if (!isObject(raw)) return reject('invalid', 'readOutbox requires an input object');
+    if (Object.keys(raw).some((key) => key !== 'senderRun' && key !== 'senderSession' && key !== 'page')) {
+      return reject('invalid', 'readOutbox does not accept extra fields');
+    }
+    if ((raw['senderRun'] === undefined) === (raw['senderSession'] === undefined))
+      return reject('invalid', 'readOutbox requires exactly one sender Run or Session');
+    if (raw['senderRun'] !== undefined && !isRunRef(raw['senderRun'])) return reject('invalid', 'readOutbox requires a complete RunRef');
+    if (raw['senderSession'] !== undefined && checkPlainSessionRef(raw['senderSession']) !== null)
+      return reject('invalid', 'readOutbox requires a complete SessionRef');
+    const senderRun = raw['senderRun'] === undefined ? undefined : structuredClone(raw['senderRun']) as RunRef;
+    const senderSession = raw['senderSession'] === undefined ? undefined : structuredClone(raw['senderSession']) as SessionRef;
+    if ((senderRun ?? senderSession)!.projectId !== owned.projectId) return reject('forbidden', 'the outbox sender belongs to another project');
+    const page = raw['page'];
+    if (!isObject(page)) return reject('invalid', 'readOutbox requires a page object');
+    if (Object.keys(page).some((key) => key !== 'limit' && key !== 'cursor' && key !== 'atLeastCursor')) {
+      return reject('invalid', 'readOutbox page does not accept extra fields');
+    }
+    const limit = page['limit'];
+    if (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1 || limit > 100) {
+      return reject('invalid', 'readOutbox limit must be an integer between 1 and 100');
+    }
+    const rawCursor = page['cursor'];
+    const rawAtLeast = page['atLeastCursor'];
+    if (rawCursor !== undefined && !nonEmpty(rawCursor)) {
+      return reject('invalid', 'the outbox cursor must be a non-empty string');
+    }
+    let decodedCursor: OutboxCursorV1 | null = null;
+    if (rawCursor !== undefined) {
+      decodedCursor = decodeOutboxCursor(rawCursor);
+      if (decodedCursor === null) return reject('invalid', 'the outbox cursor is not a valid continuation token');
+      if (decodedCursor.projectId !== owned.projectId || decodedCursor.workspaceId !== owned.workspaceId
+        || canonicalOf(decodedCursor.senderRun ?? decodedCursor.senderSession) !== canonicalOf(senderRun ?? senderSession)) {
+        return reject('invalid', 'the outbox cursor belongs to another scope or sender Run');
+      }
+    }
+    let atLeastSeq: number | undefined;
+    if (rawAtLeast !== undefined) {
+      const parsed = cursorSequence(rawAtLeast);
+      if (parsed === null) return reject('invalid', 'atLeastCursor is not a ledger commit cursor');
+      atLeastSeq = parsed;
+    }
+    const after = decodedCursor?.after;
+
+    let callerKey: string;
+    if (owned.principal.kind === 'host') {
+      callerKey = canonicalOf({ kind: 'host', actor: { ...owned.principal.actor } }) ?? '';
+    } else if (owned.principal.kind === 'work_run') {
+      const identity = await readWorkRunIdentity(owned, owned.principal, owned.principal.runRef);
+      if (!identity.ok) return identity.rejection;
+      if (senderRun !== undefined ? canonicalOf(identity.run.ref) !== canonicalOf(senderRun)
+        : canonicalOf(identity.claim.sessionRef) !== canonicalOf(senderSession)) {
+        return reject('forbidden', 'a work_run outbox read is limited to its own Run or Session');
+      }
+      callerKey = canonicalOf({ kind: 'work_run', sessionRef: identity.claim.sessionRef, runRef: identity.run.ref }) ?? '';
+    } else {
+      return reject('forbidden', 'the mailbox reader principal is not supported');
+    }
+    if (decodedCursor !== null && decodedCursor.callerKey !== callerKey) {
+      return reject('invalid', 'the outbox cursor does not belong to the current caller');
+    }
+
+    const request: RecordLookupRequest = {
+      index: senderRun === undefined ? SESSION_MESSAGE_BY_SENDER_SESSION_LOOKUP : SESSION_MESSAGE_BY_SENDER_RUN_LOOKUP,
+      values: senderRun === undefined ? [owned.projectId, owned.workspaceId, senderSession!.sessionId]
+        : [owned.projectId, owned.workspaceId, senderRun.goalId, senderRun.runId],
+      limit,
+      ...(after === undefined ? {} : { after }),
+    };
+    let pageResult: StoreResult<{ records: EncodedRecord[]; next: string | null; readThrough: CommitCursor | null }>;
+    try {
+      pageResult = await records.lookup(request);
+    } catch {
+      return reject('unavailable', 'the outbox lookup failed');
+    }
+    if (pageResult.status !== 'ready') return mapStoreFailure(pageResult);
+    const readThrough = pageResult.value.readThrough;
+    if (atLeastSeq !== undefined) {
+      const observed = readThrough === null ? null : cursorSequence(readThrough);
+      if (observed === null || observed < atLeastSeq) {
+        return {
+          status: 'not_ready',
+          observed: readThrough === null ? null : { kind: 'platform', cursor: readThrough },
+          required: { kind: 'platform', cursor: rawAtLeast as CommitCursor },
+        };
+      }
+    }
+    if (readThrough === null) {
+      return { status: 'not_ready', observed: null, required: { kind: 'platform', cursor: MIN_CURSOR } };
+    }
+    const items: SessionMessage[] = [];
+    for (const record of pageResult.value.records) {
+      const decoded = decodeSessionMessageRecord(record);
+      if (decoded.status !== 'decoded') return reject('unavailable', `an outbox candidate is damaged: ${decoded.reason}`);
+      const message = decoded.value;
+      if (sessionMessageRefKey(message.ref) !== record.refKey
+        || message.ref.projectId !== owned.projectId
+        || message.ref.workspaceId !== owned.workspaceId
+        || message.sender.kind !== 'work_run'
+        || (senderRun === undefined ? canonicalOf(message.sender.sessionRef) !== canonicalOf(senderSession)
+          : canonicalOf(message.sender.runRef) !== canonicalOf(senderRun))) {
+        return reject('unavailable', 'an outbox candidate disagrees with the requested sender Run');
+      }
+      items.push(message);
+    }
+    const nextCursor = pageResult.value.next === null ? null : encodeOutboxCursor({
+      v: 1,
+      projectId: owned.projectId,
+      workspaceId: owned.workspaceId,
+      ...(senderRun === undefined ? { senderSession: senderSession! } : { senderRun }),
+      callerKey,
+      after: pageResult.value.next,
+    });
+    return { status: 'ready', value: { items, nextCursor, sourceCursor: readThrough } };
+  }
+
   // ---- ackMessage ---------------------------------------------------------
 
   async function ackMessage(ctx: CoreCallContext, request: GraphWrite<{ messageRef: SessionMessageRef }>): Promise<WriteResult<SessionMessage>> {
@@ -1429,5 +1713,356 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     });
   }
 
-  return { sendMessage, readMessage, readMessageBody, readInbox, ackMessage, respondMessage };
+  // ---- respondFromQueryAnswer (Host-only association) ---------------------
+
+  /**
+   * Associate an ALREADY-SAVED formal Query Answer with the original message's
+   * single response slot. The body and the `query_run` sender are read from the
+   * settled Answer/Job/Run, never from caller text or caller identity. The
+   * scope, consultation binding, deterministic message identity, original
+   * recipient and actual claimed Session generation are all re-checked before
+   * the one CAS response write.
+   */
+  async function respondFromQueryAnswer(
+    ctx: CoreCallContext,
+    request: GraphWrite<{ messageRef: SessionMessageRef; answerRef: QueryJobAnswerRef }>,
+  ): Promise<WriteResult<SessionMessage>> {
+    const owned = ownContext(ctx);
+    if (!owned.ok) return owned.rejection;
+    if (owned.principal.kind !== 'host') {
+      return reject('forbidden', 'only the Host may associate an official Query answer with a message');
+    }
+    if (owned.signal.aborted) return reject('cancelled', 'the answer association was cancelled before validation');
+    const write = ownWrite(request);
+    if (!write.ok) return write.rejection;
+    const raw = write.input as unknown as Unknown | null | undefined;
+    if (!isObject(raw)) return reject('invalid', 'respondFromQueryAnswer requires an input object');
+    if (Object.keys(raw).some((key) => key !== 'messageRef' && key !== 'answerRef')) {
+      return reject('invalid', 'respondFromQueryAnswer does not accept extra fields');
+    }
+    const normalized = normalizeMessageRef(raw['messageRef']);
+    if (!normalized.ok) return reject('invalid', normalized.reason);
+    const scopeProblem = scopeOfMessageRef(owned, normalized.ref);
+    if (scopeProblem !== null) return scopeProblem;
+    const rawAnswer = raw['answerRef'];
+    if (!isObject(rawAnswer) || rawAnswer['aggregateType'] !== 'QueryJobAnswer'
+      || !nonEmpty(rawAnswer['projectId']) || !nonEmpty(rawAnswer['workspaceId'])
+      || !nonEmpty(rawAnswer['queryJobId']) || !nonEmpty(rawAnswer['answerId'])
+      || Object.keys(rawAnswer).some((key) => !['aggregateType', 'projectId', 'workspaceId', 'queryJobId', 'answerId'].includes(key))) {
+      return reject('invalid', 'respondFromQueryAnswer requires a complete QueryJobAnswerRef');
+    }
+    let answerRef: QueryJobAnswerRef;
+    try { answerRef = structuredClone(rawAnswer) as unknown as QueryJobAnswerRef; }
+    catch { return reject('invalid', 'the answer ref cannot be isolated from the caller'); }
+    if (answerRef.projectId !== owned.projectId || answerRef.workspaceId !== owned.workspaceId) {
+      return reject('forbidden', 'the Query answer ref is outside the bound project/workspace');
+    }
+    const pin = normalizeMessagePin(write.expected, normalized.ref);
+    if (!pin.ok) return pin.rejection;
+
+    const loaded = await loadMessage(owned, normalized.ref);
+    if (loaded.status !== 'ready') return mapReadResult(loaded) as CoreRejection;
+    const message = loaded.value;
+    const recipient = { projectId: message.recipient.projectId, sessionId: message.recipient.sessionId };
+
+    const answerRead = await loadQueryAnswer(owned, answerRef);
+    if (answerRead.status !== 'ready') return mapReadResult(answerRead) as CoreRejection;
+    const answer = answerRead.value;
+    const jobRead = await loadQueryJob(owned, answer.answer.queryJobRef);
+    if (jobRead.status !== 'ready') return mapReadResult(jobRead) as CoreRejection;
+    const job = jobRead.value;
+    const runRead = await loadQueryRun(owned, answer.answer.runRef);
+    if (runRead.status !== 'ready') return mapReadResult(runRead) as CoreRejection;
+    const run = runRead.value;
+
+    const execution = job.job.intent.execution;
+    const consultation = execution?.consultation;
+    if (execution === undefined || execution.kind !== 'semantic_query' || consultation === undefined) {
+      return reject('forbidden', 'the Query answer is not an explicit consultation answer');
+    }
+    if (canonicalOf(consultation.messageRef) !== canonicalOf(message.ref)) {
+      return reject('forbidden', 'the consultation answer belongs to another message');
+    }
+    if (canonicalOf(consultation.recipient) !== canonicalOf(recipient)) {
+      return reject('forbidden', 'the consultation answer recipient is not the original message recipient');
+    }
+    // A derived A′ answer is answered by the CHILD Session, while the original
+    // message recipient (source A) stays the formal source. The two are never
+    // conflated and the derivation must name that exact source.
+    const derivation = consultation.derivation;
+    if (derivation !== undefined && canonicalOf(derivation.sourceSessionRef) !== canonicalOf(recipient)) {
+      return reject('forbidden', 'the derived answer source is not the original message recipient');
+    }
+    const answererSession = derivation === undefined
+      ? recipient
+      : { projectId: derivation.childSessionRef.projectId, sessionId: derivation.childSessionRef.sessionId };
+    const refs = consultationQueryRefs(consultation.messageRef);
+    if (refs.queryJobRef.queryJobId !== job.job.queryJobId || refs.queryRunRef.runId !== run.run.runId) {
+      return reject('forbidden', 'the consultation answer does not match the deterministic message identity');
+    }
+    if (job.job.status !== 'answered'
+      || !job.job.answerRefs.some((candidate) => canonicalOf(candidate) === canonicalOf(answerRef))) {
+      return reject('forbidden', 'the QueryJob does not record this answer as its formal answered fact');
+    }
+    const state = run.run.executionState;
+    if (state === undefined || state.phase !== 'settled') {
+      return reject('forbidden', 'the QueryRun is not settled and cannot source a message reply');
+    }
+    if (run.run.status !== 'answered' || run.run.outcome !== 'answered') {
+      return reject('forbidden', 'the QueryRun did not settle as answered');
+    }
+    if (state.sessionRef.projectId !== answererSession.projectId || state.sessionRef.sessionId !== answererSession.sessionId) {
+      return reject('forbidden', 'the QueryRun was not claimed by the formal answerer Session');
+    }
+    if (canonicalOf(answer.answer.runRef) !== canonicalOf(run.ref)) {
+      return reject('forbidden', 'the Query answer does not belong to the settled QueryRun');
+    }
+    if (!isPositiveInt(state.sessionGeneration)) return reject('unavailable', 'the QueryRun Session generation is not readable');
+    const text = answer.answer.answer;
+    if (typeof text !== 'string' || text.length === 0 || Buffer.byteLength(text, 'utf8') > SESSION_MESSAGE_MAX_TEXT_BYTES) {
+      return reject('invalid', 'the formal Query answer text is not a legal bounded message body');
+    }
+
+    const sender: MessageQueryAnswerSender = {
+      kind: 'query_run',
+      sessionRef: { projectId: answererSession.projectId, sessionId: answererSession.sessionId },
+      queryRunRef: { ...answer.answer.runRef },
+      answerRef: { ...answerRef },
+      generation: state.sessionGeneration,
+    };
+    const senderIdentity = senderIdentityOf(sender);
+    const identityKey = identityKeyOf('respond_from_query_answer', owned, senderIdentity, write.requestId);
+    const fingerprint = fingerprintOf('respond_from_query_answer', owned, senderIdentity,
+      { messageRef: message.ref, answerRef }, write.expected);
+    if (owned.signal.aborted) return reject('cancelled', 'the answer association was cancelled before the idempotency lookup');
+    const existing = await records.lookupCommit({ identityKey, fingerprint });
+    if (existing.status === 'ready') return replayMessage(existing.value);
+    if (existing.code !== 'not_found') return mapStoreFailure(existing);
+    if (message.status === 'responded') {
+      const restored = await recheckAfterMiss(identityKey, fingerprint);
+      return restored ?? reject('invalid', 'the message already has a response');
+    }
+    // Preserve the formal Answer's ORIGINAL source; a later current Workspace
+    // revision must never impersonate the answer-time evidence.
+    const answerSource = answer.answer.bodyRef.source;
+    const bodyRequestId = `session-message-body:${sha256Hex(`${identityKey}|response`)}`;
+    const stored = await storeMessageBody({
+      owned, sender, part: 'response', messageRef: message.ref, text,
+      sourceRef: answerSource, expectedSource: answerSource, bodyRequestId,
+    });
+    if (!stored.ok) return stored.rejection;
+    const respondedAt = deps.now();
+    if (!nonEmpty(respondedAt)) return reject('invalid', 'the injected clock is not a legal instant');
+    const response = { sender, bodyRef: stored.ref, sourceRef: stored.ref.source, respondedAt };
+    const next: SessionMessage = {
+      ...message,
+      revision: message.revision + 1,
+      status: 'responded',
+      readAt: message.readAt ?? respondedAt,
+      response,
+    };
+    const event: SessionMessageRespondedEventV1 = {
+      eventId: eventIdOf(identityKey, 'responded'),
+      eventType: 'SessionMessageResponded',
+      schemaVersion: 1,
+      occurredAt: respondedAt,
+      projectId: owned.projectId,
+      workspaceId: owned.workspaceId,
+      requestId: write.requestId,
+      actor: sender,
+      message: next,
+    };
+    if (owned.signal.aborted) return reject('cancelled', 'the answer association was cancelled before commit');
+    return commitMessage({
+      identityKey, fingerprint, message: next,
+      messageGuard: { refKey: sessionMessageRefKey(next.ref), expectedRevision: pin.revision },
+      guards: [], event: encodeSessionMessageRespondedEvent(event),
+    });
+  }
+
+  // ---- recordConsultationDerivation (Host-only fixed A′ fact) -------------
+
+  async function recordConsultationDerivation(
+    ctx: CoreCallContext,
+    request: GraphWrite<{ messageRef: SessionMessageRef; derivation: NonNullable<SessionMessage['consultationDerivation']> }>,
+  ): Promise<WriteResult<SessionMessage>> {
+    const owned = ownContext(ctx);
+    if (!owned.ok) return owned.rejection;
+    if (owned.principal.kind !== 'host') return reject('forbidden', 'only the Host may record a consultation derivation');
+    if (owned.signal.aborted) return reject('cancelled', 'the derivation record was cancelled before validation');
+    const write = ownWrite(request);
+    if (!write.ok) return write.rejection;
+    const raw = write.input as unknown;
+    if (!isObject(raw)) return reject('invalid', 'recordConsultationDerivation requires an input object');
+    if (Object.keys(raw).some(key => key !== 'messageRef' && key !== 'derivation')) {
+      return reject('invalid', 'recordConsultationDerivation does not accept extra fields');
+    }
+    const normalized = normalizeMessageRef(raw['messageRef']);
+    if (!normalized.ok) return reject('invalid', normalized.reason);
+    const scopeProblem = scopeOfMessageRef(owned, normalized.ref);
+    if (scopeProblem !== null) return scopeProblem;
+    const derivation = raw['derivation'];
+    if (!isObject(derivation)) return reject('invalid', 'recordConsultationDerivation requires a derivation object');
+    const pin = normalizeMessagePin(write.expected, normalized.ref);
+    if (!pin.ok) return pin.rejection;
+    const sender: MessageSender = { kind: 'host', actor: { ...owned.principal.actor } };
+    const identityKey = identityKeyOf('consultation-derivation', owned, senderIdentityOf(sender), write.requestId);
+    const fingerprint = fingerprintOf('consultation-derivation', owned, senderIdentityOf(sender),
+      { messageRef: normalized.ref, derivation }, write.expected);
+    const existing = await records.lookupCommit({ identityKey, fingerprint });
+    if (existing.status === 'ready') return replayMessage(existing.value);
+    if (existing.code !== 'not_found') return mapStoreFailure(existing);
+    const loaded = await loadMessage(owned, normalized.ref);
+    if (loaded.status !== 'ready') return mapReadResult(loaded) as CoreRejection;
+    const message = loaded.value;
+    if (message.consultationDerivation !== undefined) {
+      const restored = await recheckAfterMiss(identityKey, fingerprint);
+      return restored ?? reject('invalid', 'the original request already carries a fixed consultation derivation');
+    }
+    const recordedAt = deps.now();
+    if (!nonEmpty(recordedAt)) return reject('invalid', 'the injected clock is not a legal instant');
+    const next: SessionMessage = { ...message, revision: message.revision + 1,
+      consultationDerivation: derivation as NonNullable<SessionMessage['consultationDerivation']> };
+    const event = {
+      eventId: eventIdOf(identityKey, 'consultation-derived'),
+      eventType: 'SessionMessageConsultationDerived' as const,
+      schemaVersion: 1 as const,
+      occurredAt: recordedAt,
+      projectId: owned.projectId,
+      workspaceId: owned.workspaceId,
+      requestId: write.requestId,
+      actor: sender,
+      message: next,
+    };
+    if (owned.signal.aborted) return reject('cancelled', 'the derivation record was cancelled before commit');
+    return commitMessage({
+      identityKey, fingerprint, message: next,
+      messageGuard: { refKey: sessionMessageRefKey(next.ref), expectedRevision: pin.revision },
+      guards: [], event: encodeSessionMessageConsultationDerivedEvent(event),
+    });
+  }
+
+  // ---- recordInputAccepted (Runtime observer confirmation) ---------------
+
+  async function recordInputAccepted(
+    ctx: CoreCallContext,
+    request: GraphWrite<{
+      messageRef: SessionMessageRef;
+      part: 'message' | 'response';
+      executionRef: RunRef | QueryRunRef;
+      executionSessionRef?: SessionRef;
+      kernel: { adapterId: string; kernelSessionId: string; runId: string; turnId: string; position: number };
+    }>,
+  ): Promise<WriteResult<SessionMessage>> {
+    const owned = ownContext(ctx);
+    if (!owned.ok) return owned.rejection;
+    if (owned.principal.kind !== 'work_run' && owned.principal.kind !== 'host') {
+      return reject('forbidden', 'only the trusted observing Host or executing Run may confirm an accepted input');
+    }
+    if (owned.signal.aborted) return reject('cancelled', 'the input acceptance was cancelled before validation');
+    const write = ownWrite(request);
+    if (!write.ok) return write.rejection;
+    const raw = write.input as unknown;
+    if (!isObject(raw)) return reject('invalid', 'recordInputAccepted requires an input object');
+    if (Object.keys(raw).some(key => !['messageRef', 'part', 'executionRef', 'executionSessionRef', 'kernel'].includes(key))) {
+      return reject('invalid', 'recordInputAccepted does not accept extra fields');
+    }
+
+    const normalized = normalizeMessageRef(raw['messageRef']);
+    if (!normalized.ok) return reject('invalid', normalized.reason);
+    const scopeProblem = scopeOfMessageRef(owned, normalized.ref);
+    if (scopeProblem !== null) return scopeProblem;
+    const part = raw['part'];
+    if (part !== 'message' && part !== 'response') return reject('invalid', 'recordInputAccepted part must be message or response');
+    const executionRef = raw['executionRef'];
+    if (!isObject(executionRef) || !['Run', 'QueryRun'].includes(String(executionRef['aggregateType']))) {
+      return reject('forbidden', 'the accepted input execution must be a RunRef or QueryRunRef');
+    }
+    if (owned.principal.kind === 'work_run' && canonicalOf(executionRef) !== canonicalOf(owned.principal.runRef)) {
+      return reject('forbidden', 'an execution may only confirm its own accepted inputs');
+    }
+    if (executionRef['projectId'] !== owned.projectId) {
+      return reject('forbidden', 'the accepted input execution is outside the project');
+    }
+    const kernel = raw['kernel'];
+    if (!isObject(kernel) || Object.keys(kernel).some(key => !['adapterId', 'kernelSessionId', 'runId', 'turnId', 'position'].includes(key))
+      || !nonEmpty(kernel['adapterId']) || !nonEmpty(kernel['kernelSessionId'])
+      || !nonEmpty(kernel['runId']) || !nonEmpty(kernel['turnId'])
+      || !isPositiveInt(kernel['position'])) {
+      return reject('invalid', 'recordInputAccepted requires a complete Kernel event identity');
+    }
+    const sender: MessageSender = { kind: 'host', actor: { ...deps.systemActor } };
+    const senderIdentity = senderIdentityOf(sender);
+    const identityKey = `input-accepted:${sha256Hex(canonicalJson({ messageRef: normalized.ref, part, executionRef, kernel } as unknown as JsonValue))}`;
+    const fingerprint = fingerprintOf('input-accepted', owned, senderIdentity,
+      { messageRef: normalized.ref, part, executionRef, kernel }, []);
+    const existing = await records.lookupCommit({ identityKey, fingerprint });
+    if (existing.status === 'ready') return replayMessage(existing.value);
+    if (existing.code !== 'not_found') return mapStoreFailure(existing);
+    const loaded = await loadMessage(owned, normalized.ref);
+    if (loaded.status !== 'ready') return mapReadResult(loaded) as CoreRejection;
+    const message = loaded.value;
+    let actualSession: SessionRef;
+    let actualKernel: { adapterId: string; kernelSessionId: string; runId: string; turnId: string } | null | undefined;
+    if (executionRef['aggregateType'] === 'Run') {
+      const facts = await readFreshWorkRunFacts(owned, executionRef as unknown as RunRef);
+      if (!facts.ok) return facts.rejection;
+      actualSession = { projectId: facts.record.outbox.claim.sessionRef.projectId, sessionId: facts.record.outbox.claim.sessionRef.sessionId };
+      const authorization = facts.record.run.executionAuthorization;
+      actualKernel = facts.record.run.executionHistory?.kernel
+        ?? (authorization !== undefined && 'schemaVersion' in authorization && authorization.schemaVersion === 2 ? authorization.kernel : null);
+    } else {
+      if (executionRef['workspaceId'] !== owned.workspaceId) return reject('forbidden', 'Query execution is outside the workspace');
+      const facts = await loadQueryRun(owned, executionRef as unknown as QueryRunRef);
+      if (facts.status !== 'ready') return mapReadResult(facts) as CoreRejection;
+      const state = facts.value.run.executionState;
+      if (state === undefined) return reject('unavailable', 'Query has no execution identity');
+      actualSession = { projectId: state.sessionRef.projectId, sessionId: state.sessionRef.sessionId };
+      actualKernel = state.entry?.kernel;
+    }
+    if (actualKernel === undefined || actualKernel === null
+      || actualKernel.adapterId !== kernel['adapterId'] || actualKernel.kernelSessionId !== kernel['kernelSessionId']
+      || actualKernel.runId !== kernel['runId'] || actualKernel.turnId !== kernel['turnId'])
+      return reject('forbidden', 'accepted input does not match the persisted execution Kernel identity');
+    if (raw['executionSessionRef'] !== undefined && canonicalOf(raw['executionSessionRef']) !== canonicalOf(actualSession))
+      return reject('forbidden', 'claimed acceptance Session differs from the execution');
+    const inputId = deriveSessionInputId(normalized.ref, part);
+    if (part === 'response') {
+      if (message.response === null || message.sender.kind !== 'work_run'
+        || canonicalOf(message.sender.sessionRef) !== canonicalOf(actualSession))
+        return reject('forbidden', 'the accepted response does not belong to the executing Session');
+    } else if (canonicalOf(message.recipient) !== canonicalOf(actualSession)) {
+      return reject('forbidden', 'the accepted message is not addressed to the executing Session');
+    }
+    const accepted = (message.acceptedInputs ?? []).find(entry => entry.inputId === inputId);
+    if (accepted !== undefined) {
+      // The same original event is identified independently of observing actor/revision.
+      const restored = await recheckAfterMiss(identityKey, fingerprint);
+      return restored ?? reject('invalid', 'this source input was accepted by another execution event');
+    }
+    const acceptedAt = deps.now();
+    if (!nonEmpty(acceptedAt)) return reject('invalid', 'the injected clock is not a legal instant');
+    const next: SessionMessage = { ...message, revision: message.revision + 1,
+      acceptedInputs: [ ...(message.acceptedInputs ?? []),
+        { inputId, part, executionRef: { ...(executionRef as RunRef | QueryRunRef) }, kernel: { ...(kernel as NonNullable<SessionMessage['acceptedInputs']>[number]['kernel']) }, acceptedAt } ] };
+    const event = {
+      eventId: eventIdOf(identityKey, 'input-accepted'),
+      eventType: 'SessionMessageInputAccepted' as const,
+      schemaVersion: 1 as const,
+      occurredAt: acceptedAt,
+      projectId: owned.projectId,
+      workspaceId: owned.workspaceId,
+      requestId: write.requestId,
+      actor: { ...sender },
+      message: next,
+    };
+    if (owned.signal.aborted) return reject('cancelled', 'the input acceptance was cancelled before commit');
+    return commitMessage({
+      identityKey, fingerprint, message: next,
+      messageGuard: { refKey: sessionMessageRefKey(next.ref), expectedRevision: message.revision },
+      guards: [], event: encodeSessionMessageInputAcceptedEvent(event),
+    });
+  }
+
+  return { sendMessage, readMessage, readMessageBody, readInbox, readOutbox, ackMessage, respondMessage, respondFromQueryAnswer, recordConsultationDerivation, recordInputAccepted };
 }

@@ -1,0 +1,32 @@
+[
+  {
+    "path": "src/business/workflow/workflow.ts",
+    "sha256": "e791e2d73405b7ff911d936e21031cfcd60bb54eff9e0fdfe509a35cadd4bc29",
+    "added": 7,
+    "deleted": 4
+  },
+  {
+    "path": "src/core/work-graph/evidence/contracts.ts",
+    "sha256": "a91e63e7e599aac1551f90d94922c3d289663bb3c5c837c01de8dbeae3cff1d8",
+    "added": 1,
+    "deleted": 1
+  },
+  {
+    "path": "src/core/work-graph/evidence/evidence-service.ts",
+    "sha256": "44b5607e7a087677c75fbe98b136a327938a2ba5984e83fdb098965f6cbfc2d6",
+    "added": 12,
+    "deleted": 6
+  },
+  {
+    "path": "src/contracts/verification-context.ts",
+    "sha256": "1584d048d864e83d18c74887cbd7b8472d7ea9cf0840c835a8a63d07690361a4",
+    "added": 1,
+    "deleted": 1
+  },
+  {
+    "path": "tests/composition/R5c-workflow-platform.test.ts",
+    "sha256": "71c2d55ad6d3edb7e1d3a703651b7c6887cb626c8ba92df4353e54b68c511f8a",
+    "added": 31,
+    "deleted": 14
+  }
+]

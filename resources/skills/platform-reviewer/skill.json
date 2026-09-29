@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "platform-reviewer",
+  "title": "Platform reviewer",
+  "kind": "instruction",
+  "priority": 40,
+  "contentFile": "content.md"
+}

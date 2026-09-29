@@ -1,0 +1,4 @@
+{
+  "writableFiles": ["src/ui/views.ts", "src/ui/main.ts", "src/ui/styles.css", "src/ui/markdown.ts", "tests/app/session-rendering.test.ts"],
+  "dshStateDirectories": ["profiles", "sessions", "storages", "cache", "llm-deepseek", "attachments"]
+}

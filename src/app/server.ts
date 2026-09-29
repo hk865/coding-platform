@@ -21,6 +21,8 @@ import {
   WORKBENCH_PATH,
   type BootstrapResponse,
 } from './core-http-types.js';
+import { SETTINGS_API_PREFIX, type HostSettingsPort } from './host-settings-types.js';
+import { isSettingsRoute } from './host-settings.js';
 import type { HostActor } from './core-call-context.js';
 import { createHostCoreCallContext } from './core-call-context.js';
 import {
@@ -50,10 +52,14 @@ export type WorkbenchServerOptions = {
   token: string;
   bindings: CoreRouteBindings;
   actor: HostActor;
-  /** Trusted startup projection; never built by scanning the ledger. */
-  bootstrap: BootstrapResponse;
-  /** The exact trusted scope set; a request scope outside it is forbidden. */
-  allowedScopes: readonly CoreScope[];
+  /** Trusted LIVE projection; never built by scanning the ledger. It is a
+   * function so a newly opened scope is visible without restarting the Host. */
+  bootstrap: () => BootstrapResponse;
+  /** Trusted Host-local settings port. Absence keeps every settings route an
+   * explicit `unsupported` gap; the transport boundary is unchanged. */
+  settings?: HostSettingsPort;
+  /** The live trusted scope predicate; a request scope outside it is forbidden. */
+  allowsScope: (scope: CoreScope) => boolean;
   host?: string;
   publicDir?: string;
   maxBodyBytes?: number;
@@ -193,7 +199,7 @@ export function createWorkbenchServer(options: WorkbenchServerOptions): Workbenc
     const parsed = parseCoreRouteRequest(suffix as CoreRouteSuffix, raw);
     try {
       if (!parsed.ok) throw new CoreRouteRejectionError(parsed.rejection);
-      if (!options.allowedScopes.some(allowed => allowed.projectId === parsed.scope.projectId && allowed.workspaceId === parsed.scope.workspaceId)) {
+      if (!options.allowsScope(parsed.scope)) {
         throw new CoreRouteRejectionError({
           status: 'rejected', code: 'forbidden',
           reason: 'the requested scope is not part of the trusted Host configuration',
@@ -206,6 +212,41 @@ export function createWorkbenchServer(options: WorkbenchServerOptions): Workbenc
       if (error instanceof CoreUnsupportedError) sendJson(response, statusForCode('unsupported'), error.rejection);
       else if (error instanceof CoreRouteRejectionError) sendJson(response, statusForCode(error.rejection.code), error.rejection);
       else sendJson(response, 500, { status: 'rejected', code: 'unavailable', reason: 'the Host failed to execute the route' });
+    }
+    return true;
+  }
+
+  /**
+   * Every settings suffix is POST with the corresponding DTO input as the JSON
+   * body. The transport keeps the same token/same-origin boundary as the core
+   * routes and never lets a settings request reach a domain owner directly: an
+   * absent port is an explicit `unsupported` gap and a port failure is a bounded
+   * `unavailable` response.
+   */
+  async function handleSettings(suffix: string, request: IncomingMessage, response: ServerResponse): Promise<boolean> {
+    if (!isSettingsRoute(suffix)) return false;
+    if (!handleToken(request)) { sendJson(response, 403, { status: 'rejected', code: 'forbidden', reason: 'the local platform token is missing or stale' }); return true; }
+    const controller = new AbortController();
+    response.on('close', () => { if (!response.writableEnded) controller.abort(); });
+    request.setTimeout(120_000, () => controller.abort());
+    let raw: unknown;
+    try { raw = await readJsonBody(request, maxBodyBytes); }
+    catch (error) {
+      if (error instanceof BodyTooLargeError) sendJson(response, 413, { status: 'rejected', code: 'capacity', reason: error.message });
+      else sendJson(response, 400, { status: 'rejected', code: 'invalid', reason: error instanceof Error ? error.message : 'invalid request body' });
+      return true;
+    }
+    if (controller.signal.aborted) { sendJson(response, 408, { status: 'rejected', code: 'cancelled', reason: 'the client cancelled the request' }); return true; }
+    if (options.settings === undefined) {
+      sendJson(response, statusForCode('unsupported'), { status: 'rejected', code: 'unsupported', reason: 'the Host has no settings configuration' });
+      return true;
+    }
+    try {
+      const result = await options.settings.call(suffix, raw as never);
+      if (result.status === 'ready') sendJson(response, 200, result);
+      else sendJson(response, statusForCode(result.code), result);
+    } catch {
+      sendJson(response, 500, { status: 'rejected', code: 'unavailable', reason: 'the Host failed to execute the settings route' });
     }
     return true;
   }
@@ -238,7 +279,14 @@ export function createWorkbenchServer(options: WorkbenchServerOptions): Workbenc
     if (pathname === `${CORE_API_PREFIX}${BOOTSTRAP_SUFFIX}`) {
       if (method !== 'GET') { sendJson(response, 405, { status: 'rejected', code: 'invalid', reason: 'use GET for bootstrap' }); return; }
       if (!handleToken(request)) { sendJson(response, 403, { status: 'rejected', code: 'forbidden', reason: 'the local platform token is missing or stale' }); return; }
-      sendJson(response, 200, options.bootstrap);
+      sendJson(response, 200, options.bootstrap());
+      return;
+    }
+    if (pathname.startsWith(SETTINGS_API_PREFIX)) {
+      if (method !== 'POST') { sendJson(response, 405, { status: 'rejected', code: 'invalid', reason: 'use POST for settings routes' }); return; }
+      const suffix = pathname.slice(SETTINGS_API_PREFIX.length);
+      if (await handleSettings(suffix, request, response)) return;
+      sendJson(response, 404, { status: 'rejected', code: 'not_found', reason: `unpublished settings route ${suffix}` });
       return;
     }
     if (pathname.startsWith(CORE_API_PREFIX)) {

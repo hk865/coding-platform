@@ -1,0 +1,94 @@
+{
+  "attempt": 2,
+  "streams": 17,
+  "state": "completed",
+  "goalPhase": "COMPLETED",
+  "twoDistinctWaitRuns": 2,
+  "acceptedReplies": 2,
+  "checks": [
+    "PASS",
+    "PASS"
+  ],
+  "projectChecks": 0,
+  "providerErrors": [],
+  "transportErrors": [],
+  "distinctToolErrors": {
+    "call_00_XBfM9eDbjnTKSG4U4ikG3007": {
+      "schemaVersion": 1,
+      "callId": "call_00_XBfM9eDbjnTKSG4U4ikG3007",
+      "output": [
+        {
+          "kind": "json",
+          "value": {
+            "code": "forbidden",
+            "reason": "the plan belongs to another project",
+            "status": "rejected"
+          }
+        }
+      ],
+      "effects": {
+        "sideEffect": "none",
+        "changedPaths": [],
+        "workspaceRevision": null,
+        "artifactRefs": []
+      },
+      "status": "error",
+      "error": {
+        "code": "execution_failed",
+        "message": "the plan belongs to another project",
+        "retryable": false
+      }
+    },
+    "call_01_tMDW1HLjXpYmKoYEUQFZ5415": {
+      "schemaVersion": 1,
+      "callId": "call_01_tMDW1HLjXpYmKoYEUQFZ5415",
+      "output": [
+        {
+          "kind": "text",
+          "text": "ENOTDIR: not a directory, open '/proc/self/fd/36/contract.md'"
+        }
+      ],
+      "effects": {
+        "sideEffect": "none",
+        "changedPaths": [],
+        "workspaceRevision": null,
+        "artifactRefs": []
+      },
+      "status": "error",
+      "error": {
+        "code": "execution_failed",
+        "message": "ENOTDIR: not a directory, open '/proc/self/fd/36/contract.md'",
+        "retryable": false
+      }
+    },
+    "call_00_Q0JvAgKaT8MYaEWEFjr47273": {
+      "schemaVersion": 1,
+      "callId": "call_00_Q0JvAgKaT8MYaEWEFjr47273",
+      "output": [
+        {
+          "kind": "text",
+          "text": "工具参数不符合 schema"
+        }
+      ],
+      "effects": {
+        "sideEffect": "none",
+        "changedPaths": [],
+        "workspaceRevision": null,
+        "artifactRefs": []
+      },
+      "status": "error",
+      "error": {
+        "code": "invalid_arguments",
+        "message": "工具参数不符合 schema",
+        "retryable": false
+      }
+    }
+  },
+  "verdict": "Engineering result completed; live harness failed overly broad zero-tool-error assertion. Two actual model argument mistakes and one ambiguous directory-prefix error. Preserve original failure; clarify directory contract then reverify same generic mechanism.",
+  "classification": {
+    "call_00_XBfM9eDbjnTKSG4U4ikG3007": "Model used task/module ID as planRef.projectId; authoritative owner rejection, followed by correction.",
+    "call_01_tMDW1HLjXpYmKoYEUQFZ5415": "search prefix points at a file contract.md; listFiles expects directory. Not parallel fd reuse. Tool description/result need correct argument contract.",
+    "call_00_Q0JvAgKaT8MYaEWEFjr47273": "edit replace omitted required expectedRevision; schema rejection, followed by correction."
+  },
+  "harnessCorrection": "Count errors once by callId, preserve actual outputs, reject transport/provider/unclassified execution failures. Explicit model argument or formal owner rejections are retained and reviewed separately, not claimed as zero tool errors."
+}

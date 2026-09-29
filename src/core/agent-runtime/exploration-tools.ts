@@ -57,6 +57,7 @@ function textAnalysis(content:string):Analysis{
   }
   return {status:'unsupported_ast',engine:'text-fallback',ast:false,symbols:[],imports:imports.slice(0,150),calls:[],diagnostics:[{message:'No AST provider for this language. Only textual include references are extracted; use search/read to inspect source. No semantic or call-graph coverage.'}],truncated:imports.length>150};
 }
+class DirectoryPrefixError extends Error {}
 export type SourceToolOptions = {
   sourceIdentity?: () => Promise<{ workspace: string; commit: string | null }>;
   allowedPath?: (path: string) => boolean;
@@ -115,15 +116,27 @@ export function createExplorationTools(workspace: WorkspaceSandbox, options: Sou
     inventory: signal => workspace.listFiles(60000, { signal }),
     sourceIdentity });
 
+  async function directoryInventory(prefix: string|undefined, signal: AbortSignal) {
+    try { return await workspace.listFiles(20000,{...(prefix?{prefix}:{}),signal}); }
+    catch(error) {
+      if(prefix && typeof error==='object' && error!==null && 'code' in error && error.code==='ENOTDIR')
+        throw new DirectoryPrefixError('prefix must name a workspace directory');
+      throw error;
+    }
+  }
   function tool(name:string,description:string,inputSchema:ToolDefinition['inputSchema'],execute:(args:Record<string,unknown>,signal:AbortSignal)=>Promise<unknown>):ToolDefinition {
+    const rootPrefix = (args:Record<string,unknown>) => (name==='search'||name==='list_files') && args['prefix']==='.';
     return {name,description,inputSchema,effectClass:'read_only',requiredCapabilities:['workspace_read'],defaultTimeoutMs:10000,outputLimitBytes:64*1024,independentReadOnly:true,
-      summarize:args=>({paths:typeof args['path']==='string'?[args['path']]:Array.isArray(args['paths'])?args['paths'] as string[]:typeof args['prefix']==='string'?[args['prefix']]:[],cwd:null,commandPreview:null}),
+      summarize:args=>({paths:typeof args['path']==='string'?[args['path']]:Array.isArray(args['paths'])?args['paths'] as string[]:typeof args['prefix']==='string'&&!rootPrefix(args)?[args['prefix']]:[],cwd:null,commandPreview:null}),
       handler:{execute:async(call,executionOptions)=>{
         if(executionOptions.signal.aborted)return {schemaVersion:1,callId:call.callId,status:'cancelled',reason:'Analysis cancelled',output:[],effects:NONE};
         const parsed=inputSchema.safeParse(call.arguments);
         if(!parsed.success)return {schemaVersion:1,callId:call.callId,status:'error',error:{code:'invalid_arguments',message:'Invalid analysis arguments',retryable:false},output:[],effects:NONE};
         try {
           const args=parsed.data as Record<string,unknown>;
+          // Root directory selection is the same bounded, permission-filtered
+          // enumeration as an omitted prefix; it is not a file path grant.
+          if(rootPrefix(args)) delete args['prefix'];
           if(options.allowedPath) {
             for(const key of ['path','prefix','configPath'])if(typeof args[key]==='string')requireVisible(args[key] as string);
             if(Array.isArray(args['paths']))for(const path of args['paths'])requireVisible(path as string);
@@ -135,8 +148,9 @@ export function createExplorationTools(workspace: WorkspaceSandbox, options: Sou
           return {schemaVersion:1,callId:call.callId,status:'success',output:[{kind:'json',value}],effects:NONE} as never;
         } catch(error) {
           if(executionOptions.signal.aborted)return {schemaVersion:1,callId:call.callId,status:'cancelled',reason:'Analysis cancelled',output:[],effects:NONE};
-          const message=error instanceof Error?error.message:'Analysis unavailable';
-          return {schemaVersion:1,callId:call.callId,status:'error',error:{code:'execution_failed',message,retryable:false},output:[{kind:'text',text:message}],effects:NONE};
+          const invalidPrefix=error instanceof DirectoryPrefixError;
+          const message=invalidPrefix?'prefix must name a workspace directory; use search.paths for individual files':error instanceof Error?error.message:'Analysis unavailable';
+          return {schemaVersion:1,callId:call.callId,status:'error',error:{code:invalidPrefix?'invalid_arguments':'execution_failed',message,retryable:false},output:[{kind:'text',text:message}],effects:NONE};
         }
       }}
     };
@@ -158,17 +172,17 @@ export function createExplorationTools(workspace: WorkspaceSandbox, options: Sou
     projectTool,
     tool('code_index','Query TS/JS declarations, definitions or semantic references within explicit readable files. Coordinates are one-based UTF-16. Returns source digests and partial coverage; no project config or external dependencies. Not a complete call graph. Use source_excerpt with a returned digest to fetch material.',z.object({paths:z.array(safePath).min(1).max(64),operation:z.enum(['symbols','definitions','references']),path:safePath.optional(),line:z.number().int().positive().optional(),column:z.number().int().positive().optional(),expectedSnapshot:z.string().regex(/^[a-f0-9]{64}$/).optional(),limit:z.number().int().min(1).max(200).default(100)}).strict(),async(args,signal)=>sourceIndex.query(args as unknown as import('../../core/workspace/source-index.js').SourceQuery,signal)),
     tool('source_excerpt','Read a bounded source range at an exact content digest from code_index or symbols. Returns stale if content changed; never silently substitutes newer source.',z.object({path:safePath,expectedDigest:z.string().regex(/^[a-f0-9]{64}$/),startLine:z.number().int().positive(),endLine:z.number().int().positive()}).strict(),async args=>sourceIndex.excerpt(args['path'] as string,args['expectedDigest'] as string,args['startLine'] as number,args['endLine'] as number)),
-    tool('list_files','List readable workspace file paths with bounded pagination. Includes installed/generated files; skips denied paths and symbolic links. No source execution.',z.object({prefix:safePath.optional(),offset:z.number().int().min(0).max(20000).default(0),limit:z.number().int().min(1).max(300).default(100)}).strict(),async(args,signal)=>{
+    tool('list_files','List readable workspace file paths with bounded pagination. Includes installed/generated files; skips denied paths and symbolic links. No source execution.',z.object({prefix:safePath.describe('Workspace-relative directory to enumerate recursively, not a file. Omit or use a single dot for the workspace root.').optional(),offset:z.number().int().min(0).max(20000).default(0),limit:z.number().int().min(1).max(300).default(100)}).strict(),async(args,signal)=>{
       const prefix=args['prefix'] as string|undefined; if(prefix)requireVisible(prefix);
-      const inventory=await workspace.listFiles(20000,{...(prefix?{prefix}:{}),signal});
+      const inventory=await directoryInventory(prefix,signal);
       const paths=inventory.paths.filter(visible);
       const offset=args['offset'] as number,limit=args['limit'] as number;
       return {paths:paths.slice(offset,offset+limit),nextOffset:offset+limit<paths.length?offset+limit:null,truncated:inventory.truncated,totalListed:paths.length,coverage:'bounded file enumeration; denied paths and symlinks excluded',excludedPrefixes:workspace.deniedPrefixes};
     }),
-    tool('search','Search literal text in workspace source without running shell commands. Returns matching lines with file content digests; bounded files/results and explicit skipped coverage. Use paths to narrow a query.',z.object({query:z.string().min(1).max(200),paths:z.array(safePath).min(1).max(32).optional(),prefix:safePath.optional(),maxResults:z.number().int().min(1).max(100).default(40),maxFiles:z.number().int().min(1).max(500).default(200)}).strict(),async(args,signal)=>{
+    tool('search','Search literal text in workspace source without running shell commands. Returns matching lines with file content digests; bounded files/results and explicit skipped coverage. Use paths to narrow a query.',z.object({query:z.string().min(1).max(200),paths:z.array(safePath).min(1).max(32).optional(),prefix:safePath.describe('Workspace-relative directory to search recursively, not a file. Omit or use a single dot for the workspace root. Use paths for individual search files.').optional(),maxResults:z.number().int().min(1).max(100).default(40),maxFiles:z.number().int().min(1).max(500).default(200)}).strict(),async(args,signal)=>{
       const prefix=args['prefix'] as string|undefined; if(prefix)requireVisible(prefix);
       const explicit=args['paths'] as string[]|undefined; explicit?.forEach(requireVisible);
-      const inventory=explicit?{paths:explicit,truncated:false}:await workspace.listFiles(20000,{...(prefix?{prefix}:{}),signal});
+      const inventory=explicit?{paths:explicit,truncated:false}:await directoryInventory(prefix,signal);
       const candidates=inventory.paths.filter(visible);
       const limit=args['maxResults'] as number,maxFiles=args['maxFiles'] as number,query=args['query'] as string;
       const matches:Rows=[],skipped:Rows=[];let filesRead=0,bytesRead=0,truncated=inventory.truncated||candidates.length>maxFiles;

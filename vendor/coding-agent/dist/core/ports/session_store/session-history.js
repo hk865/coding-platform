@@ -10,6 +10,7 @@ const TERMINAL_EVENT_TYPES = new Set([
     "run.cancelled",
     "run.limit_exceeded",
     "run.failed",
+    "run.yielded",
 ]);
 /**
  * 解释记录中携带的 contextBasis。
@@ -29,6 +30,10 @@ export function parseContextBasis(value) {
         version: KERNEL_SESSION_HISTORY_VERSION,
         mode: SESSION_HISTORY_MODE,
         throughPosition: basis.throughPosition,
+        // A derived isolated basis must keep its real source Session through every
+        // parse/compare/checkpoint/resume replay; dropping it silently restores the
+        // wrong history.
+        ...(basis.sourceSessionId === undefined ? {} : { sourceSessionId: basis.sourceSessionId }),
     };
 }
 /** 分页读取一个 Session 的全部记录；组合根共用，避免各自实现一套扫描。 */
@@ -189,7 +194,7 @@ function nextTurnStart(records, from) {
  *  - 前缀包含当前 Turn（conflict）。
  */
 export function restoreSessionHistory(records, input) {
-    const { sessionId, throughPosition } = input;
+    const { sessionId, throughPosition, sourceSessionId } = input;
     const lastPosition = records.at(-1)?.position ?? 0;
     if (!Number.isSafeInteger(throughPosition) || throughPosition < 1) {
         throw new StoreError("invalid_record", `throughPosition 必须是正的安全整数`);
@@ -266,6 +271,7 @@ export function restoreSessionHistory(records, input) {
             version: KERNEL_SESSION_HISTORY_VERSION,
             mode: SESSION_HISTORY_MODE,
             throughPosition,
+            ...(sourceSessionId === undefined ? {} : { sourceSessionId }),
         },
         sessionId,
         throughPosition,

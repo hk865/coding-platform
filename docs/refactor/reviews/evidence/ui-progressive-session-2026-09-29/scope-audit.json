@@ -1,0 +1,11 @@
+{
+  "changed": [
+    "src/ui/main.ts",
+    "src/ui/markdown.ts",
+    "src/ui/styles.css",
+    "src/ui/views.ts",
+    "tests/app/session-rendering.test.ts"
+  ],
+  "outsideScope": [],
+  "originalWorkspaceChanged": []
+}

@@ -11,6 +11,7 @@ export const runStatusSchema = z.enum([
     "created",
     "running",
     "paused",
+    "yielded",
     "completed",
     "cancelled",
     "limit_exceeded",
@@ -32,6 +33,20 @@ export const runFailureSchema = z
     message: z.string().min(1),
     retryable: z.boolean(),
     operationId: nonEmptyIdSchema.nullable(),
+})
+    .strict();
+/**
+ * 明确让出执行的外部等待事实。它与 completed/cancelled/failed 一样构成一次执行的终止，
+ * 但语义是「本 Turn 在真实工具组排空后主动退出活动执行，等待外部输入」；它不同于
+ * paused（paused 可在原 Kernel 身份上 resume），也不同于 Run 完成。pendingToolCallId
+ * 指向让出时仍未开始的调用；让出只发生在已结算的工具组边界，因此通常为 null。
+ */
+export const yieldStateSchema = z
+    .object({
+    reason: z.enum(["reply_required", "external_input_required", "operator_requested"]),
+    requestedBy: z.enum(["runtime", "app"]),
+    yieldedAt: isoUtcDateTimeSchema,
+    pendingToolCallId: nonEmptyIdSchema.nullable(),
 })
     .strict();
 export const runOutcomeSchema = z.discriminatedUnion("kind", [
@@ -65,6 +80,7 @@ export const runOutcomeSchema = z.discriminatedUnion("kind", [
     })
         .strict(),
     z.object({ kind: z.literal("failed"), failure: runFailureSchema }).strict(),
+    z.object({ kind: z.literal("yielded"), yield: yieldStateSchema }).strict(),
 ]);
 export const pauseStateSchema = z
     .object({
@@ -168,6 +184,21 @@ export const runUsageSchema = z
     .refine((value) => value.cachedInputTokens <= value.inputTokens, {
     message: "cachedInputTokens 不能超过 inputTokens",
 });
+/**
+ * One input that was really accepted into the execution context. The inputId is
+ * the stable identity of its ORIGINAL persisted source (message ref + part), the
+ * digest covers the exact accepted text, and eventSequence is the required
+ * run.input_accepted event that carried it. It never claims the model understood
+ * it or that any business work was processed.
+ */
+export const acceptedInputSchema = z
+    .object({
+    inputId: nonEmptyIdSchema,
+    messageId: nonEmptyIdSchema,
+    digest: z.string().min(1),
+    eventSequence: z.number().int().positive(),
+})
+    .strict();
 export const runStateSchema = z
     .object({
     schemaVersion: z.literal(1),
@@ -187,9 +218,11 @@ export const runStateSchema = z
     elapsedMs: z.number().int().nonnegative(),
     lastEventSequence: z.number().int().nonnegative(),
     lastEventId: nonEmptyIdSchema.nullable(),
+    /** Old states without the field read as the explicit empty input list. */
+    acceptedInputs: z.array(acceptedInputSchema).readonly().default([]),
 })
     .strict();
-const terminalStatuses = new Set(["completed", "cancelled", "limit_exceeded", "failed"]);
+const terminalStatuses = new Set(["completed", "cancelled", "limit_exceeded", "failed", "yielded"]);
 export function isTerminalRunStatus(status) {
     return terminalStatuses.has(status);
 }
@@ -220,6 +253,7 @@ export function createInitialRunState(runInput) {
         elapsedMs: 0,
         lastEventSequence: 0,
         lastEventId: null,
+        acceptedInputs: [],
     };
 }
 function invalidState(message) {

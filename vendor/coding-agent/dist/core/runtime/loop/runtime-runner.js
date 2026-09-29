@@ -4,7 +4,7 @@
  * 设计边界：Runner 只依赖 Core 端口；权限、沙箱、存储和模型供应商由外层实现注入。
  * 关键流程：选择并构建上下文，调用模型，处理工具组，把每一步结果提交为事件，直到终态。
  */
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { DeterministicContextBuilder } from "../../context/builder/context-builder.js";
 import { CharacterTokenEstimator, ContextSelectionError, estimateTokens, selectContext, } from "../../context/selection_policy/context-selection-policy.js";
 import { HookExecutionError, HookExecutor } from "../../hooks/executor/hook-executor.js";
@@ -319,6 +319,24 @@ export class RuntimeRunner {
                 },
             });
         }
+        if (kind === "yield") {
+            // 让出只允许在真实工具组排空后的稳定边界；组内仍有 pending/running 调用时
+            // 不伪装让出（否则未结算的副作用会被静默丢弃）。
+            const pending = state.toolBatch?.calls.find((call) => call.status === "pending" || call.status === "running");
+            if (pending !== undefined) {
+                return this.#commit(state, context, "run.failed", {
+                    failure: failure("internal", "tool_group_yield_unsettled", `tool_group_yield_unsettled:${point}:${pending.requestedCall.callId}`),
+                });
+            }
+            return this.#commit(state, context, "run.yielded", {
+                yield: {
+                    reason: decision.reason,
+                    requestedBy: "app",
+                    yieldedAt: this.#clock.now().toISOString(),
+                    pendingToolCallId: null,
+                },
+            });
+        }
         // 非法 decision 不吞错继续、不启动新工具、不伪装暂停，仍沿同一失败通道并针对最新 state 收束。
         return this.#commit(state, context, "run.failed", {
             failure: failure("internal", "runner_internal", `tool_group_barrier_invalid_decision:${point}:${kind}`),
@@ -341,6 +359,16 @@ export class RuntimeRunner {
                 const stopped = await this.#checkStop(state, context);
                 if (stopped)
                     return stopped;
+                // Pull applicable inputs ONLY at the SAME phase the event transition
+                // accepts (drained before_model). At ready_to_complete the candidates stay
+                // unconsumed for the next applicable execution instead of turning a
+                // successful final answer into a failed Run.
+                const phaseBeforeInputs = deriveRunPhase(state);
+                if (phaseBeforeInputs === "before_model") {
+                    state = await this.#acceptSuppliedInputs(state, context);
+                    if (isTerminalRunStatus(state.status) || state.status === "paused")
+                        return state;
+                }
                 const phase = deriveRunPhase(state);
                 if (phase === "ready_to_complete") {
                     const last = state.transcript.at(-1);
@@ -495,6 +523,56 @@ export class RuntimeRunner {
                     : failure("internal", "runner_internal", error instanceof Error ? error.message : "Runner 异常");
             return this.#commit(state, context, "run.failed", { failure: normalized });
         }
+    }
+    /** Pull, re-check, then commit each accepted input; same id+content skips. */
+    async #acceptSuppliedInputs(state, context) {
+        const supply = context.input.inputSupply;
+        if (!supply)
+            return state;
+        let supplied;
+        try {
+            supplied = await supply({
+                sessionId: context.input.sessionId ?? null,
+                runId: state.runId,
+                turnId: state.turn.turnId,
+                afterEventSequence: state.lastEventSequence,
+                acceptedInputIds: (state.acceptedInputs ?? []).map(entry => entry.inputId),
+            }, { signal: context.cancellation.signal });
+        }
+        catch (error) {
+            const stoppedOnError = await this.#checkStop(state, context);
+            if (stoppedOnError)
+                return stoppedOnError;
+            return this.#commit(state, context, "run.failed", {
+                failure: failure("internal", "input_supply_failed", error instanceof Error ? error.message : "input supply failed"),
+            });
+        }
+        const stopped = await this.#checkStop(state, context);
+        if (stopped)
+            return stopped;
+        for (const item of supplied ?? []) {
+            if (isTerminalRunStatus(state.status) || state.status === "paused")
+                return state;
+            const digest = createHash("sha256").update(item.text, "utf8").digest("hex");
+            const prior = (state.acceptedInputs ?? []).find(entry => entry.inputId === item.inputId);
+            if (prior !== undefined) {
+                if (prior.digest !== digest) {
+                    return this.#commit(state, context, "run.failed", {
+                        failure: failure("internal", "input_conflict", `input ${item.inputId} was already accepted with different content`),
+                    });
+                }
+                continue;
+            }
+            state = await this.#commit(state, context, "run.input_accepted", {
+                input: {
+                    inputId: item.inputId,
+                    messageId: `input-${item.inputId}`,
+                    text: item.text,
+                    sourceRef: item.sourceRef,
+                },
+            });
+        }
+        return state;
     }
     async #executeTools(stateInput, context) {
         let state = stateInput;

@@ -11,8 +11,11 @@ import type { EvidencePort } from '../../core/work-graph/evidence/contracts.js';
 import type { RuntimeExecutionPort } from '../../core/agent-runtime/ports.js';
 import type { RegisteredCheckRunner } from '../../core/agent-runtime/check-execution.js';
 import type { SourceSnapshotReads } from '../../core/work-graph/source-authority-ports.js';
-import type { InitialPlanningGoalInput, InitialPlanningGoalInputResult, N0GoalInput,
-  WorkflowAdvanceInput, WorkflowAdvanceResult } from './contracts.js';
+import type { SessionMailboxPort } from '../../core/work-graph/communication/contracts.js';
+import type { ProjectRegistrationPort } from '../../core/work-graph/configuration/project-bootstrap-contracts.js';
+import type { QueryJobPort } from '../../core/work-graph/queries/contracts.js';
+import type { ConsultationInput, ConsultationResult, InitialPlanningGoalInput, InitialPlanningGoalInputResult,
+  N0GoalInput, WorkflowAdvanceInput, WorkflowAdvanceResult } from './contracts.js';
 
 /**
  * Trusted Host advancement policy. It is pure data snapshotted by the
@@ -47,6 +50,24 @@ export type WorkflowDependencies = {
   checks: RegisteredCheckRunner;
   sourceAuthority: SourceSnapshotReads;
   configuration?: WorkflowHostConfiguration;
+  /**
+   * Optional explicit-consultation consumer dependencies. They reuse the SAME
+   * mailbox/Query/Project owners; without them `consumeConsultation` is
+   * explicitly unsupported and every other Workflow behavior is unchanged.
+   */
+  consultations?: ConsultationConsumerDependencies;
+};
+
+/**
+ * The exact owners the explicit-consultation consumer composes. The mailbox
+ * half is read-only except for the ONE Host-only `respondFromQueryAnswer`
+ * association; the Query half is the accepted pending/claim/answer port.
+ */
+export type ConsultationConsumerDependencies = {
+  messages: Pick<SessionMailboxPort, 'readMessage' | 'readMessageBody'>
+    & Required<Pick<SessionMailboxPort, 'respondFromQueryAnswer' | 'recordConsultationDerivation'>>;
+  queries: QueryJobPort;
+  projects: ProjectRegistrationPort;
 };
 
 /**
@@ -57,6 +78,14 @@ export type WorkflowDependencies = {
 export interface WorkflowPort {
   handleGoalInput(ctx: CoreCallContext, input: N0GoalInput | InitialPlanningGoalInput): Promise<InitialPlanningGoalInputResult>;
   advanceWork(ctx: CoreCallContext, input: WorkflowAdvanceInput): Promise<WorkflowAdvanceResult>;
+  /**
+   * Explicitly process ONE received message: reuse the saved deterministic
+   * Query/Answer first, otherwise run the finite submit/claim/prepare/start
+   * chain and attach the formal Answer to the original message. No polling,
+   * scheduler or background loop; absence keeps every existing Workflow
+   * behavior and the type-compatible fixtures.
+   */
+  consumeConsultation?(ctx: CoreCallContext, input: ConsultationInput): Promise<ConsultationResult>;
 }
 
 /** Compatibility aliases pointing at the one narrow new surface. */

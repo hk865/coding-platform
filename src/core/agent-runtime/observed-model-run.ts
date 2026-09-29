@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 import type { AgentEvent, ExecutionIdentity, HookPort, ModelClientPort, SessionContextMode, ToolDefinition, ToolGroupBarrier, WorkspaceSandbox } from '../../../vendor/coding-agent/dist/public-api.js';
 import type { BoundModel } from './source-tool-ports.js';
 import type { ModelBudget, RuntimeBudget } from './model-budget.js';
-import type { TaskBudgetV1 } from '../../contracts/dispatch.js';
+import type { ModelTokenBudget } from './model-budget.js';
 import { kernelRunLimits } from './run-limits.js';
 import { createExplorationTools, type ExplorationToolsHandle, type SourceToolOptions } from './exploration-tools.js';
 import { readSourceIdentity } from '../../core/workspace/source-identity.js';
@@ -20,11 +20,13 @@ export type ObservedModelRunOptions = {
   kernel: typeof import('../../../vendor/coding-agent/dist/public-api.js'); bound: BoundModel; meter: ModelBudget;
   root: string; databasePath: string; sessionId: string; input: string; budget: RuntimeBudget; readOnly: boolean;
   /** Persistent Run cumulative constraint; the formal driver always supplies it. */
-  taskBudget?: TaskBudgetV1;
+  taskBudget?: ModelTokenBudget;
   /** Trusted clock used to evaluate the persistent absolute task deadline. */
   now?: () => string;
   /** Frozen public Kernel inputs; the caller supplies a real completed history boundary. */
   sessionContext?: SessionContextMode;
+  /** Host-supplied applicable inputs, pulled at a drained before_model boundary. */
+  inputSupply?: import('./execution-inputs.js').InputSupply;
   executionIdentity?: ExecutionIdentity;
   signal: AbortSignal; deniedPrefixes: string[];
   modelCalls?: ModelCallAccess; manifestDigest?: string; assertMaterialsCurrent?: () => Promise<void>;
@@ -150,6 +152,7 @@ export async function runObservedModel(o: ObservedModelRunOptions) {
   // Own the optional object fields before the first await and forward these
   // snapshots to Kernel; never assemble a platform transcript here.
   const sessionContext = o.sessionContext === undefined ? undefined : { ...o.sessionContext };
+  const inputSupply = o.inputSupply;
   const executionIdentity = o.executionIdentity === undefined ? undefined : { ...o.executionIdentity };
   // This call exclusively owns the resources it creates: the exploration tool groups and the
   // frozen source capture capability. The Kernel closes its own store but never disposes platform
@@ -275,6 +278,7 @@ export async function runObservedModel(o: ObservedModelRunOptions) {
         // 冻结的公共 Kernel 会话参数：缺省不传，保持 current_turn 与随机执行身份。
         ...(sessionContext !== undefined ? { sessionContext } : {}),
         ...(executionIdentity !== undefined ? { executionIdentity } : {}),
+        ...(inputSupply === undefined ? {} : { inputSupply }),
         // 宿主可信控制 Hook：缺省保持旧行为；元数据与 execute 已在首次 await 前快照。
         ...(controlHooks !== undefined ? { controlHooks } : {}),
         // R4.3a 可选工具组安全点：缺省不调用任何新逻辑。
@@ -285,7 +289,6 @@ export async function runObservedModel(o: ObservedModelRunOptions) {
         approvalRequester: new o.kernel.StaticApprovalRequester({ decision: 'allow_once', reason: o.readOnly ? 'explicit_read_only_role_work' : 'explicit_gui_task_in_isolated_workspace' }),
         observerEventSinks: [{ sinkId: 'platform-live-events', delivery: 'best_effort', publish: async (event: AgentEvent) => {
           const data = JSON.parse(JSON.stringify(event.payload)) as Record<string, unknown>;
-          if (data['message'] && typeof data['message'] === 'object') delete (data['message'] as Record<string, unknown>)['reasoningContent'];
           await o.publish({ type: event.type, sequence: event.meta.sequence, at: event.meta.occurredAt, data });
         } }],
       });

@@ -24,6 +24,8 @@ export interface SessionHistoryRestoreInput {
     readonly sessionId: string;
     /** 开始当前 Turn 前最后已完成轮次的边界（Session 记录 position）。 */
     readonly throughPosition: number;
+    /** 派生隔离基线的真实源 Session；缺省表示前缀就是当前 Session 自身。 */
+    readonly sourceSessionId?: string;
     /** 当前 Turn 身份：前缀绝不允许包含它，避免把当前输入重复喂给模型。 */
     readonly currentTurn?: SessionHistoryTurnIdentity;
 }

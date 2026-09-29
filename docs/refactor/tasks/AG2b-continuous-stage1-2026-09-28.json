@@ -1,0 +1,15 @@
+{
+  "writableFiles": [
+    "src/app/collaboration-driver.ts",
+    "tests/app/AG2b-collaboration.test.ts",
+    "tests/helpers/AG2b-collaboration-fixture.ts"
+  ],
+  "dshStateDirectories": [
+    "profiles",
+    "sessions",
+    "storages",
+    "cache",
+    "llm-deepseek",
+    "attachments"
+  ]
+}

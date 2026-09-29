@@ -1,0 +1,46 @@
+{
+  "at": "2026-09-28T06:27:46.421737+00:00",
+  "url": "http://127.0.0.1:46289/workbench/",
+  "steps": [
+    {
+      "action": "Select original builder; enter adopted ag2b-goal; Continue",
+      "result": "running; flow-mukvbmd7"
+    },
+    {
+      "action": "Reload page; reenter ag2b-goal; Refresh execution",
+      "result": "Same flow-mukvbmd7; waiting_for_reply; original pending Work message visible; Stop enabled"
+    },
+    {
+      "action": "Observe completed and open second message",
+      "result": "Same flow completed; complete_goal receipt; two responded wait messages; original B Session response text and source visible"
+    },
+    {
+      "action": "Query and expand Task graph",
+      "result": "Formal Goal phase COMPLETED; ag2b-work and ag2b-gate satisfied"
+    },
+    {
+      "action": "Read original member directory and A history; expand record at position 10",
+      "result": "Original A/B both idle; A history positions 1-10 of 54 paginated; actual saved recordId/source/payload visible"
+    }
+  ],
+  "earlierAttempt": {
+    "url": "http://127.0.0.1:40959/workbench/",
+    "steps": [
+      {
+        "action": "Read sessions; select original builder; enter ag2b-goal",
+        "result": "Continue and refresh enabled immediately without replacing input"
+      },
+      {
+        "action": "Click Continue",
+        "result": "running; flow-mukv812d"
+      },
+      {
+        "action": "Reload whole page; enter same Goal; click Refresh execution",
+        "result": "Same flow-mukv812d; running; Stop enabled; no new start"
+      }
+    ]
+  },
+  "consoleWarningsAndErrors": [],
+  "modelRequestsBeforeInspection": 13,
+  "modelRequestsAfterInspection": 13
+}

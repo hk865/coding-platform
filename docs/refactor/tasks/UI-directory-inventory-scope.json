@@ -1,0 +1,19 @@
+{
+  "writableFiles": [
+    "src/app/workbench-tools.ts",
+    "src/app/core-http-types.ts",
+    "src/app/core-routes.ts",
+    "src/app/host.ts",
+    "src/ui/main.ts",
+    "tests/app/MVP-workbench-tools.test.ts",
+    "tests/app/MVP-ui-entry.test.ts"
+  ],
+  "dshStateDirectories": [
+    "profiles",
+    "sessions",
+    "storages",
+    "cache",
+    "llm-deepseek",
+    "attachments"
+  ]
+}

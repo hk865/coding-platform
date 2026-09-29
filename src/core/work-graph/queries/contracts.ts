@@ -39,6 +39,7 @@ import type { RawArtifactStorePort } from '../../record-store/body-ports.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
 import type { RoleBindingFactsPort } from '../configuration/contracts.js';
+import type { SessionMailboxPort } from '../communication/contracts.js';
 import type { GraphWrite } from '../tasks/contracts.js';
 
 /** The exact pending pair a submit records: both ids are independent identities. */
@@ -220,4 +221,11 @@ export type QueryJobDependencies = {
   now(): string;
   eventId(): string;
   execution?: Pick<QueryExecutionPort, 'claimQuery' | 'readQueryAnswer'>;
+  /**
+   * Optional read-only mailbox seam used ONLY to admit a consultation submit:
+   * it proves the original message/body/recipient/scope and the verbatim
+   * question. It exposes no send/ack/respond capability and never becomes a
+   * second mailbox.
+   */
+  consultations?: Pick<SessionMailboxPort, 'readMessage' | 'readMessageBody'>;
 };

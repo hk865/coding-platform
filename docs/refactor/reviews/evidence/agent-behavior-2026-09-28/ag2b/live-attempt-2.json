@@ -1,0 +1,2226 @@
+{
+  "at": "2026-09-28T06:27:39.156Z",
+  "root": "/tmp/ag2b-live-x4MQ7f/retry-project",
+  "seedOnly": false,
+  "seed": {
+    "goalRef": {
+      "aggregateType": "Goal",
+      "projectId": "ag2b-collab-project",
+      "goalId": "ag2b-goal"
+    },
+    "a": {
+      "projectId": "ag2b-collab-project",
+      "sessionId": "session-f2ec57e50ba66e1ade824e2432de0fac8945dac589e1aa82ecf79d89ad0a6c03"
+    },
+    "b": {
+      "projectId": "ag2b-collab-project",
+      "sessionId": "session-55c32473db89e6eecdad51a05838e88ce20f4aadfc4146672dfb9cefe9e9711e"
+    },
+    "bLink": {
+      "kind": "module",
+      "moduleId": "ag2b-work"
+    },
+    "graph": {
+      "status": "ready",
+      "value": {
+        "plan": {
+          "ref": {
+            "aggregateType": "PlanRevision",
+            "projectId": "ag2b-collab-project",
+            "planId": "ag2b-plan"
+          },
+          "revision": 1,
+          "goalRef": {
+            "aggregateType": "Goal",
+            "projectId": "ag2b-collab-project",
+            "goalId": "ag2b-goal"
+          },
+          "planId": "ag2b-plan",
+          "planRevision": 1,
+          "acceptedAt": "2026-09-28T06:26:31.820Z",
+          "effectiveCompletionPolicy": {
+            "ref": {
+              "aggregateType": "CompletionPolicyRevision",
+              "projectId": "ag2b-collab-project",
+              "policyId": "ag2b-policy",
+              "revision": 1
+            },
+            "digest": "3e71151b89a83c5e20bf58ea41b13104eee49963ec153a80dff3bd14cfc98297"
+          },
+          "effectiveArchitectureBaseline": {
+            "ref": {
+              "aggregateType": "ArchitectureBaselineRevision",
+              "projectId": "ag2b-collab-project",
+              "baselineId": "ag2b-baseline",
+              "revision": 1
+            },
+            "digest": "7799d4e834a4077dce5d1f44a74b3c5cfaa2275ad6e4b39490d54afef46469fa"
+          },
+          "stages": [
+            {
+              "stageId": "retry-stage",
+              "title": "Retry module"
+            }
+          ],
+          "tasks": [
+            {
+              "taskId": "ag2b-work",
+              "title": "Consult B then write the isolated project",
+              "requirementLevel": "required",
+              "taskKind": "work",
+              "disposition": "active",
+              "phase": "pending",
+              "scope": {
+                "kind": "module",
+                "stageId": "retry-stage",
+                "moduleRef": "ag2b-work"
+              },
+              "executionIntent": "request_execution"
+            },
+            {
+              "taskId": "ag2b-gate",
+              "title": "Goal gate",
+              "requirementLevel": "required",
+              "taskKind": "gate",
+              "disposition": "active",
+              "phase": "pending",
+              "scope": {
+                "kind": "goal"
+              }
+            }
+          ],
+          "assignments": [
+            {
+              "taskId": "ag2b-work",
+              "role": "builder",
+              "instruction": "Complete the retry-library task in the isolated workspace. First use query_task_graph and find_related_sessions to discover the related adviser Session from the real module/task association, then read its card. Ask that Session TWO separate substantive questions using send_session_message with replyMode=wait: first about delay and attempt semantics; after receiving its actual reply, ask about caller/error propagation and exhausted retries. Do not invent the recipient ID. Read the actual response before continuing each time. Then inspect src/retry.mjs, src/client.mjs and checks/retry.test.mjs, edit the implementation to satisfy the contract, and finish. Use the existing tools only. Your adviser is read-only, but you are the builder and must edit src/retry.mjs after both replies. Do not alter checks or contract.md. Do not claim a check passed merely from reasoning; formal checks run after the Work."
+            }
+          ],
+          "obligations": [
+            {
+              "obligationId": "ag2b-obligation",
+              "title": "Deliver the AG2b work",
+              "requirementLevel": "required",
+              "taskIds": [
+                "ag2b-work",
+                "ag2b-gate"
+              ],
+              "verificationRequirements": [
+                {
+                  "requirementId": "ag2b-static",
+                  "requirementLevel": "required",
+                  "kind": "static",
+                  "description": "Registered static command check"
+                }
+              ]
+            }
+          ],
+          "taskHierarchy": {
+            "parentOf": []
+          },
+          "executionDag": {
+            "dependsOn": []
+          },
+          "schemaVersion": 2,
+          "taskRelations": [],
+          "inputRequirements": []
+        },
+        "tasks": [
+          {
+            "ref": {
+              "projectId": "ag2b-collab-project",
+              "goalId": "ag2b-goal",
+              "taskId": "ag2b-work"
+            },
+            "definition": {
+              "taskId": "ag2b-work",
+              "title": "Consult B then write the isolated project",
+              "requirementLevel": "required",
+              "taskKind": "work",
+              "disposition": "active",
+              "phase": "pending",
+              "scope": {
+                "kind": "module",
+                "stageId": "retry-stage",
+                "moduleRef": "ag2b-work"
+              },
+              "executionIntent": "request_execution"
+            },
+            "effectivePhase": "pending",
+            "disposition": "active",
+            "currentAttempt": null,
+            "execution": null,
+            "eligibilityScope": "task_state",
+            "eligibility": {
+              "eligible": true,
+              "reasons": []
+            },
+            "relations": [],
+            "inputRequirements": [],
+            "legacyDependencies": [],
+            "planningDiagnostics": []
+          },
+          {
+            "ref": {
+              "projectId": "ag2b-collab-project",
+              "goalId": "ag2b-goal",
+              "taskId": "ag2b-gate"
+            },
+            "definition": {
+              "taskId": "ag2b-gate",
+              "title": "Goal gate",
+              "requirementLevel": "required",
+              "taskKind": "gate",
+              "disposition": "active",
+              "phase": "pending",
+              "scope": {
+                "kind": "goal"
+              }
+            },
+            "effectivePhase": "pending",
+            "disposition": "active",
+            "currentAttempt": null,
+            "execution": null,
+            "eligibilityScope": "task_state",
+            "eligibility": {
+              "eligible": false,
+              "reasons": [
+                {
+                  "code": "task_kind_not_work",
+                  "taskId": "ag2b-gate",
+                  "taskKind": "gate",
+                  "message": "only work tasks are dispatched; gate tasks are reduced by evidence"
+                }
+              ]
+            },
+            "relations": [],
+            "inputRequirements": [],
+            "legacyDependencies": [],
+            "planningDiagnostics": []
+          }
+        ],
+        "sourceCursor": "c0000000012",
+        "planning": {
+          "completionEvaluation": "not_evaluated",
+          "diagnostics": [
+            {
+              "code": "required_task_unfinished",
+              "taskId": "ag2b-gate",
+              "message": "required task ag2b-gate is not formally satisfied"
+            },
+            {
+              "code": "required_task_unfinished",
+              "taskId": "ag2b-work",
+              "message": "required task ag2b-work is not formally satisfied"
+            }
+          ]
+        },
+        "completion": {
+          "status": "not_recorded"
+        }
+      }
+    },
+    "checkCommand": "/usr/bin/node --test checks/retry.test.mjs",
+    "sandboxCheckRuntime": {
+      "executable": "/usr/bin/node",
+      "version": "v18.19.1"
+    },
+    "repositoryRuntime": "v24.21.0"
+  },
+  "before": {
+    "status": 1,
+    "stdout": "✖ success on third attempt keeps policy and delays (0.580422ms)\n✖ exhaustion preserves the exact error and does not sleep after final attempt (1.262859ms)\nℹ tests 2\nℹ suites 0\nℹ pass 0\nℹ fail 2\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 42.010481\n\n✖ failing tests:\n\ntest at checks/retry.test.mjs:4:1\n✖ success on third attempt keeps policy and delays (0.580422ms)\n  Error: transient\n      at callClient.maxAttempts (file:///tmp/ag2b-live-x4MQ7f/retry-project/checks/retry.test.mjs:4:164)\n      at retry (file:///tmp/ag2b-live-x4MQ7f/retry-project/src/retry.mjs:1:58)\n      at callClient (file:///tmp/ag2b-live-x4MQ7f/retry-project/src/client.mjs:2:51)\n      at TestContext.<anonymous> (file:///tmp/ag2b-live-x4MQ7f/retry-project/checks/retry.test.mjs:4:113)\n      at Test.runInAsyncScope (node:async_hooks:227:14)\n      at Test.run (node:internal/test_runner/test:1402:25)\n      at Test.start (node:internal/test_runner/test:1262:17)\n      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17)\n\ntest at checks/retry.test.mjs:5:1\n✖ exhaustion preserves the exact error and does not sleep after final attempt (1.262859ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:\n  + actual - expected\n  \n    [\n  +   0\n  -   1,\n  -   2\n    ]\n  \n      at TestContext.<anonymous> (file:///tmp/ag2b-live-x4MQ7f/retry-project/checks/retry.test.mjs:5:315)\n      at async Test.run (node:internal/test_runner/test:1409:7)\n      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: [ 0 ],\n    expected: [ 1, 2 ],\n    operator: 'deepStrictEqual',\n    diff: 'simple'\n  }\n",
+    "stderr": ""
+  },
+  "after": {
+    "status": 1,
+    "stdout": "✖ success on third attempt keeps policy and delays (0.603705ms)\n✖ exhaustion preserves the exact error and does not sleep after final attempt (1.138914ms)\nℹ tests 2\nℹ suites 0\nℹ pass 0\nℹ fail 2\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 42.412195\n\n✖ failing tests:\n\ntest at checks/retry.test.mjs:4:1\n✖ success on third attempt keeps policy and delays (0.603705ms)\n  Error: transient\n      at callClient.maxAttempts (file:///tmp/ag2b-live-x4MQ7f/retry-project/checks/retry.test.mjs:4:164)\n      at retry (file:///tmp/ag2b-live-x4MQ7f/retry-project/src/retry.mjs:1:58)\n      at callClient (file:///tmp/ag2b-live-x4MQ7f/retry-project/src/client.mjs:2:51)\n      at TestContext.<anonymous> (file:///tmp/ag2b-live-x4MQ7f/retry-project/checks/retry.test.mjs:4:113)\n      at Test.runInAsyncScope (node:async_hooks:227:14)\n      at Test.run (node:internal/test_runner/test:1402:25)\n      at Test.start (node:internal/test_runner/test:1262:17)\n      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17)\n\ntest at checks/retry.test.mjs:5:1\n✖ exhaustion preserves the exact error and does not sleep after final attempt (1.138914ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:\n  + actual - expected\n  \n    [\n  +   0\n  -   1,\n  -   2\n    ]\n  \n      at TestContext.<anonymous> (file:///tmp/ag2b-live-x4MQ7f/retry-project/checks/retry.test.mjs:5:315)\n      at async Test.run (node:internal/test_runner/test:1409:7)\n      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: [ 0 ],\n    expected: [ 1, 2 ],\n    operator: 'deepStrictEqual',\n    diff: 'simple'\n  }\n",
+    "stderr": ""
+  },
+  "streams": 3,
+  "toolnames": [
+    "query_task_graph",
+    "list_files",
+    "find_related_sessions",
+    "find_related_sessions"
+  ],
+  "providerErrors": [
+    "error"
+  ],
+  "transportErrors": [
+    {
+      "name": "TypeError",
+      "causeCode": "UND_ERR_CONNECT_TIMEOUT"
+    }
+  ],
+  "toolErrors": [],
+  "snapshot": {
+    "state": "waiting",
+    "goalPhase": "",
+    "aSessionId": "session-f2ec57e50ba66e1ade824e2432de0fac8945dac589e1aa82ecf79d89ad0a6c03",
+    "bSessionId": "session-55c32473db89e6eecdad51a05838e88ce20f4aadfc4146672dfb9cefe9e9711e",
+    "aRunIds": [],
+    "messages": [],
+    "checkOutcomes": [],
+    "trace": {
+      "driver": [
+        {
+          "state": "not_started",
+          "messages": []
+        },
+        {
+          "goalRef": {
+            "aggregateType": "Goal",
+            "projectId": "ag2b-collab-project",
+            "goalId": "ag2b-goal"
+          },
+          "flowId": "flow-mukv812d",
+          "state": "running",
+          "current": {
+            "schemaVersion": 1,
+            "goalRef": {
+              "aggregateType": "Goal",
+              "projectId": "ag2b-collab-project",
+              "goalId": "ag2b-goal"
+            },
+            "flowId": "flow-mukv812d",
+            "sessionHint": {
+              "projectId": "ag2b-collab-project",
+              "sessionId": "session-f2ec57e50ba66e1ade824e2432de0fac8945dac589e1aa82ecf79d89ad0a6c03"
+            },
+            "kind": "perform",
+            "operation": {
+              "kind": "start",
+              "request": {
+                "prepared": {
+                  "kind": "task",
+                  "claim": {
+                    "task": {
+                      "projectId": "ag2b-collab-project",
+                      "goalId": "ag2b-goal",
+                      "taskId": "ag2b-work"
+                    },
+                    "planRef": {
+                      "aggregateType": "PlanRevision",
+                      "projectId": "ag2b-collab-project",
+                      "planId": "ag2b-plan"
+                    },
+                    "workspaceId": "ag2b-collab-workspace",
+                    "sessionRef": {
+                      "projectId": "ag2b-collab-project",
+                      "sessionId": "session-f2ec57e50ba66e1ade824e2432de0fac8945dac589e1aa82ecf79d89ad0a6c03"
+                    },
+                    "sessionRevision": 2,
+                    "generation": 2,
+                    "runRef": {
+                      "aggregateType": "Run",
+                      "projectId": "ag2b-collab-project",
+                      "goalId": "ag2b-goal",
+                      "runId": "325e838e-2358-4929-b5d6-8c58f7b6bba5"
+                    },
+                    "attemptRef": {
+                      "aggregateType": "TaskAttempt",
+                      "projectId": "ag2b-collab-project",
+                      "goalId": "ag2b-goal",
+                      "taskId": "ag2b-work",
+                      "attemptId": "5b9c3f6d-c377-4476-be4b-c835f37a7b4f"
+                    },
+                    "outboxRef": {
+                      "aggregateType": "DispatchOutboxEntry",
+                      "projectId": "ag2b-collab-project",
+                      "goalId": "ag2b-goal",
+                      "taskId": "ag2b-work",
+                      "attemptId": "5b9c3f6d-c377-4476-be4b-c835f37a7b4f"
+                    },
+                    "claimedAt": "2026-09-28T06:27:26.453Z"
+                  },
+                  "envelope": {
+                    "schemaVersion": 1,
+                    "envelopeId": "fa086de8-0ca0-4e8b-bfee-43c0d076267f",
+                    "projectId": "ag2b-collab-project",
+                    "workspaceId": "ag2b-collab-workspace",
+                    "goalId": "ag2b-goal",
+                    "taskId": "ag2b-work",
+                    "runRef": {
+                      "aggregateType": "Run",
+                      "projectId": "ag2b-collab-project",
+                      "goalId": "ag2b-goal",
+                      "runId": "325e838e-2358-4929-b5d6-8c58f7b6bba5"
+                    },
+                    "attemptRef": {
+                      "aggregateType": "TaskAttempt",
+                      "projectId": "ag2b-collab-project",
+                      "goalId": "ag2b-goal",
+                      "taskId": "ag2b-work",
+                      "attemptId": "5b9c3f6d-c377-4476-be4b-c835f37a7b4f"
+                    },
+                    "planRef": {
+                      "aggregateType": "PlanRevision",
+                      "projectId": "ag2b-collab-project",
+                      "planId": "ag2b-plan"
+                    },
+                    "roleBinding": {
+                      "schemaVersion": 1,
+                      "bindingId": "ag2b-work-binding",
+                      "templateId": "builder",
+                      "templateRevision": "1",
+                      "bindingVersion": 1,
+                      "policyRevision": "legacy-template"
+                    },
+                    "workspaceSnapshot": {
+                      "workspaceId": "ag2b-collab-workspace",
+                      "revision": 1
+                    },
+                    "permissions": {
+                      "policyRevision": "legacy-template",
+                      "tools": [
+                        "read",
+                        "write",
+                        "query_task_graph",
+                        "find_related_sessions",
+                        "read_session_card",
+                        "send_session_message"
+                      ],
+                      "writeScope": [
+                        "."
+                      ]
+                    },
+                    "budget": {
+                      "tokenBudget": 200000,
+                      "deadline": null
+                    },
+                    "sourceRefs": [
+                      {
+                        "kind": "plan-revision",
+                        "refId": "ag2b-plan",
+                        "revision": "1"
+                      },
+                      {
+                        "kind": "workspace",
+                        "refId": "ag2b-collab-workspace",
+                        "revision": "1"
+                      }
+                    ],
+                    "bundleRef": {
+                      "kind": "artifact",
+                      "contentType": "application/vnd.coding-platform.task-execution-manifest+json;version=1",
+                      "digest": "cc85d5b6088545e333bdc68e00b3f3ad09d0ce70a5ed4e1a3eaaeae5697eed0e",
+                      "sizeBytes": 3838,
+                      "source": {
+                        "kind": "plan-revision",
+                        "refId": "ag2b-plan",
+                        "revision": "1"
+                      }
+                    }
+                  },
+                  "inputBinding": {
+                    "schemaVersion": 1,
+                    "inputDigest": "3cb2945c62e35528567284489fcfa9f12e46d46ba5227ff41453d6095c12a4e3",
+                    "manifestDigest": "cc85d5b6088545e333bdc68e00b3f3ad09d0ce70a5ed4e1a3eaaeae5697eed0e",
+                    "materialAccessRefs": [],
+                    "additionalMaterialRefs": [],
+                    "deliveryRefs": []
+                  }
+                },
+                "consumerId": "ag2b-consumer",
+                "requestId": "wf:81f598e404ba5d903a5333f8219bd1889afb566078119a5f084797c312d39998"
+              }
+            }
+          },
+          "last": {
+            "status": "ready",
+            "value": {
+              "state": "advance",
+              "receipt": {
+                "kind": "prepare",
+                "result": {
+                  "status": "ready",
+                  "value": {
+                    "kind": "task",
+                    "claim": {
+                      "task": {
+                        "projectId": "ag2b-collab-project",
+                        "goalId": "ag2b-goal",
+                        "taskId": "ag2b-work"
+                      },
+                      "planRef": {
+                        "aggregateType": "PlanRevision",
+                        "projectId": "ag2b-collab-project",
+                        "planId": "ag2b-plan"
+                      },
+                      "workspaceId": "ag2b-collab-workspace",
+                      "sessionRef": {
+                        "projectId": "ag2b-collab-project",
+                        "sessionId": "session-f2ec57e50ba66e1ade824e2432de0fac8945dac589e1aa82ecf79d89ad0a6c03"
+                      },
+                      "sessionRevision": 2,
+                      "generation": 2,
+                      "runRef": {
+                        "aggregateType": "Run",
+                        "projectId": "ag2b-collab-project",
+                        "goalId": "ag2b-goal",
+                        "runId": "325e838e-2358-4929-b5d6-8c58f7b6bba5"
+                      },
+                      "attemptRef": {
+                        "aggregateType": "TaskAttempt",
+                        "projectId": "ag2b-collab-project",
+                        "goalId": "ag2b-goal",
+                        "taskId": "ag2b-work",
+                        "attemptId": "5b9c3f6d-c377-4476-be4b-c835f37a7b4f"
+                      },
+                      "outboxRef": {
+                        "aggregateType": "DispatchOutboxEntry",
+                        "projectId": "ag2b-collab-project",
+                        "goalId": "ag2b-goal",
+                        "taskId": "ag2b-work",
+                        "attemptId": "5b9c3f6d-c377-4476-be4b-c835f37a7b4f"
+                      },
+                      "claimedAt": "2026-09-28T06:27:26.453Z"
+                    },
+                    "envelope": {
+                      "schemaVersion": 1,
+                      "envelopeId": "fa086de8-0ca0-4e8b-bfee-43c0d076267f",
+                      "projectId": "ag2b-collab-project",
+                      "workspaceId": "ag2b-collab-workspace",
+                      "goalId": "ag2b-goal",
+                      "taskId": "ag2b-work",
+                      "runRef": {
+                        "aggregateType": "Run",
+                        "projectId": "ag2b-collab-project",
+                        "goalId": "ag2b-goal",
+                        "runId": "325e838e-2358-4929-b5d6-8c58f7b6bba5"
+                      },
+                      "attemptRef": {
+                        "aggregateType": "TaskAttempt",
+                        "projectId": "ag2b-collab-project",
+                        "goalId": "ag2b-goal",
+                        "taskId": "ag2b-work",
+                        "attemptId": "5b9c3f6d-c377-4476-be4b-c835f37a7b4f"
+                      },
+                      "planRef": {
+                        "aggregateType": "PlanRevision",
+                        "projectId": "ag2b-collab-project",
+                        "planId": "ag2b-plan"
+                      },
+                      "roleBinding": {
+                        "schemaVersion": 1,
+                        "bindingId": "ag2b-work-binding",
+                        "templateId": "builder",
+                        "templateRevision": "1",
+                        "bindingVersion": 1,
+                        "policyRevision": "legacy-template"
+                      },
+                      "workspaceSnapshot": {
+                        "workspaceId": "ag2b-collab-workspace",
+                        "revision": 1
+                      },
+                      "permissions": {
+                        "policyRevision": "legacy-template",
+                        "tools": [
+                          "read",
+                          "write",
+                          "query_task_graph",
+                          "find_related_sessions",
+                          "read_session_card",
+                          "send_session_message"
+                        ],
+                        "writeScope": [
+                          "."
+                        ]
+                      },
+                      "budget": {
+                        "tokenBudget": 200000,
+                        "deadline": null
+                      },
+                      "sourceRefs": [
+                        {
+                          "kind": "plan-revision",
+                          "refId": "ag2b-plan",
+                          "revision": "1"
+                        },
+                        {
+                          "kind": "workspace",
+                          "refId": "ag2b-collab-workspace",
+                          "revision": "1"
+                        }
+                      ],
+                      "bundleRef": {
+                        "kind": "artifact",
+                        "contentType": "application/vnd.coding-platform.task-execution-manifest+json;version=1",
+                        "digest": "cc85d5b6088545e333bdc68e00b3f3ad09d0ce70a5ed4e1a3eaaeae5697eed0e",
+                        "sizeBytes": 3838,
+                        "source": {
+                          "kind": "plan-revision",
+                          "refId": "ag2b-plan",
+                          "revision": "1"
+                        }
+                      }
+                    },
+                    "inputBinding": {
+                      "schemaVersion": 1,
+                      "inputDigest": "3cb2945c62e35528567284489fcfa9f12e46d46ba5227ff41453d6095c12a4e3",
+                      "manifestDigest": "cc85d5b6088545e333bdc68e00b3f3ad09d0ce70a5ed4e1a3eaaeae5697eed0e",
+                      "materialAccessRefs": [],
+                      "additionalMaterialRefs": [],
+                      "deliveryRefs": []
+                    }
+                  }
+                }
+              },
+              "next": {
+                "schemaVersion": 1,
+                "goalRef": {
+                  "aggregateType": "Goal",
+                  "projectId": "ag2b-collab-project",
+                  "goalId": "ag2b-goal"
+                },
+                "flowId": "flow-mukv812d",
+                "sessionHint": {
+                  "projectId": "ag2b-collab-project",
+                  "sessionId": "session-f2ec57e50ba66e1ade824e2432de0fac8945dac589e1aa82ecf79d89ad0a6c03"
+                },
+                "kind": "perform",
+                "operation": {
+                  "kind": "start",
+                  "request": {
+                    "prepared": {
+                      "kind": "task",
+                      "claim": {
+                        "task": {
+                          "projectId": "ag2b-collab-project",
+                          "goalId": "ag2b-goal",
+                          "taskId": "ag2b-work"
+                        },
+                        "planRef": {
+                          "aggregateType": "PlanRevision",
+                          "projectId": "ag2b-collab-project",
+                          "planId": "ag2b-plan"
+                        },
+                        "workspaceId": "ag2b-collab-workspace",
+                        "sessionRef": {
+                          "projectId": "ag2b-collab-project",
+                          "sessionId": "session-f2ec57e50ba66e1ade824e2432de0fac8945dac589e1aa82ecf79d89ad0a6c03"
+                        },
+                        "sessionRevision": 2,
+                        "generation": 2,
+                        "runRef": {
+                          "aggregateType": "Run",
+                          "projectId": "ag2b-collab-project",
+                          "goalId": "ag2b-goal",
+                          "runId": "325e838e-2358-4929-b5d6-8c58f7b6bba5"
+                        },
+                        "attemptRef": {
+                          "aggregateType": "TaskAttempt",
+                          "projectId": "ag2b-collab-project",
+                          "goalId": "ag2b-goal",
+                          "taskId": "ag2b-work",
+                          "attemptId": "5b9c3f6d-c377-4476-be4b-c835f37a7b4f"
+                        },
+                        "outboxRef": {
+                          "aggregateType": "DispatchOutboxEntry",
+                          "projectId": "ag2b-collab-project",
+                          "goalId": "ag2b-goal",
+                          "taskId": "ag2b-work",
+                          "attemptId": "5b9c3f6d-c377-4476-be4b-c835f37a7b4f"
+                        },
+                        "claimedAt": "2026-09-28T06:27:26.453Z"
+                      },
+                      "envelope": {
+                        "schemaVersion": 1,
+                        "envelopeId": "fa086de8-0ca0-4e8b-bfee-43c0d076267f",
+                        "projectId": "ag2b-collab-project",
+                        "workspaceId": "ag2b-collab-workspace",
+                        "goalId": "ag2b-goal",
+                        "taskId": "ag2b-work",
+                        "runRef": {
+                          "aggregateType": "Run",
+                          "projectId": "ag2b-collab-project",
+                          "goalId": "ag2b-goal",
+                          "runId": "325e838e-2358-4929-b5d6-8c58f7b6bba5"
+                        },
+                        "attemptRef": {
+                          "aggregateType": "TaskAttempt",
+                          "projectId": "ag2b-collab-project",
+                          "goalId": "ag2b-goal",
+                          "taskId": "ag2b-work",
+                          "attemptId": "5b9c3f6d-c377-4476-be4b-c835f37a7b4f"
+                        },
+                        "planRef": {
+                          "aggregateType": "PlanRevision",
+                          "projectId": "ag2b-collab-project",
+                          "planId": "ag2b-plan"
+                        },
+                        "roleBinding": {
+                          "schemaVersion": 1,
+                          "bindingId": "ag2b-work-binding",
+                          "templateId": "builder",
+                          "templateRevision": "1",
+                          "bindingVersion": 1,
+                          "policyRevision": "legacy-template"
+                        },
+                        "workspaceSnapshot": {
+                          "workspaceId": "ag2b-collab-workspace",
+                          "revision": 1
+                        },
+                        "permissions": {
+                          "policyRevision": "legacy-template",
+                          "tools": [
+                            "read",
+                            "write",
+                            "query_task_graph",
+                            "find_related_sessions",
+                            "read_session_card",
+                            "send_session_message"
+                          ],
+                          "writeScope": [
+                            "."
+                          ]
+                        },
+                        "budget": {
+                          "tokenBudget": 200000,
+                          "deadline": null
+                        },
+                        "sourceRefs": [
+                          {
+                            "kind": "plan-revision",
+                            "refId": "ag2b-plan",
+                            "revision": "1"
+                          },
+                          {
+                            "kind": "workspace",
+                            "refId": "ag2b-collab-workspace",
+                            "revision": "1"
+                          }
+                        ],
+                        "bundleRef": {
+                          "kind": "artifact",
+                          "contentType": "application/vnd.coding-platform.task-execution-manifest+json;version=1",
+                          "digest": "cc85d5b6088545e333bdc68e00b3f3ad09d0ce70a5ed4e1a3eaaeae5697eed0e",
+                          "sizeBytes": 3838,
+                          "source": {
+                            "kind": "plan-revision",
+                            "refId": "ag2b-plan",
+                            "revision": "1"
+                          }
+                        }
+                      },
+                      "inputBinding": {
+                        "schemaVersion": 1,
+                        "inputDigest": "3cb2945c62e35528567284489fcfa9f12e46d46ba5227ff41453d6095c12a4e3",
+                        "manifestDigest": "cc85d5b6088545e333bdc68e00b3f3ad09d0ce70a5ed4e1a3eaaeae5697eed0e",
+                        "materialAccessRefs": [],
+                        "additionalMaterialRefs": [],
+                        "deliveryRefs": []
+                      }
+                    },
+                    "consumerId": "ag2b-consumer",
+                    "requestId": "wf:81f598e404ba5d903a5333f8219bd1889afb566078119a5f084797c312d39998"
+                  }
+                }
+              },
+              "reason": null
+            }
+          },
+          "messages": [],
+          "reason": null
+        },
+        {
+          "goalRef": {
+            "aggregateType": "Goal",
+            "projectId": "ag2b-collab-project",
+            "goalId": "ag2b-goal"
+          },
+          "flowId": "flow-mukv812d",
+          "state": "waiting",
+          "current": null,
+          "last": {
+            "status": "ready",
+            "value": {
+              "state": "waiting",
+              "receipt": {
+                "kind": "start",
+                "result": {
+                  "status": "ready",
+                  "value": {
+                    "run": {
+                      "ref": {
+                        "aggregateType": "Run",
+                        "projectId": "ag2b-collab-project",
+                        "goalId": "ag2b-goal",
+                        "runId": "325e838e-2358-4929-b5d6-8c58f7b6bba5"
+                      },
+                      "revision": 5,
+                      "schemaVersion": 1,
+                      "task": {
+                        "projectId": "ag2b-collab-project",
+                        "goalId": "ag2b-goal",
+                        "taskId": "ag2b-work"
+                      },
+                      "attemptId": "5b9c3f6d-c377-4476-be4b-c835f37a7b4f",
+                      "planRef": {
+                        "aggregateType": "PlanRevision",
+                        "projectId": "ag2b-collab-project",
+                        "planId": "ag2b-plan"
+                      },
+                      "roleBinding": {
+                        "schemaVersion": 1,
+                        "bindingId": "ag2b-work-binding",
+                        "templateId": "builder",
+                        "templateRevision": "1",
+                        "bindingVersion": 1,
+                        "policyRevision": "legacy-template"
+                      },
+                      "budget": {
+                        "tokenBudget": 200000,
+                        "deadline": null
+                      },
+                      "workspaceSnapshot": {
+                        "workspaceId": "ag2b-collab-workspace",
+                        "revision": 1
+                      },
+                      "status": "ended",
+                      "outcome": "crashed",
+                      "exitCode": null,
+                      "lastEventSeq": 1,
+                      "lastRuntimeEventId": "fff1a999-ce8f-4f0d-bf3b-58bd010b35f8",
+                      "lastFactEventId": "c1eb6700-0118-48a5-99c2-459aa759aeb1",
+                      "envelope": {
+                        "schemaVersion": 1,
+                        "envelopeId": "fa086de8-0ca0-4e8b-bfee-43c0d076267f",
+                        "projectId": "ag2b-collab-project",
+                        "workspaceId": "ag2b-collab-workspace",
+                        "goalId": "ag2b-goal",
+                        "taskId": "ag2b-work",
+                        "runRef": {
+                          "aggregateType": "Run",
+                          "projectId": "ag2b-collab-project",
+                          "goalId": "ag2b-goal",
+                          "runId": "325e838e-2358-4929-b5d6-8c58f7b6bba5"
+                        },
+                        "attemptRef": {
+                          "aggregateType": "TaskAttempt",
+                          "projectId": "ag2b-collab-project",
+                          "goalId": "ag2b-goal",
+                          "taskId": "ag2b-work",
+                          "attemptId": "5b9c3f6d-c377-4476-be4b-c835f37a7b4f"
+                        },
+                        "planRef": {
+                          "aggregateType": "PlanRevision",
+                          "projectId": "ag2b-collab-project",
+                          "planId": "ag2b-plan"
+                        },
+                        "roleBinding": {
+                          "schemaVersion": 1,
+                          "bindingId": "ag2b-work-binding",
+                          "templateId": "builder",
+                          "templateRevision": "1",
+                          "bindingVersion": 1,
+                          "policyRevision": "legacy-template"
+                        },
+                        "workspaceSnapshot": {
+                          "workspaceId": "ag2b-collab-workspace",
+                          "revision": 1
+                        },
+                        "permissions": {
+                          "policyRevision": "legacy-template",
+                          "tools": [
+                            "read",
+                            "write",
+                            "query_task_graph",
+                            "find_related_sessions",
+                            "read_session_card",
+                            "send_session_message"
+                          ],
+                          "writeScope": [
+                            "."
+                          ]
+                        },
+                        "budget": {
+                          "tokenBudget": 200000,
+                          "deadline": null
+                        },
+                        "sourceRefs": [
+                          {
+                            "kind": "plan-revision",
+                            "refId": "ag2b-plan",
+                            "revision": "1"
+                          },
+                          {
+                            "kind": "workspace",
+                            "refId": "ag2b-collab-workspace",
+                            "revision": "1"
+                          }
+                        ],
+                        "bundleRef": {
+                          "kind": "artifact",
+                          "contentType": "application/vnd.coding-platform.task-execution-manifest+json;version=1",
+                          "digest": "cc85d5b6088545e333bdc68e00b3f3ad09d0ce70a5ed4e1a3eaaeae5697eed0e",
+                          "sizeBytes": 3838,
+                          "source": {
+                            "kind": "plan-revision",
+                            "refId": "ag2b-plan",
+                            "revision": "1"
+                          }
+                        }
+                      },
+                      "startedAt": "2026-09-28T06:27:26.573Z",
+                      "endedAt": "2026-09-28T06:27:39.106Z",
+                      "inputBinding": {
+                        "schemaVersion": 1,
+                        "inputDigest": "3cb2945c62e35528567284489fcfa9f12e46d46ba5227ff41453d6095c12a4e3",
+                        "manifestDigest": "cc85d5b6088545e333bdc68e00b3f3ad09d0ce70a5ed4e1a3eaaeae5697eed0e",
+                        "materialAccessRefs": [],
+                        "additionalMaterialRefs": [],
+                        "deliveryRefs": []
+                      },
+                      "executionAuthorization": {
+                        "schemaVersion": 2,
+                        "generation": 1,
+                        "sessionGeneration": 2,
+                        "revision": 4,
+                        "consumerId": "ag2b-consumer",
+                        "inputDigest": "3cb2945c62e35528567284489fcfa9f12e46d46ba5227ff41453d6095c12a4e3",
+                        "phase": "settled",
+                        "kernel": {
+                          "adapterId": "ag2b-kernel",
+                          "kernelSessionId": "session-f2ec57e50ba66e1ade824e2432de0fac8945dac589e1aa82ecf79d89ad0a6c03",
+                          "runId": "krun-c30e68f50860953dd4fdf4591f86c8c707967a0973e722606a2de47e0c6fe2af",
+                          "turnId": "kturn-f452d1045eaa0dcd4b056e37ee0f373e444a04c89903cd693a555104bafdb440"
+                        }
+                      },
+                      "executionHistory": {
+                        "schemaVersion": 1,
+                        "sessionRef": {
+                          "projectId": "ag2b-collab-project",
+                          "sessionId": "session-f2ec57e50ba66e1ade824e2432de0fac8945dac589e1aa82ecf79d89ad0a6c03"
+                        },
+                        "kernel": {
+                          "adapterId": "ag2b-kernel",
+                          "kernelSessionId": "session-f2ec57e50ba66e1ade824e2432de0fac8945dac589e1aa82ecf79d89ad0a6c03",
+                          "runId": "krun-c30e68f50860953dd4fdf4591f86c8c707967a0973e722606a2de47e0c6fe2af",
+                          "turnId": "kturn-f452d1045eaa0dcd4b056e37ee0f373e444a04c89903cd693a555104bafdb440"
+                        },
+                        "startPosition": 2,
+                        "observedThroughPosition": 20,
+                        "endPosition": 20
+                      }
+                    },
+                    "attempt": {
+                      "ref": {
+                        "aggregateType": "TaskAttempt",
+                        "projectId": "ag2b-collab-project",
+                        "goalId": "ag2b-goal",
+                        "taskId": "ag2b-work",
+                        "attemptId": "5b9c3f6d-c377-4476-be4b-c835f37a7b4f"
+                      },
+                      "revision": 3,
+                      "schemaVersion": 1,
+                      "runId": "325e838e-2358-4929-b5d6-8c58f7b6bba5",
+                      "planRef": {
+                        "aggregateType": "PlanRevision",
+                        "projectId": "ag2b-collab-project",
+                        "planId": "ag2b-plan"
+                      },
+                      "status": "ended",
+                      "startedAt": "2026-09-28T06:27:26.573Z",
+                      "endedAt": "2026-09-28T06:27:39.106Z",
+                      "endOutcome": "crashed"
+                    },
+                    "outbox": {
+                      "ref": {
+                        "aggregateType": "DispatchOutboxEntry",
+                        "projectId": "ag2b-collab-project",
+                        "goalId": "ag2b-goal",
+                        "taskId": "ag2b-work",
+                        "attemptId": "5b9c3f6d-c377-4476-be4b-c835f37a7b4f"
+                      },
+                      "revision": 3,
+                      "schemaVersion": 1,
+                      "status": "settled",
+                      "claim": {
+                        "task": {
+                          "projectId": "ag2b-collab-project",
+                          "goalId": "ag2b-goal",
+                          "taskId": "ag2b-work"
+                        },
+                        "planRef": {
+                          "aggregateType": "PlanRevision",
+                          "projectId": "ag2b-collab-project",
+                          "planId": "ag2b-plan"
+                        },
+                        "workspaceId": "ag2b-collab-workspace",
+                        "sessionRef": {
+                          "projectId": "ag2b-collab-project",
+                          "sessionId": "session-f2ec57e50ba66e1ade824e2432de0fac8945dac589e1aa82ecf79d89ad0a6c03"
+                        },
+                        "sessionRevision": 2,
+                        "generation": 2,
+                        "runRef": {
+                          "aggregateType": "Run",
+                          "projectId": "ag2b-collab-project",
+                          "goalId": "ag2b-goal",
+                          "runId": "325e838e-2358-4929-b5d6-8c58f7b6bba5"
+                        },
+                        "attemptRef": {
+                          "aggregateType": "TaskAttempt",
+                          "projectId": "ag2b-collab-project",
+                          "goalId": "ag2b-goal",
+                          "taskId": "ag2b-work",
+                          "attemptId": "5b9c3f6d-c377-4476-be4b-c835f37a7b4f"
+                        },
+                        "outboxRef": {
+                          "aggregateType": "DispatchOutboxEntry",
+                          "projectId": "ag2b-collab-project",
+                          "goalId": "ag2b-goal",
+                          "taskId": "ag2b-work",
+                          "attemptId": "5b9c3f6d-c377-4476-be4b-c835f37a7b4f"
+                        },
+                        "claimedAt": "2026-09-28T06:27:26.453Z"
+                      },
+                      "dispatchState": {
+                        "schemaVersion": 1,
+                        "phase": "settled",
+                        "consumerId": "ag2b-consumer",
+                        "entryGeneration": 1,
+                        "sessionGeneration": 2,
+                        "eventId": "c1eb6700-0118-48a5-99c2-459aa759aeb1"
+                      }
+                    },
+                    "plan": {
+                      "ref": {
+                        "aggregateType": "PlanRevision",
+                        "projectId": "ag2b-collab-project",
+                        "planId": "ag2b-plan"
+                      },
+                      "revision": 1,
+                      "goalRef": {
+                        "aggregateType": "Goal",
+                        "projectId": "ag2b-collab-project",
+                        "goalId": "ag2b-goal"
+                      },
+                      "planId": "ag2b-plan",
+                      "planRevision": 1,
+                      "acceptedAt": "2026-09-28T06:26:31.820Z",
+                      "effectiveCompletionPolicy": {
+                        "ref": {
+                          "aggregateType": "CompletionPolicyRevision",
+                          "projectId": "ag2b-collab-project",
+                          "policyId": "ag2b-policy",
+                          "revision": 1
+                        },
+                        "digest": "3e71151b89a83c5e20bf58ea41b13104eee49963ec153a80dff3bd14cfc98297"
+                      },
+                      "effectiveArchitectureBaseline": {
+                        "ref": {
+                          "aggregateType": "ArchitectureBaselineRevision",
+                          "projectId": "ag2b-collab-project",
+                          "baselineId": "ag2b-baseline",
+                          "revision": 1
+                        },
+                        "digest": "7799d4e834a4077dce5d1f44a74b3c5cfaa2275ad6e4b39490d54afef46469fa"
+                      },
+                      "stages": [
+                        {
+                          "stageId": "retry-stage",
+                          "title": "Retry module"
+                        }
+                      ],
+                      "tasks": [
+                        {
+                          "taskId": "ag2b-work",
+                          "title": "Consult B then write the isolated project",
+                          "requirementLevel": "required",
+                          "taskKind": "work",
+                          "disposition": "active",
+                          "phase": "pending",
+                          "scope": {
+                            "kind": "module",
+                            "stageId": "retry-stage",
+                            "moduleRef": "ag2b-work"
+                          },
+                          "executionIntent": "request_execution"
+                        },
+                        {
+                          "taskId": "ag2b-gate",
+                          "title": "Goal gate",
+                          "requirementLevel": "required",
+                          "taskKind": "gate",
+                          "disposition": "active",
+                          "phase": "pending",
+                          "scope": {
+                            "kind": "goal"
+                          }
+                        }
+                      ],
+                      "assignments": [
+                        {
+                          "taskId": "ag2b-work",
+                          "role": "builder",
+                          "instruction": "Complete the retry-library task in the isolated workspace. First use query_task_graph and find_related_sessions to discover the related adviser Session from the real module/task association, then read its card. Ask that Session TWO separate substantive questions using send_session_message with replyMode=wait: first about delay and attempt semantics; after receiving its actual reply, ask about caller/error propagation and exhausted retries. Do not invent the recipient ID. Read the actual response before continuing each time. Then inspect src/retry.mjs, src/client.mjs and checks/retry.test.mjs, edit the implementation to satisfy the contract, and finish. Use the existing tools only. Your adviser is read-only, but you are the builder and must edit src/retry.mjs after both replies. Do not alter checks or contract.md. Do not claim a check passed merely from reasoning; formal checks run after the Work."
+                        }
+                      ],
+                      "obligations": [
+                        {
+                          "obligationId": "ag2b-obligation",
+                          "title": "Deliver the AG2b work",
+                          "requirementLevel": "required",
+                          "taskIds": [
+                            "ag2b-work",
+                            "ag2b-gate"
+                          ],
+                          "verificationRequirements": [
+                            {
+                              "requirementId": "ag2b-static",
+                              "requirementLevel": "required",
+                              "kind": "static",
+                              "description": "Registered static command check"
+                            }
+                          ]
+                        }
+                      ],
+                      "taskHierarchy": {
+                        "parentOf": []
+                      },
+                      "executionDag": {
+                        "dependsOn": []
+                      },
+                      "schemaVersion": 2,
+                      "taskRelations": [],
+                      "inputRequirements": []
+                    },
+                    "session": {
+                      "ref": {
+                        "aggregateType": "Session",
+                        "projectId": "ag2b-collab-project",
+                        "sessionId": "session-f2ec57e50ba66e1ade824e2432de0fac8945dac589e1aa82ecf79d89ad0a6c03"
+                      },
+                      "revision": 3,
+                      "kernel": {
+                        "adapterId": "ag2b-kernel",
+                        "kernelSessionId": "session-f2ec57e50ba66e1ade824e2432de0fac8945dac589e1aa82ecf79d89ad0a6c03"
+                      },
+                      "lifecycle": "active",
+                      "health": "available",
+                      "role": {
+                        "kind": "legacy_template",
+                        "templateId": "builder",
+                        "templateRevision": "1"
+                      },
+                      "workspaceId": "ag2b-collab-workspace",
+                      "lastExecutionRef": {
+                        "aggregateType": "Run",
+                        "projectId": "ag2b-collab-project",
+                        "goalId": "ag2b-goal",
+                        "runId": "325e838e-2358-4929-b5d6-8c58f7b6bba5"
+                      },
+                      "occupancy": null,
+                      "historyCursor": "kernhist1.eyJ2IjoxLCJwIjp7InByb2plY3RJZCI6ImFnMmItY29sbGFiLXByb2plY3QiLCJzZXNzaW9uSWQiOiJzZXNzaW9uLWYyZWM1N2U1MGJhNjZlMWFkZTgyNGUyNDMyZGUwZmFjODk0NWRhYzU4OWUxYWE4MmVjZjc5ZDg5YWQwYTZjMDMifSwiYSI6ImFnMmIta2VybmVsIiwiayI6InNlc3Npb24tZjJlYzU3ZTUwYmE2NmUxYWRlODI0ZTI0MzJkZTBmYWM4OTQ1ZGFjNTg5ZTFhYTgyZWNmNzlkODlhZDBhNmMwMyIsInIiOiJ7XCJhY3RvclwiOntcImlkXCI6XCJhZ2VudC1ydW50aW1lXCIsXCJraW5kXCI6XCJzeXN0ZW1cIn0sXCJraW5kXCI6XCJob3N0XCJ9IiwidSI6MjAsImwiOjIsImkiOjIwfQ",
+                      "createdAt": "2026-09-28T06:26:31.869Z",
+                      "archivedAt": null
+                    },
+                    "lease": {
+                      "ref": {
+                        "aggregateType": "TaskLease",
+                        "projectId": "ag2b-collab-project",
+                        "goalId": "ag2b-goal",
+                        "taskId": "ag2b-work"
+                      },
+                      "revision": 2,
+                      "schemaVersion": 1,
+                      "holderRunId": "325e838e-2358-4929-b5d6-8c58f7b6bba5",
+                      "attemptId": "5b9c3f6d-c377-4476-be4b-c835f37a7b4f",
+                      "grantedAt": "2026-09-28T06:27:26.453Z",
+                      "expiresAt": null,
+                      "release": {
+                        "schemaVersion": 1,
+                        "runRef": {
+                          "aggregateType": "Run",
+                          "projectId": "ag2b-collab-project",
+                          "goalId": "ag2b-goal",
+                          "runId": "325e838e-2358-4929-b5d6-8c58f7b6bba5"
+                        },
+                        "attemptRef": {
+                          "aggregateType": "TaskAttempt",
+                          "projectId": "ag2b-collab-project",
+                          "goalId": "ag2b-goal",
+                          "taskId": "ag2b-work",
+                          "attemptId": "5b9c3f6d-c377-4476-be4b-c835f37a7b4f"
+                        },
+                        "sessionRef": {
+                          "projectId": "ag2b-collab-project",
+                          "sessionId": "session-f2ec57e50ba66e1ade824e2432de0fac8945dac589e1aa82ecf79d89ad0a6c03"
+                        },
+                        "generation": 2,
+                        "releasedAt": "2026-09-28T06:27:39.106Z",
+                        "eventId": "c1eb6700-0118-48a5-99c2-459aa759aeb1"
+                      }
+                    },
+                    "readThrough": "c0000000023"
+                  }
+                }
+              },
+              "next": null,
+              "reason": "the Run 325e838e-2358-4929-b5d6-8c58f7b6bba5 ended with outcome crashed"
+            }
+          },
+          "messages": [],
+          "reason": "the Run 325e838e-2358-4929-b5d6-8c58f7b6bba5 ended with outcome crashed"
+        }
+      ],
+      "graph": {
+        "status": "ready",
+        "value": {
+          "plan": {
+            "ref": {
+              "aggregateType": "PlanRevision",
+              "projectId": "ag2b-collab-project",
+              "planId": "ag2b-plan"
+            },
+            "revision": 1,
+            "goalRef": {
+              "aggregateType": "Goal",
+              "projectId": "ag2b-collab-project",
+              "goalId": "ag2b-goal"
+            },
+            "planId": "ag2b-plan",
+            "planRevision": 1,
+            "acceptedAt": "2026-09-28T06:26:31.820Z",
+            "effectiveCompletionPolicy": {
+              "ref": {
+                "aggregateType": "CompletionPolicyRevision",
+                "projectId": "ag2b-collab-project",
+                "policyId": "ag2b-policy",
+                "revision": 1
+              },
+              "digest": "3e71151b89a83c5e20bf58ea41b13104eee49963ec153a80dff3bd14cfc98297"
+            },
+            "effectiveArchitectureBaseline": {
+              "ref": {
+                "aggregateType": "ArchitectureBaselineRevision",
+                "projectId": "ag2b-collab-project",
+                "baselineId": "ag2b-baseline",
+                "revision": 1
+              },
+              "digest": "7799d4e834a4077dce5d1f44a74b3c5cfaa2275ad6e4b39490d54afef46469fa"
+            },
+            "stages": [
+              {
+                "stageId": "retry-stage",
+                "title": "Retry module"
+              }
+            ],
+            "tasks": [
+              {
+                "taskId": "ag2b-work",
+                "title": "Consult B then write the isolated project",
+                "requirementLevel": "required",
+                "taskKind": "work",
+                "disposition": "active",
+                "phase": "pending",
+                "scope": {
+                  "kind": "module",
+                  "stageId": "retry-stage",
+                  "moduleRef": "ag2b-work"
+                },
+                "executionIntent": "request_execution"
+              },
+              {
+                "taskId": "ag2b-gate",
+                "title": "Goal gate",
+                "requirementLevel": "required",
+                "taskKind": "gate",
+                "disposition": "active",
+                "phase": "pending",
+                "scope": {
+                  "kind": "goal"
+                }
+              }
+            ],
+            "assignments": [
+              {
+                "taskId": "ag2b-work",
+                "role": "builder",
+                "instruction": "Complete the retry-library task in the isolated workspace. First use query_task_graph and find_related_sessions to discover the related adviser Session from the real module/task association, then read its card. Ask that Session TWO separate substantive questions using send_session_message with replyMode=wait: first about delay and attempt semantics; after receiving its actual reply, ask about caller/error propagation and exhausted retries. Do not invent the recipient ID. Read the actual response before continuing each time. Then inspect src/retry.mjs, src/client.mjs and checks/retry.test.mjs, edit the implementation to satisfy the contract, and finish. Use the existing tools only. Your adviser is read-only, but you are the builder and must edit src/retry.mjs after both replies. Do not alter checks or contract.md. Do not claim a check passed merely from reasoning; formal checks run after the Work."
+              }
+            ],
+            "obligations": [
+              {
+                "obligationId": "ag2b-obligation",
+                "title": "Deliver the AG2b work",
+                "requirementLevel": "required",
+                "taskIds": [
+                  "ag2b-work",
+                  "ag2b-gate"
+                ],
+                "verificationRequirements": [
+                  {
+                    "requirementId": "ag2b-static",
+                    "requirementLevel": "required",
+                    "kind": "static",
+                    "description": "Registered static command check"
+                  }
+                ]
+              }
+            ],
+            "taskHierarchy": {
+              "parentOf": []
+            },
+            "executionDag": {
+              "dependsOn": []
+            },
+            "schemaVersion": 2,
+            "taskRelations": [],
+            "inputRequirements": []
+          },
+          "tasks": [
+            {
+              "ref": {
+                "projectId": "ag2b-collab-project",
+                "goalId": "ag2b-goal",
+                "taskId": "ag2b-work"
+              },
+              "definition": {
+                "taskId": "ag2b-work",
+                "title": "Consult B then write the isolated project",
+                "requirementLevel": "required",
+                "taskKind": "work",
+                "disposition": "active",
+                "phase": "pending",
+                "scope": {
+                  "kind": "module",
+                  "stageId": "retry-stage",
+                  "moduleRef": "ag2b-work"
+                },
+                "executionIntent": "request_execution"
+              },
+              "effectivePhase": "blocked",
+              "disposition": "active",
+              "currentAttempt": {
+                "aggregateType": "TaskAttempt",
+                "projectId": "ag2b-collab-project",
+                "goalId": "ag2b-goal",
+                "taskId": "ag2b-work",
+                "attemptId": "5b9c3f6d-c377-4476-be4b-c835f37a7b4f"
+              },
+              "execution": {
+                "aggregateType": "Run",
+                "projectId": "ag2b-collab-project",
+                "goalId": "ag2b-goal",
+                "runId": "325e838e-2358-4929-b5d6-8c58f7b6bba5"
+              },
+              "eligibilityScope": "task_state",
+              "eligibility": {
+                "eligible": false,
+                "reasons": [
+                  {
+                    "code": "task_phase_not_dispatchable",
+                    "taskId": "ag2b-work",
+                    "phase": "blocked",
+                    "blocked": true,
+                    "message": "task is blocked"
+                  }
+                ]
+              },
+              "relations": [],
+              "inputRequirements": [],
+              "legacyDependencies": [],
+              "planningDiagnostics": []
+            },
+            {
+              "ref": {
+                "projectId": "ag2b-collab-project",
+                "goalId": "ag2b-goal",
+                "taskId": "ag2b-gate"
+              },
+              "definition": {
+                "taskId": "ag2b-gate",
+                "title": "Goal gate",
+                "requirementLevel": "required",
+                "taskKind": "gate",
+                "disposition": "active",
+                "phase": "pending",
+                "scope": {
+                  "kind": "goal"
+                }
+              },
+              "effectivePhase": "pending",
+              "disposition": "active",
+              "currentAttempt": null,
+              "execution": null,
+              "eligibilityScope": "task_state",
+              "eligibility": {
+                "eligible": false,
+                "reasons": [
+                  {
+                    "code": "task_kind_not_work",
+                    "taskId": "ag2b-gate",
+                    "taskKind": "gate",
+                    "message": "only work tasks are dispatched; gate tasks are reduced by evidence"
+                  }
+                ]
+              },
+              "relations": [],
+              "inputRequirements": [],
+              "legacyDependencies": [],
+              "planningDiagnostics": []
+            }
+          ],
+          "sourceCursor": "c0000000023",
+          "planning": {
+            "completionEvaluation": "not_evaluated",
+            "diagnostics": [
+              {
+                "code": "required_task_unfinished",
+                "taskId": "ag2b-gate",
+                "message": "required task ag2b-gate is not formally satisfied"
+              },
+              {
+                "code": "required_task_unfinished",
+                "taskId": "ag2b-work",
+                "message": "required task ag2b-work is not formally satisfied"
+              }
+            ]
+          },
+          "completion": {
+            "status": "not_recorded"
+          }
+        }
+      },
+      "verificationRounds": []
+    }
+  },
+  "consumedReplyRefs": [],
+  "failure": "expected 'waiting' to be 'completed' // Object.is equality",
+  "requests": [
+    {
+      "requestId": "bba8da40-d3ca-4ff8-9792-8ef275394abb",
+      "tools": [
+        "code_index",
+        "cpp_index",
+        "edit",
+        "find_related_sessions",
+        "list_files",
+        "project_source",
+        "python_index",
+        "query_task_graph",
+        "read",
+        "read_session_card",
+        "search",
+        "send_session_message",
+        "source_excerpt",
+        "symbols"
+      ],
+      "messages": [
+        {
+          "role": "user",
+          "messageId": "ed9a5d90-cb09-4fed-8d65-524f87181508",
+          "content": "# Verified runtime task input\n\nThis is the current task context assembled from formal platform facts; it is not a transcript.\n\n## Accepted task\ntask: Consult B then write the isolated project (ag2b-work)\ninstruction: Complete the retry-library task in the isolated workspace. First use query_task_graph and find_related_sessions to discover the related adviser Session from the real module/task association, then read its card. Ask that Session TWO separate substantive questions using send_session_message with replyMode=wait: first about delay and attempt semantics; after receiving its actual reply, ask about caller/error propagation and exhausted retries. Do not invent the recipient ID. Read the actual response before continuing each time. Then inspect src/retry.mjs, src/client.mjs and checks/retry.test.mjs, edit the implementation to satisfy the contract, and finish. Use the existing tools only. Your adviser is read-only, but you are the builder and must edit src/retry.mjs after both replies. Do not alter checks or contract.md. Do not claim a check passed merely from reasoning; formal checks run after the Work.\nplan: ag2b-plan\nworkspace: ag2b-collab-workspace@1\n\n## Runtime binding\nroleBinding: {\"policyRevision\":\"legacy-template\",\"tools\":[\"read\",\"write\",\"query_task_graph\",\"find_related_sessions\",\"read_session_card\",\"send_session_message\"],\"writeScope\":[\".\"]}\ntools: read, write, query_task_graph, find_related_sessions, read_session_card, send_session_message\nwriteScope: .\n\n## Role specification\nrole: builder (absent)\nthe project has no active coordination policy, so there is no role matrix"
+        }
+      ]
+    },
+    {
+      "requestId": "bbb68ea5-8128-4ae8-bfb4-b5a5fa5b9dfb",
+      "tools": [
+        "code_index",
+        "cpp_index",
+        "edit",
+        "find_related_sessions",
+        "list_files",
+        "project_source",
+        "python_index",
+        "query_task_graph",
+        "read",
+        "read_session_card",
+        "search",
+        "send_session_message",
+        "source_excerpt",
+        "symbols"
+      ],
+      "messages": [
+        {
+          "role": "user",
+          "messageId": "ed9a5d90-cb09-4fed-8d65-524f87181508",
+          "content": "# Verified runtime task input\n\nThis is the current task context assembled from formal platform facts; it is not a transcript.\n\n## Accepted task\ntask: Consult B then write the isolated project (ag2b-work)\ninstruction: Complete the retry-library task in the isolated workspace. First use query_task_graph and find_related_sessions to discover the related adviser Session from the real module/task association, then read its card. Ask that Session TWO separate substantive questions using send_session_message with replyMode=wait: first about delay and attempt semantics; after receiving its actual reply, ask about caller/error propagation and exhausted retries. Do not invent the recipient ID. Read the actual response before continuing each time. Then inspect src/retry.mjs, src/client.mjs and checks/retry.test.mjs, edit the implementation to satisfy the contract, and finish. Use the existing tools only. Your adviser is read-only, but you are the builder and must edit src/retry.mjs after both replies. Do not alter checks or contract.md. Do not claim a check passed merely from reasoning; formal checks run after the Work.\nplan: ag2b-plan\nworkspace: ag2b-collab-workspace@1\n\n## Runtime binding\nroleBinding: {\"policyRevision\":\"legacy-template\",\"tools\":[\"read\",\"write\",\"query_task_graph\",\"find_related_sessions\",\"read_session_card\",\"send_session_message\"],\"writeScope\":[\".\"]}\ntools: read, write, query_task_graph, find_related_sessions, read_session_card, send_session_message\nwriteScope: .\n\n## Role specification\nrole: builder (absent)\nthe project has no active coordination policy, so there is no role matrix"
+        },
+        {
+          "role": "assistant",
+          "messageId": "37141032-7857-4fcc-a11f-0b36685f3bb7",
+          "content": "I'll start by discovering the task graph and related sessions from the real module/task association.",
+          "toolCalls": [
+            {
+              "schemaVersion": 1,
+              "callId": "call_00_idiXjVIwVPXZfNghIfM80678",
+              "name": "query_task_graph",
+              "arguments": {}
+            },
+            {
+              "schemaVersion": 1,
+              "callId": "call_01_KN3BmJErJc3jePsGGQ579239",
+              "name": "list_files",
+              "arguments": {
+                "offset": 0,
+                "limit": 100
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "callId": "call_00_idiXjVIwVPXZfNghIfM80678",
+          "result": {
+            "schemaVersion": 1,
+            "callId": "call_00_idiXjVIwVPXZfNghIfM80678",
+            "output": [
+              {
+                "kind": "json",
+                "value": {
+                  "status": "ready",
+                  "value": {
+                    "plan": {
+                      "ref": {
+                        "aggregateType": "PlanRevision",
+                        "projectId": "ag2b-collab-project",
+                        "planId": "ag2b-plan"
+                      },
+                      "revision": 1,
+                      "goalRef": {
+                        "aggregateType": "Goal",
+                        "projectId": "ag2b-collab-project",
+                        "goalId": "ag2b-goal"
+                      },
+                      "planId": "ag2b-plan",
+                      "planRevision": 1,
+                      "acceptedAt": "2026-09-28T06:26:31.820Z",
+                      "effectiveCompletionPolicy": {
+                        "ref": {
+                          "aggregateType": "CompletionPolicyRevision",
+                          "projectId": "ag2b-collab-project",
+                          "policyId": "ag2b-policy",
+                          "revision": 1
+                        },
+                        "digest": "3e71151b89a83c5e20bf58ea41b13104eee49963ec153a80dff3bd14cfc98297"
+                      },
+                      "effectiveArchitectureBaseline": {
+                        "ref": {
+                          "aggregateType": "ArchitectureBaselineRevision",
+                          "projectId": "ag2b-collab-project",
+                          "baselineId": "ag2b-baseline",
+                          "revision": 1
+                        },
+                        "digest": "7799d4e834a4077dce5d1f44a74b3c5cfaa2275ad6e4b39490d54afef46469fa"
+                      },
+                      "stages": [
+                        {
+                          "stageId": "retry-stage",
+                          "title": "Retry module"
+                        }
+                      ],
+                      "tasks": [
+                        {
+                          "taskId": "ag2b-work",
+                          "title": "Consult B then write the isolated project",
+                          "requirementLevel": "required",
+                          "taskKind": "work",
+                          "disposition": "active",
+                          "phase": "pending",
+                          "scope": {
+                            "kind": "module",
+                            "stageId": "retry-stage",
+                            "moduleRef": "ag2b-work"
+                          },
+                          "executionIntent": "request_execution"
+                        },
+                        {
+                          "taskId": "ag2b-gate",
+                          "title": "Goal gate",
+                          "requirementLevel": "required",
+                          "taskKind": "gate",
+                          "disposition": "active",
+                          "phase": "pending",
+                          "scope": {
+                            "kind": "goal"
+                          }
+                        }
+                      ],
+                      "assignments": [
+                        {
+                          "taskId": "ag2b-work",
+                          "role": "builder",
+                          "instruction": "Complete the retry-library task in the isolated workspace. First use query_task_graph and find_related_sessions to discover the related adviser Session from the real module/task association, then read its card. Ask that Session TWO separate substantive questions using send_session_message with replyMode=wait: first about delay and attempt semantics; after receiving its actual reply, ask about caller/error propagation and exhausted retries. Do not invent the recipient ID. Read the actual response before continuing each time. Then inspect src/retry.mjs, src/client.mjs and checks/retry.test.mjs, edit the implementation to satisfy the contract, and finish. Use the existing tools only. Your adviser is read-only, but you are the builder and must edit src/retry.mjs after both replies. Do not alter checks or contract.md. Do not claim a check passed merely from reasoning; formal checks run after the Work."
+                        }
+                      ],
+                      "obligations": [
+                        {
+                          "obligationId": "ag2b-obligation",
+                          "title": "Deliver the AG2b work",
+                          "requirementLevel": "required",
+                          "taskIds": [
+                            "ag2b-work",
+                            "ag2b-gate"
+                          ],
+                          "verificationRequirements": [
+                            {
+                              "requirementId": "ag2b-static",
+                              "requirementLevel": "required",
+                              "kind": "static",
+                              "description": "Registered static command check"
+                            }
+                          ]
+                        }
+                      ],
+                      "taskHierarchy": {
+                        "parentOf": []
+                      },
+                      "executionDag": {
+                        "dependsOn": []
+                      },
+                      "schemaVersion": 2,
+                      "taskRelations": [],
+                      "inputRequirements": []
+                    },
+                    "tasks": [
+                      {
+                        "ref": {
+                          "projectId": "ag2b-collab-project",
+                          "goalId": "ag2b-goal",
+                          "taskId": "ag2b-work"
+                        },
+                        "definition": {
+                          "taskId": "ag2b-work",
+                          "title": "Consult B then write the isolated project",
+                          "requirementLevel": "required",
+                          "taskKind": "work",
+                          "disposition": "active",
+                          "phase": "pending",
+                          "scope": {
+                            "kind": "module",
+                            "stageId": "retry-stage",
+                            "moduleRef": "ag2b-work"
+                          },
+                          "executionIntent": "request_execution"
+                        },
+                        "effectivePhase": "running",
+                        "disposition": "active",
+                        "currentAttempt": {
+                          "aggregateType": "TaskAttempt",
+                          "projectId": "ag2b-collab-project",
+                          "goalId": "ag2b-goal",
+                          "taskId": "ag2b-work",
+                          "attemptId": "5b9c3f6d-c377-4476-be4b-c835f37a7b4f"
+                        },
+                        "execution": {
+                          "aggregateType": "Run",
+                          "projectId": "ag2b-collab-project",
+                          "goalId": "ag2b-goal",
+                          "runId": "325e838e-2358-4929-b5d6-8c58f7b6bba5"
+                        },
+                        "eligibilityScope": "task_state",
+                        "eligibility": {
+                          "eligible": false,
+                          "reasons": [
+                            {
+                              "code": "task_phase_not_dispatchable",
+                              "taskId": "ag2b-work",
+                              "phase": "running",
+                              "blocked": false,
+                              "message": "task phase is not dispatchable (pending|ready)"
+                            },
+                            {
+                              "code": "resource_unavailable",
+                              "taskId": "ag2b-work",
+                              "detail": "leased",
+                              "message": "task already has an active lease (holder run 325e838e-2358-4929-b5d6-8c58f7b6bba5)"
+                            }
+                          ]
+                        },
+                        "relations": [],
+                        "inputRequirements": [],
+                        "legacyDependencies": [],
+                        "planningDiagnostics": []
+                      },
+                      {
+                        "ref": {
+                          "projectId": "ag2b-collab-project",
+                          "goalId": "ag2b-goal",
+                          "taskId": "ag2b-gate"
+                        },
+                        "definition": {
+                          "taskId": "ag2b-gate",
+                          "title": "Goal gate",
+                          "requirementLevel": "required",
+                          "taskKind": "gate",
+                          "disposition": "active",
+                          "phase": "pending",
+                          "scope": {
+                            "kind": "goal"
+                          }
+                        },
+                        "effectivePhase": "pending",
+                        "disposition": "active",
+                        "currentAttempt": null,
+                        "execution": null,
+                        "eligibilityScope": "task_state",
+                        "eligibility": {
+                          "eligible": false,
+                          "reasons": [
+                            {
+                              "code": "task_kind_not_work",
+                              "taskId": "ag2b-gate",
+                              "taskKind": "gate",
+                              "message": "only work tasks are dispatched; gate tasks are reduced by evidence"
+                            }
+                          ]
+                        },
+                        "relations": [],
+                        "inputRequirements": [],
+                        "legacyDependencies": [],
+                        "planningDiagnostics": []
+                      }
+                    ],
+                    "sourceCursor": "c0000000018",
+                    "planning": {
+                      "completionEvaluation": "not_evaluated",
+                      "diagnostics": [
+                        {
+                          "code": "required_task_unfinished",
+                          "taskId": "ag2b-gate",
+                          "message": "required task ag2b-gate is not formally satisfied"
+                        },
+                        {
+                          "code": "required_task_unfinished",
+                          "taskId": "ag2b-work",
+                          "message": "required task ag2b-work is not formally satisfied"
+                        }
+                      ]
+                    },
+                    "completion": {
+                      "status": "not_recorded"
+                    }
+                  }
+                }
+              }
+            ],
+            "effects": {
+              "sideEffect": "none",
+              "changedPaths": [],
+              "workspaceRevision": null,
+              "artifactRefs": []
+            },
+            "status": "success"
+          }
+        },
+        {
+          "role": "tool",
+          "callId": "call_01_KN3BmJErJc3jePsGGQ579239",
+          "result": {
+            "schemaVersion": 1,
+            "callId": "call_01_KN3BmJErJc3jePsGGQ579239",
+            "output": [
+              {
+                "kind": "json",
+                "value": {
+                  "paths": [
+                    "checks/retry.test.mjs",
+                    "contract.md",
+                    "package.json",
+                    "src/client.mjs",
+                    "src/retry.mjs",
+                    "tsconfig.json"
+                  ],
+                  "nextOffset": null,
+                  "truncated": false,
+                  "totalListed": 6,
+                  "coverage": "bounded file enumeration; denied paths and symlinks excluded",
+                  "excludedPrefixes": []
+                }
+              }
+            ],
+            "effects": {
+              "sideEffect": "none",
+              "changedPaths": [],
+              "workspaceRevision": null,
+              "artifactRefs": []
+            },
+            "status": "success"
+          }
+        }
+      ]
+    },
+    {
+      "requestId": "3a8657bf-c1f1-456f-bd0a-42338ef5978b",
+      "tools": [
+        "code_index",
+        "cpp_index",
+        "edit",
+        "find_related_sessions",
+        "list_files",
+        "project_source",
+        "python_index",
+        "query_task_graph",
+        "read",
+        "read_session_card",
+        "search",
+        "send_session_message",
+        "source_excerpt",
+        "symbols"
+      ],
+      "messages": [
+        {
+          "role": "user",
+          "messageId": "ed9a5d90-cb09-4fed-8d65-524f87181508",
+          "content": "# Verified runtime task input\n\nThis is the current task context assembled from formal platform facts; it is not a transcript.\n\n## Accepted task\ntask: Consult B then write the isolated project (ag2b-work)\ninstruction: Complete the retry-library task in the isolated workspace. First use query_task_graph and find_related_sessions to discover the related adviser Session from the real module/task association, then read its card. Ask that Session TWO separate substantive questions using send_session_message with replyMode=wait: first about delay and attempt semantics; after receiving its actual reply, ask about caller/error propagation and exhausted retries. Do not invent the recipient ID. Read the actual response before continuing each time. Then inspect src/retry.mjs, src/client.mjs and checks/retry.test.mjs, edit the implementation to satisfy the contract, and finish. Use the existing tools only. Your adviser is read-only, but you are the builder and must edit src/retry.mjs after both replies. Do not alter checks or contract.md. Do not claim a check passed merely from reasoning; formal checks run after the Work.\nplan: ag2b-plan\nworkspace: ag2b-collab-workspace@1\n\n## Runtime binding\nroleBinding: {\"policyRevision\":\"legacy-template\",\"tools\":[\"read\",\"write\",\"query_task_graph\",\"find_related_sessions\",\"read_session_card\",\"send_session_message\"],\"writeScope\":[\".\"]}\ntools: read, write, query_task_graph, find_related_sessions, read_session_card, send_session_message\nwriteScope: .\n\n## Role specification\nrole: builder (absent)\nthe project has no active coordination policy, so there is no role matrix"
+        },
+        {
+          "role": "assistant",
+          "messageId": "37141032-7857-4fcc-a11f-0b36685f3bb7",
+          "content": "I'll start by discovering the task graph and related sessions from the real module/task association.",
+          "toolCalls": [
+            {
+              "schemaVersion": 1,
+              "callId": "call_00_idiXjVIwVPXZfNghIfM80678",
+              "name": "query_task_graph",
+              "arguments": {}
+            },
+            {
+              "schemaVersion": 1,
+              "callId": "call_01_KN3BmJErJc3jePsGGQ579239",
+              "name": "list_files",
+              "arguments": {
+                "offset": 0,
+                "limit": 100
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "callId": "call_00_idiXjVIwVPXZfNghIfM80678",
+          "result": {
+            "schemaVersion": 1,
+            "callId": "call_00_idiXjVIwVPXZfNghIfM80678",
+            "output": [
+              {
+                "kind": "json",
+                "value": {
+                  "status": "ready",
+                  "value": {
+                    "plan": {
+                      "ref": {
+                        "aggregateType": "PlanRevision",
+                        "projectId": "ag2b-collab-project",
+                        "planId": "ag2b-plan"
+                      },
+                      "revision": 1,
+                      "goalRef": {
+                        "aggregateType": "Goal",
+                        "projectId": "ag2b-collab-project",
+                        "goalId": "ag2b-goal"
+                      },
+                      "planId": "ag2b-plan",
+                      "planRevision": 1,
+                      "acceptedAt": "2026-09-28T06:26:31.820Z",
+                      "effectiveCompletionPolicy": {
+                        "ref": {
+                          "aggregateType": "CompletionPolicyRevision",
+                          "projectId": "ag2b-collab-project",
+                          "policyId": "ag2b-policy",
+                          "revision": 1
+                        },
+                        "digest": "3e71151b89a83c5e20bf58ea41b13104eee49963ec153a80dff3bd14cfc98297"
+                      },
+                      "effectiveArchitectureBaseline": {
+                        "ref": {
+                          "aggregateType": "ArchitectureBaselineRevision",
+                          "projectId": "ag2b-collab-project",
+                          "baselineId": "ag2b-baseline",
+                          "revision": 1
+                        },
+                        "digest": "7799d4e834a4077dce5d1f44a74b3c5cfaa2275ad6e4b39490d54afef46469fa"
+                      },
+                      "stages": [
+                        {
+                          "stageId": "retry-stage",
+                          "title": "Retry module"
+                        }
+                      ],
+                      "tasks": [
+                        {
+                          "taskId": "ag2b-work",
+                          "title": "Consult B then write the isolated project",
+                          "requirementLevel": "required",
+                          "taskKind": "work",
+                          "disposition": "active",
+                          "phase": "pending",
+                          "scope": {
+                            "kind": "module",
+                            "stageId": "retry-stage",
+                            "moduleRef": "ag2b-work"
+                          },
+                          "executionIntent": "request_execution"
+                        },
+                        {
+                          "taskId": "ag2b-gate",
+                          "title": "Goal gate",
+                          "requirementLevel": "required",
+                          "taskKind": "gate",
+                          "disposition": "active",
+                          "phase": "pending",
+                          "scope": {
+                            "kind": "goal"
+                          }
+                        }
+                      ],
+                      "assignments": [
+                        {
+                          "taskId": "ag2b-work",
+                          "role": "builder",
+                          "instruction": "Complete the retry-library task in the isolated workspace. First use query_task_graph and find_related_sessions to discover the related adviser Session from the real module/task association, then read its card. Ask that Session TWO separate substantive questions using send_session_message with replyMode=wait: first about delay and attempt semantics; after receiving its actual reply, ask about caller/error propagation and exhausted retries. Do not invent the recipient ID. Read the actual response before continuing each time. Then inspect src/retry.mjs, src/client.mjs and checks/retry.test.mjs, edit the implementation to satisfy the contract, and finish. Use the existing tools only. Your adviser is read-only, but you are the builder and must edit src/retry.mjs after both replies. Do not alter checks or contract.md. Do not claim a check passed merely from reasoning; formal checks run after the Work."
+                        }
+                      ],
+                      "obligations": [
+                        {
+                          "obligationId": "ag2b-obligation",
+                          "title": "Deliver the AG2b work",
+                          "requirementLevel": "required",
+                          "taskIds": [
+                            "ag2b-work",
+                            "ag2b-gate"
+                          ],
+                          "verificationRequirements": [
+                            {
+                              "requirementId": "ag2b-static",
+                              "requirementLevel": "required",
+                              "kind": "static",
+                              "description": "Registered static command check"
+                            }
+                          ]
+                        }
+                      ],
+                      "taskHierarchy": {
+                        "parentOf": []
+                      },
+                      "executionDag": {
+                        "dependsOn": []
+                      },
+                      "schemaVersion": 2,
+                      "taskRelations": [],
+                      "inputRequirements": []
+                    },
+                    "tasks": [
+                      {
+                        "ref": {
+                          "projectId": "ag2b-collab-project",
+                          "goalId": "ag2b-goal",
+                          "taskId": "ag2b-work"
+                        },
+                        "definition": {
+                          "taskId": "ag2b-work",
+                          "title": "Consult B then write the isolated project",
+                          "requirementLevel": "required",
+                          "taskKind": "work",
+                          "disposition": "active",
+                          "phase": "pending",
+                          "scope": {
+                            "kind": "module",
+                            "stageId": "retry-stage",
+                            "moduleRef": "ag2b-work"
+                          },
+                          "executionIntent": "request_execution"
+                        },
+                        "effectivePhase": "running",
+                        "disposition": "active",
+                        "currentAttempt": {
+                          "aggregateType": "TaskAttempt",
+                          "projectId": "ag2b-collab-project",
+                          "goalId": "ag2b-goal",
+                          "taskId": "ag2b-work",
+                          "attemptId": "5b9c3f6d-c377-4476-be4b-c835f37a7b4f"
+                        },
+                        "execution": {
+                          "aggregateType": "Run",
+                          "projectId": "ag2b-collab-project",
+                          "goalId": "ag2b-goal",
+                          "runId": "325e838e-2358-4929-b5d6-8c58f7b6bba5"
+                        },
+                        "eligibilityScope": "task_state",
+                        "eligibility": {
+                          "eligible": false,
+                          "reasons": [
+                            {
+                              "code": "task_phase_not_dispatchable",
+                              "taskId": "ag2b-work",
+                              "phase": "running",
+                              "blocked": false,
+                              "message": "task phase is not dispatchable (pending|ready)"
+                            },
+                            {
+                              "code": "resource_unavailable",
+                              "taskId": "ag2b-work",
+                              "detail": "leased",
+                              "message": "task already has an active lease (holder run 325e838e-2358-4929-b5d6-8c58f7b6bba5)"
+                            }
+                          ]
+                        },
+                        "relations": [],
+                        "inputRequirements": [],
+                        "legacyDependencies": [],
+                        "planningDiagnostics": []
+                      },
+                      {
+                        "ref": {
+                          "projectId": "ag2b-collab-project",
+                          "goalId": "ag2b-goal",
+                          "taskId": "ag2b-gate"
+                        },
+                        "definition": {
+                          "taskId": "ag2b-gate",
+                          "title": "Goal gate",
+                          "requirementLevel": "required",
+                          "taskKind": "gate",
+                          "disposition": "active",
+                          "phase": "pending",
+                          "scope": {
+                            "kind": "goal"
+                          }
+                        },
+                        "effectivePhase": "pending",
+                        "disposition": "active",
+                        "currentAttempt": null,
+                        "execution": null,
+                        "eligibilityScope": "task_state",
+                        "eligibility": {
+                          "eligible": false,
+                          "reasons": [
+                            {
+                              "code": "task_kind_not_work",
+                              "taskId": "ag2b-gate",
+                              "taskKind": "gate",
+                              "message": "only work tasks are dispatched; gate tasks are reduced by evidence"
+                            }
+                          ]
+                        },
+                        "relations": [],
+                        "inputRequirements": [],
+                        "legacyDependencies": [],
+                        "planningDiagnostics": []
+                      }
+                    ],
+                    "sourceCursor": "c0000000018",
+                    "planning": {
+                      "completionEvaluation": "not_evaluated",
+                      "diagnostics": [
+                        {
+                          "code": "required_task_unfinished",
+                          "taskId": "ag2b-gate",
+                          "message": "required task ag2b-gate is not formally satisfied"
+                        },
+                        {
+                          "code": "required_task_unfinished",
+                          "taskId": "ag2b-work",
+                          "message": "required task ag2b-work is not formally satisfied"
+                        }
+                      ]
+                    },
+                    "completion": {
+                      "status": "not_recorded"
+                    }
+                  }
+                }
+              }
+            ],
+            "effects": {
+              "sideEffect": "none",
+              "changedPaths": [],
+              "workspaceRevision": null,
+              "artifactRefs": []
+            },
+            "status": "success"
+          }
+        },
+        {
+          "role": "tool",
+          "callId": "call_01_KN3BmJErJc3jePsGGQ579239",
+          "result": {
+            "schemaVersion": 1,
+            "callId": "call_01_KN3BmJErJc3jePsGGQ579239",
+            "output": [
+              {
+                "kind": "json",
+                "value": {
+                  "paths": [
+                    "checks/retry.test.mjs",
+                    "contract.md",
+                    "package.json",
+                    "src/client.mjs",
+                    "src/retry.mjs",
+                    "tsconfig.json"
+                  ],
+                  "nextOffset": null,
+                  "truncated": false,
+                  "totalListed": 6,
+                  "coverage": "bounded file enumeration; denied paths and symlinks excluded",
+                  "excludedPrefixes": []
+                }
+              }
+            ],
+            "effects": {
+              "sideEffect": "none",
+              "changedPaths": [],
+              "workspaceRevision": null,
+              "artifactRefs": []
+            },
+            "status": "success"
+          }
+        },
+        {
+          "role": "assistant",
+          "messageId": "6a4cbe3d-65d8-40f5-866b-c6c84c6a23c0",
+          "content": "The task graph shows module `ag2b-work` in project `ag2b-collab-project`. Now I'll find the related adviser Session via the module and task associations.",
+          "toolCalls": [
+            {
+              "schemaVersion": 1,
+              "callId": "call_00_7CkvrcIIySFa26FSz5RX7086",
+              "name": "find_related_sessions",
+              "arguments": {
+                "target": {
+                  "kind": "module",
+                  "ref": {
+                    "projectId": "ag2b-collab-project",
+                    "moduleId": "ag2b-work"
+                  }
+                },
+                "page": {
+                  "limit": 50
+                }
+              }
+            },
+            {
+              "schemaVersion": 1,
+              "callId": "call_01_Sp6DDdlYuIBLMapivFOs9518",
+              "name": "find_related_sessions",
+              "arguments": {
+                "target": {
+                  "kind": "task",
+                  "ref": {
+                    "projectId": "ag2b-collab-project",
+                    "goalId": "ag2b-goal",
+                    "taskId": "ag2b-work"
+                  }
+                },
+                "page": {
+                  "limit": 50
+                }
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "callId": "call_00_7CkvrcIIySFa26FSz5RX7086",
+          "result": {
+            "schemaVersion": 1,
+            "callId": "call_00_7CkvrcIIySFa26FSz5RX7086",
+            "output": [
+              {
+                "kind": "json",
+                "value": {
+                  "status": "ready",
+                  "value": {
+                    "items": [
+                      {
+                        "record": {
+                          "ref": {
+                            "aggregateType": "Session",
+                            "projectId": "ag2b-collab-project",
+                            "sessionId": "session-55c32473db89e6eecdad51a05838e88ce20f4aadfc4146672dfb9cefe9e9711e"
+                          },
+                          "revision": 1,
+                          "kernel": {
+                            "adapterId": "ag2b-kernel",
+                            "kernelSessionId": "session-55c32473db89e6eecdad51a05838e88ce20f4aadfc4146672dfb9cefe9e9711e"
+                          },
+                          "lifecycle": "active",
+                          "health": "available",
+                          "role": {
+                            "kind": "legacy_template",
+                            "templateId": "advisor",
+                            "templateRevision": "1"
+                          },
+                          "workspaceId": "ag2b-collab-workspace",
+                          "lastExecutionRef": null,
+                          "occupancy": null,
+                          "historyCursor": null,
+                          "createdAt": "2026-09-28T06:26:31.893Z",
+                          "archivedAt": null
+                        },
+                        "availability": "idle",
+                        "links": [
+                          {
+                            "ref": {
+                              "aggregateType": "SessionWorkLink",
+                              "projectId": "ag2b-collab-project",
+                              "sessionId": "session-55c32473db89e6eecdad51a05838e88ce20f4aadfc4146672dfb9cefe9e9711e",
+                              "target": {
+                                "kind": "module",
+                                "ref": {
+                                  "projectId": "ag2b-collab-project",
+                                  "moduleId": "ag2b-work"
+                                }
+                              },
+                              "relation": "participates"
+                            },
+                            "revision": 1,
+                            "since": "c0000000012",
+                            "until": null
+                          }
+                        ],
+                        "recommendationReasons": []
+                      }
+                    ],
+                    "nextCursor": null,
+                    "sourceCursor": "c0000000020"
+                  }
+                }
+              }
+            ],
+            "effects": {
+              "sideEffect": "none",
+              "changedPaths": [],
+              "workspaceRevision": null,
+              "artifactRefs": []
+            },
+            "status": "success"
+          }
+        },
+        {
+          "role": "tool",
+          "callId": "call_01_Sp6DDdlYuIBLMapivFOs9518",
+          "result": {
+            "schemaVersion": 1,
+            "callId": "call_01_Sp6DDdlYuIBLMapivFOs9518",
+            "output": [
+              {
+                "kind": "json",
+                "value": {
+                  "status": "ready",
+                  "value": {
+                    "items": [],
+                    "nextCursor": null,
+                    "sourceCursor": "c0000000020"
+                  }
+                }
+              }
+            ],
+            "effects": {
+              "sideEffect": "none",
+              "changedPaths": [],
+              "workspaceRevision": null,
+              "artifactRefs": []
+            },
+            "status": "success"
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -35,6 +35,8 @@ export interface ResumeAppInput {
     readonly limits?: RunLimits;
     readonly workspaceOptions?: WorkspaceSandboxOptions;
     readonly processSandboxOptions?: ProcessSandboxOptions;
+    /** Host input supply read at a real drained before_model boundary (same as RunAppInput). */
+    readonly inputSupply?: import("./composition-contracts.js").AppInputSupply;
     readonly config: AppConfig;
     readonly workspaceRoot: string;
     readonly sessionId: string;

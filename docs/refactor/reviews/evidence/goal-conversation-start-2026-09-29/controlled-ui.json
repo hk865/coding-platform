@@ -1,0 +1,43 @@
+{
+  "provider": "controlled fixture (not DeepSeek)",
+  "cases": [
+    {
+      "action": "first send with model",
+      "providerCallsAfter": 1,
+      "answer": true
+    },
+    {
+      "action": "first send without model; then select model",
+      "providerCallsAfter": 1,
+      "answer": false,
+      "noSessionBeforeStart": true
+    },
+    {
+      "action": "explicit start after model selection",
+      "providerCallsAfter": 2,
+      "answer": true,
+      "sameGoal": true
+    },
+    {
+      "action": "UI resume originally claimed Query",
+      "providerCallsAfter": 3,
+      "answer": true,
+      "sameQueryRun": true,
+      "sameSession": true
+    },
+    {
+      "action": "final UI first send after draft and session display correction",
+      "providerCallsAfter": 4,
+      "answer": true,
+      "composerEmpty": true,
+      "memberDisplayed": "idle"
+    }
+  ],
+  "counts": {
+    "goals": 3,
+    "sessions": 4,
+    "queryJobs": 4,
+    "queryRuns": 4
+  },
+  "note": "One claimed Session/Query was prepared as test precondition through public owners. No production/user project records were seeded. Temporary host/tab closed."
+}

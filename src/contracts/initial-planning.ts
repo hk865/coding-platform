@@ -36,6 +36,24 @@ export type InitialPlanningResponsePlanV2 = Omit<
   'planId' | 'planRevision' | 'goalId' | 'origin'
 >;
 
+/**
+ * R6 cold-start optional setup proposal carried by a v2 plan answer.
+ *
+ * It is a SUGGESTION only: it grants no Host tool/file permission and is never
+ * itself a trusted executor/permissionRevision. The Plan candidate is still
+ * created by the original owner from the SAVED Answer, and an explicit user
+ * adoption is what later drives the existing architecture/policy/Plan routes.
+ * `checks` names only the exact `RegisteredCommandCheck` DTO
+ * (checkId/kind/command/cwd/timeoutMs/taskIds); it never carries `coverage`.
+ */
+export type InitialPlanningSetupV2 = {
+  architecture: import('./architecture-catalog.js').AdoptInitialArchitectureInput;
+  completionPolicy: import('./governance.js').CompletionPolicyContentV1;
+  checks: import('./verification.js').RegisteredCommandCheck[];
+};
+
 export type InitialPlanningResponseV2 =
   | { schemaVersion: 2; kind: 'needs_decision'; summary: string; questions: string[] }
-  | { schemaVersion: 2; kind: 'plan'; summary: string; plan: InitialPlanningResponsePlanV2 };
+  | { schemaVersion: 2; kind: 'plan'; summary: string; plan: InitialPlanningResponsePlanV2;
+      /** Optional additive setup proposal; absent keeps the old v2 exactly. */
+      setup?: InitialPlanningSetupV2 };

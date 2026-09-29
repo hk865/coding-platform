@@ -1,0 +1,46 @@
+{
+  "recordedAt": "2026-09-28",
+  "tool": "cua_repl; actual browser actions",
+  "url": "http://127.0.0.1:40143/workbench/",
+  "target": {
+    "scope": {
+      "projectId": "ag2-live-project",
+      "workspaceId": "ag2-live-workspace"
+    },
+    "sessionRef": {
+      "projectId": "ag2-live-project",
+      "sessionId": "session-c9b44e0ab20e012088c8276f83e5fd1211e3245f89a9bd92b5475b105bc57772"
+    },
+    "messageRef": {
+      "aggregateType": "SessionMessage",
+      "projectId": "ag2-live-project",
+      "workspaceId": "ag2-live-workspace",
+      "messageId": "session-message-a50755d4652e261ddf2f0baf1b693865752902a411f54e6eb820f864efe9856b"
+    },
+    "goalRef": {
+      "aggregateType": "Goal",
+      "projectId": "ag2-live-project",
+      "goalId": "ag2-live-goal"
+    },
+    "queryProfileId": "ag2-adviser",
+    "statusAtHandoff": "pending",
+    "providerDeltaOnEnqueue": 0
+  },
+  "steps": [
+    "Open live Host",
+    "Choose original idle Session from member navigation",
+    "Set current Goal ag2-live-goal",
+    "Open inbox and select second pending message",
+    "Click 处理咨询 once",
+    "Observe 已回复, original Session sender, exact random marker in body",
+    "Observe disabled 处理咨询 button and preserved workspace source revision 1"
+  ],
+  "result": "passed",
+  "scope": "explicit consultation UI only; no full layout/MVP claim",
+  "sourceRef": {
+    "kind": "workspace",
+    "refId": "ag2-live-workspace",
+    "revision": "1"
+  },
+  "newModelCallsOnHistoryRead": 0
+}

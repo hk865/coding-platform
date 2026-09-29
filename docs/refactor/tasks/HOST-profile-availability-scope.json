@@ -1,0 +1,14 @@
+{
+  "writableFiles": [
+    "src/app/host.ts",
+    "tests/app/host-settings.test.ts"
+  ],
+  "dshStateDirectories": [
+    "profiles",
+    "sessions",
+    "storages",
+    "cache",
+    "llm-deepseek",
+    "attachments"
+  ]
+}

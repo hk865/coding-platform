@@ -1,0 +1,33 @@
+{
+  "writableFiles": [
+    "src/app/core-http-types.ts",
+    "src/app/core-routes.ts",
+    "src/app/host.ts",
+    "src/app/main.ts",
+    "src/app/workbench-tools.ts",
+    "src/core/work-graph/tasks/execution-read-contracts.ts",
+    "src/core/work-graph/tasks/run-state-service.ts",
+    "src/core/work-graph/configuration/project-bootstrap-contracts.ts",
+    "src/core/work-graph/configuration/project-bootstrap-service.ts",
+    "src/composition/create-platform.ts",
+    "scripts/build-kernel-patch.mjs",
+    "vendor/coding-agent/patches/sandbox/workspace/workspace-sandbox.ts",
+    "tests/app/MVP-workbench-tools.test.ts",
+    "tests/app/MVP-ui-entry.test.ts",
+    "tests/core/work-graph/MVP-execution-list.test.ts",
+    "vendor/coding-agent/dist/sandbox/workspace/workspace-sandbox.js",
+    "vendor/coding-agent/dist/sandbox/workspace/workspace-sandbox.js.map",
+    "vendor/coding-agent/dist/sandbox/workspace/workspace-sandbox.d.ts",
+    "vendor/coding-agent/dist/sandbox/workspace/workspace-sandbox.d.ts.map",
+    "tests/app/R6-host.test.ts",
+    "tests/app/R6-workbench.test.ts"
+  ],
+  "dshStateDirectories": [
+    "profiles",
+    "sessions",
+    "storages",
+    "cache",
+    "llm-deepseek",
+    "attachments"
+  ]
+}

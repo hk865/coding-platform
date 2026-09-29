@@ -1,0 +1,2134 @@
+--- before/src/app/collaboration-driver.ts
++++ after/src/app/collaboration-driver.ts
+@@ -1 +1,638 @@
+-// AG2b stage-1 placeholder; scope frozen in docs/refactor/tasks/AG2b-continuous-communication-2026-09-28.md.
++/**
++ * AG2b continuous-communication Host driver (implementation).
++ *
++ * This is a HOST-layer composition of the EXISTING platform owners
++ * (`WorkflowPort`, `RuntimeExecutionPort`, the Session directory, the exact
++ * execution reader, the mailbox and the Run control port) plus the trusted
++ * startup Query profiles. It declares no second Workflow/Runtime/mailbox/
++ * scheduler and owns no store: the original Run, Session, message, Query and
++ * control facts remain the only truth.
++ *
++ * Contract (docs/refactor/tasks/AG2b-continuous-communication-2026-09-28.md):
++ *   - `start` forwards the Host-provided `WorkflowAdvanceInput` untouched and
++ *     never rebuilds or guesses `next`.
++ *   - while THIS handle freshly starts one Work Run, the Work promise and the
++ *     consultation pump run in parallel over the exact sender-Run outbox (all
++ *     pages, not just the first); an already entered/unknown/settled Run is only
++ *     observed and never restarts B.
++ *   - each Goal has at most one active handle; the same seed/profile replays the
++ *     original snapshot with no model call, a different active seed is `busy`.
++ *     Once the owner returns `waiting` the loop has drained, so a later explicit
++ *     advance may start a new handle.
++ *   - `stop` stops new dispatch, cancels the still-open original Run through the
++ *     real `controls` + `runtime.deliverControl` on an independent context, and
++ *     drains the original promise and any consultation before `stopped`.
++ *   - `read` projects the per-Goal handle for UI/reopen reads; a reopened Host
++ *     with no live handle honestly returns `not_found`.
++ */
++import type { CoreCallContext } from '../contracts/core/call-context.js';
++import type { CoreRejection, ReadResult } from '../contracts/core/results.js';
++import type { RunRef } from '../contracts/dispatch.js';
++import type { GoalRef } from '../contracts/ledger.js';
++import { canonicalJson, sha256Hex, type JsonValue } from '../contracts/fingerprint.js';
++import type { RuntimeExecutionPort } from '../core/agent-runtime/ports.js';
++import type { ExecutionReadPort, TaskExecutionRecord } from '../core/work-graph/tasks/execution-read-contracts.js';
++import type { RunControlPort } from '../core/work-graph/tasks/control-contracts.js';
++import type { SessionDirectoryPort } from '../core/work-graph/sessions/contracts.js';
++import type {
++  SessionMailboxPort,
++  SessionMessage,
++  SessionMessagePage,
++} from '../core/work-graph/communication/contracts.js';
++import type {
++  ConsultationInput,
++  ConsultationResult,
++  WorkflowAdvanceInput,
++  WorkflowAdvanceResult,
++} from '../business/workflow/contracts.js';
++import type { WorkflowPort } from '../business/workflow/ports.js';
++import type { WorkbenchQueryProfile } from './runtime-configuration.js';
++
++/** The frozen closed set of states. `waiting_for_reply` stays active. */
++export type CollaborationState =
++  | 'running'
++  | 'waiting_for_reply'
++  | 'waiting'
++  | 'stopping'
++  | 'stopped'
++  | 'completed'
++  | 'failed';
++
++/**
++ * The bounded per-Goal projection. `current`/`last` are the exact Workflow
++ * advancement request/result; `messages` is the most recent display projection
++ * (at most 50) while the original mailbox remains the durable authority.
++ */
++export type CollaborationSnapshot = {
++  goalRef: GoalRef;
++  flowId: string;
++  state: CollaborationState;
++  current: WorkflowAdvanceInput | null;
++  last: WorkflowAdvanceResult | null;
++  messages: SessionMessage[];
++  reason: string | null;
++};
++
++/** The same keyset page shape as the inbox; one independent sender-Run cursor. */
++export type CollaborationOutboxPage = SessionMessagePage;
++
++/**
++ * The narrow mailbox surface. `readOutbox` is optional on the shared port only
++ * so a frozen port literal stays type-compatible; the composition root always
++ * publishes the real method.
++ */
++export type CollaborationMailboxPort = Pick<SessionMailboxPort, 'readMessage' | 'readOutbox'>;
++
++/** `start` carries the Host-supplied next Workflow request and the selected
++ * trusted Query profile ids (never a recipient, model, secret or grant). */
++export type CollaborationStartInput = {
++  advance: WorkflowAdvanceInput;
++  queryProfileIds: string[];
++};
++
++export type CollaborationReadInput = { goalRef: GoalRef };
++export type CollaborationStopInput = { goalRef: GoalRef };
++
++/** One active handle per Goal; different Goals may run in parallel. */
++export interface CollaborationDriverPort {
++  start(ctx: CoreCallContext, input: CollaborationStartInput): Promise<ReadResult<CollaborationSnapshot>>;
++  read(ctx: CoreCallContext, input: CollaborationReadInput): Promise<ReadResult<CollaborationSnapshot>>;
++  stop(ctx: CoreCallContext, input: CollaborationStopInput): Promise<ReadResult<CollaborationSnapshot>>;
++}
++
++/** The Host owns the handle lifetime; `close` stops and drains every handle. */
++export type CollaborationDriver = CollaborationDriverPort & {
++  close(): Promise<void>;
++};
++
++/** Trusted startup profiles, exactly the published `WorkbenchQueryProfile`. */
++export type CollaborationDriverProfile = WorkbenchQueryProfile;
++
++/**
++ * The exact owners the Host layer may compose. Every member is an existing
++ * platform port; `profiles` is the frozen trusted startup selection.
++ */
++export type CollaborationDriverDependencies = {
++  workflow: WorkflowPort;
++  runtime: RuntimeExecutionPort;
++  sessions: SessionDirectoryPort;
++  executions: Pick<ExecutionReadPort, 'readExecution'>;
++  mailbox: CollaborationMailboxPort;
++  controls: RunControlPort;
++  profiles: readonly CollaborationDriverProfile[];
++};
++
++const TICK_MS = 500;
++const MAX_PROJECTED_MESSAGES = 50;
++
++type UnknownRecord = Record<string, unknown>;
++
++function isRecord(value: unknown): value is UnknownRecord {
++  return typeof value === 'object' && value !== null && !Array.isArray(value);
++}
++function nonEmpty(value: unknown): value is string {
++  return typeof value === 'string' && value.length > 0;
++}
++function canonicalOf(value: unknown): string | null {
++  try { return canonicalJson(value as JsonValue); } catch { return null; }
++}
++function sameCanonical(left: unknown, right: unknown): boolean {
++  const leftKey = canonicalOf(left);
++  return leftKey !== null && leftKey === canonicalOf(right);
++}
++function messageOf(error: unknown): string {
++  return error instanceof Error ? error.message : String(error);
++}
++function rejected(code: CoreRejection['code'], reason: string): CoreRejection {
++  return { status: 'rejected', code, reason };
++}
++function isRunRef(value: unknown): value is RunRef {
++  return isRecord(value) && value['aggregateType'] === 'Run'
++    && nonEmpty(value['projectId']) && nonEmpty(value['goalId']) && nonEmpty(value['runId']);
++}
++function isGoalRef(value: unknown): value is GoalRef {
++  return isRecord(value) && value['aggregateType'] === 'Goal'
++    && nonEmpty(value['projectId']) && nonEmpty(value['goalId']);
++}
++/** A snapshot of the caller's trusted identity; each handle owns its own signals. */
++type TrustedContext = Pick<CoreCallContext, 'projectId' | 'principal' | 'materialReader'>;
++function snapshotContext(ctx: CoreCallContext): TrustedContext {
++  return {
++    projectId: ctx.projectId,
++    principal: structuredClone(ctx.principal),
++    materialReader: structuredClone(ctx.materialReader),
++  };
++}
++function contextWith(context: TrustedContext, workspaceId: string, signal: AbortSignal): CoreCallContext {
++  return {
++    projectId: context.projectId, workspaceId,
++    principal: structuredClone(context.principal),
++    materialReader: structuredClone(context.materialReader),
++    signal,
++  };
++}
++/**
++ * Active means a live loop/consultation still owns the Goal handle. `waiting`
++ * is NOT active: the owner already returned and the loop drained, so a later
++ * explicit advance may start the next bounded step.
++ */
++function isActive(state: CollaborationState): boolean {
++  return state === 'running' || state === 'waiting_for_reply' || state === 'stopping';
++}
++function isTerminal(state: CollaborationState): boolean {
++  return state === 'completed' || state === 'failed' || state === 'stopped';
++}
++function goalKey(projectId: string, workspaceId: string, goalId: string): string {
++  return `${projectId}\u0000${workspaceId}\u0000${goalId}`;
++}
++function sleep(ms: number, signal: AbortSignal): Promise<void> {
++  return new Promise((resolvePromise) => {
++    if (signal.aborted) { resolvePromise(); return; }
++    const finish = (): void => { clearTimeout(timer); signal.removeEventListener('abort', onAbort); resolvePromise(); };
++    const onAbort = (): void => finish();
++    const timer = setTimeout(finish, Math.max(0, ms));
++    signal.addEventListener('abort', onAbort, { once: true });
++  });
++}
++/** The RunRef an upcoming `perform:start` will start, if that is the next step. */
++function startRunRefOf(input: WorkflowAdvanceInput | null): RunRef | null {
++  const raw: unknown = input;
++  const operation = isRecord(raw) ? raw['operation'] : undefined;
++  if (!isRecord(operation) || operation['kind'] !== 'start') return null;
++  const request = isRecord(operation['request']) ? operation['request'] : {};
++  const prepared = isRecord(request['prepared']) ? request['prepared'] : {};
++  const claim = isRecord(prepared['claim']) ? prepared['claim'] : {};
++  return isRunRef(claim['runRef']) ? claim['runRef'] : null;
++}
++/** The RunRef a completed/received Workflow step already recorded. */
++function receiptRunRefOf(value: WorkflowAdvanceResult): RunRef | null {
++  if (value.status !== 'ready') return null;
++  const receipt: UnknownRecord | null = isRecord(value.value.receipt) ? value.value.receipt : null;
++  if (receipt === null) return null;
++  const kind = receipt['kind'];
++  const result: UnknownRecord = isRecord(receipt['result']) ? receipt['result'] : {};
++  if (kind === 'claim_task') {
++    if (result['status'] !== 'committed') return null;
++    const claim = isRecord(result['value']) ? result['value'] : {};
++    return isRunRef(claim['runRef']) ? claim['runRef'] : null;
++  }
++  if (kind === 'prepare') {
++    if (result['status'] !== 'ready') return null;
++    const prepared = isRecord(result['value']) ? result['value'] : {};
++    const claim = isRecord(prepared['claim']) ? prepared['claim'] : {};
++    return isRunRef(claim['runRef']) ? claim['runRef'] : null;
++  }
++  if (kind === 'start' || kind === 'observe') {
++    if (result['status'] !== 'ready') return null;
++    const recordValue = isRecord(result['value']) ? result['value'] : {};
++    const run = isRecord(recordValue['run']) ? recordValue['run'] : {};
++    return isRunRef(run['ref']) ? run['ref'] : null;
++  }
++  return null;
++}
++
++type Handle = {
++  key: string;
++  projectId: string;
++  workspaceId: string;
++  goalRef: GoalRef;
++  flowId: string;
++  seed: string;
++  profiles: readonly WorkbenchQueryProfile[];
++  context: TrustedContext;
++  state: CollaborationState;
++  current: WorkflowAdvanceInput | null;
++  last: WorkflowAdvanceResult | null;
++  reason: string | null;
++  messages: SessionMessage[];
++  messageKeys: Set<string>;
++  currentRun: RunRef | null;
++  stopRequested: boolean;
++  stopReason: string | null;
++  /** The driver's own lifetime signal; aborted only by `close`. */
++  abort: AbortController;
++  /** The live consultation pump signal; aborted on stop/close/run end. */
++  activePumpAbort: AbortController | null;
++  /** One-shot drain promise so stop and close cannot double-drain. */
++  stopDrain: Promise<void> | null;
++  done: Promise<void>;
++};
++
++export function createCollaborationDriver(dependencies: CollaborationDriverDependencies): CollaborationDriver {
++  const handles = new Map<string, Handle>();
++  const trustedProfiles = dependencies.profiles.map(profile => structuredClone(profile));
++
++  function snapshot(handle: Handle): CollaborationSnapshot {
++    return {
++      goalRef: structuredClone(handle.goalRef),
++      flowId: handle.flowId,
++      state: handle.state,
++      current: handle.current === null ? null : structuredClone(handle.current),
++      last: handle.last === null ? null : structuredClone(handle.last),
++      messages: handle.messages.map(message => structuredClone(message)),
++      reason: handle.reason,
++    };
++  }
++  function project(handle: Handle, message: SessionMessage): void {
++    const key = canonicalOf(message.ref) ?? `${message.ref.messageId}:${message.revision}`;
++    const existingIndex = handle.messageKeys.has(key)
++      ? handle.messages.findIndex(candidate => canonicalOf(candidate.ref) === canonicalOf(message.ref))
++      : -1;
++    if (existingIndex >= 0) { handle.messages[existingIndex] = message; return; }
++    handle.messageKeys.add(key);
++    handle.messages.push(message);
++    if (handle.messages.length > MAX_PROJECTED_MESSAGES) {
++      const removed = handle.messages.shift();
++      if (removed !== undefined) handle.messageKeys.delete(canonicalOf(removed.ref) ?? '');
++    }
++  }
++  function loopContext(handle: Handle): CoreCallContext {
++    return contextWith(handle.context, handle.workspaceId, handle.abort.signal);
++  }
++  /** The formal cancel must never ride an already-aborted signal. */
++  function independentContext(handle: Handle): CoreCallContext {
++    return contextWith(handle.context, handle.workspaceId, new AbortController().signal);
++  }
++
++  /** Select the exactly-matching trusted profiles: same scope, requested id. */
++  function selectProfiles(projectId: string, workspaceId: string, ids: readonly string[]): WorkbenchQueryProfile[] {
++    const wanted = new Set(ids);
++    return trustedProfiles.filter(profile => wanted.has(profile.id)
++      && profile.scope.projectId === projectId && profile.scope.workspaceId === workspaceId);
++  }
++
++  /** THIS driver freshly starts the Run only when the Run is not already begun. */
++  async function freshStart(handle: Handle, runRef: RunRef): Promise<boolean> {
++    let read: ReadResult<TaskExecutionRecord>;
++    try {
++      read = await dependencies.executions.readExecution(independentContext(handle), runRef);
++    } catch {
++      return false;
++    }
++    if (read.status !== 'ready') return false;
++    if (read.value.run.task.goalId !== handle.goalRef.goalId) return false;
++    if (read.value.session.workspaceId !== handle.workspaceId) return false;
++    const auth = read.value.run.executionAuthorization;
++    return auth === undefined || auth.phase === 'authorized';
++  }
++
++  /** Match one replyMode wait to exactly one same-scope/role trusted profile. */
++  async function consultFor(
++    handle: Handle, message: SessionMessage, signal: AbortSignal,
++  ): Promise<{ ok: true; profile: WorkbenchQueryProfile } | { ok: false; reason: string }> {
++    const cardRead = await dependencies.sessions.readSession(
++      contextWith(handle.context, handle.workspaceId, signal), message.recipient);
++    if (cardRead.status !== 'ready') return { ok: false, reason: 'the wait recipient Session is not readable' };
++    const card = cardRead.value;
++    const matches = handle.profiles.filter(profile => profile.scope.projectId === handle.projectId
++      && profile.scope.workspaceId === handle.workspaceId
++      && sameCanonical(profile.sessionRole, card.record.role));
++    if (matches.length === 0) return { ok: false, reason: 'no trusted Query profile matches the wait recipient role' };
++    if (matches.length > 1) return { ok: false, reason: 'more than one trusted Query profile matches the wait recipient role' };
++    return { ok: true, profile: matches[0]! };
++  }
++
++  async function consultOne(
++    handle: Handle, message: SessionMessage, signal: AbortSignal,
++  ): Promise<ConsultationResult | CoreRejection> {
++    const consume = dependencies.workflow.consumeConsultation;
++    if (consume === undefined) return rejected('unsupported', 'the Workflow has no consultation consumer');
++    const matched = await consultFor(handle, message, signal);
++    if (!matched.ok) return rejected('incomplete', matched.reason);
++    const profile = matched.profile;
++    const input: ConsultationInput = {
++      schemaVersion: 1,
++      messageRef: message.ref,
++      goalRef: handle.goalRef,
++      roleBinding: profile.roleBinding,
++      runtimeBudget: profile.runtimeBudget,
++      budget: profile.budget,
++      consumerId: profile.consumerId,
++    };
++    try {
++      return await consume.call(dependencies.workflow,
++        contextWith(handle.context, handle.workspaceId, signal), input);
++    } catch (error) {
++      return rejected('unavailable', `the consultation consumer failed: ${messageOf(error)}`);
++    }
++  }
++
++  /** Read EVERY page of one sender Run's outbox; only the display projection is
++   * capped at 50. */
++  async function readAllOutbox(handle: Handle, runRef: RunRef, signal: AbortSignal): Promise<SessionMessage[] | null> {
++    const readOutbox = dependencies.mailbox.readOutbox;
++    if (readOutbox === undefined) return null;
++    const all: SessionMessage[] = [];
++    let cursor: string | undefined;
++    // No arbitrary page cap: follow the keyset cursor until it is exhausted or
++    // the pump is aborted, so a consultation sent after the first 50 messages is
++    // never lost. Only the DISPLAY projection stays capped at 50.
++    while (!signal.aborted) {
++      const page_ = await readOutbox.call(dependencies.mailbox,
++        contextWith(handle.context, handle.workspaceId, signal), {
++          senderRun: runRef,
++          page: { limit: MAX_PROJECTED_MESSAGES, ...(cursor === undefined ? {} : { cursor }) },
++        });
++      if (page_.status !== 'ready') break;
++      all.push(...page_.value.items);
++      for (const message of page_.value.items) project(handle, message);
++      if (page_.value.nextCursor === null) break;
++      cursor = page_.value.nextCursor;
++    }
++    return all;
++  }
++
++  /** The read-only consultation pump over the exact sender-Run outbox. */
++  async function pump(handle: Handle, runRef: RunRef, signal: AbortSignal): Promise<void> {
++    const readOutbox = dependencies.mailbox.readOutbox;
++    if (readOutbox === undefined) {
++      handle.reason = 'the mailbox does not publish readOutbox; the wait cannot be consumed';
++      return;
++    }
++    while (!signal.aborted && !handle.stopRequested) {
++      try {
++        const all = await readAllOutbox(handle, runRef, signal);
++        if (all !== null) {
++          const waiting = all.filter(message => message.sender.kind === 'work_run'
++            && message.replyMode === 'wait' && message.status !== 'responded');
++          if (waiting.length === 0) {
++            if (handle.state === 'waiting_for_reply') handle.state = 'running';
++          } else {
++            handle.state = 'waiting_for_reply';
++            for (const message of waiting) {
++              if (signal.aborted || handle.stopRequested) break;
++              const outcome = await consultOne(handle, message, signal);
++              if (outcome.status === 'ready') {
++                project(handle, outcome.value.message);
++                handle.reason = outcome.value.state === 'waiting' ? outcome.value.reason : null;
++              } else if (outcome.status === 'rejected') {
++                handle.reason = outcome.reason;
++              } else {
++                handle.reason = 'the consultation consumer did not return a ready result';
++              }
++            }
++          }
++        }
++      } catch (error) {
++        handle.reason = `the consultation pump failed: ${messageOf(error)}`;
++      }
++      await sleep(TICK_MS, signal);
++    }
++  }
++
++  async function runWithPump(handle: Handle, runRef: RunRef, input: WorkflowAdvanceInput): Promise<WorkflowAdvanceResult> {
++    handle.currentRun = structuredClone(runRef);
++    const fresh = await freshStart(handle, runRef);
++    const pumpAbort = new AbortController();
++    // A stop or driver close must cancel the consultation too; link both into the
++    // pump signal that every consultation call receives.
++    const onLoopAbort = (): void => { try { pumpAbort.abort('driver_stopped'); } catch { /* already aborted */ } };
++    handle.abort.signal.addEventListener('abort', onLoopAbort, { once: true });
++    if (handle.abort.signal.aborted) onLoopAbort();
++    handle.activePumpAbort = pumpAbort;
++    const pumpDone = fresh ? pump(handle, runRef, pumpAbort.signal) : null;
++    if (!fresh) handle.reason = 'the Run was already entered or settled; only observing the original facts';
++    try {
++      return await dependencies.workflow.advanceWork(loopContext(handle), input);
++    } finally {
++      pumpAbort.abort('run_finished');
++      if (pumpDone !== null) await pumpDone.catch(() => { /* the pump recorded its own reason */ });
++      handle.abort.signal.removeEventListener('abort', onLoopAbort);
++      if (handle.activePumpAbort === pumpAbort) handle.activePumpAbort = null;
++    }
++  }
++
++  async function runHandle(handle: Handle): Promise<void> {
++    try {
++      let input = handle.current;
++      while (input !== null && !handle.stopRequested) {
++        const startRun = startRunRefOf(input);
++        const result = startRun === null
++          ? await dependencies.workflow.advanceWork(loopContext(handle), input)
++          : await runWithPump(handle, startRun, input);
++        // Record the REAL receipt/Run BEFORE honoring a concurrent stop, so a Run
++        // claimed/prepared while stop was requested is never lost.
++        handle.last = result;
++        if (result.status === 'ready') {
++          const observedRun = receiptRunRefOf(result) ?? startRunRefOf(result.value.next);
++          if (observedRun !== null) handle.currentRun = structuredClone(observedRun);
++        }
++        if (handle.stopRequested) break;
++        if (result.status !== 'ready') {
++          handle.state = 'failed';
++          handle.reason = result.reason;
++          return;
++        }
++        const value = result.value;
++        if (value.state === 'completed') { handle.state = 'completed'; handle.reason = null; return; }
++        if (value.state === 'waiting') { handle.state = 'waiting'; handle.reason = value.reason; return; }
++        if (value.next === null) { handle.state = 'waiting'; handle.reason = 'the Workflow returned no next step'; return; }
++        handle.current = value.next;
++        input = value.next;
++      }
++    } catch (error) {
++      if (!handle.stopRequested) {
++        handle.state = 'failed';
++        handle.reason = `the Workflow advancement failed: ${messageOf(error)}`;
++      }
++    } finally {
++      handle.current = null;
++      // A stop drain owns the final `stopped` transition; never claim it here.
++      if (!handle.stopRequested && (handle.state === 'running' || handle.state === 'waiting_for_reply')) {
++        handle.state = 'waiting';
++      }
++    }
++  }
++
++  /** Submit + deliver the formal cancel for the still-open original Run. */
++  async function requestCancel(handle: Handle): Promise<void> {
++    const runRef = handle.currentRun;
++    if (runRef === null) return;
++    let read: ReadResult<TaskExecutionRecord>;
++    try {
++      read = await dependencies.executions.readExecution(independentContext(handle), runRef);
++    } catch {
++      handle.reason = 'the original Run could not be read to confirm the cancel';
++      return;
++    }
++    if (read.status !== 'ready') { handle.reason = 'the original Run facts were not readable to confirm the cancel'; return; }
++    const run = read.value.run;
++    if (run.status === 'ended' || run.outcome !== null) return;
++    const request: Parameters<RunControlPort['submitControl']>[1] = {
++      input: { runRef, kind: 'cancel', reason: handle.stopReason ?? 'the collaboration driver stopped' },
++      meta: { requestId: `collab-cancel:${sha256Hex(canonicalJson(runRef as unknown as JsonValue))}`,
++        expected: [{ ref: runRef, revision: run.revision }] },
++    };
++    let submitted;
++    try {
++      submitted = await dependencies.controls.submitControl(independentContext(handle), request);
++    } catch (error) {
++      handle.reason = `submitting the cancel failed: ${messageOf(error)}`;
++      return;
++    }
++    if (submitted.status !== 'committed') {
++      handle.reason = `the cancel was not accepted: ${submitted.reason}`;
++      return;
++    }
++    if (dependencies.runtime.deliverControl === undefined) {
++      handle.reason = 'the cancel intent is durable, but the Runtime has no control delivery to confirm it';
++      return;
++    }
++    try {
++      const delivered = await dependencies.runtime.deliverControl(
++        independentContext(handle), { intentRef: submitted.value.intent.ref });
++      if (delivered.status !== 'ready') {
++        handle.reason = `the cancel intent is queued but was not delivered: ${delivered.status}`;
++        return;
++      }
++    } catch (error) {
++      handle.reason = `delivering the cancel failed: ${messageOf(error)}`;
++      return;
++    }
++    // Confirm against the ORIGINAL Run facts; a queued intent for a Run that has
++    // not reached the Kernel is honestly reported as unconfirmed, never faked.
++    let confirm: ReadResult<TaskExecutionRecord>;
++    try {
++      confirm = await dependencies.executions.readExecution(independentContext(handle), runRef);
++    } catch {
++      handle.reason = 'the cancel was delivered, but the Run could not be re-read to confirm it';
++      return;
++    }
++    if (confirm.status === 'ready' && confirm.value.run.status === 'ended' && confirm.value.run.outcome === 'cancelled') {
++      handle.reason = null;
++    } else {
++      handle.reason = 'the driver stopped, but the original Run did not confirm cancellation; its occupancy is left untouched';
++    }
++  }
++
++  function stopHandle(handle: Handle): Promise<void> {
++    if (handle.stopDrain !== null) return handle.stopDrain;
++    if (isTerminal(handle.state)) return Promise.resolve();
++    handle.stopRequested = true;
++    handle.stopReason ??= 'the collaboration driver was asked to stop';
++    handle.state = 'stopping';
++    handle.activePumpAbort?.abort('driver_stopped');
++    handle.stopDrain = (async () => {
++      // Cancel the currently-known Run, let the loop drain (a Run claimed while
++      // stopping is recorded by the loop before it breaks), then do the final
++      // cancel for that late Run. Only then does `stopped` become true.
++      await requestCancel(handle);
++      await handle.done.catch(() => { /* the loop stored its own reason */ });
++      await requestCancel(handle);
++      if (!isTerminal(handle.state)) handle.state = 'stopped';
++    })();
++    return handle.stopDrain;
++  }
++
++  return {
++    async start(ctx, input) {
++      if (!nonEmpty(ctx.projectId) || !nonEmpty(ctx.workspaceId)) {
++        return rejected('forbidden', 'the collaboration driver requires a bound project/workspace context');
++      }
++      const advance = (() => { try { return structuredClone(input?.advance); } catch { return null; } })();
++      if (!isRecord(advance) || !isGoalRef(advance['goalRef'])) {
++        return rejected('invalid', 'driver start requires a complete WorkflowAdvanceInput');
++      }
++      const goalRef = advance['goalRef'];
++      if (goalRef.projectId !== ctx.projectId) return rejected('forbidden', 'the driver Goal is outside the bound project');
++      const requested = Array.isArray(input?.queryProfileIds) ? input.queryProfileIds.filter(nonEmpty) : [];
++      const profiles = selectProfiles(ctx.projectId, ctx.workspaceId!, requested);
++      const typedAdvance = advance as unknown as WorkflowAdvanceInput;
++      const seedMaterial = { advance: typedAdvance, queryProfileIds: [...requested].sort() };
++      const seed = canonicalOf(seedMaterial) ?? sha256Hex(canonicalJson(seedMaterial as unknown as JsonValue));
++      const key = goalKey(ctx.projectId, ctx.workspaceId!, goalRef.goalId);
++      const existing = handles.get(key);
++      if (existing !== undefined) {
++        // Same seed always replays the ORIGINAL snapshot without a model call,
++        // even after the owner returned `waiting`.
++        if (existing.seed === seed) return { status: 'ready', value: snapshot(existing) };
++        if (isActive(existing.state)) return rejected('busy', 'another collaboration advancement is already active for this Goal');
++      }
++      const handle: Handle = {
++        key, projectId: ctx.projectId, workspaceId: ctx.workspaceId!,
++        goalRef: structuredClone(goalRef), flowId: typedAdvance.flowId, seed, profiles,
++        context: snapshotContext(ctx),
++        state: 'running', current: structuredClone(typedAdvance), last: null, reason: null,
++        messages: [], messageKeys: new Set(), currentRun: null,
++        stopRequested: false, stopReason: null, abort: new AbortController(),
++        activePumpAbort: null, stopDrain: null, done: Promise.resolve(),
++      };
++      handles.set(key, handle);
++      handle.done = runHandle(handle);
++      return { status: 'ready', value: snapshot(handle) };
++    },
++    async read(ctx, input) {
++      if (!nonEmpty(ctx.projectId) || !nonEmpty(ctx.workspaceId)) {
++        return rejected('forbidden', 'the driver read requires a bound scope');
++      }
++      const goalRef = input?.goalRef;
++      if (!isGoalRef(goalRef) || goalRef.projectId !== ctx.projectId) {
++        return rejected('invalid', 'driver read requires a complete in-project GoalRef');
++      }
++      const handle = handles.get(goalKey(ctx.projectId, ctx.workspaceId!, goalRef.goalId));
++      if (handle === undefined) return { status: 'not_found' };
++      return { status: 'ready', value: snapshot(handle) };
++    },
++    async stop(ctx, input) {
++      if (!nonEmpty(ctx.projectId) || !nonEmpty(ctx.workspaceId)) {
++        return rejected('forbidden', 'the driver stop requires a bound scope');
++      }
++      const goalRef = input?.goalRef;
++      if (!isGoalRef(goalRef) || goalRef.projectId !== ctx.projectId) {
++        return rejected('invalid', 'driver stop requires a complete in-project GoalRef');
++      }
++      const handle = handles.get(goalKey(ctx.projectId, ctx.workspaceId!, goalRef.goalId));
++      if (handle === undefined) return { status: 'not_found' };
++      if (isTerminal(handle.state)) return { status: 'ready', value: snapshot(handle) };
++      // Returns immediately with `stopping`; the cancel and the original-promise
++      // drain settle in the background and only then become `stopped`.
++      void stopHandle(handle);
++      return { status: 'ready', value: snapshot(handle) };
++    },
++    async close() {
++      const all = [...handles.values()];
++      handles.clear();
++      await Promise.all(all.map(handle => stopHandle(handle).catch(() => { /* close still drains */ })));
++    },
++  };
++}
+--- before/src/app/host.ts
++++ after/src/app/host.ts
+@@ -19,6 +19,7 @@
+ import type { WorkspaceRef } from '../contracts/ledger.js';
+ import type { WorkspaceResult } from '../core/workspace/ports.js';
+ import { createPlatformCoreRouteBindings } from './core-routes.js';
++import { createCollaborationDriver } from './collaboration-driver.js';
+ import type { BootstrapExecution, BootstrapResponse, BootstrapReviewMaterial, CoreScope, WorkbenchActor } from './core-http-types.js';
+ import {
+   createWorkbenchRuntimeHostBindings,
+@@ -205,6 +206,20 @@
+     sourcePolicyFor,
+   });
+ 
++  // The AG2b collaboration driver is a Host-layer handle over the ONE platform
++  // above. It owns its own background signal (never the browser HTTP request)
++  // and uses only the trusted startup Query profiles; every other fact stays on
++  // the original Workflow/Runtime/mailbox/control owners.
++  const collaborationDriver = createCollaborationDriver({
++    workflow: platform.workflow,
++    runtime: platform.runtime,
++    sessions: platform.sessions,
++    executions: platform.executions,
++    mailbox: platform.messages,
++    controls: platform.controls,
++    profiles: runtimeConfiguration?.queryProfiles ?? [],
++  });
++
+   // The safe display projection is computed from the frozen startup material
+   // only. It carries no binding, grant, model, baseUrl, option, environment name,
+   // secret, root or client, and an unconfigured Host publishes empty arrays.
+@@ -237,7 +252,7 @@
+   // The real route bindings share the ONE platform instance assembled above.
+   const server: WorkbenchServer = createWorkbenchServer({
+     token,
+-    bindings: createPlatformCoreRouteBindings(platform),
++    bindings: createPlatformCoreRouteBindings(platform, collaborationDriver),
+     actor,
+     bootstrap,
+     allowedScopes: workspaces.map(workspace => workspace.scope),
+@@ -258,6 +273,9 @@
+     close(): Promise<void> {
+       closePromise ??= (async () => {
+         await server.close();
++        // Drain the Host-owned collaboration handles (their own signals) BEFORE
++        // the platform stores close; this never depends on a browser request.
++        await collaborationDriver.close();
+         await platform.close();
+       })();
+       return closePromise;
+--- before/src/app/core-routes.ts
++++ after/src/app/core-routes.ts
+@@ -27,6 +27,7 @@
+ import type { MaterialPort } from '../core/work-graph/materials/contracts.js';
+ import type { QueryJobPort } from '../core/work-graph/queries/contracts.js';
+ import type { WorkflowPort } from '../business/workflow/ports.js';
++import type { CollaborationDriverPort } from './collaboration-driver.js';
+ import {
+   type CoreRouteKind,
+   type CoreRouteSuffix,
+@@ -63,6 +64,7 @@
+   readInbox: SessionMailboxPort['readInbox'];
+   readMessage: SessionMailboxPort['readMessage'];
+   readMessageBody: SessionMailboxPort['readMessageBody'];
++  readOutbox: NonNullable<SessionMailboxPort['readOutbox']>;
+   // R6 execution-entry routes: one named binding per new suffix.
+   readWorkspaceRegistration: ProjectRegistrationPort['readWorkspaceRegistration'];
+   submitQueryJob: QueryJobPort['submitQueryJob'];
+@@ -76,6 +78,12 @@
+   handleGoalInput: WorkflowPort['handleGoalInput'];
+   advanceWork: WorkflowPort['advanceWork'];
+   consumeConsultation: NonNullable<WorkflowPort['consumeConsultation']>;
++  // AG2b collaboration driver: the Host-layer handle lifetime, one binding per
++  // exact driver method. A Host without a driver keeps the routes published but
++  // explicitly unsupported.
++  driverStart: CollaborationDriverPort['start'];
++  driverRead: CollaborationDriverPort['read'];
++  driverStop: CollaborationDriverPort['stop'];
+   // R6 Task-execution -> original Session/history reads: one binding per owner.
+   readExecution: ExecutionReadPort['readExecution'];
+   readTaskExecutionHistory: RuntimeExecutionPort['readTaskExecutionHistory'];
+@@ -99,7 +107,8 @@
+   runtime: Pick<RuntimeExecutionPort,
+     'capabilities' | 'createSession' | 'readSessionHistory' | 'readTaskExecutionHistory'>
+     & Required<Pick<RuntimeExecutionPort, 'prepareQuery' | 'startQuery' | 'observeQuery'>>;
+-  messages: Pick<SessionMailboxPort, 'sendMessage' | 'readInbox' | 'readMessage' | 'readMessageBody'>;
++  messages: Pick<SessionMailboxPort, 'sendMessage' | 'readInbox' | 'readMessage' | 'readMessageBody'>
++    & Required<Pick<SessionMailboxPort, 'readOutbox'>>;
+   queries: QueryJobPort;
+   materials: Pick<MaterialPort, 'openArtifact'>;
+   workflow: WorkflowPort & Required<Pick<WorkflowPort, 'consumeConsultation'>>;
+@@ -140,6 +149,7 @@
+   'sessions/history': { kind: 'plain', binding: 'readSessionHistory', owner: 'runtime.readSessionHistory' },
+   'messages/send': { kind: 'graph_write', binding: 'sendMessage', owner: 'messages.sendMessage' },
+   'messages/inbox': { kind: 'plain', binding: 'readInbox', owner: 'messages.readInbox' },
++  'messages/outbox': { kind: 'plain', binding: 'readOutbox', owner: 'messages.readOutbox' },
+   'messages/read': { kind: 'plain', binding: 'readMessage', owner: 'messages.readMessage' },
+   'messages/body': { kind: 'plain', binding: 'readMessageBody', owner: 'messages.readMessageBody' },
+   'workspaces/registration': { kind: 'plain', binding: 'readWorkspaceRegistration', owner: 'projects.readWorkspaceRegistration' },
+@@ -154,6 +164,9 @@
+   'workflow/goal-input': { kind: 'plain', binding: 'handleGoalInput', owner: 'workflow.handleGoalInput' },
+   'workflow/advance': { kind: 'plain', binding: 'advanceWork', owner: 'workflow.advanceWork' },
+   'workflow/consultation': { kind: 'plain', binding: 'consumeConsultation', owner: 'workflow.consumeConsultation' },
++  'workflow/driver-start': { kind: 'plain', binding: 'driverStart', owner: 'collaboration.start' },
++  'workflow/driver-read': { kind: 'plain', binding: 'driverRead', owner: 'collaboration.read' },
++  'workflow/driver-stop': { kind: 'plain', binding: 'driverStop', owner: 'collaboration.stop' },
+   'executions/read': { kind: 'plain', binding: 'readExecution', owner: 'executions.readExecution' },
+   'executions/history': { kind: 'plain', binding: 'readTaskExecutionHistory', owner: 'runtime.readTaskExecutionHistory' },
+ };
+@@ -245,7 +258,14 @@
+  * services; the Host `ctx` (fixed actor/scope/signal) is supplied by the
+  * server, never by the request body.
+  */
+-export function createPlatformCoreRouteBindings(platform: CoreRoutePlatform): CoreRouteBindings {
++export function createPlatformCoreRouteBindings(platform: CoreRoutePlatform, driver?: CollaborationDriverPort): CoreRouteBindings {
++  // A Host that assembles no collaboration driver still publishes the exact
++  // routes, but every one answers an explicit `unsupported` instead of a fake
++  // success. The old composition never has to import the Host layer.
++  const unsupportedDriver = <T>(method: string): T => (async () => ({
++    status: 'rejected', code: 'unsupported',
++    reason: `the Host does not publish a collaboration driver (${method})`,
++  })) as unknown as T;
+   return {
+     createProject: platform.projects.createProject.bind(platform.projects),
+     registerWorkspace: platform.projects.registerWorkspace.bind(platform.projects),
+@@ -272,6 +292,7 @@
+     readSessionHistory: platform.runtime.readSessionHistory.bind(platform.runtime),
+     sendMessage: platform.messages.sendMessage.bind(platform.messages),
+     readInbox: platform.messages.readInbox.bind(platform.messages),
++    readOutbox: platform.messages.readOutbox.bind(platform.messages),
+     readMessage: platform.messages.readMessage.bind(platform.messages),
+     readMessageBody: platform.messages.readMessageBody.bind(platform.messages),
+     readWorkspaceRegistration: platform.projects.readWorkspaceRegistration.bind(platform.projects),
+@@ -286,6 +307,9 @@
+     handleGoalInput: platform.workflow.handleGoalInput.bind(platform.workflow),
+     advanceWork: platform.workflow.advanceWork.bind(platform.workflow),
+     consumeConsultation: platform.workflow.consumeConsultation.bind(platform.workflow),
++    driverStart: driver === undefined ? unsupportedDriver('start') : driver.start.bind(driver),
++    driverRead: driver === undefined ? unsupportedDriver('read') : driver.read.bind(driver),
++    driverStop: driver === undefined ? unsupportedDriver('stop') : driver.stop.bind(driver),
+     readExecution: platform.executions.readExecution.bind(platform.executions),
+     readTaskExecutionHistory: platform.runtime.readTaskExecutionHistory.bind(platform.runtime),
+   };
+@@ -356,6 +380,7 @@
+       case 'sessions/history': return bindings.readSessionHistory(ctx, plain.input as never);
+       case 'messages/send': return bindings.sendMessage(ctx, graphWrite.request as never);
+       case 'messages/inbox': return bindings.readInbox(ctx, plain.input as never);
++      case 'messages/outbox': return bindings.readOutbox(ctx, plain.input as never);
+       case 'messages/read': return bindings.readMessage(ctx, plain.input as never);
+       case 'messages/body': return bindings.readMessageBody(ctx, plain.input as never);
+       case 'workspaces/registration': return bindings.readWorkspaceRegistration(ctx, plain.input as never);
+@@ -370,6 +395,9 @@
+       case 'workflow/goal-input': return bindings.handleGoalInput(ctx, plain.input as never);
+       case 'workflow/advance': return bindings.advanceWork(ctx, plain.input as never);
+       case 'workflow/consultation': return bindings.consumeConsultation(ctx, plain.input as never);
++      case 'workflow/driver-start': return bindings.driverStart(ctx, plain.input as never);
++      case 'workflow/driver-read': return bindings.driverRead(ctx, plain.input as never);
++      case 'workflow/driver-stop': return bindings.driverStop(ctx, plain.input as never);
+       case 'executions/read': return bindings.readExecution(ctx, plain.input as never);
+       case 'executions/history': return bindings.readTaskExecutionHistory(ctx, plain.input as never);
+     }
+--- before/src/app/core-http-types.ts
++++ after/src/app/core-http-types.ts
+@@ -39,6 +39,7 @@
+ import type { QueryJobPort, QueryExecutionRecord } from '../core/work-graph/queries/contracts.js';
+ import type { MaterialPort } from '../core/work-graph/materials/contracts.js';
+ import type { WorkflowPort } from '../business/workflow/ports.js';
++import type { CollaborationDriverPort } from './collaboration-driver.js';
+ import type { InitialPlanningGoalInputResult, WorkflowAdvanceResult, WorkflowStepReceipt } from '../business/workflow/contracts.js';
+ 
+ /** The project/workspace navigation scope. It is a real domain scope, not a
+@@ -96,6 +97,7 @@
+   | 'messages/inbox'
+   | 'messages/read'
+   | 'messages/body'
++  | 'messages/outbox'
+   | 'workspaces/registration'
+   | 'queries/submit'
+   | 'queries/read'
+@@ -108,6 +110,9 @@
+   | 'workflow/goal-input'
+   | 'workflow/advance'
+   | 'workflow/consultation'
++  | 'workflow/driver-start'
++  | 'workflow/driver-read'
++  | 'workflow/driver-stop'
+   | 'executions/read'
+   | 'executions/history';
+ 
+@@ -188,6 +193,8 @@
+ export type MessagesReadResponse = RouteResponse<SessionMailboxPort['readMessage']>;
+ export type MessagesBodyBody = PlainBody<SessionMailboxPort['readMessageBody']>;
+ export type MessagesBodyResponse = RouteResponse<SessionMailboxPort['readMessageBody']>;
++export type MessagesOutboxBody = PlainBody<NonNullable<SessionMailboxPort['readOutbox']>>;
++export type MessagesOutboxResponse = RouteResponse<NonNullable<SessionMailboxPort['readOutbox']>>;
+ 
+ // ---------------------------------------------------------------------------
+ // R6 execution-entry routes: each alias is derived from the exact public owner
+@@ -223,6 +230,15 @@
+  * always publishes it, so the NonNullable derivation is the real DTO. */
+ export type WorkflowConsultationBody = PlainBody<NonNullable<WorkflowPort['consumeConsultation']>>;
+ export type WorkflowConsultationResponse = RouteResponse<NonNullable<WorkflowPort['consumeConsultation']>>;
++// AG2b collaboration driver: the three plain routes derive their bodies and
++// responses from the exact frozen driver methods, so the DTO never restates a
++// domain shape.
++export type WorkflowDriverStartBody = PlainBody<CollaborationDriverPort['start']>;
++export type WorkflowDriverStartResponse = RouteResponse<CollaborationDriverPort['start']>;
++export type WorkflowDriverReadBody = PlainBody<CollaborationDriverPort['read']>;
++export type WorkflowDriverReadResponse = RouteResponse<CollaborationDriverPort['read']>;
++export type WorkflowDriverStopBody = PlainBody<CollaborationDriverPort['stop']>;
++export type WorkflowDriverStopResponse = RouteResponse<CollaborationDriverPort['stop']>;
+ 
+ // ---------------------------------------------------------------------------
+ // R6 Task-execution -> original Session/history consumer routes. Both suffixes
+@@ -255,6 +271,7 @@
+ export type { PreparedQueryExecution } from '../contracts/core/prepared-execution.js';
+ export type { InitialPlanningGoalInputResult, WorkflowAdvanceResult, WorkflowStepReceipt,
+   ConsultationInput, ConsultationResult } from '../business/workflow/contracts.js';
++export type { CollaborationDriverPort, CollaborationSnapshot, CollaborationState } from './collaboration-driver.js';
+ 
+ /** Explicitly unsupported capability gap surfaced verbatim to the browser. */
+ export type UnsupportedResponse = CoreRejection & { status: 'rejected'; code: 'unsupported' };
+--- before/src/core/work-graph/communication/contracts.ts
++++ after/src/core/work-graph/communication/contracts.ts
+@@ -98,6 +98,20 @@
+   status: SessionMessageStatus;
+   readAt: string | null;
+   response: MessageResponse | null;
++  /**
++   * Optional explicit reply expectation. ABSENT is the entire historical
++   * fire-and-forget behavior; the ONLY accepted value is `'wait'`, which asks a
++   * Host driver to consume the eventual saved answer in the original Run. It is
++   * persisted with the message so a reopened Host still sees the original ask.
++   */
++  replyMode?: 'wait';
++};
++
++/** One keyset page shared by the inbox and the sender-Run outbox. */
++export type SessionMessagePage = {
++  items: SessionMessage[];
++  nextCursor: string | null;
++  sourceCursor: CommitCursor;
+ };
+ 
+ /**
+@@ -121,7 +135,7 @@
+ export interface SessionMailboxPort {
+   sendMessage(
+     ctx: CoreCallContext,
+-    request: GraphWrite<{ recipient: SessionRef; text: string }>,
++    request: GraphWrite<{ recipient: SessionRef; text: string; replyMode?: 'wait' }>,
+   ): Promise<WriteResult<SessionMessage>>;
+   readMessage(ctx: CoreCallContext, ref: SessionMessageRef): Promise<ReadResult<SessionMessage>>;
+   readMessageBody(
+@@ -135,7 +149,20 @@
+       status?: SessionMessageStatus;
+       page: { limit: number; cursor?: string; atLeastCursor?: CommitCursor };
+     },
+-  ): Promise<ReadResult<{ items: SessionMessage[]; nextCursor: string | null; sourceCursor: CommitCursor }>>;
++  ): Promise<ReadResult<SessionMessagePage>>;
++  /**
++   * Host/sender-Run outbox read: the SAME keyset page shape as `readInbox`, but
++   * keyed by the ORIGINAL sender Work Run (complete scope + RunRef) through its
++   * own registered lookup. The Host may read a same-workspace Run; a work_run
++   * caller may read only its own Run. It never acks, wakes or reorders a Session.
++   */
++  readOutbox?(
++    ctx: CoreCallContext,
++    input: {
++      senderRun: RunRef;
++      page: { limit: number; cursor?: string; atLeastCursor?: CommitCursor };
++    },
++  ): Promise<ReadResult<SessionMessagePage>>;
+   ackMessage(
+     ctx: CoreCallContext,
+     request: GraphWrite<{ messageRef: SessionMessageRef }>,
+--- before/src/core/work-graph/communication/message-record-codecs.ts
++++ after/src/core/work-graph/communication/message-record-codecs.ts
+@@ -42,6 +42,10 @@
+ /** Registered lookup index names (`core/record-store/lookup-ports.ts`). */
+ export const SESSION_MESSAGE_BY_RECIPIENT_LOOKUP = 'session-message-by-recipient';
+ export const SESSION_MESSAGE_BY_RECIPIENT_STATUS_LOOKUP = 'session-message-by-recipient-status';
++/** The sender Work Run outbox index: complete scope + the nested RunRef. A host
++ * sender has no `sender.runRef`, so its missing scalar paths are null and never
++ * become a candidate of a concrete Run query. */
++export const SESSION_MESSAGE_BY_SENDER_RUN_LOOKUP = 'session-message-by-sender-run';
+ 
+ /**
+  * Fixed body contentType for the canonical JSON envelope:
+@@ -66,6 +70,11 @@
+     aggregateType: 'SessionMessage',
+     paths: ['ref.projectId', 'ref.workspaceId', 'recipient.sessionId', 'status'],
+   },
++  {
++    name: SESSION_MESSAGE_BY_SENDER_RUN_LOOKUP,
++    aggregateType: 'SessionMessage',
++    paths: ['ref.projectId', 'ref.workspaceId', 'sender.runRef.goalId', 'sender.runRef.runId'],
++  },
+ ];
+ 
+ // --------------------------------------------------------------------------
+@@ -271,7 +280,7 @@
+ 
+ const MESSAGE_KEYS: readonly string[] = [
+   'ref', 'schemaVersion', 'revision', 'sender', 'recipient', 'bodyRef', 'sourceRef',
+-  'createdAt', 'status', 'readAt', 'response',
++  'createdAt', 'status', 'readAt', 'response', 'replyMode',
+ ];
+ 
+ export function checkSessionMessageBody(body: UnknownRecord): Problem {
+@@ -295,6 +304,8 @@
+   }
+   const readAt = body['readAt'];
+   if (!(readAt === null || nonEmpty(readAt))) return 'SessionMessage readAt must be null or a non-empty string';
++  const replyMode = body['replyMode'];
++  if (replyMode !== undefined && replyMode !== 'wait') return 'SessionMessage replyMode must be omitted or wait';
+   const response = body['response'];
+   if (response !== null) {
+     const responseProblem = checkMessageResponse(response);
+--- before/src/core/work-graph/communication/mailbox-service.ts
++++ after/src/core/work-graph/communication/mailbox-service.ts
+@@ -40,7 +40,7 @@
+ import type { SessionRecord } from '../../../contracts/core/session.js';
+ import type { PreparedTaskManifestV1 } from '../../../contracts/core/prepared-execution.js';
+ import type { CoreError, CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
+-import type { RunSnapshot } from '../../../contracts/dispatch.js';
++import type { RunRef, RunSnapshot } from '../../../contracts/dispatch.js';
+ import { consultationQueryRefs } from '../../../contracts/query-job.js';
+ import type { QueryJobAnswerRef, QueryJobAnswerSnapshot, QueryJobRef, QueryJobSnapshot, QueryRunRef, QueryRunSnapshot } from '../../../contracts/query-job.js';
+ import type { MessageQueryAnswerSender, MessageSender, MessageWorkRunSender, SessionMailboxDependencies, SessionMailboxPort, SessionMessage, SessionMessageStatus } from './contracts.js';
+@@ -58,6 +58,7 @@
+ import { decodeRun } from '../tasks/run-state-service.js';
+ import {
+   SESSION_MESSAGE_BY_RECIPIENT_LOOKUP, SESSION_MESSAGE_BY_RECIPIENT_STATUS_LOOKUP,
++  SESSION_MESSAGE_BY_SENDER_RUN_LOOKUP,
+   SESSION_MESSAGE_CONTENT_TYPE, SESSION_MESSAGE_MAX_TEXT_BYTES,
+   checkMessageSender, checkSessionMessageRef, decodeSessionMessageRecord,
+   encodeSessionMessageReadEvent, encodeSessionMessageRecord, encodeSessionMessageRespondedEvent,
+@@ -373,10 +374,48 @@
+ }
+ 
+ // --------------------------------------------------------------------------
++// Outbox cursor: binds scope, the exact sender Run, the caller and the after
++// key only. It is a SEPARATE cursor namespace from the inbox.
++// --------------------------------------------------------------------------
++
++type OutboxCursorV1 = {
++  v: 1;
++  projectId: string;
++  workspaceId: string;
++  senderRun: RunRef;
++  callerKey: string;
++  after: string;
++};
++
++function encodeOutboxCursor(cursor: OutboxCursorV1): string {
++  return Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url');
++}
++function decodeOutboxCursor(raw: string): OutboxCursorV1 | null {
++  let parsed: unknown;
++  try {
++    parsed = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8'));
++  } catch {
++    return null;
++  }
++  if (!isObject(parsed) || parsed['v'] !== 1) return null;
++  const { projectId, workspaceId, senderRun, callerKey, after } = parsed;
++  if (!nonEmpty(projectId) || !nonEmpty(workspaceId) || !nonEmpty(callerKey) || !nonEmpty(after)) return null;
++  if (!isRunRef(senderRun)) return null;
++  const run = senderRun as RunRef;
++  return {
++    v: 1, projectId, workspaceId,
++    senderRun: {
++      aggregateType: 'Run', projectId: run.projectId, goalId: run.goalId, runId: run.runId,
++    },
++    callerKey, after,
++  };
++}
++
++// --------------------------------------------------------------------------
+ // The factory
+ // --------------------------------------------------------------------------
+ 
+-export function createSessionMailbox(deps: SessionMailboxDependencies): SessionMailboxPort & Required<Pick<SessionMailboxPort, 'respondFromQueryAnswer'>> {
++export function createSessionMailbox(deps: SessionMailboxDependencies): SessionMailboxPort & Required<Pick<SessionMailboxPort, 'respondFromQueryAnswer' | 'readOutbox'>> {
+   const records = deps.records;
+   const MIN_CURSOR: CommitCursor = makeCommitCursor(1);
+ 
+@@ -998,7 +1037,7 @@
+ 
+   // ---- sendMessage --------------------------------------------------------
+ 
+-  async function sendMessage(ctx: CoreCallContext, request: GraphWrite<{ recipient: SessionRef; text: string }>): Promise<WriteResult<SessionMessage>> {
++  async function sendMessage(ctx: CoreCallContext, request: GraphWrite<{ recipient: SessionRef; text: string; replyMode?: 'wait' }>): Promise<WriteResult<SessionMessage>> {
+     const owned = ownContext(ctx);
+     if (!owned.ok) return owned.rejection;
+     if (owned.signal.aborted) return reject('cancelled', 'the send was cancelled before validation');
+@@ -1012,6 +1051,10 @@
+     if (recipient.projectId !== owned.projectId) return reject('forbidden', 'the recipient Session belongs to another project');
+     const text = normalizeText(raw['text']);
+     if (!text.ok) return text.rejection;
++    const replyMode = raw['replyMode'];
++    if (replyMode !== undefined && replyMode !== 'wait') {
++      return reject('invalid', 'the send replyMode must be omitted or wait');
++    }
+     if (write.expected.length !== 0) return reject('invalid', 'sendSessionMessage must not carry version pins');
+ 
+     let sender: MessageSender;
+@@ -1030,7 +1073,11 @@
+     }
+     const senderIdentity = senderIdentityOf(sender);
+     const identityKey = identityKeyOf('send', owned, senderIdentity, write.requestId);
+-    const fingerprint = fingerprintOf('send', owned, senderIdentity, { recipient, text: text.text }, write.expected);
++    // The reply expectation is part of the request identity ONLY when it is
++    // explicitly present: an omitted replyMode keeps the exact historical
++    // fingerprint, so every existing fire-and-forget send replays unchanged.
++    const fingerprint = fingerprintOf('send', owned, senderIdentity,
++      { recipient, text: text.text, ...(replyMode === undefined ? {} : { replyMode }) }, write.expected);
+ 
+     if (owned.signal.aborted) return reject('cancelled', 'the send was cancelled before the idempotency lookup');
+     const existing = await records.lookupCommit({ identityKey, fingerprint });
+@@ -1087,6 +1134,7 @@
+       status: 'pending',
+       readAt: null,
+       response: null,
++      ...(replyMode === undefined ? {} : { replyMode }),
+     };
+     const event: SessionMessageSentEventV1 = {
+       eventId: eventIdOf(identityKey, 'sent'),
+@@ -1348,6 +1396,130 @@
+     return { status: 'ready', value: { items, nextCursor, sourceCursor: readThrough } };
+   }
+ 
++  // ---- readOutbox ---------------------------------------------------------
++
++  /**
++   * Read the messages SENT BY one exact Work Run. It mirrors `readInbox`'s
++   * keyset/atLeast contract over the registered sender-Run index: a Host caller
++   * may read a same-workspace Run, a work_run caller only its own Run. It never
++   * acks, wakes or reorders a Session and never scans all Sessions.
++   */
++  async function readOutbox(ctx: CoreCallContext, input: {
++    senderRun: RunRef;
++    page: { limit: number; cursor?: string; atLeastCursor?: CommitCursor };
++  }): Promise<ReadResult<{ items: SessionMessage[]; nextCursor: string | null; sourceCursor: CommitCursor }>> {
++    const owned = ownContext(ctx);
++    if (!owned.ok) return owned.rejection;
++    const raw = input as unknown as Unknown | null | undefined;
++    if (!isObject(raw)) return reject('invalid', 'readOutbox requires an input object');
++    if (Object.keys(raw).some((key) => key !== 'senderRun' && key !== 'page')) {
++      return reject('invalid', 'readOutbox does not accept extra fields');
++    }
++    if (!isRunRef(raw['senderRun'])) return reject('invalid', 'readOutbox requires a complete RunRef');
++    let senderRun: RunRef;
++    try { senderRun = structuredClone(raw['senderRun']) as RunRef; }
++    catch { return reject('invalid', 'the outbox sender Run cannot be isolated from the caller'); }
++    if (senderRun.projectId !== owned.projectId) return reject('forbidden', 'the outbox Run belongs to another project');
++    const page = raw['page'];
++    if (!isObject(page)) return reject('invalid', 'readOutbox requires a page object');
++    if (Object.keys(page).some((key) => key !== 'limit' && key !== 'cursor' && key !== 'atLeastCursor')) {
++      return reject('invalid', 'readOutbox page does not accept extra fields');
++    }
++    const limit = page['limit'];
++    if (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1 || limit > 100) {
++      return reject('invalid', 'readOutbox limit must be an integer between 1 and 100');
++    }
++    const rawCursor = page['cursor'];
++    const rawAtLeast = page['atLeastCursor'];
++    if (rawCursor !== undefined && !nonEmpty(rawCursor)) {
++      return reject('invalid', 'the outbox cursor must be a non-empty string');
++    }
++    let decodedCursor: OutboxCursorV1 | null = null;
++    if (rawCursor !== undefined) {
++      decodedCursor = decodeOutboxCursor(rawCursor);
++      if (decodedCursor === null) return reject('invalid', 'the outbox cursor is not a valid continuation token');
++      if (decodedCursor.projectId !== owned.projectId || decodedCursor.workspaceId !== owned.workspaceId
++        || canonicalOf(decodedCursor.senderRun) !== canonicalOf(senderRun)) {
++        return reject('invalid', 'the outbox cursor belongs to another scope or sender Run');
++      }
++    }
++    let atLeastSeq: number | undefined;
++    if (rawAtLeast !== undefined) {
++      const parsed = cursorSequence(rawAtLeast);
++      if (parsed === null) return reject('invalid', 'atLeastCursor is not a ledger commit cursor');
++      atLeastSeq = parsed;
++    }
++    const after = decodedCursor?.after;
++
++    let callerKey: string;
++    if (owned.principal.kind === 'host') {
++      callerKey = canonicalOf({ kind: 'host', actor: { ...owned.principal.actor } }) ?? '';
++    } else if (owned.principal.kind === 'work_run') {
++      const identity = await readWorkRunIdentity(owned, owned.principal, owned.principal.runRef);
++      if (!identity.ok) return identity.rejection;
++      if (canonicalOf(identity.run.ref) !== canonicalOf(senderRun)) {
++        return reject('forbidden', 'a work_run outbox read is limited to its own Run');
++      }
++      callerKey = canonicalOf({ kind: 'work_run', sessionRef: identity.claim.sessionRef, runRef: identity.run.ref }) ?? '';
++    } else {
++      return reject('forbidden', 'the mailbox reader principal is not supported');
++    }
++    if (decodedCursor !== null && decodedCursor.callerKey !== callerKey) {
++      return reject('invalid', 'the outbox cursor does not belong to the current caller');
++    }
++
++    const request: RecordLookupRequest = {
++      index: SESSION_MESSAGE_BY_SENDER_RUN_LOOKUP,
++      values: [owned.projectId, owned.workspaceId, senderRun.goalId, senderRun.runId],
++      limit,
++      ...(after === undefined ? {} : { after }),
++    };
++    let pageResult: StoreResult<{ records: EncodedRecord[]; next: string | null; readThrough: CommitCursor | null }>;
++    try {
++      pageResult = await records.lookup(request);
++    } catch {
++      return reject('unavailable', 'the outbox lookup failed');
++    }
++    if (pageResult.status !== 'ready') return mapStoreFailure(pageResult);
++    const readThrough = pageResult.value.readThrough;
++    if (atLeastSeq !== undefined) {
++      const observed = readThrough === null ? null : cursorSequence(readThrough);
++      if (observed === null || observed < atLeastSeq) {
++        return {
++          status: 'not_ready',
++          observed: readThrough === null ? null : { kind: 'platform', cursor: readThrough },
++          required: { kind: 'platform', cursor: rawAtLeast as CommitCursor },
++        };
++      }
++    }
++    if (readThrough === null) {
++      return { status: 'not_ready', observed: null, required: { kind: 'platform', cursor: MIN_CURSOR } };
++    }
++    const items: SessionMessage[] = [];
++    for (const record of pageResult.value.records) {
++      const decoded = decodeSessionMessageRecord(record);
++      if (decoded.status !== 'decoded') return reject('unavailable', `an outbox candidate is damaged: ${decoded.reason}`);
++      const message = decoded.value;
++      if (sessionMessageRefKey(message.ref) !== record.refKey
++        || message.ref.projectId !== owned.projectId
++        || message.ref.workspaceId !== owned.workspaceId
++        || message.sender.kind !== 'work_run'
++        || canonicalOf(message.sender.runRef) !== canonicalOf(senderRun)) {
++        return reject('unavailable', 'an outbox candidate disagrees with the requested sender Run');
++      }
++      items.push(message);
++    }
++    const nextCursor = pageResult.value.next === null ? null : encodeOutboxCursor({
++      v: 1,
++      projectId: owned.projectId,
++      workspaceId: owned.workspaceId,
++      senderRun,
++      callerKey,
++      after: pageResult.value.next,
++    });
++    return { status: 'ready', value: { items, nextCursor, sourceCursor: readThrough } };
++  }
++
+   // ---- ackMessage ---------------------------------------------------------
+ 
+   async function ackMessage(ctx: CoreCallContext, request: GraphWrite<{ messageRef: SessionMessageRef }>): Promise<WriteResult<SessionMessage>> {
+@@ -1664,5 +1836,5 @@
+     });
+   }
+ 
+-  return { sendMessage, readMessage, readMessageBody, readInbox, ackMessage, respondMessage, respondFromQueryAnswer };
+-}
++  return { sendMessage, readMessage, readMessageBody, readInbox, readOutbox, ackMessage, respondMessage, respondFromQueryAnswer };
++}
+--- before/src/core/agent-runtime/communication-tools.ts
++++ after/src/core/agent-runtime/communication-tools.ts
+@@ -41,6 +41,19 @@
+ 
+ export type SessionMailboxToolName = (typeof SESSION_MAILBOX_TOOL_NAMES)[number];
+ 
++/**
++ * The narrow read-only control verdict a replyMode wait may observe. It is NOT
++ * the coordinator's consuming `decide`: the wait only YIELDS the tool on a
++ * pause/cancel; the original tool-group barrier consumes the intent.
++ */
++export type SessionMailboxWaitControl = 'continue' | 'pause' | 'cancel';
++
++/** The business wait bound for one replyMode wait. `maxWaitMs` never exceeds
++ * the 300 s ceiling; `deadlineAtMs` is the EARLIEST absolute instant of the
++ * original Kernel run timeout and the persistent Task deadline, so no wait can
++ * re-acquire a fresh full Run timeout. */
++export type SessionMailboxWaitLimit = { maxWaitMs: number; deadlineAtMs: number | null };
++
+ export type SessionMailboxToolsConfig = {
+   mailbox: SessionMailboxPort;
+   /** Trusted, already-bound context. Snapshotted per call; never model JSON. */
+@@ -49,7 +62,35 @@
+   sessionRef: SessionRef;
+   /** Trusted command identity: Kernel `ToolCall.callId` + bound Run/operation. */
+   requestIdForCall: (call: Readonly<ToolCall>) => string;
++  /** Narrow read-only control check injected by the Runtime; absent keeps the
++   * historical single-shot send behavior. */
++  waitControl?: () => Promise<SessionMailboxWaitControl>;
++  /** The real remaining Run/deadline bound, read at each wait. */
++  waitLimit?: () => SessionMailboxWaitLimit;
++  /** Real clock; defaults to the wall clock (never a frozen display clock). */
++  now?: () => number;
++  /** Poll interval for one wait; defaults to 250 ms. */
++  waitPollMs?: number;
+ };
++
++/** The business wait ceiling: one wait must never exceed 300 s. */
++export const SESSION_MESSAGE_WAIT_MAX_MS = 300_000;
++/** The Kernel dispatcher timeout for `send_session_message`: the 300 s business
++ * ceiling plus at least five seconds of read-back/cleanup margin, so the handler
++ * returns its graceful waiting result BEFORE the dispatcher aborts the signal. */
++export const SESSION_MESSAGE_WAIT_DISPATCHER_TIMEOUT_MS = SESSION_MESSAGE_WAIT_MAX_MS + 10_000;
++const SESSION_MESSAGE_WAIT_POLL_MS = 250;
++
++/** Abort-aware sleep: resolves immediately when the tool/run signal aborts. */
++function sleepUntilWake(ms: number, signal: AbortSignal): Promise<void> {
++  return new Promise((resolvePromise) => {
++    if (signal.aborted) { resolvePromise(); return; }
++    const finish = (): void => { clearTimeout(timer); signal.removeEventListener('abort', onAbort); resolvePromise(); };
++    const onAbort = (): void => finish();
++    const timer = setTimeout(finish, Math.max(0, ms));
++    signal.addEventListener('abort', onAbort, { once: true });
++  });
++}
+ 
+ export type SessionMailboxToolsHandle = {
+   names: readonly string[];
+@@ -113,7 +154,7 @@
+     messageId: z.string().min(1),
+   }).strict();
+   const schemas: readonly z.ZodType[] = [
+-    z.object({ recipient: session, text: z.string().min(1) }).strict(),
++    z.object({ recipient: session, text: z.string().min(1), replyMode: z.literal('wait').optional() }).strict(),
+     z.object({
+       status: z.enum(['pending', 'read', 'responded']).optional(),
+       page: z.object({
+@@ -137,6 +178,50 @@
+       materialReader: structuredClone(config.context.materialReader),
+       signal,
+     };
++  }
++
++  const wallClock = (): number => Date.now();
++
++  /**
++   * The original replyMode='wait' branch. The message is ALREADY durably saved
++   * before this runs; a later timeout/control yield returns a real waiting fact
++   * and NEVER a send failure or a suggestion to mint a new message. Only THIS
++   * message is polled; no model, Session or query is started here.
++   */
++  async function waitForReply(callId: string, context: CoreCallContext, message: SessionMessage): Promise<ToolResult> {
++    const now = config.now ?? wallClock;
++    const pollMs = config.waitPollMs ?? SESSION_MESSAGE_WAIT_POLL_MS;
++    const startedAt = now();
++    let latest = message;
++    const waiting = (reason: string): ToolResult =>
++      success(callId, { message: latest, response: null, waiting: true, reason });
++    const remainingMs = (): number => {
++      const limit = config.waitLimit?.() ?? { maxWaitMs: SESSION_MESSAGE_WAIT_MAX_MS, deadlineAtMs: null };
++      let remaining = Math.min(limit.maxWaitMs, SESSION_MESSAGE_WAIT_MAX_MS) - (now() - startedAt);
++      if (limit.deadlineAtMs !== null) remaining = Math.min(remaining, limit.deadlineAtMs - now());
++      return remaining;
++    };
++    if (remainingMs() <= 0) return waiting('the Run wait budget or persistent deadline had already passed');
++    for (;;) {
++      if (context.signal.aborted) return cancelled(callId, 'the reply wait was cancelled');
++      const control = config.waitControl === undefined ? 'continue' : await config.waitControl();
++      if (control !== 'continue') return waiting(`the Run control requested ${control}`);
++      const read = await config.mailbox.readMessage(context, latest.ref);
++      if (read.status === 'ready') {
++        latest = read.value;
++        if (latest.status === 'responded' && latest.response !== null) {
++          const body = await config.mailbox.readMessageBody(context, { messageRef: latest.ref, part: 'response' });
++          if (body.status === 'ready') return success(callId, { message: latest, response: body.value });
++          if (body.status === 'rejected' && body.code === 'cancelled') return cancelledResult(callId, body.reason, body);
++          return rejectedResult(callId, body, 'the saved reply body is not readable');
++        }
++      } else if (read.status === 'rejected' && read.code === 'cancelled') {
++        return cancelledResult(callId, read.reason, read);
++      }
++      const remaining = remainingMs();
++      if (remaining <= 0) return waiting('the Run wait budget or persistent deadline was reached');
++      await sleepUntilWake(Math.min(pollMs, remaining), context.signal);
++    }
+   }
+ 
+   async function execute<Args>(
+@@ -187,7 +272,8 @@
+       // existing registration label that lets a legal query reach the handler.
+       // Writes stay non-read-only and are authorized through hostAuthorizedTools.
+       requiredCapabilities: readOnly ? ['workspace_read'] : [],
+-      defaultTimeoutMs: 10000,
++      defaultTimeoutMs: name === 'send_session_message'
++        ? SESSION_MESSAGE_WAIT_DISPATCHER_TIMEOUT_MS : 10000,
+       outputLimitBytes: 64 * 1024,
+       independentReadOnly: readOnly,
+       summarize: () => ({ paths: [], cwd: null, commandPreview: null }),
+@@ -196,12 +282,17 @@
+           return execute(call, options.signal, schema, async (args, requestId, context) => {
+             switch (name) {
+               case 'send_session_message': {
+-                const input = args as { recipient: SessionRef; text: string };
++                const input = args as { recipient: SessionRef; text: string; replyMode?: 'wait' };
+                 const result = await config.mailbox.sendMessage(context, {
+-                  input: { recipient: { ...input.recipient }, text: input.text },
++                  input: {
++                    recipient: { ...input.recipient }, text: input.text,
++                    ...(input.replyMode === undefined ? {} : { replyMode: input.replyMode }),
++                  },
+                   meta: { requestId, expected: [] },
+                 });
+-                return mapWrite(call.callId, result);
++                // An omitted replyMode keeps the untouched historical send result.
++                if (input.replyMode !== 'wait' || result.status !== 'committed') return mapWrite(call.callId, result);
++                return await waitForReply(call.callId, context, result.value);
+               }
+               case 'read_session_inbox': {
+                 const input = args as {
+--- before/src/core/agent-runtime/execution-driver.ts
++++ after/src/core/agent-runtime/execution-driver.ts
+@@ -23,7 +23,8 @@
+ import { runObservedModel } from './observed-model-run.js';
+ import type { SourceToolOptions } from './exploration-tools.js';
+ import type { RuntimeSourceCaptureFactory } from './source-tool-ports.js';
+-import { createSessionMailboxTools, SESSION_MAILBOX_TOOL_NAMES } from './communication-tools.js';
++import { createSessionMailboxTools, SESSION_MAILBOX_TOOL_NAMES, SESSION_MESSAGE_WAIT_MAX_MS,
++  type SessionMailboxWaitControl, type SessionMailboxWaitLimit } from './communication-tools.js';
+ import { createWhiteboardTools, WHITEBOARD_TOOL_NAMES } from './whiteboard-tools.js';
+ import { createSessionDiscoveryTools, SESSION_DISCOVERY_TOOL_NAMES } from './session-discovery-tools.js';
+ import { ModelBudget } from './model-budget.js';
+@@ -110,6 +111,10 @@
+   sessionRef: SessionRef;
+   goalRef: GoalRef;
+   requestIdForCall: (call: Readonly<ToolCall>) => string;
++  /** Narrow read-only control check for a replyMode wait (optional). */
++  waitControl?: () => Promise<SessionMailboxWaitControl>;
++  /** Real remaining Run/deadline bound for a replyMode wait (optional). */
++  waitLimit?: () => SessionMailboxWaitLimit;
+ }): { ok: true; value: CoordinationTools | null } | { ok: false; rejection: CoreRejection } {
+   const unknown = input.selected.filter(name => !BUILTIN_TOOL_NAMES.has(name) && !PLATFORM_COORDINATION_TOOL_NAMES.has(name));
+   if (unknown.length > 0) {
+@@ -132,6 +137,8 @@
+       context: input.context,
+       sessionRef: input.sessionRef,
+       requestIdForCall: input.requestIdForCall,
++      ...(input.waitControl === undefined ? {} : { waitControl: input.waitControl }),
++      ...(input.waitLimit === undefined ? {} : { waitLimit: input.waitLimit }),
+     }));
+   }
+   if (whiteboardNames.length > 0) {
+@@ -307,6 +314,15 @@
+         if (!nonEmpty(call.callId) || !nonEmpty(call.name)) throw new Error('the Kernel tool call carries no trusted identity');
+         return 'c2-tool:' + sha256Hex(canonicalJson({ runRef, sessionRef, operation: call.name, callId: call.callId } as never));
+       };
++      // The wait bound starts at the 300 s business ceiling. It is tightened
++      // below to the ABSOLUTE earliest of the Kernel run timeout and the
++      // persistent Task deadline, so no wait re-acquires a fresh full Run
++      // timeout and every wait shares the original execution start.
++      let waitLimit: SessionMailboxWaitLimit = {
++        maxWaitMs: SESSION_MESSAGE_WAIT_MAX_MS, deadlineAtMs: null,
++      };
++      const waitControl = control === undefined ? undefined
++        : async (): Promise<SessionMailboxWaitControl> => (await control.inspect(owned, runRef)).kind;
+       const coordination = selectCoordinationTools({
+         selected: manifest.permissions.tools,
+         mailbox: deps.messages,
+@@ -316,6 +332,8 @@
+         sessionRef,
+         goalRef,
+         requestIdForCall,
++        ...(waitControl === undefined ? {} : { waitControl }),
++        waitLimit: () => waitLimit,
+       });
+       if (!coordination.ok) return coordination.rejection;
+       const coordinationTools = coordination.value;
+@@ -641,6 +659,22 @@
+             return control.decide(owned, runRef);
+           };
+ 
++      // The Kernel execution start pins the absolute run budget. The business
++      // wait may never extend past it nor past the persistent Task deadline.
++      {
++        const kernelStartedAtMs = Date.now();
++        const candidates: number[] = [];
++        if (hostConfig.budget.timeoutMs !== null) candidates.push(kernelStartedAtMs + hostConfig.budget.timeoutMs);
++        if (record.run.budget.deadline !== null) {
++          const taskDeadlineMs = Date.parse(record.run.budget.deadline);
++          if (Number.isFinite(taskDeadlineMs)) candidates.push(taskDeadlineMs);
++        }
++        waitLimit = {
++          maxWaitMs: SESSION_MESSAGE_WAIT_MAX_MS,
++          deadlineAtMs: candidates.length === 0 ? null : Math.min(...candidates),
++        };
++      }
++
+       try {
+         try {
+           await runObservedModel({
+--- before/src/core/agent-runtime/execution-control.ts
++++ after/src/core/agent-runtime/execution-control.ts
+@@ -71,6 +71,14 @@
+ 
+ export type RuntimeControlDecision = { kind: 'continue' } | { kind: 'pause' };
+ 
++/**
++ * The read-only verdict a narrow long-running tool (the replyMode wait) may
++ * observe. It NEVER consumes the intent, associates a handle or aborts a
++ * controller; it only lets the tool yield to the original tool-group barrier,
++ * which performs the real consuming decision.
++ */
++export type RuntimeControlInspection = { kind: 'continue' } | { kind: 'pause' } | { kind: 'cancel' };
++
+ export type RuntimeControlCoordinator = {
+   /** Read the accepted intent and consume it only at a real local safe point. */
+   deliver(ctx: CoreCallContext, request: DeliverControlRequest): Promise<ReadResult<ControlIntentSnapshotV1>>;
+@@ -85,6 +93,13 @@
+    * controller and lets the Kernel's own signal check win.
+    */
+   decide(ctx: CoreCallContext, runRef: RunRef): Promise<RuntimeControlDecision>;
++  /**
++   * Read the CURRENT canonical Run control pointer WITHOUT any side effect. A
++   * pause/cancel is reported so a narrow tool can yield; the intent is left for
++   * the existing barrier. Missing/unavailable facts keep the historical
++   * 'continue' (the barrier still fails closed at its own real safe point).
++   */
++  inspect(ctx: CoreCallContext, runRef: RunRef): Promise<RuntimeControlInspection>;
+   /** Drain the coordinator without starting any background recovery. */
+   close(): Promise<void>;
+ };
+@@ -246,6 +261,37 @@
+       // batch. Fail closed instead of admitting work under an unproven pointer.
+       return { kind: 'pause' };
+     },
++    async inspect(ctx: CoreCallContext, runRef: RunRef): Promise<RuntimeControlInspection> {
++      const controls = deps.controls;
++      const sourceAuthority = deps.sourceAuthority;
++      // No trusted control facts: nothing to yield to; the historical path runs.
++      if (controls === undefined || sourceAuthority === undefined) return { kind: 'continue' };
++      if (!isRunRef(runRef)) return { kind: 'continue' };
++      let loaded;
++      try {
++        loaded = await sourceAuthority().load(runRef);
++      } catch {
++        return { kind: 'continue' };
++      }
++      if (loaded.status !== 'found' || !isRunRef(loaded.snapshot.ref) || !sameRef(loaded.snapshot.ref, runRef)) {
++        return { kind: 'continue' };
++      }
++      const run = loaded.snapshot as RunSnapshot;
++      const control = run.controlState;
++      if (control === undefined) return { kind: 'continue' };
++      let read: ReadResult<ControlIntentSnapshotV1>;
++      try {
++        read = await controls.readControl(ctx, control.intentRef);
++      } catch {
++        return { kind: 'continue' };
++      }
++      if (read.status !== 'ready') return { kind: 'continue' };
++      const intent = read.value;
++      if (!sameRef(intent.ref, control.intentRef) || !sameRef(intent.runRef, runRef)) return { kind: 'continue' };
++      if (control.desiredState === 'paused') return { kind: 'pause' };
++      if (control.desiredState === 'cancelled') return { kind: 'cancel' };
++      return { kind: 'continue' };
++    },
+     async close(): Promise<void> {
+       handles.clear();
+     },
+--- before/src/composition/create-platform.ts
++++ after/src/composition/create-platform.ts
+@@ -489,11 +489,12 @@
+       grantMaterialAccess: (...args) => trackedCall(() => grantService.grantMaterialAccess(...args), unavailable),
+       revokeMaterialAccess: (...args) => trackedCall(() => grantService.revokeMaterialAccess(...args), unavailable),
+     };
+-    const messages: SessionMailboxPort = {
++    const messages: SessionMailboxPort & Required<Pick<SessionMailboxPort, 'readOutbox'>> = {
+       sendMessage: (...args) => trackedCall(() => mailbox.sendMessage(...args), unavailable),
+       readMessage: (...args) => trackedCall(() => mailbox.readMessage(...args), unavailable),
+       readMessageBody: (...args) => trackedCall(() => mailbox.readMessageBody(...args), unavailable),
+       readInbox: (...args) => trackedCall(() => mailbox.readInbox(...args), unavailable),
++      readOutbox: (...args) => trackedCall(() => mailbox.readOutbox(...args), unavailable),
+       ackMessage: (...args) => trackedCall(() => mailbox.ackMessage(...args), unavailable),
+       respondMessage: (...args) => trackedCall(() => mailbox.respondMessage(...args), unavailable),
+     };
+--- before/src/ui/main.ts
++++ after/src/ui/main.ts
+@@ -108,6 +108,10 @@
+   WorkflowAdvanceResult,
+   WorkflowConsultationBody,
+   WorkflowConsultationResponse,
++  WorkflowDriverReadResponse,
++  WorkflowDriverStartBody,
++  WorkflowDriverStartResponse,
++  WorkflowDriverStopResponse,
+   WorkflowGoalInputBody,
+   WorkspacesRegisterResponse,
+   WorkspacesRegistrationResponse,
+@@ -349,6 +353,17 @@
+   executionProfileId: string | null;
+   executionNotice: string | null;
+   execution: ExecutionRun;
++  /** The last read-only Host collaboration snapshot for this scope's Goal. It is
++   * display state only: the page never drives the Workflow itself and never
++   * stops the background driver by hiding the panel. */
++  collaboration: { goalRef: NonNullable<ExecutionRun['goalRef']>; result: WorkflowDriverReadResponse } | null;
++  /** The page's read-only polling timer; it never cancels the Host driver. */
++  collaborationPoll: ReturnType<typeof setInterval> | null;
++  /** Monotone epoch of the current Goal/poll: a late response for an older Goal
++   * can never overwrite the panel or clear a newer timer. */
++  collaborationEpoch: number;
++  /** The Goal whose official TaskGraph/Goal was already synced once. */
++  collaborationSyncedGoal: string | null;
+   forms: Forms;
+   sending: boolean;
+   pending: { route: CoreRouteSuffix; body: unknown; tags: RequestTags } | null;
+@@ -394,6 +409,7 @@
+   'messages/inbox': '查看收件箱',
+   'messages/read': '查看消息',
+   'messages/body': '查看消息正文',
++  'messages/outbox': '查看发送记录',
+   'workspaces/registration': '查看项目/工作区登记',
+   'queries/submit': '提交调查',
+   'queries/read': '查看调查',
+@@ -406,6 +422,9 @@
+   'workflow/goal-input': '提交规划输入',
+   'workflow/advance': '推进执行',
+   'workflow/consultation': '处理咨询',
++  'workflow/driver-start': '启动协同推进',
++  'workflow/driver-read': '查看协同推进',
++  'workflow/driver-stop': '停止协同推进',
+   'executions/read': '查看执行事实',
+   'executions/history': '查看本次执行原历史',
+ };
+@@ -1177,6 +1196,173 @@
+   return true;
+ }
+ 
++/** The Goal this execution/scope works under; on a reload it falls back to the
++ * selected/typed Goal so a read-only driver read still works by goal. */
++function collaborationGoalRef(scope: ScopeState, run: ExecutionRun): NonNullable<ExecutionRun['goalRef']> | null {
++  // The CURRENT explicit Goal choice (typed form or selected Goal) owns the
++  // panel; the previous execution run is only a fallback. This is what lets a
++  // user switch Goals without the old handle's response writing back.
++  const target = run.scope ?? scope.config.scope;
++  const goalId = scope.forms.goalId.trim() || scope.goal?.ref.goalId || '';
++  if (goalId.length > 0) return { aggregateType: 'Goal', projectId: target.projectId, goalId };
++  return run.goalRef;
++}
++
++function collaborationIsActive(snapshot: WorkflowDriverReadResponse): boolean {
++  if (snapshot.status !== 'ready') return false;
++  const value = snapshot.value.state;
++  // `waiting` means the owner already returned and the loop drained; only an
++  // explicit later continue may start the next bounded advance.
++  return value === 'running' || value === 'waiting_for_reply' || value === 'stopping';
++}
++
++/** Read the official Goal/TaskGraph once when a collaboration handle first
++ * reaches `completed`; the UI never treats its own flag as formal completion. */
++async function syncCollaborationFacts(
++  scope: ScopeState, target: CoreScope, goalRef: NonNullable<ExecutionRun['goalRef']>, epoch: number,
++): Promise<void> {
++  const key = `${target.projectId}\u0000${target.workspaceId}\u0000${goalRef.goalId}`;
++  if (scope.collaborationSyncedGoal === key) return;
++  const goalRead = await callCore('goals/read', { scope: target, input: goalRef });
++  const tasksRead = await callCore('tasks/query', { scope: target, input: { goalRef } });
++  // A late response for an OLD Goal must not sync its official graph into a
++  // newer panel, and only two successful reads mark the Goal synced.
++  if (scope.collaborationEpoch !== epoch) return;
++  const currentSelected = collaborationGoalRef(scope, scope.execution);
++  if (currentSelected === null || currentSelected.goalId !== goalRef.goalId) return;
++  const goalPayload = goalRead.kind === 'response' ? payloadOf(goalRead) : null;
++  const tasksPayload = tasksRead.kind === 'response' ? payloadOf(tasksRead) : null;
++  const goalOk = goalPayload !== null && record(goalPayload).status === 'ready';
++  const tasksOk = tasksPayload !== null && record(tasksPayload).status === 'ready';
++  if (goalOk) scope.goalRead = goalPayload;
++  if (tasksOk) { scope.taskGraph = tasksPayload; scope.taskGraphGoalId = goalRef.goalId; }
++  if (goalOk && tasksOk) scope.collaborationSyncedGoal = key;
++  renderScopeIfSelected(scope);
++}
++
++/** Same-scope trusted Query profile ids, one per role. An ambiguous role keeps
++ * only the user's explicitly selected profile; the Host re-matches the exact
++ * recipient role and reports an honest wait when no unique profile exists. */
++function collaborationProfileIds(scope: ScopeState, target: CoreScope): string[] {
++  const profiles = bootstrapState?.execution.queryProfiles ?? [];
++  const matching = profiles.filter(profile => profile.scope.projectId === target.projectId
++    && profile.scope.workspaceId === target.workspaceId);
++  const groups = new Map<string, BootstrapExecutionQueryProfile[]>();
++  for (const profile of matching) {
++    const key = JSON.stringify(profile.sessionRole);
++    const group = groups.get(key);
++    if (group === undefined) groups.set(key, [profile]); else group.push(profile);
++  }
++  const ids: string[] = [];
++  for (const group of groups.values()) {
++    if (group.length === 1) { ids.push(group[0]!.id); continue; }
++    const selected = group.find(profile => profile.id === scope.executionProfileId);
++    if (selected !== undefined) ids.push(selected.id);
++  }
++  return ids;
++}
++
++function beginCollaborationPoll(
++  scope: ScopeState, target: CoreScope, goalRef: NonNullable<ExecutionRun['goalRef']>,
++): void {
++  const epoch = scope.collaborationEpoch + 1;
++  scope.collaborationEpoch = epoch;
++  if (scope.collaborationPoll !== null) clearInterval(scope.collaborationPoll);
++  void readCollaboration(scope, target, goalRef, epoch);
++  scope.collaborationPoll = setInterval(() => { void readCollaboration(scope, target, goalRef, epoch); }, 1000);
++}
++
++/** Read-only driver projection bound to one poll/goal EPOCH. A network failure
++ * keeps the last snapshot; a response for an older Goal can never overwrite the
++ * current panel or clear a newer timer, and the Host driver is never cancelled. */
++async function readCollaboration(
++  scope: ScopeState, target: CoreScope, goalRef: NonNullable<ExecutionRun['goalRef']>, epoch: number,
++): Promise<void> {
++  const outcome = await callCore('workflow/driver-read', { scope: target, input: { goalRef } });
++  if (scope.collaborationEpoch !== epoch) return;
++  if (outcome.kind !== 'response') return;
++  const payload = payloadOf(outcome) as WorkflowDriverReadResponse;
++  if (payload.status !== 'ready' && payload.status !== 'not_found') return;
++  scope.collaboration = { goalRef, result: payload };
++  const run = scope.execution;
++  if (run.goalRef !== null && run.goalRef.goalId === goalRef.goalId && payload.status === 'ready') {
++    run.phase = payload.value.state;
++    if (payload.value.last !== null) run.advance = payload.value.last;
++  }
++  if (payload.status === 'ready' && payload.value.state === 'completed') {
++    void syncCollaborationFacts(scope, target, goalRef, epoch);
++  }
++  if (!collaborationIsActive(payload) && scope.collaborationPoll !== null) {
++    clearInterval(scope.collaborationPoll);
++    scope.collaborationPoll = null;
++  }
++  renderScopeIfSelected(scope);
++}
++
++/** Start (or replay) the Host driver for one exact Workflow advance through the
++ * page's normal request cache, so a network retry replays the SAME driver-start
++ * payload instead of rebuilding a flow or reusing the old Query driver. */
++async function startCollaboration(
++  scope: ScopeState, run: ExecutionRun, target: CoreScope, advance: WorkflowAdvanceBody['input'],
++): Promise<void> {
++  const goalRef = collaborationGoalRef(scope, run);
++  if (goalRef === null) { run.error = '请先选择或创建目标。'; renderScopeIfSelected(scope); return; }
++  run.goalRef = goalRef;
++  const request: WorkflowDriverStartBody = { scope: target, input: {
++    advance: advance as WorkflowAdvanceBody['input'],
++    queryProfileIds: collaborationProfileIds(scope, target),
++  } };
++  const epoch = scope.collaborationEpoch + 1;
++  scope.collaborationEpoch = epoch;
++  await driveRun(scope, run, async (current, active) => {
++    const outcome = await executionCall(current, active, 'workflow/driver-start', request);
++    const problem = outcomeProblem(outcome);
++    if (problem !== null) { active.error = problem; return; }
++    const payload = payloadOf(outcome) as WorkflowDriverStartResponse;
++    if (payload.status !== 'ready') {
++      active.error = outcomeRejectionReason(payload);
++      active.phase = 'rejected';
++      return;
++    }
++    active.phase = payload.value.state;
++    active.resumeIntent = null;
++    if (payload.value.last !== null) active.advance = payload.value.last;
++    // The user may have switched Goals while this start was in flight: the old
++    // Goal must never write the new panel or own its timer.
++    if (scope.collaborationEpoch !== epoch) return;
++    scope.collaboration = { goalRef, result: { status: 'ready', value: payload.value } };
++    beginCollaborationPoll(scope, target, goalRef);
++  });
++}
++
++/** Ask the Host driver to stop; the page only reads afterwards and never writes
++ * a fabricated 'cancelled'. */
++async function stopCollaboration(scope: ScopeState): Promise<void> {
++  const run = scope.execution;
++  const goalRef = collaborationGoalRef(scope, run) ?? scope.collaboration?.goalRef ?? null;
++  if (goalRef === null) { scope.error = '没有可停止的协同推进句柄。'; renderScopeIfSelected(scope); return; }
++  const target = run.scope ?? scope.config.scope;
++  const epoch = scope.collaborationEpoch;
++  run.running = true;
++  renderScopeIfSelected(scope);
++  try {
++    const outcome = await callCore('workflow/driver-stop', { scope: target, input: { goalRef } });
++    const problem = outcomeProblem(outcome);
++    if (problem !== null) { run.error = problem; return; }
++    const payload = payloadOf(outcome) as WorkflowDriverStopResponse;
++    if (payload.status === 'ready' || payload.status === 'not_found') {
++      if (scope.collaborationEpoch !== epoch) return;
++      scope.collaboration = { goalRef, result: payload };
++      beginCollaborationPoll(scope, target, goalRef);
++    } else {
++      run.error = outcomeRejectionReason(payload);
++    }
++  } finally {
++    run.running = false;
++    renderScopeIfSelected(scope);
++  }
++}
++
+ /** One user action per public request: send, display, and continue ONLY when the
+  * owner returned ready with a real `next`. A null `next` or a non-ready result
+  * is a real stop that keeps the original request. The owner's next input is
+@@ -1186,6 +1372,12 @@
+ ): Promise<void> {
+   let intent = seed;
+   for (let guard = 0; guard < 64; guard += 1) {
++    // The Host owns every formal Workflow advance: the page never sends a
++    // browser `workflow/advance` chain, it starts the driver and then reads.
++    if (intent.route === 'workflow/advance') {
++      await startCollaboration(scope, run, target, intent.input);
++      return;
++    }
+     run.resumeIntent = intent;
+     const outcome = await executionCall(scope, run, intent.route, { scope: target, input: intent.input });
+     const problem = outcomeProblem(outcome);
+@@ -1206,8 +1398,11 @@
+           run.candidate = run.planning.value.receipt;
+       }
+     } else {
++      // Unreachable for a fresh seed (a workflow/advance intent is handed to the
++      // Host at the top of the loop); kept so the type-narrowed branch is total.
++      const advanceIntent = intent as { route: 'workflow/advance'; input: WorkflowAdvanceInput };
+       run.advance = payload as WorkflowAdvanceResult;
+-      run.advanceRequest = { scope: target, input: intent.input };
++      run.advanceRequest = { scope: target, input: advanceIntent.input };
+       if (run.advance.status === 'ready') run.phase = run.advance.value.state;
+     }
+     const continuation = planExecutionContinuation(
+@@ -1371,6 +1566,10 @@
+  * selected Session are frozen into the run before the first await. */
+ async function runExecution(scope: ScopeState, kind: 'investigate' | 'planning'): Promise<void> {
+   if (scope.execution.running || scope.execution.pending !== null) return;
++  // A new QueryFlow/Goal owns the panel: stop only the page's old read timer.
++  // The Host driver itself keeps running.
++  if (scope.collaborationPoll !== null) { clearInterval(scope.collaborationPoll); scope.collaborationPoll = null; }
++  scope.collaborationEpoch += 1;
+   const profile = selectedExecutionProfile(scope);
+   const selectedSession = scope.activeSession;
+   const target: CoreScope = profile === null
+@@ -1417,6 +1616,20 @@
+   }
+   scope.error = null;
+   scope.notice = null;
++  // A saved continuation belongs to the Goal that produced it. If the user has
++  // since chosen a DIFFERENT Goal, never send the old Goal's request under the
++  // new selection: keep the original unconfirmed payload and idempotency, and
++  // ask the user to switch back. No multi-Goal state store is introduced.
++  const currentGoal = collaborationGoalRef(scope, run);
++  if (resume !== null && currentGoal !== null) {
++    const resumeGoal = resume.input.goalRef;
++    if (resumeGoal.projectId !== currentGoal.projectId || resumeGoal.goalId !== currentGoal.goalId) {
++      run.notice = `待续请求属于目标 ${resumeGoal.goalId}，与当前目标 ${currentGoal.goalId} 不同；`
++        + '请切回原目标后再继续，原请求与幂等身份均已保留。';
++      renderScopeIfSelected(scope);
++      return;
++    }
++  }
+   if (resume !== null && resume.route === 'workflow/goal-input') {
+     // Explicit NEW action: same Goal/flow and same public input semantics, a NEW
+     // requestId. The old idempotency key is never reused with different expected.
+@@ -1431,8 +1644,22 @@
+       drainContinuation(current, active, target, { route: 'workflow/goal-input', input }));
+     return;
+   }
++  // The Host may already own this Goal's handle: read it BEFORE restarting so a
++  // navigation/reload never starts a second advancement.
++  const existingGoal = collaborationGoalRef(scope, run);
++  if (existingGoal !== null) {
++    run.goalRef = existingGoal;
++    const epoch = scope.collaborationEpoch + 1;
++    scope.collaborationEpoch = epoch;
++    await readCollaboration(scope, target, existingGoal, epoch);
++    if (scope.collaboration !== null && collaborationIsActive(scope.collaboration.result)) {
++      if (scope.collaboration.result.status === 'ready') run.phase = scope.collaboration.result.value.state;
++      beginCollaborationPoll(scope, target, scope.collaboration.goalRef);
++      return;
++    }
++  }
+   if (resume !== null && resume.route === 'workflow/advance') {
+-    await driveRun(scope, run, (current, active) => drainContinuation(current, active, target, resume));
++    await startCollaboration(scope, run, target, resume.input);
+     return;
+   }
+   if (run.goalRef === null) {
+@@ -1447,8 +1674,7 @@
+     schemaVersion: 1, goalRef: run.goalRef, flowId: run.flowId ?? `flow-${Date.now().toString(36)}`,
+     sessionHint: run.selectedSession, kind: 'select_work',
+   };
+-  await driveRun(scope, run, (current, active) =>
+-    drainContinuation(current, active, target, { route: 'workflow/advance', input }));
++  await startCollaboration(scope, run, target, input);
+ }
+ 
+ /** Resend the exact unconfirmed request and, once its real receipt arrives,
+@@ -1483,26 +1709,45 @@
+   await driveRun(scope, run, driver);
+ }
+ 
+-/** Re-read the original Query state; it never starts a new model call. */
++/** Re-read the original Query OR the Host collaboration handle; it never starts
++ * a new model call and never depends on a browser QueryRunRef. */
+ async function refreshExecution(scope: ScopeState): Promise<void> {
+   const run = scope.execution;
+-  const ref = run.queryRunRef;
+-  if (run.running || ref === null) return;
++  if (run.running) return;
+   if (run.pending !== null) {
+     scope.notice = '存在尚未确认的原请求，请先“重新发送原请求”。';
+     renderScopeIfSelected(scope);
+     return;
+   }
+-  const target: CoreScope = run.scope ?? { projectId: ref.projectId, workspaceId: ref.workspaceId };
+-  await driveRun(scope, run, async (current, active) => {
+-    const observed = await executionCall(current, active, 'queries/observe', { scope: target, input: { queryRunRef: ref } });
+-    const problem = outcomeProblem(observed);
+-    if (problem !== null) { active.error = problem; return; }
+-    const observedPayload = payloadOf(observed) as QueriesStartResponse;
+-    if (observedPayload.status !== 'ready') { active.notice = '调查状态尚未就绪。'; return; }
+-    if (observedPayload.value.answer === null) { active.notice = '调查仍在进行，没有新的正式回答。'; return; }
+-    await readExecutionAnswer(current, active, target, observedPayload.value.answer.ref);
+-  });
++  const target: CoreScope = run.scope ?? { projectId: scope.config.scope.projectId, workspaceId: scope.config.scope.workspaceId };
++  // Prefer the CURRENT Host collaboration handle for this Goal; the legacy
++  // browser Query is only a fallback when no Goal-driven handle exists.
++  const goalRef = collaborationGoalRef(scope, run) ?? scope.collaboration?.goalRef ?? null;
++  if (goalRef !== null) {
++    run.goalRef = goalRef;
++    const epoch = scope.collaborationEpoch + 1;
++    scope.collaborationEpoch = epoch;
++    await readCollaboration(scope, target, goalRef, epoch);
++    if (scope.collaboration !== null && scope.collaboration.result.status === 'ready') {
++      beginCollaborationPoll(scope, target, goalRef);
++      return;
++    }
++  }
++  if (run.queryRunRef !== null) {
++    const ref = run.queryRunRef;
++    await driveRun(scope, run, async (current, active) => {
++      const observed = await executionCall(current, active, 'queries/observe', { scope: target, input: { queryRunRef: ref } });
++      const problem = outcomeProblem(observed);
++      if (problem !== null) { active.error = problem; return; }
++      const observedPayload = payloadOf(observed) as QueriesStartResponse;
++      if (observedPayload.status !== 'ready') { active.notice = '调查状态尚未就绪。'; return; }
++      if (observedPayload.value.answer === null) { active.notice = '调查仍在进行，没有新的正式回答。'; return; }
++      await readExecutionAnswer(current, active, target, observedPayload.value.answer.ref);
++    });
++    return;
++  }
++  scope.notice = '没有进行中的调查或协同推进。';
++  renderScopeIfSelected(scope);
+ }
+ 
+ async function handleAction(action: string, element: HTMLElement): Promise<void> {
+@@ -1536,6 +1781,7 @@
+     case 'run-planning': { await runExecution(scope, 'planning'); return; }
+     case 'run-continue': { await continueExecution(scope); return; }
+     case 'refresh-execution': { await refreshExecution(scope); return; }
++    case 'stop-execution': { await stopCollaboration(scope); return; }
+     case 'read-path': {
+       const path = element.dataset.path ?? '';
+       const body = buildFileRequest(path);
+@@ -1656,6 +1902,31 @@
+       if (ref === null) { scope.error = '请先查看一条消息。'; renderScopeIfSelected(scope); return; }
+       const part = element.dataset.part === 'response' ? 'response' as const : 'message' as const;
+       await submit(scope, 'messages/body', { scope: scope.config.scope, input: { messageRef: ref, part } }, tagsFor(scope.activeSession, ref, part));
++      return;
++    }
++    case 'read-collaboration-message': {
++      // Reuse the EXISTING messages/read + messages/body routes and the existing
++      // renderMessage/renderMessageBody entries; no new projection or page.
++      const messageId = element.dataset.messageId ?? '';
++      const collab = scope.collaboration;
++      if (collab === null || collab.result.status !== 'ready') {
++        scope.error = '当前没有可查看的协同消息。'; renderScopeIfSelected(scope); return;
++      }
++      const message = collab.result.value.messages.find(candidate => candidate.ref.messageId === messageId);
++      if (message === undefined) { scope.error = '该消息不在当前协同快照中。'; renderScopeIfSelected(scope); return; }
++      const recipient: SessionRef = { projectId: message.recipient.projectId, sessionId: message.recipient.sessionId };
++      const ref = message.ref;
++      scope.activeSession = recipient;
++      scope.activeMessage = ref;
++      await submit(scope, 'messages/read', { scope: scope.config.scope, input: ref }, tagsFor(recipient, ref));
++      const read = scope.message;
++      if (read === null || read.result.status !== 'ready') return;
++      await submit(scope, 'messages/body', { scope: scope.config.scope, input: { messageRef: ref, part: 'message' } },
++        tagsFor(recipient, ref, 'message'));
++      if (message.status === 'responded') {
++        await submit(scope, 'messages/body', { scope: scope.config.scope, input: { messageRef: ref, part: 'response' } },
++          tagsFor(recipient, ref, 'response'));
++      }
+       return;
+     }
+     case 'consult-message': {
+@@ -2097,6 +2368,77 @@
+     + detailsBlock('查看版本引用', `<pre>${escapeHtml(JSON.stringify(value.ref, null, 2))}</pre>`);
+ }
+ 
++/** The read-only Host collaboration projection: the page shows the driver's own
++ * state/messages and never re-derives or fakes a terminal. */
++function renderCollaboration(
++  scope: ScopeState, collab: { goalRef: NonNullable<ExecutionRun['goalRef']>; result: WorkflowDriverReadResponse },
++): string {
++  if (collab.result.status === 'not_found') {
++    return `<section data-collaboration><h3>协同推进</h3>`
++      + `<p class="muted">本机没有目标 <code>${escapeHtml(collab.goalRef.goalId)}</code> 的活动句柄；原消息/回答仍在原历史中可查。</p></section>`;
++  }
++  if (collab.result.status !== 'ready') return '';
++  const value = collab.result.value;
++  const active = scope.activeMessage;
++  const readMessage = active !== null && scope.message !== null && sameMessage(scope.message.messageRef, active)
++    ? scope.message : null;
++  const body = active !== null && scope.messageBody !== null && sameMessage(scope.messageBody.messageRef, active)
++    ? scope.messageBody : null;
++  const messages = value.messages.length === 0 ? ''
++    : `<ul class="messages">${value.messages.map(message => {
++      const isActive = active !== null && sameMessage(message.ref, active);
++      return `<li${isActive ? ' data-active-message="true"' : ''}>`
++        + `<code>${escapeHtml(message.ref.messageId)}</code> · ${escapeHtml(message.status)}`
++        + ` · ${escapeHtml(message.sender.kind)}`
++        + (message.replyMode === 'wait' ? ' · 等待回复' : '')
++        + `<button class="link" data-action="read-collaboration-message" data-message-id="${escapeHtml(message.ref.messageId)}">查看消息</button>`
++        + `</li>`;
++    }).join('')}</ul>`;
++  return `<section data-collaboration><h3>协同推进</h3>`
++    + `<p>状态：${escapeHtml(value.state)} · flow <code>${escapeHtml(value.flowId)}</code></p>`
++    + (value.reason === null ? '' : `<p class="muted">${escapeHtml(value.reason)}</p>`)
++    + messages
++    + (readMessage === null ? '' : renderMessage(readMessage.result))
++    + (body === null ? '' : renderMessageBody(body.result))
++    + detailsBlock('查看完整快照', `<pre>${escapeHtml(JSON.stringify(value, null, 2))}</pre>`)
++    + `</section>`;
++}
++
++/** The execution entry availability derived from the CURRENT explicit Goal (a
++ * typed/selected Goal counts even before any in-memory handle exists) plus the
++ * real run/handle state. `run.running`/`run.pending` protection stays outside. */
++function executionAvailability(scope: ScopeState): {
++  canContinue: boolean; canRefresh: boolean; driverActive: boolean;
++} {
++  const run = scope.execution;
++  const currentGoal = collaborationGoalRef(scope, run);
++  const driverActive = scope.collaboration !== null && collaborationIsActive(scope.collaboration.result);
++  return {
++    canContinue: run.resumeIntent !== null || run.queryRunRef !== null
++      || currentGoal !== null || scope.collaboration !== null,
++    canRefresh: run.queryRunRef !== null || currentGoal !== null || scope.collaboration !== null,
++    driverActive,
++  };
++}
++
++/** Update the execution action buttons in place after a Goal edit so the formal
++ * read/start entry becomes usable WITHOUT rebuilding the focused input. */
++function refreshExecutionButtons(scope: ScopeState): void {
++  const run = scope.execution;
++  const { canContinue, canRefresh, driverActive } = executionAvailability(scope);
++  const set = (action: string, enabled: boolean, reason: string): void => {
++    const button = document.querySelector<HTMLButtonElement>(`[data-action="${action}"]`);
++    if (button === null) return;
++    button.disabled = !enabled;
++    if (enabled) button.removeAttribute('title');
++    else button.setAttribute('title', reason);
++  };
++  set('run-continue', canContinue && !run.running && run.pending === null,
++    run.pending === null ? '需要先有采用的计划或待续传步骤' : '存在尚未确认的原请求，请先重试');
++  set('refresh-execution', canRefresh && !run.running, '没有进行中的调查或推进句柄');
++  set('stop-execution', driverActive && !run.running, '没有进行中的协同推进');
++}
++
+ /** R6 execution entry: the trusted startup execution projection, the one
+  * question input and the two finite product actions plus the real owner results.
+  * It never sends an HTTP step by itself, opens a background loop or marks a
+@@ -2109,12 +2451,13 @@
+     run.running || run.pending !== null);
+   const question = `<label class="inline">调查 / 规划问题 <input data-field="question" `
+     + `value="${escapeHtml(current.forms.question)}" placeholder="例如：阅读来源并给出初始规划"></label>`;
+-  const canContinue = run.resumeIntent !== null || run.queryRunRef !== null
+-    || run.goalRef !== null || current.goal !== null;
++  const { canContinue, canRefresh, driverActive } = executionAvailability(current);
+   const buttons = `<div class="buttons">`
+     + actionButton('run-continue', '继续执行', canContinue && !run.running && run.pending === null,
+       run.pending === null ? '需要先有采用的计划或待续传步骤' : '存在尚未确认的原请求，请先重试')
+-    + actionButton('refresh-execution', '刷新执行状态', run.queryRunRef !== null && !run.running, '没有进行中的调查')
++    + actionButton('refresh-execution', '刷新执行状态', canRefresh && !run.running, '没有进行中的调查或推进句柄')
++    + actionButton('stop-execution', '停止推进', driverActive && !run.running,
++      driverActive ? '' : '没有进行中的协同推进')
+     + `</div>`;
+   const messages = [run.notice, current.executionNotice, run.error].filter((entry): entry is string =>
+     typeof entry === 'string' && entry.length > 0);
+@@ -2127,10 +2470,11 @@
+     : detailsBlock('已保留的初始计划候选', `<pre>${escapeHtml(JSON.stringify(run.candidate, null, 2))}</pre>`);
+   const planning = run.planning === null ? '' : renderInitialPlanning(run.planning, run.planningRequest);
+   const advance = run.advance === null ? '' : renderWorkflowAdvance(run.advance, run.advanceRequest);
++  const collaboration = current.collaboration === null ? '' : renderCollaboration(current, current.collaboration);
+   const sent = run.calls.length === 0 ? ''
+     : detailsBlock('已发送的完整原请求', `<pre>${escapeHtml(JSON.stringify(
+       run.calls.map(call => ({ route: call.route, request: call.request })), null, 2))}</pre>`);
+-  return profiles + question + buttons + notice + phase + answer + candidate + planning + advance + sent;
++  return profiles + question + buttons + notice + phase + answer + candidate + planning + advance + collaboration + sent;
+ }
+ 
+ function renderScope(): string {
+@@ -3198,6 +3542,7 @@
+     taskGraphGoalId: '', relatedSessions: null,
+     executionProfileId: null, executionNotice: null,
+     execution: createExecutionRun(),
++    collaboration: null, collaborationPoll: null, collaborationEpoch: 0, collaborationSyncedGoal: null,
+     forms: {
+       projectId: config.scope.projectId, goalId: '', objective: '', filePath: '',
+       proposalId: '', baselineId: '', baselineRevision: '1', provider: 'text', prefix: '',
+@@ -3230,6 +3575,15 @@
+   const current = states.get(selectedKey);
+   if (current === undefined) return;
+   if (field in current.forms) current.forms[field as keyof Forms] = value;
++  if (field === 'goalId') {
++    // A different explicit Goal owns a different host handle. Unbind only the
++    // PAGE's timer/panel/epoch; the Host driver for the old Goal keeps running,
++    // and any pending unconfirmed request stays intact.
++    if (current.collaborationPoll !== null) { clearInterval(current.collaborationPoll); current.collaborationPoll = null; }
++    current.collaborationEpoch += 1;
++    current.collaboration = null;
++    current.collaborationSyncedGoal = null;
++  }
+ }
+ 
+ let splitDrag: { side: 'left' | 'right'; startX: number; startWidth: number } | null = null;
+@@ -3354,6 +3708,9 @@
+       return;
+     }
+     onField(field, element.value);
++    // A typed Goal immediately enables the formal continue/refresh entry, while
++    // the focused input is left untouched.
++    if (field === 'goalId') refreshExecutionButtons(current);
+   });
+ 
+   document.addEventListener('change', event => {
+@@ -3362,7 +3719,18 @@
+     const current = states.get(selectedKey);
+     if (current === undefined) return;
+     if (element.dataset.action === 'select-scope') {
+-      if (states.has(element.value)) { selectedKey = element.value; renderAll(); }
++      if (states.has(element.value)) {
++        selectedKey = element.value;
++        renderAll();
++        const next = states.get(element.value);
++        if (next !== undefined) {
++          const goalRef = next.collaboration?.goalRef ?? collaborationGoalRef(next, next.execution);
++          if (goalRef !== null) {
++            const target = next.execution.scope ?? next.config.scope;
++            beginCollaborationPoll(next, target, goalRef);
++          }
++        }
++      }
+       return;
+     }
+     if (element.dataset.action === 'toggle-archived') {
+@@ -3377,6 +3745,7 @@
+     const field = element.dataset.field;
+     if (field === undefined) return;
+     onField(field, element.value);
++    if (field === 'goalId') refreshExecutionButtons(current);
+     // Only the architecture-range selector reveals dependent inputs; refresh the
+     // auxiliary body without touching the conversation or the composer draft.
+     if (field === 'archSelection') setHtml('region-tab-body', renderTabBody());
+--- before/resources/skills/platform-work/content.md
++++ after/resources/skills/platform-work/content.md
+@@ -19,6 +19,12 @@
+ - 临时协调是有范围的局部参谋：把设计取舍连同依据反馈给当前架构决策者和用户；超出范围的事项交回有相应授权的角色。
+ - 冷启动按受信配置装配，需要实际执行时走已支持的入口；不预设必须凑齐固定数量的模型或角色。统一工作台只有一个通用交互面，可按成员查看各 Agent 的 Session、状态和历史，不为不同职责另造独立入口。
+ 
++## 与同伴通信
++
++- 只有确实依赖同伴信息、需要等待其正式回答时，才用 `send_session_message` 的 `replyMode: 'wait'`；普通通知、告知和状态同步保持默认发送，不等待、不轮询，也不替对方启动咨询。
++- 等待返回的是同伴的陈述，不是权限、验收或完成证明；把它当作需要核对的输入，结合原文件、任务图与历史自行判断，不直接把回复当成已完成的证据。
++- 一轮等待结束后可以继续原任务并按需再次咨询；每次等待都由原 Run 内的正式工具结果返回，不新建替代 Session，也不靠提示词伪造工具回执或回答。
++
+ ## 如实与负责
+ 
+ - 未知副作用不要盲目重试；拒绝、未就绪与版本冲突照原样呈现。
+--- before/runtime-assets.json
++++ after/runtime-assets.json
+@@ -45,7 +45,7 @@
+   },
+   {
+     "path": "resources/skills/platform-work/content.md",
+-    "sha256": "84d45d7255beb0c64d5fb831e7d58aa737beec479eea4c29f4e8d87e5e3a8887"
++    "sha256": "53352aec4f35a89bb124220d6e3eb14d41d32a538c0680d850c8a9e335b06f9f"
+   },
+   {
+     "path": "resources/skills/platform-work/skill.json",

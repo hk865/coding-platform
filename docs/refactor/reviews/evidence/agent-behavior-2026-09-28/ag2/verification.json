@@ -1,0 +1,153 @@
+{
+  "recordedAt": "2026-09-28",
+  "stage1Session": "session-fa035c5e-bfdf-4537-ae54-848a1687833c",
+  "stage2Session": "session-9a2761ed-bf17-4f1e-b0bf-800c3e32b360",
+  "stage2Lane": "ag2-consultation-stage2-20260928",
+  "scopeAudit": {
+    "outsideScope": [],
+    "originalAllowedChanges": []
+  },
+  "checks": {
+    "testFiles": 12,
+    "tests": 115,
+    "testsExit": 0,
+    "nodeTypes": 0,
+    "uiTypes": 0,
+    "architecture": 0,
+    "isolatedBuild": 0
+  },
+  "changedProduction": [
+    {
+      "path": "src/contracts/query-job.ts",
+      "before": "a809695334bc88048a410bf03a401307287c04bffee98988d4e1b7c12aa5c051",
+      "after": "ca2c63736d522e211ee7db9348b5941befd78272fc8db8ed42d0a5d00290ba4d",
+      "added": 57,
+      "deleted": 1
+    },
+    {
+      "path": "src/core/work-graph/queries/contracts.ts",
+      "before": "2f3f99e5566bfad3ac0b2ebff5419a3a7d1888a3ee562da06de72be12f38afe9",
+      "after": "dea53b6414c6a93e3c643720ceb6d6dfe4a7e2277a2943385cb3b6023349d322",
+      "added": 8,
+      "deleted": 0
+    },
+    {
+      "path": "src/core/work-graph/queries/query-job-service.ts",
+      "before": "8619ff82a56a14ad9d5736380b83088173020f9f8328fe1f116815810a5f6869",
+      "after": "f2c5b4df076b3d507b504d2d00f3897eee84637e3da238bf382d628833cd63a7",
+      "added": 68,
+      "deleted": 2
+    },
+    {
+      "path": "src/core/work-graph/queries/query-execution.ts",
+      "before": "30263f0a77b54de09d8ee81b6ad950c5b0d40c07d0944985dcb420d70f730381",
+      "after": "7bf8f44f0e659b5f4c8f09bcf506d75ecfec703685375313d683e1c40ef41607",
+      "added": 14,
+      "deleted": 0
+    },
+    {
+      "path": "src/core/work-graph/communication/contracts.ts",
+      "before": "2f2415038fe7495a10ef568cfa9a8eb92035a5429dda8082116b5ea687515d75",
+      "after": "72e00256351b30bc8370e404f6ba2e4c620220affedf606ae71b38bb33d827cb",
+      "added": 29,
+      "deleted": 2
+    },
+    {
+      "path": "src/core/work-graph/communication/message-record-codecs.ts",
+      "before": "d8a4d1b54192a7a5bdf1b1ba321e245d0b73fb73b3be4d77bf4692875e36a3de",
+      "after": "1b0cb183f6f952507ce4f2f4ac7f7f6593a572b85c27965ffe8353f8d64ed6de",
+      "added": 69,
+      "deleted": 8
+    },
+    {
+      "path": "src/core/work-graph/communication/mailbox-service.ts",
+      "before": "dc357fd3184ad5a4a9631a42f1fbfcae8d1a53e884c7cc8c300c44c3756d86a0",
+      "after": "fc0536b9df8d1685ece1181a313239a64b4ac0ba1dfec9fa807cd6eaacac98e1",
+      "added": 249,
+      "deleted": 14
+    },
+    {
+      "path": "src/business/workflow/contracts.ts",
+      "before": "3c0c86df9d0d6f074108f69ec21cadb7c3a799912da34f4748a9d21a31f9dc79",
+      "after": "ca241f52b87e16a73d7ef982d0062cf584dde1af502d4d8d627982b932799733",
+      "added": 38,
+      "deleted": 2
+    },
+    {
+      "path": "src/business/workflow/ports.ts",
+      "before": "fce5f74ee00934b11b8fc7838da17caea7a132f823990f52a8c6420b8497b29b",
+      "after": "cb359af6ec5a927306884143224edb4f459cc896e4c67256f76e486f7ab9d779",
+      "added": 31,
+      "deleted": 2
+    },
+    {
+      "path": "src/business/workflow/workflow.ts",
+      "before": "66de01d850d473cde9356bcbfb27de5e0a87103d3226bf1522c25d65d9125b18",
+      "after": "8d07b437c59c119033da64750e0480ab3a195a86646807cd92da8ffa54ce2914",
+      "added": 19,
+      "deleted": 5
+    },
+    {
+      "path": "src/business/workflow/consultation.ts",
+      "before": "5b7d9ebcf8dec8c340bbddbf27ec08a290eb6f11cc179cadaaa184d888a0c92e",
+      "after": "dfcd691e7f96578932abe9eaec5d1a8778636f948aa8008365b4c1bc5728ae73",
+      "added": 355,
+      "deleted": 1
+    },
+    {
+      "path": "src/composition/create-platform.ts",
+      "before": "ef038aee2be924e5776ab550ae7559086991f4ca90d17a25f8f6f74226b4977a",
+      "after": "52789b434260b4fd5556435e68313236555c0f345a61830b8ac20fedb32abe62",
+      "added": 22,
+      "deleted": 9
+    },
+    {
+      "path": "src/app/core-http-types.ts",
+      "before": "f17fb3c80077b99cabe3ea209ff16e0536abb09a81edf12aa1dcf335ec422264",
+      "after": "664dd7dbe06838719ebd842c2054b63db7df50e360fe0f1f037351aea7242a70",
+      "added": 8,
+      "deleted": 1
+    },
+    {
+      "path": "src/app/core-routes.ts",
+      "before": "17c77d3525f76773be9794f60a98b8508fe2f223b6b57ca9dc12150d4c9070a9",
+      "after": "59dd752cf6bfac1a3614fe9ffce5474c37869ce9a0cd3433ed231ea72d390362",
+      "added": 5,
+      "deleted": 1
+    },
+    {
+      "path": "src/ui/main.ts",
+      "before": "cd9a5d3154a7896f7b9b6e9882dbad69ea9384cc5468565c8a2a41b8464aa874",
+      "after": "058a36a15d8796066f5d57787fab09d3bb735d2736da7bba949604e2c7542031",
+      "added": 93,
+      "deleted": 1
+    }
+  ],
+  "productionLineDelta": 1016,
+  "frozenTest": {
+    "path": "tests/app/AG2-consultation.test.ts",
+    "sha256": "0294946e0cff7b6109f013beba2d566e57c3a314fa3176980ce6560549bc9403"
+  },
+  "review": "query submit message guard, original Answer provenance, UI request retention checked; no Query write capability or Kernel changes",
+  "notCovered": [
+    "automatic awareness/wake",
+    "sender Work continuation",
+    "AG3 dispatch",
+    "full MVP"
+  ],
+  "committed": false,
+  "pushed": false,
+  "live": {
+    "status": "passed",
+    "requests": 7,
+    "initialRequests": 4,
+    "browserRequests": 3,
+    "replayProviderDelta": 0,
+    "reopenProviderDelta": 0,
+    "providerErrors": 0,
+    "toolFailuresRecovered": 2,
+    "browserToolFailures": 0,
+    "browser": "passed",
+    "temporaryHostClosed": true
+  }
+}

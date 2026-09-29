@@ -361,7 +361,10 @@ function copyQueryExecutionRequest(request: QueryExecutionRequest): QueryExecuti
       || typeof runRef.queryJobId !== 'string' || !runRef.queryJobId || typeof runRef.runId !== 'string' || !runRef.runId)
     throw Error('query source binding requires a real QueryRun reference');
   if (typeof request.question !== 'string' || !request.question) throw Error('query source binding requires the recorded question');
-  if (!request.budget || !Number.isSafeInteger(request.budget.maxTokens) || request.budget.maxTokens < 1)
+  // An explicit null maxTokens is accepted (no cumulative cap) while a real
+  // numeric budget must still be a positive safe integer.
+  if (!request.budget || (request.budget.maxTokens !== null
+    && (!Number.isSafeInteger(request.budget.maxTokens) || request.budget.maxTokens < 1)))
     throw Error('query source binding requires the recorded budget');
   const bundle = request.bundleRef;
   if (!bundle || bundle.kind !== 'artifact' || typeof bundle.digest !== 'string' || !bundle.digest

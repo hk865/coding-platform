@@ -18,11 +18,12 @@ import type { PreparedQueryManifestV1 } from '../../contracts/core/prepared-exec
 import type { ArtifactRef } from '../../contracts/artifact.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../contracts/fingerprint.js';
 import {
-  assertTranscriptExchangeIntegrity, createInitialRunState, reduceRunState,
+  assertTranscriptExchangeIntegrity, createInitialRunState, projectTerminalTranscript, reduceRunState,
   sessionRecordSchema, validateRunStateInvariants,
 } from '../../../vendor/coding-agent/dist/public-api.js';
 import type { RunState, SessionRecord as KernelSessionRecord } from '../../../vendor/coding-agent/dist/public-api.js';
 import { createSessionHistoryCursorOwner, type SessionHistoryEntry } from './session-operations.js';
+import { confirmMailboxInputs } from './execution-inputs.js';
 import type { RuntimeExecutionDependencies } from './execution-contracts.js';
 import type {
   QueryEntryIdentity, QueryExecutionRecord, QueryPreparationFacts,
@@ -110,6 +111,14 @@ function turnIsComplete(state: RunState): boolean {
   const batch = state.toolBatch;
   if (batch !== null && batch.calls.some(call => !settledStatus(call.status))) return false;
   return true;
+}
+/** The formal Kernel transcript outcome_unknown check. A reduced tool batch that
+ * no longer lists the call is NOT a known result: the transcript's official
+ * `outcome_unknown` tool result is still the evidence. Mirrors the Work
+ * observer's single reader; no second error interpreter is added. */
+function transcriptHasOutcomeUnknown(transcript: RunState['transcript']): boolean {
+  return transcript.some(entry => entry.kind === 'tool_result'
+    && entry.result.status === 'error' && entry.result.error.code === 'outcome_unknown');
 }
 function mapOutcome(status: string): 'answered' | 'failed' | 'cancelled' | 'timeout' | null {
   switch (status) {
@@ -200,6 +209,7 @@ function answerSources(pins: PreparedQueryManifestV1, state: RunState): QueryJob
 
 type CollectedTurn = {
   state: RunState;
+  decoded: readonly DecodedRecord[];
   startPosition: number;
   lastPosition: number;
   lastCursor: string;
@@ -283,6 +293,7 @@ export function createQueryObservation(deps: RuntimeExecutionDependencies): Quer
       status: 'ready',
       value: {
         state,
+        decoded: window.value.decoded,
         startPosition: start.position,
         lastPosition: window.value.throughPosition,
         lastCursor: lastEntry.cursor,
@@ -374,16 +385,35 @@ export function createQueryObservation(deps: RuntimeExecutionDependencies): Quer
     const collected = await collectTurn(session, entry.kernel, owned.signal);
     if (collected.status !== 'ready') return mapRead(collected);
     if (collected.value === null) return { status: 'ready', value: record.value };
+    // An accepted input is an original Kernel fact. Confirm its source before
+    // publishing an Answer or releasing the Session, so a retry cannot start a
+    // successor that accepts the same source again after a lost acknowledgement.
+    if (!await confirmMailboxInputs(deps.messages, owned, queryRunRef, entry.kernel, collected.value.decoded)) {
+      return rejected('unavailable', 'the Query input acceptance is saved in Kernel history but its source acknowledgement is not confirmed');
+    }
     const runState = collected.value.state;
     const terminalStatus = mapOutcome(runState.status);
     if (terminalStatus === null) return { status: 'ready', value: record.value };
-    if (!turnIsComplete(runState)) return { status: 'ready', value: record.value };
-    if (runState.toolBatch !== null
-      && runState.toolBatch.calls.some(call => call.status === 'abandoned' || call.status === 'outcome_unknown')) {
+    // A terminal status is only evidence when the complete Turn is settled and
+    // no result is genuinely unknown. A reducer-proven `abandoned` call is
+    // different: it is a declared-but-never-started call with no result, and the
+    // shared Kernel projection consumes it. A formal outcome_unknown (batch or
+    // transcript) or any genuinely unsettled action keeps the real occupancy.
+    const unknownInBatch = runState.toolBatch !== null
+      && runState.toolBatch.calls.some(call => call.status === 'outcome_unknown');
+    const transcriptUnknown = transcriptHasOutcomeUnknown(runState.transcript);
+    const abandonedInBatch = runState.toolBatch !== null
+      && runState.toolBatch.calls.some(call => call.status === 'abandoned');
+    if ((!turnIsComplete(runState) && !abandonedInBatch) || unknownInBatch || transcriptUnknown) {
       return { status: 'ready', value: record.value };
     }
+    // The platform-facing contract is the shared Kernel projection: an abandoned
+    // terminal Turn drops only the never-started declarations from a COPY and
+    // every other known terminal still passes the same genuine-unknown check.
+    // The original state/records stay untouched; a projection that cannot be
+    // consumed keeps the real occupancy and never fabricates an answer.
     try {
-      assertTranscriptExchangeIntegrity(runState.transcript, `r5b-query:${queryRunRef.runId}`);
+      assertTranscriptExchangeIntegrity(projectTerminalTranscript(runState), `r5b-query:${queryRunRef.runId}`);
     } catch {
       return { status: 'ready', value: record.value };
     }

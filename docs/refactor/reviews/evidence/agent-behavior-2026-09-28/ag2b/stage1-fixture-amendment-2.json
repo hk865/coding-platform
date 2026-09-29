@@ -1,0 +1,17 @@
+{
+  "at": "2026-09-28T06:11:08.005988+00:00",
+  "changes": [
+    {
+      "path": "tests/helpers/AG2b-collaboration-fixture.ts",
+      "before": "77074e3509b58fa9e46e456337fc0d216702ef9a3e397cce2d8644ff236c9094",
+      "after": "aed006fc8f743ff227a82fe69cea329a3a6cd5e1e12573efb3f2f462726ba496"
+    },
+    {
+      "path": "tests/app/AG2b-collaboration.test.ts",
+      "before": "ed1cec15df5c13510688147a1254f26708e17da155130abacf2fa3ac1c8a7fcf",
+      "after": "38e1a5e0a391804c402c21eedfb19db7cba4798219419a05c99207dcef05603a"
+    }
+  ],
+  "reason": "Registered check marker changed the checked source, correctly producing INCONCLUSIVE. Use the same real artifact assertion with stdout only, preserve formal Task/Goal gates. Busy/reopen scripted discovery must select actual linked B from returned directory by identity, not arbitrary first row which may be current A. No production validation change or assertion of false completion.",
+  "laneAuditException": "Both originally read-only test paths are explicitly amended by primary; DSH still cannot edit tests, manifest unchanged."
+}

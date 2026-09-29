@@ -1,0 +1,11 @@
+{
+  "fixture": "/tmp/coding-platform-coldstart-final-20260929-4qdhz4g5",
+  "baselineFiles": {
+    "README.md": "7b4b7d3a4932ce63ad1c26fd0852791075333b6eeeb2a8442d3b7b9518ddd674",
+    "package.json": "f05a4fad1f208f0fe2ef29f89e72ff816254eb900e3ee86111caaf0bd2e56b3b",
+    "src/report.js": "72d1345349a21c15b1e04726eb9155a43d6f1fccfe78194e7b854ec7bf583f3c",
+    "src/labels.js": "f8bb2f3af0f8f36c6e3483a3c72d1c586dde25b5703e0bb00d75c5fc832ca67e",
+    "test/labels.test.js": "2cfa4fc3bf71596cff00cc88bcad09f1b12a01559eed3b624f13ac0df6d50286"
+  },
+  "note": "Created by copying still-unmodified isolated fixture; registered and goal sent through normal UI; no Plan/Session/policy/baseline seeded."
+}

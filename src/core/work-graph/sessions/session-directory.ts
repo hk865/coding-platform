@@ -23,6 +23,7 @@
  */
 import type { ArtifactRef } from '../../../contracts/artifact.js';
 import type { CommitCursor } from '../../../contracts/command-event.js';
+import type { RunRef } from '../../../contracts/dispatch.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type {
@@ -54,6 +55,7 @@ import {
   sessionOperationFromAdmittedEvent, sessionWorkLinkRefKey, type PendingSessionWorkLink,
 } from './session-record-codecs.js';
 import { validateWorkLinkTarget } from './session-targets.js';
+import { decodeRun } from '../tasks/run-state-service.js';
 
 /** R4b's required physical surface. WorkGraph remains the sole domain writer;
  * Store implements only mechanical guards, claims, index reads and commits. */
@@ -71,6 +73,12 @@ export type HostActor = { kind: 'human' | 'system'; id: string };
 type TrustedContext =
   | { ok: true; scope: WorkspaceScope; actor: HostActor }
   | { ok: false; rejection: CoreRejection };
+/** A read-only directory binding: the Host keeps `trustedContext`; a work_run
+ * binds only its own Run workspace. `not_found` stays a ReadResult, not a
+ * rejection, so an absent Run never grants a workspace read. */
+type ReadBinding =
+  | { ok: true; scope: WorkspaceScope; actorKey: string }
+  | { ok: false; result: CoreRejection | { status: 'not_found' } };
 
 function isObject(value: unknown): value is UnknownRecord {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -87,6 +95,11 @@ function canonicalOf(value: unknown): string | null {
   } catch {
     return null;
   }
+}
+/** A complete RunRef, the only work_run identity a read-only directory call may claim. */
+function isRunRef(value: unknown): value is RunRef {
+  return isObject(value) && value['aggregateType'] === 'Run'
+    && nonEmpty(value['projectId']) && nonEmpty(value['goalId']) && nonEmpty(value['runId']);
 }
 function reject(code: CoreError, reason: string, current?: VersionPin[]): CoreRejection {
   return { status: 'rejected', code, reason, ...(current === undefined ? {} : { current }) };
@@ -1059,15 +1072,96 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
     return { ok: true, value: links };
   }
 
+  /**
+   * The read-only directory binding. A trusted Host reuses the ORIGINAL
+   * `trustedContext` guard and actor key, so every existing directory cursor
+   * still binds to the same principal. A work_run binds only its own snapshotted
+   * project/workspace and RunRef: it reads exactly ONE Run through the shared
+   * `decodeRun` and checks the Run workspace. It never loads the whole execution
+   * chain, never re-checks lease/Role/generation and never permits a write.
+   */
+  async function readContext(ctx: CoreCallContext): Promise<ReadBinding> {
+    const bound = ctx as unknown as {
+      projectId?: unknown; workspaceId?: unknown; principal?: unknown; signal?: unknown;
+    };
+    const principal = isObject(bound) ? bound['principal'] : undefined;
+    if (isObject(principal) && principal['kind'] === 'host') {
+      const trusted = trustedContext(ctx);
+      if (!trusted.ok) return { ok: false, result: trusted.rejection };
+      const actorKey = canonicalOf(actorIdentity(trusted.actor));
+      if (actorKey === null) return { ok: false, result: reject('invalid', 'the Host actor cannot be canonically encoded') };
+      return { ok: true, scope: trusted.scope, actorKey };
+    }
+    if (isObject(principal) && principal['kind'] === 'work_run') {
+      return readWorkRunContext(bound, principal);
+    }
+    return { ok: false, result: reject('forbidden', 'a Session read requires a trusted Host or work_run principal') };
+  }
+
+  async function readWorkRunContext(
+    bound: { projectId?: unknown; workspaceId?: unknown; signal?: unknown },
+    principal: UnknownRecord,
+  ): Promise<ReadBinding> {
+    // Snapshot every scope/identity input BEFORE the first await. Only these
+    // copied values are used after `readMany`; the caller's mutable objects are
+    // never consulted again.
+    const projectId = nonEmpty(bound.projectId) ? bound.projectId : null;
+    const workspaceId = nonEmpty(bound.workspaceId) ? bound.workspaceId : null;
+    if (projectId === null || workspaceId === null) {
+      return { ok: false, result: reject('forbidden', 'a work_run Session read requires a bound project/workspace context') };
+    }
+    const signal = bound.signal;
+    if (!isObject(signal) || typeof signal['aborted'] !== 'boolean' || typeof signal['addEventListener'] !== 'function') {
+      return { ok: false, result: reject('forbidden', 'a work_run Session read requires the bound AbortSignal') };
+    }
+    const rawRunRef = principal['runRef'];
+    if (!isRunRef(rawRunRef)) {
+      return { ok: false, result: reject('forbidden', 'a work_run Session read requires a complete RunRef') };
+    }
+    let runRef: RunRef;
+    try {
+      runRef = structuredClone(rawRunRef);
+    } catch {
+      return { ok: false, result: reject('invalid', 'the Run ref cannot be isolated from the caller') };
+    }
+    if (runRef.projectId !== projectId) {
+      return { ok: false, result: reject('forbidden', 'the Run belongs to another project') };
+    }
+    const runKey = canonicalOf(runRef);
+    if (runKey === null) return { ok: false, result: reject('invalid', 'the Run ref cannot be canonically encoded') };
+    const actorKey = canonicalOf({ kind: 'work_run', runRef });
+    if (actorKey === null) return { ok: false, result: reject('invalid', 'the work_run read identity cannot be canonically encoded') };
+    const scope: WorkspaceScope = { projectId, workspaceId };
+    const read = await records.readMany([runKey]);
+    if (read.status !== 'ready') return { ok: false, result: mapStoreFailure(read) };
+    const record = read.value.records.find((entry) => entry.refKey === runKey);
+    if (record === undefined) return { ok: false, result: { status: 'not_found' } };
+    const decoded = decodeRun(record);
+    if (!decoded.ok) return { ok: false, result: reject('unavailable', `the Run is damaged: ${decoded.reason}`) };
+    const run = decoded.value;
+    if (canonicalOf(run.ref) !== runKey) {
+      return { ok: false, result: reject('unavailable', 'the Run ref disagrees with the requested Run') };
+    }
+    if (run.workspaceSnapshot.workspaceId !== workspaceId) {
+      return { ok: false, result: reject('forbidden', 'the Run workspace does not match the bound read context') };
+    }
+    return { ok: true, scope, actorKey };
+  }
+
   async function readSession(ctx: CoreCallContext, ref: SessionRef): Promise<ReadResult<SessionCard>> {
-    const trusted = trustedContext(ctx);
-    if (!trusted.ok) return trusted.rejection;
-    const { scope } = trusted;
-    if (!isObject(ref) || !nonEmpty(ref['projectId']) || !nonEmpty(ref['sessionId'])) {
+    // The read binding may suspend, so freeze the caller's ref BEFORE the first
+    // await; a failed isolation keeps the original synchronous `invalid` shape.
+    const ownedRef = ownRequest<unknown>(ref, 'readSession reference');
+    if (!ownedRef.ok) return reject('invalid', ownedRef.reason);
+    const binding = await readContext(ctx);
+    if (!binding.ok) return binding.result;
+    const { scope } = binding;
+    const owned = ownedRef.value;
+    if (!isObject(owned) || !nonEmpty(owned['projectId']) || !nonEmpty(owned['sessionId'])) {
       return reject('invalid', 'readSession requires a SessionRef');
     }
-    if (ref['projectId'] !== scope.projectId) return { status: 'not_found' };
-    const sessionRef: SessionRef = { projectId: ref['projectId'], sessionId: ref['sessionId'] };
+    if (owned['projectId'] !== scope.projectId) return { status: 'not_found' };
+    const sessionRef: SessionRef = { projectId: owned['projectId'], sessionId: owned['sessionId'] };
     const key = sessionAggregateRefKey(plainSessionRefToAggregate(sessionRef));
     const read = await records.readMany([key]);
     if (read.status !== 'ready') return mapStoreFailure(read);
@@ -1299,10 +1393,14 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
       page: { limit: number; cursor?: string; atLeastCursor?: CommitCursor };
     },
   ): Promise<ReadResult<SessionPage<SessionCard>>> {
-    const trusted = trustedContext(ctx);
-    if (!trusted.ok) return trusted.rejection;
-    const { scope, actor } = trusted;
-    const raw = input as unknown as Record<string, unknown> | null | undefined;
+    // The read binding may suspend, so freeze the caller's input BEFORE the
+    // first await; a failed isolation keeps the original `invalid` shape.
+    const ownedInput = ownRequest<unknown>(input, 'findSessions input');
+    if (!ownedInput.ok) return reject('invalid', ownedInput.reason);
+    const binding = await readContext(ctx);
+    if (!binding.ok) return binding.result;
+    const { scope, actorKey } = binding;
+    const raw = ownedInput.value as Record<string, unknown> | null | undefined;
     if (!isObject(raw)) return reject('invalid', 'findSessions requires an input object');
     const workspace = raw['workspace'];
     if (!isObject(workspace) || workspace['projectId'] !== scope.projectId || workspace['workspaceId'] !== scope.workspaceId) {
@@ -1338,8 +1436,6 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
     const roleKey = roleValue === undefined ? null : canonicalOf(roleValue);
     if (targetValue !== undefined && targetKey === null) return reject('invalid', 'findSessions target cannot be canonically encoded');
     if (roleValue !== undefined && roleKey === null) return reject('invalid', 'findSessions role cannot be canonically encoded');
-    const actorKey = canonicalOf(actorIdentity(actor));
-    if (actorKey === null) return reject('invalid', 'the Host actor cannot be canonically encoded');
 
     const rawAtLeast = pageInput['atLeastCursor'];
     let atLeast: CommitCursor | undefined;

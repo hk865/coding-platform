@@ -1,0 +1,18 @@
+{
+  "writableFiles": [
+    "src/business/workflow/workflow.ts",
+    "tests/composition/R5c-workflow-platform.test.ts",
+    "src/core/work-graph/evidence/contracts.ts",
+    "src/core/work-graph/evidence/evidence-service.ts",
+    "src/core/work-graph/evidence/evidence-record-codecs.ts",
+    "src/composition/create-platform.ts"
+  ],
+  "dshStateDirectories": [
+    "profiles",
+    "sessions",
+    "storages",
+    "cache",
+    "llm-deepseek",
+    "attachments"
+  ]
+}

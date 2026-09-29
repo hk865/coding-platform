@@ -1,0 +1,83 @@
+{
+  "status": "failed_before_new_implementation",
+  "goalId": "goal-mum98715-1",
+  "sessionId": "session-0817dbb201f88325521aa06a50da6cc0f6030435166c711e6a5124debad74a53",
+  "modelRequests": 2,
+  "answerProduced": false,
+  "events": [
+    {
+      "position": 3,
+      "type": "run.started"
+    },
+    {
+      "position": 4,
+      "type": "model.request_started"
+    },
+    {
+      "position": 5,
+      "type": "model.usage_recorded"
+    },
+    {
+      "position": 6,
+      "type": "assistant.message_completed",
+      "assistantFields": [
+        "content",
+        "messageId",
+        "reasoningContent",
+        "role",
+        "schemaVersion"
+      ],
+      "reasoningCharacters": 265
+    },
+    {
+      "position": 7,
+      "type": "tool.started"
+    },
+    {
+      "position": 8,
+      "type": "tool.started"
+    },
+    {
+      "position": 9,
+      "type": "tool.completed"
+    },
+    {
+      "position": 10,
+      "type": "tool.completed"
+    },
+    {
+      "position": 11,
+      "type": "model.request_started"
+    },
+    {
+      "position": 12,
+      "type": "model.request_failed",
+      "failure": {
+        "category": "model",
+        "code": "provider_request_failed",
+        "message": "DeepSeek 请求失败",
+        "operationId": "5f403cb7-406d-42f5-875d-17ec8680186f",
+        "retryable": false
+      }
+    },
+    {
+      "position": 13,
+      "type": "run.failed",
+      "failure": {
+        "category": "model",
+        "code": "provider_request_failed",
+        "message": "DeepSeek 请求失败",
+        "operationId": "5f403cb7-406d-42f5-875d-17ec8680186f",
+        "retryable": false
+      }
+    }
+  ],
+  "ui": {
+    "thinkingSections": 1,
+    "collapsedThinkingSections": 1
+  },
+  "fixtureBaselineTests": {
+    "passed": 0,
+    "failed": 2
+  }
+}

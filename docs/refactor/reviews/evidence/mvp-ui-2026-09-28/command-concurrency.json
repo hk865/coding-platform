@@ -1,0 +1,14 @@
+{
+  "node": "v24.21.0",
+  "method": "Independent temporary probe transpiled the current src/app/workbench-tools.ts, calling the actual Kernel ProcessSandbox with no mocked executor.",
+  "request": "Two Promise.all starts with identical scope and requestId; actual command appends one line to count.txt.",
+  "result": {
+    "status": "passed",
+    "commandId": "workbench-command-1",
+    "sharedHandle": true,
+    "sideEffectLines": 1,
+    "exitCode": 0,
+    "closeDrained": true
+  },
+  "temporaryWorkspaceRemoved": true
+}

@@ -1,0 +1,1665 @@
+diff --git a/home/hyh001/projects/coding-platform/coding-platform-next/src/contracts/query-job.ts b/home/hyh001/projects/coding-platform/coding-platform-next/.toolchain/dsh-refactor-runs/ag2-consultation-stage2-20260928/workspace/src/contracts/query-job.ts
+index 92c7ed9..0df03d0 100644
+--- a/home/hyh001/projects/coding-platform/coding-platform-next/src/contracts/query-job.ts
++++ b/home/hyh001/projects/coding-platform/coding-platform-next/.toolchain/dsh-refactor-runs/ag2-consultation-stage2-20260928/workspace/src/contracts/query-job.ts
+@@ -20,6 +20,21 @@ export type QueryJobAnswerRef = {
+     queryJobId: string;
+     answerId: string;
+ };
++/**
++ * The frozen deterministic identity of the ONE consultation Query bound to a
++ * complete SessionMessageRef: the canonical SHA-256 of the message ref decides
++ * the QueryJob and QueryRun ids. Two outer retries therefore address the same
++ * persisted pair; no generic dedupe layer exists.
++ */
++export function consultationQueryRefs(messageRef: SessionMessageRef): { queryJobRef: QueryJobRef; queryRunRef: QueryRunRef } {
++    const hash = sha256Hex(canonicalJson(messageRef as unknown as JsonValue));
++    const queryJobId = `consultation-${hash}`;
++    return {
++        queryJobRef: { aggregateType: "QueryJob", projectId: messageRef.projectId, workspaceId: messageRef.workspaceId, queryJobId },
++        queryRunRef: { aggregateType: "QueryRun", projectId: messageRef.projectId, workspaceId: messageRef.workspaceId,
++            queryJobId, runId: `consultation-run-${hash}` },
++    };
++}
+ type QueryRunStatus = "pending" | "running" | "answered" | "closed";
+ export type QueryExecutionBindingV1 = {
+     schemaVersion: 1;
+@@ -90,10 +105,11 @@ export type QueryRunSnapshot = {
+  *     the source Task/Goal phase.
+  */
+ import type { ActorRef } from "./command-event.js";
+-import { canonicalJson } from "./fingerprint.js";
++import { canonicalJson, sha256Hex, type JsonValue } from "./fingerprint.js";
+ import type { RoleBindingRefV1 } from "./dispatch.js";
+ import { validateRuntimeBudget, type RuntimeBudget } from './runtime-budget.js';
+ import type { RoleConfigurationRef, SessionRef } from './core/identity.js';
++import type { SessionMessageRef } from './core/session-message.js';
+ import type { RoleSpecResolutionV1 } from './role-spec-materials.js';
+ import type { RunExecutionHistoryV1 } from './core/execution-history.js';
+ import { validMaterialSourcePin } from './material-access.js';
+@@ -133,6 +149,15 @@ export type QueryJobIntentV1 = {
+         feedback?: import('./execution-feedback.js').FeedbackSource;
+         roleBinding: RoleBindingRefV1;
+         runtimeBudget: import('./runtime-budget.js').RuntimeBudget;
++        /**
++         * Explicit consultation binding. When present the Query's question MUST
++         * be the original message body text and the formal Answer is attached to
++         * that same original message. It is legal only on `semantic_query`.
++         */
++        consultation?: {
++            messageRef: SessionMessageRef;
++            recipient: SessionRef;
++        };
+         implementationAuthorization?: {
+             requestId: string;
+             writeScope: [
+@@ -144,11 +169,42 @@ export type QueryJobIntentV1 = {
+     };
+ };
+ type QueryJobStatus = "pending" | "running" | "answered" | "closed";
++function isRecordValue(value: unknown): value is Record<string, unknown> {
++    return typeof value === 'object' && value !== null && !Array.isArray(value);
++}
++function validSessionMessageRef(value: unknown): boolean {
++    if (!isRecordValue(value))
++        return false;
++    const keys = Object.keys(value);
++    return keys.length === 4 && keys.every(key => ['aggregateType', 'projectId', 'workspaceId', 'messageId'].includes(key)) &&
++        value['aggregateType'] === 'SessionMessage' &&
++        typeof value['projectId'] === 'string' && value['projectId'].length > 0 &&
++        typeof value['workspaceId'] === 'string' && value['workspaceId'].length > 0 &&
++        typeof value['messageId'] === 'string' && value['messageId'].length > 0;
++}
++function validConsultationBinding(value: unknown): boolean {
++    if (!isRecordValue(value))
++        return false;
++    const keys = Object.keys(value);
++    if (keys.length !== 2 || !keys.includes('messageRef') || !keys.includes('recipient'))
++        return false;
++    if (!validSessionMessageRef(value['messageRef']))
++        return false;
++    const recipient = value['recipient'];
++    if (!isRecordValue(recipient))
++        return false;
++    if (Object.keys(recipient).some(key => key !== 'aggregateType' && key !== 'projectId' && key !== 'sessionId'))
++        return false;
++    return typeof recipient['projectId'] === 'string' && recipient['projectId'].length > 0 &&
++        typeof recipient['sessionId'] === 'string' && recipient['sessionId'].length > 0;
++}
+ export function validQueryExecution(value: QueryJobIntentV1['execution']): boolean {
+     if (value === undefined)
+         return true;
+     if (!value || !['semantic_query', 'initial_coordination', 'execution_coordination'].includes(value.kind))
+         return false;
++    if (value.consultation !== undefined && (value.kind !== 'semantic_query' || !validConsultationBinding(value.consultation)))
++        return false;
+     if (value.responsePurpose !== undefined && !['reply', 'architecture', 'progress', 'planning', 'handoff', 'execution'].includes(value.responsePurpose))
+         return false;
+     if ((value.kind === 'execution_coordination') !== !!value.feedback)
+diff --git a/home/hyh001/projects/coding-platform/coding-platform-next/src/core/work-graph/queries/contracts.ts b/home/hyh001/projects/coding-platform/coding-platform-next/.toolchain/dsh-refactor-runs/ag2-consultation-stage2-20260928/workspace/src/core/work-graph/queries/contracts.ts
+index 9369819..b4bd98e 100644
+--- a/home/hyh001/projects/coding-platform/coding-platform-next/src/core/work-graph/queries/contracts.ts
++++ b/home/hyh001/projects/coding-platform/coding-platform-next/.toolchain/dsh-refactor-runs/ag2-consultation-stage2-20260928/workspace/src/core/work-graph/queries/contracts.ts
+@@ -39,6 +39,7 @@ import type { RawArtifactStorePort } from '../../record-store/body-ports.js';
+ import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
+ import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
+ import type { RoleBindingFactsPort } from '../configuration/contracts.js';
++import type { SessionMailboxPort } from '../communication/contracts.js';
+ import type { GraphWrite } from '../tasks/contracts.js';
+ 
+ /** The exact pending pair a submit records: both ids are independent identities. */
+@@ -220,4 +221,11 @@ export type QueryJobDependencies = {
+   now(): string;
+   eventId(): string;
+   execution?: Pick<QueryExecutionPort, 'claimQuery' | 'readQueryAnswer'>;
++  /**
++   * Optional read-only mailbox seam used ONLY to admit a consultation submit:
++   * it proves the original message/body/recipient/scope and the verbatim
++   * question. It exposes no send/ack/respond capability and never becomes a
++   * second mailbox.
++   */
++  consultations?: Pick<SessionMailboxPort, 'readMessage' | 'readMessageBody'>;
+ };
+diff --git a/home/hyh001/projects/coding-platform/coding-platform-next/src/core/work-graph/queries/query-job-service.ts b/home/hyh001/projects/coding-platform/coding-platform-next/.toolchain/dsh-refactor-runs/ag2-consultation-stage2-20260928/workspace/src/core/work-graph/queries/query-job-service.ts
+index 12e1908..209814d 100644
+--- a/home/hyh001/projects/coding-platform/coding-platform-next/src/core/work-graph/queries/query-job-service.ts
++++ b/home/hyh001/projects/coding-platform/coding-platform-next/.toolchain/dsh-refactor-runs/ag2-consultation-stage2-20260928/workspace/src/core/work-graph/queries/query-job-service.ts
+@@ -26,10 +26,11 @@
+ import { commandIdentityKey } from '../../../contracts/command-event.js';
+ import type { ActorRef } from '../../../contracts/command-event.js';
+ import type { CoreCallContext } from '../../../contracts/core/call-context.js';
+-import type { VersionPin } from '../../../contracts/core/identity.js';
++import type { SessionRef, VersionPin } from '../../../contracts/core/identity.js';
+ import type { CoreError, CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
++import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
+ import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
+-import { validQueryExecution } from '../../../contracts/query-job.js';
++import { consultationQueryRefs, validQueryExecution } from '../../../contracts/query-job.js';
+ import type {
+   QueryJobIntentV1,
+   QueryJobRef,
+@@ -55,6 +56,7 @@ import {
+   decodeProjectSnapshot,
+   decodeWorkspaceSnapshot,
+ } from '../persistence/record-codecs.js';
++import { sessionMessageRefKey } from '../communication/message-record-codecs.js';
+ import { decodePlanRevisionSnapshot, planRevisionRefKey } from '../tasks/plan-record-codecs.js';
+ import type { QueryJobDependencies, QueryJobPort } from './contracts.js';
+ import {
+@@ -116,6 +118,8 @@ type FocusTaskRef = { aggregateType: 'Task'; projectId: string; goalId: string;
+ 
+ type CallerPins = { project: number; workspace: number; goal: number };
+ 
++type ConsultationBinding = { messageRef: SessionMessageRef; recipient: SessionRef };
++
+ type SubmitDraft = {
+   projectId: string;
+   workspaceId: string;
+@@ -127,6 +131,7 @@ type SubmitDraft = {
+   intent: QueryJobIntentV1;
+   focusRefs: FocusTaskRef[];
+   pins: CallerPins;
++  consultation: ConsultationBinding | null;
+ };
+ 
+ type PreparedSubmit = { status: 'ok'; draft: SubmitDraft } | { status: 'rejected'; rejection: CoreRejection };
+@@ -299,6 +304,29 @@ function prepareSubmit(ctx: CoreCallContext, request: unknown): PreparedSubmit {
+       return { status: 'rejected', rejection: reject('unsupported', 'this execution kind is not delivered in this batch') };
+     }
+   }
++  let consultation: ConsultationBinding | null = null;
++  if (execution !== undefined && isRecord(execution) && execution['consultation'] !== undefined) {
++    // `validQueryExecution` already proved the exact binding shape; the only
++    // remaining facts are the deterministic identity and the bound scope.
++    const rawConsultation = execution['consultation'] as unknown as {
++      messageRef: SessionMessageRef; recipient: SessionRef;
++    };
++    const messageRef = rawConsultation.messageRef;
++    if (messageRef.projectId !== projectId || messageRef.workspaceId !== workspaceId) {
++      return { status: 'rejected', rejection: reject('forbidden', 'the consultation message is outside the Host call scope') };
++    }
++    if (rawConsultation.recipient.projectId !== projectId) {
++      return { status: 'rejected', rejection: reject('forbidden', 'the consultation recipient is outside the Host call project') };
++    }
++    const refs = consultationQueryRefs(messageRef);
++    if (refs.queryJobRef.queryJobId !== queryJobId || refs.queryRunRef.runId !== runId) {
++      return { status: 'rejected', rejection: reject('invalid', 'a consultation submit must use the deterministic identity of its message') };
++    }
++    consultation = {
++      messageRef: { ...messageRef },
++      recipient: { projectId: rawConsultation.recipient.projectId, sessionId: rawConsultation.recipient.sessionId },
++    };
++  }
+ 
+   const rawFocus = intent['focusTaskRefs'];
+   if (!Array.isArray(rawFocus)) return { status: 'rejected', rejection: reject('invalid', 'intent.focusTaskRefs must be an array') };
+@@ -343,6 +371,7 @@ function prepareSubmit(ctx: CoreCallContext, request: unknown): PreparedSubmit {
+       intent: intent as unknown as QueryJobIntentV1,
+       focusRefs,
+       pins: expected.pins,
++      consultation,
+     },
+   };
+ }
+@@ -634,6 +663,42 @@ async function submit(
+   if (facts.goal.workspaceRef.projectId !== draft.projectId || facts.goal.workspaceRef.workspaceId !== draft.workspaceId) {
+     return reject('invalid', 'the Goal belongs to another workspace');
+   }
++
++  // (3a) an explicit consultation submit is admitted only through the injected
++  // read-only mailbox seam: the original message, its actual body text and its
++  // recipient are the real facts, never caller JSON. The exact message revision
++  // the admission read is also carried into the ONE commit as a local guard, so
++  // a concurrent reply/ack that landed after the read makes the submit lose the
++  // CAS instead of creating a redundant Query/model run.
++  let consultationMessageGuard: RecordGuard | null = null;
++  if (draft.consultation !== null) {
++    if (deps.consultations === undefined) {
++      return reject('unsupported', 'a consultation submit requires the read-only mailbox dependency');
++    }
++    if (signal?.aborted) return reject('cancelled', 'submitQueryJob was cancelled before reading the consultation message');
++    const messageRead = await deps.consultations.readMessage(ctx, draft.consultation.messageRef);
++    if (messageRead.status === 'not_found') return reject('not_found', 'the consultation message does not exist');
++    if (messageRead.status === 'not_ready') return reject('incomplete', 'the consultation message is not readable at the required watermark');
++    if (messageRead.status !== 'ready') return messageRead;
++    const message = messageRead.value;
++    if (message.recipient.projectId !== draft.consultation.recipient.projectId
++      || message.recipient.sessionId !== draft.consultation.recipient.sessionId) {
++      return reject('forbidden', 'the consultation recipient is not the original message recipient');
++    }
++    if (message.status === 'responded') {
++      return reject('invalid', 'the original consultation message already has a response');
++    }
++    const bodyRead = await deps.consultations.readMessageBody(ctx,
++      { messageRef: draft.consultation.messageRef, part: 'message' });
++    if (bodyRead.status === 'not_found') return reject('not_found', 'the consultation message body does not exist');
++    if (bodyRead.status === 'not_ready') return reject('incomplete', 'the consultation message body is not readable at the required watermark');
++    if (bodyRead.status !== 'ready') return bodyRead;
++    if (bodyRead.value.text !== draft.intent.question) {
++      return reject('invalid', 'the consultation question must be the original message body text');
++    }
++    consultationMessageGuard = { refKey: sessionMessageRefKey(message.ref), expectedRevision: message.revision };
++  }
++
+   const execution = draft.intent.execution;
+   if (execution !== undefined && execution.kind === 'initial_coordination' && facts.goal.activePlanRevision !== null) {
+     return reject('invalid', 'initial_coordination requires a Goal without an active Plan');
+@@ -734,6 +799,7 @@ async function submit(
+     { refKey: runKey, expectedRevision: null },
+   ];
+   if (planGuard !== null) guards.push({ refKey: planGuard.refKey, expectedRevision: planGuard.revision });
++  if (consultationMessageGuard !== null) guards.push(consultationMessageGuard);
+ 
+   const preparedCommit: PreparedCommit = {
+     identityKey,
+diff --git a/home/hyh001/projects/coding-platform/coding-platform-next/src/core/work-graph/queries/query-execution.ts b/home/hyh001/projects/coding-platform/coding-platform-next/.toolchain/dsh-refactor-runs/ag2-consultation-stage2-20260928/workspace/src/core/work-graph/queries/query-execution.ts
+index 4288339..f5bbf3f 100644
+--- a/home/hyh001/projects/coding-platform/coding-platform-next/src/core/work-graph/queries/query-execution.ts
++++ b/home/hyh001/projects/coding-platform/coding-platform-next/.toolchain/dsh-refactor-runs/ag2-consultation-stage2-20260928/workspace/src/core/work-graph/queries/query-execution.ts
+@@ -23,6 +23,7 @@ import type { PreparedQueryExecution, PreparedQueryManifestV1 } from '../../../c
+ import type { CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
+ import type { SessionRecord } from '../../../contracts/core/session.js';
+ import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
++import { consultationQueryRefs } from '../../../contracts/query-job.js';
+ import type { GoalSnapshot, WorkspaceSnapshot } from '../../../contracts/ledger.js';
+ import type { PlanRevisionSnapshot } from '../../../contracts/plan.js';
+ import type { RuntimeBudget } from '../../../contracts/runtime-budget.js';
+@@ -719,6 +720,19 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
+     if (!Number.isSafeInteger(generation)) return rejected('invalid', 'the Session generation would not be a safe integer');
+     const execution = job.job.intent.execution;
+     if (execution === undefined) return rejected('unsupported', 'claimQuery requires an explicit read-only execution binding');
++    if (execution.consultation !== undefined) {
++      // The FIRST occupancy point re-checks the bound recipient against the
++      // ACTUAL claimed Session and the deterministic message identity. The
++      // submit already did this, but a claim is the authoritative claim.
++      if (execution.consultation.recipient.projectId !== session.ref.projectId
++        || execution.consultation.recipient.sessionId !== session.ref.sessionId) {
++        return rejected('forbidden', 'the consultation binding recipient is not the claimed Session');
++      }
++      const refs = consultationQueryRefs(execution.consultation.messageRef);
++      if (refs.queryJobRef.queryJobId !== queryRunRef.queryJobId || refs.queryRunRef.runId !== queryRunRef.runId) {
++        return rejected('invalid', 'the consultation Query is not the deterministic identity of its message');
++      }
++    }
+     if (signal.aborted) return rejected('cancelled', 'the Query claim was cancelled before Role resolution');
+ 
+     let roleFacts;
+diff --git a/home/hyh001/projects/coding-platform/coding-platform-next/src/core/work-graph/communication/contracts.ts b/home/hyh001/projects/coding-platform/coding-platform-next/.toolchain/dsh-refactor-runs/ag2-consultation-stage2-20260928/workspace/src/core/work-graph/communication/contracts.ts
+index 9e66aae..5ff7bea 100644
+--- a/home/hyh001/projects/coding-platform/coding-platform-next/src/core/work-graph/communication/contracts.ts
++++ b/home/hyh001/projects/coding-platform/coding-platform-next/.toolchain/dsh-refactor-runs/ag2-consultation-stage2-20260928/workspace/src/core/work-graph/communication/contracts.ts
+@@ -22,6 +22,7 @@ import type { SessionRef } from '../../../contracts/core/identity.js';
+ import type { ReadResult, WriteResult } from '../../../contracts/core/results.js';
+ import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
+ import type { RoleBindingRefV1, RunRef, SourceRefV1 } from '../../../contracts/dispatch.js';
++import type { QueryJobAnswerRef, QueryRunRef } from '../../../contracts/query-job.js';
+ import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
+ import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
+ import type { RoleBindingFactsPort } from '../configuration/contracts.js';
+@@ -51,12 +52,28 @@ export type MessageWorkRunSender = {
+ 
+ export type MessageSender = MessageHostSender | MessageWorkRunSender;
+ 
++/**
++ * Formal Query Answer sender. It is DERIVED by the mailbox from the settled
++ * official Query Job/Run/Answer, never supplied by a caller: `sessionRef` is the
++ * original recipient, `queryRunRef`/`answerRef` are the persisted facts and
++ * `generation` is the claimed Session generation that produced the Answer.
++ */
++export type MessageQueryAnswerSender = {
++  kind: 'query_run';
++  sessionRef: SessionRef;
++  queryRunRef: QueryRunRef;
++  answerRef: QueryJobAnswerRef;
++  generation: number;
++};
++
+ /**
+  * A reply lives in the ORIGINAL message's single response slot. It never
+- * produces a second inbox message and never fabricates a sender Session.
++ * produces a second inbox message and never fabricates a sender Session. The
++ * original message `sender` stays restricted to host/work_run; only the
++ * response slot additionally accepts the derived `query_run` Answer source.
+  */
+ export type MessageResponse = {
+-  sender: MessageWorkRunSender;
++  sender: MessageWorkRunSender | MessageQueryAnswerSender;
+   bodyRef: ArtifactRef;
+   sourceRef: SourceRefV1;
+   respondedAt: string;
+@@ -127,6 +144,16 @@ export interface SessionMailboxPort {
+     ctx: CoreCallContext,
+     request: GraphWrite<{ messageRef: SessionMessageRef; text: string }>,
+   ): Promise<WriteResult<SessionMessage>>;
++  /**
++   * Host-only association of an ALREADY-SAVED formal Query Answer with the
++   * original message's single response slot. It accepts no free text and no
++   * caller identity: the body and the `query_run` sender are read from the
++   * settled Answer/Job/Run. Absence keeps every existing mailbox behavior.
++   */
++  respondFromQueryAnswer?(
++    ctx: CoreCallContext,
++    request: GraphWrite<{ messageRef: SessionMessageRef; answerRef: QueryJobAnswerRef }>,
++  ): Promise<WriteResult<SessionMessage>>;
+ }
+ 
+ /**
+diff --git a/home/hyh001/projects/coding-platform/coding-platform-next/src/core/work-graph/communication/message-record-codecs.ts b/home/hyh001/projects/coding-platform/coding-platform-next/.toolchain/dsh-refactor-runs/ag2-consultation-stage2-20260928/workspace/src/core/work-graph/communication/message-record-codecs.ts
+index ef2ca7b..b1f8d05 100644
+--- a/home/hyh001/projects/coding-platform/coding-platform-next/src/core/work-graph/communication/message-record-codecs.ts
++++ b/home/hyh001/projects/coding-platform/coding-platform-next/.toolchain/dsh-refactor-runs/ag2-consultation-stage2-20260928/workspace/src/core/work-graph/communication/message-record-codecs.ts
+@@ -21,13 +21,14 @@ import type { ArtifactRef } from '../../../contracts/artifact.js';
+ import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
+ import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
+ import type { RoleBindingRefV1, RunRef, SourceRefV1 } from '../../../contracts/dispatch.js';
++import type { QueryJobAnswerRef, QueryRunRef } from '../../../contracts/query-job.js';
+ import type { RecordLookupIndex } from '../../record-store/lookup-ports.js';
+ import type {
+   DecodeResult, EncodedDomainEvent, EncodedRecord, RecordBackendSchemas,
+ } from '../../record-store/ports.js';
+ import { isJsonObject, isNonEmptyString, parseJsonObject } from '../../record-store/record-codec.js';
+ import { checkArtifactRef, checkPlainSessionRef } from '../sessions/session-record-codecs.js';
+-import type { MessageSender, SessionMessage } from './contracts.js';
++import type { MessageQueryAnswerSender, MessageSender, SessionMessage } from './contracts.js';
+ 
+ /** Encoding selector for the persisted message record. */
+ export const SESSION_MESSAGE_SCHEMA_ID = 'SessionMessage@1';
+@@ -84,7 +85,11 @@ type SentEventBase = {
+ 
+ export type SessionMessageSentEventV1 = SentEventBase & { eventType: 'SessionMessageSent' };
+ export type SessionMessageReadEventV1 = SentEventBase & { eventType: 'SessionMessageRead' };
+-export type SessionMessageRespondedEventV1 = SentEventBase & { eventType: 'SessionMessageResponded' };
++export type SessionMessageRespondedEventV1 = Omit<SentEventBase, 'actor'> & {
++  eventType: 'SessionMessageResponded';
++  /** The formal responder identity: a work_run or a derived query_run Answer. */
++  actor: MessageSender | MessageQueryAnswerSender;
++};
+ export type SessionMessageEventV1 =
+   | SessionMessageSentEventV1
+   | SessionMessageReadEventV1
+@@ -197,15 +202,65 @@ export function checkMessageSender(value: unknown): Problem {
+   return 'message sender kind must be host or work_run';
+ }
+ 
++function checkQueryRunRef(value: unknown): Problem {
++  if (!isObject(value) || !hasOnlyKeys(value,
++    ['aggregateType', 'projectId', 'workspaceId', 'queryJobId', 'runId'])) {
++    return 'query_run sender run ref carries unknown fields';
++  }
++  if (value['aggregateType'] !== 'QueryRun' || !nonEmpty(value['projectId'])
++    || !nonEmpty(value['workspaceId']) || !nonEmpty(value['queryJobId']) || !nonEmpty(value['runId'])) {
++    return 'query_run sender run ref is not a valid QueryRunRef';
++  }
++  return null;
++}
++
++function checkQueryAnswerRef(value: unknown): Problem {
++  if (!isObject(value) || !hasOnlyKeys(value,
++    ['aggregateType', 'projectId', 'workspaceId', 'queryJobId', 'answerId'])) {
++    return 'query_run sender answer ref carries unknown fields';
++  }
++  if (value['aggregateType'] !== 'QueryJobAnswer' || !nonEmpty(value['projectId'])
++    || !nonEmpty(value['workspaceId']) || !nonEmpty(value['queryJobId']) || !nonEmpty(value['answerId'])) {
++    return 'query_run sender answer ref is not a valid QueryJobAnswerRef';
++  }
++  return null;
++}
++
++/** The derived formal Query Answer sender. It is never a caller-supplied text
++ * author: every identity field is a persisted Query fact. */
++export function checkQueryAnswerSender(value: unknown): Problem {
++  if (!isObject(value) || !hasOnlyKeys(value,
++    ['kind', 'sessionRef', 'queryRunRef', 'answerRef', 'generation'])) {
++    return 'query_run sender carries unknown fields';
++  }
++  if (value['kind'] !== 'query_run') return 'query_run sender kind must be query_run';
++  const session = checkPlainSessionRef(value['sessionRef']);
++  if (session !== null) return `query_run sender session: ${session}`;
++  const run = checkQueryRunRef(value['queryRunRef']);
++  if (run !== null) return `query_run sender run: ${run}`;
++  const answer = checkQueryAnswerRef(value['answerRef']);
++  if (answer !== null) return `query_run sender answer: ${answer}`;
++  if (!isPositiveInt(value['generation'])) return 'query_run sender generation must be a positive integer';
++  return null;
++}
++
++/** A response slot accepts the original work_run reply or the derived
++ * query_run Answer reply. The message `sender` itself stays host/work_run. */
++export function checkResponseSender(value: unknown): Problem {
++  if (!isObject(value)) return 'message response sender must be an object';
++  if (value['kind'] === 'query_run') return checkQueryAnswerSender(value);
++  const workRun = checkMessageSender(value);
++  if (workRun !== null) return workRun;
++  if (value['kind'] !== 'work_run') return 'message response sender must be a work_run or query_run sender';
++  return null;
++}
++
+ function checkMessageResponse(value: unknown): Problem {
+   if (!isObject(value) || !hasOnlyKeys(value, ['sender', 'bodyRef', 'sourceRef', 'respondedAt'])) {
+     return 'message response carries unknown fields';
+   }
+-  const sender = checkMessageSender(value['sender']);
++  const sender = checkResponseSender(value['sender']);
+   if (sender !== null) return `message response sender: ${sender}`;
+-  if (!isObject(value['sender']) || value['sender']['kind'] !== 'work_run') {
+-    return 'message response sender must be a work_run sender';
+-  }
+   const body = checkArtifactRef(value['bodyRef']);
+   if (body !== null) return `message response body: ${body}`;
+   const source = checkSourceRef(value['sourceRef']);
+@@ -276,7 +331,9 @@ function checkEventBody(body: UnknownRecord, eventType: string): Problem {
+   if (!nonEmpty(body['projectId']) || !nonEmpty(body['workspaceId']) || !nonEmpty(body['requestId'])) {
+     return `${eventType} requires projectId, workspaceId and requestId`;
+   }
+-  const actor = checkMessageSender(body['actor']);
++  const actor = eventType === SESSION_MESSAGE_RESPONDED_EVENT_TYPE
++    ? checkResponseSender(body['actor'])
++    : checkMessageSender(body['actor']);
+   if (actor !== null) return `${eventType} actor: ${actor}`;
+   const message = body['message'];
+   if (!isObject(message)) return `${eventType} requires the complete message`;
+@@ -290,10 +347,14 @@ function checkEventBody(body: UnknownRecord, eventType: string): Problem {
+     && canonicalOf(body['actor']) !== canonicalOf(message['sender'])) {
+     return 'SessionMessageSent actor must be the message sender';
+   }
+-  if ((eventType === SESSION_MESSAGE_READ_EVENT_TYPE || eventType === SESSION_MESSAGE_RESPONDED_EVENT_TYPE)
++  if (eventType === SESSION_MESSAGE_READ_EVENT_TYPE
+     && (!isObject(body['actor']) || body['actor']['kind'] !== 'work_run')) {
+     return `${eventType} actor must be the formal work_run command identity`;
+   }
++  if (eventType === SESSION_MESSAGE_RESPONDED_EVENT_TYPE
++    && (!isObject(body['actor']) || (body['actor']['kind'] !== 'work_run' && body['actor']['kind'] !== 'query_run'))) {
++    return `${eventType} actor must be the formal work_run or query_run command identity`;
++  }
+   return null;
+ }
+ 
+diff --git a/home/hyh001/projects/coding-platform/coding-platform-next/src/core/work-graph/communication/mailbox-service.ts b/home/hyh001/projects/coding-platform/coding-platform-next/.toolchain/dsh-refactor-runs/ag2-consultation-stage2-20260928/workspace/src/core/work-graph/communication/mailbox-service.ts
+index 46edf06..15f376d 100644
+--- a/home/hyh001/projects/coding-platform/coding-platform-next/src/core/work-graph/communication/mailbox-service.ts
++++ b/home/hyh001/projects/coding-platform/coding-platform-next/.toolchain/dsh-refactor-runs/ag2-consultation-stage2-20260928/workspace/src/core/work-graph/communication/mailbox-service.ts
+@@ -41,7 +41,9 @@ import type { SessionRecord } from '../../../contracts/core/session.js';
+ import type { PreparedTaskManifestV1 } from '../../../contracts/core/prepared-execution.js';
+ import type { CoreError, CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
+ import type { RunSnapshot } from '../../../contracts/dispatch.js';
+-import type { MessageSender, MessageWorkRunSender, SessionMailboxDependencies, SessionMailboxPort, SessionMessage, SessionMessageStatus } from './contracts.js';
++import { consultationQueryRefs } from '../../../contracts/query-job.js';
++import type { QueryJobAnswerRef, QueryJobAnswerSnapshot, QueryJobRef, QueryJobSnapshot, QueryRunRef, QueryRunSnapshot } from '../../../contracts/query-job.js';
++import type { MessageQueryAnswerSender, MessageSender, MessageWorkRunSender, SessionMailboxDependencies, SessionMailboxPort, SessionMessage, SessionMessageStatus } from './contracts.js';
+ import { makeCommitCursor, seqOfCommitCursor } from '../../../contracts/ledger.js';
+ import { canonicalRefKey, decodeWorkspaceSnapshot } from '../persistence/record-codecs.js';
+ import { checkPlainSessionRef, decodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey } from '../sessions/session-record-codecs.js';
+@@ -62,6 +64,9 @@ import {
+   encodeSessionMessageSentEvent, sessionMessageFromEvent, sessionMessageRefKey,
+   type SessionMessageReadEventV1, type SessionMessageRespondedEventV1, type SessionMessageSentEventV1,
+ } from './message-record-codecs.js';
++import {
++  decodeQueryJobAnswerSnapshot, decodeQueryJobSnapshot, decodeQueryRunSnapshotRecord,
++} from '../queries/query-record-codecs.js';
+ 
+ type Unknown = Record<string, unknown>;
+ type WorkRunPrincipal = Extract<CorePrincipal, { kind: 'work_run' }>;
+@@ -283,12 +288,21 @@ function normalizeMessagePin(expected: readonly VersionPin[], ref: SessionMessag
+ // Identity, messageId and fingerprints
+ // --------------------------------------------------------------------------
+ 
+-function senderIdentityOf(sender: MessageSender): Unknown {
++function senderIdentityOf(sender: MessageSender | MessageQueryAnswerSender): Unknown {
+   if (sender.kind === 'host') return { kind: 'host', actor: { ...sender.actor } };
++  if (sender.kind === 'work_run') {
++    return {
++      kind: 'work_run',
++      sessionRef: { ...sender.sessionRef },
++      runRef: { ...sender.runRef },
++      generation: sender.generation,
++    };
++  }
+   return {
+-    kind: 'work_run',
++    kind: 'query_run',
+     sessionRef: { ...sender.sessionRef },
+-    runRef: { ...sender.runRef },
++    queryRunRef: { ...sender.queryRunRef },
++    answerRef: { ...sender.answerRef },
+     generation: sender.generation,
+   };
+ }
+@@ -362,7 +376,7 @@ function decodeInboxCursor(raw: string): InboxCursorV1 | null {
+ // The factory
+ // --------------------------------------------------------------------------
+ 
+-export function createSessionMailbox(deps: SessionMailboxDependencies): SessionMailboxPort {
++export function createSessionMailbox(deps: SessionMailboxDependencies): SessionMailboxPort & Required<Pick<SessionMailboxPort, 'respondFromQueryAnswer'>> {
+   const records = deps.records;
+   const MIN_CURSOR: CommitCursor = makeCommitCursor(1);
+ 
+@@ -726,20 +740,76 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
+     return { ok: true, value: { kind: 'workspace', refId: owned.workspaceId, revision: String(decoded.value.revision) } };
+   }
+ 
++  // ---- official Query answer reads (read-only, codec-owned) ----------------
++
++  type QueryRecordRead<T> = ReadResult<T>;
++
++  async function readEncoded(key: string): Promise<{ ok: true; record: EncodedRecord } | { ok: false; failure: CoreRejection | { missing: true } }> {
++    let read: StoreResult<RecordBatchRead>;
++    try {
++      read = await records.readMany([key]);
++    } catch {
++      return { ok: false, failure: reject('unavailable', 'the Query record could not be read') };
++    }
++    if (read.status !== 'ready') return { ok: false, failure: mapStoreFailure(read) };
++    const record = read.value.records.find((candidate) => candidate.refKey === key);
++    if (record === undefined) {
++      return { ok: false, failure: read.value.missing.includes(key) ? { missing: true } : reject('unavailable', 'the record store neither returned nor reported missing the Query record') };
++    }
++    return { ok: true, record };
++  }
++
++  async function loadQueryJob(owned: Owned, ref: QueryJobRef): Promise<QueryRecordRead<QueryJobSnapshot>> {
++    if (owned.signal.aborted) return reject('cancelled', 'the QueryJob read was cancelled');
++    const key = canonicalOf(ref);
++    if (key === null) return reject('invalid', 'the QueryJob ref is not canonicalizable JSON');
++    const read = await readEncoded(key);
++    if (!read.ok) return 'missing' in read.failure ? { status: 'not_found' } : read.failure;
++    const decoded = decodeQueryJobSnapshot(read.record);
++    if (decoded.status !== 'decoded') return reject('unavailable', `the QueryJob snapshot is damaged: ${decoded.reason}`);
++    return { status: 'ready', value: decoded.value };
++  }
++
++  async function loadQueryRun(owned: Owned, ref: QueryRunRef): Promise<QueryRecordRead<QueryRunSnapshot>> {
++    if (owned.signal.aborted) return reject('cancelled', 'the QueryRun read was cancelled');
++    const key = canonicalOf(ref);
++    if (key === null) return reject('invalid', 'the QueryRun ref is not canonicalizable JSON');
++    const read = await readEncoded(key);
++    if (!read.ok) return 'missing' in read.failure ? { status: 'not_found' } : read.failure;
++    const decoded = decodeQueryRunSnapshotRecord(read.record);
++    if (decoded.status !== 'decoded') return reject('unavailable', `the QueryRun snapshot is damaged: ${decoded.reason}`);
++    return { status: 'ready', value: decoded.value };
++  }
++
++  async function loadQueryAnswer(owned: Owned, ref: QueryJobAnswerRef): Promise<QueryRecordRead<QueryJobAnswerSnapshot>> {
++    if (owned.signal.aborted) return reject('cancelled', 'the QueryJobAnswer read was cancelled');
++    const key = canonicalOf(ref);
++    if (key === null) return reject('invalid', 'the QueryJobAnswer ref is not canonicalizable JSON');
++    const read = await readEncoded(key);
++    if (!read.ok) return 'missing' in read.failure ? { status: 'not_found' } : read.failure;
++    const decoded = decodeQueryJobAnswerSnapshot(read.record);
++    if (decoded.status !== 'decoded') return reject('unavailable', `the QueryJobAnswer snapshot is damaged: ${decoded.reason}`);
++    return { status: 'ready', value: decoded.value };
++  }
++
+   // ---- body storage -------------------------------------------------------
+ 
+   type BodyOutcome = { ok: true; ref: ArtifactRef } | { ok: false; rejection: CoreRejection };
+ 
+   async function storeMessageBody(args: {
+     owned: Owned;
+-    sender: MessageSender;
++    sender: MessageSender | MessageQueryAnswerSender;
+     part: 'message' | 'response';
+     messageRef: SessionMessageRef;
+     text: string;
+     sourceRef: ArtifactRef['source'];
++    /** When set, the saved body provenance must equal this exact source instead
++     * of the generic current-workspace check. Used ONLY for a formal Query
++     * answer reply, whose original source may be an earlier workspace revision. */
++    expectedSource?: ArtifactRef['source'];
+     bodyRequestId: string;
+   }): Promise<BodyOutcome> {
+-    const { owned, sender, part, messageRef, text, sourceRef, bodyRequestId } = args;
++    const { owned, sender, part, messageRef, text, sourceRef, expectedSource, bodyRequestId } = args;
+     const envelope: Unknown = {
+       schemaVersion: 1,
+       projectId: messageRef.projectId,
+@@ -782,19 +852,27 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
+     // content-addressed store may return an earlier writer's exact ref/source;
+     // the message is not source evidence, so the ACTUAL stored provenance is
+     // accepted once it is a legal workspace provenance for this workspace.
+-    const verified = await verifyStoredBody(owned, stored.ref, body);
++    const verified = await verifyStoredBody(owned, stored.ref, body, expectedSource);
+     if (!verified.ok) return { ok: false, rejection: verified.rejection };
+     return { ok: true, ref: stored.ref };
+   }
+ 
+-  async function verifyStoredBody(owned: Owned, ref: ArtifactRef, expectedBody: string): Promise<{ ok: true } | { ok: false; rejection: CoreRejection }> {
++  async function verifyStoredBody(owned: Owned, ref: ArtifactRef, expectedBody: string,
++    expectedSource?: ArtifactRef['source']): Promise<{ ok: true } | { ok: false; rejection: CoreRejection }> {
+     if (ref.contentType !== SESSION_MESSAGE_CONTENT_TYPE) {
+       return { ok: false, rejection: reject('unavailable', 'the stored message body contentType disagrees with the expected envelope') };
+     }
+-    // The original body provenance is authoritative: it must be a legal
+-    // workspace source for THIS workspace. It need not be the CURRENT revision,
+-    // because a deduplicated body keeps its first writer's source.
+-    if (ref.source.kind !== 'workspace' || ref.source.refId !== owned.workspaceId || !nonEmpty(ref.source.revision)) {
++    if (expectedSource !== undefined) {
++      // A formal Query answer reply keeps the ACTUAL source of the verified
++      // Answer body (possibly an earlier workspace revision); the generic
++      // current-workspace check must not rewrite that provenance.
++      if (canonicalOf(ref.source) !== canonicalOf(expectedSource)) {
++        return { ok: false, rejection: reject('unavailable', 'the stored message body provenance is not the verified Query answer source') };
++      }
++    } else if (ref.source.kind !== 'workspace' || ref.source.refId !== owned.workspaceId || !nonEmpty(ref.source.revision)) {
++      // The original body provenance is authoritative: it must be a legal
++      // workspace source for THIS workspace. It need not be the CURRENT revision,
++      // because a deduplicated body keeps its first writer's source.
+       return { ok: false, rejection: reject('unavailable', 'the stored message body provenance is not a legal source for this workspace') };
+     }
+     if (ref.sizeBytes !== Buffer.byteLength(expectedBody, 'utf8')) {
+@@ -1429,5 +1507,162 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
+     });
+   }
+ 
+-  return { sendMessage, readMessage, readMessageBody, readInbox, ackMessage, respondMessage };
++  // ---- respondFromQueryAnswer (Host-only association) ---------------------
++
++  /**
++   * Associate an ALREADY-SAVED formal Query Answer with the original message's
++   * single response slot. The body and the `query_run` sender are read from the
++   * settled Answer/Job/Run, never from caller text or caller identity. The
++   * scope, consultation binding, deterministic message identity, original
++   * recipient and actual claimed Session generation are all re-checked before
++   * the one CAS response write.
++   */
++  async function respondFromQueryAnswer(
++    ctx: CoreCallContext,
++    request: GraphWrite<{ messageRef: SessionMessageRef; answerRef: QueryJobAnswerRef }>,
++  ): Promise<WriteResult<SessionMessage>> {
++    const owned = ownContext(ctx);
++    if (!owned.ok) return owned.rejection;
++    if (owned.principal.kind !== 'host') {
++      return reject('forbidden', 'only the Host may associate an official Query answer with a message');
++    }
++    if (owned.signal.aborted) return reject('cancelled', 'the answer association was cancelled before validation');
++    const write = ownWrite(request);
++    if (!write.ok) return write.rejection;
++    const raw = write.input as unknown as Unknown | null | undefined;
++    if (!isObject(raw)) return reject('invalid', 'respondFromQueryAnswer requires an input object');
++    if (Object.keys(raw).some((key) => key !== 'messageRef' && key !== 'answerRef')) {
++      return reject('invalid', 'respondFromQueryAnswer does not accept extra fields');
++    }
++    const normalized = normalizeMessageRef(raw['messageRef']);
++    if (!normalized.ok) return reject('invalid', normalized.reason);
++    const scopeProblem = scopeOfMessageRef(owned, normalized.ref);
++    if (scopeProblem !== null) return scopeProblem;
++    const rawAnswer = raw['answerRef'];
++    if (!isObject(rawAnswer) || rawAnswer['aggregateType'] !== 'QueryJobAnswer'
++      || !nonEmpty(rawAnswer['projectId']) || !nonEmpty(rawAnswer['workspaceId'])
++      || !nonEmpty(rawAnswer['queryJobId']) || !nonEmpty(rawAnswer['answerId'])
++      || Object.keys(rawAnswer).some((key) => !['aggregateType', 'projectId', 'workspaceId', 'queryJobId', 'answerId'].includes(key))) {
++      return reject('invalid', 'respondFromQueryAnswer requires a complete QueryJobAnswerRef');
++    }
++    let answerRef: QueryJobAnswerRef;
++    try { answerRef = structuredClone(rawAnswer) as unknown as QueryJobAnswerRef; }
++    catch { return reject('invalid', 'the answer ref cannot be isolated from the caller'); }
++    if (answerRef.projectId !== owned.projectId || answerRef.workspaceId !== owned.workspaceId) {
++      return reject('forbidden', 'the Query answer ref is outside the bound project/workspace');
++    }
++    const pin = normalizeMessagePin(write.expected, normalized.ref);
++    if (!pin.ok) return pin.rejection;
++
++    const loaded = await loadMessage(owned, normalized.ref);
++    if (loaded.status !== 'ready') return mapReadResult(loaded) as CoreRejection;
++    const message = loaded.value;
++    const recipient = { projectId: message.recipient.projectId, sessionId: message.recipient.sessionId };
++
++    const answerRead = await loadQueryAnswer(owned, answerRef);
++    if (answerRead.status !== 'ready') return mapReadResult(answerRead) as CoreRejection;
++    const answer = answerRead.value;
++    const jobRead = await loadQueryJob(owned, answer.answer.queryJobRef);
++    if (jobRead.status !== 'ready') return mapReadResult(jobRead) as CoreRejection;
++    const job = jobRead.value;
++    const runRead = await loadQueryRun(owned, answer.answer.runRef);
++    if (runRead.status !== 'ready') return mapReadResult(runRead) as CoreRejection;
++    const run = runRead.value;
++
++    const execution = job.job.intent.execution;
++    const consultation = execution?.consultation;
++    if (execution === undefined || execution.kind !== 'semantic_query' || consultation === undefined) {
++      return reject('forbidden', 'the Query answer is not an explicit consultation answer');
++    }
++    if (canonicalOf(consultation.messageRef) !== canonicalOf(message.ref)) {
++      return reject('forbidden', 'the consultation answer belongs to another message');
++    }
++    if (canonicalOf(consultation.recipient) !== canonicalOf(recipient)) {
++      return reject('forbidden', 'the consultation answer recipient is not the original message recipient');
++    }
++    const refs = consultationQueryRefs(consultation.messageRef);
++    if (refs.queryJobRef.queryJobId !== job.job.queryJobId || refs.queryRunRef.runId !== run.run.runId) {
++      return reject('forbidden', 'the consultation answer does not match the deterministic message identity');
++    }
++    if (job.job.status !== 'answered'
++      || !job.job.answerRefs.some((candidate) => canonicalOf(candidate) === canonicalOf(answerRef))) {
++      return reject('forbidden', 'the QueryJob does not record this answer as its formal answered fact');
++    }
++    const state = run.run.executionState;
++    if (state === undefined || state.phase !== 'settled') {
++      return reject('forbidden', 'the QueryRun is not settled and cannot source a message reply');
++    }
++    if (run.run.status !== 'answered' || run.run.outcome !== 'answered') {
++      return reject('forbidden', 'the QueryRun did not settle as answered');
++    }
++    if (state.sessionRef.projectId !== recipient.projectId || state.sessionRef.sessionId !== recipient.sessionId) {
++      return reject('forbidden', 'the QueryRun was not claimed by the original recipient Session');
++    }
++    if (canonicalOf(answer.answer.runRef) !== canonicalOf(run.ref)) {
++      return reject('forbidden', 'the Query answer does not belong to the settled QueryRun');
++    }
++    if (!isPositiveInt(state.sessionGeneration)) return reject('unavailable', 'the QueryRun Session generation is not readable');
++    const text = answer.answer.answer;
++    if (typeof text !== 'string' || text.length === 0 || Buffer.byteLength(text, 'utf8') > SESSION_MESSAGE_MAX_TEXT_BYTES) {
++      return reject('invalid', 'the formal Query answer text is not a legal bounded message body');
++    }
++
++    const sender: MessageQueryAnswerSender = {
++      kind: 'query_run',
++      sessionRef: { projectId: recipient.projectId, sessionId: recipient.sessionId },
++      queryRunRef: { ...answer.answer.runRef },
++      answerRef: { ...answerRef },
++      generation: state.sessionGeneration,
++    };
++    const senderIdentity = senderIdentityOf(sender);
++    const identityKey = identityKeyOf('respond_from_query_answer', owned, senderIdentity, write.requestId);
++    const fingerprint = fingerprintOf('respond_from_query_answer', owned, senderIdentity,
++      { messageRef: message.ref, answerRef }, write.expected);
++    if (owned.signal.aborted) return reject('cancelled', 'the answer association was cancelled before the idempotency lookup');
++    const existing = await records.lookupCommit({ identityKey, fingerprint });
++    if (existing.status === 'ready') return replayMessage(existing.value);
++    if (existing.code !== 'not_found') return mapStoreFailure(existing);
++    if (message.status === 'responded') {
++      const restored = await recheckAfterMiss(identityKey, fingerprint);
++      return restored ?? reject('invalid', 'the message already has a response');
++    }
++    // Preserve the formal Answer's ORIGINAL source; a later current Workspace
++    // revision must never impersonate the answer-time evidence.
++    const answerSource = answer.answer.bodyRef.source;
++    const bodyRequestId = `session-message-body:${sha256Hex(`${identityKey}|response`)}`;
++    const stored = await storeMessageBody({
++      owned, sender, part: 'response', messageRef: message.ref, text,
++      sourceRef: answerSource, expectedSource: answerSource, bodyRequestId,
++    });
++    if (!stored.ok) return stored.rejection;
++    const respondedAt = deps.now();
++    if (!nonEmpty(respondedAt)) return reject('invalid', 'the injected clock is not a legal instant');
++    const response = { sender, bodyRef: stored.ref, sourceRef: stored.ref.source, respondedAt };
++    const next: SessionMessage = {
++      ...message,
++      revision: message.revision + 1,
++      status: 'responded',
++      readAt: message.readAt ?? respondedAt,
++      response,
++    };
++    const event: SessionMessageRespondedEventV1 = {
++      eventId: eventIdOf(identityKey, 'responded'),
++      eventType: 'SessionMessageResponded',
++      schemaVersion: 1,
++      occurredAt: respondedAt,
++      projectId: owned.projectId,
++      workspaceId: owned.workspaceId,
++      requestId: write.requestId,
++      actor: sender,
++      message: next,
++    };
++    if (owned.signal.aborted) return reject('cancelled', 'the answer association was cancelled before commit');
++    return commitMessage({
++      identityKey, fingerprint, message: next,
++      messageGuard: { refKey: sessionMessageRefKey(next.ref), expectedRevision: pin.revision },
++      guards: [], event: encodeSessionMessageRespondedEvent(event),
++    });
++  }
++
++  return { sendMessage, readMessage, readMessageBody, readInbox, ackMessage, respondMessage, respondFromQueryAnswer };
+ }
+diff --git a/home/hyh001/projects/coding-platform/coding-platform-next/src/business/workflow/contracts.ts b/home/hyh001/projects/coding-platform/coding-platform-next/.toolchain/dsh-refactor-runs/ag2-consultation-stage2-20260928/workspace/src/business/workflow/contracts.ts
+index 56c8963..122d8b9 100644
+--- a/home/hyh001/projects/coding-platform/coding-platform-next/src/business/workflow/contracts.ts
++++ b/home/hyh001/projects/coding-platform/coding-platform-next/.toolchain/dsh-refactor-runs/ag2-consultation-stage2-20260928/workspace/src/business/workflow/contracts.ts
+@@ -1,9 +1,14 @@
+ import type { ArtifactRef } from '../../contracts/artifact.js';
+ import type { CommandMeta, SessionRef } from '../../contracts/core/identity.js';
+-import type { CoreRejection, WriteResult } from '../../contracts/core/results.js';
++import type { CoreRejection, ReadResult, WriteResult } from '../../contracts/core/results.js';
++import type { SessionMessageRef } from '../../contracts/core/session-message.js';
+ import type { GoalRef } from '../../contracts/ledger.js';
+ import type { PlanRevisionRef, PlanRevisionSnapshot } from '../../contracts/plan.js';
+-import type { TaskTriple } from '../../contracts/dispatch.js';
++import type { QueryJobAnswerSnapshot, QueryJobIntentV1 } from '../../contracts/query-job.js';
++import type { RuntimeBudget } from '../../contracts/runtime-budget.js';
++import type { RoleBindingRefV1, TaskTriple } from '../../contracts/dispatch.js';
++import type { SessionMessage } from '../../core/work-graph/communication/contracts.js';
++import type { QueryJobRecord } from '../../core/work-graph/queries/contracts.js';
+ import type { CreateGoalInput, GoalTaskPort } from '../../core/work-graph/tasks/contracts.js';
+ import type { TaskClaimPort } from '../../core/work-graph/tasks/claim-contracts.js';
+ import type { InitialPlanProposalResult, PlanTaskPort } from '../../core/work-graph/tasks/plan-contracts.js';
+@@ -124,3 +129,34 @@ export type InitialPlanningGoalInputResult = CoreRejection | {
+         | { kind: 'work'; input: WorkflowAdvanceInput } | null;
+   };
+ };
++
++/**
++ * The frozen explicit-consultation consumer input. The caller supplies only the
++ * original message ref, a real Goal, the already-selected read-only Query
++ * profile fields and a consumer id; there is no caller recipient, question,
++ * answer text, sender identity or terminal state.
++ */
++export type ConsultationInput = {
++  schemaVersion: 1;
++  messageRef: SessionMessageRef;
++  goalRef: GoalRef;
++  roleBinding: RoleBindingRefV1;
++  runtimeBudget: RuntimeBudget;
++  budget: QueryJobIntentV1['budget'];
++  consumerId: string;
++};
++
++/**
++ * The finite consultation result. `not_found`/`rejected` are reserved for
++ * failures BEFORE any action was accepted; once a Query was accepted the caller
++ * always receives `ready` with the real message/Query/Answer references it
++ * managed to obtain plus a concrete reason, so a later failure never looks like
++ * a safe fresh start.
++ */
++export type ConsultationResult = ReadResult<{
++  state: 'waiting' | 'responded';
++  message: SessionMessage;
++  query: QueryJobRecord | null;
++  answer: QueryJobAnswerSnapshot | null;
++  reason: string | null;
++}>;
+diff --git a/home/hyh001/projects/coding-platform/coding-platform-next/src/business/workflow/ports.ts b/home/hyh001/projects/coding-platform/coding-platform-next/.toolchain/dsh-refactor-runs/ag2-consultation-stage2-20260928/workspace/src/business/workflow/ports.ts
+index 7f0c1ad..b840d2d 100644
+--- a/home/hyh001/projects/coding-platform/coding-platform-next/src/business/workflow/ports.ts
++++ b/home/hyh001/projects/coding-platform/coding-platform-next/.toolchain/dsh-refactor-runs/ag2-consultation-stage2-20260928/workspace/src/business/workflow/ports.ts
+@@ -11,8 +11,11 @@ import type { EvidencePort } from '../../core/work-graph/evidence/contracts.js';
+ import type { RuntimeExecutionPort } from '../../core/agent-runtime/ports.js';
+ import type { RegisteredCheckRunner } from '../../core/agent-runtime/check-execution.js';
+ import type { SourceSnapshotReads } from '../../core/work-graph/source-authority-ports.js';
+-import type { InitialPlanningGoalInput, InitialPlanningGoalInputResult, N0GoalInput,
+-  WorkflowAdvanceInput, WorkflowAdvanceResult } from './contracts.js';
++import type { SessionMailboxPort } from '../../core/work-graph/communication/contracts.js';
++import type { ProjectRegistrationPort } from '../../core/work-graph/configuration/project-bootstrap-contracts.js';
++import type { QueryJobPort } from '../../core/work-graph/queries/contracts.js';
++import type { ConsultationInput, ConsultationResult, InitialPlanningGoalInput, InitialPlanningGoalInputResult,
++  N0GoalInput, WorkflowAdvanceInput, WorkflowAdvanceResult } from './contracts.js';
+ 
+ /**
+  * Trusted Host advancement policy. It is pure data snapshotted by the
+@@ -47,6 +50,24 @@ export type WorkflowDependencies = {
+   checks: RegisteredCheckRunner;
+   sourceAuthority: SourceSnapshotReads;
+   configuration?: WorkflowHostConfiguration;
++  /**
++   * Optional explicit-consultation consumer dependencies. They reuse the SAME
++   * mailbox/Query/Project owners; without them `consumeConsultation` is
++   * explicitly unsupported and every other Workflow behavior is unchanged.
++   */
++  consultations?: ConsultationConsumerDependencies;
++};
++
++/**
++ * The exact owners the explicit-consultation consumer composes. The mailbox
++ * half is read-only except for the ONE Host-only `respondFromQueryAnswer`
++ * association; the Query half is the accepted pending/claim/answer port.
++ */
++export type ConsultationConsumerDependencies = {
++  messages: Pick<SessionMailboxPort, 'readMessage' | 'readMessageBody'>
++    & Required<Pick<SessionMailboxPort, 'respondFromQueryAnswer'>>;
++  queries: QueryJobPort;
++  projects: ProjectRegistrationPort;
+ };
+ 
+ /**
+@@ -57,6 +78,14 @@ export type WorkflowDependencies = {
+ export interface WorkflowPort {
+   handleGoalInput(ctx: CoreCallContext, input: N0GoalInput | InitialPlanningGoalInput): Promise<InitialPlanningGoalInputResult>;
+   advanceWork(ctx: CoreCallContext, input: WorkflowAdvanceInput): Promise<WorkflowAdvanceResult>;
++  /**
++   * Explicitly process ONE received message: reuse the saved deterministic
++   * Query/Answer first, otherwise run the finite submit/claim/prepare/start
++   * chain and attach the formal Answer to the original message. No polling,
++   * scheduler or background loop; absence keeps every existing Workflow
++   * behavior and the type-compatible fixtures.
++   */
++  consumeConsultation?(ctx: CoreCallContext, input: ConsultationInput): Promise<ConsultationResult>;
+ }
+ 
+ /** Compatibility aliases pointing at the one narrow new surface. */
+diff --git a/home/hyh001/projects/coding-platform/coding-platform-next/src/business/workflow/workflow.ts b/home/hyh001/projects/coding-platform/coding-platform-next/.toolchain/dsh-refactor-runs/ag2-consultation-stage2-20260928/workspace/src/business/workflow/workflow.ts
+index f0caaee..2c361e8 100644
+--- a/home/hyh001/projects/coding-platform/coding-platform-next/src/business/workflow/workflow.ts
++++ b/home/hyh001/projects/coding-platform/coding-platform-next/.toolchain/dsh-refactor-runs/ag2-consultation-stage2-20260928/workspace/src/business/workflow/workflow.ts
+@@ -17,8 +17,9 @@ import type { ClaimTaskInput } from '../../core/work-graph/tasks/claim-contracts
+ import type { TaskGraph, TaskRow } from '../../core/work-graph/tasks/plan-contracts.js';
+ import type { GraphWrite } from '../../core/work-graph/tasks/contracts.js';
+ import type { SessionCard } from '../../core/work-graph/sessions/contracts.js';
+-import type { InitialPlanningGoalInput, InitialPlanningGoalInputResult, N0GoalInput, WorkflowAdvanceInput, WorkflowAdvanceResult, WorkflowOperation, WorkflowStepReceipt } from './contracts.js';
++import type { ConsultationInput, ConsultationResult, InitialPlanningGoalInput, InitialPlanningGoalInputResult, N0GoalInput, WorkflowAdvanceInput, WorkflowAdvanceResult, WorkflowOperation, WorkflowStepReceipt } from './contracts.js';
+ import type { WorkflowDependencies, WorkflowHostConfiguration, WorkflowPort } from './ports.js';
++import { createConsultationConsumer } from './consultation.js';
+ 
+ /**
+  * R5c.1 stage-two adoption-first advancement loop.
+@@ -34,7 +35,7 @@ import type { WorkflowDependencies, WorkflowHostConfiguration, WorkflowPort } fr
+ type Actor = { kind: 'human' | 'system'; id: string };
+ type Binding = WorkflowHostConfiguration['bindings'][number];
+ 
+-type Owned = {
++export type Owned = {
+   ctx: CoreCallContext;
+   projectId: string;
+   workspaceId: string;
+@@ -223,7 +224,7 @@ function roleReusable(card: SessionCard, workspaceId: string, binding: Binding):
+ // Context / input isolation (before the first await)
+ // --------------------------------------------------------------------------
+ 
+-function ownContext(ctx: CoreCallContext): Owned | { rejection: CoreRejection } {
++export function ownContext(ctx: CoreCallContext): Owned | { rejection: CoreRejection } {
+   const raw = ctx as unknown as Record<string, unknown> | null | undefined;
+   if (!isRecord(raw)) return { rejection: rejection('invalid', 'advanceWork requires a bound call context') };
+   const projectId = raw['projectId'];
+@@ -330,7 +331,7 @@ function initialPlanningBase(
+ // The factory
+ // --------------------------------------------------------------------------
+ 
+-export function createWorkflow(deps: WorkflowDependencies): WorkflowPort {
++export function createWorkflow(deps: WorkflowDependencies): WorkflowPort & Required<Pick<WorkflowPort, 'consumeConsultation'>> {
+   /**
+    * R5b.4 §11.5 finite first-consumer handoff. Each call delegates exactly ONE
+    * original owner (`proposeInitialPlanFromAnswer` or `applyPlanChange`) and
+@@ -710,5 +711,18 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort {
+     return await performStep(owned, base, isolated.operation);
+   };
+ 
+-  return { handleGoalInput, advanceWork };
++  // AG2a: the explicit-consultation consumer is published on the SAME Workflow
++  // port. Without the optional consultation dependencies it stays explicitly
++  // unsupported, so existing Workflow fixtures are never forced to extend.
++  const consultation = deps.consultations === undefined ? null : createConsultationConsumer({
++    sessions: deps.sessions, plans: deps.plans, runtime: deps.runtime, consultations: deps.consultations,
++  });
++  const consumeConsultation = async (ctx: CoreCallContext, input: ConsultationInput): Promise<ConsultationResult> => {
++    if (consultation === null) {
++      return rejection('unsupported', 'the Workflow has no consultation mailbox/Query/Project dependency');
++    }
++    return consultation(ctx, input);
++  };
++
++  return { handleGoalInput, advanceWork, consumeConsultation };
+ }
+diff --git a/home/hyh001/projects/coding-platform/coding-platform-next/src/business/workflow/consultation.ts b/home/hyh001/projects/coding-platform/coding-platform-next/.toolchain/dsh-refactor-runs/ag2-consultation-stage2-20260928/workspace/src/business/workflow/consultation.ts
+index 5bc3309..9b77db3 100644
+--- a/home/hyh001/projects/coding-platform/coding-platform-next/src/business/workflow/consultation.ts
++++ b/home/hyh001/projects/coding-platform/coding-platform-next/.toolchain/dsh-refactor-runs/ag2-consultation-stage2-20260928/workspace/src/business/workflow/consultation.ts
+@@ -1 +1,355 @@
+-// AG2 implementation placeholder: owned by the bounded Stage2 DSH scope.
++/**
++ * AG2a explicit-consultation consumer.
++ *
++ * One explicit call processes ONE received message. It NEVER polls, schedules,
++ * preempts a busy Session, creates a replacement Session or re-runs a model for
++ * a message whose deterministic Query already exists. The order is frozen:
++ *
++ *   1. read the original message;
++ *   2. read the deterministic `consultationQueryRefs(messageRef)` QueryJob and,
++ *      when it already carries a formal answer, attach that saved answer;
++ *   3. ONLY when no Query exists yet, judge whether the recipient Session is
++ *      available; a busy/archived/unavailable recipient returns `waiting` with
++ *      zero model calls and no new Session;
++ *   4. otherwise run the finite submit -> claim -> prepare -> start chain and
++ *      attach the formal answer.
++ *
++ * Once a Query was accepted, later failures keep the real message/Query/Answer
++ * references plus the concrete reason; they never look like a safe fresh start.
++ */
++import type { CoreCallContext } from '../../contracts/core/call-context.js';
++import type { SessionAggregateRef, SessionRef, VersionPin } from '../../contracts/core/identity.js';
++import type { CoreRejection, ReadResult } from '../../contracts/core/results.js';
++import type { SessionMessageRef } from '../../contracts/core/session-message.js';
++import type {
++  QueryJobAnswerRef, QueryJobAnswerSnapshot, QueryJobIntentV1, QueryRunRef,
++} from '../../contracts/query-job.js';
++import { consultationQueryRefs } from '../../contracts/query-job.js';
++import { canonicalJson, sha256Hex, type JsonValue } from '../../contracts/fingerprint.js';
++import type { SessionMessage } from '../../core/work-graph/communication/contracts.js';
++import type { QueryJobRecord } from '../../core/work-graph/queries/contracts.js';
++import type { GraphWrite } from '../../core/work-graph/tasks/contracts.js';
++import type { PlanTaskPort } from '../../core/work-graph/tasks/plan-contracts.js';
++import type { SessionDirectoryPort } from '../../core/work-graph/sessions/contracts.js';
++import type { RuntimeExecutionPort } from '../../core/agent-runtime/ports.js';
++import type { ConsultationInput, ConsultationResult } from './contracts.js';
++import type { ConsultationConsumerDependencies } from './ports.js';
++import { ownContext, type Owned } from './workflow.js';
++
++// --------------------------------------------------------------------------
++// Small consultation-specific helpers. The trusted call-context validation is
++// the shared `ownContext` extracted from the Workflow owner, never duplicated.
++// --------------------------------------------------------------------------
++
++function isRecord(value: unknown): value is Record<string, unknown> {
++  return typeof value === 'object' && value !== null && !Array.isArray(value);
++}
++function nonEmpty(value: unknown): value is string {
++  return typeof value === 'string' && value.length > 0;
++}
++function sameCanonical(left: unknown, right: unknown): boolean {
++  try { return canonicalJson(left as JsonValue) === canonicalJson(right as JsonValue); } catch { return false; }
++}
++function reject(code: CoreRejection['code'], reason: string): CoreRejection {
++  return { status: 'rejected', code, reason };
++}
++function hashOf(ref: SessionMessageRef): string {
++  return sha256Hex(canonicalJson(ref as unknown as JsonValue));
++}
++function rejectionReason(result: { status: string; code?: string; reason?: string }): string {
++  return result.status === 'rejected' ? `${result.code}: ${result.reason}` : result.status;
++}
++function asRejection(result: Exclude<ReadResult<unknown>, { status: 'ready' }>, what: string): CoreRejection {
++  if (result.status === 'rejected') return result;
++  return reject('incomplete', `${what} is not ready (${result.status})`);
++}
++
++type IsolatedInput =
++  | { ok: true; value: ConsultationInput }
++  | { ok: false; rejection: CoreRejection };
++
++function isolateInput(input: unknown): IsolatedInput {
++  let cloned: unknown;
++  try { cloned = structuredClone(input); } catch { return { ok: false, rejection: reject('invalid', 'the consultation input cannot be isolated from the caller') }; }
++  if (!isRecord(cloned)) return { ok: false, rejection: reject('invalid', 'consumeConsultation requires an input object') };
++  if (Object.keys(cloned).some((key) => !['schemaVersion', 'messageRef', 'goalRef', 'roleBinding', 'runtimeBudget', 'budget', 'consumerId'].includes(key))) {
++    return { ok: false, rejection: reject('invalid', 'consumeConsultation does not accept extra fields') };
++  }
++  if (cloned['schemaVersion'] !== 1) return { ok: false, rejection: reject('invalid', 'consumeConsultation requires schemaVersion 1') };
++  const messageRef = cloned['messageRef'];
++  if (!isRecord(messageRef) || messageRef['aggregateType'] !== 'SessionMessage'
++    || !nonEmpty(messageRef['projectId']) || !nonEmpty(messageRef['workspaceId']) || !nonEmpty(messageRef['messageId'])) {
++    return { ok: false, rejection: reject('invalid', 'messageRef must be a complete SessionMessageRef') };
++  }
++  const goalRef = cloned['goalRef'];
++  if (!isRecord(goalRef) || goalRef['aggregateType'] !== 'Goal'
++    || !nonEmpty(goalRef['projectId']) || !nonEmpty(goalRef['goalId'])) {
++    return { ok: false, rejection: reject('invalid', 'goalRef must be a complete GoalRef') };
++  }
++  const roleBinding = cloned['roleBinding'];
++  if (!isRecord(roleBinding) || roleBinding['schemaVersion'] !== 1
++    || !nonEmpty(roleBinding['bindingId']) || !nonEmpty(roleBinding['templateId'])
++    || !nonEmpty(roleBinding['templateRevision']) || !nonEmpty(roleBinding['policyRevision'])
++    || typeof roleBinding['bindingVersion'] !== 'number' || !Number.isSafeInteger(roleBinding['bindingVersion']) || roleBinding['bindingVersion'] < 1) {
++    return { ok: false, rejection: reject('invalid', 'roleBinding must be a RoleBindingRefV1') };
++  }
++  const runtimeBudget = cloned['runtimeBudget'];
++  if (!isRecord(runtimeBudget)) return { ok: false, rejection: reject('invalid', 'runtimeBudget must be an object') };
++  const budget = cloned['budget'];
++  if (!isRecord(budget) || typeof budget['maxTokens'] !== 'number' || !Number.isSafeInteger(budget['maxTokens']) || budget['maxTokens'] <= 0
++    || (budget['deadline'] !== null && typeof budget['deadline'] !== 'string')) {
++    return { ok: false, rejection: reject('invalid', 'budget must be a QueryJobIntentV1 budget') };
++  }
++  if (!nonEmpty(cloned['consumerId'])) return { ok: false, rejection: reject('invalid', 'consumerId must be a non-empty string') };
++  return { ok: true, value: cloned as unknown as ConsultationInput };
++}
++
++// --------------------------------------------------------------------------
++// The consumer
++// --------------------------------------------------------------------------
++
++export function createConsultationConsumer(deps: {
++  sessions: SessionDirectoryPort;
++  plans: PlanTaskPort;
++  runtime: RuntimeExecutionPort;
++  consultations: ConsultationConsumerDependencies;
++}): (ctx: CoreCallContext, input: ConsultationInput) => Promise<ConsultationResult> {
++  const waiting = (message: SessionMessage, query: QueryJobRecord | null,
++    answer: QueryJobAnswerSnapshot | null, reason: string): ConsultationResult =>
++    ({ status: 'ready', value: { state: 'waiting', message, query, answer, reason } });
++  const responded = (message: SessionMessage, query: QueryJobRecord | null,
++    answer: QueryJobAnswerSnapshot): ConsultationResult =>
++    ({ status: 'ready', value: { state: 'responded', message, query, answer, reason: null } });
++
++  /** Attach the already-saved official answer; never calls a model. */
++  async function attach(owned: Owned, message: SessionMessage, query: QueryJobRecord | null,
++    answer: QueryJobAnswerSnapshot): Promise<ConsultationResult> {
++    if (message.response !== null) {
++      const sender = message.response.sender;
++      if (sender.kind === 'query_run' && sameCanonical(sender.answerRef, answer.ref)) {
++        return responded(message, query, answer);
++      }
++      return waiting(message, query, answer, 'the original message already has a response from another source');
++    }
++    const request: GraphWrite<{ messageRef: SessionMessageRef; answerRef: QueryJobAnswerRef }> = {
++      input: { messageRef: message.ref, answerRef: answer.ref },
++      meta: { requestId: `consultation-respond:${hashOf(message.ref)}`,
++        expected: [{ ref: message.ref, revision: message.revision }] },
++    };
++    const replied = await deps.consultations.messages.respondFromQueryAnswer(owned.ctx, request);
++    if (replied.status !== 'committed') {
++      return waiting(message, query, answer, `attaching the saved answer failed: ${rejectionReason(replied)}`);
++    }
++    return responded(replied.value, query, answer);
++  }
++
++  async function claim(owned: Owned, messageRef: SessionMessageRef, queryRunRef: QueryRunRef,
++    sessionRef: SessionAggregateRef,
++    sessionRevision: number): Promise<{ kind: 'ok'; record: QueryJobRecord } | { kind: 'fail'; reason: string }> {
++    const refs = consultationQueryRefs(messageRef);
++    const expected: VersionPin[] = [
++      { ref: refs.queryJobRef, revision: 1 },
++      { ref: refs.queryRunRef, revision: 1 },
++      { ref: sessionRef, revision: sessionRevision },
++    ];
++    const request: GraphWrite<{ queryRunRef: QueryRunRef; sessionRef: SessionRef }> = {
++      input: { queryRunRef, sessionRef },
++      meta: { requestId: `consultation-claim:${hashOf(messageRef)}`, expected },
++    };
++    const claimed = await deps.consultations.queries.claimQuery(owned.ctx, request);
++    if (claimed.status !== 'committed') return { kind: 'fail', reason: `claiming the consultation Query failed: ${rejectionReason(claimed)}` };
++    return { kind: 'ok', record: { job: claimed.value.job, run: claimed.value.run } };
++  }
++
++  /**
++   * Drive ONE accepted, unanswered Query to its settled Answer. Explicit phase
++   * dispatch, no loop: observe an already-begun execution, otherwise prepare and
++   * start the claimed/prepared one exactly once.
++   */
++  async function driveAccepted(owned: Owned, messageRef: SessionMessageRef, message: SessionMessage,
++    consumerId: string, record: QueryJobRecord): Promise<ConsultationResult> {
++    const refs = consultationQueryRefs(messageRef);
++    const phase = record.run.run.executionState?.phase;
++    if (phase === 'entering' || phase === 'entered' || phase === 'unknown' || phase === 'settled') {
++      if (deps.runtime.observeQuery === undefined) return waiting(message, record, null, 'the Runtime has no Query observation binding');
++      const observed = await deps.runtime.observeQuery(owned.ctx, { queryRunRef: refs.queryRunRef });
++      if (observed.status !== 'ready') return waiting(message, record, null, `observing the consultation Query failed: ${rejectionReason(observed)}`);
++      const next: QueryJobRecord = { job: observed.value.job, run: observed.value.run };
++      if (observed.value.answer !== null) return attach(owned, message, next, observed.value.answer);
++      return waiting(message, next, null, 'the consultation Query is still waiting for a formal answer');
++    }
++    if (deps.runtime.prepareQuery === undefined || deps.runtime.startQuery === undefined) {
++      return waiting(message, record, null, 'the Runtime has no Query prepare/start binding');
++    }
++    const prepared = await deps.runtime.prepareQuery(owned.ctx,
++      { queryRunRef: refs.queryRunRef, requestId: `consultation-prepare:${hashOf(messageRef)}` });
++    if (prepared.status !== 'ready') return waiting(message, record, null, `preparing the consultation Query failed: ${rejectionReason(prepared)}`);
++    const started = await deps.runtime.startQuery(owned.ctx, {
++      prepared: prepared.value, consumerId, requestId: `consultation-start:${hashOf(messageRef)}`,
++    });
++    if (started.status !== 'ready') return waiting(message, record, null, `starting the consultation Query failed: ${rejectionReason(started)}`);
++    const next: QueryJobRecord = { job: started.value.job, run: started.value.run };
++    if (started.value.answer !== null) return attach(owned, message, next, started.value.answer);
++    return waiting(message, next, null, 'the consultation Query is still waiting for a formal answer');
++  }
++
++  async function continueExisting(owned: Owned, input: ConsultationInput, message: SessionMessage,
++    record: QueryJobRecord): Promise<ConsultationResult> {
++    const job = record.job;
++    const run = record.run;
++    const execution = job.job.intent.execution;
++    const consultation = execution?.consultation;
++    if (execution === undefined || execution.kind !== 'semantic_query' || consultation === undefined) {
++      return reject('forbidden', 'the existing deterministic Query is not an explicit consultation');
++    }
++    if (!sameCanonical(consultation.messageRef, message.ref)) {
++      return reject('forbidden', 'the existing consultation Query belongs to another message');
++    }
++    if (!sameCanonical(consultation.recipient, { projectId: message.recipient.projectId, sessionId: message.recipient.sessionId })) {
++      return reject('forbidden', 'the existing consultation Query recipient is not the original message recipient');
++    }
++    const refs = consultationQueryRefs(message.ref);
++    if (refs.queryJobRef.queryJobId !== job.job.queryJobId || refs.queryRunRef.runId !== run.run.runId) {
++      return reject('forbidden', 'the existing Query is not the deterministic identity of its message');
++    }
++    // A saved formal answer is attached first and is NEVER re-run, even when the
++    // later Session occupancy or the current input configuration changed.
++    if (job.job.answerRefs.length > 0) {
++      const answerRef = job.job.answerRefs[job.job.answerRefs.length - 1];
++      if (answerRef === undefined) return waiting(message, record, null, 'the saved consultation answer ref is missing');
++      const answerRead = await deps.consultations.queries.readQueryAnswer(owned.ctx, answerRef);
++      if (answerRead.status !== 'ready') return waiting(message, record, null, `the saved consultation answer is not readable: ${rejectionReason(answerRead)}`);
++      return attach(owned, message, record, answerRead.value);
++    }
++    const configMatches = job.job.intent.goalId === input.goalRef.goalId
++      && sameCanonical(job.job.intent.budget, input.budget)
++      && sameCanonical(execution.roleBinding, input.roleBinding)
++      && sameCanonical(execution.runtimeBudget, input.runtimeBudget);
++    if (!configMatches) {
++      return waiting(message, record, null, 'the existing consultation Query was configured differently and is not re-run');
++    }
++    const phase = run.run.executionState?.phase;
++    if (phase === 'settled') {
++      return waiting(message, record, null, 'the existing consultation Query settled without a formal answer');
++    }
++    if (phase !== undefined) {
++      // claimed / prepared / entering / entered / unknown: continue the SAME
++      // execution, never a new Query.
++      return driveAccepted(owned, message.ref, message, input.consumerId, record);
++    }
++    // Pending and never claimed: the recipient must be free BEFORE this consumer
++    // claims; a busy/archived recipient waits without a claim or a new Session.
++    const recipient = await deps.sessions.readSession(owned.ctx, message.recipient);
++    if (recipient.status !== 'ready') return waiting(message, record, null, asRejection(recipient, 'the recipient Session').reason);
++    const card = recipient.value;
++    if (card.record.lifecycle !== 'active' || card.availability !== 'idle' || card.record.occupancy !== null) {
++      return waiting(message, record, null, `the recipient Session is ${card.record.lifecycle !== 'active' ? 'archived' : 'busy or unavailable'}`);
++    }
++    const claimed = await claim(owned, message.ref, run.ref, card.record.ref, card.record.revision);
++    if (claimed.kind === 'fail') return waiting(message, record, null, claimed.reason);
++    return driveAccepted(owned, message.ref, message, input.consumerId, claimed.record);
++  }
++
++  return async (ctx, input) => {
++    const owned = ownContext(ctx);
++    if ('rejection' in owned) return owned.rejection;
++    const isolated = isolateInput(input);
++    if (!isolated.ok) return isolated.rejection;
++    const value = isolated.value;
++    const messageRef = value.messageRef;
++    if (messageRef.projectId !== owned.projectId || messageRef.workspaceId !== owned.workspaceId) {
++      return reject('forbidden', 'the consultation message is outside the bound project/workspace');
++    }
++    if (value.goalRef.projectId !== owned.projectId) {
++      return reject('forbidden', 'the consultation Goal is outside the bound project');
++    }
++
++    const messageRead = await deps.consultations.messages.readMessage(owned.ctx, messageRef);
++    if (messageRead.status === 'not_found') return { status: 'not_found' };
++    if (messageRead.status !== 'ready') return messageRead;
++    const message = messageRead.value;
++    if (message.ref.projectId !== owned.projectId || message.ref.workspaceId !== owned.workspaceId) {
++      return reject('forbidden', 'the consultation message is outside the bound project/workspace');
++    }
++
++    // Read the existing deterministic Query/Answer BEFORE any Session
++    // busy/archive judgment: a saved Answer is an original fact and stays valid
++    // even if the recipient is later occupied or archived.
++    const refs = consultationQueryRefs(messageRef);
++    const existing = await deps.consultations.queries.readQueryJob(owned.ctx, refs.queryJobRef);
++    if (existing.status === 'ready') return continueExisting(owned, value, message, existing.value);
++    if (existing.status !== 'not_found') return existing;
++
++    if (message.status === 'responded') {
++      return reject('invalid', 'the original message already has a response');
++    }
++    const questionRead = await deps.consultations.messages.readMessageBody(owned.ctx, { messageRef, part: 'message' });
++    if (questionRead.status === 'not_found') return { status: 'not_found' };
++    if (questionRead.status !== 'ready') return questionRead;
++    const question = questionRead.value.text;
++    if (question.length === 0) return reject('invalid', 'the consultation message body is empty');
++
++    // No Query yet: an unavailable recipient waits with ZERO model calls and no
++    // new Session; it never submits a Query the owner could not claim.
++    const recipientRead = await deps.sessions.readSession(owned.ctx, message.recipient);
++    if (recipientRead.status !== 'ready') {
++      return waiting(message, null, null, asRejection(recipientRead, 'the recipient Session').reason);
++    }
++    const card = recipientRead.value;
++    if (card.record.lifecycle !== 'active' || card.availability !== 'idle' || card.record.occupancy !== null) {
++      return waiting(message, null, null, `the recipient Session is ${card.record.lifecycle !== 'active' ? 'archived' : 'busy or unavailable'}`);
++    }
++
++    const registration = await deps.consultations.projects.readWorkspaceRegistration(owned.ctx,
++      { projectId: owned.projectId, workspaceId: owned.workspaceId });
++    if (registration.status !== 'ready') return asRejection(registration, 'the Project/Workspace registration');
++    const goalRead = await deps.plans.queryGoal(owned.ctx, value.goalRef);
++    if (goalRead.status !== 'ready') return asRejection(goalRead, 'the Goal');
++    if (goalRead.value.goal.ref.goalId !== value.goalRef.goalId
++      || goalRead.value.goal.workspaceRef.workspaceId !== owned.workspaceId) {
++      return reject('forbidden', 'the Goal is not the requested same-workspace Goal');
++    }
++    const goalRevision = goalRead.value.goal.revision;
++
++    const intent: QueryJobIntentV1 = {
++      schemaVersion: 1,
++      intentId: refs.queryJobRef.queryJobId,
++      projectId: owned.projectId,
++      workspaceId: owned.workspaceId,
++      goalId: value.goalRef.goalId,
++      question,
++      focusTaskRefs: [],
++      budget: { maxTokens: value.budget.maxTokens, deadline: value.budget.deadline },
++      multiTurn: { maxRounds: 1 },
++      correlationId: `consultation:${hashOf(messageRef)}`,
++      execution: {
++        kind: 'semantic_query', roleBinding: value.roleBinding, runtimeBudget: value.runtimeBudget,
++        consultation: {
++          messageRef: { ...messageRef },
++          recipient: { projectId: message.recipient.projectId, sessionId: message.recipient.sessionId },
++        },
++      },
++    };
++    const submit: GraphWrite<{ queryJobId: string; runId: string; intent: QueryJobIntentV1 }> = {
++      input: { queryJobId: refs.queryJobRef.queryJobId, runId: refs.queryRunRef.runId, intent },
++      meta: {
++        requestId: `consultation-submit:${hashOf(messageRef)}`,
++        expected: [
++          { ref: { aggregateType: 'Project', projectId: owned.projectId }, revision: registration.value.project.revision },
++          { ref: { aggregateType: 'Workspace', projectId: owned.projectId, workspaceId: owned.workspaceId }, revision: registration.value.workspace.revision },
++          { ref: value.goalRef, revision: goalRevision },
++          { ref: refs.queryJobRef, revision: 0 },
++          { ref: refs.queryRunRef, revision: 0 },
++        ],
++      },
++    };
++    const submitted = await deps.consultations.queries.submitQueryJob(owned.ctx, submit);
++    if (submitted.status !== 'committed') {
++      return waiting(message, null, null, `submitting the consultation Query failed: ${rejectionReason(submitted)}`);
++    }
++    const record: QueryJobRecord = { job: submitted.value.job, run: submitted.value.run };
++    const claimed = await claim(owned, messageRef, refs.queryRunRef, card.record.ref, card.record.revision);
++    if (claimed.kind === 'fail') return waiting(message, record, null, claimed.reason);
++    return driveAccepted(owned, messageRef, message, value.consumerId, claimed.record);
++  };
++}
+diff --git a/home/hyh001/projects/coding-platform/coding-platform-next/src/composition/create-platform.ts b/home/hyh001/projects/coding-platform/coding-platform-next/.toolchain/dsh-refactor-runs/ag2-consultation-stage2-20260928/workspace/src/composition/create-platform.ts
+index efe26e9..3e16a4b 100644
+--- a/home/hyh001/projects/coding-platform/coding-platform-next/src/composition/create-platform.ts
++++ b/home/hyh001/projects/coding-platform/coding-platform-next/.toolchain/dsh-refactor-runs/ag2-consultation-stage2-20260928/workspace/src/composition/create-platform.ts
+@@ -305,6 +305,16 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
+     const executionReader = createRunStateReader({ records: backend.records });
+     const authorizeConfiguration = options.runtime === undefined
+       ? undefined : createAuthorizeConfiguration(options.runtime);
++    const sessionDirectory = createSessionDirectory({ records: backend.records, lookups: backend.records });
++    // The public mailbox is real even without a model Host binding; internal
++    // calls use the raw service so an in-flight operation is never rejected by
++    // the public tracked wrapper after close has already begun. It is built
++    // BEFORE the Query jobs so a consultation submit can use its read-only
++    // message seam; no second mailbox/service instance exists.
++    const mailbox = createSessionMailbox({ records: backend.records, sessions: sessionDirectory,
++      executions: executionReader, roles: roleService, materials: rawMaterials,
++      systemActor: SYSTEM_ACTOR, now, newId: randomUUID,
++      ...(authorizeConfiguration === undefined ? {} : { runtimeAdmission: { bodies, authorizeConfiguration } }) });
+     // R5b.2: the ONE internal Query writer shares this records/roles/bodies
+     // instance. It is injected into the QueryJob claim/read adapter and the
+     // Runtime thin path, never published as a public terminal port. Without a
+@@ -318,6 +328,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
+     const queryJobs = createQueryJobService({
+       records: backend.records, now, eventId: randomUUID,
+       ...(queryExecution === undefined ? {} : { execution: queryExecution }),
++      consultations: { readMessage: mailbox.readMessage.bind(mailbox), readMessageBody: mailbox.readMessageBody.bind(mailbox) },
+     });
+     const observed = createObservedArchitecture({ records: backend.records, bodies, access, workspace: workspace.tools,
+       source: options.architectureSource ?? { provider: 'typescript', configPath: 'tsconfig.json' } });
+@@ -330,7 +341,6 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
+       }) });
+     const claimService = createTaskClaimService({ records: backend.records, roles: roleService,
+       now, newId: randomUUID });
+-    const sessionDirectory = createSessionDirectory({ records: backend.records, lookups: backend.records });
+     const sessionLifecycle = createSessionLifecycleService({ records: backend.records, lookups: backend.records });
+     const kernelStores = await createKernelStoreRegistry(options.kernelStores ?? { entries: [] });
+     // Internal calls retain the raw directory. The outer Runtime operation is
+@@ -357,13 +367,6 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
+     });
+     const rawCheckRunner = createRegisteredCheckRunner({ evidence: rawEvidence,
+       workspaceHost: options.workspace, kernel, now });
+-    // The public mailbox is real even without a model Host binding; internal
+-    // calls use the raw services so an in-flight operation is never rejected by
+-    // the public tracked wrappers after close has already begun.
+-    const mailbox = createSessionMailbox({ records: backend.records, sessions: sessionDirectory,
+-      executions: executionReader, roles: roleService, materials: rawMaterials,
+-      systemActor: SYSTEM_ACTOR, now, newId: randomUUID,
+-      ...(authorizeConfiguration === undefined ? {} : { runtimeAdmission: { bodies, authorizeConfiguration } }) });
+     let runtime = createAgentRuntime();
+     if (options.runtime !== undefined) {
+       const host = options.runtime;
+@@ -591,13 +594,23 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
+       executions: executionReader, runtime: rawRuntime, evidence: rawEvidence, checks: rawCheckRunner,
+       sourceAuthority,
+       ...(workflowConfiguration === undefined ? {} : { configuration: workflowConfiguration }),
++      // The explicit-consultation consumer reuses the SAME mailbox/Query/Project
++      // owners. The mailbox half is read-only plus the ONE Host-only answer
++      // association; it is never a second mailbox or a new service.
++      consultations: {
++        messages: { readMessage: mailbox.readMessage.bind(mailbox), readMessageBody: mailbox.readMessageBody.bind(mailbox),
++          respondFromQueryAnswer: mailbox.respondFromQueryAnswer.bind(mailbox) },
++        queries: queryJobs,
++        projects: bootstrap.projects,
++      },
+     };
+     const rawWorkflow = createWorkflow(workflowDependencies);
+     // The public advancement port drains the complete call before any owned
+     // store closes; the in-flight raw workflow keeps the raw owner instances.
+-    const workflow: WorkflowPort = {
++    const workflow: WorkflowPort & Required<Pick<WorkflowPort, 'consumeConsultation'>> = {
+       handleGoalInput: (...args) => trackedCall(() => rawWorkflow.handleGoalInput(...args), unavailable),
+       advanceWork: (...args) => trackedCall(() => rawWorkflow.advanceWork(...args), unavailable),
++      consumeConsultation: (...args) => trackedCall(() => rawWorkflow.consumeConsultation(...args), unavailable),
+     };
+     let closing: Promise<void> | undefined;
+     return {
+diff --git a/home/hyh001/projects/coding-platform/coding-platform-next/src/app/core-http-types.ts b/home/hyh001/projects/coding-platform/coding-platform-next/.toolchain/dsh-refactor-runs/ag2-consultation-stage2-20260928/workspace/src/app/core-http-types.ts
+index b821319..0b8b391 100644
+--- a/home/hyh001/projects/coding-platform/coding-platform-next/src/app/core-http-types.ts
++++ b/home/hyh001/projects/coding-platform/coding-platform-next/.toolchain/dsh-refactor-runs/ag2-consultation-stage2-20260928/workspace/src/app/core-http-types.ts
+@@ -107,6 +107,7 @@ export type CoreRouteSuffix =
+   | 'materials/open'
+   | 'workflow/goal-input'
+   | 'workflow/advance'
++  | 'workflow/consultation'
+   | 'executions/read'
+   | 'executions/history';
+ 
+@@ -217,6 +218,11 @@ export type WorkflowGoalInputBody = PlainBody<WorkflowPort['handleGoalInput']>;
+ export type WorkflowGoalInputResponse = RouteResponse<WorkflowPort['handleGoalInput']>;
+ export type WorkflowAdvanceBody = PlainBody<WorkflowPort['advanceWork']>;
+ export type WorkflowAdvanceResponse = RouteResponse<WorkflowPort['advanceWork']>;
++/** The explicit-consultation route derives its body/response from the exact
++ * optional `WorkflowPort.consumeConsultation` method; the composition root
++ * always publishes it, so the NonNullable derivation is the real DTO. */
++export type WorkflowConsultationBody = PlainBody<NonNullable<WorkflowPort['consumeConsultation']>>;
++export type WorkflowConsultationResponse = RouteResponse<NonNullable<WorkflowPort['consumeConsultation']>>;
+ 
+ // ---------------------------------------------------------------------------
+ // R6 Task-execution -> original Session/history consumer routes. Both suffixes
+@@ -247,7 +253,8 @@ export type { RunRef } from '../contracts/dispatch.js';
+ export type { TaskExecutionRecord } from '../core/work-graph/tasks/execution-read-contracts.js';
+ export type { ExecutionHistoryPage } from '../core/agent-runtime/execution-history-contracts.js';
+ export type { PreparedQueryExecution } from '../contracts/core/prepared-execution.js';
+-export type { InitialPlanningGoalInputResult, WorkflowAdvanceResult, WorkflowStepReceipt } from '../business/workflow/contracts.js';
++export type { InitialPlanningGoalInputResult, WorkflowAdvanceResult, WorkflowStepReceipt,
++  ConsultationInput, ConsultationResult } from '../business/workflow/contracts.js';
+ 
+ /** Explicitly unsupported capability gap surfaced verbatim to the browser. */
+ export type UnsupportedResponse = CoreRejection & { status: 'rejected'; code: 'unsupported' };
+diff --git a/home/hyh001/projects/coding-platform/coding-platform-next/src/app/core-routes.ts b/home/hyh001/projects/coding-platform/coding-platform-next/.toolchain/dsh-refactor-runs/ag2-consultation-stage2-20260928/workspace/src/app/core-routes.ts
+index 767e2bc..fb3ab7a 100644
+--- a/home/hyh001/projects/coding-platform/coding-platform-next/src/app/core-routes.ts
++++ b/home/hyh001/projects/coding-platform/coding-platform-next/.toolchain/dsh-refactor-runs/ag2-consultation-stage2-20260928/workspace/src/app/core-routes.ts
+@@ -75,6 +75,7 @@ export type CoreRouteBindings = {
+   openArtifact: MaterialPort['openArtifact'];
+   handleGoalInput: WorkflowPort['handleGoalInput'];
+   advanceWork: WorkflowPort['advanceWork'];
++  consumeConsultation: NonNullable<WorkflowPort['consumeConsultation']>;
+   // R6 Task-execution -> original Session/history reads: one binding per owner.
+   readExecution: ExecutionReadPort['readExecution'];
+   readTaskExecutionHistory: RuntimeExecutionPort['readTaskExecutionHistory'];
+@@ -101,7 +102,7 @@ export type CoreRoutePlatform = {
+   messages: Pick<SessionMailboxPort, 'sendMessage' | 'readInbox' | 'readMessage' | 'readMessageBody'>;
+   queries: QueryJobPort;
+   materials: Pick<MaterialPort, 'openArtifact'>;
+-  workflow: WorkflowPort;
++  workflow: WorkflowPort & Required<Pick<WorkflowPort, 'consumeConsultation'>>;
+ };
+ 
+ export type CoreRouteSpec = {
+@@ -152,6 +153,7 @@ export const CORE_ROUTE_SPECS: Record<CoreRouteSuffix, CoreRouteSpec> = {
+   'materials/open': { kind: 'plain', binding: 'openArtifact', owner: 'materials.openArtifact' },
+   'workflow/goal-input': { kind: 'plain', binding: 'handleGoalInput', owner: 'workflow.handleGoalInput' },
+   'workflow/advance': { kind: 'plain', binding: 'advanceWork', owner: 'workflow.advanceWork' },
++  'workflow/consultation': { kind: 'plain', binding: 'consumeConsultation', owner: 'workflow.consumeConsultation' },
+   'executions/read': { kind: 'plain', binding: 'readExecution', owner: 'executions.readExecution' },
+   'executions/history': { kind: 'plain', binding: 'readTaskExecutionHistory', owner: 'runtime.readTaskExecutionHistory' },
+ };
+@@ -283,6 +285,7 @@ export function createPlatformCoreRouteBindings(platform: CoreRoutePlatform): Co
+     openArtifact: platform.materials.openArtifact.bind(platform.materials),
+     handleGoalInput: platform.workflow.handleGoalInput.bind(platform.workflow),
+     advanceWork: platform.workflow.advanceWork.bind(platform.workflow),
++    consumeConsultation: platform.workflow.consumeConsultation.bind(platform.workflow),
+     readExecution: platform.executions.readExecution.bind(platform.executions),
+     readTaskExecutionHistory: platform.runtime.readTaskExecutionHistory.bind(platform.runtime),
+   };
+@@ -366,6 +369,7 @@ export async function dispatchCoreRoute(
+       case 'materials/open': return bindings.openArtifact(ctx, plain.input as never);
+       case 'workflow/goal-input': return bindings.handleGoalInput(ctx, plain.input as never);
+       case 'workflow/advance': return bindings.advanceWork(ctx, plain.input as never);
++      case 'workflow/consultation': return bindings.consumeConsultation(ctx, plain.input as never);
+       case 'executions/read': return bindings.readExecution(ctx, plain.input as never);
+       case 'executions/history': return bindings.readTaskExecutionHistory(ctx, plain.input as never);
+     }
+diff --git a/home/hyh001/projects/coding-platform/coding-platform-next/src/ui/main.ts b/home/hyh001/projects/coding-platform/coding-platform-next/.toolchain/dsh-refactor-runs/ag2-consultation-stage2-20260928/workspace/src/ui/main.ts
+index 7901859..5961679 100644
+--- a/home/hyh001/projects/coding-platform/coding-platform-next/src/ui/main.ts
++++ b/home/hyh001/projects/coding-platform/coding-platform-next/.toolchain/dsh-refactor-runs/ag2-consultation-stage2-20260928/workspace/src/ui/main.ts
+@@ -106,6 +106,8 @@ import type {
+   TaskGraph,
+   WorkflowAdvanceBody,
+   WorkflowAdvanceResult,
++  WorkflowConsultationBody,
++  WorkflowConsultationResponse,
+   WorkflowGoalInputBody,
+   WorkspacesRegisterResponse,
+   WorkspacesRegistrationResponse,
+@@ -114,6 +116,7 @@ import type {
+ type CommittedOf<T> = Extract<T, { status: 'committed' }>;
+ type ReadyOf<T> = Extract<T, { status: 'ready' }>;
+ type MessageRefValue = ReadyOf<MessagesReadResponse>['value']['ref'];
++type ConsultationInputValue = WorkflowConsultationBody['input'];
+ 
+ /** Attribution captured when a request is built. It lets an async response be
+  * written back to the scope AND the Session/message it was actually issued for,
+@@ -312,6 +315,9 @@ type ScopeState = {
+   inbox: { session: SessionRef; result: MessagesInboxResponse } | null;
+   message: { session: SessionRef; messageRef: MessageRefValue; result: MessagesReadResponse } | null;
+   messageBody: { session: SessionRef; messageRef: MessageRefValue; part: 'message' | 'response'; result: MessagesBodyResponse } | null;
++  /** The last explicit `workflow/consultation` result for the exact message it
++   * was issued for. Display state only; it is not a second Query/Workflow owner. */
++  consultation: { session: SessionRef; messageRef: MessageRefValue; result: WorkflowConsultationResponse } | null;
+   /** Opened Session-history pages keyed by scope + captured conversation/layout
+    * + page (center or tab) + exact SessionRef. The center and each auxiliary
+    * history/session tab keep their own result and original cursor. */
+@@ -399,6 +405,7 @@ const ROUTE_LABELS: Record<CoreRouteSuffix, string> = {
+   'materials/open': '读取材料',
+   'workflow/goal-input': '提交规划输入',
+   'workflow/advance': '推进执行',
++  'workflow/consultation': '处理咨询',
+   'executions/read': '查看执行事实',
+   'executions/history': '查看本次执行原历史',
+ };
+@@ -635,6 +642,10 @@ function applyResult(scope: ScopeState, route: CoreRouteSuffix, payload: unknown
+       if (tags.session !== null && tags.pageKey !== null)
+         scope.sessionHistories.set(tags.pageKey, { session: tags.session, result: payload as SessionsHistoryResponse });
+       break;
++    case 'workflow/consultation':
++      if (tags.session !== null && tags.messageRef !== null)
++        scope.consultation = { session: tags.session, messageRef: tags.messageRef, result: payload as WorkflowConsultationResponse };
++      break;
+     case 'executions/read':
+       if (tags.run !== null && tags.pageKey !== null)
+         scope.executionReads.set(tags.pageKey, { run: tags.run, result: payload as ExecutionsReadResponse });
+@@ -1647,6 +1658,46 @@ async function handleAction(action: string, element: HTMLElement): Promise<void>
+       await submit(scope, 'messages/body', { scope: scope.config.scope, input: { messageRef: ref, part } }, tagsFor(scope.activeSession, ref, part));
+       return;
+     }
++    case 'consult-message': {
++      // Capture the originating session/message/profile BEFORE the first await;
++      // a later member switch can never redirect this consultation or its refresh.
++      const session = scope.activeSession;
++      const messageRef = scope.activeMessage;
++      if (session === null || messageRef === null) { scope.error = '请先从收件箱选择一条消息。'; renderScopeIfSelected(scope); return; }
++      const profile = selectedExecutionProfile(scope);
++      if (profile === null) { scope.error = '当前工作区没有可用的只读调查配置，无法处理咨询。'; renderScopeIfSelected(scope); return; }
++      const goalId = currentConsultationGoalId(scope);
++      if (goalId === null) { scope.error = '没有可用的当前 Goal，无法处理咨询。'; renderScopeIfSelected(scope); return; }
++      const target: CoreScope = { projectId: profile.scope.projectId, workspaceId: profile.scope.workspaceId };
++      const input: ConsultationInputValue = {
++        schemaVersion: 1,
++        messageRef,
++        goalRef: { aggregateType: 'Goal', projectId: target.projectId, goalId },
++        roleBinding: profile.roleBinding,
++        runtimeBudget: profile.runtimeBudget,
++        budget: profile.budget,
++        consumerId: profile.consumerId,
++      };
++      await submit(scope, 'workflow/consultation', { scope: target, input }, tagsFor(session, messageRef));
++      // Capture THIS consultation's outcome for the exact captured
++      // session/message BEFORE any other read. A network/403 failure keeps its
++      // original pending/error and is never overwritten by a refresh, and a
++      // later read can never decide which response body was requested.
++      const stored = scope.consultation;
++      const outcome = stored !== null && sameSession(stored.session, session) && sameMessage(stored.messageRef, messageRef)
++        ? stored.result : null;
++      // `pending` stays set on a network/403 failure: keep the original request
++      // and error, and never let a later refresh overwrite them.
++      if (scope.pending !== null || outcome === null || outcome.status !== 'ready') return;
++      // Refresh ONLY the captured scope/session/message under their own tags.
++      await submit(scope, 'messages/read', { scope: scope.config.scope, input: messageRef }, tagsFor(session, messageRef));
++      await submit(scope, 'messages/inbox', { scope: scope.config.scope, input: { recipient: session, page: { limit: 10 } } }, tagsFor(session));
++      await submit(scope, 'messages/body', { scope: scope.config.scope, input: { messageRef, part: 'message' } }, tagsFor(session, messageRef, 'message'));
++      if (outcome.value.state === 'responded') {
++        await submit(scope, 'messages/body', { scope: scope.config.scope, input: { messageRef, part: 'response' } }, tagsFor(session, messageRef, 'response'));
++      }
++      return;
++    }
+     case 'read-session-history': {
+       const active = scope.activeSession;
+       const key = active === null ? null : centerSessionHistoryKey(active);
+@@ -2530,6 +2581,46 @@ function renderNav(): string {
+ 
+ // --- Center: original Session conversation ------------------------------------
+ 
++/** The current Goal for THIS scope only: an explicitly entered id, or the Goal
++ * created in this same scope. Another workspace's review Goal is never borrowed. */
++function currentConsultationGoalId(scope: ScopeState): string | null {
++  const explicit = scope.forms.goalId.trim();
++  if (explicit.length > 0) return explicit;
++  const goal = scope.goal;
++  if (goal !== null && goal.ref.projectId === scope.config.scope.projectId) return goal.ref.goalId;
++  return null;
++}
++
++/**
++ * The message-detail consultation entry. It reuses the current Goal and the
++ * selected read-only Query profile; a missing Goal/profile is explained instead
++ * of inventing one. It shows only the real waiting/responded result and never
++ * writes "已停止" or "Task 完成".
++ */
++function renderConsultation(current: ScopeState, active: SessionRef, result: MessagesReadResponse): string {
++  if (result.status !== 'ready') return '';
++  const message = result.value;
++  const profile = selectedExecutionProfile(current);
++  const goalId = currentConsultationGoalId(current);
++  const missing: string[] = [];
++  if (profile === null) missing.push('当前工作区没有可用的只读调查配置');
++  if (goalId === null) missing.push('没有可用的当前 Goal');
++  const stored = current.consultation !== null && sameSession(current.consultation.session, active)
++    && sameMessage(current.consultation.messageRef, message.ref) ? current.consultation.result : null;
++  const status = stored === null ? ''
++    : stored.status === 'ready'
++      ? `<p data-consultation="${escapeHtml(stored.value.state)}">${stored.value.state === 'responded' ? '已回复' : '等待处理'}`
++        + (stored.value.reason === null ? '' : `：${escapeHtml(stored.value.reason)}`) + `</p>`
++      : `<p data-consultation="rejected">${escapeHtml(outcomeRejectionReason(stored))}</p>`;
++  const disabledReason = message.status === 'responded' ? '该消息已有回复' : missing.join('、');
++  return `<section class="panel" data-view="consultation"><header><h4>处理咨询</h4>`
++    + `<p class="muted">请该成员答复这条消息；成员忙碌时等待处理。</p></header>`
++    + (missing.length > 0 ? `<p class="muted">缺少：${escapeHtml(missing.join('、'))}</p>` : '')
++    + `<div class="buttons">${actionButton('consult-message', '处理咨询',
++      missing.length === 0 && message.status !== 'responded', disabledReason)}</div>`
++    + status + `</section>`;
++}
++
+ function renderConversation(): string {
+   const current = state();
+   syncActiveLayout(current);
+@@ -2576,6 +2667,7 @@ function renderConversation(): string {
+     + (read === null ? renderGap('sessions/read', '尚未读取会话详情') : renderSessionDetail(read.result))
+     + `<div class="conversation-body">${timeline}`
+     + (message === null ? '' : renderMessage(message.result))
++    + (message === null ? '' : renderConsultation(current, active, message.result))
+     + (body === null ? '' : renderMessageBody(body.result))
+     + inboxHtml + `</div></section>`;
+ }
+@@ -3099,7 +3191,7 @@ function createState(config: BootstrapWorkspace): ScopeState {
+     observedCapture: null, goalRead: null, proposalRead: null, architectureRead: null,
+     taskGraph: null, observed: null, capture: null, sourcePage: null, file: null,
+     sessionFind: null, sessionRead: null, sessionCreateReceipt: null, sessionOperationRead: null,
+-    runtimeCapabilities: null, inbox: null, message: null, messageBody: null,
++    runtimeCapabilities: null, inbox: null, message: null, messageBody: null, consultation: null,
+     sessionHistories: new Map(), executionHistories: new Map(), executionReads: new Map(),
+     activeSession: null, activeMessage: null,
+     layouts: new Map(), sessionIncludeArchived: false, architectureReadSelection: '',

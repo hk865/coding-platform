@@ -23,6 +23,7 @@ import type { PreparedQueryExecution, PreparedQueryManifestV1 } from '../../../c
 import type { CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import type { SessionRecord } from '../../../contracts/core/session.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
+import { consultationQueryRefs } from '../../../contracts/query-job.js';
 import type { GoalSnapshot, WorkspaceSnapshot } from '../../../contracts/ledger.js';
 import type { PlanRevisionSnapshot } from '../../../contracts/plan.js';
 import type { RuntimeBudget } from '../../../contracts/runtime-budget.js';
@@ -719,6 +720,24 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     if (!Number.isSafeInteger(generation)) return rejected('invalid', 'the Session generation would not be a safe integer');
     const execution = job.job.intent.execution;
     if (execution === undefined) return rejected('unsupported', 'claimQuery requires an explicit read-only execution binding');
+    if (execution.consultation !== undefined) {
+      // The FIRST occupancy point re-checks the bound recipient against the
+      // ACTUAL claimed Session and the deterministic message identity. The
+      // submit already did this, but a claim is the authoritative claim.
+      // The claimed Session is the ORIGINAL recipient for a legacy Query, or the
+      // formal derived child A′ for a derived one. The source is never replaced.
+      const claimSession = execution.consultation.derivation === undefined
+        ? execution.consultation.recipient
+        : execution.consultation.derivation.childSessionRef;
+      if (claimSession.projectId !== session.ref.projectId
+        || claimSession.sessionId !== session.ref.sessionId) {
+        return rejected('forbidden', 'the consultation binding recipient is not the claimed Session');
+      }
+      const refs = consultationQueryRefs(execution.consultation.messageRef, execution.consultation.part);
+      if (refs.queryJobRef.queryJobId !== queryRunRef.queryJobId || refs.queryRunRef.runId !== queryRunRef.runId) {
+        return rejected('invalid', 'the consultation Query is not the deterministic identity of its message');
+      }
+    }
     if (signal.aborted) return rejected('cancelled', 'the Query claim was cancelled before Role resolution');
 
     let roleFacts;

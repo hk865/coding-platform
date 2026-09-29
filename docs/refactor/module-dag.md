@@ -1,5 +1,7 @@
 # 模块依赖图：业务策略与核心操作
 
+当前独立仓库的实际装配、静态依赖与代码规模见 [2026-09-27 当前模块关系图](reviews/current-module-map-2026-09-27.md)。下文目标图与历史迁移记录保留原义，不代表当前全部实现状态。
+
 状态：2026-09-24。目标 5 模块/8 条允许边，在独立工程 `coding-platform/next` 按[目标源码门禁](../../scripts/check-boundaries.mjs)检查；实际功能尚为子集，见[干净迁移记录](reviews/next-completed-migration-2026-09-24.md)。原[源码 map](../../coding-platform/scripts/module-map.mjs)描述旧参考工程，不能混计为 next 的模块数。依据：[架构](ARCHITECTURE.md)。
 
 ## 1. 目标 DAG

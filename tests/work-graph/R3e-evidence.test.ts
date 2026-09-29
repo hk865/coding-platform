@@ -13,7 +13,10 @@
  * R3e.1 mid-review repair §5.
  */
 import { afterEach, expect, it } from 'vitest';
-import type { CheckProcessObservation, RoundSnapshot } from '../../src/contracts/verification.js';
+import type { CheckProcessObservation, RoundSnapshot, TrustedCheckConfiguration } from '../../src/contracts/verification.js';
+import { createEvidenceService } from '../../src/core/work-graph/evidence/evidence-service.js';
+import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
+import { VerificationWorkspaceReader } from '../../src/core/workspace/verification-workspace-reader.js';
 import { B2_AT } from '../helpers/B2-execution-fixture.js';
 import { createR3eEvidenceFixture, R3E_HOST, R3E_WORK_TASK_ID, type R3eEvidenceFixture } from '../helpers/R3e-evidence-fixture.js';
 
@@ -259,4 +262,51 @@ it('finalizes under one Round CAS, ignores an unrelated public write, then refus
   if (original === undefined) throw Error('the pass check begin request must be retained');
   const replayed = await fixture.evidence.beginCheck(fixture.ctx, original.request);
   expect(replayed, 'the original begin request replays its receipt').toEqual({ ...original.result, replayed: true });
+});
+
+/**
+ * R6 cold-start Stage-1 contract: a fresh round resolves the CURRENT scoped
+ * checks configuration, while an already-open round keeps the exact
+ * configuration it froze. Stage 1 declares the `configurationFor` seam only, so
+ * the fresh-round assertion below is the acknowledged RED.
+ */
+it('freezes an open round configuration and resolves a fresh round from the current scope configuration', async () => {
+  const fixture = await openFixture();
+  const current: { configuration: TrustedCheckConfiguration } = { configuration: { ...fixture.configuration } };
+  let sequence = 0;
+  const scoped = createEvidenceService({
+    records: fixture.records,
+    materials: fixture.materials,
+    materialFacts: fixture.materialFacts,
+    executions: createRunStateReader({ records: fixture.records }),
+    workspaceHost: fixture.workspaceHost,
+    source: new VerificationWorkspaceReader(),
+    configuration: fixture.configuration,
+    configurationFor: scope =>
+      scope.projectId === fixture.scope.projectId && scope.workspaceId === fixture.scope.workspaceId
+        ? current.configuration : undefined,
+    now: () => B2_AT,
+    newId: () => `r3e-scoped-${++sequence}`,
+  });
+
+  const opened = await scoped.openVerification(fixture.ctx, fixture.openRequest());
+  expect(opened, 'a fresh round resolves the current scope configuration').toMatchObject({ status: 'committed' });
+  if (opened.status !== 'committed') throw Error('the scoped round did not open');
+  const round = opened.value;
+  expect(round.configuration.configurationRevision).toBe(fixture.configuration.configurationRevision);
+
+  // The current scope configuration moves to a NEW revision after the round froze.
+  current.configuration = { ...fixture.configuration, configurationRevision: 'r3e-checks-config-2' };
+
+  // The original round is unchanged and still readable under its frozen bind.
+  const read = await scoped.readVerification(fixture.ctx, round.ref);
+  expect(read, 'the original round stays readable').toMatchObject({ status: 'ready' });
+  if (read.status !== 'ready') throw Error('the original round was not readable');
+  expect(read.value.configuration.configurationRevision).toBe(fixture.configuration.configurationRevision);
+
+  // RED (Stage 2): a fresh round takes the CURRENT resolved scope configuration.
+  const fresh = await scoped.openVerification(fixture.ctx, fixture.openRequest());
+  expect(fresh, 'a fresh round uses the current scope configuration').toMatchObject({ status: 'committed' });
+  if (fresh.status !== 'committed') throw Error('the fresh scoped round did not open');
+  expect(fresh.value.configuration.configurationRevision).toBe('r3e-checks-config-2');
 });

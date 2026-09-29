@@ -1,0 +1,30 @@
+{
+  "audit": {
+    "changed": [
+      "src/ui/index.html",
+      "src/ui/main.ts",
+      "src/ui/styles.css",
+      "src/ui/views.ts"
+    ],
+    "outsideScope": [],
+    "originalWorkspaceChanged": []
+  },
+  "files": [
+    {
+      "path": "src/ui/index.html",
+      "sha256": "9f20410a78b039726c1475467969b80a25911791352e078da39123a6c38ff0bf"
+    },
+    {
+      "path": "src/ui/main.ts",
+      "sha256": "04fafcfe2b6e649714a6ae6f44144e235f91d88e83e6f18d39ab065a29834a54"
+    },
+    {
+      "path": "src/ui/styles.css",
+      "sha256": "4624aea39957f8803d913f2226606b40f90b542508ae92352e214727daaecb57"
+    },
+    {
+      "path": "src/ui/views.ts",
+      "sha256": "8e9da39122f80a1a594503d2d44987d93a22f91896fe24c6bbb0842fa7faaa6a"
+    }
+  ]
+}

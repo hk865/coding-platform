@@ -382,3 +382,76 @@ it('consumes one real v2 answer into the same Plan owner candidate, then adopts 
       .toMatchObject({ status: 'committed', replayed: true, value: applied.value });
   } finally { await platform.close(); }
 });
+
+/**
+ * R6 cold-start Stage-1 contract: the optional `setup` proposal on a v2 plan
+ * answer and its recovery from the SAVED Answer source. The plain v2 shape is
+ * unchanged; the injected `initial_coordination` guide still lacks the setup
+ * shape, so the final guide assertion is the acknowledged RED until Stage 2.
+ */
+it('keeps the old v2 plan compatible and recovers the optional setup proposal from the saved answer source', () => {
+  // 1. The lifted contract accepts a plan answer with the optional setup.
+  if (PLAN_RESPONSE.kind !== 'plan') throw new Error('the fixture response must be a plan');
+  const withSetup: InitialPlanningResponseV2 = {
+    schemaVersion: 2,
+    kind: 'plan',
+    summary: 'Initial plan with an explicit setup suggestion',
+    plan: structuredClone(PLAN_RESPONSE.plan),
+    setup: {
+      architecture: {
+        baselineId: 'r5b-setup-baseline',
+        description: 'The suggested initial module boundary',
+        constraints: [],
+        catalog: {
+          requireDag: true, dependencies: [], modules: [{
+            ref: { projectId, moduleId: 'r5b-setup-module' },
+            name: 'R5b setup module', responsibility: 'Own the cold-start initial plan',
+            paths: ['src'], interfaces: [],
+          }],
+        },
+      },
+      completionPolicy: structuredClone(completionPolicyContent),
+      checks: [{
+        checkId: 'r5b-setup-check', kind: 'static', command: 'node --test',
+        cwd: '.', timeoutMs: 60_000, taskIds: 'all',
+      }],
+    },
+  };
+  const parsedWithSetup = parseInitialPlanningResponseV2(JSON.stringify(withSetup));
+  expect(parsedWithSetup).toMatchObject({ status: 'parsed', response: { schemaVersion: 2, kind: 'plan' } });
+  if (parsedWithSetup.status !== 'parsed' || parsedWithSetup.response.kind !== 'plan') {
+    throw new Error('the with-setup answer must parse as a v2 plan');
+  }
+  expect(parsedWithSetup.response.setup).toMatchObject({
+    architecture: { baselineId: 'r5b-setup-baseline', catalog: { modules: [{ name: 'R5b setup module' }] } },
+    completionPolicy: { requirementKinds: ['static'] },
+    checks: [{ checkId: 'r5b-setup-check', command: 'node --test', taskIds: 'all' }],
+  });
+  // The registered check DTO has NO coverage field; the model never supplies one.
+  expect(parsedWithSetup.response.setup?.checks[0]).not.toHaveProperty('coverage');
+
+  // 2. The setup is recovered from the saved Answer response only.
+  expect(parsedWithSetup.response.setup).toMatchObject({ architecture: { baselineId: 'r5b-setup-baseline' } });
+
+  // 3. Old v2 without setup stays exactly compatible and recovers `null`.
+  const legacy = parseInitialPlanningResponseV2(JSON.stringify(PLAN_RESPONSE));
+  expect(legacy).toMatchObject({ status: 'parsed', response: { schemaVersion: 2, kind: 'plan' } });
+  if (legacy.status !== 'parsed') throw new Error('the old v2 answer must still parse');
+  expect((legacy.response.kind === 'plan' ? legacy.response.setup ?? null : null)).toBeNull();
+
+  // 4. RED (Stage 2): the verified initial_coordination guide must teach the
+  // optional setup shape from the real saved-source facts. It currently does
+  // not, so the real provider request's example carries no setup at all.
+  const guideExample = guideExampleFrom(INITIAL_COORDINATION_RESPONSE_GUIDE);
+  expect(guideExample, 'the verified guide must carry the JSON example').not.toBeNull();
+  if (guideExample === null) throw new Error('the verified guide carries no JSON example');
+  const parsedGuide = parseInitialPlanningResponseV2(guideExample);
+  expect(parsedGuide).toMatchObject({ status: 'parsed', response: { schemaVersion: 2, kind: 'plan' } });
+  if (parsedGuide.status !== 'parsed' || parsedGuide.response.kind !== 'plan') {
+    throw new Error('the guide example is not a v2 plan response');
+  }
+  expect(parsedGuide.response.setup,
+    'the guide example must show the optional setup proposal (architecture/completionPolicy/checks)').toBeDefined();
+  expect(parsedGuide.response.setup?.checks.every(check =>
+    !Object.prototype.hasOwnProperty.call(check, 'coverage'))).toBe(true);
+});

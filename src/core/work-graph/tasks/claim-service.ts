@@ -47,9 +47,12 @@ import type { ClaimTaskInput, TaskClaim, TaskClaimDependencies, TaskClaimOutbox,
 import type { GraphWrite } from './contracts.js';
 import { evaluateEligibility } from './eligibility.js';
 import { readCanonicalTaskFacts, readGoal, readPlan, sameCursor, type Rejected } from './plan-readers.js';
+import { decodeSessionMessageRecord, sessionMessageRefKey } from '../communication/message-record-codecs.js';
+import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 
 const RUN_SCHEMA_ID = 'RunSnapshot@1';
 const TASK_LEASE_SCHEMA_ID = 'TaskLeaseSnapshot@1';
+const CLAIM_CONTINUATION_PREFIX = 'claim-continuation:';
 const CLAIM_IDENTITY_PREFIX = 'task-claim:';
 
 type Records = GoalRecordTransactionPort & RecordLookupPort;
@@ -370,6 +373,37 @@ function roleMatchRejection(
 export function createTaskClaimService(deps: TaskClaimDependencies): TaskClaimPort {
   const records: Records = deps.records;
 
+  /**
+   * A continuation is identified ONLY by (prior Run, saved message) in the bound
+   * scope, so any Host actor replaying the same wait gets the same receipt and a
+   * second consumption cannot create a second Run.
+   */
+  function continuationIdentityAndFingerprint(
+    scope: WorkspaceScope,
+    input: ClaimTaskInput,
+    expected: readonly VersionPin[],
+  ): { identityKey: string; fingerprint: string } {
+    const consumed = input.consumedWait!;
+    const identityKey = CLAIM_CONTINUATION_PREFIX + sha256Hex(canonicalJson({
+      kind: 'claim-continuation', projectId: scope.projectId, workspaceId: scope.workspaceId,
+      runRef: consumed.runRef, messageRef: consumed.messageRef,
+    } as unknown as JsonValue));
+    const expectedCanonical = [...expected].map(pin => ({ ref: pin.ref, revision: pin.revision }))
+      .sort((left, right) => {
+        const leftKey = refKeyOf(left.ref);
+        const rightKey = refKeyOf(right.ref);
+        return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
+      });
+    const fingerprint = sha256Hex(canonicalJson({
+      kind: 'task-claim-continuation',
+      projectId: scope.projectId, workspaceId: scope.workspaceId,
+      goalRef: input.goalRef, planRef: input.planRef, taskId: input.taskId,
+      sessionRef: input.sessionRef, roleBinding: input.roleBinding, budget: input.budget,
+      consumedWait: consumed, expected: expectedCanonical,
+    } as unknown as JsonValue));
+    return { identityKey, fingerprint };
+  }
+
   function identityAndFingerprint(
     actor: Extract<ActorRef, { kind: 'human' | 'system' }>,
     scope: WorkspaceScope,
@@ -392,6 +426,7 @@ export function createTaskClaimService(deps: TaskClaimDependencies): TaskClaimPo
       projectId: scope.projectId, workspaceId: scope.workspaceId,
       goalRef: input.goalRef, planRef: input.planRef, taskId: input.taskId,
       sessionRef: input.sessionRef, roleBinding: input.roleBinding, budget: input.budget,
+      consumedWait: input.consumedWait ?? null,
       expected: expectedCanonical,
     } as unknown as JsonValue));
     return { identityKey, fingerprint };
@@ -404,6 +439,7 @@ export function createTaskClaimService(deps: TaskClaimDependencies): TaskClaimPo
     identityKey: string,
     fingerprint: string,
     input: ClaimTaskInput,
+    actorBound: boolean,
   ): Promise<WriteResult<TaskClaim>> {
     if (receipt.eventIds.length !== 1 || !nonEmpty(receipt.eventIds[0])) {
       return unavailable('the recorded claim receipt does not name exactly one event');
@@ -420,7 +456,7 @@ export function createTaskClaimService(deps: TaskClaimDependencies): TaskClaimPo
     if (event.identityKey !== identityKey || event.fingerprint !== fingerprint) {
       return unavailable('the recorded claim identity/fingerprint disagrees with the idempotency receipt');
     }
-    if (event.actor.kind !== actor.kind || event.actor.id !== actor.id) {
+    if (actorBound && (event.actor.kind !== actor.kind || event.actor.id !== actor.id)) {
       return unavailable('the recorded claim event belongs to another actor');
     }
     const claim = event.claim;
@@ -452,12 +488,19 @@ export function createTaskClaimService(deps: TaskClaimDependencies): TaskClaimPo
     if (!checkedExpected.ok) return checkedExpected.rejection;
     if (scopeCtx.signal.aborted) return reject('cancelled', 'the Task claim was cancelled before lookup');
 
-    const { identityKey, fingerprint } = identityAndFingerprint(actor, scope, requestId, input, expected);
+    // A continuation is idempotent by (prior yielded Run, saved message) and is
+    // actor-independent, NOT by the caller's requestId or Host actor: a later
+    // wake (even from another Host actor) must replay the original receipt
+    // instead of claiming a second continuation Run.
+    const actorBound = input.consumedWait === undefined;
+    const { identityKey, fingerprint } = actorBound
+      ? identityAndFingerprint(actor, scope, requestId, input, expected)
+      : continuationIdentityAndFingerprint(scope, input, expected);
 
     // 1. Original receipt first: a replay must not consult the current world.
     const lookup = await records.lookupCommit({ identityKey, fingerprint });
     if (lookup.status === 'ready') {
-      return readReplay(lookup.value, actor, scope, identityKey, fingerprint, input);
+      return readReplay(lookup.value, actor, scope, identityKey, fingerprint, input, actorBound);
     }
     if (lookup.code !== 'not_found') return mapStoreFailure(lookup);
     if (scopeCtx.signal.aborted) return reject('cancelled', 'the Task claim was cancelled during lookup');
@@ -540,7 +583,62 @@ export function createTaskClaimService(deps: TaskClaimDependencies): TaskClaimPo
         default: return busy(first.message);
       }
     }
-    if (facts.taskHasRun === true) return busy('this Task already has a Run and cannot be claimed for the first time');
+    // A first claim with an existing Run is busy. A continuation claim is legal
+    // only against a formal yielded Run whose saved wait is the one it consumes.
+    let continuationLease: TaskLeaseSnapshot | null = null;
+    let continuationMessageGuard: RecordGuard | null = null;
+    if (input.consumedWait !== undefined) {
+      const priorRuns = facts.runsByTaskId.get(input.taskId) ?? [];
+      const prior = priorRuns.find(run => sameRef(run.ref, input.consumedWait!.runRef));
+      if (prior === undefined) return busy('the continuation prior Run is not a Run of this Task');
+      if (prior.status !== 'ended' || prior.outcome !== 'yielded' || prior.continuation === undefined) {
+        return busy('the continuation prior Run did not yield with a formal continuation');
+      }
+      if (!sameRef(prior.continuation.messageRef, input.consumedWait.messageRef)) {
+        return busy('the continuation wait message does not match the yielded Run');
+      }
+      if (prior.continuation.task.taskId !== input.taskId || prior.continuation.task.goalId !== input.goalRef.goalId) {
+        return forbidden('the continuation prior Run belongs to another Task');
+      }
+      if (prior.continuation.sessionRef.sessionId !== input.sessionRef.sessionId) {
+        return forbidden('the continuation prior Run used another Session');
+      }
+      // A queued wait-window pause/cancel must survive the yield and hold the
+      // continuation; it is a formal control fact, never a Host boolean.
+      if (prior.controlState !== undefined
+        && (prior.controlState.desiredState === 'paused' || prior.controlState.desiredState === 'cancelled')) {
+        return busy(`the prior yielded Run has a queued ${prior.controlState.desiredState} control; the continuation is held`);
+      }
+      // The released lease must belong to THIS prior Run; a later consumption
+      // already moved the holder, so an older wait cannot be consumed again.
+      const priorLease = facts.leasesByTaskId.get(input.taskId) ?? null;
+      if (priorLease === null || priorLease.release === undefined
+        || priorLease.holderRunId !== prior.ref.runId) {
+        return busy('the continuation prior Run lease is not released by that Run');
+      }
+      // Read the FORMAL saved reply from the same records transaction instead of
+      // trusting the caller's responseRef: a pending message or an arbitrary
+      // artifact must never be claimable, and the exact message revision is guarded.
+      const messageKey = sessionMessageRefKey(input.consumedWait.messageRef);
+      const messageRead = await records.readMany([messageKey]);
+      if (messageRead.status !== 'ready') return busy('the continuation wait message is not readable');
+      const messageRecord = messageRead.value.records.find(record => record.refKey === messageKey);
+      if (messageRecord === undefined) return busy('the continuation wait message record does not exist');
+      const decodedMessage = decodeSessionMessageRecord(messageRecord);
+      if (decodedMessage.status !== 'decoded') return unavailable(`the continuation wait message is damaged: ${decodedMessage.reason}`);
+      const savedMessage = decodedMessage.value;
+      if (savedMessage.status !== 'responded' || savedMessage.response === null) {
+        return busy('the continuation wait has not been answered');
+      }
+      if (!sameRef(savedMessage.response.bodyRef, input.consumedWait.responseRef)) {
+        return forbidden('the continuation responseRef is not the formal saved reply body');
+      }
+      if (savedMessage.ref.workspaceId !== scope.workspaceId) return forbidden('the continuation wait message is outside the bound workspace');
+      continuationLease = priorLease;
+      continuationMessageGuard = { refKey: messageKey, expectedRevision: messageRecord.revision };
+    } else if (facts.taskHasRun === true) {
+      return busy('this Task already has a Run and cannot be claimed for the first time');
+    }
 
     const assignments = revisionAssignments(plan).filter(assignment => assignment.taskId === input.taskId);
     if (assignments.length !== 1) return forbidden('the Task must carry exactly one assignment');
@@ -589,13 +687,20 @@ export function createTaskClaimService(deps: TaskClaimDependencies): TaskClaimPo
     const outbox: TaskClaimOutbox = { ref: outboxRef, revision: 1, schemaVersion: 1, status: 'pending', claim };
     const leaseRef = { aggregateType: 'TaskLease' as const, projectId: scope.projectId,
       goalId: taskTriple.goalId, taskId: input.taskId };
-    const lease: TaskLeaseSnapshot = { ref: leaseRef, revision: 1, schemaVersion: 1,
-      holderRunId: runId, attemptId, grantedAt: claimedAt, expiresAt: null };
+    // A continuation reuses the SAME released TaskLease record at its current
+    // revision; a first claim creates it at revision 1. The release marker is
+    // dropped because this exact commit is the new, idempotent hold.
+    const lease: TaskLeaseSnapshot = continuationLease === null
+      ? { ref: leaseRef, revision: 1, schemaVersion: 1,
+          holderRunId: runId, attemptId, grantedAt: claimedAt, expiresAt: null }
+      : { ref: continuationLease.ref, revision: continuationLease.revision + 1, schemaVersion: 1,
+          holderRunId: runId, attemptId, grantedAt: claimedAt, expiresAt: null };
     const run: RunSnapshot = { ref: runRef, revision: 1, schemaVersion: 1, task: taskTriple, attemptId,
       planRef: input.planRef, roleBinding: input.roleBinding, budget: input.budget,
       workspaceSnapshot: { workspaceId: scope.workspaceId, revision: workspaceRecord.revision },
       status: 'starting', outcome: null, exitCode: null, lastEventSeq: 0,
-      lastRuntimeEventId: '', lastFactEventId: '', envelope: null, startedAt: null, endedAt: null };
+      lastRuntimeEventId: '', lastFactEventId: '', envelope: null, startedAt: null, endedAt: null,
+      ...(input.consumedWait === undefined ? {} : { consumedWait: structuredClone(input.consumedWait) }) };
     const attempt: TaskAttemptSnapshot = { ref: attemptRef, revision: 1, schemaVersion: 1, runId,
       planRef: input.planRef, status: 'claimed', startedAt: null, endedAt: null, endOutcome: null };
     const nextSession: SessionRecord = { ...session, revision: generation,
@@ -604,7 +709,7 @@ export function createTaskClaimService(deps: TaskClaimDependencies): TaskClaimPo
       identityKey, actor, fingerprint, claim };
 
     const leaseRecord: EncodedRecord = { refKey: refKeyOf(leaseRef), schemaId: TASK_LEASE_SCHEMA_ID,
-      revision: 1, json: JSON.stringify(lease) };
+      revision: lease.revision, json: JSON.stringify(lease) };
     const runRecord: EncodedRecord = { refKey: refKeyOf(runRef), schemaId: RUN_SCHEMA_ID,
       revision: 1, json: JSON.stringify(run) };
     const attemptRecord = encodeTaskAttemptSnapshot(attempt);
@@ -623,6 +728,7 @@ export function createTaskClaimService(deps: TaskClaimDependencies): TaskClaimPo
     addGuard(sessionKey, session.revision);
     for (const guard of facts.guards) addGuard(guard.refKey, guard.expectedRevision);
     for (const guard of roleFacts.guards) addGuard(guard.refKey, guard.expectedRevision);
+    if (continuationMessageGuard !== null) addGuard(continuationMessageGuard.refKey, continuationMessageGuard.expectedRevision);
     addGuard(refKeyOf(leaseRef), null);
     addGuard(taskAttemptRefKey(attemptRef), null);
     addGuard(refKeyOf(runRef), null);
@@ -638,7 +744,7 @@ export function createTaskClaimService(deps: TaskClaimDependencies): TaskClaimPo
     if (receipt.status !== 'committed') return mapStoreFailure(receipt);
     // A concurrent identical request win makes the Store replay the original
     // event; the local freshly-minted ids must NEVER be returned in that case.
-    if (receipt.replayed) return readReplay(receipt, actor, scope, identityKey, fingerprint, input);
+    if (receipt.replayed) return readReplay(receipt, actor, scope, identityKey, fingerprint, input, actorBound);
     return { status: 'committed', value: claim, replayed: false, cursor: receipt.cursor };
   }
 

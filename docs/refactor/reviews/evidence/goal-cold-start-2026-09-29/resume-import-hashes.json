@@ -1,0 +1,16 @@
+{
+  "lane": ".toolchain/dsh-refactor-runs/work-unprepared-resume-20260929",
+  "manifestSha256": "41277cadcbf81143ef2b67184d1fbd3ee1756ecae9eb67f0c0e4e95097497fcd",
+  "files": [
+    {
+      "path": "src/business/workflow/workflow.ts",
+      "originalSha256": "e791e2d73405b7ff911d936e21031cfcd60bb54eff9e0fdfe509a35cadd4bc29",
+      "candidateSha256": "88f0c668ce831ab855b3a4a1d41bd01d4bf3835e08a11a6dc45a2ebc718d89ec"
+    },
+    {
+      "path": "tests/composition/R5c-workflow-platform.test.ts",
+      "originalSha256": "71c2d55ad6d3edb7e1d3a703651b7c6887cb626c8ba92df4353e54b68c511f8a",
+      "candidateSha256": "9c18b09250180b209e9c569722e00146724cc19289d32313687137c4815184e6"
+    }
+  ]
+}

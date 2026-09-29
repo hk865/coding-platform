@@ -1,0 +1,50 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform-next
+
+ ❯ tests/work-graph/C1-session-mailbox.test.ts (50 tests | 2 failed) 8548ms
+     × declares the two recipient lookup indexes with their frozen paths 4ms
+     × declares the two recipient lookup indexes with their frozen paths 1ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/work-graph/C1-session-mailbox.test.ts > C1 SessionMailbox real memory > declares the two recipient lookup indexes with their frozen paths
+ FAIL  tests/work-graph/C1-session-mailbox.test.ts > C1 SessionMailbox real sqlite > declares the two recipient lookup indexes with their frozen paths
+AssertionError: expected [ { …(3) }, { …(3) }, { …(3) } ] to deeply equal [ { …(3) }, { …(3) } ]
+
+- Expected
++ Received
+
+@@ -16,6 +16,16 @@
+        "ref.workspaceId",
+        "recipient.sessionId",
+        "status",
+      ],
+    },
++   {
++     "aggregateType": "SessionMessage",
++     "name": "session-message-by-sender-run",
++     "paths": [
++       "ref.projectId",
++       "ref.workspaceId",
++       "sender.runRef.goalId",
++       "sender.runRef.runId",
++     ],
++   },
+  ]
+
+ ❯ tests/work-graph/C1-session-mailbox.test.ts:306:44
+    304|
+    305|   it('declares the two recipient lookup indexes with their frozen path…
+    306|     expect(SESSION_MESSAGE_LOOKUP_INDEXES).toEqual([
+       |                                            ^
+    307|       { name: 'session-message-by-recipient', aggregateType: 'SessionM…
+    308|         paths: ['ref.projectId', 'ref.workspaceId', 'recipient.session…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+
+ Test Files  1 failed | 10 passed (11)
+      Tests  2 failed | 103 passed (105)
+   Start at  14:14:44
+   Duration  39.78s (transform 1.06s, setup 0ms, import 4.00s, tests 35.01s, environment 1ms)
+

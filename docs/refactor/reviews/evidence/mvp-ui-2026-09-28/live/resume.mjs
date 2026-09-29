@@ -1,0 +1,40 @@
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { createHash } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
+const repo = resolve(process.env.MVP_UI_REPO ?? process.cwd());
+const base = resolve(process.env.MVP_UI_OUTPUT_DIR ?? '/tmp/mvp-ui-live-20260928');
+const { createLocalWorkbenchHost } = await import(pathToFileURL(join(repo,'dist/app/host.js')));
+const { loadWorkbenchCliConfig } = await import(pathToFileURL(join(repo,'dist/app/main.js')));
+const { createBuiltinProviderRegistry } = await import(pathToFileURL(join(repo,'vendor/coding-agent/dist/public-api.js')));
+const sha = s => createHash('sha256').update(s).digest('hex');
+// Read only at explicit launch. Never print or persist the credential.
+const keyFile=process.env.MVP_UI_API_KEY_FILE;
+if(!keyFile)throw Error('MVP_UI_API_KEY_FILE must name a private credential file');
+const secretText=await readFile(keyFile,'utf8');
+const key = secretText.match(/sk-[A-Za-z0-9_-]+/)?.[0] ?? secretText.trim();
+if (!key || /\s/.test(key)) throw Error('The authorized credential file needs one usable API key');
+if(!process.env.MVP_UI_RUN_DIR)throw Error('MVP_UI_RUN_DIR must name an existing acceptance run directory');
+const runDir = resolve(process.env.MVP_UI_RUN_DIR);
+await mkdir(base,{recursive:true});
+const root=join(runDir,'project'),database=join(runDir,'db');
+const previousConfigPath=join(runDir,'workbench.json');
+const config=JSON.parse(await readFile(previousConfigPath,'utf8'));
+const configPath=previousConfigPath;
+const evidence=JSON.parse(await readFile(join(runDir,'evidence.json'),'utf8'));
+evidence.restarts ??= []; evidence.restarts.push({at:new Date().toISOString(),reason:'Load reviewed gate-scope consumer repair; preserve original model-generated Plan, Run, Session and evidence'});
+delete evidence.closedAt;
+const seen=new Set(evidence.toolErrors.map(error=>error.callId));
+let writing=Promise.resolve();
+const persist=()=>{const json=JSON.stringify(evidence,null,2).replaceAll(key,'[redacted]');writing=writing.then(()=>writeFile(join(runDir,'evidence.json'),json));return writing;};
+const original=createBuiltinProviderRegistry();
+const registry={get:original.get.bind(original),create(...args){const client=original.create(...args);return {async *stream(request,options){if(++evidence.providerCalls>40)throw Error('Acceptance provider-call ceiling reached');evidence.requests.push({requestId:request.requestId,messages:request.messages,tools:request.tools.map(t=>t.name)});for(const m of request.messages)if(m.role==='tool'&&m.result.status!=='success'&&!seen.has(m.callId)){seen.add(m.callId);evidence.toolErrors.push({callId:m.callId,result:m.result});}await persist();try{for await(const event of client.stream(request,options)){if(event.type==='tool_call_started')evidence.toolNames.push(event.name);if(['failed','error','cancelled','truncated'].includes(event.type))evidence.providerErrors.push({requestId:request.requestId,type:event.type});yield event;}}catch(error){evidence.transportErrors.push({name:error?.name,code:error?.cause?.code??null});throw error;}finally{await persist();}}};}};
+const loaded=await loadWorkbenchCliConfig(configPath);
+const host=await createLocalWorkbenchHost({...loaded,publicDir:join(repo,'dist/app/public/workbench'),runtimeProvider:{registry,secretSource:{get:name=>name==='MVP_UI_PRIVATE_KEY'?key:undefined}}});
+const address=await host.listen(Number(process.env.MVP_UI_PORT ?? 44797));evidence.url=address.url;await persist();
+await writeFile(join(base,'latest.json'),JSON.stringify({pid:process.pid,url:address.url,runDir,root,database},null,2));
+console.log(JSON.stringify({pid:process.pid,url:address.url,runDir,root}));
+let closing=false;async function close(){if(closing)return;closing=true;await host.close();evidence.closedAt=new Date().toISOString();await persist();process.exit(0);}
+process.on('SIGINT',()=>void close());process.on('SIGTERM',()=>void close());
+// Intentionally no HTTP POST, no database seeding, and no automatic model call.

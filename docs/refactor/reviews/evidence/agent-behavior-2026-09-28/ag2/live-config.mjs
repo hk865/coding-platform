@@ -1,0 +1,1 @@
+export default { test: { environment: 'node', include: ['.toolchain/ag2-live.test.ts'], exclude: ['**/node_modules/**'], testTimeout: process.env.AG2_KEEP_HOST === '1' ? 86400000 : 300000, hookTimeout: 30000, maxWorkers: 1 } };

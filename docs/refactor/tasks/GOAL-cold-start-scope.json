@@ -1,0 +1,35 @@
+{
+  "writableFiles": [
+    "src/contracts/initial-planning.ts",
+    "src/core/work-graph/tasks/initial-plan.ts",
+    "src/core/agent-runtime/query-preparation.ts",
+    "src/app/runtime-configuration.ts",
+    "src/app/host-settings-types.ts",
+    "src/app/host-settings.ts",
+    "src/app/host.ts",
+    "src/composition/create-platform.ts",
+    "src/core/work-graph/evidence/contracts.ts",
+    "src/core/work-graph/evidence/evidence-service.ts",
+    "src/ui/main.ts",
+    "src/ui/views.ts",
+    "src/ui/styles.css",
+    "tests/work-graph/R5b-initial-plan.test.ts",
+    "tests/app/host-settings.test.ts",
+    "tests/work-graph/R3e-evidence.test.ts",
+    "tests/app/session-rendering.test.ts",
+    "src/contracts/architecture-catalog.ts",
+    "src/core/work-graph/architecture/catalog-contracts.ts",
+    "src/core/work-graph/configuration/project-bootstrap-contracts.ts",
+    "src/core/work-graph/configuration/project-bootstrap-service.ts",
+    "src/app/core-routes.ts",
+    "src/app/core-http-types.ts"
+  ],
+  "dshStateDirectories": [
+    "profiles",
+    "sessions",
+    "storages",
+    "cache",
+    "llm-deepseek",
+    "attachments"
+  ]
+}

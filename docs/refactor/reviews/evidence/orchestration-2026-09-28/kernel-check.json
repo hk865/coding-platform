@@ -1,0 +1,344 @@
+{
+  "mode": "check",
+  "sources": [
+    {
+      "path": "vendor/coding-agent/patches/storage/adapters/sqlite/sqlite-stores.ts",
+      "sha256": "4c552b0ecbaecdd5db514697fe39019c5899e51589a8caa8a950c9b4bebe16b6"
+    },
+    {
+      "path": "vendor/coding-agent/patches/public-api.ts",
+      "sha256": "a87deed2b4d9fb9f2275c97d1d9feaf403f74c9797c8f988d44c7de9a8b9ebfe"
+    },
+    {
+      "path": "vendor/coding-agent/patches/app/composition/control-hooks.ts",
+      "sha256": "de8bbc1aa688a99718f02710458a80882acd920499aa86edbd7e35c984b6999b"
+    },
+    {
+      "path": "vendor/coding-agent/patches/app/composition/composition-contracts.ts",
+      "sha256": "7c72477068743fb2e7942ecb04e3899ec1b2ba1f970fe77a99359e0bc03ed746"
+    },
+    {
+      "path": "vendor/coding-agent/patches/core/runtime/loop/runtime-runner.ts",
+      "sha256": "0f354a23a473b3f2a455c096338b96de0f7cadf31380fe8ef40205cedfc22720"
+    },
+    {
+      "path": "vendor/coding-agent/patches/app/composition/composition-root.ts",
+      "sha256": "f3fb82a99a982ca3b99f9344b4456a1af23b7fbf9a7b08073ec378583979e9b4"
+    },
+    {
+      "path": "vendor/coding-agent/patches/app/composition/resume-composition.ts",
+      "sha256": "6b636f0d469f0671e7d3e19592764109ca64f95669e8333eb8d0c0d23362b183"
+    },
+    {
+      "path": "vendor/coding-agent/patches/core/ports/session_store/session-history.ts",
+      "sha256": "36cad47434965d66eab31d3829d644ce900c3c07949aeaec5230989a1b65e78b"
+    },
+    {
+      "path": "vendor/coding-agent/patches/core/runtime/state/run-state.ts",
+      "sha256": "f076a00098e33b4b29df7fab9e051065e5ed350c77b102ce49183f711014d651"
+    },
+    {
+      "path": "vendor/coding-agent/patches/core/runtime/events/agent-events.ts",
+      "sha256": "3c1e46e21bf4eab9569f6b0ad39ccde6d324215d6393b5b62049ad1df2bda2a1"
+    },
+    {
+      "path": "vendor/coding-agent/patches/core/runtime/reducer/run-state-reducer.ts",
+      "sha256": "81e9592ea8b46cf74f9632cb7782f08be493ecec632707e73a99e958477d45e8"
+    },
+    {
+      "path": "vendor/coding-agent/patches/core/ports/session_store/session-store-port.ts",
+      "sha256": "a99ba92a44bc4a9b13d027ef872b4bb5e4518db8bc5e7d51ad0b46d8b5c1f62f"
+    }
+  ],
+  "typeScript": "6.0.3",
+  "artifacts": [
+    {
+      "path": "storage/adapters/sqlite/sqlite-stores.js",
+      "sha256": "a52fef11ca8d6b24c84034b5ef25bd895638d9c453f59cad90e909ffd573ef76",
+      "currentSha256": "a52fef11ca8d6b24c84034b5ef25bd895638d9c453f59cad90e909ffd573ef76",
+      "matches": true
+    },
+    {
+      "path": "storage/adapters/sqlite/sqlite-stores.js.map",
+      "sha256": "651abb806baca8a32a6f285fc6ced6fc2f1fc1460b80dc51e83efb2c84231111",
+      "currentSha256": "651abb806baca8a32a6f285fc6ced6fc2f1fc1460b80dc51e83efb2c84231111",
+      "matches": true
+    },
+    {
+      "path": "storage/adapters/sqlite/sqlite-stores.d.ts",
+      "sha256": "80be7f2b88f5578ed0a24d59014e49e5a124777f7926a0b46182d86f3ca9e8f3",
+      "currentSha256": "80be7f2b88f5578ed0a24d59014e49e5a124777f7926a0b46182d86f3ca9e8f3",
+      "matches": true
+    },
+    {
+      "path": "storage/adapters/sqlite/sqlite-stores.d.ts.map",
+      "sha256": "08e758e735d8d98b0a6b56f540bfbd7b7dd61bd585f21be5bf6cfa06b5e54102",
+      "currentSha256": "08e758e735d8d98b0a6b56f540bfbd7b7dd61bd585f21be5bf6cfa06b5e54102",
+      "matches": true
+    },
+    {
+      "path": "public-api.js",
+      "sha256": "a9e2e9731e56b1425e4f3b284d07101c72447573481dc776b91792956a0bc358",
+      "currentSha256": "a9e2e9731e56b1425e4f3b284d07101c72447573481dc776b91792956a0bc358",
+      "matches": true
+    },
+    {
+      "path": "public-api.js.map",
+      "sha256": "edfb16f23eb058cf1a62ade31ce884afeba0a981eb942e610445801dfa754314",
+      "currentSha256": "edfb16f23eb058cf1a62ade31ce884afeba0a981eb942e610445801dfa754314",
+      "matches": true
+    },
+    {
+      "path": "public-api.d.ts",
+      "sha256": "fa20c24223d8081f954db0ba20d14b45be5c6a45a570f52aa471dd65b57de3a6",
+      "currentSha256": "fa20c24223d8081f954db0ba20d14b45be5c6a45a570f52aa471dd65b57de3a6",
+      "matches": true
+    },
+    {
+      "path": "public-api.d.ts.map",
+      "sha256": "2817ad684b5744c1154d6775ac12a559d83dd8fdeab7464cb5bb5ebcca9ec745",
+      "currentSha256": "2817ad684b5744c1154d6775ac12a559d83dd8fdeab7464cb5bb5ebcca9ec745",
+      "matches": true
+    },
+    {
+      "path": "app/composition/control-hooks.js",
+      "sha256": "f4b3450871e2b9c8a1ee5ced6e4d63d11b7fb3200a483d4d68b95d703e290a1a",
+      "currentSha256": "f4b3450871e2b9c8a1ee5ced6e4d63d11b7fb3200a483d4d68b95d703e290a1a",
+      "matches": true
+    },
+    {
+      "path": "app/composition/control-hooks.js.map",
+      "sha256": "9e46efd8b51c31d11e4fc081a6ce4c54377e36ccf3ed84986acd2b35024458c5",
+      "currentSha256": "9e46efd8b51c31d11e4fc081a6ce4c54377e36ccf3ed84986acd2b35024458c5",
+      "matches": true
+    },
+    {
+      "path": "app/composition/control-hooks.d.ts",
+      "sha256": "112e0beecc2ab9002a5f83ccb5ffbc51b484cd1778e717e8f9047f0f804ef1e5",
+      "currentSha256": "112e0beecc2ab9002a5f83ccb5ffbc51b484cd1778e717e8f9047f0f804ef1e5",
+      "matches": true
+    },
+    {
+      "path": "app/composition/control-hooks.d.ts.map",
+      "sha256": "83ce956c4892d3780ca513502321b1b93b84475298d89d0b54905c11a5e2c285",
+      "currentSha256": "83ce956c4892d3780ca513502321b1b93b84475298d89d0b54905c11a5e2c285",
+      "matches": true
+    },
+    {
+      "path": "app/composition/composition-contracts.js",
+      "sha256": "5fd021c87f8b629775801bce9d303daaec0d1e0611d9a663fc5590bb6a099b93",
+      "currentSha256": "5fd021c87f8b629775801bce9d303daaec0d1e0611d9a663fc5590bb6a099b93",
+      "matches": true
+    },
+    {
+      "path": "app/composition/composition-contracts.js.map",
+      "sha256": "cc66fb2e867da5b8f5f58e4a517bbbf44ab6aabd935c86f96450f68ea6f4d184",
+      "currentSha256": "cc66fb2e867da5b8f5f58e4a517bbbf44ab6aabd935c86f96450f68ea6f4d184",
+      "matches": true
+    },
+    {
+      "path": "app/composition/composition-contracts.d.ts",
+      "sha256": "1f77faf557bf213b4be2075c6e63f80dc2ed36ad38f36906959ad4d6fea09cfe",
+      "currentSha256": "1f77faf557bf213b4be2075c6e63f80dc2ed36ad38f36906959ad4d6fea09cfe",
+      "matches": true
+    },
+    {
+      "path": "app/composition/composition-contracts.d.ts.map",
+      "sha256": "5b44279c213ef08c008fd34e61c6a9ee722f9c18d33f576d8a337eff2dc9cb49",
+      "currentSha256": "5b44279c213ef08c008fd34e61c6a9ee722f9c18d33f576d8a337eff2dc9cb49",
+      "matches": true
+    },
+    {
+      "path": "core/runtime/loop/runtime-runner.js",
+      "sha256": "c04423fe721c894973d3ecfcd35969958db6529eef9d82c1b2fd481a862ebcce",
+      "currentSha256": "c04423fe721c894973d3ecfcd35969958db6529eef9d82c1b2fd481a862ebcce",
+      "matches": true
+    },
+    {
+      "path": "core/runtime/loop/runtime-runner.js.map",
+      "sha256": "dd44bb33cb8083fae470ad280fba9916385b0a54c57c230d4e6e1925048beeef",
+      "currentSha256": "dd44bb33cb8083fae470ad280fba9916385b0a54c57c230d4e6e1925048beeef",
+      "matches": true
+    },
+    {
+      "path": "core/runtime/loop/runtime-runner.d.ts",
+      "sha256": "d42d83e7ae91194c48de880814c3e8c834c94f1c5639ef485d72c01d93c2011f",
+      "currentSha256": "d42d83e7ae91194c48de880814c3e8c834c94f1c5639ef485d72c01d93c2011f",
+      "matches": true
+    },
+    {
+      "path": "core/runtime/loop/runtime-runner.d.ts.map",
+      "sha256": "552ef86f5555f93767c98f057ae2b456407af858f3f99317c3d456825083a5ad",
+      "currentSha256": "552ef86f5555f93767c98f057ae2b456407af858f3f99317c3d456825083a5ad",
+      "matches": true
+    },
+    {
+      "path": "app/composition/composition-root.js",
+      "sha256": "3994ee8a46fdfd18f044f48bea24772679e1355956ca14b623cd8b1197b4c46e",
+      "currentSha256": "3994ee8a46fdfd18f044f48bea24772679e1355956ca14b623cd8b1197b4c46e",
+      "matches": true
+    },
+    {
+      "path": "app/composition/composition-root.js.map",
+      "sha256": "ece4874c7fdcf4d6660f4975cd5fd31129dd482f4a2cb4a241ce497f38b451f7",
+      "currentSha256": "ece4874c7fdcf4d6660f4975cd5fd31129dd482f4a2cb4a241ce497f38b451f7",
+      "matches": true
+    },
+    {
+      "path": "app/composition/composition-root.d.ts",
+      "sha256": "8d39b4273a4a3e0763d51093f2ae4591d4cd645d084b1d777c38edb3abf8c3a2",
+      "currentSha256": "8d39b4273a4a3e0763d51093f2ae4591d4cd645d084b1d777c38edb3abf8c3a2",
+      "matches": true
+    },
+    {
+      "path": "app/composition/composition-root.d.ts.map",
+      "sha256": "1a1195127f55126578b69d616ced08f82ee3ee02995126a364e674fe6bf3fbe3",
+      "currentSha256": "1a1195127f55126578b69d616ced08f82ee3ee02995126a364e674fe6bf3fbe3",
+      "matches": true
+    },
+    {
+      "path": "app/composition/resume-composition.js",
+      "sha256": "d734d4f3733ea3836fde591cc1738fbcc5a9414daadbcc0997dcbff89b20f244",
+      "currentSha256": "d734d4f3733ea3836fde591cc1738fbcc5a9414daadbcc0997dcbff89b20f244",
+      "matches": true
+    },
+    {
+      "path": "app/composition/resume-composition.js.map",
+      "sha256": "5f0f103616d02ba0366b7eadb29c4c9e285fd1fd880421ca6eea31205bf4be17",
+      "currentSha256": "5f0f103616d02ba0366b7eadb29c4c9e285fd1fd880421ca6eea31205bf4be17",
+      "matches": true
+    },
+    {
+      "path": "app/composition/resume-composition.d.ts",
+      "sha256": "0d1fb20ddf7c727742e6ada512fae74203995fccd6e70066e21297b1896b002e",
+      "currentSha256": "0d1fb20ddf7c727742e6ada512fae74203995fccd6e70066e21297b1896b002e",
+      "matches": true
+    },
+    {
+      "path": "app/composition/resume-composition.d.ts.map",
+      "sha256": "29f2e2f9d72211ed1eac969d1a423cb89d13403c8c58dfdb1d947c197878b34b",
+      "currentSha256": "29f2e2f9d72211ed1eac969d1a423cb89d13403c8c58dfdb1d947c197878b34b",
+      "matches": true
+    },
+    {
+      "path": "core/ports/session_store/session-history.js",
+      "sha256": "821b36b9076f140f5d8644f53c284e6a81a30d2d69ba4a5bb3be3ffde7186668",
+      "currentSha256": "821b36b9076f140f5d8644f53c284e6a81a30d2d69ba4a5bb3be3ffde7186668",
+      "matches": true
+    },
+    {
+      "path": "core/ports/session_store/session-history.js.map",
+      "sha256": "44d5f35485d762e63629e7464dca7bc99c230059fd8f83d4e5939b6987ac3f88",
+      "currentSha256": "44d5f35485d762e63629e7464dca7bc99c230059fd8f83d4e5939b6987ac3f88",
+      "matches": true
+    },
+    {
+      "path": "core/ports/session_store/session-history.d.ts",
+      "sha256": "63edd06449321bc57ece0273c61c2a580e947521871a855f507bc9de64d7582d",
+      "currentSha256": "63edd06449321bc57ece0273c61c2a580e947521871a855f507bc9de64d7582d",
+      "matches": true
+    },
+    {
+      "path": "core/ports/session_store/session-history.d.ts.map",
+      "sha256": "cefc96ad5f8d1dbcd038e7eaf15d105697f24cfeb65a234533a8d44a02a84a26",
+      "currentSha256": "cefc96ad5f8d1dbcd038e7eaf15d105697f24cfeb65a234533a8d44a02a84a26",
+      "matches": true
+    },
+    {
+      "path": "core/runtime/state/run-state.js",
+      "sha256": "a20897fe9b84c0dd7d91decf909a6a02eaddc518b6374f27ee11f61779922b3c",
+      "currentSha256": "a20897fe9b84c0dd7d91decf909a6a02eaddc518b6374f27ee11f61779922b3c",
+      "matches": true
+    },
+    {
+      "path": "core/runtime/state/run-state.js.map",
+      "sha256": "20128e06c13d6ba73a3fc05a2ea25a834f8abd5d5e8f81c78e7e02ab763a7a00",
+      "currentSha256": "20128e06c13d6ba73a3fc05a2ea25a834f8abd5d5e8f81c78e7e02ab763a7a00",
+      "matches": true
+    },
+    {
+      "path": "core/runtime/state/run-state.d.ts",
+      "sha256": "0fbbc2879f424dd7b79f608292f2df1a230765e3e93ffdc572b6cd1a80eb7b2a",
+      "currentSha256": "0fbbc2879f424dd7b79f608292f2df1a230765e3e93ffdc572b6cd1a80eb7b2a",
+      "matches": true
+    },
+    {
+      "path": "core/runtime/state/run-state.d.ts.map",
+      "sha256": "994faba440343b8c7fe03a73138d225dd542e12be6449212803c695abada225d",
+      "currentSha256": "994faba440343b8c7fe03a73138d225dd542e12be6449212803c695abada225d",
+      "matches": true
+    },
+    {
+      "path": "core/runtime/events/agent-events.js",
+      "sha256": "3230289496e6ed89d869dffca15a8273d5274c1d59040f4a9345f060030e4b01",
+      "currentSha256": "3230289496e6ed89d869dffca15a8273d5274c1d59040f4a9345f060030e4b01",
+      "matches": true
+    },
+    {
+      "path": "core/runtime/events/agent-events.js.map",
+      "sha256": "f2aa5a045161d0c229c5a944187cdcaf7c8506f840b9be474dfc048230a4b1dd",
+      "currentSha256": "f2aa5a045161d0c229c5a944187cdcaf7c8506f840b9be474dfc048230a4b1dd",
+      "matches": true
+    },
+    {
+      "path": "core/runtime/events/agent-events.d.ts",
+      "sha256": "67ceff589995fbd45214f1d6c1076e556d38a20320e8ca5c83c69d59a369bdd2",
+      "currentSha256": "67ceff589995fbd45214f1d6c1076e556d38a20320e8ca5c83c69d59a369bdd2",
+      "matches": true
+    },
+    {
+      "path": "core/runtime/events/agent-events.d.ts.map",
+      "sha256": "188dd1b2f326eeb813feb41c03d1297fba75ad192dcd1350fb8152ddad244625",
+      "currentSha256": "188dd1b2f326eeb813feb41c03d1297fba75ad192dcd1350fb8152ddad244625",
+      "matches": true
+    },
+    {
+      "path": "core/runtime/reducer/run-state-reducer.js",
+      "sha256": "c90f109f4b2bd7e6a6bbdc005931683162b1c3dc79aac756b08462cc239769a1",
+      "currentSha256": "c90f109f4b2bd7e6a6bbdc005931683162b1c3dc79aac756b08462cc239769a1",
+      "matches": true
+    },
+    {
+      "path": "core/runtime/reducer/run-state-reducer.js.map",
+      "sha256": "8591a7b0c3681d0b3b2c7bc11140dcb73b160a874b83878018b8a7ec26bc244f",
+      "currentSha256": "8591a7b0c3681d0b3b2c7bc11140dcb73b160a874b83878018b8a7ec26bc244f",
+      "matches": true
+    },
+    {
+      "path": "core/runtime/reducer/run-state-reducer.d.ts",
+      "sha256": "edc76762099fb30a4dde0b9c9ae7259e548877c603de3798f8b2778eb45d6753",
+      "currentSha256": "edc76762099fb30a4dde0b9c9ae7259e548877c603de3798f8b2778eb45d6753",
+      "matches": true
+    },
+    {
+      "path": "core/runtime/reducer/run-state-reducer.d.ts.map",
+      "sha256": "5b1f9da3d2fb57c4ea18e960f171d437d3f1f01f06b7059d7f0a7611155441e3",
+      "currentSha256": "5b1f9da3d2fb57c4ea18e960f171d437d3f1f01f06b7059d7f0a7611155441e3",
+      "matches": true
+    },
+    {
+      "path": "core/ports/session_store/session-store-port.js",
+      "sha256": "e7f904395ac7571e81e3f5b6f073ae19fca848e93beea1ce631d9447032dbc6b",
+      "currentSha256": "e7f904395ac7571e81e3f5b6f073ae19fca848e93beea1ce631d9447032dbc6b",
+      "matches": true
+    },
+    {
+      "path": "core/ports/session_store/session-store-port.js.map",
+      "sha256": "3a3e41334d54ef2eed03f7d02dfef2c7f309a686dd9da11d7a51c291c7078caa",
+      "currentSha256": "3a3e41334d54ef2eed03f7d02dfef2c7f309a686dd9da11d7a51c291c7078caa",
+      "matches": true
+    },
+    {
+      "path": "core/ports/session_store/session-store-port.d.ts",
+      "sha256": "fe40fbb02633cce28db1ec74b872fa7bc262145cee8baa825b27fc45debd432a",
+      "currentSha256": "fe40fbb02633cce28db1ec74b872fa7bc262145cee8baa825b27fc45debd432a",
+      "matches": true
+    },
+    {
+      "path": "core/ports/session_store/session-store-port.d.ts.map",
+      "sha256": "eeec20bb28529e98011e35d145ce2b24faac086720e90668bba5aea0566a5dcf",
+      "currentSha256": "eeec20bb28529e98011e35d145ce2b24faac086720e90668bba5aea0566a5dcf",
+      "matches": true
+    }
+  ]
+}

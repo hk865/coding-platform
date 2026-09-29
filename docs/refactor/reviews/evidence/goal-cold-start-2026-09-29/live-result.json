@@ -1,0 +1,497 @@
+{
+  "capturedAt": "2026-09-29T08:08:58.234434+00:00",
+  "projectId": "b01d4f5e1e55d0ef4edb6b6d2a2b4f39",
+  "fixture": "/tmp/coding-platform-coldstart-accepted-20260929-cdh7tmdl",
+  "counts": {
+    "Project": 1,
+    "Workspace": 1,
+    "Goal": 1,
+    "CoreOperation": 1,
+    "Session": 1,
+    "QueryJob": 2,
+    "QueryRun": 2,
+    "QueryJobAnswer": 2,
+    "PlanProposal": 1,
+    "ArchitectureBaselineRevision": 1,
+    "ArchitectureCatalog": 1,
+    "ProjectArchitectureBaselineActive": 1,
+    "CompletionPolicyRevision": 1,
+    "ProjectCompletionPolicyActive": 1,
+    "PlanRevision": 1,
+    "TaskLease": 2,
+    "TaskAttempt": 2,
+    "Run": 2,
+    "DispatchOutboxEntry": 2,
+    "ModelRequestPermit": 6,
+    "VerificationRound": 3,
+    "Evidence": 3,
+    "TaskEvidenceIndex": 3,
+    "TaskReduction": 3,
+    "GoalPhase": 1
+  },
+  "goals": [
+    {
+      "ref": {
+        "aggregateType": "Goal",
+        "projectId": "b01d4f5e1e55d0ef4edb6b6d2a2b4f39",
+        "goalId": "goal-mumc54t2-1"
+      },
+      "activePlanRevision": {
+        "aggregateType": "PlanRevision",
+        "projectId": "b01d4f5e1e55d0ef4edb6b6d2a2b4f39",
+        "planId": "initial-plan-2f4ef8387aa580e126b131546ac5b61b"
+      },
+      "desiredState": "active",
+      "revision": 2
+    }
+  ],
+  "runs": [
+    {
+      "ref": {
+        "aggregateType": "Run",
+        "projectId": "b01d4f5e1e55d0ef4edb6b6d2a2b4f39",
+        "goalId": "goal-mumc54t2-1",
+        "runId": "62c2347b-7f51-4986-89c3-f648f58fd259"
+      },
+      "task": {
+        "projectId": "b01d4f5e1e55d0ef4edb6b6d2a2b4f39",
+        "goalId": "goal-mumc54t2-1",
+        "taskId": "task-implement-normalize-label"
+      },
+      "attemptId": "77b73192-2e99-449c-9a77-f44167e9c5af",
+      "status": "ended",
+      "outcome": "completed",
+      "startedAt": "2026-09-29T07:11:48.344Z",
+      "endedAt": "2026-09-29T07:12:00.194Z",
+      "executionHistory": {
+        "schemaVersion": 1,
+        "sessionRef": {
+          "projectId": "b01d4f5e1e55d0ef4edb6b6d2a2b4f39",
+          "sessionId": "session-b09d7b843b242244c9ce177c1f4a3f2eac3591cb5307a807ebea7c755d661553"
+        },
+        "kernel": {
+          "adapterId": "host-settings-kernel-569adce628597bf772a8d36093fd2d59",
+          "kernelSessionId": "session-b09d7b843b242244c9ce177c1f4a3f2eac3591cb5307a807ebea7c755d661553",
+          "runId": "krun-16718bc5aae49e4067fa1cbb5be74f4e82030aa896fc1b5abe7f4660dd89359c",
+          "turnId": "kturn-846de88fa4cdd38068ced3f6f60cd184df0a2f6b7fde47833dd1891865839b4c"
+        },
+        "startPosition": 32,
+        "observedThroughPosition": 60,
+        "endPosition": 60
+      }
+    },
+    {
+      "ref": {
+        "aggregateType": "Run",
+        "projectId": "b01d4f5e1e55d0ef4edb6b6d2a2b4f39",
+        "goalId": "goal-mumc54t2-1",
+        "runId": "8bc9502f-8401-49e5-9dda-ef70fd9d1194"
+      },
+      "task": {
+        "projectId": "b01d4f5e1e55d0ef4edb6b6d2a2b4f39",
+        "goalId": "goal-mumc54t2-1",
+        "taskId": "task-preserve-dependency-and-tests"
+      },
+      "attemptId": "f2dcc2fb-9093-42ac-8841-9618a8412e89",
+      "status": "ended",
+      "outcome": "completed",
+      "startedAt": "2026-09-29T07:20:16.226Z",
+      "endedAt": "2026-09-29T07:20:25.005Z",
+      "executionHistory": {
+        "schemaVersion": 1,
+        "sessionRef": {
+          "projectId": "b01d4f5e1e55d0ef4edb6b6d2a2b4f39",
+          "sessionId": "session-b09d7b843b242244c9ce177c1f4a3f2eac3591cb5307a807ebea7c755d661553"
+        },
+        "kernel": {
+          "adapterId": "host-settings-kernel-569adce628597bf772a8d36093fd2d59",
+          "kernelSessionId": "session-b09d7b843b242244c9ce177c1f4a3f2eac3591cb5307a807ebea7c755d661553",
+          "runId": "krun-8dd7ac0da800c097d1f0c41ece35c02c23d7a4c167f6ac08bc0f8011b302337e",
+          "turnId": "kturn-769395bbdd50697045dd9ab4ce6b8ce7bbf9f1af1d9a3f33b150aea351549492"
+        },
+        "startPosition": 61,
+        "observedThroughPosition": 77,
+        "endPosition": 77
+      }
+    }
+  ],
+  "taskReductions": [
+    {
+      "ref": {
+        "aggregateType": "TaskReduction",
+        "projectId": "b01d4f5e1e55d0ef4edb6b6d2a2b4f39",
+        "goalId": "goal-mumc54t2-1",
+        "taskId": "task-preserve-dependency-and-tests"
+      },
+      "phase": "satisfied",
+      "completion": {
+        "schemaVersion": 1,
+        "roundRef": {
+          "aggregateType": "VerificationRound",
+          "projectId": "b01d4f5e1e55d0ef4edb6b6d2a2b4f39",
+          "workspaceId": "9e704420b22e55c0f437818c72417694",
+          "goalId": "goal-mumc54t2-1",
+          "taskId": "task-preserve-dependency-and-tests",
+          "runId": "8bc9502f-8401-49e5-9dda-ef70fd9d1194",
+          "roundId": "75eaf983-c619-4771-8cbf-5a3898252306"
+        },
+        "roundRevision": 4,
+        "taskBasisRef": {
+          "aggregateType": "PlanRevision",
+          "projectId": "b01d4f5e1e55d0ef4edb6b6d2a2b4f39",
+          "planId": "initial-plan-2f4ef8387aa580e126b131546ac5b61b"
+        },
+        "verificationPlanRef": {
+          "planId": "c157d44399a4100a8c82dad69eea3b67705aa0f7503dceeae63a8d36bd17f3d1",
+          "planDigest": "c157d44399a4100a8c82dad69eea3b67705aa0f7503dceeae63a8d36bd17f3d1"
+        },
+        "configurationDigest": "7621b65e79f490385eee7bbcbb07e324d3ec826e07af69b9e754bca15504c152",
+        "evidenceRefs": [
+          {
+            "aggregateType": "Evidence",
+            "projectId": "b01d4f5e1e55d0ef4edb6b6d2a2b4f39",
+            "evidenceId": "b76eb5fa-149a-45aa-aac9-b0275ff96833"
+          }
+        ]
+      }
+    },
+    {
+      "ref": {
+        "aggregateType": "TaskReduction",
+        "projectId": "b01d4f5e1e55d0ef4edb6b6d2a2b4f39",
+        "goalId": "goal-mumc54t2-1",
+        "taskId": "task-implement-normalize-label"
+      },
+      "phase": "satisfied",
+      "completion": {
+        "schemaVersion": 1,
+        "roundRef": {
+          "aggregateType": "VerificationRound",
+          "projectId": "b01d4f5e1e55d0ef4edb6b6d2a2b4f39",
+          "workspaceId": "9e704420b22e55c0f437818c72417694",
+          "goalId": "goal-mumc54t2-1",
+          "taskId": "task-implement-normalize-label",
+          "runId": "62c2347b-7f51-4986-89c3-f648f58fd259",
+          "roundId": "fc0f6261-ef3d-41c2-bb82-12662156d800"
+        },
+        "roundRevision": 4,
+        "taskBasisRef": {
+          "aggregateType": "PlanRevision",
+          "projectId": "b01d4f5e1e55d0ef4edb6b6d2a2b4f39",
+          "planId": "initial-plan-2f4ef8387aa580e126b131546ac5b61b"
+        },
+        "verificationPlanRef": {
+          "planId": "be2dad7698749157770e1f179b9d95c7a6aac0bd025ddfac8ba416bb207d665d",
+          "planDigest": "be2dad7698749157770e1f179b9d95c7a6aac0bd025ddfac8ba416bb207d665d"
+        },
+        "configurationDigest": "7621b65e79f490385eee7bbcbb07e324d3ec826e07af69b9e754bca15504c152",
+        "evidenceRefs": [
+          {
+            "aggregateType": "Evidence",
+            "projectId": "b01d4f5e1e55d0ef4edb6b6d2a2b4f39",
+            "evidenceId": "cff74868-64e9-4dce-918c-033e9a2c4823"
+          }
+        ]
+      }
+    },
+    {
+      "ref": {
+        "aggregateType": "TaskReduction",
+        "projectId": "b01d4f5e1e55d0ef4edb6b6d2a2b4f39",
+        "goalId": "goal-mumc54t2-1",
+        "taskId": "task-goal-gate"
+      },
+      "phase": "satisfied",
+      "completion": {
+        "schemaVersion": 1,
+        "roundRef": {
+          "aggregateType": "VerificationRound",
+          "projectId": "b01d4f5e1e55d0ef4edb6b6d2a2b4f39",
+          "workspaceId": "9e704420b22e55c0f437818c72417694",
+          "goalId": "goal-mumc54t2-1",
+          "taskId": "task-goal-gate",
+          "runId": "62c2347b-7f51-4986-89c3-f648f58fd259",
+          "roundId": "b2661388-81d3-44eb-8ab5-9777f281c06c"
+        },
+        "roundRevision": 4,
+        "taskBasisRef": {
+          "aggregateType": "PlanRevision",
+          "projectId": "b01d4f5e1e55d0ef4edb6b6d2a2b4f39",
+          "planId": "initial-plan-2f4ef8387aa580e126b131546ac5b61b"
+        },
+        "verificationPlanRef": {
+          "planId": "c666728d090f3e99a05f300862e52197368cb239e262d4a590c84ce874d2b8c0",
+          "planDigest": "c666728d090f3e99a05f300862e52197368cb239e262d4a590c84ce874d2b8c0"
+        },
+        "configurationDigest": "7621b65e79f490385eee7bbcbb07e324d3ec826e07af69b9e754bca15504c152",
+        "evidenceRefs": [
+          {
+            "aggregateType": "Evidence",
+            "projectId": "b01d4f5e1e55d0ef4edb6b6d2a2b4f39",
+            "evidenceId": "4cd15ea9-603d-4bf8-9765-cefeeda4d993"
+          }
+        ]
+      }
+    }
+  ],
+  "goalPhases": [
+    {
+      "ref": {
+        "aggregateType": "GoalPhase",
+        "projectId": "b01d4f5e1e55d0ef4edb6b6d2a2b4f39",
+        "goalId": "goal-mumc54t2-1"
+      },
+      "revision": 1,
+      "schemaVersion": 1,
+      "planRef": {
+        "aggregateType": "PlanRevision",
+        "projectId": "b01d4f5e1e55d0ef4edb6b6d2a2b4f39",
+        "planId": "initial-plan-2f4ef8387aa580e126b131546ac5b61b"
+      },
+      "planRevision": 1,
+      "phase": "COMPLETED",
+      "adoptedTaskReductions": [
+        {
+          "ref": {
+            "aggregateType": "TaskReduction",
+            "projectId": "b01d4f5e1e55d0ef4edb6b6d2a2b4f39",
+            "goalId": "goal-mumc54t2-1",
+            "taskId": "task-implement-normalize-label"
+          },
+          "revision": 1
+        },
+        {
+          "ref": {
+            "aggregateType": "TaskReduction",
+            "projectId": "b01d4f5e1e55d0ef4edb6b6d2a2b4f39",
+            "goalId": "goal-mumc54t2-1",
+            "taskId": "task-preserve-dependency-and-tests"
+          },
+          "revision": 1
+        },
+        {
+          "ref": {
+            "aggregateType": "TaskReduction",
+            "projectId": "b01d4f5e1e55d0ef4edb6b6d2a2b4f39",
+            "goalId": "goal-mumc54t2-1",
+            "taskId": "task-goal-gate"
+          },
+          "revision": 1
+        }
+      ],
+      "satisfiedObligationIds": [
+        "obligation-normalize-label"
+      ],
+      "reducedAt": "2026-09-29T07:53:06.614Z"
+    }
+  ],
+  "rounds": [
+    {
+      "ref": {
+        "aggregateType": "VerificationRound",
+        "projectId": "b01d4f5e1e55d0ef4edb6b6d2a2b4f39",
+        "workspaceId": "9e704420b22e55c0f437818c72417694",
+        "goalId": "goal-mumc54t2-1",
+        "taskId": "task-implement-normalize-label",
+        "runId": "62c2347b-7f51-4986-89c3-f648f58fd259",
+        "roundId": "fc0f6261-ef3d-41c2-bb82-12662156d800"
+      },
+      "status": "finalized",
+      "outcome": "PASS",
+      "checks": [
+        {
+          "checkId": "check-node-test-labels",
+          "phase": "finished",
+          "outcome": "PASS",
+          "invocationId": "f0a3a112-b121-4208-9032-ab55e049c3e3",
+          "sourceStatus": "matched"
+        }
+      ]
+    },
+    {
+      "ref": {
+        "aggregateType": "VerificationRound",
+        "projectId": "b01d4f5e1e55d0ef4edb6b6d2a2b4f39",
+        "workspaceId": "9e704420b22e55c0f437818c72417694",
+        "goalId": "goal-mumc54t2-1",
+        "taskId": "task-preserve-dependency-and-tests",
+        "runId": "8bc9502f-8401-49e5-9dda-ef70fd9d1194",
+        "roundId": "75eaf983-c619-4771-8cbf-5a3898252306"
+      },
+      "status": "finalized",
+      "outcome": "PASS",
+      "checks": [
+        {
+          "checkId": "check-node-test-labels",
+          "phase": "finished",
+          "outcome": "PASS",
+          "invocationId": "477a6e85-d4a6-4698-bd32-cd3374c42eaa",
+          "sourceStatus": "matched"
+        }
+      ]
+    },
+    {
+      "ref": {
+        "aggregateType": "VerificationRound",
+        "projectId": "b01d4f5e1e55d0ef4edb6b6d2a2b4f39",
+        "workspaceId": "9e704420b22e55c0f437818c72417694",
+        "goalId": "goal-mumc54t2-1",
+        "taskId": "task-goal-gate",
+        "runId": "62c2347b-7f51-4986-89c3-f648f58fd259",
+        "roundId": "b2661388-81d3-44eb-8ab5-9777f281c06c"
+      },
+      "status": "finalized",
+      "outcome": "PASS",
+      "checks": [
+        {
+          "checkId": "check-node-test-labels",
+          "phase": "finished",
+          "outcome": "PASS",
+          "invocationId": "080fd28f-580f-4ab8-baeb-81149f60f377",
+          "sourceStatus": "matched"
+        }
+      ]
+    }
+  ],
+  "plans": [
+    {
+      "ref": {
+        "aggregateType": "PlanRevision",
+        "projectId": "b01d4f5e1e55d0ef4edb6b6d2a2b4f39",
+        "planId": "initial-plan-2f4ef8387aa580e126b131546ac5b61b"
+      },
+      "tasks": [
+        {
+          "taskId": "task-implement-normalize-label",
+          "stageId": "stage-change",
+          "title": "在 src/labels.js 实现 normalizeLabel（trim → 内部空白串转单个连字符 → 转小写；纯空白返回空字符串）",
+          "requirementLevel": "required",
+          "taskKind": "work",
+          "disposition": "active",
+          "phase": "pending",
+          "scope": {
+            "kind": "module",
+            "stageId": "stage-change",
+            "moduleRef": "labels"
+          },
+          "executionIntent": "request_execution"
+        },
+        {
+          "taskId": "task-preserve-dependency-and-tests",
+          "stageId": "stage-change",
+          "title": "保持 report 对 labels 的依赖与原测试不变，且不安装依赖、不新增文件",
+          "requirementLevel": "required",
+          "taskKind": "work",
+          "disposition": "active",
+          "phase": "pending",
+          "scope": {
+            "kind": "module",
+            "stageId": "stage-change",
+            "moduleRef": "labels"
+          },
+          "executionIntent": "request_execution"
+        },
+        {
+          "taskId": "task-goal-gate",
+          "title": "目标门：按正式证据判定 normalizeLabel 规格达成且 report 依赖链与原测试未削弱",
+          "requirementLevel": "required",
+          "taskKind": "gate",
+          "disposition": "active",
+          "phase": "pending",
+          "scope": {
+            "kind": "goal"
+          }
+        },
+        {
+          "taskId": "task-future-i18n",
+          "title": "未来意图（本次不执行、无验收条件）：normalizeLabel 的国际化/本地化处理",
+          "requirementLevel": "optional",
+          "taskKind": "work",
+          "disposition": "deferred",
+          "phase": "pending",
+          "scope": {
+            "kind": "goal"
+          },
+          "executionIntent": "plan_only"
+        }
+      ],
+      "taskHierarchy": {
+        "parentOf": []
+      },
+      "executionDag": {
+        "dependsOn": [
+          {
+            "taskId": "task-preserve-dependency-and-tests",
+            "dependsOnId": "task-implement-normalize-label",
+            "requires": {
+              "kind": "output-contract",
+              "label": "src/labels.js 中 normalizeLabel 已按规格实现且导出名不变，可据此核对 report 依赖与测试未被改动"
+            }
+          },
+          {
+            "taskId": "task-goal-gate",
+            "dependsOnId": "task-preserve-dependency-and-tests",
+            "requires": {
+              "kind": "output-contract",
+              "label": "实现与保持性核对完成，node --test 正式运行结果可作为门结论的正式证据"
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "eventCounts": {
+    "run.started": 4,
+    "model.request_started": 10,
+    "model.usage_recorded": 10,
+    "assistant.message_completed": 10,
+    "tool.started": 17,
+    "tool.completed": 15,
+    "run.completed": 4,
+    "tool.failed": 2
+  },
+  "failures": [
+    {
+      "type": "tool.failed",
+      "failure": null,
+      "resultStatus": "error",
+      "error": {
+        "code": "sandbox_unavailable",
+        "message": "所需隔离能力不可用",
+        "retryable": false
+      }
+    },
+    {
+      "type": "tool.failed",
+      "failure": null,
+      "resultStatus": "error",
+      "error": {
+        "code": "sandbox_unavailable",
+        "message": "所需隔离能力不可用",
+        "retryable": false
+      }
+    }
+  ],
+  "files": {
+    "baseline": {
+      "README.md": "7b4b7d3a4932ce63ad1c26fd0852791075333b6eeeb2a8442d3b7b9518ddd674",
+      "package.json": "f05a4fad1f208f0fe2ef29f89e72ff816254eb900e3ee86111caaf0bd2e56b3b",
+      "src/report.js": "72d1345349a21c15b1e04726eb9155a43d6f1fccfe78194e7b854ec7bf583f3c",
+      "src/labels.js": "f8bb2f3af0f8f36c6e3483a3c72d1c586dde25b5703e0bb00d75c5fc832ca67e",
+      "test/labels.test.js": "2cfa4fc3bf71596cff00cc88bcad09f1b12a01559eed3b624f13ac0df6d50286"
+    },
+    "after": {
+      "README.md": "7b4b7d3a4932ce63ad1c26fd0852791075333b6eeeb2a8442d3b7b9518ddd674",
+      "package.json": "f05a4fad1f208f0fe2ef29f89e72ff816254eb900e3ee86111caaf0bd2e56b3b",
+      "src/report.js": "72d1345349a21c15b1e04726eb9155a43d6f1fccfe78194e7b854ec7bf583f3c",
+      "src/labels.js": "b3d17ef334f0ccb0f93d8f6c50356ce9d506bd8eebf0c17640b85ba82d98bf38",
+      "test/labels.test.js": "2cfa4fc3bf71596cff00cc88bcad09f1b12a01559eed3b624f13ac0df6d50286"
+    },
+    "changed": [
+      "src/labels.js"
+    ],
+    "removed": []
+  },
+  "providerDiagnosticRemoved": true,
+  "uiFlow": "settings open folder/model -> main send goal -> investigate -> planning -> explicit adopt -> continue via normal UI; no platform state seeded"
+}

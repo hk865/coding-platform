@@ -1,0 +1,17 @@
+[
+  [
+    "src/ui/views.ts",
+    "ac807a7260f376a4260719de112df9fe5643230bacccd9abf4c7be52c5e06811",
+    "aeff9ec73788a1854d8ae3693468ab0646bd1c0567fa8bf03eabd46a5bbf8cf1"
+  ],
+  [
+    "src/ui/styles.css",
+    "d5be4e9a504886d04a0d86f477a546b9861877f297f6c4dd2329e47b1326699a",
+    "7eca328ac70f9adfdcf155e0817e9e4a1ae9b4c647b7a8e577540631f296687b"
+  ],
+  [
+    "tests/app/MVP-ui-entry.test.ts",
+    "bc9fa7122664f1621669e8c1b2bac0e08c9d84383602e8213f455b2bddb319ac",
+    "eaa9f1a52b93bad0d44550f42545ec3916fbe369692e7882c3a2b2133071d7da"
+  ]
+]

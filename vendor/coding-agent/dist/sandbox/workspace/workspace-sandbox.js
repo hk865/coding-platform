@@ -251,7 +251,12 @@ export class WorkspaceSandbox {
             if (first < 0) {
                 throw new WorkspaceSandboxError("no_match", `${normalized} 中未找到待替换文本`);
             }
-            if (current.content.indexOf(oldText, first + oldText.length) >= 0) {
+            // 唯一的空替换：仅当 oldText 为空且文件当前也为空时成立（整文件替换）。
+            // 其余情况完全沿用原有唯一匹配 CAS 检查，不放宽非空替换的歧义判定。
+            const ambiguous = oldText === ""
+                ? current.content !== ""
+                : current.content.indexOf(oldText, first + oldText.length) >= 0;
+            if (ambiguous) {
                 throw new WorkspaceSandboxError("ambiguous_match", `${normalized} 中待替换文本不唯一`);
             }
             const nextContent = current.content.slice(0, first) + newText + current.content.slice(first + oldText.length);

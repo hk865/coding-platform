@@ -1,0 +1,23 @@
+{
+  "at": "2026-09-28T11:18:42.762184+00:00",
+  "method": "Codex in-app browser CUA, real HTTP Host backed by SQLite and real Kernel/DeepSeek",
+  "url": "http://127.0.0.1:38785/workbench/",
+  "actions": [
+    "selected existing Goal ag2b-goal and original builder Session",
+    "clicked Continue execution once; driver continued without further prompting",
+    "observed completed and formal complete_goal receipt, no next step",
+    "observed two responded communication entries",
+    "read original builder Session history page positions 1–10",
+    "expanded actual position 8 tool.started record, including saved recordId, Run/Turn and call arguments",
+    "refreshed execution status; same completed projection",
+    "closed test tab and signalled retained harness only after model completion"
+  ],
+  "observedGoalPhase": "COMPLETED",
+  "originalSession": "session-f2ec57e50ba66e1ade824e2432de0fac8945dac589e1aa82ecf79d89ad0a6c03",
+  "modelRequestsBeforeRead": 14,
+  "modelRequestsAfterRead": 14,
+  "readTriggeredRequests": 0,
+  "harnessExit": 0,
+  "hostClosed": true,
+  "limitations": "This verifies the connected production workbench controls and history path, not the complete visual prototype or every UI behavior."
+}

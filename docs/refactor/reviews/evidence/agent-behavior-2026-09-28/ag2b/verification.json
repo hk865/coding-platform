@@ -1,0 +1,68 @@
+{
+  "at": "2026-09-28T06:36:51.419839+00:00",
+  "productionTypescriptNetLines": 1451,
+  "newControlledTestLines": 962,
+  "relatedTests": 105,
+  "realProviderTestExitCode": 0,
+  "realProviderRequests": 13,
+  "workRequests": 8,
+  "consultationRequests": 5,
+  "replyCount": 2,
+  "sameOriginalARun": true,
+  "sameOriginalBSession": true,
+  "consumedReplies": [
+    {
+      "messageRef": {
+        "aggregateType": "SessionMessage",
+        "projectId": "ag2b-collab-project",
+        "workspaceId": "ag2b-collab-workspace",
+        "messageId": "session-message-fdcea8840b546d8d65fb565eca836095d933625a4064d83752d8c875df50eea4"
+      },
+      "senderRunRef": {
+        "aggregateType": "Run",
+        "projectId": "ag2b-collab-project",
+        "goalId": "ag2b-goal",
+        "runId": "bd5bca6b-1006-4414-a84d-4e1c37fc84af"
+      },
+      "callId": "call_00_1k73CdoMiiZeDvCvIrMo4927",
+      "subsequentRequestIds": [
+        "e663d580-3961-4b72-bfe9-cb1a5ff910ba",
+        "677a6f37-8293-429a-b93c-3c8843060d0d",
+        "bc53f13a-e04a-412e-a990-e058073c7f05",
+        "66a9505c-6ad4-4324-81bd-82584c6456d3"
+      ]
+    },
+    {
+      "messageRef": {
+        "aggregateType": "SessionMessage",
+        "projectId": "ag2b-collab-project",
+        "workspaceId": "ag2b-collab-workspace",
+        "messageId": "session-message-1831d1e56a30340da68641f33f3b99a9d6b1e71a90ff0da145e8c46531ca524a"
+      },
+      "senderRunRef": {
+        "aggregateType": "Run",
+        "projectId": "ag2b-collab-project",
+        "goalId": "ag2b-goal",
+        "runId": "bd5bca6b-1006-4414-a84d-4e1c37fc84af"
+      },
+      "callId": "call_00_zDyIokiaf4j9yldVsWqk6602",
+      "subsequentRequestIds": [
+        "677a6f37-8293-429a-b93c-3c8843060d0d",
+        "bc53f13a-e04a-412e-a990-e058073c7f05",
+        "66a9505c-6ad4-4324-81bd-82584c6456d3"
+      ]
+    }
+  ],
+  "formalCheckOutcomes": [
+    "PASS",
+    "PASS"
+  ],
+  "goalPhase": "COMPLETED",
+  "failure": null,
+  "providerErrors": [],
+  "transportErrors": [],
+  "toolErrors": [],
+  "hostClosed": true,
+  "fullMvpComplete": false,
+  "coldResumeImplemented": false
+}

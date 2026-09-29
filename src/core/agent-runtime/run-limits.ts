@@ -1,4 +1,4 @@
-import type { TaskBudgetV1 } from '../../contracts/dispatch.js';
+import type { ModelTokenBudget } from './model-budget.js';
 import type { RuntimeBudget } from './model-budget.js';
 
 /**
@@ -9,7 +9,7 @@ import type { RuntimeBudget } from './model-budget.js';
  * operator did not configure one. Declared capacities (context window, single
  * response output) live in the model config, not here.
  *
- * The persistent Run's `TaskBudgetV1` is a real cumulative constraint. Its
+ * The persistent Run's `ModelTokenBudget` is a real cumulative constraint. Its
  * absolute `deadline` is turned into the remaining wall-clock budget against the
  * same trusted `now()` clock the meter uses; the earlier of the relative
  * `timeoutMs` and the absolute remainder wins. A null deadline contributes
@@ -28,7 +28,7 @@ export type KernelRunLimits = {
 /** Shared deadline evaluation: the remaining milliseconds until the persistent
  * task deadline, or null when no absolute deadline is pinned. A passed deadline
  * yields 0 (never a negative Kernel limit). */
-export function remainingTaskDeadlineMs(taskBudget: TaskBudgetV1 | null | undefined, now: () => string): number | null {
+export function remainingTaskDeadlineMs(taskBudget: ModelTokenBudget | null | undefined, now: () => string): number | null {
   if (taskBudget === null || taskBudget === undefined || taskBudget.deadline === null) return null;
   const currentMs = Date.parse(now());
   const deadlineMs = Date.parse(taskBudget.deadline);
@@ -38,7 +38,7 @@ export function remainingTaskDeadlineMs(taskBudget: TaskBudgetV1 | null | undefi
   return Math.max(0, deadlineMs - currentMs);
 }
 
-export function kernelRunLimits(budget: RuntimeBudget, taskBudget?: TaskBudgetV1, now?: () => string): KernelRunLimits {
+export function kernelRunLimits(budget: RuntimeBudget, taskBudget?: ModelTokenBudget, now?: () => string): KernelRunLimits {
   const maxTotalTokens = taskBudget === undefined ? null : taskBudget.tokenBudget;
   let deadlineMs = budget.timeoutMs;
   if (taskBudget !== undefined && taskBudget.deadline !== null) {

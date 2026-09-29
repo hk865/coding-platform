@@ -1,0 +1,77 @@
+{
+  "baseline": "d0dc9d6cf4b914159a67578dd1de7265fa9bad9d",
+  "importedAt": "2026-09-27T06:03:04.441286+00:00",
+  "lane": "cleanup-role-admission-20260927",
+  "session": "session-46c5dde1-42af-4022-b6af-0cf8086dd299",
+  "stage1Review": {
+    "stage": "stage1-reviewed",
+    "test": "tests/composition/B2-runtime-platform.test.ts",
+    "originalSha256": "e4f692878e038de5f1c9e2cad2eabefd6dfaacf65fb2c3cd81d481bedd632421",
+    "frozenSha256": "3e18aaabeb55e6b0ad7a14bbec3f07f0c66a69b76b9018f0d49956cecda36379",
+    "finding": "Primary merged regression into existing cold-observation case; removed fixed facts==6 and duplicate third case. Actual regression: expected zero duplicate composition resolutions, received 4; other case passes.",
+    "reviewedAt": 1790488787.5833395
+  },
+  "files": [
+    {
+      "path": "src/core/work-graph/tasks/execution-entry-contracts.ts",
+      "beforeSha256": "72e37b1840ddd37c339e45f29e520ab2a898b59faf50b712d3571c08eb8669b0",
+      "afterSha256": "550208e4bfa093b0d96723423bbf371a759193bbc56c12e4b7d9116654d6b213",
+      "linesBefore": 119,
+      "linesAfter": 124,
+      "added": 5,
+      "removed": 0
+    },
+    {
+      "path": "src/core/work-graph/tasks/execution-entry-service.ts",
+      "beforeSha256": "1fdafb34ca337df23682bf5556f30ab2ebe1f7ab31b0c0e28d61c293e6368a09",
+      "afterSha256": "eb6e4c5b165d1f2cbcbcf971cf4063298b3948b708c6efd7d60592cb87afa116",
+      "linesBefore": 1650,
+      "linesAfter": 1651,
+      "added": 2,
+      "removed": 1
+    },
+    {
+      "path": "src/composition/create-platform.ts",
+      "beforeSha256": "9d5be391be290d065be762f733acd44a91e7481ed3643b6cc61698db5c1297aa",
+      "afterSha256": "ef038aee2be924e5776ab550ae7559086991f4ca90d17a25f8f6f74226b4977a",
+      "linesBefore": 632,
+      "linesAfter": 626,
+      "added": 8,
+      "removed": 14
+    },
+    {
+      "path": "tests/composition/B2-runtime-platform.test.ts",
+      "beforeSha256": "e4f692878e038de5f1c9e2cad2eabefd6dfaacf65fb2c3cd81d481bedd632421",
+      "afterSha256": "3e18aaabeb55e6b0ad7a14bbec3f07f0c66a69b76b9018f0d49956cecda36379",
+      "linesBefore": 62,
+      "linesAfter": 79,
+      "added": 18,
+      "removed": 1
+    }
+  ],
+  "verification": {
+    "tests": [
+      "tests/composition/B2-runtime-platform.test.ts",
+      "tests/work-graph/B2-model-request.test.ts",
+      "tests/work-graph/C2-mailbox-admission.test.ts",
+      "tests/work-graph/W2-agent-whiteboard.test.ts"
+    ],
+    "testFilesPassed": 4,
+    "testsPassed": 41,
+    "checksPassed": [
+      "next-types",
+      "next-ui-types",
+      "next-architecture",
+      "next-build"
+    ],
+    "scopeAudit": {
+      "outsideScope": [],
+      "originalWorkspaceChanged": []
+    },
+    "notes": [
+      "Checks ran in physical lane snapshot through read-only bubblewrap bindings. next-build additionally built a separate physical copy.",
+      "Initial invocation combining non-test check selectors was rejected by runner; these checks were then run individually. Passed 41 tests were not repeated.",
+      "No live provider calls, no changes to candidate user workspaces, no push."
+    ]
+  }
+}

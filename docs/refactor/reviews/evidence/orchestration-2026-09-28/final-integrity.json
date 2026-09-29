@@ -1,0 +1,9 @@
+{
+  "hashMismatches": [],
+  "outsideScope": [],
+  "changedImplementationPaths": 102,
+  "allowedScopePaths": 200,
+  "missingEvidenceLinks": [],
+  "credentialPatternMatches": 0,
+  "priorDirtyTreePreserved": "original hashes checked before import; outside-scope import audit retained in scope-final.json; post-import mutations limited to four recorded paths"
+}

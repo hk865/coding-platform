@@ -1,0 +1,82 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform-next
+
+ ❯ tests/app/AG6-agent-assembly.test.ts (3 tests | 3 failed) 8ms
+     × resolves through both factory branches and reaches the real request with only work+secretary+scribe 5ms
+     × keeps the explicit resourceRoot/empty enabledIds shape and separates common-only from reviewer 1ms
+     × rejects an unknown bundle/behavior or a missing behaviors array before any provider or secret access 0ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/app/AG6-agent-assembly.test.ts > AG6 trusted preset assembly > resolves through both factory branches and reaches the real request with only work+secretary+scribe
+AssertionError: expected { bundle: 'platform', …(1) } to deeply equal { …(2) }
+
+- Expected
++ Received
+
+  {
+-   "enabledIds": [
+-     "platform-work",
+-     "platform-secretary",
+-     "platform-scribe",
++   "behaviors": [
++     "secretary",
++     "scribe",
+    ],
+-   "resourceRoot": "/home/hyh001/projects/coding-platform/coding-platform-next/resources/skills",
++   "bundle": "platform",
+  }
+
+ ❯ tests/app/AG6-agent-assembly.test.ts:178:25
+    176|     const work = expectReady(await bindings.resolveConfiguration(ctx, …
+    177|     const expectedSkills = { resourceRoot: REPO_SKILLS, enabledIds: ['…
+    178|     expect(work.skills).toEqual(expectedSkills);
+       |                         ^
+    179|     // tools/writeScope stay the explicit trusted grant, not widened b…
+    180|     expect(work.tools).toEqual(['read']);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  tests/app/AG6-agent-assembly.test.ts > AG6 trusted preset assembly > keeps the explicit resourceRoot/empty enabledIds shape and separates common-only from reviewer
+AssertionError: expected { bundle: 'platform', behaviors: [] } to deeply equal { …(2) }
+
+- Expected
++ Received
+
+  {
+-   "enabledIds": [
+-     "platform-work",
+-   ],
+-   "resourceRoot": "/home/hyh001/projects/coding-platform/coding-platform-next/resources/skills",
++   "behaviors": [],
++   "bundle": "platform",
+  }
+
+ ❯ tests/app/AG6-agent-assembly.test.ts:227:47
+    225|     expect(await resolveSkills('ag6-explicit')).toEqual({ resourceRoot…
+    226|     // An explicit empty behaviors selects only the shared work instru…
+    227|     expect(await resolveSkills('ag6-common')).toEqual({ resourceRoot: …
+       |                                               ^
+    228|     // reviewer is selectable as a bounded, on-demand behavior.
+    229|     expect(await resolveSkills('ag6-reviewer')).toEqual({ resourceRoot…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+ FAIL  tests/app/AG6-agent-assembly.test.ts > AG6 trusted preset assembly > rejects an unknown bundle/behavior or a missing behaviors array before any provider or secret access
+AssertionError: expected null not to be null
+ ❯ tests/app/AG6-agent-assembly.test.ts:249:72
+    247|     for (const [index, skills] of badPresets.entries()) {
+    248|       const configuration = configWith({ [`ag6-bad-${index}`]: skills …
+    249|       expect(validateWorkbenchRuntimeConfiguration(configuration)).not…
+       |                                                                        ^
+    250|       expect(() => createWorkbenchRuntimeHostBindings(configuration, {…
+    251|     }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯
+
+
+ Test Files  1 failed | 1 passed (2)
+      Tests  3 failed | 5 passed (8)
+   Start at  00:25:54
+   Duration  1.15s (transform 301ms, setup 0ms, import 816ms, tests 186ms, environment 0ms)
+

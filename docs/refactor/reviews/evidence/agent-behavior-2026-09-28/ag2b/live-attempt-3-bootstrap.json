@@ -1,0 +1,23 @@
+{
+  "at": "2026-09-28T06:29:02.505Z",
+  "root": "/tmp/ag2b-live-R5N8GA/retry-project",
+  "seedOnly": false,
+  "before": {
+    "status": 1,
+    "stdout": "✖ success on third attempt keeps policy and delays (0.56581ms)\n✖ exhaustion preserves the exact error and does not sleep after final attempt (1.087444ms)\nℹ tests 2\nℹ suites 0\nℹ pass 0\nℹ fail 2\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 56.164312\n\n✖ failing tests:\n\ntest at checks/retry.test.mjs:4:1\n✖ success on third attempt keeps policy and delays (0.56581ms)\n  Error: transient\n      at callClient.maxAttempts (file:///tmp/ag2b-live-R5N8GA/retry-project/checks/retry.test.mjs:4:164)\n      at retry (file:///tmp/ag2b-live-R5N8GA/retry-project/src/retry.mjs:1:58)\n      at callClient (file:///tmp/ag2b-live-R5N8GA/retry-project/src/client.mjs:2:51)\n      at TestContext.<anonymous> (file:///tmp/ag2b-live-R5N8GA/retry-project/checks/retry.test.mjs:4:113)\n      at Test.runInAsyncScope (node:async_hooks:227:14)\n      at Test.run (node:internal/test_runner/test:1402:25)\n      at Test.start (node:internal/test_runner/test:1262:17)\n      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17)\n\ntest at checks/retry.test.mjs:5:1\n✖ exhaustion preserves the exact error and does not sleep after final attempt (1.087444ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:\n  + actual - expected\n  \n    [\n  +   0\n  -   1,\n  -   2\n    ]\n  \n      at TestContext.<anonymous> (file:///tmp/ag2b-live-R5N8GA/retry-project/checks/retry.test.mjs:5:315)\n      at async Test.run (node:internal/test_runner/test:1409:7)\n      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: [ 0 ],\n    expected: [ 1, 2 ],\n    operator: 'deepStrictEqual',\n    diff: 'simple'\n  }\n",
+    "stderr": ""
+  },
+  "after": {
+    "status": 1,
+    "stdout": "✖ success on third attempt keeps policy and delays (0.564539ms)\n✖ exhaustion preserves the exact error and does not sleep after final attempt (1.077371ms)\nℹ tests 2\nℹ suites 0\nℹ pass 0\nℹ fail 2\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 52.64079\n\n✖ failing tests:\n\ntest at checks/retry.test.mjs:4:1\n✖ success on third attempt keeps policy and delays (0.564539ms)\n  Error: transient\n      at callClient.maxAttempts (file:///tmp/ag2b-live-R5N8GA/retry-project/checks/retry.test.mjs:4:164)\n      at retry (file:///tmp/ag2b-live-R5N8GA/retry-project/src/retry.mjs:1:58)\n      at callClient (file:///tmp/ag2b-live-R5N8GA/retry-project/src/client.mjs:2:51)\n      at TestContext.<anonymous> (file:///tmp/ag2b-live-R5N8GA/retry-project/checks/retry.test.mjs:4:113)\n      at Test.runInAsyncScope (node:async_hooks:227:14)\n      at Test.run (node:internal/test_runner/test:1402:25)\n      at Test.start (node:internal/test_runner/test:1262:17)\n      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17)\n\ntest at checks/retry.test.mjs:5:1\n✖ exhaustion preserves the exact error and does not sleep after final attempt (1.077371ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:\n  + actual - expected\n  \n    [\n  +   0\n  -   1,\n  -   2\n    ]\n  \n      at TestContext.<anonymous> (file:///tmp/ag2b-live-R5N8GA/retry-project/checks/retry.test.mjs:5:315)\n      at async Test.run (node:internal/test_runner/test:1409:7)\n      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: [ 0 ],\n    expected: [ 1, 2 ],\n    operator: 'deepStrictEqual',\n    diff: 'simple'\n  }\n",
+    "stderr": ""
+  },
+  "streams": 0,
+  "toolnames": [],
+  "providerErrors": [],
+  "transportErrors": [],
+  "toolErrors": [],
+  "consumedReplyRefs": [],
+  "failure": "Existing sandbox Node binary is unavailable",
+  "requests": []
+}

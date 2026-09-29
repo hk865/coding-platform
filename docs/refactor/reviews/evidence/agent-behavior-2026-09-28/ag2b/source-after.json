@@ -1,0 +1,182 @@
+{
+  "at": "2026-09-28T06:30:30.725911+00:00",
+  "production": {
+    "src/app/collaboration-driver.ts": {
+      "before": {
+        "sha256": "83387d035ef1184328e242cd936488bca55eb2c3c97a4a0606f9694f357fb7fc",
+        "lines": 1
+      },
+      "after": {
+        "sha256": "c335050dda860d7e37b91232a5144b4fe159417b965990a37a128f241458e6b9",
+        "lines": 638
+      },
+      "netLines": 637
+    },
+    "src/app/host.ts": {
+      "before": {
+        "sha256": "c1638768eb6a92ab4d29e37a270e09e176b269b1888d33d8f06e96d3a87dced0",
+        "lines": 266
+      },
+      "after": {
+        "sha256": "4d3e521c914bbc249f4757146fbc4b3065e6dba054c432144c2aedb66ad03e81",
+        "lines": 284
+      },
+      "netLines": 18
+    },
+    "src/app/core-routes.ts": {
+      "before": {
+        "sha256": "59dd752cf6bfac1a3614fe9ffce5474c37869ce9a0cd3433ed231ea72d390362",
+        "lines": 382
+      },
+      "after": {
+        "sha256": "f657eaabd8ceb42fc443cd2610ea3b711502064ee26061d7c9b3006c782a18da",
+        "lines": 410
+      },
+      "netLines": 28
+    },
+    "src/app/core-http-types.ts": {
+      "before": {
+        "sha256": "664dd7dbe06838719ebd842c2054b63db7df50e360fe0f1f037351aea7242a70",
+        "lines": 330
+      },
+      "after": {
+        "sha256": "361bdb6bf09cd87c391ca0d9b9494e3ab21311a2d8efe2485016ba74954802ac",
+        "lines": 347
+      },
+      "netLines": 17
+    },
+    "src/core/work-graph/communication/contracts.ts": {
+      "before": {
+        "sha256": "72e00256351b30bc8370e404f6ba2e4c620220affedf606ae71b38bb33d827cb",
+        "lines": 184
+      },
+      "after": {
+        "sha256": "2ec4e44dc3d50f767af430e83e292e33fa028c8902658f228d40e303ddc89b40",
+        "lines": 211
+      },
+      "netLines": 27
+    },
+    "src/core/work-graph/communication/message-record-codecs.ts": {
+      "before": {
+        "sha256": "1b0cb183f6f952507ce4f2f4ac7f7f6593a572b85c27965ffe8353f8d64ed6de",
+        "lines": 491
+      },
+      "after": {
+        "sha256": "123e25937de528eaf004cb9afc76c7f5472a454ab13264875101676ee06edb9b",
+        "lines": 502
+      },
+      "netLines": 11
+    },
+    "src/core/work-graph/communication/mailbox-service.ts": {
+      "before": {
+        "sha256": "fc0536b9df8d1685ece1181a313239a64b4ac0ba1dfec9fa807cd6eaacac98e1",
+        "lines": 1668
+      },
+      "after": {
+        "sha256": "2f27d448de39a676f4294adbfad0ca5dbe53c4194a58b6eca6799a916291fcbb",
+        "lines": 1840
+      },
+      "netLines": 172
+    },
+    "src/core/agent-runtime/communication-tools.ts": {
+      "before": {
+        "sha256": "b3ced82df2417d6e5e0af97ede7e50bbc8b9ace2599f0a6a9003ff38d791b194",
+        "lines": 263
+      },
+      "after": {
+        "sha256": "d17734b755bedd3f8bd734ad0506cbc692b32fc9af02bc995b23bbc9f82c736d",
+        "lines": 354
+      },
+      "netLines": 91
+    },
+    "src/core/agent-runtime/execution-driver.ts": {
+      "before": {
+        "sha256": "d201d4555408c92c82b070d2cd12d4ece9d8b19d22363c420212b315da54f4b4",
+        "lines": 720
+      },
+      "after": {
+        "sha256": "96f0647a1c62e336b0955acb0d2ebce9ab220cf5b7bf4f877850af4612e56dc9",
+        "lines": 754
+      },
+      "netLines": 34
+    },
+    "src/core/agent-runtime/execution-control.ts": {
+      "before": {
+        "sha256": "623d3e9ad78f457dca60bb0812260499bbbd3d6654334b398902d215563357cf",
+        "lines": 253
+      },
+      "after": {
+        "sha256": "4b89588dcda646f6de114a3ef2edc7fd24e8c98e34f237eb902aeb08a0205977",
+        "lines": 299
+      },
+      "netLines": 46
+    },
+    "src/composition/create-platform.ts": {
+      "before": {
+        "sha256": "52789b434260b4fd5556435e68313236555c0f345a61830b8ac20fedb32abe62",
+        "lines": 639
+      },
+      "after": {
+        "sha256": "61afba2acc624950cf4d8c86a3893263822f9933af7e159c4f1b83a567fc139f",
+        "lines": 640
+      },
+      "netLines": 1
+    },
+    "src/ui/main.ts": {
+      "before": {
+        "sha256": "058a36a15d8796066f5d57787fab09d3bb735d2736da7bba949604e2c7542031",
+        "lines": 3462
+      },
+      "after": {
+        "sha256": "ce54a543f039b0002c4719fbf934ecfec1d3409c2f2123a69f22699f82f719a7",
+        "lines": 3831
+      },
+      "netLines": 369
+    },
+    "src/ui/views.ts": {
+      "before": {
+        "sha256": "2c846565e7aae6d61cc6bfc73495adb56c7ea4a18e22e09254a0c4f6d69fcbb8",
+        "lines": 1409
+      },
+      "after": {
+        "sha256": "2c846565e7aae6d61cc6bfc73495adb56c7ea4a18e22e09254a0c4f6d69fcbb8",
+        "lines": 1409
+      },
+      "netLines": 0
+    },
+    "resources/skills/platform-work/content.md": {
+      "before": {
+        "sha256": "84d45d7255beb0c64d5fb831e7d58aa737beec479eea4c29f4e8d87e5e3a8887",
+        "lines": 26
+      },
+      "after": {
+        "sha256": "53352aec4f35a89bb124220d6e3eb14d41d32a538c0680d850c8a9e335b06f9f",
+        "lines": 32
+      },
+      "netLines": 6
+    },
+    "runtime-assets.json": {
+      "before": {
+        "sha256": "673756b3a478a885bb6578e73b330ea122baa9bcda459e37ae76a5104b0274a0",
+        "lines": 90
+      },
+      "after": {
+        "sha256": "7c68021793e2cd7f3361e76cc0e453f224213eec8336b67977d3de57e5f22248",
+        "lines": 90
+      },
+      "netLines": 0
+    }
+  },
+  "newTests": {
+    "tests/app/AG2b-collaboration.test.ts": {
+      "sha256": "38e1a5e0a391804c402c21eedfb19db7cba4798219419a05c99207dcef05603a",
+      "lines": 544
+    },
+    "tests/helpers/AG2b-collaboration-fixture.ts": {
+      "sha256": "aed006fc8f743ff227a82fe69cea329a3a6cd5e1e12573efb3f2f462726ba496",
+      "lines": 418
+    }
+  },
+  "productionTsNetLines": 1451,
+  "newTestLines": 962
+}

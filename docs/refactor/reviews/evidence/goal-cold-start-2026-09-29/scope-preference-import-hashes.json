@@ -1,0 +1,15 @@
+{
+  "lane": ".toolchain/dsh-refactor-runs/ui-scope-preference-20260929",
+  "files": [
+    {
+      "path": "src/ui/main.ts",
+      "originalSha256": "00c9b7ff1fc77e06c799e63adf7c184d2ca9acb3a81ec284f59734a8e1665876",
+      "candidateSha256": "9928aea3ba7986d84032efd55b906ccd59f7496957b14a946c368ee047be6b8d"
+    },
+    {
+      "path": "tests/app/MVP-ui-entry.test.ts",
+      "originalSha256": "eaa9f1a52b93bad0d44550f42545ec3916fbe369692e7882c3a2b2133071d7da",
+      "candidateSha256": "fca187f65c2cc3e6b8e21c04aa1398974b3e9544b00de1341e410c832a6dca1e"
+    }
+  ]
+}

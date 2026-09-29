@@ -1,0 +1,15 @@
+{
+  "writableFiles": [
+    "src/ui/views.ts",
+    "src/ui/styles.css",
+    "tests/app/MVP-ui-entry.test.ts"
+  ],
+  "dshStateDirectories": [
+    "profiles",
+    "sessions",
+    "storages",
+    "cache",
+    "llm-deepseek",
+    "attachments"
+  ]
+}

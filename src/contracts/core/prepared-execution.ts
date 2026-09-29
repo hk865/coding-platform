@@ -81,8 +81,15 @@ export type PreparedQueryManifestV1 = {
   focusPlan: { ref: PlanRevisionSnapshot['ref']; revision: number } | null;
   permissions: { tools: string[]; writeScope: [] };
   runtimeBudget: RuntimeBudget;
-  budget: { tokenBudget: number; deadline: string | null };
+  budget: { tokenBudget: number | null; deadline: string | null };
   sourceRefs: SourceRefV1[];
+  /**
+   * The formal isolated derivation of this Query: the source Kernel Session and
+   * its fixed completed boundary. `throughPosition: null` is the explicit empty
+   * baseline (the source had no completed turn). Absent keeps the legacy target
+   * Session history behavior.
+   */
+  sessionBasis?: { sourceKernelSessionId: string; throughPosition: number | null };
   input: string;
   inputDigest: string;
 };

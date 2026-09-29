@@ -82,6 +82,8 @@ export interface ResumeAppInput {
   readonly limits?: RunLimits;
   readonly workspaceOptions?: WorkspaceSandboxOptions;
   readonly processSandboxOptions?: ProcessSandboxOptions;
+  /** Host input supply read at a real drained before_model boundary (same as RunAppInput). */
+  readonly inputSupply?: import("./composition-contracts.js").AppInputSupply;
   readonly config: AppConfig;
   readonly workspaceRoot: string;
   readonly sessionId: string;
@@ -218,9 +220,15 @@ export async function resumeCodingAgentInternal(
     // 恢复时的「最新历史」；没有该字段的旧记录保持 current_turn 语义。
     const recordedBasis = turnRecord.payload.contextBasis;
     const contextBasis = recordedBasis ? parseContextBasis(recordedBasis) : null;
+    // A derived isolated basis rebuilds its prefix from the PERSISTED source
+    // Session, never from the target Session that only holds this new Turn.
+    const sourceSessionId = contextBasis?.sourceSessionId ?? input.sessionId;
+    const sourceRecords = sourceSessionId === input.sessionId
+      ? records
+      : await readAllSessionRecords(store, sourceSessionId, signal);
     const historyTranscript: readonly TranscriptEntry[] = contextBasis
-      ? restoreSessionHistory(records, {
-          sessionId: input.sessionId,
+      ? restoreSessionHistory(sourceRecords, {
+          sessionId: sourceSessionId,
           throughPosition: contextBasis.throughPosition,
           currentTurn: {
             runId: turnRecord.payload.run.runId,
@@ -393,6 +401,8 @@ export async function resumeCodingAgentInternal(
     });
     const context = {
       run: turnRecord.payload.run,
+      sessionId: input.sessionId,
+      ...(input.inputSupply === undefined ? {} : { inputSupply: input.inputSupply }),
       baseSystemPrompt: CODING_AGENT_SYSTEM_PROMPT,
       tools: tools.modelToolSpecs(),
       skills,

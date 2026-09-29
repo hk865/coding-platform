@@ -1,0 +1,122 @@
+{
+  "date": "2026-09-27",
+  "baselineHead": "d0dc9d6cf4b914159a67578dd1de7265fa9bad9d",
+  "baseline": "Current dirty standalone root; prior role-admission changes preserved",
+  "dshSession": "session-673c1b6c-4c6a-46d4-9002-a02baed649a9",
+  "stages": [
+    "DSH tests",
+    "primary narrowed/froze two cases",
+    "DSH implementation",
+    "primary narrow scope/input/skill review",
+    "DSH fixes including runtime asset digest",
+    "independent checks",
+    "guarded import"
+  ],
+  "scope": "Real SQLite + Kernel + controlled provider: find related current Sessions, select returned idle candidate, read card, send actual consultation, read recipient inbox/body; recipient remains idle",
+  "limitations": [
+    "One constrained live scenario is not a general model selection quality evaluation",
+    "No receiving Agent reply or automatic wakeup",
+    "No delegation, new scheduling manager, Query expansion or lifecycle write grant",
+    "Target discovery uses current open work links; ended-work-link discovery remains pending"
+  ],
+  "checks": {
+    "tests": {
+      "exitCode": 0,
+      "files": 6,
+      "tests": 42,
+      "log": "tests.log"
+    },
+    "nodeAndUiTypes": {
+      "exitCode": 0,
+      "log": "types.log"
+    },
+    "architecture": {
+      "exitCode": 0,
+      "log": "architecture.log"
+    },
+    "liveAgent": {
+      "exitCode": 0,
+      "provider": "deepseek-flash",
+      "requests": 4,
+      "toolCalls": 3,
+      "toolErrors": 0,
+      "modelErrors": 0,
+      "log": "live.log",
+      "result": "live-result.json",
+      "coverage": "Real provider selected the returned idle Session, read its card and sent one consultation; recipient stayed idle; follow-up reads made zero model calls"
+    }
+  },
+  "frozenTestSha256": "b4589f31c43a3adf4f0e74afd8a67ad547ed8897b7bb7eda7809494920b65b70",
+  "imported": [
+    {
+      "path": "src/core/agent-runtime/session-discovery-tools.ts",
+      "introduced": true,
+      "baselineSha256": null,
+      "candidateSha256": "ff754a6b80b56c658ee3d6940be949095135e35b60db221a9d0844aa9175d880",
+      "beforeLines": 0,
+      "afterLines": 199,
+      "added": 199,
+      "removed": 0,
+      "net": 199
+    },
+    {
+      "path": "src/core/agent-runtime/execution-driver.ts",
+      "introduced": false,
+      "baselineSha256": "012fca087057124db002401b1f3439e02ea13da8f2d00e851fbb5703d87987e2",
+      "candidateSha256": "d201d4555408c92c82b070d2cd12d4ece9d8b19d22363c420212b315da54f4b4",
+      "beforeLines": 708,
+      "afterLines": 720,
+      "added": 17,
+      "removed": 5,
+      "net": 12
+    },
+    {
+      "path": "src/core/work-graph/sessions/session-directory.ts",
+      "introduced": false,
+      "baselineSha256": "ff0288306c911419e938dc444c856e05db4bc64848ebb8320d41727ad397fe56",
+      "candidateSha256": "9a1bc8350ff22f4952b69a5e01ddbea770aee249d5ea5cd4685793fbd8575588",
+      "beforeLines": 1474,
+      "afterLines": 1570,
+      "added": 108,
+      "removed": 12,
+      "net": 96
+    },
+    {
+      "path": "resources/skills/platform-secretary/content.md",
+      "introduced": false,
+      "baselineSha256": "fbbf765ac1589f37ea7345a48a2eae3980e3726c434bca15ee3ee1e1cbdbb4e5",
+      "candidateSha256": "06171f2d3980ca9ea9fb5839bf4e543f0a57c87b094ec0da240f80c9b3cb50ac",
+      "beforeLines": 17,
+      "afterLines": 25,
+      "added": 8,
+      "removed": 0,
+      "net": 8
+    },
+    {
+      "path": "runtime-assets.json",
+      "introduced": false,
+      "baselineSha256": "b9e8a1c43feb3e46fb3fe1fbaf43f67ff78359ca58b844bc057f4c1727684aa0",
+      "candidateSha256": "efd69783c6e1981d5d47d7a34de258cb13bde84e2850a0ba3474fccde00d1ef3",
+      "beforeLines": 74,
+      "afterLines": 74,
+      "added": 1,
+      "removed": 1,
+      "net": 0
+    },
+    {
+      "path": "tests/composition/AG1-session-discovery.test.ts",
+      "introduced": true,
+      "baselineSha256": null,
+      "candidateSha256": "b4589f31c43a3adf4f0e74afd8a67ad547ed8897b7bb7eda7809494920b65b70",
+      "beforeLines": 0,
+      "afterLines": 151,
+      "added": 151,
+      "removed": 0,
+      "net": 151
+    }
+  ],
+  "netProductionTsLines": 307,
+  "netTestLines": 151,
+  "commitCreated": false,
+  "pushed": false
+}

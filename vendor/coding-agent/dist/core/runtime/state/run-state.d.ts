@@ -6,18 +6,19 @@
  */
 import { z } from "zod";
 export declare const runStatusSchema: z.ZodEnum<{
-    cancelled: "cancelled";
-    completed: "completed";
-    failed: "failed";
     created: "created";
     running: "running";
     paused: "paused";
+    yielded: "yielded";
+    completed: "completed";
+    cancelled: "cancelled";
     limit_exceeded: "limit_exceeded";
+    failed: "failed";
 }>;
 export declare const runFailureSchema: z.ZodObject<{
     category: z.ZodEnum<{
-        model: "model";
         context: "context";
+        model: "model";
         model_protocol: "model_protocol";
         tool_executor: "tool_executor";
         hook: "hook";
@@ -29,6 +30,25 @@ export declare const runFailureSchema: z.ZodObject<{
     message: z.ZodString;
     retryable: z.ZodBoolean;
     operationId: z.ZodNullable<z.ZodString>;
+}, z.core.$strict>;
+/**
+ * 明确让出执行的外部等待事实。它与 completed/cancelled/failed 一样构成一次执行的终止，
+ * 但语义是「本 Turn 在真实工具组排空后主动退出活动执行，等待外部输入」；它不同于
+ * paused（paused 可在原 Kernel 身份上 resume），也不同于 Run 完成。pendingToolCallId
+ * 指向让出时仍未开始的调用；让出只发生在已结算的工具组边界，因此通常为 null。
+ */
+export declare const yieldStateSchema: z.ZodObject<{
+    reason: z.ZodEnum<{
+        reply_required: "reply_required";
+        external_input_required: "external_input_required";
+        operator_requested: "operator_requested";
+    }>;
+    requestedBy: z.ZodEnum<{
+        runtime: "runtime";
+        app: "app";
+    }>;
+    yieldedAt: z.ZodString;
+    pendingToolCallId: z.ZodNullable<z.ZodString>;
 }, z.core.$strict>;
 export declare const runOutcomeSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
     kind: z.ZodLiteral<"completed">;
@@ -44,8 +64,8 @@ export declare const runOutcomeSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
 }, z.core.$strict>, z.ZodObject<{
     kind: z.ZodLiteral<"limit_exceeded">;
     limit: z.ZodEnum<{
-        tool_calls: "tool_calls";
         model_requests: "model_requests";
+        tool_calls: "tool_calls";
         input_tokens: "input_tokens";
         output_tokens: "output_tokens";
         total_tokens: "total_tokens";
@@ -58,8 +78,8 @@ export declare const runOutcomeSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
     kind: z.ZodLiteral<"failed">;
     failure: z.ZodObject<{
         category: z.ZodEnum<{
-            model: "model";
             context: "context";
+            model: "model";
             model_protocol: "model_protocol";
             tool_executor: "tool_executor";
             hook: "hook";
@@ -72,18 +92,33 @@ export declare const runOutcomeSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
         retryable: z.ZodBoolean;
         operationId: z.ZodNullable<z.ZodString>;
     }, z.core.$strict>;
+}, z.core.$strict>, z.ZodObject<{
+    kind: z.ZodLiteral<"yielded">;
+    yield: z.ZodObject<{
+        reason: z.ZodEnum<{
+            reply_required: "reply_required";
+            external_input_required: "external_input_required";
+            operator_requested: "operator_requested";
+        }>;
+        requestedBy: z.ZodEnum<{
+            runtime: "runtime";
+            app: "app";
+        }>;
+        yieldedAt: z.ZodString;
+        pendingToolCallId: z.ZodNullable<z.ZodString>;
+    }, z.core.$strict>;
 }, z.core.$strict>], "kind">;
 export declare const pauseStateSchema: z.ZodObject<{
     reason: z.ZodEnum<{
+        external_input_required: "external_input_required";
         operator_requested: "operator_requested";
         hook_requested: "hook_requested";
         approval_required: "approval_required";
-        external_input_required: "external_input_required";
     }>;
     requestedBy: z.ZodEnum<{
-        runtime: "runtime";
         tool_executor: "tool_executor";
         hook: "hook";
+        runtime: "runtime";
         app: "app";
     }>;
     pausedAt: z.ZodString;
@@ -261,12 +296,12 @@ export declare const toolExecutionStateSchema: z.ZodObject<{
         arguments: z.ZodType<import("../../context/types/context-types.js").JsonObject, unknown, z.core.$ZodTypeInternals<import("../../context/types/context-types.js").JsonObject, unknown>>;
     }, z.core.$strict>>;
     status: z.ZodEnum<{
-        outcome_unknown: "outcome_unknown";
-        cancelled: "cancelled";
-        completed: "completed";
-        failed: "failed";
         running: "running";
+        completed: "completed";
+        cancelled: "cancelled";
+        failed: "failed";
         pending: "pending";
+        outcome_unknown: "outcome_unknown";
         abandoned: "abandoned";
     }>;
     result: z.ZodNullable<z.ZodDiscriminatedUnion<[z.ZodObject<{
@@ -380,12 +415,12 @@ export declare const toolBatchStateSchema: z.ZodObject<{
             arguments: z.ZodType<import("../../context/types/context-types.js").JsonObject, unknown, z.core.$ZodTypeInternals<import("../../context/types/context-types.js").JsonObject, unknown>>;
         }, z.core.$strict>>;
         status: z.ZodEnum<{
-            outcome_unknown: "outcome_unknown";
-            cancelled: "cancelled";
-            completed: "completed";
-            failed: "failed";
             running: "running";
+            completed: "completed";
+            cancelled: "cancelled";
+            failed: "failed";
             pending: "pending";
+            outcome_unknown: "outcome_unknown";
             abandoned: "abandoned";
         }>;
         result: z.ZodNullable<z.ZodDiscriminatedUnion<[z.ZodObject<{
@@ -491,6 +526,19 @@ export declare const runUsageSchema: z.ZodObject<{
     cachedInputTokens: z.ZodNumber;
     costUsdMicros: z.ZodNullable<z.ZodNumber>;
 }, z.core.$strict>;
+/**
+ * One input that was really accepted into the execution context. The inputId is
+ * the stable identity of its ORIGINAL persisted source (message ref + part), the
+ * digest covers the exact accepted text, and eventSequence is the required
+ * run.input_accepted event that carried it. It never claims the model understood
+ * it or that any business work was processed.
+ */
+export declare const acceptedInputSchema: z.ZodObject<{
+    inputId: z.ZodString;
+    messageId: z.ZodString;
+    digest: z.ZodString;
+    eventSequence: z.ZodNumber;
+}, z.core.$strict>;
 export declare const runStateSchema: z.ZodObject<{
     schemaVersion: z.ZodLiteral<1>;
     runId: z.ZodString;
@@ -504,13 +552,14 @@ export declare const runStateSchema: z.ZodObject<{
         }, z.core.$strict>;
     }, z.core.$strict>;
     status: z.ZodEnum<{
-        cancelled: "cancelled";
-        completed: "completed";
-        failed: "failed";
         created: "created";
         running: "running";
         paused: "paused";
+        yielded: "yielded";
+        completed: "completed";
+        cancelled: "cancelled";
         limit_exceeded: "limit_exceeded";
+        failed: "failed";
     }>;
     transcript: z.ZodReadonly<z.ZodArray<z.ZodDiscriminatedUnion<[z.ZodObject<{
         kind: z.ZodLiteral<"user_message">;
@@ -654,12 +703,12 @@ export declare const runStateSchema: z.ZodObject<{
                 arguments: z.ZodType<import("../../context/types/context-types.js").JsonObject, unknown, z.core.$ZodTypeInternals<import("../../context/types/context-types.js").JsonObject, unknown>>;
             }, z.core.$strict>>;
             status: z.ZodEnum<{
-                outcome_unknown: "outcome_unknown";
-                cancelled: "cancelled";
-                completed: "completed";
-                failed: "failed";
                 running: "running";
+                completed: "completed";
+                cancelled: "cancelled";
+                failed: "failed";
                 pending: "pending";
+                outcome_unknown: "outcome_unknown";
                 abandoned: "abandoned";
             }>;
             result: z.ZodNullable<z.ZodDiscriminatedUnion<[z.ZodObject<{
@@ -759,15 +808,15 @@ export declare const runStateSchema: z.ZodObject<{
     }, z.core.$strict>>;
     pause: z.ZodNullable<z.ZodObject<{
         reason: z.ZodEnum<{
+            external_input_required: "external_input_required";
             operator_requested: "operator_requested";
             hook_requested: "hook_requested";
             approval_required: "approval_required";
-            external_input_required: "external_input_required";
         }>;
         requestedBy: z.ZodEnum<{
-            runtime: "runtime";
             tool_executor: "tool_executor";
             hook: "hook";
+            runtime: "runtime";
             app: "app";
         }>;
         pausedAt: z.ZodString;
@@ -787,8 +836,8 @@ export declare const runStateSchema: z.ZodObject<{
     }, z.core.$strict>, z.ZodObject<{
         kind: z.ZodLiteral<"limit_exceeded">;
         limit: z.ZodEnum<{
-            tool_calls: "tool_calls";
             model_requests: "model_requests";
+            tool_calls: "tool_calls";
             input_tokens: "input_tokens";
             output_tokens: "output_tokens";
             total_tokens: "total_tokens";
@@ -801,8 +850,8 @@ export declare const runStateSchema: z.ZodObject<{
         kind: z.ZodLiteral<"failed">;
         failure: z.ZodObject<{
             category: z.ZodEnum<{
-                model: "model";
                 context: "context";
+                model: "model";
                 model_protocol: "model_protocol";
                 tool_executor: "tool_executor";
                 hook: "hook";
@@ -814,6 +863,21 @@ export declare const runStateSchema: z.ZodObject<{
             message: z.ZodString;
             retryable: z.ZodBoolean;
             operationId: z.ZodNullable<z.ZodString>;
+        }, z.core.$strict>;
+    }, z.core.$strict>, z.ZodObject<{
+        kind: z.ZodLiteral<"yielded">;
+        yield: z.ZodObject<{
+            reason: z.ZodEnum<{
+                reply_required: "reply_required";
+                external_input_required: "external_input_required";
+                operator_requested: "operator_requested";
+            }>;
+            requestedBy: z.ZodEnum<{
+                runtime: "runtime";
+                app: "app";
+            }>;
+            yieldedAt: z.ZodString;
+            pendingToolCallId: z.ZodNullable<z.ZodString>;
         }, z.core.$strict>;
     }, z.core.$strict>], "kind">>;
     usage: z.ZodObject<{
@@ -831,11 +895,19 @@ export declare const runStateSchema: z.ZodObject<{
     elapsedMs: z.ZodNumber;
     lastEventSequence: z.ZodNumber;
     lastEventId: z.ZodNullable<z.ZodString>;
+    acceptedInputs: z.ZodDefault<z.ZodReadonly<z.ZodArray<z.ZodObject<{
+        inputId: z.ZodString;
+        messageId: z.ZodString;
+        digest: z.ZodString;
+        eventSequence: z.ZodNumber;
+    }, z.core.$strict>>>>;
 }, z.core.$strict>;
 export type RunStatus = z.infer<typeof runStatusSchema>;
 export type RunFailure = z.infer<typeof runFailureSchema>;
 export type RunOutcome = z.infer<typeof runOutcomeSchema>;
 export type PauseState = z.infer<typeof pauseStateSchema>;
+export type YieldState = z.infer<typeof yieldStateSchema>;
+export type YieldReason = YieldState["reason"];
 export type Turn = z.infer<typeof turnSchema>;
 export type Run = z.infer<typeof runSchema>;
 export type TranscriptEntry = z.infer<typeof transcriptEntrySchema>;
@@ -844,6 +916,7 @@ export type ToolExecutionState = z.infer<typeof toolExecutionStateSchema>;
 export type ToolBatchState = z.infer<typeof toolBatchStateSchema>;
 export type RunUsage = z.infer<typeof runUsageSchema>;
 export type RunState = z.infer<typeof runStateSchema>;
+export type AcceptedInput = z.infer<typeof acceptedInputSchema>;
 export type DerivedRunPhase = "created" | "before_model" | "awaiting_model" | "before_tools" | "ready_to_complete" | "paused" | "terminal";
 export type RunStateInvariantResult = {
     readonly ok: true;

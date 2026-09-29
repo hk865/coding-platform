@@ -31,6 +31,12 @@ export interface RuntimeExecutionPort {
   capabilities(ctx: CoreCallContext, workspace: WorkspaceScope): Promise<ReadResult<RuntimeCapabilities>>;
   createSession(ctx: CoreCallContext, request: CreateSessionRequest): Promise<OperationReceipt<SessionRecord>>;
   readSessionHistory(ctx: CoreCallContext, request: SessionHistoryRequest): Promise<ReadResult<Page<SessionHistoryEntry>>>;
+  /**
+   * The Kernel-backed last completed-turn boundary of one Session. A derived
+   * isolated Query uses it as its fixed source prefix; absence of a completed
+   * turn is the explicit empty baseline (`position: 0`).
+   */
+  readCompletedBoundary?(ctx: CoreCallContext, request: { sessionRef: import('../../contracts/core/identity.js').SessionRef }): Promise<ReadResult<{ cursor: string | null; position: number }>>;
   readExecutionHistory(ctx: CoreCallContext, request: ExecutionHistoryRequest): Promise<ReadResult<ExecutionHistoryPage>>;
   readTaskExecutionHistory(ctx: CoreCallContext, request: TaskExecutionHistoryRequest): Promise<ReadResult<ExecutionHistoryPage>>;
   prepareExecution(ctx: CoreCallContext, request: PrepareTaskExecutionRequest): Promise<ReadResult<PreparedTaskExecution>>;

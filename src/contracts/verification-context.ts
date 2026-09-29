@@ -52,7 +52,7 @@ import type { CompletionPolicyPin } from './governance.js';
 import type { ArchitectureBaselinePin } from './governance.js';
 export type VerificationRoundScope = VerificationScope & {
     taskId: string;
-    gateSubject?: 'goal';
+    gateSubject?: 'goal' | 'stage' | 'module';
 };
 /** Versioned canonical and filesystem identities, rechecked before every use. */
 export type VerificationRoundMaterialIdentity = {

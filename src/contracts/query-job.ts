@@ -20,6 +20,22 @@ export type QueryJobAnswerRef = {
     queryJobId: string;
     answerId: string;
 };
+/**
+ * The frozen deterministic identity of the ONE consultation Query bound to a
+ * complete SessionMessageRef: the canonical SHA-256 of the message ref decides
+ * the QueryJob and QueryRun ids (response processing has a distinct part key).
+ * Two outer retries therefore address the same
+ * persisted pair; no generic dedupe layer exists.
+ */
+export function consultationQueryRefs(messageRef: SessionMessageRef, part: 'message' | 'response' = 'message'): { queryJobRef: QueryJobRef; queryRunRef: QueryRunRef } {
+    const hash = sha256Hex(canonicalJson((part === 'message' ? messageRef : { messageRef, part }) as unknown as JsonValue));
+    const queryJobId = `consultation-${hash}`;
+    return {
+        queryJobRef: { aggregateType: "QueryJob", projectId: messageRef.projectId, workspaceId: messageRef.workspaceId, queryJobId },
+        queryRunRef: { aggregateType: "QueryRun", projectId: messageRef.projectId, workspaceId: messageRef.workspaceId,
+            queryJobId, runId: `consultation-run-${hash}` },
+    };
+}
 type QueryRunStatus = "pending" | "running" | "answered" | "closed";
 export type QueryExecutionBindingV1 = {
     schemaVersion: 1;
@@ -29,7 +45,7 @@ export type QueryExecutionBindingV1 = {
         bundleRef: ArtifactRef;
         question: string;
         budget: {
-            maxTokens: number;
+            maxTokens: number | null;
         };
     };
     selectedSources: {
@@ -90,10 +106,11 @@ export type QueryRunSnapshot = {
  *     the source Task/Goal phase.
  */
 import type { ActorRef } from "./command-event.js";
-import { canonicalJson } from "./fingerprint.js";
+import { canonicalJson, sha256Hex, type JsonValue } from "./fingerprint.js";
 import type { RoleBindingRefV1 } from "./dispatch.js";
 import { validateRuntimeBudget, type RuntimeBudget } from './runtime-budget.js';
 import type { RoleConfigurationRef, SessionRef } from './core/identity.js';
+import type { SessionMessageRef } from './core/session-message.js';
 import type { RoleSpecResolutionV1 } from './role-spec-materials.js';
 import type { RunExecutionHistoryV1 } from './core/execution-history.js';
 import { validMaterialSourcePin } from './material-access.js';
@@ -119,7 +136,7 @@ export type QueryJobIntentV1 = {
     question: string;
     focusTaskRefs: TaskRef[];
     budget: {
-        maxTokens: number;
+        maxTokens: number | null;
         deadline: string | null;
     };
     multiTurn: {
@@ -133,6 +150,30 @@ export type QueryJobIntentV1 = {
         feedback?: import('./execution-feedback.js').FeedbackSource;
         roleBinding: RoleBindingRefV1;
         runtimeBudget: import('./runtime-budget.js').RuntimeBudget;
+        /**
+         * A saved mailbox source for a read-only semantic Query. Inquiry answers
+         * attach to the original message; part=response processes that saved
+         * response in the sender Session without replacing the original answer.
+         */
+        consultation?: {
+            messageRef: SessionMessageRef;
+            part?: 'response';
+            recipient: SessionRef;
+            /**
+             * Formal isolated A′ derivation. When present the Query runs in
+             * `childSessionRef` with the fixed completed prefix of `sourceSessionRef`
+             * (null throughPosition = explicit empty baseline).
+             */
+            derivation?: {
+                childSessionRef: SessionRef;
+                sourceSessionRef: SessionRef;
+                sourceKernel: {
+                    adapterId: string;
+                    kernelSessionId: string;
+                };
+                throughPosition: number | null;
+            };
+        };
         implementationAuthorization?: {
             requestId: string;
             writeScope: [
@@ -144,10 +185,66 @@ export type QueryJobIntentV1 = {
     };
 };
 type QueryJobStatus = "pending" | "running" | "answered" | "closed";
+function isRecordValue(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+function validSessionMessageRef(value: unknown): boolean {
+    if (!isRecordValue(value))
+        return false;
+    const keys = Object.keys(value);
+    return keys.length === 4 && keys.every(key => ['aggregateType', 'projectId', 'workspaceId', 'messageId'].includes(key)) &&
+        value['aggregateType'] === 'SessionMessage' &&
+        typeof value['projectId'] === 'string' && value['projectId'].length > 0 &&
+        typeof value['workspaceId'] === 'string' && value['workspaceId'].length > 0 &&
+        typeof value['messageId'] === 'string' && value['messageId'].length > 0;
+}
+function validPlainSessionRef(value: unknown): boolean {
+    if (!isRecordValue(value))
+        return false;
+    if (Object.keys(value).some(key => key !== 'aggregateType' && key !== 'projectId' && key !== 'sessionId'))
+        return false;
+    return typeof value['projectId'] === 'string' && value['projectId'].length > 0 &&
+        typeof value['sessionId'] === 'string' && value['sessionId'].length > 0;
+}
+function validConsultationBinding(value: unknown): boolean {
+    if (!isRecordValue(value))
+        return false;
+    const keys = Object.keys(value);
+    if (!(keys.length >= 2 && keys.length <= 4) || !keys.includes('messageRef') || !keys.includes('recipient'))
+        return false;
+    if (keys.some(key => !['messageRef', 'recipient', 'derivation', 'part'].includes(key)))
+        return false;
+    if (!validSessionMessageRef(value['messageRef']))
+        return false;
+    if (!validPlainSessionRef(value['recipient']))
+        return false;
+    if (value['part'] !== undefined && value['part'] !== 'response') return false;
+    if (value['part'] === 'response' && value['derivation'] !== undefined) return false;
+    const derivation = value['derivation'];
+    if (derivation !== undefined) {
+        if (!isRecordValue(derivation))
+            return false;
+        if (Object.keys(derivation).some(key => !['childSessionRef', 'sourceSessionRef', 'sourceKernel', 'throughPosition'].includes(key)))
+            return false;
+        if (!validPlainSessionRef(derivation['childSessionRef']) || !validPlainSessionRef(derivation['sourceSessionRef']))
+            return false;
+        const sourceKernel = derivation['sourceKernel'];
+        if (!isRecordValue(sourceKernel)
+            || typeof sourceKernel['adapterId'] !== 'string' || sourceKernel['adapterId'].length === 0
+            || typeof sourceKernel['kernelSessionId'] !== 'string' || sourceKernel['kernelSessionId'].length === 0)
+            return false;
+        const through = derivation['throughPosition'];
+        if (!(through === null || (Number.isSafeInteger(through) && (through as number) >= 1)))
+            return false;
+    }
+    return true;
+}
 export function validQueryExecution(value: QueryJobIntentV1['execution']): boolean {
     if (value === undefined)
         return true;
     if (!value || !['semantic_query', 'initial_coordination', 'execution_coordination'].includes(value.kind))
+        return false;
+    if (value.consultation !== undefined && (value.kind !== 'semantic_query' || !validConsultationBinding(value.consultation)))
         return false;
     if (value.responsePurpose !== undefined && !['reply', 'architecture', 'progress', 'planning', 'handoff', 'execution'].includes(value.responsePurpose))
         return false;

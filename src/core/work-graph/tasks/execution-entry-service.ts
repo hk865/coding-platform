@@ -143,14 +143,14 @@ function mapReadResult<T>(result: Exclude<ReadResult<T>, { status: 'ready' }>): 
  * the facts read in the shared `admitEnteredRun` (both model barriers). An
  * absent `controlState` is the historical behavior. A queued pause/cancel is a
  * real fence and fails the fresh action `busy`; it never claims the Run already
- * stopped. A present `running`/`steered` pointer still has no unblock proof in
- * this batch, so it fails closed as `unsupported` and is never treated as an
- * absent field. The gate is deliberately NOT in `readAdmissionFacts`, because
+ * stopped. A `running` pointer is written only by the formal resume owner
+ * after a confirmed pause (or a yielded wait); that explicit continuation may
+ * pass. A standalone `steered` pointer is not a resume and stays unsupported. The gate is deliberately NOT in `readAdmissionFacts`, because
  * entered/result re-reads must stay free of it.
  */
 export function freshRunControlProblem(run: RunSnapshot): CoreRejection | null {
   const control = run.controlState;
-  if (control === undefined) return null;
+  if (control === undefined || control.desiredState === 'running') return null;
   if (control.desiredState === 'paused' || control.desiredState === 'cancelled') {
     return busy(`the Run is fenced by a queued ${control.desiredState} control intent (${control.intentRef.intentId}); no fresh execution action is admitted`);
   }
@@ -570,7 +570,8 @@ export async function recheckHostRoleAdmission(
     }
   }
   const host = await deps.authorizeConfiguration(ctx, {
-    run: input.run, sessionRole: input.sessionRole, configurationRevision: input.configurationRevision,
+    run: input.run, roleResolution: resolution, sessionRole: input.sessionRole,
+    configurationRevision: input.configurationRevision,
     permissions: input.permissions, hostTemplate: input.hostTemplate,
   });
   if (host.status !== 'ready') return { ok: false, rejection: mapReadResult(host) };
@@ -1321,6 +1322,7 @@ export function createExecutionEntryService(deps: ExecutionEntryDependencies): E
         claim, entry: { consumerId: observation.entry.consumerId, entryGeneration: observation.entry.entryGeneration },
         event: observation.event, kernelSource: observation.kernelSource,
         completedHistoryBoundary: observation.completedHistoryBoundary, history: observation.history,
+        continuation: observation.continuation ?? null,
         expected: expectedPinList(runPin) });
     } catch { return invalid('the result request is not canonicalizable JSON'); }
 
@@ -1365,6 +1367,18 @@ export function createExecutionEntryService(deps: ExecutionEntryDependencies): E
       }
       const terminal = terminalFact(observation.event, claim.runRef, facts.run);
       if ('status' in terminal) return terminal;
+      // A real yield is only actionable when it carries the original work/wait
+      // binding in the SAME terminal commit; a bare yielded status with no
+      // continuation is a malformed fact, not a silent dead end.
+      if (terminal.outcome === 'yielded') {
+        if (observation.continuation === undefined) {
+          return invalid('a yielded Run requires the original wait continuation binding');
+        }
+        const continuationProblem = runContinuationProblem(observation.continuation, claim);
+        if (continuationProblem !== null) return invalid(`the yielded continuation is malformed: ${continuationProblem}`);
+      } else if (observation.continuation !== undefined) {
+        return invalid('only a yielded Run may carry a continuation binding');
+      }
       // Terminal reduction records an already-entered fact: it does NOT re-apply
       // the new-action Host/Role/material admission gates. Only the Kernel/begin/
       // claim/entry/Turn provenance below is required.
@@ -1386,7 +1400,8 @@ export function createExecutionEntryService(deps: ExecutionEntryDependencies): E
       const nextRun: RunSnapshot = { ...compiled.value.nextRun, status: 'ended', outcome: terminal.outcome,
         exitCode: terminal.exitCode, endedAt: nowIso, executionAuthorization: nextAuthorization,
         lastEventSeq: observation.event.sequence, lastRuntimeEventId: observation.event.eventId,
-        lastFactEventId: eventId };
+        lastFactEventId: eventId,
+        ...(observation.continuation === undefined ? {} : { continuation: structuredClone(observation.continuation) }) };
       const runRecord = encodeRun(nextRun);
       const nextAttempt: TaskAttemptSnapshot = { ...facts.attempt, revision: facts.attempt.revision + 1,
         status: 'ended', endedAt: nowIso, endOutcome: terminal.outcome };
@@ -1595,6 +1610,25 @@ function runFinished(run: RunSnapshot): boolean {
   return run.status === 'ended' || run.outcome !== null;
 }
 
+/** A yielded continuation must bind the exact original Task/Session and a
+ * complete saved message; it never authorizes a new Run by itself. */
+function runContinuationProblem(continuation: unknown, claim: TaskClaim): string | null {
+  if (!isRecord(continuation)) return 'the continuation must be an object';
+  if (continuation['schemaVersion'] !== 1 || continuation['kind'] !== 'wait_reply') return 'the continuation kind is not recognized';
+  const task = continuation['task'];
+  if (!isRecord(task) || task['projectId'] !== claim.task.projectId || task['goalId'] !== claim.task.goalId
+    || task['taskId'] !== claim.task.taskId) return 'the continuation Task is not the claimed Task';
+  const sessionRef = continuation['sessionRef'];
+  if (!isRecord(sessionRef) || sessionRef['projectId'] !== claim.sessionRef.projectId
+    || sessionRef['sessionId'] !== claim.sessionRef.sessionId) return 'the continuation Session is not the claimed Session';
+  const messageRef = continuation['messageRef'];
+  if (!isRecord(messageRef) || messageRef['aggregateType'] !== 'SessionMessage'
+    || !nonEmpty(messageRef['projectId']) || !nonEmpty(messageRef['workspaceId']) || !nonEmpty(messageRef['messageId'])) {
+    return 'the continuation messageRef is incomplete';
+  }
+  return null;
+}
+
 function terminalFact(event: RuntimeEventV1, runRef: RunRef, run: RunSnapshot): { outcome: RunOutcome; exitCode: number | null } | CoreRejection {
   if (!isRecord(event)) return invalid('the result event must be an object');
   if (!sameRef(event.runRef, runRef)) return invalid('the result event names another Run');
@@ -1620,6 +1654,17 @@ function terminalFact(event: RuntimeEventV1, runRef: RunRef, run: RunSnapshot): 
         return invalid('run_budget_exhausted requires a budget_exhausted payload');
       }
       return { outcome: 'budget_exhausted', exitCode: null };
+    case 'run_yielded':
+      // An explicit yield is a REAL terminal fact: the Turn exited active execution
+      // after its tool group drained. It releases the same occupancy/lease as every
+      // other terminal, but is never counted as Task satisfaction or failure.
+      if (event.payload.kind !== 'yielded' || !isRecord(event.payload.yield)
+        || (event.payload.yield.reason !== 'reply_required'
+          && event.payload.yield.reason !== 'external_input_required'
+          && event.payload.yield.reason !== 'operator_requested')) {
+        return invalid('run_yielded requires a yielded payload with a recognized reason');
+      }
+      return { outcome: 'yielded', exitCode: null };
     default:
       return invalid('a terminal result requires a terminal Runtime event');
   }

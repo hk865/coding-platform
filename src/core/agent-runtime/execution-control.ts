@@ -20,11 +20,13 @@ import type {
   ControlEntryIdentityV1, ControlIntentRef, ControlIntentSnapshotV1,
 } from '../../contracts/control-intent.js';
 import type { ReadResult } from '../../contracts/core/results.js';
-import type { RunRef, RunSnapshot } from '../../contracts/dispatch.js';
+import type { RunContinuationV1, RunRef, RunSnapshot, TaskTriple } from '../../contracts/dispatch.js';
 import { canonicalJson } from '../../contracts/fingerprint.js';
 import type { ControlObservationPort, RunControlPort } from '../work-graph/tasks/control-contracts.js';
 import type { KernelExecutionBinding } from '../work-graph/tasks/execution-entry-contracts.js';
 import type { SourceSnapshotReads } from '../work-graph/source-authority-ports.js';
+import type { SessionRef } from '../../contracts/core/identity.js';
+import type { SessionMessage } from '../work-graph/communication/contracts.js';
 import type { DeliverControlRequest } from './execution-contracts.js';
 import type { RuntimeResourceCloseResult } from './observed-model-run.js';
 
@@ -60,6 +62,12 @@ export type RuntimeControlHandle = {
   settled?: boolean;
   /** The exact intent this handle consumed, if any. */
   intentRef?: ControlIntentRef;
+  resumeIntentRef?: ControlIntentRef;
+  /** The original claim Task/Session; used to build a real yield continuation. */
+  task?: TaskTriple;
+  sessionRef?: SessionRef;
+  /** The exact durably-saved waitAfterSend message this Run registered, if any. */
+  waitMessage?: SessionMessage;
 };
 
 /** The private exit/cleanup proof the observer reads before any positive ack. */
@@ -67,9 +75,18 @@ export type RuntimeControlProof = {
   kernelExited: boolean;
   resourcesClosed?: RuntimeResourceCloseResult;
   consumedIntentRef?: ControlIntentRef;
+  resumeIntentRef?: ControlIntentRef;
 };
 
 export type RuntimeControlDecision = { kind: 'continue' } | { kind: 'pause' };
+
+/**
+ * The read-only verdict a narrow long-running tool (the replyMode wait) may
+ * observe. It NEVER consumes the intent, associates a handle or aborts a
+ * controller; it only lets the tool yield to the original tool-group barrier,
+ * which performs the real consuming decision.
+ */
+export type RuntimeControlInspection = { kind: 'continue' } | { kind: 'pause' } | { kind: 'cancel' };
 
 export type RuntimeControlCoordinator = {
   /** Read the accepted intent and consume it only at a real local safe point. */
@@ -80,11 +97,25 @@ export type RuntimeControlCoordinator = {
    * positive pause/cancel conclusion. `undefined` means "not proven". */
   proof(runRef: RunRef): RuntimeControlProof | undefined;
   /**
+   * The durable platform continuation of a handle that really registered a wait:
+   * the original Task/Session plus the exact saved message. It is a projection of
+   * already-happened facts, never a permission to start a Run.
+   */
+  inputs(ctx: CoreCallContext, runRef: RunRef): Promise<ControlIntentSnapshotV1[]>;
+  continuation(runRef: RunRef): RunContinuationV1 | undefined;
+  /**
    * The real safe-point decision over the current canonical Run controlState.
    * Missing/unavailable facts fail closed; a cancel aborts this handle's own
    * controller and lets the Kernel's own signal check win.
    */
   decide(ctx: CoreCallContext, runRef: RunRef): Promise<RuntimeControlDecision>;
+  /**
+   * Read the CURRENT canonical Run control pointer WITHOUT any side effect. A
+   * pause/cancel is reported so a narrow tool can yield; the intent is left for
+   * the existing barrier. Missing/unavailable facts keep the historical
+   * 'continue' (the barrier still fails closed at its own real safe point).
+   */
+  inspect(ctx: CoreCallContext, runRef: RunRef): Promise<RuntimeControlInspection>;
   /** Drain the coordinator without starting any background recovery. */
   close(): Promise<void>;
 };
@@ -174,6 +205,31 @@ export function createRuntimeControlCoordinator(
       handles.set(key, handle);
       return handle;
     },
+    async inputs(ctx, runRef) {
+      if (deps.controls === undefined || deps.sourceAuthority === undefined) return [];
+      const loaded = await deps.sourceAuthority().load(runRef);
+      if (loaded.status !== 'found') return [];
+      const run = loaded.snapshot as RunSnapshot;
+      const inputs: ControlIntentSnapshotV1[] = [];
+      for (const ref of run.controlInputs ?? []) {
+        const read = await deps.controls.readControl(ctx, ref);
+        if (read.status === 'ready' && read.value.kind === 'steer' && read.value.status === 'queued' && sameRef(read.value.runRef, runRef)) inputs.push(read.value);
+      }
+      return inputs;
+    },
+    continuation(runRef: RunRef): RunContinuationV1 | undefined {
+      const key = keyOf(runRef);
+      if (key === null) return undefined;
+      const handle = handles.get(key);
+      if (handle === undefined || handle.waitMessage === undefined
+        || handle.task === undefined || handle.sessionRef === undefined) return undefined;
+      return {
+        schemaVersion: 1, kind: 'wait_reply',
+        task: structuredClone(handle.task),
+        sessionRef: { projectId: handle.sessionRef.projectId, sessionId: handle.sessionRef.sessionId },
+        messageRef: structuredClone(handle.waitMessage.ref),
+      };
+    },
     proof(runRef: RunRef): RuntimeControlProof | undefined {
       const key = keyOf(runRef);
       if (key === null) return undefined;
@@ -183,6 +239,7 @@ export function createRuntimeControlCoordinator(
         kernelExited: handle.kernelExited,
         ...(handle.resourcesClosed === undefined ? {} : { resourcesClosed: handle.resourcesClosed }),
         ...(handle.intentRef === undefined ? {} : { consumedIntentRef: handle.intentRef }),
+        ...(handle.resumeIntentRef === undefined ? {} : { resumeIntentRef: handle.resumeIntentRef }),
       };
     },
     async decide(ctx: CoreCallContext, runRef: RunRef): Promise<RuntimeControlDecision> {
@@ -242,9 +299,45 @@ export function createRuntimeControlCoordinator(
         // run.cancelled; this is not a pause.
         return { kind: 'continue' };
       }
-      // A legal running/steered pointer still has no unblock proof in this
-      // batch. Fail closed instead of admitting work under an unproven pointer.
+      // An explicit resume/steer pointer is the ONLY unblock proof: it releases
+      // the hold so the Run continues and the unified input supply can read the
+      // applicable new input at the next before_model. Unknown pointers still
+      // fail closed.
+      if (control.desiredState === 'running' || control.desiredState === 'steered') {
+        return { kind: 'continue' };
+      }
       return { kind: 'pause' };
+    },
+    async inspect(ctx: CoreCallContext, runRef: RunRef): Promise<RuntimeControlInspection> {
+      const controls = deps.controls;
+      const sourceAuthority = deps.sourceAuthority;
+      // No trusted control facts: nothing to yield to; the historical path runs.
+      if (controls === undefined || sourceAuthority === undefined) return { kind: 'continue' };
+      if (!isRunRef(runRef)) return { kind: 'continue' };
+      let loaded;
+      try {
+        loaded = await sourceAuthority().load(runRef);
+      } catch {
+        return { kind: 'continue' };
+      }
+      if (loaded.status !== 'found' || !isRunRef(loaded.snapshot.ref) || !sameRef(loaded.snapshot.ref, runRef)) {
+        return { kind: 'continue' };
+      }
+      const run = loaded.snapshot as RunSnapshot;
+      const control = run.controlState;
+      if (control === undefined) return { kind: 'continue' };
+      let read: ReadResult<ControlIntentSnapshotV1>;
+      try {
+        read = await controls.readControl(ctx, control.intentRef);
+      } catch {
+        return { kind: 'continue' };
+      }
+      if (read.status !== 'ready') return { kind: 'continue' };
+      const intent = read.value;
+      if (!sameRef(intent.ref, control.intentRef) || !sameRef(intent.runRef, runRef)) return { kind: 'continue' };
+      if (control.desiredState === 'paused') return { kind: 'pause' };
+      if (control.desiredState === 'cancelled') return { kind: 'cancel' };
+      return { kind: 'continue' };
     },
     async close(): Promise<void> {
       handles.clear();

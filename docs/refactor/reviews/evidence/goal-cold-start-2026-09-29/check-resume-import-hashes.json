@@ -1,0 +1,36 @@
+{
+  "lane": ".toolchain/dsh-refactor-runs/work-check-resume-20260929",
+  "manifestSha256": "16936176dda3f8b054e6984e928756215bf84be5840916c580483c44468365f9",
+  "files": [
+    {
+      "path": "src/business/workflow/workflow.ts",
+      "originalSha256": "88f0c668ce831ab855b3a4a1d41bd01d4bf3835e08a11a6dc45a2ebc718d89ec",
+      "candidateSha256": "515e2f6a0fdb82ecb7cf06bc160a132bb5231558e2ac9e57695b0ef9cbcfbbf0"
+    },
+    {
+      "path": "tests/composition/R5c-workflow-platform.test.ts",
+      "originalSha256": "9c18b09250180b209e9c569722e00146724cc19289d32313687137c4815184e6",
+      "candidateSha256": "26865bb14672673f0b92791a82eeba5d5631473fd2f0f42e4d842e69e911a7a6"
+    },
+    {
+      "path": "src/core/work-graph/evidence/contracts.ts",
+      "originalSha256": "bbe2a3735e420bfa680114a64c372b9e21432483bb6e7d9538820451a32a91d4",
+      "candidateSha256": "a0ccb3a0ec6c7f328457e902f0b92b67e60dd15a8d04cab6f1a0697e3b8173d3"
+    },
+    {
+      "path": "src/core/work-graph/evidence/evidence-service.ts",
+      "originalSha256": "641bfb3b4ffb5a7e859c5526bbc69008505c2037275329482595818c2d0d6c61",
+      "candidateSha256": "1acf787330e2ef20cc60514135378e34351165b7974a93ab97c5f79921135725"
+    },
+    {
+      "path": "src/core/work-graph/evidence/evidence-record-codecs.ts",
+      "originalSha256": "9b7551597b3e2b1ae42c5c02c35305ad01b3a6a98768a78205f25374eae5f311",
+      "candidateSha256": "dafb8119be9192800a36b70c2729da0332decb33b6c03c86eb5f2cb5f4b0399e"
+    },
+    {
+      "path": "src/composition/create-platform.ts",
+      "originalSha256": "78546a4d45063f499cb5183ddec90a64896d56191d5251b8abb8d2e422d50236",
+      "candidateSha256": "a15dd512a0031dc986e78bfac547fb2acd790d6676ea0511525527868621173d"
+    }
+  ]
+}

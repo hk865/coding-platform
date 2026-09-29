@@ -1,0 +1,18 @@
+{
+  "runtime": "Node v24.21.0",
+  "relatedTests": {
+    "total": 105,
+    "passed": 105,
+    "files": 11,
+    "initialLog": "tests.log",
+    "initialPassed": 103,
+    "initialFailed": 2,
+    "failureCause": "Two backend variants of the existing exact index-list assertion omitted the new sender-run lookup index.",
+    "targetedRerunLog": "mailbox-regression.log",
+    "targetedRerunPassed": 50
+  },
+  "nodeTypes": "passed (types.log)",
+  "uiTypes": "passed (ui-types.log)",
+  "boundaries": "passed (boundaries.log)",
+  "build": "passed (build.log)"
+}

@@ -1,0 +1,9 @@
+{
+  "status": "frozen",
+  "tests": "3 expected RED, 5 existing wiring PASS",
+  "frozenHashes": {
+    "tests/app/AG6-agent-assembly.test.ts": "0be31c9d4dc352a7e81ce956b9a337cb350739bc1e36f9920dbdb8f8cb83f48b",
+    "tests/runtime/W2-role-skills.test.ts": "7c20191b464ffec35cc06fa5c48ce2d8efc95c84577d4c3cf041e7828629f8b3"
+  },
+  "review": "Real Host factory resolves Work and Query configurations, real Kernel observes enabled instructions/tools. Accept removal of old keyword-only prompt assertions; real digest/selection/tool/error checks retained. No added prompt text snapshots or broad matrix."
+}

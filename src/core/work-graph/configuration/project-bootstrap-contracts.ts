@@ -55,6 +55,19 @@ export interface ProjectRegistrationPort {
     ctx: CoreCallContext,
     scope: WorkspaceScope,
   ): Promise<ReadResult<{ project: ProjectSnapshot; workspace: WorkspaceSnapshot }>>;
+  /**
+   * MVP UI connection: one narrow read of ONLY the already-registered Project,
+   * so a cold-start UI can distinguish "the Project does not exist yet" from
+   * "the Workspace is not registered" without guessing revision 1 or
+   * classifying a failure by its message. It writes nothing and exposes the
+   * real record revision. Optional only so an existing narrow
+   * `ProjectRegistrationPort` test double keeps compiling; the real
+   * composition always assembles it.
+   */
+  readProject?(
+    ctx: CoreCallContext,
+    projectId: string,
+  ): Promise<ReadResult<ProjectSnapshot>>;
 }
 
 /**
@@ -65,6 +78,17 @@ export interface ProjectRegistrationPort {
  * active pointer with an exact pin + active CAS. Activating is not a runtime
  * Role switch and never rewrites an already accepted Plan's policy pin.
  */
+/**
+ * R6 cold-start one exact CURRENT CompletionPolicy read: the project's active
+ * pointer plus the immutable revision it pins. `not_found` means the project
+ * has NO active pointer yet (an explicit absence); a missing or damaged PINNED
+ * revision row is a different failure and is NEVER reported as absence.
+ */
+export type CurrentCompletionPolicyRead = {
+  active: ProjectCompletionPolicyActiveSnapshot;
+  policy: CompletionPolicyRevisionSnapshot;
+};
+
 export interface CompletionPolicyConfigurationPort {
   installCompletionPolicy(
     ctx: CoreCallContext,
@@ -78,6 +102,16 @@ export interface CompletionPolicyConfigurationPort {
     ctx: CoreCallContext,
     request: GraphWrite<{ target: CompletionPolicyPin }>,
   ): Promise<WriteResult<ProjectCompletionPolicyActiveSnapshot>>;
+  /**
+   * Read the project's current active policy pointer and the exact immutable
+   * revision it pins, from the real owner facts (never a model input, default
+   * or cached value). Optional only so existing narrow port doubles keep
+   * compiling; the real composition always publishes it.
+   */
+  readCurrentCompletionPolicy?(
+    ctx: CoreCallContext,
+    input: { projectId: string },
+  ): Promise<ReadResult<CurrentCompletionPolicyRead>>;
 }
 
 /**

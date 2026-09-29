@@ -1,0 +1,58 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform-next
+
+ ❯ tests/app/AG2b-collaboration.test.ts (3 tests | 1 failed) 4307ms
+     × releases a busy B, runs two wait rounds and completes the real Task/Goal 1773ms
+ ❯ tests/app/orchestration-mechanism.test.ts (15 tests | 1 failed) 20188ms
+   × delivers a real Host attention change into the original idle Session once 16578ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/app/AG2b-collaboration.test.ts > AG2b continuous communication over the real Host HTTP > releases a busy B, runs two wait rounds and completes the real Task/Goal
+AssertionError: {"goalRef":{"aggregateType":"Goal","projectId":"ag2b-collab-project","goalId":"ag2b-goal"},"flowId":"ag2b-flow","taskId":null,"siblings":[],"state":"completed","current":null,"last":{"status":"ready","value":{"state":"completed","receipt":{"kind":"complete_goal","result":{"status":"committed","value":{"ref":{"aggregateType":"GoalPhase","projectId":"ag2b-collab-project","goalId":"ag2b-goal"},"revision":1,"schemaVersion":1,"planRef":{"aggregateType":"PlanRevision","projectId":"ag2b-collab-project","planId":"ag2b-plan"},"planRevision":1,"phase":"COMPLETED","adoptedTaskReductions":[{"ref":{"aggregateType":"TaskReduction","projectId":"ag2b-collab-project","goalId":"ag2b-goal","taskId":"ag2b-work"},"revision":1},{"ref":{"aggregateType":"TaskReduction","projectId":"ag2b-collab-project","goalId":"ag2b-goal","taskId":"ag2b-gate"},"revision":1}],"satisfiedObligationIds":["ag2b-obligation"],"reducedAt":"2026-09-28T00:00:00.000Z"},"replayed":false,"cursor":"c0000000088"}},"next":null,"reason":"the Goal was formally completed"}},"messages":[{"ref":{"aggregateType":"SessionMessage","projectId":"ag2b-collab-project","workspaceId":"ag2b-collab-workspace","messageId":"session-message-1533c7278efe97bc98be8116afbac996422a092652b10afea2a0bdfe9c778411"},"schemaVersion":1,"revision":3,"sender":{"kind":"work_run","sessionRef":{"projectId":"ag2b-collab-project","sessionId":"session-25cef95c588c252977f683f00a36b4f1f8ffd25057ad5b640b768e385aca9f63"},"runRef":{"aggregateType":"Run","projectId":"ag2b-collab-project","goalId":"ag2b-goal","runId":"a6ee62c2-b0b6-470b-82fc-c26b96c037bf"},"roleBinding":{"schemaVersion":1,"bindingId":"ag2b-work-binding","templateId":"builder","templateRevision":"1","bindingVersion":1,"policyRevision":"legacy-template"},"generation":2},"recipient":{"projectId":"ag2b-collab-project","sessionId":"session-d42a1532a0465f130af59e764eb0c69a45a98dcacd0c44eb0f2883cd827774a1"},"bodyRef":{"kind":"artifact","contentType":"application/vnd.coding-platform.session-message+json","digest":"09b31c7f4029e4e6d047e7ee3f9ee0aa28228109bf445580d5f294e2e33ead4d","sizeBytes":739,"source":{"kind":"workspace","refId":"ag2b-collab-workspace","revision":"1"}},"sourceRef":{"kind":"workspace","refId":"ag2b-collab-workspace","revision":"1"},"createdAt":"2026-09-28T00:00:00.000Z","status":"responded","readAt":"2026-09-28T00:00:00.000Z","response":{"sender":{"kind":"query_run","sessionRef":{"projectId":"ag2b-collab-project","sessionId":"session-a2597ec1e56fa49abbda0b60fa15c3b8eef9ad7c8c018e3c97fa798d86235d0a"},"queryRunRef":{"aggregateType":"QueryRun","projectId":"ag2b-collab-project","workspaceId":"ag2b-collab-workspace","queryJobId":"consultation-d0f70f055761f277d71c2f28b6df932590b90cf3e431976eb50bb596fee3b3b0","runId":"consultation-run-d0f70f055761f277d71c2f28b6df932590b90cf3e431976eb50bb596fee3b3b0"},"answerRef":{"aggregateType":"QueryJobAnswer","projectId":"ag2b-collab-project","workspaceId":"ag2b-collab-workspace","queryJobId":"consultation-d0f70f055761f277d71c2f28b6df932590b90cf3e431976eb50bb596fee3b3b0","answerId":"r5b-query-answer-695570b670c09f4009c178dc467ccd9b2e87403d3e86f83de5839011e8777461"},"generation":2},"bodyRef":{"kind":"artifact","contentType":"application/vnd.coding-platform.session-message+json","digest":"d7bd5053b1ad66476bebae5973051f6866909375256a045d399b1622792e0bed","sizeBytes":1039,"source":{"kind":"workspace","refId":"ag2b-collab-workspace","revision":"1"}},"sourceRef":{"kind":"workspace","refId":"ag2b-collab-workspace","revision":"1"},"respondedAt":"2026-09-28T00:00:00.000Z"},"replyMode":"wait","needsReply":true,"waitAfterSend":true,"consultationDerivation":{"childSessionRef":{"projectId":"ag2b-collab-project","sessionId":"session-a2597ec1e56fa49abbda0b60fa15c3b8eef9ad7c8c018e3c97fa798d86235d0a"},"sourceSessionRef":{"projectId":"ag2b-collab-project","sessionId":"session-d42a1532a0465f130af59e764eb0c69a45a98dcacd0c44eb0f2883cd827774a1"},"sourceKernel":{"adapterId":"ag2b-kernel","kernelSessionId":"session-d42a1532a0465f130af59e764eb0c69a45a98dcacd0c44eb0f2883cd827774a1"},"throughPosition":null}},{"ref":{"aggregateType":"SessionMessage","projectId":"ag2b-collab-project","workspaceId":"ag2b-collab-workspace","messageId":"session-message-0e72968fafc0b8a2e61e24a95db6e19572c39807503ebb638d49b31e728e1179"},"schemaVersion":1,"revision":3,"sender":{"kind":"work_run","sessionRef":{"projectId":"ag2b-collab-project","sessionId":"session-25cef95c588c252977f683f00a36b4f1f8ffd25057ad5b640b768e385aca9f63"},"runRef":{"aggregateType":"Run","projectId":"ag2b-collab-project","goalId":"ag2b-goal","runId":"6eac2cd0-f726-4075-97ae-be40a71e2155"},"roleBinding":{"schemaVersion":1,"bindingId":"ag2b-work-binding","templateId":"builder","templateRevision":"1","bindingVersion":1,"policyRevision":"legacy-template"},"generation":4},"recipient":{"projectId":"ag2b-collab-project","sessionId":"session-d42a1532a0465f130af59e764eb0c69a45a98dcacd0c44eb0f2883cd827774a1"},"bodyRef":{"kind":"artifact","contentType":"application/vnd.coding-platform.session-message+json","digest":"2e09776c3375f4502e18dcc1944443ca756ce82849dfd211fe8de8c701a7334c","sizeBytes":736,"source":{"kind":"workspace","refId":"ag2b-collab-workspace","revision":"1"}},"sourceRef":{"kind":"workspace","refId":"ag2b-collab-workspace","revision":"1"},"createdAt":"2026-09-28T00:00:00.000Z","status":"responded","readAt":"2026-09-28T00:00:00.000Z","response":{"sender":{"kind":"query_run","sessionRef":{"projectId":"ag2b-collab-project","sessionId":"session-6083f436cf3cec67d43376ae48de7bc226af3f6919b28ec776eb7af3af8f7894"},"queryRunRef":{"aggregateType":"QueryRun","projectId":"ag2b-collab-project","workspaceId":"ag2b-collab-workspace","queryJobId":"consultation-06bc78016d495f425a2ffe576d9d0f7ee7aa7cf3c21244da67f7d96ba50a37b1","runId":"consultation-run-06bc78016d495f425a2ffe576d9d0f7ee7aa7cf3c21244da67f7d96ba50a37b1"},"answerRef":{"aggregateType":"QueryJobAnswer","projectId":"ag2b-collab-project","workspaceId":"ag2b-collab-workspace","queryJobId":"consultation-06bc78016d495f425a2ffe576d9d0f7ee7aa7cf3c21244da67f7d96ba50a37b1","answerId":"r5b-query-answer-109b7df3e1db98528ca5873785311e15ed128d79720f0aec4e680fcf31bcc8d1"},"generation":2},"bodyRef":{"kind":"artifact","contentType":"application/vnd.coding-platform.session-message+json","digest":"d3f0c287894870579d6d57675e46021147114a93dffba166bc7e42b96918b629","sizeBytes":1039,"source":{"kind":"workspace","refId":"ag2b-collab-workspace","revision":"1"}},"sourceRef":{"kind":"workspace","refId":"ag2b-collab-workspace","revision":"1"},"respondedAt":"2026-09-28T00:00:00.000Z"},"replyMode":"wait","needsReply":true,"waitAfterSend":true,"consultationDerivation":{"childSessionRef":{"projectId":"ag2b-collab-project","sessionId":"session-6083f436cf3cec67d43376ae48de7bc226af3f6919b28ec776eb7af3af8f7894"},"sourceSessionRef":{"projectId":"ag2b-collab-project","sessionId":"session-d42a1532a0465f130af59e764eb0c69a45a98dcacd0c44eb0f2883cd827774a1"},"sourceKernel":{"adapterId":"ag2b-kernel","kernelSessionId":"session-d42a1532a0465f130af59e764eb0c69a45a98dcacd0c44eb0f2883cd827774a1"},"throughPosition":4}}],"reason":"the Goal was formally completed"}: expected { goalRef: { …(3) }, …(8) } to match object { state: 'completed', reason: null }
+(12 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "reason": null,
++   "reason": "the Goal was formally completed",
+    "state": "completed",
+  }
+
+ ❯ tests/app/AG2b-collaboration.test.ts:289:68
+    287|       // The driver auto-consults B and the two wait rounds run to com…
+    288|       const completedSnapshot = await waitForDriver(started, snapshot …
+    289|       expect(completedSnapshot, JSON.stringify(completedSnapshot)).toM…
+       |                                                                    ^
+    290|       // Repeating start/read adds no model call and reuses the one ha…
+    291|       const replayStart = await corePost(started.base, 'workflow/drive…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  tests/app/orchestration-mechanism.test.ts > delivers a real Host attention change into the original idle Session once
+AssertionError: the accepting original Query has a formal Answer: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ tests/app/orchestration-mechanism.test.ts:383:74
+    381|       await new Promise(resolve => setTimeout(resolve, 25));
+    382|     }
+    383|     expect(answered, 'the accepting original Query has a formal Answer…
+       |                                                                          ^
+    384|     expect(message?.acceptedInputs?.[0]?.kernel.kernelSessionId).toBeD…
+    385|     expect(message?.recipient).toEqual(member.sessionRef);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  2 failed | 1 passed (3)
+      Tests  2 failed | 21 passed (23)
+   Start at  18:48:50
+   Duration  26.75s (transform 923ms, setup 0ms, import 1.57s, tests 24.96s, environment 0ms)
+

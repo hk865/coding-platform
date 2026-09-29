@@ -21,16 +21,19 @@ import type {
   HookPort, SqliteStores, ToolCall, ToolDefinition, ToolGroupBarrier, WorkspaceSandbox,
 } from '../../../vendor/coding-agent/dist/public-api.js';
 import { runObservedModel } from './observed-model-run.js';
+import { createMailboxInputSupply } from './execution-inputs.js';
 import type { SourceToolOptions } from './exploration-tools.js';
 import type { RuntimeSourceCaptureFactory } from './source-tool-ports.js';
 import { createSessionMailboxTools, SESSION_MAILBOX_TOOL_NAMES } from './communication-tools.js';
 import { createWhiteboardTools, WHITEBOARD_TOOL_NAMES } from './whiteboard-tools.js';
+import { createSessionDiscoveryTools, SESSION_DISCOVERY_TOOL_NAMES } from './session-discovery-tools.js';
 import { ModelBudget } from './model-budget.js';
 import { createRuntimeModelCallAccess, RuntimeModelCallRejected } from './model-call-access.js';
 import { createSessionHistoryCursorOwner } from './session-operations.js';
 import { loadPreparedManifest, snapshotRuntimeConfiguration } from './execution-preparation.js';
 import { createRuntimeSourceCaptureFactory } from './source-capture-access.js';
-import type { SessionMailboxPort } from '../work-graph/communication/contracts.js';
+import type { SessionMailboxPort, SessionMessage } from '../work-graph/communication/contracts.js';
+import type { SessionDirectoryPort } from '../work-graph/sessions/contracts.js';
 import type { PlanTaskPort } from '../work-graph/tasks/plan-contracts.js';
 import type { ExecutionObservationService } from './execution-observation.js';
 import type { RuntimeControlCoordinator, RuntimeControlHandle } from './execution-control.js';
@@ -44,7 +47,7 @@ import type {
 export type ExecutionDriverDependencies = Pick<RuntimeExecutionDependencies,
   | 'entry' | 'historyWriter' | 'executions' | 'sessionOperations' | 'kernelStores' | 'workspaceHost'
   | 'sourceAuthority' | 'sourcePolicyFor' | 'host' | 'kernel' | 'now' | 'newId'
-  | 'modelRequests' | 'roles' | 'materials' | 'bodies' | 'plans' | 'messages'> & {
+  | 'modelRequests' | 'roles' | 'materials' | 'bodies' | 'plans' | 'messages' | 'sessions'> & {
   /** The same observer instance backs start and explicit observe calls. */
   observation: ExecutionObservationService;
   /**
@@ -65,7 +68,9 @@ type KernelSessionReader = Pick<SqliteStores, 'get' | 'read'>;
 /** The frozen C1 + W2 platform coordination tool names. Declaring a name here
  * grants nothing: the real selection set is the manifest/Role/Host intersection
  * re-checked above. */
-const PLATFORM_COORDINATION_TOOL_NAMES = new Set<string>([...SESSION_MAILBOX_TOOL_NAMES, ...WHITEBOARD_TOOL_NAMES]);
+const PLATFORM_COORDINATION_TOOL_NAMES = new Set<string>([
+  ...SESSION_MAILBOX_TOOL_NAMES, ...WHITEBOARD_TOOL_NAMES, ...SESSION_DISCOVERY_TOOL_NAMES,
+]);
 
 function rejected(code: CoreRejection['code'], reason: string): CoreRejection {
   return { status: 'rejected', code, reason };
@@ -90,7 +95,7 @@ const RESERVED_TOOL_NAMES = new Set<string>([
 type CoordinationTools = { names: readonly string[]; create: (workspace: WorkspaceSandbox) => ToolDefinition[] };
 
 /**
- * Filter the two already-reviewed factories down to the effective manifest
+ * Filter the already-reviewed coordination factories down to the effective manifest
  * intersection. An unknown selected name or a selected platform tool whose
  * dependency is unbound fails closed here, before any provider, authorize/begin
  * write or new-entry Host call. The returned `names` and the actual definitions
@@ -100,11 +105,15 @@ type CoordinationTools = { names: readonly string[]; create: (workspace: Workspa
 function selectCoordinationTools(input: {
   selected: readonly string[];
   mailbox: SessionMailboxPort | undefined;
+  sessions: SessionDirectoryPort;
   plans: PlanTaskPort;
   context: CoreCallContext;
   sessionRef: SessionRef;
   goalRef: GoalRef;
   requestIdForCall: (call: Readonly<ToolCall>) => string;
+  /** Real registration seam for an explicit waitAfterSend; the Runtime owns the
+   * per-Run wait and the Kernel barrier commits the yielded terminal. */
+  onWaitRegistered?: (message: SessionMessage) => void;
 }): { ok: true; value: CoordinationTools | null } | { ok: false; rejection: CoreRejection } {
   const unknown = input.selected.filter(name => !BUILTIN_TOOL_NAMES.has(name) && !PLATFORM_COORDINATION_TOOL_NAMES.has(name));
   if (unknown.length > 0) {
@@ -113,7 +122,10 @@ function selectCoordinationTools(input: {
   const wanted = new Set(input.selected);
   const mailboxNames = SESSION_MAILBOX_TOOL_NAMES.filter(name => wanted.has(name));
   const whiteboardNames = WHITEBOARD_TOOL_NAMES.filter(name => wanted.has(name));
-  if (mailboxNames.length === 0 && whiteboardNames.length === 0) return { ok: true, value: null };
+  const discoveryNames = SESSION_DISCOVERY_TOOL_NAMES.filter(name => wanted.has(name));
+  if (mailboxNames.length === 0 && whiteboardNames.length === 0 && discoveryNames.length === 0) {
+    return { ok: true, value: null };
+  }
   if (mailboxNames.length > 0 && input.mailbox === undefined) {
     return { ok: false, rejection: rejected('unsupported', `the Run selects communication tools but no SessionMailbox dependency is bound: ${mailboxNames.join(', ')}`) };
   }
@@ -124,6 +136,7 @@ function selectCoordinationTools(input: {
       context: input.context,
       sessionRef: input.sessionRef,
       requestIdForCall: input.requestIdForCall,
+      ...(input.onWaitRegistered === undefined ? {} : { onWaitRegistered: input.onWaitRegistered }),
     }));
   }
   if (whiteboardNames.length > 0) {
@@ -134,7 +147,10 @@ function selectCoordinationTools(input: {
       requestIdForCall: input.requestIdForCall,
     }));
   }
-  const names = [...mailboxNames, ...whiteboardNames];
+  if (discoveryNames.length > 0) {
+    handles.push(createSessionDiscoveryTools({ sessions: input.sessions, context: input.context }));
+  }
+  const names = [...mailboxNames, ...whiteboardNames, ...discoveryNames];
   if (new Set(names).size !== names.length) {
     return { ok: false, rejection: rejected('unsupported', 'the selected coordination tool names are duplicated') };
   }
@@ -261,11 +277,14 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
         turnId: 'kturn-' + sha256Hex(canonicalJson({ runRef, attemptRef: manifest.claim.attemptRef } as never)),
       };
 
-      // 3. An already begun/entered/settled Run is only observed. Observation
-      //    needs the formal identity and the fixed Run/claim/Kernel association,
-      //    not a fresh authorization for a new model action; the current Host
-      //    may already have revoked new execution.
-      if (isV2 && existingAuth.phase !== 'authorized') {
+      // 3. An already begun/entered/settled Run is only observed, EXCEPT an
+      //    entered Run with a queued formal resume intent: an explicit Host
+      //    resume re-enters the SAME Kernel Turn through the original identity.
+      const resumePointer = record.run.controlState?.desiredState === 'running' ? record.run.controlState.intentRef : undefined;
+      const resumeIntent = resumePointer === undefined || control === undefined ? undefined : await control.deliver(owned, { intentRef: resumePointer });
+      const resumeEntered = isV2 && existingAuth.phase === 'entered' && resumeIntent?.status === 'ready'
+        && resumeIntent.value.kind === 'resume' && resumeIntent.value.status === 'queued';
+      if (isV2 && existingAuth.phase !== 'authorized' && !resumeEntered) {
         if (existingAuth.consumerId !== consumerId) return rejected('busy', 'another consumer already authorized this Run');
         if (existingAuth.inputDigest !== manifest.inputDigest) return rejected('invalid', 'the Prepared input digest disagrees with the fixed entry binding');
         return deps.observation.observe(owned, { runRef });
@@ -296,14 +315,30 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
         if (!nonEmpty(call.callId) || !nonEmpty(call.name)) throw new Error('the Kernel tool call carries no trusted identity');
         return 'c2-tool:' + sha256Hex(canonicalJson({ runRef, sessionRef, operation: call.name, callId: call.callId } as never));
       };
+      // The explicit wait registration for THIS Run. It is set only after a
+      // waitAfterSend message is durably committed; the tool-group barrier reads
+      // it at the real after_group boundary and commits the yielded terminal.
+      // No polling, no held model promise and no second schedule exist.
+      let waitRegistered: { message: SessionMessage } | null = null;
+      // The wait is registered on the SAME live control handle the observer reads,
+      // so a real yielded terminal can persist the exact original Task/Session and
+      // saved message. The handle is created below and assigned before any tool
+      // can run, so this callback always sees it.
+      let waitHandle: RuntimeControlHandle | null = null;
+      const onWaitRegistered = (message: SessionMessage): void => {
+        waitRegistered ??= { message };
+        if (waitHandle !== null) waitHandle.waitMessage = structuredClone(message);
+      };
       const coordination = selectCoordinationTools({
         selected: manifest.permissions.tools,
         mailbox: deps.messages,
+        sessions: deps.sessions,
         plans: deps.plans,
         context: toolContext,
         sessionRef,
         goalRef,
         requestIdForCall,
+        onWaitRegistered,
       });
       if (!coordination.ok) return coordination.rejection;
       const coordinationTools = coordination.value;
@@ -364,7 +399,7 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
       //    is already authorized, otherwise read the current revision and
       //    authorize a fresh grant.
       let permit: TaskEntryPermit;
-      if (isV2 && existingAuth.phase === 'authorized') {
+      if (isV2 && (existingAuth.phase === 'authorized' || resumeEntered)) {
         permit = { claim: manifest.claim, consumerId: existingAuth.consumerId, entryGeneration: existingAuth.generation, authorizationRevision: existingAuth.revision, inputDigest: existingAuth.inputDigest };
         if (existingAuth.consumerId !== consumerId) return rejected('busy', 'another consumer already authorized this Run');
       } else {
@@ -384,27 +419,30 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
 
       // 7. A fresh begin is the only path that may call the model. Every other
       //    outcome is observed instead of restarted.
-      let currentRevision: number;
-      if (isV2 && existingAuth.phase === 'authorized') {
-        currentRevision = record.run.revision;
-      } else {
-        const afterAuthorize = await deps.executions.readExecution(owned, runRef);
-        if (afterAuthorize.status !== 'ready') return mapRead(afterAuthorize);
-        currentRevision = afterAuthorize.value.run.revision;
+      let currentRevision: number = record.run.revision;
+      let refreshedPermit: TaskEntryPermit = permit;
+      if (!resumeEntered) {
+        if (isV2 && existingAuth.phase === 'authorized') {
+          currentRevision = record.run.revision;
+        } else {
+          const afterAuthorize = await deps.executions.readExecution(owned, runRef);
+          if (afterAuthorize.status !== 'ready') return mapRead(afterAuthorize);
+          currentRevision = afterAuthorize.value.run.revision;
+        }
+        let begun;
+        try {
+          begun = await deps.entry.beginRuntimeEntry(owned, {
+            input: { permit, kernel: kernelBinding },
+            meta: { requestId: `b2-begin:${requestId}`, expected: [{ ref: runRef, revision: currentRevision }] },
+          });
+        } catch (error) {
+          return rejected('unavailable', `beginning the runtime entry failed: ${messageOf(error)}`);
+        }
+        if (begun.status !== 'committed') return mapWrite(begun);
+        if (begun.replayed) return deps.observation.observe(owned, { runRef });
+        refreshedPermit = { ...permit, authorizationRevision: begun.value.authorization.revision };
+        currentRevision = begun.value.runRevision;
       }
-      let begun;
-      try {
-        begun = await deps.entry.beginRuntimeEntry(owned, {
-          input: { permit, kernel: kernelBinding },
-          meta: { requestId: `b2-begin:${requestId}`, expected: [{ ref: runRef, revision: currentRevision }] },
-        });
-      } catch (error) {
-        return rejected('unavailable', `beginning the runtime entry failed: ${messageOf(error)}`);
-      }
-      if (begun.status !== 'committed') return mapWrite(begun);
-      if (begun.replayed) return deps.observation.observe(owned, { runRef });
-      const refreshedPermit: TaskEntryPermit = { ...permit, authorizationRevision: begun.value.authorization.revision };
-      currentRevision = begun.value.runRevision;
 
       // 8. Read the trusted session boundary and build this Run's model loop.
       const cursorOwner = createSessionHistoryCursorOwner({ kernelStores: deps.kernelStores });
@@ -439,16 +477,20 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
       const done = new Promise<void>((resolve) => { settleDone = resolve; });
       const handle: RuntimeControlHandle = {
         runRef, done, controller,
+        ...(resumeEntered && resumePointer !== undefined ? { resumeIntentRef: resumePointer } : {}),
         entry: { consumerId: refreshedPermit.consumerId, entryGeneration: refreshedPermit.entryGeneration,
           sessionGeneration: refreshedPermit.claim.generation },
         kernel: { ...kernelBinding },
         kernelExited: false,
+        task: structuredClone(manifest.claim.task),
+        sessionRef: structuredClone(manifest.claim.sessionRef),
       };
+      waitHandle = handle;
       control?.register(handle);
 
       const readOnly = manifest.permissions.writeScope.length === 0;
       let enteredFailure: CoreRejection | undefined;
-      let enteredDone = false;
+      let enteredDone = resumeEntered;
       const shouldPause = (reason: string): { point: 'before_model'; kind: 'pause'; reason: string } => ({ point: 'before_model', kind: 'pause', reason });
 
       const enteredHook: HookPort = {
@@ -621,20 +663,50 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
       // R4.3a real tool-group safe point: it reads the CURRENT canonical Run and
       // the accepted control intent. A cancel aborts this handle's own
       // controller; a pause is committed by the Kernel at this real boundary.
-      const toolGroupBarrier: ToolGroupBarrier | undefined = control === undefined ? undefined
-        : async (invocation) => {
-            if (invocation.runId !== kernelBinding.runId || invocation.turnId !== kernelBinding.turnId) {
-              return { kind: 'pause' };
-            }
-            return control.decide(owned, runRef);
-          };
+      // The barrier first honors the canonical control (pause/cancel) and then a
+      // real wait registration. A yield is only requested AFTER the current tool
+      // group drained, so the saved send result is already in the transcript and
+      // no un-settled side effect is silently dropped.
+      const toolGroupBarrier: ToolGroupBarrier = async (invocation) => {
+        if (invocation.runId !== kernelBinding.runId || invocation.turnId !== kernelBinding.turnId) {
+          return { kind: 'pause' };
+        }
+        if (control !== undefined) {
+          const decision = await control.decide(owned, runRef);
+          if (decision.kind === 'pause') return { kind: 'pause' };
+        }
+        if (invocation.point === 'after_group' && waitRegistered !== null) {
+          return { kind: 'yield', reason: 'reply_required' };
+        }
+        return { kind: 'continue' };
+      };
 
       try {
         try {
+          // One unified input channel: ordinary mail, saved replies, steer and
+          // mechanical attention are read here and only REALLY accepted by the
+          // Kernel run.input_accepted commit.
+          const inputSupply = deps.messages === undefined ? undefined : createMailboxInputSupply({
+            messages: deps.messages,
+            context: () => toolContext,
+            sessionRef,
+            runRef,
+            controlInputs: async (point, options) => {
+              const inputs = await control?.inputs({ ...owned, signal: options.signal }, runRef) ?? [];
+              return inputs.flatMap(intent => {
+                const inputId = `control:${sha256Hex(canonicalJson(intent.ref as never))}`;
+                return point.acceptedInputIds.includes(inputId) || intent.reason === null ? [] : [{ inputId, text: intent.reason, sourceRef: { kind: 'ControlIntent', intentRef: intent.ref } }];
+              });
+            },
+            // A continuation still owns the prior yielded Run's saved reply; the
+            // exact original message identity is read Session-scoped.
+            ...(record.run.consumedWait === undefined ? {} : { consumedWait: { runRef: record.run.consumedWait.runRef, messageRef: record.run.consumedWait.messageRef } }),
+          });
           await runObservedModel({
             kernel: deps.kernel, bound: hostConfig.model, meter, root: rootResolved.value.root, databasePath: location.databasePath,
             sessionId: record.session.kernel.kernelSessionId, input: manifest.input, budget: hostConfig.budget, readOnly,
             taskBudget: record.run.budget, sessionContext, executionIdentity: { runId: kernelBinding.runId, turnId: kernelBinding.turnId },
+            ...(inputSupply === undefined ? {} : { inputSupply }),
             now: deps.now, signal: controller.signal, deniedPrefixes: hostConfig.deniedPrefixes, modelCalls, manifestDigest: bundleRef.digest,
             allowedTools: builtinTools,
             ...(coordinationTools === null ? {} : { coordinationTools }),

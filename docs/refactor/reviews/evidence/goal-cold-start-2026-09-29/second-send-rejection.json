@@ -1,0 +1,9 @@
+{
+  "status": "rejected_before_model",
+  "goalId": "goal-mum98715-1",
+  "sessionId": "session-0817dbb201f88325521aa06a50da6cc0f6030435166c711e6a5124debad74a53",
+  "reason": "send recipient: plannedSessionRef must be a plain SessionRef without aggregateType",
+  "newModelRequests": 0,
+  "cause": "UI copied SessionAggregateRef to plain mailbox recipient",
+  "repair": "Project only projectId/sessionId at UI boundary; preserve owner validation. Known rejected invalid can be edited; uncertain network result retains exact replay."
+}

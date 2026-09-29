@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "platform-work",
+  "title": "Platform work",
+  "kind": "instruction",
+  "priority": 90,
+  "contentFile": "content.md"
+}

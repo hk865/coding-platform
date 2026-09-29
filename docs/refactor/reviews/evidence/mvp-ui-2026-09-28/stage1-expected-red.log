@@ -1,0 +1,140 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform-next
+
+ ❯ tests/app/MVP-workbench-tools.test.ts (5 tests | 3 failed) 16ms
+     × performs an exclusive create and an old-revision CAS save with the real WorkspaceSandbox 7ms
+     × legally replaces an EMPTY file at its exact revision 2ms
+     × retains real output, replays one command handle and cancels a running command 1ms
+ ❯ tests/app/MVP-ui-entry.test.ts (3 tests | 1 failed) 1731ms
+     × registers the Project and then reads its real revision through the narrow owner read 193ms
+ ❯ tests/core/work-graph/MVP-execution-list.test.ts (3 tests | 1 failed) 65ms
+     × pages real claimed Runs and keeps cursor scope and claim identities intact 62ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 5 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/app/MVP-ui-entry.test.ts > MVP UI cold start (expected red until stage two) > registers the Project and then reads its real revision through the narrow owner read
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'ready', value: { …(2) } }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "ready",
+-   "value": {
+-     "ref": {
+-       "aggregateType": "Project",
+-       "projectId": "mvp-ui-project",
+-     },
+-     "revision": 1,
+-   },
++   "status": "rejected",
+  }
+
+ ❯ tests/app/MVP-ui-entry.test.ts:145:33
+    143|       expect(await created.json()).toMatchObject({ status: 'committed'…
+    144|       const read = await corePost(started.base, 'projects/read', start…
+    145|       expect(await read.json()).toMatchObject({ status: 'ready', value…
+       |                                 ^
+    146|     } finally {
+    147|       await started.host.close();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/5]⎯
+
+ FAIL  tests/app/MVP-workbench-tools.test.ts > MVP workbench-tools Kernel CAS save (expected red until stage two) > performs an exclusive create and an old-revision CAS save with the real WorkspaceSandbox
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'ready', value: { …(1) } }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "ready",
+-   "value": {
+-     "oldRevision": null,
+-   },
++   "status": "rejected",
+  }
+
+ ❯ tests/app/MVP-workbench-tools.test.ts:90:23
+     88|       const created = await handle.tools.saveFile(context(),
+     89|         { path: 'src/created.ts', expectedRevision: null, content: 'ex…
+     90|       expect(created).toMatchObject({ status: 'ready', value: { oldRev…
+       |                       ^
+     91|       const saved = await handle.tools.saveFile(context(),
+     92|         { path: 'src/app.ts', expectedRevision: before.revision, conte…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/5]⎯
+
+ FAIL  tests/app/MVP-workbench-tools.test.ts > MVP workbench-tools Kernel CAS save (expected red until stage two) > legally replaces an EMPTY file at its exact revision
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'ready', value: { …(1) } }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "ready",
+-   "value": {
+-     "oldRevision": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+-   },
++   "status": "rejected",
+  }
+
+ ❯ tests/app/MVP-workbench-tools.test.ts:114:21
+    112|       const saved = await handle.tools.saveFile(context(),
+    113|         { path: 'src/empty.ts', expectedRevision: empty.revision, cont…
+    114|       expect(saved).toMatchObject({ status: 'ready', value: { oldRevis…
+       |                     ^
+    115|       expect(await readFile(join(root, 'src', 'empty.ts'), 'utf8')).to…
+    116|     } finally { await handle.close(); }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/5]⎯
+
+ FAIL  tests/app/MVP-workbench-tools.test.ts > MVP workbench-tools real command handle (expected red until stage two) > retains real output, replays one command handle and cancels a running command
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'ready', …(1) }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "ready",
+-   "value": {
+-     "state": "running",
+-   },
++   "status": "rejected",
+  }
+
+ ❯ tests/app/MVP-workbench-tools.test.ts:129:23
+    127|       const request = { requestId: 'req-echo', command: 'echo mvp-comm…
+    128|       const started = await handle.tools.startCommand(context(), reque…
+    129|       expect(started).toMatchObject({ status: 'ready', value: { state:…
+       |                       ^
+    130|       if (started.status !== 'ready') throw new Error(`command start w…
+    131|       const replay = await handle.tools.startCommand(context(), reques…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/5]⎯
+
+ FAIL  tests/core/work-graph/MVP-execution-list.test.ts > MVP executions/list real index read (expected red until stage two) > pages real claimed Runs and keeps cursor scope and claim identities intact
+AssertionError: expected 'rejected' to be 'ready' // Object.is equality
+
+Expected: "ready"
+Received: "rejected"
+
+ ❯ tests/core/work-graph/MVP-execution-list.test.ts:69:28
+     67|       const request = { goalRef: fixture.goalRef, page: { afterCursor:…
+     68|       const page1 = await reader.listExecutions!(fixture.ctx, request);
+     69|       expect(page1.status).toBe('ready');
+       |                            ^
+     70|       if (page1.status !== 'ready') throw new Error('first execution p…
+     71|       expect(page1.value.items).toHaveLength(1);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/5]⎯
+
+
+ Test Files  3 failed (3)
+      Tests  5 failed | 6 passed (11)
+   Start at  20:13:41
+   Duration  3.62s (transform 918ms, setup 0ms, import 1.58s, tests 1.81s, environment 0ms)
+

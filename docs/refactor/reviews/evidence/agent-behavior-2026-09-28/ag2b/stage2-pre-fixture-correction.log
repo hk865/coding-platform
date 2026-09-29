@@ -1,0 +1,142 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform-next
+
+stderr | tests/app/AG2b-collaboration.test.ts > AG2b continuous communication over the real Host HTTP > releases a busy B, runs two wait rounds and completes the real Task/Goal
+[t] step advance
+
+stderr | tests/app/AG2b-collaboration.test.ts > AG2b continuous communication over the real Host HTTP > releases a busy B, runs two wait rounds and completes the real Task/Goal
+[t] step done ready advance|null
+[t] step advance
+
+stderr | tests/app/AG2b-collaboration.test.ts > AG2b continuous communication over the real Host HTTP > releases a busy B, runs two wait rounds and completes the real Task/Goal
+[t] step done ready advance|null
+[t] step advance
+
+stderr | tests/app/AG2b-collaboration.test.ts > AG2b continuous communication over the real Host HTTP > releases a busy B, runs two wait rounds and completes the real Task/Goal
+[t] step done ready advance|null
+[t] step advance
+
+stderr | tests/app/AG2b-collaboration.test.ts > AG2b continuous communication over the real Host HTTP > releases a busy B, runs two wait rounds and completes the real Task/Goal
+[t] step done ready advance|null
+[t] step start
+
+stderr | tests/app/AG2b-collaboration.test.ts > AG2b continuous communication over the real Host HTTP > releases a busy B, runs two wait rounds and completes the real Task/Goal
+[t] pump start 8874306c-c008-4cbf-93ef-7a5c67a4fd90
+
+stderr | tests/app/AG2b-collaboration.test.ts > AG2b continuous communication over the real Host HTTP > releases a busy B, runs two wait rounds and completes the real Task/Goal
+[t] tick 
+
+stderr | tests/app/AG2b-collaboration.test.ts > AG2b continuous communication over the real Host HTTP > releases a busy B, runs two wait rounds and completes the real Task/Goal
+[t] tick 649d02:pending:wait
+
+stderr | tests/app/AG2b-collaboration.test.ts > AG2b continuous communication over the real Host HTTP > releases a busy B, runs two wait rounds and completes the real Task/Goal
+[t] tick 649d02:pending:wait
+
+stderr | tests/app/AG2b-collaboration.test.ts > AG2b continuous communication over the real Host HTTP > releases a busy B, runs two wait rounds and completes the real Task/Goal
+[t] tick 649d02:responded:wait,5ff794:pending:wait
+
+stderr | tests/app/AG2b-collaboration.test.ts > AG2b continuous communication over the real Host HTTP > releases a busy B, runs two wait rounds and completes the real Task/Goal
+[t] step done ready advance|null
+[t] step advance
+
+stderr | tests/app/AG2b-collaboration.test.ts > AG2b continuous communication over the real Host HTTP > releases a busy B, runs two wait rounds and completes the real Task/Goal
+[t] step done ready advance|null
+[t] step advance
+
+stderr | tests/app/AG2b-collaboration.test.ts > AG2b continuous communication over the real Host HTTP > releases a busy B, runs two wait rounds and completes the real Task/Goal
+[t] step done ready advance|null
+[t] step advance
+
+stderr | tests/app/AG2b-collaboration.test.ts > AG2b continuous communication over the real Host HTTP > releases a busy B, runs two wait rounds and completes the real Task/Goal
+[t] step done ready waiting|the round finalized INCONCLUSIVE with 1 gap(s)
+
+stderr | tests/app/AG2b-collaboration.test.ts > AG2b continuous communication over the real Host HTTP > reopens read-only over the original messages/Query/history and refuses another scope
+[t] step advance
+
+stderr | tests/app/AG2b-collaboration.test.ts > AG2b continuous communication over the real Host HTTP > reopens read-only over the original messages/Query/history and refuses another scope
+[t] step done ready advance|null
+[t] step advance
+
+stderr | tests/app/AG2b-collaboration.test.ts > AG2b continuous communication over the real Host HTTP > reopens read-only over the original messages/Query/history and refuses another scope
+[t] step done ready advance|null
+[t] step advance
+
+stderr | tests/app/AG2b-collaboration.test.ts > AG2b continuous communication over the real Host HTTP > reopens read-only over the original messages/Query/history and refuses another scope
+[t] step done ready advance|null
+[t] step advance
+
+stderr | tests/app/AG2b-collaboration.test.ts > AG2b continuous communication over the real Host HTTP > reopens read-only over the original messages/Query/history and refuses another scope
+[t] step done ready advance|null
+[t] step start
+
+stderr | tests/app/AG2b-collaboration.test.ts > AG2b continuous communication over the real Host HTTP > reopens read-only over the original messages/Query/history and refuses another scope
+[t] pump start d849901a-f880-4c00-97af-4fcb36f70020
+
+stderr | tests/app/AG2b-collaboration.test.ts > AG2b continuous communication over the real Host HTTP > reopens read-only over the original messages/Query/history and refuses another scope
+[t] tick 
+
+stderr | tests/app/AG2b-collaboration.test.ts > AG2b continuous communication over the real Host HTTP > reopens read-only over the original messages/Query/history and refuses another scope
+[t] tick 462a1c:pending:wait
+
+stderr | tests/app/AG2b-collaboration.test.ts > AG2b continuous communication over the real Host HTTP > reopens read-only over the original messages/Query/history and refuses another scope
+[t] tick 462a1c:pending:wait
+
+stderr | tests/app/AG2b-collaboration.test.ts > AG2b continuous communication over the real Host HTTP > reopens read-only over the original messages/Query/history and refuses another scope
+[t] tick 462a1c:pending:wait
+
+stderr | tests/app/AG2b-collaboration.test.ts > AG2b continuous communication over the real Host HTTP > reopens read-only over the original messages/Query/history and refuses another scope
+[t] tick 462a1c:pending:wait
+
+stderr | tests/app/AG2b-collaboration.test.ts > AG2b continuous communication over the real Host HTTP > reopens read-only over the original messages/Query/history and refuses another scope
+[t] tick 462a1c:pending:wait
+
+stderr | tests/app/AG2b-collaboration.test.ts > AG2b continuous communication over the real Host HTTP > reopens read-only over the original messages/Query/history and refuses another scope
+[t] tick 462a1c:pending:wait
+
+stderr | tests/app/AG2b-collaboration.test.ts > AG2b continuous communication over the real Host HTTP > reopens read-only over the original messages/Query/history and refuses another scope
+[t] tick 462a1c:pending:wait
+
+stderr | tests/app/AG2b-collaboration.test.ts > AG2b continuous communication over the real Host HTTP > reopens read-only over the original messages/Query/history and refuses another scope
+[t] tick 462a1c:pending:wait
+
+stderr | tests/app/AG2b-collaboration.test.ts > AG2b continuous communication over the real Host HTTP > reopens read-only over the original messages/Query/history and refuses another scope
+[t] tick 462a1c:pending:wait
+
+ ❯ tests/app/AG2b-collaboration.test.ts (3 tests | 2 failed) 11979ms
+     × releases a busy B, runs two wait rounds and completes the real Task/Goal 5002ms
+     × reopens read-only over the original messages/Query/history and refuses another scope 5001ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/app/AG2b-collaboration.test.ts > AG2b continuous communication over the real Host HTTP > releases a busy B, runs two wait rounds and completes the real Task/Goal
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ tests/app/AG2b-collaboration.test.ts:151:3
+    149|   //    A writes the isolated project and the formal Task/Goal complet…
+    150|   // ------------------------------------------------------------------
+    151|   it('releases a busy B, runs two wait rounds and completes the real T…
+       |   ^
+    152|     const busyQuestion = 'AG2b busy release query one';
+    153|     const busyReleaseAnswer = 'AG2b busy query release answer';
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  tests/app/AG2b-collaboration.test.ts > AG2b continuous communication over the real Host HTTP > reopens read-only over the original messages/Query/history and refuses another scope
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ tests/app/AG2b-collaboration.test.ts:454:3
+    452|   //    scope can never read/stop this driver.
+    453|   // ------------------------------------------------------------------
+    454|   it('reopens read-only over the original messages/Query/history and r…
+       |   ^
+    455|     let workTarget: WorkLinkTarget | undefined;
+    456|     let bSession: SessionRef | undefined;
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 1 passed (3)
+   Start at  14:05:54
+   Duration  13.32s (transform 867ms, setup 0ms, import 1.26s, tests 11.98s, environment 0ms)
+

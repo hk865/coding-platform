@@ -1,0 +1,22 @@
+{
+  "attempt": "attempt-1790590004066131243",
+  "accepted": false,
+  "imported": false,
+  "selfReported": {
+    "typecheck": "passed",
+    "architecture": "passed",
+    "kernelRegeneration": "12 sources,48 outputs,0 unmatched",
+    "targeted": "41/41 + one old reopen test",
+    "knownFailure": "AG2b second consultation child with source throughPosition 6 has no formal Answer"
+  },
+  "sourceReview": [
+    "input supply must match before_model phase and survive original identity resume",
+    "yield reply still direct initial text rather than common accepted event",
+    "pagination and owner acknowledgement retry missing",
+    "paused ordinary start retry is not explicit resume",
+    "actual resume/steer route and idle input wake incomplete",
+    "attention notice identity based only on statistics, pending overwritten, architecture graph missing, entered context is not business processed"
+  ],
+  "nextAttempt": "attempt-1790590831357576644",
+  "scopeCount": 197
+}

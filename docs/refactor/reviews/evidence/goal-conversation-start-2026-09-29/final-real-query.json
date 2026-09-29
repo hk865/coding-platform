@@ -1,0 +1,62 @@
+{
+  "budget": {
+    "maxTokens": null,
+    "deadline": null
+  },
+  "contextWindowTokens": 1000000,
+  "meter": [
+    {
+      "reservedInput": 169300,
+      "reservedOutput": 4096,
+      "inputTokens": 52689,
+      "outputTokens": 202,
+      "usageStatus": "reported"
+    },
+    {
+      "reservedInput": 189994,
+      "reservedOutput": 4096,
+      "inputTokens": 59283,
+      "outputTokens": 2117,
+      "usageStatus": "reported"
+    }
+  ],
+  "recordedAt": "2026-09-28T19:43:02.515Z",
+  "queryRunRef": {
+    "aggregateType": "QueryRun",
+    "projectId": "48985e87e7697d72d7083396ecb8106b",
+    "workspaceId": "2e12a0a03b0839a8b84432b8291cfd94",
+    "queryJobId": "consultation-84ac4efa7592083aa8f01031bb799508f2b8308db3dbae58a4ba292953f3f8ac",
+    "runId": "consultation-run-84ac4efa7592083aa8f01031bb799508f2b8308db3dbae58a4ba292953f3f8ac"
+  },
+  "queryJobRef": {
+    "aggregateType": "QueryJob",
+    "projectId": "48985e87e7697d72d7083396ecb8106b",
+    "workspaceId": "2e12a0a03b0839a8b84432b8291cfd94",
+    "queryJobId": "consultation-84ac4efa7592083aa8f01031bb799508f2b8308db3dbae58a4ba292953f3f8ac"
+  },
+  "goalId": "goal-mullar1o-1",
+  "originalGoal": true,
+  "sessionRef": {
+    "aggregateType": "Session",
+    "projectId": "48985e87e7697d72d7083396ecb8106b",
+    "sessionId": "session-0394c756db5968b642e5f0d070348e61316476978ff6bfc390ce48e807e73ab2"
+  },
+  "originalSession": true,
+  "path": "normal Session send → consultation",
+  "kernelStarts": 2,
+  "providerCalls": 2,
+  "providerCallsEvidence": "Reported usage entries (not inferred from Kernel request_started)",
+  "completedModelResponses": 2,
+  "modelFailures": 0,
+  "toolStarted": 4,
+  "toolCompleted": 4,
+  "toolFailed": 0,
+  "toolCancelled": 0,
+  "runStatus": "answered",
+  "outcome": "answered",
+  "phase": "settled",
+  "answerPresent": true,
+  "sessionOccupied": false,
+  "failure": null,
+  "note": "Read-only ledger/Kernel metadata; no observer/start/model invocation. Failure message and all prompt/output/credentials omitted."
+}

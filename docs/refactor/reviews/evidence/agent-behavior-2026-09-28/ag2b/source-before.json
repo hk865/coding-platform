@@ -1,0 +1,62 @@
+{
+  "src/app/collaboration-driver.ts": {
+    "sha256": "83387d035ef1184328e242cd936488bca55eb2c3c97a4a0606f9694f357fb7fc",
+    "lines": 1
+  },
+  "src/app/host.ts": {
+    "sha256": "c1638768eb6a92ab4d29e37a270e09e176b269b1888d33d8f06e96d3a87dced0",
+    "lines": 266
+  },
+  "src/app/core-routes.ts": {
+    "sha256": "59dd752cf6bfac1a3614fe9ffce5474c37869ce9a0cd3433ed231ea72d390362",
+    "lines": 382
+  },
+  "src/app/core-http-types.ts": {
+    "sha256": "664dd7dbe06838719ebd842c2054b63db7df50e360fe0f1f037351aea7242a70",
+    "lines": 330
+  },
+  "src/core/work-graph/communication/contracts.ts": {
+    "sha256": "72e00256351b30bc8370e404f6ba2e4c620220affedf606ae71b38bb33d827cb",
+    "lines": 184
+  },
+  "src/core/work-graph/communication/message-record-codecs.ts": {
+    "sha256": "1b0cb183f6f952507ce4f2f4ac7f7f6593a572b85c27965ffe8353f8d64ed6de",
+    "lines": 491
+  },
+  "src/core/work-graph/communication/mailbox-service.ts": {
+    "sha256": "fc0536b9df8d1685ece1181a313239a64b4ac0ba1dfec9fa807cd6eaacac98e1",
+    "lines": 1668
+  },
+  "src/core/agent-runtime/communication-tools.ts": {
+    "sha256": "b3ced82df2417d6e5e0af97ede7e50bbc8b9ace2599f0a6a9003ff38d791b194",
+    "lines": 263
+  },
+  "src/core/agent-runtime/execution-driver.ts": {
+    "sha256": "d201d4555408c92c82b070d2cd12d4ece9d8b19d22363c420212b315da54f4b4",
+    "lines": 720
+  },
+  "src/core/agent-runtime/execution-control.ts": {
+    "sha256": "623d3e9ad78f457dca60bb0812260499bbbd3d6654334b398902d215563357cf",
+    "lines": 253
+  },
+  "src/composition/create-platform.ts": {
+    "sha256": "52789b434260b4fd5556435e68313236555c0f345a61830b8ac20fedb32abe62",
+    "lines": 639
+  },
+  "src/ui/main.ts": {
+    "sha256": "058a36a15d8796066f5d57787fab09d3bb735d2736da7bba949604e2c7542031",
+    "lines": 3462
+  },
+  "src/ui/views.ts": {
+    "sha256": "2c846565e7aae6d61cc6bfc73495adb56c7ea4a18e22e09254a0c4f6d69fcbb8",
+    "lines": 1409
+  },
+  "resources/skills/platform-work/content.md": {
+    "sha256": "84d45d7255beb0c64d5fb831e7d58aa737beec479eea4c29f4e8d87e5e3a8887",
+    "lines": 26
+  },
+  "runtime-assets.json": {
+    "sha256": "673756b3a478a885bb6578e73b330ea122baa9bcda459e37ae76a5104b0274a0",
+    "lines": 90
+  }
+}

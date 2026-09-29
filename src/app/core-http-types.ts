@@ -39,12 +39,15 @@ import type { RuntimeBudget } from '../contracts/runtime-budget.js';
 import type { QueryJobPort, QueryExecutionRecord } from '../core/work-graph/queries/contracts.js';
 import type { MaterialPort } from '../core/work-graph/materials/contracts.js';
 import type { WorkflowPort } from '../business/workflow/ports.js';
+import type { CollaborationDriverPort } from './collaboration-driver.js';
+import type { WorkbenchToolsPort } from './workbench-tools.js';
 import type { InitialPlanningGoalInputResult, WorkflowAdvanceResult, WorkflowStepReceipt } from '../business/workflow/contracts.js';
 
 /** The project/workspace navigation scope. It is a real domain scope, not a
  * second source of Project/Workspace registration truth. */
 export type { AdoptInitialArchitectureInput, ArchitectureRevision, ModuleDefinition } from '../core/work-graph/architecture/catalog-contracts.js';
 export type { ObservedArchitectureNeighborhood } from '../core/work-graph/architecture/contracts.js';
+export type { CurrentCompletionPolicyRead } from '../core/work-graph/configuration/project-bootstrap-contracts.js';
 export type { TaskGraph, TaskRow } from '../core/work-graph/tasks/plan-contracts.js';
 export type { CoreRejection, ReadResult } from '../contracts/core/results.js';
 export type { CaptureSummary, SourcePage, WorkspaceFile, WorkspaceResult } from '../core/workspace/ports.js';
@@ -69,10 +72,12 @@ export const BOOTSTRAP_SUFFIX = 'bootstrap';
 export type CoreRouteKind = 'graph_write' | 'plain';
 
 export type CoreRouteSuffix =
+  | 'controls/submit' | 'controls/read' | 'controls/deliver' | 'executions/start'
   | 'projects/create'
   | 'workspaces/register'
   | 'completion-policies/install'
   | 'completion-policies/activate'
+  | 'completion-policies/read'
   | 'goals/create'
   | 'goals/read'
   | 'architecture/adopt-initial'
@@ -84,6 +89,7 @@ export type CoreRouteSuffix =
   | 'plans/proposal'
   | 'tasks/query'
   | 'files/read'
+  | 'files/list'
   | 'source/capture'
   | 'source/query'
   | 'sessions/find'
@@ -92,10 +98,14 @@ export type CoreRouteSuffix =
   | 'runtime/capabilities'
   | 'sessions/create'
   | 'sessions/history'
+  | 'sessions/archive'
+  | 'sessions/reactivate'
+  | 'sessions/link'
   | 'messages/send'
   | 'messages/inbox'
   | 'messages/read'
   | 'messages/body'
+  | 'messages/outbox'
   | 'workspaces/registration'
   | 'queries/submit'
   | 'queries/read'
@@ -107,8 +117,21 @@ export type CoreRouteSuffix =
   | 'materials/open'
   | 'workflow/goal-input'
   | 'workflow/advance'
+  | 'workflow/consultation'
+  | 'workflow/driver-start'
+  | 'workflow/driver-read'
+  | 'workflow/driver-stop'
   | 'executions/read'
-  | 'executions/history';
+  | 'executions/history'
+  // MVP UI connection: bounded execution list, narrow project read, Kernel
+  // workspace CAS save/compare and the explicit command handles.
+  | 'executions/list'
+  | 'projects/read'
+  | 'files/save'
+  | 'files/compare'
+  | 'commands/start'
+  | 'commands/read'
+  | 'commands/stop';
 
 type SecondArgument<M> = M extends (ctx: CoreCallContext, argument: infer A) => unknown ? A : never;
 type MethodResult<M> = M extends (ctx: CoreCallContext, argument: never) => infer R ? Awaited<R> : never;
@@ -127,6 +150,8 @@ export type CompletionPoliciesInstallBody = GraphWriteBody<CompletionPolicyConfi
 export type CompletionPoliciesInstallResponse = RouteResponse<CompletionPolicyConfigurationPort['installCompletionPolicy']>;
 export type CompletionPoliciesActivateBody = GraphWriteBody<CompletionPolicyConfigurationPort['activateCompletionPolicy']>;
 export type CompletionPoliciesActivateResponse = RouteResponse<CompletionPolicyConfigurationPort['activateCompletionPolicy']>;
+export type CompletionPoliciesReadBody = PlainBody<NonNullable<CompletionPolicyConfigurationPort['readCurrentCompletionPolicy']>>;
+export type CompletionPoliciesReadResponse = RouteResponse<NonNullable<CompletionPolicyConfigurationPort['readCurrentCompletionPolicy']>>;
 export type GoalsCreateBody = GraphWriteBody<GoalTaskPort['createGoal']>;
 export type GoalsCreateResponse = RouteResponse<GoalTaskPort['createGoal']>;
 export type GoalsReadBody = PlainBody<PlanTaskPort['queryGoal']>;
@@ -149,6 +174,11 @@ export type TasksQueryBody = PlainBody<PlanTaskPort['queryTaskGraph']>;
 export type TasksQueryResponse = RouteResponse<PlanTaskPort['queryTaskGraph']>;
 export type FilesReadBody = PlainBody<WorkspaceToolsPort['readWorkspace']>;
 export type FilesReadResponse = RouteResponse<WorkspaceToolsPort['readWorkspace']>;
+/** `files/list` is the Host workbench-tools bounded directory inventory: it
+ * enumerates authorized paths without reading any body, so binary/oversized
+ * files do not fail the tree. `files/read` keeps the original text ceiling. */
+export type FilesListBody = PlainBody<WorkbenchToolsPort['listFiles']>;
+export type FilesListResponse = RouteResponse<WorkbenchToolsPort['listFiles']>;
 /** `source/capture` maps to the real `CaptureSourceRequest` and returns a
  * `WorkspaceResult<CaptureSummary>`; it is not wrapped in a GraphWrite. */
 export type SourceCaptureBody = PlainBody<WorkspaceCapturePort['captureSourceChanges']>;
@@ -187,6 +217,8 @@ export type MessagesReadBody = PlainBody<SessionMailboxPort['readMessage']>;
 export type MessagesReadResponse = RouteResponse<SessionMailboxPort['readMessage']>;
 export type MessagesBodyBody = PlainBody<SessionMailboxPort['readMessageBody']>;
 export type MessagesBodyResponse = RouteResponse<SessionMailboxPort['readMessageBody']>;
+export type MessagesOutboxBody = PlainBody<NonNullable<SessionMailboxPort['readOutbox']>>;
+export type MessagesOutboxResponse = RouteResponse<NonNullable<SessionMailboxPort['readOutbox']>>;
 
 // ---------------------------------------------------------------------------
 // R6 execution-entry routes: each alias is derived from the exact public owner
@@ -217,6 +249,20 @@ export type WorkflowGoalInputBody = PlainBody<WorkflowPort['handleGoalInput']>;
 export type WorkflowGoalInputResponse = RouteResponse<WorkflowPort['handleGoalInput']>;
 export type WorkflowAdvanceBody = PlainBody<WorkflowPort['advanceWork']>;
 export type WorkflowAdvanceResponse = RouteResponse<WorkflowPort['advanceWork']>;
+/** The explicit-consultation route derives its body/response from the exact
+ * optional `WorkflowPort.consumeConsultation` method; the composition root
+ * always publishes it, so the NonNullable derivation is the real DTO. */
+export type WorkflowConsultationBody = PlainBody<NonNullable<WorkflowPort['consumeConsultation']>>;
+export type WorkflowConsultationResponse = RouteResponse<NonNullable<WorkflowPort['consumeConsultation']>>;
+// AG2b collaboration driver: the three plain routes derive their bodies and
+// responses from the exact frozen driver methods, so the DTO never restates a
+// domain shape.
+export type WorkflowDriverStartBody = PlainBody<CollaborationDriverPort['start']>;
+export type WorkflowDriverStartResponse = RouteResponse<CollaborationDriverPort['start']>;
+export type WorkflowDriverReadBody = PlainBody<CollaborationDriverPort['read']>;
+export type WorkflowDriverReadResponse = RouteResponse<CollaborationDriverPort['read']>;
+export type WorkflowDriverStopBody = PlainBody<CollaborationDriverPort['stop']>;
+export type WorkflowDriverStopResponse = RouteResponse<CollaborationDriverPort['stop']>;
 
 // ---------------------------------------------------------------------------
 // R6 Task-execution -> original Session/history consumer routes. Both suffixes
@@ -230,6 +276,33 @@ export type ExecutionsReadBody = PlainBody<ExecutionReadPort['readExecution']>;
 export type ExecutionsReadResponse = RouteResponse<ExecutionReadPort['readExecution']>;
 export type ExecutionsHistoryBody = PlainBody<RuntimeExecutionPort['readTaskExecutionHistory']>;
 export type ExecutionsHistoryResponse = RouteResponse<RuntimeExecutionPort['readTaskExecutionHistory']>;
+
+// ---------------------------------------------------------------------------
+// MVP UI connection routes. Each alias derives from the exact owner method:
+//   - `executions/list` is the bounded ExecutionReadPort.listExecutions page;
+//   - `projects/read` is the narrow ProjectRegistrationPort.readProject read;
+//   - `files/save` is the Host workbench-tools Kernel CAS write;
+//   - `files/compare` forwards the EXISTING WorkspaceToolsPort.compareWorkspace
+//     (no new compare implementation);
+//   - the three command routes are the Host command-handle start/read/stop.
+// Both methods added to an existing owner are optional on the port only so an
+// existing narrow test double keeps compiling; the real composition always
+// assembles them, and a Host without workbench tools answers `unsupported`.
+// ---------------------------------------------------------------------------
+export type ExecutionsListBody = PlainBody<NonNullable<ExecutionReadPort['listExecutions']>>;
+export type ExecutionsListResponse = RouteResponse<NonNullable<ExecutionReadPort['listExecutions']>>;
+export type ProjectsReadBody = PlainBody<NonNullable<ProjectRegistrationPort['readProject']>>;
+export type ProjectsReadResponse = RouteResponse<NonNullable<ProjectRegistrationPort['readProject']>>;
+export type FilesSaveBody = PlainBody<WorkbenchToolsPort['saveFile']>;
+export type FilesSaveResponse = RouteResponse<WorkbenchToolsPort['saveFile']>;
+export type FilesCompareBody = PlainBody<WorkspaceToolsPort['compareWorkspace']>;
+export type FilesCompareResponse = RouteResponse<WorkspaceToolsPort['compareWorkspace']>;
+export type CommandsStartBody = PlainBody<WorkbenchToolsPort['startCommand']>;
+export type CommandsStartResponse = RouteResponse<WorkbenchToolsPort['startCommand']>;
+export type CommandsReadBody = PlainBody<WorkbenchToolsPort['readCommand']>;
+export type CommandsReadResponse = RouteResponse<WorkbenchToolsPort['readCommand']>;
+export type CommandsStopBody = PlainBody<WorkbenchToolsPort['stopCommand']>;
+export type CommandsStopResponse = RouteResponse<WorkbenchToolsPort['stopCommand']>;
 
 /** Exact public result/domain shapes the UI and its tests consume. They are
  * re-exported, never restated, so the browser cannot depend on a private copy. */
@@ -247,7 +320,17 @@ export type { RunRef } from '../contracts/dispatch.js';
 export type { TaskExecutionRecord } from '../core/work-graph/tasks/execution-read-contracts.js';
 export type { ExecutionHistoryPage } from '../core/agent-runtime/execution-history-contracts.js';
 export type { PreparedQueryExecution } from '../contracts/core/prepared-execution.js';
-export type { InitialPlanningGoalInputResult, WorkflowAdvanceResult, WorkflowStepReceipt } from '../business/workflow/contracts.js';
+export type { ExecutionListPageRequest, TaskExecutionPage } from '../core/work-graph/tasks/execution-read-contracts.js';
+export type { WorkspaceComparison, WorkspaceComparisonRequest, WorkspaceVersion } from '../core/workspace/ports.js';
+export type {
+  SaveWorkbenchFileRequest, SaveWorkbenchFileResult,
+  ListWorkbenchFilesRequest, ListWorkbenchFilesResult,
+  StartWorkbenchCommandRequest, WorkbenchCommandRef, WorkbenchCommandSnapshot,
+  WorkbenchCommandState, WorkbenchToolsPort, WorkbenchToolsWorkspace,
+} from './workbench-tools.js';
+export type { InitialPlanningGoalInputResult, WorkflowAdvanceResult, WorkflowStepReceipt,
+  ConsultationInput, ConsultationResult } from '../business/workflow/contracts.js';
+export type { CollaborationDriverPort, CollaborationSnapshot, CollaborationState } from './collaboration-driver.js';
 
 /** Explicitly unsupported capability gap surfaced verbatim to the browser. */
 export type UnsupportedResponse = CoreRejection & { status: 'rejected'; code: 'unsupported' };
@@ -259,6 +342,11 @@ export type BootstrapWorkspace = {
   scope: CoreScope;
   name: string;
   workspaceRevision: number;
+  /** Display-only capability flags for the cold-start UI. Absence means the
+   * capability is NOT granted; no root, prefix list or permission predicate is
+   * ever published. */
+  writeAllowed?: boolean;
+  commandsAllowed?: boolean;
 };
 
 export type ReviewCompletionPolicy = {

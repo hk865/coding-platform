@@ -1,0 +1,17 @@
+{
+  "writableFiles": [
+    "src/core/agent-runtime/session-discovery-tools.ts",
+    "src/core/agent-runtime/execution-driver.ts",
+    "src/core/work-graph/sessions/session-directory.ts",
+    "resources/skills/platform-secretary/content.md",
+    "runtime-assets.json"
+  ],
+  "dshStateDirectories": [
+    "profiles",
+    "sessions",
+    "storages",
+    "cache",
+    "llm-deepseek",
+    "attachments"
+  ]
+}

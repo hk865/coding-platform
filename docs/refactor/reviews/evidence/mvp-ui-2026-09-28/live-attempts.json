@@ -1,0 +1,81 @@
+{
+  "snapshotAt": "2026-09-28T13:22:15.760414+00:00",
+  "countSource": "Only evidence.json scalar counters, times and error-array lengths; request/model bodies excluded.",
+  "interpretation": "Zero low-level error counters alone do not imply valid planning, fixture or recovery. Final limited acceptance includes one recorded semantic tool error; not a zero-tool-error claim.",
+  "attempts": [
+    {
+      "attempt": "run-01ZbPk",
+      "status": "closed_without_model",
+      "startedAt": "2026-09-28T12:15:31.855Z",
+      "closedAt": "2026-09-28T12:15:44.115Z",
+      "providerCalls": 0,
+      "toolErrorCount": 0,
+      "providerErrorCount": 0,
+      "transportErrorCount": 0,
+      "restartCount": 0,
+      "note": "Initial setup; no model acceptance claimed."
+    },
+    {
+      "attempt": "run-0MsWZx",
+      "status": "failed_not_accepted",
+      "startedAt": "2026-09-28T12:57:26.434Z",
+      "closedAt": "2026-09-28T13:03:48.073Z",
+      "providerCalls": 4,
+      "toolErrorCount": 0,
+      "providerErrorCount": 1,
+      "transportErrorCount": 0,
+      "restartCount": 0,
+      "note": "provider_request_failed; underlying cause unknown. Do not relabel as semantic error or successful E2E."
+    },
+    {
+      "attempt": "run-2Lznkl",
+      "status": "failed_not_accepted",
+      "startedAt": "2026-09-28T12:53:39.963Z",
+      "closedAt": "2026-09-28T12:57:26.083Z",
+      "providerCalls": 4,
+      "toolErrorCount": 0,
+      "providerErrorCount": 0,
+      "transportErrorCount": 0,
+      "restartCount": 1,
+      "note": "verification kind=test rejected; shell fixture lacked shellWorkspaceAccess. Restart removed shell on original DB, but new driver could not automatically recover the starting Run; unaccepted recovery limitation retained."
+    },
+    {
+      "attempt": "run-FUGeXf",
+      "status": "accepted_limited_path_host_retained",
+      "startedAt": "2026-09-28T13:03:48.419Z",
+      "closedAt": null,
+      "providerCalls": 14,
+      "toolErrorCount": 1,
+      "providerErrorCount": 0,
+      "transportErrorCount": 0,
+      "restartCount": 2,
+      "note": "14 provider calls, one semantic tool error, no provider/transport errors. Planning JSON was corrected in the same Session; user adopted candidate. Existing Goal/DB resumed after gate fix; formal complete_goal and three satisfied Tasks observed. Host intentionally retained on port 44797.",
+      "restartAudit": [
+        {
+          "ordinal": 1,
+          "at": "2026-09-28T13:18:32.746Z",
+          "newGateBuildLoaded": false,
+          "note": "The intended repair restart still used the old build."
+        },
+        {
+          "ordinal": 2,
+          "at": "2026-09-28T13:19:49.044Z",
+          "newGateBuildLoaded": true,
+          "note": "After independently successful typecheck/build, restart loaded the gate repair and resumed the same Goal/DB."
+        }
+      ]
+    },
+    {
+      "attempt": "run-uHbloI",
+      "status": "failed_not_accepted",
+      "startedAt": "2026-09-28T12:32:20.650Z",
+      "closedAt": "2026-09-28T12:53:39.627Z",
+      "providerCalls": 10,
+      "toolErrorCount": 0,
+      "providerErrorCount": 0,
+      "transportErrorCount": 0,
+      "restartCount": 0,
+      "note": "Model JSON-format failure and invalid check fixture; retained failure."
+    }
+  ]
+}

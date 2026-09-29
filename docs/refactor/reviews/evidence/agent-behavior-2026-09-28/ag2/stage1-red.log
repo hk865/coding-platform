@@ -1,0 +1,73 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform-next
+
+ ❯ tests/app/AG2-consultation.test.ts (3 tests | 3 failed) 1355ms
+     × answers the original question from the saved formal Query answer and replies on the original message 53ms
+     × waits on a busy recipient and refuses a consultation bound to a non-recipient Session 27ms
+     × attaches a reply to an already-saved formal answer without re-running the model 100ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/app/AG2-consultation.test.ts > AG2 explicit consultation over the real Host HTTP > answers the original question from the saved formal Query answer and replies on the original message
+AssertionError: expected 404 to be 200 // Object.is equality
+
+- Expected
++ Received
+
+- 200
++ 404
+
+ ❯ tests/app/AG2-consultation.test.ts:375:35
+    373|       // FIRST RED (Stage 1): the route is not published yet, so the r…
+    374|       // boundary answers 404 `unpublished core route workflow/consult…
+    375|       expect(consultation.status).toBe(200);
+       |                                   ^
+    376|       const body = await consultation.json() as unknown;
+    377|       const value = asRecord(asRecord(body)['value']);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  tests/app/AG2-consultation.test.ts > AG2 explicit consultation over the real Host HTTP > waits on a busy recipient and refuses a consultation bound to a non-recipient Session
+AssertionError: expected 404 to be 200 // Object.is equality
+
+- Expected
++ Received
+
+- 200
++ 404
+
+ ❯ tests/app/AG2-consultation.test.ts:474:35
+    472|       // FIRST RED (Stage 1): the unpublished route answers 404 before…
+    473|       // busy/archive policy can be reached.
+    474|       expect(consultation.status).toBe(200);
+       |                                   ^
+    475|       const body = await consultation.json() as unknown;
+    476|       const status = asRecord(body)['status'];
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+ FAIL  tests/app/AG2-consultation.test.ts > AG2 explicit consultation over the real Host HTTP > attaches a reply to an already-saved formal answer without re-running the model
+AssertionError: expected 404 to be 200 // Object.is equality
+
+- Expected
++ Received
+
+- 200
++ 404
+
+ ❯ tests/app/AG2-consultation.test.ts:552:35
+    550|       const consultation = await corePost(started.base, 'workflow/cons…
+    551|       // FIRST RED (Stage 1): the unpublished route answers 404.
+    552|       expect(consultation.status).toBe(200);
+       |                                   ^
+    553|       expect(await consultation.json()).toMatchObject({ status: 'ready…
+    554|         state: 'responded', answer: { ref: firstAnswerRef } } });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯
+
+
+ Test Files  1 failed | 1 passed (2)
+      Tests  3 failed | 9 passed (12)
+   Start at  01:41:20
+   Duration  4.98s (transform 855ms, setup 0ms, import 1.57s, tests 3.25s, environment 0ms)
+

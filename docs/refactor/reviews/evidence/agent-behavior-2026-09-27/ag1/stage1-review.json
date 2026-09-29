@@ -1,0 +1,14 @@
+{
+  "status": "frozen",
+  "testHash": "b4589f31c43a3adf4f0e74afd8a67ad547ed8897b7bb7eda7809494920b65b70",
+  "lines": 151,
+  "reviewChanges": [
+    "select idle from returned candidates, not fixture identity",
+    "second case reads formal Run role binding and directly verifies scope/cursor/Host-only writes"
+  ],
+  "red": [
+    "Runtime unsupported discovery tools",
+    "Session directory rejects work_run reads"
+  ],
+  "baselineHead": "d0dc9d6cf4b914159a67578dd1de7265fa9bad9d"
+}

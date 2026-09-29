@@ -10,9 +10,19 @@ import { fileURLToPath } from 'node:url';
 // declarations. No original Kernel source or generated platform build is read.
 const project = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const vendor = resolve(project, 'vendor/coding-agent');
-const relativeSources = ['storage/adapters/sqlite/sqlite-stores.ts', 'public-api.ts', 'app/composition/control-hooks.ts',
+const relativeSources = ['storage/adapters/sqlite/sqlite-stores.ts', 'public-api.ts', 'app/composition/control-hooks.ts', 'app/composition/composition-contracts.ts',
   'core/runtime/loop/runtime-runner.ts', 'app/composition/composition-root.ts', 'app/composition/resume-composition.ts',
-  'core/ports/session_store/session-history.ts'];
+  'core/ports/session_store/session-history.ts',
+  // The common orchestration mechanism extends the ONE Kernel Run lifecycle with an
+  // explicit yielded terminal boundary; the event/state/reducer seams are compiled
+  // from the restored sources and regenerated only through this script.
+  'core/runtime/state/run-state.ts', 'core/runtime/events/agent-events.ts', 'core/runtime/reducer/run-state-reducer.ts',
+  // session-store-port inlines the AgentEvent union into its emitted declarations; it
+  // must be regenerated with the same event set or its ZodObject snapshot goes stale.
+  'core/ports/session_store/session-store-port.ts',
+  // The Host workbench tool adapter needs the minimal legal empty-file replace;
+  // the restored source is managed here so dist is only produced by this script.
+  'sandbox/workspace/workspace-sandbox.ts', 'sandbox/process/process-sandbox.ts'];
 const artifacts = relativeSources.flatMap(source => ['.js', '.js.map', '.d.ts', '.d.ts.map']
   .map(suffix => ({ path: source.slice(0, -3) + suffix, source })));
 const args = process.argv.slice(2);

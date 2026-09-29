@@ -436,6 +436,15 @@ function validateRoundEvent(event: EncodedDomainEvent): DecodeResult<EncodedDoma
     return decoded.status === 'decoded' ? { status: 'decoded', value: event } : decoded;
 }
 
+/**
+ * The candidate lookup for the ONE original round (open or finalized) of an
+ * ended subject Run, keyed by the round's formal scope/subject-Run identity. It
+ * is a candidate index only: `queryOriginalVerification` rechecks the decoded
+ * canonical round's scope, subject Run/task and adopted Plan, and never guesses
+ * the latest when more than one row matches.
+ */
+export const VERIFICATION_ROUND_ORIGINAL_LOOKUP = 'VerificationRoundBySubject' as const;
+
 /** The ONE R3e registration. Run/Plan/policy/baseline schemas keep their owners. */
 export const EVIDENCE_RECORD_SCHEMAS: RecordBackendSchemas = {
     records: [
@@ -446,5 +455,8 @@ export const EVIDENCE_RECORD_SCHEMAS: RecordBackendSchemas = {
     events: VERIFICATION_ROUND_EVENT_TYPES.map(eventType => ({
         eventType, schemaVersion: EVIDENCE_EVENT_SCHEMA_VERSION, validate: validateRoundEvent,
     })),
-    lookups: [],
+    lookups: [
+        { name: VERIFICATION_ROUND_ORIGINAL_LOOKUP, aggregateType: 'VerificationRound',
+            paths: ['ref.projectId', 'ref.workspaceId', 'ref.goalId', 'ref.taskId', 'ref.runId'] },
+    ],
 };

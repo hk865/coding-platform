@@ -387,7 +387,7 @@ describe('R4.1 durable control intent', () => {
       principal: { kind: 'host', actor },
       materialReader: { kind: 'host', projectId: fixture.ctx.projectId, workspaceId: 'r4-other-workspace', actor },
       signal: new AbortController().signal };
-    const badKind = { runRef: fixture.claim.runRef, kind: 'resume', reason: null } as unknown as SubmitControlInput;
+    const badKind = { runRef: fixture.claim.runRef, kind: 'unknown-control', reason: null } as unknown as SubmitControlInput;
     const base = { input: { runRef: fixture.claim.runRef, kind: 'pause' as const, reason: null },
       meta: { requestId: 'r4-boundary-base', expected: [runPin] } };
 

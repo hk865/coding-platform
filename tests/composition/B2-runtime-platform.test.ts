@@ -1,10 +1,24 @@
 /** Real composition consumers over the same durable ledger, bodies and Kernel Session.
  * Initial domain facts are produced by real Goal/Plan/Session/claim services in
  * the shared fixture. No Run/envelope/terminal is manually seeded. */
-import {afterEach,expect,it} from 'vitest';
+import {afterEach,expect,it,vi} from 'vitest';
 import {join} from 'node:path';
 import {createTargetPlatform} from '../../src/composition/create-platform.js';
 import {B2_AT,createB2RuntimeFixture,type B2RuntimeFixture} from '../helpers/B2-runtime-fixture.js';
+
+// Narrow spy around the real Role factory: the composition root still builds its
+// real resolver, so each Work admission must reuse the Role resolution its entry
+// recheck already made instead of resolving a second time through authorizeConfiguration.
+const roleResolutions=vi.hoisted(()=>({binding:0}));
+vi.mock('../../src/core/work-graph/configuration/role-memory-service.js',async importOriginal=>{
+  const actual=await importOriginal<typeof import('../../src/core/work-graph/configuration/role-memory-service.js')>();
+  return {...actual,createRoleConfigurationService:(deps:Parameters<typeof actual.createRoleConfigurationService>[0])=>{
+    const service=actual.createRoleConfigurationService(deps);
+    return {...service,
+      resolveRoleBinding:async(...args:Parameters<typeof service.resolveRoleBinding>)=>{roleResolutions.binding++;return service.resolveRoleBinding(...args);},
+    };
+  }};
+});
 
 const fixtures:B2RuntimeFixture[]=[];
 afterEach(async()=>{for(const fixture of fixtures.splice(0))await fixture.close();});
@@ -18,6 +32,7 @@ async function open(options:Parameters<typeof createB2RuntimeFixture>[0]={}){
 
 it('prepares and executes the real claimed Run through the composition root, then cold-observes without another provider',async()=>{
   const {fixture:f,platformOptions,platform}=await open({scriptedReplies:[{kind:'text',text:'B2 composed answer'}]});
+  roleResolutions.binding=0;
   try{
     const capabilities=await platform.runtime.capabilities(f.ctx,f.scope);
     expect(capabilities).toMatchObject({status:'ready',value:{createSession:{supported:true},readHistory:{supported:true},scopedWorkspaceWrites:{supported:false}}});
@@ -35,6 +50,8 @@ it('prepares and executes the real claimed Run through the composition root, the
       expect(observed).toMatchObject({status:'ready',value:{run:{status:'ended'},session:{occupancy:null}}});
       if(observed.status==='ready')expect(observed.value.run.executionHistory).toEqual(original.value.run.executionHistory);
       expect(f.scripted.calls()).toBe(1);
+      // The checked Role facts are reused by Host admission; no second resolver is needed.
+      expect(roleResolutions.binding).toBe(0);
     }finally{await reopened.close();}
   }finally{await platform.close();}
 });

@@ -1,0 +1,69 @@
+{
+  "status": "implemented_and_browser_checked",
+  "reason": "User rejected previous UI fidelity; existing backend evidence remains limited to formal consumers and isolated execution.",
+  "referenceThread": "01a0dc16-38ca-7a71-ba7d-fc23e0d3cbed",
+  "referenceSource": "/home/hyh001/.codex/visualizations/2026/09/26/01a0dc16-38ca-7a71-ba7d-fc23e0d3cbed/agent-workbench.html",
+  "referenceSha256": "c581dafd12193e9cb9797ecaafa0c617ebb42031744eef274ee03b19ebc58c9c",
+  "baseline": {
+    "src/ui/index.html": "9f20410a78b039726c1475467969b80a25911791352e078da39123a6c38ff0bf",
+    "src/ui/styles.css": "6b78c9817d576f49a8e329fb894e58ab3d90bb2418f5fd663198f727aef497bb",
+    "src/ui/main.ts": "e6b7d2ea014288cf53a682b520dc003adbc81c303faed861010ee0c550fcab4b",
+    "src/ui/views.ts": "38b89b794c63bf1c082fbb5dd7bee67b061bf4536cf63a6a42cd58b8660bc897"
+  },
+  "lane": "ui-prototype-correction-20260928",
+  "stage1": {
+    "session": "session-057b5486-4f51-467d-901d-6285482c2dc3",
+    "exitCode": 0,
+    "sourceChanged": false,
+    "review": "Display interfaces reviewed; unused 317-line additive skeleton is not mandatory. Stage2 must modify existing UI, shared project auxiliary tabs, per-recipient drafts, archived read-only history and actual multi-scope navigation."
+  },
+  "stage2Initial": {
+    "attempt": "attempt-1790602884797640103",
+    "exitCode": 0,
+    "scope": "four UI files only; no outside scope or root source changes",
+    "decision": "rejected; not imported",
+    "checks": "types and 16 existing checks passed; default build blocked by read-only output directory",
+    "remaining": [
+      "project-shared tabs",
+      "recipient-only draft clearing",
+      "project tree navigation",
+      "continuous lens within Task structure instead of stacked timeline",
+      "minimal graph labels and compact node details"
+    ]
+  },
+  "stage2Repair": {
+    "attempt": "attempt-1790603521654634131",
+    "exitCode": 0,
+    "scope": "four UI files; outsideScope and originalWorkspaceChanged empty",
+    "review": "imported after bounded audit; root corrected remaining graph identity, untimed edges, archive read-only, node double-click, lens input lifetime and context-menu issues"
+  },
+  "validation": {
+    "node": "24.21.0",
+    "typecheck": "passed",
+    "build": "passed",
+    "tests": {
+      "files": [
+        "tests/app/R6-workbench.test.ts",
+        "tests/app/MVP-ui-entry.test.ts"
+      ],
+      "passed": 16,
+      "failed": 0,
+      "note": "one existing assertion migrated from simultaneously stacked hierarchy/execution sections to separately selectable graph modes; no new test cases"
+    },
+    "browser": "actual same Host/database at 127.0.0.1:44797; project/tree, graphs, node detail/pin/context/new page, file draft/reference and recipient switching, Task→Run history verified",
+    "newModelExecutionTriggered": false,
+    "newWorkspaceFileWrites": false,
+    "notClaimed": [
+      "new live model E2E",
+      "large-project visual acceptance",
+      "whole MVP acceptance"
+    ]
+  },
+  "finalSha256": {
+    "src/ui/index.html": "cf847c9df5dceb69e400cd77b1dfa9b4ec4895f5f6b6abcace42539ee3197597",
+    "src/ui/styles.css": "27325fc831b527b83eec1cb73bcd0d2ce56dbd2452d30d008747aa5b94fa1dc4",
+    "src/ui/main.ts": "a5084877c26374a5aea9136c580f6608710832346a9103c991864d3ccaa322d6",
+    "src/ui/views.ts": "874cd55b7efea8b75c807e2749aedb2344c5ecdb39a0c51e80b82e8591c28a22",
+    "tests/app/R6-workbench.test.ts": "d15530aca2cbf10539dd8b13c1720bb703427368f48ddb95970b5771bbe52c19"
+  }
+}

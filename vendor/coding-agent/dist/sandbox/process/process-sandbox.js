@@ -165,6 +165,10 @@ export class ProcessSandbox {
         const executionStartedAt = performance.now();
         try {
             const args = await this.#arguments(request.command, cwd, rootCapability);
+            // Preparation awaits may outlive an accepted stop. No child exists yet.
+            if (request.signal.aborted) {
+                return this.#notStartedResult(true, false, request.outputLimitBytes);
+            }
             result = await new Promise((resolve, reject) => {
                 const child = spawn(this.profile.bwrapPath, args, {
                     detached: true,
@@ -199,6 +203,10 @@ export class ProcessSandbox {
                 timeout.unref?.();
                 const onAbort = () => terminate("cancel");
                 request.signal.addEventListener("abort", onAbort, { once: true });
+                // AbortSignal does not replay an abort that preceded registration.
+                // Once spawned, termination still settles from the real child close.
+                if (request.signal.aborted)
+                    onAbort();
                 child.stdout.on("data", (chunk) => {
                     stdoutBytes += chunk.byteLength;
                     appendBounded(stdoutChunks, chunk, stdoutRetained, request.outputLimitBytes);

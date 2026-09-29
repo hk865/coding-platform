@@ -45,7 +45,7 @@ import type {
 } from '../../record-store/ports.js';
 import type { GraphWrite } from '../tasks/contracts.js';
 import { decodeProjectSnapshot, decodeWorkspaceSnapshot, encodeProjectSnapshot, encodeWorkspaceSnapshot, cloneActorRef } from '../persistence/record-codecs.js';
-import type { ProjectBootstrapDependencies, ProjectBootstrapServices } from './project-bootstrap-contracts.js';
+import type { CurrentCompletionPolicyRead, ProjectBootstrapDependencies, ProjectBootstrapServices } from './project-bootstrap-contracts.js';
 import type {
   ProjectBootstrapEventFact,
   ProjectCompletionPolicyActivatedEventV1,
@@ -1019,6 +1019,122 @@ async function readWorkspaceRegistration(
 }
 
 // --------------------------------------------------------------------------
+// readProject
+// --------------------------------------------------------------------------
+
+/**
+ * MVP UI connection: one narrow read of ONLY the already-registered Project.
+ * It is deliberately separate from `readWorkspaceRegistration` because a
+ * cold-start UI must be able to tell "the Project is absent" apart from "the
+ * Workspace is absent" without parsing a failure message. Stage one freezes the
+ * exact scope check and reports the unimplemented read; stage two reuses the
+ * existing directed `readProjectRevision` read and the shared Project codec,
+ * so the REAL revision is returned and revision 1 is never assumed.
+ */
+async function readProject(
+  deps: ProjectBootstrapDependencies,
+  ctx: CoreCallContext,
+  projectId: string,
+): Promise<ReadResult<ProjectSnapshot>> {
+  const bound = bindContext(ctx);
+  if (bound.status !== 'ok') return bound;
+  if (!nonEmpty(projectId)) return invalid('readProject requires a non-empty projectId');
+  if (bound.projectId !== projectId) return forbidden('the call context is outside the requested project');
+  if (ctx.signal.aborted) return rejected('cancelled', 'the project read was cancelled before the read');
+  // The SAME directed read the bootstrap writers use: one readMany of the exact
+  // Project key, decoded through the shared codec. Missing stays not_found and a
+  // damaged record stays unavailable; the real revision is never guessed.
+  const project = await readProjectRevision(deps.records, projectId);
+  if (project.status === 'rejected') return project;
+  return { status: 'ready', value: { ref: project.ref, revision: project.revision } };
+}
+
+// --------------------------------------------------------------------------
+// readCurrentCompletionPolicy
+// --------------------------------------------------------------------------
+
+/**
+ * R6 cold-start: one exact read of the project's CURRENT CompletionPolicy from
+ * the real owner facts. It reads the active pointer row and then the immutable
+ * revision that pointer names, checks the pointer/body agreement and recomputes
+ * the canonical content digest. No active pointer is an explicit `not_found`
+ * (the ONLY result that permits treating setup as absent); a missing or damaged
+ * pinned row is `unavailable`/`incomplete`, never absence.
+ */
+async function readCurrentCompletionPolicy(
+  deps: ProjectBootstrapDependencies,
+  ctx: CoreCallContext,
+  input: { projectId: string },
+): Promise<ReadResult<CurrentCompletionPolicyRead>> {
+  const bound = bindContext(ctx);
+  if (bound.status !== 'ok') return bound;
+  const projectId = isRecord(input) ? input['projectId'] : undefined;
+  if (!nonEmpty(projectId)) return invalid('readCurrentCompletionPolicy requires a non-empty projectId');
+  if (bound.projectId !== projectId) return forbidden('the call context is outside the requested project');
+  if (ctx.signal.aborted) return rejected('cancelled', 'the current policy read was cancelled before the read');
+  const activeRef: ProjectCompletionPolicyActiveRef = { aggregateType: 'ProjectCompletionPolicyActive', projectId };
+  const activeKey = canonicalJson(activeRef as unknown as JsonValue);
+  const read = await deps.records.readMany([activeKey]);
+  if (read.status !== 'ready') return mapStoreFailure(read);
+  const activeLookup = lookupRecord(read.value, activeKey);
+  if (activeLookup.status === 'missing') {
+    return rejected('not_found', `project ${projectId} has no active CompletionPolicy`);
+  }
+  if (activeLookup.status === 'unaccounted') {
+    return unavailable('the record store neither returned nor reported missing the active policy pointer');
+  }
+  const parsed = parseRecordBody(activeLookup.record);
+  if (!isRecord(parsed)) return unavailable('the active policy pointer is not valid JSON');
+  if (parsed['revision'] !== activeLookup.record.revision) {
+    return unavailable('the active policy pointer revision disagrees with its body');
+  }
+  const pinned = localPolicyRefFromValue(parsed['activeRevision'], projectId);
+  if (pinned === null) return unavailable('the active policy pointer does not name a legal CompletionPolicyRevisionRef');
+  if (parsed['projectId'] !== pinned.projectId) {
+    return unavailable('the active policy pointer projectId disagrees with its ref');
+  }
+  const active: ProjectCompletionPolicyActiveSnapshot = {
+    ref: activeRef, projectId, activeRevision: pinned, revision: activeLookup.record.revision,
+  };
+  const policyKey = canonicalJson(pinned as unknown as JsonValue);
+  const policyRead = await deps.records.readMany([policyKey]);
+  if (policyRead.status !== 'ready') return mapStoreFailure(policyRead);
+  const policyLookup = lookupRecord(policyRead.value, policyKey);
+  if (policyLookup.status === 'missing') return unavailable('the active policy revision row is missing');
+  if (policyLookup.status === 'unaccounted') {
+    return unavailable('the record store neither returned nor reported missing the active policy revision');
+  }
+  const policyBody = parseRecordBody(policyLookup.record);
+  if (!isRecord(policyBody)) return unavailable('the active policy revision is not a JSON object');
+  if (policyBody['policyId'] !== pinned.policyId || policyBody['contentRevision'] !== pinned.revision) {
+    return unavailable('the active policy revision disagrees with the active pointer');
+  }
+  if (policyLookup.record.revision !== 1) return unavailable('the active policy revision row is not the immutable revision 1');
+  const content = policyBody['content'];
+  if (!isRecord(content) || !Array.isArray(content['requirementKinds'])
+    || typeof content['minimumRequiredRequirementsPerObligation'] !== 'number') {
+    return unavailable('the active policy revision content is malformed');
+  }
+  let contentDigest: string;
+  try {
+    contentDigest = completionPolicyContentDigest({
+      schemaVersion: 1, policyId: pinned.policyId, contentRevision: pinned.revision,
+      content: content as unknown as CompletionPolicyContentV1,
+    });
+  } catch {
+    return unavailable('the active policy content cannot be canonicalized');
+  }
+  if (policyBody['contentDigest'] !== contentDigest) {
+    return unavailable('the active policy revision digest does not match its content');
+  }
+  const policy: CompletionPolicyRevisionSnapshot = {
+    ref: pinned, revision: 1, schemaVersion: 1, policyId: pinned.policyId,
+    contentRevision: pinned.revision, contentDigest, content: content as unknown as CompletionPolicyContentV1,
+  };
+  return { status: 'ready', value: { active, policy } };
+}
+
+// --------------------------------------------------------------------------
 // Factory
 // --------------------------------------------------------------------------
 
@@ -1031,10 +1147,15 @@ export function createProjectBootstrapServices(deps: ProjectBootstrapDependencie
       // R6 execution-entry registration read: one exact Project/Workspace read
       // for the trusted Host; it writes nothing and returns the real revisions.
       readWorkspaceRegistration: (ctx, scope) => readWorkspaceRegistration(bootstrapDeps, ctx, scope),
+      // MVP UI connection: the narrow Project-only read for a cold start.
+      readProject: (ctx, projectId) => readProject(bootstrapDeps, ctx, projectId),
     },
     completionPolicies: {
       installCompletionPolicy: (ctx, request) => installCompletionPolicy(bootstrapDeps, ctx, request),
       activateCompletionPolicy: (ctx, request) => activateCompletionPolicy(bootstrapDeps, ctx, request),
+      // R6 cold-start: the independent current-policy read for the UI and the
+      // explicit setup adoption boundary.
+      readCurrentCompletionPolicy: (ctx, input) => readCurrentCompletionPolicy(bootstrapDeps, ctx, input),
     },
   };
 }

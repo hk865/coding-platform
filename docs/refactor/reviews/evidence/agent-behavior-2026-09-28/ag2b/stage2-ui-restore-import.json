@@ -1,0 +1,8 @@
+{
+  "path": "src/ui/main.ts",
+  "before": "6010a0746822e3cfbb827a4b82265486e28cb8fb14689b3f6d49c2383cdbb168",
+  "after": "ce54a543f039b0002c4719fbf934ecfec1d3409c2f2123a69f22699f82f719a7",
+  "attempt": "1790576398876432792",
+  "otherImportedPathsUnchanged": true,
+  "reason": "Current explicit Goal enables original read/start after page refresh; input focus retained."
+}

@@ -77,8 +77,8 @@ export declare const agentEventSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
         requestId: z.ZodString;
         failure: z.ZodObject<{
             category: z.ZodEnum<{
-                model: "model";
                 context: "context";
+                model: "model";
                 model_protocol: "model_protocol";
                 tool_executor: "tool_executor";
                 hook: "hook";
@@ -428,19 +428,64 @@ export declare const agentEventSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
     payload: z.ZodObject<{
         pause: z.ZodObject<{
             reason: z.ZodEnum<{
+                external_input_required: "external_input_required";
                 operator_requested: "operator_requested";
                 hook_requested: "hook_requested";
                 approval_required: "approval_required";
-                external_input_required: "external_input_required";
             }>;
             requestedBy: z.ZodEnum<{
-                runtime: "runtime";
                 tool_executor: "tool_executor";
                 hook: "hook";
+                runtime: "runtime";
                 app: "app";
             }>;
             pausedAt: z.ZodString;
             pendingToolCallId: z.ZodNullable<z.ZodString>;
+        }, z.core.$strict>;
+    }, z.core.$strict>;
+}, z.core.$strict>, z.ZodObject<{
+    type: z.ZodLiteral<"run.yielded">;
+    meta: z.ZodObject<{
+        schemaVersion: z.ZodLiteral<1>;
+        eventId: z.ZodString;
+        runId: z.ZodString;
+        turnId: z.ZodString;
+        sequence: z.ZodNumber;
+        occurredAt: z.ZodString;
+        elapsedMs: z.ZodNumber;
+    }, z.core.$strict>;
+    payload: z.ZodObject<{
+        yield: z.ZodObject<{
+            reason: z.ZodEnum<{
+                reply_required: "reply_required";
+                external_input_required: "external_input_required";
+                operator_requested: "operator_requested";
+            }>;
+            requestedBy: z.ZodEnum<{
+                runtime: "runtime";
+                app: "app";
+            }>;
+            yieldedAt: z.ZodString;
+            pendingToolCallId: z.ZodNullable<z.ZodString>;
+        }, z.core.$strict>;
+    }, z.core.$strict>;
+}, z.core.$strict>, z.ZodObject<{
+    type: z.ZodLiteral<"run.input_accepted">;
+    meta: z.ZodObject<{
+        schemaVersion: z.ZodLiteral<1>;
+        eventId: z.ZodString;
+        runId: z.ZodString;
+        turnId: z.ZodString;
+        sequence: z.ZodNumber;
+        occurredAt: z.ZodString;
+        elapsedMs: z.ZodNumber;
+    }, z.core.$strict>;
+    payload: z.ZodObject<{
+        input: z.ZodObject<{
+            inputId: z.ZodString;
+            messageId: z.ZodString;
+            text: z.ZodString;
+            sourceRef: z.ZodUnknown;
         }, z.core.$strict>;
     }, z.core.$strict>;
 }, z.core.$strict>, z.ZodObject<{
@@ -456,9 +501,9 @@ export declare const agentEventSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
     }, z.core.$strict>;
     payload: z.ZodObject<{
         resumedBy: z.ZodEnum<{
-            runtime: "runtime";
             tool_executor: "tool_executor";
             hook: "hook";
+            runtime: "runtime";
             app: "app";
         }>;
     }, z.core.$strict>;
@@ -507,8 +552,8 @@ export declare const agentEventSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
     }, z.core.$strict>;
     payload: z.ZodObject<{
         limit: z.ZodEnum<{
-            tool_calls: "tool_calls";
             model_requests: "model_requests";
+            tool_calls: "tool_calls";
             input_tokens: "input_tokens";
             output_tokens: "output_tokens";
             total_tokens: "total_tokens";
@@ -532,8 +577,8 @@ export declare const agentEventSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
     payload: z.ZodObject<{
         failure: z.ZodObject<{
             category: z.ZodEnum<{
-                model: "model";
                 context: "context";
+                model: "model";
                 model_protocol: "model_protocol";
                 tool_executor: "tool_executor";
                 hook: "hook";

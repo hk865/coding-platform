@@ -1,0 +1,48 @@
+{
+  "recordedAt": "2026-09-28T13:20:40.795338+00:00",
+  "source": "Main reviewer confirmed tool completion; this agent did not rerun checks.",
+  "interruptedCombinedCommand": {
+    "execSessionId": 70780,
+    "exitCode": 143,
+    "completedTests": {
+      "filesPassed": 4,
+      "testsPassed": 20,
+      "log": "gate-final-tests.log"
+    },
+    "typecheckAndBuild": "Not established by this interrupted command; the pre-existing logs are retained as pre-gate history."
+  },
+  "independentReruns": {
+    "typecheck": {
+      "execSessionId": 67850,
+      "exitCode": 0,
+      "log": "final-typecheck.log"
+    },
+    "build": {
+      "execSessionId": 31034,
+      "exitCode": 0,
+      "log": "final-build.log",
+      "compiledGateScopeCheck": "Main reviewer inspected dist and confirmed gateTask.scope.kind is present."
+    }
+  },
+  "liveResume": {
+    "hostPid": 2247899,
+    "databaseAttempt": "run-FUGeXf",
+    "sameDatabase": true,
+    "uiContinue": "Changed from previous rejection to running after rebuilt Host restart.",
+    "status": "accepted_limited_path",
+    "accepted": true,
+    "result": "Formal complete_goal, three Tasks satisfied and three PASS check rounds (stage/goal scopes); no new gate Run. Final browser reload restored Goal and gate continuation added zero provider calls.",
+    "finalEvidence": "live-final.json",
+    "hostRetained": true
+  },
+  "logs": {
+    "gate-final-tests.log": "8097f35c7d091faff8376384963c597455feac04c30b5d7f31eea5fd506ccd6d",
+    "final-typecheck.log": "57f92d562b87390a9400b80dd1e066bb5db335c24c8d86b81bf1e490fc8a3a66",
+    "final-build.log": "ca7011941032ce067def94b5e31cc5b4117b2c1644fabeb2e9be29108247f961"
+  },
+  "logProvenance": "Independent execution exit statuses and compiled dist inspection were confirmed by the main reviewer; do not infer freshness or exit status solely from a /tmp log file.",
+  "scopedDiffCheck": {
+    "exitCode": 0,
+    "source": "main reviewer report"
+  }
+}

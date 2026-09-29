@@ -1,0 +1,15 @@
+{
+  "workspace": "slam6_navigation (test)",
+  "rootPaths": 850,
+  "visibleBefore": 100,
+  "visibleAfterShowMore": 200,
+  "prefix": "ros2_ws/src",
+  "prefixPaths": 115,
+  "openedFile": "ros2_ws/src/fast_livo2_nav/config/nav2_params.yaml",
+  "fileBytes": 7552,
+  "version": "working_tree",
+  "fileDigestPrefix": "11baecf81d29",
+  "modelCallsInitiated": 0,
+  "workspaceWrites": 0,
+  "finalMainSha256": "88aa3ed4ded171149d3b114c46c1692dba636a01f75d73d66d887ea28013244e"
+}

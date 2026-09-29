@@ -20,8 +20,10 @@ import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { SessionRef } from '../../../contracts/core/identity.js';
 import type { ReadResult, WriteResult } from '../../../contracts/core/results.js';
-import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
+import type { SessionMessageIntentFields, SessionMessageIntentV1, SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { RoleBindingRefV1, RunRef, SourceRefV1 } from '../../../contracts/dispatch.js';
+import type { QueryJobAnswerRef, QueryRunRef } from '../../../contracts/query-job.js';
+import { canonicalJson, sha256Hex } from '../../../contracts/fingerprint.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
 import type { RoleBindingFactsPort } from '../configuration/contracts.js';
@@ -51,12 +53,33 @@ export type MessageWorkRunSender = {
 
 export type MessageSender = MessageHostSender | MessageWorkRunSender;
 
+/** The stable identity of one persisted source part; shared by Kernel supply and mailbox consumption. */
+export function deriveSessionInputId(messageRef: SessionMessageRef, part: 'message' | 'response'): string {
+  return 'session-input:' + sha256Hex(canonicalJson({ ref: messageRef, part } as never));
+}
+
+/**
+ * Formal Query Answer sender. It is DERIVED by the mailbox from the settled
+ * official Query Job/Run/Answer, never supplied by a caller: `sessionRef` is the
+ * original recipient, `queryRunRef`/`answerRef` are the persisted facts and
+ * `generation` is the claimed Session generation that produced the Answer.
+ */
+export type MessageQueryAnswerSender = {
+  kind: 'query_run';
+  sessionRef: SessionRef;
+  queryRunRef: QueryRunRef;
+  answerRef: QueryJobAnswerRef;
+  generation: number;
+};
+
 /**
  * A reply lives in the ORIGINAL message's single response slot. It never
- * produces a second inbox message and never fabricates a sender Session.
+ * produces a second inbox message and never fabricates a sender Session. The
+ * original message `sender` stays restricted to host/work_run; only the
+ * response slot additionally accepts the derived `query_run` Answer source.
  */
 export type MessageResponse = {
-  sender: MessageWorkRunSender;
+  sender: MessageWorkRunSender | MessageQueryAnswerSender;
   bodyRef: ArtifactRef;
   sourceRef: SourceRefV1;
   respondedAt: string;
@@ -81,6 +104,51 @@ export type SessionMessage = {
   status: SessionMessageStatus;
   readAt: string | null;
   response: MessageResponse | null;
+  /**
+   * Optional explicit reply expectation. ABSENT is the entire historical
+   * fire-and-forget behavior; the ONLY accepted legacy value is `'wait'`, which is
+   * normalized to `needsReply`/`waitAfterSend`. It is persisted with the message
+   * so a reopened Host still sees the original ask.
+   */
+  replyMode?: 'wait';
+  /** Explicit communication intent; absent keeps the historical notify default. */
+  intent?: SessionMessageIntentV1;
+  /** The sender expects a semantic reply (independent of whether it waits now). */
+  needsReply?: boolean;
+  /** The sender chose to yield execution after the message is durably saved. */
+  waitAfterSend?: boolean;
+  /**
+   * The FIXED isolated A′ derivation recorded on the original request BEFORE the
+   * Query is submitted. A retry reuses it even if the source advanced, so the
+   * first derivation source/boundary is the replayable formal fact. A null
+   * throughPosition is the explicit empty baseline, distinct from a non-empty one.
+   */
+  /**
+   * Narrow Host-side confirmation, written ONLY from a committed Kernel
+   * `run.input_accepted` fact: which original source part entered which
+   * execution. It is the durable cross-Turn consumption relation, never a
+   * caller-supplied processed flag.
+   */
+  acceptedInputs?: {
+    inputId: string;
+    part: 'message' | 'response';
+    executionRef: RunRef | QueryRunRef;
+    kernel: { adapterId: string; kernelSessionId: string; runId: string; turnId: string; position: number };
+    acceptedAt: string;
+  }[];
+  consultationDerivation?: {
+    childSessionRef: SessionRef;
+    sourceSessionRef: SessionRef;
+    sourceKernel: { adapterId: string; kernelSessionId: string };
+    throughPosition: number | null;
+  };
+};
+
+/** One keyset page shared by the inbox and the sender-Run outbox. */
+export type SessionMessagePage = {
+  items: SessionMessage[];
+  nextCursor: string | null;
+  sourceCursor: CommitCursor;
 };
 
 /**
@@ -104,7 +172,7 @@ export type MessageBody = {
 export interface SessionMailboxPort {
   sendMessage(
     ctx: CoreCallContext,
-    request: GraphWrite<{ recipient: SessionRef; text: string }>,
+    request: GraphWrite<{ recipient: SessionRef; text: string; replyMode?: 'wait' } & SessionMessageIntentFields>,
   ): Promise<WriteResult<SessionMessage>>;
   readMessage(ctx: CoreCallContext, ref: SessionMessageRef): Promise<ReadResult<SessionMessage>>;
   readMessageBody(
@@ -118,7 +186,20 @@ export interface SessionMailboxPort {
       status?: SessionMessageStatus;
       page: { limit: number; cursor?: string; atLeastCursor?: CommitCursor };
     },
-  ): Promise<ReadResult<{ items: SessionMessage[]; nextCursor: string | null; sourceCursor: CommitCursor }>>;
+  ): Promise<ReadResult<SessionMessagePage>>;
+  /**
+   * Select exactly one original sender Run or Session, using the SAME keyset
+   * page shape as `readInbox`. A work_run caller may read its own Run or Session;
+   * a Host caller reads within its workspace. Reading never acknowledges or wakes.
+   */
+  readOutbox?(
+    ctx: CoreCallContext,
+    input: {
+      senderRun?: RunRef;
+      senderSession?: SessionRef;
+      page: { limit: number; cursor?: string; atLeastCursor?: CommitCursor };
+    },
+  ): Promise<ReadResult<SessionMessagePage>>;
   ackMessage(
     ctx: CoreCallContext,
     request: GraphWrite<{ messageRef: SessionMessageRef }>,
@@ -126,6 +207,40 @@ export interface SessionMailboxPort {
   respondMessage(
     ctx: CoreCallContext,
     request: GraphWrite<{ messageRef: SessionMessageRef; text: string }>,
+  ): Promise<WriteResult<SessionMessage>>;
+  /**
+   * Host-only association of an ALREADY-SAVED formal Query Answer with the
+   * original message's single response slot. It accepts no free text and no
+   * caller identity: the body and the `query_run` sender are read from the
+   * settled Answer/Job/Run. Absence keeps every existing mailbox behavior.
+   */
+  respondFromQueryAnswer?(
+    ctx: CoreCallContext,
+    request: GraphWrite<{ messageRef: SessionMessageRef; answerRef: QueryJobAnswerRef }>,
+  ): Promise<WriteResult<SessionMessage>>;
+  /**
+   * Host-only CAS recording of the fixed A′ derivation on the ORIGINAL request
+   * message. The first recorded derivation wins and every retry reuses it, so the
+   * child and its source prefix are not re-decided by a later attempt.
+   */
+  /**
+   * Narrow Host/Runtime confirmation that one original source part really entered
+   * an execution (committed Kernel run.input_accepted). Never a caller-supplied
+   * processed flag and never called before the required sink commit.
+   */
+  recordInputAccepted?(
+    ctx: CoreCallContext,
+    request: GraphWrite<{
+      messageRef: SessionMessageRef;
+      part: 'message' | 'response';
+      executionRef: RunRef | QueryRunRef;
+      executionSessionRef?: SessionRef;
+      kernel: { adapterId: string; kernelSessionId: string; runId: string; turnId: string; position: number };
+    }>,
+  ): Promise<WriteResult<SessionMessage>>;
+  recordConsultationDerivation?(
+    ctx: CoreCallContext,
+    request: GraphWrite<{ messageRef: SessionMessageRef; derivation: NonNullable<SessionMessage['consultationDerivation']> }>,
   ): Promise<WriteResult<SessionMessage>>;
 }
 

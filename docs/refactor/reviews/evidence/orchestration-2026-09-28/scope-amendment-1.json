@@ -1,0 +1,26 @@
+{
+  "time": 1790586850.7043822,
+  "reason": "Existing strict Run/control/history codecs required by unified execution semantics; replace legacy same-Run wait assertions with the now-approved yield/continuation behavior, preserve unrelated assertions.",
+  "additions": [
+    {
+      "path": "src/core/work-graph/materials/record-readers.ts",
+      "originalSha256": "3ff5fad74bd9831055bcc6d5d3b29f8147fbbd8476028c2ea2d6d8a278d57489"
+    },
+    {
+      "path": "src/core/work-graph/persistence/execution-history-codecs.ts",
+      "originalSha256": "d1b0ffcbea3fcf0c73c9061131c20f6b0fc506206551971dfb93c2e82b56b8ea"
+    },
+    {
+      "path": "src/core/work-graph/persistence/control-record-codecs.ts",
+      "originalSha256": "b1ec75052523793af01030a174d7a12194fdb2bdf44a4604934d97f12b57e25f"
+    },
+    {
+      "path": "tests/app/AG2b-collaboration.test.ts",
+      "originalSha256": "38e1a5e0a391804c402c21eedfb19db7cba4798219419a05c99207dcef05603a"
+    },
+    {
+      "path": "tests/helpers/AG2b-collaboration-fixture.ts",
+      "originalSha256": "aed006fc8f743ff227a82fe69cea329a3a6cd5e1e12573efb3f2f462726ba496"
+    }
+  ]
+}

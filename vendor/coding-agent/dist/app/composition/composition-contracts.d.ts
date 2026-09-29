@@ -45,7 +45,29 @@ export type SessionContextMode = {
     version: 1;
     mode: "session_history";
     throughPosition: number;
+    /**
+     * 派生隔离基线：前缀从该源 Session 的 throughPosition 边界重建，而新 Turn 仍写入
+     * 目标 sessionId。缺省表示前缀就是目标 Session 自身（普通连续会话）。
+     */
+    sourceSessionId?: string;
 };
+/**
+ * Host-supplied applicable inputs read at a real Kernel safe point. It only
+ * reports candidate identities/texts; acceptance is the Kernel event commit.
+ */
+export type AppInputSupply = (point: {
+    readonly sessionId: string | null;
+    readonly runId: string;
+    readonly turnId: string;
+    readonly afterEventSequence: number;
+    readonly acceptedInputIds: readonly string[];
+}, options: Readonly<{
+    signal: AbortSignal;
+}>) => Promise<readonly {
+    readonly inputId: string;
+    readonly text: string;
+    readonly sourceRef: unknown;
+}[]>;
 /** 稳定执行身份：宿主派生并持久化，重试先按原身份查记录，不生成第二个 Turn。 */
 export type ExecutionIdentity = {
     runId: string;

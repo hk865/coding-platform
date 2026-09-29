@@ -1,0 +1,73 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform-next
+
+ ❯ tests/app/AG2b-collaboration.test.ts (3 tests | 3 failed) 1396ms
+     × releases a busy B, runs two wait rounds and completes the real Task/Goal 96ms
+     × waits while B is busy, creates no replacement Session and confirms the stop through the real Run 26ms
+     × reopens read-only over the original messages/Query/history and refuses another scope 18ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/app/AG2b-collaboration.test.ts > AG2b continuous communication over the real Host HTTP > releases a busy B, runs two wait rounds and completes the real Task/Goal
+AssertionError: expected 404 to be 200 // Object.is equality
+
+- Expected
++ Received
+
+- 200
++ 404
+
+ ❯ tests/app/AG2b-collaboration.test.ts:263:36
+    261|       // FIRST RED (Stage 1): the route is not published, so the real …
+    262|       // boundary answers 404 `unpublished core route workflow/driver-…
+    263|       expect(startResponse.status).toBe(200);
+       |                                    ^
+    264|       const startResult = await startResponse.json() as ReadResult<Col…
+    265|       expect(startResult.status).toBe('ready');
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  tests/app/AG2b-collaboration.test.ts > AG2b continuous communication over the real Host HTTP > waits while B is busy, creates no replacement Session and confirms the stop through the real Run
+AssertionError: expected 404 to be 200 // Object.is equality
+
+- Expected
++ Received
+
+- 200
++ 404
+
+ ❯ tests/app/AG2b-collaboration.test.ts:409:36
+    407|       // FIRST RED (Stage 1): the unpublished route answers 404 before…
+    408|       // busy/wait policy can be reached.
+    409|       expect(startResponse.status).toBe(200);
+       |                                    ^
+    410|       const waiting = await waitForDriver(started, snapshot => snapsho…
+    411|       expect(waiting.state).toBe('waiting_for_reply');
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+ FAIL  tests/app/AG2b-collaboration.test.ts > AG2b continuous communication over the real Host HTTP > reopens read-only over the original messages/Query/history and refuses another scope
+AssertionError: expected 404 to be 200 // Object.is equality
+
+- Expected
++ Received
+
+- 200
++ 404
+
+ ❯ tests/app/AG2b-collaboration.test.ts:501:36
+    499|       bSession = createdB.sessionRef;
+    500|       const startResponse = await corePost(started.base, 'workflow/dri…
+    501|       expect(startResponse.status).toBe(200);
+       |                                    ^
+    502|       const completed = await waitForDriver(started, snapshot => snaps…
+    503|       expect(completed.state, 'the original run must really complete b…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  3 failed (3)
+   Start at  13:40:34
+   Duration  2.74s (transform 866ms, setup 0ms, import 1.26s, tests 1.40s, environment 0ms)
+

@@ -15,6 +15,8 @@
  * Role/Grant admission. A Host without a runtime configuration keeps every
  * other page working.
  */
+import { resolve } from 'node:path';
+import { sha256Hex } from '../contracts/fingerprint.js';
 import {
   createBuiltinProviderRegistry,
   type ProviderId,
@@ -26,7 +28,7 @@ import type { CoreRejection, ReadResult } from '../contracts/core/results.js';
 import type { RoleBindingRefV1 } from '../contracts/dispatch.js';
 import type { JsonValue } from '../contracts/fingerprint.js';
 import type { QueryJobIntentV1 } from '../contracts/query-job.js';
-import { validateRuntimeBudget, type RuntimeBudget } from '../contracts/runtime-budget.js';
+import { DEFAULT_RUNTIME_BUDGET, validateRuntimeBudget, type RuntimeBudget } from '../contracts/runtime-budget.js';
 import type {
   QueryRuntimeConfigurationInput,
   ResolvedRuntimeConfiguration,
@@ -45,6 +47,72 @@ export type WorkbenchModelConfiguration = {
   secretEnvironmentVariable?: string;
 };
 
+/** The original explicit trusted Skill selection: a repository resource root
+ * plus the exact ids enabled from it. An explicit empty `enabledIds` stays empty
+ * and never falls back to a default. */
+export type WorkbenchSkillResourceSelection = { resourceRoot: string; enabledIds: string[] };
+
+/** One selectable platform instruction behavior inside the trusted bundle. */
+export type PlatformBehavior = 'secretary' | 'adviser' | 'scribe' | 'reviewer';
+
+/** The trusted preset shorthand: one platform bundle plus the explicitly chosen
+ * behaviors. `behaviors` is required and may be empty; an empty array selects
+ * only the shared `platform-work` instruction and never every behavior. */
+export type WorkbenchPlatformSkillBundle = { bundle: 'platform'; behaviors: PlatformBehavior[] };
+
+/** Either the original explicit Skill selection or the preset bundle shorthand. */
+export type WorkbenchSkillConfiguration = WorkbenchSkillResourceSelection | WorkbenchPlatformSkillBundle;
+
+/** The behaviors the trusted `platform` bundle accepts; order is always the
+ * caller's explicit input order, never this list order. */
+const PLATFORM_BEHAVIORS: readonly PlatformBehavior[] = ['secretary', 'adviser', 'scribe', 'reviewer'];
+
+/** The repository `resources/skills` root derived from this module's own location
+ * (`src/app` in source, `dist/app` after the build). Both point two levels up at
+ * the repository root, so the path never depends on the process cwd and never
+ * looks at a parent checkout. */
+export const PLATFORM_SKILL_RESOURCE_ROOT = resolve(import.meta.dirname, '../../resources/skills');
+
+/**
+ * The builtin identity for a directory opened through Host settings. It is a
+ * real `legacy_template` Role with a concrete guidance digest and the shared
+ * `platform-work` instruction; it grants only the existing read tools and never
+ * copies a startup scope's RoleSpec, paths or permissions.
+ */
+export const LOCAL_WORKBENCH_TEMPLATE_ID = 'local-workbench';
+export const LOCAL_WORKBENCH_TEMPLATE_REVISION = '1';
+export const LOCAL_WORKBENCH_GUIDANCE =
+  'You work inside one explicitly mounted local directory. Obey exactly the tools the current Host grant '
+  + 'declares: a read-only investigation stays read-only and never attempts a write, edit or shell command, '
+  + 'while an explicitly write-enabled execution may use the granted write/shell tools and the granted '
+  + 'collaboration read/notify tools. Stay within the mounted root, never widen your own permissions, and '
+  + 'never assume access to another workspace.';
+export const LOCAL_WORKBENCH_ROLE: RoleConfigurationRef = {
+  kind: 'legacy_template', templateId: LOCAL_WORKBENCH_TEMPLATE_ID, templateRevision: LOCAL_WORKBENCH_TEMPLATE_REVISION,
+};
+export const LOCAL_WORKBENCH_ROLE_BINDING: RoleBindingRefV1 = {
+  schemaVersion: 1, bindingId: 'local-workbench-binding', templateId: LOCAL_WORKBENCH_TEMPLATE_ID,
+  templateRevision: LOCAL_WORKBENCH_TEMPLATE_REVISION, bindingVersion: 1, policyRevision: 'legacy-template',
+};
+export const LOCAL_WORKBENCH_HOST_TEMPLATE = {
+  templateId: LOCAL_WORKBENCH_TEMPLATE_ID, revision: LOCAL_WORKBENCH_TEMPLATE_REVISION,
+  digest: sha256Hex(LOCAL_WORKBENCH_GUIDANCE),
+};
+/** The local workbench reuses the platform default: no hidden cumulative
+ * request/tool/wall-clock cap; structured planning reserves up to 16384 output tokens.
+ * It only reaches newly built scopes/queries; an already prepared run keeps its
+ * fixed budget and permissions. */
+// The local workbench can produce a complete structured initial plan, including
+// provider reasoning. The generic 4K reply cap truncates that normal path.
+export const LOCAL_WORKBENCH_BUDGET: RuntimeBudget = { ...DEFAULT_RUNTIME_BUDGET, perResponseTokens: 16384 };
+
+/** Deterministic SecretSource variable name for a user-saved settings model. The
+ * value is kept only in the Host's in-memory overlay and is never written to the
+ * environment, a log or a response. */
+export function settingsModelSecretVariable(modelId: string): string {
+  return `HOST_SETTINGS_${modelId.replace(/[^A-Za-z0-9]+/g, '_').toUpperCase()}`;
+}
+
 /** One trusted runtime binding for a complete workspace scope plus one complete
  * `RoleConfigurationRef`. `grant` is the trusted Host grant; it is never rebuilt
  * from task text and never widened to a default shell/whole-workspace write. */
@@ -55,7 +123,9 @@ export type WorkbenchRuntimeBinding = {
   role: RoleConfigurationRef;
   configurationRevision: string;
   model: WorkbenchModelConfiguration;
-  grant: Omit<ResolvedRuntimeConfiguration, 'configurationRevision' | 'model'>;
+  grant: Omit<ResolvedRuntimeConfiguration, 'configurationRevision' | 'model' | 'skills'> & {
+    skills: WorkbenchSkillConfiguration;
+  };
 };
 
 /** The display/selection projection a user picks for one read-only Query. The
@@ -159,6 +229,19 @@ export function validateWorkbenchRuntimeConfiguration(
     if (!nonEmpty(binding.configurationRevision)) return { code: 'invalid', reason: `bindings[${index}] requires a configurationRevision` };
     if (!isPlainObject(binding.model) || !nonEmpty(binding.model.model)) return { code: 'invalid', reason: `bindings[${index}] requires a model description` };
     if (!isPlainObject(binding.grant)) return { code: 'invalid', reason: `bindings[${index}] requires a trusted grant` };
+    const skills: Record<string, unknown> | undefined = isPlainObject(binding.grant['skills'])
+      ? binding.grant['skills'] : undefined;
+    if (skills !== undefined && (skills['bundle'] !== undefined || skills['behaviors'] !== undefined)) {
+      if (skills['bundle'] !== 'platform')
+        return { code: 'invalid', reason: `bindings[${index}].grant.skills names an unknown platform bundle` };
+      const behaviors = skills['behaviors'];
+      if (!Array.isArray(behaviors))
+        return { code: 'invalid', reason: `bindings[${index}].grant.skills requires a behaviors array` };
+      for (const behavior of behaviors) {
+        if (typeof behavior !== 'string' || !PLATFORM_BEHAVIORS.includes(behavior as PlatformBehavior))
+          return { code: 'invalid', reason: `bindings[${index}].grant.skills names an unknown platform behavior` };
+      }
+    }
     const duplicate = seenBindings.some(seen => scopeKey(seen.scope) === scopeKey(binding.scope)
       && sameRoleConfiguration(seen.role, binding.role));
     if (duplicate) return { code: 'invalid', reason: `duplicate runtime binding for scope ${scopeKey(binding.scope)} and Role configuration` };
@@ -188,7 +271,7 @@ export function validateWorkbenchRuntimeConfiguration(
     if (scopeKey(profile.scope) !== scopeKey(binding.scope) || !sameRoleConfiguration(profile.sessionRole, binding.role))
       return { code: 'invalid', reason: `queryProfiles[${index}] does not match its runtime binding scope/Role` };
     if (!nonEmpty(profile.consumerId)) return { code: 'invalid', reason: `queryProfiles[${index}] requires a consumerId` };
-    if (!isPlainObject(profile.budget) || typeof profile.budget.maxTokens !== 'number')
+    if (!isPlainObject(profile.budget) || (profile.budget.maxTokens !== null && typeof profile.budget.maxTokens !== 'number'))
       return { code: 'invalid', reason: `queryProfiles[${index}] requires a budget { maxTokens, deadline }` };
     try {
       validateRuntimeBudget(profile.runtimeBudget);
@@ -222,6 +305,21 @@ export function createWorkbenchRuntimeHostBindings(
     config.bindings.find(candidate => candidate.scope.projectId === scope.projectId
       && candidate.scope.workspaceId === scope.workspaceId
       && sameRoleConfiguration(candidate.role, role)) ?? null;
+
+  /** Resolve one trusted Skill selection into the existing Runtime skills shape.
+   * The explicit shape is copied; the preset bundle always starts from the
+   * shared `platform-work` instruction and appends the selected behaviors in
+   * input order, de-duplicated. It creates no Session/Agent, starts no model
+   * and never widens the grant. */
+  const resolveSkillSelection = (skills: WorkbenchSkillConfiguration): { resourceRoot: string; enabledIds: string[] } => {
+    if (!('bundle' in skills)) return { resourceRoot: skills.resourceRoot, enabledIds: [...skills.enabledIds] };
+    const enabledIds = ['platform-work'];
+    for (const behavior of skills.behaviors) {
+      const id = `platform-${behavior}`;
+      if (!enabledIds.includes(id)) enabledIds.push(id);
+    }
+    return { resourceRoot: PLATFORM_SKILL_RESOURCE_ROOT, enabledIds };
+  };
 
   // One existing `BoundModel` per binding, produced on its first real
   // resolution and reused for the life of this Host.
@@ -284,6 +382,7 @@ export function createWorkbenchRuntimeHostBindings(
       configurationRevision: binding.configurationRevision,
       model: model.value,
       ...binding.grant,
+      skills: resolveSkillSelection(binding.grant.skills),
     } };
   };
 

@@ -4,6 +4,7 @@
  * 设计边界：Reducer 不执行 I/O、不产生事件，也不容忍非法转换或破坏状态不变量。
  * 关键流程：先校验事件和转换，再按事件类型更新副本，最后校验完整状态并返回。
  */
+import { createHash } from "node:crypto";
 import { agentEventSchema, validateTransition } from "../events/agent-events.js";
 import { runStateSchema, validateRunStateInvariants } from "../state/run-state.js";
 export class ReducerError extends Error {
@@ -193,6 +194,37 @@ function applyEvent(state, event) {
         case "run.paused":
             next = { ...state, status: "paused", pause: event.payload.pause };
             break;
+        case "run.yielded":
+            next = terminalState(state, event, "yielded", {
+                kind: "yielded",
+                yield: event.payload.yield,
+            });
+            break;
+        case "run.input_accepted": {
+            const accepted = event.payload.input;
+            const digest = createHash("sha256").update(accepted.text, "utf8").digest("hex");
+            next = {
+                ...state,
+                transcript: [
+                    ...state.transcript,
+                    {
+                        kind: "user_message",
+                        message: {
+                            schemaVersion: 1,
+                            messageId: accepted.messageId,
+                            role: "user",
+                            content: accepted.text,
+                        },
+                    },
+                ],
+                acceptedInputs: [
+                    ...state.acceptedInputs,
+                    { inputId: accepted.inputId, messageId: accepted.messageId, digest,
+                        eventSequence: event.meta.sequence },
+                ],
+            };
+            break;
+        }
         case "run.resumed":
             next = { ...state, status: "running", pause: null };
             break;

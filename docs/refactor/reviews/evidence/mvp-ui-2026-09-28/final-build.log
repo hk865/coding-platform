@@ -1,0 +1,5 @@
+
+> build
+> tsc -p tsconfig.build.json && node scripts/build-workbench.mjs
+
+workbench build: published /home/hyh001/projects/coding-platform/coding-platform-next/dist/app/public/workbench

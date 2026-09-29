@@ -13,15 +13,23 @@
   },
   {
     "path": "resources/skills/platform-adviser/content.md",
-    "sha256": "071d074e6aaeb5b43cef7a0fa0487492afb07df6f605ee766dc62656da47d55a"
+    "sha256": "59a23cb832a64730b48010f3fc8932935341bf86a381fa492a7c7553dbed2bf0"
   },
   {
     "path": "resources/skills/platform-adviser/skill.json",
     "sha256": "a6ce8b810d0e352b7cad25594a100f6c7f42d73a71195f5307cb1e909c396ccf"
   },
   {
+    "path": "resources/skills/platform-reviewer/content.md",
+    "sha256": "a7e4ab9987ab8703399f3f9c7815e85b1b4bb7ced24ad9437d196c169ee63d6f"
+  },
+  {
+    "path": "resources/skills/platform-reviewer/skill.json",
+    "sha256": "103af01b9f1dd3b10a79cf5a1238dd2e132b455d64e9f23bed9069a1ed1eda49"
+  },
+  {
     "path": "resources/skills/platform-scribe/content.md",
-    "sha256": "6bf7036a56732e38a6283d5265fbca2f8f5ea589f05b243bc24d986b4b57e0cf"
+    "sha256": "8e492c1d34fe7cc07cf67629c617e277b253c6b3c1952bf1a28f17aafa3a8b13"
   },
   {
     "path": "resources/skills/platform-scribe/skill.json",
@@ -29,11 +37,19 @@
   },
   {
     "path": "resources/skills/platform-secretary/content.md",
-    "sha256": "fbbf765ac1589f37ea7345a48a2eae3980e3726c434bca15ee3ee1e1cbdbb4e5"
+    "sha256": "7f1f78bd5160c48f16fdf57f6b6932c2b25ab690875fce09a833536fa0f15380"
   },
   {
     "path": "resources/skills/platform-secretary/skill.json",
     "sha256": "c91022d85eb4c32781438de4a93885423eca9b50b7838951bc1f89ba3722fd60"
+  },
+  {
+    "path": "resources/skills/platform-work/content.md",
+    "sha256": "292a4beed9cd5ae9a1c2f8e802b3b45b59df383ac583c275c80e663a2f4bf552"
+  },
+  {
+    "path": "resources/skills/platform-work/skill.json",
+    "sha256": "3c60ae2a1b09b0d7b1d034f5c40730b9762e0f53c5121266f620b3db37e1838c"
   },
   {
     "path": "scripts/cpp-source-query.py",

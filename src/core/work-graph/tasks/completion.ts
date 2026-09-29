@@ -337,6 +337,10 @@ export async function completeTaskFromHost(
   }
   if (producerRun.status !== 'ended') return incomplete('the round producer Run has not ended');
   if (producerRun.outcome === 'outcome_unknown') return incomplete('the round producer Run outcome is unknown');
+  // A yielded producer Run exited active execution on a real wait: it produced no
+  // verified output yet, so an old/other PASS can never complete the Task on it.
+  // The continuation produces a new Run and the normal checks path resumes there.
+  if (producerRun.outcome === 'yielded') return incomplete('the round producer Run yielded on a wait and has not produced verified output yet');
   if (taskDefinition.taskKind === 'gate') {
     if (producerRun.task.taskId === task.taskId) {
       return invalid('a gate round must reference a same-Goal ordinary producer Run, not a gate Run');

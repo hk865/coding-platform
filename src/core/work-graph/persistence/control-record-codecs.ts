@@ -197,7 +197,7 @@ export function controlObservationProblem(value: unknown): string | null {
   }
   if (value['schemaVersion'] !== 1) return 'ControlObservation schemaVersion must be 1';
   const kind = value['kind'];
-  if (kind !== 'paused' && kind !== 'cancelled' && kind !== 'terminal_without_cancel' && kind !== 'outcome_unknown') {
+  if (kind !== 'resumed' && kind !== 'steered' && kind !== 'paused' && kind !== 'cancelled' && kind !== 'terminal_without_cancel' && kind !== 'outcome_unknown') {
     return 'ControlObservation kind is not recognized';
   }
   const entry = value['entry'];
@@ -254,8 +254,15 @@ function controlIntentSnapshotProblem(value: unknown): string | null {
   if ((value['ref'] as UnknownRecord)['projectId'] !== (value['runRef'] as UnknownRecord)['projectId']) {
     return 'ControlIntentSnapshot runRef is outside the intent project';
   }
-  if (value['kind'] !== 'pause' && value['kind'] !== 'cancel') {
-    return 'ControlIntentSnapshot kind must be pause or cancel';
+  if (value['kind'] !== 'pause' && value['kind'] !== 'cancel'
+    && value['kind'] !== 'resume' && value['kind'] !== 'steer') {
+    return 'ControlIntentSnapshot kind is not recognized';
+  }
+  if (value['kind'] === 'resume' && value['desiredState'] !== 'running') {
+    return 'a resume intent must request the running state';
+  }
+  if (value['kind'] === 'steer' && value['desiredState'] !== 'steered') {
+    return 'a steer intent must request the steered state';
   }
   if (value['kind'] === 'pause' && value['desiredState'] !== 'paused') {
     return 'ControlIntentSnapshot pause must desire paused';
@@ -290,6 +297,10 @@ function controlIntentSnapshotProblem(value: unknown): string | null {
   const observationKind = (value['observation'] as UnknownRecord)['kind'];
   if (observationKind === 'paused') {
     if (value['kind'] !== 'pause') return 'a paused observation must belong to a pause intent';
+  } else if (observationKind === 'resumed') {
+    if (value['kind'] !== 'resume') return 'resumed must belong to resume';
+  } else if (observationKind === 'steered') {
+    if (value['kind'] !== 'steer') return 'steered must belong to steer';
   } else if (value['kind'] !== 'cancel') {
     return 'a cancelled/unknown observation must belong to a cancel intent';
   }

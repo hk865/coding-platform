@@ -1,0 +1,5 @@
+{
+  "file": "tests/app/AG2-consultation.test.ts",
+  "sha256": "0294946e0cff7b6109f013beba2d566e57c3a314fa3176980ce6560549bc9403",
+  "red": "3 real HTTP route failures; 9 existing Host passes"
+}

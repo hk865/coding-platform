@@ -1,0 +1,4 @@
+{
+  "writableFiles": ["tests/composition/AG1-session-discovery.test.ts"],
+  "dshStateDirectories": ["profiles", "sessions", "storages", "cache", "llm-deepseek", "attachments"]
+}

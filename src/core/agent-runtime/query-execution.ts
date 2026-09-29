@@ -12,14 +12,15 @@
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { PreparedQueryExecution, PreparedQueryManifestV1 } from '../../contracts/core/prepared-execution.js';
 import type { CoreRejection, ReadResult } from '../../contracts/core/results.js';
-import type { ModelCallAccess, TaskBudgetV1 } from '../../contracts/dispatch.js';
+import type { ModelCallAccess } from '../../contracts/dispatch.js';
 import type { QueryModelUsageV1, QueryRunRef } from '../../contracts/query-job.js';
 import type { HookPort } from '../../../vendor/coding-agent/dist/public-api.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../contracts/fingerprint.js';
 import type { SourceToolOptions } from './exploration-tools.js';
-import { ModelBudget, type MeterEntry } from './model-budget.js';
+import { ModelBudget, type MeterEntry, type ModelTokenBudget } from './model-budget.js';
 import { RuntimeModelCallRejected } from './model-call-access.js';
 import { runObservedModel } from './observed-model-run.js';
+import { createMailboxInputSupply } from './execution-inputs.js';
 import { projectQueryConfiguration } from './query-preparation.js';
 import { createQueryObservation } from './query-observation.js';
 import { createQuerySourceCaptureFactory } from './source-capture-access.js';
@@ -297,7 +298,7 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
         );
       }
 
-      const taskBudget: TaskBudgetV1 = { tokenBudget: record.job.job.intent.budget.maxTokens, deadline: record.job.job.intent.budget.deadline };
+      const taskBudget: ModelTokenBudget = { tokenBudget: record.job.job.intent.budget.maxTokens, deadline: record.job.job.intent.budget.deadline };
       const meter = new ModelBudget(manifest.runtimeBudget, async (entries) => {
         const projectedEntries = entries.map(projectMeterEntry);
         const usageRequestId = `r5b-query-usage:${queryRunRef.runId}:${sha256Hex(canonicalJson(projectedEntries as unknown as JsonValue))}`;
@@ -408,17 +409,28 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
         },
       };
 
-      const cursorOwner = createSessionHistoryCursorOwner({ kernelStores: deps.kernelStores });
-      let boundary;
-      try {
-        boundary = await cursorOwner.completedBoundary({ session: record.session, signal });
-      } catch (error) {
-        return rejected('unavailable', `reading the completed Query history boundary failed: ${messageOf(error)}`);
+      let sessionContext;
+      if (manifest.sessionBasis !== undefined) {
+        // A formal isolated A′ uses the fixed SOURCE prefix; null throughPosition
+        // is the explicit empty baseline, never an unfinished inherited turn.
+        sessionContext = manifest.sessionBasis.throughPosition === null
+          ? { version: 1 as const, mode: 'current_turn' as const }
+          : { version: 1 as const, mode: 'session_history' as const,
+              throughPosition: manifest.sessionBasis.throughPosition,
+              sourceSessionId: manifest.sessionBasis.sourceKernelSessionId };
+      } else {
+        const cursorOwner = createSessionHistoryCursorOwner({ kernelStores: deps.kernelStores });
+        let boundary;
+        try {
+          boundary = await cursorOwner.completedBoundary({ session: record.session, signal });
+        } catch (error) {
+          return rejected('unavailable', `reading the completed Query history boundary failed: ${messageOf(error)}`);
+        }
+        if (boundary.status === 'rejected') return boundary;
+        sessionContext = boundary.cursor === null
+          ? { version: 1 as const, mode: 'current_turn' as const }
+          : { version: 1 as const, mode: 'session_history' as const, throughPosition: boundary.position };
       }
-      if (boundary.status === 'rejected') return boundary;
-      const sessionContext = boundary.cursor === null
-        ? { version: 1 as const, mode: 'current_turn' as const }
-        : { version: 1 as const, mode: 'session_history' as const, throughPosition: boundary.position };
 
       try {
         await runObservedModel({
@@ -429,8 +441,14 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
           databasePath: location.databasePath,
           sessionId: record.session.kernel.kernelSessionId,
           input: manifest.input,
+          ...(deps.messages === undefined || execution.kind !== 'semantic_query' || execution.consultation?.derivation !== undefined ? {} : {
+            inputSupply: createMailboxInputSupply({ messages: deps.messages, context: () => owned,
+              sessionRef: state.sessionRef, runRef: queryRunRef }),
+          }),
           budget: manifest.runtimeBudget,
           readOnly: true,
+          // Null removes only the cumulative token cap; the explicit deadline
+          // still reaches Kernel to stop an in-flight model/tool.
           taskBudget,
           now: deps.now,
           sessionContext,

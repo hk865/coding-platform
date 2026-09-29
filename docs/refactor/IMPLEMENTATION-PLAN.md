@@ -1,5 +1,15 @@
 # 从核心结构到实际源码的重构实施方案
 
+**2026-09-29 文件资源管理器修复：** 普通目录浏览改用既有 Kernel 路径枚举，不再依赖完整文本 capture；二进制/大文件不阻断文件名展示。每次本地显示100项、可输入子目录、明确加载/错误/部分结果。13项、类型、构建、边界及真实ROS目录只读浏览/文件打开通过；未写项目文件、未调用模型。当前44797终端Host PID379878；未提交推送。[本批证据](reviews/evidence/ui-directory-inventory-2026-09-29/README.md)。
+
+**2026-09-29 正常 UI 冷启动与双图纠偏：** 隔离新项目已从主对话目标、只读调查、候选审阅和明确采用，进入两个同 Session Work；唯一预期源码变更、三轮正式检查 PASS、GoalPhase COMPLETED。双图恢复稀疏节点/真实连线、下方独立滚动详情、按需展开及固定，未来节点保留。检查恢复不重开模型、不把已 finalized 非 PASS 当成无结果。按工作区保存显示选择及两标签页切换/刷新恢复已通过浏览器复验；取消/失败后新 Attempt 等缺口仍保留，不能宣告整个 MVP。产品模型 10 次，曾有 2 次沙箱工具失败；正常终端 Host 保留沙箱后检查通过，用户级服务已停止。 [本批证据与边界](reviews/evidence/goal-cold-start-2026-09-29/README.md)。
+
+**2026-09-28 AG2a 已导入：** [到达 MVP 的路线](AGENT-BEHAVIOR-PLAN.md#8-到达-mvp-的路线与证据导航)逐项对应既有 B/E 行为，纳入异步对齐及三类进入流程。本批完成显式咨询接收/Answer 回复：保留原 Query/Session/消息事实，新增精确 HTTP 与同一消息详情入口；不要求 Query 写工具或常驻角色链。[两阶段实现与证据](reviews/evidence/agent-behavior-2026-09-28/ag2/README.md)。下一段是原发信 Agent 感知回复、恢复并重新决策，再沿 AG3 明确执行选择；完整 MVP 原门槛不变。
+
+**2026-09-28 AG6 已导入：** 用户六条职责批注已落实为五份可组合指令资源及 Host 显式 bundle 装配，沿原 Runtime/Kernel 执行，不另建工厂或固定角色链。一个通用工作台按成员查看各 Agent，不变成三个独立入口；冷启动成员策略与后续演进决策归编排，配置本身不启动四个 Agent。[任务](tasks/AG6-behavior-assembly-2026-09-28.md)与[证据](reviews/evidence/agent-behavior-2026-09-28/ag6/README.md)记录两阶段实现、19 项/类型/构建及提示词修正后 8 项复验。真实模型装配调用通过，但语义抽查仍有明确问题；不扩大局部评测来宣称角色可靠，也不将 AG2–AG5 或 MVP 余项记为完成。
+
+**2026-09-27 最新施工顺序：** 按用户要求转为 [Agent 职责与行为计划](AGENT-BEHAVIOR-PLAN.md)，先从真实消费者发现平台缺口及冗余。AG1 当前关联发现与咨询请求已两阶段独审导入（6文件42项及类型/边界通过）；AG2–AG5 对应回复/委托、复用或创建后执行、并行冲突、结束交接恢复。本页旧批次状态保留历史范围，不能因有任务书就继续平台扩建，也不能把既定必需行为自动移出 MVP。
+
 **最新独立仓库验收：124 文件 / 1,102 项通过（exit0）。** 本次包含最终 graph/history UI 和独立目录构建脚本；Kernel 补丁再生、边界、Node/UI 类型、构建、编译入口和受 token 保护的 Host smoke 均通过。[独立验收记录](reviews/evidence/standalone-2026-09-27/verification.json)。本轮[有界 completion audit](reviews/completion-audit-2026-09-27.md)已完成：仍有真实实现阻塞与验收缺证；下方较早报告保留其当时范围。
 
 > 独立仓库说明（2026-09-27）：本仓库根即原 `coding-platform/next`，文档位于 `docs/`；当前继续入口见根 `CONTINUE.md` 与 `AGENTS.md`。旧证据、任务书中的绝对路径和 scope 只描述当时工作区，不能直接执行。用户已从独立 main 恢复并完成有界审计；本轮真实模型接入的非语义错误修复已验收并停止，尚未宣告整个 MVP 完成。
@@ -18,7 +28,7 @@
 | 当前批次 / R编号 | 已有能力与真实生产者 | 本批消费者 / 验收目标 | 尚待闭合 |
 | --- | --- | --- | --- |
 | B2 / R4c、R3运行状态 | 正式Claim、Role、WG11/12、B1、原Kernel持久日志 | prepare/start/observe、模型准入、终态归约与释放；C2真实材料facts消费 | Task/Query执行、R4.3a本地控制和R4.3b取消后继已接通；恢复、维护与完整连续生命周期继续 |
-| C1 / R3f、R4工具 | Session目录、正式邮箱/MaterialPort/注册索引 | 定址send/inbox/body/ack/respond；C2同Kernel真实工具往返与同请求并发回执 | 领域、公开组合根及Runtime工具已接；强wait、唤醒与Workflow咨询仍缺 |
+| C1 / R3f、R4工具 | Session目录、正式邮箱/MaterialPort/注册索引 | 定址send/inbox/body/ack/respond；C2同Kernel真实工具往返与同请求并发回执 | 领域、公开组合根及 Runtime 工具已接；AG2a 已接显式处理/Answer 回复，自动唤醒、强 wait 和原发送方续接仍缺 |
 | W2及后续 / R3c、R3g、R5 | W1未来编辑、RoleSpec、B1 Skill装配、W2委托与显式意图 | 真实Agent query/propose/apply；无完整验收/分配节点入图、首次分配、显式激活、延期与局部CAS | 原语、正式完成与限定规划/推进/Host入口已接；完整授权变更、复杂调度及其余Host/UI继续 |
 | R2、R3d/e、R4d/e/p、R5/R6 | 既有Workspace/图/Store原语 | Git及语言消费者、架构演进、证据完成、控制恢复、并行结果、bootstrap/Host/UI与最终切换 | 完整范围继续保留；知识库/Memory非当前门禁，不因B2/C1局部交付关闭 |
 
@@ -127,7 +137,7 @@ Context分为稳定配置（职责/Skill/工具说明）、本次绑定（Task/M
 | AT-01 角色创建与挂靠 | partial | RoleSpec；A1 真实 Session 创建与 Module/Task 关联；B1 受信 Skill 配置进入真实请求 | 正式 Role pin→Skill/工具/图引用装配及执行消费者，B |
 | AT-02 真实执行自动回写 | partial | WG12 可写、RT8 可读原区间 | Kernel entry/观察自动调用 writer，B |
 | AT-03 结束转待命仍可见 | partial | A1 模块下可发现闲置 Session，归档/重新启用联动 | 真实终态→释放→模块下仍可查；不宣布任务完成，B/D |
-| AT-04 沿模块咨询待命者 | partial | A1 真实目标发现与同一 Kernel Session 历史保留 | 定向咨询→续用 Session→带来源回复，B/C |
+| AT-04 沿模块咨询待命者 | partial | AG1 发现/发送、AG2a 显式处理→原 Session→正式 Answer 回复 | 原发信 Agent 感知答复并恢复决策；完整自动协作仍待接，B/C |
 | AT-05 咨询工作中目标 | 未全路径验收 | 同 Session 占用已有 | 持久查询不打断；消息异步/独立调查实际路径，B/C |
 | AT-06 显式归档保留历史 | **partial；A1 子场景通过** | 真实 SQLite/Kernel：空闲 Session 归档退出活跃发现，模块关联、身份和已有 Session 历史保留，重启后可读且不自动启用；显式重新启用及原请求重放也已核对，见[A1报告](reviews/next-a1-graph-session-2026-09-25.md) | B 接真实执行后，补验旧 Task/Run 及其执行证据仍可沿图查询；不据 A1 关闭完整 AT-06、控制/释放、业务角色/UI 或整个生命周期 |
 | AT-07 控制与交接 | 未全路径验收 | Kernel 公共能力和保留约束测试 | 平台真实控制/恢复、义务与来源交接，D |

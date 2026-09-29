@@ -151,7 +151,13 @@ export async function runCodingAgent(input) {
     const store = await SqliteStores.open(path.resolve(input.config.storage.databasePath));
     try {
         let revision;
-        let records = null;
+        // The TARGET Session owns turn identity/idempotency; the SOURCE Session only
+        // supplies the fixed completed prefix. They must never be conflated.
+        let targetRecords = null;
+        let sourceRecords = null;
+        const sourceSessionId = sessionContext.mode === "session_history"
+            ? (sessionContext.sourceSessionId ?? sessionId)
+            : sessionId;
         if (sessionContext.mode === "session_history") {
             // 历史边界必须属于已存在的 Session；不为它新建空会话，也不把「最后位置」当完成证据。
             const existing = await store.get(sessionId, { signal });
@@ -159,7 +165,9 @@ export async function runCodingAgent(input) {
                 throw new Error(`Session ${sessionId} 仍有活动 Run`);
             }
             revision = existing.revision;
-            records = await readAllSessionRecords(store, sessionId, signal);
+            targetRecords = await readAllSessionRecords(store, sessionId, signal);
+            sourceRecords = sourceSessionId === sessionId ? targetRecords
+                : await readAllSessionRecords(store, sourceSessionId, signal);
         }
         else {
             try {
@@ -183,13 +191,14 @@ export async function runCodingAgent(input) {
                 version: 1,
                 mode: "session_history",
                 throughPosition: sessionContext.throughPosition,
+                ...(sessionContext.sourceSessionId === undefined ? {} : { sourceSessionId: sessionContext.sourceSessionId }),
             }
             : undefined;
         // 已完成轮次重建出的前缀：只与当前 Turn 合并做一次预算选择，且绝不含当前 Turn。
         let historyTranscript = [];
         if (sessionContext.mode === "session_history" && contextBasis) {
-            const restored = restoreSessionHistory(records ?? [], {
-                sessionId,
+            const restored = restoreSessionHistory(sourceRecords ?? [], {
+                sessionId: sourceSessionId,
                 throughPosition: contextBasis.throughPosition,
                 currentTurn: {
                     runId,
@@ -202,8 +211,8 @@ export async function runCodingAgent(input) {
         // 稳定执行身份重试：先按原身份查记录。同一 Turn 已存在时进入恢复/回放，
         // 绝不追加第二个 turn.started；身份相同但内容不同则显式拒绝。
         if (executionIdentity) {
-            records ??= await readAllSessionRecords(store, sessionId, signal);
-            const existingTurn = records.find((record) => record.recordType === "turn.started" && record.payload.run.runId === runId);
+            targetRecords ??= await readAllSessionRecords(store, sessionId, signal);
+            const existingTurn = targetRecords.find((record) => record.recordType === "turn.started" && record.payload.run.runId === runId);
             if (existingTurn && existingTurn.recordType === "turn.started") {
                 assertSameExecutionContent(existingTurn, run, contextBasis);
                 await store.close();
@@ -220,6 +229,7 @@ export async function runCodingAgent(input) {
                         : {}),
                     ...(input.controlHooks ? { controlHooks: input.controlHooks } : {}),
                     ...(input.toolGroupBarrier ? { toolGroupBarrier: input.toolGroupBarrier } : {}),
+                    ...(input.inputSupply ? { inputSupply: input.inputSupply } : {}),
                     config: input.config,
                     workspaceRoot: input.workspaceRoot,
                     sessionId,
@@ -335,6 +345,8 @@ export async function runCodingAgent(input) {
         });
         const state = await runner.run({
             run,
+            ...(sessionId === undefined ? {} : { sessionId }),
+            ...(input.inputSupply === undefined ? {} : { inputSupply: input.inputSupply }),
             baseSystemPrompt: CODING_AGENT_SYSTEM_PROMPT,
             tools: tools.modelToolSpecs(),
             skills,
@@ -364,7 +376,16 @@ function resolveSessionContextMode(input) {
         if (!Number.isSafeInteger(throughPosition) || throughPosition < 1) {
             throw new StoreError("invalid_record", "session_history 需要正的 throughPosition");
         }
-        return { version: 1, mode: "session_history", throughPosition: throughPosition };
+        const sourceSessionId = input.sourceSessionId;
+        if (sourceSessionId !== undefined && (typeof sourceSessionId !== "string" || sourceSessionId.length === 0)) {
+            throw new StoreError("invalid_record", "session_history sourceSessionId 必须是非空字符串");
+        }
+        return {
+            version: 1,
+            mode: "session_history",
+            throughPosition: throughPosition,
+            ...(sourceSessionId === undefined ? {} : { sourceSessionId }),
+        };
     }
     throw new StoreError("version_unsupported", `sessionContext mode=${JSON.stringify(candidate.mode)} 不受支持`);
 }
@@ -391,7 +412,8 @@ function assertSameExecutionContent(record, run, contextBasis) {
     const recorded = record.payload.contextBasis;
     const recordedBasis = recorded ? parseContextBasis(recorded) : null;
     if ((recordedBasis?.throughPosition ?? null) !== (contextBasis?.throughPosition ?? null) ||
-        (recordedBasis?.mode ?? null) !== (contextBasis?.mode ?? null)) {
+        (recordedBasis?.mode ?? null) !== (contextBasis?.mode ?? null) ||
+        (recordedBasis?.sourceSessionId ?? null) !== (contextBasis?.sourceSessionId ?? null)) {
         throw new StoreError("idempotency_conflict", "相同执行身份的会话历史绑定不同");
     }
 }

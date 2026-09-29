@@ -6,7 +6,7 @@ import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { SessionRef } from '../../../contracts/core/identity.js';
 import type { TaskClaim } from '../../../contracts/core/task-claim.js';
 import type { ReadResult, WriteResult } from '../../../contracts/core/results.js';
-import type { DispatchOutboxRef, RoleBindingRefV1, TaskAttemptRef, TaskBudgetV1 } from '../../../contracts/dispatch.js';
+import type { ConsumedWaitV1, DispatchOutboxRef, RoleBindingRefV1, TaskAttemptRef, TaskBudgetV1 } from '../../../contracts/dispatch.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
 import type { PlanRevisionRef } from '../../../contracts/plan.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
@@ -24,6 +24,13 @@ export type ClaimTaskInput = {
   sessionRef: SessionRef;
   roleBinding: RoleBindingRefV1;
   budget: TaskBudgetV1;
+  /**
+   * Present only for a continuation claim: the earlier yielded Run whose saved
+   * wait reply this new Attempt consumes. It is part of the claim fingerprint, so
+   * a repeated wake request with the same pair replays instead of creating a
+   * second Attempt/Run.
+   */
+  consumedWait?: ConsumedWaitV1;
 };
 /**
  * Versioned dispatch phase nested in the @1 outbox body. `entered`/`settled`

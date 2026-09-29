@@ -488,8 +488,9 @@ describe('pure DTO presentation', () => {
     } };
 
     const taskHtml = renderTaskStructure(graph);
-    expect(taskHtml).toContain('data-structure="hierarchy"'); // parentOf, work breakdown
-    expect(taskHtml).toContain('data-structure="execution"'); // executionDag.dependsOn, real dependency
+    expect(taskHtml).toContain('data-edges="hierarchy" aria-pressed="true"'); // parentOf is the selected view
+    const dependencyHtml = renderTaskStructure(graph, undefined, undefined, undefined, 'dependency');
+    expect(dependencyHtml).toContain('data-edges="dependency" aria-pressed="true"'); // separate dependency view
     expect(taskHtml).toContain('t-root');
     expect(taskHtml).toContain('t-child');
     expect(taskHtml).toContain('t-future'); // planning-only/optional/future row is kept

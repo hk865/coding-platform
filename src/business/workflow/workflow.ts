@@ -4,12 +4,13 @@ import type { SessionRef, VersionPin } from '../../contracts/core/identity.js';
 import type { SessionRecord } from '../../contracts/core/session.js';
 import type { RunRef, RunSnapshot, TaskTriple } from '../../contracts/dispatch.js';
 import type { GoalRef, GoalSnapshot, WorkspaceRef } from '../../contracts/ledger.js';
-import type { PlanRevisionRef, RuntimeTask } from '../../contracts/plan.js';
+import type { PlanRevisionRef, RuntimeTask, TaskScope } from '../../contracts/plan.js';
 import { revisionAssignments } from '../../contracts/plan.js';
 import type { TaskReductionRef } from '../../contracts/reduction.js';
 import type { GoalPhaseRef } from '../../contracts/goal-phase.js';
 import type { RoundSnapshot } from '../../contracts/verification.js';
 import type { PreparedTaskExecution } from '../../contracts/core/prepared-execution.js';
+import type { ConsumedWaitV1 } from '../../contracts/dispatch.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../contracts/fingerprint.js';
 import type { CreateSessionRequest } from '../../core/agent-runtime/session-operations.js';
 import type { PrepareTaskExecutionRequest, StartTaskExecutionRequest } from '../../core/agent-runtime/execution-contracts.js';
@@ -17,8 +18,9 @@ import type { ClaimTaskInput } from '../../core/work-graph/tasks/claim-contracts
 import type { TaskGraph, TaskRow } from '../../core/work-graph/tasks/plan-contracts.js';
 import type { GraphWrite } from '../../core/work-graph/tasks/contracts.js';
 import type { SessionCard } from '../../core/work-graph/sessions/contracts.js';
-import type { InitialPlanningGoalInput, InitialPlanningGoalInputResult, N0GoalInput, WorkflowAdvanceInput, WorkflowAdvanceResult, WorkflowOperation, WorkflowStepReceipt } from './contracts.js';
+import type { ConsultationInput, ConsultationResult, InitialPlanningGoalInput, InitialPlanningGoalInputResult, N0GoalInput, WorkflowAdvanceInput, WorkflowAdvanceResult, WorkflowOperation, WorkflowStepReceipt } from './contracts.js';
 import type { WorkflowDependencies, WorkflowHostConfiguration, WorkflowPort } from './ports.js';
+import { createConsultationConsumer } from './consultation.js';
 
 /**
  * R5c.1 stage-two adoption-first advancement loop.
@@ -34,7 +36,7 @@ import type { WorkflowDependencies, WorkflowHostConfiguration, WorkflowPort } fr
 type Actor = { kind: 'human' | 'system'; id: string };
 type Binding = WorkflowHostConfiguration['bindings'][number];
 
-type Owned = {
+export type Owned = {
   ctx: CoreCallContext;
   projectId: string;
   workspaceId: string;
@@ -46,6 +48,8 @@ type Base = {
   flowId: string;
   sessionHint: SessionRef | null;
   actor: Actor;
+  /** Explicit `select_work` Task selection; null keeps the default selection. */
+  taskId: string | null;
 };
 
 // --------------------------------------------------------------------------
@@ -109,8 +113,10 @@ function openWorkChecksStep(base: Base, run: RunSnapshot): WorkflowOperation {
   const input = { subjectRunRef: run.ref, subject: run.task, planRef: run.planRef };
   return { kind: 'open_checks', request: graphWrite(base, 'open_checks', input, []) };
 }
-function openGateChecksStep(base: Base, planRef: PlanRevisionRef, gate: TaskTriple, producer: RunRef): WorkflowOperation {
-  const input = { subjectRunRef: producer, subject: gate, planRef, gateSubject: 'goal' as const };
+function openGateChecksStep(
+  base: Base, planRef: PlanRevisionRef, gate: TaskTriple, producer: RunRef, gateSubject: TaskScope['kind'],
+): WorkflowOperation {
+  const input = { subjectRunRef: producer, subject: gate, planRef, gateSubject };
   return { kind: 'open_checks', request: graphWrite(base, 'open_checks', input, []) };
 }
 /** `null` means an unknown check window exists: never skip it to run a later
@@ -149,7 +155,9 @@ function completeGoalStep(base: Base, projectId: string, goal: GoalSnapshot): Wo
   return { kind: 'complete_goal', request: graphWrite(base, 'complete_goal', { goalRef: base.goalRef }, expected) };
 }
 function makePerform(base: Base, operation: WorkflowOperation): WorkflowAdvanceInput {
-  return { schemaVersion: 1, goalRef: base.goalRef, flowId: base.flowId, sessionHint: base.sessionHint, kind: 'perform', operation };
+  return { schemaVersion: 1, goalRef: base.goalRef, flowId: base.flowId, sessionHint: base.sessionHint, kind: 'perform', operation,
+    // An explicit Task selection is preserved across every successor request.
+    ...(base.taskId === null ? {} : { taskId: base.taskId }) };
 }
 
 type WorkflowAdvanceValue = {
@@ -223,7 +231,7 @@ function roleReusable(card: SessionCard, workspaceId: string, binding: Binding):
 // Context / input isolation (before the first await)
 // --------------------------------------------------------------------------
 
-function ownContext(ctx: CoreCallContext): Owned | { rejection: CoreRejection } {
+export function ownContext(ctx: CoreCallContext): Owned | { rejection: CoreRejection } {
   const raw = ctx as unknown as Record<string, unknown> | null | undefined;
   if (!isRecord(raw)) return { rejection: rejection('invalid', 'advanceWork requires a bound call context') };
   const projectId = raw['projectId'];
@@ -286,7 +294,12 @@ function baseFromInput(input: WorkflowAdvanceInput, owned: Owned): Base | { reje
     }
     sessionHint = { projectId: hint['projectId'], sessionId: hint['sessionId'] };
   }
-  return { goalRef: goalRef as unknown as GoalRef, flowId, sessionHint, actor: owned.actor };
+  const rawTaskId = raw['taskId'];
+  if (rawTaskId !== undefined && !nonEmpty(rawTaskId)) {
+    return { rejection: rejection('invalid', 'taskId must be a non-empty string when present') };
+  }
+  return { goalRef: goalRef as unknown as GoalRef, flowId, sessionHint, actor: owned.actor,
+    taskId: rawTaskId === undefined ? null : rawTaskId };
 }
 
 /**
@@ -323,14 +336,14 @@ function initialPlanningBase(
     return { rejection: rejection('invalid', 'handleGoalInput requires an executeWithinRequest boolean') };
   }
   return { goalRef: goalRef as unknown as GoalRef, flowId, sessionHint, actor: owned.actor,
-    executeWithinRequest: raw['executeWithinRequest'] };
+    taskId: null, executeWithinRequest: raw['executeWithinRequest'] };
 }
 
 // --------------------------------------------------------------------------
 // The factory
 // --------------------------------------------------------------------------
 
-export function createWorkflow(deps: WorkflowDependencies): WorkflowPort {
+export function createWorkflow(deps: WorkflowDependencies): WorkflowPort & Required<Pick<WorkflowPort, 'consumeConsultation'>> {
   /**
    * R5b.4 §11.5 finite first-consumer handoff. Each call delegates exactly ONE
    * original owner (`proposeInitialPlanFromAnswer` or `applyPlanChange`) and
@@ -476,6 +489,7 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort {
   async function buildClaimOperation(
     owned: Owned, base: Base, goal: GoalSnapshot, planRef: PlanRevisionRef,
     task: RuntimeTask, binding: Binding, sessionId: string, sessionRevision: number,
+    consumedWait?: ConsumedWaitV1,
   ): Promise<{ operation: WorkflowOperation } | { rejection: CoreRejection }> {
     const workspacePin = await loadWorkspacePin(owned, goal.workspaceRef);
     if ('rejection' in workspacePin) return workspacePin;
@@ -488,8 +502,100 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort {
     const input: ClaimTaskInput = {
       goalRef: base.goalRef, planRef, taskId: task.taskId, sessionRef,
       roleBinding: binding.roleBinding, budget: binding.budget,
+      ...(consumedWait === undefined ? {} : { consumedWait }),
     };
     return { operation: { kind: 'claim_task', request: graphWrite(base, 'claim_task', input, expected) } };
+  }
+
+  /** Read the exact prior yielded Run continuation and its saved reply ref. */
+  async function readContinuation(
+    owned: Owned, priorRunRef: RunRef,
+  ): Promise<{ value: ConsumedWaitV1; sessionRef: SessionRef } | { waiting: string } | { rejection: CoreRejection }> {
+    const priorRead = await deps.executions.readExecution(owned.ctx, priorRunRef);
+    if (priorRead.status !== 'ready') return { waiting: receiptReason(priorRead, 'the prior yielded Run is not readable') };
+    const continuation = priorRead.value.run.continuation;
+    if (priorRead.value.run.outcome !== 'yielded' || continuation === undefined) return { waiting: 'the prior Run has no durable yielded continuation binding' };
+    if (priorRead.value.run.controlState?.desiredState === 'paused' || priorRead.value.run.controlState?.desiredState === 'cancelled') {
+      return { waiting: 'the prior yielded execution is paused or cancelled' };
+    }
+    if (deps.consultations === undefined) return { waiting: 'the continuation wait requires the consultation mailbox' };
+    const messageRead = await deps.consultations.messages.readMessage(owned.ctx, continuation.messageRef);
+    if (messageRead.status !== 'ready') return { waiting: receiptReason(messageRead, 'the continuation wait message is not readable') };
+    const message = messageRead.value;
+    if (message.status !== 'responded' || message.response === null) {
+      return { waiting: 'the continuation wait has not been answered yet' };
+    }
+    return { sessionRef: structuredClone(continuation.sessionRef), value: { runRef: priorRunRef, messageRef: continuation.messageRef, responseRef: structuredClone(message.response.bodyRef) } };
+  }
+
+  /**
+   * The ONE recoverable unadmitted execution. A formal READY `readExecution`
+   * that is still a bare `starting` claim - no authorization, envelope, input
+   * binding, entry or runtime fact and no pause/cancel intent - is exactly the
+   * Run whose very first prepare was refused. An unreadable read or ANY other
+   * execution state is never inferred to be unentered and never restarted.
+   */
+  async function isUnadmittedStarting(owned: Owned, runRef: RunRef): Promise<boolean> {
+    const read = await deps.executions.readExecution(owned.ctx, runRef).catch(() => null);
+    if (read === null || read.status !== 'ready') return false;
+    const run = read.value.run;
+    if (!sameCanonical(run.ref, runRef)) return false;
+    if (run.status !== 'starting') return false;
+    if (run.executionAuthorization !== undefined) return false;
+    if (run.envelope !== null) return false;
+    if (run.inputBinding !== undefined) return false;
+    if (run.executionHistory !== undefined) return false;
+    if (run.startedAt !== null) return false;
+    if (run.lastEventSeq !== 0 || run.lastRuntimeEventId !== '' || run.lastFactEventId !== '') return false;
+    const desired = run.controlState?.desiredState;
+    if (desired === 'paused' || desired === 'cancelled') return false;
+    return true;
+  }
+
+  /**
+   * Resume the ORIGINAL verification round of a formally completed/ended Run
+   * before any new claim/open. An `open` round follows the SAME `nextAfterRound`
+   * rules (pending continues its registered check; executing/interrupted waits).
+   * A `finalized` PASS round completes the Task from that same round; a
+   * finalized non-PASS round waits and is never re-verified. Only an explicit
+   * `not_found` opens the checks exactly once. A missing optional port or any
+   * unknown read/corruption is `waiting`, never treated as "no round", so an
+   * unknown window can never be bypassed with a second round.
+   */
+  async function resumeOriginalRound(owned: Owned, base: Base, run: RunSnapshot): Promise<WorkflowAdvanceResult> {
+    const query = deps.evidence.queryOriginalVerification;
+    if (query === undefined) {
+      return waiting(null, 'the original verification round is not readable: the original-round read is not published');
+    }
+    let read: ReadResult<RoundSnapshot>;
+    try {
+      read = await query(owned.ctx, { subjectRunRef: run.ref, subject: { ...run.task }, planRef: run.planRef });
+    } catch {
+      return waiting(null, 'the original verification round read failed; no new round is opened');
+    }
+    if (read.status === 'ready') {
+      const round = read.value;
+      if (round.status === 'finalized') {
+        if (round.outcome !== 'PASS' || round.gaps.length > 0) {
+          return waiting(null,
+            `the original verification round finalized ${round.outcome ?? 'INCONCLUSIVE'} with ${round.gaps.length} gap(s); not re-verifying`);
+        }
+        const goalRead = await deps.plans.queryGoal(owned.ctx, base.goalRef);
+        if (goalRead.status !== 'ready') {
+          return waiting(null, receiptReason(goalRead, 'the Goal could not be read for the Task completion'));
+        }
+        return advancing(null, makePerform(base, completeTaskStep(base, goalRead.value.goal, round)));
+      }
+      const next = nextAfterRound(base, round);
+      if (next === null) {
+        return waiting(null, 'the original verification round has an executing or interrupted check; not advancing');
+      }
+      return advancing(null, next);
+    }
+    if (read.status === 'not_found') {
+      return advancing(null, makePerform(base, openWorkChecksStep(base, run)));
+    }
+    return waiting(null, receiptReason(read, 'the original verification round is not readable'));
   }
 
   /** Read-only deterministic first-step selection shared by `select_work`. */
@@ -511,14 +617,48 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort {
       return completed(null, 'the Goal is formally COMPLETED');
     }
 
+    // An explicit Task selection ends THIS work handle once that Task is
+    // satisfied; it never silently switches to another Task of the same Goal.
+    if (base.taskId !== null) {
+      const selectedRow = graph.tasks.find(candidate => candidate.ref.taskId === base.taskId);
+      if (selectedRow !== undefined && selectedRow.effectivePhase === 'satisfied') {
+        return completed(null, `the selected Task ${base.taskId} is satisfied`);
+      }
+    }
     // 1. The first eligible active ordinary work in required-first / plan order.
     const ordered = orderTasks(graph.plan.tasks);
     for (const task of ordered) {
+      if (base.taskId !== null && task.taskId !== base.taskId) continue;
       const row = graph.tasks.find((candidate) => candidate.ref.taskId === task.taskId);
       if (row === undefined) continue;
       if (task.taskKind !== 'work' || task.disposition !== 'active') continue;
       if (task.executionIntent === 'plan_only') continue;
-      if (row.execution !== null) continue;
+      // A real claim that was persisted but never admitted to the Kernel (its
+      // first prepare was refused) is recoverable from the SAME Run. This is the
+      // ONE narrow unadmitted state, checked against the formal execution read;
+      // unknown/unreadable, authorized, entered, running and terminal executions
+      // keep the pre-existing rules below and are never restarted.
+      if (row.execution !== null && row.effectivePhase !== 'satisfied' && row.effectivePhase !== 'failed'
+        && await isUnadmittedStarting(owned, row.execution)) {
+        return advancing(null, makePerform(base, { kind: 'prepare', request: prepareStep(base, row.execution) }));
+      }
+      // A formally completed/ended Run whose Task is still open keeps its
+      // ORIGINAL verification round (open or finalized). Resume that round (or
+      // open it exactly once on an explicit not_found) BEFORE skipping the ended
+      // Run; an unknown original-round read waits rather than falling through to
+      // an unrelated Work. Failed/cancelled/paused/running/unknown executions
+      // keep the existing rules below, and other same-Goal Tasks stay
+      // independently selectable.
+      if (row.execution !== null && row.effectivePhase !== 'satisfied' && row.effectivePhase !== 'failed') {
+        const execution = await deps.executions.readExecution(owned.ctx, row.execution);
+        if (execution.status === 'ready' && sameCanonical(execution.value.run.ref, row.execution)
+          && normalEnd(execution.value.run).ok) {
+          return await resumeOriginalRound(owned, base, execution.value.run);
+        }
+      }
+      // An ended Run with no formal yield is never re-claimed. A real yielded Run
+      // with a durable continuation is the ONE continuable execution.
+      if (row.execution !== null && row.effectivePhase !== 'ready') continue;
       if (row.effectivePhase === 'satisfied' || row.effectivePhase === 'failed') continue;
       if (!row.eligibility.eligible) continue;
       const assignment = revisionAssignments(graph.plan).find((candidate) => candidate.taskId === task.taskId);
@@ -528,7 +668,24 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort {
         return rejection('unsupported',
           `no trusted Workflow binding matches workspace ${goal.workspaceRef.workspaceId} and role ${assignment.role}`);
       }
-      const chosen = await chooseSession(owned, goal, binding, base.sessionHint);
+      // A persisted yield fixes the originating Session before any default
+      // selection. Reopening the Host must never create or choose a substitute.
+      let consumedWait: ConsumedWaitV1 | undefined;
+      let chosen: SessionChoice;
+      if (row.execution !== null) {
+        const continuation = await readContinuation(owned, row.execution);
+        if ('rejection' in continuation) return continuation.rejection;
+        if ('waiting' in continuation) return waiting(null, continuation.waiting);
+        consumedWait = continuation.value;
+        const original = await deps.sessions.readSession(owned.ctx, continuation.sessionRef);
+        if (original.status !== 'ready') return waiting(null, 'the original continuation Session is not readable');
+        if (!roleReusable(original.value, goal.workspaceRef.workspaceId, binding)) {
+          return waiting(null, 'the original continuation Session is busy, archived or incompatible');
+        }
+        chosen = { kind: 'reuse', card: original.value };
+      } else {
+        chosen = await chooseSession(owned, goal, binding, base.sessionHint);
+      }
       if (chosen.kind === 'rejection') return chosen.rejection;
       if (chosen.kind === 'waiting') return waiting(null, chosen.reason);
       const taskRef: TaskTriple = { projectId: owned.projectId, goalId: base.goalRef.goalId, taskId: task.taskId };
@@ -542,11 +699,16 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort {
       }
       const sessionRef: SessionRef = { projectId: owned.projectId, sessionId: chosen.card.record.ref.sessionId };
       const built = await buildClaimOperation(owned, base, goal, graph.plan.ref, task, binding,
-        sessionRef.sessionId, chosen.card.record.revision);
+        sessionRef.sessionId, chosen.card.record.revision, consumedWait);
       if ('rejection' in built) return built.rejection;
       return advancing(null, makePerform({ ...base, sessionHint: sessionRef }, built.operation));
     }
 
+    // An explicit Task selection never advances the Goal-level gate/completion:
+    // only that Task's own work may progress.
+    if (base.taskId !== null) {
+      return waiting(null, `the selected Task ${base.taskId} is not executable right now`);
+    }
     // 2. While any required ordinary work is still unsatisfied (including a
     //    required plan_only future node) the real gap stays; the Goal gate is
     //    never scheduled ahead of unfinished ordinary work.
@@ -569,7 +731,8 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort {
         return waiting(null, `the goal gate ${gateTask.taskId} has no ended ordinary producer Run yet`);
       }
       const gate: TaskTriple = { projectId: owned.projectId, goalId: base.goalRef.goalId, taskId: gateTask.taskId };
-      return advancing(null, makePerform(base, openGateChecksStep(base, graph.plan.ref, gate, producer.execution)));
+      return advancing(null, makePerform(base,
+        openGateChecksStep(base, graph.plan.ref, gate, producer.execution, gateTask.scope.kind)));
     }
 
     // 4. Only a fully satisfied required set may propose the formal Goal completion.
@@ -686,6 +849,7 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort {
         if (result.status !== 'committed') return waiting(receipt, result.reason);
         const next: WorkflowAdvanceInput = {
           schemaVersion: 1, goalRef: base.goalRef, flowId: base.flowId, sessionHint: base.sessionHint, kind: 'select_work',
+          ...(base.taskId === null ? {} : { taskId: base.taskId }),
         };
         return advancing(receipt, next);
       }
@@ -710,5 +874,18 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort {
     return await performStep(owned, base, isolated.operation);
   };
 
-  return { handleGoalInput, advanceWork };
+  // AG2a: the explicit-consultation consumer is published on the SAME Workflow
+  // port. Without the optional consultation dependencies it stays explicitly
+  // unsupported, so existing Workflow fixtures are never forced to extend.
+  const consultation = deps.consultations === undefined ? null : createConsultationConsumer({
+    sessions: deps.sessions, plans: deps.plans, runtime: deps.runtime, consultations: deps.consultations,
+  });
+  const consumeConsultation = async (ctx: CoreCallContext, input: ConsultationInput): Promise<ConsultationResult> => {
+    if (consultation === null) {
+      return rejection('unsupported', 'the Workflow has no consultation mailbox/Query/Project dependency');
+    }
+    return consultation(ctx, input);
+  };
+
+  return { handleGoalInput, advanceWork, consumeConsultation };
 }

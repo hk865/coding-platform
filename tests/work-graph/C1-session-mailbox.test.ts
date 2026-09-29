@@ -302,12 +302,16 @@ describe.each(KINDS)('C1 SessionMailbox real %s', kind => {
     expect(body).toMatchObject({ status: 'ready', value: { text: 'readable body' } });
   });
 
-  it('declares the two recipient lookup indexes with their frozen paths', () => {
+  it('declares recipient and sender Run lookup indexes with their frozen paths', () => {
     expect(SESSION_MESSAGE_LOOKUP_INDEXES).toEqual([
+      { name: 'session-message-by-sender-session', aggregateType: 'SessionMessage',
+        paths: ['ref.projectId', 'ref.workspaceId', 'sender.sessionRef.sessionId'] },
       { name: 'session-message-by-recipient', aggregateType: 'SessionMessage',
         paths: ['ref.projectId', 'ref.workspaceId', 'recipient.sessionId'] },
       { name: 'session-message-by-recipient-status', aggregateType: 'SessionMessage',
         paths: ['ref.projectId', 'ref.workspaceId', 'recipient.sessionId', 'status'] },
+      { name: 'session-message-by-sender-run', aggregateType: 'SessionMessage',
+        paths: ['ref.projectId', 'ref.workspaceId', 'sender.runRef.goalId', 'sender.runRef.runId'] },
     ]);
   });
 

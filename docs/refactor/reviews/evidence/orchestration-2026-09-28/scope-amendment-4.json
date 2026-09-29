@@ -1,0 +1,17 @@
+{
+  "at": "2026-09-28T10:52:30.443038+00:00",
+  "files": [
+    {
+      "path": "tests/work-graph/C1-session-mailbox.test.ts",
+      "sha256": "2e5ef2e9d8073d813b32dfd9b21bd2e6ea6e6cf6aef972da387143788bec0578",
+      "originalMatchesSnapshot": true
+    },
+    {
+      "path": "tests/work-graph/R4-control-intent.test.ts",
+      "sha256": "857070132fda5e20da1f3a2ff80103880fc3aeaed6a6509261d7fd4c7c185f56",
+      "originalMatchesSnapshot": true
+    }
+  ],
+  "reason": "Migrate obsolete exact-index assertion and invalid resume fixture to the approved Session outbox lookup and explicit resume contract, retaining strict assertions.",
+  "totalWritableFiles": 199
+}

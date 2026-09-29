@@ -15,10 +15,10 @@ export type ControlIntentRef = {
 // R4.1/R4.3 durable control intent (pause/cancel request plus observation)   //
 // ------------------------------------------------------------------------ //
 /**
- * The two control kinds this batch accepts. Resume/steer are deliberately not
- * declared: no port method or DTO field may advertise an unimplemented action.
+ * Durable execution controls. Directional input is separate from stop fencing;
+ * accepted intent alone never proves the requested action happened.
  */
-export type ControlIntentKindV1 = 'pause' | 'cancel';
+export type ControlIntentKindV1 = 'pause' | 'cancel' | 'resume' | 'steer';
 /**
  * The fixed execution entry an observation belongs to. The trusted Runtime
  * observer reads it from the Run's formal V2 authorization and claim
@@ -42,7 +42,7 @@ export type ControlEntryIdentityV1 = {
  */
 export type ControlObservationV1 = {
   schemaVersion: 1;
-  kind: 'paused' | 'cancelled' | 'terminal_without_cancel' | 'outcome_unknown';
+  kind: 'paused' | 'cancelled' | 'resumed' | 'steered' | 'terminal_without_cancel' | 'outcome_unknown';
   entry: ControlEntryIdentityV1;
   history: RunExecutionHistoryV1;
   source: RunExecutionHistoryV1['kernel'] & { position: number };
@@ -60,7 +60,7 @@ export type ControlIntentRequestV1 = {
   ref: ControlIntentRef;
   runRef: RunRef;
   kind: ControlIntentKindV1;
-  desiredState: 'paused' | 'cancelled';
+  desiredState: 'paused' | 'cancelled' | 'running' | 'steered';
   reason: string | null;
   requestedAt: string;
   requestedBy: Extract<ActorRef, { kind: 'human' | 'system' }>;

@@ -39,6 +39,7 @@ import type {
 import type { PlanRevisionSnapshot } from '../../../contracts/plan.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import { seqOfCommitCursor } from '../../../contracts/ledger.js';
+import type { LookupValue, RecordLookupPort, RecordLookupRequest } from '../../record-store/lookup-ports.js';
 import type { EncodedRecord } from '../../record-store/ports.js';
 import { materialRecordSchemas } from '../materials/record-readers.js';
 import {
@@ -61,9 +62,11 @@ import {
   type Rejected,
 } from './plan-readers.js';
 import type {
+  ExecutionListPageRequest,
   ExecutionReadDependencies,
   ExecutionReadPort,
   TaskExecutionRecord,
+  TaskExecutionPage,
 } from './execution-read-contracts.js';
 
 const RUN_SNAPSHOT_SCHEMA_ID = 'RunSnapshot@1';
@@ -308,14 +311,96 @@ function verifyChain(
 }
 
 // --------------------------------------------------------------------------
+// Bounded execution list (MVP UI connection)
+// --------------------------------------------------------------------------
+
+/** The exact candidate indexes registered by `PLAN_STATE_RECORD_SCHEMAS`; this
+ * reader only consumes them and never registers a second index or schema. */
+const RUN_BY_GOAL_INDEX = 'r3c-run-by-goal';
+const RUN_BY_TASK_INDEX = 'r4c-run-by-task';
+/** One page is 1-100; the candidate lookup gathers at most one extra Run. */
+const LIST_PAGE_LIMIT_MAX = 100;
+
+/** Opaque list cursor: bound to the exact scope/Goal/Task query and the
+ * exclusive canonical key of the last Run returned by the previous page. */
+type ExecutionListCursor = {
+  schemaVersion: 1;
+  projectId: string;
+  workspaceId: string;
+  goalId: string;
+  taskId: string | null;
+  after: string;
+};
+
+function encodeExecutionListCursor(cursor: ExecutionListCursor): string {
+  return canonicalJson(cursor as unknown as JsonValue);
+}
+
+function decodeExecutionListCursor(raw: string): ExecutionListCursor | null {
+  let parsed: unknown;
+  try { parsed = JSON.parse(raw); } catch { return null; }
+  if (!isRecord(parsed) || parsed['schemaVersion'] !== 1) return null;
+  const projectId = parsed['projectId'];
+  const workspaceId = parsed['workspaceId'];
+  const goalId = parsed['goalId'];
+  const after = parsed['after'];
+  const taskId = parsed['taskId'];
+  if (!nonEmpty(projectId) || !nonEmpty(workspaceId) || !nonEmpty(goalId) || !nonEmpty(after)) return null;
+  if (taskId !== null && !nonEmpty(taskId)) return null;
+  return { schemaVersion: 1, projectId, workspaceId, goalId, taskId: taskId === null ? null : taskId, after };
+}
+
+/** Locate one RunRef from a candidate index refKey. The canonical
+ * `readExecution` still re-reads and validates the Run; this is a locator only. */
+function runRefFromCandidateKey(refKey: string): RunRef | null {
+  let parsed: unknown;
+  try { parsed = JSON.parse(refKey); } catch { return null; }
+  return isRunRef(parsed) ? parsed : null;
+}
+
+/**
+ * Candidate lookup over the EXISTING Run-by-Goal / Run-by-Task index. It
+ * gathers at most `desired` keys, using the index's own exclusive
+ * `after` cursor in one bounded lookup; a missing/unregistered index is
+ * `incomplete`, never an empty page.
+ */
+/** The candidate-index capability of the SAME records backend. The dependency
+ * type declares the optional capability explicitly, so no cast or `any` is
+ * needed; a records port without it yields `null` and the list read is
+ * `incomplete`, never an empty page. */
+function lookupPortOf(records: ExecutionReadDependencies['records']): RecordLookupPort | null {
+  const lookup = records.lookup;
+  return lookup === undefined ? null : { lookup: lookup.bind(records) };
+}
+
+async function collectRunCandidateKeys(
+  lookups: RecordLookupPort,
+  index: string,
+  values: readonly LookupValue[],
+  afterKey: string | undefined,
+  desired: number,
+): Promise<{ status: 'ready'; refKeys: string[] } | CoreRejection> {
+  const lookupRequest: RecordLookupRequest = {
+    index, values, limit: desired,
+    ...(afterKey === undefined ? {} : { after: afterKey }),
+  };
+  const result = await lookups.lookup(lookupRequest);
+  if (result.status !== 'ready') {
+    if (result.code === 'unsupported') return incomplete(`lookup index ${index} is not registered`);
+    if (result.code === 'invalid') return incomplete(`lookup index ${index} rejected the request: ${result.reason}`);
+    return unavailable(`${result.code}: ${result.reason}`);
+  }
+  return { status: 'ready', refKeys: result.value.records.map(record => record.refKey) };
+}
+
+// --------------------------------------------------------------------------
 // The factory
 // --------------------------------------------------------------------------
 
 export function createRunStateReader(deps: ExecutionReadDependencies): ExecutionReadPort {
   const records = deps.records;
-  return {
-    async readExecution(ctx: CoreCallContext, ref: RunRef,
-      options?: { atLeastCursor?: CommitCursor }): Promise<ReadResult<TaskExecutionRecord>> {
+  const readExecution = async (ctx: CoreCallContext, ref: RunRef,
+    options?: { atLeastCursor?: CommitCursor }): Promise<ReadResult<TaskExecutionRecord>> => {
       const owned = ownCallContext(ctx);
       if (!owned.ok) return owned.rejection;
       const scope = owned.ctx;
@@ -467,6 +552,92 @@ export function createRunStateReader(deps: ExecutionReadDependencies): Execution
         };
       }
       return reject('busy', 'the execution references changed in every final read window');
-    },
   };
+  /**
+   * MVP UI connection: a bounded page over the EXISTING Run-by-Goal /
+   * Run-by-Task candidate index and the canonical `readExecution`. The opaque
+   * cursor is bound to the exact project/workspace/Goal/Task query and to the
+   * exclusive canonical key of the last returned Run, so a cursor from another
+   * query is rejected instead of leaking other Runs. Every item keeps its own
+   * `readThrough`; the page is a bounded set of independent reads, never an
+   * atomic snapshot and never a fallback to an empty list.
+   */
+  const listExecutions = async (
+    ctx: CoreCallContext,
+    request: ExecutionListPageRequest,
+  ): Promise<ReadResult<TaskExecutionPage>> => {
+    const owned = ownCallContext(ctx);
+    if (!owned.ok) return owned.rejection;
+    const workspaceId = owned.ctx.workspaceId;
+    if (workspaceId === undefined || workspaceId.length === 0) {
+      return forbidden('listExecutions requires a bound project/workspace context');
+    }
+    const raw = request as unknown as { goalRef?: unknown; taskId?: unknown; page?: unknown } | null | undefined;
+    if (!isRecord(raw) || !isRecord(raw.goalRef)
+      || raw.goalRef['aggregateType'] !== 'Goal'
+      || !nonEmpty(raw.goalRef['projectId']) || !nonEmpty(raw.goalRef['goalId'])) {
+      return invalid('listExecutions requires a complete GoalRef');
+    }
+    const projectId = raw.goalRef['projectId'];
+    const goalId = raw.goalRef['goalId'];
+    if (projectId !== owned.ctx.projectId) return forbidden('the Goal belongs to another project');
+    const rawTaskId = raw.taskId;
+    if (rawTaskId !== undefined && !nonEmpty(rawTaskId)) {
+      return invalid('taskId must be a non-empty string when present');
+    }
+    const taskId: string | null = rawTaskId === undefined ? null : rawTaskId;
+    if (!isRecord(raw.page)) return invalid('listExecutions requires a page with afterCursor and limit');
+    const afterCursor = raw.page['afterCursor'];
+    if (afterCursor !== null && typeof afterCursor !== 'string') return invalid('page.afterCursor must be a string or null');
+    const limit = raw.page['limit'];
+    if (typeof limit !== 'number' || !Number.isSafeInteger(limit) || limit < 1 || limit > LIST_PAGE_LIMIT_MAX) {
+      return invalid('page.limit must be an integer between 1 and 100');
+    }
+    let afterKey: string | undefined;
+    if (afterCursor !== null) {
+      const cursor = decodeExecutionListCursor(afterCursor);
+      if (cursor === null) return invalid('page.afterCursor is not a valid execution-list cursor');
+      if (cursor.projectId !== projectId || cursor.workspaceId !== workspaceId
+        || cursor.goalId !== goalId || cursor.taskId !== taskId) {
+        return invalid('page.afterCursor does not belong to this workspace/Goal/Task query');
+      }
+      afterKey = cursor.after;
+    }
+    const index = taskId === null ? RUN_BY_GOAL_INDEX : RUN_BY_TASK_INDEX;
+    const values: LookupValue[] = taskId === null ? [projectId, goalId] : [projectId, goalId, taskId];
+    const lookups = lookupPortOf(records);
+    if (lookups === null) return incomplete('the Run candidate index port is not configured');
+    const candidates = await collectRunCandidateKeys(lookups, index, values, afterKey, limit + 1);
+    if (candidates.status !== 'ready') return candidates;
+    const located: { key: string; runRef: RunRef }[] = [];
+    const seen = new Set<string>();
+    for (const key of candidates.refKeys) {
+      if (located.length >= limit) break;
+      if (seen.has(key)) continue;
+      const runRef = runRefFromCandidateKey(key);
+      if (runRef === null) return unavailable('a Run candidate is not a canonical RunRef');
+      if (runRef.projectId !== projectId || runRef.goalId !== goalId) {
+        return unavailable('a Run candidate belongs to another Goal');
+      }
+      seen.add(key);
+      located.push({ key, runRef });
+    }
+    const items: TaskExecutionRecord[] = [];
+    for (const { runRef } of located) {
+      const read = await readExecution(owned.ctx, runRef);
+      if (read.status === 'ready') { items.push(read.value); continue; }
+      if (read.status === 'not_found') return unavailable('a located Run has no canonical record');
+      return read;
+    }
+    const last = located[located.length - 1];
+    const nextCursor = candidates.refKeys.length > limit && last !== undefined
+      ? encodeExecutionListCursor({ schemaVersion: 1, projectId, workspaceId, goalId, taskId, after: last.key })
+      : null;
+    return { status: 'ready', value: {
+      items,
+      nextCursor,
+      readThrough: items.length === 0 ? null : items[items.length - 1]!.readThrough,
+    } };
+  };
+  return { readExecution, listExecutions };
 }

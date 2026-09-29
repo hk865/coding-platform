@@ -13,12 +13,17 @@
  * context synchronously before the first await, forwards the Kernel call signal
  * into the real service, and reports success ONLY for a real `committed`
  * mailbox result. It never fabricates a Host actor, invents an expected pin or
- * performs an automatic ack/reply/wait.
+ * performs an automatic ack/reply.
+ *
+ * 2026-09-28 共同机制：`send_session_message` 不再在工具内轮询回复。意图、需要回复与
+ * 发送后立即等待是三件独立事实；当 `waitAfterSend` 为真时，消息先被持久保存，然后由
+ * Runtime 侧登记真实等待，Kernel 工具组屏障在排空后提交 `run.yielded`。让出是独立的
+ * 执行终止事实，后续唤醒在原 Session 建立新 Turn/Run，而不是挂起模型 promise。
  */
 import type { CommitCursor } from '../../contracts/command-event.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { SessionRef } from '../../contracts/core/identity.js';
-import type { SessionMessageRef } from '../../contracts/core/session-message.js';
+import type { SessionMessageIntentV1, SessionMessageRef } from '../../contracts/core/session-message.js';
 import type { ReadResult, WriteResult } from '../../contracts/core/results.js';
 import {
   toolSchema as z,
@@ -49,7 +54,19 @@ export type SessionMailboxToolsConfig = {
   sessionRef: SessionRef;
   /** Trusted command identity: Kernel `ToolCall.callId` + bound Run/operation. */
   requestIdForCall: (call: Readonly<ToolCall>) => string;
+  /**
+   * The real registration seam for an explicit waitAfterSend. It is called ONLY
+   * after the message is durably committed; the Runtime owns the per-Run wait
+   * registry and lets the Kernel tool-group barrier commit the real yield.
+   * Absent keeps the message a normal durable send with no wait fact.
+   */
+  onWaitRegistered?: (message: SessionMessage) => void;
 };
+
+/** The Kernel dispatcher timeout for `send_session_message`. The tool never
+ * blocks for a reply: it saves the message and returns after the registration,
+ * so a bounded ordinary timeout is enough. */
+export const SESSION_MESSAGE_SEND_TIMEOUT_MS = 15_000;
 
 export type SessionMailboxToolsHandle = {
   names: readonly string[];
@@ -113,7 +130,18 @@ export function createSessionMailboxTools(config: SessionMailboxToolsConfig): Se
     messageId: z.string().min(1),
   }).strict();
   const schemas: readonly z.ZodType[] = [
-    z.object({ recipient: session, text: z.string().min(1) }).strict(),
+    z.object({
+      recipient: session,
+      text: z.string().min(1),
+      /** Explicit intent; omitted keeps the historical notify default. */
+      intent: z.enum(['notify', 'inquiry', 'action_request']).optional(),
+      /** Independent of waitAfterSend: a reply may be requested without waiting. */
+      needsReply: z.boolean().optional(),
+      /** Independent of needsReply: yield after the message is durably saved. */
+      waitAfterSend: z.boolean().optional(),
+      /** Legacy equivalent of waitAfterSend=true; normalized, never a second flow. */
+      replyMode: z.literal('wait').optional(),
+    }).strict(),
     z.object({
       status: z.enum(['pending', 'read', 'responded']).optional(),
       page: z.object({
@@ -187,7 +215,7 @@ export function createSessionMailboxTools(config: SessionMailboxToolsConfig): Se
       // existing registration label that lets a legal query reach the handler.
       // Writes stay non-read-only and are authorized through hostAuthorizedTools.
       requiredCapabilities: readOnly ? ['workspace_read'] : [],
-      defaultTimeoutMs: 10000,
+      defaultTimeoutMs: name === 'send_session_message' ? SESSION_MESSAGE_SEND_TIMEOUT_MS : 10000,
       outputLimitBytes: 64 * 1024,
       independentReadOnly: readOnly,
       summarize: () => ({ paths: [], cwd: null, commandPreview: null }),
@@ -196,12 +224,33 @@ export function createSessionMailboxTools(config: SessionMailboxToolsConfig): Se
           return execute(call, options.signal, schema, async (args, requestId, context) => {
             switch (name) {
               case 'send_session_message': {
-                const input = args as { recipient: SessionRef; text: string };
+                const input = args as {
+                  recipient: SessionRef; text: string; intent?: SessionMessageIntentV1;
+                  needsReply?: boolean; waitAfterSend?: boolean; replyMode?: 'wait';
+                };
                 const result = await config.mailbox.sendMessage(context, {
-                  input: { recipient: { ...input.recipient }, text: input.text },
+                  input: {
+                    recipient: { ...input.recipient }, text: input.text,
+                    ...(input.intent === undefined ? {} : { intent: input.intent }),
+                    ...(input.needsReply === undefined ? {} : { needsReply: input.needsReply }),
+                    ...(input.waitAfterSend === undefined ? {} : { waitAfterSend: input.waitAfterSend }),
+                    ...(input.replyMode === undefined ? {} : { replyMode: input.replyMode }),
+                  },
                   meta: { requestId, expected: [] },
                 });
-                return mapWrite(call.callId, result);
+                if (result.status !== 'committed') return mapWrite(call.callId, result);
+                // The historical fire-and-forget send keeps the untouched result.
+                const waitAfterSend = input.waitAfterSend === true || input.replyMode === 'wait';
+                if (!waitAfterSend) return mapWrite(call.callId, result);
+                // The message is ALREADY durably saved; registration never changes
+                // the send receipt and never starts a model or a poll loop.
+                config.onWaitRegistered?.(result.value);
+                return success(call.callId, {
+                  message: result.value,
+                  response: null,
+                  waiting: true,
+                  reason: 'the message is durably saved; the Run yields and continues on the matching reply',
+                });
               }
               case 'read_session_inbox': {
                 const input = args as {

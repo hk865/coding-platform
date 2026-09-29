@@ -1,0 +1,18 @@
+{
+  "purpose": "One controlled transport-only continuation from already-saved assistant/tool results; no tool execution or Host mutation",
+  "requests": 1,
+  "assistantReasoningChars": 265,
+  "toolResultCount": 2,
+  "finishReasons": [
+    "stop"
+  ],
+  "deltaFields": [
+    "role",
+    "content",
+    "reasoning_content"
+  ],
+  "chunks": 193,
+  "httpStatus": "stream_created",
+  "success": true,
+  "limitation": "Not the exact original system/tools request. Success does not establish the original failure cause or a production fix."
+}

@@ -26,10 +26,11 @@
 import { commandIdentityKey } from '../../../contracts/command-event.js';
 import type { ActorRef } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
-import type { VersionPin } from '../../../contracts/core/identity.js';
+import type { SessionRef, VersionPin } from '../../../contracts/core/identity.js';
 import type { CoreError, CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
+import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
-import { validQueryExecution } from '../../../contracts/query-job.js';
+import { consultationQueryRefs, validQueryExecution } from '../../../contracts/query-job.js';
 import type {
   QueryJobIntentV1,
   QueryJobRef,
@@ -55,6 +56,7 @@ import {
   decodeProjectSnapshot,
   decodeWorkspaceSnapshot,
 } from '../persistence/record-codecs.js';
+import { sessionMessageRefKey } from '../communication/message-record-codecs.js';
 import { decodePlanRevisionSnapshot, planRevisionRefKey } from '../tasks/plan-record-codecs.js';
 import type { QueryJobDependencies, QueryJobPort } from './contracts.js';
 import {
@@ -116,6 +118,8 @@ type FocusTaskRef = { aggregateType: 'Task'; projectId: string; goalId: string; 
 
 type CallerPins = { project: number; workspace: number; goal: number };
 
+type ConsultationBinding = { messageRef: SessionMessageRef; recipient: SessionRef; part?: 'response' };
+
 type SubmitDraft = {
   projectId: string;
   workspaceId: string;
@@ -127,6 +131,7 @@ type SubmitDraft = {
   intent: QueryJobIntentV1;
   focusRefs: FocusTaskRef[];
   pins: CallerPins;
+  consultation: ConsultationBinding | null;
 };
 
 type PreparedSubmit = { status: 'ok'; draft: SubmitDraft } | { status: 'rejected'; rejection: CoreRejection };
@@ -267,8 +272,10 @@ function prepareSubmit(ctx: CoreCallContext, request: unknown): PreparedSubmit {
   const budget = intent['budget'];
   if (!isRecord(budget)) return { status: 'rejected', rejection: reject('invalid', 'intent.budget must be an object') };
   const maxTokens = budget['maxTokens'];
-  if (typeof maxTokens !== 'number' || !Number.isSafeInteger(maxTokens) || maxTokens <= 0) {
-    return { status: 'rejected', rejection: reject('invalid', 'intent.budget.maxTokens must be a positive safe integer') };
+  // An explicit null budget means no cumulative Query token cap; a real number
+  // must still be a positive safe integer (0/negative/non-integer stay invalid).
+  if (maxTokens !== null && (typeof maxTokens !== 'number' || !Number.isSafeInteger(maxTokens) || maxTokens <= 0)) {
+    return { status: 'rejected', rejection: reject('invalid', 'intent.budget.maxTokens must be null or a positive safe integer') };
   }
   const deadline = budget['deadline'];
   if (deadline !== null &&
@@ -298,6 +305,40 @@ function prepareSubmit(ctx: CoreCallContext, request: unknown): PreparedSubmit {
     if (execution['kind'] !== 'initial_coordination' && execution['kind'] !== 'semantic_query') {
       return { status: 'rejected', rejection: reject('unsupported', 'this execution kind is not delivered in this batch') };
     }
+  }
+  let consultation: ConsultationBinding | null = null;
+  if (execution !== undefined && isRecord(execution) && execution['consultation'] !== undefined) {
+    // `validQueryExecution` already proved the exact binding shape; the only
+    // remaining facts are the deterministic identity and the bound scope.
+    const rawConsultation = execution['consultation'] as unknown as {
+      messageRef: SessionMessageRef; recipient: SessionRef; part?: 'response';
+    };
+    const messageRef = rawConsultation.messageRef;
+    if (messageRef.projectId !== projectId || messageRef.workspaceId !== workspaceId) {
+      return { status: 'rejected', rejection: reject('forbidden', 'the consultation message is outside the Host call scope') };
+    }
+    if (rawConsultation.recipient.projectId !== projectId) {
+      return { status: 'rejected', rejection: reject('forbidden', 'the consultation recipient is outside the Host call project') };
+    }
+    const refs = consultationQueryRefs(messageRef, rawConsultation.part);
+    if (refs.queryJobRef.queryJobId !== queryJobId || refs.queryRunRef.runId !== runId) {
+      return { status: 'rejected', rejection: reject('invalid', 'a consultation submit must use the deterministic identity of its message') };
+    }
+    const rawDerivation = (rawConsultation as { derivation?: unknown }).derivation;
+    if (rawDerivation !== undefined) {
+      const derivation = isRecord(rawDerivation) ? rawDerivation : null;
+      const child = derivation === null ? null : derivation['childSessionRef'];
+      const source = derivation === null ? null : derivation['sourceSessionRef'];
+      if (child === null || source === null || !isRecord(child) || !isRecord(source)
+        || child['projectId'] !== projectId || source['projectId'] !== projectId) {
+        return { status: 'rejected', rejection: reject('forbidden', 'the consultation derivation Sessions are outside the bound project') };
+      }
+    }
+    consultation = {
+      messageRef: { ...messageRef },
+      ...(rawConsultation.part === undefined ? {} : { part: rawConsultation.part }),
+      recipient: { projectId: rawConsultation.recipient.projectId, sessionId: rawConsultation.recipient.sessionId },
+    };
   }
 
   const rawFocus = intent['focusTaskRefs'];
@@ -343,6 +384,7 @@ function prepareSubmit(ctx: CoreCallContext, request: unknown): PreparedSubmit {
       intent: intent as unknown as QueryJobIntentV1,
       focusRefs,
       pins: expected.pins,
+      consultation,
     },
   };
 }
@@ -634,6 +676,45 @@ async function submit(
   if (facts.goal.workspaceRef.projectId !== draft.projectId || facts.goal.workspaceRef.workspaceId !== draft.workspaceId) {
     return reject('invalid', 'the Goal belongs to another workspace');
   }
+
+  // (3a) an explicit consultation submit is admitted only through the injected
+  // read-only mailbox seam: the original message, its actual body text and its
+  // recipient are the real facts, never caller JSON. The exact message revision
+  // the admission read is also carried into the ONE commit as a local guard, so
+  // a concurrent reply/ack that landed after the read makes the submit lose the
+  // CAS instead of creating a redundant Query/model run.
+  let consultationMessageGuard: RecordGuard | null = null;
+  if (draft.consultation !== null) {
+    if (deps.consultations === undefined) {
+      return reject('unsupported', 'a consultation submit requires the read-only mailbox dependency');
+    }
+    if (signal?.aborted) return reject('cancelled', 'submitQueryJob was cancelled before reading the consultation message');
+    const messageRead = await deps.consultations.readMessage(ctx, draft.consultation.messageRef);
+    if (messageRead.status === 'not_found') return reject('not_found', 'the consultation message does not exist');
+    if (messageRead.status === 'not_ready') return reject('incomplete', 'the consultation message is not readable at the required watermark');
+    if (messageRead.status !== 'ready') return messageRead;
+    const message = messageRead.value;
+    const target = draft.consultation.part === 'response'
+      ? (message.sender.kind === 'work_run' ? message.sender.sessionRef : null) : message.recipient;
+    if (target === null || target.projectId !== draft.consultation.recipient.projectId
+      || target.sessionId !== draft.consultation.recipient.sessionId) {
+      return reject('forbidden', 'the consultation recipient is not the original message recipient');
+    }
+    if (draft.consultation.part === 'response' ? message.response === null : message.status === 'responded') {
+      return reject('invalid', 'the original consultation message already has a response');
+    }
+    const bodyRead = await deps.consultations.readMessageBody(ctx,
+      { messageRef: draft.consultation.messageRef, part: draft.consultation.part ?? 'message' });
+    if (bodyRead.status === 'not_found') return reject('not_found', 'the consultation message body does not exist');
+    if (bodyRead.status === 'not_ready') return reject('incomplete', 'the consultation message body is not readable at the required watermark');
+    if (bodyRead.status !== 'ready') return bodyRead;
+    const originalInquiry = message.intent === 'inquiry' || (message.intent === undefined && message.replyMode === 'wait');
+    if ((originalInquiry || draft.consultation.part === 'response') && bodyRead.value.text !== draft.intent.question) {
+      return reject('invalid', 'the consultation question must be the original message body text');
+    }
+    consultationMessageGuard = { refKey: sessionMessageRefKey(message.ref), expectedRevision: message.revision };
+  }
+
   const execution = draft.intent.execution;
   if (execution !== undefined && execution.kind === 'initial_coordination' && facts.goal.activePlanRevision !== null) {
     return reject('invalid', 'initial_coordination requires a Goal without an active Plan');
@@ -734,6 +815,7 @@ async function submit(
     { refKey: runKey, expectedRevision: null },
   ];
   if (planGuard !== null) guards.push({ refKey: planGuard.refKey, expectedRevision: planGuard.revision });
+  if (consultationMessageGuard !== null) guards.push(consultationMessageGuard);
 
   const preparedCommit: PreparedCommit = {
     identityKey,

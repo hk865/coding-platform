@@ -1,0 +1,17 @@
+{
+  "httpStatus": 200,
+  "status": "ready",
+  "queryRunRef": {
+    "aggregateType": "QueryRun",
+    "projectId": "48985e87e7697d72d7083396ecb8106b",
+    "workspaceId": "2e12a0a03b0839a8b84432b8291cfd94",
+    "queryJobId": "qjob-flow-mullfole-3",
+    "runId": "qrun-flow-mullfole-3"
+  },
+  "phase": "settled",
+  "outcome": "timeout",
+  "runStatus": "closed",
+  "hasAnswer": false,
+  "sessionId": "session-0394c756db5968b642e5f0d070348e61316476978ff6bfc390ce48e807e73ab2",
+  "occupancy": null
+}

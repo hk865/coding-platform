@@ -12,6 +12,7 @@ import { pathToFileURL } from 'node:url';
 import { createLocalWorkbenchHost, type LocalWorkbenchHost, type LocalWorkbenchHostOptions } from './host.js';
 import type { TargetPlatformOptions } from '../composition/create-platform.js';
 import type { WorkbenchRuntimeConfiguration } from './runtime-configuration.js';
+import type { HostSettingsModelDefinition } from './host-settings.js';
 import type { BootstrapReviewMaterial, CoreScope, WorkbenchActor } from './core-http-types.js';
 
 export type WorkbenchCliWorkspace = {
@@ -20,6 +21,10 @@ export type WorkbenchCliWorkspace = {
   root: string;
   workspaceRevision: number;
   readPrefixes: string[];
+  /** Trusted CAS write scope; absence denies every write. */
+  writePrefixes?: string[];
+  /** Explicit whole-workspace command authorization; absence denies commands. */
+  allowCommands?: boolean;
 };
 
 export type WorkbenchCliConfig = {
@@ -36,6 +41,12 @@ export type WorkbenchCliConfig = {
   runtime?: WorkbenchRuntimeConfiguration;
   checks?: TargetPlatformOptions['checks'];
   workflow?: TargetPlatformOptions['workflow'];
+  attention?: LocalWorkbenchHostOptions['attention'];
+  inputConsumers?: LocalWorkbenchHostOptions['inputConsumers'];
+  /** Explicit private settings directory override; absent uses the SQLite default. */
+  settingsDirectory?: string;
+  /** Trusted startup model catalog seeds (environment variable NAMES only). */
+  settingsModels?: HostSettingsModelDefinition[];
 };
 
 export const WORKBENCH_CLI_USAGE = 'usage: node dist/app/main.js <workbench-config.json>';
@@ -80,8 +91,16 @@ export function parseWorkbenchCliConfig(raw: unknown, configDirectory: string): 
     if (!Array.isArray(prefixesRaw) || prefixesRaw.some(prefix => typeof prefix !== 'string'))
       throw new Error(`workspaces[${index}].readPrefixes must be an array of strings`);
     const readPrefixes = prefixesRaw as string[];
+    const writePrefixesRaw = entry.writePrefixes;
+    if (writePrefixesRaw !== undefined
+      && (!Array.isArray(writePrefixesRaw) || writePrefixesRaw.some(prefix => typeof prefix !== 'string')))
+      throw new Error(`workspaces[${index}].writePrefixes must be an array of strings when present`);
+    if (entry.allowCommands !== undefined && typeof entry.allowCommands !== 'boolean')
+      throw new Error(`workspaces[${index}].allowCommands must be a boolean when present`);
     const root = isAbsolute(entryRoot) ? entryRoot : resolve(configDirectory, entryRoot);
-    return { scope, name, root, workspaceRevision: revision, readPrefixes: [...readPrefixes] };
+    return { scope, name, root, workspaceRevision: revision, readPrefixes: [...readPrefixes],
+      ...(writePrefixesRaw === undefined ? {} : { writePrefixes: [...(writePrefixesRaw as string[])] }),
+      ...(entry.allowCommands === undefined ? {} : { allowCommands: entry.allowCommands as boolean }) };
   });
   const rawArchitectureSource = raw.architectureSource;
   let architectureConfigPath: string | undefined;
@@ -137,8 +156,23 @@ export function parseWorkbenchCliConfig(raw: unknown, configDirectory: string): 
       }
     }
   }
+  const settingsDirectoryRaw = raw.settingsDirectory;
+  if (settingsDirectoryRaw !== undefined && (typeof settingsDirectoryRaw !== 'string' || settingsDirectoryRaw.length === 0))
+    throw new Error('settingsDirectory must be a non-empty string when present');
+  const settingsModelsRaw = raw.settingsModels;
+  if (settingsModelsRaw !== undefined && !Array.isArray(settingsModelsRaw))
+    throw new Error('settingsModels must be an array when present');
+  const settings: NonNullable<LocalWorkbenchHostOptions['settings']> | undefined =
+    settingsDirectoryRaw === undefined && settingsModelsRaw === undefined ? undefined : {
+      ...(settingsDirectoryRaw === undefined ? {}
+        : { settingsDirectory: resolveConfiguredPath(settingsDirectoryRaw as string, configDirectory) }),
+      ...(settingsModelsRaw === undefined ? {}
+        : { models: structuredClone(settingsModelsRaw) as HostSettingsModelDefinition[] }),
+    };
   if (raw.checks !== undefined && !isPlainObject(raw.checks)) throw new Error('checks must be a JSON object');
   if (raw.workflow !== undefined && !isPlainObject(raw.workflow)) throw new Error('workflow must be a JSON object');
+  if (raw.inputConsumers !== undefined && !Array.isArray(raw.inputConsumers)) throw new Error('inputConsumers must be an array');
+  if (raw.attention !== undefined && !Array.isArray(raw.attention)) throw new Error('attention must be an array of scopes');
   return {
     storage: { kind: 'sqlite', directory: isAbsolute(sqliteDirectory) ? sqliteDirectory : resolve(configDirectory, sqliteDirectory) },
     actor: { kind: raw.actor.kind, id: raw.actor.id },
@@ -152,6 +186,9 @@ export function parseWorkbenchCliConfig(raw: unknown, configDirectory: string): 
     ...(runtimeConfiguration === undefined ? {} : { runtimeConfiguration }),
     ...(raw.checks === undefined ? {} : { checks: raw.checks as TargetPlatformOptions['checks'] }),
     ...(raw.workflow === undefined ? {} : { workflow: raw.workflow as TargetPlatformOptions['workflow'] }),
+    ...(raw.attention === undefined ? {} : { attention: raw.attention as NonNullable<LocalWorkbenchHostOptions['attention']> }),
+    ...(raw.inputConsumers === undefined ? {} : { inputConsumers: raw.inputConsumers as NonNullable<LocalWorkbenchHostOptions['inputConsumers']> }),
+    ...(settings === undefined ? {} : { settings }),
   };
 }
 

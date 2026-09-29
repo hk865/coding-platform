@@ -30,10 +30,11 @@ import type {
 } from '../work-graph/tasks/execution-entry-contracts.js';
 import type { ObserveTaskRunRequest, RuntimeExecutionDependencies, TaskExecutionRecord } from './execution-contracts.js';
 import type { RuntimeControlCoordinator } from './execution-control.js';
+import { confirmMailboxInputs } from './execution-inputs.js';
 
 export type ExecutionObservationDependencies = Pick<RuntimeExecutionDependencies,
   | 'entry' | 'historyWriter' | 'executions' | 'graphHistory' | 'activity' | 'sessionOperations'
-  | 'kernelStores' | 'host' | 'kernel' | 'now' | 'newId' | 'controls'> & {
+  | 'kernelStores' | 'host' | 'kernel' | 'now' | 'newId' | 'controls' | 'messages'> & {
   /**
    * R4.3a: the SAME internal control coordinator the driver holds. The private
    * exit/cleanup proof is read here before any positive pause/cancel conclusion;
@@ -49,7 +50,7 @@ export type ExecutionObservationService = {
   observe(ctx: CoreCallContext, request: ObserveTaskRunRequest): Promise<ReadResult<TaskExecutionRecord>>;
 };
 
-type ControlSource = { position: number; eventId: string; kernelEventSequence: number };
+type ControlSource = { position: number; eventId: string; kernelEventSequence: number; inputIntentRef?: ControlIntentRef };
 /** The original control-source events actually read for one Run, keyed by event
  * type. Retained across observations so a later observe (whose incremental page
  * is empty) can still complete a pending ack from the same real record. */
@@ -161,12 +162,22 @@ function terminalEventOf(state: RunState, runRef: RunRef, sequence: number, even
       return { eventType: 'run_cancelled', schemaVersion: 1, eventId, runRef, sequence, occurredAt: now, payload: { kind: 'cancelled', reason: 'the Kernel run was cancelled' } };
     case 'limit_exceeded':
       return { eventType: 'run_budget_exhausted', schemaVersion: 1, eventId, runRef, sequence, occurredAt: now, payload: { kind: 'budget_exhausted', exhaustedAt: now } };
+    case 'yielded': {
+      // A yielded Turn is a genuine terminal: the platform records the real yield
+      // reason, releases the Run occupancy and keeps the wait as platform fact.
+      const reason = state.outcome !== null && state.outcome !== undefined && state.outcome.kind === 'yielded'
+        ? state.outcome.yield.reason : 'reply_required';
+      const pendingToolCallId = state.outcome !== null && state.outcome !== undefined && state.outcome.kind === 'yielded'
+        ? state.outcome.yield.pendingToolCallId : null;
+      return { eventType: 'run_yielded', schemaVersion: 1, eventId, runRef, sequence, occurredAt: now,
+        payload: { kind: 'yielded', yield: { reason, requestedBy: 'app', yieldedAt: now, pendingToolCallId } } };
+    }
     default:
       return null;
   }
 }
 
-type ControlAckKind = 'paused' | 'cancelled' | 'terminal_without_cancel' | 'outcome_unknown';
+type ControlAckKind = ControlObservationV1['kind'];
 
 function sameRef(left: unknown, right: unknown): boolean {
   try { return canonicalJson(left as never) === canonicalJson(right as never); } catch { return false; }
@@ -186,7 +197,7 @@ function transcriptHasOutcomeUnknown(transcript: RunState['transcript']): boolea
 }
 /** The original `agent.event` types that can carry an observation source. */
 const CONTROL_SOURCE_EVENT_TYPES: readonly string[] = [
-  'run.paused', 'run.cancelled', 'run.completed', 'run.failed', 'run.limit_exceeded', 'tool.outcome_unknown',
+  'run.paused', 'run.resumed', 'run.cancelled', 'run.completed', 'run.failed', 'run.limit_exceeded', 'run.yielded', 'tool.outcome_unknown',
 ];
 /**
  * Collect the control-source events that were ACTUALLY read in this pass, keyed
@@ -201,6 +212,16 @@ function collectControlSources(
     if (item.record.recordType !== 'agent.event') continue;
     const event = item.record.payload.event;
     if (event.meta.runId !== kernel.runId || event.meta.turnId !== kernel.turnId) continue;
+    if (event.type === 'run.input_accepted') {
+      const source = event.payload.input.sourceRef;
+      if (isRecord(source) && source['kind'] === 'ControlIntent' && isRecord(source['intentRef'])) {
+        const intentRef = source['intentRef'] as ControlIntentRef;
+        sources['input:' + canonicalJson(intentRef as never)] = {
+          position: item.position, eventId: event.meta.eventId, kernelEventSequence: event.meta.sequence, inputIntentRef: intentRef,
+        };
+      }
+      continue;
+    }
     if (!CONTROL_SOURCE_EVENT_TYPES.includes(event.type)) continue;
     if (!nonEmpty(event.meta.eventId) || !isNonNegativeInteger(event.meta.sequence)) continue;
     sources[event.type] = { position: item.position, eventId: event.meta.eventId, kernelEventSequence: event.meta.sequence };
@@ -301,7 +322,7 @@ export function createExecutionObservation(deps: ExecutionObservationDependencie
           sessionRef: { projectId: persisted.sessionRef.projectId, sessionId: persisted.sessionRef.sessionId },
           kernel: { ...persisted.kernel }, startPosition: persisted.startPosition,
           observedThroughPosition: persistedThrough,
-          endPosition: kind === 'paused' || kind === 'outcome_unknown' ? null : persistedThrough,
+          endPosition: kind === 'paused' || kind === 'resumed' || kind === 'steered' || kind === 'outcome_unknown' ? null : persistedThrough,
         },
         source: { ...persisted.kernel, position: sourceItem.position },
         kernelEventId: sourceItem.eventId, kernelEventSequence: sourceItem.kernelEventSequence, observedAt: deps.now(),
@@ -374,13 +395,31 @@ export function createExecutionObservation(deps: ExecutionObservationDependencie
     } catch { return null; }
   }
 
-  async function consumedIntentKind(ctx: CoreCallContext, ref: ControlIntentRef): Promise<'pause' | 'cancel' | null> {
+  async function consumedIntentKind(ctx: CoreCallContext, ref: ControlIntentRef): Promise<import('../../contracts/control-intent.js').ControlIntentKindV1 | null> {
     const controls = deps.controls;
     if (controls === undefined) return null;
     try {
       const read = await controls.readControl(ctx, ref);
       return read.status === 'ready' ? read.value.kind : null;
     } catch { return null; }
+  }
+
+  /** Resume and steering acknowledge a saved context event, not stopped work.
+   * Steer carries its original intent in the event; resume uses the exact
+   * intent bound to this invocation, separately from a later stop request. */
+  async function acknowledgeContextControls(
+    ctx: CoreCallContext, runRef: RunRef, auth: ExecutionAuthorizationV2,
+    sources: CachedControlSources, resumeIntentRef?: ControlIntentRef,
+  ): Promise<void> {
+    const resumed = sources['run.resumed'];
+    if (resumeIntentRef !== undefined && resumed !== undefined) {
+      await recordControlAck(ctx, runRef, auth, resumed, resumeIntentRef, 'resumed');
+    }
+    for (const source of Object.values(sources)) {
+      if (source?.inputIntentRef !== undefined) {
+        await recordControlAck(ctx, runRef, auth, source, source.inputIntentRef, 'steered');
+      }
+    }
   }
 
   return {
@@ -489,9 +528,20 @@ export function createExecutionObservation(deps: ExecutionObservationDependencie
       } catch (error) {
         return rejected('unavailable', `reducing the complete Turn failed: ${messageOf(error)}`);
       }
+      // A committed run.input_accepted is the ONLY confirmation that an original
+      // source part entered execution; the narrow owner write records it without
+      // claiming any business processing.
+      const inputsConfirmed = await confirmMailboxInputs(deps.messages, owned, runRef, locator.kernel, decoded);
+      if (!inputsConfirmed) {
+        return rejected('unavailable', 'the accepted input is saved in Kernel history but its source acknowledgement is not confirmed');
+      }
       const observedControlSources = collectControlSources(decoded, locator.kernel);
       const retainedControlSources: CachedControlSources = { ...(cached?.controlSources ?? {}), ...observedControlSources };
-      cache.set(cacheKey, { startPosition: locator.startPosition, reducedThrough, state, controlSources: retainedControlSources });
+      // Never advance past an accepted-input event whose narrow owner write did
+      // not confirm (replayed or committed); the same event is re-read and retried.
+      if (inputsConfirmed) {
+        cache.set(cacheKey, { startPosition: locator.startPosition, reducedThrough, state, controlSources: retainedControlSources });
+      }
 
       // The private proof comes from the SAME coordinator/driver instance. A
       // positive pause/cancel conclusion needs the Kernel call to have exited
@@ -501,7 +551,8 @@ export function createExecutionObservation(deps: ExecutionObservationDependencie
       const cleanProof = proof?.kernelExited === true && proof.resourcesClosed?.status === 'completed';
 
       const isTerminal = state.status === 'completed' || state.status === 'failed'
-        || state.status === 'cancelled' || state.status === 'limit_exceeded';
+        || state.status === 'cancelled' || state.status === 'limit_exceeded'
+        || state.status === 'yielded';
       if (!isTerminal) {
         pendingTerminals.delete(cacheKey);
         // The observed window is persisted BEFORE any positive ack, so the Run
@@ -510,6 +561,7 @@ export function createExecutionObservation(deps: ExecutionObservationDependencie
         // a complete transcript; it is only acknowledged after the consumed
         // intent's live handle proves Kernel exit + cleanup.
         if (!alreadyEnded) await advanceLocator(owned, runRef, reducedThrough);
+        await acknowledgeContextControls(owned, runRef, v2Auth, retainedControlSources, proof?.resumeIntentRef);
         if (state.status === 'paused' && consumedIntentRef !== undefined && cleanProof) {
           const sourceItem = controlSourceRecord(decoded, cached?.controlSources, locator.kernel, 'paused', state);
           if (sourceItem !== undefined) {
@@ -555,6 +607,7 @@ export function createExecutionObservation(deps: ExecutionObservationDependencie
         return { status: 'ready', value: record };
       }
       if (alreadyEnded) {
+        await acknowledgeContextControls(owned, runRef, v2Auth, retainedControlSources, proof?.resumeIntentRef);
         // The terminal result was already recorded by an earlier observer. Only
         // complete the missing control ack from the fixed terminal window.
         if (consumedIntentRef !== undefined && cleanProof) {
@@ -588,6 +641,10 @@ export function createExecutionObservation(deps: ExecutionObservationDependencie
           kernel: { ...locator.kernel }, startPosition: locator.startPosition,
           observedThroughPosition: endPosition, endPosition,
         };
+        // The yielded terminal carries the original Task/Session and the exact
+        // saved wait message. It is the durable continuation binding a later
+        // Attempt consumes; absence keeps every non-yield terminal unchanged.
+        const continuation = state.status === 'yielded' ? deps.control?.continuation(runRef) : undefined;
         submission = {
           endPosition,
           requestId: `b2-result:${runRef.runId}:${String(endPosition)}`,
@@ -598,6 +655,7 @@ export function createExecutionObservation(deps: ExecutionObservationDependencie
             kernelSource: { ...locator.kernel, position: endPosition },
             completedHistoryBoundary: { source: { ...locator.kernel, position: endPosition }, cursor: boundaryEntry.cursor },
             history,
+            ...(continuation === undefined ? {} : { continuation }),
           },
         };
         pendingTerminals.set(cacheKey, submission);
@@ -623,6 +681,7 @@ export function createExecutionObservation(deps: ExecutionObservationDependencie
         return rejected('unavailable', `recording the terminal result failed: ${messageOf(error)}`);
       }
       if (written.status !== 'committed') return mapRead(written);
+      await acknowledgeContextControls(owned, runRef, v2Auth, retainedControlSources, proof?.resumeIntentRef);
       // The terminal is confirmed: this Run no longer needs any in-memory
       // reduction state, and the next observation reads the persisted Run.
       cache.delete(cacheKey);
