@@ -1,32 +1,194 @@
 import { readdir, lstat, readFile, realpath } from 'node:fs/promises';
-import { resolve, relative, dirname, extname, sep } from 'node:path';
+import { resolve, relative, dirname, extname, sep, posix } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { createHash } from 'node:crypto';
 
-const MODULES = [
-  ['Workflow', 'business/workflow'],
-  ['WorkGraph', 'core/work-graph'],
-  ['AgentRuntime', 'core/agent-runtime'],
-  ['WorkspaceTools', 'core/workspace'],
-  ['RecordStore', 'core/record-store'],
-];
-const ALLOWED = {
-  Workflow: new Set(['WorkGraph', 'AgentRuntime', 'WorkspaceTools']),
-  WorkGraph: new Set(['WorkspaceTools', 'RecordStore']),
-  AgentRuntime: new Set(['WorkGraph', 'WorkspaceTools', 'RecordStore']),
-  WorkspaceTools: new Set(), RecordStore: new Set(),
-};
+/** The single source of the module and submodule rules (task C, 2026-10-02). */
+export const MODULE_TARGET_PATH = 'docs/refactor/module-target.json';
+const MODULE_TARGET_SCHEMA = 2;
+const OUTER_LAYER_PREFIXES = ['src/contracts/', 'src/composition/', 'src/app/', 'src/ui/'];
+// Outer-layer owners have fixed rules in checkSpecifier; a JSON module may not borrow their names.
+const RESERVED_MODULE_IDS = new Set(['Contracts', 'Composition', 'Host', 'UI']);
 const sourceExtensions = new Set(['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs']);
 const APPROVED_NEXT_PACKAGES = new Set(['typescript', 'vitest', '@types/node', 'marked', 'esbuild']);
 const APPROVED_KERNEL_PACKAGES = new Set(['openai', 'zod']);
 const inside = (root, path) => path === root || path.startsWith(root + sep);
-const owner = rel => rel.startsWith('contracts/') ? 'Contracts'
-  : rel.startsWith('composition/') ? 'Composition'
-  : rel.startsWith('app/') ? 'Host'
-  : rel.startsWith('ui/') ? 'UI'
-  : MODULES.find(([, prefix]) => rel === prefix || rel.startsWith(prefix + '/'))?.[0] ?? null;
-const MODULE_NAMES = new Set(MODULES.map(([name]) => name));
+// `x.d.ts`, `x.ts` and an `x.js` specifier all name the same module.
+const withoutSourceExtension = path => path.replace(/(?:\.d)?\.(?:tsx?|mts|cts|jsx?|mjs|cjs)$/, '');
+// Ownership compares raw path prefixes, so declared paths must already be normalized.
+const isNormalizedPath = path => !path.split('/').slice(0, path.endsWith('/') ? -1 : undefined)
+  .some(segment => segment === '' || segment === '.' || segment === '..') && posix.normalize(path) === path;
+const isObject = value => typeof value === 'object' && value !== null && !Array.isArray(value);
+
+async function isRealDirectory(path) {
+  try { const stat = await lstat(path); return stat.isDirectory() && !stat.isSymbolicLink(); } catch { return false; }
+}
+async function isRealFile(path) {
+  try { const stat = await lstat(path); return stat.isFile() && !stat.isSymbolicLink(); } catch { return false; }
+}
+
+/** Returns one dependency cycle as ['A', 'B', 'A'], or null for a DAG. */
+function findCycle(nodes, dependenciesOf) {
+  const state = new Map();
+  const stack = [];
+  function visit(node) {
+    state.set(node, 'open');
+    stack.push(node);
+    for (const next of dependenciesOf(node)) {
+      if (state.get(next) === 'open') return [...stack.slice(stack.indexOf(next)), next];
+      if (!state.has(next)) { const cycle = visit(next); if (cycle) return cycle; }
+    }
+    stack.pop();
+    state.set(node, 'done');
+    return null;
+  }
+  for (const node of nodes) if (!state.has(node)) { const cycle = visit(node); if (cycle) return cycle; }
+  return null;
+}
+
+function checkDependencyList(label, self, value, known, fail) {
+  if (!Array.isArray(value) || value.some(entry => typeof entry !== 'string')) {
+    fail(`${label} is missing a "dependencies" string array`);
+    return [];
+  }
+  const seen = new Set();
+  for (const dependency of value) {
+    if (seen.has(dependency)) fail(`${label} lists dependency ${dependency} twice`);
+    seen.add(dependency);
+    if (dependency === self) fail(`${label} may not depend on itself`);
+    else if (!known.has(dependency)) fail(`${label} depends on unknown ${dependency}`);
+  }
+  return [...seen].filter(dependency => known.has(dependency));
+}
+
+/**
+ * Reads and validates docs/refactor/module-target.json. Missing fields, paths
+ * that do not exist in this repository, overlapping ownership and dependency
+ * cycles are reported as issues; callers must not guess rules from a broken file.
+ */
+export async function loadModuleTarget(projectDir) {
+  const project = resolve(projectDir);
+  const targetFile = resolve(project, MODULE_TARGET_PATH);
+  const issues = [];
+  const fail = message => issues.push(`${MODULE_TARGET_PATH}: ${message}`);
+  let raw;
+  try { raw = JSON.parse(await readFile(targetFile, 'utf8')); }
+  catch (error) {
+    fail(`cannot be read as JSON (${error?.code ?? error?.message ?? String(error)})`);
+    return { modules: [], issues };
+  }
+  if (!isObject(raw)) { fail('top level must be a JSON object'); return { modules: [], issues }; }
+  if (raw.schemaVersion !== MODULE_TARGET_SCHEMA)
+    fail(`schemaVersion must be ${MODULE_TARGET_SCHEMA}, found ${JSON.stringify(raw.schemaVersion)}`);
+  const base = dirname(targetFile);
+  if (typeof raw.projectRoot !== 'string' || !raw.projectRoot) fail('is missing the "projectRoot" string');
+  else if (resolve(base, raw.projectRoot) !== project) fail(`projectRoot ${raw.projectRoot} does not resolve to this repository`);
+  if (typeof raw.implementationOwnership !== 'string' || !raw.implementationOwnership)
+    fail('is missing the "implementationOwnership" string');
+  else {
+    const checker = resolve(base, raw.implementationOwnership);
+    if (checker !== resolve(project, 'scripts/check-boundaries.mjs'))
+      fail(`implementationOwnership ${raw.implementationOwnership} must point to scripts/check-boundaries.mjs in this repository`);
+    else if (!await isRealFile(checker)) fail(`implementationOwnership ${raw.implementationOwnership} does not exist`);
+  }
+  if (!Array.isArray(raw.modules) || raw.modules.length === 0) {
+    fail('"modules" must be a non-empty array');
+    return { modules: [], issues };
+  }
+  const ids = new Set();
+  for (const [index, entry] of raw.modules.entries()) {
+    if (!isObject(entry) || typeof entry.id !== 'string' || !/^[A-Za-z][A-Za-z0-9]*$/.test(entry.id)) {
+      fail(`modules[${index}] is missing a valid "id"`);
+      continue;
+    }
+    if (RESERVED_MODULE_IDS.has(entry.id)) fail(`module id ${entry.id} is reserved for an outer layer`);
+    if (ids.has(entry.id)) fail(`module id ${entry.id} is declared twice`);
+    ids.add(entry.id);
+  }
+  const modules = [];
+  for (const entry of raw.modules) {
+    if (!isObject(entry) || typeof entry.id !== 'string') continue;
+    const label = `module ${entry.id}`;
+    if (typeof entry.path !== 'string' || !/^src\/.+\/$/.test(entry.path) || entry.path.includes('..')) {
+      fail(`${label} is missing a "path" of the form src/<dir>/`);
+      continue;
+    }
+    if (!isNormalizedPath(entry.path)) {
+      fail(`${label} path ${entry.path} must be normalized (no empty, "." or ".." segments)`);
+      continue;
+    }
+    if (OUTER_LAYER_PREFIXES.some(prefix => entry.path.startsWith(prefix)))
+      fail(`${label} path ${entry.path} lies inside an outer layer`);
+    if (!await isRealDirectory(resolve(project, entry.path))) fail(`${label} path ${entry.path} does not exist`);
+    const dependencies = checkDependencyList(label, entry.id, entry.dependencies, ids, fail);
+    const prefix = entry.path.slice('src/'.length, -1);
+    const module = { id: entry.id, path: entry.path, prefix, dependencies, submodules: null };
+    if (entry.submodules !== undefined) module.submodules = await loadSubmodules(project, module, entry.submodules, fail);
+    modules.push(module);
+  }
+  for (const a of modules) for (const b of modules) {
+    if (a !== b && (a.prefix + '/').startsWith(b.prefix + '/'))
+      fail(`module ${a.id} path ${a.path} overlaps module ${b.id} path ${b.path}`);
+  }
+  const byId = new Map(modules.map(module => [module.id, module]));
+  const cycle = findCycle(modules.map(module => module.id), id => byId.get(id)?.dependencies ?? []);
+  if (cycle) fail(`module dependency cycle ${cycle.join(' -> ')}`);
+  return { modules, issues };
+}
+
+async function loadSubmodules(project, module, value, fail) {
+  const label = `module ${module.id}`;
+  if (!Array.isArray(value) || value.length === 0) { fail(`${label} "submodules" must be a non-empty array`); return null; }
+  const ids = new Set();
+  for (const [index, entry] of value.entries()) {
+    if (!isObject(entry) || typeof entry.id !== 'string' || !/^[a-z][a-z0-9-]*$/.test(entry.id)) {
+      fail(`${label} submodules[${index}] is missing a valid lower-case "id"`);
+      continue;
+    }
+    if (ids.has(entry.id)) fail(`${label} submodule ${entry.id} is declared twice`);
+    ids.add(entry.id);
+  }
+  const submodules = [];
+  for (const entry of value) {
+    if (!isObject(entry) || typeof entry.id !== 'string') continue;
+    const subLabel = `submodule ${module.id}/${entry.id}`;
+    const path = entry.path;
+    const directory = typeof path === 'string' && path.endsWith('/');
+    if (typeof path !== 'string' || !path || path.startsWith('/') || path.includes('..') || path.includes('\\') ||
+      (!directory && !sourceExtensions.has(extname(path)))) {
+      fail(`${subLabel} is missing a "path" relative to ${module.path} (a directory ending in / or one source file)`);
+      continue;
+    }
+    if (!isNormalizedPath(path)) {
+      fail(`${subLabel} path ${path} must be normalized (no empty, "." or ".." segments)`);
+      continue;
+    }
+    const absolute = resolve(project, module.path, path);
+    if (!(directory ? await isRealDirectory(absolute) : await isRealFile(absolute)))
+      fail(`${subLabel} path ${module.path}${path} does not exist`);
+    const dependencies = checkDependencyList(subLabel, entry.id, entry.dependencies, ids, fail);
+    submodules.push({ id: entry.id, path, directory, dependencies });
+  }
+  for (const a of submodules) for (const b of submodules) {
+    if (a === b) continue;
+    const overlaps = a.path === b.path || (b.directory && a.path.startsWith(b.path));
+    if (overlaps) fail(`submodule ${module.id}/${a.id} path ${a.path} overlaps ${module.id}/${b.id} path ${b.path}`);
+  }
+  const byId = new Map(submodules.map(submodule => [submodule.id, submodule]));
+  const cycle = findCycle(submodules.map(submodule => submodule.id), id => byId.get(id)?.dependencies ?? []);
+  if (cycle) fail(`submodule dependency cycle ${cycle.map(id => `${module.id}/${id}`).join(' -> ')}`);
+  return submodules;
+}
+
+/** Owner of a path relative to the module directory, compared without extension. */
+function submoduleOwner(module, pathInModule) {
+  if (!module.submodules) return null;
+  const bare = withoutSourceExtension(pathInModule);
+  return module.submodules.find(submodule => submodule.directory
+    ? pathInModule.startsWith(submodule.path)
+    : withoutSourceExtension(submodule.path) === bare)?.id ?? null;
+}
 
 /** Static architecture check. The isolated build separately proves every local
  * import resolves without the old repository. No aliases or generated shims. */
@@ -35,9 +197,21 @@ export async function inspectSourceTree(projectDir) {
   const sourceRoot = resolve(project, 'src');
   const vendorRoot = resolve(project, 'vendor/coding-agent');
   const publicKernelEntry = resolve(project, 'vendor/coding-agent/dist/public-api.js');
-  const issues = [];
-  const moduleFileCounts = new Map(MODULES.map(([name]) => [name, 0]));
+  const target = await loadModuleTarget(project);
+  const issues = [...target.issues];
+  const MODULES = target.modules;
+  const MODULE_BY_NAME = new Map(MODULES.map(module => [module.id, module]));
+  const MODULE_NAMES = new Set(MODULE_BY_NAME.keys());
+  const ALLOWED = Object.fromEntries(MODULES.map(module => [module.id, new Set(module.dependencies)]));
+  const owner = rel => rel.startsWith('contracts/') ? 'Contracts'
+    : rel.startsWith('composition/') ? 'Composition'
+    : rel.startsWith('app/') ? 'Host'
+    : rel.startsWith('ui/') ? 'UI'
+    : MODULES.find(({ prefix }) => rel === prefix || rel.startsWith(prefix + '/'))?.id ?? null;
+  const moduleFileCounts = new Map(MODULES.map(({ id }) => [id, 0]));
+  const submoduleFileCounts = new Map();
   const observedEdges = new Set();
+  const observedSubmoduleEdges = new Set();
   // Executable helpers and skills are runtime dependencies even though they
   // are not JavaScript imports. Keep the frozen asset closure physical and
   // complete, so a successful typecheck cannot hide a missing runtime file.
@@ -202,8 +376,19 @@ export async function inspectSourceTree(projectDir) {
     const from = owner(rel);
     if (moduleFileCounts.has(from)) moduleFileCounts.set(from, moduleFileCounts.get(from) + 1);
     if (!from) issues.push(`${rel}: source file has no target module or contracts owner`);
+    const fromModule = MODULE_BY_NAME.get(from);
+    const fromSubmodule = fromModule?.submodules ? submoduleOwner(fromModule, rel.slice(fromModule.prefix.length + 1)) : null;
+    if (fromModule?.submodules) {
+      if (!fromSubmodule) issues.push(`${rel}: source file has no ${from} submodule owner in ${MODULE_TARGET_PATH}`);
+      else {
+        const key = `${from}/${fromSubmodule}`;
+        submoduleFileCounts.set(key, (submoduleFileCounts.get(key) ?? 0) + 1);
+      }
+    }
     const content = await readFile(path, 'utf8');
     const file = ts.createSourceFile(rel, content, ts.ScriptTarget.Latest, true);
+    // Every import diagnostic names the file and the 1-based line of the import.
+    const at = node => `${rel}:${file.getLineAndCharacterOfPosition(node.getStart(file)).line + 1}`;
     const uiDtoModules = new Set(['core-http-types', 'host-settings-types'].map(name => resolve(sourceRoot, 'app', name)));
     const withoutJsExtension = candidate => candidate.replace(/\.(mjs|cjs|js|jsx)$/, '');
     // Browser rule, applied BEFORE the generic Node/Kernel/npm exemptions so a
@@ -211,91 +396,112 @@ export async function inspectSourceTree(projectDir) {
     // Host/Contracts value import cannot be waived by an early return. The only
     // Host import remains TYPE-ONLY. The existing Markdown adapter alone may
     // consume its bundled browser parser; no other bare-package exemption.
-    function checkUiSpecifier(specifier, typeOnly) {
-      if (typeof specifier !== 'string') { issues.push(`${rel}: computed import/require is forbidden`); return; }
-      if (specifier.startsWith('node:')) { issues.push(`${rel}: the browser UI may not import a Node builtin (${specifier})`); return; }
+    function checkUiSpecifier(specifier, typeOnly, loc) {
+      if (typeof specifier !== 'string') { issues.push(`${loc}: computed import/require is forbidden`); return; }
+      if (specifier.startsWith('node:')) { issues.push(`${loc}: the browser UI may not import a Node builtin (${specifier})`); return; }
       if (rel === 'ui/markdown.ts' && specifier === 'marked') return;
-      if (!specifier.startsWith('.')) { issues.push(`${rel}: the browser UI may not import a bare package (${specifier})`); return; }
+      if (!specifier.startsWith('.')) { issues.push(`${loc}: the browser UI may not import a bare package (${specifier})`); return; }
       const target = resolve(dirname(path), specifier);
-      if (!inside(sourceRoot, target)) { issues.push(`${rel}: the browser UI import escapes next/src: ${specifier}`); return; }
+      if (!inside(sourceRoot, target)) { issues.push(`${loc}: the browser UI import escapes next/src: ${specifier}`); return; }
       if (owner(relative(sourceRoot, target).split(sep).join('/')) === 'UI') return;
       if (uiDtoModules.has(withoutJsExtension(target))) {
-        if (!typeOnly) issues.push(`${rel}: the browser UI may only type-only import app/core-http-types`);
+        if (!typeOnly) issues.push(`${loc}: the browser UI may only type-only import app/core-http-types`);
         return;
       }
-      issues.push(`${rel}: the browser UI may only use local UI modules and the type-only HTTP DTO (${specifier})`);
+      issues.push(`${loc}: the browser UI may only use local UI modules and the type-only HTTP DTO (${specifier})`);
     }
-    function checkSpecifier(specifier, typeOnly = false) {
-      if (from === 'UI') { checkUiSpecifier(specifier, typeOnly); return; }
-      if (typeof specifier !== 'string') { issues.push(`${rel}: computed import/require is forbidden`); return; }
-      if (specifier === 'node:module') { issues.push(`${rel}: node:module is forbidden in product source`); return; }
+    function checkSpecifier(specifier, typeOnly, node) {
+      const loc = at(node);
+      if (from === 'UI') { checkUiSpecifier(specifier, typeOnly, loc); return; }
+      if (typeof specifier !== 'string') { issues.push(`${loc}: computed import/require is forbidden`); return; }
+      if (specifier === 'node:module') { issues.push(`${loc}: node:module is forbidden in product source`); return; }
       if (specifier.startsWith('node:')) return;
       if (!specifier.startsWith('.')) {
         const packageName = specifier.startsWith('@') ? specifier.split('/').slice(0, 2).join('/') : specifier.split('/')[0];
-        if (!dependencies.has(packageName)) issues.push(`${rel}: undeclared or absolute import ${specifier}`);
+        if (!dependencies.has(packageName)) issues.push(`${loc}: undeclared or absolute import ${specifier}`);
         return;
       }
       const target = resolve(dirname(path), specifier);
       // A frozen Kernel public build is the one non-src source dependency.
       // Internal Kernel files and the former repository's vendor tree remain forbidden.
       if (target === publicKernelEntry) return;
-      if (!inside(sourceRoot, target)) { issues.push(`${rel}: import escapes next/src: ${specifier}`); return; }
-      const to = owner(relative(sourceRoot, target).split(sep).join('/'));
-      if (!to) { issues.push(`${rel}: import targets no target module: ${specifier}`); return; }
+      if (!inside(sourceRoot, target)) { issues.push(`${loc}: import escapes next/src: ${specifier}`); return; }
+      const targetRel = relative(sourceRoot, target).split(sep).join('/');
+      const to = owner(targetRel);
+      if (!to) { issues.push(`${loc}: import targets no target module: ${specifier}`); return; }
       // Host and UI are outer layers: the Host may use composition plus the
       // public module ports; the browser UI may only use local views and a
       // TYPE-ONLY view of the Host HTTP DTO. Core modules never depend on them.
       if (to === 'Host' || to === 'UI') {
         if (from === to) return;
-        if (from === 'Host' && to === 'UI') { issues.push(`${rel}: Host may not depend on the browser UI`); return; }
+        if (from === 'Host' && to === 'UI') { issues.push(`${loc}: Host may not depend on the browser UI`); return; }
         if (from === 'UI' && to === 'Host') {
-          if (!typeOnly) issues.push(`${rel}: the browser UI may only type-only import the Host HTTP DTO`);
+          if (!typeOnly) issues.push(`${loc}: the browser UI may only type-only import the Host HTTP DTO`);
           return;
         }
-        issues.push(`${rel}: ${from} may not depend on the ${to} layer`);
+        issues.push(`${loc}: ${from} may not depend on the ${to} layer`);
         return;
       }
       if (from === 'Host') {
         if (to === 'Composition' || to === 'Contracts' || MODULE_NAMES.has(to)) return;
-        issues.push(`${rel}: Host may only depend on composition, contracts and public module ports (${to})`);
+        issues.push(`${loc}: Host may only depend on composition, contracts and public module ports (${to})`);
         return;
       }
-      if (from === 'Contracts' && to !== 'Contracts') issues.push(`${rel}: shared contracts depend on ${to}`);
-      else if (to === 'Composition' && from !== 'Composition') issues.push(`${rel}: ${from} depends on composition`);
+      if (from === 'Contracts' && to !== 'Contracts') issues.push(`${loc}: shared contracts depend on ${to}`);
+      else if (to === 'Composition' && from !== 'Composition') issues.push(`${loc}: ${from} depends on composition`);
       else if (from === 'Composition') return;
       else if (from && from !== to && to !== 'Contracts' && !ALLOWED[from]?.has(to))
-        issues.push(`${rel}: forbidden module edge ${from} -> ${to}`);
+        issues.push(`${loc}: forbidden module edge ${from} -> ${to}`);
       else if (from && from !== to && to !== 'Contracts') observedEdges.add(`${from} -> ${to}`);
+      else if (from && from === to && fromSubmodule) {
+        // Submodule rules apply to every import inside one module, type-only included.
+        const toSubmodule = submoduleOwner(fromModule, targetRel.slice(fromModule.prefix.length + 1));
+        // Fail closed: an import that resolves to no submodule cannot be proven to follow the rules.
+        if (!toSubmodule) { issues.push(`${loc}: import targets no ${from} submodule (${specifier})`); return; }
+        if (toSubmodule === fromSubmodule) return;
+        const edge = `${from}/${fromSubmodule} -> ${from}/${toSubmodule}`;
+        const allowed = fromModule.submodules.find(submodule => submodule.id === fromSubmodule)?.dependencies ?? [];
+        if (allowed.includes(toSubmodule)) observedSubmoduleEdges.add(edge);
+        else issues.push(`${loc}: forbidden submodule edge ${edge}`);
+      }
     }
     function walk(node) {
       if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier) {
         const typeOnly = ts.isImportDeclaration(node)
           ? node.importClause?.isTypeOnly === true
           : node.isTypeOnly === true;
-        checkSpecifier(ts.isStringLiteral(node.moduleSpecifier) ? node.moduleSpecifier.text : null, typeOnly);
+        checkSpecifier(ts.isStringLiteral(node.moduleSpecifier) ? node.moduleSpecifier.text : null, typeOnly, node);
       }
       if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference))
-        checkSpecifier(ts.isStringLiteral(node.moduleReference.expression) ? node.moduleReference.expression.text : null);
+        checkSpecifier(ts.isStringLiteral(node.moduleReference.expression) ? node.moduleReference.expression.text : null, false, node);
       if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument))
-        checkSpecifier(ts.isStringLiteral(node.argument.literal) ? node.argument.literal.text : null, true);
+        checkSpecifier(ts.isStringLiteral(node.argument.literal) ? node.argument.literal.text : null, true, node);
       if (ts.isCallExpression(node) && (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
         (ts.isIdentifier(node.expression) && node.expression.text === 'require') ||
         (ts.isPropertyAccessExpression(node.expression) && node.expression.getText(file) === 'require.resolve'))) {
         const arg = node.arguments[0];
-        checkSpecifier(arg && ts.isStringLiteral(arg) ? arg.text : null);
+        checkSpecifier(arg && ts.isStringLiteral(arg) ? arg.text : null, false, node);
       }
       ts.forEachChild(node, walk);
     }
     walk(file);
   }
-  await visit(sourceRoot);
+  // A broken module target has no trustworthy ownership; do not report a flood
+  // of derived "no owner" issues on top of the precise target issues.
+  if (target.issues.length)
+    issues.push(`source files were not checked (ownership, imports, symlinks, UI rules) because ${MODULE_TARGET_PATH} is invalid`);
+  else await visit(sourceRoot);
   const modules = [];
-  for (const [name, prefix] of MODULES) {
-    let directory = false;
-    try { directory = (await lstat(resolve(sourceRoot, prefix))).isDirectory(); } catch { /* absent module */ }
-    modules.push({ name, directory, sourceFiles: moduleFileCounts.get(name) });
-  }
-  return { issues, modules, observedEdges: [...observedEdges].sort() };
+  for (const { id, path } of MODULES)
+    modules.push({ name: id, directory: await isRealDirectory(resolve(project, path)), sourceFiles: moduleFileCounts.get(id) });
+  const submodules = [];
+  for (const module of MODULES) for (const submodule of module.submodules ?? [])
+    submodules.push({ name: `${module.id}/${submodule.id}`, sourceFiles: submoduleFileCounts.get(`${module.id}/${submodule.id}`) ?? 0 });
+  const allowedEdgeCount = MODULES.reduce((count, module) => count + module.dependencies.length, 0);
+  return {
+    issues, modules, submodules, allowedEdgeCount,
+    observedEdges: [...observedEdges].sort(), observedSubmoduleEdges: [...observedSubmoduleEdges].sort(),
+  };
 }
 
 export async function auditSourceTree(projectDir) {
@@ -303,9 +509,13 @@ export async function auditSourceTree(projectDir) {
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const { issues, modules, observedEdges } = await inspectSourceTree(resolve(dirname(fileURLToPath(import.meta.url)), '..'));
+  const { issues, modules, submodules, allowedEdgeCount, observedEdges, observedSubmoduleEdges } =
+    await inspectSourceTree(resolve(dirname(fileURLToPath(import.meta.url)), '..'));
   for (const module of modules) process.stdout.write(`${module.name}: directory=${module.directory}, sourceFiles=${module.sourceFiles}\n`);
-  process.stdout.write(`observed module edges: ${observedEdges.length}/8 allowed (${observedEdges.join(', ') || 'none'})\n`);
+  process.stdout.write(`observed module edges: ${observedEdges.length}/${allowedEdgeCount} allowed (${observedEdges.join(', ') || 'none'})\n`);
+  for (const submodule of submodules) process.stdout.write(`  ${submodule.name}: sourceFiles=${submodule.sourceFiles}\n`);
+  if (submodules.length)
+    process.stdout.write(`observed submodule edges: ${observedSubmoduleEdges.length} (${observedSubmoduleEdges.join(', ') || 'none'})\n`);
   if (issues.length) { for (const issue of issues) process.stderr.write(`${issue}\n`); process.exitCode = 1; }
   else process.stdout.write('next source boundaries: OK\n');
 }

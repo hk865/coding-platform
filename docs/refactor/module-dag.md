@@ -84,3 +84,31 @@ flowchart LR
 材料读取的当前实现直接读取同后端 snapshot 或投影，没有沿上述模块关系递归调用 Goal 写入，也不开始嵌套写事务。但模块级依赖已出现环；`check:architecture` 的 import/声明边检查成功，只证明该检查的范围，不能外推为完整逻辑图无环。
 
 退出项：把精确 snapshot 读取、material-access 候选索引的物理读取归 RecordStore，共用现有连接和状态；WorkGraph 保留来源、grant、basis 与撤权规则，旧读入口改为薄适配。随 R3c 的数据/索引迁移先行小批关闭，不新造 DataEngine、不复制 SQL 或双写索引来美化图。R3b 验收报告必须保留此欠账，最终 R6c 不允许带着这两条临时边宣称目标 DAG 收敛。
+
+## 5. 机器可读规则的单一来源（2026-10-02）
+
+`module-target.json`（schemaVersion 2）是模块路径和允许边的唯一来源：`scripts/check-boundaries.mjs` 直接读取它，不再在脚本里另写一份 `MODULES/ALLOWED`。`projectRoot`、`implementationOwnership` 相对该 JSON 所在目录解析，必须分别指向本仓库根与 `scripts/check-boundaries.mjs`；模块 `path` 相对仓库根。检查脚本对以下情况明确报错，并跳过全部源码文件检查（归属、import、symlink、UI 规则；退出码仍为失败）：JSON 不可读、缺字段、模块 id 占用外层名（Contracts/Composition/Host/UI）、路径未规范化、模块/子模块路径不存在或互相重叠、依赖指向未知 id、自依赖、模块或子模块依赖成环。import 违规的报错带 `src` 内相对路径和 1 起算的行号（如 `core/workspace/entry.ts:3: forbidden module edge ...`）。
+
+模块可以声明 `submodules`：每项 `{ id, path, dependencies }`，`path` 相对模块目录，可以是以 `/` 结尾的目录或单个源码文件；声明后模块内每个源码文件必须恰好属于一个子模块，子模块之间（含 type-only import）只允许沿声明的 `dependencies` 方向依赖，且子模块依赖图必须无环；解析不到任何子模块的 import 按失败处理（fail closed）。WorkGraph 的具体子模块分层由任务 D 决定后写入同一 JSON。
+
+Contracts、Composition、Host（`src/app`）和 UI（`src/ui`）是外层，规则仍由脚本内的固定分支实现（UI 仅可 type-only 引用 Host DTO 等），不在 JSON 中重复声明。
+
+### 旧模块名去向（原 `legacyModules`，已从 JSON 移出）
+
+该段没有代码消费者，2026-10-02 从 `module-target.json` 移到此处保存，仅供追溯；旧 `referenceOwnership`（旧工程 `coding-platform/scripts/module-map.mjs`）同时移除。
+
+| 旧模块 | 现归属模块 |
+| --- | --- |
+| HumanCollaboration | Workflow |
+| PlanCompiler | Workflow、WorkGraph |
+| ControlEngine | WorkGraph |
+| DispatchEngine | AgentRuntime、Workflow |
+| VerificationEngine | Workflow、WorkGraph、AgentRuntime |
+| ArchitectureReconciler | WorkGraph |
+| AgentLifecycle | Workflow、WorkGraph、AgentRuntime |
+| WorkerRuntime | AgentRuntime |
+| StateLedger | RecordStore、WorkGraph |
+| ArtifactVault | RecordStore、WorkGraph |
+| ReadModelIndex | WorkGraph、RecordStore |
+| ContextCompiler | WorkGraph、Workflow、AgentRuntime |
+| WorkspaceReader | WorkspaceTools |
