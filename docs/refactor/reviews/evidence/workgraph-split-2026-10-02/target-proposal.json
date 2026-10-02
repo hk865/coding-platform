@@ -1,0 +1,329 @@
+{
+  "angle": "judge synthesis: proposal-2 layering (sessions below tasks, session codecs stay in sessions) + proposal-1 evidence handling (completion stays in tasks) + proposal-3 model-request-codecs follows its only consumer",
+  "submodules": [
+    {
+      "id": "model",
+      "path": "model/",
+      "dependencies": [],
+      "responsibility": "跨子模块共享的端口/数据契约与少量纯工具（task-index 邻接、deriveSessionInputId）；无 I/O、无记录编码、无业务流程"
+    },
+    {
+      "id": "state",
+      "path": "state/",
+      "dependencies": [],
+      "responsibility": "任务 A 的纯状态机（transition* / 记录构造），只依赖 src/contracts；目录由任务 A 创建"
+    },
+    {
+      "id": "persistence",
+      "path": "persistence/",
+      "dependencies": [
+        "model"
+      ],
+      "responsibility": "Goal 创建编译与仓储，以及被多个子模块共读的记录/事件编解码（Goal、执行入口、执行历史、控制、Plan、证据）"
+    },
+    {
+      "id": "configuration",
+      "path": "configuration/",
+      "dependencies": [
+        "model",
+        "persistence"
+      ],
+      "responsibility": "Project/Workspace/CompletionPolicy 引导、角色配置与角色记忆"
+    },
+    {
+      "id": "materials",
+      "path": "materials/",
+      "dependencies": [
+        "model",
+        "persistence"
+      ],
+      "responsibility": "材料访问、授权、适用性；RunSnapshot/QueryRun/Grant 只读编码与材料权威读取"
+    },
+    {
+      "id": "architecture",
+      "path": "architecture/",
+      "dependencies": [
+        "model",
+        "persistence"
+      ],
+      "responsibility": "架构目录 catalog、基线与架构差异"
+    },
+    {
+      "id": "sessions",
+      "path": "sessions/",
+      "dependencies": [
+        "model",
+        "state",
+        "persistence",
+        "materials",
+        "architecture"
+      ],
+      "responsibility": "Session 目录、生命周期、工作目标，以及 SessionRecord / SessionMessage 记录编码"
+    },
+    {
+      "id": "queries",
+      "path": "queries/",
+      "dependencies": [
+        "model",
+        "state",
+        "persistence",
+        "materials",
+        "sessions"
+      ],
+      "responsibility": "QueryJob/QueryRun 提交、执行、答复及其记录编码"
+    },
+    {
+      "id": "tasks",
+      "path": "tasks/",
+      "dependencies": [
+        "model",
+        "state",
+        "persistence",
+        "materials",
+        "sessions",
+        "queries"
+      ],
+      "responsibility": "Plan（读/写/校验/采用）、领取、执行入口与历史、控制、模型调用、运行状态、Task/Goal 完成判定与证据覆盖折叠"
+    },
+    {
+      "id": "evidence",
+      "path": "evidence/",
+      "dependencies": [
+        "model",
+        "state",
+        "persistence",
+        "architecture",
+        "tasks"
+      ],
+      "responsibility": "验证轮次与证据写入服务、验证计划"
+    },
+    {
+      "id": "communication",
+      "path": "communication/",
+      "dependencies": [
+        "model",
+        "state",
+        "persistence",
+        "materials",
+        "sessions",
+        "queries",
+        "tasks"
+      ],
+      "responsibility": "Session 邮箱：投递、读取、回复"
+    },
+    {
+      "id": "source-authority-ports",
+      "path": "source-authority-ports.ts",
+      "dependencies": [
+        "materials"
+      ],
+      "responsibility": "对 Runtime/Workflow 公开的来源权威读取端口类型（单文件）"
+    },
+    {
+      "id": "source-authority-reader",
+      "path": "source-authority-reader.ts",
+      "dependencies": [
+        "source-authority-ports",
+        "materials",
+        "queries"
+      ],
+      "responsibility": "来源权威精确事实读取适配器（单文件）"
+    }
+  ],
+  "assign": {
+    "architecture/architecture-delta.ts": "architecture",
+    "architecture/architecture-record-codecs.ts": "architecture",
+    "architecture/architecture-service.ts": "architecture",
+    "architecture/catalog-contracts.ts": "architecture",
+    "architecture/catalog-record-codecs.ts": "architecture",
+    "architecture/catalog-service.ts": "architecture",
+    "architecture/contracts.ts": "architecture",
+    "architecture/graph-index.ts": "architecture",
+    "communication/contracts.ts": "model",
+    "communication/mailbox-service.ts": "communication",
+    "communication/message-record-codecs.ts": "sessions",
+    "configuration/contracts.ts": "model",
+    "configuration/project-bootstrap-contracts.ts": "configuration",
+    "configuration/project-bootstrap-record-codecs.ts": "configuration",
+    "configuration/project-bootstrap-service.ts": "configuration",
+    "configuration/role-memory-service.ts": "configuration",
+    "configuration/role-record-codecs.ts": "configuration",
+    "evidence/contracts.ts": "model",
+    "evidence/coverage.ts": "tasks",
+    "evidence/evidence-record-codecs.ts": "persistence",
+    "evidence/evidence-service.ts": "evidence",
+    "evidence/verification-plan.ts": "evidence",
+    "materials/applicability.ts": "materials",
+    "materials/contracts.ts": "model",
+    "materials/grant-contracts.ts": "materials",
+    "materials/grant-record-codecs.ts": "materials",
+    "materials/grant-service.ts": "materials",
+    "materials/material-facts-service.ts": "materials",
+    "materials/material-service.ts": "materials",
+    "materials/record-ports.ts": "materials",
+    "materials/record-readers.ts": "materials",
+    "persistence/commit-compiler.ts": "persistence",
+    "persistence/control-record-codecs.ts": "persistence",
+    "persistence/execution-entry-codecs.ts": "persistence",
+    "persistence/execution-history-codecs.ts": "persistence",
+    "persistence/graph-repository.ts": "persistence",
+    "persistence/model-request-codecs.ts": "tasks",
+    "persistence/record-codecs.ts": "persistence",
+    "queries/contracts.ts": "queries",
+    "queries/query-execution.ts": "queries",
+    "queries/query-job-service.ts": "queries",
+    "queries/query-record-codecs.ts": "queries",
+    "sessions/contracts.ts": "model",
+    "sessions/lifecycle-contracts.ts": "sessions",
+    "sessions/lifecycle-record-codecs.ts": "sessions",
+    "sessions/session-directory.ts": "sessions",
+    "sessions/session-lifecycle.ts": "sessions",
+    "sessions/session-record-codecs.ts": "sessions",
+    "sessions/session-targets.ts": "sessions",
+    "source-authority-ports.ts": "source-authority-ports",
+    "source-authority-reader.ts": "source-authority-reader",
+    "tasks/claim-contracts.ts": "model",
+    "tasks/claim-record-codecs.ts": "tasks",
+    "tasks/claim-service.ts": "tasks",
+    "tasks/completion-policy.ts": "tasks",
+    "tasks/completion-record-codecs.ts": "tasks",
+    "tasks/completion.ts": "tasks",
+    "tasks/contracts.ts": "model",
+    "tasks/control-contracts.ts": "tasks",
+    "tasks/control-service.ts": "tasks",
+    "tasks/eligibility.ts": "tasks",
+    "tasks/execution-entry-contracts.ts": "model",
+    "tasks/execution-entry-service.ts": "tasks",
+    "tasks/execution-history-binding.ts": "tasks",
+    "tasks/execution-history-contracts.ts": "model",
+    "tasks/execution-history-service.ts": "tasks",
+    "tasks/execution-read-contracts.ts": "model",
+    "tasks/initial-plan.ts": "tasks",
+    "tasks/model-call-contracts.ts": "tasks",
+    "tasks/model-call-service.ts": "tasks",
+    "tasks/plan-commit-compiler.ts": "tasks",
+    "tasks/plan-contracts.ts": "model",
+    "tasks/plan-readers.ts": "tasks",
+    "tasks/plan-record-codecs.ts": "persistence",
+    "tasks/plan-service.ts": "tasks",
+    "tasks/plan-task-basis.ts": "tasks",
+    "tasks/plan-validation.ts": "tasks",
+    "tasks/plan-write-admission.ts": "tasks",
+    "tasks/run-state-service.ts": "tasks",
+    "tasks/task-index.ts": "model",
+    "tasks/task-service.ts": "tasks"
+  },
+  "moves": [
+    {
+      "from": "tasks/contracts.ts",
+      "to": "model/task-contracts.ts",
+      "why": "model 内契约闭包（claim-contracts:15、execution-entry-contracts:24、execution-history-contracts:6、plan-contracts:15）；并消除 configuration/project-bootstrap-contracts:25、materials/grant-contracts:36、queries/contracts:43 等对 tasks 的 type 边"
+    },
+    {
+      "from": "tasks/claim-contracts.ts",
+      "to": "model/claim-contracts.ts",
+      "why": "persistence/execution-entry-codecs.ts:26 -> tasks（persistence -> tasks）"
+    },
+    {
+      "from": "tasks/execution-entry-contracts.ts",
+      "to": "model/execution-entry-contracts.ts",
+      "why": "persistence/execution-entry-codecs.ts:27 -> tasks（persistence -> tasks）"
+    },
+    {
+      "from": "tasks/execution-read-contracts.ts",
+      "to": "model/execution-read-contracts.ts",
+      "why": "execution-entry-contracts:25 的闭包；communication/contracts:33、evidence/contracts:37 也引用"
+    },
+    {
+      "from": "tasks/execution-history-contracts.ts",
+      "to": "model/execution-history-contracts.ts",
+      "why": "persistence/execution-history-codecs.ts:35 -> tasks（persistence -> tasks）"
+    },
+    {
+      "from": "tasks/plan-contracts.ts",
+      "to": "model/plan-contracts.ts",
+      "why": "execution-entry-contracts:27 的闭包；plan-record-codecs:39 下沉后需要"
+    },
+    {
+      "from": "configuration/contracts.ts",
+      "to": "model/configuration-contracts.ts",
+      "why": "claim-contracts:14、execution-entry-contracts:22 的闭包；否则 model -> configuration"
+    },
+    {
+      "from": "materials/contracts.ts",
+      "to": "model/material-contracts.ts",
+      "why": "execution-entry-contracts:23 的闭包；否则 model -> materials"
+    },
+    {
+      "from": "sessions/contracts.ts",
+      "to": "model/session-contracts.ts",
+      "why": "communication/contracts:31 的闭包"
+    },
+    {
+      "from": "communication/contracts.ts",
+      "to": "model/communication-contracts.ts",
+      "why": "message-record-codecs:31（下沉到 sessions）与 queries/contracts:42 引用；消除 queries <-> communication 二元环"
+    },
+    {
+      "from": "evidence/contracts.ts",
+      "to": "model/evidence-contracts.ts",
+      "why": "evidence-record-codecs:25（下沉到 persistence）需要 FinalizedChecks"
+    },
+    {
+      "from": "tasks/task-index.ts",
+      "to": "model/task-index.ts",
+      "why": "architecture/catalog-record-codecs.ts:25 -> tasks（纯邻接工具 hasCycleInEdges）"
+    },
+    {
+      "from": "tasks/plan-record-codecs.ts",
+      "to": "persistence/plan-record-codecs.ts",
+      "why": "queries/query-execution.ts:40、query-job-service.ts:60（queries 低于 tasks）及 coverage:27 共读 PlanRevision 编码"
+    },
+    {
+      "from": "evidence/evidence-record-codecs.ts",
+      "to": "persistence/evidence-record-codecs.ts",
+      "why": "tasks/completion.ts:44 -> evidence（tasks -> evidence）"
+    },
+    {
+      "from": "persistence/model-request-codecs.ts",
+      "to": "tasks/model-request-codecs.ts",
+      "why": "其 :19 type 引用 tasks/model-call-contracts（persistence -> tasks）；唯一使用方 tasks/model-call-service:34，跟随使用方上移"
+    },
+    {
+      "from": "evidence/coverage.ts",
+      "to": "tasks/evidence-coverage.ts",
+      "why": "tasks/completion.ts:47 -> evidence（tasks -> evidence）；纯证据覆盖折叠，依赖 tasks/plan-task-basis"
+    },
+    {
+      "from": "communication/message-record-codecs.ts",
+      "to": "sessions/message-record-codecs.ts",
+      "why": "tasks/claim-service.ts:50、queries/query-job-service.ts:59 -> communication（tasks/queries -> communication）；值依赖只有 session-record-codecs"
+    }
+  ],
+  "splits": [
+    {
+      "from": "tasks/run-state-service.ts",
+      "part": "decodeRun + Decoded<T>（含 RUN_VALIDATE 选择与私有 isRecord/parseBody 副本）",
+      "to": "materials/run-snapshot-decoder.ts",
+      "submodule": "materials",
+      "step": 1,
+      "why": "sessions/session-directory.ts:58 -> tasks（sessions -> tasks）；decodeRun 只是 RunSnapshot@1 已注册校验器的包装，校验器由 materials/record-readers 拥有；改引用方：session-directory:58、mailbox-service:59、completion:51、run-state-service 自身"
+    }
+  ],
+  "newFiles": {
+    "materials/run-snapshot-decoder.ts": "materials"
+  },
+  "ports": [
+    {
+      "from": "sessions/session-directory.ts",
+      "to": "tasks/run-state-service.ts",
+      "kind": "split-sink (step-1 file split, NOT a runtime port injection)",
+      "why": "该边由上面的 decodeRun 拆分消除（拆后变为 sessions -> materials，已声明）；检查器只认识现有文件，故在此列出。拆分后图已单独验证 0 违规、0 端口。"
+    }
+  ],
+  "notes": [
+    "state 声明为无依赖（与任务 A.2「只依赖 src/contracts」一致）；若任务 A 需要 model 中的 WorkGraph 内部类型，可加 state -> model，仍无环。",
+    "state 的使用方预留：sessions、queries、tasks、evidence、communication。",
+    "communication -> materials 在拆分前未使用；decodeRun 拆分后 mailbox-service:59 改为引用 materials/run-snapshot-decoder.ts。"
+  ]
+}

@@ -1,0 +1,2985 @@
+{
+  "root": "src/core/work-graph",
+  "totals": {
+    "files": 81,
+    "edges": 250,
+    "typeOnlyEdges": 109,
+    "lines": 37403
+  },
+  "groups": [
+    {
+      "group": "(root)",
+      "files": 2,
+      "lines": 315
+    },
+    {
+      "group": "architecture",
+      "files": 8,
+      "lines": 2990
+    },
+    {
+      "group": "communication",
+      "files": 3,
+      "lines": 2927
+    },
+    {
+      "group": "configuration",
+      "files": 6,
+      "lines": 3121
+    },
+    {
+      "group": "evidence",
+      "files": 5,
+      "lines": 2052
+    },
+    {
+      "group": "materials",
+      "files": 9,
+      "lines": 2880
+    },
+    {
+      "group": "persistence",
+      "files": 7,
+      "lines": 2538
+    },
+    {
+      "group": "queries",
+      "files": 4,
+      "lines": 3445
+    },
+    {
+      "group": "sessions",
+      "files": 7,
+      "lines": 3625
+    },
+    {
+      "group": "tasks",
+      "files": 30,
+      "lines": 13510
+    }
+  ],
+  "largestFiles": [
+    {
+      "file": "tasks/plan-service.ts",
+      "group": "tasks",
+      "lines": 2130
+    },
+    {
+      "file": "communication/mailbox-service.ts",
+      "group": "communication",
+      "lines": 2069
+    },
+    {
+      "file": "tasks/execution-entry-service.ts",
+      "group": "tasks",
+      "lines": 1696
+    },
+    {
+      "file": "sessions/session-directory.ts",
+      "group": "sessions",
+      "lines": 1571
+    },
+    {
+      "file": "queries/query-execution.ts",
+      "group": "queries",
+      "lines": 1494
+    },
+    {
+      "file": "tasks/plan-readers.ts",
+      "group": "tasks",
+      "lines": 1343
+    },
+    {
+      "file": "configuration/project-bootstrap-service.ts",
+      "group": "configuration",
+      "lines": 1162
+    },
+    {
+      "file": "evidence/evidence-service.ts",
+      "group": "evidence",
+      "lines": 1118
+    },
+    {
+      "file": "materials/grant-service.ts",
+      "group": "materials",
+      "lines": 969
+    },
+    {
+      "file": "queries/query-job-service.ts",
+      "group": "queries",
+      "lines": 956
+    },
+    {
+      "file": "tasks/plan-record-codecs.ts",
+      "group": "tasks",
+      "lines": 838
+    },
+    {
+      "file": "configuration/role-memory-service.ts",
+      "group": "configuration",
+      "lines": 809
+    },
+    {
+      "file": "architecture/catalog-service.ts",
+      "group": "architecture",
+      "lines": 805
+    },
+    {
+      "file": "sessions/session-record-codecs.ts",
+      "group": "sessions",
+      "lines": 788
+    },
+    {
+      "file": "tasks/claim-service.ts",
+      "group": "tasks",
+      "lines": 785
+    },
+    {
+      "file": "queries/query-record-codecs.ts",
+      "group": "queries",
+      "lines": 763
+    },
+    {
+      "file": "sessions/session-lifecycle.ts",
+      "group": "sessions",
+      "lines": 701
+    },
+    {
+      "file": "architecture/architecture-service.ts",
+      "group": "architecture",
+      "lines": 687
+    },
+    {
+      "file": "materials/record-readers.ts",
+      "group": "materials",
+      "lines": 687
+    },
+    {
+      "file": "tasks/completion.ts",
+      "group": "tasks",
+      "lines": 687
+    },
+    {
+      "file": "tasks/run-state-service.ts",
+      "group": "tasks",
+      "lines": 644
+    },
+    {
+      "file": "tasks/control-service.ts",
+      "group": "tasks",
+      "lines": 633
+    },
+    {
+      "file": "communication/message-record-codecs.ts",
+      "group": "communication",
+      "lines": 585
+    },
+    {
+      "file": "architecture/catalog-record-codecs.ts",
+      "group": "architecture",
+      "lines": 556
+    },
+    {
+      "file": "configuration/role-record-codecs.ts",
+      "group": "configuration",
+      "lines": 525
+    }
+  ],
+  "groupEdges": [
+    {
+      "from": "(root)",
+      "to": "materials",
+      "value": 0,
+      "typeOnly": 2,
+      "examples": [
+        "source-authority-ports.ts:7 -> materials/record-ports.ts (type)",
+        "source-authority-reader.ts:29 -> materials/record-ports.ts (type)"
+      ]
+    },
+    {
+      "from": "(root)",
+      "to": "queries",
+      "value": 1,
+      "typeOnly": 0,
+      "examples": [
+        "source-authority-reader.ts:30 -> queries/query-record-codecs.ts"
+      ]
+    },
+    {
+      "from": "architecture",
+      "to": "persistence",
+      "value": 4,
+      "typeOnly": 0,
+      "examples": [
+        "architecture/architecture-service.ts:48 -> persistence/record-codecs.ts",
+        "architecture/architecture-service.ts:49 -> persistence/commit-compiler.ts",
+        "architecture/catalog-service.ts:49 -> persistence/record-codecs.ts"
+      ]
+    },
+    {
+      "from": "architecture",
+      "to": "tasks",
+      "value": 1,
+      "typeOnly": 0,
+      "examples": [
+        "architecture/catalog-record-codecs.ts:25 -> tasks/task-index.ts"
+      ]
+    },
+    {
+      "from": "communication",
+      "to": "configuration",
+      "value": 0,
+      "typeOnly": 1,
+      "examples": [
+        "communication/contracts.ts:29 -> configuration/contracts.ts (type)"
+      ]
+    },
+    {
+      "from": "communication",
+      "to": "materials",
+      "value": 0,
+      "typeOnly": 1,
+      "examples": [
+        "communication/contracts.ts:30 -> materials/contracts.ts (type)"
+      ]
+    },
+    {
+      "from": "communication",
+      "to": "persistence",
+      "value": 1,
+      "typeOnly": 0,
+      "examples": [
+        "communication/mailbox-service.ts:49 -> persistence/record-codecs.ts"
+      ]
+    },
+    {
+      "from": "communication",
+      "to": "queries",
+      "value": 1,
+      "typeOnly": 0,
+      "examples": [
+        "communication/mailbox-service.ts:70 -> queries/query-record-codecs.ts"
+      ]
+    },
+    {
+      "from": "communication",
+      "to": "sessions",
+      "value": 2,
+      "typeOnly": 2,
+      "examples": [
+        "communication/contracts.ts:31 -> sessions/contracts.ts (type)",
+        "communication/mailbox-service.ts:50 -> sessions/session-record-codecs.ts",
+        "communication/mailbox-service.ts:51 -> sessions/contracts.ts (type)"
+      ]
+    },
+    {
+      "from": "communication",
+      "to": "tasks",
+      "value": 4,
+      "typeOnly": 4,
+      "examples": [
+        "communication/contracts.ts:32 -> tasks/execution-entry-contracts.ts (type)",
+        "communication/contracts.ts:33 -> tasks/execution-read-contracts.ts (type)",
+        "communication/mailbox-service.ts:54 -> tasks/claim-contracts.ts (type)"
+      ]
+    },
+    {
+      "from": "configuration",
+      "to": "persistence",
+      "value": 1,
+      "typeOnly": 0,
+      "examples": [
+        "configuration/project-bootstrap-service.ts:47 -> persistence/record-codecs.ts"
+      ]
+    },
+    {
+      "from": "configuration",
+      "to": "tasks",
+      "value": 0,
+      "typeOnly": 2,
+      "examples": [
+        "configuration/project-bootstrap-contracts.ts:25 -> tasks/contracts.ts (type)",
+        "configuration/project-bootstrap-service.ts:46 -> tasks/contracts.ts (type)"
+      ]
+    },
+    {
+      "from": "evidence",
+      "to": "architecture",
+      "value": 1,
+      "typeOnly": 0,
+      "examples": [
+        "evidence/evidence-service.ts:40 -> architecture/catalog-record-codecs.ts"
+      ]
+    },
+    {
+      "from": "evidence",
+      "to": "materials",
+      "value": 0,
+      "typeOnly": 1,
+      "examples": [
+        "evidence/contracts.ts:36 -> materials/contracts.ts (type)"
+      ]
+    },
+    {
+      "from": "evidence",
+      "to": "tasks",
+      "value": 6,
+      "typeOnly": 3,
+      "examples": [
+        "evidence/contracts.ts:37 -> tasks/execution-read-contracts.ts (type)",
+        "evidence/contracts.ts:38 -> tasks/contracts.ts (type)",
+        "evidence/coverage.ts:23 -> tasks/plan-task-basis.ts"
+      ]
+    },
+    {
+      "from": "materials",
+      "to": "persistence",
+      "value": 4,
+      "typeOnly": 0,
+      "examples": [
+        "materials/record-readers.ts:38 -> persistence/record-codecs.ts",
+        "materials/record-readers.ts:39 -> persistence/execution-history-codecs.ts",
+        "materials/record-readers.ts:40 -> persistence/execution-entry-codecs.ts"
+      ]
+    },
+    {
+      "from": "materials",
+      "to": "tasks",
+      "value": 0,
+      "typeOnly": 2,
+      "examples": [
+        "materials/grant-contracts.ts:36 -> tasks/contracts.ts (type)",
+        "materials/grant-service.ts:90 -> tasks/contracts.ts (type)"
+      ]
+    },
+    {
+      "from": "persistence",
+      "to": "tasks",
+      "value": 0,
+      "typeOnly": 4,
+      "examples": [
+        "persistence/execution-entry-codecs.ts:26 -> tasks/claim-contracts.ts (type)",
+        "persistence/execution-entry-codecs.ts:27 -> tasks/execution-entry-contracts.ts (type)",
+        "persistence/execution-history-codecs.ts:35 -> tasks/execution-history-contracts.ts (type)"
+      ]
+    },
+    {
+      "from": "queries",
+      "to": "communication",
+      "value": 1,
+      "typeOnly": 1,
+      "examples": [
+        "queries/contracts.ts:42 -> communication/contracts.ts (type)",
+        "queries/query-job-service.ts:59 -> communication/message-record-codecs.ts"
+      ]
+    },
+    {
+      "from": "queries",
+      "to": "configuration",
+      "value": 0,
+      "typeOnly": 1,
+      "examples": [
+        "queries/contracts.ts:41 -> configuration/contracts.ts (type)"
+      ]
+    },
+    {
+      "from": "queries",
+      "to": "materials",
+      "value": 1,
+      "typeOnly": 0,
+      "examples": [
+        "queries/query-record-codecs.ts:51 -> materials/record-readers.ts"
+      ]
+    },
+    {
+      "from": "queries",
+      "to": "persistence",
+      "value": 2,
+      "typeOnly": 0,
+      "examples": [
+        "queries/query-execution.ts:39 -> persistence/record-codecs.ts",
+        "queries/query-job-service.ts:52 -> persistence/record-codecs.ts"
+      ]
+    },
+    {
+      "from": "queries",
+      "to": "sessions",
+      "value": 1,
+      "typeOnly": 0,
+      "examples": [
+        "queries/query-execution.ts:41 -> sessions/session-record-codecs.ts"
+      ]
+    },
+    {
+      "from": "queries",
+      "to": "tasks",
+      "value": 2,
+      "typeOnly": 2,
+      "examples": [
+        "queries/contracts.ts:43 -> tasks/contracts.ts (type)",
+        "queries/query-execution.ts:40 -> tasks/plan-record-codecs.ts",
+        "queries/query-execution.ts:54 -> tasks/contracts.ts (type)"
+      ]
+    },
+    {
+      "from": "sessions",
+      "to": "architecture",
+      "value": 1,
+      "typeOnly": 0,
+      "examples": [
+        "sessions/session-targets.ts:20 -> architecture/catalog-service.ts"
+      ]
+    },
+    {
+      "from": "sessions",
+      "to": "persistence",
+      "value": 1,
+      "typeOnly": 0,
+      "examples": [
+        "sessions/session-targets.ts:21 -> persistence/record-codecs.ts"
+      ]
+    },
+    {
+      "from": "sessions",
+      "to": "tasks",
+      "value": 1,
+      "typeOnly": 0,
+      "examples": [
+        "sessions/session-directory.ts:58 -> tasks/run-state-service.ts"
+      ]
+    },
+    {
+      "from": "tasks",
+      "to": "communication",
+      "value": 1,
+      "typeOnly": 0,
+      "examples": [
+        "tasks/claim-service.ts:50 -> communication/message-record-codecs.ts"
+      ]
+    },
+    {
+      "from": "tasks",
+      "to": "configuration",
+      "value": 0,
+      "typeOnly": 3,
+      "examples": [
+        "tasks/claim-contracts.ts:14 -> configuration/contracts.ts (type)",
+        "tasks/execution-entry-contracts.ts:22 -> configuration/contracts.ts (type)",
+        "tasks/execution-entry-service.ts:39 -> configuration/contracts.ts (type)"
+      ]
+    },
+    {
+      "from": "tasks",
+      "to": "evidence",
+      "value": 2,
+      "typeOnly": 0,
+      "examples": [
+        "tasks/completion.ts:44 -> evidence/evidence-record-codecs.ts",
+        "tasks/completion.ts:47 -> evidence/coverage.ts"
+      ]
+    },
+    {
+      "from": "tasks",
+      "to": "materials",
+      "value": 1,
+      "typeOnly": 4,
+      "examples": [
+        "tasks/control-contracts.ts:18 -> materials/record-ports.ts (type)",
+        "tasks/execution-entry-contracts.ts:23 -> materials/contracts.ts (type)",
+        "tasks/execution-entry-service.ts:40 -> materials/contracts.ts (type)"
+      ]
+    },
+    {
+      "from": "tasks",
+      "to": "persistence",
+      "value": 18,
+      "typeOnly": 0,
+      "examples": [
+        "tasks/claim-record-codecs.ts:25 -> persistence/execution-entry-codecs.ts",
+        "tasks/control-service.ts:31 -> persistence/control-record-codecs.ts",
+        "tasks/control-service.ts:39 -> persistence/execution-history-codecs.ts"
+      ]
+    },
+    {
+      "from": "tasks",
+      "to": "queries",
+      "value": 2,
+      "typeOnly": 0,
+      "examples": [
+        "tasks/plan-service.ts:73 -> queries/query-record-codecs.ts",
+        "tasks/plan-service.ts:78 -> queries/query-execution.ts"
+      ]
+    },
+    {
+      "from": "tasks",
+      "to": "sessions",
+      "value": 6,
+      "typeOnly": 0,
+      "examples": [
+        "tasks/claim-service.ts:39 -> sessions/session-record-codecs.ts",
+        "tasks/execution-entry-service.ts:51 -> sessions/session-record-codecs.ts",
+        "tasks/execution-history-service.ts:47 -> sessions/session-record-codecs.ts"
+      ]
+    }
+  ],
+  "groupComponents": [
+    [
+      "architecture",
+      "communication",
+      "configuration",
+      "evidence",
+      "materials",
+      "persistence",
+      "queries",
+      "sessions",
+      "tasks"
+    ]
+  ],
+  "groupComponentsValueOnly": [
+    [
+      "architecture",
+      "communication",
+      "evidence",
+      "queries",
+      "sessions",
+      "tasks"
+    ]
+  ],
+  "groupCycles": [
+    [
+      "architecture",
+      "persistence",
+      "tasks",
+      "communication",
+      "queries",
+      "sessions",
+      "architecture"
+    ],
+    [
+      "architecture",
+      "persistence",
+      "tasks",
+      "communication",
+      "sessions",
+      "architecture"
+    ],
+    [
+      "architecture",
+      "persistence",
+      "tasks",
+      "evidence",
+      "architecture"
+    ],
+    [
+      "architecture",
+      "persistence",
+      "tasks",
+      "queries",
+      "communication",
+      "sessions",
+      "architecture"
+    ],
+    [
+      "architecture",
+      "persistence",
+      "tasks",
+      "queries",
+      "sessions",
+      "architecture"
+    ],
+    [
+      "architecture",
+      "persistence",
+      "tasks",
+      "sessions",
+      "architecture"
+    ],
+    [
+      "architecture",
+      "tasks",
+      "communication",
+      "queries",
+      "sessions",
+      "architecture"
+    ],
+    [
+      "architecture",
+      "tasks",
+      "communication",
+      "sessions",
+      "architecture"
+    ],
+    [
+      "architecture",
+      "tasks",
+      "evidence",
+      "architecture"
+    ],
+    [
+      "architecture",
+      "tasks",
+      "queries",
+      "communication",
+      "sessions",
+      "architecture"
+    ],
+    [
+      "architecture",
+      "tasks",
+      "queries",
+      "sessions",
+      "architecture"
+    ],
+    [
+      "architecture",
+      "tasks",
+      "sessions",
+      "architecture"
+    ],
+    [
+      "communication",
+      "configuration",
+      "persistence",
+      "tasks",
+      "communication"
+    ],
+    [
+      "communication",
+      "configuration",
+      "persistence",
+      "tasks",
+      "queries",
+      "communication"
+    ],
+    [
+      "communication",
+      "configuration",
+      "tasks",
+      "communication"
+    ],
+    [
+      "communication",
+      "configuration",
+      "tasks",
+      "queries",
+      "communication"
+    ],
+    [
+      "communication",
+      "materials",
+      "persistence",
+      "tasks",
+      "communication"
+    ],
+    [
+      "communication",
+      "materials",
+      "persistence",
+      "tasks",
+      "queries",
+      "communication"
+    ],
+    [
+      "communication",
+      "materials",
+      "tasks",
+      "communication"
+    ],
+    [
+      "communication",
+      "materials",
+      "tasks",
+      "queries",
+      "communication"
+    ],
+    [
+      "communication",
+      "persistence",
+      "tasks",
+      "communication"
+    ],
+    [
+      "communication",
+      "persistence",
+      "tasks",
+      "queries",
+      "communication"
+    ],
+    [
+      "communication",
+      "queries",
+      "communication"
+    ],
+    [
+      "communication",
+      "queries",
+      "configuration",
+      "persistence",
+      "tasks",
+      "communication"
+    ],
+    [
+      "communication",
+      "queries",
+      "configuration",
+      "tasks",
+      "communication"
+    ],
+    [
+      "communication",
+      "queries",
+      "materials",
+      "persistence",
+      "tasks",
+      "communication"
+    ],
+    [
+      "communication",
+      "queries",
+      "materials",
+      "tasks",
+      "communication"
+    ],
+    [
+      "communication",
+      "queries",
+      "persistence",
+      "tasks",
+      "communication"
+    ],
+    [
+      "communication",
+      "queries",
+      "sessions",
+      "persistence",
+      "tasks",
+      "communication"
+    ],
+    [
+      "communication",
+      "queries",
+      "sessions",
+      "tasks",
+      "communication"
+    ],
+    [
+      "communication",
+      "queries",
+      "tasks",
+      "communication"
+    ],
+    [
+      "communication",
+      "sessions",
+      "persistence",
+      "tasks",
+      "communication"
+    ],
+    [
+      "communication",
+      "sessions",
+      "persistence",
+      "tasks",
+      "queries",
+      "communication"
+    ],
+    [
+      "communication",
+      "sessions",
+      "tasks",
+      "communication"
+    ],
+    [
+      "communication",
+      "sessions",
+      "tasks",
+      "queries",
+      "communication"
+    ],
+    [
+      "communication",
+      "tasks",
+      "communication"
+    ],
+    [
+      "communication",
+      "tasks",
+      "queries",
+      "communication"
+    ],
+    [
+      "configuration",
+      "persistence",
+      "tasks",
+      "configuration"
+    ],
+    [
+      "configuration",
+      "persistence",
+      "tasks",
+      "queries",
+      "configuration"
+    ],
+    [
+      "configuration",
+      "tasks",
+      "configuration"
+    ],
+    [
+      "configuration",
+      "tasks",
+      "queries",
+      "configuration"
+    ],
+    [
+      "evidence",
+      "materials",
+      "persistence",
+      "tasks",
+      "evidence"
+    ],
+    [
+      "evidence",
+      "materials",
+      "tasks",
+      "evidence"
+    ],
+    [
+      "evidence",
+      "tasks",
+      "evidence"
+    ],
+    [
+      "materials",
+      "persistence",
+      "tasks",
+      "materials"
+    ],
+    [
+      "materials",
+      "persistence",
+      "tasks",
+      "queries",
+      "materials"
+    ],
+    [
+      "materials",
+      "tasks",
+      "materials"
+    ],
+    [
+      "materials",
+      "tasks",
+      "queries",
+      "materials"
+    ],
+    [
+      "persistence",
+      "tasks",
+      "persistence"
+    ],
+    [
+      "persistence",
+      "tasks",
+      "queries",
+      "persistence"
+    ],
+    [
+      "persistence",
+      "tasks",
+      "queries",
+      "sessions",
+      "persistence"
+    ],
+    [
+      "persistence",
+      "tasks",
+      "sessions",
+      "persistence"
+    ],
+    [
+      "queries",
+      "sessions",
+      "tasks",
+      "queries"
+    ],
+    [
+      "queries",
+      "tasks",
+      "queries"
+    ],
+    [
+      "sessions",
+      "tasks",
+      "sessions"
+    ]
+  ],
+  "groupCyclesValueOnly": [
+    [
+      "architecture",
+      "tasks",
+      "communication",
+      "queries",
+      "sessions",
+      "architecture"
+    ],
+    [
+      "architecture",
+      "tasks",
+      "communication",
+      "sessions",
+      "architecture"
+    ],
+    [
+      "architecture",
+      "tasks",
+      "evidence",
+      "architecture"
+    ],
+    [
+      "architecture",
+      "tasks",
+      "queries",
+      "communication",
+      "sessions",
+      "architecture"
+    ],
+    [
+      "architecture",
+      "tasks",
+      "queries",
+      "sessions",
+      "architecture"
+    ],
+    [
+      "architecture",
+      "tasks",
+      "sessions",
+      "architecture"
+    ],
+    [
+      "communication",
+      "queries",
+      "communication"
+    ],
+    [
+      "communication",
+      "queries",
+      "sessions",
+      "tasks",
+      "communication"
+    ],
+    [
+      "communication",
+      "queries",
+      "tasks",
+      "communication"
+    ],
+    [
+      "communication",
+      "sessions",
+      "tasks",
+      "communication"
+    ],
+    [
+      "communication",
+      "sessions",
+      "tasks",
+      "queries",
+      "communication"
+    ],
+    [
+      "communication",
+      "tasks",
+      "communication"
+    ],
+    [
+      "communication",
+      "tasks",
+      "queries",
+      "communication"
+    ],
+    [
+      "evidence",
+      "tasks",
+      "evidence"
+    ],
+    [
+      "queries",
+      "sessions",
+      "tasks",
+      "queries"
+    ],
+    [
+      "queries",
+      "tasks",
+      "queries"
+    ],
+    [
+      "sessions",
+      "tasks",
+      "sessions"
+    ]
+  ],
+  "fileComponents": [],
+  "fileComponentsValueOnly": [],
+  "external": {
+    "src/contracts/architecture-catalog.ts": 2,
+    "src/contracts/architecture-inspection.ts": 2,
+    "src/contracts/architecture-source.ts": 7,
+    "src/contracts/artifact.ts": 25,
+    "src/contracts/command-event.ts": 55,
+    "src/contracts/control-intent.ts": 3,
+    "src/contracts/core/call-context.ts": 45,
+    "src/contracts/core/execution-history.ts": 7,
+    "src/contracts/core/identity.ts": 38,
+    "src/contracts/core/operations.ts": 3,
+    "src/contracts/core/prepared-execution.ts": 8,
+    "src/contracts/core/results.ts": 47,
+    "src/contracts/core/session-message.ts": 5,
+    "src/contracts/core/session.ts": 14,
+    "src/contracts/core/source.ts": 3,
+    "src/contracts/core/task-claim.ts": 4,
+    "src/contracts/dispatch.ts": 45,
+    "src/contracts/evidence.ts": 10,
+    "src/contracts/fingerprint.ts": 50,
+    "src/contracts/goal-change.ts": 2,
+    "src/contracts/goal-phase.ts": 6,
+    "src/contracts/governance.ts": 14,
+    "src/contracts/human-role-collaboration.ts": 2,
+    "src/contracts/initial-planning.ts": 1,
+    "src/contracts/ledger.ts": 39,
+    "src/contracts/material-access.ts": 15,
+    "src/contracts/plan.ts": 34,
+    "src/contracts/query-job.ts": 18,
+    "src/contracts/reduction.ts": 5,
+    "src/contracts/reviewer-work.ts": 1,
+    "src/contracts/role-spec-materials.ts": 5,
+    "src/contracts/role-spec.ts": 6,
+    "src/contracts/runtime-budget.ts": 2,
+    "src/contracts/task-envelope.ts": 3,
+    "src/contracts/validation/common.ts": 1,
+    "src/contracts/validation/goal.ts": 1,
+    "src/contracts/validation/role.ts": 2,
+    "src/contracts/verification-context.ts": 2,
+    "src/contracts/verification.ts": 7,
+    "src/core/record-store/body-codec.ts": 5,
+    "src/core/record-store/body-ports.ts": 9,
+    "src/core/record-store/lookup-index.ts": 1,
+    "src/core/record-store/lookup-ports.ts": 25,
+    "src/core/record-store/ports.ts": 67,
+    "src/core/record-store/record-codec.ts": 2,
+    "src/core/workspace/access.ts": 2,
+    "src/core/workspace/ports.ts": 2,
+    "src/core/workspace/source-applicability.ts": 1
+  },
+  "nodes": [
+    {
+      "file": "architecture/architecture-delta.ts",
+      "group": "architecture",
+      "lines": 101
+    },
+    {
+      "file": "architecture/architecture-record-codecs.ts",
+      "group": "architecture",
+      "lines": 389
+    },
+    {
+      "file": "architecture/architecture-service.ts",
+      "group": "architecture",
+      "lines": 687
+    },
+    {
+      "file": "architecture/catalog-contracts.ts",
+      "group": "architecture",
+      "lines": 137
+    },
+    {
+      "file": "architecture/catalog-record-codecs.ts",
+      "group": "architecture",
+      "lines": 556
+    },
+    {
+      "file": "architecture/catalog-service.ts",
+      "group": "architecture",
+      "lines": 805
+    },
+    {
+      "file": "architecture/contracts.ts",
+      "group": "architecture",
+      "lines": 73
+    },
+    {
+      "file": "architecture/graph-index.ts",
+      "group": "architecture",
+      "lines": 242
+    },
+    {
+      "file": "communication/contracts.ts",
+      "group": "communication",
+      "lines": 273
+    },
+    {
+      "file": "communication/mailbox-service.ts",
+      "group": "communication",
+      "lines": 2069
+    },
+    {
+      "file": "communication/message-record-codecs.ts",
+      "group": "communication",
+      "lines": 585
+    },
+    {
+      "file": "configuration/contracts.ts",
+      "group": "configuration",
+      "lines": 40
+    },
+    {
+      "file": "configuration/project-bootstrap-contracts.ts",
+      "group": "configuration",
+      "lines": 135
+    },
+    {
+      "file": "configuration/project-bootstrap-record-codecs.ts",
+      "group": "configuration",
+      "lines": 450
+    },
+    {
+      "file": "configuration/project-bootstrap-service.ts",
+      "group": "configuration",
+      "lines": 1162
+    },
+    {
+      "file": "configuration/role-memory-service.ts",
+      "group": "configuration",
+      "lines": 809
+    },
+    {
+      "file": "configuration/role-record-codecs.ts",
+      "group": "configuration",
+      "lines": 525
+    },
+    {
+      "file": "evidence/contracts.ts",
+      "group": "evidence",
+      "lines": 140
+    },
+    {
+      "file": "evidence/coverage.ts",
+      "group": "evidence",
+      "lines": 199
+    },
+    {
+      "file": "evidence/evidence-record-codecs.ts",
+      "group": "evidence",
+      "lines": 463
+    },
+    {
+      "file": "evidence/evidence-service.ts",
+      "group": "evidence",
+      "lines": 1118
+    },
+    {
+      "file": "evidence/verification-plan.ts",
+      "group": "evidence",
+      "lines": 132
+    },
+    {
+      "file": "materials/applicability.ts",
+      "group": "materials",
+      "lines": 232
+    },
+    {
+      "file": "materials/contracts.ts",
+      "group": "materials",
+      "lines": 37
+    },
+    {
+      "file": "materials/grant-contracts.ts",
+      "group": "materials",
+      "lines": 110
+    },
+    {
+      "file": "materials/grant-record-codecs.ts",
+      "group": "materials",
+      "lines": 292
+    },
+    {
+      "file": "materials/grant-service.ts",
+      "group": "materials",
+      "lines": 969
+    },
+    {
+      "file": "materials/material-facts-service.ts",
+      "group": "materials",
+      "lines": 210
+    },
+    {
+      "file": "materials/material-service.ts",
+      "group": "materials",
+      "lines": 320
+    },
+    {
+      "file": "materials/record-ports.ts",
+      "group": "materials",
+      "lines": 23
+    },
+    {
+      "file": "materials/record-readers.ts",
+      "group": "materials",
+      "lines": 687
+    },
+    {
+      "file": "persistence/commit-compiler.ts",
+      "group": "persistence",
+      "lines": 285
+    },
+    {
+      "file": "persistence/control-record-codecs.ts",
+      "group": "persistence",
+      "lines": 475
+    },
+    {
+      "file": "persistence/execution-entry-codecs.ts",
+      "group": "persistence",
+      "lines": 497
+    },
+    {
+      "file": "persistence/execution-history-codecs.ts",
+      "group": "persistence",
+      "lines": 222
+    },
+    {
+      "file": "persistence/graph-repository.ts",
+      "group": "persistence",
+      "lines": 345
+    },
+    {
+      "file": "persistence/model-request-codecs.ts",
+      "group": "persistence",
+      "lines": 248
+    },
+    {
+      "file": "persistence/record-codecs.ts",
+      "group": "persistence",
+      "lines": 466
+    },
+    {
+      "file": "queries/contracts.ts",
+      "group": "queries",
+      "lines": 232
+    },
+    {
+      "file": "queries/query-execution.ts",
+      "group": "queries",
+      "lines": 1494
+    },
+    {
+      "file": "queries/query-job-service.ts",
+      "group": "queries",
+      "lines": 956
+    },
+    {
+      "file": "queries/query-record-codecs.ts",
+      "group": "queries",
+      "lines": 763
+    },
+    {
+      "file": "sessions/contracts.ts",
+      "group": "sessions",
+      "lines": 60
+    },
+    {
+      "file": "sessions/lifecycle-contracts.ts",
+      "group": "sessions",
+      "lines": 68
+    },
+    {
+      "file": "sessions/lifecycle-record-codecs.ts",
+      "group": "sessions",
+      "lines": 266
+    },
+    {
+      "file": "sessions/session-directory.ts",
+      "group": "sessions",
+      "lines": 1571
+    },
+    {
+      "file": "sessions/session-lifecycle.ts",
+      "group": "sessions",
+      "lines": 701
+    },
+    {
+      "file": "sessions/session-record-codecs.ts",
+      "group": "sessions",
+      "lines": 788
+    },
+    {
+      "file": "sessions/session-targets.ts",
+      "group": "sessions",
+      "lines": 171
+    },
+    {
+      "file": "source-authority-ports.ts",
+      "group": "(root)",
+      "lines": 63
+    },
+    {
+      "file": "source-authority-reader.ts",
+      "group": "(root)",
+      "lines": 252
+    },
+    {
+      "file": "tasks/claim-contracts.ts",
+      "group": "tasks",
+      "lines": 68
+    },
+    {
+      "file": "tasks/claim-record-codecs.ts",
+      "group": "tasks",
+      "lines": 319
+    },
+    {
+      "file": "tasks/claim-service.ts",
+      "group": "tasks",
+      "lines": 785
+    },
+    {
+      "file": "tasks/completion-policy.ts",
+      "group": "tasks",
+      "lines": 280
+    },
+    {
+      "file": "tasks/completion-record-codecs.ts",
+      "group": "tasks",
+      "lines": 312
+    },
+    {
+      "file": "tasks/completion.ts",
+      "group": "tasks",
+      "lines": 687
+    },
+    {
+      "file": "tasks/contracts.ts",
+      "group": "tasks",
+      "lines": 91
+    },
+    {
+      "file": "tasks/control-contracts.ts",
+      "group": "tasks",
+      "lines": 74
+    },
+    {
+      "file": "tasks/control-service.ts",
+      "group": "tasks",
+      "lines": 633
+    },
+    {
+      "file": "tasks/eligibility.ts",
+      "group": "tasks",
+      "lines": 79
+    },
+    {
+      "file": "tasks/execution-entry-contracts.ts",
+      "group": "tasks",
+      "lines": 127
+    },
+    {
+      "file": "tasks/execution-entry-service.ts",
+      "group": "tasks",
+      "lines": 1696
+    },
+    {
+      "file": "tasks/execution-history-binding.ts",
+      "group": "tasks",
+      "lines": 172
+    },
+    {
+      "file": "tasks/execution-history-contracts.ts",
+      "group": "tasks",
+      "lines": 33
+    },
+    {
+      "file": "tasks/execution-history-service.ts",
+      "group": "tasks",
+      "lines": 480
+    },
+    {
+      "file": "tasks/execution-read-contracts.ts",
+      "group": "tasks",
+      "lines": 64
+    },
+    {
+      "file": "tasks/initial-plan.ts",
+      "group": "tasks",
+      "lines": 180
+    },
+    {
+      "file": "tasks/model-call-contracts.ts",
+      "group": "tasks",
+      "lines": 82
+    },
+    {
+      "file": "tasks/model-call-service.ts",
+      "group": "tasks",
+      "lines": 304
+    },
+    {
+      "file": "tasks/plan-commit-compiler.ts",
+      "group": "tasks",
+      "lines": 329
+    },
+    {
+      "file": "tasks/plan-contracts.ts",
+      "group": "tasks",
+      "lines": 163
+    },
+    {
+      "file": "tasks/plan-readers.ts",
+      "group": "tasks",
+      "lines": 1343
+    },
+    {
+      "file": "tasks/plan-record-codecs.ts",
+      "group": "tasks",
+      "lines": 838
+    },
+    {
+      "file": "tasks/plan-service.ts",
+      "group": "tasks",
+      "lines": 2130
+    },
+    {
+      "file": "tasks/plan-task-basis.ts",
+      "group": "tasks",
+      "lines": 193
+    },
+    {
+      "file": "tasks/plan-validation.ts",
+      "group": "tasks",
+      "lines": 513
+    },
+    {
+      "file": "tasks/plan-write-admission.ts",
+      "group": "tasks",
+      "lines": 385
+    },
+    {
+      "file": "tasks/run-state-service.ts",
+      "group": "tasks",
+      "lines": 644
+    },
+    {
+      "file": "tasks/task-index.ts",
+      "group": "tasks",
+      "lines": 78
+    },
+    {
+      "file": "tasks/task-service.ts",
+      "group": "tasks",
+      "lines": 428
+    }
+  ],
+  "edges": [
+    {
+      "from": "architecture/architecture-delta.ts",
+      "to": "architecture/contracts.ts",
+      "line": 9,
+      "typeOnly": true
+    },
+    {
+      "from": "architecture/architecture-record-codecs.ts",
+      "to": "architecture/contracts.ts",
+      "line": 18,
+      "typeOnly": true
+    },
+    {
+      "from": "architecture/architecture-service.ts",
+      "to": "architecture/architecture-delta.ts",
+      "line": 35,
+      "typeOnly": false
+    },
+    {
+      "from": "architecture/architecture-service.ts",
+      "to": "architecture/architecture-record-codecs.ts",
+      "line": 36,
+      "typeOnly": false
+    },
+    {
+      "from": "architecture/architecture-service.ts",
+      "to": "architecture/contracts.ts",
+      "line": 43,
+      "typeOnly": true
+    },
+    {
+      "from": "architecture/architecture-service.ts",
+      "to": "architecture/graph-index.ts",
+      "line": 47,
+      "typeOnly": false
+    },
+    {
+      "from": "architecture/architecture-service.ts",
+      "to": "persistence/record-codecs.ts",
+      "line": 48,
+      "typeOnly": false
+    },
+    {
+      "from": "architecture/architecture-service.ts",
+      "to": "persistence/commit-compiler.ts",
+      "line": 49,
+      "typeOnly": false
+    },
+    {
+      "from": "architecture/catalog-contracts.ts",
+      "to": "architecture/contracts.ts",
+      "line": 21,
+      "typeOnly": true
+    },
+    {
+      "from": "architecture/catalog-record-codecs.ts",
+      "to": "tasks/task-index.ts",
+      "line": 25,
+      "typeOnly": false
+    },
+    {
+      "from": "architecture/catalog-record-codecs.ts",
+      "to": "architecture/catalog-contracts.ts",
+      "line": 26,
+      "typeOnly": true
+    },
+    {
+      "from": "architecture/catalog-service.ts",
+      "to": "architecture/catalog-contracts.ts",
+      "line": 35,
+      "typeOnly": true
+    },
+    {
+      "from": "architecture/catalog-service.ts",
+      "to": "architecture/contracts.ts",
+      "line": 40,
+      "typeOnly": true
+    },
+    {
+      "from": "architecture/catalog-service.ts",
+      "to": "architecture/catalog-record-codecs.ts",
+      "line": 41,
+      "typeOnly": false
+    },
+    {
+      "from": "architecture/catalog-service.ts",
+      "to": "persistence/record-codecs.ts",
+      "line": 49,
+      "typeOnly": false
+    },
+    {
+      "from": "architecture/catalog-service.ts",
+      "to": "persistence/commit-compiler.ts",
+      "line": 50,
+      "typeOnly": false
+    },
+    {
+      "from": "architecture/catalog-service.ts",
+      "to": "architecture/catalog-record-codecs.ts",
+      "line": 52,
+      "typeOnly": false
+    },
+    {
+      "from": "architecture/graph-index.ts",
+      "to": "architecture/contracts.ts",
+      "line": 14,
+      "typeOnly": true
+    },
+    {
+      "from": "communication/contracts.ts",
+      "to": "configuration/contracts.ts",
+      "line": 29,
+      "typeOnly": true
+    },
+    {
+      "from": "communication/contracts.ts",
+      "to": "materials/contracts.ts",
+      "line": 30,
+      "typeOnly": true
+    },
+    {
+      "from": "communication/contracts.ts",
+      "to": "sessions/contracts.ts",
+      "line": 31,
+      "typeOnly": true
+    },
+    {
+      "from": "communication/contracts.ts",
+      "to": "tasks/execution-entry-contracts.ts",
+      "line": 32,
+      "typeOnly": true
+    },
+    {
+      "from": "communication/contracts.ts",
+      "to": "tasks/execution-read-contracts.ts",
+      "line": 33,
+      "typeOnly": true
+    },
+    {
+      "from": "communication/mailbox-service.ts",
+      "to": "communication/contracts.ts",
+      "line": 46,
+      "typeOnly": true
+    },
+    {
+      "from": "communication/mailbox-service.ts",
+      "to": "communication/contracts.ts",
+      "line": 47,
+      "typeOnly": false
+    },
+    {
+      "from": "communication/mailbox-service.ts",
+      "to": "persistence/record-codecs.ts",
+      "line": 49,
+      "typeOnly": false
+    },
+    {
+      "from": "communication/mailbox-service.ts",
+      "to": "sessions/session-record-codecs.ts",
+      "line": 50,
+      "typeOnly": false
+    },
+    {
+      "from": "communication/mailbox-service.ts",
+      "to": "sessions/contracts.ts",
+      "line": 51,
+      "typeOnly": true
+    },
+    {
+      "from": "communication/mailbox-service.ts",
+      "to": "tasks/claim-contracts.ts",
+      "line": 54,
+      "typeOnly": true
+    },
+    {
+      "from": "communication/mailbox-service.ts",
+      "to": "tasks/execution-read-contracts.ts",
+      "line": 55,
+      "typeOnly": true
+    },
+    {
+      "from": "communication/mailbox-service.ts",
+      "to": "tasks/claim-record-codecs.ts",
+      "line": 56,
+      "typeOnly": false
+    },
+    {
+      "from": "communication/mailbox-service.ts",
+      "to": "tasks/execution-entry-service.ts",
+      "line": 57,
+      "typeOnly": false
+    },
+    {
+      "from": "communication/mailbox-service.ts",
+      "to": "tasks/plan-readers.ts",
+      "line": 58,
+      "typeOnly": false
+    },
+    {
+      "from": "communication/mailbox-service.ts",
+      "to": "tasks/run-state-service.ts",
+      "line": 59,
+      "typeOnly": false
+    },
+    {
+      "from": "communication/mailbox-service.ts",
+      "to": "communication/message-record-codecs.ts",
+      "line": 60,
+      "typeOnly": false
+    },
+    {
+      "from": "communication/mailbox-service.ts",
+      "to": "queries/query-record-codecs.ts",
+      "line": 70,
+      "typeOnly": false
+    },
+    {
+      "from": "communication/mailbox-service.ts",
+      "to": "communication/contracts.ts",
+      "line": 1208,
+      "typeOnly": true
+    },
+    {
+      "from": "communication/message-record-codecs.ts",
+      "to": "sessions/session-record-codecs.ts",
+      "line": 30,
+      "typeOnly": false
+    },
+    {
+      "from": "communication/message-record-codecs.ts",
+      "to": "communication/contracts.ts",
+      "line": 31,
+      "typeOnly": true
+    },
+    {
+      "from": "configuration/project-bootstrap-contracts.ts",
+      "to": "tasks/contracts.ts",
+      "line": 25,
+      "typeOnly": true
+    },
+    {
+      "from": "configuration/project-bootstrap-service.ts",
+      "to": "tasks/contracts.ts",
+      "line": 46,
+      "typeOnly": true
+    },
+    {
+      "from": "configuration/project-bootstrap-service.ts",
+      "to": "persistence/record-codecs.ts",
+      "line": 47,
+      "typeOnly": false
+    },
+    {
+      "from": "configuration/project-bootstrap-service.ts",
+      "to": "configuration/project-bootstrap-contracts.ts",
+      "line": 48,
+      "typeOnly": true
+    },
+    {
+      "from": "configuration/project-bootstrap-service.ts",
+      "to": "configuration/project-bootstrap-record-codecs.ts",
+      "line": 49,
+      "typeOnly": true
+    },
+    {
+      "from": "configuration/project-bootstrap-service.ts",
+      "to": "configuration/project-bootstrap-record-codecs.ts",
+      "line": 56,
+      "typeOnly": false
+    },
+    {
+      "from": "configuration/role-memory-service.ts",
+      "to": "configuration/contracts.ts",
+      "line": 61,
+      "typeOnly": true
+    },
+    {
+      "from": "configuration/role-memory-service.ts",
+      "to": "configuration/role-record-codecs.ts",
+      "line": 62,
+      "typeOnly": false
+    },
+    {
+      "from": "evidence/contracts.ts",
+      "to": "materials/contracts.ts",
+      "line": 36,
+      "typeOnly": true
+    },
+    {
+      "from": "evidence/contracts.ts",
+      "to": "tasks/execution-read-contracts.ts",
+      "line": 37,
+      "typeOnly": true
+    },
+    {
+      "from": "evidence/contracts.ts",
+      "to": "tasks/contracts.ts",
+      "line": 38,
+      "typeOnly": true
+    },
+    {
+      "from": "evidence/coverage.ts",
+      "to": "tasks/plan-task-basis.ts",
+      "line": 23,
+      "typeOnly": false
+    },
+    {
+      "from": "evidence/coverage.ts",
+      "to": "tasks/plan-record-codecs.ts",
+      "line": 27,
+      "typeOnly": false
+    },
+    {
+      "from": "evidence/evidence-record-codecs.ts",
+      "to": "evidence/contracts.ts",
+      "line": 25,
+      "typeOnly": true
+    },
+    {
+      "from": "evidence/evidence-service.ts",
+      "to": "architecture/catalog-record-codecs.ts",
+      "line": 40,
+      "typeOnly": false
+    },
+    {
+      "from": "evidence/evidence-service.ts",
+      "to": "tasks/plan-readers.ts",
+      "line": 41,
+      "typeOnly": false
+    },
+    {
+      "from": "evidence/evidence-service.ts",
+      "to": "tasks/plan-record-codecs.ts",
+      "line": 44,
+      "typeOnly": false
+    },
+    {
+      "from": "evidence/evidence-service.ts",
+      "to": "tasks/plan-task-basis.ts",
+      "line": 45,
+      "typeOnly": false
+    },
+    {
+      "from": "evidence/evidence-service.ts",
+      "to": "tasks/execution-entry-service.ts",
+      "line": 48,
+      "typeOnly": false
+    },
+    {
+      "from": "evidence/evidence-service.ts",
+      "to": "evidence/verification-plan.ts",
+      "line": 51,
+      "typeOnly": false
+    },
+    {
+      "from": "evidence/evidence-service.ts",
+      "to": "evidence/coverage.ts",
+      "line": 52,
+      "typeOnly": false
+    },
+    {
+      "from": "evidence/evidence-service.ts",
+      "to": "evidence/evidence-record-codecs.ts",
+      "line": 53,
+      "typeOnly": false
+    },
+    {
+      "from": "evidence/evidence-service.ts",
+      "to": "evidence/contracts.ts",
+      "line": 61,
+      "typeOnly": true
+    },
+    {
+      "from": "evidence/evidence-service.ts",
+      "to": "tasks/contracts.ts",
+      "line": 64,
+      "typeOnly": true
+    },
+    {
+      "from": "materials/applicability.ts",
+      "to": "materials/record-ports.ts",
+      "line": 7,
+      "typeOnly": true
+    },
+    {
+      "from": "materials/applicability.ts",
+      "to": "materials/record-ports.ts",
+      "line": 8,
+      "typeOnly": true
+    },
+    {
+      "from": "materials/grant-contracts.ts",
+      "to": "tasks/contracts.ts",
+      "line": 36,
+      "typeOnly": true
+    },
+    {
+      "from": "materials/grant-contracts.ts",
+      "to": "materials/record-ports.ts",
+      "line": 37,
+      "typeOnly": true
+    },
+    {
+      "from": "materials/grant-contracts.ts",
+      "to": "materials/contracts.ts",
+      "line": 38,
+      "typeOnly": true
+    },
+    {
+      "from": "materials/grant-record-codecs.ts",
+      "to": "materials/record-readers.ts",
+      "line": 27,
+      "typeOnly": false
+    },
+    {
+      "from": "materials/grant-service.ts",
+      "to": "materials/grant-record-codecs.ts",
+      "line": 66,
+      "typeOnly": false
+    },
+    {
+      "from": "materials/grant-service.ts",
+      "to": "materials/grant-contracts.ts",
+      "line": 80,
+      "typeOnly": false
+    },
+    {
+      "from": "materials/grant-service.ts",
+      "to": "tasks/contracts.ts",
+      "line": 90,
+      "typeOnly": true
+    },
+    {
+      "from": "materials/material-facts-service.ts",
+      "to": "materials/applicability.ts",
+      "line": 42,
+      "typeOnly": false
+    },
+    {
+      "from": "materials/material-facts-service.ts",
+      "to": "materials/contracts.ts",
+      "line": 43,
+      "typeOnly": true
+    },
+    {
+      "from": "materials/material-facts-service.ts",
+      "to": "materials/material-service.ts",
+      "line": 44,
+      "typeOnly": false
+    },
+    {
+      "from": "materials/material-facts-service.ts",
+      "to": "materials/record-ports.ts",
+      "line": 45,
+      "typeOnly": true
+    },
+    {
+      "from": "materials/material-service.ts",
+      "to": "materials/contracts.ts",
+      "line": 10,
+      "typeOnly": true
+    },
+    {
+      "from": "materials/material-service.ts",
+      "to": "materials/applicability.ts",
+      "line": 11,
+      "typeOnly": true
+    },
+    {
+      "from": "materials/material-service.ts",
+      "to": "materials/applicability.ts",
+      "line": 12,
+      "typeOnly": false
+    },
+    {
+      "from": "materials/record-readers.ts",
+      "to": "persistence/record-codecs.ts",
+      "line": 38,
+      "typeOnly": false
+    },
+    {
+      "from": "materials/record-readers.ts",
+      "to": "persistence/execution-history-codecs.ts",
+      "line": 39,
+      "typeOnly": false
+    },
+    {
+      "from": "materials/record-readers.ts",
+      "to": "persistence/execution-entry-codecs.ts",
+      "line": 40,
+      "typeOnly": false
+    },
+    {
+      "from": "materials/record-readers.ts",
+      "to": "persistence/control-record-codecs.ts",
+      "line": 41,
+      "typeOnly": false
+    },
+    {
+      "from": "materials/record-readers.ts",
+      "to": "materials/record-ports.ts",
+      "line": 49,
+      "typeOnly": true
+    },
+    {
+      "from": "persistence/commit-compiler.ts",
+      "to": "persistence/record-codecs.ts",
+      "line": 24,
+      "typeOnly": false
+    },
+    {
+      "from": "persistence/control-record-codecs.ts",
+      "to": "persistence/execution-history-codecs.ts",
+      "line": 24,
+      "typeOnly": false
+    },
+    {
+      "from": "persistence/execution-entry-codecs.ts",
+      "to": "tasks/claim-contracts.ts",
+      "line": 26,
+      "typeOnly": true
+    },
+    {
+      "from": "persistence/execution-entry-codecs.ts",
+      "to": "tasks/execution-entry-contracts.ts",
+      "line": 27,
+      "typeOnly": true
+    },
+    {
+      "from": "persistence/execution-history-codecs.ts",
+      "to": "tasks/execution-history-contracts.ts",
+      "line": 35,
+      "typeOnly": true
+    },
+    {
+      "from": "persistence/graph-repository.ts",
+      "to": "persistence/commit-compiler.ts",
+      "line": 20,
+      "typeOnly": false
+    },
+    {
+      "from": "persistence/graph-repository.ts",
+      "to": "persistence/record-codecs.ts",
+      "line": 21,
+      "typeOnly": false
+    },
+    {
+      "from": "persistence/model-request-codecs.ts",
+      "to": "tasks/model-call-contracts.ts",
+      "line": 19,
+      "typeOnly": true
+    },
+    {
+      "from": "queries/contracts.ts",
+      "to": "configuration/contracts.ts",
+      "line": 41,
+      "typeOnly": true
+    },
+    {
+      "from": "queries/contracts.ts",
+      "to": "communication/contracts.ts",
+      "line": 42,
+      "typeOnly": true
+    },
+    {
+      "from": "queries/contracts.ts",
+      "to": "tasks/contracts.ts",
+      "line": 43,
+      "typeOnly": true
+    },
+    {
+      "from": "queries/query-execution.ts",
+      "to": "persistence/record-codecs.ts",
+      "line": 39,
+      "typeOnly": false
+    },
+    {
+      "from": "queries/query-execution.ts",
+      "to": "tasks/plan-record-codecs.ts",
+      "line": 40,
+      "typeOnly": false
+    },
+    {
+      "from": "queries/query-execution.ts",
+      "to": "sessions/session-record-codecs.ts",
+      "line": 41,
+      "typeOnly": false
+    },
+    {
+      "from": "queries/query-execution.ts",
+      "to": "queries/query-record-codecs.ts",
+      "line": 44,
+      "typeOnly": false
+    },
+    {
+      "from": "queries/query-execution.ts",
+      "to": "queries/contracts.ts",
+      "line": 50,
+      "typeOnly": true
+    },
+    {
+      "from": "queries/query-execution.ts",
+      "to": "tasks/contracts.ts",
+      "line": 54,
+      "typeOnly": true
+    },
+    {
+      "from": "queries/query-job-service.ts",
+      "to": "persistence/record-codecs.ts",
+      "line": 52,
+      "typeOnly": false
+    },
+    {
+      "from": "queries/query-job-service.ts",
+      "to": "communication/message-record-codecs.ts",
+      "line": 59,
+      "typeOnly": false
+    },
+    {
+      "from": "queries/query-job-service.ts",
+      "to": "tasks/plan-record-codecs.ts",
+      "line": 60,
+      "typeOnly": false
+    },
+    {
+      "from": "queries/query-job-service.ts",
+      "to": "queries/contracts.ts",
+      "line": 61,
+      "typeOnly": true
+    },
+    {
+      "from": "queries/query-job-service.ts",
+      "to": "queries/query-record-codecs.ts",
+      "line": 62,
+      "typeOnly": false
+    },
+    {
+      "from": "queries/query-record-codecs.ts",
+      "to": "queries/contracts.ts",
+      "line": 27,
+      "typeOnly": true
+    },
+    {
+      "from": "queries/query-record-codecs.ts",
+      "to": "materials/record-readers.ts",
+      "line": 51,
+      "typeOnly": false
+    },
+    {
+      "from": "sessions/lifecycle-contracts.ts",
+      "to": "sessions/contracts.ts",
+      "line": 19,
+      "typeOnly": true
+    },
+    {
+      "from": "sessions/lifecycle-record-codecs.ts",
+      "to": "sessions/session-record-codecs.ts",
+      "line": 18,
+      "typeOnly": false
+    },
+    {
+      "from": "sessions/session-directory.ts",
+      "to": "sessions/contracts.ts",
+      "line": 42,
+      "typeOnly": true
+    },
+    {
+      "from": "sessions/session-directory.ts",
+      "to": "sessions/session-record-codecs.ts",
+      "line": 46,
+      "typeOnly": false
+    },
+    {
+      "from": "sessions/session-directory.ts",
+      "to": "sessions/session-targets.ts",
+      "line": 57,
+      "typeOnly": false
+    },
+    {
+      "from": "sessions/session-directory.ts",
+      "to": "tasks/run-state-service.ts",
+      "line": 58,
+      "typeOnly": false
+    },
+    {
+      "from": "sessions/session-lifecycle.ts",
+      "to": "sessions/contracts.ts",
+      "line": 43,
+      "typeOnly": true
+    },
+    {
+      "from": "sessions/session-lifecycle.ts",
+      "to": "sessions/lifecycle-contracts.ts",
+      "line": 44,
+      "typeOnly": true
+    },
+    {
+      "from": "sessions/session-lifecycle.ts",
+      "to": "sessions/session-record-codecs.ts",
+      "line": 48,
+      "typeOnly": false
+    },
+    {
+      "from": "sessions/session-lifecycle.ts",
+      "to": "sessions/lifecycle-record-codecs.ts",
+      "line": 54,
+      "typeOnly": false
+    },
+    {
+      "from": "sessions/session-lifecycle.ts",
+      "to": "sessions/session-targets.ts",
+      "line": 60,
+      "typeOnly": false
+    },
+    {
+      "from": "sessions/session-record-codecs.ts",
+      "to": "sessions/contracts.ts",
+      "line": 29,
+      "typeOnly": true
+    },
+    {
+      "from": "sessions/session-targets.ts",
+      "to": "architecture/catalog-service.ts",
+      "line": 20,
+      "typeOnly": false
+    },
+    {
+      "from": "sessions/session-targets.ts",
+      "to": "persistence/record-codecs.ts",
+      "line": 21,
+      "typeOnly": false
+    },
+    {
+      "from": "source-authority-ports.ts",
+      "to": "materials/record-ports.ts",
+      "line": 7,
+      "typeOnly": true
+    },
+    {
+      "from": "source-authority-reader.ts",
+      "to": "materials/record-ports.ts",
+      "line": 29,
+      "typeOnly": true
+    },
+    {
+      "from": "source-authority-reader.ts",
+      "to": "queries/query-record-codecs.ts",
+      "line": 30,
+      "typeOnly": false
+    },
+    {
+      "from": "source-authority-reader.ts",
+      "to": "source-authority-ports.ts",
+      "line": 31,
+      "typeOnly": true
+    },
+    {
+      "from": "tasks/claim-contracts.ts",
+      "to": "configuration/contracts.ts",
+      "line": 14,
+      "typeOnly": true
+    },
+    {
+      "from": "tasks/claim-contracts.ts",
+      "to": "tasks/contracts.ts",
+      "line": 15,
+      "typeOnly": true
+    },
+    {
+      "from": "tasks/claim-record-codecs.ts",
+      "to": "tasks/claim-contracts.ts",
+      "line": 24,
+      "typeOnly": true
+    },
+    {
+      "from": "tasks/claim-record-codecs.ts",
+      "to": "persistence/execution-entry-codecs.ts",
+      "line": 25,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/claim-service.ts",
+      "to": "sessions/session-record-codecs.ts",
+      "line": 39,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/claim-service.ts",
+      "to": "tasks/claim-record-codecs.ts",
+      "line": 42,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/claim-service.ts",
+      "to": "tasks/claim-contracts.ts",
+      "line": 46,
+      "typeOnly": true
+    },
+    {
+      "from": "tasks/claim-service.ts",
+      "to": "tasks/contracts.ts",
+      "line": 47,
+      "typeOnly": true
+    },
+    {
+      "from": "tasks/claim-service.ts",
+      "to": "tasks/eligibility.ts",
+      "line": 48,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/claim-service.ts",
+      "to": "tasks/plan-readers.ts",
+      "line": 49,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/claim-service.ts",
+      "to": "communication/message-record-codecs.ts",
+      "line": 50,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/completion-policy.ts",
+      "to": "tasks/plan-readers.ts",
+      "line": 22,
+      "typeOnly": true
+    },
+    {
+      "from": "tasks/completion.ts",
+      "to": "tasks/plan-readers.ts",
+      "line": 39,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/completion.ts",
+      "to": "tasks/plan-record-codecs.ts",
+      "line": 43,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/completion.ts",
+      "to": "evidence/evidence-record-codecs.ts",
+      "line": 44,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/completion.ts",
+      "to": "evidence/coverage.ts",
+      "line": 47,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/completion.ts",
+      "to": "tasks/execution-entry-service.ts",
+      "line": 48,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/completion.ts",
+      "to": "tasks/run-state-service.ts",
+      "line": 51,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/completion.ts",
+      "to": "tasks/completion-policy.ts",
+      "line": 52,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/completion.ts",
+      "to": "tasks/completion-record-codecs.ts",
+      "line": 53,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/completion.ts",
+      "to": "tasks/contracts.ts",
+      "line": 58,
+      "typeOnly": true
+    },
+    {
+      "from": "tasks/control-contracts.ts",
+      "to": "materials/record-ports.ts",
+      "line": 18,
+      "typeOnly": true
+    },
+    {
+      "from": "tasks/control-contracts.ts",
+      "to": "tasks/contracts.ts",
+      "line": 19,
+      "typeOnly": true
+    },
+    {
+      "from": "tasks/control-service.ts",
+      "to": "persistence/control-record-codecs.ts",
+      "line": 31,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/control-service.ts",
+      "to": "persistence/execution-history-codecs.ts",
+      "line": 39,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/control-service.ts",
+      "to": "persistence/execution-entry-codecs.ts",
+      "line": 40,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/control-service.ts",
+      "to": "tasks/execution-entry-service.ts",
+      "line": 41,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/control-service.ts",
+      "to": "tasks/control-contracts.ts",
+      "line": 45,
+      "typeOnly": true
+    },
+    {
+      "from": "tasks/control-service.ts",
+      "to": "tasks/contracts.ts",
+      "line": 48,
+      "typeOnly": true
+    },
+    {
+      "from": "tasks/execution-entry-contracts.ts",
+      "to": "configuration/contracts.ts",
+      "line": 22,
+      "typeOnly": true
+    },
+    {
+      "from": "tasks/execution-entry-contracts.ts",
+      "to": "materials/contracts.ts",
+      "line": 23,
+      "typeOnly": true
+    },
+    {
+      "from": "tasks/execution-entry-contracts.ts",
+      "to": "tasks/contracts.ts",
+      "line": 24,
+      "typeOnly": true
+    },
+    {
+      "from": "tasks/execution-entry-contracts.ts",
+      "to": "tasks/execution-read-contracts.ts",
+      "line": 25,
+      "typeOnly": true
+    },
+    {
+      "from": "tasks/execution-entry-contracts.ts",
+      "to": "tasks/execution-history-contracts.ts",
+      "line": 26,
+      "typeOnly": true
+    },
+    {
+      "from": "tasks/execution-entry-contracts.ts",
+      "to": "tasks/plan-contracts.ts",
+      "line": 27,
+      "typeOnly": true
+    },
+    {
+      "from": "tasks/execution-entry-service.ts",
+      "to": "configuration/contracts.ts",
+      "line": 39,
+      "typeOnly": true
+    },
+    {
+      "from": "tasks/execution-entry-service.ts",
+      "to": "materials/contracts.ts",
+      "line": 40,
+      "typeOnly": true
+    },
+    {
+      "from": "tasks/execution-entry-service.ts",
+      "to": "persistence/execution-entry-codecs.ts",
+      "line": 41,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/execution-entry-service.ts",
+      "to": "sessions/session-record-codecs.ts",
+      "line": 51,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/execution-entry-service.ts",
+      "to": "tasks/claim-record-codecs.ts",
+      "line": 52,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/execution-entry-service.ts",
+      "to": "tasks/claim-contracts.ts",
+      "line": 53,
+      "typeOnly": true
+    },
+    {
+      "from": "tasks/execution-entry-service.ts",
+      "to": "tasks/contracts.ts",
+      "line": 54,
+      "typeOnly": true
+    },
+    {
+      "from": "tasks/execution-entry-service.ts",
+      "to": "tasks/execution-history-binding.ts",
+      "line": 55,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/execution-entry-service.ts",
+      "to": "tasks/execution-entry-contracts.ts",
+      "line": 56,
+      "typeOnly": true
+    },
+    {
+      "from": "tasks/execution-entry-service.ts",
+      "to": "tasks/execution-read-contracts.ts",
+      "line": 60,
+      "typeOnly": true
+    },
+    {
+      "from": "tasks/execution-entry-service.ts",
+      "to": "tasks/plan-readers.ts",
+      "line": 61,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/execution-entry-service.ts",
+      "to": "tasks/plan-record-codecs.ts",
+      "line": 62,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/execution-entry-service.ts",
+      "to": "tasks/plan-readers.ts",
+      "line": 1693,
+      "typeOnly": true
+    },
+    {
+      "from": "tasks/execution-history-binding.ts",
+      "to": "persistence/execution-history-codecs.ts",
+      "line": 23,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/execution-history-binding.ts",
+      "to": "tasks/execution-entry-contracts.ts",
+      "line": 24,
+      "typeOnly": true
+    },
+    {
+      "from": "tasks/execution-history-contracts.ts",
+      "to": "tasks/contracts.ts",
+      "line": 6,
+      "typeOnly": true
+    },
+    {
+      "from": "tasks/execution-history-service.ts",
+      "to": "persistence/execution-history-codecs.ts",
+      "line": 40,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/execution-history-service.ts",
+      "to": "sessions/session-record-codecs.ts",
+      "line": 47,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/execution-history-service.ts",
+      "to": "persistence/execution-entry-codecs.ts",
+      "line": 48,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/execution-history-service.ts",
+      "to": "tasks/execution-history-binding.ts",
+      "line": 49,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/execution-history-service.ts",
+      "to": "tasks/claim-record-codecs.ts",
+      "line": 50,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/execution-history-service.ts",
+      "to": "tasks/contracts.ts",
+      "line": 51,
+      "typeOnly": true
+    },
+    {
+      "from": "tasks/execution-history-service.ts",
+      "to": "tasks/execution-history-contracts.ts",
+      "line": 52,
+      "typeOnly": true
+    },
+    {
+      "from": "tasks/execution-history-service.ts",
+      "to": "tasks/plan-record-codecs.ts",
+      "line": 58,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/execution-history-service.ts",
+      "to": "tasks/plan-readers.ts",
+      "line": 59,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/execution-history-service.ts",
+      "to": "tasks/run-state-service.ts",
+      "line": 60,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/execution-read-contracts.ts",
+      "to": "tasks/claim-contracts.ts",
+      "line": 11,
+      "typeOnly": true
+    },
+    {
+      "from": "tasks/model-call-contracts.ts",
+      "to": "tasks/contracts.ts",
+      "line": 17,
+      "typeOnly": true
+    },
+    {
+      "from": "tasks/model-call-contracts.ts",
+      "to": "tasks/execution-entry-contracts.ts",
+      "line": 18,
+      "typeOnly": true
+    },
+    {
+      "from": "tasks/model-call-service.ts",
+      "to": "sessions/session-record-codecs.ts",
+      "line": 20,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/model-call-service.ts",
+      "to": "tasks/claim-record-codecs.ts",
+      "line": 21,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/model-call-service.ts",
+      "to": "tasks/plan-record-codecs.ts",
+      "line": 22,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/model-call-service.ts",
+      "to": "tasks/contracts.ts",
+      "line": 23,
+      "typeOnly": true
+    },
+    {
+      "from": "tasks/model-call-service.ts",
+      "to": "tasks/execution-entry-service.ts",
+      "line": 24,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/model-call-service.ts",
+      "to": "tasks/execution-entry-service.ts",
+      "line": 28,
+      "typeOnly": true
+    },
+    {
+      "from": "tasks/model-call-service.ts",
+      "to": "tasks/model-call-contracts.ts",
+      "line": 29,
+      "typeOnly": true
+    },
+    {
+      "from": "tasks/model-call-service.ts",
+      "to": "tasks/model-call-contracts.ts",
+      "line": 32,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/model-call-service.ts",
+      "to": "tasks/model-call-contracts.ts",
+      "line": 33,
+      "typeOnly": true
+    },
+    {
+      "from": "tasks/model-call-service.ts",
+      "to": "persistence/model-request-codecs.ts",
+      "line": 34,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/plan-commit-compiler.ts",
+      "to": "persistence/record-codecs.ts",
+      "line": 15,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/plan-commit-compiler.ts",
+      "to": "tasks/plan-task-basis.ts",
+      "line": 16,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/plan-commit-compiler.ts",
+      "to": "tasks/plan-contracts.ts",
+      "line": 17,
+      "typeOnly": true
+    },
+    {
+      "from": "tasks/plan-commit-compiler.ts",
+      "to": "tasks/plan-record-codecs.ts",
+      "line": 18,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/plan-contracts.ts",
+      "to": "tasks/contracts.ts",
+      "line": 15,
+      "typeOnly": true
+    },
+    {
+      "from": "tasks/plan-readers.ts",
+      "to": "persistence/record-codecs.ts",
+      "line": 33,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/plan-readers.ts",
+      "to": "persistence/execution-entry-codecs.ts",
+      "line": 34,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/plan-readers.ts",
+      "to": "tasks/plan-commit-compiler.ts",
+      "line": 35,
+      "typeOnly": true
+    },
+    {
+      "from": "tasks/plan-readers.ts",
+      "to": "tasks/plan-contracts.ts",
+      "line": 36,
+      "typeOnly": true
+    },
+    {
+      "from": "tasks/plan-readers.ts",
+      "to": "tasks/plan-task-basis.ts",
+      "line": 37,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/plan-readers.ts",
+      "to": "tasks/plan-record-codecs.ts",
+      "line": 41,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/plan-readers.ts",
+      "to": "tasks/completion-record-codecs.ts",
+      "line": 48,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/plan-record-codecs.ts",
+      "to": "tasks/plan-contracts.ts",
+      "line": 39,
+      "typeOnly": true
+    },
+    {
+      "from": "tasks/plan-service.ts",
+      "to": "materials/contracts.ts",
+      "line": 44,
+      "typeOnly": true
+    },
+    {
+      "from": "tasks/plan-service.ts",
+      "to": "persistence/record-codecs.ts",
+      "line": 51,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/plan-service.ts",
+      "to": "persistence/commit-compiler.ts",
+      "line": 52,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/plan-service.ts",
+      "to": "tasks/eligibility.ts",
+      "line": 53,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/plan-service.ts",
+      "to": "tasks/plan-contracts.ts",
+      "line": 54,
+      "typeOnly": true
+    },
+    {
+      "from": "tasks/plan-service.ts",
+      "to": "tasks/plan-commit-compiler.ts",
+      "line": 72,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/plan-service.ts",
+      "to": "queries/query-record-codecs.ts",
+      "line": 73,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/plan-service.ts",
+      "to": "queries/query-execution.ts",
+      "line": 78,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/plan-service.ts",
+      "to": "tasks/initial-plan.ts",
+      "line": 79,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/plan-service.ts",
+      "to": "tasks/plan-record-codecs.ts",
+      "line": 84,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/plan-service.ts",
+      "to": "tasks/plan-readers.ts",
+      "line": 93,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/plan-service.ts",
+      "to": "tasks/plan-validation.ts",
+      "line": 111,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/plan-service.ts",
+      "to": "tasks/plan-write-admission.ts",
+      "line": 118,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/plan-service.ts",
+      "to": "tasks/execution-entry-service.ts",
+      "line": 125,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/plan-validation.ts",
+      "to": "tasks/plan-task-basis.ts",
+      "line": 11,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/plan-validation.ts",
+      "to": "tasks/task-index.ts",
+      "line": 15,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/plan-write-admission.ts",
+      "to": "persistence/execution-entry-codecs.ts",
+      "line": 34,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/plan-write-admission.ts",
+      "to": "sessions/session-record-codecs.ts",
+      "line": 38,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/plan-write-admission.ts",
+      "to": "tasks/claim-record-codecs.ts",
+      "line": 42,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/plan-write-admission.ts",
+      "to": "tasks/execution-entry-contracts.ts",
+      "line": 43,
+      "typeOnly": true
+    },
+    {
+      "from": "tasks/plan-write-admission.ts",
+      "to": "tasks/execution-entry-service.ts",
+      "line": 44,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/plan-write-admission.ts",
+      "to": "tasks/plan-record-codecs.ts",
+      "line": 50,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/plan-write-admission.ts",
+      "to": "tasks/plan-contracts.ts",
+      "line": 51,
+      "typeOnly": true
+    },
+    {
+      "from": "tasks/plan-write-admission.ts",
+      "to": "tasks/execution-read-contracts.ts",
+      "line": 221,
+      "typeOnly": true
+    },
+    {
+      "from": "tasks/run-state-service.ts",
+      "to": "materials/record-readers.ts",
+      "line": 44,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/run-state-service.ts",
+      "to": "sessions/session-record-codecs.ts",
+      "line": 45,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/run-state-service.ts",
+      "to": "tasks/claim-record-codecs.ts",
+      "line": 50,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/run-state-service.ts",
+      "to": "tasks/claim-contracts.ts",
+      "line": 56,
+      "typeOnly": true
+    },
+    {
+      "from": "tasks/run-state-service.ts",
+      "to": "tasks/plan-record-codecs.ts",
+      "line": 57,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/run-state-service.ts",
+      "to": "tasks/plan-readers.ts",
+      "line": 58,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/run-state-service.ts",
+      "to": "tasks/execution-read-contracts.ts",
+      "line": 64,
+      "typeOnly": true
+    },
+    {
+      "from": "tasks/task-service.ts",
+      "to": "tasks/completion.ts",
+      "line": 32,
+      "typeOnly": true
+    },
+    {
+      "from": "tasks/task-service.ts",
+      "to": "tasks/completion.ts",
+      "line": 33,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/task-service.ts",
+      "to": "tasks/contracts.ts",
+      "line": 34,
+      "typeOnly": true
+    },
+    {
+      "from": "tasks/task-service.ts",
+      "to": "persistence/commit-compiler.ts",
+      "line": 35,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/task-service.ts",
+      "to": "persistence/graph-repository.ts",
+      "line": 36,
+      "typeOnly": false
+    },
+    {
+      "from": "tasks/task-service.ts",
+      "to": "persistence/record-codecs.ts",
+      "line": 37,
+      "typeOnly": false
+    }
+  ]
+}
