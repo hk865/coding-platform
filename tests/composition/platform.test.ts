@@ -53,7 +53,7 @@ it.each(['memory', 'sqlite'] as const)('%s: public composition wires Host materi
     { kind: 'sqlite', directory: join(f.dir, 'storage') }, workspace: f.bindings, now: () => at });
   let closed = false;
   try {
-    expect(Object.keys(platform).sort()).toEqual(['architecture', 'checks', 'claims', 'close', 'completionPolicies', 'controls', 'evidence', 'executions', 'goals', 'materials', 'messages', 'plans', 'projects', 'queries', 'roles', 'runtime', 'sessions', 'workflow', 'workspace']);
+    expect(Object.keys(platform).sort()).toEqual(['architecture', 'checks', 'claims', 'close', 'completionPolicies', 'controls', 'evidence', 'executions', 'goals', 'kernelStores', 'materials', 'messages', 'plans', 'projects', 'queries', 'registerCheckConfiguration', 'registerWorkflowBinding', 'roles', 'runtime', 'sessions', 'workflow', 'workspace']);
     const ctx = context();
     const stored = await platform.materials.storeArtifact(ctx, {
       contentType: 'text/plain', body: 'A trusted Host note',

@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  push:
+    branches: [next-main, main, 'feat/**']
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    # The Kernel process sandbox needs bubblewrap and unprivileged user
+    # namespaces, so the suite runs on Linux only. No secrets are configured:
+    # every test uses fake or replayed providers and never calls a real model.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            vendor/coding-agent/package-lock.json
+
+      - name: Install sandbox and analyzer tools
+        # python3 (>= 3.11, hardcoded /usr/bin/python3) runs the Python source analyzer;
+        # libclang1-18 provides /usr/lib/llvm-18/lib/libclang.so.1 for the C/C++ analyzer.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap python3 git libclang1-18
+
+      - name: Allow unprivileged user namespaces for bwrap
+        # Ubuntu 24.04 restricts unprivileged user namespaces through AppArmor;
+        # without this bwrap cannot create the sandbox.
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      - name: Make Node visible inside the Kernel sandbox
+        # The sandbox mounts only /usr, /bin, /lib and /lib64 with PATH=/usr/bin:/bin.
+        # Verification checks such as `node -e ...` run inside it, so the
+        # setup-node binary is copied (not linked: the tool cache is not mounted).
+        run: |
+          sudo install -m 0755 "$(command -v node)" /usr/bin/node
+          /usr/bin/node --version
+
+      - name: Show sandbox prerequisites
+        run: |
+          bwrap --version
+          bwrap --ro-bind /usr /usr --ro-bind /bin /bin --ro-bind /lib /lib --ro-bind /lib64 /lib64 \
+            --unshare-all --clearenv --setenv PATH /usr/bin:/bin node -e 'console.log("node in bwrap", process.version)'
+          /usr/bin/python3 --version
+          ls -l /usr/lib/llvm-18/lib/libclang.so.1 /usr/bin/git
+
+      - name: Configure git identity for temporary repositories
+        run: |
+          git config --global user.name "CI"
+          git config --global user.email "ci@localhost"
+
+      - name: Install dependencies (both lockfiles)
+        run: |
+          npm ci --ignore-scripts
+          npm ci --prefix vendor/coding-agent --omit=dev --ignore-scripts
+
+      - name: Typecheck
+        run: node --run typecheck
+
+      - name: Architecture boundaries
+        run: node --run check:architecture
+
+      - name: Build
+        run: node --run build
+
+      - name: Test
+        run: node --run test

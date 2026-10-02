@@ -394,15 +394,16 @@ it('terminalizes a real Kernel tool-budget limit whose never-started call is aba
 });
 it('keeps the local workbench budget at the no-cumulative-limit default', () => {
   // Frozen contract: the local workbench reuses DEFAULT_RUNTIME_BUDGET, so an
-  // ordinary read is not truncated by hidden per-run request/tool/time caps and
-  // one response still carries the declared 4096 output tokens.
-  expect(LOCAL_WORKBENCH_BUDGET).toEqual(DEFAULT_RUNTIME_BUDGET);
+  // ordinary read is not truncated by hidden per-run request/tool/time caps.
+  // Since c7df257 one response may carry up to 16384 output tokens, because
+  // structured planning needs that much in a single reply.
+  expect(LOCAL_WORKBENCH_BUDGET).toEqual({ ...DEFAULT_RUNTIME_BUDGET, perResponseTokens: 16384 });
   expect(LOCAL_WORKBENCH_BUDGET.inputTokens).toBeNull();
   expect(LOCAL_WORKBENCH_BUDGET.outputTokens).toBeNull();
   expect(LOCAL_WORKBENCH_BUDGET.maxRequests).toBeNull();
   expect(LOCAL_WORKBENCH_BUDGET.maxToolCalls).toBeNull();
   expect(LOCAL_WORKBENCH_BUDGET.timeoutMs).toBeNull();
-  expect(LOCAL_WORKBENCH_BUDGET.perResponseTokens).toBe(4096);
+  expect(LOCAL_WORKBENCH_BUDGET.perResponseTokens).toBe(16384);
 });
 
 it('keeps explicit numeric and deadline ModelBudget limits while a null token budget imposes no cumulative cap', () => {

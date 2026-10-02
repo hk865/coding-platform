@@ -40,6 +40,31 @@ node --run verify:isolated
 
 也可单独运行 `node --run typecheck`、`node --run check:architecture` 和 `node --run test`。`verify:isolated` 在临时物理副本检查 Kernel 补丁再生、边界、类型、构建、测试及真实 Host 启停。依赖目录不提交。
 
+### 持续集成（CI）
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) 在推送到 `next-main`、`main`、`feat/**` 以及 pull request 时运行；同一分支有新提交会取消旧运行。它只在 `ubuntu-24.04` 上跑，因为 Kernel 进程沙箱依赖 bubblewrap 和非特权用户命名空间。步骤依次是：
+
+1. 用 Node 24.x，npm 缓存同时覆盖根目录与 `vendor/coding-agent` 两个锁文件；
+2. `apt-get install bubblewrap python3 git libclang1-18`（Python 源码分析器硬编码 `/usr/bin/python3`；C/C++ 分析器使用 `/usr/lib/llvm-18/lib/libclang.so.1`，测试固定 18.1.3），并执行 `sysctl kernel.apparmor_restrict_unprivileged_userns=0`（否则 24.04 的 AppArmor 会拒绝 bwrap）；
+3. 把 `node` 复制到 `/usr/bin/node`：正式检查命令（如 `node -e …`）在沙箱里执行，沙箱只挂载 `/usr`、`/bin`、`/lib`、`/lib64`，`PATH=/usr/bin:/bin`；
+4. 配置临时 git 身份，两个 `npm ci --ignore-scripts`；
+5. `node --run typecheck` → `check:architecture` → `build` → `test`。
+
+CI 不配置任何密钥，测试只用 fake 或回放的 provider，不调用真实模型，也不依赖 `DEEPSEEK_API_KEY`。CI 要在分支推送后才会在 GitHub 上运行。
+
+本地复现（WSL2 Ubuntu 24.04 或其他 Linux）：
+
+```sh
+sudo apt-get install -y bubblewrap python3 git libclang1-18
+sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0   # 仅当 bwrap 报 user namespace 被拒
+sudo install -m 0755 "$(command -v node)" /usr/bin/node         # 若 node 不在 /usr/bin（如 nvm 安装）
+npm ci --ignore-scripts
+npm ci --prefix vendor/coding-agent --omit=dev --ignore-scripts
+node --run typecheck && node --run check:architecture && node --run build && node --run test
+```
+
+没有 root 权限时，可以把 bubblewrap 解包到用户目录，并用 `CODING_AGENT_BWRAP_PATH=/abs/path/to/bwrap` 指定。缺少 `/usr/bin/node` 时，依赖沙箱内检查的 3 项集成测试会失败（检查 FAIL）。基线和失败归类见 [cc-baseline-2026-10-02](docs/refactor/reviews/evidence/cc-baseline-2026-10-02/README.md)。仓库最好放在 WSL 自己的文件系统里（例如 `~/agent-next-main`），比 `/mnt/d/...` 快得多。
+
 构建后，使用本机自行保存的配置启动：
 
 ```sh
