@@ -345,9 +345,10 @@ function admissionRefusalOf(refused: Refused, ctx: MessageGuardContext): CoreRej
  * Whether today's service re-checks the same identity's receipt
  * (`recheckAfterMiss`) before this refusal: a refused fresh admission, and a
  * refusal of an existing message's own state (already read, responded or
- * derived, or a stale pin, today's commit CAS), because a concurrent request of
- * this identity may have committed after the first lookup missed. An absent
- * message and a recipient or Query mismatch are refused directly.
+ * derived), because a concurrent request of this identity may have committed
+ * after the first lookup missed. An absent message and a recipient or Query
+ * mismatch are refused directly. A stale pin is not a machine refusal: as
+ * today, only the commit's message CAS catches it (`commitMessage`).
  */
 function rechecksReceipt(refused: Refused, ctx: MessageGuardContext, message: SessionMessage | null): boolean {
   if (admissionRefusalOf(refused, ctx) !== null) return true;
@@ -356,18 +357,11 @@ function rechecksReceipt(refused: Refused, ctx: MessageGuardContext, message: Se
 
 /**
  * A machine refusal as the rejection today's service returned (§1.2: code and
- * reason kept). A refused admission is its own rejection; a stale pin is the
- * failed message guard of today's commit, with the revision read as `current`.
+ * reason kept). A refused admission is its own rejection.
  */
-function refusalOf(refused: Refused, ctx: MessageGuardContext, message: SessionMessage | null): CoreRejection {
+function refusalOf(refused: Refused, ctx: MessageGuardContext): CoreRejection {
   const admission = admissionRefusalOf(refused, ctx);
   if (admission !== null) return admission;
-  if (refused.reason === 'stale' && message !== null) {
-    return mapStoreFailure({
-      status: 'rejected', code: 'revision_conflict', reason: refused.detail,
-      current: [{ refKey: sessionMessageRefKey(message.ref), revision: message.revision }],
-    });
-  }
   return reject(refused.code, refused.detail);
 }
 
@@ -1261,13 +1255,13 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
   }
 
   /** A machine refusal, after today's same-identity receipt re-check where today's service made one. */
-  async function refuse(refused: Refused, ctx: MessageGuardContext, message: SessionMessage | null,
+  async function refuse(refused: Refused, ctx: MessageGuardContext,
     identity: { identityKey: string; fingerprint: string }, recheck: boolean): Promise<WriteResult<SessionMessage>> {
     if (recheck) {
       const restored = await recheckAfterMiss(identity.identityKey, identity.fingerprint);
       if (restored !== null) return restored;
     }
-    return refusalOf(refused, ctx, message);
+    return refusalOf(refused, ctx);
   }
 
   /** The planned record, its event and the effects' CAS guards in ONE commit. */
@@ -1432,7 +1426,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
       // A concurrent identical request may have committed after the first
       // lookup missed; restore that original receipt instead of re-judging the
       // already-happened fact under the now-current world.
-      return refuse(decided, messageCtx, null, { identityKey, fingerprint }, rechecksReceipt(decided, messageCtx, null));
+      return refuse(decided, messageCtx, { identityKey, fingerprint }, rechecksReceipt(decided, messageCtx, null));
     }
     const plan = messageCommitPlan(decided.effects, 'created', 'SessionMessageSent');
     const messageRef: SessionMessageRef = {
@@ -1889,7 +1883,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
       // while this call sat between its first receipt miss and the message
       // read. Restore that original receipt; a genuine different request keeps
       // the domain rejection and never commits a second time.
-      return refuse(decided, messageCtx, message, { identityKey, fingerprint }, rechecksReceipt(decided, messageCtx, message));
+      return refuse(decided, messageCtx, { identityKey, fingerprint }, rechecksReceipt(decided, messageCtx, message));
     }
     const plan = messageCommitPlan(decided.effects, 'read', 'SessionMessageRead');
     const readAt = deps.now();
@@ -1961,7 +1955,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     if (!decided.ok) {
       // See the acknowledgement branch: restore the original committed receipt
       // of this exact identity instead of reporting a second, conflicting one.
-      return refuse(decided, messageCtx, message, { identityKey, fingerprint }, rechecksReceipt(decided, messageCtx, message));
+      return refuse(decided, messageCtx, { identityKey, fingerprint }, rechecksReceipt(decided, messageCtx, message));
     }
     const current = acceptedMessage(message);
     const plan = messageCommitPlan(decided.effects, 'responded', 'SessionMessageResponded');
@@ -2057,7 +2051,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
       bodyBounded: facts === null ? null : facts.bodyBounded,
     });
     const decided = transitionMessage(messageMachineStateOf(message), { type: 'message_responded', via: 'query_answer' }, messageCtx);
-    if (!decided.ok && (message === null || decided.reason === 'guard_failed')) return refusalOf(decided, messageCtx, message);
+    if (!decided.ok && (message === null || decided.reason === 'guard_failed')) return refusalOf(decided, messageCtx);
     if (message === null || facts === null || facts.sender === null) {
       throw new Error('MSG-06 passed its Query guards without the derived query_run sender');
     }
@@ -2071,9 +2065,10 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     const existing = await records.lookupCommit({ identityKey, fingerprint });
     if (existing.status === 'ready') return replayMessage(existing.value);
     if (existing.code !== 'not_found') return mapStoreFailure(existing);
-    // The single response slot (first come with MSG-04/05) and the pin are
-    // judged after the lookup, so this identity's committed receipt replays.
-    if (!decided.ok) return refuse(decided, messageCtx, message, { identityKey, fingerprint }, rechecksReceipt(decided, messageCtx, message));
+    // The single response slot (first come with MSG-04/05) is judged after the
+    // lookup, so this identity's committed receipt replays; the pin is the
+    // commit's message CAS.
+    if (!decided.ok) return refuse(decided, messageCtx, { identityKey, fingerprint }, rechecksReceipt(decided, messageCtx, message));
     const plan = messageCommitPlan(decided.effects, 'responded', 'SessionMessageResponded');
     const stored = await storePlannedBody(plan, {
       owned, sender, messageRef: message.ref, text: facts.text, identityKey, answerSource: facts.answerSource,
@@ -2140,7 +2135,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     const message = read.message;
     const messageCtx = messageContext(owned.principal, { pins: pinFacts(pin.revision) });
     const decided = transitionMessage(messageMachineStateOf(message), { type: 'consultation_derived' }, messageCtx);
-    if (!decided.ok) return refuse(decided, messageCtx, message, { identityKey, fingerprint }, rechecksReceipt(decided, messageCtx, message));
+    if (!decided.ok) return refuse(decided, messageCtx, { identityKey, fingerprint }, rechecksReceipt(decided, messageCtx, message));
     const plan = messageCommitPlan(decided.effects, 'consultation_derived', 'SessionMessageConsultationDerived');
     const recordedAt = deps.now();
     if (!nonEmpty(recordedAt)) return reject('invalid', 'the injected clock is not a legal instant');
@@ -2270,7 +2265,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     if (!decided.ok) {
       // Only the inputId uniqueness refusals (`invalid`: another event's entry,
       // or this event's own without its receipt) re-check the receipt first.
-      return refuse(decided, messageCtx, message, { identityKey, fingerprint }, decided.code === 'invalid');
+      return refuse(decided, messageCtx, { identityKey, fingerprint }, decided.code === 'invalid');
     }
     const plan = messageCommitPlan(decided.effects, 'input_accepted', 'SessionMessageInputAccepted');
     const acceptedAt = deps.now();

@@ -302,6 +302,14 @@ function rejection(result: MessageTransition): { reason: TransitionRejectReason;
   return { reason: result.reason, code: result.code, detail: result.detail };
 }
 
+/** The message CAS revision an accepted write commits against (`null` = must not exist). */
+function guardRevisionOf(result: MessageTransition): number | null {
+  if (!result.ok) throw new Error(`expected an accepted write, got ${JSON.stringify(result)}`);
+  const guard = result.effects.find((effect) => effect.kind === 'guard_message');
+  if (guard === undefined || guard.kind !== 'guard_message') throw new Error('an accepted message write names its message CAS');
+  return guard.expectedRevision;
+}
+
 // --------------------------------------------------------------------------
 // Exhaustive (state, event) table
 // --------------------------------------------------------------------------
@@ -507,36 +515,43 @@ describe('§10.4 forbidden transitions', () => {
     }
   });
 
-  it('a stale pin is stale/revision_conflict wherever the event is otherwise legal', () => {
+  it('a stale pin is left to the commit CAS: the otherwise legal write guards the caller\'s pin, never the revision read', () => {
+    // §10.4 "版本钉 ≠ 当前 revision" is the store CAS. Today nothing checks the pin
+    // earlier, so the write keeps its body store, clock and commit planning and
+    // the RecordStore refuses it (revision_conflict); the machine never answers stale.
     for (const stateName of STATE_NAMES) {
       const state = STATES[stateName];
       for (const eventName of ['read', 'respondText', 'respondAnswer', 'derived'] as const) {
         const expected = TABLE[stateName][eventName];
-        const ctx = { ...happyCtx(eventName, state), pins: { count: 1, matchesMessage: true, revision: revisionOf(state) + 7 } };
+        const pinned = revisionOf(state) + 7;
+        const ctx = { ...happyCtx(eventName, state), pins: { count: 1, matchesMessage: true, revision: pinned } };
         const result = transitionMessage(state, EVENTS[eventName], ctx);
-        if (expected.ok) expectResult(result, no('stale', 'revision_conflict'));
-        else expectResult(result, expected); // status or slot rejections come before the CAS
+        if (expected.ok) {
+          expectResult(result, ok(expected.next, expected.effects.map((effect): MessageEffect => effect.kind === 'guard_message'
+            ? { kind: 'guard_message', expectedRevision: pinned }
+            : effect)));
+          expect(guardRevisionOf(result)).not.toBe(revisionOf(state));
+        } else {
+          expectResult(result, expected); // status or slot rejections come before the CAS
+        }
       }
     }
   });
 
-  it('a stale pin carries the RecordStore CAS reason that today\'s commit reports', () => {
-    for (const eventName of ['read', 'respondText', 'respondAnswer', 'derived'] as const) {
-      const ctx = { ...happyCtx(eventName, S.pending), pins: { count: 1, matchesMessage: true, revision: 9 } };
-      expect(rejection(transitionMessage(S.pending, EVENTS[eventName], ctx)))
-        .toEqual({ reason: 'stale', code: 'revision_conflict', detail: 'record version changed' });
-    }
-  });
-
-  it('two reply writers: the loser that read before the winner committed gets revision_conflict, after it invalid', () => {
+  it('two reply writers: the loser that read before the winner committed meets the CAS, after it invalid', () => {
     // The winner moved pending@1 → responded@2; the loser still pins @1.
     const loserPin = { count: 1, matchesMessage: true, revision: 1 };
     const winner = transitionMessage(S.pending, EVENTS.respondText, happyCtx('respondText', S.pending));
     expect(winner.ok).toBe(true);
-    // The loser's commit meets a CAS conflict against a newer pending/read revision...
+    // The loser read pending@1 before the winner committed: its write is planned with the
+    // message CAS @1, which today's commit refuses against @2 (revision_conflict)...
+    const loser = transitionMessage(S.pending, EVENTS.respondAnswer, { ...happyCtx('respondAnswer', S.pending), pins: loserPin });
+    expect(guardRevisionOf(loser)).toBe(1);
+    if (winner.ok) expect(revisionOf(winner.next)).toBe(2);
+    // ...as does a loser whose pin is older than the pending/read revision it read.
     const readAt2 = { ...S.read, revision: 2 };
-    expectResult(transitionMessage(readAt2, EVENTS.respondAnswer, { ...happyCtx('respondAnswer', readAt2), pins: loserPin }), no('stale', 'revision_conflict'));
-    // ...and a loser that reads the responded message gets invalid; the winner's slot is never overwritten.
+    expect(guardRevisionOf(transitionMessage(readAt2, EVENTS.respondAnswer, { ...happyCtx('respondAnswer', readAt2), pins: loserPin }))).toBe(1);
+    // A loser that reads the responded message gets invalid; the winner's slot is never overwritten.
     if (!winner.ok) return;
     expectResult(transitionMessage(winner.next, EVENTS.respondAnswer, { ...happyCtx('respondAnswer', winner.next), pins: loserPin }), no('illegal', 'invalid'));
     expectResult(transitionMessage(winner.next, EVENTS.respondText, happyCtx('respondText', winner.next)), no('illegal', 'invalid'));
@@ -905,6 +920,8 @@ function applyToRecord(record: SessionMessageRecord | null, event: EventName, at
 
 describe('I-8: status monotone, reply complete, appends only (property)', () => {
   const ORDER: Record<SessionMessageStatus, number> = { pending: 0, read: 1, responded: 2 };
+  /** The events whose message CAS is the caller's version pin. */
+  const PINNED_EVENTS: ReadonlySet<EventName> = new Set(['read', 'respondText', 'respondAnswer', 'derived']);
 
   it('holds for 300 seeded random sequences, and the constructors agree with the machine state', () => {
     const random = prng(0x5e55_1009);
@@ -917,10 +934,16 @@ describe('I-8: status monotone, reply complete, appends only (property)', () => 
           : EVENT_NAMES[Math.floor(random() * EVENT_NAMES.length)]!;
         const state = messageMachineStateOf(record);
         const ctx = happyCtx(eventName, state);
-        if (random() < 0.15) ctx.pins = { count: 1, matchesMessage: true, revision: revisionOf(state) + 1 }; // stale
+        const stalePin = random() < 0.15 && PINNED_EVENTS.has(eventName);
+        if (stalePin) ctx.pins = { count: 1, matchesMessage: true, revision: revisionOf(state) + 1 };
         const result = transitionMessage(state, EVENTS[eventName], ctx);
         if (!result.ok) {
-          expect(['illegal', 'guard_failed', 'duplicate', 'stale']).toContain(result.reason);
+          expect(['illegal', 'guard_failed', 'duplicate']).toContain(result.reason);
+          continue;
+        }
+        if (stalePin) {
+          // The commit's message CAS on the stale pin refuses the write; the record is unchanged.
+          expect(guardRevisionOf(result)).toBe(revisionOf(state) + 1);
           continue;
         }
         const previous = record;

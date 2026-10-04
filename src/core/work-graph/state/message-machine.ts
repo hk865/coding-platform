@@ -21,12 +21,15 @@
  *
  * Two kinds of rejection depend on the RecordStore as well as on the state, so the
  * service keeps today's receipt handling around them (§1.2):
- * - `stale` stands for today's commit CAS failure (`commitMessage`). The
- *   service does not return it verbatim: it first re-checks the receipt of the
- *   same identity (`recheckAfterMiss`) and replays it on a hit; on a miss it
- *   returns `revision_conflict` with `current` naming the message at the
- *   revision it read, as `mapStoreFailure` reports the failed message guard
- *   (the detail is the RecordStore's CAS reason).
+ * - A stale pin (§10.4 "版本钉 ≠ 当前 revision") is refused only by the commit
+ *   CAS, as today: an accepted ack/respond/derive carries the caller's pin in
+ *   `guard_message`, never the revision read, so the doomed write still does
+ *   everything before its commit (workspace read, body store, clock, abort
+ *   check, commit planning) and the store refuses it. The service maps that
+ *   failure as today (`commitMessage`): `recheckAfterMiss` first (a
+ *   same-identity receipt replays), then `mapStoreFailure`'s
+ *   `revision_conflict` with the store's `current` pins. So this machine never
+ *   answers `stale`.
  * - The `illegal`/`invalid` rejections of an already read, responded or
  *   derived message, and the inputId uniqueness rejections of an accepted
  *   input, are likewise preceded by `recheckAfterMiss`, so a concurrent request
@@ -158,13 +161,13 @@ export type MessageEvent =
 /** §10.1. IO stays in the service; it fills in what it read and authorized. */
 export type MessageGuardContext = {
   principal: 'host' | 'work_run' | 'other';
-  /** `authorizeNewWorkRunAction` (`mailbox-service.ts:787-913`); `null` for a Host call. */
+  /** `authorizeNewWorkRunAction` (`mailbox-service.ts:782-908`); `null` for a Host call. */
   workRunAuthorization: 'ok' | CoreRejection | null;
   /** ack/respond: the caller Session is the recipient. */
   callerIsRecipient: boolean | null;
   /** message_sent only. */
   recipientScope: 'same_workspace' | 'other_workspace' | 'other_project' | null;
-  /** message_sent only: the normalized flags (`mailbox-service.ts:1361-1363`) and the pin count. */
+  /** message_sent only: the normalized flags (`mailbox-service.ts:1356-1358`) and the pin count. */
   sendFlags: { needsReply: boolean; waitAfterSend: boolean; replyMode: 'wait' | null; pinCount: number } | null;
   /** ack/respond/derive need exactly one pin naming this message; `revision` is null when not a positive integer. */
   pins: { count: number; matchesMessage: boolean; revision: number | null };
@@ -173,7 +176,7 @@ export type MessageGuardContext = {
    * `true` = a non-empty string within `SESSION_MESSAGE_MAX_TEXT_BYTES`; `false` = a
    * non-empty string over that bound (`capacity`); `null` = empty or not a string
    * (`invalid`). Formal Answer (MSG-06, `readQueryAnswerFacts`): anything but `true` is `invalid`.
-   * `message_sent` does not read it: the send text check (`:1341`) stays with the
+   * `message_sent` does not read it: the send text check (`:1336`) stays with the
    * service's request-shape checks, after the project check and before the flags.
    */
   bodyBounded: boolean | null;
@@ -239,10 +242,10 @@ export type SessionMessageEventType =
  *   `nextSessionMessageRecord` (the other kinds).
  * - `append_event`: the durable event in the same commit.
  * - `guard_message`: the message CAS; `null` means "must not exist" (send CAS@0),
- *   otherwise the pinned revision (ack/respond/derive) or the read revision
- *   (input_accepted). A failure of this CAS at commit time is mapped exactly as
- *   a `stale` rejection (see the module comment): receipt re-check first, then
- *   `revision_conflict` with the store's `current` pins.
+ *   otherwise the caller's pin (ack/respond/derive; a stale pin fails here, as
+ *   today) or the read revision (input_accepted). A failure of this CAS at
+ *   commit time is mapped as today's commit failure (see the module comment):
+ *   receipt re-check first, then `revision_conflict` with the store's `current` pins.
  * - `guard_work_run_facts`: join the Run, Session, Lease and role guards
  *   returned by `authorizeNewWorkRunAction`.
  */
@@ -284,7 +287,7 @@ function pinProblem(ctx: MessageGuardContext): MessageTransition | null {
   return null;
 }
 
-/** The fresh work_run admission (`mailbox-service.ts:787-913`) keeps its own code. */
+/** The fresh work_run admission (`mailbox-service.ts:782-908`) keeps its own code. */
 function workRunAuthorizationProblem(ctx: MessageGuardContext): MessageTransition | null {
   const verdict = ctx.workRunAuthorization;
   if (verdict === 'ok') return null;
@@ -293,17 +296,14 @@ function workRunAuthorizationProblem(ctx: MessageGuardContext): MessageTransitio
 }
 
 /**
- * Store CAS on the pinned revision (§10.4 "版本钉 ≠ 当前 revision"). Today this
- * is caught only by the commit CAS, so the service handles `stale` as that
- * failure: `recheckAfterMiss` first (a same-identity receipt replays), then
- * `revision_conflict` carrying the `current` message pin (module comment). The
- * detail is the RecordStore's CAS reason, which today's rejection carries.
+ * The message CAS revision of an accepted ack/respond/derive: the caller's pin,
+ * never the revision read. §10.4 "版本钉 ≠ 当前 revision" is that store CAS, which
+ * today is the only check of a stale pin (module comment). `pinProblem` held,
+ * so the pin is a positive integer.
  */
-function stalePinProblem(ctx: MessageGuardContext, state: PresentMessageState): MessageTransition | null {
-  if (ctx.pins.revision !== state.revision) {
-    return reject('stale', 'revision_conflict', 'record version changed');
-  }
-  return null;
+function pinnedRevision(ctx: MessageGuardContext): number {
+  if (ctx.pins.revision === null) throw new Error('the message CAS needs the version pin that pinProblem accepted');
+  return ctx.pins.revision;
 }
 
 /**
@@ -415,22 +415,17 @@ function onMessageRead(state: MessageMachineState, ctx: MessageGuardContext): Me
   switch (state.status) {
     case 'absent':
       return absentMessage();
-    case 'pending': {
-      const guard = first(
-        () => ctx.callerIsRecipient === true ? null : reject('guard_failed', 'forbidden', 'this message is not addressed to the caller Session'),
-        () => stalePinProblem(ctx, state),
-      );
-      if (guard !== null) return guard;
+    case 'pending':
+      if (ctx.callerIsRecipient !== true) return reject('guard_failed', 'forbidden', 'this message is not addressed to the caller Session');
       return accept<MessageMachineState, MessageEffect>(
         { ...state, status: 'read', hasReadAt: true, revision: state.revision + 1 },
         [
           { kind: 'write_message', change: 'read' },
           { kind: 'append_event', eventType: 'SessionMessageRead' },
-          { kind: 'guard_message', expectedRevision: state.revision },
+          { kind: 'guard_message', expectedRevision: pinnedRevision(ctx) },
           { kind: 'guard_work_run_facts' },
         ],
       );
-    }
     case 'read':
     case 'responded':
       // :1597 runs before :1598-1605.
@@ -457,20 +452,15 @@ function onTextResponse(state: MessageMachineState, ctx: MessageGuardContext): M
     case 'absent':
       return absentMessage();
     case 'pending':
-    case 'read': {
-      const guard = first(
-        () => ctx.callerIsRecipient === true ? null : reject('guard_failed', 'forbidden', 'this message is not addressed to the caller Session'),
-        () => stalePinProblem(ctx, state),
-      );
-      if (guard !== null) return guard;
+    case 'read':
+      if (ctx.callerIsRecipient !== true) return reject('guard_failed', 'forbidden', 'this message is not addressed to the caller Session');
       return accept<MessageMachineState, MessageEffect>(respondedState(state), [
         { kind: 'store_body', part: 'response', source: 'workspace' },
         { kind: 'write_message', change: 'responded' },
         { kind: 'append_event', eventType: 'SessionMessageResponded' },
-        { kind: 'guard_message', expectedRevision: state.revision },
+        { kind: 'guard_message', expectedRevision: pinnedRevision(ctx) },
         { kind: 'guard_work_run_facts' },
       ]);
-    }
     case 'responded':
       // :1669 runs before :1670-1675; the single slot is first-come.
       if (ctx.callerIsRecipient !== true) return reject('guard_failed', 'forbidden', 'this message is not addressed to the caller Session');
@@ -546,16 +536,13 @@ function onAnswerResponse(state: MessageMachineState, ctx: MessageGuardContext):
   if (guard !== null) return guard;
   switch (state.status) {
     case 'pending':
-    case 'read': {
-      const stale = stalePinProblem(ctx, state);
-      if (stale !== null) return stale;
+    case 'read':
       return accept<MessageMachineState, MessageEffect>(respondedState(state), [
         { kind: 'store_body', part: 'response', source: 'answer' },
         { kind: 'write_message', change: 'responded' },
         { kind: 'append_event', eventType: 'SessionMessageResponded' },
-        { kind: 'guard_message', expectedRevision: state.revision },
+        { kind: 'guard_message', expectedRevision: pinnedRevision(ctx) },
       ]);
-    }
     case 'responded':
       // :1841-1844 — first-come with MSG-04/05.
       return reject('illegal', 'invalid', 'the message already has a response');
@@ -645,14 +632,12 @@ function onConsultationDerived(state: MessageMachineState, ctx: MessageGuardCont
       if (state.hasDerivation) {
         return reject('illegal', 'invalid', 'the original request already carries a fixed consultation derivation');
       }
-      const stale = stalePinProblem(ctx, state);
-      if (stale !== null) return stale;
       return accept<MessageMachineState, MessageEffect>(
         { ...state, hasDerivation: true, revision: state.revision + 1 },
         [
           { kind: 'write_message', change: 'consultation_derived' },
           { kind: 'append_event', eventType: 'SessionMessageConsultationDerived' },
-          { kind: 'guard_message', expectedRevision: state.revision },
+          { kind: 'guard_message', expectedRevision: pinnedRevision(ctx) },
         ],
       );
     }
@@ -743,7 +728,7 @@ export type NewSessionMessageInput = {
   bodyRef: ArtifactRef;
   sourceRef: SourceRefV1;
   createdAt: string;
-  /** Normalized send flags (`mailbox-service.ts:1361-1363`); `null` = omitted. */
+  /** Normalized send flags (`mailbox-service.ts:1356-1358`); `null` = omitted. */
   replyMode: 'wait' | null;
   intent: SessionMessageIntentV1 | null;
   needsReply: boolean;
