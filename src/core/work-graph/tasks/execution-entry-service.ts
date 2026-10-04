@@ -23,7 +23,8 @@
  * written; its effects become the Attempt, Outbox and Lease
  * (`state/attempt-machine.ts`, ATT-02/06/18/26/27), the Session release
  * (`state/session-availability.ts`, SES-04) and the Kernel identity slot of
- * the same commit.
+ * the same commit. The model barrier (`admitEnteredRun`) asks the same
+ * machine's V2 binding, persisted claim, permit and claim Session/Lease guards.
  */
 import type { CoreCallContext, MaterialReader } from '../../../contracts/core/call-context.js';
 import type { RoleConfigurationRef, VersionPin, WorkspaceScope } from '../../../contracts/core/identity.js';
@@ -61,21 +62,22 @@ import {
   encodeExecutionEntryEnteredEvent, encodeExecutionRunResultRecordedEvent,
   executionEntryAuthorizedEventFromEvent, executionEntryBegunEventFromEvent,
   executionEntryEnteredEventFromEvent, executionRunResultRecordedEventFromEvent,
-  inputBindingProblem, isExecutionAuthorizationV2, taskDispatchStateV1Problem,
+  inputBindingProblem, taskDispatchStateV1Problem,
 } from '../persistence/execution-entry-codecs.js';
 import { encodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey } from '../sessions/session-record-codecs.js';
 import {
-  attemptEventFromRunEvent, isTaskLeaseEvent, transitionAttempt, transitionDispatchOutbox, transitionTaskLease,
-  type AttemptEvent, type AttemptGuardContext, type DispatchOutboxRecord, type RunEventForAttempt,
+  attemptEventFromRunEvent, isTaskLeaseEvent, taskLeaseNodeOf, transitionAttempt, transitionDispatchOutbox,
+  transitionTaskLease, type AttemptEvent, type AttemptGuardContext, type DispatchOutboxRecord, type RunEventForAttempt,
 } from '../state/attempt-machine.js';
 import {
-  leaseOwnedByRun, runControlFence, runStateOf, transitionRun,
+  claimHoldGuard, entryPermitGuard, entryV2Binding, leaseOwnedByRun, permitClaimGuard, runControlFence, runStateOf, transitionRun,
   type RunEffect, type RunEvent, type RunGuardContext, type RunState, type RunTransition,
 } from '../state/run-machine.js';
 import {
   ownsOccupancy, releaseSessionRecord, sessionMachineStateOf, transitionSession,
   type SessionGuardContext, type SessionRelease,
 } from '../state/session-availability.js';
+import type { Rejected as MachineRefusal } from '../state/transition.js';
 import {
   dispatchOutboxRefKey, encodeDispatchOutboxEntry, encodeTaskAttemptSnapshot, taskAttemptRefKey, taskClaimProblem,
 } from './claim-record-codecs.js';
@@ -789,27 +791,21 @@ export async function admitEnteredRun(
   const enteredControl = runControlFence(factsRead.value.run);
   if (enteredControl !== null) return { ok: false, rejection: enteredControl };
   const { run, outbox, session } = factsRead.value;
-  const auth = run.executionAuthorization;
-  if (!isExecutionAuthorizationV2(auth)) return { ok: false, rejection: forbidden('the Run has no formal V2 entry authorization') };
+  // RUN-04/05's guards at the barrier's own points: the V2 binding; after the phase
+  // and status, the persisted claim, the permit, then the claim Session and Lease.
+  const v2 = entryV2Binding(run);
+  if (!v2.ok) return { ok: false, rejection: runRefusal(v2) };
+  const auth = v2.next;
   if (auth.phase !== 'entered') return { ok: false, rejection: busy('the Run entry is not entered') };
   if (run.status !== 'running') return { ok: false, rejection: busy('the Run is not running') };
-  if (!sameRef(outbox.claim, permit.claim)) return { ok: false, rejection: invalid('the entry permit claim disagrees with the persisted claim') };
-  if (auth.consumerId !== permit.consumerId || auth.generation !== permit.entryGeneration
-    || auth.revision !== permit.authorizationRevision || auth.inputDigest !== permit.inputDigest) {
-    return { ok: false, rejection: forbidden('the entry permit does not match the current V2 entry binding') };
-  }
-  if (auth.sessionGeneration !== permit.claim.generation) {
-    return { ok: false, rejection: forbidden('the V2 entry binding session generation disagrees with the claim') };
-  }
+  const permitRefused = refusalOf(permitClaimGuard(outbox.claim, permit) ?? entryPermitGuard(auth, permit));
+  if (permitRefused !== null) return { ok: false, rejection: permitRefused };
   if (outbox.claim.sessionRef.projectId !== session.ref.projectId
     || outbox.claim.sessionRef.sessionId !== session.ref.sessionId) {
     return { ok: false, rejection: unavailable('the claim Session mapping changed') };
   }
-  const admittedOwnership = sessionOccupancyProblem(session, permit.claim);
-  if (admittedOwnership !== null) return { ok: false, rejection: admittedOwnership };
-  const lease = factsRead.value.lease;
-  const leaseProblem = leaseOwnershipProblem(lease, permit.claim);
-  if (leaseProblem !== null) return { ok: false, rejection: leaseProblem };
+  const held = refusalOf(claimHoldGuard(claimSessionOf(session, permit.claim), claimLeaseOf(factsRead.value.lease, permit.claim)));
+  if (held !== null) return { ok: false, rejection: held };
   const inputBinding = run.inputBinding;
   if (inputBinding === undefined) return { ok: false, rejection: forbidden('the Run has no persisted input binding') };
   const bindingProblem = inputBindingProblem(inputBinding);
@@ -820,19 +816,34 @@ export async function admitEnteredRun(
   if (manifest.inputDigest !== inputBinding.inputDigest || manifest.inputDigest !== permit.inputDigest) {
     return { ok: false, rejection: forbidden('the entry permit input digest disagrees with the saved manifest') };
   }
+  const admitted = await admitManifest(deps, ctx, factsRead.value, manifest);
+  if (!admitted.ok) return admitted;
+  return { ok: true, value: { facts: factsRead.value, auth, manifest, inputBinding, ...admitted.value } };
+}
+
+type ManifestAdmission = Pick<EnteredAdmission, 'roleFacts' | 'materialGuards'>;
+type Admitted = { ok: true; value: ManifestAdmission } | Rejected;
+
+/**
+ * The fresh re-admission of a saved manifest that authorize, begin and the
+ * model barrier share, in today's order: the current Host/Role, the deadline,
+ * then the external materials.
+ */
+async function admitManifest(
+  deps: Omit<ExecutionEntryDependencies, 'newId'>, ctx: CoreCallContext, facts: TaskExecutionRecord,
+  manifest: PreparedTaskManifestV1,
+): Promise<Admitted> {
   const hostRole = await recheckHostRoleAdmission(deps, ctx, {
-    run, manifestRole: manifest.role, sessionRole: session.role,
-    roleBinding: run.roleBinding, permissions: manifest.permissions,
+    run: facts.run, manifestRole: manifest.role, sessionRole: facts.session.role,
+    roleBinding: facts.run.roleBinding, permissions: manifest.permissions,
     hostTemplate: manifest.hostTemplate, configurationRevision: manifest.hostConfigurationRevision,
   });
   if (!hostRole.ok) return hostRole;
-  const nowIso = deps.now();
-  const deadline = deadlineProblem(run, nowIso);
+  const deadline = deadlineProblem(facts.run, deps.now());
   if (deadline !== null) return { ok: false, rejection: deadline };
-  const material = await admitExternalMaterials(deps, ctx, factsRead.value, manifest);
+  const material = await admitExternalMaterials(deps, ctx, facts, manifest);
   if (!material.ok) return material;
-  return { ok: true, value: { facts: factsRead.value, auth, manifest, inputBinding,
-    roleFacts: hostRole.value.roleFacts, materialGuards: material.value.guards } };
+  return { ok: true, value: { roleFacts: hostRole.value.roleFacts, materialGuards: material.value.guards } };
 }
 
 // --------------------------------------------------------------------------
@@ -840,21 +851,32 @@ export async function admitEnteredRun(
 // --------------------------------------------------------------------------
 
 /**
- * The claim Lease as `leaseOwnershipProblem` reads it: missing, released,
- * naming another Task than `claim`, held by this claim (`leaseOwnedByRun`, the
- * release rule of RUN-07), or held by another one. The execution read keys the
- * Lease by the Run's Task (`run-state-service.ts:309`), so another Task is
- * reachable only through W3's prepared claim, which RUN-02 asks about the
- * Lease before the persisted claim; W4..W6 compare the persisted claim first.
+ * The claim Lease as the Run machine's Lease guard reads it: missing, released
+ * (§5 `taskLeaseNodeOf`), naming another Task than `claim`, held by this claim
+ * (`leaseOwnedByRun`, the release rule of RUN-07), or held by another one. The
+ * execution read keys the Lease by the Run's Task (`run-state-service.ts:309`),
+ * so another Task is reachable only through W3's prepared claim, which RUN-02
+ * asks about the Lease before the persisted claim; W4..W6 compare the persisted
+ * claim first.
  */
 function claimLeaseOf(lease: TaskLeaseSnapshot | null, claim: TaskClaim): RunGuardContext['lease'] {
   if (lease === null) return 'missing';
-  if (lease.release !== undefined) return 'released';
+  if (taskLeaseNodeOf(lease) === 'released') return 'released';
   if (lease.ref.projectId !== claim.task.projectId || lease.ref.goalId !== claim.task.goalId
     || lease.ref.taskId !== claim.task.taskId) {
     return 'other_task';
   }
   return leaseOwnedByRun(lease, claim) ? 'owned' : 'other';
+}
+
+/** The claim Session as this Run holds it (§8 `ownsOccupancy`) and its Kernel mapping. */
+function claimSessionOf(session: SessionRecord, claim: TaskClaim): RunGuardContext['session'] {
+  return {
+    usable: session.lifecycle === 'active' && session.health === 'available',
+    owned: ownsOccupancy(session, claim.runRef, claim.generation),
+    kernel: { adapterId: session.kernel.adapterId, kernelSessionId: session.kernel.kernelSessionId },
+    archived: session.lifecycle !== 'active',
+  };
 }
 
 /**
@@ -864,14 +886,8 @@ function claimLeaseOf(lease: TaskLeaseSnapshot | null, claim: TaskClaim): RunGua
  * until read; control, reconcile and claim facts belong to other Run events.
  */
 function entryRunContext(facts: TaskExecutionRecord, claim: TaskClaim, actor: HostActor): RunGuardContext {
-  const session = facts.session;
   return {
-    session: {
-      usable: session.lifecycle === 'active' && session.health === 'available',
-      owned: ownsOccupancy(session, claim.runRef, claim.generation),
-      kernel: { adapterId: session.kernel.adapterId, kernelSessionId: session.kernel.kernelSessionId },
-      archived: session.lifecycle !== 'active',
-    },
+    session: claimSessionOf(facts.session, claim),
     lease: claimLeaseOf(facts.lease, claim),
     persistedClaim: facts.outbox.claim,
     goal: { desiredState: 'active', activePlanMatchesClaim: true },
@@ -899,6 +915,11 @@ function entryRunContext(facts: TaskExecutionRecord, claim: TaskClaim, actor: Ho
 function runRefusal(refused: Extract<RunTransition, { ok: false }>, admission: CoreRejection | null = null): CoreRejection {
   if (admission !== null && refused.code === admission.code && refused.detail === admission.reason) return admission;
   return reject(refused.code, refused.detail);
+}
+
+/** A Run machine guard the model barrier asks outside a transition, mapped as `runRefusal` maps it. */
+function refusalOf(refused: MachineRefusal | null): CoreRejection | null {
+  return refused === null || refused.ok ? null : runRefusal(refused);
 }
 
 /** The Run an accepted transition writes: `next.record` is the whole next Run (§6). */
@@ -946,11 +967,89 @@ function terminalReleaseContext(release: SessionRelease): SessionGuardContext {
   };
 }
 
-/** A fresh entry admission: its first refusal, or the guards it read (role facts, then materials). */
-type FreshAdmission = { problem: CoreRejection | null; guards: readonly RecordGuard[] };
+/** The node RUN-05/07 moves from: the paired Run of their §5 event (D-14). */
+const PAIRED_RUN_NODE = { entered_observed: 'Entering', terminal_observed: 'Running' } as const;
 
-function refusedAdmission(problem: CoreRejection): FreshAdmission {
-  return { problem, guards: [] };
+/**
+ * RUN-05/07's effects as the other records of the same commit, each written by
+ * its own machine with the §5 event of the same Run event: the Attempt
+ * (ATT-02/06), the Outbox (ATT-26/27), and only what the Run still holds, its
+ * Lease (ATT-18) and its Session occupancy (SES-04, the cursor moves to the
+ * complete Turn boundary). Records in today's order: Attempt, Outbox, Lease,
+ * Session.
+ */
+function effectRecords(
+  kind: keyof typeof PAIRED_RUN_NODE, effects: readonly RunEffect[], facts: TaskExecutionRecord,
+  runCtx: RunGuardContext, attemptEvent: AttemptEvent,
+): { ok: true; records: EncodedRecord[] } | Rejected {
+  const pairing: AttemptGuardContext = { runNode: PAIRED_RUN_NODE[kind], runLastEventSeq: facts.run.lastEventSeq,
+    ownsSession: runCtx.session.owned, ownsLease: runCtx.lease === 'owned' };
+  let attempt: TaskAttemptSnapshot | null = null;
+  let outbox: DispatchOutboxRecord | null = null;
+  let lease: TaskLeaseSnapshot | null = null;
+  let session: SessionRecord | null = null;
+  for (const effect of effects) {
+    switch (effect.kind) {
+      case 'attempt': {
+        const next = transitionAttempt(facts.attempt, attemptEvent, pairing);
+        if (!next.ok) return { ok: false, rejection: reject(next.code, next.detail) };
+        attempt = next.next;
+        break;
+      }
+      case 'outbox': {
+        const next = transitionDispatchOutbox(facts.outbox, attemptEvent, pairing);
+        if (!next.ok) return { ok: false, rejection: reject(next.code, next.detail) };
+        outbox = next.next;
+        break;
+      }
+      case 'release_lease': {
+        if (!isTaskLeaseEvent(attemptEvent)) throw new Error(`${kind} drives the TaskLease`);
+        const next = transitionTaskLease(facts.lease, attemptEvent);
+        if (!next.ok) return { ok: false, rejection: reject(next.code, next.detail) };
+        lease = next.next;
+        break;
+      }
+      case 'release_session': {
+        // Only RUN-07 releases the Session.
+        const next = transitionSession(sessionMachineStateOf(facts.session),
+          { kind: 'occupancy_released', cause: 'terminal_observed' }, terminalReleaseContext(effect));
+        if (!next.ok) return { ok: false, rejection: reject(next.code, next.detail) };
+        for (const sessionEffect of next.effects) {
+          if (sessionEffect.kind !== 'release_session') throw new Error(`occupancy_released has no ${sessionEffect.kind} effect`);
+          session = releaseSessionRecord(facts.session, sessionEffect);
+        }
+        break;
+      }
+      default:
+        throw new Error(`${kind} has no ${effect.kind} effect`);
+    }
+  }
+  if (attempt === null || outbox === null) throw new Error(`${kind} must write the Attempt and the Outbox`);
+  return { ok: true, records: [encodeTaskAttemptSnapshot(attempt), encodeDispatchOutboxEntry(outbox),
+    ...(lease === null ? [] : [encodeLease(lease)]), ...(session === null ? [] : [encodeSessionRecord(session)])] };
+}
+
+/**
+ * The exact versions of the execution read every entry commit keeps: the Run
+ * at the caller's pin, its Attempt, Outbox, Plan and claim Session, and the
+ * Lease whenever one was read (it decides the release, so it is pinned whether
+ * or not this Run still holds it; RUN-02/04/05 refuse a missing one).
+ */
+function executionReadGuards(facts: TaskExecutionRecord, runKey: string, runPin: VersionPin): RecordGuard[] {
+  return [
+    { refKey: runKey, expectedRevision: runPin.revision },
+    { refKey: taskAttemptRefKey(facts.attempt.ref), expectedRevision: facts.attempt.revision },
+    { refKey: dispatchOutboxRefKey(facts.outbox.ref), expectedRevision: facts.outbox.revision },
+    { refKey: planRevisionRefKey(facts.plan.ref), expectedRevision: facts.plan.revision },
+    { refKey: sessionAggregateRefKey(plainSessionRefToAggregate(facts.outbox.claim.sessionRef)), expectedRevision: facts.session.revision },
+    ...(facts.lease === null ? [] : [{ refKey: refKeyOf(facts.lease.ref) as string, expectedRevision: facts.lease.revision }]),
+  ];
+}
+
+/** A fresh entry admission as RUN-02/04 read it: its refusal, or the guards it read (role facts, then materials). */
+function freshAdmissionOf(admitted: Admitted): { problem: CoreRejection | null; guards: readonly RecordGuard[] } {
+  return admitted.ok ? { problem: null, guards: [...admitted.value.roleFacts.guards, ...admitted.value.materialGuards] }
+    : { problem: admitted.rejection, guards: [] };
 }
 
 /**
@@ -961,40 +1060,24 @@ function refusedAdmission(problem: CoreRejection): FreshAdmission {
 async function authorizeAdmission(
   deps: ExecutionEntryDependencies, ctx: CoreCallContext, scope: WorkspaceScope,
   prepared: PreparedTaskExecution, facts: TaskExecutionRecord, goalWorkspaceId: string,
-): Promise<FreshAdmission> {
+): Promise<Admitted> {
   const claim = prepared.claim;
-  if (goalWorkspaceId !== claim.workspaceId) return refusedAdmission(forbidden('the Goal belongs to another workspace'));
+  if (goalWorkspaceId !== claim.workspaceId) return { ok: false, rejection: forbidden('the Goal belongs to another workspace') };
   const stored = await readManifestFromEnvelope(deps, prepared.envelope as unknown as Record<string, unknown>, claim.runRef);
-  if (!stored.ok) return refusedAdmission(stored.rejection);
+  if (!stored.ok) return stored;
   const manifest = stored.value.manifest;
   const manifestRejection = manifestAgainstPrepared(manifest, prepared, facts, stored.value.bodyDigest, scope);
-  if (manifestRejection !== null) return refusedAdmission(manifestRejection);
+  if (manifestRejection !== null) return { ok: false, rejection: manifestRejection };
   return admitManifest(deps, ctx, facts, manifest);
 }
 
 /** RUN-04's `freshAdmission`: the saved manifest of the Run, then as RUN-02 from the Host/Role on. */
 async function beginAdmission(
   deps: ExecutionEntryDependencies, ctx: CoreCallContext, facts: TaskExecutionRecord,
-): Promise<FreshAdmission> {
+): Promise<Admitted> {
   const stored = await readStoredManifest(deps, facts.run);
-  if (!stored.ok) return refusedAdmission(stored.rejection);
+  if (!stored.ok) return stored;
   return admitManifest(deps, ctx, facts, stored.value.manifest);
-}
-
-async function admitManifest(
-  deps: ExecutionEntryDependencies, ctx: CoreCallContext, facts: TaskExecutionRecord, manifest: PreparedTaskManifestV1,
-): Promise<FreshAdmission> {
-  const hostRole = await recheckHostRoleAdmission(deps, ctx, {
-    run: facts.run, manifestRole: manifest.role, sessionRole: facts.session.role,
-    roleBinding: facts.run.roleBinding, permissions: manifest.permissions,
-    hostTemplate: manifest.hostTemplate, configurationRevision: manifest.hostConfigurationRevision,
-  });
-  if (!hostRole.ok) return refusedAdmission(hostRole.rejection);
-  const deadline = deadlineProblem(facts.run, deps.now());
-  if (deadline !== null) return refusedAdmission(deadline);
-  const material = await admitExternalMaterials(deps, ctx, facts, manifest);
-  if (!material.ok) return refusedAdmission(material.rejection);
-  return { problem: null, guards: [...hostRole.value.roleFacts.guards, ...material.value.guards] };
 }
 
 // --------------------------------------------------------------------------
@@ -1130,7 +1213,8 @@ export function createExecutionEntryService(deps: ExecutionEntryDependencies): E
       const onGoal = transitionRun(state, runEvent, runCtx);
       if (!onGoal.ok) return runRefusal(onGoal);
 
-      const admission = await authorizeAdmission(deps, scopeCtx, scope, prepared, facts, goalScope.goal.workspaceRef.workspaceId);
+      const admission = freshAdmissionOf(
+        await authorizeAdmission(deps, scopeCtx, scope, prepared, facts, goalScope.goal.workspaceRef.workspaceId));
       const authorized = transitionRun(state, runEvent, { ...runCtx, freshAdmission: admission.problem });
       if (!authorized.ok) return runRefusal(authorized, admission.problem);
       const nextRun = nextRunOf(authorized.next);
@@ -1139,8 +1223,6 @@ export function createExecutionEntryService(deps: ExecutionEntryDependencies): E
         claim, consumerId, entryGeneration: authorization.generation, authorizationRevision: authorization.revision,
         inputDigest: authorization.inputDigest,
       };
-      // RUN-02 refused a missing Lease above.
-      const lease = facts.lease as TaskLeaseSnapshot;
       const runRecord = encodeRun(nextRun);
       const event = {
         eventId: deps.eventId(), eventType: EXECUTION_ENTRY_AUTHORIZED_EVENT_TYPE,
@@ -1151,12 +1233,7 @@ export function createExecutionEntryService(deps: ExecutionEntryDependencies): E
       const goalKey = refKeyOf(goalRefOf(claim.task));
       if (goalKey === null) return invalid('the Goal ref is not canonicalizable JSON');
       const merged = mergeGuards([
-        { refKey: runRecord.refKey, expectedRevision: runPin.revision },
-        { refKey: taskAttemptRefKey(facts.attempt.ref), expectedRevision: facts.attempt.revision },
-        { refKey: dispatchOutboxRefKey(facts.outbox.ref), expectedRevision: facts.outbox.revision },
-        { refKey: planRevisionRefKey(facts.plan.ref), expectedRevision: facts.plan.revision },
-        { refKey: sessionAggregateRefKey(plainSessionRefToAggregate(facts.outbox.claim.sessionRef)), expectedRevision: facts.session.revision },
-        { refKey: refKeyOf(lease.ref) as string, expectedRevision: lease.revision },
+        ...executionReadGuards(facts, runRecord.refKey, runPin),
         { refKey: goalKey, expectedRevision: goalScope.goal.revision },
         { refKey: goalScope.workspaceKey, expectedRevision: goalScope.workspaceRevision },
         ...admission.guards,
@@ -1243,13 +1320,11 @@ export function createExecutionEntryService(deps: ExecutionEntryDependencies): E
       const onExecution = transitionRun(state, runEvent, runCtx);
       if (!onExecution.ok) return runRefusal(onExecution);
 
-      const admission = await beginAdmission(deps, scopeCtx, facts);
+      const admission = freshAdmissionOf(await beginAdmission(deps, scopeCtx, facts));
       const begun = transitionRun(state, runEvent, { ...runCtx, freshAdmission: admission.problem });
       if (!begun.ok) return runRefusal(begun, admission.problem);
       const nextRun = nextRunOf(begun.next);
       const nextAuthorization = nextRun.executionAuthorization as ExecutionAuthorizationV2;
-      // RUN-04 refused a missing Lease above.
-      const lease = facts.lease as TaskLeaseSnapshot;
       const runRecord = encodeRun(nextRun);
       const entry: RuntimeEntryRecord = { runRef: facts.run.ref, runRevision: nextRun.revision, authorization: nextAuthorization };
       const event = {
@@ -1261,15 +1336,7 @@ export function createExecutionEntryService(deps: ExecutionEntryDependencies): E
       const runKey = runRecord.refKey;
       // RUN-04's one effect: the shared Kernel identity slot, claimed by this Run in the same commit.
       const claims = begun.effects.map(effect => kernelSlotChange(effect, runKey));
-      const merged = mergeGuards([
-        { refKey: runKey, expectedRevision: runPin.revision },
-        { refKey: taskAttemptRefKey(facts.attempt.ref), expectedRevision: facts.attempt.revision },
-        { refKey: dispatchOutboxRefKey(facts.outbox.ref), expectedRevision: facts.outbox.revision },
-        { refKey: planRevisionRefKey(facts.plan.ref), expectedRevision: facts.plan.revision },
-        { refKey: sessionAggregateRefKey(plainSessionRefToAggregate(facts.outbox.claim.sessionRef)), expectedRevision: facts.session.revision },
-        { refKey: refKeyOf(lease.ref) as string, expectedRevision: lease.revision },
-        ...admission.guards,
-      ]);
+      const merged = mergeGuards([...executionReadGuards(facts, runKey, runPin), ...admission.guards]);
       if (!merged.ok) return merged.rejection;
       const guards = merged.guards;
       const preparedCommit: PreparedCommit = {
@@ -1352,62 +1419,29 @@ export function createExecutionEntryService(deps: ExecutionEntryDependencies): E
       // Host/Role/material admission gates here. authorize/begin and the model
       // barriers keep those; this write keeps only the original permit, claim,
       // Run/Kernel/Session/Lease identity and the real history source.
+      const runCtx = entryRunContext(facts, permit.claim, actor);
       const entered = transitionRun(runStateOf(facts.run),
-        { kind: 'entered_observed', permit, kernelSource, history, enteredAt }, entryRunContext(facts, permit.claim, actor));
+        { kind: 'entered_observed', permit, kernelSource, history, enteredAt }, runCtx);
       if (!entered.ok) return runRefusal(entered);
       const nextRun = nextRunOf(entered.next);
       const runRecord = encodeRun(nextRun);
       const eventId = deps.eventId();
       if (!nonEmpty(eventId)) return reject('unsupported', 'the injected id source produced an empty event id');
-      // RUN-05's effects in this commit: the Attempt starts (ATT-02) and the
-      // Outbox enters (ATT-26). The paired Run is at the node RUN-05 moves from.
-      const started = attemptEventOf({ kind: 'entered_observed', enteredAt, consumerId: permit.consumerId,
-        entryGeneration: permit.entryGeneration, sessionGeneration: permit.claim.generation, eventId });
-      const pairing: AttemptGuardContext = { runNode: 'Entering', runLastEventSeq: facts.run.lastEventSeq,
-        ownsSession: ownsOccupancy(facts.session, permit.claim.runRef, permit.claim.generation),
-        ownsLease: leaseOwnedByRun(facts.lease, permit.claim) };
-      let nextAttempt: TaskAttemptSnapshot | null = null;
-      let nextOutbox: DispatchOutboxRecord | null = null;
-      for (const effect of entered.effects) {
-        switch (effect.kind) {
-          case 'attempt': {
-            const attempt = transitionAttempt(facts.attempt, started, pairing);
-            if (!attempt.ok) return reject(attempt.code, attempt.detail);
-            nextAttempt = attempt.next;
-            break;
-          }
-          case 'outbox': {
-            const outbox = transitionDispatchOutbox(facts.outbox, started, pairing);
-            if (!outbox.ok) return reject(outbox.code, outbox.detail);
-            nextOutbox = outbox.next;
-            break;
-          }
-          default:
-            throw new Error(`entered_observed has no ${effect.kind} effect`);
-        }
-      }
-      if (nextAttempt === null || nextOutbox === null) throw new Error('entered_observed must write the Attempt and the Outbox');
-      const attemptRecord = encodeTaskAttemptSnapshot(nextAttempt);
-      const outboxRecord = encodeDispatchOutboxEntry(nextOutbox);
+      // RUN-05's effects in this commit: the Attempt starts (ATT-02) and the Outbox enters (ATT-26).
+      const written = effectRecords('entered_observed', entered.effects, facts, runCtx,
+        attemptEventOf({ kind: 'entered_observed', enteredAt, consumerId: permit.consumerId,
+          entryGeneration: permit.entryGeneration, sessionGeneration: permit.claim.generation, eventId }));
+      if (!written.ok) return written.rejection;
       const event = {
         eventId, eventType: EXECUTION_ENTRY_ENTERED_EVENT_TYPE,
         schemaVersion: EXECUTION_ENTRY_EVENT_SCHEMA_VERSION, occurredAt: deps.now(),
         identityKey: identity, actor, fingerprint, permit, run: nextRun,
       };
-      // RUN-05 refused a missing Lease above.
-      const enteredLease = facts.lease as TaskLeaseSnapshot;
-      const merged = mergeGuards([
-        { refKey: runRecord.refKey, expectedRevision: runPin.revision },
-        { refKey: taskAttemptRefKey(facts.attempt.ref), expectedRevision: facts.attempt.revision },
-        { refKey: dispatchOutboxRefKey(facts.outbox.ref), expectedRevision: facts.outbox.revision },
-        { refKey: planRevisionRefKey(facts.plan.ref), expectedRevision: facts.plan.revision },
-        { refKey: sessionAggregateRefKey(plainSessionRefToAggregate(facts.outbox.claim.sessionRef)), expectedRevision: facts.session.revision },
-        { refKey: refKeyOf(enteredLease.ref) as string, expectedRevision: enteredLease.revision },
-      ]);
+      const merged = mergeGuards(executionReadGuards(facts, runRecord.refKey, runPin));
       if (!merged.ok) return merged.rejection;
       const guards = merged.guards;
       const preparedCommit: PreparedCommit = {
-        identityKey: identity, fingerprint, guards, records: [runRecord, attemptRecord, outboxRecord], claims: [],
+        identityKey: identity, fingerprint, guards, records: [runRecord, ...written.records], claims: [],
         indexGuards: [], indexChanges: [], events: [encodeExecutionEntryEnteredEvent(event)],
       };
       if (signal.aborted) return reject('cancelled', 'the entered write was cancelled before commit');
@@ -1455,6 +1489,8 @@ export function createExecutionEntryService(deps: ExecutionEntryDependencies): E
     if (!nonEmpty(observation.entry.consumerId) || !isPositiveSafeInteger(observation.entry.entryGeneration)) {
       return invalid('the result entry projection is incomplete');
     }
+    // RUN-07 accepts only the V2 binding's own consumer and generation, so this is also what the commit records.
+    const entry = { consumerId: observation.entry.consumerId, entryGeneration: observation.entry.entryGeneration };
     const checkedRun = checkRunPin(owned.expected, claim.runRef);
     if (!checkedRun.ok) return checkedRun.rejection;
     const runPin = checkedRun.pin;
@@ -1465,8 +1501,7 @@ export function createExecutionEntryService(deps: ExecutionEntryDependencies): E
     try {
       identity = identityKey(ENTRY_RESULT_PREFIX, actor, scope, owned.requestId);
       fingerprint = fingerprintOf({ kind: 'b2-entry-result', actor: { kind: actor.kind, id: actor.id },
-        claim, entry: { consumerId: observation.entry.consumerId, entryGeneration: observation.entry.entryGeneration },
-        event: observation.event, kernelSource: observation.kernelSource,
+        claim, entry, event: observation.event, kernelSource: observation.kernelSource,
         completedHistoryBoundary: observation.completedHistoryBoundary, history: observation.history,
         continuation: observation.continuation ?? null,
         expected: expectedPinList(runPin) });
@@ -1493,7 +1528,7 @@ export function createExecutionEntryService(deps: ExecutionEntryDependencies): E
       const state = runStateOf(facts.run);
       const runCtx: RunGuardContext = { ...entryRunContext(facts, claim, actor), exitProof: 'live_clean', inputsConfirmed: true };
       const observed = {
-        kind: 'terminal_observed' as const, claim, entry: observation.entry, event: observation.event,
+        kind: 'terminal_observed' as const, claim, entry, event: observation.event,
         kernelSource: observation.kernelSource, completedHistoryBoundary: observation.completedHistoryBoundary,
         history: observation.history, unresolvedToolCallIds: [],
         ...(observation.continuation === undefined ? {} : { continuation: observation.continuation }),
@@ -1509,86 +1544,23 @@ export function createExecutionEntryService(deps: ExecutionEntryDependencies): E
       if (!ended.ok) return runRefusal(ended);
       const nextRun = nextRunOf(ended.next);
       const runRecord = encodeRun(nextRun);
-      // RUN-07 accepted, so the Run read carries its V2 binding.
-      const auth = facts.run.executionAuthorization as ExecutionAuthorizationV2;
       const outcome = nextRun.outcome;
       if (outcome === null) throw new Error('terminal_observed ends the Run with an outcome');
-
       // RUN-07's effects in this commit: the Attempt ends (ATT-06), the Outbox
-      // settles (ATT-27), and only what the Run still holds is released: its
-      // Lease (ATT-18) and its Session occupancy (SES-04, the cursor moves to the
-      // complete Turn boundary). The paired Run is at the node RUN-07 moves from.
-      const attemptEnded = attemptEventOf({ kind: 'terminal_observed', claim, endOutcome: outcome, endedAt: nowIso, eventId,
-        sequence: observation.event.sequence, entry: { consumerId: auth.consumerId, entryGeneration: auth.generation },
-        turnStartedAt: null });
-      if (!isTaskLeaseEvent(attemptEnded)) throw new Error('terminal_observed drives the TaskLease');
-      const pairing: AttemptGuardContext = { runNode: 'Running', runLastEventSeq: facts.run.lastEventSeq,
-        ownsSession: runCtx.session.owned, ownsLease: runCtx.lease === 'owned' };
-      let nextAttempt: TaskAttemptSnapshot | null = null;
-      let nextOutbox: DispatchOutboxRecord | null = null;
-      let nextLease: TaskLeaseSnapshot | null = null;
-      let nextSession: SessionRecord | null = null;
-      for (const effect of ended.effects) {
-        switch (effect.kind) {
-          case 'attempt': {
-            const attempt = transitionAttempt(facts.attempt, attemptEnded, pairing);
-            if (!attempt.ok) return reject(attempt.code, attempt.detail);
-            nextAttempt = attempt.next;
-            break;
-          }
-          case 'outbox': {
-            const outbox = transitionDispatchOutbox(facts.outbox, attemptEnded, pairing);
-            if (!outbox.ok) return reject(outbox.code, outbox.detail);
-            nextOutbox = outbox.next;
-            break;
-          }
-          case 'release_lease': {
-            const released = transitionTaskLease(facts.lease, attemptEnded);
-            if (!released.ok) return reject(released.code, released.detail);
-            nextLease = released.next;
-            break;
-          }
-          case 'release_session': {
-            const released = transitionSession(sessionMachineStateOf(facts.session),
-              { kind: 'occupancy_released', cause: 'terminal_observed' }, terminalReleaseContext(effect));
-            if (!released.ok) return reject(released.code, released.detail);
-            for (const sessionEffect of released.effects) {
-              if (sessionEffect.kind !== 'release_session') throw new Error(`occupancy_released has no ${sessionEffect.kind} effect`);
-              nextSession = releaseSessionRecord(facts.session, sessionEffect);
-            }
-            break;
-          }
-          default:
-            throw new Error(`terminal_observed has no ${effect.kind} effect`);
-        }
-      }
-      if (nextAttempt === null || nextOutbox === null) throw new Error('terminal_observed must write the Attempt and the Outbox');
-      const encoded: EncodedRecord[] = [runRecord, encodeTaskAttemptSnapshot(nextAttempt), encodeDispatchOutboxEntry(nextOutbox)];
-      const guardList: RecordGuard[] = [
-        { refKey: runRecord.refKey, expectedRevision: runPin.revision },
-        { refKey: taskAttemptRefKey(facts.attempt.ref), expectedRevision: facts.attempt.revision },
-        { refKey: dispatchOutboxRefKey(facts.outbox.ref), expectedRevision: facts.outbox.revision },
-        { refKey: planRevisionRefKey(facts.plan.ref), expectedRevision: facts.plan.revision },
-        { refKey: sessionAggregateRefKey(plainSessionRefToAggregate(claim.sessionRef)), expectedRevision: facts.session.revision },
-      ];
-      if (facts.lease !== null) {
-        // The Lease is read to decide the release: its exact local version must
-        // be in the same commit, whether or not this Run still owns/releases it.
-        guardList.push({ refKey: refKeyOf(facts.lease.ref) as string, expectedRevision: facts.lease.revision });
-      }
-      if (nextLease !== null) encoded.push(encodeLease(nextLease));
-      // The Session guard was already added above.
-      if (nextSession !== null) encoded.push(encodeSessionRecord(nextSession));
+      // settles (ATT-27), and only what the Run still holds is released.
+      const written = effectRecords('terminal_observed', ended.effects, facts, runCtx,
+        attemptEventOf({ kind: 'terminal_observed', claim, endOutcome: outcome, endedAt: nowIso, eventId,
+          sequence: observation.event.sequence, entry, turnStartedAt: null }));
+      if (!written.ok) return written.rejection;
       const event = {
         eventId, eventType: EXECUTION_RUN_RESULT_RECORDED_EVENT_TYPE,
         schemaVersion: EXECUTION_ENTRY_EVENT_SCHEMA_VERSION, occurredAt: nowIso,
-        identityKey: identity, actor, fingerprint, claim,
-        entry: { consumerId: auth.consumerId, entryGeneration: auth.generation }, run: nextRun,
+        identityKey: identity, actor, fingerprint, claim, entry, run: nextRun,
       };
-      const mergedGuards = mergeGuards(guardList);
+      const mergedGuards = mergeGuards(executionReadGuards(facts, runRecord.refKey, runPin));
       if (!mergedGuards.ok) return mergedGuards.rejection;
       const preparedCommit: PreparedCommit = {
-        identityKey: identity, fingerprint, guards: mergedGuards.guards, records: encoded, claims: [],
+        identityKey: identity, fingerprint, guards: mergedGuards.guards, records: [runRecord, ...written.records], claims: [],
         indexGuards: [], indexChanges: [], events: [encodeExecutionRunResultRecordedEvent(event)],
       };
       if (signal.aborted) return reject('cancelled', 'the result write was cancelled before commit');
@@ -1712,35 +1684,6 @@ function observedHistoryProblem(history: unknown): boolean {
   if (!isPositiveSafeInteger(history['startPosition']) || !isPositiveSafeInteger(history['observedThroughPosition'])) return false;
   if (!(history['endPosition'] === null || isPositiveSafeInteger(history['endPosition']))) return false;
   return true;
-}
-
-// The model barrier's (`admitEnteredRun`) Lease and Session checks. The four
-// lifecycle writes ask the same with the same texts through the Run machine
-// (`state/run-machine.ts` `leaseGuard`, `sessionGuard`).
-function leaseOwnershipProblem(lease: TaskLeaseSnapshot | null, claim: TaskClaim): CoreRejection | null {
-  // A missing Lease is never "free": entry admission requires the claim's exact
-  // present, unreleased Lease whose full TaskRef/holder/attempt still match.
-  if (lease === null) return busy('the claim TaskLease is missing; a missing lease is not free');
-  if (lease.release !== undefined) return busy('the claim TaskLease was already released');
-  if (lease.ref.projectId !== claim.task.projectId || lease.ref.goalId !== claim.task.goalId
-    || lease.ref.taskId !== claim.task.taskId) {
-    return busy('the claim TaskLease names another Task');
-  }
-  if (lease.holderRunId !== claim.runRef.runId || lease.attemptId !== claim.attemptRef.attemptId) {
-    return busy('the claim TaskLease is held by another attempt');
-  }
-  return null;
-}
-
-function sessionOccupancyProblem(session: SessionRecord, claim: TaskClaim): CoreRejection | null {
-  if (session.lifecycle !== 'active') return busy('the claim Session is archived');
-  if (session.health !== 'available') return busy('the claim Session is not available');
-  const occupancy = session.occupancy;
-  if (occupancy === null || occupancy.kind !== 'execution' || !sameRef(occupancy.executionRef, claim.runRef)
-    || occupancy.generation !== claim.generation) {
-    return busy('the claim Session is no longer occupied by this Run generation');
-  }
-  return null;
 }
 
 /**

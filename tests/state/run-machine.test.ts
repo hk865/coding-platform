@@ -10,7 +10,9 @@
  * - Guard rows of RUN-01..07 and RUN-09..15 in today's order, the §6.4
  *   refusals in front of the 新增 rows, and the pure helpers named by §6.6 /
  *   §15.1 (`runControlFence`, `terminalOutcomeOf`, `terminalPayloadOf`,
- *   `isPausedInterrupted`, `runUnresolvedBlocker`, `leaseOwnedByRun`).
+ *   `isPausedInterrupted`, `runUnresolvedBlocker`, `leaseOwnedByRun`), and the
+ *   guards the model barrier shares (`entryV2Binding`, `permitClaimGuard`,
+ *   `entryPermitGuard`, `claimHoldGuard`).
  *
  * Pure: no RecordStore, no Kernel, no model.
  */
@@ -28,9 +30,9 @@ import type { PlanRevisionRef } from '../../src/contracts/plan.js';
 import type { TaskEnvelopeV1 } from '../../src/contracts/task-envelope.js';
 import type { TaskRequeueRef } from '../../src/contracts/task-requeue.js';
 import {
-  RUN_NODES, attestedTerminalPayload, controlSubmissionRunEvent, isPausedInterrupted, isRunFinished, leaseOwnedByRun,
-  newRunRecord, runCombinationProblem, runControlFence, runControlNodeOf, runNodeOf, runStateOf, runUnresolvedBlocker,
-  terminalOutcomeOf, terminalPayloadOf, transitionRun,
+  RUN_NODES, attestedTerminalPayload, claimHoldGuard, controlSubmissionRunEvent, entryPermitGuard, entryV2Binding,
+  isPausedInterrupted, isRunFinished, leaseOwnedByRun, newRunRecord, permitClaimGuard, runCombinationProblem, runControlFence,
+  runControlNodeOf, runNodeOf, runStateOf, runUnresolvedBlocker, terminalOutcomeOf, terminalPayloadOf, transitionRun,
   type RunEffect, type RunEvent, type RunGuardContext, type RunNode, type RunObservedHistory, type RunState,
   type RunTransition, type RunTurnFacts,
 } from '../../src/core/work-graph/state/run-machine.js';
@@ -1306,6 +1308,50 @@ describe('pure helpers (§6.6, §15.1)', () => {
     expect(leaseOwnedByRun({ ...lease, attemptId: 'att-2' }, claim)).toBe(false);
     expect(leaseOwnedByRun({ ...lease, release: { schemaVersion: 1, runRef: claim.runRef, attemptRef: claim.attemptRef,
       sessionRef, generation: GEN, releasedAt: T_END, eventId: 'e' } }, claim)).toBe(false);
+  });
+
+  it('the guards RUN-02/04/05 and the model barrier share (A.2 step 3b)', () => {
+    const hold = (session: Partial<RunGuardContext['session']>, lease: RunGuardContext['lease'] = 'owned') =>
+      claimHoldGuard({ ...CTX.session, ...session }, lease);
+    const busy = (detail: string) => ({ ok: false, reason: 'guard_failed', code: 'busy', detail });
+    expect(hold({})).toBeNull();
+    // The Session first (lifecycle, health, holder), then the Lease.
+    expect(hold({ usable: false, owned: false, archived: true }, 'missing')).toEqual(busy('the claim Session is archived'));
+    expect(hold({ usable: false, owned: false }, 'missing')).toEqual(busy('the claim Session is not available'));
+    expect(hold({ owned: false }, 'missing')).toEqual(busy('the claim Session is no longer occupied by this Run generation'));
+    expect(hold({}, 'missing')).toEqual(busy('the claim TaskLease is missing; a missing lease is not free'));
+    expect(hold({}, 'released')).toEqual(busy('the claim TaskLease was already released'));
+    expect(hold({}, 'other_task')).toEqual(busy('the claim TaskLease names another Task'));
+    expect(hold({}, 'other')).toEqual(busy('the claim TaskLease is held by another attempt'));
+
+    const auth = authOf(AUTHORIZED);
+    const forbidden = (detail: string) => ({ ok: false, reason: 'guard_failed', code: 'forbidden', detail });
+    const mismatch = forbidden('the entry permit does not match the current V2 entry binding');
+    expect(entryPermitGuard(auth, permitAt(1))).toBeNull();
+    expect(entryPermitGuard(auth, { ...permitAt(1), consumerId: 'consumer-2' })).toEqual(mismatch);
+    expect(entryPermitGuard(auth, permitAt(1, 2))).toEqual(mismatch);
+    expect(entryPermitGuard(auth, permitAt(2))).toEqual(mismatch);
+    expect(entryPermitGuard(auth, { ...permitAt(1), inputDigest: 'c'.repeat(64) })).toEqual(mismatch);
+    // The permit's own fields first, then the binding's Session generation against the permit claim.
+    const otherGeneration = { ...claim, generation: GEN + 1 };
+    expect(entryPermitGuard(auth, { ...permitAt(1), claim: otherGeneration }))
+      .toEqual(forbidden('the V2 entry binding session generation disagrees with the claim'));
+    expect(entryPermitGuard(auth, { ...permitAt(2), claim: otherGeneration })).toEqual(mismatch);
+
+    // The V2 binding as RUN-04/05 read it: one text for a V1, a pre-B2 and a never-bound Run.
+    expect(entryV2Binding(AUTHORIZED)).toEqual({ ok: true, next: auth, effects: [] });
+    const noV2 = (reason: TransitionRejectReason) =>
+      ({ ok: false, reason, code: 'forbidden', detail: 'the Run has no formal V2 entry authorization' });
+    expect(entryV2Binding({ ...RUNNING, executionAuthorization: { generation: 1, consumerId: 'c', phase: 'entered' } }))
+      .toEqual(noV2('guard_failed'));
+    const { executionAuthorization: _preB2, ...preB2 } = RUNNING;
+    expect(entryV2Binding(preB2)).toEqual(noV2('guard_failed'));
+    expect(entryV2Binding(CLAIMED)).toEqual(noV2('illegal'));
+
+    // The persisted claim against the permit claim, with RUN-04/05's text.
+    expect(permitClaimGuard(claim, permitAt(1))).toBeNull();
+    expect(permitClaimGuard({ ...claim, sessionRevision: GEN + 1 }, permitAt(1)))
+      .toEqual({ ok: false, reason: 'guard_failed', code: 'invalid', detail: 'the entry permit claim disagrees with the persisted claim' });
   });
 
   it('terminalOutcomeOf keeps terminalFact', () => {

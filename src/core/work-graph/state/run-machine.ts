@@ -506,17 +506,19 @@ export type RunGuardContext = {
    * the claim Session's Kernel mapping, which a history locator must match
    * (`execution-history-binding.ts:104`); `null` when not read. `archived`
    * says which half of `usable` failed, so RUN-02/04/05 keep today's two
-   * refusal texts (`execution-entry-service.ts` `sessionOccupancyProblem`);
-   * RUN-01 refuses with its own text and does not pass it.
+   * refusal texts (`claimHoldGuard`, formerly `sessionOccupancyProblem` in
+   * `execution-entry-service.ts`); RUN-01 refuses with its own text and does
+   * not pass it.
    */
   session: {
     usable: boolean; owned: boolean; kernel: { adapterId: string; kernelSessionId: string } | null; archived?: boolean;
   };
   /**
-   * The claim Lease in `leaseOwnershipProblem` order: missing, released, a
-   * Lease naming another Task than the event's claim (`other_task`, an
-   * addition: RUN-02 asks it before the persisted claim, so a prepared claim
-   * naming another Task keeps today's text), then the holder.
+   * The claim Lease in the order `claimHoldGuard` asks it (formerly
+   * `leaseOwnershipProblem` in `execution-entry-service.ts`): missing,
+   * released, a Lease naming another Task than the event's claim
+   * (`other_task`, an addition: RUN-02 asks it before the persisted claim, so
+   * a prepared claim naming another Task keeps today's text), then the holder.
    */
   lease: 'owned' | 'released' | 'other_task' | 'other' | 'missing';
   /**
@@ -681,8 +683,8 @@ function freshAdmissionRejected(rejection: CoreRejection): Rejected {
 }
 
 /**
- * `leaseOwnershipProblem` (`execution-entry-service.ts:1599-1612`): a missing Lease is never free;
- * then a released Lease, a Lease naming another Task, another holder.
+ * The claim Lease (formerly `leaseOwnershipProblem` in `execution-entry-service.ts`): a missing
+ * Lease is never free; then a released Lease, a Lease naming another Task, another holder.
  */
 function leaseGuard(lease: RunGuardContext['lease']): Rejected | null {
   switch (lease) {
@@ -695,14 +697,26 @@ function leaseGuard(lease: RunGuardContext['lease']): Rejected | null {
   }
 }
 
-/** `sessionOccupancyProblem` (`execution-entry-service.ts:1614-1623`): lifecycle, health, then the holder. */
-function sessionGuard(ctx: RunGuardContext): Rejected | null {
-  if (!ctx.session.usable) {
+/**
+ * The claim Session (formerly `sessionOccupancyProblem` in `execution-entry-service.ts`):
+ * lifecycle, health, then the holder.
+ */
+function sessionGuard(session: RunGuardContext['session']): Rejected | null {
+  if (!session.usable) {
     return reject('guard_failed', 'busy',
-      ctx.session.archived === true ? 'the claim Session is archived' : 'the claim Session is not available');
+      session.archived === true ? 'the claim Session is archived' : 'the claim Session is not available');
   }
-  if (!ctx.session.owned) return reject('guard_failed', 'busy', 'the claim Session is no longer occupied by this Run generation');
+  if (!session.owned) return reject('guard_failed', 'busy', 'the claim Session is no longer occupied by this Run generation');
   return null;
+}
+
+/**
+ * The claim Session, then the claim Lease, as RUN-02/04/05 ask them. The model
+ * barrier (`execution-entry-service.ts` `admitEnteredRun`) asks the same on an
+ * entered Run without a Run event, so the texts have one copy.
+ */
+export function claimHoldGuard(session: RunGuardContext['session'], lease: RunGuardContext['lease']): Rejected | null {
+  return sessionGuard(session) ?? leaseGuard(lease);
 }
 
 function fenceGuard(run: RunSnapshot): Rejected | null {
@@ -710,10 +724,25 @@ function fenceGuard(run: RunSnapshot): Rejected | null {
   return fence === null ? null : rejected(fence);
 }
 
+/** A RUN-02/04/05/07 event sent without the persisted Outbox claim. */
+function noPersistedClaim(kind: RunEvent['kind']): Rejected {
+  return reject('illegal', 'invalid', `${kind} requires the persisted DispatchOutbox claim`);
+}
+
 /** The event's claim against the persisted Outbox claim (`sameRef(outbox.claim, claim)`), with today's reason. */
 function persistedClaimGuard(ctx: RunGuardContext, claim: TaskClaim, kind: RunEvent['kind'], detail: string): Rejected | null {
-  if (ctx.persistedClaim === null) return reject('illegal', 'invalid', `${kind} requires the persisted DispatchOutbox claim`);
+  if (ctx.persistedClaim === null) return noPersistedClaim(kind);
   return sameRef(ctx.persistedClaim, claim) ? null : reject('guard_failed', 'invalid', detail);
+}
+
+/**
+ * RUN-04/05's persisted-claim guard: the entry permit's claim against the
+ * persisted Outbox claim. The model barrier (`execution-entry-service.ts`
+ * `admitEnteredRun`) asks the same on the Outbox it read.
+ */
+export function permitClaimGuard(persisted: TaskClaim, permit: RunEntryPermit): Rejected | null {
+  return sameRef(persisted, permit.claim) ? null
+    : reject('guard_failed', 'invalid', 'the entry permit claim disagrees with the persisted claim');
 }
 
 /**
@@ -742,6 +771,16 @@ function v2Binding(state: RunState, run: RunSnapshot): ExecutionAuthorizationV2 
   return reject(state.legacyV1 ? 'guard_failed' : 'illegal', 'forbidden', 'the Run has no formal V2 entry authorization');
 }
 
+/**
+ * `v2Binding` of a stored Run outside a Run event: the binding as `next`, or
+ * the same refusal. The model barrier (`execution-entry-service.ts`
+ * `admitEnteredRun`) asks it first, as RUN-04/05 ask it.
+ */
+export function entryV2Binding(run: RunSnapshot): Transition<ExecutionAuthorizationV2, never, never> {
+  const auth = v2Binding(runStateOf(run), run);
+  return isRejected(auth) ? auth : accept(auth);
+}
+
 function isRejected<T extends object>(value: T | Rejected): value is Rejected {
   return 'ok' in value && value.ok === false;
 }
@@ -751,7 +790,11 @@ function sameKernel(left: RunKernelBinding, right: RunKernelBinding): boolean {
     && left.runId === right.runId && left.turnId === right.turnId;
 }
 
-function permitMatches(auth: ExecutionAuthorizationV2, permit: RunEntryPermit): Rejected | null {
+/**
+ * The entry permit against the Run's V2 binding (RUN-04/05). The model barrier
+ * (`execution-entry-service.ts` `admitEnteredRun`) asks the same.
+ */
+export function entryPermitGuard(auth: ExecutionAuthorizationV2, permit: RunEntryPermit): Rejected | null {
   if (auth.consumerId !== permit.consumerId || auth.generation !== permit.entryGeneration
     || auth.revision !== permit.authorizationRevision || auth.inputDigest !== permit.inputDigest) {
     return reject('guard_failed', 'forbidden', 'the entry permit does not match the current V2 entry binding');
@@ -1025,10 +1068,8 @@ function onEntryAuthorized(
   if (fence !== null) return fence;
   const starting = startingClassOf(run);
   if (starting === 'not_starting') return reject('illegal', 'busy', 'the Run is not in a claimable starting state');
-  const session = sessionGuard(ctx);
-  if (session !== null) return session;
-  const lease = leaseGuard(ctx.lease);
-  if (lease !== null) return lease;
+  const held = claimHoldGuard(ctx.session, ctx.lease);
+  if (held !== null) return held;
   const persisted = persistedClaimGuard(ctx, event.claim, event.kind, 'the prepared claim disagrees with the persisted claim');
   if (persisted !== null) return persisted;
   const prepared = preparedBindingGuard(run, event.envelope);
@@ -1069,8 +1110,7 @@ function onEntryBegun(
   if (fence !== null) return fence;
   const starting = startingClassOf(run);
   if (starting === 'not_starting') return reject('illegal', 'busy', 'the Run is not in a beginable starting state');
-  const persisted = persistedClaimGuard(ctx, event.permit.claim, event.kind,
-    'the entry permit claim disagrees with the persisted claim');
+  const persisted = ctx.persistedClaim === null ? noPersistedClaim(event.kind) : permitClaimGuard(ctx.persistedClaim, event.permit);
   if (persisted !== null) return persisted;
   const auth = v2Binding(state, run);
   if (isRejected(auth)) return auth;
@@ -1086,12 +1126,10 @@ function onEntryBegun(
       return reject('guard_failed', 'busy', 'the Run entry is not in the authorized phase');
     default: return unreachable(starting, 'starting class');
   }
-  const permit = permitMatches(auth, event.permit);
+  const permit = entryPermitGuard(auth, event.permit);
   if (permit !== null) return permit;
-  const session = sessionGuard(ctx);
-  if (session !== null) return session;
-  const lease = leaseGuard(ctx.lease);
-  if (lease !== null) return lease;
+  const held = claimHoldGuard(ctx.session, ctx.lease);
+  if (held !== null) return held;
   if (run.inputBinding === undefined || run.inputBinding.inputDigest !== event.permit.inputDigest) {
     return reject('guard_failed', 'forbidden', 'the Run input binding disagrees with the entry permit');
   }
@@ -1112,8 +1150,7 @@ function onEntryBegun(
 function onEnteredObserved(
   state: RunState, run: RunSnapshot, event: Extract<RunEvent, { kind: 'entered_observed' }>, ctx: RunGuardContext,
 ): RunTransition {
-  const persisted = persistedClaimGuard(ctx, event.permit.claim, event.kind,
-    'the entry permit claim disagrees with the persisted claim');
+  const persisted = ctx.persistedClaim === null ? noPersistedClaim(event.kind) : permitClaimGuard(ctx.persistedClaim, event.permit);
   if (persisted !== null) return persisted;
   const auth = v2Binding(state, run);
   if (isRejected(auth)) return auth;
@@ -1122,12 +1159,10 @@ function onEnteredObserved(
   if (auth.phase !== 'entering') {
     return reject('illegal', 'busy', 'the Run entry is not in the entering phase');
   }
-  const permit = permitMatches(auth, event.permit);
+  const permit = entryPermitGuard(auth, event.permit);
   if (permit !== null) return permit;
-  const session = sessionGuard(ctx);
-  if (session !== null) return session;
-  const lease = leaseGuard(ctx.lease);
-  if (lease !== null) return lease;
+  const held = claimHoldGuard(ctx.session, ctx.lease);
+  if (held !== null) return held;
   if (auth.kernel === null || !sameKernel(auth.kernel, event.kernelSource)) {
     return reject('guard_failed', 'forbidden', 'the entered Kernel source disagrees with the begin binding');
   }
