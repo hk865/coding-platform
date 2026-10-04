@@ -28,10 +28,12 @@
  *    never fabricated.
  *
  * The write is decided by the pure Run machine (STATE-MACHINES-SPEC §6,
- * RUN-06 in `state/run-machine.ts`) through `execution-history-binding.ts`:
- * the receipt lookup still comes first, the execution read and the Run pin
- * check happen where they always did, and the next Run and the Kernel slot
- * change come from the machine's record and effect, never from a literal here.
+ * RUN-06 in `state/run-machine.ts`) through `execution-history-binding.ts`.
+ * This file keeps the request shape and scope checks before any store access,
+ * the receipt lookup first, and the execution read and the Run pin check where
+ * they always were (no Run row reads the caller's pin); the locator refusals
+ * past them, the next Run and the Kernel slot change come from the machine's
+ * decision, record and effect, never from a literal here.
  */
 import type { ActorRef } from '../../../contracts/command-event.js';
 import type { CoreCallContext, MaterialReader } from '../../../contracts/core/call-context.js';
@@ -416,19 +418,16 @@ export function createExecutionHistoryService(
 
         const sessionRef = outbox.claim.sessionRef;
 
-        // 5-6. Pure compile through RUN-06: fixed identity/start, monotone
-        //      watermark, write-once end and the ONE Kernel-slot change (owner
-        //      -> owner when this Run's fresh begin already holds the slot even
-        //      though the locator is still absent). The writer adds the
-        //      remaining guards for the records it read in this window; the
-        //      Attempt and the outbox are guarded only (ATT-03/ATT-25 write
-        //      nothing).
+        // 5-6. Pure compile through RUN-06, which reads the request's Kernel
+        //      identity and positions as the observed history: fixed
+        //      identity/start, monotone watermark, write-once end and the ONE
+        //      Kernel-slot change (owner -> owner when this Run's fresh begin
+        //      already holds the slot even though the locator is still absent).
+        //      The writer adds the remaining guards for the records it read in
+        //      this window; the Attempt and the outbox are guarded only
+        //      (ATT-03/ATT-25 write nothing).
         const compiled = compileExecutionHistoryBinding({
-          run, session, sessionRef, kernel: input.kernel,
-          startPosition: input.startPosition,
-          observedThroughPosition: input.observedThroughPosition,
-          endPosition: input.endPosition,
-          actor: isAutomationActor(actor) ? 'system' : 'human',
+          run, session, sessionRef, history: input, actor: isAutomationActor(actor) ? 'system' : 'human',
         });
         if (compiled.status !== 'compiled') return compiled;
         const { history, nextRun, runRecord, guards: runGuards, claim } = compiled.value;
