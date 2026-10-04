@@ -18,13 +18,13 @@ import type { RunExecutionHistoryV1 } from '../../contracts/core/execution-histo
 import type { ExecutionAuthorizationV2, RunRef, RuntimeEventV1 } from '../../contracts/dispatch.js';
 import { canonicalJson } from '../../contracts/fingerprint.js';
 import {
-  assertTranscriptExchangeIntegrity, createInitialRunState, projectTerminalTranscript,
-  reduceRunState, sessionRecordSchema, validateRunStateInvariants,
+  assertTranscriptExchangeIntegrity, projectTerminalTranscript, validateRunStateInvariants,
 } from '../../../vendor/coding-agent/dist/public-api.js';
-import type { RunState, SessionRecord as KernelSessionRecord } from '../../../vendor/coding-agent/dist/public-api.js';
+import type { RunState } from '../../../vendor/coding-agent/dist/public-api.js';
 import { isRunExecutionHistoryV1 } from '../work-graph/persistence/execution-history-codecs.js';
 import { createSessionHistoryCursorOwner } from './session-operations.js';
 import type { SessionHistoryEntry } from './session-operations.js';
+import { applyTurnEvents, decodeKernelEntry, reduceTurnFromStart, type DecodedKernelRecord } from './kernel-turn-facts.js';
 import type {
   KernelExecutionBinding, ObservedExecutionHistory, TaskResultObservation,
 } from '../work-graph/tasks/execution-entry-contracts.js';
@@ -70,7 +70,6 @@ type PendingTerminal = { endPosition: number; requestId: string; observation: Ta
  * observation, requestId and pinned revisions are kept so a later observe reuses
  * the SAME idempotency fingerprint and recovers the original receipt. */
 type PendingControlAck = { observation: ControlObservationV1; requestId: string; expected: VersionPin[] };
-type DecodedRecord = { position: number; record: KernelSessionRecord };
 
 function rejected(code: CoreRejection['code'], reason: string): CoreRejection {
   return { status: 'rejected', code, reason };
@@ -103,43 +102,6 @@ function mapRead(result: ReadResult<unknown>): CoreRejection {
   if (result.status === 'not_found') return rejected('not_found', 'the required execution fact was not found');
   if (result.status === 'not_ready') return rejected('incomplete', 'the required execution fact is not readable at the required watermark');
   return { status: 'rejected', code: result.code, reason: result.reason, ...(result.current === undefined ? {} : { current: result.current }) };
-}
-function decodeEntry(entry: SessionHistoryEntry): DecodedRecord | null {
-  const body: unknown = entry.body;
-  if (!isRecord(body) || body['encoding'] !== 'kernel_session_record_json' || typeof body['text'] !== 'string') return null;
-  let parsed: unknown;
-  try { parsed = JSON.parse(body['text']); } catch { return null; }
-  const result = sessionRecordSchema.safeParse(parsed);
-  if (!result.success) return null;
-  if (result.data.position !== entry.source.position || result.data.recordId !== entry.recordId
-    || result.data.sessionId !== entry.source.kernelSessionId) return null;
-  return { position: result.data.position, record: result.data };
-}
-function findTurnStart(records: readonly DecodedRecord[], kernel: KernelExecutionBinding): { run: Parameters<typeof createInitialRunState>[0]; position: number } | null {
-  for (const item of records) {
-    if (item.record.recordType !== 'turn.started') continue;
-    const payload = item.record.payload as unknown as { run?: Parameters<typeof createInitialRunState>[0] };
-    const run = payload.run;
-    if (run === undefined || run.runId !== kernel.runId || run.turn.turnId !== kernel.turnId) continue;
-    return { run, position: item.position };
-  }
-  return null;
-}
-function reduceFromStart(records: readonly DecodedRecord[], kernel: KernelExecutionBinding): RunState | null {
-  const start = findTurnStart(records, kernel);
-  if (start === null) return null;
-  return applyEvents(createInitialRunState(start.run), records, kernel, start.position);
-}
-function applyEvents(state: RunState, records: readonly DecodedRecord[], kernel: KernelExecutionBinding, afterPosition: number): RunState {
-  let next = state;
-  for (const item of records) {
-    if (item.position <= afterPosition) continue;
-    if (item.record.recordType !== 'agent.event') continue;
-    const event = item.record.payload.event;
-    if (event.meta.runId !== kernel.runId || event.meta.turnId !== kernel.turnId) continue;
-    next = reduceRunState(next, event);
-  }
-  return next;
 }
 function turnIsComplete(state: RunState): boolean {
   if (state.activeModelRequest !== null) return false;
@@ -205,7 +167,7 @@ const CONTROL_SOURCE_EVENT_TYPES: readonly string[] = [
  * the same Session is never retained.
  */
 function collectControlSources(
-  decoded: readonly DecodedRecord[], kernel: KernelExecutionBinding,
+  decoded: readonly DecodedKernelRecord[], kernel: KernelExecutionBinding,
 ): CachedControlSources {
   const sources: CachedControlSources = {};
   for (const item of decoded) {
@@ -236,7 +198,7 @@ function collectControlSources(
  * bounded to its fixed terminal window by the caller.
  */
 function controlSourceRecord(
-  decoded: readonly DecodedRecord[],
+  decoded: readonly DecodedKernelRecord[],
   cached: CachedControlSources | undefined,
   kernel: KernelExecutionBinding,
   kind: ControlAckKind,
@@ -484,7 +446,7 @@ export function createExecutionObservation(deps: ExecutionObservationDependencie
       const from = cached === undefined ? Math.max(0, locator.startPosition - 1) : cached.reducedThrough;
       // Read the frozen tail page by page; each page keeps the first page's
       // throughPosition so observed growth never widens this reconciliation.
-      const decoded: DecodedRecord[] = [];
+      const decoded: DecodedKernelRecord[] = [];
       let expected = from + 1;
       let cursor = from;
       // An ended Run only ever re-reads its fixed terminal window; a live Run
@@ -502,7 +464,7 @@ export function createExecutionObservation(deps: ExecutionObservationDependencie
         if (window.status !== 'ready') return mapRead(window);
         frozenThrough = window.value.throughPosition;
         for (const entry of window.value.entries) {
-          const item = decodeEntry(entry);
+          const item = decodeKernelEntry(entry);
           if (item === null) return rejected('unavailable', 'a raw history entry is damaged or not a Kernel Session record');
           if (item.position !== expected) return rejected('unavailable', 'the Kernel history positions are not contiguous');
           expected += 1;
@@ -517,11 +479,11 @@ export function createExecutionObservation(deps: ExecutionObservationDependencie
       let state: RunState;
       try {
         if (cached === undefined) {
-          const built = reduceFromStart(decoded, locator.kernel);
+          const built = reduceTurnFromStart(decoded, locator.kernel);
           if (built === null) return rejected('unavailable', 'the fixed turn.started record was not present at the locator start');
           state = built;
         } else {
-          state = applyEvents(cached.state, decoded, locator.kernel, cached.reducedThrough);
+          state = applyTurnEvents(cached.state, decoded, locator.kernel, cached.reducedThrough);
         }
         const invariants = validateRunStateInvariants(state);
         if (!invariants.ok) return rejected('unavailable', `the reduced Turn violates Kernel invariants: ${invariants.message}`);
