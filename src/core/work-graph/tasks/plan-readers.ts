@@ -19,7 +19,7 @@ import type {
 } from '../../../contracts/governance.js';
 import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
 import { seqOfCommitCursor } from '../../../contracts/ledger.js';
-import { revisionAssignments, type Phase, type PlanRevisionRef, type PlanRevisionSnapshot } from '../../../contracts/plan.js';
+import type { Phase, PlanRevisionRef, PlanRevisionSnapshot } from '../../../contracts/plan.js';
 import type { TaskReductionSnapshot } from '../../../contracts/reduction.js';
 import type { GoalPhaseRef, GoalPhaseSnapshot } from '../../../contracts/goal-phase.js';
 import type { RecordLookupPort, RecordLookupRequest } from '../../record-store/lookup-ports.js';
@@ -32,11 +32,12 @@ import type {
 } from '../../record-store/ports.js';
 import { decodeGoalSnapshot } from '../persistence/record-codecs.js';
 import { taskLeaseSnapshotProblem } from '../persistence/execution-entry-codecs.js';
+import type { FutureChangeTaskFactsV1 } from '../state/plan-machine.js';
 import type { VerifiedGovernance } from './plan-commit-compiler.js';
 import type { PlanProposal, PlanProposalRef } from './plan-contracts.js';
 import {
-  buildEffectiveTaskBasis, buildFrozenTaskDefinitions, frozenTaskDefinitionsAgree, isBasisUnsupported,
-  type BasisUnsupported, type FrozenTaskDefinition,
+  isBasisUnsupported, planTaskFacts, taskOriginVerdict, verifyBasisDelegation,
+  type FrozenTaskDefinition, type PlanTaskFacts,
 } from './plan-task-basis.js';
 import {
   PLAN_PROPOSAL_LOOKUP_INDEX,
@@ -804,137 +805,9 @@ function samePlanRevisionPointer(left: PlanRevisionRef | null, right: PlanRevisi
   if (left === null || right === null) return left === right;
   return planRevisionRefKey(left) === planRevisionRefKey(right);
 }
-function taskKey(aggregateType: 'TaskLease' | 'TaskReduction', goalRef: GoalRef, taskId: string): string {
+/** The record key of a Task's TaskLease / TaskReduction (also the key of its absence guard). */
+export function taskRecordRefKey(aggregateType: 'TaskLease' | 'TaskReduction', goalRef: GoalRef, taskId: string): string {
   return canonicalJson({ aggregateType, projectId: goalRef.projectId, goalId: goalRef.goalId, taskId } as unknown as JsonValue);
-}
-
-/** The per-Plan frozen definition index plus the per-Plan effective-basis
- * index. The reader builds each ONCE and reuses it, never re-scanning a Plan per
- * Task or per Run. */
-type PlanFactsEntry = {
-  plan: PlanRevisionSnapshot;
-  definitions: ReadonlyMap<string, FrozenTaskDefinition>;
-  basis: ReadonlyMap<string, PlanRevisionRef | BasisUnsupported>;
-};
-
-function planFactsEntry(plan: PlanRevisionSnapshot): PlanFactsEntry {
-  return {
-    plan,
-    definitions: buildFrozenTaskDefinitions({
-      tasks: plan.tasks,
-      assignments: revisionAssignments(plan),
-      inputRequirements: plan.schemaVersion === 2 ? plan.inputRequirements ?? [] : [],
-      obligations: plan.obligations,
-    }),
-    basis: buildEffectiveTaskBasis(plan),
-  };
-}
-
-type OriginVerdict =
-  | { status: 'accepted' }
-  | { status: 'excluded' }
-  | { status: 'unavailable'; reason: string };
-
-type BasisVerdict = { status: 'ok' } | { status: 'unavailable'; reason: string };
-
-/**
- * Verifies ONE Plan's declared basis for one Task. The basis is either the Plan
- * itself (an absolute source) or a same-Goal Plan, no later than the referrer,
- * present, defining the Task, agreeing on its frozen definition, and itself an
- * absolute source. It never walks a second hop, so a chained/degenerate basis is
- * an explicit `unavailable`, not a silent success.
- */
-function verifyBasisDelegation(input: {
-  referrer: PlanFactsEntry;
-  taskId: string;
-  index: ReadonlyMap<string, PlanFactsEntry>;
-  goalRef: GoalRef;
-}): BasisVerdict {
-  const { referrer, taskId } = input;
-  const basis = referrer.basis.get(taskId);
-  if (basis === undefined) {
-    return { status: 'unavailable', reason: `plan ${referrer.plan.planId} has no task ${taskId}` };
-  }
-  if (isBasisUnsupported(basis)) return { status: 'unavailable', reason: basis.reason };
-  if (planRevisionRefKey(basis) === planRevisionRefKey(referrer.plan.ref)) return { status: 'ok' };
-  const source = input.index.get(planRevisionRefKey(basis));
-  if (source === undefined) {
-    return { status: 'unavailable', reason: `basis source ${basis.planId} for task ${taskId} is missing` };
-  }
-  if (source.plan.ref.projectId !== input.goalRef.projectId
-    || source.plan.goalRef.goalId !== input.goalRef.goalId) {
-    return { status: 'unavailable', reason: `basis source ${basis.planId} for task ${taskId} belongs to another goal` };
-  }
-  if (source.plan.planRevision > referrer.plan.planRevision) {
-    return { status: 'unavailable', reason: `basis source ${basis.planId} for task ${taskId} is later than its referrer` };
-  }
-  const sourceDefinition = source.definitions.get(taskId);
-  const referrerDefinition = referrer.definitions.get(taskId);
-  if (sourceDefinition === undefined || referrerDefinition === undefined) {
-    return { status: 'unavailable', reason: `basis source ${basis.planId} does not define task ${taskId}` };
-  }
-  const agree = frozenTaskDefinitionsAgree({ left: sourceDefinition, right: referrerDefinition });
-  if (isBasisUnsupported(agree)) return { status: 'unavailable', reason: agree.reason };
-  if (!agree) {
-    return { status: 'unavailable',
-      reason: `basis source ${basis.planId} and referrer ${referrer.plan.planId} disagree on task ${taskId}` };
-  }
-  const sourceBasis = source.basis.get(taskId);
-  if (sourceBasis === undefined || isBasisUnsupported(sourceBasis)) {
-    return { status: 'unavailable', reason: `basis source ${basis.planId} has no effective basis for task ${taskId}` };
-  }
-  if (planRevisionRefKey(sourceBasis) !== planRevisionRefKey(source.plan.ref)) {
-    return { status: 'unavailable', reason: `basis source ${basis.planId} is not an absolute source for task ${taskId}` };
-  }
-  return { status: 'ok' };
-}
-
-/**
- * Whether one Run/Reduction fact pinned to `origin` may describe `taskId` of
- * the selected Plan. Accepted only when the origin is the same Goal, the Task's
- * EFFECTIVE basis is identical, both the origin's and the selected Plan's
- * declared basis sources verify, the frozen execution definition agrees with
- * the selected Plan, and the origin is not a later revision. A basis match with
- * a differing definition is corruption and must be `unavailable`, never absent.
- */
-function originVerdict(input: {
-  origin: PlanFactsEntry;
-  selected: PlanFactsEntry;
-  selectedBasis: PlanRevisionRef;
-  selectedDefinition: FrozenTaskDefinition;
-  taskId: string;
-  index: ReadonlyMap<string, PlanFactsEntry>;
-  goalRef: GoalRef;
-}): OriginVerdict {
-  const { origin } = input;
-  if (origin.plan.ref.projectId !== input.goalRef.projectId || origin.plan.goalRef.projectId !== input.goalRef.projectId) {
-    return { status: 'unavailable', reason: `origin plan ${origin.plan.planId} is outside the requested project` };
-  }
-  if (origin.plan.goalRef.goalId !== input.goalRef.goalId
-    || origin.plan.goalRef.goalId !== input.selected.plan.goalRef.goalId) {
-    return { status: 'unavailable', reason: `origin plan ${origin.plan.planId} belongs to another goal` };
-  }
-  const originBasis = origin.basis.get(input.taskId);
-  if (originBasis === undefined) {
-    return { status: 'unavailable', reason: `origin plan ${origin.plan.planId} has no task ${input.taskId}` };
-  }
-  if (isBasisUnsupported(originBasis)) return { status: 'unavailable', reason: originBasis.reason };
-  if (planRevisionRefKey(originBasis) !== planRevisionRefKey(input.selectedBasis)) return { status: 'excluded' };
-  const originChain = verifyBasisDelegation({ referrer: origin, taskId: input.taskId,
-    index: input.index, goalRef: input.goalRef });
-  if (originChain.status === 'unavailable') return originChain;
-  const originDefinition = origin.definitions.get(input.taskId);
-  if (originDefinition === undefined) {
-    return { status: 'unavailable', reason: `origin plan ${origin.plan.planId} does not define task ${input.taskId}` };
-  }
-  const agree = frozenTaskDefinitionsAgree({ left: originDefinition, right: input.selectedDefinition });
-  if (isBasisUnsupported(agree)) return { status: 'unavailable', reason: agree.reason };
-  if (!agree) {
-    return { status: 'unavailable',
-      reason: `origin plan ${origin.plan.planId} shares the basis for task ${input.taskId} but its frozen definition differs` };
-  }
-  if (origin.plan.planRevision > input.selected.plan.planRevision) return { status: 'excluded' };
-  return { status: 'accepted' };
 }
 
 /**
@@ -947,8 +820,8 @@ function projectLease(input: {
   lease: TaskLeaseSnapshot | null;
   taskId: string;
   runById: ReadonlyMap<string, RunSnapshot>;
-  index: ReadonlyMap<string, PlanFactsEntry>;
-  selected: PlanFactsEntry;
+  index: ReadonlyMap<string, PlanTaskFacts>;
+  selected: PlanTaskFacts;
   selectedBasis: PlanRevisionRef;
   selectedDefinition: FrozenTaskDefinition;
   goalRef: GoalRef;
@@ -969,7 +842,7 @@ function projectLease(input: {
   if (entry === undefined) {
     return { status: 'ok', value: { status: 'leased', holderRunId: input.lease.holderRunId } };
   }
-  const verdict = originVerdict({ origin: entry, selected: input.selected, selectedBasis: input.selectedBasis,
+  const verdict = taskOriginVerdict({ origin: entry, selected: input.selected, selectedBasis: input.selectedBasis,
     selectedDefinition: input.selectedDefinition, taskId: input.taskId, index: input.index, goalRef: input.goalRef });
   if (verdict.status === 'unavailable') return { status: 'unavailable', reason: verdict.reason };
   if (verdict.status === 'accepted') return { status: 'ok', value: { status: 'leased', holderRunId: input.lease.holderRunId } };
@@ -1005,7 +878,7 @@ export async function readCanonicalTaskFacts(
   const directed = taskId !== undefined;
   const selectedTasks = directed ? plan.tasks.filter((task) => task.taskId === taskId) : plan.tasks;
   const selectedTaskIds = new Set(selectedTasks.map((task) => task.taskId));
-  const selectedFacts = planFactsEntry(plan);
+  const selectedFacts = planTaskFacts(plan);
   const requiredBasisSources = new Map<string, PlanRevisionRef>();
   for (const task of selectedTasks) {
     const basis = selectedFacts.basis.get(task.taskId);
@@ -1014,8 +887,8 @@ export async function readCanonicalTaskFacts(
       requiredBasisSources.set(planRevisionRefKey(basis), basis);
     }
   }
-  const leaseKeys = selectedTasks.map((task) => taskKey('TaskLease', goalRef, task.taskId));
-  const reductionKeys = selectedTasks.map((task) => taskKey('TaskReduction', goalRef, task.taskId));
+  const leaseKeys = selectedTasks.map((task) => taskRecordRefKey('TaskLease', goalRef, task.taskId));
+  const reductionKeys = selectedTasks.map((task) => taskRecordRefKey('TaskReduction', goalRef, task.taskId));
   for (let attempt = 0; attempt < WINDOW_MAX_ATTEMPTS; attempt += 1) {
     const found = taskId !== undefined
       ? await readLookupKeys(records, RUN_BY_TASK_INDEX, [goalRef.projectId, goalRef.goalId, taskId])
@@ -1055,8 +928,8 @@ export async function readCanonicalTaskFacts(
     const leaseByTask = new Map<string, TaskLeaseSnapshot>();
     const reductionByTask = new Map<string, TaskReductionSnapshot>();
     for (const task of selectedTasks) {
-      const leaseKey = taskKey('TaskLease', goalRef, task.taskId);
-      const reductionKey = taskKey('TaskReduction', goalRef, task.taskId);
+      const leaseKey = taskRecordRefKey('TaskLease', goalRef, task.taskId);
+      const reductionKey = taskRecordRefKey('TaskReduction', goalRef, task.taskId);
       const leaseRecord = present.get(leaseKey);
       const reductionRecord = present.get(reductionKey);
       guards.push({ refKey: leaseKey, expectedRevision: leaseRecord === undefined ? null : leaseRecord.revision });
@@ -1079,12 +952,12 @@ export async function readCanonicalTaskFacts(
     const combinedRefs = new Map(factOriginRefs);
     for (const [key, ref] of requiredBasisSources) combinedRefs.set(key, ref);
     combinedRefs.delete(selectedKey);
-    const index = new Map<string, PlanFactsEntry>([[selectedKey, selectedFacts]]);
+    const index = new Map<string, PlanTaskFacts>([[selectedKey, selectedFacts]]);
     if (combinedRefs.size > 0) {
       const origins = await readOriginPlans(records, [...combinedRefs.values()]);
       if (origins.status !== 'ready') return origins;
       if (!sameCursor(read.value.readThrough, origins.value.readThrough)) continue;
-      for (const [key, originPlan] of origins.value.plansByRefKey) index.set(key, planFactsEntry(originPlan));
+      for (const [key, originPlan] of origins.value.plansByRefKey) index.set(key, planTaskFacts(originPlan));
     }
     // A declared basis source is a hard dependency of the selected definition.
     for (const [key, ref] of requiredBasisSources) {
@@ -1115,7 +988,7 @@ export async function readCanonicalTaskFacts(
       for (const candidate of runByTask.get(task.taskId) ?? []) {
         const entry = index.get(planRevisionRefKey(candidate.planRef));
         if (entry === undefined) { unresolvable = true; continue; }
-        const verdict = originVerdict({ origin: entry, selected: selectedFacts, selectedBasis,
+        const verdict = taskOriginVerdict({ origin: entry, selected: selectedFacts, selectedBasis,
           selectedDefinition, taskId: task.taskId, index, goalRef });
         if (verdict.status === 'unavailable') return unavailable(verdict.reason);
         if (verdict.status === 'excluded') continue;
@@ -1130,7 +1003,7 @@ export async function readCanonicalTaskFacts(
         if (entry === undefined) {
           if (run === null) unresolvable = true;
         } else {
-          const verdict = originVerdict({ origin: entry, selected: selectedFacts, selectedBasis,
+          const verdict = taskOriginVerdict({ origin: entry, selected: selectedFacts, selectedBasis,
             selectedDefinition, taskId: task.taskId, index, goalRef });
           if (verdict.status === 'unavailable') return unavailable(verdict.reason);
           if (verdict.status === 'accepted' && reduction.taskKind === task.taskKind
@@ -1221,18 +1094,22 @@ export async function readGoalPhase(
 // --------------------------------------------------------------------------
 
 /**
- * Directed result for the tasks a future-change candidate touches. The future
- * check only needs EXACT ABSENCE guards plus the read watermark used to prove
- * it; it does NOT assemble a full CanonicalTaskState map. Any existing Run /
- * Lease / Reduction trace is a specific rejection. It never requires whole
- * ledger readThrough equality: the directed RUN_BY_TASK index plus exact
- * Lease/Reduction reads close the race at the LAST commit with their guards.
+ * Directed facts for the tasks a future-change candidate touches (W16 guard 7):
+ * per Task, this Goal's Runs of it, its TaskLease and its TaskReduction, one
+ * entry per Task in `taskIds` order. The untraced rule judges them
+ * (`futureChangeTraceProblem`, `state/plan-machine.ts`) in this read's order:
+ * every Run before any Lease or Reduction, then per Task its Lease before its
+ * Reduction. The rule refuses on the first trace, so the read stops there, as
+ * it always did: the facts after it are not decoded and read as absent (the
+ * adoption is refused, they are never used). It does NOT assemble a full
+ * CanonicalTaskState map and never requires whole ledger readThrough equality:
+ * the directed RUN_BY_TASK index plus exact Lease/Reduction reads close the
+ * race at the LAST commit with the Lease ∅ / Reduction ∅ guards the plan
+ * machine names for the adoption.
  */
 export type FutureChangeTaskFacts = {
   goalRef: GoalRef;
-  taskIds: readonly string[];
-  guards: readonly RecordGuard[];
-  readThrough: CommitCursor;
+  tasks: readonly FutureChangeTaskFactsV1[];
 };
 
 export async function readFutureChangeTaskFacts(
@@ -1245,7 +1122,10 @@ export async function readFutureChangeTaskFacts(
     return { status: 'rejected', code: 'invalid', reason: 'the source plan does not belong to the requested goal' };
   }
   const uniqueTaskIds = [...new Set(taskIds)];
-  const guards: RecordGuard[] = [];
+  const facts = new Map(uniqueTaskIds.map((taskId) => [taskId,
+    { taskId, runs: [] as RunSnapshot[], lease: null as TaskLeaseSnapshot | null, reduction: null as TaskReductionSnapshot | null }]));
+  const ready = (): { status: 'ready'; value: FutureChangeTaskFacts } =>
+    ({ status: 'ready', value: { goalRef, tasks: uniqueTaskIds.map((taskId) => facts.get(taskId)!) } });
   let watermark: CommitCursor | null = null;
   const runKeys: string[] = [];
   for (const taskId of uniqueTaskIds) {
@@ -1254,8 +1134,8 @@ export async function readFutureChangeTaskFacts(
     watermark = laterCursor(watermark, found.readThrough);
     runKeys.push(...found.refKeys);
   }
-  const leaseKeys = uniqueTaskIds.map((taskId) => taskKey('TaskLease', goalRef, taskId));
-  const reductionKeys = uniqueTaskIds.map((taskId) => taskKey('TaskReduction', goalRef, taskId));
+  const leaseKeys = uniqueTaskIds.map((taskId) => taskRecordRefKey('TaskLease', goalRef, taskId));
+  const reductionKeys = uniqueTaskIds.map((taskId) => taskRecordRefKey('TaskReduction', goalRef, taskId));
   const read = await records.readMany(uniqueKeys([...runKeys, ...leaseKeys, ...reductionKeys]));
   if (read.status !== 'ready') {
     if (read.code === 'unsupported') return incomplete(`task-state record schemas are not registered: ${read.reason}`);
@@ -1265,39 +1145,39 @@ export async function readFutureChangeTaskFacts(
   watermark = laterCursor(watermark, read.value.readThrough);
   const present = new Map<string, EncodedRecord>();
   for (const record of read.value.records) present.set(record.refKey, record);
-  const taskIdSet = new Set(uniqueTaskIds);
   for (const key of uniqueKeys(runKeys)) {
     const record = present.get(key);
     if (record === undefined) return unavailable(`Run candidate ${key} has no canonical record`);
     const run = parseRun(record.json);
     if (run === null) return unavailable(`Run record ${key} is not decodable`);
     if (run.ref.projectId !== goalRef.projectId || run.ref.goalId !== goalRef.goalId) continue;
-    if (!taskIdSet.has(run.task.taskId)) continue;
-    return { status: 'rejected', code: 'revision_conflict',
-      reason: `task ${run.task.taskId} already has a Run and is no longer a future task` };
+    const entry = facts.get(run.task.taskId);
+    if (entry === undefined) continue;
+    // The first trace: the untraced rule refuses on it.
+    entry.runs.push(run);
+    return ready();
   }
   for (const taskId of uniqueTaskIds) {
-    const leaseKey = taskKey('TaskLease', goalRef, taskId);
-    const reductionKey = taskKey('TaskReduction', goalRef, taskId);
+    const entry = facts.get(taskId)!;
+    const leaseKey = taskRecordRefKey('TaskLease', goalRef, taskId);
+    const reductionKey = taskRecordRefKey('TaskReduction', goalRef, taskId);
     const leaseRecord = present.get(leaseKey);
     if (leaseRecord !== undefined) {
       const lease = parseLease(leaseRecord.json);
       if (lease === null) return unavailable(`TaskLease ${leaseKey} is not decodable`);
-      return { status: 'rejected', code: 'revision_conflict',
-        reason: `task ${taskId} already holds a TaskLease and is no longer a future task` };
+      entry.lease = lease;
+      return ready();
     }
-    guards.push({ refKey: leaseKey, expectedRevision: null });
     const reductionRecord = present.get(reductionKey);
     if (reductionRecord !== undefined) {
       const reduction = parseReduction(reductionRecord.json);
       if (reduction === null) return unavailable(`TaskReduction ${reductionKey} is not decodable`);
-      return { status: 'rejected', code: 'revision_conflict',
-        reason: `task ${taskId} already has a formal reduction and is no longer a future task` };
+      entry.reduction = reduction;
+      return ready();
     }
-    guards.push({ refKey: reductionKey, expectedRevision: null });
   }
   if (watermark === null) return incomplete('the ledger has no readable watermark for future-change facts');
-  return { status: 'ready', value: { goalRef, taskIds: uniqueTaskIds, guards, readThrough: watermark } };
+  return ready();
 }
 
 /** The origin Plans a basis comparison actually needs. */

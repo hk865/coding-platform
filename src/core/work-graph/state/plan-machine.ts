@@ -14,9 +14,13 @@
  * the draft validators that live in `tasks/plan-validation.ts` (this directory
  * may not import them, §14.4) and hands their results in through
  * `PlanProposalGuardContext`. The checks run in today's service order, so the
- * first failing guard returns today's CoreError (§1.2). Read failures
- * (not_found/unavailable/corrupt of a record the service needed) stay with the
- * service, as do the input-shape checks it makes before the receipt lookup.
+ * first failing guard returns today's CoreError (§1.2). After each read the
+ * owner asks `planProposalProblem` with the facts read so far (an unread fact
+ * holds), so a refusal stops its reads where they always stopped; the
+ * accepted transition then names the records, the event and the CAS guards of
+ * the one commit. Read failures (not_found/unavailable/corrupt of a record the
+ * service needed) stay with the service, as do the input-shape checks it makes
+ * before the receipt lookup.
  *
  * Step 2 (§15.2) implements today's results. Not yet wired, flipped in step 5:
  * the Goal `cancelled` guard (D-9, step 5.5); the C7 `affectedTaskIds` shape
@@ -30,6 +34,9 @@
  * directory may not import. `PlanProposalRecord` below is the same shape built
  * from `src/contracts` types only; tests/state/plan-machine.test.ts asserts the
  * two types are identical.
+ *
+ * The `plan-service.ts`, `plan-commit-compiler.ts` and `plan-readers.ts` line
+ * references below cite the pre-step-3 worktree (2026-10-02, as the spec does).
  */
 import type { ArtifactRef } from '../../../contracts/artifact.js';
 import type { ControlIntentSnapshotV1 } from '../../../contracts/control-intent.js';
@@ -47,7 +54,7 @@ import type { TaskReductionSnapshot } from '../../../contracts/reduction.js';
 import type { ReworkActorClass } from '../../../contracts/task-requeue.js';
 import { runUnresolvedBlocker } from './run-machine.js';
 import { reworkFenceOf } from './task-failure.js';
-import { accept, reject, rejected, unreachable, type Transition } from './transition.js';
+import { accept, reject, rejected, unreachable, type Rejected, type Transition } from './transition.js';
 
 // --------------------------------------------------------------------------
 // Persisted record (structurally identical to tasks/plan-contracts.ts:28-50)
@@ -84,7 +91,7 @@ export type PlanProposalRecord = CandidatePlanProposal | LegacyPlanProposal;
 // --------------------------------------------------------------------------
 
 /**
- * PLAN-01..03: a new `candidate@1` (today `plan-service.ts:965-967` and
+ * PLAN-01..03: a new `candidate@1` (pre-step-3 `plan-service.ts:965-967` and
  * `:1974-1977`). Key order matches today's record bytes; `submittedBy` is
  * present only on an Agent candidate.
  */
@@ -103,7 +110,7 @@ export function newCandidateProposal(input: {
   return input.submittedBy === null ? candidate : { ...candidate, submittedBy: input.submittedBy };
 }
 
-/** PLAN-04/05: the accepted candidate, revision + 1 (today `plan-commit-compiler.ts:145-149,294-298`). */
+/** PLAN-04/05: the accepted candidate, revision + 1 (pre-step-3 `plan-commit-compiler.ts:145-149,294-298`). */
 export function acceptProposalRecord(proposal: CandidatePlanProposal): CandidatePlanProposal {
   return { ...proposal, revision: proposal.revision + 1, status: 'accepted' };
 }
@@ -344,10 +351,12 @@ export type TracedTaskFactsV1 = FutureChangeTaskFactsV1 & {
 };
 
 /**
- * The untraced rule (§3.3; `plan-readers.ts:1269-1297`) for the Tasks whose
- * execution definition changes or that are added (`changedTaskIds ∪
- * addedTaskIds`): none may have a Run, a TaskLease or a TaskReduction. Today's
- * order: every Task's Runs first, then each Task's Lease and Reduction.
+ * The untraced rule (§3.3; pre-step-3 inside the reader, `plan-readers.ts:1269-1297`)
+ * for the Tasks whose execution definition changes or that are added
+ * (`changedTaskIds ∪ addedTaskIds`): none may have a Run, a TaskLease or a
+ * TaskReduction. Today's order: every Task's Runs first, then each Task's Lease
+ * and Reduction (`readFutureChangeTaskFacts` reads them in that order and stops
+ * at the first trace).
  */
 export function futureChangeTraceProblem(facts: readonly FutureChangeTaskFactsV1[]): PlanGuardProblem | null {
   for (const task of facts) {
@@ -532,7 +541,90 @@ function fenceOf(task: Pick<TracedTaskFactsV1, 'selectedRun' | 'pointerIntent'>)
 }
 
 // --------------------------------------------------------------------------
-// Shared guards (each returns today's rejection, or null)
+// Facts read so far (the owner asks after each read, A.2 step 3)
+// --------------------------------------------------------------------------
+
+/**
+ * The facts the owner has read so far in one call. An absent (`undefined`)
+ * entry is not read yet: it holds, and every guard after it in today's order
+ * waits for it, so `planProposalProblem` stops the owner's reads where today's
+ * service stopped. `null` keeps its `PlanProposalGuardContext` meaning (not
+ * read for this event); the complete context is one of these.
+ */
+export type PlanProposalReadFacts = {
+  goal?: PlanProposalGuardContext['goal'];
+  goalInWorkspace?: boolean;
+  pinsAgree?: boolean;
+  agentAdmission?: 'ok' | CoreRejection | null;
+  source?: PlanSourceFacts | null;
+  initial?: Partial<InitialAdoptionFacts> | null;
+  future?: Partial<FutureAdoptionFacts> | null;
+};
+
+type RecordedGuardEvent = Omit<Extract<PlanProposalEvent, { type: 'proposal_recorded' }>, 'issues'>;
+type AcceptedEvent = Extract<PlanProposalEvent, { type: 'proposal_accepted' }>;
+
+/** What the guards read of an event: a recorded candidate's `issues` are diagnostics no guard reads (PLAN-01). */
+export type PlanProposalGuardEvent = RecordedGuardEvent | AcceptedEvent;
+
+/** A guard's fact is not read yet: it holds, and the guards after it wait. */
+const UNREAD = 'unread';
+
+/** One guard: today's refusal, `null` (holds) or `UNREAD`. */
+type GuardStep = Rejected | null | typeof UNREAD;
+
+/** A candidate every PLAN-04/05 guard admits, with what its one commit names. */
+type AdmittedAdoption =
+  | { path: 'initial'; proposal: CandidatePlanProposal; target: PlanRevisionRef }
+  | {
+    path: 'future'; proposal: CandidatePlanProposal; target: PlanRevisionRef; source: PlanSourceFacts;
+    changedTaskIds: readonly string[]; addedTaskIds: readonly string[];
+    /** `changedTaskIds ∪ addedTaskIds`, each once. */
+    touchedTaskIds: readonly string[];
+    pinnedPolicy: boolean;
+  };
+
+type AcceptStep = Rejected | typeof UNREAD | AdmittedAdoption;
+
+function isAdmitted(step: AcceptStep): step is AdmittedAdoption {
+  return typeof step === 'object' && 'path' in step;
+}
+
+/**
+ * PLAN-01..05 over the facts read so far: today's refusal, or `null` while
+ * every guard whose facts are read holds. The owner asks after each read, so
+ * a refusal stops its reads where today's service stopped; then
+ * `transitionPlanProposal` re-judges with the complete context and names the
+ * commit. `state` is `undefined` while the proposal is not read (an Agent
+ * adoption judges its decisionRefs and fresh admission first); a proposal
+ * write passes `null`: its absence is the commit's CAS ∅ guard, never a read.
+ */
+export function planProposalProblem(
+  state: PlanProposalMachineState | undefined,
+  event: PlanProposalGuardEvent,
+  facts: PlanProposalReadFacts,
+): Rejected | null {
+  switch (event.type) {
+    case 'proposal_recorded': {
+      const step = recordedStep(state, event, facts);
+      return step === UNREAD ? null : step;
+    }
+    case 'proposal_accepted': {
+      const step = acceptedStep(state, event, facts);
+      return step === UNREAD || isAdmitted(step) ? null : step;
+    }
+    default:
+      return unreachable(event, 'plan proposal guard event');
+  }
+}
+
+/** `transitionPlanProposal` always has every fact; an unread one is a broken caller. */
+function incompleteFacts(): Rejected {
+  return reject('illegal', 'invalid', 'the plan proposal guard context is incomplete');
+}
+
+// --------------------------------------------------------------------------
+// Shared guards (each returns today's rejection, null, or UNREAD)
 // --------------------------------------------------------------------------
 
 function refKey(ref: object): string {
@@ -546,20 +638,32 @@ function samePlanPointer(left: PlanRevisionRef | null, right: PlanRevisionRef | 
 }
 
 /** A forwarded read/admission verdict keeps its own code; an old basis is `stale`. */
-function verdictProblem(verdict: 'ok' | CoreRejection): PlanProposalTransition | null {
+function verdictStep(verdict: 'ok' | CoreRejection | undefined): GuardStep {
+  if (verdict === undefined) return UNREAD;
   return verdict === 'ok' ? null : rejected(verdict);
 }
 
 /** The fresh Agent admission runs before any proposal/Goal read. */
-function agentAdmissionProblem(ctx: PlanProposalGuardContext): PlanProposalTransition | null {
-  if (ctx.agentAdmission === null) {
+function agentAdmissionStep(facts: PlanProposalReadFacts): GuardStep {
+  if (facts.agentAdmission === undefined) return UNREAD;
+  if (facts.agentAdmission === null) {
     return reject('illegal', 'invalid', 'an Agent plan write requires the fresh authorizePlanWrite verdict');
   }
-  return verdictProblem(ctx.agentAdmission);
+  return verdictStep(facts.agentAdmission);
 }
 
-/** `planAdmissionRejection` (`plan-service.ts:215-223`). */
-function planAdmissionProblem(label: string, issues: readonly PlanValidationError[]): PlanProposalTransition {
+/** `readGoalScope` workspace + pin comparison (propose :955-961, :1941-1950; apply `validateProposalScope`, :1644-1666). */
+function scopeStep(facts: PlanProposalReadFacts, outsideWorkspace: string): GuardStep {
+  if (facts.goalInWorkspace === undefined || facts.pinsAgree === undefined) return UNREAD;
+  if (!facts.goalInWorkspace) return reject('guard_failed', 'forbidden', outsideWorkspace);
+  if (!facts.pinsAgree) {
+    return reject('stale', 'revision_conflict', 'the supplied version pins do not match the versions read in this call');
+  }
+  return null;
+}
+
+/** The service's `planAdmissionRejection` mapping (`plan-service.ts:215-223`), now only here. */
+function planAdmissionProblem(label: string, issues: readonly PlanValidationError[]): Rejected {
   const rendered = `${label}: ${issues.map((issue) => `${issue.path}: ${issue.message}`).join('; ')}`;
   if (issues.some((issue) => issue.code === 'unsupported_execution_change')) return reject('guard_failed', 'unsupported', rendered);
   const structural = issues.some((issue) => issue.code === 'dag_cycle' || issue.code === 'self_dependency'
@@ -567,20 +671,28 @@ function planAdmissionProblem(label: string, issues: readonly PlanValidationErro
   return reject('guard_failed', structural ? 'invalid' : 'incomplete', rendered);
 }
 
-/** validatePlanDraft → validatePlanAssignments → planPhaseGuardReasons (`:1180-1185`, `:1762-1767`). */
-function draftAdmissionProblem(label: string, facts: PlanDraftAdmissionFacts): PlanProposalTransition | null {
+/**
+ * validatePlanDraft → validatePlanAssignments → planPhaseGuardReasons
+ * (`:1180-1185`, `:1762-1767`); the owner runs each validator only after the
+ * one before it holds.
+ */
+function draftAdmissionStep(label: string, facts: Partial<PlanDraftAdmissionFacts>): GuardStep {
+  if (facts.draftIssues === undefined) return UNREAD;
   if (facts.draftIssues.length > 0) return planAdmissionProblem(label, facts.draftIssues);
+  if (facts.assignmentReasons === undefined) return UNREAD;
   if (facts.assignmentReasons.length > 0) {
     return reject('guard_failed', 'incomplete', `${label}: ${facts.assignmentReasons.join('; ')}`);
   }
+  if (facts.phaseReasons === undefined) return UNREAD;
   if (facts.phaseReasons.length > 0) return reject('guard_failed', 'incomplete', `${label}: ${facts.phaseReasons.join('; ')}`);
   return null;
 }
 
-function first(...checks: ReadonlyArray<() => PlanProposalTransition | null>): PlanProposalTransition | null {
-  for (const check of checks) {
-    const problem = check();
-    if (problem !== null) return problem;
+/** The first refusal, or `UNREAD` at the first guard whose fact is not read yet. */
+function chain(...steps: ReadonlyArray<() => GuardStep>): GuardStep {
+  for (const step of steps) {
+    const result = step();
+    if (result !== null) return result;
   }
   return null;
 }
@@ -599,65 +711,56 @@ function guard(value: PlanCommitGuard): PlanProposalEffect {
  * `basedOn` (GAP-14): a candidate may be stale the moment it is recorded
  * (`W1-future-plan.test.ts:471-473`).
  */
-function onProposalRecorded(
-  state: PlanProposalMachineState,
-  event: Extract<PlanProposalEvent, { type: 'proposal_recorded' }>,
-  ctx: PlanProposalGuardContext,
-): PlanProposalTransition {
+function recordedStep(
+  state: PlanProposalMachineState | undefined,
+  event: RecordedGuardEvent,
+  facts: PlanProposalReadFacts,
+): GuardStep {
   // :1029 — the shared entry check of every writer.
   if (event.draft.goalId !== event.goalRef.goalId) {
     return reject('illegal', 'invalid', 'the draft goalId does not match the GoalRef');
   }
-  let problem: PlanProposalTransition | null;
-  /** The writer's own CAS guards: `before` the Goal scope guards, `after` them (the source Plan). */
-  let writerGuards: { before: PlanCommitGuard[]; after: PlanCommitGuard[] };
+  let problem: GuardStep;
   switch (event.writer) {
     case 'host':
-      problem = first(
+      problem = chain(
         () => hostProvenanceProblem(event),
         // :955-961
-        () => recordScopeProblem(ctx),
+        () => scopeStep(facts, 'the goal does not belong to the requested workspace'),
       );
-      writerGuards = { before: [], after: [] };
       break;
     case 'initial_answer':
-      problem = first(
+      problem = chain(
         // PLAN-03: the answer-derived candidate is an initial plan (:1331).
         () => event.basedOn !== null
           ? reject('illegal', 'invalid', 'an initial-plan answer candidate is never based on a plan') : null,
         () => hostProvenanceProblem(event),
         // :955-961
-        () => recordScopeProblem(ctx),
+        () => scopeStep(facts, 'the goal does not belong to the requested workspace'),
       );
-      // :1325-1329
-      writerGuards = { before: [{ target: 'answer_facts' }], after: [] };
       break;
     case 'agent':
-      problem = first(
+      problem = chain(
+        // :1930-1936 — the fresh admission comes first; its provenance is `submittedBy`.
+        () => agentAdmissionStep(facts),
         () => event.submittedBy === null
           ? reject('illegal', 'invalid', 'an Agent proposal requires the admitted submission provenance') : null,
-        // :1930-1936
-        () => agentAdmissionProblem(ctx),
         // :1941-1950
-        () => recordScopeProblem(ctx),
+        () => scopeStep(facts, 'the goal does not belong to the requested workspace'),
         // :1954-1958
         () => event.draft.schemaVersion !== 2
           ? reject('guard_failed', 'unsupported', 'an Agent proposal requires a schemaVersion 2 future draft') : null,
         () => event.basedOn === null
           ? reject('guard_failed', 'forbidden', 'an Agent proposal must be based on an accepted source plan') : null,
         // :1959-1970
-        () => agentSourceProblem(event, ctx),
+        () => agentSourceStep(event, facts),
       );
-      // :1985-1992 — the admission guards first, the source Plan @1 after the scope (non-null once its guard passed).
-      writerGuards = { before: [{ target: 'agent_admission' }],
-        after: ctx.source === null ? [] : [{ target: 'plan_revision', ref: ctx.source.ref, expectedRevision: 1 }] };
       break;
     default:
       return unreachable(event.writer, 'plan proposal writer');
   }
   if (problem !== null) return problem;
-  const candidate = newCandidateProposal({ ref: event.ref, goalRef: event.goalRef, basedOn: event.basedOn,
-    draft: event.draft, reason: event.reason, issues: event.issues, submittedBy: event.submittedBy });
+  if (state === undefined) return UNREAD;
   // The proposalId is derived from the request id (:269-271, :1836-1839). The
   // receipt lookup runs first (:942-951, :1921-1925); a record found after it
   // was committed in between. Today the store replays a same-identity commit
@@ -666,10 +769,43 @@ function onProposalRecorded(
   // receipt (replay, or `idempotency_conflict`), and with no receipt for this
   // identity keeps today's create CAS ∅ code, `revision_conflict` (:985, :1991).
   if (state !== null) {
+    const candidate = newCandidateProposal({ ref: event.ref, goalRef: event.goalRef, basedOn: event.basedOn,
+      draft: event.draft, reason: event.reason, issues: [], submittedBy: event.submittedBy });
     return sameRecordedCandidate(state, candidate)
       ? reject('duplicate', 'revision_conflict',
         `proposal ${event.ref.proposalId} is already recorded with the same content; only its original receipt replays`)
       : reject('illegal', 'revision_conflict', `proposal ${event.ref.proposalId} already exists; only the original receipt replays`);
+  }
+  return null;
+}
+
+function onProposalRecorded(
+  state: PlanProposalMachineState,
+  event: Extract<PlanProposalEvent, { type: 'proposal_recorded' }>,
+  ctx: PlanProposalGuardContext,
+): PlanProposalTransition {
+  const problem = recordedStep(state, event, ctx);
+  if (problem === UNREAD) return incompleteFacts();
+  if (problem !== null) return problem;
+  const candidate = newCandidateProposal({ ref: event.ref, goalRef: event.goalRef, basedOn: event.basedOn,
+    draft: event.draft, reason: event.reason, issues: event.issues, submittedBy: event.submittedBy });
+  /** The writer's own CAS guards: `before` the Goal scope guards, `after` them (the source Plan). */
+  let writerGuards: { before: PlanCommitGuard[]; after: PlanCommitGuard[] };
+  switch (event.writer) {
+    case 'host':
+      writerGuards = { before: [], after: [] };
+      break;
+    case 'initial_answer':
+      // :1325-1329
+      writerGuards = { before: [{ target: 'answer_facts' }], after: [] };
+      break;
+    case 'agent':
+      // :1985-1992 — the admission guards first, the source Plan @1 after the scope (non-null once its guard passed).
+      writerGuards = { before: [{ target: 'agent_admission' }],
+        after: ctx.source === null ? [] : [{ target: 'plan_revision', ref: ctx.source.ref, expectedRevision: 1 }] };
+      break;
+    default:
+      return unreachable(event.writer, 'plan proposal writer');
   }
   const effects: PlanProposalEffect[] = [
     { kind: 'write_proposal' },
@@ -683,7 +819,7 @@ function onProposalRecorded(
 }
 
 /** A Host or answer-derived candidate never carries an Agent submission provenance. */
-function hostProvenanceProblem(event: Extract<PlanProposalEvent, { type: 'proposal_recorded' }>): PlanProposalTransition | null {
+function hostProvenanceProblem(event: RecordedGuardEvent): GuardStep {
   return event.submittedBy !== null
     ? reject('illegal', 'invalid', 'only an Agent candidate carries a submission provenance') : null;
 }
@@ -704,26 +840,17 @@ function sameRecordedCandidate(state: PlanProposalRecord, candidate: CandidatePl
   }
 }
 
-/** `readGoalScope` workspace + pin comparison of a proposal write (:955-961, :1941-1950). */
-function recordScopeProblem(ctx: PlanProposalGuardContext): PlanProposalTransition | null {
-  if (!ctx.goalInWorkspace) return reject('guard_failed', 'forbidden', 'the goal does not belong to the requested workspace');
-  if (!ctx.pinsAgree) {
-    return reject('stale', 'revision_conflict', 'the supplied version pins do not match the versions read in this call');
-  }
-  return null;
-}
-
 /** PLAN-02: the source is a real Plan of this Goal and still its active plan (:1959-1970). */
-function agentSourceProblem(
-  event: Extract<PlanProposalEvent, { type: 'proposal_recorded' }>,
-  ctx: PlanProposalGuardContext,
-): PlanProposalTransition | null {
-  const source = ctx.source;
+function agentSourceStep(event: RecordedGuardEvent, facts: PlanProposalReadFacts): GuardStep {
+  const source = facts.source;
+  if (source === undefined) return UNREAD;
   if (source === null) return reject('illegal', 'invalid', 'an Agent proposal requires the source plan read through basedOn');
   if (source.ref.projectId !== event.ref.projectId || source.goalRef.goalId !== event.goalRef.goalId) {
     return reject('illegal', 'not_found', 'the source plan does not belong to the proposal goal');
   }
-  if (!samePlanPointer(ctx.goal.activePlanRevision, source.ref)) {
+  // The Goal was read with the scope, before the source.
+  if (facts.goal === undefined) return UNREAD;
+  if (!samePlanPointer(facts.goal.activePlanRevision, source.ref)) {
     return reject('stale', 'revision_conflict', 'the source plan is not the Goal current active plan');
   }
   return null;
@@ -734,11 +861,11 @@ function agentSourceProblem(
  * (`plan-service.ts:1140-1215`); Agent `applyPlanChangeAsAgent` (`:2019-2106`),
  * whose decisionRefs and fresh admission checks run before the proposal read.
  */
-function onProposalAccepted(
-  state: PlanProposalMachineState,
-  event: Extract<PlanProposalEvent, { type: 'proposal_accepted' }>,
-  ctx: PlanProposalGuardContext,
-): PlanProposalTransition {
+function acceptedStep(
+  state: PlanProposalMachineState | undefined,
+  event: AcceptedEvent,
+  facts: PlanProposalReadFacts,
+): AcceptStep {
   switch (event.adopter) {
     case 'host':
       break;
@@ -747,13 +874,14 @@ function onProposalAccepted(
       if (event.decisionRefs.length > 0) {
         return reject('guard_failed', 'forbidden', 'an Agent future-plan apply does not accept decision references');
       }
-      const admission = agentAdmissionProblem(ctx);
+      const admission = agentAdmissionStep(facts);
       if (admission !== null) return admission;
       break;
     }
     default:
       return unreachable(event.adopter, 'plan adopter');
   }
+  if (state === undefined) return UNREAD;
   if (state === null) return reject('illegal', 'not_found', `proposal ${event.proposalRef.proposalId} does not exist`);
   switch (state.kind) {
     case 'legacy_v1':
@@ -765,13 +893,25 @@ function onProposalAccepted(
           // :1145, :2070
           return reject('illegal', 'invalid', `proposal ${event.proposalRef.proposalId} is not a pending candidate`);
         case 'candidate':
-          return acceptCandidate(state, event, ctx);
+          return candidateStep(state, event, facts);
         default:
           return unreachable(state, 'plan proposal status');
       }
     default:
       return unreachable(state, 'plan proposal kind');
   }
+}
+
+function onProposalAccepted(
+  state: PlanProposalMachineState,
+  event: AcceptedEvent,
+  ctx: PlanProposalGuardContext,
+): PlanProposalTransition {
+  const step = acceptedStep(state, event, ctx);
+  if (step === UNREAD) return incompleteFacts();
+  if (!isAdmitted(step)) return step;
+  return accept<PlanProposalMachineState, PlanProposalEffect>(acceptProposalRecord(step.proposal),
+    adoptionEffects(step, event.adopter));
 }
 
 /** :1144 (Host), :2069 (Agent). */
@@ -798,11 +938,11 @@ function adopterCommitGuards(adopter: PlanAdopter): PlanCommitGuard[] {
   }
 }
 
-function acceptCandidate(
+function candidateStep(
   proposal: CandidatePlanProposal,
-  event: Extract<PlanProposalEvent, { type: 'proposal_accepted' }>,
-  ctx: PlanProposalGuardContext,
-): PlanProposalTransition {
+  event: AcceptedEvent,
+  facts: PlanProposalReadFacts,
+): AcceptStep {
   // :1146-1149, :2071-2073
   if (proposal.revision !== event.expectedProposalRevision) {
     return reject('stale', 'revision_conflict', 'the proposal revision changed');
@@ -819,20 +959,15 @@ function acceptCandidate(
       return unreachable(event.adopter, 'plan adopter');
   }
   // validateProposalScope (:1644-1666)
-  if (!ctx.goalInWorkspace) return reject('guard_failed', 'forbidden', 'the goal does not belong to the proposal workspace');
-  if (!ctx.pinsAgree) {
-    return reject('stale', 'revision_conflict', 'the supplied version pins do not match the versions read in this call');
-  }
+  const scope = scopeStep(facts, 'the goal does not belong to the proposal workspace');
+  if (scope !== null) return scope;
   return proposal.basedOn === null
-    ? initialAdoption(proposal, event, ctx)
-    : futureAdoption(proposal, event, ctx);
+    ? initialAdoptionStep(proposal, event, facts)
+    : futureAdoptionStep(proposal, event, facts);
 }
 
 /** :2075-2087 — only this Run's own future candidate of its own Goal. */
-function agentCandidateProblem(
-  proposal: CandidatePlanProposal,
-  event: Extract<PlanProposalEvent, { type: 'proposal_accepted' }>,
-): PlanProposalTransition | null {
+function agentCandidateProblem(proposal: CandidatePlanProposal, event: AcceptedEvent): Rejected | null {
   const writer = event.agentWriter;
   if (writer === null) return reject('illegal', 'invalid', 'an Agent apply requires the identified writer');
   const submittedBy = proposal.submittedBy;
@@ -853,47 +988,35 @@ function agentCandidateProblem(
 }
 
 /** PLAN-04 + GOAL-02 + PLAN-08 (`plan-service.ts:1165-1215` → `plan-commit-compiler.ts:135-181`). */
-function initialAdoption(
+function initialAdoptionStep(
   proposal: CandidatePlanProposal,
-  event: Extract<PlanProposalEvent, { type: 'proposal_accepted' }>,
-  ctx: PlanProposalGuardContext,
-): PlanProposalTransition {
+  event: AcceptedEvent,
+  facts: PlanProposalReadFacts,
+): AcceptStep {
   // :1165
   if (event.decisionRefs.length > 0) {
     return reject('guard_failed', 'invalid', 'an initial plan adoption does not accept decision references');
   }
-  // :1166-1170
-  if (ctx.goal.activePlanRevision !== null) {
+  // :1166-1170 (the Goal was read with the scope)
+  if (facts.goal === undefined) return UNREAD;
+  if (facts.goal.activePlanRevision !== null) {
     return reject('stale', 'revision_conflict', 'the goal already has an active plan; an initial adoption cannot replace it');
   }
-  const facts = ctx.initial;
-  if (facts === null) {
+  const initial = facts.initial;
+  if (initial === undefined) return UNREAD;
+  if (initial === null) {
     return reject('illegal', 'invalid', 'an initial adoption requires the origin, governance and draft admission facts');
   }
-  const problem = first(
+  const problem = chain(
     // :1171-1179
-    () => verdictProblem(facts.origin),
-    () => verdictProblem(facts.governance),
+    () => verdictStep(initial.origin),
+    () => verdictStep(initial.governance),
     // :1180-1185
-    () => draftAdmissionProblem('the initial plan is not admissible', facts),
+    () => draftAdmissionStep('the initial plan is not admissible', initial),
   );
   if (problem !== null) return problem;
-  const planRef: PlanRevisionRef = { aggregateType: 'PlanRevision', projectId: event.proposalRef.projectId,
-    planId: proposal.draft.planId };
-  const effects: PlanProposalEffect[] = [
-    { kind: 'write_proposal' },
-    { kind: 'write_plan_revision', ref: planRef, build: { from: 'initial_draft' } },
-    { kind: 'move_goal_pointer', from: null, to: planRef },
-    { kind: 'append_event', eventType: 'PlanRevisionAccepted' },
-  ];
-  if (proposal.draft.origin !== undefined) effects.push(guard({ target: 'origin_sources' }));
-  effects.push(
-    guard({ target: 'project' }), guard({ target: 'workspace' }), guard({ target: 'goal' }),
-    guard({ target: 'proposal', expectedRevision: proposal.revision }),
-    guard({ target: 'governance' }),
-    guard({ target: 'plan_revision', ref: planRef, expectedRevision: null }),
-  );
-  return accept<PlanProposalMachineState, PlanProposalEffect>(acceptProposalRecord(proposal), effects);
+  return { path: 'initial', proposal,
+    target: { aggregateType: 'PlanRevision', projectId: event.proposalRef.projectId, planId: proposal.draft.planId } };
 }
 
 /**
@@ -902,11 +1025,11 @@ function initialAdoption(
  * definition differs is "changed", including a disposition-only change, and
  * falls under the untraced rule (C7 splits it off in step 5.10).
  */
-function futureAdoption(
+function futureAdoptionStep(
   proposal: CandidatePlanProposal,
-  event: Extract<PlanProposalEvent, { type: 'proposal_accepted' }>,
-  ctx: PlanProposalGuardContext,
-): PlanProposalTransition {
+  event: AcceptedEvent,
+  facts: PlanProposalReadFacts,
+): AcceptStep {
   const draft = proposal.draft;
   // :1695-1700
   if (draft.schemaVersion !== 2) {
@@ -918,14 +1041,16 @@ function futureAdoption(
   if (event.decisionRefs.length > 0) {
     return reject('guard_failed', 'unsupported', 'a W1 future-only revision does not accept decision references');
   }
-  const source = ctx.source;
+  const source = facts.source;
+  if (source === undefined) return UNREAD;
   if (source === null) return reject('illegal', 'invalid', 'a future adoption requires the source plan read through basedOn');
   // :1709-1711
   if (source.ref.projectId !== event.proposalRef.projectId || source.goalRef.goalId !== proposal.goalRef.goalId) {
     return reject('illegal', 'not_found', 'the source plan does not belong to the proposal goal');
   }
-  // :1712-1717 — the pointer only moves forward (a superseded source is stale).
-  if (!samePlanPointer(ctx.goal.activePlanRevision, source.ref)) {
+  // :1712-1717 — the pointer only moves forward (a superseded source is stale); the Goal was read with the scope.
+  if (facts.goal === undefined) return UNREAD;
+  if (!samePlanPointer(facts.goal.activePlanRevision, source.ref)) {
     return reject('stale', 'revision_conflict', 'the source plan is not the Goal current active plan');
   }
   // :1718-1726
@@ -938,15 +1063,19 @@ function futureAdoption(
   if (draft.planId === source.planId) {
     return reject('illegal', 'invalid', 'the target planId must be a new, unused reference');
   }
-  const facts = ctx.future;
-  if (facts === null) return reject('illegal', 'invalid', 'a future adoption requires the target, delta and task facts');
+  const future = facts.future;
+  if (future === undefined) return UNREAD;
+  if (future === null) return reject('illegal', 'invalid', 'a future adoption requires the target, delta and task facts');
   // :1727-1733
-  if (facts.targetExists) return reject('stale', 'revision_conflict', 'the target plan already exists');
+  if (future.targetExists === undefined) return UNREAD;
+  if (future.targetExists) return reject('stale', 'revision_conflict', 'the target plan already exists');
   // :1737-1738 — includes "a Task was physically removed".
-  if (facts.delta.status === 'unsupported') return reject('guard_failed', 'unsupported', facts.delta.reason);
-  const delta = facts.delta;
+  const delta = future.delta;
+  if (delta === undefined) return UNREAD;
+  if (delta.status === 'unsupported') return reject('guard_failed', 'unsupported', delta.reason);
   // :1740-1745 — obligation, gate, intent, role and new-Task-phase rules.
-  const coverage = facts.coverage;
+  const coverage = future.coverage;
+  if (coverage === undefined) return UNREAD;
   switch (coverage.status) {
     case 'supported':
       break;
@@ -958,46 +1087,78 @@ function futureAdoption(
     default:
       return unreachable(coverage, 'future obligation coverage');
   }
-  const problem = first(
+  const pinnedPolicy = future.pinnedPolicy;
+  const problem = chain(
     // :1755-1761
-    () => facts.pinnedPolicy === 'not_needed' ? null : verdictProblem(facts.pinnedPolicy),
+    () => pinnedPolicy === 'not_needed' ? null : verdictStep(pinnedPolicy),
     // :1762-1767
-    () => draftAdmissionProblem('the future plan is not admissible', facts),
+    () => draftAdmissionStep('the future plan is not admissible', future),
   );
   if (problem !== null) return problem;
-  // :1769-1771 → plan-readers.ts:1238-1301
+  // :1769-1771 → plan-readers.ts `readFutureChangeTaskFacts`
+  const touchedFacts = future.touchedTaskFacts;
+  if (touchedFacts === undefined) return UNREAD;
   const touched = [...new Set([...delta.changedTaskIds, ...delta.addedTaskIds])];
-  const factsById = new Map(facts.touchedTaskFacts.map((entry) => [entry.taskId, entry]));
-  const touchedFacts: FutureChangeTaskFactsV1[] = [];
+  const factsById = new Map(touchedFacts.map((entry) => [entry.taskId, entry]));
+  const judged: FutureChangeTaskFactsV1[] = [];
   for (const taskId of touched) {
     const entry = factsById.get(taskId);
     if (entry === undefined) return reject('illegal', 'invalid', `the future-change facts of task ${taskId} were not read`);
-    touchedFacts.push(entry);
+    judged.push(entry);
   }
-  const trace = futureChangeTraceProblem(touchedFacts);
+  const trace = futureChangeTraceProblem(judged);
   if (trace !== null) return reject('guard_failed', trace.code, trace.detail);
-  const targetRef: PlanRevisionRef = { aggregateType: 'PlanRevision', projectId: event.proposalRef.projectId,
-    planId: draft.planId };
-  const effects: PlanProposalEffect[] = [
-    { kind: 'write_proposal' },
-    { kind: 'write_plan_revision', ref: targetRef, build: { from: 'future_delta', source: source.ref,
-      changedTaskIds: delta.changedTaskIds, addedTaskIds: delta.addedTaskIds } },
-    { kind: 'move_goal_pointer', from: source.ref, to: targetRef },
-    { kind: 'append_event', eventType: 'PlanRevisionAccepted' },
-    ...adopterCommitGuards(event.adopter).map(guard),
-  ];
-  if (facts.pinnedPolicy === 'ok') effects.push(guard({ target: 'pinned_policy' }));
-  effects.push(
-    guard({ target: 'project' }), guard({ target: 'workspace' }), guard({ target: 'goal' }),
-    guard({ target: 'proposal', expectedRevision: proposal.revision }),
-    guard({ target: 'plan_revision', ref: source.ref, expectedRevision: 1 }),
-  );
-  for (const taskId of touched) {
-    effects.push(guard({ target: 'task_record_absent', record: 'TaskLease', taskId }),
-      guard({ target: 'task_record_absent', record: 'TaskReduction', taskId }));
+  return { path: 'future', proposal, source,
+    target: { aggregateType: 'PlanRevision', projectId: event.proposalRef.projectId, planId: draft.planId },
+    changedTaskIds: delta.changedTaskIds, addedTaskIds: delta.addedTaskIds, touchedTaskIds: touched,
+    pinnedPolicy: pinnedPolicy === 'ok' };
+}
+
+/** The one adoption commit of an admitted candidate (§3.3 effects column of PLAN-04/05). */
+function adoptionEffects(admitted: AdmittedAdoption, adopter: PlanAdopter): PlanProposalEffect[] {
+  const proposal = admitted.proposal;
+  switch (admitted.path) {
+    case 'initial': {
+      const effects: PlanProposalEffect[] = [
+        { kind: 'write_proposal' },
+        { kind: 'write_plan_revision', ref: admitted.target, build: { from: 'initial_draft' } },
+        { kind: 'move_goal_pointer', from: null, to: admitted.target },
+        { kind: 'append_event', eventType: 'PlanRevisionAccepted' },
+      ];
+      if (proposal.draft.origin !== undefined) effects.push(guard({ target: 'origin_sources' }));
+      effects.push(
+        guard({ target: 'project' }), guard({ target: 'workspace' }), guard({ target: 'goal' }),
+        guard({ target: 'proposal', expectedRevision: proposal.revision }),
+        guard({ target: 'governance' }),
+        guard({ target: 'plan_revision', ref: admitted.target, expectedRevision: null }),
+      );
+      return effects;
+    }
+    case 'future': {
+      const effects: PlanProposalEffect[] = [
+        { kind: 'write_proposal' },
+        { kind: 'write_plan_revision', ref: admitted.target, build: { from: 'future_delta', source: admitted.source.ref,
+          changedTaskIds: admitted.changedTaskIds, addedTaskIds: admitted.addedTaskIds } },
+        { kind: 'move_goal_pointer', from: admitted.source.ref, to: admitted.target },
+        { kind: 'append_event', eventType: 'PlanRevisionAccepted' },
+        ...adopterCommitGuards(adopter).map(guard),
+      ];
+      if (admitted.pinnedPolicy) effects.push(guard({ target: 'pinned_policy' }));
+      effects.push(
+        guard({ target: 'project' }), guard({ target: 'workspace' }), guard({ target: 'goal' }),
+        guard({ target: 'proposal', expectedRevision: proposal.revision }),
+        guard({ target: 'plan_revision', ref: admitted.source.ref, expectedRevision: 1 }),
+      );
+      for (const taskId of admitted.touchedTaskIds) {
+        effects.push(guard({ target: 'task_record_absent', record: 'TaskLease', taskId }),
+          guard({ target: 'task_record_absent', record: 'TaskReduction', taskId }));
+      }
+      effects.push(guard({ target: 'plan_revision', ref: admitted.target, expectedRevision: null }));
+      return effects;
+    }
+    default:
+      return unreachable(admitted, 'admitted adoption');
   }
-  effects.push(guard({ target: 'plan_revision', ref: targetRef, expectedRevision: null }));
-  return accept<PlanProposalMachineState, PlanProposalEffect>(acceptProposalRecord(proposal), effects);
 }
 
 /**

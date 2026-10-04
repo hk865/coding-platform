@@ -1,7 +1,8 @@
 /**
  * §3 PlanProposal / PlanRevision machines (docs/refactor/STATE-MACHINES-SPEC.md):
  * every (state, event) pair of PLAN-01..PLAN-09, the §3.4 forbidden rows, each
- * guard of the propose/apply rows in today's order, the record constructors
+ * guard of the propose/apply rows in today's order, `planProposalProblem` (the
+ * same guards over the facts the owner read so far), the record constructors
  * (§14.1), the derived statuses, and the W16 pure guards (untraced rule,
  * TASK-19 `tracedDispositionChangeProblem`, LA-3 `parallelCarrierFenceProblem`).
  * Rows that step 5 flips are pinned at today's result and marked "step 5".
@@ -30,6 +31,7 @@ import {
   newCandidateProposal,
   parallelCarrierFactTaskIds,
   parallelCarrierFenceProblem,
+  planProposalProblem,
   tracedDispositionChangeProblem,
   transitionPlanProposal,
   transitionPlanRevision,
@@ -46,6 +48,7 @@ import {
   type PlanProposalEvent,
   type PlanProposalGuardContext,
   type PlanProposalMachineState,
+  type PlanProposalReadFacts,
   type PlanProposalRecord,
   type PlanProposalRef,
   type PlanProposalTransition,
@@ -823,6 +826,116 @@ describe('PLAN-05 Agent proposal_accepted (applyPlanChangeAsAgent, plan-service.
 
   it('then runs the same future path as the Host', () => {
     expectResult(transitionPlanProposal(CANDIDATE_FUTURE, ACCEPT_AGENT, agentCtx(pointer(P2))), no('stale', 'revision_conflict'));
+  });
+});
+
+// --------------------------------------------------------------------------
+// planProposalProblem: the same guards over the facts read so far (A.2 step 3)
+// --------------------------------------------------------------------------
+
+describe('planProposalProblem (the owner asks after each read)', () => {
+  const refusalOf = (result: PlanProposalTransition) => (result.ok ? null
+    : { ok: false, reason: result.reason, detail: result.detail, code: result.code });
+
+  it('agrees with transitionPlanProposal on every propose/apply pair once every fact is read', () => {
+    for (const stateName of Object.keys(STATES) as StateName[]) {
+      for (const eventName of ['recordHost', 'recordAgent', 'recordAnswer', 'acceptHost', 'acceptAgent'] as const) {
+        const event = EVENTS[eventName] as RecordedEvent | AcceptedEvent;
+        const ctx = worldFor(stateName, eventName);
+        expect(planProposalProblem(STATES[stateName], event, ctx), `${stateName} × ${eventName}`)
+          .toEqual(refusalOf(transitionPlanProposal(STATES[stateName], event, ctx)));
+      }
+    }
+  });
+
+  it('agrees on every refusal of the guard tables above', () => {
+    const cases: Array<[PlanProposalMachineState, RecordedEvent | AcceptedEvent, PlanProposalGuardContext]> = [
+      [null, { ...RECORD_HOST, submittedBy: PROVENANCE }, context()],
+      [null, RECORD_HOST, context({ goalInWorkspace: false, pinsAgree: false })],
+      [null, RECORD_AGENT, context({ agentAdmission: rejection('busy', 'the Run is not running') })],
+      [null, { ...RECORD_AGENT, basedOn: null }, context({ agentAdmission: 'ok' })],
+      [null, RECORD_AGENT, context({ agentAdmission: 'ok', ...pointer(P2) })],
+      [CANDIDATE_INITIAL, ACCEPT_HOST, context({ ...pointer(null), initial: { ...INITIAL_FACTS, phaseReasons: ['p'] } })],
+      [CANDIDATE_FUTURE, ACCEPT_HOST, context({ future: { ...FUTURE_FACTS, targetExists: true } })],
+      [CANDIDATE_FUTURE, ACCEPT_HOST, context({ future: { ...FUTURE_FACTS,
+        touchedTaskFacts: [{ ...DOCS_FACTS, runs: [runOf('run-docs', 't-docs')] }] } })],
+      [CANDIDATE_FUTURE, { ...ACCEPT_AGENT, agentWriter: { ...WRITER, runRef: runRef('run-other') } }, context({ agentAdmission: 'ok' })],
+    ];
+    for (const [state, event, ctx] of cases) {
+      const expected = refusalOf(transitionPlanProposal(state, event, ctx));
+      expect(expected).not.toBeNull();
+      expect(planProposalProblem(state, event, ctx)).toEqual(expected);
+    }
+  });
+
+  it('an unread fact holds: the guards after it wait for the read (Host adoption)', () => {
+    const initialWithDecisions: AcceptedEvent = { ...ACCEPT_HOST, decisionRefs: [{ ref: GOAL, revision: 1 }] };
+    // The proposal is read, the scope is not: the initial decisionRefs check comes after the scope.
+    expect(planProposalProblem(CANDIDATE_INITIAL, initialWithDecisions, {})).toBeNull();
+    expectResult(planProposalProblem(CANDIDATE_INITIAL, { ...ACCEPT_HOST, expectedProposalRevision: 2 }, {})!,
+      no('stale', 'revision_conflict', 'the proposal revision changed'));
+    const scope: PlanProposalReadFacts = { goal: { activePlanRevision: null, desiredState: 'active' }, goalInWorkspace: true, pinsAgree: true };
+    expectResult(planProposalProblem(CANDIDATE_INITIAL, initialWithDecisions, scope)!, no('guard_failed', 'invalid'));
+    // Origin read and holding; governance not read yet: nothing after it is judged.
+    expect(planProposalProblem(CANDIDATE_INITIAL, ACCEPT_HOST, { ...scope, initial: { origin: 'ok' } })).toBeNull();
+    expectResult(planProposalProblem(CANDIDATE_INITIAL, ACCEPT_HOST,
+      { ...scope, initial: { origin: rejection('invalid', 'not the unique normalization') } })!,
+    no('guard_failed', 'invalid', 'not the unique normalization'));
+    // The draft validators run one after the other.
+    expect(planProposalProblem(CANDIDATE_INITIAL, ACCEPT_HOST,
+      { ...scope, initial: { origin: 'ok', governance: 'ok', draftIssues: [] } })).toBeNull();
+    expectResult(planProposalProblem(CANDIDATE_INITIAL, ACCEPT_HOST,
+      { ...scope, initial: { origin: 'ok', governance: 'ok', draftIssues: [], assignmentReasons: ['a'] } })!,
+    no('guard_failed', 'incomplete', 'the initial plan is not admissible: a'));
+  });
+
+  it('an unread fact holds: the guards after it wait for the read (future adoption)', () => {
+    const scope: PlanProposalReadFacts = { goal: { activePlanRevision: P1, desiredState: 'active' }, goalInWorkspace: true, pinsAgree: true };
+    const badTarget = candidate({ basedOn: P1, draft: draftOf({ planId: 'plan-2', planRevision: 5 }), submittedBy: PROVENANCE });
+    // Source not read: the draft schema and decisionRefs are judged, the source-relative rules wait.
+    expect(planProposalProblem(badTarget, ACCEPT_HOST, scope)).toBeNull();
+    expectResult(planProposalProblem(badTarget, { ...ACCEPT_HOST, decisionRefs: [{ ref: GOAL, revision: 1 }] }, scope)!,
+      no('guard_failed', 'unsupported', 'a W1 future-only revision does not accept decision references'));
+    expectResult(planProposalProblem(badTarget, ACCEPT_HOST, { ...scope, source: SOURCE })!,
+      no('stale', 'revision_conflict', 'the target planRevision must be exactly source+1'));
+    const read = { ...scope, source: SOURCE };
+    expect(planProposalProblem(CANDIDATE_FUTURE, ACCEPT_HOST, { ...read, future: { targetExists: false } })).toBeNull();
+    expectResult(planProposalProblem(CANDIDATE_FUTURE, ACCEPT_HOST, { ...read, future: { targetExists: true } })!,
+      no('stale', 'revision_conflict', 'the target plan already exists'));
+    // Every validator holds, the touched Task facts are not read yet.
+    const { touchedTaskFacts: _unread, ...validated } = FUTURE_FACTS;
+    void _unread;
+    expect(planProposalProblem(CANDIDATE_FUTURE, ACCEPT_HOST, { ...read, future: validated })).toBeNull();
+    expectResult(planProposalProblem(CANDIDATE_FUTURE, ACCEPT_HOST, { ...read, future: { ...validated,
+      touchedTaskFacts: [{ ...DOCS_FACTS, lease: leaseOf('t-docs', true) }] } })!,
+    no('guard_failed', 'revision_conflict', 'task t-docs already holds a TaskLease and is no longer a future task'));
+  });
+
+  it('an Agent adoption judges decisionRefs and the fresh admission before the proposal is read', () => {
+    expectResult(planProposalProblem(undefined, { ...ACCEPT_AGENT, decisionRefs: [{ ref: GOAL, revision: 1 }] }, {})!,
+      no('guard_failed', 'forbidden', 'an Agent future-plan apply does not accept decision references'));
+    expect(planProposalProblem(undefined, ACCEPT_AGENT, {})).toBeNull();
+    expectResult(planProposalProblem(undefined, ACCEPT_AGENT, { agentAdmission: rejection('forbidden', 'the Run has ended') })!,
+      no('guard_failed', 'forbidden', 'the Run has ended'));
+    expect(planProposalProblem(undefined, ACCEPT_AGENT, { agentAdmission: 'ok' })).toBeNull();
+  });
+
+  it('an Agent proposal judges the fresh admission first: a refused admission has no provenance yet', () => {
+    const noProvenance: RecordedEvent = { ...RECORD_AGENT, submittedBy: null };
+    expectResult(planProposalProblem(null, noProvenance, { agentAdmission: rejection('busy', 'the lease is held by another Run') })!,
+      no('guard_failed', 'busy', 'the lease is held by another Run'));
+    expectResult(transitionPlanProposal(null, { ...noProvenance }, context({ agentAdmission: rejection('busy', 'lease lost') })),
+      no('guard_failed', 'busy', 'lease lost'));
+    // Admitted, the scope not read yet: nothing after the admission is judged.
+    expect(planProposalProblem(null, RECORD_AGENT, { agentAdmission: 'ok' })).toBeNull();
+    expectResult(planProposalProblem(null, RECORD_AGENT, { agentAdmission: 'ok', goalInWorkspace: true, pinsAgree: false })!,
+      no('stale', 'revision_conflict'));
+  });
+
+  it('a proposal write is not refused for the unread proposal record (its absence is the commit CAS ∅)', () => {
+    expect(planProposalProblem(undefined, RECORD_HOST, context())).toBeNull();
+    expect(planProposalProblem(null, RECORD_HOST, context())).toBeNull();
+    expectResult(planProposalProblem(CANDIDATE_INITIAL, RECORD_HOST, context())!, DUPLICATE);
   });
 });
 

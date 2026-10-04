@@ -10,7 +10,12 @@
  *    same project) from the trusted source plus the validated delta;
  *  - extract and compare the frozen execution definition of the same Task
  *    across Plans, reusing ONE extraction/comparison implementation for the
- *    validator and the reader (neither builds a second parser).
+ *    validator and the reader (neither builds a second parser);
+ *  - verify one Plan's declared basis for a Task (`verifyBasisDelegation`) and
+ *    decide whether a Run/Reduction fact pinned to an origin Plan describes a
+ *    Task of the selected Plan (`taskOriginVerdict`), over the per-Plan index
+ *    `planTaskFacts` (moved unchanged from `plan-readers.ts`, STATE-MACHINES-SPEC
+ *    §3.3 point 5 / §15.2 step 3).
  *
  * An obligation's frozen semantics keep its identity, title, requirementLevel
  * and compiled verificationRequirements; only the cross-Task carrier list
@@ -23,16 +28,19 @@
  *
  * Specification: docs/refactor/tasks/W1-future-plan-skeleton.md §5.
  */
-import type {
-  AcceptanceObligation,
-  PlanRevisionRef,
-  PlanRevisionSnapshot,
-  PlanTaskAssignment,
-  RuntimeTask,
-  TaskInputRequirementV2,
-  TaskStateBasisV1,
+import type { GoalRef } from '../../../contracts/ledger.js';
+import {
+  revisionAssignments,
+  type AcceptanceObligation,
+  type PlanRevisionRef,
+  type PlanRevisionSnapshot,
+  type PlanTaskAssignment,
+  type RuntimeTask,
+  type TaskInputRequirementV2,
+  type TaskStateBasisV1,
 } from '../../../contracts/plan.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
+import { planRevisionRefKey } from './plan-record-codecs.js';
 
 /** Explicit invalid/unprovable marker. A helper never invents a valid basis or
  * silently reports two definitions as equal. */
@@ -189,4 +197,133 @@ export function frozenTaskDefinitionsAgree(input: {
     const detail = error instanceof Error ? error.message : String(error);
     return unsupported(`the frozen task definition is not canonicalizable: ${detail}`);
   }
+}
+
+/** The per-Plan frozen definition index plus the per-Plan effective-basis
+ * index. The reader builds each ONCE and reuses it, never re-scanning a Plan per
+ * Task or per Run. */
+export type PlanTaskFacts = {
+  plan: PlanRevisionSnapshot;
+  definitions: ReadonlyMap<string, FrozenTaskDefinition>;
+  basis: ReadonlyMap<string, PlanRevisionRef | BasisUnsupported>;
+};
+
+export function planTaskFacts(plan: PlanRevisionSnapshot): PlanTaskFacts {
+  return {
+    plan,
+    definitions: buildFrozenTaskDefinitions({
+      tasks: plan.tasks,
+      assignments: revisionAssignments(plan),
+      inputRequirements: plan.schemaVersion === 2 ? plan.inputRequirements ?? [] : [],
+      obligations: plan.obligations,
+    }),
+    basis: buildEffectiveTaskBasis(plan),
+  };
+}
+
+export type TaskOriginVerdict =
+  | { status: 'accepted' }
+  | { status: 'excluded' }
+  | { status: 'unavailable'; reason: string };
+
+export type BasisDelegationVerdict = { status: 'ok' } | { status: 'unavailable'; reason: string };
+
+/**
+ * Verifies ONE Plan's declared basis for one Task. The basis is either the Plan
+ * itself (an absolute source) or a same-Goal Plan, no later than the referrer,
+ * present, defining the Task, agreeing on its frozen definition, and itself an
+ * absolute source. It never walks a second hop, so a chained/degenerate basis is
+ * an explicit `unavailable`, not a silent success.
+ */
+export function verifyBasisDelegation(input: {
+  referrer: PlanTaskFacts;
+  taskId: string;
+  index: ReadonlyMap<string, PlanTaskFacts>;
+  goalRef: GoalRef;
+}): BasisDelegationVerdict {
+  const { referrer, taskId } = input;
+  const basis = referrer.basis.get(taskId);
+  if (basis === undefined) {
+    return { status: 'unavailable', reason: `plan ${referrer.plan.planId} has no task ${taskId}` };
+  }
+  if (isBasisUnsupported(basis)) return { status: 'unavailable', reason: basis.reason };
+  if (planRevisionRefKey(basis) === planRevisionRefKey(referrer.plan.ref)) return { status: 'ok' };
+  const source = input.index.get(planRevisionRefKey(basis));
+  if (source === undefined) {
+    return { status: 'unavailable', reason: `basis source ${basis.planId} for task ${taskId} is missing` };
+  }
+  if (source.plan.ref.projectId !== input.goalRef.projectId
+    || source.plan.goalRef.goalId !== input.goalRef.goalId) {
+    return { status: 'unavailable', reason: `basis source ${basis.planId} for task ${taskId} belongs to another goal` };
+  }
+  if (source.plan.planRevision > referrer.plan.planRevision) {
+    return { status: 'unavailable', reason: `basis source ${basis.planId} for task ${taskId} is later than its referrer` };
+  }
+  const sourceDefinition = source.definitions.get(taskId);
+  const referrerDefinition = referrer.definitions.get(taskId);
+  if (sourceDefinition === undefined || referrerDefinition === undefined) {
+    return { status: 'unavailable', reason: `basis source ${basis.planId} does not define task ${taskId}` };
+  }
+  const agree = frozenTaskDefinitionsAgree({ left: sourceDefinition, right: referrerDefinition });
+  if (isBasisUnsupported(agree)) return { status: 'unavailable', reason: agree.reason };
+  if (!agree) {
+    return { status: 'unavailable',
+      reason: `basis source ${basis.planId} and referrer ${referrer.plan.planId} disagree on task ${taskId}` };
+  }
+  const sourceBasis = source.basis.get(taskId);
+  if (sourceBasis === undefined || isBasisUnsupported(sourceBasis)) {
+    return { status: 'unavailable', reason: `basis source ${basis.planId} has no effective basis for task ${taskId}` };
+  }
+  if (planRevisionRefKey(sourceBasis) !== planRevisionRefKey(source.plan.ref)) {
+    return { status: 'unavailable', reason: `basis source ${basis.planId} is not an absolute source for task ${taskId}` };
+  }
+  return { status: 'ok' };
+}
+
+/**
+ * Whether one Run/Reduction fact pinned to `origin` may describe `taskId` of
+ * the selected Plan. Accepted only when the origin is the same Goal, the Task's
+ * EFFECTIVE basis is identical, both the origin's and the selected Plan's
+ * declared basis sources verify, the frozen execution definition agrees with
+ * the selected Plan, and the origin is not a later revision. A basis match with
+ * a differing definition is corruption and must be `unavailable`, never absent.
+ */
+export function taskOriginVerdict(input: {
+  origin: PlanTaskFacts;
+  selected: PlanTaskFacts;
+  selectedBasis: PlanRevisionRef;
+  selectedDefinition: FrozenTaskDefinition;
+  taskId: string;
+  index: ReadonlyMap<string, PlanTaskFacts>;
+  goalRef: GoalRef;
+}): TaskOriginVerdict {
+  const { origin } = input;
+  if (origin.plan.ref.projectId !== input.goalRef.projectId || origin.plan.goalRef.projectId !== input.goalRef.projectId) {
+    return { status: 'unavailable', reason: `origin plan ${origin.plan.planId} is outside the requested project` };
+  }
+  if (origin.plan.goalRef.goalId !== input.goalRef.goalId
+    || origin.plan.goalRef.goalId !== input.selected.plan.goalRef.goalId) {
+    return { status: 'unavailable', reason: `origin plan ${origin.plan.planId} belongs to another goal` };
+  }
+  const originBasis = origin.basis.get(input.taskId);
+  if (originBasis === undefined) {
+    return { status: 'unavailable', reason: `origin plan ${origin.plan.planId} has no task ${input.taskId}` };
+  }
+  if (isBasisUnsupported(originBasis)) return { status: 'unavailable', reason: originBasis.reason };
+  if (planRevisionRefKey(originBasis) !== planRevisionRefKey(input.selectedBasis)) return { status: 'excluded' };
+  const originChain = verifyBasisDelegation({ referrer: origin, taskId: input.taskId,
+    index: input.index, goalRef: input.goalRef });
+  if (originChain.status === 'unavailable') return originChain;
+  const originDefinition = origin.definitions.get(input.taskId);
+  if (originDefinition === undefined) {
+    return { status: 'unavailable', reason: `origin plan ${origin.plan.planId} does not define task ${input.taskId}` };
+  }
+  const agree = frozenTaskDefinitionsAgree({ left: originDefinition, right: input.selectedDefinition });
+  if (isBasisUnsupported(agree)) return { status: 'unavailable', reason: agree.reason };
+  if (!agree) {
+    return { status: 'unavailable',
+      reason: `origin plan ${origin.plan.planId} shares the basis for task ${input.taskId} but its frozen definition differs` };
+  }
+  if (origin.plan.planRevision > input.selected.plan.planRevision) return { status: 'excluded' };
+  return { status: 'accepted' };
 }

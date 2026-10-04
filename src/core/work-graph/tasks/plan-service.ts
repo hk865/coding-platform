@@ -6,6 +6,15 @@
  * one atomic fold to `plan-commit-compiler.ts`. It starts no transaction of its
  * own and never re-implements those rules.
  *
+ * Every lifecycle write (W13 Host/answer proposal, W14 Agent proposal, W15
+ * initial and W16 future adoption) is decided by the state machines
+ * (STATE-MACHINES-SPEC §3 `state/plan-machine.ts`, §2 GOAL-02/03
+ * `state/goal-machine.ts`): receipt lookup first; after each read the owner asks
+ * `planProposalProblem` with the facts read so far, so a refusal stops the
+ * reads where it always stopped; `transitionPlanProposal` then gives the
+ * candidate / accepted proposal (§14.1) and the CAS guards of the one commit,
+ * and `transitionGoal` the moved Goal pointer.
+ *
  * This slice implements the INITIAL plan path (candidate v2 -> accepted
  * PlanRevision) plus the six `PlanTaskPort` reads. A v2 candidate carries a full
  * draft, not the legacy restricted delta/target digest, so a CHANGE candidate
@@ -22,15 +31,16 @@ import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js
 import { commandIdentityKey } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { SessionRef, VersionPin } from '../../../contracts/core/identity.js';
-import type { CoreError, ReadResult, ReadStamp, WriteResult } from '../../../contracts/core/results.js';
+import type { CoreError, CoreRejection, ReadResult, ReadStamp, WriteResult } from '../../../contracts/core/results.js';
 import type { PreparedQueryManifestV1 } from '../../../contracts/core/prepared-execution.js';
 import type { RunRef } from '../../../contracts/dispatch.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
-import type { GoalRef } from '../../../contracts/ledger.js';
+import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
 import { makeCommitCursor, seqOfCommitCursor } from '../../../contracts/ledger.js';
 import type { CompletionPolicyContentV1 } from '../../../contracts/governance.js';
 import type { Phase, PlanRevisionDraft, PlanRevisionRef, PlanRevisionSnapshot,
-  PlanValidationError, RuntimeTask, TaskInputRequirementV2, TaskRelationV2 } from '../../../contracts/plan.js';
+  RuntimeTask, TaskInputRequirementV2, TaskRelationV2 } from '../../../contracts/plan.js';
+import { reworkActorClassOf } from '../../../contracts/task-requeue.js';
 import type { GoalPhaseRef } from '../../../contracts/goal-phase.js';
 import type {
   QueryJobAnswerRef,
@@ -105,6 +115,7 @@ import {
   readProposal,
   resolveGovernance,
   sameCursor,
+  taskRecordRefKey,
   tryPolicyContent,
   type CanonicalTaskFacts,
 } from './plan-readers.js';
@@ -123,6 +134,13 @@ import {
   type PlanWriteOperation,
 } from './plan-write-admission.js';
 import { mergeGuards, sameRef } from './execution-entry-service.js';
+import { goalStateOf, transitionGoal } from '../state/goal-machine.js';
+import {
+  planProposalProblem, transitionPlanProposal,
+  type FutureAdoptionFacts, type FuturePlanDeltaVerdict, type PlanCommitGuard, type PlanProposalEffect, type PlanProposalEvent,
+  type PlanProposalGuardContext, type PlanProposalMachineState, type PlanProposalReadFacts, type PlanSourceFacts,
+} from '../state/plan-machine.js';
+import type { Rejected as MachineRefusal } from '../state/transition.js';
 
 export type PlanServiceDependencies = { records: GoalRecordTransactionPort & RecordLookupPort;
   materials?: Pick<MaterialPort, 'openArtifact'>;
@@ -208,18 +226,6 @@ function rejected(code: CoreError, reason: string): Rejection {
 }
 function forbidden(reason: string): Rejection {
   return rejected('forbidden', reason);
-}
-/** Map pure plan-admission issues to the write rejection. An explicit
- * `unsupported_execution_change` (the Stage 1 executionIntent seam) must be
- * reported as `unsupported`, not silently downgraded to `incomplete`/`invalid`. */
-function planAdmissionRejection(scopeLabel: string, issues: readonly PlanValidationError[]): Rejection {
-  const rendered = `${scopeLabel}: ${issues.map((issue) => `${issue.path}: ${issue.message}`).join('; ')}`;
-  if (issues.some((issue) => issue.code === 'unsupported_execution_change')) {
-    return rejected('unsupported', rendered);
-  }
-  const structural = issues.some((issue) => issue.code === 'dag_cycle' || issue.code === 'self_dependency'
-    || issue.code === 'hierarchy_cycle' || issue.code === 'dangling_task_ref' || issue.code === 'dangling_stage_ref');
-  return rejected(structural ? 'invalid' : 'incomplete', rendered);
 }
 /** ReadResult has a bare `not_found` variant; the reader's uniform `Rejected`
  * shape carries a reason. Translate at the read boundary so a missing record is
@@ -917,10 +923,13 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
    * identity/fingerprint/proposal ref (already bound to the trusted actor/scope);
    * this step only does the original receipt lookup/restore, the pinned-scope CAS,
    * the bounded draft admission and the single `PlanProposalRecorded` commit.
-   * `extraGuards` joins the same local CAS (e.g. the Answer/Job/Run revisions the
-   * new entry actually read); it never becomes a second commit algorithm.
+   * PLAN-01 (`host`) / PLAN-03 (`initial_answer`) of the plan machine judge the
+   * scope and write the candidate@1 (§14.1). `extraGuards` joins the same local
+   * CAS as PLAN-03's `answer_facts` (the Answer/Job/Run revisions the new entry
+   * actually read); it never becomes a second commit algorithm.
    */
   async function commitHostPlanProposal(input: {
+    writer: 'host' | 'initial_answer';
     goalRef: GoalRef;
     workspaceId: string;
     actor: ActorRef;
@@ -952,19 +961,23 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
 
     const scope = await readGoalScope(records, goalRef);
     if (scope.status !== 'ready') return scope;
-    if (scope.goal.workspaceRef.workspaceId !== workspaceId) return forbidden('the goal does not belong to the requested workspace');
     const comparison = compareCallerPlanPins({ projectId: goalRef.projectId, workspaceId, goalId: goalRef.goalId },
       pins.pins, { projectRevision: scope.projectRevision, workspaceRevision: scope.workspaceRevision, goalRevision: scope.goal.revision });
-    if (comparison.status === 'conflict') {
-      return { status: 'rejected', code: 'revision_conflict',
-        reason: 'the supplied version pins do not match the versions read in this call', current: comparison.current };
-    }
+    // PLAN-01/03 judge the scope before the policy read. The proposal is not
+    // read: its absence is the commit's CAS ∅ guard (state ∅).
+    const recorded = { type: 'proposal_recorded' as const, writer: input.writer, ref: input.ref, goalRef,
+      basedOn: input.basedOn, draft: input.draft, reason: input.reason as unknown as PlanChangeReason, submittedBy: null };
+    const ctx: PlanProposalGuardContext = { ...scopeFactsOf(scope, workspaceId, comparison),
+      agentAdmission: null, source: null, initial: null, future: null };
+    const refused = planProposalProblem(null, recorded, ctx);
+    if (refused?.ok === false) return refusalOf(refused, pinsCurrent(refused, comparison));
 
     const policyRead = await tryPolicyContent(records, goalRef.projectId);
     const issues = validatePlanDraft(input.draft, policyRead.policy);
-    const candidate: PlanProposal = { kind: 'candidate_v2', ref: input.ref, revision: 1, schemaVersion: 2,
-      goalRef, basedOn: input.basedOn, draft: input.draft, reason: input.reason as unknown as PlanChangeReason,
-      status: 'candidate', issues };
+    const decided = transitionPlanProposal(null, { ...recorded, issues }, ctx);
+    if (!decided.ok) return refusalOf(decided);
+    const candidate = decided.next;
+    if (candidate === null) throw new Error('proposal_recorded must write the candidate');
     const identity = { projectId: goalRef.projectId, actor: input.actor, idempotencyKey: input.requestId };
     const derived = deriveCommandIds(identity, 'plan-propose');
     const event: PlanProposalRecordedEvent = {
@@ -977,13 +990,8 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     // conflict, even if a later optional read observed a newer head.
     const horizon = scope.readThrough;
     if (horizon === null) return rejected('incomplete', 'the ledger has no readable watermark for the proposal');
-    const guards: RecordGuard[] = [
-      ...input.extraGuards,
-      { refKey: scope.projectKey, expectedRevision: scope.projectRevision },
-      { refKey: scope.workspaceKey, expectedRevision: scope.workspaceRevision },
-      { refKey: refKeyOf(goalRef), expectedRevision: scope.goal.revision },
-      { refKey: planProposalRefKey(input.ref), expectedRevision: null },
-    ];
+    const guards = planCommitGuards(decided.effects, { scope, goalRef, proposalRef: input.ref,
+      answerFacts: input.extraGuards });
     const committed = await records.commit({ identityKey: input.identityKey, fingerprint: input.fingerprint,
       guards, records: [encodePlanProposal(candidate)], claims: [], indexGuards: [], indexChanges: [],
       events: [encodePlanProposalRecordedEvent(event)], ledgerHorizon: horizon });
@@ -1049,7 +1057,7 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     const fingerprint = proposeFingerprint({ projectId: goalRef.projectId, workspaceId, goalRef, basedOn, draft, reason: reasonRaw });
 
     return commitHostPlanProposal({
-      goalRef, workspaceId, actor: bound.actor, identityKey, fingerprint, proposalId, ref,
+      writer: 'host', goalRef, workspaceId, actor: bound.actor, identityKey, fingerprint, proposalId, ref,
       basedOn, draft, reason: reasonRaw, requestId, expected: rawMeta['expected'], extraGuards: [],
     });
   }
@@ -1141,67 +1149,87 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
       const proposalRead = await readProposal(records, proposalRef);
       if (proposalRead.status !== 'ready') return proposalRead;
       const proposal = proposalRead.proposal;
-      if (proposal.kind !== 'candidate_v2') return rejected('unsupported', 'a legacy v1 patch proposal cannot be adopted by this slice');
-      if (proposal.status !== 'candidate') return rejected('invalid', `proposal ${proposalRef.proposalId} is not a pending candidate`);
-      if (proposal.revision !== expectedProposalRevision) {
-        return { status: 'rejected', code: 'revision_conflict', reason: 'the proposal revision changed',
-          current: [{ ref: proposalRef, revision: proposal.revision }] };
+      const adoption: AcceptedPlanEvent = { type: 'proposal_accepted', adopter: 'host', proposalRef,
+        expectedProposalRevision, decisionRefs: decisionRefs as readonly VersionPin[], agentWriter: null };
+      // PLAN-04/05: the proposal kind, status and revision before the scope read.
+      let refused = planProposalProblem(proposal, adoption, {});
+      if (refused?.ok === false) {
+        return refusalOf(refused, refused.reason === 'stale' ? [{ ref: proposalRef, revision: proposal.revision }] : undefined);
       }
-      const goalRef = proposal.goalRef;
-      const scoped = await validateProposalScope(records, proposalRef, goalRef, rawMeta['expected']);
+      const candidate = admittedCandidate(proposal);
+      const goalRef = candidate.goalRef;
+      const scoped = await readProposalScope(records, proposalRef, goalRef, rawMeta['expected']);
       if (scoped.status !== 'ready') return scoped;
       const scope = scoped.scope;
+      const adoptionScope: PlanAdoptionScope = { ...scopeFactsOf(scope, proposalRef.workspaceId, scoped.comparison),
+        agentAdmission: null };
+      // PLAN-04/05: the scope, then decisionRefs and the pointer (initial) or the
+      // draft schema and decisionRefs (future), before the next read.
+      refused = planProposalProblem(candidate, adoption, adoptionScope);
+      if (refused?.ok === false) {
+        // A stale refusal is the pins' (they come first) or the initial pointer's; each reports what it read.
+        const active = scope.goal.activePlanRevision;
+        return refusalOf(refused, pinsCurrent(refused, scoped.comparison)
+          ?? (refused.reason === 'stale' && active !== null ? [{ ref: active, revision: 1 }] : undefined));
+      }
 
-      if (proposal.basedOn !== null) {
+      if (candidate.basedOn !== null) {
         return applyFutureRevision({
-          records, proposal, proposalRef, goalRef, goalScope: scope, sourceRef: proposal.basedOn,
-          decisionRefs: decisionRefs as readonly VersionPin[],
+          records, proposal: candidate, proposalRef, goalRef, goalScope: scope, sourceRef: candidate.basedOn,
+          adoption, adoptionScope,
           identity, identityKey, fingerprint, requestId,
           extraGuards: [], actor: bound.actor, preCommitSignal: null,
           eventId: deps.eventId, now: deps.now,
         });
       }
 
-      if ((decisionRefs as unknown[]).length > 0) return rejected('invalid', 'an initial plan adoption does not accept decision references');
-      if (scope.goal.activePlanRevision !== null) {
-        return { status: 'rejected', code: 'revision_conflict',
-          reason: 'the goal already has an active plan; an initial adoption cannot replace it',
-          current: [{ ref: scope.goal.activePlanRevision, revision: 1 }] };
-      }
       let originGuards: RecordGuard[] = [];
-      if (proposal.draft.origin !== undefined) {
-        const verified = await verifyModelCoordinationDraft(capturedContext, proposal);
-        if ('rejection' in verified) return verified.rejection;
-        originGuards = verified.guards;
+      let origin: 'ok' | CoreRejection = 'ok';
+      if (candidate.draft.origin !== undefined) {
+        const verified = await verifyModelCoordinationDraft(capturedContext, candidate);
+        if ('rejection' in verified) origin = verified.rejection;
+        else originGuards = verified.guards;
       }
+      refused = planProposalProblem(candidate, adoption, { ...adoptionScope, initial: { origin } });
+      if (refused?.ok === false) return refusalOf(refused);
 
-      const governance = await resolveGovernance(records, proposalRef.projectId);
-      if (governance.status !== 'resolved') return governance;
-      const initialIssues = validatePlanDraft(proposal.draft, governance.policyContent);
-      if (initialIssues.length > 0) return planAdmissionRejection('the initial plan is not admissible', initialIssues);
-      const initialAssignmentReasons = validatePlanAssignments(proposal.draft);
-      if (initialAssignmentReasons.length > 0) return rejected('incomplete', `the initial plan is not admissible: ${initialAssignmentReasons.join('; ')}`);
-      const initialPhaseReasons = planPhaseGuardReasons(proposal.draft.tasks);
-      if (initialPhaseReasons.length > 0) return rejected('incomplete', `the initial plan is not admissible: ${initialPhaseReasons.join('; ')}`);
+      const governanceRead = await resolveGovernance(records, proposalRef.projectId);
+      refused = planProposalProblem(candidate, adoption, { ...adoptionScope,
+        initial: { origin, governance: governanceRead.status === 'resolved' ? 'ok' : governanceRead } });
+      if (refused?.ok === false) return refusalOf(refused);
+      // PLAN-04 refused an unresolved governance above.
+      const governance = governanceRead.status === 'resolved' ? governanceRead : null;
+      // The draft validators run one after the other, each only once the one before it holds.
+      const draftIssues = validatePlanDraft(candidate.draft, governance!.policyContent);
+      refused = planProposalProblem(candidate, adoption, { ...adoptionScope,
+        initial: { origin, governance: 'ok', draftIssues } });
+      if (refused?.ok === false) return refusalOf(refused);
+      const assignmentReasons = validatePlanAssignments(candidate.draft);
+      refused = planProposalProblem(candidate, adoption, { ...adoptionScope,
+        initial: { origin, governance: 'ok', draftIssues, assignmentReasons } });
+      if (refused?.ok === false) return refusalOf(refused);
+      const phaseReasons = planPhaseGuardReasons(candidate.draft.tasks);
 
-      const priorGuards: RecordGuard[] = [
-        ...originGuards,
-        { refKey: scope.projectKey, expectedRevision: scope.projectRevision },
-        { refKey: scope.workspaceKey, expectedRevision: scope.workspaceRevision },
-        { refKey: refKeyOf(goalRef), expectedRevision: scope.goal.revision },
-        { refKey: planProposalRefKey(proposalRef), expectedRevision: proposal.revision },
-      ];
+      // PLAN-04 + GOAL-02: the accepted candidate, the moved Goal and the guards of the one commit.
+      const decided = transitionPlanProposal(candidate, adoption, { ...adoptionScope, source: null,
+        initial: { origin, governance: 'ok', draftIssues, assignmentReasons, phaseReasons }, future: null });
+      if (!decided.ok) return refusalOf(decided);
+      const accepted = acceptedProposalOf(decided.next);
+      const moved = movedGoal(decided.effects, scope.goal, bound.actor);
+      if (moved.status !== 'moved') return moved;
+      const guards = planCommitGuards(decided.effects, { scope, goalRef, proposalRef,
+        originSources: originGuards, governance: governance!.governance.guards });
       // The proposal read is the FIRST read of this window: it is the horizon.
       const horizon = proposalRead.readThrough ?? scope.readThrough;
       if (horizon === null) return rejected('incomplete', 'the ledger has no readable watermark for the plan adoption');
       const acceptedAt = deps.now();
       const derived = deriveCommandIds(identity, 'plan-apply');
       const compiled = compileInitialPlanAdoption({
-        goal: scope.goal,
-        proposal,
-        draft: proposal.draft,
-        governance: governance.governance,
-        priorGuards,
+        nextGoal: moved.goal,
+        acceptedProposal: accepted,
+        draft: candidate.draft,
+        governance: governance!.governance,
+        guards,
         ledgerHorizon: horizon,
         identityKey,
         fingerprint,
@@ -1327,7 +1355,7 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
       { refKey: canonicalJson(facts.job.ref as unknown as JsonValue), expectedRevision: facts.job.revision },
       { refKey: canonicalJson(facts.run.ref as unknown as JsonValue), expectedRevision: facts.run.revision },
     ];
-    return commitHostPlanProposal({ goalRef, workspaceId, actor: bound.actor, identityKey, fingerprint,
+    return commitHostPlanProposal({ writer: 'initial_answer', goalRef, workspaceId, actor: bound.actor, identityKey, fingerprint,
       proposalId, ref, basedOn: null, draft: normalized.draft, reason: rawReason, requestId,
       expected, extraGuards: originGuards });
   }
@@ -1634,44 +1662,177 @@ function asWriteRejection<T>(result: ReadResult<T>, fallback: string): Rejection
 }
 
 type GoalScopeFacts = Extract<Awaited<ReturnType<typeof readGoalScope>>, { status: 'ready' }>;
+type PinComparison = ReturnType<typeof compareCallerPlanPins>;
+
+// --------------------------------------------------------------------------
+// The plan machine (STATE-MACHINES-SPEC §3 PLAN-01..05, §2 GOAL-02/03)
+// --------------------------------------------------------------------------
+
+type AcceptedPlanEvent = Extract<PlanProposalEvent, { type: 'proposal_accepted' }>;
+type MachineRefusalOf = Extract<MachineRefusal, { ok: false }>;
+/** The scope facts of an adoption (and the Agent's fresh admission), read before its source or facts. */
+type PlanAdoptionScope = Pick<PlanProposalGuardContext, 'goal' | 'goalInWorkspace' | 'pinsAgree' | 'agentAdmission'>;
+
+/** A plan-machine refusal keeps its CoreError and text (§1.2); `current` is the versions today's refusal reported. */
+function refusalOf(refused: MachineRefusalOf, current?: VersionPin[]): CoreRejection {
+  return current === undefined ? rejected(refused.code, refused.detail)
+    : { status: 'rejected', code: refused.code, reason: refused.detail, current };
+}
+
+/** The pin refusal (`stale` while the caller pins disagree) reports the versions read, as today. */
+function pinsCurrent(refused: MachineRefusalOf, comparison: PinComparison): VersionPin[] | undefined {
+  return refused.reason === 'stale' && comparison.status === 'conflict' ? comparison.current : undefined;
+}
+
+/** The scope facts the plan machine judges: the Goal read, its workspace and the caller pins. */
+function scopeFactsOf(scope: GoalScopeFacts, workspaceId: string, comparison: PinComparison):
+  Pick<PlanProposalGuardContext, 'goal' | 'goalInWorkspace' | 'pinsAgree'> {
+  return {
+    goal: { activePlanRevision: scope.goal.activePlanRevision, desiredState: scope.goal.desiredState },
+    goalInWorkspace: scope.goal.workspaceRef.workspaceId === workspaceId,
+    pinsAgree: comparison.status === 'ok',
+  };
+}
+
+function planSourceFactsOf(plan: PlanRevisionSnapshot): PlanSourceFacts {
+  return { ref: plan.ref, goalRef: plan.goalRef, planId: plan.planId, planRevision: plan.planRevision };
+}
+
+/** PLAN-04/05 refuse a legacy proposal before anything else reads it. */
+function admittedCandidate(proposal: PlanProposal): Extract<PlanProposal, { kind: 'candidate_v2' }> {
+  if (proposal.kind !== 'candidate_v2') throw new Error('PLAN-04/05 admitted a legacy proposal');
+  return proposal;
+}
+
+/** The candidate PLAN-04/05 accepted (`acceptProposalRecord`, §14.1). */
+function acceptedProposalOf(next: PlanProposalMachineState): Extract<PlanProposal, { kind: 'candidate_v2' }> {
+  if (next === null || next.kind !== 'candidate_v2') throw new Error('proposal_accepted must write the accepted candidate');
+  return next;
+}
+
+/**
+ * The Goal record of the adoption commit: the plan machine's
+ * `move_goal_pointer` is GOAL-02/03 of the Goal machine, whose
+ * `nextGoalPointer` writes the moved Goal (§14.1).
+ */
+function movedGoal(effects: readonly PlanProposalEffect[], goal: GoalSnapshot, actor: ActorRef):
+  { status: 'moved'; goal: GoalSnapshot } | CoreRejection {
+  const move = effects.find((effect): effect is Extract<PlanProposalEffect, { kind: 'move_goal_pointer' }> =>
+    effect.kind === 'move_goal_pointer');
+  if (move === undefined) throw new Error('a plan adoption must move the Goal pointer');
+  const moved = transitionGoal(goalStateOf(goal, null), { type: 'plan_adopted', basedOn: move.from, target: move.to }, {
+    // The adopter (§1.3); GOAL-02/03 do not read it.
+    callerClass: reworkActorClassOf(null, actor),
+    // Read only by goal_created / goal_completed; PLAN-04/05 judged the scope.
+    scopePinsAgree: true, goalInWorkspace: true, completion: null,
+  });
+  if (!moved.ok) return refusalOf(moved);
+  if (moved.next.goal === null) throw new Error('plan_adopted must write the Goal');
+  return { status: 'moved', goal: moved.next.goal };
+}
+
+/** What a PLAN-05 commit builds its new Plan from (`write_plan_revision`). */
+function futureBuildOf(effects: readonly PlanProposalEffect[]): { changedTaskIds: readonly string[]; addedTaskIds: readonly string[] } {
+  for (const effect of effects) {
+    if (effect.kind === 'write_plan_revision' && effect.build.from === 'future_delta') return effect.build;
+  }
+  throw new Error('a future adoption must write its PlanRevision from the source and the delta');
+}
+
+/** The record guards a plan commit's guard effects name, read in this call. */
+type PlanGuardSources = {
+  scope: GoalScopeFacts;
+  goalRef: GoalRef;
+  proposalRef: PlanProposalRef;
+  answerFacts?: readonly RecordGuard[];
+  agentAdmission?: readonly RecordGuard[];
+  originSources?: readonly RecordGuard[];
+  governance?: readonly RecordGuard[];
+  pinnedPolicy?: readonly RecordGuard[];
+};
+
+/**
+ * The plan machine's guard effects as the commit's record guards, in the
+ * machine's order. The records and the event of the commit are its other
+ * effects (`write_proposal`, `write_plan_revision`, `move_goal_pointer`,
+ * `append_event`), built by the caller and the compiler.
+ */
+function planCommitGuards(effects: readonly PlanProposalEffect[], sources: PlanGuardSources): RecordGuard[] {
+  const named = (list: readonly RecordGuard[] | undefined, target: PlanCommitGuard['target']): readonly RecordGuard[] => {
+    if (list === undefined) throw new Error(`the plan commit read no ${target} guards`);
+    return list;
+  };
+  const guards: RecordGuard[] = [];
+  for (const effect of effects) {
+    if (effect.kind !== 'guard') continue;
+    const guard = effect.guard;
+    switch (guard.target) {
+      case 'answer_facts': guards.push(...named(sources.answerFacts, guard.target)); break;
+      case 'agent_admission': guards.push(...named(sources.agentAdmission, guard.target)); break;
+      case 'origin_sources': guards.push(...named(sources.originSources, guard.target)); break;
+      case 'governance': guards.push(...named(sources.governance, guard.target)); break;
+      case 'pinned_policy': guards.push(...named(sources.pinnedPolicy, guard.target)); break;
+      case 'project':
+        guards.push({ refKey: sources.scope.projectKey, expectedRevision: sources.scope.projectRevision });
+        break;
+      case 'workspace':
+        guards.push({ refKey: sources.scope.workspaceKey, expectedRevision: sources.scope.workspaceRevision });
+        break;
+      case 'goal':
+        guards.push({ refKey: refKeyOf(sources.goalRef), expectedRevision: sources.scope.goal.revision });
+        break;
+      case 'proposal':
+        guards.push({ refKey: planProposalRefKey(sources.proposalRef), expectedRevision: guard.expectedRevision });
+        break;
+      case 'plan_revision':
+        guards.push({ refKey: planRevisionRefKey(guard.ref), expectedRevision: guard.expectedRevision });
+        break;
+      case 'task_record_absent':
+        guards.push({ refKey: taskRecordRefKey(guard.record, sources.goalRef, guard.taskId), expectedRevision: null });
+        break;
+      default: {
+        const unknown: never = guard;
+        throw new Error(`unknown plan commit guard ${JSON.stringify(unknown)}`);
+      }
+    }
+  }
+  return guards;
+}
 
 /**
  * The scope half shared by every plan-adoption caller: the caller pins must
  * describe the real proposal Goal, and the Goal/Project/Workspace revisions
- * actually read here become the local CAS basis. Both the Host and the Agent
- * path use this one implementation.
+ * actually read here become the local CAS basis. PLAN-04/05 judge the
+ * workspace and the pins (`scopeFactsOf`). Both the Host and the Agent path
+ * use this one implementation.
  */
-async function validateProposalScope(
+async function readProposalScope(
   records: GoalRecordTransactionPort & RecordLookupPort,
   proposalRef: PlanProposalRef,
   goalRef: GoalRef,
   expected: unknown,
-): Promise<{ status: 'ready'; scope: GoalScopeFacts } | (Rejection & { current?: VersionPin[] })> {
+): Promise<{ status: 'ready'; scope: GoalScopeFacts; comparison: PinComparison } | Rejection> {
   const pins = normalizeCallerPlanPins({ projectId: proposalRef.projectId, workspaceId: proposalRef.workspaceId,
     goalId: goalRef.goalId }, expected);
   if (pins.status === 'invalid') return rejected('invalid', pins.reason);
   const scope = await readGoalScope(records, goalRef);
   if (scope.status !== 'ready') return scope;
-  if (scope.goal.workspaceRef.workspaceId !== proposalRef.workspaceId) {
-    return forbidden('the goal does not belong to the proposal workspace');
-  }
   const comparison = compareCallerPlanPins({ projectId: proposalRef.projectId, workspaceId: proposalRef.workspaceId,
     goalId: goalRef.goalId }, pins.pins, { projectRevision: scope.projectRevision,
     workspaceRevision: scope.workspaceRevision, goalRevision: scope.goal.revision });
-  if (comparison.status === 'conflict') {
-    return { status: 'rejected', code: 'revision_conflict',
-      reason: 'the supplied version pins do not match the versions read in this call', current: comparison.current };
-  }
-  return { status: 'ready', scope };
+  return { status: 'ready', scope, comparison };
 }
 
 /**
  * The ONE future-adoption orchestration shared by the Host and Agent apply
- * paths. It reads the real source, enforces the W1 future-only rules with the
- * existing validators, merges the caller's admission guards with the exact
- * local CAS guards, and performs the single `compileFuturePlanAdoption` commit.
- * Only the actor, command identity/fingerprint and admission guards differ; the
- * Host initial path and both propose paths are untouched.
+ * paths (PLAN-05 + GOAL-03). The caller has read the proposal and the scope;
+ * this reads the real source, the target, the pinned policy and the touched
+ * Task facts, asking the plan machine after each read with the existing
+ * validators' verdicts, merges the caller's admission guards with the exact
+ * local CAS guards the machine names, and performs the single
+ * `compileFuturePlanAdoption` commit. Only the actor, command
+ * identity/fingerprint and admission guards differ; the Host initial path and
+ * both propose paths are separate.
  */
 async function applyFutureRevision(input: {
   records: GoalRecordTransactionPort & RecordLookupPort;
@@ -1680,69 +1841,62 @@ async function applyFutureRevision(input: {
   goalRef: GoalRef;
   goalScope: GoalScopeFacts;
   sourceRef: PlanRevisionRef;
-  decisionRefs: readonly VersionPin[];
+  adoption: AcceptedPlanEvent;
+  /** Judged by the caller already (scope; draft schema and decisionRefs). */
+  adoptionScope: PlanAdoptionScope;
   identity: { projectId: string; actor: ActorRef; idempotencyKey: string };
   identityKey: string;
   fingerprint: string;
   requestId: string;
+  /** The Agent's fresh admission guards (`agent_admission`); none for the Host. */
   extraGuards: readonly RecordGuard[];
   actor: ActorRef;
   preCommitSignal: AbortSignal | null;
   eventId: () => string;
   now: () => string;
 }): Promise<WriteResult<PlanRevisionSnapshot>> {
-  const { records, proposal, proposalRef, goalRef, goalScope, decisionRefs, actor } = input;
-  if (proposal.draft.schemaVersion !== 2) {
-    if ((decisionRefs as unknown[]).length === 0) {
-      return rejected('incomplete', 'a plan change requires an accepted UserDecision; this slice does not accept raw full drafts');
-    }
-    return rejected('unsupported', 'authorized plan-change delta compilation is not implemented in this slice');
-  }
-  // W1 future-only revision. A non-empty decisionRefs is not a universal
-  // authorization for this narrow branch.
-  if ((decisionRefs as unknown[]).length > 0) {
-    return rejected('unsupported', 'a W1 future-only revision does not accept decision references');
-  }
+  const { records, proposal, proposalRef, goalRef, goalScope, adoption, adoptionScope, actor } = input;
   const sourceRead = await readPlan(records, input.sourceRef);
   if (sourceRead.status !== 'ready') return sourceRead;
   const source = sourceRead.plan;
-  if (source.ref.projectId !== proposalRef.projectId || source.goalRef.goalId !== goalRef.goalId) {
-    return rejected('not_found', 'the source plan does not belong to the proposal goal');
-  }
-  const active = goalScope.goal.activePlanRevision;
-  if (active === null || planRevisionRefKey(active) !== planRevisionRefKey(source.ref)) {
-    return { status: 'rejected', code: 'revision_conflict',
-      reason: 'the source plan is not the Goal current active plan',
-      current: [{ ref: source.ref, revision: source.revision }] };
-  }
-  if (proposal.draft.goalId !== goalRef.goalId) {
-    return rejected('invalid', 'the draft goalId does not match the proposal goal');
-  }
-  if (proposal.draft.planRevision !== source.planRevision + 1) {
-    return rejected('revision_conflict', 'the target planRevision must be exactly source+1');
-  }
-  if (proposal.draft.planId === source.planId) {
-    return rejected('invalid', 'the target planId must be a new, unused reference');
+  const sourceFacts = planSourceFactsOf(source);
+  /** PLAN-05 over the facts read so far (the scope, the source and `future`). */
+  const ask = (future?: Partial<FutureAdoptionFacts>): MachineRefusalOf | null => {
+    const facts: PlanProposalReadFacts = future === undefined
+      ? { ...adoptionScope, source: sourceFacts } : { ...adoptionScope, source: sourceFacts, future };
+    const refused = planProposalProblem(proposal, adoption, facts);
+    return refused?.ok === false ? refused : null;
+  };
+  let refused = ask();
+  if (refused !== null) {
+    // A stale source refusal is "not the active plan", which reports the source (today's `current`), or "not source+1".
+    const active = goalScope.goal.activePlanRevision;
+    const sourceIsActive = active !== null && planRevisionRefKey(active) === planRevisionRefKey(source.ref);
+    return refusalOf(refused, refused.reason === 'stale' && !sourceIsActive
+      ? [{ ref: source.ref, revision: source.revision }] : undefined);
   }
   const targetRef: PlanRevisionRef = { aggregateType: 'PlanRevision', projectId: proposalRef.projectId, planId: proposal.draft.planId };
   const targetRead = await readPlan(records, targetRef);
-  if (targetRead.status === 'ready') {
-    return { status: 'rejected', code: 'revision_conflict', reason: 'the target plan already exists',
-      current: [{ ref: targetRef, revision: targetRead.plan.revision }] };
+  if (targetRead.status !== 'ready' && targetRead.code !== 'not_found') return targetRead;
+  const targetExists = targetRead.status === 'ready';
+  refused = ask({ targetExists });
+  if (refused !== null) {
+    return refusalOf(refused, targetRead.status === 'ready' ? [{ ref: targetRef, revision: targetRead.plan.revision }] : undefined);
   }
-  if (targetRead.status !== 'rejected' || targetRead.code !== 'not_found') return targetRead;
 
   // The intent/role/gate future-only rules run before the generic completeness
   // gate so an omitted source intent is `invalid`, not masked by `incomplete`.
   const deltaResult = deriveFuturePlanDelta(source, proposal.draft);
-  if (deltaResult.status !== 'supported') return rejected('unsupported', deltaResult.reason);
-  const delta = deltaResult.delta;
-  const coverage = validateFutureObligationCoverage({ source, target: proposal.draft, delta });
-  if (coverage.status === 'unsupported') return rejected('unsupported', coverage.reason);
-  if (coverage.status === 'rejected') {
-    return rejected('invalid',
-      `the future plan is not admissible: ${coverage.issues.map((issue) => `${issue.path}: ${issue.message}`).join('; ')}`);
-  }
+  const deltaVerdict: FuturePlanDeltaVerdict = deltaResult.status === 'supported'
+    ? { status: 'supported', changedTaskIds: deltaResult.delta.changedTaskIds, addedTaskIds: deltaResult.delta.addedTaskIds }
+    : deltaResult;
+  refused = ask({ targetExists, delta: deltaVerdict });
+  if (refused !== null) return refusalOf(refused);
+  // PLAN-05 refused an unsupported delta above.
+  const delta = deltaResult.status === 'supported' ? deltaResult.delta : null;
+  const coverage = validateFutureObligationCoverage({ source, target: proposal.draft, delta: delta! });
+  refused = ask({ targetExists, delta: deltaVerdict, coverage });
+  if (refused !== null) return refusalOf(refused);
 
   // Only a genuinely NEW obligationId reads the SOURCE PLAN's exact pinned
   // policy (ref + digest); its local record guard joins this one commit. No new
@@ -1751,48 +1905,61 @@ async function applyFutureRevision(input: {
   const sourceObligationIds = new Set(source.obligations.map((obligation) => obligation.obligationId));
   const hasNewObligation = proposal.draft.obligations
     .some((obligation) => !sourceObligationIds.has(obligation.obligationId));
+  let pinnedPolicy: FutureAdoptionFacts['pinnedPolicy'] = 'not_needed';
   let pinnedPolicyContent: CompletionPolicyContentV1 | null = null;
   let pinnedPolicyGuards: readonly RecordGuard[] = [];
   if (hasNewObligation) {
     const pinned = await readPinnedCompletionPolicy(records, source.effectiveCompletionPolicy);
-    if (pinned.status !== 'resolved') return rejected(pinned.code, pinned.reason);
-    pinnedPolicyContent = pinned.policyContent;
-    pinnedPolicyGuards = pinned.guards;
+    if (pinned.status === 'resolved') {
+      pinnedPolicy = 'ok';
+      pinnedPolicyContent = pinned.policyContent;
+      pinnedPolicyGuards = pinned.guards;
+    } else {
+      pinnedPolicy = rejected(pinned.code, pinned.reason);
+    }
   }
-  const issues = validatePlanDraft(proposal.draft, pinnedPolicyContent);
-  if (issues.length > 0) return planAdmissionRejection('the future plan is not admissible', issues);
+  refused = ask({ targetExists, delta: deltaVerdict, coverage, pinnedPolicy });
+  if (refused !== null) return refusalOf(refused);
+  // The draft validators run one after the other, each only once the one before it holds.
+  const draftIssues = validatePlanDraft(proposal.draft, pinnedPolicyContent);
+  refused = ask({ targetExists, delta: deltaVerdict, coverage, pinnedPolicy, draftIssues });
+  if (refused !== null) return refusalOf(refused);
   const assignmentReasons = validatePlanAssignments(proposal.draft);
-  if (assignmentReasons.length > 0) return rejected('incomplete', `the future plan is not admissible: ${assignmentReasons.join('; ')}`);
+  refused = ask({ targetExists, delta: deltaVerdict, coverage, pinnedPolicy, draftIssues, assignmentReasons });
+  if (refused !== null) return refusalOf(refused);
   const phaseReasons = planPhaseGuardReasons(proposal.draft.tasks);
-  if (phaseReasons.length > 0) return rejected('incomplete', `the future plan is not admissible: ${phaseReasons.join('; ')}`);
+  refused = ask({ targetExists, delta: deltaVerdict, coverage, pinnedPolicy, draftIssues, assignmentReasons, phaseReasons });
+  if (refused !== null) return refusalOf(refused);
 
-  const touchedTaskIds = [...delta.changedTaskIds, ...delta.addedTaskIds];
+  const touchedTaskIds = [...delta!.changedTaskIds, ...delta!.addedTaskIds];
   const futureFacts = await readFutureChangeTaskFacts(records, goalRef, source, touchedTaskIds);
   if (futureFacts.status !== 'ready') return futureFacts;
-
-  const merged = mergePlanGuards([
-    ...input.extraGuards,
-    ...pinnedPolicyGuards,
-    { refKey: goalScope.projectKey, expectedRevision: goalScope.projectRevision },
-    { refKey: goalScope.workspaceKey, expectedRevision: goalScope.workspaceRevision },
-    { refKey: refKeyOf(goalRef), expectedRevision: goalScope.goal.revision },
-    { refKey: planProposalRefKey(proposalRef), expectedRevision: proposal.revision },
-    { refKey: planRevisionRefKey(source.ref), expectedRevision: source.revision },
-    ...futureFacts.value.guards,
-  ]);
+  // PLAN-05 (the untraced rule judges the facts just read) + GOAL-03: the
+  // accepted candidate, the moved Goal and the guards of the one commit.
+  const decided = transitionPlanProposal(proposal, adoption, { ...adoptionScope, source: sourceFacts, initial: null,
+    future: { targetExists, delta: deltaVerdict, coverage, pinnedPolicy, draftIssues, assignmentReasons, phaseReasons,
+      touchedTaskFacts: futureFacts.value.tasks } });
+  if (!decided.ok) return refusalOf(decided);
+  const accepted = acceptedProposalOf(decided.next);
+  const moved = movedGoal(decided.effects, goalScope.goal, actor);
+  if (moved.status !== 'moved') return moved;
+  // mergeGuards keeps first occurrences in order, so the target Plan ∅ guard stays last.
+  const merged = mergePlanGuards(planCommitGuards(decided.effects, { scope: goalScope, goalRef, proposalRef,
+    agentAdmission: input.extraGuards, pinnedPolicy: pinnedPolicyGuards }));
   if (!merged.ok) return merged.rejection;
   if (input.preCommitSignal !== null && input.preCommitSignal.aborted) {
     return rejected('cancelled', 'the plan adoption was cancelled before commit');
   }
+  const build = futureBuildOf(decided.effects);
   const derived = deriveCommandIds(input.identity, 'plan-apply');
   const compiled = compileFuturePlanAdoption({
-    goal: goalScope.goal,
+    nextGoal: moved.goal,
     source,
-    candidate: proposal,
+    acceptedProposal: accepted,
     target: proposal.draft,
-    changedTaskIds: delta.changedTaskIds,
-    addedTaskIds: delta.addedTaskIds,
-    priorGuards: merged.guards,
+    changedTaskIds: build.changedTaskIds,
+    addedTaskIds: build.addedTaskIds,
+    guards: merged.guards,
     identityKey: input.identityKey,
     fingerprint: input.fingerprint,
     eventId: input.eventId(),
@@ -1879,9 +2046,10 @@ async function recheckAgentApply(
 /**
  * W2 Agent proposal path. Order is fixed: stable identify -> original
  * identity/fingerprint receipt lookup -> fresh authorize -> the SAME W1
- * validation/compile/commit. The Host path above is untouched. A fresh failure
- * re-reads the same-identity receipt so a concurrent winner that committed
- * before a later revoke is replayed instead of re-acted.
+ * validation/compile/commit. PLAN-02 of the plan machine judges the admission,
+ * the scope and the source after each read and writes the candidate@1. A fresh
+ * failure re-reads the same-identity receipt so a concurrent winner that
+ * committed before a later revoke is replayed instead of re-acted.
  */
 async function proposePlanAsAgent(
   deps: PlanServiceDependencies,
@@ -1928,53 +2096,51 @@ async function proposePlanAsAgent(
   if (early.code !== 'not_found') return rejected('unavailable', `${early.code}: ${early.reason}`);
 
   const authorized = await authorizePlanWrite(delegated, ctx, { writer, operation: 'propose_future_plan' });
-  if (authorized.status !== 'ready') {
+  const freshAdmission = authorized.status === 'ready' ? authorized.value : null;
+  const recorded = { type: 'proposal_recorded' as const, writer: 'agent' as const, ref, goalRef: input.goalRef,
+    basedOn: input.basedOn, draft: input.draft, reason: input.reason as unknown as PlanChangeReason,
+    submittedBy: freshAdmission === null ? null : freshAdmission.provenance };
+  // PLAN-02: the fresh admission first; a refused write re-reads the same-identity receipt.
+  const refusedAdmission = planProposalProblem(null, recorded, { agentAdmission: freshAdmission === null
+    ? asWriteRejection(authorized, 'the Agent plan write is not authorized') : 'ok' });
+  if (refusedAdmission?.ok === false) {
     const concurrent = await recheckAgentProposal(records, receiptExpected);
     if (concurrent !== null) return concurrent;
-    return asWriteRejection(authorized, 'the Agent plan write is not authorized');
+    return refusalOf(refusedAdmission);
   }
-  const admission = authorized.value;
+  // PLAN-02 refused a write without the fresh admission above.
+  const admission = freshAdmission!;
 
   const evaluate = async (): Promise<WriteResult<PlanProposal>> => {
     const goalScope = await readGoalScope(records, input.goalRef);
     if (goalScope.status !== 'ready') return goalScope;
-    if (goalScope.goal.workspaceRef.workspaceId !== input.workspaceId) {
-      return forbidden('the goal does not belong to the requested workspace');
-    }
     const comparison = compareCallerPlanPins({ projectId: scope.projectId, workspaceId: input.workspaceId,
       goalId: input.goalRef.goalId }, pins.pins, { projectRevision: goalScope.projectRevision,
       workspaceRevision: goalScope.workspaceRevision, goalRevision: goalScope.goal.revision });
-    if (comparison.status === 'conflict') {
-      return { status: 'rejected', code: 'revision_conflict',
-        reason: 'the supplied version pins do not match the versions read in this call', current: comparison.current };
-    }
     // Agent scope: a proposal is a future revision of a REAL accepted source
     // that is still the Goal active plan. The proposal keeps its diagnostic
-    // issues; the full execution rules stay in apply.
-    if (input.draft.schemaVersion !== 2) {
-      return rejected('unsupported', 'an Agent proposal requires a schemaVersion 2 future draft');
-    }
-    if (input.basedOn === null) {
-      return forbidden('an Agent proposal must be based on an accepted source plan');
-    }
-    const sourceRead = await readPlan(records, input.basedOn);
+    // issues; the full execution rules stay in apply. PLAN-02 judges the scope,
+    // the draft schema and basedOn before the source read, then the source.
+    const scoped: PlanProposalReadFacts = { ...scopeFactsOf(goalScope, input.workspaceId, comparison), agentAdmission: 'ok' };
+    let refused = planProposalProblem(null, recorded, scoped);
+    if (refused?.ok === false) return refusalOf(refused, pinsCurrent(refused, comparison));
+    // PLAN-02 refused a proposal without basedOn above.
+    const sourceRead = await readPlan(records, input.basedOn!);
     if (sourceRead.status !== 'ready') return sourceRead;
     const source = sourceRead.plan;
-    if (source.ref.projectId !== scope.projectId || source.goalRef.goalId !== input.goalRef.goalId) {
-      return rejected('not_found', 'the source plan does not belong to the proposal goal');
-    }
-    const active = goalScope.goal.activePlanRevision;
-    if (active === null || planRevisionRefKey(active) !== planRevisionRefKey(source.ref)) {
-      return { status: 'rejected', code: 'revision_conflict',
-        reason: 'the source plan is not the Goal current active plan',
-        current: [{ ref: source.ref, revision: source.revision }] };
+    const ctxFacts: PlanProposalGuardContext = { ...scopeFactsOf(goalScope, input.workspaceId, comparison),
+      agentAdmission: 'ok', source: planSourceFactsOf(source), initial: null, future: null };
+    refused = planProposalProblem(null, recorded, ctxFacts);
+    // The stale source refusal is "not the active plan": it reports the source, as today.
+    if (refused?.ok === false) {
+      return refusalOf(refused, refused.reason === 'stale' ? [{ ref: source.ref, revision: source.revision }] : undefined);
     }
     const policyRead = await tryPolicyContent(records, input.goalRef.projectId);
     const issues = validatePlanDraft(input.draft, policyRead.policy);
-    const candidate: Extract<PlanProposal, { kind: 'candidate_v2' }> = {
-      kind: 'candidate_v2', ref, revision: 1, schemaVersion: 2, goalRef: input.goalRef,
-      basedOn: input.basedOn, draft: input.draft, reason: input.reason as unknown as PlanChangeReason,
-      status: 'candidate', issues, submittedBy: admission.provenance };
+    const decided = transitionPlanProposal(null, { ...recorded, issues }, ctxFacts);
+    if (!decided.ok) return refusalOf(decided);
+    const candidate = decided.next;
+    if (candidate === null) throw new Error('proposal_recorded must write the candidate');
     const derived = deriveCommandIds(identity, 'plan-propose-agent');
     const event: PlanProposalRecordedEvent = {
       eventId: deps.eventId(), eventType: 'PlanProposalRecorded', schemaVersion: 2,
@@ -1982,14 +2148,8 @@ async function proposePlanAsAgent(
       aggregateId: proposalId, aggregateRevision: 1, causationId: derived.commandId,
       correlationId: derived.correlationId, idempotencyKey: input.requestId, actor: writer.actor,
       occurredAt: deps.now(), payload: { proposal: candidate } };
-    const merged = mergePlanGuards([
-      ...admission.guards,
-      { refKey: goalScope.projectKey, expectedRevision: goalScope.projectRevision },
-      { refKey: goalScope.workspaceKey, expectedRevision: goalScope.workspaceRevision },
-      { refKey: refKeyOf(input.goalRef), expectedRevision: goalScope.goal.revision },
-      { refKey: planRevisionRefKey(source.ref), expectedRevision: source.revision },
-      { refKey: planProposalRefKey(ref), expectedRevision: null },
-    ]);
+    const merged = mergePlanGuards(planCommitGuards(decided.effects, { scope: goalScope, goalRef: input.goalRef,
+      proposalRef: ref, agentAdmission: admission.guards }));
     if (!merged.ok) return merged.rejection;
     if (ctx.signal.aborted) return rejected('cancelled', 'the Agent plan proposal was cancelled before commit');
     const committed = await records.commit({ identityKey, fingerprint, guards: merged.guards,
@@ -2013,8 +2173,9 @@ async function proposePlanAsAgent(
 /**
  * W2 Agent apply path. The original command author is recovered from the
  * receipt/event identity, never inferred from the current candidate. The
- * candidate must carry this exact Run/Session/Role source; the same W1 future
- * compile/commit runs with the Agent actor and the admitted local guards.
+ * candidate must carry this exact Run/Session/Role source (PLAN-05, Agent
+ * adopter); the same W1 future compile/commit runs with the Agent actor and
+ * the admitted local guards.
  */
 async function applyPlanChangeAsAgent(
   deps: PlanServiceDependencies,
@@ -2031,9 +2192,12 @@ async function applyPlanChangeAsAgent(
   const identified = await identifyPlanWriter(delegated, ctx, scope);
   if (identified.status !== 'ready') return asWriteRejection(identified, 'the Agent plan writer could not be identified');
   const writer = identified.value;
-  if ((input.decisionRefs as unknown[]).length > 0) {
-    return forbidden('an Agent future-plan apply does not accept decision references');
-  }
+  const adoption: AcceptedPlanEvent = { type: 'proposal_accepted', adopter: 'agent', proposalRef: input.proposalRef,
+    expectedProposalRevision: input.expectedProposalRevision, decisionRefs: input.decisionRefs as readonly VersionPin[],
+    agentWriter: { runRef: writer.runRef, sessionRef: writer.sessionRef, roleBinding: writer.roleBinding, goalRef: writer.goalRef } };
+  // PLAN-05 (Agent): decisionRefs before any other check or read.
+  const refusedDecisions = planProposalProblem(undefined, adoption, {});
+  if (refusedDecisions?.ok === false) return refusalOf(refusedDecisions);
   const pins = normalizeCallerPlanPins(scope, input.expected);
   if (pins.status === 'invalid') return rejected('invalid', pins.reason);
   const expected = orderedPlanPins(input.expected);
@@ -2055,42 +2219,41 @@ async function applyPlanChangeAsAgent(
   if (early.code !== 'not_found') return rejected('unavailable', `${early.code}: ${early.reason}`);
 
   const authorized = await authorizePlanWrite(delegated, ctx, { writer, operation: 'apply_future_plan' });
-  if (authorized.status !== 'ready') {
+  const freshAdmission = authorized.status === 'ready' ? authorized.value : null;
+  // PLAN-05 (Agent): the fresh admission before the proposal read; a refused write re-reads the receipt.
+  const refusedAdmission = planProposalProblem(undefined, adoption, { agentAdmission: freshAdmission === null
+    ? asWriteRejection(authorized, 'the Agent plan write is not authorized') : 'ok' });
+  if (refusedAdmission?.ok === false) {
     const concurrent = await recheckAgentApply(records, receiptExpected);
     if (concurrent !== null) return concurrent;
-    return asWriteRejection(authorized, 'the Agent plan write is not authorized');
+    return refusalOf(refusedAdmission);
   }
-  const admission = authorized.value;
+  // PLAN-05 refused an Agent write without the fresh admission above.
+  const admission = freshAdmission!;
 
   const evaluate = async (): Promise<WriteResult<PlanRevisionSnapshot>> => {
     const proposalRead = await readProposal(records, input.proposalRef);
     if (proposalRead.status !== 'ready') return proposalRead;
     const proposal = proposalRead.proposal;
-    if (proposal.kind !== 'candidate_v2') return rejected('unsupported', 'a legacy v1 patch proposal cannot be adopted by an Agent');
-    if (proposal.status !== 'candidate') return rejected('invalid', `proposal ${input.proposalRef.proposalId} is not a pending candidate`);
-    if (proposal.revision !== input.expectedProposalRevision) {
-      return { status: 'rejected', code: 'revision_conflict', reason: 'the proposal revision changed',
-        current: [{ ref: input.proposalRef, revision: proposal.revision }] };
+    // PLAN-05 (Agent): kind, status, revision and the submission source before the scope read.
+    let refused = planProposalProblem(proposal, adoption, { agentAdmission: 'ok' });
+    if (refused?.ok === false) {
+      return refusalOf(refused, refused.reason === 'stale' ? [{ ref: input.proposalRef, revision: proposal.revision }] : undefined);
     }
-    const submittedBy = proposal.submittedBy;
-    if (submittedBy === undefined) {
-      return forbidden('a candidate without an Agent submission source cannot be adopted by an Agent');
-    }
-    if (!sameRef(submittedBy.runRef, writer.runRef) || !sameRef(submittedBy.sessionRef, writer.sessionRef)
-      || !sameRef(submittedBy.roleBinding, writer.roleBinding)) {
-      return forbidden('the candidate was submitted by another Agent Run');
-    }
-    const goalRef = proposal.goalRef;
-    if (goalRef.projectId !== scope.projectId || goalRef.goalId !== writer.goalRef.goalId) {
-      return forbidden('the candidate goal is not the Agent Run goal');
-    }
-    if (proposal.basedOn === null) return forbidden('an Agent apply requires a future revision with a source plan');
-    const scoped = await validateProposalScope(records, input.proposalRef, goalRef, input.expected);
+    const candidate = admittedCandidate(proposal);
+    const goalRef = candidate.goalRef;
+    const scoped = await readProposalScope(records, input.proposalRef, goalRef, input.expected);
     if (scoped.status !== 'ready') return scoped;
+    const adoptionScope: PlanAdoptionScope = { ...scopeFactsOf(scoped.scope, input.proposalRef.workspaceId, scoped.comparison),
+      agentAdmission: 'ok' };
+    // PLAN-05: the scope, then the draft schema and decisionRefs, before the source read.
+    refused = planProposalProblem(candidate, adoption, adoptionScope);
+    if (refused?.ok === false) return refusalOf(refused, pinsCurrent(refused, scoped.comparison));
     return applyFutureRevision({
-      records, proposal, proposalRef: input.proposalRef, goalRef, goalScope: scoped.scope,
-      sourceRef: proposal.basedOn,
-      decisionRefs: input.decisionRefs as readonly VersionPin[],
+      records, proposal: candidate, proposalRef: input.proposalRef, goalRef, goalScope: scoped.scope,
+      // PLAN-05 refused an Agent apply without a source plan above.
+      sourceRef: candidate.basedOn!,
+      adoption, adoptionScope,
       identity, identityKey, fingerprint, requestId: input.requestId,
       extraGuards: admission.guards, actor: writer.actor, preCommitSignal: ctx.signal,
       eventId: deps.eventId, now: deps.now,

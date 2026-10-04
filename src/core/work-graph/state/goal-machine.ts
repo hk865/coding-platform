@@ -22,7 +22,7 @@
  *
  * A.2 step 2 (§15.2) scope:
  * - 已有 rows keep today's records byte for byte (pre-step-3 `commit-compiler.ts:113-120`,
- *   `plan-commit-compiler.ts:144,293`, pre-step-3 `completion.ts:572-582`) and today's
+ *   pre-step-3 `plan-commit-compiler.ts:144,293`, pre-step-3 `completion.ts:572-582`) and today's
  *   CoreError codes, checked in today's service order.
  * - 改造 rows keep TODAY's externally visible result; step 5.5 flips them: the
  *   `desiredState = active` guard of GOAL-07/08 (`busy`), the `busy` of a new
@@ -96,7 +96,7 @@ export function newGoalSnapshot(input: { ref: GoalRef; workspaceRef: WorkspaceRe
 
 /**
  * GOAL-02/03: the pointer moves onto `planRef`, revision + 1. The desired state,
- * its revision and requester are kept (today `plan-commit-compiler.ts:144,293`
+ * its revision and requester are kept (pre-step-3 `plan-commit-compiler.ts:144,293`
  * spread the Goal the same way).
  */
 export function nextGoalPointer(goal: GoalSnapshot, planRef: PlanRevisionRef): GoalSnapshot {
@@ -342,9 +342,10 @@ function onGoalCreated(
  * GOAL-02 (null → P1) / GOAL-03 (Pk → Pk+1), the Goal side of §3 PLAN-04/05,
  * in today's order and with today's texts, the same as `transitionPlanProposal`
  * (so both machines answer one adoption commit alike): the pointer only moves
- * forward from the candidate's source (`plan-service.ts:1166-1170`,
- * `:1712-1717`), then the target must be a new plan (`:1724-1726`). A pointer
- * already on the target is a stale source like any other: the owner's
+ * forward from the candidate's source (pre-step-3 `plan-service.ts:1166-1170`,
+ * `:1712-1717`), then the target must be a new plan (`:1724-1726`). The plan
+ * service runs it on the plan machine's `move_goal_pointer` of the same commit.
+ * A pointer already on the target is a stale source like any other: the owner's
  * same-identity recheck after a rejection (`plan-service.ts:1120-1138,
  * 1225-1229`) replays the adoption that moved it. Step 5.5: a `cancelled` Goal
  * answers `illegal`/`invalid` (§2.4); `paused` stays legal (W16 is a plan

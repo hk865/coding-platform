@@ -660,6 +660,84 @@ it('scenario 8: codec rejects broken shapes and graph reads verify the actual ba
   }
 });
 
+it('scenario 9: a changed or added Task with a Run, TaskLease or TaskReduction is no longer future (zero writes)', async () => {
+  const noLongerFuture = (taskId: string, trace: string) => ({ status: 'rejected', code: 'revision_conflict',
+    reason: `task ${taskId} ${trace} and is no longer a future task` });
+  const RUN = 'already has a Run';
+  const LEASE = 'already holds a TaskLease';
+  const REDUCTION = 'already has a formal reduction';
+  const leaseKeyB = canonicalJson({ aggregateType: 'TaskLease', projectId, goalId: 'goal-1', taskId: 'B' });
+  /** B's TaskLease reads back undecodable; everything else is read as stored. */
+  const corruptLeaseB = (f: W1Fixture): Records => ({ ...f.records, async readMany(keys) {
+    const read = await f.records.readMany(keys);
+    if (read.status !== 'ready') return read;
+    return { ...read, value: { ...read.value, records: read.value.records.map(record =>
+      record.refKey === leaseKeyB ? { ...record, json: '{}' } : record) } };
+  } });
+  /** Seeds a fresh fixture, proposes `draft` on the active source, applies it
+   * (over `over` when given) and checks the exact refusal and that nothing was written. */
+  async function refusedAdoption(label: string, draft: PlanDraftV2, seed: (f: W1Fixture) => Promise<unknown>,
+    expected: object, over?: (f: W1Fixture) => Records): Promise<void> {
+    const f = await setup();
+    await seed(f);
+    const proposed = await f.proposeChange(draft, `w1-s9-${label}`);
+    expect(proposed, label).toMatchObject({ status: 'committed', value: { status: 'candidate', issues: [] } });
+    if (proposed.status !== 'committed') throw new Error(`W1 scenario 9 ${label} candidate failed to persist`);
+    const goalKey = canonicalJson(f.goalRef as unknown as JsonValue);
+    const head = async () => {
+      const read = await f.records.readMany([goalKey]);
+      if (read.status !== 'ready') throw new Error(`W1 scenario 9 head read failed: ${JSON.stringify(read)}`);
+      return read.value.readThrough;
+    };
+    const before = await head();
+    const plans = over === undefined ? f.plans : planServiceOver(over(f), `s9-${label}`);
+    const applied = await plans.applyPlanChange(ctx, { meta: { requestId: `w1-s9-${label}-apply`, expected: [] },
+      input: { proposalRef: proposed.value.ref, expectedProposalRevision: proposed.value.revision, decisionRefs: [] } });
+    expect(applied, label).toEqual(expected);
+    // Zero write: no commit at all; the active pointer, the candidate and the absent target are unchanged.
+    expect(await head(), label).toEqual(before);
+    expect((await f.currentGoal()).activePlanRevision, label).toEqual(f.planRef);
+    expect(await f.plans.readPlanProposal(ctx, proposed.value.ref), label)
+      .toMatchObject({ status: 'ready', value: { status: 'candidate', revision: proposed.value.revision } });
+    expect(await f.readJsons([{ aggregateType: 'PlanRevision', projectId, planId: draft.planId }]), label).toEqual({});
+  }
+
+  // editBDraft changes B; splitBDraft changes B (superseded) and adds B1, B2.
+  await refusedAdoption('changed-run', editBDraft(), f => f.seedRun('B', 'ended'), noLongerFuture('B', RUN));
+  await refusedAdoption('changed-lease', editBDraft(), f => f.seedLease('B', 'w1-run-B'), noLongerFuture('B', LEASE));
+  await refusedAdoption('changed-reduction', editBDraft(), f => f.seedReduction('B', 'satisfied'),
+    noLongerFuture('B', REDUCTION));
+  await refusedAdoption('added-run', splitBDraft(), f => f.seedRun('B2', 'running'), noLongerFuture('B2', RUN));
+  await refusedAdoption('added-lease', splitBDraft(), f => f.seedLease('B1', 'w1-run-B1'), noLongerFuture('B1', LEASE));
+  await refusedAdoption('added-reduction', splitBDraft(), f => f.seedReduction('B2', 'satisfied'),
+    noLongerFuture('B2', REDUCTION));
+
+  // The rule's order: every touched Task's Runs first, then per Task (changed
+  // before added) its Lease before its Reduction; the first trace answers.
+  await refusedAdoption('runs-first', splitBDraft(), async f => {
+    await f.seedReduction('B', 'satisfied');
+    await f.seedLease('B1', 'w1-run-B1');
+    await f.seedRun('B2', 'running');
+  }, noLongerFuture('B2', RUN));
+  await refusedAdoption('task-order', splitBDraft(), async f => {
+    await f.seedReduction('B', 'satisfied');
+    await f.seedLease('B1', 'w1-run-B1');
+  }, noLongerFuture('B', REDUCTION));
+  await refusedAdoption('lease-before-reduction', editBDraft(), async f => {
+    await f.seedReduction('B', 'satisfied');
+    await f.seedLease('B', 'w1-run-B');
+  }, noLongerFuture('B', LEASE));
+
+  // The read stops at the first trace: a later undecodable record is never
+  // decoded, so the answer stays the trace; without the trace it is unavailable.
+  await refusedAdoption('first-trace-stops', editBDraft(), async f => {
+    await f.seedRun('B', 'ended');
+    await f.seedLease('B', 'w1-run-B');
+  }, noLongerFuture('B', RUN), corruptLeaseB);
+  await refusedAdoption('undecodable-lease', editBDraft(), f => f.seedLease('B', 'w1-run-B'),
+    { status: 'rejected', code: 'unavailable', reason: `TaskLease ${leaseKeyB} is not decodable` }, corruptLeaseB);
+});
+
 it('scenario 6 (memory): explicit old Plan excludes later Run + global Lease; active reads stay authoritative', async () => {
   const f = await setup();
   const plan1 = f.plan;
