@@ -35,9 +35,9 @@ import type { CompletionDependencies } from "./completion.js";
 import { completeGoalFromHost, completeTaskFromHost } from "./completion.js";
 import type { CreateGoalInput, GoalService, GoalServiceDependencies, GoalTaskPort, GraphWrite } from "./contracts.js";
 import { compareCallerGoalPins, compileGoalCreate, goalCreateFingerprint, goalCreateIdentityKey, goalRefFor, normalizeCallerGoalPins, projectRefFor, workspaceRefFor } from "../persistence/commit-compiler.js";
-import { createGoalGraphRepository, type CommittedStoreReceipt, type GoalCreateIdentity, type GoalGraphRepository, type GoalScopeRefs } from "../persistence/graph-repository.js";
+import { createGoalGraphRepository, type CommittedStoreReceipt, type GoalCreateIdentity, type GoalGraphRepository } from "../persistence/graph-repository.js";
 import { cloneActorRef, canonicalRefKey } from "../persistence/record-codecs.js";
-import { goalStateOf, transitionGoal, type GoalCommitGuard, type GoalEffect } from "../state/goal-machine.js";
+import { goalStateOf, transitionGoal } from "../state/goal-machine.js";
 
 // --------------------------------------------------------------------------
 // Internal admission result
@@ -150,41 +150,6 @@ function goalRevisionConflict(
   };
 }
 
-/**
- * GOAL-01's effects as the commit's record guards, in the machine's order:
- * the Project/Workspace revisions read in this call and Goal ∅. The record is
- * `next.goal` and the compiler builds the GoalCreated event.
- */
-function goalCreateGuards(
-  effects: readonly GoalEffect[],
-  refs: GoalScopeRefs,
-  read: { projectRevision: number; workspaceRevision: number },
-): RecordGuard[] {
-  const guardOf = (guard: GoalCommitGuard): RecordGuard => {
-    switch (guard.target) {
-      case "project": return { refKey: canonicalRefKey(refs.projectRef), expectedRevision: read.projectRevision };
-      case "workspace": return { refKey: canonicalRefKey(refs.workspaceRef), expectedRevision: read.workspaceRevision };
-      // Goal absence is guaranteed by the null guard — never by a pre-read.
-      case "goal": return { refKey: canonicalRefKey(refs.goalRef), expectedRevision: guard.expectedRevision };
-      default: throw new Error(`goal_created has no ${guard.target} guard`);
-    }
-  };
-  const guards: RecordGuard[] = [];
-  for (const effect of effects) {
-    switch (effect.kind) {
-      case "write_goal":
-      case "append_event":
-        break;
-      case "guard":
-        guards.push(guardOf(effect.guard));
-        break;
-      default:
-        throw new Error(`goal_created has no ${effect.kind} effect`);
-    }
-  }
-  return guards;
-}
-
 // --------------------------------------------------------------------------
 // The one admission pipeline
 // --------------------------------------------------------------------------
@@ -246,7 +211,7 @@ export async function admitGoalCreation(
   const observed = read.scope;
   const preReadGoalRevision = observed.goal?.revision;
   const goalRefKey = canonicalRefKey(refs.goalRef);
-  const comparison = compareCallerGoalPins(command, pins.pins, {
+  const disagreeing = compareCallerGoalPins(command, pins.pins, {
     projectRevision: observed.project.revision,
     workspaceRevision: observed.workspace.revision,
     goalRevision: preReadGoalRevision ?? null,
@@ -261,40 +226,37 @@ export async function admitGoalCreation(
     {
       // The Host-bound command actor (§1.3); GOAL-01 does not read it.
       callerClass: reworkActorClassOf(null, command.identity.actor),
-      scopePinsAgree: comparison.status === "ok",
+      scopePinsAgree: disagreeing.length === 0,
       // Read only by goal_completed.
       goalInWorkspace: true,
       completion: null,
     },
   );
-  if (!created.ok) {
-    // GOAL-01 refuses only pins that disagree with the versions read.
-    return comparison.status === "conflict"
-      ? goalRevisionConflict(comparison.current, preReadGoalRevision, goalRefKey, created.detail)
-      : reject(created.code, created.detail);
-  }
+  // GOAL-01's one refusal (stale / revision_conflict): the disagreeing pins.
+  if (!created.ok) return goalRevisionConflict(disagreeing, preReadGoalRevision, goalRefKey, created.detail);
   const goal = created.next.goal;
   if (goal === null) throw new Error("goal_created must write the Goal");
-  const compiled = compileGoalCreate({
-    command,
-    goal,
-    guards: goalCreateGuards(created.effects, refs, {
-      projectRevision: observed.project.revision,
-      workspaceRevision: observed.workspace.revision,
-    }),
-    eventId: deps.eventId(),
-    occurredAt: deps.now(),
+  // The record is `next.goal` and the compiler builds the GoalCreated event;
+  // each guard effect names one CAS guard of the scope read in this call.
+  const guards = created.effects.flatMap((effect): RecordGuard[] => {
+    if (effect.kind === "write_goal" || effect.kind === "append_event") return [];
+    if (effect.kind !== "guard") throw new Error(`goal_created has no ${effect.kind} effect`);
+    const guard = effect.guard;
+    switch (guard.target) {
+      case "project": return [{ refKey: canonicalRefKey(refs.projectRef), expectedRevision: observed.project.revision }];
+      case "workspace": return [{ refKey: canonicalRefKey(refs.workspaceRef), expectedRevision: observed.workspace.revision }];
+      // Goal absence is guaranteed by the null guard — never by a pre-read.
+      case "goal": return [{ refKey: goalRefKey, expectedRevision: guard.expectedRevision }];
+      default: throw new Error(`goal_created has no ${guard.target} guard`);
+    }
   });
+  const prepared = compileGoalCreate({ command, goal, guards, eventId: deps.eventId(), occurredAt: deps.now() });
 
   // (5) the store re-looks-up, CASes, writes and commits. Once inside this
   // call the transaction result wins: a successful commit is never flipped to
   // cancelled by an end-of-call signal.
   if (options?.signal?.aborted) return reject("cancelled", "goal creation was cancelled before commit");
-  const committed = await repository.commit({
-    prepared: compiled.prepared,
-    folded: compiled.snapshot,
-    expected,
-  });
+  const committed = await repository.commit({ prepared, folded: goal, expected });
   if (committed.status === "committed") {
     return { status: "committed", snapshot: committed.snapshot, receipt: committed.receipt };
   }

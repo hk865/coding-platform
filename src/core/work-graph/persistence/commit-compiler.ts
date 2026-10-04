@@ -75,22 +75,13 @@ export type GoalCreateCompileInput = {
   occurredAt: string;
 };
 
-export type CompiledGoalCreate = {
-  prepared: PreparedCommit;
-  event: GoalCreatedEvent;
-  snapshot: GoalSnapshot;
-  identityKey: string;
-  fingerprint: CommandFingerprint;
-};
-
 /**
  * Compiles one Goal creation into the exact 3 guards / 1 record / 1 event write
  * set. Field order matches the original Control builders byte for byte so the
  * stored `snapshot_json` / `event_json` stay compatible with existing rows.
  */
-export function compileGoalCreate(input: GoalCreateCompileInput): CompiledGoalCreate {
+export function compileGoalCreate(input: GoalCreateCompileInput): PreparedCommit {
   const command = input.command;
-  const snapshot = input.goal;
   const projectId = command.identity.projectId;
   const workspaceId = command.payload.workspaceId;
   const goalId = command.aggregateId;
@@ -110,29 +101,21 @@ export function compileGoalCreate(input: GoalCreateCompileInput): CompiledGoalCr
     actor: cloneActorRef(command.identity.actor),
     occurredAt: input.occurredAt,
     payload: {
-      objective: snapshot.objective,
+      objective: input.goal.objective,
       desiredState: "active",
       activePlanRevision: null,
     },
   };
 
-  const prepared: PreparedCommit = {
+  return {
     identityKey: goalCreateIdentityKey(command.identity),
     fingerprint: goalCreateFingerprint(command),
-    guards: [...input.guards],
-    records: [encodeGoalSnapshot(snapshot)],
+    guards: input.guards,
+    records: [encodeGoalSnapshot(input.goal)],
     claims: [],
     indexGuards: [],
     indexChanges: [],
     events: [encodeGoalCreatedEvent(event)],
-  };
-
-  return {
-    prepared,
-    event,
-    snapshot,
-    identityKey: prepared.identityKey,
-    fingerprint: prepared.fingerprint as CommandFingerprint,
   };
 }
 
@@ -234,20 +217,17 @@ export type ObservedGoalScopeVersions = {
   goalRevision: number | null;
 };
 
-export type GoalPinComparison =
-  | { status: "ok" }
-  | { status: "conflict"; current: { refKey: string; revision: number | null }[] };
-
 /**
- * Compares the supplied pins against the versions read in THIS call. An omitted
- * pin uses the observed revision (never silently overwritten); a supplied pin is
- * enforced.
+ * Compares the supplied pins against the versions read in THIS call and returns
+ * each disagreeing one with the version read; empty = the pins agree (GOAL-01's
+ * `scopePinsAgree`). An omitted pin uses the observed revision (never silently
+ * overwritten); a supplied pin is enforced.
  */
 export function compareCallerGoalPins(
   command: CreateGoalCommand,
   pins: CallerGoalPins,
   observed: ObservedGoalScopeVersions,
-): GoalPinComparison {
+): { refKey: string; revision: number | null }[] {
   const current: { refKey: string; revision: number | null }[] = [];
   if (pins.project !== undefined && pins.project !== observed.projectRevision) {
     current.push({
@@ -270,5 +250,5 @@ export function compareCallerGoalPins(
       });
     }
   }
-  return current.length === 0 ? { status: "ok" } : { status: "conflict", current };
+  return current;
 }
