@@ -4,12 +4,15 @@
  * `evaluateTaskCompletion` consumes the single R3e effective-evidence fold
  * (`EffectiveEvidenceSet`) already computed by the completion service; it never
  * recomputes applicability, reviewer coverage or source status itself. A
- * required reviewer that has no formal producer is passed as
- * `requiredReviewerMissing`; when no adopted requirement asks for a reviewer the
- * caller passes `false` and this seam adds no prerequisite.
+ * required reviewer requirement has no formal producer yet, so it holds the
+ * Task; when no adopted requirement asks for a reviewer this seam adds no
+ * prerequisite. Its verdict is the one TASK-14/15/24 judge
+ * (`state/task-machine.ts` `TaskCompletionVerdictV1`).
  *
  * `evaluateGoalCompletion` consumes only the selected Plan plus the canonical
- * task facts already read by the service (formal reductions + effective phases).
+ * task facts already read by the service (formal reductions + effective phases)
+ * and answers the facts GOAL-07/08 judge and record (`state/goal-machine.ts`
+ * `GoalCompletionFacts`).
  *
  * `CanonicalTaskFacts`/`CanonicalTaskState` are TYPE-ONLY imports so this file
  * stays free of the reader's runtime (avoiding a completion <-> reader cycle).
@@ -18,25 +21,15 @@
  */
 import type { EffectiveEvidenceSet } from '../../../contracts/evidence.js';
 import { requirementKeyOf } from '../../../contracts/evidence.js';
-import type { PlanRevisionSnapshot } from '../../../contracts/plan.js';
+import type { PlanRevisionSnapshot, RuntimeTask } from '../../../contracts/plan.js';
 import type { RunSnapshot } from '../../../contracts/dispatch.js';
-import type { TaskReductionCause, TaskReductionPhase, TaskReductionSnapshot } from '../../../contracts/reduction.js';
+import type {
+  TaskReductionCause, TaskReductionPhase, TaskReductionRef, TaskReductionSnapshot,
+} from '../../../contracts/reduction.js';
+import type { GoalCompletionFacts } from '../state/goal-machine.js';
 import { runUnresolvedBlocker } from '../state/run-machine.js';
+import type { TaskCompletionVerdictV1 } from '../state/task-machine.js';
 import type { CanonicalTaskFacts, CanonicalTaskState } from './plan-readers.js';
-
-export type TaskCompletionEvaluation = {
-  satisfied: boolean;
-  phase: TaskReductionPhase;
-  causes: TaskReductionCause[];
-  satisfiedObligationIds: string[];
-};
-
-export type GoalCompletionEvaluation = {
-  completed: boolean;
-  unfinishedTaskIds: string[];
-  unsatisfiedObligationIds: string[];
-  reasons: string[];
-};
 
 type RequiredRequirement = { obligationId: string; requirementId: string; kind: string };
 
@@ -61,23 +54,18 @@ function requiredRequirementsOf(plan: PlanRevisionSnapshot, taskId: string): {
   return { required, requiredObligations };
 }
 
-/** PURE Task completion decision over the ONE effective-evidence set. */
+/** PURE Task completion decision over the ONE effective-evidence set. `task` is
+ * the selected Plan's definition; TASK-14/15/24 refuse a Task outside the Plan. */
 export function evaluateTaskCompletion(input: {
   plan: PlanRevisionSnapshot;
-  taskId: string;
+  task: RuntimeTask;
   effectiveSet: EffectiveEvidenceSet;
   runs: readonly RunSnapshot[];
   lease: CanonicalTaskState['lease'];
-  requiredReviewerMissing: boolean;
-}): TaskCompletionEvaluation {
-  const { plan, taskId, effectiveSet, runs, lease, requiredReviewerMissing } = input;
+}): TaskCompletionVerdictV1 {
+  const { plan, task, effectiveSet, runs, lease } = input;
+  const { taskId } = task;
   const causes: TaskReductionCause[] = [];
-  const task = plan.tasks.find(candidate => candidate.taskId === taskId);
-  if (task === undefined) {
-    return { satisfied: false, phase: 'verifying',
-      causes: [{ code: 'not_current_plan', message: 'task not found in the current plan revision' }],
-      satisfiedObligationIds: [] };
-  }
   if (task.disposition !== 'active') {
     causes.push({ code: 'not_active',
       message: `disposition is ${task.disposition} — deferred/cancelled/superseded never satisfy` });
@@ -109,8 +97,7 @@ export function evaluateTaskCompletion(input: {
       evidenceIds: [lease.holderRunId] });
   }
 
-  const reviewerRequired = [...required.values()].some(entry => entry.kind === 'reviewer');
-  const reviewerMissing = requiredReviewerMissing && reviewerRequired;
+  const reviewerMissing = [...required.values()].some(entry => entry.kind === 'reviewer');
   if (reviewerMissing) {
     causes.push({ code: 'missing_evidence',
       message: 'a required independent review requirement has no formal producer yet' });
@@ -186,15 +173,14 @@ function satisfiedReduction(taskFacts: CanonicalTaskFacts, taskId: string): Task
  * covered by formal reductions. Required plan_only/deferred stay unfinished;
  * an optional intent alone never blocks, but a REAL already-started side effect
  * on any adopted task — an active/unknown/quarantined/unresolved Run or a valid
- * Lease — must be reconciled and therefore blocks completion. */
+ * Lease — must be reconciled and therefore blocks completion. The satisfied
+ * reductions it counts are the ones the GoalPhase lists (GOAL-07/08). */
 export function evaluateGoalCompletion(input: {
   plan: PlanRevisionSnapshot;
   taskFacts: CanonicalTaskFacts;
-}): GoalCompletionEvaluation {
+}): GoalCompletionFacts {
   const { plan, taskFacts } = input;
   const reasons: string[] = [];
-  const unfinishedTaskIds: string[] = [];
-  const unsatisfiedObligationIds: string[] = [];
 
   const requiredWork = plan.tasks.filter(task => task.requirementLevel === 'required' && task.taskKind === 'work');
   const requiredGates = plan.tasks.filter(task => task.requirementLevel === 'required' && task.taskKind === 'gate');
@@ -207,10 +193,12 @@ export function evaluateGoalCompletion(input: {
   const requiredObligations = plan.obligations.filter(obligation => obligation.requirementLevel === 'required');
   if (requiredObligations.length === 0) reasons.push('the plan has no required obligation');
 
+  const adoptedTaskReductions: { ref: TaskReductionRef; revision: number }[] = [];
   const satisfiedObligations = new Set<string>();
   for (const task of plan.tasks) {
     const reduction = satisfiedReduction(taskFacts, task.taskId);
     if (reduction === null) continue;
+    adoptedTaskReductions.push({ ref: reduction.ref, revision: reduction.revision });
     for (const obligationId of reduction.satisfiedObligationIds) satisfiedObligations.add(obligationId);
   }
 
@@ -218,23 +206,15 @@ export function evaluateGoalCompletion(input: {
     // A cancelled/superseded required task no longer carries work, but its
     // obligations are still checked below and never silently disappear.
     if (task.disposition === 'cancelled' || task.disposition === 'superseded') continue;
-    const reduction = satisfiedReduction(taskFacts, task.taskId);
-    if (task.disposition !== 'active' || reduction === null) {
-      unfinishedTaskIds.push(task.taskId);
+    if (task.disposition !== 'active' || satisfiedReduction(taskFacts, task.taskId) === null) {
       reasons.push(`required task ${task.taskId} is not formally satisfied`);
     }
   }
 
   for (const obligation of requiredObligations) {
-    const requiredRequirements = obligation.verificationRequirements
-      .filter(requirement => requirement.requirementLevel === 'required');
-    if (requiredRequirements.length === 0) {
-      unsatisfiedObligationIds.push(obligation.obligationId);
+    if (!obligation.verificationRequirements.some(requirement => requirement.requirementLevel === 'required')) {
       reasons.push(`required obligation ${obligation.obligationId} has no required verification requirement`);
-      continue;
-    }
-    if (!satisfiedObligations.has(obligation.obligationId)) {
-      unsatisfiedObligationIds.push(obligation.obligationId);
+    } else if (!satisfiedObligations.has(obligation.obligationId)) {
       reasons.push(`required obligation ${obligation.obligationId} is not formally satisfied`);
     }
   }
@@ -256,5 +236,9 @@ export function evaluateGoalCompletion(input: {
     }
   }
 
-  return { completed: reasons.length === 0, unfinishedTaskIds, unsatisfiedObligationIds, reasons };
+  // GOAL-07/08 add the reviewer reason to an incomplete answer.
+  const requiresReviewer = requiredObligations.some(obligation => obligation.verificationRequirements
+    .some(requirement => requirement.requirementLevel === 'required' && requirement.kind === 'reviewer'));
+  return { plan: { ref: plan.ref, planRevision: plan.planRevision }, evaluation: { completed: reasons.length === 0, reasons },
+    requiresReviewer, adoptedTaskReductions, satisfiedObligationIds: [...satisfiedObligations] };
 }

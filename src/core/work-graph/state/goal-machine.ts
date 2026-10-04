@@ -234,7 +234,7 @@ export const GOAL_EVENT_TYPES: readonly GoalEventType[] = Object.freeze([
 
 /**
  * What `completeGoal` read after the pointer (pre-step-3 `completion.ts:529-569`): the
- * active Plan, `evaluateGoalCompletion` (`completion-policy.ts:190-260`), and
+ * active Plan, `evaluateGoalCompletion` (`completion-policy.ts:178-244`), and
  * the formal reductions it consumes. `requiresReviewer` adds today's reviewer
  * reason to an incomplete answer (pre-step-3 `completion.ts:549-554`).
  */
@@ -897,7 +897,7 @@ function gateStateOf(gate: GoalDisplayTaskFactsV1, tasks: readonly GoalDisplayTa
     && task.requirementLevel === 'required');
   const round = gate.failure?.round ?? null;
   if (round === null) {
-    // Cancelled/superseded work carries no work any more (`completion-policy.ts:220`).
+    // Cancelled/superseded work carries no work any more (`completion-policy.ts:208`).
     const carried = requiredWork.filter((task) => task.disposition !== 'cancelled' && task.disposition !== 'superseded');
     return gate.requirementLevel === 'required' && carried.every((task) => task.phase === 'satisfied') ? 'awaiting_gate' : null;
   }

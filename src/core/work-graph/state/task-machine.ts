@@ -249,7 +249,7 @@ export type TaskClaimFacts = {
   admission: CoreRejection | null;
 };
 
-/** `evaluateTaskCompletion` over the folded Evidence (`completion-policy.ts` `TaskCompletionEvaluation`). */
+/** `evaluateTaskCompletion` over the folded Evidence (`completion-policy.ts` returns this type). */
 export type TaskCompletionVerdictV1 = {
   satisfied: boolean;
   phase: TaskReductionPhase;

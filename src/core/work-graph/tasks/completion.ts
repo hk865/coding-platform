@@ -9,7 +9,8 @@
  *      current-state read, so a replay returns the original value/cursor;
  *   3. reads only the exact Goal/Plan/round/Evidence/index/facts/policy the
  *      completion actually consumes;
- *   4. folds the ONE effective-evidence set and calls the pure completion policy;
+ *   4. folds the ONE effective-evidence set and calls the pure completion policy,
+ *      which answers the facts the machines judge;
  *   5. asks the state machine (§4 TASK-14/15/24 `transitionTask`, §2 GOAL-07/08
  *      `transitionGoal`), whose record constructors build the TaskReduction /
  *      GoalPhase (§14.1);
@@ -42,10 +43,7 @@ import type {
   DecodeResult, EncodedRecord, GoalRecordTransactionPort, PreparedCommit, RecordGuard, StoreCommitReceipt,
 } from '../../record-store/ports.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
-import {
-  goalCompletionProblem, goalStateOf, transitionGoal,
-  type GoalCommitGuard, type GoalCompletionFacts, type GoalGuardContext,
-} from '../state/goal-machine.js';
+import { goalCompletionProblem, goalStateOf, transitionGoal, type GoalGuardContext } from '../state/goal-machine.js';
 import {
   taskCompletionFoldProblem, taskCompletionRoundProblem, taskMachineStateOf, transitionTask, type TaskPhaseFacts,
 } from '../state/task-machine.js';
@@ -400,14 +398,8 @@ export async function completeTaskFromHost(
   }
   const effectiveSet = selectEffectiveEvidenceSet(evidenceList, bindings);
 
-  const reviewerRequired = plan.obligations.some(obligation => obligation.taskIds.includes(task.taskId)
-    && obligation.requirementLevel === 'required'
-    && obligation.verificationRequirements.some(requirement => requirement.requirementLevel === 'required'
-      && requirement.kind === 'reviewer'));
   const evaluation = evaluateTaskCompletion({
-    plan, taskId: task.taskId, effectiveSet,
-    runs: facts.runsByTaskId.get(task.taskId) ?? [], lease: state.lease,
-    requiredReviewerMissing: reviewerRequired,
+    plan, task: taskDefinition, effectiveSet, runs: facts.runsByTaskId.get(task.taskId) ?? [], lease: state.lease,
   });
   // TASK-14/15/24 refuse an unsatisfied fold before the pinned policy is read.
   const foldRefusal = taskCompletionFoldProblem(task.taskId, evaluation);
@@ -438,12 +430,9 @@ export async function completeTaskFromHost(
     },
   }, { taskId: task.taskId, claim: null, completion: { producerRun, producerTaskKind, evaluation }, trace: null });
   if (!completed.ok) return reject(completed.code, completed.detail);
-  let reduction: TaskReductionSnapshot | null = null;
-  for (const effect of completed.effects) {
-    if (effect.kind !== 'write_task_reduction') throw new Error(`task_completed has no ${effect.kind} effect`);
-    reduction = effect.reduction;
-  }
-  if (reduction === null) throw new Error('task_completed must write the TaskReduction');
+  const [written, ...others] = completed.effects;
+  if (written?.kind !== 'write_task_reduction' || others.length > 0) throw new Error('task_completed writes exactly the TaskReduction');
+  const reduction = written.reduction;
 
   const guards = mergeGuards([
     { refKey: refKeyOf(goalRef) as string, expectedRevision: goal.revision },
@@ -554,33 +543,17 @@ export async function completeGoalFromHost(
 
   const phaseRead = await readGoalPhase(deps.records, goalPhaseRef);
   if (phaseRead.status !== 'ready') return mapRejected(phaseRead);
-  const persistedPhaseRevision = phaseRead.guard.expectedRevision;
 
-  const evaluation = evaluateGoalCompletion({ plan, taskFacts: facts });
-  const requiresReviewer = plan.obligations.some(obligation => obligation.requirementLevel === 'required'
-    && obligation.verificationRequirements.some(requirement => requirement.requirementLevel === 'required'
-      && requirement.kind === 'reviewer'));
-  const adoptedTaskReductions: { ref: TaskReductionRef; revision: number }[] = [];
-  const satisfiedObligations = new Set<string>();
-  for (const planTask of plan.tasks) {
-    const state = facts.byTaskId.get(planTask.taskId);
-    const reduction = facts.reductionsByTaskId.get(planTask.taskId);
-    if (state === undefined || state.effectivePhase !== 'satisfied') continue;
-    if (reduction === undefined || reduction.phase !== 'satisfied') continue;
-    adoptedTaskReductions.push({ ref: reduction.ref, revision: reduction.revision });
-    for (const obligationId of reduction.satisfiedObligationIds) satisfiedObligations.add(obligationId);
-  }
-  const completion: GoalCompletionFacts = { plan: { ref: plan.ref, planRevision: plan.planRevision }, evaluation,
-    requiresReviewer, adoptedTaskReductions, satisfiedObligationIds: [...satisfiedObligations] };
   const goalState = goalStateOf(goal, phaseRead.snapshot);
   const goalCtx: GoalGuardContext = { callerClass: reworkActorClassOf(ownedCtx.ctx.principal, actor),
-    scopePinsAgree: true, goalInWorkspace, completion };
+    scopePinsAgree: true, goalInWorkspace, completion: evaluateGoalCompletion({ plan, taskFacts: facts }) };
   // GOAL-07/08 judge the GoalPhase pin, then the reduction, before the pinned
   // policy is read; the Goal pin held above, so a stale refusal is the GoalPhase's.
   const decided = goalCompletionProblem(goalState, pinned, goalCtx);
   if (decided?.ok === false) {
-    return reject(decided.code, decided.detail, decided.reason === 'stale' && persistedPhaseRevision !== null
-      ? [{ ref: goalPhaseRef, revision: persistedPhaseRevision }] : undefined);
+    const stored = goalState.goalPhase;
+    return reject(decided.code, decided.detail, decided.reason === 'stale' && stored !== null
+      ? [{ ref: goalPhaseRef, revision: stored.revision }] : undefined);
   }
 
   const policyRead = await readPinnedCompletionPolicy(deps.records, plan.effectiveCompletionPolicy);
@@ -592,7 +565,12 @@ export async function completeGoalFromHost(
   if (!completed.ok) return reject(completed.code, completed.detail);
   const goalPhase = completed.next.goalPhase;
   if (goalPhase === null) throw new Error('goal_completed must write the GoalPhase');
-  const commitGuard = (guard: GoalCommitGuard): readonly RecordGuard[] => {
+  // The record is `next.goalPhase` and the GoalCompleted event is built below;
+  // each guard effect names one CAS guard of the read set.
+  const guards = mergeGuards(completed.effects.flatMap((effect): readonly RecordGuard[] => {
+    if (effect.kind === 'write_goal_phase' || effect.kind === 'append_event') return [];
+    if (effect.kind !== 'guard') throw new Error(`goal_completed has no ${effect.kind} effect`);
+    const guard = effect.guard;
     switch (guard.target) {
       case 'goal': return [{ refKey: refKeyOf(goalRef) as string, expectedRevision: guard.expectedRevision }];
       case 'plan_revision': return [{ refKey: refKeyOf(guard.ref) as string, expectedRevision: plan.revision }];
@@ -601,23 +579,7 @@ export async function completeGoalFromHost(
       case 'task_facts': return facts.guards;
       default: throw new Error(`goal_completed has no ${guard.target} guard`);
     }
-  };
-  const commitGuards: RecordGuard[] = [];
-  for (const effect of completed.effects) {
-    switch (effect.kind) {
-      // The record is `next.goalPhase`; the GoalCompleted event is built below.
-      case 'write_goal_phase':
-      case 'append_event':
-        break;
-      case 'guard':
-        commitGuards.push(...commitGuard(effect.guard));
-        break;
-      default:
-        throw new Error(`goal_completed has no ${effect.kind} effect`);
-    }
-  }
-
-  const guards = mergeGuards(commitGuards);
+  }));
   if (!guards.ok) return guards.rejection;
 
   const occurredAt = deps.now();
@@ -665,8 +627,8 @@ async function collectEvidenceKeys(
   } else if (!read.batch.missing.has(indexKey)) {
     return { rejection: unavailable('the TaskEvidenceIndex key was neither returned nor reported missing') };
   }
+  // Never empty: TASK-14/15/24 refused a round that admitted no Evidence.
   const evidenceIds = [...new Set([...indexIds, ...roundEvidenceRefs.map(ref => ref.evidenceId)])];
-  if (evidenceIds.length === 0) return { rejection: incomplete('the task has no admitted Evidence') };
   const refs: EvidenceRef[] = evidenceIds.map(evidenceId => ({ aggregateType: 'Evidence', projectId, evidenceId }));
   const evidenceRead = await readBatch(records, refs.map(ref => refKeyOf(ref) as string));
   if (evidenceRead.status !== 'ready') return { rejection: mapRejected(evidenceRead) };
