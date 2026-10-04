@@ -1,0 +1,231 @@
+{
+  "ready": true,
+  "scope": {
+    "projectId": "demo-project",
+    "workspaceId": "demo-workspace"
+  },
+  "libScope": {
+    "projectId": "demo-lib",
+    "workspaceId": "demo-lib-workspace"
+  },
+  "goalId": "demo-goal",
+  "pollGoalId": "demo-goal-poll",
+  "goal": {
+    "objective": "让解析器返回结构化结果，并补充使用说明",
+    "desiredState": "active",
+    "desiredStateRevision": 1,
+    "revision": 2
+  },
+  "goalPhase": null,
+  "goalReadKeys": [
+    "goal",
+    "pendingPlan"
+  ],
+  "tasks": [
+    {
+      "taskId": "parse-result",
+      "phase": "satisfied",
+      "disposition": "active"
+    },
+    {
+      "taskId": "usage-doc",
+      "phase": "satisfied",
+      "disposition": "active"
+    },
+    {
+      "taskId": "future-cli",
+      "phase": "pending",
+      "disposition": "active"
+    },
+    {
+      "taskId": "goal-gate",
+      "phase": "satisfied",
+      "disposition": "active"
+    }
+  ],
+  "sessions": {
+    "main": "session-0284706ac357e4bcda061a75498300323c92d785ff887ff8c5d29a6a5ed9b24d",
+    "work": "session-329d27f7e2f88d441cdc851da67f7591443e9eed9f6c49e7e9ac227142409ac1",
+    "reviewer": "session-6c4964dd4e442486d8e04534d913f7434d30278fa5c7faad64274462a246ac3e",
+    "archived": "session-f59038f5d2d42ff393fb74d58bbdc5b7216f276c3d643ddbf789e833ca98d60d"
+  },
+  "queries": {
+    "main": {
+      "queryRunRef": {
+        "aggregateType": "QueryRun",
+        "projectId": "demo-project",
+        "workspaceId": "demo-workspace",
+        "queryJobId": "demo-query-main",
+        "runId": "demo-query-run-main"
+      },
+      "answered": true
+    },
+    "review": {
+      "queryRunRef": {
+        "aggregateType": "QueryRun",
+        "projectId": "demo-project",
+        "workspaceId": "demo-workspace",
+        "queryJobId": "demo-query-review",
+        "runId": "demo-query-run-review"
+      },
+      "answered": true
+    }
+  },
+  "queryProfileIds": [
+    "demo-consult"
+  ],
+  "advance": {
+    "state": "completed",
+    "receipts": [
+      {
+        "state": "advance",
+        "receipt": null,
+        "result": null,
+        "next": "claim_task"
+      },
+      {
+        "state": "advance",
+        "receipt": "claim_task",
+        "result": "committed",
+        "next": "prepare"
+      },
+      {
+        "state": "advance",
+        "receipt": "prepare",
+        "result": "ready",
+        "next": "start"
+      },
+      {
+        "state": "advance",
+        "receipt": "start",
+        "result": "ready",
+        "next": "open_checks"
+      },
+      {
+        "state": "advance",
+        "receipt": "open_checks",
+        "result": "committed",
+        "next": "run_check"
+      },
+      {
+        "state": "advance",
+        "receipt": "run_check",
+        "result": "ready",
+        "next": "finalize_checks"
+      },
+      {
+        "state": "advance",
+        "receipt": "finalize_checks",
+        "result": "committed",
+        "next": "complete_task"
+      },
+      {
+        "state": "advance",
+        "receipt": "complete_task",
+        "result": "committed",
+        "next": "select_work"
+      },
+      {
+        "state": "advance",
+        "receipt": null,
+        "result": null,
+        "next": "claim_task"
+      },
+      {
+        "state": "advance",
+        "receipt": "claim_task",
+        "result": "committed",
+        "next": "prepare"
+      },
+      {
+        "state": "advance",
+        "receipt": "prepare",
+        "result": "ready",
+        "next": "start"
+      },
+      {
+        "state": "advance",
+        "receipt": "start",
+        "result": "ready",
+        "next": "open_checks"
+      },
+      {
+        "state": "advance",
+        "receipt": "open_checks",
+        "result": "committed",
+        "next": "run_check"
+      },
+      {
+        "state": "advance",
+        "receipt": "run_check",
+        "result": "ready",
+        "next": "finalize_checks"
+      },
+      {
+        "state": "advance",
+        "receipt": "finalize_checks",
+        "result": "committed",
+        "next": "complete_task"
+      },
+      {
+        "state": "advance",
+        "receipt": "complete_task",
+        "result": "committed",
+        "next": "select_work"
+      },
+      {
+        "state": "advance",
+        "receipt": null,
+        "result": null,
+        "next": "open_checks"
+      },
+      {
+        "state": "advance",
+        "receipt": "open_checks",
+        "result": "committed",
+        "next": "run_check"
+      },
+      {
+        "state": "advance",
+        "receipt": "run_check",
+        "result": "ready",
+        "next": "finalize_checks"
+      },
+      {
+        "state": "advance",
+        "receipt": "finalize_checks",
+        "result": "committed",
+        "next": "complete_task"
+      },
+      {
+        "state": "advance",
+        "receipt": "complete_task",
+        "result": "committed",
+        "next": "select_work"
+      },
+      {
+        "state": "advance",
+        "receipt": null,
+        "result": null,
+        "next": "complete_goal"
+      },
+      {
+        "state": "completed",
+        "receipt": "complete_goal",
+        "result": "committed",
+        "next": null
+      }
+    ]
+  },
+  "scriptedCalls": {
+    "work": 6,
+    "query": 2,
+    "blocked": 0
+  },
+  "clock": {
+    "base": "2026-10-04T01:00:00.000Z",
+    "stepMs": 10,
+    "ticksAfterSeed": 310
+  },
+  "uuidsAfterSeed": 155
+}
