@@ -51,13 +51,15 @@ import type {
 import {
   SESSION_BY_WORKSPACE_LOOKUP, SESSION_BY_WORKSPACE_LIFECYCLE_LOOKUP,
   SESSION_BY_WORKSPACE_LEGACY_ROLE_LOOKUP, SESSION_BY_WORKSPACE_SPEC_ROLE_LOOKUP,
-  SESSION_LINKS_BY_MODULE_LOOKUP, SESSION_LINKS_BY_TASK_LOOKUP, SESSION_LINKS_BY_WORK_LOOKUP,
-  SESSION_WORK_LINK_RELATIONS, SESSION_WORK_LINKS_LOOKUP, checkArtifactRef, checkOperationRef,
+  SESSION_CREATED_EVENT_TYPE, SESSION_LINKS_BY_MODULE_LOOKUP, SESSION_LINKS_BY_TASK_LOOKUP,
+  SESSION_LINKS_BY_WORK_LOOKUP, SESSION_WORK_LINK_RELATIONS, SESSION_WORK_LINKS_LOOKUP,
+  checkArtifactRef, checkOperationRef,
   checkPlainSessionRef, checkRole, checkTarget, decodeSessionOperationRecord, decodeSessionRecord,
   decodeSessionWorkLink, encodePendingSessionWorkLink, encodeSessionCreationAdmittedEvent,
   encodeSessionCreatedEvent, encodeSessionOperationRecord, encodeSessionRecord, isPlatformCursor,
   operationRefKey, plainSessionRefToAggregate, sessionAggregateRefKey, sessionCreatedPayloadFromEvent,
   sessionOperationFromAdmittedEvent, sessionWorkLinkRefKey, type PendingSessionWorkLink,
+  type SessionCreatedEvent,
 } from './session-record-codecs.js';
 import { validateWorkLinkTarget } from './session-targets.js';
 import {
@@ -960,10 +962,10 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
       },
       failure: null,
     };
-    const event = {
+    const event: SessionCreatedEvent = {
       eventId: deriveEventId(identityKey, 'created'),
-      eventType: 'SessionCreated' as const,
-      schemaVersion: 1 as const,
+      eventType: SESSION_CREATED_EVENT_TYPE,
+      schemaVersion: 1,
       occurredAt: createdAt,
       projectId: scope.projectId,
       workspaceId: scope.workspaceId,
@@ -993,6 +995,10 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
           }
           break;
         case 'emit_event':
+          // SES-01 names the event; this write encodes only that one.
+          if (effect.eventType !== event.eventType) {
+            throw new Error(`session_created emits ${event.eventType}, not ${effect.eventType}`);
+          }
           events.push(encodeSessionCreatedEvent(event));
           break;
         default:
