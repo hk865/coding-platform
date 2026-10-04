@@ -25,9 +25,11 @@ import type {
   ExecutionAuthorizationV2, RoleBindingRefV1, RunOutcome, RunRef, RunSnapshot, RuntimeEventV1,
   RuntimeInputBindingV1, TaskAttemptSnapshot, TaskBudgetV1, TaskLeaseSnapshot, TaskTriple,
 } from '../../../contracts/dispatch.js';
+import { continuationBriefShapeProblem } from '../../../contracts/continuation-brief.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
 import { sameArtifactRef, validMaterialSourcePin, type MaterialBasisV1 } from '../../../contracts/material-access.js';
+import { MANIFEST_CONTENT_TYPE } from '../../../contracts/no-progress.js';
 import type { PlanRevisionSnapshot, TaskInputRequirementV2 } from '../../../contracts/plan.js';
 import type { RoleSpecResolutionV1 } from '../../../contracts/role-spec-materials.js';
 import type { TaskEnvelopeV1 } from '../../../contracts/task-envelope.js';
@@ -467,6 +469,16 @@ function sessionRoleProblem(value: unknown): string | null {
   }
   return 'manifest sessionRole kind is not recognized';
 }
+/** LA-1 `sessionBasis` (spec §6.1 (e)): a Kernel session id and a non-negative position or null. */
+function sessionBasisProblem(value: unknown): string | null {
+  if (!isRecord(value) || !Object.keys(value).every((key) => key === 'sourceKernelSessionId' || key === 'throughPosition')
+    || !nonEmpty(value['sourceKernelSessionId'])
+    || !(value['throughPosition'] === null
+      || (typeof value['throughPosition'] === 'number' && Number.isSafeInteger(value['throughPosition']) && value['throughPosition'] >= 0))) {
+    return 'manifest sessionBasis must be {sourceKernelSessionId, throughPosition: null or a safe non-negative integer}';
+  }
+  return null;
+}
 
 function manifestProblem(value: unknown): string | null {
   if (!isRecord(value)) return 'manifest must be an object';
@@ -516,6 +528,15 @@ function manifestProblem(value: unknown): string | null {
   for (const source of value['sourceRefs']) {
     const problem = sourceRefProblem(source);
     if (problem !== null) return problem;
+  }
+  // C3 / LA-1 optional fields: shape only here; the RUN-02 binding guard compares them.
+  if (value['continuationBrief'] !== undefined) {
+    const briefProblem = continuationBriefShapeProblem(value['continuationBrief']);
+    if (briefProblem !== null) return `manifest ${briefProblem}`;
+  }
+  if (value['sessionBasis'] !== undefined) {
+    const sessionBasisError = sessionBasisProblem(value['sessionBasis']);
+    if (sessionBasisError !== null) return sessionBasisError;
   }
   if (typeof value['input'] !== 'string') return 'manifest input must be a string';
   if (!isSha256Hex(value['inputDigest'])) return 'manifest inputDigest must be a sha256 hex';
@@ -846,8 +867,8 @@ function expectedPinList(pin: VersionPin): Array<{ ref: VersionPin['ref']; revis
 // The factory
 // --------------------------------------------------------------------------
 
-/** The ONE accepted prepared-manifest body content type. */
-export const MANIFEST_CONTENT_TYPE = 'application/vnd.coding-platform.task-execution-manifest+json;version=1';
+/** The ONE accepted prepared-manifest body content type (declared once in contracts, ND-9). */
+export { MANIFEST_CONTENT_TYPE };
 
 const ENTRY_AUTHORIZE_PREFIX = 'b2-entry-authorize:';
 const ENTRY_BEGIN_PREFIX = 'b2-entry-begin:';

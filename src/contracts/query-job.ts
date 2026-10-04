@@ -69,7 +69,8 @@ export type QueryRunV1 = {
     status: QueryRunStatus;
     startedAt: string | null;
     endedAt: string | null;
-    outcome: "answered" | "timeout" | "gap" | "failed" | "cancelled" | null;
+    /** `not_entered`: settled by reconciliation without the Query ever entering the Kernel (§8). */
+    outcome: "answered" | "timeout" | "gap" | "failed" | "cancelled" | "not_entered" | null;
 };
 export type QueryRunSnapshot = {
     ref: QueryRunRef;
@@ -291,7 +292,7 @@ export type QueryJobV1 = {
     runRef: QueryRunRef | null;
     answerRefs: QueryJobAnswerRef[];
     closeReason: {
-        code: "timeout" | "gap" | "failed" | "stale_source" | "cancelled";
+        code: "timeout" | "gap" | "failed" | "stale_source" | "cancelled" | "not_entered";
         message: string;
     } | null;
     submittedAt: string;

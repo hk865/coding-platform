@@ -12,6 +12,11 @@
  * Existing Evidence/Index or TaskReduction owners are NOT re-registered here.
  * The validators are pure and closed: they never start I/O, never fake
  * `decoded`, and never accept arbitrary JSON.
+ *
+ * A.2 (spec §9.1, C5): a round may carry `chain` (shape-checked; legacy rounds
+ * without it stay readable) and a check `incompleteCause`; four events
+ * (interrupted, abandoned, report booked, reverified) and the gate-chain and
+ * open-round lookups are registered with the original ones.
  */
 import type {
     DecodeResult, EncodedDomainEvent, EncodedRecord, RecordBackendSchemas,
@@ -19,10 +24,14 @@ import type {
 import type { EvidenceSnapshot, TaskEvidenceIndexSnapshot } from '../../../contracts/evidence.js';
 import type { ActorRef } from '../../../contracts/command-event.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
-import type {
-    CheckExecutionTicket, CheckProcessObservation, RoundSnapshot, VerificationRoundRef,
+import {
+    ROUND_CHAIN_MAX,
+    type CheckExecutionTicket, type CheckProcessObservation, type RoundSnapshot, type VerificationRoundRef,
 } from '../../../contracts/verification.js';
 import type { FinalizedChecks } from './contracts.js';
+import {
+    actorRefProblem, incompleteCauseProblem, isSha256Hex, newBasisInputRefsProblem, reverifyBasisProblem,
+} from '../persistence/rework-codecs.js';
 
 // -------------------------------------------------------------------------- //
 // Schema names (frozen)                                                      //
@@ -37,7 +46,17 @@ export const VERIFICATION_CHECK_BEGUN_EVENT_TYPE = 'VerificationCheckBegun' as c
 export const VERIFICATION_CHECK_RESULT_RECORDED_EVENT_TYPE = 'VerificationCheckResultRecorded' as const;
 export const VERIFICATION_ROUND_FINALIZED_EVENT_TYPE = 'VerificationRoundFinalized' as const;
 export const EVIDENCE_ADMITTED_EVENT_TYPE = 'EvidenceAdmitted' as const;
+/** A.2 check reconciliation and successor-round events (spec §9.2; VR-04, VR-13, VD-6, VR-14). */
+export const VERIFICATION_CHECK_INTERRUPTED_EVENT_TYPE = 'VerificationCheckInterrupted' as const;
+export const VERIFICATION_CHECK_ABANDONED_EVENT_TYPE = 'VerificationCheckAbandoned' as const;
+export const VERIFICATION_CHECK_REPORT_BOOKED_EVENT_TYPE = 'VerificationCheckReportBooked' as const;
+export const VERIFICATION_ROUND_REVERIFIED_EVENT_TYPE = 'VerificationRoundReverified' as const;
 export const EVIDENCE_EVENT_SCHEMA_VERSION = 1 as const;
+
+/** Why an executing check was interrupted (written as its `incompleteCause`). */
+export type CheckInterruptionCause = 'host_restart' | 'ticket_invalid';
+/** Why a begun check was proven never started and returned to pending (VD-6). */
+export type CheckAbandonCause = 'caller_cancelled' | 'root_changed' | 'permission_changed' | 'read_failed';
 
 /** Trusted Host actor for a committed evidence/round operation. */
 export type EvidenceEventActor = Extract<ActorRef, { kind: 'human' | 'system' }>;
@@ -68,7 +87,34 @@ export type VerificationRoundEvent =
     | (EvidenceEventBase & { eventType: typeof VERIFICATION_CHECK_BEGUN_EVENT_TYPE; result: CheckExecutionTicket })
     | (EvidenceEventBase & { eventType: typeof VERIFICATION_CHECK_RESULT_RECORDED_EVENT_TYPE; result: RoundSnapshot })
     | (EvidenceEventBase & { eventType: typeof VERIFICATION_ROUND_FINALIZED_EVENT_TYPE; result: FinalizedChecks })
-    | (EvidenceEventBase & { eventType: typeof EVIDENCE_ADMITTED_EVENT_TYPE; result: EvidenceSnapshot });
+    | (EvidenceEventBase & { eventType: typeof EVIDENCE_ADMITTED_EVENT_TYPE; result: EvidenceSnapshot })
+    /** VR-04 (reconcile, with the reconciling `hostInstanceId`) and VR-13 (`ticket_invalid`, no Host instance). */
+    | (EvidenceEventBase & {
+        eventType: typeof VERIFICATION_CHECK_INTERRUPTED_EVENT_TYPE;
+        checkId: string;
+        invocationId: string;
+        cause: CheckInterruptionCause;
+        hostInstanceId: string | null;
+        result: RoundSnapshot;
+    })
+    /** VD-6: the runner proved the process never started. */
+    | (EvidenceEventBase & {
+        eventType: typeof VERIFICATION_CHECK_ABANDONED_EVENT_TYPE;
+        checkId: string;
+        invocationId: string;
+        cause: CheckAbandonCause;
+        result: RoundSnapshot;
+    })
+    /** Reconcile booked the located report of an interrupted check. */
+    | (EvidenceEventBase & {
+        eventType: typeof VERIFICATION_CHECK_REPORT_BOOKED_EVENT_TYPE;
+        checkId: string;
+        invocationId: string;
+        hostInstanceId: string;
+        result: RoundSnapshot;
+    })
+    /** VR-14: `roundRef` and `result` are the new successor round (chain ordinal ≥ 2). */
+    | (EvidenceEventBase & { eventType: typeof VERIFICATION_ROUND_REVERIFIED_EVENT_TYPE; result: RoundSnapshot });
 
 export const VERIFICATION_ROUND_EVENT_TYPES: readonly VerificationRoundEvent['eventType'][] = [
     VERIFICATION_ROUND_OPENED_EVENT_TYPE,
@@ -76,6 +122,10 @@ export const VERIFICATION_ROUND_EVENT_TYPES: readonly VerificationRoundEvent['ev
     VERIFICATION_CHECK_RESULT_RECORDED_EVENT_TYPE,
     VERIFICATION_ROUND_FINALIZED_EVENT_TYPE,
     EVIDENCE_ADMITTED_EVENT_TYPE,
+    VERIFICATION_CHECK_INTERRUPTED_EVENT_TYPE,
+    VERIFICATION_CHECK_ABANDONED_EVENT_TYPE,
+    VERIFICATION_CHECK_REPORT_BOOKED_EVENT_TYPE,
+    VERIFICATION_ROUND_REVERIFIED_EVENT_TYPE,
 ];
 
 // -------------------------------------------------------------------------- //
@@ -158,13 +208,94 @@ function checkSnapshotProblem(value: unknown): string | null {
     if (value['sourceStatus'] !== null && !SOURCE_STATUSES.includes(value['sourceStatus'] as typeof SOURCE_STATUSES[number])) {
         return 'a round check sourceStatus is not recognized';
     }
+    // C5: absent on legacy checks (read as null); only the enumeration is a
+    // codec rule, the phase/outcome pairing is the `withCheckPhase` constructor's.
+    if (value['incompleteCause'] !== undefined) {
+        const cause = incompleteCauseProblem(value['incompleteCause'], 'a round check incompleteCause');
+        if (cause !== null) return cause;
+    }
     return null;
 }
+
+const REVERIFY_FAILURE_CLASSES: readonly string[] = ['check_failed', 'check_incomplete'];
+const REVERIFY_EXEMPTIONS: readonly string[] = ['none', 'host_interruption', 'not_started'];
+const ACTOR_CLASSES: readonly string[] = ['human', 'system', 'agent'];
+
+/** `RoundReverifyFactV1`: `requestedBy` may be an Agent (it is not the event actor). */
+function reverifyFactProblem(value: unknown): string | null {
+    if (!isRecord(value) || !hasOnlyKeys(value, ['requestedBy', 'actorClass', 'failureClass', 'requestedAt', 'basis',
+        'exemption', 'sourceChanged', 'newInputRefs', 'reason'])) {
+        return 'a round chain reverify must be a RoundReverifyFactV1';
+    }
+    const actor = actorRefProblem(value['requestedBy'], 'a round chain reverify requestedBy');
+    if (actor !== null) return actor;
+    if (!ACTOR_CLASSES.includes(value['actorClass'] as string)) return 'a round chain reverify actorClass is not a ReworkActorClass';
+    if (!REVERIFY_FAILURE_CLASSES.includes(value['failureClass'] as string)) {
+        return 'a round chain reverify failureClass must be check_failed or check_incomplete';
+    }
+    if (!nonEmpty(value['requestedAt'])) return 'a round chain reverify requires requestedAt';
+    const basis = reverifyBasisProblem(value['basis'], 'a round chain reverify basis');
+    if (basis !== null) return basis;
+    if (!REVERIFY_EXEMPTIONS.includes(value['exemption'] as string)) return 'a round chain reverify exemption is not recognized';
+    if (typeof value['sourceChanged'] !== 'boolean') return 'a round chain reverify sourceChanged must be a boolean';
+    const inputs = newBasisInputRefsProblem(value['newInputRefs'], 'a round chain reverify newInputRefs');
+    if (inputs !== null) return inputs;
+    if (!(value['reason'] === null || typeof value['reason'] === 'string')) return 'a round chain reverify reason must be a string or null';
+    return null;
+}
+
+/**
+ * `RoundChainV1` shape (spec §9.1, C5): `ordinal ≥ 1`; `predecessorRoundRef =
+ * null ⇔ ordinal = 1 ⇔ reverify = null`; a chain root has no superseded
+ * evidence, no basis digests and `autoCount = 0`; a successor's predecessor is
+ * another round of the same subject. Cross-record linearity is `roundChainHead`'s.
+ */
+function roundChainProblem(value: unknown, ref: UnknownRecord): string | null {
+    if (!isRecord(value) || !hasOnlyKeys(value, ['schemaVersion', 'ordinal', 'predecessorRoundRef', 'predecessorRevision',
+        'supersededEvidenceIds', 'basisDigests', 'autoCount', 'reverify'])) {
+        return 'VerificationRoundSnapshot chain must be a RoundChainV1';
+    }
+    if (value['schemaVersion'] !== 1) return 'the round chain schemaVersion must be 1';
+    const ordinal = value['ordinal'];
+    if (!isSafeInteger(ordinal, 1) || ordinal > ROUND_CHAIN_MAX) {
+        return `the round chain ordinal must be an integer between 1 and ${String(ROUND_CHAIN_MAX)}`;
+    }
+    const superseded = value['supersededEvidenceIds'];
+    if (!Array.isArray(superseded) || !superseded.every(nonEmpty)) return 'the round chain supersededEvidenceIds must be evidence ids';
+    const digests = value['basisDigests'];
+    if (!Array.isArray(digests) || !digests.every(isSha256Hex)) return 'the round chain basisDigests must be sha256 hex digests';
+    const autoCount = value['autoCount'];
+    if (!isSafeInteger(autoCount) || autoCount > ordinal - 1) {
+        return 'the round chain autoCount must be a non-negative integer below the ordinal';
+    }
+    const predecessor = value['predecessorRoundRef'];
+    if (ordinal === 1) {
+        if (predecessor !== null || value['predecessorRevision'] !== null || value['reverify'] !== null) {
+            return 'a chain root (ordinal 1) has no predecessor and no reverify fact';
+        }
+        if (superseded.length > 0 || digests.length > 0 || autoCount !== 0) {
+            return 'a chain root (ordinal 1) has no superseded evidence, no basis digests and autoCount 0';
+        }
+        return null;
+    }
+    const predecessorProblem = roundRefProblem(predecessor);
+    if (predecessorProblem !== null) return `a successor round needs its predecessor: ${predecessorProblem}`;
+    const predecessorRef = predecessor as UnknownRecord;
+    if (predecessorRef['projectId'] !== ref['projectId'] || predecessorRef['workspaceId'] !== ref['workspaceId']
+        || predecessorRef['goalId'] !== ref['goalId'] || predecessorRef['taskId'] !== ref['taskId']
+        || predecessorRef['runId'] !== ref['runId'] || predecessorRef['roundId'] === ref['roundId']) {
+        return 'a successor round predecessor must be another round of the same subject';
+    }
+    if (!isSafeInteger(value['predecessorRevision'], 1)) return 'a successor round needs the predecessor revision';
+    if (value['reverify'] === null) return 'a successor round needs its reverify fact';
+    return reverifyFactProblem(value['reverify']);
+}
+
 function roundSnapshotProblem(value: unknown): string | null {
     if (!isRecord(value)) return 'VerificationRoundSnapshot must be an object';
     if (!hasOnlyKeys(value, ['ref', 'revision', 'schemaVersion', 'subject', 'subjectRunRef', 'adoptedPlanRef',
         'taskBasisRef', 'executor', 'configuration', 'configurationDigest', 'identity', 'sourceProof',
-        'verificationPlan', 'checks', 'status', 'outcome', 'gaps', 'evidenceRefs'])) {
+        'verificationPlan', 'checks', 'status', 'outcome', 'gaps', 'evidenceRefs', 'chain'])) {
         return 'VerificationRoundSnapshot carries unknown fields';
     }
     const ref = roundRefProblem(value['ref']);
@@ -194,6 +325,8 @@ function roundSnapshotProblem(value: unknown): string | null {
     if (value['outcome'] !== null && !OUTCOMES.includes(value['outcome'] as typeof OUTCOMES[number])) return 'VerificationRoundSnapshot outcome is not recognized';
     if (!Array.isArray(value['gaps'])) return 'VerificationRoundSnapshot gaps must be an array';
     if (!Array.isArray(value['evidenceRefs'])) return 'VerificationRoundSnapshot evidenceRefs must be an array';
+    // Absent = legacy slot-less chain root (ordinal 1); every A.2 round carries it.
+    if (value['chain'] !== undefined) return roundChainProblem(value['chain'], value['ref'] as UnknownRecord);
     return null;
 }
 
@@ -349,7 +482,74 @@ export function verificationRoundEventFromEvent(event: EncodedDomainEvent): Deco
     if (body === null) return invalid('the round event is not a JSON object');
     const problem = eventEnvelopeProblem(body, event);
     if (problem !== null) return invalid(problem);
+    const a2Problem = a2RoundEventProblem(body);
+    if (a2Problem !== null) return invalid(a2Problem);
     return { status: 'decoded', value: body as unknown as VerificationRoundEvent };
+}
+
+const INTERRUPTION_CAUSES: readonly string[] = ['host_restart', 'ticket_invalid'];
+const ABANDON_CAUSES: readonly string[] = ['caller_cancelled', 'root_changed', 'permission_changed', 'read_failed'];
+
+/** The A.2 events carry the written round as `result`; it must be that event's round. */
+function a2ResultRoundProblem(body: UnknownRecord): string | null {
+    const result = body['result'];
+    const problem = roundSnapshotProblem(result);
+    if (problem !== null) return `the event result round is invalid: ${problem}`;
+    if (canonicalOf((result as UnknownRecord)['ref']) !== canonicalOf(body['roundRef'])) {
+        return 'the event result round is not the event roundRef';
+    }
+    return null;
+}
+function a2CheckOf(body: UnknownRecord): UnknownRecord | string {
+    if (!nonEmpty(body['checkId']) || !nonEmpty(body['invocationId'])) return 'the check event requires checkId and invocationId';
+    const checks = (body['result'] as UnknownRecord)['checks'] as unknown[];
+    const check = checks.find(entry => isRecord(entry) && entry['checkId'] === body['checkId']);
+    return isRecord(check) ? check : 'the check event names a check that is not in its round';
+}
+
+/** Per-type payload checks of the four A.2 round events (spec §9.2). */
+function a2RoundEventProblem(body: UnknownRecord): string | null {
+    switch (body['eventType']) {
+        case VERIFICATION_CHECK_INTERRUPTED_EVENT_TYPE: {
+            const round = a2ResultRoundProblem(body);
+            if (round !== null) return round;
+            const check = a2CheckOf(body);
+            if (typeof check === 'string') return check;
+            if (!INTERRUPTION_CAUSES.includes(body['cause'] as string)) return 'an interruption cause must be host_restart or ticket_invalid';
+            if (body['cause'] === 'host_restart' ? !nonEmpty(body['hostInstanceId']) : body['hostInstanceId'] !== null) {
+                return 'a host_restart interruption names the reconciling hostInstanceId; ticket_invalid names none';
+            }
+            if (check['phase'] !== 'interrupted' || check['incompleteCause'] !== body['cause']) {
+                return 'the interrupted check must be interrupted with the event cause';
+            }
+            return null;
+        }
+        case VERIFICATION_CHECK_ABANDONED_EVENT_TYPE: {
+            const round = a2ResultRoundProblem(body);
+            if (round !== null) return round;
+            const check = a2CheckOf(body);
+            if (typeof check === 'string') return check;
+            return ABANDON_CAUSES.includes(body['cause'] as string) ? null : 'an abandon cause is not recognized';
+        }
+        case VERIFICATION_CHECK_REPORT_BOOKED_EVENT_TYPE: {
+            const round = a2ResultRoundProblem(body);
+            if (round !== null) return round;
+            const check = a2CheckOf(body);
+            if (typeof check === 'string') return check;
+            if (!nonEmpty(body['hostInstanceId'])) return 'a booked report names the reconciling hostInstanceId';
+            if (check['phase'] !== 'finished' || !isRecord(check['reportRef'])) return 'a booked check must be finished with its report';
+            return null;
+        }
+        case VERIFICATION_ROUND_REVERIFIED_EVENT_TYPE: {
+            const round = a2ResultRoundProblem(body);
+            if (round !== null) return round;
+            const chain = (body['result'] as UnknownRecord)['chain'];
+            if (!isRecord(chain) || !isSafeInteger(chain['ordinal'], 2)) return 'a reverified round must be a successor round (chain ordinal >= 2)';
+            return null;
+        }
+        default:
+            return null;
+    }
 }
 
 // -------------------------------------------------------------------------- //
@@ -444,6 +644,16 @@ function validateRoundEvent(event: EncodedDomainEvent): DecodeResult<EncodedDoma
  * the latest when more than one row matches.
  */
 export const VERIFICATION_ROUND_ORIGINAL_LOOKUP = 'VerificationRoundBySubject' as const;
+/**
+ * C5 (VD-14): a subject's whole work chain shares the `VerificationRoundBySubject`
+ * group, so a chain read asks for one row more than the longest chain; a next
+ * page means the chain cannot be judged (`incomplete`).
+ */
+export const VERIFICATION_ROUND_CHAIN_LOOKUP_LIMIT = ROUND_CHAIN_MAX + 1;
+/** C5 (VD-15): the gate chain is read by gate Task, without a runId. */
+export const VERIFICATION_ROUND_BY_TASK_LOOKUP = 'VerificationRoundByTask' as const;
+/** VR-04: Host-restart reconcile enumerates the open rounds of a workspace. */
+export const VERIFICATION_ROUND_BY_STATUS_LOOKUP = 'VerificationRoundByStatus' as const;
 
 /** The ONE R3e registration. Run/Plan/policy/baseline schemas keep their owners. */
 export const EVIDENCE_RECORD_SCHEMAS: RecordBackendSchemas = {
@@ -458,5 +668,9 @@ export const EVIDENCE_RECORD_SCHEMAS: RecordBackendSchemas = {
     lookups: [
         { name: VERIFICATION_ROUND_ORIGINAL_LOOKUP, aggregateType: 'VerificationRound',
             paths: ['ref.projectId', 'ref.workspaceId', 'ref.goalId', 'ref.taskId', 'ref.runId'] },
+        { name: VERIFICATION_ROUND_BY_TASK_LOOKUP, aggregateType: 'VerificationRound',
+            paths: ['ref.projectId', 'ref.workspaceId', 'ref.goalId', 'ref.taskId'] },
+        { name: VERIFICATION_ROUND_BY_STATUS_LOOKUP, aggregateType: 'VerificationRound',
+            paths: ['ref.projectId', 'ref.workspaceId', 'status'] },
     ],
 };

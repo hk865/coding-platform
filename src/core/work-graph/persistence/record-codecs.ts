@@ -16,7 +16,9 @@
  *   - a historical `objective` is never re-normalized on read.
  */
 import type { ActorRef, GoalCreatedEvent } from "../../../contracts/command-event.js";
-import type { GoalRef, GoalSnapshot, ProjectRef, ProjectSnapshot, WorkspaceRef, WorkspaceSnapshot } from "../../../contracts/ledger.js";
+import type {
+  GoalDesiredState, GoalRef, GoalSnapshot, ProjectRef, ProjectSnapshot, WorkspaceRef, WorkspaceSnapshot,
+} from "../../../contracts/ledger.js";
 import type { PlanRevisionRef } from "../../../contracts/plan.js";
 import { canonicalJson, type JsonValue } from "../../../contracts/fingerprint.js";
 import type { DecodeResult, EncodedDomainEvent, EncodedRecord, EncodedRecordSchema, RecordBackendSchemas } from "../../record-store/ports.js";
@@ -30,6 +32,33 @@ export const WORKSPACE_SNAPSHOT_SCHEMA_ID = "WorkspaceSnapshot@1";
 export const GOAL_SNAPSHOT_SCHEMA_ID = "GoalSnapshot@1";
 export const GOAL_CREATED_EVENT_TYPE = "GoalCreated";
 export const GOAL_CREATED_EVENT_SCHEMA_VERSION = 1;
+export const GOAL_DESIRED_STATE_CHANGED_EVENT_TYPE = "GoalDesiredStateChanged";
+export const GOAL_DESIRED_STATE_CHANGED_EVENT_SCHEMA_VERSION = 1;
+
+/** The three Goal-level controls (G7, GOAL-04…06). */
+export type GoalControlKind = "pause" | "resume" | "cancel";
+
+/**
+ * GOAL-04…06 replay event. `desiredStateRevision` is the new Goal revision
+ * (the fan-out epoch); `pausedEpoch` is the resumed pause's epoch on a resume
+ * and null otherwise. `goal` is the exact snapshot written by the same commit.
+ */
+export type GoalDesiredStateChangedEvent = {
+  eventId: string;
+  eventType: typeof GOAL_DESIRED_STATE_CHANGED_EVENT_TYPE;
+  schemaVersion: typeof GOAL_DESIRED_STATE_CHANGED_EVENT_SCHEMA_VERSION;
+  occurredAt: string;
+  identityKey: string;
+  actor: Extract<ActorRef, { kind: "human" | "system" }>;
+  fingerprint: string;
+  control: GoalControlKind;
+  from: GoalDesiredState;
+  to: GoalDesiredState;
+  desiredStateRevision: number;
+  pausedEpoch: number | null;
+  reason: string | null;
+  goal: GoalSnapshot;
+};
 
 /**
  * Canonical key of a FULL aggregate ref. The RecordStore keys snapshots by this
@@ -206,6 +235,53 @@ function validateWorkspaceSnapshot(record: EncodedRecord): DecodeResult<EncodedR
   return { status: "decoded", value: copyRecord(record) };
 }
 
+function isGoalDesiredState(value: unknown): value is GoalDesiredState {
+  return value === "active" || value === "paused" || value === "cancelled";
+}
+
+/**
+ * Pure shape check of one Goal snapshot body, shared by the record validator
+ * and the `GoalDesiredStateChanged` replay event. D-9: `desiredState` is any of
+ * the three stored values; `desiredStateRevision` and `desiredStateRequestedBy`
+ * are absent on records written before A.2 (read as 1 / null).
+ */
+function goalSnapshotProblem(parsed: UnknownRecord): string | null {
+  const ref = goalRefFromValue(parsed["ref"]);
+  if (ref === null) return "Goal snapshot has no valid GoalRef";
+  const workspaceRef = workspaceRefFromValue(parsed["workspaceRef"]);
+  if (workspaceRef === null) return "Goal snapshot has no valid workspaceRef";
+  if (workspaceRef.projectId !== ref.projectId) {
+    return "Goal snapshot workspaceRef belongs to another project";
+  }
+  if (typeof parsed["objective"] !== "string") return "Goal snapshot objective must be a string";
+  if (!isGoalDesiredState(parsed["desiredState"])) {
+    return 'Goal snapshot desiredState must be "active", "paused" or "cancelled"';
+  }
+  const active = parsed["activePlanRevision"];
+  if (active !== null) {
+    const planRef = planRevisionRefFromValue(active, ref.projectId);
+    if (planRef === null) return "Goal snapshot activePlanRevision is not a legal PlanRevisionRef";
+  }
+  const revision = parsed["revision"];
+  // Goal's own encoding rule: revision >= 1 (0 never denotes an existing Goal).
+  if (!isSafeRevision(revision) || revision < 1) {
+    return "Goal snapshot revision must be a safe integer >= 1";
+  }
+  const desiredStateRevision = parsed["desiredStateRevision"];
+  if (desiredStateRevision !== undefined
+    && (!isSafeRevision(desiredStateRevision) || desiredStateRevision < 1 || desiredStateRevision > revision)) {
+    return "Goal snapshot desiredStateRevision must be a safe integer between 1 and the Goal revision";
+  }
+  const requestedBy = parsed["desiredStateRequestedBy"];
+  if (requestedBy !== undefined && requestedBy !== null) {
+    const actor = actorFromValue(requestedBy);
+    if (actor === null || actor.kind === "agent") {
+      return "Goal snapshot desiredStateRequestedBy must be null or a Host (human/system) actor";
+    }
+  }
+  return null;
+}
+
 /**
  * `GoalSnapshot@1`. Accepts ANY legal Goal, including revision 2+ with a real
  * `PlanRevisionRef`: creation (revision 1, `activePlanRevision: null`) is
@@ -218,25 +294,10 @@ function validateGoalSnapshot(record: EncodedRecord): DecodeResult<EncodedRecord
   }
   const parsed = parseJsonObject(record.json, "Goal snapshot");
   if (typeof parsed === "string") return invalid(parsed);
-  const ref = goalRefFromValue(parsed["ref"]);
-  if (ref === null) return invalid("Goal snapshot has no valid GoalRef");
-  const workspaceRef = workspaceRefFromValue(parsed["workspaceRef"]);
-  if (workspaceRef === null) return invalid("Goal snapshot has no valid workspaceRef");
-  if (workspaceRef.projectId !== ref.projectId) {
-    return invalid("Goal snapshot workspaceRef belongs to another project");
-  }
-  if (typeof parsed["objective"] !== "string") return invalid("Goal snapshot objective must be a string");
-  if (parsed["desiredState"] !== "active") return invalid('Goal snapshot desiredState must be "active"');
-  const active = parsed["activePlanRevision"];
-  if (active !== null) {
-    const planRef = planRevisionRefFromValue(active, ref.projectId);
-    if (planRef === null) return invalid("Goal snapshot activePlanRevision is not a legal PlanRevisionRef");
-  }
+  const problem = goalSnapshotProblem(parsed);
+  if (problem !== null) return invalid(problem);
+  const ref = goalRefFromValue(parsed["ref"])!;
   const revision = parsed["revision"];
-  // Goal's own encoding rule: revision >= 1 (0 never denotes an existing Goal).
-  if (!isSafeRevision(revision) || revision < 1) {
-    return invalid("Goal snapshot revision must be a safe integer >= 1");
-  }
   if (revision !== record.revision) {
     return invalid("Goal snapshot outer revision disagrees with the JSON revision");
   }
@@ -288,6 +349,110 @@ function validateGoalCreatedEvent(event: EncodedDomainEvent): DecodeResult<Encod
   return { status: "decoded", value: copyEvent(event) };
 }
 
+const DESIRED_STATE_CHANGED_EVENT_KEYS: readonly string[] = [
+  "eventId", "eventType", "schemaVersion", "occurredAt", "identityKey", "actor", "fingerprint",
+  "control", "from", "to", "desiredStateRevision", "pausedEpoch", "reason", "goal",
+];
+
+function hasExactKeys(value: unknown, keys: readonly string[]): boolean {
+  if (!isRecord(value)) return false;
+  const own = Object.keys(value);
+  return own.length === keys.length && keys.every((key) => Object.prototype.hasOwnProperty.call(value, key));
+}
+
+/**
+ * The Goal a `GoalDesiredStateChanged` event carries has no unknown or missing
+ * field at any level, so a receipt replay can return it as the written
+ * snapshot (shape-checked separately by `goalSnapshotProblem`).
+ */
+function writtenGoalHasExactShape(goal: UnknownRecord): boolean {
+  return hasExactKeys(goal, [
+    "ref", "workspaceRef", "objective", "desiredState", "desiredStateRevision", "desiredStateRequestedBy",
+    "activePlanRevision", "revision",
+  ])
+    && hasExactKeys(goal["ref"], ["aggregateType", "projectId", "goalId"])
+    && hasExactKeys(goal["workspaceRef"], ["aggregateType", "projectId", "workspaceId"])
+    && (goal["activePlanRevision"] === null || hasExactKeys(goal["activePlanRevision"], ["aggregateType", "projectId", "planId"]))
+    && (goal["desiredStateRequestedBy"] === null || hasExactKeys(goal["desiredStateRequestedBy"], ["kind", "id"]));
+}
+
+/** The legal `(control, from, to)` triples of GOAL-04…06 (D-9). */
+function desiredStateChangeProblem(control: unknown, from: unknown, to: unknown): string | null {
+  if (!isGoalDesiredState(from) || !isGoalDesiredState(to)) return "GoalDesiredStateChanged from/to must be Goal desired states";
+  switch (control) {
+    case "pause":
+      return from === "active" && to === "paused" ? null : "a pause changes active to paused";
+    case "resume":
+      return from === "paused" && to === "active" ? null : "a resume changes paused to active";
+    case "cancel":
+      return from !== "cancelled" && to === "cancelled" ? null : "a cancel changes active or paused to cancelled";
+    default:
+      return "GoalDesiredStateChanged control must be pause, resume or cancel";
+  }
+}
+
+/**
+ * `GoalDesiredStateChanged` schemaVersion 1 (GOAL-04…06). It carries the exact
+ * Goal snapshot written by the same commit, so a receipt replay restores the
+ * original snapshot (including `desiredStateRequestedBy`, LA-7) instead of the
+ * current one.
+ */
+function validateGoalDesiredStateChangedEvent(event: EncodedDomainEvent): DecodeResult<EncodedDomainEvent> {
+  if (event.eventType !== GOAL_DESIRED_STATE_CHANGED_EVENT_TYPE) {
+    return invalid(`expected eventType ${GOAL_DESIRED_STATE_CHANGED_EVENT_TYPE}, got ${event.eventType}`);
+  }
+  if (event.schemaVersion !== GOAL_DESIRED_STATE_CHANGED_EVENT_SCHEMA_VERSION) {
+    return invalid(`expected schemaVersion ${GOAL_DESIRED_STATE_CHANGED_EVENT_SCHEMA_VERSION}, got ${event.schemaVersion}`);
+  }
+  if (!nonEmptyString(event.eventId)) return invalid("eventId must be a non-empty string");
+  if (!nonEmptyString(event.occurredAt)) return invalid("occurredAt must be a non-empty string");
+  const parsed = parseJsonObject(event.json, "GoalDesiredStateChanged event");
+  if (typeof parsed === "string") return invalid(parsed);
+  if (parsed["eventId"] !== event.eventId || parsed["eventType"] !== event.eventType
+    || parsed["schemaVersion"] !== event.schemaVersion || parsed["occurredAt"] !== event.occurredAt) {
+    return invalid("GoalDesiredStateChanged envelope disagrees with the event JSON");
+  }
+  if (!Object.keys(parsed).every((key) => DESIRED_STATE_CHANGED_EVENT_KEYS.includes(key))) {
+    return invalid("GoalDesiredStateChanged carries unknown fields");
+  }
+  if (!nonEmptyString(parsed["identityKey"])) return invalid("GoalDesiredStateChanged identityKey must be a non-empty string");
+  if (!nonEmptyString(parsed["fingerprint"])) return invalid("GoalDesiredStateChanged fingerprint must be a non-empty string");
+  const actor = actorFromValue(parsed["actor"]);
+  if (actor === null || actor.kind === "agent") return invalid("GoalDesiredStateChanged actor must be a Host (human/system) actor");
+  const changeProblem = desiredStateChangeProblem(parsed["control"], parsed["from"], parsed["to"]);
+  if (changeProblem !== null) return invalid(changeProblem);
+  const desiredStateRevision = parsed["desiredStateRevision"];
+  if (!isSafeRevision(desiredStateRevision) || desiredStateRevision < 2) {
+    return invalid("GoalDesiredStateChanged desiredStateRevision must be a safe integer >= 2");
+  }
+  const pausedEpoch = parsed["pausedEpoch"];
+  if (parsed["control"] === "resume") {
+    if (!isSafeRevision(pausedEpoch) || pausedEpoch < 2 || pausedEpoch >= desiredStateRevision) {
+      return invalid("a resume pausedEpoch must be the earlier pause desiredStateRevision");
+    }
+  } else if (pausedEpoch !== null) {
+    return invalid("only a resume carries a pausedEpoch");
+  }
+  const reason = parsed["reason"];
+  if (!(reason === null || nonEmptyString(reason))) return invalid("GoalDesiredStateChanged reason must be null or a non-empty string");
+  const goal = parsed["goal"];
+  if (!isRecord(goal)) return invalid("GoalDesiredStateChanged goal must be the written Goal snapshot");
+  const goalProblem = goalSnapshotProblem(goal);
+  if (goalProblem !== null) return invalid(`GoalDesiredStateChanged goal: ${goalProblem}`);
+  if (!writtenGoalHasExactShape(goal)) {
+    return invalid("GoalDesiredStateChanged goal must carry exactly the Goal snapshot fields");
+  }
+  if (goal["desiredState"] !== parsed["to"]) return invalid("GoalDesiredStateChanged goal desiredState disagrees with to");
+  if (goal["desiredStateRevision"] !== desiredStateRevision || goal["revision"] !== desiredStateRevision) {
+    return invalid("GoalDesiredStateChanged goal revision and desiredStateRevision must equal the event desiredStateRevision");
+  }
+  const requestedBy = actorFromValue(goal["desiredStateRequestedBy"]);
+  if (requestedBy === null || requestedBy.kind !== actor.kind || requestedBy.id !== actor.id) {
+    return invalid("GoalDesiredStateChanged goal desiredStateRequestedBy must be the event actor");
+  }
+  return { status: "decoded", value: copyEvent(event) };
+}
+
 // --------------------------------------------------------------------------
 // The single registration
 // --------------------------------------------------------------------------
@@ -322,6 +487,11 @@ export const GOAL_RECORD_SCHEMAS: RecordBackendSchemas = {
       schemaVersion: GOAL_CREATED_EVENT_SCHEMA_VERSION,
       validate: validateGoalCreatedEvent,
     },
+    {
+      eventType: GOAL_DESIRED_STATE_CHANGED_EVENT_TYPE,
+      schemaVersion: GOAL_DESIRED_STATE_CHANGED_EVENT_SCHEMA_VERSION,
+      validate: validateGoalDesiredStateChangedEvent,
+    },
   ],
 };
 
@@ -352,12 +522,22 @@ export function encodeWorkspaceSnapshot(snapshot: WorkspaceSnapshot): EncodedRec
  * as given (no added `schemaId`, no re-normalization), so a value produced by
  * the compiler stays byte-compatible with the legacy writer.
  */
+/**
+ * A Goal whose desired state never changed (`desiredStateRevision` 1 or absent,
+ * no requester) is written in its pre-A.2 shape, without the two D-9 fields.
+ * Decoding reads them back as 1 / null, so the value round-trips, and a plan
+ * adoption over a decoded legacy Goal keeps writing legacy bytes until
+ * GOAL-04…06 record a real change (§15 step 1: no new values written yet).
+ */
 export function encodeGoalSnapshot(snapshot: GoalSnapshot): EncodedRecord {
+  const { desiredStateRevision, desiredStateRequestedBy, ...legacyShape } = snapshot;
+  const neverChanged = (desiredStateRevision === undefined || desiredStateRevision === 1)
+    && (desiredStateRequestedBy === undefined || desiredStateRequestedBy === null);
   return {
     refKey: canonicalRefKey(snapshot.ref),
     schemaId: GOAL_SNAPSHOT_SCHEMA_ID,
     revision: snapshot.revision,
-    json: JSON.stringify(snapshot),
+    json: JSON.stringify(neverChanged ? legacyShape : snapshot),
   };
 }
 
@@ -394,6 +574,7 @@ export function decodeGoalSnapshot(record: EncodedRecord): DecodeResult<GoalSnap
   const ref = goalRefFromValue(parsed.ref)!;
   const workspaceRef = workspaceRefFromValue(parsed.workspaceRef)!;
   const active = parsed.activePlanRevision;
+  const requestedBy = parsed.desiredStateRequestedBy;
   return {
     status: "decoded",
     value: {
@@ -401,7 +582,13 @@ export function decodeGoalSnapshot(record: EncodedRecord): DecodeResult<GoalSnap
       workspaceRef,
       // Returned verbatim: a historical objective is never re-normalized here.
       objective: parsed.objective,
-      desiredState: "active",
+      // D-9: the stored value; GoalCreated still writes only "active".
+      desiredState: parsed.desiredState,
+      // Absent before A.2: the Goal never changed its desired state (epoch 1,
+      // no requester), so a legacy record reads as 1 / null (LA-7).
+      desiredStateRevision: parsed.desiredStateRevision ?? 1,
+      desiredStateRequestedBy:
+        requestedBy === undefined || requestedBy === null ? null : actorFromValue(requestedBy),
       activePlanRevision:
         active === null ? null : planRevisionRefFromValue(active, ref.projectId),
       revision: record.revision,
@@ -457,6 +644,34 @@ export function goalSnapshotFromCreatedEvent(event: GoalCreatedEvent): GoalSnaps
     activePlanRevision: event.payload.activePlanRevision,
     revision: 1,
   };
+}
+
+export function encodeGoalDesiredStateChangedEvent(event: GoalDesiredStateChangedEvent): EncodedDomainEvent {
+  return {
+    eventId: event.eventId,
+    eventType: event.eventType,
+    schemaVersion: event.schemaVersion,
+    occurredAt: event.occurredAt,
+    json: JSON.stringify(event),
+  };
+}
+
+export function decodeGoalDesiredStateChangedEvent(event: EncodedDomainEvent): DecodeResult<GoalDesiredStateChangedEvent> {
+  const checked = validateGoalDesiredStateChangedEvent(event);
+  if (checked.status !== "decoded") return checked;
+  return { status: "decoded", value: JSON.parse(event.json) as GoalDesiredStateChangedEvent };
+}
+
+/**
+ * The ORIGINAL snapshot written by a GOAL-04…06 commit, from its recorded
+ * `GoalDesiredStateChanged` event (the receipt replay source, same role as
+ * `goalSnapshotFromCreatedEvent`); never from the current Goal. The event
+ * validator already holds `goal` to the exact snapshot shape and to the event's
+ * `to`, revision and actor, so this returns a copy and sets no lifecycle field
+ * itself (§14: those are written only through `state/`).
+ */
+export function goalSnapshotFromDesiredStateChangedEvent(event: GoalDesiredStateChangedEvent): GoalSnapshot {
+  return structuredClone(event.goal);
 }
 
 /** Selects a registered record codec by the aggregateType of the full ref. */

@@ -17,6 +17,9 @@
 import { randomUUID } from 'node:crypto';
 import type { QueryJobAnswerRef } from '../contracts/query-job.js';
 import type { RegisteredCommandCheck } from '../contracts/verification.js';
+import {
+  DEFAULT_TASK_AUTOMATION_POLICY, MAX_AUTO_REWORK_LIMIT, type TaskAutomationPolicyV1,
+} from '../contracts/task-requeue.js';
 import { mkdir, readFile, readdir, realpath, rename, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -122,6 +125,9 @@ export type HostSettingsPrivateSnapshot = {
    * settings file, never model input. */
   checks: { scope: CoreScope; checks: RegisteredCommandCheck[];
     answerRef: QueryJobAnswerRef; answerDigest: string }[];
+  /** C8 automatic-rework policy as stored, or the defaults (3 / true) when the
+   * file has none. The Host installs it from A.2 step 5.6 on. */
+  automation: TaskAutomationPolicyV1;
 };
 
 /** Trusted facts about one Host-registered workspace, read from the Host. */
@@ -260,6 +266,9 @@ type PersistedSettingsV1 = {
   models: HostSettingsStoredModel[];
   selection: Record<string, string | null>;
   workspaces: PersistedWorkspaceV1[];
+  /** C8 automatic-rework policy. Absent in files written before A.2; it stays
+   * absent on the next save and reads as `DEFAULT_TASK_AUTOMATION_POLICY`. */
+  automation?: TaskAutomationPolicyV1;
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -301,6 +310,17 @@ function parseStoredChecksSource(value: unknown): { answerRef: QueryJobAnswerRef
       queryJobId: ref['queryJobId'], answerId: ref['answerId'] },
     answerDigest: value['answerDigest'],
   };
+}
+
+function parseStoredAutomation(value: unknown): TaskAutomationPolicyV1 {
+  if (!isRecord(value) || value['schemaVersion'] !== 1 || typeof value['resumeOnStartup'] !== 'boolean') {
+    throw new Error('the private host settings file is invalid');
+  }
+  const limit = value['autoReworkLimit'];
+  if (typeof limit !== 'number' || !Number.isSafeInteger(limit) || limit < 0 || limit > MAX_AUTO_REWORK_LIMIT) {
+    throw new Error('the private host settings file is invalid');
+  }
+  return { schemaVersion: 1, autoReworkLimit: limit, resumeOnStartup: value['resumeOnStartup'] };
 }
 
 const invalid = (reason: string): SettingsResponse<never> => ({ status: 'rejected', code: 'invalid', reason });
@@ -351,7 +371,8 @@ function parsePersisted(text: string): PersistedSettingsV1 {
       ...(entry['checksSource'] === undefined ? {} : { checksSource: parseStoredChecksSource(entry['checksSource']) }),
     };
   });
-  return { schemaVersion: 1, models, selection, workspaces };
+  return { schemaVersion: 1, models, selection, workspaces,
+    ...(raw['automation'] === undefined ? {} : { automation: parseStoredAutomation(raw['automation']) }) };
 }
 
 function toStoredModel(model: HostSettingsModelDefinition): HostSettingsStoredModel {
@@ -396,6 +417,8 @@ export async function createHostSettings(
   const models: HostSettingsStoredModel[] = persisted.models;
   const selection: Record<string, string | null> = persisted.selection;
   const workspaces: PersistedWorkspaceV1[] = persisted.workspaces;
+  /** Kept exactly as stored (absent stays absent); no route writes it yet. */
+  const automation: TaskAutomationPolicyV1 | undefined = persisted.automation;
 
   const privateSnapshot = (): HostSettingsPrivateSnapshot => ({
     models: structuredClone(models),
@@ -406,10 +429,12 @@ export async function createHostSettings(
         workspace.checks !== undefined && workspace.checks.length > 0 && workspace.checksSource !== undefined)
       .map(workspace => ({ scope: { ...workspace.scope }, checks: structuredClone(workspace.checks),
         answerRef: structuredClone(workspace.checksSource.answerRef), answerDigest: workspace.checksSource.answerDigest })),
+    automation: { ...(automation ?? DEFAULT_TASK_AUTOMATION_POLICY) },
   });
 
   const persist = async (): Promise<void> => {
-    const payload: PersistedSettingsV1 = { schemaVersion: 1, models, selection, workspaces };
+    const payload: PersistedSettingsV1 = { schemaVersion: 1, models, selection, workspaces,
+      ...(automation === undefined ? {} : { automation }) };
     await mkdir(settingsDirectory, { recursive: true, mode: 0o700 });
     const temporaryPath = join(settingsDirectory, `.host-settings.${randomUUID()}.tmp`);
     await writeFile(temporaryPath, JSON.stringify(payload), { mode: 0o600 });

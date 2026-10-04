@@ -98,6 +98,36 @@ export type TaskStateBasisV1 = {
     schemaVersion: 1;
     entries: { taskId: string; planRef: PlanRevisionRef }[];
 };
+/**
+ * C7: one Task's latest disposition change made through a future-only
+ * adoption (W16), traced (with execution history) or not. Compiler-owned like
+ * `TaskStateBasisV1`; a Draft/Proposal never carries it.
+ */
+export type TaskDispositionChangeV1 = {
+    taskId: string;
+    from: Disposition;
+    to: Disposition;
+    replacedByTaskId: string | null;
+    /** The Task had execution history when its disposition changed (TASK-19). */
+    traced: boolean;
+    /** The adopted PlanRevision that made this change. */
+    setIn: PlanRevisionRef;
+    /** The adopted candidate. */
+    proposalRef: { aggregateType: "PlanProposal"; projectId: string; workspaceId: string; proposalId: string };
+    /** The candidate's change reason; absent `affectedTaskIds` is recorded as []. */
+    reason: { text: string; sources: import("./artifact.js").ArtifactRef[]; affectedTaskIds: string[] };
+    /** The adopter (operator, automation actor or Agent). */
+    actor: ActorRef;
+};
+/**
+ * Compiler-written on each adoption: this adoption's entries plus the entries
+ * inherited from the source Plan, one per Task, sorted by taskId. Absent means
+ * no Task's disposition was ever changed through W16.
+ */
+export type TaskDispositionRecordV1 = {
+    schemaVersion: 1;
+    entries: TaskDispositionChangeV1[];
+};
 
 // Completed-capability migration: selected original declarations, no legacy service port.
 /**
@@ -252,6 +282,8 @@ export type PlanRevisionSnapshot =
         inputRequirements?: TaskInputRequirementV2[];
         /** W1 compiler-owned; absent means every Task points at this Plan. */
         taskStateBasis?: TaskStateBasisV1;
+        /** C7 compiler-owned latest disposition change per Task; inherited version to version. */
+        dispositionRecord?: TaskDispositionRecordV1;
     });
 export type PlanRevisionAcceptedEvent = {
     eventId: string;

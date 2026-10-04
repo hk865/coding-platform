@@ -17,6 +17,7 @@ import type { RoleSpecResolutionV1 } from '../../contracts/role-spec-materials.j
 import type { SourceRefV1 } from '../../contracts/dispatch.js';
 import type { RuntimeBudget } from '../../contracts/runtime-budget.js';
 import { sha256Hex } from '../../contracts/fingerprint.js';
+import { QUERY_MANIFEST_CONTENT_TYPE } from '../../contracts/no-progress.js';
 import { plainSessionRefToAggregate } from '../work-graph/sessions/session-record-codecs.js';
 import { SESSION_MAILBOX_TOOL_NAMES } from './communication-tools.js';
 import { WHITEBOARD_TOOL_NAMES } from './whiteboard-tools.js';
@@ -28,8 +29,8 @@ export type QueryPreparationPort = {
   prepare(ctx: CoreCallContext, request: PrepareQueryExecutionRequest): Promise<ReadResult<PreparedQueryExecution>>;
 };
 
-/** Exact manifest content type; the Query writer re-reads the body and requires this. */
-export const QUERY_MANIFEST_CONTENT_TYPE = 'application/vnd.coding-platform.query-execution-manifest+json;version=1';
+/** Exact manifest content type (declared once in contracts, ND-9); the Query writer re-reads the body and requires this. */
+export { QUERY_MANIFEST_CONTENT_TYPE };
 export const MAX_QUERY_MANIFEST_BYTES = ARTIFACT_MAX_SIZE_BYTES;
 
 /**

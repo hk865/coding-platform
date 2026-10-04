@@ -131,18 +131,75 @@ export type ExecutionAuthorizationV2 = {
     phase: 'authorized' | 'entering' | 'entered' | 'unknown' | 'revoked' | 'settled';
     kernel: import('./core/execution-history.js').RunExecutionHistoryV1['kernel'] | null;
 };
+/**
+ * C6 relaxed authorization plan guard (§6.1 contract (g)); computed by the pure
+ * `entryPlanVerdict`. The claim, envelope and inputBinding always keep
+ * `claim.planRef`; `activePlanRef` is only pinned by the authorization commit.
+ */
+export type EntryPlanVerdict =
+    /** The active Plan is `claim.planRef` (today's path). */
+    | { kind: 'active_plan' }
+    /** Same Goal; the claim Plan is older, but this Task's execution definition and basis are unchanged. */
+    | { kind: 'carried_unchanged'; activePlanRef: PlanRevisionRef }
+    /** The Task was excluded, removed, is not work or not active in the active Plan. */
+    | { kind: 'changed'; reason: string }
+    /** The basis chain, a definition or a basis source cannot be resolved. */
+    | { kind: 'unavailable'; reason: string };
+/** How a reconciling Host knows the previous executor is gone (D-18). */
+export type RunReconciliationBasisV1 =
+    | { kind: 'live_clean' }
+    | { kind: 'host_instance_takeover'; hostInstanceId: string };
+/**
+ * Reconciliation record (spec §6.1 contract (a)). New writes use `status:'done'`
+ * except `unresolved`, which is `quarantined`; `cancelled` has no writer.
+ * RUN-07 (in-process known terminal) writes no reconciliation.
+ */
 export type RunReconciliationV1 = {
     status: 'done' | 'cancelled' | 'quarantined';
     observation: {
+        /** RUN-17/18/21 */
         kind: 'runtime_terminal';
         event: RuntimeEventV1;
         digest: string;
     } | {
+        /** RUN-08/20: `running`/`outcome_unknown` tool calls only (Kernel `pending` is not in flight). */
         kind: 'unresolved';
         reason: string;
+        observedThroughPosition: number | null;
+        unresolvedToolCallIds: string[];
+    } | {
+        /** RUN-16 */
+        kind: 'not_entered';
+        kernel: import('./core/execution-history.js').RunExecutionHistoryV1['kernel'];
+        revokedGeneration: number;
+    } | {
+        /** RUN-19, RUN-24 (synthesized run_crashed), RUN-23 (synthesized run_cancelled). */
+        kind: 'interrupted_clean';
+        event: RuntimeEventV1;
+        lastPosition: number | null;
+        /** The Kernel Turn was paused (C4). */
+        kernelPaused: boolean;
+        /** RUN-24: the pointer pause intent (paused-interrupted); RUN-19, RUN-23: null. */
+        pausedIntentRef: import('./control-intent.js').ControlIntentRef | null;
+    } | {
+        /**
+         * RUN-22: an operator's attestation through the Host holding the instance
+         * lease. The operator is any non-automation Host actor (`reworkActorClassOf`
+         * → `human`), including a Host started with a `kind:'system'` actor
+         * (TD-6, LA-7), so the type admits `system`; the Run codec rejects the
+         * platform automation actors (`isAutomationActor`).
+         */
+        kind: 'human_attested';
+        attestedBy: Extract<import('./command-event.js').ActorRef, { kind: 'human' | 'system' }>;
+        reason: string;
     };
+    basis: RunReconciliationBasisV1;
     recordedAt: string;
 };
+/** Bounded terminal detail: crashed `error` / cancelled `reason` are cut to this many characters. */
+export const TERMINAL_PAYLOAD_TEXT_MAX_CHARS = 2000;
+/** Appended to a terminal payload text that was cut. */
+export const TERMINAL_PAYLOAD_TRUNCATION_SUFFIX = '…[truncated]';
 export type RunSnapshot = {
     /** Optional for unindexed/legacy executions; does not imply entry permission. */
     executionHistory?: import('./core/execution-history.js').RunExecutionHistoryV1;
@@ -185,6 +242,14 @@ export type RunSnapshot = {
     continuation?: RunContinuationV1;
     /** Set only on a continuation claim that consumes an earlier yielded wait. */
     consumedWait?: ConsumedWaitV1;
+    /** Set only by a claim after a TaskRequeue (TASK-03); exclusive with `consumedWait`. */
+    requeueRef?: import('./task-requeue.js').TaskRequeueRef;
+    /**
+     * Bounded terminal detail (C1, §6.1 contract (f)), written once in the same
+     * commit as a known outcome. Absent on historical Runs, on `outcome_unknown`
+     * (RUN-08/20) and on a not-entered cancel (RUN-09).
+     */
+    terminalPayload?: RuntimeEventV1['payload'];
     /** Durable directional inputs; independent of pause/cancel fencing. */
     controlInputs?: import("./control-intent.js").ControlIntentRef[];
     startedAt: string | null;
@@ -221,6 +286,12 @@ export type RuntimeInputBindingV1 = {
     /** Exact additional bodies actually assembled outside Delivery; all require the pinned grants. */
     additionalMaterialRefs?: import("./artifact.js").ArtifactRef[];
     deliveryRefs: ModelRequestMaterialPinV1[];
+    /**
+     * `continuationBriefDigest(manifest.continuationBrief)` (C3). Present exactly
+     * when the Run has a `requeueRef` and is authorized (§11 I-19); written once
+     * by RUN-02 like every other field here.
+     */
+    continuationBriefDigest?: string;
 };
 /**
  * **一次性模型调用许可**（协作通信可靠投递规则中的“调用证据”）。
@@ -373,4 +444,21 @@ export type TaskAttemptSnapshot = {
     startedAt: string | null;
     endedAt: string | null;
     endOutcome: RunOutcome | null;
+    /** Set only on the Attempt of a claim after a TaskRequeue (TASK-03). */
+    requeueRef?: import('./task-requeue.js').TaskRequeueRef;
+};
+/**
+ * Dispatch outbox settlement of a Run that never entered (AD-2, D-7): the
+ * outbox goes `pending → settled` directly, so the entry identity may be
+ * absent. Nested in the @1 outbox body beside the V1 phases; the outer
+ * outbox `schemaVersion` stays 1.
+ */
+export type TaskDispatchStateV2 = {
+    schemaVersion: 2;
+    phase: 'settled';
+    settlement: 'not_entered';
+    consumerId: string | null;
+    entryGeneration: number | null;
+    sessionGeneration: number;
+    eventId: string;
 };

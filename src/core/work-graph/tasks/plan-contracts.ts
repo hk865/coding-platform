@@ -2,42 +2,37 @@
 import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { ArtifactRecord, ArtifactRef } from '../../../contracts/artifact.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
-import type { SessionRef, VersionPin } from '../../../contracts/core/identity.js';
+import type { VersionPin } from '../../../contracts/core/identity.js';
 import type { ReadResult, WriteResult } from '../../../contracts/core/results.js';
-import type { TaskTriple, TaskAttemptRef, RunRef, RoleBindingRefV1, TaskEligibility } from '../../../contracts/dispatch.js';
+import type { TaskTriple, TaskAttemptRef, RunRef, TaskEligibility } from '../../../contracts/dispatch.js';
+import type { PlanWriteProvenanceV1 } from '../../../contracts/delegated-write.js';
 import type { GoalRef, GoalSnapshot, VersionedRef } from '../../../contracts/ledger.js';
 import type { GoalPhaseSnapshot } from '../../../contracts/goal-phase.js';
 import type { PlanProposalSnapshot } from '../../../contracts/goal-change.js';
 import type { QueryJobAnswerRef } from '../../../contracts/query-job.js';
 import type { DependencyRequirement, Disposition, Phase, PlanRevisionDraft, PlanRevisionRef,
-  PlanRevisionSnapshot, PlanValidationError, RuntimeTask, TaskInputRequirementV2,
+  PlanRevisionSnapshot, PlanValidationError, RuntimeTask, TaskDispositionChangeV1, TaskInputRequirementV2,
   TaskRelationV2 } from '../../../contracts/plan.js';
+import type { TaskFailureFactsV1, TaskPhaseCauseV1, TaskReworkSummaryV1 } from '../../../contracts/task-failure.js';
+import type { TaskRequeueRef } from '../../../contracts/task-requeue.js';
 import type { GraphWrite } from './contracts.js';
 
 /**
- * Versioned Agent submission provenance (W2 §8.1).
- *
- * The runtime produces this; candidate input never supplies it. It records the
- * exact formal Run/Session/Role binding and the two authorization generations
- * the write was admitted against. `authorizationRevision` is the entry
- * binding's own revision, never the Run revision. A candidate without this
- * field stays readable/adoptable by the Host under the legacy path and must
- * never be inferred to have an Agent author.
+ * Versioned Agent submission provenance (W2 §8.1). The single declaration is
+ * `DelegatedWriteProvenanceV1` in `contracts/delegated-write.ts` (spec §4.1);
+ * this former name keeps the JSON shape and every importer unchanged.
  */
-export type PlanWriteProvenanceV1 = {
-  schemaVersion: 1;
-  runRef: RunRef;
-  sessionRef: SessionRef;
-  roleBinding: RoleBindingRefV1;
-  sessionGeneration: number;
-  entryGeneration: number;
-  authorizationRevision: number;
-  configurationRevision: string;
-};
+export type { DelegatedWriteProvenanceV1, PlanWriteProvenanceV1 } from '../../../contracts/delegated-write.js';
 /** Same full identity as legacy PlanProposal@1; schema v2 has a distinct body. */
 export type PlanProposalRef = { aggregateType: 'PlanProposal'; projectId: string;
   workspaceId: string; proposalId: string };
-export type PlanChangeReason = { text: string; sources: ArtifactRef[] };
+export type PlanChangeReason = { text: string; sources: ArtifactRef[];
+  /**
+   * C7 (spec §3.1): the Tasks this candidate means to change, e.g. a traced
+   * Task whose disposition only changes. Absent is recorded as `[]` in a
+   * `TaskDispositionChangeV1`; its shape check and the TASK-19 use land with C7.
+   */
+  affectedTaskIds?: string[] };
 export type PlanProposal =
   | { kind: 'candidate_v2'; ref: PlanProposalRef; revision: number; schemaVersion: 2;
       goalRef: GoalRef; basedOn: PlanRevisionRef | null; draft: PlanRevisionDraft;
@@ -86,6 +81,19 @@ export type TaskRow = { ref: TaskTriple; definition: RuntimeTask; effectivePhase
     verification: 'legacy_unverifiable' }[];
   /** 兼容可选；缺省表示该生产者尚未提供投影，不等于无缺口。 */
   planningDiagnostics?: TaskPlanningDiagnostic[];
+  /**
+   * Spec §4 TD-1: the projection reason of `effectivePhase`, produced only by
+   * `projectTaskPhase`. Read-only; absent until that producer exists.
+   */
+  phaseCause?: TaskPhaseCauseV1;
+  /** The TaskRequeue covering the selected Run (P4); read-only. */
+  requeueRef?: TaskRequeueRef;
+  /** C1 structured failure facts (`buildTaskFailureFacts`); read-only. */
+  failure?: TaskFailureFactsV1;
+  /** C8 requeue history and automatic count; read-only. */
+  rework?: TaskReworkSummaryV1;
+  /** C7 latest disposition change through a future-only adoption; read-only. */
+  dispositionChange?: TaskDispositionChangeV1;
 };
 /**
  * R3e.3 formal Goal completion projection. It is INDEPENDENT of the advisory

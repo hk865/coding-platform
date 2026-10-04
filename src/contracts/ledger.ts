@@ -26,6 +26,8 @@ import type { GoalRevisionSnapshot, PlanProposalSnapshot, UserDecisionSnapshot }
 import type { ArchitectureEvolutionPolicyRevisionRef, ProjectArchitectureEvolutionPolicyActiveRef } from "./architecture-evolution-policy.js";
 import type { MaterialAccessGrantRef } from "./material-access.js";
 import type { SessionMessageRef } from "./core/session-message.js";
+import type { ActorRef } from "./command-event.js";
+import type { TaskRequeueRef, TaskReworkRefusalRef } from "./task-requeue.js";
 // 协作通信：协作通信聚合（AgentInstance / participation / request / subscription /
 // delivery / wait / 机械 intent / 后继 admission）与它们的 commit kind。
 import type { AgentInstanceRef, CommunicationAdmissionRef, CoordinationRegistryRef, WorkMailboxRef, CommunicationIntentRef, DeliveryRef, DirectedRequestRef, SubscriptionRef, WaitConditionRef, WorkParticipationRef } from "./coordination.js";
@@ -43,7 +45,7 @@ export type GoalRef = {
     projectId: string;
     goalId: string;
 };
-export type AggregateRef = import('./core/identity.js').SessionAggregateRef | import('./core/identity.js').SessionWorkLinkRef | import('./core/operations.js').OperationRef | import("./architecture-review.js").ArchitectureReviewRef | import('./reviewer-work.js').TaskReviewProtocolRef | import('./reviewer-work.js').ReviewWorkRef | import('./reviewer-work.js').ReviewResultRef | ProjectRef | WorkspaceRef | GoalRef | BootstrapManifestRef | CompletionPolicyRevisionRef | ArchitectureBaselineRevisionRef | ProjectCompletionPolicyActiveRef | ProjectArchitectureBaselineActiveRef | PlanRevisionRef | TaskLeaseRef | TaskAttemptRef | RunRef | DispatchOutboxRef | EvidenceRef | TaskEvidenceIndexRef | VerificationRoundRef | TaskReductionRef | GoalPhaseRef | HandoffPacketRef | ReplacementAttemptRef | WorkspaceReadLeaseRef | WorkspaceReadLeaseIndexRef | WorkspaceWriteLeaseRef | WorkspaceWriteLeaseIndexRef | IntegrationResultRef | PatchRecordRef | WorkContextRef | ExecutionNoteRef | ContinuationRecordRef | ArchitectureInspectionRef | ArchitectureFindingRef | ArchitectureDecisionBriefRef | ArchitectureCandidateProposalRef | ControlIntentRef | QueryJobRef | QueryRunRef | QueryJobAnswerRef | PlanProposalSnapshot["ref"] | UserDecisionSnapshot["ref"] | GoalRevisionSnapshot["ref"] | ArchitectureEvolutionPolicyRevisionRef | ProjectArchitectureEvolutionPolicyActiveRef | RemediationPlanPatchRef | RemediationTaskRef | CandidateArchitectureBaselineRef | ArchitectureChangeDecisionRef | MigrationGateTaskRef | BaselineActivationRef | InitialDesignProposalRef | InitialDesignDecisionRef | CoordinationPolicyRevisionRef | ProjectCoordinationPolicyActiveRef | RoleSpecRevisionRef | ProjectRoleSpecActiveRef | MaterialAccessGrantRef | AgentInstanceRef | WorkParticipationRef | DirectedRequestRef | SubscriptionRef | DeliveryRef | WaitConditionRef | CommunicationIntentRef | CommunicationAdmissionRef | CoordinationRegistryRef | WorkMailboxRef | import('./dispatch.js').ModelRequestPermitRef | SessionMessageRef;
+export type AggregateRef = import('./core/identity.js').SessionAggregateRef | import('./core/identity.js').SessionWorkLinkRef | import('./core/operations.js').OperationRef | import("./architecture-review.js").ArchitectureReviewRef | import('./reviewer-work.js').TaskReviewProtocolRef | import('./reviewer-work.js').ReviewWorkRef | import('./reviewer-work.js').ReviewResultRef | ProjectRef | WorkspaceRef | GoalRef | BootstrapManifestRef | CompletionPolicyRevisionRef | ArchitectureBaselineRevisionRef | ProjectCompletionPolicyActiveRef | ProjectArchitectureBaselineActiveRef | PlanRevisionRef | TaskLeaseRef | TaskAttemptRef | RunRef | DispatchOutboxRef | EvidenceRef | TaskEvidenceIndexRef | VerificationRoundRef | TaskReductionRef | GoalPhaseRef | HandoffPacketRef | ReplacementAttemptRef | WorkspaceReadLeaseRef | WorkspaceReadLeaseIndexRef | WorkspaceWriteLeaseRef | WorkspaceWriteLeaseIndexRef | IntegrationResultRef | PatchRecordRef | WorkContextRef | ExecutionNoteRef | ContinuationRecordRef | ArchitectureInspectionRef | ArchitectureFindingRef | ArchitectureDecisionBriefRef | ArchitectureCandidateProposalRef | ControlIntentRef | QueryJobRef | QueryRunRef | QueryJobAnswerRef | PlanProposalSnapshot["ref"] | UserDecisionSnapshot["ref"] | GoalRevisionSnapshot["ref"] | ArchitectureEvolutionPolicyRevisionRef | ProjectArchitectureEvolutionPolicyActiveRef | RemediationPlanPatchRef | RemediationTaskRef | CandidateArchitectureBaselineRef | ArchitectureChangeDecisionRef | MigrationGateTaskRef | BaselineActivationRef | InitialDesignProposalRef | InitialDesignDecisionRef | CoordinationPolicyRevisionRef | ProjectCoordinationPolicyActiveRef | RoleSpecRevisionRef | ProjectRoleSpecActiveRef | MaterialAccessGrantRef | AgentInstanceRef | WorkParticipationRef | DirectedRequestRef | SubscriptionRef | DeliveryRef | WaitConditionRef | CommunicationIntentRef | CommunicationAdmissionRef | CoordinationRegistryRef | WorkMailboxRef | import('./dispatch.js').ModelRequestPermitRef | SessionMessageRef | TaskRequeueRef | TaskReworkRefusalRef;
 export type ProjectSnapshot = {
     ref: ProjectRef;
     revision: number;
@@ -52,11 +54,25 @@ export type WorkspaceSnapshot = {
     ref: WorkspaceRef;
     revision: number;
 };
+/** D-9 durable desired state; `GoalCreated` still writes only "active". */
+export type GoalDesiredState = "active" | "paused" | "cancelled";
 export type GoalSnapshot = {
     ref: GoalRef;
     workspaceRef: WorkspaceRef;
     objective: string;
-    desiredState: "active";
+    desiredState: GoalDesiredState;
+    /**
+     * Goal revision of the latest desired-state change (1 at creation); the
+     * fan-out epoch. Plan adoption never changes it. Absent on records written
+     * before A.2, which read as 1.
+     */
+    desiredStateRevision?: number;
+    /**
+     * Host actor of the latest desired-state change; null at creation. Plan
+     * adoption never changes it (GOAL-05, LA-7). Absent on records written
+     * before A.2, which decode as null.
+     */
+    desiredStateRequestedBy?: ActorRef | null;
     /** null after GoalCreated@1; a PlanRevisionRef after ApplyPlanRevision. */
     activePlanRevision: PlanRevisionRef | null;
     /** 1 at creation; 2+ after an accepted plan revision. */

@@ -1,13 +1,19 @@
 /** R4c.2a: exact persisted facts, never a Kernel entry permit. */
+import type { ArtifactRef } from '../../../contracts/artifact.js';
 import type { CommitCursor } from '../../../contracts/command-event.js';
+import type { ControlIntentSnapshotV1 } from '../../../contracts/control-intent.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { ReadResult } from '../../../contracts/core/results.js';
+import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { SessionRecord } from '../../../contracts/core/session.js';
 import type { RunRef, RunSnapshot, TaskAttemptSnapshot, TaskLeaseSnapshot } from '../../../contracts/dispatch.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
 import type { PlanRevisionSnapshot } from '../../../contracts/plan.js';
+import type { TaskRequeueSnapshotV1 } from '../../../contracts/task-requeue.js';
+import type { RoundSnapshot } from '../../../contracts/verification.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
+import type { SessionMessage } from '../communication/contracts.js';
 import type { TaskClaimOutbox } from './claim-contracts.js';
 
 /** One final atomic readMany window. Mutable Session/Lease describe the current
@@ -45,12 +51,45 @@ export type TaskExecutionPage = {
   readThrough: CommitCursor | null;
 };
 
+/**
+ * C3 continuation-brief basis (WorkGraph side): the durable facts AgentRuntime
+ * assembles a `ContinuationBriefV1` from, read in one `readMany` window. Bodies
+ * are returned only for inputs the Run's own TaskRequeue lists. Nothing here
+ * is a new record or authorization.
+ */
+export type ContinuationBasis = {
+  /** The new Run; it carries a `requeueRef`. */
+  run: RunSnapshot;
+  requeue: TaskRequeueSnapshotV1;
+  /** Every TaskRequeue of the Task, for the ordinal and earlier classes. */
+  allRequeues: TaskRequeueSnapshotV1[];
+  /** The afterRun record. */
+  previous: TaskExecutionRecord;
+  previousIntents: { pointer: ControlIntentSnapshotV1 | null; steers: ControlIntentSnapshotV1[] };
+  /** The wait message when the afterRun outcome is `yielded`. */
+  previousWait: SessionMessage | null;
+  /** `requeue.afterRoundRef` (the chain head). */
+  round: RoundSnapshot | null;
+  /** Bounded Artifact bodies listed in `requeue.newInputRefs`. */
+  newInputBodies: { ref: ArtifactRef; body: string | null; reason: string | null }[];
+  /** Bounded reply bodies of listed messages whose sender is not the new claim Session. */
+  replyBodies: { messageRef: SessionMessageRef; body: string | null; reason: string | null }[];
+  /** Nearest entered ancestor when the afterRun never entered (at most 4 hops); `[]` otherwise. */
+  factsChain: { requeue: TaskRequeueSnapshotV1; run: TaskExecutionRecord; round: RoundSnapshot | null }[];
+  readThrough: CommitCursor | null;
+};
+
 export interface ExecutionReadPort {
   readExecution(ctx: CoreCallContext, ref: RunRef,
     options?: { atLeastCursor?: CommitCursor }): Promise<ReadResult<TaskExecutionRecord>>;
   /** Optional only so an existing narrow `ExecutionReadPort` test double keeps
    * compiling without a new method; the real composition always assembles it. */
   listExecutions?(ctx: CoreCallContext, request: ExecutionListPageRequest): Promise<ReadResult<TaskExecutionPage>>;
+  /**
+   * C3: the continuation basis of a requeue Run; `not_found` when the Run has
+   * no `requeueRef`. Optional like `listExecutions`; implemented in A.2 step 5.4.
+   */
+  readContinuationBasis?(ctx: CoreCallContext, request: { runRef: RunRef }): Promise<ReadResult<ContinuationBasis>>;
 }
 /** The reader needs BOTH the transactional record port and the real candidate
  * index port. In production and in the existing fixtures they are the SAME

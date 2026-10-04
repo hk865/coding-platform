@@ -23,6 +23,7 @@ import type { EffectivityAnchorV1, EvidenceApplicability, EvidenceCoverageV1, Ev
     EvidenceSnapshot, EvidenceV1, TaskEvidenceIndexRef, TaskEvidenceIndexSnapshot } from '../../../contracts/evidence.js';
 import { EVIDENCE_SUMMARY_MAX_BYTES, requirementKeyOf } from '../../../contracts/evidence.js';
 import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
+import { REPORT_CONTENT_TYPE } from '../../../contracts/no-progress.js';
 import type { PlanRevisionRef, PlanRevisionSnapshot } from '../../../contracts/plan.js';
 import type { RunRef, RunSnapshot, SourceRefV1, TaskTriple } from '../../../contracts/dispatch.js';
 import type {
@@ -53,7 +54,8 @@ import { evidenceApplicabilityWithBasis, evidenceBindingFor, selectEffectiveEvid
 import {
     EVIDENCE_ADMITTED_EVENT_TYPE, VERIFICATION_CHECK_BEGUN_EVENT_TYPE,
     VERIFICATION_CHECK_RESULT_RECORDED_EVENT_TYPE, VERIFICATION_ROUND_FINALIZED_EVENT_TYPE,
-    VERIFICATION_ROUND_OPENED_EVENT_TYPE, VERIFICATION_ROUND_ORIGINAL_LOOKUP, checkObservationProblem, decodeVerificationRoundSnapshot,
+    VERIFICATION_ROUND_OPENED_EVENT_TYPE, VERIFICATION_ROUND_ORIGINAL_LOOKUP, VERIFICATION_ROUND_CHAIN_LOOKUP_LIMIT,
+    checkObservationProblem, decodeVerificationRoundSnapshot,
     encodeEvidenceSnapshot, encodeTaskEvidenceIndexSnapshot, encodeVerificationRoundEvent,
     encodeVerificationRoundSnapshot, verificationRoundEventFromEvent, decodeTaskEvidenceIndexSnapshot,
     type VerificationRoundEvent,
@@ -66,8 +68,6 @@ import type { GraphWrite } from '../tasks/contracts.js';
 type Records = GoalRecordTransactionPort & RecordLookupPort;
 type HostActor = { kind: 'human' | 'system'; id: string };
 type LoadedRound = { ok: true; round: RoundSnapshot } | { ok: false; rejection: CoreRejection };
-
-const REPORT_CONTENT_TYPE = 'application/vnd.coding-platform.verification-check-report+json;version=1';
 
 // -------------------------------------------------------------------------- //
 // Small pure helpers                                                          //
@@ -612,7 +612,8 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
             lookup = await records.lookup({
                 index: VERIFICATION_ROUND_ORIGINAL_LOOKUP,
                 values: [scope.projectId, scope.workspaceId, subject.goalId, subject.taskId, rawRunRef.runId],
-                limit: 2,
+                // C5: the whole chain shares this group; more than one row is still `incomplete` here.
+                limit: VERIFICATION_ROUND_CHAIN_LOOKUP_LIMIT,
             });
         } catch (error) {
             return unavailable(`the original-round lookup failed: ${messageOf(error)}`);

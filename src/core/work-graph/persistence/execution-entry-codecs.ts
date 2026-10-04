@@ -6,7 +6,10 @@
  *    the existing @1 bodies: `ExecutionAuthorizationV2`, the retained
  *    `ExecutionAuthorizationV1` compatibility shape, `RuntimeInputBindingV1`,
  *    `TaskLeaseReleaseV1`, the @1 TaskLease snapshot including its optional
- *    release, and `TaskDispatchStateV1`;
+ *    release, and `TaskDispatchStateV1`/`TaskDispatchStateV2`;
+ *  - own the A.2 Run nested-fact validators used by the Run reader:
+ *    `RuntimeEventV1`, `RunSnapshot.terminalPayload` and `RunReconciliationV1`
+ *    (spec §6.1 (a), (f));
  *  - own the four `ExecutionEntry*` replay event codecs plus their registration.
  *
  * It does NOT register a second Run/Attempt/outbox/Lease schema: those
@@ -15,8 +18,14 @@
  * upgraded into a fresh begin permission here.
  */
 import type { ActorRef } from '../../../contracts/command-event.js';
-import type { ExecutionAuthorizationV2, RunSnapshot, TaskLeaseReleaseV1, TaskLeaseSnapshot } from '../../../contracts/dispatch.js';
+import {
+  TERMINAL_PAYLOAD_TEXT_MAX_CHARS, TERMINAL_PAYLOAD_TRUNCATION_SUFFIX,
+  type ExecutionAuthorizationV2, type RunOutcome, type RunSnapshot, type TaskDispatchStateV2, type TaskLeaseReleaseV1,
+  type TaskLeaseSnapshot,
+} from '../../../contracts/dispatch.js';
 import type { RunExecutionHistoryV1 } from '../../../contracts/core/execution-history.js';
+import type { PlanRevisionRef } from '../../../contracts/plan.js';
+import { isAutomationActor } from '../../../contracts/task-requeue.js';
 import type {
   DecodeResult,
   EncodedDomainEvent,
@@ -25,8 +34,9 @@ import type {
 import { isArtifactRef } from '../../record-store/body-codec.js';
 import type { TaskDispatchStateV1 } from '../tasks/claim-contracts.js';
 import type { RuntimeEntryRecord, TaskEntryPermit } from '../tasks/execution-entry-contracts.js';
+import { controlIntentRefProblem } from './rework-codecs.js';
 
-export type { ExecutionAuthorizationV2, TaskDispatchStateV1, TaskLeaseReleaseV1 };
+export type { ExecutionAuthorizationV2, TaskDispatchStateV1, TaskDispatchStateV2, TaskLeaseReleaseV1 };
 
 export const EXECUTION_ENTRY_EVENT_SCHEMA_VERSION = 1 as const;
 export const EXECUTION_ENTRY_AUTHORIZED_EVENT_TYPE = 'ExecutionEntryAuthorized' as const;
@@ -46,6 +56,9 @@ function nonEmpty(value: unknown): value is string {
 }
 function isPositiveSafeInteger(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1;
+}
+function isNonNegativeSafeInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 }
 function isSha256Hex(value: unknown): value is string {
   return typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
@@ -170,11 +183,19 @@ function deliveryPinProblem(value: unknown): string | null {
   return null;
 }
 
+/**
+ * `continuationBriefDigest` (C3, spec §6.1 (e)) is optional and, when present, a
+ * sha256 hex. Whether a Run must or must not carry it (§11 I-19) is the entry
+ * guard's decision, not this shape check.
+ */
 export function inputBindingProblem(value: unknown): string | null {
   if (!isJsonObject(value)) return 'inputBinding must be an object';
   if (!hasOnlyKeys(value, ['schemaVersion', 'inputDigest', 'manifestDigest',
-    'materialAccessRefs', 'deliveryRefs', 'additionalMaterialRefs'])) {
+    'materialAccessRefs', 'deliveryRefs', 'additionalMaterialRefs', 'continuationBriefDigest'])) {
     return 'inputBinding carries unknown fields';
+  }
+  if (value['continuationBriefDigest'] !== undefined && !isSha256Hex(value['continuationBriefDigest'])) {
+    return 'inputBinding continuationBriefDigest must be a sha256 hex';
   }
   if (value['schemaVersion'] !== 1) return 'inputBinding schemaVersion must be 1';
   if (!isSha256Hex(value['inputDigest'])) return 'inputBinding inputDigest must be a sha256 hex';
@@ -285,6 +306,259 @@ export function taskDispatchStateV1Problem(value: unknown): string | null {
   return null;
 }
 
+/**
+ * AD-2 not-entered settlement (`pending → settled` directly, D-7). The entry
+ * identity may be absent because the Run never had one; a present value is
+ * still a complete identity.
+ */
+export function taskDispatchStateV2Problem(value: unknown): string | null {
+  if (!isJsonObject(value)) return 'dispatchState must be an object';
+  if (!hasOnlyKeys(value, ['schemaVersion', 'phase', 'settlement', 'consumerId', 'entryGeneration', 'sessionGeneration', 'eventId'])) {
+    return 'dispatchState V2 carries unknown fields';
+  }
+  if (value['schemaVersion'] !== 2) return 'dispatchState V2 schemaVersion must be 2';
+  if (value['phase'] !== 'settled') return 'dispatchState V2 phase must be settled';
+  if (value['settlement'] !== 'not_entered') return 'dispatchState V2 settlement must be not_entered';
+  if (!(value['consumerId'] === null || nonEmpty(value['consumerId']))) {
+    return 'dispatchState V2 consumerId must be null or a non-empty string';
+  }
+  if (!(value['entryGeneration'] === null || isPositiveSafeInteger(value['entryGeneration']))) {
+    return 'dispatchState V2 entryGeneration must be null or a positive safe integer';
+  }
+  if (!isPositiveSafeInteger(value['sessionGeneration'])) return 'dispatchState V2 sessionGeneration must be a positive safe integer';
+  if (!nonEmpty(value['eventId'])) return 'dispatchState V2 eventId is required';
+  return null;
+}
+
+/** Outbox `dispatchState` validator: dispatches on the nested `schemaVersion` (AD-2). */
+export function taskDispatchStateProblem(value: unknown): string | null {
+  if (isJsonObject(value) && value['schemaVersion'] === 2) return taskDispatchStateV2Problem(value);
+  return taskDispatchStateV1Problem(value);
+}
+
+// --------------------------------------------------------------------------
+// A.2 Run nested facts (spec §6.1 (a), (f); §4.1)
+// --------------------------------------------------------------------------
+
+const RUNTIME_EVENT_PAYLOAD_KINDS: Readonly<Record<string, string>> = Object.freeze({
+  run_started: 'started',
+  run_completed: 'completed',
+  run_crashed: 'crashed',
+  run_cancelled: 'cancelled',
+  run_budget_exhausted: 'budget_exhausted',
+  run_yielded: 'yielded',
+});
+const YIELD_REASONS: readonly string[] = ['reply_required', 'external_input_required', 'operator_requested'];
+
+/** Closed `RuntimeEventV1['payload']` shape check. */
+export function runtimeEventPayloadProblem(value: unknown): string | null {
+  if (!isJsonObject(value)) return 'runtime event payload must be an object';
+  switch (value['kind']) {
+    case 'started':
+      if (!hasOnlyKeys(value, ['kind', 'startedAt']) || !nonEmpty(value['startedAt'])) return 'a started payload requires startedAt';
+      return null;
+    case 'completed':
+      if (!hasOnlyKeys(value, ['kind', 'exitCode']) || typeof value['exitCode'] !== 'number'
+        || !Number.isSafeInteger(value['exitCode'])) {
+        return 'a completed payload requires a safe integer exitCode';
+      }
+      return null;
+    case 'crashed':
+      if (!hasOnlyKeys(value, ['kind', 'error']) || typeof value['error'] !== 'string') return 'a crashed payload requires an error string';
+      return null;
+    case 'cancelled':
+      if (!hasOnlyKeys(value, ['kind', 'reason']) || typeof value['reason'] !== 'string') return 'a cancelled payload requires a reason string';
+      return null;
+    case 'budget_exhausted':
+      if (!hasOnlyKeys(value, ['kind', 'exhaustedAt']) || !nonEmpty(value['exhaustedAt'])) {
+        return 'a budget_exhausted payload requires exhaustedAt';
+      }
+      return null;
+    case 'yielded': {
+      if (!hasOnlyKeys(value, ['kind', 'yield'])) return 'a yielded payload carries unknown fields';
+      const yielded = value['yield'];
+      if (!isJsonObject(yielded) || !hasOnlyKeys(yielded, ['reason', 'requestedBy', 'yieldedAt', 'pendingToolCallId'])
+        || !YIELD_REASONS.includes(yielded['reason'] as string)
+        || (yielded['requestedBy'] !== 'runtime' && yielded['requestedBy'] !== 'app')
+        || !nonEmpty(yielded['yieldedAt'])
+        || !(yielded['pendingToolCallId'] === null || nonEmpty(yielded['pendingToolCallId']))) {
+        return 'a yielded payload requires a complete yield';
+      }
+      return null;
+    }
+    default:
+      return 'runtime event payload kind is not recognized';
+  }
+}
+
+/** Closed `RuntimeEventV1` shape check; the payload kind must match the event type. */
+export function runtimeEventProblem(value: unknown): string | null {
+  if (!isJsonObject(value)) return 'runtime event must be an object';
+  if (!hasOnlyKeys(value, ['eventType', 'schemaVersion', 'eventId', 'runRef', 'sequence', 'occurredAt', 'payload'])) {
+    return 'runtime event carries unknown fields';
+  }
+  const expectedKind = typeof value['eventType'] === 'string' ? RUNTIME_EVENT_PAYLOAD_KINDS[value['eventType']] : undefined;
+  if (expectedKind === undefined) return 'runtime event type is not recognized';
+  if (value['schemaVersion'] !== 1) return 'runtime event schemaVersion must be 1';
+  if (!nonEmpty(value['eventId'])) return 'runtime event eventId is required';
+  const runProblem = runRefProblem(value['runRef'], 'runtime event runRef');
+  if (runProblem !== null) return runProblem;
+  if (!isNonNegativeSafeInteger(value['sequence'])) return 'runtime event sequence must be a non-negative safe integer';
+  if (!nonEmpty(value['occurredAt'])) return 'runtime event occurredAt is required';
+  const payloadProblem = runtimeEventPayloadProblem(value['payload']);
+  if (payloadProblem !== null) return payloadProblem;
+  if ((value['payload'] as Record<string, unknown>)['kind'] !== expectedKind) {
+    return `runtime event ${String(value['eventType'])} requires a ${expectedKind} payload`;
+  }
+  return null;
+}
+
+/** The terminal payload kind each known outcome records (contract (f)). */
+const TERMINAL_PAYLOAD_KIND_BY_OUTCOME: Readonly<Partial<Record<RunOutcome, string>>> = Object.freeze({
+  completed: 'completed',
+  crashed: 'crashed',
+  cancelled: 'cancelled',
+  budget_exhausted: 'budget_exhausted',
+  yielded: 'yielded',
+});
+const TERMINAL_PAYLOAD_TEXT_LIMIT = TERMINAL_PAYLOAD_TEXT_MAX_CHARS + TERMINAL_PAYLOAD_TRUNCATION_SUFFIX.length;
+
+/**
+ * `RunSnapshot.terminalPayload` (C1, spec §6.1 (f)). `undefined` is a historical
+ * Run, an `outcome_unknown` Run or a not-entered cancel. A present payload is a
+ * bounded terminal payload of an ended Run whose kind matches its known outcome.
+ */
+export function terminalPayloadProblem(value: unknown, status: unknown, outcome: unknown): string | null {
+  if (value === undefined) return null;
+  const payloadProblem = runtimeEventPayloadProblem(value);
+  if (payloadProblem !== null) return payloadProblem;
+  const payload = value as Record<string, unknown>;
+  if (payload['kind'] === 'started') return 'terminalPayload must be a terminal payload';
+  if (status !== 'ended') return 'terminalPayload is only recorded on an ended Run';
+  const expectedKind = typeof outcome === 'string' ? TERMINAL_PAYLOAD_KIND_BY_OUTCOME[outcome as RunOutcome] : undefined;
+  if (expectedKind === undefined) return `terminalPayload is not recorded for outcome ${String(outcome)}`;
+  if (payload['kind'] !== expectedKind) return `terminalPayload kind ${String(payload['kind'])} disagrees with outcome ${String(outcome)}`;
+  const text = payload['kind'] === 'crashed' ? payload['error'] : payload['kind'] === 'cancelled' ? payload['reason'] : null;
+  if (typeof text === 'string' && text.length > TERMINAL_PAYLOAD_TEXT_LIMIT) {
+    return `terminalPayload text exceeds ${String(TERMINAL_PAYLOAD_TEXT_MAX_CHARS)} characters plus the truncation suffix`;
+  }
+  return null;
+}
+
+function reconciliationBasisProblem(value: unknown): string | null {
+  if (!isJsonObject(value)) return 'reconciliation basis must be an object';
+  if (value['kind'] === 'live_clean') {
+    return hasOnlyKeys(value, ['kind']) ? null : 'reconciliation live_clean basis carries unknown fields';
+  }
+  if (value['kind'] === 'host_instance_takeover') {
+    if (!hasOnlyKeys(value, ['kind', 'hostInstanceId']) || !nonEmpty(value['hostInstanceId'])) {
+      return 'reconciliation host_instance_takeover basis requires a hostInstanceId';
+    }
+    return null;
+  }
+  return 'reconciliation basis kind must be live_clean or host_instance_takeover';
+}
+
+function reconciliationEventProblem(value: unknown, runRef: Record<string, unknown>, label: string): string | null {
+  const problem = runtimeEventProblem(value);
+  if (problem !== null) return `${label}: ${problem}`;
+  const eventRun = (value as Record<string, unknown>)['runRef'] as Record<string, unknown>;
+  if (eventRun['projectId'] !== runRef['projectId'] || eventRun['goalId'] !== runRef['goalId']
+    || eventRun['runId'] !== runRef['runId']) {
+    return `${label} names another Run`;
+  }
+  return null;
+}
+
+/**
+ * `RunSnapshot.reconciliation` (spec §6.1 contract (a)). The field had no writer
+ * before A.2, so every present value must be a complete current shape.
+ * `interrupted_clean` must carry both C4 fields (`kernelPaused`,
+ * `pausedIntentRef`); which status a given observation is written with is the
+ * reconciliation owner's rule, not this shape check.
+ */
+export function runReconciliationProblem(value: unknown, runRef: Record<string, unknown>): string | null {
+  if (value === undefined) return null;
+  if (!isJsonObject(value)) return 'reconciliation must be an object';
+  if (!hasOnlyKeys(value, ['status', 'observation', 'basis', 'recordedAt'])) return 'reconciliation carries unknown fields';
+  if (value['status'] !== 'done' && value['status'] !== 'cancelled' && value['status'] !== 'quarantined') {
+    return 'reconciliation status must be done, cancelled or quarantined';
+  }
+  if (!nonEmpty(value['recordedAt'])) return 'reconciliation recordedAt is required';
+  const basisProblem = reconciliationBasisProblem(value['basis']);
+  if (basisProblem !== null) return basisProblem;
+  const observation = value['observation'];
+  if (!isJsonObject(observation)) return 'reconciliation observation must be an object';
+  switch (observation['kind']) {
+    case 'runtime_terminal':
+      if (!hasOnlyKeys(observation, ['kind', 'event', 'digest'])) return 'runtime_terminal observation carries unknown fields';
+      if (!nonEmpty(observation['digest'])) return 'runtime_terminal observation digest is required';
+      return reconciliationEventProblem(observation['event'], runRef, 'runtime_terminal observation event');
+    case 'unresolved': {
+      if (!hasOnlyKeys(observation, ['kind', 'reason', 'observedThroughPosition', 'unresolvedToolCallIds'])) {
+        return 'unresolved observation carries unknown fields';
+      }
+      if (typeof observation['reason'] !== 'string') return 'unresolved observation reason must be a string';
+      if (!(observation['observedThroughPosition'] === null || isNonNegativeSafeInteger(observation['observedThroughPosition']))) {
+        return 'unresolved observation observedThroughPosition must be null or a non-negative safe integer';
+      }
+      const toolCallIds = observation['unresolvedToolCallIds'];
+      if (!Array.isArray(toolCallIds) || !toolCallIds.every(nonEmpty)) {
+        return 'unresolved observation unresolvedToolCallIds must be an array of non-empty strings';
+      }
+      return null;
+    }
+    case 'not_entered': {
+      if (!hasOnlyKeys(observation, ['kind', 'kernel', 'revokedGeneration'])) return 'not_entered observation carries unknown fields';
+      const kernelProblem = kernelBindingProblem(observation['kernel']);
+      if (kernelProblem !== null) return `not_entered observation ${kernelProblem}`;
+      if (!isPositiveSafeInteger(observation['revokedGeneration'])) {
+        return 'not_entered observation revokedGeneration must be a positive safe integer';
+      }
+      return null;
+    }
+    case 'interrupted_clean': {
+      if (!hasOnlyKeys(observation, ['kind', 'event', 'lastPosition', 'kernelPaused', 'pausedIntentRef'])) {
+        return 'interrupted_clean observation carries unknown fields';
+      }
+      const eventProblem = reconciliationEventProblem(observation['event'], runRef, 'interrupted_clean observation event');
+      if (eventProblem !== null) return eventProblem;
+      const eventType = (observation['event'] as Record<string, unknown>)['eventType'];
+      if (eventType !== 'run_crashed' && eventType !== 'run_cancelled') {
+        return 'interrupted_clean observation event must be a synthesized run_crashed or run_cancelled';
+      }
+      if (!(observation['lastPosition'] === null || isNonNegativeSafeInteger(observation['lastPosition']))) {
+        return 'interrupted_clean observation lastPosition must be null or a non-negative safe integer';
+      }
+      if (typeof observation['kernelPaused'] !== 'boolean') return 'interrupted_clean observation requires a kernelPaused boolean';
+      if (!Object.hasOwn(observation, 'pausedIntentRef')) return 'interrupted_clean observation requires pausedIntentRef (null when none)';
+      if (observation['pausedIntentRef'] !== null) {
+        const intentProblem = controlIntentRefProblem(observation['pausedIntentRef'], 'interrupted_clean observation pausedIntentRef');
+        if (intentProblem !== null) return intentProblem;
+        if ((observation['pausedIntentRef'] as Record<string, unknown>)['projectId'] !== runRef['projectId']) {
+          return 'interrupted_clean observation pausedIntentRef belongs to another project';
+        }
+      }
+      return null;
+    }
+    case 'human_attested': {
+      if (!hasOnlyKeys(observation, ['kind', 'attestedBy', 'reason'])) return 'human_attested observation carries unknown fields';
+      const attestedBy = observation['attestedBy'];
+      // An operator is any non-automation Host actor (TD-6, LA-7): a Host started
+      // with a `kind:'system'` actor qualifies, a platform automation actor never does.
+      if (!isJsonObject(attestedBy) || !hasOnlyKeys(attestedBy, ['kind', 'id'])
+        || (attestedBy['kind'] !== 'human' && attestedBy['kind'] !== 'system') || !nonEmpty(attestedBy['id'])
+        || isAutomationActor(attestedBy as ActorRef)) {
+        return 'human_attested observation attestedBy must be a Host operator actor';
+      }
+      if (typeof observation['reason'] !== 'string') return 'human_attested observation reason must be a string';
+      return null;
+    }
+    default:
+      return 'reconciliation observation kind is not recognized';
+  }
+}
+
 // --------------------------------------------------------------------------
 // Execution-entry replay events
 // --------------------------------------------------------------------------
@@ -303,6 +577,13 @@ type ExecutionEntryEventBase = {
 export type ExecutionEntryAuthorizedEvent = ExecutionEntryEventBase & {
   eventType: typeof EXECUTION_ENTRY_AUTHORIZED_EVENT_TYPE;
   permit: TaskEntryPermit;
+  /**
+   * C6 (spec §6.1 (g)): present only when the entry plan verdict was
+   * `carried_unchanged`; the Goal's active Plan pinned by the authorization
+   * commit. The claim, envelope and inputBinding keep `claim.planRef`; replay
+   * ignores this field.
+   */
+  activePlanRef?: PlanRevisionRef;
 };
 export type ExecutionEntryBegunEvent = ExecutionEntryEventBase & {
   eventType: typeof EXECUTION_ENTRY_BEGUN_EVENT_TYPE;
@@ -394,6 +675,15 @@ export function executionEntryAuthorizedEventFromEvent(event: EncodedDomainEvent
   if (decoded.status !== 'decoded') return decoded;
   const problem = permitProblem(decoded.value.body['permit']);
   if (problem !== null) return invalid(problem);
+  const activePlanRef = decoded.value.body['activePlanRef'];
+  if (activePlanRef !== undefined) {
+    const claimRun = ((decoded.value.body['permit'] as Record<string, unknown>)['claim'] as Record<string, unknown>)['runRef'] as Record<string, unknown>;
+    if (!isJsonObject(activePlanRef) || !hasOnlyKeys(activePlanRef, ['aggregateType', 'projectId', 'planId'])
+      || activePlanRef['aggregateType'] !== 'PlanRevision' || activePlanRef['projectId'] !== claimRun['projectId']
+      || !nonEmpty(activePlanRef['planId'])) {
+      return invalid('authorized event activePlanRef must be a PlanRevisionRef of the claim project');
+    }
+  }
   return { status: 'decoded', value: decoded.value.body as unknown as ExecutionEntryAuthorizedEvent };
 }
 

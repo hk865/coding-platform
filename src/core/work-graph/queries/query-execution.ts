@@ -25,6 +25,7 @@ import type { SessionRecord } from '../../../contracts/core/session.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import { consultationQueryRefs } from '../../../contracts/query-job.js';
 import type { GoalSnapshot, WorkspaceSnapshot } from '../../../contracts/ledger.js';
+import { QUERY_MANIFEST_CONTENT_TYPE } from '../../../contracts/no-progress.js';
 import type { PlanRevisionSnapshot } from '../../../contracts/plan.js';
 import type { RuntimeBudget } from '../../../contracts/runtime-budget.js';
 import type {
@@ -53,8 +54,8 @@ import type {
 } from './contracts.js';
 import type { GraphWrite } from '../tasks/contracts.js';
 
-/** Exact manifest content type; the writer re-reads the body and requires this. */
-export const QUERY_MANIFEST_CONTENT_TYPE = 'application/vnd.coding-platform.query-execution-manifest+json;version=1';
+/** Exact manifest content type (declared once in contracts, ND-9); the writer re-reads the body and requires this. */
+export { QUERY_MANIFEST_CONTENT_TYPE };
 
 type HostActor = Extract<ActorRef, { kind: 'human' | 'system' }>;
 type Core = { job: QueryJobSnapshot; run: QueryRunSnapshot; session: SessionRecord };

@@ -2,6 +2,7 @@
 import type { CoreScope, BootstrapResponse } from './core-http-types.js';
 import type { QueryJobAnswerRef } from '../contracts/query-job.js';
 import type { RegisteredCommandCheck } from '../contracts/verification.js';
+import type { TaskAutomationPolicyV1 } from '../contracts/task-requeue.js';
 
 export const SETTINGS_API_PREFIX = '/api/real/settings/';
 export type SettingsProvider = 'deepseek' | 'openai';
@@ -21,6 +22,12 @@ export type SettingsWorkspace = {
 };
 export type HostSettingsSnapshot = {
   models: SettingsModel[]; workspaces: SettingsWorkspace[];
+  /**
+   * C8 automatic-rework policy (Host setting `automation`). Optional so older
+   * snapshots and test literals stay valid; the backend publishes it from the
+   * step that adds the settings input (A.2 step 5.8).
+   */
+  automation?: TaskAutomationPolicyV1;
 };
 export type DirectoryListing = {
   path: string; parent: string | null;

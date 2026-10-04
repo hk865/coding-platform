@@ -6,7 +6,8 @@ import type { GoalRef } from '../../contracts/ledger.js';
 import type { PlanRevisionRef, PlanRevisionSnapshot } from '../../contracts/plan.js';
 import type { QueryJobAnswerSnapshot, QueryJobIntentV1 } from '../../contracts/query-job.js';
 import type { RuntimeBudget } from '../../contracts/runtime-budget.js';
-import type { RoleBindingRefV1, TaskTriple } from '../../contracts/dispatch.js';
+import type { RoleBindingRefV1, TaskBudgetV1, TaskTriple } from '../../contracts/dispatch.js';
+import type { TaskRequeueRef } from '../../contracts/task-requeue.js';
 import type { SessionMessage } from '../../core/work-graph/communication/contracts.js';
 import type { QueryJobRecord } from '../../core/work-graph/queries/contracts.js';
 import type { CreateGoalInput, GoalTaskPort } from '../../core/work-graph/tasks/contracts.js';
@@ -45,20 +46,33 @@ export type WorkflowCalls = {
   finalize_checks: EvidencePort['finalizeChecks'];
   complete_task: GoalTaskPort['completeTask'];
   complete_goal: GoalTaskPort['completeGoal'];
+  /** C8 automatic rework (spec §4.1, §9 VD-12); performed from A.2 step 5 on. */
+  requeue_task: NonNullable<TaskClaimPort['requeueTask']>;
+  reverify_round: NonNullable<EvidencePort['reverifyRound']>;
 };
 
-export type WorkflowStepKind = keyof WorkflowCalls;
+/** Declared owner calls that no `perform` step produces or accepts yet (A.2 step 5). */
+export type WorkflowPendingStepKind = 'requeue_task' | 'reverify_round';
+export type WorkflowStepKind = Exclude<keyof WorkflowCalls, WorkflowPendingStepKind>;
+
+/**
+ * Session creation for a `claim_requeued` Task (spec §4 4.3, LA-1): the new
+ * Session then claims with this requeue and budget.
+ */
+export type WorkflowSessionRequeue = { requeueRef: TaskRequeueRef; budget: TaskBudgetV1 | null };
 
 /**
  * One explicit perform step. The request is the owner's real second argument.
  * Only Session creation additionally carries the formal Task/Plan to link after
- * the owner receipt confirms a Session record exists; every other object comes
- * from the original request or a formal receipt, never from a caller-supplied
- * PASS, policy, command or capability.
+ * the owner receipt confirms a Session record exists (and, for a requeued Task,
+ * the requeue to claim with); every other object comes from the original
+ * request or a formal receipt, never from a caller-supplied PASS, policy,
+ * command or capability.
  */
 export type WorkflowOperation = {
   [K in WorkflowStepKind]: { kind: K; request: Parameters<WorkflowCalls[K]>[1] }
-    & (K extends 'create_session' ? { taskRef: TaskTriple; planRef: PlanRevisionRef } : {})
+    & (K extends 'create_session'
+      ? { taskRef: TaskTriple; planRef: PlanRevisionRef; requeue?: WorkflowSessionRequeue } : {})
 }[WorkflowStepKind];
 
 /** The owner's complete, un-weakened result for one performed step. */

@@ -37,7 +37,10 @@ import { isArtifactRef } from '../../record-store/body-codec.js';
 import { isJsonObject, isNonEmptyString, isRevision, messageOf, parseJsonObject } from '../../record-store/record-codec.js';
 import { GOAL_RECORD_SCHEMAS } from '../persistence/record-codecs.js';
 import { isRunExecutionHistoryV1 } from '../persistence/execution-history-codecs.js';
-import { inputBindingProblem, runExecutionAuthorizationProblem } from '../persistence/execution-entry-codecs.js';
+import {
+  inputBindingProblem, runExecutionAuthorizationProblem, runReconciliationProblem, terminalPayloadProblem,
+} from '../persistence/execution-entry-codecs.js';
+import { taskRequeueRefProblem } from '../persistence/rework-codecs.js';
 import { runControlStateProblem } from '../persistence/control-record-codecs.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { ArtifactOwnerRunRef } from '../../../contracts/artifact.js';
@@ -168,7 +171,9 @@ function isQueryRunStatus(value: unknown): boolean {
 
 function isQueryRunOutcome(value: unknown): boolean {
   return value === null || value === 'answered' || value === 'timeout' || value === 'gap' ||
-    value === 'failed' || value === 'cancelled';
+    value === 'failed' || value === 'cancelled' ||
+    // §8 SD-4: settled by reconciliation without the Query ever entering the Kernel.
+    value === 'not_entered';
 }
 
 /** R5b.2 compatibility extension: the ONE QueryRun schema accepts the optional
@@ -248,6 +253,24 @@ function runContinuationShapeProblem(value: unknown, ref: RunRef, task: unknown)
   return null;
 }
 
+/**
+ * Optional `requeueRef` (TASK-03): the TaskRequeue of this Run's own Task that
+ * covers an earlier Run. It never coexists with `consumedWait`.
+ */
+function runRequeueRefProblem(value: unknown, ref: RunRef, task: UnknownRecord, consumedWait: unknown): string | null {
+  if (value === undefined) return null;
+  const problem = taskRequeueRefProblem(value, 'requeueRef');
+  if (problem !== null) return problem;
+  const requeueRef = value as UnknownRecord;
+  if (requeueRef['projectId'] !== ref.projectId || requeueRef['goalId'] !== ref.goalId
+    || requeueRef['taskId'] !== task['taskId']) {
+    return 'the requeueRef does not belong to the Run Task';
+  }
+  if (requeueRef['afterRunId'] === ref.runId) return 'a Run cannot continue its own requeue';
+  if (consumedWait !== undefined) return 'a requeued Run cannot also consume a wait';
+  return null;
+}
+
 function validateRunSnapshot(record: EncodedRecord): DecodeResult<EncodedRecord> {
   if (record.schemaId !== RUN_SNAPSHOT_SCHEMA_ID) {
     return invalid(`expected schemaId ${RUN_SNAPSHOT_SCHEMA_ID}, got ${record.schemaId}`);
@@ -312,6 +335,14 @@ function validateRunSnapshot(record: EncodedRecord): DecodeResult<EncodedRecord>
   if (continuationProblem !== null) return invalid(`Run continuation is malformed: ${continuationProblem}`);
   if (!isRunStatus(body['status'])) return invalid('Run snapshot status is not a RunStatus');
   if (!isRunOutcome(body['outcome'])) return invalid('Run snapshot outcome is not a RunOutcome or null');
+  // A.2 optional facts (spec §4.1, §6.1 (a)/(f)). Absent on every historical
+  // Run; a present value is checked by its one owning helper.
+  const requeueProblem = runRequeueRefProblem(body['requeueRef'], ref, task, body['consumedWait']);
+  if (requeueProblem !== null) return invalid(`Run requeueRef is malformed: ${requeueProblem}`);
+  const terminalProblem = terminalPayloadProblem(body['terminalPayload'], body['status'], body['outcome']);
+  if (terminalProblem !== null) return invalid(`Run terminalPayload is malformed: ${terminalProblem}`);
+  const reconciliationProblem = runReconciliationProblem(body['reconciliation'], ref as unknown as UnknownRecord);
+  if (reconciliationProblem !== null) return invalid(`Run reconciliation is malformed: ${reconciliationProblem}`);
   if (!(body['exitCode'] === null || typeof body['exitCode'] === 'number')) {
     return invalid('Run snapshot exitCode must be a number or null');
   }

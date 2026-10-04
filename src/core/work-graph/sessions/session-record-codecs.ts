@@ -22,7 +22,7 @@ import type {
   SessionAggregateRef, SessionRef, SessionWorkLinkRef, WorkLinkRelation,
 } from '../../../contracts/core/identity.js';
 import type { OperationRef } from '../../../contracts/core/operations.js';
-import type { SessionRecord, SessionWorkLink } from '../../../contracts/core/session.js';
+import { SESSION_HEALTH_CONCLUSIONS, type SessionRecord, type SessionWorkLink } from '../../../contracts/core/session.js';
 import type {
   DecodeResult, EncodedDomainEvent, EncodedRecord, RecordBackendSchemas,
 } from '../../record-store/ports.js';
@@ -381,7 +381,7 @@ const OPERATION_BODY_KEYS: readonly string[] = [
 const ACTION_KEYS: readonly string[] = ['kind', 'plannedSessionRef', 'workspace', 'kernelStore', 'role', 'recommendedRefs', 'initialLinks'];
 const OPERATION_PHASES: readonly string[] = ['accepted', 'running', 'completed', 'failed', 'unknown'];
 const SESSION_BODY_KEYS: readonly string[] = [
-  'ref', 'revision', 'kernel', 'lifecycle', 'health', 'role', 'workspaceId', 'lastExecutionRef',
+  'ref', 'revision', 'kernel', 'lifecycle', 'health', 'healthConclusion', 'role', 'workspaceId', 'lastExecutionRef',
   'occupancy', 'historyCursor', 'createdAt', 'archivedAt',
 ];
 const WORK_LINK_BODY_KEYS: readonly string[] = ['ref', 'revision', 'since', 'until'];
@@ -463,6 +463,13 @@ export function checkSessionBody(body: UnknownRecord): Problem {
   }
   if (!['available', 'recoverable', 'unavailable'].includes(String(body['health']))) {
     return 'session health is not recognized';
+  }
+  // SD-2: why `health` is unavailable. Absent before A.2 and read as null; only
+  // the enumeration is checked here, cross-field rules belong to the writers.
+  const conclusion = body['healthConclusion'];
+  if (conclusion !== undefined && conclusion !== null
+    && !(SESSION_HEALTH_CONCLUSIONS as readonly unknown[]).includes(conclusion)) {
+    return 'session healthConclusion is not recognized';
   }
   const occupancy = checkOccupancy(body['occupancy']);
   if (occupancy !== null) return occupancy;

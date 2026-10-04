@@ -13,6 +13,14 @@
  * `controlState` stays readable and a legal `running`/`steered` pointer is not
  * reported damaged. It does not admit or fence execution; the one fresh-action
  * barrier lives in `tasks/execution-entry-service.ts`.
+ *
+ * A.2 (spec §7.1): a non-queued snapshot may carry a platform-proven
+ * `ControlPlatformObservationV1` (CD-1, told apart by its `origin` key); such a
+ * platform observation may close any intent kind with
+ * `terminal_without_cancel`, `outcome_unknown` or `superseded_by_newer` (CD-2);
+ * `ControlIntentSubmitted` may carry a not-entered `applied@2` intent (CD-3).
+ * A Kernel observation keeps its pre-A.2 pairing until sub-step 5.1 relaxes it
+ * together with CTL-03/CTL-06, because a live producer already reaches it.
  */
 import type { ActorRef } from '../../../contracts/command-event.js';
 import type { ControlIntentSnapshotV1, ControlObservationV1, SubmittedControl } from '../../../contracts/control-intent.js';
@@ -238,6 +246,81 @@ export function controlObservationProblem(value: unknown): string | null {
   return null;
 }
 
+const PLATFORM_OBSERVATION_KINDS: readonly string[] = [
+  'paused', 'cancelled', 'resumed', 'superseded_by_newer', 'terminal_without_cancel', 'outcome_unknown',
+];
+const RUN_OUTCOMES: readonly string[] = [
+  'completed', 'failed', 'cancelled', 'budget_exhausted', 'crashed', 'outcome_unknown', 'yielded',
+];
+
+/**
+ * Closed shape of one platform-proven `ControlPlatformObservationV1` (spec §7.1
+ * CD-1). It never carries Kernel fields; `detail` must be the variant of its
+ * `origin`. Which kinds a given origin may record (for example `paused` from
+ * `platform_reconcile` only for CTL-08(f)) is the control machine's rule.
+ */
+export function controlPlatformObservationProblem(value: unknown): string | null {
+  if (!isJsonObject(value)) return 'ControlPlatformObservation must be an object';
+  if (!hasOnlyKeys(value, ['schemaVersion', 'origin', 'kind', 'runRevision', 'detail', 'observedAt'])) {
+    return 'ControlPlatformObservation carries unknown fields';
+  }
+  if (value['schemaVersion'] !== 1) return 'ControlPlatformObservation schemaVersion must be 1';
+  if (!PLATFORM_OBSERVATION_KINDS.includes(value['kind'] as string)) return 'ControlPlatformObservation kind is not recognized';
+  if (!isPositiveSafeInteger(value['runRevision'])) return 'ControlPlatformObservation runRevision must be a positive safe integer';
+  if (typeof value['observedAt'] !== 'string' || !nonEmpty(value['observedAt'])
+    || !Number.isFinite(Date.parse(value['observedAt']))) {
+    return 'ControlPlatformObservation observedAt must be a legal instant';
+  }
+  const detail = value['detail'];
+  if (!isJsonObject(detail)) return 'ControlPlatformObservation detail must be an object';
+  switch (value['origin']) {
+    case 'platform_not_entered':
+      if (!hasOnlyKeys(detail, ['entryPhase'])
+        || (detail['entryPhase'] !== 'none' && detail['entryPhase'] !== 'authorized' && detail['entryPhase'] !== 'revoked')) {
+        return 'a platform_not_entered detail must carry entryPhase none, authorized or revoked';
+      }
+      return null;
+    case 'platform_superseded':
+      if (!hasOnlyKeys(detail, ['supersededBy']) || controlIntentRefProblem(detail['supersededBy']) !== null) {
+        return 'a platform_superseded detail must carry a complete supersededBy ControlIntentRef';
+      }
+      return null;
+    case 'platform_reconcile':
+      if (!hasOnlyKeys(detail, ['hostInstanceId', 'runOutcome']) || !nonEmpty(detail['hostInstanceId'])
+        || !RUN_OUTCOMES.includes(detail['runOutcome'] as string)) {
+        return 'a platform_reconcile detail must carry hostInstanceId and runOutcome';
+      }
+      return null;
+    case 'platform_paused_stop': {
+      if (!hasOnlyKeys(detail, ['basis', 'pausedBy'])
+        || (detail['basis'] !== 'live_clean' && detail['basis'] !== 'host_instance_takeover')) {
+        return 'a platform_paused_stop detail must carry basis live_clean or host_instance_takeover';
+      }
+      if (!Object.prototype.hasOwnProperty.call(detail, 'pausedBy')) {
+        return 'a platform_paused_stop detail must carry pausedBy (null when not paused)';
+      }
+      if (detail['pausedBy'] !== null && controlIntentRefProblem(detail['pausedBy']) !== null) {
+        return 'a platform_paused_stop detail pausedBy must be null or a complete ControlIntentRef';
+      }
+      return null;
+    }
+    default:
+      return 'ControlPlatformObservation origin is not recognized';
+  }
+}
+
+/**
+ * The observation of a non-queued snapshot: a Kernel observation, or a
+ * platform-proven one told apart by its `origin` key (CD-1). The Runtime
+ * observation write input keeps the Kernel-only `controlObservationProblem`.
+ */
+export function controlIntentObservationProblem(value: unknown): string | null {
+  if (isJsonObject(value) && Object.prototype.hasOwnProperty.call(value, 'origin')) {
+    return controlPlatformObservationProblem(value);
+  }
+  return controlObservationProblem(value);
+}
+
 const SNAPSHOT_ALL_KEYS: readonly string[] = ['schemaVersion', 'ref', 'revision', 'runRef', 'kind',
   'desiredState', 'reason', 'requestedAt', 'requestedBy', 'status', 'observation'];
 
@@ -292,17 +375,35 @@ function controlIntentSnapshotProblem(value: unknown): string | null {
   if (!isPositiveSafeInteger(value['revision']) || value['revision'] < 2) {
     return 'an observed ControlIntentSnapshot revision must be at least 2';
   }
-  const observationProblem = controlObservationProblem(value['observation']);
+  const observationProblem = controlIntentObservationProblem(value['observation']);
   if (observationProblem !== null) return observationProblem;
-  const observationKind = (value['observation'] as UnknownRecord)['kind'];
+  const observation = value['observation'] as UnknownRecord;
+  if (Object.prototype.hasOwnProperty.call(observation, 'origin')) {
+    // CD-1: the intents a platform observation names live in the same scope.
+    const detail = observation['detail'] as UnknownRecord;
+    const named = detail['supersededBy'] ?? detail['pausedBy'] ?? null;
+    const ref = value['ref'] as UnknownRecord;
+    if (isJsonObject(named) && (named['projectId'] !== ref['projectId'] || named['workspaceId'] !== ref['workspaceId'])) {
+      return 'a platform observation names a control intent outside the intent scope';
+    }
+  }
+  // Pairing: paused/resumed/steered/cancelled belong to their own kind. A
+  // platform observation (CD-2) may close any kind with superseded_by_newer,
+  // terminal_without_cancel or outcome_unknown. A Kernel observation keeps the
+  // pre-A.2 rule (only a cancel intent) until §15 sub-step 5.1: relaxing it
+  // here would let the live observer's outcome_unknown ack of a consumed pause
+  // (`execution-observation.ts`) commit, a CTL-03/CTL-06 behaviour change.
+  const observationKind = observation['kind'];
   if (observationKind === 'paused') {
     if (value['kind'] !== 'pause') return 'a paused observation must belong to a pause intent';
   } else if (observationKind === 'resumed') {
     if (value['kind'] !== 'resume') return 'resumed must belong to resume';
   } else if (observationKind === 'steered') {
     if (value['kind'] !== 'steer') return 'steered must belong to steer';
-  } else if (value['kind'] !== 'cancel') {
-    return 'a cancelled/unknown observation must belong to a cancel intent';
+  } else if (!Object.prototype.hasOwnProperty.call(observation, 'origin')) {
+    if (value['kind'] !== 'cancel') return 'a cancelled/unknown observation must belong to a cancel intent';
+  } else if (observationKind === 'cancelled') {
+    if (value['kind'] !== 'cancel') return 'a cancelled observation must belong to a cancel intent';
   }
   return null;
 }
@@ -378,8 +479,14 @@ export function controlIntentSubmittedEventFromEvent(
   const intentProblem = controlIntentSnapshotProblem(submitted['intent']);
   if (intentProblem !== null) return invalid(intentProblem);
   const submittedIntent = submitted['intent'] as UnknownRecord;
-  if (submittedIntent['status'] !== 'queued' || submittedIntent['revision'] !== 1) {
-    return invalid('the submitted control intent must be the original queued@1 snapshot');
+  // CD-3: the original queued@1 snapshot, or an intent the platform applied in
+  // the same commit because the Run never entered (CTL-02, `∅→applied@2`).
+  const queuedOriginal = submittedIntent['status'] === 'queued' && submittedIntent['revision'] === 1;
+  const appliedNotEntered = submittedIntent['status'] === 'applied' && submittedIntent['revision'] === 2
+    && isJsonObject(submittedIntent['observation'])
+    && submittedIntent['observation']['origin'] === 'platform_not_entered';
+  if (!queuedOriginal && !appliedNotEntered) {
+    return invalid('the submitted control intent must be the original queued@1 or a not-entered applied@2 snapshot');
   }
   if (!isPositiveSafeInteger(submitted['runRevision'])) {
     return invalid('control-intent runRevision must be a positive safe integer');
@@ -401,7 +508,7 @@ export function encodeControlIntentObservedEvent(event: ControlIntentObservedEve
 /**
  * Decode and validate one `ControlIntentObserved` replay event. The observed
  * result must be a real non-queued snapshot (`revision >= 2`); the observation
- * itself is validated by the shared `controlObservationProblem`.
+ * itself is validated by the shared `controlIntentObservationProblem`.
  */
 export function controlIntentObservedEventFromEvent(
   event: EncodedDomainEvent,

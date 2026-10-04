@@ -21,7 +21,9 @@ import type { WorkspaceScope } from '../../../contracts/core/identity.js';
 import type { EvidenceOutcome, EvidenceRef, EvidenceSnapshot } from '../../../contracts/evidence.js';
 import type { ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import type { RunRef, TaskTriple } from '../../../contracts/dispatch.js';
+import type { NewBasisInputRefV1 } from '../../../contracts/no-progress.js';
 import type { PlanRevisionRef } from '../../../contracts/plan.js';
+import type { TaskReworkRefusalSnapshotV1 } from '../../../contracts/task-requeue.js';
 import type {
     CheckExecutionTicket,
     CheckProcessObservation,
@@ -53,12 +55,44 @@ export type FinalizedChecks = {
  * already produced for it — open or finalized — instead of opening a second
  * round. It never accepts a caller-supplied round identity, digest or verdict;
  * the lookup is a read over the existing RecordStore only.
+ *
+ * `planRef` is optional in the type (spec §9 VD-7, C6): it becomes information
+ * only once the query is the plan-independent alias of `queryRoundChainHead`.
+ * Until then every caller still passes it and the service still requires it.
  */
 export type OriginalVerificationQuery = {
     subjectRunRef: RunRef;
     subject: TaskTriple;
-    planRef: PlanRevisionRef;
+    planRef?: PlanRevisionRef;
 };
+
+/**
+ * Chain-head read (spec §9 VD-14): the work chain of `(subject, subjectRunRef)`,
+ * or the gate's own chain with `subjectRunRef: null`.
+ */
+export type RoundChainHeadQuery = {
+    subject: TaskTriple;
+    subjectRunRef: RunRef | null;
+};
+
+/**
+ * Successor-round request (spec §9 VD-12). There is no `trigger`: the actor
+ * class is derived from the principal. `onlyIfSourceChanged` only narrows
+ * admission; `note` is accepted only from a human operator and is stored by the
+ * owner as an Artifact that joins `newInputRefs`; `reason` is never a new basis.
+ */
+export type ReverifyRoundInput = {
+    predecessorRoundRef: VerificationRoundRef;
+    onlyIfSourceChanged?: boolean;
+    newInputRefs?: NewBasisInputRefV1[];
+    reason?: string;
+    note?: string;
+};
+
+/** `reverifyRound` result: a committed policy refusal is a value, not a CoreError. */
+export type ReverifyOutcomeV1 =
+    | { kind: 'reverified'; round: RoundSnapshot }
+    | { kind: 'refused'; refusal: TaskReworkRefusalSnapshotV1 };
 
 export interface EvidencePort {
     openVerification(
@@ -87,6 +121,24 @@ export interface EvidencePort {
         ctx: CoreCallContext,
         request: OriginalVerificationQuery,
     ): Promise<ReadResult<RoundSnapshot>>;
+    /**
+     * Spec §9 VD-14: the head of one subject's round chain. `not_found` = no
+     * chain; an invalid chain or a page past `ROUND_CHAIN_MAX` is `incomplete`.
+     * Optional until the evidence service implements it (A.2 step 5).
+     */
+    queryRoundChainHead?(
+        ctx: CoreCallContext,
+        request: RoundChainHeadQuery,
+    ): Promise<ReadResult<RoundSnapshot>>;
+    /**
+     * Spec §9 VD-12 (VR-14): open the successor round of a finalized non-PASS
+     * chain head, or commit a policy refusal. Optional until the evidence
+     * service implements it (A.2 step 5).
+     */
+    reverifyRound?(
+        ctx: CoreCallContext,
+        request: GraphWrite<ReverifyRoundInput>,
+    ): Promise<WriteResult<ReverifyOutcomeV1>>;
     beginCheck(
         ctx: CoreCallContext,
         request: GraphWrite<{ roundRef: VerificationRoundRef; checkId: string }>,

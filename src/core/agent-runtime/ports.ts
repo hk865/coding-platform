@@ -1,5 +1,7 @@
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
+import type { ContinuationBriefV1 } from '../../contracts/continuation-brief.js';
 import type { ControlIntentSnapshotV1 } from '../../contracts/control-intent.js';
+import type { RunRef } from '../../contracts/dispatch.js';
 import type { WorkspaceScope } from '../../contracts/core/identity.js';
 import type { OperationReceipt, Page, ReadResult } from '../../contracts/core/results.js';
 import type { SessionRecord } from '../../contracts/core/session.js';
@@ -64,6 +66,13 @@ export interface RuntimeExecutionPort {
   prepareQuery?(ctx: CoreCallContext, request: PrepareQueryExecutionRequest): Promise<ReadResult<PreparedQueryExecution>>;
   startQuery?(ctx: CoreCallContext, request: StartQueryExecutionRequest): Promise<ReadResult<QueryExecutionRecord>>;
   observeQuery?(ctx: CoreCallContext, request: ObserveQueryExecutionRequest): Promise<ReadResult<QueryExecutionRecord>>;
+  /**
+   * C3: the continuation brief pinned in a Run's saved manifest, checked
+   * against `inputBinding.continuationBriefDigest`. `null` = a Run without
+   * `requeueRef`; a requeue Run with no pinned brief yet is `not_ready`.
+   * Optional like the members above; implemented in A.2 step 5.4.
+   */
+  readContinuationBrief?(ctx: CoreCallContext, request: { runRef: RunRef }): Promise<ReadResult<{ brief: ContinuationBriefV1; digest: string } | null>>;
 }
 
 export type AgentRuntimeService = {

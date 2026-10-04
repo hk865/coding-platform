@@ -1,5 +1,7 @@
 /**
- * W2 Agent delegated plan-write admission.
+ * W2 Agent delegated plan-write admission, generalized to every delegated
+ * operation (`DelegatedWriteOperation`, spec §4.1); the rework operations are
+ * declared but have no caller yet.
  *
  * The ONE narrow seam that turns a formal `work_run` caller into a real Agent
  * plan writer and re-checks the current Host/Role/Run/Session/Lease facts before
@@ -12,11 +14,11 @@
  *
  * Two ordered steps, so a terminal/revoked exact replay can still restore its
  * original receipt:
- *   1. `identifyPlanWriter` proves a stable Agent identity from the formal
+ *   1. `identifyDelegatedWriter` proves a stable Agent identity from the formal
  *      Run/outbox/Session association. It does NOT require the Run to still be
  *      running or the Session to still be active, and it consults no current
  *      configuration, so replay never depends on present permission.
- *   2. `authorizePlanWrite` is reached only after an exact receipt miss. It
+ *   2. `authorizeDelegatedWrite` is reached only after an exact receipt miss. It
  *      re-reads WG11 (never the identify snapshot) and rechecks the current
  *      V2-entered binding, health/ownership/generations, the pinned manifest,
  *      the operation grant and the trusted Host/Role configuration. It returns
@@ -48,7 +50,7 @@ import {
   sameRef,
 } from './execution-entry-service.js';
 import { planRevisionRefKey } from './plan-record-codecs.js';
-import type { PlanWriteProvenanceV1 } from './plan-contracts.js';
+import type { DelegatedWriteProvenanceV1 } from '../../../contracts/delegated-write.js';
 
 /**
  * The four B2-owned dependencies the Agent admission may read. `records` is
@@ -58,10 +60,17 @@ import type { PlanWriteProvenanceV1 } from './plan-contracts.js';
 export type PlanDelegatedWriteDependencies = Pick<ExecutionEntryDependencies,
   'reads' | 'roles' | 'bodies' | 'authorizeConfiguration'>;
 
-/** The fixed delegated tool operations (the two whiteboard write tools). */
-export type PlanWriteOperation = 'propose_future_plan' | 'apply_future_plan';
+/**
+ * The fixed delegated operations an Agent write may be admitted for (spec §4.1):
+ * the two whiteboard plan tools plus the two rework operations. Each must be in
+ * the current Host/Role grant (`manifest.permissions.tools`); no production Role
+ * grants the rework names before their Agent tools exist (GAP-46).
+ */
+export type DelegatedWriteOperation = 'propose_future_plan' | 'apply_future_plan' | 'requeue_task' | 'reverify_round';
+/** The plan-write subset (the two whiteboard write tools). */
+export type PlanWriteOperation = Extract<DelegatedWriteOperation, 'propose_future_plan' | 'apply_future_plan'>;
 
-/** The exact formal writer identity `identifyPlanWriter` proves. */
+/** The exact formal writer identity `identifyDelegatedWriter` proves. */
 export type AgentPlanWriter = {
   actor: Extract<ActorRef, { kind: 'agent' }>;
   runRef: RunRef;
@@ -71,11 +80,15 @@ export type AgentPlanWriter = {
   roleBinding: RoleBindingRefV1;
 };
 
+/** Same identity for every delegated operation (spec §4.1 generalization). */
+export type AgentDelegatedWriter = AgentPlanWriter;
+
 /** The current authorization decision plus the exact versions it observed. */
 export type PlanWriteAdmission = {
-  provenance: PlanWriteProvenanceV1;
+  provenance: DelegatedWriteProvenanceV1;
   guards: readonly RecordGuard[];
 };
+export type DelegatedWriteAdmission = PlanWriteAdmission;
 
 /** The fixed platform attribution of the internal Host-only WG11 read. */
 const INTERNAL_READ_ACTOR = { kind: 'system' as const, id: 'w2-plan-write-admission' };
@@ -144,7 +157,7 @@ function internalReadContext(ctx: CoreCallContext, projectId: string, workspaceI
  * require the Run to still be running or the Session to still be active, so a
  * finished or revoked exact replay can still restore its original receipt.
  */
-export async function identifyPlanWriter(
+export async function identifyDelegatedWriter(
   deps: Pick<PlanDelegatedWriteDependencies, 'reads'>,
   ctx: CoreCallContext,
   scope: { projectId: string; workspaceId: string },
@@ -244,10 +257,10 @@ function manifestAgainstRun(
  * `recheckHostRoleAdmission`, verifies the operation grant and derives all local
  * Store guards. It returns the real provenance and guards, never a boolean.
  */
-export async function authorizePlanWrite(
+export async function authorizeDelegatedWrite(
   deps: PlanDelegatedWriteDependencies,
   ctx: CoreCallContext,
-  input: { writer: AgentPlanWriter; operation: PlanWriteOperation },
+  input: { writer: AgentPlanWriter; operation: DelegatedWriteOperation },
 ): Promise<ReadResult<PlanWriteAdmission>> {
   let writer: AgentPlanWriter;
   try {
@@ -360,7 +373,7 @@ export async function authorizePlanWrite(
   );
   if (!hostRole.ok) return { status: 'rejected', code: hostRole.rejection.code, reason: hostRole.rejection.reason };
 
-  const provenance: PlanWriteProvenanceV1 = {
+  const provenance: DelegatedWriteProvenanceV1 = {
     schemaVersion: 1,
     runRef: writer.runRef,
     sessionRef: writer.sessionRef,
@@ -382,3 +395,7 @@ export async function authorizePlanWrite(
   if (!merged.ok) return { status: 'rejected', code: merged.rejection.code, reason: merged.rejection.reason };
   return { status: 'ready', value: { provenance, guards: merged.guards } };
 }
+
+/** Former names, kept as aliases (spec §4.1); the plan service still uses them. */
+export const identifyPlanWriter = identifyDelegatedWriter;
+export const authorizePlanWrite = authorizeDelegatedWrite;

@@ -402,6 +402,88 @@ function taskStateBasisIssues(value: unknown, tasks: unknown, ref: unknown): str
   return issues;
 }
 
+/** Upper bound of `PlanChangeReason.affectedTaskIds` (spec §3.1, C7). */
+const MAX_AFFECTED_TASK_IDS = 200;
+
+/** `affectedTaskIds`: distinct non-empty task ids, at most 200, each a task of `tasks` when known. */
+function affectedTaskIdsIssues(value: unknown, tasks: unknown, path: string): string[] {
+  if (!Array.isArray(value)) return [`${path} must be an array when present`];
+  const issues: string[] = [];
+  if (value.length > MAX_AFFECTED_TASK_IDS) issues.push(`${path} must hold at most ${MAX_AFFECTED_TASK_IDS} task ids`);
+  const taskIds = Array.isArray(tasks)
+    ? new Set((tasks as unknown[]).map((task) => isRecord(task) ? task['taskId'] : undefined).filter(isNonEmptyString))
+    : null;
+  const seen = new Set<string>();
+  value.forEach((taskId, index) => {
+    if (!isNonEmptyString(taskId)) { issues.push(`${path}[${index}] must be a non-empty string`); return; }
+    if (seen.has(taskId)) issues.push(`${path}[${index}] duplicates ${taskId}`);
+    seen.add(taskId);
+    if (taskIds !== null && !taskIds.has(taskId)) issues.push(`${path}[${index}] is not a task of the draft`);
+  });
+  return issues;
+}
+
+/**
+ * C7 `TaskDispositionRecordV1` on an accepted snapshot: one entry per Task,
+ * stable ascending by taskId, each a real disposition change of a task of this
+ * plan, set in an adopted PlanRevision of this project by a recorded actor.
+ */
+function dispositionRecordIssues(value: unknown, tasks: unknown, ref: unknown): string[] {
+  if (!isRecord(value)) return ['plan dispositionRecord must be an object'];
+  const issues: string[] = [];
+  if (value['schemaVersion'] !== 1) issues.push('plan dispositionRecord.schemaVersion must be 1');
+  const entries = value['entries'];
+  if (!Array.isArray(entries)) {
+    issues.push('plan dispositionRecord.entries must be an array');
+    return issues;
+  }
+  const projectId = isRecord(ref) && isNonEmptyString(ref['projectId']) ? ref['projectId'] : null;
+  const planIds = new Set(Array.isArray(tasks)
+    ? (tasks as unknown[]).map((task) => isRecord(task) ? task['taskId'] : undefined).filter(isNonEmptyString)
+    : []);
+  const seen = new Set<string>();
+  let previous: string | null = null;
+  entries.forEach((entry, index) => {
+    const path = `plan dispositionRecord.entries[${index}]`;
+    if (!isRecord(entry)) { issues.push(`${path} must be an object`); return; }
+    const allowed = ['taskId', 'from', 'to', 'replacedByTaskId', 'traced', 'setIn', 'proposalRef', 'reason', 'actor'];
+    if (!Object.keys(entry).every((key) => allowed.includes(key))) issues.push(`${path} carries unknown fields`);
+    const taskId = entry['taskId'];
+    if (!isNonEmptyString(taskId)) { issues.push(`${path}.taskId must be a non-empty string`); return; }
+    if (seen.has(taskId)) issues.push(`${path}.taskId duplicates ${taskId}`);
+    seen.add(taskId);
+    if (previous !== null && taskId < previous) issues.push(`${path}.taskId is not in stable ascending order`);
+    previous = taskId;
+    if (planIds.size > 0 && !planIds.has(taskId)) issues.push(`${path}.taskId is not a task of this plan`);
+    if (!isEnum(entry['from'], DISPOSITIONS) || !isEnum(entry['to'], DISPOSITIONS)) {
+      issues.push(`${path}.from/to must be dispositions`);
+    } else if (entry['from'] === entry['to']) {
+      issues.push(`${path} must record a disposition change`);
+    }
+    if (!(entry['replacedByTaskId'] === null || isNonEmptyString(entry['replacedByTaskId']))) {
+      issues.push(`${path}.replacedByTaskId must be null or a non-empty string`);
+    }
+    if (typeof entry['traced'] !== 'boolean') issues.push(`${path}.traced must be a boolean`);
+    if (projectId !== null && planRevisionRefFromValue(entry['setIn'], projectId) === null) {
+      issues.push(`${path}.setIn must be a PlanRevisionRef in this project`);
+    }
+    const proposalRef = planProposalRefFromValue(entry['proposalRef']);
+    if (proposalRef === null || (projectId !== null && proposalRef.projectId !== projectId)) {
+      issues.push(`${path}.proposalRef must be a PlanProposal ref in this project`);
+    }
+    const reason = entry['reason'];
+    if (!isRecord(reason) || !Object.keys(reason).every((key) => ['text', 'sources', 'affectedTaskIds'].includes(key))
+      || !isNonEmptyString(reason['text']) || !Array.isArray(reason['sources'])
+      || !(reason['sources'] as unknown[]).every(isArtifactRef)) {
+      issues.push(`${path}.reason must carry text, ArtifactRef sources and affectedTaskIds`);
+    } else {
+      issues.push(...affectedTaskIdsIssues(reason['affectedTaskIds'], null, `${path}.reason.affectedTaskIds`));
+    }
+    if (actorFromValue(entry['actor']) === null) issues.push(`${path}.actor must be an ActorRef`);
+  });
+  return issues;
+}
+
 function structuralPlanIssues(value: unknown, requireGoalId: boolean): string[] {
   if (!isRecord(value)) return ['plan body must be an object'];
   const issues: string[] = [];
@@ -461,6 +543,7 @@ function structuralPlanIssues(value: unknown, requireGoalId: boolean): string[] 
     if (value['taskRelations'] !== undefined) issues.push('plan schemaVersion 1 must not carry taskRelations');
     if (value['inputRequirements'] !== undefined) issues.push('plan schemaVersion 1 must not carry inputRequirements');
     if (value['taskStateBasis'] !== undefined) issues.push('plan schemaVersion 1 must not carry taskStateBasis');
+    if (value['dispositionRecord'] !== undefined) issues.push('plan schemaVersion 1 must not carry dispositionRecord');
     // `executionIntent` is a v2-only capability. The parent version branch owns
     // the ban (not only the enum check) so a v1 body can never smuggle it.
     if (Array.isArray(tasks) && tasks.some((task) => isRecord(task) && task['executionIntent'] !== undefined)) {
@@ -503,6 +586,15 @@ function structuralPlanIssues(value: unknown, requireGoalId: boolean): string[] 
         issues.push('plan taskStateBasis is compiler-owned and must not appear on a draft/proposal');
       } else {
         issues.push(...taskStateBasisIssues(taskStateBasis, value['tasks'], value['ref']));
+      }
+    }
+    // C7 compiler-owned disposition record: same rule as `taskStateBasis`.
+    const dispositionRecord = value['dispositionRecord'];
+    if (dispositionRecord !== undefined) {
+      if (requireGoalId) {
+        issues.push('plan dispositionRecord is compiler-owned and must not appear on a draft/proposal');
+      } else {
+        issues.push(...dispositionRecordIssues(dispositionRecord, value['tasks'], value['ref']));
       }
     }
   }
@@ -548,6 +640,12 @@ function proposalValueIssues(value: unknown, expectedRef: PlanProposalRef | null
           issues.push(`${path} must be an ArtifactRef`);
         }
       });
+      // C7: optional; absent on every candidate recorded before it existed.
+      if (reason['affectedTaskIds'] !== undefined) {
+        const draft = value['draft'];
+        issues.push(...affectedTaskIdsIssues(reason['affectedTaskIds'], isRecord(draft) ? draft['tasks'] : null,
+          'candidate_v2.reason.affectedTaskIds'));
+      }
     }
     const status = value['status'];
     if (status !== 'candidate' && status !== 'accepted' && status !== 'rejected') {

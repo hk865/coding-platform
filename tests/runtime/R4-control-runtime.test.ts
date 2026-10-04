@@ -224,10 +224,13 @@ it('keeps a pause queued through the real in-flight tool group, then pauses befo
   const ack = await controls.readControl(fx.ctx, intentRef);
   expect(ack).toMatchObject({ status: 'ready', value: { status: 'applied', observation: { kind: 'paused' } } });
   if (ack.status === 'ready' && 'observation' in ack.value && paused !== undefined && paused.recordType === 'agent.event') {
+    // Type-only narrowing: a platform-proven observation (CD-1) has no Kernel fields.
+    const observation = ack.value.observation;
+    if ('origin' in observation) throw new Error('expected the Kernel control observation, not a platform one');
     // Exact binding to the original agent.event meta and the SessionRecord position.
-    expect(ack.value.observation.kernelEventId).toBe(paused.payload.event?.meta?.eventId);
-    expect(ack.value.observation.kernelEventSequence).toBe(paused.payload.event?.meta?.sequence);
-    expect(ack.value.observation.source.position).toBe(paused.position);
+    expect(observation.kernelEventId).toBe(paused.payload.event?.meta?.eventId);
+    expect(observation.kernelEventSequence).toBe(paused.payload.event?.meta?.sequence);
+    expect(observation.source.position).toBe(paused.position);
   }
 });
 

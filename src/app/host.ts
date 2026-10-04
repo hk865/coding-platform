@@ -35,6 +35,7 @@ import type { WorkspaceResult } from '../core/workspace/ports.js';
 import { createPlatformCoreRouteBindings } from './core-routes.js';
 import { parseInitialPlanningResponseV2 } from '../core/work-graph/tasks/initial-plan.js';
 import type { TrustedCheckConfiguration } from '../contracts/verification.js';
+import { DEFAULT_TASK_AUTOMATION_POLICY } from '../contracts/task-requeue.js';
 import { createCollaborationDriver } from './collaboration-driver.js';
 import { createWorkbenchTools } from './workbench-tools.js';
 import {
@@ -291,7 +292,8 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   const initialBindings = options.runtime
     ?? (seedConfiguration === undefined
       ? undefined : createWorkbenchRuntimeHostBindings(seedConfiguration,
-        versionProvider(versionSecretSource(seedConfiguration, { models: [], selection: {}, checks: [] }))));
+        versionProvider(versionSecretSource(seedConfiguration, { models: [], selection: {}, checks: [],
+          automation: { ...DEFAULT_TASK_AUTOMATION_POLICY } }))));
   const resolverRegistry = initialBindings === undefined ? undefined : createHostRuntimeResolverRegistry(initialBindings);
   const runtime: TargetPlatformOptions['runtime'] = resolverRegistry ?? options.runtime;
   // Settings may rebuild the runtime only from the serializable configuration;

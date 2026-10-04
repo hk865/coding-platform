@@ -49,6 +49,22 @@ export type { AdoptInitialArchitectureInput, ArchitectureRevision, ModuleDefinit
 export type { ObservedArchitectureNeighborhood } from '../core/work-graph/architecture/contracts.js';
 export type { CurrentCompletionPolicyRead } from '../core/work-graph/configuration/project-bootstrap-contracts.js';
 export type { TaskGraph, TaskRow } from '../core/work-graph/tasks/plan-contracts.js';
+/** A.2 Task read-model and rework shapes (spec §4.1, §9 VD-12, C3), type-only for the UI. */
+export type {
+  FailingCheckFactV1, NotReworkableCause, RunErrorSource, TaskAutomationStopReason, TaskAutomationVerdictV1,
+  TaskFailureFactsV1, TaskPhaseCauseCode, TaskPhaseCauseV1, TaskReworkRefusalFactV1, TaskReworkSummaryEntryV1,
+  TaskReworkSummaryV1,
+} from '../contracts/task-failure.js';
+export type {
+  ReworkActorClass, ReworkFailureClass, StopRequester, TaskAutomationPolicyV1, TaskRequeueOutcomeV1, TaskRequeueRef,
+  TaskRequeueSnapshotV1, TaskReworkRefusalCode, TaskReworkRefusalRef, TaskReworkRefusalSnapshotV1,
+} from '../contracts/task-requeue.js';
+export type { NewBasisInputRefV1 } from '../contracts/no-progress.js';
+export type { TaskDispositionChangeV1 } from '../contracts/plan.js';
+export type { ContinuationBriefV1, SourceChangeVerdictV1 } from '../contracts/continuation-brief.js';
+export type { RoundChainV1, RoundCheckIncompleteCause, RoundReverifyFactV1 } from '../contracts/verification.js';
+export type { RequeueTaskInput } from '../core/work-graph/tasks/claim-contracts.js';
+export type { ReverifyOutcomeV1, ReverifyRoundInput } from '../core/work-graph/evidence/contracts.js';
 export type { CoreRejection, ReadResult } from '../contracts/core/results.js';
 export type { CaptureSummary, SourcePage, WorkspaceFile, WorkspaceResult } from '../core/workspace/ports.js';
 

@@ -19,6 +19,7 @@ import type { SourceRefV1, RuntimeInputBindingV1 } from '../../contracts/dispatc
 import type { TaskEnvelopeV1 } from '../../contracts/task-envelope.js';
 import { revisionAssignments } from '../../contracts/plan.js';
 import { sha256Hex } from '../../contracts/fingerprint.js';
+import { MANIFEST_CONTENT_TYPE } from '../../contracts/no-progress.js';
 import type { PrepareTaskExecutionRequest, ResolvedRuntimeConfiguration, RuntimeExecutionDependencies } from './execution-contracts.js';
 
 export type ExecutionPreparationDependencies = Pick<RuntimeExecutionDependencies,
@@ -28,8 +29,8 @@ export type ExecutionPreparationService = {
   prepare(ctx: CoreCallContext, request: PrepareTaskExecutionRequest): Promise<ReadResult<PreparedTaskExecution>>;
 };
 
-/** Exact manifest content type; WorkGraph re-reads the body and requires this. */
-export const PREPARED_MANIFEST_CONTENT_TYPE = 'application/vnd.coding-platform.task-execution-manifest+json;version=1';
+/** Exact manifest content type (declared once in contracts, ND-9); WorkGraph re-reads the body and requires this. */
+export const PREPARED_MANIFEST_CONTENT_TYPE = MANIFEST_CONTENT_TYPE;
 /** One prepared manifest is a bounded JSON body, never a transcript store. */
 export const MAX_PREPARED_MANIFEST_BYTES = ARTIFACT_MAX_SIZE_BYTES;
 

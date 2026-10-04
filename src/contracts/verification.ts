@@ -31,6 +31,8 @@ import type {
     VerificationRoundMaterialIdentity,
     VerificationRoundSourceProof,
 } from "./verification-context.js";
+import type { NewBasisInputRefV1, NoProgressCheckFactV1, SourceStampV1 } from "./no-progress.js";
+import type { ReworkActorClass, ReworkFailureClass } from "./task-requeue.js";
 
 /** Trusted Host actor for a check: a real human/system application host. */
 export type CheckHostActor = Extract<ActorRef, { kind: "human" | "system" }>;
@@ -112,6 +114,24 @@ export type CheckExecutionTicket = {
     definition: RegisteredCommandCheck;
 };
 
+/**
+ * Why a check did not reach PASS/FAIL (C5). `host_restart` and `ticket_invalid`
+ * accompany phase `interrupted` (VR-04, VR-13); the other five accompany a
+ * finished INCONCLUSIVE check, in `outcomeFor` order (VR-03).
+ */
+export type RoundCheckIncompleteCause =
+    | "host_restart"
+    | "ticket_invalid"
+    | "not_started"
+    | "source_not_matched"
+    | "process_timed_out"
+    | "process_cancelled"
+    | "process_abnormal";
+export const ROUND_CHECK_INCOMPLETE_CAUSES: readonly RoundCheckIncompleteCause[] = Object.freeze([
+    "host_restart", "ticket_invalid", "not_started", "source_not_matched", "process_timed_out",
+    "process_cancelled", "process_abnormal",
+]);
+
 export type RoundCheckSnapshot = {
     checkId: string;
     definition: RegisteredCommandCheck;
@@ -121,6 +141,71 @@ export type RoundCheckSnapshot = {
     outcome: EvidenceOutcome | null;
     reportRef: ArtifactRef | null;
     sourceStatus: "matched" | "changed" | "unavailable" | "permission_changed" | null;
+    /** Absent on legacy checks and read as null; null for pending/executing and PASS/FAIL. */
+    incompleteCause?: RoundCheckIncompleteCause | null;
+};
+
+/** Gap code of a check left `interrupted` by a Host restart (VR-04). */
+export const INTERRUPTED_CHECK_GAP_CODE = "interrupted_check";
+/** Longest round chain per subject; the chain lookups read at most ROUND_CHAIN_MAX + 1 rows. */
+export const ROUND_CHAIN_MAX = 32;
+/** Reverify exemptions (§13.7 point 3); legacy checks without a cause always give `none`. */
+export type ReverifyExemption = "none" | "host_interruption" | "not_started";
+/**
+ * The reverify no-progress key (§13.7), a key space separate from requeue's.
+ * The digest covers every field above it: no ids, report digests, time,
+ * reason, actor class, automatic count or `onlyIfSourceChanged`.
+ */
+export type ReverifyBasisV1 = {
+    subject: TaskTriple;
+    /** work: the selected Run; gate: the anchored producer Run. */
+    subjectRunId: string;
+    actionKind: "reverify";
+    failure: { checks: NoProgressCheckFactV1[]; gapCodes: string[] };
+    source: SourceStampV1;
+    configuration: { configurationRevision: string; configurationDigest: string };
+    verificationInputs: {
+        basisPlanRef: PlanRevisionRef;
+        completionPolicyPin: CompletionPolicyPin;
+        architectureBaselinePin: ArchitectureBaselinePin;
+    };
+    newInputDigest: string | null;
+    digest: string;
+};
+/** Who opened a successor round and why (C8: who, class, reason, which time). */
+export type RoundReverifyFactV1 = {
+    requestedBy: ActorRef;
+    /** Derived by `reworkActorClassOf`; never an input. */
+    actorClass: ReworkActorClass;
+    /** `reverifyFailureClass(predecessor)`: `check_failed` or `check_incomplete`. */
+    failureClass: ReworkFailureClass;
+    requestedAt: string;
+    basis: ReverifyBasisV1;
+    exemption: ReverifyExemption;
+    /** This capture's sourceDigest differs from the predecessor identity's. */
+    sourceChanged: boolean;
+    newInputRefs: NewBasisInputRefV1[];
+    reason: string | null;
+};
+/**
+ * The round's place in its subject's chain (C5), written once at creation.
+ * Absent means a legacy slot-less chain root (ordinal 1). Shape rules:
+ * `predecessorRoundRef = null` ⇔ `ordinal = 1` ⇔ `reverify = null`; an
+ * ordinal-1 chain has empty `supersededEvidenceIds`/`basisDigests` and
+ * `autoCount = 0`. Cross-record linearity is judged by `roundChainHead`.
+ */
+export type RoundChainV1 = {
+    schemaVersion: 1;
+    ordinal: number;
+    predecessorRoundRef: VerificationRoundRef | null;
+    predecessorRevision: number | null;
+    /** Cumulative evidence ids of every earlier round in the chain, ancestors first. */
+    supersededEvidenceIds: string[];
+    /** Reverify key digests along the chain, in order. */
+    basisDigests: string[];
+    /** Automatic successor rounds counted against the cap (VD-13). */
+    autoCount: number;
+    reverify: RoundReverifyFactV1 | null;
 };
 
 export type RoundSnapshot = {
@@ -142,6 +227,8 @@ export type RoundSnapshot = {
     outcome: EvidenceOutcome | null;
     gaps: { code: string; message: string; coverage?: EvidenceCoverageV1 }[];
     evidenceRefs: EvidenceRef[];
+    /** Every round written from A.2 on carries it; absent = legacy chain root. */
+    chain?: RoundChainV1;
 };
 
 // ------------------------------------------------------------------------ //

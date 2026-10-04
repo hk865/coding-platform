@@ -25,6 +25,7 @@ import type { GoalSnapshot, WorkspaceSnapshot } from '../ledger.js';
 import type { PlanRevisionSnapshot } from '../plan.js';
 import type { RuntimeBudget } from '../runtime-budget.js';
 import type { TaskClaim } from './task-claim.js';
+import type { ContinuationBriefV1 } from '../continuation-brief.js';
 
 export type PreparedTaskManifestV1 = {
   schemaVersion: 1;
@@ -47,6 +48,18 @@ export type PreparedTaskManifestV1 = {
   additionalMaterialRefs: ArtifactRef[];
   deliveryRefs: ModelRequestMaterialPinV1[];
   sourceRefs: SourceRefV1[];
+  /**
+   * C3: present exactly on a Run claimed with a `requeueRef`; pinned by
+   * `inputBinding.continuationBriefDigest`, rendered as the last section of `input`.
+   */
+  continuationBrief?: ContinuationBriefV1;
+  /**
+   * LA-1: model history seed filled by AgentRuntime `prepare` (never Workflow)
+   * from `TaskRequeue.historySource` when the claim Session is a fresh Session
+   * on the same Kernel adapter and the source is readable. `throughPosition:
+   * null` is the explicit empty baseline.
+   */
+  sessionBasis?: { sourceKernelSessionId: string; throughPosition: number | null };
   input: string;
   inputDigest: string;
 };

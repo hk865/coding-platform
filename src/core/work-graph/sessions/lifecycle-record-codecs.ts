@@ -23,6 +23,8 @@ import {
 export const SESSION_WORK_LINK_CHANGED_EVENT = 'SessionWorkLinkChanged';
 export const SESSION_ARCHIVED_EVENT = 'SessionArchived';
 export const SESSION_REACTIVATED_EVENT = 'SessionReactivated';
+/** A.2 SES-12/SES-13 (spec §8, SD-2): a reconcile health observation. */
+export const SESSION_HEALTH_OBSERVED_EVENT = 'SessionHealthObserved';
 export const SESSION_LIFECYCLE_EVENT_VERSION = 1;
 
 /** Replay payload of one link activation or closure. */
@@ -51,6 +53,25 @@ export type SessionLifecycleChangedEventV1 = {
   projectId: string;
   session: SessionRecord;
   reason: string;
+};
+
+/**
+ * Replay payload of one Host-restart health observation (SES-12/SES-13). The
+ * probe conclusion is `ready` for `available` (SES-13, with the Kernel session
+ * head read by the same probe) and `missing`/`damaged` for `unavailable`
+ * (SES-12, stored as `healthConclusion`). `session` is the written record.
+ */
+export type SessionHealthObservedEventV1 = {
+  eventId: string;
+  eventType: typeof SESSION_HEALTH_OBSERVED_EVENT;
+  schemaVersion: 1;
+  occurredAt: string;
+  projectId: string;
+  hostInstanceId: string;
+  observed: 'available' | 'unavailable';
+  probe: 'ready' | 'missing' | 'damaged';
+  kernelHeader: { activeRunId: string | null } | null;
+  session: SessionRecord;
 };
 
 // --------------------------------------------------------------------------
@@ -89,6 +110,10 @@ const WORK_LINK_CHANGED_EVENT_KEYS: readonly string[] = [
 ];
 const LIFECYCLE_CHANGED_EVENT_KEYS: readonly string[] = [
   'eventId', 'eventType', 'schemaVersion', 'occurredAt', 'projectId', 'session', 'reason',
+];
+const HEALTH_OBSERVED_EVENT_KEYS: readonly string[] = [
+  'eventId', 'eventType', 'schemaVersion', 'occurredAt', 'projectId', 'hostInstanceId', 'observed', 'probe',
+  'kernelHeader', 'session',
 ];
 
 // --------------------------------------------------------------------------
@@ -159,6 +184,44 @@ function checkLifecycleChangedBody(body: UnknownRecord, lifecycle: 'archived' | 
   return null;
 }
 
+function checkHealthObservedBody(body: UnknownRecord): Problem {
+  if (!hasOnlyKeys(body, HEALTH_OBSERVED_EVENT_KEYS)) return 'SessionHealthObserved carries unknown fields';
+  if (!nonEmpty(body['projectId'])) return 'SessionHealthObserved requires a projectId';
+  if (!nonEmpty(body['hostInstanceId'])) return 'SessionHealthObserved requires the reconciling hostInstanceId';
+  const observed = body['observed'];
+  const probe = body['probe'];
+  if (observed === 'available') {
+    if (probe !== 'ready') return 'an available health observation requires a ready probe';
+  } else if (observed === 'unavailable') {
+    if (probe !== 'missing' && probe !== 'damaged') return 'an unavailable health observation requires a missing or damaged probe';
+  } else {
+    return 'SessionHealthObserved observed must be available or unavailable';
+  }
+  const header = body['kernelHeader'];
+  if (probe === 'ready') {
+    if (!isObject(header) || !hasOnlyKeys(header, ['activeRunId'])
+      || !(header['activeRunId'] === null || nonEmpty(header['activeRunId']))) {
+      return 'a ready probe carries the Kernel session head {activeRunId}';
+    }
+  } else if (header !== null) {
+    return 'only a ready probe carries the Kernel session head';
+  }
+  const session = body['session'];
+  if (!isObject(session)) return 'SessionHealthObserved requires the observed SessionRecord';
+  const sessionProblem = checkSessionBody(session);
+  if (sessionProblem !== null) return `SessionHealthObserved session: ${sessionProblem}`;
+  const ref = session['ref'];
+  if (!isObject(ref) || ref['projectId'] !== body['projectId']) {
+    return 'SessionHealthObserved Session disagrees with the event project';
+  }
+  if (session['health'] !== observed) return 'SessionHealthObserved session health disagrees with the observation';
+  const conclusion = session['healthConclusion'] ?? null;
+  if (observed === 'available' ? conclusion !== null : conclusion !== probe) {
+    return 'SessionHealthObserved session healthConclusion disagrees with the probe';
+  }
+  return null;
+}
+
 // --------------------------------------------------------------------------
 // Envelope validation
 // --------------------------------------------------------------------------
@@ -208,6 +271,11 @@ export const SESSION_LIFECYCLE_RECORD_SCHEMAS: RecordBackendSchemas = {
       validate: (event) => validateEventBody(event, SESSION_REACTIVATED_EVENT,
         (body) => checkLifecycleChangedBody(body, 'active')),
     },
+    {
+      eventType: SESSION_HEALTH_OBSERVED_EVENT,
+      schemaVersion: SESSION_LIFECYCLE_EVENT_VERSION,
+      validate: (event) => validateEventBody(event, SESSION_HEALTH_OBSERVED_EVENT, checkHealthObservedBody),
+    },
   ],
   lookups: [],
 };
@@ -227,6 +295,16 @@ export function encodeSessionWorkLinkChangedEvent(event: SessionWorkLinkChangedE
 }
 
 export function encodeSessionLifecycleChangedEvent(event: SessionLifecycleChangedEventV1): EncodedDomainEvent {
+  return {
+    eventId: event.eventId,
+    eventType: event.eventType,
+    schemaVersion: event.schemaVersion,
+    occurredAt: event.occurredAt,
+    json: JSON.stringify(event),
+  };
+}
+
+export function encodeSessionHealthObservedEvent(event: SessionHealthObservedEventV1): EncodedDomainEvent {
   return {
     eventId: event.eventId,
     eventType: event.eventType,
@@ -262,4 +340,14 @@ export function sessionLifecycleChangedPayloadFromEvent(
   const body = parseObject(event.json);
   if (body === null) return invalid('Session lifecycle event json is not an object');
   return { status: 'decoded', value: body as unknown as SessionLifecycleChangedEventV1 };
+}
+
+export function sessionHealthObservedPayloadFromEvent(
+  event: EncodedDomainEvent,
+): DecodeResult<SessionHealthObservedEventV1> {
+  const checked = validateEventBody(event, SESSION_HEALTH_OBSERVED_EVENT, checkHealthObservedBody);
+  if (checked.status !== 'decoded') return checked;
+  const body = parseObject(event.json);
+  if (body === null) return invalid('SessionHealthObserved event json is not an object');
+  return { status: 'decoded', value: body as unknown as SessionHealthObservedEventV1 };
 }

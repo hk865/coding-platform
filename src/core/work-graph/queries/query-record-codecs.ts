@@ -290,7 +290,8 @@ function closeReasonIssues(value: unknown): string[] {
   if (value === null) return [];
   if (!isRecord(value)) return ['job.closeReason must be null or an object'];
   const issues: string[] = [];
-  if (!['timeout', 'gap', 'failed', 'stale_source', 'cancelled'].includes(value['code'] as string)) {
+  // `not_entered` (§8 SD-4): closed by reconciliation without ever entering the Kernel.
+  if (!['timeout', 'gap', 'failed', 'stale_source', 'cancelled', 'not_entered'].includes(value['code'] as string)) {
     issues.push('job.closeReason.code is not a legal close code');
   }
   if (typeof value['message'] !== 'string') issues.push('job.closeReason.message must be a string');

@@ -16,6 +16,7 @@ import type { ModelCallAccess } from '../../contracts/dispatch.js';
 import type { QueryModelUsageV1, QueryRunRef } from '../../contracts/query-job.js';
 import type { HookPort } from '../../../vendor/coding-agent/dist/public-api.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../contracts/fingerprint.js';
+import { QUERY_MANIFEST_CONTENT_TYPE } from '../../contracts/no-progress.js';
 import type { SourceToolOptions } from './exploration-tools.js';
 import { ModelBudget, type MeterEntry, type ModelTokenBudget } from './model-budget.js';
 import { RuntimeModelCallRejected } from './model-call-access.js';
@@ -39,7 +40,6 @@ export type QueryExecutionDriverPort = {
   start(ctx: CoreCallContext, request: StartQueryExecutionRequest): Promise<ReadResult<QueryExecutionRecord>>;
 };
 
-const QUERY_MANIFEST_CONTENT_TYPE = 'application/vnd.coding-platform.query-execution-manifest+json;version=1';
 const BUILTIN_TOOL_NAMES = new Set<string>(['read', 'write', 'shell']);
 const CORE_ERROR_CODES = new Set<string>(['invalid', 'forbidden', 'not_found', 'source_stale', 'capacity', 'unsupported', 'unavailable', 'cancelled']);
 
