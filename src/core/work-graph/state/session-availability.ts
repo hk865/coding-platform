@@ -22,7 +22,7 @@ import type { OperationRef } from '../../../contracts/core/operations.js';
 import type { SessionHealthConclusion, SessionRecord } from '../../../contracts/core/session.js';
 import type { RunRef } from '../../../contracts/dispatch.js';
 import type { QueryExecutionStateV1, QueryRunRef } from '../../../contracts/query-job.js';
-import { accept, notYet, reject, unreachable, type Transition } from './transition.js';
+import { accept, notYet, reject, unreachable, type Rejected, type Transition } from './transition.js';
 
 // --------------------------------------------------------------------------
 // State, events, guard context and effects (§8.1, §8.2)
@@ -444,23 +444,36 @@ function created(ctx: SessionGuardContext): SessionTransition {
 }
 
 /**
- * SES-02/SES-03. Guard order keeps today's codes (`claim-service.ts:541-550`,
- * `query-execution.ts:715-720`): lifecycle → health → occupancy → revision →
- * generation → pin. The Query service checks its three pins before calling,
- * so a stale pin on a busy Session stays `busy` for Work and
- * `revision_conflict` for Query, as today.
+ * SES-02/SES-03 admission. Guard order keeps today's codes
+ * (`claim-service.ts:541-550`, `query-execution.ts:715-720`): lifecycle →
+ * health → occupancy → revision → generation → pin (`null` = no pin to
+ * compare). The Query service checks its three pins before calling, so a
+ * stale pin on a busy Session stays `busy` for Work and `revision_conflict`
+ * for Query, as today. `transitionSession` applies it to
+ * `occupancy_acquired`; the Work claim asks it before its holder Run has an
+ * id, so a refused guard stops the claim's reads where they always stopped.
  */
-function acquired(state: ActiveState, holder: SessionHolderRef, ctx: SessionGuardContext): SessionTransition {
-  if (holder.aggregateType === 'CoreOperation') {
-    return reject('illegal', 'unsupported', 'a maintenance occupancy has no writer');
-  }
+export function occupancyAdmissionProblem(state: SessionMachineState, pin: number | null): Rejected | null {
+  if (state === 'absent') return reject('illegal', 'not_found', 'the target Session does not exist');
   if (state.lifecycle !== 'active') return reject('guard_failed', 'busy', 'the target Session is archived');
   if (state.health !== 'available') return reject('guard_failed', 'busy', `the target Session health is ${state.health}`);
   if (state.occupancy !== null) return reject('guard_failed', 'busy', 'the target Session is already occupied');
   const next = nextOccupancyGeneration(state.revision);
   if (!next.ok) return reject('guard_failed', next.code, next.detail);
-  if (stalePin(state, ctx)) return reject('stale', 'revision_conflict', 'the Session changed since the caller read it');
-  const generation = next.generation;
+  if (pin !== null && pin !== state.revision) {
+    return reject('stale', 'revision_conflict', 'the Session changed since the caller read it');
+  }
+  return null;
+}
+
+/** SES-02/SES-03: `occupancyAdmissionProblem`, then the generation `revision + 1` it admitted. */
+function acquired(state: ActiveState, holder: SessionHolderRef, ctx: SessionGuardContext): SessionTransition {
+  if (holder.aggregateType === 'CoreOperation') {
+    return reject('illegal', 'unsupported', 'a maintenance occupancy has no writer');
+  }
+  const problem = occupancyAdmissionProblem(state, ctx.pin);
+  if (problem !== null) return problem;
+  const generation = state.revision + 1;
   return done({ ...state, occupancy: { kind: 'execution', holder, generation }, revision: generation },
     [{ kind: 'occupy_session', holder, generation }]);
 }

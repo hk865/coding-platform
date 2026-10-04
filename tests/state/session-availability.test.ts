@@ -22,7 +22,7 @@ import type { RunRef } from '../../src/contracts/dispatch.js';
 import type { QueryRunRef } from '../../src/contracts/query-job.js';
 import {
   SESSION_RELEASE_CAUSES, archiveSessionRecord, createSessionRecord, deriveAvailability, nextOccupancyGeneration,
-  observeSessionHealthRecord, occupySessionRecord, ownsOccupancy, ownsQuery, reactivateSessionRecord,
+  observeSessionHealthRecord, occupancyAdmissionProblem, occupySessionRecord, ownsOccupancy, ownsQuery, reactivateSessionRecord,
   releaseSessionRecord, sessionMachineStateOf, transitionSession,
   type HolderPhase, type SessionEffect, type SessionEvent, type SessionGuardContext, type SessionHealth,
   type SessionHolderContext, type SessionLifecycle, type SessionMachineState, type SessionReleaseCause,
@@ -377,6 +377,22 @@ describe('SES-02/SES-03 occupancy_acquired', () => {
 
   it('a kernel_turn_open Session is not claimable (busy): the requeue goes to a new Session', () => {
     expect(run(TURN_OPEN, acquire(RUN_B), ctxOf({ pin: REVISION }))).toEqual(refused('guard_failed', 'busy'));
+  });
+
+  it('occupancyAdmissionProblem is the same guard without a holder (the Work claim asks it before its Run has an id)', () => {
+    for (const desc of DIMENSION_STATES) {
+      for (const pin of [null, REVISION, REVISION - 1]) {
+        const state = machineState(desc);
+        const transition = transitionSession(state, acquire(RUN_B), ctxOf({ pin }));
+        const problem = occupancyAdmissionProblem(state, pin);
+        expect(problem, `${labelOf(desc)} pin=${String(pin)}`).toEqual(transition.ok ? null : transition);
+      }
+    }
+    for (const revision of [0, Number.MAX_SAFE_INTEGER]) {
+      expect(occupancyAdmissionProblem({ ...IDLE, revision }, null)).toEqual(transitionSession({ ...IDLE, revision },
+        acquire(RUN_B), ctxOf()));
+    }
+    expect(occupancyAdmissionProblem('absent', null)).toEqual(transitionSession('absent', acquire(RUN_B), ctxOf()));
   });
 });
 

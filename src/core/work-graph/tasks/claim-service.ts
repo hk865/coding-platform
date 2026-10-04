@@ -16,6 +16,15 @@
  *      directed canonical task facts and the current role facts;
  *   5. check eligibility/budget, compile ONE PreparedCommit, re-check cancel and
  *      commit. Every guard conflict leaves zero records and zero occupancy.
+ *
+ * The claim is decided by the pure machines (STATE-MACHINES-SPEC §4-§10):
+ * TASK-01..03 (`state/task-machine.ts`) are asked after each read with the
+ * facts read so far (a fact not read yet holds), so a refused guard stops the
+ * reads where they always stopped, and the Session admission is SES-02
+ * (`state/session-availability.ts`) and the saved reply MSG-10
+ * (`state/message-machine.ts`). The accepted `task_claimed` names the five
+ * records; each comes from its own machine (RUN-01, ATT-01/14/15/24, SES-02)
+ * and all are written in the one commit.
  */
 import type { ActorRef } from '../../../contracts/command-event.js';
 import type { CoreCallContext, MaterialReader } from '../../../contracts/core/call-context.js';
@@ -23,15 +32,16 @@ import type { RoleConfigurationRef, VersionPin, WorkspaceScope } from '../../../
 import type { SessionRecord } from '../../../contracts/core/session.js';
 import type { CoreError, CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import type {
-  DispatchOutboxRef, RoleBindingRefV1, RunRef, RunSnapshot, TaskAttemptRef, TaskAttemptSnapshot,
-  TaskBudgetV1, TaskLeaseSnapshot, TaskTriple,
+  ConsumedWaitV1, DispatchOutboxRef, RoleBindingRefV1, RunContinuationV1, RunRef, RunSnapshot, TaskAttemptRef,
+  TaskAttemptSnapshot, TaskEligibility, TaskLeaseSnapshot, TaskTriple,
 } from '../../../contracts/dispatch.js';
 import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
-import type { PlanRevisionSnapshot } from '../../../contracts/plan.js';
+import type { PlanRevisionSnapshot, RuntimeTask } from '../../../contracts/plan.js';
 import { revisionAssignments } from '../../../contracts/plan.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { RoleSpecResolutionV1 } from '../../../contracts/role-spec-materials.js';
 import { roleSpecContentDigest } from '../../../contracts/role-spec.js';
+import { isAutomationActor } from '../../../contracts/task-requeue.js';
 import type {
   EncodedRecord, GoalRecordTransactionPort, PreparedCommit, RecordGuard, StoreFailure,
 } from '../../record-store/ports.js';
@@ -40,13 +50,32 @@ import {
   decodeSessionRecord, encodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey,
 } from '../sessions/session-record-codecs.js';
 import {
+  transitionAttempt, transitionDispatchOutbox, transitionTaskLease,
+  type AttemptClaimBasis, type AttemptEvent, type AttemptGuardContext, type DispatchOutboxRecord,
+} from '../state/attempt-machine.js';
+import { messageMachineStateOf, messageSatisfiesWait } from '../state/message-machine.js';
+import { runNodeOf, runStateOf, transitionRun, type RunGuardContext, type RunNode } from '../state/run-machine.js';
+import {
+  nextOccupancyGeneration, occupancyAdmissionProblem, occupySessionRecord, sessionMachineStateOf, transitionSession,
+  type SessionGuardContext,
+} from '../state/session-availability.js';
+import {
+  taskClaimProblem, taskMachineStateOf, transitionTask,
+  type TaskClaimFacts, type TaskClaimSubject, type TaskPhaseFacts,
+} from '../state/task-machine.js';
+import type { Rejected as Refusal } from '../state/transition.js';
+import {
   decodeDispatchOutboxEntry, dispatchOutboxRefKey, encodeDispatchOutboxEntry, encodeTaskAttemptSnapshot,
   encodeTaskClaimedEvent, taskClaimedEventFromEvent, taskAttemptRefKey, type TaskClaimedEvent,
 } from './claim-record-codecs.js';
-import type { ClaimTaskInput, TaskClaim, TaskClaimDependencies, TaskClaimOutbox, TaskClaimPort } from './claim-contracts.js';
+import type { ClaimTaskInput, TaskClaim, TaskClaimDependencies, TaskClaimPort } from './claim-contracts.js';
 import type { GraphWrite } from './contracts.js';
 import { evaluateEligibility } from './eligibility.js';
-import { readCanonicalTaskFacts, readGoal, readPlan, sameCursor, type Rejected } from './plan-readers.js';
+import {
+  readCanonicalTaskFacts, readGoal, readPlan, sameCursor,
+  type CanonicalTaskFacts, type CanonicalTaskState, type Rejected,
+} from './plan-readers.js';
+import type { SessionMessage } from '../communication/contracts.js';
 import { decodeSessionMessageRecord, sessionMessageRefKey } from '../communication/message-record-codecs.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 
@@ -127,6 +156,163 @@ function mapReadResult<T>(result: Exclude<ReadResult<T>, { status: 'ready' }>): 
   if (result.status === 'not_found') return reject('not_found', 'the requested record does not exist');
   if (result.status === 'not_ready') return reject('incomplete', 'the read is not ready at the required watermark');
   return result;
+}
+
+/** A machine refusal keeps its CoreError and text (STATE-MACHINES-SPEC §1.2). */
+function rejectionOf(refusal: Refusal | null): CoreRejection | null {
+  return refusal === null || refusal.ok ? null : reject(refusal.code, refusal.detail);
+}
+
+// --------------------------------------------------------------------------
+// Claim facts for the state machines
+// --------------------------------------------------------------------------
+
+/** TASK-01..03 subject before the Task is read: every guard on it holds. */
+const UNREAD_TASK: TaskClaimSubject = { taskKind: 'work', disposition: 'active', phase: 'pending' };
+/** A continuation's prior Run before it is read: every guard on it holds. */
+const UNREAD_PRIOR: NonNullable<TaskClaimFacts['prior']> = { node: 'YieldedWait', pointer: 'none', bindingProblem: null,
+  leaseReleasedByPrior: true, replyProblem: null };
+/** The Attempt and Outbox of a claim are created with no paired Run yet (§5.2: `Absent` only while claiming). */
+const CLAIMING: AttemptGuardContext = { runNode: 'Absent', runLastEventSeq: 0, ownsSession: false, ownsLease: false };
+
+/** First claim, W2 continuation, or a claim after a TaskRequeue (read as a first claim until A.2 step 5.4). */
+function claimBasisOf(input: ClaimTaskInput): AttemptClaimBasis {
+  if (input.consumedWait !== undefined) return { kind: 'continuation', consumedWait: input.consumedWait };
+  if (input.requeueRef !== undefined) return { kind: 'requeue', requeueRef: input.requeueRef };
+  return { kind: 'first' };
+}
+
+/**
+ * The projection inputs (§4.1) of the claimed Task from its directed canonical
+ * read (`plan-readers.ts:1095-1165`): the selected Run, the applicable
+ * Reduction, and an unresolvable origin, which that read shows only as a
+ * `blocked` Task with neither. The claim reads no round chain (every
+ * completed-Run row is `blocked` today) and no TaskRequeue covers a Run before
+ * A.2 step 5.4. `null` when the read lacks the Run or Reduction it selected.
+ */
+function claimPhaseFacts(task: RuntimeTask, state: CanonicalTaskState, read: CanonicalTaskFacts): TaskPhaseFacts | null {
+  const execution = state.execution;
+  const selectedRun = execution === null ? null
+    : (read.runsByTaskId.get(task.taskId) ?? []).find(run => sameRef(run.ref, execution)) ?? null;
+  if (execution !== null && selectedRun === null) return null;
+  const applicableReduction = state.reductionRevision === null ? null : read.reductionsByTaskId.get(task.taskId) ?? null;
+  if (state.reductionRevision !== null && applicableReduction === null) return null;
+  return {
+    taskKind: task.taskKind,
+    applicableReduction,
+    selectedRun,
+    originUnresolvable: selectedRun === null && applicableReduction === null && state.effectivePhase === 'blocked',
+    round: { kind: 'none' },
+    coveringRequeue: null,
+  };
+}
+
+/**
+ * The structural reasons of the shared eligibility rule as `incomplete`
+ * (`plan_only`, missing assignment, unread phase); the phase and lease reasons
+ * are judged by TASK-01..03 from the Task state with the same texts.
+ */
+function structuralProblemOf(eligibility: TaskEligibility): CoreRejection | null {
+  const first = eligibility.reasons[0];
+  if (first === undefined) return null;
+  switch (first.code) {
+    case 'task_state_incomplete':
+    case 'task_planning_only':
+    case 'task_assignment_missing':
+      return incomplete(first.message);
+    default:
+      return null;
+  }
+}
+
+/**
+ * The prior's node as the claim reads it (the former `prior.status !== 'ended' ||
+ * prior.outcome !== 'yielded' || prior.continuation === undefined` check): only an
+ * `ended` Run is a yielded wait (§6.1 states; `run-machine.ts` `runNodeOf`).
+ */
+function priorRunNode(run: RunSnapshot): RunNode {
+  const node = runNodeOf(run);
+  return node === 'YieldedWait' && run.status !== 'ended' ? 'Ended' : node;
+}
+
+/** The yielded continuation names this wait message, Task and Session. */
+function continuationBindingProblem(
+  continuation: RunContinuationV1, consumedWait: ConsumedWaitV1, input: ClaimTaskInput,
+): CoreRejection | null {
+  if (!sameRef(continuation.messageRef, consumedWait.messageRef)) {
+    return busy('the continuation wait message does not match the yielded Run');
+  }
+  if (continuation.task.taskId !== input.taskId || continuation.task.goalId !== input.goalRef.goalId) {
+    return forbidden('the continuation prior Run belongs to another Task');
+  }
+  if (continuation.sessionRef.sessionId !== input.sessionRef.sessionId) {
+    return forbidden('the continuation prior Run used another Session');
+  }
+  return null;
+}
+
+/**
+ * TASK-02 facts of the yielded prior Run. A queued wait-window pause/cancel
+ * (its pointer) holds the continuation; the released lease must name THIS
+ * prior Run, so an older wait cannot be consumed again after a later
+ * consumption moved the holder. The saved reply is read afterwards (MSG-10).
+ */
+function continuationPrior(
+  prior: RunSnapshot, lease: TaskLeaseSnapshot | null, consumedWait: ConsumedWaitV1, input: ClaimTaskInput,
+): NonNullable<TaskClaimFacts['prior']> {
+  return {
+    node: priorRunNode(prior),
+    pointer: runStateOf(prior).pointer,
+    bindingProblem: prior.continuation === undefined ? null : continuationBindingProblem(prior.continuation, consumedWait, input),
+    leaseReleasedByPrior: lease !== null && lease.release !== undefined && lease.holderRunId === prior.ref.runId,
+    replyProblem: null,
+  };
+}
+
+/** The claim deadline (new requests only) must be a legal instant after the injected clock. */
+function deadlineProblem(deadline: string | null, nowMs: number): CoreRejection | null {
+  if (deadline === null) return null;
+  const deadlineMs = Date.parse(deadline);
+  if (!Number.isFinite(deadlineMs)) return reject('invalid', 'budget.deadline is not a legal instant');
+  if (!(deadlineMs > nowMs)) return reject('capacity', 'budget.deadline has passed');
+  return null;
+}
+
+/**
+ * RUN-01's guard context (§6.1), built once TASK-01..03 accepted the claim:
+ * the Run reads the Goal, the target Session and the claim facts (TASK-01..03
+ * already judged kind, disposition and eligibility); every entry, control and
+ * reconcile fact belongs to later Run events.
+ */
+function claimRunContext(
+  facts: TaskClaimFacts, session: SessionRecord, actor: Extract<ActorRef, { kind: 'human' | 'system' }>,
+): RunGuardContext {
+  return {
+    session: { usable: session.lifecycle === 'active' && session.health === 'available', owned: false, kernel: null },
+    lease: 'missing',
+    persistedClaim: null,
+    goal: { desiredState: facts.goalDesiredState, activePlanMatchesClaim: facts.activePlanMatchesClaim },
+    entryPlan: 'active_plan',
+    continuationBrief: 'absent_ok',
+    freshAdmission: null,
+    pointerIntent: null,
+    queuedSteerCount: 0,
+    continuationConsumed: false,
+    exitProof: null,
+    hostLease: null,
+    kernelProbe: null,
+    kernelPaused: false,
+    inputsConfirmed: null,
+    actor: isAutomationActor(actor) ? 'system' : 'human',
+    claim: { sessionOccupied: session.occupancy !== null, eligibility: null, taskHasRun: facts.taskHasRun,
+      prior: facts.prior, admission: facts.admission },
+  };
+}
+
+/** SES-02's guard context: the caller's Session pin. */
+function occupyContext(pin: number): SessionGuardContext {
+  return { caller: 'service', hostLease: null, pin, holder: null, probe: null, kernelHeader: null,
+    openResponsibleLink: null, creation: null, link: null };
 }
 
 // --------------------------------------------------------------------------
@@ -505,16 +691,24 @@ export function createTaskClaimService(deps: TaskClaimDependencies): TaskClaimPo
     if (lookup.code !== 'not_found') return mapStoreFailure(lookup);
     if (scopeCtx.signal.aborted) return reject('cancelled', 'the Task claim was cancelled during lookup');
 
-    // 2. Current Goal / accepted Plan / Workspace / Session.
+    // 2. Current Goal / accepted Plan / Workspace / Session. TASK-01..03 judge
+    //    the facts read so far after each read; a fact not read yet holds.
+    const basis = claimBasisOf(input);
     const goalRead = await readGoal(records, input.goalRef);
     if (goalRead.status !== 'ready') return mapReaderRejection(goalRead);
     if (scopeCtx.signal.aborted) return reject('cancelled', 'the Task claim was cancelled during the goal read');
     const goal: GoalSnapshot = goalRead.goal;
     if (goal.workspaceRef.workspaceId !== scope.workspaceId) return forbidden('the Goal belongs to another workspace');
-    if (goal.desiredState !== 'active') return busy('the Goal is not active');
-    if (goal.activePlanRevision === null || refKeyOf(goal.activePlanRevision) !== refKeyOf(input.planRef)) {
-      return reject('revision_conflict', 'the requested Plan is not the Goal current pin');
-    }
+    let subject: TaskClaimSubject | null = UNREAD_TASK;
+    let claimFacts: TaskClaimFacts = {
+      goalDesiredState: goal.desiredState,
+      activePlanMatchesClaim: goal.activePlanRevision !== null
+        && refKeyOf(goal.activePlanRevision) === refKeyOf(input.planRef),
+      sessionProblem: null, structuralProblem: null, lease: { status: 'free' }, taskHasRun: false,
+      prior: basis.kind === 'continuation' ? UNREAD_PRIOR : null, admission: null,
+    };
+    let refused = rejectionOf(taskClaimProblem(subject, basis, claimFacts));
+    if (refused !== null) return refused;
 
     const planRead = await readPlan(records, input.planRef);
     if (planRead.status !== 'ready') return mapReaderRejection(planRead);
@@ -538,22 +732,27 @@ export function createTaskClaimService(deps: TaskClaimDependencies): TaskClaimPo
     const session: SessionRecord = decodedSession.value;
     if (session.ref.projectId !== scope.projectId) return forbidden('the target Session belongs to another project');
     if (session.workspaceId !== scope.workspaceId) return forbidden('the target Session belongs to another workspace');
-    if (session.lifecycle !== 'active') return busy('the target Session is archived');
-    if (session.health !== 'available') return busy(`the target Session health is ${session.health}`);
-    if (session.occupancy !== null) return busy('the target Session is already occupied');
-    if (!isSafeRevision(session.revision) || session.revision < 1) return unavailable('the target Session revision is not readable');
-    const generation = session.revision + 1;
-    if (!Number.isSafeInteger(generation)) return reject('invalid', 'the Session generation would not be a safe integer');
+    // SES-02: lifecycle, health, occupancy, revision and generation; the pin comes after the Goal/Workspace pins.
+    const sessionState = sessionMachineStateOf(session);
+    claimFacts = { ...claimFacts, sessionProblem: rejectionOf(occupancyAdmissionProblem(sessionState, null)) };
+    refused = rejectionOf(taskClaimProblem(subject, basis, claimFacts));
+    if (refused !== null) return refused;
+    const occupancyGeneration = nextOccupancyGeneration(session.revision);
+    if (!occupancyGeneration.ok) return reject(occupancyGeneration.code, occupancyGeneration.detail);
+    const generation = occupancyGeneration.generation;
     // 3. Expected pins must match the current values exactly.
     if (checkedExpected.pins.goal.revision !== goal.revision) return reject('revision_conflict', 'the Goal changed since the caller read it');
     if (checkedExpected.pins.workspace.revision !== workspaceRecord.revision) return reject('revision_conflict', 'the Workspace changed since the caller read it');
-    if (checkedExpected.pins.session.revision !== session.revision) return reject('revision_conflict', 'the Session changed since the caller read it');
+    claimFacts = { ...claimFacts,
+      sessionProblem: rejectionOf(occupancyAdmissionProblem(sessionState, checkedExpected.pins.session.revision)) };
 
     // 4. Task identity + canonical state (directed, this Task only).
     const task = plan.tasks.find(candidate => candidate.taskId === input.taskId);
-    if (task === undefined) return reject('not_found', 'the Task is not part of the accepted Plan');
-    if (task.taskKind !== 'work') return reject('invalid', 'only a work task can be claimed');
-    if (task.disposition !== 'active') return reject('invalid', 'the Task disposition is not active');
+    subject = task === undefined ? null : { taskKind: task.taskKind, disposition: task.disposition, phase: UNREAD_TASK.phase };
+    refused = rejectionOf(taskClaimProblem(subject, basis, claimFacts));
+    if (refused !== null) return refused;
+    // TASK-01..03 refused a Task outside the accepted Plan (`not_found`) above.
+    const definition = task!;
 
     const factsRead = await readCanonicalTaskFacts(records, input.goalRef, plan, input.taskId);
     if (factsRead.status !== 'ready') return mapReaderRejection(factsRead);
@@ -561,6 +760,10 @@ export function createTaskClaimService(deps: TaskClaimDependencies): TaskClaimPo
     const facts = factsRead.value;
     const state = facts.byTaskId.get(input.taskId);
     if (state === undefined) return incomplete('the directed task state was not read');
+    const phaseFacts = claimPhaseFacts(definition, state, facts);
+    if (phaseFacts === null) return incomplete('the directed task state was not read');
+    const taskState = taskMachineStateOf(definition, phaseFacts);
+    subject = taskState;
     // The SAME shared eligibility rule queryReadyTasks uses decides plan_only /
     // missing assignment BEFORE the role-binding and occupancy checks, so a
     // structural `incomplete` is never masked by a `forbidden`/`busy`.
@@ -568,83 +771,56 @@ export function createTaskClaimService(deps: TaskClaimDependencies): TaskClaimPo
       plan, goalDesiredState: 'active', taskId: input.taskId,
       effectivePhases: new Map([[input.taskId, state.effectivePhase]]), lease: state.lease,
     });
-    if (!eligibility.eligible) {
-      const first = eligibility.reasons[0]!;
-      switch (first.code) {
-        case 'task_state_incomplete': return incomplete(first.message);
-        case 'task_planning_only': return incomplete(first.message);
-        case 'task_assignment_missing': return incomplete(first.message);
-        case 'goal_not_active': return busy(first.message);
-        case 'task_not_found': return reject('not_found', first.message);
-        case 'task_kind_not_work': return reject('invalid', first.message);
-        case 'task_not_active': return reject('invalid', first.message);
-        case 'task_phase_not_dispatchable': return busy(first.message);
-        case 'resource_unavailable': return busy(first.message);
-        default: return busy(first.message);
-      }
-    }
+    claimFacts = { ...claimFacts, structuralProblem: structuralProblemOf(eligibility), lease: state.lease,
+      taskHasRun: facts.taskHasRun === true };
     // A first claim with an existing Run is busy. A continuation claim is legal
     // only against a formal yielded Run whose saved wait is the one it consumes.
     let continuationLease: TaskLeaseSnapshot | null = null;
     let continuationMessageGuard: RecordGuard | null = null;
-    if (input.consumedWait !== undefined) {
-      const priorRuns = facts.runsByTaskId.get(input.taskId) ?? [];
-      const prior = priorRuns.find(run => sameRef(run.ref, input.consumedWait!.runRef));
-      if (prior === undefined) return busy('the continuation prior Run is not a Run of this Task');
-      if (prior.status !== 'ended' || prior.outcome !== 'yielded' || prior.continuation === undefined) {
-        return busy('the continuation prior Run did not yield with a formal continuation');
-      }
-      if (!sameRef(prior.continuation.messageRef, input.consumedWait.messageRef)) {
-        return busy('the continuation wait message does not match the yielded Run');
-      }
-      if (prior.continuation.task.taskId !== input.taskId || prior.continuation.task.goalId !== input.goalRef.goalId) {
-        return forbidden('the continuation prior Run belongs to another Task');
-      }
-      if (prior.continuation.sessionRef.sessionId !== input.sessionRef.sessionId) {
-        return forbidden('the continuation prior Run used another Session');
-      }
-      // A queued wait-window pause/cancel must survive the yield and hold the
-      // continuation; it is a formal control fact, never a Host boolean.
-      if (prior.controlState !== undefined
-        && (prior.controlState.desiredState === 'paused' || prior.controlState.desiredState === 'cancelled')) {
-        return busy(`the prior yielded Run has a queued ${prior.controlState.desiredState} control; the continuation is held`);
-      }
-      // The released lease must belong to THIS prior Run; a later consumption
-      // already moved the holder, so an older wait cannot be consumed again.
-      const priorLease = facts.leasesByTaskId.get(input.taskId) ?? null;
-      if (priorLease === null || priorLease.release === undefined
-        || priorLease.holderRunId !== prior.ref.runId) {
-        return busy('the continuation prior Run lease is not released by that Run');
-      }
-      // Read the FORMAL saved reply from the same records transaction instead of
-      // trusting the caller's responseRef: a pending message or an arbitrary
-      // artifact must never be claimable, and the exact message revision is guarded.
-      const messageKey = sessionMessageRefKey(input.consumedWait.messageRef);
+    const consumedWait = input.consumedWait;
+    if (consumedWait !== undefined) {
+      const prior = (facts.runsByTaskId.get(input.taskId) ?? []).find(run => sameRef(run.ref, consumedWait.runRef));
+      continuationLease = facts.leasesByTaskId.get(input.taskId) ?? null;
+      claimFacts = { ...claimFacts,
+        prior: prior === undefined ? null : continuationPrior(prior, continuationLease, consumedWait, input) };
+    }
+    refused = rejectionOf(taskClaimProblem(subject, basis, claimFacts));
+    if (refused !== null) return refused;
+    if (consumedWait !== undefined) {
+      // MSG-10: read the FORMAL saved reply from the same records transaction
+      // instead of trusting the caller's responseRef: a pending message or an
+      // arbitrary artifact must never be claimable, and the exact message revision is guarded.
+      const messageKey = sessionMessageRefKey(consumedWait.messageRef);
       const messageRead = await records.readMany([messageKey]);
       if (messageRead.status !== 'ready') return busy('the continuation wait message is not readable');
       const messageRecord = messageRead.value.records.find(record => record.refKey === messageKey);
-      if (messageRecord === undefined) return busy('the continuation wait message record does not exist');
-      const decodedMessage = decodeSessionMessageRecord(messageRecord);
-      if (decodedMessage.status !== 'decoded') return unavailable(`the continuation wait message is damaged: ${decodedMessage.reason}`);
-      const savedMessage = decodedMessage.value;
-      if (savedMessage.status !== 'responded' || savedMessage.response === null) {
-        return busy('the continuation wait has not been answered');
+      let savedMessage: SessionMessage | null = null;
+      if (messageRecord !== undefined) {
+        const decodedMessage = decodeSessionMessageRecord(messageRecord);
+        if (decodedMessage.status !== 'decoded') return unavailable(`the continuation wait message is damaged: ${decodedMessage.reason}`);
+        savedMessage = decodedMessage.value;
+        continuationMessageGuard = { refKey: messageKey, expectedRevision: messageRecord.revision };
       }
-      if (!sameRef(savedMessage.response.bodyRef, input.consumedWait.responseRef)) {
-        return forbidden('the continuation responseRef is not the formal saved reply body');
-      }
-      if (savedMessage.ref.workspaceId !== scope.workspaceId) return forbidden('the continuation wait message is outside the bound workspace');
-      continuationLease = priorLease;
-      continuationMessageGuard = { refKey: messageKey, expectedRevision: messageRecord.revision };
-    } else if (facts.taskHasRun === true) {
-      return busy('this Task already has a Run and cannot be claimed for the first time');
+      const reply = messageSatisfiesWait(messageMachineStateOf(savedMessage), {
+        responseRefMatches: savedMessage !== null && savedMessage.response !== null
+          && sameRef(savedMessage.response.bodyRef, consumedWait.responseRef),
+        sameWorkspace: savedMessage !== null && savedMessage.ref.workspaceId === scope.workspaceId,
+      });
+      // TASK-02 refused a continuation without a prior Run of this Task above.
+      claimFacts = { ...claimFacts,
+        prior: { ...claimFacts.prior!, replyProblem: reply.satisfied ? null : reject(reply.code, reply.detail) } };
+      refused = rejectionOf(taskClaimProblem(subject, basis, claimFacts));
+      if (refused !== null) return refused;
     }
 
+    // Admission (TASK-01..03's last guard): assignment, then role, then deadline.
     const assignments = revisionAssignments(plan).filter(assignment => assignment.taskId === input.taskId);
-    if (assignments.length !== 1) return forbidden('the Task must carry exactly one assignment');
-    if (assignments[0]!.role !== input.roleBinding.templateId) {
-      return forbidden('the Task assignment role does not match the role binding');
-    }
+    claimFacts = { ...claimFacts, admission: assignments.length !== 1
+      ? forbidden('the Task must carry exactly one assignment')
+      : assignments[0]!.role !== input.roleBinding.templateId
+        ? forbidden('the Task assignment role does not match the role binding') : null };
+    refused = rejectionOf(taskClaimProblem(subject, basis, claimFacts));
+    if (refused !== null) return refused;
 
     // 5. Current role facts (same resolver, exact read window guards).
     const roleFacts = await deps.roles.resolveRoleBindingFacts(scopeCtx, {
@@ -652,18 +828,17 @@ export function createTaskClaimService(deps: TaskClaimDependencies): TaskClaimPo
     });
     if (scopeCtx.signal.aborted) return reject('cancelled', 'the Task claim was cancelled during role resolution');
     if (roleFacts.result.status !== 'ready') return mapReadResult(roleFacts.result);
-    const roleRejection = roleMatchRejection(session.role, input.roleBinding, roleFacts.result.value);
-    if (roleRejection !== null) return roleRejection;
+    claimFacts = { ...claimFacts, admission: roleMatchRejection(session.role, input.roleBinding, roleFacts.result.value) };
+    refused = rejectionOf(taskClaimProblem(subject, basis, claimFacts));
+    if (refused !== null) return refused;
 
     // 6. Deadline (new requests only) and the immutable result identity.
     const nowIso = deps.now();
     const nowMs = Date.parse(nowIso);
     if (!nonEmpty(nowIso) || !Number.isFinite(nowMs)) return reject('invalid', 'the injected clock is not a legal instant');
-    if (input.budget.deadline !== null) {
-      const deadlineMs = Date.parse(input.budget.deadline);
-      if (!Number.isFinite(deadlineMs)) return reject('invalid', 'budget.deadline is not a legal instant');
-      if (!(deadlineMs > nowMs)) return reject('capacity', 'budget.deadline has passed');
-    }
+    claimFacts = { ...claimFacts, admission: deadlineProblem(input.budget.deadline, nowMs) };
+    refused = rejectionOf(taskClaimProblem(subject, basis, claimFacts));
+    if (refused !== null) return refused;
     const claimedAt = nowIso;
 
     const runId = deps.newId();
@@ -684,34 +859,75 @@ export function createTaskClaimService(deps: TaskClaimDependencies): TaskClaimPo
       sessionRevision: generation,
       generation, runRef, attemptRef, outboxRef, claimedAt,
     };
-    const outbox: TaskClaimOutbox = { ref: outboxRef, revision: 1, schemaVersion: 1, status: 'pending', claim };
-    const leaseRef = { aggregateType: 'TaskLease' as const, projectId: scope.projectId,
-      goalId: taskTriple.goalId, taskId: input.taskId };
-    // A continuation reuses the SAME released TaskLease record at its current
-    // revision; a first claim creates it at revision 1. The release marker is
-    // dropped because this exact commit is the new, idempotent hold.
-    const lease: TaskLeaseSnapshot = continuationLease === null
-      ? { ref: leaseRef, revision: 1, schemaVersion: 1,
-          holderRunId: runId, attemptId, grantedAt: claimedAt, expiresAt: null }
-      : { ref: continuationLease.ref, revision: continuationLease.revision + 1, schemaVersion: 1,
-          holderRunId: runId, attemptId, grantedAt: claimedAt, expiresAt: null };
-    const run: RunSnapshot = { ref: runRef, revision: 1, schemaVersion: 1, task: taskTriple, attemptId,
-      planRef: input.planRef, roleBinding: input.roleBinding, budget: input.budget,
-      workspaceSnapshot: { workspaceId: scope.workspaceId, revision: workspaceRecord.revision },
-      status: 'starting', outcome: null, exitCode: null, lastEventSeq: 0,
-      lastRuntimeEventId: '', lastFactEventId: '', envelope: null, startedAt: null, endedAt: null,
-      ...(input.consumedWait === undefined ? {} : { consumedWait: structuredClone(input.consumedWait) }) };
-    const attempt: TaskAttemptSnapshot = { ref: attemptRef, revision: 1, schemaVersion: 1, runId,
-      planRef: input.planRef, status: 'claimed', startedAt: null, endedAt: null, endOutcome: null };
-    const nextSession: SessionRecord = { ...session, revision: generation,
-      lastExecutionRef: runRef, occupancy: { kind: 'execution', executionRef: runRef, generation } };
+
+    // TASK-01..03 accept the claim; each record its effects name comes from its
+    // own machine (RUN-01, ATT-01/24, ATT-14/15, SES-02) for this one commit.
+    const claimed = transitionTask(taskState, { kind: 'task_claimed', claim, basis, budget: input.budget },
+      { taskId: input.taskId, claim: claimFacts, completion: null, trace: null });
+    if (!claimed.ok) return reject(claimed.code, claimed.detail);
+    const attemptEvent: AttemptEvent = { kind: 'attempt_claimed', claim, basis };
+    let lease: TaskLeaseSnapshot | null = null;
+    let attempt: TaskAttemptSnapshot | null = null;
+    let run: RunSnapshot | null = null;
+    let outbox: DispatchOutboxRecord | null = null;
+    let nextSession: SessionRecord | null = null;
+    for (const effect of claimed.effects) {
+      switch (effect.kind) {
+        case 'create_attempt': {
+          const created = transitionAttempt(null, attemptEvent, CLAIMING);
+          if (!created.ok) return reject(created.code, created.detail);
+          attempt = created.next;
+          break;
+        }
+        case 'create_run': {
+          // RUN-01's own effects name the Attempt, Outbox, Lease and Session rows of this list.
+          const created = transitionRun(runStateOf(null), { kind: 'claim_committed', claim, basis,
+            roleBinding: input.roleBinding, budget: input.budget, workspaceRevision: workspaceRecord.revision },
+          claimRunContext(claimFacts, session, actor));
+          if (!created.ok) return reject(created.code, created.detail);
+          run = created.next.record;
+          break;
+        }
+        case 'create_outbox': {
+          const created = transitionDispatchOutbox(null, attemptEvent, CLAIMING);
+          if (!created.ok) return reject(created.code, created.detail);
+          outbox = created.next;
+          break;
+        }
+        case 'hold_lease': {
+          // A continuation reuses the SAME released TaskLease record at its
+          // current revision (ATT-15); a first claim creates it at revision 1
+          // (ATT-14). The release marker is dropped because this exact commit
+          // is the new, idempotent hold.
+          const held = transitionTaskLease(continuationLease, attemptEvent);
+          if (!held.ok) return reject(held.code, held.detail);
+          lease = held.next;
+          break;
+        }
+        case 'occupy_session': {
+          const occupied = transitionSession(sessionState, { kind: 'occupancy_acquired', holder: runRef },
+            occupyContext(checkedExpected.pins.session.revision));
+          if (!occupied.ok) return reject(occupied.code, occupied.detail);
+          for (const sessionEffect of occupied.effects) {
+            if (sessionEffect.kind !== 'occupy_session') throw new Error(`occupancy_acquired has no ${sessionEffect.kind} effect`);
+            nextSession = occupySessionRecord(session, { holder: sessionEffect.holder, generation: sessionEffect.generation });
+          }
+          break;
+        }
+        default:
+          throw new Error(`task_claimed has no ${effect.kind} effect`);
+      }
+    }
+    if (lease === null || attempt === null || run === null || outbox === null || nextSession === null) {
+      throw new Error('task_claimed must write the lease, attempt, run, outbox and Session records');
+    }
     const event: TaskClaimedEvent = { eventId, eventType: 'TaskClaimed', schemaVersion: 1, occurredAt: claimedAt,
       identityKey, actor, fingerprint, claim };
 
-    const leaseRecord: EncodedRecord = { refKey: refKeyOf(leaseRef), schemaId: TASK_LEASE_SCHEMA_ID,
+    const leaseRecord: EncodedRecord = { refKey: refKeyOf(lease.ref), schemaId: TASK_LEASE_SCHEMA_ID,
       revision: lease.revision, json: JSON.stringify(lease) };
-    const runRecord: EncodedRecord = { refKey: refKeyOf(runRef), schemaId: RUN_SCHEMA_ID,
-      revision: 1, json: JSON.stringify(run) };
+    const runRecord: EncodedRecord = { refKey: refKeyOf(run.ref), schemaId: RUN_SCHEMA_ID,
+      revision: run.revision, json: JSON.stringify(run) };
     const attemptRecord = encodeTaskAttemptSnapshot(attempt);
     const outboxRecord = encodeDispatchOutboxEntry(outbox);
     const sessionEncoded = encodeSessionRecord(nextSession);
@@ -729,7 +945,7 @@ export function createTaskClaimService(deps: TaskClaimDependencies): TaskClaimPo
     for (const guard of facts.guards) addGuard(guard.refKey, guard.expectedRevision);
     for (const guard of roleFacts.guards) addGuard(guard.refKey, guard.expectedRevision);
     if (continuationMessageGuard !== null) addGuard(continuationMessageGuard.refKey, continuationMessageGuard.expectedRevision);
-    addGuard(refKeyOf(leaseRef), null);
+    addGuard(refKeyOf(lease.ref), null);
     addGuard(taskAttemptRefKey(attemptRef), null);
     addGuard(refKeyOf(runRef), null);
     addGuard(dispatchOutboxRefKey(outboxRef), null);

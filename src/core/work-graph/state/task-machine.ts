@@ -223,15 +223,20 @@ export function taskMachineStateOf(
 export type TaskLeaseProjection = { status: 'free' } | { status: 'leased'; holderRunId: string };
 
 /**
- * `task_claimed` facts beyond the Task state, in `claim-service.ts:510-666`
- * order. The CoreRejections carry today's exact code and text; Workspace,
- * Session and Goal pins stay the service's CAS.
+ * `task_claimed` facts beyond the Task state, in the order of the pre-step-3
+ * `claim-service.ts:510-666` (line refs below are to that version). The
+ * CoreRejections carry today's exact code and text; only the Goal and
+ * Workspace pins stay the service's CAS.
  */
 export type TaskClaimFacts = {
   goalDesiredState: GoalDesiredState;
   /** The requested Plan is the Goal's current pin (`:514-516`). */
   activePlanMatchesClaim: boolean;
-  /** §8 admission of the target Session (archived, health, occupied; `:536-545`); null when usable. */
+  /**
+   * SES-02 admission of the target Session (`session-availability.ts`
+   * `occupancyAdmissionProblem`: lifecycle, health, occupancy, revision,
+   * generation, then the caller's Session pin; `:536-545`); null when usable.
+   */
   sessionProblem: CoreRejection | null;
   /** `task_planning_only`/`task_assignment_missing` of `evaluateEligibility` → `incomplete` (`:575-578`); null when none. */
   structuralProblem: CoreRejection | null;
@@ -764,22 +769,29 @@ function claimPhaseProblem(phase: Phase): Rejected | null {
   }
 }
 
-/** TASK-01 (first), TASK-02 (continuation), TASK-03 (requeue) in `claim-service.ts:510-666` order. */
-function onTaskClaimed(
-  state: TaskMachineState,
-  event: Extract<TaskEvent, { kind: 'task_claimed' }>,
-  ctx: TaskGuardContext,
-): TaskTransition {
-  const facts = ctx.claim;
-  if (facts === null) return reject('illegal', 'invalid', 'task_claimed requires the claim guard facts');
+/** The Task dimensions TASK-01..03 read: kind, disposition and the projected phase. */
+export type TaskClaimSubject = Pick<TaskState, 'taskKind' | 'disposition' | 'phase'>;
+
+/**
+ * TASK-01 (first), TASK-02 (continuation), TASK-03 (requeue) guards in
+ * `claim-service.ts:510-666` order; `null` when the claim may commit. It needs
+ * no claim ids: `transitionTask` applies it to `task_claimed`, and the claim
+ * service also asks it after each read (a fact not read yet holds), so a
+ * refused guard stops the claim's reads where they always stopped.
+ */
+export function taskClaimProblem(
+  task: TaskClaimSubject | null,
+  claimBasis: AttemptClaimBasis,
+  facts: TaskClaimFacts,
+): Rejected | null {
   if (facts.goalDesiredState !== 'active') return reject('guard_failed', 'busy', 'the Goal is not active');
   if (!facts.activePlanMatchesClaim) return reject('stale', 'revision_conflict', 'the requested Plan is not the Goal current pin');
   if (facts.sessionProblem !== null) return rejected(facts.sessionProblem);
-  if (state === null) return reject('illegal', 'not_found', 'the Task is not part of the accepted Plan');
-  if (state.taskKind !== 'work') return reject('illegal', 'invalid', 'only a work task can be claimed');
-  if (state.disposition !== 'active') return reject('guard_failed', 'invalid', 'the Task disposition is not active');
+  if (task === null) return reject('illegal', 'not_found', 'the Task is not part of the accepted Plan');
+  if (task.taskKind !== 'work') return reject('illegal', 'invalid', 'only a work task can be claimed');
+  if (task.disposition !== 'active') return reject('guard_failed', 'invalid', 'the Task disposition is not active');
   if (facts.structuralProblem !== null) return rejected(facts.structuralProblem);
-  const phaseProblem = claimPhaseProblem(state.phase);
+  const phaseProblem = claimPhaseProblem(task.phase);
   if (phaseProblem !== null) return phaseProblem;
   if (facts.lease.status === 'leased') {
     return reject('guard_failed', 'busy', `task already has an active lease (holder run ${facts.lease.holderRunId})`);
@@ -787,7 +799,7 @@ function onTaskClaimed(
   // TASK-03 (D-3, TD-3) is step 5.4: today the claim service accepts a
   // `requeueRef` but never reads it (`claim-service.ts:639-641`), so a requeue
   // claim is a first claim: `busy` once the Task has a Run, otherwise a @1 lease.
-  const basis = claimBasisToday(event.basis);
+  const basis = claimBasisToday(claimBasis);
   switch (basis.kind) {
     case 'first':
       if (facts.taskHasRun) return reject('guard_failed', 'busy', 'this Task already has a Run and cannot be claimed for the first time');
@@ -810,8 +822,24 @@ function onTaskClaimed(
     default: return unreachable(basis, 'claim basis');
   }
   if (facts.admission !== null) return rejected(facts.admission);
+  return null;
+}
+
+/** TASK-01..03: `taskClaimProblem`, then the claim's records in one commit. */
+function onTaskClaimed(
+  state: TaskMachineState,
+  event: Extract<TaskEvent, { kind: 'task_claimed' }>,
+  ctx: TaskGuardContext,
+): TaskTransition {
+  const facts = ctx.claim;
+  if (facts === null) return reject('illegal', 'invalid', 'task_claimed requires the claim guard facts');
+  const problem = taskClaimProblem(state, event.basis, facts);
+  if (problem !== null) return problem;
+  // `taskClaimProblem` refuses ∅ (`not_found`), so the Task is in the Plan here.
+  const { taskKind, disposition } = state as TaskState;
+  const basis = claimBasisToday(event.basis);
   const claim = event.claim;
-  return accept({ taskKind: state.taskKind, disposition: state.disposition, row: 'P2', phase: 'running', cause: null }, [
+  return accept({ taskKind, disposition, row: 'P2', phase: 'running', cause: null }, [
     { kind: 'create_attempt' },
     { kind: 'create_run' },
     { kind: 'create_outbox' },

@@ -41,8 +41,8 @@ import type {
   RoundChainV1, RoundCheckSnapshot, RoundSnapshot, VerificationRoundRef,
 } from '../../src/contracts/verification.js';
 import {
-  classifyTaskPhase, newTaskReductionRecord, newTaskRequeueRecord, projectTaskPhase, taskCompletionRoundProblem,
-  taskMachineStateOf, transitionTask,
+  classifyTaskPhase, newTaskReductionRecord, newTaskRequeueRecord, projectTaskPhase, taskClaimProblem,
+  taskCompletionRoundProblem, taskMachineStateOf, transitionTask,
   type NewTaskRequeueInput, type TaskClaimFacts, type TaskCompletionFacts, type TaskEffect, type TaskEvent,
   type TaskGuardContext, type TaskMachineState, type TaskPhaseFacts, type TaskPhaseProjection, type TaskReductionBuildV1,
   type TaskRoundEventKind, type TaskState, type TaskTrace,
@@ -704,6 +704,26 @@ describe('task_claimed guards in claim-service order', () => {
   it('the claim facts are required', () => {
     expect(transitionTask(STATES.P16, EVENTS['claim:first'](), { ...ctxFor('P16'), claim: null }))
       .toMatchObject({ ok: false, reason: 'illegal', code: 'invalid' });
+  });
+
+  it('taskClaimProblem is the same guard without the claim ids (the claim service asks it after each read)', () => {
+    const variants: Partial<TaskClaimFacts>[] = [{}, { goalDesiredState: 'paused' }, { activePlanMatchesClaim: false },
+      { sessionProblem: rejection('busy', 'the target Session is archived') },
+      { structuralProblem: rejection('incomplete', 'planning only') }, { lease: { status: 'leased', holderRunId: 'run-9' } },
+      { taskHasRun: false }, { prior: CONSUMABLE_PRIOR }, { prior: { ...CONSUMABLE_PRIOR, pointer: 'paused' } },
+      { prior: { ...CONSUMABLE_PRIOR, replyProblem: rejection('busy', 'the continuation wait has not been answered') } },
+      { taskHasRun: false, admission: rejection('capacity', 'budget.deadline has passed') }];
+    for (const label of STATE_LABELS) {
+      for (const basis of ['claim:first', 'claim:continuation', 'claim:requeue'] as const) {
+        for (const patch of variants) {
+          const event = EVENTS[basis]() as Extract<TaskEvent, { kind: 'task_claimed' }>;
+          const facts = claimFacts(patch);
+          const transition = transitionTask(STATES[label], event, { ...ctxFor(label), claim: facts });
+          expect(taskClaimProblem(STATES[label], event.basis, facts), `${label} ${basis} ${JSON.stringify(patch)}`)
+            .toEqual(transition.ok ? null : transition);
+        }
+      }
+    }
   });
 });
 
