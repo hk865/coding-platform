@@ -32,7 +32,7 @@ import type {
 } from '../../record-store/ports.js';
 import { decodeGoalSnapshot } from '../persistence/record-codecs.js';
 import { taskLeaseSnapshotProblem } from '../persistence/execution-entry-codecs.js';
-import type { FutureChangeTaskFactsV1 } from '../state/plan-machine.js';
+import { derivePlanProposalStatus, derivePlanRevisionStatus, type FutureChangeTaskFactsV1 } from '../state/plan-machine.js';
 import type { VerifiedGovernance } from './plan-commit-compiler.js';
 import type { PlanProposal, PlanProposalRef } from './plan-contracts.js';
 import {
@@ -480,12 +480,10 @@ export async function findPendingProposal(
       const decoded = decodePlanProposalRecord(record);
       if (decoded.status !== 'decoded') continue;
       const proposal = decoded.value;
+      // PLAN-06: a legacy candidate is never pending; a stale one (basedOn ≠ the active plan) is skipped.
       if (proposal.kind !== 'candidate_v2') continue;
-      if (proposal.status !== 'candidate') continue;
       if (proposal.goalRef.projectId !== goal.ref.projectId || proposal.goalRef.goalId !== goal.ref.goalId) continue;
-      const activeKey = goal.activePlanRevision === null ? null : planRevisionRefKey(goal.activePlanRevision);
-      const basedOnKey = proposal.basedOn === null ? null : planRevisionRefKey(proposal.basedOn);
-      if (activeKey !== basedOnKey) continue;
+      if (derivePlanProposalStatus(proposal, goal.activePlanRevision) !== 'candidate') continue;
       if (selected === null || key < planProposalRefKey(selected.ref)) selected = proposal;
     }
     return { status: 'ready', goal, proposal: selected, readThrough: canonical.batch.readThrough };
@@ -686,8 +684,7 @@ export async function confirmActivePlan(
 ): Promise<{ status: 'ready'; goal: GoalSnapshot; readThrough: CommitCursor | null } | Rejected> {
   const goalRead = await readGoal(records, goalRef);
   if (goalRead.status !== 'ready') return goalRead;
-  const active = goalRead.goal.activePlanRevision;
-  if (active === null || planRevisionRefKey(active) !== planRevisionRefKey(expected)) {
+  if (derivePlanRevisionStatus(expected, goalRead.goal.activePlanRevision) !== 'adopted') {
     return { status: 'rejected', code: 'revision_conflict', reason: 'the active plan changed while it was being read' };
   }
   return { status: 'ready', goal: goalRead.goal, readThrough: goalRead.readThrough };

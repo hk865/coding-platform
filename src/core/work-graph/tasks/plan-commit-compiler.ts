@@ -2,10 +2,11 @@
  * it never reads Store, resolves governance or performs a transaction.
  *
  * The protected records of an adoption (the accepted PlanProposal and the
- * moved Goal pointer) and the commit's CAS guards come from the state
- * machines the owner ran (STATE-MACHINES-SPEC §3 PLAN-04/05, §2 GOAL-02/03,
- * §14.1): this file builds only the compiler-owned PlanRevisionSnapshot and
- * the PlanRevisionAccepted event, and encodes the one PreparedCommit. */
+ * moved Goal pointer), the new Plan's ref and build and the commit's CAS
+ * guards come from the state machines the owner ran (STATE-MACHINES-SPEC §3
+ * PLAN-04/05/08, §2 GOAL-02/03, §14.1), as one `PlanCommit`: this file builds
+ * only the compiler-owned PlanRevisionSnapshot and the PlanRevisionAccepted
+ * event, and encodes the one PreparedCommit. */
 import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js';
 import type { ArchitectureBaselinePin, CompletionPolicyPin } from '../../../contracts/governance.js';
 import type { GoalSnapshot } from '../../../contracts/ledger.js';
@@ -13,11 +14,13 @@ import {
   revisionAssignments,
   type PlanRevisionAcceptedEvent,
   type PlanRevisionDraft,
+  type PlanRevisionRef,
   type PlanRevisionSnapshot,
   type PlanTaskAssignment,
   type TaskInputRequirementV2,
 } from '../../../contracts/plan.js';
 import type { PreparedCommit, RecordGuard } from '../../record-store/ports.js';
+import type { PlanProposalEffect } from '../state/plan-machine.js';
 import { encodeGoalSnapshot } from '../persistence/record-codecs.js';
 import { buildTargetTaskBasis, isBasisUnsupported } from './plan-task-basis.js';
 import type { PlanProposal } from './plan-contracts.js';
@@ -37,15 +40,27 @@ export type VerifiedGovernance = {
   architectureActiveRevision: number;
   guards: readonly RecordGuard[];
 };
-export type InitialPlanAdoptionInput = {
-  /** GOAL-02: the Goal with its pointer moved onto the new Plan (`state/goal-machine.ts`). */
-  nextGoal: GoalSnapshot;
-  /** PLAN-04: the accepted candidate (`state/plan-machine.ts` `acceptProposalRecord`). */
-  acceptedProposal: Extract<PlanProposal, { kind: 'candidate_v2' }>;
-  draft: PlanRevisionDraft;
-  governance: VerifiedGovernance;
-  /** PLAN-04's CAS guards in its order: origin, scope, candidate, governance, target Plan ∅. */
+
+/** PLAN-08: the new Plan an adoption writes, as the plan machine names it (`ref`, and `build` from the draft or the delta). */
+export type PlanRevisionWrite = Extract<PlanProposalEffect, { kind: 'write_plan_revision' }>;
+
+/** One plan commit as the state machines named it; the owner reads it off their effects. */
+export type PlanCommit = {
+  /** `write_proposal`: candidate@1 (PLAN-01..03) or the accepted candidate (PLAN-04/05, `acceptProposalRecord`). */
+  proposal: Extract<PlanProposal, { kind: 'candidate_v2' }>;
+  /** `move_goal_pointer`: the Goal moved by GOAL-02/03 (`nextGoalPointer`); null for a proposal. */
+  nextGoal: GoalSnapshot | null;
+  /** `write_plan_revision` (PLAN-08); null for a proposal. */
+  plan: PlanRevisionWrite | null;
+  /** The `guard` effects as the commit's record guards, in the machine's order. */
   guards: readonly RecordGuard[];
+};
+
+export type InitialPlanAdoptionInput = {
+  /** PLAN-04 + GOAL-02 + PLAN-08: the accepted candidate (its draft is written verbatim), the moved Goal,
+   * the new Plan's ref and the CAS guards (origin, scope, candidate, governance, target Plan ∅). */
+  commit: PlanCommit;
+  governance: VerifiedGovernance;
   ledgerHorizon: CommitCursor;
   identityKey: string;
   fingerprint: string;
@@ -56,17 +71,20 @@ export type InitialPlanAdoptionInput = {
   idempotencyKey: string;
   actor: ActorRef;
 };
-export type CompiledInitialPlanAdoption = {
-  snapshot: PlanRevisionSnapshot;
-  nextGoal: GoalSnapshot;
-  acceptedProposal: Extract<PlanProposal, { kind: 'candidate_v2' }>;
-  prepared: PreparedCommit;
-};
+export type CompiledPlanAdoption = { snapshot: PlanRevisionSnapshot; prepared: PreparedCommit };
+
+/** PLAN-04/05 move the Goal pointer and PLAN-08 writes the new Plan; a commit without them is a broken caller. */
+function adoptionWrites(commit: PlanCommit): { nextGoal: GoalSnapshot; plan: PlanRevisionWrite } {
+  if (commit.nextGoal === null || commit.plan === null) {
+    throw new Error('a plan adoption moves the Goal pointer and writes its PlanRevision');
+  }
+  return { nextGoal: commit.nextGoal, plan: commit.plan };
+}
 
 function buildPlanRevisionSnapshot(input: {
   draft: PlanRevisionDraft;
+  ref: PlanRevisionRef;
   goalRef: PlanRevisionSnapshot['goalRef'];
-  projectId: string;
   acceptedAt: string;
   policyPin: CompletionPolicyPin;
   architecturePin: ArchitectureBaselinePin;
@@ -75,7 +93,7 @@ function buildPlanRevisionSnapshot(input: {
   const common = {
     ...(draft.reviewAdmissionProtocol !== undefined ? { reviewAdmissionProtocol: draft.reviewAdmissionProtocol } : {}),
     ...(draft.origin !== undefined ? { origin: draft.origin } : {}),
-    ref: { aggregateType: 'PlanRevision' as const, projectId: input.projectId, planId: draft.planId },
+    ref: input.ref,
     revision: 1 as const,
     goalRef: input.goalRef,
     planId: draft.planId,
@@ -139,18 +157,19 @@ function planRevisionAcceptedEvent(input: {
 
 /** Folds one accepted initial Plan, its Goal pointer and its candidate status
  * into exactly one `PreparedCommit`. Guard order/identity is the caller's input. */
-export function compileInitialPlanAdoption(input: InitialPlanAdoptionInput): CompiledInitialPlanAdoption {
-  const { nextGoal, acceptedProposal } = input;
+export function compileInitialPlanAdoption(input: InitialPlanAdoptionInput): CompiledPlanAdoption {
+  const acceptedProposal = input.commit.proposal;
+  const { nextGoal, plan } = adoptionWrites(input.commit);
   const snapshot = buildPlanRevisionSnapshot({
-    draft: input.draft,
+    draft: acceptedProposal.draft,
+    ref: plan.ref,
     goalRef: nextGoal.ref,
-    projectId: nextGoal.ref.projectId,
     acceptedAt: input.occurredAt,
     policyPin: input.governance.completionPolicy,
     architecturePin: input.governance.architectureBaseline,
   });
   const event = planRevisionAcceptedEvent({
-    planId: input.draft.planId,
+    planId: acceptedProposal.draft.planId,
     goalRef: nextGoal.ref,
     projectId: nextGoal.ref.projectId,
     workspaceId: acceptedProposal.ref.workspaceId,
@@ -166,7 +185,7 @@ export function compileInitialPlanAdoption(input: InitialPlanAdoptionInput): Com
   const prepared: PreparedCommit = {
     identityKey: input.identityKey,
     fingerprint: input.fingerprint,
-    guards: [...input.guards],
+    guards: input.commit.guards,
     records: [encodeGoalSnapshot(nextGoal), encodePlanRevisionSnapshot(snapshot), encodePlanProposal(acceptedProposal)],
     claims: [],
     indexGuards: [],
@@ -174,25 +193,13 @@ export function compileInitialPlanAdoption(input: InitialPlanAdoptionInput): Com
     events: [encodePlanRevisionAcceptedEvent(event)],
     ledgerHorizon: input.ledgerHorizon,
   };
-  return { snapshot, nextGoal, acceptedProposal, prepared };
+  return { snapshot, prepared };
 }
 
 // --------------------------------------------------------------------------
-// W1 future-only adoption (Stage 1 skeleton, no behavior)
+// W1 future-only adoption
 // --------------------------------------------------------------------------
 
-/**
- * W1: compiles ONE accepted future-only Plan adoption. The target snapshot is
- * constructed deterministically from the trusted immutable source plus the
- * validated future-only delta; the caller Draft is NEVER written over existing
- * Tasks. It writes the new Plan, the Goal pointer, the accepted proposal and
- * the original adoption event, with the LOCAL guards PLAN-05 names (current
- * Goal/source/proposal, target Plan absence, and confirmed Lease/Reduction
- * absence for each changed or added Task). The initial fold above is unchanged.
- *
- * Stage 1 declares the contact point only; it returns an explicit unsupported
- * outcome and writes nothing.
- */
 /** ONE grouping pass for a Plan's exact inputs, keyed by consumer Task. */
 function groupInputsByConsumer(
   requirements: readonly TaskInputRequirementV2[],
@@ -207,16 +214,10 @@ function groupInputsByConsumer(
 }
 
 export type FuturePlanAdoptionInput = {
-  /** GOAL-03: the Goal with its pointer moved from the source onto the target (`state/goal-machine.ts`). */
-  nextGoal: GoalSnapshot;
+  /** PLAN-05 + GOAL-03 + PLAN-08: the accepted candidate (its draft is the target), the moved Goal, the new
+   * Plan's ref and the validated delta, and the CAS guards (merged, ending with the target Plan ∅). */
+  commit: PlanCommit;
   source: PlanRevisionSnapshot;
-  /** PLAN-05: the accepted candidate (`state/plan-machine.ts` `acceptProposalRecord`). */
-  acceptedProposal: Extract<PlanProposal, { kind: 'candidate_v2' }>;
-  target: PlanRevisionDraft;
-  changedTaskIds: readonly string[];
-  addedTaskIds: readonly string[];
-  /** PLAN-05's CAS guards in its order, merged, ending with the target Plan ∅. */
-  guards: readonly RecordGuard[];
   identityKey: string;
   fingerprint: string;
   eventId: string;
@@ -227,30 +228,36 @@ export type FuturePlanAdoptionInput = {
   actor: ActorRef;
 };
 
-export type CompiledFuturePlanAdoption = {
-  snapshot: PlanRevisionSnapshot;
-  nextGoal: GoalSnapshot;
-  acceptedProposal: Extract<PlanProposal, { kind: 'candidate_v2' }>;
-  prepared: PreparedCommit;
-};
-
 export type FuturePlanAdoptionCompile =
-  | { status: 'compiled'; value: CompiledFuturePlanAdoption }
+  | { status: 'compiled'; value: CompiledPlanAdoption }
   | { status: 'unsupported'; reason: string };
 
+/**
+ * W1: compiles ONE accepted future-only Plan adoption. The target snapshot is
+ * constructed deterministically from the trusted immutable source plus the
+ * validated future-only delta; the caller Draft is NEVER written over existing
+ * Tasks. It writes the new Plan, the Goal pointer, the accepted proposal and
+ * the original adoption event, with the LOCAL guards PLAN-05 names (current
+ * Goal/source/proposal, target Plan absence, and confirmed Lease/Reduction
+ * absence for each changed or added Task).
+ */
 export function compileFuturePlanAdoption(input: FuturePlanAdoptionInput): FuturePlanAdoptionCompile {
-  const { source, target, nextGoal, acceptedProposal } = input;
-  if (target.schemaVersion !== 2) {
-    return { status: 'unsupported', reason: 'W1 future-only adoption requires a schemaVersion 2 target' };
+  const { source } = input;
+  const acceptedProposal = input.commit.proposal;
+  const target = acceptedProposal.draft;
+  const { nextGoal, plan } = adoptionWrites(input.commit);
+  const build = plan.build;
+  // PLAN-05 admits only a schemaVersion 2 draft and names the delta it validated.
+  if (target.schemaVersion !== 2 || build.from !== 'future_delta') {
+    throw new Error('a future adoption writes a schemaVersion 2 draft from its source and the validated delta');
   }
-  const targetRef = { aggregateType: 'PlanRevision' as const, projectId: nextGoal.ref.projectId, planId: target.planId };
-  const basis = buildTargetTaskBasis({ source, targetRef,
-    changedTaskIds: input.changedTaskIds, addedTaskIds: input.addedTaskIds });
+  const basis = buildTargetTaskBasis({ source, targetRef: plan.ref,
+    changedTaskIds: build.changedTaskIds, addedTaskIds: build.addedTaskIds });
   if (isBasisUnsupported(basis)) return { status: 'unsupported', reason: basis.reason };
   // Deterministic source + validated delta: an unchanged Task is written from
   // its immutable source definition, never from the caller body. Only changed
   // or added Tasks take the candidate definition.
-  const changed = new Set([...input.changedTaskIds, ...input.addedTaskIds]);
+  const changed = new Set([...build.changedTaskIds, ...build.addedTaskIds]);
   const sourceTaskById = new Map(source.tasks.map((task) => [task.taskId, task]));
   const sourceAssignmentsById = new Map(revisionAssignments(source).map((assignment) => [assignment.taskId, assignment]));
   const targetAssignmentsById = new Map(revisionAssignments(target).map((assignment) => [assignment.taskId, assignment]));
@@ -261,7 +268,7 @@ export function compileFuturePlanAdoption(input: FuturePlanAdoptionInput): Futur
     if (chosen !== undefined) assignments.push(chosen);
   }
   const sourceInputs = groupInputsByConsumer(source.schemaVersion === 2 ? source.inputRequirements ?? [] : []);
-  const targetInputs = groupInputsByConsumer(target.schemaVersion === 2 ? target.inputRequirements ?? [] : []);
+  const targetInputs = groupInputsByConsumer(target.inputRequirements ?? []);
   const inputRequirements: TaskInputRequirementV2[] = [];
   for (const task of tasks) {
     const list = changed.has(task.taskId) ? targetInputs.get(task.taskId) : sourceInputs.get(task.taskId);
@@ -271,7 +278,7 @@ export function compileFuturePlanAdoption(input: FuturePlanAdoptionInput): Futur
     ...(source.reviewAdmissionProtocol !== undefined ? { reviewAdmissionProtocol: source.reviewAdmissionProtocol } : {}),
     ...(target.origin !== undefined ? { origin: target.origin }
       : source.origin !== undefined ? { origin: source.origin } : {}),
-    ref: targetRef,
+    ref: plan.ref,
     revision: 1,
     goalRef: nextGoal.ref,
     planId: target.planId,
@@ -307,12 +314,12 @@ export function compileFuturePlanAdoption(input: FuturePlanAdoptionInput): Futur
   const prepared: PreparedCommit = {
     identityKey: input.identityKey,
     fingerprint: input.fingerprint,
-    guards: [...input.guards],
+    guards: input.commit.guards,
     records: [encodeGoalSnapshot(nextGoal), encodePlanRevisionSnapshot(snapshot), encodePlanProposal(acceptedProposal)],
     claims: [],
     indexGuards: [],
     indexChanges: [],
     events: [encodePlanRevisionAcceptedEvent(event)],
   };
-  return { status: 'compiled', value: { snapshot, nextGoal, acceptedProposal, prepared } };
+  return { status: 'compiled', value: { snapshot, prepared } };
 }
