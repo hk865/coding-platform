@@ -1,0 +1,3605 @@
+{
+  "description": "Unreached src/ nodes allowed by tests/architecture/production-reach.test.ts. reason: step5/step6 (wired by A.2 step 5 or 6; substep names the substep, wiredBy the STEP5-FLIPS.md section or spec §15.2/§15.3 item; none may remain once its substep is closed, nor after step 6), pre-batch (already unreached at 790d970; the user decides later), wire-format (persisted or wire contract that must stay; the note names its reader). First filled 2026-10-05; port members and the review fixes added the same day.",
+  "entries": [
+    {
+      "file": "src/app/collaboration-driver.ts",
+      "name": "CollaborationOutboxPage",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "PLATFORM_TOKEN_META_NAME",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; used only by tests: tests/app/AG2-consultation.test.ts, tests/app/MVP-ui-entry.test.ts, tests/app/R6-host.test.ts, tests/app/R6-workbench.test.ts, tests/app/change-commit-observer.test.ts, tests/app/host-settings.test.ts, tests/helpers/AG2b-collaboration-fixture.ts"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "ProjectsCreateBody",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "WorkspacesRegisterBody",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "CompletionPoliciesInstallBody",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "CompletionPoliciesActivateBody",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "CompletionPoliciesReadBody",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "CompletionPoliciesReadResponse",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "GoalsCreateBody",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "GoalsReadBody",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "GoalsReadResponse",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "ArchitectureAdoptInitialBody",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "ArchitectureReadResponse",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "ArchitectureCaptureBody",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "ArchitectureCaptureResponse",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "ArchitectureQueryBody",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "ArchitectureQueryResponse",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "PlansProposeBody",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "PlansApplyBody",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "PlansProposalBody",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "PlansProposalResponse",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "TasksQueryBody",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "TasksQueryResponse",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "FilesReadBody",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "FilesListBody",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "FilesListResponse",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "SourceCaptureBody",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "SourceQueryBody",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "SessionsFindBody",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "SessionsReadBody",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "SessionsOperationBody",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "RuntimeCapabilitiesBody",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "SessionsCreateBody",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "SessionsHistoryBody",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "MessagesSendBody",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "MessagesInboxBody",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "MessagesReadBody",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "MessagesBodyBody",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "MessagesOutboxBody",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "MessagesOutboxResponse",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "WorkspacesRegistrationBody",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "QueriesReadBody",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "QueriesClaimBody",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "QueriesClaimResponse",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "QueriesPrepareBody",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "QueriesStartBody",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "QueriesObserveBody",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "QueriesObserveResponse",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "MaterialsOpenBody",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "WorkflowGoalInputResponse",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "WorkflowAdvanceResponse",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "WorkflowDriverReadBody",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "WorkflowDriverStopBody",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "ExecutionsReadBody",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "ExecutionsHistoryBody",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "ExecutionsListBody",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "ProjectsReadBody",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "FilesSaveBody",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "FilesCompareBody",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "CommandsStartBody",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "CommandsReadBody",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "CommandsStopBody",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "UnsupportedResponse",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/app/main.ts",
+      "name": "WorkbenchCliWorkspace",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from WorkbenchCliConfig"
+    },
+    {
+      "file": "src/app/main.ts",
+      "name": "WorkbenchCliConfig",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/app/workbench-tools.ts",
+      "name": "WorkbenchKernelHandles",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/business/workflow/ports.ts",
+      "name": "N0WorkflowPort",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/business/workflow/ports.ts",
+      "name": "N0WorkflowDependencies",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/contracts/architecture-source.ts",
+      "name": "ArchitectureSourceCapturePort",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from ProjectArchitectureSourceReader"
+    },
+    {
+      "file": "src/contracts/architecture-source.ts",
+      "name": "architectureSourceDigest",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; used only by tests: tests/data/workspace-capture-architecture.test.ts"
+    },
+    {
+      "file": "src/contracts/continuation-brief.ts",
+      "name": "continuationBriefDigest",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §3 run-machine, flip RUN-02 (C3 continuationBrief, 5.4): a requeue Run persists inputBinding.continuationBriefDigest",
+      "note": "the RUN-02/RUN-03 brief binding and I-19 digest"
+    },
+    {
+      "file": "src/contracts/continuation-brief.ts",
+      "name": "continuationBriefMarker",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 接续说明: AgentRuntime assembles ContinuationBriefV1 and buildInput appends the brief section",
+      "note": "helper of renderContinuationBriefZh"
+    },
+    {
+      "file": "src/contracts/continuation-brief.ts",
+      "name": "SourceCheckpointStampV1",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §7 task-failure: FC and failure facts wired in 5.4 (spec §15.2 5.4 失败事实: TaskRow.failure, TaskRow.rework)",
+      "note": "helper of buildTaskFailureFacts"
+    },
+    {
+      "file": "src/contracts/continuation-brief.ts",
+      "name": "compareSourceCheckpoints",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §7 task-failure: FC and failure facts wired in 5.4 (spec §15.2 5.4 失败事实: TaskRow.failure, TaskRow.rework)",
+      "note": "helper of buildTaskFailureFacts"
+    },
+    {
+      "file": "src/contracts/continuation-brief.ts",
+      "name": "because",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §7 task-failure: FC and failure facts wired in 5.4 (spec §15.2 5.4 失败事实: TaskRow.failure, TaskRow.rework)",
+      "note": "helper of buildTaskFailureFacts"
+    },
+    {
+      "file": "src/contracts/continuation-brief.ts",
+      "name": "REWORK_FAILURE_CLASS_LABELS_ZH",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 接续说明: AgentRuntime assembles ContinuationBriefV1 and buildInput appends the brief section",
+      "note": "helper of renderContinuationBriefZh"
+    },
+    {
+      "file": "src/contracts/continuation-brief.ts",
+      "name": "REWORK_ACTOR_CLASS_LABELS_ZH",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 接续说明: AgentRuntime assembles ContinuationBriefV1 and buildInput appends the brief section",
+      "note": "helper of renderContinuationBriefZh"
+    },
+    {
+      "file": "src/contracts/continuation-brief.ts",
+      "name": "CONTINUATION_STANDING_INSTRUCTIONS_ZH_V1",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 接续说明: AgentRuntime assembles ContinuationBriefV1 and buildInput appends the brief section",
+      "note": "helper of renderContinuationBriefZh"
+    },
+    {
+      "file": "src/contracts/continuation-brief.ts",
+      "name": "STOP_REQUESTER_ZH",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 接续说明: AgentRuntime assembles ContinuationBriefV1 and buildInput appends the brief section",
+      "note": "helper of renderContinuationBriefZh"
+    },
+    {
+      "file": "src/contracts/continuation-brief.ts",
+      "name": "TOOL_RESULT_ZH",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 接续说明: AgentRuntime assembles ContinuationBriefV1 and buildInput appends the brief section",
+      "note": "helper of renderContinuationBriefZh"
+    },
+    {
+      "file": "src/contracts/continuation-brief.ts",
+      "name": "SIDE_EFFECT_ZH",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 接续说明: AgentRuntime assembles ContinuationBriefV1 and buildInput appends the brief section",
+      "note": "helper of renderContinuationBriefZh"
+    },
+    {
+      "file": "src/contracts/continuation-brief.ts",
+      "name": "WAIT_STATUS_ZH",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 接续说明: AgentRuntime assembles ContinuationBriefV1 and buildInput appends the brief section",
+      "note": "helper of renderContinuationBriefZh"
+    },
+    {
+      "file": "src/contracts/continuation-brief.ts",
+      "name": "CHECKPOINT_ZH",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 接续说明: AgentRuntime assembles ContinuationBriefV1 and buildInput appends the brief section",
+      "note": "helper of renderContinuationBriefZh"
+    },
+    {
+      "file": "src/contracts/continuation-brief.ts",
+      "name": "RENDER_TEXT_CAPS",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 接续说明: AgentRuntime assembles ContinuationBriefV1 and buildInput appends the brief section",
+      "note": "helper of renderContinuationBriefZh"
+    },
+    {
+      "file": "src/contracts/continuation-brief.ts",
+      "name": "UTF8",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 接续说明: AgentRuntime assembles ContinuationBriefV1 and buildInput appends the brief section",
+      "note": "helper of renderContinuationBriefZh"
+    },
+    {
+      "file": "src/contracts/continuation-brief.ts",
+      "name": "renderContinuationBriefZh",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 接续说明: AgentRuntime assembles ContinuationBriefV1 and buildInput appends the brief section",
+      "note": "renders the brief and its marker line for the first model request of a requeue Run"
+    },
+    {
+      "file": "src/contracts/continuation-brief.ts",
+      "name": "omittedNoteZh",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 接续说明: AgentRuntime assembles ContinuationBriefV1 and buildInput appends the brief section",
+      "note": "helper of renderContinuationBriefZh"
+    },
+    {
+      "file": "src/contracts/continuation-brief.ts",
+      "name": "utf8Length",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 接续说明: AgentRuntime assembles ContinuationBriefV1 and buildInput appends the brief section",
+      "note": "helper of renderContinuationBriefZh"
+    },
+    {
+      "file": "src/contracts/continuation-brief.ts",
+      "name": "clip",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 接续说明: AgentRuntime assembles ContinuationBriefV1 and buildInput appends the brief section",
+      "note": "helper of renderContinuationBriefZh"
+    },
+    {
+      "file": "src/contracts/continuation-brief.ts",
+      "name": "boundedZh",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 接续说明: AgentRuntime assembles ContinuationBriefV1 and buildInput appends the brief section",
+      "note": "helper of renderContinuationBriefZh"
+    },
+    {
+      "file": "src/contracts/continuation-brief.ts",
+      "name": "listZh",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 接续说明: AgentRuntime assembles ContinuationBriefV1 and buildInput appends the brief section",
+      "note": "helper of renderContinuationBriefZh"
+    },
+    {
+      "file": "src/contracts/continuation-brief.ts",
+      "name": "moreZh",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 接续说明: AgentRuntime assembles ContinuationBriefV1 and buildInput appends the brief section",
+      "note": "helper of renderContinuationBriefZh"
+    },
+    {
+      "file": "src/contracts/continuation-brief.ts",
+      "name": "briefBodyZh",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 接续说明: AgentRuntime assembles ContinuationBriefV1 and buildInput appends the brief section",
+      "note": "helper of renderContinuationBriefZh"
+    },
+    {
+      "file": "src/contracts/continuation-brief.ts",
+      "name": "endingZh",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 接续说明: AgentRuntime assembles ContinuationBriefV1 and buildInput appends the brief section",
+      "note": "helper of renderContinuationBriefZh"
+    },
+    {
+      "file": "src/contracts/continuation-brief.ts",
+      "name": "continuityZh",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 接续说明: AgentRuntime assembles ContinuationBriefV1 and buildInput appends the brief section",
+      "note": "helper of renderContinuationBriefZh"
+    },
+    {
+      "file": "src/contracts/continuation-brief.ts",
+      "name": "toolCallZh",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 接续说明: AgentRuntime assembles ContinuationBriefV1 and buildInput appends the brief section",
+      "note": "helper of renderContinuationBriefZh"
+    },
+    {
+      "file": "src/contracts/core/results.ts",
+      "name": "ReadBasis",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/contracts/evidence.ts",
+      "name": "MAX_EVIDENCE_PER_TASK",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/contracts/evidence.ts",
+      "name": "EVIDENCE_KINDS",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/contracts/human-role-collaboration.ts",
+      "name": "CoordinationPolicyPin",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/contracts/no-progress.ts",
+      "name": "PLATFORM_GENERATED_CONTENT_TYPES",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 (ND-9: 新依据只收 NewBasisInputRefV1)",
+      "note": "helper of newBasisInputProblem"
+    },
+    {
+      "file": "src/contracts/no-progress.ts",
+      "name": "NewBasisInputObservationV1",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 (ND-9: 新依据只收 NewBasisInputRefV1)",
+      "note": "helper of newBasisInputProblem"
+    },
+    {
+      "file": "src/contracts/no-progress.ts",
+      "name": "newBasisInputProblem",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 (ND-9: 新依据只收 NewBasisInputRefV1)",
+      "note": "refuses platform-generated bodies as new basis inputs of a requeue"
+    },
+    {
+      "file": "src/contracts/plan.ts",
+      "name": "ApplyPlanRevisionCommand",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from applyPlanRevisionFingerprint, planRevisionRefFor, goalRefFor"
+    },
+    {
+      "file": "src/contracts/plan.ts",
+      "name": "applyPlanRevisionFingerprint",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/contracts/plan.ts",
+      "name": "planRevisionRefFor",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/contracts/plan.ts",
+      "name": "goalRefFor",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/contracts/query-execution-context.ts",
+      "name": "QuerySourceRevisionPort",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from QueryWorkspaceSourceReader"
+    },
+    {
+      "file": "src/contracts/reviewer-context.ts",
+      "name": "REVIEWER_MATERIAL_PAGE_MAX_BYTES",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from readReviewerSource"
+    },
+    {
+      "file": "src/contracts/reviewer-context.ts",
+      "name": "REVIEWER_SOURCE_MAX_LINES",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from readReviewerSource"
+    },
+    {
+      "file": "src/contracts/reviewer-context.ts",
+      "name": "ReviewerMaterialError",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from readReviewerSource"
+    },
+    {
+      "file": "src/contracts/reviewer-context.ts",
+      "name": "ReviewerSourceRequest",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from readReviewerSource"
+    },
+    {
+      "file": "src/contracts/reviewer-context.ts",
+      "name": "ReviewerSourcePage",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from readReviewerSource"
+    },
+    {
+      "file": "src/contracts/role-material-channels.ts",
+      "name": "RoleSourceIndexRequestV1",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from WorkspaceSourceIndexReader"
+    },
+    {
+      "file": "src/contracts/role-material-channels.ts",
+      "name": "RoleSourceIndexEntryV1",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from WorkspaceSourceIndexReader"
+    },
+    {
+      "file": "src/contracts/role-material-channels.ts",
+      "name": "RoleSourceIndexExcerptV1",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from WorkspaceSourceIndexReader"
+    },
+    {
+      "file": "src/contracts/role-material-channels.ts",
+      "name": "RoleSourceIndexResultV1",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from WorkspaceSourceIndexReader"
+    },
+    {
+      "file": "src/contracts/role-material-channels.ts",
+      "name": "RoleSourceIndexPort",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from WorkspaceSourceIndexReader"
+    },
+    {
+      "file": "src/contracts/role-spec.ts",
+      "name": "ROLE_SPEC_REVISION",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from RoleConfigurationPort.installRoleSpec"
+    },
+    {
+      "file": "src/contracts/role-spec.ts",
+      "name": "roleSpecRevisionRefFor",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/contracts/role-spec.ts",
+      "name": "InstallRoleSpecRevisionCommand",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from RoleConfigurationPort.installRoleSpec"
+    },
+    {
+      "file": "src/contracts/role-spec.ts",
+      "name": "ActivateRoleSpecRevisionCommand",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from RoleConfigurationPort.activateRoleSpec"
+    },
+    {
+      "file": "src/contracts/role-spec.ts",
+      "name": "InstallRoleSpecRevisionReceipt",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from RoleConfigurationPort.installRoleSpec"
+    },
+    {
+      "file": "src/contracts/role-spec.ts",
+      "name": "ActivateRoleSpecRevisionReceipt",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from RoleConfigurationPort.activateRoleSpec"
+    },
+    {
+      "file": "src/contracts/role-spec.ts",
+      "name": "installRoleSpecRevisionFingerprint",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from RoleConfigurationPort.installRoleSpec"
+    },
+    {
+      "file": "src/contracts/role-spec.ts",
+      "name": "activateRoleSpecRevisionFingerprint",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from RoleConfigurationPort.activateRoleSpec"
+    },
+    {
+      "file": "src/contracts/role-spec.ts",
+      "name": "RoleSpecInstalledEvent",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from RoleConfigurationPort.installRoleSpec"
+    },
+    {
+      "file": "src/contracts/role-spec.ts",
+      "name": "RoleSpecActivatedEvent",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from RoleConfigurationPort.activateRoleSpec"
+    },
+    {
+      "file": "src/contracts/validation/common.ts",
+      "name": "safePositiveIntField",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from validateApplyPlanRevisionCommand"
+    },
+    {
+      "file": "src/contracts/validation/common.ts",
+      "name": "validateEnum",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from validateApplyPlanRevisionCommand"
+    },
+    {
+      "file": "src/contracts/validation/plan.ts",
+      "name": "validateTaskScope",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from validateApplyPlanRevisionCommand"
+    },
+    {
+      "file": "src/contracts/validation/plan.ts",
+      "name": "REQUIREMENT_LEVELS",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from validateApplyPlanRevisionCommand"
+    },
+    {
+      "file": "src/contracts/validation/plan.ts",
+      "name": "TASK_KINDS",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from validateApplyPlanRevisionCommand"
+    },
+    {
+      "file": "src/contracts/validation/plan.ts",
+      "name": "DISPOSITIONS",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from validateApplyPlanRevisionCommand"
+    },
+    {
+      "file": "src/contracts/validation/plan.ts",
+      "name": "PHASES",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from validateApplyPlanRevisionCommand"
+    },
+    {
+      "file": "src/contracts/validation/plan.ts",
+      "name": "validateRuntimeTask",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from validateApplyPlanRevisionCommand"
+    },
+    {
+      "file": "src/contracts/validation/plan.ts",
+      "name": "validateVerificationRequirement",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from validateApplyPlanRevisionCommand"
+    },
+    {
+      "file": "src/contracts/validation/plan.ts",
+      "name": "validateAcceptanceObligation",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from validateApplyPlanRevisionCommand"
+    },
+    {
+      "file": "src/contracts/validation/plan.ts",
+      "name": "validatePlanRevisionDraft",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from validateApplyPlanRevisionCommand"
+    },
+    {
+      "file": "src/contracts/validation/plan.ts",
+      "name": "validateApplyPlanRevisionCommand",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/contracts/validation/role.ts",
+      "name": "validateRoleSpecInstallCommon",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from RoleConfigurationPort.installRoleSpec"
+    },
+    {
+      "file": "src/contracts/validation/role.ts",
+      "name": "validateInstallRoleSpecRevisionCommand",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from RoleConfigurationPort.installRoleSpec"
+    },
+    {
+      "file": "src/contracts/validation/role.ts",
+      "name": "validateActivateRoleSpecRevisionCommand",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from RoleConfigurationPort.activateRoleSpec"
+    },
+    {
+      "file": "src/contracts/verification-context.ts",
+      "name": "ReadonlySourceRead",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from ReadonlyReadWitnessReader"
+    },
+    {
+      "file": "src/contracts/verification-context.ts",
+      "name": "ReadonlyReadWitnessPort",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from ReadonlyReadWitnessReader"
+    },
+    {
+      "file": "src/contracts/verification.ts",
+      "name": "INTERRUPTED_CHECK_GAP_CODE",
+      "reason": "step5",
+      "substep": "5.3",
+      "wiredBy": "STEP5-FLIPS.md §5 verification-machine, flip VR-07 (D-2, 5.3): interrupted → gap interrupted_check",
+      "note": "gap code written by the VR-07 fold; also read by the failure facts and successor rounds"
+    },
+    {
+      "file": "src/contracts/verification.ts",
+      "name": "REVIEWER_SEMANTIC_CHECK_ID",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/contracts/verification.ts",
+      "name": "NO_CHANGE_FAST_PATH_CHECK_ID",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/core/agent-runtime/communication-tools.ts",
+      "name": "SessionMailboxToolName",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/core/agent-runtime/execution-contracts.ts",
+      "name": "RuntimePreparedExecution",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/core/agent-runtime/execution-contracts.ts",
+      "name": "RuntimePreparedQueryExecution",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/core/agent-runtime/execution-contracts.ts",
+      "name": "RuntimeQueryExecutionRecord",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/core/agent-runtime/execution-contracts.ts",
+      "name": "RuntimeExecutionRecord",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/core/agent-runtime/execution-contracts.ts",
+      "name": "RuntimeSessionRef",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/core/agent-runtime/execution-contracts.ts",
+      "name": "RuntimeReadPage",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/core/agent-runtime/ports.ts",
+      "name": "RuntimeExecutionPort.readContinuationBrief",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 接续说明 (executions/brief 读取路由); §15.3 接续说明（C3） names app/core-routes.ts executions/brief",
+      "note": "step-1 optional port member (A.2 step 1): no implementation and no caller yet"
+    },
+    {
+      "file": "src/core/agent-runtime/ports.ts",
+      "name": "N0RuntimeExecutionPort",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/core/agent-runtime/ports.ts",
+      "name": "N0AgentRuntimeService",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/core/agent-runtime/query-preparation.ts",
+      "name": "initialCoordinationResponseGuide",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/core/agent-runtime/session-discovery-tools.ts",
+      "name": "SessionDiscoveryToolName",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/core/work-graph/architecture/architecture-delta.ts",
+      "name": "changeId",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from ObservedArchitecturePort.compareArchitecture"
+    },
+    {
+      "file": "src/core/work-graph/architecture/architecture-delta.ts",
+      "name": "deterministicCycles",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from ObservedArchitecturePort.compareArchitecture"
+    },
+    {
+      "file": "src/core/work-graph/architecture/architecture-delta.ts",
+      "name": "compareObservedGraphs",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from ObservedArchitecturePort.compareArchitecture"
+    },
+    {
+      "file": "src/core/work-graph/architecture/architecture-record-codecs.ts",
+      "name": "ObservedArchitectureMapping",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/core/work-graph/architecture/catalog-contracts.ts",
+      "name": "ReviseArchitectureCatalogInput",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from ArchitectureCatalogPort.reviseArchitectureCatalog"
+    },
+    {
+      "file": "src/core/work-graph/architecture/catalog-contracts.ts",
+      "name": "ArchitectureCatalogPort.reviseArchitectureCatalog",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; a port operation create-platform.ts publishes, but no route (core-routes.ts), Workflow or script reads it; used only by tests: tests/composition/A1-graph-session-platform.test.ts"
+    },
+    {
+      "file": "src/core/work-graph/architecture/catalog-record-codecs.ts",
+      "name": "ArchitectureCatalogRevisedEventV1",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from ArchitectureCatalogPort.reviseArchitectureCatalog"
+    },
+    {
+      "file": "src/core/work-graph/architecture/catalog-record-codecs.ts",
+      "name": "encodeArchitectureCatalogRevisedEvent",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from ArchitectureCatalogPort.reviseArchitectureCatalog"
+    },
+    {
+      "file": "src/core/work-graph/architecture/catalog-record-codecs.ts",
+      "name": "decodeArchitectureCatalogRevisedEvent",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from ArchitectureCatalogPort.reviseArchitectureCatalog"
+    },
+    {
+      "file": "src/core/work-graph/architecture/catalog-service.ts",
+      "name": "REVISE_IDENTITY_PREFIX",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from ArchitectureCatalogPort.reviseArchitectureCatalog"
+    },
+    {
+      "file": "src/core/work-graph/architecture/catalog-service.ts",
+      "name": "REVISE_COMMAND_TYPE",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from ArchitectureCatalogPort.reviseArchitectureCatalog"
+    },
+    {
+      "file": "src/core/work-graph/architecture/catalog-service.ts",
+      "name": "MAX_REVISE_REASON_BYTES",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from ArchitectureCatalogPort.reviseArchitectureCatalog"
+    },
+    {
+      "file": "src/core/work-graph/architecture/catalog-service.ts",
+      "name": "CallerScope",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from ArchitectureCatalogPort.reviseArchitectureCatalog"
+    },
+    {
+      "file": "src/core/work-graph/architecture/catalog-service.ts",
+      "name": "readCallerScope",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from ArchitectureCatalogPort.reviseArchitectureCatalog"
+    },
+    {
+      "file": "src/core/work-graph/architecture/catalog-service.ts",
+      "name": "restoreRevised",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from ArchitectureCatalogPort.reviseArchitectureCatalog"
+    },
+    {
+      "file": "src/core/work-graph/architecture/contracts.ts",
+      "name": "ObservedArchitectureDeltaChange",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from ObservedArchitecturePort.compareArchitecture"
+    },
+    {
+      "file": "src/core/work-graph/architecture/contracts.ts",
+      "name": "ObservedArchitectureComparison",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from ObservedArchitecturePort.compareArchitecture"
+    },
+    {
+      "file": "src/core/work-graph/architecture/contracts.ts",
+      "name": "ObservedArchitectureImpact",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from ObservedArchitecturePort.queryImpact"
+    },
+    {
+      "file": "src/core/work-graph/architecture/contracts.ts",
+      "name": "ObservedArchitecturePort.compareArchitecture",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; a port operation create-platform.ts publishes, but no route (core-routes.ts), Workflow or script reads it; used only by tests: tests/composition/R3d-R3g-platform.test.ts, tests/work-graph/R3d-observed-architecture.test.ts"
+    },
+    {
+      "file": "src/core/work-graph/architecture/contracts.ts",
+      "name": "ObservedArchitecturePort.queryImpact",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; a port operation create-platform.ts publishes, but no route (core-routes.ts), Workflow or script reads it; used only by tests: tests/work-graph/R3d-observed-architecture.test.ts, tests/work-graph/R3d-observed-boundaries.test.ts"
+    },
+    {
+      "file": "src/core/work-graph/architecture/graph-index.ts",
+      "name": "reverseAdjacency",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from ObservedArchitecturePort.queryImpact"
+    },
+    {
+      "file": "src/core/work-graph/architecture/graph-index.ts",
+      "name": "buildObservedImpact",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from ObservedArchitecturePort.queryImpact"
+    },
+    {
+      "file": "src/core/work-graph/communication/mailbox-service.ts",
+      "name": "isNonNegInt",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; file-local; referenced nowhere"
+    },
+    {
+      "file": "src/core/work-graph/configuration/contracts.ts",
+      "name": "RoleReadOptions",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from RoleConfigurationPort.readRoleSpec"
+    },
+    {
+      "file": "src/core/work-graph/configuration/contracts.ts",
+      "name": "RoleConfigurationPort.installRoleSpec",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; a port operation create-platform.ts publishes, but no route (core-routes.ts), Workflow or script reads it; used only by tests: tests/composition/R3d-R3g-platform.test.ts, tests/helpers/B2-runtime-fixture.ts, tests/helpers/C2-runtime-platform-fixture.ts, tests/work-graph/R3g-role-spec.test.ts, tests/work-graph/R4c-task-claim-boundaries.test.ts"
+    },
+    {
+      "file": "src/core/work-graph/configuration/contracts.ts",
+      "name": "RoleConfigurationPort.readRoleSpec",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; a port operation create-platform.ts publishes, but no route (core-routes.ts), Workflow or script reads it; used only by tests: tests/composition/R3d-R3g-platform.test.ts, tests/work-graph/R3g-role-spec.test.ts"
+    },
+    {
+      "file": "src/core/work-graph/configuration/contracts.ts",
+      "name": "RoleConfigurationPort.activateRoleSpec",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; a port operation create-platform.ts publishes, but no route (core-routes.ts), Workflow or script reads it; used only by tests: tests/composition/R3d-R3g-platform.test.ts, tests/helpers/B2-runtime-fixture.ts, tests/helpers/C2-runtime-platform-fixture.ts, tests/work-graph/R3g-role-spec.test.ts, tests/work-graph/R4c-task-claim-boundaries.test.ts"
+    },
+    {
+      "file": "src/core/work-graph/configuration/contracts.ts",
+      "name": "RoleConfigurationPort.resolveRoleBinding",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; a port operation create-platform.ts publishes, but no route (core-routes.ts), Workflow or script reads it; used only by tests: tests/composition/B2-runtime-platform.test.ts, tests/helpers/B2-runtime-fixture.ts, tests/work-graph/R3g-role-spec.test.ts"
+    },
+    {
+      "file": "src/core/work-graph/configuration/role-memory-service.ts",
+      "name": "CommittedStoreReceipt",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from RoleConfigurationPort.installRoleSpec, RoleConfigurationPort.activateRoleSpec"
+    },
+    {
+      "file": "src/core/work-graph/configuration/role-memory-service.ts",
+      "name": "ROLE_INSTALL_IDENTITY_PREFIX",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from RoleConfigurationPort.installRoleSpec"
+    },
+    {
+      "file": "src/core/work-graph/configuration/role-memory-service.ts",
+      "name": "ROLE_ACTIVATE_IDENTITY_PREFIX",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from RoleConfigurationPort.activateRoleSpec"
+    },
+    {
+      "file": "src/core/work-graph/configuration/role-memory-service.ts",
+      "name": "actorRefEquals",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from RoleConfigurationPort.installRoleSpec, RoleConfigurationPort.activateRoleSpec"
+    },
+    {
+      "file": "src/core/work-graph/configuration/role-memory-service.ts",
+      "name": "roleInstallIdentityKey",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from RoleConfigurationPort.installRoleSpec"
+    },
+    {
+      "file": "src/core/work-graph/configuration/role-memory-service.ts",
+      "name": "roleActivateIdentityKey",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from RoleConfigurationPort.activateRoleSpec"
+    },
+    {
+      "file": "src/core/work-graph/configuration/role-memory-service.ts",
+      "name": "mapInstallStoreFailure",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from RoleConfigurationPort.installRoleSpec"
+    },
+    {
+      "file": "src/core/work-graph/configuration/role-memory-service.ts",
+      "name": "mapActivateStoreFailure",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from RoleConfigurationPort.activateRoleSpec"
+    },
+    {
+      "file": "src/core/work-graph/configuration/role-record-codecs.ts",
+      "name": "encodeRoleSpecRevisionSnapshot",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from RoleConfigurationPort.installRoleSpec"
+    },
+    {
+      "file": "src/core/work-graph/configuration/role-record-codecs.ts",
+      "name": "encodeProjectRoleSpecActiveSnapshot",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from RoleConfigurationPort.activateRoleSpec"
+    },
+    {
+      "file": "src/core/work-graph/configuration/role-record-codecs.ts",
+      "name": "encodeRoleSpecInstalledEvent",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from RoleConfigurationPort.installRoleSpec"
+    },
+    {
+      "file": "src/core/work-graph/configuration/role-record-codecs.ts",
+      "name": "encodeRoleSpecActivatedEvent",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from RoleConfigurationPort.activateRoleSpec"
+    },
+    {
+      "file": "src/core/work-graph/evidence/contracts.ts",
+      "name": "RoundChainHeadQuery",
+      "reason": "step5",
+      "substep": "5.3",
+      "wiredBy": "spec §15.2 5.3 (投影、完成与 Workflow 经 roundChainHead 读链头); §15.3 VR-01 names evidence-service.ts queryRoundChainHead",
+      "note": "helper of EvidencePort.queryRoundChainHead"
+    },
+    {
+      "file": "src/core/work-graph/evidence/contracts.ts",
+      "name": "EvidencePort.queryRoundChainHead",
+      "reason": "step5",
+      "substep": "5.3",
+      "wiredBy": "spec §15.2 5.3 (投影、完成与 Workflow 经 roundChainHead 读链头); §15.3 VR-01 names evidence-service.ts queryRoundChainHead",
+      "note": "step-1 optional port member (A.2 step 1): no implementation and no caller yet"
+    },
+    {
+      "file": "src/core/work-graph/evidence/contracts.ts",
+      "name": "EvidencePort.reverifyRound",
+      "reason": "step5",
+      "substep": "5.9",
+      "wiredBy": "spec §15.2 5.9 C5 重新检查 (reverifyRound); §15.3 VR-14 names evidence-service.ts reverifyRound",
+      "note": "step-1 optional port member (A.2 step 1): no implementation and no caller yet; WorkflowCalls.reverify_round names its type"
+    },
+    {
+      "file": "src/core/work-graph/evidence/contracts.ts",
+      "name": "EvidencePort.submitEvidence",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; a port operation create-platform.ts publishes, but no route (core-routes.ts), Workflow or script reads it; used only by tests: tests/business/R5c-workflow.test.ts"
+    },
+    {
+      "file": "src/core/work-graph/materials/grant-contracts.ts",
+      "name": "MATERIAL_GRANT_MAX_MATERIALS",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from MaterialGrantPort.grantMaterialAccess"
+    },
+    {
+      "file": "src/core/work-graph/materials/grant-contracts.ts",
+      "name": "MATERIAL_GRANT_PURPOSE_MAX_BYTES",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from MaterialGrantPort.grantMaterialAccess"
+    },
+    {
+      "file": "src/core/work-graph/materials/grant-contracts.ts",
+      "name": "MATERIAL_GRANT_REASON_MAX_BYTES",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from MaterialGrantPort.revokeMaterialAccess"
+    },
+    {
+      "file": "src/core/work-graph/materials/grant-contracts.ts",
+      "name": "MaterialGrantWorkspaceSourceSet",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from MaterialGrantPort.grantMaterialAccess"
+    },
+    {
+      "file": "src/core/work-graph/materials/grant-contracts.ts",
+      "name": "GrantMaterialAccessInput",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from MaterialGrantPort.grantMaterialAccess"
+    },
+    {
+      "file": "src/core/work-graph/materials/grant-contracts.ts",
+      "name": "RevokeMaterialAccessInput",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from MaterialGrantPort.revokeMaterialAccess"
+    },
+    {
+      "file": "src/core/work-graph/materials/grant-contracts.ts",
+      "name": "MaterialGrantPort.grantMaterialAccess",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; a port operation create-platform.ts publishes, but no route (core-routes.ts), Workflow or script reads it; used only by tests: tests/composition/C1-M1-platform.test.ts, tests/composition/C2-runtime-platform.test.ts, tests/work-graph/B2-material-admission.test.ts, tests/work-graph/M1-material-grants.test.ts"
+    },
+    {
+      "file": "src/core/work-graph/materials/grant-contracts.ts",
+      "name": "MaterialGrantPort.revokeMaterialAccess",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; a port operation create-platform.ts publishes, but no route (core-routes.ts), Workflow or script reads it; used only by tests: tests/composition/C1-M1-platform.test.ts, tests/composition/C2-runtime-platform.test.ts, tests/work-graph/B2-material-admission.test.ts, tests/work-graph/M1-material-grants.test.ts"
+    },
+    {
+      "file": "src/core/work-graph/materials/grant-record-codecs.ts",
+      "name": "MaterialAccessRevocationV1",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from MaterialGrantPort.revokeMaterialAccess"
+    },
+    {
+      "file": "src/core/work-graph/materials/grant-record-codecs.ts",
+      "name": "encodeMaterialAccessGrantSnapshot",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from MaterialGrantPort.grantMaterialAccess, MaterialGrantPort.revokeMaterialAccess"
+    },
+    {
+      "file": "src/core/work-graph/materials/grant-record-codecs.ts",
+      "name": "encodeEvent",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from MaterialGrantPort.grantMaterialAccess, MaterialGrantPort.revokeMaterialAccess"
+    },
+    {
+      "file": "src/core/work-graph/materials/grant-record-codecs.ts",
+      "name": "encodeMaterialAccessGrantedEvent",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from MaterialGrantPort.grantMaterialAccess"
+    },
+    {
+      "file": "src/core/work-graph/materials/grant-record-codecs.ts",
+      "name": "encodeMaterialAccessRevokedEvent",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from MaterialGrantPort.revokeMaterialAccess"
+    },
+    {
+      "file": "src/core/work-graph/materials/grant-service.ts",
+      "name": "GRANT_IDENTITY_PREFIX",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from MaterialGrantPort.grantMaterialAccess"
+    },
+    {
+      "file": "src/core/work-graph/materials/grant-service.ts",
+      "name": "REVOKE_IDENTITY_PREFIX",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from MaterialGrantPort.revokeMaterialAccess"
+    },
+    {
+      "file": "src/core/work-graph/materials/grant-service.ts",
+      "name": "GRANT_INPUT_KEYS",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from MaterialGrantPort.grantMaterialAccess"
+    },
+    {
+      "file": "src/core/work-graph/materials/grant-service.ts",
+      "name": "REVOKE_INPUT_KEYS",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from MaterialGrantPort.revokeMaterialAccess"
+    },
+    {
+      "file": "src/core/work-graph/materials/grant-service.ts",
+      "name": "isRecord",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from MaterialGrantPort.grantMaterialAccess, MaterialGrantPort.revokeMaterialAccess"
+    },
+    {
+      "file": "src/core/work-graph/materials/grant-service.ts",
+      "name": "nonEmpty",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from MaterialGrantPort.grantMaterialAccess, MaterialGrantPort.revokeMaterialAccess"
+    },
+    {
+      "file": "src/core/work-graph/materials/grant-service.ts",
+      "name": "isSafeRevision",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from MaterialGrantPort.grantMaterialAccess"
+    },
+    {
+      "file": "src/core/work-graph/materials/grant-service.ts",
+      "name": "isSignal",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from MaterialGrantPort.grantMaterialAccess, MaterialGrantPort.revokeMaterialAccess"
+    },
+    {
+      "file": "src/core/work-graph/materials/grant-service.ts",
+      "name": "trustedActor",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from MaterialGrantPort.grantMaterialAccess, MaterialGrantPort.revokeMaterialAccess"
+    },
+    {
+      "file": "src/core/work-graph/materials/grant-service.ts",
+      "name": "sameActor",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from MaterialGrantPort.grantMaterialAccess, MaterialGrantPort.revokeMaterialAccess"
+    },
+    {
+      "file": "src/core/work-graph/materials/grant-service.ts",
+      "name": "refKeyOf",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from MaterialGrantPort.grantMaterialAccess, MaterialGrantPort.revokeMaterialAccess"
+    },
+    {
+      "file": "src/core/work-graph/materials/grant-service.ts",
+      "name": "sameRef",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from MaterialGrantPort.grantMaterialAccess, MaterialGrantPort.revokeMaterialAccess"
+    },
+    {
+      "file": "src/core/work-graph/materials/grant-service.ts",
+      "name": "messageOf",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from MaterialGrantPort.grantMaterialAccess"
+    },
+    {
+      "file": "src/core/work-graph/materials/grant-service.ts",
+      "name": "reject",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from MaterialGrantPort.grantMaterialAccess, MaterialGrantPort.revokeMaterialAccess"
+    },
+    {
+      "file": "src/core/work-graph/materials/grant-service.ts",
+      "name": "forbidden",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from MaterialGrantPort.grantMaterialAccess, MaterialGrantPort.revokeMaterialAccess"
+    },
+    {
+      "file": "src/core/work-graph/materials/grant-service.ts",
+      "name": "invalid",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from MaterialGrantPort.grantMaterialAccess, MaterialGrantPort.revokeMaterialAccess"
+    },
+    {
+      "file": "src/core/work-graph/materials/grant-service.ts",
+      "name": "unavailable",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from MaterialGrantPort.grantMaterialAccess, MaterialGrantPort.revokeMaterialAccess"
+    },
+    {
+      "file": "src/core/work-graph/materials/grant-service.ts",
+      "name": "notFound",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from MaterialGrantPort.grantMaterialAccess, MaterialGrantPort.revokeMaterialAccess"
+    },
+    {
+      "file": "src/core/work-graph/materials/grant-service.ts",
+      "name": "revisionConflict",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from MaterialGrantPort.grantMaterialAccess, MaterialGrantPort.revokeMaterialAccess"
+    },
+    {
+      "file": "src/core/work-graph/materials/grant-service.ts",
+      "name": "cancelled",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from MaterialGrantPort.grantMaterialAccess, MaterialGrantPort.revokeMaterialAccess"
+    },
+    {
+      "file": "src/core/work-graph/materials/grant-service.ts",
+      "name": "unsupported",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from MaterialGrantPort.grantMaterialAccess, MaterialGrantPort.revokeMaterialAccess"
+    },
+    {
+      "file": "src/core/work-graph/materials/grant-service.ts",
+      "name": "pinsFromCurrent",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from MaterialGrantPort.grantMaterialAccess, MaterialGrantPort.revokeMaterialAccess"
+    },
+    {
+      "file": "src/core/work-graph/materials/grant-service.ts",
+      "name": "mapStoreFailure",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from MaterialGrantPort.grantMaterialAccess, MaterialGrantPort.revokeMaterialAccess"
+    },
+    {
+      "file": "src/core/work-graph/materials/grant-service.ts",
+      "name": "HostPrincipal",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from MaterialGrantPort.grantMaterialAccess, MaterialGrantPort.revokeMaterialAccess"
+    },
+    {
+      "file": "src/core/work-graph/materials/grant-service.ts",
+      "name": "HostReader",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from MaterialGrantPort.grantMaterialAccess, MaterialGrantPort.revokeMaterialAccess"
+    },
+    {
+      "file": "src/core/work-graph/materials/grant-service.ts",
+      "name": "BoundContext",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from MaterialGrantPort.grantMaterialAccess, MaterialGrantPort.revokeMaterialAccess"
+    },
+    {
+      "file": "src/core/work-graph/materials/grant-service.ts",
+      "name": "OwnedContext",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from MaterialGrantPort.grantMaterialAccess, MaterialGrantPort.revokeMaterialAccess"
+    },
+    {
+      "file": "src/core/work-graph/materials/grant-service.ts",
+      "name": "ownCallContext",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from MaterialGrantPort.grantMaterialAccess, MaterialGrantPort.revokeMaterialAccess"
+    },
+    {
+      "file": "src/core/work-graph/materials/grant-service.ts",
+      "name": "OwnedGrantRequest",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from MaterialGrantPort.grantMaterialAccess"
+    },
+    {
+      "file": "src/core/work-graph/materials/grant-service.ts",
+      "name": "ownGrantRequest",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from MaterialGrantPort.grantMaterialAccess"
+    },
+    {
+      "file": "src/core/work-graph/materials/grant-service.ts",
+      "name": "OwnedRevokeRequest",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from MaterialGrantPort.revokeMaterialAccess"
+    },
+    {
+      "file": "src/core/work-graph/materials/grant-service.ts",
+      "name": "ownRevokeRequest",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from MaterialGrantPort.revokeMaterialAccess"
+    },
+    {
+      "file": "src/core/work-graph/materials/grant-service.ts",
+      "name": "ValidatedGrant",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from MaterialGrantPort.grantMaterialAccess"
+    },
+    {
+      "file": "src/core/work-graph/materials/grant-service.ts",
+      "name": "rejectUnknownFields",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from MaterialGrantPort.grantMaterialAccess, MaterialGrantPort.revokeMaterialAccess"
+    },
+    {
+      "file": "src/core/work-graph/materials/grant-service.ts",
+      "name": "validateGrantShape",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from MaterialGrantPort.grantMaterialAccess"
+    },
+    {
+      "file": "src/core/work-graph/materials/grant-service.ts",
+      "name": "validateGrantExpected",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from MaterialGrantPort.grantMaterialAccess"
+    },
+    {
+      "file": "src/core/work-graph/materials/grant-service.ts",
+      "name": "validateRevokeShape",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from MaterialGrantPort.revokeMaterialAccess"
+    },
+    {
+      "file": "src/core/work-graph/materials/grant-service.ts",
+      "name": "validateRevokeExpected",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from MaterialGrantPort.revokeMaterialAccess"
+    },
+    {
+      "file": "src/core/work-graph/materials/grant-service.ts",
+      "name": "actorIdentity",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from MaterialGrantPort.grantMaterialAccess, MaterialGrantPort.revokeMaterialAccess"
+    },
+    {
+      "file": "src/core/work-graph/materials/grant-service.ts",
+      "name": "stableDigest",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from MaterialGrantPort.grantMaterialAccess, MaterialGrantPort.revokeMaterialAccess"
+    },
+    {
+      "file": "src/core/work-graph/materials/grant-service.ts",
+      "name": "sortedExpected",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from MaterialGrantPort.grantMaterialAccess, MaterialGrantPort.revokeMaterialAccess"
+    },
+    {
+      "file": "src/core/work-graph/materials/grant-service.ts",
+      "name": "grantFingerprint",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from MaterialGrantPort.grantMaterialAccess"
+    },
+    {
+      "file": "src/core/work-graph/materials/grant-service.ts",
+      "name": "revokeFingerprint",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from MaterialGrantPort.revokeMaterialAccess"
+    },
+    {
+      "file": "src/core/work-graph/materials/grant-service.ts",
+      "name": "AuthorityLoad",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from MaterialGrantPort.grantMaterialAccess, MaterialGrantPort.revokeMaterialAccess"
+    },
+    {
+      "file": "src/core/work-graph/materials/grant-service.ts",
+      "name": "authorityRejection",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from MaterialGrantPort.grantMaterialAccess, MaterialGrantPort.revokeMaterialAccess"
+    },
+    {
+      "file": "src/core/work-graph/materials/grant-service.ts",
+      "name": "runScopeProblem",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from MaterialGrantPort.grantMaterialAccess"
+    },
+    {
+      "file": "src/core/work-graph/materials/grant-service.ts",
+      "name": "loadOwnerRun",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from MaterialGrantPort.grantMaterialAccess"
+    },
+    {
+      "file": "src/core/work-graph/materials/material-service.ts",
+      "name": "StoreRejectionCode",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; file-local; referenced nowhere"
+    },
+    {
+      "file": "src/core/work-graph/persistence/record-codecs.ts",
+      "name": "GoalControlKind",
+      "reason": "step5",
+      "substep": "5.5",
+      "wiredBy": "STEP5-FLIPS.md §11 goal-machine, 新增 GOAL-04/05/06 (5.5): the GoalDesiredStateChanged effect has no writer yet",
+      "note": "helper of encodeGoalDesiredStateChangedEvent, decodeGoalDesiredStateChangedEvent, goalSnapshotFromDesiredStateChangedEvent"
+    },
+    {
+      "file": "src/core/work-graph/persistence/record-codecs.ts",
+      "name": "GoalDesiredStateChangedEvent",
+      "reason": "step5",
+      "substep": "5.5",
+      "wiredBy": "STEP5-FLIPS.md §11 goal-machine, 新增 GOAL-04/05/06 (5.5): the GoalDesiredStateChanged effect has no writer yet",
+      "note": "helper of encodeGoalDesiredStateChangedEvent, decodeGoalDesiredStateChangedEvent, goalSnapshotFromDesiredStateChangedEvent"
+    },
+    {
+      "file": "src/core/work-graph/persistence/record-codecs.ts",
+      "name": "encodeGoalDesiredStateChangedEvent",
+      "reason": "step5",
+      "substep": "5.5",
+      "wiredBy": "STEP5-FLIPS.md §11 goal-machine, 新增 GOAL-04/05/06 (5.5): the GoalDesiredStateChanged effect has no writer yet",
+      "note": "event writer of setGoalControl"
+    },
+    {
+      "file": "src/core/work-graph/persistence/record-codecs.ts",
+      "name": "decodeGoalDesiredStateChangedEvent",
+      "reason": "step5",
+      "substep": "5.5",
+      "wiredBy": "STEP5-FLIPS.md §11 goal-machine, 新增 GOAL-04/05/06 (5.5): the GoalDesiredStateChanged effect has no writer yet",
+      "note": "typed decode for the receipt replay (LA-7); stored rows are validated by the registered validateGoalDesiredStateChangedEvent"
+    },
+    {
+      "file": "src/core/work-graph/persistence/record-codecs.ts",
+      "name": "goalSnapshotFromDesiredStateChangedEvent",
+      "reason": "step5",
+      "substep": "5.5",
+      "wiredBy": "STEP5-FLIPS.md §11 goal-machine, 新增 GOAL-04/05/06 (5.5): the GoalDesiredStateChanged effect has no writer yet",
+      "note": "receipt replay restores desiredStateRequestedBy (LA-7)"
+    },
+    {
+      "file": "src/core/work-graph/persistence/record-codecs.ts",
+      "name": "recordSchemaForAggregateType",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/core/work-graph/queries/query-execution.ts",
+      "name": "fingerprintOf",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; file-local; referenced nowhere"
+    },
+    {
+      "file": "src/core/work-graph/queries/query-execution.ts",
+      "name": "mergeGuards",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; file-local; referenced nowhere"
+    },
+    {
+      "file": "src/core/work-graph/queries/query-execution.ts",
+      "name": "ExpectedPins",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; file-local; referenced nowhere"
+    },
+    {
+      "file": "src/core/work-graph/queries/query-record-codecs.ts",
+      "name": "decodeQueryJobAnsweredEvent",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/core/work-graph/sessions/lifecycle-record-codecs.ts",
+      "name": "SessionHealthObservedEventV1",
+      "reason": "step5",
+      "substep": "5.6",
+      "wiredBy": "STEP5-FLIPS.md §1 session-availability, 新增 SES-12/13/19 health_observed (5.6)",
+      "note": "helper of encodeSessionHealthObservedEvent, sessionHealthObservedPayloadFromEvent"
+    },
+    {
+      "file": "src/core/work-graph/sessions/lifecycle-record-codecs.ts",
+      "name": "encodeSessionHealthObservedEvent",
+      "reason": "step5",
+      "substep": "5.6",
+      "wiredBy": "STEP5-FLIPS.md §1 session-availability, 新增 SES-12/13/19 health_observed (5.6)",
+      "note": "event writer of the health probe"
+    },
+    {
+      "file": "src/core/work-graph/sessions/lifecycle-record-codecs.ts",
+      "name": "sessionHealthObservedPayloadFromEvent",
+      "reason": "step5",
+      "substep": "5.6",
+      "wiredBy": "STEP5-FLIPS.md §1 session-availability, 新增 SES-12/13/19 health_observed (5.6)",
+      "note": "receipt replay of the health probe"
+    },
+    {
+      "file": "src/core/work-graph/sessions/session-targets.ts",
+      "name": "nonEmpty",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; file-local; referenced nowhere"
+    },
+    {
+      "file": "src/core/work-graph/state/goal-machine.ts",
+      "name": "GoalControl",
+      "reason": "step5",
+      "substep": "5.5",
+      "wiredBy": "spec §15.2 5.5 扇出驱动 (GOAL-09..16; reason text goal:<goalId>:<control>@<desiredStateRevision> of §2.3 扇出身份与重驱协议)",
+      "note": "helper of goalFanOutReason, findGoalResumeContinuations"
+    },
+    {
+      "file": "src/core/work-graph/state/goal-machine.ts",
+      "name": "nextGoalDesiredState",
+      "reason": "step5",
+      "substep": "5.5",
+      "wiredBy": "STEP5-FLIPS.md §11 goal-machine, 新增 GOAL-04/05/06 (5.5): nextGoalDesiredState has no writer yet",
+      "note": "record constructor of the Goal desired state"
+    },
+    {
+      "file": "src/core/work-graph/state/goal-machine.ts",
+      "name": "sameIntent",
+      "reason": "step5",
+      "substep": "5.5",
+      "wiredBy": "STEP5-FLIPS.md §11 goal-machine: GOAL-17..30 live in reduceGoalDisplay, no writer today (spec §15.2 5.5 展示归约; GOAL-24/25/27/30 in 5.8)",
+      "note": "helper of reduceGoalDisplay, findGoalResumeContinuations"
+    },
+    {
+      "file": "src/core/work-graph/state/goal-machine.ts",
+      "name": "goalIdentity",
+      "reason": "step5",
+      "substep": "5.5",
+      "wiredBy": "spec §15.2 5.5 扇出驱动 (fan-out driver); §15.3 GOAL-09 names goalFanOutRequestId (also GOAL-29 in 5.6)",
+      "note": "helper of findGoalResumeContinuations"
+    },
+    {
+      "file": "src/core/work-graph/state/goal-machine.ts",
+      "name": "runIdentity",
+      "reason": "step5",
+      "substep": "5.5",
+      "wiredBy": "spec §15.2 5.5 扇出驱动 (fan-out driver); §15.3 GOAL-09 names goalFanOutRequestId (also GOAL-29 in 5.6)",
+      "note": "helper of findGoalResumeContinuations"
+    },
+    {
+      "file": "src/core/work-graph/state/goal-machine.ts",
+      "name": "goalFanOutRequestId",
+      "reason": "step5",
+      "substep": "5.5",
+      "wiredBy": "spec §15.2 5.5 扇出驱动 (fan-out driver); §15.3 GOAL-09 names goalFanOutRequestId (also GOAL-29 in 5.6)",
+      "note": "helper of findGoalResumeContinuations"
+    },
+    {
+      "file": "src/core/work-graph/state/goal-machine.ts",
+      "name": "goalFanOutReason",
+      "reason": "step5",
+      "substep": "5.5",
+      "wiredBy": "spec §15.2 5.5 扇出驱动 (GOAL-09..16; reason text goal:<goalId>:<control>@<desiredStateRevision> of §2.3 扇出身份与重驱协议)",
+      "note": "deterministic reason of a fan-out control"
+    },
+    {
+      "file": "src/core/work-graph/state/goal-machine.ts",
+      "name": "goalResumeContinueRequestId",
+      "reason": "step5",
+      "substep": "5.6",
+      "wiredBy": "spec §15.2 5.6 GOAL-29 (§2 GOAL-29 row: Host fan-out driver after the resume commit)",
+      "note": "helper of findGoalResumeContinuations"
+    },
+    {
+      "file": "src/core/work-graph/state/goal-machine.ts",
+      "name": "GoalResumeTaskFactsV1",
+      "reason": "step5",
+      "substep": "5.6",
+      "wiredBy": "spec §15.2 5.6 GOAL-29 (§2 GOAL-29 row: Host fan-out driver after the resume commit)",
+      "note": "helper of findGoalResumeContinuations"
+    },
+    {
+      "file": "src/core/work-graph/state/goal-machine.ts",
+      "name": "GoalResumeContinuationV1",
+      "reason": "step5",
+      "substep": "5.6",
+      "wiredBy": "spec §15.2 5.6 GOAL-29 (§2 GOAL-29 row: Host fan-out driver after the resume commit)",
+      "note": "helper of findGoalResumeContinuations"
+    },
+    {
+      "file": "src/core/work-graph/state/goal-machine.ts",
+      "name": "findGoalResumeContinuations",
+      "reason": "step5",
+      "substep": "5.6",
+      "wiredBy": "spec §15.2 5.6 GOAL-29 (§2 GOAL-29 row: Host fan-out driver after the resume commit)",
+      "note": "selects the Tasks a Goal resume continues"
+    },
+    {
+      "file": "src/core/work-graph/state/goal-machine.ts",
+      "name": "GoalRunControlCapabilityV1",
+      "reason": "step5",
+      "substep": "5.5",
+      "wiredBy": "STEP5-FLIPS.md §11 goal-machine: GOAL-17..30 live in reduceGoalDisplay, no writer today (spec §15.2 5.5 展示归约; GOAL-24/25/27/30 in 5.8)",
+      "note": "helper of reduceGoalDisplay"
+    },
+    {
+      "file": "src/core/work-graph/state/goal-machine.ts",
+      "name": "GoalRunStopInputV1",
+      "reason": "step5",
+      "substep": "5.5",
+      "wiredBy": "STEP5-FLIPS.md §11 goal-machine: GOAL-17..30 live in reduceGoalDisplay, no writer today (spec §15.2 5.5 展示归约; GOAL-24/25/27/30 in 5.8)",
+      "note": "helper of reduceGoalDisplay"
+    },
+    {
+      "file": "src/core/work-graph/state/goal-machine.ts",
+      "name": "GoalRunStopStateV1",
+      "reason": "step5",
+      "substep": "5.5",
+      "wiredBy": "STEP5-FLIPS.md §11 goal-machine: GOAL-17..30 live in reduceGoalDisplay, no writer today (spec §15.2 5.5 展示归约; GOAL-24/25/27/30 in 5.8)",
+      "note": "helper of reduceGoalDisplay"
+    },
+    {
+      "file": "src/core/work-graph/state/goal-machine.ts",
+      "name": "GoalRunStopV1",
+      "reason": "step5",
+      "substep": "5.5",
+      "wiredBy": "STEP5-FLIPS.md §11 goal-machine: GOAL-17..30 live in reduceGoalDisplay, no writer today (spec §15.2 5.5 展示归约; GOAL-24/25/27/30 in 5.8)",
+      "note": "helper of reduceGoalDisplay"
+    },
+    {
+      "file": "src/core/work-graph/state/goal-machine.ts",
+      "name": "otherIntent",
+      "reason": "step5",
+      "substep": "5.5",
+      "wiredBy": "STEP5-FLIPS.md §11 goal-machine: GOAL-17..30 live in reduceGoalDisplay, no writer today (spec §15.2 5.5 展示归约; GOAL-24/25/27/30 in 5.8)",
+      "note": "helper of reduceGoalDisplay"
+    },
+    {
+      "file": "src/core/work-graph/state/goal-machine.ts",
+      "name": "projectGoalRunStop",
+      "reason": "step5",
+      "substep": "5.5",
+      "wiredBy": "STEP5-FLIPS.md §11 goal-machine: GOAL-17..30 live in reduceGoalDisplay, no writer today (spec §15.2 5.5 展示归约; GOAL-24/25/27/30 in 5.8)",
+      "note": "helper of reduceGoalDisplay"
+    },
+    {
+      "file": "src/core/work-graph/state/goal-machine.ts",
+      "name": "runStopState",
+      "reason": "step5",
+      "substep": "5.5",
+      "wiredBy": "STEP5-FLIPS.md §11 goal-machine: GOAL-17..30 live in reduceGoalDisplay, no writer today (spec §15.2 5.5 展示归约; GOAL-24/25/27/30 in 5.8)",
+      "note": "helper of reduceGoalDisplay"
+    },
+    {
+      "file": "src/core/work-graph/state/goal-machine.ts",
+      "name": "GoalDisplayPhase",
+      "reason": "step5",
+      "substep": "5.5",
+      "wiredBy": "STEP5-FLIPS.md §11 goal-machine: GOAL-17..30 live in reduceGoalDisplay, no writer today (spec §15.2 5.5 展示归约; GOAL-24/25/27/30 in 5.8)",
+      "note": "helper of reduceGoalDisplay"
+    },
+    {
+      "file": "src/core/work-graph/state/goal-machine.ts",
+      "name": "GoalDisplayRow",
+      "reason": "step5",
+      "substep": "5.5",
+      "wiredBy": "STEP5-FLIPS.md §11 goal-machine: GOAL-17..30 live in reduceGoalDisplay, no writer today (spec §15.2 5.5 展示归约; GOAL-24/25/27/30 in 5.8)",
+      "note": "helper of reduceGoalDisplay"
+    },
+    {
+      "file": "src/core/work-graph/state/goal-machine.ts",
+      "name": "GoalDisplayTaskFactsV1",
+      "reason": "step5",
+      "substep": "5.5",
+      "wiredBy": "STEP5-FLIPS.md §11 goal-machine: GOAL-17..30 live in reduceGoalDisplay, no writer today (spec §15.2 5.5 展示归约; GOAL-24/25/27/30 in 5.8)",
+      "note": "helper of reduceGoalDisplay"
+    },
+    {
+      "file": "src/core/work-graph/state/goal-machine.ts",
+      "name": "GoalDisplayFactsV1",
+      "reason": "step5",
+      "substep": "5.5",
+      "wiredBy": "STEP5-FLIPS.md §11 goal-machine: GOAL-17..30 live in reduceGoalDisplay, no writer today (spec §15.2 5.5 展示归约; GOAL-24/25/27/30 in 5.8)",
+      "note": "helper of reduceGoalDisplay"
+    },
+    {
+      "file": "src/core/work-graph/state/goal-machine.ts",
+      "name": "GoalStopCauseCode",
+      "reason": "step5",
+      "substep": "5.5",
+      "wiredBy": "STEP5-FLIPS.md §11 goal-machine: GOAL-17..30 live in reduceGoalDisplay, no writer today (spec §15.2 5.5 展示归约; GOAL-24/25/27/30 in 5.8)",
+      "note": "helper of reduceGoalDisplay"
+    },
+    {
+      "file": "src/core/work-graph/state/goal-machine.ts",
+      "name": "GoalDisplayCauseV1",
+      "reason": "step5",
+      "substep": "5.5",
+      "wiredBy": "STEP5-FLIPS.md §11 goal-machine: GOAL-17..30 live in reduceGoalDisplay, no writer today (spec §15.2 5.5 展示归约; GOAL-24/25/27/30 in 5.8)",
+      "note": "helper of reduceGoalDisplay"
+    },
+    {
+      "file": "src/core/work-graph/state/goal-machine.ts",
+      "name": "GoalDisplayV1",
+      "reason": "step5",
+      "substep": "5.5",
+      "wiredBy": "STEP5-FLIPS.md §11 goal-machine: GOAL-17..30 live in reduceGoalDisplay, no writer today (spec §15.2 5.5 展示归约; GOAL-24/25/27/30 in 5.8)",
+      "note": "helper of reduceGoalDisplay"
+    },
+    {
+      "file": "src/core/work-graph/state/goal-machine.ts",
+      "name": "DisplayHit",
+      "reason": "step5",
+      "substep": "5.5",
+      "wiredBy": "STEP5-FLIPS.md §11 goal-machine: GOAL-17..30 live in reduceGoalDisplay, no writer today (spec §15.2 5.5 展示归约; GOAL-24/25/27/30 in 5.8)",
+      "note": "helper of reduceGoalDisplay"
+    },
+    {
+      "file": "src/core/work-graph/state/goal-machine.ts",
+      "name": "RankedCause",
+      "reason": "step5",
+      "substep": "5.5",
+      "wiredBy": "STEP5-FLIPS.md §11 goal-machine: GOAL-17..30 live in reduceGoalDisplay, no writer today (spec §15.2 5.5 展示归约; GOAL-24/25/27/30 in 5.8)",
+      "note": "helper of reduceGoalDisplay"
+    },
+    {
+      "file": "src/core/work-graph/state/goal-machine.ts",
+      "name": "NO_VERDICT",
+      "reason": "step5",
+      "substep": "5.5",
+      "wiredBy": "STEP5-FLIPS.md §11 goal-machine: GOAL-17..30 live in reduceGoalDisplay, no writer today (spec §15.2 5.5 展示归约; GOAL-24/25/27/30 in 5.8)",
+      "note": "helper of reduceGoalDisplay"
+    },
+    {
+      "file": "src/core/work-graph/state/goal-machine.ts",
+      "name": "verdictOf",
+      "reason": "step5",
+      "substep": "5.5",
+      "wiredBy": "STEP5-FLIPS.md §11 goal-machine: GOAL-17..30 live in reduceGoalDisplay, no writer today (spec §15.2 5.5 展示归约; GOAL-24/25/27/30 in 5.8)",
+      "note": "helper of reduceGoalDisplay"
+    },
+    {
+      "file": "src/core/work-graph/state/goal-machine.ts",
+      "name": "isPendingVerdict",
+      "reason": "step5",
+      "substep": "5.5",
+      "wiredBy": "STEP5-FLIPS.md §11 goal-machine: GOAL-17..30 live in reduceGoalDisplay, no writer today (spec §15.2 5.5 展示归约; GOAL-24/25/27/30 in 5.8)",
+      "note": "helper of reduceGoalDisplay"
+    },
+    {
+      "file": "src/core/work-graph/state/goal-machine.ts",
+      "name": "decidedByAutomation",
+      "reason": "step5",
+      "substep": "5.5",
+      "wiredBy": "STEP5-FLIPS.md §11 goal-machine: GOAL-17..30 live in reduceGoalDisplay, no writer today (spec §15.2 5.5 展示归约; GOAL-24/25/27/30 in 5.8)",
+      "note": "helper of reduceGoalDisplay"
+    },
+    {
+      "file": "src/core/work-graph/state/goal-machine.ts",
+      "name": "isGoalStopCause",
+      "reason": "step5",
+      "substep": "5.5",
+      "wiredBy": "STEP5-FLIPS.md §11 goal-machine: GOAL-17..30 live in reduceGoalDisplay, no writer today (spec §15.2 5.5 展示归约; GOAL-24/25/27/30 in 5.8)",
+      "note": "helper of reduceGoalDisplay"
+    },
+    {
+      "file": "src/core/work-graph/state/goal-machine.ts",
+      "name": "DesiredStateHit",
+      "reason": "step5",
+      "substep": "5.5",
+      "wiredBy": "STEP5-FLIPS.md §11 goal-machine: GOAL-17..30 live in reduceGoalDisplay, no writer today (spec §15.2 5.5 展示归约; GOAL-24/25/27/30 in 5.8)",
+      "note": "helper of reduceGoalDisplay"
+    },
+    {
+      "file": "src/core/work-graph/state/goal-machine.ts",
+      "name": "desiredStateHit",
+      "reason": "step5",
+      "substep": "5.5",
+      "wiredBy": "STEP5-FLIPS.md §11 goal-machine: GOAL-17..30 live in reduceGoalDisplay, no writer today (spec §15.2 5.5 展示归约; GOAL-24/25/27/30 in 5.8)",
+      "note": "helper of reduceGoalDisplay"
+    },
+    {
+      "file": "src/core/work-graph/state/goal-machine.ts",
+      "name": "isLiveRun",
+      "reason": "step5",
+      "substep": "5.5",
+      "wiredBy": "STEP5-FLIPS.md §11 goal-machine: GOAL-17..30 live in reduceGoalDisplay, no writer today (spec §15.2 5.5 展示归约; GOAL-24/25/27/30 in 5.8)",
+      "note": "helper of reduceGoalDisplay"
+    },
+    {
+      "file": "src/core/work-graph/state/goal-machine.ts",
+      "name": "orderedRuns",
+      "reason": "step5",
+      "substep": "5.5",
+      "wiredBy": "STEP5-FLIPS.md §11 goal-machine: GOAL-17..30 live in reduceGoalDisplay, no writer today (spec §15.2 5.5 展示归约; GOAL-24/25/27/30 in 5.8)",
+      "note": "helper of reduceGoalDisplay"
+    },
+    {
+      "file": "src/core/work-graph/state/goal-machine.ts",
+      "name": "GateState",
+      "reason": "step5",
+      "substep": "5.5",
+      "wiredBy": "STEP5-FLIPS.md §11 goal-machine: GOAL-17..30 live in reduceGoalDisplay, no writer today (spec §15.2 5.5 展示归约; GOAL-24/25/27/30 in 5.8)",
+      "note": "helper of reduceGoalDisplay"
+    },
+    {
+      "file": "src/core/work-graph/state/goal-machine.ts",
+      "name": "gateStateOf",
+      "reason": "step5",
+      "substep": "5.5",
+      "wiredBy": "STEP5-FLIPS.md §11 goal-machine: GOAL-17..30 live in reduceGoalDisplay, no writer today (spec §15.2 5.5 展示归约; GOAL-24/25/27/30 in 5.8)",
+      "note": "helper of reduceGoalDisplay"
+    },
+    {
+      "file": "src/core/work-graph/state/goal-machine.ts",
+      "name": "claimRequeuedClass",
+      "reason": "step5",
+      "substep": "5.5",
+      "wiredBy": "STEP5-FLIPS.md §11 goal-machine: GOAL-17..30 live in reduceGoalDisplay, no writer today (spec §15.2 5.5 展示归约; GOAL-24/25/27/30 in 5.8)",
+      "note": "helper of reduceGoalDisplay"
+    },
+    {
+      "file": "src/core/work-graph/state/goal-machine.ts",
+      "name": "runningCauses",
+      "reason": "step5",
+      "substep": "5.5",
+      "wiredBy": "STEP5-FLIPS.md §11 goal-machine: GOAL-17..30 live in reduceGoalDisplay, no writer today (spec §15.2 5.5 展示归约; GOAL-24/25/27/30 in 5.8)",
+      "note": "helper of reduceGoalDisplay"
+    },
+    {
+      "file": "src/core/work-graph/state/goal-machine.ts",
+      "name": "stopCauses",
+      "reason": "step5",
+      "substep": "5.5",
+      "wiredBy": "STEP5-FLIPS.md §11 goal-machine: GOAL-17..30 live in reduceGoalDisplay, no writer today (spec §15.2 5.5 展示归约; GOAL-24/25/27/30 in 5.8)",
+      "note": "helper of reduceGoalDisplay"
+    },
+    {
+      "file": "src/core/work-graph/state/goal-machine.ts",
+      "name": "reduceGoalDisplay",
+      "reason": "step5",
+      "substep": "5.5",
+      "wiredBy": "STEP5-FLIPS.md §11 goal-machine: GOAL-17..30 live in reduceGoalDisplay, no writer today (spec §15.2 5.5 展示归约; GOAL-24/25/27/30 in 5.8)",
+      "note": "Goal display reduction read by readGoalDisplayFacts"
+    },
+    {
+      "file": "src/core/work-graph/state/no-progress.ts",
+      "name": "RoundFailureFactsV1",
+      "reason": "step5",
+      "substep": "5.3",
+      "wiredBy": "spec §15.2 5.3 (投影、完成与 Workflow 经 roundChainHead 读链头); §9.6 投影 row names roundTaskSignal",
+      "note": "helper of roundTaskSignal, noProgressKey, buildTaskFailureFacts, automationVerdict, reverifyBasis, buildSuccessorRound"
+    },
+    {
+      "file": "src/core/work-graph/state/no-progress.ts",
+      "name": "TaskBasisLookupV1",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 (§13 13.1–13.3: the requeue no-progress key)",
+      "note": "helper of noProgressKey, reverifyBasis"
+    },
+    {
+      "file": "src/core/work-graph/state/no-progress.ts",
+      "name": "KeyRoundV1",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 (§13 13.1–13.3: the requeue no-progress key)",
+      "note": "helper of noProgressKey, reverifyBasis"
+    },
+    {
+      "file": "src/core/work-graph/state/no-progress.ts",
+      "name": "NoProgressKeyInputV1",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 (§13 13.1–13.3: the requeue no-progress key)",
+      "note": "helper of noProgressKey"
+    },
+    {
+      "file": "src/core/work-graph/state/no-progress.ts",
+      "name": "ReverifyBasisInputV1",
+      "reason": "step5",
+      "substep": "5.9",
+      "wiredBy": "spec §15.2 5.9 (§13.7: reverifyBasis key and exemption)",
+      "note": "helper of reverifyBasis"
+    },
+    {
+      "file": "src/core/work-graph/state/no-progress.ts",
+      "name": "NoProgressKeyResult",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 (§13 13.1–13.3: the requeue no-progress key)",
+      "note": "helper of noProgressKey"
+    },
+    {
+      "file": "src/core/work-graph/state/no-progress.ts",
+      "name": "ReverifyBasisResult",
+      "reason": "step5",
+      "substep": "5.9",
+      "wiredBy": "spec §15.2 5.9 (§13.7: reverifyBasis key and exemption)",
+      "note": "helper of reverifyBasis"
+    },
+    {
+      "file": "src/core/work-graph/state/no-progress.ts",
+      "name": "roundFailureFacts",
+      "reason": "step5",
+      "substep": "5.3",
+      "wiredBy": "spec §15.2 5.3 (投影、完成与 Workflow 经 roundChainHead 读链头); §9.6 投影 row names roundTaskSignal",
+      "note": "helper of roundTaskSignal, noProgressKey, buildTaskFailureFacts, automationVerdict, reverifyBasis, buildSuccessorRound"
+    },
+    {
+      "file": "src/core/work-graph/state/no-progress.ts",
+      "name": "keyCheckFacts",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 (§13 13.1–13.3: the requeue no-progress key)",
+      "note": "helper of noProgressKey, reverifyBasis"
+    },
+    {
+      "file": "src/core/work-graph/state/no-progress.ts",
+      "name": "newBasisInputDigest",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 (§13 13.1–13.3: the requeue no-progress key)",
+      "note": "helper of noProgressKey, reverifyBasis"
+    },
+    {
+      "file": "src/core/work-graph/state/no-progress.ts",
+      "name": "noProgressKey",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 (§13 13.1–13.3: the requeue no-progress key)",
+      "note": "requeue key stored on TaskRequeue.basis"
+    },
+    {
+      "file": "src/core/work-graph/state/no-progress.ts",
+      "name": "reverifyBasis",
+      "reason": "step5",
+      "substep": "5.9",
+      "wiredBy": "spec §15.2 5.9 (§13.7: reverifyBasis key and exemption)",
+      "note": "reverify key of the successor round"
+    },
+    {
+      "file": "src/core/work-graph/state/no-progress.ts",
+      "name": "KeyRejection",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 (§13 13.1–13.3: the requeue no-progress key)",
+      "note": "helper of noProgressKey, reverifyBasis"
+    },
+    {
+      "file": "src/core/work-graph/state/no-progress.ts",
+      "name": "knownOutcome",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 (§13 13.1–13.3: the requeue no-progress key)",
+      "note": "helper of noProgressKey"
+    },
+    {
+      "file": "src/core/work-graph/state/no-progress.ts",
+      "name": "openRound",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 (§13 13.1–13.3: the requeue no-progress key)",
+      "note": "helper of noProgressKey, reverifyBasis"
+    },
+    {
+      "file": "src/core/work-graph/state/no-progress.ts",
+      "name": "resolvedBasis",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 (§13 13.1–13.3: the requeue no-progress key)",
+      "note": "helper of noProgressKey, reverifyBasis"
+    },
+    {
+      "file": "src/core/work-graph/state/no-progress.ts",
+      "name": "isPlanRevisionRef",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 (§13 13.1–13.3: the requeue no-progress key)",
+      "note": "helper of noProgressKey, reverifyBasis"
+    },
+    {
+      "file": "src/core/work-graph/state/no-progress.ts",
+      "name": "triple",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 (§13 13.1–13.3: the requeue no-progress key)",
+      "note": "helper of noProgressKey, reverifyBasis"
+    },
+    {
+      "file": "src/core/work-graph/state/no-progress.ts",
+      "name": "stamp",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 (§13 13.1–13.3: the requeue no-progress key)",
+      "note": "helper of noProgressKey, reverifyBasis"
+    },
+    {
+      "file": "src/core/work-graph/state/no-progress.ts",
+      "name": "KeyInputRefV1",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 (§13 13.1–13.3: the requeue no-progress key)",
+      "note": "helper of noProgressKey, reverifyBasis"
+    },
+    {
+      "file": "src/core/work-graph/state/no-progress.ts",
+      "name": "keyInputRef",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 (§13 13.1–13.3: the requeue no-progress key)",
+      "note": "helper of noProgressKey, reverifyBasis"
+    },
+    {
+      "file": "src/core/work-graph/state/no-progress.ts",
+      "name": "compareCheckFacts",
+      "reason": "step5",
+      "substep": "5.3",
+      "wiredBy": "spec §15.2 5.3 (投影、完成与 Workflow 经 roundChainHead 读链头); §9.6 投影 row names roundTaskSignal",
+      "note": "helper of roundTaskSignal, noProgressKey, buildTaskFailureFacts, automationVerdict, reverifyBasis, buildSuccessorRound"
+    },
+    {
+      "file": "src/core/work-graph/state/no-progress.ts",
+      "name": "keyFact",
+      "reason": "step5",
+      "substep": "5.3",
+      "wiredBy": "spec §15.2 5.3 (投影、完成与 Workflow 经 roundChainHead 读链头); §9.6 投影 row names roundTaskSignal",
+      "note": "helper of roundTaskSignal, noProgressKey, buildTaskFailureFacts, automationVerdict, reverifyBasis, buildSuccessorRound"
+    },
+    {
+      "file": "src/core/work-graph/state/no-progress.ts",
+      "name": "sortedDistinct",
+      "reason": "step5",
+      "substep": "5.3",
+      "wiredBy": "spec §15.2 5.3 (投影、完成与 Workflow 经 roundChainHead 读链头); §9.6 投影 row names roundTaskSignal",
+      "note": "helper of roundTaskSignal, noProgressKey, buildTaskFailureFacts, automationVerdict, reverifyBasis, buildSuccessorRound"
+    },
+    {
+      "file": "src/core/work-graph/state/no-progress.ts",
+      "name": "compareText",
+      "reason": "step5",
+      "substep": "5.3",
+      "wiredBy": "spec §15.2 5.3 (投影、完成与 Workflow 经 roundChainHead 读链头); §9.6 投影 row names roundTaskSignal",
+      "note": "helper of roundTaskSignal, noProgressKey, buildTaskFailureFacts, automationVerdict, reverifyBasis, buildSuccessorRound"
+    },
+    {
+      "file": "src/core/work-graph/state/no-progress.ts",
+      "name": "canonicalText",
+      "reason": "step5",
+      "substep": "5.3",
+      "wiredBy": "spec §15.2 5.3 (投影、完成与 Workflow 经 roundChainHead 读链头); §9.6 投影 row names roundTaskSignal",
+      "note": "helper of roundTaskSignal, noProgressKey, buildTaskFailureFacts, automationVerdict, reverifyBasis, buildSuccessorRound"
+    },
+    {
+      "file": "src/core/work-graph/state/no-progress.ts",
+      "name": "digestOf",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 (§13 13.1–13.3: the requeue no-progress key)",
+      "note": "helper of noProgressKey, reverifyBasis"
+    },
+    {
+      "file": "src/core/work-graph/state/plan-machine.ts",
+      "name": "TracedTaskFactsV1",
+      "reason": "step5",
+      "substep": "5.10",
+      "wiredBy": "STEP5-FLIPS.md §10 plan-machine, flip PLAN-05 + §3.4 TASK-19 rows (C7, 5.10)",
+      "note": "helper of tracedDispositionChangeProblem, parallelCarrierFenceProblem"
+    },
+    {
+      "file": "src/core/work-graph/state/plan-machine.ts",
+      "name": "tracedDispositionChangeProblem",
+      "reason": "step5",
+      "substep": "5.10",
+      "wiredBy": "STEP5-FLIPS.md §10 plan-machine, flip PLAN-05 + §3.4 TASK-19 rows (C7, 5.10)",
+      "note": "W16 guard for a disposition-only change of a traced Task"
+    },
+    {
+      "file": "src/core/work-graph/state/plan-machine.ts",
+      "name": "tracedTaskProblem",
+      "reason": "step5",
+      "substep": "5.10",
+      "wiredBy": "STEP5-FLIPS.md §10 plan-machine, flip PLAN-05 + §3.4 TASK-19 rows (C7, 5.10)",
+      "note": "helper of tracedDispositionChangeProblem"
+    },
+    {
+      "file": "src/core/work-graph/state/plan-machine.ts",
+      "name": "PlanCarrierViewV1",
+      "reason": "step5",
+      "substep": "5.10",
+      "wiredBy": "STEP5-FLIPS.md §10 plan-machine, flip PLAN-05 guard 9 (LA-3, 5.10)",
+      "note": "helper of parallelCarrierFactTaskIds, parallelCarrierFenceProblem"
+    },
+    {
+      "file": "src/core/work-graph/state/plan-machine.ts",
+      "name": "GainingObligation",
+      "reason": "step5",
+      "substep": "5.10",
+      "wiredBy": "STEP5-FLIPS.md §10 plan-machine, flip PLAN-05 guard 9 (LA-3, 5.10)",
+      "note": "helper of parallelCarrierFactTaskIds, parallelCarrierFenceProblem"
+    },
+    {
+      "file": "src/core/work-graph/state/plan-machine.ts",
+      "name": "obligationsGainingWorkCarriers",
+      "reason": "step5",
+      "substep": "5.10",
+      "wiredBy": "STEP5-FLIPS.md §10 plan-machine, flip PLAN-05 guard 9 (LA-3, 5.10)",
+      "note": "helper of parallelCarrierFactTaskIds, parallelCarrierFenceProblem"
+    },
+    {
+      "file": "src/core/work-graph/state/plan-machine.ts",
+      "name": "parallelCarrierFactTaskIds",
+      "reason": "step5",
+      "substep": "5.10",
+      "wiredBy": "STEP5-FLIPS.md §10 plan-machine, flip PLAN-05 guard 9 (LA-3, 5.10)",
+      "note": "which carrier facts the service reads for guard 9"
+    },
+    {
+      "file": "src/core/work-graph/state/plan-machine.ts",
+      "name": "parallelCarrierFenceProblem",
+      "reason": "step5",
+      "substep": "5.10",
+      "wiredBy": "STEP5-FLIPS.md §10 plan-machine, flip PLAN-05 guard 9 (LA-3, 5.10)",
+      "note": "W16 guard 9 (parallel carrier fence)"
+    },
+    {
+      "file": "src/core/work-graph/state/plan-machine.ts",
+      "name": "fenceOf",
+      "reason": "step5",
+      "substep": "5.10",
+      "wiredBy": "STEP5-FLIPS.md §10 plan-machine, flip PLAN-05 + §3.4 TASK-19 rows (C7, 5.10)",
+      "note": "helper of tracedDispositionChangeProblem, parallelCarrierFenceProblem"
+    },
+    {
+      "file": "src/core/work-graph/state/run-machine.ts",
+      "name": "RunTerminalPayload",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §3 run-machine, flip RUN-07 (C1, 5.4): write terminalPayload = terminalPayloadOf(event.payload)",
+      "note": "type of terminalPayloadOf"
+    },
+    {
+      "file": "src/core/work-graph/state/run-machine.ts",
+      "name": "boundedText",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §3 run-machine, flip RUN-07 (C1, 5.4): write terminalPayload = terminalPayloadOf(event.payload)",
+      "note": "helper of terminalPayloadOf"
+    },
+    {
+      "file": "src/core/work-graph/state/run-machine.ts",
+      "name": "terminalPayloadOf",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §3 run-machine, flip RUN-07 (C1, 5.4): write terminalPayload = terminalPayloadOf(event.payload)",
+      "note": "bounded terminal payload"
+    },
+    {
+      "file": "src/core/work-graph/state/run-machine.ts",
+      "name": "attestedTerminalPayload",
+      "reason": "step5",
+      "substep": "5.6",
+      "wiredBy": "STEP5-FLIPS.md §3 run-machine, 新增 RUN-22 unknown_attested (5.6; spec §15.2 5.6: RUN-17..19, RUN-21..24 write terminalPayload)",
+      "note": "terminal payload of a human-attested unknown outcome"
+    },
+    {
+      "file": "src/core/work-graph/state/session-availability.ts",
+      "name": "observeSessionHealthRecord",
+      "reason": "step5",
+      "substep": "5.6",
+      "wiredBy": "STEP5-FLIPS.md §1 session-availability, 新增 SES-12/13/19 (5.6): observeSessionHealthRecord is exported and tested, but no row emits it yet",
+      "note": "record constructor of a health observation"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "REWORK_ACTOR_CLASSES",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §7 task-failure: FC and failure facts wired in 5.4 (spec §15.2 5.4 失败事实: TaskRow.failure, TaskRow.rework)",
+      "note": "helper of buildTaskFailureFacts"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "ReworkFence",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §7 task-failure: FC and failure facts wired in 5.4 (spec §15.2 5.4 失败事实: TaskRow.failure, TaskRow.rework)",
+      "note": "helper of buildTaskFailureFacts, newTaskRequeueRecord, automationVerdict, tracedDispositionChangeProblem, parallelCarrierFenceProblem"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "ReworkStopV1",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §7 task-failure: FC and failure facts wired in 5.4 (spec §15.2 5.4 失败事实: TaskRow.failure, TaskRow.rework)",
+      "note": "helper of buildTaskFailureFacts, newTaskRequeueRecord, automationVerdict"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "ReworkPermissionRefusal",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §7 task-failure: FC and failure facts wired in 5.4 (spec §15.2 5.4 失败事实: TaskRow.failure, TaskRow.rework)",
+      "note": "helper of buildTaskFailureFacts, newTaskRequeueRecord"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "stopRequesterOf",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §7 task-failure: FC and failure facts wired in 5.4 (spec §15.2 5.4 失败事实: TaskRow.failure, TaskRow.rework)",
+      "note": "helper of buildTaskFailureFacts, newTaskRequeueRecord, reduceGoalDisplay, findGoalResumeContinuations, automationVerdict, tracedDispositionChangeProblem, parallelCarrierFenceProblem"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "reworkStopOf",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §7 task-failure: FC and failure facts wired in 5.4 (spec §15.2 5.4 失败事实: TaskRow.failure, TaskRow.rework)",
+      "note": "helper of buildTaskFailureFacts, newTaskRequeueRecord, automationVerdict"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "reworkFenceOf",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §7 task-failure: FC and failure facts wired in 5.4 (spec §15.2 5.4 失败事实: TaskRow.failure, TaskRow.rework)",
+      "note": "helper of buildTaskFailureFacts, newTaskRequeueRecord, automationVerdict, tracedDispositionChangeProblem, parallelCarrierFenceProblem"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "ReworkClassDerivationV1",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §7 task-failure: FC and failure facts wired in 5.4 (spec §15.2 5.4 失败事实: TaskRow.failure, TaskRow.rework)",
+      "note": "helper of buildTaskFailureFacts, newTaskRequeueRecord, automationVerdict"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "deriveReworkClass",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §7 task-failure: FC and failure facts wired in 5.4 (spec §15.2 5.4 失败事实: TaskRow.failure, TaskRow.rework)",
+      "note": "helper of buildTaskFailureFacts, newTaskRequeueRecord, automationVerdict"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "completedRunClass",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §7 task-failure: FC and failure facts wired in 5.4 (spec §15.2 5.4 失败事实: TaskRow.failure, TaskRow.rework)",
+      "note": "helper of buildTaskFailureFacts, newTaskRequeueRecord, automationVerdict"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "onlyInterruptedLeft",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §7 task-failure: FC and failure facts wired in 5.4 (spec §15.2 5.4 失败事实: TaskRow.failure, TaskRow.rework)",
+      "note": "helper of buildTaskFailureFacts, newTaskRequeueRecord, automationVerdict"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "ReworkPermissionInputV1",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §7 task-failure: FC and failure facts wired in 5.4 (spec §15.2 5.4 失败事实: TaskRow.failure, TaskRow.rework)",
+      "note": "helper of buildTaskFailureFacts, newTaskRequeueRecord"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "reworkPermission",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §7 task-failure: FC and failure facts wired in 5.4 (spec §15.2 5.4 失败事实: TaskRow.failure, TaskRow.rework)",
+      "note": "helper of buildTaskFailureFacts, newTaskRequeueRecord"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "requeueClassProblem",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §7 task-failure: FC and failure facts wired in 5.4 (spec §15.2 5.4 失败事实: TaskRow.failure, TaskRow.rework)",
+      "note": "helper of buildTaskFailureFacts, newTaskRequeueRecord"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "reverifyClassProblem",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §7 task-failure: FC and failure facts wired in 5.4 (spec §15.2 5.4 失败事实: TaskRow.failure, TaskRow.rework)",
+      "note": "helper of buildTaskFailureFacts, newTaskRequeueRecord"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "ChainRun",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §7 task-failure: FC and failure facts wired in 5.4 (spec §15.2 5.4 失败事实: TaskRow.failure, TaskRow.rework)",
+      "note": "helper of buildTaskFailureFacts, newTaskRequeueRecord, automationVerdict"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "priorRequeueAutoCount",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §7 task-failure: FC and failure facts wired in 5.4 (spec §15.2 5.4 失败事实: TaskRow.failure, TaskRow.rework)",
+      "note": "helper of buildTaskFailureFacts, newTaskRequeueRecord, automationVerdict"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "nextRequeueAutoCount",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §8 task-machine, 新增 TASK-16/17/27 (newTaskRequeueRecord is complete for 5.4)",
+      "note": "helper of newTaskRequeueRecord"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "countEndedGoalRuns",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 (TASK-28: 策略拒绝提交为 TaskReworkRefusal，先用 countEndedGoalRuns 计数)",
+      "note": "refusal staleness counter"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "ReworkRefusalClockV1",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §7 task-failure: FC and failure facts wired in 5.4 (spec §15.2 5.4 失败事实: TaskRow.failure, TaskRow.rework)",
+      "note": "helper of buildTaskFailureFacts, automationVerdict"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "reworkRefusalIsStale",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §7 task-failure: FC and failure facts wired in 5.4 (spec §15.2 5.4 失败事实: TaskRow.failure, TaskRow.rework)",
+      "note": "helper of buildTaskFailureFacts, automationVerdict"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "refusalFact",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §7 task-failure: FC and failure facts wired in 5.4 (spec §15.2 5.4 失败事实: TaskRow.failure, TaskRow.rework)",
+      "note": "helper of buildTaskFailureFacts"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "runErrorOf",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §7 task-failure: FC and failure facts wired in 5.4 (spec §15.2 5.4 失败事实: TaskRow.failure, TaskRow.rework)",
+      "note": "helper of buildTaskFailureFacts"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "payloadErrorText",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §7 task-failure: FC and failure facts wired in 5.4 (spec §15.2 5.4 失败事实: TaskRow.failure, TaskRow.rework)",
+      "note": "helper of buildTaskFailureFacts"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "FailureInputCommonV1",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §7 task-failure: FC and failure facts wired in 5.4 (spec §15.2 5.4 失败事实: TaskRow.failure, TaskRow.rework)",
+      "note": "helper of buildTaskFailureFacts, automationVerdict"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "WorkFailureInputV1",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §7 task-failure: FC and failure facts wired in 5.4 (spec §15.2 5.4 失败事实: TaskRow.failure, TaskRow.rework)",
+      "note": "helper of buildTaskFailureFacts, automationVerdict"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "GateFailureInputV1",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 失败事实 reaches it through buildTaskFailureFacts (gate facts); the plan wires the gate TaskRow.failure and GV in 5.9 (§15.2 5.9; STEP5-FLIPS.md §7)",
+      "note": "helper of buildTaskFailureFacts, automationVerdict"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "TaskFailureInputV1",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §7 task-failure: FC and failure facts wired in 5.4 (spec §15.2 5.4 失败事实: TaskRow.failure, TaskRow.rework)",
+      "note": "helper of buildTaskFailureFacts, automationVerdict"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "WorkVerdictRow",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 失败事实 reaches it through buildTaskFailureFacts, which embeds automation.verdict (workVerdict/gateVerdict); the plan itself wires AV in 5.8 and GV in 5.9 (§15.2 5.8, 5.9; STEP5-FLIPS.md §7)",
+      "note": "helper of buildTaskFailureFacts, automationVerdict"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "GateVerdictRow",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 失败事实 reaches it through buildTaskFailureFacts, which embeds automation.verdict (workVerdict/gateVerdict); the plan itself wires AV in 5.8 and GV in 5.9 (§15.2 5.8, 5.9; STEP5-FLIPS.md §7)",
+      "note": "helper of buildTaskFailureFacts, automationVerdict"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "AutomationVerdictResultV1",
+      "reason": "step5",
+      "substep": "5.8",
+      "wiredBy": "STEP5-FLIPS.md §7 task-failure: AV tables wired in 5.8 (spec §15.2 5.8 C8 自动返工)",
+      "note": "helper of automationVerdict"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "automationVerdict",
+      "reason": "step5",
+      "substep": "5.8",
+      "wiredBy": "STEP5-FLIPS.md §7 task-failure: AV tables wired in 5.8 (spec §15.2 5.8 C8 自动返工)",
+      "note": "TD-9 AV/GV verdict"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "RefusalView",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 失败事实: buildTaskFailureFacts reads it for the work and gate facts; automationVerdict shares it (AV in 5.8, GV in 5.9; STEP5-FLIPS.md §7)",
+      "note": "helper of buildTaskFailureFacts, automationVerdict"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "WorkView",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 失败事实: buildTaskFailureFacts reads it for the work and gate facts; automationVerdict shares it (AV in 5.8, GV in 5.9; STEP5-FLIPS.md §7)",
+      "note": "helper of buildTaskFailureFacts, automationVerdict"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "GateView",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 失败事实 reaches it through buildTaskFailureFacts (gate facts); the plan wires the gate TaskRow.failure and GV in 5.9 (§15.2 5.9; STEP5-FLIPS.md §7)",
+      "note": "helper of buildTaskFailureFacts, automationVerdict"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "clockOf",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 失败事实: buildTaskFailureFacts reads it for the work and gate facts; automationVerdict shares it (AV in 5.8, GV in 5.9; STEP5-FLIPS.md §7)",
+      "note": "helper of buildTaskFailureFacts, automationVerdict"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "refusalView",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 失败事实: buildTaskFailureFacts reads it for the work and gate facts; automationVerdict shares it (AV in 5.8, GV in 5.9; STEP5-FLIPS.md §7)",
+      "note": "helper of buildTaskFailureFacts, automationVerdict"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "headOf",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 失败事实: buildTaskFailureFacts reads it for the work and gate facts; automationVerdict shares it (AV in 5.8, GV in 5.9; STEP5-FLIPS.md §7)",
+      "note": "helper of buildTaskFailureFacts, automationVerdict"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "workView",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 失败事实: buildTaskFailureFacts reads it for the work and gate facts; automationVerdict shares it (AV in 5.8, GV in 5.9; STEP5-FLIPS.md §7)",
+      "note": "helper of buildTaskFailureFacts, automationVerdict"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "gateView",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 失败事实 reaches it through buildTaskFailureFacts (gate facts); the plan wires the gate TaskRow.failure and GV in 5.9 (§15.2 5.9; STEP5-FLIPS.md §7)",
+      "note": "helper of buildTaskFailureFacts, automationVerdict"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "NONE",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 失败事实 reaches it through buildTaskFailureFacts, which embeds automation.verdict (workVerdict/gateVerdict); the plan itself wires AV in 5.8 and GV in 5.9 (§15.2 5.8, 5.9; STEP5-FLIPS.md §7)",
+      "note": "helper of buildTaskFailureFacts, automationVerdict"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "stopped",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 失败事实 reaches it through buildTaskFailureFacts, which embeds automation.verdict (workVerdict/gateVerdict); the plan itself wires AV in 5.8 and GV in 5.9 (§15.2 5.8, 5.9; STEP5-FLIPS.md §7)",
+      "note": "helper of buildTaskFailureFacts, automationVerdict"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "workVerdict",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 失败事实 reaches it through buildTaskFailureFacts, which embeds automation.verdict (workVerdict/gateVerdict); the plan itself wires AV in 5.8 and GV in 5.9 (§15.2 5.8, 5.9; STEP5-FLIPS.md §7)",
+      "note": "helper of buildTaskFailureFacts, automationVerdict"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "incompleteHeadVerdict",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 失败事实 reaches it through buildTaskFailureFacts, which embeds automation.verdict (workVerdict/gateVerdict); the plan itself wires AV in 5.8 and GV in 5.9 (§15.2 5.8, 5.9; STEP5-FLIPS.md §7)",
+      "note": "helper of buildTaskFailureFacts, automationVerdict"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "gateVerdict",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 失败事实 reaches it through buildTaskFailureFacts, which embeds automation.verdict (workVerdict/gateVerdict); the plan itself wires AV in 5.8 and GV in 5.9 (§15.2 5.8, 5.9; STEP5-FLIPS.md §7)",
+      "note": "helper of buildTaskFailureFacts, automationVerdict"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "TaskFailureFactsResultV1",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §7 task-failure: FC and failure facts wired in 5.4 (spec §15.2 5.4 失败事实: TaskRow.failure, TaskRow.rework)",
+      "note": "helper of buildTaskFailureFacts"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "buildTaskFailureFacts",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §7 task-failure: FC and failure facts wired in 5.4 (spec §15.2 5.4 失败事实: TaskRow.failure, TaskRow.rework)",
+      "note": "failure read model"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "workFailureFacts",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §7 task-failure: FC and failure facts wired in 5.4 (spec §15.2 5.4 失败事实: TaskRow.failure, TaskRow.rework)",
+      "note": "helper of buildTaskFailureFacts"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "gateFailureFacts",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 失败事实 reaches it through buildTaskFailureFacts (gate facts); the plan wires the gate TaskRow.failure and GV in 5.9 (§15.2 5.9; STEP5-FLIPS.md §7)",
+      "note": "helper of buildTaskFailureFacts"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "gateFailureClass",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 失败事实 reaches it through buildTaskFailureFacts (gate facts); the plan wires the gate TaskRow.failure and GV in 5.9 (§15.2 5.9; STEP5-FLIPS.md §7)",
+      "note": "helper of buildTaskFailureFacts"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "chainLimitCause",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §7 task-failure: FC and failure facts wired in 5.4 (spec §15.2 5.4 失败事实: TaskRow.failure, TaskRow.rework)",
+      "note": "helper of buildTaskFailureFacts"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "runIdentity",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §7 task-failure: FC and failure facts wired in 5.4 (spec §15.2 5.4 失败事实: TaskRow.failure, TaskRow.rework)",
+      "note": "helper of buildTaskFailureFacts"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "runFacts",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §7 task-failure: FC and failure facts wired in 5.4 (spec §15.2 5.4 失败事实: TaskRow.failure, TaskRow.rework)",
+      "note": "helper of buildTaskFailureFacts"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "interruptionFacts",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §7 task-failure: FC and failure facts wired in 5.4 (spec §15.2 5.4 失败事实: TaskRow.failure, TaskRow.rework)",
+      "note": "helper of buildTaskFailureFacts"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "stopFacts",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §7 task-failure: FC and failure facts wired in 5.4 (spec §15.2 5.4 失败事实: TaskRow.failure, TaskRow.rework)",
+      "note": "helper of buildTaskFailureFacts"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "roundFacts",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §7 task-failure: FC and failure facts wired in 5.4 (spec §15.2 5.4 失败事实: TaskRow.failure, TaskRow.rework)",
+      "note": "helper of buildTaskFailureFacts"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "sourceFacts",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §7 task-failure: FC and failure facts wired in 5.4 (spec §15.2 5.4 失败事实: TaskRow.failure, TaskRow.rework)",
+      "note": "helper of buildTaskFailureFacts"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "automationFacts",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §7 task-failure: FC and failure facts wired in 5.4 (spec §15.2 5.4 失败事实: TaskRow.failure, TaskRow.rework)",
+      "note": "helper of buildTaskFailureFacts"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "workRequeueActors",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §7 task-failure: FC and failure facts wired in 5.4 (spec §15.2 5.4 失败事实: TaskRow.failure, TaskRow.rework)",
+      "note": "helper of buildTaskFailureFacts"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "workReverifyActors",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §7 task-failure: FC and failure facts wired in 5.4 (spec §15.2 5.4 失败事实: TaskRow.failure, TaskRow.rework)",
+      "note": "helper of buildTaskFailureFacts"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "gateReverifyActors",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 失败事实 reaches it through buildTaskFailureFacts (gate facts); the plan wires the gate TaskRow.failure and GV in 5.9 (§15.2 5.9; STEP5-FLIPS.md §7)",
+      "note": "helper of buildTaskFailureFacts"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "reverifiableSubjectRun",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §7 task-failure: FC and failure facts wired in 5.4 (spec §15.2 5.4 失败事实: TaskRow.failure, TaskRow.rework)",
+      "note": "helper of buildTaskFailureFacts"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "reverifyActors",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §7 task-failure: FC and failure facts wired in 5.4 (spec §15.2 5.4 失败事实: TaskRow.failure, TaskRow.rework)",
+      "note": "helper of buildTaskFailureFacts"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "permittedActors",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §7 task-failure: FC and failure facts wired in 5.4 (spec §15.2 5.4 失败事实: TaskRow.failure, TaskRow.rework)",
+      "note": "helper of buildTaskFailureFacts"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "reworkSummary",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §7 task-failure: FC and failure facts wired in 5.4 (spec §15.2 5.4 失败事实: TaskRow.failure, TaskRow.rework)",
+      "note": "helper of buildTaskFailureFacts"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "chainRunIds",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §7 task-failure: FC and failure facts wired in 5.4 (spec §15.2 5.4 失败事实: TaskRow.failure, TaskRow.rework)",
+      "note": "helper of buildTaskFailureFacts"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "NewTaskReworkRefusalInputV1",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 (TASK-28: 策略拒绝提交为 TaskReworkRefusal)",
+      "note": "helper of taskReworkRefusalEffects"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "newTaskReworkRefusalRecord",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 (TASK-28: 策略拒绝提交为 TaskReworkRefusal)",
+      "note": "helper of taskReworkRefusalEffects"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "reworkRefusalProblem",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 (TASK-28: 策略拒绝提交为 TaskReworkRefusal)",
+      "note": "helper of taskReworkRefusalEffects"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "TaskReworkRefusalEffect",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 (TASK-28: 策略拒绝提交为 TaskReworkRefusal)",
+      "note": "helper of taskReworkRefusalEffects"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "taskReworkRefusalEffects",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 (TASK-28: 策略拒绝提交为 TaskReworkRefusal)",
+      "note": "commit effects of a rework refusal"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "sameActor",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §7 task-failure: FC and failure facts wired in 5.4 (spec §15.2 5.4 失败事实: TaskRow.failure, TaskRow.rework)",
+      "note": "helper of buildTaskFailureFacts, newTaskRequeueRecord, reduceGoalDisplay, findGoalResumeContinuations, automationVerdict, tracedDispositionChangeProblem, parallelCarrierFenceProblem"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "sameRequeueRef",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §7 task-failure: FC and failure facts wired in 5.4 (spec §15.2 5.4 失败事实: TaskRow.failure, TaskRow.rework)",
+      "note": "helper of buildTaskFailureFacts, newTaskRequeueRecord, automationVerdict"
+    },
+    {
+      "file": "src/core/work-graph/state/task-failure.ts",
+      "name": "sameRefusalRef",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 (TASK-28: 策略拒绝提交为 TaskReworkRefusal)",
+      "note": "helper of taskReworkRefusalEffects"
+    },
+    {
+      "file": "src/core/work-graph/state/task-machine.ts",
+      "name": "basisComparisonOf",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §8 task-machine, 新增 TASK-16/17/27 (newTaskRequeueRecord is complete for 5.4)",
+      "note": "helper of newTaskRequeueRecord"
+    },
+    {
+      "file": "src/core/work-graph/state/task-machine.ts",
+      "name": "sameIntentRef",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §8 task-machine, 新增 TASK-16/17/27 (newTaskRequeueRecord is complete for 5.4)",
+      "note": "helper of newTaskRequeueRecord"
+    },
+    {
+      "file": "src/core/work-graph/state/task-machine.ts",
+      "name": "taskRequeueSubjectProblem",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §8 task-machine, 新增 TASK-16/17/27 (newTaskRequeueRecord is complete for 5.4)",
+      "note": "helper of newTaskRequeueRecord"
+    },
+    {
+      "file": "src/core/work-graph/state/task-machine.ts",
+      "name": "taskRequeueChainProblem",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §8 task-machine, 新增 TASK-16/17/27 (newTaskRequeueRecord is complete for 5.4)",
+      "note": "helper of newTaskRequeueRecord"
+    },
+    {
+      "file": "src/core/work-graph/state/task-machine.ts",
+      "name": "taskRequeueHistoryProblem",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §8 task-machine, 新增 TASK-16/17/27 (newTaskRequeueRecord is complete for 5.4)",
+      "note": "helper of newTaskRequeueRecord"
+    },
+    {
+      "file": "src/core/work-graph/state/task-machine.ts",
+      "name": "taskRequeueCombinationProblem",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §8 task-machine, 新增 TASK-16/17/27 (newTaskRequeueRecord is complete for 5.4)",
+      "note": "helper of newTaskRequeueRecord"
+    },
+    {
+      "file": "src/core/work-graph/state/task-machine.ts",
+      "name": "requeueCannotBeBuilt",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §8 task-machine, 新增 TASK-16/17/27 (newTaskRequeueRecord is complete for 5.4)",
+      "note": "helper of newTaskRequeueRecord"
+    },
+    {
+      "file": "src/core/work-graph/state/task-machine.ts",
+      "name": "newTaskRequeueRecord",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §8 task-machine, 新增 TASK-16/17/27 (newTaskRequeueRecord is complete for 5.4)",
+      "note": "TaskRequeue record constructor"
+    },
+    {
+      "file": "src/core/work-graph/state/verification-machine.ts",
+      "name": "roundOrdinalOf",
+      "reason": "step5",
+      "substep": "5.3",
+      "wiredBy": "spec §15.2 5.3 (投影、完成与 Workflow 经 roundChainHead 读链头); §9.6 投影 row names roundTaskSignal",
+      "note": "helper of roundTaskSignal, buildTaskFailureFacts, automationVerdict, buildSuccessorRound"
+    },
+    {
+      "file": "src/core/work-graph/state/verification-machine.ts",
+      "name": "isFinalizedNonPass",
+      "reason": "step5",
+      "substep": "5.3",
+      "wiredBy": "spec §15.2 5.3 (投影、完成与 Workflow 经 roundChainHead 读链头); §9.6 投影 row names roundTaskSignal",
+      "note": "helper of roundTaskSignal, buildTaskFailureFacts, newTaskRequeueRecord, automationVerdict, buildSuccessorRound"
+    },
+    {
+      "file": "src/core/work-graph/state/verification-machine.ts",
+      "name": "rootRoundChain",
+      "reason": "step5",
+      "substep": "5.3",
+      "wiredBy": "STEP5-FLIPS.md §5 verification-machine, flip VR-01 (5.3): write rootRoundChain() ordinal 1",
+      "note": "chain of a round opened through VR-01"
+    },
+    {
+      "file": "src/core/work-graph/state/verification-machine.ts",
+      "name": "ROUND_SUBJECT_SLOT_PREFIX",
+      "reason": "step5",
+      "substep": "5.3",
+      "wiredBy": "STEP5-FLIPS.md §5 verification-machine, flip VR-01 (5.3): claim the subject/gate slot (claim_round_slot); §9.6 and §15.3 VR-01 name roundSlotKey",
+      "note": "helper of roundSlotKey"
+    },
+    {
+      "file": "src/core/work-graph/state/verification-machine.ts",
+      "name": "ROUND_GATE_SLOT_PREFIX",
+      "reason": "step5",
+      "substep": "5.3",
+      "wiredBy": "STEP5-FLIPS.md §5 verification-machine, flip VR-01 (5.3): claim the subject/gate slot (claim_round_slot); §9.6 and §15.3 VR-01 name roundSlotKey",
+      "note": "helper of roundSlotKey"
+    },
+    {
+      "file": "src/core/work-graph/state/verification-machine.ts",
+      "name": "RoundSlotSubjectV1",
+      "reason": "step5",
+      "substep": "5.3",
+      "wiredBy": "STEP5-FLIPS.md §5 verification-machine, flip VR-01 (5.3): claim the subject/gate slot (claim_round_slot); §9.6 and §15.3 VR-01 name roundSlotKey",
+      "note": "helper of roundSlotKey, roundSlotSubjectOf"
+    },
+    {
+      "file": "src/core/work-graph/state/verification-machine.ts",
+      "name": "roundSlotKey",
+      "reason": "step5",
+      "substep": "5.3",
+      "wiredBy": "STEP5-FLIPS.md §5 verification-machine, flip VR-01 (5.3): claim the subject/gate slot (claim_round_slot); §9.6 and §15.3 VR-01 name roundSlotKey",
+      "note": "the VR-01 subject/gate slot key (§9.6, §15.3 VR-01); its §15.3 alias roundSubjectSlotKey was deleted in step 4"
+    },
+    {
+      "file": "src/core/work-graph/state/verification-machine.ts",
+      "name": "roundSlotSubjectOf",
+      "reason": "step5",
+      "substep": "5.3",
+      "wiredBy": "STEP5-FLIPS.md §5 verification-machine, flip VR-01 (5.3): claim the subject/gate slot (claim_round_slot)",
+      "note": "slot subject of a round"
+    },
+    {
+      "file": "src/core/work-graph/state/verification-machine.ts",
+      "name": "roundSlotOwner",
+      "reason": "step5",
+      "substep": "5.3",
+      "wiredBy": "STEP5-FLIPS.md §5 verification-machine, flip VR-01 (5.3): claim the subject/gate slot (claim_round_slot)",
+      "note": "slot owner value (head round refKey)"
+    },
+    {
+      "file": "src/core/work-graph/state/verification-machine.ts",
+      "name": "RoundDisplayStatus",
+      "reason": "step5",
+      "substep": "5.3",
+      "wiredBy": "STEP5-FLIPS.md §5 verification-machine, flip VR-07 (5.3); spec §9.6 VR-07 row names displayRoundStatus",
+      "note": "helper of displayRoundStatus"
+    },
+    {
+      "file": "src/core/work-graph/state/verification-machine.ts",
+      "name": "displayRoundStatus",
+      "reason": "step5",
+      "substep": "5.3",
+      "wiredBy": "STEP5-FLIPS.md §5 verification-machine, flip VR-07 (5.3); spec §9.6 VR-07 row names displayRoundStatus",
+      "note": "display status of a round (also VR-15 history, 5.9)"
+    },
+    {
+      "file": "src/core/work-graph/state/verification-machine.ts",
+      "name": "FROZEN_PERMISSION_CHANGED",
+      "reason": "step5",
+      "substep": "5.3",
+      "wiredBy": "STEP5-FLIPS.md §5 verification-machine, flip VR-02 (VD-8 frozen_* reason prefixes, 5.3); spec §9.6 出口 #3 row (workflow run_check)",
+      "note": "helper of beginRefusalIsPermanent"
+    },
+    {
+      "file": "src/core/work-graph/state/verification-machine.ts",
+      "name": "FROZEN_ROOT_CHANGED",
+      "reason": "step5",
+      "substep": "5.3",
+      "wiredBy": "STEP5-FLIPS.md §5 verification-machine, flip VR-02 (VD-8 frozen_* reason prefixes, 5.3); spec §9.6 出口 #3 row (workflow run_check)",
+      "note": "helper of beginRefusalIsPermanent"
+    },
+    {
+      "file": "src/core/work-graph/state/verification-machine.ts",
+      "name": "FROZEN_SOURCE_CHANGED",
+      "reason": "step5",
+      "substep": "5.3",
+      "wiredBy": "STEP5-FLIPS.md §5 verification-machine, flip VR-02 (VD-8 frozen_* reason prefixes, 5.3); spec §9.6 出口 #3 row (workflow run_check)",
+      "note": "helper of beginRefusalIsPermanent"
+    },
+    {
+      "file": "src/core/work-graph/state/verification-machine.ts",
+      "name": "FROZEN_BINDING_MARKERS",
+      "reason": "step5",
+      "substep": "5.3",
+      "wiredBy": "STEP5-FLIPS.md §5 verification-machine, flip VR-02 (VD-8 frozen_* reason prefixes, 5.3); spec §9.6 出口 #3 row (workflow run_check)",
+      "note": "helper of beginRefusalIsPermanent"
+    },
+    {
+      "file": "src/core/work-graph/state/verification-machine.ts",
+      "name": "beginRefusalIsPermanent",
+      "reason": "step5",
+      "substep": "5.3",
+      "wiredBy": "STEP5-FLIPS.md §5 verification-machine, flip VR-02 (VD-8 frozen_* reason prefixes, 5.3); spec §9.6 出口 #3 row (workflow run_check)",
+      "note": "exit #3 of the check attempts"
+    },
+    {
+      "file": "src/core/work-graph/state/verification-machine.ts",
+      "name": "roundChainHead",
+      "reason": "step5",
+      "substep": "5.3",
+      "wiredBy": "spec §15.2 5.3 (投影、完成与 Workflow 经 roundChainHead 读链头)",
+      "note": "chain head of a subject"
+    },
+    {
+      "file": "src/core/work-graph/state/verification-machine.ts",
+      "name": "chainEvidenceIds",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §8 task-machine, 新增 TASK-16/17/27 (newTaskRequeueRecord is complete for 5.4)",
+      "note": "helper of newTaskRequeueRecord, buildSuccessorRound"
+    },
+    {
+      "file": "src/core/work-graph/state/verification-machine.ts",
+      "name": "evidenceSupersededByRequeue",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 (完成时排除 TaskRequeue 与轮次链上被超越的证据; §15.3 VR-09 row)",
+      "note": "completion evidence exclusion"
+    },
+    {
+      "file": "src/core/work-graph/state/verification-machine.ts",
+      "name": "ReverifyFailureClass",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §7 task-failure: FC and failure facts wired in 5.4 (spec §15.2 5.4 失败事实: TaskRow.failure, TaskRow.rework)",
+      "note": "helper of buildTaskFailureFacts, buildSuccessorRound"
+    },
+    {
+      "file": "src/core/work-graph/state/verification-machine.ts",
+      "name": "reverifyFailureClass",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §7 task-failure: FC and failure facts wired in 5.4 (spec §15.2 5.4 失败事实: TaskRow.failure, TaskRow.rework)",
+      "note": "helper of buildTaskFailureFacts, buildSuccessorRound"
+    },
+    {
+      "file": "src/core/work-graph/state/verification-machine.ts",
+      "name": "reverifyExemption",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §7 task-failure: FC and failure facts wired in 5.4 (spec §15.2 5.4 失败事实: TaskRow.failure, TaskRow.rework)",
+      "note": "helper of buildTaskFailureFacts, automationVerdict, buildSuccessorRound"
+    },
+    {
+      "file": "src/core/work-graph/state/verification-machine.ts",
+      "name": "SuccessorRoundBuildV1",
+      "reason": "step5",
+      "substep": "5.9",
+      "wiredBy": "STEP5-FLIPS.md §5 verification-machine, 新增 VR-14/VR-15 (5.9): the pure pieces buildSuccessorRound, roundChainHead, chainEvidenceIds, reverifyExemption, reverifyFailureClass are complete",
+      "note": "helper of buildSuccessorRound"
+    },
+    {
+      "file": "src/core/work-graph/state/verification-machine.ts",
+      "name": "SuccessorRoundInputV1",
+      "reason": "step5",
+      "substep": "5.9",
+      "wiredBy": "STEP5-FLIPS.md §5 verification-machine, 新增 VR-14/VR-15 (5.9): the pure pieces buildSuccessorRound, roundChainHead, chainEvidenceIds, reverifyExemption, reverifyFailureClass are complete",
+      "note": "helper of buildSuccessorRound"
+    },
+    {
+      "file": "src/core/work-graph/state/verification-machine.ts",
+      "name": "buildSuccessorRound",
+      "reason": "step5",
+      "substep": "5.9",
+      "wiredBy": "STEP5-FLIPS.md §5 verification-machine, 新增 VR-14/VR-15 (5.9): the pure pieces buildSuccessorRound, roundChainHead, chainEvidenceIds, reverifyExemption, reverifyFailureClass are complete",
+      "note": "successor round constructor"
+    },
+    {
+      "file": "src/core/work-graph/state/verification-machine.ts",
+      "name": "roundTaskSignal",
+      "reason": "step5",
+      "substep": "5.3",
+      "wiredBy": "spec §15.2 5.3 (投影、完成与 Workflow 经 roundChainHead 读链头); §9.6 投影 row names roundTaskSignal",
+      "note": "projection input from the round chain head"
+    },
+    {
+      "file": "src/core/work-graph/state/verification-machine.ts",
+      "name": "distinct",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "STEP5-FLIPS.md §8 task-machine, 新增 TASK-16/17/27 (newTaskRequeueRecord is complete for 5.4)",
+      "note": "helper of newTaskRequeueRecord, evidenceSupersededByRequeue, buildSuccessorRound"
+    },
+    {
+      "file": "src/core/work-graph/tasks/claim-contracts.ts",
+      "name": "TaskClaimPort.readTaskClaim",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; a port operation create-platform.ts publishes, but no route (core-routes.ts), Workflow or script reads it; used only by tests: tests/composition/R3c-R4b-platform.test.ts, tests/work-graph/R4c-task-claim-concurrency.test.ts, tests/work-graph/R4c-task-claim.test.ts, tests/work-graph/W2-future-intent.test.ts"
+    },
+    {
+      "file": "src/core/work-graph/tasks/claim-contracts.ts",
+      "name": "TaskClaimPort.requeueTask",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 重新入队 (TaskRequeue, requeueTask service)",
+      "note": "step-1 optional port member (A.2 step 1): no implementation and no caller yet; WorkflowCalls.requeue_task names its type"
+    },
+    {
+      "file": "src/core/work-graph/tasks/claim-record-codecs.ts",
+      "name": "taskRequeueRefKey",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 重新入队 (TaskRequeue, requeueTask service)",
+      "note": "helper of encodeTaskRequeueSnapshot"
+    },
+    {
+      "file": "src/core/work-graph/tasks/claim-record-codecs.ts",
+      "name": "taskReworkRefusalRefKey",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 (TASK-28: 策略拒绝提交为 TaskReworkRefusal)",
+      "note": "helper of encodeTaskReworkRefusalSnapshot"
+    },
+    {
+      "file": "src/core/work-graph/tasks/claim-record-codecs.ts",
+      "name": "encodeTaskRequeueSnapshot",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 重新入队 (TaskRequeue, requeueTask service)",
+      "note": "TaskRequeue record encoder"
+    },
+    {
+      "file": "src/core/work-graph/tasks/claim-record-codecs.ts",
+      "name": "encodeTaskReworkRefusalSnapshot",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 (TASK-28: 策略拒绝提交为 TaskReworkRefusal)",
+      "note": "TaskReworkRefusal record encoder"
+    },
+    {
+      "file": "src/core/work-graph/tasks/claim-record-codecs.ts",
+      "name": "encodeTaskRequeuedEvent",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 重新入队 (TaskRequeue, requeueTask service)",
+      "note": "TaskRequeued event encoder"
+    },
+    {
+      "file": "src/core/work-graph/tasks/claim-record-codecs.ts",
+      "name": "encodeTaskReworkRefusedEvent",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 (TASK-28: 策略拒绝提交为 TaskReworkRefusal)",
+      "note": "TaskReworkRefused event encoder"
+    },
+    {
+      "file": "src/core/work-graph/tasks/execution-read-contracts.ts",
+      "name": "ContinuationBasis",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 接续说明 (readContinuationBasis); §15.3 接续说明（C3） names wg/tasks/continuation-basis-reader.ts",
+      "note": "helper of ExecutionReadPort.readContinuationBasis"
+    },
+    {
+      "file": "src/core/work-graph/tasks/execution-read-contracts.ts",
+      "name": "ExecutionReadPort.readContinuationBasis",
+      "reason": "step5",
+      "substep": "5.4",
+      "wiredBy": "spec §15.2 5.4 接续说明 (readContinuationBasis); §15.3 接续说明（C3） names wg/tasks/continuation-basis-reader.ts",
+      "note": "step-1 optional port member (A.2 step 1): no implementation and no caller yet"
+    },
+    {
+      "file": "src/core/work-graph/tasks/initial-plan.ts",
+      "name": "InitialPlanFactReader",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/core/work-graph/tasks/plan-readers.ts",
+      "name": "Ready",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/core/work-graph/tasks/plan-record-codecs.ts",
+      "name": "workspaceRefFromValue",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; file-local; referenced nowhere"
+    },
+    {
+      "file": "src/core/workspace/architecture-source.ts",
+      "name": "captureArchitectureSource",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; used only by tests: tests/data/workspace-capture-architecture.test.ts, tests/work-graph/R3d-record-integrity.test.ts"
+    },
+    {
+      "file": "src/core/workspace/exploration-source.ts",
+      "name": "Limits",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from ExplorationSourceApplicability"
+    },
+    {
+      "file": "src/core/workspace/exploration-source.ts",
+      "name": "defaults",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from ExplorationSourceApplicability"
+    },
+    {
+      "file": "src/core/workspace/exploration-source.ts",
+      "name": "sameIdentity",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from ExplorationSourceApplicability"
+    },
+    {
+      "file": "src/core/workspace/exploration-source.ts",
+      "name": "ensure",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from ExplorationSourceApplicability"
+    },
+    {
+      "file": "src/core/workspace/exploration-source.ts",
+      "name": "explorationSourceDigest",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from ExplorationSourceApplicability"
+    },
+    {
+      "file": "src/core/workspace/exploration-source.ts",
+      "name": "ExplorationSourceApplicability",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; used only by tests: tests/data/exploration-source-applicability.test.ts"
+    },
+    {
+      "file": "src/core/workspace/project-source-index.ts",
+      "name": "ProjectSourceIndex.architectureMaterials",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from captureArchitectureSource"
+    },
+    {
+      "file": "src/core/workspace/query-workspace-source-reader.ts",
+      "name": "QueryWorkspaceSourceReader",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/core/workspace/readonly-read-witness-reader.ts",
+      "name": "ReadonlyReadWitnessReader",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/core/workspace/reviewer-source-reader.ts",
+      "name": "ensure",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; only reached from readReviewerSource"
+    },
+    {
+      "file": "src/core/workspace/reviewer-source-reader.ts",
+      "name": "readReviewerSource",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/core/workspace/role-source-reader.ts",
+      "name": "WorkspaceSourceIndexReader",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; used only by tests: tests/data/workspace-path-boundary.test.ts"
+    },
+    {
+      "file": "src/core/workspace/source-workspace-reader.ts",
+      "name": "workspaceProjectIndex",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; used only by tests: tests/data/workspace-capture-architecture.test.ts"
+    },
+    {
+      "file": "src/core/workspace/source-workspace-reader.ts",
+      "name": "ProjectArchitectureSourceReader",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; used only by tests: tests/data/workspace-capture-architecture.test.ts"
+    },
+    {
+      "file": "src/core/workspace/verification-source-applicability.ts",
+      "name": "VerificationSourceApplicability",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970; referenced nowhere"
+    },
+    {
+      "file": "src/ui/state/layout.ts",
+      "name": "WorkbenchTabKind",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970 in src/ui/views.ts (moved here by task E); referenced nowhere"
+    },
+    {
+      "file": "src/ui/state/layout.ts",
+      "name": "createWorkbenchLayout",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970 in src/ui/views.ts (moved here by task E); used only by tests: tests/app/R6-workbench.test.ts"
+    },
+    {
+      "file": "src/ui/state/layout.ts",
+      "name": "renderWorkbenchLayout",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970 in src/ui/views.ts (moved here by task E); referenced nowhere"
+    },
+    {
+      "file": "src/ui/views/conversation/composer.ts",
+      "name": "renderConsultation",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970 in src/ui/main.ts (moved here by task E); file-local; referenced nowhere"
+    },
+    {
+      "file": "src/ui/views/conversation/composer.ts",
+      "name": "planningGovernanceHint",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970 in src/ui/main.ts (moved here by task E); file-local; referenced nowhere"
+    },
+    {
+      "file": "src/ui/views/files/render.ts",
+      "name": "renderSourcePage",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970 in src/ui/views.ts (moved here by task E); referenced nowhere"
+    },
+    {
+      "file": "src/ui/views/graphs/node-link.ts",
+      "name": "renderGraphPanels",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970 in src/ui/views.ts (moved here by task E); referenced nowhere"
+    },
+    {
+      "file": "src/ui/views/sessions/render.ts",
+      "name": "HISTORY_KIND_TEXT",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970 in src/ui/views.ts (moved here by task E); only reached from renderSessionHistory"
+    },
+    {
+      "file": "src/ui/views/sessions/render.ts",
+      "name": "OPERATION_PHASE_TEXT",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970 in src/ui/views.ts (moved here by task E); only reached from renderSessionOperationRead"
+    },
+    {
+      "file": "src/ui/views/sessions/render.ts",
+      "name": "renderSessionRoleOptions",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970 in src/ui/views.ts (moved here by task E); referenced nowhere"
+    },
+    {
+      "file": "src/ui/views/sessions/render.ts",
+      "name": "renderSessionOperation",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970 in src/ui/views.ts (moved here by task E); used only by tests: tests/app/R6-workbench.test.ts"
+    },
+    {
+      "file": "src/ui/views/sessions/render.ts",
+      "name": "renderSessionOperationRead",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970 in src/ui/views.ts (moved here by task E); referenced nowhere"
+    },
+    {
+      "file": "src/ui/views/sessions/render.ts",
+      "name": "renderInbox",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970 in src/ui/views.ts (moved here by task E); used only by tests: tests/app/R6-workbench.test.ts"
+    },
+    {
+      "file": "src/ui/views/sessions/render.ts",
+      "name": "renderSessionHistory",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970 in src/ui/views.ts (moved here by task E); used only by tests: tests/app/R6-workbench.test.ts"
+    },
+    {
+      "file": "src/ui/views/sessions/render.ts",
+      "name": "renderRuntimeCapabilities",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970 in src/ui/views.ts (moved here by task E); referenced nowhere"
+    },
+    {
+      "file": "src/ui/views/setup/render.ts",
+      "name": "renderBootstrap",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970 in src/ui/views.ts (moved here by task E); used only by tests: tests/app/R6-workbench.test.ts"
+    },
+    {
+      "file": "src/ui/views/setup/render.ts",
+      "name": "renderRouteResponse",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970 in src/ui/views.ts (moved here by task E); only reached from renderLastResult"
+    },
+    {
+      "file": "src/ui/views/shell/bars.ts",
+      "name": "lastSummary",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970 in src/ui/main.ts (moved here by task E); only reached from renderLastResult"
+    },
+    {
+      "file": "src/ui/views/shell/bars.ts",
+      "name": "renderLastResult",
+      "reason": "pre-batch",
+      "note": "unreached at 790d970 in src/ui/main.ts (moved here by task E); file-local; referenced nowhere"
+    }
+  ]
+}
