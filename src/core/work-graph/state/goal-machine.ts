@@ -21,7 +21,7 @@
  *   or TaskRequeue commit judged by its own machine, never part of a Goal commit.
  *
  * A.2 step 2 (§15.2) scope:
- * - 已有 rows keep today's records byte for byte (`commit-compiler.ts:111-118`,
+ * - 已有 rows keep today's records byte for byte (pre-step-3 `commit-compiler.ts:113-120`,
  *   `plan-commit-compiler.ts:144,293`, pre-step-3 `completion.ts:572-582`) and today's
  *   CoreError codes, checked in today's service order.
  * - 改造 rows keep TODAY's externally visible result; step 5.5 flips them: the
@@ -77,8 +77,8 @@ export type GoalControl = 'pause' | 'resume' | 'cancel';
 // -------------------------------------------------------------------------- //
 
 /**
- * GOAL-01: Goal@1, `active`, no plan (today `commit-compiler.ts:111-118`, same
- * key order). The two D-9 fields are absent, which the contract reads as
+ * GOAL-01: Goal@1, `active`, no plan (the pre-step-3 `commit-compiler.ts:113-120`
+ * literal, same key order). The two D-9 fields are absent, which the contract reads as
  * `desiredStateRevision` 1 and `desiredStateRequestedBy` null (`ledger.ts`);
  * `encodeGoalSnapshot` writes this pre-A.2 shape for an unchanged Goal anyway,
  * and a fresh commit returns this value as is (`graph-repository.ts:319`).
@@ -249,7 +249,7 @@ export type GoalCompletionFacts = {
 export type GoalGuardContext = {
   /** `reworkActorClassOf(principal, actor)` of the caller; null for a principal that is not a Host. GOAL-05 (step 5.5). */
   callerClass: ReworkActorClass | null;
-  /** `goal_created`: `compareCallerGoalPins` agreed with the versions read (`task-service.ts:211-222`). */
+  /** `goal_created`: `compareCallerGoalPins` agreed with the versions read (`task-service.ts:249-253`). */
   scopePinsAgree: boolean;
   /** `goal_completed`: the Goal belongs to the trusted workspace (pre-step-3 `completion.ts:522`). */
   goalInWorkspace: boolean;
@@ -312,15 +312,15 @@ function guard(value: GoalCommitGuard): GoalEffect {
 // -------------------------------------------------------------------------- //
 
 /**
- * GOAL-01 (`task-service.ts:154-257` → `commit-compiler.ts:85-133`). The pins
- * are compared before the commit (`task-service.ts:211-222`). Goal absence is
+ * GOAL-01 (`task-service.ts:192-309` → `commit-compiler.ts:91-137`). The pins
+ * are compared before the commit (`task-service.ts:249-253`). Goal absence is
  * NOT judged from the pre-read Goal: it comes only from the commit's Goal ∅
- * guard (`commit-compiler.ts:126`), which the store checks after its
+ * guard (`task-service.ts:168`), which the store checks after its
  * in-transaction receipt lookup. So a same-identity request committed between
  * the owner's lookup miss and its read still replays its receipt, and a new
  * identity on an existing Goal gets the store's `revision_conflict`
- * (`task-service.ts:249-251`, the §2.4 "Goal 已存在" row) with today's reason.
- * The pre-read Goal therefore never rejects here (`task-service.ts:225-227`).
+ * (`task-service.ts:301-303`, the §2.4 "Goal 已存在" row) with today's reason.
+ * The pre-read Goal therefore never rejects here (`task-service.ts:255-257`).
  */
 function onGoalCreated(
   state: GoalMachineState,

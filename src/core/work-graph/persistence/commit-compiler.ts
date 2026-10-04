@@ -2,8 +2,11 @@
  * WorkGraph Goal commit compiler — the ONE goal-create pure validator/fold.
  *
  * This file owns every pure decision of the Goal creation slice:
- *   - the deterministic fold (`GoalCreated@1` event + revision-1 `GoalSnapshot`);
- *   - the complete guard set and the encoded write set for one `PreparedCommit`;
+ *   - the deterministic `GoalCreated@1` event and the encoded write set of one
+ *     `PreparedCommit`. The revision-1 `GoalSnapshot` and the guard set come
+ *     from GOAL-01 (`state/goal-machine.ts` `transitionGoal`, STATE-MACHINES-SPEC
+ *     §2), which the owner (`tasks/task-service.ts`) runs and translates: the
+ *     Goal record is built only there (§14.1), and this file imports no `state/`;
  *   - the legacy raw-batch envelope validator MOVED here from
  *     `data/state-ledger/validation/bootstrap.ts` (its semantics are preserved
  *     verbatim for the old entry point; see `validateGoalCreateCommit`);
@@ -15,7 +18,7 @@
  * `contracts/command-event.ts` — never copied.
  */
 import type { CommandFingerprint, CommandIdentity, CreateGoalCommand, GoalCreatedEvent } from "../../../contracts/command-event.js";
-import { commandFingerprint, commandIdentityKey, normalizeObjective } from "../../../contracts/command-event.js";
+import { commandFingerprint, commandIdentityKey } from "../../../contracts/command-event.js";
 import type { VersionPin } from "../../../contracts/core/identity.js";
 
 
@@ -60,11 +63,14 @@ export function goalRefFor(projectId: string, goalId: string): GoalRef {
 
 export type GoalCreateCompileInput = {
   command: CreateGoalCommand;
-  /** Already normalized by the caller; normalized again here so the event, the
-   * snapshot and the fingerprint can never disagree. */
-  objective: string;
-  projectRevision: number;
-  workspaceRevision: number;
+  /**
+   * Goal@1 as GOAL-01 wrote it (`newGoalSnapshot`), with the caller's
+   * normalized objective. The event carries this same objective, so the event
+   * and the snapshot can never disagree.
+   */
+  goal: GoalSnapshot;
+  /** GOAL-01's CAS guards as record guards, in the machine's order. */
+  guards: readonly RecordGuard[];
   eventId: string;
   occurredAt: string;
 };
@@ -84,7 +90,7 @@ export type CompiledGoalCreate = {
  */
 export function compileGoalCreate(input: GoalCreateCompileInput): CompiledGoalCreate {
   const command = input.command;
-  const objective = normalizeObjective(input.objective);
+  const snapshot = input.goal;
   const projectId = command.identity.projectId;
   const workspaceId = command.payload.workspaceId;
   const goalId = command.aggregateId;
@@ -104,32 +110,16 @@ export function compileGoalCreate(input: GoalCreateCompileInput): CompiledGoalCr
     actor: cloneActorRef(command.identity.actor),
     occurredAt: input.occurredAt,
     payload: {
-      objective,
+      objective: snapshot.objective,
       desiredState: "active",
       activePlanRevision: null,
     },
   };
 
-  const snapshot: GoalSnapshot = {
-    ref: goalRefFor(projectId, goalId),
-    workspaceRef: workspaceRefFor(projectId, workspaceId),
-    objective,
-    desiredState: "active",
-    activePlanRevision: null,
-    revision: 1,
-  };
-
-  const guards: RecordGuard[] = [
-    { refKey: canonicalRefKey(projectRefFor(projectId)), expectedRevision: input.projectRevision },
-    { refKey: canonicalRefKey(workspaceRefFor(projectId, workspaceId)), expectedRevision: input.workspaceRevision },
-    // Goal absence is guaranteed by the null guard — never by a pre-read.
-    { refKey: canonicalRefKey(goalRefFor(projectId, goalId)), expectedRevision: null },
-  ];
-
   const prepared: PreparedCommit = {
     identityKey: goalCreateIdentityKey(command.identity),
     fingerprint: goalCreateFingerprint(command),
-    guards,
+    guards: [...input.guards],
     records: [encodeGoalSnapshot(snapshot)],
     claims: [],
     indexGuards: [],

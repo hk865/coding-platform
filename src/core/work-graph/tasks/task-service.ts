@@ -13,7 +13,8 @@
  *   3. ONE read snapshot of the canonical Project/Workspace/Goal keys; caller
  *      pins are structurally validated BEFORE the lookup and enforced against
  *      the versions read here;
- *   4. fold + compile exactly 3 guards;
+ *   4. GOAL-01 (`state/goal-machine.ts` `transitionGoal`, STATE-MACHINES-SPEC
+ *      §2) judges the pins and gives Goal@1 plus exactly 3 guards; compile;
  *   5. `records.commit(...)`: the store re-looks-up, CASes, writes, records the
  *      idempotency receipt and COMMITs.
  *
@@ -26,15 +27,17 @@ import type { VersionPin } from "../../../contracts/core/identity.js";
 import type { CoreError, WriteResult } from "../../../contracts/core/results.js";
 import { canonicalJson, type JsonValue } from "../../../contracts/fingerprint.js";
 import type { AggregateRef, GoalSnapshot } from "../../../contracts/ledger.js";
+import { reworkActorClassOf } from "../../../contracts/task-requeue.js";
 import { validateCreateGoalCommand } from "../../../contracts/validation/goal.js";
-import type { GoalRecordTransactionPort } from "../../record-store/ports.js";
+import type { GoalRecordTransactionPort, RecordGuard } from "../../record-store/ports.js";
 import type { RecordLookupPort } from "../../record-store/lookup-ports.js";
 import type { CompletionDependencies } from "./completion.js";
 import { completeGoalFromHost, completeTaskFromHost } from "./completion.js";
 import type { CreateGoalInput, GoalService, GoalServiceDependencies, GoalTaskPort, GraphWrite } from "./contracts.js";
 import { compareCallerGoalPins, compileGoalCreate, goalCreateFingerprint, goalCreateIdentityKey, goalRefFor, normalizeCallerGoalPins, projectRefFor, workspaceRefFor } from "../persistence/commit-compiler.js";
-import { createGoalGraphRepository, type CommittedStoreReceipt, type GoalCreateIdentity, type GoalGraphRepository } from "../persistence/graph-repository.js";
+import { createGoalGraphRepository, type CommittedStoreReceipt, type GoalCreateIdentity, type GoalGraphRepository, type GoalScopeRefs } from "../persistence/graph-repository.js";
 import { cloneActorRef, canonicalRefKey } from "../persistence/record-codecs.js";
+import { goalStateOf, transitionGoal, type GoalCommitGuard, type GoalEffect } from "../state/goal-machine.js";
 
 // --------------------------------------------------------------------------
 // Internal admission result
@@ -147,6 +150,41 @@ function goalRevisionConflict(
   };
 }
 
+/**
+ * GOAL-01's effects as the commit's record guards, in the machine's order:
+ * the Project/Workspace revisions read in this call and Goal ∅. The record is
+ * `next.goal` and the compiler builds the GoalCreated event.
+ */
+function goalCreateGuards(
+  effects: readonly GoalEffect[],
+  refs: GoalScopeRefs,
+  read: { projectRevision: number; workspaceRevision: number },
+): RecordGuard[] {
+  const guardOf = (guard: GoalCommitGuard): RecordGuard => {
+    switch (guard.target) {
+      case "project": return { refKey: canonicalRefKey(refs.projectRef), expectedRevision: read.projectRevision };
+      case "workspace": return { refKey: canonicalRefKey(refs.workspaceRef), expectedRevision: read.workspaceRevision };
+      // Goal absence is guaranteed by the null guard — never by a pre-read.
+      case "goal": return { refKey: canonicalRefKey(refs.goalRef), expectedRevision: guard.expectedRevision };
+      default: throw new Error(`goal_created has no ${guard.target} guard`);
+    }
+  };
+  const guards: RecordGuard[] = [];
+  for (const effect of effects) {
+    switch (effect.kind) {
+      case "write_goal":
+      case "append_event":
+        break;
+      case "guard":
+        guards.push(guardOf(effect.guard));
+        break;
+      default:
+        throw new Error(`goal_created has no ${effect.kind} effect`);
+    }
+  }
+  return guards;
+}
+
 // --------------------------------------------------------------------------
 // The one admission pipeline
 // --------------------------------------------------------------------------
@@ -213,23 +251,37 @@ export async function admitGoalCreation(
     workspaceRevision: observed.workspace.revision,
     goalRevision: preReadGoalRevision ?? null,
   });
-  if (comparison.status === "conflict") {
-    return goalRevisionConflict(
-      comparison.current,
-      preReadGoalRevision,
-      goalRefKey,
-      "the supplied version pins do not match the versions read in this call",
-    );
-  }
 
-  // (4) fold + compile exactly 3 guards. Goal absence is guaranteed by the
-  // null guard; a pre-read Goal never short-circuits the in-transaction
-  // idempotency opportunity.
+  // (4) GOAL-01 judges the pins, writes Goal@1 (§14.1) and names exactly 3
+  // guards. Goal absence is guaranteed by the null guard; a pre-read Goal never
+  // short-circuits the in-transaction idempotency opportunity.
+  const created = transitionGoal(
+    goalStateOf(observed.goal ?? null, null),
+    { type: "goal_created", ref: refs.goalRef, workspaceRef: refs.workspaceRef, objective },
+    {
+      // The Host-bound command actor (§1.3); GOAL-01 does not read it.
+      callerClass: reworkActorClassOf(null, command.identity.actor),
+      scopePinsAgree: comparison.status === "ok",
+      // Read only by goal_completed.
+      goalInWorkspace: true,
+      completion: null,
+    },
+  );
+  if (!created.ok) {
+    // GOAL-01 refuses only pins that disagree with the versions read.
+    return comparison.status === "conflict"
+      ? goalRevisionConflict(comparison.current, preReadGoalRevision, goalRefKey, created.detail)
+      : reject(created.code, created.detail);
+  }
+  const goal = created.next.goal;
+  if (goal === null) throw new Error("goal_created must write the Goal");
   const compiled = compileGoalCreate({
     command,
-    objective,
-    projectRevision: observed.project.revision,
-    workspaceRevision: observed.workspace.revision,
+    goal,
+    guards: goalCreateGuards(created.effects, refs, {
+      projectRevision: observed.project.revision,
+      workspaceRevision: observed.workspace.revision,
+    }),
     eventId: deps.eventId(),
     occurredAt: deps.now(),
   });
