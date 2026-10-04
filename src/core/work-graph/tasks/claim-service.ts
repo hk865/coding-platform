@@ -301,8 +301,11 @@ function claimRunContext(facts: TaskClaimFacts, actor: Extract<ActorRef, { kind:
   };
 }
 
-/** The Run and TaskLease rows are their plain JSON snapshot (serialization only, §14.2). */
-function snapshotRecord(schemaId: string, snapshot: { ref: unknown; revision: number }): EncodedRecord {
+/**
+ * The Run and TaskLease rows are their plain JSON snapshot (serialization only,
+ * §14.2). Typed as the records, so a literal passed here is checked by §14.3 R1.
+ */
+function snapshotRecord(schemaId: string, snapshot: RunSnapshot | TaskLeaseSnapshot): EncodedRecord {
   return { refKey: refKeyOf(snapshot.ref), schemaId, revision: snapshot.revision, json: JSON.stringify(snapshot) };
 }
 

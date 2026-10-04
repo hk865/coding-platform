@@ -10,7 +10,7 @@ const temporary: string[] = [];
 afterEach(async () => { for (const dir of temporary.splice(0)) await rm(dir, { recursive: true, force: true }); });
 
 type ModuleTarget = {
-  schemaVersion?: number; projectRoot?: string; implementationOwnership?: string;
+  schemaVersion?: number; projectRoot?: string; implementationOwnership?: string; pureDirectories?: unknown;
   modules: Array<{ id: string; path?: string; dependencies?: string[];
     submodules?: Array<{ id: string; path: string; dependencies: string[] }> }>;
 };
@@ -28,8 +28,12 @@ async function fixture(path: string, source: string) {
   // Declared module directories must exist; the fixture keeps them empty unless a test writes a file.
   // The real submodule layout belongs to the real tree; tests that need submodules declare their own.
   await writeTarget(dir, target => { for (const module of target.modules) delete module.submodules; });
-  for (const module of (await readTarget(dir)).modules)
+  const copied = await readTarget(dir);
+  for (const module of copied.modules)
     if (module.path) await mkdir(join(dir, module.path), { recursive: true });
+  // The real pure directories (spec §14.4) must exist too; they stay empty unless a test writes a file.
+  for (const pure of Array.isArray(copied.pureDirectories) ? copied.pureDirectories as string[] : [])
+    await mkdir(join(dir, pure), { recursive: true });
   const file = join(dir, 'src', path);
   await mkdir(dirname(file), { recursive: true });
   await writeFile(file, source);
@@ -219,6 +223,86 @@ describe('submodule rules', () => {
       `${MODULE_TARGET_PATH}: submodule WorkGraph/nested depends on unknown ghost`,
       `${MODULE_TARGET_PATH}: submodule WorkGraph/nested path tasks/inner/ overlaps WorkGraph/tasks path tasks/`,
       'source files were not checked (ownership, imports, symlinks, UI rules) because docs/refactor/module-target.json is invalid',
+    ]));
+  });
+});
+
+describe('pure directories (spec §14.4)', () => {
+  it('rejects a Node builtin, a package and another work-graph directory in state/ with file and line', async () => {
+    const dir = await fixture('core/work-graph/state/run-machine.ts', [
+      "import type { RunSnapshot } from '../../../contracts/dispatch.js';",
+      "import { accept } from './transition.js';",
+      "import { createHash } from 'node:crypto';",
+      "import ts from 'typescript';",
+      "import type { Claim } from '../tasks/x.js';",
+      "import '../../../../vendor/coding-agent/dist/public-api.js';",
+      "export type { Store } from '../../record-store/ports.js';",
+      '',
+    ].join('\n'));
+    expect(await auditSourceTree(dir)).toEqual([
+      'core/work-graph/state/run-machine.ts:3: pure directory may not import node:crypto',
+      'core/work-graph/state/run-machine.ts:4: pure directory may not import typescript',
+      'core/work-graph/state/run-machine.ts:5: pure directory may not import ../tasks/x.js',
+      'core/work-graph/state/run-machine.ts:6: pure directory may not import ../../../../vendor/coding-agent/dist/public-api.js',
+      'core/work-graph/state/run-machine.ts:7: pure directory may not import ../../record-store/ports.js',
+    ]);
+  });
+
+  it('accepts contracts and same-directory imports, and leaves files outside the directory to the module rules', async () => {
+    const dir = await fixture('core/work-graph/state/run-machine.ts',
+      "import type { RunSnapshot } from '../../../contracts/dispatch.js';\nimport { accept } from './transition.js';\n");
+    await source(dir, 'core/work-graph/tasks/claim.ts', "import { createHash } from 'node:crypto';\nimport '../state/run-machine.js';\n");
+    expect(await auditSourceTree(dir)).toEqual([]);
+    expect((await inspectSourceTree(dir)).pureDirectories).toEqual(['src/core/work-graph/state/']);
+  });
+
+  it('rejects the clock, randomness, timers, the network and the process through globals in state/ (§14.5)', async () => {
+    const dir = await fixture('core/work-graph/state/run-machine.ts', [
+      'export const at = Date.now();',
+      'export const nonce = Math.random();',
+      'export const today = new Date();',
+      'export const stamp = Date();',
+      "export const env = process.env['X'];",
+      'export const scope = globalThis;',
+      "export function later(f: () => void) { setTimeout(f, 1); setInterval(f, 1); return fetch('x'); }",
+      'export const id = crypto.randomUUID();',
+      'export const tick = performance.now();',
+      "export const parsed = Date.parse('2026-10-05') + new Date('2026-10-05').getTime();",
+      'export const shape = { process: 1, crypto: 2 }.process;',
+      'export type Env = typeof process;',
+      '',
+    ].join('\n'));
+    await source(dir, 'core/work-graph/tasks/clock.ts', 'export const at = Date.now();\n');
+    expect(await auditSourceTree(dir)).toEqual([
+      'core/work-graph/state/run-machine.ts:1: pure directory may not use Date.now',
+      'core/work-graph/state/run-machine.ts:2: pure directory may not use Math.random',
+      'core/work-graph/state/run-machine.ts:3: pure directory may not use new Date()',
+      'core/work-graph/state/run-machine.ts:4: pure directory may not use Date()',
+      'core/work-graph/state/run-machine.ts:5: pure directory may not use process',
+      'core/work-graph/state/run-machine.ts:6: pure directory may not use globalThis',
+      'core/work-graph/state/run-machine.ts:7: pure directory may not use setTimeout',
+      'core/work-graph/state/run-machine.ts:7: pure directory may not use setInterval',
+      'core/work-graph/state/run-machine.ts:7: pure directory may not use fetch',
+      'core/work-graph/state/run-machine.ts:8: pure directory may not use crypto',
+      'core/work-graph/state/run-machine.ts:9: pure directory may not use performance',
+    ]);
+  });
+
+  it('validates pureDirectories in module-target.json', async () => {
+    const dir = await fixture('core/workspace/entry.ts', 'export {};\n');
+    await writeTarget(dir, target => {
+      target.pureDirectories = ['src/core/work-graph/missing/', 'src/core/work-graph/./state/', 'src/business/', 'core/x/'];
+    });
+    expect(await auditSourceTree(dir)).toEqual([
+      `${MODULE_TARGET_PATH}: pure directory src/core/work-graph/missing/ does not exist`,
+      `${MODULE_TARGET_PATH}: pure directory src/core/work-graph/./state/ must be normalized (no empty, "." or ".." segments)`,
+      `${MODULE_TARGET_PATH}: pure directory src/business/ is not inside a module`,
+      `${MODULE_TARGET_PATH}: pure directory core/x/ is not of the form src/<dir>/`,
+      'source files were not checked (ownership, imports, symlinks, UI rules) because docs/refactor/module-target.json is invalid',
+    ]);
+    await writeTarget(dir, target => { target.pureDirectories = 'src/core/work-graph/state/'; });
+    expect(await auditSourceTree(dir)).toEqual(expect.arrayContaining([
+      `${MODULE_TARGET_PATH}: "pureDirectories" must be an array of directory paths`,
     ]));
   });
 });

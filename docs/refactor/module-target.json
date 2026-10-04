@@ -1,9 +1,12 @@
 {
   "schemaVersion": 2,
   "status": "enforced-by-check-architecture",
-  "updated": "2026-10-02",
+  "updated": "2026-10-05",
   "projectRoot": "../..",
   "implementationOwnership": "../../scripts/check-boundaries.mjs",
+  "pureDirectories": [
+    "src/core/work-graph/state/"
+  ],
   "modules": [
     {
       "id": "Workflow",

@@ -13,7 +13,10 @@ const RESERVED_MODULE_IDS = new Set(['Contracts', 'Composition', 'Host', 'UI']);
 const sourceExtensions = new Set(['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs']);
 const APPROVED_NEXT_PACKAGES = new Set(['typescript', 'vitest', '@types/node', 'marked', 'esbuild']);
 const APPROVED_KERNEL_PACKAGES = new Set(['openai', 'zod']);
-const inside = (root, path) => path === root || path.startsWith(root + sep);
+// Spec §14.5: globals a pure directory may not use (besides `Date.now`, `Math.random` and an argument-less `Date`).
+const PURE_FORBIDDEN_GLOBALS = new Set(['process', 'globalThis', 'fetch', 'setTimeout', 'setInterval', 'setImmediate',
+  'queueMicrotask', 'crypto', 'performance']);
+const inside =(root, path) => path === root || path.startsWith(root + sep);
 // `x.d.ts`, `x.ts` and an `x.js` specifier all name the same module.
 const withoutSourceExtension = path => path.replace(/(?:\.d)?\.(?:tsx?|mts|cts|jsx?|mjs|cjs)$/, '');
 // Ownership compares raw path prefixes, so declared paths must already be normalized.
@@ -76,9 +79,9 @@ export async function loadModuleTarget(projectDir) {
   try { raw = JSON.parse(await readFile(targetFile, 'utf8')); }
   catch (error) {
     fail(`cannot be read as JSON (${error?.code ?? error?.message ?? String(error)})`);
-    return { modules: [], issues };
+    return { modules: [], pureDirectories: [], issues };
   }
-  if (!isObject(raw)) { fail('top level must be a JSON object'); return { modules: [], issues }; }
+  if (!isObject(raw)) { fail('top level must be a JSON object'); return { modules: [], pureDirectories: [], issues }; }
   if (raw.schemaVersion !== MODULE_TARGET_SCHEMA)
     fail(`schemaVersion must be ${MODULE_TARGET_SCHEMA}, found ${JSON.stringify(raw.schemaVersion)}`);
   const base = dirname(targetFile);
@@ -94,7 +97,7 @@ export async function loadModuleTarget(projectDir) {
   }
   if (!Array.isArray(raw.modules) || raw.modules.length === 0) {
     fail('"modules" must be a non-empty array');
-    return { modules: [], issues };
+    return { modules: [], pureDirectories: [], issues };
   }
   const ids = new Set();
   for (const [index, entry] of raw.modules.entries()) {
@@ -134,7 +137,32 @@ export async function loadModuleTarget(projectDir) {
   const byId = new Map(modules.map(module => [module.id, module]));
   const cycle = findCycle(modules.map(module => module.id), id => byId.get(id)?.dependencies ?? []);
   if (cycle) fail(`module dependency cycle ${cycle.join(' -> ')}`);
-  return { modules, issues };
+  const pureDirectories = await loadPureDirectories(project, raw.pureDirectories, modules, fail);
+  return { modules, pureDirectories, issues };
+}
+
+/**
+ * Optional top-level "pureDirectories" (spec §14.4; replaced by a `pure: true`
+ * submodule once WorkGraph has submodules): source directories whose files may
+ * import only src/contracts/ and files of the same directory.
+ */
+async function loadPureDirectories(project, value, modules, fail) {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.some(entry => typeof entry !== 'string')) {
+    fail('"pureDirectories" must be an array of directory paths');
+    return [];
+  }
+  const directories = [];
+  for (const path of value) {
+    const label = `pure directory ${path}`;
+    if (!/^src\/.+\/$/.test(path) || path.includes('\\')) { fail(`${label} is not of the form src/<dir>/`); continue; }
+    if (!isNormalizedPath(path)) { fail(`${label} must be normalized (no empty, "." or ".." segments)`); continue; }
+    if (directories.includes(path)) { fail(`${label} is declared twice`); continue; }
+    if (!await isRealDirectory(resolve(project, path))) fail(`${label} does not exist`);
+    if (!modules.some(module => path.startsWith(module.path))) fail(`${label} is not inside a module`);
+    directories.push(path);
+  }
+  return directories;
 }
 
 async function loadSubmodules(project, module, value, fail) {
@@ -203,6 +231,7 @@ export async function inspectSourceTree(projectDir) {
   const MODULE_BY_NAME = new Map(MODULES.map(module => [module.id, module]));
   const MODULE_NAMES = new Set(MODULE_BY_NAME.keys());
   const ALLOWED = Object.fromEntries(MODULES.map(module => [module.id, new Set(module.dependencies)]));
+  const PURE_PREFIXES = target.pureDirectories.map(path => path.slice('src/'.length));
   const owner = rel => rel.startsWith('contracts/') ? 'Contracts'
     : rel.startsWith('composition/') ? 'Composition'
     : rel.startsWith('app/') ? 'Host'
@@ -391,6 +420,34 @@ export async function inspectSourceTree(projectDir) {
     const at = node => `${rel}:${file.getLineAndCharacterOfPosition(node.getStart(file)).line + 1}`;
     const uiDtoModules = new Set(['core-http-types', 'host-settings-types'].map(name => resolve(sourceRoot, 'app', name)));
     const withoutJsExtension = candidate => candidate.replace(/\.(mjs|cjs|js|jsx)$/, '');
+    const purePrefix = PURE_PREFIXES.find(prefix => rel.startsWith(prefix)) ?? null;
+    // Spec §14.4: a pure directory imports only src/contracts/ and its own files
+    // (types or values). Checked BEFORE the generic exemptions, so a `node:`
+    // builtin, a package, the Kernel entry or another source cannot pass.
+    function pureImportAllowed(specifier) {
+      if (!specifier.startsWith('.')) return false;
+      const targetRel = relative(sourceRoot, resolve(dirname(path), specifier)).split(sep).join('/');
+      return targetRel.startsWith('contracts/') || targetRel.startsWith(purePrefix);
+    }
+    // Spec §14.1/§14.5: a pure directory does no IO and reads no clock, so it
+    // may not reach the clock, randomness, timers, the network or the process
+    // through globals either; `now` and ids arrive through ctx or event payloads.
+    function pureGlobalUse(node) {
+      if (ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression)) {
+        const name = `${node.expression.text}.${node.name.text}`;
+        return name === 'Date.now' || name === 'Math.random' ? name : null;
+      }
+      if ((ts.isNewExpression(node) || ts.isCallExpression(node)) && ts.isIdentifier(node.expression)
+        && node.expression.text === 'Date' && (node.arguments?.length ?? 0) === 0)
+        return ts.isNewExpression(node) ? 'new Date()' : 'Date()';
+      if (!ts.isIdentifier(node) || !PURE_FORBIDDEN_GLOBALS.has(node.text)) return null;
+      // A value reference, not a property or declaration name and not a type position.
+      const parent = node.parent;
+      if (ts.isShorthandPropertyAssignment(parent)) return node.text;
+      if (parent.name === node || parent.propertyName === node || parent.label === node) return null;
+      if (ts.isTypeReferenceNode(parent) || ts.isTypeQueryNode(parent) || ts.isQualifiedName(parent)) return null;
+      return node.text;
+    }
     // Browser rule, applied BEFORE the generic Node/Kernel/npm exemptions so a
     // `node:` builtin, the frozen Kernel entry, a bare package, or an arbitrary
     // Host/Contracts value import cannot be waived by an early return. The only
@@ -414,6 +471,10 @@ export async function inspectSourceTree(projectDir) {
       const loc = at(node);
       if (from === 'UI') { checkUiSpecifier(specifier, typeOnly, loc); return; }
       if (typeof specifier !== 'string') { issues.push(`${loc}: computed import/require is forbidden`); return; }
+      if (purePrefix !== null && !pureImportAllowed(specifier)) {
+        issues.push(`${loc}: pure directory may not import ${specifier}`);
+        return;
+      }
       if (specifier === 'node:module') { issues.push(`${loc}: node:module is forbidden in product source`); return; }
       if (specifier.startsWith('node:')) return;
       if (!specifier.startsWith('.')) {
@@ -482,6 +543,10 @@ export async function inspectSourceTree(projectDir) {
         const arg = node.arguments[0];
         checkSpecifier(arg && ts.isStringLiteral(arg) ? arg.text : null, false, node);
       }
+      if (purePrefix !== null) {
+        const global = pureGlobalUse(node);
+        if (global !== null) issues.push(`${at(node)}: pure directory may not use ${global}`);
+      }
       ts.forEachChild(node, walk);
     }
     walk(file);
@@ -499,7 +564,7 @@ export async function inspectSourceTree(projectDir) {
     submodules.push({ name: `${module.id}/${submodule.id}`, sourceFiles: submoduleFileCounts.get(`${module.id}/${submodule.id}`) ?? 0 });
   const allowedEdgeCount = MODULES.reduce((count, module) => count + module.dependencies.length, 0);
   return {
-    issues, modules, submodules, allowedEdgeCount,
+    issues, modules, submodules, allowedEdgeCount, pureDirectories: target.pureDirectories,
     observedEdges: [...observedEdges].sort(), observedSubmoduleEdges: [...observedSubmoduleEdges].sort(),
   };
 }
@@ -509,13 +574,14 @@ export async function auditSourceTree(projectDir) {
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const { issues, modules, submodules, allowedEdgeCount, observedEdges, observedSubmoduleEdges } =
+  const { issues, modules, submodules, allowedEdgeCount, pureDirectories, observedEdges, observedSubmoduleEdges } =
     await inspectSourceTree(resolve(dirname(fileURLToPath(import.meta.url)), '..'));
   for (const module of modules) process.stdout.write(`${module.name}: directory=${module.directory}, sourceFiles=${module.sourceFiles}\n`);
   process.stdout.write(`observed module edges: ${observedEdges.length}/${allowedEdgeCount} allowed (${observedEdges.join(', ') || 'none'})\n`);
   for (const submodule of submodules) process.stdout.write(`  ${submodule.name}: sourceFiles=${submodule.sourceFiles}\n`);
   if (submodules.length)
     process.stdout.write(`observed submodule edges: ${observedSubmoduleEdges.length} (${observedSubmoduleEdges.join(', ') || 'none'})\n`);
+  if (pureDirectories.length) process.stdout.write(`pure directories: ${pureDirectories.join(', ')}\n`);
   if (issues.length) { for (const issue of issues) process.stderr.write(`${issue}\n`); process.exitCode = 1; }
   else process.stdout.write('next source boundaries: OK\n');
 }

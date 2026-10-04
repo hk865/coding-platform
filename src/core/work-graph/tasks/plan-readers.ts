@@ -33,6 +33,7 @@ import type {
 import { decodeGoalSnapshot } from '../persistence/record-codecs.js';
 import { taskLeaseSnapshotProblem } from '../persistence/execution-entry-codecs.js';
 import { derivePlanProposalStatus, derivePlanRevisionStatus, type FutureChangeTaskFactsV1 } from '../state/plan-machine.js';
+import { projectTaskPhase } from '../state/task-machine.js';
 import type { VerifiedGovernance } from './plan-commit-compiler.js';
 import type { PlanProposal, PlanProposalRef } from './plan-contracts.js';
 import {
@@ -1012,16 +1013,19 @@ export async function readCanonicalTaskFacts(
       const lease = projectLease({ lease: leaseByTask.get(task.taskId) ?? null, taskId: task.taskId,
         runById, index, selected: selectedFacts, selectedBasis, selectedDefinition, goalRef });
       if (lease.status === 'unavailable') return unavailable(lease.reason);
-      // Active accepted Run => running. A Run that really yielded on a wait with
-      // a durable continuation is continuable (`ready`), never `blocked`; only an
-      // ended Run with no such formal continuation stays conservatively blocked.
-      const continuable = run !== null && run.status === 'ended' && run.outcome === 'yielded'
-        && run.continuation !== undefined;
-      const effectivePhase: Phase = reductionApplicable ? reduction!.phase
-        : run !== null && runIsActive(run) ? 'running'
-        : continuable ? 'ready'
-        : run !== null ? 'blocked'
-        : unresolvable ? 'blocked' : 'pending';
+      // §4.1 projection (D-1, §14.1): an applicable Reduction, else an active
+      // Run => running, a Run that really yielded with a durable continuation =>
+      // ready, any other ended Run or an unresolvable origin => blocked, no Run
+      // => pending. No round chain or TaskRequeue enters this read before A.2
+      // step 5.3/5.4 (every completed-Run row projects `blocked` until then).
+      const effectivePhase = projectTaskPhase({
+        taskKind: task.taskKind,
+        applicableReduction: reductionApplicable ? reduction : null,
+        selectedRun: run,
+        originUnresolvable: unresolvable,
+        round: { kind: 'none' },
+        coveringRequeue: null,
+      }).phase;
       byTaskId.set(task.taskId, {
         taskId: task.taskId,
         effectivePhase,
