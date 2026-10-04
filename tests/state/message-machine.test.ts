@@ -14,8 +14,11 @@ import { deriveSessionInputId, type SessionMessage } from '../../src/core/work-g
 import { checkSessionMessageBody } from '../../src/core/work-graph/communication/message-record-codecs.js';
 import {
   createSessionMessageRecord,
+  inputObserverProblem,
   messageMachineStateOf,
+  messagePinProblem,
   messageSatisfiesWait,
+  messageSendFlagsProblem,
   nextSessionMessageRecord,
   transitionMessage,
   type MessageAcceptedInput,
@@ -747,6 +750,67 @@ describe('§10.4 forbidden transitions', () => {
     expect(rejection(transitionMessage(S.read, EVENTS.read, { ...happyCtx('read', S.read), pins: stale })).code).toBe('invalid');
     expect(rejection(transitionMessage(S.pendingDerivedDelivered, EVENTS.derived, { ...happyCtx('derived', S.pendingDerivedDelivered), pins: stale })).code)
       .toBe('invalid');
+  });
+});
+
+describe('request guards the service asks before its receipt lookup', () => {
+  it('messagePinProblem is the pin check of ack, respond, MSG-06 and MSG-09, with today\'s reasons', () => {
+    const cases: ReadonlyArray<{ pins: MessageGuardContext['pins']; detail: string | null }> = [
+      { pins: { count: 0, matchesMessage: false, revision: null }, detail: 'ack/respond require exactly one SessionMessage version pin' },
+      { pins: { count: 2, matchesMessage: true, revision: 1 }, detail: 'ack/respond require exactly one SessionMessage version pin' },
+      { pins: { count: 1, matchesMessage: false, revision: null }, detail: 'the SessionMessage pin revision must be a positive integer' },
+      { pins: { count: 1, matchesMessage: false, revision: 1 }, detail: 'the version pin does not name the requested message' },
+      { pins: { count: 1, matchesMessage: true, revision: 1 }, detail: null },
+    ];
+    for (const { pins, detail } of cases) {
+      const guard = messagePinProblem(pins);
+      if (detail === null) {
+        expect(guard).toBeNull();
+        continue;
+      }
+      expect(guard).toEqual({ ok: false, reason: 'illegal', code: 'invalid', detail });
+      for (const stateName of STATE_NAMES) {
+        for (const eventName of ['read', 'respondText', 'respondAnswer', 'derived'] as const) {
+          const state = STATES[stateName];
+          expect(transitionMessage(state, EVENTS[eventName], { ...happyCtx(eventName, state), pins })).toEqual(guard);
+        }
+      }
+    }
+  });
+
+  it('messageSendFlagsProblem is MSG-01/02\'s flag check, then its pin check', () => {
+    const happy = happyCtx('sent', S.absent);
+    const flags = happy.sendFlags!;
+    const cases: ReadonlyArray<{ flags: typeof flags; detail: string | null }> = [
+      { flags: { ...flags, waitAfterSend: true, needsReply: false, pinCount: 1 }, detail: 'waitAfterSend requires needsReply to be true or omitted' },
+      { flags: { ...flags, pinCount: 1 }, detail: 'sendSessionMessage must not carry version pins' },
+      { flags: { ...flags, waitAfterSend: true, needsReply: true, replyMode: 'wait' }, detail: null },
+      { flags, detail: null },
+    ];
+    for (const { flags: sendFlags, detail } of cases) {
+      const guard = messageSendFlagsProblem(sendFlags);
+      if (detail === null) {
+        expect(guard).toBeNull();
+        expectResult(transitionMessage(S.absent, EVENTS.sent, { ...happy, sendFlags }), TABLE.absent.sent);
+        continue;
+      }
+      expect(guard).toEqual({ ok: false, reason: 'illegal', code: 'invalid', detail });
+      expect(transitionMessage(S.absent, EVENTS.sent, { ...happy, sendFlags })).toEqual(guard);
+    }
+  });
+
+  it('inputObserverProblem is MSG-07/08\'s check that a work_run confirms only its own execution', () => {
+    expect(inputObserverProblem(true)).toBeNull();
+    const guard = inputObserverProblem(false);
+    expect(guard).toEqual({ ok: false, reason: 'guard_failed', code: 'forbidden', detail: 'an execution may only confirm its own accepted inputs' });
+    for (const stateName of PRESENT_STATE_NAMES) {
+      for (const eventName of ['acceptMessage', 'acceptResponse'] as const) {
+        const state = STATES[stateName];
+        const happy = happyCtx(eventName, state);
+        const ctx = { ...happy, principal: 'work_run' as const, inputAccepted: { ...happy.inputAccepted!, observerOwnsExecution: false } };
+        expect(transitionMessage(state, EVENTS[eventName], ctx)).toEqual(guard);
+      }
+    }
   });
 });
 

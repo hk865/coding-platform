@@ -58,7 +58,7 @@ import { makeCommitCursor, seqOfCommitCursor } from '../../../contracts/ledger.j
 import { canonicalRefKey, decodeWorkspaceSnapshot } from '../persistence/record-codecs.js';
 import { checkPlainSessionRef, decodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey } from '../sessions/session-record-codecs.js';
 import type { GraphWrite } from '../sessions/contracts.js';
-import type { RecordBatchRead, EncodedRecord, PreparedCommit, RecordGuard, StoreFailure, StoreResult } from '../../record-store/ports.js';
+import type { RecordBatchRead, EncodedDomainEvent, EncodedRecord, PreparedCommit, RecordGuard, StoreFailure, StoreResult } from '../../record-store/ports.js';
 import type { RecordLookupRequest } from '../../record-store/lookup-ports.js';
 import type { TaskClaimOutbox } from '../tasks/claim-contracts.js';
 import type { TaskExecutionRecord } from '../tasks/execution-read-contracts.js';
@@ -73,19 +73,22 @@ import {
   checkMessageSender, checkSessionMessageRef, decodeSessionMessageRecord,
   encodeSessionMessageReadEvent, encodeSessionMessageRecord, encodeSessionMessageRespondedEvent,
   encodeSessionMessageSentEvent, sessionMessageFromEvent, sessionMessageRefKey,
-  encodeSessionMessageConsultationDerivedEvent, encodeSessionMessageInputAcceptedEvent,
-  type SessionMessageReadEventV1, type SessionMessageRespondedEventV1, type SessionMessageSentEventV1,
+  encodeSessionMessageConsultationDerivedEvent, encodeSessionMessageInputAcceptedEvent, type SessionMessageEventV1,
 } from './message-record-codecs.js';
 import {
   decodeQueryJobAnswerSnapshot, decodeQueryJobSnapshot, decodeQueryRunSnapshotRecord,
 } from '../queries/query-record-codecs.js';
 import {
-  createSessionMessageRecord, messageMachineStateOf, nextSessionMessageRecord, transitionMessage,
-  type MessageEffect, type MessageGuardContext, type MessageTransition, type QueryAnswerBinding,
+  createSessionMessageRecord, inputObserverProblem, messageMachineStateOf, messagePinProblem, messageSendFlagsProblem,
+  nextSessionMessageRecord, transitionMessage,
+  type MessageEffect, type MessageEvent, type MessageGuardContext, type MessageTransition, type QueryAnswerBinding,
+  type SessionMessageEventType,
 } from '../state/message-machine.js';
-import { unreachable } from '../state/transition.js';
+import { unreachable, type Rejected } from '../state/transition.js';
 
 type Unknown = Record<string, unknown>;
+/** `ownContext` admits only these two principals. */
+type MailboxPrincipal = Extract<CorePrincipal, { kind: 'host' | 'work_run' }>;
 type WorkRunPrincipal = Extract<CorePrincipal, { kind: 'work_run' }>;
 type HostActor = Extract<CorePrincipal, { kind: 'host' }>['actor'];
 
@@ -173,7 +176,7 @@ type Owned = {
   ok: true;
   projectId: string;
   workspaceId: string;
-  principal: CorePrincipal;
+  principal: MailboxPrincipal;
   reader: MaterialReader;
   signal: AbortSignal;
 };
@@ -214,7 +217,7 @@ function ownContext(ctx: CoreCallContext): OwnedContext {
     }
     return {
       ok: true, projectId, workspaceId,
-      principal: principal as unknown as CorePrincipal,
+      principal: principal as unknown as MailboxPrincipal,
       reader: reader as unknown as MaterialReader,
       signal: signal as unknown as AbortSignal,
     };
@@ -234,7 +237,7 @@ function ownContext(ctx: CoreCallContext): OwnedContext {
     }
     return {
       ok: true, projectId, workspaceId,
-      principal: principal as unknown as CorePrincipal,
+      principal: principal as unknown as MailboxPrincipal,
       reader: reader as unknown as MaterialReader,
       signal: signal as unknown as AbortSignal,
     };
@@ -293,28 +296,43 @@ function scopeOfMessageRef(owned: Owned, ref: SessionMessageRef): CoreRejection 
   return null;
 }
 
-function normalizeMessagePin(expected: readonly VersionPin[], ref: SessionMessageRef): { ok: true; revision: number } | { ok: false; rejection: CoreRejection } {
-  if (expected.length !== 1) return { ok: false, rejection: reject('invalid', 'ack/respond require exactly one SessionMessage version pin') };
-  const pin = expected[0] as unknown;
-  if (!isObject(pin) || !isPositiveInt(pin['revision'])) return { ok: false, rejection: reject('invalid', 'the SessionMessage pin revision must be a positive integer') };
-  if (canonicalOf(pin['ref']) !== canonicalOf(ref)) return { ok: false, rejection: reject('invalid', 'the version pin does not name the requested message') };
-  return { ok: true, revision: pin['revision'] };
-}
-
 // --------------------------------------------------------------------------
 // Message machine calls (STATE-MACHINES-SPEC §10)
 // --------------------------------------------------------------------------
 
 type Refused = Extract<MessageTransition, { ok: false }>;
+type Accepted = Extract<MessageTransition, { ok: true }>;
+
+/** A machine guard's refusal as today's rejection (§1.2: code and reason kept); `null` when it holds. */
+function guardRejection(problem: Rejected | null): CoreRejection | null {
+  return problem === null || problem.ok ? null : reject(problem.code, problem.detail);
+}
 
 /**
- * §10.1's guard context: the caller principal plus only the facts this write
- * read or authorized. The request checks that run before the receipt lookup
- * (principal, pins, text, flags) have already held when the machine is asked.
+ * The one version pin of ack, respond, MSG-06 and MSG-09: the machine's pin
+ * guard, asked with the request before the receipt lookup. The row asks the
+ * same facts again.
  */
-function messageContext(principal: CorePrincipal, facts: Partial<Omit<MessageGuardContext, 'principal'>>): MessageGuardContext {
-  return {
-    principal: principal.kind === 'host' || principal.kind === 'work_run' ? principal.kind : 'other',
+function pinsOf(expected: readonly VersionPin[], ref: SessionMessageRef):
+  { ok: true; pins: MessageGuardContext['pins'] } | { ok: false; rejection: CoreRejection } {
+  const pin = expected.length === 1 && isObject(expected[0]) ? expected[0] as unknown as Unknown : null;
+  const pins = {
+    count: expected.length,
+    matchesMessage: pin !== null && canonicalOf(pin['ref']) === canonicalOf(ref),
+    revision: pin !== null && isPositiveInt(pin['revision']) ? pin['revision'] : null,
+  };
+  const rejection = guardRejection(messagePinProblem(pins));
+  return rejection === null ? { ok: true, pins } : { ok: false, rejection };
+}
+
+/**
+ * §10.1: the machine's verdict on the message read (`null` = absent), asked
+ * with the caller principal and only the facts this write read or authorized.
+ */
+function judge(principal: MailboxPrincipal, message: SessionMessage | null, event: MessageEvent,
+  facts: Partial<Omit<MessageGuardContext, 'principal'>>): { decided: MessageTransition; ctx: MessageGuardContext } {
+  const ctx: MessageGuardContext = {
+    principal: principal.kind,
     workRunAuthorization: null,
     callerIsRecipient: null,
     recipientScope: null,
@@ -326,11 +344,7 @@ function messageContext(principal: CorePrincipal, facts: Partial<Omit<MessageGua
     consumedWait: null,
     ...facts,
   };
-}
-
-/** The one SessionMessage pin `normalizeMessagePin` accepted. */
-function pinFacts(revision: number): MessageGuardContext['pins'] {
-  return { count: 1, matchesMessage: true, revision };
+  return { decided: transitionMessage(messageMachineStateOf(message), event, ctx), ctx };
 }
 
 /** The fresh work_run admission's own rejection when the refusal is its verdict (the machine passes it through). */
@@ -341,28 +355,9 @@ function admissionRefusalOf(refused: Refused, ctx: MessageGuardContext): CoreRej
     ? admission : null;
 }
 
-/**
- * Whether today's service re-checks the same identity's receipt
- * (`recheckAfterMiss`) before this refusal: a refused fresh admission, and a
- * refusal of an existing message's own state (already read, responded or
- * derived), because a concurrent request of this identity may have committed
- * after the first lookup missed. An absent message and a recipient or Query
- * mismatch are refused directly. A stale pin is not a machine refusal: as
- * today, only the commit's message CAS catches it (`commitMessage`).
- */
-function rechecksReceipt(refused: Refused, ctx: MessageGuardContext, message: SessionMessage | null): boolean {
-  if (admissionRefusalOf(refused, ctx) !== null) return true;
-  return message !== null && refused.reason !== 'guard_failed';
-}
-
-/**
- * A machine refusal as the rejection today's service returned (§1.2: code and
- * reason kept). A refused admission is its own rejection.
- */
+/** A machine refusal as the rejection today's service returned; a refused admission is its own rejection. */
 function refusalOf(refused: Refused, ctx: MessageGuardContext): CoreRejection {
-  const admission = admissionRefusalOf(refused, ctx);
-  if (admission !== null) return admission;
-  return reject(refused.code, refused.detail);
+  return admissionRefusalOf(refused, ctx) ?? reject(refused.code, refused.detail);
 }
 
 /**
@@ -404,6 +399,8 @@ function acceptedMessage(message: SessionMessage | null): SessionMessage {
 type MessageCommitPlan = {
   /** `store_body`: stored and verified BEFORE the commit, outside the transaction. */
   body: Extract<MessageEffect, { kind: 'store_body' }> | null;
+  /** `append_event`: the event appended in the commit. */
+  eventType: SessionMessageEventType;
   /** `guard_message`: `null` = the message must not exist yet (send CAS@0). */
   messageRevision: number | null;
   /** `guard_work_run_facts`: the admission's Run, Session, Lease and role guards join the commit. */
@@ -411,32 +408,25 @@ type MessageCommitPlan = {
 };
 
 /**
- * An accepted write's effects (§10.3). The write builds the record change and
- * the event the machine names; the body store, the message CAS and the joined
- * admission guards come from the effects.
+ * An accepted write's effects (§10.3). `write_message` is the record the write
+ * builds with the machine's constructor, which must be the machine's `next`.
  */
-function messageCommitPlan(
-  effects: readonly MessageEffect[],
-  change: Extract<MessageEffect, { kind: 'write_message' }>['change'],
-  eventType: Extract<MessageEffect, { kind: 'append_event' }>['eventType'],
-): MessageCommitPlan {
+function messageCommitPlan(effects: readonly MessageEffect[]): MessageCommitPlan {
   let body: MessageCommitPlan['body'] = null;
+  let eventType: SessionMessageEventType | null = null;
   let messageRevision: number | null | undefined;
   let workRunFacts = false;
   let written = false;
-  let appended = false;
   for (const effect of effects) {
     switch (effect.kind) {
       case 'store_body':
         body = effect;
         break;
       case 'write_message':
-        if (effect.change !== change) throw new Error(`this mailbox write builds ${change}, not ${effect.change}`);
         written = true;
         break;
       case 'append_event':
-        if (effect.eventType !== eventType) throw new Error(`this mailbox write appends ${eventType}, not ${effect.eventType}`);
-        appended = true;
+        eventType = effect.eventType;
         break;
       case 'guard_message':
         messageRevision = effect.expectedRevision;
@@ -448,10 +438,22 @@ function messageCommitPlan(
         return unreachable(effect, 'message effect');
     }
   }
-  if (!written || !appended || messageRevision === undefined) {
+  if (!written || eventType === null || messageRevision === undefined) {
     throw new Error('an accepted message write names its record, its event and its message CAS');
   }
-  return { body, messageRevision, workRunFacts };
+  return { body, eventType, messageRevision, workRunFacts };
+}
+
+/** The `append_event` event; every SessionMessage event has the same envelope. */
+function encodeMessageEvent(event: SessionMessageEventV1): EncodedDomainEvent {
+  switch (event.eventType) {
+    case 'SessionMessageSent': return encodeSessionMessageSentEvent(event);
+    case 'SessionMessageRead': return encodeSessionMessageReadEvent(event);
+    case 'SessionMessageResponded': return encodeSessionMessageRespondedEvent(event);
+    case 'SessionMessageConsultationDerived': return encodeSessionMessageConsultationDerivedEvent(event);
+    case 'SessionMessageInputAccepted': return encodeSessionMessageInputAcceptedEvent(event);
+    default: return unreachable(event, 'message event');
+  }
 }
 
 // --------------------------------------------------------------------------
@@ -502,8 +504,17 @@ function messageIdOf(owned: Owned, senderIdentity: Unknown, requestId: string): 
   } as unknown as JsonValue));
 }
 
-function eventIdOf(identityKey: string, suffix: string): string {
-  return sha256Hex(`${identityKey}|${suffix}`);
+/** Each event's id under its write identity. */
+const EVENT_ID_SUFFIX: Record<SessionMessageEventType, string> = {
+  SessionMessageSent: 'sent',
+  SessionMessageRead: 'read',
+  SessionMessageResponded: 'responded',
+  SessionMessageConsultationDerived: 'consultation-derived',
+  SessionMessageInputAccepted: 'input-accepted',
+};
+
+function eventIdOf(identityKey: string, eventType: SessionMessageEventType): string {
+  return sha256Hex(`${identityKey}|${EVENT_ID_SUFFIX[eventType]}`);
 }
 
 // --------------------------------------------------------------------------
@@ -1185,18 +1196,10 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
    * source; a formal Answer body keeps the Answer's ORIGINAL source, so a later
    * current Workspace revision never impersonates the answer-time evidence.
    */
-  async function storePlannedBody(plan: MessageCommitPlan, args: {
-    owned: Owned;
-    sender: MessageSender | MessageQueryAnswerSender;
-    messageRef: SessionMessageRef;
-    text: string;
-    identityKey: string;
-    answerSource: ArtifactRef['source'] | null;
-  }): Promise<BodyOutcome> {
-    const { owned, sender, messageRef, text, identityKey, answerSource } = args;
-    const body = plan.body;
-    if (body === null) throw new Error('this mailbox write stores its body before the commit');
-    const bodyRequestId = `session-message-body:${sha256Hex(`${identityKey}|${body.part}`)}`;
+  async function storePlannedBody(body: NonNullable<MessageCommitPlan['body']>, input: BodyInput, write: MessageWrite): Promise<BodyOutcome> {
+    const { owned, actor: sender } = write;
+    const { messageRef, text, answerSource } = input;
+    const bodyRequestId = `session-message-body:${sha256Hex(`${write.identityKey}|${body.part}`)}`;
     if (body.source === 'answer') {
       if (answerSource === null) throw new Error('a formal Answer body keeps the Answer source');
       return storeMessageBody({
@@ -1254,42 +1257,100 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     return null;
   }
 
-  /** A machine refusal, after today's same-identity receipt re-check where today's service made one. */
-  async function refuse(refused: Refused, ctx: MessageGuardContext,
-    identity: { identityKey: string; fingerprint: string }, recheck: boolean): Promise<WriteResult<SessionMessage>> {
-    if (recheck) {
-      const restored = await recheckAfterMiss(identity.identityKey, identity.fingerprint);
+  /**
+   * A machine refusal, after today's same-identity receipt re-check
+   * (`recheckAfterMiss`) where today's service made one, because a concurrent
+   * request of this identity may have committed after the first lookup missed:
+   * a refused fresh admission, and an `invalid` refusal of an existing message's
+   * own state (already read, responded or derived; the inputId already
+   * accepted). An absent message and a recipient, Query, Kernel or Session
+   * mismatch are refused directly. A stale pin is not a machine refusal: as
+   * today, only the commit's message CAS catches it (`writeMessage`).
+   */
+  async function refuse(refused: Refused, ctx: MessageGuardContext, identityKey: string, fingerprint: string): Promise<WriteResult<SessionMessage>> {
+    if (admissionRefusalOf(refused, ctx) !== null || refused.code === 'invalid') {
+      const restored = await recheckAfterMiss(identityKey, fingerprint);
       if (restored !== null) return restored;
     }
     return refusalOf(refused, ctx);
   }
 
-  /** The planned record, its event and the effects' CAS guards in ONE commit. */
-  async function commitMessage(args: {
+  // ---- accepted writes ----------------------------------------------------
+
+  /** `store_body`'s input: the message the body belongs to, its text, and a formal Answer's ORIGINAL source (`null` = the current Workspace). */
+  type BodyInput = { messageRef: SessionMessageRef; text: string; answerSource: ArtifactRef['source'] | null };
+
+  /** An accepted write's own inputs; the machine's effects decide the rest (`writeMessage`). */
+  type MessageWrite = {
+    owned: Owned;
     identityKey: string;
     fingerprint: string;
-    message: SessionMessage;
-    plan: MessageCommitPlan;
-    /** The fresh work_run admission; its guards join only on a `guard_work_run_facts` effect. */
+    requestId: string;
+    /** The command identity: the event actor and a stored body's sender. */
+    actor: MessageSender | MessageQueryAnswerSender;
+    /** The fresh work_run admission; its guards join the commit on `guard_work_run_facts`. */
     admission: AuthOutcome | null;
-    event: import('../../record-store/ports.js').EncodedDomainEvent;
-  }): Promise<WriteResult<SessionMessage>> {
-    const { identityKey, fingerprint, message, plan, admission, event } = args;
-    let guards: RecordGuard[] = [];
-    if (plan.workRunFacts) {
-      if (admission === null || !admission.ok) throw new Error('only an admitted work_run write guards its admission facts');
-      guards = admission.guards;
+    /** The reason of the cancellation check right before the commit. */
+    cancelled: string;
+  } & (
+    /** `write_message`: the record the machine's constructor builds at the write's clock instant, around the stored body. */
+    | { body: BodyInput; record: (at: string, bodyRef: ArtifactRef) => SessionMessage }
+    | { body: null; record: (at: string) => SessionMessage }
+  );
+
+  /**
+   * An accepted write (§10.3) in today's order: the `store_body` effect before
+   * the commit and outside its transaction, the clock, the write's record (the
+   * machine's `next`), the `append_event` event, the cancellation check, then
+   * ONE commit guarded by `guard_message` and, on `guard_work_run_facts`, the
+   * fresh admission's Run, Session, Lease and role guards.
+   */
+  async function writeMessage(accepted: Accepted, write: MessageWrite): Promise<WriteResult<SessionMessage>> {
+    const { owned, identityKey, fingerprint } = write;
+    const plan = messageCommitPlan(accepted.effects);
+    let record: (at: string) => SessionMessage;
+    if (write.body === null || plan.body === null) {
+      if (write.body !== null || plan.body !== null) throw new Error('a mailbox write stores its body exactly when the machine names store_body');
+      record = write.record;
+    } else {
+      const stored = await storePlannedBody(plan.body, write.body, write);
+      if (!stored.ok) return stored.rejection;
+      const withBody = write.record;
+      record = (at) => withBody(at, stored.ref);
     }
-    const messageGuard: RecordGuard = { refKey: sessionMessageRefKey(message.ref), expectedRevision: plan.messageRevision };
+    const at = deps.now();
+    if (!nonEmpty(at)) return reject('invalid', 'the injected clock is not a legal instant');
+    const message = record(at);
+    if (canonicalOf(messageMachineStateOf(message)) !== canonicalOf(accepted.next)) {
+      throw new Error('the written SessionMessage is not the state the message machine accepted');
+    }
+    const event = {
+      eventId: eventIdOf(identityKey, plan.eventType),
+      eventType: plan.eventType,
+      schemaVersion: 1 as const,
+      occurredAt: at,
+      projectId: owned.projectId,
+      workspaceId: owned.workspaceId,
+      requestId: write.requestId,
+      actor: write.actor,
+      message,
+    } as SessionMessageEventV1;
+    if (owned.signal.aborted) return reject('cancelled', write.cancelled);
+    const events = [encodeMessageEvent(event)];
+    const guards: RecordGuard[] = [{ refKey: sessionMessageRefKey(message.ref), expectedRevision: plan.messageRevision }];
+    if (plan.workRunFacts) {
+      if (write.admission === null || !write.admission.ok) throw new Error('only an admitted work_run write guards its admission facts');
+      guards.push(...write.admission.guards);
+    }
     const prepared: PreparedCommit = {
       identityKey,
       fingerprint,
-      guards: dedupeGuards([messageGuard, ...guards]),
+      guards: dedupeGuards(guards),
       records: [encodeSessionMessageRecord(message)],
       claims: [],
       indexGuards: [],
       indexChanges: [],
-      events: [event],
+      events,
     };
     let receipt: Awaited<ReturnType<SessionMailboxDependencies['records']['commit']>>;
     try {
@@ -1356,24 +1417,23 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     const legacyWait = replyMode === 'wait';
     const waitAfterSend = explicitWaitAfterSend === true || (explicitWaitAfterSend === undefined && legacyWait);
     const needsReply = explicitNeedsReply === true || (explicitNeedsReply === undefined && (legacyWait || waitAfterSend));
-    if (waitAfterSend && explicitNeedsReply === false) {
-      return reject('invalid', 'waitAfterSend requires needsReply to be true or omitted');
-    }
-    if (write.expected.length !== 0) return reject('invalid', 'sendSessionMessage must not carry version pins');
+    const sendFlags: NonNullable<MessageGuardContext['sendFlags']> = {
+      needsReply, waitAfterSend, replyMode: replyMode ?? null, pinCount: write.expected.length,
+    };
+    const flagRejection = guardRejection(messageSendFlagsProblem(sendFlags));
+    if (flagRejection !== null) return flagRejection;
 
     let sender: MessageSender;
     let workRunPrincipal: WorkRunPrincipal | null = null;
     if (owned.principal.kind === 'host') {
       sender = { kind: 'host', actor: { ...owned.principal.actor } };
-    } else if (owned.principal.kind === 'work_run') {
+    } else {
       const identity = await readWorkRunIdentity(owned, owned.principal, owned.principal.runRef);
       if (!identity.ok) return identity.rejection;
       const derived = deriveWorkRunSender(identity);
       if (!derived.ok) return derived.rejection;
       sender = derived.sender;
       workRunPrincipal = owned.principal;
-    } else {
-      return reject('unsupported', 'the mailbox sender principal is not supported');
     }
     const senderIdentity = senderIdentityOf(sender);
     const identityKey = identityKeyOf('send', owned, senderIdentity, write.requestId);
@@ -1415,47 +1475,28 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     }
 
     // MSG-01/02. The messageId derives from the send identity, so the record is
-    // not read: an existing one is caught by the create CAS@0.
-    const messageCtx = messageContext(owned.principal, {
+    // not read: an existing one is caught by the create CAS@0. A refused
+    // admission first restores this identity's receipt if a concurrent identical
+    // request committed after the lookup missed (`refuse`).
+    const { decided, ctx: messageCtx } = judge(owned.principal, null, { type: 'message_sent' }, {
       workRunAuthorization: authorized === null ? null : authorized.ok ? 'ok' : authorized.rejection,
       recipientScope,
-      sendFlags: { needsReply, waitAfterSend, replyMode: replyMode ?? null, pinCount: write.expected.length },
+      sendFlags,
     });
-    const decided = transitionMessage(messageMachineStateOf(null), { type: 'message_sent' }, messageCtx);
-    if (!decided.ok) {
-      // A concurrent identical request may have committed after the first
-      // lookup missed; restore that original receipt instead of re-judging the
-      // already-happened fact under the now-current world.
-      return refuse(decided, messageCtx, { identityKey, fingerprint }, rechecksReceipt(decided, messageCtx, null));
-    }
-    const plan = messageCommitPlan(decided.effects, 'created', 'SessionMessageSent');
+    if (!decided.ok) return refuse(decided, messageCtx, identityKey, fingerprint);
     const messageRef: SessionMessageRef = {
       aggregateType: 'SessionMessage', projectId: owned.projectId, workspaceId: owned.workspaceId,
       messageId: messageIdOf(owned, senderIdentity, write.requestId),
     };
-    const stored = await storePlannedBody(plan, {
-      owned, sender, messageRef, text: text.text, identityKey, answerSource: null,
+    return writeMessage(decided, {
+      owned, identityKey, fingerprint, requestId: write.requestId, actor: sender, admission: authorized,
+      cancelled: 'the send was cancelled before commit',
+      body: { messageRef, text: text.text, answerSource: null },
+      record: (createdAt, bodyRef) => createSessionMessageRecord({
+        ref: messageRef, sender, recipient, bodyRef, sourceRef: bodyRef.source, createdAt,
+        replyMode: replyMode ?? null, intent: intent ?? null, needsReply, waitAfterSend,
+      }),
     });
-    if (!stored.ok) return stored.rejection;
-    const createdAt = deps.now();
-    if (!nonEmpty(createdAt)) return reject('invalid', 'the injected clock is not a legal instant');
-    const message: SessionMessage = createSessionMessageRecord({
-      ref: messageRef, sender, recipient, bodyRef: stored.ref, sourceRef: stored.ref.source, createdAt,
-      replyMode: replyMode ?? null, intent: intent ?? null, needsReply, waitAfterSend,
-    });
-    const event: SessionMessageSentEventV1 = {
-      eventId: eventIdOf(identityKey, 'sent'),
-      eventType: 'SessionMessageSent',
-      schemaVersion: 1,
-      occurredAt: createdAt,
-      projectId: owned.projectId,
-      workspaceId: owned.workspaceId,
-      requestId: write.requestId,
-      actor: sender,
-      message,
-    };
-    if (owned.signal.aborted) return reject('cancelled', 'the send was cancelled before commit');
-    return commitMessage({ identityKey, fingerprint, message, plan, admission: authorized, event: encodeSessionMessageSentEvent(event) });
   }
 
   // ---- readMessage --------------------------------------------------------
@@ -1849,8 +1890,8 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     if (!normalized.ok) return reject('invalid', normalized.reason);
     const scopeProblem = scopeOfMessageRef(owned, normalized.ref);
     if (scopeProblem !== null) return scopeProblem;
-    const pin = normalizeMessagePin(write.expected, normalized.ref);
-    if (!pin.ok) return pin.rejection;
+    const pins = pinsOf(write.expected, normalized.ref);
+    if (!pins.ok) return pins.rejection;
 
     const identity = await readWorkRunIdentity(owned, owned.principal, owned.principal.runRef);
     if (!identity.ok) return identity.rejection;
@@ -1872,37 +1913,22 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     const read = authorized.ok ? await loadMessageForWrite(owned, normalized.ref) : { ok: true as const, message: null };
     if (!read.ok) return read.rejection;
     const message = read.message;
-    const messageCtx = messageContext(owned.principal, {
+    const { decided, ctx: messageCtx } = judge(owned.principal, message, { type: 'message_read' }, {
       workRunAuthorization: authorized.ok ? 'ok' : authorized.rejection,
       callerIsRecipient: message === null ? null : ownsInbox(sender.sessionRef, message),
-      pins: pinFacts(pin.revision),
+      pins: pins.pins,
     });
-    const decided = transitionMessage(messageMachineStateOf(message), { type: 'message_read' }, messageCtx);
-    if (!decided.ok) {
-      // A same-identity request may have committed this exact acknowledgement
-      // while this call sat between its first receipt miss and the message
-      // read. Restore that original receipt; a genuine different request keeps
-      // the domain rejection and never commits a second time.
-      return refuse(decided, messageCtx, { identityKey, fingerprint }, rechecksReceipt(decided, messageCtx, message));
-    }
-    const plan = messageCommitPlan(decided.effects, 'read', 'SessionMessageRead');
-    const readAt = deps.now();
-    if (!nonEmpty(readAt)) return reject('invalid', 'the injected clock is not a legal instant');
-    const next: SessionMessage = nextSessionMessageRecord(acceptedMessage(message), { kind: 'read', readAt });
-    const event: SessionMessageReadEventV1 = {
-      eventId: eventIdOf(identityKey, 'read'),
-      eventType: 'SessionMessageRead',
-      schemaVersion: 1,
-      occurredAt: readAt,
-      projectId: owned.projectId,
-      workspaceId: owned.workspaceId,
-      requestId: write.requestId,
-      actor: sender,
-      message: next,
-    };
-    if (owned.signal.aborted) return reject('cancelled', 'the acknowledgement was cancelled before commit');
-    return commitMessage({
-      identityKey, fingerprint, message: next, plan, admission: authorized, event: encodeSessionMessageReadEvent(event),
+    // A same-identity request may have committed this exact acknowledgement
+    // while this call sat between its first receipt miss and the message read:
+    // its receipt is restored (`refuse`); a genuine different request
+    // keeps the domain rejection and never commits a second time.
+    if (!decided.ok) return refuse(decided, messageCtx, identityKey, fingerprint);
+    const current = acceptedMessage(message);
+    return writeMessage(decided, {
+      owned, identityKey, fingerprint, requestId: write.requestId, actor: sender, admission: authorized,
+      cancelled: 'the acknowledgement was cancelled before commit',
+      body: null,
+      record: (readAt) => nextSessionMessageRecord(current, { kind: 'read', readAt }),
     });
   }
 
@@ -1923,8 +1949,8 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     if (scopeProblem !== null) return scopeProblem;
     const text = normalizeText(raw['text']);
     if (!text.ok) return text.rejection;
-    const pin = normalizeMessagePin(write.expected, normalized.ref);
-    if (!pin.ok) return pin.rejection;
+    const pins = pinsOf(write.expected, normalized.ref);
+    if (!pins.ok) return pins.rejection;
 
     const identity = await readWorkRunIdentity(owned, owned.principal, owned.principal.runRef);
     if (!identity.ok) return identity.rejection;
@@ -1945,44 +1971,23 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     const read = authorized.ok ? await loadMessageForWrite(owned, normalized.ref) : { ok: true as const, message: null };
     if (!read.ok) return read.rejection;
     const message = read.message;
-    const messageCtx = messageContext(owned.principal, {
+    const { decided, ctx: messageCtx } = judge(owned.principal, message, { type: 'message_responded', via: 'text' }, {
       workRunAuthorization: authorized.ok ? 'ok' : authorized.rejection,
       callerIsRecipient: message === null ? null : ownsInbox(sender.sessionRef, message),
-      pins: pinFacts(pin.revision),
+      pins: pins.pins,
       bodyBounded: true, // `normalizeText` held with the request
     });
-    const decided = transitionMessage(messageMachineStateOf(message), { type: 'message_responded', via: 'text' }, messageCtx);
-    if (!decided.ok) {
-      // See the acknowledgement branch: restore the original committed receipt
-      // of this exact identity instead of reporting a second, conflicting one.
-      return refuse(decided, messageCtx, { identityKey, fingerprint }, rechecksReceipt(decided, messageCtx, message));
-    }
+    // See the acknowledgement: this exact identity's committed receipt is
+    // restored instead of a second, conflicting rejection.
+    if (!decided.ok) return refuse(decided, messageCtx, identityKey, fingerprint);
     const current = acceptedMessage(message);
-    const plan = messageCommitPlan(decided.effects, 'responded', 'SessionMessageResponded');
-    const stored = await storePlannedBody(plan, {
-      owned, sender, messageRef: current.ref, text: text.text, identityKey, answerSource: null,
-    });
-    if (!stored.ok) return stored.rejection;
-    const respondedAt = deps.now();
-    if (!nonEmpty(respondedAt)) return reject('invalid', 'the injected clock is not a legal instant');
-    const next: SessionMessage = nextSessionMessageRecord(current, {
-      kind: 'responded',
-      response: { sender, bodyRef: stored.ref, sourceRef: stored.ref.source, respondedAt },
-    });
-    const event: SessionMessageRespondedEventV1 = {
-      eventId: eventIdOf(identityKey, 'responded'),
-      eventType: 'SessionMessageResponded',
-      schemaVersion: 1,
-      occurredAt: respondedAt,
-      projectId: owned.projectId,
-      workspaceId: owned.workspaceId,
-      requestId: write.requestId,
-      actor: sender,
-      message: next,
-    };
-    if (owned.signal.aborted) return reject('cancelled', 'the response was cancelled before commit');
-    return commitMessage({
-      identityKey, fingerprint, message: next, plan, admission: authorized, event: encodeSessionMessageRespondedEvent(event),
+    return writeMessage(decided, {
+      owned, identityKey, fingerprint, requestId: write.requestId, actor: sender, admission: authorized,
+      cancelled: 'the response was cancelled before commit',
+      body: { messageRef: current.ref, text: text.text, answerSource: null },
+      record: (respondedAt, bodyRef) => nextSessionMessageRecord(current, {
+        kind: 'responded', response: { sender, bodyRef, sourceRef: bodyRef.source, respondedAt },
+      }),
     });
   }
 
@@ -2030,8 +2035,8 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     if (answerRef.projectId !== owned.projectId || answerRef.workspaceId !== owned.workspaceId) {
       return reject('forbidden', 'the Query answer ref is outside the bound project/workspace');
     }
-    const pin = normalizeMessagePin(write.expected, normalized.ref);
-    if (!pin.ok) return pin.rejection;
+    const pins = pinsOf(write.expected, normalized.ref);
+    if (!pins.ok) return pins.rejection;
 
     // MSG-06. The Query facts are read only for an existing message (an absent
     // one is refused first). The binding, the settled Query facts and the body
@@ -2045,12 +2050,11 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
       if (!gathered.ok) return gathered.rejection;
       facts = gathered.facts;
     }
-    const messageCtx = messageContext(owned.principal, {
-      pins: pinFacts(pin.revision),
+    const { decided, ctx: messageCtx } = judge(owned.principal, message, { type: 'message_responded', via: 'query_answer' }, {
+      pins: pins.pins,
       queryAnswer: facts === null ? null : facts.verdict,
       bodyBounded: facts === null ? null : facts.bodyBounded,
     });
-    const decided = transitionMessage(messageMachineStateOf(message), { type: 'message_responded', via: 'query_answer' }, messageCtx);
     if (!decided.ok && (message === null || decided.reason === 'guard_failed')) return refusalOf(decided, messageCtx);
     if (message === null || facts === null || facts.sender === null) {
       throw new Error('MSG-06 passed its Query guards without the derived query_run sender');
@@ -2068,32 +2072,14 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     // The single response slot (first come with MSG-04/05) is judged after the
     // lookup, so this identity's committed receipt replays; the pin is the
     // commit's message CAS.
-    if (!decided.ok) return refuse(decided, messageCtx, { identityKey, fingerprint }, rechecksReceipt(decided, messageCtx, message));
-    const plan = messageCommitPlan(decided.effects, 'responded', 'SessionMessageResponded');
-    const stored = await storePlannedBody(plan, {
-      owned, sender, messageRef: message.ref, text: facts.text, identityKey, answerSource: facts.answerSource,
-    });
-    if (!stored.ok) return stored.rejection;
-    const respondedAt = deps.now();
-    if (!nonEmpty(respondedAt)) return reject('invalid', 'the injected clock is not a legal instant');
-    const next: SessionMessage = nextSessionMessageRecord(message, {
-      kind: 'responded',
-      response: { sender, bodyRef: stored.ref, sourceRef: stored.ref.source, respondedAt },
-    });
-    const event: SessionMessageRespondedEventV1 = {
-      eventId: eventIdOf(identityKey, 'responded'),
-      eventType: 'SessionMessageResponded',
-      schemaVersion: 1,
-      occurredAt: respondedAt,
-      projectId: owned.projectId,
-      workspaceId: owned.workspaceId,
-      requestId: write.requestId,
-      actor: sender,
-      message: next,
-    };
-    if (owned.signal.aborted) return reject('cancelled', 'the answer association was cancelled before commit');
-    return commitMessage({
-      identityKey, fingerprint, message: next, plan, admission: null, event: encodeSessionMessageRespondedEvent(event),
+    if (!decided.ok) return refuse(decided, messageCtx, identityKey, fingerprint);
+    return writeMessage(decided, {
+      owned, identityKey, fingerprint, requestId: write.requestId, actor: sender, admission: null,
+      cancelled: 'the answer association was cancelled before commit',
+      body: { messageRef: message.ref, text: facts.text, answerSource: facts.answerSource },
+      record: (respondedAt, bodyRef) => nextSessionMessageRecord(message, {
+        kind: 'responded', response: { sender, bodyRef, sourceRef: bodyRef.source, respondedAt },
+      }),
     });
   }
 
@@ -2120,8 +2106,8 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     if (scopeProblem !== null) return scopeProblem;
     const derivation = raw['derivation'];
     if (!isObject(derivation)) return reject('invalid', 'recordConsultationDerivation requires a derivation object');
-    const pin = normalizeMessagePin(write.expected, normalized.ref);
-    if (!pin.ok) return pin.rejection;
+    const pins = pinsOf(write.expected, normalized.ref);
+    if (!pins.ok) return pins.rejection;
     const sender: MessageSender = { kind: 'host', actor: { ...owned.principal.actor } };
     const identityKey = identityKeyOf('consultation-derivation', owned, senderIdentityOf(sender), write.requestId);
     const fingerprint = fingerprintOf('consultation-derivation', owned, senderIdentityOf(sender),
@@ -2133,29 +2119,16 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     const read = await loadMessageForWrite(owned, normalized.ref);
     if (!read.ok) return read.rejection;
     const message = read.message;
-    const messageCtx = messageContext(owned.principal, { pins: pinFacts(pin.revision) });
-    const decided = transitionMessage(messageMachineStateOf(message), { type: 'consultation_derived' }, messageCtx);
-    if (!decided.ok) return refuse(decided, messageCtx, { identityKey, fingerprint }, rechecksReceipt(decided, messageCtx, message));
-    const plan = messageCommitPlan(decided.effects, 'consultation_derived', 'SessionMessageConsultationDerived');
-    const recordedAt = deps.now();
-    if (!nonEmpty(recordedAt)) return reject('invalid', 'the injected clock is not a legal instant');
-    const next: SessionMessage = nextSessionMessageRecord(acceptedMessage(message), {
-      kind: 'consultation_derived', derivation: derivation as NonNullable<SessionMessage['consultationDerivation']>,
-    });
-    const event = {
-      eventId: eventIdOf(identityKey, 'consultation-derived'),
-      eventType: 'SessionMessageConsultationDerived' as const,
-      schemaVersion: 1 as const,
-      occurredAt: recordedAt,
-      projectId: owned.projectId,
-      workspaceId: owned.workspaceId,
-      requestId: write.requestId,
-      actor: sender,
-      message: next,
-    };
-    if (owned.signal.aborted) return reject('cancelled', 'the derivation record was cancelled before commit');
-    return commitMessage({
-      identityKey, fingerprint, message: next, plan, admission: null, event: encodeSessionMessageConsultationDerivedEvent(event),
+    const { decided, ctx: messageCtx } = judge(owned.principal, message, { type: 'consultation_derived' }, { pins: pins.pins });
+    if (!decided.ok) return refuse(decided, messageCtx, identityKey, fingerprint);
+    const current = acceptedMessage(message);
+    return writeMessage(decided, {
+      owned, identityKey, fingerprint, requestId: write.requestId, actor: sender, admission: null,
+      cancelled: 'the derivation record was cancelled before commit',
+      body: null,
+      record: () => nextSessionMessageRecord(current, {
+        kind: 'consultation_derived', derivation: derivation as NonNullable<SessionMessage['consultationDerivation']>,
+      }),
     });
   }
 
@@ -2173,9 +2146,6 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
   ): Promise<WriteResult<SessionMessage>> {
     const owned = ownContext(ctx);
     if (!owned.ok) return owned.rejection;
-    if (owned.principal.kind !== 'work_run' && owned.principal.kind !== 'host') {
-      return reject('forbidden', 'only the trusted observing Host or executing Run may confirm an accepted input');
-    }
     if (owned.signal.aborted) return reject('cancelled', 'the input acceptance was cancelled before validation');
     const write = ownWrite(request);
     if (!write.ok) return write.rejection;
@@ -2195,9 +2165,9 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     if (!isObject(executionRef) || !['Run', 'QueryRun'].includes(String(executionRef['aggregateType']))) {
       return reject('forbidden', 'the accepted input execution must be a RunRef or QueryRunRef');
     }
-    if (owned.principal.kind === 'work_run' && canonicalOf(executionRef) !== canonicalOf(owned.principal.runRef)) {
-      return reject('forbidden', 'an execution may only confirm its own accepted inputs');
-    }
+    const observerOwnsExecution = owned.principal.kind !== 'work_run' || canonicalOf(executionRef) === canonicalOf(owned.principal.runRef);
+    const observerRejection = guardRejection(inputObserverProblem(observerOwnsExecution));
+    if (observerRejection !== null) return observerRejection;
     if (executionRef['projectId'] !== owned.projectId) {
       return reject('forbidden', 'the accepted input execution is outside the project');
     }
@@ -2247,7 +2217,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
       // another event's; this event's own entry is the machine's duplicate.
       const accepted = (message.acceptedInputs ?? []).find(entry => entry.inputId === inputId);
       facts = {
-        observerOwnsExecution: owned.principal.kind !== 'work_run' || canonicalOf(executionRef) === canonicalOf(owned.principal.runRef),
+        observerOwnsExecution,
         kernelMatches: actualKernel !== undefined && actualKernel !== null
           && actualKernel.adapterId === kernel['adapterId'] && actualKernel.kernelSessionId === kernel['kernelSessionId']
           && actualKernel.runId === kernel['runId'] && actualKernel.turnId === kernel['turnId'],
@@ -2260,37 +2230,22 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
           && (canonicalOf(accepted.executionRef) !== canonicalOf(executionRef) || canonicalOf(accepted.kernel) !== canonicalOf(kernel)),
       };
     }
-    const messageCtx = messageContext(owned.principal, { inputAccepted: facts });
-    const decided = transitionMessage(messageMachineStateOf(message), { type: 'input_accepted', part, inputId }, messageCtx);
-    if (!decided.ok) {
-      // Only the inputId uniqueness refusals (`invalid`: another event's entry,
-      // or this event's own without its receipt) re-check the receipt first.
-      return refuse(decided, messageCtx, { identityKey, fingerprint }, decided.code === 'invalid');
-    }
-    const plan = messageCommitPlan(decided.effects, 'input_accepted', 'SessionMessageInputAccepted');
-    const acceptedAt = deps.now();
-    if (!nonEmpty(acceptedAt)) return reject('invalid', 'the injected clock is not a legal instant');
-    const next: SessionMessage = nextSessionMessageRecord(acceptedMessage(message), {
-      kind: 'input_accepted',
-      input: {
-        inputId, part, executionRef: executionRef as RunRef | QueryRunRef,
-        kernel: kernel as NonNullable<SessionMessage['acceptedInputs']>[number]['kernel'], acceptedAt,
-      },
-    });
-    const event = {
-      eventId: eventIdOf(identityKey, 'input-accepted'),
-      eventType: 'SessionMessageInputAccepted' as const,
-      schemaVersion: 1 as const,
-      occurredAt: acceptedAt,
-      projectId: owned.projectId,
-      workspaceId: owned.workspaceId,
-      requestId: write.requestId,
-      actor: { ...sender },
-      message: next,
-    };
-    if (owned.signal.aborted) return reject('cancelled', 'the input acceptance was cancelled before commit');
-    return commitMessage({
-      identityKey, fingerprint, message: next, plan, admission: null, event: encodeSessionMessageInputAcceptedEvent(event),
+    const { decided, ctx: messageCtx } = judge(owned.principal, message, { type: 'input_accepted', part, inputId }, { inputAccepted: facts });
+    // Only the inputId uniqueness refusals (`invalid`: another event's entry, or
+    // this event's own without its receipt) re-check the receipt first.
+    if (!decided.ok) return refuse(decided, messageCtx, identityKey, fingerprint);
+    const current = acceptedMessage(message);
+    return writeMessage(decided, {
+      owned, identityKey, fingerprint, requestId: write.requestId, actor: sender, admission: null,
+      cancelled: 'the input acceptance was cancelled before commit',
+      body: null,
+      record: (acceptedAt) => nextSessionMessageRecord(current, {
+        kind: 'input_accepted',
+        input: {
+          inputId, part, executionRef: executionRef as RunRef | QueryRunRef,
+          kernel: kernel as NonNullable<SessionMessage['acceptedInputs']>[number]['kernel'], acceptedAt,
+        },
+      }),
     });
   }
 

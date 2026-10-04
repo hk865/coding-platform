@@ -16,8 +16,10 @@
  * commit. The checks run in today's service order, so the first failing guard
  * returns today's CoreError (§1.2). The `:N` comments in the rows cite the
  * pre-step-3 service (the tree the spec cites), whose checks now run here.
- * The request checks that name the receipt identity (principal, pins, text,
- * send flags) still run in the service first; they hold here when asked.
+ * The request checks that name the receipt identity run in the service before
+ * its receipt lookup, so they hold here when asked: its principal and text
+ * checks, and this machine's exported pin, send flag and observer guards
+ * (`messagePinProblem`, `messageSendFlagsProblem`, `inputObserverProblem`).
  *
  * Two kinds of rejection depend on the RecordStore as well as on the state, so the
  * service keeps today's receipt handling around them (§1.2):
@@ -26,7 +28,7 @@
  *   `guard_message`, never the revision read, so the doomed write still does
  *   everything before its commit (workspace read, body store, clock, abort
  *   check, commit planning) and the store refuses it. The service maps that
- *   failure as today (`commitMessage`): `recheckAfterMiss` first (a
+ *   failure as today (`writeMessage`): `recheckAfterMiss` first (a
  *   same-identity receipt replays), then `mapStoreFailure`'s
  *   `revision_conflict` with the store's `current` pins. So this machine never
  *   answers `stale`.
@@ -47,7 +49,7 @@ import type { CoreError, CoreRejection } from '../../../contracts/core/results.j
 import type { SessionMessageIntentV1, SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { RoleBindingRefV1, RunRef, SourceRefV1 } from '../../../contracts/dispatch.js';
 import type { QueryJobAnswerRef, QueryRunRef } from '../../../contracts/query-job.js';
-import { accept, reject, unreachable, type Transition } from './transition.js';
+import { accept, reject, unreachable, type Rejected, type Transition } from './transition.js';
 
 // --------------------------------------------------------------------------
 // Persisted record (structurally identical to communication/contracts.ts:36-145)
@@ -279,12 +281,30 @@ export function messageMachineStateOf(message: SessionMessageRecord | null): Mes
 // Shared guards (each returns the rejection of today's service, or null)
 // --------------------------------------------------------------------------
 
-/** `normalizeMessagePin` (`mailbox-service.ts:296-302`): exactly one pin naming this message. */
-function pinProblem(ctx: MessageGuardContext): MessageTransition | null {
-  if (ctx.pins.count !== 1) return reject('illegal', 'invalid', 'ack/respond require exactly one SessionMessage version pin');
-  if (ctx.pins.revision === null) return reject('illegal', 'invalid', 'the SessionMessage pin revision must be a positive integer');
-  if (!ctx.pins.matchesMessage) return reject('illegal', 'invalid', 'the version pin does not name the requested message');
+/**
+ * Pre-step-3 `normalizeMessagePin` (`mailbox-service.ts:296-302`): exactly one pin naming this
+ * message (MSG-03..06, MSG-09). The service asks it with the request, before its receipt lookup.
+ */
+export function messagePinProblem(pins: MessageGuardContext['pins']): Rejected | null {
+  if (pins.count !== 1) return reject('illegal', 'invalid', 'ack/respond require exactly one SessionMessage version pin');
+  if (pins.revision === null) return reject('illegal', 'invalid', 'the SessionMessage pin revision must be a positive integer');
+  if (!pins.matchesMessage) return reject('illegal', 'invalid', 'the version pin does not name the requested message');
   return null;
+}
+
+/**
+ * MSG-01/02's send flags and pins (pre-step-3 `:1075-1078`, codec `:325-327`): `waitAfterSend`
+ * without `needsReply`, then any version pin, is illegal. The service asks it with the request.
+ */
+export function messageSendFlagsProblem(flags: NonNullable<MessageGuardContext['sendFlags']>): Rejected | null {
+  if (flags.waitAfterSend && !flags.needsReply) return reject('illegal', 'invalid', 'waitAfterSend requires needsReply to be true or omitted');
+  if (flags.pinCount !== 0) return reject('illegal', 'invalid', 'sendSessionMessage must not carry version pins');
+  return null;
+}
+
+/** MSG-07/08 (pre-step-3 `:1981-1983`): a work_run confirms only its own execution. The service asks it with the request. */
+export function inputObserverProblem(observerOwnsExecution: boolean): Rejected | null {
+  return observerOwnsExecution ? null : reject('guard_failed', 'forbidden', 'an execution may only confirm its own accepted inputs');
 }
 
 /** The fresh work_run admission (`mailbox-service.ts:782-908`) keeps its own code. */
@@ -298,11 +318,11 @@ function workRunAuthorizationProblem(ctx: MessageGuardContext): MessageTransitio
 /**
  * The message CAS revision of an accepted ack/respond/derive: the caller's pin,
  * never the revision read. §10.4 "版本钉 ≠ 当前 revision" is that store CAS, which
- * today is the only check of a stale pin (module comment). `pinProblem` held,
+ * today is the only check of a stale pin (module comment). `messagePinProblem` held,
  * so the pin is a positive integer.
  */
 function pinnedRevision(ctx: MessageGuardContext): number {
-  if (ctx.pins.revision === null) throw new Error('the message CAS needs the version pin that pinProblem accepted');
+  if (ctx.pins.revision === null) throw new Error('the message CAS needs the version pin that messagePinProblem accepted');
   return ctx.pins.revision;
 }
 
@@ -346,14 +366,9 @@ function onMessageSent(state: MessageMachineState, ctx: MessageGuardContext): Me
   if (ctx.recipientScope === 'other_project') {
     return reject('guard_failed', 'forbidden', 'the recipient Session belongs to another project');
   }
-  const flags = ctx.sendFlags;
-  if (flags === null) return reject('illegal', 'invalid', 'message_sent requires the normalized send flags');
-  // :1075-1077 (codec :325-327).
-  if (flags.waitAfterSend && !flags.needsReply) {
-    return reject('illegal', 'invalid', 'waitAfterSend requires needsReply to be true or omitted');
-  }
-  // :1078
-  if (flags.pinCount !== 0) return reject('illegal', 'invalid', 'sendSessionMessage must not carry version pins');
+  if (ctx.sendFlags === null) return reject('illegal', 'invalid', 'message_sent requires the normalized send flags');
+  const flagProblem = messageSendFlagsProblem(ctx.sendFlags);
+  if (flagProblem !== null) return flagProblem;
   let workRun: boolean;
   switch (ctx.principal) {
     case 'host':
@@ -408,7 +423,7 @@ function onMessageRead(state: MessageMachineState, ctx: MessageGuardContext): Me
     () => ctx.principal === 'work_run' ? null : reject('guard_failed', 'forbidden', ctx.principal === 'host'
       ? 'a Host cannot acknowledge a message'
       : 'only a work_run may acknowledge a message'),
-    () => pinProblem(ctx),
+    () => messagePinProblem(ctx.pins),
     () => workRunAuthorizationProblem(ctx),
   );
   if (problem !== null) return problem;
@@ -444,7 +459,7 @@ function onTextResponse(state: MessageMachineState, ctx: MessageGuardContext): M
       : 'only a work_run may respond to a message'),
     // :1642-1643 — text normalization runs before the pin and the receipt lookup.
     () => textBodyProblem(ctx),
-    () => pinProblem(ctx),
+    () => messagePinProblem(ctx.pins),
     () => workRunAuthorizationProblem(ctx),
   );
   if (problem !== null) return problem;
@@ -522,7 +537,7 @@ function queryAnswerProblem(answer: MessageGuardContext['queryAnswer']): Message
 function onAnswerResponse(state: MessageMachineState, ctx: MessageGuardContext): MessageTransition {
   const problem = first(
     () => ctx.principal === 'host' ? null : reject('guard_failed', 'forbidden', 'only the Host may associate an official Query answer with a message'),
-    () => pinProblem(ctx),
+    () => messagePinProblem(ctx.pins),
   );
   if (problem !== null) return problem;
   if (state.status === 'absent') return absentMessage();
@@ -567,8 +582,7 @@ function onInputAccepted(
     () => ctx.principal !== 'other' ? null
       : reject('guard_failed', 'forbidden', 'only the trusted observing Host or executing Run may confirm an accepted input'),
     // :1981-1983 — checked with the request, before the receipt lookup and the message read.
-    () => facts === null || facts.observerOwnsExecution ? null
-      : reject('guard_failed', 'forbidden', 'an execution may only confirm its own accepted inputs'),
+    () => facts === null ? null : inputObserverProblem(facts.observerOwnsExecution),
   );
   if (problem !== null) return problem;
   if (state.status === 'absent') return absentMessage();
@@ -619,7 +633,7 @@ function onInputAccepted(
 function onConsultationDerived(state: MessageMachineState, ctx: MessageGuardContext): MessageTransition {
   const problem = first(
     () => ctx.principal === 'host' ? null : reject('guard_failed', 'forbidden', 'only the Host may record a consultation derivation'),
-    () => pinProblem(ctx),
+    () => messagePinProblem(ctx.pins),
   );
   if (problem !== null) return problem;
   switch (state.status) {
