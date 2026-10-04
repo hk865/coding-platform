@@ -35,7 +35,6 @@ import {
   planRevisionTargetOf,
   tracedDispositionChangeProblem,
   transitionPlanProposal,
-  transitionPlanRevision,
   type AgentPlanWriterIdentity,
   type CandidatePlanProposal,
   type FutureAdoptionFacts,
@@ -53,9 +52,6 @@ import {
   type PlanProposalRecord,
   type PlanProposalRef,
   type PlanProposalTransition,
-  type PlanRevisionEvent,
-  type PlanRevisionMachineState,
-  type PlanRevisionTransition,
   type PlanSourceFacts,
   type TracedTaskFactsV1,
 } from '../../src/core/work-graph/state/plan-machine.js';
@@ -204,8 +200,7 @@ const ok = (next: PlanProposalMachineState, effects: PlanProposalEffect[] = []):
 const no = (reason: TransitionRejectReason, code: CoreError, detail?: string): Expected =>
   detail === undefined ? { ok: false, reason, code } : { ok: false, reason, code, detail };
 
-function expectResult(result: PlanProposalTransition | PlanRevisionTransition, expected: Expected | {
-  ok: true; next: PlanRevisionMachineState; effects: unknown[] }): void {
+function expectResult(result: PlanProposalTransition, expected: Expected): void {
   if (expected.ok) {
     expect(result).toEqual({ ok: true, next: expected.next, effects: expected.effects });
     return;
@@ -1003,42 +998,6 @@ describe('planRevisionTargetOf (PLAN-08)', () => {
   });
 });
 
-describe('§3 transitionPlanRevision: every (state, event) pair', () => {
-  const states: PlanRevisionMachineState[] = ['absent', 'adopted', 'superseded'];
-  const events: Record<string, PlanRevisionEvent> = {
-    target: { type: 'plan_adopted', role: 'target' },
-    source: { type: 'plan_adopted', role: 'source' },
-    rewritten: { type: 'plan_revision_rewritten' },
-  };
-  const table: Record<PlanRevisionMachineState, Record<string, Expected | { ok: true; next: PlanRevisionMachineState; effects: unknown[] }>> = {
-    absent: {
-      target: { ok: true, next: 'adopted', effects: [{ kind: 'write_plan_revision', expectedRevision: null }] },
-      source: no('illegal', 'not_found'),
-      rewritten: no('illegal', 'invalid'),
-    },
-    adopted: {
-      target: no('stale', 'revision_conflict', 'the target plan already exists'),
-      source: { ok: true, next: 'superseded', effects: [] },
-      rewritten: no('illegal', 'invalid'),
-    },
-    superseded: {
-      // A superseded version can never become the active plan again (§3.4).
-      target: no('stale', 'revision_conflict', 'the target plan already exists'),
-      source: no('stale', 'revision_conflict', 'the source plan is not the Goal current active plan'),
-      rewritten: no('illegal', 'invalid'),
-    },
-  };
-  for (const state of states) {
-    for (const [name, event] of Object.entries(events)) {
-      it(`${state} × ${name}`, () => {
-        const expected = table[state][name];
-        if (expected === undefined) throw new Error('missing table row');
-        expectResult(transitionPlanRevision(state, event), expected);
-      });
-    }
-  }
-});
-
 // --------------------------------------------------------------------------
 // W16 pure guards
 // --------------------------------------------------------------------------
@@ -1253,15 +1212,13 @@ describe('parallelCarrierFenceProblem (W16 guard 9, lead decision LA-3)', () => 
 });
 
 describe('exhaustive event variants (§1.1)', () => {
-  // A writer, adopter or role the machine does not know must reach the `never`
-  // branch, never silently take the Host or `source` path.
+  // A writer or adopter the machine does not know must reach the `never`
+  // branch, never silently take the Host path.
   it.each<[string, () => unknown, string]>([
     ['writer', () => transitionPlanProposal(null, { ...RECORD_HOST, writer: 'workflow' } as unknown as PlanProposalEvent, context()),
       'unreachable plan proposal writer'],
     ['adopter', () => transitionPlanProposal(CANDIDATE_FUTURE,
       { ...ACCEPT_HOST, adopter: 'workflow' } as unknown as PlanProposalEvent, context()), 'unreachable plan adopter'],
-    ['plan revision role', () => transitionPlanRevision('adopted', { type: 'plan_adopted', role: 'other' } as unknown as PlanRevisionEvent),
-      'unreachable plan revision role'],
   ])('an unknown %s throws', (_name, run, message) => {
     expect(run).toThrow(message);
   });

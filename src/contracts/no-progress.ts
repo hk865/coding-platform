@@ -89,8 +89,6 @@ export type NoProgressCheckFactV1 = {
   outcome: EvidenceOutcome | null;
   cause: RoundCheckIncompleteCause | null;
 };
-/** The two rework key spaces; they are never compared with each other. */
-export type NoProgressActionKind = 'requeue' | 'reverify';
 /**
  * The §13.1 requeue key, stored with its digest on `TaskRequeue.basis`. The
  * digest covers every field above it and nothing else: no ids, reason, actor,

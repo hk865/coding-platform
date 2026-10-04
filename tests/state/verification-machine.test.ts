@@ -38,7 +38,7 @@ import {
   isFinalizedNonPass, nextTaskEvidenceIndex, outcomeFor, pendingRoundChecks, requiredRoundCoverage, reverifyExemption,
   reverifyFailureClass, rootRoundChain, roundChainHead, roundOpenBasisProblem, roundOpenChecksProblem, roundOpenPointerProblem, roundOpenProblem,
   roundOpenSubjectProblem, roundOrdinalOf, roundReviewerEvidenceProblem, roundSlotKey, roundSlotOwner,
-  roundSlotSubjectOf, roundSubjectSlotKey, roundTaskSignal, roundWriteAdmission, taskEvidenceIndexRefOf,
+  roundSlotSubjectOf, roundTaskSignal, roundWriteAdmission, taskEvidenceIndexRefOf,
   transitionCheck, transitionRound, withCheckPhase,
   type CheckEvent, type RoundEvent, type RoundFoldFactsV1, type RoundGapV1, type RoundGuardContext,
   type RoundOpenFactsV1, type RoundOpeningV1, type SuccessorRoundBuildV1, type SuccessorRoundInputV1,
@@ -908,7 +908,6 @@ describe('display, coverage, refusal markers and slots', () => {
     // Every producer Run of the same gate shares the one gate slot (VD-15).
     expect(roundSlotKey(gate)).toBe(roundSlotKey(roundSlotSubjectOf({ ref: roundRef('round-2', 'run-8'),
       identity: identity(sha('5'), 'stage') })));
-    expect(roundSubjectSlotKey).toBe(roundSlotKey);
     expect(roundSlotOwner(OPEN_PENDING.ref)).toBe(canonicalJson(OPEN_PENDING.ref));
   });
 });

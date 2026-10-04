@@ -88,10 +88,6 @@ export type TaskAutomationStopReason =
   | 'task_cancelled'
   | 'task_paused'
   | 'not_reworkable';
-export const TASK_AUTOMATION_STOP_REASONS: readonly TaskAutomationStopReason[] = Object.freeze([
-  'unknown_outcome', 'auto_rework_cap_reached', 'no_new_basis', 'gate_needs_fix', 'verification_uncovered',
-  'budget_exhausted', 'task_cancelled', 'task_paused', 'not_reworkable',
-]);
 export type TaskAutomationStopDetailV1 = {
   operation?: TaskReworkOperation;
   /** `not_reworkable` only. */

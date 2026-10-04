@@ -136,9 +136,6 @@ export function reworkFenceOf(
 // ------------------------------------------------------------------------ //
 // Failure class (TD-8, FC-1..FC-17)                                         //
 // ------------------------------------------------------------------------ //
-export type ReworkClassRow =
-  | 'FC-1' | 'FC-2' | 'FC-3' | 'FC-4' | 'FC-5' | 'FC-6' | 'FC-7' | 'FC-8' | 'FC-9'
-  | 'FC-10' | 'FC-11' | 'FC-12' | 'FC-13' | 'FC-14' | 'FC-15' | 'FC-16' | 'FC-17';
 
 /**
  * The FC row that matched (first match in row order) and what it means:
@@ -491,11 +488,6 @@ export function reworkRefusalIsStale(
   if (now.goalEndedRuns > refusal.goalEndedRunsAtRefusal) return true;
   return refusal.configurationRevision !== null && now.configurationRevision !== null
     && now.configurationRevision !== refusal.configurationRevision;
-}
-
-/** `TaskFailureFactsV1.automation.lastRefusal` / `lastReverifyRefusal`. */
-export function reworkRefusalFactOf(refusal: TaskReworkRefusalSnapshotV1, now: ReworkRefusalClockV1): TaskReworkRefusalFactV1 {
-  return refusalFact(refusal, reworkRefusalIsStale(refusal, now));
 }
 
 function refusalFact(refusal: TaskReworkRefusalSnapshotV1, stale: boolean): TaskReworkRefusalFactV1 {

@@ -144,8 +144,6 @@ export function roundSlotKey(subject: RoundSlotSubjectV1): string {
     default: return unreachable(subject, 'round slot subject');
   }
 }
-/** §15.3 names the same function `roundSubjectSlotKey`. */
-export const roundSubjectSlotKey = roundSlotKey;
 
 /** A gate round carries its declared kind in the frozen identity scope (`evidence-service.ts:596-598`). */
 export function roundSlotSubjectOf(round: Pick<RoundSnapshot, 'ref' | 'identity'>): RoundSlotSubjectV1 {

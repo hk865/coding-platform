@@ -26,7 +26,7 @@ import type {
 import type { PlanRevisionRef } from '../../src/contracts/plan.js';
 import type { TaskRequeueRef } from '../../src/contracts/task-requeue.js';
 import {
-  attemptEventFromRunEvent, attemptNodeOf, dispatchOutboxNodeOf, isTaskLeaseEvent, leaseHeldByClaim,
+  attemptEventFromRunEvent, attemptNodeOf, isTaskLeaseEvent, leaseHeldByClaim,
   newDispatchOutboxRecord, newTaskAttemptRecord, newTaskLeaseRecord, taskLeaseNodeOf, transitionAttempt,
   transitionDispatchOutbox, transitionTaskLease,
   type AttemptEffect, type AttemptEndFacts, type AttemptEndSource, type AttemptEvent, type AttemptGuardContext,
@@ -35,6 +35,15 @@ import {
 } from '../../src/core/work-graph/state/attempt-machine.js';
 import type { Transition, TransitionRejectReason } from '../../src/core/work-graph/state/transition.js';
 import type { TaskClaimOutbox, TaskDispatchStateV1 } from '../../src/core/work-graph/tasks/claim-contracts.js';
+
+/**
+ * The Outbox counterpart of `attemptNodeOf`/`taskLeaseNodeOf` (moved from
+ * `attempt-machine.ts` in A.2 step 4: production reads `outbox.status` directly).
+ */
+type DispatchOutboxNode = 'absent' | DispatchOutboxRecord['status'];
+function dispatchOutboxNodeOf(outbox: DispatchOutboxRecord | null): DispatchOutboxNode {
+  return outbox === null ? 'absent' : outbox.status;
+}
 
 // ------------------------------------------------------------------------ //
 // Fixtures                                                                  //

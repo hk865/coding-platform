@@ -53,11 +53,16 @@ import type { VerificationRoundMaterialIdentity } from '../../src/contracts/veri
 import {
   REWORK_ACTOR_CLASSES, automationVerdict, buildTaskFailureFacts, countEndedGoalRuns, deriveReworkClass,
   newTaskReworkRefusalRecord, nextRequeueAutoCount, priorRequeueAutoCount, reworkFenceOf, reworkPermission,
-  reworkRefusalFactOf, reworkRefusalIsStale, reworkStopOf, runErrorOf, stopRequesterOf, taskReworkRefusalEffects,
-  type GateFailureInputV1, type NewTaskReworkRefusalInputV1, type ReworkClassRow, type ReworkFence,
+  reworkRefusalIsStale, reworkStopOf, runErrorOf, stopRequesterOf, taskReworkRefusalEffects,
+  type GateFailureInputV1, type NewTaskReworkRefusalInputV1, type ReworkFence,
   type ReworkPermissionInputV1, type StopIntentV1, type WorkFailureInputV1,
 } from '../../src/core/work-graph/state/task-failure.js';
 import { reverifyExemption, roundChainHead, type RoundChainHeadV1 } from '../../src/core/work-graph/state/verification-machine.js';
+
+/** The FC row names (moved from `task-failure.ts` in A.2 step 4: `ReworkClassDerivationV1` spells its rows inline). */
+type ReworkClassRow =
+  | 'FC-1' | 'FC-2' | 'FC-3' | 'FC-4' | 'FC-5' | 'FC-6' | 'FC-7' | 'FC-8' | 'FC-9'
+  | 'FC-10' | 'FC-11' | 'FC-12' | 'FC-13' | 'FC-14' | 'FC-15' | 'FC-16' | 'FC-17';
 
 // ------------------------------------------------------------------------ //
 // Fixtures                                                                  //
@@ -661,12 +666,6 @@ describe('countEndedGoalRuns and refusal staleness (ND-7, ND-8, LA-4)', () => {
   ])('%s', (_name, atRefusal, recorded, now, current, stale) => {
     expect(reworkRefusalIsStale({ goalEndedRunsAtRefusal: atRefusal, configurationRevision: recorded },
       { goalEndedRuns: now, configurationRevision: current })).toBe(stale);
-  });
-
-  it('reworkRefusalFactOf copies the latest revision with its staleness', () => {
-    const refusal = requeueRefusal('run-1', 'no_new_basis');
-    expect(reworkRefusalFactOf(refusal, { goalEndedRuns: 5, configurationRevision: null })).toEqual({ ref: refusal.ref, revision: 1,
-      code: 'no_new_basis', reason: 'refused: no_new_basis', requestedBy: WORKFLOW, refusedAt: time(7), stale: true });
   });
 });
 

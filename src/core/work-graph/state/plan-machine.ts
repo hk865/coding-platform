@@ -1,5 +1,5 @@
 /**
- * PlanProposal / PlanRevision state machines (docs/refactor/STATE-MACHINES-SPEC.md
+ * PlanProposal state machine and PlanRevision derivations (docs/refactor/STATE-MACHINES-SPEC.md
  * §3, rows PLAN-01..PLAN-09; forbidden transitions §3.4; the W16 guards of §3.3).
  *
  * A candidate is the only mutable plan record: `candidate → accepted` and the
@@ -1224,76 +1224,5 @@ export function transitionPlanProposal(
       return onProposalRejected(state);
     default:
       return unreachable(event, 'plan proposal event');
-  }
-}
-
-// --------------------------------------------------------------------------
-// PlanRevision (PLAN-08, PLAN-09; §3.4 PlanRevision rows)
-// --------------------------------------------------------------------------
-
-/** `absent` = no record; otherwise the derived status (`derivePlanRevisionStatus`). */
-export type PlanRevisionMachineState = 'absent' | PlanRevisionStatus;
-
-/**
- * `plan_adopted` from the point of view of one revision: `target` = this
- * revision is the adoption's new Plan (PLAN-08); `source` = the pointer moves
- * from this revision to its successor (PLAN-09). `plan_revision_rewritten`
- * stands for any attempt to change a stored revision: there is no such entry.
- */
-export type PlanRevisionEvent =
-  | { type: 'plan_adopted'; role: 'target' | 'source' }
-  | { type: 'plan_revision_rewritten' };
-
-/** PLAN-08: write the immutable revision under CAS ∅ (`plan-commit-compiler.ts:167,315`). */
-export type PlanRevisionEffect = { kind: 'write_plan_revision'; expectedRevision: null };
-
-export type PlanRevisionTransition = Transition<PlanRevisionMachineState, PlanRevisionEvent, PlanRevisionEffect>;
-
-export function transitionPlanRevision(state: PlanRevisionMachineState, event: PlanRevisionEvent): PlanRevisionTransition {
-  switch (event.type) {
-    case 'plan_adopted':
-      switch (event.role) {
-        case 'target':
-          return onAdoptedAsTarget(state);
-        case 'source':
-          return onAdoptedAsSource(state);
-        default:
-          return unreachable(event.role, 'plan revision role');
-      }
-    case 'plan_revision_rewritten':
-      // `revision` is always 1 (`plan.ts:233`); the commit layer also guards the target ∅.
-      return reject('illegal', 'invalid', 'a PlanRevision is immutable; a change adopts a new revision');
-    default:
-      return unreachable(event, 'plan revision event');
-  }
-}
-
-/** PLAN-08; an existing target (adopted or superseded) is never pointed at again. */
-function onAdoptedAsTarget(state: PlanRevisionMachineState): PlanRevisionTransition {
-  switch (state) {
-    case 'absent':
-      return accept<PlanRevisionMachineState, PlanRevisionEffect>('adopted', [{ kind: 'write_plan_revision', expectedRevision: null }]);
-    case 'adopted':
-    case 'superseded':
-      // plan-service.ts:1727-1733
-      return reject('stale', 'revision_conflict', 'the target plan already exists');
-    default:
-      return unreachable(state, 'plan revision state');
-  }
-}
-
-/** PLAN-09: the record is unchanged; "superseded" is derived from the pointer. */
-function onAdoptedAsSource(state: PlanRevisionMachineState): PlanRevisionTransition {
-  switch (state) {
-    case 'absent':
-      // readPlan (plan-readers.ts:388)
-      return reject('illegal', 'not_found', 'the source plan does not exist');
-    case 'adopted':
-      return accept<PlanRevisionMachineState, PlanRevisionEffect>('superseded');
-    case 'superseded':
-      // plan-service.ts:1712-1717
-      return reject('stale', 'revision_conflict', 'the source plan is not the Goal current active plan');
-    default:
-      return unreachable(state, 'plan revision state');
   }
 }

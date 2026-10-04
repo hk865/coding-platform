@@ -111,12 +111,6 @@ export type SessionReleaseCause =
   | 'query_reconcile_not_entered' | 'query_reconcile_interrupted_clean' // QRR-01/02/04 → SES-09 (新增)
   | 'query_unknown_attested';                                    // QRR-06 → SES-10 (新增)
 
-export const SESSION_RELEASE_CAUSES: readonly SessionReleaseCause[] = Object.freeze([
-  'terminal_observed', 'stop_not_entered', 'reconcile_terminal', 'reconcile_interrupted_clean', 'late_evidence',
-  'stop_paused', 'unknown_attested', 'query_terminal_observed', 'query_reconcile_terminal',
-  'query_reconcile_not_entered', 'query_reconcile_interrupted_clean', 'query_unknown_attested',
-]);
-
 /**
  * Session events (§8.2). Times, ids and pins never come from the machine: the
  * service passes them in the guard context or keeps them for the record

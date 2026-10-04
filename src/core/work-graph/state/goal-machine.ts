@@ -226,12 +226,6 @@ export type GoalEvent =
   | ({ type: 'goal_cancel_requested' } & GoalControlRequest)
   | { type: 'goal_completed'; expectedGoalRevision: number; expectedGoalPhaseRevision: number; reducedAt: string };
 
-export type GoalEventType = GoalEvent['type'];
-
-export const GOAL_EVENT_TYPES: readonly GoalEventType[] = Object.freeze([
-  'goal_created', 'plan_adopted', 'goal_pause_requested', 'goal_resume_requested', 'goal_cancel_requested', 'goal_completed',
-]);
-
 /**
  * What `completeGoal` read after the pointer (pre-step-3 `completion.ts:529-569`): the
  * active Plan, `evaluateGoalCompletion` (`completion-policy.ts:178-244`), and
@@ -716,20 +710,10 @@ export type GoalDisplayPhase =
   | 'PLANNING' | 'RUNNING' | 'CHANGE_PENDING' | 'NEEDS_DECISION' | 'BLOCKED' | 'FAILED'
   | 'PAUSED' | 'CANCELLED' | 'COMPLETED' | 'ACCEPTED_PARTIAL';
 
-export const GOAL_DISPLAY_PHASES: readonly GoalDisplayPhase[] = Object.freeze([
-  'PLANNING', 'RUNNING', 'CHANGE_PENDING', 'NEEDS_DECISION', 'BLOCKED', 'FAILED', 'PAUSED', 'CANCELLED', 'COMPLETED',
-  'ACCEPTED_PARTIAL',
-]);
-
 /** The rows of the display table, in priority order. */
 export type GoalDisplayRow =
   | 'GOAL-17' | 'GOAL-18' | 'GOAL-19' | 'GOAL-20' | 'GOAL-21' | 'GOAL-22' | 'GOAL-23' | 'GOAL-30'
   | 'GOAL-24' | 'GOAL-25' | 'GOAL-26' | 'GOAL-27';
-
-export const GOAL_DISPLAY_ROWS: readonly GoalDisplayRow[] = Object.freeze([
-  'GOAL-17', 'GOAL-18', 'GOAL-19', 'GOAL-20', 'GOAL-21', 'GOAL-22', 'GOAL-23', 'GOAL-30',
-  'GOAL-24', 'GOAL-25', 'GOAL-26', 'GOAL-27',
-]);
 
 /** One Task of the active plan, read in the same `readGoalDisplayFacts` window as `queryTaskGraph`'s `TaskRow`. */
 export type GoalDisplayTaskFactsV1 = {

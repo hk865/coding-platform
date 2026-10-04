@@ -30,14 +30,20 @@ import type { PlanRevisionRef } from '../../src/contracts/plan.js';
 import type { TaskEnvelopeV1 } from '../../src/contracts/task-envelope.js';
 import type { TaskRequeueRef } from '../../src/contracts/task-requeue.js';
 import {
-  RUN_NODES, attestedTerminalPayload, claimHoldGuard, controlSubmissionRunEvent, entryPermitGuard, entryV2Binding,
-  isPausedInterrupted, isRunFinished, leaseOwnedByRun, newRunRecord, permitClaimGuard, runCombinationProblem, runControlFence,
+  attestedTerminalPayload, claimHoldGuard, controlSubmissionRunEvent, entryPermitGuard, entryV2Binding,
+  isPausedInterrupted, isRunFinished, leaseOwnedByRun, newRunRecord, permitClaimGuard, runControlFence,
   runControlNodeOf, runNodeOf, runStateOf, runUnresolvedBlocker, terminalOutcomeOf, terminalPayloadOf, transitionRun,
   type RunEffect, type RunEvent, type RunGuardContext, type RunNode, type RunObservedHistory, type RunState,
   type RunTransition, type RunTurnFacts,
 } from '../../src/core/work-graph/state/run-machine.js';
 import { controlSubmissionProblem, transitionControlIntent } from '../../src/core/work-graph/state/control-intent-machine.js';
 import type { TransitionRejectReason } from '../../src/core/work-graph/state/transition.js';
+import { runCombinationProblem } from './invariants.js';
+
+/** The nine §6.1 nodes (moved from `run-machine.ts` in A.2 step 4: no production code enumerates them). */
+const RUN_NODES: readonly RunNode[] = Object.freeze([
+  'Absent', 'Claimed', 'Authorized', 'Entering', 'Revoked', 'Running', 'Ended', 'YieldedWait', 'EndedUnknown',
+]);
 
 // ------------------------------------------------------------------------ //
 // Fixtures                                                                  //

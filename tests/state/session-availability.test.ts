@@ -24,7 +24,7 @@ import type { RunRef } from '../../src/contracts/dispatch.js';
 import { makeCommitCursor } from '../../src/contracts/ledger.js';
 import type { QueryRunRef } from '../../src/contracts/query-job.js';
 import {
-  SESSION_RELEASE_CAUSES, archiveSessionRecord, createSessionRecord, deriveAvailability, nextOccupancyGeneration,
+  archiveSessionRecord, createSessionRecord, deriveAvailability, nextOccupancyGeneration,
   observeSessionHealthRecord, occupancyAdmissionProblem, occupySessionRecord, openResponsibleLinkOf, ownsOccupancy, ownsQuery,
   reactivateSessionRecord, releaseSessionRecord, sessionMachineStateOf, transitionSession,
   type HolderPhase, type SessionEffect, type SessionEvent, type SessionGuardContext, type SessionHealth,
@@ -33,6 +33,13 @@ import {
 } from '../../src/core/work-graph/state/session-availability.js';
 import type { CoreError } from '../../src/contracts/core/results.js';
 import type { TransitionRejectReason } from '../../src/core/work-graph/state/transition.js';
+
+/** Every release cause (moved from `session-availability.ts` in A.2 step 4: no production code enumerates them). */
+const SESSION_RELEASE_CAUSES: readonly SessionReleaseCause[] = Object.freeze([
+  'terminal_observed', 'stop_not_entered', 'reconcile_terminal', 'reconcile_interrupted_clean', 'late_evidence',
+  'stop_paused', 'unknown_attested', 'query_terminal_observed', 'query_reconcile_terminal',
+  'query_reconcile_not_entered', 'query_reconcile_interrupted_clean', 'query_unknown_attested',
+]);
 
 // --------------------------------------------------------------------------
 // Fixtures

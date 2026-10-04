@@ -193,4 +193,3 @@ export const refreshHub = createRefreshHub();
 export const startPoll = refreshHub.startPoll;
 export const stopPoll = refreshHub.stopPoll;
 export const noticeMark = refreshHub.noticeMark;
-export const watchChanges = refreshHub.watchChanges;

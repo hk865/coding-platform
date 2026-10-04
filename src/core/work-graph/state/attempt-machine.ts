@@ -69,7 +69,6 @@ export type DispatchOutboxRecord = {
 export type AttemptNode = 'absent' | 'claimed' | 'started' | 'ended_known' | 'ended_unknown';
 /** One lease per Task: held without `release`, released with it; `expiresAt` never releases. */
 export type TaskLeaseNode = 'absent' | 'held' | 'released';
-export type DispatchOutboxNode = 'absent' | DispatchOutboxRecord['status'];
 
 export function attemptNodeOf(attempt: TaskAttemptSnapshot | null): AttemptNode {
   if (attempt === null) return 'absent';
@@ -84,10 +83,6 @@ export function attemptNodeOf(attempt: TaskAttemptSnapshot | null): AttemptNode 
 export function taskLeaseNodeOf(lease: TaskLeaseSnapshot | null): TaskLeaseNode {
   if (lease === null) return 'absent';
   return lease.release === undefined ? 'held' : 'released';
-}
-
-export function dispatchOutboxNodeOf(outbox: DispatchOutboxRecord | null): DispatchOutboxNode {
-  return outbox === null ? 'absent' : outbox.status;
 }
 
 /**

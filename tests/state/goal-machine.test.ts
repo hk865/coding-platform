@@ -26,16 +26,31 @@ import {
 } from '../../src/contracts/task-requeue.js';
 import type { VerificationRoundRef } from '../../src/contracts/verification.js';
 import {
-  GOAL_DISPLAY_PHASES, GOAL_DISPLAY_ROWS, GOAL_EVENT_TYPES, GOAL_FAN_OUT_ACTOR,
+  GOAL_FAN_OUT_ACTOR,
   buildGoalPhaseSnapshot, findGoalResumeContinuations, goalCompletionProblem, goalFanOutReason, goalFanOutRequestId,
   goalResumeContinueRequestId, goalStateOf, newGoalSnapshot, nextGoalDesiredState, nextGoalPointer,
   projectGoalRunStop, reduceGoalDisplay, transitionGoal,
-  type GoalCompletionFacts, type GoalDisplayCauseV1, type GoalDisplayFactsV1, type GoalDisplayTaskFactsV1,
-  type GoalEffect, type GoalEvent, type GoalGuardContext, type GoalHostActorRef, type GoalMachineState,
-  type GoalResumeTaskFactsV1, type GoalRunControlCapabilityV1, type GoalTransition,
+  type GoalCompletionFacts, type GoalDisplayCauseV1, type GoalDisplayFactsV1, type GoalDisplayPhase, type GoalDisplayRow,
+  type GoalDisplayTaskFactsV1, type GoalEffect, type GoalEvent, type GoalGuardContext, type GoalHostActorRef,
+  type GoalMachineState, type GoalResumeTaskFactsV1, type GoalRunControlCapabilityV1, type GoalTransition,
 } from '../../src/core/work-graph/state/goal-machine.js';
 import type { PlanProposalRef } from '../../src/core/work-graph/state/plan-machine.js';
 import type { TransitionRejectReason } from '../../src/core/work-graph/state/transition.js';
+
+// The enumerations below moved from `goal-machine.ts` in A.2 step 4: no production code enumerates them.
+const GOAL_EVENT_TYPES: readonly GoalEvent['type'][] = Object.freeze([
+  'goal_created', 'plan_adopted', 'goal_pause_requested', 'goal_resume_requested', 'goal_cancel_requested', 'goal_completed',
+]);
+
+const GOAL_DISPLAY_PHASES: readonly GoalDisplayPhase[] = Object.freeze([
+  'PLANNING', 'RUNNING', 'CHANGE_PENDING', 'NEEDS_DECISION', 'BLOCKED', 'FAILED', 'PAUSED', 'CANCELLED', 'COMPLETED',
+  'ACCEPTED_PARTIAL',
+]);
+
+const GOAL_DISPLAY_ROWS: readonly GoalDisplayRow[] = Object.freeze([
+  'GOAL-17', 'GOAL-18', 'GOAL-19', 'GOAL-20', 'GOAL-21', 'GOAL-22', 'GOAL-23', 'GOAL-30',
+  'GOAL-24', 'GOAL-25', 'GOAL-26', 'GOAL-27',
+]);
 
 // --------------------------------------------------------------------------
 // Fixtures

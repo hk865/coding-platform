@@ -80,15 +80,11 @@ export type AgentPlanWriter = {
   roleBinding: RoleBindingRefV1;
 };
 
-/** Same identity for every delegated operation (spec §4.1 generalization). */
-export type AgentDelegatedWriter = AgentPlanWriter;
-
 /** The current authorization decision plus the exact versions it observed. */
 export type PlanWriteAdmission = {
   provenance: DelegatedWriteProvenanceV1;
   guards: readonly RecordGuard[];
 };
-export type DelegatedWriteAdmission = PlanWriteAdmission;
 
 /** The fixed platform attribution of the internal Host-only WG11 read. */
 const INTERNAL_READ_ACTOR = { kind: 'system' as const, id: 'w2-plan-write-admission' };

@@ -74,10 +74,6 @@ import { accept, failed, notYet, reject, rejected, unreachable, type Rejected, t
 export type RunNode = 'Absent' | 'Claimed' | 'Authorized' | 'Entering' | 'Revoked'
   | 'Running' | 'Ended' | 'YieldedWait' | 'EndedUnknown';
 
-export const RUN_NODES: readonly RunNode[] = Object.freeze([
-  'Absent', 'Claimed', 'Authorized', 'Entering', 'Revoked', 'Running', 'Ended', 'YieldedWait', 'EndedUnknown',
-]);
-
 /** `Run.controlState.desiredState`, or `none` without a pointer (§6.1). */
 export type RunPointer = 'none' | NonNullable<RunSnapshot['controlState']>['desiredState'];
 
@@ -114,7 +110,8 @@ function isAuthorizationV2(auth: ExecutionAuthorizationV1 | ExecutionAuthorizati
  * (`execution-entry-service.ts:1630-1632`, `control-service.ts:387-391`): a
  * finished Run is `Ended`/`YieldedWait`/`EndedUnknown` by outcome, a
  * `running` Run is `Running`, a `starting` Run by its V2 phase. A combination
- * outside the eight machine states is reported by `runCombinationProblem`.
+ * outside the eight machine states is reported by `runCombinationProblem`
+ * (`tests/state/invariants.ts`).
  */
 export function runNodeOf(record: RunSnapshot | null): RunNode {
   if (record === null) return 'Absent';
@@ -185,39 +182,6 @@ export function runStateOf(record: RunSnapshot | null): RunState {
       : null,
     record,
   };
-}
-
-/**
- * §6.1 "其他 V2 组合视为损坏": the problem of a Run outside the eight machine
- * states, or `null`. A V1 or pre-B2 Run is legacy history, not damage. Every
- * record `transitionRun` produces passes it (§14.5); today's readers do not
- * cross-check (`record-readers.ts:313-314`), so it is the invariant check's tool.
- */
-export function runCombinationProblem(record: RunSnapshot): string | null {
-  const auth = record.executionAuthorization;
-  if (auth !== undefined && !isAuthorizationV2(auth)) return null;
-  const phase = isAuthorizationV2(auth) ? auth.phase : 'none';
-  switch (record.status) {
-    case 'starting':
-      if (record.outcome !== null) return 'a starting Run has no outcome';
-      return phase === 'none' || phase === 'authorized' || phase === 'entering' || phase === 'revoked'
-        ? null : `a starting Run cannot carry the ${phase} entry phase`;
-    case 'running':
-      if (record.outcome !== null) return 'a running Run has no outcome';
-      return phase === 'entered' || auth === undefined ? null : `a running Run cannot carry the ${phase} entry phase`;
-    case 'ended': {
-      const outcome = record.outcome;
-      if (outcome === null) return 'an ended Run needs an outcome';
-      if (outcome === 'failed') return 'the outcome failed has no writer';
-      if (auth === undefined) return null;
-      if (outcome === 'outcome_unknown') return phase === 'unknown' ? null : 'an outcome_unknown Run carries the unknown entry phase';
-      if (outcome === 'yielded' && record.continuation === undefined) return 'a yielded Run carries its continuation';
-      if (phase === 'settled') return null;
-      // D-7: an un-entered stop ends a Run whose authorization was revoked (or never existed).
-      return outcome === 'cancelled' && phase === 'revoked' ? null : `an ended Run cannot carry the ${phase} entry phase`;
-    }
-    default: return unreachable(record.status, 'Run status');
-  }
 }
 
 // -------------------------------------------------------------------------- //
