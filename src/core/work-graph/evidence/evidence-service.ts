@@ -11,6 +11,12 @@
  * permission changed. `finalizeChecks` folds the frozen coverage and commits
  * round + Evidence + TaskEvidenceIndex + event + receipt in ONE records.commit.
  *
+ * Every round, check and TaskEvidenceIndex write is decided by
+ * `state/verification-machine.ts` (spec §9 VR-01..VR-03, VR-07, VR-08,
+ * VR-10..VR-12) after the unchanged receipt lookup: the service reads,
+ * captures and mints ids, stops at the machine's exported guard steps where it
+ * stopped before each IO, and translates the machine's effects into the commit.
+ *
  * The service never calls completeTask/completeGoal, never releases or advances
  * a Task/Run/Session, and never fabricates a PASS from a missing/blocked check.
  */
@@ -19,28 +25,29 @@ import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { VersionPin } from '../../../contracts/core/identity.js';
 import type { CoreError, CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import type { ArtifactRef } from '../../../contracts/artifact.js';
-import type { EffectivityAnchorV1, EvidenceApplicability, EvidenceCoverageV1, EvidenceOutcome, EvidenceRef,
-    EvidenceSnapshot, EvidenceV1, TaskEvidenceIndexRef, TaskEvidenceIndexSnapshot } from '../../../contracts/evidence.js';
-import { EVIDENCE_SUMMARY_MAX_BYTES, requirementKeyOf } from '../../../contracts/evidence.js';
-import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
+import type {
+    EffectivityAnchorV1, EvidenceOutcome, EvidenceRef, EvidenceSnapshot, EvidenceV1,
+} from '../../../contracts/evidence.js';
+import { EVIDENCE_SUMMARY_MAX_BYTES } from '../../../contracts/evidence.js';
+import type { GoalRef } from '../../../contracts/ledger.js';
 import { REPORT_CONTENT_TYPE } from '../../../contracts/no-progress.js';
 import type { PlanRevisionRef, PlanRevisionSnapshot } from '../../../contracts/plan.js';
-import type { RunRef, RunSnapshot, SourceRefV1, TaskTriple } from '../../../contracts/dispatch.js';
+import type { RunRef, SourceRefV1, TaskTriple } from '../../../contracts/dispatch.js';
 import type {
     CheckCapabilityV1, CheckExecutionTicket, CheckProcessObservation, RoundCheckSnapshot, RoundSnapshot,
     TrustedCheckConfiguration, VerificationRoundRef,
 } from '../../../contracts/verification.js';
 import type {
-    VerificationRoundMaterialIdentity, VerificationRoundSourceProof, VerificationRoundSourceResult,
+    VerificationRoundMaterialIdentity, VerificationRoundSourceResult,
 } from '../../../contracts/verification-context.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import type {
-    EncodedRecord, GoalRecordTransactionPort, PreparedCommit, RecordGuard, StoreCommitReceipt, StoreFailure,
+    EncodedDomainEvent, EncodedRecord, GoalRecordTransactionPort, PreparedCommit, RecordGuard, StoreCommitReceipt,
 } from '../../record-store/ports.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import { architectureBaselineDigest, readArchitectureBaselineSnapshot } from '../architecture/catalog-record-codecs.js';
 import {
-    readBatch, readGoal, readPinnedCompletionPolicy, readPlan, readRevisionNumber, type Rejected,
+    readBatch, readGoal, readPinnedCompletionPolicy, readPlan, readRevisionNumber, type Rejected as ReadRejected,
 } from '../tasks/plan-readers.js';
 import { planRevisionRefKey } from '../tasks/plan-record-codecs.js';
 import {
@@ -49,8 +56,16 @@ import {
 import {
     bindTrustedContext, isRecord, isolateWrite, loadReplayEvent, mapStoreFailure, mergeGuards, nonEmpty, sameRef,
 } from '../tasks/execution-entry-service.js';
+import {
+    checkEventAdmission, finalizeRoundOutcome, foldVerdictChecks, frozenBindingProblem, nextTaskEvidenceIndex, outcomeFor,
+    roundOpenBasisProblem, roundOpenChecksProblem, roundOpenPointerProblem, roundOpenSubjectProblem,
+    roundReviewerEvidenceProblem, roundWriteAdmission, taskEvidenceIndexRefOf, transitionCheck, transitionRound,
+    type CheckVerdictDecisionV1, type RoundFoldFactsV1, type RoundGuardContext, type RoundOpenFactsV1,
+    type TaskEvidenceIndexReadV1, type TaskEvidenceIndexWrite, type VerificationEffect,
+} from '../state/verification-machine.js';
+import { unreachable, type Rejected } from '../state/transition.js';
 import { compileVerificationPlan } from './verification-plan.js';
-import { evidenceApplicabilityWithBasis, evidenceBindingFor, selectEffectiveEvidenceSet } from './coverage.js';
+import { evidenceApplicabilityWithBasis } from './coverage.js';
 import {
     EVIDENCE_ADMITTED_EVENT_TYPE, VERIFICATION_CHECK_BEGUN_EVENT_TYPE,
     VERIFICATION_CHECK_RESULT_RECORDED_EVENT_TYPE, VERIFICATION_ROUND_FINALIZED_EVENT_TYPE,
@@ -78,7 +93,6 @@ function reject(code: CoreError, reason: string, current?: VersionPin[]): CoreRe
 }
 function invalid(reason: string): CoreRejection { return reject('invalid', reason); }
 function forbidden(reason: string): CoreRejection { return reject('forbidden', reason); }
-function busy(reason: string): CoreRejection { return reject('busy', reason); }
 function unavailable(reason: string): CoreRejection { return reject('unavailable', reason); }
 function notFound(reason: string): CoreRejection { return reject('not_found', reason); }
 function incomplete(reason: string): CoreRejection { return reject('incomplete', reason); }
@@ -118,7 +132,7 @@ function isRunRef(value: unknown): value is RunRef {
     return isRecord(value) && value['aggregateType'] === 'Run' && nonEmpty(value['projectId'])
         && nonEmpty(value['goalId']) && nonEmpty(value['runId']);
 }
-function mapRejected(result: Rejected): CoreRejection {
+function mapRejected(result: ReadRejected): CoreRejection {
     return { status: 'rejected', code: result.code, reason: result.reason };
 }
 function mapWorkspaceRejection(result: { status: 'rejected'; code: string; reason: string }): CoreRejection {
@@ -146,9 +160,6 @@ function checkRoundPin(expected: readonly VersionPin[], ref: VerificationRoundRe
     if (!sameRef(raw['ref'], ref)) return invalid('meta.expected must pin exactly the target round');
     return { ok: true, revision: raw['revision'] as number };
 }
-function withCheck(round: RoundSnapshot, checkId: string, update: Partial<RoundCheckSnapshot>): RoundCheckSnapshot[] {
-    return round.checks.map(check => check.checkId === checkId ? { ...check, ...update } : check);
-}
 function boundedSummary(text: string): string {
     if (Buffer.byteLength(text, 'utf8') <= EVIDENCE_SUMMARY_MAX_BYTES) return text;
     let end = Math.min(text.length, EVIDENCE_SUMMARY_MAX_BYTES);
@@ -160,6 +171,100 @@ function anchorOf(round: RoundSnapshot): EffectivityAnchorV1 {
         workspaceRevision: round.identity.workspaceRevision,
         pinnedCompletionPolicy: round.verificationPlan.pinnedCompletionPolicy,
         pinnedArchitectureBaseline: round.verificationPlan.pinnedArchitectureBaseline };
+}
+
+// -------------------------------------------------------------------------- //
+// The verification machine (spec §9)                                          //
+// -------------------------------------------------------------------------- //
+
+/** The round machines' guard context for this caller; a service call never holds the reconcile lease. */
+function roundCtx(executor: HostActor, actor: HostActor, expectedRevision: number | null): RoundGuardContext {
+    return { callerIsExecutor: executor.kind === actor.kind && executor.id === actor.id, expectedRevision,
+        instanceLeaseHeld: false };
+}
+
+type Refused = { ok: false; code: CoreError; detail: string };
+
+/** A machine refusal as today's rejection (§1.2: code and reason kept); a stale pin also reports the round's revision. */
+function refusalOf(refusal: Refused, round?: RoundSnapshot): CoreRejection;
+function refusalOf(refusal: Rejected | null, round?: RoundSnapshot): CoreRejection | null;
+function refusalOf(refusal: Refused | Rejected | null, round?: RoundSnapshot): CoreRejection | null {
+    if (refusal === null || refusal.ok) return null;
+    return reject(refusal.code, refusal.detail, refusal.code === 'revision_conflict' && round !== undefined
+        ? [{ ref: round.ref, revision: round.revision }] : undefined);
+}
+
+/** The effect of one kind (a decided write carries each kind at most once). */
+function effectOf<K extends VerificationEffect['kind']>(effects: readonly VerificationEffect[], kind: K):
+Extract<VerificationEffect, { kind: K }> | undefined {
+    return effects.find((effect): effect is Extract<VerificationEffect, { kind: K }> => effect.kind === kind);
+}
+
+/** One decided write: the parts its effects select for the ONE commit. */
+type RoundWrite<T> = {
+    identity: string;
+    fingerprint: string;
+    effects: readonly VerificationEffect[];
+    /** The machine's next round, written under its CAS when the effects carry `guard_round`. */
+    round: RoundSnapshot;
+    /** `guard_open_read_set`: the CAS of every record the open read. */
+    readSet?: readonly RecordGuard[];
+    /** `admit_claim_evidence` / `admit_verdict_evidence`: the Evidence@1 rows built from the effect. */
+    evidence?: readonly EvidenceSnapshot[];
+    /** `append_task_evidence_index`. */
+    index?: TaskEvidenceIndexWrite;
+    event: VerificationRoundEvent;
+    value: T;
+    /** The cancel refusal checked just before the commit; null where there is none (`recordCheckResult`). */
+    cancelled: string | null;
+};
+
+/**
+ * Translates the effects into ONE RecordStore commit and commits it. Guards:
+ * round, read set, index, then each Evidence (CAS null); records: round,
+ * Evidence, index. A replayed or lost commit restores the original event result.
+ */
+async function commitRoundWrite<T>(records: Records, signal: AbortSignal, write: RoundWrite<T>): Promise<WriteResult<T>> {
+    type Guarded = { record: EncodedRecord; guard: RecordGuard };
+    const guarded = (record: EncodedRecord, expectedRevision: number | null): Guarded => ({ record, guard: { refKey: record.refKey, expectedRevision } });
+    let round: Guarded[] = [];
+    let readSet: readonly RecordGuard[] = [];
+    let evidence: Guarded[] = [];
+    let index: Guarded[] = [];
+    let events: EncodedDomainEvent[] = [];
+    for (const effect of write.effects) {
+        switch (effect.kind) {
+            case 'guard_round': round = [guarded(encodeVerificationRoundSnapshot(write.round), effect.expectedRevision)]; break;
+            case 'guard_open_read_set': readSet = write.readSet ?? []; break;
+            case 'admit_claim_evidence':
+            case 'admit_verdict_evidence':
+                evidence = (write.evidence ?? []).map(snapshot => guarded(encodeEvidenceSnapshot(snapshot), null));
+                break;
+            case 'append_task_evidence_index':
+                if (write.index?.write === true) index = [guarded(encodeTaskEvidenceIndexSnapshot(write.index.record), write.index.expectedRevision)];
+                break;
+            case 'emit_event':
+                if (effect.eventType !== write.event.eventType) throw new Error(`the decided event is ${effect.eventType}, not ${write.event.eventType}`);
+                events = [encodeVerificationRoundEvent(write.event)];
+                break;
+            case 'claim_round_slot': throw new Error('the round slot is not claimed before A.2 step 5');
+            default: return unreachable(effect, 'verification effect');
+        }
+    }
+    const merged = mergeGuards([...round.map(entry => entry.guard), ...readSet, ...[...index, ...evidence].map(entry => entry.guard)]);
+    if (!merged.ok) return merged.rejection;
+    const prepared: PreparedCommit = { identityKey: write.identity, fingerprint: write.fingerprint, guards: merged.guards,
+        records: [...round, ...evidence, ...index].map(entry => entry.record), claims: [], indexGuards: [], indexChanges: [], events };
+    const eventType = write.event.eventType;
+    try {
+        if (write.cancelled !== null && signal.aborted) return cancelled(write.cancelled);
+        const receipt = await records.commit(prepared);
+        if (receipt.status !== 'committed') return mapStoreFailure(receipt);
+        if (receipt.replayed) return await replayEvent(records, receipt, write.identity, write.fingerprint, eventType) as WriteResult<T>;
+        return { status: 'committed', value: write.value, replayed: false, cursor: receipt.cursor };
+    } catch (error) {
+        return await commitOrRecover(records, write.identity, write.fingerprint, eventType, error) as WriteResult<T>;
+    }
 }
 
 // -------------------------------------------------------------------------- //
@@ -217,7 +322,6 @@ async function replayEvent(
 
 async function commitOrRecover(
     records: Records,
-    prepared: PreparedCommit,
     identity: string,
     fingerprint: string,
     expectedEventType: VerificationRoundEvent['eventType'],
@@ -264,6 +368,25 @@ Promise<{ ok: true; revision: number } | { ok: false; rejection: CoreRejection }
     return { ok: true, revision };
 }
 
+/** The subject task's evidence index as read (VR-10..12); a missing row reads as revision 0 with no ids. */
+async function readIndex(records: Records, round: RoundSnapshot):
+Promise<{ ok: true; index: TaskEvidenceIndexReadV1 } | { ok: false; rejection: CoreRejection }> {
+    const ref = taskEvidenceIndexRefOf(round);
+    const key = refKeyOf(ref);
+    if (key === null) return { ok: false, rejection: invalid('the task evidence index ref is not canonical JSON') };
+    let read;
+    try { read = await records.readMany([key]); }
+    catch (error) { return { ok: false, rejection: unavailable(`the task evidence index read failed: ${messageOf(error)}`) }; }
+    if (read.status !== 'ready') return { ok: false, rejection: mapStoreFailure(read) };
+    const record: EncodedRecord | undefined = read.value.records.find(candidate => candidate.refKey === key);
+    if (record === undefined || read.value.missing.includes(key)) {
+        return { ok: true, index: { ref, exists: false, revision: 0, evidenceIds: [] } };
+    }
+    const decoded = decodeTaskEvidenceIndexSnapshot(record);
+    if (decoded.status !== 'decoded') return { ok: false, rejection: unavailable(`the task evidence index is damaged: ${decoded.reason}`) };
+    return { ok: true, index: { ...decoded.value, exists: true } };
+}
+
 // -------------------------------------------------------------------------- //
 // The factory                                                                 //
 // -------------------------------------------------------------------------- //
@@ -274,18 +397,17 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
     async function storeReport(
         ctx: CoreCallContext,
         round: RoundSnapshot,
-        check: RoundCheckSnapshot,
-        observation: CheckProcessObservation,
+        request: { checkId: string; invocationId: string; observation: CheckProcessObservation },
         requestId: string,
         sourceStatus: RoundCheckSnapshot['sourceStatus'],
         outcome: EvidenceOutcome,
     ): Promise<{ ok: true; ref: ArtifactRef } | { ok: false; rejection: CoreRejection }> {
         const body = JSON.stringify({
             schemaVersion: 1, kind: 'registered-check-report', roundRef: round.ref,
-            checkId: check.checkId, invocationId: check.invocationId,
-            source: { actor: round.executor, runRef: null, checkId: check.checkId },
+            checkId: request.checkId, invocationId: request.invocationId,
+            source: { actor: round.executor, runRef: null, checkId: request.checkId },
             subjectRunRef: round.subjectRunRef, subject: round.subject,
-            observation, sourceStatus, outcome, recordedAt: deps.now(),
+            observation: request.observation, sourceStatus, outcome, recordedAt: deps.now(),
         });
         const sources: SourceRefV1[] = [
             { kind: 'plan-revision', refId: round.adoptedPlanRef.planId, revision: String(round.verificationPlan.planRevision) },
@@ -310,7 +432,7 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         ctx: CoreCallContext,
         configuration: TrustedCheckConfiguration,
         round: RoundSnapshot,
-    ): Promise<RoundCheckSnapshot['sourceStatus']> {
+    ): Promise<Exclude<RoundCheckSnapshot['sourceStatus'], null>> {
         try {
             const resolved = await deps.workspaceHost.resolveRoot(configuration.workspace);
             if (resolved.status !== 'ready') return 'unavailable';
@@ -324,14 +446,6 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         } catch {
             return 'unavailable';
         }
-    }
-
-    function outcomeFor(observation: CheckProcessObservation, sourceStatus: RoundCheckSnapshot['sourceStatus']): EvidenceOutcome {
-        if (observation.kind === 'not_started') return 'INCONCLUSIVE';
-        if (sourceStatus !== 'matched') return 'INCONCLUSIVE';
-        if (observation.timedOut || observation.cancelled || observation.signal !== null || observation.exitCode === null) return 'INCONCLUSIVE';
-        if (observation.effects.workspaceRevision === null) return 'INCONCLUSIVE';
-        return observation.exitCode === 0 ? 'PASS' : 'FAIL';
     }
 
     async function openVerification(
@@ -382,9 +496,10 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         if (configuration.workspace.projectId !== scope.projectId || configuration.workspace.workspaceId !== scope.workspaceId) {
             return forbidden('the trusted check configuration belongs to another workspace');
         }
-        if (actor.kind !== configuration.executor.kind || actor.id !== configuration.executor.id) {
-            return forbidden('the call context is not the registered check Host executor');
-        }
+        // VR-01: the caller must be the configuration's registered executor.
+        const guardCtx = roundCtx(configuration.executor, actor, null);
+        const admitted = refusalOf(roundWriteAdmission(null, { kind: 'round_opened' }, guardCtx));
+        if (admitted !== null) return admitted;
         if (signal.aborted) return cancelled('the round open was cancelled before the reads');
 
         const goalRef: GoalRef = { aggregateType: 'Goal', projectId: input.subject.projectId, goalId: input.subject.goalId };
@@ -395,9 +510,10 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         if (goal.workspaceRef.projectId !== scope.projectId || goal.workspaceRef.workspaceId !== scope.workspaceId) {
             return forbidden('the subject Goal belongs to another workspace');
         }
-        if (goal.activePlanRevision === null || planRevisionRefKey(goal.activePlanRevision) !== planRevisionRefKey(input.planRef)) {
-            return reject('source_stale', 'the requested planRef is not the Goal current adopted Plan');
-        }
+        const planIsActive = goal.activePlanRevision !== null
+            && planRevisionRefKey(goal.activePlanRevision) === planRevisionRefKey(input.planRef);
+        const pointerProblem = refusalOf(roundOpenPointerProblem(planIsActive));
+        if (pointerProblem !== null) return pointerProblem;
         const planRead = await readPlan(records, input.planRef);
         if (planRead.status !== 'ready') return mapRejected(planRead);
         const plan = planRead.plan;
@@ -405,40 +521,32 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
             return notFound('the adopted Plan belongs to another Goal');
         }
         const basis = buildEffectiveTaskBasis(plan).get(input.subject.taskId);
-        if (basis === undefined || isBasisUnsupported(basis)) {
-            return incomplete(`the subject task ${input.subject.taskId} has no resolved task-state basis`);
-        }
+        const taskBasisResolved = basis !== undefined && !isBasisUnsupported(basis);
+        const basisProblem = refusalOf(roundOpenBasisProblem(taskBasisResolved, input.subject));
+        if (basisProblem !== null) return basisProblem;
         const execution = await deps.executions.readExecution(trusted, input.subjectRunRef);
         if (execution.status !== 'ready') return mapRead(execution);
         const run = execution.value.run;
         if (!sameRef(run.ref, input.subjectRunRef)) return unavailable('the Run read returned a different aggregate');
-        if (input.gateSubject !== undefined) {
-            // A gate is not claimable: its round is opened against a formal
-            // ended normal work Run of the SAME project/Goal/workspace while the
-            // Round/VerificationPlan/taskBasis/Evidence subject stays the gate.
-            // The adopted node must be a gate whose ACTUAL scope kind equals the
-            // declared gateSubject; that actual kind is preserved unchanged in
-            // the round's VerificationRoundScope identity below.
-            const gateNode = plan.tasks.find(task => task.taskId === input.subject.taskId);
-            if (gateNode === undefined || gateNode.taskKind !== 'gate' || gateNode.scope.kind !== input.gateSubject) {
-                return invalid(`the gate subject ${input.subject.taskId} is not an adopted ${input.gateSubject} gate`);
-            }
-            if (run.task.projectId !== input.subject.projectId || run.task.goalId !== input.subject.goalId
-                || run.task.taskId === input.subject.taskId) {
-                return forbidden('the gate producer Run is not a work Run of the same Goal');
-            }
-            const producerNode = plan.tasks.find(task => task.taskId === run.task.taskId);
-            if (producerNode === undefined || producerNode.taskKind !== 'work') {
-                return forbidden('the gate producer Run is not an adopted work task of the same Plan');
-            }
-            if (run.workspaceSnapshot.workspaceId !== scope.workspaceId) {
-                return forbidden('the gate producer Run belongs to another workspace');
-            }
-        } else if (run.task.projectId !== input.subject.projectId || run.task.goalId !== input.subject.goalId
-            || run.task.taskId !== input.subject.taskId) {
-            return forbidden('the subject task is not the subject Run task');
-        }
-        if (run.status !== 'ended') return forbidden('the subject Run has not formally ended');
+        // A gate is not claimable: its round is opened against a formal ended
+        // normal work Run of the SAME project/Goal/workspace while the
+        // Round/VerificationPlan/taskBasis/Evidence subject stays the gate. The
+        // adopted node must be a gate whose ACTUAL scope kind equals the declared
+        // gateSubject; that actual kind is preserved unchanged in the round's
+        // VerificationRoundScope identity below.
+        const subjectNode = plan.tasks.find(task => task.taskId === input.subject.taskId);
+        const producerNode = plan.tasks.find(task => task.taskId === run.task.taskId);
+        const sameGoal = run.task.projectId === input.subject.projectId && run.task.goalId === input.subject.goalId;
+        const facts: RoundOpenFactsV1 = { planIsActive, taskBasisResolved, subjectRun: run,
+            relation: input.gateSubject === undefined
+                ? { kind: 'work', runTaskIsSubject: sameGoal && run.task.taskId === input.subject.taskId }
+                : { kind: 'gate', gateSubject: input.gateSubject,
+                    gateAdopted: subjectNode !== undefined && subjectNode.taskKind === 'gate' && subjectNode.scope.kind === input.gateSubject,
+                    producer: !sameGoal || run.task.taskId === input.subject.taskId ? 'not_goal_work_run'
+                        : producerNode === undefined || producerNode.taskKind !== 'work' ? 'not_adopted_work'
+                            : run.workspaceSnapshot.workspaceId !== scope.workspaceId ? 'other_workspace' : 'ok' } };
+        const runProblem = refusalOf(roundOpenSubjectProblem(facts, input.subject));
+        if (runProblem !== null) return runProblem;
         const policyRead = await readPinnedCompletionPolicy(records, plan.effectiveCompletionPolicy);
         if (policyRead.status !== 'resolved') return mapRejected(policyRead);
         const baseline = await readPinnedBaseline(records, plan.effectiveArchitectureBaseline);
@@ -479,14 +587,8 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
                 : incomplete(`the VerificationPlan could not be compiled (${compiled.code}): ${compiled.issues.map(issue => issue.message).join('; ')}`);
         }
         const verificationPlan = compiled.plan;
-        const checks: RoundCheckSnapshot[] = [];
-        for (const planCheck of verificationPlan.checks) {
-            const definition = configuration.checks.find(candidate => candidate.checkId === planCheck.checkId);
-            if (definition === undefined) return incomplete(`the compiled plan names an unregistered check ${planCheck.checkId}`);
-            checks.push({ checkId: planCheck.checkId, definition, coverage: planCheck.coverage.map(entry => ({ ...entry })),
-                phase: 'pending', invocationId: null, outcome: null, reportRef: null, sourceStatus: null });
-        }
-        const taskDefinition = plan.tasks.find(task => task.taskId === input.subject.taskId);
+        const checksProblem = refusalOf(roundOpenChecksProblem(verificationPlan, configuration));
+        if (checksProblem !== null) return checksProblem;
         let identityMaterial: VerificationRoundMaterialIdentity;
         try {
             identityMaterial = {
@@ -496,7 +598,7 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
                     ...(input.gateSubject === undefined ? {} : { gateSubject: input.gateSubject }) },
                 runRef: input.subjectRunRef, runRevision: run.revision, runDigest: digestOf(run),
                 planRef: input.planRef, planRevision: plan.planRevision, planDigest: digestOf(plan),
-                taskDigest: digestOf(taskDefinition ?? input.subject),
+                taskDigest: digestOf(subjectNode ?? input.subject),
                 goalRevision: goal.revision, goalDigest: digestOf(goal),
                 workspaceRevision: resolvedRoot.value.workspaceRevision,
                 workspaceDigest: digestOf({ workspaceRef: goal.workspaceRef, revision: resolvedRoot.value.workspaceRevision }),
@@ -508,14 +610,12 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         const roundRef: VerificationRoundRef = { aggregateType: 'VerificationRound', projectId: scope.projectId,
             workspaceId: scope.workspaceId, goalId: goalRef.goalId, taskId: input.subject.taskId,
             runId: input.subjectRunRef.runId, roundId: deps.newId() };
-        const gaps: RoundSnapshot['gaps'] = (verificationPlan.uncovered ?? []).map(uncovered => ({
-            code: 'uncovered_requirement', message: `no registered check covers required requirement ${uncovered.requirementId}`,
-            coverage: { obligationId: uncovered.obligationId, requirementId: uncovered.requirementId } }));
-        const round: RoundSnapshot = { ref: roundRef, revision: 1, schemaVersion: 1, subject: { ...input.subject },
+        const decided = transitionRound(null, { kind: 'round_opened', facts, opening: { ref: roundRef, subject: input.subject,
             subjectRunRef: input.subjectRunRef, adoptedPlanRef: input.planRef, taskBasisRef: basis as PlanRevisionRef,
             executor: actor, configuration, configurationDigest, identity: identityMaterial,
-            sourceProof: captured.sourceProof, verificationPlan, checks, status: 'open', outcome: null, gaps, evidenceRefs: [] };
-        const record = encodeVerificationRoundSnapshot(round);
+            sourceProof: captured.sourceProof, verificationPlan } }, guardCtx);
+        if (!decided.ok) return refusalOf(decided);
+        const round = decided.next;
         const occurredAt = deps.now();
         const event: VerificationRoundEvent = { eventId: deps.newId(), eventType: VERIFICATION_ROUND_OPENED_EVENT_TYPE,
             schemaVersion: 1, occurredAt, identityKey: identity, roundRef, actor, fingerprint, result: round };
@@ -530,33 +630,16 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         if (goalKey === null || workspaceKey === null || runKey === null) {
             return invalid('the open read refs are not canonical JSON');
         }
-        const mergedGuards = mergeGuards([
-            { refKey: record.refKey, expectedRevision: null },
-            { refKey: goalKey, expectedRevision: goal.revision },
-            { refKey: planRevisionRefKey(input.planRef), expectedRevision: plan.revision },
-            { refKey: workspaceKey, expectedRevision: workspaceRead.revision },
-            { refKey: runKey, expectedRevision: run.revision },
-            ...policyRead.guards,
-            baseline.guard,
-        ]);
-        if (!mergedGuards.ok) return mergedGuards.rejection;
-        const prepared: PreparedCommit = { identityKey: identity, fingerprint,
-            guards: mergedGuards.guards,
-            records: [record], claims: [], indexGuards: [], indexChanges: [],
-            events: [encodeVerificationRoundEvent(event)] };
-        try {
-            if (signal.aborted) return cancelled('the round open was cancelled before commit');
-            const receipt = await records.commit(prepared);
-            if (receipt.status !== 'committed') return mapStoreFailure(receipt);
-            if (receipt.replayed) {
-                const replayed = await replayEvent(records, receipt, identity, fingerprint, VERIFICATION_ROUND_OPENED_EVENT_TYPE);
-                return replayed as WriteResult<RoundSnapshot>;
-            }
-            return { status: 'committed', value: round, replayed: false, cursor: receipt.cursor };
-        } catch (error) {
-            const recovered = await commitOrRecover(records, prepared, identity, fingerprint, VERIFICATION_ROUND_OPENED_EVENT_TYPE, error);
-            return recovered as WriteResult<RoundSnapshot>;
-        }
+        return await commitRoundWrite(records, signal, { identity, fingerprint, effects: decided.effects, round, event,
+            value: round, cancelled: 'the round open was cancelled before commit',
+            readSet: [
+                { refKey: goalKey, expectedRevision: goal.revision },
+                { refKey: planRevisionRefKey(input.planRef), expectedRevision: plan.revision },
+                { refKey: workspaceKey, expectedRevision: workspaceRead.revision },
+                { refKey: runKey, expectedRevision: run.revision },
+                ...policyRead.guards,
+                baseline.guard,
+            ] });
     }
 
     async function readVerification(ctx: CoreCallContext, ref: VerificationRoundRef): Promise<ReadResult<RoundSnapshot>> {
@@ -668,62 +751,45 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         const loaded = await readRoundRecord(records, input.roundRef);
         if (!loaded.ok) return loaded.rejection;
         const round = loaded.round;
-        if (round.status === 'finalized') return busy('the round is finalized; no fresh check may begin');
-        if (round.executor.kind !== actor.kind || round.executor.id !== actor.id) return forbidden('the check executor is not the round executor');
-        const check = round.checks.find(candidate => candidate.checkId === input.checkId);
-        if (check === undefined) return invalid(`the round has no registered check ${input.checkId}`);
-        if (round.revision !== checked.revision) {
-            return reject('revision_conflict', 'the round changed since the caller read it', [{ ref: round.ref, revision: round.revision }]);
-        }
-        if (check.phase !== 'pending') return busy(`the check ${input.checkId} is already ${check.phase}`);
+        // VR-02 before any IO: open round, executor, registered check, pin, then `pending`.
+        const guardCtx = roundCtx(round.executor, actor, checked.revision);
+        const admitted = refusalOf(checkEventAdmission(round, { kind: 'check_begun', checkId: input.checkId }, guardCtx), round);
+        if (admitted !== null) return admitted;
         // R6 cold-start: the original round FROZE its trusted configuration when
         // it opened. A later scope approval may never rewrite or re-key it, so
         // this fresh begin and every ticket it issues use the round's frozen
         // configuration, never the current resolver value.
         const configuration = round.configuration;
         // A fresh begin must still match the round's frozen Host grant and its
-        // exact frozen source; otherwise no execution ticket is issued.
+        // exact frozen source; otherwise no execution ticket is issued. The
+        // permission and root are compared before the capture, the source
+        // before the invocation id is minted.
         const resolved = await deps.workspaceHost.resolveRoot(configuration.workspace);
         if (resolved.status !== 'ready') return mapWorkspaceRejection(resolved);
         const authorized = await deps.workspaceHost.authorize(ownedCtx.ctx, configuration.workspace);
         if (authorized.status !== 'ready') return mapWorkspaceRejection(authorized);
-        if (authorized.value.permissionRevision !== configuration.permissionRevision) {
-            return forbidden('the current Host permission revision is not the trusted configuration binding');
-        }
-        if (resolved.value.root !== round.identity.workspaceRoot) {
-            return reject('source_stale', 'the current workspace root is not the round fixed root');
-        }
+        const grant = { permissionRevision: authorized.value.permissionRevision, workspaceRoot: resolved.value.root };
+        const grantProblem = refusalOf(frozenBindingProblem(round, grant));
+        if (grantProblem !== null) return grantProblem;
         const captured = await deps.source.capture(resolved.value.root);
         if (captured.status !== 'ready') return mapSourceFailure(captured);
-        if (captured.sourceDigest !== round.identity.sourceDigest) {
-            return reject('source_stale', 'the current verification source is not the round fixed source');
-        }
-        const ticket: CheckExecutionTicket = { roundRef: round.ref, checkId: check.checkId, invocationId: deps.newId(),
+        const observed = { ...grant, sourceDigest: captured.sourceDigest };
+        const sourceProblem = refusalOf(frozenBindingProblem(round, observed));
+        if (sourceProblem !== null) return sourceProblem;
+        const invocationId = deps.newId();
+        const decided = transitionCheck(round, { kind: 'check_begun', checkId: input.checkId, invocationId, observed }, guardCtx);
+        if (!decided.ok) return refusalOf(decided, round);
+        const definition = round.checks.find(candidate => candidate.checkId === input.checkId)!.definition;
+        const ticket: CheckExecutionTicket = { roundRef: round.ref, checkId: input.checkId, invocationId,
             configurationRevision: configuration.configurationRevision, configurationDigest: round.configurationDigest,
             executor: round.executor, workspace: configuration.workspace, workspaceRoot: round.identity.workspaceRoot,
             permissionRevision: configuration.permissionRevision, sourceDigest: round.identity.sourceDigest,
-            processAccess: configuration.processAccess, deniedPrefixes: configuration.deniedPrefixes, definition: check.definition };
-        const nextRound: RoundSnapshot = { ...round, revision: round.revision + 1,
-            checks: withCheck(round, check.checkId, { phase: 'executing', invocationId: ticket.invocationId }) };
-        const record = encodeVerificationRoundSnapshot(nextRound);
+            processAccess: configuration.processAccess, deniedPrefixes: configuration.deniedPrefixes, definition };
         const occurredAt = deps.now();
-        const event: VerificationRoundEvent = { eventId: deps.newId(), eventType: VERIFICATION_CHECK_BEGUN_EVENT_TYPE,
-            schemaVersion: 1, occurredAt, identityKey: identity, roundRef: round.ref, actor, fingerprint, result: ticket };
-        const prepared: PreparedCommit = { identityKey: identity, fingerprint,
-            guards: [{ refKey: record.refKey, expectedRevision: checked.revision }],
-            records: [record], claims: [], indexGuards: [], indexChanges: [], events: [encodeVerificationRoundEvent(event)] };
-        try {
-            if (signal.aborted) return cancelled('the check begin was cancelled before commit');
-            const receipt = await records.commit(prepared);
-            if (receipt.status !== 'committed') return mapStoreFailure(receipt);
-            if (receipt.replayed) {
-                return await replayEvent(records, receipt, identity, fingerprint, VERIFICATION_CHECK_BEGUN_EVENT_TYPE) as WriteResult<CheckExecutionTicket>;
-            }
-            return { status: 'committed', value: ticket, replayed: false, cursor: receipt.cursor };
-        } catch (error) {
-            const recovered = await commitOrRecover(records, prepared, identity, fingerprint, VERIFICATION_CHECK_BEGUN_EVENT_TYPE, error);
-            return recovered as WriteResult<CheckExecutionTicket>;
-        }
+        return await commitRoundWrite(records, signal, { identity, fingerprint, effects: decided.effects, round: decided.next,
+            event: { eventId: deps.newId(), eventType: VERIFICATION_CHECK_BEGUN_EVENT_TYPE, schemaVersion: 1, occurredAt,
+                identityKey: identity, roundRef: round.ref, actor, fingerprint, result: ticket },
+            value: ticket, cancelled: 'the check begin was cancelled before commit' });
     }
 
     async function recordCheckResult(ctx: CoreCallContext, request: GraphWrite<{
@@ -761,43 +827,27 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         const loaded = await readRoundRecord(records, input.roundRef);
         if (!loaded.ok) return loaded.rejection;
         const round = loaded.round;
-        if (round.status === 'finalized') return busy('the round is finalized; no fresh result may be recorded');
-        if (round.executor.kind !== actor.kind || round.executor.id !== actor.id) return forbidden('the check executor is not the round executor');
-        const check = round.checks.find(candidate => candidate.checkId === input.checkId);
-        if (check === undefined) return invalid(`the round has no registered check ${input.checkId}`);
-        if (check.phase !== 'executing') return busy(`the check ${input.checkId} is ${check.phase}, not executing`);
-        if (check.invocationId !== input.invocationId) return forbidden('the ticket is not the begun invocation of this check');
-        if (round.revision !== checked.revision) {
-            return reject('revision_conflict', 'the round changed since the caller read it', [{ ref: round.ref, revision: round.revision }]);
-        }
+        // VR-03 before any IO: open round, executor, registered check, `executing`, the begun invocation, then the pin.
+        const guardCtx = roundCtx(round.executor, actor, checked.revision);
+        const admitted = refusalOf(checkEventAdmission(round, { kind: 'check_result_recorded', checkId: input.checkId,
+            invocationId: input.invocationId }, guardCtx), round);
+        if (admitted !== null) return admitted;
         const sourceStatus = await evaluateSource(ownedCtx.ctx, round.configuration, round);
-        const outcome = outcomeFor(input.observation, sourceStatus);
         // The observation is already an occurred fact. A late caller cancel must not
         // discard the real exit/signal/stdout/stderr/effects/report; the trusted
         // finishing signal keeps the same Host identity/scope (B2 cleanup pattern).
         const finishingCtx: CoreCallContext = { ...ownedCtx.ctx, signal: new AbortController().signal };
-        const report = await storeReport(finishingCtx, round, check, input.observation, owned.requestId, sourceStatus, outcome);
+        const report = await storeReport(finishingCtx, round, input, owned.requestId, sourceStatus,
+            outcomeFor(input.observation, sourceStatus).outcome);
         if (!report.ok) return report.rejection;
-        const nextRound: RoundSnapshot = { ...round, revision: round.revision + 1,
-            checks: withCheck(round, check.checkId, { phase: 'finished', outcome, reportRef: report.ref, sourceStatus }) };
-        const record = encodeVerificationRoundSnapshot(nextRound);
+        const decided = transitionCheck(round, { kind: 'check_result_recorded', checkId: input.checkId,
+            invocationId: input.invocationId, observation: input.observation, sourceStatus, reportRef: report.ref }, guardCtx);
+        if (!decided.ok) return refusalOf(decided, round);
         const occurredAt = deps.now();
-        const event: VerificationRoundEvent = { eventId: deps.newId(), eventType: VERIFICATION_CHECK_RESULT_RECORDED_EVENT_TYPE,
-            schemaVersion: 1, occurredAt, identityKey: identity, roundRef: round.ref, actor, fingerprint, result: nextRound };
-        const prepared: PreparedCommit = { identityKey: identity, fingerprint,
-            guards: [{ refKey: record.refKey, expectedRevision: checked.revision }],
-            records: [record], claims: [], indexGuards: [], indexChanges: [], events: [encodeVerificationRoundEvent(event)] };
-        try {
-            const receipt = await records.commit(prepared);
-            if (receipt.status !== 'committed') return mapStoreFailure(receipt);
-            if (receipt.replayed) {
-                return await replayEvent(records, receipt, identity, fingerprint, VERIFICATION_CHECK_RESULT_RECORDED_EVENT_TYPE) as WriteResult<RoundSnapshot>;
-            }
-            return { status: 'committed', value: nextRound, replayed: false, cursor: receipt.cursor };
-        } catch (error) {
-            const recovered = await commitOrRecover(records, prepared, identity, fingerprint, VERIFICATION_CHECK_RESULT_RECORDED_EVENT_TYPE, error);
-            return recovered as WriteResult<RoundSnapshot>;
-        }
+        return await commitRoundWrite(records, signal, { identity, fingerprint, effects: decided.effects, round: decided.next,
+            event: { eventId: deps.newId(), eventType: VERIFICATION_CHECK_RESULT_RECORDED_EVENT_TYPE, schemaVersion: 1,
+                occurredAt, identityKey: identity, roundRef: round.ref, actor, fingerprint, result: decided.next },
+            value: decided.next, cancelled: null });
     }
 
     async function submitEvidence(ctx: CoreCallContext, request: GraphWrite<{ roundRef: VerificationRoundRef; claim: string }>):
@@ -828,44 +878,25 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         const loaded = await readRoundRecord(records, input.roundRef);
         if (!loaded.ok) return loaded.rejection;
         const round = loaded.round;
-        if (round.executor.kind !== actor.kind || round.executor.id !== actor.id) return forbidden('the evidence author is not the round executor');
-        const coverage = collectRequiredCoverage(round);
-        if (coverage.length === 0) return incomplete('the round has no required verification coverage to attach a claim to');
+        // VR-08: the executor's claim attaches to the round's required coverage; the round itself is not written.
+        const decided = transitionRound(round, { kind: 'evidence_submitted' }, roundCtx(round.executor, actor, null));
+        if (!decided.ok) return refusalOf(decided, round);
         const evidenceId = deps.newId();
         const admittedAt = deps.now();
         const evidence: EvidenceV1 = { schemaVersion: 1, evidenceId, kind: 'claim', outcome: 'INCONCLUSIVE',
             source: { actor: round.executor, runRef: null, checkId: null }, subject: { ...round.subject },
-            coverage, anchor: anchorOf(round),
+            coverage: effectOf(decided.effects, 'admit_claim_evidence')?.coverage ?? [], anchor: anchorOf(round),
             verificationPlanRef: { planId: round.verificationPlan.planId, planDigest: round.verificationPlan.planDigest },
             summary: { text: boundedSummary(input.claim), artifactRef: null } };
         const snapshot: EvidenceSnapshot = { ref: { aggregateType: 'Evidence', projectId: round.ref.projectId, evidenceId },
             revision: 1, schemaVersion: 1, evidence, admittedAt };
         const indexRead = await readIndex(records, round);
         if (!indexRead.ok) return indexRead.rejection;
-        const index = indexRead.index;
-        const nextIndex: TaskEvidenceIndexSnapshot = { ref: index.ref, revision: index.evidenceIds.length + 1,
-            schemaVersion: 1, evidenceIds: [...index.evidenceIds, evidenceId] };
-        const prepared: PreparedCommit = { identityKey: identity, fingerprint,
-            guards: [{ refKey: encodeTaskEvidenceIndexSnapshot(nextIndex).refKey,
-                    expectedRevision: index.revision === 0 ? null : index.revision },
-                { refKey: encodeEvidenceSnapshot(snapshot).refKey, expectedRevision: null }],
-            records: [encodeEvidenceSnapshot(snapshot), encodeTaskEvidenceIndexSnapshot(nextIndex)],
-            claims: [], indexGuards: [], indexChanges: [],
-            events: [encodeVerificationRoundEvent({ eventId: deps.newId(), eventType: EVIDENCE_ADMITTED_EVENT_TYPE,
-                schemaVersion: 1, occurredAt: admittedAt, identityKey: identity, roundRef: round.ref, actor, fingerprint,
-                result: snapshot })] };
-        try {
-            if (signal.aborted) return cancelled('the evidence claim was cancelled before commit');
-            const receipt = await records.commit(prepared);
-            if (receipt.status !== 'committed') return mapStoreFailure(receipt);
-            if (receipt.replayed) {
-                return await replayEvent(records, receipt, identity, fingerprint, EVIDENCE_ADMITTED_EVENT_TYPE) as WriteResult<EvidenceSnapshot>;
-            }
-            return { status: 'committed', value: snapshot, replayed: false, cursor: receipt.cursor };
-        } catch (error) {
-            const recovered = await commitOrRecover(records, prepared, identity, fingerprint, EVIDENCE_ADMITTED_EVENT_TYPE, error);
-            return recovered as WriteResult<EvidenceSnapshot>;
-        }
+        return await commitRoundWrite(records, signal, { identity, fingerprint, effects: decided.effects, round,
+            evidence: [snapshot], index: nextTaskEvidenceIndex(indexRead.index, [evidenceId]),
+            event: { eventId: deps.newId(), eventType: EVIDENCE_ADMITTED_EVENT_TYPE, schemaVersion: 1, occurredAt: admittedAt,
+                identityKey: identity, roundRef: round.ref, actor, fingerprint, result: snapshot },
+            value: snapshot, cancelled: 'the evidence claim was cancelled before commit' });
     }
 
     async function finalizeChecks(ctx: CoreCallContext, request: GraphWrite<{
@@ -879,9 +910,10 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         const input = owned.input;
         const refProblem = roundRefProblem(input.roundRef);
         if (refProblem !== null) return invalid(refProblem);
-        if (input.reviewerEvidence !== undefined && input.reviewerEvidence.length > 0) {
-            return unsupported('reviewer evidence finalization is not implemented in R3e.1');
-        }
+        // VR-07's first guard step, where it stood before: ahead of the scope check and the receipt lookup.
+        const reviewerEvidenceCount = input.reviewerEvidence === undefined ? 0 : input.reviewerEvidence.length;
+        const reviewerProblem = refusalOf(roundReviewerEvidenceProblem(reviewerEvidenceCount));
+        if (reviewerProblem !== null) return reviewerProblem;
         if (input.roundRef.projectId !== scope.projectId || input.roundRef.workspaceId !== scope.workspaceId) {
             return forbidden('the round ref is outside the trusted Host scope');
         }
@@ -901,11 +933,10 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         const loaded = await readRoundRecord(records, input.roundRef);
         if (!loaded.ok) return loaded.rejection;
         const round = loaded.round;
-        if (round.status === 'finalized') return busy('the round is already finalized');
-        if (round.executor.kind !== actor.kind || round.executor.id !== actor.id) return forbidden('the finalizer is not the round executor');
-        if (round.revision !== checked.revision) {
-            return reject('revision_conflict', 'the round changed since the caller read it', [{ ref: round.ref, revision: round.revision }]);
-        }
+        // VR-07 before any read (reviewer evidence was refused above): open round, executor, then the pin.
+        const guardCtx = roundCtx(round.executor, actor, checked.revision);
+        const admitted = refusalOf(roundWriteAdmission(round, { kind: 'round_finalized', reviewerEvidenceCount }, guardCtx), round);
+        if (admitted !== null) return admitted;
 
         // Resolve the CURRENT adopted Plan and source once, then judge each
         // finished check's evidence with the existing basis/frozen-definition
@@ -949,19 +980,11 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
             contextGaps.push({ code: 'source_unavailable', message: 'the current workspace root is unavailable for the round fixed source' });
         }
 
-        const candidates: { evidence: EvidenceV1; applicability: EvidenceApplicability }[] = [];
-        const gaps: RoundSnapshot['gaps'] = [];
-        for (const planCheck of round.verificationPlan.checks) {
-            const check = round.checks.find(candidate => candidate.checkId === planCheck.checkId);
-            if (check === undefined) { gaps.push({ code: 'missing_check', message: `the round is missing required check ${planCheck.checkId}` }); continue; }
-            if (check.phase === 'executing' || check.phase === 'interrupted') {
-                return incomplete(`the check ${check.checkId} is ${check.phase}; its result window is not reconciled`);
-            }
-            if (check.phase === 'pending') {
-                gaps.push({ code: 'pending_check', message: `the required check ${check.checkId} never ran`,
-                    ...(planCheck.coverage[0] === undefined ? {} : { coverage: { ...planCheck.coverage[0] } }) });
-                continue;
-            }
+        // One candidate verdict (one id) and its applicability per check the
+        // fold judges, in the machine's order (VR-07 `foldVerdictChecks`).
+        const verdicts = new Map<string, EvidenceV1>();
+        const decisions: Record<string, CheckVerdictDecisionV1> = {};
+        for (const check of foldVerdictChecks(round)) {
             const evidence: EvidenceV1 = {
                 schemaVersion: 1, evidenceId: deps.newId(), kind: 'verdict', outcome: check.outcome ?? 'INCONCLUSIVE',
                 source: { actor: round.executor, runRef: null, checkId: check.checkId }, subject: { ...round.subject },
@@ -969,150 +992,44 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
                 verificationPlanRef: { planId: round.verificationPlan.planId, planDigest: round.verificationPlan.planDigest },
                 summary: { text: boundedSummary(`check ${check.checkId} ${check.outcome ?? 'INCONCLUSIVE'}`), artifactRef: check.reportRef },
             };
-            let applicability: EvidenceApplicability = 'APPLICABLE';
+            verdicts.set(check.checkId, evidence);
             if (evidencePlan !== null && adoptedPlan !== null) {
                 const currentAnchor: EffectivityAnchorV1 = { schemaVersion: 1, planRef: adoptedPlan.ref,
                     planRevision: adoptedPlan.planRevision, workspaceRevision: currentWorkspaceRevision,
                     pinnedCompletionPolicy: adoptedPlan.effectiveCompletionPolicy,
                     pinnedArchitectureBaseline: adoptedPlan.effectiveArchitectureBaseline };
-                const decision = evidenceApplicabilityWithBasis({ evidence, adoptedPlan, evidencePlan, currentAnchor });
-                applicability = decision.applicability;
-                if (decision.applicability !== 'APPLICABLE') {
-                    gaps.push({ code: `evidence_${decision.basis}`, message: `check ${check.checkId}: ${decision.reason}`,
-                        ...(planCheck.coverage[0] === undefined ? {} : { coverage: { ...planCheck.coverage[0] } }) });
-                }
-            } else {
-                applicability = 'OUT_OF_SCOPE';
-            }
-            if (!sourceCurrent) applicability = 'STALE';
-            candidates.push({ evidence, applicability });
-        }
-        for (const uncovered of round.verificationPlan.uncovered ?? []) {
-            gaps.push({ code: 'uncovered_requirement', message: `no registered check covers required requirement ${uncovered.requirementId}`,
-                coverage: { obligationId: uncovered.obligationId, requirementId: uncovered.requirementId } });
-        }
-        gaps.push(...contextGaps);
-        const effective = selectEffectiveEvidenceSet(candidates.map(candidate => candidate.evidence),
-            candidates.map(candidate => evidenceBindingFor(candidate.evidence, candidate.applicability)));
-        const requiredKeys = new Set<string>();
-        for (const planCheck of round.verificationPlan.checks) {
-            for (const coverage of planCheck.coverage) requiredKeys.add(requirementKeyOf(coverage));
-        }
-        for (const uncovered of round.verificationPlan.uncovered ?? []) requiredKeys.add(requirementKeyOf(uncovered));
-        let blocked = false;
-        let missing = false;
-        for (const key of requiredKeys) {
-            if ((effective.blockingByRequirement[key]?.length ?? 0) > 0) blocked = true;
-            if (effective.coverageByRequirement[key] === undefined) missing = true;
-        }
-        const outcome: EvidenceOutcome = blocked || missing ? 'INCONCLUSIVE' : 'PASS';
-
-        const snapshots: EvidenceSnapshot[] = [];
-        const admittedAt = deps.now();
-        const pushSnapshot = (sourceEvidence: EvidenceV1, coverage: EvidenceCoverageV1): void => {
-            const evidenceId = deps.newId();
-            const evidence: EvidenceV1 = { ...sourceEvidence, evidenceId, coverage: [{ ...coverage }] };
-            snapshots.push({ ref: { aggregateType: 'Evidence', projectId: round.ref.projectId, evidenceId },
-                revision: 1, schemaVersion: 1, evidence, admittedAt });
-        };
-        const candidateById = new Map(candidates.map(candidate => [candidate.evidence.evidenceId, candidate.evidence]));
-        for (const [key, evidenceId] of Object.entries(effective.coverageByRequirement)) {
-            const source = candidateById.get(evidenceId);
-            if (source === undefined) continue;
-            pushSnapshot(source, requirementPartsOf(key));
-        }
-        for (const [key, ids] of Object.entries(effective.blockingByRequirement)) {
-            for (const evidenceId of ids) {
-                const source = candidateById.get(evidenceId);
-                if (source === undefined) continue;
-                pushSnapshot(source, requirementPartsOf(key));
+                decisions[check.checkId] = evidenceApplicabilityWithBasis({ evidence, adoptedPlan, evidencePlan, currentAnchor });
             }
         }
+        const fold: RoundFoldFactsV1 = { decisions: evidencePlan !== null && adoptedPlan !== null ? decisions : null,
+            sourceCurrent, contextGaps };
+        // The machine mints no ids: one Evidence ref per admission of the fold,
+        // after the clock as before; a refused fold mints none.
+        const folded = finalizeRoundOutcome({ ...fold, round });
+        const admittedAt = folded.status === 'folded' ? deps.now() : '';
+        const evidenceRefs: EvidenceRef[] = folded.status !== 'folded' ? [] : folded.admissions.map(() => ({
+            aggregateType: 'Evidence', projectId: round.ref.projectId, evidenceId: deps.newId() }));
+        const decided = transitionRound(round, { kind: 'round_finalized', reviewerEvidenceCount, fold, evidenceRefs }, guardCtx);
+        if (!decided.ok) return refusalOf(decided, round);
+        const finalizedRound = decided.next;
+        const snapshots: EvidenceSnapshot[] = (effectOf(decided.effects, 'admit_verdict_evidence')?.admissions ?? [])
+            .map((admission): EvidenceSnapshot => {
+                const verdict = verdicts.get(admission.checkId);
+                if (verdict === undefined) throw new Error(`the fold admitted check ${admission.checkId}, which has no candidate verdict`);
+                return { ref: admission.ref, revision: 1, schemaVersion: 1,
+                    evidence: { ...verdict, evidenceId: admission.ref.evidenceId, coverage: [{ ...admission.coverage }] }, admittedAt };
+            });
         const indexRead = await readIndex(records, round);
         if (!indexRead.ok) return indexRead.rejection;
-        const index = indexRead.index;
-        const nextIndex: TaskEvidenceIndexSnapshot = { ref: index.ref,
-            revision: index.evidenceIds.length + snapshots.length, schemaVersion: 1,
-            evidenceIds: [...index.evidenceIds, ...snapshots.map(snapshot => snapshot.ref.evidenceId)] };
-        const finalizedRound: RoundSnapshot = { ...round, revision: round.revision + 1, status: 'finalized',
-            outcome, gaps, evidenceRefs: snapshots.map(snapshot => snapshot.ref) };
-        const finalized: FinalizedChecks = { snapshot: finalizedRound, outcome, evidence: snapshots,
-            applicable: outcome === 'PASS', gaps };
-        const prepared: PreparedCommit = { identityKey: identity, fingerprint,
-            guards: [
-                { refKey: encodeVerificationRoundSnapshot(finalizedRound).refKey, expectedRevision: checked.revision },
-                { refKey: encodeTaskEvidenceIndexSnapshot(nextIndex).refKey,
-                    expectedRevision: index.revision === 0 ? null : index.revision },
-                ...snapshots.map(snapshot => ({ refKey: encodeEvidenceSnapshot(snapshot).refKey, expectedRevision: null as number | null })),
-            ],
-            records: [encodeVerificationRoundSnapshot(finalizedRound), ...snapshots.map(encodeEvidenceSnapshot),
-                encodeTaskEvidenceIndexSnapshot(nextIndex)],
-            claims: [], indexGuards: [], indexChanges: [],
-            events: [encodeVerificationRoundEvent({ eventId: deps.newId(), eventType: VERIFICATION_ROUND_FINALIZED_EVENT_TYPE,
-                schemaVersion: 1, occurredAt: admittedAt, identityKey: identity, roundRef: round.ref, actor, fingerprint,
-                result: finalized })] };
-        try {
-            if (signal.aborted) return cancelled('the round finalize was cancelled before commit');
-            const receipt = await records.commit(prepared);
-            if (receipt.status !== 'committed') return mapStoreFailure(receipt);
-            if (receipt.replayed) {
-                return await replayEvent(records, receipt, identity, fingerprint, VERIFICATION_ROUND_FINALIZED_EVENT_TYPE) as WriteResult<FinalizedChecks>;
-            }
-            return { status: 'committed', value: finalized, replayed: false, cursor: receipt.cursor };
-        } catch (error) {
-            const recovered = await commitOrRecover(records, prepared, identity, fingerprint, VERIFICATION_ROUND_FINALIZED_EVENT_TYPE, error);
-            return recovered as WriteResult<FinalizedChecks>;
-        }
+        // VR-07 writes the folded outcome, never null.
+        const finalized: FinalizedChecks = { snapshot: finalizedRound, outcome: finalizedRound.outcome!, evidence: snapshots,
+            applicable: finalizedRound.outcome === 'PASS', gaps: finalizedRound.gaps };
+        return await commitRoundWrite(records, signal, { identity, fingerprint, effects: decided.effects, round: finalizedRound,
+            evidence: snapshots, index: nextTaskEvidenceIndex(indexRead.index, snapshots.map(snapshot => snapshot.ref.evidenceId)),
+            event: { eventId: deps.newId(), eventType: VERIFICATION_ROUND_FINALIZED_EVENT_TYPE, schemaVersion: 1,
+                occurredAt: admittedAt, identityKey: identity, roundRef: round.ref, actor, fingerprint, result: finalized },
+            value: finalized, cancelled: 'the round finalize was cancelled before commit' });
     }
 
     return { openVerification, readVerification, queryOriginalVerification, beginCheck, recordCheckResult, submitEvidence, finalizeChecks };
-}
-
-// -------------------------------------------------------------------------- //
-// Small helpers used by finalize/submit                                       //
-// -------------------------------------------------------------------------- //
-
-function collectRequiredCoverage(round: RoundSnapshot): EvidenceCoverageV1[] {
-    const seen = new Set<string>();
-    const coverage: EvidenceCoverageV1[] = [];
-    for (const check of round.verificationPlan.checks) {
-        for (const entry of check.coverage) {
-            const key = requirementKeyOf(entry);
-            if (seen.has(key)) continue;
-            seen.add(key);
-            coverage.push({ ...entry });
-        }
-    }
-    for (const uncovered of round.verificationPlan.uncovered ?? []) {
-        const key = requirementKeyOf(uncovered);
-        if (seen.has(key)) continue;
-        seen.add(key);
-        coverage.push({ obligationId: uncovered.obligationId, requirementId: uncovered.requirementId });
-    }
-    return coverage;
-}
-
-function requirementPartsOf(key: string): EvidenceCoverageV1 {
-    const separator = key.indexOf('\u0000');
-    return { obligationId: key.slice(0, separator), requirementId: key.slice(separator + 1) };
-}
-
-type IndexRead = { ok: true; index: TaskEvidenceIndexSnapshot } | { ok: false; rejection: CoreRejection };
-
-async function readIndex(records: Records, round: RoundSnapshot): Promise<IndexRead> {
-    const ref: TaskEvidenceIndexRef = { aggregateType: 'TaskEvidenceIndex', projectId: round.ref.projectId,
-        goalId: round.ref.goalId, taskId: round.ref.taskId };
-    const key = refKeyOf(ref);
-    if (key === null) return { ok: false, rejection: invalid('the task evidence index ref is not canonical JSON') };
-    let read;
-    try { read = await records.readMany([key]); }
-    catch (error) { return { ok: false, rejection: unavailable(`the task evidence index read failed: ${messageOf(error)}`) }; }
-    if (read.status !== 'ready') return { ok: false, rejection: mapStoreFailure(read) };
-    const record: EncodedRecord | undefined = read.value.records.find(candidate => candidate.refKey === key);
-    if (record === undefined || read.value.missing.includes(key)) {
-        return { ok: true, index: { ref, revision: 0, schemaVersion: 1, evidenceIds: [] } };
-    }
-    const decoded = decodeTaskEvidenceIndexSnapshot(record);
-    if (decoded.status !== 'decoded') return { ok: false, rejection: unavailable(`the task evidence index is damaged: ${decoded.reason}`) };
-    return { ok: true, index: decoded.value };
 }

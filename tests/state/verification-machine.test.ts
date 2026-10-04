@@ -4,8 +4,8 @@
  *
  * - Every (state, event) combination of `transitionRound` and
  *   `transitionCheck`: a legal one asserts `next` (byte for byte against
- *   today's record literals, `evidence-service.ts:486-517`, `:706-707`,
- *   `:781-782`, `:1037-1038`) and `effects`; an illegal one asserts `reason`
+ *   the open, begin, record and finalize literals `evidence-service.ts` wrote
+ *   before A.2 step 3) and `effects`; an illegal one asserts `reason`
  *   and `code` (§9.4).
  * - 改造 rows keep today's result (no VR-01 slot/`chain`/VD-3/VD-9, no VR-02
  *   VD-9, no VR-03 `incompleteCause`, today's VR-07 fold, VR-08 on a finalized
@@ -34,10 +34,10 @@ import { ROUND_CHAIN_MAX } from '../../src/contracts/verification.js';
 import type { VerificationRoundMaterialIdentity } from '../../src/contracts/verification-context.js';
 import {
   beginRefusalIsPermanent, buildFinalizedRound, buildOpenedRound, buildSuccessorRound, chainEvidenceIds,
-  checkEventAdmission, displayRoundStatus, evidenceSupersededByRequeue, finalizeRoundOutcome, frozenBindingProblem,
+  checkEventAdmission, displayRoundStatus, evidenceSupersededByRequeue, finalizeRoundOutcome, foldVerdictChecks, frozenBindingProblem,
   isFinalizedNonPass, nextTaskEvidenceIndex, outcomeFor, pendingRoundChecks, requiredRoundCoverage, reverifyExemption,
-  reverifyFailureClass, rootRoundChain, roundChainHead, roundOpenBasisProblem, roundOpenPointerProblem, roundOpenProblem,
-  roundOpenSubjectProblem, roundOrdinalOf, roundSlotKey, roundSlotOwner,
+  reverifyFailureClass, rootRoundChain, roundChainHead, roundOpenBasisProblem, roundOpenChecksProblem, roundOpenPointerProblem, roundOpenProblem,
+  roundOpenSubjectProblem, roundOrdinalOf, roundReviewerEvidenceProblem, roundSlotKey, roundSlotOwner,
   roundSlotSubjectOf, roundSubjectSlotKey, roundTaskSignal, roundWriteAdmission, taskEvidenceIndexRefOf,
   transitionCheck, transitionRound, withCheckPhase,
   type CheckEvent, type RoundEvent, type RoundFoldFactsV1, type RoundGapV1, type RoundGuardContext,
@@ -119,7 +119,7 @@ const UNIT = pendingCheck('unit', cov('r2'));
 const pendingGap = (checkId: string, requirementId: string): RoundGapV1 =>
   ({ code: 'pending_check', message: `the required check ${checkId} never ran`, coverage: cov(requirementId) });
 
-/** Today's open@1 (`evidence-service.ts:486-487`, `:514-517`): no `chain`. */
+/** Today's open@1 (the service's former literal, now `buildOpenedRound`): no `chain`. */
 const OPEN_PENDING: RoundSnapshot = { ref: roundRef('round-1'), revision: 1, schemaVersion: 1, subject: { ...task },
   subjectRunRef: runRef('run-1'), adoptedPlanRef: planRef, taskBasisRef: planRef, executor: operator, configuration: CONFIG,
   configurationDigest: sha('a'), identity: IDENTITY, sourceProof: SOURCE_PROOF, verificationPlan: PLAN2,
@@ -249,7 +249,7 @@ const CLAIM_EFFECTS: VerificationEffect[] = [{ kind: 'admit_claim_evidence', cov
 const finalizedEffects = (revision: number, admissions: { ref: EvidenceRef; checkId: string; coverage: EvidenceCoverageV1 }[]):
 VerificationEffect[] => [{ kind: 'guard_round', expectedRevision: revision }, { kind: 'admit_verdict_evidence', admissions },
   { kind: 'append_task_evidence_index' }, { kind: 'emit_event', eventType: 'VerificationRoundFinalized' }];
-/** Today's finalized round (`:1037-1038`). */
+/** Today's finalized round (the service's former literal, now `buildFinalizedRound`). */
 const FINALIZED_FROM_PENDING: RoundSnapshot = { ...OPEN_PENDING, revision: 2, status: 'finalized', outcome: 'INCONCLUSIVE',
   gaps: [pendingGap('lint', 'r1'), pendingGap('unit', 'r2')], evidenceRefs: [] };
 const FINALIZED_FROM_SETTLED: RoundSnapshot = { ...OPEN_SETTLED, revision: 6, status: 'finalized', outcome: 'PASS', gaps: [],
@@ -261,7 +261,7 @@ const ROUND_TABLE: Record<RoundEventLabel, () => Record<RoundStateLabel, Expect>
   // VR-08 today: also on a finalized round (VD-2 flips it to busy in step 5.3); the round is not written.
   evidence_submitted: () => r(II, keep(CLAIM_EFFECTS), keep(CLAIM_EFFECTS), keep(CLAIM_EFFECTS), keep(CLAIM_EFFECTS),
     keep(CLAIM_EFFECTS), keep(CLAIM_EFFECTS), keep(CLAIM_EFFECTS), keep(CLAIM_EFFECTS)),
-  // VR-07 today: executing and interrupted both refuse (`:956-958`); finalized is busy (`:903`).
+  // VR-07 today: executing and interrupted both refuse (`finalizeRoundOutcome`); finalized is busy (`roundWriteAdmission`).
   round_finalized: () => r(II, to(FINALIZED_FROM_PENDING, finalizedEffects(1, [])), GI, GI,
     to(FINALIZED_FROM_SETTLED, finalizedEffects(5, [
       { ref: evidence('e-1'), checkId: 'lint', coverage: cov('r1') },
@@ -317,7 +317,7 @@ const CHECK_EVENTS = {
 } satisfies Record<string, (checkId: string, invocationId: string) => CheckEvent>;
 type CheckEventLabel = keyof typeof CHECK_EVENTS;
 
-/** Today's begin / record literals (`evidence-service.ts:706-707`, `:781-782`). */
+/** Today's begin / record literals (the service's former `withCheck` spreads, now `withCheckPhase`). */
 const BEGUN = { ...MIXED, revision: MIXED.revision + 1, checks: MIXED.checks.map((one) => one.checkId === 'c-pending'
   ? { ...one, ...{ phase: 'executing' as const, invocationId: 'inv-new' } } : one) };
 const RECORDED = { ...MIXED, revision: MIXED.revision + 1, checks: MIXED.checks.map((one) => one.checkId === 'c-exec'
@@ -325,9 +325,9 @@ const RECORDED = { ...MIXED, revision: MIXED.revision + 1, checks: MIXED.checks.
 const guardAt = (revision: number): VerificationEffect => ({ kind: 'guard_round', expectedRevision: revision });
 
 const CHECK_TABLE: Record<CheckEventLabel, () => Record<CheckStateLabel, Expect>> = {
-  // VR-02; executing/finished/interrupted busy (`:678`, D-12); unknown check invalid; finalized busy (`:671`).
+  // VR-02; executing/finished/interrupted busy (D-12); unknown check invalid; finalized busy (`checkEventAdmission`).
   'check_begun': () => c(to(BEGUN, [guardAt(7), { kind: 'emit_event', eventType: 'VerificationCheckBegun' }]), IB, IB, IB, II, IB),
-  // VR-03; pending/finished busy (`:768`), a late result on interrupted is stale busy.
+  // VR-03; pending/finished busy (`checkEventAdmission`), a late result on interrupted is stale busy.
   'check_result_recorded': () => c(IB,
     to(RECORDED, [guardAt(7), { kind: 'emit_event', eventType: 'VerificationCheckResultRecorded' }]), IB, SB, II, IB),
   // VR-04 (新增): only executing; the same interruption again is a duplicate.
@@ -370,21 +370,21 @@ describe('VR-01 round_opened guards (today)', () => {
       .toMatchObject({ ok: false, reason: 'stale', code: 'source_stale' });
   });
 
-  it('refuses an unresolved task basis after the pointer and before the Run checks (`:407-410`)', () => {
+  it('refuses an unresolved task basis after the pointer and before the Run checks (`roundOpenBasisProblem`)', () => {
     expect(openWith({ taskBasisResolved: false, relation: { kind: 'work', runTaskIsSubject: false },
       subjectRun: { status: 'running', outcome: null } }))
       .toEqual({ ok: false, reason: 'guard_failed', code: 'incomplete', detail: `the subject task ${T} has no resolved task-state basis` });
   });
 
   it('splits the subject guards into one step per read, in today order', () => {
-    // After the Goal read (`:398-400`): only the pointer is known.
+    // After the Goal read: only the pointer is known.
     expect(roundOpenPointerProblem(true)).toBeNull();
     expect(roundOpenPointerProblem(false)).toEqual({ ok: false, reason: 'stale', code: 'source_stale',
       detail: 'the requested planRef is not the Goal current adopted Plan' });
-    // After the Plan read (`:407-410`): the basis.
+    // After the Plan read: the basis.
     expect(roundOpenBasisProblem(true, task)).toBeNull();
     expect(roundOpenBasisProblem(false, task)).toMatchObject({ reason: 'guard_failed', code: 'incomplete' });
-    // After the Run read (`:415-441`): relation, then ended; no pointer or basis fact needed.
+    // After the Run read: relation, then ended; no pointer or basis fact needed.
     expect(roundOpenSubjectProblem({ relation: OPEN_FACTS.relation, subjectRun: endedRun }, task)).toBeNull();
     expect(roundOpenSubjectProblem({ relation: { kind: 'work', runTaskIsSubject: false },
       subjectRun: { status: 'running', outcome: null } }, task)).toMatchObject({ code: 'forbidden',
@@ -398,7 +398,7 @@ describe('VR-01 round_opened guards (today)', () => {
       .toMatchObject({ code: 'incomplete' });
   });
 
-  it('checks the subject relation in today order (`:415-440`)', () => {
+  it('checks the subject relation in today order (`roundOpenSubjectProblem`)', () => {
     expect(openWith({ relation: { kind: 'work', runTaskIsSubject: false } }))
       .toEqual({ ok: false, reason: 'guard_failed', code: 'forbidden', detail: 'the subject task is not the subject Run task' });
     const gate = (gateAdopted: boolean, producer: 'ok' | 'not_goal_work_run' | 'not_adopted_work' | 'other_workspace') =>
@@ -430,13 +430,17 @@ describe('VR-01 round_opened guards (today)', () => {
     expect(opened.ok && opened.effects.some((effect) => effect.kind === 'claim_round_slot')).toBe(false);
   });
 
-  it('refuses a compiled plan check the frozen configuration does not register (`:485`)', () => {
+  it('refuses a compiled plan check the frozen configuration does not register (`roundOpenChecksProblem`)', () => {
     const ghost: RoundOpeningV1 = { ...OPENING, verificationPlan: verificationPlan([{ checkId: 'ghost', coverage: [cov('r1')] }]) };
     expect(openWith({}, {}, ghost))
       .toEqual({ ok: false, reason: 'guard_failed', code: 'incomplete', detail: 'the compiled plan names an unregistered check ghost' });
+    // The same guard as a step after the compile, before the identity and the round id.
+    expect(roundOpenChecksProblem(OPENING.verificationPlan, OPENING.configuration)).toBeNull();
+    expect(roundOpenChecksProblem(ghost.verificationPlan, ghost.configuration))
+      .toEqual({ ok: false, reason: 'guard_failed', code: 'incomplete', detail: 'the compiled plan names an unregistered check ghost' });
   });
 
-  it('opens with the uncovered requirements as gaps (`:511-513`)', () => {
+  it('opens with the uncovered requirements as gaps (`buildOpenedRound`)', () => {
     const plan = verificationPlan([{ checkId: 'lint', coverage: [cov('r1')] }],
       [{ obligationId: 'ob-2', requirementId: 'r9', kind: 'dynamic' }]);
     const opened = openWith({}, {}, { ...OPENING, verificationPlan: plan });
@@ -450,9 +454,13 @@ describe('VR-07 / VR-08 guards (today)', () => {
     ctx: Partial<RoundGuardContext> = {}) =>
     transitionRound(state, { ...(finalizeEvent(state) as Extract<RoundEvent, { kind: 'round_finalized' }>), ...over }, ctxOf(state, ctx));
 
-  it('refuses reviewer evidence before anything else (`:881-883`)', () => {
+  it('refuses reviewer evidence before anything else (`roundReviewerEvidenceProblem`)', () => {
     expect(finalize(FINAL_PASS, { reviewerEvidenceCount: 1 }, { callerIsExecutor: false }))
       .toMatchObject({ ok: false, reason: 'guard_failed', code: 'unsupported' });
+    // The same guard as a step the owner runs before the scope check and the receipt lookup.
+    expect(roundReviewerEvidenceProblem(0)).toBeNull();
+    expect(roundReviewerEvidenceProblem(2)).toEqual({ ok: false, reason: 'guard_failed', code: 'unsupported',
+      detail: 'reviewer evidence finalization is not implemented in R3e.1' });
   });
 
   it('then finalized (busy), executor (forbidden) and the pin (revision_conflict)', () => {
@@ -510,7 +518,7 @@ describe('check event guards (today order)', () => {
   const record = (invocationId = 'inv-exec', observation = executed(), sourceStatus: 'matched' | 'changed' = 'matched'): CheckEvent =>
     ({ kind: 'check_result_recorded', checkId: 'c-exec', invocationId, observation, sourceStatus, reportRef: REPORT });
 
-  it('VR-02: finalized, executor, checkId, pin, phase (`:671-678`)', () => {
+  it('VR-02: finalized, executor, checkId, pin, phase (`checkEventAdmission`)', () => {
     expect(run(begin(), { callerIsExecutor: false }, MIXED_FINALIZED)).toMatchObject({ code: 'busy',
       detail: 'the round is finalized; no fresh check may begin' });
     expect(run(begin(), { callerIsExecutor: false })).toEqual({ ok: false, reason: 'guard_failed', code: 'forbidden',
@@ -537,7 +545,7 @@ describe('check event guards (today order)', () => {
     expect(!refused.ok && beginRefusalIsPermanent({ reason: refused.detail })).toBe(false);
   });
 
-  it('VR-03: finalized, executor, checkId, phase, invocation, pin (`:764-771`)', () => {
+  it('VR-03: finalized, executor, checkId, phase, invocation, pin (`checkEventAdmission`)', () => {
     expect(run(record(), { callerIsExecutor: false })).toMatchObject({ code: 'forbidden' });
     expect(run(record('inv-other'))).toEqual({ ok: false, reason: 'guard_failed', code: 'forbidden',
       detail: 'the ticket is not the begun invocation of this check' });
@@ -842,6 +850,20 @@ describe('finalizeRoundOutcome (today`s fold)', () => {
       admissions: [{ checkId: 'lint', coverage: cov('r1') }] });
     expect(fold([lint, unitOnR1], both, unitFirst)).toEqual({ status: 'folded', outcome: 'PASS', gaps: [],
       admissions: [{ checkId: 'unit', coverage: cov('r1') }] });
+  });
+
+  it('foldVerdictChecks: the finished checks in plan-check order, up to where the fold stops', () => {
+    const ids = (round: Pick<RoundSnapshot, 'checks' | 'verificationPlan'>) => foldVerdictChecks(round).map((one) => one.checkId);
+    expect(foldVerdictChecks(OPEN_SETTLED)).toEqual(OPEN_SETTLED.checks);
+    expect(ids({ checks: [...OPEN_SETTLED.checks].reverse(), verificationPlan: PLAN2 })).toEqual(['lint', 'unit']);
+    // Missing and pending checks give no verdict; the walk ends at an executing or interrupted check.
+    expect(ids(OPEN_PENDING)).toEqual([]);
+    expect(ids(OPEN_EXECUTING)).toEqual([]);
+    expect(ids(OPEN_INTERRUPTED)).toEqual(['lint']);
+    const plan = verificationPlan([{ checkId: 'gone', coverage: [cov('r0')] }, { checkId: 'c-pending', coverage: [cov('c-pending')] },
+      { checkId: 'c-fin', coverage: [cov('c-fin')] }, { checkId: 'c-exec', coverage: [cov('c-exec')] },
+      { checkId: 'c-int', coverage: [cov('c-int')] }]);
+    expect(ids({ checks: MIXED.checks, verificationPlan: plan })).toEqual(['c-fin']);
   });
 });
 
