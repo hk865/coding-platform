@@ -15,15 +15,18 @@
  * No RecordStore, no Kernel.
  */
 import { describe, expect, it } from 'vitest';
-import type { RoleConfigurationRef, SessionAggregateRef } from '../../src/contracts/core/identity.js';
+import type {
+  RoleConfigurationRef, SessionAggregateRef, WorkLinkRelation, WorkLinkTarget,
+} from '../../src/contracts/core/identity.js';
 import type { OperationRef } from '../../src/contracts/core/operations.js';
-import type { SessionHealthConclusion, SessionRecord } from '../../src/contracts/core/session.js';
+import type { SessionHealthConclusion, SessionRecord, SessionWorkLink } from '../../src/contracts/core/session.js';
 import type { RunRef } from '../../src/contracts/dispatch.js';
+import { makeCommitCursor } from '../../src/contracts/ledger.js';
 import type { QueryRunRef } from '../../src/contracts/query-job.js';
 import {
   SESSION_RELEASE_CAUSES, archiveSessionRecord, createSessionRecord, deriveAvailability, nextOccupancyGeneration,
-  observeSessionHealthRecord, occupancyAdmissionProblem, occupySessionRecord, ownsOccupancy, ownsQuery, reactivateSessionRecord,
-  releaseSessionRecord, sessionMachineStateOf, transitionSession,
+  observeSessionHealthRecord, occupancyAdmissionProblem, occupySessionRecord, openResponsibleLinkOf, ownsOccupancy, ownsQuery,
+  reactivateSessionRecord, releaseSessionRecord, sessionMachineStateOf, transitionSession,
   type HolderPhase, type SessionEffect, type SessionEvent, type SessionGuardContext, type SessionHealth,
   type SessionHolderContext, type SessionLifecycle, type SessionMachineState, type SessionReleaseCause,
   type SessionTransition,
@@ -584,6 +587,24 @@ describe('SES-11 session_archived / SES-14 session_reactivated', () => {
         detail: `the Session still has an unresolved responsible ${kind} obligation`,
       });
     }
+  });
+
+  it('the link fact: the first open responsible task/work link; closed, other relations and modules never block', () => {
+    const task: WorkLinkTarget = { kind: 'task', ref: { projectId: 'p1', goalId: 'g1', taskId: 't1' } };
+    const work: WorkLinkTarget = { kind: 'work', ref: { aggregateType: 'WorkContextBinding', projectId: 'p1', workspaceId: 'w1', workId: 'k1' } };
+    const mod: WorkLinkTarget = { kind: 'module', ref: { projectId: 'p1', moduleId: 'm1' } };
+    const link = (target: WorkLinkTarget, relation: WorkLinkRelation, open: boolean): Pick<SessionWorkLink, 'ref' | 'until'> => ({
+      ref: { aggregateType: 'SessionWorkLink', projectId: 'p1', sessionId: 's1', target, relation },
+      until: open ? null : makeCommitCursor(3),
+    });
+    expect(openResponsibleLinkOf([])).toBe(false);
+    expect(openResponsibleLinkOf([
+      link(task, 'responsible', false), link(mod, 'responsible', true), link(work, 'participates', true),
+      link(task, 'investigated', true),
+    ])).toBe(false);
+    expect(openResponsibleLinkOf([link(mod, 'responsible', true), link(work, 'responsible', true), link(task, 'responsible', true)]))
+      .toBe('work');
+    expect(openResponsibleLinkOf([link(task, 'responsible', true), link(work, 'responsible', true)])).toBe('task');
   });
 
   it('guard order: archived → occupied → links → pin', () => {

@@ -19,7 +19,7 @@
  */
 import type { ExecutionRef, RoleConfigurationRef, SessionAggregateRef } from '../../../contracts/core/identity.js';
 import type { OperationRef } from '../../../contracts/core/operations.js';
-import type { SessionHealthConclusion, SessionRecord } from '../../../contracts/core/session.js';
+import type { SessionHealthConclusion, SessionRecord, SessionWorkLink } from '../../../contracts/core/session.js';
 import type { RunRef } from '../../../contracts/dispatch.js';
 import type { QueryExecutionStateV1, QueryRunRef } from '../../../contracts/query-job.js';
 import { accept, notYet, reject, unreachable, type Rejected, type Transition } from './transition.js';
@@ -83,9 +83,8 @@ export type SessionGuardContext = {
   /** Only for `health_observed`: the Kernel session head a `ready` probe read; null for other verdicts. */
   kernelHeader: null | { activeRunId: string | null };
   /**
-   * Only for `session_archived`: the target kind of the first open
-   * `responsible` task/work link, which the refusal names as today's service
-   * reason does; false without one; null = not read.
+   * Only for `session_archived`: `openResponsibleLinkOf` the Session's links,
+   * whose kind the refusal names as today's service reason does; null = not read.
    */
   openResponsibleLink: 'task' | 'work' | false | null;
   /** Only for `session_created`. */
@@ -226,6 +225,20 @@ export function deriveAvailability(session: {
   if (session.occupancy !== null) return 'busy';
   if (session.health === 'recoverable') return 'recoverable';
   return 'idle';
+}
+
+/**
+ * SES-11's link fact (formerly inline in `session-lifecycle.ts`): the target
+ * kind of the first open `responsible` task/work link, false without one.
+ * Module relations are lookup history, not unfinished work, and never block.
+ */
+export function openResponsibleLinkOf(links: readonly Pick<SessionWorkLink, 'ref' | 'until'>[]): 'task' | 'work' | false {
+  for (const link of links) {
+    if (link.until !== null || link.ref.relation !== 'responsible') continue;
+    const kind = link.ref.target.kind;
+    if (kind === 'task' || kind === 'work') return kind;
+  }
+  return false;
 }
 
 /** The machine state of a decoded record; a missing record is `absent`. */

@@ -61,8 +61,7 @@ import {
 } from './session-record-codecs.js';
 import { validateWorkLinkTarget } from './session-targets.js';
 import {
-  createSessionRecord, deriveAvailability, sessionMachineStateOf, transitionSession,
-  type SessionEvent, type SessionGuardContext,
+  createSessionRecord, deriveAvailability, sessionMachineStateOf, transitionSession, type SessionTransition,
 } from '../state/session-availability.js';
 import { decodeRun } from '../tasks/run-state-service.js';
 
@@ -403,23 +402,21 @@ function normalizeCreationResult(raw: unknown, scope: WorkspaceScope): Normalize
   };
 }
 
-const SESSION_CREATED: SessionEvent = { kind: 'session_created' };
-
 /**
- * SES-01's guard context (STATE-MACHINES-SPEC §8.3). The registration reads
- * its facts in today's order and asks the Session machine after each read, so
- * a refused guard stops the reads where they always stopped; a fact not read
- * yet is passed as holding. The initial link targets are then checked with
- * their own codes (the machine's `not_found` is only its backstop) and the
- * Kernel mapping stays the commit's unique claim, so a held mapping is still
- * the store's `revision_conflict`.
+ * SES-01 (STATE-MACHINES-SPEC §8.3) on the planned Session as read so far
+ * (null = absent or not read yet). The registration asks after each read in
+ * today's order, so a refused guard stops the reads where they always stopped;
+ * a fact not read yet is passed as holding. The initial link targets are then
+ * checked with their own codes (the machine's `not_found` is only its
+ * backstop) and the Kernel mapping stays the commit's unique claim, so a held
+ * mapping is still the store's `revision_conflict`.
  */
-function registrationContext(facts: { operationAcceptedAt1: boolean; plannedAbsent: boolean }): SessionGuardContext {
-  return {
+function registrationVerdict(planned: SessionRecord | null, operationAcceptedAt1: boolean): SessionTransition {
+  return transitionSession(sessionMachineStateOf(planned), { kind: 'session_created' }, {
     caller: 'service', hostLease: null, pin: null, holder: null, probe: null, kernelHeader: null,
     openResponsibleLink: null, link: null,
-    creation: { ...facts, mappingUnique: true, linkTargetsValid: true },
-  };
+    creation: { operationAcceptedAt1, plannedAbsent: planned === null, mappingUnique: true, linkTargetsValid: true },
+  });
 }
 
 // --------------------------------------------------------------------------
@@ -893,8 +890,7 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
 
     // SES-01: the operation is judged before the planned Session is read.
     const operationAcceptedAt1 = storedOperation.revision === 1 && storedOperation.phase === 'accepted';
-    const admitted = transitionSession('absent', SESSION_CREATED,
-      registrationContext({ operationAcceptedAt1, plannedAbsent: true }));
+    const admitted = registrationVerdict(null, operationAcceptedAt1);
     if (!admitted.ok) return reject(admitted.code, admitted.detail);
 
     const sessionKey = sessionAggregateRefKey(plainSessionRefToAggregate(registration.sessionRef));
@@ -909,8 +905,7 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
       }
       present = decodedExisting.value;
     }
-    const registered = transitionSession(sessionMachineStateOf(present), SESSION_CREATED,
-      registrationContext({ operationAcceptedAt1, plannedAbsent: present === null }));
+    const registered = registrationVerdict(present, operationAcceptedAt1);
     if (!registered.ok) {
       return reject(registered.code, registered.detail,
         present === null ? undefined : [{ ref: present.ref, revision: present.revision }]);
@@ -975,6 +970,9 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
       operationRef: registration.operationRef,
       session,
     };
+    const guardByKey = new Map<string, RecordGuard>();
+    guardByKey.set(opKey, { refKey: opKey, expectedRevision: 1 });
+    guardByKey.set(sessionKey, { refKey: sessionKey, expectedRevision: null });
     const recordsToWrite: EncodedRecord[] = [];
     const events: EncodedDomainEvent[] = [];
     const bindings: CommitCursorBinding[] = [];
@@ -988,8 +986,10 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
           break;
         case 'write_initial_links':
           for (const link of pendingLinks) {
+            const linkKey = sessionWorkLinkRefKey(link.ref);
             recordsToWrite.push(encodePendingSessionWorkLink(link));
-            bindings.push({ refKey: sessionWorkLinkRefKey(link.ref), field: 'since' });
+            guardByKey.set(linkKey, { refKey: linkKey, expectedRevision: null });
+            bindings.push({ refKey: linkKey, field: 'since' });
           }
           break;
         case 'emit_event':
@@ -998,13 +998,6 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
         default:
           throw new Error(`session_created has no ${effect.kind} effect`);
       }
-    }
-    const guardByKey = new Map<string, RecordGuard>();
-    guardByKey.set(opKey, { refKey: opKey, expectedRevision: 1 });
-    guardByKey.set(sessionKey, { refKey: sessionKey, expectedRevision: null });
-    for (const link of pendingLinks) {
-      const linkKey = sessionWorkLinkRefKey(link.ref);
-      guardByKey.set(linkKey, { refKey: linkKey, expectedRevision: null });
     }
     for (const guard of targetGuards.values()) guardByKey.set(guard.refKey, guard);
     const claims: UniqueClaimChange[] = [{

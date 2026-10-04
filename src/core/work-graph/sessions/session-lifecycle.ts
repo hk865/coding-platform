@@ -30,11 +30,11 @@
  *
  * After the receipt lookup every write is decided by the pure Session machine
  * (`state/session-availability.ts`, STATE-MACHINES-SPEC §8 SES-11, SES-14,
- * SES-15, SES-16) and its effects become the records and the event of the one
- * commit; lifecycle and archivedAt are written only by the state/ record
- * constructors (§14.1). The caller's Session pin is not given to the machine:
- * it stays the commit's CAS guard, so a stale pin is still the store's
- * `revision_conflict` with `current` (§8.4).
+ * SES-15, SES-16): its guards, including which open links block an archive,
+ * the link field the commit cursor fills and the event; lifecycle and
+ * archivedAt come only from its record constructors (§14.1). The caller's
+ * Session pin is not given to the machine: it stays the commit's CAS guard, so
+ * a stale pin is still the store's `revision_conflict` with `current` (§8.4).
  */
 import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
@@ -46,8 +46,7 @@ import type { CoreError, CoreRejection, WriteResult } from '../../../contracts/c
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { RecordLookupPort, RecordLookupRequest } from '../../record-store/lookup-ports.js';
 import type {
-  CommitCursorBinding, EncodedDomainEvent, EncodedRecord, GoalRecordTransactionPort, PreparedCommit, RecordGuard,
-  StoreFailure,
+  EncodedRecord, GoalRecordTransactionPort, PreparedCommit, RecordGuard, StoreFailure,
 } from '../../record-store/ports.js';
 import type { GraphWrite } from './contracts.js';
 import type {
@@ -68,8 +67,8 @@ import {
 } from './lifecycle-record-codecs.js';
 import { validateWorkLinkTarget } from './session-targets.js';
 import {
-  archiveSessionRecord, reactivateSessionRecord, sessionMachineStateOf, transitionSession,
-  type SessionEvent, type SessionGuardContext, type SessionTransition,
+  archiveSessionRecord, openResponsibleLinkOf, reactivateSessionRecord, sessionMachineStateOf, transitionSession,
+  type SessionDomainEventType, type SessionEffect, type SessionEvent, type SessionGuardContext, type SessionTransition,
 } from '../state/session-availability.js';
 
 type UnknownRecord = Record<string, unknown>;
@@ -232,35 +231,73 @@ const LINK_PAGE_LIMIT = 200;
 
 type LinkRead = { ok: true; links: SessionWorkLink[] } | { ok: false; rejection: CoreRejection };
 
-/** The target kind of the first open `responsible` task/work link, false without one. */
-function openResponsibleKind(links: readonly SessionWorkLink[]): 'task' | 'work' | false {
-  for (const link of links) {
-    if (link.until !== null || link.ref.relation !== 'responsible') continue;
-    const kind = link.ref.target.kind;
-    if (kind === 'task' || kind === 'work') return kind;
-  }
-  return false;
-}
-
 // --------------------------------------------------------------------------
 // Session machine calls
 // --------------------------------------------------------------------------
 
-/** The guard context of a lifecycle or link event; no Session pin (it is the commit's CAS guard). */
-function lifecycleContext(
-  facts: Partial<Pick<SessionGuardContext, 'openResponsibleLink' | 'link'>>,
-): SessionGuardContext {
-  return {
+/** The machine on a lifecycle or link event of `session` (null = absent), without the Session pin. */
+function decide(
+  session: SessionRecord | null,
+  event: SessionEvent,
+  facts: Partial<Pick<SessionGuardContext, 'openResponsibleLink' | 'link'>> = {},
+): SessionTransition {
+  return transitionSession(sessionMachineStateOf(session), event, {
     caller: 'service', hostLease: null, pin: null, holder: null, probe: null, kernelHeader: null,
-    openResponsibleLink: facts.openResponsibleLink ?? null, creation: null, link: facts.link ?? null,
-  };
+    openResponsibleLink: null, creation: null, link: null, ...facts,
+  });
 }
 
-/** The machine's §8.4 refusal of an event on an absent Session (`not_found`), as today's rejection. */
-function absentRefusal(event: SessionEvent): CoreRejection {
-  const verdict = transitionSession('absent', event, lifecycleContext({}));
-  if (verdict.ok) throw new Error(`the Session machine accepted ${event.kind} on an absent Session`);
-  return reject(verdict.code, verdict.detail);
+/** The read target Session; absent is the machine's §8.4 `not_found`, damaged or another scope is refused here. */
+function targetSession(found: EncodedRecord | undefined, scope: WorkspaceScope, event: SessionEvent): SessionRecord | CoreRejection {
+  if (found === undefined) {
+    const absent = decide(null, event);
+    if (absent.ok) throw new Error(`the Session machine accepted ${event.kind} on an absent Session`);
+    return reject(absent.code, absent.detail);
+  }
+  const decoded = decodeSessionRecord(found);
+  if (decoded.status !== 'decoded') return reject('unavailable', `the target Session is damaged: ${decoded.reason}`);
+  if (decoded.value.ref.projectId !== scope.projectId || decoded.value.workspaceId !== scope.workspaceId) {
+    return reject('not_found', 'the target Session belongs to another project or workspace');
+  }
+  return decoded.value;
+}
+
+/**
+ * The one translation of accepted effects (§8.2): the next Session record from
+ * its state/ constructor (a link change only bumps the revision) and the link
+ * field the commit cursor fills; the machine must name this write's event.
+ */
+function sessionWrite(
+  session: SessionRecord,
+  effects: readonly SessionEffect[],
+  eventType: SessionDomainEventType,
+): { session: SessionRecord; bound: 'since' | 'until' | null } {
+  let next: SessionRecord | null = null;
+  let bound: 'since' | 'until' | null = null;
+  let emits = false;
+  for (const effect of effects) {
+    switch (effect.kind) {
+      case 'archive_session':
+        next = archiveSessionRecord(session, new Date().toISOString());
+        break;
+      case 'reactivate_session':
+        next = reactivateSessionRecord(session);
+        break;
+      case 'bump_session_revision':
+        next = { ...session, revision: session.revision + 1 };
+        break;
+      case 'write_work_link':
+        bound = effect.bound;
+        break;
+      case 'emit_event':
+        emits = effect.eventType === eventType;
+        break;
+      default:
+        throw new Error(`a Session lifecycle or link write has no ${effect.kind} effect`);
+    }
+  }
+  if (next === null || !emits) throw new Error(`an accepted Session write writes the Session and emits ${eventType}`);
+  return { session: next, bound };
 }
 
 // --------------------------------------------------------------------------
@@ -425,16 +462,8 @@ export function createSessionLifecycleService(stores: SessionLifecycleStores): S
     const read = await records.readMany([sessionKey, linkKey]);
     if (read.status !== 'ready') return mapStoreFailure(read);
     const linked: SessionEvent = { kind: 'work_linked', active: input.active };
-    const sessionRecord = read.value.records.find((record) => record.refKey === sessionKey);
-    if (sessionRecord === undefined) return absentRefusal(linked);
-    const decodedSession = decodeSessionRecord(sessionRecord);
-    if (decodedSession.status !== 'decoded') {
-      return reject('unavailable', `the target Session is damaged: ${decodedSession.reason}`);
-    }
-    const session: SessionRecord = decodedSession.value;
-    if (session.ref.projectId !== scope.projectId || session.workspaceId !== scope.workspaceId) {
-      return reject('not_found', 'the target Session belongs to another project or workspace');
-    }
+    const session = targetSession(read.value.records.find((record) => record.refKey === sessionKey), scope, linked);
+    if ('status' in session) return session;
     const linkRecord = read.value.records.find((record) => record.refKey === linkKey);
     let currentLink: SessionWorkLink | null = null;
     if (linkRecord !== undefined) {
@@ -450,14 +479,9 @@ export function createSessionLifecycleService(stores: SessionLifecycleStores): S
     // the machine's `not_found` for an invalid target is its backstop). The link
     // pin stays the link record's guard in the commit.
     const linkPin = expectedLink === undefined || expectedLink.revision === 0 ? null : expectedLink.revision;
-    const verdict = transitionSession(sessionMachineStateOf(session), linked, lifecycleContext({
-      link: {
-        exists: currentLink !== null,
-        open: currentLink !== null && currentLink.until === null,
-        targetValid: true,
-        pin: linkPin,
-      },
-    }));
+    const verdict = decide(session, linked, { link: {
+      exists: currentLink !== null, open: currentLink !== null && currentLink.until === null, targetValid: true, pin: linkPin,
+    } });
     if (!verdict.ok) return reject(verdict.code, verdict.detail);
     const targetGuards: RecordGuard[] = [];
     if (input.active) {
@@ -466,15 +490,16 @@ export function createSessionLifecycleService(stores: SessionLifecycleStores): S
       for (const guard of checked.guards) targetGuards.push(guard);
     }
 
-    // Opening (or reopening) starts an unbound interval; closing keeps `since`.
-    const boundField: 'since' | 'until' = input.active ? 'since' : 'until';
+    // The machine's bound field: opening (or reopening) starts an unbound
+    // interval at the commit cursor; closing keeps `since`.
+    const { session: nextSession, bound: boundField } = sessionWrite(session, verdict.effects, SESSION_WORK_LINK_CHANGED_EVENT);
+    if (boundField === null) throw new Error('work_linked always writes the work link');
     const nextLink: PendingSessionWorkLink = {
       ref: linkRef,
       revision: (currentLink?.revision ?? 0) + 1,
-      since: input.active ? null : currentLink?.since ?? null,
+      since: boundField === 'since' ? null : currentLink?.since ?? null,
       until: null,
     };
-    const nextSession: SessionRecord = { ...session, revision: session.revision + 1 };
     const event: SessionWorkLinkChangedEventV1 = {
       eventId: eventIdOf(identityKey, 'link'),
       eventType: SESSION_WORK_LINK_CHANGED_EVENT,
@@ -488,25 +513,6 @@ export function createSessionLifecycleService(stores: SessionLifecycleStores): S
       link: nextLink,
       boundField,
     };
-    const recordsToWrite: EncodedRecord[] = [];
-    const events: EncodedDomainEvent[] = [];
-    const bindings: CommitCursorBinding[] = [];
-    for (const effect of verdict.effects) {
-      switch (effect.kind) {
-        case 'bump_session_revision':
-          recordsToWrite.push(encodeSessionRecord(nextSession));
-          break;
-        case 'write_work_link':
-          recordsToWrite.push(encodePendingSessionWorkLink(nextLink));
-          bindings.push({ refKey: linkKey, field: effect.bound });
-          break;
-        case 'emit_event':
-          events.push(encodeSessionWorkLinkChangedEvent(event));
-          break;
-        default:
-          throw new Error(`work_linked has no ${effect.kind} effect`);
-      }
-    }
     const guardMap = new Map<string, number | null>();
     guardMap.set(sessionKey, expectedSession.revision);
     guardMap.set(linkKey, linkPin);
@@ -515,12 +521,12 @@ export function createSessionLifecycleService(stores: SessionLifecycleStores): S
       identityKey,
       fingerprint,
       guards: [...guardMap].map(([refKey, expectedRevision]) => ({ refKey, expectedRevision })),
-      records: recordsToWrite,
+      records: [encodeSessionRecord(nextSession), encodePendingSessionWorkLink(nextLink)],
       claims: [],
       indexGuards: [],
       indexChanges: [],
-      events,
-      commitCursorBindings: bindings,
+      events: [encodeSessionWorkLinkChangedEvent(event)],
+      commitCursorBindings: [{ refKey: linkKey, field: boundField }],
     };
 
     if (ctx.signal?.aborted) return reject('cancelled', 'the Session link was cancelled before commit');
@@ -646,63 +652,31 @@ export function createSessionLifecycleService(stores: SessionLifecycleStores): S
     scope: WorkspaceScope;
     input: ArchiveSessionInput;
     kind: 'archive' | 'reactivate';
+    expectedEvent: SessionLifecycleChangedEventV1['eventType'];
     expectedSession: VersionPin;
     identityKey: string;
     fingerprint: string;
   }): Promise<WriteResult<SessionRecord>> {
-    const { ctx, scope, input, kind, expectedSession, identityKey, fingerprint } = args;
+    const { ctx, scope, input, kind, expectedEvent, expectedSession, identityKey, fingerprint } = args;
     const sessionKey = sessionAggregateRefKey(plainSessionRefToAggregate(input.sessionRef));
     const read = await records.readMany([sessionKey]);
     if (read.status !== 'ready') return mapStoreFailure(read);
     const lifecycleEvent: SessionEvent = kind === 'archive' ? { kind: 'session_archived' } : { kind: 'session_reactivated' };
-    const sessionRecord = read.value.records.find((record) => record.refKey === sessionKey);
-    if (sessionRecord === undefined) return absentRefusal(lifecycleEvent);
-    const decodedSession = decodeSessionRecord(sessionRecord);
-    if (decodedSession.status !== 'decoded') {
-      return reject('unavailable', `the target Session is damaged: ${decodedSession.reason}`);
-    }
-    const session: SessionRecord = decodedSession.value;
-    if (session.ref.projectId !== scope.projectId || session.workspaceId !== scope.workspaceId) {
-      return reject('not_found', 'the target Session belongs to another project or workspace');
-    }
+    const session = targetSession(read.value.records.find((record) => record.refKey === sessionKey), scope, lifecycleEvent);
+    if ('status' in session) return session;
 
     // SES-11/SES-14. The machine first judges the Session itself (links not
     // read yet); only an archive it accepts reads the responsible links, so a
     // link-read failure never hides `invalid`/`busy`, as before. The machine
     // then judges the archive again with them.
-    const state = sessionMachineStateOf(session);
-    let verdict: SessionTransition = transitionSession(state, lifecycleEvent,
-      lifecycleContext({ openResponsibleLink: false }));
-    if (!verdict.ok) return reject(verdict.code, verdict.detail);
-    if (kind === 'archive') {
+    let verdict = decide(session, lifecycleEvent, { openResponsibleLink: false });
+    if (verdict.ok && kind === 'archive') {
       const links = await readSessionLinks(scope.projectId, session.ref.sessionId);
       if (!links.ok) return links.rejection;
-      verdict = transitionSession(state, lifecycleEvent,
-        lifecycleContext({ openResponsibleLink: openResponsibleKind(links.links) }));
-      if (!verdict.ok) return reject(verdict.code, verdict.detail);
+      verdict = decide(session, lifecycleEvent, { openResponsibleLink: openResponsibleLinkOf(links.links) });
     }
-
-    const expectedEvent = kind === 'archive' ? SESSION_ARCHIVED_EVENT : SESSION_REACTIVATED_EVENT;
-    let nextSession: SessionRecord | null = null;
-    let emitsEvent = false;
-    for (const effect of verdict.effects) {
-      switch (effect.kind) {
-        case 'archive_session':
-          nextSession = archiveSessionRecord(session, new Date().toISOString());
-          break;
-        case 'reactivate_session':
-          nextSession = reactivateSessionRecord(session);
-          break;
-        case 'emit_event':
-          emitsEvent = effect.eventType === expectedEvent;
-          break;
-        default:
-          throw new Error(`${lifecycleEvent.kind} has no ${effect.kind} effect`);
-      }
-    }
-    if (nextSession === null || !emitsEvent) {
-      throw new Error(`${lifecycleEvent.kind} must write the Session and emit ${expectedEvent}`);
-    }
+    if (!verdict.ok) return reject(verdict.code, verdict.detail);
+    const { session: nextSession } = sessionWrite(session, verdict.effects, expectedEvent);
 
     const event: SessionLifecycleChangedEventV1 = {
       eventId: eventIdOf(identityKey, kind),
@@ -764,13 +738,15 @@ export function createSessionLifecycleService(stores: SessionLifecycleStores): S
     }, owned.expected);
     if (ctx.signal?.aborted) return reject('cancelled', `the Session ${kind} was cancelled before lookup`);
 
+    // The replay check needs the event type before the machine is asked; the
+    // machine's `emit_event` must name the same one (`sessionWrite`).
     const expectedEvent = kind === 'archive' ? SESSION_ARCHIVED_EVENT : SESSION_REACTIVATED_EVENT;
     const existing = await records.lookupCommit({ identityKey, fingerprint });
     if (existing.status === 'ready') return readLifecycleReplay(existing.value, scope, input.sessionRef, expectedEvent);
     if (existing.code !== 'not_found') return mapStoreFailure(existing);
 
     const attempt = await runTransitionAttempt({
-      ctx, scope, input, kind, expectedSession: expected.session, identityKey, fingerprint,
+      ctx, scope, input, kind, expectedEvent, expectedSession: expected.session, identityKey, fingerprint,
     });
     if (attempt.status !== 'rejected' || attempt.code === 'cancelled') return attempt;
     const restored = await recheckLifecycleAfterMiss(identityKey, fingerprint, scope, input.sessionRef, expectedEvent);
