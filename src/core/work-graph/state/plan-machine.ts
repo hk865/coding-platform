@@ -116,7 +116,7 @@ export function acceptProposalRecord(proposal: CandidatePlanProposal): Candidate
 }
 
 // --------------------------------------------------------------------------
-// Derived status (PLAN-06, PLAN-08/09)
+// Derived status and the adoption target (PLAN-06, PLAN-08/09)
 // --------------------------------------------------------------------------
 
 export type PlanProposalReadStatus = 'candidate' | 'stale' | 'accepted' | 'rejected';
@@ -157,6 +157,15 @@ export function derivePlanRevisionStatus(
   activePlanRevision: PlanRevisionRef | null,
 ): PlanRevisionStatus {
   return samePlanPointer(planRef, activePlanRevision) ? 'adopted' : 'superseded';
+}
+
+/**
+ * PLAN-08: the PlanRevision an adoption writes (the draft's planId in the
+ * proposal's project), which GOAL-02/03 move the pointer onto. The future
+ * owner reads it first: its absence is PLAN-05's `targetExists` fact.
+ */
+export function planRevisionTargetOf(proposalRef: PlanProposalRef, draft: PlanRevisionDraft): PlanRevisionRef {
+  return { aggregateType: 'PlanRevision', projectId: proposalRef.projectId, planId: draft.planId };
 }
 
 // --------------------------------------------------------------------------
@@ -1015,8 +1024,7 @@ function initialAdoptionStep(
     () => draftAdmissionStep('the initial plan is not admissible', initial),
   );
   if (problem !== null) return problem;
-  return { path: 'initial', proposal,
-    target: { aggregateType: 'PlanRevision', projectId: event.proposalRef.projectId, planId: proposal.draft.planId } };
+  return { path: 'initial', proposal, target: planRevisionTargetOf(event.proposalRef, proposal.draft) };
 }
 
 /**
@@ -1108,8 +1116,7 @@ function futureAdoptionStep(
   }
   const trace = futureChangeTraceProblem(judged);
   if (trace !== null) return reject('guard_failed', trace.code, trace.detail);
-  return { path: 'future', proposal, source,
-    target: { aggregateType: 'PlanRevision', projectId: event.proposalRef.projectId, planId: draft.planId },
+  return { path: 'future', proposal, source, target: planRevisionTargetOf(event.proposalRef, draft),
     changedTaskIds: delta.changedTaskIds, addedTaskIds: delta.addedTaskIds, touchedTaskIds: touched,
     pinnedPolicy: pinnedPolicy === 'ok' };
 }

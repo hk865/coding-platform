@@ -80,7 +80,7 @@ import type {
   TaskRow,
 } from './plan-contracts.js';
 import {
-  compileFuturePlanAdoption, compileInitialPlanAdoption, type PlanCommit, type PlanRevisionWrite,
+  compileFuturePlanAdoption, compileInitialPlanAdoption, type PlanAdoptionCommit, type PlanRevisionWrite,
 } from './plan-commit-compiler.js';
 import {
   decodeQueryJobAnswerSnapshot,
@@ -138,9 +138,10 @@ import {
 import { mergeGuards, sameRef } from './execution-entry-service.js';
 import { goalStateOf, transitionGoal } from '../state/goal-machine.js';
 import {
-  derivePlanRevisionStatus, planProposalProblem, transitionPlanProposal,
-  type FutureAdoptionFacts, type FuturePlanDeltaVerdict, type PlanCommitGuard, type PlanProposalEvent,
-  type PlanProposalGuardContext, type PlanProposalTransition, type PlanSourceFacts,
+  derivePlanRevisionStatus, planProposalProblem, planRevisionTargetOf, transitionPlanProposal,
+  type FutureAdoptionFacts, type FuturePlanDeltaVerdict, type InitialAdoptionFacts, type PlanCommitGuard,
+  type PlanProposalEvent, type PlanProposalGuardContext, type PlanProposalReadFacts, type PlanProposalTransition,
+  type PlanSourceFacts,
 } from '../state/plan-machine.js';
 import type { Rejected as MachineRefusal } from '../state/transition.js';
 
@@ -950,11 +951,11 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     const pins = normalizeCallerPlanPins({ projectId: goalRef.projectId, workspaceId, goalId: goalRef.goalId }, input.expected);
     if (pins.status === 'invalid') return rejected('invalid', pins.reason);
 
+    const receiptExpected = { identityKey: input.identityKey, projectId: goalRef.projectId, workspaceId,
+      proposalId: input.proposalId, idempotencyKey: input.requestId, actor: input.actor };
     const early = await records.lookupCommit({ identityKey: input.identityKey, fingerprint: input.fingerprint });
     if (early.status === 'ready') {
-      const restored = await restoreProposal(records, early.value, { identityKey: input.identityKey,
-        projectId: goalRef.projectId, workspaceId, proposalId: input.proposalId,
-        idempotencyKey: input.requestId, actor: input.actor });
+      const restored = await restoreProposal(records, early.value, receiptExpected);
       if (restored.status !== 'restored') return rejected(restored.code, restored.reason);
       return { status: 'committed', value: restored.proposal, replayed: true, cursor: early.value.cursor };
     }
@@ -994,9 +995,7 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
       events: [encodePlanProposalRecordedEvent(event)], ledgerHorizon: horizon });
     if (committed.status !== 'committed') return mapCommitFailure(committed);
     if (!committed.replayed) return { status: 'committed', value: candidate, replayed: false, cursor: committed.cursor };
-    const restored = await restoreProposal(records, committed, { identityKey: input.identityKey,
-      projectId: goalRef.projectId, workspaceId, proposalId: input.proposalId,
-      idempotencyKey: input.requestId, actor: input.actor });
+    const restored = await restoreProposal(records, committed, receiptExpected);
     if (restored.status !== 'restored') return rejected(restored.code, restored.reason);
     return { status: 'committed', value: restored.proposal, replayed: true, cursor: committed.cursor };
   }
@@ -1131,8 +1130,8 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
       if (read.status !== 'ready') return read;
       const { candidate, scope, adoptionScope } = read;
       if (candidate.basedOn !== null) {
-        return applyFutureRevision({ records, read, adoption, identity, identityKey, fingerprint, requestId,
-          extraGuards: [], actor: bound.actor, preCommitSignal: null, eventId: deps.eventId, now: deps.now });
+        return applyFutureRevision({ records, read, adoption, receipt: receiptExpected,
+          extraGuards: [], preCommitSignal: null, eventId: deps.eventId, now: deps.now });
       }
 
       let originGuards: RecordGuard[] = [];
@@ -1142,39 +1141,38 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
         if ('rejection' in verified) origin = verified.rejection;
         else originGuards = verified.guards;
       }
-      let refused = planProposalProblem(candidate, adoption, { ...adoptionScope, initial: { origin } });
-      if (refused?.ok === false) return refusalOf(refused);
+      const ask = adoptionAsk<InitialAdoptionFacts>(candidate, adoption, (initial) => ({ ...adoptionScope, initial }));
+      let refused = ask({ origin });
+      if (refused !== null) return refusalOf(refused);
 
       const governanceRead = await resolveGovernance(records, proposalRef.projectId);
-      refused = planProposalProblem(candidate, adoption, { ...adoptionScope,
-        initial: { origin, governance: governanceRead.status === 'resolved' ? 'ok' : governanceRead } });
-      if (refused?.ok === false) return refusalOf(refused);
+      const governance = governanceRead.status === 'resolved' ? 'ok' : governanceRead;
+      refused = ask({ governance });
+      if (refused !== null) return refusalOf(refused);
       // PLAN-04 refused an unresolved governance above.
-      const governance = governanceRead.status === 'resolved' ? governanceRead : null;
+      const resolved = governanceRead.status === 'resolved' ? governanceRead : null;
       // The draft validators run one after the other, each only once the one before it holds.
-      const draftIssues = validatePlanDraft(candidate.draft, governance!.policyContent);
-      refused = planProposalProblem(candidate, adoption, { ...adoptionScope,
-        initial: { origin, governance: 'ok', draftIssues } });
-      if (refused?.ok === false) return refusalOf(refused);
+      const draftIssues = validatePlanDraft(candidate.draft, resolved!.policyContent);
+      refused = ask({ draftIssues });
+      if (refused !== null) return refusalOf(refused);
       const assignmentReasons = validatePlanAssignments(candidate.draft);
-      refused = planProposalProblem(candidate, adoption, { ...adoptionScope,
-        initial: { origin, governance: 'ok', draftIssues, assignmentReasons } });
-      if (refused?.ok === false) return refusalOf(refused);
+      refused = ask({ assignmentReasons });
+      if (refused !== null) return refusalOf(refused);
       const phaseReasons = planPhaseGuardReasons(candidate.draft.tasks);
 
       // PLAN-04 + GOAL-02: the accepted candidate, the moved Goal and the guards of the one commit.
       const decided = transitionPlanProposal(candidate, adoption, { ...adoptionScope, source: null,
-        initial: { origin, governance: 'ok', draftIssues, assignmentReasons, phaseReasons }, future: null });
+        initial: { origin, governance, draftIssues, assignmentReasons, phaseReasons }, future: null });
       if (!decided.ok) return refusalOf(decided);
       const commit = planCommitOf(decided, { scope, actor: bound.actor,
-        originSources: originGuards, governance: governance!.governance.guards });
+        originSources: originGuards, governance: resolved!.governance.guards });
       if (commit.status !== 'ready') return commit;
       if (read.horizon === null) return rejected('incomplete', 'the ledger has no readable watermark for the plan adoption');
       const acceptedAt = deps.now();
       const derived = deriveCommandIds(identity, 'plan-apply');
       const compiled = compileInitialPlanAdoption({
-        commit,
-        governance: governance!.governance,
+        commit: adoptionCommitOf(commit),
+        governance: resolved!.governance,
         ledgerHorizon: read.horizon,
         identityKey,
         fingerprint,
@@ -1670,6 +1668,9 @@ type PlanCommitSources = {
   pinnedPolicy?: readonly RecordGuard[];
 };
 
+/** One plan commit as the state machines named it: a proposal (PLAN-01..03) moves no Goal and writes no Plan. */
+type PlanCommit = Omit<PlanAdoptionCommit, 'nextGoal' | 'plan'> & { nextGoal: GoalSnapshot | null; plan: PlanRevisionWrite | null };
+
 /**
  * The one commit a plan transition names, read off its effects (§3.3 effects
  * column): `write_proposal` is the machine's `next` (§14.1); `move_goal_pointer`
@@ -1715,6 +1716,13 @@ function planCommitOf(
     }
   }
   return { status: 'ready', proposal, nextGoal, plan, guards };
+}
+
+/** PLAN-04/05 name GOAL-02/03's pointer move and PLAN-08's new Plan; an adoption without them is a broken machine. */
+function adoptionCommitOf(commit: PlanCommit): PlanAdoptionCommit {
+  const { proposal, nextGoal, plan, guards } = commit;
+  if (nextGoal === null || plan === null) throw new Error('a plan adoption moves the Goal pointer and writes its PlanRevision');
+  return { proposal, nextGoal, plan, guards };
 }
 
 /** One `guard` effect as the record guards of the record it names, at the version read in this call. */
@@ -1793,6 +1801,20 @@ async function readAdoption(
     horizon: proposalRead.readThrough ?? scoped.scope.readThrough };
 }
 
+/** PLAN-04/05 over the adoption facts read so far: each read joins them and the machine is asked again. */
+function adoptionAsk<F extends object>(candidate: PlanCommit['proposal'], adoption: AcceptedPlanEvent,
+  contextOf: (facts: Partial<F>) => PlanProposalReadFacts): (read: Partial<F>) => MachineRefusalOf | null {
+  const facts: Partial<F> = {};
+  return (read) => {
+    const refused = planProposalProblem(candidate, adoption, contextOf(Object.assign(facts, read)));
+    return refused?.ok === false ? refused : null;
+  };
+}
+
+/** The original plan-apply command (Host or Agent): its receipt identity also names its commit and event. */
+type ApplyReceipt = { identityKey: string; fingerprint: string; projectId: string; workspaceId: string;
+  idempotencyKey: string; actor: ActorRef };
+
 /**
  * The ONE future-adoption orchestration shared by the Host and Agent apply
  * paths (PLAN-05 + GOAL-03). The caller has read the proposal and the scope
@@ -1800,27 +1822,24 @@ async function readAdoption(
  * and the touched Task facts, asking the plan machine after each read with the
  * existing validators' verdicts, merges the caller's admission guards with the
  * exact local CAS guards the machine names, and performs the single
- * `compileFuturePlanAdoption` commit. Only the actor, command
- * identity/fingerprint and admission guards differ; the Host initial path and
- * both propose paths are separate.
+ * `compileFuturePlanAdoption` commit. Only the original command (`receipt`:
+ * actor, identity, fingerprint) and the admission guards differ; the Host
+ * initial path and both propose paths are separate.
  */
 async function applyFutureRevision(input: {
   records: GoalRecordTransactionPort & RecordLookupPort;
   /** Judged by the caller already (scope; draft schema and decisionRefs). */
   read: AdoptionRead;
   adoption: AcceptedPlanEvent;
-  identity: { projectId: string; actor: ActorRef; idempotencyKey: string };
-  identityKey: string;
-  fingerprint: string;
-  requestId: string;
+  receipt: ApplyReceipt;
   /** The Agent's fresh admission guards (`agent_admission`); none for the Host. */
   extraGuards: readonly RecordGuard[];
-  actor: ActorRef;
   preCommitSignal: AbortSignal | null;
   eventId: () => string;
   now: () => string;
 }): Promise<WriteResult<PlanRevisionSnapshot>> {
-  const { records, adoption, actor } = input;
+  const { records, adoption, receipt } = input;
+  const { actor } = receipt;
   const { candidate: proposal, scope: goalScope, adoptionScope } = input.read;
   const proposalRef = adoption.proposalRef;
   // The Host branched on basedOn; PLAN-05 refused an Agent candidate without one.
@@ -1828,13 +1847,8 @@ async function applyFutureRevision(input: {
   if (sourceRead.status !== 'ready') return sourceRead;
   const source = sourceRead.plan;
   const sourceFacts = planSourceFactsOf(source);
-  /** PLAN-05 over the facts read so far: the scope, the source, then each `future` fact as it is read. */
-  const future: Partial<FutureAdoptionFacts> = {};
-  const ask = (read: Partial<FutureAdoptionFacts>): MachineRefusalOf | null => {
-    Object.assign(future, read);
-    const refused = planProposalProblem(proposal, adoption, { ...adoptionScope, source: sourceFacts, future });
-    return refused?.ok === false ? refused : null;
-  };
+  // PLAN-05 over the facts read so far: the scope, the source, then each `future` fact as it is read.
+  const ask = adoptionAsk<FutureAdoptionFacts>(proposal, adoption, (future) => ({ ...adoptionScope, source: sourceFacts, future }));
   let refused = ask({});
   if (refused !== null) {
     // A stale source refusal is "not the active plan" (PLAN-09: the source reads as superseded), which
@@ -1843,7 +1857,7 @@ async function applyFutureRevision(input: {
     return refusalOf(refused, refused.reason === 'stale' && superseded
       ? [{ ref: source.ref, revision: source.revision }] : undefined);
   }
-  const targetRef: PlanRevisionRef = { aggregateType: 'PlanRevision', projectId: proposalRef.projectId, planId: proposal.draft.planId };
+  const targetRef = planRevisionTargetOf(proposalRef, proposal.draft);
   const targetRead = await readPlan(records, targetRef);
   if (targetRead.status !== 'ready' && targetRead.code !== 'not_found') return targetRead;
   const targetExists = targetRead.status === 'ready';
@@ -1917,17 +1931,17 @@ async function applyFutureRevision(input: {
   if (input.preCommitSignal !== null && input.preCommitSignal.aborted) {
     return rejected('cancelled', 'the plan adoption was cancelled before commit');
   }
-  const derived = deriveCommandIds(input.identity, 'plan-apply');
+  const derived = deriveCommandIds({ projectId: receipt.projectId, actor, idempotencyKey: receipt.idempotencyKey }, 'plan-apply');
   const compiled = compileFuturePlanAdoption({
-    commit: { ...commit, guards: merged.guards },
+    commit: { ...adoptionCommitOf(commit), guards: merged.guards },
     source,
-    identityKey: input.identityKey,
-    fingerprint: input.fingerprint,
+    identityKey: receipt.identityKey,
+    fingerprint: receipt.fingerprint,
     eventId: input.eventId(),
     occurredAt: input.now(),
     commandId: derived.commandId,
     correlationId: derived.correlationId,
-    idempotencyKey: input.requestId,
+    idempotencyKey: receipt.idempotencyKey,
     actor,
   });
   if (compiled.status !== 'compiled') return rejected('unsupported', compiled.reason);
@@ -1936,9 +1950,7 @@ async function applyFutureRevision(input: {
   if (!committed.replayed) {
     return { status: 'committed', value: compiled.value.snapshot, replayed: false, cursor: committed.cursor };
   }
-  const restored = await restoreAcceptedPlan(records, committed, { identityKey: input.identityKey,
-    projectId: proposalRef.projectId, workspaceId: proposalRef.workspaceId,
-    idempotencyKey: input.requestId, actor });
+  const restored = await restoreAcceptedPlan(records, committed, receipt);
   if (restored.status !== 'restored') return rejected(restored.code, restored.reason);
   return { status: 'committed', value: restored.value, replayed: true, cursor: committed.cursor };
 }
@@ -1985,8 +1997,7 @@ async function recheckAgentProposal(
 /** Exact plan-apply receipt re-read (Host and Agent) for the concurrent-commit window. */
 async function recheckApply(
   records: GoalRecordTransactionPort & RecordLookupPort,
-  expected: { identityKey: string; fingerprint: string; projectId: string; workspaceId: string;
-    idempotencyKey: string; actor: ActorRef },
+  expected: ApplyReceipt,
 ): Promise<WriteResult<PlanRevisionSnapshot> | null> {
   const receipt = await records.lookupCommit({ identityKey: expected.identityKey, fingerprint: expected.fingerprint });
   if (receipt.status === 'ready') {
@@ -2186,8 +2197,8 @@ async function applyPlanChangeAsAgent(
     // and decisionRefs, before the source read.
     const read = await readAdoption(records, adoption, 'ok', input.expected);
     if (read.status !== 'ready') return read;
-    return applyFutureRevision({ records, read, adoption, identity, identityKey, fingerprint, requestId: input.requestId,
-      extraGuards: admission.guards, actor: writer.actor, preCommitSignal: ctx.signal, eventId: deps.eventId, now: deps.now });
+    return applyFutureRevision({ records, read, adoption, receipt: receiptExpected,
+      extraGuards: admission.guards, preCommitSignal: ctx.signal, eventId: deps.eventId, now: deps.now });
   };
 
   const outcome = await evaluate();

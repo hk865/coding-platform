@@ -32,6 +32,7 @@ import {
   parallelCarrierFactTaskIds,
   parallelCarrierFenceProblem,
   planProposalProblem,
+  planRevisionTargetOf,
   tracedDispositionChangeProblem,
   transitionPlanProposal,
   transitionPlanRevision,
@@ -992,6 +993,13 @@ describe('derivePlanRevisionStatus (PLAN-08/09)', () => {
     expect(derivePlanRevisionStatus(P1, P1)).toBe('adopted');
     expect(derivePlanRevisionStatus(P1, P2)).toBe('superseded');
     expect(derivePlanRevisionStatus(P1, { ...P1 })).toBe('adopted');
+  });
+});
+
+describe('planRevisionTargetOf (PLAN-08)', () => {
+  it('names the draft planId in the proposal project, with the ref bytes the adoption writes and the owner reads', () => {
+    expect(JSON.stringify(planRevisionTargetOf(PROPOSAL_REF, INITIAL_DRAFT))).toBe(JSON.stringify(P1));
+    expect(JSON.stringify(planRevisionTargetOf(PROPOSAL_REF, FUTURE_DRAFT))).toBe(JSON.stringify(P2));
   });
 });
 

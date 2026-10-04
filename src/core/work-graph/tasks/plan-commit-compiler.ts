@@ -4,9 +4,9 @@
  * The protected records of an adoption (the accepted PlanProposal and the
  * moved Goal pointer), the new Plan's ref and build and the commit's CAS
  * guards come from the state machines the owner ran (STATE-MACHINES-SPEC §3
- * PLAN-04/05/08, §2 GOAL-02/03, §14.1), as one `PlanCommit`: this file builds
- * only the compiler-owned PlanRevisionSnapshot and the PlanRevisionAccepted
- * event, and encodes the one PreparedCommit. */
+ * PLAN-04/05/08, §2 GOAL-02/03, §14.1), as one `PlanAdoptionCommit`: this
+ * file builds only the compiler-owned PlanRevisionSnapshot and the
+ * PlanRevisionAccepted event, and encodes the one PreparedCommit. */
 import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js';
 import type { ArchitectureBaselinePin, CompletionPolicyPin } from '../../../contracts/governance.js';
 import type { GoalSnapshot } from '../../../contracts/ledger.js';
@@ -44,14 +44,14 @@ export type VerifiedGovernance = {
 /** PLAN-08: the new Plan an adoption writes, as the plan machine names it (`ref`, and `build` from the draft or the delta). */
 export type PlanRevisionWrite = Extract<PlanProposalEffect, { kind: 'write_plan_revision' }>;
 
-/** One plan commit as the state machines named it; the owner reads it off their effects. */
-export type PlanCommit = {
-  /** `write_proposal`: candidate@1 (PLAN-01..03) or the accepted candidate (PLAN-04/05, `acceptProposalRecord`). */
+/** One adoption commit as the state machines named it (PLAN-04/05); the owner reads it off their effects. */
+export type PlanAdoptionCommit = {
+  /** `write_proposal`: the accepted candidate (`acceptProposalRecord`). */
   proposal: Extract<PlanProposal, { kind: 'candidate_v2' }>;
-  /** `move_goal_pointer`: the Goal moved by GOAL-02/03 (`nextGoalPointer`); null for a proposal. */
-  nextGoal: GoalSnapshot | null;
-  /** `write_plan_revision` (PLAN-08); null for a proposal. */
-  plan: PlanRevisionWrite | null;
+  /** `move_goal_pointer`: the Goal moved by GOAL-02/03 (`nextGoalPointer`). */
+  nextGoal: GoalSnapshot;
+  /** `write_plan_revision` (PLAN-08). */
+  plan: PlanRevisionWrite;
   /** The `guard` effects as the commit's record guards, in the machine's order. */
   guards: readonly RecordGuard[];
 };
@@ -59,7 +59,7 @@ export type PlanCommit = {
 export type InitialPlanAdoptionInput = {
   /** PLAN-04 + GOAL-02 + PLAN-08: the accepted candidate (its draft is written verbatim), the moved Goal,
    * the new Plan's ref and the CAS guards (origin, scope, candidate, governance, target Plan ∅). */
-  commit: PlanCommit;
+  commit: PlanAdoptionCommit;
   governance: VerifiedGovernance;
   ledgerHorizon: CommitCursor;
   identityKey: string;
@@ -72,14 +72,6 @@ export type InitialPlanAdoptionInput = {
   actor: ActorRef;
 };
 export type CompiledPlanAdoption = { snapshot: PlanRevisionSnapshot; prepared: PreparedCommit };
-
-/** PLAN-04/05 move the Goal pointer and PLAN-08 writes the new Plan; a commit without them is a broken caller. */
-function adoptionWrites(commit: PlanCommit): { nextGoal: GoalSnapshot; plan: PlanRevisionWrite } {
-  if (commit.nextGoal === null || commit.plan === null) {
-    throw new Error('a plan adoption moves the Goal pointer and writes its PlanRevision');
-  }
-  return { nextGoal: commit.nextGoal, plan: commit.plan };
-}
 
 function buildPlanRevisionSnapshot(input: {
   draft: PlanRevisionDraft;
@@ -158,8 +150,7 @@ function planRevisionAcceptedEvent(input: {
 /** Folds one accepted initial Plan, its Goal pointer and its candidate status
  * into exactly one `PreparedCommit`. Guard order/identity is the caller's input. */
 export function compileInitialPlanAdoption(input: InitialPlanAdoptionInput): CompiledPlanAdoption {
-  const acceptedProposal = input.commit.proposal;
-  const { nextGoal, plan } = adoptionWrites(input.commit);
+  const { proposal: acceptedProposal, nextGoal, plan } = input.commit;
   const snapshot = buildPlanRevisionSnapshot({
     draft: acceptedProposal.draft,
     ref: plan.ref,
@@ -216,7 +207,7 @@ function groupInputsByConsumer(
 export type FuturePlanAdoptionInput = {
   /** PLAN-05 + GOAL-03 + PLAN-08: the accepted candidate (its draft is the target), the moved Goal, the new
    * Plan's ref and the validated delta, and the CAS guards (merged, ending with the target Plan ∅). */
-  commit: PlanCommit;
+  commit: PlanAdoptionCommit;
   source: PlanRevisionSnapshot;
   identityKey: string;
   fingerprint: string;
@@ -243,11 +234,10 @@ export type FuturePlanAdoptionCompile =
  */
 export function compileFuturePlanAdoption(input: FuturePlanAdoptionInput): FuturePlanAdoptionCompile {
   const { source } = input;
-  const acceptedProposal = input.commit.proposal;
+  const { proposal: acceptedProposal, nextGoal, plan } = input.commit;
   const target = acceptedProposal.draft;
-  const { nextGoal, plan } = adoptionWrites(input.commit);
   const build = plan.build;
-  // PLAN-05 admits only a schemaVersion 2 draft and names the delta it validated.
+  // PLAN-05 admits only a schemaVersion 2 draft and names the delta it validated (narrows both types).
   if (target.schemaVersion !== 2 || build.from !== 'future_delta') {
     throw new Error('a future adoption writes a schemaVersion 2 draft from its source and the validated delta');
   }
