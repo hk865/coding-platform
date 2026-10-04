@@ -112,15 +112,17 @@ function refFromRefKey(refKey: string): AggregateRef | null {
 }
 
 /**
- * Legacy Goal-first / pre-read / first-entry fallback, with the store's
- * `revision: null` ("the row genuinely did not exist") mapped to the legacy
- * `currentRevision: 0` meaning. The `current` conflict detail observed inside
+ * The detail of a refusal whose code and reason the caller has (GOAL-01's or
+ * the store's): the legacy Goal-first / pre-read / first-entry fallback, with
+ * the store's `revision: null` ("the row genuinely did not exist") mapped to the
+ * legacy `currentRevision: 0` meaning. The `current` detail observed inside
  * the failed transaction is preserved, never replaced by a fresh read.
  */
 function goalRevisionConflict(
   current: readonly { refKey: string; revision: number | null }[],
   preReadGoalRevision: number | undefined,
   goalRefKey: string,
+  code: CoreError,
   reason: string,
 ): GoalAdmissionRejection {
   const goalEntry = current.find((entry) => entry.refKey === goalRefKey);
@@ -143,7 +145,7 @@ function goalRevisionConflict(
 
   return {
     status: "rejected",
-    code: "revision_conflict",
+    code,
     reason,
     currentRevision,
     ...(pins.length > 0 ? { current: pins } : {}),
@@ -232,8 +234,8 @@ export async function admitGoalCreation(
       completion: null,
     },
   );
-  // GOAL-01's one refusal (stale / revision_conflict): the disagreeing pins.
-  if (!created.ok) return goalRevisionConflict(disagreeing, preReadGoalRevision, goalRefKey, created.detail);
+  // GOAL-01's refusal keeps its code and detail; the disagreeing pins give current.
+  if (!created.ok) return goalRevisionConflict(disagreeing, preReadGoalRevision, goalRefKey, created.code, created.detail);
   const goal = created.next.goal;
   if (goal === null) throw new Error("goal_created must write the Goal");
   // The record is `next.goal` and the compiler builds the GoalCreated event;
@@ -261,7 +263,7 @@ export async function admitGoalCreation(
     return { status: "committed", snapshot: committed.snapshot, receipt: committed.receipt };
   }
   if (committed.status === "revision_conflict") {
-    return goalRevisionConflict(committed.current, preReadGoalRevision, goalRefKey, committed.reason);
+    return goalRevisionConflict(committed.current, preReadGoalRevision, goalRefKey, committed.status, committed.reason);
   }
   if (committed.status === "idempotency_conflict") {
     return reject("idempotency_conflict", committed.reason);

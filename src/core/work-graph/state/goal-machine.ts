@@ -249,7 +249,7 @@ export type GoalCompletionFacts = {
 export type GoalGuardContext = {
   /** `reworkActorClassOf(principal, actor)` of the caller; null for a principal that is not a Host. GOAL-05 (step 5.5). */
   callerClass: ReworkActorClass | null;
-  /** `goal_created`: `compareCallerGoalPins` found no pin that disagrees with the versions read (`task-service.ts:214-218`). */
+  /** `goal_created`: `compareCallerGoalPins` found no pin that disagrees with the versions read (`task-service.ts:216-220`). */
   scopePinsAgree: boolean;
   /** `goal_completed`: the Goal belongs to the trusted workspace (pre-step-3 `completion.ts:522`). */
   goalInWorkspace: boolean;
@@ -312,15 +312,15 @@ function guard(value: GoalCommitGuard): GoalEffect {
 // -------------------------------------------------------------------------- //
 
 /**
- * GOAL-01 (`task-service.ts:157-271` → `commit-compiler.ts:83-120`). The pins
- * are compared before the commit (`task-service.ts:214-218`). Goal absence is
+ * GOAL-01 (`task-service.ts:159-273` → `commit-compiler.ts:83-120`). The pins
+ * are compared before the commit (`task-service.ts:216-220`). Goal absence is
  * NOT judged from the pre-read Goal: it comes only from the commit's Goal ∅
- * guard (`task-service.ts:249`), which the store checks after its
+ * guard (`task-service.ts:251`), which the store checks after its
  * in-transaction receipt lookup. So a same-identity request committed between
  * the owner's lookup miss and its read still replays its receipt, and a new
  * identity on an existing Goal gets the store's `revision_conflict`
- * (`task-service.ts:263-265`, the §2.4 "Goal 已存在" row) with today's reason.
- * The pre-read Goal therefore never rejects here (`task-service.ts:220-222`).
+ * (`task-service.ts:265-267`, the §2.4 "Goal 已存在" row) with today's reason.
+ * The pre-read Goal therefore never rejects here (`task-service.ts:222-224`).
  */
 function onGoalCreated(
   state: GoalMachineState,
