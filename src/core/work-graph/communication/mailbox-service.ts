@@ -79,8 +79,8 @@ import {
   decodeQueryJobAnswerSnapshot, decodeQueryJobSnapshot, decodeQueryRunSnapshotRecord,
 } from '../queries/query-record-codecs.js';
 import {
-  createSessionMessageRecord, inputObserverProblem, messageMachineStateOf, messagePinProblem, messageSendFlagsProblem,
-  nextSessionMessageRecord, transitionMessage,
+  createSessionMessageRecord, inputObserverProblem, messageMachineStateOf, messagePinProblem, messagePrincipalProblem,
+  messageRecipientProjectProblem, messageSendFlagsProblem, nextSessionMessageRecord, transitionMessage,
   type MessageEffect, type MessageEvent, type MessageGuardContext, type MessageTransition, type QueryAnswerBinding,
   type SessionMessageEventType,
 } from '../state/message-machine.js';
@@ -275,6 +275,7 @@ function ownWrite<T>(request: GraphWrite<T>): OwnedWrite<T> {
 // Request normalization
 // --------------------------------------------------------------------------
 
+/** Send/respond text, kept on purpose: its capacity reason names the codec bound the machine cannot (`textBodyProblem`). */
 function normalizeText(raw: unknown): { ok: true; text: string } | { ok: false; rejection: CoreRejection } {
   if (typeof raw !== 'string' || raw.length === 0) return { ok: false, rejection: reject('invalid', 'message text must be a non-empty string') };
   if (Buffer.byteLength(raw, 'utf8') > SESSION_MESSAGE_MAX_TEXT_BYTES) {
@@ -306,6 +307,13 @@ type Accepted = Extract<MessageTransition, { ok: true }>;
 /** A machine guard's refusal as today's rejection (§1.2: code and reason kept); `null` when it holds. */
 function guardRejection(problem: Rejected | null): CoreRejection | null {
   return problem === null || problem.ok ? null : reject(problem.code, problem.detail);
+}
+
+/** The row's first guard refusing a write's principal; the write compares the kind itself only to narrow its principal. */
+function principalRefusal(principal: MailboxPrincipal, event: Parameters<typeof messagePrincipalProblem>[0]): CoreRejection {
+  const rejection = guardRejection(messagePrincipalProblem(event, principal.kind));
+  if (rejection === null) throw new Error(`the message machine admits the ${principal.kind} principal this write refused`);
+  return rejection;
 }
 
 /**
@@ -444,12 +452,23 @@ function messageCommitPlan(effects: readonly MessageEffect[]): MessageCommitPlan
   return { body, eventType, messageRevision, workRunFacts };
 }
 
-/** The `append_event` event; every SessionMessage event has the same envelope. */
-function encodeMessageEvent(event: SessionMessageEventV1): EncodedDomainEvent {
+/** The fields every SessionMessage event carries between its type and its actor, in today's key order. */
+type MessageEventEnvelope = { schemaVersion: 1; occurredAt: string; projectId: string; workspaceId: string; requestId: string };
+
+/**
+ * The `append_event` event in today's key order (so the same bytes). Only a
+ * `SessionMessageResponded` event may name a derived query_run Answer (MSG-06).
+ */
+function encodeMessageEvent(eventType: SessionMessageEventType, eventId: string, envelope: MessageEventEnvelope,
+  actor: MessageSender | MessageQueryAnswerSender, message: SessionMessage): EncodedDomainEvent {
+  if (eventType === 'SessionMessageResponded') {
+    return encodeSessionMessageRespondedEvent({ eventId, eventType, ...envelope, actor, message });
+  }
+  if (actor.kind === 'query_run') throw new Error(`a ${eventType} event cannot name a query_run actor`);
+  const event: Exclude<SessionMessageEventV1, { eventType: 'SessionMessageResponded' }> = { eventId, eventType, ...envelope, actor, message };
   switch (event.eventType) {
     case 'SessionMessageSent': return encodeSessionMessageSentEvent(event);
     case 'SessionMessageRead': return encodeSessionMessageReadEvent(event);
-    case 'SessionMessageResponded': return encodeSessionMessageRespondedEvent(event);
     case 'SessionMessageConsultationDerived': return encodeSessionMessageConsultationDerivedEvent(event);
     case 'SessionMessageInputAccepted': return encodeSessionMessageInputAcceptedEvent(event);
     default: return unreachable(event, 'message event');
@@ -1324,19 +1343,10 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     if (canonicalOf(messageMachineStateOf(message)) !== canonicalOf(accepted.next)) {
       throw new Error('the written SessionMessage is not the state the message machine accepted');
     }
-    const event = {
-      eventId: eventIdOf(identityKey, plan.eventType),
-      eventType: plan.eventType,
-      schemaVersion: 1 as const,
-      occurredAt: at,
-      projectId: owned.projectId,
-      workspaceId: owned.workspaceId,
-      requestId: write.requestId,
-      actor: write.actor,
-      message,
-    } as SessionMessageEventV1;
+    const event = encodeMessageEvent(plan.eventType, eventIdOf(identityKey, plan.eventType), {
+      schemaVersion: 1, occurredAt: at, projectId: owned.projectId, workspaceId: owned.workspaceId, requestId: write.requestId,
+    }, write.actor, message);
     if (owned.signal.aborted) return reject('cancelled', write.cancelled);
-    const events = [encodeMessageEvent(event)];
     const guards: RecordGuard[] = [{ refKey: sessionMessageRefKey(message.ref), expectedRevision: plan.messageRevision }];
     if (plan.workRunFacts) {
       if (write.admission === null || !write.admission.ok) throw new Error('only an admitted work_run write guards its admission facts');
@@ -1350,7 +1360,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
       claims: [],
       indexGuards: [],
       indexChanges: [],
-      events,
+      events: [event],
     };
     let receipt: Awaited<ReturnType<SessionMailboxDependencies['records']['commit']>>;
     try {
@@ -1393,7 +1403,8 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     const recipientProblem = checkPlainSessionRef(raw['recipient']);
     if (recipientProblem !== null) return reject('invalid', `send recipient: ${recipientProblem}`);
     const recipient = structuredClone(raw['recipient']) as SessionRef;
-    if (recipient.projectId !== owned.projectId) return reject('forbidden', 'the recipient Session belongs to another project');
+    const projectRejection = guardRejection(messageRecipientProjectProblem(recipient.projectId === owned.projectId));
+    if (projectRejection !== null) return projectRejection;
     const text = normalizeText(raw['text']);
     if (!text.ok) return text.rejection;
     const replyMode = raw['replyMode'];
@@ -1880,7 +1891,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
   async function ackMessage(ctx: CoreCallContext, request: GraphWrite<{ messageRef: SessionMessageRef }>): Promise<WriteResult<SessionMessage>> {
     const owned = ownContext(ctx);
     if (!owned.ok) return owned.rejection;
-    if (owned.principal.kind !== 'work_run') return reject('forbidden', 'a Host cannot acknowledge a message');
+    if (owned.principal.kind !== 'work_run') return principalRefusal(owned.principal, { type: 'message_read' });
     if (owned.signal.aborted) return reject('cancelled', 'the acknowledgement was cancelled before validation');
     const write = ownWrite(request);
     if (!write.ok) return write.rejection;
@@ -1937,7 +1948,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
   async function respondMessage(ctx: CoreCallContext, request: GraphWrite<{ messageRef: SessionMessageRef; text: string }>): Promise<WriteResult<SessionMessage>> {
     const owned = ownContext(ctx);
     if (!owned.ok) return owned.rejection;
-    if (owned.principal.kind !== 'work_run') return reject('forbidden', 'a Host cannot respond to a message');
+    if (owned.principal.kind !== 'work_run') return principalRefusal(owned.principal, { type: 'message_responded', via: 'text' });
     if (owned.signal.aborted) return reject('cancelled', 'the response was cancelled before validation');
     const write = ownWrite(request);
     if (!write.ok) return write.rejection;
@@ -2007,9 +2018,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
   ): Promise<WriteResult<SessionMessage>> {
     const owned = ownContext(ctx);
     if (!owned.ok) return owned.rejection;
-    if (owned.principal.kind !== 'host') {
-      return reject('forbidden', 'only the Host may associate an official Query answer with a message');
-    }
+    if (owned.principal.kind !== 'host') return principalRefusal(owned.principal, { type: 'message_responded', via: 'query_answer' });
     if (owned.signal.aborted) return reject('cancelled', 'the answer association was cancelled before validation');
     const write = ownWrite(request);
     if (!write.ok) return write.rejection;
@@ -2091,7 +2100,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
   ): Promise<WriteResult<SessionMessage>> {
     const owned = ownContext(ctx);
     if (!owned.ok) return owned.rejection;
-    if (owned.principal.kind !== 'host') return reject('forbidden', 'only the Host may record a consultation derivation');
+    if (owned.principal.kind !== 'host') return principalRefusal(owned.principal, { type: 'consultation_derived' });
     if (owned.signal.aborted) return reject('cancelled', 'the derivation record was cancelled before validation');
     const write = ownWrite(request);
     if (!write.ok) return write.rejection;

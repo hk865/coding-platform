@@ -17,6 +17,8 @@ import {
   inputObserverProblem,
   messageMachineStateOf,
   messagePinProblem,
+  messagePrincipalProblem,
+  messageRecipientProjectProblem,
   messageSatisfiesWait,
   messageSendFlagsProblem,
   nextSessionMessageRecord,
@@ -809,6 +811,49 @@ describe('request guards the service asks before its receipt lookup', () => {
         const happy = happyCtx(eventName, state);
         const ctx = { ...happy, principal: 'work_run' as const, inputAccepted: { ...happy.inputAccepted!, observerOwnsExecution: false } };
         expect(transitionMessage(state, EVENTS[eventName], ctx)).toEqual(guard);
+      }
+    }
+  });
+
+  it('messagePrincipalProblem is the first guard of ack, respond, MSG-06 and MSG-09, with today\'s reasons', () => {
+    type Principal = MessageGuardContext['principal'];
+    const cases: ReadonlyArray<{
+      eventName: 'read' | 'respondText' | 'respondAnswer' | 'derived'; admitted: Principal; refused: ReadonlyArray<[Principal, string]>;
+    }> = [
+      { eventName: 'read', admitted: 'work_run', refused: [
+        ['host', 'a Host cannot acknowledge a message'], ['other', 'only a work_run may acknowledge a message']] },
+      { eventName: 'respondText', admitted: 'work_run', refused: [
+        ['host', 'a Host cannot respond to a message'], ['other', 'only a work_run may respond to a message']] },
+      { eventName: 'respondAnswer', admitted: 'host', refused: [
+        ['work_run', 'only the Host may associate an official Query answer with a message'],
+        ['other', 'only the Host may associate an official Query answer with a message']] },
+      { eventName: 'derived', admitted: 'host', refused: [
+        ['work_run', 'only the Host may record a consultation derivation'], ['other', 'only the Host may record a consultation derivation']] },
+    ];
+    for (const { eventName, admitted, refused } of cases) {
+      expect(messagePrincipalProblem(EVENTS[eventName], admitted)).toBeNull();
+      for (const [principal, detail] of refused) {
+        const guard = messagePrincipalProblem(EVENTS[eventName], principal);
+        expect(guard).toEqual({ ok: false, reason: 'guard_failed', code: 'forbidden', detail });
+        // The row asks it first: the later facts failing too never change the refusal.
+        for (const stateName of STATE_NAMES) {
+          const state = STATES[stateName];
+          const ctx = { ...happyCtx(eventName, state), principal, pins: { count: 0, matchesMessage: false, revision: null }, bodyBounded: null };
+          expect(transitionMessage(state, EVENTS[eventName], ctx)).toEqual(guard);
+        }
+      }
+    }
+  });
+
+  it('messageRecipientProjectProblem is MSG-01/02\'s first check', () => {
+    expect(messageRecipientProjectProblem(true)).toBeNull();
+    const guard = messageRecipientProjectProblem(false);
+    expect(guard).toEqual({ ok: false, reason: 'guard_failed', code: 'forbidden', detail: 'the recipient Session belongs to another project' });
+    // It runs before the flags and the principal: those failing too never change the refusal.
+    for (const stateName of STATE_NAMES) {
+      for (const principal of ['host', 'work_run', 'other'] as const) {
+        const ctx = { ...happyCtx('sent', STATES[stateName]), principal, recipientScope: 'other_project' as const, sendFlags: null };
+        expect(transitionMessage(STATES[stateName], EVENTS.sent, ctx)).toEqual(guard);
       }
     }
   });

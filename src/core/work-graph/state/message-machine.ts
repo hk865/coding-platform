@@ -17,9 +17,12 @@
  * returns today's CoreError (§1.2). The `:N` comments in the rows cite the
  * pre-step-3 service (the tree the spec cites), whose checks now run here.
  * The request checks that name the receipt identity run in the service before
- * its receipt lookup, so they hold here when asked: its principal and text
- * checks, and this machine's exported pin, send flag and observer guards
- * (`messagePinProblem`, `messageSendFlagsProblem`, `inputObserverProblem`).
+ * its receipt lookup, so they hold here when asked: this machine's exported
+ * principal, recipient project, pin, send flag and observer guards
+ * (`messagePrincipalProblem`, `messageRecipientProjectProblem`,
+ * `messagePinProblem`, `messageSendFlagsProblem`, `inputObserverProblem`),
+ * which the rows ask again with the same facts, and the service's own text
+ * check (`normalizeText`; a known exception, see `textBodyProblem`).
  *
  * Two kinds of rejection depend on the RecordStore as well as on the state, so the
  * service keeps today's receipt handling around them (§1.2):
@@ -174,10 +177,11 @@ export type MessageGuardContext = {
   /** ack/respond/derive need exactly one pin naming this message; `revision` is null when not a positive integer. */
   pins: { count: number; matchesMessage: boolean; revision: number | null };
   /**
-   * respond only. Text reply (MSG-04/05, `normalizeText`, `mailbox-service.ts:275-281`):
-   * `true` = a non-empty string within `SESSION_MESSAGE_MAX_TEXT_BYTES`; `false` = a
-   * non-empty string over that bound (`capacity`); `null` = empty or not a string
-   * (`invalid`). Formal Answer (MSG-06, `readQueryAnswerFacts`): anything but `true` is `invalid`.
+   * respond only. Text reply (MSG-04/05): `true` = a non-empty string within
+   * `SESSION_MESSAGE_MAX_TEXT_BYTES`; `false` = a non-empty string over that bound
+   * (`capacity`, with this machine's own reason, see `textBodyProblem`); `null` = empty or
+   * not a string (`invalid`). The service passes `true`: its `normalizeText` already refused
+   * the others. Formal Answer (MSG-06, `readQueryAnswerFacts`): anything but `true` is `invalid`.
    * `message_sent` does not read it: the send text check (`:1336`) stays with the
    * service's request-shape checks, after the project check and before the flags.
    */
@@ -282,6 +286,40 @@ export function messageMachineStateOf(message: SessionMessageRecord | null): Mes
 // --------------------------------------------------------------------------
 
 /**
+ * The first guard of MSG-03..06 and MSG-09: the principal the row admits, with today's reason
+ * (pre-step-3 `:1561`, `:1631`, `:1728`, `:1887`). The service asks it before anything else of
+ * the write and compares the kind itself only to narrow the principal it holds.
+ */
+export function messagePrincipalProblem(
+  event: Extract<MessageEvent, { type: 'message_read' | 'message_responded' | 'consultation_derived' }>,
+  principal: MessageGuardContext['principal'],
+): Rejected | null {
+  switch (event.type) {
+    case 'message_read':
+      return principal === 'work_run' ? null : reject('guard_failed', 'forbidden', principal === 'host'
+        ? 'a Host cannot acknowledge a message'
+        : 'only a work_run may acknowledge a message');
+    case 'message_responded':
+      if (event.via === 'query_answer') {
+        return principal === 'host' ? null
+          : reject('guard_failed', 'forbidden', 'only the Host may associate an official Query answer with a message');
+      }
+      return principal === 'work_run' ? null : reject('guard_failed', 'forbidden', principal === 'host'
+        ? 'a Host cannot respond to a message'
+        : 'only a work_run may respond to a message');
+    case 'consultation_derived':
+      return principal === 'host' ? null : reject('guard_failed', 'forbidden', 'only the Host may record a consultation derivation');
+    default:
+      return unreachable(event, 'message event');
+  }
+}
+
+/** MSG-01/02's first check (pre-step-3 `:1051`): the recipient is in the caller's project. The service asks it with the request. */
+export function messageRecipientProjectProblem(sameProject: boolean): Rejected | null {
+  return sameProject ? null : reject('guard_failed', 'forbidden', 'the recipient Session belongs to another project');
+}
+
+/**
  * Pre-step-3 `normalizeMessagePin` (`mailbox-service.ts:296-302`): exactly one pin naming this
  * message (MSG-03..06, MSG-09). The service asks it with the request, before its receipt lookup.
  */
@@ -327,8 +365,13 @@ function pinnedRevision(ctx: MessageGuardContext): number {
 }
 
 /**
- * `normalizeText` (`mailbox-service.ts:275-281`) on a text reply: an empty or
- * non-string text is `invalid`, an oversized one `capacity`.
+ * MSG-04/05's text check, the same codes as the service's `normalizeText`: an
+ * empty or non-string text is `invalid`, an oversized one `capacity`. Known
+ * exception: the service keeps `normalizeText` and asks the row with its result
+ * (`bodyBounded: true`), because its capacity reason names
+ * `SESSION_MESSAGE_MAX_TEXT_BYTES` ("message text exceeds 16384 UTF-8 bytes"),
+ * a codec bound this directory may not import (§14.4). This row's capacity
+ * reason is NOT today's; do not drop the service check in its favour.
  */
 function textBodyProblem(ctx: MessageGuardContext): MessageTransition | null {
   switch (ctx.bodyBounded) {
@@ -363,9 +406,8 @@ function first(...checks: ReadonlyArray<() => MessageTransition | null>): Messag
 /** MSG-01 (Host) / MSG-02 (work_run); checks in the pre-step-3 `sendMessage` order (`mailbox-service.ts:1040-1178`). */
 function onMessageSent(state: MessageMachineState, ctx: MessageGuardContext): MessageTransition {
   // :1051 — the project check runs before everything else, before the workspace check.
-  if (ctx.recipientScope === 'other_project') {
-    return reject('guard_failed', 'forbidden', 'the recipient Session belongs to another project');
-  }
+  const projectProblem = messageRecipientProjectProblem(ctx.recipientScope !== 'other_project');
+  if (projectProblem !== null) return projectProblem;
   if (ctx.sendFlags === null) return reject('illegal', 'invalid', 'message_sent requires the normalized send flags');
   const flagProblem = messageSendFlagsProblem(ctx.sendFlags);
   if (flagProblem !== null) return flagProblem;
@@ -420,9 +462,7 @@ function onMessageSent(state: MessageMachineState, ctx: MessageGuardContext): Me
 /** MSG-03; checks in the pre-step-3 `ackMessage` order (`mailbox-service.ts:1559-1624`). */
 function onMessageRead(state: MessageMachineState, ctx: MessageGuardContext): MessageTransition {
   const problem = first(
-    () => ctx.principal === 'work_run' ? null : reject('guard_failed', 'forbidden', ctx.principal === 'host'
-      ? 'a Host cannot acknowledge a message'
-      : 'only a work_run may acknowledge a message'),
+    () => messagePrincipalProblem({ type: 'message_read' }, ctx.principal),
     () => messagePinProblem(ctx.pins),
     () => workRunAuthorizationProblem(ctx),
   );
@@ -454,9 +494,7 @@ function onMessageRead(state: MessageMachineState, ctx: MessageGuardContext): Me
 /** MSG-04 / MSG-05; checks in the pre-step-3 `respondMessage` order (`mailbox-service.ts:1629-1713`). */
 function onTextResponse(state: MessageMachineState, ctx: MessageGuardContext): MessageTransition {
   const problem = first(
-    () => ctx.principal === 'work_run' ? null : reject('guard_failed', 'forbidden', ctx.principal === 'host'
-      ? 'a Host cannot respond to a message'
-      : 'only a work_run may respond to a message'),
+    () => messagePrincipalProblem({ type: 'message_responded', via: 'text' }, ctx.principal),
     // :1642-1643 — text normalization runs before the pin and the receipt lookup.
     () => textBodyProblem(ctx),
     () => messagePinProblem(ctx.pins),
@@ -536,7 +574,7 @@ function queryAnswerProblem(answer: MessageGuardContext['queryAnswer']): Message
 /** MSG-06; checks in the pre-step-3 `respondFromQueryAnswer` order (`mailbox-service.ts:1726-1880`). */
 function onAnswerResponse(state: MessageMachineState, ctx: MessageGuardContext): MessageTransition {
   const problem = first(
-    () => ctx.principal === 'host' ? null : reject('guard_failed', 'forbidden', 'only the Host may associate an official Query answer with a message'),
+    () => messagePrincipalProblem({ type: 'message_responded', via: 'query_answer' }, ctx.principal),
     () => messagePinProblem(ctx.pins),
   );
   if (problem !== null) return problem;
@@ -632,7 +670,7 @@ function onInputAccepted(
 /** MSG-09; checks in the pre-step-3 `recordConsultationDerivation` order (`mailbox-service.ts:1885-1942`). */
 function onConsultationDerived(state: MessageMachineState, ctx: MessageGuardContext): MessageTransition {
   const problem = first(
-    () => ctx.principal === 'host' ? null : reject('guard_failed', 'forbidden', 'only the Host may record a consultation derivation'),
+    () => messagePrincipalProblem({ type: 'consultation_derived' }, ctx.principal),
     () => messagePinProblem(ctx.pins),
   );
   if (problem !== null) return problem;
