@@ -51,7 +51,7 @@ import {
   decodeSessionRecord, encodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey,
 } from '../sessions/session-record-codecs.js';
 import {
-  transitionAttempt, transitionDispatchOutbox, transitionTaskLease,
+  taskLeaseNodeOf, transitionAttempt, transitionDispatchOutbox, transitionTaskLease,
   type AttemptClaimBasis, type AttemptEvent, type AttemptGuardContext,
 } from '../state/attempt-machine.js';
 import { messageMachineStateOf, messageSatisfiesWait } from '../state/message-machine.js';
@@ -245,9 +245,10 @@ function continuationBindingProblem(
  * TASK-02 facts of the yielded prior Run. Its node is the one §6 reads
  * (`runControlNodeOf`: only an `ended` yielded Run with its continuation is
  * `YieldedWait`). A queued wait-window pause/cancel (its pointer) holds the
- * continuation; the released lease must name THIS prior Run, so an older wait
- * cannot be consumed again after a later consumption moved the holder. The
- * saved reply is read afterwards (MSG-10).
+ * continuation; the lease, `released` as §5 reads it (`taskLeaseNodeOf`), must
+ * name THIS prior Run as holder, so an older wait cannot be consumed again
+ * after a later consumption moved the holder. The saved reply is read
+ * afterwards (MSG-10).
  */
 function continuationPrior(
   prior: RunSnapshot, lease: TaskLeaseSnapshot | null, consumedWait: ConsumedWaitV1, input: ClaimTaskInput,
@@ -256,7 +257,7 @@ function continuationPrior(
     node: runControlNodeOf(prior),
     pointer: runStateOf(prior).pointer,
     bindingProblem: prior.continuation === undefined ? null : continuationBindingProblem(prior.continuation, consumedWait, input),
-    leaseReleasedByPrior: lease !== null && lease.release !== undefined && lease.holderRunId === prior.ref.runId,
+    leaseReleasedByPrior: lease !== null && taskLeaseNodeOf(lease) === 'released' && lease.holderRunId === prior.ref.runId,
     replyProblem: null,
   };
 }
@@ -272,15 +273,14 @@ function deadlineProblem(deadline: string | null, nowMs: number): CoreRejection 
 
 /**
  * RUN-01's guard context (§6.1), built once TASK-01..03 accepted the claim:
- * the Run reads the Goal, SES-02's verdict on the target Session (an admitted
- * Session is active, available and unoccupied) and the claim facts
- * (TASK-01..03 already judged kind, disposition and eligibility); every
- * entry, control and reconcile fact belongs to later Run events.
+ * the Run reads the Goal and the claim facts (TASK-01..03 already judged kind,
+ * disposition and eligibility); every entry, control and reconcile fact
+ * belongs to later Run events.
  */
 function claimRunContext(facts: TaskClaimFacts, actor: Extract<ActorRef, { kind: 'human' | 'system' }>): RunGuardContext {
-  const admitted = facts.sessionProblem === null;
   return {
-    session: { usable: admitted, owned: false, kernel: null },
+    // TASK-01..03 accepted SES-02's verdict (`facts.sessionProblem === null`): an active, available, unoccupied Session.
+    session: { usable: true, owned: false, kernel: null },
     lease: 'missing',
     persistedClaim: null,
     goal: { desiredState: facts.goalDesiredState, activePlanMatchesClaim: facts.activePlanMatchesClaim },
@@ -296,7 +296,7 @@ function claimRunContext(facts: TaskClaimFacts, actor: Extract<ActorRef, { kind:
     kernelPaused: false,
     inputsConfirmed: null,
     actor: isAutomationActor(actor) ? 'system' : 'human',
-    claim: { sessionOccupied: !admitted, eligibility: null, taskHasRun: facts.taskHasRun,
+    claim: { sessionOccupied: false, eligibility: null, taskHasRun: facts.taskHasRun,
       prior: facts.prior, admission: facts.admission },
   };
 }
@@ -756,7 +756,7 @@ export function createTaskClaimService(deps: TaskClaimDependencies): TaskClaimPo
       prior: basis.kind === 'continuation' ? UNREAD_PRIOR : null, admission: null,
     };
     // Adds the facts just read and asks TASK-01..03 again.
-    const judge =(read: Partial<TaskClaimFacts>): CoreRejection | null => {
+    const judge = (read: Partial<TaskClaimFacts>): CoreRejection | null => {
       claimFacts = { ...claimFacts, ...read };
       return rejectionOf(taskClaimProblem(subject, basis, claimFacts));
     };
@@ -822,15 +822,15 @@ export function createTaskClaimService(deps: TaskClaimDependencies): TaskClaimPo
     // only against a formal yielded Run whose saved wait is the one it consumes.
     let continuationLease: TaskLeaseSnapshot | null = null;
     let continuationMessageGuard: RecordGuard | null = null;
+    let prior: TaskClaimFacts['prior'] = null;
     const consumedWait = input.consumedWait;
     if (consumedWait !== undefined) {
-      const prior = (facts.runsByTaskId.get(input.taskId) ?? []).find(run => sameRef(run.ref, consumedWait.runRef));
+      const priorRun = (facts.runsByTaskId.get(input.taskId) ?? []).find(run => sameRef(run.ref, consumedWait.runRef));
       continuationLease = facts.leasesByTaskId.get(input.taskId) ?? null;
-      claimFacts = { ...claimFacts,
-        prior: prior === undefined ? null : continuationPrior(prior, continuationLease, consumedWait, input) };
+      prior = priorRun === undefined ? null : continuationPrior(priorRun, continuationLease, consumedWait, input);
     }
     refused = judge({ structuralProblem: structuralProblemOf(eligibility), lease: state.lease,
-      taskHasRun: facts.taskHasRun === true });
+      taskHasRun: facts.taskHasRun === true, prior });
     if (refused !== null) return refused;
     if (consumedWait !== undefined) {
       // MSG-10: read the FORMAL saved reply from the same records transaction
