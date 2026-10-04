@@ -24,7 +24,7 @@
  *   and P20 (5.9) are not evaluated yet: their facts fall through to the row
  *   today's fold reaches.
  * - 已有 rows keep today's codes in today's order (`claim-service.ts:510-666`,
- *   `completion.ts:316-395`, `plan-service.ts:1737-1767`,
+ *   pre-step-3 `completion.ts:316-395`, `plan-service.ts:1737-1767`,
  *   `plan-readers.ts:1269-1297`).
  * - 改造 rows keep today's result; step 5 flips them: TASK-03 (the claim
  *   service does not read `requeueRef`, so a requeue claim follows the
@@ -257,7 +257,7 @@ export type TaskCompletionVerdictV1 = {
   satisfiedObligationIds: string[];
 };
 
-/** `task_completed` read facts (`completion.ts:327-394`). */
+/** `task_completed` read facts (pre-step-3 `completion.ts:327-394`). */
 export type TaskCompletionFacts = {
   /** The round's `subjectRunRef` Run. */
   producerRun: RunSnapshot;
@@ -343,7 +343,7 @@ export type TaskTransition = Transition<TaskMachineState, TaskEvent, TaskEffect>
 // Record constructors (§14.1: TaskReductionSnapshot, TaskRequeueSnapshotV1)  //
 // -------------------------------------------------------------------------- //
 
-/** What the completion owner built besides the round and the evaluation (`completion.ts:396-436`). */
+/** What the completion owner built besides the round and the evaluation (pre-step-3 `completion.ts:396-436`). */
 export type TaskReductionBuildV1 = {
   ref: TaskReductionRef;
   /** The persisted revision; null before the first reduction (written @1). */
@@ -354,7 +354,7 @@ export type TaskReductionBuildV1 = {
   blockingEvidenceIds: string[];
   staleEvidenceIds: string[];
   outOfScopeEvidenceIds: string[];
-  /** The admitted Evidence the index read (`completion.ts:360`). */
+  /** The admitted Evidence the index read (pre-step-3 `completion.ts:360`). */
   evidenceRefs: EvidenceRef[];
   reducedAt: string;
 };
@@ -362,7 +362,7 @@ export type TaskReductionBuildV1 = {
 export type NewTaskReductionInput = TaskReductionBuildV1 & { round: RoundSnapshot; evaluation: TaskCompletionVerdictV1 };
 
 /**
- * TASK-14/15/24: the reduction `completeTask` writes, in `completion.ts:408-436`
+ * TASK-14/15/24: the reduction `completeTask` writes, in the pre-step-3 `completion.ts:408-436`
  * key order. Its only writer reduces to `satisfied` (§4.1); any other
  * evaluation is refused before a record exists.
  */
@@ -927,15 +927,17 @@ function onRoundEvent(state: TaskMachineState, event: RoundTaskEvent): TaskTrans
 }
 
 /**
- * The round and producer checks of `completeTask` in `completion.ts:316-354`
- * order, exported so the owner can stop at the same point before reading
- * Evidence; `transitionTask` re-runs them.
+ * The round and producer checks of `completeTask` in the pre-step-3
+ * `completion.ts:316-354` order, exported so the owner can stop at the same
+ * points: after the round read (`producerRun` null: a producer not read yet
+ * holds) and after the producer read, before it reads Evidence;
+ * `transitionTask` re-runs them.
  */
 export function taskCompletionRoundProblem(input: {
   task: TaskTriple;
   taskKind: TaskKind;
   round: RoundSnapshot;
-  producerRun: RunSnapshot;
+  producerRun: RunSnapshot | null;
   producerTaskKind: TaskKind | null;
 }): CoreRejection | null {
   const { task, round, producerRun } = input;
@@ -946,11 +948,15 @@ export function taskCompletionRoundProblem(input: {
   if (round.outcome !== 'PASS') return incomplete('the specified round did not finalize as PASS');
   if (round.gaps.length > 0) return incomplete('the specified round carries unresolved gaps');
   if (round.evidenceRefs.length === 0) return incomplete('the specified round admitted no Evidence');
+  if (producerRun === null) return null;
   if (producerRun.ref.projectId !== task.projectId || producerRun.ref.goalId !== task.goalId) {
     return invalid('the round producer Run is outside the requested Goal');
   }
   if (producerRun.status !== 'ended') return incomplete('the round producer Run has not ended');
   if (producerRun.outcome === 'outcome_unknown') return incomplete('the round producer Run outcome is unknown');
+  // A yielded producer Run exited active execution on a real wait: it produced no
+  // verified output yet, so an old/other PASS can never complete the Task on it.
+  // The continuation produces a new Run and the normal checks path resumes there.
   if (producerRun.outcome === 'yielded') {
     return incomplete('the round producer Run yielded on a wait and has not produced verified output yet');
   }
@@ -963,6 +969,18 @@ export function taskCompletionRoundProblem(input: {
     return invalid('the round producer Run does not belong to the requested task');
   }
   return null;
+}
+
+/**
+ * The fold check of `completeTask` (pre-step-3 `completion.ts:392-395`),
+ * exported so the owner stops on an unsatisfied fold before it reads the
+ * pinned policy; `transitionTask` re-runs it after the round checks.
+ */
+export function taskCompletionFoldProblem(taskId: string, evaluation: TaskCompletionVerdictV1): CoreRejection | null {
+  if (evaluation.satisfied) return null;
+  const detail = evaluation.causes.map(cause => cause.message).join('; ');
+  return { status: 'rejected', code: 'incomplete',
+    reason: `task ${taskId} is not satisfied (${evaluation.phase})${detail.length === 0 ? '' : `: ${detail}`}` };
 }
 
 /**
@@ -980,14 +998,10 @@ function onTaskCompleted(
   const facts = ctx.completion;
   if (facts === null) return reject('illegal', 'invalid', 'task_completed requires the completion guard facts');
   const problem = taskCompletionRoundProblem({ task: event.task, taskKind: state.taskKind, round: event.round,
-    producerRun: facts.producerRun, producerTaskKind: facts.producerTaskKind });
+    producerRun: facts.producerRun, producerTaskKind: facts.producerTaskKind })
+    ?? taskCompletionFoldProblem(event.task.taskId, facts.evaluation);
   if (problem !== null) return rejected(problem);
   const evaluation = facts.evaluation;
-  if (!evaluation.satisfied) {
-    const detail = evaluation.causes.map(cause => cause.message).join('; ');
-    return reject('guard_failed', 'incomplete',
-      `task ${event.task.taskId} is not satisfied (${evaluation.phase})${detail.length === 0 ? '' : `: ${detail}`}`);
-  }
   const reduction = newTaskReductionRecord({ ...event.reduction, round: event.round, evaluation });
   return accept({ taskKind: state.taskKind, disposition: state.disposition, row: 'P1', phase: reduction.phase, cause: null },
     [{ kind: 'write_task_reduction', reduction }]);

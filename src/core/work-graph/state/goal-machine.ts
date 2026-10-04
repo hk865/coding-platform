@@ -22,7 +22,7 @@
  *
  * A.2 step 2 (§15.2) scope:
  * - 已有 rows keep today's records byte for byte (`commit-compiler.ts:111-118`,
- *   `plan-commit-compiler.ts:144,293`, `completion.ts:572-582`) and today's
+ *   `plan-commit-compiler.ts:144,293`, pre-step-3 `completion.ts:572-582`) and today's
  *   CoreError codes, checked in today's service order.
  * - 改造 rows keep TODAY's externally visible result; step 5.5 flips them: the
  *   `desiredState = active` guard of GOAL-07/08 (`busy`), the `busy` of a new
@@ -127,7 +127,10 @@ export function nextGoalDesiredState(goal: GoalSnapshot, input: {
   };
 }
 
-/** GOAL-07/08: `COMPLETED@previous+1` for the plan it was reduced against (today `completion.ts:572-582`, same key order). */
+/**
+ * GOAL-07/08: `COMPLETED@previous+1` for the plan it was reduced against (the
+ * pre-step-3 `completion.ts:572-582` literal, same key order).
+ */
 export function buildGoalPhaseSnapshot(input: {
   ref: GoalPhaseRef;
   /** The stored GoalPhase revision, null when there is none. */
@@ -230,10 +233,10 @@ export const GOAL_EVENT_TYPES: readonly GoalEventType[] = Object.freeze([
 ]);
 
 /**
- * What `completeGoal` read after the pointer (`completion.ts:529-569`): the
- * active Plan, `evaluateGoalCompletion` (`completion-policy.ts:209-279`), and
+ * What `completeGoal` read after the pointer (pre-step-3 `completion.ts:529-569`): the
+ * active Plan, `evaluateGoalCompletion` (`completion-policy.ts:190-260`), and
  * the formal reductions it consumes. `requiresReviewer` adds today's reviewer
- * reason to an incomplete answer (`completion.ts:549-554`).
+ * reason to an incomplete answer (pre-step-3 `completion.ts:549-554`).
  */
 export type GoalCompletionFacts = {
   plan: { ref: PlanRevisionRef; planRevision: number };
@@ -248,7 +251,7 @@ export type GoalGuardContext = {
   callerClass: ReworkActorClass | null;
   /** `goal_created`: `compareCallerGoalPins` agreed with the versions read (`task-service.ts:211-222`). */
   scopePinsAgree: boolean;
-  /** `goal_completed`: the Goal belongs to the trusted workspace (`completion.ts:524`). */
+  /** `goal_completed`: the Goal belongs to the trusted workspace (pre-step-3 `completion.ts:522`). */
   goalInWorkspace: boolean;
   /** `goal_completed`: null when the service did not read them (no pointer). */
   completion: GoalCompletionFacts | null;
@@ -376,17 +379,19 @@ function onPlanAdopted(state: GoalMachineState, event: Extract<GoalEvent, { type
 }
 
 /**
- * GOAL-07 (no GoalPhase) / GOAL-08 (a GoalPhase for an older plan),
- * `completeGoalFromHost` (`completion.ts:481-614`) in today's order: workspace,
- * Goal pin, pointer, GoalPhase pin, reduction. Today a GoalPhase already for
- * the active plan is completed again as `@r+1`, and the desired state is not
- * read; step 5.5 refuses both with `busy` (§2.4).
+ * The GOAL-07/08 guards of `completeGoalFromHost` in the pre-step-3
+ * `completion.ts:519-555` order: workspace, Goal pin, pointer, then the facts'
+ * plan, the GoalPhase pin and the reduction. Exported so the owner stops where
+ * it always stopped: right after the Goal read, with `completion` null (the
+ * facts, the GoalPhase and the reduction are not read yet and hold), and after
+ * the GoalPhase read and the pure reduction, before it reads the pinned
+ * policy. `transitionGoal` re-runs them, then requires the facts.
  */
-function onGoalCompleted(
+export function goalCompletionProblem(
   state: GoalMachineState,
-  event: Extract<GoalEvent, { type: 'goal_completed' }>,
-  ctx: GoalGuardContext,
-): GoalTransition {
+  event: Pick<Extract<GoalEvent, { type: 'goal_completed' }>, 'expectedGoalRevision' | 'expectedGoalPhaseRevision'>,
+  ctx: Pick<GoalGuardContext, 'goalInWorkspace' | 'completion'>,
+): Rejected | null {
   switch (state.node) {
     case 'absent':
       return reject('illegal', 'not_found', 'the Goal does not exist');
@@ -402,21 +407,21 @@ function onGoalCompleted(
   // `goalStateOf` keeps the node and the record together; this only narrows the type.
   const goal = state.goal;
   if (goal === null) return reject('illegal', 'not_found', 'the Goal does not exist');
-  // :524
+  // :522
   if (!ctx.goalInWorkspace) return reject('guard_failed', 'forbidden', 'the Goal belongs to another workspace');
-  // :525-526
+  // :523-525
   if (goal.revision !== event.expectedGoalRevision) {
     return reject('stale', 'revision_conflict', 'the Goal changed since the caller read it');
   }
-  // :527-528
+  // :526-527
   const pointer = state.activePlanRef;
   if (pointer === null) return reject('guard_failed', 'incomplete', 'the Goal has no adopted Plan to complete');
   const facts = ctx.completion;
-  if (facts === null) return reject('illegal', 'invalid', 'goal_completed requires the completion facts of the active plan');
+  if (facts === null) return null;
   if (!samePlan(facts.plan.ref, pointer)) {
     return reject('illegal', 'invalid', 'the completion facts were read for another plan than the Goal active plan');
   }
-  // :541-546
+  // :539-546
   const persistedPhaseRevision = state.goalPhase?.revision ?? null;
   const expectedPhaseRevision = event.expectedGoalPhaseRevision === 0 ? null : event.expectedGoalPhaseRevision;
   if (persistedPhaseRevision !== expectedPhaseRevision) {
@@ -428,6 +433,28 @@ function onGoalCompleted(
     if (facts.requiresReviewer) reasons.push('a required independent review requirement has no formal producer yet');
     return reject('guard_failed', 'incomplete', `Goal ${goal.ref.goalId} is not complete: ${reasons.join('; ')}`);
   }
+  return null;
+}
+
+/**
+ * GOAL-07 (no GoalPhase) / GOAL-08 (a GoalPhase for an older plan),
+ * `completeGoalFromHost` (`tasks/completion.ts`) in today's order
+ * (`goalCompletionProblem`). Today a GoalPhase already for the active plan is
+ * completed again as `@r+1`, and the desired state is not read; step 5.5
+ * refuses both with `busy` (§2.4).
+ */
+function onGoalCompleted(
+  state: GoalMachineState,
+  event: Extract<GoalEvent, { type: 'goal_completed' }>,
+  ctx: GoalGuardContext,
+): GoalTransition {
+  const problem = goalCompletionProblem(state, event, ctx);
+  if (problem !== null) return problem;
+  const facts = ctx.completion;
+  if (facts === null) return reject('illegal', 'invalid', 'goal_completed requires the completion facts of the active plan');
+  // `goalCompletionProblem` refused ∅ above; this only narrows the type.
+  const goal = state.goal!;
+  const persistedPhaseRevision = state.goalPhase?.revision ?? null;
   const goalPhase = buildGoalPhaseSnapshot({
     ref: { aggregateType: 'GoalPhase', projectId: goal.ref.projectId, goalId: goal.ref.goalId },
     previousRevision: persistedPhaseRevision,
@@ -869,7 +896,7 @@ function gateStateOf(gate: GoalDisplayTaskFactsV1, tasks: readonly GoalDisplayTa
     && task.requirementLevel === 'required');
   const round = gate.failure?.round ?? null;
   if (round === null) {
-    // Cancelled/superseded work carries no work any more (`completion-policy.ts:239`).
+    // Cancelled/superseded work carries no work any more (`completion-policy.ts:220`).
     const carried = requiredWork.filter((task) => task.disposition !== 'cancelled' && task.disposition !== 'superseded');
     return gate.requirementLevel === 'required' && carried.every((task) => task.phase === 'satisfied') ? 'awaiting_gate' : null;
   }

@@ -13,12 +13,15 @@
  *
  * `CanonicalTaskFacts`/`CanonicalTaskState` are TYPE-ONLY imports so this file
  * stays free of the reader's runtime (avoiding a completion <-> reader cycle).
+ * A Run that blocks completion is judged by `runUnresolvedBlocker`
+ * (`state/run-machine.ts`, the former `runBlocker` of this file).
  */
 import type { EffectiveEvidenceSet } from '../../../contracts/evidence.js';
 import { requirementKeyOf } from '../../../contracts/evidence.js';
 import type { PlanRevisionSnapshot } from '../../../contracts/plan.js';
 import type { RunSnapshot } from '../../../contracts/dispatch.js';
 import type { TaskReductionCause, TaskReductionPhase, TaskReductionSnapshot } from '../../../contracts/reduction.js';
+import { runUnresolvedBlocker } from '../state/run-machine.js';
 import type { CanonicalTaskFacts, CanonicalTaskState } from './plan-readers.js';
 
 export type TaskCompletionEvaluation = {
@@ -58,28 +61,6 @@ function requiredRequirementsOf(plan: PlanRevisionSnapshot, taskId: string): {
   return { required, requiredObligations };
 }
 
-/** A run whose real state blocks completion: still active, ended with an unknown
- * outcome, quarantined, unreconciled, or carrying an unreconciled entry
- * authorization. A normal ended Run is NEUTRAL: it never produces PASS. */
-function runBlocker(run: RunSnapshot): string | null {
-  if (run.status === 'starting' || run.status === 'running') {
-    return `run ${run.ref.runId} is ${run.status} and has not ended`;
-  }
-  if (run.status === 'ended' && run.outcome === 'outcome_unknown') {
-    return `run ${run.ref.runId} ended with an unknown outcome`;
-  }
-  const reconciliation = run.reconciliation;
-  if (reconciliation !== undefined) {
-    if (reconciliation.status === 'quarantined') return `run ${run.ref.runId} is quarantined and not reconciled`;
-    if (reconciliation.observation.kind === 'unresolved') return `run ${run.ref.runId} carries an unresolved reconciliation`;
-  }
-  const authorization = run.executionAuthorization;
-  if (authorization !== undefined && (authorization.phase === 'unknown' || authorization.phase === 'quarantined')) {
-    return `run ${run.ref.runId} carries an unreconciled ${authorization.phase} entry authorization`;
-  }
-  return null;
-}
-
 /** PURE Task completion decision over the ONE effective-evidence set. */
 export function evaluateTaskCompletion(input: {
   plan: PlanRevisionSnapshot;
@@ -117,7 +98,7 @@ export function evaluateTaskCompletion(input: {
 
   let runUnresolved = false;
   for (const run of runs) {
-    const blocker = runBlocker(run);
+    const blocker = runUnresolvedBlocker(run);
     if (blocker === null) continue;
     runUnresolved = true;
     causes.push({ code: 'unreconciled_side_effect', message: blocker, evidenceIds: [run.ref.runId] });
@@ -265,7 +246,7 @@ export function evaluateGoalCompletion(input: {
   // effect that must be reconciled before the Goal can be COMPLETED.
   for (const [taskId, runs] of taskFacts.runsByTaskId) {
     for (const run of runs) {
-      const blocker = runBlocker(run);
+      const blocker = runUnresolvedBlocker(run);
       if (blocker !== null) reasons.push(`task ${taskId}: ${blocker}`);
     }
   }

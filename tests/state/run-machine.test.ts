@@ -1348,7 +1348,7 @@ describe('pure helpers (§6.6, §15.1)', () => {
     expect(isPausedInterrupted({ ...ENDED, outcome: 'crashed' })).toBe(false);
   });
 
-  it('runUnresolvedBlocker keeps completion-policy.ts runBlocker', () => {
+  it('runUnresolvedBlocker keeps the former completion-policy.ts runBlocker', () => {
     expect(runUnresolvedBlocker(CLAIMED)).toBe('run run-1 is starting and has not ended');
     expect(runUnresolvedBlocker(RUNNING)).toBe('run run-1 is running and has not ended');
     expect(runUnresolvedBlocker(ENDED)).toBeNull();

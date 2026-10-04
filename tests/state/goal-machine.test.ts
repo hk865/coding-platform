@@ -27,7 +27,7 @@ import {
 import type { VerificationRoundRef } from '../../src/contracts/verification.js';
 import {
   GOAL_DISPLAY_PHASES, GOAL_DISPLAY_ROWS, GOAL_EVENT_TYPES, GOAL_FAN_OUT_ACTOR,
-  buildGoalPhaseSnapshot, findGoalResumeContinuations, goalFanOutReason, goalFanOutRequestId,
+  buildGoalPhaseSnapshot, findGoalResumeContinuations, goalCompletionProblem, goalFanOutReason, goalFanOutRequestId,
   goalResumeContinueRequestId, goalStateOf, newGoalSnapshot, nextGoalDesiredState, nextGoalPointer,
   projectGoalRunStop, reduceGoalDisplay, transitionGoal,
   type GoalCompletionFacts, type GoalDisplayCauseV1, type GoalDisplayFactsV1, type GoalDisplayTaskFactsV1,
@@ -461,6 +461,44 @@ describe('GOAL-07/08 goal_completed guards (completion.ts:481-614)', () => {
     expectResult(transitionGoal(state, completeEvent(state), ctxFor(state, { completion: facts })),
       no('guard_failed', 'incomplete', 'Goal g-1 is not complete: required task t-build is not formally satisfied; '
         + 'required obligation ob-1 is not formally satisfied; a required independent review requirement has no formal producer yet'));
+  });
+
+  it('goalCompletionProblem is the transition\'s refusal, so the owner can stop after each read', () => {
+    for (const name of STATE_NAMES) {
+      const current = STATES[name]!;
+      const base = completeEvent(current) as Extract<GoalEvent, { type: 'goal_completed' }>;
+      const events = [base, { ...base, expectedGoalRevision: 99 }, { ...base, expectedGoalPhaseRevision: 7 }];
+      const contexts = [ctxFor(current), ctxFor(current, { goalInWorkspace: false })];
+      if (current.activePlanRef !== null) {
+        contexts.push(ctxFor(current, { completion: completionFacts(current.activePlanRef,
+          { evaluation: { completed: false, reasons: ['required obligation ob-1 is not formally satisfied'] }, requiresReviewer: true }) }));
+        contexts.push(ctxFor(current, { completion: completionFacts(current.activePlanRef === P1 ? P2 : P1) }));
+      }
+      for (const event of events) {
+        for (const ctx of contexts) {
+          const transition = transitionGoal(current, event, ctx);
+          expect(goalCompletionProblem(current, event, ctx), `${name} ${JSON.stringify(event)}`)
+            .toEqual(transition.ok ? null : transition);
+        }
+      }
+    }
+  });
+
+  it('right after the Goal read (facts not read yet) the GoalPhase pin and the reduction hold', () => {
+    const done = STATES['activeDoneOther']!;
+    const unread = goalStateOf(done.goal, null);
+    const pins = { expectedGoalRevision: done.goal!.revision, expectedGoalPhaseRevision: 0 };
+    expect(goalCompletionProblem(unread, pins, { goalInWorkspace: true, completion: null })).toBeNull();
+    expect(goalCompletionProblem(unread, { ...pins, expectedGoalPhaseRevision: 7 }, { goalInWorkspace: true, completion: null }))
+      .toBeNull();
+    expectResult(goalCompletionProblem(unread, { ...pins, expectedGoalRevision: 99 }, { goalInWorkspace: true, completion: null })!,
+      no('stale', 'revision_conflict', 'the Goal changed since the caller read it'));
+    const noPlan = STATES['activeNoPlan']!;
+    expectResult(goalCompletionProblem(noPlan, completeEvent(noPlan) as Extract<GoalEvent, { type: 'goal_completed' }>,
+      { goalInWorkspace: true, completion: null })!, no('guard_failed', 'incomplete', 'the Goal has no adopted Plan to complete'));
+    // The transition itself still requires the facts.
+    expectResult(transitionGoal(done, completeEvent(done), ctxFor(done, { completion: null })),
+      no('illegal', 'invalid', 'goal_completed requires the completion facts of the active plan'));
   });
 
   it('step 5: paused/cancelled Goals and a second completion for the active plan still complete today', () => {

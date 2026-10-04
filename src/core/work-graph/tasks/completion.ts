@@ -10,8 +10,13 @@
  *   3. reads only the exact Goal/Plan/round/Evidence/index/facts/policy the
  *      completion actually consumes;
  *   4. folds the ONE effective-evidence set and calls the pure completion policy;
- *   5. commits the formal reduction/phase + one replay event + receipt ONCE with
+ *   5. asks the state machine (§4 TASK-14/15/24 `transitionTask`, §2 GOAL-07/08
+ *      `transitionGoal`), whose record constructors build the TaskReduction /
+ *      GoalPhase (§14.1);
+ *   6. commits the formal reduction/phase + one replay event + receipt ONCE with
  *      the local guards covering the whole read set.
+ * The machines' guards also run after each read through their exported
+ * problem functions, so a refusal stops the reads where it always stopped.
  *
  * It is not a second RecordStore, manager or evidence fold: applicability and
  * coverage come from `evidence/coverage.ts`, the decoders come from
@@ -27,9 +32,10 @@ import type {
 } from '../../../contracts/evidence.js';
 import type { GoalPhaseRef, GoalPhaseSnapshot } from '../../../contracts/goal-phase.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
-import type { PlanRevisionRef, PlanRevisionSnapshot } from '../../../contracts/plan.js';
+import type { PlanRevisionRef, PlanRevisionSnapshot, RuntimeTask } from '../../../contracts/plan.js';
 import type { TaskReductionRef, TaskReductionSnapshot } from '../../../contracts/reduction.js';
 import type { RunRef, RunSnapshot, TaskTriple } from '../../../contracts/dispatch.js';
+import { reworkActorClassOf } from '../../../contracts/task-requeue.js';
 import type { VerificationRoundRef, RoundSnapshot } from '../../../contracts/verification.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import type {
@@ -37,8 +43,15 @@ import type {
 } from '../../record-store/ports.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import {
+  goalCompletionProblem, goalStateOf, transitionGoal,
+  type GoalCommitGuard, type GoalCompletionFacts, type GoalGuardContext,
+} from '../state/goal-machine.js';
+import {
+  taskCompletionFoldProblem, taskCompletionRoundProblem, taskMachineStateOf, transitionTask, type TaskPhaseFacts,
+} from '../state/task-machine.js';
+import {
   readBatch, readCanonicalTaskFacts, readGoal, readGoalPhase, readPinnedCompletionPolicy, readPlan,
-  type Rejected,
+  type CanonicalTaskFacts, type CanonicalTaskState, type Rejected,
 } from './plan-readers.js';
 import { decodePlanRevisionSnapshot, planRevisionRefKey } from './plan-record-codecs.js';
 import {
@@ -120,6 +133,32 @@ function roundRefProblem(value: unknown): string | null {
     return 'the round ref must be a complete VerificationRoundRef';
   }
   return null;
+}
+
+/**
+ * The projection inputs (§4.1) of the completed Task from its directed
+ * canonical read (`plan-readers.ts` `readCanonicalTaskFacts`): the selected
+ * Run, the applicable Reduction, and an unresolvable origin, which that read
+ * shows only as a `blocked` Task with neither. No round chain and no
+ * TaskRequeue enter it before A.2 step 5.3/5.4. TASK-14/15/24 do not read the
+ * projection before step 5, so a selected Run or Reduction the read did not
+ * return projects as absent instead of refusing the completion. Keep it in
+ * step with `claimPhaseFacts` (`claim-service.ts`), the same mapping except
+ * that the claim answers null for that missing Run or Reduction.
+ */
+function completionPhaseFacts(task: RuntimeTask, state: CanonicalTaskState, read: CanonicalTaskFacts): TaskPhaseFacts {
+  const execution = state.execution;
+  const selectedRun = execution === null ? null
+    : (read.runsByTaskId.get(task.taskId) ?? []).find(run => sameRef(run.ref, execution)) ?? null;
+  const applicableReduction = state.reductionRevision === null ? null : read.reductionsByTaskId.get(task.taskId) ?? null;
+  return {
+    taskKind: task.taskKind,
+    applicableReduction,
+    selectedRun,
+    originUnresolvable: selectedRun === null && applicableReduction === null && state.effectivePhase === 'blocked',
+    round: { kind: 'none' },
+    coveringRequeue: null,
+  };
 }
 
 // -------------------------------------------------------------------------- //
@@ -292,6 +331,7 @@ export async function completeTaskFromHost(
     return notFound('the selected Plan belongs to another Goal');
   }
   const taskDefinition = plan.tasks.find(candidate => candidate.taskId === task.taskId);
+  // TASK-14/15/24 answer a Task outside the selected Plan (∅) with the same refusal.
   if (taskDefinition === undefined) return incomplete('the selected Plan does not define the requested task');
 
   const factsRead = await readCanonicalTaskFacts(deps.records, goalRef, plan, task.taskId);
@@ -312,14 +352,10 @@ export async function completeTaskFromHost(
   const roundRead = await readRecord(deps.records, refKeyOf(round) as string, decodeVerificationRoundSnapshot, 'VerificationRound');
   if (!roundRead.ok) return roundRead.rejection;
   const snapshot = roundRead.value as RoundSnapshot;
-  if (snapshot.subject.projectId !== goalRef.projectId || snapshot.subject.goalId !== goalRef.goalId
-    || snapshot.subject.taskId !== task.taskId) {
-    return invalid('the round subject disagrees with the requested task');
-  }
-  if (snapshot.status !== 'finalized') return incomplete('the specified round is not finalized');
-  if (snapshot.outcome !== 'PASS') return incomplete('the specified round did not finalize as PASS');
-  if (snapshot.gaps.length > 0) return incomplete('the specified round carries unresolved gaps');
-  if (snapshot.evidenceRefs.length === 0) return incomplete('the specified round admitted no Evidence');
+  // TASK-14/15/24 judge the round before its producer Run is read (a producer not read yet holds).
+  const roundRefusal = taskCompletionRoundProblem({ task, taskKind: taskDefinition.taskKind, round: snapshot,
+    producerRun: null, producerTaskKind: null });
+  if (roundRefusal !== null) return roundRefusal;
 
   // The round's producer Run is a real identity: for a work round it is the
   // task's own Run; for a gate round it must be a same-Goal ordinary work Run,
@@ -332,26 +368,10 @@ export async function completeTaskFromHost(
   }, 'subject Run');
   if (!producerRead.ok) return producerRead.rejection;
   const producerRun = producerRead.value as RunSnapshot;
-  if (producerRun.ref.projectId !== goalRef.projectId || producerRun.ref.goalId !== goalRef.goalId) {
-    return invalid('the round producer Run is outside the requested Goal');
-  }
-  if (producerRun.status !== 'ended') return incomplete('the round producer Run has not ended');
-  if (producerRun.outcome === 'outcome_unknown') return incomplete('the round producer Run outcome is unknown');
-  // A yielded producer Run exited active execution on a real wait: it produced no
-  // verified output yet, so an old/other PASS can never complete the Task on it.
-  // The continuation produces a new Run and the normal checks path resumes there.
-  if (producerRun.outcome === 'yielded') return incomplete('the round producer Run yielded on a wait and has not produced verified output yet');
-  if (taskDefinition.taskKind === 'gate') {
-    if (producerRun.task.taskId === task.taskId) {
-      return invalid('a gate round must reference a same-Goal ordinary producer Run, not a gate Run');
-    }
-    const producerDefinition = plan.tasks.find(candidate => candidate.taskId === producerRun.task.taskId);
-    if (producerDefinition === undefined || producerDefinition.taskKind !== 'work') {
-      return invalid('the gate round producer Run must be a same-Plan work task');
-    }
-  } else if (producerRun.task.taskId !== task.taskId) {
-    return invalid('the round producer Run does not belong to the requested task');
-  }
+  const producerTaskKind = plan.tasks.find(candidate => candidate.taskId === producerRun.task.taskId)?.taskKind ?? null;
+  const producerRefusal = taskCompletionRoundProblem({ task, taskKind: taskDefinition.taskKind, round: snapshot,
+    producerRun, producerTaskKind });
+  if (producerRefusal !== null) return producerRefusal;
 
   // Read the task's formal Evidence index and the exact admitted Evidence.
   const indexRef = { aggregateType: 'TaskEvidenceIndex' as const, projectId: goalRef.projectId,
@@ -389,10 +409,9 @@ export async function completeTaskFromHost(
     runs: facts.runsByTaskId.get(task.taskId) ?? [], lease: state.lease,
     requiredReviewerMissing: reviewerRequired,
   });
-  if (!evaluation.satisfied) {
-    const detail = evaluation.causes.map(cause => cause.message).join('; ');
-    return incomplete(`task ${task.taskId} is not satisfied (${evaluation.phase})${detail.length === 0 ? '' : `: ${detail}`}`);
-  }
+  // TASK-14/15/24 refuse an unsatisfied fold before the pinned policy is read.
+  const foldRefusal = taskCompletionFoldProblem(task.taskId, evaluation);
+  if (foldRefusal !== null) return foldRefusal;
 
   // The policy pinned by the adopted Plan is re-read and its local guard is
   // merged into this commit; the project active pointer is never consulted.
@@ -400,39 +419,31 @@ export async function completeTaskFromHost(
   if (policyRead.status !== 'resolved') return mapRejected(policyRead);
 
   const policyGuards = policyRead.guards;
-  const reductionRevision = (persistedReductionRevision ?? 0) + 1;
-  const currentAnchor: EffectivityAnchorV1 = { schemaVersion: 1, planRef: plan.ref, planRevision: plan.planRevision,
-    workspaceRevision: snapshot.identity.workspaceRevision,
-    pinnedCompletionPolicy: plan.effectiveCompletionPolicy,
-    pinnedArchitectureBaseline: plan.effectiveArchitectureBaseline };
-  const reduction: TaskReductionSnapshot = {
-    ref: reductionRef,
-    revision: reductionRevision,
-    schemaVersion: 1,
-    planRef: plan.ref,
-    planRevision: plan.planRevision,
-    taskKind: taskDefinition.taskKind,
-    requirementLevel: taskDefinition.requirementLevel,
-    disposition: taskDefinition.disposition,
-    phase: evaluation.phase,
-    currentAnchor,
-    effectiveEvidenceIds: effectiveSet.effectiveEvidenceIds,
-    blockingEvidenceIds: flattenBlocking(effectiveSet.blockingByRequirement),
-    staleEvidenceIds: effectiveSet.staleEvidenceIds,
-    outOfScopeEvidenceIds: effectiveSet.outOfScopeEvidenceIds,
-    satisfiedObligationIds: evaluation.satisfiedObligationIds,
-    causes: evaluation.causes,
-    reducedAt: deps.now(),
-    completion: {
-      schemaVersion: 1,
-      roundRef: snapshot.ref,
-      roundRevision: snapshot.revision,
-      taskBasisRef: snapshot.taskBasisRef,
-      verificationPlanRef: { planId: snapshot.verificationPlan.planId, planDigest: snapshot.verificationPlan.planDigest },
-      configurationDigest: snapshot.configurationDigest,
+  // TASK-14 (work), TASK-15 (gate), TASK-24 (already satisfied, new identity):
+  // the machine re-judges the round, its producer and the fold, and its record
+  // constructor builds the TaskReduction@revision+1 (§14.1).
+  const completed = transitionTask(taskMachineStateOf(taskDefinition, completionPhaseFacts(taskDefinition, state, facts)), {
+    kind: 'task_completed', task, round: snapshot,
+    reduction: {
+      ref: reductionRef,
+      previousRevision: persistedReductionRevision,
+      plan,
+      definition: taskDefinition,
+      effectiveEvidenceIds: effectiveSet.effectiveEvidenceIds,
+      blockingEvidenceIds: flattenBlocking(effectiveSet.blockingByRequirement),
+      staleEvidenceIds: effectiveSet.staleEvidenceIds,
+      outOfScopeEvidenceIds: effectiveSet.outOfScopeEvidenceIds,
       evidenceRefs: evidenceSnapshots.map(entry => entry.ref),
+      reducedAt: deps.now(),
     },
-  };
+  }, { taskId: task.taskId, claim: null, completion: { producerRun, producerTaskKind, evaluation }, trace: null });
+  if (!completed.ok) return reject(completed.code, completed.detail);
+  let reduction: TaskReductionSnapshot | null = null;
+  for (const effect of completed.effects) {
+    if (effect.kind !== 'write_task_reduction') throw new Error(`task_completed has no ${effect.kind} effect`);
+    reduction = effect.reduction;
+  }
+  if (reduction === null) throw new Error('task_completed must write the TaskReduction');
 
   const guards = mergeGuards([
     { refKey: refKeyOf(goalRef) as string, expectedRevision: goal.revision },
@@ -519,12 +530,17 @@ export async function completeGoalFromHost(
   const goalRead = await readGoal(deps.records, goalRef);
   if (goalRead.status !== 'ready') return mapRejected(goalRead);
   const goal = goalRead.goal;
-  if (goal.workspaceRef.workspaceId !== scope.workspaceId) return forbidden('the Goal belongs to another workspace');
-  if (goal.revision !== pins.goalPin.revision) {
-    return reject('revision_conflict', 'the Goal changed since the caller read it', [{ ref: goalRef, revision: goal.revision }]);
+  // GOAL-07/08: workspace, Goal pin and pointer before the Plan is read (the
+  // facts, the GoalPhase and the reduction are not read yet and hold).
+  const pinned = { expectedGoalRevision: pins.goalPin.revision, expectedGoalPhaseRevision: pins.targetPin.revision };
+  const goalInWorkspace = goal.workspaceRef.workspaceId === scope.workspaceId;
+  const admitted = goalCompletionProblem(goalStateOf(goal, null), pinned, { goalInWorkspace, completion: null });
+  if (admitted?.ok === false) {
+    return reject(admitted.code, admitted.detail,
+      admitted.reason === 'stale' ? [{ ref: goalRef, revision: goal.revision }] : undefined);
   }
-  const activeRef = goal.activePlanRevision;
-  if (activeRef === null) return incomplete('the Goal has no adopted Plan to complete');
+  // GOAL-07/08 refused a Goal without an adopted Plan above.
+  const activeRef = goal.activePlanRevision!;
   const planRead = await readPlan(deps.records, activeRef);
   if (planRead.status !== 'ready') return mapRejected(planRead);
   const plan = planRead.plan;
@@ -539,22 +555,11 @@ export async function completeGoalFromHost(
   const phaseRead = await readGoalPhase(deps.records, goalPhaseRef);
   if (phaseRead.status !== 'ready') return mapRejected(phaseRead);
   const persistedPhaseRevision = phaseRead.guard.expectedRevision;
-  const expectedPhaseRevision = pins.targetPin.revision === 0 ? null : pins.targetPin.revision;
-  if (persistedPhaseRevision !== expectedPhaseRevision) {
-    return reject('revision_conflict', 'the GoalPhase changed since the caller read it',
-      persistedPhaseRevision === null ? undefined : [{ ref: goalPhaseRef, revision: persistedPhaseRevision }]);
-  }
 
   const evaluation = evaluateGoalCompletion({ plan, taskFacts: facts });
-  if (!evaluation.completed) {
-    const requiresReviewer = plan.obligations.some(obligation => obligation.requirementLevel === 'required'
-      && obligation.verificationRequirements.some(requirement => requirement.requirementLevel === 'required'
-        && requirement.kind === 'reviewer'));
-    const reasons = [...evaluation.reasons];
-    if (requiresReviewer) reasons.push('a required independent review requirement has no formal producer yet');
-    return incomplete(`Goal ${goalRef.goalId} is not complete: ${reasons.join('; ')}`);
-  }
-
+  const requiresReviewer = plan.obligations.some(obligation => obligation.requirementLevel === 'required'
+    && obligation.verificationRequirements.some(requirement => requirement.requirementLevel === 'required'
+      && requirement.kind === 'reviewer'));
   const adoptedTaskReductions: { ref: TaskReductionRef; revision: number }[] = [];
   const satisfiedObligations = new Set<string>();
   for (const planTask of plan.tasks) {
@@ -565,29 +570,54 @@ export async function completeGoalFromHost(
     adoptedTaskReductions.push({ ref: reduction.ref, revision: reduction.revision });
     for (const obligationId of reduction.satisfiedObligationIds) satisfiedObligations.add(obligationId);
   }
+  const completion: GoalCompletionFacts = { plan: { ref: plan.ref, planRevision: plan.planRevision }, evaluation,
+    requiresReviewer, adoptedTaskReductions, satisfiedObligationIds: [...satisfiedObligations] };
+  const goalState = goalStateOf(goal, phaseRead.snapshot);
+  const goalCtx: GoalGuardContext = { callerClass: reworkActorClassOf(ownedCtx.ctx.principal, actor),
+    scopePinsAgree: true, goalInWorkspace, completion };
+  // GOAL-07/08 judge the GoalPhase pin, then the reduction, before the pinned
+  // policy is read; the Goal pin held above, so a stale refusal is the GoalPhase's.
+  const decided = goalCompletionProblem(goalState, pinned, goalCtx);
+  if (decided?.ok === false) {
+    return reject(decided.code, decided.detail, decided.reason === 'stale' && persistedPhaseRevision !== null
+      ? [{ ref: goalPhaseRef, revision: persistedPhaseRevision }] : undefined);
+  }
 
   const policyRead = await readPinnedCompletionPolicy(deps.records, plan.effectiveCompletionPolicy);
   if (policyRead.status !== 'resolved') return mapRejected(policyRead);
 
-  const goalPhase: GoalPhaseSnapshot = {
-    ref: goalPhaseRef,
-    revision: (persistedPhaseRevision ?? 0) + 1,
-    schemaVersion: 1,
-    planRef: plan.ref,
-    planRevision: plan.planRevision,
-    phase: 'COMPLETED',
-    adoptedTaskReductions,
-    satisfiedObligationIds: [...satisfiedObligations],
-    reducedAt: deps.now(),
+  // GOAL-07 (no GoalPhase) / GOAL-08 (one for an older plan): the machine
+  // builds GoalPhase COMPLETED@revision+1 (§14.1) and names the commit's guards.
+  const completed = transitionGoal(goalState, { type: 'goal_completed', ...pinned, reducedAt: deps.now() }, goalCtx);
+  if (!completed.ok) return reject(completed.code, completed.detail);
+  const goalPhase = completed.next.goalPhase;
+  if (goalPhase === null) throw new Error('goal_completed must write the GoalPhase');
+  const commitGuard = (guard: GoalCommitGuard): readonly RecordGuard[] => {
+    switch (guard.target) {
+      case 'goal': return [{ refKey: refKeyOf(goalRef) as string, expectedRevision: guard.expectedRevision }];
+      case 'plan_revision': return [{ refKey: refKeyOf(guard.ref) as string, expectedRevision: plan.revision }];
+      case 'goal_phase': return [{ refKey: phaseRead.guard.refKey, expectedRevision: guard.expectedRevision }];
+      case 'pinned_policy': return policyRead.guards;
+      case 'task_facts': return facts.guards;
+      default: throw new Error(`goal_completed has no ${guard.target} guard`);
+    }
   };
+  const commitGuards: RecordGuard[] = [];
+  for (const effect of completed.effects) {
+    switch (effect.kind) {
+      // The record is `next.goalPhase`; the GoalCompleted event is built below.
+      case 'write_goal_phase':
+      case 'append_event':
+        break;
+      case 'guard':
+        commitGuards.push(...commitGuard(effect.guard));
+        break;
+      default:
+        throw new Error(`goal_completed has no ${effect.kind} effect`);
+    }
+  }
 
-  const guards = mergeGuards([
-    { refKey: refKeyOf(goalRef) as string, expectedRevision: goal.revision },
-    { refKey: refKeyOf(plan.ref) as string, expectedRevision: plan.revision },
-    { refKey: phaseRead.guard.refKey, expectedRevision: persistedPhaseRevision },
-    ...policyRead.guards,
-    ...facts.guards,
-  ]);
+  const guards = mergeGuards(commitGuards);
   if (!guards.ok) return guards.rejection;
 
   const occurredAt = deps.now();

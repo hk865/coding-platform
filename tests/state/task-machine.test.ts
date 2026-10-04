@@ -42,7 +42,7 @@ import type {
 } from '../../src/contracts/verification.js';
 import {
   classifyTaskPhase, newTaskReductionRecord, newTaskRequeueRecord, projectTaskPhase, taskClaimProblem,
-  taskCompletionRoundProblem, taskMachineStateOf, transitionTask,
+  taskCompletionFoldProblem, taskCompletionRoundProblem, taskMachineStateOf, transitionTask,
   type NewTaskRequeueInput, type TaskClaimFacts, type TaskCompletionFacts, type TaskEffect, type TaskEvent,
   type TaskGuardContext, type TaskMachineState, type TaskPhaseFacts, type TaskPhaseProjection, type TaskReductionBuildV1,
   type TaskRoundEventKind, type TaskState, type TaskTrace,
@@ -798,6 +798,38 @@ describe('task_completed in completeTask order', () => {
       producerTaskKind: 'work' })).toBeNull();
     expect(taskCompletionRoundProblem({ task, taskKind: 'work', round: OPEN_PENDING, producerRun: PRODUCER,
       producerTaskKind: 'work' })).toEqual(rejection('incomplete', 'the specified round is not finalized'));
+  });
+
+  it('the owner stops where the transition refuses: the round before its producer is read, the producer, then the fold', () => {
+    const rounds = [FINAL_PASS, OPEN_PENDING, FINAL_FAIL, FINAL_PASS_GAPS, round('r', { ...FINAL_PASS, evidenceRefs: [] }),
+      round('r', { ...FINAL_PASS, subject: gateTask })];
+    const producers: RunSnapshot[] = [PRODUCER, RUNNING, ENDED_UNKNOWN, YIELDED_WAIT,
+      { ...PRODUCER, ref: { ...PRODUCER.ref, goalId: 'other' } }, { ...PRODUCER, task: { ...task, taskId: 'other' } }];
+    const evaluations = [SATISFIED, { satisfied: false, phase: 'blocked' as const, satisfiedObligationIds: [],
+      causes: [{ code: 'missing_evidence' as const, message: 'required verification requirements have no applicable evidence yet' }] }];
+    for (const passRound of rounds) {
+      for (const producerRun of producers) {
+        for (const evaluation of evaluations) {
+          const transition = at(work(passRound), { producerRun, evaluation });
+          const staged = taskCompletionRoundProblem({ task, taskKind: 'work', round: passRound, producerRun: null,
+            producerTaskKind: null })
+            ?? taskCompletionRoundProblem({ task, taskKind: 'work', round: passRound, producerRun, producerTaskKind: 'work' })
+            ?? taskCompletionFoldProblem(T, evaluation);
+          expect(staged === null ? null : { code: staged.code, detail: staged.reason })
+            .toEqual(transition.ok ? null : { code: transition.code, detail: transition.detail });
+        }
+      }
+    }
+  });
+
+  it('a producer not read yet holds; a satisfied fold has no problem', () => {
+    expect(taskCompletionRoundProblem({ task, taskKind: 'work', round: FINAL_PASS, producerRun: null,
+      producerTaskKind: null })).toBeNull();
+    expect(taskCompletionRoundProblem({ task: gateTask, taskKind: 'gate', round: GATE_PASS, producerRun: null,
+      producerTaskKind: null })).toBeNull();
+    expect(taskCompletionRoundProblem({ task, taskKind: 'work', round: FINAL_FAIL, producerRun: null,
+      producerTaskKind: null })).toEqual(rejection('incomplete', 'the specified round did not finalize as PASS'));
+    expect(taskCompletionFoldProblem(T, SATISFIED)).toBeNull();
   });
 
   it('the completion facts are required, and a record is built only for a satisfied fold', () => {

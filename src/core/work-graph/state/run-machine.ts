@@ -268,10 +268,10 @@ export function isPausedInterrupted(run: Pick<RunSnapshot, 'outcome' | 'reconcil
 /**
  * A Run whose real state blocks completion: still active, ended with an
  * unknown outcome, quarantined, unreconciled, or carrying an unreconciled
- * entry authorization. A normal ended Run is neutral. Copied unchanged from
- * `tasks/completion-policy.ts:61-81` `runBlocker` (§15.2 step 3 replaces the
- * original by an import); the extended observations `not_entered`,
- * `interrupted_clean`, `human_attested` and `runtime_terminal` do not block.
+ * entry authorization. A normal ended Run is neutral. Moved unchanged from
+ * `tasks/completion-policy.ts:61-81` `runBlocker` (§15.2 step 3), which now
+ * imports it; the extended observations `not_entered`, `interrupted_clean`,
+ * `human_attested` and `runtime_terminal` do not block.
  */
 export function runUnresolvedBlocker(run: RunSnapshot): string | null {
   if (run.status === 'starting' || run.status === 'running') {
