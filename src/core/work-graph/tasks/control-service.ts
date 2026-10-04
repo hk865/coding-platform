@@ -17,20 +17,31 @@
  * stable identity+fingerprint. Only a real lookup that finds the recorded event
  * returns `committed`/`replayed`; when the receipt cannot be read the result is
  * `unavailable` ("unknown"), never "did not commit".
+ *
+ * Both writes are decided by the pure machines (STATE-MACHINES-SPEC §7, §6):
+ * a submission by CTL-01 (`state/control-intent-machine.ts`), whose
+ * `run_pointer` effect the Run machine applies as RUN-09..15
+ * (`state/run-machine.ts`); an observation by CTL-03/05/06, whose only effect
+ * keeps the Run a CAS guard. The receipt lookup still comes first, each read
+ * happens where it always did (`submissionReadsPointerIntent`,
+ * `observedIntentProblem`), and the intent snapshot and the next Run come from
+ * the machines' constructors, never from a literal here.
  */
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type {
-  ControlIntentKindV1, ControlIntentRef, ControlIntentSnapshotV1, ControlObservationV1,
-  SubmitControlInput, SubmittedControl,
+  ControlIntentRef, ControlIntentSnapshotV1, SubmitControlInput, SubmittedControl,
 } from '../../../contracts/control-intent.js';
 import type { VersionPin } from '../../../contracts/core/identity.js';
 import type { CoreError, CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import type { RunRef, RunSnapshot } from '../../../contracts/dispatch.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
-import type { EncodedRecord, GoalRecordTransactionPort, PreparedCommit, StoreCommitReceipt } from '../../record-store/ports.js';
+import { isAutomationActor } from '../../../contracts/task-requeue.js';
+import type {
+  EncodedRecord, GoalRecordTransactionPort, PreparedCommit, RecordGuard, StoreCommitReceipt,
+} from '../../record-store/ports.js';
 import {
   CONTROL_INTENT_EVENT_SCHEMA_VERSION, CONTROL_INTENT_OBSERVED_EVENT_SCHEMA_VERSION,
-  CONTROL_INTENT_OBSERVED_EVENT_TYPE, CONTROL_INTENT_SUBMITTED_EVENT_TYPE,
+  CONTROL_INTENT_OBSERVED_EVENT_TYPE, CONTROL_INTENT_SNAPSHOT_SCHEMA_ID, CONTROL_INTENT_SUBMITTED_EVENT_TYPE,
   controlIntentObservedEventFromEvent, controlIntentSubmittedEventFromEvent,
   controlObservationProblem, decodeControlIntentSnapshot, encodeControlIntentObservedEvent,
   encodeControlIntentSnapshot, encodeControlIntentSubmittedEvent,
@@ -38,6 +49,16 @@ import {
 } from '../persistence/control-record-codecs.js';
 import { isRunExecutionHistoryV1 } from '../persistence/execution-history-codecs.js';
 import { isExecutionAuthorizationV2 } from '../persistence/execution-entry-codecs.js';
+import {
+  controlIntentRecordOf, controlIntentRequestOf, controlIntentStateOf, newControlIntentRequest, observationPairingProblem,
+  observedIntentProblem, submissionReadsPointerIntent, transitionControlIntent,
+  type ControlGuardContext, type ControlIntentEvent, type ControlPointerIntent,
+} from '../state/control-intent-machine.js';
+import {
+  controlSubmissionRunEvent, isPausedInterrupted, runControlNodeOf, runStateOf, transitionRun,
+  type RunGuardContext, type RunState,
+} from '../state/run-machine.js';
+import type { TransitionRejectReason } from '../state/transition.js';
 import {
   bindTrustedContext, checkRunPin, isRecord, isolateWrite, loadReplayEvent, mapStoreFailure,
   nonEmpty, sameRef,
@@ -50,6 +71,9 @@ import type { GraphWrite } from './contracts.js';
 type HostActor = { kind: 'human' | 'system'; id: string };
 type Records = GoalRecordTransactionPort;
 type LoadedRun = { ok: true; value: RunSnapshot } | { ok: false; rejection: CoreRejection };
+type SubmittedIntentEvent = Extract<ControlIntentEvent, { type: 'control_submitted' }>;
+type ObservedIntentEvent = Extract<ControlIntentEvent, { type: 'control_observed' }>;
+type Refused = { reason: TransitionRejectReason; code: CoreError; detail: string };
 
 const CONTROL_SUBMIT_PREFIX = 'r4-control-submit:';
 const CONTROL_OBSERVATION_PREFIX = 'r4-control-observation:';
@@ -65,7 +89,6 @@ function reject(code: CoreError, reason: string, current?: VersionPin[]): CoreRe
 }
 function invalid(reason: string): CoreRejection { return reject('invalid', reason); }
 function forbidden(reason: string): CoreRejection { return reject('forbidden', reason); }
-function busy(reason: string): CoreRejection { return reject('busy', reason); }
 function unavailable(reason: string): CoreRejection { return reject('unavailable', reason); }
 function notFound(reason: string): CoreRejection { return reject('not_found', reason); }
 function cancelled(reason: string): CoreRejection { return reject('cancelled', reason); }
@@ -117,26 +140,92 @@ function encodeRun(run: RunSnapshot): EncodedRecord {
     revision: run.revision, json: JSON.stringify(run) };
 }
 
+// -------------------------------------------------------------------------- //
+// Control and Run machine facts (STATE-MACHINES-SPEC §7.1, §6.1)              //
+// -------------------------------------------------------------------------- //
+
 /**
- * The narrow fresh-submit decision over the canonical Run pointer. A queued
- * cancel is final for this batch; a queued pause can be superseded by cancel.
- * A `running`/`steered` pointer does not authorize continuing execution.
+ * §7.1's guard context from one Run read, for the intent `intentRef`: the
+ * node as a control reads it (`runControlNodeOf`), the canonical pointer and
+ * steer list, the formal V2 entry identity and the persisted history locator
+ * (`'malformed'` when it fails the locator codec). The intent the pointer
+ * names is read only for the one submission that needs it. The Goal (D-9) and
+ * a consumed continuation (RD-8) are read from A.2 step 5.1 on and hold until
+ * then; the Kernel pause and the exit proof belong to other events.
  */
-function freshSubmitControlProblem(run: RunSnapshot, kind: ControlIntentKindV1): CoreRejection | null {
-  const control = run.controlState;
-  if (control === undefined) return kind === 'resume' ? busy('resume requires a formal pause') : null;
-  if (control.desiredState === 'cancelled') {
-    return busy('the Run is already fenced by a queued cancel control intent');
-  }
-  if (control.desiredState === 'paused' && kind === 'pause') {
-    return busy('the Run is already fenced by a queued pause control intent');
-  }
-  // An explicit resume is the ONLY thing that releases a formal pause hold; it
-  // is meaningless when the Run is not actually paused.
-  if (kind === 'resume' && control.desiredState !== 'paused') {
-    return busy('the Run is not fenced by a pause control intent');
-  }
-  return null;
+function controlContext(
+  run: RunSnapshot, intentRef: ControlIntentRef, pinsMatch: ControlGuardContext['pinsMatch'],
+): ControlGuardContext {
+  const auth = run.executionAuthorization;
+  const locator = run.executionHistory;
+  return {
+    run: {
+      node: runControlNodeOf(run),
+      pointer: runStateOf(run).pointer,
+      pointsHere: run.controlState !== undefined && sameRef(run.controlState.intentRef, intentRef),
+      inControlInputs: (run.controlInputs ?? []).some(ref => sameRef(ref, intentRef)),
+      continuationConsumed: false,
+      kernelPaused: false,
+      pausedInterrupted: isPausedInterrupted(run),
+      entry: isExecutionAuthorizationV2(auth)
+        ? { consumerId: auth.consumerId, entryGeneration: auth.generation, sessionGeneration: auth.sessionGeneration }
+        : null,
+      history: locator === undefined ? null : isRunExecutionHistoryV1(locator) ? locator : 'malformed',
+    },
+    goal: { desiredState: 'active' },
+    pointerIntent: null,
+    pinsMatch,
+    exitProof: null,
+    origin: 'live',
+  };
+}
+
+/** The intent the pointer names, as CTL-01's resume rule reads it. */
+function pointerIntentOf(intent: ControlIntentSnapshotV1): ControlPointerIntent {
+  return { kind: intent.kind, status: intent.status, observed: intent.status === 'queued' ? null : intent.observation.kind };
+}
+
+/**
+ * RUN-09..15's guard context: a submission reads only the intent the pointer
+ * names (the same `controlSubmissionProblem` as CTL-01). The Goal (D-9), the
+ * consumed continuation (RD-8) and the queued steers (D-8) are read from A.2
+ * step 5.1 on and hold until then; Session, Lease, entry and reconcile facts
+ * belong to other Run events.
+ */
+function controlRunContext(pointerIntent: ControlPointerIntent | null, actor: HostActor): RunGuardContext {
+  return {
+    session: { usable: true, owned: false, kernel: null },
+    lease: 'missing',
+    persistedClaim: null,
+    goal: { desiredState: 'active', activePlanMatchesClaim: true },
+    entryPlan: 'active_plan',
+    continuationBrief: 'absent_ok',
+    freshAdmission: null,
+    pointerIntent,
+    queuedSteerCount: 0,
+    continuationConsumed: false,
+    exitProof: null,
+    hostLease: null,
+    kernelProbe: null,
+    kernelPaused: false,
+    inputsConfirmed: null,
+    actor: isAutomationActor(actor) ? 'system' : 'human',
+    claim: null,
+  };
+}
+
+/**
+ * A machine refusal as the rejection today's service returned (§1.2: code and
+ * reason kept); a stale pin also names the current revision it lost to.
+ */
+function refusalOf(refused: Refused, current: VersionPin): CoreRejection {
+  return reject(refused.code, refused.detail, refused.reason === 'stale' ? [current] : undefined);
+}
+
+/** The Run an accepted transition writes: `next.record` is the whole next Run (§6). */
+function nextRunOf(next: RunState): RunSnapshot {
+  if (next.record === null) throw new Error('an accepted Run transition names the Run it writes');
+  return next.record;
 }
 
 /** Exact Run load through the SHARED authority; no Role/Session/material chain. */
@@ -213,11 +302,6 @@ async function readIntentRecord(records: Records, intentRef: ControlIntentRef): 
     return { ok: false, rejection: unavailable(`the control intent is damaged: ${decoded.reason}`) };
   }
   return { ok: true, value: decoded.value };
-}
-function observationStatusFor(kind: ControlObservationV1['kind']): 'applied' | 'superseded' | 'outcome_unknown' {
-  if (kind === 'terminal_without_cancel') return 'superseded';
-  if (kind === 'outcome_unknown') return 'outcome_unknown';
-  return 'applied';
 }
 
 /** Restore the exact observed snapshot from the immutable recorded event. */
@@ -367,36 +451,53 @@ export function createRunControlService(deps: RunControlServiceDependencies): Ru
       if (run.workspaceSnapshot.workspaceId !== scope.workspaceId) {
         return forbidden('the target Run belongs to another workspace');
       }
-      if (run.revision !== runPin.revision) {
+      const runPinned = run.revision === runPin.revision;
+      if (!runPinned) {
         // The FIRST lookup missed, but the Run advanced under us: this exact
         // call may be retrying a request that another writer already committed
         // with the same identity+fingerprint. Re-query the original identity
         // once; only a real receipt is replayed. A genuine miss keeps the
-        // explicit revision conflict with `current`, and any other read
-        // failure keeps its real rejection. A different request keeps its true
-        // CAS conflict because its identity is not found.
+        // explicit revision conflict with `current` (CTL-01's stale pin), and
+        // any other read failure keeps its real rejection. A different request
+        // keeps its true CAS conflict because its identity is not found.
         const outcome = await readIdentityReceipt(records, identity, fingerprint, actor);
         if (outcome.status === 'receipt') return outcome.result;
         if (outcome.status === 'failed') return outcome.rejection;
-        return reject('revision_conflict', 'the Run changed since the caller read it',
-          [{ ref: run.ref, revision: run.revision }]);
       }
-      // A Run that really yielded on a wait is the ONE ended Run that accepts a
-      // formal wait-window control: the queued pause/cancel survives the yield
-      // and gates the continuation instead of being lost with the terminal.
-      const yieldedWait = run.status === 'ended' && run.outcome === 'yielded'
-        && run.continuation !== undefined;
-      if ((run.status === 'ended' || run.outcome !== null) && !yieldedWait) {
-        return busy('the Run already ended; no new control intent is accepted');
-      }
-      if (input.kind === 'steer' && (input.reason === null || input.reason.trim().length === 0)) return invalid('steer requires the actual directional input text');
-      if (input.kind === 'resume' && !yieldedWait && run.controlState !== undefined) {
-        const pause = await readIntentRecord(records, run.controlState.intentRef);
+      // CTL-01 on this Run read: the pin, an ended Run (a Run that really
+      // yielded on a wait is the ONE ended Run that accepts a formal wait-window
+      // control: the queued pause/cancel survives the yield and gates the
+      // continuation instead of being lost with the terminal), the steer text,
+      // the resume rule and the pointer fence. Only a resume that needs the
+      // intent the pointer names reads it.
+      const submitted: SubmittedIntentEvent = { type: 'control_submitted', target: 'run', intentRef,
+        kind: input.kind, reason: input.reason };
+      let controlCtx = controlContext(run, intentRef, { intent: true, run: runPinned });
+      const pointer = run.controlState;
+      if (pointer !== undefined && submissionReadsPointerIntent(submitted, controlCtx)) {
+        const pause = await readIntentRecord(records, pointer.intentRef);
         if (!pause.ok) return pause.rejection;
-        if (pause.value.kind !== 'pause' || pause.value.status !== 'applied' || pause.value.observation?.kind !== 'paused') return busy('resume requires an observed paused original Turn');
+        controlCtx = { ...controlCtx, pointerIntent: pointerIntentOf(pause.value) };
       }
-      const controlProblem = freshSubmitControlProblem(run, input.kind);
-      if (controlProblem !== null) return controlProblem;
+      const decided = transitionControlIntent(controlIntentStateOf(null), submitted, controlCtx);
+      if (!decided.ok) return refusalOf(decided, { ref: run.ref, revision: run.revision });
+      // The intent's `run_pointer` effect is the Run owner's RUN-09..15: only
+      // revision and the pointer or steer list move; every other Run field is
+      // preserved, and the Run's own effect names this intent.
+      let nextRun: RunSnapshot | null = null;
+      for (const effect of decided.effects) {
+        if (effect.kind !== 'run_pointer') throw new Error(`control_submitted has no ${effect.kind} effect`);
+        const moved = transitionRun(runStateOf(run), controlSubmissionRunEvent(run, intentRef, input.kind, input.reason),
+          controlRunContext(controlCtx.pointerIntent, actor));
+        if (!moved.ok) return reject(moved.code, moved.detail);
+        for (const runEffect of moved.effects) {
+          if (runEffect.kind !== 'intent' || runEffect.event !== 'control_submitted' || !sameRef(runEffect.intentRef, intentRef)) {
+            throw new Error(`a control submission writes no Run ${runEffect.kind} effect`);
+          }
+        }
+        nextRun = nextRunOf(moved.next);
+      }
+      if (nextRun === null) throw new Error('control_submitted must move the Run pointer or steer list');
       if (signal.aborted) return cancelled('the control request was cancelled during the execution read');
 
       const nowIso = deps.now();
@@ -404,13 +505,8 @@ export function createRunControlService(deps: RunControlServiceDependencies): Ru
       if (!nonEmpty(nowIso) || !nonEmpty(eventId)) {
         return reject('unsupported', 'the injected id/clock source produced an empty value');
       }
-      const desiredState = input.kind === 'pause' ? 'paused' as const : input.kind === 'cancel' ? 'cancelled' as const : input.kind === 'resume' ? 'running' as const : 'steered' as const;
-      const intent: ControlIntentSnapshotV1 = { schemaVersion: 1, ref: intentRef, revision: 1,
-        runRef: input.runRef, kind: input.kind, desiredState, status: 'queued', reason: input.reason,
-        requestedAt: nowIso, requestedBy: actor };
-      // Only revision and controlState move; every other Run field is preserved.
-      const nextRun: RunSnapshot = { ...run, revision: run.revision + 1,
-        ...(input.kind === 'steer' ? { controlInputs: [...(run.controlInputs ?? []), intentRef] } : { controlState: { intentRef, desiredState } }) };
+      const intent = controlIntentRecordOf(newControlIntentRequest({ ref: intentRef, runRef: input.runRef,
+        kind: input.kind, reason: input.reason, requestedAt: nowIso, requestedBy: actor }), decided.next);
       const runRecord = encodeRun(nextRun);
       const intentRecord = encodeControlIntentSnapshot(intent);
       const event: ControlIntentSubmittedEvent = { eventId, eventType: CONTROL_INTENT_SUBMITTED_EVENT_TYPE,
@@ -522,10 +618,11 @@ export function createRunControlService(deps: RunControlServiceDependencies): Ru
       const intent = intentRead.value;
       if (!sameRef(intent.ref, intentRef)) return unavailable('the control intent ref disagrees with the stored record');
       if (!sameRef(intent.runRef, runRef)) return invalid('the observed Run disagrees with the intent Run');
-      if (intent.revision !== checkedPins.intentPin.revision) {
-        return reject('revision_conflict', 'the control intent changed since the caller read it',
-          [{ ref: intentRef, revision: intent.revision }]);
-      }
+      // CTL-03's intent pin is asked before the Run is read.
+      const observed: ObservedIntentEvent = { type: 'control_observed', observation };
+      const intentPinned = intent.revision === checkedPins.intentPin.revision;
+      const staleIntent = observedIntentProblem(observed, { pinsMatch: { intent: intentPinned, run: true } });
+      if (staleIntent !== null && !staleIntent.ok) return refusalOf(staleIntent, { ref: intentRef, revision: intent.revision });
 
       const loaded = await loadRun(deps, runRef);
       if (!loaded.ok) return loaded.rejection;
@@ -533,67 +630,45 @@ export function createRunControlService(deps: RunControlServiceDependencies): Ru
       if (run.workspaceSnapshot.workspaceId !== scope.workspaceId) {
         return forbidden('the observed Run belongs to another workspace');
       }
-      if (run.revision !== checkedPins.runPin.revision) {
-        return reject('revision_conflict', 'the Run changed since the caller read it',
-          [{ ref: run.ref, revision: run.revision }]);
-      }
-      const auth = run.executionAuthorization;
-      if (!isExecutionAuthorizationV2(auth)) {
-        return forbidden('the observed Run has no formal V2 entry authorization');
-      }
-      if (auth.consumerId !== observation.entry.consumerId
-        || auth.generation !== observation.entry.entryGeneration
-        || auth.sessionGeneration !== observation.entry.sessionGeneration) {
-        return forbidden('the observed entry identity disagrees with the Run entry binding');
-      }
-      const locator = run.executionHistory;
-      if (locator === undefined) return forbidden('the observed Run has no execution-history locator');
-      if (!isRunExecutionHistoryV1(locator)) return unavailable('the stored execution-history locator is malformed');
-      if (locator.sessionRef.projectId !== observation.history.sessionRef.projectId
-        || locator.sessionRef.sessionId !== observation.history.sessionRef.sessionId
-        || locator.kernel.adapterId !== observation.history.kernel.adapterId
-        || locator.kernel.kernelSessionId !== observation.history.kernel.kernelSessionId
-        || locator.kernel.runId !== observation.history.kernel.runId
-        || locator.kernel.turnId !== observation.history.kernel.turnId
-        || locator.startPosition !== observation.history.startPosition) {
-        return forbidden('the observation history disagrees with the Run locator');
-      }
-      // The persisted Run locator is the authority for the window; the
-      // observation must never replace it with a self-reported upper bound. A
-      // terminal window is bounded by `endPosition`, a nonterminal one by the
-      // last persisted `observedThroughPosition`, so a source from a later Turn
-      // of the same Session can never be accepted.
-      const persistedThrough = locator.endPosition ?? locator.observedThroughPosition;
-      if (observation.source.position < locator.startPosition
-        || observation.source.position > persistedThrough) {
-        return unavailable('the observation source is outside the persisted Run history window');
-      }
-      if (observation.history.observedThroughPosition > persistedThrough) {
-        return unavailable('the observation window exceeds the persisted Run history window');
-      }
-
-      // A newer canonical pointer keeps the older observation as history but
-      // marks it superseded; it never releases or rewrites the newer control.
-      const pointer = run.controlState;
-      const superseded = intent.kind === 'steer' ? !(run.controlInputs ?? []).some(ref => sameRef(ref, intentRef)) : pointer === undefined || !sameRef(pointer.intentRef, intentRef);
-      const status = superseded ? 'superseded' : observationStatusFor(observation.kind);
-      const nextRevision = intent.revision + 1;
-      if (!Number.isSafeInteger(nextRevision)) {
-        return invalid('the control intent revision would not be a safe integer');
-      }
-      const nextSnapshot: ControlIntentSnapshotV1 = {
-        schemaVersion: intent.schemaVersion, ref: intent.ref, runRef: intent.runRef, kind: intent.kind,
-        desiredState: intent.desiredState, reason: intent.reason, requestedAt: intent.requestedAt,
-        requestedBy: intent.requestedBy, revision: nextRevision, status, observation,
-      };
+      // CTL-03/05/06 on this Run read: the Run pin, the formal V2 entry
+      // identity, the persisted locator and its window, then the status. The
+      // persisted Run locator is the authority for the window; the observation
+      // must never replace it with a self-reported upper bound. A terminal
+      // window is bounded by `endPosition`, a nonterminal one by the last
+      // persisted `observedThroughPosition`, so a source from a later Turn of
+      // the same Session can never be accepted. A newer canonical pointer keeps
+      // the older observation as history but marks it superseded; it never
+      // releases or rewrites the newer control.
+      const decided = transitionControlIntent(controlIntentStateOf(intent), observed,
+        controlContext(run, intentRef, { intent: intentPinned, run: run.revision === checkedPins.runPin.revision }));
+      // §7.4's kind pairing is the snapshot codec's rule, which today's commit
+      // enforces: the clock and event id are drawn, the Run key and the
+      // cancellation are checked, then the RecordStore's schema check refuses
+      // the snapshot. Until step 5.1 relaxes the pairing with CTL-03/CTL-06,
+      // that one refusal keeps this order and the store's reason.
+      const mispaired = !decided.ok && decided.reason === 'illegal'
+        && decided.detail === observationPairingProblem(intent.kind, observation);
+      if (!decided.ok && !mispaired) return refusalOf(decided, { ref: run.ref, revision: run.revision });
       const nowIso = deps.now();
       const eventId = deps.eventId();
       if (!nonEmpty(nowIso) || !nonEmpty(eventId)) {
         return reject('unsupported', 'the injected id/clock source produced an empty value');
       }
+      if (!decided.ok) {
+        if (refKeyOf(run.ref) === null) return invalid('the observed Run ref is not canonicalizable JSON');
+        if (signal.aborted) return cancelled('the control observation was cancelled before commit');
+        return invalid(`record schema ${CONTROL_INTENT_SNAPSHOT_SCHEMA_ID} rejected the record: ${decided.detail}`);
+      }
+      const nextSnapshot = controlIntentRecordOf(controlIntentRequestOf(intent), decided.next);
       const intentRecord = encodeControlIntentSnapshot(nextSnapshot);
       const runKey = refKeyOf(run.ref);
       if (runKey === null) return invalid('the observed Run ref is not canonicalizable JSON');
+      // The observation writes only the intent; its `guard_run` effect keeps the Run a CAS guard.
+      const guards: RecordGuard[] = [{ refKey: intentRecord.refKey, expectedRevision: intent.revision }];
+      for (const effect of decided.effects) {
+        if (effect.kind !== 'guard_run') throw new Error(`control_observed has no ${effect.kind} effect`);
+        guards.push({ refKey: runKey, expectedRevision: run.revision });
+      }
       const event: ControlIntentObservedEvent = {
         eventId, eventType: CONTROL_INTENT_OBSERVED_EVENT_TYPE,
         schemaVersion: CONTROL_INTENT_OBSERVED_EVENT_SCHEMA_VERSION, occurredAt: nowIso,
@@ -601,10 +676,7 @@ export function createRunControlService(deps: RunControlServiceDependencies): Ru
       };
       const preparedCommit: PreparedCommit = {
         identityKey: identity, fingerprint,
-        guards: [
-          { refKey: intentRecord.refKey, expectedRevision: intent.revision },
-          { refKey: runKey, expectedRevision: run.revision },
-        ],
+        guards,
         records: [intentRecord], claims: [], indexGuards: [], indexChanges: [],
         events: [encodeControlIntentObservedEvent(event)],
       };

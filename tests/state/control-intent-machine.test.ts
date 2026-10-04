@@ -26,7 +26,7 @@ import {
 import {
   controlIntentRecordOf, controlIntentRequestOf, controlIntentStateOf, controlSubmissionProblem, controlSubmitProblem,
   desiredStateOfKind, newControlIntentRequest, newQueuedControlIntentRecord, observationPairingProblem,
-  observationStatusFor, pointerAfterSubmit, transitionControlIntent,
+  observationStatusFor, observedIntentProblem, pointerAfterSubmit, submissionReadsPointerIntent, transitionControlIntent,
   type ControlGuardContext, type ControlIntentEffect, type ControlIntentEvent, type ControlIntentState,
   type ControlNode, type ControlObservationKind, type ControlPointerIntent, type ControlRunNode, type ControlTransition,
   type RunControlPointer,
@@ -678,6 +678,75 @@ describe('control_observed: recorded node × intent kind × Kernel observation k
     expect(transitionControlIntent({ node: 'Queued', kind: null, revision: 1, observation: null },
       observedEvent(kernelObservation('paused')), ctxWith()))
       .toEqual({ ok: false, reason: 'illegal', code: 'invalid', detail: 'a recorded control intent must have a kind' });
+  });
+
+  it('a stored locator that fails the locator codec is unavailable right after the missing-locator row (`control-service.ts:551`)', () => {
+    const malformed = { ok: false, reason: 'guard_failed', code: 'unavailable', detail: 'the stored execution-history locator is malformed' };
+    const observe = (ctx: ControlGuardContext, observed: ControlObservationV1 = observation, state = queued('pause')) =>
+      transitionControlIntent(state, observedEvent(observed), ctx);
+    expect(observe(ctxWith({ history: 'malformed' }))).toEqual(malformed);
+    // The pins and the V2 entry identity come first (`:525-548`).
+    expect(observe(ctxWith({ history: 'malformed' }, { pinsMatch: { intent: false, run: true } })))
+      .toMatchObject({ reason: 'stale', detail: 'the control intent changed since the caller read it' });
+    expect(observe(ctxWith({ history: 'malformed' }, { pinsMatch: { intent: true, run: false } })))
+      .toMatchObject({ reason: 'stale', detail: 'the Run changed since the caller read it' });
+    expect(observe(ctxWith({ history: 'malformed', entry: null })))
+      .toMatchObject({ code: 'forbidden', detail: 'the observed Run has no formal V2 entry authorization' });
+    expect(observe(ctxWith({ history: 'malformed', entry: { ...ENTRY, consumerId: 'consumer-2' } })))
+      .toMatchObject({ code: 'forbidden', detail: 'the observed entry identity disagrees with the Run entry binding' });
+    // It precedes the locator identity, the window rows and the kind pairing (`:552-573`).
+    expect(observe(ctxWith({ history: 'malformed' }), kernelObservation('cancelled', { source: { ...KERNEL, position: 99 } }),
+      queued('steer'))).toEqual(malformed);
+  });
+});
+
+// -------------------------------------------------------------------------- //
+// The reads control-service.ts makes before CTL-01 / CTL-03 answer (step 3)  //
+// -------------------------------------------------------------------------- //
+
+describe('submissionReadsPointerIntent and observedIntentProblem (A.2 step 3)', () => {
+  it('reads the pointer intent only for a resume past the target-Run rows, not yielded, with a pointer', () => {
+    for (const node of RUN_NODES) {
+      for (const pointer of POINTERS) {
+        for (const kind of KINDS) {
+          for (const runPinned of [true, false]) {
+            const ctx = ctxWith({ node, pointer }, { pinsMatch: { intent: true, run: runPinned } });
+            const label = `${node}/${pointer}/${kind}/${String(runPinned)}`;
+            const reads = submissionReadsPointerIntent(submitEvent(kind), ctx);
+            const open = node !== 'Absent' && node !== 'Ended' && node !== 'EndedUnknown' && node !== 'YieldedWait';
+            expect(reads, label).toBe(kind === 'resume' && runPinned && open && pointer !== 'none');
+            // A submission that does not read it is answered the same whatever the pointer names.
+            if (!reads) {
+              const unread = transitionControlIntent(ABSENT, submitEvent(kind), ctx);
+              for (const pointerIntent of Object.values(POINTER_INTENT)) {
+                expect(transitionControlIntent(ABSENT, submitEvent(kind), { ...ctx, pointerIntent }), label).toEqual(unread);
+              }
+            }
+          }
+        }
+      }
+    }
+    expect(submissionReadsPointerIntent(submitEvent('resume', null, 'query_run'), ctxWith({ pointer: 'paused' }))).toBe(false);
+  });
+
+  it('a resume that reads it is answered by it, before the pointer fence', () => {
+    for (const node of ['Claimed', 'Authorized', 'Entering', 'Revoked', 'Running'] as const) {
+      const ctx = ctxWith({ node, pointer: 'cancelled' });
+      expect(submissionReadsPointerIntent(submitEvent('resume'), ctx), node).toBe(true);
+      expect(transitionControlIntent(ABSENT, submitEvent('resume'), { ...ctx, pointerIntent: POINTER_INTENT.cancelled }), node)
+        .toEqual({ ok: false, reason: 'guard_failed', code: 'busy', detail: 'resume requires an observed paused original Turn' });
+    }
+  });
+
+  it('observedIntentProblem is the intent pin alone, and the transition answers it first', () => {
+    const event = observedEvent(kernelObservation('paused'));
+    const stale = { ok: false, reason: 'stale', code: 'revision_conflict', detail: 'the control intent changed since the caller read it' };
+    expect(observedIntentProblem(event, { pinsMatch: { intent: true, run: false } })).toBeNull();
+    expect(observedIntentProblem(event, { pinsMatch: { intent: false, run: true } })).toEqual(stale);
+    for (const label of STATE_LABELS.filter(candidate => candidate !== 'Absent')) {
+      expect(transitionControlIntent(STATES[label], event, ctxWith({ node: 'Absent', entry: null, history: 'malformed' },
+        { pinsMatch: { intent: false, run: false } })), label).toEqual(stale);
+    }
   });
 });
 

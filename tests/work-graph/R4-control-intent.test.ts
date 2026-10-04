@@ -13,7 +13,9 @@
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
-import type { ControlIntentKindV1, SubmitControlInput, SubmittedControl } from '../../src/contracts/control-intent.js';
+import type {
+  ControlIntentKindV1, ControlObservationV1, SubmitControlInput, SubmittedControl,
+} from '../../src/contracts/control-intent.js';
 import type { VersionPin } from '../../src/contracts/core/identity.js';
 import type { RunControlPort } from '../../src/core/work-graph/tasks/control-contracts.js';
 import { createRunControlService } from '../../src/core/work-graph/tasks/control-service.js';
@@ -539,5 +541,85 @@ describe('R4.1 durable control intent', () => {
     expect(recoveredB).toMatchObject({ status: 'committed', replayed: true });
     if (recoveredB.status !== 'committed') throw Error('the original key must recover the same real receipt');
     expect(commitsB, 'the retry must not write a second commit').toBe(1);
+  });
+
+  // --------------------------------------------------------------------- //
+  // A.2 step 3: the machines read the Run where this service always did    //
+  // --------------------------------------------------------------------- //
+  it('reads the intent a resume pointer names only for a Run that is still open', async () => {
+    const fixture = await open();
+    const admitted = await fixture.enter();
+    const pause = await submitControl(fixture, controlsOn(fixture.base.records, 'open-pause'), 'open-pause', 'pause');
+    if (pause.status !== 'committed') throw Error('pause receipt required');
+    const pauseKey = b2Key(pause.value.intent.ref);
+    const keysRead: string[] = [];
+    const counted: B2Records = { ...fixture.base.records, async readMany(keys) {
+      keysRead.push(...keys);
+      return fixture.base.records.readMany(keys);
+    } };
+    const resume = async (tag: string, expected: VersionPin) => controlsOn(counted, tag).submitControl(fixture.ctx, {
+      input: { runRef: fixture.claim.runRef, kind: 'resume', reason: null },
+      meta: { requestId: `r4-resume-${tag}`, expected: [expected] } });
+
+    // An entered Run: the queued pause is read and is not yet an observed pause.
+    const openPin = await fixture.pin();
+    expect(await resume('open', openPin))
+      .toEqual({ status: 'rejected', code: 'busy', reason: 'resume requires an observed paused original Turn' });
+    expect(keysRead).toContain(pauseKey);
+
+    // A stale pin and an ended Run are refused before that read.
+    keysRead.length = 0;
+    expect(await resume('stale', { ...openPin, revision: openPin.revision - 1 }))
+      .toEqual({ status: 'rejected', code: 'revision_conflict', reason: 'the Run changed since the caller read it',
+        current: [openPin] });
+    expect(await fixture.entry.recordRunResult(fixture.ctx, { input: fixture.terminalObservation(admitted),
+      meta: { requestId: 'r4-resume-ended-result', expected: [await fixture.pin()] } }))
+      .toMatchObject({ status: 'committed', value: { status: 'ended', outcome: 'completed' } });
+    expect(await resume('ended', await fixture.pin()))
+      .toEqual({ status: 'rejected', code: 'busy', reason: 'the Run already ended; no new control intent is accepted' });
+    expect(keysRead).not.toContain(pauseKey);
+  });
+
+  it('refuses an observation the intent kind cannot pair with where the commit schema check did', async () => {
+    const fixture = await open();
+    await fixture.enter();
+    const pause = await submitControl(fixture, controlsOn(fixture.base.records, 'pair-pause'), 'pair-pause', 'pause');
+    if (pause.status !== 'committed') throw Error('pause receipt required');
+    const { run } = await fixture.read();
+    const auth = run.executionAuthorization;
+    const locator = run.executionHistory;
+    if (!auth || !('schemaVersion' in auth) || auth.schemaVersion !== 2 || locator === undefined) {
+      throw Error('an entered Run with a formal V2 entry and a history locator is required');
+    }
+    // The live observer's Kernel outcome_unknown ack of a consumed pause: until
+    // step 5.1 only a cancel intent may carry it.
+    const observation: ControlObservationV1 = {
+      schemaVersion: 1, kind: 'outcome_unknown',
+      entry: { consumerId: auth.consumerId, entryGeneration: auth.generation, sessionGeneration: auth.sessionGeneration },
+      history: { ...locator, endPosition: null },
+      source: { ...locator.kernel, position: locator.observedThroughPosition },
+      kernelEventId: 'r4-pairing-kernel-event', kernelEventSequence: 1, observedAt: B2_AT,
+    };
+    const expected = [{ ref: pause.value.intent.ref, revision: 1 }, await fixture.pin()];
+    let clocks = 0;
+    let ids = 0;
+    const observe = (tag: string, now: () => string, ctx: CoreCallContext = fixture.ctx) => createRunControlService({
+      records: fixture.base.records, authority: createMaterialRecordReaders(fixture.base.records).authority,
+      now: () => { clocks++; return now(); }, eventId: () => `r4-pairing-event-${++ids}`,
+    }).recordControlObservation(ctx, { input: { intentRef: pause.value.intent.ref, runRef: fixture.claim.runRef, observation },
+      meta: { requestId: `r4-pairing-${tag}`, expected } });
+
+    // The clock and event id are drawn first, then the stored-record schema refuses it.
+    expect(await observe('schema', () => B2_AT)).toEqual({ status: 'rejected', code: 'invalid',
+      reason: 'record schema ControlIntentSnapshot@1 rejected the record: a cancelled/unknown observation must belong to a cancel intent' });
+    expect([clocks, ids]).toEqual([1, 1]);
+    expect(await observe('empty-clock', () => ''))
+      .toEqual({ status: 'rejected', code: 'unsupported', reason: 'the injected id/clock source produced an empty value' });
+    const controller = new AbortController();
+    expect(await observe('cancelled', () => { controller.abort(); return B2_AT; }, { ...fixture.ctx, signal: controller.signal }))
+      .toEqual({ status: 'rejected', code: 'cancelled', reason: 'the control observation was cancelled before commit' });
+    expect([clocks, ids]).toEqual([3, 3]);
+    expect(await controlsOn(fixture.base.records, 'pair-read').readControl(fixture.ctx, pause.value.intent.ref))
+      .toEqual({ status: 'ready', value: pause.value.intent });
   });
 });

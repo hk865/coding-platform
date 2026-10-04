@@ -33,6 +33,10 @@
  * states), today's refusal texts, and the caller's Kernel source, boundary and
  * history shapes in its order.
  *
+ * It also routes `control-service.ts` `submitControl` (RUN-09..15 (U)): the
+ * service picks the event with `controlSubmissionRunEvent`, and the rows read
+ * the Run node as that service did (`runControlNodeOf`).
+ *
  * Pure: imports only `src/contracts` and this directory (§14.4).
  */
 import type { ControlIntentKindV1, ControlIntentRef } from '../../../contracts/control-intent.js';
@@ -126,6 +130,32 @@ export function runNodeOf(record: RunSnapshot | null): RunNode {
     case 'unknown': return 'EndedUnknown';
     case 'settled': return 'Ended';
     default: return unreachable(phase, 'V2 entry phase');
+  }
+}
+
+/**
+ * The node a control submission reads (`control-service.ts:384-391`): only an
+ * `ended` yielded Run with a continuation is the yielded wait (a yielded
+ * outcome on another status is a finished Run), every other finished Run is
+ * ended, and an unfinished Run is open whatever its V2 phase, one outside the
+ * eight states (`settled`/`unknown`) reading as `Running`. RUN-09..15 and
+ * §7 CTL-01 read the Run through it, so both answer as the control service did.
+ */
+export function runControlNodeOf(record: RunSnapshot): Exclude<RunNode, 'Absent'> {
+  const node = runNodeOf(record);
+  switch (node) {
+    case 'Absent': throw new Error('a stored Run always has a node');
+    case 'YieldedWait': return record.status === 'ended' ? node : 'Ended';
+    case 'Ended':
+    case 'EndedUnknown':
+      return isRunFinished(record) ? node : 'Running';
+    case 'Claimed':
+    case 'Authorized':
+    case 'Entering':
+    case 'Revoked':
+    case 'Running':
+      return node;
+    default: return unreachable(node, 'Run node');
   }
 }
 
@@ -921,7 +951,7 @@ export function transitionRun(state: RunState, event: RunEvent, ctx: RunGuardCon
     case 'pause_not_entered':
     case 'resume_not_entered':
       return onNotEnteredControl(node, run, event, ctx);
-    case 'control_submitted': return onControlSubmitted(node, run, event, ctx);
+    case 'control_submitted': return onControlSubmitted(run, event, ctx);
     case 'stop_paused': return onStopPaused(state, node, event, ctx);
     case 'reconcile_not_entered':
     case 'reconcile_terminal':
@@ -1230,15 +1260,31 @@ const NOT_ENTERED_EVENT = { cancel: 'stop_not_entered', pause: 'pause_not_entere
 const NOT_ENTERED_ROW = { stop_not_entered: 'RUN-09', pause_not_entered: 'RUN-10', resume_not_entered: 'RUN-11' } as const;
 
 /**
+ * The Run event of one Host control submission (`control-service.ts:325-437`):
+ * a pause, cancel or resume of a Run that never entered is RUN-09..11 (U),
+ * every other submission RUN-12..15, with the node `runControlNodeOf` reads.
+ */
+export function controlSubmissionRunEvent(
+  run: RunSnapshot, intentRef: ControlIntentRef, kind: ControlIntentKindV1, reason: string | null,
+): Extract<RunEvent, { kind: 'stop_not_entered' | 'pause_not_entered' | 'resume_not_entered' | 'control_submitted' }> {
+  if (kind !== 'steer' && controlClassOf(runControlNodeOf(run)) === 'not_entered') {
+    return { kind: NOT_ENTERED_EVENT[kind], source: 'U', intentRef };
+  }
+  return { kind: 'control_submitted', intentRef, control: kind, reason };
+}
+
+/**
  * RUN-09..11. (U) is 改造: today the submission on a Run that never entered
  * is queued like on an entered one (`control-service.ts:387-430`; step 5.1
  * applies it at once, D-7). (R), the reconcile of a leftover queued intent
- * (CTL-08(a)), is 新增.
+ * (CTL-08(a)), is 新增. A (U) submission reads the Run node as the control
+ * service reads it (`runControlNodeOf`).
  */
 function onNotEnteredControl(
-  node: Exclude<RunNode, 'Absent'>, run: RunSnapshot,
+  stateNode: Exclude<RunNode, 'Absent'>, run: RunSnapshot,
   event: Extract<RunEvent, { kind: 'stop_not_entered' | 'pause_not_entered' | 'resume_not_entered' }>, ctx: RunGuardContext,
 ): RunTransition {
+  const node = event.source === 'U' ? runControlNodeOf(run) : stateNode;
   const cls = controlClassOf(node);
   switch (cls) {
     case 'not_entered': break;
@@ -1262,13 +1308,13 @@ function onNotEnteredControl(
 /**
  * RUN-12..15 with today's result: no D-8 same-commit supersede, no D-9 Goal
  * guard for resume and no RD-8 consumed-continuation guard (step 5.1). A
- * pause/cancel/resume of a Run that never entered is `*_not_entered`.
+ * pause/cancel/resume of a Run that never entered is `*_not_entered`. The Run
+ * node is read as the control service reads it (`runControlNodeOf`).
  */
 function onControlSubmitted(
-  node: Exclude<RunNode, 'Absent'>, run: RunSnapshot,
-  event: Extract<RunEvent, { kind: 'control_submitted' }>, ctx: RunGuardContext,
+  run: RunSnapshot, event: Extract<RunEvent, { kind: 'control_submitted' }>, ctx: RunGuardContext,
 ): RunTransition {
-  const cls = controlClassOf(node);
+  const cls = controlClassOf(runControlNodeOf(run));
   switch (cls) {
     case 'ended':
       return reject('illegal', 'busy', 'the Run already ended; no new control intent is accepted');

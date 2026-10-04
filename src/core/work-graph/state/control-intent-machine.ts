@@ -22,6 +22,13 @@
  *   reason of the ended-Run refusal in step 5.6.
  * - The 新增 rows (CTL-02, CTL-04, CTL-07, CTL-08, CTL-10) keep their events in
  *   the union but still return `illegal` (`notYet`), so step 5 only adds rows.
+ *
+ * A.2 step 3 routes `control-service.ts` through this file (CTL-01 for
+ * `submitControl`, CTL-03/05/06 for `recordControlObservation`). The service
+ * asks `submissionReadsPointerIntent` before it reads the intent the pointer
+ * names and `observedIntentProblem` before it reads the Run, so each read
+ * happens exactly where it always did; a stored locator that fails the locator
+ * codec reaches the guards as `'malformed'` and keeps today's place in the order.
  */
 import type {
   ControlEntryIdentityV1, ControlIntentKindV1, ControlIntentRef, ControlIntentRequestV1,
@@ -94,10 +101,12 @@ export type ControlGuardContext = {
      * The persisted locator `Run.executionHistory` (`null` when absent). §7.1
      * names only its window `{start, through}`; the machine derives that window
      * here (`endPosition ?? observedThroughPosition`) and also compares the
-     * observation's history identity with it (`control-service.ts:549-560`). A
-     * malformed locator is a damaged read the service reports as `unavailable`.
+     * observation's history identity with it (`control-service.ts:549-560`).
+     * `'malformed'`: a stored locator that fails `isRunExecutionHistoryV1`, a
+     * damaged read answered `unavailable` right after the missing-locator row
+     * (`control-service.ts:551`).
      */
-    history: RunExecutionHistoryV1 | null;
+    history: RunExecutionHistoryV1 | 'malformed' | null;
   };
   /** D-9: the resume guard (§2). */
   goal: { desiredState: 'active' | 'paused' | 'cancelled' };
@@ -190,6 +199,15 @@ export function controlSubmitProblem(pointer: RunControlPointer, kind: ControlIn
 }
 
 /**
+ * A resume of a Run that did not yield, with a pointer, is the one submission
+ * answered by the intent that pointer names (`control-service.ts:393`): it must
+ * be an applied, observed pause.
+ */
+function resumeNeedsPointerIntent(kind: ControlIntentKindV1, yielded: boolean, pointer: RunControlPointer): boolean {
+  return kind === 'resume' && !yielded && pointer !== 'none';
+}
+
+/**
  * CTL-01's submission checks after the ended-Run refusal, in today's order
  * (`control-service.ts:392-399`): a steer needs its directional text; a resume
  * of a Run that did not yield, with a pointer, needs that pointer to name an
@@ -208,7 +226,7 @@ export function controlSubmissionProblem(input: {
   if (input.kind === 'steer' && (input.reason === null || input.reason.trim().length === 0)) {
     return { status: 'rejected', code: 'invalid', reason: 'steer requires the actual directional input text' };
   }
-  if (input.kind === 'resume' && !input.yielded && input.pointer !== 'none') {
+  if (resumeNeedsPointerIntent(input.kind, input.yielded, input.pointer)) {
     const pause = input.pointerIntent;
     if (pause === null || pause.kind !== 'pause' || pause.status !== 'applied' || pause.observed !== 'paused') {
       return busy('resume requires an observed paused original Turn');
@@ -374,7 +392,7 @@ export function controlIntentRecordOf(request: ControlIntentRequestV1, next: Con
 
 type SubmitEvent = Extract<ControlIntentEvent, { type: 'control_submitted' }>;
 type ObservedEvent = Extract<ControlIntentEvent, { type: 'control_observed' }>;
-type GuardRow<E> = { row: string; check(event: E, ctx: ControlGuardContext): Rejected | null };
+type GuardRow<E, C = ControlGuardContext> = { row: string; check(event: E, ctx: C): Rejected | null };
 
 /**
  * How a Run node answers a control: an ended Run that did not yield refuses it
@@ -403,11 +421,13 @@ function runControlClassOf(node: ControlRunNode): RunControlClass {
 
 /**
  * CTL-01 guards in today's order (`control-service.ts:96`, `:363-399`); the
- * first failing row answers. Step 5.1 adds the D-9 Goal guard and the RD-8
- * consumed-continuation guard inside `controlSubmissionProblem` (shared with
- * run-machine), and the C4 paused-interrupted reason to the ended-Run row.
+ * first failing row answers. The rows on the target Run come first: only a
+ * submission past them reads the intent the pointer names. Step 5.1 adds the
+ * D-9 Goal guard and the RD-8 consumed-continuation guard inside
+ * `controlSubmissionProblem` (shared with run-machine), and the C4
+ * paused-interrupted reason to the ended-Run row.
  */
-const SUBMIT_GUARDS: readonly GuardRow<SubmitEvent>[] = [
+const SUBMIT_TARGET_GUARDS: readonly GuardRow<SubmitEvent>[] = [
   { row: '7.4 QueryRunRef', check: event => event.target === 'query_run'
     ? reject('illegal', 'invalid', 'the control submission requires a complete RunRef') : null },
   { row: 'Run read', check: (_event, ctx) => runControlClassOf(ctx.run.node) === 'missing'
@@ -416,12 +436,30 @@ const SUBMIT_GUARDS: readonly GuardRow<SubmitEvent>[] = [
     ? null : reject('stale', 'revision_conflict', 'the Run changed since the caller read it') },
   { row: '7.4 Run ended', check: (_event, ctx) => runControlClassOf(ctx.run.node) === 'ended'
     ? reject('illegal', 'busy', 'the Run already ended; no new control intent is accepted') : null },
+];
+const SUBMIT_GUARDS: readonly GuardRow<SubmitEvent>[] = [
+  ...SUBMIT_TARGET_GUARDS,
   { row: '7.4 steer text, resume needs applied pause, pointer fence', check: (event, ctx) => {
     const problem = controlSubmissionProblem({ kind: event.kind, reason: event.reason, pointer: ctx.run.pointer,
       yielded: runControlClassOf(ctx.run.node) === 'yielded', pointerIntent: ctx.pointerIntent });
     return problem === null ? null : reject('guard_failed', problem.code, problem.reason);
   } },
 ];
+
+/**
+ * Whether CTL-01 answers this submission only with the intent `Run.controlState`
+ * names (`control-service.ts:393-397`): the rows on the target Run passed and
+ * it is a resume of a Run that did not yield, with a pointer. The service reads
+ * that intent exactly then, so the read happens where it always did and a
+ * refused earlier row never reads it; every other submission is answered with
+ * `pointerIntent: null`.
+ */
+export function submissionReadsPointerIntent(
+  event: Extract<ControlIntentEvent, { type: 'control_submitted' }>, ctx: ControlGuardContext,
+): boolean {
+  return firstFailing(SUBMIT_TARGET_GUARDS, event, ctx) === null
+    && resumeNeedsPointerIntent(event.kind, runControlClassOf(ctx.run.node) === 'yielded', ctx.run.pointer);
+}
 
 function sameHistoryIdentity(observed: RunExecutionHistoryV1, locator: RunExecutionHistoryV1): boolean {
   return locator.sessionRef.projectId === observed.sessionRef.projectId
@@ -434,13 +472,16 @@ function sameHistoryIdentity(observed: RunExecutionHistoryV1, locator: RunExecut
 }
 
 /**
- * CTL-03 guards in today's order (`control-service.ts:520-573`). The persisted
- * Run locator is the authority for the window: a terminal window is bounded by
- * `endPosition`, a nonterminal one by `observedThroughPosition`.
+ * CTL-03 guards in today's order (`control-service.ts:520-573`). The rows on
+ * the intent come first: only an observation past them reads the Run. The
+ * persisted Run locator is the authority for the window: a terminal window is
+ * bounded by `endPosition`, a nonterminal one by `observedThroughPosition`.
  */
-const OBSERVATION_GUARDS: readonly GuardRow<ObservedEvent>[] = [
+const OBSERVED_INTENT_GUARDS: readonly GuardRow<ObservedEvent, Pick<ControlGuardContext, 'pinsMatch'>>[] = [
   { row: '7.4 stale intent pin', check: (_event, ctx) => ctx.pinsMatch.intent
     ? null : reject('stale', 'revision_conflict', 'the control intent changed since the caller read it') },
+];
+const OBSERVED_RUN_GUARDS: readonly GuardRow<ObservedEvent>[] = [
   { row: 'Run read', check: (_event, ctx) => runControlClassOf(ctx.run.node) === 'missing'
     ? reject('illegal', 'not_found', 'the target Run does not exist') : null },
   { row: '7.4 stale Run pin', check: (_event, ctx) => ctx.pinsMatch.run
@@ -456,31 +497,48 @@ const OBSERVATION_GUARDS: readonly GuardRow<ObservedEvent>[] = [
   } },
   { row: '7.4 no locator', check: (_event, ctx) => ctx.run.history === null
     ? reject('guard_failed', 'forbidden', 'the observed Run has no execution-history locator') : null },
-  { row: '7.4 locator identity', check: ({ observation }, ctx) => ctx.run.history !== null
-    && !sameHistoryIdentity(observation.history, ctx.run.history)
-    ? reject('guard_failed', 'forbidden', 'the observation history disagrees with the Run locator') : null },
+  { row: 'malformed locator', check: (_event, ctx) => ctx.run.history === 'malformed'
+    ? reject('guard_failed', 'unavailable', 'the stored execution-history locator is malformed') : null },
+  { row: '7.4 locator identity', check: ({ observation }, ctx) => {
+    const locator = ctx.run.history;
+    if (locator === null || locator === 'malformed') return null;
+    return !sameHistoryIdentity(observation.history, locator)
+      ? reject('guard_failed', 'forbidden', 'the observation history disagrees with the Run locator') : null;
+  } },
   { row: '7.4 source window', check: ({ observation }, ctx) => {
     const locator = ctx.run.history;
-    if (locator === null) return null;
+    if (locator === null || locator === 'malformed') return null;
     const through = locator.endPosition ?? locator.observedThroughPosition;
     return observation.source.position < locator.startPosition || observation.source.position > through
       ? reject('guard_failed', 'unavailable', 'the observation source is outside the persisted Run history window') : null;
   } },
   { row: '7.4 observation window', check: ({ observation }, ctx) => {
     const locator = ctx.run.history;
-    if (locator === null) return null;
+    if (locator === null || locator === 'malformed') return null;
     const through = locator.endPosition ?? locator.observedThroughPosition;
     return observation.history.observedThroughPosition > through
       ? reject('guard_failed', 'unavailable', 'the observation window exceeds the persisted Run history window') : null;
   } },
 ];
 
-function firstFailing<E>(rows: readonly GuardRow<E>[], event: E, ctx: ControlGuardContext): Rejected | null {
+function firstFailing<E, C>(rows: readonly GuardRow<E, C>[], event: E, ctx: C): Rejected | null {
   for (const guard of rows) {
     const failed = guard.check(event, ctx);
     if (failed !== null) return failed;
   }
   return null;
+}
+
+/**
+ * CTL-03's rows on the intent itself (`control-service.ts:525-528`): the
+ * caller's intent pin. The service asks them after the intent read and before
+ * it reads the Run, so a stale intent never reads the Run;
+ * `transitionControlIntent` asks them again, first.
+ */
+export function observedIntentProblem(
+  event: Extract<ControlIntentEvent, { type: 'control_observed' }>, ctx: Pick<ControlGuardContext, 'pinsMatch'>,
+): Rejected | null {
+  return firstFailing(OBSERVED_INTENT_GUARDS, event, ctx);
 }
 
 // -------------------------------------------------------------------------- //
@@ -534,7 +592,7 @@ function onObserved(state: ControlIntentState, event: ObservedEvent, ctx: Contro
     case 'OutcomeUnknown': {
       const kind = state.kind;
       if (kind === null) return reject('illegal', 'invalid', 'a recorded control intent must have a kind');
-      const failed = firstFailing(OBSERVATION_GUARDS, event, ctx);
+      const failed = observedIntentProblem(event, ctx) ?? firstFailing(OBSERVED_RUN_GUARDS, event, ctx);
       if (failed !== null) return failed;
       const stillNamed = kind === 'steer' ? ctx.run.inControlInputs : ctx.run.pointsHere;
       const status = stillNamed ? observationStatusFor(event.observation.kind) : 'superseded';
