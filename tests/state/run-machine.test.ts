@@ -844,6 +844,125 @@ describe('RUN-07 terminal_observed', () => {
 });
 
 // ------------------------------------------------------------------------ //
+// A.2 step 3: execution-entry-service.ts routes W3..W6 through the machine   //
+// ------------------------------------------------------------------------ //
+
+describe('RUN-02/04/05/07 read the Run, Session and observation as execution-entry-service.ts does (A.2 step 3)', () => {
+  const v1 = (run: RunSnapshot): RunSnapshot => ({ ...run, executionAuthorization: { generation: 1, consumerId: 'c', phase: 'entered' } });
+  const withPhase = (run: RunSnapshot, phase: ExecutionAuthorizationV2['phase']): RunSnapshot =>
+    ({ ...run, executionAuthorization: { ...authOf(RUNNING), phase } });
+
+  it('names an archived and an unavailable claim Session as sessionOccupancyProblem does', () => {
+    const cases: Array<[RunEvent, RunSnapshot]> = [[EV.authorize, CLAIMED], [EV.begin, AUTHORIZED], [EV.entered, ENTERING]];
+    for (const [event, run] of cases) {
+      const at = (session: RunGuardContext['session']) => rejected(transitionRun(runStateOf(run), event, ctxWith({ session })));
+      expect(at({ ...CTX.session, usable: false, owned: false, archived: true }), event.kind)
+        .toEqual({ reason: 'guard_failed', code: 'busy', detail: 'the claim Session is archived' });
+      for (const session of [{ ...CTX.session, usable: false, archived: false }, { ...CTX.session, usable: false }]) {
+        expect(at(session), event.kind)
+          .toEqual({ reason: 'guard_failed', code: 'busy', detail: 'the claim Session is not available' });
+      }
+      expect(at({ ...CTX.session, owned: false }).detail).toBe('the claim Session is no longer occupied by this Run generation');
+    }
+  });
+
+  it('names a claim Lease of another Task as leaseOwnershipProblem does, before the persisted claim', () => {
+    const otherTask = ctxWith({ lease: 'other_task' });
+    const cases: Array<[RunEvent, RunSnapshot]> = [[EV.authorize, CLAIMED], [EV.begin, AUTHORIZED], [EV.entered, ENTERING]];
+    for (const [event, run] of cases) {
+      expect(rejected(transitionRun(runStateOf(run), event, otherTask)), event.kind)
+        .toEqual({ reason: 'guard_failed', code: 'busy', detail: 'the claim TaskLease names another Task' });
+    }
+    // W3's prepared claim reaches it: RUN-02 asks the Lease before the persisted claim.
+    expect(rejected(transitionRun(runStateOf(CLAIMED), EV.authorize, { ...MISMATCHED_CLAIM, lease: 'other_task' })))
+      .toEqual({ reason: 'guard_failed', code: 'busy', detail: 'the claim TaskLease names another Task' });
+    // RUN-07 releases only a Lease this Run owns.
+    const ended = ok(transitionRun(stateOf('Running'), EV.terminal, otherTask));
+    expect(ended.effects.some(effect => effect.kind === 'release_lease')).toBe(false);
+  });
+
+  it('refuses a V1 or pre-B2 Run with the one text of a Run without a V2 binding', () => {
+    const { executionAuthorization: _auth, ...preB2 } = RUNNING;
+    const cases: Array<[RunEvent, RunSnapshot]> = [[EV.begin, v1(AUTHORIZED)], [EV.entered, v1(ENTERING)],
+      [EV.terminal, v1(RUNNING)], [EV.terminal, preB2], [EV.begin, CLAIMED]];
+    for (const [event, run] of cases) {
+      expect(rejected(transitionRun(runStateOf(run), event, CTX)), event.kind)
+        .toMatchObject({ code: 'forbidden', detail: 'the Run has no formal V2 entry authorization' });
+    }
+  });
+
+  it('reads a fresh entry by status, then the V2 phase, also outside the eight states', () => {
+    for (const phase of ['entered', 'unknown', 'settled'] as const) {
+      const damaged = withPhase(CLAIMED, phase);
+      expect(runCombinationProblem(damaged), phase).not.toBeNull();
+      expect(rejected(transitionRun(runStateOf(damaged), EV.authorize, CTX)), phase)
+        .toEqual({ reason: 'illegal', code: 'busy', detail: 'the Run already has a V2 entry authorization' });
+      expect(rejected(transitionRun(runStateOf(damaged), EV.begin, CTX)), phase)
+        .toEqual({ reason: 'illegal', code: 'busy', detail: 'the Run entry is not in the authorized phase' });
+    }
+    // A starting Run that carries an outcome is still starting to today's service.
+    const finishedStarting: RunSnapshot = { ...CLAIMED, outcome: 'crashed' };
+    expect(ok(transitionRun(runStateOf(finishedStarting), EV.authorize, CTX)).next.record?.outcome).toBe('crashed');
+    expect(rejected(transitionRun(runStateOf({ ...AUTHORIZED, status: 'running' }), EV.begin, CTX)))
+      .toEqual({ reason: 'illegal', code: 'busy', detail: 'the Run is not in a beginable starting state' });
+  });
+
+  it('reads entered_observed by the entering phase alone', () => {
+    for (const status of ['running', 'ended'] as const) {
+      const result = ok(transitionRun(runStateOf({ ...ENTERING, status }), EV.entered, CTX));
+      expect(result.next.record).toMatchObject({ status: 'running', startedAt: T_ENTER });
+      expect(result.effects).toEqual([{ kind: 'attempt', event: 'attempt_started' }, { kind: 'outbox', change: 'entered' }]);
+    }
+  });
+
+  it('reads terminal_observed by the entered phase, then a finished Run', () => {
+    const at = (run: RunSnapshot) => rejected(transitionRun(runStateOf(run), EV.terminal, CTX));
+    for (const run of [ENDED, YIELDED_WAIT]) {
+      expect(at(run)).toEqual({ reason: 'duplicate', code: 'busy', detail: 'the Run entry is not in the entered phase' });
+    }
+    for (const run of [{ ...RUNNING, status: 'ended' as const, outcome: 'completed' as const },
+      { ...RUNNING, outcome: 'crashed' as const }, { ...withPhase(CLAIMED, 'entered'), outcome: 'cancelled' as const }]) {
+      expect(at(run)).toEqual({ reason: 'duplicate', code: 'busy', detail: 'the Run already has a terminal result' });
+    }
+    // A starting Run whose binding is entered is booked as today's service books it.
+    expect(ok(transitionRun(runStateOf(withPhase({ ...ENTERING, executionHistory: historyLocator(3, 3, null) }, 'entered')),
+      EV.terminal, CTX)).next.record?.status).toBe('ended');
+  });
+
+  it('checks the caller\'s terminal observation shapes in recordRunResult order', () => {
+    const at = (patch: Partial<Extract<RunEvent, { kind: 'terminal_observed' }>>) =>
+      rejected(transitionRun(stateOf('Running'), { ...EV.terminal, ...patch } as RunEvent, CTX));
+    expect(at({ kernelSource: { ...source(6), position: 0 } }))
+      .toEqual({ reason: 'guard_failed', code: 'invalid', detail: 'the terminal Kernel source is incomplete' });
+    expect(at({ kernelSource: 7 as unknown as ReturnType<typeof source> }).detail).toBe('the terminal Kernel source is incomplete');
+    for (const boundarySource of [null, 'x', 5]) {
+      expect(at({ completedHistoryBoundary: { source: boundarySource as unknown as ReturnType<typeof source>, cursor: 'cursor-6' } }))
+        .toEqual({ reason: 'guard_failed', code: 'invalid', detail: 'the completed history boundary disagrees with the terminal source' });
+    }
+    expect(at({ completedHistoryBoundary: 4 as unknown as { source: ReturnType<typeof source>; cursor: string } }).code).toBe('invalid');
+    for (const historyKernel of [null, 'x']) {
+      expect(at({ history: { ...observed(3, 6, 6), kernel: historyKernel as unknown as typeof kernel } }))
+        .toEqual({ reason: 'guard_failed', code: 'forbidden',
+          detail: 'the observed history Kernel identity disagrees with the terminal source' });
+    }
+    // The order: the entry projection and the null checks come before the shapes.
+    expect(at({ kernelSource: { ...source(6), position: 0 }, entry: { consumerId: 'other', entryGeneration: 1 } }).code)
+      .toBe('forbidden');
+    expect(at({ kernelSource: { ...source(6), position: 0 }, history: null }).code).toBe('incomplete');
+  });
+
+  it('compares the stored locator with the claim SessionRef as given (execution-history-binding.ts:115)', () => {
+    const wider = { ...claim, sessionRef: { ...sessionRef, note: 'x' } as typeof sessionRef };
+    const result = rejected(transitionRun(stateOf('Running'), { ...EV.terminal, claim: wider }, ctxWith({ persistedClaim: wider })));
+    expect(result).toEqual({ reason: 'stale', code: 'revision_conflict', detail: 'the execution-history identity/start is already fixed' });
+    // Without a stored locator the candidate keeps only the two SessionRef fields.
+    const entered = ok(transitionRun(stateOf('Entering'), { ...EV.entered, permit: { ...permitAt(2), claim: wider } },
+      ctxWith({ persistedClaim: wider })));
+    expect(entered.next.record?.executionHistory?.sessionRef).toEqual(sessionRef);
+  });
+});
+
+// ------------------------------------------------------------------------ //
 // RUN-09..15 control                                                        //
 // ------------------------------------------------------------------------ //
 

@@ -26,6 +26,13 @@
  *   the union; the §6.4 refusals in front of them already answer, and the row
  *   itself answers `illegal` (`notYet`) so step 5 only adds rows.
  *
+ * A.2 step 3 routes `execution-entry-service.ts` (RUN-02/04/05/07) through
+ * this file. Those rows read the Run, the claim Session and the caller's
+ * observation as that service did: a fresh entry by `status` then the V2
+ * phase, entered/terminal by the V2 phase (also for a Run outside the eight
+ * states), today's refusal texts, and the caller's Kernel source, boundary and
+ * history shapes in its order.
+ *
  * Pure: imports only `src/contracts` and this directory (§14.4).
  */
 import type { ControlIntentKindV1, ControlIntentRef } from '../../../contracts/control-intent.js';
@@ -462,10 +469,21 @@ export type RunGuardContext = {
   /**
    * `usable`: active + available; `owned`: `ownsOccupancy` (§8). `kernel` is
    * the claim Session's Kernel mapping, which a history locator must match
-   * (`execution-history-binding.ts:104`); `null` when not read.
+   * (`execution-history-binding.ts:104`); `null` when not read. `archived`
+   * says which half of `usable` failed, so RUN-02/04/05 keep today's two
+   * refusal texts (`execution-entry-service.ts` `sessionOccupancyProblem`);
+   * RUN-01 refuses with its own text and does not pass it.
    */
-  session: { usable: boolean; owned: boolean; kernel: { adapterId: string; kernelSessionId: string } | null };
-  lease: 'owned' | 'released' | 'other' | 'missing';
+  session: {
+    usable: boolean; owned: boolean; kernel: { adapterId: string; kernelSessionId: string } | null; archived?: boolean;
+  };
+  /**
+   * The claim Lease in `leaseOwnershipProblem` order: missing, released, a
+   * Lease naming another Task than the event's claim (`other_task`, an
+   * addition: RUN-02 asks it before the persisted claim, so a prepared claim
+   * naming another Task keeps today's text), then the holder.
+   */
+  lease: 'owned' | 'released' | 'other_task' | 'other' | 'missing';
   /**
    * The claim the Run's DispatchOutbox entry persisted (`outbox.claim`), which
    * the claim of RUN-02/04/05/07 must equal at today's point in each order
@@ -627,20 +645,27 @@ function freshAdmissionRejected(rejection: CoreRejection): Rejected {
   return rejection.code === 'capacity' ? reject('illegal', 'capacity', rejection.reason) : rejected(rejection);
 }
 
-/** `leaseOwnershipProblem` (`execution-entry-service.ts:1599-1612`): a missing Lease is never free. */
+/**
+ * `leaseOwnershipProblem` (`execution-entry-service.ts:1599-1612`): a missing Lease is never free;
+ * then a released Lease, a Lease naming another Task, another holder.
+ */
 function leaseGuard(lease: RunGuardContext['lease']): Rejected | null {
   switch (lease) {
     case 'owned': return null;
     case 'missing': return reject('guard_failed', 'busy', 'the claim TaskLease is missing; a missing lease is not free');
     case 'released': return reject('guard_failed', 'busy', 'the claim TaskLease was already released');
+    case 'other_task': return reject('guard_failed', 'busy', 'the claim TaskLease names another Task');
     case 'other': return reject('guard_failed', 'busy', 'the claim TaskLease is held by another attempt');
     default: return unreachable(lease, 'lease ownership');
   }
 }
 
-/** `sessionOccupancyProblem` (`execution-entry-service.ts:1614-1623`). */
+/** `sessionOccupancyProblem` (`execution-entry-service.ts:1614-1623`): lifecycle, health, then the holder. */
 function sessionGuard(ctx: RunGuardContext): Rejected | null {
-  if (!ctx.session.usable) return reject('guard_failed', 'busy', 'the claim Session is archived or not available');
+  if (!ctx.session.usable) {
+    return reject('guard_failed', 'busy',
+      ctx.session.archived === true ? 'the claim Session is archived' : 'the claim Session is not available');
+  }
   if (!ctx.session.owned) return reject('guard_failed', 'busy', 'the claim Session is no longer occupied by this Run generation');
   return null;
 }
@@ -671,13 +696,15 @@ function preparedBindingGuard(run: RunSnapshot, envelope: TaskEnvelopeV1): Rejec
   return null;
 }
 
-/** The Run's V2 binding, or the today's refusal for a Run without one. */
+/**
+ * The Run's V2 binding, or today's refusal for a Run without one
+ * (`execution-entry-service.ts:1089`, `:1222`, `:1362`): one text for a legacy
+ * V1 or pre-B2 Run (read-only history) and for a Run that never had a binding.
+ */
 function v2Binding(state: RunState, run: RunSnapshot): ExecutionAuthorizationV2 | Rejected {
   const auth = run.executionAuthorization;
   if (isAuthorizationV2(auth)) return auth;
-  return state.legacyV1
-    ? reject('guard_failed', 'forbidden', 'the Run has a legacy authorization; it is read-only history')
-    : reject('illegal', 'forbidden', 'the Run has no formal V2 entry authorization');
+  return reject(state.legacyV1 ? 'guard_failed' : 'illegal', 'forbidden', 'the Run has no formal V2 entry authorization');
 }
 
 function isRejected<T extends object>(value: T | Rejected): value is Rejected {
@@ -702,6 +729,12 @@ function permitMatches(auth: ExecutionAuthorizationV2, permit: RunEntryPermit): 
 
 function isPositiveSafeInteger(value: unknown): value is number {
   return Number.isSafeInteger(value) && (value as number) > 0;
+}
+
+/** `isKernelObservationSource` (`execution-entry-service.ts:170-172`): the four-field identity and a positive position. */
+function isKernelSource(value: unknown): value is RunKernelSource {
+  return isRecord(value) && nonEmpty(value['adapterId']) && nonEmpty(value['kernelSessionId'])
+    && nonEmpty(value['runId']) && nonEmpty(value['turnId']) && isPositiveSafeInteger(value['position']);
 }
 
 /** `isRunExecutionHistoryV1` shape (`persistence/execution-history-codecs.ts:100-122`). */
@@ -746,8 +779,8 @@ function locatorAfter(
   const existing = run.executionHistory;
   if (existing !== undefined) {
     if (!locatorShapeOk(existing)) return failed('unavailable', 'the stored executionHistory is malformed');
-    if (existing.sessionRef.projectId !== history.sessionRef.projectId
-      || existing.sessionRef.sessionId !== history.sessionRef.sessionId
+    // The stored locator against the claim SessionRef as given, whole (`execution-history-binding.ts:115`).
+    if (!sameRef(existing.sessionRef, sessionRef)
       || !sameKernel(existing.kernel, kernel) || existing.startPosition !== history.startPosition) {
       return failed('revision_conflict', 'the execution-history identity/start is already fixed');
     }
@@ -796,22 +829,29 @@ function releaseEffects(claim: TaskClaim, ctx: RunGuardContext, cursor: string):
 // -------------------------------------------------------------------------- //
 
 /**
- * How a node answers a fresh entry action (W3/W4): `status==='starting'`
- * first (`execution-entry-service.ts:939`, `:1086`), then the V2 phase.
+ * How a Run answers a fresh entry action (W3/W4), read as today's service
+ * reads it: `status==='starting'` first (`execution-entry-service.ts:939`,
+ * `:1086`), then the V2 phase of an existing binding. For the eight machine
+ * states this is the node (`Claimed`, `Authorized`, `Entering`, `Revoked`,
+ * the rest `not_starting`). A starting Run whose binding is `entered`,
+ * `unknown` or `settled` is outside them (`runCombinationProblem`) and is
+ * `damaged`: it answers like any other binding that is not `authorized`.
  */
-type StartingClass = 'none' | 'authorized' | 'entering' | 'revoked' | 'not_starting';
-function startingClassOf(node: Exclude<RunNode, 'Absent'>): StartingClass {
-  switch (node) {
-    case 'Claimed': return 'none';
-    case 'Authorized': return 'authorized';
-    case 'Entering': return 'entering';
-    case 'Revoked': return 'revoked';
-    case 'Running':
-    case 'Ended':
-    case 'YieldedWait':
-    case 'EndedUnknown':
-      return 'not_starting';
-    default: return unreachable(node, 'Run node');
+type StartingClass = 'none' | 'authorized' | 'entering' | 'revoked' | 'damaged' | 'not_starting';
+function startingClassOf(run: RunSnapshot): StartingClass {
+  if (run.status !== 'starting') return 'not_starting';
+  const auth = run.executionAuthorization;
+  if (!isAuthorizationV2(auth)) return 'none';
+  const phase = auth.phase;
+  switch (phase) {
+    case 'authorized': return 'authorized';
+    case 'entering': return 'entering';
+    case 'revoked': return 'revoked';
+    case 'entered':
+    case 'unknown':
+    case 'settled':
+      return 'damaged';
+    default: return unreachable(phase, 'V2 entry phase');
   }
 }
 
@@ -872,9 +912,9 @@ export function transitionRun(state: RunState, event: RunEvent, ctx: RunGuardCon
   switch (event.kind) {
     case 'claim_committed':
       return reject('illegal', 'invalid', 'a Run is created once, by its own claim');
-    case 'entry_authorized': return onEntryAuthorized(state, node, run, event, ctx);
-    case 'entry_begun': return onEntryBegun(state, node, run, event, ctx);
-    case 'entered_observed': return onEnteredObserved(state, node, run, event, ctx);
+    case 'entry_authorized': return onEntryAuthorized(state, run, event, ctx);
+    case 'entry_begun': return onEntryBegun(state, run, event, ctx);
+    case 'entered_observed': return onEnteredObserved(state, run, event, ctx);
     case 'history_recorded': return onHistoryRecorded(run, event, ctx);
     case 'terminal_observed': return onTerminalObserved(state, node, run, event, ctx);
     case 'stop_not_entered':
@@ -944,12 +984,11 @@ function onClaimCommitted(event: Extract<RunEvent, { kind: 'claim_committed' }>,
  * (`execution-entry-service.ts:935-981`).
  */
 function onEntryAuthorized(
-  state: RunState, node: Exclude<RunNode, 'Absent'>, run: RunSnapshot,
-  event: Extract<RunEvent, { kind: 'entry_authorized' }>, ctx: RunGuardContext,
+  state: RunState, run: RunSnapshot, event: Extract<RunEvent, { kind: 'entry_authorized' }>, ctx: RunGuardContext,
 ): RunTransition {
   const fence = fenceGuard(run);
   if (fence !== null) return fence;
-  const starting = startingClassOf(node);
+  const starting = startingClassOf(run);
   if (starting === 'not_starting') return reject('illegal', 'busy', 'the Run is not in a claimable starting state');
   const session = sessionGuard(ctx);
   if (session !== null) return session;
@@ -966,6 +1005,7 @@ function onEntryAuthorized(
     case 'none': break;
     case 'authorized':
     case 'entering':
+    case 'damaged':
       return reject('illegal', 'busy', 'the Run already has a V2 entry authorization');
     case 'revoked':
       // RUN-03 (改造) is step 5: today every existing V2 authorization is `busy`.
@@ -988,12 +1028,11 @@ function onEntryAuthorized(
  * Session, Lease, input binding, fresh re-admission.
  */
 function onEntryBegun(
-  state: RunState, node: Exclude<RunNode, 'Absent'>, run: RunSnapshot,
-  event: Extract<RunEvent, { kind: 'entry_begun' }>, ctx: RunGuardContext,
+  state: RunState, run: RunSnapshot, event: Extract<RunEvent, { kind: 'entry_begun' }>, ctx: RunGuardContext,
 ): RunTransition {
   const fence = fenceGuard(run);
   if (fence !== null) return fence;
-  const starting = startingClassOf(node);
+  const starting = startingClassOf(run);
   if (starting === 'not_starting') return reject('illegal', 'busy', 'the Run is not in a beginable starting state');
   const persisted = persistedClaimGuard(ctx, event.permit.claim, event.kind,
     'the entry permit claim disagrees with the persisted claim');
@@ -1005,6 +1044,7 @@ function onEntryBegun(
     case 'none':
       return reject('illegal', 'forbidden', 'the Run has no formal V2 entry authorization');
     case 'entering':
+    case 'damaged':
       return reject('illegal', 'busy', 'the Run entry is not in the authorized phase');
     case 'revoked':
       // §6.4: a revoked binding takes no begin until RUN-03 re-authorizes it.
@@ -1035,16 +1075,16 @@ function onEntryBegun(
  * fresh re-admission.
  */
 function onEnteredObserved(
-  state: RunState, node: Exclude<RunNode, 'Absent'>, run: RunSnapshot,
-  event: Extract<RunEvent, { kind: 'entered_observed' }>, ctx: RunGuardContext,
+  state: RunState, run: RunSnapshot, event: Extract<RunEvent, { kind: 'entered_observed' }>, ctx: RunGuardContext,
 ): RunTransition {
   const persisted = persistedClaimGuard(ctx, event.permit.claim, event.kind,
     'the entry permit claim disagrees with the persisted claim');
   if (persisted !== null) return persisted;
   const auth = v2Binding(state, run);
   if (isRejected(auth)) return auth;
-  // Today's check is the phase alone (`execution-entry-service.ts:1223`); for a legal combination it is the node.
-  if (node !== 'Entering' || auth.phase !== 'entering') {
+  // Today's check is the phase alone (`execution-entry-service.ts:1223`); for the eight machine states it is
+  // the node `Entering`, and a Run outside them (`runCombinationProblem`) is read the same way.
+  if (auth.phase !== 'entering') {
     return reject('illegal', 'busy', 'the Run entry is not in the entering phase');
   }
   const permit = permitMatches(auth, event.permit);
@@ -1102,30 +1142,24 @@ function onTerminalObserved(
   if (persisted !== null) return persisted;
   const auth = v2Binding(state, run);
   if (isRejected(auth)) return auth;
-  switch (node) {
-    case 'Running':
-      // Today's check is the phase (`execution-entry-service.ts:1363`); for a legal combination it is the node.
-      if (auth.phase !== 'entered') return reject('illegal', 'busy', 'the Run entry is not in the entered phase');
-      break;
-    case 'Claimed':
-    case 'Authorized':
-    case 'Entering':
-    case 'Revoked':
-      return reject('illegal', 'busy', 'the Run entry is not in the entered phase');
-    case 'Ended':
-    case 'YieldedWait':
-      // A new identity; the same identity and content replayed its receipt in the service (R5).
-      return reject('duplicate', 'busy', 'the Run already has a terminal result');
-    case 'EndedUnknown':
-      // §6.4: re-observing a terminal is not new evidence; only late_evidence/unknown_attested leave it.
-      // An unconfirmed input acceptance and an old sequence keep their own §6.4 answers first.
-      if (ctx.inputsConfirmed !== true) return reject('guard_failed', 'unavailable', 'the Turn input acceptance is not confirmed yet');
-      if (event.event.sequence <= state.lastEventSeq) {
-        return reject('stale', 'revision_conflict', 'the result event sequence is not newer than the applied Run fact');
-      }
-      return reject('guard_failed', 'incomplete', 'the Run outcome is unknown; only new Kernel evidence or an attestation resolves it');
-    default: return unreachable(node, 'Run node');
+  if (node === 'EndedUnknown') {
+    // §6.4: re-observing a terminal is not new evidence; only late_evidence/unknown_attested leave it.
+    // An unconfirmed input acceptance and an old sequence keep their own §6.4 answers first. No writer
+    // produces this node before RUN-08 (step 5.6).
+    if (ctx.inputsConfirmed !== true) return reject('guard_failed', 'unavailable', 'the Turn input acceptance is not confirmed yet');
+    if (event.event.sequence <= state.lastEventSeq) {
+      return reject('stale', 'revision_conflict', 'the result event sequence is not newer than the applied Run fact');
+    }
+    return reject('guard_failed', 'incomplete', 'the Run outcome is unknown; only new Kernel evidence or an attestation resolves it');
   }
+  // Today's order (`execution-entry-service.ts:1363-1364`), for every other Run including one outside the
+  // eight states: the V2 phase, then a finished Run. An ended Run (settled) is a new identity for a known
+  // terminal; the same identity replayed its receipt in the service (R5).
+  if (auth.phase !== 'entered') {
+    return reject(node === 'Ended' || node === 'YieldedWait' ? 'duplicate' : 'illegal', 'busy',
+      'the Run entry is not in the entered phase');
+  }
+  if (isRunFinished(run)) return reject('duplicate', 'busy', 'the Run already has a terminal result');
   if (ctx.exitProof === null) return reject('guard_failed', 'incomplete', 'the Kernel call has not exited cleanly; the result is not booked yet');
   if (ctx.inputsConfirmed !== true) return reject('guard_failed', 'unavailable', 'the Turn input acceptance is not confirmed yet');
   // RUN-08 (改造) is step 5: today the observer books nothing and the Run stays running.
@@ -1138,13 +1172,16 @@ function onTerminalObserved(
   if (kernelSource === null || boundary === null || observed === null) {
     return reject('guard_failed', 'incomplete', 'a terminal result requires the complete observed Turn boundary');
   }
+  // The observation is the caller's: its shapes are checked here, in today's order (`:1374-1384`).
+  if (!isKernelSource(kernelSource)) return reject('guard_failed', 'invalid', 'the terminal Kernel source is incomplete');
   if (auth.kernel === null || !sameKernel(auth.kernel, kernelSource)) {
     return reject('guard_failed', 'forbidden', 'the terminal Kernel source disagrees with the entered binding');
   }
-  if (!sameKernel(boundary.source, kernelSource) || boundary.source.position !== kernelSource.position || !nonEmpty(boundary.cursor)) {
+  if (!isRecord(boundary.source) || !sameKernel(boundary.source, kernelSource)
+    || boundary.source.position !== kernelSource.position || !nonEmpty(boundary.cursor)) {
     return reject('guard_failed', 'invalid', 'the completed history boundary disagrees with the terminal source');
   }
-  if (!sameKernel(observed.kernel, kernelSource)) {
+  if (!isRecord(observed.kernel) || !sameKernel(observed.kernel, kernelSource)) {
     return reject('guard_failed', 'forbidden', 'the observed history Kernel identity disagrees with the terminal source');
   }
   if (observed.endPosition !== kernelSource.position || observed.observedThroughPosition < kernelSource.position

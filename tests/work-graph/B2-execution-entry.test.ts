@@ -69,6 +69,20 @@ describe('B2 execution entry', () => {
     expect(await f.read()).toEqual(before);
   });
 
+  it('a prepared claim naming another Task of the claimed Run is refused at the claim Lease, before the persisted claim', async () => {
+    const f = await open(); const prepared = await f.buildPrepared();
+    // Internally consistent for another Task: the Run, Lease and Outbox are still read by the claim's runRef.
+    const taskId = 'b2-other-task';
+    const claim = { ...prepared.claim, task: { ...prepared.claim.task, taskId },
+      attemptRef: { ...prepared.claim.attemptRef, taskId }, outboxRef: { ...prepared.claim.outboxRef, taskId } };
+    const other = { ...prepared, claim, envelope: { ...prepared.envelope, taskId, attemptRef: claim.attemptRef } };
+    const before = await f.read();
+    expect(await f.entry.authorizeRuntimeEntry(f.ctx, { input: { prepared: other, consumerId: 'runtime-a' },
+      meta: { requestId: 'prepared-claim-other-task', expected: [await f.pin()] } }))
+      .toMatchObject({ status: 'rejected', code: 'busy', reason: 'the claim TaskLease names another Task' });
+    expect(await f.read()).toEqual(before);
+  });
+
   it('a Lease released after admission reads wins CAS and leaves no entry authorization', async () => {
     const f = await open(); const prepared = await f.buildPrepared(); const before = await f.read();
     const lease = before.lease; if (!lease) throw Error('real claim lease required');

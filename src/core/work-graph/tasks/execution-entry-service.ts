@@ -13,6 +13,17 @@
  * never re-reads the later Run. A fresh write compiles exactly ONE
  * `PreparedCommit` with all local guards actually used and the caller's exact
  * Run pin; no ledger horizon and no global workspace gate.
+ *
+ * The four lifecycle writes are decided by the pure Run machine
+ * (`state/run-machine.ts`, STATE-MACHINES-SPEC §6): authorize is RUN-02, begin
+ * RUN-04, entered RUN-05 and the result RUN-07. Each asks the machine after the
+ * execution read, and authorize/begin again after each later read with the
+ * facts read so far (a fact not read yet holds), so a refused guard stops the
+ * reads where they always stopped. The accepted `next.record` is the Run
+ * written; its effects become the Attempt, Outbox and Lease
+ * (`state/attempt-machine.ts`, ATT-02/06/18/26/27), the Session release
+ * (`state/session-availability.ts`, SES-04) and the Kernel identity slot of
+ * the same commit.
  */
 import type { CoreCallContext, MaterialReader } from '../../../contracts/core/call-context.js';
 import type { RoleConfigurationRef, VersionPin, WorkspaceScope } from '../../../contracts/core/identity.js';
@@ -22,7 +33,7 @@ import type { SessionRecord } from '../../../contracts/core/session.js';
 import type { TaskClaim } from '../../../contracts/core/task-claim.js';
 import { ARTIFACT_MAX_SIZE_BYTES, artifactBodyDigest, artifactBodySize, type ArtifactRecord, type ArtifactRef } from '../../../contracts/artifact.js';
 import type {
-  ExecutionAuthorizationV2, RoleBindingRefV1, RunOutcome, RunRef, RunSnapshot, RuntimeEventV1,
+  ExecutionAuthorizationV2, RoleBindingRefV1, RunRef, RunSnapshot,
   RuntimeInputBindingV1, TaskAttemptSnapshot, TaskBudgetV1, TaskLeaseSnapshot, TaskTriple,
 } from '../../../contracts/dispatch.js';
 import { continuationBriefShapeProblem } from '../../../contracts/continuation-brief.js';
@@ -33,10 +44,12 @@ import { MANIFEST_CONTENT_TYPE } from '../../../contracts/no-progress.js';
 import type { PlanRevisionSnapshot, TaskInputRequirementV2 } from '../../../contracts/plan.js';
 import type { RoleSpecResolutionV1 } from '../../../contracts/role-spec-materials.js';
 import type { TaskEnvelopeV1 } from '../../../contracts/task-envelope.js';
+import { isAutomationActor } from '../../../contracts/task-requeue.js';
 import { isArtifactRef } from '../../record-store/body-codec.js';
 import type { RawArtifactRecord } from '../../record-store/body-ports.js';
 import type {
   EncodedDomainEvent, EncodedRecord, GoalRecordTransactionPort, PreparedCommit, RecordGuard, StoreCommitReceipt, StoreFailure,
+  UniqueClaimChange,
 } from '../../record-store/ports.js';
 import type { RoleBindingFacts } from '../configuration/contracts.js';
 import type { MaterialReadFacts } from '../materials/contracts.js';
@@ -50,11 +63,23 @@ import {
   executionEntryEnteredEventFromEvent, executionRunResultRecordedEventFromEvent,
   inputBindingProblem, isExecutionAuthorizationV2, taskDispatchStateV1Problem,
 } from '../persistence/execution-entry-codecs.js';
-import { plainSessionRefToAggregate, sessionAggregateRefKey } from '../sessions/session-record-codecs.js';
-import { dispatchOutboxRefKey, taskAttemptRefKey, taskClaimProblem } from './claim-record-codecs.js';
-import type { TaskClaimOutbox } from './claim-contracts.js';
+import { encodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey } from '../sessions/session-record-codecs.js';
+import {
+  attemptEventFromRunEvent, isTaskLeaseEvent, transitionAttempt, transitionDispatchOutbox, transitionTaskLease,
+  type AttemptEvent, type AttemptGuardContext, type DispatchOutboxRecord, type RunEventForAttempt,
+} from '../state/attempt-machine.js';
+import {
+  leaseOwnedByRun, runControlFence, runStateOf, transitionRun,
+  type RunEffect, type RunEvent, type RunGuardContext, type RunState, type RunTransition,
+} from '../state/run-machine.js';
+import {
+  ownsOccupancy, releaseSessionRecord, sessionMachineStateOf, transitionSession,
+  type SessionGuardContext, type SessionRelease,
+} from '../state/session-availability.js';
+import {
+  dispatchOutboxRefKey, encodeDispatchOutboxEntry, encodeTaskAttemptSnapshot, taskAttemptRefKey, taskClaimProblem,
+} from './claim-record-codecs.js';
 import type { GraphWrite } from './contracts.js';
-import { compileExecutionHistoryBinding } from './execution-history-binding.js';
 import type {
   AuthorizeConfigurationResult, ExecutionEntryDependencies, ExecutionEntryPort, KernelExecutionBinding,
   KernelObservationSource, ObservedExecutionHistory, RuntimeEntryRecord, TaskEntryPermit, TaskResultObservation,
@@ -138,27 +163,13 @@ function mapReadResult<T>(result: Exclude<ReadResult<T>, { status: 'ready' }>): 
   return result;
 }
 
-/**
- * The ONE shared fresh-action barrier against the Run's canonical control
- * pointer, called at exactly three audited points: after the original receipt
- * lookup misses in `authorizeRuntimeEntry` and `beginRuntimeEntry`, and after
- * the facts read in the shared `admitEnteredRun` (both model barriers). An
- * absent `controlState` is the historical behavior. A queued pause/cancel is a
- * real fence and fails the fresh action `busy`; it never claims the Run already
- * stopped. A `running` pointer is written only by the formal resume owner
- * after a confirmed pause (or a yielded wait); that explicit continuation may
- * pass. A standalone `steered` pointer is not a resume and stays unsupported. The gate is deliberately NOT in `readAdmissionFacts`, because
- * entered/result re-reads must stay free of it.
- */
-export function freshRunControlProblem(run: RunSnapshot): CoreRejection | null {
-  const control = run.controlState;
-  if (control === undefined || control.desiredState === 'running') return null;
-  if (control.desiredState === 'paused' || control.desiredState === 'cancelled') {
-    return busy(`the Run is fenced by a queued ${control.desiredState} control intent (${control.intentRef.intentId}); no fresh execution action is admitted`);
-  }
-  return reject('unsupported',
-    `the Run carries a ${control.desiredState} control pointer (${control.intentRef.intentId}) that this stage does not implement`);
-}
+// The ONE shared fresh-action barrier against the Run's control pointer is the
+// Run machine's `runControlFence` (`state/run-machine.ts`), called at exactly
+// three audited points: after the execution read in `authorizeRuntimeEntry` and
+// `beginRuntimeEntry` (RUN-02/04's first guard, asked before the cancellation
+// check), and after the facts read in the shared `admitEnteredRun` (both model
+// barriers). It is deliberately NOT in `readAdmissionFacts`, because
+// entered/result re-reads must stay free of it.
 function sameKernel(left: KernelExecutionBinding, right: KernelExecutionBinding): boolean {
   return left.adapterId === right.adapterId && left.kernelSessionId === right.kernelSessionId
     && left.runId === right.runId && left.turnId === right.turnId;
@@ -775,7 +786,7 @@ export async function admitEnteredRun(
 ): Promise<{ ok: true; value: EnteredAdmission } | Rejected> {
   const factsRead = await readAdmissionFacts(deps, ctx, permit.claim.runRef, expectedPin);
   if (!factsRead.ok) return factsRead;
-  const enteredControl = freshRunControlProblem(factsRead.value.run);
+  const enteredControl = runControlFence(factsRead.value.run);
   if (enteredControl !== null) return { ok: false, rejection: enteredControl };
   const { run, outbox, session } = factsRead.value;
   const auth = run.executionAuthorization;
@@ -822,6 +833,168 @@ export async function admitEnteredRun(
   if (!material.ok) return material;
   return { ok: true, value: { facts: factsRead.value, auth, manifest, inputBinding,
     roleFacts: hostRole.value.roleFacts, materialGuards: material.value.guards } };
+}
+
+// --------------------------------------------------------------------------
+// Run machine facts (STATE-MACHINES-SPEC §6.1, §5, §8)
+// --------------------------------------------------------------------------
+
+/**
+ * The claim Lease as `leaseOwnershipProblem` reads it: missing, released,
+ * naming another Task than `claim`, held by this claim (`leaseOwnedByRun`, the
+ * release rule of RUN-07), or held by another one. The execution read keys the
+ * Lease by the Run's Task (`run-state-service.ts:309`), so another Task is
+ * reachable only through W3's prepared claim, which RUN-02 asks about the
+ * Lease before the persisted claim; W4..W6 compare the persisted claim first.
+ */
+function claimLeaseOf(lease: TaskLeaseSnapshot | null, claim: TaskClaim): RunGuardContext['lease'] {
+  if (lease === null) return 'missing';
+  if (lease.release !== undefined) return 'released';
+  if (lease.ref.projectId !== claim.task.projectId || lease.ref.goalId !== claim.task.goalId
+    || lease.ref.taskId !== claim.task.taskId) {
+    return 'other_task';
+  }
+  return leaseOwnedByRun(lease, claim) ? 'owned' : 'other';
+}
+
+/**
+ * RUN-02/04/05/07's guard context from one execution read: the claim Session
+ * as this Run holds it, the claim Lease and the persisted claim. The Goal, the
+ * Plan pin and the fresh admission are authorize/begin's later reads and hold
+ * until read; control, reconcile and claim facts belong to other Run events.
+ */
+function entryRunContext(facts: TaskExecutionRecord, claim: TaskClaim, actor: HostActor): RunGuardContext {
+  const session = facts.session;
+  return {
+    session: {
+      usable: session.lifecycle === 'active' && session.health === 'available',
+      owned: ownsOccupancy(session, claim.runRef, claim.generation),
+      kernel: { adapterId: session.kernel.adapterId, kernelSessionId: session.kernel.kernelSessionId },
+      archived: session.lifecycle !== 'active',
+    },
+    lease: claimLeaseOf(facts.lease, claim),
+    persistedClaim: facts.outbox.claim,
+    goal: { desiredState: 'active', activePlanMatchesClaim: true },
+    entryPlan: 'active_plan',
+    continuationBrief: 'absent_ok',
+    freshAdmission: null,
+    pointerIntent: null,
+    queuedSteerCount: 0,
+    continuationConsumed: false,
+    exitProof: null,
+    hostLease: null,
+    kernelProbe: null,
+    kernelPaused: false,
+    inputsConfirmed: null,
+    actor: isAutomationActor(actor) ? 'system' : 'human',
+    claim: null,
+  };
+}
+
+/**
+ * A Run machine refusal as the rejection today's service returned (§1.2: code
+ * and reason kept). RUN-02/04's last guard refuses with the fresh admission's
+ * own rejection, which is returned as is so its `current` pins survive.
+ */
+function runRefusal(refused: Extract<RunTransition, { ok: false }>, admission: CoreRejection | null = null): CoreRejection {
+  if (admission !== null && refused.code === admission.code && refused.detail === admission.reason) return admission;
+  return reject(refused.code, refused.detail);
+}
+
+/** The Run an accepted transition writes: `next.record` is the whole next Run (§6). */
+function nextRunOf(next: RunState): RunSnapshot {
+  if (next.record === null) throw new Error('an accepted Run transition names the Run it writes');
+  return next.record;
+}
+
+/** The §5 event of the same Run event (`attemptEventFromRunEvent`); every event mapped here writes the Attempt. */
+function attemptEventOf(event: RunEventForAttempt): AttemptEvent {
+  const mapped = attemptEventFromRunEvent(event);
+  if (mapped === null) throw new Error(`${event.kind} writes no TaskAttempt`);
+  return mapped;
+}
+
+const KERNEL_SLOT_PREFIX = 'execution-history-kernel:';
+
+/** RUN-04's `claim_kernel_slot` as the shared Kernel identity unique-slot change (`none`: no owner yet). */
+function kernelSlotChange(effect: RunEffect, runKey: string): UniqueClaimChange {
+  if (effect.kind !== 'claim_kernel_slot') throw new Error(`entry_begun has no ${effect.kind} effect`);
+  const kernel = effect.kernel;
+  return {
+    claimKey: KERNEL_SLOT_PREFIX + canonicalJson({ adapterId: kernel.adapterId, kernelSessionId: kernel.kernelSessionId,
+      runId: kernel.runId, turnId: kernel.turnId } as unknown as JsonValue),
+    expectedOwner: effect.expectedOwner === 'none' ? null : runKey,
+    nextOwner: runKey,
+  };
+}
+
+/**
+ * SES-04's guard context for RUN-07's `release_session`: the holder is the Run
+ * it ends, at its claim generation, with the complete Turn boundary its Kernel
+ * terminal carries (inputs confirmed by the Runtime before it books a terminal).
+ */
+function terminalReleaseContext(release: SessionRelease): SessionGuardContext {
+  return {
+    caller: 'service', hostLease: null, pin: null,
+    holder: {
+      ref: release.holder, claimGeneration: release.generation, before: 'run_running', after: 'run_ended',
+      kernelTurnSeen: true, inputsConfirmed: true,
+      historyBoundaryCursor: release.historyCursor.kind === 'advance' ? release.historyCursor.cursor : null,
+      kernelTurnOpen: release.kernelTurnOpen,
+    },
+    probe: null, kernelHeader: null, openResponsibleLink: null, creation: null, link: null,
+  };
+}
+
+/** A fresh entry admission: its first refusal, or the guards it read (role facts, then materials). */
+type FreshAdmission = { problem: CoreRejection | null; guards: readonly RecordGuard[] };
+
+function refusedAdmission(problem: CoreRejection): FreshAdmission {
+  return { problem, guards: [] };
+}
+
+/**
+ * RUN-02's `freshAdmission`, in today's order and with its own IO: the Goal
+ * workspace, the saved manifest against the prepared input, the current
+ * Host/Role, the deadline and the external materials.
+ */
+async function authorizeAdmission(
+  deps: ExecutionEntryDependencies, ctx: CoreCallContext, scope: WorkspaceScope,
+  prepared: PreparedTaskExecution, facts: TaskExecutionRecord, goalWorkspaceId: string,
+): Promise<FreshAdmission> {
+  const claim = prepared.claim;
+  if (goalWorkspaceId !== claim.workspaceId) return refusedAdmission(forbidden('the Goal belongs to another workspace'));
+  const stored = await readManifestFromEnvelope(deps, prepared.envelope as unknown as Record<string, unknown>, claim.runRef);
+  if (!stored.ok) return refusedAdmission(stored.rejection);
+  const manifest = stored.value.manifest;
+  const manifestRejection = manifestAgainstPrepared(manifest, prepared, facts, stored.value.bodyDigest, scope);
+  if (manifestRejection !== null) return refusedAdmission(manifestRejection);
+  return admitManifest(deps, ctx, facts, manifest);
+}
+
+/** RUN-04's `freshAdmission`: the saved manifest of the Run, then as RUN-02 from the Host/Role on. */
+async function beginAdmission(
+  deps: ExecutionEntryDependencies, ctx: CoreCallContext, facts: TaskExecutionRecord,
+): Promise<FreshAdmission> {
+  const stored = await readStoredManifest(deps, facts.run);
+  if (!stored.ok) return refusedAdmission(stored.rejection);
+  return admitManifest(deps, ctx, facts, stored.value.manifest);
+}
+
+async function admitManifest(
+  deps: ExecutionEntryDependencies, ctx: CoreCallContext, facts: TaskExecutionRecord, manifest: PreparedTaskManifestV1,
+): Promise<FreshAdmission> {
+  const hostRole = await recheckHostRoleAdmission(deps, ctx, {
+    run: facts.run, manifestRole: manifest.role, sessionRole: facts.session.role,
+    roleBinding: facts.run.roleBinding, permissions: manifest.permissions,
+    hostTemplate: manifest.hostTemplate, configurationRevision: manifest.hostConfigurationRevision,
+  });
+  if (!hostRole.ok) return refusedAdmission(hostRole.rejection);
+  const deadline = deadlineProblem(facts.run, deps.now());
+  if (deadline !== null) return refusedAdmission(deadline);
+  const material = await admitExternalMaterials(deps, ctx, facts, manifest);
+  if (!material.ok) return refusedAdmission(material.rejection);
+  return { problem: null, guards: [...hostRole.value.roleFacts.guards, ...material.value.guards] };
 }
 
 // --------------------------------------------------------------------------
@@ -932,64 +1105,42 @@ export function createExecutionEntryService(deps: ExecutionEntryDependencies): E
 
       const factsRead = await readAdmissionFacts(deps, scopeCtx, claim.runRef, runPin);
       if (!factsRead.ok) return factsRead.rejection;
-      const authorizeControl = freshRunControlProblem(factsRead.value.run);
+      // RUN-02's first guard, the control pointer fence, comes before the cancellation check.
+      const authorizeControl = runControlFence(factsRead.value.run);
       if (authorizeControl !== null) return authorizeControl;
       if (signal.aborted) return reject('cancelled', 'the authorization was cancelled during the execution read');
       const facts = factsRead.value;
-      if (facts.run.status !== 'starting') return busy('the Run is not in a claimable starting state');
-      const ownership = sessionOccupancyProblem(facts.session, claim);
-      if (ownership !== null) return ownership;
-      const lease = facts.lease;
-      const leaseProblem = leaseOwnershipProblem(lease, claim);
-      if (leaseProblem !== null) return leaseProblem;
-      if (!sameRef(facts.outbox.claim, claim)) return invalid('the prepared claim disagrees with the persisted claim');
-      if (!sameRef(prepared.envelope.roleBinding, facts.run.roleBinding)) return forbidden('the prepared role binding disagrees with the Run');
-      if (!sameRef(prepared.envelope.budget, facts.run.budget)) return forbidden('the prepared budget disagrees with the Run');
-      if (!sameRef(prepared.envelope.workspaceSnapshot, facts.run.workspaceSnapshot)) {
-        return forbidden('the prepared workspace snapshot disagrees with the Run');
-      }
-      if (facts.run.executionAuthorization !== undefined) {
-        return isExecutionAuthorizationV2(facts.run.executionAuthorization)
-          ? busy('the Run already has a V2 entry authorization')
-          : forbidden('the Run has a legacy V1 authorization that cannot be upgraded into a fresh begin');
-      }
+      // RUN-02 on the execution read: starting, the claim Session and Lease, the
+      // persisted claim, the prepared binding and no existing authorization. The
+      // Goal and the fresh admission are read below and hold until then.
+      const state = runStateOf(facts.run);
+      const runEvent: RunEvent = { kind: 'entry_authorized', claim, consumerId,
+        envelope: prepared.envelope, inputBinding: prepared.inputBinding };
+      let runCtx = entryRunContext(facts, claim, actor);
+      const onExecution = transitionRun(state, runEvent, runCtx);
+      if (!onExecution.ok) return runRefusal(onExecution);
 
-      // Current Goal/Workspace scope facts and their exact guards.
+      // Current Goal/Workspace scope facts and their exact guards: the Goal is active and pins the claim's Plan.
       const goalScope = await readGoalScope(records, goalRefOf(claim.task));
       if (goalScope.status !== 'ready') return mapReaderRejection(goalScope);
-      if (goalScope.goal.desiredState !== 'active') return busy('the Goal is not active');
-      if (goalScope.goal.activePlanRevision === null || !sameRef(goalScope.goal.activePlanRevision, claim.planRef)) {
-        return reject('revision_conflict', 'the requested Plan is no longer the Goal active pin');
-      }
-      if (goalScope.goal.workspaceRef.workspaceId !== claim.workspaceId) return forbidden('the Goal belongs to another workspace');
+      const activePlan = goalScope.goal.activePlanRevision;
+      const onActivePlan = activePlan !== null && sameRef(activePlan, claim.planRef);
+      runCtx = { ...runCtx, goal: { desiredState: goalScope.goal.desiredState, activePlanMatchesClaim: onActivePlan },
+        entryPlan: onActivePlan ? 'active_plan' : 'changed' };
+      const onGoal = transitionRun(state, runEvent, runCtx);
+      if (!onGoal.ok) return runRefusal(onGoal);
 
-      const stored = await readManifestFromEnvelope(deps, prepared.envelope as unknown as Record<string, unknown>, claim.runRef);
-      if (!stored.ok) return stored.rejection;
-      const manifest = stored.value.manifest;
-      const manifestRejection = manifestAgainstPrepared(manifest, prepared, facts, stored.value.bodyDigest, scope);
-      if (manifestRejection !== null) return manifestRejection;
-      const hostRole = await recheckHostRoleAdmission(deps, scopeCtx, {
-        run: facts.run, manifestRole: manifest.role, sessionRole: facts.session.role,
-        roleBinding: facts.run.roleBinding, permissions: manifest.permissions,
-        hostTemplate: manifest.hostTemplate, configurationRevision: manifest.hostConfigurationRevision,
-      });
-      if (!hostRole.ok) return hostRole.rejection;
-      const deadline = deadlineProblem(facts.run, deps.now());
-      if (deadline !== null) return deadline;
-      const material = await admitExternalMaterials(deps, scopeCtx, facts, manifest);
-      if (!material.ok) return material.rejection;
-
+      const admission = await authorizeAdmission(deps, scopeCtx, scope, prepared, facts, goalScope.goal.workspaceRef.workspaceId);
+      const authorized = transitionRun(state, runEvent, { ...runCtx, freshAdmission: admission.problem });
+      if (!authorized.ok) return runRefusal(authorized, admission.problem);
+      const nextRun = nextRunOf(authorized.next);
+      const authorization = nextRun.executionAuthorization as ExecutionAuthorizationV2;
       const permit: TaskEntryPermit = {
-        claim, consumerId, entryGeneration: 1, authorizationRevision: 1,
-        inputDigest: prepared.inputBinding.inputDigest,
+        claim, consumerId, entryGeneration: authorization.generation, authorizationRevision: authorization.revision,
+        inputDigest: authorization.inputDigest,
       };
-      const authorization: ExecutionAuthorizationV2 = {
-        schemaVersion: 2, generation: permit.entryGeneration, sessionGeneration: claim.generation,
-        revision: permit.authorizationRevision, consumerId, inputDigest: permit.inputDigest,
-        phase: 'authorized', kernel: null,
-      };
-      const nextRun: RunSnapshot = { ...facts.run, revision: facts.run.revision + 1,
-        envelope: prepared.envelope, inputBinding: prepared.inputBinding, executionAuthorization: authorization };
+      // RUN-02 refused a missing Lease above.
+      const lease = facts.lease as TaskLeaseSnapshot;
       const runRecord = encodeRun(nextRun);
       const event = {
         eventId: deps.eventId(), eventType: EXECUTION_ENTRY_AUTHORIZED_EVENT_TYPE,
@@ -1005,11 +1156,10 @@ export function createExecutionEntryService(deps: ExecutionEntryDependencies): E
         { refKey: dispatchOutboxRefKey(facts.outbox.ref), expectedRevision: facts.outbox.revision },
         { refKey: planRevisionRefKey(facts.plan.ref), expectedRevision: facts.plan.revision },
         { refKey: sessionAggregateRefKey(plainSessionRefToAggregate(facts.outbox.claim.sessionRef)), expectedRevision: facts.session.revision },
-        { refKey: refKeyOf(lease!.ref) as string, expectedRevision: lease!.revision },
+        { refKey: refKeyOf(lease.ref) as string, expectedRevision: lease.revision },
         { refKey: goalKey, expectedRevision: goalScope.goal.revision },
         { refKey: goalScope.workspaceKey, expectedRevision: goalScope.workspaceRevision },
-        ...hostRole.value.roleFacts.guards,
-        ...material.value.guards,
+        ...admission.guards,
       ]);
       if (!merged.ok) return merged.rejection;
       const guards = merged.guards;
@@ -1079,47 +1229,27 @@ export function createExecutionEntryService(deps: ExecutionEntryDependencies): E
 
       const factsRead = await readAdmissionFacts(deps, scopeCtx, permit.claim.runRef, runPin);
       if (!factsRead.ok) return factsRead.rejection;
-      const beginControl = freshRunControlProblem(factsRead.value.run);
+      // RUN-04's first guard, the control pointer fence, comes before the cancellation check.
+      const beginControl = runControlFence(factsRead.value.run);
       if (beginControl !== null) return beginControl;
       if (signal.aborted) return reject('cancelled', 'the begin was cancelled during the execution read');
       const facts = factsRead.value;
-      if (facts.run.status !== 'starting') return busy('the Run is not in a beginable starting state');
-      if (!sameRef(facts.outbox.claim, permit.claim)) return invalid('the entry permit claim disagrees with the persisted claim');
-      const auth = facts.run.executionAuthorization;
-      if (!isExecutionAuthorizationV2(auth)) return forbidden('the Run has no formal V2 entry authorization');
-      if (auth.phase !== 'authorized') return busy('the Run entry is not in the authorized phase');
-      if (auth.consumerId !== permit.consumerId || auth.generation !== permit.entryGeneration
-        || auth.revision !== permit.authorizationRevision || auth.inputDigest !== permit.inputDigest) {
-        return forbidden('the entry permit does not match the current V2 entry binding');
-      }
-      if (auth.sessionGeneration !== permit.claim.generation) {
-        return forbidden('the V2 entry binding session generation disagrees with the claim');
-      }
-      const ownership = sessionOccupancyProblem(facts.session, permit.claim);
-      if (ownership !== null) return ownership;
-      const lease = facts.lease;
-      const leaseProblem = leaseOwnershipProblem(lease, permit.claim);
-      if (leaseProblem !== null) return leaseProblem;
+      // RUN-04 on the execution read: starting, the persisted claim, the V2
+      // binding in `authorized` and the permit, the claim Session and Lease, the
+      // input binding. The fresh admission is read below and holds until then.
+      const state = runStateOf(facts.run);
+      const runEvent: RunEvent = { kind: 'entry_begun', permit, kernel };
+      const runCtx = entryRunContext(facts, permit.claim, actor);
+      const onExecution = transitionRun(state, runEvent, runCtx);
+      if (!onExecution.ok) return runRefusal(onExecution);
 
-      const stored = await readStoredManifest(deps, facts.run);
-      if (!stored.ok) return stored.rejection;
-      const manifest = stored.value.manifest;
-      if (!facts.run.inputBinding || facts.run.inputBinding.inputDigest !== permit.inputDigest) {
-        return forbidden('the Run input binding disagrees with the entry permit');
-      }
-      const hostRole = await recheckHostRoleAdmission(deps, scopeCtx, {
-        run: facts.run, manifestRole: manifest.role, sessionRole: facts.session.role,
-        roleBinding: facts.run.roleBinding, permissions: manifest.permissions,
-        hostTemplate: manifest.hostTemplate, configurationRevision: manifest.hostConfigurationRevision,
-      });
-      if (!hostRole.ok) return hostRole.rejection;
-      const deadline = deadlineProblem(facts.run, deps.now());
-      if (deadline !== null) return deadline;
-      const material = await admitExternalMaterials(deps, scopeCtx, facts, manifest);
-      if (!material.ok) return material.rejection;
-
-      const nextAuthorization: ExecutionAuthorizationV2 = { ...auth, revision: auth.revision + 1, phase: 'entering', kernel };
-      const nextRun: RunSnapshot = { ...facts.run, revision: facts.run.revision + 1, executionAuthorization: nextAuthorization };
+      const admission = await beginAdmission(deps, scopeCtx, facts);
+      const begun = transitionRun(state, runEvent, { ...runCtx, freshAdmission: admission.problem });
+      if (!begun.ok) return runRefusal(begun, admission.problem);
+      const nextRun = nextRunOf(begun.next);
+      const nextAuthorization = nextRun.executionAuthorization as ExecutionAuthorizationV2;
+      // RUN-04 refused a missing Lease above.
+      const lease = facts.lease as TaskLeaseSnapshot;
       const runRecord = encodeRun(nextRun);
       const entry: RuntimeEntryRecord = { runRef: facts.run.ref, runRevision: nextRun.revision, authorization: nextAuthorization };
       const event = {
@@ -1128,24 +1258,22 @@ export function createExecutionEntryService(deps: ExecutionEntryDependencies): E
         identityKey: identity, actor, fingerprint, permit, kernel, entry,
       };
       if (!nonEmpty(event.eventId) || !nonEmpty(event.occurredAt)) return reject('unsupported', 'the injected id/clock source produced an empty value');
-      const slotKey = 'execution-history-kernel:' + canonicalJson({ adapterId: kernel.adapterId,
-        kernelSessionId: kernel.kernelSessionId, runId: kernel.runId, turnId: kernel.turnId } as unknown as JsonValue);
       const runKey = runRecord.refKey;
+      // RUN-04's one effect: the shared Kernel identity slot, claimed by this Run in the same commit.
+      const claims = begun.effects.map(effect => kernelSlotChange(effect, runKey));
       const merged = mergeGuards([
         { refKey: runKey, expectedRevision: runPin.revision },
         { refKey: taskAttemptRefKey(facts.attempt.ref), expectedRevision: facts.attempt.revision },
         { refKey: dispatchOutboxRefKey(facts.outbox.ref), expectedRevision: facts.outbox.revision },
         { refKey: planRevisionRefKey(facts.plan.ref), expectedRevision: facts.plan.revision },
         { refKey: sessionAggregateRefKey(plainSessionRefToAggregate(facts.outbox.claim.sessionRef)), expectedRevision: facts.session.revision },
-        { refKey: refKeyOf(lease!.ref) as string, expectedRevision: lease!.revision },
-        ...hostRole.value.roleFacts.guards,
-        ...material.value.guards,
+        { refKey: refKeyOf(lease.ref) as string, expectedRevision: lease.revision },
+        ...admission.guards,
       ]);
       if (!merged.ok) return merged.rejection;
       const guards = merged.guards;
       const preparedCommit: PreparedCommit = {
-        identityKey: identity, fingerprint, guards, records: [runRecord],
-        claims: [{ claimKey: slotKey, expectedOwner: null, nextOwner: runKey }],
+        identityKey: identity, fingerprint, guards, records: [runRecord], claims,
         indexGuards: [], indexChanges: [], events: [encodeExecutionEntryBegunEvent(event)],
       };
       if (signal.aborted) return reject('cancelled', 'the begin was cancelled before commit');
@@ -1217,67 +1345,64 @@ export function createExecutionEntryService(deps: ExecutionEntryDependencies): E
       if (!factsRead.ok) return factsRead.rejection;
       if (signal.aborted) return reject('cancelled', 'the entered write was cancelled during the execution read');
       const facts = factsRead.value;
-      if (!sameRef(facts.outbox.claim, permit.claim)) return invalid('the entry permit claim disagrees with the persisted claim');
-      const auth = facts.run.executionAuthorization;
-      if (!isExecutionAuthorizationV2(auth)) return forbidden('the Run has no formal V2 entry authorization');
-      if (auth.phase !== 'entering') return busy('the Run entry is not in the entering phase');
-      if (auth.consumerId !== permit.consumerId || auth.generation !== permit.entryGeneration
-        || auth.revision !== permit.authorizationRevision || auth.inputDigest !== permit.inputDigest) {
-        return forbidden('the entry permit does not match the current V2 entry binding');
-      }
-      if (auth.sessionGeneration !== permit.claim.generation) {
-        return forbidden('the V2 entry binding session generation disagrees with the claim');
-      }
-      const enteredOwnership = sessionOccupancyProblem(facts.session, permit.claim);
-      if (enteredOwnership !== null) return enteredOwnership;
-      const enteredLease = facts.lease;
-      const enteredLeaseProblem = leaseOwnershipProblem(enteredLease, permit.claim);
-      if (enteredLeaseProblem !== null) return enteredLeaseProblem;
-      if (auth.kernel === null || !sameKernel(auth.kernel, kernelSource)) {
-        return forbidden('the entered Kernel source disagrees with the begin binding');
-      }
-      if (!isRecord(history.kernel) || !sameKernel(history.kernel as KernelExecutionBinding, kernelSource)) {
-        return forbidden('the observed history Kernel identity disagrees with the entered source');
-      }
-      if (kernelSource.position < history.startPosition || kernelSource.position > history.observedThroughPosition) {
-        return invalid('the entered Kernel position is outside the observed history range');
-      }
-      // The entered fact is already-occurred evidence: it must not re-apply the
-      // fresh Host/Role/material admission gates here. authorize/begin and the
-      // model barriers keep those; this write keeps only the original permit,
-      // claim, Run/Kernel/Session/Lease identity and the real history source.
-      const compiled = compileExecutionHistoryBinding({
-        run: facts.run, session: facts.session, sessionRef: permit.claim.sessionRef,
-        kernel: kernelSource, startPosition: history.startPosition,
-        observedThroughPosition: history.observedThroughPosition, endPosition: history.endPosition,
-        beginOwnerRefKey: refKeyOf(facts.run.ref),
-      });
-      if (compiled.status !== 'compiled') return compiled;
-      const nextAuthorization: ExecutionAuthorizationV2 = { ...auth, revision: auth.revision + 1, phase: 'entered' };
-      const nextRun: RunSnapshot = { ...compiled.value.nextRun, status: 'running', startedAt: enteredAt,
-        executionAuthorization: nextAuthorization };
+      // RUN-05: the persisted claim, the V2 binding in `entering` and the
+      // permit, the claim Session and Lease, the begin's Kernel identity, the
+      // position and the history locator. The entered fact is already-occurred
+      // evidence: it must not re-apply the pointer fence or the fresh
+      // Host/Role/material admission gates here. authorize/begin and the model
+      // barriers keep those; this write keeps only the original permit, claim,
+      // Run/Kernel/Session/Lease identity and the real history source.
+      const entered = transitionRun(runStateOf(facts.run),
+        { kind: 'entered_observed', permit, kernelSource, history, enteredAt }, entryRunContext(facts, permit.claim, actor));
+      if (!entered.ok) return runRefusal(entered);
+      const nextRun = nextRunOf(entered.next);
       const runRecord = encodeRun(nextRun);
-      const nextAttempt: TaskAttemptSnapshot = { ...facts.attempt, revision: facts.attempt.revision + 1,
-        status: 'started', startedAt: enteredAt };
-      const attemptRecord = encodeAttempt(nextAttempt);
       const eventId = deps.eventId();
       if (!nonEmpty(eventId)) return reject('unsupported', 'the injected id source produced an empty event id');
-      const nextOutbox: TaskClaimOutbox = { ...facts.outbox, revision: facts.outbox.revision + 1, status: 'entered',
-        dispatchState: { schemaVersion: 1, phase: 'entered', consumerId: permit.consumerId,
-          entryGeneration: permit.entryGeneration, sessionGeneration: permit.claim.generation, eventId } };
-      const outboxRecord = encodeOutbox(nextOutbox);
+      // RUN-05's effects in this commit: the Attempt starts (ATT-02) and the
+      // Outbox enters (ATT-26). The paired Run is at the node RUN-05 moves from.
+      const started = attemptEventOf({ kind: 'entered_observed', enteredAt, consumerId: permit.consumerId,
+        entryGeneration: permit.entryGeneration, sessionGeneration: permit.claim.generation, eventId });
+      const pairing: AttemptGuardContext = { runNode: 'Entering', runLastEventSeq: facts.run.lastEventSeq,
+        ownsSession: ownsOccupancy(facts.session, permit.claim.runRef, permit.claim.generation),
+        ownsLease: leaseOwnedByRun(facts.lease, permit.claim) };
+      let nextAttempt: TaskAttemptSnapshot | null = null;
+      let nextOutbox: DispatchOutboxRecord | null = null;
+      for (const effect of entered.effects) {
+        switch (effect.kind) {
+          case 'attempt': {
+            const attempt = transitionAttempt(facts.attempt, started, pairing);
+            if (!attempt.ok) return reject(attempt.code, attempt.detail);
+            nextAttempt = attempt.next;
+            break;
+          }
+          case 'outbox': {
+            const outbox = transitionDispatchOutbox(facts.outbox, started, pairing);
+            if (!outbox.ok) return reject(outbox.code, outbox.detail);
+            nextOutbox = outbox.next;
+            break;
+          }
+          default:
+            throw new Error(`entered_observed has no ${effect.kind} effect`);
+        }
+      }
+      if (nextAttempt === null || nextOutbox === null) throw new Error('entered_observed must write the Attempt and the Outbox');
+      const attemptRecord = encodeTaskAttemptSnapshot(nextAttempt);
+      const outboxRecord = encodeDispatchOutboxEntry(nextOutbox);
       const event = {
         eventId, eventType: EXECUTION_ENTRY_ENTERED_EVENT_TYPE,
         schemaVersion: EXECUTION_ENTRY_EVENT_SCHEMA_VERSION, occurredAt: deps.now(),
         identityKey: identity, actor, fingerprint, permit, run: nextRun,
       };
+      // RUN-05 refused a missing Lease above.
+      const enteredLease = facts.lease as TaskLeaseSnapshot;
       const merged = mergeGuards([
         { refKey: runRecord.refKey, expectedRevision: runPin.revision },
         { refKey: taskAttemptRefKey(facts.attempt.ref), expectedRevision: facts.attempt.revision },
         { refKey: dispatchOutboxRefKey(facts.outbox.ref), expectedRevision: facts.outbox.revision },
         { refKey: planRevisionRefKey(facts.plan.ref), expectedRevision: facts.plan.revision },
         { refKey: sessionAggregateRefKey(plainSessionRefToAggregate(facts.outbox.claim.sessionRef)), expectedRevision: facts.session.revision },
-        { refKey: refKeyOf(enteredLease!.ref) as string, expectedRevision: enteredLease!.revision },
+        { refKey: refKeyOf(enteredLease.ref) as string, expectedRevision: enteredLease.revision },
       ]);
       if (!merged.ok) return merged.rejection;
       const guards = merged.guards;
@@ -1357,79 +1482,88 @@ export function createExecutionEntryService(deps: ExecutionEntryDependencies): E
       if (!factsRead.ok) return factsRead.rejection;
       if (signal.aborted) return reject('cancelled', 'the result write was cancelled during the execution read');
       const facts = factsRead.value;
-      if (!sameRef(facts.outbox.claim, claim)) return invalid('the result claim disagrees with the persisted claim');
-      const auth = facts.run.executionAuthorization;
-      if (!isExecutionAuthorizationV2(auth)) return forbidden('the Run has no formal V2 entry authorization');
-      if (auth.phase !== 'entered') return busy('the Run entry is not in the entered phase');
-      if (runFinished(facts.run)) return busy('the Run already has a terminal result');
-      if (auth.consumerId !== observation.entry.consumerId || auth.generation !== observation.entry.entryGeneration) {
-        return forbidden('the result entry projection does not match the current V2 entry binding');
-      }
-      const kernelSource = observation.kernelSource;
-      const boundary = observation.completedHistoryBoundary;
-      const history = observation.history;
-      if (kernelSource === null || boundary === null || history === null) {
-        return incomplete('a terminal result requires the complete observed Turn boundary');
-      }
-      if (!isKernelObservationSource(kernelSource)) return invalid('the terminal Kernel source is incomplete');
-      if (auth.kernel === null || !sameKernel(auth.kernel, kernelSource)) {
-        return forbidden('the terminal Kernel source disagrees with the entered binding');
-      }
-      if (!isRecord(boundary.source) || !sameKernel(boundary.source as KernelExecutionBinding, kernelSource)
-        || boundary.source.position !== kernelSource.position || !nonEmpty(boundary.cursor)) {
-        return invalid('the completed history boundary disagrees with the terminal source');
-      }
-      if (!isRecord(history.kernel) || !sameKernel(history.kernel as KernelExecutionBinding, kernelSource)) {
-        return forbidden('the observed history Kernel identity disagrees with the terminal source');
-      }
-      if (history.endPosition !== kernelSource.position || history.observedThroughPosition < kernelSource.position
-        || history.startPosition > kernelSource.position) {
-        return incomplete('the observed history does not carry the complete Turn end boundary');
-      }
-      const terminal = terminalFact(observation.event, claim.runRef, facts.run);
-      if ('status' in terminal) return terminal;
-      // A real yield is only actionable when it carries the original work/wait
-      // binding in the SAME terminal commit; a bare yielded status with no
-      // continuation is a malformed fact, not a silent dead end.
-      if (terminal.outcome === 'yielded') {
-        if (observation.continuation === undefined) {
-          return invalid('a yielded Run requires the original wait continuation binding');
-        }
-        const continuationProblem = runContinuationProblem(observation.continuation, claim);
-        if (continuationProblem !== null) return invalid(`the yielded continuation is malformed: ${continuationProblem}`);
-      } else if (observation.continuation !== undefined) {
-        return invalid('only a yielded Run may carry a continuation binding');
-      }
-      // Terminal reduction records an already-entered fact: it does NOT re-apply
-      // the new-action Host/Role/material admission gates. Only the Kernel/begin/
-      // claim/entry/Turn provenance below is required.
-      const compiled = compileExecutionHistoryBinding({
-        run: facts.run, session: facts.session, sessionRef: claim.sessionRef,
-        kernel: kernelSource, startPosition: history.startPosition,
-        observedThroughPosition: history.observedThroughPosition, endPosition: history.endPosition,
-        beginOwnerRefKey: refKeyOf(facts.run.ref),
-      });
-      if (compiled.status !== 'compiled') return compiled;
-
+      // RUN-07: the persisted claim, the V2 binding in `entered` on a Run not
+      // ended yet, the entry projection, the complete Turn boundary, the event
+      // and the yield binding, then the history locator. Terminal reduction
+      // records an already-entered fact: it does NOT re-apply the new-action
+      // Host/Role/material admission gates. The caller is the in-process Runtime
+      // after its clean-exit and input-acceptance gates
+      // (`execution-observation.ts:534-537`, `:671-673`), which stay with it
+      // until step 5 makes them explicit, so both hold here.
+      const state = runStateOf(facts.run);
+      const runCtx: RunGuardContext = { ...entryRunContext(facts, claim, actor), exitProof: 'live_clean', inputsConfirmed: true };
+      const observed = {
+        kind: 'terminal_observed' as const, claim, entry: observation.entry, event: observation.event,
+        kernelSource: observation.kernelSource, completedHistoryBoundary: observation.completedHistoryBoundary,
+        history: observation.history, unresolvedToolCallIds: [],
+        ...(observation.continuation === undefined ? {} : { continuation: observation.continuation }),
+      };
+      // Every guard is asked before the commit instant and the event id are minted
+      // (they only stamp the records written), as today.
+      const checked = transitionRun(state, { ...observed, endedAt: '', factEventId: '' }, runCtx);
+      if (!checked.ok) return runRefusal(checked);
       const eventId = deps.eventId();
       const nowIso = deps.now();
       if (!nonEmpty(eventId) || !nonEmpty(nowIso)) return reject('unsupported', 'the injected id/clock source produced an empty value');
-      const ownsSession = sessionOwnedByRun(facts.session, claim);
-      const ownsLease = facts.lease !== null && facts.lease.holderRunId === claim.runRef.runId
-        && facts.lease.attemptId === claim.attemptRef.attemptId && facts.lease.release === undefined;
-      const nextAuthorization: ExecutionAuthorizationV2 = { ...auth, revision: auth.revision + 1, phase: 'settled' };
-      const nextRun: RunSnapshot = { ...compiled.value.nextRun, status: 'ended', outcome: terminal.outcome,
-        exitCode: terminal.exitCode, endedAt: nowIso, executionAuthorization: nextAuthorization,
-        lastEventSeq: observation.event.sequence, lastRuntimeEventId: observation.event.eventId,
-        lastFactEventId: eventId,
-        ...(observation.continuation === undefined ? {} : { continuation: structuredClone(observation.continuation) }) };
+      const ended = transitionRun(state, { ...observed, endedAt: nowIso, factEventId: eventId }, runCtx);
+      if (!ended.ok) return runRefusal(ended);
+      const nextRun = nextRunOf(ended.next);
       const runRecord = encodeRun(nextRun);
-      const nextAttempt: TaskAttemptSnapshot = { ...facts.attempt, revision: facts.attempt.revision + 1,
-        status: 'ended', endedAt: nowIso, endOutcome: terminal.outcome };
-      const nextOutbox: TaskClaimOutbox = { ...facts.outbox, revision: facts.outbox.revision + 1, status: 'settled',
-        dispatchState: { schemaVersion: 1, phase: 'settled', consumerId: auth.consumerId,
-          entryGeneration: auth.generation, sessionGeneration: claim.generation, eventId } };
-      const encoded: EncodedRecord[] = [runRecord, encodeAttempt(nextAttempt), encodeOutbox(nextOutbox)];
+      // RUN-07 accepted, so the Run read carries its V2 binding.
+      const auth = facts.run.executionAuthorization as ExecutionAuthorizationV2;
+      const outcome = nextRun.outcome;
+      if (outcome === null) throw new Error('terminal_observed ends the Run with an outcome');
+
+      // RUN-07's effects in this commit: the Attempt ends (ATT-06), the Outbox
+      // settles (ATT-27), and only what the Run still holds is released: its
+      // Lease (ATT-18) and its Session occupancy (SES-04, the cursor moves to the
+      // complete Turn boundary). The paired Run is at the node RUN-07 moves from.
+      const attemptEnded = attemptEventOf({ kind: 'terminal_observed', claim, endOutcome: outcome, endedAt: nowIso, eventId,
+        sequence: observation.event.sequence, entry: { consumerId: auth.consumerId, entryGeneration: auth.generation },
+        turnStartedAt: null });
+      if (!isTaskLeaseEvent(attemptEnded)) throw new Error('terminal_observed drives the TaskLease');
+      const pairing: AttemptGuardContext = { runNode: 'Running', runLastEventSeq: facts.run.lastEventSeq,
+        ownsSession: runCtx.session.owned, ownsLease: runCtx.lease === 'owned' };
+      let nextAttempt: TaskAttemptSnapshot | null = null;
+      let nextOutbox: DispatchOutboxRecord | null = null;
+      let nextLease: TaskLeaseSnapshot | null = null;
+      let nextSession: SessionRecord | null = null;
+      for (const effect of ended.effects) {
+        switch (effect.kind) {
+          case 'attempt': {
+            const attempt = transitionAttempt(facts.attempt, attemptEnded, pairing);
+            if (!attempt.ok) return reject(attempt.code, attempt.detail);
+            nextAttempt = attempt.next;
+            break;
+          }
+          case 'outbox': {
+            const outbox = transitionDispatchOutbox(facts.outbox, attemptEnded, pairing);
+            if (!outbox.ok) return reject(outbox.code, outbox.detail);
+            nextOutbox = outbox.next;
+            break;
+          }
+          case 'release_lease': {
+            const released = transitionTaskLease(facts.lease, attemptEnded);
+            if (!released.ok) return reject(released.code, released.detail);
+            nextLease = released.next;
+            break;
+          }
+          case 'release_session': {
+            const released = transitionSession(sessionMachineStateOf(facts.session),
+              { kind: 'occupancy_released', cause: 'terminal_observed' }, terminalReleaseContext(effect));
+            if (!released.ok) return reject(released.code, released.detail);
+            for (const sessionEffect of released.effects) {
+              if (sessionEffect.kind !== 'release_session') throw new Error(`occupancy_released has no ${sessionEffect.kind} effect`);
+              nextSession = releaseSessionRecord(facts.session, sessionEffect);
+            }
+            break;
+          }
+          default:
+            throw new Error(`terminal_observed has no ${effect.kind} effect`);
+        }
+      }
+      if (nextAttempt === null || nextOutbox === null) throw new Error('terminal_observed must write the Attempt and the Outbox');
+      const encoded: EncodedRecord[] = [runRecord, encodeTaskAttemptSnapshot(nextAttempt), encodeDispatchOutboxEntry(nextOutbox)];
       const guardList: RecordGuard[] = [
         { refKey: runRecord.refKey, expectedRevision: runPin.revision },
         { refKey: taskAttemptRefKey(facts.attempt.ref), expectedRevision: facts.attempt.revision },
@@ -1442,19 +1576,9 @@ export function createExecutionEntryService(deps: ExecutionEntryDependencies): E
         // be in the same commit, whether or not this Run still owns/releases it.
         guardList.push({ refKey: refKeyOf(facts.lease.ref) as string, expectedRevision: facts.lease.revision });
       }
-      if (ownsLease) {
-        const lease = facts.lease as TaskLeaseSnapshot;
-        const nextLease: TaskLeaseSnapshot = { ...lease, revision: lease.revision + 1,
-          release: { schemaVersion: 1, runRef: claim.runRef, attemptRef: claim.attemptRef,
-            sessionRef: claim.sessionRef, generation: claim.generation, releasedAt: nowIso, eventId } };
-        encoded.push(encodeLease(nextLease));
-      }
-      if (ownsSession) {
-        const nextSession: SessionRecord = { ...facts.session, revision: facts.session.revision + 1,
-          occupancy: null, lastExecutionRef: claim.runRef, historyCursor: boundary.cursor };
-        encoded.push(encodeSession(nextSession));
-        // The Session guard was already added above.
-      }
+      if (nextLease !== null) encoded.push(encodeLease(nextLease));
+      // The Session guard was already added above.
+      if (nextSession !== null) encoded.push(encodeSessionRecord(nextSession));
       const event = {
         eventId, eventType: EXECUTION_RUN_RESULT_RECORDED_EVENT_TYPE,
         schemaVersion: EXECUTION_ENTRY_EVENT_SCHEMA_VERSION, occurredAt: nowIso,
@@ -1500,23 +1624,17 @@ export function createExecutionEntryService(deps: ExecutionEntryDependencies): E
 }
 
 // --------------------------------------------------------------------------
-// Record encoders (single registered codecs, no second schema)
+// Record encoders (single registered codecs, no second schema). The Attempt,
+// Outbox and Session records use their owners' encoders
+// (`claim-record-codecs.ts`, `session-record-codecs.ts`); every record passed
+// to an encoder comes from a `state/` machine (STATE-MACHINES-SPEC §14.2).
 // --------------------------------------------------------------------------
 
 function encodeRun(run: RunSnapshot): EncodedRecord {
   return { refKey: refKeyOf(run.ref) as string, schemaId: 'RunSnapshot@1', revision: run.revision, json: JSON.stringify(run) };
 }
-function encodeAttempt(attempt: TaskAttemptSnapshot): EncodedRecord {
-  return { refKey: taskAttemptRefKey(attempt.ref), schemaId: 'TaskAttemptSnapshot@1', revision: attempt.revision, json: JSON.stringify(attempt) };
-}
-function encodeOutbox(outbox: TaskClaimOutbox): EncodedRecord {
-  return { refKey: dispatchOutboxRefKey(outbox.ref), schemaId: 'DispatchOutboxEntrySnapshot@1', revision: outbox.revision, json: JSON.stringify(outbox) };
-}
 function encodeLease(lease: TaskLeaseSnapshot): EncodedRecord {
   return { refKey: refKeyOf(lease.ref) as string, schemaId: 'TaskLeaseSnapshot@1', revision: lease.revision, json: JSON.stringify(lease) };
-}
-function encodeSession(session: SessionRecord): EncodedRecord {
-  return { refKey: sessionAggregateRefKey(session.ref), schemaId: 'SessionRecord@1', revision: session.revision, json: JSON.stringify(session) };
 }
 
 // --------------------------------------------------------------------------
@@ -1596,6 +1714,9 @@ function observedHistoryProblem(history: unknown): boolean {
   return true;
 }
 
+// The model barrier's (`admitEnteredRun`) Lease and Session checks. The four
+// lifecycle writes ask the same with the same texts through the Run machine
+// (`state/run-machine.ts` `leaseGuard`, `sessionGuard`).
 function leaseOwnershipProblem(lease: TaskLeaseSnapshot | null, claim: TaskClaim): CoreRejection | null {
   // A missing Lease is never "free": entry admission requires the claim's exact
   // present, unreleased Lease whose full TaskRef/holder/attempt still match.
@@ -1620,75 +1741,6 @@ function sessionOccupancyProblem(session: SessionRecord, claim: TaskClaim): Core
     return busy('the claim Session is no longer occupied by this Run generation');
   }
   return null;
-}
-
-function sessionOwnedByRun(session: SessionRecord, claim: TaskClaim): boolean {
-  return session.occupancy !== null && session.occupancy.kind === 'execution'
-    && sameRef(session.occupancy.executionRef, claim.runRef) && session.occupancy.generation === claim.generation;
-}
-
-function runFinished(run: RunSnapshot): boolean {
-  return run.status === 'ended' || run.outcome !== null;
-}
-
-/** A yielded continuation must bind the exact original Task/Session and a
- * complete saved message; it never authorizes a new Run by itself. */
-function runContinuationProblem(continuation: unknown, claim: TaskClaim): string | null {
-  if (!isRecord(continuation)) return 'the continuation must be an object';
-  if (continuation['schemaVersion'] !== 1 || continuation['kind'] !== 'wait_reply') return 'the continuation kind is not recognized';
-  const task = continuation['task'];
-  if (!isRecord(task) || task['projectId'] !== claim.task.projectId || task['goalId'] !== claim.task.goalId
-    || task['taskId'] !== claim.task.taskId) return 'the continuation Task is not the claimed Task';
-  const sessionRef = continuation['sessionRef'];
-  if (!isRecord(sessionRef) || sessionRef['projectId'] !== claim.sessionRef.projectId
-    || sessionRef['sessionId'] !== claim.sessionRef.sessionId) return 'the continuation Session is not the claimed Session';
-  const messageRef = continuation['messageRef'];
-  if (!isRecord(messageRef) || messageRef['aggregateType'] !== 'SessionMessage'
-    || !nonEmpty(messageRef['projectId']) || !nonEmpty(messageRef['workspaceId']) || !nonEmpty(messageRef['messageId'])) {
-    return 'the continuation messageRef is incomplete';
-  }
-  return null;
-}
-
-function terminalFact(event: RuntimeEventV1, runRef: RunRef, run: RunSnapshot): { outcome: RunOutcome; exitCode: number | null } | CoreRejection {
-  if (!isRecord(event)) return invalid('the result event must be an object');
-  if (!sameRef(event.runRef, runRef)) return invalid('the result event names another Run');
-  if (!nonEmpty(event.eventId)) return invalid('the result event requires an eventId');
-  if (event.schemaVersion !== 1) return invalid('the result event schemaVersion must be 1');
-  if (!isSafeInteger(event.sequence)) return invalid('the result event sequence must be a safe non-negative integer');
-  if (event.sequence <= run.lastEventSeq) return reject('revision_conflict', 'the result event sequence is not newer than the applied Run fact');
-  if (!isRecord(event.payload)) return invalid('the result event payload must be an object');
-  switch (event.eventType) {
-    case 'run_completed':
-      if (event.payload.kind !== 'completed' || !Number.isSafeInteger(event.payload.exitCode)) {
-        return invalid('run_completed requires a completed payload with an exitCode');
-      }
-      return { outcome: 'completed', exitCode: event.payload.exitCode as number };
-    case 'run_crashed':
-      if (event.payload.kind !== 'crashed' || typeof event.payload.error !== 'string') return invalid('run_crashed requires a crashed payload');
-      return { outcome: 'crashed', exitCode: null };
-    case 'run_cancelled':
-      if (event.payload.kind !== 'cancelled' || typeof event.payload.reason !== 'string') return invalid('run_cancelled requires a cancelled payload');
-      return { outcome: 'cancelled', exitCode: null };
-    case 'run_budget_exhausted':
-      if (event.payload.kind !== 'budget_exhausted' || typeof event.payload.exhaustedAt !== 'string') {
-        return invalid('run_budget_exhausted requires a budget_exhausted payload');
-      }
-      return { outcome: 'budget_exhausted', exitCode: null };
-    case 'run_yielded':
-      // An explicit yield is a REAL terminal fact: the Turn exited active execution
-      // after its tool group drained. It releases the same occupancy/lease as every
-      // other terminal, but is never counted as Task satisfaction or failure.
-      if (event.payload.kind !== 'yielded' || !isRecord(event.payload.yield)
-        || (event.payload.yield.reason !== 'reply_required'
-          && event.payload.yield.reason !== 'external_input_required'
-          && event.payload.yield.reason !== 'operator_requested')) {
-        return invalid('run_yielded requires a yielded payload with a recognized reason');
-      }
-      return { outcome: 'yielded', exitCode: null };
-    default:
-      return invalid('a terminal result requires a terminal Runtime event');
-  }
 }
 
 /**
