@@ -82,8 +82,12 @@ export type SessionGuardContext = {
   probe: SessionProbeVerdict | null;
   /** Only for `health_observed`: the Kernel session head a `ready` probe read; null for other verdicts. */
   kernelHeader: null | { activeRunId: string | null };
-  /** Only for `session_archived`: an open `responsible` task/work link exists. */
-  openResponsibleLink: boolean | null;
+  /**
+   * Only for `session_archived`: the target kind of the first open
+   * `responsible` task/work link, which the refusal names as today's service
+   * reason does; false without one; null = not read.
+   */
+  openResponsibleLink: 'task' | 'work' | false | null;
   /** Only for `session_created`. */
   creation: null | { operationAcceptedAt1: boolean; plannedAbsent: boolean; mappingUnique: boolean; linkTargetsValid: boolean };
   /**
@@ -210,8 +214,10 @@ export function ownsQuery(
 }
 
 /**
- * Reduction order of `session-directory.ts:1027-1032`: archived or
- * unavailable → unavailable; else occupied → busy; else recoverable; else idle.
+ * Reduction order moved from the former `availabilityOf` in
+ * `session-directory.ts`, which now reads every card's availability here:
+ * archived or unavailable → unavailable; else occupied → busy; else
+ * recoverable; else idle.
  */
 export function deriveAvailability(session: {
   lifecycle: SessionLifecycle; health: SessionHealth; occupancy: object | null;
@@ -418,7 +424,7 @@ export function transitionSession(state: SessionMachineState, event: SessionEven
   }
 }
 
-/** SES-01 (`session-directory.ts:866-984`). */
+/** SES-01 (the checks formerly inline in `session-directory.ts` `recordSessionCreated`, which now calls this). */
 function created(ctx: SessionGuardContext): SessionTransition {
   const creation = ctx.creation;
   if (creation === null) return reject('illegal', 'invalid', 'session_created requires the creation guard facts');
@@ -540,15 +546,20 @@ function releasedOnKernelTerminal(state: ActiveState, holder: SessionHolderConte
   }]);
 }
 
-/** SES-11 (`session-lifecycle.ts:605-617`): health is not checked; archiving an unavailable Session is legal. */
+/**
+ * SES-11 (the checks formerly inline in `session-lifecycle.ts`
+ * `runTransitionAttempt`, which now calls this): health is not checked;
+ * archiving an unavailable Session is legal.
+ */
 function archived(state: ActiveState, ctx: SessionGuardContext): SessionTransition {
   if (state.lifecycle === 'archived') return reject('illegal', 'invalid', 'the Session is already archived');
   if (state.occupancy !== null) return reject('guard_failed', 'busy', 'the Session is occupied');
   if (ctx.openResponsibleLink === null) {
     return reject('illegal', 'invalid', 'session_archived requires the responsible-link read');
   }
-  if (ctx.openResponsibleLink) {
-    return reject('guard_failed', 'dependency_blocked', 'the Session still has an unresolved responsible obligation');
+  if (ctx.openResponsibleLink !== false) {
+    return reject('guard_failed', 'dependency_blocked',
+      `the Session still has an unresolved responsible ${ctx.openResponsibleLink} obligation`);
   }
   if (stalePin(state, ctx)) return reject('stale', 'revision_conflict', 'the Session changed since the caller read it');
   return done({ ...state, lifecycle: 'archived', revision: state.revision + 1 },
@@ -556,7 +567,8 @@ function archived(state: ActiveState, ctx: SessionGuardContext): SessionTransiti
 }
 
 /**
- * SES-14 (`session-lifecycle.ts:618-620`): no Kernel capability check (SG-2)
+ * SES-14 (formerly inline in `session-lifecycle.ts` `runTransitionAttempt`,
+ * which now calls this): no Kernel capability check (SG-2)
  * and, as today, no occupancy check (archived with an occupancy is
  * unreachable, I-4).
  */
@@ -596,7 +608,10 @@ function healthObserved(state: ActiveState, observed: SessionHealth, ctx: Sessio
   return notYet(observed === 'unavailable' ? 'SES-12' : 'SES-13');
 }
 
-/** SES-15 (`session-lifecycle.ts:406-417`) and SES-16 (`:418-430`). */
+/**
+ * SES-15 and SES-16 (the open/close checks formerly inline in
+ * `session-lifecycle.ts` `runLinkAttempt`, which now calls this).
+ */
 function workLinked(state: ActiveState, active: boolean, ctx: SessionGuardContext): SessionTransition {
   const link = ctx.link;
   if (link === null) return reject('illegal', 'invalid', 'work_linked requires the link guard facts');

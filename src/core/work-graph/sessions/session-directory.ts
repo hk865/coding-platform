@@ -20,6 +20,11 @@
  *   - The bounded scan never advances past an unprocessed candidate, and a
  *     Session with more links than the bounded read budget fails explicitly
  *     instead of being silently truncated.
+ *   - Registration (SES-01) is decided by the pure Session machine
+ *     (`state/session-availability.ts`, STATE-MACHINES-SPEC §8) and writes the
+ *     record its `createSessionRecord` builds; every card's availability is its
+ *     `deriveAvailability`. The creating operation's progress (admission,
+ *     completion) is not part of that machine (§8.1).
  */
 import type { ArtifactRef } from '../../../contracts/artifact.js';
 import type { CommitCursor } from '../../../contracts/command-event.js';
@@ -35,7 +40,7 @@ import type { SessionRecord, SessionWorkLink } from '../../../contracts/core/ses
 import { makeCommitCursor, seqOfCommitCursor } from '../../../contracts/ledger.js';
 import type { AggregateRef } from '../../../contracts/ledger.js';
 import type {
-  CommitCursorBinding, EncodedRecord, GoalRecordTransactionPort, PreparedCommit, RecordGuard,
+  CommitCursorBinding, EncodedDomainEvent, EncodedRecord, GoalRecordTransactionPort, PreparedCommit, RecordGuard,
   StoreFailure, UniqueClaimChange,
 } from '../../record-store/ports.js';
 import type { RecordLookupPort, RecordLookupRequest } from '../../record-store/lookup-ports.js';
@@ -55,6 +60,10 @@ import {
   sessionOperationFromAdmittedEvent, sessionWorkLinkRefKey, type PendingSessionWorkLink,
 } from './session-record-codecs.js';
 import { validateWorkLinkTarget } from './session-targets.js';
+import {
+  createSessionRecord, deriveAvailability, sessionMachineStateOf, transitionSession,
+  type SessionEvent, type SessionGuardContext,
+} from '../state/session-availability.js';
 import { decodeRun } from '../tasks/run-state-service.js';
 
 /** R4b's required physical surface. WorkGraph remains the sole domain writer;
@@ -391,6 +400,25 @@ function normalizeCreationResult(raw: unknown, scope: WorkspaceScope): Normalize
       kernelSessionId: raw['kernelSessionId'],
       observedAt: raw['observedAt'],
     },
+  };
+}
+
+const SESSION_CREATED: SessionEvent = { kind: 'session_created' };
+
+/**
+ * SES-01's guard context (STATE-MACHINES-SPEC §8.3). The registration reads
+ * its facts in today's order and asks the Session machine after each read, so
+ * a refused guard stops the reads where they always stopped; a fact not read
+ * yet is passed as holding. The initial link targets are then checked with
+ * their own codes (the machine's `not_found` is only its backstop) and the
+ * Kernel mapping stays the commit's unique claim, so a held mapping is still
+ * the store's `revision_conflict`.
+ */
+function registrationContext(facts: { operationAcceptedAt1: boolean; plannedAbsent: boolean }): SessionGuardContext {
+  return {
+    caller: 'service', hostLease: null, pin: null, holder: null, probe: null, kernelHeader: null,
+    openResponsibleLink: null, link: null,
+    creation: { ...facts, mappingUnique: true, linkTargetsValid: true },
   };
 }
 
@@ -863,21 +891,29 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
     }
     if (existing.code !== 'not_found') return mapStoreFailure(existing);
 
-    if (storedOperation.revision !== 1 || storedOperation.phase !== 'accepted') {
-      return reject('revision_conflict', 'the admitted Session operation is no longer awaiting registration');
-    }
+    // SES-01: the operation is judged before the planned Session is read.
+    const operationAcceptedAt1 = storedOperation.revision === 1 && storedOperation.phase === 'accepted';
+    const admitted = transitionSession('absent', SESSION_CREATED,
+      registrationContext({ operationAcceptedAt1, plannedAbsent: true }));
+    if (!admitted.ok) return reject(admitted.code, admitted.detail);
 
     const sessionKey = sessionAggregateRefKey(plainSessionRefToAggregate(registration.sessionRef));
     const sessionRead = await records.readMany([sessionKey]);
     if (sessionRead.status !== 'ready') return mapStoreFailure(sessionRead);
     const existingSession = sessionRead.value.records.find((record) => record.refKey === sessionKey);
+    let present: SessionRecord | null = null;
     if (existingSession !== undefined) {
       const decodedExisting = decodeSessionRecord(existingSession);
       if (decodedExisting.status !== 'decoded') {
         return reject('unavailable', `the existing Session record is damaged: ${decodedExisting.reason}`);
       }
-      return reject('revision_conflict', 'the planned Session reference is already registered',
-        [{ ref: decodedExisting.value.ref, revision: decodedExisting.value.revision }]);
+      present = decodedExisting.value;
+    }
+    const registered = transitionSession(sessionMachineStateOf(present), SESSION_CREATED,
+      registrationContext({ operationAcceptedAt1, plannedAbsent: present === null }));
+    if (!registered.ok) {
+      return reject(registered.code, registered.detail,
+        present === null ? undefined : [{ ref: present.ref, revision: present.revision }]);
     }
 
     // Validate every requested initial link against its real canonical target
@@ -907,20 +943,13 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
     }
 
     const createdAt = new Date().toISOString();
-    const session: SessionRecord = {
+    const session = createSessionRecord({
       ref: plainSessionRefToAggregate(registration.sessionRef),
-      revision: 1,
       kernel: { adapterId: registration.adapterId, kernelSessionId: registration.kernelSessionId },
-      lifecycle: 'active',
-      health: 'available',
       role: storedOperation.action.role,
       workspaceId: scope.workspaceId,
-      lastExecutionRef: null,
-      occupancy: null,
-      historyCursor: null,
       createdAt,
-      archivedAt: null,
-    };
+    });
     const completedOperation: SessionOperationRecord = {
       ...storedOperation,
       revision: 2,
@@ -936,11 +965,40 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
       },
       failure: null,
     };
-    const recordsToWrite: EncodedRecord[] = [
-      encodeSessionRecord(session),
-      encodeSessionOperationRecord(completedOperation),
-      ...pendingLinks.map((link) => encodePendingSessionWorkLink(link)),
-    ];
+    const event = {
+      eventId: deriveEventId(identityKey, 'created'),
+      eventType: 'SessionCreated' as const,
+      schemaVersion: 1 as const,
+      occurredAt: createdAt,
+      projectId: scope.projectId,
+      workspaceId: scope.workspaceId,
+      operationRef: registration.operationRef,
+      session,
+    };
+    const recordsToWrite: EncodedRecord[] = [];
+    const events: EncodedDomainEvent[] = [];
+    const bindings: CommitCursorBinding[] = [];
+    for (const effect of registered.effects) {
+      switch (effect.kind) {
+        case 'create_session':
+          recordsToWrite.push(encodeSessionRecord(session));
+          break;
+        case 'complete_creation_operation':
+          recordsToWrite.push(encodeSessionOperationRecord(completedOperation));
+          break;
+        case 'write_initial_links':
+          for (const link of pendingLinks) {
+            recordsToWrite.push(encodePendingSessionWorkLink(link));
+            bindings.push({ refKey: sessionWorkLinkRefKey(link.ref), field: 'since' });
+          }
+          break;
+        case 'emit_event':
+          events.push(encodeSessionCreatedEvent(event));
+          break;
+        default:
+          throw new Error(`session_created has no ${effect.kind} effect`);
+      }
+    }
     const guardByKey = new Map<string, RecordGuard>();
     guardByKey.set(opKey, { refKey: opKey, expectedRevision: 1 });
     guardByKey.set(sessionKey, { refKey: sessionKey, expectedRevision: null });
@@ -954,20 +1012,6 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
       expectedOwner: null,
       nextOwner: sessionKey,
     }];
-    const bindings: CommitCursorBinding[] = pendingLinks.map((link) => ({
-      refKey: sessionWorkLinkRefKey(link.ref),
-      field: 'since',
-    }));
-    const event = {
-      eventId: deriveEventId(identityKey, 'created'),
-      eventType: 'SessionCreated' as const,
-      schemaVersion: 1 as const,
-      occurredAt: createdAt,
-      projectId: scope.projectId,
-      workspaceId: scope.workspaceId,
-      operationRef: registration.operationRef,
-      session,
-    };
     const prepared: PreparedCommit = {
       identityKey,
       fingerprint,
@@ -976,7 +1020,7 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
       claims,
       indexGuards: [],
       indexChanges: [],
-      events: [encodeSessionCreatedEvent(event)],
+      events,
       ...(bindings.length > 0 ? { commitCursorBindings: bindings } : {}),
     };
 
@@ -1023,13 +1067,6 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
   // ------------------------------------------------------------------------
   // Shared reads
   // ------------------------------------------------------------------------
-
-  function availabilityOf(record: SessionRecord): SessionCard['availability'] {
-    if (record.lifecycle === 'archived' || record.health === 'unavailable') return 'unavailable';
-    if (record.occupancy !== null) return 'busy';
-    if (record.health === 'recoverable') return 'recoverable';
-    return 'idle';
-  }
 
   /**
    * Complete read of one Session's own links through the registered per-Session
@@ -1177,7 +1214,7 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
     if (!links.ok) return links.rejection;
     return {
       status: 'ready',
-      value: { record: session, availability: availabilityOf(session), links: links.value, recommendationReasons: [] },
+      value: { record: session, availability: deriveAvailability(session), links: links.value, recommendationReasons: [] },
     };
   }
 
@@ -1347,7 +1384,7 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
         const links = await readSessionLinks(scope.projectId, session.ref.sessionId, observeWater);
         if (!links.ok) return links.rejection;
         if (stale) return reject('source_stale', 'the card links were read at a different water level than the target stream');
-        items.push({ record: session, availability: availabilityOf(session), links: links.value, recommendationReasons: [] });
+        items.push({ record: session, availability: deriveAvailability(session), links: links.value, recommendationReasons: [] });
       }
       // Advance every stream at this Session, including a closed/archived/role
       // filtered candidate, so it can never reappear on a later page.
@@ -1532,7 +1569,7 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
         }
         const links = await readSessionLinks(scope.projectId, session.ref.sessionId);
         if (!links.ok) return links.rejection;
-        items.push({ record: session, availability: availabilityOf(session), links: links.value, recommendationReasons: [] });
+        items.push({ record: session, availability: deriveAvailability(session), links: links.value, recommendationReasons: [] });
         lastReturnedKey = record.refKey;
       }
       if (items.length >= limit) {

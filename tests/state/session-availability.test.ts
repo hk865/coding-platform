@@ -557,15 +557,24 @@ describe('SES-11 session_archived / SES-14 session_reactivated', () => {
   });
 
   it('an open responsible link blocks; the link read is required', () => {
-    expect(run(IDLE, archive, ctxOf({ openResponsibleLink: true }))).toEqual(refused('guard_failed', 'dependency_blocked'));
+    expect(run(IDLE, archive, ctxOf({ openResponsibleLink: 'task' }))).toEqual(refused('guard_failed', 'dependency_blocked'));
     expect(run(IDLE, archive, ctxOf({ openResponsibleLink: null }))).toEqual(refused('illegal', 'invalid'));
+  });
+
+  it('the refusal names the blocking target kind, as today\'s service reason does', () => {
+    for (const kind of ['task', 'work'] as const) {
+      expect(transitionSession(IDLE, archive, ctxOf({ openResponsibleLink: kind }))).toEqual({
+        ok: false, reason: 'guard_failed', code: 'dependency_blocked',
+        detail: `the Session still has an unresolved responsible ${kind} obligation`,
+      });
+    }
   });
 
   it('guard order: archived → occupied → links → pin', () => {
     const archivedIdle = { ...IDLE, lifecycle: 'archived' as const };
-    expect(run(archivedIdle, archive, ctxOf({ pin: 1, openResponsibleLink: true }))).toEqual(refused('illegal', 'invalid'));
-    expect(run(HELD_BY_RUN, archive, ctxOf({ pin: 1, openResponsibleLink: true }))).toEqual(refused('guard_failed', 'busy'));
-    expect(run(IDLE, archive, ctxOf({ pin: 1, openResponsibleLink: true }))).toEqual(refused('guard_failed', 'dependency_blocked'));
+    expect(run(archivedIdle, archive, ctxOf({ pin: 1, openResponsibleLink: 'task' }))).toEqual(refused('illegal', 'invalid'));
+    expect(run(HELD_BY_RUN, archive, ctxOf({ pin: 1, openResponsibleLink: 'task' }))).toEqual(refused('guard_failed', 'busy'));
+    expect(run(IDLE, archive, ctxOf({ pin: 1, openResponsibleLink: 'work' }))).toEqual(refused('guard_failed', 'dependency_blocked'));
     expect(run(IDLE, archive, ctxOf({ pin: 1, openResponsibleLink: false }))).toEqual(refused('stale', 'revision_conflict'));
   });
 
