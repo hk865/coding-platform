@@ -50,6 +50,9 @@ export type WorkbenchToolsOptions = {
   /** Default command ceiling used when the request does not carry its own. */
   commandTimeoutMs?: number;
   commandOutputLimitBytes?: number;
+  /** Optional Host change feed (task E): called when a handle starts stopping
+   * and when it settles. A notification never changes the command. */
+  onCommandChange?: (change: WorkbenchCommandChange) => void;
 };
 
 export type SaveWorkbenchFileRequest = {
@@ -98,6 +101,10 @@ export type WorkbenchCommandRef = { commandId: string };
 /** `stopping` is a requested stop that has not been observed as settled yet.
  * A `settled` handle keeps its output and its real exit/timed-out facts. */
 export type WorkbenchCommandState = 'running' | 'stopping' | 'settled';
+
+/** Task E change notice: a command handle reached `state`. The output stays in
+ * the handle; the page re-reads it with `commands/read`. */
+export type WorkbenchCommandChange = { scope: MaterialSourceScope; commandId: string; state: WorkbenchCommandState };
 
 export type WorkbenchCommandSnapshot = {
   /** A saved execution/launch failure, never fabricated process stderr. */
@@ -297,6 +304,17 @@ export function createWorkbenchTools(options: WorkbenchToolsOptions): WorkbenchT
   }
   let closed = false;
   let closePromise: Promise<void> | undefined;
+
+  /** Task E: announce a handle state change. Closing the tools announces
+   * nothing; a notification failure never reaches the command. */
+  function announce(handle: CommandHandle): void {
+    const notify = options.onCommandChange;
+    if (notify === undefined || closed) return;
+    try {
+      notify({ scope: { projectId: handle.scope.projectId, workspaceId: handle.scope.workspaceId },
+        commandId: handle.commandId, state: handle.snapshot.state });
+    } catch { /* the change feed is best effort; reads stay authoritative */ }
+  }
 
   /** Bind the trusted Host scope before any Kernel capability is acquired. */
   function bind(ctx: CoreCallContext): WorkspaceRuntime | WorkspaceResult<never> {
@@ -503,6 +521,8 @@ export function createWorkbenchTools(options: WorkbenchToolsOptions): WorkbenchT
         } catch (error) {
           // A post-acceptance failure is a structured saved error, never fake stderr.
           handle.snapshot = { ...handle.snapshot, state: 'settled', error: commandErrorOf(error) };
+        } finally {
+          announce(handle);
         }
       })();
       return { status: 'ready', value: commandSnapshotOf(handle) };
@@ -534,7 +554,10 @@ export function createWorkbenchTools(options: WorkbenchToolsOptions): WorkbenchT
         return rejected('forbidden', 'the command handle belongs to another workspace');
       }
       if (handle.snapshot.state !== 'settled') {
+        const first = handle.snapshot.state === 'running';
         handle.snapshot = { ...handle.snapshot, state: 'stopping' };
+        // Announce `stopping` before the abort so it always precedes `settled`.
+        if (first) announce(handle);
         handle.controller.abort();
       }
       return { status: 'ready', value: commandSnapshotOf(handle) };

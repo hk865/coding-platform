@@ -40,7 +40,7 @@ import type { QueryJobPort, QueryExecutionRecord } from '../core/work-graph/quer
 import type { MaterialPort } from '../core/work-graph/materials/contracts.js';
 import type { WorkflowPort } from '../business/workflow/ports.js';
 import type { CollaborationDriverPort } from './collaboration-driver.js';
-import type { WorkbenchToolsPort } from './workbench-tools.js';
+import type { WorkbenchCommandState, WorkbenchToolsPort } from './workbench-tools.js';
 import type { InitialPlanningGoalInputResult, WorkflowAdvanceResult, WorkflowStepReceipt } from '../business/workflow/contracts.js';
 
 /** The project/workspace navigation scope. It is a real domain scope, not a
@@ -81,6 +81,12 @@ export const PLATFORM_TOKEN_PLACEHOLDER = '__PLATFORM_TOKEN__';
 export const WORKBENCH_PATH = '/workbench/';
 export const CORE_API_PREFIX = '/api/real/core/';
 export const BOOTSTRAP_SUFFIX = 'bootstrap';
+/** `GET ${CORE_API_PREFIX}${CHANGES_SUFFIX}` is the change-notification stream
+ * (task E). Like bootstrap it is a GET transport endpoint served by
+ * `server.ts`, not a row of the POST route table. */
+export const CHANGES_SUFFIX = 'changes';
+/** The SSE resume header; its value is the last commit cursor the page saw. */
+export const LAST_EVENT_ID_HEADER = 'last-event-id';
 
 /** Body kinds. GraphWrite routes keep the domain `{input,meta}` envelope;
  * `source/capture` is an explicit action but is NOT a GraphWrite, matching the
@@ -424,4 +430,55 @@ export type BootstrapResponse = {
   workspaces: BootstrapWorkspace[];
   review: BootstrapReviewMaterial | null;
   execution: BootstrapExecution;
+  /** Task E: the change-feed head (commit cursor; null for an empty or unknown
+   * ledger) when the Host answered `GET bootstrap`. Absent when the Host
+   * publishes no change stream, and in the settings `workspaces/open` reply. */
+  changesHead?: string | null;
 };
+
+// ---------------------------------------------------------------------------
+// Task E change stream (`GET /api/real/core/changes`, text/event-stream).
+//
+// The stream carries CHANGE NOTIFICATIONS only, never domain data: the page
+// re-reads the affected resources through the ordinary POST routes above. A
+// notice derived from a RecordStore commit carries that commit's cursor as its
+// SSE `id`, so `Last-Event-ID` resumes from the ledger order. Notices of the two
+// Host in-memory handle owners (collaboration driver, command handles) have no
+// commit cursor and therefore no `id`; a page re-reads its live handles after
+// any reconnect instead.
+// ---------------------------------------------------------------------------
+
+/** Coarse resource families. `driver`/`command` are the in-memory Host handles;
+ * every other kind is derived from the aggregate types a commit touched. */
+export type ChangeKind =
+  | 'project' | 'goals' | 'tasks' | 'executions' | 'sessions' | 'messages' | 'queries' | 'architecture'
+  | 'other' | 'driver' | 'command';
+
+/** The SSE event names. `ready` opens every connection; `reset` means the
+ * missed notices cannot be replayed and everything shown must be re-read. */
+export type ChangeEventName = 'ready' | 'change' | 'reset';
+
+/** `change` data. `cursor` is the commit cursor for a commit notice and, for a
+ * driver/command notice, only the current head for information. `projects` are
+ * the touched project ids; workspace ids are not part of most aggregate refs,
+ * so a page matches commit notices by project. */
+export type ChangeNotice = {
+  cursor: string | null;
+  kinds: ChangeKind[];
+  projects: string[];
+  /** Driver/command notices name the exact handle scope. */
+  scope?: CoreScope;
+  /** Driver notice: the Goal whose handle (or a sibling handle) moved. */
+  goalId?: string;
+  taskId?: string | null;
+  /** Command notice: the handle and its new state. */
+  commandId?: string;
+  state?: WorkbenchCommandState;
+};
+
+/** `ready` data: the head cursor at connect time (null for an empty ledger). */
+export type ChangeReady = { cursor: string | null };
+
+export type ChangeResetReason = 'cursor_invalid' | 'cursor_unknown' | 'cursor_too_old' | 'head_unknown';
+/** `reset` data. */
+export type ChangeReset = { cursor: string | null; reason: ChangeResetReason };

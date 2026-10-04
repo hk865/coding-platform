@@ -6,6 +6,11 @@
  * and request-size boundary, derives a real `AbortSignal` from the socket, and
  * forwards the parsed payload to `core-routes.ts`. It never touches the
  * RecordStore or a domain service directly.
+ *
+ * Task E adds one long-lived GET transport endpoint beside bootstrap: the
+ * change-notification stream. It keeps the same token and same-origin boundary,
+ * writes only the `ChangeFeed` notices as `text/event-stream`, and ends every
+ * open stream before the listener closes.
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { readFile } from 'node:fs/promises';
@@ -13,7 +18,9 @@ import { fileURLToPath } from 'node:url';
 import type { CoreRouteSuffix } from './core-http-types.js';
 import {
   BOOTSTRAP_SUFFIX,
+  CHANGES_SUFFIX,
   CORE_API_PREFIX,
+  LAST_EVENT_ID_HEADER,
   type CoreScope,
   PLATFORM_TOKEN_HEADER,
   PLATFORM_TOKEN_META_NAME,
@@ -30,11 +37,25 @@ import {
   CoreRouteRejectionError,
   CoreUnsupportedError,
   dispatchCoreRoute,
+  parseChangeStreamResume,
   parseCoreRouteRequest,
   type CoreRouteBindings,
 } from './core-routes.js';
+import type { ChangeFeed, ChangeFeedEvent } from './change-feed.js';
 
 const DEFAULT_MAX_BODY_BYTES = 1024 * 1024;
+/** Heartbeat comment period of an idle change stream. */
+const DEFAULT_CHANGES_HEARTBEAT_MS = 15_000;
+/** One stream per visible page. The loopback listener is plain HTTP/1.1, and a
+ * browser allows 6 connections per host for ALL tabs and windows of a profile
+ * together, so the ceiling keeps at least 2 of them free for ordinary requests;
+ * a further page gets 429 and keeps the old polling while it retries. */
+const DEFAULT_MAX_CHANGE_STREAMS = 4;
+/** A stream whose client stops reading is ended; the page resumes it with
+ * `Last-Event-ID`. */
+const DEFAULT_MAX_CHANGE_STREAM_BACKLOG_BYTES = 64 * 1024;
+/** After `end()` a stream that cannot flush is destroyed so close never hangs. */
+const CHANGE_STREAM_END_GRACE_MS = 1_000;
 
 /** The only static asset names the workbench publishes. A path outside this
  * closed set is a 404, so no directory traversal is expressible. */
@@ -63,6 +84,14 @@ export type WorkbenchServerOptions = {
   host?: string;
   publicDir?: string;
   maxBodyBytes?: number;
+  /** Task E change feed. Absence keeps the stream an explicit `unsupported` gap. */
+  changes?: ChangeFeed;
+  /** Heartbeat period of the change stream (tests shorten it). */
+  changesHeartbeatMs?: number;
+  /** Concurrent change-stream ceiling; one more is answered 429 `capacity`. */
+  maxChangeStreams?: number;
+  /** Unsent bytes a change stream may queue before it is ended (tests shrink it). */
+  maxChangeStreamBacklogBytes?: number;
 };
 
 export type WorkbenchServer = {
@@ -84,6 +113,12 @@ function sendJson(response: ServerResponse, status: number, payload: unknown): v
     'cache-control': 'no-store',
   });
   response.end(body);
+}
+
+/** One SSE frame. `data` is a single JSON line, so it never needs splitting. */
+function sseFrame(event: ChangeFeedEvent): string {
+  const id = event.id === null ? '' : `id: ${event.id}\n`;
+  return `event: ${event.name}\n${id}data: ${JSON.stringify(event.data)}\n\n`;
 }
 
 function sendText(response: ServerResponse, status: number, contentType: string, body: string, cache: string): void {
@@ -155,7 +190,12 @@ export function createWorkbenchServer(options: WorkbenchServerOptions): Workbenc
   const host = options.host ?? '127.0.0.1';
   const publicDir = options.publicDir ?? defaultPublicDir();
   const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
+  const changesHeartbeatMs = options.changesHeartbeatMs ?? DEFAULT_CHANGES_HEARTBEAT_MS;
+  const maxChangeStreams = options.maxChangeStreams ?? DEFAULT_MAX_CHANGE_STREAMS;
+  const maxChangeStreamBacklogBytes = options.maxChangeStreamBacklogBytes ?? DEFAULT_MAX_CHANGE_STREAM_BACKLOG_BYTES;
   const inFlight = new Set<Promise<void>>();
+  /** The `end` of every open change stream; `close()` ends them first. */
+  const changeStreams = new Set<() => void>();
   let boundPort = 0;
   let closing: Promise<void> | undefined;
 
@@ -214,6 +254,72 @@ export function createWorkbenchServer(options: WorkbenchServerOptions): Workbenc
       else sendJson(response, 500, { status: 'rejected', code: 'unavailable', reason: 'the Host failed to execute the route' });
     }
     return true;
+  }
+
+  /** The bootstrap plus, with a change feed, the feed head read FIRST: every
+   * read the page makes after this reply is at least this new, so a stream
+   * whose `ready` names a newer head proves a commit landed while it loaded. */
+  function bootstrapReply(): BootstrapResponse {
+    const changesHead = options.changes?.head();
+    const body = options.bootstrap();
+    return changesHead === undefined ? body : { ...body, changesHead };
+  }
+
+  /**
+   * Task E change stream. The response stays open and carries only change
+   * notices: `ready`/`change`/`reset` events plus a heartbeat comment. The
+   * handler promise settles when the response closes (client gone, write
+   * backlog, or Host shutdown), so it stays in `inFlight` until then.
+   */
+  async function serveChanges(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    const feed = options.changes;
+    if (feed === undefined) {
+      sendJson(response, statusForCode('unsupported'), { status: 'rejected', code: 'unsupported', reason: 'the Host publishes no change stream' });
+      return;
+    }
+    if (changeStreams.size >= maxChangeStreams) {
+      sendJson(response, statusForCode('capacity'), { status: 'rejected', code: 'capacity', reason: 'too many open change streams' });
+      return;
+    }
+    const resume = parseChangeStreamResume(request.headers[LAST_EVENT_ID_HEADER]);
+    response.writeHead(200, {
+      'content-type': 'text/event-stream; charset=utf-8',
+      'cache-control': 'no-store',
+      // `end()` then releases the socket, so a Host close never waits on keep-alive.
+      connection: 'close',
+    });
+    response.flushHeaders();
+    request.socket.setNoDelay(true);
+    request.socket.setTimeout(0);
+    const closed = new Promise<void>(resolvePromise => { response.once('close', () => resolvePromise()); });
+    let ended = false;
+    let grace: ReturnType<typeof setTimeout> | undefined;
+    const end = (): void => {
+      if (ended) return;
+      ended = true;
+      response.end();
+      grace = setTimeout(() => response.destroy(), CHANGE_STREAM_END_GRACE_MS);
+      grace.unref();
+    };
+    const write = (frame: string): void => {
+      if (ended || response.destroyed) return;
+      response.write(frame);
+      if (response.writableLength > maxChangeStreamBacklogBytes) end();
+    };
+    const subscription = feed.open(resume, event => write(sseFrame(event)));
+    const heartbeat = setInterval(() => write(': hb\n\n'), changesHeartbeatMs);
+    heartbeat.unref();
+    changeStreams.add(end);
+    try {
+      if (response.destroyed) return;
+      write(sseFrame(subscription.opening));
+      await closed;
+    } finally {
+      clearInterval(heartbeat);
+      if (grace !== undefined) clearTimeout(grace);
+      subscription.close();
+      changeStreams.delete(end);
+    }
   }
 
   /**
@@ -279,7 +385,13 @@ export function createWorkbenchServer(options: WorkbenchServerOptions): Workbenc
     if (pathname === `${CORE_API_PREFIX}${BOOTSTRAP_SUFFIX}`) {
       if (method !== 'GET') { sendJson(response, 405, { status: 'rejected', code: 'invalid', reason: 'use GET for bootstrap' }); return; }
       if (!handleToken(request)) { sendJson(response, 403, { status: 'rejected', code: 'forbidden', reason: 'the local platform token is missing or stale' }); return; }
-      sendJson(response, 200, options.bootstrap());
+      sendJson(response, 200, bootstrapReply());
+      return;
+    }
+    if (pathname === `${CORE_API_PREFIX}${CHANGES_SUFFIX}`) {
+      if (method !== 'GET') { sendJson(response, 405, { status: 'rejected', code: 'invalid', reason: 'use GET for the change stream' }); return; }
+      if (!handleToken(request)) { sendJson(response, 403, { status: 'rejected', code: 'forbidden', reason: 'the local platform token is missing or stale' }); return; }
+      await serveChanges(request, response);
       return;
     }
     if (pathname.startsWith(SETTINGS_API_PREFIX)) {
@@ -324,6 +436,9 @@ export function createWorkbenchServer(options: WorkbenchServerOptions): Workbenc
     },
     close(): Promise<void> {
       closing ??= (async () => {
+        // A change stream never ends by itself: end every open one first so the
+        // listener can close and the stream handlers leave `inFlight`.
+        for (const end of [...changeStreams]) end();
         await new Promise<void>((resolvePromise) => {
           server.close(() => resolvePromise());
           server.closeIdleConnections?.();

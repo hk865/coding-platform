@@ -118,6 +118,16 @@ export type CollaborationDriver = CollaborationDriverPort & {
 export type CollaborationDriverProfile = WorkbenchQueryProfile;
 
 /**
+ * Task E change notice: a handle of this Goal (the selected Task or a sibling)
+ * changed what `read` would return. It carries no snapshot; the page re-reads.
+ */
+export type CollaborationChange = {
+  scope: { projectId: string; workspaceId: string };
+  goalId: string;
+  taskId: string | null;
+};
+
+/**
  * The exact owners the Host layer may compose. Every member is an existing
  * platform port; `profiles` is the frozen trusted startup selection.
  */
@@ -129,6 +139,9 @@ export type CollaborationDriverDependencies = {
   mailbox: CollaborationMailboxPort;
   controls: RunControlPort;
   profiles: readonly CollaborationDriverProfile[];
+  /** Optional Host change feed (task E). Called only when a handle's published
+   * projection moved; a notification never changes the driver. */
+  onChange?: (change: CollaborationChange) => void;
 };
 
 const TICK_MS = 500;
@@ -268,11 +281,42 @@ type Handle = {
   /** One-shot drain promise so stop and close cannot double-drain. */
   stopDrain: Promise<void> | null;
   done: Promise<void>;
+  /** Task E: digest of the projection last announced to the change feed. */
+  announced: string | null;
 };
 
 export function createCollaborationDriver(dependencies: CollaborationDriverDependencies): CollaborationDriver {
   const handles = new Map<string, Handle>();
   const trustedProfiles = dependencies.profiles.map(profile => structuredClone(profile));
+  let closed = false;
+
+  /**
+   * Task E: announce a handle whose `read` projection moved. It is called at the
+   * loop, tick and stop boundaries instead of at every field write; the digest
+   * makes an unchanged tick free, so a blocked handle produces no notices.
+   */
+  function changed(handle: Handle): void {
+    const notify = dependencies.onChange;
+    if (notify === undefined || closed) return;
+    let digest: string | null;
+    try {
+      digest = JSON.stringify([handle.state, handle.reason, handle.current, handle.last,
+        handle.messages.map(message => [canonicalOf(message.ref), message.revision, message.status])]);
+    } catch {
+      digest = null;
+    }
+    if (digest !== null && digest === handle.announced) return;
+    handle.announced = digest;
+    try {
+      notify({ scope: { projectId: handle.projectId, workspaceId: handle.workspaceId },
+        goalId: handle.goalRef.goalId, taskId: handle.taskId });
+    } catch { /* the change feed is best effort; reads stay authoritative */ }
+  }
+  /** One driver tick: announce a moved projection, then wait. */
+  function tick(handle: Handle, signal: AbortSignal): Promise<void> {
+    changed(handle);
+    return sleep(TICK_MS, signal);
+  }
 
   function handleSiblings(handle: Handle): CollaborationSnapshot['siblings'] {
     const result: CollaborationSnapshot['siblings'] = [];
@@ -431,6 +475,8 @@ export function createCollaborationDriver(dependencies: CollaborationDriverDepen
             if (manageState && waiting.some(message => message.waitAfterSend === true || message.replyMode === 'wait')) handle.state = 'waiting_for_reply';
             for (const message of waiting) {
               if (signal.aborted || handle.stopRequested) break;
+              // A consultation can run a whole Query; announce the wait first.
+              changed(handle);
               const outcome = await consultOne(handle, message, signal);
               if (outcome.status === 'ready') {
                 project(handle, outcome.value.message);
@@ -451,7 +497,7 @@ export function createCollaborationDriver(dependencies: CollaborationDriverDepen
         handle.reason = `the consultation pump failed: ${messageOf(error)}`;
       }
       if (finalPass) return;
-      await sleep(TICK_MS, signal);
+      await tick(handle, signal);
     }
   }
 
@@ -466,7 +512,7 @@ export function createCollaborationDriver(dependencies: CollaborationDriverDepen
         const execution = await dependencies.executions.readExecution(independentContext(handle), runRef);
         if (execution.status !== 'ready') {
           handle.reason = 'the original yielded Run control is not readable';
-          await sleep(TICK_MS, signal); continue;
+          await tick(handle, signal); continue;
         }
         const desired = execution.value.run.controlState?.desiredState;
         if (desired === 'cancelled' || execution.value.run.outcome === 'cancelled') {
@@ -475,7 +521,7 @@ export function createCollaborationDriver(dependencies: CollaborationDriverDepen
         }
         if (desired === 'paused') {
           handle.reason = 'the original execution is paused; awaiting explicit resume';
-          await sleep(TICK_MS, signal); continue;
+          await tick(handle, signal); continue;
         }
         let read;
         try {
@@ -483,12 +529,12 @@ export function createCollaborationDriver(dependencies: CollaborationDriverDepen
             contextWith(handle.context, handle.workspaceId, signal), continuation.messageRef);
         } catch {
           handle.reason = 'the continuation wait message read failed';
-          await sleep(TICK_MS, signal);
+          await tick(handle, signal);
           continue;
         }
         if (read.status === 'ready' && read.value.status === 'responded' && read.value.response !== null) return true;
         if (read.status === 'rejected' && read.code === 'forbidden') { handle.reason = read.reason; return false; }
-        await sleep(TICK_MS, signal);
+        await tick(handle, signal);
       }
       return false;
     } finally {
@@ -509,6 +555,7 @@ export function createCollaborationDriver(dependencies: CollaborationDriverDepen
     let drain = false;
     const pumpDone = fresh ? pump(handle, runRef, pumpAbort.signal, true, () => drain) : null;
     if (!fresh) handle.reason = 'the Run was already entered or settled; only observing the original facts';
+    changed(handle);
     try {
       return await dependencies.workflow.advanceWork(loopContext(handle), input);
     } finally {
@@ -540,6 +587,7 @@ function yieldedContinuationOf(value: WorkflowAdvanceResult): RunContinuationV1 
     try {
       let input = handle.current;
       while (input !== null && !handle.stopRequested) {
+        changed(handle);
         const startRun = startRunRefOf(input);
         const result = startRun === null
           ? await dependencies.workflow.advanceWork(loopContext(handle), input)
@@ -708,6 +756,7 @@ function yieldedContinuationOf(value: WorkflowAdvanceResult): RunContinuationV1 
     handle.stopRequested = true;
     handle.stopReason ??= 'the collaboration driver was asked to stop';
     handle.state = 'stopping';
+    changed(handle);
     handle.activePumpAbort?.abort('driver_stopped');
     handle.stopDrain = (async () => {
       // Cancel the currently-known Run, let the loop drain (a Run claimed while
@@ -717,6 +766,7 @@ function yieldedContinuationOf(value: WorkflowAdvanceResult): RunContinuationV1 
       await handle.done.catch(() => { /* the loop stored its own reason */ });
       await requestCancel(handle);
       if (!isTerminal(handle.state)) handle.state = 'stopped';
+      changed(handle);
     })();
     return handle.stopDrain;
   }
@@ -761,10 +811,13 @@ function yieldedContinuationOf(value: WorkflowAdvanceResult): RunContinuationV1 
         state: 'running', current: structuredClone(typedAdvance), last: null, reason: null,
         messages: [], messageKeys: new Set(), currentRun: null,
         stopRequested: false, stopReason: null, wakeWaiting: false, abort: new AbortController(),
-        activePumpAbort: null, stopDrain: null, done: Promise.resolve(),
+        activePumpAbort: null, stopDrain: null, done: Promise.resolve(), announced: null,
       };
       handles.set(key, handle);
-      handle.done = runHandle(handle);
+      changed(handle);
+      // The loop's final transition (completed/failed/waiting) is announced when
+      // the loop settles.
+      handle.done = runHandle(handle).finally(() => changed(handle));
       return { status: 'ready', value: snapshot(handle) };
     },
     async read(ctx, input) {
@@ -804,6 +857,7 @@ function yieldedContinuationOf(value: WorkflowAdvanceResult): RunContinuationV1 
       return { status: 'ready', value: snapshot(targets[0]!) };
     },
     async close() {
+      closed = true;
       const all = [...handles.values()];
       handles.clear();
       await Promise.all(all.map(handle => stopHandle(handle).catch(() => { /* close still drains */ })));

@@ -1,0 +1,7 @@
+source (git log -2):
+  d214b0e cc snapshot (not a real commit)
+  215d7ed refactor: route plan proposals and adoption writes through the state machines (A.2 step 3)
+cf847c9df5dceb69e400cd77b1dfa9b4ec4895f5f6b6abcace42539ee3197597  index.html
+1537bdd85db271f0f9ceb4a80da809db0563d75be6ea1308011a7bbeb990cb39  main.js
+7eca328ac70f9adfdcf155e0817e9e4a1ae9b4c647b7a8e577540631f296687b  styles.css
+ad376f9cda3a93186481b15209b26dd6a4584ec7beed9026956d29922f377452  views.js

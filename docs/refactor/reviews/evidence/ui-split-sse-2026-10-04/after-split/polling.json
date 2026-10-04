@@ -1,0 +1,207 @@
+{
+  "capturedWith": "Playwright request events (page.on(\"request\")), wall-clock ms",
+  "scenarios": {
+    "idle": {
+      "description": "空闲页面：已完成的 Goal、主对话；页面加载并静止后记录 30 秒",
+      "loadRequests": {
+        "windowMs": 782,
+        "requestCount": 10,
+        "byRoute": {
+          "GET /workbench/": {
+            "count": 1,
+            "medianIntervalMs": null,
+            "minIntervalMs": null,
+            "maxIntervalMs": null,
+            "offsetsMs": [
+              2
+            ]
+          },
+          "GET /workbench/styles.css": {
+            "count": 1,
+            "medianIntervalMs": null,
+            "minIntervalMs": null,
+            "maxIntervalMs": null,
+            "offsetsMs": [
+              11
+            ]
+          },
+          "GET /workbench/main.js": {
+            "count": 1,
+            "medianIntervalMs": null,
+            "minIntervalMs": null,
+            "maxIntervalMs": null,
+            "offsetsMs": [
+              11
+            ]
+          },
+          "GET /api/real/core/bootstrap": {
+            "count": 1,
+            "medianIntervalMs": null,
+            "minIntervalMs": null,
+            "maxIntervalMs": null,
+            "offsetsMs": [
+              35
+            ]
+          },
+          "POST /api/real/core/goals/read": {
+            "count": 2,
+            "medianIntervalMs": 7,
+            "minIntervalMs": 7,
+            "maxIntervalMs": 7,
+            "offsetsMs": [
+              54,
+              61
+            ]
+          },
+          "POST /api/real/core/sessions/read": {
+            "count": 1,
+            "medianIntervalMs": null,
+            "minIntervalMs": null,
+            "maxIntervalMs": null,
+            "offsetsMs": [
+              57
+            ]
+          },
+          "POST /api/real/core/queries/read": {
+            "count": 1,
+            "medianIntervalMs": null,
+            "minIntervalMs": null,
+            "maxIntervalMs": null,
+            "offsetsMs": [
+              71
+            ]
+          },
+          "POST /api/real/core/sessions/history": {
+            "count": 1,
+            "medianIntervalMs": null,
+            "minIntervalMs": null,
+            "maxIntervalMs": null,
+            "offsetsMs": [
+              71
+            ]
+          },
+          "POST /api/real/core/sessions/find": {
+            "count": 1,
+            "medianIntervalMs": null,
+            "minIntervalMs": null,
+            "maxIntervalMs": null,
+            "offsetsMs": [
+              107
+            ]
+          }
+        }
+      },
+      "windowMs": 29602,
+      "requestCount": 0,
+      "byRoute": {}
+    },
+    "command": {
+      "description": "命令页运行 sleep 8（没有其它运行中的工作）：从点击运行到 settled 后 3 秒",
+      "settledAfterMs": 8865,
+      "windowMs": 11866,
+      "requestCount": 13,
+      "byRoute": {
+        "POST /api/real/core/commands/start": {
+          "count": 1,
+          "medianIntervalMs": null,
+          "minIntervalMs": null,
+          "maxIntervalMs": null,
+          "offsetsMs": [
+            42
+          ]
+        },
+        "POST /api/real/core/commands/read": {
+          "count": 12,
+          "medianIntervalMs": 700,
+          "minIntervalMs": 699,
+          "maxIntervalMs": 701,
+          "offsetsMs": [
+            739,
+            1439,
+            2138,
+            2838,
+            3539,
+            4238,
+            4939,
+            5640,
+            6339,
+            7039,
+            7739,
+            8439
+          ]
+        }
+      }
+    },
+    "collaboration": {
+      "description": "协作驱动运行中（脚本模型阻塞，状态保持 running）；切到“示例库”再切回“演示工程”触发页面自己的轮询，记录 12 秒",
+      "driverStart": {
+        "httpStatus": 200,
+        "status": "ready",
+        "state": "running"
+      },
+      "driverStateBeforeSwitch": "running",
+      "windowMs": 12041,
+      "requestCount": 13,
+      "byRoute": {
+        "POST /api/real/core/workflow/driver-read": {
+          "count": 13,
+          "medianIntervalMs": 1000,
+          "minIntervalMs": 982,
+          "maxIntervalMs": 1002,
+          "offsetsMs": [
+            39,
+            1021,
+            2021,
+            3021,
+            4021,
+            5023,
+            6022,
+            7020,
+            8021,
+            9020,
+            10021,
+            11020,
+            12020
+          ]
+        }
+      }
+    },
+    "commandWhileDriverRunning": {
+      "description": "协作 Run 保持 running、页面仍在轮询 driver-read 时再运行 sleep 1：两种轮询并行时的请求（只记录现象）",
+      "settledWithin15s": true,
+      "lastCommandState": "settled",
+      "windowMs": 1829,
+      "requestCount": 4,
+      "byRoute": {
+        "POST /api/real/core/commands/start": {
+          "count": 1,
+          "medianIntervalMs": null,
+          "minIntervalMs": null,
+          "maxIntervalMs": null,
+          "offsetsMs": [
+            40
+          ]
+        },
+        "POST /api/real/core/commands/read": {
+          "count": 2,
+          "medianIntervalMs": 703,
+          "minIntervalMs": 703,
+          "maxIntervalMs": 703,
+          "offsetsMs": [
+            735,
+            1438
+          ]
+        },
+        "POST /api/real/core/workflow/driver-read": {
+          "count": 1,
+          "medianIntervalMs": null,
+          "minIntervalMs": null,
+          "maxIntervalMs": null,
+          "offsetsMs": [
+            923
+          ]
+        }
+      }
+    }
+  }
+}

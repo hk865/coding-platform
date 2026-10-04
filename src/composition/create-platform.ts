@@ -89,6 +89,7 @@ import { OBSERVED_ARCHITECTURE_RECORD_SCHEMAS } from '../core/work-graph/archite
 import { createArchitectureCatalogService } from '../core/work-graph/architecture/catalog-service.js';
 import type { ArchitectureCatalogPort } from '../core/work-graph/architecture/catalog-contracts.js';
 import { ARCHITECTURE_CATALOG_SCHEMAS } from '../core/work-graph/architecture/catalog-record-codecs.js';
+import { observeRecordCommits, type RecordCommitObserver } from './commit-observer.js';
 
 export type TargetPlatformOptions = {
   storage: { kind: 'memory' } | { kind: 'sqlite'; directory: string };
@@ -114,6 +115,10 @@ export type TargetPlatformOptions = {
    * or file capability and is snapshotted as pure data. Without it only the
    * Workflow's fresh selection is unsupported; every other port is unchanged. */
   workflow?: WorkflowHostConfiguration;
+  /** Optional Host change observer (task E). It sees the head once and then
+   * every non-replayed RecordStore commit; it never receives record bodies and
+   * cannot change a receipt. */
+  commitObserver?: RecordCommitObserver;
 };
 
 /** The composition-owned service identity. It is used only to execute trusted
@@ -274,11 +279,14 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       ...COMPLETION_RECORD_SCHEMAS.lookups ?? []],
   };
   if (options.storage.kind === 'sqlite') mkdirSync(options.storage.directory, { recursive: true });
-  const backend = options.storage.kind === 'memory'
+  const rawBackend = options.storage.kind === 'memory'
     ? createInMemoryRecordBackend({ schemas })
     : createSqliteRecordBackend({ schemas, path: join(options.storage.directory, 'ledger.sqlite') });
   let closeBodies: (() => Promise<void>) | undefined;
   try {
+    // Task E: the optional Host observer sees every commit of the ONE records
+    // object below; without it this is the original backend unchanged.
+    const backend = await observeRecordCommits(rawBackend, options.commitObserver);
     const bodies = options.storage.kind === 'memory' ? new RawArtifactBodyStore()
       : createSqliteRawArtifactStore(join(options.storage.directory, 'artifacts.sqlite'));
     if ('close' in bodies) closeBodies = () => bodies.close();
@@ -706,7 +714,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
   } catch (error) {
     // Close every owned resource while preserving the initialization error.
     try { await closeBodies?.(); } catch { /* keep original error */ }
-    try { await backend.close(); } catch { /* keep original error */ }
+    try { await rawBackend.close(); } catch { /* keep original error */ }
     throw error;
   }
 }
