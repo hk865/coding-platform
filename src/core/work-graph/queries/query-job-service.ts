@@ -35,10 +35,8 @@ import type {
   QueryJobIntentV1,
   QueryJobRef,
   QueryJobSnapshot,
-  QueryJobV1,
   QueryRunRef,
   QueryRunSnapshot,
-  QueryRunV1,
 } from '../../../contracts/query-job.js';
 import type { GoalRef, GoalSnapshot, ProjectRef, ProjectSnapshot, WorkspaceRef, WorkspaceSnapshot } from '../../../contracts/ledger.js';
 import type { PlanRevisionRef } from '../../../contracts/plan.js';
@@ -58,6 +56,7 @@ import {
 } from '../persistence/record-codecs.js';
 import { sessionMessageRefKey } from '../communication/message-record-codecs.js';
 import { decodePlanRevisionSnapshot, planRevisionRefKey } from '../tasks/plan-record-codecs.js';
+import { newPendingQueryRecords } from '../state/query-run-recovery.js';
 import type { QueryJobDependencies, QueryJobPort } from './contracts.js';
 import {
   decodeQueryJobSnapshot,
@@ -505,28 +504,13 @@ async function recoverOriginalRecord(
       runRef.queryJobId !== queryRunRef.queryJobId || runRef.runId !== queryRunRef.runId) {
     return { status: 'unavailable', reason: 'the original event is not bound to this QueryRun' };
   }
-  const run: QueryRunV1 = {
-    schemaVersion: 1,
-    queryJobRef: { ...queryJobRef },
-    runId: queryRunRef.runId,
-    status: 'pending',
-    startedAt: null,
-    endedAt: null,
-    outcome: null,
-  };
-  const jobSnapshot: QueryJobSnapshot = {
-    ref: { ...queryJobRef },
-    revision: 1,
-    schemaVersion: 1,
-    job,
-    submission: { schemaVersion: 1, identityKey: event.identityKey, fingerprint: event.fingerprint, eventId: event.eventId },
-  };
+  // The same pending@1 constructor as the submit (§14.2), over the recorded job.
   return {
     status: 'recovered',
-    record: {
-      job: jobSnapshot,
-      run: { ref: { ...queryRunRef }, revision: 1, schemaVersion: 1, run },
-    },
+    record: newPendingQueryRecords({
+      queryRunRef, goalId: job.goalId, intent: job.intent, submittedAt: job.submittedAt,
+      submission: { schemaVersion: 1, identityKey: event.identityKey, fingerprint: event.fingerprint, eventId: event.eventId },
+    }),
   };
 }
 
@@ -752,40 +736,13 @@ async function submit(
 
   if (signal?.aborted) return reject('cancelled', 'submitQueryJob was cancelled before commit');
 
-  // (4b) compile the ONE pending pair + submitted event.
+  // (4b) compile the ONE pending pair (Q-a, `newPendingQueryRecords`) + submitted event.
   const occurredAt = deps.now();
   const eventId = deps.eventId();
-  const job: QueryJobV1 = {
-    schemaVersion: 1,
-    queryJobId: draft.queryJobId,
-    projectId: draft.projectId,
-    workspaceId: draft.workspaceId,
-    goalId: draft.goalId,
-    intent: draft.intent,
-    status: 'pending',
-    runRef: { ...queryRunRef },
-    answerRefs: [],
-    closeReason: null,
-    submittedAt: occurredAt,
-    updatedAt: occurredAt,
-  };
-  const jobSnapshot: QueryJobSnapshot = {
-    ref: { ...queryJobRef },
-    revision: 1,
-    schemaVersion: 1,
-    job,
+  const pending = newPendingQueryRecords({
+    queryRunRef, goalId: draft.goalId, intent: draft.intent, submittedAt: occurredAt,
     submission: { schemaVersion: 1, identityKey, fingerprint, eventId },
-  };
-  const run: QueryRunV1 = {
-    schemaVersion: 1,
-    queryJobRef: { ...queryJobRef },
-    runId: draft.runId,
-    status: 'pending',
-    startedAt: null,
-    endedAt: null,
-    outcome: null,
-  };
-  const runSnapshot: QueryRunSnapshot = { ref: { ...queryRunRef }, revision: 1, schemaVersion: 1, run };
+  });
   const event: QueryJobSubmittedEventV1 = {
     eventId,
     eventType: 'QueryJobSubmitted',
@@ -802,7 +759,7 @@ async function submit(
     occurredAt,
     identityKey,
     fingerprint,
-    payload: { job },
+    payload: { job: pending.job.job },
   };
 
   const jobKey = canonicalJson(queryJobRef as unknown as JsonValue);
@@ -821,7 +778,7 @@ async function submit(
     identityKey,
     fingerprint,
     guards,
-    records: [encodeQueryJobSnapshot(jobSnapshot), encodeQueryRunSnapshotRecord(runSnapshot)],
+    records: [encodeQueryJobSnapshot(pending.job), encodeQueryRunSnapshotRecord(pending.run)],
     claims: [],
     indexGuards: [],
     indexChanges: [],

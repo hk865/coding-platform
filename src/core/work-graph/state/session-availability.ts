@@ -181,7 +181,7 @@ export type OccupancyGeneration =
 /**
  * `generation = revision + 1`, and the occupying commit sets the revision to
  * it, so generations of one Session strictly increase and never repeat
- * (`claim-service.ts:544-546`, `query-execution.ts:718-720`).
+ * (`claim-service.ts:544-546`; the Query claim through SES-03, `query-execution.ts:791`).
  */
 export function nextOccupancyGeneration(revision: number): OccupancyGeneration {
   if (!Number.isSafeInteger(revision) || revision < 1) {
@@ -195,10 +195,10 @@ export function nextOccupancyGeneration(revision: number): OccupancyGeneration {
 }
 
 /**
- * The holder check (today copied at `execution-entry-service.ts:1625-1628` and
- * `query-execution.ts:935-938`): an execution occupancy of exactly this ref at
- * the holder's claim generation. Lifecycle and health are not looked at;
- * those checks and their codes stay with each caller.
+ * The holder check (formerly copied at `execution-entry-service.ts:1625-1628`
+ * and `query-execution.ts:935-938`; both owners call it now): an execution
+ * occupancy of exactly this ref at the holder's claim generation. Lifecycle
+ * and health are not looked at; those checks and their codes stay with each caller.
  */
 export function ownsOccupancy(session: Pick<SessionRecord, 'occupancy'>, holder: ExecutionRef, generation: number): boolean {
   const occupancy = session.occupancy;
@@ -445,7 +445,7 @@ function created(ctx: SessionGuardContext): SessionTransition {
 
 /**
  * SES-02/SES-03 admission. Guard order keeps today's codes
- * (`claim-service.ts:541-550`, `query-execution.ts:715-720`): lifecycle →
+ * (`claim-service.ts:541-550`, `query-execution.ts:791`): lifecycle →
  * health → occupancy → revision → generation → pin (`null` = no pin to
  * compare). The Query service checks its three pins before calling, so a
  * stale pin on a busy Session stays `busy` for Work and `revision_conflict`
@@ -546,7 +546,7 @@ function released(state: ActiveState, cause: SessionReleaseCause, ctx: SessionGu
 
 /**
  * SES-04 (`execution-entry-service.ts:1417`, `:1452-1455`) and SES-08
- * (`query-execution.ts:1408-1411`): the holder's Kernel terminal carries the
+ * (`query-execution.ts:555`): the holder's Kernel terminal carries the
  * complete Turn boundary the cursor moves to (input confirmation was checked
  * above: these causes always have a Turn).
  */

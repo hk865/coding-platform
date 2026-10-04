@@ -30,7 +30,7 @@ import type { PlanRevisionSnapshot } from '../../../contracts/plan.js';
 import type { RuntimeBudget } from '../../../contracts/runtime-budget.js';
 import type {
   QueryExecutionStateV1, QueryJobAnswerRef, QueryJobAnswerSnapshot, QueryJobRef,
-  QueryJobSnapshot, QueryJobV1, QueryModelRequestV1, QueryModelUsageV1, QueryRunRef, QueryRunSnapshot, QueryRunV1,
+  QueryJobSnapshot, QueryModelRequestV1, QueryModelUsageV1, QueryRunRef, QueryRunSnapshot, QueryRunV1,
 } from '../../../contracts/query-job.js';
 import type { RawArtifactRecord } from '../../record-store/body-ports.js';
 import type {
@@ -42,6 +42,14 @@ import { decodePlanRevisionSnapshot, planRevisionRefKey } from '../tasks/plan-re
 import {
   decodeSessionRecord, encodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey,
 } from '../sessions/session-record-codecs.js';
+import {
+  advanceQueryExecutionRecord, markQueryRunUnknownRecord, queryRecoveryStateOf, settleQueryRunRecord,
+  transitionQueryRunRecovery, type QueryRecoveryEffect, type QueryRecoveryPhase,
+} from '../state/query-run-recovery.js';
+import {
+  occupySessionRecord, ownsQuery, releaseSessionRecord, sessionMachineStateOf, transitionSession,
+  type SessionGuardContext, type SessionRelease,
+} from '../state/session-availability.js';
 import {
   decodeQueryExecutionRecordedEvent, decodeQueryJobAnswerSnapshot, decodeQueryJobSnapshot,
   decodeQueryJobSubmittedEvent, decodeQueryRunSnapshotRecord, encodeQueryExecutionRecordedEvent,
@@ -154,9 +162,6 @@ function queryJobAnswerRefKey(ref: QueryJobAnswerRef): string {
 }
 function sessionKeyOf(ref: SessionRecord['ref']): string {
   return sessionAggregateRefKey(ref);
-}
-function safeRevision(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1;
 }
 
 // --------------------------------------------------------------------------
@@ -410,12 +415,13 @@ function buildRecordedEvent(input: {
   queryRunRef: QueryRunRef;
   requestId: string;
   correlationId: string;
-  aggregateRevision: number;
   operation: QueryExecutionOperation;
   result: QueryEventResult;
-  phase: QueryExecutionStateV1['phase'];
-  executionState: QueryExecutionStateV1 | null;
+  /** The QueryRun this commit writes: the event carries its revision, phase and execution state. */
+  run: QueryRunSnapshot;
 }): QueryExecutionRecordedEventV1 {
+  const executionState = input.run.run.executionState;
+  if (executionState === undefined) throw new Error('a Query execution write always carries the execution state');
   return {
     eventId: input.eventId,
     eventType: 'QueryExecutionRecorded',
@@ -426,7 +432,7 @@ function buildRecordedEvent(input: {
     workspaceId: input.queryRunRef.workspaceId,
     aggregateType: 'QueryRun',
     aggregateId: input.queryRunRef.runId,
-    aggregateRevision: input.aggregateRevision,
+    aggregateRevision: input.run.revision,
     causationId: input.identityKey,
     correlationId: input.correlationId,
     idempotencyKey: input.requestId,
@@ -436,8 +442,8 @@ function buildRecordedEvent(input: {
       queryRunRef: { ...input.queryRunRef },
       operation: input.operation,
       result: input.result,
-      phase: input.phase,
-      executionState: input.executionState === null ? null : structuredClone(input.executionState),
+      phase: executionState.phase,
+      executionState: structuredClone(executionState),
     },
   };
 }
@@ -513,6 +519,74 @@ function mergeGuards(guards: readonly RecordGuard[]): RecordGuard[] {
     if (existing === undefined || (existing === null && guard.expectedRevision !== null)) map.set(guard.refKey, guard.expectedRevision);
   }
   return [...map].map(([refKey, expectedRevision]) => ({ refKey, expectedRevision }));
+}
+
+// --------------------------------------------------------------------------
+// State machines (§1.1): Session occupancy and the QueryRun settle
+// --------------------------------------------------------------------------
+
+/**
+ * SES-03 (`occupancy_acquired`) and SES-08 (QRR-03's `release_session` from the
+ * settling phase): the Session machine's decision and the one record it writes,
+ * through `occupySessionRecord` / `releaseSessionRecord`. The claim compares its
+ * three pins before it calls SES-03 (a stale pin stays `revision_conflict` before
+ * `busy`), so the machine gets no pin. The release holder is this QueryRun at its
+ * claim generation with the complete Turn boundary of its Kernel terminal; the
+ * Runtime confirms the accepted inputs before it books a terminal
+ * (`agent-runtime/query-observation.ts:388-393`).
+ */
+function sessionStep(
+  session: SessionRecord,
+  step: { kind: 'occupy'; holder: QueryRunRef } | { kind: 'release'; release: SessionRelease; before: QueryRecoveryPhase },
+): SessionRecord | CoreRejection {
+  const state = sessionMachineStateOf(session);
+  const ctx: SessionGuardContext = { caller: 'service', hostLease: null, pin: null, holder: null, probe: null, kernelHeader: null,
+    openResponsibleLink: null, creation: null, link: null };
+  const result = step.kind === 'occupy'
+    ? transitionSession(state, { kind: 'occupancy_acquired', holder: step.holder }, ctx)
+    : transitionSession(state, { kind: 'occupancy_released', cause: 'query_terminal_observed' }, { ...ctx, holder: {
+      ref: step.release.holder, claimGeneration: step.release.generation, before: `query_${step.before}`, after: 'query_settled',
+      kernelTurnSeen: true, inputsConfirmed: true, kernelTurnOpen: step.release.kernelTurnOpen,
+      historyBoundaryCursor: step.release.historyCursor.kind === 'advance' ? step.release.historyCursor.cursor : null,
+    } });
+  if (!result.ok) return rejected(result.code, result.detail);
+  const [effect] = result.effects;
+  if (effect?.kind === 'occupy_session') return occupySessionRecord(session, effect);
+  if (effect?.kind === 'release_session') return releaseSessionRecord(session, effect);
+  throw new Error(`the admitted Session ${step.kind} writes no Session record`);
+}
+
+type SettledRecords = { job: QueryJobSnapshot; run: QueryRunSnapshot; answer: QueryJobAnswerSnapshot | null; session: SessionRecord | null };
+
+/**
+ * QRR-03's effects as the records of its one commit: `settle_query` through
+ * `settleQueryRunRecord`, `record_answer` as Answer@1, and `release_session`
+ * through SES-08 (emitted only while this claim generation still holds the Session).
+ */
+function settledRecords(core: Core, before: QueryRecoveryPhase, effects: readonly QueryRecoveryEffect[], occurredAt: string): SettledRecords | CoreRejection {
+  let settled: Pick<SettledRecords, 'job' | 'run'> | null = null;
+  let answer: QueryJobAnswerSnapshot | null = null;
+  let session: SessionRecord | null = null;
+  for (const effect of effects) {
+    switch (effect.kind) {
+      case 'settle_query':
+        settled = settleQueryRunRecord(core, { settlement: effect.settlement, history: effect.history, occurredAt });
+        break;
+      case 'record_answer':
+        answer = { ref: effect.ref, revision: 1, schemaVersion: 1, answer: structuredClone(effect.answer) };
+        break;
+      case 'release_session': {
+        const released = sessionStep(core.session, { kind: 'release', release: effect, before });
+        if ('status' in released) return released;
+        session = released;
+        break;
+      }
+      default:
+        throw new Error(`a Query terminal has no ${effect.kind} effect`);
+    }
+  }
+  if (settled === null) throw new Error('a Query terminal always settles the QueryRun');
+  return { ...settled, answer, session };
 }
 
 // --------------------------------------------------------------------------
@@ -713,12 +787,9 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     if (session.ref.projectId !== queryRunRef.projectId || session.workspaceId !== queryRunRef.workspaceId) {
       return rejected('forbidden', 'the target Session belongs to another scope');
     }
-    if (session.lifecycle !== 'active') return rejected('busy', 'the target Session is archived');
-    if (session.health !== 'available') return rejected('busy', `the target Session health is ${session.health}`);
-    if (session.occupancy !== null) return rejected('busy', 'the target Session is already occupied');
-    if (!safeRevision(session.revision)) return rejected('unavailable', 'the target Session revision is not readable');
-    const generation = session.revision + 1;
-    if (!Number.isSafeInteger(generation)) return rejected('invalid', 'the Session generation would not be a safe integer');
+    // SES-03: lifecycle, health, occupancy and the generation `revision + 1`, which the occupied record carries as its revision.
+    const nextSession = sessionStep(session, { kind: 'occupy', holder: queryRunRef });
+    if ('status' in nextSession) return nextSession;
     const execution = job.job.intent.execution;
     if (execution === undefined) return rejected('unsupported', 'claimQuery requires an explicit read-only execution binding');
     if (execution.consultation !== undefined) {
@@ -773,36 +844,14 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     const occurredAt = deps.now();
     const eventId = deps.eventId();
     if (!nonEmpty(occurredAt) || !nonEmpty(eventId)) return rejected('unsupported', 'the injected clock/id source produced an empty value');
-    const executionState: QueryExecutionStateV1 = {
-      schemaVersion: 1,
-      phase: 'claimed',
-      sessionRef,
-      sessionGeneration: generation,
-      role: structuredClone(session.role),
-      roleBinding: structuredClone(execution.roleBinding),
-      roleResolution: structuredClone(roleResolution),
+    const nextRun = advanceQueryExecutionRecord({ job, run }, { phase: 'claimed', claim: {
+      sessionRef, sessionGeneration: nextSession.revision, role: session.role, roleBinding: execution.roleBinding, roleResolution,
       priorHistoryCursor: session.historyCursor,
-      prepared: null,
-      entry: null,
-      history: null,
-      requests: [],
-    };
-    const nextRun: QueryRunSnapshot = {
-      ...run,
-      revision: run.revision + 1,
-      run: { ...run.run, executionState: structuredClone(executionState) },
-    };
-    const nextSession: SessionRecord = {
-      ...session,
-      revision: generation,
-      lastExecutionRef: queryRunRef,
-      occupancy: { kind: 'execution', executionRef: queryRunRef, generation },
-    };
+    } }).run;
     const nextRecord: QueryExecutionRecord = { job, run: nextRun, session: nextSession, answer: null };
     const event = buildRecordedEvent({
       eventId, identityKey, fingerprint, actor, occurredAt, queryRunRef, requestId,
-      correlationId: job.job.intent.correlationId, aggregateRevision: nextRun.revision,
-      operation: 'claimed', result: nextRecord, phase: 'claimed', executionState,
+      correlationId: job.job.intent.correlationId, operation: 'claimed', result: nextRecord, run: nextRun,
     });
     const guards: RecordGuard[] = [
       { refKey: queryJobRefKey(queryJobRef), expectedRevision: expected.job! },
@@ -866,7 +915,7 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
         { refKey: sessionKeyOf(session.ref), revision: session.revision },
       ]);
     }
-    if (!sessionOwnedByQuery(state, session, queryRunRef)) {
+    if (!ownsQuery(session, queryRunRef, state)) {
       return rejected('busy', 'the target Session is no longer occupied by this QueryRun generation');
     }
     if (state.phase !== 'claimed' && state.phase !== 'prepared') return rejected('busy', `the QueryRun is not awaiting preparation (phase ${state.phase})`);
@@ -907,17 +956,12 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     const occurredAt = deps.now();
     const eventId = deps.eventId();
     if (!nonEmpty(occurredAt) || !nonEmpty(eventId)) return rejected('unsupported', 'the injected clock/id source produced an empty value');
-    const executionState: QueryExecutionStateV1 = {
-      ...structuredClone(state),
-      phase: 'prepared',
-      prepared: { bundleRef: structuredClone(loaded.value.bundleRef), inputDigest: (prepared as unknown as PreparedQueryExecution).inputDigest },
-    };
-    const nextRun: QueryRunSnapshot = { ...run, revision: run.revision + 1, run: { ...run.run, executionState } };
+    const nextRun = advanceQueryExecutionRecord({ job, run }, { phase: 'prepared',
+      prepared: { bundleRef: loaded.value.bundleRef, inputDigest: (prepared as unknown as PreparedQueryExecution).inputDigest } }).run;
     const nextRecord: QueryExecutionRecord = { job, run: nextRun, session, answer: null };
     const event = buildRecordedEvent({
       eventId, identityKey, fingerprint, actor, occurredAt, queryRunRef, requestId,
-      correlationId: job.job.intent.correlationId, aggregateRevision: nextRun.revision,
-      operation: 'prepared', result: nextRecord, phase: 'prepared', executionState,
+      correlationId: job.job.intent.correlationId, operation: 'prepared', result: nextRecord, run: nextRun,
     });
     return commitOperation({
       deps, identityKey, fingerprint,
@@ -929,13 +973,6 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
       events: [encodeQueryExecutionRecordedEvent(event)],
       value: nextRecord, operation: 'prepared',
     });
-  }
-
-  /** The fresh action is only entitled while the same QueryRun still owns the
-   * Session occupancy generation that claim fixed. */
-  function sessionOwnedByQuery(state: QueryExecutionStateV1, session: SessionRecord, queryRunRef: QueryRunRef): boolean {
-    return session.occupancy !== null && session.occupancy.kind === 'execution'
-      && sameRef(session.occupancy.executionRef, queryRunRef) && session.occupancy.generation === state.sessionGeneration;
   }
 
   async function beginEntry(
@@ -1008,7 +1045,7 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
       return rejected('invalid', 'the begin request disagrees with the persisted prepared manifest');
     }
     if (state.prepared.inputDigest !== prepared.inputDigest) return rejected('invalid', 'the begin input digest disagrees with the persisted preparation');
-    if (!sessionOwnedByQuery(state, session, queryRunRef)) {
+    if (!ownsQuery(session, queryRunRef, state)) {
       return rejected('busy', 'the target Session is no longer occupied by this QueryRun generation');
     }
     if (job.job.status !== 'pending' && job.job.status !== 'running') return rejected('busy', 'the QueryJob is not awaiting a fresh entry');
@@ -1033,36 +1070,14 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     const occurredAt = deps.now();
     const eventId = deps.eventId();
     if (!nonEmpty(occurredAt) || !nonEmpty(eventId)) return rejected('unsupported', 'the injected clock/id source produced an empty value');
-    const executionState: QueryExecutionStateV1 = {
-      ...structuredClone(state),
-      phase: 'entering',
-      entry: {
-        generation: 1,
-        consumerId,
-        hostConfigurationRevision: manifest.hostConfigurationRevision,
-        permissions: structuredClone(manifest.permissions),
-        budget: structuredClone(manifest.runtimeBudget),
-        kernel: { ...kernelBinding },
-      },
-    };
-    const executionRequest = {
-      runRef: { ...queryRunRef },
-      bundleRef: structuredClone(loaded.value.bundleRef),
-      question: job.job.intent.question,
-      budget: { maxTokens: job.job.intent.budget.maxTokens },
-    };
-    const nextRun: QueryRunSnapshot = {
-      ...run,
-      revision: run.revision + 1,
-      run: {
-        ...run.run,
-        status: 'running',
-        startedAt: run.run.startedAt ?? occurredAt,
-        execution: { schemaVersion: 1, roundIndex: 0, request: executionRequest, selectedSources: [] },
-        executionState,
-      },
-    };
-    const nextJob: QueryJobSnapshot = { ...job, revision: job.revision + 1, job: { ...job.job, status: 'running', updatedAt: occurredAt } };
+    // QueryRun and QueryJob become running with the fixed entry and the round-0 execution binding.
+    const { job: nextJob, run: nextRun } = advanceQueryExecutionRecord({ job, run }, {
+      phase: 'entering', occurredAt,
+      entry: { generation: 1, consumerId, hostConfigurationRevision: manifest.hostConfigurationRevision,
+        permissions: manifest.permissions, budget: manifest.runtimeBudget, kernel: { ...kernelBinding } },
+      request: { runRef: { ...queryRunRef }, bundleRef: loaded.value.bundleRef, question: job.job.intent.question,
+        budget: { maxTokens: job.job.intent.budget.maxTokens } },
+    });
     const ticket: QueryEntryTicket = {
       queryRunRef,
       sessionRef: state.sessionRef,
@@ -1075,8 +1090,7 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     };
     const event = buildRecordedEvent({
       eventId, identityKey, fingerprint, actor, occurredAt, queryRunRef, requestId,
-      correlationId: job.job.intent.correlationId, aggregateRevision: nextRun.revision,
-      operation: 'entering', result: ticket, phase: 'entering', executionState,
+      correlationId: job.job.intent.correlationId, operation: 'entering', result: ticket, run: nextRun,
     });
     return commitOperation({
       deps, identityKey, fingerprint,
@@ -1164,8 +1178,7 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     const nextRun: QueryRunSnapshot = { ...run, revision: run.revision + 1, run: { ...run.run, executionState } };
     const event = buildRecordedEvent({
       eventId: deps.eventId(), identityKey, fingerprint, actor, occurredAt: deps.now(), queryRunRef,
-      requestId, correlationId: job.job.intent.correlationId,
-      aggregateRevision: nextRun.revision, operation: 'usage', result: nextRun, phase: state.phase, executionState,
+      requestId, correlationId: job.job.intent.correlationId, operation: 'usage', result: nextRun, run: nextRun,
     });
     return commitOperation({
       deps, identityKey, fingerprint,
@@ -1225,7 +1238,7 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     if (state.phase !== 'entering' && state.phase !== 'entered' && state.phase !== 'unknown') {
       return rejected('busy', `the QueryRun cannot admit a model request in phase ${state.phase}`);
     }
-    if (!sessionOwnedByQuery(state, session, queryRunRef)) {
+    if (!ownsQuery(session, queryRunRef, state)) {
       return rejected('busy', 'the target Session is no longer occupied by this QueryRun generation');
     }
     if (!sameRef(entryIdentity(state, queryRunRef), entry)) return rejected('forbidden', 'the admit entry disagrees with the fixed Query entry');
@@ -1246,8 +1259,7 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     const nextRun: QueryRunSnapshot = { ...run, revision: run.revision + 1, run: { ...run.run, executionState } };
     const event = buildRecordedEvent({
       eventId: deps.eventId(), identityKey, fingerprint, actor, occurredAt: deps.now(), queryRunRef,
-      requestId, correlationId: job.job.intent.correlationId,
-      aggregateRevision: nextRun.revision, operation: 'admitted', result: nextRun, phase: state.phase, executionState,
+      requestId, correlationId: job.job.intent.correlationId, operation: 'admitted', result: nextRun, run: nextRun,
     });
     return commitOperation({
       deps, identityKey, fingerprint,
@@ -1308,28 +1320,22 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     if (expected.run !== run.revision) {
       return revisionConflict([{ refKey: queryRunRefKey(queryRunRef), revision: run.revision }]);
     }
+    // Every kind checks the fixed entry first; the terminal machine (QRR-03) gets it as already matched.
     if (!sameRef(entryIdentity(state, queryRunRef), observation.entry)) {
       return rejected('forbidden', 'the observation entry disagrees with the fixed Query entry');
     }
     const guards: RecordGuard[] = [{ refKey: queryRunRefKey(queryRunRef), expectedRevision: expected.run! }];
     if (kind === 'progress') return rejected('unsupported', 'progress observations are not persisted in this batch');
     if (kind === 'entered') {
-      if (state.phase === 'settled' || state.phase === 'unknown') {
-        return rejected('busy', `the QueryRun cannot record entered in phase ${state.phase}`);
-      }
-      if (state.phase !== 'entering') {
-        return rejected('busy', `the QueryRun cannot record entered in phase ${state.phase}`);
-      }
+      if (state.phase !== 'entering') return rejected('busy', `the QueryRun cannot record entered in phase ${state.phase}`);
       if (observation.history.endPosition !== null) return rejected('invalid', 'an entered observation must not claim a terminal boundary');
       if (observation.history.startPosition > observation.source.position) return rejected('invalid', 'the entered observation source precedes its start');
       const occurredAt = deps.now();
-      const executionState: QueryExecutionStateV1 = { ...structuredClone(state), phase: 'entered', history: structuredClone(observation.history) };
-      const nextRun: QueryRunSnapshot = { ...run, revision: run.revision + 1, run: { ...run.run, executionState } };
+      const nextRun = advanceQueryExecutionRecord({ job, run }, { phase: 'entered', history: observation.history }).run;
       const nextRecord: QueryExecutionRecord = { job, run: nextRun, session, answer: null };
       const event = buildRecordedEvent({
         eventId: deps.eventId(), identityKey, fingerprint, actor, occurredAt, queryRunRef, requestId,
-        correlationId: job.job.intent.correlationId, aggregateRevision: nextRun.revision,
-        operation: 'entered', result: nextRecord, phase: 'entered', executionState,
+        correlationId: job.job.intent.correlationId, operation: 'entered', result: nextRecord, run: nextRun,
       });
       return commitOperation({
         deps, identityKey, fingerprint, guards,
@@ -1338,16 +1344,17 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
         value: nextRecord, operation: 'entered',
       });
     }
-    if (kind === 'unknown') {
+    const fact = observation.observation;
+    if (fact.kind !== 'terminal') {
+      // The owner `unknown` branch has no QRR row; it and a malformed kind meet the settled refusal first, as before.
       if (state.phase === 'settled') return rejected('busy', 'the QueryRun is already settled');
-      if (!nonEmpty(observation.observation.reason)) return rejected('invalid', 'an unknown observation requires a reason');
-      const executionState: QueryExecutionStateV1 = { ...structuredClone(state), phase: 'unknown', history: structuredClone(observation.history) };
-      const nextRun: QueryRunSnapshot = { ...run, revision: run.revision + 1, run: { ...run.run, executionState } };
+      if (fact.kind !== 'unknown') return rejected('invalid', 'the observation is not a terminal fact');
+      if (!nonEmpty(fact.reason)) return rejected('invalid', 'an unknown observation requires a reason');
+      const nextRun = markQueryRunUnknownRecord(run, { history: { kind: 'set', history: observation.history } });
       const nextRecord: QueryExecutionRecord = { job, run: nextRun, session, answer: null };
       const event = buildRecordedEvent({
         eventId: deps.eventId(), identityKey, fingerprint, actor, occurredAt: deps.now(), queryRunRef,
-        requestId: requestId, correlationId: job.job.intent.correlationId,
-        aggregateRevision: nextRun.revision, operation: 'observed', result: nextRecord, phase: 'unknown', executionState,
+        requestId: requestId, correlationId: job.job.intent.correlationId, operation: 'observed', result: nextRecord, run: nextRun,
       });
       return commitOperation({
         deps, identityKey, fingerprint, guards,
@@ -1356,77 +1363,35 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
         value: nextRecord, operation: 'observed',
       });
     }
-    // terminal
-    if (state.phase === 'settled') return rejected('busy', 'the QueryRun is already settled');
-    const terminal = observation.observation;
-    if (terminal.kind !== 'terminal') return rejected('invalid', 'the observation is not a terminal fact');
-    if (terminal.answer !== null) {
-      if (terminal.outcome !== 'answered') return rejected('invalid', 'only an answered terminal may carry an answer');
-      if (!sameRef(terminal.answer.queryJobRef, queryJobRefFor(queryRunRef)) || !sameRef(terminal.answer.runRef, queryRunRef)) {
-        return rejected('invalid', 'the terminal answer does not belong to this QueryRun');
-      }
-    } else if (terminal.outcome === 'answered') {
-      return rejected('invalid', 'an answered terminal requires an answer');
-    }
-    if (observation.history.endPosition === null || observation.history.endPosition !== observation.source.position) {
-      return rejected('invalid', 'the terminal observation has no complete end boundary');
-    }
+    // QRR-03 (K source): the settled, Answer and end-boundary refusals; SES-08 releases the Session only
+    // while this claim generation still holds it. The Runtime confirms the accepted inputs before it books a terminal.
+    const settled = transitionQueryRunRecovery(queryRecoveryStateOf(job.job, run.run)!, {
+      kind: 'query_terminal_observed',
+      terminal: { outcome: fact.outcome, answer: fact.answer, reason: fact.reason, history: observation.history, source: observation.source },
+    }, {
+      caller: 'service', hostLease: null, probe: null, kernel: null, inputsConfirmed: true, actor: actor.kind, reason: null,
+      sessionOwned: ownsQuery(session, queryRunRef, state), sessionGeneration: state.sessionGeneration, queryRunRef, entryMatches: true,
+    });
+    if (!settled.ok) return rejected(settled.code, settled.detail);
     const occurredAt = deps.now();
-    const answerSnapshot: QueryJobAnswerSnapshot | null = terminal.answer === null
-      ? null
-      : { ref: { aggregateType: 'QueryJobAnswer', projectId: queryRunRef.projectId, workspaceId: queryRunRef.workspaceId, queryJobId: queryRunRef.queryJobId, answerId: terminal.answer.answerId }, revision: 1, schemaVersion: 1, answer: structuredClone(terminal.answer) };
-    const closeCode: QueryJobV1['closeReason'] = terminal.outcome === 'answered' ? null : {
-      code: terminal.outcome,
-      message: terminal.reason ?? terminal.outcome,
-    };
-    const nextJob: QueryJobSnapshot = {
-      ...job,
-      revision: job.revision + 1,
-      job: {
-        ...job.job,
-        status: terminal.outcome === 'answered' ? 'answered' : 'closed',
-        answerRefs: answerSnapshot === null ? [...job.job.answerRefs] : [...job.job.answerRefs, answerSnapshot.ref],
-        closeReason: closeCode,
-        updatedAt: occurredAt,
-      },
-    };
-    const executionState: QueryExecutionStateV1 = {
-      ...structuredClone(state),
-      phase: 'settled',
-      history: structuredClone(observation.history),
-    };
-    const nextRun: QueryRunSnapshot = {
-      ...run,
-      revision: run.revision + 1,
-      run: {
-        ...run.run,
-        status: terminal.outcome === 'answered' ? 'answered' : 'closed',
-        outcome: terminal.outcome,
-        endedAt: occurredAt,
-        executionState,
-      },
-    };
-    const ownsSession = sessionOwnedByQuery(state, session, queryRunRef);
-    const nextSession: SessionRecord = ownsSession
-      ? { ...session, revision: session.revision + 1, occupancy: null, lastExecutionRef: queryRunRef, historyCursor: observation.source.cursor }
-      : session;
-    const nextRecord: QueryExecutionRecord = { job: nextJob, run: nextRun, session: nextSession, answer: answerSnapshot };
+    const next = settledRecords({ job, run, session }, state.phase, settled.effects, occurredAt);
+    if ('status' in next) return next;
+    const nextRecord: QueryExecutionRecord = { job: next.job, run: next.run, session: next.session ?? session, answer: next.answer };
     const event = buildRecordedEvent({
       eventId: deps.eventId(), identityKey, fingerprint, actor, occurredAt, queryRunRef, requestId,
-      correlationId: job.job.intent.correlationId, aggregateRevision: nextRun.revision,
-      operation: 'observed', result: nextRecord, phase: 'settled', executionState,
+      correlationId: job.job.intent.correlationId, operation: 'observed', result: nextRecord, run: next.run,
     });
-    const records: EncodedRecord[] = [encodeQueryRunSnapshotRecord(nextRun), encodeQueryJobSnapshot(nextJob)];
-    if (answerSnapshot !== null) records.push(encodeQueryJobAnswerSnapshot(answerSnapshot));
-    if (ownsSession) records.push(encodeSessionRecord(nextSession));
+    const records: EncodedRecord[] = [encodeQueryRunSnapshotRecord(next.run), encodeQueryJobSnapshot(next.job)];
+    if (next.answer !== null) records.push(encodeQueryJobAnswerSnapshot(next.answer));
+    if (next.session !== null) records.push(encodeSessionRecord(next.session));
     const events = [encodeQueryExecutionRecordedEvent(event)];
-    if (answerSnapshot !== null) {
+    if (next.answer !== null) {
       events.push(encodeQueryJobAnsweredEvent({
         eventId: deps.eventId(), eventType: 'QueryJobAnswered', schemaVersion: 1,
         projectId: queryRunRef.projectId, workspaceId: queryRunRef.workspaceId,
-        aggregateType: 'QueryJobAnswer', aggregateId: answerSnapshot.ref.answerId, aggregateRevision: 1,
+        aggregateType: 'QueryJobAnswer', aggregateId: next.answer.ref.answerId, aggregateRevision: 1,
         causationId: identityKey, correlationId: job.job.intent.correlationId, idempotencyKey: requestId,
-        actor: { ...actor }, occurredAt, payload: { answer: structuredClone(answerSnapshot) },
+        actor: { ...actor }, occurredAt, payload: { answer: structuredClone(next.answer) },
       }));
     }
     const terminalGuards: RecordGuard[] = [
@@ -1434,7 +1399,7 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
       { refKey: queryJobRefKey(queryJobRefFor(queryRunRef)), expectedRevision: job.revision },
       { refKey: sessionKeyOf(session.ref), expectedRevision: session.revision },
     ];
-    if (answerSnapshot !== null) terminalGuards.push({ refKey: queryJobAnswerRefKey(answerSnapshot.ref), expectedRevision: null });
+    if (next.answer !== null) terminalGuards.push({ refKey: queryJobAnswerRefKey(next.answer.ref), expectedRevision: null });
     return commitOperation({
       deps, identityKey, fingerprint, guards: terminalGuards, records, events, value: nextRecord, operation: 'observed',
     });

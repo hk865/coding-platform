@@ -10,8 +10,9 @@
  * reconcile closes (QRR-01/02/04), `unknown` (QRR-05) and the human attestation
  * (QRR-06).
  *
- * §15.2 step 2 scope: QRR-03 (已有) is implemented with today's result
- * (`query-execution.ts:1358-1440`). QRR-01/02/04/05/06 are 新增: their events
+ * §15.2 step 2 scope: QRR-03 (已有) is implemented with today's result (the
+ * owner's `recordObservation` terminal branch calls it, `query-execution.ts:1368`).
+ * QRR-01/02/04/05/06 are 新增: their events
  * stay in the union, the phase-level entries of the §8.4 QRR table already
  * answer their code (with reason `illegal`), a phase no row starts from answers
  * the §1.2 default `invalid`, and every other combination returns `illegal` /
@@ -84,22 +85,23 @@ export type QueryRecoveryGuardContext = {
   actor: 'human' | 'system';
   reason: string | null;
   /**
-   * `sessionOwnedByQuery` (`query-execution.ts:935-938`). A settle releases the
+   * `ownsQuery` of the owner (`query-execution.ts:1373`). A settle releases the
    * Session only while this QueryRun still holds it at its claim generation
-   * (`:1409-1421`; RUN-07 does the same, §6.3 表外说明).
+   * (RUN-07 does the same, §6.3 表外说明).
    */
   sessionOwned: boolean;
   /** `executionState.sessionGeneration`: the occupancy generation the claim fixed; the release names it. */
   sessionGeneration: number;
   /**
-   * The QueryRun the event addresses. Not in the §8.1 sketch: today's terminal
-   * guard checks the Answer against it (`query-execution.ts:1365-1367`).
+   * The QueryRun the event addresses. Not in the §8.1 sketch: the terminal
+   * guard checks the Answer against it.
    */
   queryRunRef: QueryRunRef;
   /**
    * `sameRef(entryIdentity(executionState), observation.entry)`. Not in the
-   * §8.1 sketch: today the fixed entry identity is checked before the settled
-   * check (`query-execution.ts:1311`, `:1360`). False whenever no entry is fixed.
+   * §8.1 sketch: the fixed entry identity is checked before the settled check;
+   * the owner checks it for every observation kind before it calls the machine
+   * (`query-execution.ts:1324`). False whenever no entry is fixed.
    */
   entryMatches: boolean;
 };
@@ -188,7 +190,7 @@ export function transitionQueryRunRecovery(
   }
 }
 
-/** QRR-03, K source. Guard order is today's (`query-execution.ts:1311`, `:1360-1373`). */
+/** QRR-03, K source. Guard order is the owner's from before step 3: entry, settled, Answer, end boundary. */
 function terminalObserved(state: QueryRecoveryState, terminal: QueryTerminalFact, ctx: QueryRecoveryGuardContext): QueryRecoveryTransition {
   switch (state.phase) {
     case 'claimed':
@@ -244,7 +246,7 @@ function settleFromTerminal(terminal: QueryTerminalFact, ctx: QueryRecoveryGuard
     }
     if (!kernel.boundaryComplete) return reject('guard_failed', 'invalid', 'the Kernel Turn has no complete end boundary');
   }
-  // query-execution.ts:1363-1370
+  // An Answer belongs to this QueryRun and only to an answered terminal.
   if (terminal.answer !== null) {
     if (terminal.outcome !== 'answered') return reject('guard_failed', 'invalid', 'only an answered terminal may carry an answer');
     if (!sameJson(terminal.answer.queryJobRef, queryJobRefOf(ctx.queryRunRef)) || !sameJson(terminal.answer.runRef, ctx.queryRunRef)) {
@@ -253,7 +255,7 @@ function settleFromTerminal(terminal: QueryTerminalFact, ctx: QueryRecoveryGuard
   } else if (terminal.outcome === 'answered') {
     return reject('guard_failed', 'invalid', 'an answered terminal requires an answer');
   }
-  // query-execution.ts:1371-1373
+  // The observed history ends exactly at this observation's source position.
   if (terminal.history.endPosition === null || terminal.history.endPosition !== terminal.source.position) {
     return reject('guard_failed', 'invalid', 'the terminal observation has no complete end boundary');
   }
@@ -262,7 +264,7 @@ function settleFromTerminal(terminal: QueryTerminalFact, ctx: QueryRecoveryGuard
     return reject('guard_failed', 'unavailable', 'the Query input acceptance is not confirmed against its source');
   }
   const history: QueryHistoryUpdate = { kind: 'set', history: terminal.history };
-  // query-execution.ts:1409-1421: the Session moves to the complete Turn boundary only while this QueryRun holds it.
+  // SES-08: the Session moves to the complete Turn boundary only while this QueryRun holds it.
   const release: QueryRecoveryEffect[] = ctx.sessionOwned
     ? [{ kind: 'release_session', holder: ctx.queryRunRef, generation: ctx.sessionGeneration,
       historyCursor: { kind: 'advance', cursor: terminal.source.cursor }, kernelTurnOpen: false }]
@@ -347,8 +349,8 @@ export function queryRecoveryStateOf(job: QueryJobV1, run: QueryRunV1): QueryRec
 export type QueryLifecycleRecords = { job: QueryJobSnapshot; run: QueryRunSnapshot };
 
 /**
- * The pending@1 QueryJob and QueryRun of one submission (`query-job-service.ts:758-789`);
- * the receipt replay rebuilds the same pair (`:508-523`).
+ * The pending@1 QueryJob and QueryRun of one submission (`query-job-service.ts:742`);
+ * the receipt replay rebuilds the same pair (`:510`).
  */
 export function newPendingQueryRecords(input: {
   queryRunRef: QueryRunRef;
@@ -390,21 +392,21 @@ export function newPendingQueryRecords(input: {
 
 /** The in-process steps; each writes the QueryRun at revision+1 (entering also the QueryJob). */
 export type QueryExecutionStep =
-  /** `query-execution.ts:776-794`: requires the pending pair. */
+  /** `query-execution.ts:847`: requires the pending pair. */
   | {
       phase: 'claimed';
       claim: Pick<QueryExecutionStateV1, 'sessionRef' | 'sessionGeneration' | 'role' | 'roleBinding' | 'roleResolution' | 'priorHistoryCursor'>;
     }
-  /** `:910-915`: requires `claimed`. */
+  /** `:959`: requires `claimed`. */
   | { phase: 'prepared'; prepared: NonNullable<QueryExecutionStateV1['prepared']> }
-  /** `:1036-1065`: requires `prepared`; QueryRun and QueryJob become `running`. */
+  /** `:1074`: requires `prepared`; QueryRun and QueryJob become `running`. */
   | {
       phase: 'entering';
       entry: NonNullable<QueryExecutionStateV1['entry']>;
       request: QueryExecutionBindingV1['request'];
       occurredAt: string;
     }
-  /** `:1326-1327`: requires `entering`. */
+  /** `:1334`: requires `entering`. */
   | { phase: 'entered'; history: RunExecutionHistoryV1 };
 
 export function advanceQueryExecutionRecord(records: QueryLifecycleRecords, step: QueryExecutionStep): QueryLifecycleRecords {
@@ -468,14 +470,14 @@ export function advanceQueryExecutionRecord(records: QueryLifecycleRecords, step
 /**
  * Phases with a fixed entry identity (begin committed `entering`). Today's
  * owner branch reaches `unknown` only from them, since it checks the entry
- * first (`query-execution.ts:1311`); QRR-05 starts from entering/entered.
+ * first (`query-execution.ts:1324`); QRR-05 starts from entering/entered.
  * QRR-03/04/06 settle a known outcome only from them as well.
  */
 const ENTRY_FIXED_PHASES: ReadonlySet<QueryRecoveryPhase> = new Set<QueryRecoveryPhase>(['entering', 'entered', 'unknown']);
 /** QRR-01 (claimed/prepared) and QRR-02 (entering without a Kernel Turn): the only settles to `not_entered`. */
 const NOT_ENTERED_PHASES: ReadonlySet<QueryRecoveryPhase> = new Set<QueryRecoveryPhase>(['claimed', 'prepared', 'entering']);
 
-/** Phase `unknown`: today's owner branch (`query-execution.ts:1343-1344`) and QRR-05. Status stays running. */
+/** Phase `unknown`: the owner's `unknown` branch (`query-execution.ts:1353`) and QRR-05. Status stays running. */
 export function markQueryRunUnknownRecord(run: QueryRunSnapshot, input: { history: QueryHistoryUpdate }): QueryRunSnapshot {
   const state = requirePhaseIn(run.run.executionState, ENTRY_FIXED_PHASES, 'markQueryRunUnknownRecord');
   const executionState: QueryExecutionStateV1 = { ...structuredClone(state), phase: 'unknown', history: nextHistory(state, input.history) };
@@ -483,7 +485,7 @@ export function markQueryRunUnknownRecord(run: QueryRunSnapshot, input: { histor
 }
 
 /**
- * Settles the QueryRun and its QueryJob together (`query-execution.ts:1377-1408`,
+ * Settles the QueryRun and its QueryJob together (QRR-03 in `query-execution.ts:573`,
  * QRR-01..04, QRR-06): phase, status, outcome and endedAt on the QueryRun;
  * status, answerRefs, closeReason and updatedAt on the QueryJob (§8.3 收束一致性).
  * `not_entered` settles only from claimed/prepared/entering (QRR-01/02), every
