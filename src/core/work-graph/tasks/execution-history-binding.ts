@@ -1,17 +1,19 @@
 /**
  * B2 WG12 internal compile seam (implementation).
  *
- * Pure helper extracted from `execution-history-service.ts`: it validates the
- * formal Run / claimed SessionRef / Kernel session mapping / this observation
- * against the fixed identity, monotone watermark and write-once terminal end,
- * and produces the next Run record plus the ONE Kernel identity unique-slot
- * change. It owns no Store handle and performs no I/O.
+ * Pure helper used by `execution-history-service.ts`. The locator update is
+ * decided by RUN-06 (`state/run-machine.ts` `transitionRun` with
+ * `history_recorded`, STATE-MACHINES-SPEC §6): the formal Run / claimed
+ * SessionRef / Kernel session mapping / this observation against the fixed
+ * identity, monotone watermark and write-once terminal end. The machine gives
+ * the whole next Run and ONE `claim_kernel_slot` effect; this file encodes that
+ * Run and translates the effect into the Kernel identity unique-slot change. It
+ * owns no Store handle and performs no I/O.
  *
- * `beginOwnerRefKey` is the canonical Run key that a B2 fresh `begin` already
- * bound into the shared Kernel unique slot. When present, the slot change is an
- * owner -> owner CAS; the same Run may continue holding it. Because
- * `executionHistory` may still be absent at that point, "no locator" must never
- * be mistaken for "no owner".
+ * The Kernel unique slot may already be held by this Run's B2 fresh `begin`
+ * even though `executionHistory` is still absent, so "no locator" must never be
+ * mistaken for "no owner": RUN-06 reads the begin binding from the Run's V2
+ * authorization and answers `self` (owner -> owner CAS) for it.
  */
 import type { RunExecutionHistoryV1 } from '../../../contracts/core/execution-history.js';
 import type { SessionRef } from '../../../contracts/core/identity.js';
@@ -20,7 +22,7 @@ import type { SessionRecord } from '../../../contracts/core/session.js';
 import type { RunSnapshot } from '../../../contracts/dispatch.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { EncodedRecord, RecordGuard, UniqueClaimChange } from '../../record-store/ports.js';
-import { isRunExecutionHistoryV1 } from '../persistence/execution-history-codecs.js';
+import { runStateOf, transitionRun, type RunEffect, type RunGuardContext } from '../state/run-machine.js';
 import type { KernelExecutionBinding } from './execution-entry-contracts.js';
 
 const RUN_SNAPSHOT_SCHEMA_ID = 'RunSnapshot@1';
@@ -35,12 +37,8 @@ export type ExecutionHistoryBindingRequest = {
   startPosition: number;
   observedThroughPosition: number;
   endPosition: number | null;
-  /**
-   * The Kernel unique-slot owner already bound by this Run's begin, if any.
-   * The helper must distinguish "no owner" from "owned by this same Run" so a
-   * begin that claimed the slot first is not re-submitted with expectedOwner:null.
-   */
-  beginOwnerRefKey: string | null;
+  /** The rework actor class of the caller (§1.3); RUN-06 does not read it. */
+  actor: RunGuardContext['actor'];
 };
 
 export type ExecutionHistoryBinding = {
@@ -58,20 +56,47 @@ export type ExecutionHistoryBindingResult =
 function reject(code: CoreError, reason: string): CoreRejection {
   return { status: 'rejected', code, reason };
 }
-function forbidden(reason: string): CoreRejection { return reject('forbidden', reason); }
-function unavailable(reason: string): CoreRejection { return reject('unavailable', reason); }
-function invalid(reason: string): CoreRejection { return reject('invalid', reason); }
 
-function sameRef(left: unknown, right: unknown): boolean {
-  try {
-    return canonicalJson(left as JsonValue) === canonicalJson(right as JsonValue);
-  } catch {
-    return false;
-  }
+/**
+ * RUN-06's guard context: the row reads only the claim Session's Kernel
+ * mapping. The other facts belong to other Run events and hold neutral
+ * values here; W9 never requires the current Session occupancy or the Lease.
+ */
+function historyRunContext(session: SessionRecord, actor: RunGuardContext['actor']): RunGuardContext {
+  return {
+    session: { usable: true, owned: false,
+      kernel: { adapterId: session.kernel.adapterId, kernelSessionId: session.kernel.kernelSessionId } },
+    lease: 'missing',
+    persistedClaim: null,
+    goal: { desiredState: 'active', activePlanMatchesClaim: true },
+    entryPlan: 'active_plan',
+    continuationBrief: 'absent_ok',
+    freshAdmission: null,
+    pointerIntent: null,
+    queuedSteerCount: 0,
+    continuationConsumed: false,
+    exitProof: null,
+    hostLease: null,
+    kernelProbe: null,
+    kernelPaused: false,
+    inputsConfirmed: null,
+    actor,
+    claim: null,
+  };
 }
-function sameKernel(left: KernelExecutionBinding, right: KernelExecutionBinding): boolean {
-  return left.adapterId === right.adapterId && left.kernelSessionId === right.kernelSessionId
-    && left.runId === right.runId && left.turnId === right.turnId;
+
+/** RUN-06's `claim_kernel_slot` as the shared Kernel identity unique-slot change (`none`: no owner yet). */
+function kernelSlotChange(effect: RunEffect, runKey: string): UniqueClaimChange {
+  if (effect.kind !== 'claim_kernel_slot') throw new Error(`history_recorded has no ${effect.kind} effect`);
+  const kernel = effect.kernel;
+  return {
+    claimKey: KERNEL_SLOT_PREFIX + canonicalJson({
+      adapterId: kernel.adapterId, kernelSessionId: kernel.kernelSessionId,
+      runId: kernel.runId, turnId: kernel.turnId,
+    } as unknown as JsonValue),
+    expectedOwner: effect.expectedOwner === 'none' ? null : runKey,
+    nextOwner: runKey,
+  };
 }
 
 /**
@@ -82,90 +107,29 @@ export function compileExecutionHistoryBinding(
   request: ExecutionHistoryBindingRequest,
 ): ExecutionHistoryBindingResult {
   const { run, session, sessionRef } = request;
-  // A Kernel observation source may carry a local `position`; the locator keeps
-  // only the shared four-field Kernel identity and never the position.
-  const kernel = {
-    adapterId: request.kernel.adapterId,
-    kernelSessionId: request.kernel.kernelSessionId,
-    runId: request.kernel.runId,
-    turnId: request.kernel.turnId,
-  };
-  if (!isRunExecutionHistoryV1({
-    schemaVersion: 1,
-    sessionRef: { projectId: sessionRef.projectId, sessionId: sessionRef.sessionId },
-    kernel,
-    startPosition: request.startPosition,
-    observedThroughPosition: request.observedThroughPosition,
-    endPosition: request.endPosition,
-  })) {
-    return invalid('the requested execution-history locator is not a complete RunExecutionHistoryV1');
+  // A Kernel observation source may carry a local `position`; RUN-06 keeps only
+  // the shared four-field Kernel identity in the locator and never the position.
+  const recorded = transitionRun(runStateOf(run), {
+    kind: 'history_recorded', sessionRef,
+    history: { kernel: request.kernel, startPosition: request.startPosition,
+      observedThroughPosition: request.observedThroughPosition, endPosition: request.endPosition },
+  }, historyRunContext(session, request.actor));
+  if (!recorded.ok) return reject(recorded.code, recorded.detail);
+  const nextRun = recorded.next.record;
+  if (nextRun === null || nextRun.executionHistory === undefined) {
+    throw new Error('an accepted history_recorded transition names the Run and the locator it writes');
   }
-  // The Kernel Session binding is owned by the claim Session mapping.
-  if (kernel.adapterId !== session.kernel.adapterId || kernel.kernelSessionId !== session.kernel.kernelSessionId) {
-    return forbidden('the Kernel session identity disagrees with the claim Session mapping');
-  }
-
   const runRecordRefKey = canonicalJson(run.ref as unknown as JsonValue);
-  if (request.beginOwnerRefKey !== null && request.beginOwnerRefKey !== runRecordRefKey) {
-    return invalid('the begin Kernel-slot owner does not name this Run');
-  }
-
-  const existing = run.executionHistory;
-  if (existing !== undefined) {
-    if (!isRunExecutionHistoryV1(existing)) return unavailable('the stored executionHistory is malformed');
-    if (!sameRef(existing.sessionRef, sessionRef)
-      || existing.kernel.adapterId !== kernel.adapterId
-      || existing.kernel.kernelSessionId !== kernel.kernelSessionId
-      || existing.kernel.runId !== kernel.runId
-      || existing.kernel.turnId !== kernel.turnId
-      || existing.startPosition !== request.startPosition) {
-      return reject('revision_conflict', 'the execution-history identity/start is already fixed');
-    }
-    if (request.observedThroughPosition < existing.observedThroughPosition) {
-      return reject('revision_conflict', 'observedThroughPosition cannot move backwards');
-    }
-    if (existing.endPosition !== null && request.endPosition !== existing.endPosition) {
-      return reject('revision_conflict', 'endPosition is already fixed and cannot be cleared or changed');
-    }
-  }
-
-  const history: RunExecutionHistoryV1 = {
-    schemaVersion: 1,
-    sessionRef: { projectId: sessionRef.projectId, sessionId: sessionRef.sessionId },
-    kernel: { adapterId: kernel.adapterId, kernelSessionId: kernel.kernelSessionId,
-      runId: kernel.runId, turnId: kernel.turnId },
-    startPosition: request.startPosition,
-    observedThroughPosition: request.observedThroughPosition,
-    endPosition: request.endPosition,
-  };
-  if (!isRunExecutionHistoryV1(history)) {
-    return invalid('the execution-history locator is not a complete RunExecutionHistoryV1');
-  }
-  const nextRevision = run.revision + 1;
-  if (!Number.isSafeInteger(nextRevision)) return invalid('the Run revision would not be a safe integer');
-  const nextRun: RunSnapshot = { ...run, revision: nextRevision, executionHistory: history };
   const runRecord: EncodedRecord = { refKey: runRecordRefKey, schemaId: RUN_SNAPSHOT_SCHEMA_ID,
-    revision: nextRevision, json: JSON.stringify(nextRun) };
-
-  // A begin-held slot is an owner -> owner CAS even though the locator is still
-  // absent; otherwise the original WG12 rule applies.
-  const expectedOwner = request.beginOwnerRefKey !== null
-    ? request.beginOwnerRefKey
-    : existing === undefined ? null : runRecordRefKey;
-  const claim: UniqueClaimChange = {
-    claimKey: KERNEL_SLOT_PREFIX + canonicalJson({
-      adapterId: kernel.adapterId, kernelSessionId: kernel.kernelSessionId,
-      runId: kernel.runId, turnId: kernel.turnId,
-    } as unknown as JsonValue),
-    expectedOwner,
-    nextOwner: runRecordRefKey,
-  };
+    revision: nextRun.revision, json: JSON.stringify(nextRun) };
+  const [slot, ...rest] = recorded.effects;
+  if (slot === undefined || rest.length > 0) throw new Error('history_recorded claims exactly the one Kernel slot');
   return {
     status: 'compiled',
     value: {
-      history, nextRun, runRecord,
+      history: nextRun.executionHistory, nextRun, runRecord,
       guards: [{ refKey: runRecordRefKey, expectedRevision: run.revision }],
-      claim,
+      claim: kernelSlotChange(slot, runRecordRefKey),
     },
   };
 }

@@ -26,6 +26,12 @@
  *    current Session occupancy to still belong to the old Run;
  *  - a `starting` Run may record real history facts; entered/completed are
  *    never fabricated.
+ *
+ * The write is decided by the pure Run machine (STATE-MACHINES-SPEC §6,
+ * RUN-06 in `state/run-machine.ts`) through `execution-history-binding.ts`:
+ * the receipt lookup still comes first, the execution read and the Run pin
+ * check happen where they always did, and the next Run and the Kernel slot
+ * change come from the machine's record and effect, never from a literal here.
  */
 import type { ActorRef } from '../../../contracts/command-event.js';
 import type { CoreCallContext, MaterialReader } from '../../../contracts/core/call-context.js';
@@ -33,6 +39,7 @@ import type { VersionPin, WorkspaceScope } from '../../../contracts/core/identit
 import type { CoreError, CoreRejection, WriteResult } from '../../../contracts/core/results.js';
 import type { RunRef, RunSnapshot } from '../../../contracts/dispatch.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
+import { isAutomationActor } from '../../../contracts/task-requeue.js';
 import type {
   EncodedRecord, GoalRecordTransactionPort, PreparedCommit, RecordGuard, StoreCommitReceipt,
   StoreFailure,
@@ -45,7 +52,6 @@ import {
   type ExecutionHistoryRecordedEvent,
 } from '../persistence/execution-history-codecs.js';
 import { plainSessionRefToAggregate, sessionAggregateRefKey } from '../sessions/session-record-codecs.js';
-import { isExecutionAuthorizationV2 } from '../persistence/execution-entry-codecs.js';
 import { compileExecutionHistoryBinding } from './execution-history-binding.js';
 import { dispatchOutboxRefKey, taskAttemptRefKey } from './claim-record-codecs.js';
 import type { GraphWrite } from './contracts.js';
@@ -410,27 +416,19 @@ export function createExecutionHistoryService(
 
         const sessionRef = outbox.claim.sessionRef;
 
-        // The Kernel unique slot may already be held by this Run's fresh begin
-        // even though the locator is still absent. Recover that owner from the
-        // current V2 binding so the shared slot is an owner -> owner CAS.
-        const currentAuthorization = run.executionAuthorization;
-        const beginOwnerRefKey = isExecutionAuthorizationV2(currentAuthorization)
-          && currentAuthorization.kernel !== null
-          && currentAuthorization.kernel.adapterId === input.kernel.adapterId
-          && currentAuthorization.kernel.kernelSessionId === input.kernel.kernelSessionId
-          && currentAuthorization.kernel.runId === input.kernel.runId
-          && currentAuthorization.kernel.turnId === input.kernel.turnId
-          ? canonicalJson(runRef as unknown as JsonValue) : null;
-
-        // 5-6. Pure compile: fixed identity/start, monotone watermark, write-once
-        //      end and the ONE Kernel-slot change. The writer adds the remaining
-        //      guards for the records it read in this window.
+        // 5-6. Pure compile through RUN-06: fixed identity/start, monotone
+        //      watermark, write-once end and the ONE Kernel-slot change (owner
+        //      -> owner when this Run's fresh begin already holds the slot even
+        //      though the locator is still absent). The writer adds the
+        //      remaining guards for the records it read in this window; the
+        //      Attempt and the outbox are guarded only (ATT-03/ATT-25 write
+        //      nothing).
         const compiled = compileExecutionHistoryBinding({
           run, session, sessionRef, kernel: input.kernel,
           startPosition: input.startPosition,
           observedThroughPosition: input.observedThroughPosition,
           endPosition: input.endPosition,
-          beginOwnerRefKey,
+          actor: isAutomationActor(actor) ? 'system' : 'human',
         });
         if (compiled.status !== 'compiled') return compiled;
         const { history, nextRun, runRecord, guards: runGuards, claim } = compiled.value;

@@ -714,6 +714,18 @@ describe('RUN-06 history_recorded', () => {
     }
   });
 
+  it('holds the begin slot only for the begin binding\'s own four-field Kernel identity (execution-history-service.ts:413-423 before step 3)', () => {
+    // No locator yet: the begin binding names the same identity → self; another run or Turn of the
+    // same Kernel session is not begin-held → none.
+    expect(ok(transitionRun(stateOf('Entering'), EV.history, CTX)).effects).toEqual(slot('self'));
+    for (const field of ['runId', 'turnId'] as const) {
+      const other = { ...kernel, [field]: `${kernel[field]}-other` };
+      const result = ok(transitionRun(stateOf('Entering'),
+        { kind: 'history_recorded', sessionRef, history: { ...observed(3, 6, null), kernel: other } }, CTX));
+      expect(result.effects, field).toEqual([{ kind: 'claim_kernel_slot', kernel: other, expectedOwner: 'none' }]);
+    }
+  });
+
   it('refuses a moved identity, a backwards watermark, a changed end and a foreign mapping', () => {
     const at = (history: RunObservedHistory, run: RunSnapshot = RUNNING, ctx: RunGuardContext = CTX) =>
       answer(transitionRun(runStateOf(run), { kind: 'history_recorded', sessionRef, history }, ctx));

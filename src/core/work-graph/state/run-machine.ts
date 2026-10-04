@@ -37,6 +37,11 @@
  * service picks the event with `controlSubmissionRunEvent`, and the rows read
  * the Run node as that service did (`runControlNodeOf`).
  *
+ * And `execution-history-service.ts` `recordExecutionHistory` (RUN-06, through
+ * `execution-history-binding.ts`): the row reads only the claim Session's
+ * Kernel mapping, and the begin-held Kernel slot that service recovered from
+ * the V2 binding is read here.
+ *
  * Pure: imports only `src/contracts` and this directory (§14.4).
  */
 import type { ControlIntentKindV1, ControlIntentRef } from '../../../contracts/control-intent.js';
@@ -1142,9 +1147,10 @@ function onEnteredObserved(
 }
 
 /**
- * RUN-06 (`execution-history-service.ts:407-430`): any existing node, no
- * status check today; an ended Run's end is fixed (§6.4 → stale). The Kernel
- * slot is self → self when this Run's begin or an earlier locator holds it.
+ * RUN-06 (`execution-history-service.ts:407-430` before A.2 step 3): any
+ * existing node, no status check today; an ended Run's end is fixed (§6.4 →
+ * stale). The Kernel slot is self → self when this Run's begin (its V2
+ * binding names the same Kernel identity) or an earlier locator holds it.
  */
 function onHistoryRecorded(
   run: RunSnapshot, event: Extract<RunEvent, { kind: 'history_recorded' }>, ctx: RunGuardContext,
