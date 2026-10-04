@@ -22,10 +22,10 @@
  * a submission by CTL-01 (`state/control-intent-machine.ts`), whose
  * `run_pointer` effect the Run machine applies as RUN-09..15
  * (`state/run-machine.ts`); an observation by CTL-03/05/06, whose only effect
- * keeps the Run a CAS guard. The receipt lookup still comes first, each read
- * happens where it always did (`submissionReadsPointerIntent`,
- * `observedIntentProblem`), and the intent snapshot and the next Run come from
- * the machines' constructors, never from a literal here.
+ * keeps the Run a CAS guard. This file keeps the request shape, the scope
+ * checks, the receipt lookups and the reads in their order
+ * (`submissionReadsPointerIntent`, `observedIntentProblem`); the refusals past
+ * them, the intent snapshot and the next Run come from the machines.
  */
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type {
@@ -52,11 +52,10 @@ import { isExecutionAuthorizationV2 } from '../persistence/execution-entry-codec
 import {
   controlIntentRecordOf, controlIntentRequestOf, controlIntentStateOf, newControlIntentRequest, observationPairingProblem,
   observedIntentProblem, submissionReadsPointerIntent, transitionControlIntent,
-  type ControlGuardContext, type ControlIntentEvent, type ControlPointerIntent,
+  type ControlGuardContext, type ControlIntentEffect, type ControlIntentEvent, type ControlPointerIntent,
 } from '../state/control-intent-machine.js';
 import {
   controlSubmissionRunEvent, isPausedInterrupted, runControlNodeOf, runStateOf, transitionRun,
-  type RunGuardContext, type RunState,
 } from '../state/run-machine.js';
 import type { TransitionRejectReason } from '../state/transition.js';
 import {
@@ -70,7 +69,7 @@ import type { GraphWrite } from './contracts.js';
 
 type HostActor = { kind: 'human' | 'system'; id: string };
 type Records = GoalRecordTransactionPort;
-type LoadedRun = { ok: true; value: RunSnapshot } | { ok: false; rejection: CoreRejection };
+type LoadedRun = { ok: true; value: RunSnapshot | null } | { ok: false; rejection: CoreRejection };
 type SubmittedIntentEvent = Extract<ControlIntentEvent, { type: 'control_submitted' }>;
 type ObservedIntentEvent = Extract<ControlIntentEvent, { type: 'control_observed' }>;
 type Refused = { reason: TransitionRejectReason; code: CoreError; detail: string };
@@ -145,28 +144,29 @@ function encodeRun(run: RunSnapshot): EncodedRecord {
 // -------------------------------------------------------------------------- //
 
 /**
- * §7.1's guard context from one Run read, for the intent `intentRef`: the
- * node as a control reads it (`runControlNodeOf`), the canonical pointer and
- * steer list, the formal V2 entry identity and the persisted history locator
+ * §7.1's guard context from one Run read (`null`: the Run does not exist, which
+ * the machines' Run read row refuses), for the intent `intentRef`: the node as
+ * a control reads it (`runControlNodeOf`), the canonical pointer and steer
+ * list, the formal V2 entry identity and the persisted history locator
  * (`'malformed'` when it fails the locator codec). The intent the pointer
- * names is read only for the one submission that needs it. The Goal (D-9) and
+ * names is added only for the one submission that reads it. The Goal (D-9) and
  * a consumed continuation (RD-8) are read from A.2 step 5.1 on and hold until
  * then; the Kernel pause and the exit proof belong to other events.
  */
 function controlContext(
-  run: RunSnapshot, intentRef: ControlIntentRef, pinsMatch: ControlGuardContext['pinsMatch'],
+  run: RunSnapshot | null, intentRef: ControlIntentRef, pinsMatch: ControlGuardContext['pinsMatch'],
 ): ControlGuardContext {
-  const auth = run.executionAuthorization;
-  const locator = run.executionHistory;
+  const auth = run?.executionAuthorization;
+  const locator = run?.executionHistory;
   return {
     run: {
-      node: runControlNodeOf(run),
+      node: run === null ? 'Absent' : runControlNodeOf(run),
       pointer: runStateOf(run).pointer,
-      pointsHere: run.controlState !== undefined && sameRef(run.controlState.intentRef, intentRef),
-      inControlInputs: (run.controlInputs ?? []).some(ref => sameRef(ref, intentRef)),
+      pointsHere: run?.controlState !== undefined && sameRef(run.controlState.intentRef, intentRef),
+      inControlInputs: (run?.controlInputs ?? []).some(ref => sameRef(ref, intentRef)),
       continuationConsumed: false,
       kernelPaused: false,
-      pausedInterrupted: isPausedInterrupted(run),
+      pausedInterrupted: run !== null && isPausedInterrupted(run),
       entry: isExecutionAuthorizationV2(auth)
         ? { consumerId: auth.consumerId, entryGeneration: auth.generation, sessionGeneration: auth.sessionGeneration }
         : null,
@@ -180,55 +180,51 @@ function controlContext(
   };
 }
 
-/** The intent the pointer names, as CTL-01's resume rule reads it. */
-function pointerIntentOf(intent: ControlIntentSnapshotV1): ControlPointerIntent {
-  return { kind: intent.kind, status: intent.status, observed: intent.status === 'queued' ? null : intent.observation.kind };
-}
-
 /**
- * RUN-09..15's guard context: a submission reads only the intent the pointer
- * names (the same `controlSubmissionProblem` as CTL-01). The Goal (D-9), the
- * consumed continuation (RD-8) and the queued steers (D-8) are read from A.2
- * step 5.1 on and hold until then; Session, Lease, entry and reconcile facts
- * belong to other Run events.
+ * CTL-01's accepted effects as the next Run: its one `run_pointer` effect is
+ * the Run owner's RUN-09..15 (§6), which moves only the revision and the
+ * pointer or steer list and names this intent. Those rows re-ask the ended
+ * check and `controlSubmissionProblem` CTL-01 just passed with the same facts,
+ * so they cannot refuse here. The Goal (D-9), the consumed continuation (RD-8)
+ * and the queued steers (D-8) are read from A.2 step 5.1 on and hold until
+ * then; Session, Lease, entry and reconcile facts belong to other Run events.
  */
-function controlRunContext(pointerIntent: ControlPointerIntent | null, actor: HostActor): RunGuardContext {
-  return {
-    session: { usable: true, owned: false, kernel: null },
-    lease: 'missing',
-    persistedClaim: null,
-    goal: { desiredState: 'active', activePlanMatchesClaim: true },
-    entryPlan: 'active_plan',
-    continuationBrief: 'absent_ok',
-    freshAdmission: null,
-    pointerIntent,
-    queuedSteerCount: 0,
-    continuationConsumed: false,
-    exitProof: null,
-    hostLease: null,
-    kernelProbe: null,
-    kernelPaused: false,
-    inputsConfirmed: null,
-    actor: isAutomationActor(actor) ? 'system' : 'human',
-    claim: null,
-  };
+function submittedRunOf(
+  run: RunSnapshot, event: SubmittedIntentEvent, effects: readonly ControlIntentEffect[],
+  pointerIntent: ControlPointerIntent | null, actor: HostActor,
+): RunSnapshot {
+  const [effect, ...extra] = effects;
+  if (effect?.kind !== 'run_pointer' || extra.length > 0) {
+    throw new Error('control_submitted moves the Run pointer or steer list exactly once');
+  }
+  const moved = transitionRun(runStateOf(run), controlSubmissionRunEvent(run, event.intentRef, event.kind, event.reason), {
+    session: { usable: true, owned: false, kernel: null }, lease: 'missing', persistedClaim: null,
+    goal: { desiredState: 'active', activePlanMatchesClaim: true }, entryPlan: 'active_plan',
+    continuationBrief: 'absent_ok', freshAdmission: null, pointerIntent, queuedSteerCount: 0,
+    continuationConsumed: false, exitProof: null, hostLease: null, kernelProbe: null, kernelPaused: false,
+    inputsConfirmed: null, actor: isAutomationActor(actor) ? 'system' : 'human', claim: null,
+  });
+  if (!moved.ok) throw new Error(`RUN-09..15 refused a submission CTL-01 accepted: ${moved.detail}`);
+  if (moved.next.record === null || moved.effects.some(runEffect => runEffect.kind !== 'intent'
+    || runEffect.event !== 'control_submitted' || !sameRef(runEffect.intentRef, event.intentRef))) {
+    throw new Error('a control submission writes only the Run, naming its own intent');
+  }
+  return moved.next.record;
 }
 
 /**
  * A machine refusal as the rejection today's service returned (§1.2: code and
  * reason kept); a stale pin also names the current revision it lost to.
  */
-function refusalOf(refused: Refused, current: VersionPin): CoreRejection {
-  return reject(refused.code, refused.detail, refused.reason === 'stale' ? [current] : undefined);
+function refusalOf(refused: Refused, current: VersionPin | null): CoreRejection {
+  return reject(refused.code, refused.detail,
+    refused.reason === 'stale' && current !== null ? [{ ref: current.ref, revision: current.revision }] : undefined);
 }
 
-/** The Run an accepted transition writes: `next.record` is the whole next Run (§6). */
-function nextRunOf(next: RunState): RunSnapshot {
-  if (next.record === null) throw new Error('an accepted Run transition names the Run it writes');
-  return next.record;
-}
-
-/** Exact Run load through the SHARED authority; no Role/Session/material chain. */
+/**
+ * Exact Run load through the SHARED authority; no Role/Session/material chain.
+ * An absent Run is `null`: CTL-01/CTL-03's Run read row refuses it.
+ */
 async function loadRun(deps: RunControlServiceDependencies, runRef: RunRef): Promise<LoadedRun> {
   let result;
   try {
@@ -236,7 +232,7 @@ async function loadRun(deps: RunControlServiceDependencies, runRef: RunRef): Pro
   } catch (error) {
     return { ok: false, rejection: unavailable(`the Run read failed: ${messageOf(error)}`) };
   }
-  if (result.status === 'not_found') return { ok: false, rejection: notFound('the target Run does not exist') };
+  if (result.status === 'not_found') return { ok: true, value: null };
   if (result.status === 'unavailable') return { ok: false, rejection: unavailable(result.reason) };
   const snapshot = result.snapshot as unknown;
   if (!isRecord(snapshot) || !isRecord(snapshot['ref']) || snapshot['ref']['aggregateType'] !== 'Run'
@@ -446,58 +442,45 @@ export function createRunControlService(deps: RunControlServiceDependencies): Ru
 
       const loaded = await loadRun(deps, input.runRef);
       if (!loaded.ok) return loaded.rejection;
-      const run = loaded.value;
-      if (run.ref.projectId !== scope.projectId) return forbidden('the target Run belongs to another project');
-      if (run.workspaceSnapshot.workspaceId !== scope.workspaceId) {
+      const read = loaded.value;
+      if (read !== null && read.ref.projectId !== scope.projectId) return forbidden('the target Run belongs to another project');
+      if (read !== null && read.workspaceSnapshot.workspaceId !== scope.workspaceId) {
         return forbidden('the target Run belongs to another workspace');
       }
-      const runPinned = run.revision === runPin.revision;
-      if (!runPinned) {
-        // The FIRST lookup missed, but the Run advanced under us: this exact
-        // call may be retrying a request that another writer already committed
-        // with the same identity+fingerprint. Re-query the original identity
-        // once; only a real receipt is replayed. A genuine miss keeps the
-        // explicit revision conflict with `current` (CTL-01's stale pin), and
-        // any other read failure keeps its real rejection. A different request
-        // keeps its true CAS conflict because its identity is not found.
-        const outcome = await readIdentityReceipt(records, identity, fingerprint, actor);
-        if (outcome.status === 'receipt') return outcome.result;
-        if (outcome.status === 'failed') return outcome.rejection;
-      }
-      // CTL-01 on this Run read: the pin, an ended Run (a Run that really
-      // yielded on a wait is the ONE ended Run that accepts a formal wait-window
-      // control: the queued pause/cancel survives the yield and gates the
-      // continuation instead of being lost with the terminal), the steer text,
-      // the resume rule and the pointer fence. Only a resume that needs the
-      // intent the pointer names reads it.
+      // CTL-01 on this Run read: an absent Run, the pin, an ended Run (a Run
+      // that really yielded on a wait is the ONE ended Run that accepts a formal
+      // wait-window control: the queued pause/cancel survives the yield and
+      // gates the continuation instead of being lost with the terminal), the
+      // steer text, the resume rule and the pointer fence. Only a resume that
+      // needs the intent the pointer names reads it (the pointer test only narrows).
       const submitted: SubmittedIntentEvent = { type: 'control_submitted', target: 'run', intentRef,
         kind: input.kind, reason: input.reason };
-      let controlCtx = controlContext(run, intentRef, { intent: true, run: runPinned });
-      const pointer = run.controlState;
-      if (pointer !== undefined && submissionReadsPointerIntent(submitted, controlCtx)) {
+      let controlCtx = controlContext(read, intentRef, { intent: true, run: read?.revision === runPin.revision });
+      const pointer = read?.controlState;
+      if (submissionReadsPointerIntent(submitted, controlCtx) && pointer !== undefined) {
         const pause = await readIntentRecord(records, pointer.intentRef);
         if (!pause.ok) return pause.rejection;
-        controlCtx = { ...controlCtx, pointerIntent: pointerIntentOf(pause.value) };
+        controlCtx = { ...controlCtx, pointerIntent: { kind: pause.value.kind, status: pause.value.status,
+          observed: pause.value.status === 'queued' ? null : pause.value.observation.kind } };
       }
       const decided = transitionControlIntent(controlIntentStateOf(null), submitted, controlCtx);
-      if (!decided.ok) return refusalOf(decided, { ref: run.ref, revision: run.revision });
-      // The intent's `run_pointer` effect is the Run owner's RUN-09..15: only
-      // revision and the pointer or steer list move; every other Run field is
-      // preserved, and the Run's own effect names this intent.
-      let nextRun: RunSnapshot | null = null;
-      for (const effect of decided.effects) {
-        if (effect.kind !== 'run_pointer') throw new Error(`control_submitted has no ${effect.kind} effect`);
-        const moved = transitionRun(runStateOf(run), controlSubmissionRunEvent(run, intentRef, input.kind, input.reason),
-          controlRunContext(controlCtx.pointerIntent, actor));
-        if (!moved.ok) return reject(moved.code, moved.detail);
-        for (const runEffect of moved.effects) {
-          if (runEffect.kind !== 'intent' || runEffect.event !== 'control_submitted' || !sameRef(runEffect.intentRef, intentRef)) {
-            throw new Error(`a control submission writes no Run ${runEffect.kind} effect`);
-          }
+      if (!decided.ok) {
+        // CTL-01's stale Run pin: the FIRST lookup missed, but the Run advanced
+        // under us, so this exact call may be retrying a request another writer
+        // already committed with the same identity+fingerprint. Re-query the
+        // original identity once; only a real receipt is replayed and any other
+        // read failure keeps its real rejection. A genuine miss (a different
+        // request) keeps the explicit revision conflict with `current`.
+        if (decided.reason === 'stale') {
+          const outcome = await readIdentityReceipt(records, identity, fingerprint, actor);
+          if (outcome.status === 'receipt') return outcome.result;
+          if (outcome.status === 'failed') return outcome.rejection;
         }
-        nextRun = nextRunOf(moved.next);
+        return refusalOf(decided, read);
       }
-      if (nextRun === null) throw new Error('control_submitted must move the Run pointer or steer list');
+      // CTL-01 refused an absent Run (`not_found`) above.
+      const run = read!;
+      const nextRun = submittedRunOf(run, submitted, decided.effects, controlCtx.pointerIntent, actor);
       if (signal.aborted) return cancelled('the control request was cancelled during the execution read');
 
       const nowIso = deps.now();
@@ -626,12 +609,12 @@ export function createRunControlService(deps: RunControlServiceDependencies): Ru
 
       const loaded = await loadRun(deps, runRef);
       if (!loaded.ok) return loaded.rejection;
-      const run = loaded.value;
-      if (run.workspaceSnapshot.workspaceId !== scope.workspaceId) {
+      const read = loaded.value;
+      if (read !== null && read.workspaceSnapshot.workspaceId !== scope.workspaceId) {
         return forbidden('the observed Run belongs to another workspace');
       }
-      // CTL-03/05/06 on this Run read: the Run pin, the formal V2 entry
-      // identity, the persisted locator and its window, then the status. The
+      // CTL-03/05/06 on this Run read: an absent Run, the Run pin, the formal V2
+      // entry identity, the persisted locator and its window, then the status. The
       // persisted Run locator is the authority for the window; the observation
       // must never replace it with a self-reported upper bound. A terminal
       // window is bounded by `endPosition`, a nonterminal one by the last
@@ -640,7 +623,7 @@ export function createRunControlService(deps: RunControlServiceDependencies): Ru
       // the older observation as history but marks it superseded; it never
       // releases or rewrites the newer control.
       const decided = transitionControlIntent(controlIntentStateOf(intent), observed,
-        controlContext(run, intentRef, { intent: intentPinned, run: run.revision === checkedPins.runPin.revision }));
+        controlContext(read, intentRef, { intent: intentPinned, run: read?.revision === checkedPins.runPin.revision }));
       // §7.4's kind pairing is the snapshot codec's rule, which today's commit
       // enforces: the clock and event id are drawn, the Run key and the
       // cancellation are checked, then the RecordStore's schema check refuses
@@ -648,21 +631,22 @@ export function createRunControlService(deps: RunControlServiceDependencies): Ru
       // that one refusal keeps this order and the store's reason.
       const mispaired = !decided.ok && decided.reason === 'illegal'
         && decided.detail === observationPairingProblem(intent.kind, observation);
-      if (!decided.ok && !mispaired) return refusalOf(decided, { ref: run.ref, revision: run.revision });
+      if (!decided.ok && !mispaired) return refusalOf(decided, read);
+      // The Run read row refused an absent Run (`not_found`) above, before the pairing.
+      const run = read!;
       const nowIso = deps.now();
       const eventId = deps.eventId();
       if (!nonEmpty(nowIso) || !nonEmpty(eventId)) {
         return reject('unsupported', 'the injected id/clock source produced an empty value');
       }
+      const runKey = refKeyOf(run.ref);
+      if (runKey === null) return invalid('the observed Run ref is not canonicalizable JSON');
       if (!decided.ok) {
-        if (refKeyOf(run.ref) === null) return invalid('the observed Run ref is not canonicalizable JSON');
         if (signal.aborted) return cancelled('the control observation was cancelled before commit');
         return invalid(`record schema ${CONTROL_INTENT_SNAPSHOT_SCHEMA_ID} rejected the record: ${decided.detail}`);
       }
       const nextSnapshot = controlIntentRecordOf(controlIntentRequestOf(intent), decided.next);
       const intentRecord = encodeControlIntentSnapshot(nextSnapshot);
-      const runKey = refKeyOf(run.ref);
-      if (runKey === null) return invalid('the observed Run ref is not canonicalizable JSON');
       // The observation writes only the intent; its `guard_run` effect keeps the Run a CAS guard.
       const guards: RecordGuard[] = [{ refKey: intentRecord.refKey, expectedRevision: intent.revision }];
       for (const effect of decided.effects) {
