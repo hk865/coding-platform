@@ -30,6 +30,15 @@
  * Reads use the registered recipient lookup and a realtime keyset; they never
  * scan all events, never ack and never bind a cursor to the whole-ledger
  * watermark.
+ *
+ * Every write is decided by the pure message machine (`state/message-machine.ts`,
+ * STATE-MACHINES-SPEC §10 MSG-01..09). The request checks that name the
+ * receipt identity and the receipt lookup still come first, each read happens
+ * where it always did (an earlier refusal skips the later reads), and the
+ * machine's effects become the body store before the commit and the one
+ * commit's record, event and CAS guards. Status, readAt, response,
+ * acceptedInputs and the derivation are written only by the machine's record
+ * constructors (§14.1).
  */
 import type { ArtifactRef } from '../../../contracts/artifact.js';
 import type { CommitCursor } from '../../../contracts/command-event.js';
@@ -70,6 +79,11 @@ import {
 import {
   decodeQueryJobAnswerSnapshot, decodeQueryJobSnapshot, decodeQueryRunSnapshotRecord,
 } from '../queries/query-record-codecs.js';
+import {
+  createSessionMessageRecord, messageMachineStateOf, nextSessionMessageRecord, transitionMessage,
+  type MessageEffect, type MessageGuardContext, type MessageTransition, type QueryAnswerBinding,
+} from '../state/message-machine.js';
+import { unreachable } from '../state/transition.js';
 
 type Unknown = Record<string, unknown>;
 type WorkRunPrincipal = Extract<CorePrincipal, { kind: 'work_run' }>;
@@ -285,6 +299,165 @@ function normalizeMessagePin(expected: readonly VersionPin[], ref: SessionMessag
   if (!isObject(pin) || !isPositiveInt(pin['revision'])) return { ok: false, rejection: reject('invalid', 'the SessionMessage pin revision must be a positive integer') };
   if (canonicalOf(pin['ref']) !== canonicalOf(ref)) return { ok: false, rejection: reject('invalid', 'the version pin does not name the requested message') };
   return { ok: true, revision: pin['revision'] };
+}
+
+// --------------------------------------------------------------------------
+// Message machine calls (STATE-MACHINES-SPEC §10)
+// --------------------------------------------------------------------------
+
+type Refused = Extract<MessageTransition, { ok: false }>;
+
+/**
+ * §10.1's guard context: the caller principal plus only the facts this write
+ * read or authorized. The request checks that run before the receipt lookup
+ * (principal, pins, text, flags) have already held when the machine is asked.
+ */
+function messageContext(principal: CorePrincipal, facts: Partial<Omit<MessageGuardContext, 'principal'>>): MessageGuardContext {
+  return {
+    principal: principal.kind === 'host' || principal.kind === 'work_run' ? principal.kind : 'other',
+    workRunAuthorization: null,
+    callerIsRecipient: null,
+    recipientScope: null,
+    sendFlags: null,
+    pins: { count: 0, matchesMessage: false, revision: null },
+    bodyBounded: null,
+    queryAnswer: null,
+    inputAccepted: null,
+    consumedWait: null,
+    ...facts,
+  };
+}
+
+/** The one SessionMessage pin `normalizeMessagePin` accepted. */
+function pinFacts(revision: number): MessageGuardContext['pins'] {
+  return { count: 1, matchesMessage: true, revision };
+}
+
+/** The fresh work_run admission's own rejection when the refusal is its verdict (the machine passes it through). */
+function admissionRefusalOf(refused: Refused, ctx: MessageGuardContext): CoreRejection | null {
+  const admission = ctx.workRunAuthorization;
+  if (admission === null || admission === 'ok') return null;
+  return refused.reason === 'guard_failed' && refused.code === admission.code && refused.detail === admission.reason
+    ? admission : null;
+}
+
+/**
+ * Whether today's service re-checks the same identity's receipt
+ * (`recheckAfterMiss`) before this refusal: a refused fresh admission, and a
+ * refusal of an existing message's own state (already read, responded or
+ * derived, or a stale pin, today's commit CAS), because a concurrent request of
+ * this identity may have committed after the first lookup missed. An absent
+ * message and a recipient or Query mismatch are refused directly.
+ */
+function rechecksReceipt(refused: Refused, ctx: MessageGuardContext, message: SessionMessage | null): boolean {
+  if (admissionRefusalOf(refused, ctx) !== null) return true;
+  return message !== null && refused.reason !== 'guard_failed';
+}
+
+/**
+ * A machine refusal as the rejection today's service returned (§1.2: code and
+ * reason kept). A refused admission is its own rejection; a stale pin is the
+ * failed message guard of today's commit, with the revision read as `current`.
+ */
+function refusalOf(refused: Refused, ctx: MessageGuardContext, message: SessionMessage | null): CoreRejection {
+  const admission = admissionRefusalOf(refused, ctx);
+  if (admission !== null) return admission;
+  if (refused.reason === 'stale' && message !== null) {
+    return mapStoreFailure({
+      status: 'rejected', code: 'revision_conflict', reason: refused.detail,
+      current: [{ refKey: sessionMessageRefKey(message.ref), revision: message.revision }],
+    });
+  }
+  return reject(refused.code, refused.detail);
+}
+
+/**
+ * MSG-06's consultation binding in today's check order. A derived A′ answer is
+ * answered by the CHILD Session, while the original message recipient (source
+ * A) stays the formal source: the two are never conflated and the derivation
+ * must name that exact source.
+ */
+function consultationBindingOf(job: QueryJobSnapshot, run: QueryRunSnapshot, messageRef: SessionMessageRef, recipient: SessionRef): {
+  binding: QueryAnswerBinding; answererSession: SessionRef | null;
+} {
+  const execution = job.job.intent.execution;
+  const consultation = execution?.consultation;
+  if (execution === undefined || execution.kind !== 'semantic_query' || consultation === undefined) {
+    return { binding: 'not_consultation', answererSession: null };
+  }
+  if (canonicalOf(consultation.messageRef) !== canonicalOf(messageRef)) return { binding: 'other_message', answererSession: null };
+  if (canonicalOf(consultation.recipient) !== canonicalOf(recipient)) return { binding: 'other_recipient', answererSession: null };
+  const derivation = consultation.derivation;
+  if (derivation !== undefined && canonicalOf(derivation.sourceSessionRef) !== canonicalOf(recipient)) {
+    return { binding: 'other_derivation_source', answererSession: null };
+  }
+  const answererSession = derivation === undefined
+    ? recipient
+    : { projectId: derivation.childSessionRef.projectId, sessionId: derivation.childSessionRef.sessionId };
+  const refs = consultationQueryRefs(consultation.messageRef);
+  if (refs.queryJobRef.queryJobId !== job.job.queryJobId || refs.queryRunRef.runId !== run.run.runId) {
+    return { binding: 'other_query_identity', answererSession };
+  }
+  return { binding: 'matches', answererSession };
+}
+
+/** An accepted MSG-03..09 change names an existing message (an absent one is `not_found`). */
+function acceptedMessage(message: SessionMessage | null): SessionMessage {
+  if (message === null) throw new Error('the message machine accepted a change of an absent message');
+  return message;
+}
+
+type MessageCommitPlan = {
+  /** `store_body`: stored and verified BEFORE the commit, outside the transaction. */
+  body: Extract<MessageEffect, { kind: 'store_body' }> | null;
+  /** `guard_message`: `null` = the message must not exist yet (send CAS@0). */
+  messageRevision: number | null;
+  /** `guard_work_run_facts`: the admission's Run, Session, Lease and role guards join the commit. */
+  workRunFacts: boolean;
+};
+
+/**
+ * An accepted write's effects (§10.3). The write builds the record change and
+ * the event the machine names; the body store, the message CAS and the joined
+ * admission guards come from the effects.
+ */
+function messageCommitPlan(
+  effects: readonly MessageEffect[],
+  change: Extract<MessageEffect, { kind: 'write_message' }>['change'],
+  eventType: Extract<MessageEffect, { kind: 'append_event' }>['eventType'],
+): MessageCommitPlan {
+  let body: MessageCommitPlan['body'] = null;
+  let messageRevision: number | null | undefined;
+  let workRunFacts = false;
+  let written = false;
+  let appended = false;
+  for (const effect of effects) {
+    switch (effect.kind) {
+      case 'store_body':
+        body = effect;
+        break;
+      case 'write_message':
+        if (effect.change !== change) throw new Error(`this mailbox write builds ${change}, not ${effect.change}`);
+        written = true;
+        break;
+      case 'append_event':
+        if (effect.eventType !== eventType) throw new Error(`this mailbox write appends ${eventType}, not ${effect.eventType}`);
+        appended = true;
+        break;
+      case 'guard_message':
+        messageRevision = effect.expectedRevision;
+        break;
+      case 'guard_work_run_facts':
+        workRunFacts = true;
+        break;
+      default:
+        return unreachable(effect, 'message effect');
+    }
+  }
+  if (!written || !appended || messageRevision === undefined) {
+    throw new Error('an accepted message write names its record, its event and its message CAS');
+  }
+  return { body, messageRevision, workRunFacts };
 }
 
 // --------------------------------------------------------------------------
@@ -763,6 +936,15 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     return { status: 'ready', value: decoded.value };
   }
 
+  /** A write's message read: absent is the machine's `not_found`; any other failure keeps today's rejection. */
+  async function loadMessageForWrite(owned: Owned, ref: SessionMessageRef): Promise<
+    { ok: true; message: SessionMessage | null } | { ok: false; rejection: CoreRejection }> {
+    const loaded = await loadMessage(owned, ref);
+    if (loaded.status === 'ready') return { ok: true, message: loaded.value };
+    if (loaded.status === 'not_found') return { ok: true, message: null };
+    return { ok: false, rejection: mapReadResult(loaded) as CoreRejection };
+  }
+
   async function readWorkspaceSource(owned: Owned): Promise<{ ok: true; value: ArtifactRef['source'] } | { ok: false; rejection: CoreRejection }> {
     const key = canonicalRefKey({ aggregateType: 'Workspace', projectId: owned.projectId, workspaceId: owned.workspaceId });
     let read: StoreResult<RecordBatchRead>;
@@ -829,6 +1011,68 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     const decoded = decodeQueryJobAnswerSnapshot(read.record);
     if (decoded.status !== 'decoded') return reject('unavailable', `the QueryJobAnswer snapshot is damaged: ${decoded.reason}`);
     return { status: 'ready', value: decoded.value };
+  }
+
+  type QueryAnswerFacts = {
+    verdict: NonNullable<MessageGuardContext['queryAnswer']>;
+    bodyBounded: boolean;
+    text: string;
+    /** The formal Answer body's ORIGINAL source. */
+    answerSource: ArtifactRef['source'];
+    /** The derived query_run sender; null while a fact the machine refuses on is missing. */
+    sender: MessageQueryAnswerSender | null;
+  };
+
+  /**
+   * MSG-06's facts, read in today's order: the Answer, its QueryJob and its
+   * QueryRun (a failed read keeps today's rejection). The body and the
+   * `query_run` sender come from the settled Answer/Job/Run, never from caller
+   * text or caller identity.
+   */
+  async function readQueryAnswerFacts(owned: Owned, message: SessionMessage, answerRef: QueryJobAnswerRef): Promise<
+    { ok: true; facts: QueryAnswerFacts } | { ok: false; rejection: CoreRejection }> {
+    const answerRead = await loadQueryAnswer(owned, answerRef);
+    if (answerRead.status !== 'ready') return { ok: false, rejection: mapReadResult(answerRead) as CoreRejection };
+    const answer = answerRead.value;
+    const jobRead = await loadQueryJob(owned, answer.answer.queryJobRef);
+    if (jobRead.status !== 'ready') return { ok: false, rejection: mapReadResult(jobRead) as CoreRejection };
+    const job = jobRead.value;
+    const runRead = await loadQueryRun(owned, answer.answer.runRef);
+    if (runRead.status !== 'ready') return { ok: false, rejection: mapReadResult(runRead) as CoreRejection };
+    const run = runRead.value;
+
+    const recipient = { projectId: message.recipient.projectId, sessionId: message.recipient.sessionId };
+    const { binding, answererSession } = consultationBindingOf(job, run, message.ref, recipient);
+    const state = run.run.executionState;
+    const settlement: QueryAnswerFacts['verdict']['run'] = state === undefined || state.phase !== 'settled' ? 'not_settled'
+      : run.run.status !== 'answered' || run.run.outcome !== 'answered' ? 'not_answered' : 'settled_answered';
+    const generation = state?.sessionGeneration;
+    const text = answer.answer.answer;
+    return {
+      ok: true,
+      facts: {
+        verdict: {
+          binding,
+          jobAnsweredWithAnswer: job.job.status === 'answered'
+            && job.job.answerRefs.some((candidate) => canonicalOf(candidate) === canonicalOf(answerRef)),
+          run: settlement,
+          answeringSessionIsClaimSession: state !== undefined && answererSession !== null
+            && state.sessionRef.projectId === answererSession.projectId && state.sessionRef.sessionId === answererSession.sessionId,
+          answerOfRun: canonicalOf(answer.answer.runRef) === canonicalOf(run.ref),
+          sessionGenerationReadable: isPositiveInt(generation),
+        },
+        bodyBounded: typeof text === 'string' && text.length > 0 && Buffer.byteLength(text, 'utf8') <= SESSION_MESSAGE_MAX_TEXT_BYTES,
+        text,
+        answerSource: answer.answer.bodyRef.source,
+        sender: answererSession === null || !isPositiveInt(generation) ? null : {
+          kind: 'query_run',
+          sessionRef: { projectId: answererSession.projectId, sessionId: answererSession.sessionId },
+          queryRunRef: { ...answer.answer.runRef },
+          answerRef: { ...answerRef },
+          generation,
+        },
+      },
+    };
   }
 
   // ---- body storage -------------------------------------------------------
@@ -942,6 +1186,34 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     return { ok: true };
   }
 
+  /**
+   * The `store_body` effect: a workspace body takes the current Workspace
+   * source; a formal Answer body keeps the Answer's ORIGINAL source, so a later
+   * current Workspace revision never impersonates the answer-time evidence.
+   */
+  async function storePlannedBody(plan: MessageCommitPlan, args: {
+    owned: Owned;
+    sender: MessageSender | MessageQueryAnswerSender;
+    messageRef: SessionMessageRef;
+    text: string;
+    identityKey: string;
+    answerSource: ArtifactRef['source'] | null;
+  }): Promise<BodyOutcome> {
+    const { owned, sender, messageRef, text, identityKey, answerSource } = args;
+    const body = plan.body;
+    if (body === null) throw new Error('this mailbox write stores its body before the commit');
+    const bodyRequestId = `session-message-body:${sha256Hex(`${identityKey}|${body.part}`)}`;
+    if (body.source === 'answer') {
+      if (answerSource === null) throw new Error('a formal Answer body keeps the Answer source');
+      return storeMessageBody({
+        owned, sender, part: body.part, messageRef, text, sourceRef: answerSource, expectedSource: answerSource, bodyRequestId,
+      });
+    }
+    const source = await readWorkspaceSource(owned);
+    if (!source.ok) return { ok: false, rejection: source.rejection };
+    return storeMessageBody({ owned, sender, part: body.part, messageRef, text, sourceRef: source.value, bodyRequestId });
+  }
+
   // ---- replay -------------------------------------------------------------
 
   type Receipt = Extract<Awaited<ReturnType<SessionMailboxDependencies['records']['commit']>>, { status: 'committed' }>;
@@ -988,15 +1260,33 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     return null;
   }
 
+  /** A machine refusal, after today's same-identity receipt re-check where today's service made one. */
+  async function refuse(refused: Refused, ctx: MessageGuardContext, message: SessionMessage | null,
+    identity: { identityKey: string; fingerprint: string }, recheck: boolean): Promise<WriteResult<SessionMessage>> {
+    if (recheck) {
+      const restored = await recheckAfterMiss(identity.identityKey, identity.fingerprint);
+      if (restored !== null) return restored;
+    }
+    return refusalOf(refused, ctx, message);
+  }
+
+  /** The planned record, its event and the effects' CAS guards in ONE commit. */
   async function commitMessage(args: {
     identityKey: string;
     fingerprint: string;
     message: SessionMessage;
-    messageGuard: RecordGuard;
-    guards: readonly RecordGuard[];
+    plan: MessageCommitPlan;
+    /** The fresh work_run admission; its guards join only on a `guard_work_run_facts` effect. */
+    admission: AuthOutcome | null;
     event: import('../../record-store/ports.js').EncodedDomainEvent;
   }): Promise<WriteResult<SessionMessage>> {
-    const { identityKey, fingerprint, message, messageGuard, guards, event } = args;
+    const { identityKey, fingerprint, message, plan, admission, event } = args;
+    let guards: RecordGuard[] = [];
+    if (plan.workRunFacts) {
+      if (admission === null || !admission.ok) throw new Error('only an admitted work_run write guards its admission facts');
+      guards = admission.guards;
+    }
+    const messageGuard: RecordGuard = { refKey: sessionMessageRefKey(message.ref), expectedRevision: plan.messageRevision };
     const prepared: PreparedCommit = {
       identityKey,
       fingerprint,
@@ -1108,61 +1398,57 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     if (existing.status === 'ready') return replayMessage(existing.value);
     if (existing.code !== 'not_found') return mapStoreFailure(existing);
 
-    let guards: RecordGuard[] = [];
+    // MSG-02's fresh admission comes before the target Session read; a refused
+    // admission never reads the target (the machine asks the admission first).
+    let authorized: AuthOutcome | null = null;
     if (workRunPrincipal !== null) {
-      const authorized = await authorizeNewWorkRunAction({
+      authorized = await authorizeNewWorkRunAction({
         owned, principal: workRunPrincipal, operationToolName: 'send_session_message',
       });
-      if (!authorized.ok) {
-        // A concurrent identical request may have committed after the first
-        // lookup missed; restore that original receipt instead of re-judging the
-        // already-happened fact under the now-current world.
-        const restored = await recheckAfterMiss(identityKey, fingerprint);
-        return restored ?? authorized.rejection;
-      }
-      guards = authorized.guards;
     }
 
     // The target Session must exist in the same project/workspace. busy/archived
     // never blocks durable mail.
-    if (owned.signal.aborted) return reject('cancelled', 'the send was cancelled before the target Session read');
-    const target = await deps.sessions.readSession(internalHostContext(owned), recipient);
-    if (owned.signal.aborted) return reject('cancelled', 'the send was cancelled during the target Session read');
-    if (target.status !== 'ready') return mapReadResult(target) as CoreRejection;
-    if (target.value.record.ref.projectId !== owned.projectId || target.value.record.workspaceId !== owned.workspaceId) {
-      return reject('not_found', 'the recipient Session is outside the bound workspace');
+    let recipientScope: MessageGuardContext['recipientScope'] = null;
+    if (authorized === null || authorized.ok) {
+      if (owned.signal.aborted) return reject('cancelled', 'the send was cancelled before the target Session read');
+      const target = await deps.sessions.readSession(internalHostContext(owned), recipient);
+      if (owned.signal.aborted) return reject('cancelled', 'the send was cancelled during the target Session read');
+      if (target.status !== 'ready' && target.status !== 'not_found') return mapReadResult(target) as CoreRejection;
+      recipientScope = target.status === 'not_found' ? null
+        : target.value.record.ref.projectId === owned.projectId && target.value.record.workspaceId === owned.workspaceId
+          ? 'same_workspace' : 'other_workspace';
     }
 
-    const source = await readWorkspaceSource(owned);
-    if (!source.ok) return source.rejection;
+    // MSG-01/02. The messageId derives from the send identity, so the record is
+    // not read: an existing one is caught by the create CAS@0.
+    const messageCtx = messageContext(owned.principal, {
+      workRunAuthorization: authorized === null ? null : authorized.ok ? 'ok' : authorized.rejection,
+      recipientScope,
+      sendFlags: { needsReply, waitAfterSend, replyMode: replyMode ?? null, pinCount: write.expected.length },
+    });
+    const decided = transitionMessage(messageMachineStateOf(null), { type: 'message_sent' }, messageCtx);
+    if (!decided.ok) {
+      // A concurrent identical request may have committed after the first
+      // lookup missed; restore that original receipt instead of re-judging the
+      // already-happened fact under the now-current world.
+      return refuse(decided, messageCtx, null, { identityKey, fingerprint }, rechecksReceipt(decided, messageCtx, null));
+    }
+    const plan = messageCommitPlan(decided.effects, 'created', 'SessionMessageSent');
     const messageRef: SessionMessageRef = {
       aggregateType: 'SessionMessage', projectId: owned.projectId, workspaceId: owned.workspaceId,
       messageId: messageIdOf(owned, senderIdentity, write.requestId),
     };
-    const bodyRequestId = `session-message-body:${sha256Hex(`${identityKey}|message`)}`;
-    const stored = await storeMessageBody({
-      owned, sender, part: 'message', messageRef, text: text.text, sourceRef: source.value, bodyRequestId,
+    const stored = await storePlannedBody(plan, {
+      owned, sender, messageRef, text: text.text, identityKey, answerSource: null,
     });
     if (!stored.ok) return stored.rejection;
     const createdAt = deps.now();
     if (!nonEmpty(createdAt)) return reject('invalid', 'the injected clock is not a legal instant');
-    const message: SessionMessage = {
-      ref: messageRef,
-      schemaVersion: 1,
-      revision: 1,
-      sender,
-      recipient,
-      bodyRef: stored.ref,
-      sourceRef: stored.ref.source,
-      createdAt,
-      status: 'pending',
-      readAt: null,
-      response: null,
-      ...(replyMode === undefined ? {} : { replyMode }),
-      ...(intent === undefined ? {} : { intent }),
-      ...(needsReply ? { needsReply: true } : {}),
-      ...(waitAfterSend ? { waitAfterSend: true } : {}),
-    };
+    const message: SessionMessage = createSessionMessageRecord({
+      ref: messageRef, sender, recipient, bodyRef: stored.ref, sourceRef: stored.ref.source, createdAt,
+      replyMode: replyMode ?? null, intent: intent ?? null, needsReply, waitAfterSend,
+    });
     const event: SessionMessageSentEventV1 = {
       eventId: eventIdOf(identityKey, 'sent'),
       eventType: 'SessionMessageSent',
@@ -1175,7 +1461,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
       message,
     };
     if (owned.signal.aborted) return reject('cancelled', 'the send was cancelled before commit');
-    return commitMessage({ identityKey, fingerprint, message, messageGuard: { refKey: sessionMessageRefKey(message.ref), expectedRevision: null }, guards, event: encodeSessionMessageSentEvent(event) });
+    return commitMessage({ identityKey, fingerprint, message, plan, admission: authorized, event: encodeSessionMessageSentEvent(event) });
   }
 
   // ---- readMessage --------------------------------------------------------
@@ -1587,25 +1873,28 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     const authorized = await authorizeNewWorkRunAction({
       owned, principal: owned.principal, operationToolName: 'ack_session_message',
     });
-    if (!authorized.ok) {
-      const restored = await recheckAfterMiss(identityKey, fingerprint);
-      return restored ?? authorized.rejection;
-    }
-    const loaded = await loadMessage(owned, normalized.ref);
-    if (loaded.status !== 'ready') return mapReadResult(loaded) as CoreRejection;
-    const message = loaded.value;
-    if (!ownsInbox(sender.sessionRef, message)) return reject('forbidden', 'this message is not addressed to the caller Session');
-    if (message.status !== 'pending') {
+    // MSG-03. A refused admission never reads the message (the machine asks the
+    // admission before the record).
+    const read = authorized.ok ? await loadMessageForWrite(owned, normalized.ref) : { ok: true as const, message: null };
+    if (!read.ok) return read.rejection;
+    const message = read.message;
+    const messageCtx = messageContext(owned.principal, {
+      workRunAuthorization: authorized.ok ? 'ok' : authorized.rejection,
+      callerIsRecipient: message === null ? null : ownsInbox(sender.sessionRef, message),
+      pins: pinFacts(pin.revision),
+    });
+    const decided = transitionMessage(messageMachineStateOf(message), { type: 'message_read' }, messageCtx);
+    if (!decided.ok) {
       // A same-identity request may have committed this exact acknowledgement
       // while this call sat between its first receipt miss and the message
       // read. Restore that original receipt; a genuine different request keeps
       // the domain rejection and never commits a second time.
-      const restored = await recheckAfterMiss(identityKey, fingerprint);
-      return restored ?? reject('invalid', 'only a pending message can be acknowledged');
+      return refuse(decided, messageCtx, message, { identityKey, fingerprint }, rechecksReceipt(decided, messageCtx, message));
     }
+    const plan = messageCommitPlan(decided.effects, 'read', 'SessionMessageRead');
     const readAt = deps.now();
     if (!nonEmpty(readAt)) return reject('invalid', 'the injected clock is not a legal instant');
-    const next: SessionMessage = { ...message, revision: message.revision + 1, status: 'read', readAt };
+    const next: SessionMessage = nextSessionMessageRecord(acceptedMessage(message), { kind: 'read', readAt });
     const event: SessionMessageReadEventV1 = {
       eventId: eventIdOf(identityKey, 'read'),
       eventType: 'SessionMessageRead',
@@ -1619,8 +1908,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     };
     if (owned.signal.aborted) return reject('cancelled', 'the acknowledgement was cancelled before commit');
     return commitMessage({
-      identityKey, fingerprint, message: next, messageGuard: { refKey: sessionMessageRefKey(next.ref), expectedRevision: pin.revision },
-      guards: authorized.guards, event: encodeSessionMessageReadEvent(event),
+      identityKey, fingerprint, message: next, plan, admission: authorized, event: encodeSessionMessageReadEvent(event),
     });
   }
 
@@ -1659,42 +1947,34 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     const authorized = await authorizeNewWorkRunAction({
       owned, principal: owned.principal, operationToolName: 'respond_session_message',
     });
-    if (!authorized.ok) {
-      const restored = await recheckAfterMiss(identityKey, fingerprint);
-      return restored ?? authorized.rejection;
-    }
-    const loaded = await loadMessage(owned, normalized.ref);
-    if (loaded.status !== 'ready') return mapReadResult(loaded) as CoreRejection;
-    const message = loaded.value;
-    if (!ownsInbox(sender.sessionRef, message)) return reject('forbidden', 'this message is not addressed to the caller Session');
-    if (message.status === 'responded') {
+    // MSG-04/05. A refused admission never reads the message.
+    const read = authorized.ok ? await loadMessageForWrite(owned, normalized.ref) : { ok: true as const, message: null };
+    if (!read.ok) return read.rejection;
+    const message = read.message;
+    const messageCtx = messageContext(owned.principal, {
+      workRunAuthorization: authorized.ok ? 'ok' : authorized.rejection,
+      callerIsRecipient: message === null ? null : ownsInbox(sender.sessionRef, message),
+      pins: pinFacts(pin.revision),
+      bodyBounded: true, // `normalizeText` held with the request
+    });
+    const decided = transitionMessage(messageMachineStateOf(message), { type: 'message_responded', via: 'text' }, messageCtx);
+    if (!decided.ok) {
       // See the acknowledgement branch: restore the original committed receipt
       // of this exact identity instead of reporting a second, conflicting one.
-      const restored = await recheckAfterMiss(identityKey, fingerprint);
-      return restored ?? reject('invalid', 'the message already has a response');
+      return refuse(decided, messageCtx, message, { identityKey, fingerprint }, rechecksReceipt(decided, messageCtx, message));
     }
-    const source = await readWorkspaceSource(owned);
-    if (!source.ok) return source.rejection;
-    const bodyRequestId = `session-message-body:${sha256Hex(`${identityKey}|response`)}`;
-    const stored = await storeMessageBody({
-      owned, sender, part: 'response', messageRef: message.ref, text: text.text, sourceRef: source.value, bodyRequestId,
+    const current = acceptedMessage(message);
+    const plan = messageCommitPlan(decided.effects, 'responded', 'SessionMessageResponded');
+    const stored = await storePlannedBody(plan, {
+      owned, sender, messageRef: current.ref, text: text.text, identityKey, answerSource: null,
     });
     if (!stored.ok) return stored.rejection;
     const respondedAt = deps.now();
     if (!nonEmpty(respondedAt)) return reject('invalid', 'the injected clock is not a legal instant');
-    const response = {
-      sender,
-      bodyRef: stored.ref,
-      sourceRef: stored.ref.source,
-      respondedAt,
-    };
-    const next: SessionMessage = {
-      ...message,
-      revision: message.revision + 1,
-      status: 'responded',
-      readAt: message.readAt ?? respondedAt,
-      response,
-    };
+    const next: SessionMessage = nextSessionMessageRecord(current, {
+      kind: 'responded',
+      response: { sender, bodyRef: stored.ref, sourceRef: stored.ref.source, respondedAt },
+    });
     const event: SessionMessageRespondedEventV1 = {
       eventId: eventIdOf(identityKey, 'responded'),
       eventType: 'SessionMessageResponded',
@@ -1708,8 +1988,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     };
     if (owned.signal.aborted) return reject('cancelled', 'the response was cancelled before commit');
     return commitMessage({
-      identityKey, fingerprint, message: next, messageGuard: { refKey: sessionMessageRefKey(next.ref), expectedRevision: pin.revision },
-      guards: authorized.guards, event: encodeSessionMessageRespondedEvent(event),
+      identityKey, fingerprint, message: next, plan, admission: authorized, event: encodeSessionMessageRespondedEvent(event),
     });
   }
 
@@ -1760,76 +2039,30 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     const pin = normalizeMessagePin(write.expected, normalized.ref);
     if (!pin.ok) return pin.rejection;
 
-    const loaded = await loadMessage(owned, normalized.ref);
-    if (loaded.status !== 'ready') return mapReadResult(loaded) as CoreRejection;
-    const message = loaded.value;
-    const recipient = { projectId: message.recipient.projectId, sessionId: message.recipient.sessionId };
-
-    const answerRead = await loadQueryAnswer(owned, answerRef);
-    if (answerRead.status !== 'ready') return mapReadResult(answerRead) as CoreRejection;
-    const answer = answerRead.value;
-    const jobRead = await loadQueryJob(owned, answer.answer.queryJobRef);
-    if (jobRead.status !== 'ready') return mapReadResult(jobRead) as CoreRejection;
-    const job = jobRead.value;
-    const runRead = await loadQueryRun(owned, answer.answer.runRef);
-    if (runRead.status !== 'ready') return mapReadResult(runRead) as CoreRejection;
-    const run = runRead.value;
-
-    const execution = job.job.intent.execution;
-    const consultation = execution?.consultation;
-    if (execution === undefined || execution.kind !== 'semantic_query' || consultation === undefined) {
-      return reject('forbidden', 'the Query answer is not an explicit consultation answer');
+    // MSG-06. The Query facts are read only for an existing message (an absent
+    // one is refused first). The binding, the settled Query facts and the body
+    // bound refuse before the receipt lookup, which needs the derived sender.
+    const read = await loadMessageForWrite(owned, normalized.ref);
+    if (!read.ok) return read.rejection;
+    const message = read.message;
+    let facts: QueryAnswerFacts | null = null;
+    if (message !== null) {
+      const gathered = await readQueryAnswerFacts(owned, message, answerRef);
+      if (!gathered.ok) return gathered.rejection;
+      facts = gathered.facts;
     }
-    if (canonicalOf(consultation.messageRef) !== canonicalOf(message.ref)) {
-      return reject('forbidden', 'the consultation answer belongs to another message');
-    }
-    if (canonicalOf(consultation.recipient) !== canonicalOf(recipient)) {
-      return reject('forbidden', 'the consultation answer recipient is not the original message recipient');
-    }
-    // A derived A′ answer is answered by the CHILD Session, while the original
-    // message recipient (source A) stays the formal source. The two are never
-    // conflated and the derivation must name that exact source.
-    const derivation = consultation.derivation;
-    if (derivation !== undefined && canonicalOf(derivation.sourceSessionRef) !== canonicalOf(recipient)) {
-      return reject('forbidden', 'the derived answer source is not the original message recipient');
-    }
-    const answererSession = derivation === undefined
-      ? recipient
-      : { projectId: derivation.childSessionRef.projectId, sessionId: derivation.childSessionRef.sessionId };
-    const refs = consultationQueryRefs(consultation.messageRef);
-    if (refs.queryJobRef.queryJobId !== job.job.queryJobId || refs.queryRunRef.runId !== run.run.runId) {
-      return reject('forbidden', 'the consultation answer does not match the deterministic message identity');
-    }
-    if (job.job.status !== 'answered'
-      || !job.job.answerRefs.some((candidate) => canonicalOf(candidate) === canonicalOf(answerRef))) {
-      return reject('forbidden', 'the QueryJob does not record this answer as its formal answered fact');
-    }
-    const state = run.run.executionState;
-    if (state === undefined || state.phase !== 'settled') {
-      return reject('forbidden', 'the QueryRun is not settled and cannot source a message reply');
-    }
-    if (run.run.status !== 'answered' || run.run.outcome !== 'answered') {
-      return reject('forbidden', 'the QueryRun did not settle as answered');
-    }
-    if (state.sessionRef.projectId !== answererSession.projectId || state.sessionRef.sessionId !== answererSession.sessionId) {
-      return reject('forbidden', 'the QueryRun was not claimed by the formal answerer Session');
-    }
-    if (canonicalOf(answer.answer.runRef) !== canonicalOf(run.ref)) {
-      return reject('forbidden', 'the Query answer does not belong to the settled QueryRun');
-    }
-    if (!isPositiveInt(state.sessionGeneration)) return reject('unavailable', 'the QueryRun Session generation is not readable');
-    const text = answer.answer.answer;
-    if (typeof text !== 'string' || text.length === 0 || Buffer.byteLength(text, 'utf8') > SESSION_MESSAGE_MAX_TEXT_BYTES) {
-      return reject('invalid', 'the formal Query answer text is not a legal bounded message body');
+    const messageCtx = messageContext(owned.principal, {
+      pins: pinFacts(pin.revision),
+      queryAnswer: facts === null ? null : facts.verdict,
+      bodyBounded: facts === null ? null : facts.bodyBounded,
+    });
+    const decided = transitionMessage(messageMachineStateOf(message), { type: 'message_responded', via: 'query_answer' }, messageCtx);
+    if (!decided.ok && (message === null || decided.reason === 'guard_failed')) return refusalOf(decided, messageCtx, message);
+    if (message === null || facts === null || facts.sender === null) {
+      throw new Error('MSG-06 passed its Query guards without the derived query_run sender');
     }
 
-    const sender: MessageQueryAnswerSender = {
-      kind: 'query_run',
-      sessionRef: { projectId: answererSession.projectId, sessionId: answererSession.sessionId },
-      queryRunRef: { ...answer.answer.runRef },
-      answerRef: { ...answerRef },
-      generation: state.sessionGeneration,
-    };
+    const sender = facts.sender;
     const senderIdentity = senderIdentityOf(sender);
     const identityKey = identityKeyOf('respond_from_query_answer', owned, senderIdentity, write.requestId);
     const fingerprint = fingerprintOf('respond_from_query_answer', owned, senderIdentity,
@@ -1838,29 +2071,20 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     const existing = await records.lookupCommit({ identityKey, fingerprint });
     if (existing.status === 'ready') return replayMessage(existing.value);
     if (existing.code !== 'not_found') return mapStoreFailure(existing);
-    if (message.status === 'responded') {
-      const restored = await recheckAfterMiss(identityKey, fingerprint);
-      return restored ?? reject('invalid', 'the message already has a response');
-    }
-    // Preserve the formal Answer's ORIGINAL source; a later current Workspace
-    // revision must never impersonate the answer-time evidence.
-    const answerSource = answer.answer.bodyRef.source;
-    const bodyRequestId = `session-message-body:${sha256Hex(`${identityKey}|response`)}`;
-    const stored = await storeMessageBody({
-      owned, sender, part: 'response', messageRef: message.ref, text,
-      sourceRef: answerSource, expectedSource: answerSource, bodyRequestId,
+    // The single response slot (first come with MSG-04/05) and the pin are
+    // judged after the lookup, so this identity's committed receipt replays.
+    if (!decided.ok) return refuse(decided, messageCtx, message, { identityKey, fingerprint }, rechecksReceipt(decided, messageCtx, message));
+    const plan = messageCommitPlan(decided.effects, 'responded', 'SessionMessageResponded');
+    const stored = await storePlannedBody(plan, {
+      owned, sender, messageRef: message.ref, text: facts.text, identityKey, answerSource: facts.answerSource,
     });
     if (!stored.ok) return stored.rejection;
     const respondedAt = deps.now();
     if (!nonEmpty(respondedAt)) return reject('invalid', 'the injected clock is not a legal instant');
-    const response = { sender, bodyRef: stored.ref, sourceRef: stored.ref.source, respondedAt };
-    const next: SessionMessage = {
-      ...message,
-      revision: message.revision + 1,
-      status: 'responded',
-      readAt: message.readAt ?? respondedAt,
-      response,
-    };
+    const next: SessionMessage = nextSessionMessageRecord(message, {
+      kind: 'responded',
+      response: { sender, bodyRef: stored.ref, sourceRef: stored.ref.source, respondedAt },
+    });
     const event: SessionMessageRespondedEventV1 = {
       eventId: eventIdOf(identityKey, 'responded'),
       eventType: 'SessionMessageResponded',
@@ -1874,9 +2098,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     };
     if (owned.signal.aborted) return reject('cancelled', 'the answer association was cancelled before commit');
     return commitMessage({
-      identityKey, fingerprint, message: next,
-      messageGuard: { refKey: sessionMessageRefKey(next.ref), expectedRevision: pin.revision },
-      guards: [], event: encodeSessionMessageRespondedEvent(event),
+      identityKey, fingerprint, message: next, plan, admission: null, event: encodeSessionMessageRespondedEvent(event),
     });
   }
 
@@ -1912,17 +2134,19 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     const existing = await records.lookupCommit({ identityKey, fingerprint });
     if (existing.status === 'ready') return replayMessage(existing.value);
     if (existing.code !== 'not_found') return mapStoreFailure(existing);
-    const loaded = await loadMessage(owned, normalized.ref);
-    if (loaded.status !== 'ready') return mapReadResult(loaded) as CoreRejection;
-    const message = loaded.value;
-    if (message.consultationDerivation !== undefined) {
-      const restored = await recheckAfterMiss(identityKey, fingerprint);
-      return restored ?? reject('invalid', 'the original request already carries a fixed consultation derivation');
-    }
+    // MSG-09: the first derivation wins; its shape is the codec's at commit.
+    const read = await loadMessageForWrite(owned, normalized.ref);
+    if (!read.ok) return read.rejection;
+    const message = read.message;
+    const messageCtx = messageContext(owned.principal, { pins: pinFacts(pin.revision) });
+    const decided = transitionMessage(messageMachineStateOf(message), { type: 'consultation_derived' }, messageCtx);
+    if (!decided.ok) return refuse(decided, messageCtx, message, { identityKey, fingerprint }, rechecksReceipt(decided, messageCtx, message));
+    const plan = messageCommitPlan(decided.effects, 'consultation_derived', 'SessionMessageConsultationDerived');
     const recordedAt = deps.now();
     if (!nonEmpty(recordedAt)) return reject('invalid', 'the injected clock is not a legal instant');
-    const next: SessionMessage = { ...message, revision: message.revision + 1,
-      consultationDerivation: derivation as NonNullable<SessionMessage['consultationDerivation']> };
+    const next: SessionMessage = nextSessionMessageRecord(acceptedMessage(message), {
+      kind: 'consultation_derived', derivation: derivation as NonNullable<SessionMessage['consultationDerivation']>,
+    });
     const event = {
       eventId: eventIdOf(identityKey, 'consultation-derived'),
       eventType: 'SessionMessageConsultationDerived' as const,
@@ -1936,9 +2160,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     };
     if (owned.signal.aborted) return reject('cancelled', 'the derivation record was cancelled before commit');
     return commitMessage({
-      identityKey, fingerprint, message: next,
-      messageGuard: { refKey: sessionMessageRefKey(next.ref), expectedRevision: pin.revision },
-      guards: [], event: encodeSessionMessageConsultationDerivedEvent(event),
+      identityKey, fingerprint, message: next, plan, admission: null, event: encodeSessionMessageConsultationDerivedEvent(event),
     });
   }
 
@@ -1999,52 +2221,67 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     const existing = await records.lookupCommit({ identityKey, fingerprint });
     if (existing.status === 'ready') return replayMessage(existing.value);
     if (existing.code !== 'not_found') return mapStoreFailure(existing);
-    const loaded = await loadMessage(owned, normalized.ref);
-    if (loaded.status !== 'ready') return mapReadResult(loaded) as CoreRejection;
-    const message = loaded.value;
-    let actualSession: SessionRef;
-    let actualKernel: { adapterId: string; kernelSessionId: string; runId: string; turnId: string } | null | undefined;
-    if (executionRef['aggregateType'] === 'Run') {
-      const facts = await readFreshWorkRunFacts(owned, executionRef as unknown as RunRef);
-      if (!facts.ok) return facts.rejection;
-      actualSession = { projectId: facts.record.outbox.claim.sessionRef.projectId, sessionId: facts.record.outbox.claim.sessionRef.sessionId };
-      const authorization = facts.record.run.executionAuthorization;
-      actualKernel = facts.record.run.executionHistory?.kernel
-        ?? (authorization !== undefined && 'schemaVersion' in authorization && authorization.schemaVersion === 2 ? authorization.kernel : null);
-    } else {
-      if (executionRef['workspaceId'] !== owned.workspaceId) return reject('forbidden', 'Query execution is outside the workspace');
-      const facts = await loadQueryRun(owned, executionRef as unknown as QueryRunRef);
-      if (facts.status !== 'ready') return mapReadResult(facts) as CoreRejection;
-      const state = facts.value.run.executionState;
-      if (state === undefined) return reject('unavailable', 'Query has no execution identity');
-      actualSession = { projectId: state.sessionRef.projectId, sessionId: state.sessionRef.sessionId };
-      actualKernel = state.entry?.kernel;
-    }
-    if (actualKernel === undefined || actualKernel === null
-      || actualKernel.adapterId !== kernel['adapterId'] || actualKernel.kernelSessionId !== kernel['kernelSessionId']
-      || actualKernel.runId !== kernel['runId'] || actualKernel.turnId !== kernel['turnId'])
-      return reject('forbidden', 'accepted input does not match the persisted execution Kernel identity');
-    if (raw['executionSessionRef'] !== undefined && canonicalOf(raw['executionSessionRef']) !== canonicalOf(actualSession))
-      return reject('forbidden', 'claimed acceptance Session differs from the execution');
+    // MSG-07/08. The execution facts are read only for an existing message (an
+    // absent one is refused first); their read failures keep today's rejections.
+    const read = await loadMessageForWrite(owned, normalized.ref);
+    if (!read.ok) return read.rejection;
+    const message = read.message;
     const inputId = deriveSessionInputId(normalized.ref, part);
-    if (part === 'response') {
-      if (message.response === null || message.sender.kind !== 'work_run'
-        || canonicalOf(message.sender.sessionRef) !== canonicalOf(actualSession))
-        return reject('forbidden', 'the accepted response does not belong to the executing Session');
-    } else if (canonicalOf(message.recipient) !== canonicalOf(actualSession)) {
-      return reject('forbidden', 'the accepted message is not addressed to the executing Session');
+    let facts: MessageGuardContext['inputAccepted'] = null;
+    if (message !== null) {
+      let actualSession: SessionRef;
+      let actualKernel: { adapterId: string; kernelSessionId: string; runId: string; turnId: string } | null | undefined;
+      if (executionRef['aggregateType'] === 'Run') {
+        const runFacts = await readFreshWorkRunFacts(owned, executionRef as unknown as RunRef);
+        if (!runFacts.ok) return runFacts.rejection;
+        actualSession = { projectId: runFacts.record.outbox.claim.sessionRef.projectId, sessionId: runFacts.record.outbox.claim.sessionRef.sessionId };
+        const authorization = runFacts.record.run.executionAuthorization;
+        actualKernel = runFacts.record.run.executionHistory?.kernel
+          ?? (authorization !== undefined && 'schemaVersion' in authorization && authorization.schemaVersion === 2 ? authorization.kernel : null);
+      } else {
+        if (executionRef['workspaceId'] !== owned.workspaceId) return reject('forbidden', 'Query execution is outside the workspace');
+        const queryFacts = await loadQueryRun(owned, executionRef as unknown as QueryRunRef);
+        if (queryFacts.status !== 'ready') return mapReadResult(queryFacts) as CoreRejection;
+        const state = queryFacts.value.run.executionState;
+        if (state === undefined) return reject('unavailable', 'Query has no execution identity');
+        actualSession = { projectId: state.sessionRef.projectId, sessionId: state.sessionRef.sessionId };
+        actualKernel = state.entry?.kernel;
+      }
+      // The same original event is identified independently of observing
+      // actor/revision: an entry of another executionRef or Kernel position is
+      // another event's; this event's own entry is the machine's duplicate.
+      const accepted = (message.acceptedInputs ?? []).find(entry => entry.inputId === inputId);
+      facts = {
+        observerOwnsExecution: owned.principal.kind !== 'work_run' || canonicalOf(executionRef) === canonicalOf(owned.principal.runRef),
+        kernelMatches: actualKernel !== undefined && actualKernel !== null
+          && actualKernel.adapterId === kernel['adapterId'] && actualKernel.kernelSessionId === kernel['kernelSessionId']
+          && actualKernel.runId === kernel['runId'] && actualKernel.turnId === kernel['turnId'],
+        claimedSessionMatches: raw['executionSessionRef'] === undefined
+          || canonicalOf(raw['executionSessionRef']) === canonicalOf(actualSession),
+        executionSessionMatches: part === 'response'
+          ? message.sender.kind === 'work_run' && canonicalOf(message.sender.sessionRef) === canonicalOf(actualSession)
+          : canonicalOf(message.recipient) === canonicalOf(actualSession),
+        inputIdTakenByOtherEvent: accepted !== undefined
+          && (canonicalOf(accepted.executionRef) !== canonicalOf(executionRef) || canonicalOf(accepted.kernel) !== canonicalOf(kernel)),
+      };
     }
-    const accepted = (message.acceptedInputs ?? []).find(entry => entry.inputId === inputId);
-    if (accepted !== undefined) {
-      // The same original event is identified independently of observing actor/revision.
-      const restored = await recheckAfterMiss(identityKey, fingerprint);
-      return restored ?? reject('invalid', 'this source input was accepted by another execution event');
+    const messageCtx = messageContext(owned.principal, { inputAccepted: facts });
+    const decided = transitionMessage(messageMachineStateOf(message), { type: 'input_accepted', part, inputId }, messageCtx);
+    if (!decided.ok) {
+      // Only the inputId uniqueness refusals (`invalid`: another event's entry,
+      // or this event's own without its receipt) re-check the receipt first.
+      return refuse(decided, messageCtx, message, { identityKey, fingerprint }, decided.code === 'invalid');
     }
+    const plan = messageCommitPlan(decided.effects, 'input_accepted', 'SessionMessageInputAccepted');
     const acceptedAt = deps.now();
     if (!nonEmpty(acceptedAt)) return reject('invalid', 'the injected clock is not a legal instant');
-    const next: SessionMessage = { ...message, revision: message.revision + 1,
-      acceptedInputs: [ ...(message.acceptedInputs ?? []),
-        { inputId, part, executionRef: { ...(executionRef as RunRef | QueryRunRef) }, kernel: { ...(kernel as NonNullable<SessionMessage['acceptedInputs']>[number]['kernel']) }, acceptedAt } ] };
+    const next: SessionMessage = nextSessionMessageRecord(acceptedMessage(message), {
+      kind: 'input_accepted',
+      input: {
+        inputId, part, executionRef: executionRef as RunRef | QueryRunRef,
+        kernel: kernel as NonNullable<SessionMessage['acceptedInputs']>[number]['kernel'], acceptedAt,
+      },
+    });
     const event = {
       eventId: eventIdOf(identityKey, 'input-accepted'),
       eventType: 'SessionMessageInputAccepted' as const,
@@ -2058,9 +2295,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     };
     if (owned.signal.aborted) return reject('cancelled', 'the input acceptance was cancelled before commit');
     return commitMessage({
-      identityKey, fingerprint, message: next,
-      messageGuard: { refKey: sessionMessageRefKey(next.ref), expectedRevision: message.revision },
-      guards: [], event: encodeSessionMessageInputAcceptedEvent(event),
+      identityKey, fingerprint, message: next, plan, admission: null, event: encodeSessionMessageInputAcceptedEvent(event),
     });
   }
 

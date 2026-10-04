@@ -14,20 +14,23 @@
  * `transitionMessage`, then builds the record with `createSessionMessageRecord`
  * / `nextSessionMessageRecord` and translates the effects into ONE RecordStore
  * commit. The checks run in today's service order, so the first failing guard
- * returns today's CoreError (§1.2).
+ * returns today's CoreError (§1.2). The `:N` comments in the rows cite the
+ * pre-step-3 service (the tree the spec cites), whose checks now run here.
+ * The request checks that name the receipt identity (principal, pins, text,
+ * send flags) still run in the service first; they hold here when asked.
  *
  * Two kinds of rejection depend on the RecordStore as well as on the state, so the
  * service keeps today's receipt handling around them (§1.2):
- * - `stale` stands for today's commit CAS failure (`commitMessage`,
- *   `mailbox-service.ts:1017-1019`). The service does not return it verbatim:
- *   it first re-checks the receipt of the same identity (`recheckAfterMiss`,
- *   `:979-989`) and replays it on a hit; on a miss it returns
- *   `revision_conflict` with `current` naming the message at the revision it
- *   read, as `mapStoreFailure` reports the failed message guard (`:121-131`).
+ * - `stale` stands for today's commit CAS failure (`commitMessage`). The
+ *   service does not return it verbatim: it first re-checks the receipt of the
+ *   same identity (`recheckAfterMiss`) and replays it on a hit; on a miss it
+ *   returns `revision_conflict` with `current` naming the message at the
+ *   revision it read, as `mapStoreFailure` reports the failed message guard
+ *   (the detail is the RecordStore's CAS reason).
  * - The `illegal`/`invalid` rejections of an already read, responded or
- *   derived message are likewise preceded by `recheckAfterMiss` (`:1598-1604`,
- *   `:1670-1674`, `:1841-1843`, `:1918-1920`), so a concurrent request of the
- *   same identity replays its original receipt instead of being rejected.
+ *   derived message, and the inputId uniqueness rejections of an accepted
+ *   input, are likewise preceded by `recheckAfterMiss`, so a concurrent request
+ *   of the same identity replays its original receipt instead of being rejected.
  *
  * `SessionMessage` is declared in `communication/contracts.ts:95`, which this
  * directory may not import (§14.4). `SessionMessageRecord` below is the same
@@ -155,39 +158,53 @@ export type MessageEvent =
 /** §10.1. IO stays in the service; it fills in what it read and authorized. */
 export type MessageGuardContext = {
   principal: 'host' | 'work_run' | 'other';
-  /** `authorizeNewWorkRunAction` (`mailbox-service.ts:615-741`); `null` for a Host call. */
+  /** `authorizeNewWorkRunAction` (`mailbox-service.ts:787-913`); `null` for a Host call. */
   workRunAuthorization: 'ok' | CoreRejection | null;
   /** ack/respond: the caller Session is the recipient. */
   callerIsRecipient: boolean | null;
   /** message_sent only. */
   recipientScope: 'same_workspace' | 'other_workspace' | 'other_project' | null;
-  /** message_sent only: the normalized flags (`mailbox-service.ts:1072-1074`) and the pin count. */
+  /** message_sent only: the normalized flags (`mailbox-service.ts:1361-1363`) and the pin count. */
   sendFlags: { needsReply: boolean; waitAfterSend: boolean; replyMode: 'wait' | null; pinCount: number } | null;
   /** ack/respond/derive need exactly one pin naming this message; `revision` is null when not a positive integer. */
   pins: { count: number; matchesMessage: boolean; revision: number | null };
   /**
-   * respond only. Text reply (MSG-04/05, `normalizeText`, `mailbox-service.ts:261-267`):
+   * respond only. Text reply (MSG-04/05, `normalizeText`, `mailbox-service.ts:275-281`):
    * `true` = a non-empty string within `SESSION_MESSAGE_MAX_TEXT_BYTES`; `false` = a
    * non-empty string over that bound (`capacity`); `null` = empty or not a string
-   * (`invalid`). Formal Answer (MSG-06, `:1822-1823`): anything but `true` is `invalid`.
-   * `message_sent` does not read it: the send text check (`:1052`) stays with the
+   * (`invalid`). Formal Answer (MSG-06, `readQueryAnswerFacts`): anything but `true` is `invalid`.
+   * `message_sent` does not read it: the send text check (`:1341`) stays with the
    * service's request-shape checks, after the project check and before the flags.
    */
   bodyBounded: boolean | null;
-  /** MSG-06 only. */
+  /** MSG-06 only: the settled Query facts, each naming today's first failing check (`respondFromQueryAnswer`). */
   queryAnswer: null | {
-    /** The consultation binding names this message, the original recipient and the derivation source. */
-    bindingMatches: boolean;
+    /**
+     * `matches`: the Query is an explicit consultation of this message, for its original
+     * recipient, a derivation (if any) is sourced at that recipient, and the QueryJob/QueryRun
+     * are the message's deterministic consultation identity; otherwise the first mismatch.
+     */
+    binding: QueryAnswerBinding;
     jobAnsweredWithAnswer: boolean;
-    runSettledAnswered: boolean;
+    /** The QueryRun `executionState.phase` is settled, and its status and outcome are answered. */
+    run: 'settled_answered' | 'not_settled' | 'not_answered';
     answeringSessionIsClaimSession: boolean;
+    /** The Answer names this settled QueryRun. */
+    answerOfRun: boolean;
+    /** The claimed Session generation is a positive integer; it becomes the reply sender's generation. */
+    sessionGenerationReadable: boolean;
   };
-  /** MSG-07/08 only. */
+  /**
+   * MSG-07/08 only. `null` while the execution facts are unread: the service reads them only
+   * for an existing message, so an absent one is refused first.
+   */
   inputAccepted: null | {
     /** A work_run may confirm only its own Run; always true for the Host. */
     observerOwnsExecution: boolean;
     /** Equals the Kernel identity pinned on the execution record. */
     kernelMatches: boolean;
+    /** The caller's optional `executionSessionRef` is the execution's claimed Session (true when omitted). */
+    claimedSessionMatches: boolean;
     /** part=message: the recipient; part=response: the original work_run sender Session. */
     executionSessionMatches: boolean;
     inputIdTakenByOtherEvent: boolean;
@@ -195,6 +212,15 @@ export type MessageGuardContext = {
   /** MSG-10 only. */
   consumedWait: null | { responseRefMatches: boolean; sameWorkspace: boolean };
 };
+
+/** MSG-06 consultation binding verdict, in today's check order. */
+export type QueryAnswerBinding =
+  | 'matches'
+  | 'not_consultation'
+  | 'other_message'
+  | 'other_recipient'
+  | 'other_derivation_source'
+  | 'other_query_identity';
 
 export type SessionMessageEventType =
   | 'SessionMessageSent'
@@ -250,7 +276,7 @@ export function messageMachineStateOf(message: SessionMessageRecord | null): Mes
 // Shared guards (each returns the rejection of today's service, or null)
 // --------------------------------------------------------------------------
 
-/** `normalizeMessagePin` (`mailbox-service.ts:282-288`): exactly one pin naming this message. */
+/** `normalizeMessagePin` (`mailbox-service.ts:296-302`): exactly one pin naming this message. */
 function pinProblem(ctx: MessageGuardContext): MessageTransition | null {
   if (ctx.pins.count !== 1) return reject('illegal', 'invalid', 'ack/respond require exactly one SessionMessage version pin');
   if (ctx.pins.revision === null) return reject('illegal', 'invalid', 'the SessionMessage pin revision must be a positive integer');
@@ -258,7 +284,7 @@ function pinProblem(ctx: MessageGuardContext): MessageTransition | null {
   return null;
 }
 
-/** The fresh work_run admission (`mailbox-service.ts:615-741`) keeps its own code. */
+/** The fresh work_run admission (`mailbox-service.ts:787-913`) keeps its own code. */
 function workRunAuthorizationProblem(ctx: MessageGuardContext): MessageTransition | null {
   const verdict = ctx.workRunAuthorization;
   if (verdict === 'ok') return null;
@@ -270,17 +296,18 @@ function workRunAuthorizationProblem(ctx: MessageGuardContext): MessageTransitio
  * Store CAS on the pinned revision (§10.4 "版本钉 ≠ 当前 revision"). Today this
  * is caught only by the commit CAS, so the service handles `stale` as that
  * failure: `recheckAfterMiss` first (a same-identity receipt replays), then
- * `revision_conflict` carrying the `current` message pin (module comment).
+ * `revision_conflict` carrying the `current` message pin (module comment). The
+ * detail is the RecordStore's CAS reason, which today's rejection carries.
  */
 function stalePinProblem(ctx: MessageGuardContext, state: PresentMessageState): MessageTransition | null {
   if (ctx.pins.revision !== state.revision) {
-    return reject('stale', 'revision_conflict', 'the SessionMessage version pin is not the current revision');
+    return reject('stale', 'revision_conflict', 'record version changed');
   }
   return null;
 }
 
 /**
- * `normalizeText` (`mailbox-service.ts:261-267`) on a text reply: an empty or
+ * `normalizeText` (`mailbox-service.ts:275-281`) on a text reply: an empty or
  * non-string text is `invalid`, an oversized one `capacity`.
  */
 function textBodyProblem(ctx: MessageGuardContext): MessageTransition | null {
@@ -296,7 +323,7 @@ function textBodyProblem(ctx: MessageGuardContext): MessageTransition | null {
   }
 }
 
-/** `mapReadResult` (`mailbox-service.ts:139`) for a missing message. */
+/** `mapReadResult` (`mailbox-service.ts:153`) for a missing message. */
 function absentMessage(): MessageTransition {
   return reject('illegal', 'not_found', 'the requested record does not exist');
 }
@@ -313,7 +340,7 @@ function first(...checks: ReadonlyArray<() => MessageTransition | null>): Messag
 // Rows
 // --------------------------------------------------------------------------
 
-/** MSG-01 (Host) / MSG-02 (work_run); checks in `sendMessage` order (`mailbox-service.ts:1040-1178`). */
+/** MSG-01 (Host) / MSG-02 (work_run); checks in the pre-step-3 `sendMessage` order (`mailbox-service.ts:1040-1178`). */
 function onMessageSent(state: MessageMachineState, ctx: MessageGuardContext): MessageTransition {
   // :1051 — the project check runs before everything else, before the workspace check.
   if (ctx.recipientScope === 'other_project') {
@@ -345,10 +372,11 @@ function onMessageSent(state: MessageMachineState, ctx: MessageGuardContext): Me
     default:
       return unreachable(ctx.principal, 'message principal');
   }
-  // :1126-1134 — busy or archived recipients still receive durable mail.
+  // :1126-1134 — busy or archived recipients still receive durable mail. An
+  // unresolved recipient is today's `mapReadResult` refusal of the Session read.
   if (ctx.recipientScope !== 'same_workspace') {
     return reject('guard_failed', 'not_found', ctx.recipientScope === null
-      ? 'the recipient Session was not found'
+      ? 'the requested record does not exist'
       : 'the recipient Session is outside the bound workspace');
   }
   switch (state.status) {
@@ -374,7 +402,7 @@ function onMessageSent(state: MessageMachineState, ctx: MessageGuardContext): Me
   }
 }
 
-/** MSG-03; checks in `ackMessage` order (`mailbox-service.ts:1559-1624`). */
+/** MSG-03; checks in the pre-step-3 `ackMessage` order (`mailbox-service.ts:1559-1624`). */
 function onMessageRead(state: MessageMachineState, ctx: MessageGuardContext): MessageTransition {
   const problem = first(
     () => ctx.principal === 'work_run' ? null : reject('guard_failed', 'forbidden', ctx.principal === 'host'
@@ -413,7 +441,7 @@ function onMessageRead(state: MessageMachineState, ctx: MessageGuardContext): Me
   }
 }
 
-/** MSG-04 / MSG-05; checks in `respondMessage` order (`mailbox-service.ts:1629-1713`). */
+/** MSG-04 / MSG-05; checks in the pre-step-3 `respondMessage` order (`mailbox-service.ts:1629-1713`). */
 function onTextResponse(state: MessageMachineState, ctx: MessageGuardContext): MessageTransition {
   const problem = first(
     () => ctx.principal === 'work_run' ? null : reject('guard_failed', 'forbidden', ctx.principal === 'host'
@@ -452,7 +480,55 @@ function onTextResponse(state: MessageMachineState, ctx: MessageGuardContext): M
   }
 }
 
-/** MSG-06; checks in `respondFromQueryAnswer` order (`mailbox-service.ts:1726-1880`). */
+/**
+ * MSG-06's consultation guards in `respondFromQueryAnswer` order, each with
+ * today's reason: the binding, the answered QueryJob, the settled answered
+ * QueryRun, the claimed answerer Session, the Answer's own QueryRun, then the
+ * readable claim generation (`unavailable`).
+ */
+function queryAnswerProblem(answer: MessageGuardContext['queryAnswer']): MessageTransition | null {
+  if (answer === null) {
+    return reject('guard_failed', 'forbidden', 'the consultation answer does not match this message, its recipient or the derivation source');
+  }
+  switch (answer.binding) {
+    case 'matches':
+      break;
+    case 'not_consultation':
+      return reject('guard_failed', 'forbidden', 'the Query answer is not an explicit consultation answer');
+    case 'other_message':
+      return reject('guard_failed', 'forbidden', 'the consultation answer belongs to another message');
+    case 'other_recipient':
+      return reject('guard_failed', 'forbidden', 'the consultation answer recipient is not the original message recipient');
+    case 'other_derivation_source':
+      // A derived A′ answer is answered by the child Session; the original recipient stays the source.
+      return reject('guard_failed', 'forbidden', 'the derived answer source is not the original message recipient');
+    case 'other_query_identity':
+      return reject('guard_failed', 'forbidden', 'the consultation answer does not match the deterministic message identity');
+    default:
+      return unreachable(answer.binding, 'consultation binding');
+  }
+  if (!answer.jobAnsweredWithAnswer) {
+    return reject('guard_failed', 'forbidden', 'the QueryJob does not record this answer as its formal answered fact');
+  }
+  switch (answer.run) {
+    case 'settled_answered':
+      break;
+    case 'not_settled':
+      return reject('guard_failed', 'forbidden', 'the QueryRun is not settled and cannot source a message reply');
+    case 'not_answered':
+      return reject('guard_failed', 'forbidden', 'the QueryRun did not settle as answered');
+    default:
+      return unreachable(answer.run, 'QueryRun settlement');
+  }
+  if (!answer.answeringSessionIsClaimSession) {
+    return reject('guard_failed', 'forbidden', 'the QueryRun was not claimed by the formal answerer Session');
+  }
+  if (!answer.answerOfRun) return reject('guard_failed', 'forbidden', 'the Query answer does not belong to the settled QueryRun');
+  if (!answer.sessionGenerationReadable) return reject('guard_failed', 'unavailable', 'the QueryRun Session generation is not readable');
+  return null;
+}
+
+/** MSG-06; checks in the pre-step-3 `respondFromQueryAnswer` order (`mailbox-service.ts:1726-1880`). */
 function onAnswerResponse(state: MessageMachineState, ctx: MessageGuardContext): MessageTransition {
   const problem = first(
     () => ctx.principal === 'host' ? null : reject('guard_failed', 'forbidden', 'only the Host may associate an official Query answer with a message'),
@@ -460,17 +536,10 @@ function onAnswerResponse(state: MessageMachineState, ctx: MessageGuardContext):
   );
   if (problem !== null) return problem;
   if (state.status === 'absent') return absentMessage();
-  // :1780-1826 — the binding and the settled Query facts are checked before the slot.
-  const answer = ctx.queryAnswer;
+  // The binding and the settled Query facts are checked before the slot, and
+  // before the receipt lookup that needs the derived query_run sender.
   const guard = first(
-    () => answer !== null && answer.bindingMatches ? null
-      : reject('guard_failed', 'forbidden', 'the consultation answer does not match this message, its recipient or the derivation source'),
-    () => answer !== null && answer.jobAnsweredWithAnswer ? null
-      : reject('guard_failed', 'forbidden', 'the QueryJob does not record this answer as its formal answered fact'),
-    () => answer !== null && answer.runSettledAnswered ? null
-      : reject('guard_failed', 'forbidden', 'the QueryRun did not settle as answered'),
-    () => answer !== null && answer.answeringSessionIsClaimSession ? null
-      : reject('guard_failed', 'forbidden', 'the QueryRun was not claimed by the formal answerer Session'),
+    () => queryAnswerProblem(ctx.queryAnswer),
     () => ctx.bodyBounded === true ? null
       : reject('guard_failed', 'invalid', 'the formal Query answer text is not a legal bounded message body'),
   );
@@ -500,7 +569,7 @@ function respondedState(state: PresentMessageState): MessageMachineState {
   return { ...state, status: 'responded', hasReadAt: true, hasResponse: true, revision: state.revision + 1 };
 }
 
-/** MSG-07 / MSG-08; checks in `recordInputAccepted` order (`mailbox-service.ts:1947-2064`). */
+/** MSG-07 / MSG-08; checks in the pre-step-3 `recordInputAccepted` order (`mailbox-service.ts:1947-2064`). */
 function onInputAccepted(
   state: MessageMachineState,
   event: Extract<MessageEvent, { type: 'input_accepted' }>,
@@ -510,17 +579,19 @@ function onInputAccepted(
   const problem = first(
     () => ctx.principal !== 'other' ? null
       : reject('guard_failed', 'forbidden', 'only the trusted observing Host or executing Run may confirm an accepted input'),
-    () => facts !== null ? null : reject('guard_failed', 'forbidden', 'input_accepted requires the persisted execution facts'),
-    // :1981-1983
-    () => facts !== null && facts.observerOwnsExecution ? null
+    // :1981-1983 — checked with the request, before the receipt lookup and the message read.
+    () => facts === null || facts.observerOwnsExecution ? null
       : reject('guard_failed', 'forbidden', 'an execution may only confirm its own accepted inputs'),
   );
   if (problem !== null) return problem;
   if (state.status === 'absent') return absentMessage();
-  // :2023-2036
+  // :2023-2036 — the execution facts are read after the message.
   const guard = first(
+    () => facts !== null ? null : reject('guard_failed', 'forbidden', 'input_accepted requires the persisted execution facts'),
     () => facts !== null && facts.kernelMatches ? null
       : reject('guard_failed', 'forbidden', 'accepted input does not match the persisted execution Kernel identity'),
+    () => facts !== null && facts.claimedSessionMatches ? null
+      : reject('guard_failed', 'forbidden', 'claimed acceptance Session differs from the execution'),
     () => {
       if (event.part === 'response') {
         // :2030-2033 — a response part needs the slot and the original work_run sender Session.
@@ -533,9 +604,10 @@ function onInputAccepted(
     // :2037-2042 — inputId uniqueness; another event has a different identity key.
     () => facts !== null && !facts.inputIdTakenByOtherEvent ? null
       : reject('guard_failed', 'invalid', 'this source input was accepted by another execution event'),
-    // The same event already appended: the service replays its original receipt.
+    // The same event already appended: the service replays its original receipt;
+    // without one it keeps today's single uniqueness refusal.
     () => !state.acceptedInputIds.includes(event.inputId) ? null
-      : reject('duplicate', 'invalid', 'this source input is already recorded; only the original receipt replays'),
+      : reject('duplicate', 'invalid', 'this source input was accepted by another execution event'),
   );
   if (guard !== null) return guard;
   switch (state.status) {
@@ -556,7 +628,7 @@ function onInputAccepted(
   }
 }
 
-/** MSG-09; checks in `recordConsultationDerivation` order (`mailbox-service.ts:1885-1942`). */
+/** MSG-09; checks in the pre-step-3 `recordConsultationDerivation` order (`mailbox-service.ts:1885-1942`). */
 function onConsultationDerived(state: MessageMachineState, ctx: MessageGuardContext): MessageTransition {
   const problem = first(
     () => ctx.principal === 'host' ? null : reject('guard_failed', 'forbidden', 'only the Host may record a consultation derivation'),
@@ -671,7 +743,7 @@ export type NewSessionMessageInput = {
   bodyRef: ArtifactRef;
   sourceRef: SourceRefV1;
   createdAt: string;
-  /** Normalized send flags (`mailbox-service.ts:1072-1074`); `null` = omitted. */
+  /** Normalized send flags (`mailbox-service.ts:1361-1363`); `null` = omitted. */
   replyMode: 'wait' | null;
   intent: SessionMessageIntentV1 | null;
   needsReply: boolean;
@@ -680,8 +752,8 @@ export type NewSessionMessageInput = {
 
 /**
  * MSG-01/02: `pending` at revision 1 (send CAS@0). Optional fields are written
- * only when present, exactly as `mailbox-service.ts:1149-1165`, so a historical
- * fire-and-forget message keeps its shape.
+ * only when present, exactly as the pre-step-3 literal (`mailbox-service.ts:1149-1165`),
+ * so a historical fire-and-forget message keeps its shape.
  */
 export function createSessionMessageRecord(input: NewSessionMessageInput): SessionMessageRecord {
   if (input.waitAfterSend && !input.needsReply) {
@@ -722,11 +794,11 @@ export function nextSessionMessageRecord(message: SessionMessageRecord, change: 
   const revision = message.revision + 1;
   switch (change.kind) {
     case 'read':
-      // MSG-03 (`mailbox-service.ts:1608`).
+      // MSG-03 (pre-step-3 `mailbox-service.ts:1608`).
       if (message.status !== 'pending') throw new Error('nextSessionMessageRecord: only a pending message can be read');
       return { ...message, revision, status: 'read', readAt: change.readAt };
     case 'responded': {
-      // MSG-04/05/06 (`:1691-1697`, `:1857-1863`): one slot; readAt ??= respondedAt.
+      // MSG-04/05/06 (pre-step-3 `:1691-1697`, `:1857-1863`): one slot; readAt ??= respondedAt.
       if (message.status === 'responded' || message.response !== null) {
         throw new Error('nextSessionMessageRecord: the response slot is already written');
       }
@@ -739,7 +811,7 @@ export function nextSessionMessageRecord(message: SessionMessageRecord, change: 
       return { ...message, revision, status: 'responded', readAt: message.readAt ?? response.respondedAt, response };
     }
     case 'input_accepted': {
-      // MSG-07/08 (`:2045-2047`): append only; status and readAt are untouched.
+      // MSG-07/08 (pre-step-3 `:2045-2047`): append only; status and readAt are untouched.
       const existing = message.acceptedInputs ?? [];
       if (existing.some((entry) => entry.inputId === change.input.inputId)) {
         throw new Error('nextSessionMessageRecord: the input is already accepted');
@@ -757,7 +829,7 @@ export function nextSessionMessageRecord(message: SessionMessageRecord, change: 
       return { ...message, revision, acceptedInputs: [...existing, entry] };
     }
     case 'consultation_derived':
-      // MSG-09 (`:1924-1925`): written once.
+      // MSG-09 (pre-step-3 `:1924-1925`): written once.
       if (message.consultationDerivation !== undefined) {
         throw new Error('nextSessionMessageRecord: the consultation derivation is already fixed');
       }

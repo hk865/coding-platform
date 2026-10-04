@@ -124,6 +124,27 @@ function pinFor(state: MessageMachineState): MessageGuardContext['pins'] {
   return { count: 1, matchesMessage: true, revision: revisionOf(state) };
 }
 
+/** MSG-06's settled Query facts when every consultation check holds. */
+const ANSWER_FACTS: NonNullable<MessageGuardContext['queryAnswer']> = {
+  binding: 'matches', jobAnsweredWithAnswer: true, run: 'settled_answered', answeringSessionIsClaimSession: true,
+  answerOfRun: true, sessionGenerationReadable: true,
+};
+
+/** Each failing MSG-06 fact in `respondFromQueryAnswer` order, with today's code and reason. */
+const ANSWER_REFUSALS: ReadonlyArray<{ facts: Partial<NonNullable<MessageGuardContext['queryAnswer']>>; code: CoreError; detail: string }> = [
+  { facts: { binding: 'not_consultation' }, code: 'forbidden', detail: 'the Query answer is not an explicit consultation answer' },
+  { facts: { binding: 'other_message' }, code: 'forbidden', detail: 'the consultation answer belongs to another message' },
+  { facts: { binding: 'other_recipient' }, code: 'forbidden', detail: 'the consultation answer recipient is not the original message recipient' },
+  { facts: { binding: 'other_derivation_source' }, code: 'forbidden', detail: 'the derived answer source is not the original message recipient' },
+  { facts: { binding: 'other_query_identity' }, code: 'forbidden', detail: 'the consultation answer does not match the deterministic message identity' },
+  { facts: { jobAnsweredWithAnswer: false }, code: 'forbidden', detail: 'the QueryJob does not record this answer as its formal answered fact' },
+  { facts: { run: 'not_settled' }, code: 'forbidden', detail: 'the QueryRun is not settled and cannot source a message reply' },
+  { facts: { run: 'not_answered' }, code: 'forbidden', detail: 'the QueryRun did not settle as answered' },
+  { facts: { answeringSessionIsClaimSession: false }, code: 'forbidden', detail: 'the QueryRun was not claimed by the formal answerer Session' },
+  { facts: { answerOfRun: false }, code: 'forbidden', detail: 'the Query answer does not belong to the settled QueryRun' },
+  { facts: { sessionGenerationReadable: false }, code: 'unavailable', detail: 'the QueryRun Session generation is not readable' },
+];
+
 /** The context under which each event is legal from a state that allows it. */
 function happyCtx(event: EventName, state: MessageMachineState): MessageGuardContext {
   const base = baseCtx();
@@ -135,15 +156,15 @@ function happyCtx(event: EventName, state: MessageMachineState): MessageGuardCon
     case 'respondText':
       return { ...base, principal: 'work_run', workRunAuthorization: 'ok', callerIsRecipient: true, bodyBounded: true, pins: pinFor(state) };
     case 'respondAnswer':
-      return {
-        ...base, pins: pinFor(state), bodyBounded: true,
-        queryAnswer: { bindingMatches: true, jobAnsweredWithAnswer: true, runSettledAnswered: true, answeringSessionIsClaimSession: true },
-      };
+      return { ...base, pins: pinFor(state), bodyBounded: true, queryAnswer: ANSWER_FACTS };
     case 'acceptMessage':
     case 'acceptResponse':
       return {
         ...base,
-        inputAccepted: { observerOwnsExecution: true, kernelMatches: true, executionSessionMatches: true, inputIdTakenByOtherEvent: false },
+        inputAccepted: {
+          observerOwnsExecution: true, kernelMatches: true, claimedSessionMatches: true, executionSessionMatches: true,
+          inputIdTakenByOtherEvent: false,
+        },
       };
     case 'derived':
       return { ...base, pins: pinFor(state) };
@@ -416,14 +437,14 @@ describe('§10.4 forbidden transitions', () => {
     }
   });
 
-  it('MSG-06: an unsettled, unanswered or mismatched Query Answer is forbidden, even on a responded message', () => {
-    const flags = ['bindingMatches', 'jobAnsweredWithAnswer', 'runSettledAnswered', 'answeringSessionIsClaimSession'] as const;
+  it('MSG-06: an unsettled, unanswered or mismatched Query Answer is refused with today\'s code and reason, even on a responded message', () => {
     for (const stateName of PRESENT_STATE_NAMES) {
       const state = STATES[stateName];
       const happy = happyCtx('respondAnswer', state);
-      for (const flag of flags) {
-        const ctx = { ...happy, queryAnswer: { ...happy.queryAnswer!, [flag]: false } };
-        expect(rejection(transitionMessage(state, EVENTS.respondAnswer, ctx))).toMatchObject({ reason: 'guard_failed', code: 'forbidden' });
+      for (const refusal of ANSWER_REFUSALS) {
+        const ctx = { ...happy, queryAnswer: { ...ANSWER_FACTS, ...refusal.facts } };
+        expect(rejection(transitionMessage(state, EVENTS.respondAnswer, ctx)))
+          .toEqual({ reason: 'guard_failed', code: refusal.code, detail: refusal.detail });
       }
       expect(rejection(transitionMessage(state, EVENTS.respondAnswer, { ...happy, queryAnswer: null })))
         .toMatchObject({ reason: 'guard_failed', code: 'forbidden' });
@@ -431,10 +452,10 @@ describe('§10.4 forbidden transitions', () => {
       for (const bodyBounded of [false, null]) {
         expect(rejection(transitionMessage(state, EVENTS.respondAnswer, { ...happy, bodyBounded })))
           .toMatchObject({ reason: 'guard_failed', code: 'invalid' });
-        // The binding and Query facts (`:1780-1819`) are checked before the body bound (`:1822-1825`).
-        for (const flag of flags) {
-          const ctx = { ...happy, bodyBounded, queryAnswer: { ...happy.queryAnswer!, [flag]: false } };
-          expect(rejection(transitionMessage(state, EVENTS.respondAnswer, ctx))).toMatchObject({ reason: 'guard_failed', code: 'forbidden' });
+        // The binding and Query facts are checked before the body bound.
+        for (const refusal of ANSWER_REFUSALS) {
+          const ctx = { ...happy, bodyBounded, queryAnswer: { ...ANSWER_FACTS, ...refusal.facts } };
+          expect(rejection(transitionMessage(state, EVENTS.respondAnswer, ctx))).toMatchObject({ reason: 'guard_failed', code: refusal.code });
         }
         expect(rejection(transitionMessage(state, EVENTS.respondAnswer, { ...happy, bodyBounded, queryAnswer: null })))
           .toMatchObject({ reason: 'guard_failed', code: 'forbidden' });
@@ -442,6 +463,18 @@ describe('§10.4 forbidden transitions', () => {
     }
     // Absent: not_found comes first (`:1763-1764`).
     expectResult(transitionMessage(S.absent, EVENTS.respondAnswer, { ...happyCtx('respondAnswer', S.absent), queryAnswer: null }), NOT_FOUND);
+  });
+
+  it('MSG-06: the consultation checks keep respondFromQueryAnswer\'s order (first failing fact wins)', () => {
+    // Every later fact fails too; the earlier one must still be the refusal.
+    for (let index = 0; index < ANSWER_REFUSALS.length; index += 1) {
+      const facts = { ...ANSWER_FACTS };
+      for (const later of ANSWER_REFUSALS.slice(index + 1)) Object.assign(facts, later.facts);
+      // `binding` is a single fact: later binding refusals do not override an earlier one.
+      Object.assign(facts, ANSWER_REFUSALS[index]!.facts);
+      const ctx = { ...happyCtx('respondAnswer', S.pending), queryAnswer: facts, bodyBounded: false };
+      expect(rejection(transitionMessage(S.pending, EVENTS.respondAnswer, ctx)).detail).toBe(ANSWER_REFUSALS[index]!.detail);
+    }
   });
 
   it('MSG-04: an oversized text reply is capacity, an empty one invalid, in every state (before the pin and the record)', () => {
@@ -484,6 +517,14 @@ describe('§10.4 forbidden transitions', () => {
         if (expected.ok) expectResult(result, no('stale', 'revision_conflict'));
         else expectResult(result, expected); // status or slot rejections come before the CAS
       }
+    }
+  });
+
+  it('a stale pin carries the RecordStore CAS reason that today\'s commit reports', () => {
+    for (const eventName of ['read', 'respondText', 'respondAnswer', 'derived'] as const) {
+      const ctx = { ...happyCtx(eventName, S.pending), pins: { count: 1, matchesMessage: true, revision: 9 } };
+      expect(rejection(transitionMessage(S.pending, EVENTS[eventName], ctx)))
+        .toEqual({ reason: 'stale', code: 'revision_conflict', detail: 'record version changed' });
     }
   });
 
@@ -532,6 +573,9 @@ describe('§10.4 forbidden transitions', () => {
       expectResult(send({ ...happy, recipientScope: 'other_project' }), no('guard_failed', 'forbidden'));
       expectResult(send({ ...happy, recipientScope: 'other_workspace' }), no('guard_failed', 'not_found'));
       expectResult(send({ ...happy, recipientScope: null }), no('guard_failed', 'not_found'));
+      // Today's reasons: the workspace check, and `mapReadResult` of the missing Session.
+      expect(rejection(send({ ...happy, recipientScope: 'other_workspace' })).detail).toBe('the recipient Session is outside the bound workspace');
+      expect(rejection(send({ ...happy, recipientScope: null })).detail).toBe('the requested record does not exist');
     });
 
     it('precedence follows sendMessage: project → flags → pins → principal → admission → workspace → existing record', () => {
@@ -573,16 +617,38 @@ describe('§10.4 forbidden transitions', () => {
         .toMatchObject({ reason: 'guard_failed', code: 'forbidden' });
     });
 
-    it('a Kernel identity or execution Session mismatch is forbidden (present states)', () => {
+    it('a Kernel identity, claimed Session or execution Session mismatch is forbidden (present states)', () => {
       for (const stateName of PRESENT_STATE_NAMES) {
         for (const eventName of part) {
           const state = STATES[stateName];
           const happy = happyCtx(eventName, state);
-          for (const flag of ['kernelMatches', 'executionSessionMatches'] as const) {
+          for (const flag of ['kernelMatches', 'claimedSessionMatches', 'executionSessionMatches'] as const) {
             const ctx = { ...happy, inputAccepted: { ...happy.inputAccepted!, [flag]: false } };
             expect(rejection(transitionMessage(state, EVENTS[eventName], ctx))).toMatchObject({ reason: 'guard_failed', code: 'forbidden' });
           }
         }
+      }
+    });
+
+    it('recordInputAccepted order and reasons: Kernel → claimed Session → executing Session → inputId', () => {
+      const happy = happyCtx('acceptMessage', S.pending);
+      const facts = happy.inputAccepted!;
+      const refuse = (overrides: Partial<typeof facts>) =>
+        rejection(transitionMessage(S.pending, EVENTS.acceptMessage, { ...happy, inputAccepted: { ...facts, ...overrides } })).detail;
+      const allBad = { kernelMatches: false, claimedSessionMatches: false, executionSessionMatches: false, inputIdTakenByOtherEvent: true };
+      expect(refuse(allBad)).toBe('accepted input does not match the persisted execution Kernel identity');
+      expect(refuse({ ...allBad, kernelMatches: true })).toBe('claimed acceptance Session differs from the execution');
+      expect(refuse({ ...allBad, kernelMatches: true, claimedSessionMatches: true }))
+        .toBe('the accepted message is not addressed to the executing Session');
+      expect(refuse({ inputIdTakenByOtherEvent: true })).toBe('this source input was accepted by another execution event');
+      // This event's own entry without its receipt keeps today's single uniqueness reason.
+      expect(rejection(transitionMessage(S.pendingDerivedDelivered, EVENTS.acceptMessage, happyCtx('acceptMessage', S.pendingDerivedDelivered))))
+        .toEqual({ reason: 'duplicate', code: 'invalid', detail: 'this source input was accepted by another execution event' });
+    });
+
+    it('an absent message is not_found before the execution facts are read (null facts)', () => {
+      for (const eventName of part) {
+        expectResult(transitionMessage(S.absent, EVENTS[eventName], { ...happyCtx(eventName, S.absent), inputAccepted: null }), NOT_FOUND);
       }
     });
 
@@ -600,7 +666,7 @@ describe('§10.4 forbidden transitions', () => {
         for (const eventName of part) {
           const state = STATES[stateName];
           const happy = happyCtx(eventName, state);
-          for (const flag of ['kernelMatches', 'executionSessionMatches'] as const) {
+          for (const flag of ['kernelMatches', 'claimedSessionMatches', 'executionSessionMatches'] as const) {
             const ctx = { ...happy, inputAccepted: { ...happy.inputAccepted!, [flag]: false, inputIdTakenByOtherEvent: true } };
             expect(rejection(transitionMessage(state, EVENTS[eventName], ctx))).toMatchObject({ reason: 'guard_failed', code: 'forbidden' });
           }
