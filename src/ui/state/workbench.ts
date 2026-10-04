@@ -1,6 +1,7 @@
 /** The page's workbench store: selection, bootstrap, scopes, view, render memory and the `render` intent. */
 
 import type { BootstrapResponse, BootstrapWorkspace, SessionRef } from '../../app/core-http-types.js';
+import type { ConnectionStatus } from '../api/live.js';
 import type { ScopeState } from './scope-state.js';
 import { createStore } from './store.js';
 import type { Store } from './store.js';
@@ -40,6 +41,9 @@ export type WorkbenchSlices = {
   renderMemory: RenderMemory;
   diffText: Map<string, { path: string; before: string; after: string }>;
   splitDrag: { side: 'left' | 'right'; startX: number; startWidth: number } | null;
+  /** The change-stream state (task E). Only `api/live.ts` writes it, through
+   * main(); the current views do not render it. */
+  connection: ConnectionStatus;
 };
 
 /** `render` repaints synchronously; a scoped one only while that scope is still selected. */
@@ -64,6 +68,7 @@ export function createWorkbenchStore(): Store<WorkbenchSlices, WorkbenchAction> 
     },
     diffText: new Map<string, { path: string; before: string; after: string }>(),
     splitDrag: null,
+    connection: { mode: 'connecting', cursor: null, attempt: 0, reason: null },
   });
 }
 

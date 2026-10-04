@@ -6,7 +6,7 @@ import type {
   CommandsStopResponse,
 } from '../../../app/core-http-types.js';
 import { callCore, payloadOf } from '../../api/http.js';
-import { startPoll, stopPoll } from '../../api/refresh.js';
+import { noticeMark, startPoll, stopPoll } from '../../api/refresh.js';
 import { escapeHtml } from '../../components/html.js';
 import type { WorkbenchTab } from '../../state/layout.js';
 import type { ScopeState } from '../../state/scope-state.js';
@@ -32,6 +32,7 @@ export async function startCommand(scope: ScopeState, command: string, cwd: stri
   scope.sending = true;
   scope.error = null;
   renderScopeIfSelected(scope);
+  const mark = noticeMark();
   const outcome = await callCore('commands/start', { scope: scope.config.scope, input: { requestId, command, cwd } });
   scope.sending = false;
   if (outcome.kind === 'network') { scope.error = `命令启动结果未确认：${outcome.reason}`; renderScopeIfSelected(scope); return; }
@@ -46,15 +47,18 @@ export async function startCommand(scope: ScopeState, command: string, cwd: stri
     state: snapshot.state, poll: null, stopping: false });
   openTab(scope, { tabId: `terminal:${snapshot.commandId}`, kind: 'terminal',
     title: `${command.slice(0, 24)} · ${snapshot.commandId.replace("workbench-command-", "")}`, commandId: snapshot.commandId, command, cwd });
-  if (snapshot.state !== 'settled') beginCommandPoll(scope, snapshot.commandId);
+  if (snapshot.state !== 'settled') beginCommandPoll(scope, snapshot.commandId, mark);
   renderScopeIfSelected(scope);
 }
 
-function beginCommandPoll(scope: ScopeState, commandId: string): void {
+/** Read on this handle's notices (the 700 ms poll is the fallback). `since` is
+ * the notice mark taken before the start/stop request was sent. */
+function beginCommandPoll(scope: ScopeState, commandId: string, since: number): void {
   const command = scope.commands.get(commandId);
   if (command === undefined) return;
   stopPoll(command.poll);
-  command.poll = startPoll(700, () => { void readCommand(scope, commandId); });
+  command.poll = startPoll(700, () => readCommand(scope, commandId),
+    { kind: 'command', scope: scope.config.scope, commandId }, { since });
 }
 
 async function readCommand(scope: ScopeState, commandId: string): Promise<void> {
@@ -76,12 +80,13 @@ export async function stopCommand(scope: ScopeState, commandId: string): Promise
   const command = scope.commands.get(commandId);
   if (command === undefined) return;
   command.stopping = true;
+  const mark = noticeMark();
   const outcome = await callCore('commands/stop', { scope: scope.config.scope, input: { commandId } });
   if (outcome.kind === 'network') { scope.error = '停止请求结果未确认。'; renderScopeIfSelected(scope); return; }
   const payload = payloadOf(outcome) as CommandsStopResponse;
   if (payload.status === 'ready') { command.result = payload; command.state = payload.value.state; }
   command.stopping = false;
-  if (command.poll === null) beginCommandPoll(scope, commandId);
+  if (command.poll === null) beginCommandPoll(scope, commandId, mark);
   renderScopeIfSelected(scope);
 }
 

@@ -1,0 +1,1330 @@
+{
+  "capturedWith": "Playwright request events (page.on(\"request\")), monotonic ms (performance.now in the capture process; before/ used wall-clock ms)",
+  "streamFramesCapturedWith": "phase 2: CDP Network.streamResourceContent + Network.dataReceived on GET /api/real/core/changes",
+  "scenarios": {
+    "idle": {
+      "description": "空闲页面：已完成的 Goal、主对话；页面加载并静止后记录 30 秒",
+      "loadRequests": {
+        "windowMs": 753,
+        "requestCount": 11,
+        "byRoute": {
+          "GET /workbench/": {
+            "count": 1,
+            "medianIntervalMs": null,
+            "minIntervalMs": null,
+            "maxIntervalMs": null,
+            "offsetsMs": [
+              4
+            ]
+          },
+          "GET /workbench/styles.css": {
+            "count": 1,
+            "medianIntervalMs": null,
+            "minIntervalMs": null,
+            "maxIntervalMs": null,
+            "offsetsMs": [
+              11
+            ]
+          },
+          "GET /workbench/main.js": {
+            "count": 1,
+            "medianIntervalMs": null,
+            "minIntervalMs": null,
+            "maxIntervalMs": null,
+            "offsetsMs": [
+              11
+            ]
+          },
+          "GET /api/real/core/bootstrap": {
+            "count": 1,
+            "medianIntervalMs": null,
+            "minIntervalMs": null,
+            "maxIntervalMs": null,
+            "offsetsMs": [
+              32
+            ]
+          },
+          "GET /api/real/core/changes": {
+            "count": 1,
+            "medianIntervalMs": null,
+            "minIntervalMs": null,
+            "maxIntervalMs": null,
+            "offsetsMs": [
+              46
+            ]
+          },
+          "POST /api/real/core/goals/read": {
+            "count": 2,
+            "medianIntervalMs": 4,
+            "minIntervalMs": 4,
+            "maxIntervalMs": 4,
+            "offsetsMs": [
+              46,
+              50
+            ]
+          },
+          "POST /api/real/core/sessions/read": {
+            "count": 1,
+            "medianIntervalMs": null,
+            "minIntervalMs": null,
+            "maxIntervalMs": null,
+            "offsetsMs": [
+              48
+            ]
+          },
+          "POST /api/real/core/queries/read": {
+            "count": 1,
+            "medianIntervalMs": null,
+            "minIntervalMs": null,
+            "maxIntervalMs": null,
+            "offsetsMs": [
+              58
+            ]
+          },
+          "POST /api/real/core/sessions/history": {
+            "count": 1,
+            "medianIntervalMs": null,
+            "minIntervalMs": null,
+            "maxIntervalMs": null,
+            "offsetsMs": [
+              58
+            ]
+          },
+          "POST /api/real/core/sessions/find": {
+            "count": 1,
+            "medianIntervalMs": null,
+            "minIntervalMs": null,
+            "maxIntervalMs": null,
+            "offsetsMs": [
+              86
+            ]
+          }
+        }
+      },
+      "windowMs": 30001,
+      "requestCount": 0,
+      "byRoute": {},
+      "streamFromLoad": {
+        "connections": [
+          {
+            "stream": 1,
+            "startedAtMs": 46,
+            "lastEventId": null,
+            "httpStatus": 200,
+            "contentType": "text/event-stream; charset=utf-8",
+            "end": "open at window end"
+          }
+        ],
+        "heartbeats": 2,
+        "events": [
+          {
+            "atMs": 47,
+            "stream": 1,
+            "event": "ready",
+            "id": "c0000000081",
+            "data": {
+              "cursor": "c0000000081"
+            }
+          }
+        ]
+      }
+    },
+    "command": {
+      "description": "命令页运行 sleep 8（没有其它运行中的工作）：从点击运行到 settled 后 3 秒",
+      "settledAfterMs": 8378,
+      "windowMs": 11380,
+      "requestCount": 2,
+      "byRoute": {
+        "POST /api/real/core/commands/start": {
+          "count": 1,
+          "medianIntervalMs": null,
+          "minIntervalMs": null,
+          "maxIntervalMs": null,
+          "offsetsMs": [
+            42
+          ]
+        },
+        "POST /api/real/core/commands/read": {
+          "count": 1,
+          "medianIntervalMs": null,
+          "minIntervalMs": null,
+          "maxIntervalMs": null,
+          "offsetsMs": [
+            8069
+          ]
+        }
+      },
+      "stream": {
+        "connections": [
+          {
+            "stream": 1,
+            "startedAtMs": -768,
+            "lastEventId": null,
+            "httpStatus": 200,
+            "contentType": "text/event-stream; charset=utf-8",
+            "end": "open at window end"
+          }
+        ],
+        "heartbeats": 0,
+        "events": [
+          {
+            "atMs": 8052,
+            "stream": 1,
+            "event": "change",
+            "id": null,
+            "data": {
+              "cursor": "c0000000081",
+              "kinds": [
+                "command"
+              ],
+              "projects": [
+                "demo-project"
+              ],
+              "scope": {
+                "projectId": "demo-project",
+                "workspaceId": "demo-workspace"
+              },
+              "commandId": "workbench-command-2",
+              "state": "settled"
+            }
+          }
+        ]
+      }
+    },
+    "collaboration": {
+      "description": "协作驱动运行中（脚本模型阻塞，状态保持 running）；切到“示例库”再切回“演示工程”触发页面自己的轮询，记录 12 秒",
+      "driverStart": {
+        "httpStatus": 200,
+        "status": "ready",
+        "state": "running"
+      },
+      "driverStateBeforeSwitch": "running",
+      "windowMs": 12045,
+      "requestCount": 1,
+      "byRoute": {
+        "POST /api/real/core/workflow/driver-read": {
+          "count": 1,
+          "medianIntervalMs": null,
+          "minIntervalMs": null,
+          "maxIntervalMs": null,
+          "offsetsMs": [
+            44
+          ]
+        }
+      },
+      "stream": {
+        "connections": [
+          {
+            "stream": 1,
+            "startedAtMs": -2991,
+            "lastEventId": null,
+            "httpStatus": 200,
+            "contentType": "text/event-stream; charset=utf-8",
+            "end": "open at window end"
+          }
+        ],
+        "heartbeats": 1,
+        "events": []
+      },
+      "afterDriverStart": {
+        "harnessRequests": {
+          "POST /api/real/core/workflow/driver-start": 1,
+          "POST /api/real/core/workflow/driver-read": 1
+        },
+        "windowMs": 1578,
+        "requestCount": 3,
+        "byRoute": {
+          "POST /api/real/core/workflow/driver-start": {
+            "count": 1,
+            "medianIntervalMs": null,
+            "minIntervalMs": null,
+            "maxIntervalMs": null,
+            "offsetsMs": [
+              2
+            ]
+          },
+          "POST /api/real/core/workflow/driver-read": {
+            "count": 1,
+            "medianIntervalMs": null,
+            "minIntervalMs": null,
+            "maxIntervalMs": null,
+            "offsetsMs": [
+              7
+            ]
+          },
+          "POST /api/real/core/goals/read": {
+            "count": 1,
+            "medianIntervalMs": null,
+            "minIntervalMs": null,
+            "maxIntervalMs": null,
+            "offsetsMs": [
+              300
+            ]
+          }
+        },
+        "stream": {
+          "connections": [
+            {
+              "stream": 1,
+              "startedAtMs": -719,
+              "lastEventId": null,
+              "httpStatus": 200,
+              "contentType": "text/event-stream; charset=utf-8",
+              "end": "open at window end"
+            }
+          ],
+          "heartbeats": 0,
+          "events": [
+            {
+              "atMs": 74,
+              "stream": 1,
+              "event": "change",
+              "id": null,
+              "data": {
+                "cursor": "c0000000081",
+                "kinds": [
+                  "driver"
+                ],
+                "projects": [
+                  "demo-project"
+                ],
+                "scope": {
+                  "projectId": "demo-project",
+                  "workspaceId": "demo-workspace"
+                },
+                "goalId": "demo-goal-poll",
+                "taskId": null
+              }
+            },
+            {
+              "atMs": 74,
+              "stream": 1,
+              "event": "change",
+              "id": null,
+              "data": {
+                "cursor": "c0000000081",
+                "kinds": [
+                  "driver"
+                ],
+                "projects": [
+                  "demo-project"
+                ],
+                "scope": {
+                  "projectId": "demo-project",
+                  "workspaceId": "demo-workspace"
+                },
+                "goalId": "demo-goal-poll",
+                "taskId": null
+              }
+            },
+            {
+              "atMs": 74,
+              "stream": 1,
+              "event": "change",
+              "id": "c0000000082",
+              "data": {
+                "cursor": "c0000000082",
+                "kinds": [
+                  "executions",
+                  "sessions",
+                  "tasks"
+                ],
+                "projects": [
+                  "demo-project"
+                ]
+              }
+            },
+            {
+              "atMs": 74,
+              "stream": 1,
+              "event": "change",
+              "id": null,
+              "data": {
+                "cursor": "c0000000082",
+                "kinds": [
+                  "driver"
+                ],
+                "projects": [
+                  "demo-project"
+                ],
+                "scope": {
+                  "projectId": "demo-project",
+                  "workspaceId": "demo-workspace"
+                },
+                "goalId": "demo-goal-poll",
+                "taskId": null
+              }
+            },
+            {
+              "atMs": 74,
+              "stream": 1,
+              "event": "change",
+              "id": null,
+              "data": {
+                "cursor": "c0000000082",
+                "kinds": [
+                  "driver"
+                ],
+                "projects": [
+                  "demo-project"
+                ],
+                "scope": {
+                  "projectId": "demo-project",
+                  "workspaceId": "demo-workspace"
+                },
+                "goalId": "demo-goal-poll",
+                "taskId": null
+              }
+            },
+            {
+              "atMs": 74,
+              "stream": 1,
+              "event": "change",
+              "id": "c0000000083",
+              "data": {
+                "cursor": "c0000000083",
+                "kinds": [
+                  "executions"
+                ],
+                "projects": [
+                  "demo-project"
+                ]
+              }
+            },
+            {
+              "atMs": 74,
+              "stream": 1,
+              "event": "change",
+              "id": "c0000000084",
+              "data": {
+                "cursor": "c0000000084",
+                "kinds": [
+                  "executions"
+                ],
+                "projects": [
+                  "demo-project"
+                ]
+              }
+            },
+            {
+              "atMs": 203,
+              "stream": 1,
+              "event": "change",
+              "id": "c0000000085",
+              "data": {
+                "cursor": "c0000000085",
+                "kinds": [
+                  "executions",
+                  "tasks"
+                ],
+                "projects": [
+                  "demo-project"
+                ]
+              }
+            },
+            {
+              "atMs": 203,
+              "stream": 1,
+              "event": "change",
+              "id": "c0000000086",
+              "data": {
+                "cursor": "c0000000086",
+                "kinds": [
+                  "executions"
+                ],
+                "projects": [
+                  "demo-project"
+                ]
+              }
+            },
+            {
+              "atMs": 203,
+              "stream": 1,
+              "event": "change",
+              "id": "c0000000087",
+              "data": {
+                "cursor": "c0000000087",
+                "kinds": [
+                  "executions"
+                ],
+                "projects": [
+                  "demo-project"
+                ]
+              }
+            }
+          ]
+        }
+      }
+    },
+    "commandWhileDriverRunning": {
+      "description": "协作 Run 保持 running、页面仍在轮询 driver-read 时再运行 sleep 1：两种轮询并行时的请求（只记录现象）",
+      "settledWithin15s": true,
+      "lastCommandState": "settled",
+      "windowMs": 1334,
+      "requestCount": 2,
+      "byRoute": {
+        "POST /api/real/core/commands/start": {
+          "count": 1,
+          "medianIntervalMs": null,
+          "minIntervalMs": null,
+          "maxIntervalMs": null,
+          "offsetsMs": [
+            45
+          ]
+        },
+        "POST /api/real/core/commands/read": {
+          "count": 1,
+          "medianIntervalMs": null,
+          "minIntervalMs": null,
+          "maxIntervalMs": null,
+          "offsetsMs": [
+            1084
+          ]
+        }
+      },
+      "stream": {
+        "connections": [
+          {
+            "stream": 1,
+            "startedAtMs": -15090,
+            "lastEventId": null,
+            "httpStatus": 200,
+            "contentType": "text/event-stream; charset=utf-8",
+            "end": "open at window end"
+          }
+        ],
+        "heartbeats": 0,
+        "events": [
+          {
+            "atMs": 1053,
+            "stream": 1,
+            "event": "change",
+            "id": null,
+            "data": {
+              "cursor": "c0000000087",
+              "kinds": [
+                "command"
+              ],
+              "projects": [
+                "demo-project"
+              ],
+              "scope": {
+                "projectId": "demo-project",
+                "workspaceId": "demo-workspace"
+              },
+              "commandId": "workbench-command-3",
+              "state": "settled"
+            }
+          }
+        ]
+      }
+    },
+    "fallback": {
+      "description": "流中途断开：页面在跟随运行中的 driver，并运行 sleep 14；1 秒后拦截 changes 路由（route abort）并让 Host 断开已打开的流，5 秒后解除拦截；记录到 settled 后 3 秒",
+      "marksMs": {
+        "streamBroken": 1098,
+        "routeAllowed": 6100,
+        "streamLiveAgain": 8052,
+        "commandSettled": 14510
+      },
+      "windowMs": 17511,
+      "requestCount": 24,
+      "byRoute": {
+        "POST /api/real/core/commands/start": {
+          "count": 1,
+          "medianIntervalMs": null,
+          "minIntervalMs": null,
+          "maxIntervalMs": null,
+          "offsetsMs": [
+            91
+          ]
+        },
+        "POST /api/real/core/commands/read": {
+          "count": 12,
+          "medianIntervalMs": 700,
+          "minIntervalMs": 62,
+          "maxIntervalMs": 6052,
+          "offsetsMs": [
+            1738,
+            2438,
+            3139,
+            3837,
+            4538,
+            5237,
+            5937,
+            6637,
+            7337,
+            8040,
+            8102,
+            14154
+          ]
+        },
+        "POST /api/real/core/workflow/driver-read": {
+          "count": 8,
+          "medianIntervalMs": 1000,
+          "minIntervalMs": 63,
+          "maxIntervalMs": 1002,
+          "offsetsMs": [
+            2039,
+            3038,
+            4037,
+            5037,
+            6037,
+            7037,
+            8039,
+            8102
+          ]
+        },
+        "GET /api/real/core/changes": {
+          "count": 3,
+          "medianIntervalMs": 4006,
+          "minIntervalMs": 2005,
+          "maxIntervalMs": 4006,
+          "offsetsMs": [
+            2040,
+            4045,
+            8051
+          ]
+        }
+      },
+      "phases": {
+        "live": {
+          "fromMs": 0,
+          "windowMs": 1098,
+          "requestCount": 1,
+          "byRoute": {
+            "POST /api/real/core/commands/start": {
+              "count": 1,
+              "medianIntervalMs": null,
+              "minIntervalMs": null,
+              "maxIntervalMs": null,
+              "offsetsMs": [
+                91
+              ]
+            }
+          }
+        },
+        "fallback": {
+          "fromMs": 1098,
+          "windowMs": 6954,
+          "requestCount": 20,
+          "byRoute": {
+            "POST /api/real/core/commands/read": {
+              "count": 10,
+              "medianIntervalMs": 700,
+              "minIntervalMs": 698,
+              "maxIntervalMs": 703,
+              "offsetsMs": [
+                640,
+                1340,
+                2041,
+                2739,
+                3440,
+                4139,
+                4839,
+                5539,
+                6239,
+                6942
+              ]
+            },
+            "POST /api/real/core/workflow/driver-read": {
+              "count": 7,
+              "medianIntervalMs": 1000,
+              "minIntervalMs": 999,
+              "maxIntervalMs": 1002,
+              "offsetsMs": [
+                941,
+                1940,
+                2939,
+                3939,
+                4939,
+                5939,
+                6941
+              ]
+            },
+            "GET /api/real/core/changes": {
+              "count": 3,
+              "medianIntervalMs": 4006,
+              "minIntervalMs": 2005,
+              "maxIntervalMs": 4006,
+              "offsetsMs": [
+                942,
+                2947,
+                6953
+              ]
+            }
+          }
+        },
+        "recovered": {
+          "fromMs": 8052,
+          "windowMs": 9459,
+          "requestCount": 3,
+          "byRoute": {
+            "POST /api/real/core/workflow/driver-read": {
+              "count": 1,
+              "medianIntervalMs": null,
+              "minIntervalMs": null,
+              "maxIntervalMs": null,
+              "offsetsMs": [
+                50
+              ]
+            },
+            "POST /api/real/core/commands/read": {
+              "count": 2,
+              "medianIntervalMs": 6052,
+              "minIntervalMs": 6052,
+              "maxIntervalMs": 6052,
+              "offsetsMs": [
+                50,
+                6102
+              ]
+            }
+          }
+        }
+      },
+      "stream": {
+        "connections": [
+          {
+            "stream": 1,
+            "startedAtMs": -2081,
+            "lastEventId": null,
+            "httpStatus": 200,
+            "contentType": "text/event-stream; charset=utf-8",
+            "end": {
+              "atMs": 1099,
+              "outcome": "failed",
+              "error": "net::ERR_INCOMPLETE_CHUNKED_ENCODING"
+            }
+          },
+          {
+            "stream": 2,
+            "startedAtMs": 2040,
+            "lastEventId": "c0000000087",
+            "httpStatus": null,
+            "contentType": null,
+            "end": {
+              "atMs": 2042,
+              "outcome": "failed",
+              "error": "net::ERR_FAILED"
+            }
+          },
+          {
+            "stream": 3,
+            "startedAtMs": 4045,
+            "lastEventId": "c0000000087",
+            "httpStatus": null,
+            "contentType": null,
+            "end": {
+              "atMs": 4046,
+              "outcome": "failed",
+              "error": "net::ERR_FAILED"
+            }
+          },
+          {
+            "stream": 4,
+            "startedAtMs": 8051,
+            "lastEventId": "c0000000087",
+            "httpStatus": 200,
+            "contentType": "text/event-stream; charset=utf-8",
+            "end": "open at window end"
+          }
+        ],
+        "heartbeats": 0,
+        "events": [
+          {
+            "atMs": 8052,
+            "stream": 4,
+            "event": "ready",
+            "id": "c0000000087",
+            "data": {
+              "cursor": "c0000000087"
+            }
+          },
+          {
+            "atMs": 14102,
+            "stream": 4,
+            "event": "change",
+            "id": null,
+            "data": {
+              "cursor": "c0000000087",
+              "kinds": [
+                "command"
+              ],
+              "projects": [
+                "demo-project"
+              ],
+              "scope": {
+                "projectId": "demo-project",
+                "workspaceId": "demo-workspace"
+              },
+              "commandId": "workbench-command-4",
+              "state": "settled"
+            }
+          }
+        ]
+      },
+      "console": [
+        {
+          "atMs": 1099,
+          "type": "error",
+          "text": "Failed to load resource: net::ERR_INCOMPLETE_CHUNKED_ENCODING"
+        },
+        {
+          "atMs": 2042,
+          "type": "error",
+          "text": "Failed to load resource: net::ERR_FAILED"
+        },
+        {
+          "atMs": 4046,
+          "type": "error",
+          "text": "Failed to load resource: net::ERR_FAILED"
+        }
+      ]
+    },
+    "fallbackAtLoad": {
+      "description": "加载时 changes 路由就被拦截（route abort）：运行 sleep 8，3 秒后解除拦截；记录从加载到 settled 后 3 秒",
+      "marksMs": {
+        "commandStarted": 751,
+        "routeAllowed": 3855,
+        "streamLiveAgain": 7043,
+        "commandSettled": 9171
+      },
+      "windowMs": 12173,
+      "requestCount": 26,
+      "byRoute": {
+        "GET /workbench/": {
+          "count": 1,
+          "medianIntervalMs": null,
+          "minIntervalMs": null,
+          "maxIntervalMs": null,
+          "offsetsMs": [
+            4
+          ]
+        },
+        "GET /workbench/styles.css": {
+          "count": 1,
+          "medianIntervalMs": null,
+          "minIntervalMs": null,
+          "maxIntervalMs": null,
+          "offsetsMs": [
+            11
+          ]
+        },
+        "GET /workbench/main.js": {
+          "count": 1,
+          "medianIntervalMs": null,
+          "minIntervalMs": null,
+          "maxIntervalMs": null,
+          "offsetsMs": [
+            11
+          ]
+        },
+        "GET /api/real/core/bootstrap": {
+          "count": 1,
+          "medianIntervalMs": null,
+          "minIntervalMs": null,
+          "maxIntervalMs": null,
+          "offsetsMs": [
+            34
+          ]
+        },
+        "GET /api/real/core/changes": {
+          "count": 4,
+          "medianIntervalMs": 2001,
+          "minIntervalMs": 991,
+          "maxIntervalMs": 4000,
+          "offsetsMs": [
+            49,
+            1040,
+            3041,
+            7041
+          ]
+        },
+        "POST /api/real/core/goals/read": {
+          "count": 3,
+          "medianIntervalMs": 7284,
+          "minIntervalMs": 7,
+          "maxIntervalMs": 7284,
+          "offsetsMs": [
+            50,
+            57,
+            7341
+          ]
+        },
+        "POST /api/real/core/sessions/read": {
+          "count": 1,
+          "medianIntervalMs": null,
+          "minIntervalMs": null,
+          "maxIntervalMs": null,
+          "offsetsMs": [
+            53
+          ]
+        },
+        "POST /api/real/core/queries/read": {
+          "count": 1,
+          "medianIntervalMs": null,
+          "minIntervalMs": null,
+          "maxIntervalMs": null,
+          "offsetsMs": [
+            66
+          ]
+        },
+        "POST /api/real/core/sessions/history": {
+          "count": 1,
+          "medianIntervalMs": null,
+          "minIntervalMs": null,
+          "maxIntervalMs": null,
+          "offsetsMs": [
+            66
+          ]
+        },
+        "POST /api/real/core/sessions/find": {
+          "count": 1,
+          "medianIntervalMs": null,
+          "minIntervalMs": null,
+          "maxIntervalMs": null,
+          "offsetsMs": [
+            96
+          ]
+        },
+        "POST /api/real/core/commands/start": {
+          "count": 1,
+          "medianIntervalMs": null,
+          "minIntervalMs": null,
+          "maxIntervalMs": null,
+          "offsetsMs": [
+            852
+          ]
+        },
+        "POST /api/real/core/commands/read": {
+          "count": 10,
+          "medianIntervalMs": 700,
+          "minIntervalMs": 627,
+          "maxIntervalMs": 1780,
+          "offsetsMs": [
+            1564,
+            2264,
+            2966,
+            3664,
+            4365,
+            5064,
+            5764,
+            6466,
+            7093,
+            8873
+          ]
+        }
+      },
+      "phases": {
+        "load": {
+          "fromMs": 0,
+          "windowMs": 751,
+          "requestCount": 11,
+          "byRoute": {
+            "GET /workbench/": {
+              "count": 1,
+              "medianIntervalMs": null,
+              "minIntervalMs": null,
+              "maxIntervalMs": null,
+              "offsetsMs": [
+                4
+              ]
+            },
+            "GET /workbench/styles.css": {
+              "count": 1,
+              "medianIntervalMs": null,
+              "minIntervalMs": null,
+              "maxIntervalMs": null,
+              "offsetsMs": [
+                11
+              ]
+            },
+            "GET /workbench/main.js": {
+              "count": 1,
+              "medianIntervalMs": null,
+              "minIntervalMs": null,
+              "maxIntervalMs": null,
+              "offsetsMs": [
+                11
+              ]
+            },
+            "GET /api/real/core/bootstrap": {
+              "count": 1,
+              "medianIntervalMs": null,
+              "minIntervalMs": null,
+              "maxIntervalMs": null,
+              "offsetsMs": [
+                34
+              ]
+            },
+            "GET /api/real/core/changes": {
+              "count": 1,
+              "medianIntervalMs": null,
+              "minIntervalMs": null,
+              "maxIntervalMs": null,
+              "offsetsMs": [
+                49
+              ]
+            },
+            "POST /api/real/core/goals/read": {
+              "count": 2,
+              "medianIntervalMs": 7,
+              "minIntervalMs": 7,
+              "maxIntervalMs": 7,
+              "offsetsMs": [
+                50,
+                57
+              ]
+            },
+            "POST /api/real/core/sessions/read": {
+              "count": 1,
+              "medianIntervalMs": null,
+              "minIntervalMs": null,
+              "maxIntervalMs": null,
+              "offsetsMs": [
+                53
+              ]
+            },
+            "POST /api/real/core/queries/read": {
+              "count": 1,
+              "medianIntervalMs": null,
+              "minIntervalMs": null,
+              "maxIntervalMs": null,
+              "offsetsMs": [
+                66
+              ]
+            },
+            "POST /api/real/core/sessions/history": {
+              "count": 1,
+              "medianIntervalMs": null,
+              "minIntervalMs": null,
+              "maxIntervalMs": null,
+              "offsetsMs": [
+                66
+              ]
+            },
+            "POST /api/real/core/sessions/find": {
+              "count": 1,
+              "medianIntervalMs": null,
+              "minIntervalMs": null,
+              "maxIntervalMs": null,
+              "offsetsMs": [
+                96
+              ]
+            }
+          }
+        },
+        "fallback": {
+          "fromMs": 751,
+          "windowMs": 6292,
+          "requestCount": 12,
+          "byRoute": {
+            "POST /api/real/core/commands/start": {
+              "count": 1,
+              "medianIntervalMs": null,
+              "minIntervalMs": null,
+              "maxIntervalMs": null,
+              "offsetsMs": [
+                101
+              ]
+            },
+            "GET /api/real/core/changes": {
+              "count": 3,
+              "medianIntervalMs": 4000,
+              "minIntervalMs": 2001,
+              "maxIntervalMs": 4000,
+              "offsetsMs": [
+                289,
+                2290,
+                6290
+              ]
+            },
+            "POST /api/real/core/commands/read": {
+              "count": 8,
+              "medianIntervalMs": 700,
+              "minIntervalMs": 698,
+              "maxIntervalMs": 702,
+              "offsetsMs": [
+                813,
+                1513,
+                2215,
+                2913,
+                3614,
+                4313,
+                5013,
+                5715
+              ]
+            }
+          }
+        },
+        "recovered": {
+          "fromMs": 7043,
+          "windowMs": 5130,
+          "requestCount": 3,
+          "byRoute": {
+            "POST /api/real/core/commands/read": {
+              "count": 2,
+              "medianIntervalMs": 1780,
+              "minIntervalMs": 1780,
+              "maxIntervalMs": 1780,
+              "offsetsMs": [
+                50,
+                1830
+              ]
+            },
+            "POST /api/real/core/goals/read": {
+              "count": 1,
+              "medianIntervalMs": null,
+              "minIntervalMs": null,
+              "maxIntervalMs": null,
+              "offsetsMs": [
+                298
+              ]
+            }
+          }
+        }
+      },
+      "stream": {
+        "connections": [
+          {
+            "stream": 1,
+            "startedAtMs": 49,
+            "lastEventId": null,
+            "httpStatus": null,
+            "contentType": null,
+            "end": {
+              "atMs": 51,
+              "outcome": "failed",
+              "error": "net::ERR_FAILED"
+            }
+          },
+          {
+            "stream": 2,
+            "startedAtMs": 1040,
+            "lastEventId": null,
+            "httpStatus": null,
+            "contentType": null,
+            "end": {
+              "atMs": 1041,
+              "outcome": "failed",
+              "error": "net::ERR_FAILED"
+            }
+          },
+          {
+            "stream": 3,
+            "startedAtMs": 3041,
+            "lastEventId": null,
+            "httpStatus": null,
+            "contentType": null,
+            "end": {
+              "atMs": 3043,
+              "outcome": "failed",
+              "error": "net::ERR_FAILED"
+            }
+          },
+          {
+            "stream": 4,
+            "startedAtMs": 7041,
+            "lastEventId": null,
+            "httpStatus": 200,
+            "contentType": "text/event-stream; charset=utf-8",
+            "end": "open at window end"
+          }
+        ],
+        "heartbeats": 0,
+        "events": [
+          {
+            "atMs": 7043,
+            "stream": 4,
+            "event": "ready",
+            "id": "c0000000087",
+            "data": {
+              "cursor": "c0000000087"
+            }
+          },
+          {
+            "atMs": 8867,
+            "stream": 4,
+            "event": "change",
+            "id": null,
+            "data": {
+              "cursor": "c0000000087",
+              "kinds": [
+                "command"
+              ],
+              "projects": [
+                "demo-project"
+              ],
+              "scope": {
+                "projectId": "demo-project",
+                "workspaceId": "demo-workspace"
+              },
+              "commandId": "workbench-command-5",
+              "state": "settled"
+            }
+          }
+        ]
+      },
+      "console": [
+        {
+          "atMs": 51,
+          "type": "error",
+          "text": "Failed to load resource: net::ERR_FAILED"
+        },
+        {
+          "atMs": 1041,
+          "type": "error",
+          "text": "Failed to load resource: net::ERR_FAILED"
+        },
+        {
+          "atMs": 3043,
+          "type": "error",
+          "text": "Failed to load resource: net::ERR_FAILED"
+        }
+      ]
+    },
+    "hidden": {
+      "description": "页面隐藏：页面在跟随运行中的 driver，运行 sleep 6 后把 visibilityState 设为 hidden 9 秒（命令在隐藏期间结束），再设回 visible；记录到 settled 后 3 秒",
+      "marksMs": {
+        "hidden": 622,
+        "visible": 9641,
+        "commandSettledSeen": 9718
+      },
+      "windowMs": 12721,
+      "requestCount": 4,
+      "byRoute": {
+        "POST /api/real/core/commands/start": {
+          "count": 1,
+          "medianIntervalMs": null,
+          "minIntervalMs": null,
+          "maxIntervalMs": null,
+          "offsetsMs": [
+            92
+          ]
+        },
+        "GET /api/real/core/changes": {
+          "count": 1,
+          "medianIntervalMs": null,
+          "minIntervalMs": null,
+          "maxIntervalMs": null,
+          "offsetsMs": [
+            9643
+          ]
+        },
+        "POST /api/real/core/workflow/driver-read": {
+          "count": 1,
+          "medianIntervalMs": null,
+          "minIntervalMs": null,
+          "maxIntervalMs": null,
+          "offsetsMs": [
+            9664
+          ]
+        },
+        "POST /api/real/core/commands/read": {
+          "count": 1,
+          "medianIntervalMs": null,
+          "minIntervalMs": null,
+          "maxIntervalMs": null,
+          "offsetsMs": [
+            9665
+          ]
+        }
+      },
+      "phases": {
+        "visible": {
+          "fromMs": 0,
+          "windowMs": 622,
+          "requestCount": 1,
+          "byRoute": {
+            "POST /api/real/core/commands/start": {
+              "count": 1,
+              "medianIntervalMs": null,
+              "minIntervalMs": null,
+              "maxIntervalMs": null,
+              "offsetsMs": [
+                92
+              ]
+            }
+          }
+        },
+        "hidden": {
+          "fromMs": 622,
+          "windowMs": 9019,
+          "requestCount": 0,
+          "byRoute": {}
+        },
+        "visibleAgain": {
+          "fromMs": 9641,
+          "windowMs": 3080,
+          "requestCount": 3,
+          "byRoute": {
+            "GET /api/real/core/changes": {
+              "count": 1,
+              "medianIntervalMs": null,
+              "minIntervalMs": null,
+              "maxIntervalMs": null,
+              "offsetsMs": [
+                2
+              ]
+            },
+            "POST /api/real/core/workflow/driver-read": {
+              "count": 1,
+              "medianIntervalMs": null,
+              "minIntervalMs": null,
+              "maxIntervalMs": null,
+              "offsetsMs": [
+                23
+              ]
+            },
+            "POST /api/real/core/commands/read": {
+              "count": 1,
+              "medianIntervalMs": null,
+              "minIntervalMs": null,
+              "maxIntervalMs": null,
+              "offsetsMs": [
+                24
+              ]
+            }
+          }
+        }
+      },
+      "stream": {
+        "connections": [
+          {
+            "stream": 1,
+            "startedAtMs": -2162,
+            "lastEventId": null,
+            "httpStatus": 200,
+            "contentType": "text/event-stream; charset=utf-8",
+            "end": {
+              "atMs": 625,
+              "outcome": "failed",
+              "error": "net::ERR_ABORTED"
+            }
+          },
+          {
+            "stream": 2,
+            "startedAtMs": 9643,
+            "lastEventId": "c0000000087",
+            "httpStatus": 200,
+            "contentType": "text/event-stream; charset=utf-8",
+            "end": "open at window end"
+          }
+        ],
+        "heartbeats": 0,
+        "events": [
+          {
+            "atMs": 9645,
+            "stream": 2,
+            "event": "ready",
+            "id": "c0000000087",
+            "data": {
+              "cursor": "c0000000087"
+            }
+          }
+        ]
+      },
+      "console": []
+    }
+  }
+}

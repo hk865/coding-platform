@@ -35,7 +35,9 @@ import type {
   BootstrapResponse,
 } from '../app/core-http-types.js';
 import { token } from './api/auth.js';
+import { startLiveUpdates } from './api/live.js';
 import { submit } from './api/submit.js';
+import { watchRecordChanges } from './state/change-refetch.js';
 import { displayPreferenceStore } from './state/display-preference.js';
 import {
   scopeKey,
@@ -133,6 +135,11 @@ async function main(): Promise<void> {
   attachHandlers();
   attachSettingsHandlers();
   renderSettings(settingsController.state);
+  // Task E: change notices drive the read loops; their old polls are only the
+  // fallback. Started for an empty bootstrap too: later scopes need notices.
+  // The bootstrap's head lets the first `ready` see a commit made while loading.
+  startLiveUpdates(status => store.set('connection', status), bootstrap.changesHead);
+  watchRecordChanges();
   if (first === undefined) {
     // Empty bootstrap: still expose the gear so the user can open the first
     // real folder. No default scope and no state() call is invented.

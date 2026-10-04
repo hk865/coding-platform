@@ -88,8 +88,9 @@ export function beginCollaborationPoll(
   const epoch = scope.collaborationEpoch + 1;
   scope.collaborationEpoch = epoch;
   stopPoll(scope.collaborationPoll);
-  void readCollaboration(scope, target, goalRef, epoch);
-  scope.collaborationPoll = startPoll(1000, () => { void readCollaboration(scope, target, goalRef, epoch); });
+  // One read now; then on driver notices for this Goal (the 1000 ms poll is the fallback).
+  scope.collaborationPoll = startPoll(1000, () => readCollaboration(scope, target, goalRef, epoch),
+    { kind: 'driver', scope: target, goalId: goalRef.goalId }, { immediate: true });
 }
 
 /** Read-only driver projection bound to one poll/goal EPOCH. A network failure

@@ -36,6 +36,7 @@ import { createPlatformCoreRouteBindings } from './core-routes.js';
 import { parseInitialPlanningResponseV2 } from '../core/work-graph/tasks/initial-plan.js';
 import type { TrustedCheckConfiguration } from '../contracts/verification.js';
 import { DEFAULT_TASK_AUTOMATION_POLICY } from '../contracts/task-requeue.js';
+import { createChangeFeed } from './change-feed.js';
 import { createCollaborationDriver } from './collaboration-driver.js';
 import { createWorkbenchTools } from './workbench-tools.js';
 import {
@@ -331,9 +332,14 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     },
   };
 
+  // Task E: the one in-process change feed. It observes every RecordStore
+  // commit of the platform below and the two in-memory handle owners the page
+  // used to poll, and publishes change NOTIFICATIONS only.
+  const changes = createChangeFeed();
   const platform = await createTargetPlatform({
     storage,
     workspace: bindings,
+    commitObserver: changes,
     ...(options.now === undefined ? {} : { now: options.now }),
     ...(architectureSource === undefined ? {} : { architectureSource }),
     ...(options.kernelStores === undefined ? {} : { kernelStores: options.kernelStores }),
@@ -353,6 +359,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       ...(workspace.writePrefixes === undefined ? {} : { writePrefixes: workspace.writePrefixes }),
       ...(workspace.allowCommands === undefined ? {} : { allowCommands: workspace.allowCommands }),
     })),
+    onCommandChange: changes.commandChanged,
   });
   const collaborationDriver = createCollaborationDriver({
     workflow: platform.workflow,
@@ -362,6 +369,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     mailbox: platform.messages,
     controls: platform.controls,
     profiles: runtimeConfiguration?.queryProfiles ?? [],
+    onChange: changes.driverChanged,
   });
 
   // Live projections the Host rebuilds for every bootstrap read / settings open.
@@ -977,6 +985,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     bindings: createPlatformCoreRouteBindings(platform, collaborationDriver, workbenchTools.tools),
     actor,
     bootstrap: buildBootstrap,
+    changes,
     allowsScope: scope => byScope.has(scopeKey(scope)),
     ...(hostSettings === undefined ? {} : { settings: hostSettings }),
     ...(options.publicDir === undefined ? {} : { publicDir: options.publicDir }),

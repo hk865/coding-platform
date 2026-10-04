@@ -21,6 +21,9 @@
  *   `workflow/advance` steps instead of the background driver), which keeps
  *   that call order stable. The token stays random (it is never displayed).
  *
+ * Fault injection (phase 2 evidence): SIGUSR2 breaks every open change-stream
+ * connection (see 1b). Nothing else reacts to it.
+ *
  * Usage (inside WSL, after `npm run build` in the repository):
  *   REPO_ROOT=<repo> node run-host.mjs --dir <empty temp dir> [--port 44851] [--state <file>]
  * REPO_ROOT defaults to five directories above this file (the repository root
@@ -61,6 +64,32 @@ class VirtualDate extends RealDate {
   static now() { return virtualNow(); }
 }
 if (process.env.RUN_HOST_REAL_CLOCK !== '1') globalThis.Date = VirtualDate;
+
+// ---------------------------------------------------------------------------
+// 1b. Change-stream fault injection (task E phase 2 evidence only).
+// SIGUSR2 destroys the TCP socket of every open `GET /api/real/core/changes`,
+// i.e. the connection breaks in the middle of the stream, as a network drop
+// would. capture.mjs uses it for the fallback scenario, because a Playwright
+// route only affects new requests and Chromium's offline emulation does not
+// end an already open loopback stream. Product code is not touched.
+// ---------------------------------------------------------------------------
+const http = require('node:http');
+const changeStreamSockets = new Set();
+const serverEmit = http.Server.prototype.emit;
+http.Server.prototype.emit = function emit(event, ...args) {
+  const request = args[0];
+  if (event === 'request' && typeof request?.url === 'string' && request.url.startsWith('/api/real/core/changes')) {
+    const socket = request.socket;
+    changeStreamSockets.add(socket);
+    socket.once('close', () => changeStreamSockets.delete(socket));
+  }
+  return serverEmit.call(this, event, ...args);
+};
+process.on('SIGUSR2', () => {
+  const count = changeStreamSockets.size;
+  for (const socket of changeStreamSockets) socket.destroy();
+  process.stderr.write(`fault injection: destroyed ${count} change-stream connection(s)\n`);
+});
 
 // ---------------------------------------------------------------------------
 // 2. Arguments and repository paths.

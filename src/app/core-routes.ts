@@ -12,6 +12,8 @@ import type { RunControlPort } from '../core/work-graph/tasks/control-contracts.
  */
 import type { CoreCallContext } from '../contracts/core/call-context.js';
 import type { CoreRejection } from '../contracts/core/results.js';
+import type { CommitCursor } from '../contracts/command-event.js';
+import { seqOfCommitCursor } from '../contracts/ledger.js';
 import type { RuntimeExecutionPort } from '../core/agent-runtime/ports.js';
 import type { ArchitectureCatalogPort } from '../core/work-graph/architecture/catalog-contracts.js';
 import type { ObservedArchitecturePort } from '../core/work-graph/architecture/contracts.js';
@@ -290,6 +292,30 @@ export function parseCoreRouteRequest(suffix: CoreRouteSuffix, raw: unknown): Pa
     return { ok: true, scope, kind: 'graph_write', request };
   }
   return { ok: true, scope, kind: 'plain', input: raw.input };
+}
+
+/**
+ * Task E change stream request. The stream (`GET changes`) is a transport
+ * endpoint served by `server.ts` beside bootstrap, NOT a row of the frozen POST
+ * route table above; its only request input is the optional SSE
+ * `Last-Event-ID` header, parsed here. A value that is not a ledger commit
+ * cursor is `invalid`, which the feed answers with an explicit `reset` instead
+ * of guessing a position.
+ */
+export type ChangeStreamResume =
+  | { kind: 'fresh' }
+  | { kind: 'resume'; cursor: CommitCursor; seq: number }
+  | { kind: 'invalid' };
+
+export function parseChangeStreamResume(header: string | string[] | undefined): ChangeStreamResume {
+  if (header === undefined || header === '') return { kind: 'fresh' };
+  if (typeof header !== 'string') return { kind: 'invalid' };
+  try {
+    const seq = seqOfCommitCursor(header as CommitCursor);
+    return { kind: 'resume', cursor: header as CommitCursor, seq };
+  } catch {
+    return { kind: 'invalid' };
+  }
 }
 
 /**
