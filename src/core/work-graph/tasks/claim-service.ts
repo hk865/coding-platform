@@ -288,7 +288,7 @@ function claimRunContext(facts: TaskClaimFacts, actor: Extract<ActorRef, { kind:
     continuationBrief: 'absent_ok',
     freshAdmission: null,
     pointerIntent: null,
-    queuedSteerCount: 0,
+    queuedSteers: [],
     continuationConsumed: false,
     exitProof: null,
     hostLease: null,

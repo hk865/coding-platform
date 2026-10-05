@@ -15,7 +15,7 @@ import type { VersionPin } from '../../contracts/core/identity.js';
 import type { CoreRejection, ReadResult } from '../../contracts/core/results.js';
 import type { ControlIntentRef, ControlObservationV1 } from '../../contracts/control-intent.js';
 import type { RunExecutionHistoryV1 } from '../../contracts/core/execution-history.js';
-import type { ExecutionAuthorizationV2, RunRef, RuntimeEventV1 } from '../../contracts/dispatch.js';
+import type { ExecutionAuthorizationV2, RunRef, RunSnapshot, RuntimeEventV1 } from '../../contracts/dispatch.js';
 import { canonicalJson } from '../../contracts/fingerprint.js';
 import {
   assertTranscriptExchangeIntegrity, projectTerminalTranscript, validateRunStateInvariants,
@@ -204,12 +204,14 @@ function controlSourceRecord(
   kind: ControlAckKind,
   state: RunState,
 ): ControlSource | undefined {
+  // terminal_without_cancel: the source is the Turn's own terminal record (CTL-06).
   const wanted = kind === 'paused' ? ['run.paused']
     : kind === 'cancelled' ? ['run.cancelled']
       : kind === 'outcome_unknown' ? ['tool.outcome_unknown']
         : state.status === 'completed' ? ['run.completed']
           : state.status === 'failed' ? ['run.failed']
-            : ['run.limit_exceeded'];
+            : state.status === 'cancelled' ? ['run.cancelled']
+              : ['run.limit_exceeded'];
   for (let index = decoded.length - 1; index >= 0; index -= 1) {
     const item = decoded[index];
     if (item === undefined || item.record.recordType !== 'agent.event') continue;
@@ -364,6 +366,53 @@ export function createExecutionObservation(deps: ExecutionObservationDependencie
       const read = await controls.readControl(ctx, ref);
       return read.status === 'ready' ? read.value.kind : null;
     } catch { return null; }
+  }
+
+  /**
+   * CTL-06 / CD-4: after a known terminal that is not a yielded wait, every
+   * intent still queued on the Run gets its real observation: the intent the
+   * live handle consumed (`cancelled` when it is the cancel the Kernel
+   * honoured), then the pointer intent and every steer the Kernel never
+   * accepted (`terminal_without_cancel`: the terminal came before the control
+   * took effect). A steer the Kernel accepted is acknowledged as `steered` by
+   * `acknowledgeContextControls`, never here; a yielded wait keeps its intents
+   * as the continuation fence; `recordControlAck` skips an intent that is no
+   * longer queued. The source is the Turn's terminal record.
+   */
+  async function settleQueuedAfterTerminal(
+    ctx: CoreCallContext, runRef: RunRef, auth: ExecutionAuthorizationV2, run: RunSnapshot,
+    decoded: readonly DecodedKernelRecord[], cachedSources: CachedControlSources | undefined,
+    sources: CachedControlSources, kernel: KernelExecutionBinding, state: RunState,
+    consumedIntentRef: ControlIntentRef | undefined, resumeIntentRef: ControlIntentRef | undefined,
+  ): Promise<void> {
+    if (state.status === 'yielded') return;
+    // The resume this invocation re-entered with took effect only when the
+    // Kernel saved its `run.resumed`; that `resumed` ack belongs to
+    // `acknowledgeContextControls`. Without it the resume is settled like any
+    // other queued pointer intent.
+    const settled: string[] = [];
+    if (resumeIntentRef !== undefined && sources['run.resumed'] !== undefined) {
+      try { settled.push(canonicalJson(resumeIntentRef as never)); } catch { return; }
+    }
+    const settle = async (intentRef: ControlIntentRef, kind: ControlAckKind): Promise<void> => {
+      let key: string;
+      try { key = canonicalJson(intentRef as never); } catch { return; }
+      if (settled.includes(key)) return;
+      settled.push(key);
+      const sourceItem = controlSourceRecord(decoded, cachedSources, kernel, kind, state);
+      if (sourceItem !== undefined) await recordControlAck(ctx, runRef, auth, sourceItem, intentRef, kind);
+    };
+    if (consumedIntentRef !== undefined) {
+      const intentKind = await consumedIntentKind(ctx, consumedIntentRef);
+      await settle(consumedIntentRef, intentKind === 'cancel' && state.status === 'cancelled' ? 'cancelled' : 'terminal_without_cancel');
+    }
+    if (run.controlState !== undefined) await settle(run.controlState.intentRef, 'terminal_without_cancel');
+    for (const steer of run.controlInputs ?? []) {
+      let inputKey: string;
+      try { inputKey = 'input:' + canonicalJson(steer as never); } catch { continue; }
+      if (sources[inputKey] !== undefined) continue;
+      await settle(steer, 'terminal_without_cancel');
+    }
   }
 
   /** Resume and steering acknowledge a saved context event, not stopped work.
@@ -571,17 +620,12 @@ export function createExecutionObservation(deps: ExecutionObservationDependencie
       if (alreadyEnded) {
         await acknowledgeContextControls(owned, runRef, v2Auth, retainedControlSources, proof?.resumeIntentRef);
         // The terminal result was already recorded by an earlier observer. Only
-        // complete the missing control ack from the fixed terminal window.
-        if (consumedIntentRef !== undefined && cleanProof) {
-          const intentKind = await consumedIntentKind(owned, consumedIntentRef);
-          const ackKind: ControlAckKind | null = intentKind === 'cancel'
-            ? (state.status === 'cancelled' ? 'cancelled' : 'terminal_without_cancel') : null;
-          if (ackKind !== null) {
-            const sourceItem = controlSourceRecord(decoded, cached?.controlSources, locator.kernel, ackKind, state);
-            if (sourceItem !== undefined) {
-              await recordControlAck(owned, runRef, v2Auth, sourceItem, consumedIntentRef, ackKind);
-            }
-          }
+        // complete the missing control acks from the fixed terminal window, and
+        // only while this process's live handle proves the Kernel exit; without
+        // it the start-up reconcile settles them (CTL-08(e)).
+        if (cleanProof) {
+          await settleQueuedAfterTerminal(owned, runRef, v2Auth, record.run, decoded, cached?.controlSources,
+            retainedControlSources, locator.kernel, state, consumedIntentRef, proof?.resumeIntentRef);
         }
         return { status: 'ready', value: record };
       }
@@ -649,20 +693,11 @@ export function createExecutionObservation(deps: ExecutionObservationDependencie
       cache.delete(cacheKey);
       pendingTerminals.delete(cacheKey);
       // After the real terminal is recorded (and the same generation released),
-      // the consumed intent gets its real observation. A natural
-      // completed/failed/limit keeps its outcome and only marks a queued cancel
+      // every intent still queued gets its real observation (CTL-06, CD-4). A
+      // natural completed/failed/limit keeps its outcome and marks them
       // terminal_without_cancel/superseded.
-      if (consumedIntentRef !== undefined) {
-        const intentKind = await consumedIntentKind(owned, consumedIntentRef);
-        const ackKind: ControlAckKind | null = intentKind === 'cancel'
-          ? (state.status === 'cancelled' ? 'cancelled' : 'terminal_without_cancel') : null;
-        if (ackKind !== null) {
-          const sourceItem = controlSourceRecord(decoded, cached?.controlSources, locator.kernel, ackKind, state);
-          if (sourceItem !== undefined) {
-            await recordControlAck(owned, runRef, v2Auth, sourceItem, consumedIntentRef, ackKind);
-          }
-        }
-      }
+      await settleQueuedAfterTerminal(owned, runRef, v2Auth, record.run, decoded, cached?.controlSources,
+        retainedControlSources, locator.kernel, state, consumedIntentRef, proof?.resumeIntentRef);
       const finalRead = await deps.executions.readExecution(owned, runRef);
       return finalRead.status === 'ready' ? { status: 'ready', value: finalRead.value } : mapRead(finalRead);
     },

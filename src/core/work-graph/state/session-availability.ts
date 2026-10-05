@@ -8,8 +8,9 @@
  * `transitionSession` (SES-01..SES-19). The QueryRun settle sub-machine (QRR
  * rows) lives in `query-run-recovery.ts`.
  *
- * Rows whose 现状 is 新增 — SES-05, SES-06, SES-07, SES-09, SES-10 (releases
- * that only exist once D-7 stop, reconcile and human attestation land) and
+ * SES-05 (the D-7 release of a Run stopped before it entered) is step 5.1.
+ * Rows whose 现状 is 新增 — SES-06, SES-07, SES-09, SES-10 (releases that
+ * only exist once reconcile and human attestation land) and
  * SES-12, SES-13, SES-19 (health observation) — are not reachable yet: their
  * events stay in the unions, the §8.4 refusals in front of them already
  * apply, and the row itself answers `illegal`/`invalid` (the §1.2 default)
@@ -103,7 +104,7 @@ export type SessionGuardContext = {
  */
 export type SessionReleaseCause =
   | 'terminal_observed'                                          // RUN-07 → SES-04
-  | 'stop_not_entered'                                           // RUN-09 → SES-05 (新增)
+  | 'stop_not_entered'                                           // RUN-09 → SES-05 (D-7)
   | 'reconcile_terminal' | 'reconcile_interrupted_clean'         // RUN-17/18/19/24 → SES-06 (新增)
   | 'late_evidence' | 'stop_paused'                              // RUN-21/23 → SES-06 (新增)
   | 'unknown_attested'                                           // RUN-22 → SES-07 (新增)
@@ -532,8 +533,8 @@ function released(state: ActiveState, cause: SessionReleaseCause, ctx: SessionGu
     case 'query_terminal_observed':           // SES-08
     case 'query_reconcile_terminal':          // SES-08
       return releasedOnKernelTerminal(state, holder);
-    case 'stop_not_entered':
-      return notYet('SES-05');
+    case 'stop_not_entered':                  // SES-05
+      return releasedNotEntered(state, holder);
     case 'reconcile_terminal':
     case 'reconcile_interrupted_clean':
     case 'late_evidence':
@@ -563,6 +564,22 @@ function releasedOnKernelTerminal(state: ActiveState, holder: SessionHolderConte
     ? { kind: 'keep' } : { kind: 'advance', cursor: holder.historyBoundaryCursor };
   return done({ ...state, occupancy: null, revision: state.revision + 1 }, [{
     kind: 'release_session', holder: holder.ref, generation: holder.claimGeneration, historyCursor, kernelTurnOpen: false,
+  }]);
+}
+
+/**
+ * SES-05 (D-7, RD-1): a Run stopped before it ever entered releases with no
+ * Kernel Turn, so nothing needs confirming and `historyCursor` keeps its value.
+ * A holder that reached `Entering` or the Kernel is stopped only through the
+ * Kernel, a paused stop or reconcile.
+ */
+function releasedNotEntered(state: ActiveState, holder: SessionHolderContext): SessionTransition {
+  if (holder.before !== 'run_starting' || holder.kernelTurnSeen || holder.kernelTurnOpen) {
+    return reject('illegal', 'invalid', 'stop_not_entered releases only a Run that never entered (SES-05, D-7)');
+  }
+  return done({ ...state, occupancy: null, revision: state.revision + 1 }, [{
+    kind: 'release_session', holder: holder.ref, generation: holder.claimGeneration, historyCursor: { kind: 'keep' },
+    kernelTurnOpen: false,
   }]);
 }
 

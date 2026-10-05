@@ -28,6 +28,7 @@ import type { AgentRuntimeService } from '../../src/core/agent-runtime/ports.js'
 import type { RuntimeHostBindings } from '../../src/core/agent-runtime/execution-contracts.js';
 import type { ExecutionEntryPort } from '../../src/core/work-graph/tasks/execution-entry-contracts.js';
 import { createRunControlService } from '../../src/core/work-graph/tasks/control-service.js';
+import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
 import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
 import { B2_AT, createB2RuntimeFixture, type B2RuntimeFixture } from '../helpers/B2-runtime-fixture.js';
 import {
@@ -65,6 +66,7 @@ function controlsOn(fx: B2RuntimeFixture) {
   return createRunControlService({
     records: fx.claimFixture.records,
     authority: createMaterialRecordReaders(fx.claimFixture.records).authority,
+    reads: createRunStateReader({ records: fx.claimFixture.records }),
     now: () => B2_AT,
     eventId: () => `r4-control-runtime-event-${++seq}`,
   });

@@ -95,8 +95,9 @@ export type ControlIntentRequestV1 = {
  * `status: 'queued'` and no observation; a later real observation is
  * `revision >= 2` with an `applied`/`superseded`/`outcome_unknown` status and
  * the matching `observation`, from the Kernel history or proven by the
- * platform (CD-1). The original submission producer still writes only
- * `queued@1`, and old queued bytes remain readable.
+ * platform (CD-1). The submission producer writes `queued@1`, or `applied@2`
+ * with a `platform_not_entered` observation for a Run that never entered
+ * (D-7, CD-3); old queued bytes remain readable.
  */
 export type ControlIntentSnapshotV1 = ControlIntentRequestV1 & (
   | { revision: 1; status: 'queued'; observation?: never }

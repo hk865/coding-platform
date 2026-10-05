@@ -105,9 +105,9 @@ const CAUSES: Record<SessionReleaseCause, CauseInfo> = {
   query_reconcile_interrupted_clean: { holder: 'query', reconcile: true, attested: false, terminal: false, turnSeen: true },
   query_unknown_attested: { holder: 'query', reconcile: false, attested: true, terminal: false, turnSeen: true },
 };
-/** The rows implemented today (SES-04, SES-08); every other cause is 新增. */
+/** The rows implemented (SES-04, SES-08; SES-05 since step 5.1); every other cause is 新增. */
 const IMPLEMENTED_CAUSES: ReadonlySet<SessionReleaseCause> = new Set<SessionReleaseCause>([
-  'terminal_observed', 'query_terminal_observed', 'query_reconcile_terminal',
+  'terminal_observed', 'stop_not_entered', 'query_terminal_observed', 'query_reconcile_terminal',
 ]);
 
 /** The happy-path holder context of a cause: the holder RUN_A / QUERY_A at GENERATION. */
@@ -227,7 +227,8 @@ function expectedFor(desc: StateDesc | 'absent', c: Case): Expected {
       if (!IMPLEMENTED_CAUSES.has(event.cause)) return NOT_YET;
       return legal({ ...state, occupancy: null, revision: REVISION + 1 }, [{
         kind: 'release_session', holder: info.holder === 'run' ? RUN_A : QUERY_A, generation: GENERATION,
-        historyCursor: { kind: 'advance', cursor: BOUNDARY }, kernelTurnOpen: false,
+        // A Kernel terminal moves the cursor to its boundary; the D-7 stop (SES-05) has no Turn and keeps it.
+        historyCursor: info.terminal ? { kind: 'advance', cursor: BOUNDARY } : { kind: 'keep' }, kernelTurnOpen: false,
       }]);
     }
     case 'session_archived':
@@ -526,13 +527,38 @@ describe('SES-04/SES-08 occupancy_released on the holder\'s Kernel terminal', ()
   });
 });
 
-describe('SES-05/06/07/09/10: 新增 release rows answer illegal/invalid until step 5', () => {
+describe('SES-05: the D-7 stop of a Run that never entered (step 5.1)', () => {
+  const release: SessionEvent = { kind: 'occupancy_released', cause: 'stop_not_entered' };
+  const holder = (overrides: Partial<SessionHolderContext>): SessionGuardContext =>
+    releaseCtx('stop_not_entered', { holder: holderFor('stop_not_entered', overrides) });
+
+  it('releases the occupancy and keeps historyCursor: there is no Turn and nothing to confirm', () => {
+    expect(transitionSession(HELD_BY_RUN, release, holder({ inputsConfirmed: false }))).toEqual({ ok: true,
+      next: { ...(HELD_BY_RUN as Exclude<SessionMachineState, 'absent'>), occupancy: null, revision: REVISION + 1 },
+      effects: [{ kind: 'release_session', holder: RUN_A, generation: GENERATION, historyCursor: { kind: 'keep' },
+        kernelTurnOpen: false }] });
+  });
+
+  it('refuses a holder that reached Entering or the Kernel (illegal/invalid)', () => {
+    for (const overrides of [{ before: 'run_running' as const }, { kernelTurnSeen: true }, { kernelTurnOpen: true }]) {
+      expect(transitionSession(HELD_BY_RUN, release, holder(overrides)), JSON.stringify(overrides)).toEqual({ ok: false,
+        reason: 'illegal', code: 'invalid', detail: 'stop_not_entered releases only a Run that never entered (SES-05, D-7)' });
+    }
+  });
+
+  it('is an empty transition when the Run no longer holds the Session (SES-17/18, SD-1)', () => {
+    expect(run(HELD_BY_RUN, release, holder({ claimGeneration: GENERATION + 1 }))).toEqual(legal(HELD_BY_RUN));
+    expect(run(IDLE, release, holder({}))).toEqual(legal(IDLE));
+  });
+});
+
+describe('SES-06/07/09/10: 新增 release rows answer illegal/invalid until step 5', () => {
   const release = (cause: SessionReleaseCause): SessionEvent => ({ kind: 'occupancy_released', cause });
   const newCauses = SESSION_RELEASE_CAUSES.filter((cause) => !IMPLEMENTED_CAUSES.has(cause));
 
   it('lists exactly the 新增 causes', () => {
     expect(newCauses).toEqual([
-      'stop_not_entered', 'reconcile_terminal', 'reconcile_interrupted_clean', 'late_evidence', 'stop_paused',
+      'reconcile_terminal', 'reconcile_interrupted_clean', 'late_evidence', 'stop_paused',
       'unknown_attested', 'query_reconcile_not_entered', 'query_reconcile_interrupted_clean', 'query_unknown_attested',
     ]);
   });
@@ -541,7 +567,7 @@ describe('SES-05/06/07/09/10: 新增 release rows answer illegal/invalid until s
     const held = CAUSES[cause].holder === 'run' ? HELD_BY_RUN : HELD_BY_QUERY;
     const result = transitionSession(held, release(cause), releaseCtx(cause));
     expect(result).toMatchObject({ ok: false, reason: 'illegal', code: 'invalid' });
-    expect(!result.ok && result.detail).toMatch(/^SES-(05|06|07|09|10) is not implemented before A.2 step 5$/);
+    expect(!result.ok && result.detail).toMatch(/^SES-(06|07|09|10) is not implemented before A.2 step 5$/);
   });
 
   it('the §8.4 refusals in front of them already apply', () => {
@@ -568,7 +594,7 @@ describe('SES-05/06/07/09/10: 新增 release rows answer illegal/invalid until s
     const stopWithTurn = releaseCtx('stop_paused', { holder: holderFor('stop_paused', { inputsConfirmed: 'kernel_unreadable' }) });
     expect(run(HELD_BY_RUN, release('stop_paused'), stopWithTurn)).toEqual(refused('guard_failed', 'unavailable'));
     const notEntered = releaseCtx('stop_not_entered', { holder: holderFor('stop_not_entered', { inputsConfirmed: false }) });
-    expect(run(HELD_BY_RUN, release('stop_not_entered'), notEntered)).toEqual(NOT_YET);
+    expect(run(HELD_BY_RUN, release('stop_not_entered'), notEntered)).toMatchObject({ ok: true });
   });
 });
 

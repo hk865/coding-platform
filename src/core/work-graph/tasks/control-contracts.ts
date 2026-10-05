@@ -17,6 +17,7 @@ import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
 import type { MaterialAuthorityReads } from '../materials/record-ports.js';
 import type { GraphWrite } from './contracts.js';
+import type { ExecutionReadPort } from './execution-read-contracts.js';
 
 export interface RunControlPort {
   submitControl(
@@ -63,11 +64,15 @@ export interface ControlObservationPort {
  * `records` is the ONE RecordStore transaction port (control intent and the Run
  * `controlState` are committed together) and `authority` is the SAME
  * `MaterialAuthorityReads` exact Run loader the composition root already owns.
+ * `reads` is the execution reader over the same records: a not-entered stop
+ * ends the Attempt, Outbox, Lease and Session occupancy of the claim in its
+ * commit (§6 RUN-09), and a control on a yielded wait reads the Lease (RD-8).
  * This is an internal trusted dependency, not a model material grant.
  */
 export type RunControlServiceDependencies = {
   records: GoalRecordTransactionPort & RecordLookupPort;
   authority: MaterialAuthorityReads;
+  reads: ExecutionReadPort;
   now(): string;
   eventId(): string;
 };

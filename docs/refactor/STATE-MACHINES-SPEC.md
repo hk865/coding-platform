@@ -1377,7 +1377,7 @@ export function transitionTask(state: TaskMachineState, event: TaskEvent, ctx: T
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | ATT-01 | ∅ | `attempt_claimed` | 由 Task 机决定（TASK-01、02、03）；Attempt 的 key 为 ∅（CAS `null`） | `claimed`@1：`startedAt`、`endedAt`、`endOutcome` 均为 `null` | 与 Run@1、Outbox@1、租约、Session 占用在同一提交 | 领取回执重放，不生成新的 attemptId（`claim-service.ts:745-747`） | T2 | 已有 `claim-service.ts:704-705` |
 | ATT-02 | `claimed` | `attempt_started` | Attempt 为 `claimed`（新增显式守卫；今日只靠 auth 为 `entering`，`execution-entry-service.ts:1202`）；Run 的 auth 为 `entering`；Session 和租约属于本代际（`:1210-1214`） | `started`，`startedAt=enteredAt` | `enter_outbox`（ATT-26） | `recordExecutionEntered` 回执重放（`:1270`） | T3 | 已有 `execution-entry-service.ts:1239-1240`；改造：加显式守卫 |
-| ATT-03 | `claimed` | `entry_authorized`、`entry_begun`、`history_recorded`、`pause_not_entered`、`resume_not_entered` | — | `claimed`，不写 | 无 | — | T3、R1、R3 | 已有：`entry_authorized`（W3，只写 Run，`execution-entry-service.ts:965-971`）、`entry_begun`（W4，`:1100-1101`）、`history_recorded`（W9，`execution-history-binding.ts:146`）都不写 Attempt。新增：`pause_not_entered`、`resume_not_entered`（D-7） |
+| ATT-03 | `claimed` | `entry_authorized`、`entry_begun`、`history_recorded` | — | `claimed`，不写 | 无 | — | T3、R1、R3 | 已有：`entry_authorized`（W3，只写 Run，`execution-entry-service.ts:965-971`）、`entry_begun`（W4，`:1100-1101`）、`history_recorded`（W9，`execution-history-binding.ts:146`）都不写 Attempt。A.2 5.1 同步：Run 事件 `pause_not_entered`、`resume_not_entered`（D-7，§6 RUN-10/11）与 `control_submitted` 一样不进入 Attempt 机器（`attemptEventFromRunEvent` 映射为 `null`），Attempt、Outbox、Lease 都不写 |
 | ATT-04 | `claimed` | `reconcile_not_entered` | 同 §6 RUN-16：auth 为 `entering`，探针 `ready` 且 Kernel 中没有该 turn，`exitProof≠null`（重启时本 Host 持有实例租约，D-5；进程内为 `live_clean`） | `claimed`，不写 | 无。Run 侧撤销 auth，同一 claim 以 `entryGeneration+1` 重新授权（§6 RUN-16、RUN-03）。不新建 Attempt | reconcile 操作回执重放 | A8、ORCHESTRATION §9 `:412`、D-5 | 新增 |
 | ATT-05 | `claimed` | `attempt_ended`，来自 `stop_not_entered`（cancel） | Run 为 `starting`（`Claimed`/`Authorized`/`Revoked`），entry∈{none, authorized, revoked}（§6 RD-1），绝不能是 `entering`；指针条件与 §6 RUN-09 相同：U 来源指针≠cancelled（同提交 `set_pointer(cancelled)`），R 来源指针=cancelled 且指向 queued cancel | `ended`：`endOutcome='cancelled'`，`startedAt=null`，`endedAt=now` | `settle_outbox(not_entered)`（ATT-30）、`release_lease`（ATT-23）、`release_session{sessionRef, generation}`。Run、auth、意图的变化见 §6 RUN-09、§7 CTL-02 | 停止意图同身份重放 | R1、R2、D-7、RD-1 | 新增（缺口 state-writes-other §7 #15） |
 | ATT-06 | `started` | `attempt_ended`，来自 `terminal_observed`（outcome 已知） | Run 的 auth 为 `entered`；Run 未结束（`:1343`）；事件序号更新（`:1638`）；Kernel 边界完整（`:1350-1367`） | `ended`，`endOutcome` 等于 Run 的 outcome | `settle_outbox`（ATT-27）；仅当 `ownsLease` 时 `release_lease`（`:1397-1398`）；仅当 `ownsSession` 时 `release_session`（`:1396`） | 回执重放（`:1331`）；对已结束 Run 的新身份返回 `busy`（`:1343`） | T5、R5 | 已有 `execution-entry-service.ts:1406-1407` |
@@ -1413,7 +1413,7 @@ export function transitionTask(state: TaskMachineState, event: TaskEvent, ctx: T
 | # | from | event | guard（守卫） | to | effects（同事务副作用意图） | 幂等/重复事件 | 原文编号 | 现状 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | ATT-24 | ∅ | `attempt_claimed` | Outbox key 为 ∅ | `pending`@1，带不可变的 `claim` | — | 同 ATT-01 | T2 | 已有 `claim-service.ts:687` |
-| ATT-25 | `pending` | `entry_authorized`、`entry_begun`、`history_recorded`、`reconcile_not_entered`、`pause_not_entered`、`resume_not_entered` | — | `pending`，不写 | — | — | work-graph.md §6.3（`:582-586`） | 已有：`entry_authorized`、`entry_begun`、`history_recorded` 都只写 Run（W3 `execution-entry-service.ts:970-971`、W4 `:1101`、W9 `execution-history-binding.ts:146`）。新增：`reconcile_not_entered`、`pause_not_entered`、`resume_not_entered` |
+| ATT-25 | `pending` | `entry_authorized`、`entry_begun`、`history_recorded`、`reconcile_not_entered` | — | `pending`，不写 | — | — | work-graph.md §6.3（`:582-586`） | 已有：`entry_authorized`、`entry_begun`、`history_recorded` 都只写 Run（W3 `execution-entry-service.ts:970-971`、W4 `:1101`、W9 `execution-history-binding.ts:146`）。新增：`reconcile_not_entered`。`pause_not_entered`、`resume_not_entered` 不进入 Attempt 机器（A.2 5.1 同步，见 ATT-03） |
 | ATT-26 | `pending` | `attempt_started` | 同 ATT-02 | `entered`：`dispatchState{phase:'entered', consumerId, entryGeneration, sessionGeneration, eventId}` | — | 同 ATT-02 | T3 | 已有 `execution-entry-service.ts:1244-1246` |
 | ATT-27 | `entered` | `attempt_ended`（outcome 已知） | 同 ATT-06 | `settled`：`dispatchState.phase='settled'` | — | 同 ATT-06 | T5 | 已有 `execution-entry-service.ts:1408-1410` |
 | ATT-28 | `entered` | `attempt_ended`（`outcome_unknown`） | — | `entered`，不写 | — | — | D-4、AD-1 | 新增 |
@@ -1435,7 +1435,7 @@ export function transitionTask(state: TaskMachineState, event: TaskEvent, ctx: T
 | `stop_not_entered`（cancel，RUN-09） | ATT-05 | ATT-23 | ATT-30 |
 | `stop_paused`（RUN-23），Run 为 `Running` | ATT-35 | ATT-18 或 19 | ATT-27 |
 | `stop_paused`（RUN-23），Run 为 `Entering`（只在重启时，lead 决定 LA-7） | ATT-31 | ATT-18 或 19 | ATT-33 |
-| `pause_not_entered`、`resume_not_entered` | ATT-03 | 不写 | ATT-25 |
+| `pause_not_entered`、`resume_not_entered`（不进入 Attempt 机器，A.2 5.1 同步） | 不写 | 不写 | 不写 |
 | `control_submitted` | 不写 | 不写 | 不写 |
 | `reconcile_not_entered` | ATT-04 | ATT-21 | ATT-25 |
 | `reconcile_terminal`、`reconcile_interrupted_clean`，Run 为 `Running`（RUN-18、19、24） | ATT-08、09 | ATT-18 或 19 | ATT-27 |
@@ -1519,7 +1519,7 @@ stateDiagram-v2
 | 行号 | 状态机函数 | 调用服务（file） | 已有测试（file） | 计划新增测试 |
 | --- | --- | --- | --- | --- |
 | ATT-01、14、24 | `transitionAttempt`、`transitionTaskLease`、`transitionDispatchOutbox`（`attempt_claimed`） | `claim-service.ts:682-707` | `R4c-task-claim.test.ts`、`R4c-task-claim-concurrency.test.ts` | 表驱动：三个记录同一次提交，revision 都为 1 |
-| ATT-03、25 | 不写入的事件 | `execution-entry-service.ts`（W3、W4）；`execution-history-service.ts`（W9）；未进入停止服务（§6 RUN-10、11） | `B2-execution-entry.test.ts:214`（begin 与历史记录后 Attempt 仍为 `claimed`） | 表驱动：这些事件后 Attempt、Outbox 的 revision 不变；D-7 pause/resume 后同样不变 |
+| ATT-03、25 | 不写入的事件 | `execution-entry-service.ts`（W3、W4）；`execution-history-service.ts`（W9）；未进入停止服务（§6 RUN-10、11） | `B2-execution-entry.test.ts:214`（begin 与历史记录后 Attempt 仍为 `claimed`） | 表驱动：这些事件后 Attempt、Outbox 的 revision 不变；D-7 pause/resume 后同样不变（A.2 5.1 同步：这两个 Run 事件不进入 Attempt 机器，改在服务层证明，`tests/work-graph/A2-control-service.test.ts` 的 claimed Run pause/resume 用例断言 Attempt、Outbox、Lease、Session 不变） |
 | ATT-15、16 | `transitionTaskLease`（复用） | `claim-service.ts:693-697` | `tests/app/AG2b-collaboration.test.ts`（续接） | requeue 领取后租约到 @k+1 且没有 `release`；`release.runRef` 不符时 `revision_conflict`；并发领取只有一次 commit |
 | ATT-17 | `transitionTaskLease`（held + `attempt_claimed`） | `claim-service.ts` | `R4c-task-claim.test.ts:326`（两个连接领取同一 Task 只有一个成功）、`R4c-task-claim-concurrency.test.ts` | 表驱动：held 时任一种 `attempt_claimed` 都返回 `busy` |
 | ATT-02、26 | `attempt_started` | `execution-entry-service.ts:1158-1275` | `B2-execution-entry.test.ts:167` | Attempt 不是 `claimed` 时拒绝（新增显式守卫） |
@@ -1656,7 +1656,7 @@ type RunGuardContext = {
   continuationBrief: 'absent_ok' | 'bound' | 'missing' | 'unexpected' | 'mismatch'; // RUN-02/03（C3）：服务比较，机器只看取值，见契约 (e)
   freshAdmission: CoreRejection | null;    // Host/Role/材料/deadline 复核结果；IO 留在服务
   pointerIntent: { kind: ControlIntentKindV1; status: ControlIntentSnapshotV1['status']; observed: string | null } | null;
-  queuedSteerCount: number;                // controlInputs 中仍 queued 的 steer（RUN-09/23 同提交取代）
+  queuedSteers: readonly ControlIntentRef[]; // controlInputs 中仍 queued 的 steer（RUN-09/23 同提交取代；A.2 5.1 同步：由计数改为 ref 列表，取代效果要逐个点名 intent）
   continuationConsumed: boolean;           // YieldedWait：Lease holder 已换成继任 Run（RD-8）
   exitProof: 'live_clean' | 'host_instance_takeover' | null;
   hostLease: 'owned' | 'held_by_other' | null;    // 只用于 R 事件与 RUN-22（D-18）
@@ -2065,6 +2065,7 @@ stateDiagram-v2
 - **Run 已进入或为 `YieldedWait` 时（RUN-12..15）。** 另读取 Lease，用于判定 RD-8；resume 时另读取 Goal。
   - 守卫：旧指针 intent@rev，Lease@rev，Goal@rev（resume 时）。
 - 依赖从 `authority` 扩展为 `reads`（`ExecutionReadPort`）和 `records`。
+- **A.2 5.1 同步（实际落地的读取集合，功能等价）。** 只有两种提交经 `readExecution` 读取执行窗口，并以窗口中的 Run 代替精确读取：未进入 Run 的 cancel（RUN-09，要结束 claim 的 Attempt、Outbox、Lease、Session），以及 `YieldedWait`（RD-8 按 Lease 判定）。未进入 Run 的 pause/resume（RUN-10/11）只写 Run 指针与新 intent，不读执行窗口，也不加 Attempt、Outbox、Session、Lease 守卫；`controlInputs` 中的 steer 只在 RUN-09 读取（CTL-04(b)）。旧指针 intent 只在提交要移动已有指针时读取（resume 规则与 D-8，`submissionReadsPointerIntent`），Goal 只在 resume 时读取（`submissionReadsGoal`）。已进入的 Run 不读 Lease、不加 Lease 守卫：RD-8 只对 `YieldedWait` 成立；`YieldedWait` 上不结束 claim 的提交加 Lease@读到的 revision 守卫，继任领取在读取与提交之间移动 Lease 时提交冲突。
 
 **受 D-7/D-8 影响、需要改断言的已有测试。** 这些测试的夹具 Run 处于 `Claimed` 或 `Authorized`，今天断言控制为 queued。建议需要 queued 语义的用例改用 `fixture.enter()` 夹具；保留在未进入夹具上的用例改为断言 applied，并检查 RUN-09/10 的效果。
 
@@ -2268,6 +2269,7 @@ export type ControlPlatformObservationV1 = {
 | `Queued` | `control_observed`，source 或窗口超出已持久的 locator | guard_failed | unavailable | `:566-573` |
 | `Queued` | `control_observed`，intent 或 Run 的 revision 不等于版本钉 | stale | revision_conflict | `:525-528`、`:536-539` |
 | `Queued` | 观察 kind 与 intent kind 不配对 | illegal | invalid | `control-record-codecs.ts:297-306`（按 CD-2 放宽后的规则；例如 `paused` 落在 cancel 上） |
+| `Queued` | `control_observed`，kind=terminal_without_cancel，但 Run 不是 `Ended`（`YieldedWait`、`EndedUnknown`，或尚未终结） | guard_failed | busy | A.2 5.1 同步：CTL-06 的已知终态守卫（`control-intent-machine.ts` 的 `CTL-06 known terminal`）。等待中的 intent 是接续围栏（7.3 情形 6）；未知终态走 outcome_unknown（CTL-03、CTL-08(d)） |
 | `Queued`（cancel） | `control_applied_paused_stop`，但 `exitProof=null`、Turn 已有终态、有在途工具（`running`/`outcome_unknown`），或进程内变体时 Kernel 不是 paused | guard_failed | incomplete | 保持 queued，等待证明完成或启动核对（§6 RUN-23）；Turn 已有终态时走 CTL-03/CTL-08(b)(c)。重启时 Kernel 未暂停不再是拒绝理由（lead 决定 LA-7（2026-10-03）） |
 | `Applied`/`Superseded` | `control_observed`，内容不同 | stale | revision_conflict | D-8；迟到 ack 只留在 Kernel 原历史中，不改指针 |
 | `Applied`/`Superseded`/`OutcomeUnknown` | `control_superseded_by_newer` | illegal | invalid（内部断言，不对外） | 只有 queued 能被取代；服务不会选中这些节点 |

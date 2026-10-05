@@ -153,8 +153,6 @@ const EVENTS = {
   'entry_authorized': { kind: 'entry_authorized' },
   'entry_begun': { kind: 'entry_begun' },
   'history_recorded': { kind: 'history_recorded' },
-  'pause_not_entered': { kind: 'pause_not_entered' },
-  'resume_not_entered': { kind: 'resume_not_entered' },
   'reconcile_not_entered': { kind: 'reconcile_not_entered' },
 } satisfies Record<string, AttemptEvent>;
 type EventLabel = keyof typeof EVENTS;
@@ -236,7 +234,8 @@ const ATTEMPT_TABLE: Record<EventLabel, () => Record<AttemptStateLabel, Expect>>
     a(II, IB, to(ATTEMPT_ENDED, [SETTLE, RELEASE_LEASE, RELEASE_SESSION]), DB, GI, GI),
   // ATT-07 keeps today's result (recordRunResult accepts only a known terminal).
   'end:terminal_observed:unknown': () => a(II, IB, II, DB, GI, GI),
-  // ATT-05 (新增); never from an entered or unknown Run.
+  // ATT-05 needs a Run that never entered (`claimed` pairs with Entering here: §5.4, the stop is queued); never
+  // from an entered or unknown Run. The not-entered nodes: 'ATT-05 / ATT-23 / ATT-30' below.
   'end:stop_not_entered': () => a(II, II, II, DB, II, II),
   // ATT-31 / ATT-35 (新增).
   'end:stop_paused': () => a(II, II, II, DB, GI, GI),
@@ -254,9 +253,7 @@ const ATTEMPT_TABLE: Record<EventLabel, () => Record<AttemptStateLabel, Expect>>
   'entry_begun': () => a(II, SAME, IB, IB, IB, IB),
   // ATT-03: W9 writes only the Run, at any node.
   'history_recorded': () => a(II, SAME, SAME, SAME, SAME, SAME),
-  // ATT-03 (D-7 part) and ATT-04 (新增).
-  'pause_not_entered': () => a(II, II, II, II, II, II),
-  'resume_not_entered': () => a(II, II, II, II, II, II),
+  // ATT-04 (新增).
   'reconcile_not_entered': () => a(II, II, II, II, II, II),
 };
 
@@ -297,8 +294,8 @@ const LEASE_TABLE: Partial<Record<EventLabel, () => Record<LeaseStateLabel, Expe
   'end:terminal_observed:known': () => l(SAME, to(LEASE_RELEASED_BY_CLAIM), SAME),
   // ATT-20 (新增).
   'end:terminal_observed:unknown': () => l(II, II, II),
-  // ATT-23 (新增).
-  'end:stop_not_entered': () => l(II, II, II),
+  // ATT-23 for the claim's own hold; ATT-19 no-effect for a missing lease or an earlier release.
+  'end:stop_not_entered': () => l(SAME, to(LEASE_RELEASED_BY_CLAIM), SAME),
   // ATT-18 through reconciliation (ATT-31), ATT-20 (新增).
   'end:stop_paused': () => l(II, II, II),
   'end:reconcile_terminal': () => l(II, II, II),
@@ -358,7 +355,7 @@ const OUTBOX_TABLE: Record<EventLabel, () => Record<OutboxStateLabel, Expect>> =
   'end:terminal_observed:known': () => o(II, IB, IU, to(OUTBOX_SETTLED), IU, DB),
   // ATT-28 (新增) keeps today's result.
   'end:terminal_observed:unknown': () => o(II, IB, IU, II, IU, DB),
-  // ATT-30 (新增); never from an entered Run.
+  // ATT-30 needs a Run that never entered (pending pairs with Entering here); never from an entered Run.
   'end:stop_not_entered': () => o(II, II, II, II, II, DB),
   // ATT-33 / ATT-27 via ATT-35, 08, 09 (新增).
   'end:stop_paused': () => o(II, II, IU, II, IU, DB),
@@ -374,9 +371,7 @@ const OUTBOX_TABLE: Record<EventLabel, () => Record<OutboxStateLabel, Expect>> =
   'entry_authorized': () => o(II, SAME, IB, IB, IB, IB),
   'entry_begun': () => o(II, SAME, IB, IB, IB, IB),
   'history_recorded': () => o(II, SAME, SAME, SAME, SAME, SAME),
-  // ATT-25 (D-5, D-7 part, 新增).
-  'pause_not_entered': () => o(II, II, II, II, II, II),
-  'resume_not_entered': () => o(II, II, II, II, II, II),
+  // ATT-25 (D-5 part, 新增).
   'reconcile_not_entered': () => o(II, II, II, II, II, II),
 };
 
@@ -397,6 +392,52 @@ describe('transitionDispatchOutbox: every (state, event) combination', () => {
 
 const ALL_RUN_NODES: readonly AttemptRunNode[] = ['Absent', 'Claimed', 'Authorized', 'Entering', 'Revoked', 'Running',
   'Ended', 'YieldedWait', 'EndedUnknown'];
+
+describe('ATT-05 / ATT-23 / ATT-30: the D-7 stop of a Run that never entered', () => {
+  const stop = EVENTS['end:stop_not_entered'];
+  const ATTEMPT_STOPPED: TaskAttemptSnapshot = { ...ATTEMPT_CLAIMED, revision: 2, status: 'ended', endedAt: T_END,
+    endOutcome: 'cancelled' };
+  const settledNotEntered = (entry: { consumerId: string; entryGeneration: number } | null): DispatchOutboxRecord => ({
+    ...OUTBOX_PENDING, revision: 2, status: 'settled',
+    dispatchState: { schemaVersion: 2, phase: 'settled', settlement: 'not_entered', consumerId: entry?.consumerId ?? null,
+      entryGeneration: entry?.entryGeneration ?? null, sessionGeneration: GEN, eventId: 'evt-end' } });
+  const byNode: Record<AttemptRunNode, Expect | 'legal'> = {
+    Absent: no('guard_failed', 'invalid'), Claimed: 'legal', Authorized: 'legal', Revoked: 'legal',
+    Entering: II, Running: II, Ended: II, YieldedWait: II, EndedUnknown: II,
+  };
+  for (const runNode of ALL_RUN_NODES) {
+    it(`Run ${runNode}`, () => {
+      const expected = byNode[runNode];
+      const ctx = ctxOf(runNode, 0, true);
+      if (expected === 'legal') {
+        // startedAt stays null: there was no Kernel Turn.
+        check(transitionAttempt(ATTEMPT_CLAIMED, stop, ctx), to(ATTEMPT_STOPPED,
+          [{ kind: 'settle_outbox', settlement: 'not_entered' }, RELEASE_LEASE, RELEASE_SESSION]), ATTEMPT_CLAIMED);
+        check(transitionDispatchOutbox(OUTBOX_PENDING, stop, ctx), to(settledNotEntered(null)), OUTBOX_PENDING);
+      } else {
+        check(transitionAttempt(ATTEMPT_CLAIMED, stop, ctx), expected, ATTEMPT_CLAIMED);
+        check(transitionDispatchOutbox(OUTBOX_PENDING, stop, ctx), expected, OUTBOX_PENDING);
+      }
+    });
+  }
+  it('releases only what the Run still holds, and settles with the V2 binding of an authorized Run (AD-2)', () => {
+    const notOwned = { ...ctxOf('Authorized', 0, false) };
+    check(transitionAttempt(ATTEMPT_CLAIMED, stop, notOwned), to(ATTEMPT_STOPPED,
+      [{ kind: 'settle_outbox', settlement: 'not_entered' }]), ATTEMPT_CLAIMED);
+    check(transitionDispatchOutbox(OUTBOX_PENDING, { ...stop, entry }, ctxOf('Authorized', 0, true)),
+      to(settledNotEntered(entry)), OUTBOX_PENDING);
+    // ATT-23 for the claim's own hold, ATT-19 otherwise.
+    check(transitionTaskLease(LEASE_HELD, stop), to(LEASE_RELEASED_BY_CLAIM), LEASE_HELD);
+    const other: TaskLeaseSnapshot = { ...LEASE_HELD, holderRunId: 'run-2', attemptId: 'att-2' };
+    check(transitionTaskLease(other, stop), SAME, other);
+  });
+  it('a stop always ends the Attempt cancelled', () => {
+    const completed = ended('stop_not_entered', 'completed');
+    check(transitionAttempt(ATTEMPT_CLAIMED, completed, ctxOf('Claimed', 0, true)), II, ATTEMPT_CLAIMED);
+    check(transitionDispatchOutbox(OUTBOX_PENDING, completed, ctxOf('Claimed', 0, true)), II, OUTBOX_PENDING);
+    check(transitionTaskLease(LEASE_HELD, completed), II, LEASE_HELD);
+  });
+});
 
 describe('ATT-02 / ATT-26 guard: entering Run, the claim Session and Lease', () => {
   const byNode: Record<AttemptRunNode, Expect | 'legal'> = {
@@ -595,10 +636,12 @@ describe('attemptEventFromRunEvent (§5.3 mapping table)', () => {
       [{ kind, ...endFacts }, { kind: 'attempt_ended', source: kind, ...endFacts }, true]),
     ...(['late_evidence', 'unknown_attested'] as const).map((kind): [RunEventForAttempt, AttemptEvent, boolean] =>
       [{ kind, ...resolveFacts }, { kind: 'attempt_resolved', source: kind, ...resolveFacts }, true]),
-    ...(['entry_authorized', 'entry_begun', 'history_recorded', 'pause_not_entered', 'resume_not_entered'] as const)
+    ...(['entry_authorized', 'entry_begun', 'history_recorded'] as const)
       .map((kind): [RunEventForAttempt, AttemptEvent, boolean] => [{ kind }, { kind }, false]),
     [{ kind: 'reconcile_not_entered' }, { kind: 'reconcile_not_entered' }, true],
-    [{ kind: 'control_submitted' }, null, false],
+    // RUN-10/11 (D-7) write none of the three records (§5.2), like a queued control.
+    ...(['control_submitted', 'pause_not_entered', 'resume_not_entered'] as const)
+      .map((kind): [RunEventForAttempt, null, boolean] => [{ kind }, null, false]),
   ];
   for (const [runEvent, expected, drivesLease] of cases) {
     it(`${runEvent.kind} → ${expected === null ? 'no write' : expected.kind}; lease ${drivesLease ? 'driven' : '不写'}`, () => {

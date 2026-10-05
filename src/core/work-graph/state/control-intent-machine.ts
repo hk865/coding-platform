@@ -13,22 +13,27 @@
  * ids or reads a clock: the intent ref, the observation and its instants come
  * in through the event, the Run/Goal facts through `ControlGuardContext`.
  *
- * A.2 step 2 (§15.2) scope:
- * - CTL-01, CTL-03, CTL-05, CTL-06, CTL-09 keep TODAY's externally visible
- *   result (`control-service.ts:358-432`, `:520-612`; codec pairing
- *   `control-record-codecs.ts:390-407`). Their 改造 targets (Goal and RD-8
- *   submit guards, CD-2 pairing for Kernel observations, the terminal-state
- *   guard of CTL-09) are flipped in step 5.1; the C4 paused-interrupted
- *   reason of the ended-Run refusal in step 5.6.
- * - The 新增 rows (CTL-02, CTL-04, CTL-07, CTL-08, CTL-10) keep their events in
- *   the union but still return `illegal` (`notYet`), so step 5 only adds rows.
+ * A.2 step 5.1 (§15.2) scope: CTL-01 with the D-9 Goal guard and the RD-8
+ * consumed-continuation guard; CTL-02 (D-7, a Run that never entered takes a
+ * pause/cancel/resume at once, `∅ → applied@2` with a platform observation,
+ * CD-1/CD-3); CTL-04 (D-8, the older queued intent is superseded in the newer
+ * commit); CTL-03/CTL-06 with the CD-2 pairing (a Kernel
+ * `terminal_without_cancel` or `outcome_unknown` closes any kind); CTL-09 (an
+ * applied or superseded intent is never re-observed: the same content is an
+ * idempotent no-op, other content is stale; an outcome_unknown one is stale,
+ * §7.4). The C4 paused-interrupted reason of the
+ * ended-Run refusal is step 5.6; CTL-07, CTL-08 and CTL-10 (reconcile and the
+ * paused stop) keep their events in the union and still return `illegal`
+ * (`notYet`).
  *
- * A.2 step 3 routes `control-service.ts` through this file (CTL-01 for
- * `submitControl`, CTL-03/05/06 for `recordControlObservation`). The service
- * asks `submissionReadsPointerIntent` before it reads the intent the pointer
- * names and `observedIntentProblem` before it reads the Run, so each read
- * happens exactly where it always did; a stored locator that fails the locator
- * codec reaches the guards as `'malformed'` and keeps today's place in the order.
+ * `control-service.ts` drives this file (CTL-01/02/04 for `submitControl`,
+ * CTL-03/05/06/09 for `recordControlObservation`). It asks
+ * `submissionReadsPointerIntent` and `submissionReadsGoal` before it reads the
+ * intent the pointer names and the Goal, and `observedIntentAnswer` before it
+ * reads the Run; a stored locator that fails the locator codec reaches the
+ * guards as `'malformed'`. Which older intents a submission supersedes is the
+ * Run machine's effect list (`intent:control_superseded_by_newer`, §6
+ * RUN-09..15), which names their refs.
  */
 import type {
   ControlEntryIdentityV1, ControlIntentKindV1, ControlIntentRef, ControlIntentRequestV1,
@@ -119,13 +124,16 @@ export type ControlGuardContext = {
   origin: 'live' | 'reconcile';
 };
 
+/** The V2 entry phase of a Run that never entered (§7.1 `ControlPlatformObservationV1` detail, RD-1). */
+export type NotEnteredEntryPhase = 'none' | 'authorized' | 'revoked';
+
 export type ControlIntentEvent =
   /** U/P (§7.2): R1–R4, G7. `intentRef` is derived by the service from the request identity. */
   | { type: 'control_submitted'; target: 'run' | 'query_run'; intentRef: ControlIntentRef;
       kind: ControlIntentKindV1; reason: string | null }
   /** P, CTL-02 (D-7): submitted and applied in one commit because the Run never entered. */
   | { type: 'control_applied_not_entered'; intentRef: ControlIntentRef; kind: 'pause' | 'cancel' | 'resume';
-      reason: string | null; entryPhase: 'none' | 'authorized' | 'revoked'; runRevision: number; observedAt: string }
+      reason: string | null; entryPhase: NotEnteredEntryPhase; runRevision: number; observedAt: string }
   /** P, CTL-04 (D-8): `supersededBy` is the new pointer intent, or the cancel that ended the Run. */
   | { type: 'control_superseded_by_newer'; supersededBy: ControlIntentRef; runRevision: number; observedAt: string }
   /** K: the trusted in-process Runtime observer (CTL-03, CTL-05, CTL-06, CTL-09). */
@@ -143,12 +151,10 @@ export type RunPointerChange =
   | { kind: 'append_input'; intentRef: ControlIntentRef };
 
 export type ControlIntentEffect =
-  /** The same commit moves `Run.controlState` or appends to `Run.controlInputs` (RUN-12..15). */
+  /** The same commit moves `Run.controlState` or appends to `Run.controlInputs` (RUN-09..15). */
   | { kind: 'run_pointer'; change: RunPointerChange }
   /** The Run is only a CAS guard of the commit; it is never written (`control-service.ts:602-610`). */
-  | { kind: 'guard_run' }
-  /** CTL-04 (step 5): an older queued intent becomes `Superseded` in the same commit, CAS-guarded. */
-  | { kind: 'supersede_intent'; intentRef: ControlIntentRef; supersededBy: ControlIntentRef };
+  | { kind: 'guard_run' };
 
 export type ControlTransition = Transition<ControlIntentState, ControlIntentEvent, ControlIntentEffect>;
 
@@ -168,10 +174,11 @@ export function desiredStateOfKind(kind: ControlIntentKindV1): ControlIntentRequ
 }
 
 /**
- * §6 RUN-12..15: the Run pointer after one accepted submission. pause/cancel/
+ * §6 RUN-09..15: the Run pointer after one accepted submission. pause/cancel/
  * resume move `controlState` to the new intent; a steer leaves the pointer and
  * only appends to `controlInputs` (`control-service.ts:411-413`). Which older
- * queued intent the move supersedes is CTL-04 (step 5), not this function.
+ * queued intent the move supersedes (CTL-04) is the Run machine's effect list,
+ * not this function.
  */
 export function pointerAfterSubmit(kind: ControlIntentKindV1, intentRef: ControlIntentRef): RunPointerChange {
   if (kind === 'steer') return { kind: 'append_input', intentRef };
@@ -208,21 +215,29 @@ function resumeNeedsPointerIntent(kind: ControlIntentKindV1, yielded: boolean, p
 }
 
 /**
- * CTL-01's submission checks after the ended-Run refusal, in today's order
- * (`control-service.ts:392-399`): a steer needs its directional text; a resume
- * of a Run that did not yield, with a pointer, needs that pointer to name an
- * applied, observed pause; then `controlSubmitProblem`. The ONE copy of these
- * checks: `transitionControlIntent` (CTL-01) and run-machine's RUN-09..15 both
- * answer a submission with it, so the step 5.1 flips (D-9 Goal guard, RD-8
- * consumed-continuation guard) are made here once and the Run record and the
- * intent record cannot disagree about whether a submission is legal.
+ * CTL-01's submission checks after the ended-Run refusal, in the order of the
+ * CTL-01 guard (§7.3): a `YieldedWait` whose continuation a successor Run
+ * already consumed takes no control (RD-8); a steer needs its directional
+ * text; a resume of a Run that did not yield, with a pointer, needs that
+ * pointer to name an applied, observed pause; a resume needs the Goal active
+ * (D-9: a single Run is not resumed while its Goal is paused or cancelled);
+ * then `controlSubmitProblem`. The ONE copy of these checks: CTL-01/CTL-02 and
+ * run-machine's RUN-09..15 all answer a submission with it, so the Run record
+ * and the intent record cannot disagree about whether a submission is legal.
  */
 export function controlSubmissionProblem(input: {
   kind: ControlIntentKindV1; reason: string | null; pointer: RunControlPointer;
   /** A `YieldedWait` Run: its queued pause is the continuation fence, not an observed pause. */
   yielded: boolean;
+  /** RD-8: the `YieldedWait`'s continuation was already consumed by a successor Run. */
+  continuationConsumed: boolean;
   pointerIntent: ControlPointerIntent | null;
+  /** D-9: the Goal's desired state (§2). */
+  goal: ControlGuardContext['goal']['desiredState'];
 }): CoreRejection | null {
+  if (input.yielded && input.continuationConsumed) {
+    return busy('a successor Run already consumed the yielded wait continuation; no new control intent is accepted');
+  }
   if (input.kind === 'steer' && (input.reason === null || input.reason.trim().length === 0)) {
     return { status: 'rejected', code: 'invalid', reason: 'steer requires the actual directional input text' };
   }
@@ -231,6 +246,9 @@ export function controlSubmissionProblem(input: {
     if (pause === null || pause.kind !== 'pause' || pause.status !== 'applied' || pause.observed !== 'paused') {
       return busy('resume requires an observed paused original Turn');
     }
+  }
+  if (input.kind === 'resume' && input.goal !== 'active') {
+    return busy(`the Goal is ${input.goal}; a single Run is not resumed while its Goal is not active`);
   }
   return controlSubmitProblem(input.pointer, input.kind);
 }
@@ -265,11 +283,11 @@ function isPlatformObservation(
 
 /**
  * Which intent kind an observation may close, exactly as the snapshot codec
- * enforces it today (`control-record-codecs.ts:390-407`): paused/resumed/
- * steered/cancelled belong to their own kind; a platform observation may close
- * any kind with superseded_by_newer, terminal_without_cancel or outcome_unknown
- * (CD-2). A Kernel cancelled, terminal_without_cancel or outcome_unknown still
- * belongs only to a cancel until step 5.1 relaxes it with CTL-03/CTL-06.
+ * enforces it (`control-record-codecs.ts`, §7.1 pairing): paused/resumed/
+ * steered/cancelled belong to their own kind, from the Kernel or the platform;
+ * superseded_by_newer (platform only), terminal_without_cancel and
+ * outcome_unknown close any kind (CD-2: a terminal can come before any control
+ * takes effect, and a consumed pause can meet an unknown tool result).
  */
 export function observationPairingProblem(
   intentKind: ControlIntentKindV1,
@@ -280,16 +298,11 @@ export function observationPairingProblem(
     case 'paused': return intentKind === 'pause' ? null : 'a paused observation must belong to a pause intent';
     case 'resumed': return intentKind === 'resume' ? null : 'resumed must belong to resume';
     case 'steered': return intentKind === 'steer' ? null : 'steered must belong to steer';
-    case 'cancelled':
-      if (intentKind === 'cancel') return null;
-      return isPlatformObservation(observation)
-        ? 'a cancelled observation must belong to a cancel intent'
-        : 'a cancelled/unknown observation must belong to a cancel intent';
+    case 'cancelled': return intentKind === 'cancel' ? null : 'a cancelled observation must belong to a cancel intent';
     case 'superseded_by_newer':
     case 'terminal_without_cancel':
     case 'outcome_unknown':
-      if (intentKind === 'cancel' || isPlatformObservation(observation)) return null;
-      return 'a cancelled/unknown observation must belong to a cancel intent';
+      return null;
     default: return unreachable(kind, 'control observation kind');
   }
 }
@@ -391,8 +404,19 @@ export function controlIntentRecordOf(request: ControlIntentRequestV1, next: Con
 // -------------------------------------------------------------------------- //
 
 type SubmitEvent = Extract<ControlIntentEvent, { type: 'control_submitted' }>;
+type AppliedNotEnteredEvent = Extract<ControlIntentEvent, { type: 'control_applied_not_entered' }>;
+/** The two events of one Host submission: queued (CTL-01) or applied at once (CTL-02). */
+export type ControlSubmissionEvent = SubmitEvent | AppliedNotEnteredEvent;
 type ObservedEvent = Extract<ControlIntentEvent, { type: 'control_observed' }>;
+type SupersededEvent = Extract<ControlIntentEvent, { type: 'control_superseded_by_newer' }>;
 type GuardRow<E, C = ControlGuardContext> = { row: string; check(event: E, ctx: C): Rejected | null };
+
+/** What every submission guard reads of either submission event (CTL-02 always targets a Run). */
+type Submission = { target: 'run' | 'query_run'; kind: ControlIntentKindV1; reason: string | null };
+function submissionOf(event: ControlSubmissionEvent): Submission {
+  return event.type === 'control_submitted' ? { target: event.target, kind: event.kind, reason: event.reason }
+    : { target: 'run', kind: event.kind, reason: event.reason };
+}
 
 /**
  * How a Run node answers a control: an ended Run that did not yield refuses it
@@ -420,45 +444,100 @@ function runControlClassOf(node: ControlRunNode): RunControlClass {
 }
 
 /**
- * CTL-01 guards in today's order (`control-service.ts:96`, `:363-399`); the
- * first failing row answers. The rows on the target Run come first: only a
- * submission past them reads the intent the pointer names. Step 5.1 adds the
- * D-9 Goal guard and the RD-8 consumed-continuation guard inside
- * `controlSubmissionProblem` (shared with run-machine), and the C4
- * paused-interrupted reason to the ended-Run row.
+ * The entry phase a Run that never entered carries in its CTL-02 observation
+ * (§7.1, RD-1); `null` for every other node, which CTL-02 refuses.
  */
-const SUBMIT_TARGET_GUARDS: readonly GuardRow<SubmitEvent>[] = [
-  { row: '7.4 QueryRunRef', check: event => event.target === 'query_run'
+export function notEnteredEntryPhase(node: ControlRunNode): NotEnteredEntryPhase | null {
+  switch (node) {
+    case 'Claimed': return 'none';
+    case 'Authorized': return 'authorized';
+    case 'Revoked': return 'revoked';
+    case 'Absent':
+    case 'Entering':
+    case 'Running':
+    case 'YieldedWait':
+    case 'Ended':
+    case 'EndedUnknown':
+      return null;
+    default: return unreachable(node, 'Run node');
+  }
+}
+
+/**
+ * The rows on the target Run every submission asks first (`control-service.ts:96`,
+ * `:363-391`); only a submission past them reads the intent the pointer names
+ * or the Goal. The C4 paused-interrupted reason of the ended-Run row is step 5.6.
+ */
+const SUBMIT_TARGET_GUARDS: readonly GuardRow<Submission>[] = [
+  { row: '7.4 QueryRunRef', check: submission => submission.target === 'query_run'
     ? reject('illegal', 'invalid', 'the control submission requires a complete RunRef') : null },
-  { row: 'Run read', check: (_event, ctx) => runControlClassOf(ctx.run.node) === 'missing'
+  { row: 'Run read', check: (_submission, ctx) => runControlClassOf(ctx.run.node) === 'missing'
     ? reject('illegal', 'not_found', 'the target Run does not exist') : null },
-  { row: '7.4 stale Run pin', check: (_event, ctx) => ctx.pinsMatch.run
+  { row: '7.4 stale Run pin', check: (_submission, ctx) => ctx.pinsMatch.run
     ? null : reject('stale', 'revision_conflict', 'the Run changed since the caller read it') },
-  { row: '7.4 Run ended', check: (_event, ctx) => runControlClassOf(ctx.run.node) === 'ended'
+  { row: '7.4 Run ended', check: (_submission, ctx) => runControlClassOf(ctx.run.node) === 'ended'
     ? reject('illegal', 'busy', 'the Run already ended; no new control intent is accepted') : null },
 ];
-const SUBMIT_GUARDS: readonly GuardRow<SubmitEvent>[] = [
-  ...SUBMIT_TARGET_GUARDS,
-  { row: '7.4 steer text, resume needs applied pause, pointer fence', check: (event, ctx) => {
+
+/**
+ * Which of the two submission events a Run node takes (D-7): a pause, cancel
+ * or resume of a Run that never entered is applied at once (CTL-02); every
+ * other submission is queued (CTL-01). The other event is an internal
+ * assertion (§7.4): the service picks the event by the same Run read.
+ */
+const SUBMISSION_ROUTE: GuardRow<ControlSubmissionEvent> = { row: '7.4 D-7 route', check: (event, ctx) => {
+  const cls = runControlClassOf(ctx.run.node);
+  if (event.type === 'control_submitted') {
+    return cls === 'not_entered' && event.kind !== 'steer'
+      ? reject('illegal', 'invalid', `a Run that never entered takes ${event.kind} through control_applied_not_entered (CTL-02)`)
+      : null;
+  }
+  switch (cls) {
+    case 'not_entered':
+      return event.entryPhase === notEnteredEntryPhase(ctx.run.node)
+        ? null : reject('illegal', 'invalid', 'the not-entered entry phase disagrees with the Run');
+    case 'yielded':
+      return reject('illegal', 'invalid', 'a yielded wait keeps its control queued as the continuation fence');
+    case 'missing':
+    case 'entered':
+    case 'ended':
+      return reject('illegal', 'invalid', 'from Entering on only the Kernel, RUN-23 or reconcile can apply a control (D-7)');
+    default: return unreachable(cls, 'Run control class');
+  }
+} };
+
+const SUBMIT_GUARDS: readonly GuardRow<ControlSubmissionEvent>[] = [
+  ...SUBMIT_TARGET_GUARDS.map((guard): GuardRow<ControlSubmissionEvent> =>
+    ({ row: guard.row, check: (event, ctx) => guard.check(submissionOf(event), ctx) })),
+  SUBMISSION_ROUTE,
+  { row: '7.4 RD-8, steer text, resume needs applied pause, D-9 Goal, pointer fence', check: (event, ctx) => {
     const problem = controlSubmissionProblem({ kind: event.kind, reason: event.reason, pointer: ctx.run.pointer,
-      yielded: runControlClassOf(ctx.run.node) === 'yielded', pointerIntent: ctx.pointerIntent });
+      yielded: runControlClassOf(ctx.run.node) === 'yielded', continuationConsumed: ctx.run.continuationConsumed,
+      pointerIntent: ctx.pointerIntent, goal: ctx.goal.desiredState });
     return problem === null ? null : reject('guard_failed', problem.code, problem.reason);
   } },
 ];
 
 /**
- * Whether CTL-01 answers this submission only with the intent `Run.controlState`
- * names (`control-service.ts:393-397`): the rows on the target Run passed and
- * it is a resume of a Run that did not yield, with a pointer. The service reads
- * that intent exactly then, so the read happens where it always did and a
- * refused earlier row never reads it; every other submission is answered with
- * `pointerIntent: null`.
+ * Whether the submission is answered with the intent `Run.controlState` names:
+ * the rows on the target Run passed and a pause, cancel or resume moves an
+ * existing pointer. A resume of a Run that did not yield needs it to be an
+ * observed pause, and a still-queued one is superseded in the same commit
+ * (D-8). The service reads that intent exactly then; every other submission
+ * is answered with `pointerIntent: null`.
  */
-export function submissionReadsPointerIntent(
-  event: Extract<ControlIntentEvent, { type: 'control_submitted' }>, ctx: ControlGuardContext,
-): boolean {
-  return firstFailing(SUBMIT_TARGET_GUARDS, event, ctx) === null
-    && resumeNeedsPointerIntent(event.kind, runControlClassOf(ctx.run.node) === 'yielded', ctx.run.pointer);
+export function submissionReadsPointerIntent(event: ControlSubmissionEvent, ctx: ControlGuardContext): boolean {
+  return firstFailing(SUBMIT_TARGET_GUARDS, submissionOf(event), ctx) === null
+    && event.kind !== 'steer' && ctx.run.pointer !== 'none';
+}
+
+/**
+ * Whether the submission is answered with the Goal's desired state (D-9): the
+ * rows on the target Run passed and it is a resume. The service reads the Goal
+ * exactly then; every other submission holds `goal.desiredState='active'`.
+ */
+export function submissionReadsGoal(event: ControlSubmissionEvent, ctx: ControlGuardContext): boolean {
+  return firstFailing(SUBMIT_TARGET_GUARDS, submissionOf(event), ctx) === null && event.kind === 'resume';
 }
 
 function sameHistoryIdentity(observed: RunExecutionHistoryV1, locator: RunExecutionHistoryV1): boolean {
@@ -519,6 +598,13 @@ const OBSERVED_RUN_GUARDS: readonly GuardRow<ObservedEvent>[] = [
     return observation.history.observedThroughPosition > through
       ? reject('guard_failed', 'unavailable', 'the observation window exceeds the persisted Run history window') : null;
   } },
+  // CTL-06: the terminal came first only for a Run that ended with a known
+  // outcome; a yielded wait keeps its intents as the continuation fence, an
+  // unknown end records outcome_unknown.
+  { row: 'CTL-06 known terminal', check: ({ observation }, ctx) =>
+    observation.kind === 'terminal_without_cancel' && ctx.run.node !== 'Ended'
+      ? reject('guard_failed', 'busy', 'terminal_without_cancel is recorded only after a known terminal that is not a yielded wait')
+      : null },
 ];
 
 function firstFailing<E, C>(rows: readonly GuardRow<E, C>[], event: E, ctx: C): Rejected | null {
@@ -530,15 +616,45 @@ function firstFailing<E, C>(rows: readonly GuardRow<E, C>[], event: E, ctx: C): 
 }
 
 /**
- * CTL-03's rows on the intent itself (`control-service.ts:525-528`): the
- * caller's intent pin. The service asks them after the intent read and before
- * it reads the Run, so a stale intent never reads the Run;
- * `transitionControlIntent` asks them again, first.
+ * CTL-09: an observation that names the same Kernel fact (kind, source
+ * position and Kernel event id) as the one already recorded.
  */
-export function observedIntentProblem(
-  event: Extract<ControlIntentEvent, { type: 'control_observed' }>, ctx: Pick<ControlGuardContext, 'pinsMatch'>,
-): Rejected | null {
-  return firstFailing(OBSERVED_INTENT_GUARDS, event, ctx);
+function sameObservedFact(recorded: ControlIntentState['observation'], observation: ControlObservationV1): boolean {
+  return recorded !== null && !isPlatformObservation(recorded) && recorded.kind === observation.kind
+    && recorded.source.position === observation.source.position && recorded.kernelEventId === observation.kernelEventId;
+}
+
+/**
+ * CTL-03's rows on the intent itself (`control-service.ts:525-528`): the
+ * caller's intent pin, then the state guard of an already observed intent
+ * (CTL-09: an applied or superseded intent is never re-observed; the same
+ * Kernel fact is the idempotent no-op, SD-1, any other content a late
+ * observation that is stale. §7.4: an outcome_unknown intent is stale for
+ * every in-process observation; only `control_reconciled` moves it). `null`
+ * when the answer needs the Run: a queued intent past its pin. The service
+ * asks it after the intent read and before it reads the Run, so neither a
+ * stale nor an observed intent reads the Run; `transitionControlIntent` asks
+ * it again, first.
+ */
+export function observedIntentAnswer(
+  state: ControlIntentState, event: ObservedEvent, ctx: Pick<ControlGuardContext, 'pinsMatch'>,
+): ControlTransition | null {
+  const stale = firstFailing(OBSERVED_INTENT_GUARDS, event, ctx);
+  if (stale !== null) return stale;
+  switch (state.node) {
+    case 'Absent':
+    case 'Queued':
+      return null;
+    case 'Applied':
+    case 'Superseded':
+      return sameObservedFact(state.observation, event.observation) ? accept<ControlIntentState, ControlIntentEffect>(state)
+        : reject('stale', 'revision_conflict',
+          `the control intent is already ${statusOfNode(state.node)}; a later observation does not change it`);
+    case 'OutcomeUnknown':
+      return reject('stale', 'revision_conflict',
+        'the control intent is outcome_unknown; only the start-up reconcile settles it');
+    default: return unreachable(state.node, 'control node');
+  }
 }
 
 // -------------------------------------------------------------------------- //
@@ -554,16 +670,27 @@ function existingIdentity(): Rejected {
   return reject('duplicate', 'idempotency_conflict', 'the control request identity was already used with different content');
 }
 
-/** CTL-01 (today's result; CTL-02 for not-entered Runs is step 5). */
-function onSubmitted(state: ControlIntentState, event: SubmitEvent, ctx: ControlGuardContext): ControlTransition {
+/**
+ * CTL-01 (queued) and CTL-02 (applied at once, D-7) from `Absent`: the same
+ * submission guards, the D-7 route by the Run node, then the new intent and
+ * its one `run_pointer` effect. CTL-02 writes `applied@2` with the platform's
+ * own `platform_not_entered` observation (CD-1, CD-3); the Run revision it
+ * names is the one the same commit writes.
+ */
+function onSubmission(state: ControlIntentState, event: ControlSubmissionEvent, ctx: ControlGuardContext): ControlTransition {
   switch (state.node) {
     case 'Absent': {
       const failed = firstFailing(SUBMIT_GUARDS, event, ctx);
       if (failed !== null) return failed;
-      return accept<ControlIntentState, ControlIntentEffect>(
-        { node: 'Queued', kind: event.kind, revision: 1, observation: null },
-        [{ kind: 'run_pointer', change: pointerAfterSubmit(event.kind, event.intentRef) }],
-      );
+      const effects: ControlIntentEffect[] = [{ kind: 'run_pointer', change: pointerAfterSubmit(event.kind, event.intentRef) }];
+      if (event.type === 'control_submitted') {
+        return accept<ControlIntentState, ControlIntentEffect>({ node: 'Queued', kind: event.kind, revision: 1, observation: null }, effects);
+      }
+      const observation: ControlPlatformObservationV1 = {
+        schemaVersion: 1, origin: 'platform_not_entered', kind: NOT_ENTERED_OBSERVATION[event.kind],
+        runRevision: event.runRevision, detail: { entryPhase: event.entryPhase }, observedAt: event.observedAt,
+      };
+      return accept<ControlIntentState, ControlIntentEffect>({ node: 'Applied', kind: event.kind, revision: 2, observation }, effects);
     }
     case 'Queued':
     case 'Applied':
@@ -574,13 +701,14 @@ function onSubmitted(state: ControlIntentState, event: SubmitEvent, ctx: Control
   }
 }
 
+const NOT_ENTERED_OBSERVATION = { pause: 'paused', cancel: 'cancelled', resume: 'resumed' } as const;
+
 /**
- * CTL-03 / CTL-05 / CTL-06 with today's result for every recorded node: the
- * service does not yet check the intent status (CTL-09 is step 5.1), so a new
- * observation identity at the current pins re-observes an applied, superseded
- * or outcome_unknown intent. A pointer that no longer names the intent keeps
- * the real observation as `Superseded` (CTL-05, A7). The kind pairing is the
- * codec rule the commit enforces today (7.4 → illegal/invalid).
+ * CTL-03 / CTL-05 / CTL-06 / CTL-09. An intent already observed is answered by
+ * `observedIntentAnswer` (CTL-09). A queued intent the pointer (a steer:
+ * `controlInputs`) still names records the mapped status; one it no longer
+ * names keeps the real observation as `Superseded` (CTL-05, A7). The kind
+ * pairing is the CD-2 codec rule (7.4 → illegal/invalid).
  */
 function onObserved(state: ControlIntentState, event: ObservedEvent, ctx: ControlGuardContext): ControlTransition {
   switch (state.node) {
@@ -592,7 +720,9 @@ function onObserved(state: ControlIntentState, event: ObservedEvent, ctx: Contro
     case 'OutcomeUnknown': {
       const kind = state.kind;
       if (kind === null) return reject('illegal', 'invalid', 'a recorded control intent must have a kind');
-      const failed = observedIntentProblem(event, ctx) ?? firstFailing(OBSERVED_RUN_GUARDS, event, ctx);
+      const answered = observedIntentAnswer(state, event, ctx);
+      if (answered !== null) return answered;
+      const failed = firstFailing(OBSERVED_RUN_GUARDS, event, ctx);
       if (failed !== null) return failed;
       const stillNamed = kind === 'steer' ? ctx.run.inControlInputs : ctx.run.pointsHere;
       const status = stillNamed ? observationStatusFor(event.observation.kind) : 'superseded';
@@ -612,34 +742,30 @@ function onObserved(state: ControlIntentState, event: ObservedEvent, ctx: Contro
 }
 
 /**
- * CTL-02 (新增): `∅ → applied@2` for a Run that never entered (D-7, CD-3).
- * Until step 5 the whole event is illegal; only the §7.4 internal assertion
- * for an entered Run is final. The CTL-01-style identity answer for an
- * existing intent arrives with the CTL-02 row in step 5.1.
+ * CTL-04 (D-8): an older queued intent superseded in the newer commit, with
+ * the platform's `platform_superseded` observation naming the newer intent
+ * (a), or the cancel that ends the Run for a queued steer (b). The intent is
+ * the one the pre-commit pointer names (a steer: one `controlInputs` lists);
+ * the commit guards its revision. No other effect.
  */
-function onAppliedNotEntered(
-  state: ControlIntentState, ctx: ControlGuardContext,
-): ControlTransition {
+function onSupersededByNewer(state: ControlIntentState, event: SupersededEvent, ctx: ControlGuardContext): ControlTransition {
   switch (state.node) {
-    case 'Absent':
-      if (runControlClassOf(ctx.run.node) === 'entered') {
-        return reject('illegal', 'invalid', 'from Entering on only the Kernel, RUN-23 or reconcile can apply a control (D-7)');
+    case 'Queued': {
+      const kind = state.kind;
+      if (kind === null) return reject('illegal', 'invalid', 'a recorded control intent must have a kind');
+      if (!(kind === 'steer' ? ctx.run.inControlInputs : ctx.run.pointsHere)) {
+        return reject('illegal', 'invalid', 'only the intent the newer commit moves off the Run pointer, or a queued steer of the Run, is superseded');
       }
-      return notYet('CTL-02');
-    case 'Queued':
-    case 'Applied':
-    case 'Superseded':
-    case 'OutcomeUnknown':
-      return notYet('CTL-02');
-    default: return unreachable(state.node, 'control node');
-  }
-}
-
-/** CTL-04 (新增): an older queued intent superseded in the newer commit (D-8). */
-function onSupersededByNewer(state: ControlIntentState): ControlTransition {
-  switch (state.node) {
-    case 'Queued':
-      return notYet('CTL-04');
+      const revision = state.revision + 1;
+      if (!Number.isSafeInteger(revision)) {
+        return reject('illegal', 'invalid', 'the control intent revision would not be a safe integer');
+      }
+      const observation: ControlPlatformObservationV1 = {
+        schemaVersion: 1, origin: 'platform_superseded', kind: 'superseded_by_newer', runRevision: event.runRevision,
+        detail: { supersededBy: event.supersededBy }, observedAt: event.observedAt,
+      };
+      return accept<ControlIntentState, ControlIntentEffect>({ node: 'Superseded', kind, revision, observation });
+    }
     case 'Absent':
     case 'Applied':
     case 'Superseded':
@@ -687,9 +813,10 @@ export function transitionControlIntent(
   ctx: ControlGuardContext,
 ): ControlTransition {
   switch (event.type) {
-    case 'control_submitted': return onSubmitted(state, event, ctx);
-    case 'control_applied_not_entered': return onAppliedNotEntered(state, ctx);
-    case 'control_superseded_by_newer': return onSupersededByNewer(state);
+    case 'control_submitted':
+    case 'control_applied_not_entered':
+      return onSubmission(state, event, ctx);
+    case 'control_superseded_by_newer': return onSupersededByNewer(state, event, ctx);
     case 'control_observed': return onObserved(state, event, ctx);
     case 'control_applied_paused_stop': return onAppliedPausedStop(state);
     case 'control_reconciled': return onReconciled(state);

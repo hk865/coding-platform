@@ -1,17 +1,18 @@
 /**
  * Exhaustive table tests for the pure ControlIntent machine
- * (docs/refactor/STATE-MACHINES-SPEC.md §7; A.2 step 2, §15.2).
+ * (docs/refactor/STATE-MACHINES-SPEC.md §7; A.2 step 2, flipped in step 5.1).
  *
  * Every (state, event) combination is answered: legal ones assert `next` and
- * `effects`, illegal ones assert `reason` and `code` from §7.4. Rows whose 现状
- * is 改造 assert TODAY's result (`control-service.ts`, the codec pairing in
- * `control-record-codecs.ts`); the comments tagged `step 5.1 flip` name the
- * target the row changes to. Rows whose 现状 is 新增 (CTL-02, CTL-04, CTL-07,
- * CTL-08, CTL-10) still answer `illegal`/`invalid`.
+ * `effects`, illegal ones assert `reason` and `code` from §7.4. Step 5.1 rows:
+ * CTL-01 with the D-9 Goal and RD-8 consumed-continuation guards, CTL-02 (D-7,
+ * `∅ → applied@2` with a `platform_not_entered` observation), CTL-04 (D-8,
+ * `platform_superseded`), CTL-03/CTL-06 with the CD-2 pairing and the CTL-06
+ * known-terminal guard, CTL-09 (an observed intent is never re-observed). The
+ * rows that stay 新增 (CTL-07, CTL-08, CTL-10) still answer `illegal`/`invalid`.
  *
  * Small literal fixtures only: no RecordStore, no Kernel. The snapshot codec
  * (pure) cross-checks that the record constructors and the pairing rule agree
- * with what a commit accepts today.
+ * with what a commit accepts.
  */
 import { describe, expect, it } from 'vitest';
 import type {
@@ -25,11 +26,12 @@ import {
 } from '../../src/core/work-graph/persistence/control-record-codecs.js';
 import {
   controlIntentRecordOf, controlIntentRequestOf, controlIntentStateOf, controlSubmissionProblem, controlSubmitProblem,
-  desiredStateOfKind, newControlIntentRequest, newQueuedControlIntentRecord, observationPairingProblem,
-  observationStatusFor, observedIntentProblem, pointerAfterSubmit, submissionReadsPointerIntent, transitionControlIntent,
+  desiredStateOfKind, newControlIntentRequest, newQueuedControlIntentRecord, notEnteredEntryPhase, observationPairingProblem,
+  observationStatusFor, observedIntentAnswer, pointerAfterSubmit, submissionReadsGoal, submissionReadsPointerIntent,
+  transitionControlIntent,
   type ControlGuardContext, type ControlIntentEffect, type ControlIntentEvent, type ControlIntentState,
-  type ControlNode, type ControlObservationKind, type ControlPointerIntent, type ControlRunNode, type ControlTransition,
-  type RunControlPointer,
+  type ControlNode, type ControlObservationKind, type ControlPointerIntent, type ControlRunNode, type ControlSubmissionEvent,
+  type ControlTransition, type NotEnteredEntryPhase, type RunControlPointer,
 } from '../../src/core/work-graph/state/control-intent-machine.js';
 import type { TransitionRejectReason } from '../../src/core/work-graph/state/transition.js';
 
@@ -66,6 +68,14 @@ const RUN_NODE_SET = {
 const RUN_NODES = Object.keys(RUN_NODE_SET) as ControlRunNode[];
 const POINTER_SET = { none: true, running: true, paused: true, cancelled: true, steered: true } satisfies Record<RunControlPointer, true>;
 const POINTERS = Object.keys(POINTER_SET) as RunControlPointer[];
+/** The Run nodes that never entered and the entry phase CTL-02 names for each (RD-1). */
+const NOT_ENTERED: Readonly<Record<'Claimed' | 'Authorized' | 'Revoked', NotEnteredEntryPhase>> = {
+  Claimed: 'none', Authorized: 'authorized', Revoked: 'revoked',
+};
+const NOT_ENTERED_NODES = Object.keys(NOT_ENTERED) as (keyof typeof NOT_ENTERED)[];
+function isNotEntered(node: ControlRunNode): node is keyof typeof NOT_ENTERED {
+  return node === 'Claimed' || node === 'Authorized' || node === 'Revoked';
+}
 
 function kernelObservation(kind: ControlObservationV1['kind'], patch: Partial<ControlObservationV1> = {}): ControlObservationV1 {
   return { schemaVersion: 1, kind, entry: { ...ENTRY },
@@ -153,6 +163,8 @@ function fail(reason: TransitionRejectReason, code: CoreError): Expected {
 }
 const ILLEGAL = fail('illegal', 'invalid');
 const IDENTITY_REUSED = fail('duplicate', 'idempotency_conflict');
+/** CTL-09 / §7.4: a later observation of an already observed intent with other content. */
+const STALE = fail('stale', 'revision_conflict');
 
 function check(actual: ControlTransition, expected: Expected): void {
   if (expected.ok) {
@@ -165,26 +177,57 @@ function check(actual: ControlTransition, expected: Expected): void {
 function submitted(kind: ControlIntentKindV1, intent: ControlIntentRef = SELF): Expected {
   return { ok: true, next: queued(kind), effects: [{ kind: 'run_pointer', change: pointerAfterSubmit(kind, intent) }] };
 }
+const NOT_ENTERED_OBSERVED = { pause: 'paused', cancel: 'cancelled', resume: 'resumed' } as const;
+/** CTL-02: `applied@2` with the platform's own observation, and the one pointer move (D-7, CD-1, CD-3). */
+function appliedNotEntered(kind: 'pause' | 'cancel' | 'resume', entryPhase: NotEnteredEntryPhase, runRevision = 4): Expected {
+  return { ok: true,
+    next: { node: 'Applied', kind, revision: 2, observation: { schemaVersion: 1, origin: 'platform_not_entered',
+      kind: NOT_ENTERED_OBSERVED[kind], runRevision, detail: { entryPhase }, observedAt: AT } },
+    effects: [{ kind: 'run_pointer', change: pointerAfterSubmit(kind, SELF) }] };
+}
+/** CTL-04: `Superseded` at revision + 1 with the platform's `platform_superseded` observation, no effect (D-8). */
+function supersededBy(state: ControlIntentState, by: ControlIntentRef = OTHER): Expected {
+  return { ok: true, next: { node: 'Superseded', kind: state.kind, revision: state.revision + 1,
+    observation: { schemaVersion: 1, origin: 'platform_superseded', kind: 'superseded_by_newer', runRevision: 4,
+      detail: { supersededBy: by }, observedAt: AT } }, effects: [] };
+}
 function observedTo(state: ControlIntentState, node: Exclude<ControlNode, 'Absent' | 'Queued'>, observation: ControlObservationV1): Expected {
   return { ok: true, next: { node, kind: state.kind, revision: state.revision + 1, observation }, effects: [{ kind: 'guard_run' }] };
 }
+/** CTL-09 (SD-1): the same Kernel fact again is an idempotent no-op. */
+function unchanged(state: ControlIntentState): Expected {
+  return { ok: true, next: state, effects: [] };
+}
 
 type SubmitEvent = Extract<ControlIntentEvent, { type: 'control_submitted' }>;
+type AppliedEvent = Extract<ControlIntentEvent, { type: 'control_applied_not_entered' }>;
 type ObservedEvent = Extract<ControlIntentEvent, { type: 'control_observed' }>;
 function submitEvent(kind: ControlIntentKindV1, reason: string | null = 'operator reason',
   target: 'run' | 'query_run' = 'run'): SubmitEvent {
   return { type: 'control_submitted', target, intentRef: SELF, kind, reason };
 }
+function appliedEvent(kind: 'pause' | 'cancel' | 'resume', entryPhase: NotEnteredEntryPhase, reason: string | null = null): AppliedEvent {
+  return { type: 'control_applied_not_entered', intentRef: SELF, kind, reason, entryPhase, runRevision: 4, observedAt: AT };
+}
+/** The event `control-service.ts` sends for a submission on this node (`submissionEventOf`, D-7). */
+function submissionFor(node: ControlRunNode, kind: ControlIntentKindV1, reason: string | null = 'operator reason'): ControlSubmissionEvent {
+  return isNotEntered(node) && kind !== 'steer' ? appliedEvent(kind, NOT_ENTERED[node], reason) : submitEvent(kind, reason);
+}
+function acceptedFor(node: ControlRunNode, kind: ControlIntentKindV1): Expected {
+  return isNotEntered(node) && kind !== 'steer' ? appliedNotEntered(kind, NOT_ENTERED[node]) : submitted(kind);
+}
 function observedEvent(observation: ControlObservationV1): ObservedEvent {
   return { type: 'control_observed', observation };
 }
+const SUPERSEDED_EVENT: Extract<ControlIntentEvent, { type: 'control_superseded_by_newer' }> = {
+  type: 'control_superseded_by_newer', supersededBy: OTHER, runRevision: 4, observedAt: AT,
+};
 
 /** One representative payload per event type; `satisfies` keeps the list complete. */
 const EVENTS = {
   control_submitted: submitEvent('cancel', 'stop now'),
-  control_applied_not_entered: { type: 'control_applied_not_entered', intentRef: SELF, kind: 'cancel', reason: null,
-    entryPhase: 'none', runRevision: 4, observedAt: AT },
-  control_superseded_by_newer: { type: 'control_superseded_by_newer', supersededBy: OTHER, runRevision: 4, observedAt: AT },
+  control_applied_not_entered: appliedEvent('cancel', 'none'),
+  control_superseded_by_newer: SUPERSEDED_EVENT,
   control_observed: observedEvent(kernelObservation('cancelled')),
   control_applied_paused_stop: { type: 'control_applied_paused_stop', basis: 'live_clean', pausedBy: OTHER,
     runRevision: 4, observedAt: AT },
@@ -211,36 +254,33 @@ const MATRIX: Record<EventType, Record<StateLabel, Expected>> = {
     'OutcomeUnknown:pause': IDENTITY_REUSED, 'OutcomeUnknown:cancel': IDENTITY_REUSED,
     'OutcomeUnknown:resume': IDENTITY_REUSED, 'OutcomeUnknown:steer': IDENTITY_REUSED,
   },
-  // CTL-02 is 新增 everywhere (step 5.1 flip: Absent → Applied@2; an existing intent answers like CTL-01);
-  // from Entering/Running it is also the §7.4 internal assertion.
+  // CTL-02 from Absent is the §7.4 internal assertion on an entered Run (D-7); an existing intent answers like CTL-01.
   control_applied_not_entered: {
     Absent: ILLEGAL,
-    'Queued:pause': ILLEGAL, 'Queued:cancel': ILLEGAL, 'Queued:resume': ILLEGAL, 'Queued:steer': ILLEGAL,
-    'Applied:pause': ILLEGAL, 'Applied:cancel': ILLEGAL, 'Applied:resume': ILLEGAL, 'Applied:steer': ILLEGAL,
-    'Superseded:pause': ILLEGAL, 'Superseded:cancel': ILLEGAL, 'Superseded:resume': ILLEGAL, 'Superseded:steer': ILLEGAL,
-    'OutcomeUnknown:pause': ILLEGAL, 'OutcomeUnknown:cancel': ILLEGAL, 'OutcomeUnknown:resume': ILLEGAL, 'OutcomeUnknown:steer': ILLEGAL,
+    'Queued:pause': IDENTITY_REUSED, 'Queued:cancel': IDENTITY_REUSED, 'Queued:resume': IDENTITY_REUSED, 'Queued:steer': IDENTITY_REUSED,
+    'Applied:pause': IDENTITY_REUSED, 'Applied:cancel': IDENTITY_REUSED, 'Applied:resume': IDENTITY_REUSED, 'Applied:steer': IDENTITY_REUSED,
+    'Superseded:pause': IDENTITY_REUSED, 'Superseded:cancel': IDENTITY_REUSED, 'Superseded:resume': IDENTITY_REUSED, 'Superseded:steer': IDENTITY_REUSED,
+    'OutcomeUnknown:pause': IDENTITY_REUSED, 'OutcomeUnknown:cancel': IDENTITY_REUSED,
+    'OutcomeUnknown:resume': IDENTITY_REUSED, 'OutcomeUnknown:steer': IDENTITY_REUSED,
   },
-  // CTL-04 is 新增 (step 5.1 flip: Queued → Superseded); §7.4: only a queued intent can be superseded.
+  // CTL-04: a queued intent the pointer (a steer: `controlInputs`) names is superseded; §7.4: only a queued one.
   control_superseded_by_newer: {
     Absent: ILLEGAL,
-    'Queued:pause': ILLEGAL, 'Queued:cancel': ILLEGAL, 'Queued:resume': ILLEGAL, 'Queued:steer': ILLEGAL,
+    'Queued:pause': supersededBy(queued('pause')), 'Queued:cancel': supersededBy(queued('cancel')),
+    'Queued:resume': supersededBy(queued('resume')), 'Queued:steer': supersededBy(queued('steer')),
     'Applied:pause': ILLEGAL, 'Applied:cancel': ILLEGAL, 'Applied:resume': ILLEGAL, 'Applied:steer': ILLEGAL,
     'Superseded:pause': ILLEGAL, 'Superseded:cancel': ILLEGAL, 'Superseded:resume': ILLEGAL, 'Superseded:steer': ILLEGAL,
     'OutcomeUnknown:pause': ILLEGAL, 'OutcomeUnknown:cancel': ILLEGAL, 'OutcomeUnknown:resume': ILLEGAL, 'OutcomeUnknown:steer': ILLEGAL,
   },
-  // CTL-03 for the cancel; today's codec pairing rejects a Kernel `cancelled` on any other kind.
-  // Recorded cancels are re-observed today (step 5.1 flip, CTL-09 / §7.4: duplicate or stale).
+  // CTL-03 for the cancel; a Kernel `cancelled` pairs only with a cancel. CTL-09: an observed intent is not
+  // re-observed: the same Kernel fact is a no-op (Applied:cancel), any other content is stale.
   control_observed: {
     Absent: fail('illegal', 'not_found'),
     'Queued:pause': ILLEGAL, 'Queued:cancel': observedTo(queued('cancel'), 'Applied', kernelObservation('cancelled')),
     'Queued:resume': ILLEGAL, 'Queued:steer': ILLEGAL,
-    'Applied:pause': ILLEGAL, 'Applied:cancel': observedTo(applied('cancel'), 'Applied', kernelObservation('cancelled')),
-    'Applied:resume': ILLEGAL, 'Applied:steer': ILLEGAL,
-    'Superseded:pause': ILLEGAL, 'Superseded:cancel': observedTo(superseded('cancel'), 'Applied', kernelObservation('cancelled')),
-    'Superseded:resume': ILLEGAL, 'Superseded:steer': ILLEGAL,
-    'OutcomeUnknown:pause': ILLEGAL,
-    'OutcomeUnknown:cancel': observedTo(outcomeUnknown('cancel'), 'Applied', kernelObservation('cancelled')),
-    'OutcomeUnknown:resume': ILLEGAL, 'OutcomeUnknown:steer': ILLEGAL,
+    'Applied:pause': STALE, 'Applied:cancel': unchanged(applied('cancel')), 'Applied:resume': STALE, 'Applied:steer': STALE,
+    'Superseded:pause': STALE, 'Superseded:cancel': STALE, 'Superseded:resume': STALE, 'Superseded:steer': STALE,
+    'OutcomeUnknown:pause': STALE, 'OutcomeUnknown:cancel': STALE, 'OutcomeUnknown:resume': STALE, 'OutcomeUnknown:steer': STALE,
   },
   // CTL-10 is 新增 (step 5.6 flip: Queued cancel → Applied).
   control_applied_paused_stop: {
@@ -271,10 +311,10 @@ describe('ControlIntent machine: every (state, event) combination', () => {
 });
 
 // -------------------------------------------------------------------------- //
-// control_submitted (CTL-01, §7.4 Absent rows)                               //
+// control_submitted / control_applied_not_entered (CTL-01, CTL-02, §7.4)     //
 // -------------------------------------------------------------------------- //
 
-/** The intent the pointer names, as `submitControl` reads it for a resume. */
+/** The intent the pointer names, as `submitControl` reads it. */
 const POINTER_INTENT: Record<RunControlPointer, ControlGuardContext['pointerIntent']> = {
   none: null,
   running: { kind: 'resume', status: 'queued', observed: null },
@@ -291,18 +331,18 @@ const POINTER_FENCE: Record<RunControlPointer, Record<ControlIntentKindV1, 'ok' 
   steered: { pause: 'ok', cancel: 'ok', resume: 'busy', steer: 'ok' },
 };
 
-describe('control_submitted from Absent: pointer × kind × Run node (CTL-01)', () => {
+describe('a submission from Absent: pointer × kind × Run node (CTL-01, CTL-02)', () => {
   for (const node of RUN_NODES) {
     for (const pointer of POINTERS) {
       for (const kind of KINDS) {
         it(`${node} / pointer ${pointer} / ${kind}`, () => {
-          const result = transitionControlIntent(ABSENT, submitEvent(kind),
-            ctxWith({ node, pointer }, { pointerIntent: POINTER_INTENT[pointer] }));
+          const ctx = ctxWith({ node, pointer }, { pointerIntent: POINTER_INTENT[pointer] });
+          const result = transitionControlIntent(ABSENT, submissionFor(node, kind), ctx);
           if (node === 'Absent') return check(result, fail('illegal', 'not_found'));
           // §7.4: an ended Run (not YieldedWait) refuses every kind.
           if (node === 'Ended' || node === 'EndedUnknown') return check(result, fail('illegal', 'busy'));
-          // Not-entered Runs still queue today (step 5.1 flip: CTL-02 applied@2 for pause/cancel/resume).
-          check(result, POINTER_FENCE[pointer][kind] === 'ok' ? submitted(kind) : fail('guard_failed', 'busy'));
+          // D-7: a pause/cancel/resume of a Run that never entered is applied at once (CTL-02).
+          check(result, POINTER_FENCE[pointer][kind] === 'ok' ? acceptedFor(node, kind) : fail('guard_failed', 'busy'));
         });
       }
     }
@@ -315,18 +355,24 @@ describe('control_submitted from Absent: pointer × kind × Run node (CTL-01)', 
   });
 
   it('a missing Run is not_found before the Run pin is compared', () => {
-    expect(transitionControlIntent(ABSENT, submitEvent('pause'), ctxWith({ node: 'Absent' }, { pinsMatch: { intent: true, run: false } })))
-      .toEqual({ ok: false, reason: 'illegal', code: 'not_found', detail: 'the target Run does not exist' });
+    for (const event of [submitEvent('pause'), appliedEvent('pause', 'none')]) {
+      expect(transitionControlIntent(ABSENT, event, ctxWith({ node: 'Absent' }, { pinsMatch: { intent: true, run: false } })))
+        .toEqual({ ok: false, reason: 'illegal', code: 'not_found', detail: 'the target Run does not exist' });
+    }
   });
 
-  it('a stale Run pin is stale/revision_conflict before the ended-Run check (7.4)', () => {
+  it('a stale Run pin is stale/revision_conflict before the ended-Run check and the D-7 route (7.4)', () => {
     expect(transitionControlIntent(ABSENT, submitEvent('cancel'), ctxWith({ node: 'Ended' }, { pinsMatch: { intent: true, run: false } })))
+      .toEqual({ ok: false, reason: 'stale', code: 'revision_conflict', detail: 'the Run changed since the caller read it' });
+    expect(transitionControlIntent(ABSENT, submitEvent('cancel'), ctxWith({ node: 'Claimed' }, { pinsMatch: { intent: true, run: false } })))
       .toEqual({ ok: false, reason: 'stale', code: 'revision_conflict', detail: 'the Run changed since the caller read it' });
   });
 
   it('an ended Run refuses the control with busy (7.4, `control-service.ts:389-391`)', () => {
     for (const node of ['Ended', 'EndedUnknown'] as const) {
       expect(transitionControlIntent(ABSENT, submitEvent('steer'), ctxWith({ node })))
+        .toEqual({ ok: false, reason: 'illegal', code: 'busy', detail: 'the Run already ended; no new control intent is accepted' });
+      expect(transitionControlIntent(ABSENT, appliedEvent('cancel', 'none'), ctxWith({ node })))
         .toEqual({ ok: false, reason: 'illegal', code: 'busy', detail: 'the Run already ended; no new control intent is accepted' });
     }
   });
@@ -340,7 +386,7 @@ describe('control_submitted from Absent: pointer × kind × Run node (CTL-01)', 
     }
   });
 
-  it('a paused-interrupted Run keeps today\'s generic ended reason (step 5.6 flip: continue-the-Task reason, C4)', () => {
+  it('a paused-interrupted Run keeps the generic ended reason (step 5.6 flip: continue-the-Task reason, C4)', () => {
     for (const kind of KINDS) {
       expect(transitionControlIntent(ABSENT, submitEvent(kind), ctxWith({ node: 'Ended', pausedInterrupted: true, pointer: 'paused' },
         { pointerIntent: POINTER_INTENT.paused })))
@@ -374,10 +420,13 @@ describe('control_submitted from Absent: pointer × kind × Run node (CTL-01)', 
     ];
     for (const node of ['Claimed', 'Authorized', 'Entering', 'Revoked', 'Running'] as const) {
       for (const pointerIntent of notObserved) {
-        expect(transitionControlIntent(ABSENT, submitEvent('resume'), ctxWith({ node, pointer: 'paused' }, { pointerIntent })))
+        expect(transitionControlIntent(ABSENT, submissionFor(node, 'resume'), ctxWith({ node, pointer: 'paused' }, { pointerIntent })))
           .toEqual({ ok: false, reason: 'guard_failed', code: 'busy', detail: 'resume requires an observed paused original Turn' });
       }
     }
+    // The platform's own not-entered pause is an observed pause (CTL-02).
+    expect(transitionControlIntent(ABSENT, appliedEvent('resume', 'authorized'), ctxWith({ node: 'Authorized', pointer: 'paused' },
+      { pointerIntent: { kind: 'pause', status: 'applied', observed: 'paused' } }))).toEqual(appliedNotEntered('resume', 'authorized'));
   });
 
   it('the resume pause check precedes the pointer fence (a cancelled pointer names a cancel)', () => {
@@ -396,7 +445,7 @@ describe('control_submitted from Absent: pointer × kind × Run node (CTL-01)', 
       .toEqual({ ok: false, reason: 'guard_failed', code: 'busy', detail: 'the Run is already fenced by a queued cancel control intent' });
   });
 
-  it('the pointer fence answers with today\'s busy reasons (7.4, `:127-137`)', () => {
+  it('the pointer fence answers with the busy reasons of `freshSubmitControlProblem` (7.4, `:127-137`)', () => {
     expect(transitionControlIntent(ABSENT, submitEvent('resume'), ctxWith()))
       .toEqual({ ok: false, reason: 'guard_failed', code: 'busy', detail: 'resume requires a formal pause' });
     expect(transitionControlIntent(ABSENT, submitEvent('pause'), ctxWith({ pointer: 'paused' }, { pointerIntent: POINTER_INTENT.paused })))
@@ -418,32 +467,64 @@ describe('control_submitted from Absent: pointer × kind × Run node (CTL-01)', 
       effects: [{ kind: 'run_pointer', change: { kind: 'append_input', intentRef: SELF } }] });
   });
 
-  it('a cancel after a queued pause only moves the pointer today (step 5.1 flip, CTL-04: supersede the pause)', () => {
+  it('D-8: the new cancel is queued; the queued pause it moves off is superseded by CTL-04 in the same commit', () => {
     expect(transitionControlIntent(ABSENT, submitEvent('cancel'), ctxWith({ pointer: 'paused' },
       { pointerIntent: { kind: 'pause', status: 'queued', observed: null } }))).toEqual(submitted('cancel'));
+    expect(transitionControlIntent(queued('pause'), { ...SUPERSEDED_EVENT, supersededBy: SELF }, ctxWith({ pointer: 'paused' })))
+      .toEqual(supersededBy(queued('pause'), SELF));
   });
 
-  it('a resume while the Goal is not active is accepted today (step 5.1 flip, D-9: guard_failed/busy)', () => {
+  it('D-9: a resume while the Goal is not active is guard_failed/busy; pause, cancel and steer are not refused', () => {
     for (const desiredState of ['paused', 'cancelled'] as const) {
-      expect(transitionControlIntent(ABSENT, submitEvent('resume'), ctxWith({ pointer: 'paused' },
-        { pointerIntent: POINTER_INTENT.paused, goal: { desiredState } }))).toEqual(submitted('resume'));
+      for (const node of ['Authorized', 'Running', 'YieldedWait'] as const) {
+        expect(transitionControlIntent(ABSENT, submissionFor(node, 'resume'), ctxWith({ node, pointer: 'paused' },
+          { pointerIntent: POINTER_INTENT.paused, goal: { desiredState } })))
+          .toEqual({ ok: false, reason: 'guard_failed', code: 'busy',
+            detail: `the Goal is ${desiredState}; a single Run is not resumed while its Goal is not active` });
+      }
+      for (const kind of ['pause', 'cancel', 'steer'] as const) {
+        expect(transitionControlIntent(ABSENT, submitEvent(kind), ctxWith({}, { goal: { desiredState } }))).toEqual(submitted(kind));
+      }
     }
   });
 
-  it('a control on a YieldedWait whose continuation was consumed is accepted today (step 5.1 flip, RD-8: busy)', () => {
-    for (const kind of ['pause', 'cancel', 'steer'] as const) {
-      expect(transitionControlIntent(ABSENT, submitEvent(kind), ctxWith({ node: 'YieldedWait', continuationConsumed: true })))
-        .toEqual(submitted(kind));
+  it('RD-8: a control on a YieldedWait whose continuation a successor consumed is guard_failed/busy', () => {
+    for (const kind of KINDS) {
+      expect(transitionControlIntent(ABSENT, submitEvent(kind), ctxWith({ node: 'YieldedWait', pointer: 'paused', continuationConsumed: true },
+        { pointerIntent: { kind: 'pause', status: 'queued', observed: null } })))
+        .toEqual({ ok: false, reason: 'guard_failed', code: 'busy',
+          detail: 'a successor Run already consumed the yielded wait continuation; no new control intent is accepted' });
     }
+    // A continuation not yet consumed keeps accepting the wait-window control.
+    expect(transitionControlIntent(ABSENT, submitEvent('cancel'), ctxWith({ node: 'YieldedWait' }))).toEqual(submitted('cancel'));
   });
 
-  it('a not-entered Run queues pause/cancel/resume today (step 5.1 flip, CTL-02: applied@2 platform_not_entered)', () => {
-    for (const node of ['Claimed', 'Authorized', 'Revoked'] as const) {
-      expect(transitionControlIntent(ABSENT, submitEvent('pause'), ctxWith({ node }))).toEqual(submitted('pause'));
-      expect(transitionControlIntent(ABSENT, submitEvent('cancel'), ctxWith({ node }))).toEqual(submitted('cancel'));
-      expect(transitionControlIntent(ABSENT, submitEvent('resume'), ctxWith({ node, pointer: 'paused' },
-        { pointerIntent: POINTER_INTENT.paused }))).toEqual(submitted('resume'));
+  it('D-7 route: CTL-02 for a Run that never entered, CTL-01 otherwise; the other event is an internal assertion', () => {
+    for (const node of NOT_ENTERED_NODES) {
+      for (const kind of ['pause', 'cancel'] as const) {
+        expect(transitionControlIntent(ABSENT, appliedEvent(kind, NOT_ENTERED[node]), ctxWith({ node })))
+          .toEqual(appliedNotEntered(kind, NOT_ENTERED[node]));
+        expect(transitionControlIntent(ABSENT, submitEvent(kind), ctxWith({ node }))).toEqual({ ok: false, reason: 'illegal',
+          code: 'invalid', detail: `a Run that never entered takes ${kind} through control_applied_not_entered (CTL-02)` });
+      }
+      // The entry phase must be the Run's own.
+      const other = NOT_ENTERED[node] === 'none' ? 'revoked' : 'none';
+      expect(transitionControlIntent(ABSENT, appliedEvent('pause', other), ctxWith({ node }))).toEqual({ ok: false, reason: 'illegal',
+        code: 'invalid', detail: 'the not-entered entry phase disagrees with the Run' });
+      // A steer is queued on a Run that never entered as on any open Run.
+      expect(transitionControlIntent(ABSENT, submitEvent('steer'), ctxWith({ node }))).toEqual(submitted('steer'));
     }
+    for (const node of ['Entering', 'Running'] as const) {
+      expect(transitionControlIntent(ABSENT, appliedEvent('cancel', 'none'), ctxWith({ node }))).toEqual({ ok: false, reason: 'illegal',
+        code: 'invalid', detail: 'from Entering on only the Kernel, RUN-23 or reconcile can apply a control (D-7)' });
+    }
+    expect(transitionControlIntent(ABSENT, appliedEvent('cancel', 'none'), ctxWith({ node: 'YieldedWait' }))).toEqual({ ok: false,
+      reason: 'illegal', code: 'invalid', detail: 'a yielded wait keeps its control queued as the continuation fence' });
+  });
+
+  it('CTL-02 writes applied@2 with the observation of the platform (CD-1, CD-3), naming the Run revision of the commit', () => {
+    expect(transitionControlIntent(ABSENT, { ...appliedEvent('cancel', 'revoked'), runRevision: 9 }, ctxWith({ node: 'Revoked' })))
+      .toEqual(appliedNotEntered('cancel', 'revoked', 9));
   });
 
   it('every open Run node answers the submission checks exactly as the shared controlSubmissionProblem', () => {
@@ -455,10 +536,16 @@ describe('control_submitted from Absent: pointer × kind × Run node (CTL-01)', 
         for (const kind of KINDS) {
           for (const reason of [null, '  ', 'look at foo.ts']) {
             for (const pointerIntent of pointerIntents) {
-              const problem = controlSubmissionProblem({ kind, reason, pointer, yielded: node === 'YieldedWait', pointerIntent });
-              expect(transitionControlIntent(ABSENT, submitEvent(kind, reason), ctxWith({ node, pointer }, { pointerIntent })))
-                .toEqual(problem === null ? submitted(kind)
-                  : { ok: false, reason: 'guard_failed', code: problem.code, detail: problem.reason });
+              for (const goal of ['active', 'paused'] as const) {
+                for (const continuationConsumed of [false, true]) {
+                  const problem = controlSubmissionProblem({ kind, reason, pointer, yielded: node === 'YieldedWait',
+                    continuationConsumed, pointerIntent, goal });
+                  expect(transitionControlIntent(ABSENT, submissionFor(node, kind, reason),
+                    ctxWith({ node, pointer, continuationConsumed }, { pointerIntent, goal: { desiredState: goal } })))
+                    .toEqual(problem === null ? acceptedFor(node, kind)
+                      : { ok: false, reason: 'guard_failed', code: problem.code, detail: problem.reason });
+                }
+              }
             }
           }
         }
@@ -468,10 +555,44 @@ describe('control_submitted from Absent: pointer × kind × Run node (CTL-01)', 
 
   it('the same derived intent ref with different content is a duplicate identity (7.4, R4-control-intent.test.ts:133-135)', () => {
     for (const label of STATE_LABELS.filter(candidate => candidate !== 'Absent')) {
-      expect(transitionControlIntent(STATES[label], submitEvent('pause'), ctxWith({ node: 'Ended' })))
-        .toEqual({ ok: false, reason: 'duplicate', code: 'idempotency_conflict',
-          detail: 'the control request identity was already used with different content' });
+      for (const event of [submitEvent('pause'), appliedEvent('pause', 'none')]) {
+        expect(transitionControlIntent(STATES[label], event, ctxWith({ node: 'Ended' })))
+          .toEqual({ ok: false, reason: 'duplicate', code: 'idempotency_conflict',
+            detail: 'the control request identity was already used with different content' });
+      }
     }
+  });
+});
+
+// -------------------------------------------------------------------------- //
+// control_superseded_by_newer (CTL-04, D-8)                                  //
+// -------------------------------------------------------------------------- //
+
+describe('control_superseded_by_newer (CTL-04)', () => {
+  it('(a) supersedes the queued intent the pre-commit pointer names; (b) a queued steer of the Run', () => {
+    for (const kind of ['pause', 'cancel', 'resume'] as const) {
+      expect(transitionControlIntent(queued(kind), SUPERSEDED_EVENT, ctxWith({ pointsHere: true, inControlInputs: false })))
+        .toEqual(supersededBy(queued(kind)));
+      expect(transitionControlIntent(queued(kind), SUPERSEDED_EVENT, ctxWith({ pointsHere: false, inControlInputs: true })))
+        .toEqual({ ok: false, reason: 'illegal', code: 'invalid',
+          detail: 'only the intent the newer commit moves off the Run pointer, or a queued steer of the Run, is superseded' });
+    }
+    expect(transitionControlIntent(queued('steer'), SUPERSEDED_EVENT, ctxWith({ pointsHere: false, inControlInputs: true })))
+      .toEqual(supersededBy(queued('steer')));
+    expect(transitionControlIntent(queued('steer'), SUPERSEDED_EVENT, ctxWith({ pointsHere: true, inControlInputs: false })))
+      .toMatchObject({ ok: false, reason: 'illegal', code: 'invalid' });
+  });
+
+  it('only a queued intent can be superseded (7.4)', () => {
+    for (const label of STATE_LABELS.filter(candidate => !candidate.startsWith('Queued'))) {
+      expect(transitionControlIntent(STATES[label], SUPERSEDED_EVENT, ctxWith()))
+        .toEqual({ ok: false, reason: 'illegal', code: 'invalid', detail: 'only a queued control intent can be superseded' });
+    }
+  });
+
+  it('a recorded state without a kind is malformed', () => {
+    expect(transitionControlIntent({ node: 'Queued', kind: null, revision: 1, observation: null }, SUPERSEDED_EVENT, ctxWith()))
+      .toEqual({ ok: false, reason: 'illegal', code: 'invalid', detail: 'a recorded control intent must have a kind' });
   });
 });
 
@@ -479,19 +600,23 @@ describe('control_submitted from Absent: pointer × kind × Run node (CTL-01)', 
 // control_observed (CTL-03, CTL-05, CTL-06, CTL-09)                          //
 // -------------------------------------------------------------------------- //
 
-/** The codec pairing a commit enforces today for a Kernel observation (`control-record-codecs.ts:396-407`). */
+/** The CD-2 pairing a commit enforces for a Kernel observation (`control-record-codecs.ts`). */
 const KERNEL_PAIRS: Record<ControlObservationV1['kind'], readonly ControlIntentKindV1[]> = {
   paused: ['pause'],
   resumed: ['resume'],
   steered: ['steer'],
   cancelled: ['cancel'],
-  terminal_without_cancel: ['cancel'],
-  outcome_unknown: ['cancel'],
+  terminal_without_cancel: KINDS,
+  outcome_unknown: KINDS,
 };
 const MAPPED_NODE: Record<ControlObservationV1['kind'], Exclude<ControlNode, 'Absent' | 'Queued'>> = {
   paused: 'Applied', resumed: 'Applied', steered: 'Applied', cancelled: 'Applied',
   terminal_without_cancel: 'Superseded', outcome_unknown: 'OutcomeUnknown',
 };
+/** CTL-06: a terminal that came first is recorded only for a Run that ended with a known outcome. */
+function observationCtx(observed: ControlObservationV1['kind']): ControlGuardContext {
+  return observed === 'terminal_without_cancel' ? ctxWith({ node: 'Ended' }) : ctxWith();
+}
 
 describe('control_observed: recorded node × intent kind × Kernel observation kind', () => {
   const recorded = STATE_LABELS.filter(label => label !== 'Absent');
@@ -500,13 +625,17 @@ describe('control_observed: recorded node × intent kind × Kernel observation k
       it(`${label} × ${observed}`, () => {
         const state = STATES[label];
         const observation = kernelObservation(observed);
-        const result = transitionControlIntent(state, observedEvent(observation), ctxWith());
+        const result = transitionControlIntent(state, observedEvent(observation), observationCtx(observed));
         const kind = state.kind as ControlIntentKindV1;
-        // Pairs outside today's codec rule are illegal/invalid. Step 5.1 flips (CD-2): a Kernel
-        // outcome_unknown (CTL-03) and terminal_without_cancel (CTL-06) close any kind.
+        if (state.node !== 'Queued') {
+          // CTL-09: the same Kernel fact again is a no-op; any other content is stale.
+          // §7.4: an outcome_unknown intent is stale for every in-process observation.
+          const same = state.node !== 'OutcomeUnknown' && state.observation !== null && !('origin' in state.observation)
+            && state.observation.kind === observed;
+          return check(result, same ? unchanged(state) : STALE);
+        }
+        // CD-2: a Kernel outcome_unknown (CTL-03) and terminal_without_cancel (CTL-06) close any kind.
         if (!KERNEL_PAIRS[observed].includes(kind)) return check(result, ILLEGAL);
-        // Today a recorded Applied/Superseded/OutcomeUnknown intent is re-observed at revision + 1
-        // (step 5.1 flip, CTL-09 / §7.4: same content → duplicate, other content → stale).
         check(result, observedTo(state, MAPPED_NODE[observed], observation));
       });
     }
@@ -521,21 +650,31 @@ describe('control_observed: recorded node × intent kind × Kernel observation k
     expect(transitionControlIntent(queued('pause'), observedEvent(kernelObservation('paused')), ctxWith()))
       .toEqual({ ok: true, next: { node: 'Applied', kind: 'pause', revision: 2, observation: kernelObservation('paused') },
         effects: [{ kind: 'guard_run' }] });
-    expect(transitionControlIntent(queued('cancel'), observedEvent(kernelObservation('terminal_without_cancel')), ctxWith()))
+    expect(transitionControlIntent(queued('cancel'), observedEvent(kernelObservation('terminal_without_cancel')), ctxWith({ node: 'Ended' })))
       .toEqual(observedTo(queued('cancel'), 'Superseded', kernelObservation('terminal_without_cancel')));
     expect(transitionControlIntent(queued('cancel'), observedEvent(kernelObservation('outcome_unknown')), ctxWith()))
       .toEqual(observedTo(queued('cancel'), 'OutcomeUnknown', kernelObservation('outcome_unknown')));
   });
 
-  it('a consumed pause with an unknown outcome is refused by today\'s pairing (step 5.1 flip, CTL-03: OutcomeUnknown)', () => {
-    expect(transitionControlIntent(queued('pause'), observedEvent(kernelObservation('outcome_unknown')), ctxWith()))
-      .toEqual({ ok: false, reason: 'illegal', code: 'invalid', detail: 'a cancelled/unknown observation must belong to a cancel intent' });
+  it('CTL-03 (CD-2): a consumed pause that meets an unknown tool result is OutcomeUnknown', () => {
+    for (const kind of KINDS) {
+      expect(transitionControlIntent(queued(kind), observedEvent(kernelObservation('outcome_unknown')), ctxWith()))
+        .toEqual(observedTo(queued(kind), 'OutcomeUnknown', kernelObservation('outcome_unknown')));
+    }
   });
 
-  it('a natural terminal over a queued pause/resume/steer is refused today (step 5.1 flip, CTL-06: Superseded)', () => {
+  it('CTL-06 (CD-2): a natural terminal over a queued pause/resume/steer supersedes it on a Run that ended', () => {
     for (const kind of ['pause', 'resume', 'steer'] as const) {
-      expect(transitionControlIntent(queued(kind), observedEvent(kernelObservation('terminal_without_cancel')),
-        ctxWith({ node: 'Ended' }))).toMatchObject({ ok: false, reason: 'illegal', code: 'invalid' });
+      expect(transitionControlIntent(queued(kind), observedEvent(kernelObservation('terminal_without_cancel')), ctxWith({ node: 'Ended' })))
+        .toEqual(observedTo(queued(kind), 'Superseded', kernelObservation('terminal_without_cancel')));
+    }
+  });
+
+  it('CTL-06 guard: not for a yielded wait (the continuation fence), an unknown end or an open Run', () => {
+    for (const node of ['YieldedWait', 'EndedUnknown', 'Running', 'Entering'] as const) {
+      expect(transitionControlIntent(queued('pause'), observedEvent(kernelObservation('terminal_without_cancel')), ctxWith({ node })), node)
+        .toEqual({ ok: false, reason: 'guard_failed', code: 'busy',
+          detail: 'terminal_without_cancel is recorded only after a known terminal that is not a yielded wait' });
     }
   });
 
@@ -563,13 +702,34 @@ describe('control_observed: recorded node × intent kind × Kernel observation k
       .toMatchObject({ ok: false, reason: 'illegal', code: 'invalid' });
   });
 
-  it('a recorded intent is re-observed today (step 5.1 flip, CTL-09: same content → duplicate; otherwise stale)', () => {
-    expect(transitionControlIntent(applied('pause'), observedEvent(kernelObservation('paused')), ctxWith()))
-      .toEqual(observedTo(applied('pause'), 'Applied', kernelObservation('paused')));
-    expect(transitionControlIntent(superseded('cancel'), observedEvent(kernelObservation('outcome_unknown')), ctxWith()))
-      .toEqual(observedTo(superseded('cancel'), 'OutcomeUnknown', kernelObservation('outcome_unknown')));
-    expect(transitionControlIntent(outcomeUnknown('cancel'), observedEvent(kernelObservation('terminal_without_cancel')), ctxWith()))
-      .toEqual(observedTo(outcomeUnknown('cancel'), 'Superseded', kernelObservation('terminal_without_cancel')));
+  it('CTL-09: an observed intent is never re-observed; the same Kernel fact is a no-op, other content is stale', () => {
+    for (const label of STATE_LABELS.filter(candidate => candidate !== 'Absent' && !candidate.startsWith('Queued'))) {
+      const state = STATES[label];
+      const recorded = state.observation;
+      if (state.node === 'OutcomeUnknown') {
+        // §7.4: only control_reconciled moves an outcome_unknown intent; the same fact again is stale too.
+        const again = recorded !== null && !('origin' in recorded) ? recorded : kernelObservation('outcome_unknown');
+        for (const observation of [again, { ...again, kernelEventId: 'ke-2' }]) {
+          expect(transitionControlIntent(state, observedEvent(observation), ctxWith()), label).toEqual({ ok: false,
+            reason: 'stale', code: 'revision_conflict', detail: 'the control intent is outcome_unknown; only the start-up reconcile settles it' });
+        }
+      } else if (recorded !== null && !('origin' in recorded)) {
+        // Same kind, source position and Kernel event id: no write (SD-1), even with another window.
+        expect(transitionControlIntent(state, observedEvent({ ...recorded, observedAt: '2026-10-04T02:00:00.000Z' }), ctxWith()), label)
+          .toEqual(unchanged(state));
+        for (const patch of [{ source: { ...KERNEL, position: 6 } }, { kernelEventId: 'ke-2' }]) {
+          expect(transitionControlIntent(state, observedEvent({ ...recorded, ...patch }), ctxWith()), label).toEqual({ ok: false,
+            reason: 'stale', code: 'revision_conflict',
+            detail: `the control intent is already ${state.node.toLowerCase()}; a later observation does not change it` });
+        }
+      } else {
+        // A platform-observed intent never matches a Kernel fact.
+        expect(transitionControlIntent(state, observedEvent(kernelObservation(KERNEL_KINDS[0]!)), ctxWith()), label).toMatchObject(STALE);
+      }
+    }
+    // The state guard comes before the Run is read: a missing Run does not change the answer.
+    expect(transitionControlIntent(applied('pause'), observedEvent(kernelObservation('paused')), ctxWith({ node: 'Absent', entry: null })))
+      .toEqual(unchanged(applied('pause')));
   });
 
   const observation = kernelObservation('paused');
@@ -632,7 +792,7 @@ describe('control_observed: recorded node × intent kind × Kernel observation k
       .toMatchObject({ ok: true });
   });
 
-  it('the first failing row answers, in today\'s order (`control-service.ts:525-573`), before the pairing', () => {
+  it('the first failing row answers, in `control-service.ts:525-573` order, before the pairing', () => {
     const intentChanged = { ok: false, reason: 'stale', code: 'revision_conflict', detail: 'the control intent changed since the caller read it' };
     const runChanged = { ok: false, reason: 'stale', code: 'revision_conflict', detail: 'the Run changed since the caller read it' };
     const entryDiffers = { ok: false, reason: 'guard_failed', code: 'forbidden',
@@ -664,13 +824,20 @@ describe('control_observed: recorded node × intent kind × Kernel observation k
     // The source window precedes the observation window (`:566-573`).
     expect(observe(ctxWith(), kernelObservation('paused', { source: { ...KERNEL, position: 11 },
       history: { ...LOCATOR, observedThroughPosition: 11 } }))).toEqual(sourceOutside);
-    // Every window row precedes the kind pairing.
+    // Every window row precedes the CTL-06 guard and the kind pairing.
     expect(observe(ctxWith(), kernelObservation('cancelled', { source: { ...KERNEL, position: 99 } }), queued('steer'))).toEqual(sourceOutside);
+    expect(observe(ctxWith({ node: 'YieldedWait' }), kernelObservation('terminal_without_cancel', { source: { ...KERNEL, position: 99 } })))
+      .toEqual(sourceOutside);
+    // The CTL-06 guard precedes the pairing.
+    expect(observe(ctxWith({ node: 'YieldedWait' }), kernelObservation('terminal_without_cancel')))
+      .toMatchObject({ reason: 'guard_failed', code: 'busy' });
   });
 
   it('a revision that would leave the safe-integer range is refused', () => {
-    const state: ControlIntentState = { ...applied('pause'), revision: Number.MAX_SAFE_INTEGER };
+    const state: ControlIntentState = { ...queued('pause'), revision: Number.MAX_SAFE_INTEGER };
     expect(transitionControlIntent(state, observedEvent(kernelObservation('paused')), ctxWith()))
+      .toEqual({ ok: false, reason: 'illegal', code: 'invalid', detail: 'the control intent revision would not be a safe integer' });
+    expect(transitionControlIntent(state, SUPERSEDED_EVENT, ctxWith()))
       .toEqual({ ok: false, reason: 'illegal', code: 'invalid', detail: 'the control intent revision would not be a safe integer' });
   });
 
@@ -701,48 +868,60 @@ describe('control_observed: recorded node × intent kind × Kernel observation k
 });
 
 // -------------------------------------------------------------------------- //
-// The reads control-service.ts makes before CTL-01 / CTL-03 answer (step 3)  //
+// The reads control-service.ts makes before the machine answers              //
 // -------------------------------------------------------------------------- //
 
-describe('submissionReadsPointerIntent and observedIntentProblem (A.2 step 3)', () => {
-  it('reads the pointer intent only for a resume past the target-Run rows, not yielded, with a pointer', () => {
+describe('submissionReadsPointerIntent, submissionReadsGoal and observedIntentAnswer', () => {
+  it('reads the pointer intent for a pause, cancel or resume past the target-Run rows that moves an existing pointer', () => {
     for (const node of RUN_NODES) {
       for (const pointer of POINTERS) {
         for (const kind of KINDS) {
           for (const runPinned of [true, false]) {
             const ctx = ctxWith({ node, pointer }, { pinsMatch: { intent: true, run: runPinned } });
             const label = `${node}/${pointer}/${kind}/${String(runPinned)}`;
-            const reads = submissionReadsPointerIntent(submitEvent(kind), ctx);
-            const open = node !== 'Absent' && node !== 'Ended' && node !== 'EndedUnknown' && node !== 'YieldedWait';
-            expect(reads, label).toBe(kind === 'resume' && runPinned && open && pointer !== 'none');
+            const event = submissionFor(node, kind);
+            const reads = submissionReadsPointerIntent(event, ctx);
+            const open = node !== 'Absent' && node !== 'Ended' && node !== 'EndedUnknown';
+            expect(reads, label).toBe(kind !== 'steer' && runPinned && open && pointer !== 'none');
             // A submission that does not read it is answered the same whatever the pointer names.
             if (!reads) {
-              const unread = transitionControlIntent(ABSENT, submitEvent(kind), ctx);
+              const unread = transitionControlIntent(ABSENT, event, ctx);
               for (const pointerIntent of Object.values(POINTER_INTENT)) {
-                expect(transitionControlIntent(ABSENT, submitEvent(kind), { ...ctx, pointerIntent }), label).toEqual(unread);
+                expect(transitionControlIntent(ABSENT, event, { ...ctx, pointerIntent }), label).toEqual(unread);
               }
+            }
+            // The Goal is read for a resume past the same rows, and only then.
+            const readsGoal = submissionReadsGoal(event, ctx);
+            expect(readsGoal, label).toBe(kind === 'resume' && runPinned && open);
+            if (!readsGoal) {
+              expect(transitionControlIntent(ABSENT, event, { ...ctx, goal: { desiredState: 'paused' } }), label)
+                .toEqual(transitionControlIntent(ABSENT, event, ctx));
             }
           }
         }
       }
     }
     expect(submissionReadsPointerIntent(submitEvent('resume', null, 'query_run'), ctxWith({ pointer: 'paused' }))).toBe(false);
+    expect(submissionReadsGoal(submitEvent('resume', null, 'query_run'), ctxWith({ pointer: 'paused' }))).toBe(false);
   });
 
   it('a resume that reads it is answered by it, before the pointer fence', () => {
     for (const node of ['Claimed', 'Authorized', 'Entering', 'Revoked', 'Running'] as const) {
       const ctx = ctxWith({ node, pointer: 'cancelled' });
-      expect(submissionReadsPointerIntent(submitEvent('resume'), ctx), node).toBe(true);
-      expect(transitionControlIntent(ABSENT, submitEvent('resume'), { ...ctx, pointerIntent: POINTER_INTENT.cancelled }), node)
+      const event = submissionFor(node, 'resume');
+      expect(submissionReadsPointerIntent(event, ctx), node).toBe(true);
+      expect(transitionControlIntent(ABSENT, event, { ...ctx, pointerIntent: POINTER_INTENT.cancelled }), node)
         .toEqual({ ok: false, reason: 'guard_failed', code: 'busy', detail: 'resume requires an observed paused original Turn' });
     }
   });
 
-  it('observedIntentProblem is the intent pin alone, and the transition answers it first', () => {
+  it('observedIntentAnswer: the intent pin, then CTL-09 for an observed intent; null when the Run must be read', () => {
     const event = observedEvent(kernelObservation('paused'));
     const stale = { ok: false, reason: 'stale', code: 'revision_conflict', detail: 'the control intent changed since the caller read it' };
-    expect(observedIntentProblem(event, { pinsMatch: { intent: true, run: false } })).toBeNull();
-    expect(observedIntentProblem(event, { pinsMatch: { intent: false, run: true } })).toEqual(stale);
+    expect(observedIntentAnswer(queued('pause'), event, { pinsMatch: { intent: true, run: false } })).toBeNull();
+    expect(observedIntentAnswer(queued('pause'), event, { pinsMatch: { intent: false, run: true } })).toEqual(stale);
+    expect(observedIntentAnswer(applied('pause'), event, { pinsMatch: { intent: true, run: true } })).toEqual(unchanged(applied('pause')));
+    expect(observedIntentAnswer(applied('cancel'), event, { pinsMatch: { intent: true, run: true } })).toMatchObject(STALE);
     for (const label of STATE_LABELS.filter(candidate => candidate !== 'Absent')) {
       expect(transitionControlIntent(STATES[label], event, ctxWith({ node: 'Absent', entry: null, history: 'malformed' },
         { pinsMatch: { intent: false, run: false } })), label).toEqual(stale);
@@ -751,39 +930,10 @@ describe('submissionReadsPointerIntent and observedIntentProblem (A.2 step 3)', 
 });
 
 // -------------------------------------------------------------------------- //
-// 新增 events: still illegal until step 5                                    //
+// 新增 events: still illegal until step 5.6                                   //
 // -------------------------------------------------------------------------- //
 
-describe('rows that A.2 step 5 adds answer illegal/invalid today', () => {
-  it('CTL-02 control_applied_not_entered: not yet; an internal assertion from Entering/Running', () => {
-    const event = EVENTS.control_applied_not_entered;
-    for (const node of ['Absent', 'Claimed', 'Authorized', 'Revoked', 'YieldedWait', 'Ended', 'EndedUnknown'] as const) {
-      expect(transitionControlIntent(ABSENT, event, ctxWith({ node })))
-        .toEqual({ ok: false, reason: 'illegal', code: 'invalid', detail: 'CTL-02 is not implemented before A.2 step 5' });
-    }
-    for (const node of ['Entering', 'Running'] as const) {
-      expect(transitionControlIntent(ABSENT, event, ctxWith({ node })))
-        .toEqual({ ok: false, reason: 'illegal', code: 'invalid',
-          detail: 'from Entering on only the Kernel, RUN-23 or reconcile can apply a control (D-7)' });
-    }
-    // An existing intent is not yet answered like CTL-01's identity check either (step 5.1 adds it with the row).
-    for (const label of STATE_LABELS.filter(candidate => candidate !== 'Absent')) {
-      for (const node of RUN_NODES) {
-        expect(transitionControlIntent(STATES[label], event, ctxWith({ node })))
-          .toEqual({ ok: false, reason: 'illegal', code: 'invalid', detail: 'CTL-02 is not implemented before A.2 step 5' });
-      }
-    }
-  });
-
-  it('CTL-04 control_superseded_by_newer: not yet for a queued intent; never for another node (7.4)', () => {
-    for (const label of STATE_LABELS) {
-      const node = STATES[label].node;
-      expect(transitionControlIntent(STATES[label], EVENTS.control_superseded_by_newer, ctxWith())).toEqual({
-        ok: false, reason: 'illegal', code: 'invalid',
-        detail: node === 'Queued' ? 'CTL-04 is not implemented before A.2 step 5' : 'only a queued control intent can be superseded' });
-    }
-  });
-
+describe('rows that A.2 step 5.6 adds answer illegal/invalid today', () => {
   it('CTL-10 control_applied_paused_stop: not yet for a queued cancel, whatever the exit proof (7.4)', () => {
     for (const exitProof of [null, 'live_clean', 'host_instance_takeover'] as const) {
       for (const kernelPaused of [false, true]) {
@@ -822,12 +972,19 @@ describe('rows that A.2 step 5 adds answer illegal/invalid today', () => {
 // -------------------------------------------------------------------------- //
 
 describe('pure helpers', () => {
-  it('desiredStateOfKind and pointerAfterSubmit (RUN-12..15)', () => {
+  it('desiredStateOfKind and pointerAfterSubmit (RUN-09..15)', () => {
     expect(KINDS.map(desiredStateOfKind)).toEqual(['paused', 'cancelled', 'running', 'steered']);
     expect(pointerAfterSubmit('pause', SELF)).toEqual({ kind: 'set_pointer', controlState: { intentRef: SELF, desiredState: 'paused' } });
     expect(pointerAfterSubmit('cancel', SELF)).toEqual({ kind: 'set_pointer', controlState: { intentRef: SELF, desiredState: 'cancelled' } });
     expect(pointerAfterSubmit('resume', SELF)).toEqual({ kind: 'set_pointer', controlState: { intentRef: SELF, desiredState: 'running' } });
     expect(pointerAfterSubmit('steer', SELF)).toEqual({ kind: 'append_input', intentRef: SELF });
+  });
+
+  it('notEnteredEntryPhase names the entry phase of exactly the nodes that never entered (RD-1)', () => {
+    expect(Object.fromEntries(RUN_NODES.map(node => [node, notEnteredEntryPhase(node)]))).toEqual({
+      Absent: null, Claimed: 'none', Authorized: 'authorized', Entering: null, Revoked: 'revoked', Running: null, Ended: null,
+      YieldedWait: null, EndedUnknown: null,
+    });
   });
 
   it('controlSubmitProblem is freshSubmitControlProblem over the pointer', () => {
@@ -840,11 +997,22 @@ describe('pure helpers', () => {
     }
   });
 
-  it('controlSubmissionProblem: steer text, then the applied-pause resume check, then controlSubmitProblem (`control-service.ts:392-399`)', () => {
-    // The steer text is checked first, whatever the pointer.
+  it('controlSubmissionProblem: RD-8, steer text, the applied-pause resume check, D-9 Goal, then controlSubmitProblem', () => {
+    const base = { continuationConsumed: false, goal: 'active' as const };
+    // A consumed continuation answers first, whatever the submission.
+    for (const kind of KINDS) {
+      expect(controlSubmissionProblem({ ...base, kind, reason: null, pointer: 'cancelled', yielded: true, pointerIntent: null,
+        continuationConsumed: true, goal: 'paused' }))
+        .toEqual({ status: 'rejected', code: 'busy',
+          reason: 'a successor Run already consumed the yielded wait continuation; no new control intent is accepted' });
+      // Only a yielded wait has a continuation to consume.
+      expect(controlSubmissionProblem({ ...base, kind: 'steer', reason: 'text', pointer: 'none', yielded: false, pointerIntent: null,
+        continuationConsumed: true })).toBeNull();
+    }
+    // The steer text is checked next, whatever the pointer.
     for (const reason of [null, '', '  \n']) {
       for (const pointer of POINTERS) {
-        expect(controlSubmissionProblem({ kind: 'steer', reason, pointer, yielded: false, pointerIntent: POINTER_INTENT[pointer] }))
+        expect(controlSubmissionProblem({ ...base, kind: 'steer', reason, pointer, yielded: false, pointerIntent: POINTER_INTENT[pointer] }))
           .toEqual({ status: 'rejected', code: 'invalid', reason: 'steer requires the actual directional input text' });
       }
     }
@@ -855,18 +1023,26 @@ describe('pure helpers', () => {
       { kind: 'cancel', status: 'applied', observed: 'paused' },
     ];
     for (const pointerIntent of [null, ...notObserved]) {
-      expect(controlSubmissionProblem({ kind: 'resume', reason: null, pointer: 'paused', yielded: false, pointerIntent }))
+      expect(controlSubmissionProblem({ ...base, kind: 'resume', reason: null, pointer: 'paused', yielded: false, pointerIntent, goal: 'paused' }))
         .toEqual({ status: 'rejected', code: 'busy', reason: 'resume requires an observed paused original Turn' });
-      expect(controlSubmissionProblem({ kind: 'resume', reason: null, pointer: 'paused', yielded: true, pointerIntent })).toBeNull();
+      expect(controlSubmissionProblem({ ...base, kind: 'resume', reason: null, pointer: 'paused', yielded: true, pointerIntent })).toBeNull();
     }
-    expect(controlSubmissionProblem({ kind: 'resume', reason: null, pointer: 'none', yielded: false, pointerIntent: null }))
+    // D-9 after the resume rule and before the pointer fence.
+    for (const goal of ['paused', 'cancelled'] as const) {
+      expect(controlSubmissionProblem({ kind: 'resume', reason: null, pointer: 'none', yielded: false, pointerIntent: null,
+        continuationConsumed: false, goal }))
+        .toEqual({ status: 'rejected', code: 'busy', reason: `the Goal is ${goal}; a single Run is not resumed while its Goal is not active` });
+      expect(controlSubmissionProblem({ kind: 'cancel', reason: null, pointer: 'none', yielded: false, pointerIntent: null,
+        continuationConsumed: false, goal })).toBeNull();
+    }
+    expect(controlSubmissionProblem({ ...base, kind: 'resume', reason: null, pointer: 'none', yielded: false, pointerIntent: null }))
       .toEqual(controlSubmitProblem('none', 'resume'));
     // Otherwise it is exactly the pointer fence.
     for (const pointer of POINTERS) {
       for (const kind of KINDS) {
         for (const yielded of [false, true]) {
           const resumeCheck = kind === 'resume' && !yielded && pointer !== 'none' && pointer !== 'paused';
-          expect(controlSubmissionProblem({ kind, reason: 'text', pointer, yielded, pointerIntent: POINTER_INTENT[pointer] }))
+          expect(controlSubmissionProblem({ ...base, kind, reason: 'text', pointer, yielded, pointerIntent: POINTER_INTENT[pointer] }))
             .toEqual(resumeCheck
               ? { status: 'rejected', code: 'busy', reason: 'resume requires an observed paused original Turn' }
               : controlSubmitProblem(pointer, kind));
@@ -887,7 +1063,7 @@ describe('pure helpers', () => {
   function requestFor(kind: ControlIntentKindV1): ControlIntentRequestV1 {
     return newControlIntentRequest({ ref: SELF, kind, ...REQUEST_BASE });
   }
-  it('observationPairingProblem accepts exactly what the snapshot codec accepts today', () => {
+  it('observationPairingProblem accepts exactly what the snapshot codec accepts (CD-2)', () => {
     // The codec checks the canonical ref key, so encode one valid record to learn it.
     const refKey = encodeControlIntentSnapshot(newQueuedControlIntentRecord(requestFor('pause'))).refKey;
     const decodes = (kind: ControlIntentKindV1, observation: ControlObservationV1 | ControlPlatformObservationV1) => {
@@ -934,11 +1110,20 @@ describe('pure helpers', () => {
     for (const kind of KINDS) {
       const submit = transitionControlIntent(ABSENT, submitEvent(kind), ctxWith({ pointer: 'paused' }, { pointerIntent: POINTER_INTENT.paused }));
       if (submit.ok) accepted.push({ request: requestFor(kind), next: submit.next });
+      if (kind !== 'steer') {
+        for (const node of NOT_ENTERED_NODES) {
+          const appliedAt = transitionControlIntent(ABSENT, appliedEvent(kind, NOT_ENTERED[node]),
+            ctxWith({ node, pointer: kind === 'resume' ? 'paused' : 'none' }, { pointerIntent: kind === 'resume' ? POINTER_INTENT.paused : null }));
+          if (appliedAt.ok) accepted.push({ request: requestFor(kind), next: appliedAt.next });
+        }
+      }
+      const supersede = transitionControlIntent(queued(kind), SUPERSEDED_EVENT, ctxWith());
+      if (supersede.ok) accepted.push({ request: requestFor(kind), next: supersede.next });
       for (const label of STATE_LABELS.filter(candidate => candidate.endsWith(`:${kind}`))) {
         for (const observed of KERNEL_KINDS) {
           for (const pointsHere of [true, false]) {
             const result = transitionControlIntent(STATES[label], observedEvent(kernelObservation(observed)),
-              ctxWith({ pointsHere, inControlInputs: pointsHere }));
+              { ...observationCtx(observed), run: { ...observationCtx(observed).run, pointsHere, inControlInputs: pointsHere } });
             if (result.ok) accepted.push({ request: requestFor(kind), next: result.next });
           }
         }
@@ -967,7 +1152,7 @@ describe('pure helpers', () => {
     expect(() => controlIntentRecordOf(pause, { ...applied('pause'), observation: null })).toThrow('revision >= 2');
     expect(() => controlIntentRecordOf(pause, { ...applied('pause'), revision: 1 })).toThrow('revision >= 2');
     expect(() => controlIntentRecordOf(pause, { ...applied('pause'), observation: kernelObservation('cancelled') }))
-      .toThrow('a cancelled/unknown observation must belong to a cancel intent');
+      .toThrow('a cancelled observation must belong to a cancel intent');
     expect(() => controlIntentRecordOf({ ...pause, desiredState: 'running' }, applied('pause'))).toThrow('must desire paused');
     expect(() => newQueuedControlIntentRecord({ ...pause, desiredState: 'cancelled' })).toThrow('must desire paused');
   });

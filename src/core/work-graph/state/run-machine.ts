@@ -21,7 +21,11 @@
  *   `execution-history-binding.ts:146`) and today's CoreError codes.
  * - 改造 rows keep TODAY's externally visible result; step 5 flips them
  *   (D-3 requeue claim, C6 `entryPlan`, C3 `continuationBrief`, RUN-03, RUN-07
- *   `terminalPayload`, RUN-08, RUN-09..11 (U), D-8/D-9/RD-8 of RUN-12..15).
+ *   `terminalPayload`, RUN-08). Step 5.1 flipped RUN-09..11 (U) to D-7 (a
+ *   control on a Run that never entered applies at once; a cancel ends it and
+ *   releases its claim) and RUN-12..15 to D-8 (the older queued pointer intent
+ *   is superseded in the same commit), D-9 (resume needs the Goal active) and
+ *   RD-8 (a consumed continuation takes no control).
  * - 新增 rows (RUN-16..24 and the R source of RUN-09..11) keep their events in
  *   the union; the §6.4 refusals in front of them already answer, and the row
  *   itself answers `illegal` (`notYet`) so step 5 only adds rows.
@@ -411,8 +415,12 @@ export type RunEvent =
       event: RuntimeEventV1; kernelSource: RunKernelSource | null; completedHistoryBoundary: RunHistoryBoundary | null;
       history: RunObservedHistory | null; continuation?: RunContinuationV1; unresolvedToolCallIds: readonly string[];
       endedAt: string; factEventId: string }
-  /** RUN-09..11: U = the submission on a Run that never entered; R = reconcile of a leftover queued intent (CTL-08(a)). */
-  | { kind: 'stop_not_entered'; source: 'U' | 'R'; intentRef: ControlIntentRef }
+  /**
+   * RUN-09..11: U = the submission on a Run that never entered; R = reconcile of
+   * a leftover queued intent (CTL-08(a)). `recordedAt` is the commit's instant,
+   * the `endedAt` of the cancelled Run.
+   */
+  | { kind: 'stop_not_entered'; source: 'U' | 'R'; intentRef: ControlIntentRef; recordedAt: string }
   | { kind: 'pause_not_entered'; source: 'U' | 'R'; intentRef: ControlIntentRef }
   | { kind: 'resume_not_entered'; source: 'U' | 'R'; intentRef: ControlIntentRef }
   /** RUN-12..15 (U): the Run side of §7 CTL-01; `intentRef` is derived from the request identity. */
@@ -500,10 +508,18 @@ export type RunGuardContext = {
   continuationBrief: 'absent_ok' | 'bound' | 'missing' | 'unexpected' | 'mismatch';
   /** Host/Role/material/deadline re-admission of a fresh action; the IO stays in the service. */
   freshAdmission: CoreRejection | null;
-  /** The intent `Run.controlState` names; `null` without a pointer (the shape §7 CTL-01 reads). */
+  /**
+   * The intent `Run.controlState` names; `null` without a pointer (the shape §7
+   * CTL-01 reads). A still-queued one is superseded by the commit that moves
+   * the pointer (D-8, CTL-04(a)).
+   */
   pointerIntent: ControlPointerIntent | null;
-  /** Steers in `controlInputs` that are still queued (RUN-09/23 same-commit supersede). */
-  queuedSteerCount: number;
+  /**
+   * Steers in `controlInputs` that are still queued, which a not-entered stop
+   * supersedes in its commit (RUN-09, CTL-04(b); RUN-23 in step 5.6). §6.1
+   * sketches their count; the refs name the intents the effects write.
+   */
+  queuedSteers: readonly ControlIntentRef[];
   /** `YieldedWait` whose continuation a successor Run already consumed (RD-8). */
   continuationConsumed: boolean;
   exitProof: 'live_clean' | 'host_instance_takeover' | null;
@@ -626,7 +642,7 @@ function endedRunRecord(
     ...(event.continuation === undefined ? {} : { continuation: structuredClone(event.continuation) }) };
 }
 
-/** RUN-09..15 today (`control-service.ts:412-413`): only the revision and the pointer or steer list move. */
+/** RUN-10..15 (`control-service.ts:412-413`): only the revision and the pointer or steer list move. */
 function controlledRunRecord(run: RunSnapshot, change: RunPointerChange): RunSnapshot {
   switch (change.kind) {
     case 'append_input':
@@ -635,6 +651,20 @@ function controlledRunRecord(run: RunSnapshot, change: RunPointerChange): RunSna
       return { ...run, revision: run.revision + 1, controlState: change.controlState };
     default: return unreachable(change, 'Run pointer change');
   }
+}
+
+/**
+ * RUN-09 (D-7, RD-1): a Run that never entered ends `cancelled` with its
+ * pointer on the cancel. An `authorized` V2 binding becomes `revoked`
+ * (rev+1); none or `revoked` stays. No Runtime event, so the event watermarks
+ * and `terminalPayload` (contract (f)) are not written.
+ */
+function stoppedNotEnteredRunRecord(run: RunSnapshot, change: RunPointerChange, endedAt: string): RunSnapshot {
+  const moved = controlledRunRecord(run, change);
+  const auth = run.executionAuthorization;
+  const revoked = isAuthorizationV2(auth) && auth.phase === 'authorized'
+    ? { executionAuthorization: { ...auth, revision: auth.revision + 1, phase: 'revoked' as const } } : {};
+  return { ...moved, status: 'ended', outcome: 'cancelled', exitCode: null, endedAt, ...revoked };
 }
 
 // -------------------------------------------------------------------------- //
@@ -1244,46 +1274,70 @@ function onTerminalObserved(
 }
 
 /**
- * The submission checks of `control-service.ts:392-399` after the ended check,
- * through the ONE copy §7 CTL-01 also answers with (`controlSubmissionProblem`),
- * so the Run record and the intent record never disagree about a submission.
+ * The submission checks after the ended check, through the ONE copy §7
+ * CTL-01/CTL-02 also answer with (`controlSubmissionProblem`: RD-8, steer text,
+ * resume rule, D-9 Goal, pointer fence), so the Run record and the intent
+ * record never disagree about a submission.
  */
 function submitGuards(run: RunSnapshot, kind: ControlIntentKindV1, reason: string | null, yielded: boolean, ctx: RunGuardContext): Rejected | null {
   const problem = controlSubmissionProblem({ kind, reason, pointer: run.controlState?.desiredState ?? 'none', yielded,
-    pointerIntent: ctx.pointerIntent });
+    continuationConsumed: ctx.continuationConsumed, pointerIntent: ctx.pointerIntent, goal: ctx.goal.desiredState });
   return problem === null ? null : rejected(problem);
 }
 
-/** Today's accepted submission: the pointer or steer list moves, the new intent is queued@1 (CTL-01). */
-function queuedSubmission(run: RunSnapshot, kind: ControlIntentKindV1, intentRef: ControlIntentRef): RunTransition {
-  return accept(runStateOf(controlledRunRecord(run, pointerAfterSubmit(kind, intentRef))),
-    [{ kind: 'intent', event: 'control_submitted', intentRef }]);
+/**
+ * D-8 (CTL-04(a)): the pointer intent a pause, cancel or resume moves the
+ * pointer off is superseded in the same commit while it is still queued; an
+ * applied one stays as it is.
+ */
+function supersededPointerIntent(run: RunSnapshot, ctx: RunGuardContext): RunEffect[] {
+  const control = run.controlState;
+  return control !== undefined && ctx.pointerIntent !== null && ctx.pointerIntent.status === 'queued'
+    ? [{ kind: 'intent', event: 'control_superseded_by_newer', intentRef: control.intentRef }] : [];
+}
+
+/** RUN-12..15: the pointer or steer list moves, the new intent is queued@1 (CTL-01), D-8 for a pointer move. */
+function queuedSubmission(run: RunSnapshot, kind: ControlIntentKindV1, intentRef: ControlIntentRef, ctx: RunGuardContext): RunTransition {
+  return accept(runStateOf(controlledRunRecord(run, pointerAfterSubmit(kind, intentRef))), [
+    { kind: 'intent', event: 'control_submitted', intentRef },
+    ...(kind === 'steer' ? [] : supersededPointerIntent(run, ctx)),
+  ]);
 }
 
 const NOT_ENTERED_KIND = { stop_not_entered: 'cancel', pause_not_entered: 'pause', resume_not_entered: 'resume' } as const;
-const NOT_ENTERED_EVENT = { cancel: 'stop_not_entered', pause: 'pause_not_entered', resume: 'resume_not_entered' } as const;
 const NOT_ENTERED_ROW = { stop_not_entered: 'RUN-09', pause_not_entered: 'RUN-10', resume_not_entered: 'RUN-11' } as const;
 
 /**
- * The Run event of one Host control submission (`control-service.ts:325-437`):
- * a pause, cancel or resume of a Run that never entered is RUN-09..11 (U),
- * every other submission RUN-12..15, with the node `runControlNodeOf` reads.
+ * The Run event of one Host control submission (`control-service.ts`): a pause,
+ * cancel or resume of a Run that never entered is RUN-09..11 (U), every other
+ * submission RUN-12..15, with the node `runControlNodeOf` reads. `recordedAt`
+ * is the commit's instant (the `endedAt` of a not-entered stop).
  */
 export function controlSubmissionRunEvent(
-  run: RunSnapshot, intentRef: ControlIntentRef, kind: ControlIntentKindV1, reason: string | null,
+  run: RunSnapshot, intentRef: ControlIntentRef, kind: ControlIntentKindV1, reason: string | null, recordedAt: string,
 ): Extract<RunEvent, { kind: 'stop_not_entered' | 'pause_not_entered' | 'resume_not_entered' | 'control_submitted' }> {
   if (kind !== 'steer' && controlClassOf(runControlNodeOf(run)) === 'not_entered') {
-    return { kind: NOT_ENTERED_EVENT[kind], source: 'U', intentRef };
+    switch (kind) {
+      case 'cancel': return { kind: 'stop_not_entered', source: 'U', intentRef, recordedAt };
+      case 'pause': return { kind: 'pause_not_entered', source: 'U', intentRef };
+      case 'resume': return { kind: 'resume_not_entered', source: 'U', intentRef };
+      default: return unreachable(kind, 'not-entered control kind');
+    }
   }
   return { kind: 'control_submitted', intentRef, control: kind, reason };
 }
 
 /**
- * RUN-09..11. (U) is 改造: today the submission on a Run that never entered
- * is queued like on an entered one (`control-service.ts:387-430`; step 5.1
- * applies it at once, D-7). (R), the reconcile of a leftover queued intent
- * (CTL-08(a)), is 新增. A (U) submission reads the Run node as the control
- * service reads it (`runControlNodeOf`).
+ * RUN-09..11 (D-7, RD-1). (U), the submission on a Run that never entered
+ * (`Claimed`/`Authorized`/`Revoked`, read as the control service reads it,
+ * `runControlNodeOf`): the pointer moves and the new intent is applied at once
+ * (§7 CTL-02); a still-queued older pointer intent is superseded (D-8). A
+ * pause or resume keeps the node; a cancel ends the Run `cancelled` and, in
+ * the same commit, supersedes every queued steer (CTL-04(b)), ends the Attempt
+ * (ATT-05), settles the Outbox as not entered (ATT-30), and releases the Lease
+ * (ATT-23) and the Session occupancy (SES-05, `historyCursor` kept) the Run
+ * still holds. (R), the reconcile of a leftover queued intent (CTL-08(a)), is
+ * step 5.6.
  */
 function onNotEnteredControl(
   stateNode: Exclude<RunNode, 'Absent'>, run: RunSnapshot,
@@ -1307,14 +1361,42 @@ function onNotEnteredControl(
   const kind = NOT_ENTERED_KIND[event.kind];
   const problem = submitGuards(run, kind, null, false, ctx);
   if (problem !== null) return problem;
-  return queuedSubmission(run, kind, event.intentRef);
+  const change = pointerAfterSubmit(kind, event.intentRef);
+  const effects: RunEffect[] = [
+    { kind: 'intent', event: 'control_applied_not_entered', intentRef: event.intentRef },
+    ...supersededPointerIntent(run, ctx),
+  ];
+  switch (event.kind) {
+    case 'pause_not_entered':
+    case 'resume_not_entered':
+      return accept(runStateOf(controlledRunRecord(run, change)), effects);
+    case 'stop_not_entered': {
+      const claim = ctx.persistedClaim;
+      if (claim === null) return noPersistedClaim(event.kind);
+      for (const steer of ctx.queuedSteers) {
+        effects.push({ kind: 'intent', event: 'control_superseded_by_newer', intentRef: steer });
+      }
+      effects.push({ kind: 'attempt', event: 'attempt_ended', outcome: 'cancelled' },
+        { kind: 'outbox', change: 'settled_not_entered' });
+      if (ctx.lease === 'owned') effects.push({ kind: 'release_lease' });
+      if (ctx.session.owned) {
+        effects.push({ kind: 'release_session', holder: claim.runRef, generation: claim.generation,
+          historyCursor: { kind: 'keep' }, kernelTurnOpen: false });
+      }
+      return accept(runStateOf(stoppedNotEnteredRunRecord(run, change, event.recordedAt)), effects);
+    }
+    default: return unreachable(event, 'not-entered control event');
+  }
 }
 
 /**
- * RUN-12..15 with today's result: no D-8 same-commit supersede, no D-9 Goal
- * guard for resume and no RD-8 consumed-continuation guard (step 5.1). A
- * pause/cancel/resume of a Run that never entered is `*_not_entered`. The Run
- * node is read as the control service reads it (`runControlNodeOf`).
+ * RUN-12..15 on an entered Run, a yielded wait, and a steer on any open Run:
+ * the new intent is queued; a pause, cancel or resume supersedes the still-
+ * queued older pointer intent in the same commit (D-8); a consumed
+ * continuation takes no control (RD-8) and a resume needs the Goal active
+ * (D-9). A pause/cancel/resume of a Run that never entered is
+ * `*_not_entered`. The Run node is read as the control service reads it
+ * (`runControlNodeOf`).
  */
 function onControlSubmitted(
   run: RunSnapshot, event: Extract<RunEvent, { kind: 'control_submitted' }>, ctx: RunGuardContext,
@@ -1325,7 +1407,8 @@ function onControlSubmitted(
       return reject('illegal', 'busy', 'the Run already ended; no new control intent is accepted');
     case 'not_entered':
       if (event.control !== 'steer') {
-        return reject('illegal', 'invalid', `a Run that never entered takes ${event.control} through ${NOT_ENTERED_EVENT[event.control]}`);
+        return reject('illegal', 'invalid', `a Run that never entered takes ${event.control} through ${event.control === 'cancel'
+          ? 'stop' : event.control}_not_entered`);
       }
       break;
     case 'entered':
@@ -1335,7 +1418,7 @@ function onControlSubmitted(
   }
   const problem = submitGuards(run, event.control, event.reason, cls === 'yielded', ctx);
   if (problem !== null) return problem;
-  return queuedSubmission(run, event.control, event.intentRef);
+  return queuedSubmission(run, event.control, event.intentRef, ctx);
 }
 
 /**

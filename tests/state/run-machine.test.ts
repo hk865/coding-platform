@@ -6,7 +6,11 @@
  *   the effects (and, for the rows that write, the record byte for byte
  *   against today's service literals); an illegal one asserts `reason` and
  *   `code` from §6.4. 新增 rows (RUN-16..24, the R source of RUN-09..11) still
- *   answer `illegal`/`invalid` naming their row; 改造 rows keep today's result.
+ *   answer `illegal`/`invalid` naming their row; 改造 rows keep today's result
+ *   except the step 5.1 flips: RUN-09..11 (U) apply a control on a Run that
+ *   never entered at once (D-7), and RUN-12..15 supersede the queued older
+ *   pointer intent (D-8) and refuse a resume of a non-active Goal (D-9) and a
+ *   control on a consumed continuation (RD-8).
  * - Guard rows of RUN-01..07 and RUN-09..15 in today's order, the §6.4
  *   refusals in front of the 新增 rows, and the pure helpers named by §6.6 /
  *   §15.1 (`runControlFence`, `terminalOutcomeOf`, `terminalPayloadOf`,
@@ -36,7 +40,9 @@ import {
   type RunEffect, type RunEvent, type RunGuardContext, type RunNode, type RunObservedHistory, type RunState,
   type RunTransition, type RunTurnFacts,
 } from '../../src/core/work-graph/state/run-machine.js';
-import { controlSubmissionProblem, transitionControlIntent } from '../../src/core/work-graph/state/control-intent-machine.js';
+import {
+  controlSubmissionProblem, notEnteredEntryPhase, transitionControlIntent, type ControlIntentEvent,
+} from '../../src/core/work-graph/state/control-intent-machine.js';
 import type { TransitionRejectReason } from '../../src/core/work-graph/state/transition.js';
 import { runCombinationProblem } from './invariants.js';
 
@@ -129,7 +135,7 @@ const CTX: RunGuardContext = {
   continuationBrief: 'absent_ok',
   freshAdmission: null,
   pointerIntent: null,
-  queuedSteerCount: 0,
+  queuedSteers: [],
   continuationConsumed: false,
   exitProof: 'live_clean',
   hostLease: 'owned',
@@ -158,8 +164,8 @@ const EV = {
   terminal: { kind: 'terminal_observed', claim, entry: { consumerId: CONSUMER, entryGeneration: 1 }, event: COMPLETED(),
     kernelSource: source(6), completedHistoryBoundary: { source: source(6), cursor: 'cursor-6' },
     history: observed(3, 6, 6), unresolvedToolCallIds: [], endedAt: T_END, factEventId: 'fact-1' },
-  stopU: { kind: 'stop_not_entered', source: 'U', intentRef: intentRef('i-cancel') },
-  stopR: { kind: 'stop_not_entered', source: 'R', intentRef: intentRef('i-cancel') },
+  stopU: { kind: 'stop_not_entered', source: 'U', intentRef: intentRef('i-cancel'), recordedAt: T_LATER },
+  stopR: { kind: 'stop_not_entered', source: 'R', intentRef: intentRef('i-cancel'), recordedAt: T_LATER },
   pauseU: { kind: 'pause_not_entered', source: 'U', intentRef: intentRef('i-pause') },
   pauseR: { kind: 'pause_not_entered', source: 'R', intentRef: intentRef('i-pause') },
   resumeU: { kind: 'resume_not_entered', source: 'U', intentRef: intentRef('i-resume') },
@@ -248,12 +254,27 @@ const TERMINAL_EFFECTS: RunEffect[] = [
   { kind: 'release_lease' },
 ];
 
-/** The not-entered control U rows today (RUN-09..11 改造): node unchanged, pointer moved, intent queued. */
+/** RUN-10 (U, D-7): node unchanged, pointer moved, the new intent applied at once (§7 CTL-02). */
+const appliedNotEntered = (id: string): RunEffect[] =>
+  [{ kind: 'intent', event: 'control_applied_not_entered', intentRef: intentRef(id) }];
 const unenteredControl = (id: string): Record<'Claimed' | 'Authorized' | 'Revoked', Expect> => ({
-  Claimed: { to: 'Claimed', effects: intentEffect(id) },
-  Authorized: { to: 'Authorized', effects: intentEffect(id) },
-  Revoked: { to: 'Revoked', effects: intentEffect(id) },
+  Claimed: { to: 'Claimed', effects: appliedNotEntered(id) },
+  Authorized: { to: 'Authorized', effects: appliedNotEntered(id) },
+  Revoked: { to: 'Revoked', effects: appliedNotEntered(id) },
 });
+/** RUN-09 (U, D-7): the Run ends cancelled and its claim's records end in the same commit (ATT-05/23/30, SES-05). */
+const STOP_NOT_ENTERED_EFFECTS: RunEffect[] = [
+  ...appliedNotEntered('i-cancel'),
+  { kind: 'attempt', event: 'attempt_ended', outcome: 'cancelled' },
+  { kind: 'outbox', change: 'settled_not_entered' },
+  { kind: 'release_lease' },
+  { kind: 'release_session', holder: claim.runRef, generation: GEN, historyCursor: { kind: 'keep' }, kernelTurnOpen: false },
+];
+const stoppedNotEntered: Record<'Claimed' | 'Authorized' | 'Revoked', Expect> = {
+  Claimed: { to: 'Ended', effects: STOP_NOT_ENTERED_EFFECTS },
+  Authorized: { to: 'Ended', effects: STOP_NOT_ENTERED_EFFECTS },
+  Revoked: { to: 'Ended', effects: STOP_NOT_ENTERED_EFFECTS },
+};
 const ROUTED_TO_NOT_ENTERED = { Claimed: ILLEGAL, Authorized: ILLEGAL, Revoked: ILLEGAL };
 const NOT_ENTERED_ON_OTHERS = { Absent: NOT_FOUND, Entering: ILLEGAL, Running: ILLEGAL, Ended: BUSY, YieldedWait: ILLEGAL,
   EndedUnknown: ILLEGAL };
@@ -283,7 +304,7 @@ const TABLE: Record<EventCase, Record<RunNode, Expect>> = {
     Revoked: BUSY, Running: { to: 'Ended', effects: TERMINAL_EFFECTS },
     Ended: { reason: 'duplicate', code: 'busy' }, YieldedWait: { reason: 'duplicate', code: 'busy' },
     EndedUnknown: { reason: 'guard_failed', code: 'incomplete' } },
-  stopU: { ...NOT_ENTERED_ON_OTHERS, ...unenteredControl('i-cancel') },
+  stopU: { ...NOT_ENTERED_ON_OTHERS, ...stoppedNotEntered },
   stopR: { ...NOT_ENTERED_ON_OTHERS, Claimed: notYet('RUN-09'), Authorized: notYet('RUN-09'), Revoked: notYet('RUN-09') },
   pauseU: { ...NOT_ENTERED_ON_OTHERS, ...unenteredControl('i-pause') },
   pauseR: { ...NOT_ENTERED_ON_OTHERS, Claimed: notYet('RUN-10'), Authorized: notYet('RUN-10'), Revoked: notYet('RUN-10') },
@@ -986,38 +1007,92 @@ describe('RUN-02/04/05/07 read the Run, Session and observation as execution-ent
 // RUN-09..15 control                                                        //
 // ------------------------------------------------------------------------ //
 
-describe('RUN-09..11 *_not_entered (U keeps today\'s queued result)', () => {
-  it('moves the pointer of a Run that never entered and queues the intent (control-service.ts key order)', () => {
+describe('RUN-09..11 *_not_entered (U, D-7: applied at once)', () => {
+  const APPLIED_PAUSE = { kind: 'pause', status: 'applied', observed: 'paused' } as const;
+  const QUEUED_RESUME = { kind: 'resume', status: 'queued', observed: null } as const;
+
+  it('RUN-10/11: moves the pointer of a Run that never entered and applies the intent; the node stays', () => {
     for (const node of ['Claimed', 'Authorized', 'Revoked'] as const) {
       const run = RECORD_OF[node];
-      const stop = ok(transitionRun(stateOf(node), EV.stopU, CTX));
-      expectSameRecord(stop.next.record, { ...run, revision: run.revision + 1,
-        controlState: { intentRef: intentRef('i-cancel'), desiredState: 'cancelled' } });
-      expect(stop.next).toMatchObject({ node, pointer: 'cancelled', outcome: null });
-      expect(ok(transitionRun(stateOf(node), EV.pauseU, CTX)).next.pointer).toBe('paused');
+      const pause = ok(transitionRun(stateOf(node), EV.pauseU, CTX));
+      expectSameRecord(pause.next.record, { ...run, revision: run.revision + 1,
+        controlState: { intentRef: intentRef('i-pause'), desiredState: 'paused' } });
+      expect(pause.next).toMatchObject({ node, pointer: 'paused', outcome: null });
+      expect(pause.effects).toEqual(appliedNotEntered('i-pause'));
+      const paused = { ...run, controlState: pointer('paused', 'i-old') };
+      const resume = ok(transitionRun(runStateOf(paused), EV.resumeU, ctxWith({ pointerIntent: APPLIED_PAUSE })));
+      expectSameRecord(resume.next.record, { ...paused, revision: run.revision + 1,
+        controlState: { intentRef: intentRef('i-resume'), desiredState: 'running' } });
+      // The applied pause the resume moves off is not superseded.
+      expect(resume.effects).toEqual(appliedNotEntered('i-resume'));
     }
   });
 
-  it('applies today\'s submit guards', () => {
+  it('RUN-09: ends the Run cancelled, revokes an authorized binding and keeps none/revoked (RD-1)', () => {
+    for (const node of ['Claimed', 'Authorized', 'Revoked'] as const) {
+      const run = RECORD_OF[node];
+      const stop = ok(transitionRun(stateOf(node), EV.stopU, CTX));
+      const auth = run.executionAuthorization;
+      const expected: RunSnapshot = { ...run, revision: run.revision + 1,
+        controlState: { intentRef: intentRef('i-cancel'), desiredState: 'cancelled' },
+        status: 'ended', outcome: 'cancelled', exitCode: null, endedAt: T_LATER,
+        ...(node === 'Authorized' ? { executionAuthorization: { ...authOf(run), revision: authOf(run).revision + 1, phase: 'revoked' } }
+          : auth === undefined ? {} : { executionAuthorization: auth }) };
+      expect(stop.next.record).toEqual(expected);
+      expect(stop.next).toMatchObject({ node: 'Ended', pointer: 'cancelled', outcome: 'cancelled' });
+      // No Runtime event: the event watermarks stay and no terminalPayload is written (contract (f)).
+      expect(stop.next.record).toMatchObject({ lastEventSeq: run.lastEventSeq, lastRuntimeEventId: run.lastRuntimeEventId,
+        lastFactEventId: run.lastFactEventId, startedAt: null });
+      expect('terminalPayload' in stop.next.record!).toBe(false);
+      expect(runCombinationProblem(stop.next.record!)).toBeNull();
+      expect(stop.effects).toEqual(STOP_NOT_ENTERED_EFFECTS);
+    }
+  });
+
+  it('RUN-09 releases only what the Run still holds and supersedes every queued steer (CTL-04(b))', () => {
+    const steers = [intentRef('i-steer-1'), intentRef('i-steer-2')];
+    const effects = ok(transitionRun(stateOf('Authorized'), EV.stopU,
+      ctxWith({ queuedSteers: steers, lease: 'released', session: { ...CTX.session, owned: false } }))).effects;
+    expect(effects).toEqual([
+      ...appliedNotEntered('i-cancel'),
+      { kind: 'intent', event: 'control_superseded_by_newer', intentRef: steers[0] },
+      { kind: 'intent', event: 'control_superseded_by_newer', intentRef: steers[1] },
+      { kind: 'attempt', event: 'attempt_ended', outcome: 'cancelled' },
+      { kind: 'outbox', change: 'settled_not_entered' },
+    ]);
+    // The persisted claim names the holder of the release.
+    expect(answer(transitionRun(stateOf('Claimed'), EV.stopU, ctxWith({ persistedClaim: null }))))
+      .toEqual({ reason: 'illegal', code: 'invalid' });
+  });
+
+  it('D-8: a still-queued older pointer intent is superseded in the same commit; an applied one is not', () => {
+    const resumed: RunSnapshot = { ...CLAIMED, controlState: pointer('running', 'i-old') };
+    expect(ok(transitionRun(runStateOf(resumed), EV.pauseU, ctxWith({ pointerIntent: QUEUED_RESUME }))).effects).toEqual([
+      ...appliedNotEntered('i-pause'), { kind: 'intent', event: 'control_superseded_by_newer', intentRef: intentRef('i-old') }]);
+    expect(ok(transitionRun(runStateOf(resumed), EV.stopU, ctxWith({ pointerIntent: QUEUED_RESUME }))).effects).toEqual([
+      ...appliedNotEntered('i-cancel'), { kind: 'intent', event: 'control_superseded_by_newer', intentRef: intentRef('i-old') },
+      ...STOP_NOT_ENTERED_EFFECTS.slice(1)]);
+    expect(ok(transitionRun(runStateOf(resumed), EV.pauseU,
+      ctxWith({ pointerIntent: { kind: 'resume', status: 'applied', observed: 'resumed' } }))).effects).toEqual(appliedNotEntered('i-pause'));
+  });
+
+  it('applies the shared submit guards: pointer fence, applied pause for resume, D-9 Goal', () => {
     const paused: RunSnapshot = { ...CLAIMED, controlState: pointer('paused', 'i-old') };
     const cancelled: RunSnapshot = { ...CLAIMED, controlState: pointer('cancelled', 'i-old') };
     expect(answer(transitionRun(runStateOf(paused), EV.pauseU, CTX))).toEqual({ reason: 'guard_failed', code: 'busy' });
     expect(answer(transitionRun(runStateOf(cancelled), EV.stopU, CTX))).toEqual({ reason: 'guard_failed', code: 'busy' });
     expect(answer(transitionRun(runStateOf(cancelled), EV.pauseU, CTX))).toEqual({ reason: 'guard_failed', code: 'busy' });
-    // A pause on a Run that never entered is never applied today, so resume stays busy.
     expect(answer(transitionRun(runStateOf(paused), EV.resumeU,
       ctxWith({ pointerIntent: { kind: 'pause', status: 'queued', observed: null } })))).toEqual({ reason: 'guard_failed', code: 'busy' });
-    const resumed = ok(transitionRun(runStateOf(paused), EV.resumeU,
-      ctxWith({ pointerIntent: { kind: 'pause', status: 'applied', observed: 'paused' } })));
-    expect(resumed.next.pointer).toBe('running');
-    // D-9 (step 5.1): today the Goal is not read for a resume.
-    expect(transitionRun(runStateOf(paused), EV.resumeU, ctxWith({
-      pointerIntent: { kind: 'pause', status: 'applied', observed: 'paused' },
-      goal: { desiredState: 'paused', activePlanMatchesClaim: true } })).ok).toBe(true);
+    for (const desiredState of ['paused', 'cancelled'] as const) {
+      expect(rejected(transitionRun(runStateOf(paused), EV.resumeU, ctxWith({ pointerIntent: APPLIED_PAUSE,
+        goal: { desiredState, activePlanMatchesClaim: true } })))).toEqual({ reason: 'guard_failed', code: 'busy',
+        detail: `the Goal is ${desiredState}; a single Run is not resumed while its Goal is not active` });
+    }
   });
 });
 
-describe('RUN-12..15 control_submitted (today: no D-8 supersede, no D-9, no RD-8)', () => {
+describe('RUN-12..15 control_submitted (D-8 supersede, D-9 Goal, RD-8 consumed continuation)', () => {
   it('moves the pointer of an entered Run and appends a steer (control-service.ts key order)', () => {
     const pause = ok(transitionRun(stateOf('Running'), EV.ctlPause, CTX));
     expectSameRecord(pause.next.record, { ...RUNNING, revision: RUNNING.revision + 1,
@@ -1071,24 +1146,64 @@ describe('RUN-12..15 control_submitted (today: no D-8 supersede, no D-9, no RD-8
         for (const pointerIntent of intents) {
           for (const [event, reason] of submissions) {
             const run = ptr === 'none' ? RECORD_OF[node] : { ...RECORD_OF[node], controlState: pointer(ptr) };
-            const shared = controlSubmissionProblem({ kind: event.control, reason, pointer: ptr, yielded: node === 'YieldedWait',
-              pointerIntent });
-            const result = transitionRun(runStateOf(run), event, ctxWith({ pointerIntent }));
-            const label = `${node}/${ptr}/${JSON.stringify(pointerIntent)}/${event.control}/${String(reason)}`;
-            if (shared === null) expect(result.ok, label).toBe(true);
-            else expect(rejected(result), label).toEqual({ reason: 'guard_failed', code: shared.code, detail: shared.reason });
+            for (const goal of ['active', 'paused'] as const) {
+              for (const continuationConsumed of [false, true]) {
+                const shared = controlSubmissionProblem({ kind: event.control, reason, pointer: ptr, yielded: node === 'YieldedWait',
+                  continuationConsumed, pointerIntent, goal });
+                const result = transitionRun(runStateOf(run), event, ctxWith({ pointerIntent, continuationConsumed,
+                  goal: { desiredState: goal, activePlanMatchesClaim: true } }));
+                const label = `${node}/${ptr}/${JSON.stringify(pointerIntent)}/${event.control}/${String(reason)}/${goal}/${String(continuationConsumed)}`;
+                if (shared === null) expect(result.ok, label).toBe(true);
+                else expect(rejected(result), label).toEqual({ reason: 'guard_failed', code: shared.code, detail: shared.reason });
+              }
+            }
           }
         }
       }
     }
   });
 
-  it('keeps today\'s result where step 5.1 flips it (D-9 Goal guard, RD-8 consumed continuation)', () => {
+  it('D-8: a pause, cancel or resume supersedes the still-queued older pointer intent; a steer never does', () => {
+    const superseded = (id: string): RunEffect => ({ kind: 'intent', event: 'control_superseded_by_newer', intentRef: intentRef(id) });
+    const queuedPause = { kind: 'pause', status: 'queued', observed: null } as const;
+    const pausedRunning = { ...RUNNING, controlState: pointer('paused', 'i-old') };
+    // RUN-13: cancel over a queued pause.
+    expect(ok(transitionRun(runStateOf(pausedRunning), EV.ctlCancel, ctxWith({ pointerIntent: queuedPause }))).effects)
+      .toEqual([...intentEffect('i-cancel'), superseded('i-old')]);
+    // RUN-12: pause over a queued resume.
+    const resumedRunning = { ...RUNNING, controlState: pointer('running', 'i-old') };
+    expect(ok(transitionRun(runStateOf(resumedRunning), EV.ctlPause,
+      ctxWith({ pointerIntent: { kind: 'resume', status: 'queued', observed: null } }))).effects)
+      .toEqual([...intentEffect('i-pause'), superseded('i-old')]);
+    // RUN-14 on a yielded wait: resume over the queued wait-window pause.
+    const pausedWait = { ...YIELDED_WAIT, controlState: pointer('paused', 'i-old') };
+    expect(ok(transitionRun(runStateOf(pausedWait), EV.ctlResume, ctxWith({ pointerIntent: queuedPause }))).effects)
+      .toEqual([...intentEffect('i-resume'), superseded('i-old')]);
+    // An applied pointer intent stays; a steer leaves the pointer alone.
+    expect(ok(transitionRun(runStateOf(pausedRunning), EV.ctlCancel,
+      ctxWith({ pointerIntent: { kind: 'pause', status: 'applied', observed: 'paused' } }))).effects).toEqual(intentEffect('i-cancel'));
+    expect(ok(transitionRun(runStateOf(pausedRunning), EV.ctlSteer, ctxWith({ pointerIntent: queuedPause }))).effects)
+      .toEqual(intentEffect('i-steer'));
+    // Queued steers are superseded only by a stop that ends the Run (RUN-09/23), never by a queued cancel.
+    expect(ok(transitionRun(stateOf('Running'), EV.ctlCancel, ctxWith({ queuedSteers: [intentRef('i-steer-1')] }))).effects)
+      .toEqual(intentEffect('i-cancel'));
+  });
+
+  it('D-9 and RD-8: a resume needs the Goal active; a consumed continuation takes no control', () => {
     const paused = { ...YIELDED_WAIT, controlState: pointer('paused') };
-    expect(transitionRun(runStateOf(paused), EV.ctlResume, ctxWith({ goal: { desiredState: 'paused', activePlanMatchesClaim: true } })).ok)
+    for (const desiredState of ['paused', 'cancelled'] as const) {
+      expect(rejected(transitionRun(runStateOf(paused), EV.ctlResume, ctxWith({ goal: { desiredState, activePlanMatchesClaim: true } }))))
+        .toEqual({ reason: 'guard_failed', code: 'busy',
+          detail: `the Goal is ${desiredState}; a single Run is not resumed while its Goal is not active` });
+    }
+    // A paused Goal does not stop a pause or a cancel.
+    expect(transitionRun(stateOf('Running'), EV.ctlPause, ctxWith({ goal: { desiredState: 'paused', activePlanMatchesClaim: true } })).ok)
       .toBe(true);
-    expect(transitionRun(stateOf('YieldedWait'), EV.ctlCancel, ctxWith({ continuationConsumed: true })).ok).toBe(true);
-    expect(ok(transitionRun(stateOf('Running'), EV.ctlPause, ctxWith({ queuedSteerCount: 2 }))).effects).toEqual(intentEffect('i-pause'));
+    for (const event of [EV.ctlPause, EV.ctlCancel, EV.ctlResume, EV.ctlSteer]) {
+      expect(rejected(transitionRun(stateOf('YieldedWait'), event, ctxWith({ continuationConsumed: true }))), event.control)
+        .toEqual({ reason: 'guard_failed', code: 'busy',
+          detail: 'a successor Run already consumed the yielded wait continuation; no new control intent is accepted' });
+    }
   });
 });
 
@@ -1123,7 +1238,7 @@ describe('RUN-09..15 read a control submission as control-service.ts does (A.2 s
       const run = unfinishedPhase(phase);
       expect(runNodeOf(run)).toBe(phase === 'unknown' ? 'EndedUnknown' : 'Ended');
       expect(runControlNodeOf(run)).toBe('Running');
-      expect(controlSubmissionRunEvent(run, intentRef('i-pause'), 'pause', null)).toEqual(EV.ctlPause);
+      expect(controlSubmissionRunEvent(run, intentRef('i-pause'), 'pause', null, T_LATER)).toEqual(EV.ctlPause);
       const paused = ok(transitionRun(runStateOf(run), EV.ctlPause, CTX));
       expectSameRecord(paused.next.record, { ...run, revision: run.revision + 1,
         controlState: { intentRef: intentRef('i-pause'), desiredState: 'paused' } });
@@ -1134,19 +1249,19 @@ describe('RUN-09..15 read a control submission as control-service.ts does (A.2 s
   it('controlSubmissionRunEvent: pause, cancel and resume of a Run that never entered are RUN-09..11 (U)', () => {
     for (const node of ['Claimed', 'Authorized', 'Revoked'] as const) {
       const run = RECORD_OF[node];
-      expect(controlSubmissionRunEvent(run, intentRef('i-cancel'), 'cancel', 'stop now'), node).toEqual(EV.stopU);
-      expect(controlSubmissionRunEvent(run, intentRef('i-pause'), 'pause', null), node).toEqual(EV.pauseU);
-      expect(controlSubmissionRunEvent(run, intentRef('i-resume'), 'resume', null), node).toEqual(EV.resumeU);
-      expect(controlSubmissionRunEvent(run, intentRef('i-steer'), 'steer', EV.ctlSteer.reason), node).toEqual(EV.ctlSteer);
+      expect(controlSubmissionRunEvent(run, intentRef('i-cancel'), 'cancel', 'stop now', T_LATER), node).toEqual(EV.stopU);
+      expect(controlSubmissionRunEvent(run, intentRef('i-pause'), 'pause', null, T_LATER), node).toEqual(EV.pauseU);
+      expect(controlSubmissionRunEvent(run, intentRef('i-resume'), 'resume', null, T_LATER), node).toEqual(EV.resumeU);
+      expect(controlSubmissionRunEvent(run, intentRef('i-steer'), 'steer', EV.ctlSteer.reason, T_LATER), node).toEqual(EV.ctlSteer);
     }
     for (const node of ['Entering', 'Running', 'YieldedWait', 'Ended', 'EndedUnknown'] as const) {
       for (const event of [EV.ctlPause, EV.ctlCancel, EV.ctlResume, EV.ctlSteer]) {
-        expect(controlSubmissionRunEvent(RECORD_OF[node], event.intentRef, event.control, event.reason), node).toEqual(event);
+        expect(controlSubmissionRunEvent(RECORD_OF[node], event.intentRef, event.control, event.reason, T_LATER), node).toEqual(event);
       }
     }
   });
 
-  it('answers every submission as §7 CTL-01 answers it on the same Run read', () => {
+  it('answers every submission as §7 CTL-01/CTL-02 answer it on the same Run read', () => {
     const runs: RunSnapshot[] = [...Object.values(RECORD_OF), yieldedNotEnded('running'), unfinishedPhase('settled')];
     const pointers = ['none', 'running', 'paused', 'cancelled', 'steered'] as const;
     const intents: Array<RunGuardContext['pointerIntent']> = [null,
@@ -1159,20 +1274,30 @@ describe('RUN-09..15 read a control submission as control-service.ts does (A.2 s
       for (const ptr of pointers) {
         for (const pointerIntent of intents) {
           for (const [kind, reason] of submissions) {
-            const run = ptr === 'none' ? base : { ...base, controlState: pointer(ptr) };
-            const label = `${runControlNodeOf(run)}/${run.status}/${ptr}/${JSON.stringify(pointerIntent)}/${kind}/${String(reason)}`;
-            const control = transitionControlIntent({ node: 'Absent', kind: null, revision: 0, observation: null },
-              { type: 'control_submitted', target: 'run', intentRef: fresh, kind, reason },
-              { run: { node: runControlNodeOf(run), pointer: runStateOf(run).pointer, pointsHere: false, inControlInputs: false,
-                continuationConsumed: false, kernelPaused: false, pausedInterrupted: false, entry: null, history: null },
-              goal: { desiredState: 'active' }, pointerIntent, pinsMatch: { intent: true, run: true }, exitProof: null,
-              origin: 'live' });
-            const moved = transitionRun(runStateOf(run), controlSubmissionRunEvent(run, fresh, kind, reason), ctxWith({ pointerIntent }));
-            if (control.ok) {
-              expect(moved.ok, label).toBe(true);
-              expect(ok(moved).effects, label).toEqual(intentEffect('i-new'));
-            } else {
-              expect(rejected(moved), label).toEqual({ reason: control.reason, code: control.code, detail: control.detail });
+            for (const goal of ['active', 'paused'] as const) {
+              const run = ptr === 'none' ? base : { ...base, controlState: pointer(ptr) };
+              const label = `${runControlNodeOf(run)}/${run.status}/${ptr}/${JSON.stringify(pointerIntent)}/${kind}/${String(reason)}/${goal}`;
+              const runEvent = controlSubmissionRunEvent(run, fresh, kind, reason, T_LATER);
+              const entryPhase = notEnteredEntryPhase(runControlNodeOf(run));
+              const applied = runEvent.kind !== 'control_submitted';
+              const event: ControlIntentEvent = applied && kind !== 'steer' && entryPhase !== null
+                ? { type: 'control_applied_not_entered', intentRef: fresh, kind, reason, entryPhase, runRevision: run.revision + 1,
+                  observedAt: T_LATER }
+                : { type: 'control_submitted', target: 'run', intentRef: fresh, kind, reason };
+              const control = transitionControlIntent({ node: 'Absent', kind: null, revision: 0, observation: null }, event,
+                { run: { node: runControlNodeOf(run), pointer: runStateOf(run).pointer, pointsHere: false, inControlInputs: false,
+                  continuationConsumed: false, kernelPaused: false, pausedInterrupted: false, entry: null, history: null },
+                goal: { desiredState: goal }, pointerIntent, pinsMatch: { intent: true, run: true }, exitProof: null,
+                origin: 'live' });
+              const moved = transitionRun(runStateOf(run), runEvent,
+                ctxWith({ pointerIntent, goal: { desiredState: goal, activePlanMatchesClaim: true } }));
+              if (control.ok) {
+                expect(moved.ok, label).toBe(true);
+                expect(ok(moved).effects[0], label).toEqual({ kind: 'intent',
+                  event: applied ? 'control_applied_not_entered' : 'control_submitted', intentRef: fresh });
+              } else {
+                expect(rejected(moved), label).toEqual({ reason: control.reason, code: control.code, detail: control.detail });
+              }
             }
           }
         }

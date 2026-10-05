@@ -78,9 +78,14 @@ it('submits and replays a durable control request on a real formal Run without a
     const request = { input: { runRef, kind: 'cancel' as const, reason: 'host operator stop' },
       meta: { requestId: 'r4-platform-control', expected: [{ ref: runRef, revision: runRevision }] } };
     const submitted = await platform.controls.submitControl(fixture.ctx, request);
+    // D-7 (A.2 5.1, §6 RUN-09): the claimed Run never entered, so the cancel is
+    // applied by the platform and ends the Run in the same commit.
     expect(submitted).toMatchObject({ status: 'committed', replayed: false,
-      value: { intent: { kind: 'cancel', desiredState: 'cancelled', status: 'queued' } } });
+      value: { intent: { kind: 'cancel', desiredState: 'cancelled', status: 'applied',
+        observation: { origin: 'platform_not_entered', kind: 'cancelled', detail: { entryPhase: 'none' } } } } });
     if (submitted.status !== 'committed') throw Error('public control submission required');
+    expect(await platform.executions.readExecution(fixture.ctx, runRef))
+      .toMatchObject({ status: 'ready', value: { run: { status: 'ended', outcome: 'cancelled' } } });
     expect(await platform.controls.readControl(fixture.ctx, submitted.value.intent.ref))
       .toEqual({ status: 'ready', value: submitted.value.intent });
 

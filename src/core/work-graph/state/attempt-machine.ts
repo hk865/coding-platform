@@ -19,9 +19,14 @@
  *   (`claimBasisToday`), so a requeue claim is a first claim: `busy` on a
  *   released lease, a lease @1 when there is none, and the Attempt records no
  *   `requeueRef`. Step 5 flips them.
- * - The 新增 rows (ATT-04, 05, 08..12, 20..23, 28..37 and the D-7 events of
- *   ATT-03/25) keep their events in the union but return `illegal`
- *   (`notYet`), so step 5 only adds rows.
+ * - Step 5.1 adds the D-7 stop of a Run that never entered: ATT-05 (Attempt
+ *   claimed → ended cancelled), ATT-23 (Lease released) and ATT-30 (Outbox
+ *   pending → settled with the AD-2 `not_entered` dispatch state). A D-7 pause
+ *   or resume writes none of the three records (§5.2), so it is not an event
+ *   of this section (`attemptEventFromRunEvent` maps it to `null`).
+ * - The other 新增 rows (ATT-04, 08..12, 20..22, 28, 29, 31..37) keep their
+ *   events in the union but return `illegal` (`notYet`), so step 5 only adds
+ *   rows.
  *
  * `TaskClaimOutbox` and its V1 dispatch state are declared in
  * `tasks/claim-contracts.ts`, which `state/` may not import (§14.4); the
@@ -183,8 +188,7 @@ export type AttemptResolveFacts = {
 };
 
 /** Run events that reach this section without writing the Attempt (ATT-03, 04, 25). */
-export type AttemptPassThroughKind = 'entry_authorized' | 'entry_begun' | 'history_recorded'
-  | 'pause_not_entered' | 'resume_not_entered' | 'reconcile_not_entered';
+export type AttemptPassThroughKind = 'entry_authorized' | 'entry_begun' | 'history_recorded' | 'reconcile_not_entered';
 
 export type AttemptEvent =
   | { kind: 'attempt_claimed'; claim: TaskClaim; basis: AttemptClaimBasis }
@@ -214,14 +218,17 @@ export type AttemptEffect =
   | { kind: 'release_lease' }
   | { kind: 'release_session'; sessionRef: SessionRef; generation: number };
 
-/** The Run events of §1.6 as section 5 needs them; `control_submitted` writes none of its records. */
+/**
+ * The Run events of §1.6 as section 5 needs them; `control_submitted` and the
+ * D-7 pause/resume of a Run that never entered write none of its records.
+ */
 export type RunEventForAttempt =
   | { kind: 'claim_committed'; claim: TaskClaim; basis: AttemptClaimBasis }
   | ({ kind: 'entered_observed' } & AttemptStartedFacts)
   | { [K in AttemptEndSource]: { kind: K } & AttemptEndFacts }[AttemptEndSource]
   | { [K in AttemptResolveSource]: { kind: K } & AttemptResolveFacts }[AttemptResolveSource]
   | { [K in AttemptPassThroughKind]: { kind: K } }[AttemptPassThroughKind]
-  | { kind: 'control_submitted' };
+  | { kind: 'control_submitted' | 'pause_not_entered' | 'resume_not_entered' };
 
 /** §5.3 "Run 事件到本节事件的映射"; `null` means none of the three records is written. */
 export function attemptEventFromRunEvent(event: RunEventForAttempt): AttemptEvent | null {
@@ -248,11 +255,12 @@ export function attemptEventFromRunEvent(event: RunEventForAttempt): AttemptEven
     case 'entry_authorized':
     case 'entry_begun':
     case 'history_recorded':
-    case 'pause_not_entered':
-    case 'resume_not_entered':
     case 'reconcile_not_entered':
       return { kind: event.kind };
-    case 'control_submitted': return null;
+    case 'control_submitted':
+    case 'pause_not_entered':
+    case 'resume_not_entered':
+      return null;
     default: return unreachable(event, 'Run event');
   }
 }
@@ -318,6 +326,18 @@ function settledOutboxRecord(outbox: DispatchOutboxRecord, entry: AttemptEntryId
       entryGeneration: entry.entryGeneration, sessionGeneration: outbox.claim.generation, eventId } };
 }
 
+/**
+ * ATT-30 (AD-2): `pending → settled` for a Run that never entered, with the V2
+ * dispatch state; the entry identity is the Run's V2 binding when it had one.
+ */
+function settledNotEnteredOutboxRecord(
+  outbox: DispatchOutboxRecord, entry: AttemptEntryIdentity | null, eventId: string,
+): DispatchOutboxRecord {
+  return { ...outbox, revision: outbox.revision + 1, status: 'settled',
+    dispatchState: { schemaVersion: 2, phase: 'settled', settlement: 'not_entered', consumerId: entry?.consumerId ?? null,
+      entryGeneration: entry?.entryGeneration ?? null, sessionGeneration: outbox.claim.generation, eventId } };
+}
+
 // -------------------------------------------------------------------------- //
 // Shared guard rows                                                           //
 // -------------------------------------------------------------------------- //
@@ -362,6 +382,30 @@ function enteringGuard(ctx: AttemptGuardContext): Rejected | null {
   if (!ctx.ownsSession) return reject('guard_failed', 'busy', 'the claim Session is no longer occupied by this Run generation');
   if (!ctx.ownsLease) return reject('guard_failed', 'busy', 'the claim TaskLease is not held by this attempt');
   return null;
+}
+
+/**
+ * ATT-05 / ATT-30 guard (§6 RUN-09, RD-1): a D-7 stop ends only an Attempt
+ * whose Run never entered (`Claimed`/`Authorized`/`Revoked`), always with
+ * `cancelled`. From `Entering` on the submission is queued instead (§5.4);
+ * a Run that already ended is never stopped again.
+ */
+function notEnteredStopGuard(event: EndedEvent, ctx: AttemptGuardContext): Rejected | null {
+  switch (ctx.runNode) {
+    case 'Claimed':
+    case 'Authorized':
+    case 'Revoked':
+      break;
+    case 'Absent': return reject('guard_failed', 'invalid', 'the Attempt has no paired Run');
+    case 'Entering':
+    case 'Running':
+    case 'Ended':
+    case 'YieldedWait':
+    case 'EndedUnknown':
+      return reject('illegal', 'invalid', 'a stop ends only an Attempt whose Run never entered; from Entering on it is queued (D-7)');
+    default: return unreachable(ctx.runNode, 'Run node');
+  }
+  return event.endOutcome === 'cancelled' ? null : reject('illegal', 'invalid', 'a not-entered stop ends the Attempt cancelled');
 }
 
 /** §1.2 `stale`: the event sequence does not advance the applied Run fact (RD-4). */
@@ -465,9 +509,6 @@ export function transitionAttempt(
     case 'history_recorded':
       // ATT-03: W9 writes only the Run, at any node (`execution-history-binding.ts:146`).
       return accept(state);
-    case 'pause_not_entered':
-    case 'resume_not_entered':
-      return notYet('ATT-03 (D-7)');
     case 'reconcile_not_entered':
       return notYet('ATT-04');
     default: return unreachable(event, 'Attempt event');
@@ -510,7 +551,17 @@ function attemptOnEnded(
       switch (event.source) {
         case 'terminal_observed':
           return reject('illegal', 'busy', 'a terminal result needs an entered Run; an end from Entering is reconciled');
-        case 'stop_not_entered': return notYet('ATT-05');
+        case 'stop_not_entered': {
+          // ATT-05: no Kernel Turn, so `startedAt` stays null; the release follows ownership (ATT-23, SES-05).
+          const problem = notEnteredStopGuard(event, ctx);
+          if (problem !== null) return problem;
+          const effects: AttemptEffect[] = [{ kind: 'settle_outbox', settlement: 'not_entered' }];
+          if (ctx.ownsLease) effects.push({ kind: 'release_lease' });
+          if (ctx.ownsSession) {
+            effects.push({ kind: 'release_session', sessionRef: event.claim.sessionRef, generation: event.claim.generation });
+          }
+          return accept(endedAttemptRecord(state, event.endOutcome, event.endedAt), effects);
+        }
         case 'stop_paused':
         case 'reconcile_terminal':
         case 'reconcile_interrupted_clean':
@@ -607,7 +658,11 @@ function leaseOnEnded(
 ): Transition<TaskLeaseSnapshot | null, TaskLeaseEvent, never> {
   switch (event.source) {
     case 'terminal_observed': break;
-    case 'stop_not_entered': return notYet('ATT-23');
+    case 'stop_not_entered':
+      // ATT-23 for the claim's own hold (the stop ends `cancelled`, a known outcome); ATT-19 otherwise.
+      if (event.endOutcome !== 'cancelled') return reject('illegal', 'invalid', 'a not-entered stop ends the Attempt cancelled');
+      if (!leaseHeldByClaim(state, event.claim)) return accept(state);
+      return accept(releasedLeaseRecord(state as TaskLeaseSnapshot, event.claim, event.endedAt, event.eventId));
     case 'stop_paused':
     case 'reconcile_terminal':
     case 'reconcile_interrupted_clean':
@@ -686,10 +741,8 @@ export function transitionDispatchOutbox(
     case 'history_recorded':
       // ATT-25: W9 writes only the Run, at any node.
       return accept(state);
-    case 'pause_not_entered':
-    case 'resume_not_entered':
     case 'reconcile_not_entered':
-      return notYet('ATT-25 (D-5, D-7)');
+      return notYet('ATT-25 (D-5)');
     default: return unreachable(event, 'Attempt event');
   }
 }
@@ -708,7 +761,12 @@ function outboxOnEnded(
       switch (event.source) {
         case 'terminal_observed':
           return reject('illegal', 'busy', 'a terminal result needs an entered Run; an end from Entering is reconciled');
-        case 'stop_not_entered': return notYet('ATT-30');
+        case 'stop_not_entered': {
+          // ATT-30, same guard as ATT-05.
+          const problem = notEnteredStopGuard(event, ctx);
+          if (problem !== null) return problem;
+          return accept(settledNotEnteredOutboxRecord(state, event.entry, event.eventId));
+        }
         case 'stop_paused':
         case 'reconcile_terminal':
         case 'reconcile_interrupted_clean':

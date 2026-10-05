@@ -75,7 +75,7 @@ import {
 } from '../state/run-machine.js';
 import {
   ownsOccupancy, releaseSessionRecord, sessionMachineStateOf, transitionSession,
-  type SessionGuardContext, type SessionRelease,
+  type SessionGuardContext, type SessionRelease, type SessionReleaseCause,
 } from '../state/session-availability.js';
 import type { Rejected as MachineRefusal } from '../state/transition.js';
 import {
@@ -859,7 +859,7 @@ async function admitManifest(
  * asks about the Lease before the persisted claim; W4..W6 compare the persisted
  * claim first.
  */
-function claimLeaseOf(lease: TaskLeaseSnapshot | null, claim: TaskClaim): RunGuardContext['lease'] {
+export function claimLeaseOf(lease: TaskLeaseSnapshot | null, claim: TaskClaim): RunGuardContext['lease'] {
   if (lease === null) return 'missing';
   if (taskLeaseNodeOf(lease) === 'released') return 'released';
   if (lease.ref.projectId !== claim.task.projectId || lease.ref.goalId !== claim.task.goalId
@@ -870,7 +870,7 @@ function claimLeaseOf(lease: TaskLeaseSnapshot | null, claim: TaskClaim): RunGua
 }
 
 /** The claim Session as this Run holds it (§8 `ownsOccupancy`) and its Kernel mapping. */
-function claimSessionOf(session: SessionRecord, claim: TaskClaim): RunGuardContext['session'] {
+export function claimSessionOf(session: SessionRecord, claim: TaskClaim): RunGuardContext['session'] {
   return {
     usable: session.lifecycle === 'active' && session.health === 'available',
     owned: ownsOccupancy(session, claim.runRef, claim.generation),
@@ -895,7 +895,7 @@ function entryRunContext(facts: TaskExecutionRecord, claim: TaskClaim, actor: Ho
     continuationBrief: 'absent_ok',
     freshAdmission: null,
     pointerIntent: null,
-    queuedSteerCount: 0,
+    queuedSteers: [],
     continuationConsumed: false,
     exitProof: null,
     hostLease: null,
@@ -970,20 +970,33 @@ function terminalReleaseContext(release: SessionRelease): SessionGuardContext {
 /** The node RUN-05/07 moves from: the paired Run of their §5 event (D-14). */
 const PAIRED_RUN_NODE = { entered_observed: 'Entering', terminal_observed: 'Running' } as const;
 
+/** RUN-05/07's §5 pairing: the Run node it moves from, and what the Run still holds. */
+function pairingOf(kind: keyof typeof PAIRED_RUN_NODE, facts: TaskExecutionRecord, runCtx: RunGuardContext): AttemptGuardContext {
+  return { runNode: PAIRED_RUN_NODE[kind], runLastEventSeq: facts.run.lastEventSeq,
+    ownsSession: runCtx.session.owned, ownsLease: runCtx.lease === 'owned' };
+}
+
 /**
- * RUN-05/07's effects as the other records of the same commit, each written by
- * its own machine with the §5 event of the same Run event: the Attempt
- * (ATT-02/06), the Outbox (ATT-26/27), and only what the Run still holds, its
- * Lease (ATT-18) and its Session occupancy (SES-04, the cursor moves to the
- * complete Turn boundary). Records in today's order: Attempt, Outbox, Lease,
+ * The Session release a Run event's `release_session` effect carries through
+ * §8 `occupancy_released`: the cause selects the SES row and `context` builds
+ * its holder guard context; `null` for an event that releases no Session.
+ */
+export type ClaimSessionRelease = { cause: SessionReleaseCause; context(release: SessionRelease): SessionGuardContext } | null;
+
+/**
+ * A Run event's effects on the other records of its claim in the same commit,
+ * each written by its own machine with the §5 event of the same Run event: the
+ * Attempt (ATT-02/05/06), the Outbox (ATT-26/27/30), and only what the Run
+ * still holds, its Lease (ATT-18/23) and its Session occupancy (SES-04: the
+ * cursor moves to the complete Turn boundary; SES-05: it is kept). `effects`
+ * are the claim's only (`attempt`, `outbox`, `release_lease`,
+ * `release_session`). Records in today's order: Attempt, Outbox, Lease,
  * Session.
  */
-function effectRecords(
-  kind: keyof typeof PAIRED_RUN_NODE, effects: readonly RunEffect[], facts: TaskExecutionRecord,
-  runCtx: RunGuardContext, attemptEvent: AttemptEvent,
+export function claimEffectRecords(
+  effects: readonly RunEffect[], facts: TaskExecutionRecord, pairing: AttemptGuardContext, attemptEvent: AttemptEvent,
+  release: ClaimSessionRelease,
 ): { ok: true; records: EncodedRecord[] } | Rejected {
-  const pairing: AttemptGuardContext = { runNode: PAIRED_RUN_NODE[kind], runLastEventSeq: facts.run.lastEventSeq,
-    ownsSession: runCtx.session.owned, ownsLease: runCtx.lease === 'owned' };
   let attempt: TaskAttemptSnapshot | null = null;
   let outbox: DispatchOutboxRecord | null = null;
   let lease: TaskLeaseSnapshot | null = null;
@@ -1003,16 +1016,16 @@ function effectRecords(
         break;
       }
       case 'release_lease': {
-        if (!isTaskLeaseEvent(attemptEvent)) throw new Error(`${kind} drives the TaskLease`);
+        if (!isTaskLeaseEvent(attemptEvent)) throw new Error(`${attemptEvent.kind} drives the TaskLease`);
         const next = transitionTaskLease(facts.lease, attemptEvent);
         if (!next.ok) return { ok: false, rejection: reject(next.code, next.detail) };
         lease = next.next;
         break;
       }
       case 'release_session': {
-        // Only RUN-07 releases the Session.
+        if (release === null) throw new Error(`${attemptEvent.kind} releases no Session`);
         const next = transitionSession(sessionMachineStateOf(facts.session),
-          { kind: 'occupancy_released', cause: 'terminal_observed' }, terminalReleaseContext(effect));
+          { kind: 'occupancy_released', cause: release.cause }, release.context(effect));
         if (!next.ok) return { ok: false, rejection: reject(next.code, next.detail) };
         for (const sessionEffect of next.effects) {
           if (sessionEffect.kind !== 'release_session') throw new Error(`occupancy_released has no ${sessionEffect.kind} effect`);
@@ -1021,10 +1034,10 @@ function effectRecords(
         break;
       }
       default:
-        throw new Error(`${kind} has no ${effect.kind} effect`);
+        throw new Error(`${attemptEvent.kind} has no ${effect.kind} effect on its claim records`);
     }
   }
-  if (attempt === null || outbox === null) throw new Error(`${kind} must write the Attempt and the Outbox`);
+  if (attempt === null || outbox === null) throw new Error(`${attemptEvent.kind} must write the Attempt and the Outbox`);
   return { ok: true, records: [encodeTaskAttemptSnapshot(attempt), encodeDispatchOutboxEntry(outbox),
     ...(lease === null ? [] : [encodeLease(lease)]), ...(session === null ? [] : [encodeSessionRecord(session)])] };
 }
@@ -1428,9 +1441,9 @@ export function createExecutionEntryService(deps: ExecutionEntryDependencies): E
       const eventId = deps.eventId();
       if (!nonEmpty(eventId)) return reject('unsupported', 'the injected id source produced an empty event id');
       // RUN-05's effects in this commit: the Attempt starts (ATT-02) and the Outbox enters (ATT-26).
-      const written = effectRecords('entered_observed', entered.effects, facts, runCtx,
+      const written = claimEffectRecords(entered.effects, facts, pairingOf('entered_observed', facts, runCtx),
         attemptEventOf({ kind: 'entered_observed', enteredAt, consumerId: permit.consumerId,
-          entryGeneration: permit.entryGeneration, sessionGeneration: permit.claim.generation, eventId }));
+          entryGeneration: permit.entryGeneration, sessionGeneration: permit.claim.generation, eventId }), null);
       if (!written.ok) return written.rejection;
       const event = {
         eventId, eventType: EXECUTION_ENTRY_ENTERED_EVENT_TYPE,
@@ -1548,9 +1561,10 @@ export function createExecutionEntryService(deps: ExecutionEntryDependencies): E
       if (outcome === null) throw new Error('terminal_observed ends the Run with an outcome');
       // RUN-07's effects in this commit: the Attempt ends (ATT-06), the Outbox
       // settles (ATT-27), and only what the Run still holds is released.
-      const written = effectRecords('terminal_observed', ended.effects, facts, runCtx,
+      const written = claimEffectRecords(ended.effects, facts, pairingOf('terminal_observed', facts, runCtx),
         attemptEventOf({ kind: 'terminal_observed', claim, endOutcome: outcome, endedAt: nowIso, eventId,
-          sequence: observation.event.sequence, entry, turnStartedAt: null }));
+          sequence: observation.event.sequence, entry, turnStartedAt: null }),
+        { cause: 'terminal_observed', context: terminalReleaseContext });
       if (!written.ok) return written.rejection;
       const event = {
         eventId, eventType: EXECUTION_RUN_RESULT_RECORDED_EVENT_TYPE,

@@ -15,12 +15,10 @@
  * barrier lives in `tasks/execution-entry-service.ts`.
  *
  * A.2 (spec §7.1): a non-queued snapshot may carry a platform-proven
- * `ControlPlatformObservationV1` (CD-1, told apart by its `origin` key); such a
- * platform observation may close any intent kind with
- * `terminal_without_cancel`, `outcome_unknown` or `superseded_by_newer` (CD-2);
+ * `ControlPlatformObservationV1` (CD-1, told apart by its `origin` key); a
+ * Kernel or platform `terminal_without_cancel` or `outcome_unknown`, and the
+ * platform's `superseded_by_newer`, may close any intent kind (CD-2);
  * `ControlIntentSubmitted` may carry a not-entered `applied@2` intent (CD-3).
- * A Kernel observation keeps its pre-A.2 pairing until sub-step 5.1 relaxes it
- * together with CTL-03/CTL-06, because a live producer already reaches it.
  */
 import type { ActorRef } from '../../../contracts/command-event.js';
 import type { ControlIntentSnapshotV1, ControlObservationV1, SubmittedControl } from '../../../contracts/control-intent.js';
@@ -387,12 +385,11 @@ function controlIntentSnapshotProblem(value: unknown): string | null {
       return 'a platform observation names a control intent outside the intent scope';
     }
   }
-  // Pairing: paused/resumed/steered/cancelled belong to their own kind. A
-  // platform observation (CD-2) may close any kind with superseded_by_newer,
-  // terminal_without_cancel or outcome_unknown. A Kernel observation keeps the
-  // pre-A.2 rule (only a cancel intent) until §15 sub-step 5.1: relaxing it
-  // here would let the live observer's outcome_unknown ack of a consumed pause
-  // (`execution-observation.ts`) commit, a CTL-03/CTL-06 behaviour change.
+  // Pairing (§7.1): paused/resumed/steered/cancelled belong to their own kind,
+  // from the Kernel or the platform. superseded_by_newer (platform only),
+  // terminal_without_cancel and outcome_unknown close any kind (CD-2): a
+  // terminal can come before any control takes effect (CTL-06), and a consumed
+  // pause can meet an unknown tool result (CTL-03).
   const observationKind = observation['kind'];
   if (observationKind === 'paused') {
     if (value['kind'] !== 'pause') return 'a paused observation must belong to a pause intent';
@@ -400,8 +397,6 @@ function controlIntentSnapshotProblem(value: unknown): string | null {
     if (value['kind'] !== 'resume') return 'resumed must belong to resume';
   } else if (observationKind === 'steered') {
     if (value['kind'] !== 'steer') return 'steered must belong to steer';
-  } else if (!Object.prototype.hasOwnProperty.call(observation, 'origin')) {
-    if (value['kind'] !== 'cancel') return 'a cancelled/unknown observation must belong to a cancel intent';
   } else if (observationKind === 'cancelled') {
     if (value['kind'] !== 'cancel') return 'a cancelled observation must belong to a cancel intent';
   }

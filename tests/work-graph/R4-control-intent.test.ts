@@ -19,6 +19,7 @@ import type {
 import type { VersionPin } from '../../src/contracts/core/identity.js';
 import type { RunControlPort } from '../../src/core/work-graph/tasks/control-contracts.js';
 import { createRunControlService } from '../../src/core/work-graph/tasks/control-service.js';
+import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
 import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
 import { CONTROL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/control-record-codecs.js';
 import {
@@ -40,6 +41,7 @@ function controlsOn(records: B2Records, tag = 'wg'): RunControlPort {
   return createRunControlService({
     records,
     authority: createMaterialRecordReaders(records).authority,
+    reads: createRunStateReader({ records }),
     now: () => B2_AT,
     eventId: () => `r4-control-event-${tag}-${++seq}`,
   });
@@ -75,11 +77,15 @@ describe('R4.1 durable control intent', () => {
     const request = { input: { runRef: fixture.claim.runRef, kind: 'pause' as const, reason: 'operator requested pause' },
       meta: { requestId: 'r4-pause-persist', expected: [pin] } };
 
+    // D-7 (A.2 5.1, §6 RUN-10, §7 CTL-02): the Run never entered, so the platform
+    // applies the pause at once (applied@2 with its own not-entered observation).
     const submitted = await controls.submitControl(fixture.ctx, request);
     expect(submitted).toMatchObject({ status: 'committed', replayed: false, value: {
       runRevision: pin.revision + 1,
-      intent: { schemaVersion: 1, revision: 1, runRef: fixture.claim.runRef, kind: 'pause',
-        desiredState: 'paused', status: 'queued', reason: 'operator requested pause' } } });
+      intent: { schemaVersion: 1, revision: 2, runRef: fixture.claim.runRef, kind: 'pause',
+        desiredState: 'paused', status: 'applied', reason: 'operator requested pause',
+        observation: { schemaVersion: 1, origin: 'platform_not_entered', kind: 'paused', runRevision: pin.revision + 1,
+          detail: { entryPhase: 'none' }, observedAt: B2_AT } } } });
     if (submitted.status !== 'committed') throw Error('durable pause receipt required');
 
     const after = await fixture.read();
@@ -109,24 +115,25 @@ describe('R4.1 durable control intent', () => {
     } finally { await reopened.close(); }
   });
 
-  it('cancel supersedes a queued pause while the original pause still replays and a new pause cannot weaken cancel', async () => {
+  it('cancel ends a Run that never entered after an applied pause, the original pause still replays and a new pause cannot weaken cancel', async () => {
     const fixture = await open();
     const controls = controlsOn(fixture.base.records, 'supersede');
     const pauseRequest = { input: { runRef: fixture.claim.runRef, kind: 'pause' as const, reason: null },
       meta: { requestId: 'r4-pause-before-cancel', expected: [await fixture.pin()] } };
+    // D-7 (A.2 5.1): both controls of a Run that never entered are applied at once.
     const pause = await controls.submitControl(fixture.ctx, pauseRequest);
-    expect(pause).toMatchObject({ status: 'committed', value: { intent: { kind: 'pause', desiredState: 'paused', status: 'queued' } } });
+    expect(pause).toMatchObject({ status: 'committed', value: { intent: { kind: 'pause', desiredState: 'paused', status: 'applied' } } });
     if (pause.status !== 'committed') throw Error('pause receipt required');
 
     const cancel = await controls.submitControl(fixture.ctx, {
       input: { runRef: fixture.claim.runRef, kind: 'cancel', reason: 'stop now' },
       meta: { requestId: 'r4-cancel-after-pause', expected: [await fixture.pin()] } });
-    expect(cancel).toMatchObject({ status: 'committed', value: { intent: { kind: 'cancel', desiredState: 'cancelled', status: 'queued' } } });
+    expect(cancel).toMatchObject({ status: 'committed', value: { intent: { kind: 'cancel', desiredState: 'cancelled', status: 'applied' } } });
     if (cancel.status !== 'committed') throw Error('cancel receipt required');
-    expect((await fixture.read()).run.controlState)
-      .toEqual({ intentRef: cancel.value.intent.ref, desiredState: 'cancelled' });
+    expect((await fixture.read()).run).toMatchObject({ status: 'ended', outcome: 'cancelled',
+      controlState: { intentRef: cancel.value.intent.ref, desiredState: 'cancelled' } });
 
-    // The superseded pause stays a queued historical fact and its exact request replays.
+    // The applied pause is not superseded (D-8 supersedes only a queued one) and its exact request replays.
     expect(await controls.readControl(fixture.ctx, pause.value.intent.ref))
       .toEqual({ status: 'ready', value: pause.value.intent });
     expect(await controls.submitControl(fixture.ctx, pauseRequest)).toEqual({ ...pause, replayed: true });
@@ -158,18 +165,24 @@ describe('R4.1 durable control intent', () => {
     expect((await fixture.read()).run.executionAuthorization).toEqual(before.executionAuthorization);
   });
 
-  it('a queued control blocks fresh begin and leaves the authorized phase unchanged', async () => {
+  it('a cancel blocks fresh begin and revokes the authorization of a Run that never entered', async () => {
     const fixture = await open();
     const controls = controlsOn(fixture.base.records, 'block-begin');
     const admitted = await fixture.authorize();
     const before = (await fixture.read()).run;
     await submitControl(fixture, controls, 'block-begin', 'cancel');
+    const stopped = (await fixture.read()).run;
     expect(await fixture.entry.beginRuntimeEntry(fixture.ctx, {
       input: { permit: admitted.permit, kernel: await fixture.kernelFor(fixture.claim) },
       meta: { requestId: 'r4-fresh-begin-blocked', expected: [await fixture.pin()] } }))
       .toMatchObject({ status: 'rejected', code: 'busy' });
-    // The rejected fresh action left the authorized phase and its revision intact.
-    expect((await fixture.read()).run.executionAuthorization).toEqual(before.executionAuthorization);
+    // D-7, RD-1 (A.2 5.1, §6 RUN-09): the stop revoked the authorized binding in its own
+    // commit; the rejected fresh begin left that revoked phase and its revision intact.
+    const authorization = before.executionAuthorization;
+    if (authorization === undefined || !('schemaVersion' in authorization)) throw Error('a V2 authorization is required');
+    expect((await fixture.read()).run.executionAuthorization)
+      .toEqual({ ...authorization, revision: authorization.revision + 1, phase: 'revoked' });
+    expect(stopped.executionAuthorization).toEqual((await fixture.read()).run.executionAuthorization);
   });
 
   it('a queued control blocks fresh model issue for an entered Run', async () => {
@@ -370,8 +383,9 @@ describe('R4.1 durable control intent', () => {
     const submitted = await controls.submitControl(fixture.ctx, {
       input: { runRef: fixture.claim.runRef, kind: 'cancel', reason: 'Host revoked the execution grant' },
       meta: { requestId: 'r4-cancel-after-host-revoke', expected: [await fixture.pin()] } });
+    // D-7 (A.2 5.1): the Run never entered, so the cancel is applied and ends it at once.
     expect(submitted).toMatchObject({ status: 'committed',
-      value: { intent: { kind: 'cancel', desiredState: 'cancelled', status: 'queued' } } });
+      value: { intent: { kind: 'cancel', desiredState: 'cancelled', status: 'applied' } } });
     if (submitted.status !== 'committed') throw Error('revocation must not block the stop request');
     expect(await controls.readControl(fixture.ctx, submitted.value.intent.ref))
       .toEqual({ status: 'ready', value: submitted.value.intent });
@@ -467,6 +481,7 @@ describe('R4.1 durable control intent', () => {
         }
         return realAuthority.load(ref);
       } },
+      reads: createRunStateReader({ records: recordsB }),
       now: () => B2_AT, eventId: () => 'r4-control-event-same-identity-b',
     });
     const delayed = controlsB.submitControl(fixture.ctx, request);
@@ -591,35 +606,56 @@ describe('R4.1 durable control intent', () => {
     if (!auth || !('schemaVersion' in auth) || auth.schemaVersion !== 2 || locator === undefined) {
       throw Error('an entered Run with a formal V2 entry and a history locator is required');
     }
-    // The live observer's Kernel outcome_unknown ack of a consumed pause: until
-    // step 5.1 only a cancel intent may carry it.
-    const observation: ControlObservationV1 = {
-      schemaVersion: 1, kind: 'outcome_unknown',
+    const observationOf = (kind: ControlObservationV1['kind'], kernelEventId = 'r4-pairing-kernel-event'): ControlObservationV1 => ({
+      schemaVersion: 1, kind,
       entry: { consumerId: auth.consumerId, entryGeneration: auth.generation, sessionGeneration: auth.sessionGeneration },
       history: { ...locator, endPosition: null },
       source: { ...locator.kernel, position: locator.observedThroughPosition },
-      kernelEventId: 'r4-pairing-kernel-event', kernelEventSequence: 1, observedAt: B2_AT,
-    };
-    const expected = [{ ref: pause.value.intent.ref, revision: 1 }, await fixture.pin()];
+      kernelEventId, kernelEventSequence: 1, observedAt: B2_AT,
+    });
+    const runPin = await fixture.pin();
     let clocks = 0;
     let ids = 0;
-    const observe = (tag: string, now: () => string, ctx: CoreCallContext = fixture.ctx) => createRunControlService({
+    const observe = (tag: string, now: () => string, observation: ControlObservationV1, ctx: CoreCallContext = fixture.ctx,
+      intentRevision = 1) => createRunControlService({
       records: fixture.base.records, authority: createMaterialRecordReaders(fixture.base.records).authority,
+      reads: createRunStateReader({ records: fixture.base.records }),
       now: () => { clocks++; return now(); }, eventId: () => `r4-pairing-event-${++ids}`,
     }).recordControlObservation(ctx, { input: { intentRef: pause.value.intent.ref, runRef: fixture.claim.runRef, observation },
-      meta: { requestId: `r4-pairing-${tag}`, expected } });
+      meta: { requestId: `r4-pairing-${tag}`, expected: [{ ref: pause.value.intent.ref, revision: intentRevision }, runPin] } });
 
-    // The clock and event id are drawn first, then the stored-record schema refuses it.
-    expect(await observe('schema', () => B2_AT)).toEqual({ status: 'rejected', code: 'invalid',
-      reason: 'record schema ControlIntentSnapshot@1 rejected the record: a cancelled/unknown observation must belong to a cancel intent' });
+    // A Kernel `cancelled` still belongs only to a cancel intent: the clock and
+    // event id are drawn first, then the stored-record schema refuses it.
+    const cancelled = observationOf('cancelled');
+    expect(await observe('schema', () => B2_AT, cancelled)).toEqual({ status: 'rejected', code: 'invalid',
+      reason: 'record schema ControlIntentSnapshot@1 rejected the record: a cancelled observation must belong to a cancel intent' });
     expect([clocks, ids]).toEqual([1, 1]);
-    expect(await observe('empty-clock', () => ''))
+    expect(await observe('empty-clock', () => '', cancelled))
       .toEqual({ status: 'rejected', code: 'unsupported', reason: 'the injected id/clock source produced an empty value' });
     const controller = new AbortController();
-    expect(await observe('cancelled', () => { controller.abort(); return B2_AT; }, { ...fixture.ctx, signal: controller.signal }))
+    expect(await observe('cancelled', () => { controller.abort(); return B2_AT; }, cancelled, { ...fixture.ctx, signal: controller.signal }))
       .toEqual({ status: 'rejected', code: 'cancelled', reason: 'the control observation was cancelled before commit' });
     expect([clocks, ids]).toEqual([3, 3]);
     expect(await controlsOn(fixture.base.records, 'pair-read').readControl(fixture.ctx, pause.value.intent.ref))
       .toEqual({ status: 'ready', value: pause.value.intent });
+
+    // CD-2 (A.2 5.1, §7 CTL-03): the live observer's Kernel outcome_unknown ack
+    // of a consumed pause now commits, as OutcomeUnknown@2.
+    const unknown = observationOf('outcome_unknown');
+    const recorded = await observe('unknown', () => B2_AT, unknown);
+    expect(recorded).toMatchObject({ status: 'committed', replayed: false,
+      value: { status: 'outcome_unknown', revision: 2, observation: unknown } });
+    if (recorded.status !== 'committed') throw Error('the unknown ack must commit');
+    // §7.4 / CTL-09: only the start-up reconcile moves an outcome_unknown intent,
+    // so a later in-process observation is stale under a new request identity,
+    // whatever its content; nothing is written.
+    const writesBefore = (await fixture.base.records.readMany([b2Key(pause.value.intent.ref)]));
+    expect(await observe('unknown-again', () => B2_AT, unknown, fixture.ctx, 2))
+      .toMatchObject({ status: 'rejected', code: 'revision_conflict' });
+    expect(await observe('unknown-other', () => B2_AT, observationOf('outcome_unknown', 'r4-pairing-other-event'), fixture.ctx, 2))
+      .toMatchObject({ status: 'rejected', code: 'revision_conflict' });
+    expect(await fixture.base.records.readMany([b2Key(pause.value.intent.ref)])).toEqual(writesBefore);
+    expect(await controlsOn(fixture.base.records, 'pair-read-2').readControl(fixture.ctx, pause.value.intent.ref))
+      .toEqual({ status: 'ready', value: recorded.value });
   });
 });

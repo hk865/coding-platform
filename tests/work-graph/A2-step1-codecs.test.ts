@@ -735,8 +735,8 @@ describe('other step-1 decoders', () => {
     expect(decodeControlIntentSnapshot(encode({ ...appliedPause, kind: 'cancel', desiredState: 'cancelled' })).status).toBe('invalid');
     expect(decodeControlIntentSnapshot(encode({ ...appliedPause, observation: { ...appliedPause.observation,
       kernelEventId: 'k-1' } })).status).toBe('invalid');
-    // A Kernel observation keeps its pre-A.2 pairing in step 1: outcome_unknown and
-    // terminal_without_cancel still close only a cancel intent (relaxed in 5.1).
+    // CD-2 (relaxed in A.2 5.1, §7 CTL-03/CTL-06): a Kernel outcome_unknown and
+    // terminal_without_cancel close any intent kind; a Kernel cancelled only a cancel.
     const kernel = { adapterId: 'adapter-1', kernelSessionId: 'kernel-session-1', runId: 'kernel-run-1', turnId: 'turn-1' };
     const kernelUnknown = { schemaVersion: 1, kind: 'outcome_unknown',
       entry: { consumerId: 'consumer-1', entryGeneration: 1, sessionGeneration: 0 },
@@ -746,9 +746,10 @@ describe('other step-1 decoders', () => {
     const kernelOn = (kind: string, desiredState: string, observation: Record<string, unknown>) =>
       decodeControlIntentSnapshot(encode({ ...appliedPause, kind, desiredState, status: 'outcome_unknown', observation })).status;
     expect(kernelOn('cancel', 'cancelled', kernelUnknown)).toBe('decoded');
-    expect(kernelOn('pause', 'paused', kernelUnknown)).toBe('invalid');
-    expect(kernelOn('pause', 'paused', { ...kernelUnknown, kind: 'terminal_without_cancel' })).toBe('invalid');
-    expect(kernelOn('steer', 'steered', kernelUnknown)).toBe('invalid');
+    expect(kernelOn('pause', 'paused', kernelUnknown)).toBe('decoded');
+    expect(kernelOn('pause', 'paused', { ...kernelUnknown, kind: 'terminal_without_cancel' })).toBe('decoded');
+    expect(kernelOn('steer', 'steered', kernelUnknown)).toBe('decoded');
+    expect(kernelOn('pause', 'paused', { ...kernelUnknown, kind: 'cancelled' })).toBe('invalid');
     const submitted = (intent: unknown) => controlIntentSubmittedEventFromEvent(asEvent({ eventId: 'ev-submit', eventType: 'ControlIntentSubmitted',
       schemaVersion: 1, occurredAt: at, identityKey: 'submit-1', actor: human, fingerprint: 'fp:submit-1',
       submitted: { intent, runRevision: 4 } }));

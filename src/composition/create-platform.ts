@@ -295,10 +295,16 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     const access = createWorkspaceAccessFactory(options.workspace);
     const source = createMaterialSourceProvider({ access, contextForScope });
     const reads = createMaterialRecordReaders(backend.records);
+    // C2 §3.1: build the unique execution reader and the optional trusted Host
+    // authorization BEFORE the single Plan service, so the W2 delegated writes
+    // and the C1 mailbox admission share exactly this instance and this callback.
+    // The control service reads a not-entered stop and a yielded-wait Lease
+    // through the same reader (§6 RUN-09, RD-8).
+    const executionReader = createRunStateReader({ records: backend.records });
     // R4.1: the raw control service shares the ONE records/authority pair; the
     // public port is wrapped below so close drains an in-flight control call.
     const rawControls = createRunControlService({ records: backend.records, authority: reads.authority,
-      now, eventId: randomUUID });
+      reads: executionReader, now, eventId: randomUUID });
     const grants = createMaterialAccessResolver(reads.authority, reads.index, source);
     const rawMaterials = createMaterialService({ bodies, authority: reads.authority, grants, now });
     const grantService = createMaterialGrantService({ records: backend.records, authority: reads.authority,
@@ -308,10 +314,6 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       now, limits: DEFAULT_WORKSPACE_LIMITS });
     const roleService = createRoleConfigurationService({ records: backend.records, now, eventId: randomUUID });
     const bootstrap = createProjectBootstrapServices({ records: backend.records, now, eventId: randomUUID });
-    // C2 §3.1: build the unique execution reader and the optional trusted Host
-    // authorization BEFORE the single Plan service, so the W2 delegated writes
-    // and the C1 mailbox admission share exactly this instance and this callback.
-    const executionReader = createRunStateReader({ records: backend.records });
     const authorizeConfiguration = options.runtime === undefined
       ? undefined : createAuthorizeConfiguration(options.runtime);
     const sessionDirectory = createSessionDirectory({ records: backend.records, lookups: backend.records });

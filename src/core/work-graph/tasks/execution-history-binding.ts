@@ -65,7 +65,7 @@ function historyRunContext(session: SessionRecord, actor: RunGuardContext['actor
   return {
     session: { usable: true, owned: false, kernel: session.kernel }, lease: 'missing', persistedClaim: null,
     goal: { desiredState: 'active', activePlanMatchesClaim: true }, entryPlan: 'active_plan',
-    continuationBrief: 'absent_ok', freshAdmission: null, pointerIntent: null, queuedSteerCount: 0,
+    continuationBrief: 'absent_ok', freshAdmission: null, pointerIntent: null, queuedSteers: [],
     continuationConsumed: false, exitProof: null, hostLease: null, kernelProbe: null, kernelPaused: false,
     inputsConfirmed: null, actor, claim: null,
   };
