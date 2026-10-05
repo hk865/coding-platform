@@ -940,11 +940,25 @@ describe('planProposalProblem (the owner asks after each read)', () => {
 // --------------------------------------------------------------------------
 
 describe('today\'s results pinned for the step 5 flips', () => {
-  it('step 5.5 (D-9): a cancelled Goal does not block proposal_recorded or proposal_accepted yet', () => {
-    expect(transitionPlanProposal(null, RECORD_HOST, context(pointer(P1, 'cancelled'))).ok).toBe(true);
-    expect(transitionPlanProposal(null, RECORD_AGENT, context({ agentAdmission: 'ok', ...pointer(P1, 'cancelled') })).ok).toBe(true);
-    expect(transitionPlanProposal(CANDIDATE_INITIAL, ACCEPT_HOST, context(pointer(null, 'cancelled'))).ok).toBe(true);
-    expect(transitionPlanProposal(CANDIDATE_FUTURE, ACCEPT_HOST, context(pointer(P1, 'cancelled'))).ok).toBe(true);
+  it('step 5.5 (D-9, §3.4): a cancelled Goal records and adopts no Plan, after the scope pins; a paused Goal does', () => {
+    const cancelled = no('illegal', 'invalid', 'the Goal is cancelled; its plan can no longer change');
+    expectResult(transitionPlanProposal(null, RECORD_HOST, context(pointer(P1, 'cancelled'))), cancelled);
+    expectResult(transitionPlanProposal(null, RECORD_AGENT, context({ agentAdmission: 'ok', ...pointer(P1, 'cancelled') })), cancelled);
+    expectResult(transitionPlanProposal(CANDIDATE_INITIAL, ACCEPT_HOST, context(pointer(null, 'cancelled'))), cancelled);
+    expectResult(transitionPlanProposal(CANDIDATE_FUTURE, ACCEPT_HOST, context(pointer(P1, 'cancelled'))), cancelled);
+    expectResult(transitionPlanProposal(CANDIDATE_FUTURE, ACCEPT_AGENT, context({ agentAdmission: 'ok', ...pointer(P1, 'cancelled') })),
+      cancelled);
+    // The workspace and the caller pins answer first (they are read with the Goal).
+    expectResult(transitionPlanProposal(null, RECORD_HOST, context({ ...pointer(P1, 'cancelled'), goalInWorkspace: false })),
+      no('guard_failed', 'forbidden'));
+    expectResult(transitionPlanProposal(null, RECORD_HOST, context({ ...pointer(P1, 'cancelled'), pinsAgree: false })),
+      no('stale', 'revision_conflict'));
+    expect(planProposalProblem(null, RECORD_HOST, { goal: pointer(P1, 'cancelled').goal, goalInWorkspace: true, pinsAgree: true }))
+      .toMatchObject({ code: 'invalid' });
+    for (const [state, event] of [[null, RECORD_HOST], [CANDIDATE_INITIAL, ACCEPT_HOST], [CANDIDATE_FUTURE, ACCEPT_HOST]] as const) {
+      const ctx = context(pointer(state === CANDIDATE_INITIAL ? null : P1, 'paused'));
+      expect(transitionPlanProposal(state, event, ctx).ok).toBe(true);
+    }
   });
 
   it('step 5.10 (C7): affectedTaskIds shape and a draft dispositionRecord are left to the PlanProposal record schema at commit', () => {

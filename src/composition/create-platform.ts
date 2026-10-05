@@ -507,6 +507,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       createGoal: (...args) => trackedCall(() => rawGoals.createGoal(...args), unavailable),
       completeTask: (...args) => trackedCall(() => rawGoals.completeTask(...args), unavailable),
       completeGoal: (...args) => trackedCall(() => rawGoals.completeGoal(...args), unavailable),
+      setGoalControl: (...args) => trackedCall(() => rawGoals.setGoalControl(...args), unavailable),
     };
     function sessionCall<T>(call: () => Promise<T>): Promise<T | CoreRejection> {
       return trackedCall<T | CoreRejection>(call, unavailable);
@@ -588,6 +589,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       readTaskInput: (...args) => trackedCall(() => planService.readTaskInput(...args), unavailable),
       proposeInitialPlanFromAnswer: (...args) =>
         trackedCall(() => planService.proposeInitialPlanFromAnswer(...args), unavailable),
+      queryGoalDisplay: (...args) => trackedCall(() => planService.queryGoalDisplay(...args), unavailable),
+      queryGoalLiveRuns: (...args) => trackedCall(() => planService.queryGoalLiveRuns(...args), unavailable),
     };
     // The public material chain spans the ledger, bodies and source I/O, so the
     // whole outer call is drained before any owned store closes. The in-flight

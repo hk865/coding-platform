@@ -39,6 +39,16 @@ export type CreateGoalInput = {
 };
 
 /**
+ * A.2 step 5.5 (G7, spec §2 GOAL-04…06): one Goal-level control. `reason` is
+ * null or a non-empty text of at most 2048 UTF-8 bytes.
+ */
+export type SetGoalControlInput = {
+  goalRef: GoalRef;
+  control: 'pause' | 'resume' | 'cancel';
+  reason: string | null;
+};
+
+/**
  * The trusted Host-facing creation capability.
  *
  * `ctx` must match `request.input.workspace` and must be constructed by a real
@@ -69,6 +79,17 @@ export interface GoalTaskPort {
     ctx: CoreCallContext,
     request: GraphWrite<{ goalRef: GoalRef }>,
   ): Promise<WriteResult<GoalPhaseSnapshot>>;
+  /**
+   * A.2 step 5.5 (G7, D-9): the Goal's desired state. `meta.expected` pins the
+   * Goal and optionally its GoalPhase (0 = none). The commit stops new claims,
+   * entries and check processes; it changes no Run (the Host fan-out does,
+   * one Run at a time). An operator's pause is resumed only by an operator
+   * (LA-7).
+   */
+  setGoalControl(
+    ctx: CoreCallContext,
+    request: GraphWrite<SetGoalControlInput>,
+  ): Promise<WriteResult<GoalSnapshot>>;
 }
 
 /**

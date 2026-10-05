@@ -1,12 +1,14 @@
 /** R3c shared rule seam for queryReadyTasks and future R4c claim admission. */
 import type { TaskEligibility, TaskIneligibilityReason } from '../../../contracts/dispatch.js';
+import type { GoalDesiredState } from '../../../contracts/ledger.js';
 import { revisionAssignments, type Phase, type PlanRevisionSnapshot } from '../../../contracts/plan.js';
 
 /** Fully read canonical task state. Budget, role, Session and resource checks
  * are added by R4c claim; queryReadyTasks never fabricates those inputs. */
 export type TaskStateEligibilityFacts = {
   plan: PlanRevisionSnapshot;
-  goalDesiredState: 'active';
+  /** D-9: the Goal's stored desired state; a paused or cancelled Goal makes no Task eligible. */
+  goalDesiredState: GoalDesiredState;
   taskId: string;
   effectivePhases: ReadonlyMap<string, Phase>;
   lease: { status: 'free' } | { status: 'leased'; holderRunId: string };

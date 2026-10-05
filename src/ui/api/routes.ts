@@ -75,6 +75,10 @@ const ROUTE_LABELS: Record<CoreRouteSuffix, string> = {
   // CoreRouteSuffix); the actions are the new UI's (task E3).
   'tasks/requeue': '重新入队 / 继续',
   'executions/brief': '查看接续说明',
+  // A.2 step 5.5 suffixes: display labels only (the table is total over
+  // CoreRouteSuffix); the actions are the new UI's (task E3).
+  'goals/control': '暂停 / 恢复 / 取消目标',
+  'goals/display': '查看目标状态',
 };
 
 export const routeLabel = (route: CoreRouteSuffix): string => ROUTE_LABELS[route];

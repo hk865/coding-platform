@@ -11,7 +11,9 @@
  *   same commit; an observation that committed first wins the CAS.
  * - D-9 and RD-8: a resume needs the Goal active; a yielded wait whose
  *   continuation a successor consumed takes no control. Both are read-side
- *   facts: the paused Goal has no writer before 5.5, and the successor's
+ *   facts here: the paused Goal is written by `setGoalControl` since 5.5
+ *   (driven end to end in tests/app/A2-goal-control-route.test.ts and
+ *   tests/work-graph/A2-goal-control.test.ts), and the successor's
  *   Lease is written by a continuation claim that needs a replied wait
  *   message (the mailbox flow, driven end to end by step 6's
  *   scenarios/A7-control.test.ts). The test injects them at the read port and
@@ -314,7 +316,7 @@ describe('a yielded wait: D-8 on the fence, RD-8 once a successor consumed the c
 });
 
 describe('D-9: a resume needs the Goal active', () => {
-  /** The Goal read through this port reports `desiredState`; its writer (setGoalControl) is step 5.5. */
+  /** The Goal read through this port reports `desiredState` (its writer `setGoalControl` is tested in A2-goal-control). */
   function goalReadAs(records: B2Records, goalKey: string, desiredState: 'paused' | 'cancelled'): B2Records {
     return { ...records, async readMany(keys) {
       const read = await records.readMany(keys);

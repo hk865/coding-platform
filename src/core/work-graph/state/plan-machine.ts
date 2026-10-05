@@ -22,8 +22,8 @@
  * service needed) stay with the service, as do the input-shape checks it makes
  * before the receipt lookup.
  *
- * Step 2 (§15.2) implements today's results. Not yet wired, flipped in step 5:
- * the Goal `cancelled` guard (D-9, step 5.5); the C7 `affectedTaskIds` shape
+ * Step 2 (§15.2) implements the pre-A.2 results; step 5.5 adds the Goal
+ * `cancelled` guard (D-9, `scopeStep`). Not yet wired, flipped in step 5.10: the C7 `affectedTaskIds` shape
  * and draft `dispositionRecord` checks (today the PlanProposal record schema
  * rejects both at commit with `invalid`, zero writes); the C7 split of W16 into
  * changed / disposition-only Tasks with `tracedDispositionChangeProblem`
@@ -264,10 +264,13 @@ export type FutureAdoptionFacts = PlanDraftAdmissionFacts & {
   touchedTaskFacts: readonly FutureChangeTaskFactsV1[];
 };
 
+/** §2.4/§3.4 (D-9): the refusal of every plan write on a cancelled Goal (shared with GOAL-02/03 and TASK-19 guard 8). */
+export const GOAL_CANCELLED_PLAN_DETAIL = 'the Goal is cancelled; its plan can no longer change';
+
 /**
  * What the service read and validated. Sections an event does not use are
- * `null`. `goal.desiredState` is read for D-9 (step 5.5): today no Goal state
- * blocks a plan write.
+ * `null`. `goal.desiredState` is read for D-9 (step 5.5): a cancelled Goal
+ * records and adopts no Plan; a paused one does (W16 is not rework).
  */
 export type PlanProposalGuardContext = {
   /** The Goal read in this call (`readGoalScope`). */
@@ -401,7 +404,7 @@ export function tracedDispositionChangeProblem(input: {
 }): PlanGuardProblem | null {
   // Guard 8 (the same D-9 check as PLAN-05, checked once).
   if (input.goalDesiredState === 'cancelled') {
-    return { code: 'invalid', detail: 'the Goal is cancelled; its plan can no longer change' };
+    return { code: 'invalid', detail: GOAL_CANCELLED_PLAN_DETAIL };
   }
   const affected = new Set(input.affectedTaskIds ?? []);
   const traced = input.tasks
@@ -661,13 +664,19 @@ function agentAdmissionStep(facts: PlanProposalReadFacts): GuardStep {
   return verdictStep(facts.agentAdmission);
 }
 
-/** `readGoalScope` workspace + pin comparison (propose :955-961, :1941-1950; apply `validateProposalScope`, :1644-1666). */
+/**
+ * `readGoalScope` workspace + pin comparison (propose :955-961, :1941-1950;
+ * apply `validateProposalScope`, :1644-1666), then D-9 (§2.4, §3.4, step 5.5):
+ * the Goal read with the scope is not cancelled.
+ */
 function scopeStep(facts: PlanProposalReadFacts, outsideWorkspace: string): GuardStep {
   if (facts.goalInWorkspace === undefined || facts.pinsAgree === undefined) return UNREAD;
   if (!facts.goalInWorkspace) return reject('guard_failed', 'forbidden', outsideWorkspace);
   if (!facts.pinsAgree) {
     return reject('stale', 'revision_conflict', 'the supplied version pins do not match the versions read in this call');
   }
+  if (facts.goal === undefined) return UNREAD;
+  if (facts.goal.desiredState === 'cancelled') return reject('illegal', 'invalid', GOAL_CANCELLED_PLAN_DETAIL);
   return null;
 }
 

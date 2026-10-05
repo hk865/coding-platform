@@ -33,7 +33,7 @@ import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { SessionRef, VersionPin } from '../../../contracts/core/identity.js';
 import type { CoreError, CoreRejection, ReadResult, ReadStamp, WriteResult } from '../../../contracts/core/results.js';
 import type { PreparedQueryManifestV1 } from '../../../contracts/core/prepared-execution.js';
-import type { RunRef } from '../../../contracts/dispatch.js';
+import type { RunRef, RunSnapshot } from '../../../contracts/dispatch.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
 import { makeCommitCursor, seqOfCommitCursor } from '../../../contracts/ledger.js';
@@ -69,6 +69,10 @@ import { evaluateEligibility } from './eligibility.js';
 import type {
   GoalCompletionView,
   GoalDetail,
+  GoalDisplayQuery,
+  GoalDisplayRead,
+  GoalLiveRunsRead,
+  GoalResumePendingRunV1,
   GoalPlanningDiagnostic,
   GoalPlanningView,
   PlanChangeReason,
@@ -143,7 +147,13 @@ import {
   type PlanWriteOperation,
 } from './plan-write-admission.js';
 import { mergeGuards, sameRef } from './execution-entry-service.js';
-import { goalStateOf, transitionGoal } from '../state/goal-machine.js';
+import {
+  GOAL_FAN_OUT_ACTOR, goalFanOutRequestId, goalStateOf, reduceGoalDisplay, transitionGoal,
+  type GoalDisplayTaskFactsV1, type GoalRunControlCapabilityV1, type GoalRunStopInputV1,
+} from '../state/goal-machine.js';
+import { notEnteredEntryPhase } from '../state/control-intent-machine.js';
+import { runControlNodeOf } from '../state/run-machine.js';
+import { controlIntentRefFor } from './control-service.js';
 import {
   derivePlanRevisionStatus, planProposalProblem, planRevisionTargetOf, transitionPlanProposal,
   type FutureAdoptionFacts, type FuturePlanDeltaVerdict, type InitialAdoptionFacts, type PlanCommitGuard,
@@ -713,7 +723,8 @@ function taskRow(plan: PlanRevisionSnapshot, goalId: string,
   const definition = plan.tasks.find((candidate) => candidate.taskId === taskId);
   const state = facts.byTaskId.get(taskId);
   if (definition === undefined || state === undefined) return null;
-  const eligibility = evaluateEligibility({ plan, goalDesiredState: 'active', taskId,
+  // D-9 (§2.6): the Goal's stored desired state, so a paused Goal shows no Task as eligible.
+  const eligibility = evaluateEligibility({ plan, goalDesiredState: rework.goalDesiredState, taskId,
     effectivePhases: phases, lease: state.lease });
   const failure = taskFailureRead(definition, state, facts, rework, goalId);
   const coveringRequeueRef = state.requeueRef;
@@ -1678,8 +1689,198 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     return deps.materials.openArtifact(bound, { ref: requirement.artifactRef, usage: 'current' });
   }
 
+  /**
+   * A.2 step 5.5 (§2.1 展示读取 `readGoalDisplayFacts`, GOAL-17..30): one read
+   * window of the Goal and its active Plan (`readGoalPlanWindow`), the pending
+   * candidate (`findPendingProposal`), the canonical task facts and the
+   * GoalPhase, confirmed against the active Plan as `queryTaskGraph` does; the
+   * Task rows come from the SAME `taskRow` (projection, eligibility,
+   * `buildTaskFailureFacts`), so the Task view and the Goal display read one
+   * verdict. The pointer intents are read after the window (their status only
+   * moves forward, D-8). `runStops` cover each Task's selected Run and every
+   * `starting|running` Run while the Goal is not active.
+   */
+  async function queryGoalDisplay(ctx: CoreCallContext, input: GoalDisplayQuery): Promise<ReadResult<GoalDisplayRead>> {
+    if (ctx?.signal?.aborted) return rejected('cancelled', 'queryGoalDisplay was cancelled');
+    if (!isRecord(input) || !isRecord(input.goalRef) || !nonEmpty(input.goalRef['projectId'])) {
+      return rejected('invalid', 'queryGoalDisplay requires a full GoalRef');
+    }
+    const goalRef = goalRefFromUnknown(input.goalRef, input.goalRef['projectId']);
+    if (goalRef === null) return rejected('invalid', 'queryGoalDisplay requires a full GoalRef');
+    const capabilities = entryCapabilitiesOf(input.entryControlCapabilities);
+    if (capabilities === null) {
+      return rejected('invalid', 'entryControlCapabilities must give pause and cancel as supported, or unsupported with a reason');
+    }
+    const authority = authorizeReadContext(ctx, goalRef.projectId);
+    if (authority.status !== 'ok') return authority;
+    const window = await readGoalPlanWindow(records, goalRef);
+    if (window.status !== 'ready') return asReadResult(window);
+    const scopeError = authorizeGoal(authority.principal, window.goal);
+    if (scopeError !== null) return scopeError;
+    const pending = await findPendingProposal(records, goalRef, { revision: window.goal.revision,
+      activePlanRevision: window.goal.activePlanRevision });
+    if (pending.status !== 'ready') return asReadResult(pending);
+    const goal = pending.goal;
+    const plan = window.plan;
+    const pendingProposal = pending.proposal === null ? null
+      : { ref: pending.proposal.ref, basedOn: pending.proposal.basedOn };
+    const phaseRef: GoalPhaseRef = { aggregateType: 'GoalPhase', projectId: goalRef.projectId, goalId: goalRef.goalId };
+    if (plan === null) {
+      const phaseRead = await readGoalPhase(records, phaseRef);
+      if (phaseRead.status !== 'ready') return asReadResult(phaseRead);
+      const display = reduceGoalDisplay({ desiredState: goal.desiredState, activePlanRef: null,
+        completion: phaseRead.snapshot === null ? { status: 'not_recorded' } : { status: 'recorded', selectedPlanMatches: false },
+        partialAcceptance: null, pendingProposal, tasks: [], runsByTaskId: new Map(), runStopInputs: [] });
+      return { status: 'ready', value: { goal, display, liveRuns: [], resumePending: [],
+        sourceCursor: laterCursor(pending.readThrough, phaseRead.readThrough) } };
+    }
+    const facts = await readCanonicalTaskFacts(records, goalRef, plan);
+    if (facts.status !== 'ready') return asReadResult(facts);
+    let watermark: CommitCursor | null = facts.value.readThrough;
+    if (!sameCursor(window.readThrough, watermark)) {
+      const confirmed = await confirmActivePlan(records, goalRef, plan.ref);
+      if (confirmed.status !== 'ready') return asReadResult(confirmed);
+      watermark = confirmed.readThrough ?? watermark;
+    }
+    const phaseRead = await readGoalPhase(records, phaseRef);
+    if (phaseRead.status !== 'ready') return asReadResult(phaseRead);
+    watermark = laterCursor(watermark, phaseRead.readThrough);
+    const phases = phasesOf(facts.value);
+    const index = buildTaskRowIndex(plan);
+    const rework = await taskRowReworkOf(records, facts.value, goal.desiredState, automationPolicy());
+    if ('status' in rework) return asReadResult(rework);
+    const tasks: GoalDisplayTaskFactsV1[] = [];
+    for (const task of plan.tasks) {
+      const row = taskRow(plan, goalRef.goalId, facts.value, phases, index, task.taskId, rework);
+      if (row === null) continue;
+      tasks.push({ taskId: task.taskId, taskKind: task.taskKind, requirementLevel: task.requirementLevel,
+        disposition: task.disposition, phase: row.effectivePhase, phaseCause: row.phaseCause ?? null,
+        dispatchable: row.eligibility.eligible, failure: row.failure ?? null,
+        reworkEntries: row.rework?.entries ?? [], coveredTaskIds: gateCoverage(plan, task) });
+    }
+    // The Runs of the active Plan's Tasks in plan order: the live ones are the fan-out set (§2.3).
+    const planRuns = plan.tasks.flatMap((task) => facts.value.runsByTaskId.get(task.taskId) ?? []);
+    const liveRuns = liveRunsOf(plan, facts.value);
+    let resumePending: GoalResumePendingRunV1[] = [];
+    if (goal.desiredState === 'active' && liveRuns.length > 0) {
+      // A resumed Goal whose fan-out pause has not landed yet (or whose resume is still queued) keeps the Run visible.
+      const intents = await readPointerIntents(records, liveRuns);
+      if (intents.status !== 'ready') return asReadResult(intents);
+      resumePending = liveRuns.flatMap((run) => {
+        const intent = intents.intents.get(run.ref.runId);
+        if (intent === undefined || !requestedByGoalFanOut(intent)) return [];
+        if (intent.kind !== 'pause' && !(intent.kind === 'resume' && intent.status === 'queued')) return [];
+        return [{ runRef: run.ref, intentRef: intent.ref, intentKind: intent.kind, status: intent.status }];
+      });
+    }
+    let runStopInputs: GoalRunStopInputV1[] = [];
+    if (goal.desiredState !== 'active') {
+      const control = goal.desiredState === 'paused' ? 'pause' : 'cancel';
+      const capability = capabilities[control];
+      const selected = new Set([...facts.value.byTaskId.values()].flatMap((state) =>
+        state.execution === null ? [] : [canonicalJson(state.execution as unknown as JsonValue)]));
+      const shown = planRuns.filter((run) => run.status !== 'ended' || selected.has(canonicalJson(run.ref as unknown as JsonValue)));
+      const intents = await readPointerIntents(records, shown);
+      if (intents.status !== 'ready') return asReadResult(intents);
+      const scope = { projectId: goalRef.projectId, workspaceId: goal.workspaceRef.workspaceId };
+      runStopInputs = shown.map((run) => ({ run, pointedIntent: intents.intents.get(run.ref.runId) ?? null,
+        fanOutIntentRef: controlIntentRefFor(GOAL_FAN_OUT_ACTOR, scope,
+          goalFanOutRequestId(goalRef, goal.desiredStateRevision ?? 1, run.ref, control)),
+        // D-7: the platform pauses or cancels a Run that never entered itself.
+        capability: notEnteredEntryPhase(runControlNodeOf(run)) !== null ? { status: 'supported' as const } : capability }));
+    }
+    const display = reduceGoalDisplay({ desiredState: goal.desiredState, activePlanRef: plan.ref,
+      completion: phaseRead.snapshot === null ? { status: 'not_recorded' } : { status: 'recorded',
+        selectedPlanMatches: planRevisionRefKey(phaseRead.snapshot.planRef) === planRevisionRefKey(plan.ref) },
+      partialAcceptance: null, pendingProposal, tasks, runsByTaskId: facts.value.runsByTaskId, runStopInputs });
+    return { status: 'ready', value: { goal, display, liveRuns: liveRuns.map((run) => run.ref), resumePending,
+      sourceCursor: watermark } };
+  }
+
+  /**
+   * A.2 step 5.5 (§2.3 受影响集合): the G7 fan-out set. One read window of the
+   * Goal and its active Plan, then `readCanonicalTaskFacts(...).runsByTaskId`
+   * filtered to `starting|running`, confirmed against the active Plan as
+   * `queryTaskGraph` does. The fan-out driver reads only this: a damaged
+   * display-only fact (the pending candidate, the GoalPhase, the failure
+   * facts) never keeps a committed Goal control from reaching its Runs.
+   */
+  async function queryGoalLiveRuns(ctx: CoreCallContext, input: { goalRef: GoalRef }): Promise<ReadResult<GoalLiveRunsRead>> {
+    if (ctx?.signal?.aborted) return rejected('cancelled', 'queryGoalLiveRuns was cancelled');
+    if (!isRecord(input) || !isRecord(input.goalRef) || !nonEmpty(input.goalRef['projectId'])) {
+      return rejected('invalid', 'queryGoalLiveRuns requires a full GoalRef');
+    }
+    const goalRef = goalRefFromUnknown(input.goalRef, input.goalRef['projectId']);
+    if (goalRef === null) return rejected('invalid', 'queryGoalLiveRuns requires a full GoalRef');
+    const authority = authorizeReadContext(ctx, goalRef.projectId);
+    if (authority.status !== 'ok') return authority;
+    const window = await readGoalPlanWindow(records, goalRef);
+    if (window.status !== 'ready') return asReadResult(window);
+    const scopeError = authorizeGoal(authority.principal, window.goal);
+    if (scopeError !== null) return scopeError;
+    if (window.plan === null) return { status: 'ready', value: { goal: window.goal, liveRuns: [], sourceCursor: window.readThrough } };
+    const facts = await readCanonicalTaskFacts(records, goalRef, window.plan);
+    if (facts.status !== 'ready') return asReadResult(facts);
+    let goal = window.goal;
+    let watermark: CommitCursor | null = facts.value.readThrough;
+    if (!sameCursor(window.readThrough, watermark)) {
+      const confirmed = await confirmActivePlan(records, goalRef, window.plan.ref);
+      if (confirmed.status !== 'ready') return asReadResult(confirmed);
+      goal = confirmed.goal;
+      watermark = confirmed.readThrough ?? watermark;
+    }
+    return { status: 'ready', value: { goal, liveRuns: liveRunsOf(window.plan, facts.value).map((run) => run.ref),
+      sourceCursor: watermark } };
+  }
+
   return { queryGoal, readPlanProposal, proposePlan, applyPlanChange, proposeInitialPlanFromAnswer,
-    queryTaskGraph, queryReadyTasks, readTaskInput };
+    queryTaskGraph, queryReadyTasks, readTaskInput, queryGoalDisplay, queryGoalLiveRuns };
+}
+
+/** §2.3 受影响集合: the `starting|running` Runs of the active Plan's Tasks, in plan task order. */
+function liveRunsOf(plan: PlanRevisionSnapshot, facts: CanonicalTaskFacts): RunSnapshot[] {
+  return plan.tasks.flatMap((task) => facts.runsByTaskId.get(task.taskId) ?? [])
+    .filter((run) => run.status === 'starting' || run.status === 'running');
+}
+
+/** The intent was submitted by the Host G7 fan-out (`GOAL_FAN_OUT_ACTOR`, §2.3 身份). */
+function requestedByGoalFanOut(intent: ControlIntentSnapshotV1): boolean {
+  return intent.requestedBy.kind === GOAL_FAN_OUT_ACTOR.kind && intent.requestedBy.id === GOAL_FAN_OUT_ACTOR.id;
+}
+
+/** The `entryControlCapabilities` input; absent is both supported, a malformed value null. */
+function entryCapabilitiesOf(value: unknown): { pause: GoalRunControlCapabilityV1; cancel: GoalRunControlCapabilityV1 } | null {
+  if (value === undefined) return { pause: { status: 'supported' }, cancel: { status: 'supported' } };
+  if (!isRecord(value) || Object.keys(value).length !== 2) return null;
+  const pause = entryCapabilityOf(value['pause']);
+  const cancel = entryCapabilityOf(value['cancel']);
+  return pause === null || cancel === null ? null : { pause, cancel };
+}
+
+/** One capability of `entryControlCapabilities`; a malformed value is null. */
+function entryCapabilityOf(value: unknown): GoalRunControlCapabilityV1 | null {
+  if (!isRecord(value)) return null;
+  if (value['status'] === 'supported' && Object.keys(value).length === 1) return { status: 'supported' };
+  if (value['status'] === 'unsupported' && nonEmpty(value['reason']) && Object.keys(value).length === 2) {
+    return { status: 'unsupported', reason: value['reason'] };
+  }
+  return null;
+}
+
+/** GOAL-27 `awaiting_gate`: the work Tasks inside a gate's scope (goal: every one; stage: its stage; module: its module). */
+function gateCoverage(plan: PlanRevisionSnapshot, gate: RuntimeTask): string[] {
+  if (gate.taskKind !== 'gate') return [];
+  const scope = gate.scope;
+  return plan.tasks.filter((task) => {
+    if (task.taskKind !== 'work') return false;
+    switch (scope.kind) {
+      case 'goal': return true;
+      case 'stage': return task.scope.kind !== 'goal' && task.scope.stageId === scope.stageId;
+      case 'module': return task.scope.kind === 'module' && task.scope.stageId === scope.stageId
+        && task.scope.moduleRef === scope.moduleRef;
+      default: return false;
+    }
+  }).map((task) => task.taskId);
 }
 
 // --------------------------------------------------------------------------

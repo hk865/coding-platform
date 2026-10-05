@@ -740,6 +740,10 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort & Requi
     if (goalRead.status !== 'ready') return readRejection(goalRead);
     const goal = goalRead.value.goal;
     if (goal.workspaceRef.projectId !== owned.projectId) return rejection('forbidden', 'the Goal belongs to another project');
+    // D-9 (§2.6): a paused or cancelled Goal selects no work; the claim would be `busy` anyway.
+    if (goal.desiredState !== 'active') {
+      return waiting(null, `the Goal is ${goal.desiredState}; no work is selected while the Goal is not active`);
+    }
     if (goal.activePlanRevision === null) {
       return waiting(null, 'the Goal has no adopted Plan; no work was selected');
     }

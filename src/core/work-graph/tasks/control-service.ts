@@ -11,7 +11,9 @@
  * platform applies a pause, cancel or resume itself (D-7): the intent is
  * `applied@2`, and a cancel ends the Run and releases its Attempt, Outbox,
  * Lease and Session occupancy in the same commit. A still-queued older pointer
- * intent is superseded in the same commit (D-8).
+ * intent is superseded in the same commit (D-8). The Goal fan-out (A.2 step
+ * 5.5, §2.3) adds a Goal fence to `meta.expected` (a read-only Goal CAS) and
+ * finds its deterministic intents through `controlIntentRefFor`.
  *
  * `readControl` reads the intent by its exact ref. It never reloads the Run,
  * Role, Session or materials, and a historical intent stays readable after the
@@ -143,6 +145,43 @@ function identityDigest(actor: HostActor, projectId: string, workspaceId: string
   return sha256Hex(canonicalJson({
     actor: { kind: actor.kind, id: actor.id }, projectId, workspaceId, requestId,
   } as unknown as JsonValue));
+}
+
+/**
+ * The ControlIntentRef `submitControl` mints for this actor, scope and
+ * requestId (§2.3 扇出身份与重驱协议): the Goal fan-out computes the intent of
+ * a deterministic requestId and reads it before it submits again, because a
+ * same-identity resubmission with a newer Run pin would be an
+ * `idempotency_conflict`, not the original receipt.
+ */
+export function controlIntentRefFor(
+  actor: HostActor, scope: { projectId: string; workspaceId: string }, requestId: string,
+): ControlIntentRef {
+  return { aggregateType: 'ControlIntent', projectId: scope.projectId, workspaceId: scope.workspaceId,
+    intentId: identityDigest(actor, scope.projectId, scope.workspaceId, requestId) };
+}
+
+/**
+ * `meta.expected` of a submission: the Run pin, and optionally a Goal fence
+ * (GOAL-09..14): the Run's Goal at the revision the caller read, a read-only
+ * CAS of the commit, so a slow fan-out of an old epoch never lands after the
+ * Goal moved on (§2.4 "扇出提交 | Goal fence 过期").
+ */
+function checkControlPins(
+  expected: readonly VersionPin[], runRef: RunRef,
+): { ok: true; runPin: VersionPin; goalFence: VersionPin | null } | { ok: false; rejection: CoreRejection } {
+  const goalRef: GoalRef = { aggregateType: 'Goal', projectId: runRef.projectId, goalId: runRef.goalId };
+  const goalFence = expected.find(pin => isRecord(pin) && isRecord(pin.ref) && sameRef(pin.ref, goalRef));
+  if (goalFence === undefined) {
+    const checked = checkRunPin(expected, runRef);
+    return checked.ok ? { ok: true, runPin: checked.pin, goalFence: null } : checked;
+  }
+  const checked = checkRunPin(expected.filter(pin => pin !== goalFence), runRef);
+  if (!checked.ok) return checked;
+  if (typeof goalFence.revision !== 'number' || !Number.isSafeInteger(goalFence.revision) || goalFence.revision < 1) {
+    return { ok: false, rejection: invalid('the Goal fence must be a positive safe revision') };
+  }
+  return { ok: true, runPin: checked.pin, goalFence: { ref: goalRef, revision: goalFence.revision } };
 }
 function fingerprintOf(value: unknown): string {
   return sha256Hex(canonicalJson(value as JsonValue));
@@ -558,9 +597,10 @@ export function createRunControlService(deps: RunControlServiceDependencies): Ru
     const input = owned.input;
     const inputProblem = submitControlInputProblem(input);
     if (inputProblem !== null) return invalid(inputProblem);
-    const checkedRun = checkRunPin(owned.expected, input.runRef);
-    if (!checkedRun.ok) return checkedRun.rejection;
-    const runPin = checkedRun.pin;
+    const checkedPins = checkControlPins(owned.expected, input.runRef);
+    if (!checkedPins.ok) return checkedPins.rejection;
+    const runPin = checkedPins.runPin;
+    const goalFence = checkedPins.goalFence;
     if (signal.aborted) return cancelled('the control request was cancelled before lookup');
 
     let identity = '';
@@ -571,7 +611,8 @@ export function createRunControlService(deps: RunControlServiceDependencies): Ru
       identity = CONTROL_SUBMIT_PREFIX + intentId;
       fingerprint = fingerprintOf({ kind: 'r4-control-submit', actor: { kind: actor.kind, id: actor.id },
         runRef: input.runRef, control: input.kind, reason: input.reason,
-        expected: [{ ref: runPin.ref, revision: runPin.revision }] });
+        expected: [{ ref: runPin.ref, revision: runPin.revision },
+          ...(goalFence === null ? [] : [{ ref: goalFence.ref, revision: goalFence.revision }])] });
     } catch {
       return invalid('the control request is not canonicalizable JSON');
     }
@@ -699,6 +740,8 @@ export function createRunControlService(deps: RunControlServiceDependencies): Ru
         guards.push({ refKey: refKeyOf(facts.lease.ref) as string, expectedRevision: facts.lease.revision });
       }
       if (goalGuard !== null) guards.push(goalGuard);
+      // GOAL-09..14: the fan-out's Goal fence is a read-only CAS at the caller's revision.
+      if (goalFence !== null) guards.push({ refKey: refKeyOf(goalFence.ref) as string, expectedRevision: goalFence.revision });
       const merged = mergeGuards(guards);
       if (!merged.ok) return merged.rejection;
       const event: ControlIntentSubmittedEvent = { eventId, eventType: CONTROL_INTENT_SUBMITTED_EVENT_TYPE,

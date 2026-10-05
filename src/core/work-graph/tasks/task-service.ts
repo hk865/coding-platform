@@ -33,6 +33,7 @@ import type { GoalRecordTransactionPort, RecordGuard } from "../../record-store/
 import type { RecordLookupPort } from "../../record-store/lookup-ports.js";
 import type { CompletionDependencies } from "./completion.js";
 import { completeGoalFromHost, completeTaskFromHost } from "./completion.js";
+import { setGoalControlFromHost } from "./goal-control.js";
 import type { CreateGoalInput, GoalService, GoalServiceDependencies, GoalTaskPort, GraphWrite } from "./contracts.js";
 import { compareCallerGoalPins, compileGoalCreate, goalCreateFingerprint, goalCreateIdentityKey, goalRefFor, normalizeCallerGoalPins, projectRefFor, workspaceRefFor } from "../persistence/commit-compiler.js";
 import { createGoalGraphRepository, type CommittedStoreReceipt, type GoalCreateIdentity, type GoalGraphRepository } from "../persistence/graph-repository.js";
@@ -438,6 +439,8 @@ export function createGoalService(deps: GoalServiceDependencies): GoalService {
       ? Promise.resolve({ status: "rejected", code: "unsupported",
           reason: "Goal completion requires a RecordStore with the exact lookup capability" })
       : completeGoalFromHost(completionDeps, ctx, request),
+    // A.2 step 5.5 (G7): GOAL-04…06 over the same records.
+    setGoalControl: (ctx, request) => setGoalControlFromHost(deps, ctx, request),
   };
   return { tasks };
 }

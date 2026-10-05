@@ -64,6 +64,15 @@ export type { TaskDispositionChangeV1 } from '../contracts/plan.js';
 export type { ContinuationBriefV1, SourceChangeVerdictV1 } from '../contracts/continuation-brief.js';
 export type { RoundChainV1, RoundCheckIncompleteCause, RoundReverifyFactV1 } from '../contracts/verification.js';
 export type { RequeueTaskInput } from '../core/work-graph/tasks/claim-contracts.js';
+/** A.2 step 5.5 Goal control and display shapes (spec §2.1, §2.3), type-only for the UI. */
+export type { SetGoalControlInput } from '../core/work-graph/tasks/contracts.js';
+export type { GoalDisplayRead, GoalResumePendingRunV1 } from '../core/work-graph/tasks/plan-contracts.js';
+export type {
+  GoalDisplayCauseV1, GoalDisplayPhase, GoalDisplayRow, GoalDisplayV1, GoalRunStopStateV1, GoalRunStopV1, GoalStopCauseCode,
+} from '../core/work-graph/state/goal-machine.js';
+export type {
+  GoalControlOutcomeV1, GoalDisplayHostReadV1, GoalFanOutReportV1, GoalFanOutRunResultV1, GoalReentryFailureV1,
+} from './goal-fan-out-driver.js';
 export type { ReverifyOutcomeV1, ReverifyRoundInput } from '../core/work-graph/evidence/contracts.js';
 export type { CoreRejection, ReadResult } from '../contracts/core/results.js';
 export type { CaptureSummary, SourcePage, WorkspaceFile, WorkspaceResult } from '../core/workspace/ports.js';
@@ -157,7 +166,11 @@ export type CoreRouteSuffix =
   // A.2 step 5.4 (D-3, C1, C3): the operator requeue/continue and the
   // continuation brief pinned to a requeue Run.
   | 'tasks/requeue'
-  | 'executions/brief';
+  | 'executions/brief'
+  // A.2 step 5.5 (G7): the Goal pause/resume/cancel with its per-Run fan-out,
+  // and the Goal display reduction (GOAL-17..30 with runStops).
+  | 'goals/control'
+  | 'goals/display';
 
 type SecondArgument<M> = M extends (ctx: CoreCallContext, argument: infer A) => unknown ? A : never;
 type MethodResult<M> = M extends (ctx: CoreCallContext, argument: never) => infer R ? Awaited<R> : never;

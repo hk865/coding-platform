@@ -63,10 +63,10 @@ import {
 } from '../tasks/execution-entry-service.js';
 import {
     checkEventAdmission, finalizeRoundOutcome, foldVerdictChecks, frozenBindingProblem, nextTaskEvidenceIndex, outcomeFor,
-    roundChainHead, roundOpenBasisProblem, roundOpenChainProblem, roundOpenChecksProblem, roundOpenPointerProblem,
-    roundOpenSubjectProblem, roundReviewerEvidenceProblem, roundWriteAdmission, taskEvidenceIndexRefOf, transitionCheck,
-    transitionRound,
-    type CheckEvent, type CheckVerdictDecisionV1, type RoundChainHeadV1, type RoundFoldFactsV1, type RoundGuardContext,
+    roundActivityProblem, roundChainHead, roundGoalActivityProblem, roundOpenBasisProblem, roundOpenChainProblem,
+    roundOpenChecksProblem, roundOpenPointerProblem, roundOpenSubjectProblem, roundReviewerEvidenceProblem,
+    roundSubjectActivityProblem, roundWriteAdmission, taskEvidenceIndexRefOf, transitionCheck, transitionRound,
+    type CheckEvent, type RoundActivityFactsV1, type CheckVerdictDecisionV1, type RoundChainHeadV1, type RoundFoldFactsV1, type RoundGuardContext,
     type RoundOpenFactsV1, type TaskEvidenceIndexReadV1, type TaskEvidenceIndexWrite, type VerificationEffect,
 } from '../state/verification-machine.js';
 import { unreachable, type Rejected } from '../state/transition.js';
@@ -215,7 +215,7 @@ type RoundWrite<T> = {
     effects: readonly VerificationEffect[];
     /** The machine's next round, written under its CAS when the effects carry `guard_round`. */
     round: RoundSnapshot;
-    /** `guard_open_read_set` / `guard_finalize_read_set`: the CAS of every record the operation read. */
+    /** `guard_open_read_set` / `guard_finalize_read_set` / `guard_begin_read_set`: the CAS of every record the operation read. */
     readSet?: readonly RecordGuard[];
     /** `admit_claim_evidence` / `admit_verdict_evidence`: the Evidence@1 rows built from the effect. */
     evidence?: readonly EvidenceSnapshot[];
@@ -259,6 +259,7 @@ async function commitRoundWrite<T>(records: Records, signal: AbortSignal, write:
             }
             case 'guard_open_read_set':
             case 'guard_finalize_read_set':
+            case 'guard_begin_read_set':
                 readSet = write.readSet ?? [];
                 break;
             case 'admit_claim_evidence':
@@ -314,6 +315,35 @@ async function readRoundRecord(records: Records, ref: VerificationRoundRef): Pro
     const decoded = decodeVerificationRoundSnapshot(record);
     if (decoded.status !== 'decoded') return { ok: false, rejection: unavailable(`the round is damaged: ${decoded.reason}`) };
     return { ok: true, round: decoded.value };
+}
+
+/**
+ * VD-9 facts of a fresh check begin (VR-02): the round's Goal and the subject
+ * task's disposition in the Goal's CURRENT adopted Plan (null: that Plan does
+ * not name it, or there is none), with the guards of both reads (Goal@rev,
+ * Plan@rev); a W16 or a Goal control between the read and the commit moves the
+ * Goal revision and conflicts.
+ */
+async function readRoundActivity(records: Records, scope: { projectId: string; workspaceId: string }, round: RoundSnapshot):
+Promise<{ ok: true; facts: RoundActivityFactsV1; guards: RecordGuard[] } | { ok: false; rejection: CoreRejection }> {
+    const goalRef: GoalRef = { aggregateType: 'Goal', projectId: round.subject.projectId, goalId: round.subject.goalId };
+    const goalRead = await readGoal(records, goalRef);
+    if (goalRead.status !== 'ready') return { ok: false, rejection: mapRejected(goalRead) };
+    const goal = goalRead.goal;
+    if (goal.workspaceRef.projectId !== scope.projectId || goal.workspaceRef.workspaceId !== scope.workspaceId) {
+        return { ok: false, rejection: forbidden('the round Goal belongs to another workspace') };
+    }
+    const goalKey = refKeyOf(goalRef);
+    if (goalKey === null) return { ok: false, rejection: invalid('the round Goal ref is not canonical JSON') };
+    const guards: RecordGuard[] = [{ refKey: goalKey, expectedRevision: goal.revision }];
+    let subjectDisposition: RoundActivityFactsV1['subjectDisposition'] = null;
+    if (goal.desiredState === 'active' && goal.activePlanRevision !== null) {
+        const planRead = await readPlan(records, goal.activePlanRevision);
+        if (planRead.status !== 'ready') return { ok: false, rejection: mapRejected(planRead) };
+        subjectDisposition = planRead.plan.tasks.find(task => task.taskId === round.subject.taskId)?.disposition ?? null;
+        guards.push({ refKey: planRevisionRefKey(goal.activePlanRevision), expectedRevision: planRead.plan.revision });
+    }
+    return { ok: true, facts: { goalDesiredState: goal.desiredState, subjectDisposition }, guards };
 }
 
 type LookupOutcome = { status: 'found'; receipt: Extract<StoreCommitReceipt, { status: 'committed' }> }
@@ -608,6 +638,9 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         if (goal.workspaceRef.projectId !== scope.projectId || goal.workspaceRef.workspaceId !== scope.workspaceId) {
             return forbidden('the subject Goal belongs to another workspace');
         }
+        // VD-9 (5.5): a Goal that is not active opens no round; guarded as read below.
+        const goalActivity = refusalOf(roundGoalActivityProblem(goal.desiredState));
+        if (goalActivity !== null) return goalActivity;
         const planIsActive = goal.activePlanRevision !== null
             && planRevisionRefKey(goal.activePlanRevision) === planRevisionRefKey(input.planRef);
         const pointerProblem = refusalOf(roundOpenPointerProblem(planIsActive));
@@ -618,6 +651,11 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         if (plan.goalRef.projectId !== goalRef.projectId || plan.goalRef.goalId !== goalRef.goalId) {
             return notFound('the adopted Plan belongs to another Goal');
         }
+        // VD-9: the subject's disposition in the Goal's current adopted Plan (the pointer check made it this Plan).
+        const activity: RoundActivityFactsV1 = { goalDesiredState: goal.desiredState,
+            subjectDisposition: plan.tasks.find(task => task.taskId === input.subject.taskId)?.disposition ?? null };
+        const subjectActivity = refusalOf(roundSubjectActivityProblem(activity.subjectDisposition, input.subject));
+        if (subjectActivity !== null) return subjectActivity;
         const basis = buildEffectiveTaskBasis(plan).get(input.subject.taskId);
         const taskBasisResolved = basis !== undefined && !isBasisUnsupported(basis);
         const basisProblem = refusalOf(roundOpenBasisProblem(taskBasisResolved, input.subject));
@@ -658,7 +696,7 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         if (!chainRead.ok) return chainRead.rejection;
         const chainProblem = roundOpenChainProblem(chainRead.chain, input.subject);
         if (chainProblem !== null) return chainRefusal(chainProblem, chainRead.chain);
-        const facts: RoundOpenFactsV1 = { planIsActive, taskBasisResolved, ...subjectFacts, chain: chainRead.chain };
+        const facts: RoundOpenFactsV1 = { activity, planIsActive, taskBasisResolved, ...subjectFacts, chain: chainRead.chain };
         const policyRead = await readPinnedCompletionPolicy(records, plan.effectiveCompletionPolicy);
         if (policyRead.status !== 'resolved') return mapRejected(policyRead);
         const baseline = await readPinnedBaseline(records, plan.effectiveArchitectureBaseline);
@@ -873,6 +911,11 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         const guardCtx = roundCtx(round.executor, actor, checked.revision);
         const admitted = refusalOf(checkEventAdmission(round, { kind: 'check_begun', checkId: input.checkId }, guardCtx), round);
         if (admitted !== null) return admitted;
+        // VD-9 (5.5): the Goal and the subject's disposition in its current adopted Plan, before any Host IO.
+        const activity = await readRoundActivity(records, scope, round);
+        if (!activity.ok) return activity.rejection;
+        const activityProblem = refusalOf(roundActivityProblem(activity.facts, round.subject));
+        if (activityProblem !== null) return activityProblem;
         // R6 cold-start: the original round FROZE its trusted configuration when
         // it opened. A later scope approval may never rewrite or re-key it, so
         // this fresh begin and every ticket it issues use the round's frozen
@@ -895,7 +938,8 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         const sourceProblem = refusalOf(frozenBindingProblem(round, observed));
         if (sourceProblem !== null) return sourceProblem;
         const invocationId = deps.newId();
-        const decided = transitionCheck(round, { kind: 'check_begun', checkId: input.checkId, invocationId, observed }, guardCtx);
+        const decided = transitionCheck(round, { kind: 'check_begun', checkId: input.checkId, invocationId, observed,
+            activity: activity.facts }, guardCtx);
         if (!decided.ok) return refusalOf(decided, round);
         const definition = round.checks.find(candidate => candidate.checkId === input.checkId)!.definition;
         const ticket: CheckExecutionTicket = { roundRef: round.ref, checkId: input.checkId, invocationId,
@@ -905,6 +949,7 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
             processAccess: configuration.processAccess, deniedPrefixes: configuration.deniedPrefixes, definition };
         const occurredAt = deps.now();
         return await commitRoundWrite(records, signal, { identity, fingerprint, effects: decided.effects, round: decided.next,
+            readSet: activity.guards,
             event: { eventId: deps.newId(), eventType: VERIFICATION_CHECK_BEGUN_EVENT_TYPE, schemaVersion: 1, occurredAt,
                 identityKey: identity, roundRef: round.ref, actor, fingerprint, result: ticket },
             value: ticket, cancelled: 'the check begin was cancelled before commit' });

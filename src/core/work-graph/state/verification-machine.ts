@@ -39,8 +39,10 @@
  * - A.2 step 5.4 (D-3): VR-01 refuses a subject Run a TaskRequeue covers, and
  *   VR-09 answers a requeue of the chain head (the head guarded as read and the
  *   slot held with a same-owner claim).
- * - Later substeps add the rest, each with its facts: the VD-9 Goal and
- *   disposition guards of VR-01/VR-02 (5.5), VR-04 and VR-06 (start-up check
+ * - A.2 step 5.5 (VD-9): VR-01 and VR-02 refuse a Goal that is not active
+ *   (`busy`) and a subject task that is not active in the Goal's current
+ *   adopted Plan (`invalid`); VR-02 guards the Goal and that Plan as read.
+ * - Later substeps add the rest, each with its facts: VR-04 and VR-06 (start-up check
  *   reconcile, 5.6) and VR-14/VR-15 (`round_reverified`, 5.9). Their events stay in the unions:
  *   the guards of §9.4 that need only the round are implemented and the legal
  *   cell returns `illegal`/`invalid` (`notYet`).
@@ -65,7 +67,8 @@ import type {
 import { requirementKeyOf } from '../../../contracts/evidence.js';
 import { canonicalJson } from '../../../contracts/fingerprint.js';
 import type { NewBasisInputRefV1 } from '../../../contracts/no-progress.js';
-import type { PlanRevisionRef } from '../../../contracts/plan.js';
+import type { GoalDesiredState } from '../../../contracts/ledger.js';
+import type { Disposition, PlanRevisionRef } from '../../../contracts/plan.js';
 import type {
   ReworkActorClass, ReworkFailureClass, TaskRequeueSnapshotV1,
 } from '../../../contracts/task-requeue.js';
@@ -177,9 +180,16 @@ export type RoundGuardContext = {
   expectedRevision: number | null;
   /** The reconciling Host holds the D-18 instance lease (VR-04, VR-06); otherwise another live Host does. */
   instanceLeaseHeld: boolean;
-  // Step 5.5 adds the VD-9 inputs (Goal desired state, subject disposition in
-  // the Goal's current adopted Plan) with the VR-01/VR-02/VR-14 guards that read them.
 };
+
+/**
+ * VD-9 facts of a write that starts a new check process (VR-01 `round_opened`,
+ * VR-02 `check_begun`; VR-14 in 5.9): the Goal's desired state and the subject
+ * task's disposition in the Goal's CURRENT adopted Plan (not the round's frozen
+ * `adoptedPlanRef`; null when that Plan does not name the task). The owner
+ * guards the Goal as read (PlanRevisions are immutable).
+ */
+export type RoundActivityFactsV1 = { goalDesiredState: GoalDesiredState; subjectDisposition: Disposition | null };
 
 /** Everything `prepareRoundOpening` produced for one new round (VR-01; VR-14 reuses it without ref/subject). */
 export type RoundOpeningV1 = {
@@ -216,6 +226,8 @@ export type RoundSubjectRelationV1 =
  * guard.
  */
 export type RoundOpenFactsV1 = {
+  /** VD-9 (5.5): the Goal desired state after the Goal read, the subject disposition after the Plan read. */
+  activity: RoundActivityFactsV1;
   /** After the Goal read: `Goal.activePlanRevision` equals the requested planRef (`:513-515`). */
   planIsActive: boolean;
   /** After the Plan read: the subject task has a resolved, supported task-state basis (`:523-525`). */
@@ -274,7 +286,8 @@ export type BookedReportFactsV1 = {
 };
 
 export type CheckEvent =
-  | { kind: 'check_begun'; checkId: string; invocationId: string; observed: FrozenBindingObservationV1 }
+  /** `activity`: the VD-9 facts the owner read after the pre-IO admission (5.5). */
+  | { kind: 'check_begun'; checkId: string; invocationId: string; observed: FrozenBindingObservationV1; activity: RoundActivityFactsV1 }
   /** `sourceStatus` from the owner's `evaluateSource`; `reportRef` stored before the commit (`:835-842`). */
   | {
     kind: 'check_result_recorded'; checkId: string; invocationId: string;
@@ -311,6 +324,7 @@ export type VerdictAdmissionV1 = { ref: EvidenceRef; checkId: string; coverage: 
  *   policy and baseline as read (`evidence-service.ts:635-642`);
  * - `guard_finalize_read_set`: Goal, the Plans the fold judged against and the
  *   subject Run as read (VR-07);
+ * - `guard_begin_read_set`: the Goal and its current adopted Plan as read (VR-02, VD-9);
  * - `claim_round_slot`: the chain slot CAS (VR-01; VR-14 in 5.9);
  * - `admit_claim_evidence` / `admit_verdict_evidence`: Evidence@1 rows, each
  *   CAS null (VR-08, VR-07);
@@ -322,6 +336,7 @@ export type VerificationEffect =
   | { kind: 'guard_round_unchanged'; revision: number }
   | { kind: 'guard_open_read_set' }
   | { kind: 'guard_finalize_read_set' }
+  | { kind: 'guard_begin_read_set' }
   | { kind: 'claim_round_slot'; claim: RoundSlotClaimV1 }
   | { kind: 'admit_claim_evidence'; coverage: EvidenceCoverageV1[] }
   | { kind: 'admit_verdict_evidence'; admissions: VerdictAdmissionV1[] }
@@ -1037,13 +1052,40 @@ export function roundReviewerEvidenceProblem(reviewerEvidenceCount: number): Rej
  * relation and a normal Run end (VD-3) after the Run read
  * (`roundOpenSubjectProblem`), then the subject's chain after the lookup
  * (`roundOpenChainProblem`, VD-1/VD-15), all before the capture. The subject
- * step includes the TaskRequeue cover (5.4); 5.5 adds the VD-9 guards.
+ * step includes the TaskRequeue cover (5.4); VD-9 (5.5) asks the Goal's
+ * desired state right after the Goal read and the subject's disposition right
+ * after the Plan read (`roundGoalActivityProblem`, `roundSubjectActivityProblem`).
  */
 export function roundOpenProblem(facts: RoundOpenFactsV1, subject: TaskTriple): Rejected | null {
-  return roundOpenPointerProblem(facts.planIsActive)
+  return roundGoalActivityProblem(facts.activity.goalDesiredState)
+    ?? roundOpenPointerProblem(facts.planIsActive)
+    ?? roundSubjectActivityProblem(facts.activity.subjectDisposition, subject)
     ?? roundOpenBasisProblem(facts.taskBasisResolved, subject)
     ?? roundOpenSubjectProblem(facts, subject)
     ?? roundOpenChainProblem(facts.chain, subject);
+}
+
+/**
+ * VD-9 (§9.4, D-9): a Goal that is not active starts no new check process
+ * (`busy`, "resume the Goal first", the claim's code). Results, reconcile and
+ * finalize stay writable: they only book what already ran.
+ */
+export function roundGoalActivityProblem(goalDesiredState: GoalDesiredState): Rejected | null {
+  return goalDesiredState === 'active' ? null
+    : reject('guard_failed', 'busy', `the Goal is ${goalDesiredState}; no new check process starts until the Goal is resumed`);
+}
+
+/** VD-9 (§9.4, C7): a subject task that is not `active` in the Goal's current adopted Plan starts no new check process (`invalid`). */
+export function roundSubjectActivityProblem(subjectDisposition: Disposition | null, subject: TaskTriple): Rejected | null {
+  if (subjectDisposition === 'active') return null;
+  return reject('guard_failed', 'invalid', subjectDisposition === null
+    ? `the subject task ${subject.taskId} is not in the Goal current adopted Plan`
+    : `the subject task ${subject.taskId} is ${subjectDisposition} in the Goal current adopted Plan; no new check process starts`);
+}
+
+/** VD-9 of `check_begun` (VR-02): the Goal, then the subject, both asked after the admission and before the frozen binding. */
+export function roundActivityProblem(activity: RoundActivityFactsV1, subject: TaskTriple): Rejected | null {
+  return roundGoalActivityProblem(activity.goalDesiredState) ?? roundSubjectActivityProblem(activity.subjectDisposition, subject);
 }
 
 /** `evidence-service.ts:513-515`; `source_stale` is kept (§9.4), VD-7 makes the Workflow pass the current Plan. */
@@ -1361,11 +1403,12 @@ export function transitionCheck(state: RoundSnapshot, event: CheckEvent, ctx: Ro
   if (admission !== null) return admission;
   switch (event.kind) {
     case 'check_begun': {
-      // VR-02 with the VD-8 markers; the VD-9 Goal/disposition guard is step 5.5.
-      const problem = frozenBindingProblem(state, event.observed);
+      // VR-02: the VD-9 Goal/subject guard (5.5), then the VD-8 markers.
+      const problem = roundActivityProblem(event.activity, state.subject) ?? frozenBindingProblem(state, event.observed);
       if (problem !== null) return problem;
       return accept(withCheckPhase(state, event.checkId, { phase: 'executing', invocationId: event.invocationId }), [
         { kind: 'guard_round', expectedRevision: state.revision },
+        { kind: 'guard_begin_read_set' },
         { kind: 'emit_event', eventType: 'VerificationCheckBegun' },
       ]);
     }

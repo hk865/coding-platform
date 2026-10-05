@@ -20,21 +20,17 @@
  *   `findGoalResumeContinuations`. Each fan-out commit is a Run/ControlIntent
  *   or TaskRequeue commit judged by its own machine, never part of a Goal commit.
  *
- * A.2 step 2 (§15.2) scope:
- * - 已有 rows keep today's records byte for byte (pre-step-3 `commit-compiler.ts:113-120`,
- *   pre-step-3 `plan-commit-compiler.ts:144,293`, pre-step-3 `completion.ts:572-582`) and today's
- *   CoreError codes, checked in today's service order.
- * - 改造 rows keep TODAY's externally visible result; step 5.5 flips them: the
- *   `desiredState = active` guard of GOAL-07/08 (`busy`), the `busy` of a new
- *   completion for the active plan (§2.4, today a second `COMPLETED@r+1`), and
- *   the `cancelled` refusal of GOAL-02/03 (§2.4, `invalid`). No Goal is ever
- *   `paused`/`cancelled` before GOAL-04…06 exist, so none of them is reachable
- *   today.
- * - 新增 rows GOAL-04…06 keep their events in the union and answer `illegal`
- *   (`notYet`) from every state, together with their §2.4 refusals, so step 5
- *   only adds rows. The display reduction, `projectGoalRunStop`, the fan-out
- *   identities and the GOAL-29 selection are new pure functions with no
- *   writer today, implemented in full (§2.1, §2.3).
+ * A.2 scope:
+ * - 已有 rows keep the pre-A.2 records byte for byte (pre-step-3 `commit-compiler.ts:113-120`,
+ *   pre-step-3 `plan-commit-compiler.ts:144,293`, pre-step-3 `completion.ts:572-582`) and their
+ *   CoreError codes, checked in the pre-A.2 service order.
+ * - Step 5.5 (G7, D-9, LA-7): GOAL-04…06 (`setGoalControl`, `tasks/goal-control.ts`)
+ *   with their §2.4 refusals; the `desiredState = active` guard of GOAL-07/08
+ *   (`busy`), the `busy` of a new completion for the active plan (§2.4, before
+ *   5.5 a second `COMPLETED@r+1`), and the `cancelled` refusal of GOAL-02/03
+ *   (§2.4, `invalid`). The fan-out (`src/app/goal-fan-out-driver.ts`) and the
+ *   display read (`plan-service.ts` `queryGoalDisplay`) use the identities and
+ *   the reduction below. The GOAL-29 selection is wired in step 5.6.
  *
  * Pure: imports only `src/contracts` and this directory (§14.4). Ids, instants
  * and pins come in the event payload; read facts in the guard context.
@@ -58,10 +54,10 @@ import {
   type ReworkActorClass, type ReworkFailureClass, type StopRequester, type TaskRequeueTriggerV1,
   type TaskReworkOperation,
 } from '../../../contracts/task-requeue.js';
-import type { PlanProposalRef } from './plan-machine.js';
+import { GOAL_CANCELLED_PLAN_DETAIL, type PlanProposalRef } from './plan-machine.js';
 import { isPausedInterrupted, isRunFinished, runUnresolvedBlocker } from './run-machine.js';
 import { stopRequesterOf } from './task-failure.js';
-import { accept, notYet, reject, unreachable, type Rejected, type Transition } from './transition.js';
+import { accept, reject, unreachable, type Rejected, type Transition } from './transition.js';
 
 /** The Host Goal-resume fan-out actor (GOAL-29); defined in contracts, only re-exported here (§15.1). */
 export { GOAL_FAN_OUT_ACTOR };
@@ -71,6 +67,16 @@ export type GoalHostActorRef = Extract<ActorRef, { kind: 'human' | 'system' }>;
 
 /** The three Goal-level controls (G7, GOAL-04…06). */
 export type GoalControl = 'pause' | 'resume' | 'cancel';
+
+/** The desired state a Goal control asks for. */
+export function goalControlTarget(control: GoalControl): GoalDesiredState {
+  switch (control) {
+    case 'pause': return 'paused';
+    case 'resume': return 'active';
+    case 'cancel': return 'cancelled';
+    default: return unreachable(control, 'goal control');
+  }
+}
 
 // -------------------------------------------------------------------------- //
 // Record constructors (§14.1: the only writers of the Goal lifecycle fields)   //
@@ -241,7 +247,11 @@ export type GoalCompletionFacts = {
 };
 
 export type GoalGuardContext = {
-  /** `reworkActorClassOf(principal, actor)` of the caller; null for a principal that is not a Host. GOAL-05 (step 5.5). */
+  /**
+   * `reworkActorClassOf(principal, actor)` of the caller; null for a principal
+   * that cannot act on a Goal. GOAL-04…06 accept only a Host class (§2.4
+   * work_run row), and GOAL-05 compares it with the pauser's class (LA-7).
+   */
   callerClass: ReworkActorClass | null;
   /** `goal_created`: `compareCallerGoalPins` found no pin that disagrees with the versions read (`task-service.ts:216-220`). */
   scopePinsAgree: boolean;
@@ -341,9 +351,9 @@ function onGoalCreated(
  * service runs it on the plan machine's `move_goal_pointer` of the same commit.
  * A pointer already on the target is a stale source like any other: the owner's
  * same-identity recheck after a rejection (`plan-service.ts:1120-1138,
- * 1225-1229`) replays the adoption that moved it. Step 5.5: a `cancelled` Goal
- * answers `illegal`/`invalid` (§2.4); `paused` stays legal (W16 is a plan
- * adoption, not rework).
+ * 1225-1229`) replays the adoption that moved it. A `cancelled` Goal answers
+ * `illegal`/`invalid` (§2.4, D-9; the plan machine asks the same guard first);
+ * `paused` stays legal (W16 is a plan adoption, not rework).
  */
 function onPlanAdopted(state: GoalMachineState, event: Extract<GoalEvent, { type: 'plan_adopted' }>): GoalTransition {
   switch (state.node) {
@@ -353,8 +363,7 @@ function onPlanAdopted(state: GoalMachineState, event: Extract<GoalEvent, { type
     case 'paused':
       break;
     case 'cancelled':
-      // Today's accept path (no writer of `cancelled` before GOAL-06); step 5.5: `illegal`/`invalid` (§2.4).
-      break;
+      return reject('illegal', 'invalid', GOAL_CANCELLED_PLAN_DETAIL);
     default:
       return unreachable(state.node, 'goal node');
   }
@@ -380,7 +389,10 @@ function onPlanAdopted(state: GoalMachineState, event: Extract<GoalEvent, { type
  * it always stopped: right after the Goal read, with `completion` null (the
  * facts, the GoalPhase and the reduction are not read yet and hold), and after
  * the GoalPhase read and the pure reduction, before it reads the pinned
- * policy. `transitionGoal` re-runs them, then requires the facts.
+ * policy. `transitionGoal` re-runs them, then requires the facts. Step 5.5
+ * (§2.4, D-9): a paused or cancelled Goal is not completed (`busy`, first),
+ * and a GoalPhase already reduced for the active plan is not completed again
+ * (`busy`, after the GoalPhase pin: G6 "归约重复无重复完成事件").
  */
 export function goalCompletionProblem(
   state: GoalMachineState,
@@ -394,8 +406,7 @@ export function goalCompletionProblem(
       break;
     case 'paused':
     case 'cancelled':
-      // Today the desired state is not read (no writer before GOAL-04/06); step 5.5: `guard_failed`/`busy` (§2.4).
-      break;
+      return reject('guard_failed', 'busy', `the Goal is ${state.node}; a Goal that is not active is not completed`);
     default:
       return unreachable(state.node, 'goal node');
   }
@@ -422,6 +433,9 @@ export function goalCompletionProblem(
   if (persistedPhaseRevision !== expectedPhaseRevision) {
     return reject('stale', 'revision_conflict', 'the GoalPhase changed since the caller read it');
   }
+  if (state.completion === 'for_active') {
+    return reject('guard_failed', 'busy', 'the Goal is already completed for its active Plan');
+  }
   // :548-555
   if (!facts.evaluation.completed) {
     const reasons = [...facts.evaluation.reasons];
@@ -433,10 +447,9 @@ export function goalCompletionProblem(
 
 /**
  * GOAL-07 (no GoalPhase) / GOAL-08 (a GoalPhase for an older plan),
- * `completeGoalFromHost` (`tasks/completion.ts`) in today's order
- * (`goalCompletionProblem`). Today a GoalPhase already for the active plan is
- * completed again as `@r+1`, and the desired state is not read; step 5.5
- * refuses both with `busy` (§2.4).
+ * `completeGoalFromHost` (`tasks/completion.ts`) in the order of
+ * `goalCompletionProblem`, which refuses a Goal that is not active and a
+ * second completion for the active plan with `busy` (§2.4).
  */
 function onGoalCompleted(
   state: GoalMachineState,
@@ -471,6 +484,69 @@ function onGoalCompleted(
   ]);
 }
 
+type GoalControlEvent = Extract<GoalEvent, { type: 'goal_pause_requested' | 'goal_resume_requested' | 'goal_cancel_requested' }>;
+
+/**
+ * GOAL-04 (pause), GOAL-05 (resume), GOAL-06 (cancel), `setGoalControl`
+ * (`tasks/goal-control.ts`), with the §2.4 refusals in this order: the caller
+ * is a Host (a work Run or a Query Run is `forbidden`); the Goal exists; a
+ * cancelled Goal is terminal (cancel `busy`, pause/resume `invalid`); a Goal
+ * completed for its active plan has no work to stop (pause/cancel `invalid`);
+ * a repeated pause and a resume of an active Goal are `busy`; a Goal an
+ * operator paused is resumed only by an operator (LA-7, hard limit 3:
+ * `forbidden` for a platform automation actor); then the Goal pin and, for a
+ * pause or cancel, the GoalPhase pin (`revision_conflict`). The commit CASes
+ * the Goal and, for a pause or cancel, the GoalPhase as read (read-only), so a
+ * concurrent `completeGoal` never lands as paused + COMPLETED. The fan-out is
+ * NOT part of this commit (§2.3): the Host driver submits one control per Run
+ * after it.
+ */
+function onGoalControl(state: GoalMachineState, event: GoalControlEvent, ctx: GoalGuardContext): GoalTransition {
+  const control: GoalControl = event.type === 'goal_pause_requested' ? 'pause'
+    : event.type === 'goal_resume_requested' ? 'resume' : 'cancel';
+  if (ctx.callerClass !== 'human' && ctx.callerClass !== 'system') {
+    return reject('guard_failed', 'forbidden', 'a Goal control is accepted only from the trusted Host context');
+  }
+  switch (state.node) {
+    case 'absent':
+      return reject('illegal', 'not_found', 'the Goal does not exist');
+    case 'cancelled':
+      return control === 'cancel' ? reject('guard_failed', 'busy', 'the Goal is already cancelled')
+        : reject('illegal', 'invalid', `the Goal is cancelled (terminal); a ${control} has no effect`);
+    case 'active':
+    case 'paused':
+      break;
+    default:
+      return unreachable(state.node, 'goal node');
+  }
+  // `goalStateOf` keeps the node and the record together; this only narrows the type.
+  const goal = state.goal;
+  if (goal === null) return reject('illegal', 'not_found', 'the Goal does not exist');
+  if (control !== 'resume' && state.completion === 'for_active') {
+    return reject('illegal', 'invalid', 'the Goal is completed for its active Plan; it has no work to stop');
+  }
+  if (control === 'pause' && state.node === 'paused') return reject('guard_failed', 'busy', 'the Goal is already paused');
+  if (control === 'resume' && state.node === 'active') return reject('guard_failed', 'busy', 'the Goal is not paused');
+  if (control === 'resume' && state.desiredStateRequestedByClass === 'human' && ctx.callerClass !== 'human') {
+    return reject('guard_failed', 'forbidden', 'an operator paused this Goal; only an operator resumes it');
+  }
+  if (goal.revision !== event.expectedGoalRevision) {
+    return reject('stale', 'revision_conflict', 'the Goal changed since the caller read it');
+  }
+  const persistedPhaseRevision = state.goalPhase?.revision ?? null;
+  const expectedPhaseRevision = event.expectedGoalPhaseRevision === 0 ? null : event.expectedGoalPhaseRevision;
+  if (control !== 'resume' && persistedPhaseRevision !== expectedPhaseRevision) {
+    return reject('stale', 'revision_conflict', 'the GoalPhase changed since the caller read it');
+  }
+  const next = nextGoalDesiredState(goal, { to: goalControlTarget(control), requestedBy: event.requestedBy });
+  return accept<GoalMachineState, GoalEffect>(goalStateOf(next, state.goalPhase), [
+    { kind: 'write_goal' },
+    { kind: 'append_event', eventType: 'GoalDesiredStateChanged' },
+    guard({ target: 'goal', expectedRevision: goal.revision }),
+    ...(control === 'resume' ? [] : [guard({ target: 'goal_phase', expectedRevision: persistedPhaseRevision })]),
+  ]);
+}
+
 /** §2 Goal machine (GOAL-01..08 and the §2.4 rows). */
 export function transitionGoal(state: GoalMachineState, event: GoalEvent, ctx: GoalGuardContext): GoalTransition {
   switch (event.type) {
@@ -479,11 +555,9 @@ export function transitionGoal(state: GoalMachineState, event: GoalEvent, ctx: G
     case 'plan_adopted':
       return onPlanAdopted(state, event);
     case 'goal_pause_requested':
-      return notYet('GOAL-04');
     case 'goal_resume_requested':
-      return notYet('GOAL-05');
     case 'goal_cancel_requested':
-      return notYet('GOAL-06');
+      return onGoalControl(state, event, ctx);
     case 'goal_completed':
       return onGoalCompleted(state, event, ctx);
     default:

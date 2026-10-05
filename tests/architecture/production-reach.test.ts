@@ -29,7 +29,7 @@ const project = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const ALLOWLIST_PATH = join(project, 'tests/architecture/production-reach-allowlist.json');
 const REASONS = ['step5', 'step6', 'pre-batch', 'wire-format'] as const;
 /** Substeps the lead has closed (`5.3`, …, `6`): an entry of one of them fails. */
-const CLOSED_SUBSTEPS: readonly string[] = ['5.1', '5.2', '5.3', '5.4', '5.4b'];
+const CLOSED_SUBSTEPS: readonly string[] = ['5.1', '5.2', '5.3', '5.4', '5.4b', '5.5'];
 /** A wiredBy names the STEP5-FLIPS.md section or the spec §15.2/§15.3 item. */
 const WIRING_SOURCE = /STEP5-FLIPS\.md §\d+|§15\.[23]/;
 

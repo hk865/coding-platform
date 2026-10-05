@@ -28,6 +28,7 @@ import { realpath, stat } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { canonicalJson, sha256Hex, type JsonValue } from '../contracts/fingerprint.js';
 import { createTargetPlatform, type TargetPlatformOptions } from '../composition/create-platform.js';
+import type { RecordCommitNotice, RecordCommitObserver } from '../composition/commit-observer.js';
 import type { WorkspaceHostBindings } from '../core/workspace/access.js';
 import type { CoreCallContext } from '../contracts/core/call-context.js';
 import type { WorkspaceRef } from '../contracts/ledger.js';
@@ -38,6 +39,7 @@ import type { TrustedCheckConfiguration } from '../contracts/verification.js';
 import { DEFAULT_TASK_AUTOMATION_POLICY } from '../contracts/task-requeue.js';
 import { createChangeFeed } from './change-feed.js';
 import { createCollaborationDriver } from './collaboration-driver.js';
+import { createGoalFanOutDriver } from './goal-fan-out-driver.js';
 import { createWorkbenchTools } from './workbench-tools.js';
 import {
   attentionSignalToJson, createAttentionObserver, createAttentionScanner, type AttentionScopeV1,
@@ -336,10 +338,22 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   // commit of the platform below and the two in-memory handle owners the page
   // used to poll, and publishes change NOTIFICATIONS only.
   const changes = createChangeFeed();
+  // A.2 step 5.5: the Goal fan-out driver (assembled below, over this
+  // platform) also observes the commits, so a fan-out pause that lands later
+  // re-drives the waiting Goal resume (GOAL-14). Neither observer can affect a
+  // commit or the other observer.
+  let goalFanOutCommitted: ((notice: RecordCommitNotice) => void) | undefined;
+  const commitObserver: RecordCommitObserver = {
+    started(head) { changes.started(head); },
+    committed(notice) {
+      try { changes.committed(notice); } catch { /* the change feed keeps its own state */ }
+      try { goalFanOutCommitted?.(notice); } catch { /* the driver never affects a commit */ }
+    },
+  };
   const platform = await createTargetPlatform({
     storage,
     workspace: bindings,
-    commitObserver: changes,
+    commitObserver,
     ...(options.now === undefined ? {} : { now: options.now }),
     ...(architectureSource === undefined ? {} : { architectureSource }),
     ...(options.kernelStores === undefined ? {} : { kernelStores: options.kernelStores }),
@@ -371,6 +385,12 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     profiles: runtimeConfiguration?.queryProfiles ?? [],
     onChange: changes.driverChanged,
   });
+  // A.2 step 5.5 (G7): the Goal-control fan-out over the same platform; its
+  // commits reach the change feed through the platform's commit observer, and
+  // it watches the commits for a fan-out pause a waiting resume follows.
+  const goalFanOut = createGoalFanOutDriver({ goals: platform.goals, plans: platform.plans,
+    executions: platform.executions, controls: platform.controls, runtime: platform.runtime });
+  goalFanOutCommitted = notice => goalFanOut.committed(notice);
 
   // Live projections the Host rebuilds for every bootstrap read / settings open.
   const runtimeProfiles: WorkbenchQueryProfile[] = (runtimeConfiguration?.queryProfiles ?? []).map(profile => structuredClone(profile));
@@ -982,7 +1002,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   // The real route bindings share the ONE platform instance assembled above.
   const server: WorkbenchServer = createWorkbenchServer({
     token,
-    bindings: createPlatformCoreRouteBindings(platform, collaborationDriver, workbenchTools.tools),
+    bindings: createPlatformCoreRouteBindings(platform, collaborationDriver, workbenchTools.tools, goalFanOut),
     actor,
     bootstrap: buildBootstrap,
     changes,
@@ -1010,6 +1030,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         await attentionDone.catch(() => { /* the loop records its own state */ });
         await Promise.all([...inputJobs.values()]);
         await collaborationDriver.close();
+        await goalFanOut.close();
         await workbenchToolsClosed;
         await platform.close();
       })();

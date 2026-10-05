@@ -5,8 +5,8 @@
  * display reduction GOAL-17..27/GOAL-30 (one case per row and per stop
  * reason, plus seeded random fact combinations), `runStops` (orders 0..8), the
  * fan-out identities and the GOAL-29 selection.
- * Rows that step 5 flips are pinned at today's result and marked "step 5";
- * 新增 rows GOAL-04…06 answer `illegal`/`invalid` until then.
+ * Step 5.5 adds GOAL-04…06 with their §2.4 refusals and flips GOAL-02/03
+ * (cancelled) and GOAL-07/08 (not active, second completion for the active plan).
  * Pure: no RecordStore, no Kernel.
  */
 import { describe, expect, it } from 'vitest';
@@ -273,58 +273,93 @@ type EventName = keyof typeof EVENTS;
 const CREATED_OVER = (phase: GoalPhaseSnapshot | null): Expected => ok(goalStateOf(GOAL_NEW, phase), CREATED_EFFECTS);
 const NO_GOAL_PLAN = no('illegal', 'not_found', 'the goal does not exist');
 const NO_GOAL_COMPLETE = no('illegal', 'not_found', 'the Goal does not exist');
-const NOT_YET = (row: string): Expected => no('illegal', 'invalid', `${row} is not implemented before A.2 step 5`);
-const CONTROL_NOT_YET = { pause: NOT_YET('GOAL-04'), resume: NOT_YET('GOAL-05'), cancel: NOT_YET('GOAL-06') };
 const INITIAL_STALE = no('stale', 'revision_conflict', 'the goal already has an active plan; an initial adoption cannot replace it');
 const SOURCE_STALE = no('stale', 'revision_conflict', 'the source plan is not the Goal current active plan');
+/** §2.4 (D-9, 5.5): a cancelled Goal adopts no Plan; the plan machine answers the same first. */
+const ADOPT_CANCELLED = no('illegal', 'invalid', 'the Goal is cancelled; its plan can no longer change');
+const NOT_ACTIVE_COMPLETE = (ds: GoalDesiredState): Expected =>
+  no('guard_failed', 'busy', `the Goal is ${ds}; a Goal that is not active is not completed`);
+
+type ControlName = 'pause' | 'resume' | 'cancel';
+const TARGET: Record<ControlName, GoalDesiredState> = { pause: 'paused', resume: 'active', cancel: 'cancelled' };
+
+/** GOAL-04…06 accepted: the next Goal by `nextGoalDesiredState`, the Goal CAS and (pause/cancel) the read-only GoalPhase CAS. */
+function controlled(goal: GoalSnapshot, phase: GoalPhaseSnapshot | null, control: ControlName): Expected {
+  return ok(goalStateOf(nextGoalDesiredState(goal, { to: TARGET[control], requestedBy: HUMAN }), phase), [
+    { kind: 'write_goal' }, { kind: 'append_event', eventType: 'GoalDesiredStateChanged' },
+    g({ target: 'goal', expectedRevision: goal.revision }),
+    ...(control === 'resume' ? [] : [g({ target: 'goal_phase', expectedRevision: phase?.revision ?? null })]),
+  ]);
+}
+
+/** GOAL-04…06 and their §2.4 refusals for an operator caller with current pins. */
+function controlRows(ds: GoalDesiredState, variant: Variant): Record<ControlName, Expected> {
+  const goal = goalOf(ds, variant);
+  const phase = variant === 'DoneActive' || variant === 'DoneOther' ? PHASE_P1 : null;
+  if (ds === 'cancelled') {
+    return { pause: no('illegal', 'invalid', 'the Goal is cancelled (terminal); a pause has no effect'),
+      resume: no('illegal', 'invalid', 'the Goal is cancelled (terminal); a resume has no effect'),
+      cancel: no('guard_failed', 'busy', 'the Goal is already cancelled') };
+  }
+  const completed = no('illegal', 'invalid', 'the Goal is completed for its active Plan; it has no work to stop');
+  return {
+    pause: variant === 'DoneActive' ? completed
+      : ds === 'paused' ? no('guard_failed', 'busy', 'the Goal is already paused') : controlled(goal, phase, 'pause'),
+    resume: ds === 'active' ? no('guard_failed', 'busy', 'the Goal is not paused') : controlled(goal, phase, 'resume'),
+    cancel: variant === 'DoneActive' ? completed : controlled(goal, phase, 'cancel'),
+  };
+}
 
 /**
- * Today's results for one desired state. A paused/cancelled Goal has no writer
- * before step 5.5, so every row answers as for `active`; step 5 flips:
- * - `complete` from paused/cancelled → guard_failed/busy (GOAL-07/08 desired-state guard);
- * - `complete` from DoneActive → guard_failed/busy (§2.4 "GoalPhase 对应活动计划");
- * - `adoptInitial`/`adoptFuture` from cancelled → illegal/invalid (§2.4).
+ * The rows of one desired state. Step 5.5 (§2.4, D-9): `complete` from
+ * paused/cancelled is guard_failed/busy (GOAL-07/08 desired-state guard),
+ * `complete` from DoneActive is guard_failed/busy ("GoalPhase 对应活动计划"),
+ * and every adoption of a cancelled Goal is illegal/invalid.
  */
 function rowsFor(ds: GoalDesiredState): Record<Variant, Record<EventName, Expected>> {
   const noPlan = goalOf(ds, 'NoPlan');
   const planned = goalOf(ds, 'Planned');
   const doneOther = goalOf(ds, 'DoneOther');
+  const cancelled = ds === 'cancelled';
+  const notActive = ds !== 'active';
   return {
     NoPlan: {
       created: CREATED_OVER(null),
       // GOAL-02
-      adoptInitial: ok(goalStateOf(nextGoalPointer(noPlan, P1), null), ADOPT_EFFECTS),
-      adoptFuture: SOURCE_STALE,
-      ...CONTROL_NOT_YET,
-      complete: no('guard_failed', 'incomplete', 'the Goal has no adopted Plan to complete'),
+      adoptInitial: cancelled ? ADOPT_CANCELLED : ok(goalStateOf(nextGoalPointer(noPlan, P1), null), ADOPT_EFFECTS),
+      adoptFuture: cancelled ? ADOPT_CANCELLED : SOURCE_STALE,
+      ...controlRows(ds, 'NoPlan'),
+      complete: notActive ? NOT_ACTIVE_COMPLETE(ds) : no('guard_failed', 'incomplete', 'the Goal has no adopted Plan to complete'),
     },
     Planned: {
       created: CREATED_OVER(null),
       // The pointer (already on the target) is checked first, with today's text.
-      adoptInitial: INITIAL_STALE,
+      adoptInitial: cancelled ? ADOPT_CANCELLED : INITIAL_STALE,
       // GOAL-03
-      adoptFuture: ok(goalStateOf(nextGoalPointer(planned, P2), null), ADOPT_EFFECTS),
-      ...CONTROL_NOT_YET,
+      adoptFuture: cancelled ? ADOPT_CANCELLED : ok(goalStateOf(nextGoalPointer(planned, P2), null), ADOPT_EFFECTS),
+      ...controlRows(ds, 'Planned'),
       // GOAL-07
-      complete: ok(goalStateOf(planned, phaseFor(P1, 1, null, T1)), completeEffects(planned.revision, P1, null)),
+      complete: notActive ? NOT_ACTIVE_COMPLETE(ds)
+        : ok(goalStateOf(planned, phaseFor(P1, 1, null, T1)), completeEffects(planned.revision, P1, null)),
     },
     DoneActive: {
       created: CREATED_OVER(PHASE_P1),
-      adoptInitial: INITIAL_STALE,
+      adoptInitial: cancelled ? ADOPT_CANCELLED : INITIAL_STALE,
       // GOAL-03 with an older completion: D-17, the old COMPLETED stays and reads for_other.
-      adoptFuture: ok(goalStateOf(nextGoalPointer(planned, P2), PHASE_P1), ADOPT_EFFECTS),
-      ...CONTROL_NOT_YET,
-      // Today: completed again @2 for the same plan (step 5: busy).
-      complete: ok(goalStateOf(planned, phaseFor(P1, 1, 1, T1)), completeEffects(planned.revision, P1, 1)),
+      adoptFuture: cancelled ? ADOPT_CANCELLED : ok(goalStateOf(nextGoalPointer(planned, P2), PHASE_P1), ADOPT_EFFECTS),
+      ...controlRows(ds, 'DoneActive'),
+      // §2.4: no second completion for the same plan.
+      complete: notActive ? NOT_ACTIVE_COMPLETE(ds) : no('guard_failed', 'busy', 'the Goal is already completed for its active Plan'),
     },
     DoneOther: {
       created: CREATED_OVER(PHASE_P1),
-      adoptInitial: INITIAL_STALE,
+      adoptInitial: cancelled ? ADOPT_CANCELLED : INITIAL_STALE,
       // Pointer P2 already on the target: a stale source (the owner's recheck replays the committed adoption).
-      adoptFuture: SOURCE_STALE,
-      ...CONTROL_NOT_YET,
+      adoptFuture: cancelled ? ADOPT_CANCELLED : SOURCE_STALE,
+      ...controlRows(ds, 'DoneOther'),
       // GOAL-08
-      complete: ok(goalStateOf(doneOther, phaseFor(P2, 2, 1, T1)), completeEffects(doneOther.revision, P2, 1)),
+      complete: notActive ? NOT_ACTIVE_COMPLETE(ds)
+        : ok(goalStateOf(doneOther, phaseFor(P2, 2, 1, T1)), completeEffects(doneOther.revision, P2, 1)),
     },
   };
 }
@@ -335,7 +370,9 @@ const TABLE: Record<StateName, Record<EventName, Expected>> = {
     created: ok(goalStateOf(GOAL_NEW, null), CREATED_EFFECTS),
     adoptInitial: NO_GOAL_PLAN,
     adoptFuture: NO_GOAL_PLAN,
-    ...CONTROL_NOT_YET,
+    pause: NO_GOAL_COMPLETE,
+    resume: NO_GOAL_COMPLETE,
+    cancel: NO_GOAL_COMPLETE,
     complete: NO_GOAL_COMPLETE,
   },
 };
@@ -426,12 +463,15 @@ describe('GOAL-02/03 plan_adopted guards (plan-service.ts:1166-1170, :1712-1726)
       ok(goalStateOf(nextGoalPointer(state.goal!, p3), PHASE_P1), ADOPT_EFFECTS));
   });
 
-  it('step 5: a cancelled Goal still adopts today (§2.4 target: illegal/invalid); paused keeps adopting', () => {
-    for (const name of ['cancelledNoPlan', 'pausedNoPlan']) {
-      const state = STATES[name]!;
-      const result = transitionGoal(state, ADOPT_INITIAL, ctxFor(state));
-      expect(result.ok).toBe(true);
-      if (result.ok) expect(result.next.node).toBe(state.node);
+  it('§2.4 (5.5): a cancelled Goal adopts no Plan; a paused one keeps adopting and its desired state', () => {
+    expectResult(transitionGoal(STATES['cancelledNoPlan']!, ADOPT_INITIAL, ctxFor(STATES['cancelledNoPlan']!)), ADOPT_CANCELLED);
+    const paused = STATES['pausedNoPlan']!;
+    const result = transitionGoal(paused, ADOPT_INITIAL, ctxFor(paused));
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.next).toMatchObject({ node: 'paused', desiredStateRevision: paused.desiredStateRevision,
+        desiredStateRequestedByClass: 'human' });
+      expect(result.next.goal?.desiredStateRequestedBy).toEqual(HUMAN);
     }
   });
 });
@@ -516,27 +556,88 @@ describe('GOAL-07/08 goal_completed guards (completion.ts:481-614)', () => {
       no('illegal', 'invalid', 'goal_completed requires the completion facts of the active plan'));
   });
 
-  it('step 5: paused/cancelled Goals and a second completion for the active plan still complete today', () => {
-    for (const name of ['pausedPlanned', 'cancelledPlanned', 'activeDoneActive']) {
+  it('§2.4 (5.5): a Goal that is not active is refused first; a second completion for the active plan after the GoalPhase pin', () => {
+    for (const name of ['pausedPlanned', 'cancelledPlanned']) {
       const current = STATES[name]!;
-      const result = transitionGoal(current, completeEvent(current), ctxFor(current));
-      expect(result.ok).toBe(true);
-      if (result.ok) expect(result.next.completion).toBe('for_active');
+      // Before the workspace and every pin.
+      expectResult(transitionGoal(current, { type: 'goal_completed', expectedGoalRevision: 99, expectedGoalPhaseRevision: 7,
+        reducedAt: T1 }, ctxFor(current, { goalInWorkspace: false })), NOT_ACTIVE_COMPLETE(current.node as GoalDesiredState));
     }
+    const done = STATES['activeDoneActive']!;
+    // The GoalPhase pin still answers first; with a current pin the completion is refused (G6: no second event).
+    expectResult(transitionGoal(done, { ...completeEvent(done), expectedGoalPhaseRevision: 0 } as GoalEvent, ctxFor(done)),
+      no('stale', 'revision_conflict', 'the GoalPhase changed since the caller read it'));
+    expectResult(transitionGoal(done, completeEvent(done), ctxFor(done)),
+      no('guard_failed', 'busy', 'the Goal is already completed for its active Plan'));
+    // Right after the Goal read (no GoalPhase read yet) the second completion still holds; the owner reads on.
+    expect(goalCompletionProblem(goalStateOf(done.goal, null), completeEvent(done) as Extract<GoalEvent, { type: 'goal_completed' }>,
+      { goalInWorkspace: true, completion: null })).toBeNull();
   });
 });
 
-describe('GOAL-04…06 (新增) answer illegal until step 5', () => {
-  it('from every state, whatever the caller class', () => {
+describe('GOAL-04…06 setGoalControl guards (§2.4, LA-7)', () => {
+  const types = ['goal_pause_requested', 'goal_resume_requested', 'goal_cancel_requested'] as const;
+
+  it('only a Host caller class (human or system) controls a Goal; a work Run or an unbound principal is forbidden first', () => {
     for (const name of STATE_NAMES) {
       const state = STATES[name]!;
-      for (const [type, row] of [['goal_pause_requested', 'GOAL-04'], ['goal_resume_requested', 'GOAL-05'],
-        ['goal_cancel_requested', 'GOAL-06']] as const) {
-        for (const callerClass of ['human', 'system', 'agent', null] as const) {
-          expectResult(transitionGoal(state, controlEvent(type, state), ctxFor(state, { callerClass })), NOT_YET(row));
+      for (const type of types) {
+        for (const callerClass of ['agent', null] as const) {
+          expectResult(transitionGoal(state, controlEvent(type, state), ctxFor(state, { callerClass })),
+            no('guard_failed', 'forbidden', 'a Goal control is accepted only from the trusted Host context'));
         }
       }
     }
+  });
+
+  it('LA-7: an operator pause is resumed only by an operator; a platform pause by either', () => {
+    const paused = STATES['pausedPlanned']!;
+    const resume = controlEvent('goal_resume_requested', paused);
+    expectResult(transitionGoal(paused, { ...resume, requestedBy: WORKFLOW_AUTOMATION_ACTOR } as GoalEvent,
+      ctxFor(paused, { callerClass: 'system' })),
+      no('guard_failed', 'forbidden', 'an operator paused this Goal; only an operator resumes it'));
+    // A Host started with a kind:'system' actor is an operator (callerClass human): its resume passes.
+    const operator = { kind: 'system' as const, id: 'host:operator-console' };
+    const byOperator = transitionGoal(paused, { ...resume, requestedBy: operator } as GoalEvent, ctxFor(paused, { callerClass: 'human' }));
+    expect(byOperator.ok && byOperator.next.goal?.desiredStateRequestedBy).toEqual(operator);
+    // Paused by the platform's automation actor: the system and an operator both resume it.
+    const planned = nextGoalPointer(GOAL_NEW, P1);
+    const systemPaused = goalStateOf(nextGoalDesiredState(planned, { to: 'paused', requestedBy: CONTRACT_GOAL_FAN_OUT_ACTOR }), null);
+    expect(systemPaused.desiredStateRequestedByClass).toBe('system');
+    for (const callerClass of ['system', 'human'] as const) {
+      const result = transitionGoal(systemPaused, { ...controlEvent('goal_resume_requested', systemPaused),
+        requestedBy: callerClass === 'system' ? WORKFLOW_AUTOMATION_ACTOR : HUMAN } as GoalEvent, ctxFor(systemPaused, { callerClass }));
+      expect(result.ok, callerClass).toBe(true);
+    }
+  });
+
+  it('the Goal pin, then (pause/cancel only) the GoalPhase pin', () => {
+    const planned = STATES['activePlanned']!;
+    for (const type of ['goal_pause_requested', 'goal_cancel_requested'] as const) {
+      const event = controlEvent(type, planned) as Extract<GoalEvent, { type: typeof type }>;
+      expectResult(transitionGoal(planned, { ...event, expectedGoalRevision: 99 }, ctxFor(planned)),
+        no('stale', 'revision_conflict', 'the Goal changed since the caller read it'));
+      expectResult(transitionGoal(planned, { ...event, expectedGoalPhaseRevision: 3 }, ctxFor(planned)),
+        no('stale', 'revision_conflict', 'the GoalPhase changed since the caller read it'));
+    }
+    const paused = STATES['pausedDoneOther']!;
+    const resume = controlEvent('goal_resume_requested', paused) as Extract<GoalEvent, { type: 'goal_resume_requested' }>;
+    expectResult(transitionGoal(paused, { ...resume, expectedGoalRevision: 1 }, ctxFor(paused)),
+      no('stale', 'revision_conflict', 'the Goal changed since the caller read it'));
+    // GOAL-05 has no GoalPhase CAS: its pin is not compared.
+    expect(transitionGoal(paused, { ...resume, expectedGoalPhaseRevision: 9 }, ctxFor(paused)).ok).toBe(true);
+  });
+
+  it('the state refusals come before the pins; the epoch is the new revision and the requester is the caller', () => {
+    const paused = STATES['pausedPlanned']!;
+    expectResult(transitionGoal(paused, { ...controlEvent('goal_pause_requested', paused), expectedGoalRevision: 99 } as GoalEvent,
+      ctxFor(paused)), no('guard_failed', 'busy', 'the Goal is already paused'));
+    const planned = STATES['activePlanned']!;
+    const result = transitionGoal(planned, controlEvent('goal_pause_requested', planned), ctxFor(planned));
+    if (!result.ok) throw new Error(result.detail);
+    expect(result.next).toMatchObject({ node: 'paused', desiredStateRevision: planned.goal!.revision + 1,
+      desiredStateRequestedByClass: 'human', activePlanRef: P1, completion: 'none' });
+    expect(result.next.goal).toMatchObject({ revision: planned.goal!.revision + 1, desiredStateRequestedBy: HUMAN });
   });
 });
 

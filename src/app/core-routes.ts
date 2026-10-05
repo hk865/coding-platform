@@ -33,6 +33,7 @@ import type { MaterialPort } from '../core/work-graph/materials/contracts.js';
 import type { QueryJobPort } from '../core/work-graph/queries/contracts.js';
 import type { WorkflowPort } from '../business/workflow/ports.js';
 import type { CollaborationDriverPort } from './collaboration-driver.js';
+import type { GoalControlPort } from './goal-fan-out-driver.js';
 import type { WorkbenchToolsPort } from './workbench-tools.js';
 import {
   type CoreRouteKind,
@@ -117,6 +118,9 @@ export type CoreRouteBindings = {
   // A.2 step 5.4: the requeue owner (TD-6) and the continuation brief read (C3).
   requeueTask: NonNullable<TaskClaimPort['requeueTask']>;
   readContinuationBrief: NonNullable<RuntimeExecutionPort['readContinuationBrief']>;
+  // A.2 step 5.5 (G7): the Goal control with its fan-out, and the Goal display, through the Host driver.
+  setGoalControl: GoalControlPort['setGoalControl'];
+  readGoalDisplay: GoalControlPort['readGoalDisplay'];
 };
 
 /**
@@ -225,6 +229,9 @@ export const CORE_ROUTE_SPECS: Record<CoreRouteSuffix, CoreRouteSpec> = {
   // A.2 step 5.4 (spec §4.3 "公开入口与操作者", §6.1 (e)).
   'tasks/requeue': { kind: 'graph_write', binding: 'requeueTask', owner: 'claims.requeueTask' },
   'executions/brief': { kind: 'plain', binding: 'readContinuationBrief', owner: 'runtime.readContinuationBrief' },
+  // A.2 step 5.5 (spec §2.6 Host route `goals/control`, §2.3 fan-out, §2.1 display).
+  'goals/control': { kind: 'graph_write', binding: 'setGoalControl', owner: 'goalControl.setGoalControl' },
+  'goals/display': { kind: 'plain', binding: 'readGoalDisplay', owner: 'goalControl.readGoalDisplay' },
 };
 
 export type ParsedCoreRequest =
@@ -342,6 +349,7 @@ export function createPlatformCoreRouteBindings(
   platform: CoreRoutePlatform,
   driver?: CollaborationDriverPort,
   workbenchTools?: WorkbenchToolsPort,
+  goalControl?: GoalControlPort,
 ): CoreRouteBindings {
   // A Host that assembles no collaboration driver still publishes the exact
   // routes, but every one answers an explicit `unsupported` instead of a fake
@@ -438,6 +446,12 @@ export function createPlatformCoreRouteBindings(
     readContinuationBrief: platform.runtime.readContinuationBrief === undefined
       ? unsupported('the Host Runtime does not publish the continuation brief read')
       : platform.runtime.readContinuationBrief.bind(platform.runtime),
+    setGoalControl: goalControl === undefined
+      ? unsupported('the Host does not publish the Goal fan-out driver (setGoalControl)')
+      : goalControl.setGoalControl.bind(goalControl),
+    readGoalDisplay: goalControl === undefined
+      ? unsupported('the Host does not publish the Goal fan-out driver (readGoalDisplay)')
+      : goalControl.readGoalDisplay.bind(goalControl),
   };
 }
 
@@ -544,6 +558,8 @@ export async function dispatchCoreRoute(
       case 'commands/stop': return bindings.stopCommand(ctx, plain.input as never);
       case 'tasks/requeue': return bindings.requeueTask(ctx, graphWrite.request as never);
       case 'executions/brief': return bindings.readContinuationBrief(ctx, plain.input as never);
+      case 'goals/control': return bindings.setGoalControl(ctx, graphWrite.request as never);
+      case 'goals/display': return bindings.readGoalDisplay(ctx, plain.input as never);
     }
   })();
   // A GraphWrite rejection is a failed command: preserve its exact body but let

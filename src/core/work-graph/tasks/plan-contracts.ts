@@ -1,6 +1,7 @@
 /** R3c plan/task slice. WorkGraph owns the rules; the Store owns atomic bytes. */
 import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { ArtifactRecord, ArtifactRef } from '../../../contracts/artifact.js';
+import type { ControlIntentRef, ControlIntentSnapshotV1 } from '../../../contracts/control-intent.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { VersionPin } from '../../../contracts/core/identity.js';
 import type { ReadResult, WriteResult } from '../../../contracts/core/results.js';
@@ -15,6 +16,7 @@ import type { DependencyRequirement, Disposition, Phase, PlanRevisionDraft, Plan
   TaskRelationV2 } from '../../../contracts/plan.js';
 import type { TaskFailureFactsV1, TaskPhaseCauseV1, TaskReworkSummaryV1 } from '../../../contracts/task-failure.js';
 import type { TaskRequeueRef } from '../../../contracts/task-requeue.js';
+import type { GoalDisplayV1, GoalRunControlCapabilityV1 } from '../state/goal-machine.js';
 import type { GraphWrite } from './contracts.js';
 
 /**
@@ -114,6 +116,49 @@ export type TaskGraph = { plan: PlanRevisionSnapshot; tasks: TaskRow[]; sourceCu
   planning?: GoalPlanningView;
   /** 兼容可选；正式 Goal 完成投影，缺省表示该生产者尚未提供，不等于未完成。 */
   completion?: GoalCompletionView };
+/**
+ * A.2 step 5.5 (spec §2.1 展示读取, GOAL-17..30): the Goal display reduction
+ * (`reduceGoalDisplay`) of one read window, and the Goal's `starting|running`
+ * Runs in active-plan task order (the G7 fan-out set, §2.3). Never stored.
+ */
+export type GoalDisplayRead = {
+  goal: GoalSnapshot;
+  display: GoalDisplayV1;
+  liveRuns: RunRef[];
+  /** Only while the Goal is `active`; empty otherwise (a non-active Goal shows `display.runStops`). */
+  resumePending: GoalResumePendingRunV1[];
+  sourceCursor: CommitCursor | null;
+};
+/**
+ * A live Run of an ACTIVE Goal whose control pointer is still a Goal fan-out
+ * intent: the fan-out pause of an earlier epoch (the resume waits until it is
+ * applied and paused, GOAL-14, or until reconcile settles it, GOAL-28), or the
+ * fan-out resume while it is still queued (the original Turn has not been
+ * re-entered yet). Not part of `reduceGoalDisplay` (its `runStops` exist only
+ * while the Goal is not active); it keeps such a Run visible after the resume.
+ */
+export type GoalResumePendingRunV1 = {
+  runRef: RunRef;
+  intentRef: ControlIntentRef;
+  intentKind: 'pause' | 'resume';
+  status: ControlIntentSnapshotV1['status'];
+};
+/**
+ * A.2 step 5.5 (§2.3 受影响集合): the Goal and its `starting|running` Runs of
+ * the active Plan in plan task order, from one `readCanonicalTaskFacts`
+ * window. The fan-out reads only this, never the display facts.
+ */
+export type GoalLiveRunsRead = { goal: GoalSnapshot; liveRuns: RunRef[]; sourceCursor: CommitCursor | null };
+export type GoalDisplayQuery = {
+  goalRef: GoalRef;
+  /**
+   * `runStops` order 3 (D-15): the capability of the Goal's pause and cancel
+   * for a Run that ENTERED the Kernel, from the Host's capability report
+   * (`safePointPause`, `cancel`); a Run that never entered is controlled by
+   * the platform (D-7). Absent = both supported.
+   */
+  entryControlCapabilities?: { pause: GoalRunControlCapabilityV1; cancel: GoalRunControlCapabilityV1 };
+};
 export type ReadyTask = { task: TaskRow; planRef: PlanRevisionRef; expected: VersionPin[] };
 export type TaskPage = { items: ReadyTask[]; nextCursor: string | null; sourceCursor: CommitCursor };
 export type PlanPageRequest = { limit: number; cursor?: string; atLeastCursor?: CommitCursor };
@@ -160,6 +205,14 @@ export interface PlanTaskPort {
     atLeastCursor?: CommitCursor }): Promise<ReadResult<TaskGraph>>;
   queryReadyTasks(ctx: CoreCallContext, input: { goalRef: GoalRef; roleIds?: string[];
     includeBlocked: boolean; page: PlanPageRequest }): Promise<ReadResult<TaskPage>>;
+  /**
+   * A.2 step 5.5 (§2.1 `readGoalDisplayFacts`): the Goal display. Optional only
+   * so the older read-only `PlanTaskPort` doubles keep compiling; the real Plan
+   * service always publishes it.
+   */
+  queryGoalDisplay?(ctx: CoreCallContext, input: GoalDisplayQuery): Promise<ReadResult<GoalDisplayRead>>;
+  /** A.2 step 5.5 (§2.3): the G7 fan-out set. Optional for the same reason as `queryGoalDisplay`. */
+  queryGoalLiveRuns?(ctx: CoreCallContext, input: { goalRef: GoalRef }): Promise<ReadResult<GoalLiveRunsRead>>;
   /** Reads the exact artifact pinned by an accepted v2 Plan for this task.
    * Uses MaterialPort.openArtifact(current); its real reader, grant and source
    * failures are preserved. No caller-supplied ArtifactRef may replace the pin. */
@@ -172,4 +225,5 @@ export interface PlanTaskPort {
  * the older read-only Port doubles; `createPlanService` always publishes it, so
  * the composition root and every real consumer see the required method.
  */
-export type PlanServicePort = PlanTaskPort & Required<Pick<PlanTaskPort, 'proposeInitialPlanFromAnswer'>>;
+export type PlanServicePort = PlanTaskPort
+  & Required<Pick<PlanTaskPort, 'proposeInitialPlanFromAnswer' | 'queryGoalDisplay' | 'queryGoalLiveRuns'>>;

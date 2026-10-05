@@ -40,12 +40,12 @@ import {
   checkEventAdmission, displayRoundStatus, evidenceSupersededByRequeue, finalizeRoundOutcome, foldVerdictChecks, frozenBindingProblem,
   isFinalizedNonPass, nextTaskEvidenceIndex, outcomeFor, pendingRoundChecks, requiredRoundCoverage, reverifyExemption,
   reverifyFailureClass, rootRoundChain, roundChainHead, roundOpenBasisProblem, roundOpenChainProblem, roundOpenChecksProblem,
-  roundOpenPointerProblem, roundOpenProblem,
+  roundActivityProblem, roundGoalActivityProblem, roundOpenPointerProblem, roundOpenProblem, roundSubjectActivityProblem,
   roundOpenSubjectProblem, roundOrdinalOf, roundReviewerEvidenceProblem, roundSlotKey, roundSlotOwner,
   roundSlotSubjectOf, roundTaskSignal, roundWriteAdmission, taskEvidenceIndexRefOf,
   transitionCheck, transitionRound, withCheckPhase,
   type CheckEvent, type RoundEvent, type RoundFoldFactsV1, type RoundGapV1, type RoundGuardContext,
-  type RoundOpenFactsV1, type RoundOpeningV1, type SuccessorRoundBuildV1, type SuccessorRoundInputV1,
+  type RoundActivityFactsV1, type RoundOpenFactsV1, type RoundOpeningV1, type SuccessorRoundBuildV1, type SuccessorRoundInputV1,
   type VerificationEffect,
 } from '../../src/core/work-graph/state/verification-machine.js';
 import type { Transition, TransitionRejectReason } from '../../src/core/work-graph/state/transition.js';
@@ -155,12 +155,13 @@ const MIXED: RoundSnapshot = { ...OPEN_PENDING, revision: 7, verificationPlan: P
 const MIXED_FINALIZED: RoundSnapshot = { ...MIXED, revision: 8, status: 'finalized', outcome: 'INCONCLUSIVE',
   gaps: [pendingGap('c-pending', 'c-pending')], evidenceRefs: [] };
 
-/** The VD-9 facts (5.5) arrive with their rows; the TaskRequeue cover is `subjectRunRequeued` (5.4). */
+/** The VD-9 facts (5.5) are `activity` (open facts, begin event); the TaskRequeue cover is `subjectRunRequeued` (5.4). */
 const ctxOf = (state: RoundSnapshot | null, over: Partial<RoundGuardContext> = {}): RoundGuardContext => ({
   callerIsExecutor: true, expectedRevision: state === null ? null : state.revision, instanceLeaseHeld: true, ...over });
 
 const endedRun: Pick<RunSnapshot, 'status' | 'outcome' | 'reconciliation'> = { status: 'ended', outcome: 'completed' };
-const OPEN_FACTS: RoundOpenFactsV1 = { planIsActive: true, taskBasisResolved: true,
+const ACTIVE: RoundActivityFactsV1 = { goalDesiredState: 'active', subjectDisposition: 'active' };
+const OPEN_FACTS: RoundOpenFactsV1 = { activity: ACTIVE, planIsActive: true, taskBasisResolved: true,
   relation: { kind: 'work', runTaskIsSubject: true }, subjectRun: endedRun, subjectRunRequeued: false, chain: { kind: 'none' } };
 const APPLICABLE = { applicability: 'APPLICABLE', basis: 'same-plan', reason: 'the evidence Plan is the adopted Plan' } as const;
 const FOLD_OK: RoundFoldFactsV1 = { decisions: { lint: APPLICABLE, unit: APPLICABLE }, sourceCurrent: true, contextGaps: [] };
@@ -334,7 +335,8 @@ const c = (...cells: Expect[]): Record<CheckStateLabel, Expect> => row(C_COLS, .
 const reportFacts = (checkId: string, invocationId: string) => ({ roundRef: MIXED.ref, checkId, invocationId,
   outcome: 'PASS' as const, sourceStatus: 'matched' as const, reportRef: REPORT, bodiesAgree: true });
 const CHECK_EVENTS = {
-  'check_begun': (checkId: string): CheckEvent => ({ kind: 'check_begun', checkId, invocationId: 'inv-new', observed: OBSERVED_OK }),
+  'check_begun': (checkId: string): CheckEvent => ({ kind: 'check_begun', checkId, invocationId: 'inv-new', observed: OBSERVED_OK,
+    activity: ACTIVE }),
   'check_result_recorded': (checkId: string, invocationId: string): CheckEvent => ({ kind: 'check_result_recorded', checkId,
     invocationId, observation: executed(), sourceStatus: 'matched', reportRef: REPORT }),
   'check_interrupted:host_restart': (checkId: string, invocationId: string): CheckEvent => ({ kind: 'check_interrupted', checkId,
@@ -364,7 +366,8 @@ const ABANDONED = { ...MIXED, revision: MIXED.revision + 1, checks: MIXED.checks
 
 const CHECK_TABLE: Record<CheckEventLabel, () => Record<CheckStateLabel, Expect>> = {
   // VR-02; executing/finished/interrupted busy (D-12); unknown check invalid; finalized busy (`checkEventAdmission`).
-  'check_begun': () => c(to(BEGUN, [guardAt(7), { kind: 'emit_event', eventType: 'VerificationCheckBegun' }]), IB, IB, IB, II, IB),
+  'check_begun': () => c(to(BEGUN, [guardAt(7), { kind: 'guard_begin_read_set' }, { kind: 'emit_event', eventType: 'VerificationCheckBegun' }]),
+    IB, IB, IB, II, IB),
   // VR-03; pending/finished busy (`checkEventAdmission`), a late result on interrupted is stale busy.
   'check_result_recorded': () => c(IB,
     to(RECORDED, [guardAt(7), { kind: 'emit_event', eventType: 'VerificationCheckResultRecorded' }]), IB, SB, II, IB),
@@ -442,6 +445,30 @@ describe('VR-01 round_opened guards', () => {
       .toMatchObject({ code: 'incomplete' });
     expect(roundOpenProblem({ ...OPEN_FACTS, subjectRun: { status: 'ended', outcome: 'crashed' },
       chain: roundChainHead([OPEN_PENDING]) }, task)).toMatchObject({ code: 'forbidden' });
+  });
+
+  it('VD-9 (5.5): a Goal that is not active first, then a subject task that is not active in the current Plan', () => {
+    for (const goalDesiredState of ['paused', 'cancelled'] as const) {
+      // The Goal is asked right after the Goal read: before the pointer and every later fact.
+      expect(openWith({ activity: { goalDesiredState, subjectDisposition: 'deferred' }, planIsActive: false, taskBasisResolved: false }))
+        .toEqual({ ok: false, reason: 'guard_failed', code: 'busy',
+          detail: `the Goal is ${goalDesiredState}; no new check process starts until the Goal is resumed` });
+      expect(roundGoalActivityProblem(goalDesiredState)).toMatchObject({ code: 'busy' });
+    }
+    expect(roundGoalActivityProblem('active')).toBeNull();
+    // The subject disposition is asked after the Plan read: after the pointer, before the basis.
+    expect(openWith({ activity: { goalDesiredState: 'active', subjectDisposition: 'deferred' }, planIsActive: false }))
+      .toMatchObject({ code: 'source_stale' });
+    for (const subjectDisposition of ['deferred', 'cancelled', 'superseded'] as const) {
+      expect(openWith({ activity: { goalDesiredState: 'active', subjectDisposition }, taskBasisResolved: false }))
+        .toEqual({ ok: false, reason: 'guard_failed', code: 'invalid',
+          detail: `the subject task ${T} is ${subjectDisposition} in the Goal current adopted Plan; no new check process starts` });
+    }
+    expect(roundSubjectActivityProblem(null, task)).toEqual({ ok: false, reason: 'guard_failed', code: 'invalid',
+      detail: `the subject task ${T} is not in the Goal current adopted Plan` });
+    expect(roundSubjectActivityProblem('active', task)).toBeNull();
+    expect(roundActivityProblem({ goalDesiredState: 'paused', subjectDisposition: null }, task)).toMatchObject({ code: 'busy' });
+    expect(roundActivityProblem(ACTIVE, task)).toBeNull();
   });
 
   it('checks the subject relation in today order (`roundOpenSubjectProblem`)', () => {
@@ -587,8 +614,8 @@ describe('VR-07 / VR-08 guards', () => {
 describe('check event guards (today order)', () => {
   const run = (event: CheckEvent, ctx: Partial<RoundGuardContext> = {}, round: RoundSnapshot = MIXED) =>
     transitionCheck(round, event, ctxOf(round, ctx));
-  const begin = (checkId = 'c-pending', observed = OBSERVED_OK): CheckEvent =>
-    ({ kind: 'check_begun', checkId, invocationId: 'inv-new', observed });
+  const begin = (checkId = 'c-pending', observed = OBSERVED_OK, activity = ACTIVE): CheckEvent =>
+    ({ kind: 'check_begun', checkId, invocationId: 'inv-new', observed, activity });
   const record = (invocationId = 'inv-exec', observation = executed(), sourceStatus: 'matched' | 'changed' = 'matched'): CheckEvent =>
     ({ kind: 'check_result_recorded', checkId: 'c-exec', invocationId, observation, sourceStatus, reportRef: REPORT });
 
@@ -603,6 +630,19 @@ describe('check event guards (today order)', () => {
     expect(run(begin('c-exec'), { expectedRevision: 1 })).toMatchObject({ reason: 'stale', code: 'revision_conflict' });
     expect(run(begin('c-exec'))).toEqual({ ok: false, reason: 'illegal', code: 'busy', detail: 'the check c-exec is already executing' });
     expect(run(begin(), { expectedRevision: null })).toMatchObject({ ok: true });
+  });
+
+  it('VR-02 VD-9 (5.5): after the admission and before the frozen binding; the Goal and its Plan are a read set', () => {
+    const changed = { ...OBSERVED_OK, permissionRevision: 'perm-2' };
+    expect(run(begin('c-pending', changed, { goalDesiredState: 'paused', subjectDisposition: 'active' }))).toEqual({
+      ok: false, reason: 'guard_failed', code: 'busy', detail: 'the Goal is paused; no new check process starts until the Goal is resumed' });
+    expect(run(begin('c-pending', changed, { goalDesiredState: 'active', subjectDisposition: 'deferred' }))).toMatchObject({
+      reason: 'guard_failed', code: 'invalid' });
+    // The admission (finalized, executor, checkId, pin, phase) still answers first.
+    expect(run(begin('c-exec', OBSERVED_OK, { goalDesiredState: 'cancelled', subjectDisposition: null })))
+      .toMatchObject({ code: 'busy', detail: 'the check c-exec is already executing' });
+    const begun = run(begin());
+    expect(begun.ok && begun.effects).toContainEqual({ kind: 'guard_begin_read_set' });
   });
 
   it('VR-02: the frozen permission, root and source in that order, each with its VD-8 marker (L-9)', () => {
