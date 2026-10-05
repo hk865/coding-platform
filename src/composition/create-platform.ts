@@ -141,6 +141,53 @@ function sameJson(left: unknown, right: unknown): boolean {
 }
 
 /**
+ * The workspace-level Runtime capability report (STATE-MACHINES-SPEC §7.7, D-15).
+ * Every item carries its own reason, and a supported item's reason states the
+ * boundary of that support. It is a declaration only: no server behaviour is
+ * gated on it, and a single Run's actual result is still its ControlIntent
+ * status and observation (MVP-BEHAVIOR B08). A.2 step 5.2 reports
+ * `continueHistory` (lead decision LA-1: a continuation is a new Run), and
+ * `safePointPause` and `cancel` (D-7) as supported; `recoverRun` stays
+ * unsupported until step 5.7. D-15 asks for the report as it is: each reason
+ * states only what holds today, and the §7.7 target boundaries are added by
+ * the substep that builds them (5.4: the requeue continuation brief, C3; 5.6:
+ * the new Session after an open Kernel Turn, the restart rebuild, the
+ * paused-interrupted end, the paused stop and the restart stop, which also
+ * rewrites the `recoverRun` reason). Built fresh per read, so a caller cannot
+ * change a later report.
+ */
+function workspaceRuntimeCapabilities(
+  adapterId: string, kernelSessionApiVersion: RuntimeCapabilities['kernelSessionApiVersion'],
+): RuntimeCapabilities {
+  return {
+    adapterId, kernelSessionApiVersion,
+    createSession: { supported: true, reason: 'durable creation and Kernel mapping are configured' },
+    readHistory: { supported: true, reason: 'original Kernel history reader is configured' },
+    continueHistory: { supported: true, reason: 'a continuation is a new Run, never a resume of the original Turn. '
+      + 'When the previous Turn has a Kernel terminal, a new Run in the same Session continues its history, '
+      + 'including the successor Run after a yielded wait. When the previous Turn has no Kernel terminal (for '
+      + 'example a Run still open when its Host process ended), the Kernel refuses a new Turn in that Session and '
+      + 'no continuation is offered' },
+    recoverRun: { supported: false, reason: 'there is no start-up reconciliation of Runs: a Run\'s terminal is '
+      + 'recorded only with the in-process proof of its live handle, so a Run still open when its Host process '
+      + 'ended stays as last recorded' },
+    safePointPause: { supported: true, reason: 'an entered Work Run pauses through its live handle at the next '
+      + 'safe point (before a model call or between tool groups), and a resume re-enters the original Turn; a '
+      + 'Run that has not entered the Kernel is paused and resumed by the platform at once. A paused Run is not '
+      + 'reconciled after a Host restart (see recoverRun). A Query cannot be paused' },
+    cancel: { supported: true, reason: 'an entered Run is cancelled through its live handle, and the cancel stays '
+      + 'a pending stop request until the Run\'s stop is proved; a Run that has not entered the Kernel is '
+      + 'cancelled by the platform at once. A cancel of an entered Run already paused at a safe point cannot be '
+      + 'delivered (its live handle has exited) and stays a pending stop request. A cancel of a yielded wait only '
+      + 'fences its continuation. A Query cannot be cancelled: a control on a Query Run is refused as invalid and '
+      + 'there is no QueryJob close, so a running Query ends only with its own terminal' },
+    nativeCompact: { supported: false, reason: 'native Kernel compaction is not implemented' },
+    scopedWorkspaceWrites: { supported: false, reason: 'the Host checks only that the prepared writeScope is '
+      + 'within its grant; whether the Kernel enforces sub-path writes is not verified' },
+  };
+}
+
+/**
  * The trusted Host projection consumed by the WorkGraph entry/model-call lanes.
  *
  * It consumes the exact Role resolution the WorkGraph admission recheck already
@@ -568,14 +615,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
           return { status: 'rejected', code: 'forbidden', reason: 'capability scope is not bound by the Host' };
         const registered = kernelStores.forWorkspace(scope);
         if (!registered) return { status: 'rejected', code: 'unsupported', reason: 'workspace has no configured Kernel Store' };
-        const pending = { supported: false, reason: 'continuation, recovery, cancellation, pause, compaction and scoped writes are not implemented' };
-        return { status: 'ready', value: {
-          adapterId: registered.adapterId, kernelSessionApiVersion: kernel.kernelSessionApiVersion,
-          createSession: { supported: true, reason: 'durable creation and Kernel mapping are configured' },
-          readHistory: { supported: true, reason: 'original Kernel history reader is configured' },
-          continueHistory: pending, recoverRun: pending, safePointPause: pending,
-          cancel: pending, nativeCompact: pending, scopedWorkspaceWrites: pending,
-        } };
+        return { status: 'ready', value: workspaceRuntimeCapabilities(registered.adapterId, kernel.kernelSessionApiVersion) };
       },
       createSession(...args: Parameters<typeof sessionOperations.createSession>) {
         return sessionCall(() => sessionOperations.createSession(...args));

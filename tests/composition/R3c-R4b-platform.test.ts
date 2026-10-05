@@ -159,9 +159,14 @@ it('wires one durable Goal/Plan/Session graph and reopens the same Kernel Sessio
       { task: { ref: { taskId: 'implement' }, eligibility: { eligible: true } } },
     ] } });
 
+    // A.2 step 5.2 (spec §7.7, D-15, LA-1): continuation, safe-point pause
+    // and cancel are reported supported, each with its own boundary.
     expect(await first.runtime.capabilities(ctx, scope)).toMatchObject({ status: 'ready', value: {
       createSession: { supported: true }, readHistory: { supported: true },
-      continueHistory: { supported: false }, scopedWorkspaceWrites: { supported: false },
+      continueHistory: { supported: true, reason: expect.stringContaining('a continuation is a new Run') },
+      safePointPause: { supported: true, reason: expect.stringContaining('pauses through its live handle') },
+      cancel: { supported: true, reason: expect.stringContaining('cancelled by the platform at once') },
+      scopedWorkspaceWrites: { supported: false },
     } });
     // The composition wrapper must preserve the underlying port's synchronous
     // input snapshot, even though the operation spans asynchronous stores.
