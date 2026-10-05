@@ -160,10 +160,20 @@ it('wires one durable Goal/Plan/Session graph and reopens the same Kernel Sessio
     ] } });
 
     // A.2 step 5.2 (spec §7.7, D-15, LA-1): continuation, safe-point pause
-    // and cancel are reported supported, each with its own boundary.
+    // and cancel are reported supported, each with its own boundary; step 5.7
+    // adds the start-up reconciliation, never a fresh resume (D-17), with the
+    // §7.7 boundaries LA-7, C4, LA-1 and LA-6 (§7.7 item 3).
     expect(await first.runtime.capabilities(ctx, scope)).toMatchObject({ status: 'ready', value: {
       createSession: { supported: true }, readHistory: { supported: true },
       continueHistory: { supported: true, reason: expect.stringContaining('a continuation is a new Run') },
+      recoverRun: { supported: true, reason: expect.stringMatching(new RegExp([
+        'start-up reconciliation only, never a fresh resume of the original Turn',
+        'a queued cancel with a clean Kernel Turn ends the Run cancelled',
+        'ends paused-interrupted, which is not a failure', 'only a person continues it',
+        'new Run with a continuation brief, in a new Session',
+        'follows the Host setting automation\\.resumeOnStartup \\(on by default\\)',
+        'When that setting is off, the reconciliation still runs but no driver starts after it',
+      ].join('[\\s\\S]*'))) },
       safePointPause: { supported: true, reason: expect.stringContaining('pauses through its live handle') },
       cancel: { supported: true, reason: expect.stringContaining('cancelled by the platform at once') },
       scopedWorkspaceWrites: { supported: false },
