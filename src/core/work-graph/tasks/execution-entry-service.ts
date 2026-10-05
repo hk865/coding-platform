@@ -37,7 +37,9 @@ import type {
   ExecutionAuthorizationV2, RoleBindingRefV1, RunRef, RunSnapshot,
   RuntimeInputBindingV1, TaskAttemptSnapshot, TaskBudgetV1, TaskLeaseSnapshot, TaskTriple,
 } from '../../../contracts/dispatch.js';
-import { continuationBriefShapeProblem } from '../../../contracts/continuation-brief.js';
+import {
+  continuationBriefDigest, continuationBriefShapeProblem, renderContinuationBriefZh,
+} from '../../../contracts/continuation-brief.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
 import { sameArtifactRef, validMaterialSourcePin, type MaterialBasisV1 } from '../../../contracts/material-access.js';
@@ -882,8 +884,9 @@ export function claimSessionOf(session: SessionRecord, claim: TaskClaim): RunGua
 /**
  * RUN-02/04/05/07's guard context from one execution read: the claim Session
  * as this Run holds it, the claim Lease and the persisted claim. The Goal, the
- * Plan pin and the fresh admission are authorize/begin's later reads and hold
- * until read; control, reconcile and claim facts belong to other Run events.
+ * Plan pin, the continuation brief (C3) and the fresh admission are
+ * authorize/begin's later reads and hold until read; control, reconcile and
+ * claim facts belong to other Run events.
  */
 function entryRunContext(facts: TaskExecutionRecord, claim: TaskClaim, actor: HostActor): RunGuardContext {
   return {
@@ -892,7 +895,8 @@ function entryRunContext(facts: TaskExecutionRecord, claim: TaskClaim, actor: Ho
     persistedClaim: facts.outbox.claim,
     goal: { desiredState: 'active', activePlanMatchesClaim: true },
     entryPlan: 'active_plan',
-    continuationBrief: 'absent_ok',
+    // C3: holds until the prepared manifest is read (RUN-02 replaces it with the verdict).
+    continuationBrief: facts.run.requeueRef === undefined ? 'absent_ok' : 'bound',
     freshAdmission: null,
     pointerIntent: null,
     queuedSteers: [],
@@ -1084,6 +1088,32 @@ async function authorizeAdmission(
   return admitManifest(deps, ctx, facts, manifest);
 }
 
+/**
+ * RUN-02's `continuationBrief` (C3, §6.1 contract (e), §11 I-19): `absent_ok`
+ * for a Run without `requeueRef` and without brief or digest; `bound` for a
+ * requeue Run whose manifest brief names this Run and its `requeueRef`, whose
+ * digest is the binding's, and whose rendered text ends `manifest.input`;
+ * `missing` (a requeue Run without brief or digest), `unexpected` (a brief or
+ * digest without `requeueRef`) or `mismatch` otherwise. An unreadable manifest
+ * is judged by the binding alone; the fresh admission refuses it next.
+ */
+function continuationBriefVerdict(
+  run: RunSnapshot, claim: TaskClaim, binding: RuntimeInputBindingV1, manifest: PreparedTaskManifestV1 | null,
+): RunGuardContext['continuationBrief'] {
+  const digest = binding.continuationBriefDigest;
+  const brief = manifest === null ? undefined : manifest.continuationBrief;
+  const requeueRef = run.requeueRef;
+  if (requeueRef === undefined) return digest === undefined && brief === undefined ? 'absent_ok' : 'unexpected';
+  if (digest === undefined || (manifest !== null && brief === undefined)) return 'missing';
+  if (manifest === null || brief === undefined) return 'bound';
+  if (!sameRef(brief.runRef, claim.runRef) || !sameRef(brief.requeueRef, requeueRef)
+    || continuationBriefDigest(brief) !== digest
+    || !manifest.input.endsWith(`\n\n${renderContinuationBriefZh(brief, digest)}`)) {
+    return 'mismatch';
+  }
+  return 'bound';
+}
+
 /** RUN-04's `freshAdmission`: the saved manifest of the Run, then as RUN-02 from the Host/Role on. */
 async function beginAdmission(
   deps: ExecutionEntryDependencies, ctx: CoreCallContext, facts: TaskExecutionRecord,
@@ -1226,6 +1256,10 @@ export function createExecutionEntryService(deps: ExecutionEntryDependencies): E
       const onGoal = transitionRun(state, runEvent, runCtx);
       if (!onGoal.ok) return runRefusal(onGoal);
 
+      // C3 (RUN-02, contract (e)): the continuation brief binding of the prepared manifest.
+      const briefManifest = await readManifestFromEnvelope(deps, prepared.envelope as unknown as Record<string, unknown>, claim.runRef);
+      runCtx = { ...runCtx, continuationBrief: continuationBriefVerdict(facts.run, claim, prepared.inputBinding,
+        briefManifest.ok ? briefManifest.value.manifest : null) };
       const admission = freshAdmissionOf(
         await authorizeAdmission(deps, scopeCtx, scope, prepared, facts, goalScope.goal.workspaceRef.workspaceId));
       const authorized = transitionRun(state, runEvent, { ...runCtx, freshAdmission: admission.problem });

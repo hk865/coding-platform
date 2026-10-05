@@ -4,7 +4,7 @@ import type { ArtifactRecord, ArtifactRef } from '../../../contracts/artifact.js
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { VersionPin } from '../../../contracts/core/identity.js';
 import type { ReadResult, WriteResult } from '../../../contracts/core/results.js';
-import type { TaskTriple, TaskAttemptRef, RunRef, TaskEligibility } from '../../../contracts/dispatch.js';
+import type { TaskTriple, TaskAttemptRef, RunRef, TaskBudgetV1, TaskEligibility } from '../../../contracts/dispatch.js';
 import type { PlanWriteProvenanceV1 } from '../../../contracts/delegated-write.js';
 import type { GoalRef, GoalSnapshot, VersionedRef } from '../../../contracts/ledger.js';
 import type { GoalPhaseSnapshot } from '../../../contracts/goal-phase.js';
@@ -88,6 +88,11 @@ export type TaskRow = { ref: TaskTriple; definition: RuntimeTask; effectivePhase
   phaseCause?: TaskPhaseCauseV1;
   /** The TaskRequeue covering the selected Run (P4); read-only. */
   requeueRef?: TaskRequeueRef;
+  /**
+   * The claim budget that TaskRequeue pins (TASK-03: a claim with `requeueRef`
+   * must carry exactly this budget); absent when it pins none. Read-only.
+   */
+  requeueBudget?: TaskBudgetV1;
   /** C1 structured failure facts (`buildTaskFailureFacts`); read-only. */
   failure?: TaskFailureFactsV1;
   /** C8 requeue history and automatic count; read-only. */

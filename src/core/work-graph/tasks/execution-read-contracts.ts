@@ -12,6 +12,7 @@ import type { PlanRevisionSnapshot } from '../../../contracts/plan.js';
 import type { TaskRequeueSnapshotV1 } from '../../../contracts/task-requeue.js';
 import type { RoundSnapshot } from '../../../contracts/verification.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
+import type { RawArtifactStorePort } from '../../record-store/body-ports.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
 import type { SessionMessage } from '../communication/contracts.js';
 import type { TaskClaimOutbox } from './claim-contracts.js';
@@ -61,7 +62,7 @@ export type ContinuationBasis = {
   /** The new Run; it carries a `requeueRef`. */
   run: RunSnapshot;
   requeue: TaskRequeueSnapshotV1;
-  /** Every TaskRequeue of the Task, for the ordinal and earlier classes. */
+  /** Every TaskRequeue of the Task in Run-chain order (oldest first), for the ordinal and earlier classes. */
   allRequeues: TaskRequeueSnapshotV1[];
   /** The afterRun record. */
   previous: TaskExecutionRecord;
@@ -87,7 +88,8 @@ export interface ExecutionReadPort {
   listExecutions?(ctx: CoreCallContext, request: ExecutionListPageRequest): Promise<ReadResult<TaskExecutionPage>>;
   /**
    * C3: the continuation basis of a requeue Run; `not_found` when the Run has
-   * no `requeueRef`. Optional like `listExecutions`; implemented in A.2 step 5.4.
+   * no `requeueRef`. Optional like `listExecutions`; the real reader always
+   * publishes it.
    */
   readContinuationBasis?(ctx: CoreCallContext, request: { runRef: RunRef }): Promise<ReadResult<ContinuationBasis>>;
 }
@@ -99,4 +101,10 @@ export interface ExecutionReadPort {
  * list read returns `incomplete` instead of an empty page. */
 export type ExecutionReadDependencies = {
   records: GoalRecordTransactionPort & Partial<RecordLookupPort>;
+  /**
+   * C3: the raw body store `readContinuationBasis` reads the bounded bodies of
+   * a requeue's new inputs from. Absent, those bodies are reported unreadable
+   * (null with a reason); every other read is unchanged.
+   */
+  bodies?: Pick<RawArtifactStorePort, 'read'>;
 };

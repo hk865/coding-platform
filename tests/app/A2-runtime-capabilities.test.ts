@@ -12,9 +12,9 @@
  * behaviour in tests/composition/A2-control-platform.test.ts); a cancel of a Run
  * paused at a safe point cannot be delivered yet; a Query has no control.
  * `recoverRun` stays unsupported until step 5.7. The §7.7 target boundaries
- * that later substeps build (5.4 continuation brief; 5.6 new Session after an
- * open Kernel Turn, restart rebuild, paused-interrupted, paused stop, restart
- * stop) add their phrases here in those substeps. Every item has its own reason
+ * that later substeps build (5.6 new Session after an open Kernel Turn, restart
+ * rebuild, paused-interrupted, paused stop, restart stop) add their phrases here
+ * in those substeps; 5.4 added the requeue continuation brief (C3). Every item has its own reason
  * (no shared placeholder), and the report is the same after the Host reopens
  * the ledger.
  *
@@ -115,6 +115,9 @@ it('reports continuation, safe-point pause and cancel as supported with their bo
   // and the frozen Kernel takes no new Turn in a Session whose last Turn is open.
   expectAllIn(report.continueHistory.reason, [
     'a continuation is a new Run, never a resume of the original Turn',
+    // 5.4 (C3): a requeue Run starts with its continuation brief.
+    'A Run created by a requeue starts with a continuation brief',
+    'labelled a continuation, not a resumed execution',
     'has a Kernel terminal, a new Run in the same Session continues its history',
     'the successor Run after a yielded wait',
     'has no Kernel terminal',
@@ -144,12 +147,14 @@ it('reports continuation, safe-point pause and cancel as supported with their bo
   ]);
   expect(report.recoverRun.reason).toContain('there is no start-up reconciliation of Runs');
   // D-15: no reason states a §7.7 target boundary before its substep builds it.
-  // 5.4 (continuation brief, C3) and 5.6 (new Session after an open Kernel Turn,
-  // restart rebuild, paused-interrupted, RUN-14, RD-7, RUN-23, GOAL-29, C7) move
-  // their phrases from here into the lists above.
-  const notYetBuilt = ['continuation brief', 'new Session', 'kernel_turn_open', 'waiting message',
+  // 5.6 (new Session after an open Kernel Turn, restart rebuild,
+  // paused-interrupted, RUN-14, RD-7, RUN-23, GOAL-29, C7) moves its phrases
+  // from here into the lists above (5.4 moved 'continuation brief').
+  const notYetBuilt = ['new Session', 'kernel_turn_open', 'waiting message',
     'paused-interrupted', 'exit proof', 'whether or not the Kernel paused it', 'resuming the Goal',
     'Task disposition'];
+  expect(report.safePointPause.reason).not.toContain('continuation brief');
+  expect(report.cancel.reason).not.toContain('continuation brief');
   for (const reason of [report.continueHistory.reason, report.safePointPause.reason, report.cancel.reason]) {
     for (const phrase of notYetBuilt) expect(reason, phrase).not.toContain(phrase);
   }

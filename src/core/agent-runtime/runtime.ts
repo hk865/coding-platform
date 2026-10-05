@@ -15,10 +15,12 @@ import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { WorkspaceScope } from '../../contracts/core/identity.js';
 import type { OperationReceipt, Page, ReadResult } from '../../contracts/core/results.js';
 import type { SessionRecord } from '../../contracts/core/session.js';
+import type { RunRef } from '../../contracts/dispatch.js';
 import { createExecutionDriver } from './execution-driver.js';
 import { createExecutionObservation } from './execution-observation.js';
 import { createRuntimeControlCoordinator } from './execution-control.js';
-import { createExecutionPreparation } from './execution-preparation.js';
+import { createExecutionPreparation, loadPreparedManifest, rehydratePreparedExecution } from './execution-preparation.js';
+import { continuationBriefDigest } from '../../contracts/continuation-brief.js';
 import { createSessionHistoryCursorOwner } from './session-operations.js';
 import { createQueryPreparation } from './query-preparation.js';
 import { createQueryExecutionDriver } from './query-execution.js';
@@ -106,6 +108,38 @@ export function createAgentRuntime(deps?: RuntimeExecutionDependencies): AgentRu
     }
     return { status: 'ready', value: { cursor: boundary.cursor, position: boundary.position } };
   };
+  /**
+   * C3 `executions/brief` (§6.1 (e)): the continuation brief pinned in a Run's
+   * saved manifest, checked against `inputBinding.continuationBriefDigest`. A
+   * Run without `requeueRef` has none (`null`); a requeue Run not bound yet is
+   * `incomplete`.
+   */
+  const readContinuationBrief: NonNullable<RuntimeExecutionPort['readContinuationBrief']> = async (ctx, request) => {
+    // A plain route hands the body through as it came: only a complete RunRef is read.
+    const raw = (typeof request === 'object' && request !== null ? (request as { runRef?: unknown }).runRef : undefined) as
+      Record<string, unknown> | null | undefined;
+    if (typeof raw !== 'object' || raw === null || raw['aggregateType'] !== 'Run'
+      || ![raw['projectId'], raw['goalId'], raw['runId']].every((id) => typeof id === 'string' && id.length > 0)) {
+      return { status: 'rejected', code: 'invalid', reason: 'readContinuationBrief requires a complete RunRef' };
+    }
+    const runRef: RunRef = { aggregateType: 'Run', projectId: raw['projectId'] as string, goalId: raw['goalId'] as string,
+      runId: raw['runId'] as string };
+    const read = await deps.executions.readExecution(ctx, runRef);
+    if (read.status !== 'ready') return read;
+    if (read.value.run.requeueRef === undefined) return { status: 'ready', value: null };
+    const digest = read.value.run.inputBinding?.continuationBriefDigest;
+    const prepared = rehydratePreparedExecution(read.value);
+    if (prepared === null || digest === undefined) {
+      return { status: 'rejected', code: 'incomplete', reason: 'the requeue Run has not bound its continuation brief yet' };
+    }
+    const loaded = await loadPreparedManifest(deps.bodies, prepared);
+    if (loaded.status !== 'ready') return loaded;
+    const brief = loaded.value.manifest.continuationBrief;
+    if (brief === undefined || continuationBriefDigest(brief) !== digest) {
+      return { status: 'rejected', code: 'unavailable', reason: 'the saved manifest brief disagrees with the Run binding' };
+    }
+    return { status: 'ready', value: { brief, digest } };
+  };
   const observation = createExecutionObservation({ ...deps, control });
   const driver = createExecutionDriver({ ...deps, observation, control });
   const queryPreparation = createQueryPreparation(deps);
@@ -116,6 +150,7 @@ export function createAgentRuntime(deps?: RuntimeExecutionDependencies): AgentRu
     port: {
       ...base,
       readCompletedBoundary,
+      readContinuationBrief,
       prepareExecution: (ctx, request) => preparation.prepare(ctx, request),
       startRun: (ctx, request) => driver.start(ctx, request),
       observeRun: (ctx, request) => observation.observe(ctx, request),

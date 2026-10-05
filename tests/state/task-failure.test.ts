@@ -1036,7 +1036,9 @@ describe('automationVerdict: GV-0..GV-10 (TD-9, C5, gates)', () => {
 // Read model                                                                //
 // ------------------------------------------------------------------------ //
 describe('buildTaskFailureFacts (C1, TaskRow.failure / TaskRow.rework)', () => {
-  const facts = (input: WorkFailureInputV1 | GateFailureInputV1, limit = 3) => buildTaskFailureFacts(input, policy(limit));
+  // LD-1: the owner injects the verdict; here the AV/GV judgement 5.8/5.9 will wire.
+  const facts = (input: WorkFailureInputV1 | GateFailureInputV1, limit = 3) =>
+    buildTaskFailureFacts(input, policy(limit), automationVerdict(input, policy(limit)).verdict);
   const failureOf = (input: WorkFailureInputV1 | GateFailureInputV1, limit = 3): TaskFailureFactsV1 => {
     const failure = facts(input, limit).failure;
     if (failure === null) throw new Error('expected failure facts');

@@ -36,10 +36,12 @@
  *   guards the read set; VR-08 refuses a finalized round (VD-2) and guards the
  *   round as read; VR-11 guards a stored @0 index at 0 and VR-12 writes no
  *   index for zero appended ids.
+ * - A.2 step 5.4 (D-3): VR-01 refuses a subject Run a TaskRequeue covers, and
+ *   VR-09 answers a requeue of the chain head (the head guarded as read and the
+ *   slot held with a same-owner claim).
  * - Later substeps add the rest, each with its facts: the VD-9 Goal and
- *   disposition guards of VR-01/VR-02 (5.5), the TaskRequeue cover of VR-01
- *   and VR-09 (5.4), VR-04 and VR-06 (start-up check reconcile, 5.6) and
- *   VR-14/VR-15 (`round_reverified`, 5.9). Their events stay in the unions:
+ *   disposition guards of VR-01/VR-02 (5.5), VR-04 and VR-06 (start-up check
+ *   reconcile, 5.6) and VR-14/VR-15 (`round_reverified`, 5.9). Their events stay in the unions:
  *   the guards of §9.4 that need only the round are implemented and the legal
  *   cell returns `illegal`/`invalid` (`notYet`).
  * - The successor helpers (`chainEvidenceIds`, `reverifyExemption`,
@@ -222,6 +224,8 @@ export type RoundOpenFactsV1 = {
   relation: RoundSubjectRelationV1;
   /** The subject (gate: producer) Run as read (`:527-530`). */
   subjectRun: Pick<RunSnapshot, 'status' | 'outcome' | 'reconciliation'>;
+  /** VR-01 (D-3, 5.4): a TaskRequeue covers the subject Run; its rework belongs to the new Run. */
+  subjectRunRequeued: boolean;
   /**
    * After the chain lookup: `roundChainHead` of the subject's rounds (work:
    * `VerificationRoundBySubject` of the subject Run; gate:
@@ -1032,8 +1036,8 @@ export function roundReviewerEvidenceProblem(reviewerEvidenceCount: number): Rej
  * task basis after the Plan read (`roundOpenBasisProblem`), the subject
  * relation and a normal Run end (VD-3) after the Run read
  * (`roundOpenSubjectProblem`), then the subject's chain after the lookup
- * (`roundOpenChainProblem`, VD-1/VD-15), all before the capture. Step 5.4
- * adds the TaskRequeue cover and 5.5 the VD-9 guards.
+ * (`roundOpenChainProblem`, VD-1/VD-15), all before the capture. The subject
+ * step includes the TaskRequeue cover (5.4); 5.5 adds the VD-9 guards.
  */
 export function roundOpenProblem(facts: RoundOpenFactsV1, subject: TaskTriple): Rejected | null {
   return roundOpenPointerProblem(facts.planIsActive)
@@ -1057,10 +1061,12 @@ export function roundOpenBasisProblem(taskBasisResolved: boolean, subject: TaskT
  * `:537-548`: the subject relation (work or gate), then the Run has formally
  * ended, then VD-3: it ended `completed` (an unknown, crashed, cancelled or
  * yielded Run is not verified) and its reconciliation is absent or `done`
- * (Workflow `normalEnd`).
+ * (Workflow `normalEnd`), then the Run is not covered by a TaskRequeue
+ * (§9.4, D-3: the rework's output belongs to the new Run, which opens its own
+ * chain).
  */
 export function roundOpenSubjectProblem(
-  facts: Pick<RoundOpenFactsV1, 'relation' | 'subjectRun'>,
+  facts: Pick<RoundOpenFactsV1, 'relation' | 'subjectRun' | 'subjectRunRequeued'>,
   subject: TaskTriple,
 ): Rejected | null {
   const relation = facts.relation;
@@ -1090,6 +1096,9 @@ export function roundOpenSubjectProblem(
   const reconciliation = run.reconciliation;
   if (reconciliation !== undefined && reconciliation.status !== 'done') {
     return reject('guard_failed', 'forbidden', `the subject Run reconciliation is ${reconciliation.status}`);
+  }
+  if (facts.subjectRunRequeued) {
+    return reject('guard_failed', 'forbidden', 'the subject Run is covered by a TaskRequeue; its rework belongs to the new Run');
   }
   return null;
 }
@@ -1241,9 +1250,34 @@ export function transitionRound(state: RoundSnapshot | null, event: RoundEvent, 
     case 'evidence_submitted': return roundOnEvidenceSubmitted(state, ctx);
     case 'round_finalized': return roundOnFinalized(state, event, ctx);
     case 'round_reverified': return notYet('VR-14/VR-15 (round_reverified)');
-    case 'task_requeued': return notYet('VR-09 (task_requeued)');
+    case 'task_requeued': return roundOnTaskRequeued(state);
     default: return unreachable(event, 'round event');
   }
+}
+
+/**
+ * VR-09 (D-3, C5, VD-5): the round side of a requeue of the afterRun's chain
+ * head. The head stays finalized and is not written; the requeue commit guards
+ * it as read and holds the subject slot with a same-owner claim
+ * (`headKey → headKey`; a legacy slot-less root `null → null`), because VR-14
+ * never writes its predecessor: a successor round committed after the requeue
+ * read moves the slot, so the two commit at most once. Its evidence is
+ * superseded by the TaskRequeue (`chainEvidenceIds`), not here.
+ */
+function roundOnTaskRequeued(state: RoundSnapshot | null): RoundTransition {
+  if (state === null) return reject('illegal', 'not_found', 'task_requeued needs the chain head round');
+  if (state.status === 'open') {
+    return reject('guard_failed', 'busy', `finalize_first: round ${state.ref.roundId} is open; finalize it before a requeue`);
+  }
+  if (!isFinalizedNonPass(state)) {
+    return reject('illegal', 'invalid', `round ${state.ref.roundId} finalized as a clean PASS; there is nothing to requeue`);
+  }
+  const owner = state.chain === undefined ? null : roundSlotOwner(state.ref);
+  return accept(state, [
+    { kind: 'guard_round_unchanged', revision: state.revision },
+    { kind: 'claim_round_slot', claim: { claimKey: roundSlotKey(roundSlotSubjectOf(state)), expectedOwner: owner,
+      nextOwner: owner } },
+  ]);
 }
 
 /**

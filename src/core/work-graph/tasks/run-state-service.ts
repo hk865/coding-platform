@@ -39,8 +39,17 @@ import type {
 import type { PlanRevisionSnapshot } from '../../../contracts/plan.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import { seqOfCommitCursor } from '../../../contracts/ledger.js';
+import type { ArtifactRef } from '../../../contracts/artifact.js';
+import { CONTINUATION_BRIEF_LIMITS } from '../../../contracts/continuation-brief.js';
+import type { ControlIntentRef, ControlIntentSnapshotV1 } from '../../../contracts/control-intent.js';
+import type { TaskRequeueSnapshotV1 } from '../../../contracts/task-requeue.js';
+import type { RoundSnapshot } from '../../../contracts/verification.js';
 import type { LookupValue, RecordLookupPort, RecordLookupRequest } from '../../record-store/lookup-ports.js';
-import type { EncodedRecord } from '../../record-store/ports.js';
+import type { DecodeResult, EncodedRecord } from '../../record-store/ports.js';
+import type { SessionMessage } from '../communication/contracts.js';
+import { decodeSessionMessageRecord, sessionMessageRefKey } from '../communication/message-record-codecs.js';
+import { decodeVerificationRoundSnapshot } from '../evidence/evidence-record-codecs.js';
+import { decodeControlIntentSnapshot } from '../persistence/control-record-codecs.js';
 import { materialRecordSchemas } from '../materials/record-readers.js';
 import {
   decodeSessionRecord,
@@ -50,18 +59,22 @@ import {
 import {
   decodeDispatchOutboxEntry,
   decodeTaskAttemptSnapshot,
+  decodeTaskRequeueSnapshot,
   dispatchOutboxRefKey,
   taskAttemptRefKey,
+  taskRequeueRefKey,
 } from './claim-record-codecs.js';
 import type { TaskClaimOutbox } from './claim-contracts.js';
 import { decodePlanRevisionSnapshot, planRevisionRefKey } from './plan-record-codecs.js';
 import {
   PLAN_STATE_RECORD_SCHEMAS,
+  laterCursor,
   readBatch,
   type ReadBatch,
   type Rejected,
 } from './plan-readers.js';
 import type {
+  ContinuationBasis,
   ExecutionListPageRequest,
   ExecutionReadDependencies,
   ExecutionReadPort,
@@ -639,5 +652,207 @@ export function createRunStateReader(deps: ExecutionReadDependencies): Execution
       readThrough: items.length === 0 ? null : items[items.length - 1]!.readThrough,
     } };
   };
-  return { readExecution, listExecutions };
+  /** One record by key, decoded; `null` when it is reported missing. */
+  async function readOne<T>(key: string, decode: (record: EncodedRecord) => DecodeResult<T>, what: string,
+  ): Promise<{ ok: true; value: T | null; readThrough: CommitCursor | null } | { ok: false; rejection: CoreRejection }> {
+    const read = await readBatch(records, [key]);
+    if (read.status !== 'ready') return { ok: false, rejection: mapRejected(read) };
+    const presence = presenceOf(read.batch, key);
+    if (presence === 'unaccounted') return { ok: false, rejection: unavailable(`the ${what} key was neither returned nor reported missing`) };
+    if (presence === 'missing') return { ok: true, value: null, readThrough: read.batch.readThrough };
+    const decoded = decode(read.batch.present.get(key) as EncodedRecord);
+    if (decoded.status !== 'decoded') return { ok: false, rejection: unavailable(`the ${what} is damaged: ${decoded.reason}`) };
+    return { ok: true, value: decoded.value, readThrough: read.batch.readThrough };
+  }
+
+  /** A bounded body of the raw store; null with the reason when it cannot be read. */
+  async function boundedBody(ref: ArtifactRef): Promise<{ body: string | null; reason: string | null }> {
+    if (deps.bodies === undefined) return { body: null, reason: 'the body store is not readable by this reader' };
+    try {
+      const read = await deps.bodies.read(ref);
+      if (read.status !== 'ready') return { body: null, reason: `the body is not readable: ${read.reason}` };
+      const body = read.value.body;
+      return { body: body.length > CONTINUATION_BRIEF_LIMITS.textChars ? body.slice(0, CONTINUATION_BRIEF_LIMITS.textChars) : body,
+        reason: null };
+    } catch (error) {
+      return { body: null, reason: `the body read failed: ${error instanceof Error ? error.message : String(error)}` };
+    }
+  }
+
+  /**
+   * C3 (spec §6.1 contract (e)): the durable facts AgentRuntime assembles a
+   * continuation brief from. The requeue Run and its TaskRequeue, every
+   * TaskRequeue of the Task (by each ended Run's `afterRunId`), the afterRun
+   * record with its pointer and steer intents, its wait message, the chain
+   * head the requeue covered, the bounded bodies of the requeue's own new
+   * inputs (a reply only when answered outside the new claim Session) and,
+   * for an afterRun that never entered the Kernel, the nearest entered
+   * ancestor along the requeue chain (at most `factsFromHops`). Each read is
+   * exact; `readThrough` is the latest watermark read. `not_found` for a Run
+   * without `requeueRef`.
+   */
+  const readContinuationBasis = async (ctx: CoreCallContext, request: { runRef: RunRef }): Promise<ReadResult<ContinuationBasis>> => {
+    const owned = ownCallContext(ctx);
+    if (!owned.ok) return owned.rejection;
+    const runRef = isRecord(request) ? request.runRef : undefined;
+    if (!isRunRef(runRef)) return invalid('readContinuationBasis requires a complete RunRef');
+    const current = await readExecution(owned.ctx, runRef);
+    if (current.status !== 'ready') return current;
+    const run = current.value.run;
+    const requeueRef = run.requeueRef;
+    if (requeueRef === undefined) return { status: 'not_found' };
+    let readThrough: CommitCursor | null = current.value.readThrough;
+    const later = (cursor: CommitCursor | null): void => { readThrough = laterCursor(readThrough, cursor); };
+    const requeueRead = await readOne(taskRequeueRefKey(requeueRef), decodeTaskRequeueSnapshot, 'TaskRequeue');
+    if (!requeueRead.ok) return requeueRead.rejection;
+    const requeue = requeueRead.value;
+    if (requeue === null) return incomplete('the TaskRequeue the Run names is missing');
+    later(requeueRead.readThrough);
+    if (requeue.task.taskId !== run.task.taskId || requeue.task.goalId !== run.task.goalId) {
+      return unavailable('the TaskRequeue the Run names belongs to another Task');
+    }
+    const previous = await readExecution(owned.ctx, requeue.afterRunRef);
+    if (previous.status !== 'ready') return previous.status === 'not_found' ? incomplete('the requeue afterRun is missing') : previous;
+    later(previous.value.readThrough);
+
+    // Every TaskRequeue of the Task, keyed by each ended Run of it.
+    const lookups = lookupPortOf(records);
+    if (lookups === null) return incomplete('the Run candidate index port is not configured');
+    const candidates = await collectRunCandidateKeys(lookups, RUN_BY_TASK_INDEX,
+      [run.task.projectId, run.task.goalId, run.task.taskId], undefined, 200);
+    if (candidates.status !== 'ready') return candidates;
+    const runRead = await readBatch(records, unique(candidates.refKeys));
+    if (runRead.status !== 'ready') return mapRejected(runRead);
+    later(runRead.batch.readThrough);
+    const requeueKeys: string[] = [];
+    const runsById = new Map<string, RunSnapshot>([[run.ref.runId, run]]);
+    for (const record of runRead.batch.present.values()) {
+      const decoded = decodeRun(record);
+      if (!decoded.ok) return unavailable(`a Run of the Task is damaged: ${decoded.reason}`);
+      const candidate = decoded.value;
+      if (candidate.task.taskId !== run.task.taskId) continue;
+      if (!runsById.has(candidate.ref.runId)) runsById.set(candidate.ref.runId, candidate);
+      if (candidate.status !== 'ended') continue;
+      requeueKeys.push(taskRequeueRefKey({ aggregateType: 'TaskRequeue', projectId: candidate.ref.projectId,
+        goalId: candidate.ref.goalId, taskId: candidate.task.taskId, afterRunId: candidate.ref.runId }));
+    }
+    const allRequeues: TaskRequeueSnapshotV1[] = [];
+    if (requeueKeys.length > 0) {
+      const all = await readBatch(records, unique(requeueKeys));
+      if (all.status !== 'ready') return mapRejected(all);
+      later(all.batch.readThrough);
+      for (const record of all.batch.present.values()) {
+        const decoded = decodeTaskRequeueSnapshot(record);
+        if (decoded.status !== 'decoded') return unavailable(`a TaskRequeue of the Task is damaged: ${decoded.reason}`);
+        allRequeues.push(decoded.value);
+      }
+    }
+    // Run-chain order (oldest first), as `TaskRow.rework.entries`: the chain ending at this Run is
+    // linked by `requeueRef.afterRunId` and `consumedWait.runRef`; a requeue off the chain follows.
+    const chain: string[] = [];
+    for (let current: RunSnapshot | undefined = run; current !== undefined && !chain.includes(current.ref.runId);) {
+      chain.push(current.ref.runId);
+      const previousId: string | undefined = current.requeueRef?.afterRunId ?? current.consumedWait?.runRef.runId;
+      current = previousId === undefined ? undefined : runsById.get(previousId);
+    }
+    const chainIndex = new Map(chain.reverse().map((runId, index) => [runId, index]));
+    allRequeues.sort((left, right) => {
+      const byChain = (chainIndex.get(left.ref.afterRunId) ?? Number.MAX_SAFE_INTEGER)
+        - (chainIndex.get(right.ref.afterRunId) ?? Number.MAX_SAFE_INTEGER);
+      if (byChain !== 0) return byChain;
+      if (left.requestedAt !== right.requestedAt) return left.requestedAt < right.requestedAt ? -1 : 1;
+      return left.ref.afterRunId < right.ref.afterRunId ? -1 : left.ref.afterRunId > right.ref.afterRunId ? 1 : 0;
+    });
+
+    // The afterRun's pointer and steer intents, and its wait message.
+    const intentOf = async (ref: ControlIntentRef): Promise<ControlIntentSnapshotV1 | CoreRejection> => {
+      const read = await readOne(refKeyOf(ref) as string, decodeControlIntentSnapshot, 'control intent');
+      if (!read.ok) return read.rejection;
+      if (read.value === null) return incomplete('a control intent the afterRun names is missing');
+      later(read.readThrough);
+      return read.value;
+    };
+    const previousRun = previous.value.run;
+    let pointer: ControlIntentSnapshotV1 | null = null;
+    if (previousRun.controlState !== undefined) {
+      const read = await intentOf(previousRun.controlState.intentRef);
+      if ('status' in read && read.status === 'rejected') return read;
+      pointer = read as ControlIntentSnapshotV1;
+    }
+    const steers: ControlIntentSnapshotV1[] = [];
+    for (const ref of previousRun.controlInputs ?? []) {
+      const read = await intentOf(ref);
+      if ('status' in read && read.status === 'rejected') return read;
+      steers.push(read as ControlIntentSnapshotV1);
+    }
+    let previousWait: SessionMessage | null = null;
+    if (previousRun.outcome === 'yielded' && previousRun.continuation !== undefined) {
+      const read = await readOne(sessionMessageRefKey(previousRun.continuation.messageRef), decodeSessionMessageRecord, 'wait message');
+      if (!read.ok) return read.rejection;
+      later(read.readThrough);
+      previousWait = read.value;
+    }
+
+    // The chain head the requeue covered.
+    let round: RoundSnapshot | null = null;
+    if (requeue.afterRoundRef !== null) {
+      const read = await readOne(refKeyOf(requeue.afterRoundRef) as string, decodeVerificationRoundSnapshot, 'round');
+      if (!read.ok) return read.rejection;
+      if (read.value === null) return incomplete('the round the requeue covered is missing');
+      later(read.readThrough);
+      round = read.value;
+    }
+
+    // The bounded bodies of the requeue's own new inputs.
+    const newInputBodies: ContinuationBasis['newInputBodies'] = [];
+    const replyBodies: ContinuationBasis['replyBodies'] = [];
+    for (const input of requeue.newInputRefs) {
+      if (input.kind === 'artifact') {
+        newInputBodies.push({ ref: input.ref, ...await boundedBody(input.ref) });
+        continue;
+      }
+      // ND-9: a message outside the Run's project and workspace is never read into its brief.
+      if (input.ref.projectId !== run.ref.projectId || input.ref.workspaceId !== current.value.session.workspaceId) {
+        replyBodies.push({ messageRef: input.ref, body: null, reason: 'the message belongs to another project or workspace' });
+        continue;
+      }
+      const read = await readOne(sessionMessageRefKey(input.ref), decodeSessionMessageRecord, 'session message');
+      if (!read.ok) return read.rejection;
+      later(read.readThrough);
+      const message = read.value;
+      if (message === null || message.response === null) {
+        replyBodies.push({ messageRef: input.ref, body: null, reason: 'the message has no saved reply' });
+        continue;
+      }
+      // The reply is already in the history when it was answered to the new claim Session.
+      if (message.recipient.sessionId === current.value.outbox.claim.sessionRef.sessionId) continue;
+      replyBodies.push({ messageRef: input.ref, ...await boundedBody(message.response.bodyRef) });
+    }
+
+    // An afterRun that never entered: the nearest entered ancestor along the requeue chain.
+    const factsChain: ContinuationBasis['factsChain'] = [];
+    let cursor: TaskExecutionRecord = previous.value;
+    let cursorRequeue: TaskRequeueSnapshotV1 | undefined = requeue;
+    while (cursor.run.executionHistory === undefined && factsChain.length < CONTINUATION_BRIEF_LIMITS.factsFromHops) {
+      const ancestorRef = cursor.run.requeueRef;
+      if (ancestorRef === undefined) break;
+      cursorRequeue = allRequeues.find(candidate => refKeyOf(candidate.ref) === refKeyOf(ancestorRef));
+      if (cursorRequeue === undefined) return incomplete('a TaskRequeue of the requeue chain is missing');
+      const ancestor = await readExecution(owned.ctx, cursorRequeue.afterRunRef);
+      if (ancestor.status !== 'ready') return ancestor.status === 'not_found' ? incomplete('a requeue chain Run is missing') : ancestor;
+      later(ancestor.value.readThrough);
+      let ancestorRound: RoundSnapshot | null = null;
+      if (cursorRequeue.afterRoundRef !== null) {
+        const read = await readOne(refKeyOf(cursorRequeue.afterRoundRef) as string, decodeVerificationRoundSnapshot, 'round');
+        if (!read.ok) return read.rejection;
+        later(read.readThrough);
+        ancestorRound = read.value;
+      }
+      factsChain.push({ requeue: cursorRequeue, run: ancestor.value, round: ancestorRound });
+      cursor = ancestor.value;
+    }
+    return { status: 'ready', value: { run, requeue, allRequeues, previous: previous.value,
+      previousIntents: { pointer, steers }, previousWait, round, newInputBodies, replyBodies, factsChain, readThrough } };
+  };
+  return { readExecution, listExecutions, readContinuationBasis };
 }

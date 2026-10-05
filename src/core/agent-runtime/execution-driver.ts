@@ -176,6 +176,27 @@ function selectCoordinationTools(input: {
 function sameRef(left: unknown, right: unknown): boolean {
   try { return canonicalJson(left as never) === canonicalJson(right as never); } catch { return false; }
 }
+/**
+ * §6.3 driver check 1 (C3): a Run with a fixed `inputBinding` accepts only a
+ * Prepared whose binding and envelope equal the Run's, compared by canonical
+ * JSON (not key order) with an absent `additionalMaterialRefs` equal to `[]`.
+ */
+function boundInputProblem(run: Pick<RunSnapshot, 'inputBinding' | 'envelope'>, prepared: PreparedTaskExecution): string | null {
+  if (run.inputBinding === undefined) return null;
+  const normalized = (binding: RuntimeInputBindingV1): RuntimeInputBindingV1 =>
+    ({ ...binding, additionalMaterialRefs: binding.additionalMaterialRefs ?? [] });
+  try {
+    if (canonicalJson(normalized(prepared.inputBinding) as never) !== canonicalJson(normalized(run.inputBinding) as never)) {
+      return 'the Prepared input binding disagrees with the input binding fixed on the Run';
+    }
+    if (run.envelope === null || canonicalJson(prepared.envelope as never) !== canonicalJson(run.envelope as never)) {
+      return 'the Prepared envelope disagrees with the envelope fixed on the Run';
+    }
+  } catch {
+    return 'the Prepared value is not canonical JSON';
+  }
+  return null;
+}
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -259,6 +280,11 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
         || !sameRef(record.outbox.claim, manifest.claim)) {
         return rejected('unavailable', 'the Session mapping disagrees with the prepared claim');
       }
+      // C3 (§6.3 driver order, step 1): a Run whose input is already bound only
+      // runs with exactly that binding and envelope, before any WorkGraph write
+      // or Kernel call; two prepares with different briefs cannot both enter.
+      const boundProblem = boundInputProblem(record.run, prepared);
+      if (boundProblem !== null) return rejected('invalid', boundProblem);
       const workspace: WorkspaceRef = { aggregateType: 'Workspace', projectId: runRef.projectId, workspaceId: record.session.workspaceId };
 
       // 2. Fix the Kernel run/turn identity. A prior begin binding is reused

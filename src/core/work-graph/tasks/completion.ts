@@ -48,6 +48,7 @@ import {
   taskCompletionFoldProblem, taskCompletionProjectionProblem, taskCompletionRoundProblem, taskMachineStateOf, transitionTask,
   type TaskPhaseFacts,
 } from '../state/task-machine.js';
+import { evidenceSupersededByRequeue } from '../state/verification-machine.js';
 import {
   readBatch, readCanonicalTaskFacts, readGoal, readGoalPhase, readPinnedCompletionPolicy, readPlan,
   type CanonicalTaskFacts, type CanonicalTaskState, type Rejected,
@@ -139,8 +140,8 @@ function roundRefProblem(value: unknown): string | null {
  * canonical read (`plan-readers.ts` `readCanonicalTaskFacts`): the selected
  * Run, the applicable Reduction, the selected Run's round-chain signal, and an
  * unresolvable origin, which that read shows only as a `blocked` Task with
- * neither Run nor Reduction. No TaskRequeue enters it before A.2 step 5.4. The
- * same read always returns the Run or Reduction it selected; keep this in step
+ * neither Run nor Reduction, and the TaskRequeue covering the selected Run
+ * (P4). The same read always returns the Run or Reduction it selected; keep this in step
  * with `claimPhaseFacts` (`claim-service.ts`), which answers null for a missing
  * one.
  */
@@ -155,7 +156,7 @@ function completionPhaseFacts(task: RuntimeTask, state: CanonicalTaskState, read
     selectedRun,
     originUnresolvable: selectedRun === null && applicableReduction === null && state.effectivePhase === 'blocked',
     round: read.roundsByTaskId.get(task.taskId) ?? { kind: 'none' },
-    coveringRequeue: null,
+    coveringRequeue: state.requeueRef,
   };
 }
 
@@ -386,7 +387,11 @@ export async function completeTaskFromHost(
   const indexRef = { aggregateType: 'TaskEvidenceIndex' as const, projectId: goalRef.projectId,
     goalId: goalRef.goalId, taskId: task.taskId };
   const indexKey = refKeyOf(indexRef) as string;
-  const evidenceKeys = await collectEvidenceKeys(deps.records, indexKey, goalRef.projectId, snapshot.evidenceRefs);
+  // TD-2 (L-3, VD-5): the evidence every TaskRequeue of the Task stored and the
+  // completion round's own chain superseded leaves the fold before it.
+  const superseded = new Set([...evidenceSupersededByRequeue(facts.requeuesByTaskId.get(task.taskId) ?? []),
+    ...(snapshot.chain?.supersededEvidenceIds ?? [])]);
+  const evidenceKeys = await collectEvidenceKeys(deps.records, indexKey, goalRef.projectId, snapshot.evidenceRefs, superseded);
   if ('rejection' in evidenceKeys) return evidenceKeys.rejection;
   const evidenceSnapshots = evidenceKeys.evidence;
 
@@ -455,6 +460,8 @@ export async function completeTaskFromHost(
     ...[...evidencePlans.plans.entries()].map(([key, originPlan]) => ({ refKey: key, expectedRevision: originPlan.revision })),
     ...policyGuards,
     ...facts.guards,
+    // §4.3 completion guards: every TaskRequeue read @1, the selected Run's key at null.
+    ...facts.reworkGuards,
   ]);
   if (!guards.ok) return guards.rejection;
 
@@ -624,6 +631,7 @@ type CollectedEvidence = { indexRevision: number | null; evidence: EvidenceSnaps
 
 async function collectEvidenceKeys(
   records: Records, indexKey: string, projectId: string, roundEvidenceRefs: readonly EvidenceRef[],
+  superseded: ReadonlySet<string>,
 ): Promise<CollectedEvidence> {
   const read = await readBatch(records, [indexKey]);
   if (read.status !== 'ready') return { rejection: mapRejected(read) };
@@ -638,8 +646,10 @@ async function collectEvidenceKeys(
   } else if (!read.batch.missing.has(indexKey)) {
     return { rejection: unavailable('the TaskEvidenceIndex key was neither returned nor reported missing') };
   }
-  // Never empty: TASK-14/15/24 refused a round that admitted no Evidence.
-  const evidenceIds = [...new Set([...indexIds, ...roundEvidenceRefs.map(ref => ref.evidenceId)])];
+  // Never empty: TASK-14/15/24 refused a round that admitted no Evidence, and
+  // the chain head's own evidence is never superseded.
+  const evidenceIds = [...new Set([...indexIds, ...roundEvidenceRefs.map(ref => ref.evidenceId)])]
+    .filter(evidenceId => !superseded.has(evidenceId));
   const refs: EvidenceRef[] = evidenceIds.map(evidenceId => ({ aggregateType: 'Evidence', projectId, evidenceId }));
   const evidenceRead = await readBatch(records, refs.map(ref => refKeyOf(ref) as string));
   if (evidenceRead.status !== 'ready') return { rejection: mapRejected(evidenceRead) };

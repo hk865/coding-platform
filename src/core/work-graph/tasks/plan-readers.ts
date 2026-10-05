@@ -23,6 +23,9 @@ import type { Phase, PlanRevisionRef, PlanRevisionSnapshot } from '../../../cont
 import type { TaskReductionSnapshot } from '../../../contracts/reduction.js';
 import type { GoalPhaseRef, GoalPhaseSnapshot } from '../../../contracts/goal-phase.js';
 import type { TaskPhaseCauseV1 } from '../../../contracts/task-failure.js';
+import type {
+  TaskRequeueRef, TaskRequeueSnapshotV1, TaskReworkRefusalRef, TaskReworkRefusalSnapshotV1,
+} from '../../../contracts/task-requeue.js';
 import type { RoundSnapshot } from '../../../contracts/verification.js';
 import type { RecordLookupPort, RecordLookupRequest } from '../../record-store/lookup-ports.js';
 import type {
@@ -36,7 +39,10 @@ import { decodeGoalSnapshot } from '../persistence/record-codecs.js';
 import { taskLeaseSnapshotProblem } from '../persistence/execution-entry-codecs.js';
 import { derivePlanProposalStatus, derivePlanRevisionStatus, type FutureChangeTaskFactsV1 } from '../state/plan-machine.js';
 import { projectTaskPhase } from '../state/task-machine.js';
-import { roundTaskSignal, type RoundTaskSignalV1 } from '../state/verification-machine.js';
+import { countEndedGoalRuns } from '../state/task-failure.js';
+import {
+  roundChainHead, roundTaskSignal, type RoundChainHeadV1, type RoundTaskSignalV1,
+} from '../state/verification-machine.js';
 import {
   VERIFICATION_ROUND_CHAIN_LOOKUP_LIMIT, VERIFICATION_ROUND_ORIGINAL_LOOKUP, decodeVerificationRoundSnapshot,
 } from '../evidence/evidence-record-codecs.js';
@@ -54,6 +60,11 @@ import {
   planRevisionRefKey,
 } from './plan-record-codecs.js';
 import { decodeGoalPhaseSnapshot } from './completion-record-codecs.js';
+import { decodeControlIntentSnapshot } from '../persistence/control-record-codecs.js';
+import type { ControlIntentSnapshotV1 } from '../../../contracts/control-intent.js';
+import {
+  decodeTaskRequeueSnapshot, decodeTaskReworkRefusalSnapshot, taskRequeueRefKey, taskReworkRefusalRefKey,
+} from './claim-record-codecs.js';
 
 const RUN_BY_GOAL_INDEX = 'r3c-run-by-goal';
 /** R4c.1 directed candidate index: exactly one Task's Runs, any Plan. */
@@ -733,6 +744,8 @@ export type CanonicalTaskState = {
   effectivePhase: Phase;
   /** The TD-1 reason of `effectivePhase` (`projectTaskPhase`); null where the row has none. */
   phaseCause: TaskPhaseCauseV1 | null;
+  /** P4: the TaskRequeue covering the selected Run (D-3, C1); null otherwise. */
+  requeueRef: TaskRequeueRef | null;
   currentAttempt: TaskAttemptRef | null;
   execution: RunSnapshot['ref'] | null;
   lease: { status: 'free' } | { status: 'leased'; holderRunId: string };
@@ -761,6 +774,24 @@ export type CanonicalTaskFacts = {
    * THIS window. Absent for every other task (no chain enters its projection).
    */
   roundsByTaskId: ReadonlyMap<string, RoundTaskSignalV1>;
+  /** The same chains as `roundsByTaskId`, as their `roundChainHead` (the failure facts read the head). */
+  chainsByTaskId: ReadonlyMap<string, RoundChainHeadV1>;
+  /**
+   * §4.1 / §4.3 (D-3, C1): the TaskRequeue of each ended Run of a selected Task
+   * (keyed by its `afterRunId`), read in THIS window, per Task in no order.
+   */
+  requeuesByTaskId: ReadonlyMap<string, readonly TaskRequeueSnapshotV1[]>;
+  /** The latest requeue refusal (TaskReworkRefusal, operation `requeue`) per ended Run id, read in THIS window. */
+  requeueRefusalsByRunId: ReadonlyMap<string, TaskReworkRefusalSnapshotV1>;
+  /**
+   * The exact versions of those rework records (TaskRequeue@1, refusal@k) and
+   * the absence (`null`) of every key read but missing. Kept apart from
+   * `guards`: only the writes that depend on them (claim, completion, requeue)
+   * guard them.
+   */
+  reworkGuards: readonly RecordGuard[];
+  /** Undirected read only: `countEndedGoalRuns` over the Goal's raw Run candidates, before any Plan filter (ND-8). */
+  goalEndedRuns?: number;
   readThrough: CommitCursor;
   /** Complete exact versions/absences used by adoption or future claim CAS. */
   guards: readonly RecordGuard[];
@@ -870,7 +901,7 @@ function projectLease(input: {
  * as in `readGoalPhase`. A damaged or foreign row, or a chain past the limit,
  * is never guessed into a phase: the whole read refuses.
  */
-async function readRunRoundChain(
+export async function readRunRoundChain(
   records: RecordLookupPort,
   run: RunSnapshot,
 ): Promise<{ status: 'ready'; rounds: RoundSnapshot[]; readThrough: CommitCursor | null | undefined } | Rejected> {
@@ -896,6 +927,122 @@ async function readRunRoundChain(
     rounds.push(round);
   }
   return { status: 'ready', rounds, readThrough: result.value.readThrough };
+}
+
+/**
+ * ND-7/ND-8 `countEndedGoalRuns` input: every Run candidate of the Goal
+ * (`r3c-run-by-goal`), never filtered by Plan or Task and never guarded, so
+ * the refusal writer and the read model count the same set. Read before the
+ * source capture.
+ */
+export async function readGoalRunsForCount(
+  records: GoalRecordTransactionPort & RecordLookupPort, goalRef: GoalRef,
+): Promise<{ status: 'ready'; runs: RunSnapshot[] } | Rejected> {
+  const found = await readLookupKeys(records, RUN_BY_GOAL_INDEX, [goalRef.projectId, goalRef.goalId]);
+  if (found.status !== 'ready') return found;
+  if (found.refKeys.length === 0) return { status: 'ready', runs: [] };
+  const read = await records.readMany(uniqueKeys(found.refKeys));
+  if (read.status !== 'ready') return unavailable(`the Goal Runs are not readable: ${read.code}: ${read.reason}`);
+  const runs: RunSnapshot[] = [];
+  for (const record of read.value.records) {
+    const run = parseRun(record.json);
+    if (run === null) return unavailable(`Run record ${record.refKey} is not decodable`);
+    if (run.ref.projectId === goalRef.projectId && run.ref.goalId === goalRef.goalId) runs.push(run);
+  }
+  return { status: 'ready', runs };
+}
+
+/**
+ * The pointer ControlIntent of each given Run (§4.1 失败事实读模型: its
+ * request fields are immutable, so it is read after the fact window, as the
+ * Goal display reads it). A Run without a pointer has none. A backend without
+ * the control schemas cannot hold a pointer intent, so `unsupported` reads as
+ * none; a missing or damaged intent is never guessed.
+ */
+export async function readPointerIntents(
+  records: GoalRecordTransactionPort, runs: readonly RunSnapshot[],
+): Promise<{ status: 'ready'; intents: ReadonlyMap<string, ControlIntentSnapshotV1> } | Rejected> {
+  const keyed: { runId: string; key: string }[] = [];
+  for (const run of runs) {
+    const ref = run.controlState?.intentRef;
+    if (ref !== undefined) keyed.push({ runId: run.ref.runId, key: canonicalJson(ref as unknown as JsonValue) });
+  }
+  const intents = new Map<string, ControlIntentSnapshotV1>();
+  if (keyed.length === 0) return { status: 'ready', intents };
+  const read = await records.readMany(uniqueKeys(keyed.map((entry) => entry.key)));
+  if (read.status !== 'ready') {
+    if (read.code === 'unsupported') return { status: 'ready', intents };
+    return unavailable(`the pointer intents are not readable: ${read.code}: ${read.reason}`);
+  }
+  const present = new Map(read.value.records.map((record) => [record.refKey, record]));
+  for (const { runId, key } of keyed) {
+    const record = present.get(key);
+    if (record === undefined) return unavailable(`the pointer intent ${key} of Run ${runId} is missing`);
+    const decoded = decodeControlIntentSnapshot(record);
+    if (decoded.status !== 'decoded') return unavailable(`the pointer intent ${key} is damaged: ${decoded.reason}`);
+    intents.set(runId, decoded.value);
+  }
+  return { status: 'ready', intents };
+}
+
+type ReworkRecordsRead = {
+  status: 'ready';
+  requeues: TaskRequeueSnapshotV1[];
+  refusals: TaskReworkRefusalSnapshotV1[];
+  guards: RecordGuard[];
+  readThrough: CommitCursor | null | undefined;
+};
+
+/**
+ * The rework records of the given ended Runs (§4.1 投影输入, §4.3 step 3, §11
+ * I-12): per Run its TaskRequeue (`afterRunId` = the Run) and its requeue
+ * refusal (`operation:'requeue'`, `subjectId` = the Run), in one `readMany`.
+ * Every key read is guarded: a present record at its revision, a missing one
+ * at `null`. A backend without the claim schemas cannot hold either record
+ * (the store refuses an unregistered record), so `unsupported` is a confirmed
+ * absence with no watermark and no guard, as in `readRunRoundChain`. A damaged
+ * or foreign record is never guessed: the whole read refuses.
+ */
+async function readReworkRecords(records: GoalRecordTransactionPort, runs: readonly RunSnapshot[]): Promise<ReworkRecordsRead | Rejected> {
+  const none: ReworkRecordsRead = { status: 'ready', requeues: [], refusals: [], guards: [], readThrough: undefined };
+  if (runs.length === 0) return none;
+  const keyed = runs.map((run) => {
+    const requeueRef: TaskRequeueRef = { aggregateType: 'TaskRequeue', projectId: run.ref.projectId, goalId: run.ref.goalId,
+      taskId: run.task.taskId, afterRunId: run.ref.runId };
+    const refusalRef: TaskReworkRefusalRef = { aggregateType: 'TaskReworkRefusal', projectId: run.ref.projectId,
+      goalId: run.ref.goalId, taskId: run.task.taskId, operation: 'requeue', subjectId: run.ref.runId };
+    return { run, requeueKey: taskRequeueRefKey(requeueRef), refusalKey: taskReworkRefusalRefKey(refusalRef) };
+  });
+  const read = await records.readMany(uniqueKeys(keyed.flatMap((entry) => [entry.requeueKey, entry.refusalKey])));
+  if (read.status !== 'ready') {
+    if (read.code === 'unsupported') return none;
+    return unavailable(`the rework records are not readable: ${read.code}: ${read.reason}`);
+  }
+  const present = new Map(read.value.records.map((record) => [record.refKey, record]));
+  const result: ReworkRecordsRead = { ...none, requeues: [], refusals: [], guards: [], readThrough: read.value.readThrough };
+  for (const { run, requeueKey, refusalKey } of keyed) {
+    const requeueRecord = present.get(requeueKey);
+    result.guards.push({ refKey: requeueKey, expectedRevision: requeueRecord === undefined ? null : requeueRecord.revision });
+    if (requeueRecord !== undefined) {
+      const decoded = decodeTaskRequeueSnapshot(requeueRecord);
+      if (decoded.status !== 'decoded') return unavailable(`TaskRequeue ${requeueKey} is damaged: ${decoded.reason}`);
+      if (decoded.value.afterRunRef.runId !== run.ref.runId || decoded.value.task.taskId !== run.task.taskId) {
+        return unavailable(`TaskRequeue ${requeueKey} does not cover Run ${run.ref.runId}`);
+      }
+      result.requeues.push(decoded.value);
+    }
+    const refusalRecord = present.get(refusalKey);
+    result.guards.push({ refKey: refusalKey, expectedRevision: refusalRecord === undefined ? null : refusalRecord.revision });
+    if (refusalRecord !== undefined) {
+      const decoded = decodeTaskReworkRefusalSnapshot(refusalRecord);
+      if (decoded.status !== 'decoded') return unavailable(`TaskReworkRefusal ${refusalKey} is damaged: ${decoded.reason}`);
+      if (decoded.value.afterRunRef.runId !== run.ref.runId) {
+        return unavailable(`TaskReworkRefusal ${refusalKey} does not refuse Run ${run.ref.runId}`);
+      }
+      result.refusals.push(decoded.value);
+    }
+  }
+  return result;
 }
 
 /** Bounded to one Goal's accepted Plan; candidate indexes locate Run records,
@@ -957,6 +1104,7 @@ export async function readCanonicalTaskFacts(
     const runByTask = new Map<string, RunSnapshot[]>();
     const runById = new Map<string, RunSnapshot>();
     const factOriginRefs = new Map<string, PlanRevisionRef>();
+    const goalRuns: RunSnapshot[] = [];
     let taskHasRun = false;
     for (const key of found.refKeys) {
       const record = present.get(key);
@@ -966,6 +1114,7 @@ export async function readCanonicalTaskFacts(
       if (run === null) return unavailable(`Run record ${key} is not decodable`);
       if (run.ref.projectId !== goalRef.projectId || run.ref.goalId !== goalRef.goalId) continue;
       if (run.task.projectId !== goalRef.projectId || run.task.goalId !== goalRef.goalId) continue;
+      goalRuns.push(run);
       if (!selectedTaskIds.has(run.task.taskId)) continue;
       taskHasRun = true;
       runById.set(run.ref.runId, run);
@@ -1014,8 +1163,22 @@ export async function readCanonicalTaskFacts(
         return unavailable(`the basis source plan ${ref.planId} required by the selected plan is missing`);
       }
     }
+    // The TaskRequeue and requeue refusal of every ended Run of a selected Task
+    // (P4, §4.3 step 3), read in the same window as the Runs.
+    const rework = await readReworkRecords(records, [...runByTask.values()].flat().filter((run) => run.status === 'ended'));
+    if (rework.status !== 'ready') return rework;
+    if (rework.readThrough !== undefined && !sameCursor(read.value.readThrough, rework.readThrough)) continue;
+    const requeueByRunId = new Map(rework.requeues.map((requeue) => [requeue.ref.afterRunId, requeue]));
+    const requeuesByTaskId = new Map<string, TaskRequeueSnapshotV1[]>();
+    for (const requeue of rework.requeues) {
+      const list = requeuesByTaskId.get(requeue.task.taskId);
+      if (list === undefined) requeuesByTaskId.set(requeue.task.taskId, [requeue]);
+      else list.push(requeue);
+    }
+    const requeueRefusalsByRunId = new Map(rework.refusals.map((refusal) => [refusal.ref.subjectId, refusal]));
     const byTaskId = new Map<string, CanonicalTaskState>();
     const roundsByTaskId = new Map<string, RoundTaskSignalV1>();
+    const chainsByTaskId = new Map<string, RoundChainHeadV1>();
     let windowMoved = false;
     for (const task of selectedTasks) {
       const selectedDefinition = selectedFacts.definitions.get(task.taskId);
@@ -1078,21 +1241,23 @@ export async function readCanonicalTaskFacts(
         }
         round = roundTaskSignal(chain.rounds);
         roundsByTaskId.set(task.taskId, round);
+        chainsByTaskId.set(task.taskId, roundChainHead(chain.rounds));
       }
-      // §4.1 projection (D-1, TD-1, §14.1); no TaskRequeue enters this read
-      // before A.2 step 5.4.
+      // §4.1 projection (D-1, TD-1, §14.1) with the TaskRequeue covering the selected Run (P4).
+      const covering = run === null ? null : requeueByRunId.get(run.ref.runId) ?? null;
       const projected = projectTaskPhase({
         taskKind: task.taskKind,
         applicableReduction: reductionApplicable ? reduction : null,
         selectedRun: run,
         originUnresolvable: unresolvable,
         round,
-        coveringRequeue: null,
+        coveringRequeue: covering === null ? null : covering.ref,
       });
       byTaskId.set(task.taskId, {
         taskId: task.taskId,
         effectivePhase: projected.phase,
         phaseCause: projected.cause,
+        requeueRef: covering === null ? null : covering.ref,
         currentAttempt: run === null ? null : { aggregateType: 'TaskAttempt', projectId: goalRef.projectId,
           goalId: goalRef.goalId, taskId: task.taskId, attemptId: run.attemptId },
         execution: run === null ? null : run.ref,
@@ -1108,8 +1273,9 @@ export async function readCanonicalTaskFacts(
     const runsByTaskId = new Map<string, readonly RunSnapshot[]>();
     for (const [candidateTaskId, runs] of runByTask) runsByTaskId.set(candidateTaskId, runs);
     return { status: 'ready', value: { goalRef, planRef: plan.ref, byTaskId, runsByTaskId,
-      reductionsByTaskId: reductionByTask, leasesByTaskId: leaseByTask, roundsByTaskId, readThrough: watermark, guards,
-      ...(directed ? { taskHasRun } : {}) } };
+      reductionsByTaskId: reductionByTask, leasesByTaskId: leaseByTask, roundsByTaskId, chainsByTaskId,
+      requeuesByTaskId, requeueRefusalsByRunId, reworkGuards: rework.guards, readThrough: watermark, guards,
+      ...(directed ? { taskHasRun } : { goalEndedRuns: countEndedGoalRuns(goalRuns) }) } };
   }
   return { status: 'rejected', code: 'revision_conflict',
     reason: 'the canonical task window changed while it was being read' };

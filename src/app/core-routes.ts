@@ -1,4 +1,5 @@
 import type { RunControlPort } from '../core/work-graph/tasks/control-contracts.js';
+import type { TaskClaimPort } from '../core/work-graph/tasks/claim-contracts.js';
 /**
  * R6.1a per-route parsing and explicit dispatch.
  *
@@ -113,6 +114,9 @@ export type CoreRouteBindings = {
   startCommand: WorkbenchToolsPort['startCommand'];
   readCommand: WorkbenchToolsPort['readCommand'];
   stopCommand: WorkbenchToolsPort['stopCommand'];
+  // A.2 step 5.4: the requeue owner (TD-6) and the continuation brief read (C3).
+  requeueTask: NonNullable<TaskClaimPort['requeueTask']>;
+  readContinuationBrief: NonNullable<RuntimeExecutionPort['readContinuationBrief']>;
 };
 
 /**
@@ -134,7 +138,10 @@ export type CoreRoutePlatform = {
   executions: Pick<ExecutionReadPort, 'readExecution'> & Required<Pick<ExecutionReadPort, 'listExecutions'>>;
   runtime: Pick<RuntimeExecutionPort,
     'capabilities' | 'createSession' | 'readSessionHistory' | 'readTaskExecutionHistory' | 'startRun' | 'deliverControl'>
-    & Required<Pick<RuntimeExecutionPort, 'prepareQuery' | 'startQuery' | 'observeQuery'>>;
+    & Required<Pick<RuntimeExecutionPort, 'prepareQuery' | 'startQuery' | 'observeQuery'>>
+    & Pick<RuntimeExecutionPort, 'readContinuationBrief'>;
+  /** A.2 step 5.4: the requeue owner; a narrow platform without it answers `unsupported`. */
+  claims: Pick<TaskClaimPort, 'requeueTask'>;
   messages: Pick<SessionMailboxPort, 'sendMessage' | 'readInbox' | 'readMessage' | 'readMessageBody'>
     & Required<Pick<SessionMailboxPort, 'readOutbox'>>;
   queries: QueryJobPort;
@@ -215,6 +222,9 @@ export const CORE_ROUTE_SPECS: Record<CoreRouteSuffix, CoreRouteSpec> = {
   'commands/start': { kind: 'plain', binding: 'startCommand', owner: 'workbench.startCommand' },
   'commands/read': { kind: 'plain', binding: 'readCommand', owner: 'workbench.readCommand' },
   'commands/stop': { kind: 'plain', binding: 'stopCommand', owner: 'workbench.stopCommand' },
+  // A.2 step 5.4 (spec §4.3 "公开入口与操作者", §6.1 (e)).
+  'tasks/requeue': { kind: 'graph_write', binding: 'requeueTask', owner: 'claims.requeueTask' },
+  'executions/brief': { kind: 'plain', binding: 'readContinuationBrief', owner: 'runtime.readContinuationBrief' },
 };
 
 export type ParsedCoreRequest =
@@ -422,6 +432,12 @@ export function createPlatformCoreRouteBindings(
     stopCommand: workbenchTools === undefined
       ? unsupported('the Host does not publish workbench tools (stopCommand)')
       : workbenchTools.stopCommand.bind(workbenchTools),
+    requeueTask: platform.claims.requeueTask === undefined
+      ? unsupported('the Host does not publish the requeue owner')
+      : platform.claims.requeueTask.bind(platform.claims),
+    readContinuationBrief: platform.runtime.readContinuationBrief === undefined
+      ? unsupported('the Host Runtime does not publish the continuation brief read')
+      : platform.runtime.readContinuationBrief.bind(platform.runtime),
   };
 }
 
@@ -526,6 +542,8 @@ export async function dispatchCoreRoute(
       case 'commands/start': return bindings.startCommand(ctx, plain.input as never);
       case 'commands/read': return bindings.readCommand(ctx, plain.input as never);
       case 'commands/stop': return bindings.stopCommand(ctx, plain.input as never);
+      case 'tasks/requeue': return bindings.requeueTask(ctx, graphWrite.request as never);
+      case 'executions/brief': return bindings.readContinuationBrief(ctx, plain.input as never);
     }
   })();
   // A GraphWrite rejection is a failed command: preserve its exact body but let

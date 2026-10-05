@@ -20,10 +20,18 @@ import type { TaskEnvelopeV1 } from '../../contracts/task-envelope.js';
 import { revisionAssignments } from '../../contracts/plan.js';
 import { sha256Hex } from '../../contracts/fingerprint.js';
 import { MANIFEST_CONTENT_TYPE } from '../../contracts/no-progress.js';
+import {
+  CONTINUATION_BRIEF_LIMITS, continuationBriefDigest, continuationBriefShapeProblem, renderContinuationBriefZh,
+  type ContinuationBriefV1, type ContinuationSourceCheckpointV1,
+} from '../../contracts/continuation-brief.js';
+import type { TaskExecutionRecord } from '../work-graph/tasks/execution-read-contracts.js';
+import { assembleContinuationBrief, readPreviousTurn, type BriefWorkspaceFacts } from './continuation-brief-assembly.js';
+import { createSessionHistoryCursorOwner } from './session-operations.js';
 import type { PrepareTaskExecutionRequest, ResolvedRuntimeConfiguration, RuntimeExecutionDependencies } from './execution-contracts.js';
 
 export type ExecutionPreparationDependencies = Pick<RuntimeExecutionDependencies,
-  'claims' | 'executions' | 'roles' | 'plans' | 'sessions' | 'materials' | 'bodies' | 'host' | 'now' | 'newId'>;
+  'claims' | 'executions' | 'roles' | 'plans' | 'sessions' | 'materials' | 'bodies' | 'host' | 'now' | 'newId'>
+  & Partial<Pick<RuntimeExecutionDependencies, 'kernelStores' | 'workspaceHost' | 'workspaceSource'>>;
 
 export type ExecutionPreparationService = {
   prepare(ctx: CoreCallContext, request: PrepareTaskExecutionRequest): Promise<ReadResult<PreparedTaskExecution>>;
@@ -139,6 +147,86 @@ function buildInput(input: {
   return sections.join('\n\n');
 }
 
+/**
+ * C3 / §6.1 contract (e): the Prepared value of a Run whose input is already
+ * bound (Authorized, Entering or Revoked are all `starting`). Nothing is
+ * assembled again: the claim, envelope and inputBinding are the Run's own, so a
+ * re-drive or a re-authorization (RUN-03) never changes the continuation brief
+ * (§11 I-19).
+ */
+export function rehydratePreparedExecution(record: Pick<TaskExecutionRecord, 'run' | 'outbox'>): PreparedTaskExecution | null {
+  const { run, outbox } = record;
+  if (run.inputBinding === undefined || run.envelope === null) return null;
+  return { kind: 'task', claim: structuredClone(outbox.claim), envelope: structuredClone(run.envelope),
+    inputBinding: structuredClone(run.inputBinding) };
+}
+
+/**
+ * The continuation brief of a requeue Run (C3): the WorkGraph basis, the
+ * previous Run's Turn (or that of its nearest entered ancestor) and the
+ * workspace checkpoints, assembled without any model call.
+ */
+async function prepareContinuationBrief(
+  deps: ExecutionPreparationDependencies, ctx: CoreCallContext, record: TaskExecutionRecord,
+): Promise<{ ok: true; brief: ContinuationBriefV1 } | { ok: false; rejection: CoreRejection }> {
+  const readBasis = deps.executions.readContinuationBasis;
+  if (readBasis === undefined || deps.kernelStores === undefined) {
+    return { ok: false, rejection: rejected('unsupported', 'a requeue Run needs the continuation basis reader and the Kernel stores') };
+  }
+  let basis;
+  try { basis = await readBasis.call(deps.executions, ctx, { runRef: record.run.ref }); }
+  catch (error) { return { ok: false, rejection: rejected('unavailable', `the continuation basis read failed: ${messageOf(error)}`) }; }
+  if (basis.status !== 'ready') return { ok: false, rejection: mapRead(basis) };
+  const facts = basis.value.factsChain.at(-1)?.run ?? basis.value.previous;
+  const truncated = facts.run.executionHistory === undefined
+    && basis.value.factsChain.length >= CONTINUATION_BRIEF_LIMITS.factsFromHops && facts.run.requeueRef !== undefined;
+  const turn = await readPreviousTurn(createSessionHistoryCursorOwner({ kernelStores: deps.kernelStores }), facts, ctx.signal);
+  // W-25 (SD-2): a transient or Host-side Kernel read is no evidence; retry instead of pinning a degraded brief.
+  if (turn.kernel === 'retry') return { ok: false, rejection: rejected(turn.code, `the previous Turn is not readable now: ${turn.reason}`) };
+  const workspace = await briefWorkspaceFacts(deps, record);
+  const brief = assembleContinuationBrief({ basis: basis.value, factsRecord: facts, factsHops: basis.value.factsChain.length,
+    factsTruncated: truncated, turn, workspace, claimSessionRef: record.outbox.claim.sessionRef });
+  const problem = continuationBriefShapeProblem(brief);
+  if (problem !== null) return { ok: false, rejection: rejected('unavailable', `the assembled continuation brief is malformed: ${problem}`) };
+  return { ok: true, brief };
+}
+
+/** The brief's own source checkpoint (digest-only, LA-5) and the uncommitted paths of the workspace. */
+async function briefWorkspaceFacts(deps: ExecutionPreparationDependencies, record: TaskExecutionRecord): Promise<BriefWorkspaceFacts> {
+  const at = deps.now();
+  const unavailable = (reason: string): BriefWorkspaceFacts => ({
+    briefCheckpoint: { kind: 'brief', at, workspaceRevision: null, sourceDigest: null, unavailableReason: reason },
+    uncommitted: { status: 'unavailable', baseCommit: null, paths: [], omitted: 0, reason },
+  });
+  const source = deps.workspaceSource;
+  if (source === undefined || deps.workspaceHost === undefined) return unavailable('the workspace source reader is not configured');
+  let resolved;
+  try {
+    resolved = await deps.workspaceHost.resolveRoot({ aggregateType: 'Workspace', projectId: record.run.ref.projectId,
+      workspaceId: record.session.workspaceId });
+  } catch (error) { return unavailable(`the workspace root could not be resolved: ${messageOf(error)}`); }
+  if (resolved.status !== 'ready') return unavailable(`the workspace root could not be resolved: ${resolved.reason}`);
+  const digest = await source.captureDigest(resolved.value.root).catch((error: unknown) =>
+    ({ status: 'unavailable' as const, reason: messageOf(error) }));
+  const briefCheckpoint: ContinuationSourceCheckpointV1 = digest.status === 'ready'
+    ? { kind: 'brief', at, workspaceRevision: resolved.value.workspaceRevision, sourceDigest: digest.sourceDigest, unavailableReason: null }
+    : { kind: 'brief', at, workspaceRevision: resolved.value.workspaceRevision, sourceDigest: null, unavailableReason: digest.reason };
+  const captured = await source.capture(resolved.value.root).catch(() => null);
+  let uncommitted: BriefWorkspaceFacts['uncommitted'];
+  if (captured === null || captured.status !== 'ready') {
+    uncommitted = { status: 'unavailable', baseCommit: null, paths: [], omitted: 0,
+      reason: captured === null ? 'the workspace capture failed' : `the workspace capture is ${captured.status}` };
+  } else if (captured.sourceProof.kind === 'git-head-worktree') {
+    const paths = captured.sourceProof.changedFiles;
+    uncommitted = { status: 'git', baseCommit: captured.sourceProof.baseCommit,
+      paths: paths.slice(0, CONTINUATION_BRIEF_LIMITS.paths), omitted: Math.max(0, paths.length - CONTINUATION_BRIEF_LIMITS.paths),
+      reason: null };
+  } else {
+    uncommitted = { status: 'not_git', baseCommit: null, paths: [], omitted: 0, reason: null };
+  }
+  return { briefCheckpoint, uncommitted };
+}
+
 export function createExecutionPreparation(deps: ExecutionPreparationDependencies): ExecutionPreparationService {
   return {
     async prepare(ctx: CoreCallContext, request: PrepareTaskExecutionRequest): Promise<ReadResult<PreparedTaskExecution>> {
@@ -173,6 +261,13 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
       if (run.status !== 'starting') return rejected('busy', 'the Run is not awaiting a fresh entry');
       if (run.workspaceSnapshot.workspaceId !== session.workspaceId) {
         return rejected('unavailable', 'the Run workspace disagrees with the Session workspace');
+      }
+      // §6.1 (e), I-19: a Run whose input is already bound is never prepared
+      // again; its own claim, envelope and binding are the Prepared value.
+      if (run.inputBinding !== undefined) {
+        const rehydrated = rehydratePreparedExecution(record.value);
+        if (rehydrated === null) return rejected('unavailable', 'the bound Run has no saved prepared envelope');
+        return { status: 'ready', value: rehydrated };
       }
       if (signal.aborted) return rejected('cancelled', 'the preparation was cancelled after the execution read');
 
@@ -278,11 +373,21 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
       // (messageRef+response), so the second delivery cannot bypass input_accepted.
       const consumedReply: string | null = null;
       const additionalMaterialRefs: ArtifactRef[] = [];
-      const input = buildInput({
+      // C3: a Run of a requeue claim starts with its continuation brief, rendered as the last input section.
+      let brief: ContinuationBriefV1 | null = null;
+      if (run.requeueRef !== undefined) {
+        const assembled = await prepareContinuationBrief(deps, owned, record.value);
+        if (!assembled.ok) return assembled.rejection;
+        brief = assembled.brief;
+        if (signal.aborted) return rejected('cancelled', 'the preparation was cancelled after the continuation brief');
+      }
+      const briefDigest = brief === null ? null : continuationBriefDigest(brief);
+      const taskInput = buildInput({
         roleResolution, assignmentInstruction: assignment.instruction, taskTitle: plan.tasks.find(task => task.taskId === claim.task.taskId)?.title ?? claim.task.taskId,
         taskId: claim.task.taskId, planRef: plan.ref, workspaceId: session.workspaceId, workspaceRevision: run.workspaceSnapshot.revision,
         permissions, selectedInputs, consumedReply,
       });
+      const input = brief === null || briefDigest === null ? taskInput : `${taskInput}\n\n${renderContinuationBriefZh(brief, briefDigest)}`;
       const inputDigest = sha256Hex(input);
       const manifest: PreparedTaskManifestV1 = {
         schemaVersion: 1, kind: 'task_execution', claim, role: roleResolution,
@@ -290,7 +395,9 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
         roleBinding: run.roleBinding, hostConfigurationRevision: hostConfig.configurationRevision, sessionRole: session.role,
         workspaceSnapshot: { workspaceId: session.workspaceId, revision: run.workspaceSnapshot.revision },
         permissions, budget: run.budget, selectedTaskInputs, materialBasis: hostConfig.materialBasis,
-        materialAccessRefs: [], additionalMaterialRefs, deliveryRefs: [], sourceRefs, input, inputDigest,
+        materialAccessRefs: [], additionalMaterialRefs, deliveryRefs: [], sourceRefs,
+        ...(brief === null ? {} : { continuationBrief: brief }),
+        input, inputDigest,
       };
       const manifestJson = JSON.stringify(manifest);
       if (Buffer.byteLength(manifestJson, 'utf8') > MAX_PREPARED_MANIFEST_BYTES) {
@@ -319,6 +426,7 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
       const inputBinding: RuntimeInputBindingV1 = {
         schemaVersion: 1, inputDigest, manifestDigest: bundleRef.digest,
         materialAccessRefs: [], additionalMaterialRefs, deliveryRefs: [],
+        ...(briefDigest === null ? {} : { continuationBriefDigest: briefDigest }),
       };
       return { status: 'ready', value: { kind: 'task', claim, envelope, inputBinding } };
     },

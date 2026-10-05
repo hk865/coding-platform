@@ -20,8 +20,9 @@
  *   `:1256-1258`, `:1420-1425`, `control-service.ts:412-413`,
  *   `execution-history-binding.ts:146`) and today's CoreError codes.
  * - 改造 rows keep TODAY's externally visible result; step 5 flips them
- *   (D-3 requeue claim, C6 `entryPlan`, C3 `continuationBrief`, RUN-03, RUN-07
- *   `terminalPayload`, RUN-08). Step 5.1 flipped RUN-09..11 (U) to D-7 (a
+ *   (C6 `entryPlan`, RUN-03, RUN-08). Step 5.4 flipped RUN-01 to the D-3
+ *   requeue claim (`requeueClaimProblem`), RUN-02 to the C3 continuation
+ *   brief guard and RUN-07 to write `terminalPayload` (C1). Step 5.1 flipped RUN-09..11 (U) to D-7 (a
  *   control on a Run that never entered applies at once; a cancel ends it and
  *   releases its claim) and RUN-12..15 to D-8 (the older queued pointer intent
  *   is superseded in the same commit), D-9 (resume needs the Goal active) and
@@ -62,7 +63,7 @@ import {
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { PlanRevisionRef } from '../../../contracts/plan.js';
 import type { TaskEnvelopeV1 } from '../../../contracts/task-envelope.js';
-import { claimBasisToday, leaseHeldByClaim, type AttemptClaimBasis } from './attempt-machine.js';
+import { leaseHeldByClaim, type AttemptClaimBasis } from './attempt-machine.js';
 import {
   controlSubmissionProblem, pointerAfterSubmit, type ControlPointerIntent, type RunPointerChange,
 } from './control-intent-machine.js';
@@ -467,9 +468,40 @@ export type RunClaimContext = {
     /** The formal saved reply (`:619-636`); `null` when it is consumable. */
     replyProblem: CoreRejection | null;
   };
+  /** Requeue claim (TASK-03, D-3); `null` when the claim's `requeueRef` names no TaskRequeue of this Task. */
+  requeue: ClaimRequeueFacts | null;
   /** Assignment, role and deadline admission (`:643-666`); `null` when admitted. */
   admission: CoreRejection | null;
 };
+
+/**
+ * The TaskRequeue a requeue claim names, as the claim window read it (TASK-03,
+ * ATT-16, RUN-01; shared with the Task machine's `TaskClaimFacts`).
+ */
+export type ClaimRequeueFacts = {
+  /** It covers the Task's selected Run (P4): its `afterRunRef` is that Run. */
+  coversSelectedRun: boolean;
+  /** The released TaskLease names the requeue's afterRun as its last holder. */
+  leaseReleasedByAfterRun: boolean;
+  /** `requeue.budget` is null or canonically equal to the claim budget (C1). */
+  budgetPinned: boolean;
+};
+
+/**
+ * TASK-03 / RUN-01 (D-3, TD-3, C1) in §4.3 order: the named TaskRequeue covers
+ * the selected Run (an older requeue never claims again), the lease was
+ * released by its afterRun (ATT-16), and a pinned budget is the claim budget.
+ */
+export function requeueClaimProblem(requeue: ClaimRequeueFacts | null): Rejected | null {
+  if (requeue === null || !requeue.coversSelectedRun) {
+    return reject('stale', 'revision_conflict', 'the requeueRef does not name the TaskRequeue covering the selected Run');
+  }
+  if (!requeue.leaseReleasedByAfterRun) {
+    return reject('stale', 'revision_conflict', 'the Task lease was not released by the requeue afterRun');
+  }
+  if (!requeue.budgetPinned) return reject('illegal', 'invalid', 'the requeue pins the claim budget');
+  return null;
+}
 
 /** §6.1 `RunGuardContext`; `session.kernel`, `persistedClaim` and `claim` are additions (see their notes). */
 export type RunGuardContext = {
@@ -627,19 +659,24 @@ function enteredRunRecord(run: RunSnapshot, auth: ExecutionAuthorizationV2, hist
 }
 
 /**
- * RUN-07 (`execution-entry-service.ts:1420-1425`). Today's result: no
- * `terminalPayload` (C1 adds it with step 5.4, `terminalPayloadOf`).
+ * RUN-07 (`execution-entry-service.ts:1420-1425`) with C1's bounded
+ * `terminalPayload` (contract (f)), taken from the Kernel terminal event and
+ * written once with the known outcome.
  */
 function endedRunRecord(
   run: RunSnapshot, auth: ExecutionAuthorizationV2, history: RunExecutionHistoryV1, terminal: RunTerminalFact,
   event: Extract<RunEvent, { kind: 'terminal_observed' }>,
 ): RunSnapshot {
   const nextAuthorization: ExecutionAuthorizationV2 = { ...auth, revision: auth.revision + 1, phase: 'settled' };
+  const payload = event.event.payload;
+  // `terminalOutcomeOf` accepted a terminal event, whose payload is never `started`.
+  if (payload.kind === 'started') throw new Error('a terminal Runtime event carries a terminal payload');
   return { ...withHistoryRecord(run, history), status: 'ended', outcome: terminal.outcome,
     exitCode: terminal.exitCode, endedAt: event.endedAt, executionAuthorization: nextAuthorization,
     lastEventSeq: event.event.sequence, lastRuntimeEventId: event.event.eventId,
     lastFactEventId: event.factEventId,
-    ...(event.continuation === undefined ? {} : { continuation: structuredClone(event.continuation) }) };
+    ...(event.continuation === undefined ? {} : { continuation: structuredClone(event.continuation) }),
+    terminalPayload: terminalPayloadOf(payload) };
 }
 
 /** RUN-10..15 (`control-service.ts:412-413`): only the revision and the pointer or steer list move. */
@@ -1015,13 +1052,18 @@ function onClaimCommitted(event: Extract<RunEvent, { kind: 'claim_committed' }>,
   if (!ctx.session.usable) return reject('guard_failed', 'busy', 'the target Session is archived or not available');
   if (facts.sessionOccupied) return reject('guard_failed', 'busy', 'the target Session is already occupied');
   if (facts.eligibility !== null) return rejected(facts.eligibility);
-  // D-3 (TASK-03, ATT-16) is step 5.4: today the claim service does not read
-  // `requeueRef`, so a requeue claim is a first claim and the Run records none.
-  const basis = claimBasisToday(event.basis);
+  const basis = event.basis;
   switch (basis.kind) {
     case 'first':
       if (facts.taskHasRun) return reject('guard_failed', 'busy', 'this Task already has a Run and cannot be claimed for the first time');
       break;
+    case 'requeue': {
+      // D-3 (TASK-03, ATT-16): only the TaskRequeue covering the selected Run
+      // admits a new Attempt; the Run records its `requeueRef`.
+      const problem = requeueClaimProblem(facts.requeue);
+      if (problem !== null) return problem;
+      break;
+    }
     case 'continuation': {
       const prior = facts.prior;
       if (prior === null) return reject('guard_failed', 'busy', 'the continuation prior Run is not a Run of this Task');
@@ -1087,9 +1129,34 @@ function onEntryAuthorized(
   if (ctx.entryPlan !== 'active_plan') {
     return reject('stale', 'revision_conflict', 'the requested Plan is no longer the Goal active pin');
   }
-  // C3 (`continuationBrief`, step 5.4) is not read today.
+  const brief = continuationBriefGuard(run, ctx.continuationBrief);
+  if (brief !== null) return brief;
   if (ctx.freshAdmission !== null) return freshAdmissionRejected(ctx.freshAdmission);
   return accept(runStateOf(authorizedRunRecord(run, event)));
+}
+
+/**
+ * RUN-02 (C3, §11 I-19, contract (e)): a Run with a `requeueRef` enters only
+ * with its continuation brief bound (`bound`); every other Run only without one
+ * (`absent_ok`). Every other combination is `guard_failed`/`invalid`.
+ */
+function continuationBriefGuard(run: RunSnapshot, verdict: RunGuardContext['continuationBrief']): Rejected | null {
+  const requeued = run.requeueRef !== undefined;
+  switch (verdict) {
+    case 'absent_ok':
+      return requeued
+        ? reject('guard_failed', 'invalid', 'a requeue Run cannot enter the Kernel without its continuation brief') : null;
+    case 'bound':
+      return requeued ? null
+        : reject('guard_failed', 'invalid', 'only a requeue Run carries a continuation brief');
+    case 'missing':
+      return reject('guard_failed', 'invalid', 'a requeue Run cannot enter the Kernel without its continuation brief');
+    case 'unexpected':
+      return reject('guard_failed', 'invalid', 'only a requeue Run carries a continuation brief');
+    case 'mismatch':
+      return reject('guard_failed', 'invalid', 'the continuation brief does not match the Run and its manifest');
+    default: return unreachable(verdict, 'continuation brief verdict');
+  }
 }
 
 /**

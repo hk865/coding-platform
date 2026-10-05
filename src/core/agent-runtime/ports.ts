@@ -69,8 +69,8 @@ export interface RuntimeExecutionPort {
   /**
    * C3: the continuation brief pinned in a Run's saved manifest, checked
    * against `inputBinding.continuationBriefDigest`. `null` = a Run without
-   * `requeueRef`; a requeue Run with no pinned brief yet is `not_ready`.
-   * Optional like the members above; implemented in A.2 step 5.4.
+   * `requeueRef`; a requeue Run with no pinned brief yet is `incomplete`.
+   * Optional like the members above; `createAgentRuntime` publishes it.
    */
   readContinuationBrief?(ctx: CoreCallContext, request: { runRef: RunRef }): Promise<ReadResult<{ brief: ContinuationBriefV1; digest: string } | null>>;
 }

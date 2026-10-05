@@ -3,16 +3,19 @@
  * (`state/task-machine.ts`).
  *
  * - `projectTaskPhase` / `classifyTaskPhase`: one case per row P1..P18 with
- *   its target phase (A.2 step 5.3) and the TD-1 cause; the rows P4, P19 and
- *   P20 of later substeps are not evaluated yet and their facts reach the row
- *   the remaining table gives; in-round monotonicity, legacy PASS with gaps,
+ *   its target phase (A.2 step 5.3; P4 since 5.4) and the TD-1 cause; the rows
+ *   P19 and P20 of later substeps are not evaluated yet and their facts reach
+ *   the row the remaining table gives; in-round monotonicity, legacy PASS with gaps,
  *   successor heads and the disposition independence.
  * - `transitionTask`: every (state, event) combination over the projection
  *   states (plus ∅): a legal one asserts `next` and `effects`, a re-projection
  *   without change asserts the same state and `effects:[]` (SD-1), an illegal
  *   one asserts `reason` and `code` (§4.4). Rows of later substeps answer
  *   `illegal`/`invalid`; 改造 rows of later substeps keep today's result.
- * - Guard order of the claim, completion, disposition and adoption rows, and
+ * - Guard order of the claim (TASK-03 with the covering TaskRequeue since
+ *   5.4), the requeue and refusal rows (TASK-16/17/28 in the §4.3 unified
+ *   order, §4.4 codes; TASK-27 is 5.6), completion, disposition and adoption
+ *   rows, and
  *   the record constructors `newTaskReductionRecord` (today's bytes) and
  *   `newTaskRequeueRecord` (the §11 I-12 clauses its input shows: a valid
  *   chain with a finalized, not clean-PASS head for every outcome, actor ×
@@ -46,8 +49,9 @@ import {
   taskCompletionFoldProblem, taskCompletionProjectionProblem, taskCompletionRoundProblem, taskMachineStateOf, transitionTask,
   type NewTaskRequeueInput, type TaskClaimFacts, type TaskCompletionFacts, type TaskEffect, type TaskEvent,
   type TaskGuardContext, type TaskMachineState, type TaskPhaseFacts, type TaskPhaseProjection, type TaskReductionBuildV1,
-  type TaskRoundEventKind, type TaskState, type TaskTrace,
+  type TaskReworkFacts, type TaskRoundEventKind, type TaskState, type TaskTrace,
 } from '../../src/core/work-graph/state/task-machine.js';
+import { newTaskReworkRefusalRecord } from '../../src/core/work-graph/state/task-failure.js';
 import type { Transition, TransitionRejectReason } from '../../src/core/work-graph/state/transition.js';
 import {
   roundChainHead, roundTaskSignal, rootRoundChain, type RoundTaskSignalV1,
@@ -167,7 +171,7 @@ const gateFacts = (patch: Partial<TaskPhaseFacts> = {}): TaskPhaseFacts => facts
 // Projection rows (§4.1): facts and today's projection, written as literals  //
 // ------------------------------------------------------------------------ //
 
-type RowLabel = 'P1' | 'P1v' | 'P1f' | 'P2' | 'P3' | 'P5' | 'P6' | 'P7' | 'P8' | 'P9' | 'P10' | 'P11' | 'P12' | 'P13'
+type RowLabel = 'P1' | 'P1v' | 'P1f' | 'P2' | 'P3' | 'P4' | 'P5' | 'P6' | 'P7' | 'P8' | 'P9' | 'P10' | 'P11' | 'P12' | 'P13'
   | 'P14' | 'P15' | 'P16' | 'P17' | 'P18';
 
 const ROW: Record<RowLabel, { facts: TaskPhaseFacts; projection: TaskPhaseProjection }> = {
@@ -180,6 +184,9 @@ const ROW: Record<RowLabel, { facts: TaskPhaseFacts; projection: TaskPhaseProjec
   P2: { facts: facts({ selectedRun: RUNNING }), projection: { row: 'P2', phase: 'running', cause: null } },
   P3: { facts: facts({ selectedRun: ENDED_UNKNOWN }),
     projection: { row: 'P3', phase: 'blocked', cause: { code: 'run_outcome_unknown' } } },
+  // P4 (D-3, C1; 5.4): the TaskRequeue covering the selected Run.
+  P4: { facts: facts({ selectedRun: CRASHED, coveringRequeue: requeueRef }),
+    projection: { row: 'P4', phase: 'pending', cause: { code: 'requeued', detail: { requeueRef } } } },
   P5: { facts: facts({ selectedRun: YIELDED_WAIT }), projection: { row: 'P5', phase: 'ready', cause: null } },
   P6: { facts: facts({ selectedRun: CRASHED }),
     projection: { row: 'P6', phase: 'failed', cause: { code: 'run_failed', detail: { outcome: 'crashed', origin: 'observed' } } } },
@@ -247,11 +254,20 @@ describe('projectTaskPhase: one case per row, the target phase (§4.1, §15.2 st
       .toEqual(ROW.P14.projection);
   });
 
-  it('rows of later substeps are not evaluated yet: P4, P19 and P20 facts reach the remaining table', () => {
-    // P4: a TaskRequeue covers the selected Run (step 5.4) → still the FAIL head row.
+  it('P4 (5.4): a covering TaskRequeue makes the ended Run pending(requeued) whatever its outcome and chain head', () => {
     expect(classifyTaskPhase(facts({ selectedRun: COMPLETED, round: SIG.fail, coveringRequeue: requeueRef })))
-      .toEqual(ROW.P7.projection);
-    expect(classifyTaskPhase(facts({ selectedRun: CRASHED, coveringRequeue: requeueRef }))).toEqual(ROW.P6.projection);
+      .toEqual(ROW.P4.projection);
+    expect(classifyTaskPhase(facts({ selectedRun: COMPLETED, round: SIG.inconclusive, coveringRequeue: requeueRef })))
+      .toEqual(ROW.P4.projection);
+    expect(classifyTaskPhase(facts({ selectedRun: YIELDED_CANCELLED, coveringRequeue: requeueRef }))).toEqual(ROW.P4.projection);
+    // P1 and P2 come first; a requeue never covers an unknown outcome, which stays P3.
+    expect(classifyTaskPhase(facts({ applicableReduction: { phase: 'satisfied' }, selectedRun: COMPLETED, round: SIG.pass,
+      coveringRequeue: requeueRef }))).toEqual(ROW.P1.projection);
+    expect(classifyTaskPhase(facts({ selectedRun: RUNNING, coveringRequeue: requeueRef }))).toEqual(ROW.P2.projection);
+    expect(classifyTaskPhase(facts({ selectedRun: ENDED_UNKNOWN, coveringRequeue: requeueRef }))).toEqual(ROW.P3.projection);
+  });
+
+  it('rows of later substeps are not evaluated yet: P19 and P20 facts reach the remaining table', () => {
     // P19: paused-interrupted (C4, step 5.6) → P6.
     expect(classifyTaskPhase(facts({ selectedRun: PAUSED_INTERRUPTED }))).toEqual({ row: 'P6', phase: 'failed',
       cause: { code: 'run_failed', detail: { outcome: 'crashed', origin: 'host_interrupted' } } });
@@ -325,7 +341,7 @@ const CONSUMABLE_PRIOR: NonNullable<TaskClaimFacts['prior']> = { node: 'YieldedW
   leaseReleasedByPrior: true, replyProblem: null };
 const claimFacts = (patch: Partial<TaskClaimFacts> = {}): TaskClaimFacts => ({ goalDesiredState: 'active',
   activePlanMatchesClaim: true, sessionProblem: null, structuralProblem: null, lease: { status: 'free' }, taskHasRun: true,
-  prior: null, admission: null, ...patch });
+  prior: null, admission: null, requeue: null, ...patch });
 
 const PRODUCER = run('run-1');
 const SATISFIED = { satisfied: true, phase: 'satisfied' as const, causes: [], satisfiedObligationIds: ['ob-1'] };
@@ -343,6 +359,8 @@ function ctxFor(label: StateLabel): TaskGuardContext {
       lease: label === 'P2' ? { status: 'leased', holderRunId: 'run-1' } : { status: 'free' },
       taskHasRun: !(label === 'P16' || label === 'absent' || isGate(label)),
       prior: label === 'P5' ? CONSUMABLE_PRIOR : null,
+      // Only P4 has a TaskRequeue covering its selected Run (TASK-03, D-3).
+      requeue: label === 'P4' ? { coversSelectedRun: true, leaseReleasedByAfterRun: true, budgetPinned: true } : null,
     }),
     completion: completionFacts(),
     trace,
@@ -389,6 +407,13 @@ const roundEvent = (eventKind: TaskRoundEventKind, workFacts: TaskPhaseFacts): E
 const finalized = (outcome: EvidenceOutcome, workFacts: TaskPhaseFacts, gapCodes: string[] = [], runId = 'run-1'): EventFor =>
   (kind) => ({ kind: 'round_finalized', roundRef: roundRef('round-1', runId), subjectRunRef: runRef(runId), outcome, gapCodes,
     facts: post(kind, workFacts) });
+
+/** A TASK-28 cap refusal keyed by the selected Run run-1 (5.4). */
+const CAP_REFUSAL = newTaskReworkRefusalRecord({ current: null,
+  ref: { aggregateType: 'TaskReworkRefusal', projectId: P, goalId: G, taskId: T, operation: 'requeue', subjectId: 'run-1' },
+  task, afterRunRef: runRef('run-1'), subjectRoundRef: null, failureClass: 'run_failed', code: 'auto_rework_cap_reached',
+  reason: 'the automatic requeue 4 exceeds the cap 3', basisDigest: null, source: null, matchedRequeueRef: null,
+  requestedBy: WORKFLOW_AUTOMATION_ACTOR, refusedAt: T_LATER, goalEndedRunsAtRefusal: 4, configurationRevision: null });
 
 const FACTS_POINTER_RUNNING = facts({ selectedRun: run('run-1', { status: 'running', outcome: null, exitCode: null,
   endedAt: null, ...pointer('paused') }) });
@@ -443,7 +468,7 @@ const EVENTS = {
     ? { kind: 'task_completed', task: gateTask, round: GATE_PASS, reduction: REDUCTION_BUILD(gateTask) }
     : { kind: 'task_completed', task, round: FINAL_PASS, reduction: REDUCTION_BUILD(task) },
   'task_requeued': () => ({ kind: 'task_requeued', requeue: requeueInput() }),
-  'task_rework_refused': () => ({ kind: 'task_rework_refused', refusal: {} as TaskReworkRefusalSnapshotV1 }),
+  'task_rework_refused': () => ({ kind: 'task_rework_refused', refusal: CAP_REFUSAL, pointerIntent: null }),
   'disposition:deferred': () => ({ kind: 'disposition_changed', to: 'deferred', replacedByTaskId: null, actorClass: 'human' }),
 } satisfies Record<string, EventFor>;
 type EventLabel = keyof typeof EVENTS;
@@ -500,11 +525,18 @@ function claimExpect(label: StateLabel, basis: 'first' | 'continuation' | 'reque
   if (isGate(label)) return II;
   if (label === 'P1') return no('illegal', 'busy');
   if (label === 'P1v' || label === 'P1f' || label === 'P2' || BLOCKED_ROWS.includes(label)) return GB;
-  // P5 has a Run: only the continuation reholds its lease. TASK-03 (改造): today
-  // a requeue claim is a first claim, so the Run refuses it.
-  if (label === 'P5') return basis === 'continuation' ? to(stateOf('work', ROW.P2.projection), CLAIM_EFFECTS('reheld')) : GB;
-  // P16: no Run; a continuation has no prior Run of this Task, a requeue claim
-  // takes today's first-claim @1 lease.
+  // TASK-03 (D-3; 5.4): a requeue claim needs the TaskRequeue covering the
+  // selected Run (only P4 has one): elsewhere `stale`/`revision_conflict`.
+  const STALE = no('stale', 'revision_conflict');
+  // P4 has a Run: only the covering requeue re-holds the released lease (ATT-16).
+  if (label === 'P4') return basis === 'requeue' ? to(stateOf('work', ROW.P2.projection), CLAIM_EFFECTS('reheld')) : GB;
+  // P5 has a Run: only the continuation reholds its lease.
+  if (label === 'P5') {
+    if (basis === 'requeue') return STALE;
+    return basis === 'continuation' ? to(stateOf('work', ROW.P2.projection), CLAIM_EFFECTS('reheld')) : GB;
+  }
+  // P16: no Run; a continuation has no prior Run of this Task and no TaskRequeue covers anything.
+  if (basis === 'requeue') return STALE;
   return basis === 'continuation' ? GB : to(stateOf('work', ROW.P2.projection), CLAIM_EFFECTS('first'));
 }
 
@@ -596,10 +628,12 @@ function expectFor(label: StateLabel, event: EventLabel): Expect {
     case 'claim:continuation': return claimExpect(label, 'continuation');
     case 'claim:requeue': return claimExpect(label, 'requeue');
     case 'task_completed': return completedExpect(label);
-    // TASK-16/17/27/28 (新增): illegal from every state.
+    // TASK-16/17/28 (5.4): ∅ has no Task; elsewhere the owner's rework facts
+    // are required (this table's contexts carry none). The rows themselves are
+    // in the 'task_requeued and task_rework_refused' describe below.
     case 'task_requeued':
     case 'task_rework_refused':
-      return II;
+      return label === 'absent' ? NOT_FOUND : II;
     case 'disposition:deferred': return dispositionExpect(label);
     default: return reprojectionExpect(label, event);
   }
@@ -706,17 +740,32 @@ describe('task_claimed guards in claim-service order', () => {
       .toMatchObject({ ok: false, reason: 'stale', code: 'revision_conflict' });
   });
 
-  it('a requeue claim follows today\'s first-claim rule until step 5.4 (TASK-03)', () => {
-    // `claim-service.ts:639-641` never reads `requeueRef`: only an existing Run refuses it.
-    expect(claimWith(STATES.P16, { taskHasRun: true }, 'claim:requeue')).toMatchObject({ ok: false, reason: 'guard_failed',
-      code: 'busy', detail: 'this Task already has a Run and cannot be claimed for the first time' });
-    expect(claimWith(STATES.P16, { taskHasRun: false }, 'claim:requeue')).toEqual({ ok: true,
-      next: stateOf('work', ROW.P2.projection), effects: CLAIM_EFFECTS('first') });
-    // The earlier guards still come first.
-    expect(claimWith(STATES.P16, { taskHasRun: false, lease: { status: 'leased', holderRunId: 'run-9' } }, 'claim:requeue'))
+  it('a requeue claim takes only the TaskRequeue covering the selected Run (TASK-03, D-3; 5.4)', () => {
+    const covering = { coversSelectedRun: true, leaseReleasedByAfterRun: true, budgetPinned: true };
+    const at = (requeue: Partial<typeof covering> | null, patch: Partial<TaskClaimFacts> = {}) => claimWith(STATES.P4,
+      { taskHasRun: true, requeue: requeue === null ? null : { ...covering, ...requeue }, ...patch }, 'claim:requeue');
+    // Accepted from P4: running, the released lease re-held @k+1.
+    expect(at({})).toEqual({ ok: true, next: stateOf('work', ROW.P2.projection), effects: CLAIM_EFFECTS('reheld') });
+    // An older requeue (or none) never claims again; the lease must be the afterRun's.
+    expect(at(null)).toMatchObject({ ok: false, reason: 'stale', code: 'revision_conflict',
+      detail: 'the requeueRef does not name the TaskRequeue covering the selected Run' });
+    expect(at({ coversSelectedRun: false })).toMatchObject({ ok: false, reason: 'stale', code: 'revision_conflict' });
+    expect(at({ leaseReleasedByAfterRun: false })).toMatchObject({ ok: false, reason: 'stale', code: 'revision_conflict',
+      detail: 'the Task lease was not released by the requeue afterRun' });
+    // C1: a requeue budget different from the claim budget.
+    expect(at({ budgetPinned: false })).toMatchObject({ ok: false, reason: 'illegal', code: 'invalid' });
+    // The earlier guards still come first: disposition (task_not_active), a held lease, then admission last.
+    expect(claimWith({ ...(STATES.P4 as TaskState), disposition: 'deferred' }, { taskHasRun: true, requeue: covering },
+      'claim:requeue')).toMatchObject({ ok: false, reason: 'guard_failed', code: 'invalid' });
+    expect(at(null, { lease: { status: 'leased', holderRunId: 'run-9' } }))
       .toMatchObject({ ok: false, code: 'busy', detail: 'task already has an active lease (holder run run-9)' });
-    expect(claimWith(STATES.P16, { taskHasRun: false, admission: rejection('capacity', 'budget.deadline has passed') },
-      'claim:requeue')).toMatchObject({ ok: false, reason: 'guard_failed', code: 'capacity' });
+    expect(at({}, { admission: rejection('capacity', 'budget.deadline has passed') }))
+      .toMatchObject({ ok: false, reason: 'guard_failed', code: 'capacity' });
+    // Outside P4 the projection already refuses or no TaskRequeue covers the Run.
+    expect(claimWith(STATES.P16, { taskHasRun: false }, 'claim:requeue')).toMatchObject({ ok: false, reason: 'stale',
+      code: 'revision_conflict' });
+    expect(claimWith(STATES.P7, { taskHasRun: true, requeue: covering }, 'claim:requeue')).toMatchObject({ ok: false,
+      reason: 'guard_failed', code: 'busy' });
   });
 
   it('the claim facts are required', () => {
@@ -971,7 +1020,7 @@ describe('re-projection specifics', () => {
       .toEqual({ ok: true, next: STATES.P5, effects: [] });
   });
 
-  it('TASK-26/29/30 and the requeue rows name their rows', () => {
+  it('TASK-26/29/30 name their rows; the requeue rows need the owner rework facts', () => {
     const detail = (label: StateLabel, event: EventLabel): unknown => {
       const result = transitionTask(STATES[label], EVENTS[event](isGate(label) ? 'gate' : 'work'), ctxFor(label));
       return result.ok ? null : result.detail;
@@ -979,8 +1028,9 @@ describe('re-projection specifics', () => {
     expect(detail('P2', 'run_ended:paused_interrupted')).toMatch(/^TASK-26 /);
     expect(detail('P7', 'round_reverified')).toMatch(/^TASK-29 /);
     expect(detail('gate:P16', 'round_opened')).toMatch(/^TASK-30 /);
-    expect(detail('P7', 'task_requeued')).toMatch(/^TASK-16\/17\/27 /);
-    expect(detail('P7', 'task_rework_refused')).toMatch(/^TASK-28 /);
+    // 5.4: the requeue rows are open; without the owner's rework facts they refuse.
+    expect(detail('P7', 'task_requeued')).toBe('task_requeued requires the rework guard facts');
+    expect(detail('P7', 'task_rework_refused')).toBe('task_rework_refused requires the rework guard facts');
   });
 
   it('a re-projection keeps the disposition', () => {
@@ -1001,7 +1051,7 @@ function requeueInput(patch: Partial<NewTaskRequeueInput> = {}): NewTaskRequeueI
   return { task, planRef, afterRun: CRASHED, pointerIntent: null, chain: { kind: 'none' },
     requestedBy: operator, requestedAt: T_LATER, reason: 'retry after the flaky dependency', basis: keyOf('crashed'),
     newInputRefs: [], budget: null, trigger: null, agentProvenance: null, runs: [], requeues: [],
-    policy: { autoReworkLimit: 3 }, historySource: null, ...patch };
+    policy: { autoReworkLimit: 3 }, ...patch };
 }
 type StopActor = Extract<ActorRef, { kind: 'human' | 'system' }>;
 const stopIntent = (kind: 'pause' | 'cancel', requestedBy: StopActor, id = 'i-1') =>
@@ -1037,7 +1087,7 @@ describe('newTaskRequeueRecord', () => {
     const chain = roundChainHead([ROOT_FAIL, SUCC_FAIL]);
     const record = newTaskRequeueRecord(requeueInput({ afterRun, chain, requestedBy: WORKFLOW_AUTOMATION_ACTOR,
       basis: keyOf('completed'), requeues: [{ ref: { ...requeueRef, afterRunId: 'run-0' },
-        automation: { automatic: true, counted: true, autoCount: 2, cap: 3 } }] }));
+        automation: { automatic: true, counted: true, autoCount: 2, cap: 3 }, historySource: null }] }));
     expect(record).toMatchObject({ afterOutcome: 'completed', afterRoundRef: SUCC_FAIL.ref, failureClass: 'check_failed',
       interruption: null, basisComparison: 'compared', supersededEvidenceIds: ['e-1', 'e-4'],
       automation: { automatic: true, counted: true, autoCount: 3, cap: 3 } });
@@ -1111,16 +1161,21 @@ describe('newTaskRequeueRecord', () => {
       afterOutcome: 'crashed', failureClass: 'run_failed', afterRoundRef: FINAL_FAIL.ref, supersededEvidenceIds: ['e-1', 'e-3'] });
   });
 
-  it('a history source needs Kernel entry or a requeueRef (I-12 clause 10)', () => {
+  it('the history source is derived: Kernel entry, else the requeueRef record (one hop), else none (I-12 clause 10)', () => {
     const entered = run('run-1', { outcome: 'crashed', exitCode: null, executionHistory: { schemaVersion: 1, sessionRef,
       kernel: { adapterId: 'adapter-1', kernelSessionId: 'ks-1', runId: 'k-run-1', turnId: 'turn-1' },
       startPosition: 0, observedThroughPosition: 4, endPosition: 4 } });
-    expect(newTaskRequeueRecord(requeueInput({ afterRun: entered, historySource: HISTORY_SOURCE })))
+    expect(newTaskRequeueRecord(requeueInput({ afterRun: entered })))
       .toMatchObject({ historySource: HISTORY_SOURCE });
     const notEnteredRequeued = run('run-1', { outcome: 'cancelled', exitCode: null, ...pointer('cancelled'),
       requeueRef: { ...requeueRef, afterRunId: 'run-0' } });
+    const earlier = { ref: { ...requeueRef, afterRunId: 'run-0' },
+      automation: { automatic: false, counted: false, autoCount: 0, cap: null }, historySource: HISTORY_SOURCE };
     expect(newTaskRequeueRecord(requeueInput({ afterRun: notEnteredRequeued, pointerIntent: stopIntent('cancel', operator),
-      basis: keyOf('cancelled'), historySource: HISTORY_SOURCE }))).toMatchObject({ historySource: HISTORY_SOURCE });
+      basis: keyOf('cancelled'), requeues: [earlier] }))).toMatchObject({ historySource: HISTORY_SOURCE });
+    // The requeueRef record not read in the window: no source rather than a guessed one.
+    expect(newTaskRequeueRecord(requeueInput({ afterRun: notEnteredRequeued, pointerIntent: stopIntent('cancel', operator),
+      basis: keyOf('cancelled') }))).toMatchObject({ historySource: null });
     expect(newTaskRequeueRecord(requeueInput())).toMatchObject({ historySource: null });
   });
 
@@ -1129,7 +1184,8 @@ describe('newTaskRequeueRecord', () => {
   const OVER_CAP: Partial<NewTaskRequeueInput> = {
     afterRun: run('run-1', { outcome: 'crashed', exitCode: null, requeueRef: { ...requeueRef, afterRunId: 'run-0' } }),
     requestedBy: WORKFLOW_AUTOMATION_ACTOR,
-    requeues: [{ ref: { ...requeueRef, afterRunId: 'run-0' }, automation: { automatic: true, counted: true, autoCount: 3, cap: 3 } }],
+    requeues: [{ ref: { ...requeueRef, afterRunId: 'run-0' }, automation: { automatic: true, counted: true, autoCount: 3, cap: 3 },
+      historySource: null }],
   };
   it.each([
     ['a Run with nothing to rework (FC-12)', { afterRun: COMPLETED, basis: keyOf('completed') }, /no rework class \(FC-12\)/],
@@ -1145,9 +1201,6 @@ describe('newTaskRequeueRecord', () => {
       /is open; it is finalized before a requeue \(FC-9\)/],
     ['a completed Run whose head is a clean PASS (FC-17)', { afterRun: COMPLETED, basis: keyOf('completed'),
       chain: roundChainHead([FINAL_PASS]) }, /no rework class \(FC-17\)/],
-    // I-12 clause 10: never entered the Kernel and no requeueRef.
-    ['a history source for a Run that never entered the Kernel', { historySource: HISTORY_SOURCE },
-      /never entered the Kernel and has no requeueRef/],
     ['an afterRun of another task', { afterRun: run('run-1', { outcome: 'crashed', task: gateTask }) }, /another task/],
     ['a chain of another Run', { afterRun: COMPLETED, chain: roundChainHead([round('round-9', { subjectRunRef: runRef('run-9'),
       status: 'finalized', outcome: 'FAIL' })]) }, /not the afterRun chain/],
@@ -1191,5 +1244,183 @@ describe('newTaskRequeueRecord', () => {
       /auto_rework_cap_reached/],
   ] as [string, Partial<NewTaskRequeueInput>, RegExp][])('refuses %s', (_name, patch, message) => {
     expect(() => newTaskRequeueRecord(requeueInput(patch))).toThrow(message);
+  });
+});
+
+// ------------------------------------------------------------------------ //
+// task_requeued (TASK-16/17/27) and task_rework_refused (TASK-28), step 5.4  //
+// ------------------------------------------------------------------------ //
+
+describe('task_requeued and task_rework_refused in the unified order (§4.3, §4.4; 5.4)', () => {
+  const reworkFacts = (patch: Partial<TaskReworkFacts> = {}): TaskReworkFacts => ({ selectedRun: CRASHED,
+    afterRunIsSelected: true, chain: { kind: 'none' }, basisResolved: true, goalDesiredState: 'active', priorBasisDigests: [],
+    ...patch });
+  const requeueAt = (state: TaskMachineState, factsPatch: Partial<TaskReworkFacts> = {},
+    inputPatch: Partial<NewTaskRequeueInput> = {}) => transitionTask(state, { kind: 'task_requeued', requeue: requeueInput(inputPatch) },
+    { ...ctxFor('P6'), rework: reworkFacts(factsPatch) });
+  type RefusedEvent = Extract<TaskEvent, { kind: 'task_rework_refused' }>;
+  const refusedAt = (state: TaskMachineState, factsPatch: Partial<TaskReworkFacts> = {},
+    event: RefusedEvent = { kind: 'task_rework_refused', refusal: CAP_REFUSAL, pointerIntent: null }) =>
+    transitionTask(state, event, { ...ctxFor('P6'), rework: reworkFacts(factsPatch) });
+  const answerOf = (result: ReturnType<typeof transitionTask>) => result.ok ? 'ok' : { reason: result.reason, code: result.code };
+
+  it('TASK-16: a human requeue of a crashed Run writes TaskRequeue@1 and projects P4 pending(requeued)', () => {
+    expect(requeueAt(STATES.P6)).toEqual({ ok: true, next: STATES.P4,
+      effects: [{ kind: 'write_task_requeue', requeue: newTaskRequeueRecord(requeueInput()) }] });
+  });
+
+  it('TASK-16: a FAIL head (P7) and a cancelled continuation (P17); TASK-17: only a human requeues round_inconclusive (P8)', () => {
+    const failChain = roundChainHead([FINAL_FAIL]);
+    expect(requeueAt(STATES.P7, { selectedRun: COMPLETED, chain: failChain },
+      { afterRun: COMPLETED, chain: failChain, basis: keyOf('completed') })).toMatchObject({ ok: true, next: STATES.P4 });
+    expect(requeueAt(STATES.P17, { selectedRun: YIELDED_CANCELLED }, { afterRun: YIELDED_CANCELLED,
+      pointerIntent: stopIntent('cancel', operator), basis: keyOf('yielded') })).toMatchObject({ ok: true, next: STATES.P4 });
+    const inconclusive = roundChainHead([FINAL_INCONCLUSIVE]);
+    const p8 = (requestedBy: ActorRef) => requeueAt(STATES.P8, { selectedRun: COMPLETED, chain: inconclusive },
+      { afterRun: COMPLETED, chain: inconclusive, basis: keyOf('completed'), requestedBy });
+    expect(p8(operator)).toMatchObject({ ok: true, next: STATES.P4 });
+    // C2: check_incomplete goes to a successor round for the automation.
+    expect(answerOf(p8(WORKFLOW_AUTOMATION_ACTOR))).toEqual({ reason: 'illegal', code: 'invalid' });
+  });
+
+  it('§4.4: the state preconditions and the Goal rule, first match wins (shared by TASK-28)', () => {
+    const rows: Array<[string, TaskMachineState, Partial<TaskReworkFacts>, { reason: string; code: CoreError }]> = [
+      ['a gate (before the Run check)', STATES['gate:P16'], { selectedRun: null }, { reason: 'illegal', code: 'invalid' }],
+      ['no selected Run (P16)', STATES.P16, { selectedRun: null }, { reason: 'stale', code: 'revision_conflict' }],
+      ['no selected Run (P15)', STATES.P15, { selectedRun: null }, { reason: 'stale', code: 'revision_conflict' }],
+      ['another Run than the selected one', STATES.P6, { afterRunIsSelected: false }, { reason: 'stale', code: 'revision_conflict' }],
+      ['a running Run (P2)', STATES.P2, { selectedRun: RUNNING }, { reason: 'guard_failed', code: 'busy' }],
+      ['an unknown outcome (P3)', STATES.P3, { selectedRun: ENDED_UNKNOWN }, { reason: 'guard_failed', code: 'busy' }],
+      ['an invalid chain (P10)', STATES.P10, { selectedRun: COMPLETED, chain: roundChainHead(TWO_ROOTS) },
+        { reason: 'guard_failed', code: 'incomplete' }],
+      ['an open head (P9)', STATES.P9, { selectedRun: COMPLETED, chain: roundChainHead([OPEN_INTERRUPTED]) },
+        { reason: 'guard_failed', code: 'busy' }],
+      ['an open head (P12)', STATES.P12, { selectedRun: COMPLETED, chain: roundChainHead([OPEN_PENDING]) },
+        { reason: 'guard_failed', code: 'busy' }],
+      ['a clean PASS head on a crashed Run (I-12 clause 2)', STATES.P6, { chain: roundChainHead([FINAL_PASS]) },
+        { reason: 'illegal', code: 'invalid' }],
+      ['a paused continuation (P18)', STATES.P18, { selectedRun: YIELDED_PAUSED }, { reason: 'guard_failed', code: 'busy' }],
+      ['satisfied (P1)', STATES.P1, { selectedRun: COMPLETED, chain: roundChainHead([FINAL_PASS]) },
+        { reason: 'illegal', code: 'invalid' }],
+      ['ready (P5)', STATES.P5, { selectedRun: YIELDED_WAIT }, { reason: 'illegal', code: 'invalid' }],
+      ['a bare yield (P14)', STATES.P14, { selectedRun: YIELDED_BARE }, { reason: 'illegal', code: 'invalid' }],
+      ['awaiting verification (P11)', STATES.P11, { selectedRun: COMPLETED }, { reason: 'guard_failed', code: 'busy' }],
+      ['awaiting completion (P13)', STATES.P13, { selectedRun: COMPLETED, chain: roundChainHead([FINAL_PASS]) },
+        { reason: 'guard_failed', code: 'busy' }],
+      ['a non-active disposition', { ...(STATES.P6 as TaskState), disposition: 'deferred' }, {},
+        { reason: 'guard_failed', code: 'invalid' }],
+      ['an unresolvable basis', STATES.P6, { basisResolved: false }, { reason: 'guard_failed', code: 'incomplete' }],
+      ['already requeued (P4)', STATES.P4, {}, { reason: 'stale', code: 'revision_conflict' }],
+      ['a paused Goal', STATES.P6, { goalDesiredState: 'paused' }, { reason: 'guard_failed', code: 'busy' }],
+      ['a cancelled Goal', STATES.P6, { goalDesiredState: 'cancelled' }, { reason: 'guard_failed', code: 'busy' }],
+    ];
+    for (const [name, state, patch, expected] of rows) {
+      expect(answerOf(requeueAt(state, patch)), name).toEqual(expected);
+      // TASK-28 shares the state preconditions and the Goal rule.
+      expect(answerOf(refusedAt(state, patch)), `${name} (refusal)`).toEqual(expected);
+    }
+    expect(requeueAt(STATES.P9, { selectedRun: COMPLETED, chain: roundChainHead([OPEN_INTERRUPTED]) }))
+      .toMatchObject({ detail: expect.stringMatching(/^finalize_first: /) });
+    expect(requeueAt(STATES.P6, { goalDesiredState: 'paused' })).toMatchObject({ detail: expect.stringContaining('resume the Goal first') });
+    expect(requeueAt(STATES.P6)).toMatchObject({ ok: true });
+    expect(transitionTask(STATES.P6, { kind: 'task_requeued', requeue: requeueInput() }, ctxFor('P6')))
+      .toMatchObject({ ok: false, reason: 'illegal', code: 'invalid', detail: 'task_requeued requires the rework guard facts' });
+    expect(transitionTask(null, { kind: 'task_requeued', requeue: requeueInput() }, ctxFor('absent')))
+      .toMatchObject({ ok: false, reason: 'illegal', code: 'not_found' });
+  });
+
+  it('the input must carry the selected Run; the matrix with the fence and TASK-27 follow', () => {
+    expect(requeueAt(STATES.P6, {}, { afterRun: run('run-2', { outcome: 'crashed', exitCode: null }) }))
+      .toMatchObject({ ok: false, reason: 'illegal', code: 'invalid', detail: 'the requeue input does not carry the selected Run' });
+    // Hard limit 3: the Workflow never requeues a human cancel.
+    const humanCancelled = { ...CANCELLED, ...pointer('cancelled') };
+    expect(answerOf(requeueAt(STATES.P6, { selectedRun: humanCancelled }, { afterRun: humanCancelled, basis: keyOf('cancelled'),
+      pointerIntent: stopIntent('cancel', operator), requestedBy: WORKFLOW_AUTOMATION_ACTOR })))
+      .toEqual({ reason: 'guard_failed', code: 'forbidden' });
+    // TASK-27 (continue a paused-interrupted Run) is step 5.6.
+    expect(requeueAt(STATES.P6, { selectedRun: PAUSED_INTERRUPTED }, { afterRun: PAUSED_INTERRUPTED,
+      pointerIntent: stopIntent('pause', operator, 'i-pause') })).toMatchObject({ ok: false, reason: 'illegal', code: 'invalid',
+      detail: expect.stringMatching(/^TASK-27 /) });
+  });
+
+  it('a request that fails G-BUDGET, G-CAP or G-BASIS is a TASK-28 refusal, never a requeue', () => {
+    const exhausted = run('run-1', { outcome: 'budget_exhausted', exitCode: null });
+    expect(requeueAt(STATES.P6, { selectedRun: exhausted }, { afterRun: exhausted, basis: keyOf('budget_exhausted') }))
+      .toMatchObject({ ok: false, reason: 'illegal', code: 'invalid', detail: expect.stringMatching(/^budget_not_increased /) });
+    // A larger budget passes G-BUDGET.
+    expect(requeueAt(STATES.P6, { selectedRun: exhausted }, { afterRun: exhausted, basis: keyOf('budget_exhausted'),
+      budget: { tokenBudget: 2000, deadline: null } })).toMatchObject({ ok: true });
+    const counted = run('run-1', { outcome: 'crashed', exitCode: null, requeueRef: { ...requeueRef, afterRunId: 'run-0' } });
+    expect(requeueAt(STATES.P6, { selectedRun: counted }, { afterRun: counted, requestedBy: WORKFLOW_AUTOMATION_ACTOR,
+      requeues: [{ ref: { ...requeueRef, afterRunId: 'run-0' }, automation: { automatic: true, counted: true, autoCount: 3, cap: 3 },
+        historySource: null }] }))
+      .toMatchObject({ ok: false, reason: 'illegal', code: 'invalid', detail: expect.stringMatching(/^auto_rework_cap_reached /) });
+    expect(requeueAt(STATES.P6, { priorBasisDigests: [keyOf('crashed').digest] }))
+      .toMatchObject({ ok: false, reason: 'illegal', code: 'invalid', detail: expect.stringMatching(/^no_new_basis /) });
+    // ND-6: a human requeue of a human cancel skips the key, so an earlier equal key does not refuse it.
+    const humanCancelled = { ...CANCELLED, ...pointer('cancelled') };
+    expect(requeueAt(STATES.P6, { selectedRun: humanCancelled, priorBasisDigests: [keyOf('cancelled').digest] },
+      { afterRun: humanCancelled, basis: keyOf('cancelled'), pointerIntent: stopIntent('cancel', operator) })).toMatchObject({ ok: true });
+  });
+
+  it('TASK-28: the refusal keeps the phase and writes TaskReworkRefusal; keyed by the selected Run; never class interrupted', () => {
+    expect(refusedAt(STATES.P6)).toEqual({ ok: true, next: STATES.P6,
+      effects: [{ kind: 'write_task_rework_refusal', refusal: CAP_REFUSAL }] });
+    expect(refusedAt(STATES.P6, { selectedRun: run('run-2', { outcome: 'crashed', exitCode: null }) }))
+      .toMatchObject({ ok: false, reason: 'illegal', code: 'invalid', detail: 'the refusal is not keyed by the selected Run' });
+    expect(refusedAt(STATES.P6, {}, { kind: 'task_rework_refused', refusal: { ...CAP_REFUSAL, failureClass: 'interrupted' },
+      pointerIntent: null })).toMatchObject({ ok: false, reason: 'illegal', code: 'invalid' });
+    // A reverify refusal is step 5.9 (VR-14).
+    expect(refusedAt(STATES.P6, {}, { kind: 'task_rework_refused',
+      refusal: { ...CAP_REFUSAL, ref: { ...CAP_REFUSAL.ref, operation: 'reverify' } }, pointerIntent: null }))
+      .toMatchObject({ ok: false, reason: 'illegal', code: 'invalid', detail: expect.stringMatching(/^TASK-28 \(reverify\) /) });
+    expect(transitionTask(STATES.P6, { kind: 'task_rework_refused', refusal: CAP_REFUSAL, pointerIntent: null }, ctxFor('P6')))
+      .toMatchObject({ ok: false, reason: 'illegal', code: 'invalid', detail: 'task_rework_refused requires the rework guard facts' });
+  });
+
+  /** A requeue refusal of run-1 (TASK-28) with the given class, code and requester. */
+  const refusalOf = (patch: Partial<Parameters<typeof newTaskReworkRefusalRecord>[0]>) => newTaskReworkRefusalRecord({
+    current: null, ref: CAP_REFUSAL.ref, task, afterRunRef: runRef('run-1'), subjectRoundRef: null, failureClass: 'run_failed',
+    code: 'budget_not_increased', reason: 'policy refusal', basisDigest: null, source: null, matchedRequeueRef: null,
+    requestedBy: operator, refusedAt: T_LATER, goalEndedRunsAtRefusal: 1, configurationRevision: null, ...patch });
+  const refused = (refusal: TaskReworkRefusalSnapshotV1, pointerIntent: RefusedEvent['pointerIntent'] = null): RefusedEvent =>
+    ({ kind: 'task_rework_refused', refusal, pointerIntent });
+
+  it('TASK-28 judges the refusal like the requeue: the pointer intent, the class, the matrix with the fence', () => {
+    // The pointer intent must be the selected Run's own.
+    expect(refusedAt(STATES.P6, {}, refused(CAP_REFUSAL, stopIntent('cancel', operator))))
+      .toMatchObject({ ok: false, reason: 'illegal', code: 'invalid', detail: 'the pointer intent is not the selected Run pointer' });
+    // The class is re-derived from the selected Run (FC-9 run_failed for a crashed Run).
+    expect(refusedAt(STATES.P6, {}, refused({ ...CAP_REFUSAL, failureClass: 'check_failed' })))
+      .toMatchObject({ ok: false, reason: 'illegal', code: 'invalid', detail: expect.stringMatching(/is not the selected Run's class run_failed$/) });
+    // Hard limit 3: a human cancel fences the Workflow's cap refusal as it fences its requeue.
+    const humanCancelled = { ...CANCELLED, ...pointer('cancelled') };
+    const cancelCap = refusalOf({ failureClass: 'cancelled', code: 'auto_rework_cap_reached', requestedBy: WORKFLOW_AUTOMATION_ACTOR });
+    expect(answerOf(refusedAt(STATES.P6, { selectedRun: humanCancelled }, refused(cancelCap, stopIntent('cancel', operator)))))
+      .toEqual({ reason: 'guard_failed', code: 'forbidden' });
+    // A platform cancel is not fenced: the same cap refusal commits.
+    expect(refusedAt(STATES.P6, { selectedRun: humanCancelled }, refused(cancelCap, stopIntent('cancel', WORKFLOW_AUTOMATION_ACTOR))))
+      .toMatchObject({ ok: true, next: STATES.P6 });
+  });
+
+  it('TASK-28: the refusal code fits the facts (G-BUDGET after budget_exhausted, G-BASIS for an equal compared key)', () => {
+    const exhausted = run('run-1', { outcome: 'budget_exhausted', exitCode: null });
+    const budget = refusalOf({});
+    expect(refusedAt(STATES.P6, { selectedRun: exhausted }, refused(budget))).toMatchObject({ ok: true, next: STATES.P6 });
+    expect(refusedAt(STATES.P6, {}, refused(budget))).toMatchObject({ ok: false, reason: 'illegal', code: 'invalid',
+      detail: 'budget_not_increased refuses only the requeue of a budget_exhausted Run' });
+    const key = keyOf('crashed');
+    const noNewBasis = refusalOf({ code: 'no_new_basis', basisDigest: key.digest, source: key.source,
+      matchedRequeueRef: { ...requeueRef, afterRunId: 'run-0' } });
+    expect(refusedAt(STATES.P6, { priorBasisDigests: [key.digest] }, refused(noNewBasis))).toMatchObject({ ok: true, next: STATES.P6 });
+    const noMatch = { ok: false, reason: 'illegal', code: 'invalid',
+      detail: 'no_new_basis refuses only a compared key equal to an earlier TaskRequeue key' };
+    expect(refusedAt(STATES.P6, { priorBasisDigests: [sha('9')] }, refused(noNewBasis))).toMatchObject(noMatch);
+    // ND-6: a human requeue of a human cancel never compares its key, so it is never no_new_basis.
+    const humanCancelled = { ...CANCELLED, ...pointer('cancelled') };
+    const cancelKey = keyOf('cancelled');
+    expect(refusedAt(STATES.P6, { selectedRun: humanCancelled, priorBasisDigests: [cancelKey.digest] },
+      refused(refusalOf({ failureClass: 'cancelled', code: 'no_new_basis', basisDigest: cancelKey.digest, source: cancelKey.source,
+        matchedRequeueRef: { ...requeueRef, afterRunId: 'run-0' } }), stopIntent('cancel', operator)))).toMatchObject(noMatch);
   });
 });

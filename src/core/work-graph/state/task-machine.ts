@@ -18,21 +18,25 @@
  * A.2 step 5.3 (§15.2) scope:
  * - Projection rows P1..P18 have their target values (D-1, TD-5): P6 and P7
  *   are `failed`, P11..P13 `verifying`, and P17/P18 hold a yielded wait whose
- *   pointer is cancelled (`failed`) or paused (`blocked`). The rows P4 (5.4),
- *   P19 (5.6) and P20 (5.9) are not evaluated yet: their facts fall through to
- *   the row the remaining table reaches.
+ *   pointer is cancelled (`failed`) or paused (`blocked`). The rows P19 (5.6)
+ *   and P20 (5.9) are not evaluated yet: their facts fall through to the row
+ *   the remaining table reaches.
  * - The re-projection rows TASK-04..13 and TASK-20..23 follow the projection;
  *   TASK-14 adds the projection guard (`verifying`, §4.4) and the chain-head
  *   guard (the round is the selected Run's chain head, C5). Its TD-2 evidence
- *   exclusion lands with requeue (5.4) and successor rounds (5.9).
+ *   exclusion is the completion owner's (`evidenceSupersededByRequeue`; the
+ *   successor-round part is 5.9).
  * - 已有 rows keep today's codes in today's order (`claim-service.ts:510-666`,
  *   pre-step-3 `completion.ts:316-395`, `plan-service.ts:1737-1767`,
  *   `plan-readers.ts:1269-1297`).
- * - 改造 rows still at today's result, flipped by later substeps: TASK-03 (the
- *   claim service does not read `requeueRef`, so a requeue claim follows the
- *   first-claim rule: `busy` once the Task has a Run; 5.4), TASK-15 (a gate
- *   completes from `pending`; 5.9), TASK-18 (no `dispositionRecord`; 5.10).
- * - 新增 rows of later substeps (TASK-16, 17, 26..30) keep their events in the
+ * - A.2 step 5.4 (D-3, C1, C2, C8): P4 (`pending/requeued`), TASK-03 (a claim
+ *   with the `requeueRef` covering the selected Run re-holds the lease),
+ *   TASK-16/17 (`task_requeued`, TaskRequeue@1) and TASK-28 for a requeue
+ *   (`task_rework_refused`). TASK-27 (continue, 5.6) and the reverify part of
+ *   TASK-28 (5.9) still answer `notYet`.
+ * - 改造 rows still at today's result, flipped by later substeps: TASK-15 (a
+ *   gate completes from `pending`; 5.9), TASK-18 (no `dispositionRecord`; 5.10).
+ * - 新增 rows of later substeps (TASK-26, 27, 29, 30) keep their events in the
  *   union and answer `illegal` (`notYet`). TASK-19 is answered by today's
  *   §4.4 refusal in front of it: a traced Task's definition, disposition
  *   included, is frozen (`revision_conflict`).
@@ -59,15 +63,16 @@ import type { TaskPhaseCauseCode, TaskPhaseCauseDetailV1, TaskPhaseCauseV1 } fro
 import {
   GOAL_FAN_OUT_ACTOR, MAX_AUTO_REWORK_LIMIT, TASK_REWORK_REASON_MAX_CHARS, reworkActorClassOf,
   type ReworkActorClass, type ReworkFailureClass, type TaskAutomationPolicyV1, type TaskRequeueBasisComparison,
-  type TaskRequeueHistorySourceV1, type TaskRequeueRef, type TaskRequeueSnapshotV1, type TaskRequeueTriggerV1,
-  type TaskReworkRefusalSnapshotV1,
+  type TaskRequeueRef, type TaskRequeueSnapshotV1, type TaskRequeueTriggerV1, type TaskReworkRefusalSnapshotV1,
 } from '../../../contracts/task-requeue.js';
 import type { RoundSnapshot, VerificationRoundRef } from '../../../contracts/verification.js';
-import { claimBasisToday, type AttemptClaimBasis } from './attempt-machine.js';
+import type { AttemptClaimBasis } from './attempt-machine.js';
 import { runFailureOrigin } from './no-progress.js';
-import { isPausedInterrupted, type RunClaimContext } from './run-machine.js';
 import {
-  deriveReworkClass, nextRequeueAutoCount, reworkFenceOf, reworkPermission,
+  isPausedInterrupted, requeueClaimProblem, runUnresolvedBlocker, type ClaimRequeueFacts, type RunClaimContext,
+} from './run-machine.js';
+import {
+  deriveReworkClass, nextRequeueAutoCount, requeueHistorySourceOf, reworkFenceOf, reworkPermission,
   type ReworkClassDerivationV1, type StopIntentV1,
 } from './task-failure.js';
 import { accept, failed, notYet, reject, rejected, unreachable, type Rejected, type Transition } from './transition.js';
@@ -140,18 +145,20 @@ export function classifyTaskPhase(facts: TaskPhaseFacts): TaskPhaseProjection {
       : projection('P16', 'pending', null);
   }
   if (run.status === 'starting' || run.status === 'running') return projection('P2', 'running', null);
-  return endedRunProjection(run, facts.round);
+  return endedRunProjection(run, facts.round, facts.coveringRequeue);
 }
 
-function endedRunProjection(run: RunSnapshot, round: RoundTaskSignalV1): TaskPhaseProjection {
+function endedRunProjection(run: RunSnapshot, round: RoundTaskSignalV1, coveringRequeue: TaskRequeueRef | null): TaskPhaseProjection {
   const outcome = run.outcome;
   // An ended Run without an outcome is damaged (`runCombinationProblem`);
   // like P14 it is defended as `blocked`.
   if (outcome === null) return projection('P14', 'blocked', causeOf('run_failed'));
+  if (outcome === 'outcome_unknown') return projection('P3', 'blocked', causeOf('run_outcome_unknown'));
+  // P4 (D-3, C1): the TaskRequeue covering the selected Run makes the Task
+  // claimable again, only with that `requeueRef` (TASK-03).
+  if (coveringRequeue !== null) return projection('P4', 'pending', causeOf('requeued', { requeueRef: { ...coveringRequeue } }));
   switch (outcome) {
-    case 'outcome_unknown': return projection('P3', 'blocked', causeOf('run_outcome_unknown'));
-    // P4 (requeued, C1) is step 5.4 and P19 (paused-interrupted, C4) step 5.6:
-    // until then their facts reach P5..P7 below.
+    // P19 (paused-interrupted, C4) is step 5.6: until then its facts reach P6 below.
     case 'yielded': {
       if (run.continuation === undefined) return projection('P14', 'blocked', causeOf('run_failed'));
       // TD-5: a stop pointer holds the continuation (the claim answers `busy`),
@@ -246,6 +253,8 @@ export type TaskClaimFacts = {
   taskHasRun: boolean;
   /** The continuation prior Run, as RUN-01 reads it (`:590-638`); null when it is not a Run of this Task. */
   prior: RunClaimContext['prior'];
+  /** TASK-03: the TaskRequeue the claim's `requeueRef` names; null when it names none of this Task. */
+  requeue: ClaimRequeueFacts | null;
   /** Assignment, role and deadline admission (`:643-666`); null when admitted. */
   admission: CoreRejection | null;
 };
@@ -285,6 +294,26 @@ export type TaskGuardContext = {
   completion: TaskCompletionFacts | null;
   /** `disposition_changed` only. */
   trace: TaskTrace | null;
+  /** `task_requeued` and `task_rework_refused` only (absent for every other event). */
+  rework?: TaskReworkFacts;
+};
+
+/**
+ * The facts TASK-16/17/28 read beside the Task state, in the window of
+ * §4.3 "处理步骤" step 3 (the requeue owner's directed read).
+ */
+export type TaskReworkFacts = {
+  /** The Task's selected Run; null without one (P15, P16). */
+  selectedRun: RunSnapshot | null;
+  /** The request's `afterRunRef` is that selected Run. */
+  afterRunIsSelected: boolean;
+  /** `roundChainHead` of the selected Run's work chain, whatever its outcome (I-12 clause 2). */
+  chain: RoundChainHeadV1;
+  /** §13.1 `plan`: the Task's effective basis resolves in the active Plan. */
+  basisResolved: boolean;
+  goalDesiredState: GoalDesiredState;
+  /** ND-3: `basis.digest` of every TaskRequeue of the Task read in the window. */
+  priorBasisDigests: readonly string[];
 };
 
 /** §9 events that reach a Task only through its round-chain head. */
@@ -317,8 +346,12 @@ export type TaskEvent =
   | { kind: 'task_completed'; task: TaskTriple; round: RoundSnapshot; reduction: TaskReductionBuildV1 }
   /** TASK-16, 17, 27 (step 5.4/5.6). */
   | { kind: 'task_requeued'; requeue: NewTaskRequeueInput }
-  /** TASK-28 (step 5.4/5.9): the refusal record `newTaskReworkRefusalRecord` built. */
-  | { kind: 'task_rework_refused'; refusal: TaskReworkRefusalSnapshotV1 }
+  /**
+   * TASK-28 (step 5.4/5.9): the refusal record `newTaskReworkRefusalRecord`
+   * built, and the selected Run's pointer intent the matrix fence is judged
+   * with (read after the window, like `task_requeued`'s).
+   */
+  | { kind: 'task_rework_refused'; refusal: TaskReworkRefusalSnapshotV1; pointerIntent: StopIntentV1 | null }
   /** TASK-18, 19 (W16). */
   | { kind: 'disposition_changed'; to: Disposition; replacedByTaskId: string | null; actorClass: ReworkActorClass };
 
@@ -422,8 +455,10 @@ type RequeueChainRun = Pick<RunSnapshot, 'ref' | 'requeueRef' | 'consumedWait'>;
  * `deriveReworkClass` (TD-8, `task-failure.ts`), `automation` from
  * `nextRequeueAutoCount` (C8), `afterRoundRef` and `supersededEvidenceIds`
  * from the chain head (`chainEvidenceIds`, TD-2), `basisComparison` from the
- * class and the actor class (ND-5, ND-6). `basis` is `noProgressKey`
- * (`no-progress.ts`) over the source the owner captured.
+ * class and the actor class (ND-5, ND-6), `historySource` from the afterRun's
+ * Kernel history or its `requeueRef` record (`requeueHistorySourceOf`, I-12
+ * clause 10). `basis` is `noProgressKey` (`no-progress.ts`) over the source
+ * the owner captured.
  */
 export type NewTaskRequeueInput = {
   task: TaskTriple;
@@ -447,9 +482,9 @@ export type NewTaskRequeueInput = {
   trigger: TaskRequeueTriggerV1 | null;
   agentProvenance: DelegatedWriteProvenanceV1 | null;
   runs: readonly RequeueChainRun[];
-  requeues: readonly Pick<TaskRequeueSnapshotV1, 'ref' | 'automation'>[];
+  /** The Task's TaskRequeues of the same window (the C8 count and the one-hop history source). */
+  requeues: readonly Pick<TaskRequeueSnapshotV1, 'ref' | 'automation' | 'historySource'>[];
   policy: Pick<TaskAutomationPolicyV1, 'autoReworkLimit'>;
-  historySource: TaskRequeueHistorySourceV1 | null;
 };
 
 /** ND-5 / ND-6: `interrupted` and a human requeue of a cancel skip the key comparison. */
@@ -521,27 +556,12 @@ function taskRequeueChainProblem(chain: RoundChainHeadV1, row: string): string |
 }
 
 /**
- * §11 I-12 clause 10 (LA-1), the part the input shows: an afterRun that never
- * entered the Kernel (no `executionHistory`) and has no `requeueRef` has no
- * history to seed. Whether a non-null source names the claim Session, or
- * copies the `requeueRef` record's source, is the owner's same-window read.
- */
-function taskRequeueHistoryProblem(input: NewTaskRequeueInput): string | null {
-  const afterRun = input.afterRun;
-  if (input.historySource !== null && afterRun.executionHistory === undefined && afterRun.requeueRef === undefined) {
-    return `run ${afterRun.ref.runId} never entered the Kernel and has no requeueRef, so it has no history source`;
-  }
-  return null;
-}
-
-/**
- * §11 I-12 clauses 2, 3, 6, 8 and 10 (and I-17) as far as the input shows
- * them: the legal (class, actor, request) combinations. The owner refuses
- * every other one first with a 0-commit CoreError (TASK-16/17/27, §4.4), so a
+ * §11 I-12 clauses 2, 3, 6 and 8 (and I-17) as far as the input shows them:
+ * the legal (class, actor, request) combinations. The owner refuses every
+ * other one first with a 0-commit CoreError (TASK-16/17/27, §4.4), so a
  * problem here is a caller bug.
  * - the chain is valid, its head finalized and not a clean PASS (clause 2;
  *   FC-13: finalize first);
- * - no history source without Kernel entry or `requeueRef` (clause 10);
  * - the no-progress key describes the afterRun outcome;
  * - `agentProvenance` exactly for an agent;
  * - the §4.3 matrix with the human-stop fence (`reworkPermission`; the Goal is
@@ -561,8 +581,6 @@ function taskRequeueCombinationProblem(
   const afterRun = input.afterRun;
   const chainProblem = taskRequeueChainProblem(input.chain, derivation.row);
   if (chainProblem !== null) return chainProblem;
-  const historyProblem = taskRequeueHistoryProblem(input);
-  if (historyProblem !== null) return historyProblem;
   if (input.basis.failure.outcome !== afterRun.outcome) return 'the no-progress key was computed for another outcome';
   if ((input.agentProvenance !== null) !== (actorClass === 'agent')) {
     return 'agent provenance is recorded exactly for an agent requeue';
@@ -596,15 +614,14 @@ function requeueCannotBeBuilt(problem: string): never {
  * key order. It refuses every §11 I-12 combination the input can show: the
  * afterRun derives a rework class (FC-3, 6..10, 15, 16; FC-13 only after its
  * head is finalized), its chain is none or valid with a finalized head that is
- * not a clean PASS, the actor may rework it, a counted automatic requeue stays
- * within the cap (G-CAP), and a Run without Kernel entry or `requeueRef` has
- * no history source. An afterRun with nothing to rework or that is not
- * reworkable has no record. The covered evidence is the afterRun's whole
- * chain, `[]` without a round. Two I-12 clauses stay with the owner's read
- * window because the input does not carry their facts: clause 5 (a `compared`
- * key differs from every earlier requeue's digest, G-BASIS → TASK-28) and
- * clause 10's claim Session and one-hop copy of the `requeueRef` record's
- * `historySource`.
+ * not a clean PASS, the actor may rework it, and a counted automatic requeue
+ * stays within the cap (G-CAP). An afterRun with nothing to rework or that is
+ * not reworkable has no record. The covered evidence is the afterRun's whole
+ * chain, `[]` without a round; the history source is derived from the
+ * afterRun and the window's TaskRequeues (`requeueHistorySourceOf`, I-12
+ * clause 10). One I-12 clause stays with the owner's read window because the
+ * input does not carry its facts: clause 5 (a `compared` key differs from
+ * every earlier requeue's digest, G-BASIS → TASK-28).
  */
 export function newTaskRequeueRecord(input: NewTaskRequeueInput): TaskRequeueSnapshotV1 {
   const subjectProblem = taskRequeueSubjectProblem(input);
@@ -653,7 +670,7 @@ export function newTaskRequeueRecord(input: NewTaskRequeueInput): TaskRequeueSna
     requestedAt: input.requestedAt,
     agentProvenance: input.agentProvenance,
     automation,
-    historySource: input.historySource,
+    historySource: requeueHistorySourceOf(afterRun, input.requeues),
   };
 }
 
@@ -708,10 +725,8 @@ export function transitionTask(state: TaskMachineState, event: TaskEvent, ctx: T
     case 'round_reverified':
       return onRoundEvent(state, event);
     case 'task_completed': return onTaskCompleted(state, event, ctx);
-    // D-3/C1 requeue and continue (TASK-16, 17, 27) are step 5.4/5.6; the policy
-    // refusal (TASK-28) lands with them (5.4) and with reverify (5.9).
-    case 'task_requeued': return notYet('TASK-16/17/27');
-    case 'task_rework_refused': return notYet('TASK-28');
+    case 'task_requeued': return onTaskRequeued(state, event, ctx);
+    case 'task_rework_refused': return onTaskReworkRefused(state, event, ctx);
     case 'disposition_changed': return onDispositionChanged(state, event, ctx);
     default: return unreachable(event, 'Task event');
   }
@@ -792,14 +807,17 @@ export function taskClaimProblem(
   if (facts.lease.status === 'leased') {
     return reject('guard_failed', 'busy', `task already has an active lease (holder run ${facts.lease.holderRunId})`);
   }
-  // TASK-03 (D-3, TD-3) is step 5.4: today the claim service accepts a
-  // `requeueRef` but never reads it (`claim-service.ts:639-641`), so a requeue
-  // claim is a first claim: `busy` once the Task has a Run, otherwise a @1 lease.
-  const basis = claimBasisToday(claimBasis);
+  const basis = claimBasis;
   switch (basis.kind) {
     case 'first':
       if (facts.taskHasRun) return reject('guard_failed', 'busy', 'this Task already has a Run and cannot be claimed for the first time');
       break;
+    case 'requeue': {
+      // TASK-03 (D-3, TD-3): only with the TaskRequeue covering the selected Run (P4).
+      const problem = requeueClaimProblem(facts.requeue);
+      if (problem !== null) return problem;
+      break;
+    }
     case 'continuation': {
       const prior = facts.prior;
       if (prior === null) return reject('guard_failed', 'busy', 'the continuation prior Run is not a Run of this Task');
@@ -833,13 +851,14 @@ function onTaskClaimed(
   if (problem !== null) return problem;
   // `taskClaimProblem` refuses ∅ (`not_found`), so the Task is in the Plan here.
   const { taskKind, disposition } = state as TaskState;
-  const basis = claimBasisToday(event.basis);
+  const basis = event.basis;
   const claim = event.claim;
   return accept({ taskKind, disposition, row: 'P2', phase: 'running', cause: null }, [
     { kind: 'create_attempt' },
     { kind: 'create_run' },
     { kind: 'create_outbox' },
-    { kind: 'hold_lease', lease: basis.kind === 'continuation' ? 'reheld' : 'first' },
+    // ATT-15 (continuation) and ATT-16 (requeue) re-hold the released lease @k+1.
+    { kind: 'hold_lease', lease: basis.kind === 'first' ? 'first' : 'reheld' },
     { kind: 'occupy_session', sessionRef: claim.sessionRef, generation: claim.generation },
   ]);
 }
@@ -1020,6 +1039,231 @@ function onTaskCompleted(
   const reduction = newTaskReductionRecord({ ...event.reduction, round: event.round, evaluation });
   return accept({ taskKind: state.taskKind, disposition: state.disposition, row: 'P1', phase: reduction.phase, cause: null },
     [{ kind: 'write_task_reduction', reduction }]);
+}
+
+// -------------------------------------------------------------------------- //
+// Requeue and its policy refusal (TASK-16, 17, 28; §4.3 "处理步骤", §4.4)       //
+// -------------------------------------------------------------------------- //
+
+/**
+ * Step 3 of the unified order (§4.3 "处理步骤", §13.2 point 3, §4.4) on the
+ * Task's projection and the selected Run: the 0-commit refusals of a requeue
+ * or a requeue policy refusal, first match wins.
+ *
+ * A gate is refused first (`invalid`): it has no Run, so the literal order
+ * would always answer `revision_conflict` and never name the gate rule (§4.4).
+ * Then: the request names another Run than the selected one (none for P15/P16)
+ * → `revision_conflict`; the Run has not ended (P2) or has an unresolved
+ * outcome (P3, `runUnresolvedBlocker`, hard limit 1) → `busy`; the chain is
+ * invalid → `incomplete`, its head open → `busy` (`finalize_first:`), a clean
+ * PASS head on a Run that did not complete → `invalid` (I-12 clause 2); a paused
+ * continuation (P18) → `busy`; `ready`/`satisfied` or nothing to rework (P14)
+ * → `invalid`; no round yet or a clean PASS head (P11, P13) → `busy`; a
+ * non-active disposition → `invalid` (`task_not_active`, C7); an unresolvable
+ * basis → `incomplete` (§13.1); a TaskRequeue already covering the Run (P4) →
+ * `revision_conflict` (the owner adds `current=[TaskRequeue@1]`).
+ */
+export function taskRequeueStateProblem(state: TaskState, facts: TaskReworkFacts): Rejected | null {
+  if (state.taskKind === 'gate') {
+    return reject('illegal', 'invalid', 'a gate is never requeued; its exit is a successor round on its own chain');
+  }
+  const run = facts.selectedRun;
+  if (run === null || !facts.afterRunIsSelected) {
+    return reject('stale', 'revision_conflict', 'the requeue names a Run that is not the Task selected Run');
+  }
+  if (run.status !== 'ended') return reject('guard_failed', 'busy', 'the selected Run has not ended; stop or reconcile it first');
+  const blocker = runUnresolvedBlocker(run);
+  if (blocker !== null) return reject('guard_failed', 'busy', `reconcile the selected Run first: ${blocker}`);
+  if (run.outcome === null || run.outcome === 'outcome_unknown') {
+    return reject('guard_failed', 'busy', 'reconcile the selected Run first: its outcome is not known');
+  }
+  switch (facts.chain.kind) {
+    case 'invalid':
+      return reject('guard_failed', 'incomplete', `the round chain of the selected Run is invalid (${facts.chain.reason})`);
+    case 'head':
+      if (facts.chain.head.status === 'open') {
+        return reject('guard_failed', 'busy', `finalize_first: round ${facts.chain.head.ref.roundId} of the selected Run is open`);
+      }
+      // I-12 clause 2: a clean-PASS head on a Run that did not complete (P6
+      // today; a completed one is P13, `busy` below) leaves no round to rework.
+      if (run.outcome !== 'completed' && facts.chain.head.outcome === 'PASS' && facts.chain.head.gaps.length === 0) {
+        return reject('illegal', 'invalid', `round ${facts.chain.head.ref.roundId} of the selected Run is a clean PASS; there is no round to rework`);
+      }
+      break;
+    case 'none':
+      break;
+    default: return unreachable(facts.chain, 'round chain');
+  }
+  switch (state.row) {
+    case 'P18':
+      return reject('guard_failed', 'busy', 'the yielded wait is paused; resume or cancel it first');
+    case 'P1':
+    case 'P5':
+    case 'P14':
+      return reject('illegal', 'invalid', `the task is ${state.phase}; there is nothing to requeue`);
+    case 'P11':
+    case 'P13':
+    case 'P12':
+    case 'P9':
+      return reject('guard_failed', 'busy', 'the selected Run is verifying; finalize its round first');
+    default:
+      break;
+  }
+  if (state.disposition !== 'active') return reject('guard_failed', 'invalid', `task_not_active: the task disposition is ${state.disposition}`);
+  if (!facts.basisResolved) return reject('guard_failed', 'incomplete', 'the effective basis of the task is not resolvable');
+  if (state.row === 'P4') return reject('stale', 'revision_conflict', 'a TaskRequeue already covers the selected Run');
+  return null;
+}
+
+/**
+ * G-BUDGET (§4.3 "按类别的依据、预算与上限"): an afterRun that ended
+ * `budget_exhausted` is requeued only with a larger token budget or a new input
+ * (a human `note` counts as one before it is stored, §13.2 step 6).
+ */
+export function requeueBudgetIncreased(afterRun: Pick<RunSnapshot, 'outcome' | 'budget'>,
+  budget: TaskBudgetV1 | null, newInputCount: number): boolean {
+  if (afterRun.outcome !== 'budget_exhausted') return true;
+  return newInputCount > 0 || (budget !== null && budget.tokenBudget > afterRun.budget.tokenBudget);
+}
+
+/** ND-5/ND-6: whether the requeue key is compared with the earlier keys. */
+export function requeueBasisCompared(failureClass: ReworkFailureClass, actorClass: ReworkActorClass): boolean {
+  return basisComparisonOf(failureClass, actorClass) === 'compared';
+}
+
+/**
+ * TASK-16/17 (C1, C2, C8): the requeue machine. State preconditions
+ * (`taskRequeueStateProblem`), the Goal `active` (`busy` "resume the Goal
+ * first"), then the actor × class matrix with the human-stop fence
+ * (`reworkPermission`). The policy steps belong to TASK-28: a request that
+ * fails G-BUDGET, G-CAP or G-BASIS is refused here (`illegal`/`invalid`) and
+ * must have been submitted as `task_rework_refused`. Accepted: TaskRequeue@1
+ * (`newTaskRequeueRecord`) and the projection P4 (`pending/requeued`).
+ * TASK-27 (continue a paused-interrupted Run, C4) is step 5.6.
+ */
+function onTaskRequeued(
+  state: TaskMachineState,
+  event: Extract<TaskEvent, { kind: 'task_requeued' }>,
+  ctx: TaskGuardContext,
+): TaskTransition {
+  if (state === null) return absentTask(event.kind);
+  const facts = ctx.rework;
+  if (facts === undefined) return reject('illegal', 'invalid', 'task_requeued requires the rework guard facts');
+  const stateProblem = taskRequeueStateProblem(state, facts);
+  if (stateProblem !== null) return stateProblem;
+  const input = event.requeue;
+  if (facts.selectedRun === null || !sameRunRef(facts.selectedRun.ref, input.afterRun.ref)) {
+    return reject('illegal', 'invalid', 'the requeue input does not carry the selected Run');
+  }
+  if (facts.goalDesiredState !== 'active') {
+    return reject('guard_failed', 'busy', `the Goal is ${facts.goalDesiredState}; resume the Goal first`);
+  }
+  const actorClass = reworkActorClassOf(null, input.requestedBy);
+  if (actorClass === null) return reject('guard_failed', 'forbidden', 'the requester has no rework actor class');
+  const derivation = deriveReworkClass(input.afterRun, input.pointerIntent, input.chain);
+  if (derivation.kind !== 'class') return reject('illegal', 'invalid', `the selected Run has nothing to rework (${derivation.row})`);
+  if (derivation.interruption === 'paused') return notYet('TASK-27');
+  const goalFanOut = input.requestedBy.kind === GOAL_FAN_OUT_ACTOR.kind && input.requestedBy.id === GOAL_FAN_OUT_ACTOR.id;
+  const permission = reworkPermission({ operation: 'requeue', goalDesiredState: facts.goalDesiredState,
+    failureClass: derivation.failureClass, interruption: derivation.interruption,
+    fence: reworkFenceOf(input.afterRun, input.pointerIntent), actorClass, goalFanOut,
+    trigger: input.trigger !== null, budget: input.budget !== null, note: false });
+  if (permission !== null) return permission;
+  if (!requeueBudgetIncreased(input.afterRun, input.budget, input.newInputRefs.length)) {
+    return reject('illegal', 'invalid', 'budget_not_increased is a TASK-28 policy refusal, not a requeue');
+  }
+  const automation = nextRequeueAutoCount({ actorClass, failureClass: derivation.failureClass, afterRun: input.afterRun,
+    runs: input.runs, requeues: input.requeues, policy: input.policy });
+  if (automation.counted && automation.cap !== null && automation.autoCount > automation.cap) {
+    return reject('illegal', 'invalid', 'auto_rework_cap_reached is a TASK-28 policy refusal, not a requeue');
+  }
+  if (requeueBasisCompared(derivation.failureClass, actorClass) && facts.priorBasisDigests.includes(input.basis.digest)) {
+    return reject('illegal', 'invalid', 'no_new_basis is a TASK-28 policy refusal, not a requeue');
+  }
+  const requeue = newTaskRequeueRecord(input);
+  return accept({ taskKind: state.taskKind, disposition: state.disposition, row: 'P4', phase: 'pending',
+    cause: causeOf('requeued', { requeueRef: { ...requeue.ref } }) }, [{ kind: 'write_task_requeue', requeue }]);
+}
+
+/**
+ * TASK-28 (C1, C8, ND-8) for a requeue: the same state preconditions, Goal
+ * check and actor × class matrix with the human-stop fence as TASK-16/17
+ * (the class re-derived from the selected Run and its pointer intent), then
+ * the committed policy refusal whose code fits the facts: `budget_not_increased`
+ * only after a `budget_exhausted` Run (G-BUDGET), `no_new_basis` only for a
+ * compared key equal to an earlier TaskRequeue's (G-BASIS);
+ * `auto_rework_cap_reached` (G-CAP) is counted by construction (its record
+ * names an automatic actor, the class is not `interrupted`). The phase and
+ * cause do not change. A reverify refusal is step 5.9.
+ */
+function onTaskReworkRefused(
+  state: TaskMachineState,
+  event: Extract<TaskEvent, { kind: 'task_rework_refused' }>,
+  ctx: TaskGuardContext,
+): TaskTransition {
+  if (state === null) return absentTask(event.kind);
+  const refusal = event.refusal;
+  if (refusal.ref.operation === 'reverify') return notYet('TASK-28 (reverify)');
+  const facts = ctx.rework;
+  if (facts === undefined) return reject('illegal', 'invalid', 'task_rework_refused requires the rework guard facts');
+  const stateProblem = taskRequeueStateProblem(state, facts);
+  if (stateProblem !== null) return stateProblem;
+  const run = facts.selectedRun;
+  if (run === null || run.ref.runId !== refusal.ref.subjectId || !sameRunRef(run.ref, refusal.afterRunRef)) {
+    return reject('illegal', 'invalid', 'the refusal is not keyed by the selected Run');
+  }
+  if (facts.goalDesiredState !== 'active') {
+    return reject('guard_failed', 'busy', `the Goal is ${facts.goalDesiredState}; resume the Goal first`);
+  }
+  const pointerProblem = pointerIntentProblem(run, event.pointerIntent);
+  if (pointerProblem !== null) return reject('illegal', 'invalid', pointerProblem);
+  const derivation = deriveReworkClass(run, event.pointerIntent, facts.chain);
+  if (derivation.kind !== 'class') return reject('illegal', 'invalid', `the selected Run has nothing to rework (${derivation.row})`);
+  if (derivation.failureClass !== refusal.failureClass) {
+    return reject('illegal', 'invalid', `the refusal class ${refusal.failureClass} is not the selected Run's class ${derivation.failureClass}`);
+  }
+  if (refusal.failureClass === 'interrupted') {
+    return reject('illegal', 'invalid', 'class interrupted skips budget, cap and key and is never refused');
+  }
+  const actorClass = reworkActorClassOf(null, refusal.requestedBy);
+  if (actorClass === null) return reject('guard_failed', 'forbidden', 'the requester has no rework actor class');
+  const goalFanOut = refusal.requestedBy.kind === GOAL_FAN_OUT_ACTOR.kind && refusal.requestedBy.id === GOAL_FAN_OUT_ACTOR.id;
+  const permission = reworkPermission({ operation: 'requeue', goalDesiredState: facts.goalDesiredState,
+    failureClass: derivation.failureClass, interruption: derivation.interruption,
+    fence: reworkFenceOf(run, event.pointerIntent), actorClass, goalFanOut, trigger: false, budget: false, note: false });
+  if (permission !== null) return permission;
+  switch (refusal.code) {
+    case 'budget_not_increased':
+      if (run.outcome !== 'budget_exhausted') {
+        return reject('illegal', 'invalid', 'budget_not_increased refuses only the requeue of a budget_exhausted Run');
+      }
+      break;
+    case 'auto_rework_cap_reached':
+      // Counted (`nextRequeueAutoCount`): the class is not `interrupted` (above) and the record
+      // constructor admits a cap refusal only for an automatic actor class.
+      break;
+    case 'no_new_basis':
+      if (!requeueBasisCompared(derivation.failureClass, actorClass) || refusal.basisDigest === null
+        || !facts.priorBasisDigests.includes(refusal.basisDigest)) {
+        return reject('illegal', 'invalid', 'no_new_basis refuses only a compared key equal to an earlier TaskRequeue key');
+      }
+      break;
+    case 'source_unchanged':
+    case 'verification_uncovered':
+      return reject('illegal', 'invalid', `${refusal.code} is a reverify-only refusal`);
+    default:
+      return unreachable(refusal.code, 'rework refusal code');
+  }
+  return accept(state, [{ kind: 'write_task_rework_refusal', refusal }]);
+}
+
+/** The pointer intent a requeue or refusal judges with is the selected Run's own (or none without a pointer). */
+function pointerIntentProblem(run: RunSnapshot, pointerIntent: StopIntentV1 | null): string | null {
+  const pointerRef = run.controlState?.intentRef ?? null;
+  if (pointerIntent === null ? pointerRef !== null : pointerRef === null || !sameIntentRef(pointerIntent.ref, pointerRef)) {
+    return 'the pointer intent is not the selected Run pointer';
+  }
+  return null;
 }
 
 /**

@@ -35,7 +35,7 @@ import { EVIDENCE_SUMMARY_MAX_BYTES } from '../../../contracts/evidence.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
 import { REPORT_CONTENT_TYPE } from '../../../contracts/no-progress.js';
 import type { PlanRevisionRef, PlanRevisionSnapshot } from '../../../contracts/plan.js';
-import type { RunRef, SourceRefV1, TaskTriple } from '../../../contracts/dispatch.js';
+import type { RunRef, RunSnapshot, SourceRefV1, TaskTriple } from '../../../contracts/dispatch.js';
 import type {
     CheckCapabilityV1, CheckExecutionTicket, CheckProcessObservation, RoundCheckSnapshot, RoundSnapshot,
     TrustedCheckConfiguration, VerificationRoundRef,
@@ -54,6 +54,7 @@ import {
     readBatch, readGoal, readPinnedCompletionPolicy, readPlan, readRevisionNumber, type Rejected as ReadRejected,
 } from '../tasks/plan-readers.js';
 import { planRevisionRefKey } from '../tasks/plan-record-codecs.js';
+import { taskRequeueRefKey } from '../tasks/claim-record-codecs.js';
 import {
     buildEffectiveTaskBasis, isBasisUnsupported,
 } from '../tasks/plan-task-basis.js';
@@ -458,6 +459,25 @@ async function readSubjectChain(
     return { ok: true, chain: roundChainHead(rounds) };
 }
 
+/**
+ * VR-01 (D-3, §9.4): whether a TaskRequeue covers the subject Run, and the
+ * absence guard the open commits with. A backend without the claim schemas
+ * cannot hold a TaskRequeue: `unsupported` is a confirmed absence with no guard.
+ */
+async function readRequeueCover(
+    records: Records, run: Pick<RunSnapshot, 'ref' | 'task'>,
+): Promise<{ ok: true; covered: boolean; guards: RecordGuard[] } | { ok: false; rejection: CoreRejection }> {
+    const key = taskRequeueRefKey({ aggregateType: 'TaskRequeue', projectId: run.ref.projectId, goalId: run.ref.goalId,
+        taskId: run.task.taskId, afterRunId: run.ref.runId });
+    const read = await records.readMany([key]);
+    if (read.status !== 'ready') {
+        if (read.code === 'unsupported') return { ok: true, covered: false, guards: [] };
+        return { ok: false, rejection: mapStoreFailure(read) };
+    }
+    const covered = read.value.records.some(record => record.refKey === key);
+    return { ok: true, covered, guards: covered ? [] : [{ refKey: key, expectedRevision: null }] };
+}
+
 /** VD-1/VD-15 answered with the head pin (§9.4): the caller re-reads the head, never a second root. */
 function chainRefusal(refusal: Rejected, chain: RoundChainHeadV1): CoreRejection {
     if (refusal.ok) throw new Error('chainRefusal needs a refusal');
@@ -615,7 +635,13 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         const subjectNode = plan.tasks.find(task => task.taskId === input.subject.taskId);
         const producerNode = plan.tasks.find(task => task.taskId === run.task.taskId);
         const sameGoal = run.task.projectId === input.subject.projectId && run.task.goalId === input.subject.goalId;
-        const subjectFacts: Pick<RoundOpenFactsV1, 'relation' | 'subjectRun'> = { subjectRun: run,
+        // VR-01 (D-3, §9.4): a subject Run a TaskRequeue covers is never verified again;
+        // its absence is guarded by the commit. A backend without the claim schemas
+        // cannot hold a TaskRequeue (`unsupported` is a confirmed absence, no guard).
+        const requeueCover = await readRequeueCover(records, run);
+        if (!requeueCover.ok) return requeueCover.rejection;
+        const subjectFacts: Pick<RoundOpenFactsV1, 'relation' | 'subjectRun' | 'subjectRunRequeued'> = { subjectRun: run,
+            subjectRunRequeued: requeueCover.covered,
             relation: input.gateSubject === undefined
                 ? { kind: 'work', runTaskIsSubject: sameGoal && run.task.taskId === input.subject.taskId }
                 : { kind: 'gate', gateSubject: input.gateSubject,
@@ -732,6 +758,7 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
                 { refKey: planRevisionRefKey(input.planRef), expectedRevision: plan.revision },
                 { refKey: workspaceKey, expectedRevision: workspaceRead.revision },
                 { refKey: runKey, expectedRevision: run.revision },
+                ...requeueCover.guards,
                 ...policyRead.guards,
                 baseline.guard,
             ] });

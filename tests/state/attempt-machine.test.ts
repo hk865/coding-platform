@@ -6,8 +6,8 @@
  *   asserts `next` (also byte for byte against today's record literals) and
  *   `effects`; a no-change one asserts `ok:true`, the same record and
  *   `effects:[]` (SD-1); an illegal one asserts `reason` and `code` (§5.4).
- * - 新增 rows still return `illegal`/`invalid`; ATT-07 and ATT-16 keep today's
- *   result (step 5 flips them).
+ * - 新增 rows still return `illegal`/`invalid`; ATT-07 keeps today's result
+ *   (step 5 flips it); ATT-16 and ATT-01 with a requeue basis follow D-3 since 5.4.
  * - Guard rows: the Run node, Session and Lease ownership, the event sequence
  *   (and today's order: Run node, sequence, outcome), the four `ownsLease` ×
  *   `ownsSession` combinations of ATT-06, every known outcome, one code per Run
@@ -224,8 +224,8 @@ const ATTEMPT_TABLE: Record<EventLabel, () => Record<AttemptStateLabel, Expect>>
   // ATT-01 from ∅ only; an existing Attempt never takes a second claim.
   'claim:first': () => a(to(ATTEMPT_CLAIMED), II, II, II, II, II),
   'claim:continuation': () => a(to(ATTEMPT_CLAIMED), II, II, II, II, II),
-  // TASK-03 keeps today's result: requeueRef is not read, so the Attempt records none (`claimBasisToday`).
-  'claim:requeue': () => a(to(ATTEMPT_CLAIMED), II, II, II, II, II),
+  // ATT-01 with a requeue basis (TASK-03, D-3; 5.4): the Attempt records the requeueRef.
+  'claim:requeue': () => a(to(ATTEMPT_CLAIMED_REQUEUE), II, II, II, II, II),
   // ATT-02; a second entry keeps today's busy (auth not entering, :1223); an ended
   // Attempt never moves back to started (§5.4).
   'started': () => a(II, to(ATTEMPT_STARTED, [{ kind: 'enter_outbox' }]), IB, II, II, II),
@@ -287,9 +287,9 @@ const LEASE_TABLE: Partial<Record<EventLabel, () => Record<LeaseStateLabel, Expe
   'claim:first': () => l(to(LEASE_HELD), GB, GB),
   // ATT-15: the released holder is the prior yielded Run.
   'claim:continuation': () => l(GB, GB, to(LEASE_REHELD)),
-  // ATT-16 keeps today's result: requeueRef is not read, so it is a first claim
-  // (ATT-14 @1 without a lease, busy on a released one).
-  'claim:requeue': () => l(to(LEASE_HELD), GB, GB),
+  // ATT-16 (D-3; 5.4): the released holder is the TaskRequeue afterRun (run-0) → held @k+1;
+  // ATT-14 is the first claim only, so a requeue without a lease is refused (busy).
+  'claim:requeue': () => l(GB, GB, to(LEASE_REHELD)),
   // ATT-18 for the owner; ATT-19 no-effect for a missing lease or an earlier release.
   'end:terminal_observed:known': () => l(SAME, to(LEASE_RELEASED_BY_CLAIM), SAME),
   // ATT-20 (新增).
@@ -583,6 +583,13 @@ describe('TaskLease ownership rows', () => {
     const otherPrior = { kind: 'attempt_claimed', claim,
       basis: { kind: 'continuation', consumedWait: { ...consumedWait, runRef: runRef('run-x') } } } satisfies AttemptEvent;
     check(transitionTaskLease(LEASE_RELEASED, otherPrior), GB, LEASE_RELEASED);
+  });
+  it('ATT-16 (5.4): a requeue whose afterRun did not release the lease is stale; the matching one re-holds it', () => {
+    const olderRequeue = { kind: 'attempt_claimed', claim,
+      basis: { kind: 'requeue', requeueRef: { ...requeueRef, afterRunId: 'run-x' } } } satisfies AttemptEvent;
+    check(transitionTaskLease(LEASE_RELEASED, olderRequeue), no('stale', 'revision_conflict'), LEASE_RELEASED);
+    // The re-held lease drops `release` and records the new holder at @k+1.
+    check(transitionTaskLease(LEASE_RELEASED, EVENTS['claim:requeue']), to(LEASE_REHELD), LEASE_RELEASED);
   });
   it('ATT-17: a held lease refuses every kind of claim', () => {
     for (const label of ['claim:first', 'claim:continuation', 'claim:requeue'] as const) {

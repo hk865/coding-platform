@@ -50,6 +50,7 @@ import { createRunStateReader } from '../core/work-graph/tasks/run-state-service
 import type { ExecutionReadPort } from '../core/work-graph/tasks/execution-read-contracts.js';
 import { createExecutionHistoryReader } from '../core/agent-runtime/observation-recovery.js';
 import { createTaskClaimService } from '../core/work-graph/tasks/claim-service.js';
+import { createTaskRequeueService } from '../core/work-graph/tasks/requeue-service.js';
 import { TASK_CLAIM_RECORD_SCHEMAS } from '../core/work-graph/tasks/claim-record-codecs.js';
 import type { TaskClaimPort } from '../core/work-graph/tasks/claim-contracts.js';
 import type { RoleConfigurationPort } from '../core/work-graph/configuration/contracts.js';
@@ -150,8 +151,8 @@ function sameJson(left: unknown, right: unknown): boolean {
  * `safePointPause` and `cancel` (D-7) as supported; `recoverRun` stays
  * unsupported until step 5.7. D-15 asks for the report as it is: each reason
  * states only what holds today, and the §7.7 target boundaries are added by
- * the substep that builds them (5.4: the requeue continuation brief, C3; 5.6:
- * the new Session after an open Kernel Turn, the restart rebuild, the
+ * the substep that builds them (5.4 added the requeue continuation brief, C3;
+ * 5.6: the new Session after an open Kernel Turn, the restart rebuild, the
  * paused-interrupted end, the paused stop and the restart stop, which also
  * rewrites the `recoverRun` reason). Built fresh per read, so a caller cannot
  * change a later report.
@@ -164,6 +165,8 @@ function workspaceRuntimeCapabilities(
     createSession: { supported: true, reason: 'durable creation and Kernel mapping are configured' },
     readHistory: { supported: true, reason: 'original Kernel history reader is configured' },
     continueHistory: { supported: true, reason: 'a continuation is a new Run, never a resume of the original Turn. '
+      + 'A Run created by a requeue starts with a continuation brief of the previous Run\'s durable facts and is '
+      + 'labelled a continuation, not a resumed execution. '
       + 'When the previous Turn has a Kernel terminal, a new Run in the same Session continues its history, '
       + 'including the successor Run after a yielded wait. When the previous Turn has no Kernel terminal (for '
       + 'example a Run still open when its Host process ended), the Kernel refuses a new Turn in that Session and '
@@ -347,7 +350,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // and the C1 mailbox admission share exactly this instance and this callback.
     // The control service reads a not-entered stop and a yielded-wait Lease
     // through the same reader (§6 RUN-09, RD-8).
-    const executionReader = createRunStateReader({ records: backend.records });
+    const executionReader = createRunStateReader({ records: backend.records, bodies });
     // R4.1: the raw control service shares the ONE records/authority pair; the
     // public port is wrapped below so close drains an in-flight control call.
     const rawControls = createRunControlService({ records: backend.records, authority: reads.authority,
@@ -399,6 +402,19 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       }) });
     const claimService = createTaskClaimService({ records: backend.records, roles: roleService,
       now, newId: randomUUID });
+    // The ONE verification workspace reader: the evidence owner captures rounds
+    // with it and the requeue owner takes its digest-only source (LA-5).
+    const verificationWorkspaceReader = new VerificationWorkspaceReader();
+    // A.2 step 5.4 (D-3, C1): the requeue owner shares the records, the WG11
+    // reader, the material service, the mailbox (a new input message is read
+    // under its reader rules, ND-9) and the delegated-write admission.
+    const requeueService = createTaskRequeueService({ records: backend.records, reads: executionReader,
+      workspaceHost: options.workspace, source: verificationWorkspaceReader, materials: rawMaterials,
+      messages: { readMessage: mailbox.readMessage.bind(mailbox) },
+      ...(authorizeConfiguration === undefined ? {} : {
+        delegatedWrites: { reads: executionReader, roles: roleService, bodies, authorizeConfiguration },
+      }),
+      now, eventId: randomUUID });
     const sessionLifecycle = createSessionLifecycleService({ records: backend.records, lookups: backend.records });
     const kernelStores = await createKernelStoreRegistry(options.kernelStores ?? { entries: [] });
     // Internal calls retain the raw directory. The outer Runtime operation is
@@ -426,7 +442,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       `${scope.projectId}\u0000${scope.workspaceId}`;
     const rawEvidence = createEvidenceService({
       records: backend.records, materials: rawMaterials, materialFacts, executions: executionReader,
-      workspaceHost: options.workspace, source: new VerificationWorkspaceReader(),
+      workspaceHost: options.workspace, source: verificationWorkspaceReader,
       ...(options.checks === undefined ? {} : { configuration: options.checks }),
       configurationFor: (scope) => registeredCheckConfigurations.get(checkScopeKey(scope))
         ?? (options.checks !== undefined
@@ -460,6 +476,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         kernelStores, workspaceHost: options.workspace, sourceAuthority: () => sourceAuthority,
         ...(options.sourcePolicyFor === undefined ? {} : { sourcePolicyFor: options.sourcePolicyFor }),
         ...(queryExecution === undefined ? {} : { queryExecution }),
+        // C3: the continuation brief's checkpoint uses the SAME workspace reader as the evidence owner.
+        workspaceSource: verificationWorkspaceReader,
         host, kernel, now, newId: randomUUID,
       };
       runtime = createAgentRuntime(dependencies);
@@ -509,6 +527,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     const claims: TaskClaimPort = {
       claimTask: (...args) => trackedCall(() => claimService.claimTask(...args), unavailable),
       readTaskClaim: (...args) => trackedCall(() => claimService.readTaskClaim(...args), unavailable),
+      requeueTask: (...args) => trackedCall(() => requeueService.requeueTask(...args), unavailable),
     };
     const roles: RoleConfigurationPort = {
       installRoleSpec: (ctx, command) => trackedCall(() => roleService.installRoleSpec(ctx, command),
@@ -652,6 +671,15 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       observeRun(...args: Parameters<typeof runtime.port.observeRun>) {
         return sessionCall(() => runtime.port.observeRun(...args));
       },
+      // C3 `executions/brief`: drained like every other Runtime read.
+      readContinuationBrief(...args: Parameters<NonNullable<typeof runtime.port.readContinuationBrief>>) {
+        const read = runtime.port.readContinuationBrief;
+        if (read === undefined) {
+          return Promise.resolve<CoreRejection>({ status: 'rejected', code: 'unsupported',
+            reason: 'the continuation brief read needs the trusted Runtime binding' });
+        }
+        return sessionCall(() => read(...args));
+      },
       // R4.3a: local control delivery runs on the SAME trackedCall/close path as
       // execution; no public close API or background recovery is added.
       deliverControl(...args: Parameters<NonNullable<typeof runtime.port.deliverControl>>) {
@@ -685,7 +713,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     const workflowConfiguration = options.workflow === undefined
       ? undefined : structuredClone(options.workflow);
     const workflowDependencies: WorkflowDependencies = {
-      tasks: rawGoals, plans: planService, sessions: sessionDirectory, claims: claimService,
+      tasks: rawGoals, plans: planService, sessions: sessionDirectory,
+      claims: { ...claimService, requeueTask: requeueService.requeueTask },
       executions: executionReader, runtime: rawRuntime, evidence: rawEvidence, checks: rawCheckRunner,
       sourceAuthority,
       ...(workflowConfiguration === undefined ? {} : { configuration: workflowConfiguration }),

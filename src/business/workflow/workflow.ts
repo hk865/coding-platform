@@ -11,6 +11,7 @@ import type { GoalPhaseRef } from '../../contracts/goal-phase.js';
 import type { RoundSnapshot } from '../../contracts/verification.js';
 import type { PreparedTaskExecution } from '../../contracts/core/prepared-execution.js';
 import type { ConsumedWaitV1 } from '../../contracts/dispatch.js';
+import type { TaskRequeueRef } from '../../contracts/task-requeue.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../contracts/fingerprint.js';
 import type { CreateSessionRequest } from '../../core/agent-runtime/session-operations.js';
 import type { PrepareTaskExecutionRequest, StartTaskExecutionRequest } from '../../core/agent-runtime/execution-contracts.js';
@@ -19,7 +20,7 @@ import type { TaskGraph, TaskRow } from '../../core/work-graph/tasks/plan-contra
 import type { GraphWrite } from '../../core/work-graph/tasks/contracts.js';
 import type { SessionCard } from '../../core/work-graph/sessions/contracts.js';
 import { beginRefusalIsPermanent, displayRoundStatus } from '../../core/work-graph/state/verification-machine.js';
-import type { ConsultationInput, ConsultationResult, InitialPlanningGoalInput, InitialPlanningGoalInputResult, N0GoalInput, WorkflowAdvanceInput, WorkflowAdvanceResult, WorkflowOperation, WorkflowStepReceipt } from './contracts.js';
+import type { ConsultationInput, ConsultationResult, InitialPlanningGoalInput, InitialPlanningGoalInputResult, N0GoalInput, WorkflowAdvanceInput, WorkflowAdvanceResult, WorkflowOperation, WorkflowSessionRequeue, WorkflowStepReceipt } from './contracts.js';
 import type { WorkflowDependencies, WorkflowHostConfiguration, WorkflowPort } from './ports.js';
 import { createConsultationConsumer } from './consultation.js';
 
@@ -101,14 +102,18 @@ function createSessionStep(
   value: Omit<CreateSessionRequest, 'meta'>,
   taskRef: TaskTriple,
   planRef: PlanRevisionRef,
+  requeue?: WorkflowSessionRequeue,
 ): WorkflowOperation {
   const expected: VersionPin[] = [];
+  // A Session for a requeued Task is a new request: its identity names the requeue.
   const requestWithoutRequestId = {
     workspace: value.workspace, role: value.role, recommendedRefs: value.recommendedRefs,
     initialLinks: value.initialLinks, meta: { expected },
+    ...(requeue === undefined ? {} : { requeueRef: requeue.requeueRef }),
   };
   const requestId = requestIdFor(base, 'create_session', requestWithoutRequestId);
-  return { kind: 'create_session', request: { ...value, meta: { requestId, expected } }, taskRef, planRef };
+  return { kind: 'create_session', request: { ...value, meta: { requestId, expected } }, taskRef, planRef,
+    ...(requeue === undefined ? {} : { requeue }) };
 }
 /** VD-7: a work round opens under the Goal's CURRENT adopted Plan, not the Plan the Run was claimed under. */
 function openWorkChecksStep(base: Base, run: RunSnapshot, planRef: PlanRevisionRef): WorkflowOperation {
@@ -506,7 +511,7 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort & Requi
   async function buildClaimOperation(
     owned: Owned, base: Base, goal: GoalSnapshot, planRef: PlanRevisionRef,
     task: RuntimeTask, binding: Binding, sessionId: string, sessionRevision: number,
-    consumedWait?: ConsumedWaitV1,
+    consumedWait?: ConsumedWaitV1, requeue?: WorkflowSessionRequeue,
   ): Promise<{ operation: WorkflowOperation } | { rejection: CoreRejection }> {
     const workspacePin = await loadWorkspacePin(owned, goal.workspaceRef);
     if ('rejection' in workspacePin) return workspacePin;
@@ -518,8 +523,11 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort & Requi
     ];
     const input: ClaimTaskInput = {
       goalRef: base.goalRef, planRef, taskId: task.taskId, sessionRef,
-      roleBinding: binding.roleBinding, budget: binding.budget,
+      // TASK-03: a requeue that pins a budget is claimed with exactly that budget (§4.3: `budget ?? binding.budget`).
+      roleBinding: binding.roleBinding, budget: requeue?.budget ?? binding.budget,
       ...(consumedWait === undefined ? {} : { consumedWait }),
+      // TASK-03 (D-3): a requeued Task is claimed only with the TaskRequeue covering its selected Run.
+      ...(requeue === undefined ? {} : { requeueRef: requeue.requeueRef }),
     };
     return { operation: { kind: 'claim_task', request: graphWrite(base, 'claim_task', input, expected) } };
   }
@@ -661,6 +669,69 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort & Requi
       openGateChecksStep(base, graph.plan.ref, gate, producer.execution, gateTask.scope.kind)));
   }
 
+  /**
+   * TASK-03 / W-21 (D-3, §4.3 "claim_requeued", §8 8.3): a requeued Task
+   * (P4) is claimed with the TaskRequeue covering its selected Run, preferably
+   * in that Run's claim Session: reusable → claim there; busy → skip the Task
+   * this round (`null`); archived, of another role, `not_found`, or
+   * unavailable because it is `missing`/`damaged` → the default selection
+   * without a hint, and a new Session claims with the requeue too. A
+   * cancelled or forbidden read is that rejection; any other state of the
+   * claim Session (a failed read, `recoverable`) waits rather than moving the
+   * continuation off its history. The claim carries the budget the requeue
+   * pins (`TaskRow.requeueBudget`), else the binding's. A claim Session whose
+   * Kernel Turn is still open (`kernel_turn_open` → `create_session`) is
+   * step 5.6; until then it waits.
+   */
+  async function claimRequeued(
+    owned: Owned, base: Base, goal: GoalSnapshot, planRef: PlanRevisionRef, task: RuntimeTask, row: TaskRow,
+    binding: Binding, requeueRef: TaskRequeueRef, afterRunRef: RunRef,
+  ): Promise<WorkflowAdvanceResult | null> {
+    const afterRun = await deps.executions.readExecution(owned.ctx, afterRunRef);
+    if (afterRun.status !== 'ready') return waiting(null, receiptReason(afterRun, 'the requeued Task afterRun is not readable'));
+    const workspaceId = goal.workspaceRef.workspaceId;
+    const claimSession = await deps.sessions.readSession(owned.ctx, afterRun.value.outbox.claim.sessionRef);
+    let chosen: SessionChoice;
+    if (claimSession.status === 'ready') {
+      const card = claimSession.value;
+      const record = card.record;
+      if (roleReusable(card, workspaceId, binding)) {
+        chosen = { kind: 'reuse', card };
+      } else if (record.lifecycle === 'archived' || record.workspaceId !== workspaceId
+        || !sameCanonical(record.role, binding.sessionRole)
+        || (record.health === 'unavailable' && (record.healthConclusion === 'missing' || record.healthConclusion === 'damaged'))) {
+        chosen = await chooseSession(owned, goal, binding, null);
+      } else if (record.occupancy !== null) {
+        return null;
+      } else {
+        return waiting(null, `the afterRun claim Session is ${record.health}`
+          + `${record.healthConclusion === undefined || record.healthConclusion === null ? '' : ` (${record.healthConclusion})`}`);
+      }
+    } else if (claimSession.status === 'not_found') {
+      chosen = await chooseSession(owned, goal, binding, null);
+    } else if (claimSession.status === 'rejected' && (claimSession.code === 'cancelled' || claimSession.code === 'forbidden')) {
+      return claimSession;
+    } else {
+      return waiting(null, receiptReason(claimSession, 'the afterRun claim Session is not readable'));
+    }
+    if (chosen.kind === 'rejection') return chosen.rejection;
+    if (chosen.kind === 'waiting') return waiting(null, chosen.reason);
+    const taskRef: TaskTriple = row.ref;
+    const requeue: WorkflowSessionRequeue = { requeueRef, budget: row.requeueBudget ?? null };
+    if (chosen.kind === 'create') {
+      return advancing(null, makePerform(base, createSessionStep(base, {
+        workspace: { projectId: owned.projectId, workspaceId },
+        role: binding.sessionRole, recommendedRefs: [],
+        initialLinks: [{ target: { kind: 'task', ref: taskRef }, relation: 'responsible' }],
+      }, taskRef, planRef, requeue)));
+    }
+    const sessionRef: SessionRef = { projectId: owned.projectId, sessionId: chosen.card.record.ref.sessionId };
+    const built = await buildClaimOperation(owned, base, goal, planRef, task, binding,
+      sessionRef.sessionId, chosen.card.record.revision, undefined, requeue);
+    if ('rejection' in built) return built.rejection;
+    return advancing(null, makePerform({ ...base, sessionHint: sessionRef }, built.operation));
+  }
+
   /** Read-only deterministic first-step selection shared by `select_work`. */
   async function selectNext(owned: Owned, base: Base): Promise<WorkflowAdvanceResult> {
     const config = deps.configuration;
@@ -696,6 +767,21 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort & Requi
       if (row === undefined) continue;
       if (task.taskKind !== 'work' || task.disposition !== 'active') continue;
       if (task.executionIntent === 'plan_only') continue;
+      // D-3 (TASK-03): a requeued Task (P4) is claimed with its covering TaskRequeue,
+      // before the ended Run's round chain is resumed.
+      if (row.requeueRef !== undefined && row.execution !== null) {
+        if (!row.eligibility.eligible) continue;
+        const assignment = revisionAssignments(graph.plan).find((candidate) => candidate.taskId === task.taskId);
+        if (assignment === undefined) continue;
+        const binding = bindingForRole(config, owned.projectId, goal.workspaceRef.workspaceId, assignment.role);
+        if (binding === null) {
+          return rejection('unsupported',
+            `no trusted Workflow binding matches workspace ${goal.workspaceRef.workspaceId} and role ${assignment.role}`);
+        }
+        const claimed = await claimRequeued(owned, base, goal, graph.plan.ref, task, row, binding, row.requeueRef, row.execution);
+        if (claimed === null) continue;
+        return claimed;
+      }
       // A real claim that was persisted but never admitted to the Kernel (its
       // first prepare was refused) is recoverable from the SAME Run. This is the
       // ONE narrow unadmitted state, checked against the formal execution read;
@@ -837,7 +923,7 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort & Requi
             `no trusted Workflow binding matches workspace ${goal.workspaceRef.workspaceId} and role ${assignment.role}`);
         }
         const built = await buildClaimOperation(owned, base, goal, graphRead.value.plan.ref, task, binding,
-          session.ref.sessionId, session.revision);
+          session.ref.sessionId, session.revision, undefined, operation.requeue);
         if ('rejection' in built) return waiting(receipt, built.rejection.reason);
         const nextBase: Base = { ...base, sessionHint: { projectId: owned.projectId, sessionId: session.ref.sessionId } };
         return advancing(receipt, makePerform(nextBase, built.operation));

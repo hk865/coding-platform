@@ -11,8 +11,10 @@
  *   busy and VD-3; the VR-02 VD-8 markers; the VR-03 `incompleteCause`; VR-05
  *   and VR-13; the D-2 fold of VR-07 with its read-set guard; VD-2 on VR-08;
  *   the VR-11/VR-12 index. Rows of later substeps return `illegal`/`invalid`
- *   at the legal cell (VR-04/06, 5.6) or from every state (VR-09, 5.4;
- *   VR-14/15, 5.9); the VD-9 guards are 5.5.
+ *   at the legal cell (VR-04/06, 5.6) or from every state (VR-14/15, 5.9);
+ *   the VD-9 guards are 5.5. Step 5.4: VR-09 (`task_requeued` guards the
+ *   finalized non-clean-PASS head and claims its slot with the same owner)
+ *   and the VR-01 TaskRequeue cover guard.
  * - Guard rows in today's order, and the pure helpers of §9.6 / §13.7 in full
  *   (the chain cases of the planned `verification-chain.test.ts` live here).
  *
@@ -153,13 +155,13 @@ const MIXED: RoundSnapshot = { ...OPEN_PENDING, revision: 7, verificationPlan: P
 const MIXED_FINALIZED: RoundSnapshot = { ...MIXED, revision: 8, status: 'finalized', outcome: 'INCONCLUSIVE',
   gaps: [pendingGap('c-pending', 'c-pending')], evidenceRefs: [] };
 
-/** The VD-9 facts (5.5) and the TaskRequeue cover (5.4) arrive with their rows. */
+/** The VD-9 facts (5.5) arrive with their rows; the TaskRequeue cover is `subjectRunRequeued` (5.4). */
 const ctxOf = (state: RoundSnapshot | null, over: Partial<RoundGuardContext> = {}): RoundGuardContext => ({
   callerIsExecutor: true, expectedRevision: state === null ? null : state.revision, instanceLeaseHeld: true, ...over });
 
 const endedRun: Pick<RunSnapshot, 'status' | 'outcome' | 'reconciliation'> = { status: 'ended', outcome: 'completed' };
 const OPEN_FACTS: RoundOpenFactsV1 = { planIsActive: true, taskBasisResolved: true,
-  relation: { kind: 'work', runTaskIsSubject: true }, subjectRun: endedRun, chain: { kind: 'none' } };
+  relation: { kind: 'work', runTaskIsSubject: true }, subjectRun: endedRun, subjectRunRequeued: false, chain: { kind: 'none' } };
 const APPLICABLE = { applicability: 'APPLICABLE', basis: 'same-plan', reason: 'the evidence Plan is the adopted Plan' } as const;
 const FOLD_OK: RoundFoldFactsV1 = { decisions: { lint: APPLICABLE, unit: APPLICABLE }, sourceCurrent: true, contextGaps: [] };
 
@@ -187,6 +189,7 @@ const SB = no('stale', 'busy');
 const DB = no('duplicate', 'busy');
 const GI = no('guard_failed', 'incomplete');
 const GF = no('guard_failed', 'forbidden');
+const GB = no('guard_failed', 'busy');
 /** A 新增 (or not-yet-written) row: `illegal`/`invalid` until step 5. */
 const NY: Expect = { ok: false, reason: 'illegal', code: 'invalid', notYet: true };
 
@@ -254,6 +257,12 @@ const openedEffects = (round: RoundSnapshot): VerificationEffect[] => [{ kind: '
     nextOwner: roundSlotOwner(round.ref) } },
   { kind: 'emit_event', eventType: 'VerificationRoundOpened' }];
 const OPENED_EFFECTS = openedEffects(OPENED);
+/** VR-09 effects: the head guarded as read and its slot claimed by the same owner (legacy slot-less: null → null). */
+const requeuedEffects = (head: RoundSnapshot): VerificationEffect[] => {
+  const owner = head.chain === undefined ? null : roundSlotOwner(head.ref);
+  return [{ kind: 'guard_round_unchanged', revision: head.revision },
+    { kind: 'claim_round_slot', claim: { claimKey: roundSlotKey(roundSlotSubjectOf(head)), expectedOwner: owner, nextOwner: owner } }];
+};
 /** VR-08 effects: the round guarded as read (not written), the claim Evidence, the index, the event. */
 const claimEffects = (revision: number): VerificationEffect[] => [{ kind: 'guard_round_unchanged', revision },
   { kind: 'admit_claim_evidence', coverage: [cov('r1'), cov('r2')] },
@@ -285,9 +294,13 @@ const ROUND_TABLE: Record<RoundEventLabel, () => Record<RoundStateLabel, Expect>
       { ref: evidence('e-1'), checkId: 'lint', coverage: cov('r1') },
       { ref: evidence('e-2'), checkId: 'unit', coverage: cov('r2') },
     ])), IB, IB, IB, IB),
-  // VR-14/15 (新增) and VR-09 (新增).
+  // VR-14/15 (新增, 5.9).
   round_reverified: () => r(NY, NY, NY, NY, NY, NY, NY, NY, NY),
-  task_requeued: () => r(NY, NY, NY, NY, NY, NY, NY, NY, NY),
+  // VR-09 (5.4): only a finalized non-clean-PASS head; the round is guarded, not written, and its
+  // slot is claimed by the same owner (a legacy slot-less head null → null). An open head is
+  // finalize_first (busy); a clean PASS has nothing to requeue.
+  task_requeued: () => r(no('illegal', 'not_found'), GB, GB, GB, GB, II, keep(requeuedEffects(FINAL_FAIL)),
+    keep(requeuedEffects(FINAL_INCONCLUSIVE)), keep(requeuedEffects(FINAL_PASS_GAPS))),
 };
 
 describe('transitionRound: every (state, event) combination', () => {
@@ -412,11 +425,11 @@ describe('VR-01 round_opened guards', () => {
     expect(roundOpenBasisProblem(true, task)).toBeNull();
     expect(roundOpenBasisProblem(false, task)).toMatchObject({ reason: 'guard_failed', code: 'incomplete' });
     // After the Run read: relation, then ended; no pointer or basis fact needed.
-    expect(roundOpenSubjectProblem({ relation: OPEN_FACTS.relation, subjectRun: endedRun }, task)).toBeNull();
+    expect(roundOpenSubjectProblem({ relation: OPEN_FACTS.relation, subjectRun: endedRun, subjectRunRequeued: false }, task)).toBeNull();
     expect(roundOpenSubjectProblem({ relation: { kind: 'work', runTaskIsSubject: false },
-      subjectRun: { status: 'running', outcome: null } }, task)).toMatchObject({ code: 'forbidden',
+      subjectRun: { status: 'running', outcome: null }, subjectRunRequeued: false }, task)).toMatchObject({ code: 'forbidden',
       detail: 'the subject task is not the subject Run task' });
-    expect(roundOpenSubjectProblem({ relation: OPEN_FACTS.relation, subjectRun: { status: 'running', outcome: null } }, task))
+    expect(roundOpenSubjectProblem({ relation: OPEN_FACTS.relation, subjectRun: { status: 'running', outcome: null }, subjectRunRequeued: false }, task))
       .toMatchObject({ code: 'forbidden', detail: 'the subject Run has not formally ended' });
     // After the chain lookup: VD-1/VD-15.
     expect(roundOpenChainProblem({ kind: 'none' }, task)).toBeNull();
@@ -1188,5 +1201,32 @@ describe('roundTaskSignal (projection input, §4 P7–P13, P20)', () => {
     // I-20: n ≤ ROUND_CHAIN_MAX, so the head at the limit has no successor (VR-14 refuses first, step 5.9).
     expect(() => buildSuccessorRound(successorInput(head, `round-${ROUND_CHAIN_MAX + 1}`)))
       .toThrow(`round round-${ROUND_CHAIN_MAX} is at the chain limit ${ROUND_CHAIN_MAX} and has no successor`);
+  });
+});
+
+describe('step 5.4: VR-09 task_requeued and the VR-01 TaskRequeue cover', () => {
+  it('VR-09 claims a chained head slot with the same owner, so a successor committed after the read loses the race', () => {
+    const chained: RoundSnapshot = { ...FINAL_FAIL, chain: rootRoundChain() };
+    const result = transitionRound(chained, ROUND_EVENTS.task_requeued(), ctxOf(chained));
+    expect(result).toEqual({ ok: true, next: chained, effects: [
+      { kind: 'guard_round_unchanged', revision: chained.revision },
+      { kind: 'claim_round_slot', claim: { claimKey: roundSlotKey(roundSlotSubjectOf(chained)),
+        expectedOwner: roundSlotOwner(chained.ref), nextOwner: roundSlotOwner(chained.ref) } },
+    ] });
+    // A legacy slot-less head guards the empty slot (null -> null).
+    expect(requeuedEffects(FINAL_FAIL)[1]).toMatchObject({ claim: { expectedOwner: null, nextOwner: null } });
+    expect(transitionRound(OPEN_PENDING, ROUND_EVENTS.task_requeued(), ctxOf(OPEN_PENDING)))
+      .toMatchObject({ ok: false, reason: 'guard_failed', code: 'busy', detail: expect.stringMatching(/^finalize_first: /) });
+  });
+
+  it('VR-01 refuses a subject Run a TaskRequeue covers, after the ended and reconciliation checks', () => {
+    expect(roundOpenSubjectProblem({ relation: OPEN_FACTS.relation, subjectRun: endedRun, subjectRunRequeued: true }, task))
+      .toMatchObject({ reason: 'guard_failed', code: 'forbidden',
+        detail: 'the subject Run is covered by a TaskRequeue; its rework belongs to the new Run' });
+    // The earlier checks keep their own refusal.
+    expect(roundOpenSubjectProblem({ relation: OPEN_FACTS.relation, subjectRun: { status: 'running', outcome: null },
+      subjectRunRequeued: true }, task)).toMatchObject({ detail: 'the subject Run has not formally ended' });
+    expect(openWith({ subjectRunRequeued: true })).toMatchObject({ ok: false, reason: 'guard_failed', code: 'forbidden' });
+    expect(openWith({ subjectRunRequeued: false })).toMatchObject({ ok: true });
   });
 });

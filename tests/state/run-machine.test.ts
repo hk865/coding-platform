@@ -10,7 +10,10 @@
  *   except the step 5.1 flips: RUN-09..11 (U) apply a control on a Run that
  *   never entered at once (D-7), and RUN-12..15 supersede the queued older
  *   pointer intent (D-8) and refuse a resume of a non-active Goal (D-9) and a
- *   control on a consumed continuation (RD-8).
+ *   control on a consumed continuation (RD-8); and the step 5.4 flips: RUN-01
+ *   admits a requeue claim through the covering TaskRequeue (D-3), RUN-02
+ *   reads the continuation brief verdict (C3), RUN-07 writes
+ *   `terminalPayload` (C1).
  * - Guard rows of RUN-01..07 and RUN-09..15 in today's order, the §6.4
  *   refusals in front of the 新增 rows, and the pure helpers named by §6.6 /
  *   §15.1 (`runControlFence`, `terminalOutcomeOf`, `terminalPayloadOf`,
@@ -143,7 +146,7 @@ const CTX: RunGuardContext = {
   kernelPaused: false,
   inputsConfirmed: true,
   actor: 'human',
-  claim: { sessionOccupied: false, eligibility: null, taskHasRun: false, prior: null, admission: null },
+  claim: { sessionOccupied: false, eligibility: null, taskHasRun: false, prior: null, admission: null, requeue: null },
 };
 const ctxWith = (patch: Partial<RunGuardContext>): RunGuardContext => ({ ...CTX, ...patch });
 const claimCtx = (patch: Partial<NonNullable<RunGuardContext['claim']>>): RunGuardContext =>
@@ -511,13 +514,29 @@ describe('RUN-01 claim_committed', () => {
     expect(at(good).ok).toBe(true);
   });
 
-  it('keeps today\'s first-claim rule for a requeue claim (D-3 is step 5.4)', () => {
+  it('admits a requeue claim only through the TaskRequeue covering the selected Run (RUN-01, D-3; 5.4)', () => {
     const requeue: RunEvent = { ...EV.claim, basis: { kind: 'requeue', requeueRef } };
-    expect(rejected(transitionRun(stateOf('Absent'), requeue, claimCtx({ taskHasRun: true }))))
-      .toMatchObject({ reason: 'guard_failed', code: 'busy', detail: expect.stringContaining('cannot be claimed for the first time') });
-    // Without a Run the claim service never reads requeueRef: the same Run@1 as a first claim, no requeueRef.
-    expect(transitionRun(stateOf('Absent'), requeue, CTX)).toEqual(transitionRun(stateOf('Absent'), EV.claim, CTX));
-    expect(ok(transitionRun(stateOf('Absent'), requeue, CTX)).next.record?.requeueRef).toBeUndefined();
+    const facts = { coversSelectedRun: true, leaseReleasedByAfterRun: true, budgetPinned: true };
+    const at = (patch: Partial<typeof facts> | null) => transitionRun(stateOf('Absent'), requeue,
+      claimCtx({ taskHasRun: true, requeue: patch === null ? null : { ...facts, ...patch } }));
+    // No TaskRequeue named, or an older one: an older requeue never claims again.
+    expect(rejected(at(null))).toMatchObject({ reason: 'stale', code: 'revision_conflict',
+      detail: 'the requeueRef does not name the TaskRequeue covering the selected Run' });
+    expect(answer(at({ coversSelectedRun: false }))).toEqual({ reason: 'stale', code: 'revision_conflict' });
+    // ATT-16: the lease must have been released by the afterRun.
+    expect(rejected(at({ leaseReleasedByAfterRun: false }))).toMatchObject({ reason: 'stale', code: 'revision_conflict',
+      detail: 'the Task lease was not released by the requeue afterRun' });
+    // C1: a pinned requeue budget must be the claim budget.
+    expect(rejected(at({ budgetPinned: false }))).toMatchObject({ reason: 'illegal', code: 'invalid',
+      detail: 'the requeue pins the claim budget' });
+    // Accepted: Run@1 like a first claim with the requeueRef recorded; the Task already having a Run is the point.
+    const accepted = ok(at({}));
+    expect(accepted.next.record?.requeueRef).toEqual(requeueRef);
+    expectSameRecord(accepted.next.record,
+      newRunRecord({ claim, basis: { kind: 'requeue', requeueRef }, roleBinding, budget, workspaceRevision: 7 }));
+    // The shared guards still come first (an occupied Session before the requeue facts).
+    expect(answer(transitionRun(stateOf('Absent'), requeue, claimCtx({ sessionOccupied: true, requeue: null }))))
+      .toEqual({ reason: 'guard_failed', code: 'busy' });
   });
 });
 
@@ -610,9 +629,28 @@ describe('RUN-02 / RUN-03 entry_authorized', () => {
     }
   });
 
-  it('does not read the continuation brief yet (C3 is step 5.4)', () => {
-    for (const continuationBrief of ['absent_ok', 'bound', 'missing', 'unexpected', 'mismatch'] as const) {
-      expect(transitionRun(runStateOf(CLAIMED), EV.authorize, ctxWith({ continuationBrief })).ok, continuationBrief).toBe(true);
+  it('checks the continuation brief verdict against the Run requeueRef (RUN-02, C3; 5.4)', () => {
+    const requeued: RunSnapshot = { ...CLAIMED, requeueRef };
+    const at = (run: RunSnapshot, continuationBrief: RunGuardContext['continuationBrief']) =>
+      transitionRun(runStateOf(run), EV.authorize, ctxWith({ continuationBrief }));
+    // Only (absent_ok, no requeueRef) and (bound, with requeueRef) pass.
+    expect(at(CLAIMED, 'absent_ok').ok).toBe(true);
+    expect(at(requeued, 'bound').ok).toBe(true);
+    expect(rejected(at(requeued, 'absent_ok'))).toMatchObject({ reason: 'guard_failed', code: 'invalid',
+      detail: 'a requeue Run cannot enter the Kernel without its continuation brief' });
+    expect(rejected(at(CLAIMED, 'bound'))).toMatchObject({ reason: 'guard_failed', code: 'invalid',
+      detail: 'only a requeue Run carries a continuation brief' });
+    for (const run of [CLAIMED, requeued]) {
+      for (const continuationBrief of ['missing', 'unexpected', 'mismatch'] as const) {
+        expect(answer(at(run, continuationBrief)), continuationBrief).toEqual({ reason: 'guard_failed', code: 'invalid' });
+      }
+    }
+    // A continuation claim (consumedWait, never with requeueRef, TD-3) enters only without a brief.
+    const continued: RunSnapshot = { ...CLAIMED, consumedWait };
+    expect(at(continued, 'absent_ok').ok).toBe(true);
+    for (const continuationBrief of ['bound', 'missing', 'unexpected', 'mismatch'] as const) {
+      expect(answer(at(continued, continuationBrief)), `consumedWait ${continuationBrief}`)
+        .toEqual({ reason: 'guard_failed', code: 'invalid' });
     }
   });
 
@@ -783,14 +821,13 @@ describe('RUN-06 history_recorded', () => {
 // ------------------------------------------------------------------------ //
 
 describe('RUN-07 terminal_observed', () => {
-  it('ends the Run in execution-entry-service.ts key order, without terminalPayload today (C1 is step 5.4)', () => {
+  it('ends the Run in execution-entry-service.ts key order with the bounded terminalPayload (RUN-07, C1; 5.4)', () => {
     const auth = authOf(RUNNING);
     const compiled: RunSnapshot = { ...RUNNING, revision: RUNNING.revision + 1, executionHistory: historyLocator(3, 6, 6) };
     expectSameRecord(ENDED, { ...compiled, status: 'ended', outcome: 'completed',
       exitCode: 0, endedAt: T_END, executionAuthorization: { ...auth, revision: auth.revision + 1, phase: 'settled' },
       lastEventSeq: 1, lastRuntimeEventId: 'rt-run_completed-1',
-      lastFactEventId: 'fact-1' });
-    expect(ENDED.terminalPayload).toBeUndefined();
+      lastFactEventId: 'fact-1', terminalPayload: { kind: 'completed', exitCode: 0 } });
     expect(YIELDED_WAIT).toMatchObject({ outcome: 'yielded', continuation, exitCode: null });
     expect(runNodeOf(YIELDED_WAIT)).toBe('YieldedWait');
   });

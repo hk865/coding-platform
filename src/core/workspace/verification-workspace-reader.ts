@@ -20,6 +20,20 @@ export class VerificationWorkspaceReader implements VerificationRoundSourcePort 
     return result.stdout;
   }
 
+  /**
+   * The requeue key source (STATE-MACHINES-SPEC §13.1, lead decision LA-5): the
+   * same whole-workspace snapshot digest `capture` reports as `sourceDigest`,
+   * without the Git change scope, so it has no changed-file limit.
+   */
+  async captureDigest(root: string): Promise<{ status: 'ready'; sourceDigest: string } | { status: 'unavailable'; reason: string }> {
+    try {
+      const snapshot = await this.source.snapshot(root);
+      return { status: 'ready', sourceDigest: snapshot.digest };
+    } catch (error) {
+      return { status: 'unavailable', reason: error instanceof Error ? error.message : 'Current workspace source could not be read completely.' };
+    }
+  }
+
   async capture(root: string): Promise<VerificationRoundSourceResult> {
     try {
       const before = await this.source.snapshot(root);

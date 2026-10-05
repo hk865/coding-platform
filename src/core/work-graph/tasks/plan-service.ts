@@ -40,7 +40,12 @@ import { makeCommitCursor, seqOfCommitCursor } from '../../../contracts/ledger.j
 import type { CompletionPolicyContentV1 } from '../../../contracts/governance.js';
 import type { Phase, PlanRevisionDraft, PlanRevisionRef, PlanRevisionSnapshot,
   RuntimeTask, TaskInputRequirementV2, TaskRelationV2 } from '../../../contracts/plan.js';
-import { reworkActorClassOf } from '../../../contracts/task-requeue.js';
+import {
+  DEFAULT_TASK_AUTOMATION_POLICY, reworkActorClassOf, type TaskAutomationPolicyV1,
+} from '../../../contracts/task-requeue.js';
+import type { ControlIntentSnapshotV1 } from '../../../contracts/control-intent.js';
+import type { GoalDesiredState } from '../../../contracts/ledger.js';
+import { buildTaskFailureFacts } from '../state/task-failure.js';
 import type { GoalPhaseRef } from '../../../contracts/goal-phase.js';
 import type {
   QueryJobAnswerRef,
@@ -114,12 +119,14 @@ import {
   laterCursor,
   readPinnedCompletionPolicy,
   readPlan,
+  readPointerIntents,
   readProposal,
   resolveGovernance,
   sameCursor,
   taskRecordRefKey,
   tryPolicyContent,
   type CanonicalTaskFacts,
+  type CanonicalTaskState,
 } from './plan-readers.js';
 import {
   deriveFuturePlanDelta,
@@ -154,6 +161,11 @@ export type PlanServiceDependencies = { records: GoalRecordTransactionPort & Rec
   initialPlanning?: { bodies: Pick<RawArtifactStorePort, 'read'> };
   /** W2: optional delegated Agent admission. Absent keeps the original Host-only behavior. */
   delegatedWrites?: PlanDelegatedWriteDependencies;
+  /**
+   * C8: the automatic-rework policy the failure facts report (`cap`); absent is
+   * `DEFAULT_TASK_AUTOMATION_POLICY` (Host settings wire it in step 5.6).
+   */
+  automationPolicy?(): TaskAutomationPolicyV1;
   now(): string; eventId(): string };
 
 const PLAN_PROPOSE_IDENTITY_PREFIX = 'plan-propose:';
@@ -638,19 +650,88 @@ function goalPlanningView(plan: PlanRevisionSnapshot, phases: ReadonlyMap<string
   }
   return { completionEvaluation: 'not_evaluated', diagnostics: stablePlanningDiagnostics(diagnostics) };
 }
+/** What the failure facts read beside the canonical task facts (§4.1 失败事实读模型). */
+type TaskRowRework = {
+  goalDesiredState: GoalDesiredState;
+  policy: TaskAutomationPolicyV1;
+  /** The pointer ControlIntent per selected Run id, read after the fact window. */
+  pointers: ReadonlyMap<string, ControlIntentSnapshotV1>;
+};
+
+/**
+ * C1 `TaskRow.failure` / `TaskRow.rework` of a work Task (`buildTaskFailureFacts`)
+ * from the same canonical read. The automation verdict is injected as `none`
+ * until step 5.8 switches the AV judgement on (lead decision LD-1). A gate's
+ * facts come from its own chain head (P20, GV) in step 5.9.
+ */
+function taskFailureRead(definition: RuntimeTask, state: CanonicalTaskState, facts: CanonicalTaskFacts,
+  rework: TaskRowRework, goalId: string): { failure: TaskRow['failure']; rework: TaskRow['rework'] } {
+  if (definition.taskKind !== 'work') return { failure: undefined, rework: undefined };
+  const runs = facts.runsByTaskId.get(definition.taskId) ?? [];
+  const execution = state.execution;
+  const selectedRun = execution === null ? null : runs.find((run) => sameRef(run.ref, execution)) ?? null;
+  const built = buildTaskFailureFacts({
+    subjectKind: 'work',
+    task: { projectId: facts.goalRef.projectId, goalId, taskId: definition.taskId },
+    disposition: definition.disposition,
+    satisfied: state.reductionRevision !== null,
+    goalDesiredState: rework.goalDesiredState,
+    // A reverify refusal and the configuration it depends on exist from step 5.9 (VR-14, LA-4).
+    reverifyRefusal: null,
+    goalEndedRuns: facts.goalEndedRuns ?? 0,
+    configurationRevision: null,
+    // The Kernel `run.failed` text is AgentRuntime's; the read model reads the persisted payloads only.
+    kernelRunFailedError: null,
+    selectedRun,
+    originUnresolvable: selectedRun === null && state.reductionRevision === null && state.effectivePhase === 'blocked',
+    pointerIntent: selectedRun === null ? null : rework.pointers.get(selectedRun.ref.runId) ?? null,
+    chain: facts.chainsByTaskId.get(definition.taskId) ?? { kind: 'none' },
+    runs,
+    requeues: facts.requeuesByTaskId.get(definition.taskId) ?? [],
+    requeueRefusal: selectedRun === null ? null : facts.requeueRefusalsByRunId.get(selectedRun.ref.runId) ?? null,
+  }, rework.policy, { kind: 'none' });
+  return { failure: built.failure ?? undefined, rework: built.rework ?? undefined };
+}
+
+/** The read-model inputs after the fact window: the pointer intents of the selected Runs. */
+async function taskRowReworkOf(records: GoalRecordTransactionPort, facts: CanonicalTaskFacts,
+  goalDesiredState: GoalDesiredState, policy: TaskAutomationPolicyV1): Promise<TaskRowRework | Rejection> {
+  const selected = [...facts.byTaskId.values()].flatMap((state) => {
+    const execution = state.execution;
+    if (execution === null) return [];
+    const run = (facts.runsByTaskId.get(state.taskId) ?? []).find((candidate) => sameRef(candidate.ref, execution));
+    return run === undefined ? [] : [run];
+  });
+  const pointers = await readPointerIntents(records, selected);
+  if (pointers.status !== 'ready') return pointers;
+  return { goalDesiredState, policy, pointers: pointers.intents };
+}
+
 function taskRow(plan: PlanRevisionSnapshot, goalId: string,
-  facts: CanonicalTaskFacts, phases: ReadonlyMap<string, Phase>, index: TaskRowIndex, taskId: string): TaskRow | null {
+  facts: CanonicalTaskFacts, phases: ReadonlyMap<string, Phase>, index: TaskRowIndex, taskId: string,
+  rework: TaskRowRework): TaskRow | null {
   const definition = plan.tasks.find((candidate) => candidate.taskId === taskId);
   const state = facts.byTaskId.get(taskId);
   if (definition === undefined || state === undefined) return null;
   const eligibility = evaluateEligibility({ plan, goalDesiredState: 'active', taskId,
     effectivePhases: phases, lease: state.lease });
+  const failure = taskFailureRead(definition, state, facts, rework, goalId);
+  const coveringRequeueRef = state.requeueRef;
+  const requeueBudget = coveringRequeueRef === null ? null
+    : (facts.requeuesByTaskId.get(taskId) ?? []).find((requeue) => sameRef(requeue.ref, coveringRequeueRef))?.budget ?? null;
   return {
     ref: { projectId: plan.ref.projectId, goalId, taskId },
     definition,
     effectivePhase: state.effectivePhase,
     // TD-1: the projection reason, present when the projected row has one.
     ...(state.phaseCause === null ? {} : { phaseCause: state.phaseCause }),
+    // P4 (D-3): the TaskRequeue a claim of this Task must name.
+    ...(state.requeueRef === null ? {} : { requeueRef: state.requeueRef }),
+    // TASK-03: the budget that TaskRequeue pins for the claim.
+    ...(requeueBudget === null ? {} : { requeueBudget: { ...requeueBudget } }),
+    // C1: the structured failure facts and the requeue history (read-only).
+    ...(failure.failure === undefined ? {} : { failure: failure.failure }),
+    ...(failure.rework === undefined ? {} : { rework: failure.rework }),
     disposition: definition.disposition,
     currentAttempt: state.currentAttempt,
     execution: state.execution,
@@ -722,6 +803,8 @@ function sameRoleFilter(left: readonly string[], right: readonly string[]): bool
 
 export function createPlanService(deps: PlanServiceDependencies): PlanServicePort {
   const { records } = deps;
+  /** C8 policy of the failure facts, read fresh on every graph read (a settings change applies at once). */
+  const automationPolicy = (): TaskAutomationPolicyV1 => deps.automationPolicy?.() ?? DEFAULT_TASK_AUTOMATION_POLICY;
 
   /**
    * R5b.4 §11.4 the narrow fact read. It consumes only the persisted Query
@@ -1364,6 +1447,7 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     if (authority.status !== 'ok') return authority;
     const requested = input.planRef;
     let activePlan: PlanRevisionSnapshot;
+    let goalDesiredState: GoalDesiredState;
     let windowWatermark: CommitCursor | null;
     let verifyActivePlan = false;
     if (requested === undefined) {
@@ -1375,6 +1459,7 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
       if (scopeError !== null) return scopeError;
       if (window.plan === null) return { status: 'not_found' };
       activePlan = window.plan;
+      goalDesiredState = window.goal.desiredState;
       windowWatermark = window.readThrough;
       verifyActivePlan = true;
     } else {
@@ -1388,6 +1473,7 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
       const planRead = await readPlan(records, requested);
       if (planRead.status !== 'ready') return asReadResult(planRead);
       activePlan = planRead.plan;
+      goalDesiredState = goalRead.goal.desiredState;
       windowWatermark = laterCursor(goalRead.readThrough, planRead.readThrough);
     }
     if (activePlan.goalRef.goalId !== goalRef.goalId) return { status: 'not_found' };
@@ -1420,11 +1506,13 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     }
     const phases = phasesOf(facts.value);
     const index = buildTaskRowIndex(activePlan);
+    const rework = await taskRowReworkOf(records, facts.value, goalDesiredState, automationPolicy());
+    if ('status' in rework) return asReadResult(rework);
     // The task graph always contains every task of the accepted Plan; Run /
     // Lease / Reduction only update each task's state.
     const tasks: TaskRow[] = [];
     for (const task of activePlan.tasks) {
-      const row = taskRow(activePlan, goalRef.goalId, facts.value, phases, index, task.taskId);
+      const row = taskRow(activePlan, goalRef.goalId, facts.value, phases, index, task.taskId, rework);
       if (row !== null) tasks.push(row);
     }
     // A historical Plan never claims another Plan's completion: the selected
@@ -1496,6 +1584,8 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     }
     const phases = phasesOf(facts.value);
     const index = buildTaskRowIndex(plan);
+    const rework = await taskRowReworkOf(records, facts.value, window.goal.desiredState, automationPolicy());
+    if ('status' in rework) return asReadResult(rework);
     const items: ReadyTask[] = [];
     let started = after === null;
     for (const task of plan.tasks) {
@@ -1510,7 +1600,7 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
       }
       // Candidacy shares `evaluateEligibility`; there is no separate
       // predecessor-completion filter here.
-      const row = taskRow(plan, goalRef.goalId, facts.value, phases, index, task.taskId);
+      const row = taskRow(plan, goalRef.goalId, facts.value, phases, index, task.taskId, rework);
       if (row === null) continue;
       if (!row.eligibility.eligible && !input.includeBlocked) continue;
       items.push({ task: row, planRef: plan.ref,

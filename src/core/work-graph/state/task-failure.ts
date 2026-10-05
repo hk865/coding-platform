@@ -22,7 +22,9 @@
  * A.2 step 2 (§15.2) scope: these tables have no 现状 row in today's code; they
  * are pure and implemented in full. The owners wire them in step 5 (5.4 FC and
  * the facts, 5.8 AV, 5.9 AV-7a..AV-7d and GV); TASK-16/17/27/28 stay in
- * `task-machine.ts` and VR-14 in `verification-machine.ts`.
+ * `task-machine.ts` and VR-14 in `verification-machine.ts`. Since 5.4 (lead
+ * decision LD-1) `buildTaskFailureFacts` takes the verdict from its owner,
+ * which injects `{kind:'none'}` until 5.8 calls `automationVerdict`.
  *
  * The owner does every read: the Runs of the Task, the pointer ControlIntent
  * (immutable request fields, read after the window), the chain heads, the
@@ -45,7 +47,8 @@ import type {
 import {
   GOAL_FAN_OUT_ACTOR, TASK_REWORK_REASON_MAX_CHARS, WORKFLOW_AUTOMATION_ACTOR, reworkActorClassOf,
   type ReworkActorClass, type ReworkFailureClass, type StopRequester, type TaskAutomationPolicyV1,
-  type TaskRequeueAutomationV1, type TaskRequeueRef, type TaskRequeueSnapshotV1, type TaskReworkOperation,
+  type TaskRequeueAutomationV1, type TaskRequeueHistorySourceV1, type TaskRequeueRef, type TaskRequeueSnapshotV1,
+  type TaskReworkOperation,
   type TaskReworkRefusalCode, type TaskReworkRefusalRef, type TaskReworkRefusalSnapshotV1,
 } from '../../../contracts/task-requeue.js';
 import { ROUND_CHAIN_MAX, type RoundSnapshot, type VerificationRoundRef } from '../../../contracts/verification.js';
@@ -455,6 +458,34 @@ export function nextRequeueAutoCount(input: {
   };
 }
 
+/**
+ * `TaskRequeue.historySource` (§11 I-12 clause 10, LA-1): the model history a
+ * continuing Run may be seeded from, derived from the directed window, never
+ * from the caller. An afterRun that entered the Kernel names its claim
+ * Session and the completed Turn boundary its Kernel terminal recorded
+ * (`executionHistory.endPosition`, the position RUN-07 moved the Session
+ * cursor to); one that never entered copies the `historySource` of the
+ * TaskRequeue its `requeueRef` names (one hop: that record was derived by the
+ * same rule), and has none without a `requeueRef` or when that record was not
+ * read.
+ */
+export function requeueHistorySourceOf(
+  afterRun: Pick<RunSnapshot, 'executionHistory' | 'requeueRef'>,
+  requeues: readonly Pick<TaskRequeueSnapshotV1, 'ref' | 'historySource'>[],
+): TaskRequeueHistorySourceV1 | null {
+  const history = afterRun.executionHistory;
+  if (history !== undefined) {
+    return { sessionRef: { projectId: history.sessionRef.projectId, sessionId: history.sessionRef.sessionId },
+      adapterId: history.kernel.adapterId, kernelSessionId: history.kernel.kernelSessionId,
+      throughPosition: history.endPosition };
+  }
+  const requeueRef = afterRun.requeueRef;
+  if (requeueRef === undefined) return null;
+  const source = requeues.find((requeue) => sameRequeueRef(requeue.ref, requeueRef))?.historySource ?? null;
+  return source === null ? null : { sessionRef: { projectId: source.sessionRef.projectId, sessionId: source.sessionRef.sessionId },
+    adapterId: source.adapterId, kernelSessionId: source.kernelSessionId, throughPosition: source.throughPosition };
+}
+
 // ------------------------------------------------------------------------ //
 // Refusal watermark and staleness (ND-7, ND-8, LA-4)                        //
 // ------------------------------------------------------------------------ //
@@ -811,17 +842,24 @@ export type TaskFailureFactsResultV1 = {
  * work Task whose selected Run ended (or P15) and for a gate with a chain,
  * unless the Task is satisfied; `rework` appears with at least one TaskRequeue
  * or refusal record.
+ *
+ * `verdict` is `automation.verdict` as the owner judged it (lead decision
+ * LD-1): until step 5.8 switches the AV judgement on (`automationVerdict`,
+ * AV-7a..7d and GV in 5.9) the owner injects `{kind:'none'}`, today's
+ * behaviour (automation waits).
  */
-export function buildTaskFailureFacts(input: TaskFailureInputV1, policy: TaskAutomationPolicyV1): TaskFailureFactsResultV1 {
+export function buildTaskFailureFacts(
+  input: TaskFailureInputV1, policy: TaskAutomationPolicyV1, verdict: TaskAutomationVerdictV1,
+): TaskFailureFactsResultV1 {
   switch (input.subjectKind) {
     case 'work': {
       const view = workView(input);
-      return { failure: workFailureFacts(view, policy), rework: reworkSummary(view, policy) };
+      return { failure: workFailureFacts(view, policy, verdict), rework: reworkSummary(view, policy) };
     }
     case 'gate': {
       const view = gateView(input);
       // A gate never requeues; its rework history is the chain's `reverify` facts.
-      return { failure: gateFailureFacts(view, policy),
+      return { failure: gateFailureFacts(view, policy, verdict),
         rework: view.reverifyRefusal === null ? null : { entries: [], requeueAutoCount: 0, cap: policy.autoReworkLimit } };
     }
     default:
@@ -829,7 +867,7 @@ export function buildTaskFailureFacts(input: TaskFailureInputV1, policy: TaskAut
   }
 }
 
-function workFailureFacts(view: WorkView, policy: TaskAutomationPolicyV1): TaskFailureFactsV1 | null {
+function workFailureFacts(view: WorkView, policy: TaskAutomationPolicyV1, verdict: TaskAutomationVerdictV1): TaskFailureFactsV1 | null {
   const { input, run, derivation } = view;
   if (input.satisfied) return null;
   if (run === null || derivation === null) {
@@ -841,7 +879,7 @@ function workFailureFacts(view: WorkView, policy: TaskAutomationPolicyV1): TaskF
       source: sourceFacts(null, [view.requeueRefusal, view.reverifyRefusal]),
       requeueActors: [], reverifyActors: [],
       automation: automationFacts(view.priorAutoCount, null, view.requeueRefusal, view.reverifyRefusal,
-        workVerdict(view, policy.autoReworkLimit).verdict, policy),
+        verdict, policy),
     };
   }
   if (run.status !== 'ended') return null;
@@ -860,11 +898,11 @@ function workFailureFacts(view: WorkView, policy: TaskAutomationPolicyV1): TaskF
     requeueActors: workRequeueActors(view),
     reverifyActors: workReverifyActors(view),
     automation: automationFacts(view.priorAutoCount, view.covering?.ref ?? null, view.requeueRefusal, view.reverifyRefusal,
-      workVerdict(view, policy.autoReworkLimit).verdict, policy),
+      verdict, policy),
   };
 }
 
-function gateFailureFacts(view: GateView, policy: TaskAutomationPolicyV1): TaskFailureFactsV1 | null {
+function gateFailureFacts(view: GateView, policy: TaskAutomationPolicyV1, verdict: TaskAutomationVerdictV1): TaskFailureFactsV1 | null {
   const { input, head } = view;
   if (input.satisfied || input.chain.kind === 'none') return null;
   const anchor = input.anchorRun;
@@ -883,7 +921,7 @@ function gateFailureFacts(view: GateView, policy: TaskAutomationPolicyV1): TaskF
     source: sourceFacts(head, [view.reverifyRefusal]),
     requeueActors: [],
     reverifyActors: gateReverifyActors(view),
-    automation: automationFacts(0, null, null, view.reverifyRefusal, gateVerdict(view, policy.autoReworkLimit).verdict, policy),
+    automation: automationFacts(0, null, null, view.reverifyRefusal, verdict, policy),
   };
 }
 

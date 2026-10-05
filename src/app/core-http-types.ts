@@ -153,7 +153,11 @@ export type CoreRouteSuffix =
   | 'files/compare'
   | 'commands/start'
   | 'commands/read'
-  | 'commands/stop';
+  | 'commands/stop'
+  // A.2 step 5.4 (D-3, C1, C3): the operator requeue/continue and the
+  // continuation brief pinned to a requeue Run.
+  | 'tasks/requeue'
+  | 'executions/brief';
 
 type SecondArgument<M> = M extends (ctx: CoreCallContext, argument: infer A) => unknown ? A : never;
 type MethodResult<M> = M extends (ctx: CoreCallContext, argument: never) => infer R ? Awaited<R> : never;

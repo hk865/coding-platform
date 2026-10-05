@@ -42,7 +42,7 @@ import { revisionAssignments } from '../../../contracts/plan.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { RoleSpecResolutionV1 } from '../../../contracts/role-spec-materials.js';
 import { roleSpecContentDigest } from '../../../contracts/role-spec.js';
-import { isAutomationActor } from '../../../contracts/task-requeue.js';
+import { isAutomationActor, type TaskRequeueRef, type TaskRequeueSnapshotV1 } from '../../../contracts/task-requeue.js';
 import type {
   EncodedRecord, GoalRecordTransactionPort, PreparedCommit, RecordGuard, StoreFailure,
 } from '../../record-store/ports.js';
@@ -55,7 +55,9 @@ import {
   type AttemptClaimBasis, type AttemptEvent, type AttemptGuardContext,
 } from '../state/attempt-machine.js';
 import { messageMachineStateOf, messageSatisfiesWait } from '../state/message-machine.js';
-import { runControlNodeOf, runStateOf, transitionRun, type RunEvent, type RunGuardContext } from '../state/run-machine.js';
+import {
+  runControlNodeOf, runStateOf, transitionRun, type ClaimRequeueFacts, type RunEvent, type RunGuardContext,
+} from '../state/run-machine.js';
 import {
   occupancyAdmissionProblem, occupySessionRecord, sessionMachineStateOf, transitionSession, type SessionOccupation,
 } from '../state/session-availability.js';
@@ -78,6 +80,7 @@ import {
 import type { SessionMessage } from '../communication/contracts.js';
 import { decodeSessionMessageRecord, sessionMessageRefKey } from '../communication/message-record-codecs.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
+import { taskRequeueRefProblem } from '../persistence/rework-codecs.js';
 
 const RUN_SCHEMA_ID = 'RunSnapshot@1';
 const TASK_LEASE_SCHEMA_ID = 'TaskLeaseSnapshot@1';
@@ -172,10 +175,12 @@ const UNREAD_TASK: TaskClaimSubject = { taskKind: 'work', disposition: 'active',
 /** A continuation's prior Run before it is read: every guard on it holds. */
 const UNREAD_PRIOR: NonNullable<TaskClaimFacts['prior']> = { node: 'YieldedWait', pointer: 'none', bindingProblem: null,
   leaseReleasedByPrior: true, replyProblem: null };
+/** A requeue claim's TaskRequeue before it is read: every guard on it holds. */
+const UNREAD_REQUEUE: ClaimRequeueFacts = { coversSelectedRun: true, leaseReleasedByAfterRun: true, budgetPinned: true };
 /** The Attempt and Outbox of a claim are created with no paired Run yet (§5.2: `Absent` only while claiming). */
 const CLAIMING: AttemptGuardContext = { runNode: 'Absent', runLastEventSeq: 0, ownsSession: false, ownsLease: false };
 
-/** First claim, W2 continuation, or a claim after a TaskRequeue (read as a first claim until A.2 step 5.4). */
+/** First claim, W2 continuation, or a claim after a TaskRequeue (D-3, TASK-03). */
 function claimBasisOf(input: ClaimTaskInput): AttemptClaimBasis {
   if (input.consumedWait !== undefined) return { kind: 'continuation', consumedWait: input.consumedWait };
   if (input.requeueRef !== undefined) return { kind: 'requeue', requeueRef: input.requeueRef };
@@ -187,8 +192,8 @@ function claimBasisOf(input: ClaimTaskInput): AttemptClaimBasis {
  * read (`plan-readers.ts` `readCanonicalTaskFacts`): the selected Run, the
  * applicable Reduction, the selected Run's round-chain signal, and an
  * unresolvable origin, which that read shows only as a `blocked` Task with
- * neither Run nor Reduction. No TaskRequeue covers a Run before A.2 step 5.4.
- * `null` when the read lacks the Run or Reduction it selected.
+ * neither Run nor Reduction, and the TaskRequeue covering the selected Run
+ * (P4). `null` when the read lacks the Run or Reduction it selected.
  */
 function claimPhaseFacts(task: RuntimeTask, state: CanonicalTaskState, read: CanonicalTaskFacts): TaskPhaseFacts | null {
   const execution = state.execution;
@@ -203,7 +208,28 @@ function claimPhaseFacts(task: RuntimeTask, state: CanonicalTaskState, read: Can
     selectedRun,
     originUnresolvable: selectedRun === null && applicableReduction === null && state.effectivePhase === 'blocked',
     round: read.roundsByTaskId.get(task.taskId) ?? { kind: 'none' },
-    coveringRequeue: null,
+    coveringRequeue: state.requeueRef,
+  };
+}
+
+/**
+ * TASK-03 facts of the TaskRequeue the claim names (D-3, TD-3, ATT-16, C1):
+ * read among this Task's TaskRequeues of the same window; `null` when the ref
+ * names none of them. It covers the selected Run when the projection's
+ * covering requeue is this ref (P4); the released lease must name its afterRun;
+ * a pinned budget must equal the claim budget.
+ */
+function requeueClaimFacts(
+  requeueRef: TaskRequeueRef, state: CanonicalTaskState, requeues: readonly TaskRequeueSnapshotV1[],
+  lease: TaskLeaseSnapshot | null, input: ClaimTaskInput,
+): ClaimRequeueFacts | null {
+  const requeue = requeues.find(candidate => sameRef(candidate.ref, requeueRef));
+  if (requeue === undefined) return null;
+  return {
+    coversSelectedRun: state.requeueRef !== null && sameRef(state.requeueRef, requeueRef),
+    leaseReleasedByAfterRun: lease !== null && lease.release !== undefined
+      && lease.release.runRef.runId === requeue.ref.afterRunId,
+    budgetPinned: requeue.budget === null || sameRef(requeue.budget, input.budget),
   };
 }
 
@@ -297,7 +323,7 @@ function claimRunContext(facts: TaskClaimFacts, actor: Extract<ActorRef, { kind:
     inputsConfirmed: null,
     actor: isAutomationActor(actor) ? 'system' : 'human',
     claim: { sessionOccupied: false, eligibility: null, taskHasRun: facts.taskHasRun,
-      prior: facts.prior, admission: facts.admission },
+      prior: facts.prior, requeue: facts.requeue, admission: facts.admission },
   };
 }
 
@@ -479,6 +505,16 @@ function validateInputShape(input: ClaimTaskInput, scope: WorkspaceScope): CoreR
   const deadline = budget['deadline'];
   if (!(deadline === null || (typeof deadline === 'string' && deadline.length > 0 && Number.isFinite(Date.parse(deadline))))) {
     return reject('invalid', 'budget.deadline must be null or a legal instant');
+  }
+  if (input.requeueRef !== undefined) {
+    // TD-3: a requeue claim never consumes a wait, and names a TaskRequeue of this Task.
+    if (input.consumedWait !== undefined) return reject('invalid', 'requeueRef and consumedWait are exclusive');
+    const requeueProblem = taskRequeueRefProblem(input.requeueRef, 'claimTask requeueRef');
+    if (requeueProblem !== null) return reject('invalid', requeueProblem);
+    if (input.requeueRef.projectId !== scope.projectId || input.requeueRef.goalId !== goalRef['goalId']
+      || input.requeueRef.taskId !== input.taskId) {
+      return reject('invalid', 'the requeueRef names another Task');
+    }
   }
   return null;
 }
@@ -664,6 +700,8 @@ export function createTaskClaimService(deps: TaskClaimDependencies): TaskClaimPo
       goalRef: input.goalRef, planRef: input.planRef, taskId: input.taskId,
       sessionRef: input.sessionRef, roleBinding: input.roleBinding, budget: input.budget,
       consumedWait: input.consumedWait ?? null,
+      // TD-3: part of the fingerprint only when present, so a first claim keeps its fingerprint.
+      ...(input.requeueRef === undefined ? {} : { requeueRef: input.requeueRef }),
       expected: expectedCanonical,
     } as unknown as JsonValue));
     return { identityKey, fingerprint };
@@ -756,7 +794,8 @@ export function createTaskClaimService(deps: TaskClaimDependencies): TaskClaimPo
       activePlanMatchesClaim: goal.activePlanRevision !== null
         && refKeyOf(goal.activePlanRevision) === refKeyOf(input.planRef),
       sessionProblem: null, structuralProblem: null, lease: { status: 'free' }, taskHasRun: false,
-      prior: basis.kind === 'continuation' ? UNREAD_PRIOR : null, admission: null,
+      prior: basis.kind === 'continuation' ? UNREAD_PRIOR : null,
+      requeue: basis.kind === 'requeue' ? UNREAD_REQUEUE : null, admission: null,
     };
     // Adds the facts just read and asks TASK-01..03 again.
     const judge = (read: Partial<TaskClaimFacts>): CoreRejection | null => {
@@ -822,18 +861,26 @@ export function createTaskClaimService(deps: TaskClaimDependencies): TaskClaimPo
       effectivePhases: new Map([[input.taskId, state.effectivePhase]]), lease: state.lease,
     });
     // A first claim with an existing Run is busy. A continuation claim is legal
-    // only against a formal yielded Run whose saved wait is the one it consumes.
-    let continuationLease: TaskLeaseSnapshot | null = null;
+    // only against a formal yielded Run whose saved wait is the one it consumes;
+    // a requeue claim only with the TaskRequeue covering the selected Run. Both
+    // re-hold the released lease record they read.
+    let releasedLease: TaskLeaseSnapshot | null = null;
     let continuationMessageGuard: RecordGuard | null = null;
     let prior: TaskClaimFacts['prior'] = null;
+    let requeue: TaskClaimFacts['requeue'] = null;
     const consumedWait = input.consumedWait;
     if (consumedWait !== undefined) {
       const priorRun = (facts.runsByTaskId.get(input.taskId) ?? []).find(run => sameRef(run.ref, consumedWait.runRef));
-      continuationLease = facts.leasesByTaskId.get(input.taskId) ?? null;
-      prior = priorRun === undefined ? null : continuationPrior(priorRun, continuationLease, consumedWait, input);
+      releasedLease = facts.leasesByTaskId.get(input.taskId) ?? null;
+      prior = priorRun === undefined ? null : continuationPrior(priorRun, releasedLease, consumedWait, input);
+    }
+    const requeueRef = input.requeueRef;
+    if (requeueRef !== undefined) {
+      releasedLease = facts.leasesByTaskId.get(input.taskId) ?? null;
+      requeue = requeueClaimFacts(requeueRef, state, facts.requeuesByTaskId.get(input.taskId) ?? [], releasedLease, input);
     }
     refused = judge({ structuralProblem: structuralProblemOf(eligibility), lease: state.lease,
-      taskHasRun: facts.taskHasRun === true, prior });
+      taskHasRun: facts.taskHasRun === true, prior, requeue });
     if (refused !== null) return refused;
     if (consumedWait !== undefined) {
       // MSG-10: read the FORMAL saved reply from the same records transaction
@@ -912,7 +959,7 @@ export function createTaskClaimService(deps: TaskClaimDependencies): TaskClaimPo
     const claimed = transitionTask(taskState, { kind: 'task_claimed', claim, basis, budget: input.budget },
       { taskId: input.taskId, claim: claimFacts, completion: null, trace: null });
     if (!claimed.ok) return reject(claimed.code, claimed.detail);
-    const written = claimRecords(claimed.effects, { lease: continuationLease, session, occupation,
+    const written = claimRecords(claimed.effects, { lease: releasedLease, session, occupation,
       run: { kind: 'claim_committed', claim, basis, roleBinding: input.roleBinding, budget: input.budget,
         workspaceRevision: workspaceRecord.revision },
       runContext: claimRunContext(claimFacts, actor) });
@@ -931,6 +978,8 @@ export function createTaskClaimService(deps: TaskClaimDependencies): TaskClaimPo
     addGuard(refKeyOf(input.planRef), plan.revision);
     addGuard(sessionKey, session.revision);
     for (const guard of facts.guards) addGuard(guard.refKey, guard.expectedRevision);
+    // TASK-03: the requeue claim guards the TaskRequeue@1 it consumes (and the rework records it read).
+    if (requeueRef !== undefined) for (const guard of facts.reworkGuards) addGuard(guard.refKey, guard.expectedRevision);
     for (const guard of roleFacts.guards) addGuard(guard.refKey, guard.expectedRevision);
     if (continuationMessageGuard !== null) addGuard(continuationMessageGuard.refKey, continuationMessageGuard.expectedRevision);
     for (const record of [written.lease, written.attempt, written.run, written.outbox]) addGuard(record.refKey, null);

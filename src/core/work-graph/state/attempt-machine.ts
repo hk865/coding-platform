@@ -14,11 +14,11 @@
  * - 已有 rows keep today's records byte for byte (key order of the literals in
  *   `claim-service.ts:682-707` and `execution-entry-service.ts:1260-1267`,
  *   `:1417-1450`).
- * - ATT-07 and ATT-16 (改造) keep TODAY's result: `recordRunResult` accepts
- *   only a known terminal, and a claim's `requeueRef` is not read
- *   (`claimBasisToday`), so a requeue claim is a first claim: `busy` on a
- *   released lease, a lease @1 when there is none, and the Attempt records no
- *   `requeueRef`. Step 5 flips them.
+ * - ATT-07 (改造) keeps TODAY's result: `recordRunResult` accepts only a
+ *   known terminal (step 5.6 flips it).
+ * - Step 5.4 (D-3, TD-3) lands ATT-16: a claim after a TaskRequeue re-holds the
+ *   lease its afterRun released (@k → @k+1, `release` dropped), and its
+ *   Attempt records the `requeueRef` (ATT-01).
  * - Step 5.1 adds the D-7 stop of a Run that never entered: ATT-05 (Attempt
  *   claimed → ended cancelled), ATT-23 (Lease released) and ATT-30 (Outbox
  *   pending → settled with the AD-2 `not_entered` dispatch state). A D-7 pause
@@ -128,18 +128,6 @@ export type AttemptClaimBasis =
   | { kind: 'first' }
   | { kind: 'continuation'; consumedWait: ConsumedWaitV1 }
   | { kind: 'requeue'; requeueRef: TaskRequeueRef };
-
-/**
- * The basis the claim machines judge on before A.2 step 5.4 (TASK-03, ATT-16,
- * RUN-01 改造, today's result): the claim service accepts a `requeueRef` but
- * never reads it (`claim-service.ts:639-641`), so a requeue claim is a first
- * claim (`busy` once the Task has a Run, otherwise a lease @1) and no record
- * carries `requeueRef` (`:703`). The Task, Run, Attempt and Lease machines all
- * call this one mapping; step 5.4 removes it.
- */
-export function claimBasisToday(basis: AttemptClaimBasis): Exclude<AttemptClaimBasis, { kind: 'requeue' }> {
-  return basis.kind === 'requeue' ? { kind: 'first' } : basis;
-}
 
 /** `attempt_started` payload (§5.2; `recordExecutionEntered`). */
 export type AttemptStartedFacts = {
@@ -482,7 +470,7 @@ export function transitionAttempt(
 ): Transition<TaskAttemptSnapshot, AttemptEvent, AttemptEffect> {
   if (state === null) {
     // ATT-01: the Attempt key is ∅ (CAS null); eligibility is the Task machine's (TASK-01..03).
-    if (event.kind === 'attempt_claimed') return accept(newTaskAttemptRecord(event.claim, claimBasisToday(event.basis)));
+    if (event.kind === 'attempt_claimed') return accept(newTaskAttemptRecord(event.claim, event.basis));
     return reject('illegal', 'invalid', `${event.kind} needs an existing TaskAttempt`);
   }
   const node = attemptNodeOf(state) as ExistingAttemptNode;
@@ -628,11 +616,16 @@ function leaseOnClaimed(
   state: TaskLeaseSnapshot | null,
   event: Extract<TaskLeaseEvent, { kind: 'attempt_claimed' }>,
 ): Transition<TaskLeaseSnapshot | null, TaskLeaseEvent, never> {
-  const basis = claimBasisToday(event.basis);
+  const basis = event.basis;
   if (state === null) {
-    if (basis.kind === 'first') return accept(newTaskLeaseRecord(event.claim));  // ATT-14
-    // A continuation reuses the lease its prior Run released (`claim-service.ts:612-618`).
-    return reject('guard_failed', 'busy', 'the prior Run lease is not released by that Run');
+    switch (basis.kind) {
+      case 'first': return accept(newTaskLeaseRecord(event.claim));  // ATT-14
+      // A continuation reuses the lease its prior Run released (`claim-service.ts:612-618`).
+      case 'continuation': return reject('guard_failed', 'busy', 'the prior Run lease is not released by that Run');
+      // ATT-14 is the first claim only: a requeue claim re-holds the lease its afterRun released (ATT-16).
+      case 'requeue': return reject('guard_failed', 'busy', 'the requeue claim needs the lease its afterRun released');
+      default: return unreachable(basis, 'claim basis');
+    }
   }
   if (state.release === undefined) {
     // ATT-17: resource_unavailable/leased (`eligibility.ts:73-76`).
@@ -640,12 +633,18 @@ function leaseOnClaimed(
   }
   switch (basis.kind) {
     case 'first':
-      // Also ATT-16 (改造) until step 5.4: a requeue claim is a first claim here (`claimBasisToday`).
       return reject('guard_failed', 'busy', 'this Task already has a Run and cannot be claimed for the first time');
     case 'continuation':
       // ATT-15: the released holder is the yielded Run whose wait this claim consumes.
       if (state.holderRunId !== basis.consumedWait.runRef.runId) {
         return reject('guard_failed', 'busy', 'the continuation prior Run lease is not released by that Run');
+      }
+      return accept(reheldLeaseRecord(state, event.claim));
+    case 'requeue':
+      // ATT-16 (D-3): the lease was released by the TaskRequeue's afterRun; an
+      // older requeue never claims again (§5.4).
+      if (state.release.runRef.runId !== basis.requeueRef.afterRunId) {
+        return reject('stale', 'revision_conflict', 'the Task lease was not released by the requeue afterRun');
       }
       return accept(reheldLeaseRecord(state, event.claim));
     default: return unreachable(basis, 'claim basis');

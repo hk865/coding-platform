@@ -32,6 +32,7 @@ import type { MaterialBasisV1 } from '../../contracts/material-access.js';
 import type { RuntimeBudget } from '../../contracts/runtime-budget.js';
 import type { RoleSpecResolutionV1 } from '../../contracts/role-spec-materials.js';
 import type { RunRef } from '../../contracts/dispatch.js';
+import type { VerificationRoundSourceResult } from '../../contracts/verification-context.js';
 import type { RawArtifactStorePort } from '../record-store/body-ports.js';
 import type { RoleBindingFactsPort } from '../work-graph/configuration/contracts.js';
 import type { MaterialPort } from '../work-graph/materials/contracts.js';
@@ -201,8 +202,21 @@ export type RuntimeExecutionDependencies = {
   controls?: RunControlPort & ControlObservationPort;
   /** R5b.2 internal Query writer. Optional only to keep Work callers working. */
   queryExecution?: QueryExecutionPort;
+  /**
+   * C3 (spec §6.1 (e)): the verification workspace reader (the same instance
+   * the evidence owner captures with) the continuation brief takes its own
+   * source checkpoint and the uncommitted paths from. Absent, the brief states
+   * that neither could be read.
+   */
+  workspaceSource?: ContinuationWorkspaceSource;
   now: () => string;
   newId: () => string;
+};
+
+/** The two reads of the workspace source the continuation brief takes (digest-only and full, LA-5). */
+export type ContinuationWorkspaceSource = {
+  captureDigest(root: string): Promise<{ status: 'ready'; sourceDigest: string } | { status: 'unavailable'; reason: string }>;
+  capture(root: string): Promise<VerificationRoundSourceResult>;
 };
 
 // Re-export the exact shared shapes the port consumes so callers do not import
