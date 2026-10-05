@@ -4,9 +4,10 @@ import type { MaterialAccessResolver } from '../../../contracts/material-access.
 import type { SourceApplicabilityPort } from '../../../contracts/material-access.js';
 import type { MaterialOrigin } from '../../record-store/body-ports.js';
 import type { GoalSnapshot } from '../../../contracts/ledger.js';
-import type { MaterialAuthorityReads, MaterialCandidateReads } from './record-ports.js';
+import type { MaterialAuthorityReads, MaterialCandidateReads, TaskCarriedUnchanged } from './record-ports.js';
 export type { MaterialAuthorityReads } from './record-ports.js';
 import type { RunSnapshot } from '../../../contracts/dispatch.js';
+import type { PlanRevisionRef } from '../../../contracts/plan.js';
 import type { MaterialAccessGrantSnapshot, MaterialAccessGrantV1 } from '../../../contracts/material-access.js';
 import { materialBasisEquals, materialBasisIsUnconditional, materialPrincipalInScope, sameArtifactOwnerRunRef, sameArtifactRef, validMaterialSourcePin } from '../../../contracts/material-access.js';
 import { canonicalJson } from '../../../contracts/fingerprint.js';
@@ -156,10 +157,19 @@ function rejected(code: 'forbidden' | 'source_stale' | 'unsupported', reason: st
 
 /** Legacy resolver will re-export the moved implementation after migration. */
 export type MaterialOwner = ArtifactOwnerRunRef | null;
+/**
+ * The grant resolver. `isTaskCarriedUnchanged` (LA-2, A.2 step 5.4b) lets a
+ * Run reader's grant pinned to an older Plan stay current while the Goal's
+ * active Plan carries that Run's Task unchanged. The composition root and the
+ * M2 facts service always pass it (the grant writer requires it); like
+ * `sourceApplicability` it is optional only for fixtures that never adopt a
+ * second Plan, where the exact active Plan pin gives the same answer.
+ */
 export function createMaterialAccessResolver(
   authority: MaterialAuthorityReads,
   index: MaterialCandidateReads,
   sourceApplicability?: SourceApplicabilityPort,
+  isTaskCarriedUnchanged?: TaskCarriedUnchanged,
 ): MaterialAccessResolver {
   return {
     grantsFor: async (material, reader) => {
@@ -217,10 +227,22 @@ export function createMaterialAccessResolver(
       const goal = await authority.load({ aggregateType: 'Goal', projectId: grant.scope.projectId, goalId: grant.scope.goalId });
       if (goal.status !== 'found') return false;
       const activePlan = (goal.snapshot as GoalSnapshot).activePlanRevision;
-      if (grant.basis.planRef !== null && activePlan !== null && canonicalJson(activePlan) !== canonicalJson(grant.basis.planRef)) return false;
+      // LA-2: after an adoption the grant stays current only for a Run reader
+      // whose Task the active Plan carries unchanged from `basis.planRef`.
+      let carriedTo: PlanRevisionRef | null = null;
+      if (grant.basis.planRef !== null && activePlan !== null && canonicalJson(activePlan) !== canonicalJson(grant.basis.planRef)) {
+        if (grant.reader.aggregateType !== 'Run' || isTaskCarriedUnchanged === undefined) return false;
+        carriedTo = activePlan;
+      }
       if (grant.reader.aggregateType === 'Run' && grant.basis.planRef !== null) {
         const run = await authority.load(grant.reader);
         if (run.status !== 'found' || canonicalJson((run.snapshot as RunSnapshot).planRef) !== canonicalJson(grant.basis.planRef)) return false;
+        if (carriedTo !== null && isTaskCarriedUnchanged !== undefined) {
+          const carried = await isTaskCarriedUnchanged({
+            goalRef: { aggregateType: 'Goal', projectId: grant.scope.projectId, goalId: grant.scope.goalId },
+            taskId: (run.snapshot as RunSnapshot).task.taskId, fromPlanRef: grant.basis.planRef, toPlanRef: carriedTo });
+          if (carried.status !== 'carried') return false;
+        }
       }
       const canonical = await authority.load({ aggregateType: 'MaterialAccessGrant', ...grant.scope, grantId: grant.grantId });
       return canonical.status === 'found' && canonical.snapshot.revision === 1 &&

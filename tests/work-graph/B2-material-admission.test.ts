@@ -27,6 +27,8 @@ import { MATERIAL_GRANT_EVENT_SCHEMAS } from '../../src/core/work-graph/material
 import { createMaterialReadFactsService } from '../../src/core/work-graph/materials/material-facts-service.js';
 import { createMaterialService } from '../../src/core/work-graph/materials/material-service.js';
 import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
+import type { TaskCarriedUnchanged } from '../../src/core/work-graph/materials/record-ports.js';
+import { createTaskCarriedUnchanged } from '../../src/core/work-graph/tasks/entry-plan-reader.js';
 import { modelRequestPermitIdFor } from '../../src/core/work-graph/tasks/model-call-contracts.js';
 import type { GraphWrite } from '../../src/core/work-graph/tasks/contracts.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
@@ -100,15 +102,17 @@ async function openChain(kind: ClaimFixtureKind = 'memory') {
 
   const bodies = f.bodies;
   const reads = createMaterialRecordReaders(f.base.records);
+  // LA-2: the `tasks/` predicate the composition root injects into the resolver, the grant writer and M2.
+  const isTaskCarriedUnchanged = createTaskCarriedUnchanged(f.base.records);
   const materials = createMaterialService({ bodies, authority: reads.authority,
-    grants: createMaterialAccessResolver(reads.authority, reads.index, source), now: () => B2_AT });
+    grants: createMaterialAccessResolver(reads.authority, reads.index, source, isTaskCarriedUnchanged), now: () => B2_AT });
   let seq = 0;
   const grant = createMaterialGrantService({ records: f.base.records, authority: reads.authority,
-    materials, source, now: () => B2_AT, eventId: () => `b2-mat-grant-event-${++seq}` });
+    materials, source, isTaskCarriedUnchanged, now: () => B2_AT, eventId: () => `b2-mat-grant-event-${++seq}` });
   const rawPlans = createPlanService({ records: f.base.records, materials, now: () => B2_AT,
     eventId: () => `b2-mat-plan-event-${++seq}` });
   const rawFacts = createMaterialReadFactsService({ authority: reads.authority, index: reads.index, bodies,
-    sourceApplicability: source, now: () => B2_AT });
+    sourceApplicability: source, isTaskCarriedUnchanged, now: () => B2_AT });
 
   const producerCtx: CoreCallContext = { ...f.base.ctx,
     principal: { kind: 'work_run', runRef: f.claim.runRef, roleBinding: f.base.roleBinding },
@@ -256,6 +260,34 @@ function revokeAtTargetCommit(c: Chain, reason: string, requestId: string) {
     expect(observed, 'target barrier completed additional material current facts').toContain(canonicalJson(c.additionalRef as unknown as JsonValue));
     await c.revoke(reason, requestId);
   });
+}
+
+/** A real W16 future-only adoption adding one unrelated plan_only Task; the consumer Task is carried unchanged. */
+async function adoptUnrelatedPlan(c: Chain, suffix: string) {
+  const base = c.f.base;
+  const graph = await base.plans.queryTaskGraph(base.ctx, { goalRef: c.goalRef });
+  if (graph.status !== 'ready') throw new Error('the task graph must be readable');
+  const current = graph.value.plan;
+  if (current.schemaVersion !== 2) throw new Error('the material Plan is a v2 Plan');
+  const draft: PlanRevisionDraft = {
+    schemaVersion: 2, planId: `b2-mat-unrelated-${suffix}`, planRevision: current.planRevision + 1, goalId: c.goalRef.goalId,
+    stages: structuredClone(current.stages),
+    tasks: [...structuredClone(current.tasks), { taskId: `b2-mat-future-${suffix}`, title: 'Unrelated future intent',
+      requirementLevel: 'optional', taskKind: 'work', disposition: 'active', phase: 'pending', scope: { kind: 'goal' },
+      executionIntent: 'plan_only' }],
+    assignments: structuredClone(current.assignments ?? []), obligations: structuredClone(current.obligations),
+    taskHierarchy: structuredClone(current.taskHierarchy), executionDag: structuredClone(current.executionDag),
+    taskRelations: structuredClone(current.taskRelations ?? []), inputRequirements: structuredClone(current.inputRequirements ?? []),
+  };
+  const proposed = await base.plans.proposePlan(base.ctx, { meta: { requestId: `b2-mat-unrelated-${suffix}-propose`,
+    expected: [await base.goalPin()] }, input: { goalRef: c.goalRef, basedOn: current.ref, draft,
+    reason: { text: 'An unrelated future-only edit', sources: [] } } });
+  if (proposed.status !== 'committed' || proposed.value.issues.length > 0) throw new Error(`proposal: ${JSON.stringify(proposed)}`);
+  const applied = await base.plans.applyPlanChange(base.ctx, { meta: { requestId: `b2-mat-unrelated-${suffix}-apply`,
+    expected: [await base.goalPin()] },
+    input: { proposalRef: proposed.value.ref, expectedProposalRevision: proposed.value.revision, decisionRefs: [] } });
+  if (applied.status !== 'committed') throw new Error(`adoption: ${JSON.stringify(applied)}`);
+  return applied.value;
 }
 
 describe('B2 external material admission', () => {
@@ -604,6 +636,124 @@ describe('B2 external material admission', () => {
     expect(cancelled, 'a cancelled original signal is not rewritten as forbidden')
       .toMatchObject({ status: 'rejected', code: 'cancelled' });
     expect(sawSource).toBe(true);
+    expect(await c.read()).toEqual(before);
+  });
+
+  // ---- 8. LA-2: the grant is judged by the Task's basis, not the active Plan pin. ----
+  it('LA-2: after unrelated adoptions the consumer is granted, authorized, begins and passes the model barrier', async () => {
+    const c = await openChain('sqlite');
+    const b2 = c.ports();
+    const prepared = await c.buildPrepared();
+    const p3 = await adoptUnrelatedPlan(c, 'p3');
+    // The grant's basis Plan is no longer the Goal's active Plan; the basis rule keeps the grant current.
+    expect(c.basis.planRef).toEqual(c.planRef);
+    await expect(c.materials.openArtifact(c.consumerCtx(), { ref: c.selectedRef, usage: 'current' }))
+      .resolves.toMatchObject({ status: 'ready', value: { applicability: 'current' } });
+    // A new grant for the same reader is issued, bound to the claim Plan; its one commit pins the
+    // immutable Plans the carried decision read (the claim Plan and P3).
+    const batches: Parameters<B2Records['commit']>[0][] = [];
+    const recording: B2Records = { ...c.f.base.records, async commit(batch) {
+      batches.push(batch);
+      return c.f.base.records.commit(batch);
+    } };
+    let regrantEvents = 0;
+    const regrant = createMaterialGrantService({ records: recording, authority: c.readers.authority, materials: c.materials,
+      source: c.source, isTaskCarriedUnchanged: createTaskCarriedUnchanged(c.f.base.records), now: () => B2_AT,
+      eventId: () => `b2-mat-regrant-event-${++regrantEvents}` });
+    const regranted = await regrant.grantMaterialAccess(c.f.base.ctx, {
+      meta: { requestId: 'b2-mat-grant-after-p3', expected: [await c.f.base.goalPin(), { ref: c.f.base.workspaceRef, revision: 1 }] },
+      input: { goalRef: c.goalRef, reader: c.consumerClaim.runRef, materials: [c.selectedRef], sourceSet: c.sourceSet,
+        purpose: 'LA-2 grant after an unrelated adoption' } });
+    expect(regranted, JSON.stringify(regranted)).toMatchObject({ status: 'committed',
+      value: { grant: { basis: { planRef: c.planRef } } } });
+    expect(batches).toHaveLength(1);
+    expect(batches[0]?.guards).toEqual(expect.arrayContaining([
+      { refKey: canonicalJson(c.planRef as unknown as JsonValue), expectedRevision: 1 },
+      { refKey: canonicalJson(p3.ref as unknown as JsonValue), expectedRevision: 1 },
+    ]));
+    // M2 facts of the carried decision pin the Plans it read.
+    const facts = await c.facts.openArtifactFacts(c.consumerCtx(), { ref: c.selectedRef, usage: 'current' });
+    expect(facts.result).toMatchObject({ status: 'ready' });
+    expect(facts.guards).toEqual(expect.arrayContaining([
+      { refKey: canonicalJson(c.planRef as unknown as JsonValue), expectedRevision: 1 },
+      { refKey: canonicalJson(p3.ref as unknown as JsonValue), expectedRevision: 1 },
+    ]));
+
+    const authorized = await b2.entry.authorizeRuntimeEntry(c.f.base.ctx, { input: { prepared, consumerId: 'runtime-a' },
+      meta: { requestId: 'b2-mat-la2-authorize', expected: [await c.pin()] } });
+    expect(authorized, JSON.stringify(authorized)).toMatchObject({ status: 'committed', replayed: false });
+    if (authorized.status !== 'committed') return;
+    const begun = await b2.entry.beginRuntimeEntry(c.f.base.ctx, { input: { permit: authorized.value, kernel: c.kernel },
+      meta: { requestId: 'b2-mat-la2-begin', expected: [await c.pin()] } });
+    expect(begun, JSON.stringify(begun)).toMatchObject({ status: 'committed', replayed: false });
+    const entered = await b2.entry.recordExecutionEntered(c.f.base.ctx, {
+      input: { permit: await c.f.currentPermit(c.consumerClaim), enteredAt: B2_AT,
+        kernelSource: { ...c.kernel, position: 3 }, history: c.observedHistory(3) },
+      meta: { requestId: 'b2-mat-la2-entered', expected: [await c.pin()] } });
+    expect(entered).toMatchObject({ status: 'committed', value: { status: 'running' } });
+
+    // Another unrelated adoption while the Run is in the Kernel: the model barrier still admits the material.
+    await adoptUnrelatedPlan(c, 'p4');
+    const actual = c.f.actualRequest({ prepared, permit: await c.f.currentPermit(c.consumerClaim) });
+    const issued = await b2.model.authorizeModelRequest(c.f.base.ctx, {
+      input: actual, meta: { requestId: 'b2-mat-la2-issue', expected: [await c.pin()] } });
+    expect(issued, JSON.stringify(issued)).toMatchObject({ status: 'committed', replayed: false });
+    if (issued.status !== 'committed') return;
+    const consumed = await b2.model.recordModelRequestAttempt(c.f.base.ctx, {
+      input: { request: actual, permitRef: issued.value.permitRef, attemptId: 'b2-mat-la2-attempt', observedAt: B2_AT },
+      meta: { requestId: 'b2-mat-la2-consume', expected: [await c.pin(), { ref: issued.value.permitRef, revision: 1 }] } });
+    expect(consumed, JSON.stringify(consumed)).toMatchObject({ status: 'committed', replayed: false });
+    // A revoke still wins over the basis rule (the material refusal is returned as is).
+    await c.revoke('withdraw after the adoptions', 'b2-mat-la2-revoke');
+    await expect(c.materials.openArtifact(c.consumerCtx(), { ref: c.additionalRef, usage: 'current' }))
+      .resolves.toMatchObject({ status: 'rejected', code: 'forbidden' });
+  });
+
+  // The predicate's two other answers. On clean data a Task with a Run keeps its execution
+  // definition and basis (I-22), so they are driven by an injected predicate, not by records.
+  it('LA-2: a Task the active Plan does not carry, or an unreadable carried decision, keeps the grant out', async () => {
+    const c = await openChain('sqlite');
+    const p3 = await adoptUnrelatedPlan(c, 'p3');
+    const asked = { goalRef: c.goalRef, taskId: c.consumerTaskId, fromPlanRef: c.planRef, toPlanRef: p3.ref };
+    let commits = 0;
+    const counting: B2Records = { ...c.f.base.records, async commit(batch) {
+      commits += 1;
+      return c.f.base.records.commit(batch);
+    } };
+    const before = await c.read();
+    for (const status of ['not_carried', 'unavailable'] as const) {
+      const inputs: unknown[] = [];
+      const predicate: TaskCarriedUnchanged = async (input) => {
+        inputs.push(input);
+        return { status, reason: `the stub answers ${status}` };
+      };
+      // The ordinary current read: no grant is current for the Run reader.
+      const materials = createMaterialService({ bodies: c.bodies, authority: c.readers.authority,
+        grants: createMaterialAccessResolver(c.readers.authority, c.readers.index, c.source, predicate), now: () => B2_AT });
+      await expect(materials.openArtifact(c.consumerCtx(), { ref: c.selectedRef, usage: 'current' }), status)
+        .resolves.toMatchObject({ status: 'rejected', code: 'source_stale' });
+      expect(inputs, status).toContainEqual(asked);
+      // M2 facts: an unreadable decision fails the call closed; not carried is the ordinary refusal; no guards.
+      const facts = createMaterialReadFactsService({ authority: c.readers.authority, index: c.readers.index,
+        bodies: c.bodies, sourceApplicability: c.source, isTaskCarriedUnchanged: predicate, now: () => B2_AT });
+      expect(await facts.openArtifactFacts(c.consumerCtx(), { ref: c.selectedRef, usage: 'current' }), status).toEqual({
+        result: status === 'unavailable'
+          ? { status: 'rejected', code: 'unavailable', reason: 'the stub answers unavailable' }
+          : expect.objectContaining({ status: 'rejected', code: 'source_stale' }),
+        guards: [] });
+      // The grant writer: not carried is a revision_conflict naming the reason, unavailable stays unavailable.
+      const grant = createMaterialGrantService({ records: counting, authority: c.readers.authority, materials: c.materials,
+        source: c.source, isTaskCarriedUnchanged: predicate, now: () => B2_AT, eventId: () => `b2-mat-la2-${status}-event` });
+      const refused = await grant.grantMaterialAccess(c.f.base.ctx, {
+        meta: { requestId: `b2-mat-la2-${status}-grant`, expected: [await c.f.base.goalPin(), { ref: c.f.base.workspaceRef, revision: 1 }] },
+        input: { goalRef: c.goalRef, reader: c.consumerClaim.runRef, materials: [c.selectedRef], sourceSet: c.sourceSet,
+          purpose: `LA-2 grant refused: ${status}` } });
+      expect(refused, status).toEqual(status === 'unavailable'
+        ? { status: 'rejected', code: 'unavailable', reason: 'the stub answers unavailable' }
+        : { status: 'rejected', code: 'revision_conflict',
+          reason: 'the reader Run Plan is not the Goal current accepted Plan (the stub answers not_carried)' });
+    }
+    expect(commits).toBe(0);
     expect(await c.read()).toEqual(before);
   });
 });

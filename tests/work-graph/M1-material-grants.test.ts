@@ -23,6 +23,7 @@ import { createMaterialGrantService } from '../../src/core/work-graph/materials/
 import { MATERIAL_GRANT_EVENT_SCHEMAS } from '../../src/core/work-graph/materials/grant-record-codecs.js';
 import type { GrantMaterialAccessInput, MaterialGrantPort } from '../../src/core/work-graph/materials/grant-contracts.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
+import { createTaskCarriedUnchanged } from '../../src/core/work-graph/tasks/entry-plan-reader.js';
 import type { GraphWrite } from '../../src/core/work-graph/tasks/contracts.js';
 const AT = '2026-09-26T00:00:00.000Z';
 const projectId = 'r4c-claim-project', workspaceId = 'r4c-claim-workspace', goalId = 'r4c-claim-goal';
@@ -118,7 +119,7 @@ async function buildFixture(kind: 'memory' | 'sqlite') {
         const goalPin = await f.goalPin();
         const grantRequest = (overrides: Partial<GrantMaterialAccessInput> = {}): GraphWrite<GrantMaterialAccessInput> => ({ meta: { requestId: 'm1-grant-request', expected: [structuredClone(goalPin), { ref: f.workspaceRef, revision: 1 }] },
             input: { goalRef, reader: consumerRef, materials: [artifact], sourceSet: structuredClone(sourceSet), purpose: 'Share the exact reference note', ...overrides } });
-        const makeGrantService = (records: GoalRecordTransactionPort = f.records): MaterialGrantPort => createMaterialGrantService({ records, authority: reads.authority, materials, source, now: () => AT, eventId: () => `m1-event-${++eventSeq}` });
+        const makeGrantService = (records: GoalRecordTransactionPort = f.records): MaterialGrantPort => createMaterialGrantService({ records, authority: reads.authority, materials, source, isTaskCarriedUnchanged: createTaskCarriedUnchanged(records), now: () => AT, eventId: () => `m1-event-${++eventSeq}` });
         const plans = createPlanService({ records: f.records, materials, now: () => AT, eventId: () => `m1-plan-${++eventSeq}` });
         return { f, bodies, directory: f.directory, records: f.records, authority: reads.authority, materials, plans, grant: makeGrantService(), source, sourcePin, captures: () => captureCount,
             artifact, absent, unused, planRef, consumerTaskId: f.tasks.second.taskId, consumerCtx, currentBasis, grantRequest, makeGrantService,
@@ -254,7 +255,8 @@ it('checks the real material owner and refuses ownerless/platform/QueryRun/cross
         const materials = createMaterialService({ bodies, authority: reads.authority,
             grants: createMaterialAccessResolver(reads.authority, reads.index, fixture.source), now: () => AT });
         const grant = createMaterialGrantService({ records: fixture.records, authority: reads.authority,
-            materials, source: fixture.source, now: () => AT, eventId: () => 'm1-owner-event' });
+            materials, source: fixture.source, isTaskCarriedUnchanged: createTaskCarriedUnchanged(fixture.records),
+            now: () => AT, eventId: () => 'm1-owner-event' });
         await expect(materials.openArtifact(hostCtx, { ref: queryBody, usage: 'historical_explanation' })).resolves.toMatchObject({ status: 'ready', value: { ownerRunRef: queryRunRef } });
         await expect(materials.openArtifact(hostCtx, { ref: crossBody, usage: 'historical_explanation' })).resolves.toMatchObject({ status: 'ready', value: { ownerRunRef: foreignRef } });
         // Setup: the Host historical path really sees these materials, so the grant
@@ -318,10 +320,12 @@ it('treats a missing/unavailable/stale source provider as a refusal, never a met
     const fixture = await buildFixture('memory');
     try {
         const unavailable = createMaterialGrantService({ records: fixture.records, authority: fixture.authority,
-            materials: fixture.materials, now: () => AT, eventId: () => 'm1-unavailable',
+            materials: fixture.materials, isTaskCarriedUnchanged: createTaskCarriedUnchanged(fixture.records),
+            now: () => AT, eventId: () => 'm1-unavailable',
             source: { capture: async (): Promise<MaterialSourceCaptureResult> => ({ status: 'unavailable', issues: ['no provider'] }) } });
         const stale = createMaterialGrantService({ records: fixture.records, authority: fixture.authority,
-            materials: fixture.materials, now: () => AT, eventId: () => 'm1-stale',
+            materials: fixture.materials, isTaskCarriedUnchanged: createTaskCarriedUnchanged(fixture.records),
+            now: () => AT, eventId: () => 'm1-stale',
             source: { capture: async (): Promise<MaterialSourceCaptureResult> => ({ status: 'stale', issues: ['changed'] }) } });
         const unavailableResult = await unavailable.grantMaterialAccess(hostCtx, fixture.grantRequest());
         const staleResult = await stale.grantMaterialAccess(hostCtx, fixture.grantRequest());
@@ -410,7 +414,8 @@ it('restores original SQLite receipts after restart and does not revive a revoke
             const materials = createMaterialService({ bodies: t.bodies, authority: reads.authority,
                 grants: createMaterialAccessResolver(reads.authority, reads.index, t.source), now: () => AT });
             const writer = createMaterialGrantService({ records: reopened.records, authority: reads.authority,
-                materials, source: t.source, now: () => 'later', eventId: () => 'not-a-new-event' });
+                materials, source: t.source, isTaskCarriedUnchanged: createTaskCarriedUnchanged(reopened.records),
+                now: () => 'later', eventId: () => 'not-a-new-event' });
             await expect(writer.grantMaterialAccess(hostCtx, t.grantRequest())).resolves.toEqual({ ...granted, replayed: true });
             await expect(writer.revokeMaterialAccess(hostCtx, request)).resolves.toEqual({ ...revoked, replayed: true });
             expect(t.captures()).toBe(before);
@@ -453,7 +458,7 @@ it('guards Workspace changes during capture and refuses cancellation before a ne
                 return result;
             } };
         const service = createMaterialGrantService({ records: t.records, authority: t.authority, materials: t.materials,
-            source, now: () => AT, eventId: () => 'racing-grant' });
+            source, isTaskCarriedUnchanged: createTaskCarriedUnchanged(t.records), now: () => AT, eventId: () => 'racing-grant' });
         await expect(service.grantMaterialAccess(hostCtx, t.grantRequest())).resolves.toMatchObject({ status: 'rejected', code: 'revision_conflict' });
         const cancelled = new AbortController();
         cancelled.abort();

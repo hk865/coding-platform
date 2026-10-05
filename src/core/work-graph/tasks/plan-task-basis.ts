@@ -14,8 +14,12 @@
  *  - verify one Plan's declared basis for a Task (`verifyBasisDelegation`) and
  *    decide whether a Run/Reduction fact pinned to an origin Plan describes a
  *    Task of the selected Plan (`taskOriginVerdict`), over the per-Plan index
- *    `planTaskFacts` (moved unchanged from `plan-readers.ts`, STATE-MACHINES-SPEC
- *    §3.3 point 5 / §15.2 step 3).
+ *    `planTaskFacts` (moved from `plan-readers.ts`, STATE-MACHINES-SPEC
+ *    §3.3 point 5 / §15.2 step 3). Both compare EXECUTION definitions
+ *    (`executionDefinitionsAgree`, A.2 step 5.4b): a Task's disposition is not
+ *    part of what its Runs and evidence describe;
+ *  - decide whether a claim pinned to an older Plan may still enter while the
+ *    Goal's active Plan carries its Task unchanged (`entryPlanVerdict`, C6).
  *
  * An obligation's frozen semantics keep its identity, title, requirementLevel
  * and compiled verificationRequirements; only the cross-Task carrier list
@@ -28,6 +32,7 @@
  *
  * Specification: docs/refactor/tasks/W1-future-plan-skeleton.md §5.
  */
+import type { EntryPlanVerdict } from '../../../contracts/dispatch.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
 import {
   revisionAssignments,
@@ -199,6 +204,28 @@ export function frozenTaskDefinitionsAgree(input: {
   }
 }
 
+/** A frozen definition without the Task's `disposition` and `replacedByTaskId`. */
+function executionDefinition(definition: FrozenTaskDefinition): FrozenTaskDefinition {
+  const { disposition: _disposition, replacedByTaskId: _replacedBy, ...task } = definition.task;
+  void _disposition; void _replacedBy;
+  return { ...definition, task: task as RuntimeTask };
+}
+
+/**
+ * Compares the EXECUTION definition of the same Task across two Plans
+ * (STATE-MACHINES-SPEC §3.3): the frozen definition without `disposition` and
+ * `replacedByTaskId`, so a disposition-only change is not a different Task.
+ * The basis readers (`verifyBasisDelegation`, `taskOriginVerdict`) and the
+ * evidence applicability use it; the future-only validator keeps the full
+ * comparison (`frozenTaskDefinitionsAgree`), and so does the gate freeze.
+ */
+export function executionDefinitionsAgree(input: {
+  left: FrozenTaskDefinition;
+  right: FrozenTaskDefinition;
+}): boolean | BasisUnsupported {
+  return frozenTaskDefinitionsAgree({ left: executionDefinition(input.left), right: executionDefinition(input.right) });
+}
+
 /** The per-Plan frozen definition index plus the per-Plan effective-basis
  * index. The reader builds each ONCE and reuses it, never re-scanning a Plan per
  * Task or per Run. */
@@ -264,7 +291,7 @@ export function verifyBasisDelegation(input: {
   if (sourceDefinition === undefined || referrerDefinition === undefined) {
     return { status: 'unavailable', reason: `basis source ${basis.planId} does not define task ${taskId}` };
   }
-  const agree = frozenTaskDefinitionsAgree({ left: sourceDefinition, right: referrerDefinition });
+  const agree = executionDefinitionsAgree({ left: sourceDefinition, right: referrerDefinition });
   if (isBasisUnsupported(agree)) return { status: 'unavailable', reason: agree.reason };
   if (!agree) {
     return { status: 'unavailable',
@@ -318,12 +345,83 @@ export function taskOriginVerdict(input: {
   if (originDefinition === undefined) {
     return { status: 'unavailable', reason: `origin plan ${origin.plan.planId} does not define task ${input.taskId}` };
   }
-  const agree = frozenTaskDefinitionsAgree({ left: originDefinition, right: input.selectedDefinition });
+  const agree = executionDefinitionsAgree({ left: originDefinition, right: input.selectedDefinition });
   if (isBasisUnsupported(agree)) return { status: 'unavailable', reason: agree.reason };
   if (!agree) {
     return { status: 'unavailable',
-      reason: `origin plan ${origin.plan.planId} shares the basis for task ${input.taskId} but its frozen definition differs` };
+      reason: `origin plan ${origin.plan.planId} shares the basis for task ${input.taskId} but its execution definition differs` };
   }
   if (origin.plan.planRevision > input.selected.plan.planRevision) return { status: 'excluded' };
   return { status: 'accepted' };
+}
+
+/**
+ * W3's relaxed Plan guard (C6; STATE-MACHINES-SPEC §3.3 point 5, §6.1 contract
+ * (g)): may a claim pinned to `claimPlan` enter the Kernel while the Goal's
+ * active Plan is `activePlan`?
+ *
+ * - `active_plan`: the two are the same Plan (today's path);
+ * - `carried_unchanged`: both belong to the Goal, the claim Plan is older, the
+ *   active Plan's basis for the Task verifies (`verifyBasisDelegation`), the
+ *   claim Plan as origin is `accepted` for it (same effective basis, both
+ *   chains verified, `executionDefinitionsAgree`), and the active Plan holds it
+ *   as a `work` Task with `disposition: 'active'` (asked on its own, because
+ *   the agreement does not look at the disposition);
+ * - `changed`: the origin is `excluded`, or the Task is missing, not work or
+ *   not active in the active Plan (also a claim Plan that is not older);
+ * - `unavailable`: a basis chain, a definition or a basis source cannot be
+ *   resolved.
+ *
+ * `basisSources` holds the Plans the two basis entries of the Task name (keyed
+ * by `planRevisionRefKey`); a missing one is `unavailable`. Pure: the caller
+ * reads every Plan (all immutable) and pins what it read.
+ */
+export function entryPlanVerdict(input: {
+  claimPlan: PlanRevisionSnapshot;
+  activePlan: PlanRevisionSnapshot;
+  basisSources: ReadonlyMap<string, PlanRevisionSnapshot>;
+  taskId: string;
+  goalRef: GoalRef;
+}): EntryPlanVerdict {
+  const { claimPlan, activePlan, taskId, goalRef } = input;
+  const claimKey = planRevisionRefKey(claimPlan.ref);
+  const activeKey = planRevisionRefKey(activePlan.ref);
+  if (claimKey === activeKey) return { kind: 'active_plan' };
+  for (const plan of [claimPlan, activePlan]) {
+    if (plan.ref.projectId !== goalRef.projectId || plan.goalRef.projectId !== goalRef.projectId
+      || plan.goalRef.goalId !== goalRef.goalId) {
+      return { kind: 'unavailable', reason: `plan ${plan.planId} does not belong to goal ${goalRef.goalId}` };
+    }
+  }
+  if (claimPlan.planRevision >= activePlan.planRevision) {
+    return { kind: 'changed',
+      reason: `the claim Plan ${claimPlan.planId} is not older than the Goal active Plan ${activePlan.planId}` };
+  }
+  const activeTask = activePlan.tasks.find((task) => task.taskId === taskId);
+  if (activeTask === undefined) {
+    return { kind: 'changed', reason: `the Goal active Plan ${activePlan.planId} no longer has task ${taskId}` };
+  }
+  const selected = planTaskFacts(activePlan);
+  const origin = planTaskFacts(claimPlan);
+  const index = new Map<string, PlanTaskFacts>([[activeKey, selected], [claimKey, origin]]);
+  for (const [key, plan] of input.basisSources) if (!index.has(key)) index.set(key, planTaskFacts(plan));
+  const selectedBasis = selected.basis.get(taskId);
+  const selectedDefinition = selected.definitions.get(taskId);
+  if (selectedBasis === undefined || isBasisUnsupported(selectedBasis) || selectedDefinition === undefined) {
+    return { kind: 'unavailable', reason: isBasisUnsupported(selectedBasis) ? selectedBasis.reason
+      : `the Goal active Plan ${activePlan.planId} has no effective basis for task ${taskId}` };
+  }
+  const chain = verifyBasisDelegation({ referrer: selected, taskId, index, goalRef });
+  if (chain.status === 'unavailable') return { kind: 'unavailable', reason: chain.reason };
+  const verdict = taskOriginVerdict({ origin, selected, selectedBasis, selectedDefinition, taskId, index, goalRef });
+  if (verdict.status === 'unavailable') return { kind: 'unavailable', reason: verdict.reason };
+  if (verdict.status === 'excluded') {
+    return { kind: 'changed',
+      reason: `the Goal active Plan ${activePlan.planId} changed the basis or the execution definition of task ${taskId}` };
+  }
+  if (activeTask.taskKind !== 'work' || activeTask.disposition !== 'active') {
+    return { kind: 'changed',
+      reason: `task ${taskId} is not an active work Task in the Goal active Plan ${activePlan.planId}` };
+  }
+  return { kind: 'carried_unchanged', activePlanRef: activePlan.ref };
 }

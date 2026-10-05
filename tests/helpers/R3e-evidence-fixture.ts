@@ -56,6 +56,7 @@ import type { WorkspaceHostBindings } from '../../src/core/workspace/access.js';
 import { createMaterialSourceProvider } from '../../src/core/workspace/material-source-provider.js';
 import { VerificationWorkspaceReader } from '../../src/core/workspace/verification-workspace-reader.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
+import { createTaskCarriedUnchanged } from '../../src/core/work-graph/tasks/entry-plan-reader.js';
 import { plainSessionRefToAggregate } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import type { GraphWrite } from '../../src/core/work-graph/tasks/contracts.js';
 import type { ClaimTaskInput } from '../../src/core/work-graph/tasks/claim-contracts.js';
@@ -333,7 +334,8 @@ export async function createR3eEvidenceFixture(
             bodies: b2.bodies, authority, grants: createMaterialAccessResolver(authority, index, sourceProvider), now,
         });
         const materialFacts = createMaterialReadFactsService({
-            authority, index, bodies: b2.bodies, sourceApplicability: sourceProvider, now,
+            authority, index, bodies: b2.bodies, sourceApplicability: sourceProvider,
+            isTaskCarriedUnchanged: createTaskCarriedUnchanged(b2.base.records), now,
         });
         const executions = createRunStateReader({ records: b2.base.records });
         const verificationSource = new VerificationWorkspaceReader();

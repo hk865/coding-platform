@@ -20,7 +20,8 @@
  *   `:1256-1258`, `:1420-1425`, `control-service.ts:412-413`,
  *   `execution-history-binding.ts:146`) and today's CoreError codes.
  * - 改造 rows keep TODAY's externally visible result; step 5 flips them
- *   (C6 `entryPlan`, RUN-03, RUN-08). Step 5.4 flipped RUN-01 to the D-3
+ *   (RUN-03, RUN-08). Step 5.4b flipped RUN-02 to the C6 entry Plan verdict
+ *   (`carried_unchanged` passes, `entryPlanGuard`). Step 5.4 flipped RUN-01 to the D-3
  *   requeue claim (`requeueClaimProblem`), RUN-02 to the C3 continuation
  *   brief guard and RUN-07 to write `terminalPayload` (C1). Step 5.1 flipped RUN-09..11 (U) to D-7 (a
  *   control on a Run that never entered applies at once; a cancel ends it and
@@ -1092,10 +1093,10 @@ function onClaimCommitted(event: Extract<RunEvent, { kind: 'claim_committed' }>,
 }
 
 /**
- * RUN-02 (and RUN-03, today `busy`) in `authorizeRuntimeEntry` order: pointer
- * fence, `starting`, Session, Lease, persisted claim, prepared binding,
- * existing authorization, Goal, Plan pin, fresh re-admission
- * (`execution-entry-service.ts:935-981`).
+ * RUN-02 (and RUN-03, `busy` until step 5.6) in `authorizeRuntimeEntry`
+ * order: pointer fence, `starting`, Session, Lease, persisted claim, prepared
+ * binding, existing authorization, Goal, entry Plan (C6), continuation brief
+ * (C3), fresh re-admission (`execution-entry-service.ts` `authorizeRuntimeEntry`).
  */
 function onEntryAuthorized(
   state: RunState, run: RunSnapshot, event: Extract<RunEvent, { kind: 'entry_authorized' }>, ctx: RunGuardContext,
@@ -1120,19 +1121,41 @@ function onEntryAuthorized(
     case 'damaged':
       return reject('illegal', 'busy', 'the Run already has a V2 entry authorization');
     case 'revoked':
-      // RUN-03 (改造) is step 5: today every existing V2 authorization is `busy`.
+      // RUN-03 (改造) is step 5.6: until then every existing V2 authorization is `busy`. Once it
+      // re-authorizes, the Goal, entry Plan (C6, step 5.4b) and brief guards below apply to it unchanged.
       return reject('illegal', 'busy', 'the Run already has a V2 entry authorization');
     default: return unreachable(starting, 'starting class');
   }
   if (ctx.goal.desiredState !== 'active') return reject('guard_failed', 'busy', 'the Goal is not active');
-  // C6 (step 5.4b): today only the exact active Plan pin passes.
-  if (ctx.entryPlan !== 'active_plan') {
-    return reject('stale', 'revision_conflict', 'the requested Plan is no longer the Goal active pin');
-  }
+  const plan = entryPlanGuard(ctx.entryPlan);
+  if (plan !== null) return plan;
   const brief = continuationBriefGuard(run, ctx.continuationBrief);
   if (brief !== null) return brief;
   if (ctx.freshAdmission !== null) return freshAdmissionRejected(ctx.freshAdmission);
   return accept(runStateOf(authorizedRunRecord(run, event)));
+}
+
+/**
+ * RUN-02/03 (C6, contract (g); step 5.4b): the Goal's active Plan is the claim
+ * Plan (`active_plan`) or carries the claimed Task unchanged from it
+ * (`carried_unchanged`; the Run keeps `claim.planRef`). `changed` is
+ * `stale`/`revision_conflict` (on clean data only an older or damaged Plan
+ * history reaches it: a Task with a Run keeps its execution definition, I-22;
+ * the way out is a not-entered cancel, then a requeue); `unavailable` is
+ * `guard_failed`/`unavailable`.
+ */
+function entryPlanGuard(verdict: RunGuardContext['entryPlan']): Rejected | null {
+  switch (verdict) {
+    case 'active_plan':
+    case 'carried_unchanged':
+      return null;
+    case 'changed':
+      return reject('stale', 'revision_conflict',
+        'the Goal active Plan no longer carries this Task unchanged; cancel the claim and requeue the Task');
+    case 'unavailable':
+      return reject('guard_failed', 'unavailable', 'the Task basis in the Goal active Plan cannot be resolved');
+    default: return unreachable(verdict, 'entry plan verdict');
+  }
 }
 
 /**

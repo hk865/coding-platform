@@ -21,7 +21,7 @@ import { requirementKeyOf, type EffectivityAnchorV1 } from '../../../contracts/e
 import type { PlanRevisionRef, PlanRevisionSnapshot } from '../../../contracts/plan.js';
 import { revisionAssignments } from '../../../contracts/plan.js';
 import {
-    buildEffectiveTaskBasis, buildFrozenTaskDefinitions, frozenTaskDefinitionsAgree,
+    buildEffectiveTaskBasis, buildFrozenTaskDefinitions, executionDefinitionsAgree,
     isBasisUnsupported, type FrozenTaskDefinition,
 } from '../tasks/plan-task-basis.js';
 import { planRevisionRefKey } from '../tasks/plan-record-codecs.js';
@@ -144,7 +144,8 @@ function samePolicyAnchor(left: EffectivityAnchorV1, right: EffectivityAnchorV1)
 /**
  * W1-aware applicability: compares the evidence contract against the currently
  * adopted Plan using the EXISTING `buildEffectiveTaskBasis` /
- * `buildFrozenTaskDefinitions` / `frozenTaskDefinitionsAgree` helpers. An
+ * `buildFrozenTaskDefinitions` / `executionDefinitionsAgree` helpers (the
+ * execution definition, without the disposition: A.2 step 5.4b). An
  * unrelated future Plan edit that keeps the same basis/definition preserves
  * applicability; a real definition change does not. The service then passes the
  * returned applicability to `evidenceBindingFor` and the fold.
@@ -174,7 +175,7 @@ export function evidenceApplicabilityWithBasis(input: {
         return { applicability: 'OUT_OF_SCOPE', basis: 'redefined', evidenceDefinition, currentDefinition: null,
             reason: 'the adopted Plan no longer defines the evidence task' };
     }
-    const agree = frozenTaskDefinitionsAgree({ left: evidenceDefinition, right: currentDefinition });
+    const agree = executionDefinitionsAgree({ left: evidenceDefinition, right: currentDefinition });
     if (isBasisUnsupported(agree)) {
         return { applicability: 'OUT_OF_SCOPE', basis: 'unknown', evidenceDefinition, currentDefinition,
             reason: agree.reason };

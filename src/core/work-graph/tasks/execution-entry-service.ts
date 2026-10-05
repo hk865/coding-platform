@@ -89,6 +89,7 @@ import type {
   KernelObservationSource, ObservedExecutionHistory, RuntimeEntryRecord, TaskEntryPermit, TaskResultObservation,
 } from './execution-entry-contracts.js';
 import type { TaskExecutionRecord } from './execution-read-contracts.js';
+import { readEntryPlanVerdict } from './entry-plan-reader.js';
 import { readGoalScope, sameCursor } from './plan-readers.js';
 import { planRevisionRefKey } from './plan-record-codecs.js';
 
@@ -1238,23 +1239,36 @@ export function createExecutionEntryService(deps: ExecutionEntryDependencies): E
       const facts = factsRead.value;
       // RUN-02 on the execution read: starting, the claim Session and Lease, the
       // persisted claim, the prepared binding and no existing authorization. The
-      // Goal and the fresh admission are read below and hold until then.
+      // Goal, the entry Plan (C6), the brief (C3) and the fresh admission are
+      // read below and hold until then.
       const state = runStateOf(facts.run);
-      const runEvent: RunEvent = { kind: 'entry_authorized', claim, consumerId,
+      let runEvent: Extract<RunEvent, { kind: 'entry_authorized' }> = { kind: 'entry_authorized', claim, consumerId,
         envelope: prepared.envelope, inputBinding: prepared.inputBinding };
       let runCtx = entryRunContext(facts, claim, actor);
       const onExecution = transitionRun(state, runEvent, runCtx);
       if (!onExecution.ok) return runRefusal(onExecution);
 
-      // Current Goal/Workspace scope facts and their exact guards: the Goal is active and pins the claim's Plan.
+      // Current Goal/Workspace scope facts and their exact guards: the Goal is active, then (C6) its
+      // active Plan is the claim's Plan or carries the claimed Task unchanged from it.
       const goalScope = await readGoalScope(records, goalRefOf(claim.task));
       if (goalScope.status !== 'ready') return mapReaderRejection(goalScope);
       const activePlan = goalScope.goal.activePlanRevision;
-      const onActivePlan = activePlan !== null && sameRef(activePlan, claim.planRef);
-      runCtx = { ...runCtx, goal: { desiredState: goalScope.goal.desiredState, activePlanMatchesClaim: onActivePlan },
-        entryPlan: onActivePlan ? 'active_plan' : 'changed' };
+      runCtx = { ...runCtx, goal: { desiredState: goalScope.goal.desiredState,
+        activePlanMatchesClaim: activePlan !== null && sameRef(activePlan, claim.planRef) } };
       const onGoal = transitionRun(state, runEvent, runCtx);
       if (!onGoal.ok) return runRefusal(onGoal);
+      const entryPlan = await readEntryPlanVerdict(records, { goalRef: goalRefOf(claim.task), taskId: claim.task.taskId,
+        claimPlan: facts.plan, activePlanRef: activePlan });
+      if (entryPlan.status !== 'ready') return mapReaderRejection(entryPlan);
+      const verdict = entryPlan.verdict;
+      runCtx = { ...runCtx, entryPlan: verdict.kind };
+      if (verdict.kind === 'carried_unchanged') runEvent = { ...runEvent, activePlanRef: verdict.activePlanRef };
+      const onPlan = transitionRun(state, runEvent, runCtx);
+      if (!onPlan.ok) {
+        const refusal = runRefusal(onPlan);
+        return verdict.kind === 'changed' || verdict.kind === 'unavailable'
+          ? { ...refusal, reason: `${refusal.reason} (${verdict.reason})` } : refusal;
+      }
 
       // C3 (RUN-02, contract (e)): the continuation brief binding of the prepared manifest.
       const briefManifest = await readManifestFromEnvelope(deps, prepared.envelope as unknown as Record<string, unknown>, claim.runRef);
@@ -1275,6 +1289,8 @@ export function createExecutionEntryService(deps: ExecutionEntryDependencies): E
         eventId: deps.eventId(), eventType: EXECUTION_ENTRY_AUTHORIZED_EVENT_TYPE,
         schemaVersion: EXECUTION_ENTRY_EVENT_SCHEMA_VERSION, occurredAt: deps.now(),
         identityKey: identity, actor, fingerprint, permit,
+        // C6 (RUN-02): the audit names the active Plan that carried the Task; replay ignores it.
+        ...(runEvent.activePlanRef === undefined ? {} : { activePlanRef: runEvent.activePlanRef }),
       };
       if (!nonEmpty(event.eventId) || !nonEmpty(event.occurredAt)) return reject('unsupported', 'the injected id/clock source produced an empty value');
       const goalKey = refKeyOf(goalRefOf(claim.task));
@@ -1283,6 +1299,8 @@ export function createExecutionEntryService(deps: ExecutionEntryDependencies): E
         ...executionReadGuards(facts, runRecord.refKey, runPin),
         { refKey: goalKey, expectedRevision: goalScope.goal.revision },
         { refKey: goalScope.workspaceKey, expectedRevision: goalScope.workspaceRevision },
+        // C6: with `carried_unchanged`, the active Plan and the basis sources the verdict read.
+        ...entryPlan.guards,
         ...admission.guards,
       ]);
       if (!merged.ok) return merged.rejection;

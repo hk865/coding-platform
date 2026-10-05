@@ -22,6 +22,7 @@ import { createMaterialSourceProvider } from '../core/workspace/material-source-
 import { createWorkspaceTools, DEFAULT_WORKSPACE_LIMITS } from '../core/workspace/workspace-tools.js';
 import { createAgentRuntime } from '../core/agent-runtime/runtime.js';
 import { createExecutionEntryService } from '../core/work-graph/tasks/execution-entry-service.js';
+import { createTaskCarriedUnchanged } from '../core/work-graph/tasks/entry-plan-reader.js';
 import { createModelCallService } from '../core/work-graph/tasks/model-call-service.js';
 import { createSessionMailbox } from '../core/work-graph/communication/mailbox-service.js';
 import type { SessionMailboxPort } from '../core/work-graph/communication/contracts.js';
@@ -355,10 +356,15 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // public port is wrapped below so close drains an in-flight control call.
     const rawControls = createRunControlService({ records: backend.records, authority: reads.authority,
       reads: executionReader, now, eventId: randomUUID });
-    const grants = createMaterialAccessResolver(reads.authority, reads.index, source);
+    // LA-2 (A.2 step 5.4b): ONE `tasks/` predicate tells the grant writer, the
+    // read-side resolver and the M2 facts below whether the Goal's active Plan
+    // carries a reader Run's Task unchanged from its claim Plan (materials never
+    // reads a PlanRevision itself; W3 uses the same rule).
+    const isTaskCarriedUnchanged = createTaskCarriedUnchanged(backend.records);
+    const grants = createMaterialAccessResolver(reads.authority, reads.index, source, isTaskCarriedUnchanged);
     const rawMaterials = createMaterialService({ bodies, authority: reads.authority, grants, now });
     const grantService = createMaterialGrantService({ records: backend.records, authority: reads.authority,
-      materials: rawMaterials, source, now, eventId: randomUUID });
+      materials: rawMaterials, source, isTaskCarriedUnchanged, now, eventId: randomUUID });
     const rawGoals = createGoalService({ records: backend.records, now, eventId: randomUUID }).tasks;
     const workspace = createWorkspaceTools({ access,
       now, limits: DEFAULT_WORKSPACE_LIMITS });
@@ -428,7 +434,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // consumed by the B2 entry and model barriers. It is a fresh per-call
     // observer, not a second persistent material service.
     const materialFacts = createMaterialReadFactsService({ authority: reads.authority, index: reads.index,
-      bodies, sourceApplicability: source, now });
+      bodies, sourceApplicability: source, isTaskCarriedUnchanged, now });
     // R3e.1: the ONE trusted verification/evidence service and its thin Host
     // check runner share the existing records/material/execution instances. The
     // frozen checks configuration is optional; without it fresh open/begin stay

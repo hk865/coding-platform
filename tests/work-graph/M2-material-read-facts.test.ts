@@ -42,6 +42,7 @@ import { createMaterialService } from '../../src/core/work-graph/materials/mater
 import { createMaterialReadFactsService } from '../../src/core/work-graph/materials/material-facts-service.js';
 import type { MaterialReadFactsPort } from '../../src/core/work-graph/materials/contracts.js';
 import type { MaterialAuthorityReads, MaterialCandidateReads } from '../../src/core/work-graph/materials/record-ports.js';
+import { createTaskCarriedUnchanged } from '../../src/core/work-graph/tasks/entry-plan-reader.js';
 import { WorkspaceSourceApplicability } from '../../src/core/workspace/source-applicability.js';
 import { createWorkspaceAccessFactory } from '../../src/core/workspace/access.js';
 
@@ -226,7 +227,8 @@ function factsService(fixture: Fixture,
   return createMaterialReadFactsService({ authority: overrides.authority ?? fixture.authority,
     index: overrides.index ?? fixture.index, bodies: fixture.bodies,
     ...(overrides.source !== undefined ? { sourceApplicability: overrides.source }
-      : { sourceApplicability: fixture.source }), now: () => AT });
+      : { sourceApplicability: fixture.source }),
+    isTaskCarriedUnchanged: createTaskCarriedUnchanged(fixture.records), now: () => AT });
 }
 
 // 1. Exact current read returns the real body/current applicability and only the
@@ -371,7 +373,7 @@ it('candidate and source matches do not replace currentness and unavailable stay
 
     // Missing trusted provider keeps the existing source_stale refusal.
     const noSource = createMaterialReadFactsService({ authority: fixture.authority, index: fixture.index,
-      bodies: fixture.bodies, now: () => AT });
+      bodies: fixture.bodies, isTaskCarriedUnchanged: createTaskCarriedUnchanged(fixture.records), now: () => AT });
     await expect(noSource.openArtifactFacts(ctx, { ref: fixture.material, usage: 'current' }))
       .resolves.toMatchObject({ result: { status: 'rejected', code: 'source_stale' }, guards: [] });
 

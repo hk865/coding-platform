@@ -621,12 +621,28 @@ describe('RUN-02 / RUN-03 entry_authorized', () => {
     expect(at(v1, MISMATCHED_CLAIM).code).toBe('invalid');
   });
 
-  it('keeps today\'s plan pin: only the active Plan passes (C6 is step 5.4b)', () => {
+  it('passes the active Plan and a Plan that carries the Task unchanged (RUN-02, C6; 5.4b)', () => {
     const at = (entryPlan: RunGuardContext['entryPlan']) => transitionRun(runStateOf(CLAIMED), EV.authorize, ctxWith({ entryPlan }));
-    expect(at('active_plan').ok).toBe(true);
-    for (const entryPlan of ['carried_unchanged', 'changed', 'unavailable'] as const) {
-      expect(answer(at(entryPlan)), entryPlan).toEqual({ reason: 'stale', code: 'revision_conflict' });
-    }
+    const onActive = at('active_plan');
+    const carried = at('carried_unchanged');
+    expect(onActive.ok).toBe(true);
+    expect(carried.ok).toBe(true);
+    // The Run keeps its claim Plan; the authorization is the same either way.
+    if (!onActive.ok || !carried.ok) throw new Error('both verdicts authorize');
+    expect(carried.next).toEqual(onActive.next);
+    expect(carried.effects).toEqual(onActive.effects);
+    expect(rejected(at('changed'))).toMatchObject({ reason: 'stale', code: 'revision_conflict',
+      detail: 'the Goal active Plan no longer carries this Task unchanged; cancel the claim and requeue the Task' });
+    expect(rejected(at('unavailable'))).toMatchObject({ reason: 'guard_failed', code: 'unavailable',
+      detail: 'the Task basis in the Goal active Plan cannot be resolved' });
+    // The Goal guard comes first, then the Plan, then the brief and the fresh admission.
+    expect(answer(transitionRun(runStateOf(CLAIMED), EV.authorize, ctxWith({ entryPlan: 'unavailable',
+      goal: { desiredState: 'cancelled', activePlanMatchesClaim: false } })))).toEqual({ reason: 'guard_failed', code: 'busy' });
+    expect(answer(transitionRun(runStateOf(CLAIMED), EV.authorize, ctxWith({ entryPlan: 'changed',
+      continuationBrief: 'mismatch', freshAdmission: rejection('forbidden', 'role') }))))
+      .toEqual({ reason: 'stale', code: 'revision_conflict' });
+    expect(answer(transitionRun(runStateOf(CLAIMED), EV.authorize, ctxWith({ entryPlan: 'carried_unchanged',
+      freshAdmission: rejection('forbidden', 'role') })))).toEqual({ reason: 'guard_failed', code: 'forbidden' });
   });
 
   it('checks the continuation brief verdict against the Run requeueRef (RUN-02, C3; 5.4)', () => {

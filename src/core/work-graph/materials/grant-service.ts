@@ -35,7 +35,8 @@
  *   Evidence or a completion verdict.
  *
  * The composition root injects the SAME real SourceApplicabilityPort instance
- * here and into `createMaterialAccessResolver(authority, index, source)`.
+ * and the SAME `isTaskCarriedUnchanged` predicate (LA-2) here and into
+ * `createMaterialAccessResolver(authority, index, source, isTaskCarriedUnchanged)`.
  */
 import type { CoreCallContext, CorePrincipal, MaterialReader } from '../../../contracts/core/call-context.js';
 import type { VersionPin } from '../../../contracts/core/identity.js';
@@ -551,6 +552,23 @@ async function loadOwnerRun(
 export function createMaterialGrantService(deps: MaterialGrantDependencies): MaterialGrantPort {
   const records: GoalRecordTransactionPort = deps.records;
 
+  /**
+   * The reader Run's Plan against the Goal's active Plan: the same Plan, or
+   * (LA-2) an active Plan that carries the Run's Task unchanged from it. The
+   * Plans that carried decision read are returned for the grant commit.
+   */
+  async function readerPlanCurrent(goal: GoalSnapshot, reader: RunSnapshot, stale: string):
+    Promise<{ ok: true; guards: readonly RecordGuard[] } | { ok: false; rejection: CoreRejection }> {
+    const active = goal.activePlanRevision;
+    if (active !== null && sameRef(reader.planRef, active)) return { ok: true, guards: [] };
+    if (active === null) return { ok: false, rejection: revisionConflict(stale) };
+    const carried = await deps.isTaskCarriedUnchanged({ goalRef: goal.ref, taskId: reader.task.taskId,
+      fromPlanRef: reader.planRef, toPlanRef: active });
+    if (carried.status === 'carried') return { ok: true, guards: carried.guards };
+    if (carried.status === 'unavailable') return { ok: false, rejection: unavailable(carried.reason) };
+    return { ok: false, rejection: revisionConflict(`${stale} (${carried.reason})`) };
+  }
+
   function recordOf(snapshot: MaterialAccessGrantSnapshot): EncodedRecord {
     return encodeMaterialAccessGrantSnapshot(snapshot);
   }
@@ -671,9 +689,8 @@ export function createMaterialGrantService(deps: MaterialGrantDependencies): Mat
     const readerRun = readerRead.snapshot as RunSnapshot;
     const readerProblem = runScopeProblem(readerRun, validated.reader, scope);
     if (readerProblem !== null) return readerProblem;
-    if (!sameRef(readerRun.planRef, goal.activePlanRevision)) {
-      return revisionConflict('the reader Run Plan is not the Goal current accepted Plan');
-    }
+    const readerPlan = await readerPlanCurrent(goal, readerRun, 'the reader Run Plan is not the Goal current accepted Plan');
+    if (!readerPlan.ok) return readerPlan.rejection;
     if (bound.signal.aborted) return cancelled('the material grant was cancelled during the reader read');
 
     // 3. Each exact material through the real Host historical read, then the
@@ -747,9 +764,9 @@ export function createMaterialGrantService(deps: MaterialGrantDependencies): Mat
     if (goalAfter.revision !== checkedExpected.goal.revision) {
       return revisionConflict('the Goal changed since the caller read it');
     }
-    if (goalAfter.activePlanRevision === null || !sameRef(goalAfter.activePlanRevision, readerRun.planRef)) {
-      return revisionConflict('the reader Run Plan is no longer the Goal current accepted Plan');
-    }
+    const readerPlanAfterCapture = await readerPlanCurrent(goalAfter, readerRun,
+      'the reader Run Plan is no longer the Goal current accepted Plan');
+    if (!readerPlanAfterCapture.ok) return readerPlanAfterCapture.rejection;
 
     const workspaceAfterRead = await deps.authority.load(workspaceRef);
     if (workspaceAfterRead.status !== 'found') return authorityRejection(workspaceAfterRead);
@@ -764,9 +781,9 @@ export function createMaterialGrantService(deps: MaterialGrantDependencies): Mat
     const readerAfter = readerAfterRead.snapshot as RunSnapshot;
     const readerAfterProblem = runScopeProblem(readerAfter, validated.reader, scope);
     if (readerAfterProblem !== null) return readerAfterProblem;
-    if (!sameRef(readerAfter.planRef, goalAfter.activePlanRevision)) {
-      return revisionConflict('the reader Run Plan is no longer the Goal current accepted Plan');
-    }
+    const readerAfterPlan = await readerPlanCurrent(goalAfter, readerAfter,
+      'the reader Run Plan is no longer the Goal current accepted Plan');
+    if (!readerAfterPlan.ok) return readerAfterPlan.rejection;
 
     const ownerGuards = new Map<string, number>();
     for (const [key, owner] of ownerRefs) {
@@ -817,6 +834,8 @@ export function createMaterialGrantService(deps: MaterialGrantDependencies): Mat
     addGuard(refKeyOf(validated.reader), readerAfter.revision);
     addGuard(refKeyOf(grantRef), null);
     for (const [key, revision] of ownerGuards) addGuard(key, revision);
+    // LA-2: the immutable Plans that carried the reader Run's Task, when the active Plan moved.
+    for (const guard of readerAfterPlan.guards) addGuard(guard.refKey, guard.expectedRevision);
     const guards: RecordGuard[] = [...guardMap].map(([refKey, expectedRevision]) => ({ refKey, expectedRevision }));
 
     const prepared: PreparedCommit = {

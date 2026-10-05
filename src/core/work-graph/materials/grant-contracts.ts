@@ -6,8 +6,10 @@
  *   - only a trusted human/system Host principal may call either operation;
  *     a work_run or query_run principal is forbidden at the write entry;
  *   - the reader is a Run inside the same goal/workspace as the material owner;
- *   - the grant is bound to the reader's accepted, currently active Plan and to
- *     the real Workspace revision plus a freshly captured source pin;
+ *   - the grant is bound to the reader Run's claim Plan, which is the Goal's
+ *     active Plan or one the active Plan carries the Run's Task from unchanged
+ *     (LA-2), and to the real Workspace revision plus a freshly captured
+ *     source pin;
  *   - owner-Agent grants, QueryRun readers and cross-workspace/historical
  *     sharing remain product work but are explicitly NOT implemented here.
  *
@@ -34,7 +36,7 @@ import type {
 } from '../../../contracts/material-access.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
 import type { GraphWrite } from '../tasks/contracts.js';
-import type { MaterialAuthorityReads } from './record-ports.js';
+import type { MaterialAuthorityReads, TaskCarriedUnchanged } from './record-ports.js';
 import type { MaterialPort } from './contracts.js';
 
 /** A grant authorizes a bounded, auditable set of exact content-addressed materials. */
@@ -104,6 +106,12 @@ export type MaterialGrantDependencies = {
   authority: MaterialAuthorityReads;
   materials: MaterialPort;
   source: SourceApplicabilityPort;
+  /**
+   * LA-2 (A.2 step 5.4b): the SAME predicate the read-side resolver gets, so a
+   * reader Run whose Task the Goal's active Plan carries unchanged from the
+   * Run's claim Plan may be granted too.
+   */
+  isTaskCarriedUnchanged: TaskCarriedUnchanged;
   now(): string;
   eventId(): string;
 };

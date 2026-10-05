@@ -42,7 +42,7 @@ import type { RecordGuard } from '../../record-store/ports.js';
 import { createMaterialAccessResolver } from './applicability.js';
 import type { MaterialReadFacts, MaterialReadFactsPort } from './contracts.js';
 import { createMaterialService } from './material-service.js';
-import type { MaterialAuthorityReads, MaterialCandidateReads } from './record-ports.js';
+import type { MaterialAuthorityReads, MaterialCandidateReads, TaskCarriedUnchanged } from './record-ports.js';
 
 /**
  * Injected capabilities. The composition root injects the authority/index built
@@ -54,6 +54,8 @@ export type MaterialReadFactsDependencies = {
   index: MaterialCandidateReads;
   bodies: RawArtifactStorePort;
   sourceApplicability?: SourceApplicabilityPort;
+  /** LA-2: the same `tasks/` predicate the ordinary resolver gets (`createMaterialAccessResolver`). */
+  isTaskCarriedUnchanged: TaskCarriedUnchanged;
   now(): string;
 };
 
@@ -134,6 +136,17 @@ function trackCandidateReads(index: MaterialCandidateReads, collector: FactsColl
   };
 }
 
+/** LA-2: the Plans a carried decision read join this call's window; an
+ * unreadable Plan fails the call closed as unavailable, like an authority read. */
+function trackCarriedReads(predicate: TaskCarriedUnchanged, collector: FactsCollector): TaskCarriedUnchanged {
+  return async (input) => {
+    const result = await predicate(input);
+    if (result.status === 'carried') for (const guard of result.guards) collector.observe(guard.refKey, guard.expectedRevision);
+    if (result.status === 'unavailable') collector.observeUnavailable(result.reason);
+    return result;
+  };
+}
+
 /** The existing helper does not pass the caller's signal, so bind this call's
  * ORIGINAL signal to every trusted capture; the model never supplies one. */
 function bindSourceSignal(port: SourceApplicabilityPort, signal: AbortSignal): SourceApplicabilityPort {
@@ -180,7 +193,8 @@ export function createMaterialReadFactsService(deps: MaterialReadFactsDependenci
       const sourcePort = deps.sourceApplicability;
       const source = sourcePort === undefined ? undefined : bindSourceSignal(sourcePort, signal);
 
-      const grants = createMaterialAccessResolver(authority, index, source);
+      const carried = trackCarriedReads(deps.isTaskCarriedUnchanged, collector);
+      const grants = createMaterialAccessResolver(authority, index, source, carried);
       const service = createMaterialService({ bodies: deps.bodies, authority, grants, now: deps.now });
 
       const frozenCtx: CoreCallContext = {
