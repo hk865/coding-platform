@@ -279,7 +279,10 @@ describe('AG2b continuous communication over the real Host HTTP', () => {
       const waiting = await waitForDriver(started, snapshot => snapshot.state === 'waiting_for_reply');
       expect(waiting.state).toBe('waiting_for_reply');
       expect(started.scripted.calls(), 'A find/card/send only; B is never called while busy').toBe(3);
-      expect(await sessionCount(started), 'the Workflow created the A Session plus its derived child A′').toBe(sessionsBefore + 2);
+      // `waiting_for_reply` is projected when the pump SEES the wait message; the
+      // consultation consumer derives A′ asynchronously right after it.
+      await expect.poll(() => sessionCount(started), { timeout: 10_000, interval: 50,
+        message: 'the Workflow created the A Session plus its derived child A′' }).toBe(sessionsBefore + 2);
       const cardsWhileBusy = await listSessions(started);
       const querySessionsWhileBusy = cardsWhileBusy.filter(isQueryRole);
       // B stays the occupied SOURCE; the consultation runs in its own derived child.
@@ -430,7 +433,8 @@ describe('AG2b continuous communication over the real Host HTTP', () => {
       expect(waiting.state).toBe('waiting_for_reply');
       // B was never consulted and the Workflow created only A's Session.
       expect(started.scripted.calls()).toBe(3);
-      expect(await sessionCount(started), 'A plus its derived child are created next to the occupied B').toBe(sessionsBefore + 2);
+      await expect.poll(() => sessionCount(started), { timeout: 10_000, interval: 50,
+        message: 'A plus its derived child are created next to the occupied B' }).toBe(sessionsBefore + 2);
       const cards = await listSessions(started);
       const querySessions = cards.filter(isQueryRole);
       expect(querySessions, 'B plus its isolated child A′').toHaveLength(2);
