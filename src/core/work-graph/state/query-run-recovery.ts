@@ -10,13 +10,10 @@
  * reconcile closes (QRR-01/02/04), `unknown` (QRR-05) and the human attestation
  * (QRR-06).
  *
- * §15.2 step 2 scope: QRR-03 (已有) is implemented with today's result (the
- * owner's `recordObservation` terminal branch calls it, `query-execution.ts:1368`).
- * QRR-01/02/04/05/06 are 新增: their events
- * stay in the union, the phase-level entries of the §8.4 QRR table already
- * answer their code (with reason `illegal`), a phase no row starts from answers
- * the §1.2 default `invalid`, and every other combination returns `illegal` /
- * `invalid` (`notYet`, as in every other machine) until step 5 adds the row.
+ * QRR-03 (已有) is the owner's `recordObservation` terminal branch
+ * (`query-execution.ts`). Step 5.6 adds the start-up reconcile closes
+ * QRR-01/02/04, `unknown` (QRR-05) and the operator's attestation (QRR-06);
+ * the phase-level entries of the §8.4 QRR table answer first.
  */
 import type { CoreError } from '../../../contracts/core/results.js';
 import type { RunExecutionHistoryV1 } from '../../../contracts/core/execution-history.js';
@@ -34,9 +31,10 @@ import type {
   QueryRunSnapshot,
   QueryRunV1,
   QuerySubmissionBindingV1,
+  QueryUnknownCauseV1,
 } from '../../../contracts/query-job.js';
 import type { SessionProbeVerdict, SessionRelease } from './session-availability.js';
-import { accept, notYet, reject, unreachable, type Transition } from './transition.js';
+import { accept, reject, unreachable, type Transition } from './transition.js';
 
 // --------------------------------------------------------------------------
 // State, guard context, events and effects (§8.1, §8.2)
@@ -104,6 +102,11 @@ export type QueryRecoveryGuardContext = {
    * (`query-execution.ts:1324`). False whenever no entry is fixed.
    */
   entryMatches: boolean;
+  /**
+   * QRR-06 (SES-10): the attested Turn has no Kernel terminal, or the Kernel is
+   * unreadable (read by the Host entry before the attestation, as RUN-22).
+   */
+  kernelTurnOpen?: boolean;
 };
 
 export type QueryTerminalOutcome = 'answered' | 'timeout' | 'gap' | 'failed' | 'cancelled';
@@ -163,7 +166,8 @@ export type QueryHistoryUpdate = { kind: 'set'; history: RunExecutionHistoryV1 }
  */
 export type QueryRecoveryEffect =
   | { kind: 'settle_query'; settlement: QuerySettlement; history: QueryHistoryUpdate }
-  | { kind: 'mark_query_unknown'; history: QueryHistoryUpdate }
+  /** QRR-05: the cause is persisted on the QueryRun (`executionState.unknown`) for the attestation (QRR-06). */
+  | { kind: 'mark_query_unknown'; history: QueryHistoryUpdate; cause: QueryUnknownCause }
   | { kind: 'record_answer'; ref: QueryJobAnswerRef; answer: QueryJobAnswerV1 }
   | ({ kind: 'release_session' } & SessionRelease);
 
@@ -181,13 +185,126 @@ export function transitionQueryRunRecovery(
   switch (event.kind) {
     case 'query_terminal_observed': return terminalObserved(state, event.terminal, ctx);
     case 'query_reconcile_terminal': return reconcileTerminal(state, event.terminal, ctx);
-    case 'query_reconcile_not_entered':
-    case 'query_reconcile_interrupted_clean':
-    case 'query_reconcile_unknown':
-    case 'query_unknown_attested':
-      return pendingRow(state.phase, event.kind);
+    case 'query_reconcile_not_entered': return reconcileNotEntered(state, ctx);
+    case 'query_reconcile_interrupted_clean': return reconcileInterrupted(state, event, ctx);
+    case 'query_reconcile_unknown': return reconcileUnknown(state, event, ctx);
+    case 'query_unknown_attested': return unknownAttested(state, ctx);
     default: return unreachable(event, 'QueryRecoveryEvent');
   }
+}
+
+/** The R-source admission of QRR-01/02/04/05 (§8.4): the start-up reconcile under this Host's instance lease. */
+function reconcileAdmission(state: QueryRecoveryState, kind: PendingRowEvent, ctx: QueryRecoveryGuardContext): QueryRecoveryTransition | null {
+  if (ctx.caller !== 'reconcile') return reject('illegal', 'forbidden', `${kind} is accepted only from the Host start-up reconcile`);
+  if (ctx.hostLease !== 'owned') return reject('guard_failed', 'busy', 'the Host instance lease is held elsewhere or unreadable (D-18, L-10)');
+  return phaseForbidden(state.phase, kind);
+}
+
+/** The session release of a settle without a complete Turn boundary (SES-09/10): the cursor is kept. */
+function releaseKeepingCursor(ctx: QueryRecoveryGuardContext, kernelTurnOpen: boolean): QueryRecoveryEffect[] {
+  if (!ctx.sessionOwned) return [];
+  return [kernelTurnOpen
+    ? { kind: 'release_session', holder: ctx.queryRunRef, generation: ctx.sessionGeneration, historyCursor: { kind: 'keep' }, kernelTurnOpen: true }
+    : { kind: 'release_session', holder: ctx.queryRunRef, generation: ctx.sessionGeneration, historyCursor: { kind: 'keep' }, kernelTurnOpen: false }];
+}
+
+/**
+ * QRR-01 (claimed/prepared: begin commits `entering` before the Kernel starts,
+ * so there is no Turn) and QRR-02 (entering, the probe `ready` and no fixed
+ * Turn in the Kernel Store, D-5 by analogy): closed `not_entered`, never
+ * re-entered; the Session is released keeping its cursor (SES-09).
+ */
+function reconcileNotEntered(state: QueryRecoveryState, ctx: QueryRecoveryGuardContext): QueryRecoveryTransition {
+  const admitted = reconcileAdmission(state, 'query_reconcile_not_entered', ctx);
+  if (admitted !== null) return admitted;
+  if (state.phase === 'entering' && (ctx.probe !== 'ready' || ctx.kernel === null || ctx.kernel.turn !== 'absent')) {
+    return reject('guard_failed', 'unavailable', 'an entering QueryRun is proven not entered only by a readable Kernel without its Turn (SD-3)');
+  }
+  return accept(settledState('not_entered'), [
+    { kind: 'settle_query', settlement: { outcome: 'not_entered', closeMessage: 'host_restart_before_entry' }, history: { kind: 'unchanged' } },
+    ...releaseKeepingCursor(ctx, false),
+  ]);
+}
+
+/**
+ * QRR-04 (SD-4(b)(e)): a Turn whose Kernel status maps to no terminal
+ * (created/running/paused/yielded) with every tool call resolved is closed
+ * `failed`. A Kernel status without a terminal leaves the Kernel session's last
+ * Turn open, so the Session becomes `kernel_turn_open` (SES-09, LA-1);
+ * `yielded` is a Kernel terminal and does not.
+ */
+function reconcileInterrupted(
+  state: QueryRecoveryState, event: Extract<QueryRecoveryEvent, { kind: 'query_reconcile_interrupted_clean' }>,
+  ctx: QueryRecoveryGuardContext,
+): QueryRecoveryTransition {
+  const admitted = reconcileAdmission(state, event.kind, ctx);
+  if (admitted !== null) return admitted;
+  if (!ctx.entryMatches) return reject('guard_failed', 'forbidden', 'the reconciled Turn is not the fixed Query entry');
+  const kernel = ctx.kernel;
+  if (ctx.probe !== 'ready' || kernel === null || kernel.turn !== 'present') {
+    return reject('guard_failed', 'unavailable', 'no readable Kernel Turn backs the interruption (SD-2, SD-3)');
+  }
+  if (kernel.unresolvedToolCallIds.length > 0) {
+    return reject('guard_failed', 'incomplete', 'a tool call has no result; the QueryRun is reconciled unknown (QRR-05)');
+  }
+  if (kernel.mappedOutcome !== null) return reject('illegal', 'invalid', 'a mappable Kernel status is a terminal (QRR-03)');
+  if (ctx.inputsConfirmed !== true) return reject('guard_failed', 'unavailable', 'the Query input acceptance is not confirmed against its source');
+  const status = event.kernelStatus;
+  const closeMessage = status === 'paused' || status === 'yielded' ? `kernel_status:${status}` : 'host_interrupted';
+  return accept(settledState('failed'), [
+    { kind: 'settle_query', settlement: { outcome: 'failed', closeMessage }, history: { kind: 'set', history: event.history } },
+    ...releaseKeepingCursor(ctx, status !== 'yielded'),
+  ]);
+}
+
+/**
+ * QRR-05 (D-4, SD-3, SD-4(c)): a tool call without a result, or an unreadable
+ * Kernel (`missing`/`damaged`): phase `unknown`, the occupancy kept. The
+ * history is the Kernel's when readable, else unchanged.
+ */
+function reconcileUnknown(
+  state: QueryRecoveryState, event: Extract<QueryRecoveryEvent, { kind: 'query_reconcile_unknown' }>,
+  ctx: QueryRecoveryGuardContext,
+): QueryRecoveryTransition {
+  const admitted = reconcileAdmission(state, event.kind, ctx);
+  if (admitted !== null) return admitted;
+  const cause = event.cause;
+  switch (cause.kind) {
+    case 'unresolved_tools':
+      if (ctx.probe !== 'ready' || cause.toolCallIds.length === 0) {
+        return reject('illegal', 'invalid', 'unresolved_tools needs a readable Kernel and the calls without a result');
+      }
+      break;
+    case 'kernel_unreadable':
+      if (ctx.probe !== cause.verdict) return reject('illegal', 'invalid', 'kernel_unreadable is the missing/damaged probe verdict');
+      break;
+    default: return unreachable(cause, 'Query unknown cause');
+  }
+  const history: QueryHistoryUpdate = event.history === null ? { kind: 'unchanged' } : { kind: 'set', history: event.history };
+  return accept({ ...state, phase: 'unknown' }, [{ kind: 'mark_query_unknown', history, cause }]);
+}
+
+/**
+ * QRR-06 (D-4(b) by analogy, L-1): an operator attests an unknown QueryRun
+ * through the Host holding the instance lease: closed `failed` with the reason;
+ * the Session is released keeping its cursor and, when the Turn has no Kernel
+ * terminal or the Kernel is unreadable, made `kernel_turn_open` (SES-10).
+ */
+function unknownAttested(state: QueryRecoveryState, ctx: QueryRecoveryGuardContext): QueryRecoveryTransition {
+  if (state.phase !== 'unknown') {
+    if (state.phase === 'settled') return reject('illegal', 'busy', 'query_unknown_attested from settled: the QueryRun is already settled');
+    return reject('guard_failed', 'busy', `query_unknown_attested from ${state.phase}: only an unknown QueryRun is attested`);
+  }
+  if (ctx.caller !== 'host_entry') return reject('illegal', 'forbidden', 'an unknown QueryRun is attested only through the Host entry');
+  if (ctx.actor !== 'human') return reject('guard_failed', 'forbidden', 'only an operator attests an unknown QueryRun');
+  const reason = ctx.reason;
+  if (reason === null || reason.trim().length === 0) return reject('illegal', 'invalid', 'an attestation requires a reason');
+  if (ctx.hostLease !== 'owned') return reject('guard_failed', 'busy', 'this Host does not hold the Host instance lease (L-1)');
+  if (ctx.inputsConfirmed === false) return reject('guard_failed', 'unavailable', 'the Query input acceptance is not confirmed against its source');
+  return accept(settledState('failed'), [
+    { kind: 'settle_query', settlement: { outcome: 'failed', closeMessage: reason }, history: { kind: 'unchanged' } },
+    ...releaseKeepingCursor(ctx, ctx.kernelTurnOpen === true),
+  ]);
 }
 
 /** QRR-03, K source. Guard order is the owner's from before step 3: entry, settled, Answer, end boundary. */
@@ -289,23 +406,13 @@ function settledState(outcome: QuerySettledOutcome): QueryRecoveryState {
   return { phase: 'settled', runStatus: status, jobStatus: status, outcome, ended: true };
 }
 
-type PendingRowEvent = Exclude<QueryRecoveryEventKind, 'query_terminal_observed' | 'query_reconcile_terminal'>;
-
-/** The 新增 rows each pending event is waiting for (§15.2 step 5). */
-const PENDING_ROWS: { readonly [E in PendingRowEvent]: string } = {
-  query_reconcile_not_entered: 'QRR-01/QRR-02',
-  query_reconcile_interrupted_clean: 'QRR-04',
-  query_reconcile_unknown: 'QRR-05',
-  query_unknown_attested: 'QRR-06',
-};
+type PendingRowEvent = Exclude<QueryRecoveryEventKind, 'query_terminal_observed' | 'query_reconcile_terminal' | 'query_unknown_attested'>;
 
 type Forbidden = { readonly code: CoreError; readonly detail: string };
 const SETTLED: Forbidden = { code: 'busy', detail: 'the QueryRun is already settled' };
 const NO_TURN: Forbidden = { code: 'invalid', detail: 'claimed/prepared cannot have a Kernel Turn' };
 const ENTERED: Forbidden = { code: 'invalid', detail: 'entry was already observed' };
 const UNKNOWN_EXITS: Forbidden = { code: 'busy', detail: 'an unknown QueryRun leaves only through QRR-03 or QRR-06 (RD-4)' };
-/** §8.4 lists it as guard_failed; it stays `illegal` until step 5 adds QRR-06. */
-const NOT_UNKNOWN: Forbidden = { code: 'busy', detail: 'only an unknown QueryRun is attested' };
 /**
  * Not in §8.4: QRR-05 starts only from entering/entered, so the §1.2 default
  * applies. A QueryRun that is already unknown stays unknown (§12.3 Q-06); the
@@ -315,21 +422,18 @@ const NOT_UNKNOWN: Forbidden = { code: 'busy', detail: 'only an unknown QueryRun
 const ALREADY_UNKNOWN: Forbidden = { code: 'invalid', detail: 'QRR-05 starts only from entering/entered; an unknown QueryRun stays unknown (Q-06)' };
 
 /**
- * Phase-level entries of the §8.4 QRR table for the events of 新增 rows, with
- * their §8.4 code, plus the phases no row of the event starts from. In step 2
- * every one answers `illegal`.
+ * Phase-level entries of the §8.4 QRR table for the reconcile events, with
+ * their §8.4 code, plus the phases no row of the event starts from.
  */
-const PENDING_FORBIDDEN: { readonly [E in PendingRowEvent]: Partial<Readonly<Record<QueryRecoveryPhase, Forbidden>>> } = {
+const PHASE_FORBIDDEN: { readonly [E in PendingRowEvent]: Partial<Readonly<Record<QueryRecoveryPhase, Forbidden>>> } = {
   query_reconcile_not_entered: { entered: ENTERED, unknown: UNKNOWN_EXITS, settled: SETTLED },
   query_reconcile_interrupted_clean: { claimed: NO_TURN, prepared: NO_TURN, unknown: UNKNOWN_EXITS, settled: SETTLED },
   query_reconcile_unknown: { claimed: NO_TURN, prepared: NO_TURN, unknown: ALREADY_UNKNOWN, settled: SETTLED },
-  query_unknown_attested: { claimed: NOT_UNKNOWN, prepared: NOT_UNKNOWN, entering: NOT_UNKNOWN, entered: NOT_UNKNOWN, settled: SETTLED },
 };
 
-function pendingRow(phase: QueryRecoveryPhase, kind: PendingRowEvent): QueryRecoveryTransition {
-  const forbidden = PENDING_FORBIDDEN[kind][phase];
-  if (forbidden !== undefined) return reject('illegal', forbidden.code, `${kind} from ${phase}: ${forbidden.detail}`);
-  return notYet(`${kind} (${PENDING_ROWS[kind]})`);
+function phaseForbidden(phase: QueryRecoveryPhase, kind: PendingRowEvent): QueryRecoveryTransition | null {
+  const forbidden = PHASE_FORBIDDEN[kind][phase];
+  return forbidden === undefined ? null : reject('illegal', forbidden.code, `${kind} from ${phase}: ${forbidden.detail}`);
 }
 
 /** The machine state of a QueryRun and its QueryJob; null for a historical claim without execution state. */
@@ -477,10 +581,20 @@ const ENTRY_FIXED_PHASES: ReadonlySet<QueryRecoveryPhase> = new Set<QueryRecover
 /** QRR-01 (claimed/prepared) and QRR-02 (entering without a Kernel Turn): the only settles to `not_entered`. */
 const NOT_ENTERED_PHASES: ReadonlySet<QueryRecoveryPhase> = new Set<QueryRecoveryPhase>(['claimed', 'prepared', 'entering']);
 
-/** Phase `unknown`: the owner's `unknown` branch (`query-execution.ts:1353`) and QRR-05. Status stays running. */
-export function markQueryRunUnknownRecord(run: QueryRunSnapshot, input: { history: QueryHistoryUpdate }): QueryRunSnapshot {
+/**
+ * Phase `unknown`: the owner's `unknown` branch (`query-execution.ts:1353`) and QRR-05, which records its
+ * cause (`executionState.unknown`). Status stays running.
+ */
+export function markQueryRunUnknownRecord(
+  run: QueryRunSnapshot, input: { history: QueryHistoryUpdate; cause?: QueryUnknownCause },
+): QueryRunSnapshot {
   const state = requirePhaseIn(run.run.executionState, ENTRY_FIXED_PHASES, 'markQueryRunUnknownRecord');
-  const executionState: QueryExecutionStateV1 = { ...structuredClone(state), phase: 'unknown', history: nextHistory(state, input.history) };
+  const cause = input.cause;
+  const unknown: QueryUnknownCauseV1 | undefined = cause === undefined ? undefined
+    : cause.kind === 'unresolved_tools' ? { kind: 'unresolved_tools', toolCallIds: [...cause.toolCallIds] }
+      : { kind: 'kernel_unreadable', verdict: cause.verdict };
+  const executionState: QueryExecutionStateV1 = { ...structuredClone(state), phase: 'unknown', history: nextHistory(state, input.history),
+    ...(unknown === undefined ? {} : { unknown }) };
   return { ...run, revision: run.revision + 1, run: { ...run.run, executionState } };
 }
 

@@ -1,8 +1,9 @@
 /**
  * Exhaustive table test of the QueryRun recovery sub-machine and its record
  * constructors (docs/refactor/STATE-MACHINES-SPEC.md §8 QRR rows, §8.4, §14.1,
- * §15.2 step 2). Every (phase, event) pair is asserted; QRR-03 (已有) is legal
- * today, the 新增 rows QRR-01/02/04/05/06 still answer `illegal`.
+ * §15.2 steps 2 and 5.6). Every (phase, event) pair is asserted; QRR-03 (已有) and,
+ * from A.2 step 5.6, the start-up reconcile closes QRR-01/02/04/05 and the
+ * attestation QRR-06.
  */
 import { describe, expect, it } from 'vitest';
 import type { RunExecutionHistoryV1 } from '../../src/contracts/core/execution-history.js';
@@ -133,16 +134,39 @@ const SETTLED_FAILED: QueryRecoveryState = { phase: 'settled', runStatus: 'close
 const SETTLE_FAILED = { kind: 'settle_query', settlement: { outcome: 'failed', closeMessage: 'model failed' }, history: { kind: 'set', history: history() } };
 const FAILED_EFFECTS = [SETTLE_FAILED, RELEASE];
 
-type Expected = { legal: true } | { legal: false; reason: TransitionRejectReason; code: CoreError };
+type Expected =
+  | { legal: true; next?: QueryRecoveryState; effects?: readonly unknown[] }
+  | { legal: false; reason: TransitionRejectReason; code: CoreError };
 const LEGAL: Expected = { legal: true };
 const illegal = (code: CoreError): Expected => ({ legal: false, reason: 'illegal', code });
-/** A 新增 row before step 5: `notYet`, with the §1.2 default code like every other machine (§15.2 step 2). */
-const NOT_YET: Expected = illegal('invalid');
+const guardFailed = (code: CoreError): Expected => ({ legal: false, reason: 'guard_failed', code });
+
+/** SES-09/SES-10: a settle without a complete Turn boundary keeps the cursor (A.2 step 5.6). */
+const KEEP_CURSOR = (kernelTurnOpen: boolean) => ({ kind: 'release_session', holder: RUN_REF, generation: SESSION_GENERATION,
+  historyCursor: { kind: 'keep' }, kernelTurnOpen }) as const;
+const SETTLED = (outcome: 'not_entered' | 'failed'): QueryRecoveryState =>
+  ({ phase: 'settled', runStatus: 'closed', jobStatus: 'closed', outcome, ended: true });
+/** QRR-01: closed `not_entered`, never re-entered; the Session released keeping its cursor. */
+const NOT_ENTERED: Expected = { legal: true, next: SETTLED('not_entered'), effects: [
+  { kind: 'settle_query', settlement: { outcome: 'not_entered', closeMessage: 'host_restart_before_entry' }, history: { kind: 'unchanged' } },
+  KEEP_CURSOR(false)] };
+/** QRR-05 (unresolved tools, readable Kernel): phase `unknown` with its cause, the occupancy kept. */
+const MARKED_UNKNOWN = (phase: 'entering' | 'entered'): Expected => ({ legal: true,
+  next: { ...stateAt(phase), phase: 'unknown' }, effects: [{ kind: 'mark_query_unknown', history: { kind: 'set', history: history(null) },
+    cause: { kind: 'unresolved_tools', toolCallIds: ['call-1'] } }] });
+/** QRR-06: closed `failed` with the operator's reason; the Turn is not open here, so the Session stays available. */
+const ATTESTED: Expected = { legal: true, next: SETTLED('failed'), effects: [
+  { kind: 'settle_query', settlement: { outcome: 'failed', closeMessage: 'checked by hand' }, history: { kind: 'unchanged' } },
+  KEEP_CURSOR(false)] };
 
 /**
- * §8.3/§8.4 as of §15.2 step 2: QRR-03 legal; 新增 rows answer `NOT_YET`
- * outside the §8.4 phase entries. `unknown × query_reconcile_unknown` is final:
- * no row starts there (QRR-05 is entering/entered), so §1.2 gives `invalid`.
+ * §8.3/§8.4 as of A.2 step 5.6, under each event's own caller (`ctxFor`):
+ * QRR-03 legal from entering/entered/unknown; QRR-01 closes claimed/prepared;
+ * QRR-02 refuses an entering Run whose readable Kernel holds the Turn
+ * (`unavailable`); QRR-04 refuses a mappable Kernel status (a terminal,
+ * `invalid`); QRR-05 marks entering/entered unknown; QRR-06 attests only an
+ * unknown QueryRun (`guard_failed/busy` from a non-unknown phase).
+ * `unknown × query_reconcile_unknown` is final: no row starts there.
  */
 const MATRIX: { readonly [E in QueryRecoveryEventKind]: { readonly [P in QueryRecoveryPhase]: Expected } } = {
   query_terminal_observed: {
@@ -154,21 +178,21 @@ const MATRIX: { readonly [E in QueryRecoveryEventKind]: { readonly [P in QueryRe
     entering: LEGAL, entered: LEGAL, unknown: LEGAL, settled: illegal('busy'),
   },
   query_reconcile_not_entered: {
-    claimed: NOT_YET, prepared: NOT_YET, entering: NOT_YET,
+    claimed: NOT_ENTERED, prepared: NOT_ENTERED, entering: guardFailed('unavailable'),
     entered: illegal('invalid'), unknown: illegal('busy'), settled: illegal('busy'),
   },
   query_reconcile_interrupted_clean: {
-    claimed: illegal('invalid'), prepared: illegal('invalid'), entering: NOT_YET,
-    entered: NOT_YET, unknown: illegal('busy'), settled: illegal('busy'),
+    claimed: illegal('invalid'), prepared: illegal('invalid'), entering: illegal('invalid'),
+    entered: illegal('invalid'), unknown: illegal('busy'), settled: illegal('busy'),
   },
   query_reconcile_unknown: {
-    claimed: illegal('invalid'), prepared: illegal('invalid'), entering: NOT_YET,
-    entered: NOT_YET, unknown: illegal('invalid'), settled: illegal('busy'),
+    claimed: illegal('invalid'), prepared: illegal('invalid'), entering: MARKED_UNKNOWN('entering'),
+    entered: MARKED_UNKNOWN('entered'), unknown: illegal('invalid'), settled: illegal('busy'),
   },
-  // §8.4 "非 unknown × query_unknown_attested → busy" (guard_failed once step 5 adds QRR-06).
+  // §8.4 "非 unknown × query_unknown_attested → busy", a guard of QRR-06; settled stays the phase entry.
   query_unknown_attested: {
-    claimed: illegal('busy'), prepared: illegal('busy'), entering: illegal('busy'),
-    entered: illegal('busy'), unknown: NOT_YET, settled: illegal('busy'),
+    claimed: guardFailed('busy'), prepared: guardFailed('busy'), entering: guardFailed('busy'),
+    entered: guardFailed('busy'), unknown: ATTESTED, settled: illegal('busy'),
   },
 };
 
@@ -176,10 +200,10 @@ describe('transitionQueryRunRecovery: every (phase, event) pair', () => {
   for (const kind of EVENT_KINDS) {
     for (const phase of PHASES) {
       const expected = MATRIX[kind][phase];
-      it(`${phase} × ${kind} → ${expected.legal ? 'QRR-03' : `${expected.reason}/${expected.code}`}`, () => {
+      it(`${phase} × ${kind} → ${expected.legal ? 'legal' : `${expected.reason}/${expected.code}`}`, () => {
         const result = transitionQueryRunRecovery(stateAt(phase), eventOf(kind), ctxFor(kind));
         if (expected.legal) {
-          expect(result).toEqual({ ok: true, next: SETTLED_FAILED, effects: FAILED_EFFECTS });
+          expect(result).toEqual({ ok: true, next: expected.next ?? SETTLED_FAILED, effects: expected.effects ?? FAILED_EFFECTS });
         } else {
           expectRejected(result, expected.reason, expected.code);
         }
@@ -187,26 +211,63 @@ describe('transitionQueryRunRecovery: every (phase, event) pair', () => {
     }
   }
 
-  it('the 新增 rows answer the same phase-level result under any guard context', () => {
-    const contexts = [serviceCtx(), reconcileCtx(), reconcileCtx({ hostLease: 'held_by_other', probe: 'missing', kernel: null }),
-      serviceCtx({ caller: 'host_entry', hostLease: 'owned', actor: 'human', reason: 'why' })];
-    for (const kind of ['query_reconcile_not_entered', 'query_reconcile_interrupted_clean', 'query_reconcile_unknown', 'query_unknown_attested'] as const) {
-      for (const phase of PHASES) {
-        const expected = MATRIX[kind][phase];
-        if (expected.legal) throw new Error('a 新增 row is legal in step 2');
-        for (const ctx of contexts) expectRejected(transitionQueryRunRecovery(stateAt(phase), eventOf(kind), ctx), expected.reason, expected.code);
+  it('QRR-01/02/04/05 are the start-up reconcile under this Host\'s lease (§8.4)', () => {
+    for (const kind of ['query_reconcile_not_entered', 'query_reconcile_interrupted_clean', 'query_reconcile_unknown'] as const) {
+      expectRejected(transitionQueryRunRecovery(stateAt('prepared'), eventOf(kind), serviceCtx()), 'illegal', 'forbidden');
+      for (const hostLease of ['held_by_other', null] as const) {
+        expectRejected(transitionQueryRunRecovery(stateAt('entered'), eventOf(kind), reconcileCtx({ hostLease })), 'guard_failed', 'busy');
       }
     }
   });
 
-  it('QRR-05 alternative causes and QRR-04 Kernel states do not change the step-2 answer', () => {
+  it('QRR-02: an entering QueryRun is proven not entered only by a readable Kernel without its Turn (SD-3)', () => {
+    const notEntered = eventOf('query_reconcile_not_entered');
+    expect(transitionQueryRunRecovery(stateAt('entering'), notEntered,
+      reconcileCtx({ kernel: { turn: 'absent', mappedOutcome: null, boundaryComplete: false, unresolvedToolCallIds: [] } })))
+      .toEqual({ ok: true, next: SETTLED('not_entered'), effects: (NOT_ENTERED as { effects?: readonly unknown[] }).effects });
+    expectRejected(transitionQueryRunRecovery(stateAt('entering'), notEntered, reconcileCtx({ probe: 'missing', kernel: null })),
+      'guard_failed', 'unavailable');
+  });
+
+  it('QRR-04: closed failed; an open Kernel Turn makes the Session kernel_turn_open, a yielded one does not (SD-2, LA-1)', () => {
+    const clean = reconcileCtx({ kernel: { turn: 'present', mappedOutcome: null, boundaryComplete: false, unresolvedToolCallIds: [] } });
     for (const kernelStatus of ['created', 'running', 'paused', 'yielded'] as const) {
-      expectRejected(transitionQueryRunRecovery(stateAt('entered'),
-        { kind: 'query_reconcile_interrupted_clean', hostInstanceId: 'host-1', kernelStatus, history: history(null) }, reconcileCtx()), 'illegal', 'invalid');
+      const result = transitionQueryRunRecovery(stateAt('entered'),
+        { kind: 'query_reconcile_interrupted_clean', hostInstanceId: 'host-1', kernelStatus, history: history(null) }, clean);
+      const closeMessage = kernelStatus === 'paused' || kernelStatus === 'yielded' ? `kernel_status:${kernelStatus}` : 'host_interrupted';
+      expect(result).toEqual({ ok: true, next: SETTLED('failed'), effects: [
+        { kind: 'settle_query', settlement: { outcome: 'failed', closeMessage }, history: { kind: 'set', history: history(null) } },
+        KEEP_CURSOR(kernelStatus !== 'yielded')] });
     }
+    const interrupted = eventOf('query_reconcile_interrupted_clean');
+    expectRejected(transitionQueryRunRecovery(stateAt('entered'), interrupted, { ...clean, kernel: { ...clean.kernel!, unresolvedToolCallIds: ['call-1'] } }),
+      'guard_failed', 'incomplete');
+    expectRejected(transitionQueryRunRecovery(stateAt('entered'), interrupted, { ...clean, inputsConfirmed: false }), 'guard_failed', 'unavailable');
+    expectRejected(transitionQueryRunRecovery(stateAt('entered'), interrupted, { ...clean, entryMatches: false }), 'guard_failed', 'forbidden');
+  });
+
+  it('QRR-05: an unreadable Kernel marks unknown with the history unchanged; the cause must match the probe', () => {
+    expect(transitionQueryRunRecovery(stateAt('entering'),
+      { kind: 'query_reconcile_unknown', hostInstanceId: 'host-1', cause: { kind: 'kernel_unreadable', verdict: 'damaged' }, history: null },
+      reconcileCtx({ probe: 'damaged', kernel: null, inputsConfirmed: 'kernel_unreadable' })))
+      .toEqual({ ok: true, next: { ...stateAt('entering'), phase: 'unknown' }, effects: [{ kind: 'mark_query_unknown', history: { kind: 'unchanged' },
+        cause: { kind: 'kernel_unreadable', verdict: 'damaged' } }] });
     expectRejected(transitionQueryRunRecovery(stateAt('entering'),
       { kind: 'query_reconcile_unknown', hostInstanceId: 'host-1', cause: { kind: 'kernel_unreadable', verdict: 'damaged' }, history: null },
-      reconcileCtx({ probe: 'damaged', kernel: null, inputsConfirmed: 'kernel_unreadable' })), 'illegal', 'invalid');
+      reconcileCtx({ probe: 'missing', kernel: null })), 'illegal', 'invalid');
+  });
+
+  it('QRR-06: the Host entry, an operator with a reason, this Host\'s lease; an open Turn makes the Session kernel_turn_open', () => {
+    const attest = eventOf('query_unknown_attested');
+    const entry = ctxFor('query_unknown_attested');
+    expectRejected(transitionQueryRunRecovery(stateAt('unknown'), attest, { ...entry, caller: 'reconcile' }), 'illegal', 'forbidden');
+    expectRejected(transitionQueryRunRecovery(stateAt('unknown'), attest, { ...entry, actor: 'system' }), 'guard_failed', 'forbidden');
+    expectRejected(transitionQueryRunRecovery(stateAt('unknown'), attest, { ...entry, reason: ' ' }), 'illegal', 'invalid');
+    expectRejected(transitionQueryRunRecovery(stateAt('unknown'), attest, { ...entry, hostLease: 'held_by_other' }), 'guard_failed', 'busy');
+    expect(transitionQueryRunRecovery(stateAt('unknown'), attest, { ...entry, kernelTurnOpen: true }))
+      .toEqual({ ok: true, next: SETTLED('failed'), effects: [
+        { kind: 'settle_query', settlement: { outcome: 'failed', closeMessage: 'checked by hand' }, history: { kind: 'unchanged' } },
+        KEEP_CURSOR(true)] });
   });
 });
 
@@ -525,6 +586,19 @@ describe('markQueryRunUnknownRecord', () => {
     const marked = markQueryRunUnknownRecord(advancedTo('entered').run, { history: { kind: 'set', history: input } });
     input.startPosition = 99;
     expect(marked.run.executionState?.history).toEqual(history(9));
+  });
+
+  it('QRR-05 records its cause on the QueryRun (A.2 step 5.6); the in-process observation records none', () => {
+    const toolCallIds = ['call-1', 'call-2'];
+    const unresolved = markQueryRunUnknownRecord(advancedTo('entered').run, { history: { kind: 'unchanged' },
+      cause: { kind: 'unresolved_tools', toolCallIds } });
+    toolCallIds.push('call-3');
+    expect(unresolved.run.executionState?.unknown).toEqual({ kind: 'unresolved_tools', toolCallIds: ['call-1', 'call-2'] });
+    const unreadable = markQueryRunUnknownRecord(advancedTo('entering').run, { history: { kind: 'unchanged' },
+      cause: { kind: 'kernel_unreadable', verdict: 'missing' } });
+    expect(unreadable.run.executionState?.unknown).toEqual({ kind: 'kernel_unreadable', verdict: 'missing' });
+    expect(markQueryRunUnknownRecord(advancedTo('entered').run, { history: { kind: 'unchanged' } }).run.executionState)
+      .not.toHaveProperty('unknown');
   });
 });
 

@@ -9,12 +9,10 @@
  * rows) lives in `query-run-recovery.ts`.
  *
  * SES-05 (the D-7 release of a Run stopped before it entered) is step 5.1.
- * Rows whose 现状 is 新增 — SES-06, SES-07, SES-09, SES-10 (releases that
- * only exist once reconcile and human attestation land) and
- * SES-12, SES-13, SES-19 (health observation) — are not reachable yet: their
- * events stay in the unions, the §8.4 refusals in front of them already
- * apply, and the row itself answers `illegal`/`invalid` (the §1.2 default)
- * until §15.2 step 5 adds it.
+ * Step 5.6 adds the releases of the start-up reconcile, late evidence, the
+ * paused stop and the operator's attestation (SES-06, SES-07, SES-09, SES-10;
+ * a Turn left without a Kernel terminal writes `kernel_turn_open`, LA-1) and
+ * the health observation of the reconcile probe (SES-12, SES-13, SES-19).
  *
  * Pure: imports only `src/contracts` and this directory (§14.4).
  */
@@ -23,7 +21,7 @@ import type { OperationRef } from '../../../contracts/core/operations.js';
 import type { SessionHealthConclusion, SessionRecord, SessionWorkLink } from '../../../contracts/core/session.js';
 import type { RunRef } from '../../../contracts/dispatch.js';
 import type { QueryExecutionStateV1, QueryRunRef } from '../../../contracts/query-job.js';
-import { accept, notYet, reject, unreachable, type Rejected, type Transition } from './transition.js';
+import { accept, reject, unreachable, type Rejected, type Transition } from './transition.js';
 
 // --------------------------------------------------------------------------
 // State, events, guard context and effects (§8.1, §8.2)
@@ -539,17 +537,49 @@ function released(state: ActiveState, cause: SessionReleaseCause, ctx: SessionGu
     case 'reconcile_interrupted_clean':
     case 'late_evidence':
     case 'stop_paused':
-      return notYet('SES-06');
+      return releasedOnRunEnd(state, holder);                   // SES-06
     case 'unknown_attested':
-      return notYet('SES-07');
+      if (holder.before !== 'run_ended_unknown') {
+        return reject('illegal', 'invalid', 'only an unknown Run end is attested (SES-07)');
+      }
+      return releasedWithoutBoundary(state, holder);            // SES-07
     case 'query_reconcile_not_entered':
     case 'query_reconcile_interrupted_clean':
-      return notYet('SES-09');
+      return releasedWithoutBoundary(state, holder);            // SES-09
     case 'query_unknown_attested':
-      return notYet('SES-10');
+      if (holder.before !== 'query_unknown') {
+        return reject('illegal', 'invalid', 'only an unknown QueryRun is attested (SES-10)');
+      }
+      return releasedWithoutBoundary(state, holder);            // SES-10
     default:
       return unreachable(cause, 'Session release cause');
   }
+}
+
+/**
+ * SES-06 (S8, C4, LA-1): the restart reconcile, late evidence or a paused stop
+ * ends the Run. A Kernel terminal (RUN-17/18/21) moves the cursor to its
+ * complete boundary; a Turn left without one (RUN-19/23/24) keeps the cursor
+ * and makes the Session `unavailable/kernel_turn_open` in the same commit.
+ */
+function releasedOnRunEnd(state: ActiveState, holder: SessionHolderContext): SessionTransition {
+  if (holder.kernelTurnOpen) return releasedWithoutBoundary(state, holder);
+  return releasedOnKernelTerminal(state, holder);
+}
+
+/**
+ * SES-07, SES-09, SES-10 and the open-Turn ends of SES-06: no complete Turn
+ * boundary, so `historyCursor` keeps its value; `kernelTurnOpen` (the holder
+ * row's fact) also writes `unavailable/kernel_turn_open` (SD-2, LA-1).
+ */
+function releasedWithoutBoundary(state: ActiveState, holder: SessionHolderContext): SessionTransition {
+  const release: SessionRelease = holder.kernelTurnOpen
+    ? { holder: holder.ref, generation: holder.claimGeneration, historyCursor: { kind: 'keep' }, kernelTurnOpen: true }
+    : { holder: holder.ref, generation: holder.claimGeneration, historyCursor: { kind: 'keep' }, kernelTurnOpen: false };
+  const next: ActiveState = holder.kernelTurnOpen
+    ? { ...state, health: 'unavailable', healthConclusion: 'kernel_turn_open', occupancy: null, revision: state.revision + 1 }
+    : { ...state, occupancy: null, revision: state.revision + 1 };
+  return done(next, [{ kind: 'release_session', ...release }]);
 }
 
 /**
@@ -617,9 +647,13 @@ function reactivated(state: ActiveState, ctx: SessionGuardContext): SessionTrans
 }
 
 /**
- * SES-12/SES-13/SES-19 are 新增 (§15.2 step 5.6). The §8.4 refusals in front
- * of them apply now; a probe that passes them still answers `illegal`/`invalid`.
- * `kernel_turn_open` cannot be observed: it is not a probe verdict (SD-2).
+ * SES-12 / SES-13 / SES-19 (S8, SD-2, LA-1): the start-up reconcile writes the
+ * probe of a Session it may hold or recover. `missing`/`damaged` makes an
+ * available Session `unavailable` with that conclusion; `ready` makes an
+ * unavailable one `available` again, except a `kernel_turn_open` Session whose
+ * Kernel session head still names an active run; the same value writes
+ * nothing (a `missing`/`damaged` probe never replaces `kernel_turn_open`).
+ * `kernel_turn_open` cannot be observed: it is not a probe verdict.
  */
 function healthObserved(state: ActiveState, observed: SessionHealth, ctx: SessionGuardContext): SessionTransition {
   if (observed === 'recoverable') return reject('illegal', 'unsupported', 'recoverable has no writer (D-17)');
@@ -641,8 +675,18 @@ function healthObserved(state: ActiveState, observed: SessionHealth, ctx: Sessio
     // A readable Kernel does not prove the last Turn ended (LA-1).
     return reject('guard_failed', 'unavailable', 'the Kernel session still has an open Turn; kernel_turn_open stays');
   }
-  if (state.health === observed) return notYet('SES-19');
-  return notYet(observed === 'unavailable' ? 'SES-12' : 'SES-13');
+  if (state.health === observed) return done(state);                     // SES-19
+  if (observed === 'available') {
+    return done({ ...state, health: 'available', healthConclusion: null, revision: state.revision + 1 }, [   // SES-13
+      { kind: 'observe_health', health: 'available', conclusion: null },
+      { kind: 'emit_event', eventType: 'SessionHealthObserved' },
+    ]);
+  }
+  const conclusion = ctx.probe === 'missing' ? 'missing' : 'damaged';
+  return done({ ...state, health: 'unavailable', healthConclusion: conclusion, revision: state.revision + 1 }, [  // SES-12
+    { kind: 'observe_health', health: 'unavailable', conclusion },
+    { kind: 'emit_event', eventType: 'SessionHealthObserved' },
+  ]);
 }
 
 /**

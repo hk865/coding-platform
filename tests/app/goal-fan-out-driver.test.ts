@@ -60,7 +60,7 @@ async function setup(): Promise<{ fixture: TaskClaimFixture; platform: Platform;
 
 function driverOn(platform: Platform, controls: RunControlPort = platform.controls) {
   const deps: GoalFanOutDriverDependencies = { goals: platform.goals, plans: platform.plans, executions: platform.executions,
-    controls, runtime: platform.runtime };
+    controls, runtime: platform.runtime, claims: { requeueTask: (...args) => platform.claims.requeueTask!(...args) } };
   const driver = createGoalFanOutDriver(deps);
   cleanups.push(() => driver.close());
   return driver;
@@ -219,8 +219,9 @@ describe('Goal fan-out driver (§2.3)', () => {
       runtime: platform.runtime, plans: {
         queryGoal: (...args) => platform.plans.queryGoal(...args),
         queryGoalLiveRuns: (...args) => platform.plans.queryGoalLiveRuns(...args),
+        queryGoalResumeContinuations: (...args) => platform.plans.queryGoalResumeContinuations(...args),
         async queryGoalDisplay() { throw new Error('a display-only fact is damaged'); },
-      } });
+      }, claims: { requeueTask: (...args) => platform.claims.requeueTask!(...args) } });
     cleanups.push(() => driver.close());
     const paused = await driver.setGoalControl(fixture.ctx, await control(platform, fixture, 'pause', 'drv-narrow-pause'));
     expect(paused.status === 'committed' && paused.value.fanOut).toMatchObject({ problem: null, runs: [
@@ -314,6 +315,9 @@ function resumeWorld(goalState: { desiredState: 'active' | 'paused'; epoch: numb
         if (ctx.signal.aborted) return CANCELLED;
         return { status: 'ready', value: { goal, liveRuns: run.status === 'ended' ? [] : [RUN_REF], sourceCursor: null } };
       },
+      async queryGoalResumeContinuations(ctx) {
+        return ctx.signal.aborted ? CANCELLED : { status: 'ready', value: { goal, continuations: [] } };
+      },
       async queryGoalDisplay() {
         const pointer = run.controlState === undefined ? undefined : intents.get(run.controlState.intentRef.intentId);
         return { status: 'ready', value: { goal, display: { phase: 'RUNNING' } as unknown as GoalDisplayV1, liveRuns: [RUN_REF],
@@ -323,6 +327,7 @@ function resumeWorld(goalState: { desiredState: 'active' | 'paused'; epoch: numb
     },
     executions: { async readExecution(ctx) { return ctx.signal.aborted ? CANCELLED : { status: 'ready', value: record() }; } },
     controls,
+    claims: { async requeueTask() { return { status: 'rejected', code: 'unsupported', reason: 'no requeue in this test' }; } },
     runtime: {
       async capabilities() { return { status: 'rejected', code: 'unsupported', reason: 'no Kernel in this test' }; },
       async deliverControl(_ctx, request) {

@@ -163,7 +163,35 @@ export interface QueryExecutionPort {
   }>): Promise<WriteResult<QueryRunSnapshot>>;
   recordQueryObservation(ctx: CoreCallContext, request: GraphWrite<QueryHistoryObservation>): Promise<WriteResult<QueryExecutionRecord>>;
   readQueryAnswer(ctx: CoreCallContext, ref: QueryJobAnswerRef): Promise<ReadResult<QueryJobAnswerSnapshot>>;
+  /** A.2 step 5.6: the start-up reconcile closes of a stranded QueryRun (QRR-01, 02, 04, 05; §12.3). */
+  reconcileQueryRun?(ctx: CoreCallContext, request: GraphWrite<QueryReconcileInput>): Promise<WriteResult<QueryExecutionRecord>>;
+  /** A.2 step 5.6: the operator's attestation of an unknown QueryRun, only under this Host's lease (QRR-06, L-1). */
+  resolveUnknownQueryRun?(ctx: CoreCallContext, request: GraphWrite<ResolveUnknownQueryRunInput>): Promise<WriteResult<QueryExecutionRecord>>;
 }
+
+/** §12.3: the Runtime classifier's result for one QueryRun the start-up reconcile reads. */
+export type QueryReconcileInput = {
+  queryRunRef: QueryRunRef;
+  hostInstanceId: string;
+  probe: 'ready' | 'missing' | 'damaged' | 'host_config' | 'transient' | 'cancelled';
+  /** Every accepted input confirmed against its source (§10.3); `kernel_unreadable` without a readable Kernel. */
+  inputsConfirmed: boolean | 'kernel_unreadable';
+  result:
+    /** Q-01 (claimed/prepared) and Q-02 (entering, the readable Kernel holds no fixed Turn). */
+    | { kind: 'not_entered' }
+    /** Q-04: no mappable terminal, every tool call resolved. */
+    | { kind: 'interrupted_clean'; kernelStatus: 'created' | 'running' | 'paused' | 'yielded'; history: RunExecutionHistoryV1 }
+    /** Q-05: a tool call without a result, or an unreadable Kernel. */
+    | { kind: 'unknown'; unresolvedToolCallIds: string[]; history: RunExecutionHistoryV1 | null };
+};
+
+/** QRR-06 (contract (d) by analogy): `kernelTurnOpen` read by the Host entry before the attestation. */
+export type ResolveUnknownQueryRunInput = {
+  queryRunRef: QueryRunRef;
+  reason: string;
+  kernelTurnOpen: boolean;
+  inputsConfirmed: boolean | null;
+};
 
 /**
  * Trusted deps. `records` is the same physical WorkGraph backend the Goal/Plan
@@ -178,6 +206,8 @@ export type QueryExecutionDependencies = {
   authorizeConfiguration: AuthorizeQueryConfiguration;
   now(): string;
   eventId(): string;
+  /** A.2 step 5.6: this Host instance and its instance lease (D-18), for QRR-01..06. */
+  hostInstance?: { hostInstanceId: string; lease: 'owned' | 'held_by_other' };
 };
 
 /**

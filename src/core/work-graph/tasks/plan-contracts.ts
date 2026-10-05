@@ -16,7 +16,7 @@ import type { DependencyRequirement, Disposition, Phase, PlanRevisionDraft, Plan
   TaskRelationV2 } from '../../../contracts/plan.js';
 import type { TaskFailureFactsV1, TaskPhaseCauseV1, TaskReworkSummaryV1 } from '../../../contracts/task-failure.js';
 import type { TaskRequeueRef } from '../../../contracts/task-requeue.js';
-import type { GoalDisplayV1, GoalRunControlCapabilityV1 } from '../state/goal-machine.js';
+import type { GoalDisplayV1, GoalResumeContinuationV1, GoalRunControlCapabilityV1 } from '../state/goal-machine.js';
 import type { GraphWrite } from './contracts.js';
 
 /**
@@ -149,6 +149,11 @@ export type GoalResumePendingRunV1 = {
  * window. The fan-out reads only this, never the display facts.
  */
 export type GoalLiveRunsRead = { goal: GoalSnapshot; liveRuns: RunRef[]; sourceCursor: CommitCursor | null };
+/** A.2 step 5.6 (GOAL-29): the continuations a Goal resume owes, with the afterRun pin each requeue needs. */
+export type GoalResumeContinuationsRead = {
+  goal: GoalSnapshot;
+  continuations: (GoalResumeContinuationV1 & { afterRunRevision: number })[];
+};
 export type GoalDisplayQuery = {
   goalRef: GoalRef;
   /**
@@ -213,6 +218,13 @@ export interface PlanTaskPort {
   queryGoalDisplay?(ctx: CoreCallContext, input: GoalDisplayQuery): Promise<ReadResult<GoalDisplayRead>>;
   /** A.2 step 5.5 (§2.3): the G7 fan-out set. Optional for the same reason as `queryGoalDisplay`. */
   queryGoalLiveRuns?(ctx: CoreCallContext, input: { goalRef: GoalRef }): Promise<ReadResult<GoalLiveRunsRead>>;
+  /**
+   * A.2 step 5.6 (§2 GOAL-29, C4): the work Tasks of an `active` Goal whose
+   * selected Run ended paused-interrupted by this Goal's fan-out pause and that
+   * no TaskRequeue covers yet; the Host fan-out driver continues each through
+   * `requeueTask` with the `goal_resume` trigger. Optional like the reads above.
+   */
+  queryGoalResumeContinuations?(ctx: CoreCallContext, input: { goalRef: GoalRef }): Promise<ReadResult<GoalResumeContinuationsRead>>;
   /** Reads the exact artifact pinned by an accepted v2 Plan for this task.
    * Uses MaterialPort.openArtifact(current); its real reader, grant and source
    * failures are preserved. No caller-supplied ArtifactRef may replace the pin. */
@@ -226,4 +238,5 @@ export interface PlanTaskPort {
  * the composition root and every real consumer see the required method.
  */
 export type PlanServicePort = PlanTaskPort
-  & Required<Pick<PlanTaskPort, 'proposeInitialPlanFromAnswer' | 'queryGoalDisplay' | 'queryGoalLiveRuns'>>;
+  & Required<Pick<PlanTaskPort, 'proposeInitialPlanFromAnswer' | 'queryGoalDisplay' | 'queryGoalLiveRuns'
+    | 'queryGoalResumeContinuations'>>;

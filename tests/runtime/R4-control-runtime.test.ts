@@ -315,6 +315,13 @@ it('lets the real Kernel drain timeout produce the outcome_unknown, then keeps t
   // longer lists it; an empty batch is not a stop proof.
   expect(record.value.session.occupancy, 'a formal outcome_unknown must keep the occupancy').not.toBeNull();
   expect(record.value.lease?.release).toBeUndefined();
+  // A.2 step 5.6 RUN-08 (RD-2): the live terminal with a call without a determined result ends the Run
+  // outcome_unknown on the same live proof, recording the window and the unresolved call; nothing is released.
+  expect(record.value.run).toMatchObject({ status: 'ended', outcome: 'outcome_unknown',
+    executionAuthorization: { phase: 'unknown' },
+    reconciliation: { status: 'quarantined', basis: { kind: 'live_clean' }, observation: { kind: 'unresolved',
+      unresolvedToolCallIds: ['r4-runtime-ignoring'] } } });
+  expect(record.value.run.executionHistory?.endPosition, 'the unknown end leaves the history window open').toBeNull();
   const ack = await controls.readControl(fx.ctx, intentRef);
   expect(ack.status).toBe('ready');
   if (ack.status === 'ready') {

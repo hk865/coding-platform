@@ -558,6 +558,12 @@ function validateControlIntentObservedEvent(event: EncodedDomainEvent): DecodeRe
 }
 
 /**
+ * A.2 step 5.6: the ControlIntents of one workspace by status; `queued` is the
+ * start-up reconcile's step 5 candidate set (CTL-08), bounded by open intents.
+ */
+export const CONTROL_BY_WORKSPACE_STATUS_INDEX = 'a2-control-by-workspace-status';
+
+/**
  * The ONE control schema registration. The Run `controlState` inside
  * `RunSnapshot@1` stays owned and registered by `materials/record-readers.ts`;
  * this file never re-registers the Run schema.
@@ -572,5 +578,7 @@ export const CONTROL_RECORD_SCHEMAS: RecordBackendSchemas = {
     { eventType: CONTROL_INTENT_OBSERVED_EVENT_TYPE, schemaVersion: CONTROL_INTENT_OBSERVED_EVENT_SCHEMA_VERSION,
       validate: validateControlIntentObservedEvent },
   ],
-  lookups: [],
+  lookups: [
+    { name: CONTROL_BY_WORKSPACE_STATUS_INDEX, aggregateType: 'ControlIntent', paths: ['ref.projectId', 'ref.workspaceId', 'status'] },
+  ],
 };

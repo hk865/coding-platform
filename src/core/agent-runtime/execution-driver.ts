@@ -47,7 +47,7 @@ import type {
 export type ExecutionDriverDependencies = Pick<RuntimeExecutionDependencies,
   | 'entry' | 'historyWriter' | 'executions' | 'sessionOperations' | 'kernelStores' | 'workspaceHost'
   | 'sourceAuthority' | 'sourcePolicyFor' | 'host' | 'kernel' | 'now' | 'newId'
-  | 'modelRequests' | 'roles' | 'materials' | 'bodies' | 'plans' | 'messages' | 'sessions'> & {
+  | 'modelRequests' | 'roles' | 'materials' | 'bodies' | 'plans' | 'messages' | 'sessions' | 'runReconcile'> & {
   /** The same observer instance backs start and explicit observe calls. */
   observation: ExecutionObservationService;
   /**
@@ -308,9 +308,19 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
       //    resume re-enters the SAME Kernel Turn through the original identity.
       const resumePointer = record.run.controlState?.desiredState === 'running' ? record.run.controlState.intentRef : undefined;
       const resumeIntent = resumePointer === undefined || control === undefined ? undefined : await control.deliver(owned, { intentRef: resumePointer });
-      const resumeEntered = isV2 && existingAuth.phase === 'entered' && resumeIntent?.status === 'ready'
+      // RUN-14 driver guard (A.2 step 5.6, C4, §6.4): the original Turn is re-entered only while THIS
+      // Host process still holds the Run's handle (it paused at a safe point here); without it the start
+      // answers `busy` with no Kernel call, and after a restart the reconcile ends the Run (RUN-19/24).
+      const queuedResume = isV2 && existingAuth.phase === 'entered' && resumeIntent?.status === 'ready'
         && resumeIntent.value.kind === 'resume' && resumeIntent.value.status === 'queued';
-      if (isV2 && existingAuth.phase !== 'authorized' && !resumeEntered) {
+      const resumeEntered = queuedResume && control?.proof(runRef) !== undefined;
+      if (queuedResume && !resumeEntered) {
+        return rejected('busy', 'the paused Turn is re-entered only by the Host process that holds its live handle; '
+          + 'after a restart the start-up reconcile ends it (RUN-19/24)');
+      }
+      // RUN-03 (W-03): a binding revoked by a proven non-entry is authorized again (generation + 1)
+      // with the SAME prepared input below; every other non-authorized binding is only observed.
+      if (isV2 && existingAuth.phase !== 'authorized' && existingAuth.phase !== 'revoked' && !resumeEntered) {
         if (existingAuth.consumerId !== consumerId) return rejected('busy', 'another consumer already authorized this Run');
         if (existingAuth.inputDigest !== manifest.inputDigest) return rejected('invalid', 'the Prepared input digest disagrees with the fixed entry binding');
         return deps.observation.observe(owned, { runRef });
@@ -479,9 +489,17 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
         return rejected('unavailable', `reading the completed history boundary failed: ${messageOf(error)}`);
       }
       if (boundary.status === 'rejected') return boundary;
-      const sessionContext = boundary.cursor === null
-        ? { version: 1 as const, mode: 'current_turn' as const }
-        : { version: 1 as const, mode: 'session_history' as const, throughPosition: boundary.position };
+      // LA-1 (A.2 step 5.6): the first Run of a continuation Session seeded by `prepare`
+      // (`sessionBasis`) continues the ORIGINAL Session's last completed history through
+      // `session_history.sourceSessionId`; the interrupted Turn is not in it (the brief covers it).
+      const seeded = manifest.sessionBasis !== undefined && manifest.sessionBasis.throughPosition !== null
+        && boundary.cursor === null ? manifest.sessionBasis : null;
+      const sessionContext = seeded !== null && seeded.throughPosition !== null
+        ? { version: 1 as const, mode: 'session_history' as const, throughPosition: seeded.throughPosition,
+          sourceSessionId: seeded.sourceKernelSessionId }
+        : boundary.cursor === null
+          ? { version: 1 as const, mode: 'current_turn' as const }
+          : { version: 1 as const, mode: 'session_history' as const, throughPosition: boundary.position };
 
       // R4.3a: the ONE independent live handle for this fixed Run identity. The
       // caller signal is linked to this own controller so a caller cancel stops
@@ -771,6 +789,13 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
         // already-aborted caller signal, and never a best-effort hook.
         const reconcileSignal = new AbortController().signal;
         const reconciled = await deps.observation.observe({ ...owned, signal: reconcileSignal }, { runRef });
+        // RUN-16, in process (A.2 step 5.6, §12.2 "进程内的同类收尾"): the Kernel call exited with every
+        // owned resource closed before the fixed Turn started; the readable Kernel holds no Turn of the
+        // fixed identity, so the binding is revoked and the same claim re-authorizes (RUN-03) later.
+        if (!enteredDone && deps.runReconcile !== undefined && handle.kernelExited && handle.resourcesClosed?.status === 'completed') {
+          await revokeNotEntered({ ...owned, signal: reconcileSignal }, runRef, record.session.kernel.adapterId,
+            record.session.kernel.kernelSessionId, kernelBinding, boundary.cursor === null ? 0 : boundary.position);
+        }
         if (enteredFailure !== undefined) return enteredFailure;
         return reconciled;
       } finally {
@@ -780,6 +805,47 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
       }
     },
   };
+
+  /**
+   * RUN-16's in-process proof (`live_clean`): the Run is still `Entering` and
+   * the Kernel Session after the last completed boundary holds no
+   * `turn.started` of the fixed identity. Any read failure proves nothing and
+   * leaves the Run for the start-up reconcile.
+   */
+  async function revokeNotEntered(
+    ctx: CoreCallContext, runRef: RunRef, adapterId: string, kernelSessionId: string, kernel: KernelExecutionBinding,
+    afterPosition: number,
+  ): Promise<void> {
+    const reconcile = deps.runReconcile;
+    if (reconcile === undefined) return;
+    let read;
+    try { read = await deps.executions.readExecution(ctx, runRef); } catch { return; }
+    if (read.status !== 'ready') return;
+    const auth = read.value.run.executionAuthorization;
+    if (read.value.run.status !== 'starting' || auth === undefined || !('schemaVersion' in auth) || auth.schemaVersion !== 2
+      || auth.phase !== 'entering') {
+      return;
+    }
+    let started: boolean;
+    try {
+      started = await deps.kernelStores.withStore(adapterId, async (reader: KernelSessionReader) => {
+        const head = await reader.read(kernelSessionId, 0, 1, { signal: ctx.signal });
+        if (head.records.length === 0) throw new Error('the Kernel Session has no position-1 history');
+        const page = await reader.read(kernelSessionId, afterPosition, 200, { signal: ctx.signal });
+        return page.records.some(candidate => candidate.recordType === 'turn.started'
+          && isRecord(candidate.payload) && isRecord(candidate.payload['run'])
+          && candidate.payload['run']['runId'] === kernel.runId
+          && isRecord(candidate.payload['run']['turn']) && candidate.payload['run']['turn']['turnId'] === kernel.turnId);
+      });
+    } catch { return; }
+    if (started) return;
+    try {
+      await reconcile.reconcileRun(ctx, { input: { runRef, basis: { kind: 'live_clean' }, probe: 'ready',
+        result: { kind: 'not_entered', kernel: { ...kernel } } },
+      meta: { requestId: `a2-run16:${runRef.runId}:${String(auth.generation)}`,
+        expected: [{ ref: runRef, revision: read.value.run.revision }] } });
+    } catch { /* the Run stays Entering; the start-up reconcile proves it (W-05) */ }
+  }
 
   /** Read the real Kernel tail and the fixed turn.started position after the
    * Kernel persisted the Turn; the driver never invents a position. */

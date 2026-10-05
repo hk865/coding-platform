@@ -24,7 +24,9 @@ import type { RunState } from '../../../vendor/coding-agent/dist/public-api.js';
 import { isRunExecutionHistoryV1 } from '../work-graph/persistence/execution-history-codecs.js';
 import { createSessionHistoryCursorOwner } from './session-operations.js';
 import type { SessionHistoryEntry } from './session-operations.js';
-import { applyTurnEvents, decodeKernelEntry, reduceTurnFromStart, type DecodedKernelRecord } from './kernel-turn-facts.js';
+import {
+  applyTurnEvents, decodeKernelEntry, reduceTurnFromStart, unresolvedToolCallIds, type DecodedKernelRecord,
+} from './kernel-turn-facts.js';
 import type {
   KernelExecutionBinding, ObservedExecutionHistory, TaskResultObservation,
 } from '../work-graph/tasks/execution-entry-contracts.js';
@@ -103,7 +105,7 @@ function mapRead(result: ReadResult<unknown>): CoreRejection {
   if (result.status === 'not_ready') return rejected('incomplete', 'the required execution fact is not readable at the required watermark');
   return { status: 'rejected', code: result.code, reason: result.reason, ...(result.current === undefined ? {} : { current: result.current }) };
 }
-function turnIsComplete(state: RunState): boolean {
+export function turnIsComplete(state: RunState): boolean {
   if (state.activeModelRequest !== null) return false;
   const batch = state.toolBatch;
   if (batch !== null) {
@@ -111,7 +113,7 @@ function turnIsComplete(state: RunState): boolean {
   }
   return true;
 }
-function terminalEventOf(state: RunState, runRef: RunRef, sequence: number, eventId: string, now: string): RuntimeEventV1 | null {
+export function terminalEventOf(state: RunState, runRef: RunRef, sequence: number, eventId: string, now: string): RuntimeEventV1 | null {
   switch (state.status) {
     case 'completed':
       return { eventType: 'run_completed', schemaVersion: 1, eventId, runRef, sequence, occurredAt: now, payload: { kind: 'completed', exitCode: 0 } };
@@ -153,7 +155,7 @@ function isNonNegativeInteger(value: unknown): value is number {
  * `tool_result` with `error.code === 'outcome_unknown'` is still the evidence.
  * This is the ONE place that reads it; no second error interpreter exists.
  */
-function transcriptHasOutcomeUnknown(transcript: RunState['transcript']): boolean {
+export function transcriptHasOutcomeUnknown(transcript: RunState['transcript']): boolean {
   return transcript.some(entry => entry.kind === 'tool_result'
     && entry.result.status === 'error' && entry.result.error.code === 'outcome_unknown');
 }
@@ -596,6 +598,13 @@ export function createExecutionObservation(deps: ExecutionObservationDependencie
         // unknown observation but never an applied cancellation or a release.
         // The nonterminal window is persisted before the unknown ack.
         if (!alreadyEnded) await advanceLocator(owned, runRef, reducedThrough);
+        // RUN-08 (A.2 step 5.6, RD-2): a Kernel terminal with a call that has no determined
+        // result ends the Run `outcome_unknown` on the same live proof; the Session and the
+        // Lease stay held until new Kernel evidence (RUN-21) or an attestation (RUN-22).
+        const unresolved = unresolvedToolCallIds(state);
+        if (!alreadyEnded && unresolved.length > 0 && (deps.controls === undefined || cleanProof)) {
+          await recordUnknownEnd(owned, runRef, v2Auth, locator, decoded.at(-1)?.position ?? reducedThrough, state, unresolved);
+        }
         if (consumedIntentRef !== undefined && cleanProof) {
           const sourceItem = controlSourceRecord(decoded, cached?.controlSources, locator.kernel, 'outcome_unknown', state);
           if (sourceItem !== undefined) {
@@ -702,6 +711,32 @@ export function createExecutionObservation(deps: ExecutionObservationDependencie
       return finalRead.status === 'ready' ? { status: 'ready', value: finalRead.value } : mapRead(finalRead);
     },
   };
+
+  /**
+   * RUN-08: book the unknown end of a Kernel terminal whose Turn still has a call
+   * without a determined result. The history end stays open; the requestId names
+   * the terminal position, so a repeated observation replays or finds the Run ended.
+   */
+  async function recordUnknownEnd(
+    ctx: CoreCallContext, runRef: RunRef, auth: ExecutionAuthorizationV2, locator: RunExecutionHistoryV1,
+    endPosition: number, state: RunState, unresolved: string[],
+  ): Promise<void> {
+    let read;
+    try { read = await deps.executions.readExecution(ctx, runRef); } catch { return; }
+    if (read.status !== 'ready' || read.value.run.status === 'ended') return;
+    const event = terminalEventOf(state, runRef, read.value.run.lastEventSeq + 1, deps.newId(), deps.now());
+    if (event === null) return;
+    try {
+      await deps.entry.recordRunResult(ctx, {
+        input: { claim: read.value.outbox.claim, entry: { consumerId: auth.consumerId, entryGeneration: auth.generation }, event,
+          kernelSource: { ...locator.kernel, position: endPosition }, completedHistoryBoundary: null,
+          history: { kernel: { ...locator.kernel }, startPosition: locator.startPosition, observedThroughPosition: endPosition, endPosition: null },
+          unresolvedToolCallIds: unresolved },
+        meta: { requestId: `b2-result-unknown:${runRef.runId}:${String(endPosition)}`,
+          expected: [{ ref: runRef, revision: read.value.run.revision }] },
+      });
+    } catch { /* the Run stays running; the start-up reconcile books it (RUN-20(i)) */ }
+  }
 
   /** A live observation may only persist a monotone nonterminal window; the
    * terminal is recorded exactly once by recordRunResult above. The current Run

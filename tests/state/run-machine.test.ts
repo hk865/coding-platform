@@ -153,7 +153,7 @@ const claimCtx = (patch: Partial<NonNullable<RunGuardContext['claim']>>): RunGua
   ctxWith({ claim: { ...CTX.claim!, ...patch } });
 const rejection = (code: CoreError, reason: string): CoreRejection => ({ status: 'rejected', code, reason });
 
-const CLEAN_TURN: RunTurnFacts = { terminal: false, inFlightToolCallIds: [], lastPosition: 5, entered: null };
+const CLEAN_TURN: RunTurnFacts = { terminal: false, inFlightToolCallIds: [], lastPosition: 5, entered: null, acceptedSteers: [] };
 /** The persisted Outbox claim differs from the event's claim in one field. */
 const MISMATCHED_CLAIM: RunGuardContext = ctxWith({ persistedClaim: { ...claim, sessionRevision: GEN + 1 } });
 
@@ -185,12 +185,13 @@ const EV = {
     history: observed(3, 6, 6), unresolvedToolCallIds: [], enteredAt: null },
   recInterrupted: { kind: 'reconcile_interrupted_clean', claim, basis: TAKEOVER, turn: CLEAN_TURN, recordedAt: T_LATER,
     factEventId: 'fact-9' },
-  recUnknown: { kind: 'reconcile_unknown', claim, basis: TAKEOVER, cause: 'tool_calls_unresolved', reason: 'a tool call is running',
+  recUnknown: { kind: 'reconcile_unknown', claim, basis: TAKEOVER, cause: 'tool_calls_unresolved',
     unresolvedToolCallIds: ['call-9'], observedThroughPosition: 7, turn: CLEAN_TURN, recordedAt: T_LATER },
   late: { kind: 'late_evidence', claim, basis: TAKEOVER, recordedAt: T_LATER, factEventId: 'fact-9', event: COMPLETED(),
     kernelSource: source(8), completedHistoryBoundary: { source: source(8), cursor: 'cursor-8' }, history: observed(3, 8, 8),
     unresolvedToolCallIds: [], enteredAt: null },
-  attest: { kind: 'unknown_attested', claim, reason: 'checked the workspace by hand', kernelTurnOpen: true, recordedAt: T_LATER },
+  attest: { kind: 'unknown_attested', claim, reason: 'checked the workspace by hand', kernelTurnOpen: true, recordedAt: T_LATER,
+    attestedBy: { kind: 'human', id: 'operator-1' }, basis: TAKEOVER },
 } satisfies Record<string, RunEvent>;
 type EventCase = keyof typeof EV;
 
@@ -284,6 +285,23 @@ const NOT_ENTERED_ON_OTHERS = { Absent: NOT_FOUND, Entering: ILLEGAL, Running: I
 const RECONCILE_OTHERS = { Absent: NOT_FOUND, Claimed: ILLEGAL, Authorized: ILLEGAL, Revoked: ILLEGAL, Ended: BUSY,
   YieldedWait: BUSY, EndedUnknown: ILLEGAL };
 const GUARD_BUSY = { reason: 'guard_failed', code: 'busy' } as const;
+/** §6.4 (step 5.6): a reconcile basis other than the proven exit. */
+const UNPROVEN: Expect = { reason: 'guard_failed', code: 'incomplete' };
+/** RUN-21 (step 5.6): the default late evidence is a terminal past the recorded window with call-1 resolved. */
+const LATE: Expect = { to: 'Ended', effects: [
+  { kind: 'attempt', event: 'attempt_resolved', outcome: 'completed' },
+  { kind: 'outbox', change: 'settled_entered' },
+  { kind: 'release_session', holder: claim.runRef, generation: GEN, historyCursor: { kind: 'advance', cursor: 'cursor-8' },
+    kernelTurnOpen: false },
+  { kind: 'release_lease' },
+] };
+/** RUN-22 (step 5.6): crashed with the attestation; the open Turn retires the Session (kernel_turn_open, SES-07). */
+const ATTESTED_EFFECTS: RunEffect[] = [
+  { kind: 'attempt', event: 'attempt_resolved', outcome: 'crashed' },
+  { kind: 'outbox', change: 'settled_entered' },
+  { kind: 'release_session', holder: claim.runRef, generation: GEN, historyCursor: { kind: 'keep' }, kernelTurnOpen: true },
+  { kind: 'release_lease' },
+];
 
 const TABLE: Record<EventCase, Record<RunNode, Expect>> = {
   claim: { Absent: { to: 'Claimed', effects: [
@@ -291,8 +309,9 @@ const TABLE: Record<EventCase, Record<RunNode, Expect>> = {
     { kind: 'occupy_session', holder: claim.runRef, generation: GEN }] },
   Claimed: ILLEGAL, Authorized: ILLEGAL, Entering: ILLEGAL, Revoked: ILLEGAL, Running: ILLEGAL, Ended: ILLEGAL,
   YieldedWait: ILLEGAL, EndedUnknown: ILLEGAL },
+  // RUN-03 (step 5.6): a revoked binding is authorized again with the same prepared input.
   authorize: { Absent: NOT_FOUND, Claimed: { to: 'Authorized', effects: [] }, Authorized: BUSY, Entering: BUSY,
-    Revoked: BUSY, Running: BUSY, Ended: BUSY, YieldedWait: BUSY, EndedUnknown: BUSY },
+    Revoked: { to: 'Authorized', effects: [] }, Running: BUSY, Ended: BUSY, YieldedWait: BUSY, EndedUnknown: BUSY },
   begin: { Absent: NOT_FOUND, Claimed: { reason: 'illegal', code: 'forbidden' }, Authorized: { to: 'Entering', effects: slot('none') },
     Entering: BUSY, Revoked: GUARD_BUSY, Running: BUSY, Ended: BUSY, YieldedWait: BUSY, EndedUnknown: BUSY },
   entered: { Absent: NOT_FOUND, Claimed: { reason: 'illegal', code: 'forbidden' }, Authorized: BUSY,
@@ -308,12 +327,13 @@ const TABLE: Record<EventCase, Record<RunNode, Expect>> = {
     Ended: { reason: 'duplicate', code: 'busy' }, YieldedWait: { reason: 'duplicate', code: 'busy' },
     EndedUnknown: { reason: 'guard_failed', code: 'incomplete' } },
   stopU: { ...NOT_ENTERED_ON_OTHERS, ...stoppedNotEntered },
-  stopR: { ...NOT_ENTERED_ON_OTHERS, Claimed: notYet('RUN-09'), Authorized: notYet('RUN-09'), Revoked: notYet('RUN-09') },
+  // RUN-09..11 (R, step 5.6): the default context has no queued pointer intent to reconcile.
+  stopR: { ...NOT_ENTERED_ON_OTHERS, Claimed: ILLEGAL, Authorized: ILLEGAL, Revoked: ILLEGAL },
   pauseU: { ...NOT_ENTERED_ON_OTHERS, ...unenteredControl('i-pause') },
-  pauseR: { ...NOT_ENTERED_ON_OTHERS, Claimed: notYet('RUN-10'), Authorized: notYet('RUN-10'), Revoked: notYet('RUN-10') },
+  pauseR: { ...NOT_ENTERED_ON_OTHERS, Claimed: ILLEGAL, Authorized: ILLEGAL, Revoked: ILLEGAL },
   // No pointer: today's `resume requires a formal pause`.
   resumeU: { ...NOT_ENTERED_ON_OTHERS, Claimed: GUARD_BUSY, Authorized: GUARD_BUSY, Revoked: GUARD_BUSY },
-  resumeR: { ...NOT_ENTERED_ON_OTHERS, Claimed: notYet('RUN-11'), Authorized: notYet('RUN-11'), Revoked: notYet('RUN-11') },
+  resumeR: { ...NOT_ENTERED_ON_OTHERS, Claimed: ILLEGAL, Authorized: ILLEGAL, Revoked: ILLEGAL },
   ctlPause: { Absent: NOT_FOUND, ...ROUTED_TO_NOT_ENTERED, Entering: { to: 'Entering', effects: intentEffect('i-pause') },
     Running: { to: 'Running', effects: intentEffect('i-pause') }, YieldedWait: { to: 'YieldedWait', effects: intentEffect('i-pause') },
     Ended: BUSY, EndedUnknown: BUSY },
@@ -329,14 +349,16 @@ const TABLE: Record<EventCase, Record<RunNode, Expect>> = {
   // Default context is the in-process variant with the Kernel not paused.
   stopPaused: { Absent: NOT_FOUND, Claimed: ILLEGAL, Authorized: ILLEGAL, Revoked: ILLEGAL, Entering: ILLEGAL,
     Running: { reason: 'guard_failed', code: 'incomplete' }, Ended: BUSY, YieldedWait: BUSY, EndedUnknown: BUSY },
-  recNotEntered: { ...RECONCILE_OTHERS, Entering: notYet('RUN-16'), Running: ILLEGAL },
-  recTerminal: { ...RECONCILE_OTHERS, Entering: notYet('RUN-17'), Running: notYet('RUN-18') },
-  recInterrupted: { ...RECONCILE_OTHERS, Entering: notYet('RUN-19'), Running: notYet('RUN-19') },
-  recUnknown: { ...RECONCILE_OTHERS, Entering: notYet('RUN-20'), Running: notYet('RUN-20') },
+  // RUN-16..20 (step 5.6): the default context proves the live exit only, so a takeover basis is not
+  // proven (§6.4 basis guard); 'RUN-03, RUN-08, RUN-16..24' below drives each row with its own proof.
+  recNotEntered: { ...RECONCILE_OTHERS, Entering: UNPROVEN, Running: ILLEGAL },
+  recTerminal: { ...RECONCILE_OTHERS, Entering: UNPROVEN, Running: UNPROVEN },
+  recInterrupted: { ...RECONCILE_OTHERS, Entering: UNPROVEN, Running: UNPROVEN },
+  recUnknown: { ...RECONCILE_OTHERS, Entering: UNPROVEN, Running: UNPROVEN },
   late: { Absent: NOT_FOUND, Claimed: ILLEGAL, Authorized: ILLEGAL, Entering: ILLEGAL, Revoked: ILLEGAL, Running: ILLEGAL,
-    Ended: BUSY, YieldedWait: BUSY, EndedUnknown: notYet('RUN-21') },
+    Ended: BUSY, YieldedWait: BUSY, EndedUnknown: LATE },
   attest: { Absent: NOT_FOUND, Claimed: ILLEGAL, Authorized: ILLEGAL, Entering: ILLEGAL, Revoked: ILLEGAL, Running: ILLEGAL,
-    Ended: BUSY, YieldedWait: BUSY, EndedUnknown: notYet('RUN-22') },
+    Ended: BUSY, YieldedWait: BUSY, EndedUnknown: { to: 'Ended', effects: ATTESTED_EFFECTS } },
 };
 
 function expectResult(result: RunTransition, expected: Expect, label: string): void {
@@ -670,9 +692,16 @@ describe('RUN-02 / RUN-03 entry_authorized', () => {
     }
   });
 
-  it('keeps today\'s busy for a revoked Run (RUN-03 is step 5)', () => {
-    expect(rejected(transitionRun(stateOf('Revoked'), EV.authorize, CTX)))
-      .toMatchObject({ reason: 'illegal', code: 'busy', detail: 'the Run already has a V2 entry authorization' });
+  it('re-authorizes a revoked Run at the next generation with the same prepared input (RUN-03, D-5; 5.6)', () => {
+    const record = nextRecord(transitionRun(stateOf('Revoked'), EV.authorize, CTX));
+    expect(record.executionAuthorization).toMatchObject({ schemaVersion: 2, phase: 'authorized', generation: 2, revision: 1,
+      consumerId: CONSUMER, kernel, inputDigest: DIGEST });
+    expect(record.inputBinding).toEqual(inputBinding);
+    expect(record.envelope).toEqual(envelope);
+    expect(runCombinationProblem(record)).toBeNull();
+    // The bound input never changes (I-19): another prepared binding is refused.
+    expect(answer(transitionRun(stateOf('Revoked'), { ...EV.authorize, inputBinding: { ...inputBinding, inputDigest: 'c'.repeat(64) } }, CTX)))
+      .toEqual({ reason: 'guard_failed', code: 'invalid' });
   });
 });
 
@@ -921,9 +950,17 @@ describe('RUN-07 terminal_observed', () => {
     expect(at(EV.terminal, MISMATCHED_CLAIM, preB2)).toMatchObject({ reason: 'guard_failed', code: 'invalid' });
   });
 
-  it('keeps today\'s no-write for unresolved tool calls (RUN-08 is step 5)', () => {
-    expect(rejected(transitionRun(stateOf('Running'), { ...EV.terminal, unresolvedToolCallIds: ['call-1'] }, CTX)))
-      .toMatchObject({ reason: 'illegal', code: 'invalid', detail: expect.stringContaining('RUN-08') });
+  it('ends the Run outcome_unknown for an unresolved tool call, keeping its Session and Lease (RUN-08, RD-2; 5.6)', () => {
+    const unresolved = { ...EV.terminal, unresolvedToolCallIds: ['call-1'], completedHistoryBoundary: null, history: observed(3, 6, null) };
+    const result = ok(transitionRun(stateOf('Running'), unresolved, CTX));
+    expect(result.next.node).toBe('EndedUnknown');
+    expect(result.effects).toEqual([{ kind: 'attempt', event: 'attempt_ended', outcome: 'outcome_unknown' }]);
+    expect(result.next.record?.reconciliation).toEqual({ status: 'quarantined', observation: { kind: 'unresolved',
+      reason: 'tool_calls_unresolved', observedThroughPosition: 6, unresolvedToolCallIds: ['call-1'] }, basis: LIVE, recordedAt: T_END });
+    expect(runCombinationProblem(result.next.record!)).toBeNull();
+    // The history end stays open for an unknown end.
+    expect(answer(transitionRun(stateOf('Running'), { ...EV.terminal, unresolvedToolCallIds: ['call-1'] }, CTX)))
+      .toEqual({ reason: 'guard_failed', code: 'invalid' });
   });
 
   it('answers a re-observed terminal of an unknown Run by inputs, then sequence, then not-new (§6.4)', () => {
@@ -1363,8 +1400,14 @@ describe('RUN-09..15 read a control submission as control-service.ts does (A.2 s
 // 新增 rows: §6.4 refusals in front, then the row answers notYet            //
 // ------------------------------------------------------------------------ //
 
-describe('RUN-16..24: the §6.4 refusals in front of the 新增 rows', () => {
+describe('RUN-16..24 (A.2 step 5.6): the §6.4 refusals, then each row', () => {
   const legacy: RunSnapshot = { ...RUNNING, executionAuthorization: { generation: 1, consumerId: 'c', phase: 'entered' } };
+  /** The start-up reconcile: the takeover proof under this Host's own lease. */
+  const takeover = (patch: Partial<RunGuardContext> = {}) => ctxWith({ exitProof: 'host_instance_takeover', ...patch });
+  const enteredTurn: RunTurnFacts = { ...CLEAN_TURN,
+    entered: { enteredAt: T_ENTER, kernelSource: source(3), history: observed(3, 5, null) } };
+  const queued = (kind: 'pause' | 'cancel' | 'resume') => ({ pointerIntent: { kind, status: 'queued' as const, observed: null } });
+  const effectsOf = (result: RunTransition) => ok(result).effects;
 
   it('reconcile_*: legacy, Host lease, probe, then the row', () => {
     for (const event of [EV.recNotEntered, EV.recTerminal, EV.recInterrupted, EV.recUnknown]) {
@@ -1376,38 +1419,83 @@ describe('RUN-16..24: the §6.4 refusals in front of the 新增 rows', () => {
       expect(answer(transitionRun(stateOf('Running'), event, ctxWith({ hostLease: null }))))
         .toEqual({ reason: 'guard_failed', code: 'busy' });
       for (const kernelProbe of ['host_config', 'transient', 'cancelled'] as const) {
-        expect(answer(transitionRun(stateOf('Entering'), event, ctxWith({ kernelProbe }))), `${kernelProbe} ${event.kind}`)
+        expect(answer(transitionRun(stateOf('Entering'), event, takeover({ kernelProbe }))), `${kernelProbe} ${event.kind}`)
           .toEqual({ reason: 'guard_failed', code: 'unavailable' });
       }
     }
-    // §6.4: an unreadable Kernel is not proof of not entering; RUN-20(ii) takes it.
+    // §6.4: an unreadable Kernel is not proof of not entering; RUN-20(ii) takes it (ATT-36/37: no Turn, no Outbox move).
     for (const kernelProbe of ['missing', 'damaged'] as const) {
-      expect(answer(transitionRun(stateOf('Entering'), EV.recNotEntered, ctxWith({ kernelProbe }))))
+      expect(answer(transitionRun(stateOf('Entering'), EV.recNotEntered, takeover({ kernelProbe }))))
         .toEqual({ reason: 'guard_failed', code: 'unavailable' });
-      expect(rejected(transitionRun(stateOf('Entering'), { ...EV.recUnknown, cause: 'kernel_unreadable' }, ctxWith({ kernelProbe }))).detail)
-        .toContain('RUN-20');
+      const unreadable = ok(transitionRun(stateOf('Entering'), { ...EV.recUnknown, cause: 'kernel_unreadable', unresolvedToolCallIds: [],
+        observedThroughPosition: null, turn: null }, takeover({ kernelProbe })));
+      expect(unreadable.next.node).toBe('EndedUnknown');
+      expect(unreadable.effects).toEqual([{ kind: 'attempt', event: 'attempt_ended', outcome: 'outcome_unknown' }]);
+      expect(unreadable.next.record?.startedAt).toBeNull();
     }
-    // The in-process RUN-16 variant needs no instance lease of its own.
-    expect(rejected(transitionRun(stateOf('Entering'), { ...EV.recNotEntered, basis: LIVE }, ctxWith({ hostLease: null }))).detail)
-      .toContain('RUN-16');
   });
 
-  it('reconcile_interrupted_clean picks RUN-24 for a paused pointer and refuses a queued cancel (C4, LA-7)', () => {
+  it('RUN-16: a Run proven not entered is revoked for the same claim (restart, or in process with no lease of its own)', () => {
+    for (const [event, ctx] of [[EV.recNotEntered, takeover()], [{ ...EV.recNotEntered, basis: LIVE }, ctxWith({ hostLease: null })]] as const) {
+      const result = ok(transitionRun(stateOf('Entering'), event, ctx));
+      expect(result.next.node).toBe('Revoked');
+      expect(result.effects).toEqual([]);
+      expect(result.next.record?.reconciliation).toMatchObject({ status: 'done', observation: { kind: 'not_entered', kernel, revokedGeneration: 1 } });
+      expect(runCombinationProblem(result.next.record!)).toBeNull();
+    }
+    // RUN-16 + RUN-09 (R): a queued cancel ends the revoked Run in the same commit (CTL-08(a)).
+    const cancelled = ok(transitionRun(runStateOf({ ...ENTERING, controlState: pointer('cancelled', 'i-cancel') }), EV.recNotEntered,
+      takeover(queued('cancel'))));
+    expect(cancelled.next.node).toBe('Ended');
+    expect(cancelled.next.record?.outcome).toBe('cancelled');
+    expect(cancelled.effects).toContainEqual({ kind: 'intent', event: 'control_reconciled', intentRef: intentRef('i-cancel') });
+    expect(cancelled.effects).toContainEqual({ kind: 'attempt', event: 'attempt_ended', outcome: 'cancelled' });
+    expect(answer(transitionRun(stateOf('Entering'), { ...EV.recNotEntered, kernel: { ...kernel, turnId: 'turn-9' } }, takeover())))
+      .toEqual({ reason: 'guard_failed', code: 'invalid' });
+  });
+
+  it('RUN-17/18: an unbooked Kernel terminal is booked as RUN-07 would, only by the start-up reconcile', () => {
+    expect(effectsOf(transitionRun(stateOf('Running'), EV.recTerminal, takeover()))).toEqual(TERMINAL_EFFECTS);
+    expect(nextRecord(transitionRun(stateOf('Running'), EV.recTerminal, takeover())).reconciliation)
+      .toMatchObject({ status: 'done', observation: { kind: 'runtime_terminal' }, basis: TAKEOVER });
+    expect(answer(transitionRun(stateOf('Running'), { ...EV.recTerminal, basis: LIVE }, CTX))).toEqual({ reason: 'illegal', code: 'invalid' });
+    // From Entering the same commit records the Kernel Turn start (ATT-31).
+    expect(answer(transitionRun(stateOf('Entering'), EV.recTerminal, takeover()))).toEqual({ reason: 'illegal', code: 'invalid' });
+    const fromEntering = nextRecord(transitionRun(stateOf('Entering'), { ...EV.recTerminal, enteredAt: T_ENTER }, takeover()));
+    expect(fromEntering).toMatchObject({ status: 'ended', outcome: 'completed', startedAt: T_ENTER });
+    expect(answer(transitionRun(stateOf('Running'), { ...EV.recTerminal, unresolvedToolCallIds: ['call-1'] }, takeover())))
+      .toEqual({ reason: 'guard_failed', code: 'incomplete' });
+  });
+
+  it('RUN-19 / RUN-24 picks the row by the pointer; RUN-23 takes a queued cancel (C4, LA-7)', () => {
     for (const node of ['Entering', 'Running'] as const) {
       const run = RECORD_OF[node];
-      expect(rejected(transitionRun(runStateOf({ ...run, controlState: pointer('paused') }), EV.recInterrupted,
-        ctxWith({ pointerIntent: { kind: 'pause', status: 'queued', observed: null } }))).detail).toContain('RUN-24');
-      expect(rejected(transitionRun(runStateOf({ ...run, controlState: pointer('running') }), EV.recInterrupted,
-        ctxWith({ pointerIntent: { kind: 'resume', status: 'queued', observed: null } }))).detail).toContain('RUN-19');
-      expect(rejected(transitionRun(runStateOf({ ...run, controlState: pointer('cancelled') }), EV.recInterrupted,
-        ctxWith({ pointerIntent: { kind: 'cancel', status: 'queued', observed: null } }))))
+      const event = { ...EV.recInterrupted, turn: node === 'Entering' ? enteredTurn : CLEAN_TURN };
+      const plain = ok(transitionRun(runStateOf({ ...run, controlState: pointer('running') }), event, takeover(queued('resume'))));
+      expect(plain.next.record).toMatchObject({ outcome: 'crashed', reconciliation: { status: 'done',
+        observation: { kind: 'interrupted_clean', pausedIntentRef: null } } });
+      expect(isPausedInterrupted(plain.next.record!)).toBe(false);
+      expect(plain.effects).toContainEqual({ kind: 'release_session', holder: claim.runRef, generation: GEN,
+        historyCursor: { kind: 'keep' }, kernelTurnOpen: true });
+      expect(plain.effects).toContainEqual({ kind: 'intent', event: 'control_reconciled', intentRef: intentRef('i-ptr') });
+      const paused = ok(transitionRun(runStateOf({ ...run, controlState: pointer('paused') }), event, takeover(queued('pause'))));
+      expect(paused.next.record).toMatchObject({ outcome: 'crashed', reconciliation: { observation: { kind: 'interrupted_clean',
+        pausedIntentRef: intentRef('i-ptr') } } });
+      expect(isPausedInterrupted(paused.next.record!)).toBe(true);
+      // CTL-08(f): the queued pause is settled by the platform conclusion in the same commit.
+      expect(paused.effects).toContainEqual({ kind: 'intent', event: 'control_reconciled', intentRef: intentRef('i-ptr') });
+      expect(rejected(transitionRun(runStateOf({ ...run, controlState: pointer('cancelled') }), event, takeover(queued('cancel')))))
         .toMatchObject({ reason: 'illegal', code: 'invalid', detail: expect.stringContaining('RUN-23') });
     }
+    // Only the start-up reconcile ends a clean interruption; a tool call in flight is RUN-20.
+    expect(answer(transitionRun(stateOf('Running'), { ...EV.recInterrupted, basis: LIVE }, CTX))).toEqual({ reason: 'illegal', code: 'invalid' });
+    expect(answer(transitionRun(stateOf('Running'), { ...EV.recInterrupted, turn: { ...CLEAN_TURN, inFlightToolCallIds: ['call-1'] } },
+      takeover()))).toEqual({ reason: 'guard_failed', code: 'incomplete' });
   });
 
   it('stop_paused: exit proof, Host lease, Entering only on restart, clean Turn, safe point, queued cancel', () => {
     const cancelled = { ...RUNNING, controlState: pointer('cancelled', 'i-cancel') };
-    const queuedCancel = { pointerIntent: { kind: 'cancel' as const, status: 'queued' as const, observed: null } };
+    const queuedCancel = queued('cancel');
     const at = (run: RunSnapshot, ctx: RunGuardContext, event: RunEvent = EV.stopPaused) => rejected(transitionRun(runStateOf(run), event, ctx));
     expect(at(cancelled, ctxWith({ ...queuedCancel, exitProof: null }))).toMatchObject({ reason: 'guard_failed', code: 'incomplete' });
     expect(at(cancelled, ctxWith({ ...queuedCancel, exitProof: 'host_instance_takeover', hostLease: null })))
@@ -1420,49 +1508,86 @@ describe('RUN-16..24: the §6.4 refusals in front of the 新增 rows', () => {
       { ...EV.stopPaused, turn: { ...CLEAN_TURN, inFlightToolCallIds: ['call-1'] } })).toMatchObject({ reason: 'guard_failed', code: 'incomplete' });
     expect(at(cancelled, ctxWith({ ...queuedCancel }))).toMatchObject({ reason: 'guard_failed', code: 'incomplete' });
     expect(at(RUNNING, ctxWith({ kernelPaused: true }))).toMatchObject({ reason: 'illegal', code: 'invalid' });
-    // A cancelled pointer whose intent is not a queued cancel is refused in front of the row, not by its notYet.
     const notQueuedCancel = 'stop_paused applies the queued cancel the pointer names';
     for (const pointerIntent of [{ kind: 'cancel', status: 'applied', observed: 'cancelled' },
       { kind: 'cancel', status: 'superseded', observed: null }, { kind: 'pause', status: 'queued', observed: null }, null] as const) {
       expect(at(cancelled, ctxWith({ pointerIntent, kernelPaused: true })), JSON.stringify(pointerIntent))
         .toEqual({ reason: 'illegal', code: 'invalid', detail: notQueuedCancel });
     }
-    expect(at(cancelled, ctxWith({ ...queuedCancel, kernelPaused: true }))).toMatchObject({ reason: 'illegal', code: 'invalid',
-      detail: expect.stringContaining('RUN-23') });
-    // Restart variant: the Kernel need not be paused (LA-7) and Entering is allowed.
-    const restart = ctxWith({ ...queuedCancel, exitProof: 'host_instance_takeover' });
-    expect(at(cancelled, restart).detail).toContain('RUN-23');
-    expect(at({ ...ENTERING, controlState: pointer('cancelled', 'i-cancel') }, restart).detail).toContain('RUN-23');
+    // RD-7: in process, on the live handle's exit with the Kernel Turn paused.
+    const live = ok(transitionRun(runStateOf(cancelled), EV.stopPaused, ctxWith({ ...queuedCancel, kernelPaused: true })));
+    expect(live.next.record).toMatchObject({ outcome: 'cancelled', terminalPayload: { kind: 'cancelled', reason: 'cancelled_while_paused' } });
+    expect(live.effects).toEqual([
+      { kind: 'attempt', event: 'attempt_ended', outcome: 'cancelled' },
+      { kind: 'outbox', change: 'settled_entered' },
+      { kind: 'release_session', holder: claim.runRef, generation: GEN, historyCursor: { kind: 'keep' }, kernelTurnOpen: true },
+      { kind: 'release_lease' },
+      { kind: 'intent', event: 'control_applied_paused_stop', intentRef: intentRef('i-cancel') },
+    ]);
+    // LA-7: at a restart the Kernel need not be paused, and Entering is allowed with the Turn start.
+    const restart = takeover(queuedCancel);
+    const restartEvent = { ...EV.stopPaused, basis: TAKEOVER };
+    expect(nextRecord(transitionRun(runStateOf(cancelled), restartEvent, restart)))
+      .toMatchObject({ outcome: 'cancelled', terminalPayload: { kind: 'cancelled', reason: 'cancelled_at_reconcile' } });
+    expect(nextRecord(transitionRun(runStateOf({ ...ENTERING, controlState: pointer('cancelled', 'i-cancel') }),
+      { ...restartEvent, turn: enteredTurn }, restart))).toMatchObject({ outcome: 'cancelled', startedAt: T_ENTER });
     expect(at({ ...ENTERING, controlState: pointer('cancelled', 'i-cancel') }, ctxWith({ ...queuedCancel, kernelPaused: true })))
       .toMatchObject({ reason: 'illegal', code: 'invalid', detail: expect.stringContaining('restart') });
   });
 
-  it('late_evidence: exit proof, lease, inputs, sequence, then new Kernel evidence only (RD-4)', () => {
-    const at = (event: RunEvent, ctx: RunGuardContext = CTX, run: RunSnapshot = ENDED_UNKNOWN) =>
-      rejected(transitionRun(runStateOf(run), event, ctx));
-    expect(at(EV.late, ctxWith({ exitProof: null }))).toMatchObject({ reason: 'guard_failed', code: 'incomplete' });
-    expect(at(EV.late, ctxWith({ hostLease: null }))).toMatchObject({ reason: 'guard_failed', code: 'busy' });
-    expect(at({ ...EV.late, basis: LIVE }, ctxWith({ hostLease: null })).detail).toContain('RUN-21');
-    expect(at(EV.late, ctxWith({ inputsConfirmed: null }))).toMatchObject({ reason: 'guard_failed', code: 'unavailable' });
-    expect(at({ ...EV.late, event: COMPLETED(0) })).toMatchObject({ reason: 'stale', code: 'revision_conflict' });
-    expect(at({ ...EV.late, kernelSource: source(5) })).toMatchObject({ reason: 'guard_failed', code: 'incomplete' });
-    expect(at({ ...EV.late, unresolvedToolCallIds: ['call-1'] })).toMatchObject({ reason: 'guard_failed', code: 'incomplete' });
-    expect(at({ ...EV.late, unresolvedToolCallIds: ['call-other'] }).detail).toContain('RUN-21');
-    // After RUN-20(ii) the window is null: any position is new, but no call may stay unresolved.
-    const unreadable: RunSnapshot = { ...ENDED_UNKNOWN, reconciliation: { ...UNRESOLVED,
-      observation: { kind: 'unresolved', reason: 'kernel unreadable', observedThroughPosition: null, unresolvedToolCallIds: [] } } };
-    expect(at({ ...EV.late, kernelSource: source(1) }, CTX, unreadable).detail).toContain('RUN-21');
-    expect(at({ ...EV.late, unresolvedToolCallIds: ['call-2'] }, CTX, unreadable))
-      .toMatchObject({ reason: 'guard_failed', code: 'incomplete' });
+  it('RUN-20: (i) a tool call in flight ends the Run outcome_unknown, keeping its Session and Lease', () => {
+    const result = ok(transitionRun(stateOf('Running'), EV.recUnknown, takeover()));
+    expect(result.next.node).toBe('EndedUnknown');
+    expect(result.effects).toEqual([{ kind: 'attempt', event: 'attempt_ended', outcome: 'outcome_unknown' }]);
+    expect(result.next.record?.reconciliation).toMatchObject({ status: 'quarantined', observation: { kind: 'unresolved',
+      reason: 'tool_calls_unresolved', unresolvedToolCallIds: ['call-9'] } });
+    // From Entering with a Turn the start is recorded and the Outbox enters (ATT-32/34).
+    const entering = ok(transitionRun(stateOf('Entering'), { ...EV.recUnknown, turn: enteredTurn }, takeover()));
+    expect(entering.effects).toEqual([{ kind: 'attempt', event: 'attempt_ended', outcome: 'outcome_unknown' },
+      { kind: 'outbox', change: 'entered' }]);
+    expect(answer(transitionRun(stateOf('Running'), { ...EV.recUnknown, unresolvedToolCallIds: [] }, takeover())))
+      .toEqual({ reason: 'illegal', code: 'invalid' });
   });
 
-  it('unknown_attested: operator, reason, own Host lease (D-4(b), L-1)', () => {
-    const at = (event: RunEvent, ctx: RunGuardContext = CTX) => rejected(transitionRun(stateOf('EndedUnknown'), event, ctx));
-    expect(at(EV.attest, ctxWith({ actor: 'system' }))).toMatchObject({ reason: 'guard_failed', code: 'forbidden' });
-    expect(at({ ...EV.attest, reason: ' ' })).toMatchObject({ reason: 'guard_failed', code: 'invalid' });
-    expect(at(EV.attest, ctxWith({ hostLease: null }))).toMatchObject({ reason: 'guard_failed', code: 'busy' });
-    expect(at(EV.attest, ctxWith({ hostLease: 'held_by_other' }))).toMatchObject({ reason: 'guard_failed', code: 'busy' });
-    expect(at(EV.attest).detail).toContain('RUN-22');
+  it('late_evidence: exit proof, lease, inputs, sequence, then new Kernel evidence only (RD-4)', () => {
+    const at = (event: RunEvent, ctx: RunGuardContext = CTX, run: RunSnapshot = ENDED_UNKNOWN) =>
+      transitionRun(runStateOf(run), event, ctx);
+    expect(answer(at(EV.late, ctxWith({ exitProof: null })))).toEqual({ reason: 'guard_failed', code: 'incomplete' });
+    expect(answer(at(EV.late, ctxWith({ hostLease: null })))).toEqual({ reason: 'guard_failed', code: 'busy' });
+    // In process (`live_clean`) the late evidence needs no lease of its own.
+    expect(ok(at({ ...EV.late, basis: LIVE }, ctxWith({ hostLease: null }))).next.node).toBe('Ended');
+    expect(answer(at(EV.late, ctxWith({ inputsConfirmed: null })))).toEqual({ reason: 'guard_failed', code: 'unavailable' });
+    expect(answer(at({ ...EV.late, event: COMPLETED(0) }))).toEqual({ reason: 'stale', code: 'revision_conflict' });
+    expect(answer(at({ ...EV.late, kernelSource: source(5) }))).toEqual({ reason: 'guard_failed', code: 'incomplete' });
+    expect(answer(at({ ...EV.late, unresolvedToolCallIds: ['call-1'] }))).toEqual({ reason: 'guard_failed', code: 'incomplete' });
+    expect(ok(at({ ...EV.late, unresolvedToolCallIds: ['call-other'] })).next.node).toBe('Ended');
+    // CTL-07: the intents the unknown end left outcome_unknown settle in the same commit.
+    expect(ok(at(EV.late, ctxWith({ outcomeUnknownIntents: [intentRef('i-old')] }))).effects)
+      .toContainEqual({ kind: 'intent', event: 'control_reconciled', intentRef: intentRef('i-old') });
+    // After RUN-20(ii) the window is null: any position is new, but no call may stay unresolved, and the start is recorded (L-2).
+    const unreadable: RunSnapshot = { ...ENDED_UNKNOWN, startedAt: null, reconciliation: { ...UNRESOLVED,
+      observation: { kind: 'unresolved', reason: 'kernel_unreadable', observedThroughPosition: null, unresolvedToolCallIds: [] } } };
+    expect(answer(at(EV.late, CTX, unreadable))).toEqual({ reason: 'illegal', code: 'invalid' });
+    expect(nextRecord(at({ ...EV.late, enteredAt: T_ENTER }, CTX, unreadable)).startedAt).toBe(T_ENTER);
+    expect(answer(at({ ...EV.late, unresolvedToolCallIds: ['call-2'] }, CTX, unreadable)))
+      .toEqual({ reason: 'guard_failed', code: 'incomplete' });
+  });
+
+  it('unknown_attested: operator, reason, own Host lease (D-4(b), L-1); the Turn left open retires the Session', () => {
+    const at = (event: RunEvent, ctx: RunGuardContext = CTX) => transitionRun(stateOf('EndedUnknown'), event, ctx);
+    expect(answer(at(EV.attest, ctxWith({ actor: 'system' })))).toEqual({ reason: 'guard_failed', code: 'forbidden' });
+    expect(answer(at({ ...EV.attest, reason: ' ' }))).toEqual({ reason: 'guard_failed', code: 'invalid' });
+    expect(answer(at(EV.attest, ctxWith({ hostLease: null })))).toEqual({ reason: 'guard_failed', code: 'busy' });
+    expect(answer(at(EV.attest, ctxWith({ hostLease: 'held_by_other' })))).toEqual({ reason: 'guard_failed', code: 'busy' });
+    expect(answer(at(EV.attest, ctxWith({ inputsConfirmed: false })))).toEqual({ reason: 'guard_failed', code: 'unavailable' });
+    const attested = nextRecord(at(EV.attest));
+    expect(attested).toMatchObject({ outcome: 'crashed', terminalPayload: attestedTerminalPayload('checked the workspace by hand'),
+      reconciliation: { status: 'done', observation: { kind: 'human_attested', attestedBy: { kind: 'human', id: 'operator-1' },
+        reason: 'checked the workspace by hand' }, basis: TAKEOVER } });
+    // An unreadable Kernel does not block the attestation; a Turn that has its terminal keeps the Session available.
+    expect(ok(at(EV.attest, ctxWith({ inputsConfirmed: null }))).next.node).toBe('Ended');
+    expect(ok(at({ ...EV.attest, kernelTurnOpen: false })).effects).toContainEqual({ kind: 'release_session', holder: claim.runRef,
+      generation: GEN, historyCursor: { kind: 'keep' }, kernelTurnOpen: false });
   });
 });
 

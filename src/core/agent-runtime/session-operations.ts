@@ -757,7 +757,10 @@ export function createSessionOperations(deps: {
       if (record.ref.projectId !== ctxProjectId || record.workspaceId !== ctxWorkspaceId) {
         return rejected('forbidden', 'the mapped Session is outside the call workspace scope');
       }
-      if (record.health === 'unavailable') {
+      // LD-4 (A.2 step 5.6): a Session retired because its last Kernel Turn has no Kernel terminal
+      // (`kernel_turn_open`, LA-1) never executes again, but its saved history stays readable;
+      // `missing`/`damaged` cannot be read reliably and keep refusing.
+      if (record.health === 'unavailable' && (record.healthConclusion ?? null) !== 'kernel_turn_open') {
         return rejected('unavailable', 'the mapped Session is recorded unavailable');
       }
       if (record.ref.sessionId !== sessionRef.sessionId || record.ref.projectId !== sessionRef.projectId) {
@@ -844,9 +847,22 @@ export type RuntimeHistoryWindow = {
   nextPosition: number;
   hasMore: boolean;
 };
+/**
+ * The §8.2 probe verdict of one Session's Kernel mapping (A.2 step 5.6, §12.1
+ * step 1): `ready` with the Kernel session head's `activeRunId`; `missing`
+ * (no database file or no Kernel session) and `damaged` (an unreadable or
+ * foreign position-1 record) are deterministic; `host_config` (no trusted
+ * registration), `transient` and `cancelled` prove nothing (SD-2).
+ */
+export type SessionMappingProbe = {
+  verdict: 'ready' | 'missing' | 'damaged' | 'host_config' | 'transient' | 'cancelled';
+  activeRunId: string | null;
+  reason: string;
+};
 export interface SessionHistoryCursorOwner {
   completedBoundary(request: CompletedHistoryBoundaryRequest): Promise<CompletedHistoryBoundary>;
   readPositionWindow(request: RuntimeHistoryWindowRequest): Promise<ReadResult<RuntimeHistoryWindow>>;
+  probe(request: { session: SessionRecord; signal: AbortSignal }): Promise<SessionMappingProbe>;
 }
 export function createSessionHistoryCursorOwner(deps: { kernelStores: KernelStoreRegistry }): SessionHistoryCursorOwner {
   const { kernelStores } = deps;
@@ -960,6 +976,47 @@ export function createSessionHistoryCursorOwner(deps: { kernelStores: KernelStor
       });
       if (!read.ok) return read.rejection;
       return { status: 'ready', value: read.value };
+    },
+
+    async probe(request): Promise<SessionMappingProbe> {
+      const { session, signal } = request;
+      const verdict = (value: SessionMappingProbe['verdict'], reason: string, activeRunId: string | null = null): SessionMappingProbe =>
+        ({ verdict: value, activeRunId, reason });
+      if (signalAborted(signal)) return verdict('cancelled', 'the probe was cancelled');
+      const location = kernelStores.byAdapterId(session.kernel.adapterId);
+      if (!location) return verdict('host_config', 'the mapped Kernel adapter is not registered by this Host');
+      const legacy = 'expectedSessionId' in location;
+      if (legacy && !kernelStores.legacy(session.kernel.adapterId, session.kernel.kernelSessionId)) {
+        return verdict('host_config', 'the legacy Kernel locator does not match the mapped Session');
+      }
+      try {
+        if (await kernelDatabaseState(location.databasePath) === 'missing') {
+          return verdict('missing', 'the mapped Kernel database file is missing');
+        }
+      } catch (error) {
+        return verdict('transient', `the Kernel database file could not be checked: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      const use = async (reader: KernelSessionReader): Promise<SessionMappingProbe> => {
+        const header = await reader.get(session.kernel.kernelSessionId, { signal });
+        await assertOriginalKernelSession(reader, session.kernel.kernelSessionId, signal);
+        return verdict('ready', 'the Kernel session head and its original session.created are readable', header.activeRunId ?? null);
+      };
+      try {
+        return legacy
+          ? await kernelStores.withLegacyReader(session.kernel.adapterId, session.kernel.kernelSessionId, use)
+          : await kernelStores.withStore(session.kernel.adapterId, use);
+      } catch (error) {
+        if (signalAborted(signal)) return verdict('cancelled', 'the probe was cancelled');
+        const message = error instanceof Error ? error.message : String(error);
+        if (error instanceof StoreError) {
+          if (error.code === 'not_found') return verdict('missing', message);
+          if (error.code === 'corrupt' || error.code === 'invalid_record' || error.code === 'version_unsupported') {
+            return verdict('damaged', message);
+          }
+          if (error.code === 'cancelled') return verdict('cancelled', message);
+        }
+        return verdict('transient', message);
+      }
     },
   };
 }

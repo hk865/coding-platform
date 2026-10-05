@@ -570,10 +570,12 @@ it('W-21 / C3: an archived afterRun Session moves the requeue to a new Session; 
   const run2 = await readRun(platform, run2Ref);
   expect(run2.run.requeueRef).toEqual(requeued.value.requeue.ref);
   expect(run2.outbox.claim.sessionRef.sessionId).not.toBe(sessionRef.sessionId);
-  // C3 contract (e): another Session's history lacks Run 1's inputs, so the brief lists the accepted message.
+  // C3 contract (e): the new Session is seeded with the archived Session's completed history (the four conditions
+  // hold), and the brief says so (A.2 5.6); it still lists the message Run 1 accepted, as for any other Session.
   const brief = await platform.runtime.readContinuationBrief(ctx(), { runRef: run2Ref });
   expect(brief).toMatchObject({ status: 'ready', value: { brief: {
-    session: { continuity: 'other_session', sessionRef: { sessionId: run2.outbox.claim.sessionRef.sessionId } },
+    session: { continuity: 'other_session_seeded', sessionRef: { sessionId: run2.outbox.claim.sessionRef.sessionId },
+      seededFrom: { sessionRef: { sessionId: sessionRef.sessionId } } },
     acceptedInputs: { messages: [{ messageRef: sent.value.ref, part: 'message', excerpt: { text: mail, truncated: false } }],
       messagesOmitted: 0, steers: [], steersOmitted: 0 } } } });
   expect(JSON.stringify(scripted.requests[1])).toContain(mail);

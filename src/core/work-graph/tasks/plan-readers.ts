@@ -69,6 +69,12 @@ import {
 const RUN_BY_GOAL_INDEX = 'r3c-run-by-goal';
 /** R4c.1 directed candidate index: exactly one Task's Runs, any Plan. */
 const RUN_BY_TASK_INDEX = 'r4c-run-by-task';
+/** A.2 step 5.6: the Runs of one workspace in one status (start-up reconcile, §12.1 steps 2 and 5). */
+export const RUN_BY_WORKSPACE_STATUS_INDEX = 'a2-run-by-workspace-status';
+/** A.2 step 5.6: the Goals of one workspace (start-up reconcile, §12.1 steps 6 and 6b). */
+export const GOAL_BY_WORKSPACE_INDEX = 'a2-goal-by-workspace';
+/** A.2 step 5.6: the Runs of one workspace by outcome; `outcome_unknown` for §12.1 step 2 (W-15) and step 5 (W-19). */
+export const RUN_BY_WORKSPACE_OUTCOME_INDEX = 'a2-run-by-workspace-outcome';
 const LOOKUP_PAGE_LIMIT = 200;
 const LOOKUP_MAX_PAGES = 25;
 /** Bounded retries when the candidate set and the canonical re-read do not
@@ -282,6 +288,14 @@ export const PLAN_STATE_RECORD_SCHEMAS: RecordBackendSchemas = {
   lookups: [
     { name: RUN_BY_GOAL_INDEX, aggregateType: 'Run', paths: ['ref.projectId', 'ref.goalId'] },
     { name: RUN_BY_TASK_INDEX, aggregateType: 'Run', paths: ['ref.projectId', 'ref.goalId', 'task.taskId'] },
+    // A.2 step 5.6 (§12.1 steps 2, 5, 6): the start-up reconcile's candidate sets, each bounded by open
+    // work, never by history: the Runs in a live status, the unknown ends, the Goals (the queued
+    // intents are indexed beside the ControlIntent schema, `control-record-codecs.ts`).
+    { name: RUN_BY_WORKSPACE_STATUS_INDEX, aggregateType: 'Run',
+      paths: ['ref.projectId', 'workspaceSnapshot.workspaceId', 'status'] },
+    { name: RUN_BY_WORKSPACE_OUTCOME_INDEX, aggregateType: 'Run',
+      paths: ['ref.projectId', 'workspaceSnapshot.workspaceId', 'outcome'] },
+    { name: GOAL_BY_WORKSPACE_INDEX, aggregateType: 'Goal', paths: ['ref.projectId', 'workspaceRef.workspaceId'] },
   ],
 };
 
@@ -1206,9 +1220,11 @@ export async function readCanonicalTaskFacts(
           selectedDefinition, taskId: task.taskId, index, goalRef });
         if (verdict.status === 'unavailable') return unavailable(verdict.reason);
         if (verdict.status === 'excluded') continue;
-        if (run === null
-          || (candidate.ref.runId === leaseHolderRunId && run.ref.runId !== leaseHolderRunId)
-          || preferRun(candidate, run)) run = candidate;
+        // The holder wins whatever order the records are read in; preferRun only orders non-holders.
+        const candidateHolds = candidate.ref.runId === leaseHolderRunId;
+        const currentHolds = run !== null && run.ref.runId === leaseHolderRunId;
+        if (run === null || (candidateHolds && !currentHolds)
+          || (candidateHolds === currentHolds && preferRun(candidate, run))) run = candidate;
       }
       const reduction = reductionByTask.get(task.taskId) ?? null;
       let reductionApplicable = false;

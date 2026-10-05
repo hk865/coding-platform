@@ -71,6 +71,8 @@ import {
 } from '../state/task-machine.js';
 import type { Rejected as MachineRefusal } from '../state/transition.js';
 import { roundChainHead, transitionRound, type RoundChainHeadV1 } from '../state/verification-machine.js';
+import { goalFanOutRequestId } from '../state/goal-machine.js';
+import { controlIntentRefFor } from './control-service.js';
 import {
   TASK_REQUEUED_EVENT_TYPE, TASK_REWORK_EVENT_SCHEMA_VERSION, TASK_REWORK_REFUSED_EVENT_TYPE,
   encodeTaskRequeueSnapshot, encodeTaskRequeuedEvent, encodeTaskReworkRefusalSnapshot, encodeTaskReworkRefusedEvent,
@@ -610,6 +612,26 @@ export function createTaskRequeueService(deps: TaskRequeueDependencies): Require
       fence: reworkFenceOf(afterRun, pointerIntent), actorClass, goalFanOut,
       trigger: input.trigger !== undefined, budget: input.budget !== undefined, note: input.note !== undefined }));
     if (permission !== null) return permission;
+    // TASK-27 / GOAL-29 (A.2 step 5.6), after the actor × class matrix (which refuses a trigger from any actor but
+    // the Goal fan-out, §4.4): a goal_resume trigger names this Goal's current resume epoch and the earlier
+    // fan-out pause that the afterRun's pointer still is; a moved epoch is stale, anything else invalid.
+    if (input.trigger !== undefined) {
+      const trigger = input.trigger;
+      if (!sameRef(trigger.goalRef, goalRef)) return reject('invalid', 'the goal_resume trigger names another Goal');
+      if (goal.desiredState !== 'active' || (goal.desiredStateRevision ?? 1) !== trigger.resumedEpoch) {
+        return reject('revision_conflict', 'the Goal is no longer at the resume epoch the trigger names',
+          [{ ref: goalRef, revision: goal.revision }]);
+      }
+      if (trigger.pausedEpoch < 1 || trigger.pausedEpoch >= trigger.resumedEpoch) {
+        return reject('invalid', 'the goal_resume trigger pause epoch must precede its resume epoch');
+      }
+      const fanOutPause = controlIntentRefFor(GOAL_FAN_OUT_ACTOR, owned.scope,
+        goalFanOutRequestId(goalRef, trigger.pausedEpoch, afterRun.ref, 'pause'));
+      if (pointerIntent === null || !sameRef(pointerIntent.ref, fanOutPause)
+        || pointerIntent.requestedBy.kind !== GOAL_FAN_OUT_ACTOR.kind || pointerIntent.requestedBy.id !== GOAL_FAN_OUT_ACTOR.id) {
+        return reject('invalid', 'the afterRun was not paused by this Goal\'s fan-out at the trigger\'s pause epoch');
+      }
+    }
     const requestedInputs = input.newInputRefs ?? [];
     const inputProblemFound = await newInputProblem(owned, requestedInputs);
     if (inputProblemFound !== null) return inputProblemFound;

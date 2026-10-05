@@ -34,7 +34,7 @@ import type { SessionRecord } from '../../../contracts/core/session.js';
 import type { TaskClaim } from '../../../contracts/core/task-claim.js';
 import { ARTIFACT_MAX_SIZE_BYTES, artifactBodyDigest, artifactBodySize, type ArtifactRecord, type ArtifactRef } from '../../../contracts/artifact.js';
 import type {
-  ExecutionAuthorizationV2, RoleBindingRefV1, RunRef, RunSnapshot,
+  ExecutionAuthorizationV2, RoleBindingRefV1, RunReconciliationBasisV1, RunRef, RunSnapshot,
   RuntimeInputBindingV1, TaskAttemptSnapshot, TaskBudgetV1, TaskLeaseSnapshot, TaskTriple,
 } from '../../../contracts/dispatch.js';
 import {
@@ -67,6 +67,7 @@ import {
   inputBindingProblem, taskDispatchStateV1Problem,
 } from '../persistence/execution-entry-codecs.js';
 import { encodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey } from '../sessions/session-record-codecs.js';
+import { decodeSessionMessageRecord, sessionMessageRefKey } from '../communication/message-record-codecs.js';
 import {
   attemptEventFromRunEvent, isTaskLeaseEvent, taskLeaseNodeOf, transitionAttempt, transitionDispatchOutbox,
   transitionTaskLease, type AttemptEvent, type AttemptGuardContext, type DispatchOutboxRecord, type RunEventForAttempt,
@@ -85,9 +86,13 @@ import {
 } from './claim-record-codecs.js';
 import type { GraphWrite } from './contracts.js';
 import type {
-  AuthorizeConfigurationResult, ExecutionEntryDependencies, ExecutionEntryPort, KernelExecutionBinding,
-  KernelObservationSource, ObservedExecutionHistory, RuntimeEntryRecord, TaskEntryPermit, TaskResultObservation,
+  AcceptedSteerV1, AuthorizeConfigurationResult, ExecutionEntryDependencies, ExecutionEntryPort, HostInstanceFacts,
+  KernelExecutionBinding, KernelObservationSource, ObservedExecutionHistory, RuntimeEntryRecord, TaskEntryPermit,
+  TaskResultObservation,
 } from './execution-entry-contracts.js';
+import {
+  outcomeUnknownIntentsOf, pointerIntentOf, queuedSteersOf, readRunIntents, reconciledIntentRecords,
+} from './reconcile-intents.js';
 import type { TaskExecutionRecord } from './execution-read-contracts.js';
 import { readEntryPlanVerdict } from './entry-plan-reader.js';
 import { readGoalScope, sameCursor } from './plan-readers.js';
@@ -972,6 +977,85 @@ function terminalReleaseContext(release: SessionRelease): SessionGuardContext {
   };
 }
 
+/** Which Run row `recordRunResult` books (RD-5): RUN-07/08, RUN-17/18, RUN-21. */
+type ResultRow = 'terminal_observed' | 'reconcile_terminal' | 'late_evidence';
+
+/**
+ * The Host instance lease a reconciling write runs under (D-18): a takeover
+ * basis must name this Host instance and its lease must be held; the
+ * in-process `live_clean` basis needs none.
+ */
+export function hostLeaseOf(
+  hostInstance: HostInstanceFacts | undefined, basis: RunReconciliationBasisV1,
+): RunGuardContext['hostLease'] {
+  if (basis.kind === 'live_clean') return hostInstance === undefined ? null : hostInstance.lease;
+  if (hostInstance === undefined) return null;
+  return hostInstance.lease === 'owned' && basis.hostInstanceId === hostInstance.hostInstanceId ? 'owned' : 'held_by_other';
+}
+
+/** The V2 entry binding's consumer and generation; `null` without one. */
+function runCtxEntry(run: RunSnapshot): { consumerId: string; entryGeneration: number } | null {
+  const auth = run.executionAuthorization;
+  return auth !== undefined && 'schemaVersion' in auth && auth.schemaVersion === 2
+    ? { consumerId: auth.consumerId, entryGeneration: auth.generation } : null;
+}
+
+type ReconcileFields = {
+  basis: RunReconciliationBasisV1; unresolvedToolCallIds: string[]; enteredAt: string | null; acceptedSteers: AcceptedSteerV1[];
+  /** Absent for the in-process observer (it confirms the inputs before it submits). */
+  inputsConfirmed: boolean | null;
+};
+
+/** The contract (b) fields of a result observation, checked for shape; absent fields are today's live terminal. */
+function reconcileFieldsOf(observation: TaskResultObservation): { ok: true; value: ReconcileFields } | Rejected {
+  const basis = observation.basis ?? { kind: 'live_clean' as const };
+  if (!isRecord(basis) || (basis.kind !== 'live_clean'
+    && (basis.kind !== 'host_instance_takeover' || !nonEmpty((basis as { hostInstanceId?: unknown }).hostInstanceId)))) {
+    return { ok: false, rejection: invalid('the result basis must be live_clean or a host_instance_takeover with its hostInstanceId') };
+  }
+  const unresolved = observation.unresolvedToolCallIds ?? [];
+  if (!Array.isArray(unresolved) || !unresolved.every(nonEmpty)) {
+    return { ok: false, rejection: invalid('unresolvedToolCallIds must be an array of tool call ids') };
+  }
+  const enteredAt = observation.enteredAt ?? null;
+  if (enteredAt !== null && (!nonEmpty(enteredAt) || !Number.isFinite(Date.parse(enteredAt)))) {
+    return { ok: false, rejection: invalid('enteredAt must be a legal instant') };
+  }
+  const accepted = observation.acceptedSteers ?? [];
+  if (!Array.isArray(accepted) || !accepted.every(steer => isRecord(steer) && isRecord(steer.intentRef)
+    && isPositiveSafeInteger(steer.position) && nonEmpty(steer.kernelEventId) && isSafeInteger(steer.kernelEventSequence))) {
+    return { ok: false, rejection: invalid('acceptedSteers must name each steer and its Kernel input event') };
+  }
+  const confirmed = observation.inputsConfirmed;
+  if (confirmed !== undefined && typeof confirmed !== 'boolean') {
+    return { ok: false, rejection: invalid('inputsConfirmed must be a boolean when present') };
+  }
+  return { ok: true, value: { basis: structuredClone(basis), unresolvedToolCallIds: [...unresolved], enteredAt,
+    acceptedSteers: structuredClone(accepted), inputsConfirmed: confirmed ?? null } };
+}
+
+/**
+ * SES-06's guard context for a Kernel terminal the start-up reconcile books
+ * (RUN-17/18) or late evidence resolves (RUN-21): the holder ends at its claim
+ * generation with the complete Turn boundary, its inputs confirmed by the
+ * Runtime; a takeover is the reconcile caller under this Host's lease.
+ */
+function reconciledTerminalReleaseContext(
+  release: SessionRelease, node: RunState['node'], hostLease: RunGuardContext['hostLease'], inputsConfirmed: boolean,
+): SessionGuardContext {
+  return {
+    caller: 'reconcile', hostLease, pin: null,
+    holder: {
+      ref: release.holder, claimGeneration: release.generation,
+      before: node === 'Entering' ? 'run_starting' : node === 'EndedUnknown' ? 'run_ended_unknown' : 'run_running',
+      after: 'run_ended', kernelTurnSeen: true, inputsConfirmed,
+      historyBoundaryCursor: release.historyCursor.kind === 'advance' ? release.historyCursor.cursor : null,
+      kernelTurnOpen: release.kernelTurnOpen,
+    },
+    probe: 'ready', kernelHeader: null, openResponsibleLink: null, creation: null, link: null,
+  };
+}
+
 /** The node RUN-05/07 moves from: the paired Run of their §5 event (D-14). */
 const PAIRED_RUN_NODE = { entered_observed: 'Entering', terminal_observed: 'Running' } as const;
 
@@ -1017,7 +1101,8 @@ export function claimEffectRecords(
       case 'outbox': {
         const next = transitionDispatchOutbox(facts.outbox, attemptEvent, pairing);
         if (!next.ok) return { ok: false, rejection: reject(next.code, next.detail) };
-        outbox = next.next;
+        // ATT-37: an unknown end from Entering without a Turn keeps the pending entry unwritten.
+        if (next.next !== facts.outbox) outbox = next.next;
         break;
       }
       case 'release_lease': {
@@ -1042,8 +1127,9 @@ export function claimEffectRecords(
         throw new Error(`${attemptEvent.kind} has no ${effect.kind} effect on its claim records`);
     }
   }
-  if (attempt === null || outbox === null) throw new Error(`${attemptEvent.kind} must write the Attempt and the Outbox`);
-  return { ok: true, records: [encodeTaskAttemptSnapshot(attempt), encodeDispatchOutboxEntry(outbox),
+  // An unknown end writes the Attempt only (ATT-07/10/36: the Outbox stays, ATT-28/37); every other end both.
+  if (attempt === null) throw new Error(`${attemptEvent.kind} must write the Attempt`);
+  return { ok: true, records: [encodeTaskAttemptSnapshot(attempt), ...(outbox === null ? [] : [encodeDispatchOutboxEntry(outbox)]),
     ...(lease === null ? [] : [encodeLease(lease)]), ...(session === null ? [] : [encodeSessionRecord(session)])] };
 }
 
@@ -1053,7 +1139,7 @@ export function claimEffectRecords(
  * Lease whenever one was read (it decides the release, so it is pinned whether
  * or not this Run still holds it; RUN-02/04/05 refuse a missing one).
  */
-function executionReadGuards(facts: TaskExecutionRecord, runKey: string, runPin: VersionPin): RecordGuard[] {
+export function executionReadGuards(facts: TaskExecutionRecord, runKey: string, runPin: VersionPin): RecordGuard[] {
   return [
     { refKey: runKey, expectedRevision: runPin.revision },
     { refKey: taskAttemptRefKey(facts.attempt.ref), expectedRevision: facts.attempt.revision },
@@ -1177,6 +1263,43 @@ const ENTRY_RESULT_PREFIX = 'b2-entry-result:';
 
 export function createExecutionEntryService(deps: ExecutionEntryDependencies): ExecutionEntryPort {
   const records = deps.records;
+
+  /**
+   * RD-3 conditions 2 and 3, contract (b): the wait message a rebuilt yielded
+   * continuation names is read in the commit window: sent by this Run at the
+   * claim generation, with `waitAfterSend`, to this claim's Task and Session.
+   * The returned guard pins it at the revision read.
+   */
+  async function readWaitMessage(
+    continuation: NonNullable<TaskResultObservation['continuation']>, claim: TaskClaim,
+  ): Promise<{ ok: true; guard: RecordGuard } | Rejected> {
+    if (!isRecord(continuation) || !isRecord(continuation.messageRef)) {
+      return { ok: false, rejection: invalid('the continuation names no wait message') };
+    }
+    let key: string;
+    try { key = sessionMessageRefKey(continuation.messageRef); } catch {
+      return { ok: false, rejection: invalid('the continuation wait message ref is not canonicalizable') };
+    }
+    let batch;
+    try { batch = await records.readMany([key]); } catch (error) {
+      return { ok: false, rejection: unavailable(`the wait message could not be read: ${error instanceof Error ? error.message : String(error)}`) };
+    }
+    if (batch.status !== 'ready') return { ok: false, rejection: unavailable(`the wait message could not be read: ${batch.reason}`) };
+    const record = batch.value.records.find(candidate => candidate.refKey === key);
+    if (record === undefined) return { ok: false, rejection: incomplete('the continuation wait message does not exist') };
+    const decoded = decodeSessionMessageRecord(record);
+    if (decoded.status !== 'decoded') return { ok: false, rejection: unavailable(`the wait message is damaged: ${decoded.reason}`) };
+    const message = decoded.value;
+    const sender = message.sender;
+    if (sender.kind !== 'work_run' || !sameRef(sender.runRef, claim.runRef) || sender.generation !== claim.generation
+      || message.waitAfterSend !== true) {
+      return { ok: false, rejection: invalid('the wait message was not sent and waited on by this Run at its claim generation (RD-3)') };
+    }
+    if (!sameRef(continuation.task, claim.task) || !sameRef(continuation.sessionRef, claim.sessionRef)) {
+      return { ok: false, rejection: invalid('the continuation names another Task or Session than the claim (RD-3)') };
+    }
+    return { ok: true, guard: { refKey: key, expectedRevision: message.revision } };
+  }
 
   // ---- authorize ---------------------------------------------------------
   async function authorizeRuntimeEntry(
@@ -1535,6 +1658,14 @@ export function createExecutionEntryService(deps: ExecutionEntryDependencies): E
   }
 
   // ---- result ------------------------------------------------------------
+  /**
+   * Every write with a Kernel terminal (RD-5): the in-process observer's
+   * terminal (RUN-07; RUN-08 when a tool call has no determined result), the
+   * start-up reconcile of a terminal never booked (RUN-17 from `Entering`,
+   * RUN-18) and late evidence of an unknown end (RUN-21). The reconcile and
+   * late-evidence ends settle the Run's still-open intents in the same commit
+   * (CTL-08(b)(c), CTL-07).
+   */
   async function recordRunResult(
     ctx: CoreCallContext,
     request: GraphWrite<TaskResultObservation>,
@@ -1556,6 +1687,9 @@ export function createExecutionEntryService(deps: ExecutionEntryDependencies): E
     }
     // RUN-07 accepts only the V2 binding's own consumer and generation, so this is also what the commit records.
     const entry = { consumerId: observation.entry.consumerId, entryGeneration: observation.entry.entryGeneration };
+    const reconcile = reconcileFieldsOf(observation);
+    if (!reconcile.ok) return reconcile.rejection;
+    const { basis, unresolvedToolCallIds, enteredAt, acceptedSteers, inputsConfirmed } = reconcile.value;
     const checkedRun = checkRunPin(owned.expected, claim.runRef);
     if (!checkedRun.ok) return checkedRun.rejection;
     const runPin = checkedRun.pin;
@@ -1569,7 +1703,13 @@ export function createExecutionEntryService(deps: ExecutionEntryDependencies): E
         claim, entry, event: observation.event, kernelSource: observation.kernelSource,
         completedHistoryBoundary: observation.completedHistoryBoundary, history: observation.history,
         continuation: observation.continuation ?? null,
-        expected: expectedPinList(runPin) });
+        expected: expectedPinList(runPin),
+        // A.2 5.6: only a reconcile, an unknown end or Kernel evidence adds its fields (RUN-07's identity is kept).
+        ...(observation.basis === undefined ? {} : { basis }),
+        ...(unresolvedToolCallIds.length === 0 ? {} : { unresolvedToolCallIds }),
+        ...(enteredAt === null ? {} : { enteredAt }),
+        ...(acceptedSteers.length === 0 ? {} : { acceptedSteers }),
+        ...(inputsConfirmed === null ? {} : { inputsConfirmed }) });
     } catch { return invalid('the result request is not canonicalizable JSON'); }
 
     try {
@@ -1582,51 +1722,99 @@ export function createExecutionEntryService(deps: ExecutionEntryDependencies): E
       if (!factsRead.ok) return factsRead.rejection;
       if (signal.aborted) return reject('cancelled', 'the result write was cancelled during the execution read');
       const facts = factsRead.value;
-      // RUN-07: the persisted claim, the V2 binding in `entered` on a Run not
-      // ended yet, the entry projection, the complete Turn boundary, the event
-      // and the yield binding, then the history locator. Terminal reduction
-      // records an already-entered fact: it does NOT re-apply the new-action
-      // Host/Role/material admission gates. The caller is the in-process Runtime
-      // after its clean-exit and input-acceptance gates
-      // (`execution-observation.ts:534-537`, `:671-673`), which stay with it
-      // until step 5 makes them explicit, so both hold here.
+      // The Run read selects the row: an unknown end resolved by Kernel evidence
+      // (RUN-21), a terminal the start-up reconcile books (RUN-17 from Entering,
+      // RUN-18), else the in-process terminal (RUN-07, RUN-08 with an unresolved
+      // call). A terminal books an already-occurred fact: it does NOT re-apply
+      // the new-action Host/Role/material admission gates.
       const state = runStateOf(facts.run);
-      const runCtx: RunGuardContext = { ...entryRunContext(facts, claim, actor), exitProof: 'live_clean', inputsConfirmed: true };
-      const observed = {
-        kind: 'terminal_observed' as const, claim, entry, event: observation.event,
-        kernelSource: observation.kernelSource, completedHistoryBoundary: observation.completedHistoryBoundary,
-        history: observation.history, unresolvedToolCallIds: [],
-        ...(observation.continuation === undefined ? {} : { continuation: observation.continuation }),
+      const row: ResultRow = state.node === 'EndedUnknown' ? 'late_evidence'
+        : state.node === 'Entering' || basis.kind === 'host_instance_takeover' ? 'reconcile_terminal' : 'terminal_observed';
+      const intentsRead = row === 'terminal_observed' ? { ok: true as const, value: [] } : await readRunIntents(records, facts.run);
+      if (!intentsRead.ok) return intentsRead.rejection;
+      const intents = intentsRead.value;
+      // §10.3: the in-process observer confirms the accepted inputs before it submits (RUN-07/08); a
+      // reconciled terminal and late evidence carry the Runtime's confirmation, and without it the
+      // machine answers `unavailable` (RUN-17/18/21).
+      const confirmed = row === 'terminal_observed' ? true : inputsConfirmed === true;
+      const runCtx: RunGuardContext = { ...entryRunContext(facts, claim, actor), exitProof: basis.kind, inputsConfirmed: confirmed,
+        hostLease: hostLeaseOf(deps.hostInstance, basis), kernelProbe: 'ready',
+        pointerIntent: pointerIntentOf(facts.run, intents), queuedSteers: queuedSteersOf(facts.run, intents),
+        outcomeUnknownIntents: outcomeUnknownIntentsOf(intents) };
+      // RD-3, contract (b): a yielded end the Runtime rebuilt (no live handle) names a durable wait message;
+      // the same commit reads it and guards its revision instead of trusting the caller.
+      let continuationGuards: RecordGuard[] = [];
+      if (row !== 'terminal_observed' && observation.continuation !== undefined) {
+        const waited = await readWaitMessage(observation.continuation, claim);
+        if (!waited.ok) return waited.rejection;
+        continuationGuards = [waited.guard];
+      }
+      const runEventAt = (endedAt: string, factEventId: string): RunEvent | CoreRejection => {
+        if (row === 'terminal_observed') {
+          return { kind: 'terminal_observed', claim, entry, event: observation.event,
+            kernelSource: observation.kernelSource, completedHistoryBoundary: observation.completedHistoryBoundary,
+            history: observation.history, unresolvedToolCallIds, endedAt, factEventId,
+            ...(observation.continuation === undefined ? {} : { continuation: observation.continuation }) };
+        }
+        const { kernelSource, completedHistoryBoundary, history } = observation;
+        if (kernelSource === null || completedHistoryBoundary === null || history === null) {
+          return incomplete('a reconciled terminal requires the complete observed Turn boundary');
+        }
+        if (entry.consumerId !== runCtxEntry(facts.run)?.consumerId || entry.entryGeneration !== runCtxEntry(facts.run)?.entryGeneration) {
+          return forbidden('the result entry projection does not match the current V2 entry binding');
+        }
+        const evidence = { claim, basis, recordedAt: endedAt, factEventId, event: observation.event, kernelSource,
+          completedHistoryBoundary, history, unresolvedToolCallIds, enteredAt,
+          ...(observation.continuation === undefined ? {} : { continuation: observation.continuation }) };
+        return row === 'late_evidence' ? { kind: 'late_evidence', ...evidence } : { kind: 'reconcile_terminal', ...evidence };
       };
       // Every guard is asked before the commit instant and the event id are minted
       // (they only stamp the records written), as today.
-      const checked = transitionRun(state, { ...observed, endedAt: '', factEventId: '' }, runCtx);
+      const probe = runEventAt('', '');
+      if ('status' in probe) return probe;
+      const checked = transitionRun(state, probe, runCtx);
       if (!checked.ok) return runRefusal(checked);
       const eventId = deps.eventId();
       const nowIso = deps.now();
       if (!nonEmpty(eventId) || !nonEmpty(nowIso)) return reject('unsupported', 'the injected id/clock source produced an empty value');
-      const ended = transitionRun(state, { ...observed, endedAt: nowIso, factEventId: eventId }, runCtx);
+      const runEvent = runEventAt(nowIso, eventId);
+      if ('status' in runEvent) return runEvent;
+      const ended = transitionRun(state, runEvent, runCtx);
       if (!ended.ok) return runRefusal(ended);
       const nextRun = nextRunOf(ended.next);
       const runRecord = encodeRun(nextRun);
       const outcome = nextRun.outcome;
-      if (outcome === null) throw new Error('terminal_observed ends the Run with an outcome');
-      // RUN-07's effects in this commit: the Attempt ends (ATT-06), the Outbox
-      // settles (ATT-27), and only what the Run still holds is released.
-      const written = claimEffectRecords(ended.effects, facts, pairingOf('terminal_observed', facts, runCtx),
-        attemptEventOf({ kind: 'terminal_observed', claim, endOutcome: outcome, endedAt: nowIso, eventId,
-          sequence: observation.event.sequence, entry, turnStartedAt: null }),
-        { cause: 'terminal_observed', context: terminalReleaseContext });
+      if (outcome === null) throw new Error('a terminal ends the Run with an outcome');
+      // The claim's records in this commit: the Attempt ends or resolves
+      // (ATT-06/07/08/11/31), the Outbox settles unless the end is unknown
+      // (ATT-27/29/33; ATT-28), and only what the Run still holds is released.
+      const sequence = observation.event.sequence;
+      const attemptEvent = row === 'late_evidence'
+        ? attemptEventOf({ kind: 'late_evidence', claim, outcome: outcome as Exclude<typeof outcome, 'outcome_unknown'>,
+          resolvedAt: nowIso, eventId, sequence, entry, turnStartedAt: facts.run.startedAt === null ? enteredAt : null })
+        : attemptEventOf({ kind: row, claim, endOutcome: outcome, endedAt: nowIso, eventId, sequence, entry,
+          turnStartedAt: state.node === 'Entering' ? enteredAt : null });
+      const pairing: AttemptGuardContext = { runNode: state.node, runLastEventSeq: facts.run.lastEventSeq,
+        ownsSession: runCtx.session.owned, ownsLease: runCtx.lease === 'owned' };
+      const written = claimEffectRecords(ended.effects.filter(effect => effect.kind !== 'intent'), facts, pairing, attemptEvent,
+        row === 'terminal_observed' ? { cause: 'terminal_observed', context: terminalReleaseContext }
+          : { cause: row, context: release => reconciledTerminalReleaseContext(release, state.node, runCtx.hostLease, confirmed) });
       if (!written.ok) return written.rejection;
+      const intentWrites = reconciledIntentRecords(ended.effects, intents, { runBefore: facts.run, runAfter: nextRun,
+        nodeBefore: state.node, hostInstanceId: deps.hostInstance?.hostInstanceId ?? null, acceptedSteers,
+        cancelRef: null, pausedStop: null, kernelPaused: false, observedAt: nowIso });
+      if (!intentWrites.ok) return intentWrites.rejection;
       const event = {
         eventId, eventType: EXECUTION_RUN_RESULT_RECORDED_EVENT_TYPE,
         schemaVersion: EXECUTION_ENTRY_EVENT_SCHEMA_VERSION, occurredAt: nowIso,
         identityKey: identity, actor, fingerprint, claim, entry, run: nextRun,
       };
-      const mergedGuards = mergeGuards(executionReadGuards(facts, runRecord.refKey, runPin));
+      const mergedGuards = mergeGuards([...executionReadGuards(facts, runRecord.refKey, runPin), ...intentWrites.guards,
+        ...continuationGuards]);
       if (!mergedGuards.ok) return mergedGuards.rejection;
       const preparedCommit: PreparedCommit = {
-        identityKey: identity, fingerprint, guards: mergedGuards.guards, records: [runRecord, ...written.records], claims: [],
+        identityKey: identity, fingerprint, guards: mergedGuards.guards,
+        records: [runRecord, ...written.records, ...intentWrites.records], claims: [],
         indexGuards: [], indexChanges: [], events: [encodeExecutionRunResultRecordedEvent(event)],
       };
       if (signal.aborted) return reject('cancelled', 'the result write was cancelled before commit');

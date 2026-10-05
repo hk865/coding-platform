@@ -194,6 +194,11 @@ function supersededBy(state: ControlIntentState, by: ControlIntentRef = OTHER): 
 function observedTo(state: ControlIntentState, node: Exclude<ControlNode, 'Absent' | 'Queued'>, observation: ControlObservationV1): Expected {
   return { ok: true, next: { node, kind: state.kind, revision: state.revision + 1, observation }, effects: [{ kind: 'guard_run' }] };
 }
+/** CTL-07 / CTL-08 (step 5.6): settled at revision + 1 with the reconcile's observation; the Run is the CAS guard. */
+function reconciledTo(state: ControlIntentState, node: Exclude<ControlNode, 'Absent' | 'Queued'>,
+  observation: ControlObservationV1 | ControlPlatformObservationV1 = platformObservation('terminal_without_cancel')): Expected {
+  return { ok: true, next: { node, kind: state.kind, revision: state.revision + 1, observation }, effects: [{ kind: 'guard_run' }] };
+}
 /** CTL-09 (SD-1): the same Kernel fact again is an idempotent no-op. */
 function unchanged(state: ControlIntentState): Expected {
   return { ok: true, next: state, effects: [] };
@@ -282,21 +287,25 @@ const MATRIX: Record<EventType, Record<StateLabel, Expected>> = {
     'Superseded:pause': STALE, 'Superseded:cancel': STALE, 'Superseded:resume': STALE, 'Superseded:steer': STALE,
     'OutcomeUnknown:pause': STALE, 'OutcomeUnknown:cancel': STALE, 'OutcomeUnknown:resume': STALE, 'OutcomeUnknown:steer': STALE,
   },
-  // CTL-10 is 新增 (step 5.6 flip: Queued cancel → Applied).
+  // CTL-10 (step 5.6): only a queued cancel, and only on the proven exit (the base context has none).
   control_applied_paused_stop: {
     Absent: ILLEGAL,
-    'Queued:pause': ILLEGAL, 'Queued:cancel': ILLEGAL, 'Queued:resume': ILLEGAL, 'Queued:steer': ILLEGAL,
+    'Queued:pause': ILLEGAL, 'Queued:cancel': fail('guard_failed', 'incomplete'), 'Queued:resume': ILLEGAL, 'Queued:steer': ILLEGAL,
     'Applied:pause': ILLEGAL, 'Applied:cancel': ILLEGAL, 'Applied:resume': ILLEGAL, 'Applied:steer': ILLEGAL,
     'Superseded:pause': ILLEGAL, 'Superseded:cancel': ILLEGAL, 'Superseded:resume': ILLEGAL, 'Superseded:steer': ILLEGAL,
     'OutcomeUnknown:pause': ILLEGAL, 'OutcomeUnknown:cancel': ILLEGAL, 'OutcomeUnknown:resume': ILLEGAL, 'OutcomeUnknown:steer': ILLEGAL,
   },
-  // CTL-07 / CTL-08 are 新增 (step 5.6 flip); §7.4: terminal intents are skipped by reconcile.
+  // CTL-08 (step 5.6): only the start-up reconcile settles a queued intent (the base context is live);
+  // CTL-07: an outcome_unknown intent settles with a known observation only on the ended Run of RUN-21, never
+  // on the base `Running` Run (7.4, the node guard). §7.4: terminal intents are skipped by reconcile.
   control_reconciled: {
     Absent: ILLEGAL,
-    'Queued:pause': ILLEGAL, 'Queued:cancel': ILLEGAL, 'Queued:resume': ILLEGAL, 'Queued:steer': ILLEGAL,
+    'Queued:pause': fail('illegal', 'forbidden'), 'Queued:cancel': fail('illegal', 'forbidden'),
+    'Queued:resume': fail('illegal', 'forbidden'), 'Queued:steer': fail('illegal', 'forbidden'),
     'Applied:pause': ILLEGAL, 'Applied:cancel': ILLEGAL, 'Applied:resume': ILLEGAL, 'Applied:steer': ILLEGAL,
     'Superseded:pause': ILLEGAL, 'Superseded:cancel': ILLEGAL, 'Superseded:resume': ILLEGAL, 'Superseded:steer': ILLEGAL,
-    'OutcomeUnknown:pause': ILLEGAL, 'OutcomeUnknown:cancel': ILLEGAL, 'OutcomeUnknown:resume': ILLEGAL, 'OutcomeUnknown:steer': ILLEGAL,
+    'OutcomeUnknown:pause': ILLEGAL, 'OutcomeUnknown:cancel': ILLEGAL, 'OutcomeUnknown:resume': ILLEGAL,
+    'OutcomeUnknown:steer': ILLEGAL,
   },
 };
 
@@ -386,11 +395,11 @@ describe('a submission from Absent: pointer × kind × Run node (CTL-01, CTL-02)
     }
   });
 
-  it('a paused-interrupted Run keeps the generic ended reason (step 5.6 flip: continue-the-Task reason, C4)', () => {
+  it('a paused-interrupted Run points to continuing the Task (step 5.6, C4)', () => {
     for (const kind of KINDS) {
       expect(transitionControlIntent(ABSENT, submitEvent(kind), ctxWith({ node: 'Ended', pausedInterrupted: true, pointer: 'paused' },
         { pointerIntent: POINTER_INTENT.paused })))
-        .toEqual({ ok: false, reason: 'illegal', code: 'busy', detail: 'the Run already ended; no new control intent is accepted' });
+        .toEqual({ ok: false, reason: 'illegal', code: 'busy', detail: 'the paused Run ended at the Host restart; continue the Task' });
     }
   });
 
@@ -930,34 +939,111 @@ describe('submissionReadsPointerIntent, submissionReadsGoal and observedIntentAn
 });
 
 // -------------------------------------------------------------------------- //
-// 新增 events: still illegal until step 5.6                                   //
+// CTL-07 / CTL-08 / CTL-10 (A.2 step 5.6)                                    //
 // -------------------------------------------------------------------------- //
 
-describe('rows that A.2 step 5.6 adds answer illegal/invalid today', () => {
-  it('CTL-10 control_applied_paused_stop: not yet for a queued cancel, whatever the exit proof (7.4)', () => {
-    for (const exitProof of [null, 'live_clean', 'host_instance_takeover'] as const) {
-      for (const kernelPaused of [false, true]) {
-        expect(transitionControlIntent(queued('cancel'), EVENTS.control_applied_paused_stop, ctxWith({ kernelPaused }, { exitProof })))
-          .toEqual({ ok: false, reason: 'illegal', code: 'invalid', detail: 'CTL-10 is not implemented before A.2 step 5' });
-      }
-    }
+describe('the reconcile and paused-stop rows (CTL-07, CTL-08, CTL-10; A.2 step 5.6)', () => {
+  it('CTL-10 control_applied_paused_stop: a queued cancel on the proven exit; in process only at a paused safe point (7.4)', () => {
+    const stop = EVENTS.control_applied_paused_stop;
+    expect(transitionControlIntent(queued('cancel'), stop, ctxWith({ kernelPaused: true }, { exitProof: null })))
+      .toMatchObject({ ok: false, reason: 'guard_failed', code: 'incomplete' });
+    expect(transitionControlIntent(queued('cancel'), stop, ctxWith({ kernelPaused: false }, { exitProof: 'live_clean' })))
+      .toMatchObject({ ok: false, reason: 'guard_failed', code: 'incomplete' });
+    // The stop names the exit it was proven on.
+    expect(transitionControlIntent(queued('cancel'), stop, ctxWith({ kernelPaused: true }, { exitProof: 'host_instance_takeover' })))
+      .toMatchObject({ ok: false, reason: 'guard_failed', code: 'incomplete' });
+    expect(transitionControlIntent(queued('cancel'), stop, ctxWith({ kernelPaused: true, pointsHere: false }, { exitProof: 'live_clean' })))
+      .toMatchObject({ ok: false, reason: 'illegal', code: 'invalid' });
+    expect(transitionControlIntent(queued('cancel'), stop, ctxWith({ kernelPaused: true }, { exitProof: 'live_clean' }))).toEqual({
+      ok: true, effects: [], next: { node: 'Applied', kind: 'cancel', revision: 2, observation: { schemaVersion: 1,
+        origin: 'platform_paused_stop', kind: 'cancelled', runRevision: 4, detail: { basis: 'live_clean', pausedBy: OTHER }, observedAt: AT } },
+    });
+    // LA-7: at a restart the queued cancel stops a clean Turn whether or not the Kernel paused it.
+    const restartStop = { ...stop, basis: 'host_instance_takeover' as const, pausedBy: null };
+    expect(transitionControlIntent(queued('cancel'), restartStop, ctxWith({ kernelPaused: false }, { exitProof: 'host_instance_takeover' })))
+      .toMatchObject({ ok: true, next: { node: 'Applied', kind: 'cancel', observation: { origin: 'platform_paused_stop',
+        detail: { basis: 'host_instance_takeover', pausedBy: null } } } });
     for (const label of STATE_LABELS.filter(candidate => candidate !== 'Queued:cancel')) {
-      expect(transitionControlIntent(STATES[label], EVENTS.control_applied_paused_stop, ctxWith({}, { exitProof: 'live_clean' })))
+      expect(transitionControlIntent(STATES[label], stop, ctxWith({ kernelPaused: true }, { exitProof: 'live_clean' })))
         .toEqual({ ok: false, reason: 'illegal', code: 'invalid', detail: 'only a queued cancel can be applied by a paused stop' });
     }
   });
 
-  it('CTL-07 / CTL-08 control_reconciled: not yet; terminal intents are skipped (7.4)', () => {
+  it('CTL-08 control_reconciled: the start-up reconcile settles a queued intent with its observation', () => {
     const reconcile = (observation: ControlObservationV1 | ControlPlatformObservationV1): ControlIntentEvent =>
       ({ type: 'control_reconciled', hostInstanceId: 'host-1', observation });
     const restart = ctxWith({ node: 'Ended', pausedInterrupted: true, pointer: 'paused' }, { origin: 'reconcile', exitProof: 'host_instance_takeover' });
-    // Includes the C4 rows: a queued pause on a RUN-24 Run never takes a Kernel `paused` or a supersede.
-    for (const observation of [kernelObservation('paused'), platformObservation('terminal_without_cancel'), platformObservation('paused')]) {
+    const ended = ctxWith({ node: 'Ended' }, { origin: 'reconcile', exitProof: 'host_instance_takeover' });
+    // CTL-08(f), C4: a queued pause on a RUN-24 Run never takes a Kernel `paused` or the end's supersede.
+    for (const observation of [kernelObservation('paused'), platformObservation('terminal_without_cancel')]) {
       expect(transitionControlIntent(queued('pause'), reconcile(observation), restart))
-        .toEqual({ ok: false, reason: 'illegal', code: 'invalid', detail: 'CTL-08 is not implemented before A.2 step 5' });
+        .toMatchObject({ ok: false, reason: 'illegal', code: 'invalid' });
     }
-    expect(transitionControlIntent(outcomeUnknown('cancel'), reconcile(kernelObservation('cancelled')), restart))
-      .toEqual({ ok: false, reason: 'illegal', code: 'invalid', detail: 'CTL-07 is not implemented before A.2 step 5' });
+    expect(transitionControlIntent(queued('pause'), reconcile(platformObservation('paused')), restart))
+      .toEqual(reconciledTo(queued('pause'), 'Applied', platformObservation('paused')));
+    // The platform `paused` conclusion belongs only to a paused-interrupted Run.
+    expect(transitionControlIntent(queued('pause'), reconcile(platformObservation('paused')), ended))
+      .toMatchObject({ ok: false, reason: 'illegal', code: 'invalid' });
+    // CTL-08(b): a steer the Kernel accepted; (c): the end came first; (d): an unknown end.
+    expect(transitionControlIntent(queued('steer'), reconcile(kernelObservation('steered')), ended))
+      .toEqual(reconciledTo(queued('steer'), 'Applied', kernelObservation('steered')));
+    expect(transitionControlIntent(queued('resume'), reconcile(platformObservation('terminal_without_cancel')), ended))
+      .toEqual(reconciledTo(queued('resume'), 'Superseded'));
+    const endedUnknown = ctxWith({ node: 'EndedUnknown' }, { origin: 'reconcile', exitProof: 'host_instance_takeover' });
+    expect(transitionControlIntent(queued('cancel'), reconcile(platformObservation('outcome_unknown')), endedUnknown))
+      .toEqual(reconciledTo(queued('cancel'), 'OutcomeUnknown', platformObservation('outcome_unknown')));
+    // 7.4, the node guard: each conclusion belongs to the Run node the same commit leaves (CTL-08(a)..(f)).
+    const notEntered = (node: 'Claimed' | 'Authorized' | 'Revoked' | 'Ended') =>
+      ctxWith({ node }, { origin: 'reconcile', exitProof: 'host_instance_takeover' });
+    expect(transitionControlIntent(queued('cancel'), reconcile(platformObservation('outcome_unknown')), ended))
+      .toMatchObject({ ok: false, reason: 'illegal', code: 'invalid' });
+    for (const node of ['Running', 'Entering', 'Claimed', 'YieldedWait'] as const) {
+      const context = ctxWith({ node }, { origin: 'reconcile', exitProof: 'host_instance_takeover' });
+      expect(transitionControlIntent(queued('cancel'), reconcile(platformObservation('outcome_unknown')), context), node)
+        .toMatchObject({ ok: false, reason: 'illegal', code: 'invalid' });
+      expect(transitionControlIntent(queued('resume'), reconcile(platformObservation('terminal_without_cancel')), context), node)
+        .toMatchObject({ ok: false, reason: 'illegal', code: 'invalid' });
+      expect(transitionControlIntent(queued('steer'), reconcile(kernelObservation('steered')), context), node)
+        .toMatchObject({ ok: false, reason: 'illegal', code: 'invalid' });
+    }
+    expect(transitionControlIntent(queued('resume'), reconcile(platformObservation('terminal_without_cancel')), endedUnknown))
+      .toMatchObject({ ok: false, reason: 'illegal', code: 'invalid' });
+    // CTL-08(a): the not-entered conclusion only on a Run that never entered (a cancel ends it in the same commit).
+    for (const node of ['Claimed', 'Authorized', 'Revoked'] as const) {
+      expect(transitionControlIntent(queued('resume'), reconcile(platformObservation('resumed')), notEntered(node)), node)
+        .toEqual(reconciledTo(queued('resume'), 'Applied', platformObservation('resumed')));
+    }
+    expect(transitionControlIntent(queued('cancel'), reconcile(platformObservation('cancelled')), notEntered('Ended')))
+      .toEqual(reconciledTo(queued('cancel'), 'Applied', platformObservation('cancelled')));
+    expect(transitionControlIntent(queued('resume'), reconcile(platformObservation('resumed')), notEntered('Ended')))
+      .toMatchObject({ ok: false, reason: 'illegal', code: 'invalid' });
+    for (const node of ['Entering', 'Running', 'EndedUnknown'] as const) {
+      expect(transitionControlIntent(queued('cancel'), reconcile(platformObservation('cancelled')),
+        ctxWith({ node }, { origin: 'reconcile', exitProof: 'host_instance_takeover' })), node)
+        .toMatchObject({ ok: false, reason: 'illegal', code: 'invalid' });
+    }
+    // Only the start-up reconcile settles a queued intent.
+    expect(transitionControlIntent(queued('cancel'), reconcile(platformObservation('outcome_unknown')), ctxWith({ node: 'Ended' })))
+      .toMatchObject({ ok: false, reason: 'illegal', code: 'forbidden' });
+    // The observation pairs with the intent kind.
+    expect(transitionControlIntent(queued('steer'), reconcile(kernelObservation('cancelled')), ended))
+      .toMatchObject({ ok: false, reason: 'illegal', code: 'invalid' });
+  });
+
+  it('CTL-07 control_reconciled: an outcome_unknown intent leaves only with a known observation; terminal intents are skipped (7.4)', () => {
+    const reconcile = (observation: ControlObservationV1 | ControlPlatformObservationV1): ControlIntentEvent =>
+      ({ type: 'control_reconciled', hostInstanceId: 'host-1', observation });
+    const restart = ctxWith({ node: 'Ended', pausedInterrupted: true, pointer: 'paused' }, { origin: 'reconcile', exitProof: 'host_instance_takeover' });
+    expect(transitionControlIntent(outcomeUnknown('cancel'), reconcile(platformObservation('outcome_unknown')), restart))
+      .toMatchObject({ ok: false, reason: 'illegal', code: 'invalid' });
+    // RUN-21 settles it in process too (the live origin).
+    expect(transitionControlIntent(outcomeUnknown('cancel'), reconcile(kernelObservation('cancelled')), ctxWith({ node: 'Ended' })))
+      .toEqual(reconciledTo(outcomeUnknown('cancel'), 'Applied', kernelObservation('cancelled')));
+    // A yielded RUN-21 leaves the Run a yielded wait: the end came first (7.4 node guard); never on a live Run.
+    expect(transitionControlIntent(outcomeUnknown('steer'), reconcile(platformObservation('terminal_without_cancel')),
+      ctxWith({ node: 'YieldedWait' }))).toEqual(reconciledTo(outcomeUnknown('steer'), 'Superseded'));
+    expect(transitionControlIntent(outcomeUnknown('steer'), reconcile(platformObservation('terminal_without_cancel')),
+      ctxWith({ node: 'EndedUnknown' }))).toMatchObject({ ok: false, reason: 'illegal', code: 'invalid' });
     for (const label of STATE_LABELS.filter(candidate => candidate.startsWith('Applied') || candidate.startsWith('Superseded'))) {
       expect(transitionControlIntent(STATES[label], reconcile(platformObservation('outcome_unknown')), restart))
         .toEqual({ ok: false, reason: 'illegal', code: 'invalid', detail: 'the control intent is already terminal; reconcile skips it' });

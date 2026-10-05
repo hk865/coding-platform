@@ -49,7 +49,6 @@ export const EVIDENCE_ADMITTED_EVENT_TYPE = 'EvidenceAdmitted' as const;
 /** A.2 check reconciliation and successor-round events (spec §9.2; VR-04, VR-13, VD-6, VR-14). */
 export const VERIFICATION_CHECK_INTERRUPTED_EVENT_TYPE = 'VerificationCheckInterrupted' as const;
 export const VERIFICATION_CHECK_ABANDONED_EVENT_TYPE = 'VerificationCheckAbandoned' as const;
-export const VERIFICATION_CHECK_REPORT_BOOKED_EVENT_TYPE = 'VerificationCheckReportBooked' as const;
 export const VERIFICATION_ROUND_REVERIFIED_EVENT_TYPE = 'VerificationRoundReverified' as const;
 export const EVIDENCE_EVENT_SCHEMA_VERSION = 1 as const;
 
@@ -105,14 +104,6 @@ export type VerificationRoundEvent =
         cause: CheckAbandonCause;
         result: RoundSnapshot;
     })
-    /** Reconcile booked the located report of an interrupted check. */
-    | (EvidenceEventBase & {
-        eventType: typeof VERIFICATION_CHECK_REPORT_BOOKED_EVENT_TYPE;
-        checkId: string;
-        invocationId: string;
-        hostInstanceId: string;
-        result: RoundSnapshot;
-    })
     /** VR-14: `roundRef` and `result` are the new successor round (chain ordinal ≥ 2). */
     | (EvidenceEventBase & { eventType: typeof VERIFICATION_ROUND_REVERIFIED_EVENT_TYPE; result: RoundSnapshot });
 
@@ -124,7 +115,6 @@ export const VERIFICATION_ROUND_EVENT_TYPES: readonly VerificationRoundEvent['ev
     EVIDENCE_ADMITTED_EVENT_TYPE,
     VERIFICATION_CHECK_INTERRUPTED_EVENT_TYPE,
     VERIFICATION_CHECK_ABANDONED_EVENT_TYPE,
-    VERIFICATION_CHECK_REPORT_BOOKED_EVENT_TYPE,
     VERIFICATION_ROUND_REVERIFIED_EVENT_TYPE,
 ];
 
@@ -530,15 +520,6 @@ function a2RoundEventProblem(body: UnknownRecord): string | null {
             const check = a2CheckOf(body);
             if (typeof check === 'string') return check;
             return ABANDON_CAUSES.includes(body['cause'] as string) ? null : 'an abandon cause is not recognized';
-        }
-        case VERIFICATION_CHECK_REPORT_BOOKED_EVENT_TYPE: {
-            const round = a2ResultRoundProblem(body);
-            if (round !== null) return round;
-            const check = a2CheckOf(body);
-            if (typeof check === 'string') return check;
-            if (!nonEmpty(body['hostInstanceId'])) return 'a booked report names the reconciling hostInstanceId';
-            if (check['phase'] !== 'finished' || !isRecord(check['reportRef'])) return 'a booked check must be finished with its report';
-            return null;
         }
         case VERIFICATION_ROUND_REVERIFIED_EVENT_TYPE: {
             const round = a2ResultRoundProblem(body);

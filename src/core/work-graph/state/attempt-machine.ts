@@ -14,8 +14,11 @@
  * - 已有 rows keep today's records byte for byte (key order of the literals in
  *   `claim-service.ts:682-707` and `execution-entry-service.ts:1260-1267`,
  *   `:1417-1450`).
- * - ATT-07 (改造) keeps TODAY's result: `recordRunResult` accepts only a
- *   known terminal (step 5.6 flips it).
+ * - Step 5.6 (D-4..D-6, L-2) lands ATT-07 (an in-process terminal with an
+ *   unresolved tool call ends the Attempt unknown), the reconciled ends ATT-08..10,
+ *   ATT-31/32/35/36 with the Lease (ATT-18..22) and Outbox rows (ATT-25,
+ *   ATT-27..29, ATT-33/34/37), ATT-04 (a Run proven not entered keeps its
+ *   claim), and the resolutions ATT-11/12.
  * - Step 5.4 (D-3, TD-3) lands ATT-16: a claim after a TaskRequeue re-holds the
  *   lease its afterRun released (@k → @k+1, `release` dropped), and its
  *   Attempt records the `requeueRef` (ATT-01).
@@ -24,9 +27,6 @@
  *   pending → settled with the AD-2 `not_entered` dispatch state). A D-7 pause
  *   or resume writes none of the three records (§5.2), so it is not an event
  *   of this section (`attemptEventFromRunEvent` maps it to `null`).
- * - The other 新增 rows (ATT-04, 08..12, 20..22, 28, 29, 31..37) keep their
- *   events in the union but return `illegal` (`notYet`), so step 5 only adds
- *   rows.
  *
  * `TaskClaimOutbox` and its V1 dispatch state are declared in
  * `tasks/claim-contracts.ts`, which `state/` may not import (§14.4); the
@@ -39,7 +39,7 @@ import type {
   TaskLeaseSnapshot,
 } from '../../../contracts/dispatch.js';
 import type { TaskRequeueRef } from '../../../contracts/task-requeue.js';
-import { accept, notYet, reject, unreachable, type Rejected, type Transition } from './transition.js';
+import { accept, reject, unreachable, type Rejected, type Transition } from './transition.js';
 
 // -------------------------------------------------------------------------- //
 // Records and nodes (§5.1)                                                    //
@@ -300,6 +300,23 @@ function endedAttemptRecord(attempt: TaskAttemptSnapshot, endOutcome: RunOutcome
   return { ...attempt, revision: attempt.revision + 1, status: 'ended', endedAt, endOutcome };
 }
 
+/**
+ * ATT-31/32/36 (§5.3 "从 Entering 核对结束"): a claimed Attempt ends directly,
+ * recording the Kernel Turn start the reconcile read (null for ATT-36).
+ */
+function endedFromClaimedRecord(
+  attempt: TaskAttemptSnapshot, endOutcome: RunOutcome, endedAt: string, startedAt: string | null,
+): TaskAttemptSnapshot {
+  return { ...attempt, revision: attempt.revision + 1, status: 'ended', startedAt, endedAt, endOutcome };
+}
+
+/** ATT-34: `pending → entered` for an unknown end reconciled from `Entering`, with the entering binding. */
+function enteredFromEndOutboxRecord(outbox: DispatchOutboxRecord, entry: AttemptEntryIdentity, eventId: string): DispatchOutboxRecord {
+  return { ...outbox, revision: outbox.revision + 1, status: 'entered',
+    dispatchState: { schemaVersion: 1, phase: 'entered', consumerId: entry.consumerId,
+      entryGeneration: entry.entryGeneration, sessionGeneration: outbox.claim.generation, eventId } };
+}
+
 /** ATT-26 (`execution-entry-service.ts:1265-1267`). */
 function enteredOutboxRecord(outbox: DispatchOutboxRecord, facts: AttemptStartedFacts): DispatchOutboxRecord {
   return { ...outbox, revision: outbox.revision + 1, status: 'entered',
@@ -424,14 +441,13 @@ function unknownOutboxHold(ctx: AttemptGuardContext, sequence: number | null): R
 }
 
 /**
- * ATT-06 / ATT-27 guard, in `recordRunResult` order: entry projection,
+ * ATT-06/07 / ATT-27/28 guard, in `recordRunResult` order: entry projection,
  * V2 phase `entered` and not finished (`execution-entry-service.ts:1362-1364`),
  * then `terminalFact` (sequence `:1659`, then the terminal type). An unknown
- * outcome is today's result for ATT-07/28: `recordRunResult` has no unknown
- * branch (`:1653-1690`) and the observer writes nothing
- * (`execution-observation.ts:583-595`).
+ * outcome is RUN-08's (ATT-07: the Attempt ends unknown; ATT-28: the Outbox
+ * stays entered; ATT-20: the Lease stays held).
  */
-function knownTerminalGuard(event: EndedEvent, ctx: AttemptGuardContext): Rejected | null {
+function terminalGuard(event: EndedEvent, ctx: AttemptGuardContext): Rejected | null {
   if (event.entry === null) return reject('illegal', 'invalid', 'the result entry projection is incomplete');
   switch (ctx.runNode) {
     case 'Running': break;
@@ -447,16 +463,52 @@ function knownTerminalGuard(event: EndedEvent, ctx: AttemptGuardContext): Reject
     case 'EndedUnknown': return unknownReobservation(ctx, event.sequence);
     default: return unreachable(ctx.runNode, 'Run node');
   }
+  // RUN-08 books no Runtime terminal sequence (§6.3), so only a known end is ordered.
+  if (endOutcomeKind(event.endOutcome) === 'unknown') return null;
   if (sequenceNotNewer(ctx, event.sequence)) {
     return reject('stale', 'revision_conflict', 'the result event sequence is not newer than the applied Run fact');
   }
-  const outcomeKind = endOutcomeKind(event.endOutcome);
-  switch (outcomeKind) {
-    case 'known': return null;
-    case 'unknown': return reject('illegal', 'invalid', 'a terminal result requires a known terminal Runtime event (ATT-07 is step 5)');
-    case 'no_writer': return reject('illegal', 'invalid', 'the outcome failed has no writer');
-    default: return unreachable(outcomeKind, 'outcome kind');
+  return outcomeWriterGuard(event.endOutcome);
+}
+
+function outcomeWriterGuard(outcome: RunOutcome): Rejected | null {
+  return endOutcomeKind(outcome) === 'no_writer' ? reject('illegal', 'invalid', 'the outcome failed has no writer') : null;
+}
+
+/**
+ * ATT-08..10, 31, 32, 35, 36 guard (§5.3 "从 Entering 核对结束"): a reconciled
+ * or paused-stop end pairs a `claimed` Attempt with an `Entering` Run and a
+ * `started` one with a `Running` Run; a known end needs a newer sequence and an
+ * outcome with a writer; an end from `Entering` records the Turn start unless
+ * it is RUN-20(ii) (ATT-36: no Turn was read). The Run machine has already
+ * judged the reconcile itself (§6.3).
+ */
+function reconciledEndGuard(node: 'claimed' | 'started', event: EndedEvent, ctx: AttemptGuardContext): Rejected | null {
+  if (event.entry === null) return reject('illegal', 'invalid', 'the reconciled end names the Run entry binding');
+  const paired = node === 'claimed' ? 'Entering' : 'Running';
+  if (ctx.runNode !== paired) {
+    return reject('illegal', 'invalid', `a ${node} Attempt ends through ${event.source} only with an ${paired} Run`);
   }
+  if (endOutcomeKind(event.endOutcome) === 'unknown') {
+    return event.source === 'reconcile_unknown' ? null
+      : reject('illegal', 'invalid', `${event.source} ends the Attempt with a known outcome`);
+  }
+  if (event.source === 'reconcile_unknown') return reject('illegal', 'invalid', 'reconcile_unknown ends the Attempt outcome_unknown');
+  if (sequenceNotNewer(ctx, event.sequence)) {
+    return reject('stale', 'revision_conflict', 'the result event sequence is not newer than the applied Run fact');
+  }
+  if (node === 'claimed' && event.turnStartedAt === null) {
+    return reject('illegal', 'invalid', 'a known end reconciled from Entering records the Kernel Turn start (ATT-31)');
+  }
+  return outcomeWriterGuard(event.endOutcome);
+}
+
+/** The same-commit releases of an end, only for what the claim still holds (§5.3 ATT-06 effects). */
+function releaseEffectsOf(claim: TaskClaim, ctx: AttemptGuardContext): AttemptEffect[] {
+  const effects: AttemptEffect[] = [];
+  if (ctx.ownsLease) effects.push({ kind: 'release_lease' });
+  if (ctx.ownsSession) effects.push({ kind: 'release_session', sessionRef: claim.sessionRef, generation: claim.generation });
+  return effects;
 }
 
 // -------------------------------------------------------------------------- //
@@ -487,7 +539,7 @@ export function transitionAttempt(
         case 'started':
           return reject('illegal', 'invalid', 'only an Attempt that ended with outcome_unknown can be resolved');
         case 'ended_known': return reject('illegal', 'busy', 'a known terminal is never rewritten');
-        case 'ended_unknown': return notYet(event.source === 'late_evidence' ? 'ATT-11' : 'ATT-12');
+        case 'ended_unknown': return attemptOnResolved(state, event, ctx);
         default: return unreachable(node, 'Attempt node');
       }
     case 'entry_authorized':
@@ -498,7 +550,9 @@ export function transitionAttempt(
       // ATT-03: W9 writes only the Run, at any node (`execution-history-binding.ts:146`).
       return accept(state);
     case 'reconcile_not_entered':
-      return notYet('ATT-04');
+      // ATT-04 (D-5): the same claim re-authorizes; no new Attempt and no write (§9 机械重试).
+      return node === 'claimed' ? accept(state)
+        : reject('illegal', 'invalid', 'only a claimed Attempt pairs with a Run proven not entered');
     default: return unreachable(event, 'Attempt event');
   }
 }
@@ -553,29 +607,45 @@ function attemptOnEnded(
         case 'stop_paused':
         case 'reconcile_terminal':
         case 'reconcile_interrupted_clean':
-          return notYet('ATT-31');
-        case 'reconcile_unknown': return notYet('ATT-32/36');
+        case 'reconcile_unknown': {
+          const problem = reconciledEndGuard('claimed', event, ctx);
+          if (problem !== null) return problem;
+          const ended = endedFromClaimedRecord(state, event.endOutcome, event.endedAt, event.turnStartedAt);
+          if (endOutcomeKind(event.endOutcome) === 'unknown') {
+            // ATT-32 (with a Turn: the Outbox enters, ATT-34) or ATT-36 (none: it stays pending, ATT-37); no release (ATT-20).
+            return accept(ended, event.turnStartedAt === null ? [] : [{ kind: 'enter_outbox' }]);
+          }
+          // ATT-31: settled from pending (ATT-33), released by ownership (ATT-18).
+          return accept(ended, [{ kind: 'settle_outbox', settlement: 'entered' }, ...releaseEffectsOf(event.claim, ctx)]);
+        }
         default: return unreachable(event.source, 'end source');
       }
     case 'started':
       switch (event.source) {
         case 'terminal_observed': {
-          // ATT-06; settlement, lease and Session release follow ownership (`:1417-1419`).
-          const problem = knownTerminalGuard(event, ctx);
+          const problem = terminalGuard(event, ctx);
           if (problem !== null) return problem;
-          const effects: AttemptEffect[] = [{ kind: 'settle_outbox', settlement: 'entered' }];
-          if (ctx.ownsLease) effects.push({ kind: 'release_lease' });
-          if (ctx.ownsSession) {
-            effects.push({ kind: 'release_session', sessionRef: event.claim.sessionRef, generation: event.claim.generation });
+          // ATT-07 (RUN-08): an unknown end keeps the Outbox entered (ATT-28) and the Lease held (ATT-20).
+          if (endOutcomeKind(event.endOutcome) === 'unknown') {
+            return accept(endedAttemptRecord(state, event.endOutcome, event.endedAt));
           }
-          return accept(endedAttemptRecord(state, event.endOutcome, event.endedAt), effects);
+          // ATT-06; settlement, lease and Session release follow ownership (`:1417-1419`).
+          return accept(endedAttemptRecord(state, event.endOutcome, event.endedAt),
+            [{ kind: 'settle_outbox', settlement: 'entered' }, ...releaseEffectsOf(event.claim, ctx)]);
         }
         case 'stop_not_entered':
           return reject('illegal', 'invalid', 'an entered Attempt stops only through the Kernel, a paused stop or reconciliation');
-        case 'stop_paused': return notYet('ATT-35');
-        case 'reconcile_terminal': return notYet('ATT-08');
-        case 'reconcile_interrupted_clean': return notYet('ATT-09');
-        case 'reconcile_unknown': return notYet('ATT-10');
+        case 'stop_paused':
+        case 'reconcile_terminal':
+        case 'reconcile_interrupted_clean':
+        case 'reconcile_unknown': {
+          const problem = reconciledEndGuard('started', event, ctx);
+          if (problem !== null) return problem;
+          const ended = endedAttemptRecord(state, event.endOutcome, event.endedAt);
+          // ATT-10: unknown, no release; ATT-08/09/35: settled and released by ownership.
+          if (endOutcomeKind(event.endOutcome) === 'unknown') return accept(ended);
+          return accept(ended, [{ kind: 'settle_outbox', settlement: 'entered' }, ...releaseEffectsOf(event.claim, ctx)]);
+        }
         default: return unreachable(event.source, 'end source');
       }
     case 'ended_known':
@@ -588,6 +658,36 @@ function attemptOnEnded(
       return unknownReobservation(ctx, event.sequence);
     default: return unreachable(node, 'Attempt node');
   }
+}
+
+/**
+ * ATT-11 / ATT-12 (D-4, L-2): an unknown end resolved by new Kernel evidence
+ * (RUN-21) or an operator's attestation (RUN-22, `crashed`). Late evidence
+ * after ATT-36 records the Turn start it carries; an attestation never does.
+ * The Outbox settles (ATT-29) and the claim's holds are released by ownership
+ * (ATT-22, SES-06/07).
+ */
+function attemptOnResolved(
+  state: TaskAttemptSnapshot, event: Extract<AttemptEvent, { kind: 'attempt_resolved' }>, ctx: AttemptGuardContext,
+): Transition<TaskAttemptSnapshot, AttemptEvent, AttemptEffect> {
+  if (ctx.runNode !== 'EndedUnknown') {
+    return reject('illegal', 'invalid', 'an unknown Attempt is resolved only with its EndedUnknown Run');
+  }
+  const writer = outcomeWriterGuard(event.outcome);
+  if (writer !== null) return writer;
+  if (event.source === 'unknown_attested' && event.outcome !== 'crashed') {
+    return reject('illegal', 'invalid', 'an attestation resolves the Attempt crashed');
+  }
+  if (event.source === 'late_evidence' && sequenceNotNewer(ctx, event.sequence)) {
+    return reject('stale', 'revision_conflict', 'the result event sequence is not newer than the applied Run fact');
+  }
+  const startedAt = state.startedAt === null && event.source === 'late_evidence' ? event.turnStartedAt : null;
+  if (state.startedAt === null && event.source === 'late_evidence' && startedAt === null) {
+    return reject('illegal', 'invalid', 'the late evidence of an Attempt without a start carries the Kernel Turn start (L-2)');
+  }
+  const resolved: TaskAttemptSnapshot = { ...state, revision: state.revision + 1,
+    ...(startedAt === null ? {} : { startedAt }), endOutcome: event.outcome };
+  return accept(resolved, [{ kind: 'settle_outbox', settlement: 'entered' }, ...releaseEffectsOf(event.claim, ctx)]);
 }
 
 // -------------------------------------------------------------------------- //
@@ -606,8 +706,15 @@ export function transitionTaskLease(
   switch (event.kind) {
     case 'attempt_claimed': return leaseOnClaimed(state, event);
     case 'attempt_ended': return leaseOnEnded(state, event);
-    case 'attempt_resolved': return notYet('ATT-22');
-    case 'reconcile_not_entered': return notYet('ATT-21');
+    case 'attempt_resolved': {
+      // ATT-22 (D-4): the resolved claim releases its own hold; ATT-19 otherwise.
+      const kind = endOutcomeKind(event.outcome);
+      if (kind !== 'known') return reject('illegal', 'invalid', 'a resolution ends with a known outcome that has a writer');
+      if (!leaseHeldByClaim(state, event.claim)) return accept(state);
+      return accept(releasedLeaseRecord(state as TaskLeaseSnapshot, event.claim, event.resolvedAt, event.eventId));
+    }
+    // ATT-21 (D-5): the same claim keeps its hold for RUN-03.
+    case 'reconcile_not_entered': return accept(state);
     default: return unreachable(event, 'TaskLease event');
   }
 }
@@ -655,30 +762,21 @@ function leaseOnEnded(
   state: TaskLeaseSnapshot | null,
   event: Extract<TaskLeaseEvent, { kind: 'attempt_ended' }>,
 ): Transition<TaskLeaseSnapshot | null, TaskLeaseEvent, never> {
-  switch (event.source) {
-    case 'terminal_observed': break;
-    case 'stop_not_entered':
-      // ATT-23 for the claim's own hold (the stop ends `cancelled`, a known outcome); ATT-19 otherwise.
-      if (event.endOutcome !== 'cancelled') return reject('illegal', 'invalid', 'a not-entered stop ends the Attempt cancelled');
-      if (!leaseHeldByClaim(state, event.claim)) return accept(state);
-      return accept(releasedLeaseRecord(state as TaskLeaseSnapshot, event.claim, event.endedAt, event.eventId));
-    case 'stop_paused':
-    case 'reconcile_terminal':
-    case 'reconcile_interrupted_clean':
-      return notYet('ATT-18 (reconcile)');
-    case 'reconcile_unknown': return notYet('ATT-20');
-    default: return unreachable(event.source, 'end source');
+  if (event.source === 'stop_not_entered' && event.endOutcome !== 'cancelled') {
+    return reject('illegal', 'invalid', 'a not-entered stop ends the Attempt cancelled');
   }
   const outcomeKind = endOutcomeKind(event.endOutcome);
   switch (outcomeKind) {
     case 'known': break;
-    case 'unknown': return notYet('ATT-20');
+    // ATT-20 (D-4, I-2): an unknown end (RUN-08, RUN-20) keeps the hold.
+    case 'unknown': return accept(state);
     case 'no_writer': return reject('illegal', 'invalid', 'the outcome failed has no writer');
     default: return unreachable(outcomeKind, 'outcome kind');
   }
   // ATT-19: another holder, an earlier release or no lease is a no-effect transition.
   if (!leaseHeldByClaim(state, event.claim)) return accept(state);
-  return accept(releasedLeaseRecord(state as TaskLeaseSnapshot, event.claim, event.endedAt, event.eventId));  // ATT-18
+  // ATT-18 (a known end, reconciled ones included) and ATT-23 (a not-entered stop).
+  return accept(releasedLeaseRecord(state as TaskLeaseSnapshot, event.claim, event.endedAt, event.eventId));
 }
 
 // -------------------------------------------------------------------------- //
@@ -727,7 +825,11 @@ export function transitionDispatchOutbox(
       switch (node) {
         case 'pending':
         case 'entered':
-          return notYet('ATT-29');
+          // ATT-29 (D-4, AD-1, L-2): from entered, or from the ATT-37 pending, with the entering binding.
+          if (ctx.runNode !== 'EndedUnknown') {
+            return reject('illegal', 'invalid', 'the outbox entry settles a resolution only of its EndedUnknown Run');
+          }
+          return accept(settledOutboxRecord(state, event.entry, event.eventId));
         case 'settled': return reject('illegal', 'busy', 'a known terminal is never rewritten');
         default: return unreachable(node, 'outbox status');
       }
@@ -741,7 +843,10 @@ export function transitionDispatchOutbox(
       // ATT-25: W9 writes only the Run, at any node.
       return accept(state);
     case 'reconcile_not_entered':
-      return notYet('ATT-25 (D-5)');
+      // ATT-25 (D-5): the same claim continues; the entry stays pending. The ATT-37 pending
+      // belongs to an EndedUnknown Run, which is never proven not entered (§6.4).
+      return node === 'pending' && ctx.runNode !== 'EndedUnknown' ? accept(state)
+        : reject('illegal', 'invalid', 'only a pending outbox entry pairs with a Run proven not entered');
     default: return unreachable(event, 'Attempt event');
   }
 }
@@ -769,8 +874,14 @@ function outboxOnEnded(
         case 'stop_paused':
         case 'reconcile_terminal':
         case 'reconcile_interrupted_clean':
-          return notYet('ATT-33');
-        case 'reconcile_unknown': return notYet('ATT-34/37');
+        case 'reconcile_unknown': {
+          // From Entering: ATT-33 (a known end settles), ATT-34 (unknown with a Turn enters), ATT-37 (no Turn: stays).
+          const problem = reconciledEndGuard('claimed', event, ctx);
+          if (problem !== null) return problem;
+          const entry = event.entry as AttemptEntryIdentity;
+          if (endOutcomeKind(event.endOutcome) !== 'unknown') return accept(settledOutboxRecord(state, entry, event.eventId));
+          return event.turnStartedAt === null ? accept(state) : accept(enteredFromEndOutboxRecord(state, entry, event.eventId));
+        }
         default: return unreachable(event.source, 'end source');
       }
     case 'entered':
@@ -780,9 +891,10 @@ function outboxOnEnded(
       }
       switch (event.source) {
         case 'terminal_observed': {
-          // ATT-27, same guard as ATT-06.
-          const problem = knownTerminalGuard(event, ctx);
+          // ATT-27 / ATT-28, same guard as ATT-06/07.
+          const problem = terminalGuard(event, ctx);
           if (problem !== null) return problem;
+          if (endOutcomeKind(event.endOutcome) === 'unknown') return accept(state);
           return accept(settledOutboxRecord(state, event.entry as AttemptEntryIdentity, event.eventId));
         }
         case 'stop_not_entered':
@@ -790,8 +902,13 @@ function outboxOnEnded(
         case 'stop_paused':
         case 'reconcile_terminal':
         case 'reconcile_interrupted_clean':
-          return notYet('ATT-27 (reconcile)');
-        case 'reconcile_unknown': return notYet('ATT-28');
+        case 'reconcile_unknown': {
+          // ATT-27 (a known end settles) / ATT-28 (unknown: stays entered).
+          const problem = reconciledEndGuard('started', event, ctx);
+          if (problem !== null) return problem;
+          if (endOutcomeKind(event.endOutcome) === 'unknown') return accept(state);
+          return accept(settledOutboxRecord(state, event.entry as AttemptEntryIdentity, event.eventId));
+        }
         default: return unreachable(event.source, 'end source');
       }
     case 'settled':

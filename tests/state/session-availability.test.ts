@@ -7,8 +7,8 @@
  *   every release cause; legal → `next` and `effects`, empty transitions →
  *   `ok:true, effects:[]` (SD-1), illegal → `reason` and `code` of §8.4;
  * - each §8.4 refusal and guard order with its own fixture;
- * - rows whose 现状 is 新增 (SES-05/06/07/09/10/12/13/19) answer
- *   `illegal`/`invalid` (the §1.2 default) until step 5;
+ * - the rows A.2 step 5 added (SES-05 in 5.1; SES-06/07/09/10/12/13/19 in 5.6)
+ *   are written out in the oracle like the rows before them;
  * - the shared rules (generation, holder check, availability) and the record
  *   constructors of §14.1.
  *
@@ -105,7 +105,7 @@ const CAUSES: Record<SessionReleaseCause, CauseInfo> = {
   query_reconcile_interrupted_clean: { holder: 'query', reconcile: true, attested: false, terminal: false, turnSeen: true },
   query_unknown_attested: { holder: 'query', reconcile: false, attested: true, terminal: false, turnSeen: true },
 };
-/** The rows implemented (SES-04, SES-08; SES-05 since step 5.1); every other cause is 新增. */
+/** The rows implemented before A.2 step 5.6 (SES-04, SES-08; SES-05 since step 5.1). */
 const IMPLEMENTED_CAUSES: ReadonlySet<SessionReleaseCause> = new Set<SessionReleaseCause>([
   'terminal_observed', 'stop_not_entered', 'query_terminal_observed', 'query_reconcile_terminal',
 ]);
@@ -196,8 +196,6 @@ type Expected =
 
 const legal = (next: SessionMachineState, effects: readonly SessionEffect[] = []): Expected => ({ ok: true, next, effects });
 const refused = (reason: TransitionRejectReason, code: CoreError): Expected => ({ ok: false, reason, code });
-/** A 新增 row before step 5: `illegal` with the §1.2 default code, as in the other machines. */
-const NOT_YET = refused('illegal', 'invalid');
 
 function expectedFor(desc: StateDesc | 'absent', c: Case): Expected {
   const event = c.event;
@@ -224,12 +222,15 @@ function expectedFor(desc: StateDesc | 'absent', c: Case): Expected {
       const info = CAUSES[event.cause];
       const owned = (desc.occ === 'run' && info.holder === 'run') || (desc.occ === 'query' && info.holder === 'query');
       if (!owned) return legal(state); // SES-17 / SES-18
-      if (!IMPLEMENTED_CAUSES.has(event.cause)) return NOT_YET;
-      return legal({ ...state, occupancy: null, revision: REVISION + 1 }, [{
-        kind: 'release_session', holder: info.holder === 'run' ? RUN_A : QUERY_A, generation: GENERATION,
-        // A Kernel terminal moves the cursor to its boundary; the D-7 stop (SES-05) has no Turn and keeps it.
-        historyCursor: info.terminal ? { kind: 'advance', cursor: BOUNDARY } : { kind: 'keep' }, kernelTurnOpen: false,
-      }]);
+      // A Kernel terminal moves the cursor to its boundary; a release without one keeps it (SES-05/07/09/10),
+      // and a Turn left without a Kernel terminal makes the Session kernel_turn_open (SES-06/07/09/10, LA-1).
+      const open = c.ctx.holder?.kernelTurnOpen === true;
+      const holder = info.holder === 'run' ? RUN_A : QUERY_A;
+      return legal({ ...state, ...(open ? { health: 'unavailable' as const, healthConclusion: 'kernel_turn_open' as const } : {}),
+        occupancy: null, revision: REVISION + 1 }, [open
+        ? { kind: 'release_session', holder, generation: GENERATION, historyCursor: { kind: 'keep' }, kernelTurnOpen: true }
+        : { kind: 'release_session', holder, generation: GENERATION,
+          historyCursor: info.terminal ? { kind: 'advance', cursor: BOUNDARY } : { kind: 'keep' }, kernelTurnOpen: false }]);
     }
     case 'session_archived':
       if (desc.lifecycle === 'archived') return refused('illegal', 'invalid');
@@ -248,7 +249,14 @@ function expectedFor(desc: StateDesc | 'absent', c: Case): Expected {
         && c.ctx.kernelHeader?.activeRunId !== null) {
         return refused('guard_failed', 'unavailable');
       }
-      return NOT_YET; // SES-12 / SES-13 / SES-19
+      if (desc.health === event.observed) return legal(state); // SES-19
+      if (event.observed === 'available') {
+        return legal({ ...state, health: 'available', healthConclusion: null, revision: REVISION + 1 }, [  // SES-13
+          { kind: 'observe_health', health: 'available', conclusion: null }, { kind: 'emit_event', eventType: 'SessionHealthObserved' }]);
+      }
+      const conclusion = c.ctx.probe === 'missing' ? 'missing' : 'damaged';
+      return legal({ ...state, health: 'unavailable', healthConclusion: conclusion, revision: REVISION + 1 }, [  // SES-12
+        { kind: 'observe_health', health: 'unavailable', conclusion }, { kind: 'emit_event', eventType: 'SessionHealthObserved' }]);
     }
     case 'work_linked':
       if (event.active && desc.lifecycle === 'archived') return refused('guard_failed', 'busy');
@@ -552,44 +560,85 @@ describe('SES-05: the D-7 stop of a Run that never entered (step 5.1)', () => {
   });
 });
 
-describe('SES-06/07/09/10: 新增 release rows answer illegal/invalid until step 5', () => {
+describe('SES-06/07/09/10: the release rows A.2 step 5.6 adds', () => {
   const release = (cause: SessionReleaseCause): SessionEvent => ({ kind: 'occupancy_released', cause });
   const newCauses = SESSION_RELEASE_CAUSES.filter((cause) => !IMPLEMENTED_CAUSES.has(cause));
+  const heldBy = (cause: SessionReleaseCause): SessionMachineState => CAUSES[cause].holder === 'run' ? HELD_BY_RUN : HELD_BY_QUERY;
 
-  it('lists exactly the 新增 causes', () => {
+  it('lists exactly the causes step 5.6 adds', () => {
     expect(newCauses).toEqual([
       'reconcile_terminal', 'reconcile_interrupted_clean', 'late_evidence', 'stop_paused',
       'unknown_attested', 'query_reconcile_not_entered', 'query_reconcile_interrupted_clean', 'query_unknown_attested',
     ]);
   });
 
-  it.each(newCauses)('%s from its holder', (cause) => {
-    const held = CAUSES[cause].holder === 'run' ? HELD_BY_RUN : HELD_BY_QUERY;
-    const result = transitionSession(held, release(cause), releaseCtx(cause));
-    expect(result).toMatchObject({ ok: false, reason: 'illegal', code: 'invalid' });
-    expect(!result.ok && result.detail).toMatch(/^SES-(06|07|09|10) is not implemented before A.2 step 5$/);
+  it('SES-06: a Kernel terminal advances the cursor; a Turn left open keeps it and retires the Session (LA-1)', () => {
+    for (const cause of ['reconcile_terminal', 'late_evidence'] as const) {
+      expect(transitionSession(HELD_BY_RUN, release(cause), releaseCtx(cause))).toEqual({ ok: true,
+        next: { ...(HELD_BY_RUN as Exclude<SessionMachineState, 'absent'>), occupancy: null, revision: REVISION + 1 },
+        effects: [{ kind: 'release_session', holder: RUN_A, generation: GENERATION, historyCursor: { kind: 'advance', cursor: BOUNDARY },
+          kernelTurnOpen: false }] });
+    }
+    for (const cause of ['reconcile_interrupted_clean', 'stop_paused'] as const) {
+      const result = transitionSession(HELD_BY_RUN, release(cause), releaseCtx(cause));
+      expect(result).toEqual({ ok: true,
+        next: { ...(HELD_BY_RUN as Exclude<SessionMachineState, 'absent'>), health: 'unavailable', healthConclusion: 'kernel_turn_open',
+          occupancy: null, revision: REVISION + 1 },
+        effects: [{ kind: 'release_session', holder: RUN_A, generation: GENERATION, historyCursor: { kind: 'keep' }, kernelTurnOpen: true }] });
+      // The retired Session takes no new execution (I-2, SES-02).
+      if (result.ok && result.next !== 'absent') {
+        expect(run(result.next, { kind: 'occupancy_acquired', holder: RUN_B }, ctxOf())).toEqual(refused('guard_failed', 'busy'));
+      }
+    }
   });
 
-  it('the §8.4 refusals in front of them already apply', () => {
+  it('SES-07 / SES-10: an attestation keeps the cursor; only an open or unreadable Turn retires the Session', () => {
+    for (const cause of ['unknown_attested', 'query_unknown_attested'] as const) {
+      const holder = CAUSES[cause].holder === 'run' ? RUN_A : QUERY_A;
+      expect(run(heldBy(cause), release(cause), releaseCtx(cause))).toEqual(legal(
+        { ...(heldBy(cause) as Exclude<SessionMachineState, 'absent'>), occupancy: null, revision: REVISION + 1 },
+        [{ kind: 'release_session', holder, generation: GENERATION, historyCursor: { kind: 'keep' }, kernelTurnOpen: false }]));
+      const unreadable = releaseCtx(cause, { holder: holderFor(cause, { inputsConfirmed: 'kernel_unreadable', kernelTurnOpen: true }) });
+      expect(run(heldBy(cause), release(cause), unreadable)).toEqual(legal(
+        { ...(heldBy(cause) as Exclude<SessionMachineState, 'absent'>), health: 'unavailable', healthConclusion: 'kernel_turn_open',
+          occupancy: null, revision: REVISION + 1 },
+        [{ kind: 'release_session', holder, generation: GENERATION, historyCursor: { kind: 'keep' }, kernelTurnOpen: true }]));
+    }
+    expect(run(HELD_BY_RUN, release('unknown_attested'), releaseCtx('unknown_attested',
+      { holder: holderFor('unknown_attested', { before: 'run_running' }) }))).toEqual(refused('illegal', 'invalid'));
+  });
+
+  it('SES-09: a QueryRun close keeps the cursor; an open Kernel Turn retires the Session', () => {
+    for (const cause of ['query_reconcile_not_entered', 'query_reconcile_interrupted_clean'] as const) {
+      expect(run(HELD_BY_QUERY, release(cause), releaseCtx(cause))).toEqual(legal(
+        { ...(HELD_BY_QUERY as Exclude<SessionMachineState, 'absent'>), occupancy: null, revision: REVISION + 1 },
+        [{ kind: 'release_session', holder: QUERY_A, generation: GENERATION, historyCursor: { kind: 'keep' }, kernelTurnOpen: false }]));
+    }
+    const open = releaseCtx('query_reconcile_interrupted_clean',
+      { holder: holderFor('query_reconcile_interrupted_clean', { kernelTurnOpen: true }) });
+    expect(run(HELD_BY_QUERY, release('query_reconcile_interrupted_clean'), open)).toMatchObject({ ok: true,
+      next: { health: 'unavailable', healthConclusion: 'kernel_turn_open', occupancy: null } });
+  });
+
+  it('the §8.4 refusals in front of them', () => {
     // Restart releases are reconcile-only (SES-06 R causes, SES-09).
     for (const cause of ['reconcile_terminal', 'reconcile_interrupted_clean', 'query_reconcile_not_entered',
       'query_reconcile_interrupted_clean'] as const) {
-      const held = CAUSES[cause].holder === 'run' ? HELD_BY_RUN : HELD_BY_QUERY;
-      expect(run(held, release(cause), releaseCtx(cause, { caller: 'service' })), cause).toEqual(refused('illegal', 'forbidden'));
-      expect(run(held, release(cause), releaseCtx(cause, { hostLease: 'held_by_other' })), cause).toEqual(refused('guard_failed', 'busy'));
-      expect(run(held, release(cause), releaseCtx(cause, { probe: 'transient' })), cause).toEqual(refused('guard_failed', 'unavailable'));
+      expect(run(heldBy(cause), release(cause), releaseCtx(cause, { caller: 'service' })), cause).toEqual(refused('illegal', 'forbidden'));
+      expect(run(heldBy(cause), release(cause), releaseCtx(cause, { hostLease: 'held_by_other' })), cause).toEqual(refused('guard_failed', 'busy'));
+      expect(run(heldBy(cause), release(cause), releaseCtx(cause, { probe: 'transient' })), cause).toEqual(refused('guard_failed', 'unavailable'));
     }
-    // Human attestation needs the instance lease (L-1), and accepts an unreadable Kernel.
+    // Human attestation needs the instance lease (L-1), and accepts an unreadable Kernel (above).
     for (const cause of ['unknown_attested', 'query_unknown_attested'] as const) {
-      const held = CAUSES[cause].holder === 'run' ? HELD_BY_RUN : HELD_BY_QUERY;
       for (const hostLease of ['held_by_other', null] as const) {
-        expect(run(held, release(cause), releaseCtx(cause, { hostLease })), cause).toEqual(refused('guard_failed', 'busy'));
+        expect(run(heldBy(cause), release(cause), releaseCtx(cause, { hostLease })), cause).toEqual(refused('guard_failed', 'busy'));
       }
-      const unreadable = releaseCtx(cause, { holder: holderFor(cause, { inputsConfirmed: 'kernel_unreadable', kernelTurnOpen: true }) });
-      expect(run(held, release(cause), unreadable), cause).toEqual(NOT_YET);
       const unconfirmed = releaseCtx(cause, { holder: holderFor(cause, { inputsConfirmed: false }) });
-      expect(run(held, release(cause), unconfirmed), cause).toEqual(refused('guard_failed', 'unavailable'));
+      expect(run(heldBy(cause), release(cause), unconfirmed), cause).toEqual(refused('guard_failed', 'unavailable'));
     }
+    // An outcome_unknown holder keeps the Session (I-2, D-4).
+    expect(run(HELD_BY_RUN, release('reconcile_terminal'), releaseCtx('reconcile_terminal',
+      { holder: holderFor('reconcile_terminal', { after: 'run_ended_unknown' }) }))).toEqual(refused('guard_failed', 'busy'));
     // A Turn that exists needs confirmed inputs; a D-7 stop without a Turn does not.
     const stopWithTurn = releaseCtx('stop_paused', { holder: holderFor('stop_paused', { inputsConfirmed: 'kernel_unreadable' }) });
     expect(run(HELD_BY_RUN, release('stop_paused'), stopWithTurn)).toEqual(refused('guard_failed', 'unavailable'));
@@ -663,7 +712,7 @@ describe('SES-11 session_archived / SES-14 session_reactivated', () => {
   });
 });
 
-describe('SES-12/SES-13/SES-19 health_observed: 新增, §8.4 refusals already apply', () => {
+describe('SES-12/SES-13/SES-19 health_observed (A.2 step 5.6)', () => {
   const observe = (observed: SessionHealth): SessionEvent => ({ kind: 'health_observed', observed });
   const reconcile = (overrides: Partial<SessionGuardContext>): SessionGuardContext =>
     ctxOf({ caller: 'reconcile', hostLease: 'owned', ...overrides });
@@ -693,27 +742,28 @@ describe('SES-12/SES-13/SES-19 health_observed: 新增, §8.4 refusals already a
     }
   });
 
-  it('kernel_turn_open stays while the Kernel head still has an active run (or no head was read)', () => {
+  it('kernel_turn_open stays while the Kernel head still has an active run (or no head was read); a closed head clears it', () => {
     for (const kernelHeader of [{ activeRunId: 'kernel-run-1' }, null]) {
       expect(run(TURN_OPEN, observe('available'), reconcile({ probe: 'ready', kernelHeader }))).toEqual(refused('guard_failed', 'unavailable'));
     }
-    expect(run(TURN_OPEN, observe('available'), reconcile({ probe: 'ready', kernelHeader: { activeRunId: null } }))).toEqual(NOT_YET);
+    expect(run(TURN_OPEN, observe('available'), reconcile({ probe: 'ready', kernelHeader: { activeRunId: null } })))
+      .toEqual(legal({ ...TURN_OPEN, health: 'available', healthConclusion: null, revision: REVISION + 1 }, [
+        { kind: 'observe_health', health: 'available', conclusion: null }, { kind: 'emit_event', eventType: 'SessionHealthObserved' }]));
   });
 
-  it('the rows themselves are not reachable yet', () => {
+  it('SES-12 writes the probe conclusion; SES-13 clears it; SES-19 writes nothing; health never touches the occupancy', () => {
     const missing = reconcile({ probe: 'missing' });
     const ready = reconcile({ probe: 'ready', kernelHeader: { activeRunId: null } });
-    const cases: readonly [SessionMachineState, SessionEvent, SessionGuardContext, string][] = [
-      [HELD_BY_RUN, observe('unavailable'), missing, 'SES-12'],
-      [{ ...IDLE, health: 'unavailable', healthConclusion: 'damaged' }, observe('available'), ready, 'SES-13'],
-      [IDLE, observe('available'), ready, 'SES-19'],
-      [TURN_OPEN, observe('unavailable'), missing, 'SES-19'],
-    ];
-    for (const [state, event, ctx, row] of cases) {
-      const result = transitionSession(state, event, ctx);
-      expect(result).toMatchObject({ ok: false, reason: 'illegal', code: 'invalid' });
-      expect(!result.ok && result.detail.startsWith(`${row} is not implemented before A.2 step 5`), row).toBe(true);
-    }
+    expect(run(HELD_BY_RUN, observe('unavailable'), missing)).toEqual(legal(
+      { ...(HELD_BY_RUN as Exclude<SessionMachineState, 'absent'>), health: 'unavailable', healthConclusion: 'missing', revision: REVISION + 1 },
+      [{ kind: 'observe_health', health: 'unavailable', conclusion: 'missing' }, { kind: 'emit_event', eventType: 'SessionHealthObserved' }]));
+    const damaged = { ...(IDLE as Exclude<SessionMachineState, 'absent'>), health: 'unavailable' as const, healthConclusion: 'damaged' as const };
+    expect(run(damaged, observe('available'), ready)).toEqual(legal({ ...damaged, health: 'available', healthConclusion: null,
+      revision: REVISION + 1 }, [{ kind: 'observe_health', health: 'available', conclusion: null },
+      { kind: 'emit_event', eventType: 'SessionHealthObserved' }]));
+    expect(run(IDLE, observe('available'), ready)).toEqual(legal(IDLE));
+    // A missing/damaged probe never replaces kernel_turn_open: the same health is SES-19.
+    expect(run(TURN_OPEN, observe('unavailable'), missing)).toEqual(legal(TURN_OPEN));
   });
 });
 

@@ -134,6 +134,8 @@ export type AG2bOverrides = {
   queryReplies?: readonly ScriptedReply[];
   queryBeforeReply?: (request: ModelRequest, index: number, signal: AbortSignal) => Promise<void>;
   checkCommand?: string;
+  /** A.2 step 5.6: start without the trusted Kernel Store entry (the mapped adapter is then unregistered, `host_config`). */
+  noKernelStores?: boolean;
 };
 
 /** One real Host over the CLI startup file, a real SQLite ledger/Kernel and a
@@ -216,8 +218,9 @@ export async function startAG2bHost(publicDir: string, overrides: AG2bOverrides 
     actor,
     workspaces: [{ scope: AG2B_SCOPE, name: 'AG2b isolated project', root, workspaceRevision: 1, readPrefixes: ['.'] }],
     architectureSource: { provider: 'typescript', configPath: 'tsconfig.json' },
-    kernelStores: { entries: [{ adapterId: 'ag2b-kernel', storeKey: 'ag2b-kernel-store', workspace: AG2B_SCOPE,
-      databasePath: join(database, 'kernel.sqlite') }] },
+    ...(overrides.noKernelStores === true ? {} : {
+      kernelStores: { entries: [{ adapterId: 'ag2b-kernel', storeKey: 'ag2b-kernel-store', workspace: AG2B_SCOPE,
+        databasePath: join(database, 'kernel.sqlite') }] } }),
     runtime,
     workflow,
     checks,

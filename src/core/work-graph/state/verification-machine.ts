@@ -42,10 +42,13 @@
  * - A.2 step 5.5 (VD-9): VR-01 and VR-02 refuse a Goal that is not active
  *   (`busy`) and a subject task that is not active in the Goal's current
  *   adopted Plan (`invalid`); VR-02 guards the Goal and that Plan as read.
- * - Later substeps add the rest, each with its facts: VR-04 and VR-06 (start-up check
- *   reconcile, 5.6) and VR-14/VR-15 (`round_reverified`, 5.9). Their events stay in the unions:
- *   the guards of §9.4 that need only the round are implemented and the legal
- *   cell returns `illegal`/`invalid` (`notYet`).
+ * - A.2 step 5.6 (D-12, D-18): VR-04, the start-up reconcile interrupts an
+ *   executing check (`host_restart`) under the instance lease. VR-06 (booking
+ *   a stored report) needs a body lookup by origin requestId that does not exist
+ *   (§9 注 1, §16 GAP-24): it has no row, and reconcile always takes VR-04.
+ * - VR-14/VR-15 (`round_reverified`, 5.9) keep their events in the union: the
+ *   guards of §9.4 that need only the round are implemented and the legal cell
+ *   returns `illegal`/`invalid` (`notYet`).
  * - The successor helpers (`chainEvidenceIds`, `reverifyExemption`,
  *   `reverifyFailureClass`, `buildSuccessorRound`,
  *   `evidenceSupersededByRequeue`) are implemented in full for 5.4 and 5.9.
@@ -102,7 +105,6 @@ export type VerificationRoundEventType =
   | 'VerificationCheckResultRecorded'
   | 'VerificationCheckInterrupted'
   | 'VerificationCheckAbandoned'
-  | 'VerificationCheckReportBooked'
   | 'EvidenceAdmitted'
   | 'VerificationRoundFinalized'
   | 'VerificationRoundReverified';
@@ -173,12 +175,12 @@ export type RoundGuardContext = {
   /**
    * The caller is the round's frozen executor (`evidence-service.ts:755`, `:831`,
    * `:882`, `:937`); for `round_opened`, the trusted configuration's executor
-   * (`:500`). Not read by the reconcile rows VR-04 (`host_restart`) and VR-06.
+   * (`:500`). Not read by the reconcile row VR-04 (`host_restart`).
    */
   callerIsExecutor: boolean;
   /** The caller's `meta.expected` round revision; null when the operation pins none (`submitEvidence` today). */
   expectedRevision: number | null;
-  /** The reconciling Host holds the D-18 instance lease (VR-04, VR-06); otherwise another live Host does. */
+  /** The reconciling Host holds the D-18 instance lease (VR-04); otherwise another live Host does. */
   instanceLeaseHeld: boolean;
 };
 
@@ -273,18 +275,6 @@ export type RoundEvent =
 /** The current Host values compared against the round's frozen binding (`evidence-service.ts:767-777`). */
 export type FrozenBindingObservationV1 = { permissionRevision: string; workspaceRoot: string; sourceDigest: string };
 
-/** What reconcile located for VR-06 (注 1): the identity and original values of the stored report(s). */
-export type BookedReportFactsV1 = {
-  roundRef: VerificationRoundRef;
-  checkId: string;
-  invocationId: string;
-  outcome: EvidenceOutcome;
-  sourceStatus: Exclude<CheckSourceStatus, null>;
-  reportRef: ArtifactRef;
-  /** Every body stored under `r3e-check-result-<invocationId>` has the same (sourceStatus, outcome). */
-  bodiesAgree: boolean;
-};
-
 export type CheckEvent =
   /** `activity`: the VD-9 facts the owner read after the pre-IO admission (5.5). */
   | { kind: 'check_begun'; checkId: string; invocationId: string; observed: FrozenBindingObservationV1; activity: RoundActivityFactsV1 }
@@ -298,13 +288,12 @@ export type CheckEvent =
   /** VR-13 (P): the runner's ticket is incomplete; `ticketProblem` is the proof (`check-execution.ts:108-109`). */
   | { kind: 'check_interrupted'; checkId: string; invocationId: string; cause: 'ticket_invalid'; ticketProblem: string | null }
   /** VR-05 (P): `provenNotStarted` is false once `execute` may have been called (VD-6). */
-  | { kind: 'check_abandoned'; checkId: string; invocationId: string; cause: CheckAbandonCause; provenNotStarted: boolean }
-  | { kind: 'check_report_booked'; checkId: string; invocationId: string; hostInstanceId: string; report: BookedReportFactsV1 };
+  | { kind: 'check_abandoned'; checkId: string; invocationId: string; cause: CheckAbandonCause; provenNotStarted: boolean };
 
 /** The identity part of a check event that the pre-IO admission reads. */
 export type CheckEventHead =
   | { kind: 'check_begun'; checkId: string }
-  | { kind: 'check_result_recorded' | 'check_abandoned' | 'check_report_booked'; checkId: string; invocationId: string }
+  | { kind: 'check_result_recorded' | 'check_abandoned'; checkId: string; invocationId: string }
   | { kind: 'check_interrupted'; checkId: string; invocationId: string; cause: CheckInterruptionCause };
 
 /** The part of a round event that the pre-IO admission reads. */
@@ -861,7 +850,7 @@ export function buildOpenedRound(opening: RoundOpeningV1): RoundSnapshot {
 export type CheckPhaseChange =
   /** VR-02. */
   | { phase: 'executing'; invocationId: string }
-  /** VR-03 (the INCONCLUSIVE cause of `outcomeFor`; PASS/FAIL leave it out, §9.1 "null 或缺省"), VR-06. */
+  /** VR-03 (the INCONCLUSIVE cause of `outcomeFor`; PASS/FAIL leave it out, §9.1 "null 或缺省"). */
   | {
     phase: 'finished'; outcome: EvidenceOutcome; reportRef: ArtifactRef; sourceStatus: Exclude<CheckSourceStatus, null>;
     incompleteCause?: RoundCheckIncompleteCause | null;
@@ -872,8 +861,8 @@ export type CheckPhaseChange =
   | { phase: 'pending' };
 
 /**
- * The one phase each change leaves (§9.3): VR-02 pending → executing; VR-03,
- * VR-06 executing → finished; VR-04, VR-13 executing → interrupted; VR-05
+ * The one phase each change leaves (§9.3): VR-02 pending → executing; VR-03
+ * executing → finished; VR-04, VR-13 executing → interrupted; VR-05
  * executing → pending. Every other source is a §9.4 row (D-12: interrupted
  * never returns to pending and never runs again in the same round).
  */
@@ -1174,8 +1163,8 @@ export function roundOpenChecksProblem(verificationPlan: VerificationPlanV1, con
  * Pre-IO guards of the check writes. Today's order for `check_begun`
  * (`evidence-service.ts:755-756`): finalized, executor, checkId, pin, phase.
  * For the writes on an executing check (`:831-833`): finalized, executor,
- * checkId, phase, invocation, pin. The reconcile rows (VR-04 `host_restart`,
- * VR-06) skip the executor check: their guard is the instance lease.
+ * checkId, phase, invocation, pin. The reconcile row (VR-04 `host_restart`)
+ * skips the executor check: its guard is the instance lease.
  */
 export function checkEventAdmission(state: RoundSnapshot, head: CheckEventHead, ctx: RoundGuardContext): Rejected | null {
   switch (state.status) {
@@ -1186,7 +1175,7 @@ export function checkEventAdmission(state: RoundSnapshot, head: CheckEventHead, 
           : 'the round is finalized; its checks are settled');
     default: return unreachable(state.status, 'round status');
   }
-  const reconcile = head.kind === 'check_report_booked' || (head.kind === 'check_interrupted' && head.cause === 'host_restart');
+  const reconcile = head.kind === 'check_interrupted' && head.cause === 'host_restart';
   if (!reconcile && !ctx.callerIsExecutor) return reject('guard_failed', 'forbidden', 'the check executor is not the round executor');
   const check = state.checks.find((candidate) => candidate.checkId === head.checkId);
   if (check === undefined) return reject('illegal', 'invalid', `the round has no registered check ${head.checkId}`);
@@ -1221,14 +1210,12 @@ function executingPhaseProblem(check: RoundCheckSnapshot, head: Exclude<CheckEve
         case 'check_result_recorded': return reject('illegal', 'busy', notExecuting);
         case 'check_interrupted':
         case 'check_abandoned':
-        case 'check_report_booked':
           return reject('illegal', 'invalid', notExecuting);
         default: return unreachable(head, 'check event head');
       }
     case 'finished':
       switch (head.kind) {
         case 'check_result_recorded':
-        case 'check_report_booked':
           return reject('illegal', 'busy', notExecuting);
         case 'check_interrupted':
         case 'check_abandoned':
@@ -1237,9 +1224,8 @@ function executingPhaseProblem(check: RoundCheckSnapshot, head: Exclude<CheckEve
       }
     case 'interrupted':
       switch (head.kind) {
-        // A late result or a report found afterwards is history only (D-12).
+        // A late result is history only (D-12).
         case 'check_result_recorded':
-        case 'check_report_booked':
           return reject('stale', 'busy', notExecuting);
         case 'check_interrupted':
           // The same invocation already interrupted with the same cause: reconcile treats it as handled.
@@ -1427,7 +1413,13 @@ export function transitionCheck(state: RoundSnapshot, event: CheckEvent, ctx: Ro
         case 'host_restart':
           // D-18: another live Host keeps every fact unchanged.
           if (!ctx.instanceLeaseHeld) return reject('guard_failed', 'busy', 'another live Host holds the instance lease');
-          return notYet('VR-04');
+          // VR-04 (D-12): the lease takeover proves the old process (and its
+          // `--die-with-parent` check process) gone; nothing is started, and the
+          // check runs again only in a successor round (VR-14).
+          return accept(withCheckPhase(state, event.checkId, { phase: 'interrupted', incompleteCause: 'host_restart' }), [
+            { kind: 'guard_round', expectedRevision: state.revision },
+            { kind: 'emit_event', eventType: 'VerificationCheckInterrupted' },
+          ]);
         case 'ticket_invalid':
           // Without proof (for example an unknown execute error) the window stays executing for VR-04.
           if (event.ticketProblem === null) {
@@ -1451,17 +1443,6 @@ export function transitionCheck(state: RoundSnapshot, event: CheckEvent, ctx: Ro
         { kind: 'guard_round', expectedRevision: state.revision },
         { kind: 'emit_event', eventType: 'VerificationCheckAbandoned' },
       ]);
-    case 'check_report_booked': {
-      if (!ctx.instanceLeaseHeld) return reject('guard_failed', 'busy', 'another live Host holds the instance lease');
-      const report = event.report;
-      if (!sameRoundRef(report.roundRef, state.ref) || report.checkId !== event.checkId || report.invocationId !== event.invocationId) {
-        return reject('guard_failed', 'invalid', 'the located report does not belong to this check invocation');
-      }
-      if (!report.bodiesAgree) {
-        return reject('guard_failed', 'invalid', 'the located report bodies disagree; the check is reconciled as interrupted (VR-04)');
-      }
-      return notYet('VR-06');
-    }
     default: return unreachable(event, 'check event');
   }
 }

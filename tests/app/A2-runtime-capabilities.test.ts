@@ -10,11 +10,11 @@
  * whose last Kernel Turn has no terminal takes no new Turn; a pause or cancel of
  * a Run that never entered is the platform's own (step 5.1 proves that
  * behaviour in tests/composition/A2-control-platform.test.ts); a cancel of a Run
- * paused at a safe point cannot be delivered yet; a Query has no control.
- * `recoverRun` stays unsupported until step 5.7. The §7.7 target boundaries
- * that later substeps build (5.6 new Session after an open Kernel Turn, restart
- * rebuild, paused-interrupted, paused stop, restart stop) add their phrases here
- * in those substeps; 5.4 added the requeue continuation brief (C3). Every item has its own reason
+ * paused at a safe point is applied on the live handle's exit proof (5.6); a Query has no control.
+ * `recoverRun` stays unsupported until step 5.7 (5.6 rewrote its reason). The §7.7 target boundaries
+ * were added by the substeps that built them: 5.4 the requeue continuation brief (C3); 5.6 the new
+ * Session after an open Kernel Turn, the restart rebuild, paused-interrupted, the paused stop and the
+ * restart stop. Every item has its own reason
  * (no shared placeholder), and the report is the same after the Host reopens
  * the ledger.
  *
@@ -121,7 +121,13 @@ it('reports continuation, safe-point pause and cancel as supported with their bo
     'has a Kernel terminal, a new Run in the same Session continues its history',
     'the successor Run after a yielded wait',
     'has no Kernel terminal',
-    'the Kernel refuses a new Turn in that Session and no continuation is offered',
+    // 5.6 (LA-1, RD-3, RUN-20(iii)): the new Session after an open Kernel Turn and the restart rebuild.
+    'the Kernel refuses a new Turn in that Session',
+    'a Run interrupted by a Host restart, including one paused then',
+    'a Run stopped at restart by a queued cancel',
+    'one a person attested while its Kernel Turn was still open',
+    'kernel_turn_open', 'a new Run in a new Session', 'last completed history',
+    'exactly one waiting message', 'continuation_unrebuildable',
   ]);
   // §7.7 safePointPause as it holds today: live handle at a safe point, D-7 for
   // a Run that never entered, no restart reconciliation yet, D-11.
@@ -129,7 +135,10 @@ it('reports continuation, safe-point pause and cancel as supported with their bo
     'pauses through its live handle at the next safe point (before a model call or between tool groups)',
     'a resume re-enters the original Turn',
     'has not entered the Kernel is paused and resumed by the platform at once',
-    'not reconciled after a Host restart (see recoverRun)',
+    // 5.6: the RUN-14 live-handle guard, the paused-interrupted end (C4) and GOAL-29.
+    'only while this Host process still holds the live handle',
+    'ends paused-interrupted after the restart, which is not a failure',
+    'only a person continues it', 'resuming the Goal continues it',
     'A Query cannot be paused',
   ]);
   // §7.7 cancel as it holds today: live handle with the pending stop request,
@@ -139,25 +148,21 @@ it('reports continuation, safe-point pause and cancel as supported with their bo
     'cancelled through its live handle',
     'pending stop request until the Run\'s stop is proved',
     'has not entered the Kernel is cancelled by the platform at once',
-    'already paused at a safe point cannot be delivered',
+    // 5.6: RD-7 (the exit proof), RUN-23 at restart (LA-7) and C7.
+    'already paused at a safe point is applied by the platform on the exit proof',
+    'whether or not the Kernel paused it',
+    'cannot be cancelled', 'Task disposition',
     'only fences its continuation',
     'A Query cannot be cancelled',
     'refused as invalid',
     'there is no QueryJob close',
   ]);
-  expect(report.recoverRun.reason).toContain('there is no start-up reconciliation of Runs');
-  // D-15: no reason states a §7.7 target boundary before its substep builds it.
-  // 5.6 (new Session after an open Kernel Turn, restart rebuild,
-  // paused-interrupted, RUN-14, RD-7, RUN-23, GOAL-29, C7) moves its phrases
-  // from here into the lists above (5.4 moved 'continuation brief').
-  const notYetBuilt = ['new Session', 'kernel_turn_open', 'waiting message',
-    'paused-interrupted', 'exit proof', 'whether or not the Kernel paused it', 'resuming the Goal',
-    'Task disposition'];
+  // 5.6 rewrites the recoverRun reason (the start-up reconciliation exists) without flipping it (5.7).
+  expectAllIn(report.recoverRun.reason, ['start-up reconciliation', 'under the Host instance lease',
+    'never resumes or re-runs the original execution']);
+  // 5.6 moved every remaining §7.7 target phrase into the lists above (5.4 moved 'continuation brief').
   expect(report.safePointPause.reason).not.toContain('continuation brief');
   expect(report.cancel.reason).not.toContain('continuation brief');
-  for (const reason of [report.continueHistory.reason, report.safePointPause.reason, report.cancel.reason]) {
-    for (const phrase of notYetBuilt) expect(reason, phrase).not.toContain(phrase);
-  }
   // Every item states its own reason; nothing shares one placeholder.
   const items = [report.createSession, report.readHistory, report.continueHistory, report.recoverRun,
     report.safePointPause, report.cancel, report.nativeCompact, report.scopedWorkspaceWrites];

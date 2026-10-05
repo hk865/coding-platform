@@ -55,6 +55,12 @@ export type AssembleBriefInput = {
   workspace: BriefWorkspaceFacts;
   /** The new Run's claim Session. */
   claimSessionRef: SessionRef;
+  /**
+   * LA-1, contract (e): the original Session whose completed history the new
+   * Session is seeded with (`sessionBasis` of the same prepare), through which
+   * position; absent or null when nothing is seeded.
+   */
+  seededFrom?: { sessionRef: SessionRef; throughPosition: number } | null;
 };
 
 const PAGE_LIMIT = 200;
@@ -304,9 +310,12 @@ export function assembleContinuationBrief(input: AssembleBriefInput): Continuati
     ? turn.state.outcome : null;
   const sameSession = input.claimSessionRef.sessionId === previous.outbox.claim.sessionRef.sessionId;
   const previousEnd = previous.run.executionHistory?.endPosition ?? null;
-  const continuity: ContinuationBriefV1['session']['continuity'] = sameSession
-    ? previousEnd !== null ? 'same_session_history' : 'same_session_without_previous_turn'
-    : 'other_session';
+  // A seeded claim Session (it has no completed history of its own) continues the ORIGINAL Session's history,
+  // also when it is the never-entered afterRun's Session (A8-3r).
+  const seededFrom = input.seededFrom ?? null;
+  const continuity: ContinuationBriefV1['session']['continuity'] = seededFrom !== null ? 'other_session_seeded'
+    : sameSession ? previousEnd !== null ? 'same_session_history' : 'same_session_without_previous_turn'
+      : 'other_session';
   const tools = turn.kernel === 'read' ? toolFactsOf(turn.state) : null;
   const steersApplied = basis.previousIntents.steers.filter((steer) => steer.kind === 'steer' && steer.status === 'applied');
   const steersOpen = basis.previousIntents.steers.filter((steer) => steer.kind === 'steer' && steer.status !== 'applied');
@@ -407,7 +416,8 @@ export function assembleContinuationBrief(input: AssembleBriefInput): Continuati
     session: {
       continuity,
       sessionRef: { projectId: input.claimSessionRef.projectId, sessionId: input.claimSessionRef.sessionId },
-      seededFrom: null,
+      seededFrom: seededFrom === null ? null : { sessionRef: { projectId: seededFrom.sessionRef.projectId,
+        sessionId: seededFrom.sessionRef.sessionId }, throughPosition: seededFrom.throughPosition },
       boundaryPosition: continuity === 'same_session_history' ? previousEnd : null,
     },
     standingInstructionVersion: 1,

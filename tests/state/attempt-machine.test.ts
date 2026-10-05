@@ -197,6 +197,27 @@ function check(actual: Transition<unknown, unknown, unknown>, expected: Expect, 
 const SETTLE: AttemptEffect = { kind: 'settle_outbox', settlement: 'entered' };
 const RELEASE_LEASE: AttemptEffect = { kind: 'release_lease' };
 const RELEASE_SESSION: AttemptEffect = { kind: 'release_session', sessionRef, generation: GEN };
+const RESOLVE_EFFECTS: readonly AttemptEffect[] = [SETTLE, RELEASE_LEASE, RELEASE_SESSION];
+/** ATT-06 shape of a reconciled or unknown end from `started` (step 5.6). */
+const ENDED_FROM_STARTED = (endOutcome: RunOutcome): TaskAttemptSnapshot =>
+  ({ ...ATTEMPT_STARTED, revision: 3, status: 'ended', endedAt: T_END, endOutcome });
+/** ATT-36: ended from `claimed` without a readable Turn (`startedAt` stays null). */
+const ENDED_FROM_CLAIMED: TaskAttemptSnapshot = { ...ATTEMPT_CLAIMED, revision: 2, status: 'ended', endedAt: T_END,
+  endOutcome: 'outcome_unknown' };
+/** ATT-11 / ATT-12: the resolution keeps `endedAt` and writes the known outcome. */
+const RESOLVED = (attempt: TaskAttemptSnapshot, endOutcome: RunOutcome): TaskAttemptSnapshot =>
+  ({ ...attempt, revision: attempt.revision + 1, endOutcome });
+/** ATT-22: the resolving claim's release. */
+const LEASE_RELEASED_BY_RESOLUTION: TaskLeaseSnapshot = { ...LEASE_HELD, revision: 2,
+  release: { schemaVersion: 1, runRef: runRef('run-1'), attemptRef: attemptRef('att-1'), sessionRef, generation: GEN,
+    releasedAt: T_RESOLVED, eventId: 'evt-resolve' } };
+/** ATT-29: settled from the ATT-37 pending or from entered with the entering binding. */
+const OUTBOX_PENDING_RESOLVED: DispatchOutboxRecord = { ...OUTBOX_PENDING, revision: 2, status: 'settled',
+  dispatchState: { schemaVersion: 1, phase: 'settled', consumerId: 'consumer-1', entryGeneration: 1,
+    sessionGeneration: GEN, eventId: 'evt-resolve' } };
+const OUTBOX_ENTERED_RESOLVED: DispatchOutboxRecord = { ...OUTBOX_ENTERED, revision: 3, status: 'settled',
+  dispatchState: { schemaVersion: 1, phase: 'settled', consumerId: 'consumer-1', entryGeneration: 1,
+    sessionGeneration: GEN, eventId: 'evt-resolve' } };
 
 // ------------------------------------------------------------------------ //
 // TaskAttempt: every (state, event)                                          //
@@ -232,29 +253,32 @@ const ATTEMPT_TABLE: Record<EventLabel, () => Record<AttemptStateLabel, Expect>>
   // claimed: §5.4 busy; started: ATT-06; ended known: ATT-13; unknown: §5.4 not new evidence.
   'end:terminal_observed:known': () =>
     a(II, IB, to(ATTEMPT_ENDED, [SETTLE, RELEASE_LEASE, RELEASE_SESSION]), DB, GI, GI),
-  // ATT-07 keeps today's result (recordRunResult accepts only a known terminal).
-  'end:terminal_observed:unknown': () => a(II, IB, II, DB, GI, GI),
+  // ATT-07 (step 5.6, RUN-08): an unknown end keeps the Outbox entered (ATT-28) and the Lease held (ATT-20).
+  'end:terminal_observed:unknown': () => a(II, IB, to(ENDED_FROM_STARTED('outcome_unknown')), DB, GI, GI),
   // ATT-05 needs a Run that never entered (`claimed` pairs with Entering here: §5.4, the stop is queued); never
   // from an entered or unknown Run. The not-entered nodes: 'ATT-05 / ATT-23 / ATT-30' below.
   'end:stop_not_entered': () => a(II, II, II, DB, II, II),
-  // ATT-31 / ATT-35 (新增).
-  'end:stop_paused': () => a(II, II, II, DB, GI, GI),
-  // ATT-31 / ATT-08 (新增).
-  'end:reconcile_terminal': () => a(II, II, II, DB, GI, GI),
-  // ATT-31 / ATT-09 (新增).
-  'end:reconcile_interrupted_clean': () => a(II, II, II, DB, GI, GI),
-  // ATT-32, ATT-36 / ATT-10 (新增).
-  'end:reconcile_unknown': () => a(II, II, II, DB, GI, GI),
-  // ATT-11 / ATT-12 (新增); a known terminal is never rewritten (§5.4).
-  'resolve:late_evidence': () => a(II, II, II, IB, II, II),
-  'resolve:unknown_attested': () => a(II, II, II, IB, II, II),
+  // ATT-31 / ATT-35 (step 5.6): from Entering a known end needs the Turn start (the event carries none here).
+  'end:stop_paused': () => a(II, II, to(ENDED_FROM_STARTED('cancelled'), [SETTLE, RELEASE_LEASE, RELEASE_SESSION]), DB, GI, GI),
+  // ATT-31 / ATT-08 (step 5.6).
+  'end:reconcile_terminal': () => a(II, II, to(ATTEMPT_ENDED, [SETTLE, RELEASE_LEASE, RELEASE_SESSION]), DB, GI, GI),
+  // ATT-31 / ATT-09 (step 5.6).
+  'end:reconcile_interrupted_clean': () =>
+    a(II, II, to(ENDED_FROM_STARTED('crashed'), [SETTLE, RELEASE_LEASE, RELEASE_SESSION]), DB, GI, GI),
+  // ATT-36 (no Turn: `startedAt` stays null, the Outbox stays pending) / ATT-10 (step 5.6).
+  'end:reconcile_unknown': () => a(II, to(ENDED_FROM_CLAIMED), to(ENDED_FROM_STARTED('outcome_unknown')), DB, GI, GI),
+  // ATT-11 / ATT-12 (step 5.6); a known terminal is never rewritten (§5.4); late evidence of an
+  // Attempt that never recorded its start must carry it (L-2).
+  'resolve:late_evidence': () => a(II, II, II, IB, to(RESOLVED(ATTEMPT_UNKNOWN, 'completed'), RESOLVE_EFFECTS), II),
+  'resolve:unknown_attested': () => a(II, II, II, IB, to(RESOLVED(ATTEMPT_UNKNOWN, 'crashed'), RESOLVE_EFFECTS),
+    to(RESOLVED(ATTEMPT_UNKNOWN_UNSTARTED, 'crashed'), RESOLVE_EFFECTS)),
   // ATT-03: W3/W4 write only the Run; after starting the Run machine rejects them (§6.4, busy).
   'entry_authorized': () => a(II, SAME, IB, IB, IB, IB),
   'entry_begun': () => a(II, SAME, IB, IB, IB, IB),
   // ATT-03: W9 writes only the Run, at any node.
   'history_recorded': () => a(II, SAME, SAME, SAME, SAME, SAME),
-  // ATT-04 (新增).
-  'reconcile_not_entered': () => a(II, II, II, II, II, II),
+  // ATT-04 (step 5.6): the Attempt is not written; the same claim re-authorizes (RUN-03).
+  'reconcile_not_entered': () => a(II, SAME, II, II, II, II),
 };
 
 describe('transitionAttempt: every (state, event) combination', () => {
@@ -292,20 +316,20 @@ const LEASE_TABLE: Partial<Record<EventLabel, () => Record<LeaseStateLabel, Expe
   'claim:requeue': () => l(GB, GB, to(LEASE_REHELD)),
   // ATT-18 for the owner; ATT-19 no-effect for a missing lease or an earlier release.
   'end:terminal_observed:known': () => l(SAME, to(LEASE_RELEASED_BY_CLAIM), SAME),
-  // ATT-20 (新增).
-  'end:terminal_observed:unknown': () => l(II, II, II),
+  // ATT-20 (step 5.6): an unknown end keeps the hold.
+  'end:terminal_observed:unknown': () => l(SAME, SAME, SAME),
   // ATT-23 for the claim's own hold; ATT-19 no-effect for a missing lease or an earlier release.
   'end:stop_not_entered': () => l(SAME, to(LEASE_RELEASED_BY_CLAIM), SAME),
-  // ATT-18 through reconciliation (ATT-31), ATT-20 (新增).
-  'end:stop_paused': () => l(II, II, II),
-  'end:reconcile_terminal': () => l(II, II, II),
-  'end:reconcile_interrupted_clean': () => l(II, II, II),
-  'end:reconcile_unknown': () => l(II, II, II),
-  // ATT-22 (新增).
-  'resolve:late_evidence': () => l(II, II, II),
-  'resolve:unknown_attested': () => l(II, II, II),
-  // ATT-21 (新增).
-  'reconcile_not_entered': () => l(II, II, II),
+  // ATT-18 through reconciliation (ATT-31), ATT-20 (step 5.6).
+  'end:stop_paused': () => l(SAME, to(LEASE_RELEASED_BY_CLAIM), SAME),
+  'end:reconcile_terminal': () => l(SAME, to(LEASE_RELEASED_BY_CLAIM), SAME),
+  'end:reconcile_interrupted_clean': () => l(SAME, to(LEASE_RELEASED_BY_CLAIM), SAME),
+  'end:reconcile_unknown': () => l(SAME, SAME, SAME),
+  // ATT-22 (step 5.6): the resolved claim releases its own hold.
+  'resolve:late_evidence': () => l(SAME, to(LEASE_RELEASED_BY_RESOLUTION), SAME),
+  'resolve:unknown_attested': () => l(SAME, to(LEASE_RELEASED_BY_RESOLUTION), SAME),
+  // ATT-21 (step 5.6): the same claim keeps its hold for RUN-03.
+  'reconcile_not_entered': () => l(SAME, SAME, SAME),
 };
 
 describe('transitionTaskLease: every (state, event) combination', () => {
@@ -353,26 +377,26 @@ const OUTBOX_TABLE: Record<EventLabel, () => Record<OutboxStateLabel, Expect>> =
   'started': () => o(II, to(OUTBOX_ENTERED), II, IB, IB, II),
   // §5.4 pending busy; ATT-27; unknown keeps waiting (AD-1, L-2: §5.4 illegal); settled mirrors ATT-13.
   'end:terminal_observed:known': () => o(II, IB, IU, to(OUTBOX_SETTLED), IU, DB),
-  // ATT-28 (新增) keeps today's result.
-  'end:terminal_observed:unknown': () => o(II, IB, IU, II, IU, DB),
+  // ATT-28 (step 5.6): an unknown end keeps the entry entered.
+  'end:terminal_observed:unknown': () => o(II, IB, IU, SAME, IU, DB),
   // ATT-30 needs a Run that never entered (pending pairs with Entering here); never from an entered Run.
   'end:stop_not_entered': () => o(II, II, II, II, II, DB),
-  // ATT-33 / ATT-27 via ATT-35, 08, 09 (新增).
-  'end:stop_paused': () => o(II, II, IU, II, IU, DB),
-  'end:reconcile_terminal': () => o(II, II, IU, II, IU, DB),
-  'end:reconcile_interrupted_clean': () => o(II, II, IU, II, IU, DB),
-  // ATT-34, ATT-37 / ATT-28 (新增).
-  'end:reconcile_unknown': () => o(II, II, IU, II, IU, DB),
-  // ATT-29 (新增); a known terminal is never rewritten.
-  'resolve:late_evidence': () => o(II, II, II, II, II, IB),
-  'resolve:unknown_attested': () => o(II, II, II, II, II, IB),
+  // ATT-33 / ATT-27 via ATT-35, 08, 09 (step 5.6); from Entering a known end needs the Turn start.
+  'end:stop_paused': () => o(II, II, IU, to(OUTBOX_SETTLED), IU, DB),
+  'end:reconcile_terminal': () => o(II, II, IU, to(OUTBOX_SETTLED), IU, DB),
+  'end:reconcile_interrupted_clean': () => o(II, II, IU, to(OUTBOX_SETTLED), IU, DB),
+  // ATT-37 (no Turn: stays pending) / ATT-28 (stays entered) (step 5.6).
+  'end:reconcile_unknown': () => o(II, SAME, IU, SAME, IU, DB),
+  // ATT-29 (step 5.6): settles from the ATT-37 pending or from entered; a known terminal is never rewritten.
+  'resolve:late_evidence': () => o(II, II, to(OUTBOX_PENDING_RESOLVED), II, to(OUTBOX_ENTERED_RESOLVED), IB),
+  'resolve:unknown_attested': () => o(II, II, to(OUTBOX_PENDING_RESOLVED), II, to(OUTBOX_ENTERED_RESOLVED), IB),
   // ATT-25; the ATT-37 pending belongs to an EndedUnknown Run, which refuses W3/W4
   // like the paired Attempt (§6.4 busy).
   'entry_authorized': () => o(II, SAME, IB, IB, IB, IB),
   'entry_begun': () => o(II, SAME, IB, IB, IB, IB),
   'history_recorded': () => o(II, SAME, SAME, SAME, SAME, SAME),
-  // ATT-25 (D-5 part, 新增).
-  'reconcile_not_entered': () => o(II, II, II, II, II, II),
+  // ATT-25 (D-5 part, step 5.6): the entry stays pending for the same claim.
+  'reconcile_not_entered': () => o(II, SAME, II, II, II, II),
 };
 
 describe('transitionDispatchOutbox: every (state, event) combination', () => {
@@ -516,9 +540,11 @@ describe('ATT-06 / ATT-27 guard: entered Run, sequence, outcome', () => {
     }
     check(transitionAttempt(ATTEMPT_STARTED, freshUnknown, unknownRun), GI, ATTEMPT_STARTED);
     check(transitionDispatchOutbox(OUTBOX_ENTERED, freshUnknown, unknownRun), IU, OUTBOX_ENTERED);
-    // Running: the sequence before the terminal type.
+    // Running: the sequence before the terminal type; an unknown end books no Runtime sequence (ATT-07, RUN-08; 5.6).
     const running = ctxOf('Running', 1, true);
-    for (const event of [staleUnknown, ended('terminal_observed', 'failed', { sequence: 1 })]) {
+    check(transitionAttempt(ATTEMPT_STARTED, staleUnknown, running), to(ENDED_FROM_STARTED('outcome_unknown')), ATTEMPT_STARTED);
+    check(transitionDispatchOutbox(OUTBOX_ENTERED, staleUnknown, running), SAME, OUTBOX_ENTERED);
+    for (const event of [ended('terminal_observed', 'failed', { sequence: 1 })]) {
       check(transitionAttempt(ATTEMPT_STARTED, event, running), no('stale', 'revision_conflict'), ATTEMPT_STARTED);
       check(transitionDispatchOutbox(OUTBOX_ENTERED, event, running), no('stale', 'revision_conflict'), OUTBOX_ENTERED);
     }

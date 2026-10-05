@@ -55,6 +55,7 @@ import type { RuntimeExecutionPort } from '../core/agent-runtime/ports.js';
 import type { RuntimeCapability } from '../core/agent-runtime/contracts.js';
 import type { RunControlPort } from '../core/work-graph/tasks/control-contracts.js';
 import { controlIntentRefFor } from '../core/work-graph/tasks/control-service.js';
+import type { TaskClaimPort } from '../core/work-graph/tasks/claim-contracts.js';
 import type { GoalTaskPort, GraphWrite, SetGoalControlInput } from '../core/work-graph/tasks/contracts.js';
 import type { ExecutionReadPort, TaskExecutionRecord } from '../core/work-graph/tasks/execution-read-contracts.js';
 import type { GoalDisplayRead, GoalLiveRunsRead, PlanTaskPort } from '../core/work-graph/tasks/plan-contracts.js';
@@ -83,8 +84,32 @@ export type GoalFanOutReportV1 = {
   epoch: number;
   control: GoalControl | null;
   runs: GoalFanOutRunResultV1[];
-  /** The affected set could not be read (no Run was touched). */
+  /**
+   * The affected set could not be read (no Run was touched), or, on a resume,
+   * the GOAL-29 continuations could not be read (the next pass reads them again).
+   */
   problem: string | null;
+  /**
+   * GOAL-29 (A.2 step 5.6): after a resume, each Task whose Run ended
+   * paused-interrupted by this Goal's fan-out pause is continued by a requeue
+   * (`goal_resume` trigger). Absent on a pass that is not a resume.
+   */
+  continuations?: GoalResumeContinuationResultV1[];
+};
+
+/**
+ * One GOAL-29 continuation of a resume pass: `requeued`/`refused` committed
+ * (the refusal is the owner's TaskReworkRefusal); `already_continued` a
+ * TaskRequeue covers the Run already (a person pressed 继续 first, or an earlier
+ * pass); `stale` the Goal moved on (paused or cancelled again, or another
+ * resume epoch), so this pass's continuation is dropped; `failed` anything
+ * else, retried by the next pass.
+ */
+export type GoalResumeContinuationResultV1 = {
+  taskId: string;
+  afterRunRef: RunRef;
+  outcome: 'requeued' | 'refused' | 'already_continued' | 'stale' | 'failed';
+  reason: string | null;
 };
 
 /** `goals/control`: the Goal commit (GOAL-04…06) and the fan-out pass after it. */
@@ -106,9 +131,12 @@ export interface GoalControlPort {
   readGoalDisplay(ctx: CoreCallContext, input: { goalRef: GoalRef }): Promise<ReadResult<GoalDisplayHostReadV1>>;
 }
 
+/** A pass the start-up reconcile runs (§12.1 step 6): resume rows skip the entered Runs step 2 left (GOAL-14, §2.3). */
+export type GoalFanOutPassOptions = { startup?: boolean };
+
 export type GoalFanOutDriver = GoalControlPort & {
   /** One idempotent fan-out pass for the Goal's CURRENT epoch (§2.3 re-drive). */
-  fanOut(ctx: CoreCallContext, goalRef: GoalRef): Promise<GoalFanOutReportV1>;
+  fanOut(ctx: CoreCallContext, goalRef: GoalRef, options?: GoalFanOutPassOptions): Promise<GoalFanOutReportV1>;
   /**
    * The Host commit observer: a commit that touches a ControlIntent of a
    * project with a watched fan-out pause re-reads the watched intents and
@@ -122,10 +150,19 @@ export type GoalFanOutDriver = GoalControlPort & {
 
 export type GoalFanOutDriverDependencies = {
   goals: Pick<GoalTaskPort, 'setGoalControl'>;
-  plans: Pick<PlanTaskPort, 'queryGoal'> & Required<Pick<PlanTaskPort, 'queryGoalDisplay' | 'queryGoalLiveRuns'>>;
+  plans: Pick<PlanTaskPort, 'queryGoal'>
+    & Required<Pick<PlanTaskPort, 'queryGoalDisplay' | 'queryGoalLiveRuns' | 'queryGoalResumeContinuations'>>;
   executions: Pick<ExecutionReadPort, 'readExecution'>;
   controls: RunControlPort;
   runtime: Pick<RuntimeExecutionPort, 'capabilities' | 'startRun' | 'deliverControl'>;
+  /** GOAL-29 (A.2 step 5.6): the continuation of a fan-out-paused, paused-interrupted Task. */
+  claims: Required<Pick<TaskClaimPort, 'requeueTask'>>;
+  /**
+   * L-10: only the Host holding the instance lease reaches the Runs (per-Run
+   * fan-out, re-entries, continuations); without it a Goal commit still stops
+   * new claims at once and the holding Host re-drives at its start (GOAL-16).
+   */
+  driving?: () => boolean;
 };
 
 type Scope = { projectId: string; workspaceId: string };
@@ -291,7 +328,7 @@ export function createGoalFanOutDriver(deps: GoalFanOutDriverDependencies): Goal
   }
 
   async function fanOutRun(ctx: CoreCallContext, scope: Scope, goalRef: GoalRef, control: GoalControl,
-    epoch: number, desired: GoalSnapshot['desiredState'], runRef: RunRef): Promise<GoalFanOutRunResultV1> {
+    epoch: number, desired: GoalSnapshot['desiredState'], runRef: RunRef, startup: boolean): Promise<GoalFanOutRunResultV1> {
     const actorCtx = fanOutContext(scope);
     const requestId = goalFanOutRequestId(goalRef, epoch, runRef, control);
     const intentRef = controlIntentRefFor(GOAL_FAN_OUT_ACTOR, scope, requestId);
@@ -321,6 +358,13 @@ export function createGoalFanOutDriver(deps: GoalFanOutDriverDependencies): Goal
       if (read.status !== 'ready') return result('failed', `the Run is not readable (${reasonOf(read)})`);
       const run = read.value.run;
       if (run.status === 'ended') return result('skipped', 'the Run has ended (GOAL-15)');
+      // §2.3 re-drive step 2, GOAL-14: at a start the entered Runs were classified by step 2; one it left
+      // (W-07) takes no resume now: it is resumed only after a later start classifies it.
+      const authorization = run.executionAuthorization;
+      if (startup && control === 'resume' && authorization !== undefined && 'schemaVersion' in authorization
+        && authorization.schemaVersion === 2 && (authorization.phase === 'entering' || authorization.phase === 'entered')) {
+        return result('skipped', 'entered Run left by step 2; resumed only after it is classified (GOAL-14, §2.3)');
+      }
       let pointer: ControlIntentSnapshotV1 | null = null;
       if (run.controlState !== undefined) {
         const pointed = await deps.controls.readControl(actorCtx, run.controlState.intentRef);
@@ -353,7 +397,7 @@ export function createGoalFanOutDriver(deps: GoalFanOutDriverDependencies): Goal
     return result('failed', `the fan-out did not settle after ${String(MAX_RUN_ATTEMPTS)} attempts`);
   }
 
-  async function runPass(ctx: CoreCallContext, goalRef: GoalRef): Promise<GoalFanOutReportV1> {
+  async function runPass(ctx: CoreCallContext, goalRef: GoalRef, startup = false): Promise<GoalFanOutReportV1> {
     const report = (epoch: number, control: GoalControl | null, problem: string | null): GoalFanOutReportV1 =>
       ({ goalRef, epoch, control, runs: [], problem });
     let read: ReadResult<GoalLiveRunsRead>;
@@ -367,22 +411,84 @@ export function createGoalFanOutDriver(deps: GoalFanOutDriverDependencies): Goal
     const epoch = goal.desiredStateRevision ?? 1;
     const control = controlOf(goal);
     if (control === null) return report(epoch, null, null);
+    if (deps.driving !== undefined && !deps.driving()) {
+      return report(epoch, control, 'another Host holds the instance lease; that Host reaches the Runs (L-10, GOAL-16)');
+    }
     // The Goal names its workspace: the fan-out actor acts in exactly that scope.
     const scope: Scope = { projectId: goalRef.projectId, workspaceId: goal.workspaceRef.workspaceId };
     const runs: GoalFanOutRunResultV1[] = [];
     for (const runRef of read.value.liveRuns) {
       try {
-        runs.push(await fanOutRun(ctx, scope, goalRef, control, epoch, goal.desiredState, runRef));
+        runs.push(await fanOutRun(ctx, scope, goalRef, control, epoch, goal.desiredState, runRef, startup));
       } catch (error) {
         runs.push({ runRef, outcome: 'failed', intentRef: null, reason: messageOf(error) });
       }
     }
-    return { goalRef, epoch, control, runs, problem: null };
+    if (control !== 'resume') return { goalRef, epoch, control, runs, problem: null };
+    const continued = await continueResumed(ctx, scope, goalRef);
+    return { goalRef, epoch, control, runs, problem: continued.problem, continuations: continued.results };
+  }
+
+  /**
+   * GOAL-29 (C4, §2.3): after a resume, every Task whose selected Run ended
+   * paused-interrupted by this Goal's fan-out pause and that no TaskRequeue
+   * covers is continued with `requeueTask` under `GOAL_FAN_OUT_ACTOR` and the
+   * `goal_resume` trigger; the deterministic requestId makes a repeat (a later
+   * pass, a restart re-drive) replay the receipt, and an existing TaskRequeue
+   * (a person who pressed 继续 first) removes the Task from the selection.
+   */
+  async function continueResumed(ctx: CoreCallContext, scope: Scope, goalRef: GoalRef):
+    Promise<{ results: GoalResumeContinuationResultV1[]; problem: string | null }> {
+    let read;
+    try {
+      read = await deps.plans.queryGoalResumeContinuations(ctx, { goalRef });
+    } catch (error) {
+      return { results: [], problem: `the resume continuations are not readable: ${messageOf(error)}` };
+    }
+    if (read.status !== 'ready') return { results: [], problem: `the resume continuations are not readable (${reasonOf(read)})` };
+    const results: GoalResumeContinuationResultV1[] = [];
+    for (const continuation of read.value.continuations) {
+      const result = (outcome: GoalResumeContinuationResultV1['outcome'], reason: string | null): GoalResumeContinuationResultV1 =>
+        ({ taskId: continuation.taskId, afterRunRef: continuation.afterRunRef, outcome, reason });
+      try {
+        const written = await deps.claims.requeueTask(fanOutContext(scope), {
+          input: { taskRef: { projectId: goalRef.projectId, goalId: goalRef.goalId, taskId: continuation.taskId },
+            afterRunRef: continuation.afterRunRef, reason: `goal ${goalRef.goalId} resumed at epoch ${String(continuation.trigger.resumedEpoch)}`,
+            trigger: continuation.trigger },
+          meta: { requestId: continuation.requestId, expected: [{ ref: goalRef, revision: read.value.goal.revision },
+            { ref: continuation.afterRunRef, revision: continuation.afterRunRevision }] },
+        });
+        if (written.status === 'committed') {
+          results.push(written.value.kind === 'requeued' ? result('requeued', null) : result('refused', written.value.refusal.code));
+          continue;
+        }
+        // GOAL-29: a TaskRequeue already covering the Run is done; a Goal that moved on drops this continuation.
+        const current = written.current ?? [];
+        if (written.code === 'revision_conflict'
+          && current.some(pin => (pin.ref as { aggregateType?: unknown }).aggregateType === 'TaskRequeue')) {
+          results.push(result('already_continued', reasonOf(written)));
+          continue;
+        }
+        if (written.code === 'revision_conflict' || written.code === 'busy') {
+          const goal = await deps.plans.queryGoal(ctx, goalRef);
+          const moved = goal.status === 'ready' && (goal.value.goal.desiredState !== 'active'
+            || (goal.value.goal.desiredStateRevision ?? 1) !== continuation.trigger.resumedEpoch);
+          if (moved) {
+            results.push(result('stale', reasonOf(written)));
+            continue;
+          }
+        }
+        results.push(result('failed', reasonOf(written)));
+      } catch (error) {
+        results.push(result('failed', messageOf(error)));
+      }
+    }
+    return { results, problem: null };
   }
 
   /** One pass on the driver's own signal, drained by `close()`. */
-  function fanOut(ctx: CoreCallContext, goalRef: GoalRef): Promise<GoalFanOutReportV1> {
-    return track(runPass({ ...ctx, signal: hostSignal }, goalRef), passes);
+  function fanOut(ctx: CoreCallContext, goalRef: GoalRef, options: GoalFanOutPassOptions = {}): Promise<GoalFanOutReportV1> {
+    return track(runPass({ ...ctx, signal: hostSignal }, goalRef, options.startup === true), passes);
   }
 
   /** Re-read every watched intent; a Goal whose watched intent moved gets a new pass for its current epoch. */

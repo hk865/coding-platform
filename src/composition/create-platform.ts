@@ -7,7 +7,7 @@ import { createSqliteRecordBackend } from '../core/record-store/sqlite-record-st
 import { RawArtifactBodyStore } from '../core/record-store/body-store.js';
 import { createSqliteRawArtifactStore } from '../core/record-store/sqlite-body-store.js';
 import { createGoalService } from '../core/work-graph/tasks/task-service.js';
-import type { GoalTaskPort } from '../core/work-graph/tasks/contracts.js';
+import type { GoalTaskPort, GraphWrite } from '../core/work-graph/tasks/contracts.js';
 import { COMPLETION_RECORD_SCHEMAS } from '../core/work-graph/tasks/completion-record-codecs.js';
 import { createMaterialRecordReaders, materialRecordSchemas } from '../core/work-graph/materials/record-readers.js';
 import { createMaterialAccessResolver } from '../core/work-graph/materials/applicability.js';
@@ -69,11 +69,14 @@ import { createSessionHistoryCursorOwner, createSessionOperations } from '../cor
 import type { CoreCallContext } from '../contracts/core/call-context.js';
 import type { SessionRef } from '../contracts/core/identity.js';
 import type { CoreRejection, ReadResult } from '../contracts/core/results.js';
+import type { VersionPin } from '../contracts/core/identity.js';
 import { canonicalJson, type JsonValue } from '../contracts/fingerprint.js';
 import type { MaterialSourceScope } from '../contracts/material-access.js';
 import type { RuntimeCapabilities } from '../core/agent-runtime/contracts.js';
 import type { RuntimeExecutionDependencies, RuntimeHostBindings } from '../core/agent-runtime/execution-contracts.js';
-import type { AuthorizeConfiguration, ExecutionEntryDependencies } from '../core/work-graph/tasks/execution-entry-contracts.js';
+import type {
+  AuthorizeConfiguration, ExecutionEntryDependencies, ExecutionEntryPort,
+} from '../core/work-graph/tasks/execution-entry-contracts.js';
 import { createRoleConfigurationService } from '../core/work-graph/configuration/role-memory-service.js';
 import { ROLE_RECORD_SCHEMAS } from '../core/work-graph/configuration/role-record-codecs.js';
 import { createProjectBootstrapServices } from '../core/work-graph/configuration/project-bootstrap-service.js';
@@ -92,6 +95,23 @@ import { createArchitectureCatalogService } from '../core/work-graph/architectur
 import type { ArchitectureCatalogPort } from '../core/work-graph/architecture/catalog-contracts.js';
 import { ARCHITECTURE_CATALOG_SCHEMAS } from '../core/work-graph/architecture/catalog-record-codecs.js';
 import { observeRecordCommits, type RecordCommitObserver } from './commit-observer.js';
+import type { HostInstanceFacts } from '../core/work-graph/tasks/execution-entry-contracts.js';
+import { createRunReconcileService } from '../core/work-graph/tasks/run-reconcile-service.js';
+import type { RunReconcilePort } from '../core/work-graph/tasks/run-reconcile-contracts.js';
+import { createReconcileCandidateReader } from '../core/work-graph/tasks/reconcile-reads.js';
+import { createSessionHealthService } from '../core/work-graph/sessions/session-health.js';
+import {
+  readAttestationFacts, reconcileQueryRunAtStartup, reconcileRunAtStartup, reconcileRunControlsAtStartup,
+} from '../core/agent-runtime/run-reconcile.js';
+import type { SessionMappingProbe } from '../core/agent-runtime/session-operations.js';
+import type { TaskExecutionRecord } from '../core/work-graph/tasks/execution-read-contracts.js';
+import type { QueryExecutionRecord } from '../core/work-graph/queries/contracts.js';
+import type { RunRef, RunSnapshot } from '../contracts/dispatch.js';
+import type { QueryRunRef } from '../contracts/query-job.js';
+import type { WriteResult } from '../contracts/core/results.js';
+import {
+  DEFAULT_TASK_AUTOMATION_POLICY, MAX_AUTO_REWORK_LIMIT, type TaskAutomationPolicyV1,
+} from '../contracts/task-requeue.js';
 
 export type TargetPlatformOptions = {
   storage: { kind: 'memory' } | { kind: 'sqlite'; directory: string };
@@ -121,6 +141,12 @@ export type TargetPlatformOptions = {
    * every non-replayed RecordStore commit; it never receives record bodies and
    * cannot change a receipt. */
   commitObserver?: RecordCommitObserver;
+  /**
+   * A.2 step 5.6 (D-18, L-10): this Host instance and whether it holds the
+   * instance lease. The start-up reconcile, the attestations and every
+   * R-source write are admitted only under `owned`; absent, they answer `busy`.
+   */
+  hostInstance?: HostInstanceFacts;
 };
 
 /** The composition-owned service identity. It is used only to execute trusted
@@ -153,10 +179,10 @@ function sameJson(left: unknown, right: unknown): boolean {
  * unsupported until step 5.7. D-15 asks for the report as it is: each reason
  * states only what holds today, and the §7.7 target boundaries are added by
  * the substep that builds them (5.4 added the requeue continuation brief, C3;
- * 5.6: the new Session after an open Kernel Turn, the restart rebuild, the
- * paused-interrupted end, the paused stop and the restart stop, which also
- * rewrites the `recoverRun` reason). Built fresh per read, so a caller cannot
- * change a later report.
+ * 5.6 added the new Session after an open Kernel Turn, the restart rebuild,
+ * the paused-interrupted end, the RUN-14 live-handle guard, the paused stop,
+ * the restart stop and C7, and rewrote the `recoverRun` reason). Built fresh
+ * per read, so a caller cannot change a later report.
  */
 function workspaceRuntimeCapabilities(
   adapterId: string, kernelSessionApiVersion: RuntimeCapabilities['kernelSessionApiVersion'],
@@ -170,21 +196,34 @@ function workspaceRuntimeCapabilities(
       + 'labelled a continuation, not a resumed execution. '
       + 'When the previous Turn has a Kernel terminal, a new Run in the same Session continues its history, '
       + 'including the successor Run after a yielded wait. When the previous Turn has no Kernel terminal (for '
-      + 'example a Run still open when its Host process ended), the Kernel refuses a new Turn in that Session and '
-      + 'no continuation is offered' },
-    recoverRun: { supported: false, reason: 'there is no start-up reconciliation of Runs: a Run\'s terminal is '
-      + 'recorded only with the in-process proof of its live handle, so a Run still open when its Host process '
-      + 'ended stays as last recorded' },
+      + 'example a Run interrupted by a Host restart, including one paused then, a Run stopped at restart by a '
+      + 'queued cancel, or one a person attested while its Kernel Turn was still open), the Kernel refuses a new '
+      + 'Turn in that Session: the original Session becomes unavailable (kernel_turn_open, its history stays '
+      + 'readable) and the continuation is a new Run in a new Session that continues the original Session\'s last '
+      + 'completed history (same Kernel adapter only; otherwise the brief alone). After a Host restart a waiting '
+      + 'continuation is rebuilt only when its Turn has exactly one waiting message; otherwise its outcome is '
+      + 'recorded as unknown (continuation_unrebuildable), keeping its Session and Lease until a person attests it' },
+    recoverRun: { supported: false, reason: 'the Host start-up reconciliation reads each open Run\'s Kernel history '
+      + 'under the Host instance lease and books what it proves: a Kernel terminal as recorded, a clean '
+      + 'interruption as crashed (paused-interrupted when it was paused), a Run that never entered as revoked for '
+      + 'the same claim, anything it cannot prove as unknown for a person to attest; it never resumes or re-runs '
+      + 'the original execution' },
     safePointPause: { supported: true, reason: 'an entered Work Run pauses through its live handle at the next '
-      + 'safe point (before a model call or between tool groups), and a resume re-enters the original Turn; a '
-      + 'Run that has not entered the Kernel is paused and resumed by the platform at once. A paused Run is not '
-      + 'reconciled after a Host restart (see recoverRun). A Query cannot be paused' },
+      + 'safe point (before a model call or between tool groups), and a resume re-enters the original Turn only '
+      + 'while this Host process still holds the live handle; a Run that has not entered the Kernel is paused and '
+      + 'resumed by the platform at once. A Run paused when its Host stopped ends paused-interrupted after the '
+      + 'restart, which is not a failure: only a person continues it (a new continuation Run in a new '
+      + 'Session), never automatically, or, when the pause came from the Goal, resuming the Goal continues it. '
+      + 'A Query cannot be paused' },
     cancel: { supported: true, reason: 'an entered Run is cancelled through its live handle, and the cancel stays '
       + 'a pending stop request until the Run\'s stop is proved; a Run that has not entered the Kernel is '
-      + 'cancelled by the platform at once. A cancel of an entered Run already paused at a safe point cannot be '
-      + 'delivered (its live handle has exited) and stays a pending stop request. A cancel of a yielded wait only '
-      + 'fences its continuation. A Query cannot be cancelled: a control on a Query Run is refused as invalid and '
-      + 'there is no QueryJob close, so a running Query ends only with its own terminal' },
+      + 'cancelled by the platform at once. A cancel of an entered Run already paused at a safe point is applied '
+      + 'by the platform on the exit proof of its live handle (the Kernel call exited and every resource closed). '
+      + 'At a Host restart a queued cancel of a Run with a clean Kernel Turn (no tool call in flight) stops it, '
+      + 'whether or not the Kernel paused it. A paused-interrupted Run has already ended and cannot be cancelled; '
+      + 'change the Task disposition instead. A cancel of a yielded wait only fences its continuation. A Query '
+      + 'cannot be cancelled: a control on a Query Run is refused as invalid and there is no QueryJob close, so a '
+      + 'running Query ends only with its own terminal' },
     nativeCompact: { supported: false, reason: 'native Kernel compaction is not implemented' },
     scopedWorkspaceWrites: { supported: false, reason: 'the Host checks only that the prepared writeScope is '
       + 'within its grant; whether the Kernel enforces sub-path writes is not verified' },
@@ -302,6 +341,12 @@ function createAuthorizeQueryConfiguration(host: RuntimeHostBindings): Authorize
  * supplied. No business bootstrap/claim API is invented by the storage factory. */
 export async function createTargetPlatform(options: TargetPlatformOptions) {
   const now = options.now ?? (() => new Date().toISOString());
+  const hostInstance: HostInstanceFacts | undefined = options.hostInstance === undefined ? undefined
+    : { hostInstanceId: options.hostInstance.hostInstanceId, lease: options.hostInstance.lease };
+  // C8 (A.2 step 5.6): the Host-installed automatic-rework policy; the defaults (3 / true) until the
+  // Host installs its settings (`registerAutomationPolicy`). Read live by the requeue owner and the read model.
+  let automationPolicy: TaskAutomationPolicyV1 = { ...DEFAULT_TASK_AUTOMATION_POLICY };
+  const currentAutomationPolicy = (): TaskAutomationPolicyV1 => ({ ...automationPolicy });
   const materialsSchema = materialRecordSchemas();
   const schemas = {
     records: [...materialsSchema.records, ...PLAN_RECORD_SCHEMAS.records, ...PLAN_STATE_RECORD_SCHEMAS.records,
@@ -390,7 +435,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     const queryExecution = options.runtime === undefined ? undefined : createQueryExecution({
       records: backend.records, roles: roleService, bodies,
       authorizeConfiguration: createAuthorizeQueryConfiguration(options.runtime),
-      now, eventId: randomUUID,
+      now, eventId: randomUUID, ...(hostInstance === undefined ? {} : { hostInstance }),
     });
     const queryJobs = createQueryJobService({
       records: backend.records, now, eventId: randomUUID,
@@ -401,6 +446,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       source: options.architectureSource ?? { provider: 'typescript', configPath: 'tsconfig.json' } });
     const catalog = createArchitectureCatalogService({ records: backend.records });
     const planService = createPlanService({ records: backend.records, materials: rawMaterials, now, eventId: randomUUID,
+      automationPolicy: currentAutomationPolicy,
       // R5b.4: the SAME raw body store already owned by the composition root.
       initialPlanning: { bodies },
       ...(authorizeConfiguration === undefined ? {} : {
@@ -420,6 +466,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       ...(authorizeConfiguration === undefined ? {} : {
         delegatedWrites: { reads: executionReader, roles: roleService, bodies, authorizeConfiguration },
       }),
+      automationPolicy: currentAutomationPolicy,
       now, eventId: randomUUID });
     const sessionLifecycle = createSessionLifecycleService({ records: backend.records, lookups: backend.records });
     const kernelStores = await createKernelStoreRegistry(options.kernelStores ?? { entries: [] });
@@ -455,10 +502,20 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
           && options.checks.workspace.projectId === scope.projectId
           && options.checks.workspace.workspaceId === scope.workspaceId
           ? options.checks : undefined),
+      ...(hostInstance === undefined ? {} : { hostInstance }),
       now, newId: randomUUID,
     });
     const rawCheckRunner = createRegisteredCheckRunner({ evidence: rawEvidence,
       workspaceHost: options.workspace, kernel, now });
+    // A.2 step 5.6 (S8, A8): the reconcile owners share the ONE records/reader pair; the Runtime
+    // classifier reads the Kernel through the same history owner the observer uses.
+    const runReconcile: RunReconcilePort = createRunReconcileService({ records: backend.records, reads: executionReader,
+      ...(hostInstance === undefined ? {} : { hostInstance }), now, eventId: randomUUID });
+    const sessionHealth = createSessionHealthService({ records: backend.records,
+      ...(hostInstance === undefined ? {} : { hostInstance }), now, eventId: randomUUID });
+    const reconcileCandidates = createReconcileCandidateReader({ records: backend.records });
+    const historyOwner = createSessionHistoryCursorOwner({ kernelStores });
+    let resultWriter: Pick<ExecutionEntryPort, 'recordRunResult'> | undefined;
     let runtime = createAgentRuntime();
     if (options.runtime !== undefined) {
       const host = options.runtime;
@@ -467,9 +524,11 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       const entryDependencies: ExecutionEntryDependencies = {
         records: backend.records, reads: executionReader, roles: roleService, plans: planService,
         materials: rawMaterials, materialFacts, bodies, authorizeConfiguration: entryAuthorizeConfiguration,
+        ...(hostInstance === undefined ? {} : { hostInstance }),
         now, eventId: randomUUID, newId: randomUUID,
       };
       const entry = createExecutionEntryService(entryDependencies);
+      resultWriter = entry;
       const modelRequests = createModelCallService(entryDependencies);
       const dependencies: RuntimeExecutionDependencies = {
         claims: claimService, executions: executionReader, entry, historyWriter, modelRequests,
@@ -484,6 +543,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         ...(queryExecution === undefined ? {} : { queryExecution }),
         // C3: the continuation brief's checkpoint uses the SAME workspace reader as the evidence owner.
         workspaceSource: verificationWorkspaceReader,
+        // A.2 step 5.6: the in-process ends without a Kernel terminal (RUN-16, RUN-23).
+        runReconcile,
         host, kernel, now, newId: randomUUID,
       };
       runtime = createAgentRuntime(dependencies);
@@ -746,11 +807,155 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       advanceWork: (...args) => trackedCall(() => rawWorkflow.advanceWork(...args), unavailable),
       consumeConsultation: (...args) => trackedCall(() => rawWorkflow.consumeConsultation(...args), unavailable),
     };
+    // A.2 step 5.6 (§12.1): the start-up reconcile's internal seam. Only the Host
+    // that holds the instance lease calls it, before any execution driver starts;
+    // every write is judged by its owner machine (R events need `owned`).
+    const classifierMessages = mailbox;
+    const reconcile = {
+      candidates: reconcileCandidates,
+      probe: (session: Parameters<typeof historyOwner.probe>[0]['session'], signal: AbortSignal): Promise<SessionMappingProbe> =>
+        trackedCall(() => historyOwner.probe({ session, signal }),
+          () => ({ verdict: 'cancelled' as const, activeRunId: null, reason: 'platform is closing' })),
+      recordSessionHealth: (...args: Parameters<typeof sessionHealth.recordSessionHealth>) =>
+        trackedCall(() => sessionHealth.recordSessionHealth(...args), unavailable),
+      reconcileRun: (ctx: CoreCallContext, input: { record: TaskExecutionRecord; hostInstanceId: string; probe: SessionMappingProbe }) =>
+        trackedCall(async () => {
+          if (resultWriter === undefined) {
+            return { runRef: input.record.run.ref, row: 'W-*', status: 'left' as const,
+              reason: 'this Host has no trusted Runtime binding to read the Kernel' };
+          }
+          return reconcileRunAtStartup({ owner: historyOwner, messages: classifierMessages, controls: rawControls,
+            entry: resultWriter, reconcile: runReconcile, now, newId: randomUUID }, ctx, input);
+        }, () => ({ runRef: input.record.run.ref, row: 'W-*', status: 'failed' as const, reason: 'platform is closing' })),
+      reconcileQuery: (ctx: CoreCallContext, input: { record: QueryExecutionRecord; hostInstanceId: string; probe: SessionMappingProbe }) =>
+        trackedCall(async () => {
+          const observeQuery = runtime.port.observeQuery;
+          if (queryExecution === undefined || observeQuery === undefined) {
+            return { queryRunRef: input.record.run.ref, row: 'Q-*', status: 'left' as const,
+              reason: 'this Host has no trusted Query binding' };
+          }
+          return reconcileQueryRunAtStartup({ owner: historyOwner, messages: classifierMessages, queries: queryExecution,
+            observeQuery: (callCtx, request) => observeQuery(callCtx, request) }, ctx, input);
+        }, () => ({ queryRunRef: input.record.run.ref, row: 'Q-*', status: 'failed' as const, reason: 'platform is closing' })),
+      readQueryExecution: (ctx: CoreCallContext, ref: QueryRunRef) => trackedCall(() => queryExecution === undefined
+        ? Promise.resolve<CoreRejection>({ status: 'rejected', code: 'unsupported', reason: 'no trusted Query binding' })
+        : queryExecution.readQueryExecution(ctx, ref), unavailable),
+      reconcileControls: (ctx: CoreCallContext, input: { record: TaskExecutionRecord; hostInstanceId: string; queuedSteers: boolean }) =>
+        trackedCall(() => reconcileRunControlsAtStartup({ owner: historyOwner, reconcile: runReconcile }, ctx, input),
+          () => ({ runRef: input.record.run.ref, row: 'W-*', status: 'failed' as const, reason: 'platform is closing' })),
+      interruptCheck: (...args: Parameters<NonNullable<typeof rawEvidence.interruptCheck>>) =>
+        trackedCall(() => rawEvidence.interruptCheck!(...args), unavailable),
+    };
+    /**
+     * RUN-22 / QRR-06 (contract (d), L-1): the operator attests an unknown end
+     * through this Host. The Host entry first admits the request without any
+     * write (this Host's lease, a reason, an unknown target at the pinned
+     * revision; L-1 "busy，不改任何事实"), then reads the Kernel facts (an open
+     * Turn, the input confirmation, which may record the mailbox acceptance),
+     * and the owner judges the attestation.
+     */
+    function attestationAdmission(request: GraphWrite<unknown> | undefined, ref: object, revision: number, unknown: boolean,
+      what: string): CoreRejection | null {
+      if (hostInstance === undefined || hostInstance.lease !== 'owned') {
+        return { status: 'rejected', code: 'busy', reason: 'this Host does not hold the Host instance lease; only that Host attests (L-1)' };
+      }
+      const reason = (request?.input as { reason?: unknown } | undefined)?.reason;
+      if (typeof reason !== 'string' || reason.trim().length === 0) {
+        return { status: 'rejected', code: 'invalid', reason: 'the attestation needs a reason' };
+      }
+      const expected = request?.meta?.expected;
+      if (!Array.isArray(expected) || expected.length !== 1 || !sameJson(expected[0]?.ref, ref)) {
+        return { status: 'rejected', code: 'invalid', reason: `meta.expected must be exactly the ${what} pin` };
+      }
+      if (expected[0]?.revision !== revision) {
+        return { status: 'rejected', code: 'revision_conflict', reason: `the ${what} changed since the caller read it`,
+          current: [{ ref: ref as VersionPin['ref'], revision }] };
+      }
+      if (!unknown) return { status: 'rejected', code: 'busy', reason: `the ${what} has no unknown outcome to attest` };
+      return null;
+    }
+    async function resolveUnknownRun(ctx: CoreCallContext, request: GraphWrite<{ runRef: RunRef; reason: string }>,
+    ): Promise<WriteResult<RunSnapshot>> {
+      const input = request?.input as { runRef?: RunRef; reason?: unknown } | undefined;
+      if (input === undefined || input === null || typeof input.runRef !== 'object' || input.runRef === null
+        || typeof input.reason !== 'string') {
+        return { status: 'rejected', code: 'invalid', reason: 'resolve-unknown requires the runRef and a reason' };
+      }
+      const runRef = input.runRef;
+      if (hostInstance === undefined || hostInstance.lease !== 'owned') {
+        return { status: 'rejected', code: 'busy', reason: 'this Host does not hold the Host instance lease; only that Host attests (L-1)' };
+      }
+      const read = await executionReader.readExecution(ctx, runRef);
+      if (read.status !== 'ready') {
+        return read.status === 'rejected' ? read : { status: 'rejected', code: 'not_found', reason: 'the Run is not readable' };
+      }
+      const record = read.value;
+      const admitted = attestationAdmission(request, runRef, record.run.revision,
+        record.run.status === 'ended' && record.run.outcome === 'outcome_unknown', 'Run');
+      if (admitted !== null) return admitted;
+      const auth = record.run.executionAuthorization;
+      const kernel = auth !== undefined && 'schemaVersion' in auth && auth.schemaVersion === 2 ? auth.kernel : null;
+      const facts = kernel === null ? { ok: true as const, kernelTurnOpen: false, inputsConfirmed: null }
+        : await readAttestationFacts({ owner: historyOwner, messages: classifierMessages }, ctx, { session: record.session,
+          executionRef: record.run.ref, kernel, startPosition: record.run.executionHistory?.startPosition ?? null });
+      if (!facts.ok) return facts.rejection;
+      return runReconcile.resolveUnknownRun(ctx, { input: { runRef, reason: input.reason, kernelTurnOpen: facts.kernelTurnOpen,
+        inputsConfirmed: facts.inputsConfirmed }, meta: request.meta });
+    }
+    async function resolveUnknownQueryRun(ctx: CoreCallContext, request: GraphWrite<{ queryRunRef: QueryRunRef; reason: string }>,
+    ): Promise<WriteResult<QueryExecutionRecord>> {
+      if (queryExecution === undefined || queryExecution.resolveUnknownQueryRun === undefined) {
+        return { status: 'rejected', code: 'unsupported', reason: 'this Host has no trusted Query binding' };
+      }
+      const input = request?.input as { queryRunRef?: QueryRunRef; reason?: unknown } | undefined;
+      if (input === undefined || input === null || typeof input.queryRunRef !== 'object' || input.queryRunRef === null
+        || typeof input.reason !== 'string') {
+        return { status: 'rejected', code: 'invalid', reason: 'resolve-unknown requires the queryRunRef and a reason' };
+      }
+      const queryRunRef = input.queryRunRef;
+      if (hostInstance === undefined || hostInstance.lease !== 'owned') {
+        return { status: 'rejected', code: 'busy', reason: 'this Host does not hold the Host instance lease; only that Host attests (L-1)' };
+      }
+      const read = await queryExecution.readQueryExecution(ctx, queryRunRef);
+      if (read.status !== 'ready') {
+        return read.status === 'rejected' ? read : { status: 'rejected', code: 'not_found', reason: 'the QueryRun is not readable' };
+      }
+      const state = read.value.run.run.executionState;
+      const admitted = attestationAdmission(request, queryRunRef, read.value.run.revision, state?.phase === 'unknown', 'QueryRun');
+      if (admitted !== null) return admitted;
+      const kernel = state?.entry?.kernel ?? null;
+      const facts = kernel === null || state === undefined ? { ok: true as const, kernelTurnOpen: false, inputsConfirmed: null }
+        : await readAttestationFacts({ owner: historyOwner, messages: classifierMessages }, ctx, { session: read.value.session,
+          executionRef: queryRunRef, kernel, startPosition: state.history?.startPosition ?? null });
+      if (!facts.ok) return facts.rejection;
+      return queryExecution.resolveUnknownQueryRun(ctx, { input: { queryRunRef, reason: input.reason,
+        kernelTurnOpen: facts.kernelTurnOpen, inputsConfirmed: facts.inputsConfirmed }, meta: request.meta });
+    }
     let closing: Promise<void> | undefined;
     return {
       goals, plans, claims, executions, sessions, materials, messages, controls, evidence, checks, roles, architecture, projects, completionPolicies,
       queries,
       workspace: workspace.tools, runtime: runtimePort, workflow, kernelStores,
+      reconcile,
+      /** RUN-22 (U): the operator's attestation through the Host entry; drained like every write. */
+      resolveUnknownRun: (...args: Parameters<typeof resolveUnknownRun>) => trackedCall(() => resolveUnknownRun(...args), unavailable),
+      /** QRR-06 (U): the same for a QueryRun. */
+      resolveUnknownQueryRun: (...args: Parameters<typeof resolveUnknownQueryRun>) =>
+        trackedCall(() => resolveUnknownQueryRun(...args), unavailable),
+      /** C8 (A.2 step 5.6): the automatic-rework policy this Host installed from its settings (defaults 3 / true). */
+      automationPolicy: currentAutomationPolicy,
+      /**
+       * C8 (A.2 step 5.6, §12.10 step 5): install the Host setting
+       * `automation`; read live by the requeue owner, the read model and the
+       * start-up re-drive (`resumeOnStartup`). A malformed policy is refused.
+       */
+      registerAutomationPolicy(policy: TaskAutomationPolicyV1): void {
+        if (policy.schemaVersion !== 1 || !Number.isSafeInteger(policy.autoReworkLimit) || policy.autoReworkLimit < 0
+          || policy.autoReworkLimit > MAX_AUTO_REWORK_LIMIT || typeof policy.resumeOnStartup !== 'boolean') {
+          throw new Error('the automation policy is malformed');
+        }
+        automationPolicy = { schemaVersion: 1, autoReworkLimit: policy.autoReworkLimit, resumeOnStartup: policy.resumeOnStartup };
+      },
       /**
        * Extend the trusted Workflow configuration with one newly opened
        * workspace binding. The existing Workflow reads `deps.configuration`

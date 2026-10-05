@@ -1,0 +1,103 @@
+/**
+ * Run reconcile contracts (STATE-MACHINES-SPEC §6.1 contracts (c)/(d), §12;
+ * A.2 step 5.6).
+ *
+ * The WorkGraph writes of a Run end that carries no Kernel terminal: the
+ * Runtime reads the Kernel and classifies (`agent-runtime/run-reconcile.ts`),
+ * WorkGraph judges it with the pure machines and commits it. A Kernel terminal
+ * goes through the extended `recordRunResult` instead (RD-5).
+ */
+import type { CoreCallContext } from '../../../contracts/core/call-context.js';
+import type { ControlIntentRef } from '../../../contracts/control-intent.js';
+import type { WriteResult } from '../../../contracts/core/results.js';
+import type { RunReconciliationBasisV1, RunRef, RunSnapshot } from '../../../contracts/dispatch.js';
+import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
+import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
+import type { SessionProbeVerdict } from '../state/session-availability.js';
+import type { RunUnknownCause } from '../state/run-machine.js';
+import type { GraphWrite } from './contracts.js';
+import type {
+  AcceptedSteerV1, HostInstanceFacts, KernelExecutionBinding, KernelObservationSource, ObservedExecutionHistory,
+} from './execution-entry-contracts.js';
+import type { ExecutionReadPort } from './execution-read-contracts.js';
+
+/** The Kernel Turn a reconcile read (§6.2 `reconcile_interrupted_clean`, `stop_paused`, `reconcile_unknown`). */
+export type ReconcileTurnV1 = {
+  /** The Turn has a Kernel terminal event. */
+  terminal: boolean;
+  /** `running`/`outcome_unknown` tool calls; Kernel `pending` (declared, not started) is not in flight (LA-7). */
+  inFlightToolCallIds: string[];
+  lastPosition: number | null;
+  /** The Kernel Turn status is `paused` (C4, RD-7). */
+  kernelPaused: boolean;
+  /** The Turn start, recorded by an end reconciled from `Entering` (ATT-31/32). */
+  entered: { enteredAt: string; kernelSource: KernelObservationSource; history: ObservedExecutionHistory } | null;
+  /** Queued steers the Kernel accepted (CTL-08(b)). */
+  acceptedSteers: AcceptedSteerV1[];
+  /** Every `run.input_accepted` of the Turn is confirmed against its source (§10.3). */
+  inputsConfirmed: boolean;
+};
+
+/** §6.1 contract (c) `ReconciledObservation`, as the Runtime classifier gives it. */
+export type ReconcileRunInput = {
+  runRef: RunRef;
+  /** `host_instance_takeover` at a restart; `live_clean` from the in-process Runtime (RUN-16, RUN-23). */
+  basis: RunReconciliationBasisV1;
+  /** The claim Session's probe verdict (§8.2): `ready`, or `missing`/`damaged` for RUN-20(ii). */
+  probe: SessionProbeVerdict;
+  result:
+    /** RUN-16: the readable Kernel Store holds no Turn of the fixed identity. */
+    | { kind: 'not_entered'; kernel: KernelExecutionBinding }
+    /** RUN-20: (i) tool calls without a result, (ii) an unreadable Kernel, (iii) an unrebuildable continuation. */
+    | { kind: 'unknown'; cause: RunUnknownCause; unresolvedToolCallIds: string[]; observedThroughPosition: number | null;
+        turn: ReconcileTurnV1 | null }
+    /** RUN-19 / RUN-24: no Kernel terminal, nothing in flight; the WG machine picks the row by the pointer. */
+    | { kind: 'interrupted_clean'; turn: ReconcileTurnV1 }
+    /**
+     * RUN-23: the queued cancel and a Turn with no Kernel terminal, nothing in
+     * flight. `pausedBy` (CTL-10): the pause in effect when the cancel stopped
+     * the Run; in process the pause the live handle consumed, at a restart
+     * null (the Run no longer points to that pause once the cancel is queued,
+     * and the Kernel `run.paused` names no intent, CD-1).
+     */
+    | { kind: 'paused_stop'; cancelIntentRef: ControlIntentRef; pausedBy: ControlIntentRef | null; turn: ReconcileTurnV1 };
+};
+
+/** §6.1 contract (d): the operator's attestation of an unknown Run end (RUN-22). */
+export type ResolveUnknownRunInput = {
+  runRef: RunRef;
+  reason: string;
+  /** Read by the Host entry before the attestation: the Turn has no Kernel terminal, or the Kernel is unreadable. */
+  kernelTurnOpen: boolean;
+  /** Every accepted input confirmed; `null` when the Kernel is unreadable. */
+  inputsConfirmed: boolean | null;
+};
+
+/**
+ * CTL-08(a)/(d)/(e): the start-up reconcile settles the queued intents a Run
+ * keeps without any other reconcile write: on a Run that never entered
+ * (RUN-09..11 (R)), on an ended Run whose acks a crash lost, on an unknown end.
+ */
+export type ReconcileRunControlsInput = {
+  runRef: RunRef;
+  hostInstanceId: string;
+  /** Queued steers the Kernel accepted before the Run ended (CTL-08(b) through (e)). */
+  acceptedSteers: AcceptedSteerV1[];
+};
+
+export interface RunReconcilePort {
+  /** RUN-16, RUN-19, RUN-20, RUN-23, RUN-24 (with CTL-04(b), CTL-08, CTL-10 and SES-06). */
+  reconcileRun(ctx: CoreCallContext, request: GraphWrite<ReconcileRunInput>): Promise<WriteResult<RunSnapshot>>;
+  /** RUN-22: only through the Host holding the instance lease (L-1). */
+  resolveUnknownRun(ctx: CoreCallContext, request: GraphWrite<ResolveUnknownRunInput>): Promise<WriteResult<RunSnapshot>>;
+  /** CTL-08(a)/(d)/(e); a Run with nothing queued is answered `ready`-like with the Run as read (no commit). */
+  reconcileRunControls(ctx: CoreCallContext, request: GraphWrite<ReconcileRunControlsInput>): Promise<WriteResult<RunSnapshot>>;
+}
+
+export type RunReconcileDependencies = {
+  records: GoalRecordTransactionPort & RecordLookupPort;
+  reads: ExecutionReadPort;
+  hostInstance?: HostInstanceFacts;
+  now(): string;
+  eventId(): string;
+};

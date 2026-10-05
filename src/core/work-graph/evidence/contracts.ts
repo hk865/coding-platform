@@ -87,9 +87,11 @@ export type InterruptCheckInput = {
     roundRef: VerificationRoundRef;
     checkId: string;
     invocationId: string;
-    cause: 'ticket_invalid';
-    ticketProblem: string;
-};
+} & (
+    | { cause: 'ticket_invalid'; ticketProblem: string }
+    /** VR-04 (A.2 step 5.6): the start-up reconcile, under this Host's instance lease (D-12, D-18). */
+    | { cause: 'host_restart'; hostInstanceId: string }
+);
 
 /**
  * Chain-head read (spec §9 VD-14): the work chain of `(subject, subjectRunRef)`,
@@ -220,6 +222,8 @@ export type EvidenceServiceDependencies = {
     configuration?: TrustedCheckConfiguration;
     /** R6 scoped resolver; Stage 1 declares the seam only. */
     configurationFor?: CheckConfigurationResolver;
+    /** A.2 step 5.6: this Host instance and its lease (D-18), for VR-04. */
+    hostInstance?: { hostInstanceId: string; lease: 'owned' | 'held_by_other' };
     now(): string;
     newId(): string;
 };

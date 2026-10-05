@@ -28,7 +28,8 @@ import {createRoleConfigurationService} from '../../src/core/work-graph/configur
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { TaskClaim } from '../../src/contracts/core/task-claim.js';
 import type { ModelClientPort, ModelEvent, ModelRequest } from '../../vendor/coding-agent/dist/public-api.js';
-import type { AuthorizeConfiguration } from '../../src/core/work-graph/tasks/execution-entry-contracts.js';
+import type { AuthorizeConfiguration, HostInstanceFacts } from '../../src/core/work-graph/tasks/execution-entry-contracts.js';
+import { createRunReconcileService } from '../../src/core/work-graph/tasks/run-reconcile-service.js';
 import type { ExecutionEntryPort } from '../../src/core/work-graph/tasks/execution-entry-contracts.js';
 import type { ModelRequestPort } from '../../src/core/work-graph/tasks/model-call-contracts.js';
 import type { RoleBindingFactsPort } from '../../src/core/work-graph/configuration/contracts.js';
@@ -102,6 +103,10 @@ export type B2RuntimeFixtureOverrides = {
   kernelStores?: RuntimeExecutionDependencies['kernelStores'];
   workspaceHost?: RuntimeExecutionDependencies['workspaceHost'];
   sourcePolicyFor?: RuntimeExecutionDependencies['sourcePolicyFor'];
+  /** A.2 step 5.6: the Host instance the entry owner and the reconcile writer run under (D-18). */
+  hostInstance?: HostInstanceFacts;
+  /** A.2 step 5.6: wire the Run reconcile writer (RUN-16/21/23 in process) into the Runtime. */
+  runReconcile?: boolean;
 };
 
 export type B2RuntimeFixture = {
@@ -120,6 +125,8 @@ export type B2RuntimeFixture = {
   setNow(at:string):void;
   reopen(): Promise<void>;
   rebuild(overrides?: B2RuntimeFixtureOverrides): AgentRuntimeService;
+  /** The dependencies `rebuild` would use (a fresh entry owner over the same stores). */
+  rebuildDeps(overrides?: B2RuntimeFixtureOverrides): RuntimeExecutionDependencies;
   close(): Promise<void>;
 };
 
@@ -241,8 +248,11 @@ export async function createB2RuntimeFixture(options: {
         return {status:'rejected',code:'forbidden',reason:'Persisted configuration differs from real current Host grant'};
       return {status:'ready',value:{configurationRevision:value.configurationRevision,permissions:structuredClone(permissions),hostTemplate:template}};
     };
-    const common={records,reads:executions,roles,plans,materials,bodies,authorizeConfiguration,now,eventId,newId};
+    const common={records,reads:executions,roles,plans,materials,bodies,authorizeConfiguration,
+      ...(overrides.hostInstance===undefined?{}:{hostInstance:overrides.hostInstance}),now,eventId,newId};
     entry=createExecutionEntryService(common);modelRequests=createModelCallService(common);
+    const runReconcile=overrides.runReconcile===true?createRunReconcileService({records,reads:executions,
+      ...(overrides.hostInstance===undefined?{}:{hostInstance:overrides.hostInstance}),now,eventId}):undefined;
     return {claims:claimFixture.makeService(records),executions,entry:overrides.entry??entry,modelRequests:overrides.modelRequests??modelRequests,
       roles,plans,sessions,materials,bodies,historyWriter:createExecutionHistoryService({records,now,eventId}),activity,graphHistory:createGraphExecutionHistoryReader({executions,history:activity}),sessionOperations,kernelStores:selectedKernelStores,
       workspaceHost:overrides.workspaceHost??{
@@ -254,7 +264,8 @@ export async function createB2RuntimeFixture(options: {
         },
       },
       sourceAuthority:overrides.sourceAuthority??(()=>createSourceAuthorityReader({authority:reads.authority})),
-      ...(overrides.sourcePolicyFor?{sourcePolicyFor:overrides.sourcePolicyFor}:{}),host:activeHost,kernel,now,newId};
+      ...(overrides.sourcePolicyFor?{sourcePolicyFor:overrides.sourcePolicyFor}:{}),
+      ...(runReconcile===undefined?{}:{runReconcile}),host:activeHost,kernel,now,newId};
   }
   const deps = buildDeps();
   let secondary:Awaited<ReturnType<TaskClaimFixture['reopenService']>>|undefined;
@@ -262,6 +273,7 @@ export async function createB2RuntimeFixture(options: {
     claimFixture,claim,deps,runtime:createAgentRuntime(deps),host,entry,modelRequests,scripted,ctx:claimFixture.ctx,scope:claimFixture.scope,directory:claimFixture.directory,
     allowRun:ref=>{allowedRuns.add(refKey(ref));},setNow:at=>{clock=at;},
     rebuild:overrides=>createAgentRuntime(buildDeps(overrides)),
+    rebuildDeps:overrides=>buildDeps(overrides),
     async reopen(){
       if(kind!=='sqlite')throw Error('SQLite reopen only');
       await claimFixture.closeBackend();if('close' in bodies)await bodies.close();

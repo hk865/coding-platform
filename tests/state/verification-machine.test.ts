@@ -332,8 +332,6 @@ type CheckStateLabel = keyof typeof CHECK_STATES;
 const C_COLS = Object.keys(CHECK_STATES) as CheckStateLabel[];
 const c = (...cells: Expect[]): Record<CheckStateLabel, Expect> => row(C_COLS, ...cells);
 
-const reportFacts = (checkId: string, invocationId: string) => ({ roundRef: MIXED.ref, checkId, invocationId,
-  outcome: 'PASS' as const, sourceStatus: 'matched' as const, reportRef: REPORT, bodiesAgree: true });
 const CHECK_EVENTS = {
   'check_begun': (checkId: string): CheckEvent => ({ kind: 'check_begun', checkId, invocationId: 'inv-new', observed: OBSERVED_OK,
     activity: ACTIVE }),
@@ -345,8 +343,6 @@ const CHECK_EVENTS = {
     invocationId, cause: 'ticket_invalid', ticketProblem: 'the ticket has no workspaceRoot' }),
   'check_abandoned': (checkId: string, invocationId: string): CheckEvent => ({ kind: 'check_abandoned', checkId, invocationId,
     cause: 'caller_cancelled', provenNotStarted: true }),
-  'check_report_booked': (checkId: string, invocationId: string): CheckEvent => ({ kind: 'check_report_booked', checkId,
-    invocationId, hostInstanceId: 'host-2', report: reportFacts(checkId, invocationId) }),
 } satisfies Record<string, (checkId: string, invocationId: string) => CheckEvent>;
 type CheckEventLabel = keyof typeof CHECK_EVENTS;
 
@@ -360,6 +356,10 @@ const guardAt = (revision: number): VerificationEffect => ({ kind: 'guard_round'
 const TICKET_INTERRUPTED = { ...MIXED, revision: MIXED.revision + 1, checks: MIXED.checks.map((one) => one.checkId === 'c-exec'
   ? { ...one, phase: 'interrupted' as const, outcome: null, reportRef: null, sourceStatus: null,
     incompleteCause: 'ticket_invalid' as const } : one) };
+/** VR-04 (A.2 step 5.6): the executing check interrupted by the Host restart (D-12). */
+const RESTART_INTERRUPTED = { ...MIXED, revision: MIXED.revision + 1, checks: MIXED.checks.map((one) => one.checkId === 'c-exec'
+  ? { ...one, phase: 'interrupted' as const, outcome: null, reportRef: null, sourceStatus: null,
+    incompleteCause: 'host_restart' as const } : one) };
 /** VR-05: the executing check back to pending, invocation cleared. */
 const ABANDONED = { ...MIXED, revision: MIXED.revision + 1, checks: MIXED.checks.map((one) => one.checkId === 'c-exec'
   ? pendingCheck('c-exec', cov('c-exec')) : one) };
@@ -371,16 +371,15 @@ const CHECK_TABLE: Record<CheckEventLabel, () => Record<CheckStateLabel, Expect>
   // VR-03; pending/finished busy (`checkEventAdmission`), a late result on interrupted is stale busy.
   'check_result_recorded': () => c(IB,
     to(RECORDED, [guardAt(7), { kind: 'emit_event', eventType: 'VerificationCheckResultRecorded' }]), IB, SB, II, IB),
-  // VR-04 (新增, step 5.6): only executing; the same interruption again is a duplicate.
-  'check_interrupted:host_restart': () => c(II, NY, II, DB, II, IB),
+  // VR-04 (step 5.6): only executing; the same interruption again is a duplicate.
+  'check_interrupted:host_restart': () => c(II,
+    to(RESTART_INTERRUPTED, [guardAt(7), { kind: 'emit_event', eventType: 'VerificationCheckInterrupted' }]), II, DB, II, IB),
   // VR-13; another cause on an interrupted check is illegal.
   'check_interrupted:ticket_invalid': () => c(II,
     to(TICKET_INTERRUPTED, [guardAt(7), { kind: 'emit_event', eventType: 'VerificationCheckInterrupted' }]), II, II, II, IB),
   // VR-05 (VD-6); interrupted never returns to pending (D-12).
   'check_abandoned': () => c(II,
     to(ABANDONED, [guardAt(7), { kind: 'emit_event', eventType: 'VerificationCheckAbandoned' }]), II, II, II, IB),
-  // VR-06 (新增): finished busy, interrupted stale busy (D-12), pending invalid.
-  'check_report_booked': () => c(II, NY, IB, SB, II, IB),
 };
 
 describe('transitionCheck: every (state, event) combination', () => {
@@ -698,7 +697,8 @@ describe('check event guards (today order)', () => {
   it('VR-04 (R): no executor check, then the instance lease; invocation and pin still apply', () => {
     const interrupt = (invocationId = 'inv-exec'): CheckEvent =>
       ({ kind: 'check_interrupted', checkId: 'c-exec', invocationId, cause: 'host_restart', hostInstanceId: 'host-2' });
-    check(run(interrupt(), { callerIsExecutor: false }), NY, MIXED);
+    check(run(interrupt(), { callerIsExecutor: false }),
+      to(RESTART_INTERRUPTED, [guardAt(7), { kind: 'emit_event', eventType: 'VerificationCheckInterrupted' }]), MIXED);
     expect(run(interrupt(), { instanceLeaseHeld: false })).toEqual({ ok: false, reason: 'guard_failed', code: 'busy',
       detail: 'another live Host holds the instance lease' });
     expect(run(interrupt('inv-other'))).toMatchObject({ code: 'forbidden' });
@@ -726,17 +726,6 @@ describe('check event guards (today order)', () => {
     expect(run(abandon(false))).toMatchObject({ reason: 'guard_failed', code: 'unavailable' });
     expect(run(abandon(true), { expectedRevision: 1 })).toMatchObject({ reason: 'stale', code: 'revision_conflict' });
     check(run(abandon(true)), to(ABANDONED, [guardAt(7), { kind: 'emit_event', eventType: 'VerificationCheckAbandoned' }]), MIXED);
-  });
-
-  it('VR-06 (R): the instance lease, then the located report identity and agreement', () => {
-    const book = (report: Partial<ReturnType<typeof reportFacts>> = {}): CheckEvent => ({ kind: 'check_report_booked',
-      checkId: 'c-exec', invocationId: 'inv-exec', hostInstanceId: 'host-2', report: { ...reportFacts('c-exec', 'inv-exec'), ...report } });
-    check(run(book(), { callerIsExecutor: false }), NY, MIXED);
-    expect(run(book(), { instanceLeaseHeld: false })).toMatchObject({ code: 'busy' });
-    expect(run(book({ roundRef: roundRef('round-9') }))).toMatchObject({ reason: 'guard_failed', code: 'invalid' });
-    expect(run(book({ checkId: 'c-fin' }))).toMatchObject({ reason: 'guard_failed', code: 'invalid' });
-    expect(run(book({ invocationId: 'inv-old' }))).toMatchObject({ reason: 'guard_failed', code: 'invalid' });
-    expect(run(book({ bodiesAgree: false }))).toMatchObject({ reason: 'guard_failed', code: 'invalid' });
   });
 
   it('checkEventAdmission is the pre-IO part of the same rows', () => {

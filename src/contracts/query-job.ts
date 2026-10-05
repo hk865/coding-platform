@@ -390,7 +390,19 @@ export type QueryExecutionStateV1 = {
     } | null;
     history: RunExecutionHistoryV1 | null;
     requests: QueryModelRequestV1[];
+    /**
+     * Why the start-up reconcile made the QueryRun `unknown` (A.2 step 5.6,
+     * QRR-05): the calls still without a result, or the probe verdict of an
+     * unreadable Kernel. Absent otherwise (the in-process unknown observation
+     * records none); kept after the QueryRun settles as the record of that
+     * phase. The operator who attests the QueryRun (QRR-06) reads it here.
+     */
+    unknown?: QueryUnknownCauseV1;
 };
+/** QRR-05: the persisted cause of phase `unknown`. */
+export type QueryUnknownCauseV1 =
+    | { kind: 'unresolved_tools'; toolCallIds: string[] }
+    | { kind: 'kernel_unreadable'; verdict: 'missing' | 'damaged' };
 export type QueryJobAnswerV1 = {
     schemaVersion: 1;
     answerId: string;

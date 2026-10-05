@@ -209,6 +209,14 @@ export type RuntimeExecutionDependencies = {
    * that neither could be read.
    */
   workspaceSource?: ContinuationWorkspaceSource;
+  /**
+   * A.2 step 5.6: the WorkGraph writer of a Run end without a Kernel terminal,
+   * for the in-process variants this Runtime proves with its exited handle:
+   * RUN-16 (the Kernel call failed before `turn.started`) and RUN-23 (a cancel
+   * of a Run paused at a safe point). Absent, those Runs stay as recorded until
+   * the start-up reconcile.
+   */
+  runReconcile?: import('../work-graph/tasks/run-reconcile-contracts.js').RunReconcilePort;
   now: () => string;
   newId: () => string;
 };

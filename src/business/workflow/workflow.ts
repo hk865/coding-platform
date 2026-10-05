@@ -566,15 +566,19 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort & Requi
     const run = read.value.run;
     if (!sameCanonical(run.ref, runRef)) return false;
     if (run.status !== 'starting') return false;
-    if (run.executionAuthorization !== undefined) return false;
-    if (run.envelope !== null) return false;
-    if (run.inputBinding !== undefined) return false;
     if (run.executionHistory !== undefined) return false;
     if (run.startedAt !== null) return false;
     if (run.lastEventSeq !== 0 || run.lastRuntimeEventId !== '' || run.lastFactEventId !== '') return false;
     const desired = run.controlState?.desiredState;
     if (desired === 'paused' || desired === 'cancelled') return false;
-    return true;
+    const auth = run.executionAuthorization;
+    if (auth === undefined) return run.envelope === null && run.inputBinding === undefined;
+    // W-02 / W-03 (A.2 step 5.6, §12.2): an authorized binding that never began, or one revoked by a
+    // proven non-entry (RUN-16), is re-driven with the SAME claim: `prepare` only rehydrates the bound
+    // input (I-19) and the start re-authorizes a revoked binding (RUN-03). Every other phase entered or
+    // may have entered the Kernel and is never restarted.
+    return 'schemaVersion' in auth && auth.schemaVersion === 2 && (auth.phase === 'authorized' || auth.phase === 'revoked')
+      && run.envelope !== null && run.inputBinding !== undefined;
   }
 
   /**
@@ -680,8 +684,8 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort & Requi
    * claim Session (a failed read, `recoverable`) waits rather than moving the
    * continuation off its history. The claim carries the budget the requeue
    * pins (`TaskRow.requeueBudget`), else the binding's. A claim Session whose
-   * Kernel Turn is still open (`kernel_turn_open` → `create_session`) is
-   * step 5.6; until then it waits.
+   * Kernel Turn is still open (`kernel_turn_open`) gets a new Session through
+   * `create_session{requeue}` (LA-1, A.2 step 5.6).
    */
   async function claimRequeued(
     owned: Owned, base: Base, goal: GoalSnapshot, planRef: PlanRevisionRef, task: RuntimeTask, row: TaskRow,
@@ -701,6 +705,11 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort & Requi
         || !sameCanonical(record.role, binding.sessionRole)
         || (record.health === 'unavailable' && (record.healthConclusion === 'missing' || record.healthConclusion === 'damaged'))) {
         chosen = await chooseSession(owned, goal, binding, null);
+      } else if (record.occupancy === null && record.health === 'unavailable' && record.healthConclusion === 'kernel_turn_open') {
+        // LA-1 (A.2 step 5.6): the Kernel refuses a new Turn in a Session whose last Turn has no Kernel
+        // terminal; the continuation gets a NEW linked Session (never another Task's), seeded by
+        // `prepare` from the TaskRequeue history source.
+        chosen = { kind: 'create' };
       } else if (record.occupancy !== null) {
         return null;
       } else {

@@ -3,9 +3,9 @@
  * (`state/task-machine.ts`).
  *
  * - `projectTaskPhase` / `classifyTaskPhase`: one case per row P1..P18 with
- *   its target phase (A.2 step 5.3; P4 since 5.4) and the TD-1 cause; the rows
- *   P19 and P20 of later substeps are not evaluated yet and their facts reach
- *   the row the remaining table gives; in-round monotonicity, legacy PASS with gaps,
+ *   its target phase (A.2 step 5.3; P4 since 5.4; P19 since 5.6) and the TD-1
+ *   cause; the row P20 of a later substep is not evaluated yet and its facts
+ *   reach the row the remaining table gives; in-round monotonicity, legacy PASS with gaps,
  *   successor heads and the disposition independence.
  * - `transitionTask`: every (state, event) combination over the projection
  *   states (plus ∅): a legal one asserts `next` and `effects`, a re-projection
@@ -14,7 +14,7 @@
  *   `illegal`/`invalid`; 改造 rows of later substeps keep today's result.
  * - Guard order of the claim (TASK-03 with the covering TaskRequeue since
  *   5.4), the requeue and refusal rows (TASK-16/17/28 in the §4.3 unified
- *   order, §4.4 codes; TASK-27 is 5.6), completion, disposition and adoption
+ *   order, §4.4 codes; TASK-27 since 5.6), completion, disposition and adoption
  *   rows, and
  *   the record constructors `newTaskReductionRecord` (today's bytes) and
  *   `newTaskRequeueRecord` (the §11 I-12 clauses its input shows: a valid
@@ -111,6 +111,9 @@ const CRASHED_INTERRUPTED = run('run-1', { outcome: 'crashed', exitCode: null, r
 const PAUSED_INTERRUPTED = run('run-1', { outcome: 'crashed', exitCode: null, ...pointer('paused', 'i-pause'),
   reconciliation: interruptedClean(intentRef('i-pause')) });
 const CANCELLED = run('run-1', { outcome: 'cancelled', exitCode: null });
+/** P19 (C4, A.2 step 5.6): the paused-interrupted end of `PAUSED_INTERRUPTED`. */
+const P19_PROJECTION: TaskPhaseProjection = { row: 'P19', phase: 'blocked', cause: { code: 'paused_interrupted',
+  detail: { afterRunRef: runRef('run-1'), pausedIntentRef: intentRef('i-pause'), kernelPaused: true } } };
 const ENDED_NO_OUTCOME = run('run-1', { outcome: null, exitCode: null });
 
 const roundRef = (roundId: string, runId = 'run-1', taskId = T): VerificationRoundRef =>
@@ -267,10 +270,12 @@ describe('projectTaskPhase: one case per row, the target phase (§4.1, §15.2 st
     expect(classifyTaskPhase(facts({ selectedRun: ENDED_UNKNOWN, coveringRequeue: requeueRef }))).toEqual(ROW.P3.projection);
   });
 
-  it('rows of later substeps are not evaluated yet: P19 and P20 facts reach the remaining table', () => {
-    // P19: paused-interrupted (C4, step 5.6) → P6.
-    expect(classifyTaskPhase(facts({ selectedRun: PAUSED_INTERRUPTED }))).toEqual({ row: 'P6', phase: 'failed',
-      cause: { code: 'run_failed', detail: { outcome: 'crashed', origin: 'host_interrupted' } } });
+  it('P19 (C4, step 5.6) comes before P6; P20 facts (step 5.9) reach the remaining table', () => {
+    // P19: paused-interrupted, shown as 已暂停，可继续; never failed/run_failed.
+    expect(classifyTaskPhase(facts({ selectedRun: PAUSED_INTERRUPTED }))).toEqual(P19_PROJECTION);
+    // A plain clean interruption (no paused pointer) stays P6.
+    expect(classifyTaskPhase(facts({ selectedRun: run('run-1', { outcome: 'crashed', exitCode: null,
+      reconciliation: interruptedClean(null) }) }))).toMatchObject({ row: 'P6', phase: 'failed' });
     // P20: a gate's own chain (C5, step 5.9) → today P16, or P15 with an unresolvable reduction.
     for (const signal of [SIG.open, SIG.fail, SIG.inconclusive, SIG.pass, SIG.invalid]) {
       expect(classifyTaskPhase(gateFacts({ round: signal }))).toEqual(ROW.P16.projection);
@@ -456,7 +461,6 @@ const EVENTS = {
   'check_result_recorded': roundEvent('check_result_recorded', ROW.P12.facts),
   'check_interrupted': roundEvent('check_interrupted', ROW.P9.facts),
   'check_abandoned': roundEvent('check_abandoned', ROW.P12.facts),
-  'check_report_booked': roundEvent('check_report_booked', ROW.P12.facts),
   'evidence_submitted': roundEvent('evidence_submitted', ROW.P12.facts),
   'round_finalized:FAIL': finalized('FAIL', ROW.P7.facts),
   'round_finalized:INCONCLUSIVE': finalized('INCONCLUSIVE', ROW.P8.facts, ['pending_check']),
@@ -506,6 +510,12 @@ function check(actual: Transition<unknown, unknown, unknown>, expected: Expect, 
 }
 
 /** A re-projection to `row`: the same state when nothing changed (SD-1). */
+/** A re-projection to a projection that has no ROW fixture (P19). */
+function reprojectTo(label: StateLabel, projection: TaskPhaseProjection): Expect {
+  const state = STATES[label] as TaskState;
+  const next = stateOf(state.taskKind, projection);
+  return JSON.stringify({ ...state }) === JSON.stringify(next) ? SAME : to(next);
+}
 function reproject(label: StateLabel, row: RowLabel): Expect {
   const state = STATES[label] as TaskState;
   const projection = isGate(label) ? ROW.P16.projection : ROW[row].projection;
@@ -552,8 +562,8 @@ function reprojectionExpect(label: StateLabel, event: EventLabel): Expect {
     // TASK-21 (TD-5) and TASK-07.
     case 'run_ended:yielded:pointer': return gate ? SAME : reproject(label, 'P18');
     case 'run_ended:unknown': return gate ? SAME : reproject(label, 'P3');
-    // TASK-26 (C4) is step 5.6.
-    case 'run_ended:paused_interrupted': return gate ? SAME : II;
+    // TASK-26 (C4, step 5.6): the RUN-24 end re-projects to P19.
+    case 'run_ended:paused_interrupted': return gate ? SAME : reprojectTo(label, P19_PROJECTION);
     case 'run_ended:older_run': return SAME;
     case 'control:pause:running': return gate ? SAME : reproject(label, 'P2');
     // TASK-22/23 (TD-5).
@@ -565,7 +575,6 @@ function reprojectionExpect(label: StateLabel, event: EventLabel): Expect {
     case 'check_begun':
     case 'check_result_recorded':
     case 'check_abandoned':
-    case 'check_report_booked':
       return gate ? II : reproject(label, 'P12');
     case 'evidence_submitted': return reproject(label, 'P12');
     // TASK-12: the last pending/executing check settled with an interrupted one left.
@@ -1020,12 +1029,11 @@ describe('re-projection specifics', () => {
       .toEqual({ ok: true, next: STATES.P5, effects: [] });
   });
 
-  it('TASK-26/29/30 name their rows; the requeue rows need the owner rework facts', () => {
+  it('TASK-29/30 name their rows; the requeue rows need the owner rework facts', () => {
     const detail = (label: StateLabel, event: EventLabel): unknown => {
       const result = transitionTask(STATES[label], EVENTS[event](isGate(label) ? 'gate' : 'work'), ctxFor(label));
       return result.ok ? null : result.detail;
     };
-    expect(detail('P2', 'run_ended:paused_interrupted')).toMatch(/^TASK-26 /);
     expect(detail('P7', 'round_reverified')).toMatch(/^TASK-29 /);
     expect(detail('gate:P16', 'round_opened')).toMatch(/^TASK-30 /);
     // 5.4: the requeue rows are open; without the owner's rework facts they refuse.
@@ -1337,10 +1345,9 @@ describe('task_requeued and task_rework_refused in the unified order (§4.3, §4
     expect(answerOf(requeueAt(STATES.P6, { selectedRun: humanCancelled }, { afterRun: humanCancelled, basis: keyOf('cancelled'),
       pointerIntent: stopIntent('cancel', operator), requestedBy: WORKFLOW_AUTOMATION_ACTOR })))
       .toEqual({ reason: 'guard_failed', code: 'forbidden' });
-    // TASK-27 (continue a paused-interrupted Run) is step 5.6.
+    // TASK-27 (C4, step 5.6): an operator continues a paused-interrupted Run.
     expect(requeueAt(STATES.P6, { selectedRun: PAUSED_INTERRUPTED }, { afterRun: PAUSED_INTERRUPTED,
-      pointerIntent: stopIntent('pause', operator, 'i-pause') })).toMatchObject({ ok: false, reason: 'illegal', code: 'invalid',
-      detail: expect.stringMatching(/^TASK-27 /) });
+      pointerIntent: stopIntent('pause', operator, 'i-pause') })).toMatchObject({ ok: true, next: STATES.P4 });
   });
 
   it('a request that fails G-BUDGET, G-CAP or G-BASIS is a TASK-28 refusal, never a requeue', () => {

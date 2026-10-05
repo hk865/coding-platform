@@ -19,8 +19,7 @@
  *   `claim-service.ts:698-703`, `execution-entry-service.ts:986-992`, `:1121-1122`,
  *   `:1256-1258`, `:1420-1425`, `control-service.ts:412-413`,
  *   `execution-history-binding.ts:146`) and today's CoreError codes.
- * - 改造 rows keep TODAY's externally visible result; step 5 flips them
- *   (RUN-03, RUN-08). Step 5.4b flipped RUN-02 to the C6 entry Plan verdict
+ * - 改造 rows: step 5.4b flipped RUN-02 to the C6 entry Plan verdict
  *   (`carried_unchanged` passes, `entryPlanGuard`). Step 5.4 flipped RUN-01 to the D-3
  *   requeue claim (`requeueClaimProblem`), RUN-02 to the C3 continuation
  *   brief guard and RUN-07 to write `terminalPayload` (C1). Step 5.1 flipped RUN-09..11 (U) to D-7 (a
@@ -28,9 +27,13 @@
  *   releases its claim) and RUN-12..15 to D-8 (the older queued pointer intent
  *   is superseded in the same commit), D-9 (resume needs the Goal active) and
  *   RD-8 (a consumed continuation takes no control).
- * - 新增 rows (RUN-16..24 and the R source of RUN-09..11) keep their events in
- *   the union; the §6.4 refusals in front of them already answer, and the row
- *   itself answers `illegal` (`notYet`) so step 5 only adds rows.
+ * - Step 5.6 (S8, A8, C4): RUN-03 (the same claim re-authorized after RUN-16),
+ *   RUN-08 (an in-process terminal with an unresolved tool call ends
+ *   `outcome_unknown`), the R source of RUN-09..11 (CTL-08(a)), RUN-16..20 and
+ *   RUN-24 (the start-up reconcile, `reconcileRun`/`recordRunResult`),
+ *   RUN-21 (late evidence), RUN-22 (the operator's attestation) and RUN-23
+ *   (the paused stop, in process and at a restart), plus the C4 refusal of a
+ *   control on a paused-interrupted Run.
  *
  * A.2 step 3 routes `execution-entry-service.ts` (RUN-02/04/05/07) through
  * this file. Those rows read the Run, the claim Session and the caller's
@@ -58,10 +61,10 @@ import type { TaskClaim } from '../../../contracts/core/task-claim.js';
 import {
   TERMINAL_PAYLOAD_TEXT_MAX_CHARS, TERMINAL_PAYLOAD_TRUNCATION_SUFFIX,
   type EntryPlanVerdict, type ExecutionAuthorizationV1, type ExecutionAuthorizationV2, type RoleBindingRefV1,
-  type RunContinuationV1, type RunOutcome, type RunReconciliationBasisV1, type RunRef, type RunSnapshot,
-  type RuntimeEventV1, type RuntimeInputBindingV1, type TaskBudgetV1, type TaskLeaseSnapshot,
+  type RunContinuationV1, type RunOutcome, type RunReconciliationBasisV1, type RunReconciliationV1, type RunRef,
+  type RunSnapshot, type RuntimeEventV1, type RuntimeInputBindingV1, type TaskBudgetV1, type TaskLeaseSnapshot,
 } from '../../../contracts/dispatch.js';
-import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
+import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { PlanRevisionRef } from '../../../contracts/plan.js';
 import type { TaskEnvelopeV1 } from '../../../contracts/task-envelope.js';
 import { leaseHeldByClaim, type AttemptClaimBasis } from './attempt-machine.js';
@@ -382,6 +385,12 @@ export type RunTurnFacts = {
   lastPosition: number | null;
   /** The Turn start and history window, recorded with an end reconciled from `Entering`. */
   entered: { enteredAt: string; kernelSource: RunKernelSource; history: RunObservedHistory } | null;
+  /**
+   * The queued steers of `controlInputs` whose `control:<sha(intentRef)>` input
+   * the Kernel accepted (`run.input_accepted`): RUN-23's restart variant
+   * settles them through CTL-08(b) instead of superseding them (CTL-04(b)).
+   */
+  acceptedSteers: readonly ControlIntentRef[];
 };
 
 /** The Kernel terminal a reconcile or late evidence books through `recordRunResult` (RD-5). */
@@ -439,16 +448,32 @@ export type RunEvent =
   /** RUN-19/24 (R, 新增): the machine picks the row by the pointer (C4). */
   | { kind: 'reconcile_interrupted_clean'; claim: TaskClaim; basis: RunReconciliationBasisV1; turn: RunTurnFacts;
       recordedAt: string; factEventId: string }
-  /** RUN-20 (R, 新增): (i) in-flight tool calls, (ii) unreadable Kernel, (iii) unrebuildable continuation. */
+  /**
+   * RUN-20 (R): (i) in-flight tool calls, (ii) unreadable Kernel, (iii)
+   * unrebuildable continuation. The cause is the reconciliation `reason`;
+   * `turn` is the Turn read (null for (ii)), whose start an end from
+   * `Entering` records (ATT-32).
+   */
   | { kind: 'reconcile_unknown'; claim: TaskClaim; basis: RunReconciliationBasisV1;
-      cause: 'tool_calls_unresolved' | 'kernel_unreadable' | 'continuation_unrebuildable'; reason: string;
-      unresolvedToolCallIds: readonly string[]; observedThroughPosition: number | null; turn: RunTurnFacts | null;
-      recordedAt: string }
-  /** RUN-21 (K/R, 新增). */
+      cause: RunUnknownCause; unresolvedToolCallIds: readonly string[]; observedThroughPosition: number | null;
+      turn: RunTurnFacts | null; recordedAt: string }
+  /** RUN-21 (K/R). */
   | ({ kind: 'late_evidence'; claim: TaskClaim; basis: RunReconciliationBasisV1; recordedAt: string;
       factEventId: string } & RunTerminalEvidence)
-  /** RUN-22 (U, 新增): `kernelTurnOpen` read before the attestation (contract (d), LA-1). */
-  | { kind: 'unknown_attested'; claim: TaskClaim; reason: string; kernelTurnOpen: boolean; recordedAt: string };
+  /**
+   * RUN-22 (U): the operator's attestation through the Host holding the
+   * instance lease (`basis` names it); `kernelTurnOpen` read before the
+   * attestation (contract (d), LA-1).
+   */
+  | { kind: 'unknown_attested'; claim: TaskClaim; reason: string; kernelTurnOpen: boolean; recordedAt: string;
+      attestedBy: RunAttestor; basis: RunReconciliationBasisV1 };
+
+/** RUN-20's three causes (§6.3), recorded as the `unresolved` reconciliation reason. */
+export type RunUnknownCause = 'tool_calls_unresolved' | 'kernel_unreadable' | 'continuation_unrebuildable';
+/** RUN-08's reason: the in-process Kernel terminal met a tool call without a determined result (RD-2). */
+export const RUN_UNRESOLVED_TERMINAL_REASON = 'tool_calls_unresolved';
+/** The operator of a RUN-22 attestation (contract (a) `human_attested.attestedBy`). */
+export type RunAttestor = Extract<RunReconciliationV1['observation'], { kind: 'human_attested' }>['attestedBy'];
 
 /** RUN-01 facts beyond the shared context (`claim-service.ts:510-666`); `null` for every other event. */
 export type RunClaimContext = {
@@ -553,6 +578,12 @@ export type RunGuardContext = {
    * sketches their count; the refs name the intents the effects write.
    */
   queuedSteers: readonly ControlIntentRef[];
+  /**
+   * RUN-21 (CTL-07): the Run's intents (pointer and steers) recorded
+   * `outcome_unknown` by RUN-08/20, which the late evidence settles in the
+   * same commit. Absent (none) for every other event.
+   */
+  outcomeUnknownIntents?: readonly ControlIntentRef[];
   /** `YieldedWait` whose continuation a successor Run already consumed (RD-8). */
   continuationConsumed: boolean;
   exitProof: 'live_clean' | 'host_instance_takeover' | null;
@@ -698,11 +729,98 @@ function controlledRunRecord(run: RunSnapshot, change: RunPointerChange): RunSna
  * and `terminalPayload` (contract (f)) are not written.
  */
 function stoppedNotEnteredRunRecord(run: RunSnapshot, change: RunPointerChange, endedAt: string): RunSnapshot {
-  const moved = controlledRunRecord(run, change);
+  return cancelledNotEnteredFields(controlledRunRecord(run, change), endedAt);
+}
+
+/**
+ * The end of a Run that never entered (RUN-09, U and R): `cancelled` at the
+ * commit instant; an `authorized` binding becomes `revoked` (rev+1). The
+ * revision is the caller's: RUN-09 (U) moved the pointer, RUN-09 (R) and the
+ * RUN-16 + RUN-09 commit bump it once.
+ */
+function cancelledNotEnteredFields(run: RunSnapshot, endedAt: string): RunSnapshot {
   const auth = run.executionAuthorization;
   const revoked = isAuthorizationV2(auth) && auth.phase === 'authorized'
     ? { executionAuthorization: { ...auth, revision: auth.revision + 1, phase: 'revoked' as const } } : {};
-  return { ...moved, status: 'ended', outcome: 'cancelled', exitCode: null, endedAt, ...revoked };
+  return { ...run, status: 'ended', outcome: 'cancelled', exitCode: null, endedAt, ...revoked };
+}
+
+/**
+ * RUN-03 (D-5, C3): the same claim re-authorized after RUN-16 revoked it:
+ * entryGeneration+1 at binding revision 1, the claim's Session generation and
+ * the begin's Kernel identity kept. The envelope and the input binding are not
+ * rewritten (the Prepared is the rehydrated Run, `preparedFixedBindingGuard`).
+ */
+function reauthorizedRunRecord(
+  run: RunSnapshot, auth: ExecutionAuthorizationV2, event: Extract<RunEvent, { kind: 'entry_authorized' }>,
+): RunSnapshot {
+  const authorization: ExecutionAuthorizationV2 = {
+    schemaVersion: 2, generation: auth.generation + 1, sessionGeneration: event.claim.generation,
+    revision: 1, consumerId: event.consumerId, inputDigest: auth.inputDigest, phase: 'authorized', kernel: auth.kernel,
+  };
+  return { ...run, revision: run.revision + 1, executionAuthorization: authorization };
+}
+
+/** RUN-16 (D-5): proven not entered; the binding is revoked (rev+1), the Kernel identity kept for RUN-03. */
+function revokedRunRecord(
+  run: RunSnapshot, auth: ExecutionAuthorizationV2, kernel: RunKernelBinding, basis: RunReconciliationBasisV1, recordedAt: string,
+): RunSnapshot {
+  return { ...run, revision: run.revision + 1,
+    executionAuthorization: { ...auth, revision: auth.revision + 1, phase: 'revoked' },
+    reconciliation: { status: 'done', observation: { kind: 'not_entered', kernel: { ...kernel }, revokedGeneration: auth.generation },
+      basis: { ...basis }, recordedAt } };
+}
+
+/** The end a reconcile, a paused stop or a resolution writes (RUN-08, RUN-17..24). */
+type ReconciledEnd = {
+  /** `unknown` for RUN-08/20; `settled` for every known outcome. */
+  phase: 'settled' | 'unknown';
+  outcome: RunOutcome;
+  exitCode: number | null;
+  /** The commit instant; `null` keeps the end an unknown outcome already recorded (RUN-21/22). */
+  endedAt: string | null;
+  /** The Kernel Turn start recorded from `Entering` (and by RUN-21 after RUN-20(ii), L-2). */
+  startedAt: string | null;
+  /** The bound history locator; `null` leaves it. */
+  history: RunExecutionHistoryV1 | null;
+  /** A Kernel or synthesized Runtime terminal moves the event watermarks (RUN-08/20/22 move none). */
+  terminal: { event: RuntimeEventV1; factEventId: string } | null;
+  continuation?: RunContinuationV1;
+  /** Contract (f): written once with a known outcome; `null` for an unknown one. */
+  terminalPayload: RunTerminalPayload | null;
+  reconciliation: RunReconciliationV1;
+};
+
+function reconciledEndRecord(run: RunSnapshot, auth: ExecutionAuthorizationV2, end: ReconciledEnd): RunSnapshot {
+  const nextAuthorization: ExecutionAuthorizationV2 = { ...auth, revision: auth.revision + 1, phase: end.phase };
+  return {
+    ...run, revision: run.revision + 1,
+    ...(end.history === null ? {} : { executionHistory: end.history }),
+    ...(end.startedAt === null ? {} : { startedAt: end.startedAt }),
+    status: 'ended', outcome: end.outcome, exitCode: end.exitCode, endedAt: end.endedAt ?? run.endedAt,
+    executionAuthorization: nextAuthorization,
+    ...(end.terminal === null ? {} : { lastEventSeq: end.terminal.event.sequence,
+      lastRuntimeEventId: end.terminal.event.eventId, lastFactEventId: end.terminal.factEventId }),
+    ...(end.continuation === undefined ? {} : { continuation: structuredClone(end.continuation) }),
+    ...(end.terminalPayload === null ? {} : { terminalPayload: terminalPayloadOf(end.terminalPayload) }),
+    reconciliation: end.reconciliation,
+  };
+}
+
+/**
+ * The Runtime terminal the platform synthesizes for a Turn with no Kernel
+ * terminal (RUN-19/24 `run_crashed`, RUN-23 `run_cancelled`): the next
+ * sequence after the applied fact, the commit's event id and instant. Its
+ * text is for display and audit only (§13 ND-5).
+ */
+function synthesizedTerminal(run: RunSnapshot, payload: RunTerminalPayload, eventId: string, occurredAt: string): RuntimeEventV1 {
+  return { eventType: payload.kind === 'cancelled' ? 'run_cancelled' : 'run_crashed', schemaVersion: 1, eventId,
+    runRef: run.ref, sequence: run.lastEventSeq + 1, occurredAt, payload };
+}
+
+/** Contract (a) `runtime_terminal`: the Kernel terminal event and its canonical digest. */
+function runtimeTerminalObservation(event: RuntimeEventV1): RunReconciliationV1['observation'] {
+  return { kind: 'runtime_terminal', event: structuredClone(event), digest: sha256Hex(canonicalJson(event as unknown as JsonValue)) };
 }
 
 // -------------------------------------------------------------------------- //
@@ -1039,7 +1157,7 @@ export function transitionRun(state: RunState, event: RunEvent, ctx: RunGuardCon
     case 'reconcile_unknown':
       return onReconcile(state, node, event, ctx);
     case 'late_evidence': return onLateEvidence(state, node, event, ctx);
-    case 'unknown_attested': return onUnknownAttested(node, event, ctx);
+    case 'unknown_attested': return onUnknownAttested(state, node, event, ctx);
     default: return unreachable(event, 'Run event');
   }
 }
@@ -1093,10 +1211,11 @@ function onClaimCommitted(event: Extract<RunEvent, { kind: 'claim_committed' }>,
 }
 
 /**
- * RUN-02 (and RUN-03, `busy` until step 5.6) in `authorizeRuntimeEntry`
- * order: pointer fence, `starting`, Session, Lease, persisted claim, prepared
- * binding, existing authorization, Goal, entry Plan (C6), continuation brief
- * (C3), fresh re-admission (`execution-entry-service.ts` `authorizeRuntimeEntry`).
+ * RUN-02 and RUN-03 in `authorizeRuntimeEntry` order: pointer fence,
+ * `starting`, Session, Lease, persisted claim, prepared binding, existing
+ * authorization (a revoked one re-authorizes only with the binding it fixed),
+ * Goal, entry Plan (C6), continuation brief (C3), fresh re-admission
+ * (`execution-entry-service.ts` `authorizeRuntimeEntry`).
  */
 function onEntryAuthorized(
   state: RunState, run: RunSnapshot, event: Extract<RunEvent, { kind: 'entry_authorized' }>, ctx: RunGuardContext,
@@ -1120,10 +1239,12 @@ function onEntryAuthorized(
     case 'entering':
     case 'damaged':
       return reject('illegal', 'busy', 'the Run already has a V2 entry authorization');
-    case 'revoked':
-      // RUN-03 (改造) is step 5.6: until then every existing V2 authorization is `busy`. Once it
-      // re-authorizes, the Goal, entry Plan (C6, step 5.4b) and brief guards below apply to it unchanged.
-      return reject('illegal', 'busy', 'the Run already has a V2 entry authorization');
+    case 'revoked': {
+      // RUN-03 (D-5, C3): the same claim re-authorizes only with the binding the Run already fixed.
+      const fixed = preparedFixedBindingGuard(run, event);
+      if (fixed !== null) return fixed;
+      break;
+    }
     default: return unreachable(starting, 'starting class');
   }
   if (ctx.goal.desiredState !== 'active') return reject('guard_failed', 'busy', 'the Goal is not active');
@@ -1132,7 +1253,30 @@ function onEntryAuthorized(
   const brief = continuationBriefGuard(run, ctx.continuationBrief);
   if (brief !== null) return brief;
   if (ctx.freshAdmission !== null) return freshAdmissionRejected(ctx.freshAdmission);
+  if (starting === 'revoked') {
+    const auth = v2Binding(state, run);
+    if (isRejected(auth)) return auth;
+    return accept(runStateOf(reauthorizedRunRecord(run, auth, event)));
+  }
   return accept(runStateOf(authorizedRunRecord(run, event)));
+}
+
+/**
+ * RUN-03 (§6.4, C3, I-19): a revoked Run keeps its input. The Prepared input
+ * binding (`continuationBriefDigest` included) and envelope equal the Run's by
+ * canonical JSON, an absent `additionalMaterialRefs` equal to `[]`, as the
+ * driver's pre-check compares them; otherwise `guard_failed`/`invalid` (the
+ * way out is RUN-09 and a requeue).
+ */
+function preparedFixedBindingGuard(run: RunSnapshot, event: Extract<RunEvent, { kind: 'entry_authorized' }>): Rejected | null {
+  const fixed = run.inputBinding;
+  const normalized = (binding: RuntimeInputBindingV1): RuntimeInputBindingV1 =>
+    ({ ...binding, additionalMaterialRefs: binding.additionalMaterialRefs ?? [] });
+  if (fixed === undefined || run.envelope === null || !sameRef(normalized(event.inputBinding), normalized(fixed))
+    || !sameRef(event.envelope, run.envelope)) {
+    return reject('guard_failed', 'invalid', 'the Prepared input binding or envelope disagrees with the binding fixed on the revoked Run');
+  }
+  return null;
 }
 
 /**
@@ -1317,17 +1461,41 @@ function onTerminalObserved(
   if (isRunFinished(run)) return reject('duplicate', 'busy', 'the Run already has a terminal result');
   if (ctx.exitProof === null) return reject('guard_failed', 'incomplete', 'the Kernel call has not exited cleanly; the result is not booked yet');
   if (ctx.inputsConfirmed !== true) return reject('guard_failed', 'unavailable', 'the Turn input acceptance is not confirmed yet');
-  // RUN-08 (改造) is step 5: today the observer books nothing and the Run stays running.
-  if (event.unresolvedToolCallIds.length > 0) return notYet('RUN-08');
   const claim = event.claim;
   if (auth.consumerId !== event.entry.consumerId || auth.generation !== event.entry.entryGeneration) {
     return reject('guard_failed', 'forbidden', 'the result entry projection does not match the current V2 entry binding');
   }
-  const { kernelSource, completedHistoryBoundary: boundary, history: observed } = event;
+  // RUN-08 (RD-2): a tool call without a determined result makes the end unknown.
+  if (event.unresolvedToolCallIds.length > 0) return onUnresolvedTerminal(run, auth, event, ctx);
+  const { completedHistoryBoundary: boundary } = event;
+  const boundaryProblem = terminalBoundaryProblem(auth, event.kernelSource, boundary, event.history);
+  if (boundaryProblem !== null) return boundaryProblem;
+  const terminal = terminalOutcomeOf(event.event, claim.runRef, state.lastEventSeq);
+  if ('status' in terminal) return rejected(terminal);
+  const yieldProblem = continuationGuard(terminal.outcome, event.continuation, claim);
+  if (yieldProblem !== null) return yieldProblem;
+  const history = locatorAfter(run, claim.sessionRef, ctx, event.history as RunObservedHistory);
+  if (isRejected(history)) return history;
+  return accept(runStateOf(endedRunRecord(run, auth, history, terminal, event)), [
+    { kind: 'attempt', event: 'attempt_ended', outcome: terminal.outcome },
+    { kind: 'outbox', change: 'settled_entered' },
+    ...releaseEffects(claim, ctx, (boundary as RunHistoryBoundary).cursor),
+  ]);
+}
+
+/**
+ * The caller's Kernel terminal against the entered binding, in today's order
+ * (`execution-entry-service.ts:1374-1384`; RUN-07, and the terminals RUN-17/18/21
+ * book through the same write): a complete boundary, the Kernel source, the
+ * boundary at that source, the observed window ending there.
+ */
+function terminalBoundaryProblem(
+  auth: ExecutionAuthorizationV2, kernelSource: RunKernelSource | null, boundary: RunHistoryBoundary | null,
+  observed: RunObservedHistory | null,
+): Rejected | null {
   if (kernelSource === null || boundary === null || observed === null) {
     return reject('guard_failed', 'incomplete', 'a terminal result requires the complete observed Turn boundary');
   }
-  // The observation is the caller's: its shapes are checked here, in today's order (`:1374-1384`).
   if (!isKernelSource(kernelSource)) return reject('guard_failed', 'invalid', 'the terminal Kernel source is incomplete');
   if (auth.kernel === null || !sameKernel(auth.kernel, kernelSource)) {
     return reject('guard_failed', 'forbidden', 'the terminal Kernel source disagrees with the entered binding');
@@ -1343,24 +1511,54 @@ function onTerminalObserved(
     || observed.startPosition > kernelSource.position) {
     return reject('guard_failed', 'incomplete', 'the observed history does not carry the complete Turn end boundary');
   }
-  const terminal = terminalOutcomeOf(event.event, claim.runRef, state.lastEventSeq);
-  if ('status' in terminal) return rejected(terminal);
-  if (terminal.outcome === 'yielded') {
-    if (event.continuation === undefined) {
+  return null;
+}
+
+/** A yielded terminal carries exactly the continuation of its wait; no other terminal carries one. */
+function continuationGuard(outcome: RunOutcome, continuation: RunContinuationV1 | undefined, claim: TaskClaim): Rejected | null {
+  if (outcome === 'yielded') {
+    if (continuation === undefined) {
       return reject('guard_failed', 'invalid', 'a yielded Run requires the original wait continuation binding');
     }
-    const problem = continuationProblem(event.continuation, claim);
+    const problem = continuationProblem(continuation, claim);
     if (problem !== null) return reject('guard_failed', 'invalid', `the yielded continuation is malformed: ${problem}`);
-  } else if (event.continuation !== undefined) {
-    return reject('guard_failed', 'invalid', 'only a yielded Run may carry a continuation binding');
+    return null;
   }
-  const history = locatorAfter(run, claim.sessionRef, ctx, observed);
+  return continuation === undefined ? null : reject('guard_failed', 'invalid', 'only a yielded Run may carry a continuation binding');
+}
+
+/**
+ * RUN-08 (RD-2, D-4): the in-process Kernel terminal with a tool call still
+ * without a determined result. The Run ends `outcome_unknown` (auth
+ * `unknown`), keeps its Session and Lease, and records the window it observed
+ * (`quarantined/unresolved`); the Attempt ends unknown (ATT-07) while the
+ * Outbox stays entered (ATT-28) and the Lease held (ATT-20). The event
+ * watermark does not move, so RUN-21's later terminal still orders after it.
+ */
+function onUnresolvedTerminal(
+  run: RunSnapshot, auth: ExecutionAuthorizationV2, event: Extract<RunEvent, { kind: 'terminal_observed' }>, ctx: RunGuardContext,
+): RunTransition {
+  const { kernelSource, history: observed } = event;
+  if (kernelSource === null || observed === null) {
+    return reject('guard_failed', 'incomplete', 'an unresolved terminal requires the observed Turn window');
+  }
+  if (!isKernelSource(kernelSource)) return reject('guard_failed', 'invalid', 'the terminal Kernel source is incomplete');
+  if (auth.kernel === null || !sameKernel(auth.kernel, kernelSource)) {
+    return reject('guard_failed', 'forbidden', 'the terminal Kernel source disagrees with the entered binding');
+  }
+  if (!isRecord(observed.kernel) || !sameKernel(observed.kernel, kernelSource)) {
+    return reject('guard_failed', 'forbidden', 'the observed history Kernel identity disagrees with the terminal source');
+  }
+  if (observed.endPosition !== null) return reject('guard_failed', 'invalid', 'an unresolved terminal leaves the history end open');
+  const history = locatorAfter(run, event.claim.sessionRef, ctx, observed);
   if (isRejected(history)) return history;
-  return accept(runStateOf(endedRunRecord(run, auth, history, terminal, event)), [
-    { kind: 'attempt', event: 'attempt_ended', outcome: terminal.outcome },
-    { kind: 'outbox', change: 'settled_entered' },
-    ...releaseEffects(claim, ctx, boundary.cursor),
-  ]);
+  return accept(runStateOf(reconciledEndRecord(run, auth, {
+    phase: 'unknown', outcome: 'outcome_unknown', exitCode: null, endedAt: event.endedAt, startedAt: null, history,
+    terminal: null, terminalPayload: null,
+    reconciliation: { status: 'quarantined', observation: { kind: 'unresolved', reason: RUN_UNRESOLVED_TERMINAL_REASON,
+      observedThroughPosition: observed.observedThroughPosition, unresolvedToolCallIds: [...event.unresolvedToolCallIds] },
+    basis: { kind: 'live_clean' }, recordedAt: event.endedAt },
+  })), [{ kind: 'attempt', event: 'attempt_ended', outcome: 'outcome_unknown' }]);
 }
 
 /**
@@ -1444,10 +1642,10 @@ function onNotEnteredControl(
     case 'ended':
       return node === 'EndedUnknown'
         ? reject('illegal', 'invalid', 'from Entering on a control applies only through the Kernel, RUN-23 or reconcile (D-7)')
-        : reject('illegal', 'busy', 'the Run already ended; no new control intent is accepted');
+        : endedRunControlRefusal(run);
     default: return unreachable(cls, 'control class');
   }
-  if (event.source === 'R') return notYet(`${NOT_ENTERED_ROW[event.kind]} (R)`);
+  if (event.source === 'R') return onNotEnteredReconcile(runStateOf(run), run, event, ctx);
   const kind = NOT_ENTERED_KIND[event.kind];
   const problem = submitGuards(run, kind, null, false, ctx);
   if (problem !== null) return problem;
@@ -1463,20 +1661,77 @@ function onNotEnteredControl(
     case 'stop_not_entered': {
       const claim = ctx.persistedClaim;
       if (claim === null) return noPersistedClaim(event.kind);
-      for (const steer of ctx.queuedSteers) {
-        effects.push({ kind: 'intent', event: 'control_superseded_by_newer', intentRef: steer });
-      }
-      effects.push({ kind: 'attempt', event: 'attempt_ended', outcome: 'cancelled' },
-        { kind: 'outbox', change: 'settled_not_entered' });
-      if (ctx.lease === 'owned') effects.push({ kind: 'release_lease' });
-      if (ctx.session.owned) {
-        effects.push({ kind: 'release_session', holder: claim.runRef, generation: claim.generation,
-          historyCursor: { kind: 'keep' }, kernelTurnOpen: false });
-      }
-      return accept(runStateOf(stoppedNotEnteredRunRecord(run, change, event.recordedAt)), effects);
+      return accept(runStateOf(stoppedNotEnteredRunRecord(run, change, event.recordedAt)),
+        notEnteredCancelEffects(claim, ctx, effects));
     }
     default: return unreachable(event, 'not-entered control event');
   }
+}
+
+/**
+ * The ended-Run refusal of a control (§6.4, §7.4): `busy`; a paused-interrupted
+ * Run (RUN-24, C4) points to the Task-level continuation (TASK-27).
+ */
+function endedRunControlRefusal(run: RunSnapshot): Rejected {
+  return reject('illegal', 'busy', isPausedInterrupted(run)
+    ? 'the paused Run ended at the Host restart; continue the Task'
+    : 'the Run already ended; no new control intent is accepted');
+}
+
+/**
+ * RUN-09's same-commit effects after its intent effects (U and R): every
+ * queued steer superseded by the cancel (CTL-04(b)), the Attempt ended
+ * cancelled (ATT-05), the Outbox settled as not entered (ATT-30), and the Lease
+ * (ATT-23) and Session occupancy (SES-05, `historyCursor` kept) the Run still
+ * holds released.
+ */
+function notEnteredCancelEffects(claim: TaskClaim, ctx: RunGuardContext, intents: readonly RunEffect[]): RunEffect[] {
+  const effects: RunEffect[] = [...intents];
+  for (const steer of ctx.queuedSteers) {
+    effects.push({ kind: 'intent', event: 'control_superseded_by_newer', intentRef: steer });
+  }
+  effects.push({ kind: 'attempt', event: 'attempt_ended', outcome: 'cancelled' },
+    { kind: 'outbox', change: 'settled_not_entered' });
+  if (ctx.lease === 'owned') effects.push({ kind: 'release_lease' });
+  if (ctx.session.owned) {
+    effects.push({ kind: 'release_session', holder: claim.runRef, generation: claim.generation,
+      historyCursor: { kind: 'keep' }, kernelTurnOpen: false });
+  }
+  return effects;
+}
+
+const NOT_ENTERED_POINTER = { cancel: 'cancelled', pause: 'paused', resume: 'running' } as const;
+
+/**
+ * RUN-09..11 (R, CTL-08(a), W-04): the start-up reconcile settles the pointer
+ * intent a Run that never entered still holds queued (left from before D-7, or
+ * submitted while the Run was `Entering` and revoked since by RUN-16). The
+ * pointer stays; the intent is reconciled applied (`platform_not_entered`). A
+ * cancel ends the Run as RUN-09 (U) does; a pause or resume writes no Run (the
+ * commit guards it); a resume needs the Goal active, else it stays queued.
+ */
+function onNotEnteredReconcile(
+  state: RunState, run: RunSnapshot,
+  event: Extract<RunEvent, { kind: 'stop_not_entered' | 'pause_not_entered' | 'resume_not_entered' }>, ctx: RunGuardContext,
+): RunTransition {
+  const lease = hostLeaseGuard(true, ctx);
+  if (lease !== null) return lease;
+  const kind = NOT_ENTERED_KIND[event.kind];
+  const control = run.controlState;
+  const intent = ctx.pointerIntent;
+  if (control === undefined || control.desiredState !== NOT_ENTERED_POINTER[kind] || !sameRef(control.intentRef, event.intentRef)
+    || intent === null || intent.kind !== kind || intent.status !== 'queued') {
+    return reject('illegal', 'invalid', `${NOT_ENTERED_ROW[event.kind]} (R) settles only the queued ${kind} the pointer names`);
+  }
+  if (kind === 'resume' && ctx.goal.desiredState !== 'active') {
+    return reject('guard_failed', 'busy', `the Goal is ${ctx.goal.desiredState}; the queued resume stays queued`);
+  }
+  const reconciled: RunEffect = { kind: 'intent', event: 'control_reconciled', intentRef: control.intentRef };
+  if (event.kind !== 'stop_not_entered') return accept(state, [reconciled]);
+  const claim = ctx.persistedClaim;
+  if (claim === null) return noPersistedClaim(event.kind);
+  return accept(runStateOf(cancelledNotEnteredFields({ ...run, revision: run.revision + 1 }, event.recordedAt)),
+    notEnteredCancelEffects(claim, ctx, [reconciled]));
 }
 
 /**
@@ -1494,7 +1749,7 @@ function onControlSubmitted(
   const cls = controlClassOf(runControlNodeOf(run));
   switch (cls) {
     case 'ended':
-      return reject('illegal', 'busy', 'the Run already ended; no new control intent is accepted');
+      return endedRunControlRefusal(run);
     case 'not_entered':
       if (event.control !== 'steer') {
         return reject('illegal', 'invalid', `a Run that never entered takes ${event.control} through ${event.control === 'cancel'
@@ -1530,7 +1785,83 @@ function isTakeover(basis: RunReconciliationBasisV1): boolean {
   return basis.kind === 'host_instance_takeover';
 }
 
-/** RUN-23 (新增): the §6.4 refusals in front of the row (RD-7, LA-7). */
+/**
+ * The Session release of a Run end (§6.3 `release_session`, only while the Run
+ * still holds the occupancy) and the Lease release (only while it holds the
+ * Lease), in RUN-07's order. A Turn left without a Kernel terminal keeps the
+ * cursor and makes the Session `unavailable/kernel_turn_open` (SES-06/07, LA-1).
+ */
+function endReleaseEffects(claim: TaskClaim, ctx: RunGuardContext, release:
+  { kernelTurnOpen: false; historyCursor: SessionRelease['historyCursor'] } | { kernelTurnOpen: true }): RunEffect[] {
+  const effects: RunEffect[] = [];
+  if (ctx.session.owned) {
+    effects.push(release.kernelTurnOpen
+      ? { kind: 'release_session', holder: claim.runRef, generation: claim.generation, historyCursor: { kind: 'keep' },
+        kernelTurnOpen: true }
+      : { kind: 'release_session', holder: claim.runRef, generation: claim.generation, historyCursor: release.historyCursor,
+        kernelTurnOpen: false });
+  }
+  if (ctx.lease === 'owned') effects.push({ kind: 'release_lease' });
+  return effects;
+}
+
+/**
+ * CTL-08(b)(c)(d) for an end the start-up reconcile records: the pointer
+ * intent and every steer still queued are reconciled in the same commit; the
+ * service gives each its observation (a steer the Kernel accepted is
+ * `steered`, anything else the platform conclusion of the end).
+ */
+function queuedIntentsReconciled(run: RunSnapshot, ctx: RunGuardContext): RunEffect[] {
+  const effects: RunEffect[] = [];
+  const control = run.controlState;
+  if (control !== undefined && ctx.pointerIntent !== null && ctx.pointerIntent.status === 'queued') {
+    effects.push({ kind: 'intent', event: 'control_reconciled', intentRef: control.intentRef });
+  }
+  for (const steer of ctx.queuedSteers) effects.push({ kind: 'intent', event: 'control_reconciled', intentRef: steer });
+  return effects;
+}
+
+/**
+ * From `Entering` an end records the Kernel Turn start and its history window
+ * in the same commit (RUN-17/19/20/23/24; ATT-31/32): the Turn the reconcile
+ * read must be the begin's Kernel identity.
+ */
+function enteredFactsOf(
+  run: RunSnapshot, auth: ExecutionAuthorizationV2, claim: TaskClaim, ctx: RunGuardContext,
+  entered: { enteredAt: string | null; history: RunObservedHistory } | null,
+): { startedAt: string; history: RunExecutionHistoryV1 } | Rejected {
+  if (entered === null || entered.enteredAt === null) {
+    return reject('illegal', 'invalid', 'an end reconciled from Entering records the Kernel Turn start');
+  }
+  if (auth.kernel === null || !isRecord(entered.history.kernel) || !sameKernel(auth.kernel, entered.history.kernel)) {
+    return reject('guard_failed', 'forbidden', 'the reconciled Turn is not the begin Kernel identity');
+  }
+  const history = locatorAfter(run, claim.sessionRef, ctx, entered.history);
+  if (isRejected(history)) return history;
+  return { startedAt: entered.enteredAt, history };
+}
+
+/**
+ * The reconcile basis is proven (§6.3 表外说明 cleanProof): a restart takeover
+ * needs this Host to hold the instance lease (D-18); the in-process variants
+ * are submitted by the Runtime that holds the exited handle (`live_clean`).
+ */
+function basisGuard(basis: RunReconciliationBasisV1, ctx: RunGuardContext): Rejected | null {
+  if (ctx.exitProof === null || ctx.exitProof !== basis.kind) {
+    return reject('guard_failed', 'incomplete', 'the reconcile basis is not proven; the Run stays as recorded');
+  }
+  return hostLeaseGuard(isTakeover(basis), ctx);
+}
+
+/**
+ * RUN-23 (RD-7, LA-7): a queued cancel and a Turn with no Kernel terminal and
+ * no tool call in flight end the Run `cancelled`: in process once the live
+ * handle proves the Kernel exited with the Turn paused at a safe point, at a
+ * restart whatever the Kernel status (then also from `Entering`). The cancel is
+ * applied (CTL-10); a queued steer the Kernel accepted is reconciled at a
+ * restart (CTL-08(b)), every other queued steer superseded by the cancel
+ * (CTL-04(b)). The Session keeps its cursor and becomes `kernel_turn_open`.
+ */
 function onStopPaused(
   state: RunState, node: Exclude<RunNode, 'Absent'>, event: Extract<RunEvent, { kind: 'stop_paused' }>, ctx: RunGuardContext,
 ): RunTransition {
@@ -1558,21 +1889,47 @@ function onStopPaused(
   if (ctx.exitProof === 'live_clean' && !ctx.kernelPaused) {
     return reject('guard_failed', 'incomplete', 'the in-process stop needs the Kernel Turn paused at a safe point');
   }
-  if (state.pointer !== 'cancelled' || ctx.pointerIntent === null || ctx.pointerIntent.kind !== 'cancel'
-    || ctx.pointerIntent.status !== 'queued') {
+  const run = state.record as RunSnapshot;
+  const control = run.controlState;
+  if (state.pointer !== 'cancelled' || control === undefined || !sameRef(control.intentRef, event.cancelIntentRef)
+    || ctx.pointerIntent === null || ctx.pointerIntent.kind !== 'cancel' || ctx.pointerIntent.status !== 'queued') {
     return reject('illegal', 'invalid', 'stop_paused applies the queued cancel the pointer names');
   }
-  return notYet('RUN-23');
+  if (event.basis.kind !== ctx.exitProof) return reject('guard_failed', 'incomplete', 'the stop basis is not the proven exit');
+  if (ctx.kernelProbe !== 'ready') return reject('guard_failed', 'unavailable', 'the Kernel Turn of the stop is not readable');
+  if (ctx.inputsConfirmed !== true) return reject('guard_failed', 'unavailable', 'the Turn input acceptance is not confirmed yet');
+  const claim = event.claim;
+  const persisted = persistedClaimGuard(ctx, claim, event.kind, 'the stop claim disagrees with the persisted claim');
+  if (persisted !== null) return persisted;
+  const auth = v2Binding(state, run);
+  if (isRejected(auth)) return auth;
+  const entered = node === 'Entering' ? enteredFactsOf(run, auth, claim, ctx, event.turn.entered) : null;
+  if (entered !== null && isRejected(entered)) return entered;
+  const payload: RunTerminalPayload = { kind: 'cancelled',
+    reason: ctx.kernelPaused ? 'cancelled_while_paused' : 'cancelled_at_reconcile' };
+  const terminal = synthesizedTerminal(run, payload, event.factEventId, event.recordedAt);
+  const record = reconciledEndRecord(run, auth, {
+    phase: 'settled', outcome: 'cancelled', exitCode: null, endedAt: event.recordedAt,
+    startedAt: entered === null ? null : entered.startedAt, history: entered === null ? null : entered.history,
+    terminal: { event: terminal, factEventId: event.factEventId }, terminalPayload: payload,
+    reconciliation: { status: 'done', observation: { kind: 'interrupted_clean', event: terminal,
+      lastPosition: event.turn.lastPosition, kernelPaused: ctx.kernelPaused, pausedIntentRef: null },
+    basis: { ...event.basis }, recordedAt: event.recordedAt },
+  });
+  const restart = isTakeover(event.basis);
+  const steers: RunEffect[] = ctx.queuedSteers.map((steer): RunEffect => restart && event.turn.acceptedSteers.some(accepted => sameRef(accepted, steer))
+    ? { kind: 'intent', event: 'control_reconciled', intentRef: steer }
+    : { kind: 'intent', event: 'control_superseded_by_newer', intentRef: steer });
+  return accept(runStateOf(record), [
+    { kind: 'attempt', event: 'attempt_ended', outcome: 'cancelled' },
+    { kind: 'outbox', change: 'settled_entered' },
+    ...endReleaseEffects(claim, ctx, { kernelTurnOpen: true }),
+    { kind: 'intent', event: 'control_applied_paused_stop', intentRef: control.intentRef },
+    ...steers,
+  ]);
 }
 
-const RECONCILE_ROW = {
-  reconcile_not_entered: { Entering: 'RUN-16', Running: 'RUN-16' },
-  reconcile_terminal: { Entering: 'RUN-17', Running: 'RUN-18' },
-  reconcile_interrupted_clean: { Entering: 'RUN-19', Running: 'RUN-19' },
-  reconcile_unknown: { Entering: 'RUN-20', Running: 'RUN-20' },
-} as const;
-
-/** RUN-16..20, RUN-24 (新增): the §6.4 refusals in front of the rows. */
+/** RUN-16..20, RUN-24: the §6.4 refusals in front of the rows, then the row the event and the pointer select. */
 function onReconcile(
   state: RunState, node: Exclude<RunNode, 'Absent'>,
   event: Extract<RunEvent, { kind: 'reconcile_not_entered' | 'reconcile_terminal' | 'reconcile_interrupted_clean' | 'reconcile_unknown' }>,
@@ -1602,31 +1959,241 @@ function onReconcile(
     return reject('guard_failed', 'unavailable', `a ${probe} probe proves nothing; the Run stays and the Host reports it`);
   }
   const entering = node === 'Entering';
+  const run = state.record as RunSnapshot;
   switch (event.kind) {
     case 'reconcile_not_entered':
       if (!entering) return reject('illegal', 'invalid', 'only an Entering Run can be proven not entered');
       if (probe !== 'ready') {
         return reject('guard_failed', 'unavailable', 'an unreadable Kernel is not proof of not entering (RUN-20(ii))');
       }
-      return notYet(RECONCILE_ROW[event.kind].Entering);
+      return onReconcileNotEntered(state, run, event, ctx);
     case 'reconcile_terminal':
-      return notYet(RECONCILE_ROW[event.kind][entering ? 'Entering' : 'Running']);
+      return onReconcileTerminal(state, run, entering, event, ctx);
     case 'reconcile_interrupted_clean': {
       // C4: the machine picks the row by the pointer; a paused pointer never ends as a plain interruption.
-      if (state.pointer === 'paused') return notYet('RUN-24');
       const intent = ctx.pointerIntent;
       if (state.pointer === 'cancelled' && intent !== null && intent.kind === 'cancel' && intent.status === 'queued') {
         return reject('illegal', 'invalid', 'a queued cancel with a clean Turn ends through stop_paused (RUN-23)');
       }
-      return notYet(RECONCILE_ROW[event.kind].Running);
+      return onReconcileInterrupted(state, run, entering, event, ctx);
     }
     case 'reconcile_unknown':
-      return notYet(RECONCILE_ROW[event.kind].Running);
+      return onReconcileUnknown(state, run, entering, event, ctx);
     default: return unreachable(event, 'reconcile event');
   }
 }
 
-/** RUN-21 (新增): the §6.4 refusals in front of the row (RD-4). */
+/**
+ * RUN-16 (D-5): an `Entering` Run whose fixed Turn the readable Kernel Store
+ * does not hold, after its executor is proven gone (restart takeover, or the
+ * in-process Kernel call exited before `turn.started`). The binding is revoked
+ * (the same claim re-authorizes through RUN-03); Attempt, Outbox, Lease and
+ * Session are not written (ATT-04, ATT-21, ATT-25). A leftover queued cancel
+ * then ends the Run in the same commit (RUN-09 (R)), a queued pause is
+ * reconciled (RUN-10 (R)), both CTL-08(a).
+ */
+function onReconcileNotEntered(
+  state: RunState, run: RunSnapshot, event: Extract<RunEvent, { kind: 'reconcile_not_entered' }>, ctx: RunGuardContext,
+): RunTransition {
+  const proof = basisGuard(event.basis, ctx);
+  if (proof !== null) return proof;
+  const persisted = persistedClaimGuard(ctx, event.claim, event.kind, 'the reconcile claim disagrees with the persisted claim');
+  if (persisted !== null) return persisted;
+  const auth = v2Binding(state, run);
+  if (isRejected(auth)) return auth;
+  if (auth.kernel === null || !sameKernel(auth.kernel, event.kernel)) {
+    return reject('guard_failed', 'invalid', 'the reconciled Kernel identity is not the begin binding');
+  }
+  const revoked = revokedRunRecord(run, auth, auth.kernel, event.basis, event.recordedAt);
+  const control = run.controlState;
+  const intent = ctx.pointerIntent;
+  if (control !== undefined && intent !== null && intent.status === 'queued') {
+    const reconciled: RunEffect = { kind: 'intent', event: 'control_reconciled', intentRef: control.intentRef };
+    if (state.pointer === 'cancelled' && intent.kind === 'cancel') {
+      return accept(runStateOf(cancelledNotEnteredFields(revoked, event.recordedAt)),
+        notEnteredCancelEffects(event.claim, ctx, [reconciled]));
+    }
+    if (state.pointer === 'paused' && intent.kind === 'pause') return accept(runStateOf(revoked), [reconciled]);
+  }
+  return accept(runStateOf(revoked));
+}
+
+/**
+ * RUN-17/18 (D-6): the Kernel Turn reached a terminal the in-process observer
+ * never booked. It is booked through the extended `recordRunResult` (RD-5) as
+ * RUN-07 would, plus the `runtime_terminal` reconciliation; from `Entering`
+ * the same commit records the Turn start (ATT-31/33). A yielded terminal
+ * carries the continuation rebuilt per RD-3 (else RUN-20(iii)). A known
+ * non-yielded end reconciles the still-queued intents (CTL-08(b)(c)).
+ */
+function onReconcileTerminal(
+  state: RunState, run: RunSnapshot, entering: boolean, event: Extract<RunEvent, { kind: 'reconcile_terminal' }>,
+  ctx: RunGuardContext,
+): RunTransition {
+  if (!isTakeover(event.basis)) {
+    return reject('illegal', 'invalid', 'an unbooked Kernel terminal is reconciled only by the start-up reconcile (RUN-17/18)');
+  }
+  const proof = basisGuard(event.basis, ctx);
+  if (proof !== null) return proof;
+  if (ctx.kernelProbe !== 'ready') return reject('guard_failed', 'unavailable', 'the Kernel Turn of the terminal is not readable');
+  if (ctx.inputsConfirmed !== true) return reject('guard_failed', 'unavailable', 'the Turn input acceptance is not confirmed yet');
+  if (event.unresolvedToolCallIds.length > 0) {
+    return reject('guard_failed', 'incomplete', 'a tool call has no determined result; the end is unknown (RUN-20)');
+  }
+  const claim = event.claim;
+  const persisted = persistedClaimGuard(ctx, claim, event.kind, 'the reconcile claim disagrees with the persisted claim');
+  if (persisted !== null) return persisted;
+  const auth = v2Binding(state, run);
+  if (isRejected(auth)) return auth;
+  const boundaryProblem = terminalBoundaryProblem(auth, event.kernelSource, event.completedHistoryBoundary, event.history);
+  if (boundaryProblem !== null) return boundaryProblem;
+  const terminal = terminalOutcomeOf(event.event, claim.runRef, state.lastEventSeq);
+  if ('status' in terminal) return rejected(terminal);
+  const yieldProblem = continuationGuard(terminal.outcome, event.continuation, claim);
+  if (yieldProblem !== null) return yieldProblem;
+  if (entering && event.enteredAt === null) {
+    return reject('illegal', 'invalid', 'an end reconciled from Entering records the Kernel Turn start');
+  }
+  const history = locatorAfter(run, claim.sessionRef, ctx, event.history);
+  if (isRejected(history)) return history;
+  const payload = event.event.payload;
+  if (payload.kind === 'started') throw new Error('a terminal Runtime event carries a terminal payload');
+  const record = reconciledEndRecord(run, auth, {
+    phase: 'settled', outcome: terminal.outcome, exitCode: terminal.exitCode, endedAt: event.recordedAt,
+    startedAt: entering ? event.enteredAt : null, history,
+    terminal: { event: event.event, factEventId: event.factEventId },
+    ...(event.continuation === undefined ? {} : { continuation: event.continuation }),
+    terminalPayload: payload,
+    reconciliation: { status: 'done', observation: runtimeTerminalObservation(event.event), basis: { ...event.basis },
+      recordedAt: event.recordedAt },
+  });
+  return accept(runStateOf(record), [
+    { kind: 'attempt', event: 'attempt_ended', outcome: terminal.outcome },
+    { kind: 'outbox', change: 'settled_entered' },
+    ...endReleaseEffects(claim, ctx, { kernelTurnOpen: false,
+      historyCursor: { kind: 'advance', cursor: event.completedHistoryBoundary.cursor } }),
+    // A yielded wait keeps its intents as the continuation fence (§7.3 case 6).
+    ...(terminal.outcome === 'yielded' ? [] : queuedIntentsReconciled(run, ctx)),
+  ]);
+}
+
+/**
+ * RUN-19 / RUN-24 (D-6, C4, LA-7): a Turn with no Kernel terminal and no tool
+ * call `running`/`outcome_unknown` (Kernel `pending` counts as not started).
+ * A paused pointer (its pause queued or applied) ends paused-interrupted
+ * (RUN-24, `pausedIntentRef` = the pointer intent, `host_interrupted_while_paused`);
+ * any other pointer ends a plain interruption (RUN-19, `host_interrupted`).
+ * Both are `crashed` with a synthesized terminal; the Session keeps its cursor
+ * and becomes `kernel_turn_open` (SES-06, LA-1). RUN-24 reconciles a queued
+ * pause through CTL-08(f) and leaves an applied one; the other queued intents
+ * are reconciled (CTL-08(b)(c)).
+ */
+function onReconcileInterrupted(
+  state: RunState, run: RunSnapshot, entering: boolean, event: Extract<RunEvent, { kind: 'reconcile_interrupted_clean' }>,
+  ctx: RunGuardContext,
+): RunTransition {
+  if (!isTakeover(event.basis)) {
+    return reject('illegal', 'invalid', 'a clean interruption is reconciled only by the start-up reconcile (RUN-19/24)');
+  }
+  const proof = basisGuard(event.basis, ctx);
+  if (proof !== null) return proof;
+  if (ctx.kernelProbe !== 'ready') return reject('guard_failed', 'unavailable', 'the interrupted Kernel Turn is not readable');
+  if (event.turn.terminal) return reject('illegal', 'invalid', 'a Turn with a Kernel terminal is reconciled as a terminal (RUN-17/18)');
+  if (event.turn.inFlightToolCallIds.length > 0) {
+    return reject('guard_failed', 'incomplete', 'a tool call is in flight; the end is unknown (RUN-20)');
+  }
+  if (ctx.inputsConfirmed !== true) return reject('guard_failed', 'unavailable', 'the Turn input acceptance is not confirmed yet');
+  const intent = ctx.pointerIntent;
+  const control = run.controlState;
+  const paused = state.pointer === 'paused';
+  if (paused && (control === undefined || intent === null || intent.kind !== 'pause'
+    || (intent.status !== 'queued' && intent.status !== 'applied'))) {
+    return reject('illegal', 'invalid', 'a paused pointer ends paused-interrupted only for its queued or applied pause (RUN-24)');
+  }
+  const claim = event.claim;
+  const persisted = persistedClaimGuard(ctx, claim, event.kind, 'the reconcile claim disagrees with the persisted claim');
+  if (persisted !== null) return persisted;
+  const auth = v2Binding(state, run);
+  if (isRejected(auth)) return auth;
+  const entered = entering ? enteredFactsOf(run, auth, claim, ctx, event.turn.entered) : null;
+  if (entered !== null && isRejected(entered)) return entered;
+  const payload: RunTerminalPayload = { kind: 'crashed', error: paused ? 'host_interrupted_while_paused' : 'host_interrupted' };
+  const terminal = synthesizedTerminal(run, payload, event.factEventId, event.recordedAt);
+  const pausedIntentRef = paused && control !== undefined ? structuredClone(control.intentRef) : null;
+  const record = reconciledEndRecord(run, auth, {
+    phase: 'settled', outcome: 'crashed', exitCode: null, endedAt: event.recordedAt,
+    startedAt: entered === null ? null : entered.startedAt, history: entered === null ? null : entered.history,
+    terminal: { event: terminal, factEventId: event.factEventId }, terminalPayload: payload,
+    reconciliation: { status: 'done', observation: { kind: 'interrupted_clean', event: terminal,
+      lastPosition: event.turn.lastPosition, kernelPaused: ctx.kernelPaused, pausedIntentRef },
+    basis: { ...event.basis }, recordedAt: event.recordedAt },
+  });
+  return accept(runStateOf(record), [
+    { kind: 'attempt', event: 'attempt_ended', outcome: 'crashed' },
+    { kind: 'outbox', change: 'settled_entered' },
+    ...endReleaseEffects(claim, ctx, { kernelTurnOpen: true }),
+    ...queuedIntentsReconciled(run, ctx),
+  ]);
+}
+
+/**
+ * RUN-20 (D-4, D-6, RD-3, SD-3, L-2, L-5): (i) a tool call `running` or
+ * `outcome_unknown`, (ii) an unreadable Kernel (`missing`/`damaged`), (iii) a
+ * yielded terminal whose continuation cannot be rebuilt. The Run ends
+ * `outcome_unknown` and keeps its Session and Lease; every still-queued intent
+ * becomes `outcome_unknown` (CTL-08(d)). From `Entering`, (i)/(iii) record the
+ * Turn start (ATT-32) and enter the Outbox (ATT-34); (ii) has no Turn to
+ * record (ATT-36/37: `startedAt` stays null, the Outbox pending).
+ */
+function onReconcileUnknown(
+  state: RunState, run: RunSnapshot, entering: boolean, event: Extract<RunEvent, { kind: 'reconcile_unknown' }>,
+  ctx: RunGuardContext,
+): RunTransition {
+  if (!isTakeover(event.basis)) {
+    return reject('illegal', 'invalid', 'an unknown end is reconciled only by the start-up reconcile (RUN-20)');
+  }
+  const proof = basisGuard(event.basis, ctx);
+  if (proof !== null) return proof;
+  const unreadable = event.cause === 'kernel_unreadable';
+  if (unreadable ? ctx.kernelProbe !== 'missing' && ctx.kernelProbe !== 'damaged' : ctx.kernelProbe !== 'ready') {
+    return reject('illegal', 'invalid', `the cause ${event.cause} does not match the ${String(ctx.kernelProbe)} probe`);
+  }
+  if (event.cause === 'tool_calls_unresolved' && event.unresolvedToolCallIds.length === 0) {
+    return reject('illegal', 'invalid', 'tool_calls_unresolved names the calls without a result');
+  }
+  const claim = event.claim;
+  const persisted = persistedClaimGuard(ctx, claim, event.kind, 'the reconcile claim disagrees with the persisted claim');
+  if (persisted !== null) return persisted;
+  const auth = v2Binding(state, run);
+  if (isRejected(auth)) return auth;
+  const withTurn = entering && !unreadable;
+  const entered = withTurn ? enteredFactsOf(run, auth, claim, ctx, event.turn?.entered ?? null) : null;
+  if (entered !== null && isRejected(entered)) return entered;
+  const record = reconciledEndRecord(run, auth, {
+    phase: 'unknown', outcome: 'outcome_unknown', exitCode: null, endedAt: event.recordedAt,
+    startedAt: entered === null ? null : entered.startedAt, history: entered === null ? null : entered.history,
+    terminal: null, terminalPayload: null,
+    reconciliation: { status: 'quarantined', observation: { kind: 'unresolved', reason: event.cause,
+      observedThroughPosition: event.observedThroughPosition, unresolvedToolCallIds: [...event.unresolvedToolCallIds] },
+    basis: { ...event.basis }, recordedAt: event.recordedAt },
+  });
+  return accept(runStateOf(record), [
+    { kind: 'attempt', event: 'attempt_ended', outcome: 'outcome_unknown' },
+    ...(withTurn ? [{ kind: 'outbox', change: 'entered' } as const] : []),
+    ...queuedIntentsReconciled(run, ctx),
+  ]);
+}
+
+/**
+ * RUN-21 (RD-4, L-2): new Kernel evidence resolves an unknown end: a terminal
+ * past the recorded window with every unresolved call now determined. It is
+ * booked as RUN-07 books a terminal (through `recordRunResult`), with the
+ * `runtime_terminal` reconciliation; after RUN-20(ii) the same commit records
+ * the Turn start. The Attempt resolves (ATT-11), the Outbox settles from
+ * entered or pending (ATT-29), Lease and Session are released (ATT-22,
+ * SES-06), and the intents the unknown end left `outcome_unknown` settle
+ * (CTL-07).
+ */
 function onLateEvidence(
   state: RunState, node: Exclude<RunNode, 'Absent'>,
   event: Extract<RunEvent, { kind: 'late_evidence' }>, ctx: RunGuardContext,
@@ -1657,12 +2224,57 @@ function onLateEvidence(
   if ((through !== null && event.kernelSource.position <= through) || stillUnresolved) {
     return reject('guard_failed', 'incomplete', 're-observing the same Kernel fact is not new evidence (RD-4)');
   }
-  return notYet('RUN-21');
+  const run = state.record as RunSnapshot;
+  const claim = event.claim;
+  const persisted = persistedClaimGuard(ctx, claim, event.kind, 'the evidence claim disagrees with the persisted claim');
+  if (persisted !== null) return persisted;
+  const auth = v2Binding(state, run);
+  if (isRejected(auth)) return auth;
+  const boundaryProblem = terminalBoundaryProblem(auth, event.kernelSource, event.completedHistoryBoundary, event.history);
+  if (boundaryProblem !== null) return boundaryProblem;
+  const terminal = terminalOutcomeOf(event.event, claim.runRef, state.lastEventSeq);
+  if ('status' in terminal) return rejected(terminal);
+  if (terminal.outcome === 'outcome_unknown') return reject('illegal', 'invalid', 'late evidence carries a known outcome');
+  const yieldProblem = continuationGuard(terminal.outcome, event.continuation, claim);
+  if (yieldProblem !== null) return yieldProblem;
+  // L-2: after RUN-20(ii) the Run never recorded its Turn start; the evidence carries it.
+  const recordsStart = run.startedAt === null;
+  if (recordsStart && event.enteredAt === null) {
+    return reject('illegal', 'invalid', 'the Run never recorded its Turn start; the late evidence carries it (L-2)');
+  }
+  const history = locatorAfter(run, claim.sessionRef, ctx, event.history);
+  if (isRejected(history)) return history;
+  const payload = event.event.payload;
+  if (payload.kind === 'started') throw new Error('a terminal Runtime event carries a terminal payload');
+  const record = reconciledEndRecord(run, auth, {
+    phase: 'settled', outcome: terminal.outcome, exitCode: terminal.exitCode, endedAt: null,
+    startedAt: recordsStart ? event.enteredAt : null, history,
+    terminal: { event: event.event, factEventId: event.factEventId },
+    ...(event.continuation === undefined ? {} : { continuation: event.continuation }),
+    terminalPayload: payload,
+    reconciliation: { status: 'done', observation: runtimeTerminalObservation(event.event), basis: { ...event.basis },
+      recordedAt: event.recordedAt },
+  });
+  return accept(runStateOf(record), [
+    { kind: 'attempt', event: 'attempt_resolved', outcome: terminal.outcome },
+    { kind: 'outbox', change: 'settled_entered' },
+    ...endReleaseEffects(claim, ctx, { kernelTurnOpen: false,
+      historyCursor: { kind: 'advance', cursor: event.completedHistoryBoundary.cursor } }),
+    ...(ctx.outcomeUnknownIntents ?? []).map((intentRef): RunEffect => ({ kind: 'intent', event: 'control_reconciled', intentRef })),
+  ]);
 }
 
-/** RUN-22 (新增): the §6.4 refusals in front of the row (D-4(b), L-1). */
+/**
+ * RUN-22 (D-4(b), L-1, LA-1): an operator attests an unknown end through the
+ * Host holding the instance lease. The Run ends `crashed` with the
+ * `human_attested` reconciliation and `terminalPayload` `human_attested: <reason>`;
+ * the Attempt resolves (ATT-12, `startedAt` not recorded), the Outbox settles
+ * (ATT-29), Lease and Session are released (SES-07): a Turn without a Kernel
+ * terminal, or an unreadable Kernel, makes the Session `kernel_turn_open`.
+ * The intents stay `outcome_unknown` (CI-07).
+ */
 function onUnknownAttested(
-  node: Exclude<RunNode, 'Absent'>, event: Extract<RunEvent, { kind: 'unknown_attested' }>, ctx: RunGuardContext,
+  state: RunState, node: Exclude<RunNode, 'Absent'>, event: Extract<RunEvent, { kind: 'unknown_attested' }>, ctx: RunGuardContext,
 ): RunTransition {
   const cls = reconcileClassOf(node);
   switch (cls) {
@@ -1679,7 +2291,26 @@ function onUnknownAttested(
   if (event.reason.trim().length === 0) return reject('guard_failed', 'invalid', 'an attestation requires a reason');
   const lease = hostLeaseGuard(true, ctx);
   if (lease !== null) return lease;
-  return notYet('RUN-22');
+  // A readable Kernel must have confirmed the Turn's accepted inputs; an unreadable one (null) does not block.
+  if (ctx.inputsConfirmed === false) return reject('guard_failed', 'unavailable', 'the Turn input acceptance is not confirmed yet');
+  const run = state.record as RunSnapshot;
+  const claim = event.claim;
+  const persisted = persistedClaimGuard(ctx, claim, event.kind, 'the attestation claim disagrees with the persisted claim');
+  if (persisted !== null) return persisted;
+  const auth = v2Binding(state, run);
+  if (isRejected(auth)) return auth;
+  const record = reconciledEndRecord(run, auth, {
+    phase: 'settled', outcome: 'crashed', exitCode: null, endedAt: null, startedAt: null, history: null,
+    terminal: null, terminalPayload: attestedTerminalPayload(event.reason),
+    reconciliation: { status: 'done', observation: { kind: 'human_attested', attestedBy: { ...event.attestedBy },
+      reason: event.reason }, basis: { ...event.basis }, recordedAt: event.recordedAt },
+  });
+  return accept(runStateOf(record), [
+    { kind: 'attempt', event: 'attempt_resolved', outcome: 'crashed' },
+    { kind: 'outbox', change: 'settled_entered' },
+    ...endReleaseEffects(claim, ctx, event.kernelTurnOpen ? { kernelTurnOpen: true }
+      : { kernelTurnOpen: false, historyCursor: { kind: 'keep' } }),
+  ]);
 }
 
 // -------------------------------------------------------------------------- //

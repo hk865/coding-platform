@@ -33,7 +33,9 @@ import type { WorkspaceHostBindings } from '../core/workspace/access.js';
 import type { CoreCallContext } from '../contracts/core/call-context.js';
 import type { WorkspaceRef } from '../contracts/ledger.js';
 import type { WorkspaceResult } from '../core/workspace/ports.js';
-import { createPlatformCoreRouteBindings } from './core-routes.js';
+import { createPlatformCoreRouteBindings, type CoreRouteBindings, type HostReconcileReportV1 } from './core-routes.js';
+import { acquireHostInstanceLease } from './host-instance-lease.js';
+import { HOST_RECONCILE_ACTOR, runStartupReconcile, type StartupReconcileReportV1 } from './startup-reconcile.js';
 import { parseInitialPlanningResponseV2 } from '../core/work-graph/tasks/initial-plan.js';
 import type { TrustedCheckConfiguration } from '../contracts/verification.js';
 import { DEFAULT_TASK_AUTOMATION_POLICY } from '../contracts/task-requeue.js';
@@ -144,6 +146,8 @@ export type LocalWorkbenchHost = {
   /** Idempotent: reject new requests, drain accepted ones, then close the platform. */
   close(): Promise<void>;
   readonly address: WorkbenchAddress | null;
+  /** A.2 step 5.6 (§12.8, §12.1 step 7): the instance lease and the start-up reconcile report (null without the lease). */
+  readonly reconcile: HostReconcileReportV1;
 };
 
 const scopeKey = (scope: CoreScope): string => `${scope.projectId}\u0000${scope.workspaceId}`;
@@ -350,18 +354,31 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       try { goalFanOutCommitted?.(notice); } catch { /* the driver never affects a commit */ }
     },
   };
-  const platform = await createTargetPlatform({
-    storage,
-    workspace: bindings,
-    commitObserver,
-    ...(options.now === undefined ? {} : { now: options.now }),
-    ...(architectureSource === undefined ? {} : { architectureSource }),
-    ...(options.kernelStores === undefined ? {} : { kernelStores: options.kernelStores }),
-    ...(runtime === undefined ? {} : { runtime }),
-    ...(checks === undefined ? {} : { checks }),
-    ...(workflow === undefined ? {} : { workflow }),
-    sourcePolicyFor,
-  });
+  // A.2 step 5.6 (§12.1 step 0, §12.8): the Host instance lease is taken BEFORE the platform. Without it
+  // this Host serves reads and owner writes only: no reconcile, no execution driver, no Kernel entry (L-10).
+  if (storage.kind === 'sqlite') mkdirSync(storage.directory, { recursive: true });
+  const instanceLease = await acquireHostInstanceLease({ directory: storage.kind === 'sqlite' ? storage.directory : null,
+    now: options.now ?? (() => new Date().toISOString()) });
+  const leaseOwned = instanceLease.lease === 'owned';
+  let platform: Awaited<ReturnType<typeof createTargetPlatform>>;
+  try {
+    platform = await createTargetPlatform({
+      storage,
+      workspace: bindings,
+      commitObserver,
+      hostInstance: { hostInstanceId: instanceLease.hostInstanceId, lease: instanceLease.lease },
+      ...(options.now === undefined ? {} : { now: options.now }),
+      ...(architectureSource === undefined ? {} : { architectureSource }),
+      ...(options.kernelStores === undefined ? {} : { kernelStores: options.kernelStores }),
+      ...(runtime === undefined ? {} : { runtime }),
+      ...(checks === undefined ? {} : { checks }),
+      ...(workflow === undefined ? {} : { workflow }),
+      sourcePolicyFor,
+    });
+  } catch (error) {
+    await instanceLease.release().catch(() => undefined);
+    throw error;
+  }
 
   // The AG2b collaboration driver is a Host-layer handle over the ONE platform
   // above. Newly opened scopes append their trusted profiles at runtime.
@@ -389,7 +406,11 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   // commits reach the change feed through the platform's commit observer, and
   // it watches the commits for a fan-out pause a waiting resume follows.
   const goalFanOut = createGoalFanOutDriver({ goals: platform.goals, plans: platform.plans,
-    executions: platform.executions, controls: platform.controls, runtime: platform.runtime });
+    executions: platform.executions, controls: platform.controls, runtime: platform.runtime,
+    // GOAL-29 (A.2 step 5.6): the continuation of a fan-out-paused Task goes through the requeue owner.
+    claims: { requeueTask: (...args) => platform.claims.requeueTask!(...args) },
+    // L-10: only the Host holding the instance lease reaches the Runs.
+    driving: () => leaseOwned });
   goalFanOutCommitted = notice => goalFanOut.committed(notice);
 
   // Live projections the Host rebuilds for every bootstrap read / settings open.
@@ -563,6 +584,9 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   }
 
   const installFromSettings = (snapshot: HostSettingsPrivateSnapshot): void => {
+    // C8 (A.2 step 5.6): the Host setting `automation` (defaults 3 / true) governs the
+    // requeue owner, the read model and the start-up re-drive (`resumeOnStartup`).
+    platform.registerAutomationPolicy(snapshot.automation);
     // R6 cold-start: restore/refresh the trusted check configuration for every
     // scope whose saved checks were explicitly approved. It replaces only the
     // per-scope registration; an already-open round keeps its frozen config.
@@ -648,6 +672,12 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     return { models: [...modelsById.values()], seedSelection };
   }
 
+  /**
+   * A.2 step 5.6 (§12.1): set once the start-up reconcile ran; a workspace opened later is reconciled
+   * by it before `addWorkspaceState` returns. The workspaces restored before the start-up reconcile
+   * are part of that reconcile.
+   */
+  let reconcileAddedScope: ((scope: CoreScope) => Promise<void>) | null = null;
   async function addWorkspaceState(config: WorkbenchWorkspaceConfig): Promise<void> {
     const key = scopeKey(config.scope);
     if (byScope.has(key)) return;
@@ -675,6 +705,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       },
     });
     workflowScopes.push({ projectId: config.scope.projectId, workspaceId: config.scope.workspaceId });
+    if (reconcileAddedScope !== null) await reconcileAddedScope(config.scope);
   }
 
   async function openWorkspaceImpl(request: OpenSettingsWorkspace & { workspaceId?: string }): Promise<SettingsResponse<HostSettingsOpenedHost>> {
@@ -831,6 +862,64 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     }, { onConfigurationChanged: installFromSettings })
     : undefined;
 
+  // A.2 step 5.6 (§12.1 steps 1..7): the start-up reconcile, on the Host holding the instance lease only,
+  // after the settings restore registered every workspace's Kernel Store and installed the automation
+  // policy, and before any execution driver, the attention delivery or the HTTP server starts.
+  // The reconcile writes as the Host's own system actor (R source, §12.1; VR-04 "Host system actor +
+  // hostInstanceId"); the start-up re-drive starts the driver as `workflow/driver-start` does, as the Host actor.
+  const hostScopeContext = (scope: CoreScope, as: WorkbenchActor): CoreCallContext => ({
+    projectId: scope.projectId, workspaceId: scope.workspaceId,
+    principal: { kind: 'host', actor: { ...as } },
+    materialReader: { kind: 'host', projectId: scope.projectId, workspaceId: scope.workspaceId, actor: { ...as } },
+    signal: new AbortController().signal,
+  });
+  const reconcileContext = (scope: CoreScope): CoreCallContext => hostScopeContext(scope, HOST_RECONCILE_ACTOR);
+  const reconcileScopes = (scopes: readonly CoreScope[]) => runStartupReconcile({
+    platform: { sessions: platform.sessions, executions: platform.executions, controls: platform.controls,
+      reconcile: platform.reconcile },
+    hostInstanceId: instanceLease.hostInstanceId,
+    scopes: scopes.map(scope => ({ projectId: scope.projectId, workspaceId: scope.workspaceId })),
+    context: reconcileContext,
+    fanOut: (ctx, goalRef, options) => goalFanOut.fanOut(ctx, goalRef, options),
+  });
+  const reconcileReport = leaseOwned ? await reconcileScopes(workspaces.map(workspace => workspace.scope)) : null;
+  const hostReconcile: HostReconcileReportV1 = { hostInstanceId: instanceLease.hostInstanceId, lease: instanceLease.lease,
+    leaseRow: instanceLease.row, leaseReason: instanceLease.reason, report: reconcileReport };
+  // §12.1 step 6b (LA-6): the start-up re-drive starts the existing collaboration driver for each selected
+  // Goal, gated by `automation.resumeOnStartup`; every step it takes is judged by the owners.
+  const startRedrive = async (goals: StartupReconcileReportV1['redriveGoals']): Promise<void> => {
+    if (!platform.automationPolicy().resumeOnStartup) return;
+    for (const goal of goals) {
+      const scope = goal.scope;
+      const profileIds = runtimeProfiles.filter(profile => profile.scope.projectId === scope.projectId
+        && profile.scope.workspaceId === scope.workspaceId).map(profile => profile.id);
+      try {
+        await collaborationDriver.start(hostScopeContext(scope, actor), {
+          advance: { schemaVersion: 1, goalRef: goal.goalRef, flowId: `startup-redrive:${goal.goalRef.goalId}`,
+            sessionHint: null, kind: 'select_work' },
+          queryProfileIds: profileIds,
+        });
+      } catch { /* a refused start leaves the Goal for the next workflow/advance or driver-start */ }
+    }
+  };
+  if (reconcileReport !== null) await startRedrive(reconcileReport.redriveGoals);
+  // A workspace this Host opens after its start is reconciled the same way before it serves an execution
+  // (§12.1): its lines join the report, and its re-drive follows the same switch.
+  reconcileAddedScope = async (scope: CoreScope): Promise<void> => {
+    const report = hostReconcile.report;
+    if (!leaseOwned || report === null) return;
+    const added = await reconcileScopes([scope]);
+    report.sessions.push(...added.sessions);
+    report.runs.push(...added.runs);
+    report.queries.push(...added.queries);
+    report.checks.push(...added.checks);
+    report.controls.push(...added.controls);
+    report.fanOut.push(...added.fanOut);
+    report.redriveGoals.push(...added.redriveGoals);
+    report.problems.push(...added.problems);
+    await startRedrive(added.redriveGoals);
+  };
+
   // Explicit mechanical attention: the Host scans the configured real sources on
   // the configured heartbeat, delivers a real mailbox input to the target member,
   // and advances processing only after the accepting execution has a formal result.
@@ -924,7 +1013,8 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       cursor = outbox.value.nextCursor ?? undefined;
     } while (cursor !== undefined && !attentionAbort.signal.aborted);
   }
-  const attentionDone: Promise<void> = attentionScopes.length === 0 && inputConsumers.length === 0 ? Promise.resolve() : (async () => {
+  // L-10: without the instance lease this Host delivers no attention and wakes no consumer (no execution driver).
+  const attentionDone: Promise<void> = (attentionScopes.length === 0 && inputConsumers.length === 0) || !leaseOwned ? Promise.resolve() : (async () => {
     const scanner = createAttentionScanner({ workspace: platform.workspace, plans: platform.plans, messages: platform.messages, architecture: platform.architecture });
     const entries = attentionScopes.map(scope => ({
       scope, observer: createAttentionObserver(scope.config),
@@ -999,10 +1089,31 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     }
   })();
 
+  /**
+   * HL-07 (L-1, L-10): a Host without the instance lease keeps every read and
+   * owner write, but each entry that would enter the Kernel or start an
+   * execution driver, and the attestations, answer `busy`: only the Host that
+   * holds the lease enters the Kernel, so its reconcile proofs stay sound.
+   */
+  function leaseGated(bindings: CoreRouteBindings): CoreRouteBindings {
+    if (leaseOwned) return bindings;
+    const busy = (what: string) => async () => ({ status: 'rejected' as const, code: 'busy' as const,
+      reason: `another Host holds the instance lease of this store; ${what} runs only there (${instanceLease.reason})` });
+    return { ...bindings,
+      startRun: busy('executions/start') as unknown as CoreRouteBindings['startRun'],
+      startQuery: busy('queries/start') as unknown as CoreRouteBindings['startQuery'],
+      advanceWork: busy('workflow/advance') as unknown as CoreRouteBindings['advanceWork'],
+      consumeConsultation: busy('workflow/consultation') as unknown as CoreRouteBindings['consumeConsultation'],
+      driverStart: busy('workflow/driver-start') as unknown as CoreRouteBindings['driverStart'],
+      resolveUnknownRun: busy('the unknown-outcome attestation') as unknown as CoreRouteBindings['resolveUnknownRun'],
+      resolveUnknownQueryRun: busy('the unknown-outcome attestation') as unknown as CoreRouteBindings['resolveUnknownQueryRun'] };
+  }
+
   // The real route bindings share the ONE platform instance assembled above.
   const server: WorkbenchServer = createWorkbenchServer({
     token,
-    bindings: createPlatformCoreRouteBindings(platform, collaborationDriver, workbenchTools.tools, goalFanOut),
+    bindings: leaseGated(createPlatformCoreRouteBindings(platform, collaborationDriver, workbenchTools.tools, goalFanOut,
+      { readReconcileReport: async () => ({ status: 'ready', value: structuredClone(hostReconcile) }) })),
     actor,
     bootstrap: buildBootstrap,
     changes,
@@ -1017,6 +1128,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
 
   return {
     get address(): WorkbenchAddress | null { return server.address; },
+    get reconcile(): HostReconcileReportV1 { return structuredClone(hostReconcile); },
     listen(port?: number): Promise<WorkbenchAddress> {
       if (closePromise !== undefined) return Promise.reject(new Error('the workbench Host is closed'));
       listenPromise ??= server.listen(port ?? options.port ?? 0);
@@ -1033,6 +1145,8 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         await goalFanOut.close();
         await workbenchToolsClosed;
         await platform.close();
+        // HL-06: the lock file goes only while it still names this instance; a Host that never held it never touches it.
+        await instanceLease.release().catch(() => undefined);
       })();
       return closePromise;
     },

@@ -376,6 +376,14 @@ function executionStateIssues(value: unknown): string[] {
     issues.push('executionState.sessionGeneration must be a positive integer');
   }
   if (!Array.isArray(value['requests'])) issues.push('executionState.requests must be an array');
+  // QRR-05 (A.2 step 5.6): the optional cause of phase `unknown`.
+  const unknown = value['unknown'];
+  if (unknown !== undefined) {
+    const valid = isRecord(unknown) && ((unknown['kind'] === 'unresolved_tools' && Array.isArray(unknown['toolCallIds'])
+      && unknown['toolCallIds'].length > 0 && unknown['toolCallIds'].every(isNonEmptyString))
+      || (unknown['kind'] === 'kernel_unreadable' && (unknown['verdict'] === 'missing' || unknown['verdict'] === 'damaged')));
+    if (!valid) issues.push('executionState.unknown must name the unresolved tool calls or the unreadable Kernel verdict');
+  }
   return issues;
 }
 

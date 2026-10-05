@@ -27,6 +27,7 @@ import {
 import type { TaskExecutionRecord } from '../work-graph/tasks/execution-read-contracts.js';
 import { assembleContinuationBrief, readPreviousTurn, type BriefWorkspaceFacts } from './continuation-brief-assembly.js';
 import { createSessionHistoryCursorOwner } from './session-operations.js';
+import { decodeKernelEntry } from './kernel-turn-facts.js';
 import type { PrepareTaskExecutionRequest, ResolvedRuntimeConfiguration, RuntimeExecutionDependencies } from './execution-contracts.js';
 
 export type ExecutionPreparationDependencies = Pick<RuntimeExecutionDependencies,
@@ -168,7 +169,8 @@ export function rehydratePreparedExecution(record: Pick<TaskExecutionRecord, 'ru
  */
 async function prepareContinuationBrief(
   deps: ExecutionPreparationDependencies, ctx: CoreCallContext, record: TaskExecutionRecord,
-): Promise<{ ok: true; brief: ContinuationBriefV1 } | { ok: false; rejection: CoreRejection }> {
+): Promise<{ ok: true; brief: ContinuationBriefV1; sessionBasis: PreparedTaskManifestV1['sessionBasis'] | null }
+  | { ok: false; rejection: CoreRejection }> {
   const readBasis = deps.executions.readContinuationBasis;
   if (readBasis === undefined || deps.kernelStores === undefined) {
     return { ok: false, rejection: rejected('unsupported', 'a requeue Run needs the continuation basis reader and the Kernel stores') };
@@ -184,12 +186,79 @@ async function prepareContinuationBrief(
   // W-25 (SD-2): a transient or Host-side Kernel read is no evidence; retry instead of pinning a degraded brief.
   if (turn.kernel === 'retry') return { ok: false, rejection: rejected(turn.code, `the previous Turn is not readable now: ${turn.reason}`) };
   const workspace = await briefWorkspaceFacts(deps, record);
+  // LA-1, contract (e): the seeded history is decided first, so the brief says how the new Session continues.
+  const sessionBasis = await sessionBasisOf(deps, record, basis.value, ctx.signal);
+  const source = basis.value.requeue.historySource;
+  const seededFrom = sessionBasis === null || sessionBasis === undefined || sessionBasis.throughPosition === null || source === null ? null
+    : { sessionRef: { projectId: source.sessionRef.projectId, sessionId: source.sessionRef.sessionId },
+      throughPosition: sessionBasis.throughPosition };
   const brief = assembleContinuationBrief({ basis: basis.value, factsRecord: facts, factsHops: basis.value.factsChain.length,
-    factsTruncated: truncated, turn, workspace, claimSessionRef: record.outbox.claim.sessionRef });
+    factsTruncated: truncated, turn, workspace, claimSessionRef: record.outbox.claim.sessionRef, seededFrom });
   const problem = continuationBriefShapeProblem(brief);
   if (problem !== null) return { ok: false, rejection: rejected('unavailable', `the assembled continuation brief is malformed: ${problem}`) };
-  return { ok: true, brief };
+  return { ok: true, brief, sessionBasis };
 }
+
+/**
+ * LA-1 (§6.1 contract (e), A.2 step 5.6): the model history a continuation Run
+ * in a NEW Session is seeded with, from `TaskRequeue.historySource`. Filled only
+ * when (1) the requeue names a source, (2) the claim Session is a fresh Session
+ * other than the source (no completed history of its own), (3) on the same
+ * Kernel adapter, and (4) the source Session's Kernel history is readable; its
+ * boundary is the last Kernel terminal at or before the source's upper bound
+ * (an interrupted Turn is never part of it; the brief covers it). Anything else
+ * leaves the brief alone (`null`). The source Session is the one
+ * `historySource` names, wherever it sits on the requeue chain (I-12 clause
+ * 10: a requeue after a continuation that never entered carries the earlier
+ * source): the afterRun's, or that of the nearest entered ancestor.
+ */
+async function sessionBasisOf(
+  deps: ExecutionPreparationDependencies, record: TaskExecutionRecord,
+  basis: { requeue: { historySource: import('../../contracts/task-requeue.js').TaskRequeueHistorySourceV1 | null };
+    previous: TaskExecutionRecord; factsChain: { run: TaskExecutionRecord }[] },
+  signal: AbortSignal,
+): Promise<PreparedTaskManifestV1['sessionBasis'] | null> {
+  const source = basis.requeue.historySource;
+  if (source === null || deps.kernelStores === undefined) return null;
+  const claimSession = record.session;
+  if (sameRef(source.sessionRef, record.outbox.claim.sessionRef) || claimSession.historyCursor !== null) return null;
+  if (source.adapterId !== claimSession.kernel.adapterId) return null;
+  if (source.throughPosition === null) return { sourceKernelSessionId: source.kernelSessionId, throughPosition: null };
+  const onChain = [basis.previous, ...basis.factsChain.map(hop => hop.run)].find(candidate =>
+    candidate.session.ref.projectId === source.sessionRef.projectId && candidate.session.ref.sessionId === source.sessionRef.sessionId);
+  // Beyond the bounded chain the source is read by the identity the TaskRequeue fixed (same adapter, checked above);
+  // the window read uses only the Session ref and its Kernel mapping.
+  const sourceSession = onChain?.session ?? { ...claimSession,
+    ref: { ...claimSession.ref, projectId: source.sessionRef.projectId, sessionId: source.sessionRef.sessionId },
+    kernel: { ...claimSession.kernel, adapterId: source.adapterId, kernelSessionId: source.kernelSessionId } };
+  if (sourceSession.kernel.kernelSessionId !== source.kernelSessionId || sourceSession.kernel.adapterId !== source.adapterId) {
+    return null;
+  }
+  const owner = createSessionHistoryCursorOwner({ kernelStores: deps.kernelStores });
+  let boundary: number | null = null;
+  let cursor = 0;
+  for (let page = 0; page < 64 && cursor < source.throughPosition; page += 1) {
+    let window;
+    try {
+      window = await owner.readPositionWindow({ session: sourceSession, afterPosition: cursor,
+        throughPosition: source.throughPosition, limit: 200, signal });
+    } catch { return null; }
+    if (window.status !== 'ready') return null;
+    for (const entry of window.value.entries) {
+      const item = decodeKernelEntry(entry);
+      if (item === null) return null;
+      if (item.record.recordType === 'agent.event' && KERNEL_TERMINAL_EVENTS.includes(item.record.payload.event.type)) {
+        boundary = item.position;
+      }
+    }
+    cursor = window.value.nextPosition;
+    if (!window.value.hasMore) break;
+  }
+  return { sourceKernelSessionId: source.kernelSessionId, throughPosition: boundary };
+}
+
+/** The Kernel `agent.event` types that end a Turn: a completed history boundary (LA-1). */
+const KERNEL_TERMINAL_EVENTS: readonly string[] = ['run.completed', 'run.failed', 'run.cancelled', 'run.limit_exceeded', 'run.yielded'];
 
 /** The brief's own source checkpoint (digest-only, LA-5) and the uncommitted paths of the workspace. */
 async function briefWorkspaceFacts(deps: ExecutionPreparationDependencies, record: TaskExecutionRecord): Promise<BriefWorkspaceFacts> {
@@ -375,10 +444,12 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
       const additionalMaterialRefs: ArtifactRef[] = [];
       // C3: a Run of a requeue claim starts with its continuation brief, rendered as the last input section.
       let brief: ContinuationBriefV1 | null = null;
+      let sessionBasis: PreparedTaskManifestV1['sessionBasis'] | null = null;
       if (run.requeueRef !== undefined) {
         const assembled = await prepareContinuationBrief(deps, owned, record.value);
         if (!assembled.ok) return assembled.rejection;
         brief = assembled.brief;
+        sessionBasis = assembled.sessionBasis;
         if (signal.aborted) return rejected('cancelled', 'the preparation was cancelled after the continuation brief');
       }
       const briefDigest = brief === null ? null : continuationBriefDigest(brief);
@@ -397,6 +468,7 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
         permissions, budget: run.budget, selectedTaskInputs, materialBasis: hostConfig.materialBasis,
         materialAccessRefs: [], additionalMaterialRefs, deliveryRefs: [], sourceRefs,
         ...(brief === null ? {} : { continuationBrief: brief }),
+        ...(sessionBasis === null || sessionBasis === undefined ? {} : { sessionBasis }),
         input, inputDigest,
       };
       const manifestJson = JSON.stringify(manifest);

@@ -135,7 +135,11 @@ export type TaskRequeueHistorySourceV1 = {
   sessionRef: SessionRef;
   adapterId: string;
   kernelSessionId: string;
-  /** Completed-turn boundary position; null is the explicit empty baseline. */
+  /**
+   * Completed-turn boundary position (for a Turn ended without a Kernel
+   * terminal: the position before it, an upper bound `prepare` resolves to the
+   * last completed boundary at or before it); null is the explicit empty baseline.
+   */
   throughPosition: number | null;
 };
 export type TaskRequeueAutomationV1 = {

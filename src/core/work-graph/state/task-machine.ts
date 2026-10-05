@@ -18,9 +18,9 @@
  * A.2 step 5.3 (§15.2) scope:
  * - Projection rows P1..P18 have their target values (D-1, TD-5): P6 and P7
  *   are `failed`, P11..P13 `verifying`, and P17/P18 hold a yielded wait whose
- *   pointer is cancelled (`failed`) or paused (`blocked`). The rows P19 (5.6)
- *   and P20 (5.9) are not evaluated yet: their facts fall through to the row
- *   the remaining table reaches.
+ *   pointer is cancelled (`failed`) or paused (`blocked`). P20 (5.9) is not
+ *   evaluated yet: its facts fall through to the row the remaining table
+ *   reaches.
  * - The re-projection rows TASK-04..13 and TASK-20..23 follow the projection;
  *   TASK-14 adds the projection guard (`verifying`, §4.4) and the chain-head
  *   guard (the round is the selected Run's chain head, C5). Its TD-2 evidence
@@ -32,11 +32,14 @@
  * - A.2 step 5.4 (D-3, C1, C2, C8): P4 (`pending/requeued`), TASK-03 (a claim
  *   with the `requeueRef` covering the selected Run re-holds the lease),
  *   TASK-16/17 (`task_requeued`, TaskRequeue@1) and TASK-28 for a requeue
- *   (`task_rework_refused`). TASK-27 (continue, 5.6) and the reverify part of
- *   TASK-28 (5.9) still answer `notYet`.
+ *   (`task_rework_refused`). The reverify part of TASK-28 (5.9) still
+ *   answers `notYet`.
+ * - A.2 step 5.6 (C4): P19 (`blocked/paused_interrupted`, before P6), TASK-26
+ *   (the RUN-24 end re-projects to it) and TASK-27 (the operator's "继续", or the
+ *   Goal-resume continuation, as a `task_requeued`).
  * - 改造 rows still at today's result, flipped by later substeps: TASK-15 (a
  *   gate completes from `pending`; 5.9), TASK-18 (no `dispositionRecord`; 5.10).
- * - 新增 rows of later substeps (TASK-26, 27, 29, 30) keep their events in the
+ * - 新增 rows of later substeps (TASK-29, 30) keep their events in the
  *   union and answer `illegal` (`notYet`). TASK-19 is answered by today's
  *   §4.4 refusal in front of it: a traced Task's definition, disposition
  *   included, is frozen (`revision_conflict`).
@@ -157,8 +160,10 @@ function endedRunProjection(run: RunSnapshot, round: RoundTaskSignalV1, covering
   // P4 (D-3, C1): the TaskRequeue covering the selected Run makes the Task
   // claimable again, only with that `requeueRef` (TASK-03).
   if (coveringRequeue !== null) return projection('P4', 'pending', causeOf('requeued', { requeueRef: { ...coveringRequeue } }));
+  // P19 (C4, RUN-24): a Run the Host restart ended while paused shows "已暂停，可继续", not a failure.
+  const pausedInterrupted = pausedInterruptedProjection(run);
+  if (pausedInterrupted !== null) return pausedInterrupted;
   switch (outcome) {
-    // P19 (paused-interrupted, C4) is step 5.6: until then its facts reach P6 below.
     case 'yielded': {
       if (run.continuation === undefined) return projection('P14', 'blocked', causeOf('run_failed'));
       // TD-5: a stop pointer holds the continuation (the claim answers `busy`),
@@ -176,6 +181,19 @@ function endedRunProjection(run: RunSnapshot, round: RoundTaskSignalV1, covering
     case 'completed': return completedRunProjection(round);
     default: return unreachable(outcome, 'Run outcome');
   }
+}
+
+/**
+ * P19 (C4, TD-7): `blocked/paused_interrupted` with `{afterRunRef,
+ * pausedIntentRef, kernelPaused}` for a selected Run RUN-24 ended; `null` for
+ * any other Run.
+ */
+function pausedInterruptedProjection(run: RunSnapshot): TaskPhaseProjection | null {
+  const observation = run.reconciliation?.observation;
+  if (!isPausedInterrupted(run) || observation === undefined || observation.kind !== 'interrupted_clean'
+    || observation.pausedIntentRef === null) return null;
+  return projection('P19', 'blocked', causeOf('paused_interrupted', { afterRunRef: { ...run.ref },
+    pausedIntentRef: { ...observation.pausedIntentRef }, kernelPaused: observation.kernelPaused }));
 }
 
 /** P10, P7, P8, P9, P11, P12, P13 over the selected Run's chain head. */
@@ -318,7 +336,7 @@ export type TaskReworkFacts = {
 
 /** §9 events that reach a Task only through its round-chain head. */
 export type TaskRoundEventKind = 'round_opened' | 'check_begun' | 'check_result_recorded' | 'check_interrupted'
-  | 'check_abandoned' | 'check_report_booked' | 'evidence_submitted';
+  | 'check_abandoned' | 'evidence_submitted';
 
 /**
  * §4.2. Every event another machine judges carries `facts`: the projection
@@ -719,7 +737,6 @@ export function transitionTask(state: TaskMachineState, event: TaskEvent, ctx: T
     case 'check_result_recorded':
     case 'check_interrupted':
     case 'check_abandoned':
-    case 'check_report_booked':
     case 'evidence_submitted':
     case 'round_finalized':
     case 'round_reverified':
@@ -879,8 +896,7 @@ function onRunEnded(state: TaskMachineState, event: Extract<TaskEvent, { kind: '
   if (run.status !== 'ended' || outcome === null) {
     return reject('illegal', 'invalid', 'the projection facts do not show the ended Run with its outcome');
   }
-  // TASK-26 (C4, RUN-24) is step 5.6.
-  if (outcome === 'crashed' && isPausedInterrupted(run)) return notYet('TASK-26');
+  // TASK-06 (crashed/cancelled/budget_exhausted/failed → P6) and TASK-26 (paused-interrupted, C4 → P19) re-project.
   return reprojected(state, event.facts);
 }
 
@@ -1139,7 +1155,10 @@ export function requeueBasisCompared(failureClass: ReworkFailureClass, actorClas
  * fails G-BUDGET, G-CAP or G-BASIS is refused here (`illegal`/`invalid`) and
  * must have been submitted as `task_rework_refused`. Accepted: TaskRequeue@1
  * (`newTaskRequeueRecord`) and the projection P4 (`pending/requeued`).
- * TASK-27 (continue a paused-interrupted Run, C4) is step 5.6.
+ * TASK-27 (C4) is the same event for a paused-interrupted Run ("继续"): the
+ * matrix admits only an operator, or `GOAL_FAN_OUT_ACTOR` with the
+ * `goal_resume` trigger the owner checked against the Goal (GOAL-29); the
+ * class `interrupted` skips the key, the cap and the budget.
  */
 function onTaskRequeued(
   state: TaskMachineState,
@@ -1162,7 +1181,6 @@ function onTaskRequeued(
   if (actorClass === null) return reject('guard_failed', 'forbidden', 'the requester has no rework actor class');
   const derivation = deriveReworkClass(input.afterRun, input.pointerIntent, input.chain);
   if (derivation.kind !== 'class') return reject('illegal', 'invalid', `the selected Run has nothing to rework (${derivation.row})`);
-  if (derivation.interruption === 'paused') return notYet('TASK-27');
   const goalFanOut = input.requestedBy.kind === GOAL_FAN_OUT_ACTOR.kind && input.requestedBy.id === GOAL_FAN_OUT_ACTOR.id;
   const permission = reworkPermission({ operation: 'requeue', goalDesiredState: facts.goalDesiredState,
     failureClass: derivation.failureClass, interruption: derivation.interruption,

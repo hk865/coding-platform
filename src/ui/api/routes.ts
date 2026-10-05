@@ -79,6 +79,11 @@ const ROUTE_LABELS: Record<CoreRouteSuffix, string> = {
   // CoreRouteSuffix); the actions are the new UI's (task E3).
   'goals/control': '暂停 / 恢复 / 取消目标',
   'goals/display': '查看目标状态',
+  // A.2 step 5.6 suffixes: display labels only (the table is total over
+  // CoreRouteSuffix); the actions are the new UI's (task E3).
+  'executions/resolve-unknown': '认定未知结果',
+  'queries/resolve-unknown': '认定未知结果（查询）',
+  'host/reconcile-report': '查看启动核对报告',
 };
 
 export const routeLabel = (route: CoreRouteSuffix): string => ROUTE_LABELS[route];

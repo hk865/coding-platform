@@ -1045,11 +1045,18 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
             event = { kind: 'check_abandoned', checkId: input.checkId, invocationId: input.invocationId, cause, provenNotStarted: true };
         } else {
             const interrupt = input as InterruptCheckInput;
-            if (interrupt.cause !== 'ticket_invalid' || !nonEmpty(interrupt.ticketProblem)) {
-                return invalid('interruptCheck requires the ticket_invalid cause and its ticket problem');
+            if (interrupt.cause === 'host_restart') {
+                // VR-04 (A.2 step 5.6): the start-up reconcile names this Host instance.
+                if (!nonEmpty(interrupt.hostInstanceId)) return invalid('a host_restart interruption names the reconciling Host instance');
+                event = { kind: 'check_interrupted', checkId: input.checkId, invocationId: input.invocationId, cause: 'host_restart',
+                    hostInstanceId: interrupt.hostInstanceId };
+            } else {
+                if (interrupt.cause !== 'ticket_invalid' || !nonEmpty(interrupt.ticketProblem)) {
+                    return invalid('interruptCheck requires the ticket_invalid cause and its ticket problem');
+                }
+                event = { kind: 'check_interrupted', checkId: input.checkId, invocationId: input.invocationId, cause: 'ticket_invalid',
+                    ticketProblem: interrupt.ticketProblem };
             }
-            event = { kind: 'check_interrupted', checkId: input.checkId, invocationId: input.invocationId, cause: 'ticket_invalid',
-                ticketProblem: interrupt.ticketProblem };
         }
         if (input.roundRef.projectId !== scope.projectId || input.roundRef.workspaceId !== scope.workspaceId) {
             return forbidden('the round ref is outside the trusted Host scope');
@@ -1071,13 +1078,19 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         const loaded = await readRoundRecord(records, input.roundRef);
         if (!loaded.ok) return loaded.rejection;
         const round = loaded.round;
-        const decided = transitionCheck(round, event, roundCtx(round.executor, actor, checked.revision));
+        // VR-04: the lease is held only when this Host holds it under the instance the reconcile names (D-18).
+        const restart = event.kind === 'check_interrupted' && event.cause === 'host_restart' ? event.hostInstanceId : null;
+        const host = deps.hostInstance;
+        const decided = transitionCheck(round, event, { ...roundCtx(round.executor, actor, checked.revision),
+            instanceLeaseHeld: restart !== null && host !== undefined && host.lease === 'owned' && host.hostInstanceId === restart });
         if (!decided.ok) return refusalOf(decided, round);
         const base = { eventId: deps.newId(), schemaVersion: 1 as const, occurredAt: deps.now(), identityKey: identity,
             roundRef: round.ref, actor, fingerprint, checkId: input.checkId, invocationId: input.invocationId, result: decided.next };
         const recorded: VerificationRoundEvent = kind === 'abandon'
             ? { ...base, eventType: VERIFICATION_CHECK_ABANDONED_EVENT_TYPE, cause: (input as AbandonCheckInput).cause }
-            : { ...base, eventType: VERIFICATION_CHECK_INTERRUPTED_EVENT_TYPE, cause: 'ticket_invalid', hostInstanceId: null };
+            : restart !== null
+                ? { ...base, eventType: VERIFICATION_CHECK_INTERRUPTED_EVENT_TYPE, cause: 'host_restart', hostInstanceId: restart }
+                : { ...base, eventType: VERIFICATION_CHECK_INTERRUPTED_EVENT_TYPE, cause: 'ticket_invalid', hostInstanceId: null };
         // The proven fact is committed even after a late caller cancel (the runner passes a finishing signal).
         return await commitRoundWrite(records, signal, { identity, fingerprint, effects: decided.effects, round: decided.next,
             event: recorded, value: decided.next, cancelled: null });

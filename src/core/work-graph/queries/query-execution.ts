@@ -24,6 +24,7 @@ import type { CoreRejection, ReadResult, WriteResult } from '../../../contracts/
 import type { SessionRecord } from '../../../contracts/core/session.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import { consultationQueryRefs } from '../../../contracts/query-job.js';
+import { isAutomationActor } from '../../../contracts/task-requeue.js';
 import type { GoalSnapshot, WorkspaceSnapshot } from '../../../contracts/ledger.js';
 import { QUERY_MANIFEST_CONTENT_TYPE } from '../../../contracts/no-progress.js';
 import type { PlanRevisionSnapshot } from '../../../contracts/plan.js';
@@ -44,11 +45,12 @@ import {
 } from '../sessions/session-record-codecs.js';
 import {
   advanceQueryExecutionRecord, markQueryRunUnknownRecord, queryRecoveryStateOf, settleQueryRunRecord,
-  transitionQueryRunRecovery, type QueryRecoveryEffect, type QueryRecoveryPhase,
+  transitionQueryRunRecovery, type QueryRecoveryEffect, type QueryRecoveryEvent, type QueryRecoveryGuardContext,
+  type QueryRecoveryPhase,
 } from '../state/query-run-recovery.js';
 import {
   occupySessionRecord, ownsQuery, releaseSessionRecord, sessionMachineStateOf, transitionSession,
-  type SessionGuardContext, type SessionRelease,
+  type SessionGuardContext, type SessionRelease, type SessionReleaseCause,
 } from '../state/session-availability.js';
 import {
   decodeQueryExecutionRecordedEvent, decodeQueryJobAnswerSnapshot, decodeQueryJobSnapshot,
@@ -58,7 +60,7 @@ import {
 } from './query-record-codecs.js';
 import type {
   QueryEntryIdentity, QueryEntryTicket, QueryExecutionDependencies, QueryExecutionPort,
-  QueryExecutionRecord, QueryHistoryObservation, QueryPreparationFacts,
+  QueryExecutionRecord, QueryHistoryObservation, QueryPreparationFacts, QueryReconcileInput, ResolveUnknownQueryRunInput,
 } from './contracts.js';
 import type { GraphWrite } from '../tasks/contracts.js';
 
@@ -67,6 +69,13 @@ export { QUERY_MANIFEST_CONTENT_TYPE };
 
 type HostActor = Extract<ActorRef, { kind: 'human' | 'system' }>;
 type Core = { job: QueryJobSnapshot; run: QueryRunSnapshot; session: SessionRecord };
+/** One QRR row the reconcile or the Host entry asks (A.2 step 5.6): the event, its guard facts, the SES release cause. */
+type RecoveryStep = {
+  event: QueryRecoveryEvent;
+  guard: Omit<QueryRecoveryGuardContext, 'sessionOwned' | 'sessionGeneration' | 'queryRunRef' | 'entryMatches'>;
+  cause: SessionReleaseCause;
+  turnSeen: boolean;
+};
 
 function rejected(code: CoreRejection['code'], reason: string, current?: VersionPin[]): CoreRejection {
   return current === undefined || current.length === 0
@@ -81,6 +90,17 @@ function nonEmpty(value: unknown): value is string {
 }
 function sameRef(left: unknown, right: unknown): boolean {
   try { return canonicalJson(left as JsonValue) === canonicalJson(right as JsonValue); } catch { return false; }
+}
+/** QRR-06, like RUN-22: the attestation reason becomes the close message, bounded. */
+const MAX_ATTESTATION_REASON_CHARS = 2000;
+/**
+ * The QueryRun pin of a reconcile or an attestation (A.2 step 5.6): exactly one
+ * pin, naming that QueryRun; its revision, or null for anything else.
+ */
+function queryRunPinOf(expected: readonly { ref: unknown; revision: number }[], queryRunRef: unknown): number | null {
+  const [pin] = expected;
+  if (expected.length !== 1 || pin === undefined || !isRecord(queryRunRef) || !sameRef(pin.ref, queryRunRef)) return null;
+  return Number.isSafeInteger(pin.revision) && pin.revision >= 0 ? pin.revision : null;
 }
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -1405,7 +1425,167 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     });
   }
 
+  /**
+   * QRR-01/02/04/05 (R) and QRR-06 (U): one stranded QueryRun settled or marked
+   * unknown in one commit with its QueryJob and the Session release (SES-09,
+   * SES-10: the cursor is kept; a Turn left open makes the Session
+   * `kernel_turn_open`). The identity is the QueryRun and this Host instance, so
+   * a repeated reconcile replays its receipt.
+   */
+  async function settleRecovery(
+    ctx: CoreCallContext, queryRunRef: QueryRunRef, requestId: string, expectedRun: number, input: unknown,
+    eventOf: (state: QueryExecutionStateV1) => RecoveryStep,
+  ): Promise<WriteResult<QueryExecutionRecord>> {
+    const owned = ownContext(ctx);
+    if (owned === null) return rejected('invalid', 'the call context cannot be isolated from the caller');
+    const actor = hostActor(owned);
+    if (actor === null) return rejected('forbidden', 'a QueryRun reconcile requires a trusted Host call context');
+    if (queryRunRef.projectId !== owned.projectId || queryRunRef.workspaceId !== owned.workspaceId) {
+      return rejected('forbidden', 'the QueryRun is outside the Host call scope');
+    }
+    const identityKey = `a2-query-recovery:${queryRunRef.runId}:${sha256Hex(canonicalJson({ actor, requestId } as unknown as JsonValue))}`;
+    const fingerprint = requestFingerprint('observed', requestId, { job: null, run: expectedRun, session: null }, input);
+    if (fingerprint === null) return rejected('invalid', 'the reconcile request is not serializable');
+    const replay = await replayOriginal<QueryExecutionRecord>(deps, identityKey, fingerprint, 'observed');
+    if (replay !== null) return replay;
+    const read = await readCore(deps, queryRunRef, null);
+    if (read.status !== 'ready') return toRejection(read);
+    const { job, run, session } = read.value;
+    const state = run.run.executionState;
+    const recovery = queryRecoveryStateOf(job.job, run.run);
+    if (state === undefined || recovery === null) return rejected('incomplete', 'the QueryRun has no persisted execution state');
+    if (expectedRun !== run.revision) return revisionConflict([{ refKey: queryRunRefKey(queryRunRef), revision: run.revision }]);
+    const { event, guard, cause, turnSeen } = eventOf(state);
+    const decided = transitionQueryRunRecovery(recovery, event, { ...guard, sessionOwned: ownsQuery(session, queryRunRef, state),
+      sessionGeneration: state.sessionGeneration, queryRunRef, entryMatches: entryIdentity(state, queryRunRef) !== null });
+    if (!decided.ok) return rejected(decided.code, decided.detail);
+    const occurredAt = deps.now();
+    let nextRun: QueryRunSnapshot = run;
+    let nextJob: QueryJobSnapshot = job;
+    let nextSession: SessionRecord | null = null;
+    for (const effect of decided.effects) {
+      switch (effect.kind) {
+        case 'settle_query': {
+          const settled = settleQueryRunRecord({ job, run }, { settlement: effect.settlement, history: effect.history, occurredAt });
+          nextRun = settled.run;
+          nextJob = settled.job;
+          break;
+        }
+        case 'mark_query_unknown':
+          nextRun = markQueryRunUnknownRecord(run, { history: effect.history, cause: effect.cause });
+          break;
+        case 'release_session': {
+          const released = transitionSession(sessionMachineStateOf(session), { kind: 'occupancy_released', cause }, {
+            caller: guard.caller === 'reconcile' ? 'reconcile' : 'service', hostLease: guard.hostLease, pin: null,
+            holder: { ref: effect.holder, claimGeneration: effect.generation, before: `query_${state.phase}`, after: 'query_settled',
+              kernelTurnSeen: turnSeen, inputsConfirmed: guard.inputsConfirmed, historyBoundaryCursor: null,
+              kernelTurnOpen: effect.kernelTurnOpen },
+            probe: guard.probe === null ? null : guard.probe, kernelHeader: null, openResponsibleLink: null, creation: null, link: null,
+          });
+          if (!released.ok) return rejected(released.code, released.detail);
+          for (const sessionEffect of released.effects) {
+            if (sessionEffect.kind === 'release_session') nextSession = releaseSessionRecord(session, sessionEffect);
+          }
+          break;
+        }
+        case 'record_answer':
+          throw new Error('a reconcile close records no Answer');
+        default: throw new Error('an unknown Query recovery effect');
+      }
+    }
+    const nextRecord: QueryExecutionRecord = { job: nextJob, run: nextRun, session: nextSession ?? session, answer: null };
+    const recorded = buildRecordedEvent({ eventId: deps.eventId(), identityKey, fingerprint, actor, occurredAt, queryRunRef, requestId,
+      correlationId: job.job.intent.correlationId, operation: 'observed', result: nextRecord, run: nextRun });
+    const records: EncodedRecord[] = [encodeQueryRunSnapshotRecord(nextRun)];
+    if (nextJob !== job) records.push(encodeQueryJobSnapshot(nextJob));
+    if (nextSession !== null) records.push(encodeSessionRecord(nextSession));
+    return commitOperation({ deps, identityKey, fingerprint, guards: [
+      { refKey: queryRunRefKey(queryRunRef), expectedRevision: run.revision },
+      { refKey: queryJobRefKey(queryJobRefFor(queryRunRef)), expectedRevision: job.revision },
+      { refKey: sessionKeyOf(session.ref), expectedRevision: session.revision },
+    ], records, events: [encodeQueryExecutionRecordedEvent(recorded)], value: nextRecord, operation: 'observed' });
+  }
+
+  async function reconcileQuery(ctx: CoreCallContext, request: GraphWrite<QueryReconcileInput>): Promise<WriteResult<QueryExecutionRecord>> {
+    let input: QueryReconcileInput;
+    let requestId: string;
+    let expectedRun: number;
+    try {
+      input = structuredClone(request.input);
+      requestId = request.meta.requestId;
+      const pin = queryRunPinOf(request.meta.expected, (input as { queryRunRef?: unknown } | null)?.queryRunRef);
+      if (pin === null) return rejected('invalid', 'meta.expected must be exactly the QueryRun pin');
+      expectedRun = pin;
+    } catch { return rejected('invalid', 'the reconcile request cannot be isolated from the caller'); }
+    if (!isRecord(input) || !isRecord(input.queryRunRef) || !nonEmpty(input.hostInstanceId) || !isRecord(input.result) || !nonEmpty(requestId)) {
+      return rejected('invalid', 'reconcileQueryRun requires the QueryRun, the Host instance and the classification');
+    }
+    const host = deps.hostInstance;
+    const hostLease: 'owned' | 'held_by_other' | null = host === undefined ? null
+      : host.lease === 'owned' && host.hostInstanceId === input.hostInstanceId ? 'owned' : 'held_by_other';
+    const result = input.result;
+    return settleRecovery(ctx, input.queryRunRef, requestId, expectedRun, input, (state): RecoveryStep => {
+      const base = { caller: 'reconcile' as const, hostLease, probe: input.probe, inputsConfirmed: input.inputsConfirmed,
+        actor: 'system' as const, reason: null };
+      switch (result.kind) {
+        case 'not_entered':
+          // Q-01 needs no probe (begin commits `entering` before the Kernel starts); Q-02 needs a readable Kernel.
+          return { event: { kind: 'query_reconcile_not_entered', hostInstanceId: input.hostInstanceId },
+            guard: { ...base, probe: state.phase === 'entering' ? input.probe : null, kernel: state.phase === 'entering' && input.probe === 'ready'
+              ? { turn: 'absent', mappedOutcome: null, boundaryComplete: false, unresolvedToolCallIds: [] } : null },
+            cause: 'query_reconcile_not_entered', turnSeen: false };
+        case 'interrupted_clean':
+          return { event: { kind: 'query_reconcile_interrupted_clean', hostInstanceId: input.hostInstanceId,
+            kernelStatus: result.kernelStatus, history: result.history },
+          guard: { ...base, kernel: { turn: 'present', mappedOutcome: null, boundaryComplete: false, unresolvedToolCallIds: [] },
+            kernelTurnOpen: result.kernelStatus !== 'yielded' },
+          cause: 'query_reconcile_interrupted_clean', turnSeen: true };
+        case 'unknown': {
+          const verdict = input.probe;
+          return { event: { kind: 'query_reconcile_unknown', hostInstanceId: input.hostInstanceId,
+            cause: verdict === 'missing' || verdict === 'damaged' ? { kind: 'kernel_unreadable', verdict }
+              : { kind: 'unresolved_tools', toolCallIds: result.unresolvedToolCallIds }, history: result.history },
+          guard: { ...base, kernel: null }, cause: 'query_reconcile_not_entered', turnSeen: true };
+        }
+        default: throw new Error('an unknown Query reconcile result');
+      }
+    });
+  }
+
+  async function resolveUnknownQuery(
+    ctx: CoreCallContext, request: GraphWrite<ResolveUnknownQueryRunInput>,
+  ): Promise<WriteResult<QueryExecutionRecord>> {
+    let input: ResolveUnknownQueryRunInput;
+    let requestId: string;
+    let expectedRun: number;
+    try {
+      input = structuredClone(request.input);
+      requestId = request.meta.requestId;
+      const pin = queryRunPinOf(request.meta.expected, (input as { queryRunRef?: unknown } | null)?.queryRunRef);
+      if (pin === null) return rejected('invalid', 'meta.expected must be exactly the QueryRun pin');
+      expectedRun = pin;
+    } catch { return rejected('invalid', 'the attestation request cannot be isolated from the caller'); }
+    if (!isRecord(input) || !isRecord(input.queryRunRef) || typeof input.reason !== 'string' || typeof input.kernelTurnOpen !== 'boolean'
+      || !nonEmpty(requestId)) {
+      return rejected('invalid', 'resolveUnknownQueryRun requires the QueryRun, a reason and the Kernel facts');
+    }
+    if (input.reason.length > MAX_ATTESTATION_REASON_CHARS) {
+      return rejected('invalid', `the attestation reason must be at most ${String(MAX_ATTESTATION_REASON_CHARS)} characters`);
+    }
+    const actor = hostActor(ctx);
+    const host = deps.hostInstance;
+    return settleRecovery(ctx, input.queryRunRef, requestId, expectedRun, input, (): RecoveryStep => ({
+      event: { kind: 'query_unknown_attested' },
+      guard: { caller: 'host_entry', hostLease: host === undefined ? null : host.lease, probe: null, kernel: null,
+        inputsConfirmed: input.inputsConfirmed === null ? 'kernel_unreadable' : input.inputsConfirmed,
+        actor: actor === null || isAutomationActor(actor) ? 'system' : 'human', reason: input.reason, kernelTurnOpen: input.kernelTurnOpen },
+      cause: 'query_unknown_attested', turnSeen: true,
+    }));
+  }
+
   return {
+    async reconcileQueryRun(ctx, request) { return reconcileQuery(ctx, request); },
+    async resolveUnknownQueryRun(ctx, request) { return resolveUnknownQuery(ctx, request); },
     async readQueryExecution(ctx, ref) {
       const owned = ownContext(ctx);
       if (owned === null) return rejected('invalid', 'the call context cannot be isolated from the caller');

@@ -12,7 +12,9 @@ import type { TaskClaimPort } from '../core/work-graph/tasks/claim-contracts.js'
  * the bindings carry no business logic of their own.
  */
 import type { CoreCallContext } from '../contracts/core/call-context.js';
-import type { CoreRejection } from '../contracts/core/results.js';
+import type { CoreRejection, ReadResult, WriteResult } from '../contracts/core/results.js';
+import type { RunRef, RunSnapshot } from '../contracts/dispatch.js';
+import type { QueryRunRef } from '../contracts/query-job.js';
 import type { CommitCursor } from '../contracts/command-event.js';
 import { seqOfCommitCursor } from '../contracts/ledger.js';
 import type { RuntimeExecutionPort } from '../core/agent-runtime/ports.js';
@@ -30,7 +32,9 @@ import type { GoalTaskPort } from '../core/work-graph/tasks/contracts.js';
 import type { PlanTaskPort } from '../core/work-graph/tasks/plan-contracts.js';
 import type { WorkspaceCapturePort, WorkspaceToolsPort } from '../core/workspace/ports.js';
 import type { MaterialPort } from '../core/work-graph/materials/contracts.js';
-import type { QueryJobPort } from '../core/work-graph/queries/contracts.js';
+import type { QueryExecutionRecord, QueryJobPort } from '../core/work-graph/queries/contracts.js';
+import type { GraphWrite } from '../core/work-graph/tasks/contracts.js';
+import type { StartupReconcileReportV1 } from './startup-reconcile.js';
 import type { WorkflowPort } from '../business/workflow/ports.js';
 import type { CollaborationDriverPort } from './collaboration-driver.js';
 import type { GoalControlPort } from './goal-fan-out-driver.js';
@@ -121,7 +125,16 @@ export type CoreRouteBindings = {
   // A.2 step 5.5 (G7): the Goal control with its fan-out, and the Goal display, through the Host driver.
   setGoalControl: GoalControlPort['setGoalControl'];
   readGoalDisplay: GoalControlPort['readGoalDisplay'];
+  // A.2 step 5.6 (RUN-22, QRR-06): the attestations, and the Host instance/reconcile report.
+  resolveUnknownRun: NonNullable<CoreRoutePlatform['resolveUnknownRun']>;
+  resolveUnknownQueryRun: NonNullable<CoreRoutePlatform['resolveUnknownQueryRun']>;
+  readReconcileReport: HostReconcileReportPort['readReconcileReport'];
 };
+
+/** A.2 step 5.6 (§12.1 step 7, §12.8): this Host's instance lease and its start-up reconcile report. */
+export interface HostReconcileReportPort {
+  readReconcileReport(ctx: CoreCallContext, input: unknown): Promise<ReadResult<HostReconcileReportV1>>;
+}
 
 /**
  * The exact platform seams the R6.1a route table consumes. It is the real
@@ -151,6 +164,27 @@ export type CoreRoutePlatform = {
   queries: QueryJobPort;
   materials: Pick<MaterialPort, 'openArtifact'>;
   workflow: WorkflowPort & Required<Pick<WorkflowPort, 'consumeConsultation'>>;
+  /** A.2 step 5.6 (RUN-22): optional so a narrow platform answers `unsupported`. */
+  resolveUnknownRun?(ctx: CoreCallContext, request: GraphWrite<ResolveUnknownRunRequestV1>): Promise<WriteResult<RunSnapshot>>;
+  /** A.2 step 5.6 (QRR-06). */
+  resolveUnknownQueryRun?(ctx: CoreCallContext, request: GraphWrite<ResolveUnknownQueryRunRequestV1>):
+    Promise<WriteResult<QueryExecutionRecord>>;
+};
+
+/** `executions/resolve-unknown` input (RUN-22): the unknown Run and the operator's reason. */
+export type ResolveUnknownRunRequestV1 = { runRef: RunRef; reason: string };
+/** `queries/resolve-unknown` input (QRR-06): the unknown QueryRun and the operator's reason. */
+export type ResolveUnknownQueryRunRequestV1 = { queryRunRef: QueryRunRef; reason: string };
+
+/** §12.1 step 7 (A.2 step 5.6): the instance lease (§12.8) and what the start-up reconcile did and left. */
+export type HostReconcileReportV1 = {
+  hostInstanceId: string;
+  lease: 'owned' | 'held_by_other';
+  /** HL row of the lease acquisition. */
+  leaseRow: string;
+  leaseReason: string;
+  /** null when this Host did not reconcile (it does not hold the lease, L-10). */
+  report: StartupReconcileReportV1 | null;
 };
 
 export type CoreRouteSpec = {
@@ -232,6 +266,10 @@ export const CORE_ROUTE_SPECS: Record<CoreRouteSuffix, CoreRouteSpec> = {
   // A.2 step 5.5 (spec §2.6 Host route `goals/control`, §2.3 fan-out, §2.1 display).
   'goals/control': { kind: 'graph_write', binding: 'setGoalControl', owner: 'goalControl.setGoalControl' },
   'goals/display': { kind: 'plain', binding: 'readGoalDisplay', owner: 'goalControl.readGoalDisplay' },
+  // A.2 step 5.6 (spec §6 RUN-22, §8 QRR-06, §12.1 step 7, §12.8).
+  'executions/resolve-unknown': { kind: 'graph_write', binding: 'resolveUnknownRun', owner: 'platform.resolveUnknownRun' },
+  'queries/resolve-unknown': { kind: 'graph_write', binding: 'resolveUnknownQueryRun', owner: 'platform.resolveUnknownQueryRun' },
+  'host/reconcile-report': { kind: 'plain', binding: 'readReconcileReport', owner: 'host.readReconcileReport' },
 };
 
 export type ParsedCoreRequest =
@@ -350,6 +388,7 @@ export function createPlatformCoreRouteBindings(
   driver?: CollaborationDriverPort,
   workbenchTools?: WorkbenchToolsPort,
   goalControl?: GoalControlPort,
+  hostReport?: HostReconcileReportPort,
 ): CoreRouteBindings {
   // A Host that assembles no collaboration driver still publishes the exact
   // routes, but every one answers an explicit `unsupported` instead of a fake
@@ -452,6 +491,15 @@ export function createPlatformCoreRouteBindings(
     readGoalDisplay: goalControl === undefined
       ? unsupported('the Host does not publish the Goal fan-out driver (readGoalDisplay)')
       : goalControl.readGoalDisplay.bind(goalControl),
+    resolveUnknownRun: platform.resolveUnknownRun === undefined
+      ? unsupported('the Host does not publish the unknown-outcome attestation (resolveUnknownRun)')
+      : platform.resolveUnknownRun.bind(platform),
+    resolveUnknownQueryRun: platform.resolveUnknownQueryRun === undefined
+      ? unsupported('the Host does not publish the unknown-outcome attestation (resolveUnknownQueryRun)')
+      : platform.resolveUnknownQueryRun.bind(platform),
+    readReconcileReport: hostReport === undefined
+      ? unsupported('the Host does not publish its reconcile report')
+      : hostReport.readReconcileReport.bind(hostReport),
   };
 }
 
@@ -560,6 +608,9 @@ export async function dispatchCoreRoute(
       case 'executions/brief': return bindings.readContinuationBrief(ctx, plain.input as never);
       case 'goals/control': return bindings.setGoalControl(ctx, graphWrite.request as never);
       case 'goals/display': return bindings.readGoalDisplay(ctx, plain.input as never);
+      case 'executions/resolve-unknown': return bindings.resolveUnknownRun(ctx, graphWrite.request as never);
+      case 'queries/resolve-unknown': return bindings.resolveUnknownQueryRun(ctx, graphWrite.request as never);
+      case 'host/reconcile-report': return bindings.readReconcileReport(ctx, plain.input as never);
     }
   })();
   // A GraphWrite rejection is a failed command: preserve its exact body but let

@@ -72,7 +72,14 @@ export type {
 } from '../core/work-graph/state/goal-machine.js';
 export type {
   GoalControlOutcomeV1, GoalDisplayHostReadV1, GoalFanOutReportV1, GoalFanOutRunResultV1, GoalReentryFailureV1,
+  GoalResumeContinuationResultV1,
 } from './goal-fan-out-driver.js';
+/** A.2 step 5.6: the instance lease and start-up reconcile report, and the attestation inputs (§12, RUN-22, QRR-06). */
+export type {
+  HostReconcileReportV1, ResolveUnknownQueryRunRequestV1, ResolveUnknownRunRequestV1,
+} from './core-routes.js';
+export type { ReconcileLine, StartupReconcileReportV1 } from './startup-reconcile.js';
+export type { QueryUnknownCauseV1 } from '../contracts/query-job.js';
 export type { ReverifyOutcomeV1, ReverifyRoundInput } from '../core/work-graph/evidence/contracts.js';
 export type { CoreRejection, ReadResult } from '../contracts/core/results.js';
 export type { CaptureSummary, SourcePage, WorkspaceFile, WorkspaceResult } from '../core/workspace/ports.js';
@@ -170,7 +177,13 @@ export type CoreRouteSuffix =
   // A.2 step 5.5 (G7): the Goal pause/resume/cancel with its per-Run fan-out,
   // and the Goal display reduction (GOAL-17..30 with runStops).
   | 'goals/control'
-  | 'goals/display';
+  | 'goals/display'
+  // A.2 step 5.6 (RUN-22, QRR-06, L-1): the operator's attestation of an
+  // unknown end, only through the Host holding the instance lease; and the
+  // Host's own instance lease and start-up reconcile report (§12.1 step 7).
+  | 'executions/resolve-unknown'
+  | 'queries/resolve-unknown'
+  | 'host/reconcile-report';
 
 type SecondArgument<M> = M extends (ctx: CoreCallContext, argument: infer A) => unknown ? A : never;
 type MethodResult<M> = M extends (ctx: CoreCallContext, argument: never) => infer R ? Awaited<R> : never;

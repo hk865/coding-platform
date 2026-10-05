@@ -1426,66 +1426,10 @@
       "note": "unreached at 790d970; referenced nowhere"
     },
     {
-      "file": "src/core/work-graph/sessions/lifecycle-record-codecs.ts",
-      "name": "SessionHealthObservedEventV1",
-      "reason": "step5",
-      "substep": "5.6",
-      "wiredBy": "STEP5-FLIPS.md §1 session-availability, 新增 SES-12/13/19 health_observed (5.6)",
-      "note": "helper of encodeSessionHealthObservedEvent, sessionHealthObservedPayloadFromEvent"
-    },
-    {
-      "file": "src/core/work-graph/sessions/lifecycle-record-codecs.ts",
-      "name": "encodeSessionHealthObservedEvent",
-      "reason": "step5",
-      "substep": "5.6",
-      "wiredBy": "STEP5-FLIPS.md §1 session-availability, 新增 SES-12/13/19 health_observed (5.6)",
-      "note": "event writer of the health probe"
-    },
-    {
-      "file": "src/core/work-graph/sessions/lifecycle-record-codecs.ts",
-      "name": "sessionHealthObservedPayloadFromEvent",
-      "reason": "step5",
-      "substep": "5.6",
-      "wiredBy": "STEP5-FLIPS.md §1 session-availability, 新增 SES-12/13/19 health_observed (5.6)",
-      "note": "receipt replay of the health probe"
-    },
-    {
       "file": "src/core/work-graph/sessions/session-targets.ts",
       "name": "nonEmpty",
       "reason": "pre-batch",
       "note": "unreached at 790d970; file-local; referenced nowhere"
-    },
-    {
-      "file": "src/core/work-graph/state/goal-machine.ts",
-      "name": "goalResumeContinueRequestId",
-      "reason": "step5",
-      "substep": "5.6",
-      "wiredBy": "spec §15.2 5.6 GOAL-29 (§2 GOAL-29 row: Host fan-out driver after the resume commit)",
-      "note": "helper of findGoalResumeContinuations"
-    },
-    {
-      "file": "src/core/work-graph/state/goal-machine.ts",
-      "name": "GoalResumeTaskFactsV1",
-      "reason": "step5",
-      "substep": "5.6",
-      "wiredBy": "spec §15.2 5.6 GOAL-29 (§2 GOAL-29 row: Host fan-out driver after the resume commit)",
-      "note": "helper of findGoalResumeContinuations"
-    },
-    {
-      "file": "src/core/work-graph/state/goal-machine.ts",
-      "name": "GoalResumeContinuationV1",
-      "reason": "step5",
-      "substep": "5.6",
-      "wiredBy": "spec §15.2 5.6 GOAL-29 (§2 GOAL-29 row: Host fan-out driver after the resume commit)",
-      "note": "helper of findGoalResumeContinuations"
-    },
-    {
-      "file": "src/core/work-graph/state/goal-machine.ts",
-      "name": "findGoalResumeContinuations",
-      "reason": "step5",
-      "substep": "5.6",
-      "wiredBy": "spec §15.2 5.6 GOAL-29 (§2 GOAL-29 row: Host fan-out driver after the resume commit)",
-      "note": "selects the Tasks a Goal resume continues"
     },
     {
       "file": "src/core/work-graph/state/no-progress.ts",
@@ -1582,22 +1526,6 @@
       "substep": "5.10",
       "wiredBy": "STEP5-FLIPS.md §10 plan-machine, flip PLAN-05 + §3.4 TASK-19 rows (C7, 5.10)",
       "note": "helper of tracedDispositionChangeProblem, parallelCarrierFenceProblem"
-    },
-    {
-      "file": "src/core/work-graph/state/run-machine.ts",
-      "name": "attestedTerminalPayload",
-      "reason": "step5",
-      "substep": "5.6",
-      "wiredBy": "STEP5-FLIPS.md §3 run-machine, 新增 RUN-22 unknown_attested (5.6; spec §15.2 5.6: RUN-17..19, RUN-21..24 write terminalPayload)",
-      "note": "terminal payload of a human-attested unknown outcome"
-    },
-    {
-      "file": "src/core/work-graph/state/session-availability.ts",
-      "name": "observeSessionHealthRecord",
-      "reason": "step5",
-      "substep": "5.6",
-      "wiredBy": "STEP5-FLIPS.md §1 session-availability, 新增 SES-12/13/19 (5.6): observeSessionHealthRecord is exported and tested, but no row emits it yet",
-      "note": "record constructor of a health observation"
     },
     {
       "file": "src/core/work-graph/state/task-failure.ts",

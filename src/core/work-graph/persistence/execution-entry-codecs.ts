@@ -43,6 +43,8 @@ export const EXECUTION_ENTRY_AUTHORIZED_EVENT_TYPE = 'ExecutionEntryAuthorized' 
 export const EXECUTION_ENTRY_BEGUN_EVENT_TYPE = 'ExecutionEntryBegun' as const;
 export const EXECUTION_ENTRY_ENTERED_EVENT_TYPE = 'ExecutionEntryEntered' as const;
 export const EXECUTION_RUN_RESULT_RECORDED_EVENT_TYPE = 'ExecutionRunResultRecorded' as const;
+/** A.2 step 5.6: the Run writes without a Kernel terminal (`reconcileRun`, `resolveUnknownRun`, `reconcileRunControls`). */
+export const EXECUTION_RUN_RECONCILED_EVENT_TYPE = 'ExecutionRunReconciled' as const;
 
 // --------------------------------------------------------------------------
 // Small pure helpers
@@ -603,6 +605,19 @@ export type ExecutionRunResultRecordedEvent = ExecutionEntryEventBase & {
   run: RunSnapshot;
 };
 
+/**
+ * The replay event of a Run write without a Kernel terminal (§6.3 RD-5):
+ * `reconcile_run` (RUN-16/19/20/23/24), `resolve_unknown` (RUN-22),
+ * `reconcile_controls` (RUN-09..11 (R), CTL-08(e)). `run` is the Run after the
+ * commit (unchanged when the commit settled intents only).
+ */
+export type ExecutionRunReconciledEvent = ExecutionEntryEventBase & {
+  eventType: typeof EXECUTION_RUN_RECONCILED_EVENT_TYPE;
+  operation: 'reconcile_run' | 'resolve_unknown' | 'reconcile_controls';
+  run: RunSnapshot;
+};
+const RECONCILED_OPERATIONS: readonly string[] = ['reconcile_run', 'resolve_unknown', 'reconcile_controls'];
+
 function parseObject(json: string): Record<string, unknown> | null {
   try {
     const parsed: unknown = JSON.parse(json);
@@ -752,6 +767,24 @@ export function executionRunResultRecordedEventFromEvent(event: EncodedDomainEve
   return { status: 'decoded', value: body as unknown as ExecutionRunResultRecordedEvent };
 }
 
+export function encodeExecutionRunReconciledEvent(event: ExecutionRunReconciledEvent): EncodedDomainEvent {
+  return { eventId: event.eventId, eventType: event.eventType, schemaVersion: event.schemaVersion,
+    occurredAt: event.occurredAt, json: JSON.stringify(event) };
+}
+export function executionRunReconciledEventFromEvent(event: EncodedDomainEvent): DecodeResult<ExecutionRunReconciledEvent> {
+  const decoded = decodeEventBase(event, EXECUTION_RUN_RECONCILED_EVENT_TYPE, EXECUTION_ENTRY_EVENT_SCHEMA_VERSION);
+  if (decoded.status !== 'decoded') return decoded;
+  const body = decoded.value.body;
+  if (!RECONCILED_OPERATIONS.includes(body['operation'] as string)) return invalid('reconciled event operation is not recognized');
+  const runProblem = runSnapshotProblem(body['run']);
+  if (runProblem !== null) return invalid(runProblem);
+  return { status: 'decoded', value: body as unknown as ExecutionRunReconciledEvent };
+}
+
+function validateReconciledEvent(event: EncodedDomainEvent): DecodeResult<EncodedDomainEvent> {
+  const decoded = executionRunReconciledEventFromEvent(event);
+  return decoded.status === 'decoded' ? { status: 'decoded', value: event } : decoded;
+}
 function validateAuthorizedEvent(event: EncodedDomainEvent): DecodeResult<EncodedDomainEvent> {
   const decoded = executionEntryAuthorizedEventFromEvent(event);
   return decoded.status === 'decoded' ? { status: 'decoded', value: event } : decoded;
@@ -781,6 +814,7 @@ export const EXECUTION_ENTRY_RECORD_SCHEMAS: RecordBackendSchemas = {
     { eventType: EXECUTION_ENTRY_BEGUN_EVENT_TYPE, schemaVersion: EXECUTION_ENTRY_EVENT_SCHEMA_VERSION, validate: validateBegunEvent },
     { eventType: EXECUTION_ENTRY_ENTERED_EVENT_TYPE, schemaVersion: EXECUTION_ENTRY_EVENT_SCHEMA_VERSION, validate: validateEnteredEvent },
     { eventType: EXECUTION_RUN_RESULT_RECORDED_EVENT_TYPE, schemaVersion: EXECUTION_ENTRY_EVENT_SCHEMA_VERSION, validate: validateResultEvent },
+    { eventType: EXECUTION_RUN_RECONCILED_EVENT_TYPE, schemaVersion: EXECUTION_ENTRY_EVENT_SCHEMA_VERSION, validate: validateReconciledEvent },
   ],
   lookups: [],
 };

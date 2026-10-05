@@ -70,3 +70,23 @@ export function applyTurnEvents(state: RunState, records: readonly DecodedKernel
   }
   return next;
 }
+
+/**
+ * The calls of a reduced Turn without a determined result (RD-2, LA-7): a batch
+ * call `running` or `outcome_unknown` (a `pending` call never started, an
+ * `abandoned` one is determined), or a transcript result carrying the formal
+ * `outcome_unknown` error. The observer's RUN-08 and the start-up reconcile's
+ * RUN-20(i) read the same list.
+ */
+export function unresolvedToolCallIds(state: RunState): string[] {
+  const ids = new Set<string>();
+  for (const call of state.toolBatch?.calls ?? []) {
+    if (call.status === 'running' || call.status === 'outcome_unknown') ids.add(call.requestedCall.callId);
+  }
+  for (const entry of state.transcript) {
+    if (entry.kind === 'tool_result' && entry.result.status === 'error' && entry.result.error.code === 'outcome_unknown') {
+      ids.add(entry.callId);
+    }
+  }
+  return [...ids];
+}

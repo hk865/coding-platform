@@ -71,7 +71,7 @@ import type {
   GoalDetail,
   GoalDisplayQuery,
   GoalDisplayRead,
-  GoalLiveRunsRead,
+  GoalLiveRunsRead, GoalResumeContinuationsRead,
   GoalResumePendingRunV1,
   GoalPlanningDiagnostic,
   GoalPlanningView,
@@ -148,7 +148,7 @@ import {
 } from './plan-write-admission.js';
 import { mergeGuards, sameRef } from './execution-entry-service.js';
 import {
-  GOAL_FAN_OUT_ACTOR, goalFanOutRequestId, goalStateOf, reduceGoalDisplay, transitionGoal,
+  GOAL_FAN_OUT_ACTOR, findGoalResumeContinuations, goalFanOutRequestId, goalStateOf, reduceGoalDisplay, transitionGoal,
   type GoalDisplayTaskFactsV1, type GoalRunControlCapabilityV1, type GoalRunStopInputV1,
 } from '../state/goal-machine.js';
 import { notEnteredEntryPhase } from '../state/control-intent-machine.js';
@@ -1833,8 +1833,52 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
       sourceCursor: watermark } };
   }
 
+  /**
+   * GOAL-29 (§2.3, C4; A.2 step 5.6): the selection `findGoalResumeContinuations`
+   * makes over the active Plan's work Tasks: the selected Run, its pointer
+   * intent and whether a TaskRequeue covers it, read in one fact window.
+   */
+  async function queryGoalResumeContinuations(
+    ctx: CoreCallContext, input: { goalRef: GoalRef },
+  ): Promise<ReadResult<GoalResumeContinuationsRead>> {
+    if (ctx?.signal?.aborted) return rejected('cancelled', 'queryGoalResumeContinuations was cancelled');
+    if (!isRecord(input) || !isRecord(input.goalRef) || !nonEmpty(input.goalRef['projectId'])) {
+      return rejected('invalid', 'queryGoalResumeContinuations requires a full GoalRef');
+    }
+    const goalRef = goalRefFromUnknown(input.goalRef, input.goalRef['projectId']);
+    if (goalRef === null) return rejected('invalid', 'queryGoalResumeContinuations requires a full GoalRef');
+    const authority = authorizeReadContext(ctx, goalRef.projectId);
+    if (authority.status !== 'ok') return authority;
+    const window = await readGoalPlanWindow(records, goalRef);
+    if (window.status !== 'ready') return asReadResult(window);
+    const scopeError = authorizeGoal(authority.principal, window.goal);
+    if (scopeError !== null) return scopeError;
+    const goal = window.goal;
+    if (window.plan === null || goal.desiredState !== 'active') return { status: 'ready', value: { goal, continuations: [] } };
+    const plan = window.plan;
+    const facts = await readCanonicalTaskFacts(records, goalRef, plan);
+    if (facts.status !== 'ready') return asReadResult(facts);
+    const selected = plan.tasks.flatMap((task) => {
+      const state = facts.value.byTaskId.get(task.taskId);
+      const runs = facts.value.runsByTaskId.get(task.taskId) ?? [];
+      const run = state?.execution === null || state === undefined ? null
+        : runs.find((candidate) => sameRef(candidate.ref, state.execution)) ?? null;
+      return [{ task, state, run }];
+    });
+    const intents = await readPointerIntents(records, selected.flatMap((entry) => entry.run === null ? [] : [entry.run]));
+    if (intents.status !== 'ready') return asReadResult(intents);
+    const scope = { projectId: goalRef.projectId, workspaceId: goal.workspaceRef.workspaceId };
+    const continuations = findGoalResumeContinuations({
+      goal, fanOutIntentRefFor: (requestId) => controlIntentRefFor(GOAL_FAN_OUT_ACTOR, scope, requestId),
+      tasks: selected.map(({ task, state, run }) => ({ taskId: task.taskId, taskKind: task.taskKind, selectedRun: run,
+        pointerIntent: run === null ? null : intents.intents.get(run.ref.runId) ?? null, covered: state?.requeueRef != null })),
+    });
+    return { status: 'ready', value: { goal, continuations: continuations.map((continuation) => ({ ...continuation,
+      afterRunRevision: selected.find((entry) => entry.run !== null && sameRef(entry.run.ref, continuation.afterRunRef))?.run?.revision ?? 0 })) } };
+  }
+
   return { queryGoal, readPlanProposal, proposePlan, applyPlanChange, proposeInitialPlanFromAnswer,
-    queryTaskGraph, queryReadyTasks, readTaskInput, queryGoalDisplay, queryGoalLiveRuns };
+    queryTaskGraph, queryReadyTasks, readTaskInput, queryGoalDisplay, queryGoalLiveRuns, queryGoalResumeContinuations };
 }
 
 /** §2.3 受影响集合: the `starting|running` Runs of the active Plan's Tasks, in plan task order. */

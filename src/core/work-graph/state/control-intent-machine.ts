@@ -21,10 +21,9 @@
  * `terminal_without_cancel` or `outcome_unknown` closes any kind); CTL-09 (an
  * applied or superseded intent is never re-observed: the same content is an
  * idempotent no-op, other content is stale; an outcome_unknown one is stale,
- * §7.4). The C4 paused-interrupted reason of the
- * ended-Run refusal is step 5.6; CTL-07, CTL-08 and CTL-10 (reconcile and the
- * paused stop) keep their events in the union and still return `illegal`
- * (`notYet`).
+ * §7.4). Step 5.6 adds the C4 paused-interrupted reason of the ended-Run
+ * refusal, CTL-07/CTL-08 (the start-up reconcile and late evidence settle an
+ * intent) and CTL-10 (the paused stop applies a queued cancel).
  *
  * `control-service.ts` drives this file (CTL-01/02/04 for `submitControl`,
  * CTL-03/05/06/09 for `recordControlObservation`). It asks
@@ -43,7 +42,7 @@ import type { RunExecutionHistoryV1 } from '../../../contracts/core/execution-hi
 import type { CoreRejection } from '../../../contracts/core/results.js';
 import type { RunSnapshot } from '../../../contracts/dispatch.js';
 import type { RunNode, RunPointer } from './run-machine.js';
-import { accept, notYet, reject, unreachable, type Rejected, type Transition } from './transition.js';
+import { accept, reject, unreachable, type Rejected, type Transition } from './transition.js';
 
 // -------------------------------------------------------------------------- //
 // State, guard context, events and effects (§7.1, §7.2)                      //
@@ -475,8 +474,10 @@ const SUBMIT_TARGET_GUARDS: readonly GuardRow<Submission>[] = [
     ? reject('illegal', 'not_found', 'the target Run does not exist') : null },
   { row: '7.4 stale Run pin', check: (_submission, ctx) => ctx.pinsMatch.run
     ? null : reject('stale', 'revision_conflict', 'the Run changed since the caller read it') },
-  { row: '7.4 Run ended', check: (_submission, ctx) => runControlClassOf(ctx.run.node) === 'ended'
-    ? reject('illegal', 'busy', 'the Run already ended; no new control intent is accepted') : null },
+  { row: '7.4 Run ended (C4 paused-interrupted)', check: (_submission, ctx) => runControlClassOf(ctx.run.node) === 'ended'
+    ? reject('illegal', 'busy', ctx.run.pausedInterrupted
+      ? 'the paused Run ended at the Host restart; continue the Task'
+      : 'the Run already ended; no new control intent is accepted') : null },
 ];
 
 /**
@@ -775,13 +776,19 @@ function onSupersededByNewer(state: ControlIntentState, event: SupersededEvent, 
   }
 }
 
-/** CTL-10 (新增): a queued cancel applied by the platform stop of a paused Turn (§6 RUN-23). */
-function onAppliedPausedStop(state: ControlIntentState): ControlTransition {
+/**
+ * CTL-10 (RD-7, LA-7): the queued cancel the pointer names is applied by the
+ * platform stop of a Turn with no Kernel terminal (§6 RUN-23), with the
+ * `platform_paused_stop` observation naming the proof and the pause in effect
+ * before (null when the Kernel was not paused, the restart case of LA-7).
+ */
+function onAppliedPausedStop(
+  state: ControlIntentState, event: Extract<ControlIntentEvent, { type: 'control_applied_paused_stop' }>, ctx: ControlGuardContext,
+): ControlTransition {
   switch (state.node) {
     case 'Queued':
-      return state.kind === 'cancel'
-        ? notYet('CTL-10')
-        : reject('illegal', 'invalid', 'only a queued cancel can be applied by a paused stop');
+      if (state.kind !== 'cancel') return reject('illegal', 'invalid', 'only a queued cancel can be applied by a paused stop');
+      break;
     case 'Absent':
     case 'Applied':
     case 'Superseded':
@@ -789,15 +796,43 @@ function onAppliedPausedStop(state: ControlIntentState): ControlTransition {
       return reject('illegal', 'invalid', 'only a queued cancel can be applied by a paused stop');
     default: return unreachable(state.node, 'control node');
   }
+  if (ctx.exitProof === null || ctx.exitProof !== event.basis) {
+    return reject('guard_failed', 'incomplete', 'the paused stop is not proven; the cancel stays queued');
+  }
+  if (event.basis === 'live_clean' && !ctx.run.kernelPaused) {
+    return reject('guard_failed', 'incomplete', 'the in-process paused stop needs the Kernel Turn paused at a safe point');
+  }
+  if (!ctx.run.pointsHere) return reject('illegal', 'invalid', 'a paused stop applies the cancel the Run pointer names');
+  const observation: ControlPlatformObservationV1 = {
+    schemaVersion: 1, origin: 'platform_paused_stop', kind: 'cancelled', runRevision: event.runRevision,
+    detail: { basis: event.basis, pausedBy: event.pausedBy }, observedAt: event.observedAt,
+  };
+  return accept<ControlIntentState, ControlIntentEffect>({ node: 'Applied', kind: 'cancel', revision: state.revision + 1, observation });
 }
 
-/** CTL-07 / CTL-08 (新增): startup reconcile and late evidence of an unknown Run. */
-function onReconciled(state: ControlIntentState): ControlTransition {
+/**
+ * CTL-07 / CTL-08 (S8, A8, D-8, C4): the start-up reconcile settles a queued
+ * intent with the Kernel evidence it can attribute (a steer the Kernel
+ * accepted) or the platform conclusion (`platform_reconcile`); late evidence
+ * settles an `outcome_unknown` intent (CTL-07, with RUN-21, in process or at a
+ * restart). The `run` facts are the Run as the same commit writes it. A
+ * queued pause of a Run that ended paused-interrupted is applied only by the
+ * platform conclusion `paused` (CTL-08(f), 7.4): the Kernel's `run.paused`
+ * names no intent, and superseding it would contradict "已暂停，可继续".
+ */
+function onReconciled(
+  state: ControlIntentState, event: Extract<ControlIntentEvent, { type: 'control_reconciled' }>, ctx: ControlGuardContext,
+): ControlTransition {
   switch (state.node) {
     case 'Queued':
-      return notYet('CTL-08');
+      if (ctx.origin !== 'reconcile') return reject('illegal', 'forbidden', 'only the start-up reconcile settles a queued intent (CTL-08)');
+      break;
     case 'OutcomeUnknown':
-      return notYet('CTL-07');
+      // CTL-07: only a known outcome leaves outcome_unknown.
+      if (event.observation.kind === 'outcome_unknown') {
+        return reject('illegal', 'invalid', 'an outcome_unknown intent leaves only with a known observation (CTL-07)');
+      }
+      break;
     case 'Applied':
     case 'Superseded':
       return reject('illegal', 'invalid', 'the control intent is already terminal; reconcile skips it');
@@ -805,6 +840,49 @@ function onReconciled(state: ControlIntentState): ControlTransition {
       return reject('illegal', 'invalid', 'reconcile only settles a recorded control intent');
     default: return unreachable(state.node, 'control node');
   }
+  const kind = state.kind;
+  if (kind === null) return reject('illegal', 'invalid', 'a recorded control intent must have a kind');
+  const observation = event.observation;
+  const platformPause = isPlatformObservation(observation) && observation.origin === 'platform_reconcile'
+    && observation.kind === 'paused';
+  if (kind === 'pause' && ctx.run.pausedInterrupted !== platformPause) {
+    return reject('illegal', 'invalid', ctx.run.pausedInterrupted
+      ? 'a queued pause of a paused-interrupted Run is applied only by the platform conclusion (CTL-08(f))'
+      : 'the platform paused conclusion belongs only to a paused-interrupted Run (CTL-08(f))');
+  }
+  const pairing = observationPairingProblem(kind, observation);
+  if (pairing !== null) return reject('illegal', 'invalid', pairing);
+  const nodeProblem = reconciledRunNodeProblem(state.node, kind, observation, ctx.run.node);
+  if (nodeProblem !== null) return reject('illegal', 'invalid', nodeProblem);
+  const revision = state.revision + 1;
+  if (!Number.isSafeInteger(revision)) return reject('illegal', 'invalid', 'the control intent revision would not be a safe integer');
+  return accept<ControlIntentState, ControlIntentEffect>(
+    { node: nodeOfStatus(observationStatusFor(observation.kind)), kind, revision, observation }, [{ kind: 'guard_run' }]);
+}
+
+/**
+ * CTL-07/CTL-08: each reconciled observation belongs to the Run node the same
+ * commit leaves the Run in (7.4): `platform_not_entered` to a Run that never
+ * entered ((a); a cancel ends it in the same commit, RUN-09 (R));
+ * `outcome_unknown` to an unknown end ((d)); every other conclusion (a Kernel
+ * observation, `terminal_without_cancel`, the platform `paused` of (f)) to an
+ * ended Run ((b)(c)(e)(f)), or for CTL-07 to the yielded wait RUN-21 can end
+ * in. Never to an `Entering`/`Running` Run or a yielded wait the reconcile
+ * fences.
+ */
+function reconciledRunNodeProblem(
+  from: ControlNode, kind: ControlIntentKindV1, observation: ControlObservationV1 | ControlPlatformObservationV1,
+  node: ControlRunNode,
+): string | null {
+  if (isPlatformObservation(observation) && observation.origin === 'platform_not_entered') {
+    return node === 'Claimed' || node === 'Authorized' || node === 'Revoked' || (node === 'Ended' && kind === 'cancel')
+      ? null : `the not-entered conclusion belongs to a Run that never entered (CTL-08(a)); the Run is ${node}`;
+  }
+  if (observation.kind === 'outcome_unknown') {
+    return node === 'EndedUnknown' ? null : `the outcome_unknown conclusion belongs to an unknown end (CTL-08(d)); the Run is ${node}`;
+  }
+  if (node === 'Ended' || (node === 'YieldedWait' && from === 'OutcomeUnknown')) return null;
+  return `the ${observation.kind} conclusion belongs to an ended Run (CTL-07, CTL-08(b)(c)(e)(f)); the Run is ${node}`;
 }
 
 export function transitionControlIntent(
@@ -818,8 +896,8 @@ export function transitionControlIntent(
       return onSubmission(state, event, ctx);
     case 'control_superseded_by_newer': return onSupersededByNewer(state, event, ctx);
     case 'control_observed': return onObserved(state, event, ctx);
-    case 'control_applied_paused_stop': return onAppliedPausedStop(state);
-    case 'control_reconciled': return onReconciled(state);
+    case 'control_applied_paused_stop': return onAppliedPausedStop(state, event, ctx);
+    case 'control_reconciled': return onReconciled(state, event, ctx);
     default: return unreachable(event, 'control intent event');
   }
 }

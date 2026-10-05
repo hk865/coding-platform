@@ -464,7 +464,11 @@ export function nextRequeueAutoCount(input: {
  * from the caller. An afterRun that entered the Kernel names its claim
  * Session and the completed Turn boundary its Kernel terminal recorded
  * (`executionHistory.endPosition`, the position RUN-07 moved the Session
- * cursor to); one that never entered copies the `historySource` of the
+ * cursor to); a Turn the platform ended without a Kernel terminal (RUN-19/23/24,
+ * RUN-22 on an open Turn: the end is null) names the position before that Turn,
+ * the bound of the completed history the Session cursor kept, which `prepare`
+ * resolves to the last completed boundary at or before it (5.6, LA-1); one that
+ * never entered copies the `historySource` of the
  * TaskRequeue its `requeueRef` names (one hop: that record was derived by the
  * same rule), and has none without a `requeueRef` or when that record was not
  * read.
@@ -477,7 +481,7 @@ export function requeueHistorySourceOf(
   if (history !== undefined) {
     return { sessionRef: { projectId: history.sessionRef.projectId, sessionId: history.sessionRef.sessionId },
       adapterId: history.kernel.adapterId, kernelSessionId: history.kernel.kernelSessionId,
-      throughPosition: history.endPosition };
+      throughPosition: history.endPosition ?? (history.startPosition > 1 ? history.startPosition - 1 : null) };
   }
   const requeueRef = afterRun.requeueRef;
   if (requeueRef === undefined) return null;
