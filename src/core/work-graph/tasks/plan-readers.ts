@@ -22,6 +22,8 @@ import { seqOfCommitCursor } from '../../../contracts/ledger.js';
 import type { Phase, PlanRevisionRef, PlanRevisionSnapshot } from '../../../contracts/plan.js';
 import type { TaskReductionSnapshot } from '../../../contracts/reduction.js';
 import type { GoalPhaseRef, GoalPhaseSnapshot } from '../../../contracts/goal-phase.js';
+import type { TaskPhaseCauseV1 } from '../../../contracts/task-failure.js';
+import type { RoundSnapshot } from '../../../contracts/verification.js';
 import type { RecordLookupPort, RecordLookupRequest } from '../../record-store/lookup-ports.js';
 import type {
   DecodeResult,
@@ -34,6 +36,10 @@ import { decodeGoalSnapshot } from '../persistence/record-codecs.js';
 import { taskLeaseSnapshotProblem } from '../persistence/execution-entry-codecs.js';
 import { derivePlanProposalStatus, derivePlanRevisionStatus, type FutureChangeTaskFactsV1 } from '../state/plan-machine.js';
 import { projectTaskPhase } from '../state/task-machine.js';
+import { roundTaskSignal, type RoundTaskSignalV1 } from '../state/verification-machine.js';
+import {
+  VERIFICATION_ROUND_CHAIN_LOOKUP_LIMIT, VERIFICATION_ROUND_ORIGINAL_LOOKUP, decodeVerificationRoundSnapshot,
+} from '../evidence/evidence-record-codecs.js';
 import type { VerifiedGovernance } from './plan-commit-compiler.js';
 import type { PlanProposal, PlanProposalRef } from './plan-contracts.js';
 import {
@@ -725,6 +731,8 @@ export async function readGoalPlanWindow(
 export type CanonicalTaskState = {
   taskId: string;
   effectivePhase: Phase;
+  /** The TD-1 reason of `effectivePhase` (`projectTaskPhase`); null where the row has none. */
+  phaseCause: TaskPhaseCauseV1 | null;
   currentAttempt: TaskAttemptRef | null;
   execution: RunSnapshot['ref'] | null;
   lease: { status: 'free' } | { status: 'leased'; holderRunId: string };
@@ -747,6 +755,12 @@ export type CanonicalTaskFacts = {
   /** The persisted TaskLease per task (including a released lease), so a
    * continuation claim can guard and update the SAME record revision. */
   leasesByTaskId: ReadonlyMap<string, TaskLeaseSnapshot>;
+  /**
+   * §4.1 / §9 VD-14: the projection input of each task whose selected Run
+   * ended `completed`: `roundTaskSignal` over that Run's round chain, read in
+   * THIS window. Absent for every other task (no chain enters its projection).
+   */
+  roundsByTaskId: ReadonlyMap<string, RoundTaskSignalV1>;
   readThrough: CommitCursor;
   /** Complete exact versions/absences used by adoption or future claim CAS. */
   guards: readonly RecordGuard[];
@@ -845,6 +859,43 @@ function projectLease(input: {
   if (verdict.status === 'unavailable') return { status: 'unavailable', reason: verdict.reason };
   if (verdict.status === 'accepted') return { status: 'ok', value: { status: 'leased', holderRunId: input.lease.holderRunId } };
   return { status: 'ok', value: { status: 'free' } };
+}
+
+/**
+ * The selected Run's work round chain (§4.1 投影输入, §9 VD-14): every round
+ * of `VerificationRoundBySubject` for the Run, at most `ROUND_CHAIN_MAX + 1`
+ * rows, rechecked against the Run (a candidate index only). A backend without
+ * the evidence schemas cannot hold a round (the store refuses an unregistered
+ * record), so an unregistered lookup is a confirmed absence with no watermark,
+ * as in `readGoalPhase`. A damaged or foreign row, or a chain past the limit,
+ * is never guessed into a phase: the whole read refuses.
+ */
+async function readRunRoundChain(
+  records: RecordLookupPort,
+  run: RunSnapshot,
+): Promise<{ status: 'ready'; rounds: RoundSnapshot[]; readThrough: CommitCursor | null | undefined } | Rejected> {
+  const result = await records.lookup({ index: VERIFICATION_ROUND_ORIGINAL_LOOKUP,
+    values: [run.ref.projectId, run.workspaceSnapshot.workspaceId, run.ref.goalId, run.task.taskId, run.ref.runId],
+    limit: VERIFICATION_ROUND_CHAIN_LOOKUP_LIMIT });
+  if (result.status !== 'ready') {
+    if (result.code === 'unsupported') return { status: 'ready', rounds: [], readThrough: undefined };
+    return unavailable(`the round chain of Run ${run.ref.runId} is not readable: ${result.code}: ${result.reason}`);
+  }
+  if (result.value.next !== null) {
+    return incomplete(`the round chain of Run ${run.ref.runId} is longer than the chain limit`);
+  }
+  const runKey = canonicalJson(run.ref as unknown as JsonValue);
+  const rounds: RoundSnapshot[] = [];
+  for (const record of result.value.records) {
+    const decoded = decodeVerificationRoundSnapshot(record);
+    if (decoded.status !== 'decoded') return unavailable(`round ${record.refKey} is damaged: ${decoded.reason}`);
+    const round = decoded.value;
+    if (canonicalJson(round.subjectRunRef as unknown as JsonValue) !== runKey || round.subject.taskId !== run.task.taskId) {
+      return unavailable(`round ${round.ref.roundId} does not belong to Run ${run.ref.runId}`);
+    }
+    rounds.push(round);
+  }
+  return { status: 'ready', rounds, readThrough: result.value.readThrough };
 }
 
 /** Bounded to one Goal's accepted Plan; candidate indexes locate Run records,
@@ -964,6 +1015,8 @@ export async function readCanonicalTaskFacts(
       }
     }
     const byTaskId = new Map<string, CanonicalTaskState>();
+    const roundsByTaskId = new Map<string, RoundTaskSignalV1>();
+    let windowMoved = false;
     for (const task of selectedTasks) {
       const selectedDefinition = selectedFacts.definitions.get(task.taskId);
       if (selectedDefinition === undefined) {
@@ -1013,22 +1066,33 @@ export async function readCanonicalTaskFacts(
       const lease = projectLease({ lease: leaseByTask.get(task.taskId) ?? null, taskId: task.taskId,
         runById, index, selected: selectedFacts, selectedBasis, selectedDefinition, goalRef });
       if (lease.status === 'unavailable') return unavailable(lease.reason);
-      // §4.1 projection (D-1, §14.1): an applicable Reduction, else an active
-      // Run => running, a Run that really yielded with a durable continuation =>
-      // ready, any other ended Run or an unresolvable origin => blocked, no Run
-      // => pending. No round chain or TaskRequeue enters this read before A.2
-      // step 5.3/5.4 (every completed-Run row projects `blocked` until then).
-      const effectivePhase = projectTaskPhase({
+      // A completed selected Run projects from its round chain head (§4.1
+      // P7..P13, §9 VD-14), read in the same window as the Run.
+      let round: RoundTaskSignalV1 = { kind: 'none' };
+      if (run !== null && run.status === 'ended' && run.outcome === 'completed') {
+        const chain = await readRunRoundChain(records, run);
+        if (chain.status !== 'ready') return chain;
+        if (chain.readThrough !== undefined && !sameCursor(read.value.readThrough, chain.readThrough)) {
+          windowMoved = true;
+          break;
+        }
+        round = roundTaskSignal(chain.rounds);
+        roundsByTaskId.set(task.taskId, round);
+      }
+      // §4.1 projection (D-1, TD-1, §14.1); no TaskRequeue enters this read
+      // before A.2 step 5.4.
+      const projected = projectTaskPhase({
         taskKind: task.taskKind,
         applicableReduction: reductionApplicable ? reduction : null,
         selectedRun: run,
         originUnresolvable: unresolvable,
-        round: { kind: 'none' },
+        round,
         coveringRequeue: null,
-      }).phase;
+      });
       byTaskId.set(task.taskId, {
         taskId: task.taskId,
-        effectivePhase,
+        effectivePhase: projected.phase,
+        phaseCause: projected.cause,
         currentAttempt: run === null ? null : { aggregateType: 'TaskAttempt', projectId: goalRef.projectId,
           goalId: goalRef.goalId, taskId: task.taskId, attemptId: run.attemptId },
         execution: run === null ? null : run.ref,
@@ -1036,12 +1100,15 @@ export async function readCanonicalTaskFacts(
         reductionRevision: reductionApplicable && reduction !== null ? reduction.revision : null,
       });
     }
+    // A round committed after the canonical read moves the watermark: the
+    // whole window is read again rather than mixing two ledger positions.
+    if (windowMoved) continue;
     const watermark = read.value.readThrough;
     if (watermark === null) return incomplete('the ledger has no readable watermark for task state');
     const runsByTaskId = new Map<string, readonly RunSnapshot[]>();
     for (const [candidateTaskId, runs] of runByTask) runsByTaskId.set(candidateTaskId, runs);
     return { status: 'ready', value: { goalRef, planRef: plan.ref, byTaskId, runsByTaskId,
-      reductionsByTaskId: reductionByTask, leasesByTaskId: leaseByTask, readThrough: watermark, guards,
+      reductionsByTaskId: reductionByTask, leasesByTaskId: leaseByTask, roundsByTaskId, readThrough: watermark, guards,
       ...(directed ? { taskHasRun } : {}) } };
   }
   return { status: 'rejected', code: 'revision_conflict',

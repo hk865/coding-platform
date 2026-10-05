@@ -18,6 +18,7 @@ import type { ClaimTaskInput } from '../../core/work-graph/tasks/claim-contracts
 import type { TaskGraph, TaskRow } from '../../core/work-graph/tasks/plan-contracts.js';
 import type { GraphWrite } from '../../core/work-graph/tasks/contracts.js';
 import type { SessionCard } from '../../core/work-graph/sessions/contracts.js';
+import { beginRefusalIsPermanent, displayRoundStatus } from '../../core/work-graph/state/verification-machine.js';
 import type { ConsultationInput, ConsultationResult, InitialPlanningGoalInput, InitialPlanningGoalInputResult, N0GoalInput, WorkflowAdvanceInput, WorkflowAdvanceResult, WorkflowOperation, WorkflowStepReceipt } from './contracts.js';
 import type { WorkflowDependencies, WorkflowHostConfiguration, WorkflowPort } from './ports.js';
 import { createConsultationConsumer } from './consultation.js';
@@ -109,8 +110,9 @@ function createSessionStep(
   const requestId = requestIdFor(base, 'create_session', requestWithoutRequestId);
   return { kind: 'create_session', request: { ...value, meta: { requestId, expected } }, taskRef, planRef };
 }
-function openWorkChecksStep(base: Base, run: RunSnapshot): WorkflowOperation {
-  const input = { subjectRunRef: run.ref, subject: run.task, planRef: run.planRef };
+/** VD-7: a work round opens under the Goal's CURRENT adopted Plan, not the Plan the Run was claimed under. */
+function openWorkChecksStep(base: Base, run: RunSnapshot, planRef: PlanRevisionRef): WorkflowOperation {
+  const input = { subjectRunRef: run.ref, subject: run.task, planRef };
   return { kind: 'open_checks', request: graphWrite(base, 'open_checks', input, []) };
 }
 function openGateChecksStep(
@@ -119,22 +121,37 @@ function openGateChecksStep(
   const input = { subjectRunRef: producer, subject: gate, planRef, gateSubject };
   return { kind: 'open_checks', request: graphWrite(base, 'open_checks', input, []) };
 }
-/** `null` means an unknown check window exists: never skip it to run a later
- * pending check or finalize early; the caller keeps the receipt and waits. */
+function finalizeChecksStep(base: Base, round: RoundSnapshot): WorkflowAdvanceInput {
+  const request = graphWrite(base, 'finalize_checks', { roundRef: round.ref },
+    [{ ref: round.ref, revision: round.revision }]);
+  return makePerform(base, { kind: 'finalize_checks', request });
+}
+/**
+ * The next step of an open round (§9.3 "Workflow 推进顺序", by the §9.1 display
+ * names): an `executing` check is an unknown window, so `null` (the caller
+ * keeps the receipt and waits; never skip it or finalize early); otherwise a
+ * `pending` check runs first, interrupted checks or not (V6 "只补未执行");
+ * otherwise the round finalizes, an interrupted check counting as a gap. An
+ * interrupted check never runs again in the round (D-12).
+ */
 function nextAfterRound(base: Base, round: RoundSnapshot): WorkflowAdvanceInput | null {
-  const unresolved = round.checks.find((check) => check.phase === 'executing' || check.phase === 'interrupted');
-  if (unresolved !== undefined) return null;
+  switch (displayRoundStatus(round)) {
+    case 'running': return null;
+    case 'completed':
+    case 'interrupted':
+      return finalizeChecksStep(base, round);
+    case 'incomplete': break;
+  }
   const pending = round.checks.find((check) => check.phase === 'pending');
   if (pending !== undefined) {
     const request = graphWrite(base, 'run_check', { roundRef: round.ref, checkId: pending.checkId },
       [{ ref: round.ref, revision: round.revision }]);
     return makePerform(base, { kind: 'run_check', request });
   }
-  const request = graphWrite(base, 'finalize_checks', { roundRef: round.ref },
-    [{ ref: round.ref, revision: round.revision }]);
-  return makePerform(base, { kind: 'finalize_checks', request });
+  return finalizeChecksStep(base, round);
 }
-function completeTaskStep(base: Base, goal: GoalSnapshot, round: RoundSnapshot): WorkflowOperation {
+/** VD-7: the completion names the Goal's CURRENT adopted Plan, never the round's frozen `adoptedPlanRef`. */
+function completeTaskStep(base: Base, goal: GoalSnapshot, planRef: PlanRevisionRef, round: RoundSnapshot): WorkflowOperation {
   const reductionRef: TaskReductionRef = {
     aggregateType: 'TaskReduction', projectId: round.subject.projectId,
     goalId: round.subject.goalId, taskId: round.subject.taskId,
@@ -143,7 +160,7 @@ function completeTaskStep(base: Base, goal: GoalSnapshot, round: RoundSnapshot):
     { ref: base.goalRef, revision: goal.revision },
     { ref: reductionRef, revision: 0 },
   ];
-  const input = { taskRef: round.subject, planRef: round.adoptedPlanRef, roundRef: round.ref };
+  const input = { taskRef: round.subject, planRef, roundRef: round.ref };
   return { kind: 'complete_task', request: graphWrite(base, 'complete_task', input, expected) };
 }
 function completeGoalStep(base: Base, projectId: string, goal: GoalSnapshot): WorkflowOperation {
@@ -553,49 +570,95 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort & Requi
   }
 
   /**
-   * Resume the ORIGINAL verification round of a formally completed/ended Run
-   * before any new claim/open. An `open` round follows the SAME `nextAfterRound`
-   * rules (pending continues its registered check; executing/interrupted waits).
-   * A `finalized` PASS round completes the Task from that same round; a
-   * finalized non-PASS round waits and is never re-verified. Only an explicit
-   * `not_found` opens the checks exactly once. A missing optional port or any
-   * unknown read/corruption is `waiting`, never treated as "no round", so an
-   * unknown window can never be bypassed with a second round.
+   * The chain head of one subject (VD-14): a work Run's chain through the
+   * plan-independent `queryOriginalVerification` (no `planRef`, VD-7), or with
+   * `subjectRunRef: null` a gate's chain through `queryRoundChainHead`
+   * (VD-15). A missing optional port, a throw or any unknown read is a
+   * `waiting` reason, never "no round", so an unknown window can never be
+   * bypassed with a second round.
    */
-  async function resumeOriginalRound(owned: Owned, base: Base, run: RunSnapshot): Promise<WorkflowAdvanceResult> {
-    const query = deps.evidence.queryOriginalVerification;
-    if (query === undefined) {
-      return waiting(null, 'the original verification round is not readable: the original-round read is not published');
-    }
-    let read: ReadResult<RoundSnapshot>;
+  async function readChainHead(
+    owned: Owned, subject: TaskTriple, subjectRunRef: RunRef | null,
+  ): Promise<{ read: ReadResult<RoundSnapshot> } | { waiting: string }> {
+    const workQuery = deps.evidence.queryOriginalVerification;
+    const gateQuery = deps.evidence.queryRoundChainHead;
     try {
-      read = await query(owned.ctx, { subjectRunRef: run.ref, subject: { ...run.task }, planRef: run.planRef });
+      if (subjectRunRef !== null) {
+        if (workQuery === undefined) return { waiting: 'the verification round chain is not readable: the chain-head read is not published' };
+        return { read: await workQuery(owned.ctx, { subjectRunRef, subject }) };
+      }
+      if (gateQuery === undefined) return { waiting: 'the gate round chain is not readable: the chain-head read is not published' };
+      return { read: await gateQuery(owned.ctx, { subject, subjectRunRef: null }) };
     } catch {
-      return waiting(null, 'the original verification round read failed; no new round is opened');
+      return { waiting: 'the verification round chain read failed; no new round is opened' };
     }
-    if (read.status === 'ready') {
-      const round = read.value;
-      if (round.status === 'finalized') {
-        if (round.outcome !== 'PASS' || round.gaps.length > 0) {
-          return waiting(null,
-            `the original verification round finalized ${round.outcome ?? 'INCONCLUSIVE'} with ${round.gaps.length} gap(s); not re-verifying`);
-        }
-        const goalRead = await deps.plans.queryGoal(owned.ctx, base.goalRef);
-        if (goalRead.status !== 'ready') {
-          return waiting(null, receiptReason(goalRead, 'the Goal could not be read for the Task completion'));
-        }
-        return advancing(null, makePerform(base, completeTaskStep(base, goalRead.value.goal, round)));
+  }
+
+  /**
+   * Continue one subject's round chain from its head (§9.3, VD-7, VD-14): an
+   * `open` head follows `nextAfterRound`; a finalized clean PASS completes the
+   * Task under the Goal's current adopted Plan; a finalized non-PASS head waits
+   * (A.2 step 5.8/5.9 turn it into the automation verdict). `null` means the
+   * subject has no chain yet.
+   */
+  async function continueRoundChain(
+    owned: Owned, base: Base, read: ReadResult<RoundSnapshot>,
+  ): Promise<WorkflowAdvanceResult | null> {
+    if (read.status === 'not_found') return null;
+    if (read.status !== 'ready') return waiting(null, receiptReason(read, 'the verification round chain is not readable'));
+    const round = read.value;
+    if (round.status === 'finalized') {
+      if (round.outcome !== 'PASS' || round.gaps.length > 0) {
+        return waiting(null,
+          `the verification round chain head finalized ${round.outcome ?? 'INCONCLUSIVE'} with ${round.gaps.length} gap(s); not re-verifying`);
       }
-      const next = nextAfterRound(base, round);
-      if (next === null) {
-        return waiting(null, 'the original verification round has an executing or interrupted check; not advancing');
+      const goalRead = await deps.plans.queryGoal(owned.ctx, base.goalRef);
+      if (goalRead.status !== 'ready') {
+        return waiting(null, receiptReason(goalRead, 'the Goal could not be read for the Task completion'));
       }
-      return advancing(null, next);
+      const goal = goalRead.value.goal;
+      if (goal.activePlanRevision === null) return waiting(null, 'the Goal has no adopted Plan; the Task is not completed');
+      return advancing(null, makePerform(base, completeTaskStep(base, goal, goal.activePlanRevision, round)));
     }
-    if (read.status === 'not_found') {
-      return advancing(null, makePerform(base, openWorkChecksStep(base, run)));
+    const next = nextAfterRound(base, round);
+    if (next === null) return waiting(null, 'the verification round chain head has an executing check; not advancing');
+    return advancing(null, next);
+  }
+
+  /**
+   * Resume the round chain of a formally completed/ended Run before any new
+   * claim/open (VD-14): its head continues (`continueRoundChain`); only an
+   * explicit `not_found` opens the checks exactly once, under the Goal's current
+   * adopted Plan (`planRef`, VD-7).
+   */
+  async function resumeRoundChain(owned: Owned, base: Base, run: RunSnapshot, planRef: PlanRevisionRef): Promise<WorkflowAdvanceResult> {
+    const head = await readChainHead(owned, { ...run.task }, run.ref);
+    if ('waiting' in head) return waiting(null, head.waiting);
+    const continued = await continueRoundChain(owned, base, head.read);
+    return continued ?? advancing(null, makePerform(base, openWorkChecksStep(base, run, planRef)));
+  }
+
+  /**
+   * VD-15: a gate has one chain, anchored on the producer Run its root opened
+   * on. With a chain the gate only follows its head and never re-selects a
+   * producer; without one the root opens on the first satisfied work Run with
+   * an execution, under the Goal's current adopted Plan (VD-7).
+   */
+  async function advanceGate(
+    owned: Owned, base: Base, graph: TaskGraph, gateTask: RuntimeTask,
+  ): Promise<WorkflowAdvanceResult> {
+    const gate: TaskTriple = { projectId: owned.projectId, goalId: base.goalRef.goalId, taskId: gateTask.taskId };
+    const head = await readChainHead(owned, gate, null);
+    if ('waiting' in head) return waiting(null, head.waiting);
+    const continued = await continueRoundChain(owned, base, head.read);
+    if (continued !== null) return continued;
+    const producer = graph.tasks.find((row) => row.definition.taskKind === 'work'
+      && row.effectivePhase === 'satisfied' && row.execution !== null);
+    if (producer === undefined || producer.execution === null) {
+      return waiting(null, `the goal gate ${gateTask.taskId} has no ended ordinary producer Run yet`);
     }
-    return waiting(null, receiptReason(read, 'the original verification round is not readable'));
+    return advancing(null, makePerform(base,
+      openGateChecksStep(base, graph.plan.ref, gate, producer.execution, gateTask.scope.kind)));
   }
 
   /** Read-only deterministic first-step selection shared by `select_work`. */
@@ -642,18 +705,18 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort & Requi
         && await isUnadmittedStarting(owned, row.execution)) {
         return advancing(null, makePerform(base, { kind: 'prepare', request: prepareStep(base, row.execution) }));
       }
-      // A formally completed/ended Run whose Task is still open keeps its
-      // ORIGINAL verification round (open or finalized). Resume that round (or
-      // open it exactly once on an explicit not_found) BEFORE skipping the ended
-      // Run; an unknown original-round read waits rather than falling through to
-      // an unrelated Work. Failed/cancelled/paused/running/unknown executions
-      // keep the existing rules below, and other same-Goal Tasks stay
-      // independently selectable.
+      // A formally completed/ended Run whose Task is still open keeps its round
+      // chain (open or finalized). Resume the chain head (or open the root
+      // exactly once on an explicit not_found) BEFORE skipping the ended Run;
+      // an unknown chain read waits rather than falling through to an unrelated
+      // Work. Failed/cancelled/paused/running/unknown executions keep the
+      // existing rules below, and other same-Goal Tasks stay independently
+      // selectable. The graph Plan is the Goal's current adopted Plan (VD-7).
       if (row.execution !== null && row.effectivePhase !== 'satisfied' && row.effectivePhase !== 'failed') {
         const execution = await deps.executions.readExecution(owned.ctx, row.execution);
         if (execution.status === 'ready' && sameCanonical(execution.value.run.ref, row.execution)
           && normalEnd(execution.value.run).ok) {
-          return await resumeOriginalRound(owned, base, execution.value.run);
+          return await resumeRoundChain(owned, base, execution.value.run, graph.plan.ref);
         }
       }
       // An ended Run with no formal yield is never re-claimed. A real yielded Run
@@ -724,16 +787,7 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort & Requi
     // 3. Only a fully satisfied required ordinary set may produce the gate
     //    evidence from an already-ended ordinary Run (no gate Run is invented).
     const gateTask = required.find((task) => task.taskKind === 'gate' && unsatisfied(task));
-    if (gateTask !== undefined) {
-      const producer = graph.tasks.find((row) => row.definition.taskKind === 'work'
-        && row.effectivePhase === 'satisfied' && row.execution !== null);
-      if (producer === undefined || producer.execution === null) {
-        return waiting(null, `the goal gate ${gateTask.taskId} has no ended ordinary producer Run yet`);
-      }
-      const gate: TaskTriple = { projectId: owned.projectId, goalId: base.goalRef.goalId, taskId: gateTask.taskId };
-      return advancing(null, makePerform(base,
-        openGateChecksStep(base, graph.plan.ref, gate, producer.execution, gateTask.scope.kind)));
-    }
+    if (gateTask !== undefined) return await advanceGate(owned, base, graph, gateTask);
 
     // 4. Only a fully satisfied required set may propose the formal Goal completion.
     if (required.every((task) => !unsatisfied(task))) {
@@ -747,6 +801,14 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort & Requi
     // receipt is preserved. The trusted configuration is re-checked only when a
     // successful successor genuinely needs a binding or the fixed consumerId.
     const config = deps.configuration;
+    /** VD-7: the round of a normally ended Run opens under the Goal's current adopted Plan. */
+    const openChecksAfterRun = async (receipt: WorkflowStepReceipt, run: RunSnapshot): Promise<WorkflowAdvanceResult> => {
+      const goalRead = await deps.plans.queryGoal(owned.ctx, base.goalRef);
+      if (goalRead.status !== 'ready') return waiting(receipt, receiptReason(goalRead, 'the Goal could not be read for the round open'));
+      const planRef = goalRead.value.goal.activePlanRevision;
+      if (planRef === null) return waiting(receipt, 'the Goal has no adopted Plan; no round is opened');
+      return advancing(receipt, makePerform(base, openWorkChecksStep(base, run, planRef)));
+    };
     switch (operation.kind) {
       case 'create_session': {
         const result = await deps.runtime.createSession(owned.ctx, operation.request);
@@ -803,7 +865,7 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort & Requi
         if (result.status !== 'ready') return waiting(receipt, receiptReason(result, 'the Run did not return a formal record'));
         const ended = normalEnd(result.value.run);
         if (!ended.ok) return waiting(receipt, ended.reason);
-        return advancing(receipt, makePerform(base, openWorkChecksStep(base, result.value.run)));
+        return await openChecksAfterRun(receipt, result.value.run);
       }
       case 'observe': {
         const result = await deps.runtime.observeRun(owned.ctx, operation.request);
@@ -811,22 +873,30 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort & Requi
         if (result.status !== 'ready') return waiting(receipt, receiptReason(result, 'the Run observation did not return a formal record'));
         const ended = normalEnd(result.value.run);
         if (!ended.ok) return waiting(receipt, ended.reason);
-        return advancing(receipt, makePerform(base, openWorkChecksStep(base, result.value.run)));
+        return await openChecksAfterRun(receipt, result.value.run);
       }
       case 'open_checks': {
         const result = await deps.evidence.openVerification(owned.ctx, operation.request);
         const receipt: WorkflowStepReceipt = { kind: 'open_checks', result };
         if (result.status !== 'committed') return waiting(receipt, result.reason);
         const next = nextAfterRound(base, result.value);
-        if (next === null) return waiting(receipt, 'the round has an executing or interrupted check; not advancing');
+        if (next === null) return waiting(receipt, 'the round has an executing check; not advancing');
         return advancing(receipt, next);
       }
       case 'run_check': {
         const result = await deps.checks.runRegisteredCheck(owned.ctx, operation.request);
         const receipt: WorkflowStepReceipt = { kind: 'run_check', result };
+        if (result.status === 'rejected' && beginRefusalIsPermanent(result)) {
+          // Exit #3 (VD-8): the frozen binding changed, so the round's attempts
+          // end; the remaining checks count as gaps when it finalizes.
+          const read = await deps.evidence.readVerification(owned.ctx, operation.request.input.roundRef);
+          if (read.status !== 'ready') return waiting(receipt, receiptReason(read, 'the round could not be read for its finalize'));
+          if (read.value.status !== 'open') return waiting(receipt, 'the round is already finalized');
+          return advancing(receipt, finalizeChecksStep(base, read.value));
+        }
         if (result.status !== 'ready') return waiting(receipt, receiptReason(result, 'the registered check did not return a persisted round'));
         const next = nextAfterRound(base, result.value);
-        if (next === null) return waiting(receipt, 'the round has an executing or interrupted check; not advancing');
+        if (next === null) return waiting(receipt, 'the round has an executing check; not advancing');
         return advancing(receipt, next);
       }
       case 'finalize_checks': {
@@ -841,7 +911,9 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort & Requi
         if (goalRead.status !== 'ready') {
           return waiting(receipt, receiptReason(goalRead, 'the Goal could not be read for the Task completion'));
         }
-        return advancing(receipt, makePerform(base, completeTaskStep(base, goalRead.value.goal, finalized.snapshot)));
+        const goal = goalRead.value.goal;
+        if (goal.activePlanRevision === null) return waiting(receipt, 'the Goal has no adopted Plan; the Task is not completed');
+        return advancing(receipt, makePerform(base, completeTaskStep(base, goal, goal.activePlanRevision, finalized.snapshot)));
       }
       case 'complete_task': {
         const result = await deps.tasks.completeTask(owned.ctx, operation.request);

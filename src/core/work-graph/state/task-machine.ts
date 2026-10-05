@@ -15,25 +15,25 @@
  * leaves the state as is (TASK-20, R5). The machine never reads storage, mints
  * ids or reads a clock: instants and ids come in the event payload.
  *
- * A.2 step 2 (§15.2) scope:
- * - Projection rows keep TODAY's phase (`plan-readers.ts:1145-1154`): every
- *   ended Run that is not a yielded wait projects `blocked`. Step 5.3 flips P6
- *   and P7 to `failed` and P11..P13 to `verifying`; P3 is `blocked` today and
- *   in the target. The TD-1 cause codes are new read-only output and already
- *   follow the target table. The 新增 rows P4 (5.4), P17/P18 (5.3), P19 (5.6)
- *   and P20 (5.9) are not evaluated yet: their facts fall through to the row
- *   today's fold reaches.
+ * A.2 step 5.3 (§15.2) scope:
+ * - Projection rows P1..P18 have their target values (D-1, TD-5): P6 and P7
+ *   are `failed`, P11..P13 `verifying`, and P17/P18 hold a yielded wait whose
+ *   pointer is cancelled (`failed`) or paused (`blocked`). The rows P4 (5.4),
+ *   P19 (5.6) and P20 (5.9) are not evaluated yet: their facts fall through to
+ *   the row the remaining table reaches.
+ * - The re-projection rows TASK-04..13 and TASK-20..23 follow the projection;
+ *   TASK-14 adds the projection guard (`verifying`, §4.4) and the chain-head
+ *   guard (the round is the selected Run's chain head, C5). Its TD-2 evidence
+ *   exclusion lands with requeue (5.4) and successor rounds (5.9).
  * - 已有 rows keep today's codes in today's order (`claim-service.ts:510-666`,
  *   pre-step-3 `completion.ts:316-395`, `plan-service.ts:1737-1767`,
  *   `plan-readers.ts:1269-1297`).
- * - 改造 rows keep today's result; step 5 flips them: TASK-03 (the claim
- *   service does not read `requeueRef`, so a requeue claim follows the
- *   first-claim rule: `busy` once the Task has a Run), TASK-14/15 (no
- *   projection, chain-head or TD-2 evidence guard; a gate completes from
- *   `pending`), TASK-18 (no `dispositionRecord`), and TASK-05/06/09/10/11/13
- *   through their projection rows.
- * - 新增 rows (TASK-07, 08, 12, 16, 17, 21..23, 26..30) keep their events in
- *   the union and answer `illegal` (`notYet`). TASK-19 is answered by today's
+ * - 改造 rows still at today's result, flipped by later substeps: TASK-03 (the
+ *   claim service does not read `requeueRef`, so a requeue claim follows the
+ *   first-claim rule: `busy` once the Task has a Run; 5.4), TASK-15 (a gate
+ *   completes from `pending`; 5.9), TASK-18 (no `dispositionRecord`; 5.10).
+ * - 新增 rows of later substeps (TASK-16, 17, 26..30) keep their events in the
+ *   union and answer `illegal` (`notYet`). TASK-19 is answered by today's
  *   §4.4 refusal in front of it: a traced Task's definition, disposition
  *   included, is frozen (`revision_conflict`).
  *
@@ -146,23 +146,26 @@ export function classifyTaskPhase(facts: TaskPhaseFacts): TaskPhaseProjection {
 function endedRunProjection(run: RunSnapshot, round: RoundTaskSignalV1): TaskPhaseProjection {
   const outcome = run.outcome;
   // An ended Run without an outcome is damaged (`runCombinationProblem`);
-  // like P14 it is defended as `blocked`, today's fold.
+  // like P14 it is defended as `blocked`.
   if (outcome === null) return projection('P14', 'blocked', causeOf('run_failed'));
   switch (outcome) {
     case 'outcome_unknown': return projection('P3', 'blocked', causeOf('run_outcome_unknown'));
-    // P4 (requeued, C1) is step 5.4, P17/P18 (a stop pointer on a yielded wait,
-    // TD-5) step 5.3 and P19 (paused-interrupted, C4) step 5.6: until then their
-    // facts reach P5 or P6 below, as in today's fold.
-    case 'yielded':
-      return run.continuation !== undefined
-        ? projection('P5', 'ready', null)
-        : projection('P14', 'blocked', causeOf('run_failed'));
+    // P4 (requeued, C1) is step 5.4 and P19 (paused-interrupted, C4) step 5.6:
+    // until then their facts reach P5..P7 below.
+    case 'yielded': {
+      if (run.continuation === undefined) return projection('P14', 'blocked', causeOf('run_failed'));
+      // TD-5: a stop pointer holds the continuation (the claim answers `busy`),
+      // so it shows: cancelled → requeue, paused → resume (RUN-14) or cancel.
+      const pointer = run.controlState?.desiredState;
+      if (pointer === 'cancelled') return projection('P17', 'failed', causeOf('continuation_cancelled'));
+      if (pointer === 'paused') return projection('P18', 'blocked', causeOf('continuation_paused'));
+      return projection('P5', 'ready', null);
+    }
     case 'crashed':
     case 'cancelled':
     case 'budget_exhausted':
     case 'failed':
-      // Step 5.3: `failed`.
-      return projection('P6', 'blocked', causeOf('run_failed', { outcome, origin: runFailureOrigin(run) }));
+      return projection('P6', 'failed', causeOf('run_failed', { outcome, origin: runFailureOrigin(run) }));
     case 'completed': return completedRunProjection(round);
     default: return unreachable(outcome, 'Run outcome');
   }
@@ -172,9 +175,9 @@ function endedRunProjection(run: RunSnapshot, round: RoundTaskSignalV1): TaskPha
 function completedRunProjection(round: RoundTaskSignalV1): TaskPhaseProjection {
   switch (round.kind) {
     case 'invalid': return projection('P10', 'blocked', causeOf('round_ambiguous'));
+    // D-2: a FAIL round fails the Task.
     case 'fail':
-      // Step 5.3: `failed` (D-2).
-      return projection('P7', 'blocked', causeOf('check_failed', { ...successorDetail(round), checkIds: round.failedCheckIds }));
+      return projection('P7', 'failed', causeOf('check_failed', { ...successorDetail(round), checkIds: round.failedCheckIds }));
     case 'inconclusive':
       return projection('P8', 'blocked', causeOf('round_inconclusive', { ...successorDetail(round), gapCodes: round.gapCodes }));
     case 'open':
@@ -183,15 +186,13 @@ function completedRunProjection(round: RoundTaskSignalV1): TaskPhaseProjection {
       if (!round.unsettled && round.interruptedCheckIds.length > 0) {
         return projection('P9', 'blocked', causeOf('check_interrupted', successorDetail(round)));
       }
-      // Step 5.3: `verifying`.
-      return projection('P12', 'blocked', causeOf('verification_running', {
+      return projection('P12', 'verifying', causeOf('verification_running', {
         ...successorDetail(round),
         ...(round.interruptedCheckIds.length === 0 ? {} : { checkIds: round.interruptedCheckIds }),
       }));
-    // Step 5.3: `verifying`.
-    case 'none': return projection('P11', 'blocked', causeOf('awaiting_verification'));
-    // Step 5.3: `verifying` (P1 already took an applicable reduction).
-    case 'pass': return projection('P13', 'blocked', causeOf('awaiting_completion', successorDetail(round)));
+    case 'none': return projection('P11', 'verifying', causeOf('awaiting_verification'));
+    // P1 already took an applicable reduction.
+    case 'pass': return projection('P13', 'verifying', causeOf('awaiting_completion', successorDetail(round)));
     default: return unreachable(round, 'round signal');
   }
 }
@@ -264,6 +265,12 @@ export type TaskCompletionFacts = {
   /** The producer Run's task kind in the selected Plan; null when the Plan does not define it. */
   producerTaskKind: TaskKind | null;
   evaluation: TaskCompletionVerdictV1;
+  /**
+   * The head of the selected Run's round chain as the projection read it
+   * (`roundTaskSignal`, VD-14); null without a valid chain. A work Task
+   * completes only from this round (TASK-14, C5).
+   */
+  chainHead: VerificationRoundRef | null;
 };
 
 /** The first trace today's future-change reader finds: Run, then Lease, then Reduction (`plan-readers.ts:1269-1297`). */
@@ -662,17 +669,6 @@ function sameRunRef(left: RunRef, right: RunRef): boolean {
   return left.projectId === right.projectId && left.goalId === right.goalId && left.runId === right.runId;
 }
 
-/** §6 `YieldedWait`: ended, yielded, with its continuation. */
-function isYieldedWait(run: RunSnapshot): boolean {
-  return run.status === 'ended' && run.outcome === 'yielded' && run.continuation !== undefined;
-}
-
-/** The pointer that holds a yielded wait (`claim-service.ts:606-611`, TD-5). */
-function hasStopPointer(run: RunSnapshot): boolean {
-  const pointer = run.controlState?.desiredState;
-  return pointer === 'paused' || pointer === 'cancelled';
-}
-
 /** Facts for another kind of Task would project the wrong rows (P20 reads only gates). */
 function factsKindProblem(state: TaskState, facts: TaskPhaseFacts): Rejected | null {
   return facts.taskKind === state.taskKind ? null
@@ -848,7 +844,11 @@ function onTaskClaimed(
   ]);
 }
 
-/** TASK-04..08, 20, 21, 26. */
+/**
+ * TASK-04..08, 20, 21, 26: the ended selected Run re-projects (TASK-04 `ready`,
+ * TASK-05 `verifying`, TASK-06 `failed`, TASK-07 `blocked/run_outcome_unknown`,
+ * TASK-21 P17/P18), and TASK-08 resolves an unknown end the same way.
+ */
 function onRunEnded(state: TaskMachineState, event: Extract<TaskEvent, { kind: 'run_ended' }>): TaskTransition {
   if (state === null) return absentTask(event.kind);
   const kindProblem = factsKindProblem(state, event.facts);
@@ -860,44 +860,22 @@ function onRunEnded(state: TaskMachineState, event: Extract<TaskEvent, { kind: '
   if (run.status !== 'ended' || outcome === null) {
     return reject('illegal', 'invalid', 'the projection facts do not show the ended Run with its outcome');
   }
-  switch (outcome) {
-    // D-4: today an unknown end is never written (§6 RUN-08 is step 5).
-    case 'outcome_unknown': return notYet('TASK-07');
-    case 'yielded':
-      if (run.continuation !== undefined && hasStopPointer(run)) return notYet('TASK-21');
-      break;
-    case 'crashed':
-      if (isPausedInterrupted(run)) return notYet('TASK-26');
-      break;
-    case 'completed':
-    case 'cancelled':
-    case 'budget_exhausted':
-    case 'failed':
-      break;
-    default: return unreachable(outcome, 'Run outcome');
-  }
-  // TASK-08 (D-4): late evidence or an attestation resolves the unknown outcome.
-  if (state.row === 'P3') return notYet('TASK-08');
+  // TASK-26 (C4, RUN-24) is step 5.6.
+  if (outcome === 'crashed' && isPausedInterrupted(run)) return notYet('TASK-26');
   return reprojected(state, event.facts);
 }
 
-/** TASK-22/23: a stop or resume on the selected `YieldedWait` (TD-5); any other control only re-projects. */
+/**
+ * TASK-22/23: a pause, cancel or resume on the selected `YieldedWait` moves its
+ * pointer and so its projection (TD-5: P5 ⇄ P18, P5/P18 → P17); any other
+ * control only re-projects.
+ */
 function onControlSubmitted(state: TaskMachineState, event: Extract<TaskEvent, { kind: 'control_submitted' }>): TaskTransition {
   if (state === null) return absentTask(event.kind);
   const kindProblem = factsKindProblem(state, event.facts);
   if (kindProblem !== null) return kindProblem;
   const run = event.facts.selectedRun;
   if (run === null || !sameRunRef(run.ref, event.runRef)) return accept(state);
-  if (isYieldedWait(run)) {
-    const control = event.control;
-    switch (control) {
-      case 'pause': return notYet('TASK-22');
-      case 'cancel': return notYet(state.row === 'P18' ? 'TASK-23' : 'TASK-22');
-      case 'resume': return notYet('TASK-23');
-      case 'steer': break;
-      default: return unreachable(control, 'control kind');
-    }
-  }
   return reprojected(state, event.facts);
 }
 
@@ -921,8 +899,9 @@ function onRoundEvent(state: TaskMachineState, event: RoundTaskEvent): TaskTrans
   if (event.kind === 'round_finalized' && state.row === 'P9' && event.outcome === 'PASS' && event.gapCodes.length === 0) {
     return reject('illegal', 'invalid', 'an interrupted check is a gap, so the round cannot finalize as a clean PASS (§9 VD-4)');
   }
-  // TASK-12 (D-12): the last pending/executing check settles with an interrupted one left.
-  if (state.row !== 'P9' && classifyTaskPhase(event.facts).row === 'P9') return notYet('TASK-12');
+  // TASK-09 `verifying`, TASK-12 (D-12) `blocked/check_interrupted` once the
+  // last pending/executing check settles with an interrupted one left, TASK-10
+  // `failed`, TASK-11 `blocked/round_inconclusive`, TASK-13 `verifying`.
   return reprojected(state, event.facts);
 }
 
@@ -984,10 +963,44 @@ export function taskCompletionFoldProblem(taskId: string, evaluation: TaskComple
 }
 
 /**
- * TASK-14 (work), TASK-15 (gate), TASK-24 (already satisfied, new identity).
- * Today the round and the fold decide; the projection, chain-head and TD-2
- * evidence-exclusion guards are step 5.3/5.4/5.9, and so are the §4.4
- * `failed`/`blocked`/`running` refusals.
+ * TASK-14/24 guards a work Task meets before its round is read (§4.4, C5): the
+ * projection is `verifying` (TASK-14) or `satisfied` (TASK-24, a new
+ * identity): `failed` and `blocked` are `illegal`/`incomplete` (an older PASS
+ * never overtakes the latest failure), `pending`, `ready` and `running` are
+ * `guard_failed`/`incomplete`. Then the requested round must be the head of
+ * the selected Run's chain. A gate keeps today's rule until its chain
+ * projects (TASK-15, step 5.9).
+ */
+export function taskCompletionProjectionProblem(
+  state: Pick<TaskState, 'taskKind' | 'phase'>,
+  roundRef: VerificationRoundRef,
+  chainHead: VerificationRoundRef | null,
+): Rejected | null {
+  if (state.taskKind === 'gate') return null;
+  switch (state.phase) {
+    case 'verifying':
+    case 'satisfied':
+      break;
+    case 'failed':
+    case 'blocked':
+      return reject('illegal', 'incomplete', `the task is ${state.phase}; a PASS round cannot complete it`);
+    case 'pending':
+    case 'ready':
+    case 'running':
+      return reject('guard_failed', 'incomplete', `the task is ${state.phase}; only a verifying task completes`);
+    default: return unreachable(state.phase, 'Task phase');
+  }
+  if (chainHead === null || canonicalJson(roundRef as unknown as JsonValue) !== canonicalJson(chainHead as unknown as JsonValue)) {
+    return reject('guard_failed', 'incomplete', 'the specified round is not the head of the selected Run round chain');
+  }
+  return null;
+}
+
+/**
+ * TASK-14 (work), TASK-15 (gate), TASK-24 (already satisfied, new identity):
+ * the projection and chain-head guards (`taskCompletionProjectionProblem`),
+ * then the round, its producer and the fold. The TD-2 evidence exclusion is
+ * step 5.4/5.9.
  */
 function onTaskCompleted(
   state: TaskMachineState,
@@ -997,6 +1010,8 @@ function onTaskCompleted(
   if (state === null) return reject('illegal', 'incomplete', 'the selected Plan does not define the requested task');
   const facts = ctx.completion;
   if (facts === null) return reject('illegal', 'invalid', 'task_completed requires the completion guard facts');
+  const projected = taskCompletionProjectionProblem(state, event.round.ref, facts.chainHead);
+  if (projected !== null) return projected;
   const problem = taskCompletionRoundProblem({ task: event.task, taskKind: state.taskKind, round: event.round,
     producerRun: facts.producerRun, producerTaskKind: facts.producerTaskKind })
     ?? taskCompletionFoldProblem(event.task.taskId, facts.evaluation);

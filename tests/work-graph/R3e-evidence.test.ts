@@ -18,7 +18,9 @@ import { createEvidenceService } from '../../src/core/work-graph/evidence/eviden
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
 import { VerificationWorkspaceReader } from '../../src/core/workspace/verification-workspace-reader.js';
 import { B2_AT } from '../helpers/B2-execution-fixture.js';
-import { createR3eEvidenceFixture, R3E_HOST, R3E_WORK_TASK_ID, type R3eEvidenceFixture } from '../helpers/R3e-evidence-fixture.js';
+import {
+  createR3eEvidenceFixture, R3E_GATE_TASK_ID, R3E_HOST, R3E_WORK_TASK_ID, type R3eEvidenceFixture,
+} from '../helpers/R3e-evidence-fixture.js';
 
 const fixtures: R3eEvidenceFixture[] = [];
 afterEach(async () => { for (const fixture of fixtures.splice(0)) await fixture.close(); });
@@ -304,9 +306,16 @@ it('freezes an open round configuration and resolves a fresh round from the curr
   if (read.status !== 'ready') throw Error('the original round was not readable');
   expect(read.value.configuration.configurationRevision).toBe(fixture.configuration.configurationRevision);
 
-  // RED (Stage 2): a fresh round takes the CURRENT resolved scope configuration.
+  // A.2 step 5.3 (VR-01 slot, VD-1): the subject Run already has a round chain, so a
+  // second open on it is `busy` with the head pin; the next round on the subject is a
+  // successor that freezes the current configuration (`reverifyRound`, step 5.9).
   const fresh = await scoped.openVerification(fixture.ctx, fixture.openRequest());
-  expect(fresh, 'a fresh round uses the current scope configuration').toMatchObject({ status: 'committed' });
-  if (fresh.status !== 'committed') throw Error('the fresh scoped round did not open');
-  expect(fresh.value.configuration.configurationRevision).toBe('r3e-checks-config-2');
+  expect(fresh, 'a second open on the same subject Run is busy').toMatchObject({ status: 'rejected', code: 'busy',
+    current: [{ ref: round.ref, revision: round.revision }] });
+  // A fresh root on another slot (the Goal gate's) still freezes the CURRENT scope configuration.
+  const gate = await scoped.openVerification(fixture.ctx, fixture.openRequest({
+    subject: { ...fixture.subject, taskId: R3E_GATE_TASK_ID }, gateSubject: 'goal' }));
+  expect(gate, 'a fresh gate round uses the current scope configuration').toMatchObject({ status: 'committed' });
+  if (gate.status !== 'committed') throw Error('the fresh scoped gate round did not open');
+  expect(gate.value.configuration.configurationRevision).toBe('r3e-checks-config-2');
 });

@@ -184,11 +184,11 @@ function claimBasisOf(input: ClaimTaskInput): AttemptClaimBasis {
 
 /**
  * The projection inputs (§4.1) of the claimed Task from its directed canonical
- * read (`plan-readers.ts:1095-1165`): the selected Run, the applicable
- * Reduction, and an unresolvable origin, which that read shows only as a
- * `blocked` Task with neither. The claim reads no round chain (every
- * completed-Run row is `blocked` today) and no TaskRequeue covers a Run before
- * A.2 step 5.4. `null` when the read lacks the Run or Reduction it selected.
+ * read (`plan-readers.ts` `readCanonicalTaskFacts`): the selected Run, the
+ * applicable Reduction, the selected Run's round-chain signal, and an
+ * unresolvable origin, which that read shows only as a `blocked` Task with
+ * neither Run nor Reduction. No TaskRequeue covers a Run before A.2 step 5.4.
+ * `null` when the read lacks the Run or Reduction it selected.
  */
 function claimPhaseFacts(task: RuntimeTask, state: CanonicalTaskState, read: CanonicalTaskFacts): TaskPhaseFacts | null {
   const execution = state.execution;
@@ -202,7 +202,7 @@ function claimPhaseFacts(task: RuntimeTask, state: CanonicalTaskState, read: Can
     applicableReduction,
     selectedRun,
     originUnresolvable: selectedRun === null && applicableReduction === null && state.effectivePhase === 'blocked',
-    round: { kind: 'none' },
+    round: read.roundsByTaskId.get(task.taskId) ?? { kind: 'none' },
     coveringRequeue: null,
   };
 }

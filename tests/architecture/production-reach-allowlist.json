@@ -931,14 +931,6 @@
     },
     {
       "file": "src/contracts/verification.ts",
-      "name": "INTERRUPTED_CHECK_GAP_CODE",
-      "reason": "step5",
-      "substep": "5.3",
-      "wiredBy": "STEP5-FLIPS.md §5 verification-machine, flip VR-07 (D-2, 5.3): interrupted → gap interrupted_check",
-      "note": "gap code written by the VR-07 fold; also read by the failure facts and successor rounds"
-    },
-    {
-      "file": "src/contracts/verification.ts",
       "name": "REVIEWER_SEMANTIC_CHECK_ID",
       "reason": "pre-batch",
       "note": "unreached at 790d970; referenced nowhere"
@@ -1262,22 +1254,6 @@
       "name": "encodeRoleSpecActivatedEvent",
       "reason": "pre-batch",
       "note": "unreached at 790d970; only reached from RoleConfigurationPort.activateRoleSpec"
-    },
-    {
-      "file": "src/core/work-graph/evidence/contracts.ts",
-      "name": "RoundChainHeadQuery",
-      "reason": "step5",
-      "substep": "5.3",
-      "wiredBy": "spec §15.2 5.3 (投影、完成与 Workflow 经 roundChainHead 读链头); §15.3 VR-01 names evidence-service.ts queryRoundChainHead",
-      "note": "helper of EvidencePort.queryRoundChainHead"
-    },
-    {
-      "file": "src/core/work-graph/evidence/contracts.ts",
-      "name": "EvidencePort.queryRoundChainHead",
-      "reason": "step5",
-      "substep": "5.3",
-      "wiredBy": "spec §15.2 5.3 (投影、完成与 Workflow 经 roundChainHead 读链头); §15.3 VR-01 names evidence-service.ts queryRoundChainHead",
-      "note": "step-1 optional port member (A.2 step 1): no implementation and no caller yet"
     },
     {
       "file": "src/core/work-graph/evidence/contracts.ts",
@@ -2097,14 +2073,6 @@
     },
     {
       "file": "src/core/work-graph/state/no-progress.ts",
-      "name": "RoundFailureFactsV1",
-      "reason": "step5",
-      "substep": "5.3",
-      "wiredBy": "spec §15.2 5.3 (投影、完成与 Workflow 经 roundChainHead 读链头); §9.6 投影 row names roundTaskSignal",
-      "note": "helper of roundTaskSignal, noProgressKey, buildTaskFailureFacts, automationVerdict, reverifyBasis, buildSuccessorRound"
-    },
-    {
-      "file": "src/core/work-graph/state/no-progress.ts",
       "name": "TaskBasisLookupV1",
       "reason": "step5",
       "substep": "5.4",
@@ -2150,14 +2118,6 @@
       "substep": "5.9",
       "wiredBy": "spec §15.2 5.9 (§13.7: reverifyBasis key and exemption)",
       "note": "helper of reverifyBasis"
-    },
-    {
-      "file": "src/core/work-graph/state/no-progress.ts",
-      "name": "roundFailureFacts",
-      "reason": "step5",
-      "substep": "5.3",
-      "wiredBy": "spec §15.2 5.3 (投影、完成与 Workflow 经 roundChainHead 读链头); §9.6 投影 row names roundTaskSignal",
-      "note": "helper of roundTaskSignal, noProgressKey, buildTaskFailureFacts, automationVerdict, reverifyBasis, buildSuccessorRound"
     },
     {
       "file": "src/core/work-graph/state/no-progress.ts",
@@ -2262,46 +2222,6 @@
       "substep": "5.4",
       "wiredBy": "spec §15.2 5.4 (§13 13.1–13.3: the requeue no-progress key)",
       "note": "helper of noProgressKey, reverifyBasis"
-    },
-    {
-      "file": "src/core/work-graph/state/no-progress.ts",
-      "name": "compareCheckFacts",
-      "reason": "step5",
-      "substep": "5.3",
-      "wiredBy": "spec §15.2 5.3 (投影、完成与 Workflow 经 roundChainHead 读链头); §9.6 投影 row names roundTaskSignal",
-      "note": "helper of roundTaskSignal, noProgressKey, buildTaskFailureFacts, automationVerdict, reverifyBasis, buildSuccessorRound"
-    },
-    {
-      "file": "src/core/work-graph/state/no-progress.ts",
-      "name": "keyFact",
-      "reason": "step5",
-      "substep": "5.3",
-      "wiredBy": "spec §15.2 5.3 (投影、完成与 Workflow 经 roundChainHead 读链头); §9.6 投影 row names roundTaskSignal",
-      "note": "helper of roundTaskSignal, noProgressKey, buildTaskFailureFacts, automationVerdict, reverifyBasis, buildSuccessorRound"
-    },
-    {
-      "file": "src/core/work-graph/state/no-progress.ts",
-      "name": "sortedDistinct",
-      "reason": "step5",
-      "substep": "5.3",
-      "wiredBy": "spec §15.2 5.3 (投影、完成与 Workflow 经 roundChainHead 读链头); §9.6 投影 row names roundTaskSignal",
-      "note": "helper of roundTaskSignal, noProgressKey, buildTaskFailureFacts, automationVerdict, reverifyBasis, buildSuccessorRound"
-    },
-    {
-      "file": "src/core/work-graph/state/no-progress.ts",
-      "name": "compareText",
-      "reason": "step5",
-      "substep": "5.3",
-      "wiredBy": "spec §15.2 5.3 (投影、完成与 Workflow 经 roundChainHead 读链头); §9.6 投影 row names roundTaskSignal",
-      "note": "helper of roundTaskSignal, noProgressKey, buildTaskFailureFacts, automationVerdict, reverifyBasis, buildSuccessorRound"
-    },
-    {
-      "file": "src/core/work-graph/state/no-progress.ts",
-      "name": "canonicalText",
-      "reason": "step5",
-      "substep": "5.3",
-      "wiredBy": "spec §15.2 5.3 (投影、完成与 Workflow 经 roundChainHead 读链头); §9.6 投影 row names roundTaskSignal",
-      "note": "helper of roundTaskSignal, noProgressKey, buildTaskFailureFacts, automationVerdict, reverifyBasis, buildSuccessorRound"
     },
     {
       "file": "src/core/work-graph/state/no-progress.ts",
@@ -3081,142 +3001,6 @@
     },
     {
       "file": "src/core/work-graph/state/verification-machine.ts",
-      "name": "roundOrdinalOf",
-      "reason": "step5",
-      "substep": "5.3",
-      "wiredBy": "spec §15.2 5.3 (投影、完成与 Workflow 经 roundChainHead 读链头); §9.6 投影 row names roundTaskSignal",
-      "note": "helper of roundTaskSignal, buildTaskFailureFacts, automationVerdict, buildSuccessorRound"
-    },
-    {
-      "file": "src/core/work-graph/state/verification-machine.ts",
-      "name": "isFinalizedNonPass",
-      "reason": "step5",
-      "substep": "5.3",
-      "wiredBy": "spec §15.2 5.3 (投影、完成与 Workflow 经 roundChainHead 读链头); §9.6 投影 row names roundTaskSignal",
-      "note": "helper of roundTaskSignal, buildTaskFailureFacts, newTaskRequeueRecord, automationVerdict, buildSuccessorRound"
-    },
-    {
-      "file": "src/core/work-graph/state/verification-machine.ts",
-      "name": "rootRoundChain",
-      "reason": "step5",
-      "substep": "5.3",
-      "wiredBy": "STEP5-FLIPS.md §5 verification-machine, flip VR-01 (5.3): write rootRoundChain() ordinal 1",
-      "note": "chain of a round opened through VR-01"
-    },
-    {
-      "file": "src/core/work-graph/state/verification-machine.ts",
-      "name": "ROUND_SUBJECT_SLOT_PREFIX",
-      "reason": "step5",
-      "substep": "5.3",
-      "wiredBy": "STEP5-FLIPS.md §5 verification-machine, flip VR-01 (5.3): claim the subject/gate slot (claim_round_slot); §9.6 and §15.3 VR-01 name roundSlotKey",
-      "note": "helper of roundSlotKey"
-    },
-    {
-      "file": "src/core/work-graph/state/verification-machine.ts",
-      "name": "ROUND_GATE_SLOT_PREFIX",
-      "reason": "step5",
-      "substep": "5.3",
-      "wiredBy": "STEP5-FLIPS.md §5 verification-machine, flip VR-01 (5.3): claim the subject/gate slot (claim_round_slot); §9.6 and §15.3 VR-01 name roundSlotKey",
-      "note": "helper of roundSlotKey"
-    },
-    {
-      "file": "src/core/work-graph/state/verification-machine.ts",
-      "name": "RoundSlotSubjectV1",
-      "reason": "step5",
-      "substep": "5.3",
-      "wiredBy": "STEP5-FLIPS.md §5 verification-machine, flip VR-01 (5.3): claim the subject/gate slot (claim_round_slot); §9.6 and §15.3 VR-01 name roundSlotKey",
-      "note": "helper of roundSlotKey, roundSlotSubjectOf"
-    },
-    {
-      "file": "src/core/work-graph/state/verification-machine.ts",
-      "name": "roundSlotKey",
-      "reason": "step5",
-      "substep": "5.3",
-      "wiredBy": "STEP5-FLIPS.md §5 verification-machine, flip VR-01 (5.3): claim the subject/gate slot (claim_round_slot); §9.6 and §15.3 VR-01 name roundSlotKey",
-      "note": "the VR-01 subject/gate slot key (§9.6, §15.3 VR-01); its §15.3 alias roundSubjectSlotKey was deleted in step 4"
-    },
-    {
-      "file": "src/core/work-graph/state/verification-machine.ts",
-      "name": "roundSlotSubjectOf",
-      "reason": "step5",
-      "substep": "5.3",
-      "wiredBy": "STEP5-FLIPS.md §5 verification-machine, flip VR-01 (5.3): claim the subject/gate slot (claim_round_slot)",
-      "note": "slot subject of a round"
-    },
-    {
-      "file": "src/core/work-graph/state/verification-machine.ts",
-      "name": "roundSlotOwner",
-      "reason": "step5",
-      "substep": "5.3",
-      "wiredBy": "STEP5-FLIPS.md §5 verification-machine, flip VR-01 (5.3): claim the subject/gate slot (claim_round_slot)",
-      "note": "slot owner value (head round refKey)"
-    },
-    {
-      "file": "src/core/work-graph/state/verification-machine.ts",
-      "name": "RoundDisplayStatus",
-      "reason": "step5",
-      "substep": "5.3",
-      "wiredBy": "STEP5-FLIPS.md §5 verification-machine, flip VR-07 (5.3); spec §9.6 VR-07 row names displayRoundStatus",
-      "note": "helper of displayRoundStatus"
-    },
-    {
-      "file": "src/core/work-graph/state/verification-machine.ts",
-      "name": "displayRoundStatus",
-      "reason": "step5",
-      "substep": "5.3",
-      "wiredBy": "STEP5-FLIPS.md §5 verification-machine, flip VR-07 (5.3); spec §9.6 VR-07 row names displayRoundStatus",
-      "note": "display status of a round (also VR-15 history, 5.9)"
-    },
-    {
-      "file": "src/core/work-graph/state/verification-machine.ts",
-      "name": "FROZEN_PERMISSION_CHANGED",
-      "reason": "step5",
-      "substep": "5.3",
-      "wiredBy": "STEP5-FLIPS.md §5 verification-machine, flip VR-02 (VD-8 frozen_* reason prefixes, 5.3); spec §9.6 出口 #3 row (workflow run_check)",
-      "note": "helper of beginRefusalIsPermanent"
-    },
-    {
-      "file": "src/core/work-graph/state/verification-machine.ts",
-      "name": "FROZEN_ROOT_CHANGED",
-      "reason": "step5",
-      "substep": "5.3",
-      "wiredBy": "STEP5-FLIPS.md §5 verification-machine, flip VR-02 (VD-8 frozen_* reason prefixes, 5.3); spec §9.6 出口 #3 row (workflow run_check)",
-      "note": "helper of beginRefusalIsPermanent"
-    },
-    {
-      "file": "src/core/work-graph/state/verification-machine.ts",
-      "name": "FROZEN_SOURCE_CHANGED",
-      "reason": "step5",
-      "substep": "5.3",
-      "wiredBy": "STEP5-FLIPS.md §5 verification-machine, flip VR-02 (VD-8 frozen_* reason prefixes, 5.3); spec §9.6 出口 #3 row (workflow run_check)",
-      "note": "helper of beginRefusalIsPermanent"
-    },
-    {
-      "file": "src/core/work-graph/state/verification-machine.ts",
-      "name": "FROZEN_BINDING_MARKERS",
-      "reason": "step5",
-      "substep": "5.3",
-      "wiredBy": "STEP5-FLIPS.md §5 verification-machine, flip VR-02 (VD-8 frozen_* reason prefixes, 5.3); spec §9.6 出口 #3 row (workflow run_check)",
-      "note": "helper of beginRefusalIsPermanent"
-    },
-    {
-      "file": "src/core/work-graph/state/verification-machine.ts",
-      "name": "beginRefusalIsPermanent",
-      "reason": "step5",
-      "substep": "5.3",
-      "wiredBy": "STEP5-FLIPS.md §5 verification-machine, flip VR-02 (VD-8 frozen_* reason prefixes, 5.3); spec §9.6 出口 #3 row (workflow run_check)",
-      "note": "exit #3 of the check attempts"
-    },
-    {
-      "file": "src/core/work-graph/state/verification-machine.ts",
-      "name": "roundChainHead",
-      "reason": "step5",
-      "substep": "5.3",
-      "wiredBy": "spec §15.2 5.3 (投影、完成与 Workflow 经 roundChainHead 读链头)",
-      "note": "chain head of a subject"
-    },
-    {
-      "file": "src/core/work-graph/state/verification-machine.ts",
       "name": "chainEvidenceIds",
       "reason": "step5",
       "substep": "5.4",
@@ -3278,14 +3062,6 @@
       "substep": "5.9",
       "wiredBy": "STEP5-FLIPS.md §5 verification-machine, 新增 VR-14/VR-15 (5.9): the pure pieces buildSuccessorRound, roundChainHead, chainEvidenceIds, reverifyExemption, reverifyFailureClass are complete",
       "note": "successor round constructor"
-    },
-    {
-      "file": "src/core/work-graph/state/verification-machine.ts",
-      "name": "roundTaskSignal",
-      "reason": "step5",
-      "substep": "5.3",
-      "wiredBy": "spec §15.2 5.3 (投影、完成与 Workflow 经 roundChainHead 读链头); §9.6 投影 row names roundTaskSignal",
-      "note": "projection input from the round chain head"
     },
     {
       "file": "src/core/work-graph/state/verification-machine.ts",

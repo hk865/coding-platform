@@ -45,7 +45,8 @@ import type {
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import { goalCompletionProblem, goalStateOf, transitionGoal, type GoalGuardContext } from '../state/goal-machine.js';
 import {
-  taskCompletionFoldProblem, taskCompletionRoundProblem, taskMachineStateOf, transitionTask, type TaskPhaseFacts,
+  taskCompletionFoldProblem, taskCompletionProjectionProblem, taskCompletionRoundProblem, taskMachineStateOf, transitionTask,
+  type TaskPhaseFacts,
 } from '../state/task-machine.js';
 import {
   readBatch, readCanonicalTaskFacts, readGoal, readGoalPhase, readPinnedCompletionPolicy, readPlan,
@@ -136,13 +137,12 @@ function roundRefProblem(value: unknown): string | null {
 /**
  * The projection inputs (§4.1) of the completed Task from its directed
  * canonical read (`plan-readers.ts` `readCanonicalTaskFacts`): the selected
- * Run, the applicable Reduction, and an unresolvable origin, which that read
- * shows only as a `blocked` Task with neither. No round chain and no
- * TaskRequeue enter it before A.2 step 5.3/5.4. TASK-14/15/24 do not read the
- * projection before step 5, so a selected Run or Reduction the read did not
- * return projects as absent instead of refusing the completion. Keep it in
- * step with `claimPhaseFacts` (`claim-service.ts`), the same mapping except
- * that the claim answers null for that missing Run or Reduction.
+ * Run, the applicable Reduction, the selected Run's round-chain signal, and an
+ * unresolvable origin, which that read shows only as a `blocked` Task with
+ * neither Run nor Reduction. No TaskRequeue enters it before A.2 step 5.4. The
+ * same read always returns the Run or Reduction it selected; keep this in step
+ * with `claimPhaseFacts` (`claim-service.ts`), which answers null for a missing
+ * one.
  */
 function completionPhaseFacts(task: RuntimeTask, state: CanonicalTaskState, read: CanonicalTaskFacts): TaskPhaseFacts {
   const execution = state.execution;
@@ -154,9 +154,14 @@ function completionPhaseFacts(task: RuntimeTask, state: CanonicalTaskState, read
     applicableReduction,
     selectedRun,
     originUnresolvable: selectedRun === null && applicableReduction === null && state.effectivePhase === 'blocked',
-    round: { kind: 'none' },
+    round: read.roundsByTaskId.get(task.taskId) ?? { kind: 'none' },
     coveringRequeue: null,
   };
+}
+
+/** TASK-14 (C5): the head the projection read for the selected Run's chain; null without a valid chain. */
+function chainHeadOf(signal: TaskPhaseFacts['round']): VerificationRoundRef | null {
+  return signal.kind === 'none' || signal.kind === 'invalid' ? null : signal.head.ref;
 }
 
 // -------------------------------------------------------------------------- //
@@ -346,6 +351,12 @@ export async function completeTaskFromHost(
     return reject('revision_conflict', 'the TaskReduction changed since the caller read it',
       persistedReductionRevision === null ? undefined : [{ ref: reductionRef, revision: persistedReductionRevision }]);
   }
+  // TASK-14/24 judge the projection and the selected Run's chain head before the round is read (§4.4, C5).
+  const phaseFacts = completionPhaseFacts(taskDefinition, state, facts);
+  const chainHead = chainHeadOf(phaseFacts.round);
+  const projectionRefusal = taskCompletionProjectionProblem({ taskKind: taskDefinition.taskKind, phase: state.effectivePhase },
+    round, chainHead);
+  if (projectionRefusal?.ok === false) return reject(projectionRefusal.code, projectionRefusal.detail);
 
   const roundRead = await readRecord(deps.records, refKeyOf(round) as string, decodeVerificationRoundSnapshot, 'VerificationRound');
   if (!roundRead.ok) return roundRead.rejection;
@@ -414,7 +425,7 @@ export async function completeTaskFromHost(
   // TASK-14 (work), TASK-15 (gate), TASK-24 (already satisfied, new identity):
   // the machine re-judges the round, its producer and the fold, and its record
   // constructor builds the TaskReduction@revision+1 (§14.1).
-  const completed = transitionTask(taskMachineStateOf(taskDefinition, completionPhaseFacts(taskDefinition, state, facts)), {
+  const completed = transitionTask(taskMachineStateOf(taskDefinition, phaseFacts), {
     kind: 'task_completed', task, round: snapshot,
     reduction: {
       ref: reductionRef,
@@ -428,7 +439,7 @@ export async function completeTaskFromHost(
       evidenceRefs: evidenceSnapshots.map(entry => entry.ref),
       reducedAt: deps.now(),
     },
-  }, { taskId: task.taskId, claim: null, completion: { producerRun, producerTaskKind, evaluation }, trace: null });
+  }, { taskId: task.taskId, claim: null, completion: { producerRun, producerTaskKind, evaluation, chainHead }, trace: null });
   if (!completed.ok) return reject(completed.code, completed.detail);
   const [written, ...others] = completed.effects;
   if (written?.kind !== 'write_task_reduction' || others.length > 0) throw new Error('task_completed writes exactly the TaskReduction');

@@ -54,7 +54,7 @@ describe('B2 execution result and release', () => {
     if (discovery.status === 'ready') expect(discovery.value.items.find(c => c.record.ref.sessionId === f.claim.sessionRef.sessionId)?.availability).toBe('idle');
     const graph = await f.base.plans.queryTaskGraph(f.ctx, { goalRef: f.base.goalRef });
     expect(graph.status).toBe('ready');
-    if (graph.status === 'ready') expect(graph.value.tasks.find(t => t.ref.taskId === f.claim.task.taskId)?.effectivePhase).toBe('blocked');
+    if (graph.status === 'ready') expect(graph.value.tasks.find(t => t.ref.taskId === f.claim.task.taskId)?.effectivePhase).toBe('verifying');
     expect(await f.entry.recordRunResult(f.ctx, request)).toEqual({ ...result, replayed: true });
     expect(await f.read()).toEqual(ended);
     expect(await f.entry.recordRunResult(f.ctx, { input: request.input, meta: { requestId: 'duplicate-fact-new-request', expected: [await f.pin()] } }))

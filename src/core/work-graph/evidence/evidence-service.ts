@@ -12,10 +12,13 @@
  * round + Evidence + TaskEvidenceIndex + event + receipt in ONE records.commit.
  *
  * Every round, check and TaskEvidenceIndex write is decided by
- * `state/verification-machine.ts` (spec §9 VR-01..VR-03, VR-07, VR-08,
- * VR-10..VR-12) after the unchanged receipt lookup: the service reads,
+ * `state/verification-machine.ts` (spec §9 VR-01..VR-03, VR-05, VR-07, VR-08,
+ * VR-10..VR-13) after the unchanged receipt lookup: the service reads,
  * captures and mints ids, stops at the machine's exported guard steps where it
  * stopped before each IO, and translates the machine's effects into the commit.
+ * A subject has at most one round chain (VD-1, VD-15): `openVerification`
+ * reads the subject's rounds before the capture and claims the subject slot in
+ * the commit; `queryRoundChainHead` reads the chain head (VD-14).
  *
  * The service never calls completeTask/completeGoal, never releases or advances
  * a Task/Run/Session, and never fabricates a PASS from a missing/blocked check.
@@ -43,6 +46,7 @@ import type {
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import type {
     EncodedDomainEvent, EncodedRecord, GoalRecordTransactionPort, PreparedCommit, RecordGuard, StoreCommitReceipt,
+    UniqueClaimChange,
 } from '../../record-store/ports.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import { architectureBaselineDigest, readArchitectureBaselineSnapshot } from '../architecture/catalog-record-codecs.js';
@@ -58,17 +62,19 @@ import {
 } from '../tasks/execution-entry-service.js';
 import {
     checkEventAdmission, finalizeRoundOutcome, foldVerdictChecks, frozenBindingProblem, nextTaskEvidenceIndex, outcomeFor,
-    roundOpenBasisProblem, roundOpenChecksProblem, roundOpenPointerProblem, roundOpenSubjectProblem,
-    roundReviewerEvidenceProblem, roundWriteAdmission, taskEvidenceIndexRefOf, transitionCheck, transitionRound,
-    type CheckVerdictDecisionV1, type RoundFoldFactsV1, type RoundGuardContext, type RoundOpenFactsV1,
-    type TaskEvidenceIndexReadV1, type TaskEvidenceIndexWrite, type VerificationEffect,
+    roundChainHead, roundOpenBasisProblem, roundOpenChainProblem, roundOpenChecksProblem, roundOpenPointerProblem,
+    roundOpenSubjectProblem, roundReviewerEvidenceProblem, roundWriteAdmission, taskEvidenceIndexRefOf, transitionCheck,
+    transitionRound,
+    type CheckEvent, type CheckVerdictDecisionV1, type RoundChainHeadV1, type RoundFoldFactsV1, type RoundGuardContext,
+    type RoundOpenFactsV1, type TaskEvidenceIndexReadV1, type TaskEvidenceIndexWrite, type VerificationEffect,
 } from '../state/verification-machine.js';
 import { unreachable, type Rejected } from '../state/transition.js';
 import { compileVerificationPlan } from './verification-plan.js';
 import { evidenceApplicabilityWithBasis } from './coverage.js';
 import {
-    EVIDENCE_ADMITTED_EVENT_TYPE, VERIFICATION_CHECK_BEGUN_EVENT_TYPE,
-    VERIFICATION_CHECK_RESULT_RECORDED_EVENT_TYPE, VERIFICATION_ROUND_FINALIZED_EVENT_TYPE,
+    EVIDENCE_ADMITTED_EVENT_TYPE, VERIFICATION_CHECK_ABANDONED_EVENT_TYPE, VERIFICATION_CHECK_BEGUN_EVENT_TYPE,
+    VERIFICATION_CHECK_INTERRUPTED_EVENT_TYPE, VERIFICATION_CHECK_RESULT_RECORDED_EVENT_TYPE,
+    VERIFICATION_ROUND_BY_TASK_LOOKUP, VERIFICATION_ROUND_FINALIZED_EVENT_TYPE,
     VERIFICATION_ROUND_OPENED_EVENT_TYPE, VERIFICATION_ROUND_ORIGINAL_LOOKUP, VERIFICATION_ROUND_CHAIN_LOOKUP_LIMIT,
     checkObservationProblem, decodeVerificationRoundSnapshot,
     encodeEvidenceSnapshot, encodeTaskEvidenceIndexSnapshot, encodeVerificationRoundEvent,
@@ -76,7 +82,8 @@ import {
     type VerificationRoundEvent,
 } from './evidence-record-codecs.js';
 import type {
-    EvidencePort, EvidenceServiceDependencies, FinalizedChecks, OriginalVerificationQuery,
+    AbandonCheckInput, EvidencePort, EvidenceServiceDependencies, FinalizedChecks, InterruptCheckInput,
+    OriginalVerificationQuery, RoundChainHeadQuery,
 } from './contracts.js';
 import type { GraphWrite } from '../tasks/contracts.js';
 
@@ -207,7 +214,7 @@ type RoundWrite<T> = {
     effects: readonly VerificationEffect[];
     /** The machine's next round, written under its CAS when the effects carry `guard_round`. */
     round: RoundSnapshot;
-    /** `guard_open_read_set`: the CAS of every record the open read. */
+    /** `guard_open_read_set` / `guard_finalize_read_set`: the CAS of every record the operation read. */
     readSet?: readonly RecordGuard[];
     /** `admit_claim_evidence` / `admit_verdict_evidence`: the Evidence@1 rows built from the effect. */
     evidence?: readonly EvidenceSnapshot[];
@@ -217,25 +224,42 @@ type RoundWrite<T> = {
     value: T;
     /** The cancel refusal checked just before the commit; null where there is none (`recordCheckResult`). */
     cancelled: string | null;
+    /**
+     * `claim_round_slot`: the owner's own answer to a lost slot (VR-01), read
+     * again from the subject's rounds instead of the generic store mapping.
+     */
+    slotTaken?: () => Promise<CoreRejection>;
 };
 
 /**
  * Translates the effects into ONE RecordStore commit and commits it. Guards:
  * round, read set, index, then each Evidence (CAS null); records: round,
- * Evidence, index. A replayed or lost commit restores the original event result.
+ * Evidence, index; claims: the round slot. A replayed or lost commit restores
+ * the original event result.
  */
 async function commitRoundWrite<T>(records: Records, signal: AbortSignal, write: RoundWrite<T>): Promise<WriteResult<T>> {
     type Guarded = { record: EncodedRecord; guard: RecordGuard };
     const guarded = (record: EncodedRecord, expectedRevision: number | null): Guarded => ({ record, guard: { refKey: record.refKey, expectedRevision } });
     let round: Guarded[] = [];
+    let roundGuard: RecordGuard[] = [];
     let readSet: readonly RecordGuard[] = [];
     let evidence: Guarded[] = [];
     let index: Guarded[] = [];
+    let claims: UniqueClaimChange[] = [];
     let events: EncodedDomainEvent[] = [];
     for (const effect of write.effects) {
         switch (effect.kind) {
             case 'guard_round': round = [guarded(encodeVerificationRoundSnapshot(write.round), effect.expectedRevision)]; break;
-            case 'guard_open_read_set': readSet = write.readSet ?? []; break;
+            case 'guard_round_unchanged': {
+                const key = refKeyOf(write.round.ref);
+                if (key === null) return invalid('the round ref is not canonical JSON');
+                roundGuard = [{ refKey: key, expectedRevision: effect.revision }];
+                break;
+            }
+            case 'guard_open_read_set':
+            case 'guard_finalize_read_set':
+                readSet = write.readSet ?? [];
+                break;
             case 'admit_claim_evidence':
             case 'admit_verdict_evidence':
                 evidence = (write.evidence ?? []).map(snapshot => guarded(encodeEvidenceSnapshot(snapshot), null));
@@ -247,19 +271,23 @@ async function commitRoundWrite<T>(records: Records, signal: AbortSignal, write:
                 if (effect.eventType !== write.event.eventType) throw new Error(`the decided event is ${effect.eventType}, not ${write.event.eventType}`);
                 events = [encodeVerificationRoundEvent(write.event)];
                 break;
-            case 'claim_round_slot': throw new Error('the round slot is not claimed before A.2 step 5');
+            case 'claim_round_slot': claims = [{ ...effect.claim }]; break;
             default: return unreachable(effect, 'verification effect');
         }
     }
-    const merged = mergeGuards([...round.map(entry => entry.guard), ...readSet, ...[...index, ...evidence].map(entry => entry.guard)]);
+    const merged = mergeGuards([...round.map(entry => entry.guard), ...roundGuard, ...readSet,
+        ...[...index, ...evidence].map(entry => entry.guard)]);
     if (!merged.ok) return merged.rejection;
     const prepared: PreparedCommit = { identityKey: write.identity, fingerprint: write.fingerprint, guards: merged.guards,
-        records: [...round, ...evidence, ...index].map(entry => entry.record), claims: [], indexGuards: [], indexChanges: [], events };
+        records: [...round, ...evidence, ...index].map(entry => entry.record), claims, indexGuards: [], indexChanges: [], events };
     const eventType = write.event.eventType;
     try {
         if (write.cancelled !== null && signal.aborted) return cancelled(write.cancelled);
         const receipt = await records.commit(prepared);
-        if (receipt.status !== 'committed') return mapStoreFailure(receipt);
+        if (receipt.status !== 'committed') {
+            if (receipt.code === 'unique_conflict' && write.slotTaken !== undefined) return await write.slotTaken();
+            return mapStoreFailure(receipt);
+        }
         if (receipt.replayed) return await replayEvent(records, receipt, write.identity, write.fingerprint, eventType) as WriteResult<T>;
         return { status: 'committed', value: write.value, replayed: false, cursor: receipt.cursor };
     } catch (error) {
@@ -385,6 +413,56 @@ Promise<{ ok: true; index: TaskEvidenceIndexReadV1 } | { ok: false; rejection: C
     const decoded = decodeTaskEvidenceIndexSnapshot(record);
     if (decoded.status !== 'decoded') return { ok: false, rejection: unavailable(`the task evidence index is damaged: ${decoded.reason}`) };
     return { ok: true, index: { ...decoded.value, exists: true } };
+}
+
+/**
+ * One subject's round chain (§9.1 lookups, VD-14): the work chain of the
+ * subject Run (`VerificationRoundBySubject`) or, with `subjectRunRef: null`,
+ * the gate's chain over every producer (`VerificationRoundByTask`, VD-15). At
+ * most `ROUND_CHAIN_MAX + 1` rows; a next page cannot be judged
+ * (`incomplete`). Each row is rechecked against the scope and the subject (a
+ * candidate index only); legacy slot-less rounds are read like any other.
+ */
+async function readSubjectChain(
+    records: Records,
+    scope: { projectId: string; workspaceId: string },
+    subject: TaskTriple,
+    subjectRunRef: RunRef | null,
+): Promise<{ ok: true; chain: RoundChainHeadV1 } | { ok: false; rejection: CoreRejection }> {
+    let lookup;
+    try {
+        lookup = await records.lookup(subjectRunRef === null
+            ? { index: VERIFICATION_ROUND_BY_TASK_LOOKUP, values: [scope.projectId, scope.workspaceId, subject.goalId, subject.taskId],
+                limit: VERIFICATION_ROUND_CHAIN_LOOKUP_LIMIT }
+            : { index: VERIFICATION_ROUND_ORIGINAL_LOOKUP,
+                values: [scope.projectId, scope.workspaceId, subject.goalId, subject.taskId, subjectRunRef.runId],
+                limit: VERIFICATION_ROUND_CHAIN_LOOKUP_LIMIT });
+    } catch (error) {
+        return { ok: false, rejection: unavailable(`the round chain lookup failed: ${messageOf(error)}`) };
+    }
+    if (lookup.status !== 'ready') return { ok: false, rejection: mapStoreFailure(lookup) };
+    if (lookup.value.next !== null) {
+        return { ok: false, rejection: incomplete('the round chain is longer than the chain limit; refusing to guess its head') };
+    }
+    const rounds: RoundSnapshot[] = [];
+    for (const record of lookup.value.records) {
+        const decoded = decodeVerificationRoundSnapshot(record);
+        if (decoded.status !== 'decoded') return { ok: false, rejection: unavailable(`a chain round is damaged: ${decoded.reason}`) };
+        const round = decoded.value;
+        if (round.ref.projectId !== scope.projectId || round.ref.workspaceId !== scope.workspaceId
+            || !sameRef(round.subject, subject) || (subjectRunRef !== null && !sameRef(round.subjectRunRef, subjectRunRef))) {
+            return { ok: false, rejection: unavailable('an indexed round does not match the requested subject') };
+        }
+        rounds.push(round);
+    }
+    return { ok: true, chain: roundChainHead(rounds) };
+}
+
+/** VD-1/VD-15 answered with the head pin (§9.4): the caller re-reads the head, never a second root. */
+function chainRefusal(refusal: Rejected, chain: RoundChainHeadV1): CoreRejection {
+    if (refusal.ok) throw new Error('chainRefusal needs a refusal');
+    return reject(refusal.code, refusal.detail, chain.kind === 'head' && refusal.code === 'busy'
+        ? [{ ref: chain.head.ref, revision: chain.head.revision }] : undefined);
 }
 
 // -------------------------------------------------------------------------- //
@@ -537,7 +615,7 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         const subjectNode = plan.tasks.find(task => task.taskId === input.subject.taskId);
         const producerNode = plan.tasks.find(task => task.taskId === run.task.taskId);
         const sameGoal = run.task.projectId === input.subject.projectId && run.task.goalId === input.subject.goalId;
-        const facts: RoundOpenFactsV1 = { planIsActive, taskBasisResolved, subjectRun: run,
+        const subjectFacts: Pick<RoundOpenFactsV1, 'relation' | 'subjectRun'> = { subjectRun: run,
             relation: input.gateSubject === undefined
                 ? { kind: 'work', runTaskIsSubject: sameGoal && run.task.taskId === input.subject.taskId }
                 : { kind: 'gate', gateSubject: input.gateSubject,
@@ -545,8 +623,16 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
                     producer: !sameGoal || run.task.taskId === input.subject.taskId ? 'not_goal_work_run'
                         : producerNode === undefined || producerNode.taskKind !== 'work' ? 'not_adopted_work'
                             : run.workspaceSnapshot.workspaceId !== scope.workspaceId ? 'other_workspace' : 'ok' } };
-        const runProblem = refusalOf(roundOpenSubjectProblem(facts, input.subject));
+        const runProblem = refusalOf(roundOpenSubjectProblem(subjectFacts, input.subject));
         if (runProblem !== null) return runProblem;
+        // VD-1/VD-15 before the capture: the subject's chain (a gate's on any
+        // producer). The slot claim in the commit settles a concurrent open.
+        const subjectChainRun = input.gateSubject === undefined ? input.subjectRunRef : null;
+        const chainRead = await readSubjectChain(records, scope, input.subject, subjectChainRun);
+        if (!chainRead.ok) return chainRead.rejection;
+        const chainProblem = roundOpenChainProblem(chainRead.chain, input.subject);
+        if (chainProblem !== null) return chainRefusal(chainProblem, chainRead.chain);
+        const facts: RoundOpenFactsV1 = { planIsActive, taskBasisResolved, ...subjectFacts, chain: chainRead.chain };
         const policyRead = await readPinnedCompletionPolicy(records, plan.effectiveCompletionPolicy);
         if (policyRead.status !== 'resolved') return mapRejected(policyRead);
         const baseline = await readPinnedBaseline(records, plan.effectiveArchitectureBaseline);
@@ -614,7 +700,7 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
             subjectRunRef: input.subjectRunRef, adoptedPlanRef: input.planRef, taskBasisRef: basis as PlanRevisionRef,
             executor: actor, configuration, configurationDigest, identity: identityMaterial,
             sourceProof: captured.sourceProof, verificationPlan } }, guardCtx);
-        if (!decided.ok) return refusalOf(decided);
+        if (!decided.ok) return chainRefusal(decided, chainRead.chain);
         const round = decided.next;
         const occurredAt = deps.now();
         const event: VerificationRoundEvent = { eventId: deps.newId(), eventType: VERIFICATION_ROUND_OPENED_EVENT_TYPE,
@@ -630,8 +716,17 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         if (goalKey === null || workspaceKey === null || runKey === null) {
             return invalid('the open read refs are not canonical JSON');
         }
+        // A concurrent open of the same subject took the slot first: read its
+        // chain again and answer like a later open would (VD-1, §9.4).
+        const slotTaken = async (): Promise<CoreRejection> => {
+            const again = await readSubjectChain(records, scope, input.subject, subjectChainRun);
+            if (!again.ok) return again.rejection;
+            const problem = roundOpenChainProblem(again.chain, input.subject);
+            return problem === null ? unavailable('the subject round slot is held but no round of the subject is readable')
+                : chainRefusal(problem, again.chain);
+        };
         return await commitRoundWrite(records, signal, { identity, fingerprint, effects: decided.effects, round, event,
-            value: round, cancelled: 'the round open was cancelled before commit',
+            value: round, cancelled: 'the round open was cancelled before commit', slotTaken,
             readSet: [
                 { refKey: goalKey, expectedRevision: goal.revision },
                 { refKey: planRevisionRefKey(input.planRef), expectedRevision: plan.revision },
@@ -656,69 +751,65 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
     }
 
     /**
-     * The narrow formal read of the ONE original round for an ended subject Run,
-     * whether it is still open or already finalized. It uses the registered
-     * candidate lookup (formal scope + subject-Run identity, no status filter),
-     * then rechecks the decoded canonical round's scope, subject Run/task and
-     * adopted Plan. Zero candidates is exactly `not_found`; exactly one is the
-     * original round; more than one is `incomplete` (never a guessed latest). A
-     * lookup error or a mismatched/undecodable candidate is an unknown read
-     * (`unavailable`), never `not_found`, so the Workflow waits instead of
-     * opening a second round.
+     * VD-14: the head of one subject's round chain, open or finalized. Work
+     * (`subjectRunRef` given): the chain of that subject Run; gate
+     * (`subjectRunRef: null`): the gate's one chain, whatever producer anchors
+     * it (VD-15). No chain is exactly `not_found`; an invalid chain (legacy
+     * roots, an ordinal gap) or one past the limit is `incomplete`, never a
+     * guessed head; a lookup error or a mismatched/undecodable row is
+     * `unavailable`, so the Workflow waits instead of opening a second round.
+     */
+    async function queryRoundChainHead(ctx: CoreCallContext, request: RoundChainHeadQuery): Promise<ReadResult<RoundSnapshot>> {
+        const ownedCtx = bindTrustedContext(ctx);
+        if (!ownedCtx.ok) return ownedCtx.rejection;
+        const { scope } = ownedCtx;
+        if (!isRecord(request)) return invalid('the chain-head query requires an object');
+        const rawSubject: unknown = request.subject;
+        const rawRunRef: unknown = request.subjectRunRef;
+        const subjectProblem = taskTripleProblem(rawSubject);
+        if (subjectProblem !== null) return invalid(subjectProblem);
+        if (rawRunRef !== null && !isRunRef(rawRunRef)) {
+            return invalid('the chain-head query takes a complete subject RunRef, or null for a gate chain');
+        }
+        const subject = rawSubject as TaskTriple;
+        if (subject.projectId !== scope.projectId || (rawRunRef !== null && rawRunRef.projectId !== scope.projectId)) {
+            return forbidden('the chain-head query is outside the trusted Host scope');
+        }
+        if (rawRunRef !== null && rawRunRef.goalId !== subject.goalId) {
+            return invalid('the chain-head query subject Run and Task do not share a Goal');
+        }
+        const read = await readSubjectChain(records, scope, subject, rawRunRef);
+        if (!read.ok) return read.rejection;
+        const chain = read.chain;
+        switch (chain.kind) {
+            case 'none': return { status: 'not_found' };
+            case 'invalid': return incomplete(`the verification round chain is invalid (${chain.reason}); refusing to guess its head`);
+            case 'head': return { status: 'ready', value: chain.head };
+            default: return unreachable(chain, 'round chain');
+        }
+    }
+
+    /**
+     * The plan-independent alias of `queryRoundChainHead` for one subject Run
+     * (VD-7, C6): `planRef`, when given, is checked as a PlanRevisionRef of the
+     * scope project and never selects the round.
      */
     async function queryOriginalVerification(
         ctx: CoreCallContext,
         request: OriginalVerificationQuery,
     ): Promise<ReadResult<RoundSnapshot>> {
-        const ownedCtx = bindTrustedContext(ctx);
-        if (!ownedCtx.ok) return ownedCtx.rejection;
-        const { scope } = ownedCtx;
+        if (!isRecord(request)) return invalid('the original-round query requires an object');
         const rawRunRef: unknown = request.subjectRunRef;
-        const rawSubject: unknown = request.subject;
         const rawPlanRef: unknown = request.planRef;
         if (!isRunRef(rawRunRef)) return invalid('the original-round query requires a complete subject RunRef');
-        const subjectProblem = taskTripleProblem(rawSubject);
-        if (subjectProblem !== null) return invalid(subjectProblem);
-        const planProblem = planRefProblem(rawPlanRef);
-        if (planProblem !== null) return invalid(planProblem);
-        const subject = rawSubject as TaskTriple;
-        const planRef = rawPlanRef as PlanRevisionRef;
-        if (rawRunRef.projectId !== scope.projectId || subject.projectId !== scope.projectId
-            || planRef.projectId !== scope.projectId) {
-            return forbidden('the original-round query is outside the trusted Host scope');
+        if (rawPlanRef !== undefined) {
+            const planProblem = planRefProblem(rawPlanRef);
+            if (planProblem !== null) return invalid(planProblem);
+            if ((rawPlanRef as PlanRevisionRef).projectId !== (rawRunRef as RunRef).projectId) {
+                return forbidden('the original-round query plan belongs to another project');
+            }
         }
-        if (rawRunRef.goalId !== subject.goalId) {
-            return invalid('the original-round query subject Run and Task do not share a Goal');
-        }
-        let lookup;
-        try {
-            lookup = await records.lookup({
-                index: VERIFICATION_ROUND_ORIGINAL_LOOKUP,
-                values: [scope.projectId, scope.workspaceId, subject.goalId, subject.taskId, rawRunRef.runId],
-                // C5: the whole chain shares this group; more than one row is still `incomplete` here.
-                limit: VERIFICATION_ROUND_CHAIN_LOOKUP_LIMIT,
-            });
-        } catch (error) {
-            return unavailable(`the original-round lookup failed: ${messageOf(error)}`);
-        }
-        if (lookup.status !== 'ready') return mapStoreFailure(lookup);
-        const candidates = lookup.value.records;
-        if (candidates.length === 0) return { status: 'not_found' };
-        if (candidates.length > 1) {
-            return incomplete('more than one verification round matches the subject Run; refusing to guess the latest');
-        }
-        const decoded = decodeVerificationRoundSnapshot(candidates[0]!);
-        if (decoded.status !== 'decoded') {
-            return unavailable(`the original verification round is damaged: ${decoded.reason}`);
-        }
-        const round = decoded.value;
-        const inScope = round.ref.projectId === scope.projectId && round.ref.workspaceId === scope.workspaceId;
-        if (!inScope
-            || !sameRef(round.subjectRunRef, rawRunRef) || !sameRef(round.subject, subject)
-            || !sameRef(round.adoptedPlanRef, planRef)) {
-            return unavailable('the indexed verification round does not match the requested subject Run/task/plan');
-        }
-        return { status: 'ready', value: round };
+        return queryRoundChainHead(ctx, { subject: request.subject, subjectRunRef: rawRunRef });
     }
 
     async function beginCheck(ctx: CoreCallContext, request: GraphWrite<{ roundRef: VerificationRoundRef; checkId: string }>):
@@ -850,6 +941,84 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
             value: decided.next, cancelled: null });
     }
 
+    /**
+     * VR-05 and VR-13: the runner settles an executing window it proved never
+     * ran a process (abandon → `pending`) or whose frozen ticket is
+     * incomplete (→ `interrupted`, `ticket_invalid`). The receipt comes first;
+     * then the pin, the round and the machine (`checkEventAdmission`: open
+     * round, executor, registered check, `executing`, the begun invocation, the
+     * pin). The identity is the runner's request id, which it derives from the
+     * invocation, so a repeat replays the original round.
+     */
+    async function settleExecutingCheck(
+        ctx: CoreCallContext,
+        request: GraphWrite<AbandonCheckInput> | GraphWrite<InterruptCheckInput>,
+        kind: 'abandon' | 'interrupt',
+    ): Promise<WriteResult<RoundSnapshot>> {
+        const ownedCtx = bindTrustedContext(ctx);
+        if (!ownedCtx.ok) return ownedCtx.rejection;
+        const { scope, actor, signal } = ownedCtx;
+        const owned = isolateWrite<AbandonCheckInput | InterruptCheckInput>(request);
+        if (!owned.ok) return owned.rejection;
+        const input = owned.input;
+        const refProblem = roundRefProblem(input.roundRef);
+        if (refProblem !== null) return invalid(refProblem);
+        if (!nonEmpty(input.checkId) || !nonEmpty(input.invocationId)) return invalid(`${kind}Check requires a checkId and an invocationId`);
+        let event: CheckEvent;
+        if (kind === 'abandon') {
+            const cause = (input as AbandonCheckInput).cause;
+            if (cause !== 'caller_cancelled' && cause !== 'root_changed' && cause !== 'permission_changed' && cause !== 'read_failed') {
+                return invalid('abandonCheck requires a known abandon cause');
+            }
+            event = { kind: 'check_abandoned', checkId: input.checkId, invocationId: input.invocationId, cause, provenNotStarted: true };
+        } else {
+            const interrupt = input as InterruptCheckInput;
+            if (interrupt.cause !== 'ticket_invalid' || !nonEmpty(interrupt.ticketProblem)) {
+                return invalid('interruptCheck requires the ticket_invalid cause and its ticket problem');
+            }
+            event = { kind: 'check_interrupted', checkId: input.checkId, invocationId: input.invocationId, cause: 'ticket_invalid',
+                ticketProblem: interrupt.ticketProblem };
+        }
+        if (input.roundRef.projectId !== scope.projectId || input.roundRef.workspaceId !== scope.workspaceId) {
+            return forbidden('the round ref is outside the trusted Host scope');
+        }
+        const eventType = kind === 'abandon' ? VERIFICATION_CHECK_ABANDONED_EVENT_TYPE : VERIFICATION_CHECK_INTERRUPTED_EVENT_TYPE;
+        let identity = '';
+        let fingerprint = '';
+        try {
+            identity = identityKeyOf(`r3e-${kind}:`, actor, scope.projectId, scope.workspaceId, owned.requestId);
+            fingerprint = fingerprintOf({ kind: `r3e-${kind}`, ...input, expected: owned.expected });
+        } catch { return invalid(`the ${kind} request is not canonicalizable JSON`); }
+        const lookup = await lookupReceipt(records, identity, fingerprint);
+        if (lookup.status === 'failed') return lookup.rejection;
+        if (lookup.status === 'found') {
+            return await replayEvent(records, lookup.receipt, identity, fingerprint, eventType) as WriteResult<RoundSnapshot>;
+        }
+        const checked = checkRoundPin(owned.expected, input.roundRef);
+        if ('status' in checked) return checked;
+        const loaded = await readRoundRecord(records, input.roundRef);
+        if (!loaded.ok) return loaded.rejection;
+        const round = loaded.round;
+        const decided = transitionCheck(round, event, roundCtx(round.executor, actor, checked.revision));
+        if (!decided.ok) return refusalOf(decided, round);
+        const base = { eventId: deps.newId(), schemaVersion: 1 as const, occurredAt: deps.now(), identityKey: identity,
+            roundRef: round.ref, actor, fingerprint, checkId: input.checkId, invocationId: input.invocationId, result: decided.next };
+        const recorded: VerificationRoundEvent = kind === 'abandon'
+            ? { ...base, eventType: VERIFICATION_CHECK_ABANDONED_EVENT_TYPE, cause: (input as AbandonCheckInput).cause }
+            : { ...base, eventType: VERIFICATION_CHECK_INTERRUPTED_EVENT_TYPE, cause: 'ticket_invalid', hostInstanceId: null };
+        // The proven fact is committed even after a late caller cancel (the runner passes a finishing signal).
+        return await commitRoundWrite(records, signal, { identity, fingerprint, effects: decided.effects, round: decided.next,
+            event: recorded, value: decided.next, cancelled: null });
+    }
+
+    async function abandonCheck(ctx: CoreCallContext, request: GraphWrite<AbandonCheckInput>): Promise<WriteResult<RoundSnapshot>> {
+        return settleExecutingCheck(ctx, request, 'abandon');
+    }
+
+    async function interruptCheck(ctx: CoreCallContext, request: GraphWrite<InterruptCheckInput>): Promise<WriteResult<RoundSnapshot>> {
+        return settleExecutingCheck(ctx, request, 'interrupt');
+    }
+
     async function submitEvidence(ctx: CoreCallContext, request: GraphWrite<{ roundRef: VerificationRoundRef; claim: string }>):
     Promise<WriteResult<EvidenceSnapshot>> {
         const ownedCtx = bindTrustedContext(ctx);
@@ -947,22 +1116,41 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         let evidencePlan: PlanRevisionSnapshot | null = null;
         let adoptedPlan: PlanRevisionSnapshot | null = null;
         const contextGaps: RoundSnapshot['gaps'] = [];
+        // VR-07 read set: the Goal, the Plans the fold judges against and the
+        // subject Run as read, so a concurrent adoption conflicts here.
+        const readSet: RecordGuard[] = [];
         const evidencePlanRead = await readPlan(records, round.adoptedPlanRef);
-        if (evidencePlanRead.status === 'ready') evidencePlan = evidencePlanRead.plan;
-        else contextGaps.push({ code: 'evidence_plan_unavailable', message: 'the round adopted Plan is not readable' });
+        if (evidencePlanRead.status === 'ready') {
+            evidencePlan = evidencePlanRead.plan;
+            readSet.push({ refKey: planRevisionRefKey(evidencePlan.ref), expectedRevision: evidencePlan.revision });
+        } else contextGaps.push({ code: 'evidence_plan_unavailable', message: 'the round adopted Plan is not readable' });
         const goalRead = await readGoal(records, goalRef);
         if (goalRead.status !== 'ready') {
             contextGaps.push({ code: 'goal_unavailable', message: 'the subject Goal is not readable' });
-        } else if (evidencePlan !== null) {
-            const activeRef = goalRead.goal.activePlanRevision ?? round.adoptedPlanRef;
-            if (planRevisionRefKey(activeRef) === planRevisionRefKey(round.adoptedPlanRef)) {
-                adoptedPlan = evidencePlan;
-            } else {
-                const adoptedRead = await readPlan(records, activeRef);
-                if (adoptedRead.status === 'ready') adoptedPlan = adoptedRead.plan;
-                else contextGaps.push({ code: 'adopted_plan_unavailable', message: 'the current adopted Plan is not readable' });
+        } else {
+            const goalKey = refKeyOf(goalRef);
+            if (goalKey === null) return invalid('the subject Goal ref is not canonical JSON');
+            readSet.push({ refKey: goalKey, expectedRevision: goalRead.goal.revision });
+            if (evidencePlan !== null) {
+                const activeRef = goalRead.goal.activePlanRevision ?? round.adoptedPlanRef;
+                if (planRevisionRefKey(activeRef) === planRevisionRefKey(round.adoptedPlanRef)) {
+                    adoptedPlan = evidencePlan;
+                } else {
+                    const adoptedRead = await readPlan(records, activeRef);
+                    if (adoptedRead.status === 'ready') {
+                        adoptedPlan = adoptedRead.plan;
+                        readSet.push({ refKey: planRevisionRefKey(adoptedPlan.ref), expectedRevision: adoptedPlan.revision });
+                    } else contextGaps.push({ code: 'adopted_plan_unavailable', message: 'the current adopted Plan is not readable' });
+                }
             }
         }
+        const subjectRunKey = refKeyOf(round.subjectRunRef);
+        if (subjectRunKey === null) return invalid('the subject Run ref is not canonical JSON');
+        const subjectRunRead = await readBatch(records, [subjectRunKey]);
+        if (subjectRunRead.status !== 'ready') return mapRejected(subjectRunRead);
+        const subjectRunRevision = readRevisionNumber(subjectRunRead.batch, subjectRunKey);
+        if (subjectRunRevision === null) return unavailable('the round subject Run is not readable');
+        readSet.push({ refKey: subjectRunKey, expectedRevision: subjectRunRevision });
         let sourceCurrent = false;
         let currentWorkspaceRevision = round.identity.workspaceRevision;
         const resolved = await deps.workspaceHost.resolveRoot(round.configuration.workspace);
@@ -1025,11 +1213,12 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         const finalized: FinalizedChecks = { snapshot: finalizedRound, outcome: finalizedRound.outcome!, evidence: snapshots,
             applicable: finalizedRound.outcome === 'PASS', gaps: finalizedRound.gaps };
         return await commitRoundWrite(records, signal, { identity, fingerprint, effects: decided.effects, round: finalizedRound,
-            evidence: snapshots, index: nextTaskEvidenceIndex(indexRead.index, snapshots.map(snapshot => snapshot.ref.evidenceId)),
+            readSet, evidence: snapshots, index: nextTaskEvidenceIndex(indexRead.index, snapshots.map(snapshot => snapshot.ref.evidenceId)),
             event: { eventId: deps.newId(), eventType: VERIFICATION_ROUND_FINALIZED_EVENT_TYPE, schemaVersion: 1,
                 occurredAt: admittedAt, identityKey: identity, roundRef: round.ref, actor, fingerprint, result: finalized },
             value: finalized, cancelled: 'the round finalize was cancelled before commit' });
     }
 
-    return { openVerification, readVerification, queryOriginalVerification, beginCheck, recordCheckResult, submitEvidence, finalizeChecks };
+    return { openVerification, readVerification, queryOriginalVerification, queryRoundChainHead, beginCheck, recordCheckResult,
+        abandonCheck, interruptCheck, submitEvidence, finalizeChecks };
 }

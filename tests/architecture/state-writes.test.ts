@@ -59,12 +59,6 @@ type ProtectedType = {
   name: string;
   /** `all`: an immutable record that is only ever created whole. */
   fields: readonly string[] | 'all';
-  /**
-   * §14.1 fields (新增) the declaration does not have yet. They are protected
-   * already, and the table check fails once one is declared, so it moves to
-   * `fields`.
-   */
-  pending?: readonly string[];
   /** The `state/` producer the report points to. */
   use: string;
   /** `record`: R1–R4; `projection` and `read_model`: R1/R2 only (§14.3). */
@@ -143,10 +137,10 @@ const PROTECTED_TYPES: readonly ProtectedType[] = [
     fields: ['phase'], use: QUERY_USE },
   { file: 'src/contracts/query-job.ts', name: 'QueryJobV1', kind: 'record',
     fields: ['status', 'closeReason'], use: QUERY_USE },
-  // Projection: `CanonicalTaskState` carries the phase (its §14.1 `phaseCause` is not declared
-  // yet), `TaskRow` the phase and its TD-1 cause.
+  // Projection: `CanonicalTaskState` and `TaskRow` carry the phase and its TD-1 cause
+  // (`CanonicalTaskState.phaseCause` declared in A.2 step 5.3).
   { file: 'src/core/work-graph/tasks/plan-readers.ts', name: 'CanonicalTaskState', kind: 'projection',
-    fields: ['effectivePhase'], pending: ['phaseCause'], use: PROJECTION_USE },
+    fields: ['effectivePhase', 'phaseCause'], use: PROJECTION_USE },
   { file: 'src/core/work-graph/tasks/plan-contracts.ts', name: 'TaskRow', kind: 'projection',
     fields: ['effectivePhase', 'phaseCause'], use: PROJECTION_USE },
   { file: 'src/contracts/task-failure.ts', name: 'TaskFailureFactsV1', kind: 'read_model',
@@ -195,7 +189,7 @@ function globPattern(pattern: string): RegExp {
 
 type ScanResult = {
   violations: string[];
-  /** §14.1 rows whose declaration or field is missing from the Program, or whose pending field is declared. */
+  /** §14.1 rows whose declaration or field is missing from the Program. */
   unknownProtected: string[];
   /** §14.2 rows whose file or function is missing from the Program. */
   unknownAllowed: string[];
@@ -289,8 +283,7 @@ function scanStateWrites(projectDir: string): ScanResult {
       && ((member.flags & ts.TypeFlags.Object) === 0 || ((member as ts.ObjectType).objectFlags & ts.ObjectFlags.Mapped) === 0)
       && [...entriesOfSymbol(member.aliasSymbol), ...entriesOfSymbol(member.getSymbol())].includes(entry));
   }
-  const protects = (entry: ProtectedType, field: string) => entry.fields === 'all' || entry.fields.includes(field)
-    || (entry.pending?.includes(field) ?? false);
+  const protects = (entry: ProtectedType, field: string) => entry.fields === 'all' || entry.fields.includes(field);
 
   // ---- syntax helpers ---------------------------------------------------- //
 
@@ -597,9 +590,6 @@ function scanStateWrites(projectDir: string): ScanResult {
     const declares = (field: string) => members.some(member => checker.getPropertyOfType(member, field) !== undefined);
     for (const field of entry.fields) {
       if (!declares(field)) unknownProtected.push(`${entry.file}: ${entry.name}.${field} is not declared`);
-    }
-    for (const field of entry.pending ?? []) {
-      if (declares(field)) unknownProtected.push(`${entry.file}: ${entry.name}.${field} is declared now; move it from pending to fields`);
     }
   }
   const unknownAllowed: string[] = [];
@@ -999,7 +989,7 @@ export function destructure(run: RunSnapshot, statuses: RunSnapshot['status'][])
   for (run.status of statuses) break;
 }
 `,
-  // A stub at the real path that already declares the pending §14.1 field `phaseCause`.
+  // A stub at the real path that declares the §14.1 projection field `phaseCause`.
   'core/work-graph/tasks/plan-readers.ts': `
 export type Phase = 'pending' | 'running';
 export type CanonicalTaskState = { taskId: string; effectivePhase: Phase; phaseCause: string | null };
@@ -1056,13 +1046,13 @@ describe('state-writes checker: generic, nested, asserted and destructured write
     ]);
   });
 
-  it('protects a pending §14.1 field, asks for it to move once declared, and refuses a projection copied through an assertion', () => {
+  // A.2 step 5.3 declared `CanonicalTaskState.phaseCause`, the last §14.1 field that was not
+  // declared yet, so the table's `pending` list (protected before its declaration) is gone.
+  it('protects the projection cause and refuses a projection copied through an assertion', () => {
     expect(hits('core/work-graph/tasks/plan-readers.ts')).toEqual([
       'src/core/work-graph/tasks/plan-readers.ts:5: CanonicalTaskState.phaseCause',
       'src/core/work-graph/tasks/plan-readers.ts:6: CanonicalTaskState.effectivePhase',
     ]);
-    expect(result.unknownProtected).toContain(
-      'src/core/work-graph/tasks/plan-readers.ts: CanonicalTaskState.phaseCause is declared now; move it from pending to fields');
   });
 
   it('reports nothing else', () => {

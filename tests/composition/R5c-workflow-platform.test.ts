@@ -604,7 +604,7 @@ it('resumes the original verification round for a completed Work Run across a di
     expect(finalizedSecond, 'the real FAIL check finalizes the round non-PASS').toMatchObject({
       status: 'ready', value: { state: 'waiting', next: null,
         receipt: { kind: 'finalize_checks', result: { status: 'committed',
-          value: { applicable: false, outcome: 'INCONCLUSIVE' } } } } });
+          value: { applicable: false, outcome: 'FAIL' } } } } });
 
     // 8. A refresh of the finalized non-PASS round must WAIT, never open a
     //    replacement round or re-run the failed check/model.
@@ -615,6 +615,6 @@ it('resumes the original verification round for a completed Work Run across a di
     expect(scripted.calls(), 'a finalized non-PASS refresh adds no model call').toBe(2);
     const failRound = await platform.evidence.readVerification(ctx(), second.roundRef);
     expect(failRound, 'the one original non-PASS round is unchanged').toMatchObject({
-      status: 'ready', value: { ref: second.roundRef, status: 'finalized', outcome: 'INCONCLUSIVE' } });
+      status: 'ready', value: { ref: second.roundRef, status: 'finalized', outcome: 'FAIL' } });
   } finally { await platform.close(); }
 });

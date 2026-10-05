@@ -50,20 +50,45 @@ export type FinalizedChecks = {
 };
 
 /**
- * The narrow original-round query. It names exactly the subject Run, Task and
- * adopted Plan of an already-ended Work Run so a caller can find the ONE round
- * already produced for it — open or finalized — instead of opening a second
- * round. It never accepts a caller-supplied round identity, digest or verdict;
- * the lookup is a read over the existing RecordStore only.
+ * The narrow original-round query: the plan-independent alias of
+ * `queryRoundChainHead` for the work chain of exactly this subject Run and
+ * Task (spec §9 VD-7, VD-14), so a caller finds the chain head — open or
+ * finalized — instead of opening a second round. It never accepts a
+ * caller-supplied round identity, digest or verdict.
  *
- * `planRef` is optional in the type (spec §9 VD-7, C6): it becomes information
- * only once the query is the plan-independent alias of `queryRoundChainHead`.
- * Until then every caller still passes it and the service still requires it.
+ * `planRef` is information only (VD-7, C6): when given it must be a
+ * PlanRevisionRef of the scope project, and it never selects or filters the
+ * round, so a round opened before a later adoption is still found.
  */
 export type OriginalVerificationQuery = {
     subjectRunRef: RunRef;
     subject: TaskTriple;
     planRef?: PlanRevisionRef;
+};
+
+/**
+ * VR-05 (spec §9 VD-6): the runner proved, in the same process, that no
+ * process started after `beginCheck`, so the executing check returns to
+ * `pending`. `meta.expected` pins the round as re-read.
+ */
+export type AbandonCheckInput = {
+    roundRef: VerificationRoundRef;
+    checkId: string;
+    invocationId: string;
+    cause: 'caller_cancelled' | 'root_changed' | 'permission_changed' | 'read_failed';
+};
+
+/**
+ * VR-13: the frozen ticket the runner received is incomplete (`ticketProblem`
+ * is the proof), so the check is `interrupted` with cause `ticket_invalid` and
+ * never runs again in the round. `meta.expected` pins the round as re-read.
+ */
+export type InterruptCheckInput = {
+    roundRef: VerificationRoundRef;
+    checkId: string;
+    invocationId: string;
+    cause: 'ticket_invalid';
+    ticketProblem: string;
 };
 
 /**
@@ -109,13 +134,12 @@ export interface EvidencePort {
         ref: VerificationRoundRef,
     ): Promise<ReadResult<RoundSnapshot>>;
     /**
-     * Optional narrow read: the ONE original round (open or finalized) for
-     * exactly this subject Run/task/plan. A formal zero result is 'not_found',
-     * exactly one candidate is 'ready', and more than one candidate is
-     * 'incomplete' (never a guessed latest). An absent or unknown implementation
-     * is NOT 'not_found': a caller must wait rather than treat it as "no round".
-     * The service implements it as a candidate lookup over the existing
-     * RecordStore; no second store, table or manager is created.
+     * Optional narrow read: the chain head (open or finalized) of exactly this
+     * subject Run's work chain, whatever Plan opened it (`queryRoundChainHead`
+     * with `subjectRunRef`). A formal zero result is 'not_found'; an invalid
+     * chain is 'incomplete' (never a guessed latest). An absent or unknown
+     * implementation is NOT 'not_found': a caller must wait rather than treat it
+     * as "no round".
      */
     queryOriginalVerification?(
         ctx: CoreCallContext,
@@ -124,12 +148,22 @@ export interface EvidencePort {
     /**
      * Spec §9 VD-14: the head of one subject's round chain. `not_found` = no
      * chain; an invalid chain or a page past `ROUND_CHAIN_MAX` is `incomplete`.
-     * Optional until the evidence service implements it (A.2 step 5).
+     * Optional on the port: a caller without it waits.
      */
     queryRoundChainHead?(
         ctx: CoreCallContext,
         request: RoundChainHeadQuery,
     ): Promise<ReadResult<RoundSnapshot>>;
+    /** Spec §9 VR-05 (VD-6): the runner's proven non-start. Optional on the port: without it the window waits. */
+    abandonCheck?(
+        ctx: CoreCallContext,
+        request: GraphWrite<AbandonCheckInput>,
+    ): Promise<WriteResult<RoundSnapshot>>;
+    /** Spec §9 VR-13: the runner's incomplete ticket. Optional on the port: without it the window waits. */
+    interruptCheck?(
+        ctx: CoreCallContext,
+        request: GraphWrite<InterruptCheckInput>,
+    ): Promise<WriteResult<RoundSnapshot>>;
     /**
      * Spec §9 VD-12 (VR-14): open the successor round of a finalized non-PASS
      * chain head, or commit a policy refusal. Optional until the evidence

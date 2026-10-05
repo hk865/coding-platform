@@ -594,9 +594,10 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     const evidence: EvidencePort = {
       openVerification: (...args) => trackedCall(() => rawEvidence.openVerification(...args), unavailable),
       readVerification: (...args) => trackedCall(() => rawEvidence.readVerification(...args), unavailable),
-      // The narrow original-round read delegates to the raw Evidence owner's
-      // formal RecordStore candidate lookup; no second store, table or manager.
+      // The chain-head reads delegate to the raw Evidence owner's formal
+      // RecordStore candidate lookups; no second store, table or manager.
       queryOriginalVerification: (...args) => trackedCall(() => rawEvidence.queryOriginalVerification!(...args), unavailable),
+      queryRoundChainHead: (...args) => trackedCall(() => rawEvidence.queryRoundChainHead!(...args), unavailable),
       beginCheck: (...args) => trackedCall(() => rawEvidence.beginCheck(...args), unavailable),
       recordCheckResult: (...args) => trackedCall(() => rawEvidence.recordCheckResult(...args), unavailable),
       submitEvidence: (...args) => trackedCall(() => rawEvidence.submitEvidence(...args), unavailable),

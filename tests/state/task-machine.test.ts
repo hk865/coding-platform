@@ -2,15 +2,16 @@
  * A.2 step 2 (spec §15.2 第 2 步): the Task machine of spec §4
  * (`state/task-machine.ts`).
  *
- * - `projectTaskPhase` / `classifyTaskPhase`: one case per row P1..P16 with
- *   TODAY's phase and the TD-1 cause; the 新增 rows P4, P17..P20 are not
- *   evaluated yet and their facts reach today's row; in-round monotonicity,
- *   legacy PASS with gaps, successor heads and the disposition independence.
+ * - `projectTaskPhase` / `classifyTaskPhase`: one case per row P1..P18 with
+ *   its target phase (A.2 step 5.3) and the TD-1 cause; the rows P4, P19 and
+ *   P20 of later substeps are not evaluated yet and their facts reach the row
+ *   the remaining table gives; in-round monotonicity, legacy PASS with gaps,
+ *   successor heads and the disposition independence.
  * - `transitionTask`: every (state, event) combination over the projection
  *   states (plus ∅): a legal one asserts `next` and `effects`, a re-projection
  *   without change asserts the same state and `effects:[]` (SD-1), an illegal
- *   one asserts `reason` and `code` (§4.4). 新增 rows answer `illegal`/`invalid`;
- *   改造 rows keep today's result (step 5 flips them).
+ *   one asserts `reason` and `code` (§4.4). Rows of later substeps answer
+ *   `illegal`/`invalid`; 改造 rows of later substeps keep today's result.
  * - Guard order of the claim, completion, disposition and adoption rows, and
  *   the record constructors `newTaskReductionRecord` (today's bytes) and
  *   `newTaskRequeueRecord` (the §11 I-12 clauses its input shows: a valid
@@ -42,7 +43,7 @@ import type {
 } from '../../src/contracts/verification.js';
 import {
   classifyTaskPhase, newTaskReductionRecord, newTaskRequeueRecord, projectTaskPhase, taskClaimProblem,
-  taskCompletionFoldProblem, taskCompletionRoundProblem, taskMachineStateOf, transitionTask,
+  taskCompletionFoldProblem, taskCompletionProjectionProblem, taskCompletionRoundProblem, taskMachineStateOf, transitionTask,
   type NewTaskRequeueInput, type TaskClaimFacts, type TaskCompletionFacts, type TaskEffect, type TaskEvent,
   type TaskGuardContext, type TaskMachineState, type TaskPhaseFacts, type TaskPhaseProjection, type TaskReductionBuildV1,
   type TaskRoundEventKind, type TaskState, type TaskTrace,
@@ -167,7 +168,7 @@ const gateFacts = (patch: Partial<TaskPhaseFacts> = {}): TaskPhaseFacts => facts
 // ------------------------------------------------------------------------ //
 
 type RowLabel = 'P1' | 'P1v' | 'P1f' | 'P2' | 'P3' | 'P5' | 'P6' | 'P7' | 'P8' | 'P9' | 'P10' | 'P11' | 'P12' | 'P13'
-  | 'P14' | 'P15' | 'P16';
+  | 'P14' | 'P15' | 'P16' | 'P17' | 'P18';
 
 const ROW: Record<RowLabel, { facts: TaskPhaseFacts; projection: TaskPhaseProjection }> = {
   P1: { facts: facts({ applicableReduction: { phase: 'satisfied' }, selectedRun: COMPLETED, round: SIG.pass }),
@@ -181,9 +182,9 @@ const ROW: Record<RowLabel, { facts: TaskPhaseFacts; projection: TaskPhaseProjec
     projection: { row: 'P3', phase: 'blocked', cause: { code: 'run_outcome_unknown' } } },
   P5: { facts: facts({ selectedRun: YIELDED_WAIT }), projection: { row: 'P5', phase: 'ready', cause: null } },
   P6: { facts: facts({ selectedRun: CRASHED }),
-    projection: { row: 'P6', phase: 'blocked', cause: { code: 'run_failed', detail: { outcome: 'crashed', origin: 'observed' } } } },
+    projection: { row: 'P6', phase: 'failed', cause: { code: 'run_failed', detail: { outcome: 'crashed', origin: 'observed' } } } },
   P7: { facts: facts({ selectedRun: COMPLETED, round: SIG.fail }),
-    projection: { row: 'P7', phase: 'blocked', cause: { code: 'check_failed', detail: { checkIds: ['unit'] } } } },
+    projection: { row: 'P7', phase: 'failed', cause: { code: 'check_failed', detail: { checkIds: ['unit'] } } } },
   P8: { facts: facts({ selectedRun: COMPLETED, round: SIG.inconclusive }),
     projection: { row: 'P8', phase: 'blocked', cause: { code: 'round_inconclusive', detail: { gapCodes: ['pending_check'] } } } },
   P9: { facts: facts({ selectedRun: COMPLETED, round: SIG.interrupted }),
@@ -191,30 +192,27 @@ const ROW: Record<RowLabel, { facts: TaskPhaseFacts; projection: TaskPhaseProjec
   P10: { facts: facts({ selectedRun: COMPLETED, round: SIG.invalid }),
     projection: { row: 'P10', phase: 'blocked', cause: { code: 'round_ambiguous' } } },
   P11: { facts: facts({ selectedRun: COMPLETED }),
-    projection: { row: 'P11', phase: 'blocked', cause: { code: 'awaiting_verification' } } },
+    projection: { row: 'P11', phase: 'verifying', cause: { code: 'awaiting_verification' } } },
   P12: { facts: facts({ selectedRun: COMPLETED, round: SIG.open }),
-    projection: { row: 'P12', phase: 'blocked', cause: { code: 'verification_running' } } },
+    projection: { row: 'P12', phase: 'verifying', cause: { code: 'verification_running' } } },
   P13: { facts: facts({ selectedRun: COMPLETED, round: SIG.pass }),
-    projection: { row: 'P13', phase: 'blocked', cause: { code: 'awaiting_completion' } } },
+    projection: { row: 'P13', phase: 'verifying', cause: { code: 'awaiting_completion' } } },
   P14: { facts: facts({ selectedRun: YIELDED_BARE }), projection: { row: 'P14', phase: 'blocked', cause: { code: 'run_failed' } } },
   P15: { facts: facts({ originUnresolvable: true }),
     projection: { row: 'P15', phase: 'blocked', cause: { code: 'origin_unresolvable' } } },
   P16: { facts: facts(), projection: { row: 'P16', phase: 'pending', cause: null } },
+  P17: { facts: facts({ selectedRun: YIELDED_CANCELLED }),
+    projection: { row: 'P17', phase: 'failed', cause: { code: 'continuation_cancelled' } } },
+  P18: { facts: facts({ selectedRun: YIELDED_PAUSED }),
+    projection: { row: 'P18', phase: 'blocked', cause: { code: 'continuation_paused' } } },
 };
 const ROW_LABELS = Object.keys(ROW) as RowLabel[];
 
-/** §4.1 "目标值" of the rows whose today's phase differs; step 5.3 flips each (and its assertion). */
-const STEP5_TARGET_PHASE: Partial<Record<RowLabel, string>> = {
-  P6: 'failed', P7: 'failed', P11: 'verifying', P12: 'verifying', P13: 'verifying',
-};
-
-describe('projectTaskPhase: one case per row, today\'s phase (§4.1, §15.2 step 2)', () => {
+describe('projectTaskPhase: one case per row, the target phase (§4.1, §15.2 step 5.3)', () => {
   it.each(ROW_LABELS)('%s', (label) => {
     const { facts: rowFacts, projection } = ROW[label];
     expect(classifyTaskPhase(rowFacts)).toEqual(projection);
     expect(projectTaskPhase(rowFacts)).toEqual({ phase: projection.phase, cause: projection.cause });
-    const target = STEP5_TARGET_PHASE[label];
-    if (target !== undefined) expect(projection.phase).not.toBe(target);
   });
 
   it('P2 holds for a starting Run, and P1 wins over an active Run', () => {
@@ -226,27 +224,36 @@ describe('projectTaskPhase: one case per row, today\'s phase (§4.1, §15.2 step
   it('P6 covers every failed outcome with its origin; a RUN-19 interruption is host_interrupted', () => {
     for (const outcome of ['crashed', 'cancelled', 'budget_exhausted', 'failed'] as RunOutcome[]) {
       expect(classifyTaskPhase(facts({ selectedRun: run('run-1', { outcome }) })))
-        .toEqual({ row: 'P6', phase: 'blocked', cause: { code: 'run_failed', detail: { outcome, origin: 'observed' } } });
+        .toEqual({ row: 'P6', phase: 'failed', cause: { code: 'run_failed', detail: { outcome, origin: 'observed' } } });
     }
-    expect(classifyTaskPhase(facts({ selectedRun: CRASHED_INTERRUPTED }))).toEqual({ row: 'P6', phase: 'blocked',
+    expect(classifyTaskPhase(facts({ selectedRun: CRASHED_INTERRUPTED }))).toEqual({ row: 'P6', phase: 'failed',
       cause: { code: 'run_failed', detail: { outcome: 'crashed', origin: 'host_interrupted' } } });
   });
 
-  it('an ended Run without an outcome is defended like P14 (today blocked)', () => {
+  it('an ended Run without an outcome is defended like P14 (blocked)', () => {
     expect(classifyTaskPhase(facts({ selectedRun: ENDED_NO_OUTCOME })))
       .toEqual({ row: 'P14', phase: 'blocked', cause: { code: 'run_failed' } });
   });
 
-  it('新增 rows are not evaluated yet: P4, P17, P18, P19 and P20 facts reach today\'s row', () => {
+  it('TD-5: a stop pointer on a yielded wait shows (P17/P18 before P5); a running or steered pointer stays P5', () => {
+    expect(classifyTaskPhase(facts({ selectedRun: YIELDED_CANCELLED }))).toEqual(ROW.P17.projection);
+    expect(classifyTaskPhase(facts({ selectedRun: YIELDED_PAUSED }))).toEqual(ROW.P18.projection);
+    for (const desired of ['running', 'steered'] as const) {
+      expect(classifyTaskPhase(facts({ selectedRun: run('run-1', { outcome: 'yielded', exitCode: null, continuation,
+        ...pointer(desired) }) }))).toEqual(ROW.P5.projection);
+    }
+    // Without a continuation the yield is P14 whatever the pointer.
+    expect(classifyTaskPhase(facts({ selectedRun: run('run-1', { outcome: 'yielded', exitCode: null, ...pointer('cancelled') }) })))
+      .toEqual(ROW.P14.projection);
+  });
+
+  it('rows of later substeps are not evaluated yet: P4, P19 and P20 facts reach the remaining table', () => {
     // P4: a TaskRequeue covers the selected Run (step 5.4) → still the FAIL head row.
     expect(classifyTaskPhase(facts({ selectedRun: COMPLETED, round: SIG.fail, coveringRequeue: requeueRef })))
       .toEqual(ROW.P7.projection);
     expect(classifyTaskPhase(facts({ selectedRun: CRASHED, coveringRequeue: requeueRef }))).toEqual(ROW.P6.projection);
-    // P17/P18: a stop pointer on a yielded wait (TD-5, step 5.3) → today `ready`.
-    expect(classifyTaskPhase(facts({ selectedRun: YIELDED_CANCELLED }))).toEqual(ROW.P5.projection);
-    expect(classifyTaskPhase(facts({ selectedRun: YIELDED_PAUSED }))).toEqual(ROW.P5.projection);
-    // P19: paused-interrupted (C4, step 5.6) → today's P6.
-    expect(classifyTaskPhase(facts({ selectedRun: PAUSED_INTERRUPTED }))).toEqual({ row: 'P6', phase: 'blocked',
+    // P19: paused-interrupted (C4, step 5.6) → P6.
+    expect(classifyTaskPhase(facts({ selectedRun: PAUSED_INTERRUPTED }))).toEqual({ row: 'P6', phase: 'failed',
       cause: { code: 'run_failed', detail: { outcome: 'crashed', origin: 'host_interrupted' } } });
     // P20: a gate's own chain (C5, step 5.9) → today P16, or P15 with an unresolvable reduction.
     for (const signal of [SIG.open, SIG.fail, SIG.inconclusive, SIG.pass, SIG.invalid]) {
@@ -258,7 +265,7 @@ describe('projectTaskPhase: one case per row, today\'s phase (§4.1, §15.2 step
   });
 
   it('within one round: interrupted with a check still pending stays P12, then P9 (brief §2a)', () => {
-    expect(classifyTaskPhase(facts({ selectedRun: COMPLETED, round: SIG.mixed }))).toEqual({ row: 'P12', phase: 'blocked',
+    expect(classifyTaskPhase(facts({ selectedRun: COMPLETED, round: SIG.mixed }))).toEqual({ row: 'P12', phase: 'verifying',
       cause: { code: 'verification_running', detail: { checkIds: ['lint'] } } });
     expect(classifyTaskPhase(facts({ selectedRun: COMPLETED, round: SIG.interrupted }))).toEqual(ROW.P9.projection);
   });
@@ -269,13 +276,13 @@ describe('projectTaskPhase: one case per row, today\'s phase (§4.1, §15.2 step
   });
 
   it('a successor head adds ordinal and predecessor to the detail (C5)', () => {
-    expect(classifyTaskPhase(facts({ selectedRun: COMPLETED, round: SIG.succOpen }))).toEqual({ row: 'P12', phase: 'blocked',
+    expect(classifyTaskPhase(facts({ selectedRun: COMPLETED, round: SIG.succOpen }))).toEqual({ row: 'P12', phase: 'verifying',
       cause: { code: 'verification_running', detail: { ordinal: 2, predecessorRoundRef: ROOT_FAIL.ref } } });
-    expect(classifyTaskPhase(facts({ selectedRun: COMPLETED, round: SIG.succFail }))).toEqual({ row: 'P7', phase: 'blocked',
+    expect(classifyTaskPhase(facts({ selectedRun: COMPLETED, round: SIG.succFail }))).toEqual({ row: 'P7', phase: 'failed',
       cause: { code: 'check_failed', detail: { ordinal: 2, predecessorRoundRef: ROOT_FAIL.ref, checkIds: ['lint'] } } });
     // An ordinal-1 root with a chain carries no successor detail.
     expect(classifyTaskPhase(facts({ selectedRun: COMPLETED, round: roundTaskSignal([ROOT_FAIL]) })))
-      .toEqual({ row: 'P7', phase: 'blocked', cause: { code: 'check_failed', detail: { checkIds: ['unit'] } } });
+      .toEqual({ row: 'P7', phase: 'failed', cause: { code: 'check_failed', detail: { checkIds: ['unit'] } } });
   });
 
   it('the disposition never enters the projection (C7)', () => {
@@ -322,8 +329,9 @@ const claimFacts = (patch: Partial<TaskClaimFacts> = {}): TaskClaimFacts => ({ g
 
 const PRODUCER = run('run-1');
 const SATISFIED = { satisfied: true, phase: 'satisfied' as const, causes: [], satisfiedObligationIds: ['ob-1'] };
+/** The selected Run's chain head is the completion round by default (TASK-14, C5). */
 const completionFacts = (patch: Partial<TaskCompletionFacts> = {}): TaskCompletionFacts =>
-  ({ producerRun: PRODUCER, producerTaskKind: 'work', evaluation: SATISFIED, ...patch });
+  ({ producerRun: PRODUCER, producerTaskKind: 'work', evaluation: SATISFIED, chainHead: roundRef('round-1'), ...patch });
 
 /** The facts a real read would give for each state; the trace is the first one today's reader finds. */
 function ctxFor(label: StateLabel): TaskGuardContext {
@@ -484,7 +492,8 @@ const CLAIM_EFFECTS = (lease: 'first' | 'reheld'): TaskEffect[] => [
   { kind: 'create_attempt' }, { kind: 'create_run' }, { kind: 'create_outbox' }, { kind: 'hold_lease', lease },
   { kind: 'occupy_session', sessionRef, generation: GEN },
 ];
-const BLOCKED_ROWS: StateLabel[] = ['P3', 'P6', 'P7', 'P8', 'P9', 'P10', 'P11', 'P12', 'P13', 'P14', 'P15'];
+/** The rows a claim never takes: `blocked`, `failed` and `verifying` (§4.4 `busy`). */
+const BLOCKED_ROWS: StateLabel[] = ['P3', 'P6', 'P7', 'P8', 'P9', 'P10', 'P11', 'P12', 'P13', 'P14', 'P15', 'P17', 'P18'];
 
 function claimExpect(label: StateLabel, basis: 'first' | 'continuation' | 'requeue'): Expect {
   if (label === 'absent') return NOT_FOUND;
@@ -504,21 +513,21 @@ function reprojectionExpect(label: StateLabel, event: EventLabel): Expect {
   if (label === 'absent') return NOT_FOUND;
   const gate = isGate(label);
   switch (event) {
-    case 'run_ended:completed': return gate ? SAME : label === 'P3' ? II : reproject(label, 'P11');
-    case 'run_ended:crashed': return gate ? SAME : label === 'P3' ? II : reproject(label, 'P6');
-    case 'run_ended:yielded': return gate ? SAME : label === 'P3' ? II : reproject(label, 'P5');
-    // TASK-21, TASK-07, TASK-26 (新增).
-    case 'run_ended:yielded:pointer':
-    case 'run_ended:unknown':
-    case 'run_ended:paused_interrupted':
-      return gate ? SAME : II;
+    // TASK-05, TASK-06, TASK-04; from P3 these are TASK-08 (the unknown end resolved).
+    case 'run_ended:completed': return gate ? SAME : reproject(label, 'P11');
+    case 'run_ended:crashed': return gate ? SAME : reproject(label, 'P6');
+    case 'run_ended:yielded': return gate ? SAME : reproject(label, 'P5');
+    // TASK-21 (TD-5) and TASK-07.
+    case 'run_ended:yielded:pointer': return gate ? SAME : reproject(label, 'P18');
+    case 'run_ended:unknown': return gate ? SAME : reproject(label, 'P3');
+    // TASK-26 (C4) is step 5.6.
+    case 'run_ended:paused_interrupted': return gate ? SAME : II;
     case 'run_ended:older_run': return SAME;
     case 'control:pause:running': return gate ? SAME : reproject(label, 'P2');
-    // TASK-22/23 (新增).
-    case 'control:pause:yielded':
-    case 'control:cancel:yielded':
-    case 'control:resume:yielded':
-      return gate ? SAME : II;
+    // TASK-22/23 (TD-5).
+    case 'control:pause:yielded': return gate ? SAME : reproject(label, 'P18');
+    case 'control:cancel:yielded': return gate ? SAME : reproject(label, 'P17');
+    case 'control:resume:yielded': return gate ? SAME : reproject(label, 'P5');
     case 'control:steer:yielded': return gate ? SAME : reproject(label, 'P5');
     case 'round_opened':
     case 'check_begun':
@@ -527,8 +536,8 @@ function reprojectionExpect(label: StateLabel, event: EventLabel): Expect {
     case 'check_report_booked':
       return gate ? II : reproject(label, 'P12');
     case 'evidence_submitted': return reproject(label, 'P12');
-    // TASK-12 (新增) unless the head is already P9.
-    case 'check_interrupted': return gate ? II : label === 'P9' ? SAME : II;
+    // TASK-12: the last pending/executing check settled with an interrupted one left.
+    case 'check_interrupted': return gate ? II : reproject(label, 'P9');
     case 'round_finalized:FAIL': return gate ? II : reproject(label, 'P7');
     case 'round_finalized:INCONCLUSIVE': return gate ? II : reproject(label, 'P8');
     // §4.4: blocked(check_interrupted) + PASS is illegal.
@@ -554,8 +563,14 @@ function planExpect(label: StateLabel, event: EventLabel): Expect {
 
 function completedExpect(label: StateLabel): Expect {
   if (label === 'absent') return no('illegal', 'incomplete');
-  // TASK-14/15/24 today: the round and the fold decide, whatever the projection.
   const gate = isGate(label);
+  // TASK-14/24 (§4.4): a work Task completes only from `verifying` or `satisfied`;
+  // TASK-15 (a gate) keeps today's rule until step 5.9.
+  if (!gate) {
+    const phase = (STATES[label] as TaskState).phase;
+    if (phase === 'failed' || phase === 'blocked') return no('illegal', 'incomplete');
+    if (phase === 'pending' || phase === 'ready' || phase === 'running') return no('guard_failed', 'incomplete');
+  }
   return to(stateOf(gate ? 'gate' : 'work', ROW.P1.projection), [{ kind: 'write_task_reduction',
     reduction: gate ? expectedReduction(gateTask, GATE_PASS) : expectedReduction(task, FINAL_PASS) }]);
 }
@@ -641,12 +656,15 @@ describe('task_claimed guards in claim-service order', () => {
     const deferred: TaskState = { ...(STATES.P16 as TaskState), disposition: 'deferred' };
     expect(claimWith(deferred, {})).toMatchObject({ ok: false, reason: 'guard_failed', code: 'invalid',
       detail: 'the Task disposition is not active' });
-    const blockedDeferred: TaskState = { ...(STATES.P7 as TaskState), disposition: 'superseded' };
+    const blockedDeferred: TaskState = { ...(STATES.P8 as TaskState), disposition: 'superseded' };
     expect(claimWith(blockedDeferred, {})).toMatchObject({ code: 'invalid' });
     const structural = rejection('incomplete', 'task is plan_only and is not a dispatch candidate until an explicit request_execution');
-    expect(claimWith(STATES.P7, { structuralProblem: structural })).toMatchObject({ ok: false, reason: 'guard_failed',
+    expect(claimWith(STATES.P8, { structuralProblem: structural })).toMatchObject({ ok: false, reason: 'guard_failed',
       code: 'incomplete', detail: structural.reason });
-    expect(claimWith(STATES.P7, {})).toMatchObject({ ok: false, reason: 'guard_failed', code: 'busy', detail: 'task is blocked' });
+    expect(claimWith(STATES.P8, {})).toMatchObject({ ok: false, reason: 'guard_failed', code: 'busy', detail: 'task is blocked' });
+    // P7 is `failed` since A.2 step 5.3 (D-2): not dispatchable, still `busy`.
+    expect(claimWith(STATES.P7, {})).toMatchObject({ ok: false, reason: 'guard_failed', code: 'busy',
+      detail: 'task phase is not dispatchable (pending|ready)' });
     expect(claimWith(STATES.P2, {})).toMatchObject({ ok: false, reason: 'guard_failed', code: 'busy',
       detail: 'task phase is not dispatchable (pending|ready)' });
     // Order: disposition before structure, structure before phase, phase before the lease.
@@ -784,6 +802,32 @@ describe('task_completed in completeTask order', () => {
       detail: `task ${T} is not satisfied (verifying)` });
   });
 
+  it('TASK-14 (§4.4, C5): the projection is verifying and the round is the selected Run\'s chain head', () => {
+    // An older PASS never overtakes the latest failure or a blocked Task.
+    for (const label of ['P6', 'P7', 'P17'] as const) {
+      expect(at(work(FINAL_PASS), {}, STATES[label])).toEqual({ ok: false, reason: 'illegal', code: 'incomplete',
+        detail: 'the task is failed; a PASS round cannot complete it' });
+    }
+    for (const label of ['P3', 'P8', 'P9', 'P10', 'P14', 'P15', 'P18'] as const) {
+      expect(at(work(FINAL_PASS), {}, STATES[label])).toMatchObject({ ok: false, reason: 'illegal', code: 'incomplete' });
+    }
+    expect(at(work(FINAL_PASS), {}, STATES.P2)).toEqual({ ok: false, reason: 'guard_failed', code: 'incomplete',
+      detail: 'the task is running; only a verifying task completes' });
+    for (const label of ['P5', 'P16'] as const) {
+      expect(at(work(FINAL_PASS), {}, STATES[label])).toMatchObject({ ok: false, reason: 'guard_failed', code: 'incomplete' });
+    }
+    // A round that is not the chain head (another round of the Run, or no chain) is refused before it is judged.
+    for (const chainHead of [roundRef('round-2'), roundRef('round-1', 'run-0'), null]) {
+      expect(at(work(FINAL_PASS), { chainHead })).toEqual({ ok: false, reason: 'guard_failed', code: 'incomplete',
+        detail: 'the specified round is not the head of the selected Run round chain' });
+    }
+    // The projection comes before the round checks (a FAIL round on a failed Task is refused as failed).
+    expect(at(work(FINAL_FAIL), {}, STATES.P7)).toMatchObject({ reason: 'illegal', detail: 'the task is failed; a PASS round cannot complete it' });
+    // The exported guard is the same step; a gate is not judged by it (TASK-15, step 5.9).
+    expect(taskCompletionProjectionProblem(STATES.P13 as TaskState, FINAL_PASS.ref, FINAL_PASS.ref)).toBeNull();
+    expect(taskCompletionProjectionProblem({ taskKind: 'gate', phase: 'pending' }, GATE_PASS.ref, null)).toBeNull();
+  });
+
   it('TASK-24: a satisfied Task completes again at revision+1', () => {
     const event: TaskEvent = { kind: 'task_completed', task, round: FINAL_PASS,
       reduction: { ...REDUCTION_BUILD(task), previousRevision: 2 } };
@@ -909,22 +953,30 @@ describe('re-projection specifics', () => {
       .toMatchObject({ ok: false, reason: 'illegal', code: 'invalid' });
   });
 
-  it('TASK-08 is step 5: an unknown end resolved by late evidence or an attestation', () => {
+  it('TASK-08: an unknown end resolved by late evidence or an attestation re-projects like any end', () => {
     expect(transitionTask(STATES.P3, EVENTS['run_ended:crashed']('work'), ctxFor('P3')))
-      .toMatchObject({ ok: false, reason: 'illegal', code: 'invalid', detail: 'TASK-08 is not implemented before A.2 step 5' });
+      .toEqual({ ok: true, next: STATES.P6, effects: [] });
+    expect(transitionTask(STATES.P3, EVENTS['run_ended:completed']('work'), ctxFor('P3')))
+      .toEqual({ ok: true, next: STATES.P11, effects: [] });
   });
 
-  it('TASK-21/22/23/26/29/30 name their rows', () => {
+  it('TD-5 (TASK-21..23): P5 → P18 by a pause, P5/P18 → P17 by a cancel, P18 → P5 by a resume', () => {
+    expect(transitionTask(STATES.P2, EVENTS['run_ended:yielded:pointer']('work'), ctxFor('P2')))
+      .toEqual({ ok: true, next: STATES.P18, effects: [] });
+    expect(transitionTask(STATES.P5, EVENTS['control:pause:yielded']('work'), ctxFor('P5')))
+      .toEqual({ ok: true, next: STATES.P18, effects: [] });
+    expect(transitionTask(STATES.P18, EVENTS['control:cancel:yielded']('work'), ctxFor('P18')))
+      .toEqual({ ok: true, next: STATES.P17, effects: [] });
+    expect(transitionTask(STATES.P18, EVENTS['control:resume:yielded']('work'), ctxFor('P18')))
+      .toEqual({ ok: true, next: STATES.P5, effects: [] });
+  });
+
+  it('TASK-26/29/30 and the requeue rows name their rows', () => {
     const detail = (label: StateLabel, event: EventLabel): unknown => {
       const result = transitionTask(STATES[label], EVENTS[event](isGate(label) ? 'gate' : 'work'), ctxFor(label));
       return result.ok ? null : result.detail;
     };
-    expect(detail('P2', 'run_ended:yielded:pointer')).toMatch(/^TASK-21 /);
     expect(detail('P2', 'run_ended:paused_interrupted')).toMatch(/^TASK-26 /);
-    expect(detail('P2', 'run_ended:unknown')).toMatch(/^TASK-07 /);
-    expect(detail('P5', 'control:pause:yielded')).toMatch(/^TASK-22 /);
-    expect(detail('P5', 'control:resume:yielded')).toMatch(/^TASK-23 /);
-    expect(detail('P12', 'check_interrupted')).toMatch(/^TASK-12 /);
     expect(detail('P7', 'round_reverified')).toMatch(/^TASK-29 /);
     expect(detail('gate:P16', 'round_opened')).toMatch(/^TASK-30 /);
     expect(detail('P7', 'task_requeued')).toMatch(/^TASK-16\/17\/27 /);

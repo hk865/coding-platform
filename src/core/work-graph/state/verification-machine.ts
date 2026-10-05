@@ -25,28 +25,26 @@
  * the call scope), and the VR-01 Host grant, workspace revision, capture and
  * compile results stay with the service (§1.1).
  *
- * A.2 step 2 (§15.2) scope:
- * - 已有/改造 rows return TODAY's result, records byte for byte as the literals
- *   the service wrote before A.2 step 3 routed it here (VR-01, VR-02, VR-03,
- *   VR-07, VR-10..12). Not yet wired, flipped in step 5: the VR-01 slot,
- *   `chain` and VD-3/VD-9/requeue guards; the VR-02 VD-9 guard and VD-8 reason
- *   markers; the VR-03 `incompleteCause`; the D-2 target fold of VR-07 (FAIL,
- *   `interrupted_check`, PASS ⇒ no gaps); VD-2 on VR-08; VR-11 legacy @0 and
- *   VR-12 zero-append in `nextTaskEvidenceIndex`; the VR-05 and VR-13 writes.
- *   The facts only those guards read (Goal desired state and disposition for
- *   VD-9, the subject's chain for VD-1/VD-15, the TaskRequeue cover) are not
- *   in `RoundGuardContext`/`RoundOpenFactsV1` yet: today's services do not
- *   read them, and step 5 adds each with its row.
- * - 新增 rows keep their events in the unions: the guards of §9.4 that need only
- *   the round are implemented, the legal cell returns `illegal`/`invalid`
- *   (`notYet`). `round_reverified` (VR-14/15) and `task_requeued` (VR-09) need
- *   facts outside the round (chain, Goal, fences, TaskRequeue) and return
- *   `notYet` from every state.
- * - The chain helpers (`roundChainHead`, `chainEvidenceIds`,
- *   `reverifyExemption`, `reverifyFailureClass`, `buildSuccessorRound`,
- *   `evidenceSupersededByRequeue`), `outcomeFor`, `displayRoundStatus`,
- *   `roundTaskSignal`, `roundSlotKey` and `beginRefusalIsPermanent` are
- *   implemented in full: nothing calls them today, so they change no result.
+ * A.2 step 5.3 (§15.2) scope:
+ * - VR-01 writes the chain root (`rootRoundChain`) and claims the subject slot
+ *   (work per subject Run, gate per gate, VD-1/VD-15); an existing chain is
+ *   `busy` and an invalid one `incomplete`; VD-3 needs a `completed` subject
+ *   Run whose reconciliation is absent or `done`. VR-02 prefixes the VD-8
+ *   markers. VR-03 writes the INCONCLUSIVE `incompleteCause`; VR-05 (VD-6) and
+ *   VR-13 are written. VR-07 is the D-2 fold (an applicable FAIL is FAIL, an
+ *   `interrupted` check is the gap `interrupted_check`, PASS ⇒ no gaps) and
+ *   guards the read set; VR-08 refuses a finalized round (VD-2) and guards the
+ *   round as read; VR-11 guards a stored @0 index at 0 and VR-12 writes no
+ *   index for zero appended ids.
+ * - Later substeps add the rest, each with its facts: the VD-9 Goal and
+ *   disposition guards of VR-01/VR-02 (5.5), the TaskRequeue cover of VR-01
+ *   and VR-09 (5.4), VR-04 and VR-06 (start-up check reconcile, 5.6) and
+ *   VR-14/VR-15 (`round_reverified`, 5.9). Their events stay in the unions:
+ *   the guards of §9.4 that need only the round are implemented and the legal
+ *   cell returns `illegal`/`invalid` (`notYet`).
+ * - The successor helpers (`chainEvidenceIds`, `reverifyExemption`,
+ *   `reverifyFailureClass`, `buildSuccessorRound`,
+ *   `evidenceSupersededByRequeue`) are implemented in full for 5.4 and 5.9.
  *
  * `transitionCheck` takes the round, not the check, as its state: §9.4 rows
  * such as "checkId 不在轮次中" and "轮次 finalized" are round-level, and the
@@ -210,9 +208,10 @@ export type RoundSubjectRelationV1 =
   };
 
 /**
- * VR-01 facts read by the owner, in today's order: each group is known after
- * one read (Goal, Plan, Run) and has its own guard step. Step 5 adds the
- * subject's chain (VD-1, VD-15) and the TaskRequeue cover with their guards.
+ * VR-01 facts read by the owner, in order: each group is known after one read
+ * (Goal, Plan, Run, then the subject's chain) and has its own guard step.
+ * Step 5.4 adds the TaskRequeue cover and 5.5 the VD-9 facts, each with its
+ * guard.
  */
 export type RoundOpenFactsV1 = {
   /** After the Goal read: `Goal.activePlanRevision` equals the requested planRef (`:513-515`). */
@@ -223,6 +222,13 @@ export type RoundOpenFactsV1 = {
   relation: RoundSubjectRelationV1;
   /** The subject (gate: producer) Run as read (`:527-530`). */
   subjectRun: Pick<RunSnapshot, 'status' | 'outcome' | 'reconciliation'>;
+  /**
+   * After the chain lookup: `roundChainHead` of the subject's rounds (work:
+   * `VerificationRoundBySubject` of the subject Run; gate:
+   * `VerificationRoundByTask` of the gate, every producer). Legacy rounds
+   * without a slot count, so an existing chain is found without reading the slot.
+   */
+  chain: RoundChainHeadV1;
 };
 
 /** `evidenceApplicabilityWithBasis` for one finished check's verdict (`evidence-service.ts:997-1001`). */
@@ -295,10 +301,13 @@ export type VerdictAdmissionV1 = { ref: EvidenceRef; checkId: string; coverage: 
 
 /**
  * Same-commit intents the owner translates:
- * - `guard_round`: the round CAS (`null` = the key must not exist);
+ * - `guard_round`: the round CAS (`null` = the key must not exist), writing `next`;
+ * - `guard_round_unchanged`: the round as read, not written (VR-08);
  * - `guard_open_read_set`: Goal, adopted Plan, Workspace, subject Run, pinned
  *   policy and baseline as read (`evidence-service.ts:635-642`);
- * - `claim_round_slot`: the chain slot CAS (VR-01, VR-14; step 5);
+ * - `guard_finalize_read_set`: Goal, the Plans the fold judged against and the
+ *   subject Run as read (VR-07);
+ * - `claim_round_slot`: the chain slot CAS (VR-01; VR-14 in 5.9);
  * - `admit_claim_evidence` / `admit_verdict_evidence`: Evidence@1 rows, each
  *   CAS null (VR-08, VR-07);
  * - `append_task_evidence_index`: the admitted ids through `nextTaskEvidenceIndex`;
@@ -306,7 +315,9 @@ export type VerdictAdmissionV1 = { ref: EvidenceRef; checkId: string; coverage: 
  */
 export type VerificationEffect =
   | { kind: 'guard_round'; expectedRevision: number | null }
+  | { kind: 'guard_round_unchanged'; revision: number }
   | { kind: 'guard_open_read_set' }
+  | { kind: 'guard_finalize_read_set' }
   | { kind: 'claim_round_slot'; claim: RoundSlotClaimV1 }
   | { kind: 'admit_claim_evidence'; coverage: EvidenceCoverageV1[] }
   | { kind: 'admit_verdict_evidence'; admissions: VerdictAdmissionV1[] }
@@ -378,6 +389,11 @@ export const FROZEN_PERMISSION_CHANGED = 'frozen_permission_changed';
 export const FROZEN_ROOT_CHANGED = 'frozen_root_changed';
 export const FROZEN_SOURCE_CHANGED = 'frozen_source_changed';
 const FROZEN_BINDING_MARKERS: readonly string[] = [FROZEN_PERMISSION_CHANGED, FROZEN_ROOT_CHANGED, FROZEN_SOURCE_CHANGED];
+
+/** L-9: the stable VD-8 marker as a fixed `reason` prefix, `<marker>: <text>`. */
+export function frozenBindingReason(marker: string, text: string): string {
+  return `${marker}: ${text}`;
+}
 
 /**
  * Exit #3 (VD-8, L-9): only a `beginCheck` refusal whose reason starts with one
@@ -644,17 +660,17 @@ export type RoundFoldResultV1 =
   | { status: 'folded'; outcome: EvidenceOutcome; gaps: RoundGapV1[]; admissions: FoldAdmissionV1[] }
   | { status: 'incomplete'; detail: string };
 
-/** One plan check as today's fold meets it. */
+/** One plan check as the fold meets it. */
 type FoldStepV1 =
   | { kind: 'missing'; planCheck: VerificationCheckPlan }
-  | { kind: 'stop' | 'pending' | 'verdict'; planCheck: VerificationCheckPlan; check: RoundCheckSnapshot };
+  | { kind: 'stop' | 'pending' | 'interrupted' | 'verdict'; planCheck: VerificationCheckPlan; check: RoundCheckSnapshot };
 
 /**
- * The plan checks today's fold walks, in plan-check order: a check the round
- * lacks is `missing`, a `pending` one is a gap, a `finished` one gives a
- * verdict, and the walk ends at the first `executing` or `interrupted` check
- * (`stop`, which refuses the fold). The one rule for the fold and
- * `foldVerdictChecks` alike; step 5.3 makes `interrupted` a gap here.
+ * The plan checks the fold walks, in plan-check order: a check the round
+ * lacks is `missing`, a `pending` or `interrupted` one is a gap, a `finished`
+ * one gives a verdict, and the walk ends at the first `executing` check
+ * (`stop`, which refuses the fold, I-7). The one rule for the fold and
+ * `foldVerdictChecks` alike.
  */
 function foldSteps(round: Pick<RoundSnapshot, 'checks' | 'verificationPlan'>): FoldStepV1[] {
   const steps: FoldStepV1[] = [];
@@ -666,9 +682,9 @@ function foldSteps(round: Pick<RoundSnapshot, 'checks' | 'verificationPlan'>): F
     }
     switch (check.phase) {
       case 'executing':
-      case 'interrupted':
         steps.push({ kind: 'stop', planCheck, check });
         return steps;
+      case 'interrupted': steps.push({ kind: 'interrupted', planCheck, check }); break;
       case 'pending': steps.push({ kind: 'pending', planCheck, check }); break;
       case 'finished': steps.push({ kind: 'verdict', planCheck, check }); break;
       default: return unreachable(check.phase, 'check phase');
@@ -688,20 +704,20 @@ export function foldVerdictChecks(round: Pick<RoundSnapshot, 'checks' | 'verific
 }
 
 /**
- * `finalizeRoundOutcome` with TODAY's fold (the service's own before A.2 step 3):
- * - an `executing` or `interrupted` check refuses the fold (`incomplete`;
- *   the walk of `foldSteps`, shared with `foldVerdictChecks`);
+ * `finalizeRoundOutcome`, the D-2 fold (§9.3 "D-2 结论折叠"):
+ * - an `executing` check refuses the fold (`incomplete`; the walk of
+ *   `foldSteps`, shared with `foldVerdictChecks`);
  * - gaps in plan-check order: `missing_check`, `pending_check`,
- *   `evidence_<basis>` for a non-applicable verdict; then
+ *   `interrupted_check`, `evidence_<basis>` for a non-applicable verdict; then
  *   `uncovered_requirement`; then the context gaps;
  * - every verdict is STALE when the source is not current; OUT_OF_SCOPE
  *   without a gap when a Plan is unreadable (`decisions = null`);
- * - INCONCLUSIVE when a required requirement has an applicable FAIL or
- *   INCONCLUSIVE blocker or no applicable PASS, otherwise PASS, gaps or not;
+ * - FAIL when some applicable verdict is FAIL (an explicit failure wins over
+ *   missing items); otherwise INCONCLUSIVE when there is a gap, a required
+ *   requirement has an applicable INCONCLUSIVE blocker or no applicable PASS;
+ *   otherwise PASS, so PASS ⇒ `gaps = []` (VD-4);
  * - admissions: the applicable PASS coverage per requirement, then every
  *   blocker, in `selectEffectiveEvidenceSet` order (`coverage.ts:76-121`).
- * Step 5.3 flips it to the D-2 target: `interrupted` → gap
- * `interrupted_check`, an applicable FAIL → FAIL, PASS ⇒ `gaps = []`.
  */
 export function finalizeRoundOutcome(input: RoundFoldInputV1): RoundFoldResultV1 {
   const { round } = input;
@@ -721,6 +737,12 @@ export function finalizeRoundOutcome(input: RoundFoldInputV1): RoundFoldResultV1
       case 'pending':
         gaps.push({ code: 'pending_check', message: `the required check ${step.check.checkId} never ran`, ...firstCoverage });
         continue;
+      case 'interrupted': {
+        const cause = step.check.incompleteCause ?? null;
+        gaps.push({ code: INTERRUPTED_CHECK_GAP_CODE, message: `the required check ${step.check.checkId} was interrupted`
+          + (cause === null ? '' : ` (${cause})`), ...firstCoverage });
+        continue;
+      }
       case 'verdict':
         break;
       default: return unreachable(step, 'fold step');
@@ -772,7 +794,9 @@ export function finalizeRoundOutcome(input: RoundFoldInputV1): RoundFoldResultV1
     if (!covering.has(key)) missing = true;
   }
   const admissions = [...covering.values(), ...[...blocking.values()].flat()];
-  return { status: 'folded', outcome: blocked || missing ? 'INCONCLUSIVE' : 'PASS', gaps, admissions };
+  const failed = candidates.some((candidate) => candidate.applicability === 'APPLICABLE' && candidate.outcome === 'FAIL');
+  const outcome: EvidenceOutcome = failed ? 'FAIL' : gaps.length > 0 || blocked || missing ? 'INCONCLUSIVE' : 'PASS';
+  return { status: 'folded', outcome, gaps, admissions };
 }
 
 // -------------------------------------------------------------------------- //
@@ -795,10 +819,11 @@ export function pendingRoundChecks(
 }
 
 /**
- * VR-01: open@1 with every check `pending` and the uncovered requirements as
- * gaps, in the key order of the service's former literal. Today's round
- * has no `chain`; step 5.3 adds `rootRoundChain()` here (C5). Every compiled
- * check must be registered (`transitionRound` refuses otherwise).
+ * VR-01: open@1 with every check `pending`, the uncovered requirements as gaps
+ * and the ordinal-1 chain root (C5), in the key order of the service's former
+ * literal with `chain` last. Every compiled check must be registered
+ * (`transitionRound` refuses otherwise). `buildSuccessorRound` replaces the
+ * chain of the same shape (VR-14).
  */
 export function buildOpenedRound(opening: RoundOpeningV1): RoundSnapshot {
   const checks = pendingRoundChecks(opening.verificationPlan, opening.configuration);
@@ -810,14 +835,14 @@ export function buildOpenedRound(opening: RoundOpeningV1): RoundSnapshot {
     subjectRunRef: opening.subjectRunRef, adoptedPlanRef: opening.adoptedPlanRef, taskBasisRef: opening.taskBasisRef,
     executor: opening.executor, configuration: opening.configuration, configurationDigest: opening.configurationDigest,
     identity: opening.identity, sourceProof: opening.sourceProof, verificationPlan: opening.verificationPlan,
-    checks: checks.checks, status: 'open', outcome: null, gaps, evidenceRefs: [] };
+    checks: checks.checks, status: 'open', outcome: null, gaps, evidenceRefs: [], chain: rootRoundChain() };
 }
 
 /** The one write of a check's lifecycle fields (§14.1); `incompleteCause` is written only through here. */
 export type CheckPhaseChange =
   /** VR-02. */
   | { phase: 'executing'; invocationId: string }
-  /** VR-03, VR-06; today's VR-03 leaves `incompleteCause` out (step 5.3 passes it). */
+  /** VR-03 (the INCONCLUSIVE cause of `outcomeFor`; PASS/FAIL leave it out, §9.1 "null 或缺省"), VR-06. */
   | {
     phase: 'finished'; outcome: EvidenceOutcome; reportRef: ArtifactRef; sourceStatus: Exclude<CheckSourceStatus, null>;
     incompleteCause?: RoundCheckIncompleteCause | null;
@@ -892,9 +917,8 @@ function changedCheck(check: RoundCheckSnapshot, change: CheckPhaseChange): Roun
 /**
  * VR-07. Only legal combinations (§9.1, §14): the round is open (§9.4: a
  * finalized round never rewrites its outcome) and no check is `executing`
- * (I-7). An `interrupted` check is allowed: the D-2 target of step 5.3 counts
- * it as a gap. The transitions refuse both cases first, so a throw here is a
- * caller bug.
+ * (I-7). An `interrupted` check is allowed: the D-2 fold counts it as a gap.
+ * The transitions refuse both cases first, so a throw here is a caller bug.
  */
 export function buildFinalizedRound(
   round: RoundSnapshot,
@@ -930,16 +954,17 @@ export type TaskEvidenceIndexWrite =
   | { write: true; record: TaskEvidenceIndexSnapshot; expectedRevision: number | null };
 
 /**
- * VR-10..VR-12 with TODAY's results (the service's former index literals):
- * revision = stored ids + appended, CAS null when the read revision is 0
- * (missing row or legacy @0 row alike), and a write even when nothing is
- * appended. Step 5.3 flips VR-11 (a stored @0 row is guarded at 0) and VR-12
- * (`{write:false}` for zero appended ids).
+ * VR-10..VR-12: revision = stored ids + appended. A missing row is guarded
+ * absent (`null`, VR-10); a stored row, a legacy @0 row included, at its stored
+ * revision, which the append repairs (VR-11, decided by `exists`, never by
+ * `revision === 0`). Zero appended ids write nothing and create no @0 row
+ * (VR-12).
  */
 export function nextTaskEvidenceIndex(current: TaskEvidenceIndexReadV1, appended: readonly string[]): TaskEvidenceIndexWrite {
+  if (appended.length === 0) return { write: false };
   const record: TaskEvidenceIndexSnapshot = { ref: current.ref, revision: current.evidenceIds.length + appended.length,
     schemaVersion: 1, evidenceIds: [...current.evidenceIds, ...appended] };
-  return { write: true, record, expectedRevision: current.revision === 0 ? null : current.revision };
+  return { write: true, record, expectedRevision: current.exists ? current.revision : null };
 }
 
 // -------------------------------------------------------------------------- //
@@ -972,8 +997,8 @@ export function roundWriteAdmission(state: RoundSnapshot | null, head: RoundEven
       if (state === null) return reject('illegal', 'invalid', 'evidence_submitted needs an existing round');
       switch (state.status) {
         case 'open': break;
-        // VR-08 today: a finalized round still accepts a claim (VD-2 flips it to `busy` in step 5.3).
-        case 'finalized': break;
+        // VD-2: like a fresh begin or result, a claim never lands on a finalized round.
+        case 'finalized': return reject('illegal', 'busy', 'the round is finalized; no further claim may be submitted');
         default: return unreachable(state.status, 'round status');
       }
       if (!ctx.callerIsExecutor) return reject('guard_failed', 'forbidden', 'the evidence author is not the round executor');
@@ -1002,17 +1027,19 @@ export function roundReviewerEvidenceProblem(reviewerEvidenceCount: number): Rej
 }
 
 /**
- * VR-01 subject guards in today's order, one step per read so the owner
- * stops where it stops today: the plan pointer after the Goal read
- * (`roundOpenPointerProblem`), the task basis after the Plan read
- * (`roundOpenBasisProblem`), the subject relation and Run end after the Run
- * read (`roundOpenSubjectProblem`). Step 5 adds VD-3 (`completed`,
- * reconciliation done), the TaskRequeue cover, VD-1/VD-15 (`busy`) and VD-9.
+ * VR-01 subject guards, one step per read so the owner stops before the next
+ * read: the plan pointer after the Goal read (`roundOpenPointerProblem`), the
+ * task basis after the Plan read (`roundOpenBasisProblem`), the subject
+ * relation and a normal Run end (VD-3) after the Run read
+ * (`roundOpenSubjectProblem`), then the subject's chain after the lookup
+ * (`roundOpenChainProblem`, VD-1/VD-15), all before the capture. Step 5.4
+ * adds the TaskRequeue cover and 5.5 the VD-9 guards.
  */
 export function roundOpenProblem(facts: RoundOpenFactsV1, subject: TaskTriple): Rejected | null {
   return roundOpenPointerProblem(facts.planIsActive)
     ?? roundOpenBasisProblem(facts.taskBasisResolved, subject)
-    ?? roundOpenSubjectProblem(facts, subject);
+    ?? roundOpenSubjectProblem(facts, subject)
+    ?? roundOpenChainProblem(facts.chain, subject);
 }
 
 /** `evidence-service.ts:513-515`; `source_stale` is kept (§9.4), VD-7 makes the Workflow pass the current Plan. */
@@ -1026,7 +1053,12 @@ export function roundOpenBasisProblem(taskBasisResolved: boolean, subject: TaskT
     : reject('guard_failed', 'incomplete', `the subject task ${subject.taskId} has no resolved task-state basis`);
 }
 
-/** `:537-548`: the subject relation (work or gate), then the Run has formally ended. */
+/**
+ * `:537-548`: the subject relation (work or gate), then the Run has formally
+ * ended, then VD-3: it ended `completed` (an unknown, crashed, cancelled or
+ * yielded Run is not verified) and its reconciliation is absent or `done`
+ * (Workflow `normalEnd`).
+ */
 export function roundOpenSubjectProblem(
   facts: Pick<RoundOpenFactsV1, 'relation' | 'subjectRun'>,
   subject: TaskTriple,
@@ -1050,8 +1082,35 @@ export function roundOpenSubjectProblem(
       break;
     default: return unreachable(relation, 'subject relation');
   }
-  if (facts.subjectRun.status !== 'ended') return reject('guard_failed', 'forbidden', 'the subject Run has not formally ended');
+  const run = facts.subjectRun;
+  if (run.status !== 'ended') return reject('guard_failed', 'forbidden', 'the subject Run has not formally ended');
+  if (run.outcome !== 'completed') {
+    return reject('guard_failed', 'forbidden', `the subject Run ended ${run.outcome ?? 'without an outcome'}, not completed`);
+  }
+  const reconciliation = run.reconciliation;
+  if (reconciliation !== undefined && reconciliation.status !== 'done') {
+    return reject('guard_failed', 'forbidden', `the subject Run reconciliation is ${reconciliation.status}`);
+  }
   return null;
+}
+
+/**
+ * VD-1/VD-15 after the chain lookup: a subject has at most one chain. Any
+ * existing chain (a legacy slot-less root included; for a gate, on any
+ * producer) refuses a second root as `busy` (the owner adds the head pin); a
+ * chain `roundChainHead` cannot judge is `incomplete`. The next round on the
+ * subject is a successor (VR-14).
+ */
+export function roundOpenChainProblem(chain: RoundChainHeadV1, subject: TaskTriple): Rejected | null {
+  switch (chain.kind) {
+    case 'none': return null;
+    case 'head':
+      return reject('guard_failed', 'busy', `the subject ${subject.taskId} already has a verification round chain `
+        + `(head ${chain.head.ref.roundId}); its next round is a successor (VR-14)`);
+    case 'invalid':
+      return reject('guard_failed', 'incomplete', `the subject ${subject.taskId} round chain is invalid: ${chain.reason}`);
+    default: return unreachable(chain, 'round chain');
+  }
 }
 
 /** After the compile (`evidence-service.ts:590`): every check the compiled plan names is registered in the configuration. */
@@ -1146,24 +1205,28 @@ function executingPhaseProblem(check: RoundCheckSnapshot, head: Exclude<CheckEve
 }
 
 /**
- * VR-02 comparisons with the round's frozen binding, in today's order
+ * VR-02 comparisons with the round's frozen binding, in order
  * (`evidence-service.ts:767-777`): Host permission revision, workspace root,
  * then (after the capture) the source digest. `sourceDigest` may be left out
- * to compare only the first two before capturing. Step 5.3 prefixes the VD-8
- * markers.
+ * to compare only the first two before capturing. Each reason carries its
+ * VD-8 marker as the L-9 prefix, so the Workflow ends the round's attempts
+ * (`beginRefusalIsPermanent`) and finalizes instead of retrying.
  */
 export function frozenBindingProblem(
   round: RoundSnapshot,
   observed: Omit<FrozenBindingObservationV1, 'sourceDigest'> & { sourceDigest?: string },
 ): Rejected | null {
   if (observed.permissionRevision !== round.configuration.permissionRevision) {
-    return reject('guard_failed', 'forbidden', 'the current Host permission revision is not the trusted configuration binding');
+    return reject('guard_failed', 'forbidden', frozenBindingReason(FROZEN_PERMISSION_CHANGED,
+      'the current Host permission revision is not the trusted configuration binding'));
   }
   if (observed.workspaceRoot !== round.identity.workspaceRoot) {
-    return reject('guard_failed', 'source_stale', 'the current workspace root is not the round fixed root');
+    return reject('guard_failed', 'source_stale', frozenBindingReason(FROZEN_ROOT_CHANGED,
+      'the current workspace root is not the round fixed root'));
   }
   if (observed.sourceDigest !== undefined && observed.sourceDigest !== round.identity.sourceDigest) {
-    return reject('guard_failed', 'source_stale', 'the current verification source is not the round fixed source');
+    return reject('guard_failed', 'source_stale', frozenBindingReason(FROZEN_SOURCE_CHANGED,
+      'the current verification source is not the round fixed source'));
   }
   return null;
 }
@@ -1183,7 +1246,11 @@ export function transitionRound(state: RoundSnapshot | null, event: RoundEvent, 
   }
 }
 
-/** VR-01 with today's result: no slot, no `chain`, a second open on the same subject still commits. */
+/**
+ * VR-01: the chain root @1 (`buildOpenedRound`, ordinal 1) and the slot claim
+ * `null → roundKey` on the subject slot (work per subject Run, gate per gate,
+ * VD-1/VD-15); the claim makes two concurrent opens commit at most once.
+ */
 function roundOnOpened(
   state: RoundSnapshot | null,
   event: Extract<RoundEvent, { kind: 'round_opened' }>,
@@ -1194,14 +1261,21 @@ function roundOnOpened(
   const problem = roundOpenProblem(event.facts, event.opening.subject)
     ?? roundOpenChecksProblem(event.opening.verificationPlan, event.opening.configuration);
   if (problem !== null) return problem;
-  return accept(buildOpenedRound(event.opening), [
+  const round = buildOpenedRound(event.opening);
+  return accept(round, [
     { kind: 'guard_round', expectedRevision: null },
     { kind: 'guard_open_read_set' },
+    { kind: 'claim_round_slot', claim: { claimKey: roundSlotKey(roundSlotSubjectOf(round)), expectedOwner: null,
+      nextOwner: roundSlotOwner(round.ref) } },
     { kind: 'emit_event', eventType: 'VerificationRoundOpened' },
   ]);
 }
 
-/** VR-08 (and VR-10..12 through the index effect), today: any round status, no round guard. */
+/**
+ * VR-08 (and VR-10..12 through the index effect): an open round only (VD-2);
+ * the round is not written but guarded as read, so a claim and a finalize do
+ * not both commit.
+ */
 function roundOnEvidenceSubmitted(state: RoundSnapshot | null, ctx: RoundGuardContext): RoundTransition {
   const admission = roundWriteAdmission(state, { kind: 'evidence_submitted' }, ctx);
   if (admission !== null) return admission;
@@ -1211,13 +1285,14 @@ function roundOnEvidenceSubmitted(state: RoundSnapshot | null, ctx: RoundGuardCo
     return reject('guard_failed', 'incomplete', 'the round has no required verification coverage to attach a claim to');
   }
   return accept(round, [
+    { kind: 'guard_round_unchanged', revision: round.revision },
     { kind: 'admit_claim_evidence', coverage },
     { kind: 'append_task_evidence_index' },
     { kind: 'emit_event', eventType: 'EvidenceAdmitted' },
   ]);
 }
 
-/** VR-07 with today's fold; the TaskEvidenceIndex follows VR-10..12. */
+/** VR-07 with the D-2 fold and the read-set guard; the TaskEvidenceIndex follows VR-10..12. */
 function roundOnFinalized(
   state: RoundSnapshot | null,
   event: Extract<RoundEvent, { kind: 'round_finalized' }>,
@@ -1236,6 +1311,7 @@ function roundOnFinalized(
     ref: event.evidenceRefs[index]!, checkId: admission.checkId, coverage: admission.coverage }));
   return accept(buildFinalizedRound(round, { outcome: fold.outcome, gaps: fold.gaps, evidenceRefs: [...event.evidenceRefs] }), [
     { kind: 'guard_round', expectedRevision: round.revision },
+    { kind: 'guard_finalize_read_set' },
     { kind: 'admit_verdict_evidence', admissions },
     { kind: 'append_task_evidence_index' },
     { kind: 'emit_event', eventType: 'VerificationRoundFinalized' },
@@ -1251,7 +1327,7 @@ export function transitionCheck(state: RoundSnapshot, event: CheckEvent, ctx: Ro
   if (admission !== null) return admission;
   switch (event.kind) {
     case 'check_begun': {
-      // VR-02 today: no VD-9 Goal/disposition guard and no VD-8 markers (step 5.3, 5.5).
+      // VR-02 with the VD-8 markers; the VD-9 Goal/disposition guard is step 5.5.
       const problem = frozenBindingProblem(state, event.observed);
       if (problem !== null) return problem;
       return accept(withCheckPhase(state, event.checkId, { phase: 'executing', invocationId: event.invocationId }), [
@@ -1260,10 +1336,11 @@ export function transitionCheck(state: RoundSnapshot, event: CheckEvent, ctx: Ro
       ]);
     }
     case 'check_result_recorded': {
-      // VR-03 today: the outcome is written without its `incompleteCause` (step 5.3).
+      // VR-03: an INCONCLUSIVE result carries its `outcomeFor` cause (C5).
       const verdict = outcomeFor(event.observation, event.sourceStatus);
       return accept(withCheckPhase(state, event.checkId, { phase: 'finished', outcome: verdict.outcome,
-        reportRef: event.reportRef, sourceStatus: event.sourceStatus }), [
+        reportRef: event.reportRef, sourceStatus: event.sourceStatus,
+        ...(verdict.incompleteCause === null ? {} : { incompleteCause: verdict.incompleteCause }) }), [
         { kind: 'guard_round', expectedRevision: state.revision },
         { kind: 'emit_event', eventType: 'VerificationCheckResultRecorded' },
       ]);
@@ -1279,14 +1356,24 @@ export function transitionCheck(state: RoundSnapshot, event: CheckEvent, ctx: Ro
           if (event.ticketProblem === null) {
             return reject('guard_failed', 'unavailable', 'no proof that the ticket is invalid; the executing window waits for reconcile');
           }
-          return notYet('VR-13');
+          // VR-13: the ticket comes deterministically from the frozen values, so
+          // the check never runs again in this round (D-12, VD-6).
+          return accept(withCheckPhase(state, event.checkId, { phase: 'interrupted', incompleteCause: 'ticket_invalid' }), [
+            { kind: 'guard_round', expectedRevision: state.revision },
+            { kind: 'emit_event', eventType: 'VerificationCheckInterrupted' },
+          ]);
         default: return unreachable(event, 'interruption cause');
       }
     case 'check_abandoned':
       if (!event.provenNotStarted) {
         return reject('guard_failed', 'unavailable', 'the process may have started; the executing window waits for reconcile');
       }
-      return notYet('VR-05');
+      // VR-05 (VD-6): no process ran, so the check returns to pending and a
+      // later begin issues a new invocation.
+      return accept(withCheckPhase(state, event.checkId, { phase: 'pending' }), [
+        { kind: 'guard_round', expectedRevision: state.revision },
+        { kind: 'emit_event', eventType: 'VerificationCheckAbandoned' },
+      ]);
     case 'check_report_booked': {
       if (!ctx.instanceLeaseHeld) return reject('guard_failed', 'busy', 'another live Host holds the instance lease');
       const report = event.report;

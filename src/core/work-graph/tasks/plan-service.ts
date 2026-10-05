@@ -649,6 +649,8 @@ function taskRow(plan: PlanRevisionSnapshot, goalId: string,
     ref: { projectId: plan.ref.projectId, goalId, taskId },
     definition,
     effectivePhase: state.effectivePhase,
+    // TD-1: the projection reason, present when the projected row has one.
+    ...(state.phaseCause === null ? {} : { phaseCause: state.phaseCause }),
     disposition: definition.disposition,
     currentAttempt: state.currentAttempt,
     execution: state.execution,
