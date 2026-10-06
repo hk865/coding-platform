@@ -11,7 +11,7 @@ import type { GoalPhaseRef } from '../../contracts/goal-phase.js';
 import type { RoundSnapshot } from '../../contracts/verification.js';
 import type { PreparedTaskExecution } from '../../contracts/core/prepared-execution.js';
 import type { ConsumedWaitV1 } from '../../contracts/dispatch.js';
-import type { TaskFailureFactsV1 } from '../../contracts/task-failure.js';
+import type { TaskAutomationStopReason, TaskAutomationVerdictV1, TaskFailureFactsV1 } from '../../contracts/task-failure.js';
 import {
   WORKFLOW_AUTOMATION_ACTOR, type ReworkFailureClass, type TaskRequeueRef, type TaskReworkRefusalRef,
 } from '../../contracts/task-requeue.js';
@@ -23,7 +23,10 @@ import type { TaskGraph, TaskRow } from '../../core/work-graph/tasks/plan-contra
 import type { GraphWrite } from '../../core/work-graph/tasks/contracts.js';
 import type { SessionCard } from '../../core/work-graph/sessions/contracts.js';
 import { runUnresolvedBlocker } from '../../core/work-graph/state/run-machine.js';
-import { beginRefusalIsPermanent, displayRoundStatus } from '../../core/work-graph/state/verification-machine.js';
+import {
+  beginRefusalIsPermanent, displayRoundStatus, reverifyExemptionOfFacts, successorAutoCount,
+} from '../../core/work-graph/state/verification-machine.js';
+import type { ReverifyRoundInput } from '../../core/work-graph/evidence/contracts.js';
 import type { ConsultationInput, ConsultationResult, InitialPlanningGoalInput, InitialPlanningGoalInputResult, N0GoalInput, WorkflowAdvanceInput, WorkflowAdvanceResult, WorkflowOperation, WorkflowSessionRequeue, WorkflowStepReceipt } from './contracts.js';
 import type { WorkflowDependencies, WorkflowHostConfiguration, WorkflowPort } from './ports.js';
 import { createConsultationConsumer } from './consultation.js';
@@ -223,6 +226,68 @@ function requeueTaskStep(
   ];
   return { kind: 'requeue_task', request: automaticGraphWrite(base, 'requeue_task', input, expected) };
 }
+/**
+ * C5 automatic successor round (§9 VD-12, §13.7 points 9 and 11, §15.2 5.9) of
+ * the chain head a work Task's or a gate's `reverify` verdict names, as the
+ * failure facts read it. `expected` pins the predecessor round at its
+ * revision and the reverify refusal under its key
+ * (`TaskReworkRefusal(reverify, head)@k`, k = 0 when there is none); the
+ * requestId is derived from the request alone (`automaticGraphWrite`, W-23), so
+ * a retry after a stale refusal is a new request. The reason names the class
+ * and the automatic count the successor records (`auto-reverify:<class>#<n>`;
+ * a Host-interruption exemption keeps the count, `successorAutoCount`); a
+ * gate FAIL head asks `onlyIfSourceChanged` (GV-9). No Run, no continuation
+ * brief. `null` when the facts no longer name that head.
+ */
+function reverifyRoundStep(
+  base: Base, task: TaskTriple, failure: TaskFailureFactsV1, verdict: Extract<TaskAutomationVerdictV1, { kind: 'reverify' }>,
+): WorkflowOperation | null {
+  const head = failure.round;
+  if (head === null || !sameCanonical(head.roundRef, verdict.roundRef)) return null;
+  const refusalRef: TaskReworkRefusalRef = { aggregateType: 'TaskReworkRefusal', projectId: task.projectId,
+    goalId: task.goalId, taskId: task.taskId, operation: 'reverify', subjectId: head.roundRef.roundId };
+  const exemption = reverifyExemptionOfFacts({ checks: head.failingChecks, gapCodes: head.gapCodes });
+  const autoCount = successorAutoCount(head.autoCount, 'system', exemption);
+  const input: ReverifyRoundInput = {
+    predecessorRoundRef: { ...head.roundRef }, reason: `auto-reverify:${verdict.failureClass}#${autoCount}`,
+    ...(verdict.onlyIfSourceChanged ? { onlyIfSourceChanged: true } : {}),
+  };
+  const expected: VersionPin[] = [
+    { ref: head.roundRef, revision: head.revision },
+    { ref: refusalRef, revision: failure.automation.lastReverifyRefusal?.revision ?? 0 },
+  ];
+  return { kind: 'reverify_round', request: automaticGraphWrite(base, 'reverify_round', input, expected) };
+}
+/**
+ * The tail of the wait on a stopped gate (§2 GOAL-30, §13.7): what a person can
+ * do about the stop reason. A fix Task or a person's re-verification for a
+ * failed gate, the cap or an unchanged key; a check covering the requirement
+ * for an uncovered one (§13.7 point 6); nothing that grows the chain past its
+ * limit (`not_reworkable{round_chain_limit}`; an invalid chain has no head and
+ * never waits here). The prefix `<stop reason>:` is the code.
+ */
+function gateStopAdvice(reason: TaskAutomationStopReason): string {
+  switch (reason) {
+    case 'gate_needs_fix':
+    case 'no_new_basis':
+    case 'auto_rework_cap_reached':
+      return 'a person decides (add a fix Task, or re-verify)';
+    case 'verification_uncovered':
+      return 'register a check that covers the requirement in the Host settings';
+    case 'not_reworkable':
+      return 'its round chain cannot grow; a person decides';
+    case 'unknown_outcome':
+    case 'budget_exhausted':
+    case 'task_cancelled':
+    case 'task_paused':
+      return 'a person decides';
+  }
+}
+/** The chain head the failure facts read (a work Task's selected Run, or a gate's own) is finalized and not a clean PASS. */
+function headFinalizedNonPass(row: TaskRow): boolean {
+  const head = row.failure?.round;
+  return head !== undefined && head !== null && head.status === 'finalized' && (head.outcome !== 'PASS' || head.gapCodes.length > 0);
+}
 function makePerform(base: Base, operation: WorkflowOperation): WorkflowAdvanceInput {
   return { schemaVersion: 1, goalRef: base.goalRef, flowId: base.flowId, sessionHint: base.sessionHint, kind: 'perform', operation,
     // An explicit Task selection is preserved across every successor request.
@@ -379,8 +444,8 @@ export function ownContext(ctx: CoreCallContext): Owned | { rejection: CoreRejec
 }
 
 /**
- * TD-6 (C8): the context of the Workflow's own rework steps (`requeue_task`;
- * `reverify_round` from step 5.9). Same trusted Host scope and signal as the
+ * TD-6 (C8): the context of the Workflow's own rework steps (`requeue_task`,
+ * `reverify_round`). Same trusted Host scope and signal as the
  * call, with the platform automation actor `WORKFLOW_AUTOMATION_ACTOR`, so the
  * owner derives the actor class `system`: the step is counted, capped and
  * fenced by a person's stop like any automatic rework, never as the operator.
@@ -706,12 +771,17 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort & Requi
 
   /**
    * Continue one subject's round chain from its head (§9.3, VD-7, VD-14): an
-   * `open` head follows `nextAfterRound`; a finalized clean PASS completes the
-   * Task under the Goal's current adopted Plan; a finalized non-PASS head waits.
-   * A work Task whose head is FAIL is `failed` and never resumed here: the
-   * selection acts on its automation verdict first (step 5.8); a work
-   * INCONCLUSIVE head and a gate's non-PASS head wait until the successor rounds
-   * of step 5.9. `null` means the subject has no chain yet.
+   * `open` head follows `nextAfterRound` (an open head with only interrupted
+   * checks finalizes, the `needsFinalize` of FC-13 and GV-3); a finalized clean
+   * PASS completes the Task under the Goal's current adopted Plan; a finalized
+   * non-PASS head waits. The selection acts on the automation verdict before it
+   * gets here: a work Task whose facts read such a head either performs its
+   * rework or is skipped (whatever its verdict, with or without
+   * `reverifyRound`), and a gate's `reverify` performs `reverify_round` while
+   * its `stopped` waits with the stop reason. So that wait is only met by a
+   * gate whose evidence owner publishes no `reverifyRound`, or when the chain
+   * read and the facts disagree (the head moved between the two reads). `null`
+   * means the subject has no chain yet.
    */
   async function continueRoundChain(
     owned: Owned, base: Base, read: ReadResult<RoundSnapshot>,
@@ -755,11 +825,31 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort & Requi
    * on. With a chain the gate only follows its head and never re-selects a
    * producer; without one the root opens on the first satisfied work Run with
    * an execution, under the Goal's current adopted Plan (VD-7).
+   *
+   * C5 (§4 GV table, §15.2 5.9): the gate's verdict comes first. `reverify`
+   * on a finalized head performs `reverify_round` (GV-9 with
+   * `onlyIfSourceChanged`, GV-10 without; GV-3's open head is finalized by the
+   * chain below first); `stopped` on a finalized non-PASS head waits with the
+   * stop reason as the code and what a person can do about it
+   * (`gateStopAdvice`; the Goal shows the same reason, GOAL-30).
    */
   async function advanceGate(
     owned: Owned, base: Base, graph: TaskGraph, gateTask: RuntimeTask,
   ): Promise<WorkflowAdvanceResult> {
     const gate: TaskTriple = { projectId: owned.projectId, goalId: base.goalRef.goalId, taskId: gateTask.taskId };
+    const row = graph.tasks.find((candidate) => candidate.ref.taskId === gateTask.taskId);
+    const failure = row?.failure;
+    if (row !== undefined && failure !== undefined) {
+      const verdict = failure.automation.verdict;
+      if (verdict.kind === 'reverify' && !verdict.needsFinalize && deps.evidence.reverifyRound !== undefined) {
+        const step = reverifyRoundStep(base, gate, failure, verdict);
+        if (step !== null) return advancing(null, makePerform(base, step));
+      }
+      if (verdict.kind === 'stopped' && headFinalizedNonPass(row)) {
+        return waiting(null, `${verdict.reason}: the goal gate ${gateTask.taskId} is not re-verified automatically; `
+          + gateStopAdvice(verdict.reason));
+      }
+    }
     const head = await readChainHead(owned, gate, null);
     if ('waiting' in head) return waiting(null, head.waiting);
     const continued = await continueRoundChain(owned, base, head.read);
@@ -871,6 +961,22 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort & Requi
       binding.budget);
   }
 
+  /**
+   * C5 (§4 AV-7d, §15.2 5.9): the automatic successor round a work Task's
+   * `reverify` verdict asks for on its finalized chain head, or `null`. With
+   * `needsFinalize` (FC-13) the open head is finalized by the round chain
+   * first and the next selection reverifies; a Host whose evidence owner
+   * publishes no `reverifyRound` reverifies nothing. The owner judges the
+   * request again (C8).
+   */
+  function automaticReverify(base: Base, row: TaskRow): WorkflowOperation | null {
+    const failure = row.failure;
+    if (deps.evidence.reverifyRound === undefined || failure === undefined) return null;
+    const verdict = failure.automation.verdict;
+    if (verdict.kind !== 'reverify' || verdict.needsFinalize) return null;
+    return reverifyRoundStep(base, row.ref, failure, verdict);
+  }
+
   /** Read-only deterministic first-step selection shared by `select_work`. */
   async function selectNext(owned: Owned, base: Base): Promise<WorkflowAdvanceResult> {
     const config = deps.configuration;
@@ -910,14 +1016,14 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort & Requi
       if (row === undefined) continue;
       if (task.taskKind !== 'work' || task.disposition !== 'active') continue;
       if (task.executionIntent === 'plan_only') continue;
-      // C8 (§4.3 "Workflow", §15.2 5.8): the Task's automation verdict first. A `requeue`
+      // C8 (§4.3 "Workflow", §15.2 5.8, 5.9): the Task's automation verdict first. A `requeue`
       // (or a `stopped/budget_exhausted` the binding's larger budget lifts) performs the
-      // automatic requeue; `claim_requeued` is claimed below; `stopped` skips only this
-      // Task's rework (requeue, reverify, a claim by requeueRef), so a completed Run's
-      // round still opens, runs, finalizes and completes (AV-4, STEP5-FLIPS §14),
-      // except on an invalid chain (`round_ambiguous`, skipped below); `reverify` is
-      // step 5.9.
-      const rework = automaticRequeue(config, owned, base, goal, graph.plan, task, row);
+      // automatic requeue; a `reverify` on a finalized head the automatic successor round
+      // (AV-7d; with `needsFinalize` the open head is finalized below first); `claim_requeued`
+      // is claimed below; `stopped` skips only this Task's rework (requeue, reverify, a claim
+      // by requeueRef), so a completed Run's round still opens, runs, finalizes and completes
+      // (AV-4, STEP5-FLIPS §14), except on an invalid chain (`round_ambiguous`, skipped below).
+      const rework = automaticRequeue(config, owned, base, goal, graph.plan, task, row) ?? automaticReverify(base, row);
       if (rework !== null) return advancing(null, makePerform(base, rework));
       // D-3 (TASK-03): a requeued Task (P4) is claimed with its covering TaskRequeue,
       // before the ended Run's round chain is resumed, while its verdict is
@@ -940,6 +1046,10 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort & Requi
       // opens nothing on it (GAP-52), so its chain is not read (that read would only wait) and the
       // Task is skipped; the other Tasks continue.
       if (isRoundAmbiguous(row)) continue;
+      // §15.2 5.9 (C5, C8): a finalized non-PASS chain head whose verdict performed no rework above
+      // (`stopped`: the cap, no new basis, an uncovered requirement, the chain limit, a person's stop)
+      // leaves nothing for the Workflow to advance on this Task; the other Tasks continue.
+      if (headFinalizedNonPass(row)) continue;
       // A real claim that was persisted but never admitted to the Kernel (its
       // first prepare was refused) is recoverable from the SAME Run. This is the
       // ONE narrow unadmitted state, checked against the formal execution read;
@@ -1146,6 +1256,12 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort & Requi
       case 'finalize_checks': {
         const result = await deps.evidence.finalizeChecks(owned.ctx, operation.request);
         const receipt: WorkflowStepReceipt = { kind: 'finalize_checks', result };
+        if (result.status === 'rejected' && result.code === 'busy') {
+          // §15.2 5.9 (VR-07 Workflow row): `busy` on a round already finalized is a stale replay (another
+          // driver finalized it): back to the selection, where its chain head and the verdict decide.
+          const read = await deps.evidence.readVerification(owned.ctx, operation.request.input.roundRef);
+          if (read.status === 'ready' && read.value.status === 'finalized') return advancing(receipt, selectWorkStep(base));
+        }
         if (result.status !== 'committed') return waiting(receipt, result.reason);
         const finalized = result.value;
         // §15.2 5.8 result mapping (C8, C5): a non-PASS round goes back to the selection, where the
@@ -1182,6 +1298,18 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort & Requi
         // §15.2 5.8 result mapping: a commit (`requeued`, or the policy refusal `refused`) and a
         // `revision_conflict` go back to the selection, where the facts as they are now decide (a
         // conflict needs another write first, so this never spins); any other refusal waits with its code.
+        if (result.status === 'committed' || result.code === 'revision_conflict') return advancing(receipt, selectWorkStep(base));
+        return waiting(receipt, `${result.code}: ${result.reason}`);
+      }
+      case 'reverify_round': {
+        const reverify = deps.evidence.reverifyRound;
+        if (reverify === undefined) return rejection('unsupported', 'the evidence owner does not publish reverifyRound');
+        // C5/C8: performed as the platform automation actor, never as the Host operator (TD-6).
+        const result = await reverify.call(deps.evidence, automationContext(owned), operation.request);
+        const receipt: WorkflowStepReceipt = { kind: 'reverify_round', result };
+        // §15.2 5.9 result mapping (as 5.8): a commit (`reverified`, or the policy refusal `refused`) and a
+        // `revision_conflict` go back to the selection (the successor head then runs its checks through
+        // `run_check`); any other refusal waits with its code.
         if (result.status === 'committed' || result.code === 'revision_conflict') return advancing(receipt, selectWorkStep(base));
         return waiting(receipt, `${result.code}: ${result.reason}`);
       }

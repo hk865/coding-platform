@@ -13,9 +13,10 @@
  *    GOAL-30 NEEDS_DECISION once it stops).
  * 2. A Run that `start` returns ended with a failure (`crashed`) goes back to
  *    `select_work`; the verdict is AV-12 `requeue` of class `run_failed`.
- * 3. The successor-round rows AV-7a..AV-7d are 5.9: an INCONCLUSIVE round
- *    (`check_incomplete`) reads `none`, and its finalize still goes back to
- *    `select_work`.
+ * 3. AV-7d (5.9 part 2): an INCONCLUSIVE round (`check_incomplete`) reads
+ *    `reverify`; the next selection performs `reverify_round` as the platform
+ *    automation (`auto-reverify:check_incomplete#1`), the successor round runs on
+ *    the same Run and passes, and the Goal completes with no further model call.
  * 4. AV-4 kept as written (STEP5-FLIPS §14): an operator's pause superseded by
  *    the Run's natural completion (CTL-06) fences rework only; the verdict is
  *    `stopped/task_paused` while a new `select_work` still opens the round,
@@ -38,7 +39,7 @@ import {
 import type { WorkflowAdvanceInput, WorkflowAdvanceResult } from '../../src/business/workflow/contracts.js';
 import type { ReadResult, WriteResult } from '../../src/contracts/core/results.js';
 import type { RunRef } from '../../src/contracts/dispatch.js';
-import type { TaskAutomationPolicyV1, TaskRequeueOutcomeV1 } from '../../src/contracts/task-requeue.js';
+import { WORKFLOW_AUTOMATION_ACTOR, type TaskAutomationPolicyV1, type TaskRequeueOutcomeV1 } from '../../src/contracts/task-requeue.js';
 import {
   AG2B_GOAL_REF, AG2B_SCOPE, cleanupAG2b, graphWrite, plain, seedAG2bWorkGraph, startAG2bHost, type AG2bHost,
 } from '../helpers/AG2b-collaboration-fixture.js';
@@ -191,8 +192,11 @@ it('§15.2 5.8 result mapping: a Run that start returns crashed goes back to sel
   }
 }, 120_000);
 
-it('§15.2 5.8: check_incomplete reads none until 5.9 wires AV-7a..AV-7d; the INCONCLUSIVE finalize still goes back to select_work', async () => {
-  const host = await startAG2bHost(await publicDirectory(), { replies: [{ kind: 'text', text: 'A2 verdict: the work is done' }] });
+it('§15.2 5.9 (AV-7d, C5): check_incomplete reads reverify; the Workflow opens the successor round as the automation and the Goal completes', async () => {
+  const host = await startAG2bHost(await publicDirectory(), { replies: [
+    { kind: 'calls', calls: [{ callId: 'a2-verdict-edit', name: 'edit', args: { mode: 'create', path: 'src/ag2b-result.txt',
+      newText: 'AG2B_RESULT_FROM_A' } }] },
+    { kind: 'text', text: 'A2 verdict: the work is done' }] });
   try {
     await seedAG2bWorkGraph(host);
     const runCheck = await advanceUntil(host, selectWork('a2-verdict-incomplete'), 'run_check');
@@ -201,13 +205,49 @@ it('§15.2 5.8: check_incomplete reads none until 5.9 wires AV-7a..AV-7d; the IN
     const refused = await advance(host, runCheck);
     expect(refused).toMatchObject({ state: 'advance', next: { kind: 'perform', operation: { kind: 'finalize_checks' } } });
     if (refused.next === null) throw new Error('the Workflow must finalize');
-    expect(await advance(host, refused.next)).toMatchObject({ state: 'advance', next: { kind: 'select_work' },
+    const finalized = await advance(host, refused.next);
+    expect(finalized).toMatchObject({ state: 'advance', next: { kind: 'select_work' },
       receipt: { kind: 'finalize_checks', result: { status: 'committed', value: { outcome: 'INCONCLUSIVE' } } } });
+    if (finalized.receipt?.kind !== 'finalize_checks' || finalized.receipt.result.status !== 'committed') throw new Error('finalize');
+    const r1 = finalized.receipt.result.value.snapshot;
+    // AV-7d: the verdict asks a successor round on the finalized head, without a source condition.
     expect(await workRow(host)).toMatchObject({ effectivePhase: 'blocked', phaseCause: { code: 'round_inconclusive' },
-      failure: { failureClass: 'check_incomplete', automation: { verdict: { kind: 'none' } } } });
-    // GOAL-25 (a): a blocked required work Task whose verdict is neither pending nor stopped, with no live Run.
-    expect(await goalDisplay(host)).toMatchObject({ phase: 'BLOCKED', row: 'GOAL-25',
-      cause: { code: 'task_blocked', taskId: TASK.taskId } });
+      failure: { failureClass: 'check_incomplete', round: { roundRef: r1.ref, revision: r1.revision },
+        automation: { verdict: { kind: 'reverify', roundRef: r1.ref, needsFinalize: false, onlyIfSourceChanged: false,
+          failureClass: 'check_incomplete', retryAfterRefusal: false } } } });
+    // GOAL-27: a pending automatic re-verification is RUNNING "等待推进".
+    expect(await goalDisplay(host)).toMatchObject({ phase: 'RUNNING', row: 'GOAL-27', cause: null,
+      causes: expect.arrayContaining([{ code: 'auto_rework_pending', taskId: TASK.taskId, operation: 'reverify',
+        failureClass: 'check_incomplete' }]) });
+
+    // The next selection performs reverify_round as the platform automation (pins: the head and the absent refusal).
+    const selected = await advance(host, selectWork('a2-verdict-incomplete-2'));
+    expect(selected).toMatchObject({ state: 'advance', receipt: null, next: { kind: 'perform', operation: { kind: 'reverify_round',
+      request: { input: { predecessorRoundRef: r1.ref, reason: 'auto-reverify:check_incomplete#1' }, meta: { expected: [
+        { ref: r1.ref, revision: r1.revision }, { ref: { aggregateType: 'TaskReworkRefusal', projectId: TASK.projectId,
+          goalId: TASK.goalId, taskId: TASK.taskId, operation: 'reverify', subjectId: r1.ref.roundId }, revision: 0 }] } } } } });
+    if (selected.next === null) throw new Error('the Workflow must re-verify');
+    const reverified = await advance(host, selected.next);
+    expect(reverified).toMatchObject({ state: 'advance', next: { kind: 'select_work' }, receipt: { kind: 'reverify_round',
+      result: { status: 'committed', value: { kind: 'reverified', round: { status: 'open', subjectRunRef: r1.subjectRunRef,
+        chain: { ordinal: 2, predecessorRoundRef: r1.ref, autoCount: 1, reverify: { actorClass: 'system',
+          requestedBy: WORKFLOW_AUTOMATION_ACTOR, failureClass: 'check_incomplete', exemption: 'none', sourceChanged: true,
+          reason: 'auto-reverify:check_incomplete#1' } } } } } } });
+    // TASK-29: the Task follows the open successor head; GOAL-27 counts the automatic re-verification.
+    expect(await workRow(host)).toMatchObject({ effectivePhase: 'verifying',
+      phaseCause: { code: 'verification_running', detail: { ordinal: 2, predecessorRoundRef: r1.ref } } });
+    expect(await goalDisplay(host)).toMatchObject({ phase: 'RUNNING',
+      causes: expect.arrayContaining([{ code: 'auto_rework_count', taskId: TASK.taskId, operation: 'reverify', n: 1, cap: 3 }]) });
+    // The successor's check runs on the same Run and passes; the Task, the gate and the Goal complete.
+    if (reverified.next === null) throw new Error('the Workflow must select again');
+    const steps = await driveWorkflow(host, reverified.next);
+    expect(steps.at(-1)).toMatchObject({ state: 'completed' });
+    expect(await workRow(host)).toMatchObject({ effectivePhase: 'satisfied' });
+    const goalSteps = await driveWorkflow(host, selectWork('a2-verdict-incomplete-goal', true));
+    expect(goalSteps.at(-1)).toMatchObject({ state: 'completed', receipt: { kind: 'complete_goal' } });
+    expect(await goalDisplay(host)).toMatchObject({ phase: 'COMPLETED' });
+    // A successor round builds no Run: the one Run's two model calls.
+    expect(host.scripted.calls()).toBe(2);
   } finally {
     await host.host.close();
   }

@@ -184,7 +184,7 @@ function sameJson(left: unknown, right: unknown): boolean {
  * the restart rebuild, the paused-interrupted end, the RUN-14 live-handle
  * guard, the paused stop, the restart stop and C7; 5.8 added the automatic
  * requeue of an interruption and the start-up re-drive of a Goal whose required
- * Task has the automation verdict requeue or claim_requeued; 5.9 adds reverify
+ * Task has the automation verdict requeue or claim_requeued; 5.9 added reverify
  * to that re-drive). The `recoverRun` reason always says what the Host setting
  * `automation.resumeOnStartup` off does (the reconciliation still runs, no
  * driver starts after it; LA-6). `resumeOnStartup` is that setting as
@@ -226,8 +226,8 @@ function workspaceRuntimeCapabilities(
       + 'is a new Run with a continuation brief, in a new Session that continues the original Session\'s last '
       + 'completed history. After the reconciliation the Host starts the existing collaboration driver for each '
       + 'active Goal with work to advance automatically: a required active Task whose automation verdict is '
-      + 'requeue or claim_requeued, or a Run that never entered and is not paused or cancelled, whose same claim '
-      + 'is then driven again; this start-up re-drive follows the Host setting automation.resumeOnStartup (on by '
+      + 'requeue, reverify or claim_requeued, or a Run that never entered and is not paused or cancelled, whose '
+      + 'same claim is then driven again; this start-up re-drive follows the Host setting automation.resumeOnStartup (on by '
       + 'default), every step it takes is judged by the Workflow and the owners, a paused-interrupted Run is still '
       + 'continued only by a person, and there is no periodic scheduler. When that setting is off, the '
       + 'reconciliation still runs but no driver starts after it, and the automation continues only at '

@@ -18,9 +18,7 @@
  * A.2 step 5.3 (§15.2) scope:
  * - Projection rows P1..P18 have their target values (D-1, TD-5): P6 and P7
  *   are `failed`, P11..P13 `verifying`, and P17/P18 hold a yielded wait whose
- *   pointer is cancelled (`failed`) or paused (`blocked`). P20 (5.9) is not
- *   evaluated yet: its facts fall through to the row the remaining table
- *   reaches.
+ *   pointer is cancelled (`failed`) or paused (`blocked`).
  * - The re-projection rows TASK-04..13 and TASK-20..23 follow the projection;
  *   TASK-14 adds the projection guard (`verifying`, §4.4) and the chain-head
  *   guard (the round is the selected Run's chain head, C5). Its TD-2 evidence
@@ -37,15 +35,17 @@
  *   `illegal`/`invalid` here.
  * - A.2 step 5.9 part 1: TASK-29 (`round_reverified` on a work Task)
  *   re-projects to the open successor head (P12 with its ordinal).
+ * - A.2 step 5.9 part 2 (C5): P20 projects a gate from its own chain head
+ *   (right after P1, `detail.gate` and `ordinal`); TASK-30 re-projects a gate
+ *   on its chain head's round events; TASK-15 completes a gate from P20
+ *   `verifying(awaiting_completion)` with the chain-head guard.
  * - A.2 step 5.6 (C4): P19 (`blocked/paused_interrupted`, before P6), TASK-26
  *   (the RUN-24 end re-projects to it) and TASK-27 (the operator's "继续", or the
  *   Goal-resume continuation, as a `task_requeued`).
- * - 改造 rows still at today's result, flipped by later substeps: TASK-15 (a
- *   gate completes from `pending`; 5.9), TASK-18 (no `dispositionRecord`; 5.10).
- * - 新增 rows of later substeps (TASK-30, 5.9 part 2) keep their events in the
- *   union and answer `illegal` (`notYet`). TASK-19 is answered by today's
- *   §4.4 refusal in front of it: a traced Task's definition, disposition
- *   included, is frozen (`revision_conflict`).
+ * - 改造 rows still at today's result, flipped by later substeps: TASK-18 (no
+ *   `dispositionRecord`; 5.10). TASK-19 is answered by today's §4.4 refusal in
+ *   front of it: a traced Task's definition, disposition included, is frozen
+ *   (`revision_conflict`).
  *
  * Pure: imports only `src/contracts` and this directory (§14.4).
  */
@@ -81,7 +81,7 @@ import {
   deriveReworkClass, nextRequeueAutoCount, requeueHistorySourceOf, reworkFenceOf, reworkPermission,
   type ReworkClassDerivationV1, type StopIntentV1,
 } from './task-failure.js';
-import { accept, failed, notYet, reject, rejected, unreachable, type Rejected, type Transition } from './transition.js';
+import { accept, failed, reject, rejected, unreachable, type Rejected, type Transition } from './transition.js';
 import { chainEvidenceIds, type RoundChainHeadV1, type RoundTaskSignalV1 } from './verification-machine.js';
 
 // -------------------------------------------------------------------------- //
@@ -142,8 +142,12 @@ function successorDetail(signal: RoundHeadSignal): TaskPhaseCauseDetailV1 {
  */
 export function classifyTaskPhase(facts: TaskPhaseFacts): TaskPhaseProjection {
   if (facts.applicableReduction !== null) return projection('P1', facts.applicableReduction.phase, null);
-  // P20 (gate chain head, C5) is step 5.9: today a gate's rounds never enter
-  // its projection, and a gate has no Run, so it falls to P15/P16.
+  // P20 (C5, right after P1, gates only): a gate projects from its own chain
+  // head; without a chain it has no Run either and falls to P15/P16.
+  if (facts.taskKind === 'gate') {
+    const gate = gateChainProjection(facts.round);
+    if (gate !== null) return gate;
+  }
   const run = facts.selectedRun;
   if (run === null) {
     return facts.originUnresolvable
@@ -221,6 +225,29 @@ function completedRunProjection(round: RoundTaskSignalV1): TaskPhaseProjection {
     case 'none': return projection('P11', 'verifying', causeOf('awaiting_verification'));
     // P1 already took an applicable reduction.
     case 'pass': return projection('P13', 'verifying', causeOf('awaiting_completion', successorDetail(round)));
+    default: return unreachable(round, 'round signal');
+  }
+}
+
+/**
+ * P20 (C5, §9 VD-15): a gate's own chain head mapped as the work rows map the
+ * selected Run's head (open → P9/P12, FAIL → P7, INCONCLUSIVE or a legacy PASS
+ * with gaps → P8, clean PASS → P13, invalid → P10), under the row P20 with
+ * `detail.gate` and the head's `ordinal`; `null` without a chain (P16).
+ */
+function gateChainProjection(round: RoundTaskSignalV1): TaskPhaseProjection | null {
+  switch (round.kind) {
+    case 'none': return null;
+    case 'invalid': return projection('P20', 'blocked', causeOf('round_ambiguous', { gate: true }));
+    case 'open':
+    case 'fail':
+    case 'inconclusive':
+    case 'pass': {
+      const head = completedRunProjection(round);
+      const cause = head.cause;
+      if (cause === null) throw new Error('a chain head always projects with a cause');
+      return projection('P20', head.phase, causeOf(cause.code, { ...cause.detail, gate: true, ordinal: round.ordinal }));
+    }
     default: return unreachable(round, 'round signal');
   }
 }
@@ -919,14 +946,30 @@ function onControlSubmitted(state: TaskMachineState, event: Extract<TaskEvent, {
 
 type RoundTaskEvent = Extract<TaskEvent, { kind: TaskRoundEventKind | 'round_finalized' | 'round_reverified' }>;
 
+/** The head round a chain signal names; null without a valid chain. */
+function signalHeadRef(signal: RoundTaskSignalV1): VerificationRoundRef | null {
+  return signal.kind === 'none' || signal.kind === 'invalid' ? null : signal.head.ref;
+}
+
+function sameRoundRef(left: VerificationRoundRef, right: VerificationRoundRef): boolean {
+  return canonicalJson(left as unknown as JsonValue) === canonicalJson(right as unknown as JsonValue);
+}
+
 /** TASK-09..13, 20, 29, 30 and the §4.4 interrupted-PASS row. */
 function onRoundEvent(state: TaskMachineState, event: RoundTaskEvent): TaskTransition {
   if (state === null) return absentTask(event.kind);
   const kindProblem = factsKindProblem(state, event.facts);
   if (kindProblem !== null) return kindProblem;
   if (state.taskKind === 'gate') {
-    // TASK-30 (C5) is step 5.9 part 2 (P20): until then a gate's rounds never enter its projection.
-    if (event.kind !== 'evidence_submitted') return notYet('TASK-30');
+    // TASK-30 (C5): the gate's own chain head re-projects through P20 (a root
+    // opening, its check events and finalize, a successor round); an event of
+    // a round that is not the head after it is history only.
+    const head = signalHeadRef(event.facts.round);
+    if (head !== null && !sameRoundRef(head, event.roundRef)) return accept(state);
+    if (event.kind === 'round_finalized' && state.cause?.code === 'check_interrupted' && event.outcome === 'PASS'
+      && event.gapCodes.length === 0) {
+      return reject('illegal', 'invalid', 'an interrupted check is a gap, so the round cannot finalize as a clean PASS (§9 VD-4)');
+    }
     return reprojected(state, event.facts);
   }
   const run = event.facts.selectedRun;
@@ -1007,15 +1050,15 @@ export function taskCompletionFoldProblem(taskId: string, evaluation: TaskComple
  * identity): `failed` and `blocked` are `illegal`/`incomplete` (an older PASS
  * never overtakes the latest failure), `pending`, `ready` and `running` are
  * `guard_failed`/`incomplete`. Then the requested round must be the head of
- * the selected Run's chain. A gate keeps today's rule until its chain
- * projects (TASK-15, step 5.9).
+ * the selected Run's chain. A gate meets the same guards over its own chain
+ * (TASK-15, C5): it completes from P20 `verifying(awaiting_completion)` with
+ * its chain head.
  */
 export function taskCompletionProjectionProblem(
   state: Pick<TaskState, 'taskKind' | 'phase'>,
   roundRef: VerificationRoundRef,
   chainHead: VerificationRoundRef | null,
 ): Rejected | null {
-  if (state.taskKind === 'gate') return null;
   switch (state.phase) {
     case 'verifying':
     case 'satisfied':
@@ -1029,8 +1072,10 @@ export function taskCompletionProjectionProblem(
       return reject('guard_failed', 'incomplete', `the task is ${state.phase}; only a verifying task completes`);
     default: return unreachable(state.phase, 'Task phase');
   }
-  if (chainHead === null || canonicalJson(roundRef as unknown as JsonValue) !== canonicalJson(chainHead as unknown as JsonValue)) {
-    return reject('guard_failed', 'incomplete', 'the specified round is not the head of the selected Run round chain');
+  if (chainHead === null || !sameRoundRef(roundRef, chainHead)) {
+    return reject('guard_failed', 'incomplete', state.taskKind === 'gate'
+      ? 'the specified round is not the head of the gate round chain'
+      : 'the specified round is not the head of the selected Run round chain');
   }
   return null;
 }

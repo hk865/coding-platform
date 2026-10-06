@@ -20,13 +20,15 @@
  *    `finalize_checks` paths) under the Goal's current adopted Plan.
  * 3. VR-05 (VD-6): a root moved after begin returns the check to pending; the
  *    next begin sees the moved root (`frozen_root_changed:`) and the round
- *    finalizes INCONCLUSIVE.
+ *    finalizes INCONCLUSIVE; since 5.9 the next selection re-verifies it (AV-7d).
  * 4. VD-15: a gate has one chain, anchored on its first producer; another
  *    producer cannot open a second one, and the Workflow follows the head.
  * 5. VD-8: a source that changed after the round opened ends the check
  *    attempts (`frozen_source_changed:`), so the Workflow finalizes the round
- *    INCONCLUSIVE instead of retrying the check forever.
- * 6. VR-03: a timed-out check records its INCONCLUSIVE cause.
+ *    INCONCLUSIVE instead of retrying the check forever (since 5.9 the next
+ *    selection opens a successor round, AV-7d).
+ * 6. VR-03: a timed-out check records its INCONCLUSIVE cause; the automatic
+ *    re-verification of an unchanged workspace stops at no_new_basis (§13.7, 5.9).
  *
  * No real model is called: the scripted model answers with text replies.
  */
@@ -438,12 +440,14 @@ it('VR-05 (VD-6): a root moved after begin returns the check to pending; the nex
     checks: [{ checkId: CHECK_ID, phase: 'pending', invocationId: null }] } });
   expect(await taskRow(platform, 'work-1')).toMatchObject({ effectivePhase: 'verifying', phaseCause: { code: 'verification_running' } });
   // The root stays moved: the next begin compares it with the frozen root and ends the round's attempts (VD-8).
-  const next = await drive(platform, select('a2-vr05-flow-2', 'work-1'));
+  const next = await drive(platform, select('a2-vr05-flow-2', 'work-1'), performs('reverify_round'));
   expect(next.receipts.find(receipt => receipt.kind === 'run_check')).toMatchObject({ result: { status: 'rejected',
     reason: expect.stringMatching(/^frozen_root_changed: /) } });
   expect(next.receipts.find(receipt => receipt.kind === 'finalize_checks')).toMatchObject({ result: { status: 'committed',
     value: { outcome: 'INCONCLUSIVE', gaps: expect.arrayContaining([expect.objectContaining({ code: 'pending_check' })]) } } });
-  expect(next).toMatchObject({ state: 'waiting' });
+  // §15.2 5.9 (AV-7d): the next selection re-verifies the INCONCLUSIVE head automatically (a successor round).
+  expect(next.stopped).toMatchObject({ operation: { kind: 'reverify_round', request: { input: { predecessorRoundRef: roundRef,
+    reason: 'auto-reverify:check_incomplete#1' } } } });
   expect(await taskRow(platform, 'work-1')).toMatchObject({ effectivePhase: 'blocked', phaseCause: { code: 'round_inconclusive' } });
   expect(scripted.calls()).toBe(1);
 });
@@ -494,16 +498,17 @@ it('VD-8: a source changed after the open ends the check attempts and the round 
     next: { kind: 'perform', operation: { kind: 'finalize_checks', request: { input: { roundRef } } } } } });
   if (refused.status !== 'ready' || refused.value.next === null) throw new Error('the Workflow must finalize');
   const finalized = await platform.workflow.advanceWork(ctx(), refused.value.next);
-  // §15.2 5.8 result mapping: a non-PASS finalize goes back to the selection. The next selection below still
-  // waits: the Workflow's continueRoundChain waits on a finalized non-PASS chain head until 5.9.
+  // §15.2 5.8 result mapping: a non-PASS finalize goes back to the selection.
   expect(finalized).toMatchObject({ status: 'ready', value: { state: 'advance',
     next: { kind: 'select_work', flowId: 'a2-vd8-flow', taskId: 'work-1' }, receipt: { kind: 'finalize_checks',
     result: { status: 'committed', value: { outcome: 'INCONCLUSIVE', gaps: [{ code: 'pending_check' }, { code: 'source_changed' }] } } } } });
   expect(await taskRow(platform, 'work-1')).toMatchObject({ effectivePhase: 'blocked',
     phaseCause: { code: 'round_inconclusive', detail: { gapCodes: ['pending_check', 'source_changed'] } } });
-  // No retry loop: the next selection does not begin the check again.
+  // No retry loop: the next selection does not begin the check again; §15.2 5.9 (AV-7d): it opens a successor
+  // round as the automation instead (VD-8: "Workflow 自动重验").
   const next = await platform.workflow.advanceWork(ctx(), select('a2-vd8-flow-2', 'work-1'));
-  expect(next).toMatchObject({ status: 'ready', value: { state: 'waiting', next: null } });
+  expect(next).toMatchObject({ status: 'ready', value: { state: 'advance', next: { kind: 'perform', operation: {
+    kind: 'reverify_round', request: { input: { predecessorRoundRef: roundRef, reason: 'auto-reverify:check_incomplete#1' } } } } } });
   expect(scripted.calls()).toBe(1);
 });
 
@@ -517,4 +522,12 @@ it('VR-03: a timed-out check records its INCONCLUSIVE cause and blocks the Task 
     incompleteCause: 'process_timed_out' });
   expect(await taskRow(platform, 'work-1')).toMatchObject({ effectivePhase: 'blocked',
     phaseCause: { code: 'round_inconclusive' } });
+  // §13.7 example (5.9): with an unchanged workspace the first automatic re-verification passes (no earlier key);
+  // its successor times out the same way, so the second has the same key: no_new_basis, and the Task stops (AV-7c).
+  expect(driven.receipts.filter(receipt => receipt.kind === 'reverify_round')).toMatchObject([
+    { result: { status: 'committed', value: { kind: 'reverified', round: { chain: { ordinal: 2, autoCount: 1 } } } } },
+    { result: { status: 'committed', value: { kind: 'refused', refusal: { code: 'no_new_basis', revision: 1 } } } }]);
+  expect(driven).toMatchObject({ state: 'waiting', reason: 'the selected Task work-1 is not executable right now' });
+  expect(await taskRow(platform, 'work-1')).toMatchObject({ phaseCause: { detail: { ordinal: 2 } }, failure: { automation: {
+    verdict: { kind: 'stopped', reason: 'no_new_basis', detail: { operation: 'reverify' } } } } });
 });

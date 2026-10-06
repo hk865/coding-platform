@@ -41,7 +41,8 @@ import {
   beginRefusalIsPermanent, buildFinalizedRound, buildOpenedRound, buildSuccessorRound, chainEvidenceIds,
   checkEventAdmission, displayRoundStatus, evidenceSupersededByRequeue, finalizeRoundOutcome, foldVerdictChecks, frozenBindingProblem,
   isFinalizedNonPass, nextTaskEvidenceIndex, outcomeFor, pendingRoundChecks, requiredRoundCoverage, reverifyAdmissionProblem,
-  reverifyCapRefusal, reverifyExemption, reverifyFailureClass, reverifyPolicyRefusal, rootRoundChain, roundChainHead,
+  reverifyCapRefusal, reverifyExemption, reverifyExemptionOfFacts, reverifyFailureClass, reverifyPolicyRefusal, rootRoundChain,
+  roundChainHead, successorAutoCount,
   roundOpenBasisProblem, roundOpenChainProblem, roundOpenChecksProblem,
   roundActivityProblem, roundGoalActivityProblem, roundOpenPointerProblem, roundOpenProblem, roundSubjectActivityProblem,
   roundOpenSubjectProblem, roundOrdinalOf, roundReviewerEvidenceProblem, roundSlotKey, roundSlotOwner,
@@ -51,6 +52,7 @@ import {
   type RoundActivityFactsV1, type RoundOpenFactsV1, type RoundOpeningV1, type RoundReverifyFactsV1, type RoundSuccessorV1,
   type SuccessorRoundBuildV1, type SuccessorRoundInputV1, type VerificationEffect,
 } from '../../src/core/work-graph/state/verification-machine.js';
+import { roundFailureFacts } from '../../src/core/work-graph/state/no-progress.js';
 import type { Transition, TransitionRejectReason } from '../../src/core/work-graph/state/transition.js';
 
 // ------------------------------------------------------------------------ //
@@ -182,7 +184,7 @@ const OBSERVED_OK = { permissionRevision: 'perm-1', workspaceRoot: '/ws/root', s
 type Expect =
   | { ok: true; same: true; effects: readonly VerificationEffect[] }
   | { ok: true; same: false; next: RoundSnapshot; effects: readonly VerificationEffect[] }
-  | { ok: false; reason: TransitionRejectReason; code: CoreError; notYet?: true };
+  | { ok: false; reason: TransitionRejectReason; code: CoreError };
 
 const keep = (effects: readonly VerificationEffect[] = []): Expect => ({ ok: true, same: true, effects });
 const to = (next: RoundSnapshot, effects: readonly VerificationEffect[]): Expect => ({ ok: true, same: false, next, effects });
@@ -198,10 +200,7 @@ const GB = no('guard_failed', 'busy');
 function check(actual: Transition<RoundSnapshot, unknown, VerificationEffect>, expected: Expect, state: RoundSnapshot | null): void {
   if (!expected.ok) {
     expect(actual).toMatchObject({ ok: false, reason: expected.reason, code: expected.code });
-    if (!actual.ok) {
-      expect(actual.detail.length).toBeGreaterThan(0);
-      expect(actual.detail.includes('not implemented before A.2 step 5')).toBe(expected.notYet === true);
-    }
+    if (!actual.ok) expect(actual.detail.length).toBeGreaterThan(0);
     return;
   }
   if (expected.same) {
@@ -1201,6 +1200,24 @@ describe('chain evidence, failure class and exemption', () => {
     expect(withChecks([pass, finished(null)], [])).toBe('none');
     expect(withChecks([pass], [])).toBe('none');
     expect(withChecks([pass, UNIT], [pendingGap('unit', 'r2')])).toBe('none');
+  });
+
+  it('5.9 part 2: the exemption over the failure facts form, and the successor count (§13.7 points 3, 4)', () => {
+    const pass = finishedCheck(LINT, 'PASS');
+    const timedOut = { ...finishedCheck(UNIT, 'INCONCLUSIVE'), incompleteCause: 'process_timed_out' as const };
+    // The facts form (`TaskRow.failure.round`: failingChecks, gapCodes) judges what the round judges.
+    for (const [checks, gaps] of [[[pass, interruptedCheck(UNIT, 'host_restart')], [interruptedGap]],
+      [[interruptedCheck(LINT, 'host_restart'), { ...finishedCheck(UNIT, 'INCONCLUSIVE'), incompleteCause: 'not_started' as const }],
+        [interruptedGap]], [[pass, timedOut], []]] as [RoundCheckSnapshot[], RoundGapV1[]][]) {
+      const facts = roundFailureFacts({ checks, gaps });
+      expect(reverifyExemptionOfFacts(facts)).toBe(reverifyExemption({ checks, gaps }));
+    }
+    expect(reverifyExemptionOfFacts({ checks: [], gapCodes: [] })).toBe('none');
+    // A human resets the count; a Host interruption keeps it; any other automatic request adds one.
+    expect(successorAutoCount(2, 'human', 'none')).toBe(0);
+    expect(successorAutoCount(2, 'system', 'host_interruption')).toBe(2);
+    expect(successorAutoCount(2, 'system', 'not_started')).toBe(3);
+    expect(successorAutoCount(0, 'agent', 'none')).toBe(1);
   });
 });
 

@@ -947,22 +947,26 @@ type GateState = 'awaiting_gate' | 'gate_verifying' | 'gate_fix_in_progress' | n
 
 /**
  * GV-1 / GV-3′ / GV-4 / GV-5 as display states of an active, unsatisfied gate:
- * no chain yet and its required work all satisfied → `awaiting_gate` (required
- * gates only); head `open`, or `PASS` without gaps awaiting completion →
- * `gate_verifying`; another finalized head while required active work in its
- * scope is unsatisfied → `gate_fix_in_progress`.
+ * no chain yet (no failure facts) and its required work all satisfied →
+ * `awaiting_gate` (required gates only); head `open`, or `PASS` without gaps
+ * awaiting completion → `gate_verifying`; another finalized head while
+ * required active work in its scope is unsatisfied → `gate_fix_in_progress`.
+ * An invalid chain (GV-2: failure facts without a head) has no display state:
+ * GOAL-30 reports it as `not_reworkable{round_ambiguous}` (GOAL-27:
+ * `awaiting_gate` only means the gate has no chain yet).
  */
 function gateStateOf(gate: GoalDisplayTaskFactsV1, tasks: readonly GoalDisplayTaskFactsV1[]): GateState {
   if (gate.taskKind !== 'gate' || gate.disposition !== 'active' || gate.phase === 'satisfied') return null;
   const covered = new Set(gate.coveredTaskIds);
   const requiredWork = tasks.filter((task) => covered.has(task.taskId) && task.taskKind === 'work'
     && task.requirementLevel === 'required');
-  const round = gate.failure?.round ?? null;
-  if (round === null) {
+  if (gate.failure === null) {
     // Cancelled/superseded work carries no work any more (`completion-policy.ts:208`).
     const carried = requiredWork.filter((task) => task.disposition !== 'cancelled' && task.disposition !== 'superseded');
     return gate.requirementLevel === 'required' && carried.every((task) => task.phase === 'satisfied') ? 'awaiting_gate' : null;
   }
+  const round = gate.failure.round;
+  if (round === null) return null;
   if (round.status === 'open' || (round.outcome === 'PASS' && round.gapCodes.length === 0)) return 'gate_verifying';
   return requiredWork.some((task) => task.disposition === 'active' && task.phase !== 'satisfied') ? 'gate_fix_in_progress' : null;
 }

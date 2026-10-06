@@ -45,10 +45,9 @@ import {
 } from '../../../contracts/task-requeue.js';
 import type { ControlIntentSnapshotV1 } from '../../../contracts/control-intent.js';
 import type { GoalDesiredState } from '../../../contracts/ledger.js';
-import type { TaskAutomationVerdictV1 } from '../../../contracts/task-failure.js';
 import type { TrustedCheckConfiguration } from '../../../contracts/verification.js';
 import {
-  automationVerdict, buildTaskFailureFacts, type AutomationVerdictResultV1, type WorkFailureInputV1,
+  automationVerdict, buildTaskFailureFacts, type GateFailureInputV1, type WorkFailureInputV1,
 } from '../state/task-failure.js';
 import type { GoalPhaseRef } from '../../../contracts/goal-phase.js';
 import type {
@@ -682,32 +681,32 @@ type TaskRowRework = {
 };
 
 /**
- * The AV rows that judge a successor round (`check_incomplete`, AV-7a..AV-7d).
- * Step 5.9 wires them with `reverifyRound`; until then the read model gives
- * them `none`, today's wait (§15.2 5.8).
+ * C1 `TaskRow.failure` / `TaskRow.rework` (`buildTaskFailureFacts`) from the
+ * same canonical read. `automation.verdict` is the TD-9 judgement
+ * (`automationVerdict`) over the same facts and the live automation policy:
+ * the AV table for a work Task (A.2 step 5.8; the successor-round rows
+ * AV-7a..AV-7d since 5.9), the GV table for a gate (5.9, C5). The latest
+ * reverify refusal of the chain head (VR-14) is read in the same window and
+ * judged stale against the Goal's ended Runs and the current check
+ * configuration revision (LA-4).
  */
-const SUCCESSOR_ROUND_ROWS: ReadonlySet<AutomationVerdictResultV1['row']> = new Set(['AV-7a', 'AV-7b', 'AV-7c', 'AV-7d']);
-const NO_VERDICT: TaskAutomationVerdictV1 = Object.freeze({ kind: 'none' });
+function taskFailureRead(plan: PlanRevisionSnapshot, definition: RuntimeTask, state: CanonicalTaskState,
+  facts: CanonicalTaskFacts, rework: TaskRowRework, goalId: string): { failure: TaskRow['failure']; rework: TaskRow['rework'] } {
+  const input = definition.taskKind === 'gate'
+    ? gateFailureInput(plan, definition, state, facts, rework, goalId)
+    : workFailureInput(definition, state, facts, rework, goalId);
+  const built = buildTaskFailureFacts(input, rework.policy, automationVerdict(input, rework.policy).verdict);
+  return { failure: built.failure ?? undefined, rework: built.rework ?? undefined };
+}
 
-/**
- * C1 `TaskRow.failure` / `TaskRow.rework` of a work Task (`buildTaskFailureFacts`)
- * from the same canonical read. `automation.verdict` is the TD-9 AV judgement
- * (`automationVerdict`) over the same facts and the live automation policy
- * (A.2 step 5.8; `none` was injected before, lead decision LD-1), except the
- * successor-round rows AV-7a..AV-7d, which read `none` until step 5.9 part 2.
- * The latest reverify refusal of the chain head (VR-14, A.2 step 5.9) is read
- * in the same window and judged stale against the Goal's ended Runs and the
- * current check configuration revision (LA-4). A gate's facts come from its
- * own chain head (P20, GV) in step 5.9 part 2.
- */
-function taskFailureRead(definition: RuntimeTask, state: CanonicalTaskState, facts: CanonicalTaskFacts,
-  rework: TaskRowRework, goalId: string): { failure: TaskRow['failure']; rework: TaskRow['rework'] } {
-  if (definition.taskKind !== 'work') return { failure: undefined, rework: undefined };
+/** §4.1 failure facts input of a work Task: the selected Run, its chain head and its rework records. */
+function workFailureInput(definition: RuntimeTask, state: CanonicalTaskState, facts: CanonicalTaskFacts,
+  rework: TaskRowRework, goalId: string): WorkFailureInputV1 {
   const runs = facts.runsByTaskId.get(definition.taskId) ?? [];
   const execution = state.execution;
   const selectedRun = execution === null ? null : runs.find((run) => sameRef(run.ref, execution)) ?? null;
   const chain = facts.chainsByTaskId.get(definition.taskId) ?? { kind: 'none' };
-  const input: WorkFailureInputV1 = {
+  return {
     subjectKind: 'work',
     task: { projectId: facts.goalRef.projectId, goalId, taskId: definition.taskId },
     disposition: definition.disposition,
@@ -726,9 +725,39 @@ function taskFailureRead(definition: RuntimeTask, state: CanonicalTaskState, fac
     requeues: facts.requeuesByTaskId.get(definition.taskId) ?? [],
     requeueRefusal: selectedRun === null ? null : facts.requeueRefusalsByRunId.get(selectedRun.ref.runId) ?? null,
   };
-  const judged = automationVerdict(input, rework.policy);
-  const built = buildTaskFailureFacts(input, rework.policy, SUCCESSOR_ROUND_ROWS.has(judged.row) ? NO_VERDICT : judged.verdict);
-  return { failure: built.failure ?? undefined, rework: built.rework ?? undefined };
+}
+
+/**
+ * §4.1 failure facts input of a gate (P20, §9 VD-15, GV table): its own chain
+ * head, the producer Run the chain is anchored on (`head.subjectRunRef`, among
+ * the Runs this window read; null when not read), and GV-5: a required, active
+ * work Task inside the gate's scope (goal/stage/module) is not satisfied yet.
+ */
+function gateFailureInput(plan: PlanRevisionSnapshot, definition: RuntimeTask, state: CanonicalTaskState,
+  facts: CanonicalTaskFacts, rework: TaskRowRework, goalId: string): GateFailureInputV1 {
+  const chain = facts.chainsByTaskId.get(definition.taskId) ?? { kind: 'none' };
+  const head = chain.kind === 'head' ? chain.head : null;
+  const anchorRun = head === null ? null
+    : [...facts.runsByTaskId.values()].flat().find((run) => sameRef(run.ref, head.subjectRunRef)) ?? null;
+  const fixInProgress = gateCoverage(plan, definition).some((taskId) => {
+    const covered = plan.tasks.find((candidate) => candidate.taskId === taskId);
+    return covered !== undefined && covered.requirementLevel === 'required' && covered.disposition === 'active'
+      && facts.byTaskId.get(taskId)?.effectivePhase !== 'satisfied';
+  });
+  return {
+    subjectKind: 'gate',
+    task: { projectId: facts.goalRef.projectId, goalId, taskId: definition.taskId },
+    disposition: definition.disposition,
+    satisfied: state.reductionRevision !== null,
+    goalDesiredState: rework.goalDesiredState,
+    reverifyRefusal: head === null ? null : facts.reverifyRefusalsByRoundId.get(head.ref.roundId) ?? null,
+    goalEndedRuns: facts.goalEndedRuns ?? 0,
+    configurationRevision: rework.configurationRevision,
+    kernelRunFailedError: null,
+    chain,
+    anchorRun,
+    fixInProgress,
+  };
 }
 
 /**
@@ -761,7 +790,7 @@ function taskRow(plan: PlanRevisionSnapshot, goalId: string,
   // D-9 (§2.6): the Goal's stored desired state, so a paused Goal shows no Task as eligible.
   const eligibility = evaluateEligibility({ plan, goalDesiredState: rework.goalDesiredState, taskId,
     effectivePhases: phases, lease: state.lease });
-  const failure = taskFailureRead(definition, state, facts, rework, goalId);
+  const failure = taskFailureRead(plan, definition, state, facts, rework, goalId);
   const coveringRequeueRef = state.requeueRef;
   const requeueBudget = coveringRequeueRef === null ? null
     : (facts.requeuesByTaskId.get(taskId) ?? []).find((requeue) => sameRef(requeue.ref, coveringRequeueRef))?.budget ?? null;

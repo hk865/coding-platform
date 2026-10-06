@@ -39,15 +39,6 @@ export function reject(reason: TransitionRejectReason, code: CoreError, detail: 
   return { ok: false, reason, detail, code };
 }
 
-/**
- * A row whose 现状 is 新增 before A.2 step 5 (§15.2 step 2): its event stays in
- * the union and is `illegal` with the §1.2 default `invalid`, so step 5 only
- * adds the row.
- */
-export function notYet(row: string): Rejected {
-  return reject('illegal', 'invalid', `${row} is not implemented before A.2 step 5`);
-}
-
 /** A failing read-side check: an old basis is `stale`, every other code a guard failure (§1.2). */
 export function failed(code: CoreError, detail: string): Rejected {
   return reject(code === 'revision_conflict' ? 'stale' : 'guard_failed', code, detail);

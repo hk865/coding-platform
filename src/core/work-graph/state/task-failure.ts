@@ -24,8 +24,8 @@
  * the facts, 5.8 AV, 5.9 AV-7a..AV-7d and GV); TASK-16/17/27/28 stay in
  * `task-machine.ts` and VR-14 in `verification-machine.ts`. Since 5.4 (lead
  * decision LD-1) `buildTaskFailureFacts` takes the verdict from its owner;
- * since 5.8 the owner judges it with `automationVerdict` (reading the
- * successor-round rows AV-7a..AV-7d as `none` until 5.9).
+ * since 5.8 the owner judges it with `automationVerdict`, the successor-round
+ * rows AV-7a..AV-7d and a gate's facts with the GV table since 5.9.
  *
  * The owner does every read: the Runs of the Task, the pointer ControlIntent
  * (immutable request fields, read after the window), the chain heads, the
@@ -850,9 +850,8 @@ export type TaskFailureFactsResultV1 = {
  * or refusal record.
  *
  * `verdict` is `automation.verdict` as the owner judged it (lead decision
- * LD-1): `automationVerdict` over the same input since step 5.8, with the
- * successor-round rows AV-7a..AV-7d read as `{kind:'none'}` until 5.9 (a gate's
- * facts and GV are 5.9 too).
+ * LD-1): `automationVerdict` over the same input (AV since step 5.8, AV-7a..
+ * AV-7d and a gate's GV since 5.9).
  */
 export function buildTaskFailureFacts(
   input: TaskFailureInputV1, policy: TaskAutomationPolicyV1, verdict: TaskAutomationVerdictV1,

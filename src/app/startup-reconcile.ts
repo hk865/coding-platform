@@ -18,7 +18,7 @@
  * 6. re-drive the Goal fan-out (GOAL-16, GOAL-14, GOAL-29);
  * 6b. select the active Goals the start-up re-drive starts a driver for
  *    (LA-6): (a) a required active Task whose automation verdict the Workflow
- *    acts on (`requeue`, `claim_requeued`; `reverify` from step 5.9; W-21,
+ *    acts on (`requeue`, `reverify`, `claim_requeued`; W-21,
  *    RUN-19), (b) a not-entered Run the same claim re-drives (W-01..W-03);
  * 7. return the report: what moved and what was left, with the reason.
  *

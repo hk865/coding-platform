@@ -44,7 +44,8 @@ import {
   isFinalizedNonPass, roundChainHead, roundTaskSignal, type RoundChainHeadV1, type RoundTaskSignalV1,
 } from '../state/verification-machine.js';
 import {
-  VERIFICATION_ROUND_CHAIN_LOOKUP_LIMIT, VERIFICATION_ROUND_ORIGINAL_LOOKUP, decodeVerificationRoundSnapshot,
+  VERIFICATION_ROUND_BY_TASK_LOOKUP, VERIFICATION_ROUND_CHAIN_LOOKUP_LIMIT, VERIFICATION_ROUND_ORIGINAL_LOOKUP,
+  decodeVerificationRoundSnapshot,
 } from '../evidence/evidence-record-codecs.js';
 import type { VerifiedGovernance } from './plan-commit-compiler.js';
 import type { PlanProposal, PlanProposalRef } from './plan-contracts.js';
@@ -783,9 +784,10 @@ export type CanonicalTaskFacts = {
    * continuation claim can guard and update the SAME record revision. */
   leasesByTaskId: ReadonlyMap<string, TaskLeaseSnapshot>;
   /**
-   * §4.1 / §9 VD-14: the projection input of each task whose selected Run
-   * ended `completed`: `roundTaskSignal` over that Run's round chain, read in
-   * THIS window. Absent for every other task (no chain enters its projection).
+   * §4.1 / §9 VD-14: the projection input of each work task whose selected Run
+   * ended `completed` (`roundTaskSignal` over that Run's round chain) and of
+   * each gate (over the gate's own chain, P20, VD-15), read in THIS window.
+   * Absent for every other task (no chain enters its projection).
    */
   roundsByTaskId: ReadonlyMap<string, RoundTaskSignalV1>;
   /** The same chains as `roundsByTaskId`, as their `roundChainHead` (the failure facts read the head). */
@@ -946,6 +948,43 @@ export async function readRunRoundChain(
     const round = decoded.value;
     if (canonicalJson(round.subjectRunRef as unknown as JsonValue) !== runKey || round.subject.taskId !== run.task.taskId) {
       return unavailable(`round ${round.ref.roundId} does not belong to Run ${run.ref.runId}`);
+    }
+    rounds.push(round);
+  }
+  return { status: 'ready', rounds, readThrough: result.value.readThrough };
+}
+
+/**
+ * A gate's own round chain (§4.1 P20, §9 VD-15): every round of
+ * `VerificationRoundByTask` for the gate in the Goal's workspace, at most
+ * `ROUND_CHAIN_MAX + 1` rows, rechecked against the gate (a candidate index
+ * only; every producer Run, since the chain is anchored on the first one).
+ * The same refusals as `readRunRoundChain`: an unregistered lookup is a
+ * confirmed absence, a damaged or foreign row or a chain past the limit
+ * refuses the whole read.
+ */
+export async function readGateRoundChain(
+  records: RecordLookupPort,
+  workspaceId: string,
+  gate: TaskTriple,
+): Promise<{ status: 'ready'; rounds: RoundSnapshot[]; readThrough: CommitCursor | null | undefined } | Rejected> {
+  const result = await records.lookup({ index: VERIFICATION_ROUND_BY_TASK_LOOKUP,
+    values: [gate.projectId, workspaceId, gate.goalId, gate.taskId], limit: VERIFICATION_ROUND_CHAIN_LOOKUP_LIMIT });
+  if (result.status !== 'ready') {
+    if (result.code === 'unsupported') return { status: 'ready', rounds: [], readThrough: undefined };
+    return unavailable(`the round chain of gate ${gate.taskId} is not readable: ${result.code}: ${result.reason}`);
+  }
+  if (result.value.next !== null) {
+    return incomplete(`the round chain of gate ${gate.taskId} is longer than the chain limit`);
+  }
+  const rounds: RoundSnapshot[] = [];
+  for (const record of result.value.records) {
+    const decoded = decodeVerificationRoundSnapshot(record);
+    if (decoded.status !== 'decoded') return unavailable(`round ${record.refKey} is damaged: ${decoded.reason}`);
+    const round = decoded.value;
+    if (round.subject.projectId !== gate.projectId || round.subject.goalId !== gate.goalId || round.subject.taskId !== gate.taskId
+      || round.ref.workspaceId !== workspaceId) {
+      return unavailable(`round ${round.ref.roundId} does not belong to gate ${gate.taskId}`);
     }
     rounds.push(round);
   }
@@ -1144,6 +1183,15 @@ export async function readCanonicalTaskFacts(
   }
   const leaseKeys = selectedTasks.map((task) => taskRecordRefKey('TaskLease', goalRef, task.taskId));
   const reductionKeys = selectedTasks.map((task) => taskRecordRefKey('TaskReduction', goalRef, task.taskId));
+  // P20 (C5): a gate's chain is read by its workspace. A Goal's workspace is
+  // fixed at its creation (`GoalSnapshot.workspaceRef`), so it is read once,
+  // outside the window, and only when a gate is selected.
+  let gateWorkspaceId: string | null = null;
+  if (selectedTasks.some((task) => task.taskKind === 'gate')) {
+    const goalRead = await readGoal(records, goalRef);
+    if (goalRead.status !== 'ready') return goalRead;
+    gateWorkspaceId = goalRead.goal.workspaceRef.workspaceId;
+  }
   for (let attempt = 0; attempt < WINDOW_MAX_ATTEMPTS; attempt += 1) {
     const found = taskId !== undefined
       ? await readLookupKeys(records, RUN_BY_TASK_INDEX, [goalRef.projectId, goalRef.goalId, taskId])
@@ -1291,10 +1339,19 @@ export async function readCanonicalTaskFacts(
         runById, index, selected: selectedFacts, selectedBasis, selectedDefinition, goalRef });
       if (lease.status === 'unavailable') return unavailable(lease.reason);
       // A completed selected Run projects from its round chain head (§4.1
-      // P7..P13, §9 VD-14), read in the same window as the Run.
+      // P7..P13, §9 VD-14), and a gate from its own chain head (P20, VD-15),
+      // read in the same window as the Run.
       let round: RoundTaskSignalV1 = { kind: 'none' };
-      if (run !== null && run.status === 'ended' && run.outcome === 'completed') {
-        const chain = await readRunRoundChain(records, run);
+      let chain: Awaited<ReturnType<typeof readRunRoundChain>> | null = null;
+      if (task.taskKind === 'gate') {
+        if (gateWorkspaceId !== null) {
+          chain = await readGateRoundChain(records, gateWorkspaceId,
+            { projectId: goalRef.projectId, goalId: goalRef.goalId, taskId: task.taskId });
+        }
+      } else if (run !== null && run.status === 'ended' && run.outcome === 'completed') {
+        chain = await readRunRoundChain(records, run);
+      }
+      if (chain !== null) {
         if (chain.status !== 'ready') return chain;
         if (chain.readThrough !== undefined && !sameCursor(read.value.readThrough, chain.readThrough)) {
           windowMoved = true;

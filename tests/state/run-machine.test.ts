@@ -5,8 +5,8 @@
  * - Every (node, event) combination: a legal one asserts the next node and
  *   the effects (and, for the rows that write, the record byte for byte
  *   against today's service literals); an illegal one asserts `reason` and
- *   `code` from §6.4. 新增 rows (RUN-16..24, the R source of RUN-09..11) still
- *   answer `illegal`/`invalid` naming their row; 改造 rows keep today's result
+ *   `code` from §6.4. 新增 rows (RUN-16..24, the R source of RUN-09..11) are
+ *   built since step 5.6; 改造 rows keep today's result
  *   except the step 5.1 flips: RUN-09..11 (U) apply a control on a Run that
  *   never entered at once (D-7), and RUN-12..15 supersede the queued older
  *   pointer intent (D-8) and refuse a resume of a non-active Goal (D-9) and a
@@ -242,12 +242,11 @@ const stateOf = (node: RunNode): RunState => runStateOf(node === 'Absent' ? null
 
 type Expect =
   | { to: RunNode; effects: readonly RunEffect[] }
-  | { reason: TransitionRejectReason; code: CoreError; row?: string };
+  | { reason: TransitionRejectReason; code: CoreError };
 
 const NOT_FOUND: Expect = { reason: 'illegal', code: 'not_found' };
 const ILLEGAL: Expect = { reason: 'illegal', code: 'invalid' };
 const BUSY: Expect = { reason: 'illegal', code: 'busy' };
-const notYet = (row: string): Expect => ({ reason: 'illegal', code: 'invalid', row });
 const intentEffect = (id: string): RunEffect[] => [{ kind: 'intent', event: 'control_submitted', intentRef: intentRef(id) }];
 const slot = (expectedOwner: 'none' | 'self'): RunEffect[] => [{ kind: 'claim_kernel_slot', kernel, expectedOwner }];
 const TERMINAL_EFFECTS: RunEffect[] = [
@@ -375,8 +374,6 @@ function expectResult(result: RunTransition, expected: Expect, label: string): v
   if (result.ok) return;
   expect({ reason: result.reason, code: result.code }, `${label}: ${result.detail}`)
     .toEqual({ reason: expected.reason, code: expected.code });
-  if (expected.row !== undefined) expect(result.detail, label).toContain(`${expected.row}`);
-  if (expected.row === undefined) expect(result.detail, label).not.toContain('not implemented before A.2 step 5');
 }
 
 /** Today's record literal comparison: same JSON, same key order. */
@@ -1397,7 +1394,7 @@ describe('RUN-09..15 read a control submission as control-service.ts does (A.2 s
 });
 
 // ------------------------------------------------------------------------ //
-// 新增 rows: §6.4 refusals in front, then the row answers notYet            //
+// 新增 rows: §6.4 refusals in front, then the row                           //
 // ------------------------------------------------------------------------ //
 
 describe('RUN-16..24 (A.2 step 5.6): the §6.4 refusals, then each row', () => {

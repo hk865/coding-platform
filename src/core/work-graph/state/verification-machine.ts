@@ -91,7 +91,7 @@ import { INTERRUPTED_CHECK_GAP_CODE, ROUND_CHAIN_MAX } from '../../../contracts/
 import type {
   VerificationRoundMaterialIdentity, VerificationRoundSourceProof,
 } from '../../../contracts/verification-context.js';
-import { roundFailureFacts } from './no-progress.js';
+import { roundFailureFacts, type RoundFailureFactsV1 } from './no-progress.js';
 import { runUnresolvedBlocker } from './run-machine.js';
 import { accept, reject, unreachable, type Rejected, type Transition } from './transition.js';
 
@@ -596,7 +596,15 @@ export function reverifyFailureClass(head: Pick<RoundSnapshot, 'status' | 'outco
  * - otherwise `none` (a legacy check has no cause and reads null).
  */
 export function reverifyExemption(predecessor: Pick<RoundSnapshot, 'checks' | 'gaps'>): ReverifyExemption {
-  const facts = roundFailureFacts(predecessor);
+  return reverifyExemptionOfFacts(roundFailureFacts(predecessor));
+}
+
+/**
+ * `reverifyExemption` over the facts form `roundFailureFacts` gives, so a
+ * reader of `TaskRow.failure.round` (`failingChecks`, `gapCodes`) judges the
+ * same exemption without the round (the Workflow's `reverify_round` reason).
+ */
+export function reverifyExemptionOfFacts(facts: Pick<RoundFailureFactsV1, 'checks' | 'gapCodes'>): ReverifyExemption {
   if (facts.checks.length === 0) return 'none';
   if (!facts.gapCodes.every((code) => code === INTERRUPTED_CHECK_GAP_CODE)) return 'none';
   if (facts.checks.every((check) => check.phase === 'interrupted' && check.cause === 'host_restart')) return 'host_interruption';
@@ -605,6 +613,17 @@ export function reverifyExemption(predecessor: Pick<RoundSnapshot, 'checks' | 'g
     return 'not_started';
   }
   return 'none';
+}
+
+/**
+ * VD-13 (§13.7 point 4): the successor's `chain.autoCount`. A human resets it
+ * to 0; a Host-interruption exemption keeps the predecessor's count; any other
+ * automatic request (`system`, `agent`) counts one more. The VR-14 record and
+ * the Workflow's `auto-reverify:<class>#<autoCount>` reason use this one rule.
+ */
+export function successorAutoCount(previousAutoCount: number, actorClass: ReworkActorClass, exemption: ReverifyExemption): number {
+  if (actorClass === 'human') return 0;
+  return exemption === 'host_interruption' ? previousAutoCount : previousAutoCount + 1;
 }
 
 /**
@@ -654,9 +673,7 @@ export function buildSuccessorRound(input: SuccessorRoundInputV1): RoundSnapshot
     throw new Error(`round ${predecessor.ref.roundId} is at the chain limit ${ROUND_CHAIN_MAX} and has no successor`);
   }
   const exemption = reverifyExemption(predecessor);
-  const previousAutoCount = predecessor.chain?.autoCount ?? 0;
-  const autoCount = reverify.actorClass === 'human' ? 0
-    : exemption === 'host_interruption' ? previousAutoCount : previousAutoCount + 1;
+  const autoCount = successorAutoCount(predecessor.chain?.autoCount ?? 0, reverify.actorClass, exemption);
   const chain: RoundChainV1 = {
     schemaVersion: 1,
     ordinal,
@@ -1478,8 +1495,9 @@ export function reverifyAdmissionProblem(state: RoundSnapshot, facts: RoundRever
 export function reverifyCapRefusal(predecessor: RoundSnapshot, actorClass: ReworkActorClass,
   autoReworkLimit: number): ReverifyRefusalV1 | null {
   const failureClass = reverifyFailureClass(predecessor);
-  if (failureClass === null || actorClass === 'human' || reverifyExemption(predecessor) === 'host_interruption') return null;
-  const autoCount = (predecessor.chain?.autoCount ?? 0) + 1;
+  const exemption = reverifyExemption(predecessor);
+  if (failureClass === null || actorClass === 'human' || exemption === 'host_interruption') return null;
+  const autoCount = successorAutoCount(predecessor.chain?.autoCount ?? 0, actorClass, exemption);
   if (autoCount <= autoReworkLimit) return null;
   return { code: 'auto_rework_cap_reached', failureClass, basisDigest: null, source: null, configurationRevision: null,
     reason: `auto rework cap reached: automatic reverify ${autoCount} of round ${predecessor.ref.roundId} exceeds the cap ${autoReworkLimit}` };

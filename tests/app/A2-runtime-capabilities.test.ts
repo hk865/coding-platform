@@ -19,9 +19,9 @@
  * were added by the substeps that built them: 5.4 the requeue continuation brief (C3); 5.6 the new
  * Session after an open Kernel Turn, the restart rebuild, paused-interrupted, the paused stop and the
  * restart stop; 5.8 the automatic requeue of a clean interruption (RUN-19) and the start-up re-drive
- * of a Goal whose required active Task has the automation verdict requeue or claim_requeued. The
- * clauses that do not hold yet are listed in RECOVER_RUN_NOT_YET_BUILT by the substep that builds
- * them (5.9). Every item has its own reason
+ * of a Goal whose required active Task has the automation verdict requeue or claim_requeued; 5.9 the
+ * re-drive of a Goal whose required active Task has the verdict reverify (the last clause that was
+ * listed as not built yet). Every item has its own reason
  * (no shared placeholder), and the report is the same after the Host reopens
  * the ledger with the same settings.
  *
@@ -121,8 +121,8 @@ const RECOVER_RUN_BOUNDARIES = [
   'new Run with a continuation brief, in a new Session',
   // LA-6: the start-up re-drive, its switch, owner guards, no scheduler.
   'starts the existing collaboration driver for each active Goal',
-  // 5.8: re-drive condition (a) for the verdicts the Workflow acts on (requeue, claim_requeued; reverify is 5.9).
-  'a required active Task whose automation verdict is requeue or claim_requeued',
+  // 5.8, 5.9: re-drive condition (a) for the verdicts the Workflow acts on (reverify since 5.9).
+  'a required active Task whose automation verdict is requeue, reverify or claim_requeued',
   'or a Run that never entered and is not paused or cancelled',
   'follows the Host setting automation.resumeOnStartup (on by default)',
   'judged by the Workflow and the owners', 'a paused-interrupted Run is still continued only by a person',
@@ -136,24 +136,6 @@ const RECOVER_RUN_BOUNDARIES = [
 ];
 /** LA-6 (5.7): the sentence the reason adds when this Host's `automation.resumeOnStartup` is off. */
 const RESUME_ON_STARTUP_OFF = 'This Host has automation.resumeOnStartup turned off';
-/**
- * §7.7 recoverRun target clauses that do not hold yet (D-15, §7.7 item 5), keyed by the substep that
- * builds them. That substep adds the clause to the reason and moves its phrases into
- * RECOVER_RUN_BOUNDARIES as positive phrases, in the same commit.
- */
-const RECOVER_RUN_NOT_YET_BUILT: Readonly<Record<string, readonly string[]>> = {
-  // 5.8 built RUN-19 "可自动重新入队" and re-drive condition (a) for requeue and claim_requeued: its phrases
-  // ('automatic', 'automation verdict', 'claim_requeued') are positive phrases of RECOVER_RUN_BOUNDARIES now.
-  // Start-up re-drive condition (a) for reverify.
-  '5.9': ['reverify'],
-};
-
-function expectNotYetBuiltAbsent(reason: string): void {
-  for (const [substep, phrases] of Object.entries(RECOVER_RUN_NOT_YET_BUILT)) {
-    for (const phrase of phrases) expect(reason.toLowerCase(), `${substep}: ${phrase}`).not.toContain(phrase);
-  }
-}
-
 it('reports continuation, safe-point pause, cancel and start-up reconciliation as supported with their boundaries over the Host route', async () => {
   const paths = {
     publicDir: await directory('a2-capabilities-public-'),
@@ -226,8 +208,6 @@ it('reports continuation, safe-point pause, cancel and start-up reconciliation a
   // setting (the start-up re-drive on), so the "turned off" sentence is absent.
   expectAllIn(report.recoverRun.reason, RECOVER_RUN_BOUNDARIES);
   expect(report.recoverRun.reason).not.toContain(RESUME_ON_STARTUP_OFF);
-  // The re-drive of a Goal with a reverify verdict (5.9) is not claimed until it is built.
-  expectNotYetBuiltAbsent(report.recoverRun.reason);
   // 5.6 moved every remaining §7.7 target phrase into the lists above (5.4 moved 'continuation brief').
   expect(report.safePointPause.reason).not.toContain('continuation brief');
   expect(report.cancel.reason).not.toContain('continuation brief');
@@ -261,7 +241,6 @@ it('says in the recoverRun reason that this Host has the setting automation.resu
   const offReport = await readCapabilities(off.origin, off.token);
   expect(offReport.recoverRun.supported).toBe(true);
   expectAllIn(offReport.recoverRun.reason, [...RECOVER_RUN_BOUNDARIES, RESUME_ON_STARTUP_OFF]);
-  expectNotYetBuiltAbsent(offReport.recoverRun.reason);
   // A second Host on the same store while the first holds the instance lease (HL-02, L-10) neither
   // reconciles nor drives; its report says the same about its own setting and points to no entry
   // that this Host refuses as busy.

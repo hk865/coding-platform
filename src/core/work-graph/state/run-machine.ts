@@ -74,7 +74,7 @@ import {
 import {
   INCONCLUSIVE_PROBES, type SessionOccupation, type SessionProbeVerdict, type SessionRelease,
 } from './session-availability.js';
-import { accept, failed, notYet, reject, rejected, unreachable, type Rejected, type Transition } from './transition.js';
+import { accept, failed, reject, rejected, unreachable, type Rejected, type Transition } from './transition.js';
 
 // -------------------------------------------------------------------------- //
 // Machine view (§6.1)                                                         //

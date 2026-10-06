@@ -3,5 +3,5 @@ export type { WorkflowPort, WorkflowDependencies, WorkflowHostConfiguration } fr
 export type { N0WorkflowPort, N0WorkflowDependencies } from './ports.js';
 export type {
   N0GoalInput, WorkflowCalls, WorkflowStepKind, WorkflowOperation, WorkflowStepReceipt,
-  WorkflowAdvanceBase, WorkflowAdvanceInput, WorkflowAdvanceResult, WorkflowPendingStepKind, WorkflowSessionRequeue,
+  WorkflowAdvanceBase, WorkflowAdvanceInput, WorkflowAdvanceResult, WorkflowSessionRequeue,
 } from './contracts.js';

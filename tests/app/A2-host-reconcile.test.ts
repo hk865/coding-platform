@@ -436,11 +436,17 @@ it('VR-04 (C-01): a check left executing by a crashed Host is interrupted at the
     await first.host.close();
     throw error;
   }
+  // The subject is the reconcile itself: since 5.9 the interrupted round's Task has the verdict reverify
+  // (FC-13, needsFinalize), which the start-up re-drive would act on at once, so the re-drive is off here.
+  await writeAutomationSettings(database, { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: false });
   const second = await startAG2bHost(publicDir, { root, database, checkCommand });
   try {
     const report = second.host.reconcile.report;
     expect(report?.checks).toEqual([expect.objectContaining({ row: 'C-01', status: 'reconciled', reason: 'interrupted (host_restart)' })]);
     expect(report?.problems).toEqual([]);
+    // §12.1 step 6b condition (a), 5.9: the Goal with the reverify verdict is selected for the re-drive.
+    expect(report?.redriveGoals).toEqual([expect.objectContaining({ goalRef: expect.objectContaining({ goalId: 'ag2b-goal' }),
+      taskIds: ['ag2b-work'] })]);
   } finally {
     await inFlight;
     await first.host.close();

@@ -1382,6 +1382,18 @@ describe('§2.1 GOAL-27 running causes and the gate flow (C5, C8)', () => {
     expect(reduceGoalDisplay(facts({ tasks: [task('t-gate', { taskKind: 'gate', phase: 'satisfied',
       failure: failureOf({ kind: 'none' }, { round: roundOf('t-gate', { outcome: 'PASS', failingChecks: [] }) }) })] })).causes).toEqual([]);
   });
+
+  it('GV-2: an invalid gate chain (failure facts without a head) is GOAL-30 not_reworkable only, never awaiting_gate', () => {
+    const detail: TaskAutomationStopDetailV1 = { cause: 'round_ambiguous' };
+    const display = reduceGoalDisplay(facts({ tasks: [
+      task('t-a', { phase: 'satisfied' }),
+      task('t-gate', { taskKind: 'gate', phase: 'blocked', coveredTaskIds: ['t-a'],
+        failure: failureOf(stopped('not_reworkable', detail), { failureClass: null, round: null }) }),
+    ] }));
+    expect(display).toMatchObject({ phase: 'NEEDS_DECISION', row: 'GOAL-30' });
+    // GOAL-27: `awaiting_gate` only means the gate has no chain yet (GV-1).
+    expect(display.causes).toEqual([{ code: 'not_reworkable', taskId: 't-gate', detail }]);
+  });
 });
 
 describe('§2.1 reduceGoalDisplay: seeded random fact combinations', () => {
