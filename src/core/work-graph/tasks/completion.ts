@@ -444,7 +444,7 @@ export async function completeTaskFromHost(
       evidenceRefs: evidenceSnapshots.map(entry => entry.ref),
       reducedAt: deps.now(),
     },
-  }, { taskId: task.taskId, claim: null, completion: { producerRun, producerTaskKind, evaluation, chainHead }, trace: null });
+  }, { taskId: task.taskId, claim: null, completion: { producerRun, producerTaskKind, evaluation, chainHead }, disposition: null });
   if (!completed.ok) return reject(completed.code, completed.detail);
   const [written, ...others] = completed.effects;
   if (written?.kind !== 'write_task_reduction' || others.length > 0) throw new Error('task_completed writes exactly the TaskReduction');

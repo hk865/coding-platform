@@ -957,7 +957,7 @@ export function createTaskClaimService(deps: TaskClaimDependencies): TaskClaimPo
 
     // TASK-01..03 accept the claim; `claimRecords` writes the records its effects name.
     const claimed = transitionTask(taskState, { kind: 'task_claimed', claim, basis, budget: input.budget },
-      { taskId: input.taskId, claim: claimFacts, completion: null, trace: null });
+      { taskId: input.taskId, claim: claimFacts, completion: null, disposition: null });
     if (!claimed.ok) return reject(claimed.code, claimed.detail);
     const written = claimRecords(claimed.effects, { lease: releasedLease, session, occupation,
       run: { kind: 'claim_committed', claim, basis, roleBinding: input.roleBinding, budget: input.budget,

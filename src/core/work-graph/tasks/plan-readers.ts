@@ -37,8 +37,10 @@ import type {
 } from '../../record-store/ports.js';
 import { decodeGoalSnapshot } from '../persistence/record-codecs.js';
 import { taskLeaseSnapshotProblem } from '../persistence/execution-entry-codecs.js';
-import { derivePlanProposalStatus, derivePlanRevisionStatus, type FutureChangeTaskFactsV1 } from '../state/plan-machine.js';
-import { projectTaskPhase } from '../state/task-machine.js';
+import {
+  derivePlanProposalStatus, derivePlanRevisionStatus, type FutureChangeTaskFactsV1, type TracedTaskFactsV1,
+} from '../state/plan-machine.js';
+import { projectTaskPhase, type TaskPhaseFacts } from '../state/task-machine.js';
 import { countEndedGoalRuns } from '../state/task-failure.js';
 import {
   isFinalizedNonPass, roundChainHead, roundTaskSignal, type RoundChainHeadV1, type RoundTaskSignalV1,
@@ -1536,6 +1538,68 @@ export async function readFutureChangeTaskFacts(
   }
   if (watermark === null) return incomplete('the ledger has no readable watermark for future-change facts');
   return ready();
+}
+
+/**
+ * One Task's facts for a C7 disposition-only change (TASK-19) or a guard 9
+ * carrier check (lead decision LA-3), §3.3: the directed `readCanonicalTaskFacts`
+ * on the source Plan (the claim's reader) gives every Run of the Task (every
+ * Plan), the selected Run, the Lease and the Reduction; `readPointerIntents`
+ * the ControlIntent the selected Run's pointer names (null without one).
+ * `phase` is the Task's projection input (the Task machine's state for
+ * TASK-18/19). `guards` are what the adoption commit pins: every Run@rev, the
+ * Lease (@k or ∅), the Reduction (@rev or ∅) and the pointer ControlIntent@rev.
+ * TaskRequeues, rounds and slots are not pinned (§3.3 point 2: a requeue or a
+ * successor round racing the adoption commits either way).
+ */
+export type DispositionChangeTaskFacts = {
+  facts: TracedTaskFactsV1;
+  phase: TaskPhaseFacts;
+  guards: readonly RecordGuard[];
+};
+
+export async function readDispositionChangeTaskFacts(
+  records: GoalRecordTransactionPort & RecordLookupPort,
+  goalRef: GoalRef,
+  plan: PlanRevisionSnapshot,
+  taskIds: readonly string[],
+): Promise<{ status: 'ready'; tasks: DispositionChangeTaskFacts[] } | Rejected> {
+  const tasks: DispositionChangeTaskFacts[] = [];
+  for (const taskId of [...new Set(taskIds)]) {
+    const task = plan.tasks.find((candidate) => candidate.taskId === taskId);
+    if (task === undefined) return { status: 'rejected', code: 'invalid', reason: `task ${taskId} is not a task of the source plan` };
+    const read = await readCanonicalTaskFacts(records, goalRef, plan, taskId);
+    if (read.status !== 'ready') return read;
+    const facts = read.value;
+    const state = facts.byTaskId.get(taskId);
+    if (state === undefined) return unavailable(`the directed task state of ${taskId} was not read`);
+    const runs = facts.runsByTaskId.get(taskId) ?? [];
+    const execution = state.execution;
+    const selectedRun = execution === null ? null
+      : runs.find((run) => canonicalJson(run.ref as unknown as JsonValue) === canonicalJson(execution as unknown as JsonValue)) ?? null;
+    if (execution !== null && selectedRun === null) return unavailable(`the selected Run of task ${taskId} was not read`);
+    let pointerIntent: ControlIntentSnapshotV1 | null = null;
+    if (selectedRun !== null) {
+      const pointers = await readPointerIntents(records, [selectedRun]);
+      if (pointers.status !== 'ready') return pointers;
+      pointerIntent = pointers.intents.get(selectedRun.ref.runId) ?? null;
+    }
+    const lease = facts.leasesByTaskId.get(taskId) ?? null;
+    const reduction = facts.reductionsByTaskId.get(taskId) ?? null;
+    const applicableReduction = state.reductionRevision === null ? null : reduction;
+    const guards: RecordGuard[] = [...facts.guards];
+    if (pointerIntent !== null) {
+      guards.push({ refKey: canonicalJson(pointerIntent.ref as unknown as JsonValue), expectedRevision: pointerIntent.revision });
+    }
+    tasks.push({
+      facts: { taskId, runs, lease, reduction, selectedRun, pointerIntent },
+      phase: { taskKind: task.taskKind, applicableReduction, selectedRun,
+        originUnresolvable: selectedRun === null && applicableReduction === null && state.effectivePhase === 'blocked',
+        round: facts.roundsByTaskId.get(taskId) ?? { kind: 'none' }, coveringRequeue: state.requeueRef },
+      guards,
+    });
+  }
+  return { status: 'ready', tasks };
 }
 
 /** The origin Plans a basis comparison actually needs. */

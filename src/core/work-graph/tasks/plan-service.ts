@@ -29,7 +29,7 @@
  */
 import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js';
 import { commandIdentityKey } from '../../../contracts/command-event.js';
-import type { CoreCallContext } from '../../../contracts/core/call-context.js';
+import type { CoreCallContext, CorePrincipal } from '../../../contracts/core/call-context.js';
 import type { SessionRef, VersionPin } from '../../../contracts/core/identity.js';
 import type { CoreError, CoreRejection, ReadResult, ReadStamp, WriteResult } from '../../../contracts/core/results.js';
 import type { PreparedQueryManifestV1 } from '../../../contracts/core/prepared-execution.js';
@@ -41,7 +41,7 @@ import type { CompletionPolicyContentV1 } from '../../../contracts/governance.js
 import type { Phase, PlanRevisionDraft, PlanRevisionRef, PlanRevisionSnapshot,
   RuntimeTask, TaskInputRequirementV2, TaskRelationV2 } from '../../../contracts/plan.js';
 import {
-  DEFAULT_TASK_AUTOMATION_POLICY, reworkActorClassOf, type TaskAutomationPolicyV1,
+  DEFAULT_TASK_AUTOMATION_POLICY, reworkActorClassOf, type ReworkActorClass, type TaskAutomationPolicyV1,
 } from '../../../contracts/task-requeue.js';
 import type { ControlIntentSnapshotV1 } from '../../../contracts/control-intent.js';
 import type { GoalDesiredState } from '../../../contracts/ledger.js';
@@ -121,6 +121,7 @@ import {
   readGoal,
   readGoalPlanWindow,
   readGoalPhase,
+  readDispositionChangeTaskFacts,
   readFutureChangeTaskFacts,
   readGoalScope,
   laterCursor,
@@ -134,10 +135,12 @@ import {
   tryPolicyContent,
   type CanonicalTaskFacts,
   type CanonicalTaskState,
+  type DispositionChangeTaskFacts,
 } from './plan-readers.js';
 import {
   deriveFuturePlanDelta,
   planPhaseGuardReasons,
+  type FuturePlanDelta,
   validateFutureObligationCoverage,
   validatePlanAssignments,
   validatePlanDraft,
@@ -158,11 +161,12 @@ import { notEnteredEntryPhase } from '../state/control-intent-machine.js';
 import { runControlNodeOf } from '../state/run-machine.js';
 import { controlIntentRefFor } from './control-service.js';
 import {
-  derivePlanRevisionStatus, planProposalProblem, planRevisionTargetOf, transitionPlanProposal,
-  type FutureAdoptionFacts, type FuturePlanDeltaVerdict, type InitialAdoptionFacts, type PlanCommitGuard,
+  derivePlanRevisionStatus, parallelCarrierFactTaskIds, planProposalProblem, planRevisionTargetOf, transitionPlanProposal,
+  type FutureAdoptionFacts, type FuturePlanDeltaVerdict, type InitialAdoptionFacts, type PlanCarrierViewV1, type PlanCommitGuard,
   type PlanProposalEvent, type PlanProposalGuardContext, type PlanProposalReadFacts, type PlanProposalTransition,
-  type PlanSourceFacts,
+  type PlannedDispositionChangeV1, type PlanSourceFacts, type TracedTaskFactsV1,
 } from '../state/plan-machine.js';
+import { taskMachineStateOf, transitionTask, type TaskPhaseFacts } from '../state/task-machine.js';
 import type { Rejected as MachineRefusal } from '../state/transition.js';
 
 export type PlanServiceDependencies = { records: GoalRecordTransactionPort & RecordLookupPort;
@@ -794,6 +798,9 @@ function taskRow(plan: PlanRevisionSnapshot, goalId: string,
   const coveringRequeueRef = state.requeueRef;
   const requeueBudget = coveringRequeueRef === null ? null
     : (facts.requeuesByTaskId.get(taskId) ?? []).find((requeue) => sameRef(requeue.ref, coveringRequeueRef))?.budget ?? null;
+  // C7 (TD-4): the latest disposition change as the read Plan records it; no history walk.
+  const dispositionChange = plan.schemaVersion === 2
+    ? plan.dispositionRecord?.entries.find((entry) => entry.taskId === taskId) : undefined;
   return {
     ref: { projectId: plan.ref.projectId, goalId, taskId },
     definition,
@@ -808,6 +815,7 @@ function taskRow(plan: PlanRevisionSnapshot, goalId: string,
     ...(failure.failure === undefined ? {} : { failure: failure.failure }),
     ...(failure.rework === undefined ? {} : { rework: failure.rework }),
     disposition: definition.disposition,
+    ...(dispositionChange === undefined ? {} : { dispositionChange }),
     currentAttempt: state.currentAttempt,
     execution: state.execution,
     eligibilityScope: 'task_state',
@@ -1290,7 +1298,9 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
       if (read.status !== 'ready') return read;
       const { candidate, scope, adoptionScope } = read;
       if (candidate.basedOn !== null) {
+        // The Host principal as `boundWriteActor` bound it (its actor is the principal's own).
         return applyFutureRevision({ records, read, adoption, receipt: receiptExpected,
+          principal: { kind: 'host', actor: bound.actor as Extract<CorePrincipal, { kind: 'host' }>['actor'] },
           extraGuards: [], preCommitSignal: null, eventId: deps.eventId, now: deps.now });
       }
 
@@ -2067,6 +2077,25 @@ type PlanCommitSources = {
   originSources?: readonly RecordGuard[];
   governance?: readonly RecordGuard[];
   pinnedPolicy?: readonly RecordGuard[];
+  /** C7: what the Task machine reads for each `change_task_disposition`, and the guards of the facts read. */
+  disposition?: AdoptionDispositionFacts;
+};
+
+/**
+ * C7 (TASK-18/19, guard 9): the facts a future adoption read for its
+ * disposition changes and its carriers. `tasks` holds, per Task whose
+ * disposition changes, its source definition, its projection input and its
+ * facts (an untraced changed Task: the empty facts the untraced rule proved);
+ * `taskGuards` / `carrierGuards` the record guards of each Task read by
+ * `readDispositionChangeTaskFacts` for TASK-19 and guard 9.
+ */
+type AdoptionDispositionFacts = {
+  goalDesiredState: GoalDesiredState;
+  affectedTaskIds: readonly string[] | undefined;
+  adopterClass: ReworkActorClass;
+  tasks: ReadonlyMap<string, { definition: RuntimeTask; phase: TaskPhaseFacts; facts: TracedTaskFactsV1 }>;
+  taskGuards: ReadonlyMap<string, readonly RecordGuard[]>;
+  carrierGuards: ReadonlyMap<string, readonly RecordGuard[]>;
 };
 
 /** One plan commit as the state machines named it: a proposal (PLAN-01..03) moves no Goal and writes no Plan. */
@@ -2076,8 +2105,10 @@ type PlanCommit = Omit<PlanAdoptionCommit, 'nextGoal' | 'plan'> & { nextGoal: Go
  * The one commit a plan transition names, read off its effects (§3.3 effects
  * column): `write_proposal` is the machine's `next` (§14.1); `move_goal_pointer`
  * is GOAL-02/03 of the Goal machine, whose `nextGoalPointer` writes the moved
- * Goal; `write_plan_revision` is the new Plan the compiler builds; each `guard`
- * is a record guard of what this call read, in the machine's order. The events
+ * Goal; `change_task_disposition` (C7) is TASK-18/19 of the Task machine, whose
+ * `record_disposition_change` is the compiler's `dispositionRecord` entry;
+ * `write_plan_revision` is the new Plan the compiler builds; each `guard` is a
+ * record guard of what this call read, in the machine's order. The events
  * (`append_event`) are built by the owner and the compiler.
  */
 function planCommitOf(
@@ -2089,6 +2120,7 @@ function planCommitOf(
   let nextGoal: GoalSnapshot | null = null;
   let plan: PlanRevisionWrite | null = null;
   const guards: RecordGuard[] = [];
+  const dispositionChanges: PlannedDispositionChangeV1[] = [];
   for (const effect of decided.effects) {
     switch (effect.kind) {
       case 'write_proposal':
@@ -2107,6 +2139,12 @@ function planCommitOf(
         nextGoal = moved.next.goal;
         break;
       }
+      case 'change_task_disposition': {
+        const recorded = taskDispositionChange(effect.change, sources);
+        if (typeof recorded !== 'boolean') return recorded;
+        if (recorded) dispositionChanges.push(effect.change);
+        break;
+      }
       case 'guard':
         guards.push(...recordGuardsOf(effect.guard, proposal, sources));
         break;
@@ -2116,14 +2154,34 @@ function planCommitOf(
       }
     }
   }
-  return { status: 'ready', proposal, nextGoal, plan, guards };
+  return { status: 'ready', proposal, nextGoal, plan, dispositionChanges, guards };
+}
+
+/**
+ * C7: TASK-18 (untraced) / TASK-19 (traced) of the Task machine for one
+ * `change_task_disposition` effect, over the facts the adoption read: `true`
+ * when the Task machine records the change (`record_disposition_change`), its
+ * refusal otherwise (the plan machine judged the same guards first).
+ */
+function taskDispositionChange(change: PlannedDispositionChangeV1, sources: PlanCommitSources): CoreRejection | boolean {
+  const read = sources.disposition;
+  if (read === undefined) throw new Error('the plan commit read no disposition-change facts');
+  const task = read.tasks.get(change.taskId);
+  if (task === undefined) throw new Error(`the disposition-change facts of task ${change.taskId} were not read`);
+  const changed = transitionTask(taskMachineStateOf(task.definition, task.phase),
+    { kind: 'disposition_changed', to: change.to, replacedByTaskId: change.replacedByTaskId, actorClass: read.adopterClass },
+    { taskId: change.taskId, claim: null, completion: null, disposition: { facts: task.facts,
+      goalDesiredState: read.goalDesiredState, affectedTaskIds: read.affectedTaskIds,
+      replacedByTaskId: task.definition.replacedByTaskId ?? null } });
+  if (!changed.ok) return refusalOf(changed);
+  return changed.effects.some((effect) => effect.kind === 'record_disposition_change');
 }
 
 /** PLAN-04/05 name GOAL-02/03's pointer move and PLAN-08's new Plan; an adoption without them is a broken machine. */
 function adoptionCommitOf(commit: PlanCommit): PlanAdoptionCommit {
-  const { proposal, nextGoal, plan, guards } = commit;
+  const { proposal, nextGoal, plan, dispositionChanges, guards } = commit;
   if (nextGoal === null || plan === null) throw new Error('a plan adoption moves the Goal pointer and writes its PlanRevision');
-  return { proposal, nextGoal, plan, guards };
+  return { proposal, nextGoal, plan, dispositionChanges, guards };
 }
 
 /** One `guard` effect as the record guards of the record it names, at the version read in this call. */
@@ -2146,6 +2204,13 @@ function recordGuardsOf(guard: PlanCommitGuard, proposal: PlanCommit['proposal']
     case 'plan_revision': return [{ refKey: planRevisionRefKey(guard.ref), expectedRevision: guard.expectedRevision }];
     case 'task_record_absent':
       return [{ refKey: taskRecordRefKey(guard.record, scope.goal.ref, guard.taskId), expectedRevision: null }];
+    case 'task_facts':
+    case 'carrier_facts': {
+      const read = sources.disposition;
+      const list = (guard.target === 'task_facts' ? read?.taskGuards : read?.carrierGuards)?.get(guard.taskId);
+      if (list === undefined) throw new Error(`the plan commit read no ${guard.target} guards of task ${guard.taskId}`);
+      return list;
+    }
     default: {
       const unknown: never = guard;
       throw new Error(`unknown plan commit guard ${JSON.stringify(unknown)}`);
@@ -2233,6 +2298,8 @@ async function applyFutureRevision(input: {
   read: AdoptionRead;
   adoption: AcceptedPlanEvent;
   receipt: ApplyReceipt;
+  /** The caller's principal (Host or work Run), for the adopter's rework class (C7). */
+  principal: CorePrincipal;
   /** The Agent's fresh admission guards (`agent_admission`); none for the Host. */
   extraGuards: readonly RecordGuard[];
   preCommitSignal: AbortSignal | null;
@@ -2271,7 +2338,9 @@ async function applyFutureRevision(input: {
   // gate so an omitted source intent is `invalid`, not masked by `incomplete`.
   const deltaResult = deriveFuturePlanDelta(source, proposal.draft);
   const delta: FuturePlanDeltaVerdict = deltaResult.status === 'supported'
-    ? { status: 'supported', changedTaskIds: deltaResult.delta.changedTaskIds, addedTaskIds: deltaResult.delta.addedTaskIds }
+    ? { status: 'supported', changedTaskIds: deltaResult.delta.changedTaskIds, addedTaskIds: deltaResult.delta.addedTaskIds,
+      dispositionOnlyTaskIds: deltaResult.delta.dispositionOnlyTaskIds, dispositionChanges: deltaResult.delta.dispositionChanges,
+      carrierRemovals: deltaResult.delta.carrierRemovals }
     : deltaResult;
   refused = ask({ delta });
   if (refused !== null) return refusalOf(refused);
@@ -2317,14 +2386,41 @@ async function applyFutureRevision(input: {
   const touchedTaskIds = [...supported!.changedTaskIds, ...supported!.addedTaskIds];
   const futureFacts = await readFutureChangeTaskFacts(records, proposal.goalRef, source, touchedTaskIds);
   if (futureFacts.status !== 'ready') return futureFacts;
-  // PLAN-05 (the untraced rule judges the facts just read) + GOAL-03: the
+  // The untraced rule judges the changed and added Tasks before any disposition-only read.
+  refused = ask({ touchedTaskFacts: futureFacts.value.tasks });
+  if (refused !== null) return refusalOf(refused);
+  // C7 (TASK-19): the disposition-only Tasks' facts, judged with the adopter's class (§1 `reworkActorClassOf`:
+  // an Agent apply is `agent`, a Host automation actor `system`, any other Host actor `human`; an actor
+  // that is not the principal's own has none).
+  const adopterClass = reworkActorClassOf(input.principal, actor);
+  if (adopterClass === null) return rejected('forbidden', 'the plan adopter has no rework actor class');
+  const dispositionRead = await readDispositionChangeTaskFacts(records, proposal.goalRef, source, supported!.dispositionOnlyTaskIds);
+  if (dispositionRead.status !== 'ready') return dispositionRead;
+  const dispositionTaskFacts = dispositionRead.tasks.map((entry) => entry.facts);
+  refused = ask({ adopterClass, dispositionTaskFacts });
+  if (refused !== null) return refusalOf(refused);
+  // Guard 9 (LA-3): an `agent`/`system` adopter reads the existing active work carriers of each source
+  // obligation that gains a new one; an operator adoption reads none.
+  const sourceCarriers: PlanCarrierViewV1 = { tasks: source.tasks, obligations: source.obligations };
+  let carrierRead: DispositionChangeTaskFacts[] = [];
+  if (adopterClass !== 'human') {
+    const carrierIds = parallelCarrierFactTaskIds({ source: sourceCarriers,
+      target: { tasks: proposal.draft.tasks, obligations: proposal.draft.obligations } });
+    const read = await readDispositionChangeTaskFacts(records, proposal.goalRef, source, carrierIds);
+    if (read.status !== 'ready') return read;
+    carrierRead = read.tasks;
+  }
+  const carrierFacts = carrierRead.map((entry) => entry.facts);
+  // PLAN-05 (the untraced rule, TASK-19 and guard 9 judge the facts just read) + GOAL-03: the
   // accepted candidate, the moved Goal and the guards of the one commit.
   const decided = transitionPlanProposal(proposal, adoption, { ...adoptionScope, source: sourceFacts, initial: null,
     future: { targetExists, delta, coverage, pinnedPolicy, draftIssues, assignmentReasons, phaseReasons,
-      touchedTaskFacts: futureFacts.value.tasks } });
+      touchedTaskFacts: futureFacts.value.tasks, adopterClass, dispositionTaskFacts, sourceCarriers, carrierFacts } });
   if (!decided.ok) return refusalOf(decided);
   const commit = planCommitOf(decided, { scope: goalScope, actor,
-    agentAdmission: input.extraGuards, pinnedPolicy: pinnedPolicyGuards });
+    agentAdmission: input.extraGuards, pinnedPolicy: pinnedPolicyGuards,
+    disposition: adoptionDispositionFacts({ source, delta: supported!, read: dispositionRead.tasks, carriers: carrierRead,
+      goalDesiredState: goalScope.goal.desiredState, affectedTaskIds: proposal.reason.affectedTaskIds, adopterClass }) });
   if (commit.status !== 'ready') return commit;
   // mergeGuards keeps first occurrences in order, so the target Plan ∅ guard stays last.
   const merged = mergeGuards(commit.guards);
@@ -2354,6 +2450,40 @@ async function applyFutureRevision(input: {
   const restored = await restoreAcceptedPlan(records, committed, receipt);
   if (restored.status !== 'restored') return rejected(restored.code, restored.reason);
   return { status: 'committed', value: restored.value, replayed: true, cursor: committed.cursor };
+}
+
+/**
+ * C7: what `planCommitOf` gives the Task machine for each disposition change
+ * (TASK-18/19), and the record guards of the Tasks read for TASK-19 and guard 9.
+ * A changed Task whose disposition changes passed the untraced rule: it has no
+ * Run, Lease or Reduction, so its facts are empty and it projects pending (P16).
+ */
+function adoptionDispositionFacts(input: {
+  source: PlanRevisionSnapshot;
+  delta: FuturePlanDelta;
+  read: readonly DispositionChangeTaskFacts[];
+  carriers: readonly DispositionChangeTaskFacts[];
+  goalDesiredState: GoalDesiredState;
+  affectedTaskIds: readonly string[] | undefined;
+  adopterClass: ReworkActorClass;
+}): AdoptionDispositionFacts {
+  const sourceTaskById = new Map(input.source.tasks.map((task) => [task.taskId, task]));
+  const readById = new Map(input.read.map((entry) => [entry.facts.taskId, entry]));
+  const tasks = new Map<string, { definition: RuntimeTask; phase: TaskPhaseFacts; facts: TracedTaskFactsV1 }>();
+  for (const change of input.delta.dispositionChanges) {
+    const definition = sourceTaskById.get(change.taskId);
+    if (definition === undefined) throw new Error(`a disposition change names task ${change.taskId}, which is not in the source plan`);
+    const entry = readById.get(change.taskId);
+    tasks.set(change.taskId, entry !== undefined ? { definition, phase: entry.phase, facts: entry.facts } : {
+      definition,
+      phase: { taskKind: definition.taskKind, applicableReduction: null, selectedRun: null, originUnresolvable: false,
+        round: { kind: 'none' }, coveringRequeue: null },
+      facts: { taskId: change.taskId, runs: [], lease: null, reduction: null, selectedRun: null, pointerIntent: null },
+    });
+  }
+  return { goalDesiredState: input.goalDesiredState, affectedTaskIds: input.affectedTaskIds, adopterClass: input.adopterClass,
+    tasks, taskGuards: new Map(input.read.map((entry) => [entry.facts.taskId, entry.guards])),
+    carrierGuards: new Map(input.carriers.map((entry) => [entry.facts.taskId, entry.guards])) };
 }
 
 /** Canonicalize the caller's full expected pins for the Agent fingerprint. */
@@ -2598,7 +2728,7 @@ async function applyPlanChangeAsAgent(
     // and decisionRefs, before the source read.
     const read = await readAdoption(records, adoption, 'ok', input.expected);
     if (read.status !== 'ready') return read;
-    return applyFutureRevision({ records, read, adoption, receipt: receiptExpected,
+    return applyFutureRevision({ records, read, adoption, receipt: receiptExpected, principal: ctx.principal,
       extraGuards: admission.guards, preCommitSignal: ctx.signal, eventId: deps.eventId, now: deps.now });
   };
 

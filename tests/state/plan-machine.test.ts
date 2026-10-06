@@ -39,6 +39,7 @@ import {
   type CandidatePlanProposal,
   type FutureAdoptionFacts,
   type FutureChangeTaskFactsV1,
+  type FuturePlanDeltaVerdict,
   type InitialAdoptionFacts,
   type LegacyPlanProposal,
   type PlanCarrierViewV1,
@@ -124,11 +125,19 @@ const INITIAL_FACTS: InitialAdoptionFacts = {
   origin: 'ok', governance: 'ok', draftIssues: [], assignmentReasons: [], phaseReasons: [],
 };
 const DOCS_FACTS: FutureChangeTaskFactsV1 = { taskId: 't-docs', runs: [], lease: null, reduction: null };
+/** A supported delta (C7, 5.10: without disposition-only Tasks unless the test names them). */
+const delta = (changedTaskIds: string[], addedTaskIds: string[], c7: Partial<Pick<Extract<FuturePlanDeltaVerdict,
+  { status: 'supported' }>, 'dispositionOnlyTaskIds' | 'dispositionChanges' | 'carrierRemovals'>> = {}): FuturePlanDeltaVerdict =>
+  ({ status: 'supported', changedTaskIds, addedTaskIds, dispositionOnlyTaskIds: [], dispositionChanges: [], carrierRemovals: [], ...c7 });
 const FUTURE_FACTS: FutureAdoptionFacts = {
-  targetExists: false, delta: { status: 'supported', changedTaskIds: [], addedTaskIds: ['t-docs'] },
+  targetExists: false, delta: delta([], ['t-docs']),
   coverage: { status: 'supported' }, pinnedPolicy: 'not_needed', draftIssues: [], assignmentReasons: [], phaseReasons: [],
   touchedTaskFacts: [DOCS_FACTS],
+  // C7 (5.10): an operator adoption without disposition-only Tasks reads no carrier.
+  adopterClass: 'human', dispositionTaskFacts: [], sourceCarriers: { tasks: [], obligations: [] }, carrierFacts: [],
 };
+/** The same facts adopted by the Agent writer (its rework class is `agent`, §1). */
+const AGENT_FUTURE_FACTS: FutureAdoptionFacts = { ...FUTURE_FACTS, adopterClass: 'agent' };
 
 function context(overrides: Partial<PlanProposalGuardContext> = {}): PlanProposalGuardContext {
   return { goal: { activePlanRevision: P1, desiredState: 'active' }, goalInWorkspace: true, pinsAgree: true,
@@ -179,7 +188,8 @@ function futureAdoptionEffects(input: { agent: boolean; pinnedPolicy?: boolean; 
   const added = input.added ?? ['t-docs'];
   return [
     { kind: 'write_proposal' },
-    { kind: 'write_plan_revision', ref: P2, build: { from: 'future_delta', source: P1, changedTaskIds: changed, addedTaskIds: added } },
+    { kind: 'write_plan_revision', ref: P2, build: { from: 'future_delta', source: P1, changedTaskIds: changed, addedTaskIds: added,
+      dispositionOnlyTaskIds: [] } },
     { kind: 'move_goal_pointer', from: P1, to: P2 },
     { kind: 'append_event', eventType: 'PlanRevisionAccepted' },
     ...(input.agent ? [g({ target: 'agent_admission' })] : []),
@@ -345,7 +355,8 @@ type EventName = keyof typeof EVENTS;
 function worldFor(state: StateName, event: EventName): PlanProposalGuardContext {
   const agent = event === 'recordAgent' || event === 'acceptAgent';
   const initialAdoption = state === 'candidateInitial' && (event === 'acceptHost' || event === 'acceptAgent');
-  return context({ agentAdmission: agent ? 'ok' : null, ...(initialAdoption ? pointer(null) : {}) });
+  return context({ agentAdmission: agent ? 'ok' : null, ...(event === 'acceptAgent' ? { future: AGENT_FUTURE_FACTS } : {}),
+    ...(initialAdoption ? pointer(null) : {}) });
 }
 
 const EXISTS = no('illegal', 'revision_conflict', 'proposal proposal-1 already exists; only the original receipt replays');
@@ -714,11 +725,11 @@ describe('PLAN-05 future-only proposal_accepted (applyFutureRevision, plan-servi
       facts({ touchedTaskFacts: [{ ...DOCS_FACTS, runs: [runOf('run-docs', 't-docs')] }] }), CANDIDATE_FUTURE,
       no('guard_failed', 'revision_conflict', 'task t-docs already has a Run and is no longer a future task')],
     ['a changed Task holds a TaskLease (plan-readers.ts:1286)', ACCEPT_HOST,
-      facts({ delta: { status: 'supported', changedTaskIds: ['t-build'], addedTaskIds: [] },
+      facts({ delta: delta(['t-build'], []),
         touchedTaskFacts: [{ taskId: 't-build', runs: [], lease: leaseOf('t-build', true), reduction: null }] }), CANDIDATE_FUTURE,
       no('guard_failed', 'revision_conflict', 'task t-build already holds a TaskLease and is no longer a future task')],
     ['a changed Task has a Reduction (plan-readers.ts:1294)', ACCEPT_HOST,
-      facts({ delta: { status: 'supported', changedTaskIds: ['t-build'], addedTaskIds: [] },
+      facts({ delta: delta(['t-build'], []),
         touchedTaskFacts: [{ taskId: 't-build', runs: [], lease: null, reduction: reductionOf('t-build') }] }), CANDIDATE_FUTURE,
       no('guard_failed', 'revision_conflict', 'task t-build already has a formal reduction and is no longer a future task')],
     ['the facts of a touched Task were not read', ACCEPT_HOST, facts({ touchedTaskFacts: [] }), CANDIDATE_FUTURE,
@@ -738,7 +749,7 @@ describe('PLAN-05 future-only proposal_accepted (applyFutureRevision, plan-servi
   });
 
   it('guards the Lease ∅ / Reduction ∅ of every changed and added Task (:1773-1782)', () => {
-    const touched = facts({ delta: { status: 'supported', changedTaskIds: ['t-build'], addedTaskIds: ['t-docs'] },
+    const touched = facts({ delta: delta(['t-build'], ['t-docs']),
       touchedTaskFacts: [DOCS_FACTS, { taskId: 't-build', runs: [], lease: null, reduction: null }] });
     expectResult(adopt(ACCEPT_HOST, touched),
       ok(acceptProposalRecord(CANDIDATE_FUTURE), futureAdoptionEffects({ agent: false, changed: ['t-build'], added: ['t-docs'] })));
@@ -768,7 +779,7 @@ describe('PLAN-05 future-only proposal_accepted (applyFutureRevision, plan-servi
   });
 
   it('the untraced rule reports every Run before any Lease or Reduction (plan-readers.ts:1268-1297)', () => {
-    const touched = facts({ delta: { status: 'supported', changedTaskIds: ['t-build'], addedTaskIds: ['t-docs'] },
+    const touched = facts({ delta: delta(['t-build'], ['t-docs']),
       touchedTaskFacts: [{ taskId: 't-build', runs: [], lease: leaseOf('t-build', false), reduction: null },
         { ...DOCS_FACTS, runs: [runOf('run-docs', 't-docs')] }] });
     expectResult(adopt(ACCEPT_HOST, touched), no('guard_failed', 'revision_conflict',
@@ -777,7 +788,8 @@ describe('PLAN-05 future-only proposal_accepted (applyFutureRevision, plan-servi
 });
 
 describe('PLAN-05 Agent proposal_accepted (applyPlanChangeAsAgent, plan-service.ts:2019-2106)', () => {
-  const agentCtx = (overrides: Partial<PlanProposalGuardContext> = {}) => context({ agentAdmission: 'ok', ...overrides });
+  const agentCtx = (overrides: Partial<PlanProposalGuardContext> = {}) =>
+    context({ agentAdmission: 'ok', future: AGENT_FUTURE_FACTS, ...overrides });
   const otherWriter = (patch: Partial<AgentPlanWriterIdentity>): AcceptedEvent => ({ ...ACCEPT_AGENT, agentWriter: { ...WRITER, ...patch } });
 
   it.each<[string, PlanProposalMachineState, AcceptedEvent, Partial<PlanProposalGuardContext>, Expected]>([
@@ -961,18 +973,23 @@ describe('today\'s results pinned for the step 5 flips', () => {
     }
   });
 
-  it('step 5.10 (C7): affectedTaskIds shape and a draft dispositionRecord are left to the PlanProposal record schema at commit', () => {
+  it('step 5.10 (C7, §3.4, flipped): the machine refuses an affectedTaskIds shape and a draft dispositionRecord (zero writes)', () => {
     const reason = { ...REASON, affectedTaskIds: ['t-missing', 't-missing'] };
-    expect(transitionPlanProposal(null, { ...RECORD_HOST, reason }, context()).ok).toBe(true);
+    expectResult(transitionPlanProposal(null, { ...RECORD_HOST, reason }, context()),
+      no('guard_failed', 'invalid', 'reason.affectedTaskIds names t-missing, which is not a task of the draft'));
     const draft = { ...INITIAL_DRAFT, dispositionRecord: { schemaVersion: 1, entries: [] } } as unknown as PlanRevisionDraft;
-    expect(transitionPlanProposal(null, { ...RECORD_HOST, draft }, context()).ok).toBe(true);
+    expectResult(transitionPlanProposal(null, { ...RECORD_HOST, draft }, context()),
+      no('guard_failed', 'invalid', 'the draft carries dispositionRecord, which only the adoption compiler writes'));
   });
 
-  it('step 5.10 (C7): a traced Task whose disposition alone changes is still a changed Task (untraced rule)', () => {
-    const tracedChange = { future: { ...FUTURE_FACTS, delta: { status: 'supported' as const, changedTaskIds: ['t-build'], addedTaskIds: [] },
-      touchedTaskFacts: [{ taskId: 't-build', runs: [runOf('run-build', 't-build')], lease: leaseOf('t-build', true), reduction: null }] } };
+  it('step 5.10 (C7, PLAN-05, flipped): a traced Task whose disposition alone changes goes through TASK-19, not the untraced rule', () => {
+    const tracedChange = { future: { ...FUTURE_FACTS,
+      delta: delta([], [], { dispositionOnlyTaskIds: ['t-build'],
+        dispositionChanges: [{ taskId: 't-build', from: 'active', to: 'deferred', replacedByTaskId: null }] }),
+      touchedTaskFacts: [], dispositionTaskFacts: [tracedFacts('t-build')] } };
+    // TASK-19 guard 6: the candidate's reason does not list the traced Task.
     expectResult(transitionPlanProposal(CANDIDATE_FUTURE, ACCEPT_HOST, context(tracedChange)),
-      no('guard_failed', 'revision_conflict', 'task t-build already has a Run and is no longer a future task'));
+      no('guard_failed', 'invalid', 'reason.affectedTaskIds must list traced task t-build'));
   });
 });
 
@@ -1225,6 +1242,163 @@ describe('parallelCarrierFenceProblem (W16 guard 9, lead decision LA-3)', () => 
   });
 });
 
+// --------------------------------------------------------------------------
+// C7 / LA-3 in the machine (A.2 step 5.10): PLAN-01/02 shape, PLAN-05 split
+// --------------------------------------------------------------------------
+
+describe('C7 PLAN-01/02 (§3.4): the reason.affectedTaskIds shape and a draft dispositionRecord', () => {
+  const recordWith = (affectedTaskIds: unknown, writer: 'host' | 'agent' = 'host') => {
+    const base = writer === 'host' ? RECORD_HOST : RECORD_AGENT;
+    return transitionPlanProposal(null, { ...base, reason: { ...REASON, affectedTaskIds } as PlanChangeReason },
+      context({ agentAdmission: writer === 'agent' ? 'ok' : null }));
+  };
+
+  it.each<[string, unknown, string]>([
+    ['not an array', 't-build', 'reason.affectedTaskIds must be an array when present'],
+    ['an empty id', [''], 'reason.affectedTaskIds must hold non-empty task ids'],
+    ['a repeated id', ['t-build', 't-build'], 'reason.affectedTaskIds repeats task t-build'],
+    ['a task outside the draft', ['t-other'], 'reason.affectedTaskIds names t-other, which is not a task of the draft'],
+    ['more than 200 ids', Array.from({ length: 201 }, (_, index) => `t-${index}`), 'reason.affectedTaskIds must hold at most 200 task ids'],
+  ])('%s → guard_failed/invalid for the Host and the Agent writer', (_name, affectedTaskIds, detail) => {
+    expectResult(recordWith(affectedTaskIds), no('guard_failed', 'invalid', detail));
+    expectResult(recordWith(affectedTaskIds, 'agent'), no('guard_failed', 'invalid', detail));
+  });
+
+  it('absent or a listed draft task is recorded as before', () => {
+    expect(recordWith(undefined).ok).toBe(true);
+    expect(recordWith(['t-build']).ok).toBe(true);
+    expect(recordWith([], 'agent').ok).toBe(true);
+  });
+
+  it('the shape is judged after the scope, so the scope refusal answers first', () => {
+    expectResult(transitionPlanProposal(null, { ...RECORD_HOST, reason: { ...REASON, affectedTaskIds: ['t-other'] } },
+      context({ goalInWorkspace: false })), no('guard_failed', 'forbidden'));
+  });
+});
+
+describe('C7 PLAN-05 (5.10): disposition-only Tasks (TASK-19) and the parallel carrier fence (guard 9)', () => {
+  const DEFER = { taskId: 't-build', from: 'active' as const, to: 'deferred' as const, replacedByTaskId: null };
+  const listed = candidate({ basedOn: P1, draft: FUTURE_DRAFT, submittedBy: PROVENANCE,
+    reason: { ...REASON, affectedTaskIds: ['t-build'] } });
+  const adopt = (future: Partial<FutureAdoptionFacts>, state: PlanProposalMachineState = listed, event: AcceptedEvent = ACCEPT_HOST,
+    overrides: Partial<PlanProposalGuardContext> = {}) =>
+    transitionPlanProposal(state, event, context({ agentAdmission: event.adopter === 'agent' ? 'ok' : null,
+      future: { ...FUTURE_FACTS, delta: delta([], []), touchedTaskFacts: [], ...future }, ...overrides }));
+  const deferBuild = (facts: TracedTaskFactsV1, adopterClass: FutureAdoptionFacts['adopterClass'] = 'human') =>
+    ({ delta: delta([], [], { dispositionOnlyTaskIds: ['t-build'], dispositionChanges: [DEFER] }),
+      dispositionTaskFacts: [facts], adopterClass });
+  const UNTRACED: TracedTaskFactsV1 = { taskId: 't-build', runs: [], selectedRun: null, lease: null, reduction: null, pointerIntent: null };
+
+  function effects(input: { traced: boolean; agent?: boolean; carriers?: string[]; target?: PlanRevisionRef }): PlanProposalEffect[] {
+    const target = input.target ?? P2;
+    return [
+      { kind: 'write_proposal' },
+      { kind: 'write_plan_revision', ref: target, build: { from: 'future_delta', source: P1, changedTaskIds: [], addedTaskIds: [],
+        dispositionOnlyTaskIds: ['t-build'] } },
+      { kind: 'move_goal_pointer', from: P1, to: target },
+      { kind: 'change_task_disposition', change: { ...DEFER, traced: input.traced } },
+      { kind: 'append_event', eventType: 'PlanRevisionAccepted' },
+      ...(input.agent === true ? [g({ target: 'agent_admission' })] : []),
+      ...SCOPE_GUARDS, g({ target: 'proposal', expectedRevision: 1 }), g({ target: 'plan_revision', ref: P1, expectedRevision: 1 }),
+      ...(input.traced ? [g({ target: 'task_facts', taskId: 't-build' })]
+        : [g({ target: 'task_record_absent', record: 'TaskLease', taskId: 't-build' }),
+          g({ target: 'task_record_absent', record: 'TaskReduction', taskId: 't-build' })]),
+      ...(input.carriers ?? []).map((taskId) => g({ target: 'carrier_facts', taskId })),
+      g({ target: 'plan_revision', ref: target, expectedRevision: null }),
+    ];
+  }
+
+  it('a traced, ended, released and listed Task: TASK-19 passes; the change, its trace and the Task facts join the commit', () => {
+    expectResult(adopt(deferBuild(tracedFacts('t-build'))), ok(acceptProposalRecord(listed), effects({ traced: true })));
+  });
+
+  it('an untraced disposition-only Task keeps the Lease ∅ / Reduction ∅ guards and needs no affectedTaskIds', () => {
+    expectResult(adopt(deferBuild(UNTRACED), CANDIDATE_FUTURE),
+      ok(acceptProposalRecord(CANDIDATE_FUTURE), effects({ traced: false })));
+  });
+
+  it.each<[string, TracedTaskFactsV1, Expected]>([
+    ['a running Run (guard 1)', tracedFacts('t-build', { runs: [runOf('r9', 't-build', { status: 'running', outcome: null, endedAt: null })] }),
+      no('guard_failed', 'busy', 'task t-build still has an unfinished execution: run r9 is running')],
+    ['a lease not released (guard 4)', tracedFacts('t-build', { lease: leaseOf('t-build', false) }),
+      no('guard_failed', 'busy', 'task t-build still holds its TaskLease')],
+    ['Runs without a lease record (guard 4, legacy)', tracedFacts('t-build', { lease: null }), no('guard_failed', 'unavailable')],
+    ['a satisfied Task (guard 5: final, §3.4 illegal)', tracedFacts('t-build', { reduction: reductionOf('t-build') }),
+      no('illegal', 'invalid', 'task t-build is satisfied; the disposition of a satisfied task is final')],
+  ])('TASK-19 refuses %s, zero writes', (_name, facts, expected) => {
+    expectResult(adopt(deferBuild(facts)), expected);
+  });
+
+  it('TASK-19 guard 7: a human-stopped Task changes disposition only by an operator', () => {
+    expectResult(adopt(deferBuild(humanCancelledFacts('t-build'), 'system')), no('guard_failed', 'forbidden',
+      'only an operator may change the disposition of task t-build: a human paused or cancelled it'));
+    expectResult(adopt(deferBuild(humanCancelledFacts('t-build'), 'agent'), listed, ACCEPT_AGENT), no('guard_failed', 'forbidden'));
+    expect(adopt(deferBuild(humanCancelledFacts('t-build'))).ok).toBe(true);
+  });
+
+  it('the untraced rule judges the changed and added Tasks before TASK-19', () => {
+    expectResult(adopt({ ...deferBuild(tracedFacts('t-build', { lease: leaseOf('t-build', false) })),
+      delta: delta([], ['t-docs'], { dispositionOnlyTaskIds: ['t-build'], dispositionChanges: [DEFER] }),
+      touchedTaskFacts: [{ ...DOCS_FACTS, runs: [runOf('run-docs', 't-docs')] }] }),
+    no('guard_failed', 'revision_conflict', 'task t-docs already has a Run and is no longer a future task'));
+  });
+
+  it('the untraced rule tells how to keep a traced Task that left an obligation (§3.3)', () => {
+    expectResult(adopt({ delta: delta(['t-build'], [], { carrierRemovals: [{ taskId: 't-build', obligationIds: ['o-1', 'o-2'] }] }),
+      touchedTaskFacts: [{ taskId: 't-build', runs: [runOf('run-build', 't-build')], lease: leaseOf('t-build', true), reduction: null }] }),
+    no('guard_failed', 'revision_conflict', 'task t-build already has a Run and is no longer a future task; a traced task may change '
+      + 'only its disposition or replacedByTaskId: keep it in obligations[o-1].taskIds, obligations[o-2].taskIds and add the '
+      + 'replacement task as another carrier'));
+  });
+
+  it('a disposition-only Task whose facts were not read is a broken owner', () => {
+    expectResult(adopt({ ...deferBuild(UNTRACED), dispositionTaskFacts: [] }), no('illegal', 'invalid',
+      'the disposition-change facts of task t-build were not read'));
+  });
+
+  describe('guard 9 (LA-3)', () => {
+    const SOURCE_CARRIERS: PlanCarrierViewV1 = { tasks: [{ taskId: 't-build', taskKind: 'work', disposition: 'active' }],
+      obligations: [{ obligationId: 'o-1', taskIds: ['t-build'] }] };
+    const PARALLEL_DRAFT: PlanRevisionDraft = { ...FUTURE_DRAFT, tasks: [runtimeTask('t-build'), runtimeTask('t-fix')],
+      obligations: [{ obligationId: 'o-1', title: 'Deliver', requirementLevel: 'required', taskIds: ['t-build', 't-fix'],
+        verificationRequirements: [{ requirementId: 'r-1', requirementLevel: 'required', kind: 'test', description: 'Tests pass' }] }] };
+    const parallel = candidate({ basedOn: P1, draft: PARALLEL_DRAFT, submittedBy: PROVENANCE });
+    const addCarrier = (adopterClass: FutureAdoptionFacts['adopterClass'], carrierFacts: TracedTaskFactsV1[] | undefined) => ({
+      delta: delta([], ['t-fix']), touchedTaskFacts: [{ taskId: 't-fix', runs: [], lease: null, reduction: null }],
+      adopterClass, sourceCarriers: SOURCE_CARRIERS, ...(carrierFacts === undefined ? {} : { carrierFacts }) });
+
+    it('an automation (system) or Agent adoption adding a carrier to an obligation a human stopped → forbidden', () => {
+      const forbidden = no('guard_failed', 'forbidden',
+        'obligation o-1: a human stopped this work; only an operator may add the parallel carrier t-fix');
+      expectResult(adopt(addCarrier('system', [humanCancelledFacts('t-build')]), parallel), forbidden);
+      expectResult(adopt(addCarrier('agent', [humanCancelledFacts('t-build')]), parallel, ACCEPT_AGENT), forbidden);
+    });
+
+    it('an operator adoption is not limited and reads no carrier; an unfenced carrier lets automation add one', () => {
+      const operator = adopt(addCarrier('human', []), parallel);
+      expect(operator.ok).toBe(true);
+      if (operator.ok) expect(operator.effects.some((effect) => effect.kind === 'guard' && effect.guard.target === 'carrier_facts')).toBe(false);
+      const unfenced = adopt(addCarrier('system', [tracedFacts('t-build')]), parallel);
+      expect(unfenced.ok).toBe(true);
+      // The carrier read joins the commit: a concurrent human stop makes the adoption stale.
+      if (unfenced.ok) expect(unfenced.effects).toContainEqual(g({ target: 'carrier_facts', taskId: 't-build' }));
+    });
+
+    it('the carrier facts are read after TASK-19, and only for an automation or Agent adopter', () => {
+      const { carrierFacts: _unread, ...noCarriers } = { ...FUTURE_FACTS, ...addCarrier('system', undefined) };
+      void _unread;
+      const read = { ...pointer(P1), goalInWorkspace: true, pinsAgree: true, agentAdmission: null, source: SOURCE };
+      expect(planProposalProblem(parallel, ACCEPT_HOST, { ...read, future: noCarriers })).toBeNull();
+      expectResult(planProposalProblem(parallel, ACCEPT_HOST, { ...read, future: { ...noCarriers,
+        carrierFacts: [humanCancelledFacts('t-build')] } })!, no('guard_failed', 'forbidden'));
+      const { dispositionTaskFacts: _later, ...beforeTask19 } = noCarriers;
+      void _later;
+      expect(planProposalProblem(listed, ACCEPT_HOST, { ...read, future: { ...beforeTask19,
+        delta: delta([], [], { dispositionOnlyTaskIds: ['t-build'], dispositionChanges: [DEFER] }) } })).toBeNull();
+    });
+  });
+});
+
 describe('exhaustive event variants (§1.1)', () => {
   // A writer or adopter the machine does not know must reach the `never`
   // branch, never silently take the Host path.
@@ -1241,7 +1415,7 @@ describe('exhaustive event variants (§1.1)', () => {
 describe('purity', () => {
   it('never mutates the state, the event or the context', () => {
     const state = deepFreeze(structuredClone(CANDIDATE_FUTURE));
-    const ctx = deepFreeze(context({ agentAdmission: 'ok' }));
+    const ctx = deepFreeze(context({ agentAdmission: 'ok', future: AGENT_FUTURE_FACTS }));
     const event = deepFreeze(structuredClone(ACCEPT_AGENT));
     const before = JSON.stringify({ state, ctx, event });
     expect(transitionPlanProposal(state, event, ctx).ok).toBe(true);

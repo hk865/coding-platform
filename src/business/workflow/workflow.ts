@@ -334,13 +334,22 @@ function orderTasks(tasks: readonly RuntimeTask[]): RuntimeTask[] {
   return [...tasks.filter((task) => task.requirementLevel === 'required'),
     ...tasks.filter((task) => task.requirementLevel === 'optional')];
 }
+/**
+ * L-15 (§9 VD-11, C7): a cancelled or superseded Task carries no work any more
+ * (`completion-policy.ts` skips it too); a deferred one waits for a plan change.
+ */
+function carriesWork(task: RuntimeTask): boolean {
+  return task.disposition !== 'cancelled' && task.disposition !== 'superseded';
+}
 function describeGap(ordered: readonly RuntimeTask[], graph: TaskGraph): string {
   const parts: string[] = [];
   for (const task of ordered) {
-    if (task.requirementLevel !== 'required') continue;
+    if (task.requirementLevel !== 'required' || !carriesWork(task)) continue;
     const row = graph.tasks.find((candidate) => candidate.ref.taskId === task.taskId);
     if (row === undefined) { parts.push(`${task.taskId}: task state is not readable`); continue; }
     if (row.effectivePhase === 'satisfied') continue;
+    // The disposition first (C7): a deferred Task is not advanced, whatever its phase.
+    if (task.disposition !== 'active') { parts.push(`${task.taskId}: ${task.disposition}`); continue; }
     if (task.taskKind === 'work' && task.executionIntent === 'plan_only') { parts.push(`${task.taskId}: plan_only`); continue; }
     if (row.execution !== null) { parts.push(`${task.taskId}: ${row.effectivePhase} with an existing Run`); continue; }
     if (!row.eligibility.eligible) { parts.push(`${task.taskId}: ${row.eligibility.reasons.map((reason) => reason.code).join(', ')}`); continue; }
@@ -1007,6 +1016,15 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort & Requi
       if (selectedRow !== undefined && selectedRow.effectivePhase === 'satisfied') {
         return completed(null, `the selected Task ${base.taskId} is satisfied`);
       }
+      // L-15 (§9 VD-11, C7): a non-active selected Task is never advanced. A cancelled or
+      // superseded one ends this work handle; a deferred one waits for a plan change.
+      const selectedTask = graph.plan.tasks.find(candidate => candidate.taskId === base.taskId);
+      if (selectedTask !== undefined && selectedTask.disposition !== 'active') {
+        const notActive = `task_not_active: the selected Task ${base.taskId} is ${selectedTask.disposition}`;
+        return selectedTask.disposition === 'deferred'
+          ? waiting(null, `${notActive}; it waits until a plan change makes it active again`)
+          : completed(null, `${notActive}; it carries no work any more`);
+      }
     }
     // 1. The first eligible active ordinary work in required-first / plan order.
     const ordered = orderTasks(graph.plan.tasks);
@@ -1128,14 +1146,19 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort & Requi
     }
     // 2. While any required ordinary work is still unsatisfied (including a
     //    required plan_only future node) the real gap stays; the Goal gate is
-    //    never scheduled ahead of unfinished ordinary work.
+    //    never scheduled ahead of unfinished ordinary work. L-15 (§9 VD-11, C7):
+    //    a cancelled or superseded required Task carries no work and is not
+    //    waited for; when only deferred required work is left, the wait says so
+    //    (prefix `required_task_deferred:`, the Goal's GOAL-30 reason).
     const unsatisfied = (task: RuntimeTask): boolean => {
       const row = graph.tasks.find((candidate) => candidate.ref.taskId === task.taskId);
       return row === undefined || row.effectivePhase !== 'satisfied';
     };
-    const required = graph.plan.tasks.filter((task) => task.requirementLevel === 'required');
-    if (required.some((task) => task.taskKind === 'work' && unsatisfied(task))) {
-      return waiting(null, describeGap(ordered, graph));
+    const required = graph.plan.tasks.filter((task) => task.requirementLevel === 'required' && carriesWork(task));
+    const unfinishedWork = required.filter((task) => task.taskKind === 'work' && unsatisfied(task));
+    if (unfinishedWork.length > 0) {
+      const gap = describeGap(ordered, graph);
+      return waiting(null, unfinishedWork.every((task) => task.disposition === 'deferred') ? `required_task_deferred: ${gap}` : gap);
     }
 
     // 3. Only a fully satisfied required ordinary set may produce the gate

@@ -33,6 +33,7 @@ import {
   type ClaimFixtureKind, type TaskClaimFixture, type Records,
 } from './task-claim-fixture.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
+import type { RecordBackendSchemas } from '../../src/core/record-store/ports.js';
 import type { SessionRef, VersionPin } from '../../src/contracts/core/identity.js';
 import type { SessionRecord } from '../../src/contracts/core/session.js';
 import type { WriteResult } from '../../src/contracts/core/results.js';
@@ -135,8 +136,9 @@ export type W2WhiteboardFixture = {
   close(): Promise<void>;
 };
 
-export async function createW2WhiteboardFixture(kind: ClaimFixtureKind = 'memory'): Promise<W2WhiteboardFixture> {
-  const b2 = await createB2ExecutionFixture(kind);
+export async function createW2WhiteboardFixture(kind: ClaimFixtureKind = 'memory',
+  additionalSchemas: RecordBackendSchemas = { records: [], events: [] }): Promise<W2WhiteboardFixture> {
+  const b2 = await createB2ExecutionFixture(kind, additionalSchemas);
   const base = b2.base;
   let seq = 0;
   const now = () => B2_AT;

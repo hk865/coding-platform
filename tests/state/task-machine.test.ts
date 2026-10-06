@@ -26,12 +26,13 @@
  */
 import { describe, expect, it } from 'vitest';
 import type { ActorRef } from '../../src/contracts/command-event.js';
-import type { ControlIntentRef } from '../../src/contracts/control-intent.js';
+import type { ControlIntentRef, ControlIntentSnapshotV1 } from '../../src/contracts/control-intent.js';
 import type { CoreError, CoreRejection } from '../../src/contracts/core/results.js';
 import type { TaskClaim } from '../../src/contracts/core/task-claim.js';
 import type { DelegatedWriteProvenanceV1 } from '../../src/contracts/delegated-write.js';
 import type {
-  ConsumedWaitV1, RoleBindingRefV1, RunContinuationV1, RunOutcome, RunReconciliationV1, RunRef, RunSnapshot, TaskTriple,
+  ConsumedWaitV1, RoleBindingRefV1, RunContinuationV1, RunOutcome, RunReconciliationV1, RunRef, RunSnapshot, TaskLeaseSnapshot,
+  TaskTriple,
 } from '../../src/contracts/dispatch.js';
 import type { EvidenceOutcome, EvidenceRef } from '../../src/contracts/evidence.js';
 import type { NewBasisInputRefV1, NoProgressKeyV1 } from '../../src/contracts/no-progress.js';
@@ -49,8 +50,9 @@ import {
   taskCompletionFoldProblem, taskCompletionProjectionProblem, taskCompletionRoundProblem, taskMachineStateOf, transitionTask,
   type NewTaskRequeueInput, type TaskClaimFacts, type TaskCompletionFacts, type TaskEffect, type TaskEvent,
   type TaskGuardContext, type TaskMachineState, type TaskPhaseFacts, type TaskPhaseProjection, type TaskReductionBuildV1,
-  type TaskReworkFacts, type TaskRoundEventKind, type TaskState, type TaskTrace,
+  type TaskDispositionFacts, type TaskReworkFacts, type TaskRoundEventKind, type TaskState,
 } from '../../src/core/work-graph/state/task-machine.js';
+import type { TracedTaskFactsV1 } from '../../src/core/work-graph/state/plan-machine.js';
 import { newTaskReworkRefusalRecord } from '../../src/core/work-graph/state/task-failure.js';
 import type { Transition, TransitionRejectReason } from '../../src/core/work-graph/state/transition.js';
 import {
@@ -387,13 +389,38 @@ const SATISFIED = { satisfied: true, phase: 'satisfied' as const, causes: [], sa
 const completionFacts = (patch: Partial<TaskCompletionFacts> = {}): TaskCompletionFacts =>
   ({ producerRun: PRODUCER, producerTaskKind: 'work', evaluation: SATISFIED, chainHead: roundRef('round-1'), ...patch });
 
+/** A TaskLease record of the Task's selected Run; only `release` is read by TASK-19 (guard 4). */
+function leaseRecord(released: boolean): TaskLeaseSnapshot {
+  const lease = { ref: { aggregateType: 'TaskLease', projectId: P, goalId: G, taskId: T }, revision: released ? 2 : 1, schemaVersion: 1,
+    holderRunId: 'run-1', attemptId: 'att-run-1', grantedAt: T_START, expiresAt: null } as TaskLeaseSnapshot;
+  return released ? { ...lease, release: { runRef: runRef('run-1') } as unknown as NonNullable<TaskLeaseSnapshot['release']> } : lease;
+}
+/** Only its presence is read by TASK-19 (guard 5). */
+const REDUCTION_RECORD = { ref: { aggregateType: 'TaskReduction', projectId: P, goalId: G, taskId: T }, revision: 1,
+  phase: 'satisfied' } as unknown as TaskReductionSnapshot;
+
 /**
- * The facts a real read would give for each state; the trace is the first one today's reader finds (a gate
- * with rounds has no Run, Lease or Reduction). A gate completes with its own chain head (TASK-15).
+ * C7 (5.10): what `readDispositionChangeTaskFacts` would read for each state. The selected Run is the
+ * Task's Run (P15: an ended Run whose origin is not resolvable, so none is selected); its lease is held
+ * while it is live and released after it ended; P1 has a Reduction; a gate has no Run (`gate:P1` its
+ * Reduction). No pointer intent is read (TASK-19 guard 7 is in the describe below).
+ */
+function dispositionFactsFor(label: StateLabel): TracedTaskFactsV1 {
+  const rowFacts = label === 'absent' || isGate(label) ? null : ROW[label as RowLabel].facts;
+  const selectedRun = rowFacts?.selectedRun ?? null;
+  const runs = selectedRun !== null ? [selectedRun] : label === 'P15' ? [CRASHED] : [];
+  const lease = runs.length === 0 ? null : leaseRecord(selectedRun === null || selectedRun.status === 'ended');
+  const reduction = rowFacts?.applicableReduction != null || label === 'gate:P1' ? REDUCTION_RECORD : null;
+  return { taskId: isGate(label) ? GATE : T, runs, selectedRun, lease, reduction, pointerIntent: null };
+}
+const dispositionCtx = (facts: TracedTaskFactsV1, patch: Partial<TaskDispositionFacts> = {}): TaskDispositionFacts =>
+  ({ facts, goalDesiredState: 'active', affectedTaskIds: [T, GATE], replacedByTaskId: null, ...patch });
+
+/**
+ * The facts a real read would give for each state (a gate with rounds has no Run, Lease or Reduction). A
+ * gate completes with its own chain head (TASK-15).
  */
 function ctxFor(label: StateLabel): TaskGuardContext {
-  const trace: TaskTrace = label === 'P16' || label === 'absent' || (isGate(label) && label !== 'gate:P1') ? 'none'
-    : label === 'gate:P1' ? 'reduction' : 'run';
   return {
     taskId: isGate(label) ? GATE : T,
     claim: claimFacts({
@@ -404,7 +431,7 @@ function ctxFor(label: StateLabel): TaskGuardContext {
       requeue: label === 'P4' ? { coversSelectedRun: true, leaseReleasedByAfterRun: true, budgetPinned: true } : null,
     }),
     completion: isGate(label) ? completionFacts({ chainHead: GATE_PASS.ref }) : completionFacts(),
-    trace,
+    disposition: dispositionCtx(dispositionFactsFor(label)),
   };
 }
 
@@ -662,14 +689,21 @@ function completedExpect(label: StateLabel): Expect {
     reduction: gate ? expectedReduction(gateTask, GATE_PASS) : expectedReduction(task, FINAL_PASS) }]);
 }
 
+/** TASK-18/19 effects (C7, 5.10): the change is recorded in the new Plan's `dispositionRecord`. */
+const DISPOSITION_EFFECTS: TaskEffect[] = [{ kind: 'write_plan_revision' }, { kind: 'record_disposition_change' },
+  { kind: 'move_goal_pointer' }];
+
 function dispositionExpect(label: StateLabel): Expect {
   if (label === 'absent') return II;
   if (isGate(label)) return no('guard_failed', 'invalid');
-  if (label === 'P16') {
-    return to({ ...(STATES.P16 as TaskState), disposition: 'deferred' }, [{ kind: 'write_plan_revision' }, { kind: 'move_goal_pointer' }]);
+  // TASK-19 (C7, 5.10) from every projection except the ones §4.4 refuses by their facts: a satisfied Task's
+  // disposition is final (P1, guard 5); a running Run (P2, guard 1), an unknown outcome (P3, guard 2) and an
+  // unconsumed yielded wait (P5, P18, guard 3) are `busy`. P16 is TASK-18 (untraced). The phase never changes.
+  switch (label) {
+    case 'P1': case 'P1v': case 'P1f': return II;
+    case 'P2': case 'P3': case 'P5': case 'P18': return GB;
+    default: return to({ ...(STATES[label] as TaskState), disposition: 'deferred' }, DISPOSITION_EFFECTS);
   }
-  // TASK-19 (新增) is answered by today's §4.4 refusal: a traced definition is frozen.
-  return no('guard_failed', 'revision_conflict');
 }
 
 function expectFor(label: StateLabel, event: EventLabel): Expect {
@@ -1011,29 +1045,63 @@ describe('task_completed in completeTask order', () => {
 // disposition_changed, plan_adopted and re-projection specifics               //
 // ------------------------------------------------------------------------ //
 
-describe('disposition_changed (TASK-18; TASK-19 is step 5.10)', () => {
-  const change = (state: TaskMachineState, trace: TaskTrace | null, to: TaskState['disposition'] = 'deferred') =>
-    transitionTask(state, { kind: 'disposition_changed', to, replacedByTaskId: null, actorClass: 'agent' },
-      { ...ctxFor('P16'), trace });
+describe('disposition_changed (TASK-18 untraced, TASK-19 traced; C7, step 5.10)', () => {
+  const change = (state: TaskMachineState, disposition: TaskDispositionFacts | null, to: TaskState['disposition'] = 'deferred',
+    actorClass: 'human' | 'system' | 'agent' = 'agent', replacedByTaskId: string | null = null) =>
+    transitionTask(state, { kind: 'disposition_changed', to, replacedByTaskId, actorClass },
+      { ...ctxFor('P16'), disposition });
+  /** P6's Run, cancelled through an operator's pointer intent (`reworkFenceOf = 'human_only'`). */
+  const HUMAN_CANCEL: ControlIntentSnapshotV1 = { schemaVersion: 1, ref: intentRef('i-cancel'), runRef: runRef('run-1'),
+    kind: 'cancel', desiredState: 'cancelled', reason: null, requestedAt: T_START, requestedBy: { kind: 'human', id: 'operator-1' },
+    revision: 2, status: 'applied' } as ControlIntentSnapshotV1;
+  const CANCELLED_BY_HUMAN = run('run-1', { outcome: 'cancelled', exitCode: null, ...pointer('cancelled', 'i-cancel') });
+  const fenced = (): TracedTaskFactsV1 => ({ ...dispositionFactsFor('P6'), runs: [CANCELLED_BY_HUMAN],
+    selectedRun: CANCELLED_BY_HUMAN, pointerIntent: HUMAN_CANCEL });
 
-  it('reports the first trace in today\'s reader order', () => {
-    expect(change(STATES.P6, 'run')).toMatchObject({ code: 'revision_conflict',
-      detail: `task ${T} already has a Run and is no longer a future task` });
-    expect(change(STATES.P16, 'lease')).toMatchObject({ reason: 'guard_failed', code: 'revision_conflict',
-      detail: `task ${T} already holds a TaskLease and is no longer a future task` });
-    expect(change(STATES.P1, 'reduction')).toMatchObject({ code: 'revision_conflict',
-      detail: `task ${T} already has a formal reduction and is no longer a future task` });
+  it('TASK-19: a traced Task changes only its disposition; the phase and its cause stay (P7 failed/check_failed)', () => {
+    expect(change(STATES.P7, dispositionCtx(dispositionFactsFor('P7')), 'superseded')).toEqual({ ok: true,
+      next: { ...(STATES.P7 as TaskState), disposition: 'superseded' }, effects: DISPOSITION_EFFECTS });
   });
 
-  it('a deferred untraced Task is reactivated; the same disposition is no change', () => {
+  it('TASK-19 guards (§3 tracedDispositionChangeProblem): listed, released, and a human stop only by a human', () => {
+    expect(change(STATES.P6, dispositionCtx(dispositionFactsFor('P6'), { affectedTaskIds: [] }))).toMatchObject({
+      ok: false, reason: 'guard_failed', code: 'invalid', detail: `reason.affectedTaskIds must list traced task ${T}` });
+    expect(change(STATES.P6, dispositionCtx({ ...dispositionFactsFor('P6'), lease: leaseRecord(false) }))).toMatchObject({
+      ok: false, reason: 'guard_failed', code: 'busy', detail: `task ${T} still holds its TaskLease` });
+    expect(change(STATES.P6, dispositionCtx(fenced()), 'cancelled', 'agent')).toMatchObject({ ok: false, reason: 'guard_failed',
+      code: 'forbidden', detail: `only an operator may change the disposition of task ${T}: a human paused or cancelled it` });
+    expect(change(STATES.P6, dispositionCtx(fenced()), 'cancelled', 'system')).toMatchObject({ ok: false, code: 'forbidden' });
+    expect(change(STATES.P6, dispositionCtx(fenced()), 'cancelled', 'human')).toMatchObject({ ok: true,
+      effects: DISPOSITION_EFFECTS });
+  });
+
+  it('a cancelled Goal is refused first (guard 8, §4.4 guard_failed/invalid); a paused one is not a reason', () => {
+    expect(change(STATES.P2, dispositionCtx(dispositionFactsFor('P2'), { goalDesiredState: 'cancelled' }))).toMatchObject({
+      ok: false, reason: 'guard_failed', code: 'invalid', detail: 'the Goal is cancelled; its plan can no longer change' });
+    expect(change(STATES.P16, dispositionCtx(dispositionFactsFor('P16'), { goalDesiredState: 'cancelled' })))
+      .toMatchObject({ ok: false, code: 'invalid' });
+    expect(change(STATES.P6, dispositionCtx(dispositionFactsFor('P6'), { goalDesiredState: 'paused' })).ok).toBe(true);
+  });
+
+  it('TASK-18: a deferred untraced Task is reactivated and recorded; the same disposition is no change', () => {
     const deferred: TaskState = { ...(STATES.P16 as TaskState), disposition: 'deferred' };
-    expect(change(deferred, 'none', 'active')).toEqual({ ok: true, next: STATES.P16,
-      effects: [{ kind: 'write_plan_revision' }, { kind: 'move_goal_pointer' }] });
-    expect(change(deferred, 'none', 'deferred')).toMatchObject({ ok: false, reason: 'illegal', code: 'invalid' });
+    expect(change(deferred, dispositionCtx(dispositionFactsFor('P16')), 'active')).toEqual({ ok: true, next: STATES.P16,
+      effects: DISPOSITION_EFFECTS });
+    expect(change(deferred, dispositionCtx(dispositionFactsFor('P16')), 'deferred'))
+      .toMatchObject({ ok: false, reason: 'illegal', code: 'invalid' });
   });
 
-  it('a gate is refused before its trace, and the trace facts are required', () => {
-    expect(change(STATES['gate:P1'], 'reduction', 'cancelled')).toMatchObject({ code: 'invalid',
+  it('a superseded Task may name a new replacement (recorded, §3.3 "disposition 或 replacedByTaskId"); the same one is no change', () => {
+    const superseded: TaskState = { ...(STATES.P7 as TaskState), disposition: 'superseded' };
+    const facts = dispositionCtx(dispositionFactsFor('P7'), { replacedByTaskId: 'work-2' });
+    expect(change(superseded, facts, 'superseded', 'human', 'work-3')).toEqual({ ok: true, next: superseded,
+      effects: DISPOSITION_EFFECTS });
+    expect(change(superseded, facts, 'superseded', 'human', 'work-2')).toMatchObject({ ok: false, reason: 'illegal', code: 'invalid',
+      detail: 'the disposition is already superseded' });
+  });
+
+  it('a gate is refused before its facts, and the facts are required', () => {
+    expect(change(STATES['gate:P1'], dispositionCtx(dispositionFactsFor('gate:P1')), 'cancelled')).toMatchObject({ code: 'invalid',
       detail: `source gate task ${T} changed its definition or acceptance relationships` });
     expect(change(STATES.P16, null)).toMatchObject({ ok: false, reason: 'illegal', code: 'invalid' });
   });

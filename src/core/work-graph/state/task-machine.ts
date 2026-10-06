@@ -42,10 +42,12 @@
  * - A.2 step 5.6 (C4): P19 (`blocked/paused_interrupted`, before P6), TASK-26
  *   (the RUN-24 end re-projects to it) and TASK-27 (the operator's "继续", or the
  *   Goal-resume continuation, as a `task_requeued`).
- * - 改造 rows still at today's result, flipped by later substeps: TASK-18 (no
- *   `dispositionRecord`; 5.10). TASK-19 is answered by today's §4.4 refusal in
- *   front of it: a traced Task's definition, disposition included, is frozen
- *   (`revision_conflict`).
+ * - A.2 step 5.10 (C7): TASK-18 (an untraced Task) and TASK-19 (a traced Task
+ *   whose disposition alone changes, `tracedDispositionChangeProblem` of §3)
+ *   both record the change (`record_disposition_change`, the compiler's
+ *   `PlanRevisionSnapshot.dispositionRecord`); the phase and its cause never
+ *   change. A traced Task whose execution definition changes is the untraced
+ *   rule's refusal (§3 PLAN-05) and never reaches this machine.
  *
  * Pure: imports only `src/contracts` and this directory (§14.4).
  */
@@ -74,6 +76,7 @@ import {
 import type { RoundSnapshot, VerificationRoundRef } from '../../../contracts/verification.js';
 import type { AttemptClaimBasis } from './attempt-machine.js';
 import { runFailureOrigin } from './no-progress.js';
+import { tracedDispositionChangeProblem, type TracedTaskFactsV1 } from './plan-machine.js';
 import {
   isPausedInterrupted, requeueClaimProblem, runUnresolvedBlocker, type ClaimRequeueFacts, type RunClaimContext,
 } from './run-machine.js';
@@ -330,8 +333,20 @@ export type TaskCompletionFacts = {
   chainHead: VerificationRoundRef | null;
 };
 
-/** The first trace today's future-change reader finds: Run, then Lease, then Reduction (`plan-readers.ts:1269-1297`). */
-export type TaskTrace = 'none' | 'run' | 'lease' | 'reduction';
+/**
+ * `disposition_changed` facts (TASK-18/19, C7): the Task's facts as
+ * `readDispositionChangeTaskFacts` reads them (every Run, the selected Run,
+ * the Lease, the Reduction and the pointer ControlIntent; all empty for an
+ * untraced Task), the Goal's desired state, the adopted candidate's
+ * `reason.affectedTaskIds` and the source definition's `replacedByTaskId`
+ * (null when absent).
+ */
+export type TaskDispositionFacts = {
+  facts: TracedTaskFactsV1;
+  goalDesiredState: GoalDesiredState;
+  affectedTaskIds: readonly string[] | undefined;
+  replacedByTaskId: string | null;
+};
 
 export type TaskGuardContext = {
   /** The Task id, for refusal texts. */
@@ -341,7 +356,7 @@ export type TaskGuardContext = {
   /** `task_completed` only. */
   completion: TaskCompletionFacts | null;
   /** `disposition_changed` only. */
-  trace: TaskTrace | null;
+  disposition: TaskDispositionFacts | null;
   /** `task_requeued` and `task_rework_refused` only (absent for every other event). */
   rework?: TaskReworkFacts;
 };
@@ -421,7 +436,7 @@ export type TaskEffect =
   | { kind: 'write_task_requeue'; requeue: TaskRequeueSnapshotV1 }
   | { kind: 'write_task_rework_refusal'; refusal: TaskReworkRefusalSnapshotV1 }
   | { kind: 'write_plan_revision' }
-  /** TASK-19 (C7): `PlanRevisionSnapshot.dispositionRecord` (step 5.10). */
+  /** TASK-18/19 (C7): the change's entry in the new Plan's `PlanRevisionSnapshot.dispositionRecord`. */
   | { kind: 'record_disposition_change' }
   | { kind: 'move_goal_pointer' };
 
@@ -1338,10 +1353,18 @@ function pointerIntentProblem(run: RunSnapshot, pointerIntent: StopIntentV1 | nu
 }
 
 /**
- * TASK-18 (an untraced Task) in W16 order: the gate definition check of the
- * future coverage (`plan-validation.ts:423-433`) before the trace read
- * (`plan-readers.ts:1269-1297`). TASK-19 (C7, step 5.10) is not open yet:
- * today a traced Task's disposition belongs to its frozen definition.
+ * TASK-18 (an untraced Task) and TASK-19 (C7: a traced Task whose disposition
+ * alone changes) in W16 order: the gate definition check of the future
+ * coverage first (`plan-validation.ts`; a gate's disposition is frozen), then
+ * the §3 TASK-19 guards over this Task's facts (`tracedDispositionChangeProblem`:
+ * the Goal is not cancelled, then, for a traced Task, every Run ended and none
+ * unknown or unreconciled, no unconsumed yielded wait, the Lease released, not
+ * satisfied, listed in `reason.affectedTaskIds`, and a human-stopped Task only
+ * by a human). So the projections TASK-19 excludes are refused by their facts:
+ * `running` (P2) and `blocked/run_outcome_unknown` (P3) and an unconsumed wait
+ * (P5, P18) `busy`, `satisfied` (P1) `invalid`. The phase and its cause never
+ * change, only the disposition (or a superseded Task's replacement); the
+ * change is recorded in the new Plan's `dispositionRecord`.
  */
 function onDispositionChanged(
   state: TaskMachineState,
@@ -1349,21 +1372,17 @@ function onDispositionChanged(
   ctx: TaskGuardContext,
 ): TaskTransition {
   if (state === null) return reject('illegal', 'invalid', 'a Task new to the Plan is plan_adopted, not disposition_changed');
-  const trace = ctx.trace;
-  if (trace === null) return reject('illegal', 'invalid', 'disposition_changed requires the trace facts');
-  if (event.to === state.disposition) return reject('illegal', 'invalid', `the disposition is already ${event.to}`);
+  const disposition = ctx.disposition;
+  if (disposition === null) return reject('illegal', 'invalid', 'disposition_changed requires the trace facts');
+  if (event.to === state.disposition && event.replacedByTaskId === disposition.replacedByTaskId) {
+    return reject('illegal', 'invalid', `the disposition is already ${event.to}`);
+  }
   if (state.taskKind === 'gate') {
     return reject('guard_failed', 'invalid', `source gate task ${ctx.taskId} changed its definition or acceptance relationships`);
   }
-  switch (trace) {
-    case 'none': break;
-    case 'run':
-      return reject('guard_failed', 'revision_conflict', `task ${ctx.taskId} already has a Run and is no longer a future task`);
-    case 'lease':
-      return reject('guard_failed', 'revision_conflict', `task ${ctx.taskId} already holds a TaskLease and is no longer a future task`);
-    case 'reduction':
-      return reject('guard_failed', 'revision_conflict', `task ${ctx.taskId} already has a formal reduction and is no longer a future task`);
-    default: return unreachable(trace, 'Task trace');
-  }
-  return accept({ ...state, disposition: event.to }, [{ kind: 'write_plan_revision' }, { kind: 'move_goal_pointer' }]);
+  const problem = tracedDispositionChangeProblem({ goalDesiredState: disposition.goalDesiredState, tasks: [disposition.facts],
+    affectedTaskIds: disposition.affectedTaskIds, adopterClass: event.actorClass });
+  if (problem !== null) return reject(problem.reason ?? 'guard_failed', problem.code, problem.detail);
+  return accept({ ...state, disposition: event.to },
+    [{ kind: 'write_plan_revision' }, { kind: 'record_disposition_change' }, { kind: 'move_goal_pointer' }]);
 }

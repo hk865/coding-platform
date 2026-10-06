@@ -753,7 +753,7 @@ export function createTaskRequeueService(deps: TaskRequeueDependencies): Require
       task, planRef: window.plan.ref, afterRun, pointerIntent, chain: window.rework.chain, requestedBy: actor,
       requestedAt: deps.now(), reason: input.reason, basis, newInputRefs, budget, trigger, agentProvenance,
       runs, requeues, policy,
-    } }, { taskId: task.taskId, claim: null, completion: null, trace: null, rework: window.rework });
+    } }, { taskId: task.taskId, claim: null, completion: null, disposition: null, rework: window.rework });
     if (!requeued.ok) return reject(requeued.code, requeued.detail);
     const [written, ...others] = requeued.effects;
     if (written?.kind !== 'write_task_requeue' || others.length > 0) throw new Error('task_requeued writes exactly the TaskRequeue');
@@ -793,7 +793,7 @@ export function createTaskRequeueService(deps: TaskRequeueDependencies): Require
     if (written?.kind !== 'write_task_rework_refusal') throw new Error('a policy refusal writes its TaskReworkRefusal');
     const refusal: TaskReworkRefusalSnapshotV1 = written.refusal;
     const refused = transitionTask(base.window.state, { kind: 'task_rework_refused', refusal, pointerIntent: base.pointerIntent },
-      { taskId: refusal.task.taskId, claim: null, completion: null, trace: null, rework: base.window.rework });
+      { taskId: refusal.task.taskId, claim: null, completion: null, disposition: null, rework: base.window.rework });
     if (!refused.ok) return reject(refused.code, refused.detail);
     const event: TaskReworkRefusedEvent = { eventId: deps.eventId(), eventType: TASK_REWORK_REFUSED_EVENT_TYPE,
       schemaVersion: TASK_REWORK_EVENT_SCHEMA_VERSION, occurredAt: refusedAt, identityKey: base.identity, actor: base.actor,

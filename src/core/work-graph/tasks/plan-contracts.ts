@@ -32,7 +32,8 @@ export type PlanChangeReason = { text: string; sources: ArtifactRef[];
   /**
    * C7 (spec §3.1): the Tasks this candidate means to change, e.g. a traced
    * Task whose disposition only changes. Absent is recorded as `[]` in a
-   * `TaskDispositionChangeV1`; its shape check and the TASK-19 use land with C7.
+   * `TaskDispositionChangeV1`. Recording checks its shape (PLAN-01/02); an
+   * adoption requires every traced disposition-only Task in it (TASK-19 guard 6).
    */
   affectedTaskIds?: string[] };
 export type PlanProposal =

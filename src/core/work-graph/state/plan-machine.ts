@@ -23,12 +23,15 @@
  * before the receipt lookup.
  *
  * Step 2 (§15.2) implements the pre-A.2 results; step 5.5 adds the Goal
- * `cancelled` guard (D-9, `scopeStep`). Not yet wired, flipped in step 5.10: the C7 `affectedTaskIds` shape
- * and draft `dispositionRecord` checks (today the PlanProposal record schema
- * rejects both at commit with `invalid`, zero writes); the C7 split of W16 into
- * changed / disposition-only Tasks with `tracedDispositionChangeProblem`
- * (TASK-19) and the LA-3 guard 9 `parallelCarrierFenceProblem` (step 5.10).
- * Both W16 helpers are implemented in full below.
+ * `cancelled` guard (D-9, `scopeStep`). Step 5.10 (C7, lead decision LA-3)
+ * adds the `affectedTaskIds` shape and draft `dispositionRecord` checks of
+ * PLAN-01/02 (`reasonShapeStep`), and splits W16 into changed and
+ * disposition-only Tasks: the untraced rule for the changed and added ones,
+ * TASK-19 (`tracedDispositionChangeProblem`) for the traced disposition-only
+ * ones, then guard 9 (`parallelCarrierFenceProblem`) for an `agent`/`system`
+ * adopter. Each disposition change of the adoption is named as a
+ * `change_task_disposition` effect, which the owner asks the Task machine
+ * (TASK-18/19) about, as it asks the Goal machine about `move_goal_pointer`.
  *
  * `PlanProposal` is declared in `tasks/plan-contracts.ts:28-50`, which this
  * directory may not import. `PlanProposalRecord` below is the same shape built
@@ -48,13 +51,15 @@ import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js
 import type { PlanProposalSnapshot } from '../../../contracts/goal-change.js';
 import type { GoalDesiredState, GoalRef } from '../../../contracts/ledger.js';
 import type {
-  AcceptanceObligation, PlanRevisionDraft, PlanRevisionRef, PlanValidationError, RuntimeTask,
+  AcceptanceObligation, Disposition, PlanRevisionDraft, PlanRevisionRef, PlanValidationError, RuntimeTask,
 } from '../../../contracts/plan.js';
 import type { TaskReductionSnapshot } from '../../../contracts/reduction.js';
 import type { ReworkActorClass } from '../../../contracts/task-requeue.js';
 import { runUnresolvedBlocker } from './run-machine.js';
 import { reworkFenceOf } from './task-failure.js';
-import { accept, reject, rejected, unreachable, type Rejected, type Transition } from './transition.js';
+import {
+  accept, reject, rejected, unreachable, type Rejected, type Transition, type TransitionRejectReason,
+} from './transition.js';
 
 // --------------------------------------------------------------------------
 // Persisted record (structurally identical to tasks/plan-contracts.ts:28-50)
@@ -223,9 +228,26 @@ export type PlanProposalEvent =
 /** The source PlanRevision read through `basedOn`. */
 export type PlanSourceFacts = { ref: PlanRevisionRef; goalRef: GoalRef; planId: string; planRevision: number };
 
-/** `deriveFuturePlanDelta` (`plan-validation.ts:306-347`). */
+/**
+ * C7: an existing Task whose `disposition` or `replacedByTaskId` changes in a
+ * future adoption (`deriveFuturePlanDelta`); `from === to` re-points a
+ * superseded Task's replacement.
+ */
+export type FutureDispositionChangeV1 = { taskId: string; from: Disposition; to: Disposition; replacedByTaskId: string | null };
+
+/** C7 (§3.3 无痕规则): a changed Task that left these source obligations' `taskIds`. */
+export type FutureCarrierRemovalV1 = { taskId: string; obligationIds: readonly string[] };
+
+/**
+ * `deriveFuturePlanDelta` (`plan-validation.ts`). C7 (step 5.10) splits the
+ * existing Tasks into changed (execution definition) and disposition-only
+ * ones; `dispositionChanges` lists every existing Task whose `disposition` or
+ * `replacedByTaskId` changes, changed or disposition-only, in taskId order.
+ */
 export type FuturePlanDeltaVerdict =
-  | { status: 'supported'; changedTaskIds: readonly string[]; addedTaskIds: readonly string[] }
+  | { status: 'supported'; changedTaskIds: readonly string[]; addedTaskIds: readonly string[];
+    dispositionOnlyTaskIds: readonly string[]; dispositionChanges: readonly FutureDispositionChangeV1[];
+    carrierRemovals: readonly FutureCarrierRemovalV1[] }
   | { status: 'unsupported'; reason: string };
 
 /** `validateFutureObligationCoverage` (`plan-validation.ts:349-511`). */
@@ -262,6 +284,22 @@ export type FutureAdoptionFacts = PlanDraftAdmissionFacts & {
   pinnedPolicy: 'not_needed' | 'ok' | CoreRejection;
   /** `readFutureChangeTaskFacts` for `changedTaskIds ∪ addedTaskIds`. */
   touchedTaskFacts: readonly FutureChangeTaskFactsV1[];
+  /**
+   * C7: `reworkActorClassOf(principal, actor)` of the adopter (§1): an Agent
+   * `apply_future_plan` is `agent`; a Host actor that is a platform automation
+   * actor is `system`; every other Host actor (a Host started as
+   * `kind:'system'` too) is `human`.
+   */
+  adopterClass: ReworkActorClass;
+  /** C7: `readDispositionChangeTaskFacts` for `dispositionOnlyTaskIds` (TASK-19). */
+  dispositionTaskFacts: readonly TracedTaskFactsV1[];
+  /** Guard 9 (LA-3): the source Plan's carriers, read with the source. */
+  sourceCarriers: PlanCarrierViewV1;
+  /**
+   * Guard 9: the facts of `parallelCarrierFactTaskIds`, read only for an
+   * `agent`/`system` adopter (an operator adoption is never limited by it).
+   */
+  carrierFacts: readonly TracedTaskFactsV1[];
 };
 
 /** §2.4/§3.4 (D-9): the refusal of every plan write on a cancelled Goal (shared with GOAL-02/03 and TASK-19 guard 8). */
@@ -298,29 +336,45 @@ export type PlanProposalGuardContext = {
  * - `governance`/`pinned_policy`: the governance or pinned policy guards;
  * - `proposal`: the candidate (`null` = must not exist);
  * - `plan_revision`: the source Plan @1 or the target Plan ∅;
- * - `task_record_absent`: the Lease/Reduction ∅ of a changed or added Task.
+ * - `task_record_absent`: the Lease/Reduction ∅ of a changed or added Task,
+ *   and of an untraced disposition-only one (C7);
+ * - `task_facts` (C7, TASK-19): every Run@rev, the Lease@k, the Reduction ∅ and
+ *   the selected Run's pointer ControlIntent@rev read for a traced
+ *   disposition-only Task;
+ * - `carrier_facts` (guard 9, LA-3): the selected Run@rev, the Lease (@k or ∅)
+ *   and the pointer ControlIntent@rev read for an existing carrier.
  */
 export type PlanCommitGuard =
   | { target: 'answer_facts' | 'agent_admission' | 'origin_sources' | 'project' | 'workspace' | 'goal'
     | 'governance' | 'pinned_policy' }
   | { target: 'proposal'; expectedRevision: number | null }
   | { target: 'plan_revision'; ref: PlanRevisionRef; expectedRevision: 1 | null }
-  | { target: 'task_record_absent'; record: 'TaskLease' | 'TaskReduction'; taskId: string };
+  | { target: 'task_record_absent'; record: 'TaskLease' | 'TaskReduction'; taskId: string }
+  | { target: 'task_facts' | 'carrier_facts'; taskId: string };
 
 /**
  * How the new PlanRevision@1 is built (compiler-owned, `plan-commit-compiler.ts`):
  * the initial draft verbatim (`:59-90`), or source + validated delta with the
- * target `taskStateBasis` (`:241-328`).
+ * target `taskStateBasis` (`:241-328`). A disposition-only Task (C7) is its
+ * source definition with the draft's `disposition`/`replacedByTaskId`, its
+ * basis inherited.
  */
 export type PlanRevisionBuild =
   | { from: 'initial_draft' }
-  | { from: 'future_delta'; source: PlanRevisionRef; changedTaskIds: readonly string[]; addedTaskIds: readonly string[] };
+  | { from: 'future_delta'; source: PlanRevisionRef; changedTaskIds: readonly string[]; addedTaskIds: readonly string[];
+    dispositionOnlyTaskIds: readonly string[] };
+
+/** C7: one disposition change of a future adoption; `traced` = the Task had a Run, a Lease record or a Reduction. */
+export type PlannedDispositionChangeV1 = FutureDispositionChangeV1 & { traced: boolean };
 
 /**
  * Effects the owner translates into ONE commit (§3.3 effects column):
  * - `write_proposal`: the record `next` (from `newCandidateProposal` / `acceptProposalRecord`);
  * - `write_plan_revision`: PLAN-08, the new immutable Plan;
  * - `move_goal_pointer`: GOAL-02 (null → P) / GOAL-03 (Pk → Pk+1); PLAN-09 derives Pk superseded;
+ * - `change_task_disposition` (C7): the Task's `disposition_changed` (TASK-18
+ *   untraced, TASK-19 traced), whose `record_disposition_change` is the
+ *   compiler's `dispositionRecord` entry;
  * - `append_event`: the durable event of the same commit;
  * - `guard`: one CAS guard of the commit.
  */
@@ -328,6 +382,7 @@ export type PlanProposalEffect =
   | { kind: 'write_proposal' }
   | { kind: 'write_plan_revision'; ref: PlanRevisionRef; build: PlanRevisionBuild }
   | { kind: 'move_goal_pointer'; from: PlanRevisionRef | null; to: PlanRevisionRef }
+  | { kind: 'change_task_disposition'; change: PlannedDispositionChangeV1 }
   | { kind: 'append_event'; eventType: 'PlanProposalRecorded' | 'PlanRevisionAccepted' }
   | { kind: 'guard'; guard: PlanCommitGuard };
 
@@ -337,8 +392,12 @@ export type PlanProposalTransition = Transition<PlanProposalMachineState, PlanPr
 // W16 pure guards (§3.3 任务定义守卫表)
 // --------------------------------------------------------------------------
 
-/** A guard's rejection: today's CoreError and reason. */
-export type PlanGuardProblem = { code: CoreError; detail: string };
+/**
+ * A guard's rejection: today's CoreError and reason. `reason` is the
+ * transition's reject reason when it is not `guard_failed` (TASK-19 guard 5:
+ * a satisfied Task's disposition is final, `illegal`, §3.4, §4.4).
+ */
+export type PlanGuardProblem = { code: CoreError; detail: string; reason?: TransitionRejectReason };
 
 /**
  * One Task's execution facts for the untraced rule (`readFutureChangeTaskFacts`,
@@ -368,21 +427,27 @@ export type TracedTaskFactsV1 = FutureChangeTaskFactsV1 & {
  * (`changedTaskIds ∪ addedTaskIds`): none may have a Run, a TaskLease or a
  * TaskReduction. Today's order: every Task's Runs first, then each Task's Lease
  * and Reduction (`readFutureChangeTaskFacts` reads them in that order and stops
- * at the first trace).
+ * at the first trace). C7 (§3.3): when the traced Task left source
+ * obligations' `taskIds` (`carrierRemovals`), the refusal also says how to
+ * keep it.
  */
-export function futureChangeTraceProblem(facts: readonly FutureChangeTaskFactsV1[]): PlanGuardProblem | null {
+export function futureChangeTraceProblem(
+  facts: readonly FutureChangeTaskFactsV1[],
+  carrierRemovals: readonly FutureCarrierRemovalV1[] = [],
+): PlanGuardProblem | null {
+  const refused = (taskId: string, trace: string): PlanGuardProblem => {
+    const removal = carrierRemovals.find((entry) => entry.taskId === taskId);
+    const hint = removal === undefined ? '' : '; a traced task may change only its disposition or replacedByTaskId: keep it in '
+      + `${removal.obligationIds.map((obligationId) => `obligations[${obligationId}].taskIds`).join(', ')} `
+      + 'and add the replacement task as another carrier';
+    return { code: 'revision_conflict', detail: `task ${taskId} ${trace} and is no longer a future task${hint}` };
+  };
   for (const task of facts) {
-    if (task.runs.length > 0) {
-      return { code: 'revision_conflict', detail: `task ${task.taskId} already has a Run and is no longer a future task` };
-    }
+    if (task.runs.length > 0) return refused(task.taskId, 'already has a Run');
   }
   for (const task of facts) {
-    if (task.lease !== null) {
-      return { code: 'revision_conflict', detail: `task ${task.taskId} already holds a TaskLease and is no longer a future task` };
-    }
-    if (task.reduction !== null) {
-      return { code: 'revision_conflict', detail: `task ${task.taskId} already has a formal reduction and is no longer a future task` };
-    }
+    if (task.lease !== null) return refused(task.taskId, 'already holds a TaskLease');
+    if (task.reduction !== null) return refused(task.taskId, 'already has a formal reduction');
   }
   return null;
 }
@@ -456,7 +521,7 @@ function tracedTaskProblem(
   }
   // Guard 5: a satisfied Task's disposition is final (the Reduction is only ever `satisfied`).
   if (task.reduction !== null) {
-    return { code: 'invalid', detail: `task ${id} is satisfied; the disposition of a satisfied task is final` };
+    return { code: 'invalid', detail: `task ${id} is satisfied; the disposition of a satisfied task is final`, reason: 'illegal' };
   }
   // Guard 6: the candidate names the Task (candidates are immutable: resubmit).
   if (!affected.has(id)) {
@@ -594,6 +659,14 @@ type AdmittedAdoption =
     /** `changedTaskIds ∪ addedTaskIds`, each once. */
     touchedTaskIds: readonly string[];
     pinnedPolicy: boolean;
+    /** C7: the disposition-only Tasks, split by trace (Run, Lease record or Reduction). */
+    dispositionOnlyTaskIds: readonly string[];
+    tracedDispositionTaskIds: readonly string[];
+    untracedDispositionTaskIds: readonly string[];
+    /** C7: every disposition change, with its trace. */
+    dispositionChanges: readonly PlannedDispositionChangeV1[];
+    /** Guard 9: the carriers whose facts were read (agent/system adopter only). */
+    carrierTaskIds: readonly string[];
   };
 
 type AcceptStep = Rejected | typeof UNREAD | AdmittedAdoption;
@@ -745,6 +818,7 @@ function recordedStep(
         () => hostProvenanceProblem(event),
         // :955-961
         () => scopeStep(facts, 'the goal does not belong to the requested workspace'),
+        () => reasonShapeStep(event),
       );
       break;
     case 'initial_answer':
@@ -755,6 +829,7 @@ function recordedStep(
         () => hostProvenanceProblem(event),
         // :955-961
         () => scopeStep(facts, 'the goal does not belong to the requested workspace'),
+        () => reasonShapeStep(event),
       );
       break;
     case 'agent':
@@ -772,6 +847,7 @@ function recordedStep(
           ? reject('guard_failed', 'forbidden', 'an Agent proposal must be based on an accepted source plan') : null,
         // :1959-1970
         () => agentSourceStep(event, facts),
+        () => reasonShapeStep(event),
       );
       break;
     default:
@@ -834,6 +910,44 @@ function onProposalRecorded(
     guard({ target: 'proposal', expectedRevision: null }),
   ];
   return accept<PlanProposalMachineState, PlanProposalEffect>(candidate, effects);
+}
+
+/** Upper bound of `PlanChangeReason.affectedTaskIds` (§3.1, C7; the record codec checks the same bound). */
+const MAX_AFFECTED_TASK_IDS = 200;
+
+/**
+ * PLAN-01/02/03 (C7, §3.4, step 5.10), shape only: a draft never carries the
+ * compiler-owned `dispositionRecord` (like `taskStateBasis`), and
+ * `reason.affectedTaskIds`, when present, holds at most 200 distinct
+ * non-empty task ids of the draft. Whether a traced Task is listed is judged
+ * at adoption (TASK-19 guard 6).
+ */
+function reasonShapeStep(event: RecordedGuardEvent): GuardStep {
+  if ((event.draft as unknown as Record<string, unknown>)['dispositionRecord'] !== undefined) {
+    return reject('guard_failed', 'invalid', 'the draft carries dispositionRecord, which only the adoption compiler writes');
+  }
+  const reason: unknown = event.reason;
+  const affected: unknown = typeof reason === 'object' && reason !== null
+    ? (reason as { affectedTaskIds?: unknown }).affectedTaskIds : undefined;
+  if (affected === undefined) return null;
+  if (!Array.isArray(affected)) return reject('guard_failed', 'invalid', 'reason.affectedTaskIds must be an array when present');
+  if (affected.length > MAX_AFFECTED_TASK_IDS) {
+    return reject('guard_failed', 'invalid', `reason.affectedTaskIds must hold at most ${MAX_AFFECTED_TASK_IDS} task ids`);
+  }
+  const tasks: readonly unknown[] = Array.isArray(event.draft.tasks) ? event.draft.tasks : [];
+  const draftTaskIds = new Set(tasks.map((task) => (task as { taskId?: unknown }).taskId));
+  const seen = new Set<string>();
+  for (const taskId of affected as unknown[]) {
+    if (typeof taskId !== 'string' || taskId.length === 0) {
+      return reject('guard_failed', 'invalid', 'reason.affectedTaskIds must hold non-empty task ids');
+    }
+    if (seen.has(taskId)) return reject('guard_failed', 'invalid', `reason.affectedTaskIds repeats task ${taskId}`);
+    seen.add(taskId);
+    if (!draftTaskIds.has(taskId)) {
+      return reject('guard_failed', 'invalid', `reason.affectedTaskIds names ${taskId}, which is not a task of the draft`);
+    }
+  }
+  return null;
 }
 
 /** A Host or answer-derived candidate never carries an Agent submission provenance. */
@@ -1038,9 +1152,10 @@ function initialAdoptionStep(
 
 /**
  * PLAN-05 + GOAL-03 + PLAN-08/09 (`applyFutureRevision`, `plan-service.ts:1676-1816`
- * → `plan-commit-compiler.ts:241-328`). Today every existing Task whose full
- * definition differs is "changed", including a disposition-only change, and
- * falls under the untraced rule (C7 splits it off in step 5.10).
+ * → `plan-commit-compiler.ts:241-328`). C7 (step 5.10): a changed or added
+ * Task falls under the untraced rule; a disposition-only Task under TASK-19
+ * when it is traced (an untraced one keeps the Lease ∅ / Reduction ∅ commit
+ * guards); then guard 9 for an `agent`/`system` adopter.
  */
 function futureAdoptionStep(
   proposal: CandidatePlanProposal,
@@ -1112,7 +1227,7 @@ function futureAdoptionStep(
     () => draftAdmissionStep('the future plan is not admissible', future),
   );
   if (problem !== null) return problem;
-  // :1769-1771 → plan-readers.ts `readFutureChangeTaskFacts`
+  // :1769-1771 → plan-readers.ts `readFutureChangeTaskFacts`: the untraced rule for the changed and added Tasks.
   const touchedFacts = future.touchedTaskFacts;
   if (touchedFacts === undefined) return UNREAD;
   const touched = [...new Set([...delta.changedTaskIds, ...delta.addedTaskIds])];
@@ -1123,11 +1238,46 @@ function futureAdoptionStep(
     if (entry === undefined) return reject('illegal', 'invalid', `the future-change facts of task ${taskId} were not read`);
     judged.push(entry);
   }
-  const trace = futureChangeTraceProblem(judged);
+  const trace = futureChangeTraceProblem(judged, delta.carrierRemovals);
   if (trace !== null) return reject('guard_failed', trace.code, trace.detail);
+  // C7 (TASK-19, guards 8, 1, 2, 2b, 3–7): the disposition-only Tasks, read by `readDispositionChangeTaskFacts`.
+  const dispositionFacts = future.dispositionTaskFacts;
+  const adopterClass = future.adopterClass;
+  if (dispositionFacts === undefined || adopterClass === undefined) return UNREAD;
+  const dispositionById = new Map(dispositionFacts.map((entry) => [entry.taskId, entry]));
+  const dispositionJudged: TracedTaskFactsV1[] = [];
+  for (const taskId of delta.dispositionOnlyTaskIds) {
+    const entry = dispositionById.get(taskId);
+    if (entry === undefined) return reject('illegal', 'invalid', `the disposition-change facts of task ${taskId} were not read`);
+    dispositionJudged.push(entry);
+  }
+  // The scope step refused a cancelled Goal (D-9) before any of this; guard 8 is the same check.
+  if (facts.goal === undefined) return UNREAD;
+  const traced = tracedDispositionChangeProblem({ goalDesiredState: facts.goal.desiredState, tasks: dispositionJudged,
+    affectedTaskIds: proposal.reason.affectedTaskIds, adopterClass });
+  if (traced !== null) return reject(traced.reason ?? 'guard_failed', traced.code, traced.detail);
+  // Guard 9 (LA-3): only an `agent`/`system` adopter reads and judges the existing carriers.
+  let carrierTaskIds: readonly string[] = [];
+  if (adopterClass !== 'human') {
+    const sourceCarriers = future.sourceCarriers;
+    const carrierFacts = future.carrierFacts;
+    if (sourceCarriers === undefined || carrierFacts === undefined) return UNREAD;
+    const targetCarriers: PlanCarrierViewV1 = { tasks: draft.tasks, obligations: draft.obligations };
+    const fence = parallelCarrierFenceProblem({ adopterClass, source: sourceCarriers, target: targetCarriers, carrierFacts });
+    if (fence !== null) return reject(fence.reason ?? 'guard_failed', fence.code, fence.detail);
+    carrierTaskIds = parallelCarrierFactTaskIds({ source: sourceCarriers, target: targetCarriers });
+  }
+  const isTraced = (entry: TracedTaskFactsV1): boolean => entry.runs.length > 0 || entry.lease !== null || entry.reduction !== null;
+  const tracedIds = new Set(dispositionJudged.filter(isTraced).map((entry) => entry.taskId));
   return { path: 'future', proposal, source, target: planRevisionTargetOf(event.proposalRef, draft),
     changedTaskIds: delta.changedTaskIds, addedTaskIds: delta.addedTaskIds, touchedTaskIds: touched,
-    pinnedPolicy: pinnedPolicy === 'ok' };
+    pinnedPolicy: pinnedPolicy === 'ok',
+    dispositionOnlyTaskIds: delta.dispositionOnlyTaskIds,
+    tracedDispositionTaskIds: delta.dispositionOnlyTaskIds.filter((taskId) => tracedIds.has(taskId)),
+    untracedDispositionTaskIds: delta.dispositionOnlyTaskIds.filter((taskId) => !tracedIds.has(taskId)),
+    // A changed Task passed the untraced rule, so only a disposition-only Task can be traced.
+    dispositionChanges: delta.dispositionChanges.map((change) => ({ ...change, traced: tracedIds.has(change.taskId) })),
+    carrierTaskIds };
 }
 
 /** The one adoption commit of an admitted candidate (§3.3 effects column of PLAN-04/05). */
@@ -1154,8 +1304,11 @@ function adoptionEffects(admitted: AdmittedAdoption, adopter: PlanAdopter): Plan
       const effects: PlanProposalEffect[] = [
         { kind: 'write_proposal' },
         { kind: 'write_plan_revision', ref: admitted.target, build: { from: 'future_delta', source: admitted.source.ref,
-          changedTaskIds: admitted.changedTaskIds, addedTaskIds: admitted.addedTaskIds } },
+          changedTaskIds: admitted.changedTaskIds, addedTaskIds: admitted.addedTaskIds,
+          dispositionOnlyTaskIds: admitted.dispositionOnlyTaskIds } },
         { kind: 'move_goal_pointer', from: admitted.source.ref, to: admitted.target },
+        // C7: TASK-18 (untraced) / TASK-19 (traced) for each disposition change, in taskId order.
+        ...admitted.dispositionChanges.map((change): PlanProposalEffect => ({ kind: 'change_task_disposition', change })),
         { kind: 'append_event', eventType: 'PlanRevisionAccepted' },
         ...adopterCommitGuards(adopter).map(guard),
       ];
@@ -1165,10 +1318,14 @@ function adoptionEffects(admitted: AdmittedAdoption, adopter: PlanAdopter): Plan
         guard({ target: 'proposal', expectedRevision: proposal.revision }),
         guard({ target: 'plan_revision', ref: admitted.source.ref, expectedRevision: 1 }),
       );
-      for (const taskId of admitted.touchedTaskIds) {
+      // The changed and added Tasks, and (C7) the untraced disposition-only ones: Lease ∅ / Reduction ∅.
+      for (const taskId of [...admitted.touchedTaskIds, ...admitted.untracedDispositionTaskIds]) {
         effects.push(guard({ target: 'task_record_absent', record: 'TaskLease', taskId }),
           guard({ target: 'task_record_absent', record: 'TaskReduction', taskId }));
       }
+      // C7 (TASK-19): the traced disposition-only Tasks' facts; guard 9: the carriers read.
+      for (const taskId of admitted.tracedDispositionTaskIds) effects.push(guard({ target: 'task_facts', taskId }));
+      for (const taskId of admitted.carrierTaskIds) effects.push(guard({ target: 'carrier_facts', taskId }));
       effects.push(guard({ target: 'plan_revision', ref: admitted.target, expectedRevision: null }));
       return effects;
     }

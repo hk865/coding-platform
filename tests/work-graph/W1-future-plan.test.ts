@@ -719,10 +719,13 @@ it('scenario 9: a changed or added Task with a Run, TaskLease or TaskReduction i
     await f.seedLease('B1', 'w1-run-B1');
     await f.seedRun('B2', 'running');
   }, noLongerFuture('B2', RUN));
+  // B left o-core and o-solo, so the refusal says how to keep it (§3.3 无痕规则, C7, A.2 step 5.10).
   await refusedAdoption('task-order', splitBDraft(), async f => {
     await f.seedReduction('B', 'satisfied');
     await f.seedLease('B1', 'w1-run-B1');
-  }, noLongerFuture('B', REDUCTION));
+  }, { ...noLongerFuture('B', REDUCTION), reason: `${noLongerFuture('B', REDUCTION).reason}; a traced task may change only its `
+    + 'disposition or replacedByTaskId: keep it in obligations[o-core].taskIds, obligations[o-solo].taskIds and add the '
+    + 'replacement task as another carrier' });
   await refusedAdoption('lease-before-reduction', editBDraft(), async f => {
     await f.seedReduction('B', 'satisfied');
     await f.seedLease('B', 'w1-run-B');

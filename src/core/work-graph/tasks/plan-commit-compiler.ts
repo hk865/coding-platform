@@ -17,10 +17,13 @@ import {
   type PlanRevisionRef,
   type PlanRevisionSnapshot,
   type PlanTaskAssignment,
+  type RuntimeTask,
+  type TaskDispositionChangeV1,
+  type TaskDispositionRecordV1,
   type TaskInputRequirementV2,
 } from '../../../contracts/plan.js';
 import type { PreparedCommit, RecordGuard } from '../../record-store/ports.js';
-import type { PlanProposalEffect } from '../state/plan-machine.js';
+import type { PlannedDispositionChangeV1, PlanProposalEffect } from '../state/plan-machine.js';
 import { encodeGoalSnapshot } from '../persistence/record-codecs.js';
 import { buildTargetTaskBasis, isBasisUnsupported } from './plan-task-basis.js';
 import type { PlanProposal } from './plan-contracts.js';
@@ -52,6 +55,11 @@ export type PlanAdoptionCommit = {
   nextGoal: GoalSnapshot;
   /** `write_plan_revision` (PLAN-08). */
   plan: PlanRevisionWrite;
+  /**
+   * C7: the `change_task_disposition` effects whose Task transition (TASK-18/19)
+   * named `record_disposition_change`, in taskId order; `[]` for an initial adoption.
+   */
+  dispositionChanges: readonly PlannedDispositionChangeV1[];
   /** The `guard` effects as the commit's record guards, in the machine's order. */
   guards: readonly RecordGuard[];
 };
@@ -224,6 +232,28 @@ export type FuturePlanAdoptionCompile =
   | { status: 'unsupported'; reason: string };
 
 /**
+ * C7 `dispositionRecord` of the new Plan: the source Plan's entries with this
+ * adoption's changes over them (the latest change per Task), in taskId order;
+ * `null` while no Task's disposition was ever changed through W16.
+ */
+function mergeDispositionRecord(
+  source: PlanRevisionSnapshot,
+  changes: readonly PlannedDispositionChangeV1[],
+  adoption: Pick<TaskDispositionChangeV1, 'setIn' | 'proposalRef' | 'reason' | 'actor'>,
+): TaskDispositionRecordV1 | null {
+  const byTask = new Map<string, TaskDispositionChangeV1>();
+  for (const entry of source.schemaVersion === 2 ? source.dispositionRecord?.entries ?? [] : []) byTask.set(entry.taskId, entry);
+  for (const change of changes) {
+    byTask.set(change.taskId, { taskId: change.taskId, from: change.from, to: change.to,
+      replacedByTaskId: change.replacedByTaskId, traced: change.traced, setIn: adoption.setIn,
+      proposalRef: adoption.proposalRef, reason: adoption.reason, actor: adoption.actor });
+  }
+  if (byTask.size === 0) return null;
+  const entries = [...byTask.values()].sort((left, right) => (left.taskId < right.taskId ? -1 : left.taskId > right.taskId ? 1 : 0));
+  return { schemaVersion: 1, entries };
+}
+
+/**
  * W1: compiles ONE accepted future-only Plan adoption. The target snapshot is
  * constructed deterministically from the trusted immutable source plus the
  * validated future-only delta; the caller Draft is NEVER written over existing
@@ -231,6 +261,13 @@ export type FuturePlanAdoptionCompile =
  * the original adoption event, with the LOCAL guards PLAN-05 names (current
  * Goal/source/proposal, target Plan absence, and confirmed Lease/Reduction
  * absence for each changed or added Task).
+ *
+ * C7 (§3.3 PLAN-05 effects, A.2 step 5.10): a disposition-only Task is its
+ * source definition with only the draft's `disposition`/`replacedByTaskId`
+ * (never the caller's assignment or inputs) and keeps its source basis; the
+ * compiler-owned `dispositionRecord` holds this adoption's changes (the
+ * `dispositionChanges` the Task machine recorded, `traced` as the owner read
+ * it) over the source Plan's entries, one per Task in taskId order.
  */
 export function compileFuturePlanAdoption(input: FuturePlanAdoptionInput): FuturePlanAdoptionCompile {
   const { source } = input;
@@ -241,17 +278,38 @@ export function compileFuturePlanAdoption(input: FuturePlanAdoptionInput): Futur
   if (target.schemaVersion !== 2 || build.from !== 'future_delta') {
     throw new Error('a future adoption writes a schemaVersion 2 draft from its source and the validated delta');
   }
+  // A disposition-only Task is not changed: its basis is inherited (C7).
   const basis = buildTargetTaskBasis({ source, targetRef: plan.ref,
     changedTaskIds: build.changedTaskIds, addedTaskIds: build.addedTaskIds });
   if (isBasisUnsupported(basis)) return { status: 'unsupported', reason: basis.reason };
   // Deterministic source + validated delta: an unchanged Task is written from
   // its immutable source definition, never from the caller body. Only changed
-  // or added Tasks take the candidate definition.
+  // or added Tasks take the candidate definition; a disposition-only Task takes
+  // its source definition with the draft's two disposition fields.
   const changed = new Set([...build.changedTaskIds, ...build.addedTaskIds]);
+  const dispositionOnly = new Set(build.dispositionOnlyTaskIds);
   const sourceTaskById = new Map(source.tasks.map((task) => [task.taskId, task]));
   const sourceAssignmentsById = new Map(revisionAssignments(source).map((assignment) => [assignment.taskId, assignment]));
   const targetAssignmentsById = new Map(revisionAssignments(target).map((assignment) => [assignment.taskId, assignment]));
-  const tasks = target.tasks.map((task) => changed.has(task.taskId) ? task : sourceTaskById.get(task.taskId) ?? task);
+  const tasks: RuntimeTask[] = [];
+  for (const task of target.tasks) {
+    const original = sourceTaskById.get(task.taskId);
+    if (changed.has(task.taskId) || original === undefined) {
+      tasks.push(task);
+    } else if (dispositionOnly.has(task.taskId)) {
+      const { replacedByTaskId: _sourceReplacement, ...definition } = original;
+      void _sourceReplacement;
+      tasks.push({ ...definition, disposition: task.disposition,
+        ...(task.replacedByTaskId === undefined ? {} : { replacedByTaskId: task.replacedByTaskId }) });
+    } else {
+      tasks.push(original);
+    }
+  }
+  const dispositionRecord = mergeDispositionRecord(source, input.commit.dispositionChanges, {
+    setIn: plan.ref, proposalRef: acceptedProposal.ref, actor: input.actor,
+    reason: { text: acceptedProposal.reason.text, sources: acceptedProposal.reason.sources,
+      affectedTaskIds: [...(acceptedProposal.reason.affectedTaskIds ?? [])] },
+  });
   const assignments: PlanTaskAssignment[] = [];
   for (const task of tasks) {
     const chosen = changed.has(task.taskId) ? targetAssignmentsById.get(task.taskId) : sourceAssignmentsById.get(task.taskId);
@@ -286,6 +344,7 @@ export function compileFuturePlanAdoption(input: FuturePlanAdoptionInput): Futur
     ...(target.taskRelations !== undefined ? { taskRelations: target.taskRelations } : {}),
     ...(target.inputRequirements !== undefined ? { inputRequirements } : {}),
     taskStateBasis: basis,
+    ...(dispositionRecord === null ? {} : { dispositionRecord }),
   };
   const event = planRevisionAcceptedEvent({
     planId: target.planId,

@@ -8,8 +8,9 @@ import type {
 } from '../../../contracts/plan.js';
 import { planValidationError, revisionAssignments } from '../../../contracts/plan.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
+import type { FutureCarrierRemovalV1, FutureDispositionChangeV1 } from '../state/plan-machine.js';
 import {
-  buildFrozenTaskDefinitions, frozenTaskDefinitionsAgree, isBasisUnsupported,
+  buildFrozenTaskDefinitions, executionDefinitionsAgree, frozenTaskDefinitionsAgree, isBasisUnsupported,
   type FrozenObligation, type FrozenTaskDefinition,
 } from './plan-task-basis.js';
 import { buildTaskAdjacency, hasCycleInEdges, hasDirectedCycle } from './task-index.js';
@@ -253,12 +254,33 @@ export function planPhaseGuardReasons(tasks: readonly RuntimeTask[]): string[] {
  * no model access. `taskRelations` and display-only `taskHierarchy.parentOf`
  * are deliberately OUTSIDE this set, so a prompt edge to a running Task does
  * not make that Task "changed".
+ *
+ * C7 (STATE-MACHINES-SPEC §3.3 point 6, A.2 step 5.10) splits the existing
+ * Tasks in three: a different EXECUTION definition (`executionDefinitionsAgree`:
+ * the frozen definition without `disposition`/`replacedByTaskId`, the carried
+ * obligations included) is `changed`; the same execution definition with a
+ * different `disposition` or `replacedByTaskId` (an absent replacement and
+ * `null` are the same) is `dispositionOnly`, written from its source
+ * definition with its basis inherited; otherwise the Task is unchanged.
  */
 export type FuturePlanDelta = {
   changedTaskIds: string[];
   addedTaskIds: string[];
   cancelledTaskIds: string[];
+  dispositionOnlyTaskIds: string[];
+  /**
+   * Every existing Task whose `disposition` or `replacedByTaskId` changes
+   * (changed or disposition-only), in taskId order: one `disposition_changed` each.
+   */
+  dispositionChanges: FutureDispositionChangeV1[];
+  /** Changed Tasks that left source obligations' `taskIds` (the untraced rule's hint for a traced one). */
+  carrierRemovals: FutureCarrierRemovalV1[];
 };
+
+/** C7: an existing Task's `disposition` or `replacedByTaskId` changes (an absent replacement is `null`). */
+function dispositionMoved(original: RuntimeTask, task: RuntimeTask): boolean {
+  return original.disposition !== task.disposition || (original.replacedByTaskId ?? null) !== (task.replacedByTaskId ?? null);
+}
 
 export type FuturePlanDeltaResult =
   | { status: 'supported'; delta: FuturePlanDelta }
@@ -307,7 +329,6 @@ export function deriveFuturePlanDelta(
   source: PlanRevisionSnapshot,
   target: PlanRevisionDraft,
 ): FuturePlanDeltaResult {
-  const sourceTaskIds = new Set(source.tasks.map((task) => task.taskId));
   const targetTaskIds = new Set<string>();
   for (const task of target.tasks) {
     if (targetTaskIds.has(task.taskId)) {
@@ -322,11 +343,16 @@ export function deriveFuturePlanDelta(
   }
   const sourceDefinitions = definitionIndex(source);
   const targetDefinitions = draftDefinitionIndex(target);
+  const sourceTaskById = new Map(source.tasks.map((task) => [task.taskId, task]));
   const addedTaskIds: string[] = [];
   const changedTaskIds: string[] = [];
   const cancelledTaskIds: string[] = [];
+  const dispositionOnlyTaskIds: string[] = [];
+  const dispositionChanges: FutureDispositionChangeV1[] = [];
+  const carrierRemovals: FutureCarrierRemovalV1[] = [];
   for (const task of target.tasks) {
-    if (!sourceTaskIds.has(task.taskId)) {
+    const original = sourceTaskById.get(task.taskId);
+    if (original === undefined) {
       addedTaskIds.push(task.taskId);
       continue;
     }
@@ -335,15 +361,80 @@ export function deriveFuturePlanDelta(
     if (left === undefined || right === undefined) {
       return { status: 'unsupported', reason: `task ${task.taskId} execution definition cannot be extracted` };
     }
-    const agree = frozenTaskDefinitionsAgree({ left, right });
-    if (isBasisUnsupported(agree)) return { status: 'unsupported', reason: agree.reason };
-    if (!agree) changedTaskIds.push(task.taskId);
+    const sameExecution = executionDefinitionsAgree({ left, right });
+    if (isBasisUnsupported(sameExecution)) return { status: 'unsupported', reason: sameExecution.reason };
+    const moved = dispositionMoved(original, task);
+    if (!sameExecution) {
+      changedTaskIds.push(task.taskId);
+      const removal = carrierRemovalOf(source, target, task.taskId);
+      if (removal !== null) carrierRemovals.push(removal);
+    } else if (moved) {
+      // The execution definitions agree, so only `disposition`/`replacedByTaskId` can differ.
+      dispositionOnlyTaskIds.push(task.taskId);
+    }
+    if (moved) {
+      dispositionChanges.push({ taskId: task.taskId, from: original.disposition, to: task.disposition,
+        replacedByTaskId: task.replacedByTaskId ?? null });
+    }
     if (task.disposition !== 'active') cancelledTaskIds.push(task.taskId);
   }
+  const byTaskId = (left: { taskId: string }, right: { taskId: string }): number =>
+    (left.taskId < right.taskId ? -1 : left.taskId > right.taskId ? 1 : 0);
   changedTaskIds.sort();
   addedTaskIds.sort();
   cancelledTaskIds.sort();
-  return { status: 'supported', delta: { changedTaskIds, addedTaskIds, cancelledTaskIds } };
+  dispositionOnlyTaskIds.sort();
+  dispositionChanges.sort(byTaskId);
+  carrierRemovals.sort(byTaskId);
+  return { status: 'supported', delta: { changedTaskIds, addedTaskIds, cancelledTaskIds, dispositionOnlyTaskIds,
+    dispositionChanges, carrierRemovals } };
+}
+
+/**
+ * C7 (§3.3 无痕规则): the source obligations a changed Task left (no longer
+ * listed in their `taskIds`). Leaving an obligation changes the execution
+ * definition, so the untraced rule's refusal of a traced Task that did so says
+ * how to keep it: leave it listed and add the replacement as another carrier.
+ * `null` when the Task left no obligation.
+ */
+function carrierRemovalOf(source: PlanRevisionSnapshot, target: PlanRevisionDraft, taskId: string): FutureCarrierRemovalV1 | null {
+  const kept = new Set(target.obligations.filter((obligation) => obligation.taskIds.includes(taskId))
+    .map((obligation) => obligation.obligationId));
+  const obligationIds = source.obligations
+    .filter((obligation) => obligation.taskIds.includes(taskId) && !kept.has(obligation.obligationId))
+    .map((obligation) => obligation.obligationId).sort();
+  return obligationIds.length === 0 ? null : { taskId, obligationIds };
+}
+
+/**
+ * C7 (§3.3 任务定义守卫表, `replacedByTaskId` 合法): checked only for an
+ * existing Task whose `disposition` or `replacedByTaskId` changes. A
+ * `superseded` Task names no replacement (null) or another Task of the target
+ * with the same `taskKind`; any other disposition names none. Reported as
+ * `unsupported_execution_change` (no new PlanValidationCode).
+ */
+function replacementIssues(source: PlanRevisionSnapshot, target: PlanRevisionDraft): PlanValidationError[] {
+  const issues: PlanValidationError[] = [];
+  const sourceTaskById = new Map(source.tasks.map((task) => [task.taskId, task]));
+  const targetTaskById = new Map(target.tasks.map((task) => [task.taskId, task]));
+  for (const task of target.tasks) {
+    const original = sourceTaskById.get(task.taskId);
+    if (original === undefined) continue;
+    const replacedBy = task.replacedByTaskId ?? null;
+    if (!dispositionMoved(original, task) || replacedBy === null) continue;
+    const path = `tasks[${task.taskId}].replacedByTaskId`;
+    if (task.disposition !== 'superseded') {
+      issues.push(planValidationError(path, 'unsupported_execution_change',
+        `task ${task.taskId} is ${task.disposition}; only a superseded task names a replacement`));
+      continue;
+    }
+    const replacement = targetTaskById.get(replacedBy);
+    if (replacedBy === task.taskId || replacement === undefined || replacement.taskKind !== task.taskKind) {
+      issues.push(planValidationError(path, 'unsupported_execution_change',
+        `superseded task ${task.taskId} must name another ${task.taskKind} task of the target plan, not ${replacedBy}`));
+    }
+  }
+  return issues;
 }
 
 export type FutureObligationCoverageResult =
@@ -446,6 +537,9 @@ export function validateFutureObligationCoverage(input: {
         `source task ${task.taskId} declared executionIntent ${task.executionIntent}; the candidate cannot omit it`));
     }
   }
+
+  // C7: a superseded Task names its replacement correctly; no other disposition names one.
+  issues.push(...replacementIssues(source, target));
 
   const addedTaskIds = new Set(delta.addedTaskIds);
   const sourceObligationIds = new Set(source.obligations.map((obligation) => obligation.obligationId));

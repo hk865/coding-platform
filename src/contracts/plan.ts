@@ -100,8 +100,9 @@ export type TaskStateBasisV1 = {
 };
 /**
  * C7: one Task's latest disposition change made through a future-only
- * adoption (W16), traced (with execution history) or not. Compiler-owned like
- * `TaskStateBasisV1`; a Draft/Proposal never carries it.
+ * adoption (W16), traced (with execution history) or not. A change of
+ * `replacedByTaskId` alone is recorded too (`from === to === 'superseded'`).
+ * Compiler-owned like `TaskStateBasisV1`; a Draft/Proposal never carries it.
  */
 export type TaskDispositionChangeV1 = {
     taskId: string;

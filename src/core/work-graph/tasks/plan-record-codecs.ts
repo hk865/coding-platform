@@ -426,7 +426,8 @@ function affectedTaskIdsIssues(value: unknown, tasks: unknown, path: string): st
 /**
  * C7 `TaskDispositionRecordV1` on an accepted snapshot: one entry per Task,
  * stable ascending by taskId, each a real disposition change of a task of this
- * plan, set in an adopted PlanRevision of this project by a recorded actor.
+ * plan (or a superseded Task's new replacement, `from === to === 'superseded'`),
+ * set in an adopted PlanRevision of this project by a recorded actor.
  */
 function dispositionRecordIssues(value: unknown, tasks: unknown, ref: unknown): string[] {
   if (!isRecord(value)) return ['plan dispositionRecord must be an object'];
@@ -457,7 +458,8 @@ function dispositionRecordIssues(value: unknown, tasks: unknown, ref: unknown): 
     if (planIds.size > 0 && !planIds.has(taskId)) issues.push(`${path}.taskId is not a task of this plan`);
     if (!isEnum(entry['from'], DISPOSITIONS) || !isEnum(entry['to'], DISPOSITIONS)) {
       issues.push(`${path}.from/to must be dispositions`);
-    } else if (entry['from'] === entry['to']) {
+    } else if (entry['from'] === entry['to'] && entry['to'] !== 'superseded') {
+      // C7: an entry with from === to only re-points a superseded Task's replacement.
       issues.push(`${path} must record a disposition change`);
     }
     if (!(entry['replacedByTaskId'] === null || isNonEmptyString(entry['replacedByTaskId']))) {
