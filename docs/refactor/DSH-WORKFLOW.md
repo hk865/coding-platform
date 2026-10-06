@@ -1,33 +1,74 @@
 # 本地 dsh 的分批实施与验收
 
+> **2026-10-07 现行入口：** 本地入口见下文 §1，实测上限与任务书写法见 §6（[分级测试证据](reviews/evidence/dsh-ladder-2026-10-07/README.md)，HANDOFF 决定 32）。下面两段是 2026-09 的历史说法：两阶段的意思仍然有效，其中的 `coding-platform/next`、Astra、“DSH 4.1F”、原 `coding-platform/src` 等名称和路径已过时。
+
 > **2026-09-25 当前执行方式：** 在已建立的 `coding-platform/next` 内采用 Astra 架构与接口 → DSH 4.1F 骨架与测试 → Astra 审核并冻结 → DSH 4.1F 实现 → Astra 审阅 → 物理隔离测试。中间审核是独立阶段，不得在同一次不间断调用中先写测试再直接实现。原 `coding-platform/src` 只读参考。最新 [A1 验收](reviews/next-a1-graph-session-2026-09-25.md)为 75 文件 / 719 项，已增加正式目录、Module/Task 关联、定向发现和显式生命周期；前序图历史、Source、Session/Claim、Role 等原语继续复用。先读[完整路径计划](IMPLEMENTATION-PLAN.md)与[能力索引](IMPLEMENTED-CAPABILITIES.md)，不要以局部实现范围代替双图、装配、咨询、编排与控制的产品目标。运行入口 [next/package.json](../../package.json)；环境和精确写范围见 [DSH-EXECUTION-HARNESS](DSH-EXECUTION-HARNESS.md)。
 
 **原工程实施历史（2026-09-23–24，不是 next 的验收）：** 用户已授权主 Agent 负责架构、骨架和测试，dsh 按真实依赖分批并行实现代码。已经实际调用并完成 R2a、R2b、R2c、R2d.1 独立验收，R2d.2 也已独立验收，R2d.3也已沿同一会话完成并独立验收；R2e.1已通过[独立验收](reviews/R2e-1-sol-dsh-acceptance.md)。用户提交的 R3a / R4a 首轮实现曾未通过[9 月 23 日验收](reviews/R3a-R4a-independent-acceptance.md)；9 月 24 日已完成 Sol 骨架 / 测试与 dsh 受限返修并验收通过。R3b正文与规则已按两个受限Session并行实现，真实接线通过[功能验收](reviews/R3b-sol-dsh-acceptance.md)，临时reader依赖明确保留。原工程结果见[逐批验收](reviews/implementation-batches.md)，next 后续状态以新工程报告为准；不能仅凭 dsh 的完成报告认定通过；平台连续Session与范围并行尚未交付。
 
-## 1. 真实本地入口
+## 1. 本地入口（2026-10-07 核对）
 
-- CLI：`/home/hyh001/projects/deepseek-harness/deepseek-harness-master/apps/cli/lib/bin.js`，已核对版本 `0.1.6-alpha.1`。
-- DSH_HOME：`/home/hyh001/projects/deepseek-harness/.dsh-vanilla`；沿用现有已配置环境，不读取/打印凭据，不修改权限模式。
-- Node：`/home/hyh001/projects/coding-platform/.toolchain/node-v24.21.0-linux-x64/bin/node`。
-- dsh 外层运行 cwd 可保持 `/home/hyh001/projects/coding-platform`；任务书写范围必须落在 `coding-platform/next/`。新产品构建/测试 cwd 为 `coding-platform/next`，原 `coding-platform/src` 只读。
-- 原工程源码捕获阶段 R2a–R2c 的历史 Session：`session-b1f94780-085b-43e3-a1d6-40b391dfcba2`，相邻实现与修复连续复用。当时 R2d.1 转向运行工具模块，使用 `session-f5c2b6c6-58f6-4f3f-9427-07abe0d24d69`，依据落盘任务书与独立测试接手。R2d修复继续复用该Session；R2e.1回到源码核心Session b1f94780，依据最新任务书/实际文件接上已验收R2d端口。此前在同一工作树串行派发是当时执行安排，不再作为全局限制。按当前[并行设计](PARALLEL-COLLABORATION.md)，公开契约冻结后，文件范围不冲突的内部实现可并行；公共契约、组合根、模块map及共用fixture由指定集成者协调。会改同一文件/输出/数据库的任务先交接范围，不能互相覆盖。
+**在哪里跑。** 只在 WSL 里跑（用户 han001），而且一律在单独的副本里跑。不在 Windows 工作树里跑，不在 `~/cc-work`（另一个测试工作流的槽位）里跑，也不在 `base` 本身里跑。
 
-原工程已验证的 CLI 调用示例（下列 Session 是历史值，新批使用其任务书登记的 Session；`TASK_FILE` 是冻结任务，不是自行扩写的总目标）：
+**安装与配置。**
+- Node：`/home/han001/projects/agents/coding-agent/.tooling/node-v24.18.0-linux-x64/bin/node`
+- CLI：`/home/han001/projects/agents/dsh-runtime-current/node_modules/@deepseek-ai/dsh/lib/bin.js`，版本 0.1.7-rc.2。
+- DSH_HOME 用默认的 `~/.dsh`：
+  - 不改里面的 profile、设置和凭据；
+  - 不读、不打印密钥。
+- profile 用 `headless`，默认模型是 deepseek-flash。
+- 不用 3080（用户自己的网页界面），也不用 3099（插件测试用的 agent-platform-dev）。不启动工作台 44797。
+
+**换模型或参数。** 只用覆盖文件，不改 `~/.dsh`。
+- 覆盖文件放在 `~/dsh-work/patches/`，用 `--patch` 传入。例如 `pro.yml` 换成 deepseek-v4-pro；`llm-deepseek` 的 provider 配置里可以开关 thinking，reasoningEffort 可设为 off/low/high/max。
+- 覆盖会整段替换一个条目的配置，所以要保留的字段也要写上。
+- 用之前先用 `--dump-config` 核对模型。
+- `--patch` 必须写在 `--json` 前面，否则会报 `unknown option '--patch'`。
+- 按实测，平时不需要换（见 §6.5）。
+
+**副本。** 每个任务一个新副本，做法如下：
+1. 目标提交的 `git archive`，加上 `node_modules`；
+2. 再在 `vendor/coding-agent/node_modules` 里放 zod 和 openai。缺了它们，typecheck 会报 100 个 TS7006；
+3. `git init`，提交一个基线提交。
+
+分级测试的副本做法是：`~/dsh-work/base` 只读，每次用 `cp -a` 复制一份；`~/dsh-work/ladder/<级别>/setup.sh` 负责建副本，并在副本外面记下基线提交。
+
+**直接调用。** 一次跑一个任务，跑完就退出：
 
 ```bash
-cd /home/hyh001/projects/coding-platform
-env DSH_HOME=/home/hyh001/projects/deepseek-harness/.dsh-vanilla \
-    DSH_TELEMETRY_MODE=DISABLED \
-  .toolchain/node-v24.21.0-linux-x64/bin/node \
-  /home/hyh001/projects/deepseek-harness/deepseek-harness-master/apps/cli/lib/bin.js \
-  --profile headless --json \
-  --session-id session-f5c2b6c6-58f6-4f3f-9427-07abe0d24d69 \
-  - < "$TASK_FILE"
+cd <副本> && DSH_TELEMETRY_MODE=DISABLED <node> <bin.js> --profile headless [--patch <覆盖.yml>] --json \
+  [--session-id <id>] - < task.md > events.jsonl 2> err.txt
 ```
 
-第一次创建 Session 时省略 `--session-id`；继续时保持原 cwd 和 profile。调用参数和 stdin 已实际验证，未依赖 GUI。GUI 启动脚本另使用 `web --host 127.0.0.1 --port 3080 --no-open`，无需为了本任务启动网页。
+- 第一条事件给出 Session id。
+- 在同一个 Session 里继续（返修，或者第二阶段）时，加 `--session-id`，并保持同一个副本、同一个 profile。
+- 事件类型有：session、status（带 token 用量）、thinking、tool_call、tool_result、text、final。
 
-原工程批次中主 Agent 曾用 `/tmp/coding-platform-dsh-run/run.py` 调上述 CLI：仅显示 Session、工具名、最终输出文件与退出码，丢弃 thinking 事件；各批保存独立 final/result 记录。该 `/tmp` 包装脚本是运行辅助，不是产品依赖；丢失后可按上面入口重建。必要验收结论已经另存文档，不能要求接手者读取全部原会话日志。
+**推荐经沙箱运行器跑：**
+```bash
+node ~/dsh-work/ladder/_common/run-dsh.mjs run <副本> <任务书> <运行名> --level <级别目录> [--session-id <id>]
+```
+- 它用 bubblewrap。运行中只看得见副本、私有的 `/tmp`，以及只读的 DSH 安装。看不见 `/mnt`（Windows 一侧）、base、其它副本和 `~/cc-work`。
+- 默认上限是 20 分钟、1000 万 token。超了只杀它自己的进程，记为 `stopped: limit`。照用户的说法，DSH 每秒约 250–300 token，跑这么久说明卡住了，不是在干活。
+- 它把 `run.json`（时间、token、工具调用次数）、`events.jsonl`、`final.md`、`scan.json`（越界路径）和 `git-status.txt` 写到 `~/dsh-work/ladder/_runs/<运行名>/`。
+- 已知问题：这个运行器把 `--patch` 放在了 `--json` 后面。用覆盖文件之前，先在 `_common` 里改好参数顺序；改好的一份在证据的 `_results/L6work/run-dsh-fixed.mjs`。
+
+**运行规矩。**
+- 一次只跑一个 DSH，因为机器和测试工作流共用。
+- 用后台工具调用启动。不要在 `wsl.exe` 里用 `nohup … &`，会被 SIGHUP 杀掉。
+- 等待循环写进脚本文件。直接写在命令行里的 `pgrep -f` 会匹配到它自己。
+- 给 DSH 看的检查输出，要在机器空闲时跑。负载下曾出现 14 个失败而不是 8 个，原因是 sqlite 计时。
+
+**两阶段规则不变**（§2 第 3–5 条）：
+- 新行为先由 lead 冻结接口和测试。DSH 第一阶段只写骨架和测试，写完就停。lead 审核并冻结之后，才进入第二阶段实现。
+- DSH 自报的 PASS 只是输入。验收由 lead 和审查者做。
+
+纯搬移（例如任务 D）没有新接口和新测试。这时冻结的是三样东西：lead 的搬移表、精确数量和检查脚本。
+- 第一阶段：DSH 只出一份「计划改动清单」（dry run），然后停下。
+- lead 用脚本逐行对照参考结果。
+- 第二阶段：在同一个 Session 里执行改动，跑检查。
+
+**历史入口作废。** 下面这些是 2026-09 的旧入口，只留作历史记录，现在不能用：hyh001 下的路径、0.1.6-alpha.1、`.dsh-vanilla`、`/tmp/coding-platform-dsh-run/run.py`、`tools/dsh-refactor/harness.py` 的 lane 挂载。历史 Session id 也不再续用。
 
 ## 2. 派发与接收规则
 
@@ -102,3 +143,139 @@ dsh plugin --profile headless add @deepseek-ai/dsh-experimental-agent-team-profi
 要在原 DSH_HOME 下调用本地 dsh，而非意外修改另一个默认目录。命令运行者还应保持已有 Node24/CLI 入口；以上为包的文档语法，不假设 shell 已存在 dsh 别名。
 
 工具为 `spawn_teammate`、`send_message`、`list_agents`、`wait_agent`、`interrupt_agent` 和 `team_task_*`。提示词必须明确要求使用 Agent Teams。成员共享 cwd；write_scopes 只是冲突提示，无工作树隔离和文件锁。Lead 管公共文件和集成，等待成员真实完成；缺工具时如实报告，或由主 Agent 外部分派独立 dsh Session，不把串行扮演多个角色称为并行。
+
+## 6. 实测上限与任务书写法（2026-10-07 分级测试，决定 32）
+
+### 6.1 测了什么
+
+**测试条件。**
+- DSH 0.1.7-rc.2，headless，模型是 deepseek-flash。另有一次用了 deepseek-v4-pro。
+- 每次都在沙箱里、在 bfb6075 的新副本上跑。
+- 检查在一次性克隆上做，不碰副本。
+- 每一级用原样的任务书重复 3 次，再试三种做法：详细任务书、角色设定、两种反馈。
+
+**总量。** 共 57 次运行（60 个 Session），DSH 用时合计 146 分钟，合计 8490 万 token。没有一次碰到上限。
+
+| 级别 | 内容 | 原样任务书 3 次 | 最好的写法 |
+|---|---|---|---|
+| L1 | 照精确规格写一个新文件（冒烟测试） | 1/1 通过，16 秒 | — |
+| L2 | 搬 4 个文件，改 35 个文件 | 3/3 通过，约 2.7 分钟、81 万 token | 原样即可 |
+| L3a | 搬 8 个文件，改 76 个文件 | 3/3 通过，约 4.2 分钟、237 万 token | 原样即可 |
+| L3 | 搬 17 个文件，改 157 个文件（即 bfb6075 上的整个任务 D） | 0/3：157 个文件全对，但都多改了 3 个无关文件里的 10 处 | 详细任务书，一次通过，5.9 分钟、188 万 token |
+| L4 | 按冻结接口实现 79 行的纯函数，并自己写测试 | 3/3 通过 | 详细任务书，71 万 token（少 69%） |
+| L5 | 按带期望值的用例表写 14 个测试 | 3/3 通过，测试内容完全相同 | 详细任务书，8 万 token |
+| L5b | 同样 14 个测试，只给情形，值要从代码推出来 | 3/3 通过，和 L5 写出的测试相同 | 详细任务书，10 万 token |
+| L6 | 不给用例，按规格加仓库实现 94 行的 owner 写入 | 3/3 通过 | 详细任务书，214 万 token（少 66%） |
+| LD | 在代码和中文文档里查 10 处 | 3/3 全对，答案逐字节相同 | 详细任务书，16 万 token（少 50%） |
+
+### 6.2 上限在哪里
+
+**没找到规模和难度上的上限。**
+- 每一级都有写法一次通过。
+- 整个 ladder 里，得分低于满分的只有那一次 pro（15/16）。
+- 规模不是限制。157 个文件一次跑完，约 6 分钟。DSH 会自己写 TypeScript 语法树脚本，所以成本跟步数走，不跟文件数走：从 L3a 到 L3，文件多了 2.1 倍，时间只多 1.3 倍，token 反而是 0.9 倍。
+
+**可靠的事：**
+- 规则写死的多文件机械修改；
+- 按冻结接口和输出约定实现单个函数；
+- 仓库里有样板时，按规格实现 owner 写入；
+- 按用例写测试；
+- 按标识符查代码和中文文档；
+- 按指出的位置返修。
+
+**开始出错的地方。** 不在任务大小，在任务书怎么写规则：
+1. **规则的范围。** 笼统的一句话，它会用到所有够得着的地方。L3 原样的 3 次都把无关文件里的写法也“顺手改整齐”了。只有“分情况写的规则，加一个仓库里的例子”才挡住了。
+2. **没写成规则的惯例。** L6 的 5 次 flash 全都漏了仓库惯用的“别的 workspace 的记录要拒绝”，因为规格那一行没列这一步。任务书写了“照代码库的做法”，结果字面规格赢了。
+3. **大概的数字。** “约 360 处”变成了目标，实际 368 处它也接受了（L3，3/3）。
+4. **自己列的清单不全。** L3 原样任务书下，过时注释只列出 38 条中的 14 条；L5 的“未规定事项”只列出 15 项里的 6–8 项。给了列举方法之后就全了。
+5. **报告里的否定说法。** “没找到”“没建文件”“没有矛盾”这类话，大约每一级有一次是错的。CHECKS 里的数字几乎都对。
+6. **流程纪律。** 搬移级别每个 Session 都用了 `/tmp`，尽管写了“只在当前目录”。没点名禁止的 git 命令，L3 里有 4/8 用了（add、rm、checkout）；点名之后没有再用。
+
+**稳定性。** 同一级重复 3 次，结果从来没有不同：要么都对，要么像 L3 那样错得一模一样。“时好时坏”只出现在三处：
+- 第一版脚本的 bug（L3a 5/5 都有，每次不同，都被它自己发现了）；
+- 自选的测试用例；
+- 报告里列了哪些项。
+
+所以重复跑一遍查不出系统性错误，要靠任务书和 lead 的核对。
+
+### 6.3 任务书怎么写
+
+基础骨架用冒烟测试的四段：
+- 一句开场：“这是规定完整的任务，照做，不做设计决定，没规定的写进报告”；
+- 要做什么；
+- 写范围；
+- 检查命令和固定的四段报告：FILES CHANGED、CHECKS、UNSPECIFIED、NOTES。
+
+缺什么再加什么：
+1. **规则按情况写，并给一个仓库里的例子。** 例如：(a) 指向被搬文件的改；(b) 被搬文件里的相对路径按新目录写；(c) 其余一律不动，即使换个写法也能解析，例子 `src/core/agent-runtime/` 下的 `'../../core/workspace/x.js'`。依据：L3 原样 0/3，详细任务书一次通过。
+2. **期望的不变量逐句写出来，** 不写“照代码库的做法”。依据：L6 5/5。
+3. **给精确数量，按种类分开。** 例如“354 处、149 个文件 = 被搬文件 21 处/11 个 + 其它 333 处/138 个”。要求先 dry run，数量对上了才动手。依据：L3。
+4. **列出要读的文件和行号范围，附几行接口摘录。** 引用样板文件和规格里的实现说明。依据：同样质量下 token 少 50–69%（L4、L5、L5b、L6、LD）。
+5. **只跑点名的检查，并写出前后的精确数字。** 不许跑整个目录。依据：L6 约一半 token 花在可跑可不跑的测试上。
+6. **点名禁止的 git 命令：** add、rm、checkout、restore、stash、reset、commit。**指定草稿目录：** 副本内，结束前删掉，不用 `/tmp`。
+7. **要完整的清单，就给列举方法。** 例如“对每个旧文件名 git grep，带不带行号都算，逐条写 file:line”。“没找到”要写出用了哪条命令。
+8. **要它报矛盾，就明说。** 例如“列出引用的规格和输出约定不一致的每一句”。否则它常写“没有矛盾”（L4 有 3/5 次）。
+9. **格式上的选择在任务书里定死。** 例如值一律写成字符串、一项一行。同一规则如果有两种读法，选一种，并写出与之对应的数量。
+10. **不要加角色设定。** 试了 7 级，没有一级变好；有 3 级明显更慢，1 级测试更弱。
+11. **不要加它本来就会做的步骤清单。** 在 L2 和 L3a，这种清单没带来好处，多出来的命令只会变成多出来的步骤。
+
+### 6.4 反馈怎么给
+
+- **不要只发检查输出。** 8 级里 8 次都什么也没改。大多只回一句“Confirmed”，常常连报告格式也丢了。L3 那次还多了一句错话。
+- **发 lead 的审阅。** 写清楚：
+  - 哪里有问题（file:line）；
+  - 往哪个方向想；
+  - 要重读任务书的哪一句；
+  - 让它核对自己的数字；
+  - 圈定能改的范围：“只在任务书要求时才改，并写出依据哪条规则”。
+
+  不给答案，不给代码，不给结论，不给隐藏测试的结果。这样 9/9 次都修好了，或者正确地保住了本来就对的结果。每次 12 秒到 3.3 分钟。
+- **位置要由 lead 自己找。** 用 `git diff --name-only` 对照期望清单，或者核对数量、自己 git grep、对照约定读它的 diff。绿色的检查输出里找不到位置。
+- **告诉它只重跑哪些检查。** 否则它会重跑整个目录。
+- **一般一轮就够。** 第二轮还不行就停下，由 lead 用别的办法完成。
+
+### 6.5 模型和拆分
+
+- **一律用 deepseek-flash。** pro 只跑了一次：更慢（394 秒），得分 15/16，还漏了 flash 搜索时 4/4 都找到的那条规格。thinking 和 reasoningEffort 没测，因为没有哪一级需要。
+- **能用一个脚本做完的任务不拆。** L3 拆成 3 批：
+  - 成本约 3 倍，批与批之间另需约 21 分钟检查；
+  - 第一批照样犯同一个错；
+  - 第二批用 `git checkout -- src tests` 收拾自己的错。要不是第一批违规 `git add -A` 了，这一下会把第一批抹掉。
+- **要拆就按种类拆，不按大小拆。** 例如两阶段（dry run 和执行，或者骨架/测试和实现）。如果非要分批，每批通过后由 lead 提交，并点名禁止 checkout、restore、stash、reset。
+
+### 6.6 lead 怎么核对
+
+DSH 的报告只是输入。每次都要做：
+1. `git status --short` 的形状对，`git status --ignored` 里没有残留；
+2. `git diff --name-only` 等于期望清单；
+3. 改动数量等于精确数量；纯修改时 numstat 的增删行数相等；
+4. 冻结测试和隐藏测试的 sha 没变；
+5. typecheck、`check:architecture` 通过；测试 id 与基线相同，没有新失败；
+6. 没有提交，标签没有动；
+7. `scan.json` 里没有越界访问。已知误报：它自己写进模块路径字符串里的 `..`，正则里的 `~`。
+8. CHECKS 的每个数字都和检查结果对上；每一条否定说法都用 git grep 核实。
+
+搬移任务另外要求：和参考脚本的结果逐字节相同。
+
+各级的检查脚本在 `~/dsh-work/ladder/_common/`：`check-move.mjs`、`check-hidden.mjs`、`check-mutants.mjs`、`check-lookup.mjs`。
+
+### 6.7 不要给它的
+
+- 大概的数字；
+- 不限范围的风格句子；
+- 用“照代码库的惯例”代替写明的规则；
+- 没有阅读清单的“需要的都在副本里”；
+- 只有检查输出的反馈，或者负载下跑出来的检查输出；
+- 答案、代码、结论或隐藏测试的结果；
+- 角色设定；
+- 设计决定，例如未归位文件放哪、断哪条依赖边；
+- 副本以外的写权限：真实工作树、提交、推送、`~/.dsh`、3080/3099/44797 端口。
+
+### 6.8 证据
+
+分级测试的证据在 [reviews/evidence/dsh-ladder-2026-10-07](reviews/evidence/dsh-ladder-2026-10-07/README.md)：
+- 总表：`SCORECARD.md`。
+- 写法和依据：`GUIDE.md`。
+- 任务 D 的做法：`TASK-D-PLAN.md`；搬移表草稿：`L3-MOVE-TABLE.md`（按 bfb6075 计数，任务 D 前要在删减后的代码上重算，决定 34）。
+- 各级的细节：`<级别>-RESULTS.md`。
+- 运行脚本、每次运行的记录和 `best.diff` 没有入库：在 WSL 的 `~/dsh-work/ladder/` 和本次会话的临时目录里。

@@ -1,5 +1,7 @@
 # 分阶段骨架、冻结契约与 dsh 实现环境
 
+> **2026-10-07：** 本页的 harness.py lane 挂载和 hyh001 路径都是历史做法。现在的入口和隔离方式（bubblewrap 沙箱运行器）见 [DSH-WORKFLOW §1](DSH-WORKFLOW.md)，任务书写法见 §6。
+
 > 提示词引用现有真源、宽读窄写的统一规则见 [DSH-WORKFLOW §3](DSH-WORKFLOW.md)。Harness限制写入范围，不隔离产品意图和上下游只读设计；不另建重复施工包。
 
 更新：2026-09-24。用户最新调整：Astra 架构/接口 → DSH 4.1F 骨架与测试 → Astra 审核冻结 → DSH 实现 → Astra 审阅 → 隔离测试。历史 Sol 产物与验收保留；不再要求每批先调用 Sol。[原话与时序纠正](intent/2026-09-24-DSH-HARNESS.md)。
