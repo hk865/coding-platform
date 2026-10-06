@@ -101,6 +101,10 @@ it('W-11 and CTL-08(b): a Run interrupted mid-Turn ends crashed at the restart; 
     // No ack was written before the crash: the observer acks a steer only after the Kernel call returns.
     whileBlocked: async host => { expect(await readControl(host, steerRef!)).toMatchObject({ status: 'queued' }); },
   });
+  // Since A.2 step 5.8 the start-up re-drive requeues this interruption automatically (§12.1 step 6b (a));
+  // this test reads what the reconcile left, so Host 2 keeps the re-drive off
+  // (tests/app/A2-automation-rework.test.ts drives the automatic continuation).
+  await writeAutomationSettings(database, { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: false });
   const second = await startAG2bHost(publicDir, { root, database });
   try {
     const { runRef } = crashed;
@@ -109,7 +113,9 @@ it('W-11 and CTL-08(b): a Run interrupted mid-Turn ends crashed at the restart; 
     expect(JSON.stringify(crashed.first.scripted.requests[1])).toContain('A2: also read the tests');
     const hostInstanceId = second.host.reconcile.hostInstanceId;
     expect(second.host.reconcile).toMatchObject({ lease: 'owned', leaseRow: 'HL-03', report: {
-      runs: [{ ref: JSON.stringify(runRef), row: 'W-11', status: 'reconciled', reason: 'interrupted_clean' }], problems: [] } });
+      runs: [{ ref: JSON.stringify(runRef), row: 'W-11', status: 'reconciled', reason: 'interrupted_clean' }], problems: [],
+      // §12.1 step 6b (a) (5.8): the interrupted Task's verdict is requeue, so the Goal is selected either way.
+      redriveGoals: [{ goalRef: { goalId: 'ag2b-goal' }, taskIds: ['ag2b-work'] }] } });
     // RUN-19: crashed `host_interrupted` on the takeover basis; the Session is released with its cursor and retired (LA-1).
     const ended = await readExecution(second, runRef);
     expect(ended.run).toMatchObject({ status: 'ended', outcome: 'crashed', terminalPayload: { kind: 'crashed' },

@@ -46,13 +46,17 @@ export type WorkflowCalls = {
   finalize_checks: EvidencePort['finalizeChecks'];
   complete_task: GoalTaskPort['completeTask'];
   complete_goal: GoalTaskPort['completeGoal'];
-  /** C8 automatic rework (spec §4.1, §9 VD-12); performed from A.2 step 5 on. */
+  /**
+   * C8 automatic rework (spec §4.1, §9 VD-12). `requeue_task` is performed
+   * since A.2 step 5.8 under `WORKFLOW_AUTOMATION_ACTOR` (`automationContext`);
+   * `reverify_round` joins in step 5.9.
+   */
   requeue_task: NonNullable<TaskClaimPort['requeueTask']>;
   reverify_round: NonNullable<EvidencePort['reverifyRound']>;
 };
 
-/** Declared owner calls that no `perform` step produces or accepts yet (A.2 step 5). */
-export type WorkflowPendingStepKind = 'requeue_task' | 'reverify_round';
+/** Declared owner calls that no `perform` step produces or accepts yet (A.2 step 5.9). */
+export type WorkflowPendingStepKind = 'reverify_round';
 export type WorkflowStepKind = Exclude<keyof WorkflowCalls, WorkflowPendingStepKind>;
 
 /**

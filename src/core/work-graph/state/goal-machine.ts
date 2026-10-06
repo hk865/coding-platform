@@ -882,8 +882,12 @@ function verdictOf(task: GoalDisplayTaskFactsV1): TaskAutomationVerdictV1 {
   return task.failure?.automation.verdict ?? NO_VERDICT;
 }
 
-/** `requeue`, `reverify`, `claim_requeued`: an automatic rework the owner would accept now. */
-function isPendingVerdict(verdict: TaskAutomationVerdictV1): boolean {
+/**
+ * `requeue`, `reverify`, `claim_requeued`: an automatic rework the owner would
+ * accept now. The GOAL-30 headline rule and the start-up re-drive condition (a)
+ * (§12.1 step 6b, LA-6) read the same predicate.
+ */
+export function isPendingVerdict(verdict: TaskAutomationVerdictV1): boolean {
   switch (verdict.kind) {
     case 'requeue':
     case 'reverify':

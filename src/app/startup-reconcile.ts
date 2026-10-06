@@ -17,9 +17,9 @@
  *    (CTL-08(a) through RUN-09..11 (R), CTL-08(d)/(e));
  * 6. re-drive the Goal fan-out (GOAL-16, GOAL-14, GOAL-29);
  * 6b. select the active Goals the start-up re-drive starts a driver for
- *    (LA-6: a not-entered Run the same claim re-drives, W-01..W-03; condition
- *    (a), a required active Task whose automation verdict the Workflow acts
- *    on, joins with the Workflow's action in step 5.8 part 2);
+ *    (LA-6): (a) a required active Task whose automation verdict the Workflow
+ *    acts on (`requeue`, `claim_requeued`; `reverify` from step 5.9; W-21,
+ *    RUN-19), (b) a not-entered Run the same claim re-drives (W-01..W-03);
  * 7. return the report: what moved and what was left, with the reason.
  *
  * Reconcile only reads the Kernel Store and the platform records and books
@@ -41,7 +41,9 @@ import type { InterruptCheckInput } from '../core/work-graph/evidence/contracts.
 import type { QueryExecutionRecord } from '../core/work-graph/queries/contracts.js';
 import type { SessionDirectoryPort } from '../core/work-graph/sessions/contracts.js';
 import type { SessionHealthResult } from '../core/work-graph/sessions/session-health.js';
+import { isPendingVerdict } from '../core/work-graph/state/goal-machine.js';
 import type { GraphWrite } from '../core/work-graph/tasks/contracts.js';
+import type { PlanTaskPort } from '../core/work-graph/tasks/plan-contracts.js';
 import type { ExecutionReadPort, TaskExecutionRecord } from '../core/work-graph/tasks/execution-read-contracts.js';
 import type { ReconcileCandidateReader } from '../core/work-graph/tasks/reconcile-reads.js';
 import type { RunControlPort } from '../core/work-graph/tasks/control-contracts.js';
@@ -62,6 +64,8 @@ export type StartupReconcilePlatform = {
   sessions: Pick<SessionDirectoryPort, 'findSessions'>;
   executions: Pick<ExecutionReadPort, 'readExecution'>;
   controls: Pick<RunControlPort, 'readControl'>;
+  /** Step 6b condition (a): the Task facts and their automation verdicts, read again after steps 1..6. */
+  plans: Pick<PlanTaskPort, 'queryTaskGraph'>;
   reconcile: {
     candidates: ReconcileCandidateReader;
     probe(session: SessionRecord, signal: AbortSignal): Promise<SessionMappingProbe>;
@@ -101,7 +105,11 @@ export type StartupReconcileReportV1 = {
   checks: ReconcileLine[];
   controls: ReconcileLine[];
   fanOut: { goalId: string; control: string | null; problem: string | null; runs: number; continuations: number }[];
-  /** Step 6b: the active Goals with a not-entered Run the same claim re-drives (LA-6). */
+  /**
+   * Step 6b (LA-6): the active Goals the start-up re-drive starts a driver for, with the Tasks that
+   * selected them: (a) a required active Task whose automation verdict is pending, (b) a Task whose
+   * not-entered Run the same claim re-drives.
+   */
   redriveGoals: { goalRef: GoalRef; scope: Scope; taskIds: string[] }[];
   /** Candidates whose record could not be decoded, and scans that could not complete. */
   problems: string[];
@@ -315,15 +323,44 @@ export async function runStartupReconcile(deps: StartupReconcileDependencies): P
       }
     }
 
-    // Step 6b: the active Goals with a not-entered Run whose pointer is not paused/cancelled (W-01..W-03, LA-6).
+    // Step 6b (LA-6): the active Goals with (a) a required active Task whose automation verdict the
+    // Workflow acts on, read again after steps 1..6 (a Run step 2 ended is judged here, W-21, RUN-19), or
+    // (b) a not-entered Run whose pointer is not paused/cancelled (W-01..W-03).
     const afterSteps = await listed('starting', platform.reconcile.candidates.listRuns(scope, 'starting', ctx.signal));
     const notEntered = afterSteps.filter(run => startingEntryOf(run) === 'not_entered'
       && run.controlState?.desiredState !== 'paused' && run.controlState?.desiredState !== 'cancelled');
     for (const goal of goalRecords) {
       if (goal.desiredState !== 'active') continue;
-      const taskIds = notEntered.filter(run => run.ref.goalId === goal.ref.goalId).map(run => run.task.taskId);
+      const taskIds = [...await pendingAutomationTaskIds(ctx, goal, out),
+        ...notEntered.filter(run => run.ref.goalId === goal.ref.goalId).map(run => run.task.taskId)];
       if (taskIds.length > 0) out.redriveGoals.push({ goalRef: goal.ref, scope: { ...scope }, taskIds: [...new Set(taskIds)] });
     }
+  }
+
+  /**
+   * §12.1 step 6b condition (a): the required active Tasks of the Goal's adopted Plan whose automation
+   * verdict is pending (`isPendingVerdict`). An unreadable Task graph is reported and selects nothing.
+   */
+  async function pendingAutomationTaskIds(ctx: CoreCallContext, goal: GoalSnapshot, out: StartupReconcileReportV1): Promise<string[]> {
+    if (goal.activePlanRevision === null) return [];
+    let graph: Awaited<ReturnType<PlanTaskPort['queryTaskGraph']>>;
+    try {
+      graph = await platform.plans.queryTaskGraph(ctx, { goalRef: goal.ref });
+    } catch (error) {
+      out.problems.push(`${goal.ref.goalId}: the Task facts are not readable for the start-up re-drive (${messageOf(error)})`);
+      return [];
+    }
+    if (graph.status !== 'ready') {
+      out.problems.push(`${goal.ref.goalId}: the Task facts are not readable for the start-up re-drive (${rejectionText(graph)})`);
+      return [];
+    }
+    const { plan, tasks } = graph.value;
+    return plan.tasks.filter(task => task.requirementLevel === 'required' && task.disposition === 'active')
+      .filter(task => {
+        const verdict = tasks.find(row => row.ref.taskId === task.taskId)?.failure?.automation.verdict;
+        return verdict !== undefined && isPendingVerdict(verdict);
+      })
+      .map(task => task.taskId);
   }
 
   /** Whether any of the intents is still queued (a failed read counts as not queued: the Run is reconciled next start). */

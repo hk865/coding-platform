@@ -876,7 +876,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   const reconcileContext = (scope: CoreScope): CoreCallContext => hostScopeContext(scope, HOST_RECONCILE_ACTOR);
   const reconcileScopes = (scopes: readonly CoreScope[]) => runStartupReconcile({
     platform: { sessions: platform.sessions, executions: platform.executions, controls: platform.controls,
-      reconcile: platform.reconcile },
+      plans: platform.plans, reconcile: platform.reconcile },
     hostInstanceId: instanceLease.hostInstanceId,
     scopes: scopes.map(scope => ({ projectId: scope.projectId, workspaceId: scope.workspaceId })),
     context: reconcileContext,
@@ -886,7 +886,8 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   const hostReconcile: HostReconcileReportV1 = { hostInstanceId: instanceLease.hostInstanceId, lease: instanceLease.lease,
     leaseRow: instanceLease.row, leaseReason: instanceLease.reason, report: reconcileReport };
   // §12.1 step 6b (LA-6): the start-up re-drive starts the existing collaboration driver for each selected
-  // Goal, gated by `automation.resumeOnStartup`; every step it takes is judged by the owners.
+  // Goal (a pending automation verdict or a not-entered Run), gated by `automation.resumeOnStartup`; every
+  // step it takes is judged by the owners, and its rework steps run as the Workflow's automation actor.
   const startRedrive = async (goals: StartupReconcileReportV1['redriveGoals']): Promise<void> => {
     if (!platform.automationPolicy().resumeOnStartup) return;
     for (const goal of goals) {

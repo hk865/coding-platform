@@ -443,7 +443,9 @@ it('resumes the original Run prepare after the Host configuration is restored', 
  *  - the original round finalizes PASS, so a later refresh returns the existing
  *    `complete_task` for that same round without re-running any check or model;
  *  - a second Work's original round finalizes non-PASS (a real registered FAIL),
- *    so a later refresh waits instead of opening a replacement round.
+ *    so a later refresh never opens a replacement round: since A.2 step 5.8 it
+ *    returns the automatic `requeue_task` the Task's verdict asks for (C8),
+ *    performed by the Workflow automation actor with no model call.
  */
 type RunCheckPerform = Extract<WorkflowAdvanceInput, { kind: 'perform' }> & {
   operation: Extract<WorkflowOperation, { kind: 'run_check' }>;
@@ -608,12 +610,23 @@ it('resumes the original verification round for a completed Work Run across a di
         receipt: { kind: 'finalize_checks', result: { status: 'committed',
           value: { applicable: false, outcome: 'FAIL' } } } } });
 
-    // 8. A refresh of the finalized non-PASS round must WAIT, never open a
-    //    replacement round or re-run the failed check/model.
+    // 8. A refresh of the finalized non-PASS round never opens a replacement
+    //    round or re-runs the failed check/model: the Task's automation verdict
+    //    (AV-12 `requeue`, class check_failed) asks for the automatic requeue
+    //    (§15.2 5.8, step 7 list), which the Workflow performs as its automation
+    //    actor and then goes back to the selection.
     const afterFail = await platform.workflow.advanceWork(ctx(), { schemaVersion: 1, goalRef,
       flowId: 'r5c-check-resume-flow-5', sessionHint: null, taskId: 'work-2', kind: 'select_work' });
-    expect(afterFail, 'a finalized non-PASS round waits instead of opening a replacement').toMatchObject({
-      status: 'ready', value: { state: 'waiting', next: null } });
+    expect(afterFail, 'a finalized non-PASS round is requeued instead of opening a replacement').toMatchObject({
+      status: 'ready', value: { state: 'advance', receipt: null, next: { kind: 'perform', operation: { kind: 'requeue_task',
+        request: { input: { taskRef: { taskId: 'work-2' }, reason: 'auto-rework:check_failed#1' } } } } } });
+    if (afterFail.status !== 'ready' || afterFail.value.next === null) throw new Error('the requeue must be returned');
+    const requeued = await platform.workflow.advanceWork(ctx(), afterFail.value.next);
+    expect(requeued, 'TaskRequeue@1 by the Workflow automation actor, counted once').toMatchObject({
+      status: 'ready', value: { state: 'advance', next: { kind: 'select_work', taskId: 'work-2' },
+        receipt: { kind: 'requeue_task', result: { status: 'committed', value: { kind: 'requeued', requeue: {
+          revision: 1, failureClass: 'check_failed', requestedBy: { kind: 'system', id: 'workflow:auto-rework' },
+          automation: { automatic: true, counted: true, autoCount: 1 } } } } } } });
     expect(scripted.calls(), 'a finalized non-PASS refresh adds no model call').toBe(2);
     const failRound = await platform.evidence.readVerification(ctx(), second.roundRef);
     expect(failRound, 'the one original non-PASS round is unchanged').toMatchObject({

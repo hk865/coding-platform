@@ -18,8 +18,10 @@
  * off also says so, with or without the instance lease (LA-6, L-10). The §7.7 target boundaries
  * were added by the substeps that built them: 5.4 the requeue continuation brief (C3); 5.6 the new
  * Session after an open Kernel Turn, the restart rebuild, paused-interrupted, the paused stop and the
- * restart stop. The clauses that do not hold yet are listed in RECOVER_RUN_NOT_YET_BUILT by the
- * substep that builds them (5.8, 5.9). Every item has its own reason
+ * restart stop; 5.8 the automatic requeue of a clean interruption (RUN-19) and the start-up re-drive
+ * of a Goal whose required active Task has the automation verdict requeue or claim_requeued. The
+ * clauses that do not hold yet are listed in RECOVER_RUN_NOT_YET_BUILT by the substep that builds
+ * them (5.9). Every item has its own reason
  * (no shared placeholder), and the report is the same after the Host reopens
  * the ledger with the same settings.
  *
@@ -105,6 +107,9 @@ const RECOVER_RUN_BOUNDARIES = [
   'never entered the Kernel keeps its claim', 'the same claim drives it again',
   // RUN-19 (class interrupted), RUN-23 (LA-7).
   'a clean interruption (no tool call in flight) ends crashed with the failure class interrupted',
+  // 5.8 (RUN-19 "可自动重新入队", ND-7): the automation requeues it, uncounted; a person still may.
+  'which the automation requeues automatically, without counting it toward the automatic rework limit',
+  'and which a person can requeue too',
   'a queued cancel with a clean Kernel Turn ends the Run cancelled',
   // RUN-24, C4, GOAL-29: paused-interrupted, not a failure, continued only by a person.
   'ends paused-interrupted, which is not a failure and releases its Session and Lease',
@@ -116,6 +121,9 @@ const RECOVER_RUN_BOUNDARIES = [
   'new Run with a continuation brief, in a new Session',
   // LA-6: the start-up re-drive, its switch, owner guards, no scheduler.
   'starts the existing collaboration driver for each active Goal',
+  // 5.8: re-drive condition (a) for the verdicts the Workflow acts on (requeue, claim_requeued; reverify is 5.9).
+  'a required active Task whose automation verdict is requeue or claim_requeued',
+  'or a Run that never entered and is not paused or cancelled',
   'follows the Host setting automation.resumeOnStartup (on by default)',
   'judged by the Workflow and the owners', 'a paused-interrupted Run is still continued only by a person',
   'there is no periodic scheduler',
@@ -134,8 +142,8 @@ const RESUME_ON_STARTUP_OFF = 'This Host has automation.resumeOnStartup turned o
  * RECOVER_RUN_BOUNDARIES as positive phrases, in the same commit.
  */
 const RECOVER_RUN_NOT_YET_BUILT: Readonly<Record<string, readonly string[]>> = {
-  // RUN-19 "可自动重新入队" and start-up re-drive condition (a) for requeue and claim_requeued (LD-1).
-  '5.8': ['automatic', 'automation verdict', 'claim_requeued'],
+  // 5.8 built RUN-19 "可自动重新入队" and re-drive condition (a) for requeue and claim_requeued: its phrases
+  // ('automatic', 'automation verdict', 'claim_requeued') are positive phrases of RECOVER_RUN_BOUNDARIES now.
   // Start-up re-drive condition (a) for reverify.
   '5.9': ['reverify'],
 };
@@ -218,8 +226,7 @@ it('reports continuation, safe-point pause, cancel and start-up reconciliation a
   // setting (the start-up re-drive on), so the "turned off" sentence is absent.
   expectAllIn(report.recoverRun.reason, RECOVER_RUN_BOUNDARIES);
   expect(report.recoverRun.reason).not.toContain(RESUME_ON_STARTUP_OFF);
-  // The automatic requeue of an interruption (5.8) and the re-drive of a Goal with an automation
-  // verdict (5.8; reverify 5.9) are not claimed until they are built.
+  // The re-drive of a Goal with a reverify verdict (5.9) is not claimed until it is built.
   expectNotYetBuiltAbsent(report.recoverRun.reason);
   // 5.6 moved every remaining §7.7 target phrase into the lists above (5.4 moved 'continuation brief').
   expect(report.safePointPause.reason).not.toContain('continuation brief');

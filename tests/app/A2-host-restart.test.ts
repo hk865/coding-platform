@@ -247,13 +247,18 @@ it('G-04 and G-06 at a restart: a Goal resumed (and paused and resumed again) on
   }
 
   // The next start: step 6 runs the resume pass of the current epoch after step 2 (G-04); the Run's pointer is
-  // the fan-out pause of an earlier epoch, found by the bounded recomputation (G-06).
+  // the fan-out pause of an earlier epoch, found by the bounded recomputation (G-06). Since A.2 step 5.8 the
+  // start-up re-drive claims that continuation at once (§12.1 step 6b (a), W-21); this test counts the
+  // continuations the starts write, so the third and fourth Hosts keep the re-drive off.
+  await writeAutomationSettings(database, { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: false });
   const third = await startAG2bHost(publicDir, { root, database, replies: EDIT_THEN_TEXT('a2-g04') });
   try {
     const resumedEpoch = (await readGoal(third)).desiredStateRevision ?? 1;
     expect(resumedEpoch).toBe(pausedEpoch + 3);
     expect(third.host.reconcile).toMatchObject({ lease: 'owned', report: { runs: [],
-      fanOut: [{ goalId: AG2B_GOAL_REF.goalId, control: 'resume', problem: null, runs: 0, continuations: 1 }] } });
+      fanOut: [{ goalId: AG2B_GOAL_REF.goalId, control: 'resume', problem: null, runs: 0, continuations: 1 }],
+      // §12.1 step 6b (a) (5.8): step 6's continuation reads claim_requeued, so the Goal is selected either way.
+      redriveGoals: [{ goalRef: { goalId: AG2B_GOAL_REF.goalId }, taskIds: [AG2B_WORK_TASK_ID] }] } });
     expect(await workRow(third)).toMatchObject({ effectivePhase: 'pending', phaseCause: { code: 'requeued' },
       rework: { entries: [{ afterRunRef: runRef, requestedBy: GOAL_FAN_OUT_ACTOR, failureClass: 'interrupted' }] } });
   } finally {

@@ -9,8 +9,8 @@
  *    report follows the same save); an operator requeue reads AV-3
  *    `claim_requeued`; a `no_new_basis` refusal reads AV-9. A non-PASS finalize
  *    goes back to `select_work` (result mapping). `goals/display` reduces the
- *    live verdict (GOAL-27 / GOAL-30); until part 2 that is a known transient
- *    (RUNNING "等待推进" for a FAIL the Workflow does not requeue yet).
+ *    live verdict (GOAL-27 RUNNING "等待推进" while the next 推进 would requeue,
+ *    GOAL-30 NEEDS_DECISION once it stops).
  * 2. A Run that `start` returns ended with a failure (`crashed`) goes back to
  *    `select_work`; the verdict is AV-12 `requeue` of class `run_failed`.
  * 3. The successor-round rows AV-7a..AV-7d are 5.9: an INCONCLUSIVE round
@@ -18,12 +18,13 @@
  *    `select_work`.
  * 4. AV-4 kept as written (STEP5-FLIPS §14): an operator's pause superseded by
  *    the Run's natural completion (CTL-06) fences rework only; the verdict is
- *    `stopped/task_paused` while the round still opens, passes and completes
- *    the Task, and no TaskRequeue is written.
+ *    `stopped/task_paused` while a new `select_work` still opens the round,
+ *    which passes and completes the Task, and no TaskRequeue is written.
  *
- * The Workflow does not act on the verdict yet (step 5.8 part 2), so these
- * tests stop the Workflow before any selection that follows a failure. Scripted
- * model replies only; no real model is called.
+ * These tests read the verdict, so they stop the Workflow before any selection
+ * that follows a failure: since step 5.8 part 2 that selection acts on the
+ * verdict (the automatic requeue is tests/app/A2-automation-rework.test.ts).
+ * Scripted model replies only; no real model is called.
  */
 import { afterEach, expect, it } from 'vitest';
 import { writeFile } from 'node:fs/promises';
@@ -108,11 +109,12 @@ it('C8 (§15.2 5.8): the verdict follows the failure facts and the live policy: 
     expect(failed).toMatchObject({ effectivePhase: 'failed', phaseCause: { code: 'check_failed' },
       failure: { failureClass: 'check_failed', automation: { cap: 3, requeueAutoCount: 0, coveringRequeue: null, lastRefusal: null,
         verdict: { kind: 'requeue', failureClass: 'check_failed', retryAfterRefusal: false } } } });
-    // Known transient until step 5.8 part 2: `goals/display` already reduces the live verdict (GOAL-27
-    // "等待推进" instead of GOAL-24 FAILED) while the Workflow does not requeue yet. Part 2 changes these
-    // display assertions on purpose when the Workflow starts acting on the verdict.
+    // GOAL-27 (C8): a pending automatic rework is RUNNING "等待推进", not GOAL-24 FAILED; the next 推进 performs it
+    // (step 5.8 part 2: the read-only selection answers the automatic requeue, not performed here).
     expect(await goalDisplay(host)).toMatchObject({ phase: 'RUNNING', row: 'GOAL-27', cause: null,
       causes: expect.arrayContaining([{ code: 'auto_rework_pending', taskId: TASK.taskId, operation: 'requeue', failureClass: 'check_failed' }]) });
+    expect(await advance(host, selectWork('a2-verdict-peek'))).toMatchObject({ state: 'advance', receipt: null,
+      next: { kind: 'perform', operation: { kind: 'requeue_task', request: { input: { reason: 'auto-rework:check_failed#1' } } } } });
     const run1Ref = failed.execution;
     if (run1Ref === null) throw new Error('Run 1 must be selected');
 
@@ -203,6 +205,9 @@ it('§15.2 5.8: check_incomplete reads none until 5.9 wires AV-7a..AV-7d; the IN
       receipt: { kind: 'finalize_checks', result: { status: 'committed', value: { outcome: 'INCONCLUSIVE' } } } });
     expect(await workRow(host)).toMatchObject({ effectivePhase: 'blocked', phaseCause: { code: 'round_inconclusive' },
       failure: { failureClass: 'check_incomplete', automation: { verdict: { kind: 'none' } } } });
+    // GOAL-25 (a): a blocked required work Task whose verdict is neither pending nor stopped, with no live Run.
+    expect(await goalDisplay(host)).toMatchObject({ phase: 'BLOCKED', row: 'GOAL-25',
+      cause: { code: 'task_blocked', taskId: TASK.taskId } });
   } finally {
     await host.host.close();
   }
@@ -225,7 +230,8 @@ it('AV-4 (STEP5-FLIPS §14): a pause superseded by the natural completion fences
   });
   try {
     await seedAG2bWorkGraph(host);
-    const toOpen = await advanceUntil(host, selectWork('a2-av4'), 'open_checks');
+    // The open that `start` returned is not performed: the selection must find the round itself.
+    await advanceUntil(host, selectWork('a2-av4'), 'open_checks');
     if (pauseRef === undefined) throw new Error('the pause must be submitted during the Turn');
     const row = await workRow(host);
     const runRef = row.execution;
@@ -239,9 +245,11 @@ it('AV-4 (STEP5-FLIPS §14): a pause superseded by the natural completion fences
     expect(row).toMatchObject({ effectivePhase: 'verifying', phaseCause: { code: 'awaiting_verification' },
       failure: { failureClass: null, notReworkableCause: null, stop: { intentRef: pauseRef, kind: 'pause', requester: 'human' },
         automation: { verdict: { kind: 'stopped', reason: 'task_paused', detail: { fence: 'human_pause', pausedBy: 'human' } } } } });
-    // `stopped` blocks rework only: the round opens, the check passes and the Task completes.
-    const steps = await driveWorkflow(host, toOpen);
-    expect(steps.map(step => step.receipt?.kind)).toEqual(['open_checks', 'run_check', 'finalize_checks', 'complete_task', undefined]);
+    // `stopped` blocks rework only: a new 推进 selects the fenced Task's round (step 5.8 part 2 reads the
+    // verdict first), the round opens, the check passes and the Task completes.
+    const steps = await driveWorkflow(host, selectWork('a2-av4-select'));
+    expect(steps[0]).toMatchObject({ state: 'advance', receipt: null, next: { kind: 'perform', operation: { kind: 'open_checks' } } });
+    expect(steps.slice(1).map(step => step.receipt?.kind)).toEqual(['open_checks', 'run_check', 'finalize_checks', 'complete_task', undefined]);
     expect(steps.find(step => step.receipt?.kind === 'finalize_checks'))
       .toMatchObject({ receipt: { result: { status: 'committed', value: { outcome: 'PASS' } } } });
     expect(steps.at(-1)).toMatchObject({ state: 'completed' });

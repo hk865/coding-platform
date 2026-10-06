@@ -2,20 +2,23 @@ import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { CoreError, CoreRejection, ReadResult } from '../../contracts/core/results.js';
 import type { SessionRef, VersionPin } from '../../contracts/core/identity.js';
 import type { SessionRecord } from '../../contracts/core/session.js';
-import type { RunRef, RunSnapshot, TaskTriple } from '../../contracts/dispatch.js';
+import type { RunRef, RunSnapshot, TaskBudgetV1, TaskTriple } from '../../contracts/dispatch.js';
 import type { GoalRef, GoalSnapshot, WorkspaceRef } from '../../contracts/ledger.js';
-import type { PlanRevisionRef, RuntimeTask, TaskScope } from '../../contracts/plan.js';
+import type { PlanRevisionRef, PlanRevisionSnapshot, RuntimeTask, TaskScope } from '../../contracts/plan.js';
 import { revisionAssignments } from '../../contracts/plan.js';
 import type { TaskReductionRef } from '../../contracts/reduction.js';
 import type { GoalPhaseRef } from '../../contracts/goal-phase.js';
 import type { RoundSnapshot } from '../../contracts/verification.js';
 import type { PreparedTaskExecution } from '../../contracts/core/prepared-execution.js';
 import type { ConsumedWaitV1 } from '../../contracts/dispatch.js';
-import type { TaskRequeueRef } from '../../contracts/task-requeue.js';
+import type { TaskFailureFactsV1 } from '../../contracts/task-failure.js';
+import {
+  WORKFLOW_AUTOMATION_ACTOR, type ReworkFailureClass, type TaskRequeueRef, type TaskReworkRefusalRef,
+} from '../../contracts/task-requeue.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../contracts/fingerprint.js';
 import type { CreateSessionRequest } from '../../core/agent-runtime/session-operations.js';
 import type { PrepareTaskExecutionRequest, StartTaskExecutionRequest } from '../../core/agent-runtime/execution-contracts.js';
-import type { ClaimTaskInput } from '../../core/work-graph/tasks/claim-contracts.js';
+import type { ClaimTaskInput, RequeueTaskInput } from '../../core/work-graph/tasks/claim-contracts.js';
 import type { TaskGraph, TaskRow } from '../../core/work-graph/tasks/plan-contracts.js';
 import type { GraphWrite } from '../../core/work-graph/tasks/contracts.js';
 import type { SessionCard } from '../../core/work-graph/sessions/contracts.js';
@@ -89,6 +92,19 @@ function graphWrite<T>(base: Base, kind: WorkflowOperation['kind'], input: T, ex
   const requestWithoutRequestId = { input, meta: { expected: [...expected] } };
   const requestId = requestIdFor(base, kind, requestWithoutRequestId);
   return { input, meta: { requestId, expected: [...expected] } };
+}
+/**
+ * W-23 (§12.2), ND-8 (§13.4 #21): an automatic rework step's `wf-auto:`
+ * identity is derived from its request alone (Goal, step kind, input and the
+ * pins incl. `TaskReworkRefusal@k`), never from the flow or the operator. The
+ * same request from any driver (a later 推进, the start-up re-drive after a
+ * restart that lost the answer) replays the original receipt; a retry after a
+ * stale refusal pins @k and so is a new request.
+ */
+function automaticGraphWrite<T>(base: Base, kind: WorkflowOperation['kind'], input: T, expected: readonly VersionPin[]): GraphWrite<T> {
+  const requestWithoutRequestId = { input, meta: { expected: [...expected] } };
+  const material = { schemaVersion: 1, goalRef: base.goalRef, kind, requestWithoutRequestId } as unknown as JsonValue;
+  return { input, meta: { requestId: 'wf-auto:' + sha256Hex(canonicalJson(material)), expected: [...expected] } };
 }
 function prepareStep(base: Base, runRef: RunRef): PrepareTaskExecutionRequest {
   const requestId = requestIdFor(base, 'prepare', { runRef });
@@ -177,6 +193,36 @@ function completeGoalStep(base: Base, projectId: string, goal: GoalSnapshot): Wo
   ];
   return { kind: 'complete_goal', request: graphWrite(base, 'complete_goal', { goalRef: base.goalRef }, expected) };
 }
+/**
+ * C8 automatic requeue of one failed Task (§4.3 "Workflow", §15.2 5.8): the
+ * afterRun is the Task's selected Run as the failure facts read it. `expected`
+ * pins the Goal, the afterRun and the requeue refusal under the afterRun's key
+ * (`TaskReworkRefusal@k`, k = 0 when there is none); the requestId is derived
+ * from the request alone (`automaticGraphWrite`, W-23), so a retry after a
+ * stale refusal is a new request with a new requestId (ND-8, §13.4 #21). The reason
+ * names the class and the automatic count this requeue writes
+ * (`auto-rework:<class>#<autoCount>`; a class `interrupted` is not counted,
+ * ND-7). `budget` is only the binding's larger budget after `budget_exhausted`.
+ */
+function requeueTaskStep(
+  base: Base, goal: GoalSnapshot, task: TaskTriple, failure: TaskFailureFactsV1, afterRunRef: RunRef, afterRunRevision: number,
+  failureClass: ReworkFailureClass, budget: TaskBudgetV1 | null,
+): WorkflowOperation {
+  const refusalRef: TaskReworkRefusalRef = { aggregateType: 'TaskReworkRefusal', projectId: task.projectId,
+    goalId: task.goalId, taskId: task.taskId, operation: 'requeue', subjectId: afterRunRef.runId };
+  const autoCount = failure.automation.requeueAutoCount + (failureClass === 'interrupted' ? 0 : 1);
+  const input: RequeueTaskInput = {
+    taskRef: { projectId: task.projectId, goalId: task.goalId, taskId: task.taskId },
+    afterRunRef: { ...afterRunRef }, reason: `auto-rework:${failureClass}#${autoCount}`,
+    ...(budget === null ? {} : { budget: { ...budget } }),
+  };
+  const expected: VersionPin[] = [
+    { ref: base.goalRef, revision: goal.revision },
+    { ref: afterRunRef, revision: afterRunRevision },
+    { ref: refusalRef, revision: failure.automation.lastRefusal?.revision ?? 0 },
+  ];
+  return { kind: 'requeue_task', request: automaticGraphWrite(base, 'requeue_task', input, expected) };
+}
 function makePerform(base: Base, operation: WorkflowOperation): WorkflowAdvanceInput {
   return { schemaVersion: 1, goalRef: base.goalRef, flowId: base.flowId, sessionHint: base.sessionHint, kind: 'perform', operation,
     // An explicit Task selection is preserved across every successor request.
@@ -245,6 +291,11 @@ function normalEnd(run: RunSnapshot): { ok: true } | { ok: false; reason: string
     return { ok: false, reason: `the Run ${run.ref.runId} reconciliation is ${run.reconciliation.status}` };
   }
   return { ok: true };
+}
+/** AV-6 for FC-11 (P10): the selected Run's round chain is invalid, so the Task has no chain head. */
+function isRoundAmbiguous(row: TaskRow): boolean {
+  const verdict = row.failure?.automation.verdict;
+  return verdict?.kind === 'stopped' && verdict.reason === 'not_reworkable' && verdict.detail.cause === 'round_ambiguous';
 }
 function failedOutcome(run: RunSnapshot): boolean {
   switch (run.outcome) {
@@ -325,6 +376,20 @@ export function ownContext(ctx: CoreCallContext): Owned | { rejection: CoreRejec
     signal: signal as AbortSignal,
   };
   return { ctx: ownedCtx, projectId, workspaceId, actor: { kind: actor['kind'], id: actor['id'] } };
+}
+
+/**
+ * TD-6 (C8): the context of the Workflow's own rework steps (`requeue_task`;
+ * `reverify_round` from step 5.9). Same trusted Host scope and signal as the
+ * call, with the platform automation actor `WORKFLOW_AUTOMATION_ACTOR`, so the
+ * owner derives the actor class `system`: the step is counted, capped and
+ * fenced by a person's stop like any automatic rework, never as the operator.
+ */
+function automationContext(owned: Owned): CoreCallContext {
+  const actor = { ...WORKFLOW_AUTOMATION_ACTOR };
+  return { projectId: owned.projectId, workspaceId: owned.workspaceId, principal: { kind: 'host', actor },
+    materialReader: { kind: 'host', projectId: owned.projectId, workspaceId: owned.workspaceId, actor: { ...actor } },
+    signal: owned.ctx.signal };
 }
 
 function baseFromInput(input: WorkflowAdvanceInput, owned: Owned): Base | { rejection: CoreRejection } {
@@ -642,9 +707,11 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort & Requi
   /**
    * Continue one subject's round chain from its head (§9.3, VD-7, VD-14): an
    * `open` head follows `nextAfterRound`; a finalized clean PASS completes the
-   * Task under the Goal's current adopted Plan; a finalized non-PASS head waits
-   * (A.2 step 5.8/5.9 turn it into the automation verdict). `null` means the
-   * subject has no chain yet.
+   * Task under the Goal's current adopted Plan; a finalized non-PASS head waits.
+   * A work Task whose head is FAIL is `failed` and never resumed here: the
+   * selection acts on its automation verdict first (step 5.8); a work
+   * INCONCLUSIVE head and a gate's non-PASS head wait until the successor rounds
+   * of step 5.9. `null` means the subject has no chain yet.
    */
   async function continueRoundChain(
     owned: Owned, base: Base, read: ReadResult<RoundSnapshot>,
@@ -774,6 +841,36 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort & Requi
     return advancing(null, makePerform({ ...base, sessionHint: sessionRef }, built.operation));
   }
 
+  /**
+   * C8 (§4.3 "Workflow", §15.2 5.8): the automatic requeue a work Task's
+   * verdict asks for, or `null`. `requeue` (AV-12) requeues with no budget;
+   * `stopped/budget_exhausted` (AV-11) requeues only with the Task's binding
+   * budget when that is larger than the exhausted one (§13.4 #19), and the
+   * claim then carries it (TASK-03). Every other verdict, and a Host whose
+   * claim owner publishes no `requeueTask`, requeues nothing. The verdict is an
+   * admissibility fact; the owner judges the request again (C8).
+   */
+  function automaticRequeue(
+    config: WorkflowHostConfiguration, owned: Owned, base: Base, goal: GoalSnapshot, plan: PlanRevisionSnapshot,
+    task: RuntimeTask, row: TaskRow,
+  ): WorkflowOperation | null {
+    const failure = row.failure;
+    if (deps.claims.requeueTask === undefined || failure === undefined
+      || failure.runRef === null || failure.runRevision === null) return null;
+    const verdict = failure.automation.verdict;
+    if (verdict.kind === 'requeue') {
+      return requeueTaskStep(base, goal, row.ref, failure, failure.runRef, failure.runRevision, verdict.failureClass, null);
+    }
+    if (verdict.kind !== 'stopped' || verdict.reason !== 'budget_exhausted' || failure.failureClass === null) return null;
+    const exhausted = verdict.detail.minTokenBudgetExclusive;
+    const assignment = revisionAssignments(plan).find((candidate) => candidate.taskId === task.taskId);
+    const binding = assignment === undefined ? null
+      : bindingForRole(config, owned.projectId, goal.workspaceRef.workspaceId, assignment.role);
+    if (exhausted === undefined || binding === null || binding.budget.tokenBudget <= exhausted) return null;
+    return requeueTaskStep(base, goal, row.ref, failure, failure.runRef, failure.runRevision, failure.failureClass,
+      binding.budget);
+  }
+
   /** Read-only deterministic first-step selection shared by `select_work`. */
   async function selectNext(owned: Owned, base: Base): Promise<WorkflowAdvanceResult> {
     const config = deps.configuration;
@@ -813,9 +910,20 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort & Requi
       if (row === undefined) continue;
       if (task.taskKind !== 'work' || task.disposition !== 'active') continue;
       if (task.executionIntent === 'plan_only') continue;
+      // C8 (§4.3 "Workflow", §15.2 5.8): the Task's automation verdict first. A `requeue`
+      // (or a `stopped/budget_exhausted` the binding's larger budget lifts) performs the
+      // automatic requeue; `claim_requeued` is claimed below; `stopped` skips only this
+      // Task's rework (requeue, reverify, a claim by requeueRef), so a completed Run's
+      // round still opens, runs, finalizes and completes (AV-4, STEP5-FLIPS §14),
+      // except on an invalid chain (`round_ambiguous`, skipped below); `reverify` is
+      // step 5.9.
+      const rework = automaticRequeue(config, owned, base, goal, graph.plan, task, row);
+      if (rework !== null) return advancing(null, makePerform(base, rework));
       // D-3 (TASK-03): a requeued Task (P4) is claimed with its covering TaskRequeue,
-      // before the ended Run's round chain is resumed.
+      // before the ended Run's round chain is resumed, while its verdict is
+      // `claim_requeued` (AV-3); any other verdict claims nothing.
       if (row.requeueRef !== undefined && row.execution !== null) {
+        if (row.failure?.automation.verdict.kind !== 'claim_requeued') continue;
         if (!row.eligibility.eligible) continue;
         const assignment = revisionAssignments(graph.plan).find((candidate) => candidate.taskId === task.taskId);
         if (assignment === undefined) continue;
@@ -828,6 +936,10 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort & Requi
         if (claimed === null) continue;
         return claimed;
       }
+      // §4.3 "stopped" (AV-6, FC-11, P10): an invalid round chain has no head to continue and VD-14
+      // opens nothing on it (GAP-52), so its chain is not read (that read would only wait) and the
+      // Task is skipped; the other Tasks continue.
+      if (isRoundAmbiguous(row)) continue;
       // A real claim that was persisted but never admitted to the Kernel (its
       // first prepare was refused) is recoverable from the SAME Run. This is the
       // ONE narrow unadmitted state, checked against the formal execution read;
@@ -1060,6 +1172,18 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort & Requi
         const receipt: WorkflowStepReceipt = { kind: 'complete_goal', result };
         if (result.status !== 'committed') return waiting(receipt, result.reason);
         return completed(receipt, 'the Goal was formally completed');
+      }
+      case 'requeue_task': {
+        const requeue = deps.claims.requeueTask;
+        if (requeue === undefined) return rejection('unsupported', 'the Task claim owner does not publish requeueTask');
+        // C8: performed as the platform automation actor, never as the Host operator (TD-6).
+        const result = await requeue.call(deps.claims, automationContext(owned), operation.request);
+        const receipt: WorkflowStepReceipt = { kind: 'requeue_task', result };
+        // §15.2 5.8 result mapping: a commit (`requeued`, or the policy refusal `refused`) and a
+        // `revision_conflict` go back to the selection, where the facts as they are now decide (a
+        // conflict needs another write first, so this never spins); any other refusal waits with its code.
+        if (result.status === 'committed' || result.code === 'revision_conflict') return advancing(receipt, selectWorkStep(base));
+        return waiting(receipt, `${result.code}: ${result.reason}`);
       }
     }
   }

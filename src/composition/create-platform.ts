@@ -182,7 +182,7 @@ function sameJson(left: unknown, right: unknown): boolean {
  * boundaries are added by the substep that builds them (5.4 added the requeue
  * continuation brief, C3; 5.6 added the new Session after an open Kernel Turn,
  * the restart rebuild, the paused-interrupted end, the RUN-14 live-handle
- * guard, the paused stop, the restart stop and C7; 5.8 adds the automatic
+ * guard, the paused stop, the restart stop and C7; 5.8 added the automatic
  * requeue of an interruption and the start-up re-drive of a Goal whose required
  * Task has the automation verdict requeue or claim_requeued; 5.9 adds reverify
  * to that re-drive). The `recoverRun` reason always says what the Host setting
@@ -216,21 +216,23 @@ function workspaceRuntimeCapabilities(
       + 'execution driver starts, and books what it proves. A Kernel terminal is recorded as the Run ended; a Run '
       + 'that never entered the Kernel keeps its claim (an entry it began is revoked) and the same claim drives it '
       + 'again; a clean interruption (no tool call in flight) ends crashed with the failure class interrupted, '
-      + 'which a person can requeue; a queued cancel with a clean Kernel Turn ends the Run cancelled; a Run paused '
-      + 'when its Host stopped (its pause applied or still requested) ends paused-interrupted, which is not a '
-      + 'failure and releases its Session and Lease: only a person continues it, or, when the pause came from the '
-      + 'Goal, resuming the Goal continues it; an end it cannot prove is recorded as unknown, keeping its Session '
-      + 'and Lease until a person attests it (an attestation also needs the instance lease), and a probe that '
-      + 'proves nothing leaves the Run as recorded for the next start. The continuation of an interrupted Run is a '
-      + 'new Run with a continuation brief, in a new Session that continues the original Session\'s last completed '
-      + 'history. After the reconciliation the Host starts the existing collaboration driver for each active Goal '
-      + 'with a Run that never entered and is not paused or cancelled, so the same claim is driven again; this '
-      + 'start-up re-drive follows the Host setting automation.resumeOnStartup (on by default), every step it '
-      + 'takes is judged by the Workflow and the owners, a paused-interrupted Run is still continued only by a '
-      + 'person, and there is no periodic scheduler. When that setting is off, the reconciliation still runs but '
-      + 'no driver starts after it, and the automation continues only at workflow/advance, workflow/driver-start '
-      + 'or an operator\'s action. A Host that does not hold the instance lease neither reconciles nor starts an '
-      + 'execution driver; plain reads and owner writes are served as usual'
+      + 'which the automation requeues automatically, without counting it toward the automatic rework limit, '
+      + 'and which a person can requeue too; a queued cancel with a clean Kernel Turn ends the Run cancelled; a '
+      + 'Run paused when its Host stopped (its pause applied or still requested) ends paused-interrupted, which '
+      + 'is not a failure and releases its Session and Lease: only a person continues it, or, when the pause came '
+      + 'from the Goal, resuming the Goal continues it; an end it cannot prove is recorded as unknown, keeping its '
+      + 'Session and Lease until a person attests it (an attestation also needs the instance lease), and a probe '
+      + 'that proves nothing leaves the Run as recorded for the next start. The continuation of an interrupted Run '
+      + 'is a new Run with a continuation brief, in a new Session that continues the original Session\'s last '
+      + 'completed history. After the reconciliation the Host starts the existing collaboration driver for each '
+      + 'active Goal with work to advance automatically: a required active Task whose automation verdict is '
+      + 'requeue or claim_requeued, or a Run that never entered and is not paused or cancelled, whose same claim '
+      + 'is then driven again; this start-up re-drive follows the Host setting automation.resumeOnStartup (on by '
+      + 'default), every step it takes is judged by the Workflow and the owners, a paused-interrupted Run is still '
+      + 'continued only by a person, and there is no periodic scheduler. When that setting is off, the '
+      + 'reconciliation still runs but no driver starts after it, and the automation continues only at '
+      + 'workflow/advance, workflow/driver-start or an operator\'s action. A Host that does not hold the instance '
+      + 'lease neither reconciles nor starts an execution driver; plain reads and owner writes are served as usual'
       + (resumeOnStartup ? '' : '. This Host has automation.resumeOnStartup turned off') },
     safePointPause: { supported: true, reason: 'an entered Work Run pauses through its live handle at the next '
       + 'safe point (before a model call or between tool groups), and a resume re-enters the original Turn only '

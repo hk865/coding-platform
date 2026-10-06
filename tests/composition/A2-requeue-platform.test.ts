@@ -10,8 +10,8 @@
  *
  * 1. Run 1 completes and its round finalizes FAIL: the Task is `failed` with
  *    the C1 failure facts (class `check_failed`, the human may requeue, the
- *    automation verdict is AV-12 `requeue`, judged since 5.8; the Workflow
- *    does not act on it yet, so the operator requeues here).
+ *    automation verdict is AV-12 `requeue`, judged since 5.8; the Host stops
+ *    before the Workflow's automatic requeue, so the operator requeues here).
  * 2. TASK-16: the operator's requeue commits TaskRequeue@1 (afterRoundRef = the
  *    FAIL head, its evidence superseded, the history source of Run 1's Kernel
  *    terminal); the Task projects P4 `pending/requeued` with `requeueRef`. The
@@ -209,7 +209,11 @@ async function openEnvironment(commitObserver?: RecordCommitObserver): Promise<E
 const select = (flowId: string): WorkflowAdvanceInput =>
   ({ schemaVersion: 1, goalRef, flowId, sessionHint: null, kind: 'select_work', taskId: 'work-1' });
 
-/** The Host drives every returned `next` until the Workflow settles. */
+/**
+ * The Host drives every returned `next` until the Workflow settles. Since A.2 step 5.8 the Workflow
+ * requeues a failed Task automatically (C8); these tests are the operator's requeue, so the Host
+ * stops before that automatic `requeue_task` (tests/app/A2-automation-rework.test.ts drives it).
+ */
 async function drive(platform: Platform, first: WorkflowAdvanceInput): Promise<WorkflowStepReceipt[]> {
   const receipts: WorkflowStepReceipt[] = [];
   let input = first;
@@ -219,8 +223,12 @@ async function drive(platform: Platform, first: WorkflowAdvanceInput): Promise<W
     if (result.value.receipt !== null) receipts.push(result.value.receipt);
     if (result.value.state === 'completed' || result.value.next === null) return receipts;
     input = result.value.next;
+    if (isAutomaticRequeue(input)) return receipts;
   }
   throw new Error('the Workflow did not settle within the step guard');
+}
+function isAutomaticRequeue(input: WorkflowAdvanceInput): boolean {
+  return input.kind === 'perform' && input.operation.kind === 'requeue_task';
 }
 
 async function taskRow(platform: Platform) {
@@ -378,12 +386,13 @@ it('§4.3 / §4.4: 0-commit refusals of a requeue — shape, pins, a verifying T
   // §4.4 verifying → busy; nothing is written.
   expect(await requeue(platform, 'a2-reject-verifying', run1Ref)).toMatchObject({ status: 'rejected', code: 'busy' });
 
-  // The open, the check and the finalize: the Task is failed (P7).
+  // The open, the check and the finalize: the Task is failed (P7). The Host stops before the automatic requeue (5.8).
   for (let guard = 0; guard < 32; guard += 1) {
     const result = await platform.workflow.advanceWork(ctx(), input);
     if (result.status !== 'ready') throw new Error(`the Workflow call was not ready: ${JSON.stringify(result)}`);
     if (result.value.state === 'completed' || result.value.next === null) break;
     input = result.value.next;
+    if (isAutomaticRequeue(input)) break;
   }
   expect(await taskRow(platform)).toMatchObject({ effectivePhase: 'failed', phaseCause: { code: 'check_failed' } });
   const goal = await platform.plans.queryGoal(ctx(), goalRef);
