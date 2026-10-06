@@ -601,8 +601,10 @@ it('resumes the original verification round for a completed Work Run across a di
       throw new Error('the failing check did not advance to finalize_checks');
     }
     const finalizedSecond = await platform.workflow.advanceWork(ctx(), ranSecond.value.next);
+    // §15.2 5.8 result mapping (C8, C5): a non-PASS finalize goes back to the selection.
     expect(finalizedSecond, 'the real FAIL check finalizes the round non-PASS').toMatchObject({
-      status: 'ready', value: { state: 'waiting', next: null,
+      status: 'ready', value: { state: 'advance',
+        next: { kind: 'select_work', flowId: 'r5c-check-resume-flow-4', taskId: 'work-2' },
         receipt: { kind: 'finalize_checks', result: { status: 'committed',
           value: { applicable: false, outcome: 'FAIL' } } } } });
 

@@ -10,7 +10,8 @@
  *
  * 1. Run 1 completes and its round finalizes FAIL: the Task is `failed` with
  *    the C1 failure facts (class `check_failed`, the human may requeue, the
- *    automation verdict is `none` until 5.8, LD-1).
+ *    automation verdict is AV-12 `requeue`, judged since 5.8; the Workflow
+ *    does not act on it yet, so the operator requeues here).
  * 2. TASK-16: the operator's requeue commits TaskRequeue@1 (afterRoundRef = the
  *    FAIL head, its evidence superseded, the history source of Run 1's Kernel
  *    terminal); the Task projects P4 `pending/requeued` with `requeueRef`. The
@@ -263,7 +264,8 @@ it('D-3: FAIL → TaskRequeue (P4) → requeue claim with the continuation brief
   expect(failed).toMatchObject({ effectivePhase: 'failed', phaseCause: { code: 'check_failed' },
     failure: { subjectKind: 'work', failureClass: 'check_failed', notReworkableCause: null,
       round: { roundRef: round1.ref, outcome: 'FAIL' },
-      automation: { coveringRequeue: null, lastRefusal: null, verdict: { kind: 'none' } } } });
+      automation: { coveringRequeue: null, lastRefusal: null,
+        verdict: { kind: 'requeue', failureClass: 'check_failed', retryAfterRefusal: false } } } });
   expect(failed.failure?.requeueActors).toContain('human');
   expect(failed.rework).toBeUndefined();
   expect(failed.requeueRef).toBeUndefined();

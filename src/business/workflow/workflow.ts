@@ -19,6 +19,7 @@ import type { ClaimTaskInput } from '../../core/work-graph/tasks/claim-contracts
 import type { TaskGraph, TaskRow } from '../../core/work-graph/tasks/plan-contracts.js';
 import type { GraphWrite } from '../../core/work-graph/tasks/contracts.js';
 import type { SessionCard } from '../../core/work-graph/sessions/contracts.js';
+import { runUnresolvedBlocker } from '../../core/work-graph/state/run-machine.js';
 import { beginRefusalIsPermanent, displayRoundStatus } from '../../core/work-graph/state/verification-machine.js';
 import type { ConsultationInput, ConsultationResult, InitialPlanningGoalInput, InitialPlanningGoalInputResult, N0GoalInput, WorkflowAdvanceInput, WorkflowAdvanceResult, WorkflowOperation, WorkflowSessionRequeue, WorkflowStepReceipt } from './contracts.js';
 import type { WorkflowDependencies, WorkflowHostConfiguration, WorkflowPort } from './ports.js';
@@ -181,6 +182,11 @@ function makePerform(base: Base, operation: WorkflowOperation): WorkflowAdvanceI
     // An explicit Task selection is preserved across every successor request.
     ...(base.taskId === null ? {} : { taskId: base.taskId }) };
 }
+/** Back to the read-only selection, keeping the flow, the Session hint and an explicit Task selection. */
+function selectWorkStep(base: Base): WorkflowAdvanceInput {
+  return { schemaVersion: 1, goalRef: base.goalRef, flowId: base.flowId, sessionHint: base.sessionHint, kind: 'select_work',
+    ...(base.taskId === null ? {} : { taskId: base.taskId }) };
+}
 
 type WorkflowAdvanceValue = {
   state: 'advance' | 'waiting' | 'completed';
@@ -239,6 +245,33 @@ function normalEnd(run: RunSnapshot): { ok: true } | { ok: false; reason: string
     return { ok: false, reason: `the Run ${run.ref.runId} reconciliation is ${run.reconciliation.status}` };
   }
   return { ok: true };
+}
+function failedOutcome(run: RunSnapshot): boolean {
+  switch (run.outcome) {
+    case 'crashed':
+    case 'failed':
+    case 'budget_exhausted':
+    case 'cancelled':
+      return true;
+    default:
+      return false;
+  }
+}
+/**
+ * §15.2 5.8 result mapping (C8) for a Run that `start`/`observe` returns not
+ * normally ended (`notNormal` is `normalEnd`'s reason). A Run that ended with a
+ * known failure (`crashed`, `failed`, `budget_exhausted` or `cancelled`) and
+ * has nothing left to reconcile goes back to `select_work`, where the Task's
+ * failure facts and automation verdict decide; one that still carries a
+ * quarantined or unresolved reconciliation or an unknown or quarantined entry
+ * authorization waits for that with the `runUnresolvedBlocker` text (hard
+ * limit 1). A Run still open, a yielded wait, an unknown outcome and a
+ * completed Run whose reconciliation is not done keep `normalEnd`'s reason.
+ */
+function afterNotNormalEnd(receipt: WorkflowStepReceipt, run: RunSnapshot, notNormal: string, base: Base): WorkflowAdvanceResult {
+  if (run.status !== 'ended' || !failedOutcome(run)) return waiting(receipt, notNormal);
+  const blocker = runUnresolvedBlocker(run);
+  return blocker === null ? advancing(receipt, selectWorkStep(base)) : waiting(receipt, blocker);
 }
 function roleReusable(card: SessionCard, workspaceId: string, binding: Binding): boolean {
   const record = card.record;
@@ -963,7 +996,7 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort & Requi
         const receipt: WorkflowStepReceipt = { kind: 'start', result };
         if (result.status !== 'ready') return waiting(receipt, receiptReason(result, 'the Run did not return a formal record'));
         const ended = normalEnd(result.value.run);
-        if (!ended.ok) return waiting(receipt, ended.reason);
+        if (!ended.ok) return afterNotNormalEnd(receipt, result.value.run, ended.reason, base);
         return await openChecksAfterRun(receipt, result.value.run);
       }
       case 'observe': {
@@ -971,7 +1004,7 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort & Requi
         const receipt: WorkflowStepReceipt = { kind: 'observe', result };
         if (result.status !== 'ready') return waiting(receipt, receiptReason(result, 'the Run observation did not return a formal record'));
         const ended = normalEnd(result.value.run);
-        if (!ended.ok) return waiting(receipt, ended.reason);
+        if (!ended.ok) return afterNotNormalEnd(receipt, result.value.run, ended.reason, base);
         return await openChecksAfterRun(receipt, result.value.run);
       }
       case 'open_checks': {
@@ -1003,8 +1036,10 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort & Requi
         const receipt: WorkflowStepReceipt = { kind: 'finalize_checks', result };
         if (result.status !== 'committed') return waiting(receipt, result.reason);
         const finalized = result.value;
+        // §15.2 5.8 result mapping (C8, C5): a non-PASS round goes back to the selection, where the
+        // Task's failure facts and automation verdict decide; only a clean PASS completes the Task.
         if (!finalized.applicable || finalized.outcome !== 'PASS' || finalized.gaps.length > 0) {
-          return waiting(receipt, `the round finalized ${finalized.outcome} with ${finalized.gaps.length} gap(s)`);
+          return advancing(receipt, selectWorkStep(base));
         }
         const goalRead = await deps.plans.queryGoal(owned.ctx, base.goalRef);
         if (goalRead.status !== 'ready') {
@@ -1018,11 +1053,7 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort & Requi
         const result = await deps.tasks.completeTask(owned.ctx, operation.request);
         const receipt: WorkflowStepReceipt = { kind: 'complete_task', result };
         if (result.status !== 'committed') return waiting(receipt, result.reason);
-        const next: WorkflowAdvanceInput = {
-          schemaVersion: 1, goalRef: base.goalRef, flowId: base.flowId, sessionHint: base.sessionHint, kind: 'select_work',
-          ...(base.taskId === null ? {} : { taskId: base.taskId }),
-        };
-        return advancing(receipt, next);
+        return advancing(receipt, selectWorkStep(base));
       }
       case 'complete_goal': {
         const result = await deps.tasks.completeGoal(owned.ctx, operation.request);

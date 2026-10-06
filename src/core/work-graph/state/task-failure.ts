@@ -23,8 +23,9 @@
  * are pure and implemented in full. The owners wire them in step 5 (5.4 FC and
  * the facts, 5.8 AV, 5.9 AV-7a..AV-7d and GV); TASK-16/17/27/28 stay in
  * `task-machine.ts` and VR-14 in `verification-machine.ts`. Since 5.4 (lead
- * decision LD-1) `buildTaskFailureFacts` takes the verdict from its owner,
- * which injects `{kind:'none'}` until 5.8 calls `automationVerdict`.
+ * decision LD-1) `buildTaskFailureFacts` takes the verdict from its owner;
+ * since 5.8 the owner judges it with `automationVerdict` (reading the
+ * successor-round rows AV-7a..AV-7d as `none` until 5.9).
  *
  * The owner does every read: the Runs of the Task, the pointer ControlIntent
  * (immutable request fields, read after the window), the chain heads, the
@@ -728,10 +729,11 @@ function workVerdict(view: WorkView, limit: number): { row: WorkVerdictRow; verd
     // Literal row order (TD-9 puts AV-4 before AV-6): the fence also stops a
     // no-rework row (FC-5, FC-12, FC-14, FC-17) whose Run ended under an
     // operator's pause or cancel pointer, e.g. a pause superseded by a natural
-    // completion (CTL-06; the pointer stays as history, §7 CD-4). Open for the
-    // lead before step 5.8, which skips a `stopped` Task: whether Workflow still
-    // opens, finishes and completes that Run's rounds, or AV-4 is narrowed to
-    // class-bearing rows and FC-4.
+    // completion (CTL-06; the pointer stays as history, §7 CD-4). Lead decision
+    // (STEP5-FLIPS §14, synced into §4 TD-9 and §15.2 5.8): AV-4 stays as
+    // written and `stopped` blocks only rework (requeue, reverify, a claim by
+    // requeueRef); the Workflow still opens, runs, finalizes and completes the
+    // rounds of a Run that ended `completed`.
     // A paused-interrupted Run is fenced by its pause even without a readable pointer.
     const paused = isPausedInterrupted(run) || input.pointerIntent?.kind === 'pause';
     return { row: 'AV-4', verdict: paused
@@ -848,9 +850,9 @@ export type TaskFailureFactsResultV1 = {
  * or refusal record.
  *
  * `verdict` is `automation.verdict` as the owner judged it (lead decision
- * LD-1): until step 5.8 switches the AV judgement on (`automationVerdict`,
- * AV-7a..7d and GV in 5.9) the owner injects `{kind:'none'}`, today's
- * behaviour (automation waits).
+ * LD-1): `automationVerdict` over the same input since step 5.8, with the
+ * successor-round rows AV-7a..AV-7d read as `{kind:'none'}` until 5.9 (a gate's
+ * facts and GV are 5.9 too).
  */
 export function buildTaskFailureFacts(
   input: TaskFailureInputV1, policy: TaskAutomationPolicyV1, verdict: TaskAutomationVerdictV1,

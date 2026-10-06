@@ -495,7 +495,9 @@ it.each(KINDS)('%s: §9.3 Workflow order: an interrupted check does not hold the
   expect(await workRow(fixture)).toMatchObject({ effectivePhase: 'blocked',
     phaseCause: { code: 'check_interrupted' } });
   const finalized = await advance(ran.next!);
-  expect(finalized).toMatchObject({ state: 'waiting', receipt: { kind: 'finalize_checks', result: { status: 'committed',
+  // §15.2 5.8 result mapping: a non-PASS finalize goes back to the selection.
+  expect(finalized).toMatchObject({ state: 'advance', next: { kind: 'select_work', flowId: 'a2-order-2' },
+    receipt: { kind: 'finalize_checks', result: { status: 'committed',
     value: { outcome: 'INCONCLUSIVE', gaps: [{ code: 'interrupted_check',
       message: `the required check ${firstCheckId} was interrupted (ticket_invalid)` }] } } } });
   expect(await workRow(fixture)).toMatchObject({ effectivePhase: 'blocked',

@@ -23,12 +23,23 @@ export type SettingsWorkspace = {
 export type HostSettingsSnapshot = {
   models: SettingsModel[]; workspaces: SettingsWorkspace[];
   /**
-   * C8 automatic-rework policy (Host setting `automation`). Optional so older
-   * snapshots and test literals stay valid; the backend publishes it from the
-   * step that adds the settings input (A.2 step 5.8).
+   * C8 automatic-rework policy (Host setting `automation`) as stored: the
+   * saved policy, or the defaults (3 / true) when none was saved. A save
+   * installs it in the Host at once, unless `automation/save` answered
+   * `unavailable` (saved, Host configuration not confirmed); then the Host
+   * may still apply the previous policy until a retry of the same save
+   * installs it. Optional so older snapshots and test literals stay valid;
+   * the backend publishes it since A.2 step 5.8 (`automation/save`).
    */
   automation?: TaskAutomationPolicyV1;
 };
+/**
+ * C8 / LA-6 Host setting `automation` (route `automation/save`): the whole
+ * policy, `autoReworkLimit` an integer 0..10 (`MAX_AUTO_REWORK_LIMIT`; 0 allows
+ * no counted automatic requeue) and `resumeOnStartup` (the start-up re-drive
+ * after the reconciliation). The Host installs it at once, without a restart.
+ */
+export type SaveAutomationSettings = { autoReworkLimit: number; resumeOnStartup: boolean };
 export type DirectoryListing = {
   path: string; parent: string | null;
   directories: { name: string; path: string }[]; truncated: boolean;
@@ -67,6 +78,7 @@ export type SettingsRoutes = {
   'models/select': { input: { scope: CoreScope; modelId: string }; value: HostSettingsSnapshot };
   'workspaces/open': { input: OpenSettingsWorkspace; value: { settings: HostSettingsSnapshot; bootstrap: BootstrapResponse; scope: CoreScope } };
   'checks/approve': { input: ApproveWorkspaceChecks; value: HostSettingsSnapshot };
+  'automation/save': { input: SaveAutomationSettings; value: HostSettingsSnapshot };
 };
 export type SettingsRoute = keyof SettingsRoutes;
 export type SettingsResponse<T> = { status: 'ready'; value: T }

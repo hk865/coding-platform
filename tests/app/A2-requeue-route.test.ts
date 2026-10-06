@@ -95,7 +95,8 @@ it('tasks/requeue and executions/brief: a failed Task is requeued over HTTP, con
     expect(first.state).not.toBe('completed');
     const failed = await workRow(host);
     expect(failed).toMatchObject({ effectivePhase: 'failed', phaseCause: { code: 'check_failed' },
-      failure: { failureClass: 'check_failed', automation: { verdict: { kind: 'none' } } } });
+      failure: { failureClass: 'check_failed',
+        automation: { verdict: { kind: 'requeue', failureClass: 'check_failed', retryAfterRefusal: false } } } });
     const run1Ref = failed.execution;
     if (run1Ref === null) throw new Error('Run 1 must be selected');
     const run1 = await readRun(host, run1Ref);

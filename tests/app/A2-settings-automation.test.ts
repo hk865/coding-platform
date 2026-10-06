@@ -5,11 +5,14 @@
  * the Host-internal snapshot must read `DEFAULT_TASK_AUTOMATION_POLICY`
  * (3 automatic reworks, resume on start-up) and the file must not be rewritten
  * with a default it never stored. A stored policy is validated at start-up and
- * kept across saves. Step 1 publishes nothing new over HTTP, so the public
- * snapshot is unchanged. Real temporary directories, no provider, no model.
+ * kept across saves. Since A.2 step 5.8 the public snapshot publishes the
+ * stored policy (the defaults when none was saved), and
+ * `automation/save` stores the whole policy, rolls back a failed write and
+ * pushes the saved policy to the Host. Real temporary directories, no
+ * provider, no model.
  */
 import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -37,10 +40,15 @@ async function settingsDirectory(file: unknown): Promise<string> {
   if (file !== undefined) await writeFile(join(dir, 'host-settings.json'), JSON.stringify(file));
   return dir;
 }
-async function open(dir: string): Promise<{ settings: HostSettingsPort; pushed: HostSettingsPrivateSnapshot[] }> {
+async function open(dir: string, failPush: { next: boolean } = { next: false }): Promise<{
+  settings: HostSettingsPort; pushed: HostSettingsPrivateSnapshot[];
+}> {
   const pushed: HostSettingsPrivateSnapshot[] = [];
   const settings = await createHostSettings({ settingsDirectory: dir, assembly },
-    { onConfigurationChanged(snapshot) { pushed.push(snapshot); } });
+    { onConfigurationChanged(snapshot) {
+      if (failPush.next) { failPush.next = false; throw new Error('the Host could not install the configuration'); }
+      pushed.push(snapshot);
+    } });
   return { settings, pushed };
 }
 async function storedFile(dir: string): Promise<Record<string, unknown>> {
@@ -49,11 +57,13 @@ async function storedFile(dir: string): Promise<Record<string, unknown>> {
 const saveModel = { label: 'Model A', provider: 'openai' as const, model: 'model-a' };
 
 describe('Host setting automation (C8)', () => {
-  it('a settings file without automation reads the defaults and the public snapshot is unchanged', async () => {
+  it('a settings file without automation reads the defaults and the public snapshot publishes them', async () => {
     const { settings, pushed } = await open(await settingsDirectory(LEGACY_FILE));
     expect(pushed.at(-1)?.automation).toEqual(DEFAULT_TASK_AUTOMATION_POLICY);
     expect(pushed.at(-1)?.automation).toEqual({ schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: true });
-    expect(await settings.call('snapshot', {})).toEqual({ status: 'ready', value: { models: [], workspaces: [] } });
+    // §15.2 5.8: the snapshot carries the stored policy (the defaults here, none was saved).
+    expect(await settings.call('snapshot', {})).toEqual({ status: 'ready', value: { models: [], workspaces: [],
+      automation: { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: true } } });
   });
 
   it('a Host without a settings file reads the defaults', async () => {
@@ -106,5 +116,83 @@ describe('Host setting automation (C8)', () => {
     const automation: TaskAutomationPolicyV1 = { schemaVersion: 1, autoReworkLimit: 10, resumeOnStartup: true };
     const { pushed } = await open(await settingsDirectory({ ...LEGACY_FILE, automation }));
     expect(pushed.at(-1)?.automation).toEqual(automation);
+  });
+});
+
+describe('automation/save (C8, LA-6; A.2 step 5.8)', () => {
+  it('stores the whole policy, pushes it to the Host and publishes it; a reopened Host reads it back', async () => {
+    const dir = await settingsDirectory(LEGACY_FILE);
+    const { settings, pushed } = await open(dir);
+    const before = pushed.length;
+    const saved = await settings.call('automation/save', { autoReworkLimit: 5, resumeOnStartup: false });
+    const policy: TaskAutomationPolicyV1 = { schemaVersion: 1, autoReworkLimit: 5, resumeOnStartup: false };
+    expect(saved).toEqual({ status: 'ready', value: { models: [], workspaces: [], automation: policy } });
+    expect(pushed).toHaveLength(before + 1);
+    expect(pushed.at(-1)?.automation).toEqual(policy);
+    expect((await storedFile(dir))['automation']).toEqual(policy);
+    // Another setting's save keeps the stored policy.
+    expect((await settings.call('models/save', saveModel)).status).toBe('ready');
+    expect((await storedFile(dir))['automation']).toEqual(policy);
+    expect(pushed.at(-1)?.automation).toEqual(policy);
+    const reopened = await open(dir);
+    expect(reopened.pushed.at(-1)?.automation).toEqual(policy);
+    expect(await reopened.settings.call('snapshot', {})).toMatchObject({ status: 'ready', value: { automation: policy } });
+    // The bounds are inclusive: 0 (no counted automatic requeue) and 10.
+    for (const autoReworkLimit of [0, 10]) {
+      expect(await settings.call('automation/save', { autoReworkLimit, resumeOnStartup: true }))
+        .toMatchObject({ status: 'ready', value: { automation: { schemaVersion: 1, autoReworkLimit, resumeOnStartup: true } } });
+    }
+  });
+
+  it.each([
+    ['a non-object body', 'auto'],
+    ['a limit above 10', { autoReworkLimit: 11, resumeOnStartup: true }],
+    ['a negative limit', { autoReworkLimit: -1, resumeOnStartup: true }],
+    ['a fractional limit', { autoReworkLimit: 1.5, resumeOnStartup: true }],
+    ['a string limit', { autoReworkLimit: '3', resumeOnStartup: true }],
+    ['a missing limit', { resumeOnStartup: true }],
+    ['a missing resumeOnStartup', { autoReworkLimit: 3 }],
+    ['a string resumeOnStartup', { autoReworkLimit: 3, resumeOnStartup: 'yes' }],
+  ])('refuses %s as invalid: nothing is stored or pushed', async (_label, body) => {
+    const dir = await settingsDirectory(LEGACY_FILE);
+    const { settings, pushed } = await open(dir);
+    const before = pushed.length;
+    expect(await settings.call('automation/save', body as never)).toMatchObject({ status: 'rejected', code: 'invalid' });
+    expect(pushed).toHaveLength(before);
+    expect(await storedFile(dir)).not.toHaveProperty('automation');
+    expect(await settings.call('snapshot', {})).toMatchObject({ status: 'ready', value: { automation: DEFAULT_TASK_AUTOMATION_POLICY } });
+  });
+
+  it('a failed write keeps the previous policy and pushes nothing', async () => {
+    const stored: TaskAutomationPolicyV1 = { schemaVersion: 1, autoReworkLimit: 2, resumeOnStartup: true };
+    const dir = await settingsDirectory({ ...LEGACY_FILE, automation: stored });
+    const { settings, pushed } = await open(dir);
+    const before = pushed.length;
+    // The settings file is replaced by a non-empty directory: the atomic rename of the next write fails.
+    await rm(join(dir, 'host-settings.json'));
+    await mkdir(join(dir, 'host-settings.json', 'blocked'), { recursive: true });
+    expect(await settings.call('automation/save', { autoReworkLimit: 7, resumeOnStartup: false }))
+      .toEqual({ status: 'rejected', code: 'unavailable', reason: 'the settings file could not be written' });
+    expect(pushed).toHaveLength(before);
+    expect(await settings.call('snapshot', {})).toMatchObject({ status: 'ready', value: { automation: stored } });
+  });
+
+  it('a save the Host does not confirm is still stored and answers unavailable, to be retried', async () => {
+    const dir = await settingsDirectory(LEGACY_FILE);
+    const failPush = { next: false };
+    const { settings, pushed } = await open(dir, failPush);
+    const before = pushed.length;
+    failPush.next = true;
+    const policy: TaskAutomationPolicyV1 = { schemaVersion: 1, autoReworkLimit: 4, resumeOnStartup: true };
+    expect(await settings.call('automation/save', { autoReworkLimit: 4, resumeOnStartup: true })).toEqual({ status: 'rejected',
+      code: 'unavailable', reason: 'the automation policy was saved but the Host configuration was not confirmed; retry the same save' });
+    expect(pushed).toHaveLength(before);
+    expect((await storedFile(dir))['automation']).toEqual(policy);
+    // The snapshot is the stored policy, not a confirmation that the Host applies it.
+    expect(await settings.call('snapshot', {})).toMatchObject({ status: 'ready', value: { automation: policy } });
+    // The retry of the same save pushes it.
+    expect(await settings.call('automation/save', { autoReworkLimit: 4, resumeOnStartup: true }))
+      .toMatchObject({ status: 'ready', value: { automation: policy } });
+    expect(pushed.at(-1)?.automation).toEqual(policy);
   });
 });

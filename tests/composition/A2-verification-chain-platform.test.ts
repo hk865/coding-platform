@@ -320,7 +320,10 @@ it('VR-01..VR-08: one chain per subject Run, the projection follows its head, an
 
   // 4. D-2: the registered check exits 1, the round finalizes FAIL and the Task is failed (P7).
   if (opened.stopped === null) throw new Error('the open must continue with the check');
-  const checked = await drive(platform, opened.stopped);
+  // §15.2 5.8 result mapping: the non-PASS finalize goes back to the selection; the Host stops there (the
+  // Goal-level selection would go on with work-2).
+  const checked = await drive(platform, opened.stopped, input => input.kind === 'select_work');
+  expect(checked.state).toBe('stopped');
   const finalize = checked.receipts.find(receipt => receipt.kind === 'finalize_checks');
   expect(finalize).toMatchObject({ result: { status: 'committed', value: { outcome: 'FAIL', applicable: false, gaps: [] } } });
   const failedRound = await platform.evidence.readVerification(ctx(), round.ref);
@@ -491,7 +494,10 @@ it('VD-8: a source changed after the open ends the check attempts and the round 
     next: { kind: 'perform', operation: { kind: 'finalize_checks', request: { input: { roundRef } } } } } });
   if (refused.status !== 'ready' || refused.value.next === null) throw new Error('the Workflow must finalize');
   const finalized = await platform.workflow.advanceWork(ctx(), refused.value.next);
-  expect(finalized).toMatchObject({ status: 'ready', value: { state: 'waiting', receipt: { kind: 'finalize_checks',
+  // §15.2 5.8 result mapping: a non-PASS finalize goes back to the selection. The next selection below still
+  // waits: the Workflow's continueRoundChain waits on a finalized non-PASS chain head until 5.9.
+  expect(finalized).toMatchObject({ status: 'ready', value: { state: 'advance',
+    next: { kind: 'select_work', flowId: 'a2-vd8-flow', taskId: 'work-1' }, receipt: { kind: 'finalize_checks',
     result: { status: 'committed', value: { outcome: 'INCONCLUSIVE', gaps: [{ code: 'pending_check' }, { code: 'source_changed' }] } } } } });
   expect(await taskRow(platform, 'work-1')).toMatchObject({ effectivePhase: 'blocked',
     phaseCause: { code: 'round_inconclusive', detail: { gapCodes: ['pending_check', 'source_changed'] } } });

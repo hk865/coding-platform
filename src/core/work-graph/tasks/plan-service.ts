@@ -45,7 +45,10 @@ import {
 } from '../../../contracts/task-requeue.js';
 import type { ControlIntentSnapshotV1 } from '../../../contracts/control-intent.js';
 import type { GoalDesiredState } from '../../../contracts/ledger.js';
-import { buildTaskFailureFacts } from '../state/task-failure.js';
+import type { TaskAutomationVerdictV1 } from '../../../contracts/task-failure.js';
+import {
+  automationVerdict, buildTaskFailureFacts, type AutomationVerdictResultV1, type WorkFailureInputV1,
+} from '../state/task-failure.js';
 import type { GoalPhaseRef } from '../../../contracts/goal-phase.js';
 import type {
   QueryJobAnswerRef,
@@ -669,9 +672,19 @@ type TaskRowRework = {
 };
 
 /**
+ * The AV rows that judge a successor round (`check_incomplete`, AV-7a..AV-7d).
+ * Step 5.9 wires them with `reverifyRound`; until then the read model gives
+ * them `none`, today's wait (§15.2 5.8).
+ */
+const SUCCESSOR_ROUND_ROWS: ReadonlySet<AutomationVerdictResultV1['row']> = new Set(['AV-7a', 'AV-7b', 'AV-7c', 'AV-7d']);
+const NO_VERDICT: TaskAutomationVerdictV1 = Object.freeze({ kind: 'none' });
+
+/**
  * C1 `TaskRow.failure` / `TaskRow.rework` of a work Task (`buildTaskFailureFacts`)
- * from the same canonical read. The automation verdict is injected as `none`
- * until step 5.8 switches the AV judgement on (lead decision LD-1). A gate's
+ * from the same canonical read. `automation.verdict` is the TD-9 AV judgement
+ * (`automationVerdict`) over the same facts and the live automation policy
+ * (A.2 step 5.8; `none` was injected before, lead decision LD-1), except the
+ * successor-round rows AV-7a..AV-7d, which read `none` until step 5.9. A gate's
  * facts come from its own chain head (P20, GV) in step 5.9.
  */
 function taskFailureRead(definition: RuntimeTask, state: CanonicalTaskState, facts: CanonicalTaskFacts,
@@ -680,7 +693,7 @@ function taskFailureRead(definition: RuntimeTask, state: CanonicalTaskState, fac
   const runs = facts.runsByTaskId.get(definition.taskId) ?? [];
   const execution = state.execution;
   const selectedRun = execution === null ? null : runs.find((run) => sameRef(run.ref, execution)) ?? null;
-  const built = buildTaskFailureFacts({
+  const input: WorkFailureInputV1 = {
     subjectKind: 'work',
     task: { projectId: facts.goalRef.projectId, goalId, taskId: definition.taskId },
     disposition: definition.disposition,
@@ -699,7 +712,9 @@ function taskFailureRead(definition: RuntimeTask, state: CanonicalTaskState, fac
     runs,
     requeues: facts.requeuesByTaskId.get(definition.taskId) ?? [],
     requeueRefusal: selectedRun === null ? null : facts.requeueRefusalsByRunId.get(selectedRun.ref.runId) ?? null,
-  }, rework.policy, { kind: 'none' });
+  };
+  const judged = automationVerdict(input, rework.policy);
+  const built = buildTaskFailureFacts(input, rework.policy, SUCCESSOR_ROUND_ROWS.has(judged.row) ? NO_VERDICT : judged.verdict);
   return { failure: built.failure ?? undefined, rework: built.rework ?? undefined };
 }
 

@@ -17,8 +17,9 @@
  *    (CTL-08(a) through RUN-09..11 (R), CTL-08(d)/(e));
  * 6. re-drive the Goal fan-out (GOAL-16, GOAL-14, GOAL-29);
  * 6b. select the active Goals the start-up re-drive starts a driver for
- *    (LA-6: a not-entered Run the same claim re-drives, W-01..W-03; the
- *    automation verdicts of condition (a) are `none` until step 5.8, LD-1);
+ *    (LA-6: a not-entered Run the same claim re-drives, W-01..W-03; condition
+ *    (a), a required active Task whose automation verdict the Workflow acts
+ *    on, joins with the Workflow's action in step 5.8 part 2);
  * 7. return the report: what moved and what was left, with the reason.
  *
  * Reconcile only reads the Kernel Store and the platform records and books

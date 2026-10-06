@@ -48,7 +48,7 @@ import type {
 
 /** The published settings route set. `SettingsRoutes` stays the type truth. */
 export const SETTINGS_ROUTE_SUFFIXES = [
-  'snapshot', 'directories', 'models/save', 'models/select', 'workspaces/open', 'checks/approve',
+  'snapshot', 'directories', 'models/save', 'models/select', 'workspaces/open', 'checks/approve', 'automation/save',
 ] as const satisfies readonly SettingsRoute[];
 
 export function isSettingsRoute(value: string): value is SettingsRoute {
@@ -126,7 +126,8 @@ export type HostSettingsPrivateSnapshot = {
   checks: { scope: CoreScope; checks: RegisteredCommandCheck[];
     answerRef: QueryJobAnswerRef; answerDigest: string }[];
   /** C8 automatic-rework policy as stored, or the defaults (3 / true) when the
-   * file has none. The Host installs it from A.2 step 5.6 on. */
+   * file has none. The Host installs it from A.2 step 5.6 on; `automation/save`
+   * (5.8) changes it at runtime. */
   automation: TaskAutomationPolicyV1;
 };
 
@@ -267,7 +268,8 @@ type PersistedSettingsV1 = {
   selection: Record<string, string | null>;
   workspaces: PersistedWorkspaceV1[];
   /** C8 automatic-rework policy. Absent in files written before A.2; it stays
-   * absent on the next save and reads as `DEFAULT_TASK_AUTOMATION_POLICY`. */
+   * absent on the next save of another setting and reads as
+   * `DEFAULT_TASK_AUTOMATION_POLICY` until `automation/save` stores one. */
   automation?: TaskAutomationPolicyV1;
 };
 
@@ -417,8 +419,8 @@ export async function createHostSettings(
   const models: HostSettingsStoredModel[] = persisted.models;
   const selection: Record<string, string | null> = persisted.selection;
   const workspaces: PersistedWorkspaceV1[] = persisted.workspaces;
-  /** Kept exactly as stored (absent stays absent); no route writes it yet. */
-  const automation: TaskAutomationPolicyV1 | undefined = persisted.automation;
+  /** Kept exactly as stored (absent stays absent) until `automation/save` writes it. */
+  let automation: TaskAutomationPolicyV1 | undefined = persisted.automation;
 
   const privateSnapshot = (): HostSettingsPrivateSnapshot => ({
     models: structuredClone(models),
@@ -483,6 +485,9 @@ export async function createHostSettings(
         ...(persistedFacts?.checks === undefined ? {} : { checks: structuredClone(persistedFacts.checks) }),
       };
     }),
+    // C8 (A.2 step 5.8): the stored policy, the defaults when none was saved (after an
+    // unconfirmed `automation/save` the Host may still apply the previous one until a retry).
+    automation: { ...(automation ?? DEFAULT_TASK_AUTOMATION_POLICY) },
   });
 
   // Restore every persisted directory registration through the real owners
@@ -734,6 +739,35 @@ export async function createHostSettings(
     return { status: 'ready', value: snapshotOf() };
   }
 
+  /**
+   * C8 / LA-6 (A.2 step 5.8): the Host user's automatic-rework policy. The
+   * whole policy is saved (`autoReworkLimit` 0..10, `resumeOnStartup`), stored
+   * in the private file and pushed to the Host, which installs it at once
+   * (`registerAutomationPolicy`): the requeue owner, the failure facts and
+   * their automation verdict, and the capability report read it on their next
+   * call; the start-up re-drive reads it at the next start.
+   */
+  async function saveAutomationRoute(input: unknown): Promise<SettingsResponse<HostSettingsSnapshot>> {
+    if (!isRecord(input)) return invalid('automation/save requires an object body');
+    const limit = input['autoReworkLimit'];
+    if (typeof limit !== 'number' || !Number.isSafeInteger(limit) || limit < 0 || limit > MAX_AUTO_REWORK_LIMIT) {
+      return invalid(`autoReworkLimit must be an integer from 0 to ${String(MAX_AUTO_REWORK_LIMIT)}`);
+    }
+    if (typeof input['resumeOnStartup'] !== 'boolean') return invalid('resumeOnStartup must be a boolean');
+    const previous = automation;
+    automation = { schemaVersion: 1, autoReworkLimit: limit, resumeOnStartup: input['resumeOnStartup'] };
+    try { await persist(); }
+    catch {
+      automation = previous;
+      return unavailable('the settings file could not be written');
+    }
+    try { await notify(); }
+    catch {
+      return unavailable('the automation policy was saved but the Host configuration was not confirmed; retry the same save');
+    }
+    return { status: 'ready', value: snapshotOf() };
+  }
+
   const dispatch = async (route: SettingsRoute, input: unknown): Promise<SettingsResponse<unknown>> => {
     switch (route) {
       case 'snapshot': return { status: 'ready', value: snapshotOf() };
@@ -742,6 +776,7 @@ export async function createHostSettings(
       case 'models/select': return await selectModelRoute(input);
       case 'workspaces/open': return await openWorkspaceRoute(input);
       case 'checks/approve': return await approveChecksRoute(input);
+      case 'automation/save': return await saveAutomationRoute(input);
     }
   };
 
