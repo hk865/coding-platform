@@ -2,7 +2,7 @@
 
 **2026-10-06 可靠性批次进行中；新界面原型已获批，正待改版：**
 
-*批次状态。* 分支 `feat/reliability-and-structure` 上的可靠性批次（任务书任务 A–E）**没有完成**，也未推送；整个 MVP 也没有完成。任务 B、C、E 和任务 D 的准备已提交；任务 A 做到第 5 步的 5.9 第一段（5.9 第二段正在做）；之后还有 5.10、第 6 步、简化、第 7 步、任务 D（WorkGraph 拆分）和收尾。当前状态、缺口和下一步见 [STATUS](docs/refactor/STATUS.md)。用户 2026-10-04 至 10-06 的 31 条决定见 [HANDOFF 顶部](docs/refactor/HANDOFF.md)两节：1–19 和 20–31。
+*批次状态。* 分支 `feat/reliability-and-structure` 上的可靠性批次（任务书任务 A–E）**没有完成**，也未推送；整个 MVP 也没有完成。任务 B、C、E 和任务 D 的准备已提交；任务 A 的第 5 步已全部提交（最后一段 5.10 为 05125db），第 6 步正在做；之后还有简化、第 7 步、任务 D（WorkGraph 拆分，交给本地 DSH 执行，决定 32）和收尾。当前状态、缺口和下一步见 [STATUS](docs/refactor/STATUS.md)。用户 2026-10-04 至 10-06 的 32 条决定见 [HANDOFF 顶部](docs/refactor/HANDOFF.md)两节：1–19 和 20–32。
 
 *界面基线。* 新原型在 [Design 画布](https://claude.ai/artifact/3e5ynF3rwtMQfvJuim9mL2)上，只有用户本人能打开。
 - 用户 2026-10-05 批准了原型（画布第 9 版）。接下来按 HANDOFF 决定 26–28 改版，改版后把画板文件复制进 `docs/ui-reference/`。
