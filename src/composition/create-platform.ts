@@ -471,8 +471,23 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     const observed = createObservedArchitecture({ records: backend.records, bodies, access, workspace: workspace.tools,
       source: options.architectureSource ?? { provider: 'typescript', configPath: 'tsconfig.json' } });
     const catalog = createArchitectureCatalogService({ records: backend.records });
+    // R6 cold-start: the live per-workspace trusted checks configuration the
+    // Host registers after an explicit user approval. It is read by a FRESH
+    // round only; an already-open round keeps the configuration it froze. The
+    // legacy static `options.checks` remains a compatible same-scope fallback.
+    // A.2 step 5.9 (LA-4): the read model judges a configuration-dependent
+    // reverify refusal stale against the same current revision.
+    const registeredCheckConfigurations = new Map<string, TrustedCheckConfiguration>();
+    const checkScopeKey = (scope: { projectId: string; workspaceId: string }): string =>
+      `${scope.projectId}\u0000${scope.workspaceId}`;
+    const currentCheckConfiguration = (scope: { projectId: string; workspaceId: string }): TrustedCheckConfiguration | undefined =>
+      registeredCheckConfigurations.get(checkScopeKey(scope))
+        ?? (options.checks !== undefined
+          && options.checks.workspace.projectId === scope.projectId
+          && options.checks.workspace.workspaceId === scope.workspaceId
+          ? options.checks : undefined);
     const planService = createPlanService({ records: backend.records, materials: rawMaterials, now, eventId: randomUUID,
-      automationPolicy: currentAutomationPolicy,
+      automationPolicy: currentAutomationPolicy, configurationFor: currentCheckConfiguration,
       // R5b.4: the SAME raw body store already owned by the composition root.
       initialPlanning: { bodies },
       ...(authorizeConfiguration === undefined ? {} : {
@@ -512,23 +527,21 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // check runner share the existing records/material/execution instances. The
     // frozen checks configuration is optional; without it fresh open/begin stay
     // unsupported while existing history reads/receipts keep their behavior.
-    // R6 cold-start: the live per-workspace trusted checks configuration the
-    // Host registers after an explicit user approval. It is read by a FRESH
-    // round only; an already-open round keeps the configuration it froze. The
-    // legacy static `options.checks` remains a compatible same-scope fallback.
-    const registeredCheckConfigurations = new Map<string, TrustedCheckConfiguration>();
-    const checkScopeKey = (scope: { projectId: string; workspaceId: string }): string =>
-      `${scope.projectId}\u0000${scope.workspaceId}`;
+    // A.2 step 5.9 (VR-14): the successor-round owner reads the same automation
+    // policy as the requeue owner (VD-13 cap), a new input message through the
+    // mailbox (ND-9), and admits an Agent through the same delegated-write
+    // admission (no production Role grants `reverify_round` yet, GAP-46).
     const rawEvidence = createEvidenceService({
       records: backend.records, materials: rawMaterials, materialFacts, executions: executionReader,
       workspaceHost: options.workspace, source: verificationWorkspaceReader,
       ...(options.checks === undefined ? {} : { configuration: options.checks }),
-      configurationFor: (scope) => registeredCheckConfigurations.get(checkScopeKey(scope))
-        ?? (options.checks !== undefined
-          && options.checks.workspace.projectId === scope.projectId
-          && options.checks.workspace.workspaceId === scope.workspaceId
-          ? options.checks : undefined),
+      configurationFor: currentCheckConfiguration,
       ...(hostInstance === undefined ? {} : { hostInstance }),
+      automationPolicy: currentAutomationPolicy,
+      messages: { readMessage: mailbox.readMessage.bind(mailbox) },
+      ...(authorizeConfiguration === undefined ? {} : {
+        delegatedWrites: { reads: executionReader, roles: roleService, bodies, authorizeConfiguration },
+      }),
       now, newId: randomUUID,
     });
     const rawCheckRunner = createRegisteredCheckRunner({ evidence: rawEvidence,
@@ -717,6 +730,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       recordCheckResult: (...args) => trackedCall(() => rawEvidence.recordCheckResult(...args), unavailable),
       submitEvidence: (...args) => trackedCall(() => rawEvidence.submitEvidence(...args), unavailable),
       finalizeChecks: (...args) => trackedCall(() => rawEvidence.finalizeChecks(...args), unavailable),
+      // A.2 step 5.9 (VR-14): the successor round or its policy refusal (`verification/reverify`).
+      reverifyRound: (...args) => trackedCall(() => rawEvidence.reverifyRound!(...args), unavailable),
     };
     const checks: RegisteredCheckRunner = {
       runRegisteredCheck: (...args) => trackedCall(() => rawCheckRunner.runRegisteredCheck(...args), unavailable),

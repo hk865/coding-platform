@@ -32,14 +32,17 @@
  * - A.2 step 5.4 (D-3, C1, C2, C8): P4 (`pending/requeued`), TASK-03 (a claim
  *   with the `requeueRef` covering the selected Run re-holds the lease),
  *   TASK-16/17 (`task_requeued`, TaskRequeue@1) and TASK-28 for a requeue
- *   (`task_rework_refused`). The reverify part of TASK-28 (5.9) still
- *   answers `notYet`.
+ *   (`task_rework_refused`). The reverify part of TASK-28 is decided by the
+ *   round side (§9 VR-14, step 5.9): a reverify `task_rework_refused` is
+ *   `illegal`/`invalid` here.
+ * - A.2 step 5.9 part 1: TASK-29 (`round_reverified` on a work Task)
+ *   re-projects to the open successor head (P12 with its ordinal).
  * - A.2 step 5.6 (C4): P19 (`blocked/paused_interrupted`, before P6), TASK-26
  *   (the RUN-24 end re-projects to it) and TASK-27 (the operator's "继续", or the
  *   Goal-resume continuation, as a `task_requeued`).
  * - 改造 rows still at today's result, flipped by later substeps: TASK-15 (a
  *   gate completes from `pending`; 5.9), TASK-18 (no `dispositionRecord`; 5.10).
- * - 新增 rows of later substeps (TASK-29, 30) keep their events in the
+ * - 新增 rows of later substeps (TASK-30, 5.9 part 2) keep their events in the
  *   union and answer `illegal` (`notYet`). TASK-19 is answered by today's
  *   §4.4 refusal in front of it: a traced Task's definition, disposition
  *   included, is frozen (`revision_conflict`).
@@ -922,12 +925,10 @@ function onRoundEvent(state: TaskMachineState, event: RoundTaskEvent): TaskTrans
   const kindProblem = factsKindProblem(state, event.facts);
   if (kindProblem !== null) return kindProblem;
   if (state.taskKind === 'gate') {
-    // TASK-30 (C5) is step 5.9: today a gate's rounds never enter its projection.
+    // TASK-30 (C5) is step 5.9 part 2 (P20): until then a gate's rounds never enter its projection.
     if (event.kind !== 'evidence_submitted') return notYet('TASK-30');
     return reprojected(state, event.facts);
   }
-  // TASK-29 (C5, §9 VR-14) is step 5.9.
-  if (event.kind === 'round_reverified') return notYet('TASK-29');
   const run = event.facts.selectedRun;
   // TASK-20 (R5): a round of an older Run is history only.
   if (run === null || !sameRunRef(run.ref, event.subjectRunRef)) return accept(state);
@@ -936,7 +937,10 @@ function onRoundEvent(state: TaskMachineState, event: RoundTaskEvent): TaskTrans
   }
   // TASK-09 `verifying`, TASK-12 (D-12) `blocked/check_interrupted` once the
   // last pending/executing check settles with an interrupted one left, TASK-10
-  // `failed`, TASK-11 `blocked/round_inconclusive`, TASK-13 `verifying`.
+  // `failed`, TASK-11 `blocked/round_inconclusive`, TASK-13 `verifying`;
+  // TASK-29 (C5, step 5.9): a successor round on the selected Run's chain makes
+  // the open successor the head, `verifying/verification_running` with
+  // `{ordinal, predecessorRoundRef}` (its legality is §9 VR-14's).
   return reprojected(state, event.facts);
 }
 
@@ -1212,7 +1216,9 @@ function onTaskRequeued(
  * compared key equal to an earlier TaskRequeue's (G-BASIS);
  * `auto_rework_cap_reached` (G-CAP) is counted by construction (its record
  * names an automatic actor, the class is not `interrupted`). The phase and
- * cause do not change. A reverify refusal is step 5.9.
+ * cause do not change. A reverify refusal is not this machine's: the round
+ * side decides it with its successor (§9 VR-14, `refuse_reverify`, A.2 step
+ * 5.9), over the chain head this Task's projection reads.
  */
 function onTaskReworkRefused(
   state: TaskMachineState,
@@ -1221,7 +1227,9 @@ function onTaskReworkRefused(
 ): TaskTransition {
   if (state === null) return absentTask(event.kind);
   const refusal = event.refusal;
-  if (refusal.ref.operation === 'reverify') return notYet('TASK-28 (reverify)');
+  if (refusal.ref.operation === 'reverify') {
+    return reject('illegal', 'invalid', 'a reverify refusal is decided with its successor round (§9 VR-14), not by the Task machine');
+  }
   const facts = ctx.rework;
   if (facts === undefined) return reject('illegal', 'invalid', 'task_rework_refused requires the rework guard facts');
   const stateProblem = taskRequeueStateProblem(state, facts);

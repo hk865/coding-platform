@@ -307,12 +307,23 @@ it('freezes an open round configuration and resolves a fresh round from the curr
   expect(read.value.configuration.configurationRevision).toBe(fixture.configuration.configurationRevision);
 
   // A.2 step 5.3 (VR-01 slot, VD-1): the subject Run already has a round chain, so a
-  // second open on it is `busy` with the head pin; the next round on the subject is a
-  // successor that freezes the current configuration (`reverifyRound`, step 5.9).
+  // second open on it is `busy` with the head pin.
   const fresh = await scoped.openVerification(fixture.ctx, fixture.openRequest());
   expect(fresh, 'a second open on the same subject Run is busy').toMatchObject({ status: 'rejected', code: 'busy',
     current: [{ ref: round.ref, revision: round.revision }] });
-  // A fresh root on another slot (the Goal gate's) still freezes the CURRENT scope configuration.
+  // A.2 step 5.9 (C5, VR-14): the next round on the subject is the successor of the finalized
+  // head, and it freezes the CURRENT scope configuration.
+  const finalized = await scoped.finalizeChecks(fixture.ctx, fixture.finalizeRequest(read.value));
+  expect(finalized, 'the first round finalizes (its checks never ran)').toMatchObject({ status: 'committed',
+    value: { outcome: 'INCONCLUSIVE' } });
+  if (finalized.status !== 'committed') throw Error('the first round did not finalize');
+  const head = finalized.value.snapshot;
+  const successor = await scoped.reverifyRound!(fixture.ctx, { input: { predecessorRoundRef: head.ref },
+    meta: { requestId: 'r3e-scoped-reverify', expected: [{ ref: head.ref, revision: head.revision }] } });
+  expect(successor, 'the successor freezes the current scope configuration').toMatchObject({ status: 'committed',
+    value: { kind: 'reverified', round: { chain: { ordinal: 2, predecessorRoundRef: head.ref },
+      configuration: { configurationRevision: 'r3e-checks-config-2' } } } });
+  // A fresh root on another slot (the Goal gate's) freezes the CURRENT scope configuration too.
   const gate = await scoped.openVerification(fixture.ctx, fixture.openRequest({
     subject: { ...fixture.subject, taskId: R3E_GATE_TASK_ID }, gateSubject: 'goal' }));
   expect(gate, 'a fresh gate round uses the current scope configuration').toMatchObject({ status: 'committed' });

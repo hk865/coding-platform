@@ -584,8 +584,8 @@ function reprojectionExpect(label: StateLabel, event: EventLabel): Expect {
     // §4.4: blocked(check_interrupted) + PASS is illegal.
     case 'round_finalized:PASS': return gate ? II : label === 'P9' ? II : reproject(label, 'P13');
     case 'round_finalized:older_run': return gate ? II : SAME;
-    // TASK-29 / TASK-30 (新增).
-    case 'round_reverified': return II;
+    // TASK-29 (5.9): the open successor head re-projects a work Task (P12); TASK-30 (gate, 5.9 part 2) is still 新增.
+    case 'round_reverified': return gate ? II : reproject(label, 'P12');
     default: throw new Error(`not a re-projection event: ${event}`);
   }
 }
@@ -1029,13 +1029,18 @@ describe('re-projection specifics', () => {
       .toEqual({ ok: true, next: STATES.P5, effects: [] });
   });
 
-  it('TASK-29/30 name their rows; the requeue rows need the owner rework facts', () => {
+  it('TASK-30 names its row; TASK-29 re-projects; the requeue rows need the owner rework facts', () => {
     const detail = (label: StateLabel, event: EventLabel): unknown => {
       const result = transitionTask(STATES[label], EVENTS[event](isGate(label) ? 'gate' : 'work'), ctxFor(label));
       return result.ok ? null : result.detail;
     };
-    expect(detail('P7', 'round_reverified')).toMatch(/^TASK-29 /);
+    // TASK-29 (5.9): a failed or inconclusive work Task re-projects to the open successor (P12, no effect).
+    expect(transitionTask(STATES.P7, EVENTS.round_reverified('work'), ctxFor('P7')))
+      .toEqual({ ok: true, next: STATES.P12, effects: [] });
+    expect(transitionTask(STATES.P8, EVENTS.round_reverified('work'), ctxFor('P8')))
+      .toEqual({ ok: true, next: STATES.P12, effects: [] });
     expect(detail('gate:P16', 'round_opened')).toMatch(/^TASK-30 /);
+    expect(detail('gate:P16', 'round_reverified')).toMatch(/^TASK-30 /);
     // 5.4: the requeue rows are open; without the owner's rework facts they refuse.
     expect(detail('P7', 'task_requeued')).toBe('task_requeued requires the rework guard facts');
     expect(detail('P7', 'task_rework_refused')).toBe('task_rework_refused requires the rework guard facts');
@@ -1377,10 +1382,11 @@ describe('task_requeued and task_rework_refused in the unified order (§4.3, §4
       .toMatchObject({ ok: false, reason: 'illegal', code: 'invalid', detail: 'the refusal is not keyed by the selected Run' });
     expect(refusedAt(STATES.P6, {}, { kind: 'task_rework_refused', refusal: { ...CAP_REFUSAL, failureClass: 'interrupted' },
       pointerIntent: null })).toMatchObject({ ok: false, reason: 'illegal', code: 'invalid' });
-    // A reverify refusal is step 5.9 (VR-14).
+    // A reverify refusal is decided by the round side with its successor (§9 VR-14, step 5.9), never here.
     expect(refusedAt(STATES.P6, {}, { kind: 'task_rework_refused',
       refusal: { ...CAP_REFUSAL, ref: { ...CAP_REFUSAL.ref, operation: 'reverify' } }, pointerIntent: null }))
-      .toMatchObject({ ok: false, reason: 'illegal', code: 'invalid', detail: expect.stringMatching(/^TASK-28 \(reverify\) /) });
+      .toMatchObject({ ok: false, reason: 'illegal', code: 'invalid',
+        detail: 'a reverify refusal is decided with its successor round (§9 VR-14), not by the Task machine' });
     expect(transitionTask(STATES.P6, { kind: 'task_rework_refused', refusal: CAP_REFUSAL, pointerIntent: null }, ctxFor('P6')))
       .toMatchObject({ ok: false, reason: 'illegal', code: 'invalid', detail: 'task_rework_refused requires the rework guard facts' });
   });

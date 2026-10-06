@@ -23,7 +23,7 @@ import type { ReadResult, WriteResult } from '../../../contracts/core/results.js
 import type { RunRef, TaskTriple } from '../../../contracts/dispatch.js';
 import type { NewBasisInputRefV1 } from '../../../contracts/no-progress.js';
 import type { PlanRevisionRef } from '../../../contracts/plan.js';
-import type { TaskReworkRefusalSnapshotV1 } from '../../../contracts/task-requeue.js';
+import type { TaskAutomationPolicyV1, TaskReworkRefusalSnapshotV1 } from '../../../contracts/task-requeue.js';
 import type {
     CheckExecutionTicket,
     CheckProcessObservation,
@@ -35,9 +35,11 @@ import type { VerificationRoundSourcePort } from '../../../contracts/verificatio
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type { WorkspaceHostBindings } from '../../workspace/access.js';
+import type { SessionMailboxPort } from '../communication/contracts.js';
 import type { MaterialPort, MaterialReadFactsPort } from '../materials/contracts.js';
 import type { ExecutionReadPort } from '../tasks/execution-read-contracts.js';
 import type { GraphWrite } from '../tasks/contracts.js';
+import type { PlanDelegatedWriteDependencies } from '../tasks/plan-write-admission.js';
 
 /** Result of finalizing one frozen round: the persisted snapshot plus the
  * Evidence actually admitted in the same commit. */
@@ -167,9 +169,13 @@ export interface EvidencePort {
         request: GraphWrite<InterruptCheckInput>,
     ): Promise<WriteResult<RoundSnapshot>>;
     /**
-     * Spec §9 VD-12 (VR-14): open the successor round of a finalized non-PASS
-     * chain head, or commit a policy refusal. Optional until the evidence
-     * service implements it (A.2 step 5).
+     * Spec §9 VD-12 (VR-14, A.2 step 5.9): open the successor round of a
+     * finalized non-PASS chain head, or commit a policy refusal
+     * (`TaskReworkRefusal`, operation `reverify`). The actor class comes from
+     * the principal: a Host operator is `human`, a platform automation actor
+     * `system`, a `work_run` caller `agent` (through the delegated-write
+     * admission). Optional on the port: a caller without it answers
+     * `unsupported`.
      */
     reverifyRound?(
         ctx: CoreCallContext,
@@ -224,6 +230,16 @@ export type EvidenceServiceDependencies = {
     configurationFor?: CheckConfigurationResolver;
     /** A.2 step 5.6: this Host instance and its lease (D-18), for VR-04. */
     hostInstance?: { hostInstanceId: string; lease: 'owned' | 'held_by_other' };
+    /**
+     * C8 / VD-13 (A.2 step 5.9): the automatic-rework policy whose limit caps
+     * automatic successor rounds; the requeue owner's. Absent is
+     * `DEFAULT_TASK_AUTOMATION_POLICY`.
+     */
+    automationPolicy?(): TaskAutomationPolicyV1;
+    /** VR-14 step 2: the delegated-write admission an Agent reverify goes through; absent refuses an Agent. */
+    delegatedWrites?: PlanDelegatedWriteDependencies;
+    /** ND-9: a session-message new input is read through the mailbox owner; absent refuses one (`unsupported`). */
+    messages?: Pick<SessionMailboxPort, 'readMessage'>;
     now(): string;
     newId(): string;
 };

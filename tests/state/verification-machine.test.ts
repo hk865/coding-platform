@@ -11,10 +11,12 @@
  *   busy and VD-3; the VR-02 VD-8 markers; the VR-03 `incompleteCause`; VR-05
  *   and VR-13; the D-2 fold of VR-07 with its read-set guard; VD-2 on VR-08;
  *   the VR-11/VR-12 index. Rows of later substeps return `illegal`/`invalid`
- *   at the legal cell (VR-04/06, 5.6) or from every state (VR-14/15, 5.9);
- *   the VD-9 guards are 5.5. Step 5.4: VR-09 (`task_requeued` guards the
- *   finalized non-clean-PASS head and claims its slot with the same owner)
- *   and the VR-01 TaskRequeue cover guard.
+ *   at the legal cell (VR-04/06, 5.6); the VD-9 guards are 5.5. Step 5.4:
+ *   VR-09 (`task_requeued` guards the finalized non-clean-PASS head and claims
+ *   its slot with the same owner) and the VR-01 TaskRequeue cover guard.
+ *   Step 5.9 (part 1): VR-14/VR-15 (`round_reverified`): the successor or a
+ *   policy refusal, the step 3–5 order, the cap, `verification_uncovered`,
+ *   `source_unchanged` and the key.
  * - Guard rows in today's order, and the pure helpers of §9.6 / §13.7 in full
  *   (the chain cases of the planned `verification-chain.test.ts` live here).
  *
@@ -38,15 +40,16 @@ import type { VerificationRoundMaterialIdentity } from '../../src/contracts/veri
 import {
   beginRefusalIsPermanent, buildFinalizedRound, buildOpenedRound, buildSuccessorRound, chainEvidenceIds,
   checkEventAdmission, displayRoundStatus, evidenceSupersededByRequeue, finalizeRoundOutcome, foldVerdictChecks, frozenBindingProblem,
-  isFinalizedNonPass, nextTaskEvidenceIndex, outcomeFor, pendingRoundChecks, requiredRoundCoverage, reverifyExemption,
-  reverifyFailureClass, rootRoundChain, roundChainHead, roundOpenBasisProblem, roundOpenChainProblem, roundOpenChecksProblem,
+  isFinalizedNonPass, nextTaskEvidenceIndex, outcomeFor, pendingRoundChecks, requiredRoundCoverage, reverifyAdmissionProblem,
+  reverifyCapRefusal, reverifyExemption, reverifyFailureClass, reverifyPolicyRefusal, rootRoundChain, roundChainHead,
+  roundOpenBasisProblem, roundOpenChainProblem, roundOpenChecksProblem,
   roundActivityProblem, roundGoalActivityProblem, roundOpenPointerProblem, roundOpenProblem, roundSubjectActivityProblem,
   roundOpenSubjectProblem, roundOrdinalOf, roundReviewerEvidenceProblem, roundSlotKey, roundSlotOwner,
   roundSlotSubjectOf, roundTaskSignal, roundWriteAdmission, taskEvidenceIndexRefOf,
   transitionCheck, transitionRound, withCheckPhase,
-  type CheckEvent, type RoundEvent, type RoundFoldFactsV1, type RoundGapV1, type RoundGuardContext,
-  type RoundActivityFactsV1, type RoundOpenFactsV1, type RoundOpeningV1, type SuccessorRoundBuildV1, type SuccessorRoundInputV1,
-  type VerificationEffect,
+  type CheckEvent, type ReverifyRefusalV1, type RoundEvent, type RoundFoldFactsV1, type RoundGapV1, type RoundGuardContext,
+  type RoundActivityFactsV1, type RoundOpenFactsV1, type RoundOpeningV1, type RoundReverifyFactsV1, type RoundSuccessorV1,
+  type SuccessorRoundBuildV1, type SuccessorRoundInputV1, type VerificationEffect,
 } from '../../src/core/work-graph/state/verification-machine.js';
 import type { Transition, TransitionRejectReason } from '../../src/core/work-graph/state/transition.js';
 
@@ -191,8 +194,6 @@ const DB = no('duplicate', 'busy');
 const GI = no('guard_failed', 'incomplete');
 const GF = no('guard_failed', 'forbidden');
 const GB = no('guard_failed', 'busy');
-/** A 新增 (or not-yet-written) row: `illegal`/`invalid` until step 5. */
-const NY: Expect = { ok: false, reason: 'illegal', code: 'invalid', notYet: true };
 
 function check(actual: Transition<RoundSnapshot, unknown, VerificationEffect>, expected: Expect, state: RoundSnapshot | null): void {
   if (!expected.ok) {
@@ -246,7 +247,8 @@ const ROUND_EVENTS = {
   round_opened: (): RoundEvent => ({ kind: 'round_opened', opening: OPENING, facts: OPEN_FACTS }),
   evidence_submitted: (): RoundEvent => ({ kind: 'evidence_submitted' }),
   round_finalized: finalizeEvent,
-  round_reverified: (): RoundEvent => ({ kind: 'round_reverified', actorClass: 'system' }),
+  // VR-14 (5.9): the state is the requested predecessor and the chain's head; the successor is built.
+  round_reverified: (state: RoundSnapshot | null): RoundEvent => reverifyEvent(state),
   task_requeued: (): RoundEvent => ({ kind: 'task_requeued', actorClass: 'human' }),
 } satisfies Record<RoundEvent['kind'], (state: RoundSnapshot | null) => RoundEvent>;
 type RoundEventLabel = keyof typeof ROUND_EVENTS;
@@ -295,8 +297,13 @@ const ROUND_TABLE: Record<RoundEventLabel, () => Record<RoundStateLabel, Expect>
       { ref: evidence('e-1'), checkId: 'lint', coverage: cov('r1') },
       { ref: evidence('e-2'), checkId: 'unit', coverage: cov('r2') },
     ])), IB, IB, IB, IB),
-  // VR-14/15 (新增, 5.9).
-  round_reverified: () => r(NY, NY, NY, NY, NY, NY, NY, NY, NY),
+  // VR-14/15 (5.9): only a finalized non-clean-PASS head has a successor (the predecessor is not
+  // written; a legacy slot-less head moves the slot null → successor); an open head is finalize_first
+  // (busy), a clean PASS head invalid, no predecessor not_found.
+  round_reverified: () => r(no('illegal', 'not_found'), GB, GB, GB, GB, II,
+    to(successorOf(FINAL_FAIL), reverifiedEffects(FINAL_FAIL)),
+    to(successorOf(FINAL_INCONCLUSIVE), reverifiedEffects(FINAL_INCONCLUSIVE)),
+    to(successorOf(FINAL_PASS_GAPS), reverifiedEffects(FINAL_PASS_GAPS))),
   // VR-09 (5.4): only a finalized non-clean-PASS head; the round is guarded, not written, and its
   // slot is claimed by the same owner (a legacy slot-less head null → null). An open head is
   // finalize_first (busy); a clean PASS has nothing to requeue.
@@ -1257,5 +1264,192 @@ describe('step 5.4: VR-09 task_requeued and the VR-01 TaskRequeue cover', () => 
       subjectRunRequeued: true }, task)).toMatchObject({ detail: 'the subject Run has not formally ended' });
     expect(openWith({ subjectRunRequeued: true })).toMatchObject({ ok: false, reason: 'guard_failed', code: 'forbidden' });
     expect(openWith({ subjectRunRequeued: false })).toMatchObject({ ok: true });
+  });
+});
+
+// ------------------------------------------------------------------------ //
+// Step 5.9 part 1: VR-14 / VR-15 round_reverified (C5, VD-12, VD-13, §13.7)  //
+// ------------------------------------------------------------------------ //
+
+/** The subject Run as read: ended `completed`, nothing left to reconcile. */
+const COMPLETED_RUN = { ...endedRun, ref: runRef('run-1') } as RunSnapshot;
+
+function reverifyFacts(state: RoundSnapshot | null, over: Partial<RoundReverifyFactsV1> = {}): RoundReverifyFactsV1 {
+  return { actorClass: 'system', chain: state === null ? { kind: 'none' } : { kind: 'head', head: state, chain: [state] },
+    subjectRun: COMPLETED_RUN, relation: { kind: 'work', runTaskIsSubject: true }, activity: ACTIVE,
+    subjectRunRequeued: false, permission: null, ...over };
+}
+
+/** The successor the owner built after the capture (`BUILD`, `basis`, `WORKFLOW` of the chain helpers above). */
+const SUCCESSOR: RoundSuccessorV1 = { roundId: 'round-2', build: BUILD, basis: basis(sha('1')), requestedBy: WORKFLOW,
+  requestedAt: AT, newInputRefs: [], reason: 'auto-reverify:check_failed#1' };
+
+function reverifyEvent(state: RoundSnapshot | null, over: {
+  facts?: Partial<RoundReverifyFactsV1>; successor?: Partial<RoundSuccessorV1> | null; onlyIfSourceChanged?: boolean; limit?: number;
+} = {}): Extract<RoundEvent, { kind: 'round_reverified' }> {
+  return { kind: 'round_reverified', facts: reverifyFacts(state, over.facts), onlyIfSourceChanged: over.onlyIfSourceChanged ?? false,
+    autoReworkLimit: over.limit ?? 3, successor: over.successor === null ? null : { ...SUCCESSOR, ...over.successor } };
+}
+
+function successorOf(predecessor: RoundSnapshot, actorClass: 'human' | 'system' | 'agent' = 'system'): RoundSnapshot {
+  return buildSuccessorRound({ predecessor, roundId: SUCCESSOR.roundId, build: SUCCESSOR.build, reverify: {
+    requestedBy: SUCCESSOR.requestedBy, actorClass, requestedAt: SUCCESSOR.requestedAt, basis: SUCCESSOR.basis,
+    newInputRefs: SUCCESSOR.newInputRefs, reason: SUCCESSOR.reason } });
+}
+
+/** VR-14 effects: the successor CAS null, the predecessor guarded as read, the read set, the slot head → successor, the event. */
+function reverifiedEffects(predecessor: RoundSnapshot): VerificationEffect[] {
+  const owner = predecessor.chain === undefined ? null : roundSlotOwner(predecessor.ref);
+  return [{ kind: 'guard_round', expectedRevision: null },
+    { kind: 'guard_predecessor', ref: predecessor.ref, revision: predecessor.revision },
+    { kind: 'guard_reverify_read_set' },
+    { kind: 'claim_round_slot', claim: { claimKey: roundSlotKey(roundSlotSubjectOf(predecessor)), expectedOwner: owner,
+      nextOwner: roundSlotOwner({ ...predecessor.ref, roundId: SUCCESSOR.roundId }) } },
+    { kind: 'emit_event', eventType: 'VerificationRoundReverified' }];
+}
+
+/** A committed refusal: the predecessor and its slot held by the same owner, the refusal the owner writes. */
+function refusedEffects(predecessor: RoundSnapshot, refusal: ReverifyRefusalV1): VerificationEffect[] {
+  const owner = predecessor.chain === undefined ? null : roundSlotOwner(predecessor.ref);
+  return [{ kind: 'guard_predecessor', ref: predecessor.ref, revision: predecessor.revision },
+    { kind: 'guard_reverify_read_set' },
+    { kind: 'claim_round_slot', claim: { claimKey: roundSlotKey(roundSlotSubjectOf(predecessor)), expectedOwner: owner,
+      nextOwner: owner } },
+    { kind: 'refuse_reverify', refusal }];
+}
+
+function reverify(state: RoundSnapshot | null, over: Parameters<typeof reverifyEvent>[1] = {},
+  ctx: Partial<RoundGuardContext> = {}) {
+  return transitionRound(state, reverifyEvent(state, over), ctxOf(state, ctx));
+}
+
+function atLimitOf(round: RoundSnapshot): RoundSnapshot {
+  return { ...round, chain: { ...(round.chain ?? rootRoundChain()), ordinal: ROUND_CHAIN_MAX } };
+}
+
+describe('step 5.9: VR-14 round_reverified, steps 3–5 in the §13.2 order (0 commit)', () => {
+  const chained: RoundSnapshot = { ...FINAL_FAIL, chain: rootRoundChain() };
+  const r2 = finalizedAs(successorOf(chained), 'FAIL', ['e-4']);
+
+  it('the predecessor must be the chain head, read at the pinned revision; one its lookup does not list is unavailable', () => {
+    expect(reverify(chained, { facts: { chain: { kind: 'head', head: r2, chain: [chained, r2] } } }))
+      .toMatchObject({ ok: false, reason: 'stale', code: 'revision_conflict', detail: expect.stringMatching(/is not the chain head; round round-2 is/) });
+    expect(reverify(chained, {}, { expectedRevision: chained.revision - 1 }))
+      .toMatchObject({ ok: false, reason: 'stale', code: 'revision_conflict' });
+    expect(reverify(chained, { facts: { chain: { kind: 'none' } } })).toMatchObject({ ok: false, code: 'unavailable' });
+  });
+
+  it('the subject Run: an unresolved end is busy (hard limit 1), any other abnormal end forbidden (VD-3)', () => {
+    const quarantined = { ...COMPLETED_RUN, reconciliation: { status: 'quarantined' } } as unknown as RunSnapshot;
+    expect(reverify(chained, { facts: { subjectRun: quarantined } }))
+      .toMatchObject({ ok: false, reason: 'guard_failed', code: 'busy', detail: expect.stringMatching(/^reconcile the subject Run first: /) });
+    expect(reverify(chained, { facts: { subjectRun: { ...COMPLETED_RUN, outcome: 'crashed' } } }))
+      .toMatchObject({ ok: false, code: 'forbidden', detail: 'the subject Run ended crashed, not completed' });
+  });
+
+  it('chain invalid → incomplete, head open → finalize_first, at ROUND_CHAIN_MAX → round_chain_limit, clean PASS → invalid', () => {
+    expect(reverify(chained, { facts: { chain: { kind: 'invalid', reason: 'two roots' } } }))
+      .toMatchObject({ ok: false, reason: 'guard_failed', code: 'incomplete' });
+    expect(reverify(OPEN_SETTLED)).toMatchObject({ ok: false, code: 'busy', detail: expect.stringMatching(/^finalize_first: /) });
+    expect(reverify(atLimitOf(r2))).toMatchObject({ ok: false, reason: 'guard_failed', code: 'dependency_blocked',
+      detail: expect.stringMatching(/^round_chain_limit: /) });
+    expect(reverify(FINAL_PASS)).toMatchObject({ ok: false, reason: 'illegal', code: 'invalid' });
+  });
+
+  it('VD-9 disposition, VR-01 relation, a TaskRequeue cover, then the permission answer, in that order', () => {
+    expect(reverify(chained, { facts: { activity: { goalDesiredState: 'active', subjectDisposition: 'superseded' },
+      subjectRunRequeued: true } })).toMatchObject({ ok: false, code: 'invalid', detail: expect.stringMatching(/is superseded in the Goal/) });
+    expect(reverify(chained, { facts: { relation: { kind: 'gate', gateSubject: 'goal', gateAdopted: true, producer: 'other_workspace' } } }))
+      .toMatchObject({ ok: false, code: 'forbidden', detail: 'the gate producer Run belongs to another workspace' });
+    const paused = { ok: false as const, reason: 'guard_failed' as const, code: 'busy' as const,
+      detail: 'the Goal is paused; resume the Goal first' };
+    expect(reverify(chained, { facts: { subjectRunRequeued: true, permission: paused } }))
+      .toMatchObject({ ok: false, reason: 'stale', code: 'revision_conflict' });
+    // Steps 4–5 are `reworkPermission`'s answer (Goal, fence, note), after every step-3 row.
+    const fenced = { ok: false as const, reason: 'guard_failed' as const, code: 'forbidden' as const,
+      detail: 'a human stopped this work; only an operator may rework it' };
+    expect(reverify(chained, { facts: { permission: fenced } })).toEqual(fenced);
+    expect(reverify(chained, { facts: { permission: paused } })).toEqual(paused);
+    expect(reverify(atLimitOf(chained), { facts: { permission: fenced } })).toMatchObject({ code: 'dependency_blocked' });
+  });
+});
+
+describe('step 5.9: VR-14 policy refusals (§13.7) and the successor', () => {
+  const chained: RoundSnapshot = { ...FINAL_FAIL, chain: rootRoundChain() };
+  const interruptedHead: RoundSnapshot = finalizedAs({ ...OPEN_PENDING, checks: [finishedCheck(LINT, 'PASS'),
+    interruptedCheck(UNIT, 'host_restart')], chain: { ...rootRoundChain(), autoCount: 3 } }, 'INCONCLUSIVE', ['e-6'], [interruptedGap]);
+
+  it('step 7: an automatic successor past the cap is refused before the capture; a human and a Host interruption are not', () => {
+    const capped: RoundSnapshot = { ...chained, chain: { ...chained.chain!, autoCount: 3 } };
+    const refusal: ReverifyRefusalV1 = { code: 'auto_rework_cap_reached', failureClass: 'check_failed', basisDigest: null, source: null,
+      configurationRevision: null, reason: 'auto rework cap reached: automatic reverify 4 of round round-1 exceeds the cap 3' };
+    expect(reverify(capped, { successor: null })).toEqual({ ok: true, next: capped, effects: refusedEffects(capped, refusal) });
+    expect(reverifyCapRefusal(capped, 'agent', 3)).toEqual(refusal);
+    expect(reverifyCapRefusal(capped, 'system', 4)).toBeNull();
+    expect(reverifyCapRefusal(capped, 'human', 0)).toBeNull();
+    expect(reverifyCapRefusal(interruptedHead, 'system', 0)).toBeNull();
+    // Without a cap refusal the successor needs its capture.
+    expect(reverify(chained, { successor: null })).toMatchObject({ ok: false, reason: 'illegal', code: 'invalid' });
+  });
+
+  it('step 10: verification_uncovered for every class and exemption, storing the configuration revision (LA-4)', () => {
+    const uncoveredPlan = verificationPlan([{ checkId: 'lint', coverage: [cov('r1')] }],
+      [{ obligationId: 'ob-1', requirementId: 'r9', kind: 'dynamic' }]);
+    const build = { ...BUILD, verificationPlan: uncoveredPlan };
+    for (const [state, actorClass] of [[chained, 'human'], [interruptedHead, 'system']] as const) {
+      const result = reverify(state, { facts: { actorClass }, successor: { build } });
+      expect(result).toMatchObject({ ok: true, next: state, effects: [{}, {}, {}, { kind: 'refuse_reverify', refusal: {
+        code: 'verification_uncovered', basisDigest: sha('1'), source: { workspaceRevision: 3, sourceDigest: sha('c') },
+        configurationRevision: 'cfg-2' } }] });
+    }
+  });
+
+  it('step 10: source_unchanged only on request, with exemption none and the predecessor digest', () => {
+    const sameSource = { ...BUILD, identity: IDENTITY };
+    expect(reverify(chained, { onlyIfSourceChanged: true, successor: { build: sameSource } })).toMatchObject({ ok: true,
+      effects: [{}, {}, {}, { kind: 'refuse_reverify', refusal: { code: 'source_unchanged', configurationRevision: null } }] });
+    // Without the flag, or with a changed source, or after a Host interruption: a successor.
+    expect(reverify(chained, { successor: { build: sameSource } })).toMatchObject({ ok: true, next: { ref: { roundId: 'round-2' } } });
+    expect(reverify(chained, { onlyIfSourceChanged: true })).toMatchObject({ ok: true, next: { ref: { roundId: 'round-2' } } });
+    const interruptedSame: RoundSnapshot = { ...interruptedHead, identity: IDENTITY };
+    expect(reverify(interruptedSame, { onlyIfSourceChanged: true, successor: { build: sameSource } }))
+      .toMatchObject({ ok: true, next: { ref: { roundId: 'round-2' } } });
+  });
+
+  it('step 11: a key equal to any earlier key of the chain is no_new_basis (naming its round); an exemption skips it', () => {
+    const r2 = finalizedAs(successorOf(chained), 'FAIL', ['e-4']);
+    const r3 = finalizedAs(buildSuccessorRound({ predecessor: r2, roundId: 'round-3', build: BUILD, reverify: { requestedBy: operator,
+      actorClass: 'human', requestedAt: AT, basis: basis(sha('2')), newInputRefs: [], reason: null } }), 'FAIL', ['e-5']);
+    // S1 → S2 → S1: the key that opened round 2 again.
+    expect(reverify(r3, { successor: { roundId: 'round-4', basis: basis(sha('1')) } })).toMatchObject({ ok: true, next: r3,
+      effects: [{}, {}, { claim: { expectedOwner: roundSlotOwner(r3.ref), nextOwner: roundSlotOwner(r3.ref) } },
+        { kind: 'refuse_reverify', refusal: { code: 'no_new_basis', configurationRevision: 'cfg-2', basisDigest: sha('1'),
+          reason: expect.stringMatching(/opened round 2 of this chain/) } }] });
+    // A new key passes (round 4, linked to round 3); a human resets the count.
+    expect(reverify(r3, { facts: { actorClass: 'human' }, successor: { roundId: 'round-4', basis: basis(sha('3')) } }))
+      .toMatchObject({ ok: true, next: { ref: { roundId: 'round-4' }, chain: { ordinal: 4, autoCount: 0,
+        basisDigests: [sha('1'), sha('2'), sha('3')] } } });
+    // `host_interruption`: an earlier key again passes and keeps the count.
+    const repeated: RoundSnapshot = { ...interruptedHead, chain: { ...interruptedHead.chain!, ordinal: 2,
+      predecessorRoundRef: roundRef('round-0'), predecessorRevision: 2, basisDigests: [sha('1')],
+      reverify: chained.chain!.reverify } };
+    expect(reverify(repeated, { successor: { basis: basis(sha('1')) } }))
+      .toMatchObject({ ok: true, next: { chain: { autoCount: 3, basisDigests: [sha('1'), sha('1')] } } });
+  });
+
+  it('VR-14/15: the successor @1 links the chained predecessor, moves the slot head → successor and never writes it', () => {
+    const before = JSON.stringify(chained);
+    expect(reverify(chained)).toEqual({ ok: true, next: successorOf(chained), effects: reverifiedEffects(chained) });
+    expect(reverifiedEffects(chained)[3]).toMatchObject({ claim: { expectedOwner: roundSlotOwner(chained.ref) } });
+    expect(JSON.stringify(chained)).toBe(before);
+    // A key for another subject is a caller bug.
+    expect(reverify(chained, { successor: { basis: { ...basis(sha('1')), subjectRunId: 'run-9' } } }))
+      .toMatchObject({ ok: false, reason: 'illegal', code: 'invalid' });
+    // The compiled plan names a check the configuration does not register (0 commit).
+    expect(reverify(chained, { successor: { build: { ...BUILD, configuration: { ...CONFIG2, checks: [def('lint')] } } } }))
+      .toMatchObject({ ok: false, reason: 'guard_failed', code: 'incomplete' });
+    // The exported steps on their own.
+    expect(reverifyPolicyRefusal(FINAL_PASS, SUCCESSOR, true)).toBeNull();
+    expect(reverifyAdmissionProblem(chained, reverifyFacts(chained), ctxOf(chained))).toBeNull();
   });
 });

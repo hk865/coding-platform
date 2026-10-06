@@ -70,7 +70,7 @@ import {
   type TaskPhaseFacts, type TaskReworkFacts, type TaskState,
 } from '../state/task-machine.js';
 import type { Rejected as MachineRefusal } from '../state/transition.js';
-import { roundChainHead, transitionRound, type RoundChainHeadV1 } from '../state/verification-machine.js';
+import { isFinalizedNonPass, roundChainHead, transitionRound, type RoundChainHeadV1 } from '../state/verification-machine.js';
 import { goalFanOutRequestId } from '../state/goal-machine.js';
 import { controlIntentRefFor } from './control-service.js';
 import {
@@ -378,6 +378,55 @@ async function readRequeueWindow(
   return { ok: false, rejection: reject('revision_conflict', 'the requeue read window changed while it was being read') };
 }
 
+/**
+ * ND-9 (§13.1, §13.7 point 1): each requested new input as the owner reads it,
+ * judged by `newBasisInputProblem`: an Artifact through `openArtifact`, a
+ * session message through the mailbox owner, under its reader rules (one of
+ * another project or workspace is `forbidden` before any read; without the
+ * mailbox owner it is `unsupported`). Shared by the requeue and the reverify
+ * owner (`evidence-service.ts` `reverifyRound`).
+ */
+export async function newBasisInputsProblem(
+  reads: { materials: Pick<MaterialPort, 'openArtifact'>; messages: Pick<SessionMailboxPort, 'readMessage'> | undefined },
+  ctx: CoreCallContext,
+  scope: { projectId: string; workspaceId: string },
+  inputs: readonly NewBasisInputRefV1[],
+): Promise<Rejection | null> {
+  for (const input of inputs) {
+    let observed: NewBasisInputObservationV1;
+    switch (input.kind) {
+      case 'artifact': {
+        const opened = await reads.materials.openArtifact(ctx, { ref: input.ref, usage: 'historical_explanation' });
+        if (opened.status === 'ready') observed = { kind: 'artifact' };
+        else if (opened.status === 'not_found') observed = { kind: 'not_found' };
+        else if (opened.status === 'rejected' && opened.code !== 'not_found') return reject(opened.code, opened.reason);
+        else observed = { kind: 'not_found' };
+        break;
+      }
+      case 'session_message': {
+        // A message of another project or workspace is never a new input here (refused before any read).
+        if (input.ref.projectId !== scope.projectId || input.ref.workspaceId !== scope.workspaceId) {
+          return reject('forbidden', 'a new input message belongs to another project or workspace');
+        }
+        if (reads.messages === undefined) return reject('unsupported', 'a session-message new input needs the mailbox owner');
+        const read = await reads.messages.readMessage(ctx, input.ref);
+        if (read.status === 'ready') observed = { kind: 'session_message', status: read.value.status };
+        else if (read.status === 'not_found') observed = { kind: 'not_found' };
+        else if (read.status === 'rejected') return reject(read.code, read.reason, read.current);
+        else return reject('incomplete', 'the session message is not readable at the required watermark');
+        break;
+      }
+      default: {
+        const unknownInput: never = input;
+        return reject('invalid', `unknown new input kind ${String((unknownInput as { kind?: unknown }).kind)}`);
+      }
+    }
+    const problem = newBasisInputProblem(input, observed);
+    if (problem !== null) return reject('invalid', problem);
+  }
+  return null;
+}
+
 /** The §4.4 refusal with the version pins §13.3 names: the selected Run, or the TaskRequeue@1 already covering it. */
 function stateRefusal(refused: MachineRefusal, window: RequeueWindow): Rejection {
   if (refused.ok) throw new Error('stateRefusal needs a refusal');
@@ -442,38 +491,7 @@ export function createTaskRequeueService(deps: TaskRequeueDependencies): Require
 
   /** ND-9: what the owner read for each requested new input; `newBasisInputProblem` judges. */
   async function newInputProblem(owned: OwnedCall, inputs: readonly NewBasisInputRefV1[]): Promise<Rejection | null> {
-    for (const input of inputs) {
-      let observed: NewBasisInputObservationV1;
-      switch (input.kind) {
-        case 'artifact': {
-          const opened = await deps.materials.openArtifact(owned.ctx, { ref: input.ref, usage: 'historical_explanation' });
-          if (opened.status === 'ready') observed = { kind: 'artifact' };
-          else if (opened.status === 'not_found') observed = { kind: 'not_found' };
-          else if (opened.status === 'rejected' && opened.code !== 'not_found') return reject(opened.code, opened.reason);
-          else observed = { kind: 'not_found' };
-          break;
-        }
-        case 'session_message': {
-          // A message of another project or workspace is never a new input here (refused before any read).
-          if (input.ref.projectId !== owned.scope.projectId || input.ref.workspaceId !== owned.scope.workspaceId) {
-            return reject('forbidden', 'a new input message belongs to another project or workspace');
-          }
-          const read = await deps.messages.readMessage(owned.ctx, input.ref);
-          if (read.status === 'ready') observed = { kind: 'session_message', status: read.value.status };
-          else if (read.status === 'not_found') observed = { kind: 'not_found' };
-          else if (read.status === 'rejected') return reject(read.code, read.reason, read.current);
-          else return reject('incomplete', 'the session message is not readable at the required watermark');
-          break;
-        }
-        default: {
-          const unknownInput: never = input;
-          return reject('invalid', `unknown new input kind ${String((unknownInput as { kind?: unknown }).kind)}`);
-        }
-      }
-      const problem = newBasisInputProblem(input, observed);
-      if (problem !== null) return reject('invalid', problem);
-    }
-    return null;
+    return newBasisInputsProblem({ materials: deps.materials, messages: deps.messages }, owned.ctx, owned.scope, inputs);
   }
 
   /** TASK-16 guards Workspace@rev: the key's source stamp names this revision's root. */
@@ -669,6 +687,14 @@ export function createTaskRequeueService(deps: TaskRequeueDependencies): Require
         else if (effect.kind === 'claim_round_slot') roundClaims.push({ ...effect.claim });
         else throw new Error(`task_requeued has no ${effect.kind} effect on the chain head`);
       }
+      // §13.2 point 5 (§9 VR-14): a reverify refusal of this head holds its slot with the same owner, so the
+      // requeue guards the head's reverify refusal record as the window read it (absent: null) and a concurrent
+      // refusal and requeue commit at most once; a refusal committed before the read does not stop the requeue.
+      if (isFinalizedNonPass(head)) {
+        roundGuards.push({ refKey: taskReworkRefusalRefKey({ aggregateType: 'TaskReworkRefusal', projectId: task.projectId,
+          goalId: task.goalId, taskId: task.taskId, operation: 'reverify', subjectId: head.ref.roundId }),
+        expectedRevision: window.facts.reverifyRefusalsByRoundId.get(head.ref.roundId)?.revision ?? null });
+      }
     }
     const refusalBase = { current: currentRefusal, ref: refusalRef, task, afterRunRef: afterRun.ref,
       subjectRoundRef: head === null ? null : head.ref, failureClass: derivation.failureClass,
@@ -748,7 +774,7 @@ export function createTaskRequeueService(deps: TaskRequeueDependencies): Require
     afterRun: RunSnapshot; admissionGuards: readonly RecordGuard[];
     /** The afterRun's pointer intent, read after the window (TASK-28 re-judges the fence with it). */
     pointerIntent: StopIntentV1 | null;
-    /** VR-09: the chain head as read and its same-owner successor slot claim. */
+    /** VR-09: the chain head as read and its same-owner successor slot claim; the head's reverify refusal as read. */
     roundGuards: readonly RecordGuard[];
     roundClaims: readonly UniqueClaimChange[];
     /** The Goal's Workspace as read (TASK-16 guards Workspace@rev). */
@@ -785,7 +811,8 @@ export function createTaskRequeueService(deps: TaskRequeueDependencies): Require
    * same read set): the Goal@rev, the active Plan@1, the directed task facts
    * (every Run, Lease, Reduction) and the rework records read (TaskRequeue@1,
    * refusal@k, and the absent keys at null), VR-09's chain-head guard and
-   * same-owner slot claim, the afterRun's claim Session@rev, the
+   * same-owner slot claim, the head's reverify refusal as read (§13.2
+   * point 5), the afterRun's claim Session@rev, the
    * Workspace@rev, the Agent admission guards, plus the written record's own
    * CAS. A losing concurrent requeue or refusal is the store's
    * `revision_conflict`, whose `current` names the record that won.

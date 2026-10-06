@@ -41,7 +41,7 @@ import { derivePlanProposalStatus, derivePlanRevisionStatus, type FutureChangeTa
 import { projectTaskPhase } from '../state/task-machine.js';
 import { countEndedGoalRuns } from '../state/task-failure.js';
 import {
-  roundChainHead, roundTaskSignal, type RoundChainHeadV1, type RoundTaskSignalV1,
+  isFinalizedNonPass, roundChainHead, roundTaskSignal, type RoundChainHeadV1, type RoundTaskSignalV1,
 } from '../state/verification-machine.js';
 import {
   VERIFICATION_ROUND_CHAIN_LOOKUP_LIMIT, VERIFICATION_ROUND_ORIGINAL_LOOKUP, decodeVerificationRoundSnapshot,
@@ -798,6 +798,15 @@ export type CanonicalTaskFacts = {
   /** The latest requeue refusal (TaskReworkRefusal, operation `requeue`) per ended Run id, read in THIS window. */
   requeueRefusalsByRunId: ReadonlyMap<string, TaskReworkRefusalSnapshotV1>;
   /**
+   * §4.1 / §9 VR-14 (A.2 step 5.9): the latest reverify refusal (operation
+   * `reverify`) per round id, for each chain head of `chainsByTaskId` that is
+   * finalized non-PASS, read in THIS window. Not in `reworkGuards`: only the
+   * requeue owner guards its head's record at this revision (absent: null),
+   * so a concurrent reverify refusal and requeue commit at most once
+   * (§13.2 point 5); no claim or completion depends on it.
+   */
+  reverifyRefusalsByRoundId: ReadonlyMap<string, TaskReworkRefusalSnapshotV1>;
+  /**
    * The exact versions of those rework records (TaskRequeue@1, refusal@k) and
    * the absence (`null`) of every key read but missing. Kept apart from
    * `guards`: only the writes that depend on them (claim, completion, requeue)
@@ -1059,6 +1068,42 @@ async function readReworkRecords(records: GoalRecordTransactionPort, runs: reado
   return result;
 }
 
+/**
+ * The reverify refusal (`TaskReworkRefusal`, operation `reverify`,
+ * `subjectId` = the round id) of each given chain head (§4.1 失败事实读模型,
+ * §9 VR-14), in one `readMany`, keyed by round id. A backend without the
+ * claim schemas cannot hold one, so `unsupported` is a confirmed absence with
+ * no watermark. A damaged or foreign record is never guessed.
+ */
+async function readReverifyRefusals(records: GoalRecordTransactionPort, heads: readonly RoundSnapshot[]): Promise<{
+  status: 'ready'; refusals: ReadonlyMap<string, TaskReworkRefusalSnapshotV1>; readThrough: CommitCursor | null | undefined;
+} | Rejected> {
+  const refusals = new Map<string, TaskReworkRefusalSnapshotV1>();
+  if (heads.length === 0) return { status: 'ready', refusals, readThrough: undefined };
+  const keyed = heads.map((head) => {
+    const ref: TaskReworkRefusalRef = { aggregateType: 'TaskReworkRefusal', projectId: head.subject.projectId,
+      goalId: head.subject.goalId, taskId: head.subject.taskId, operation: 'reverify', subjectId: head.ref.roundId };
+    return { head, key: taskReworkRefusalRefKey(ref) };
+  });
+  const read = await records.readMany(uniqueKeys(keyed.map((entry) => entry.key)));
+  if (read.status !== 'ready') {
+    if (read.code === 'unsupported') return { status: 'ready', refusals, readThrough: undefined };
+    return unavailable(`the reverify refusals are not readable: ${read.code}: ${read.reason}`);
+  }
+  const present = new Map(read.value.records.map((record) => [record.refKey, record]));
+  for (const { head, key } of keyed) {
+    const record = present.get(key);
+    if (record === undefined) continue;
+    const decoded = decodeTaskReworkRefusalSnapshot(record);
+    if (decoded.status !== 'decoded') return unavailable(`TaskReworkRefusal ${key} is damaged: ${decoded.reason}`);
+    if (decoded.value.subjectRoundRef?.roundId !== head.ref.roundId) {
+      return unavailable(`TaskReworkRefusal ${key} does not refuse round ${head.ref.roundId}`);
+    }
+    refusals.set(head.ref.roundId, decoded.value);
+  }
+  return { status: 'ready', refusals, readThrough: read.value.readThrough };
+}
+
 /** Bounded to one Goal's accepted Plan; candidate indexes locate Run records,
  * then this reader rechecks their full refs, Plan pins and latest revisions.
  * The candidate set and the canonical read must share one ledger watermark or
@@ -1284,13 +1329,19 @@ export async function readCanonicalTaskFacts(
     // A round committed after the canonical read moves the watermark: the
     // whole window is read again rather than mixing two ledger positions.
     if (windowMoved) continue;
+    // The reverify refusal of every finalized non-PASS chain head, in the same window.
+    const reverify = await readReverifyRefusals(records, [...chainsByTaskId.values()].flatMap((chain) =>
+      chain.kind === 'head' && isFinalizedNonPass(chain.head) ? [chain.head] : []));
+    if (reverify.status !== 'ready') return reverify;
+    if (reverify.readThrough !== undefined && !sameCursor(read.value.readThrough, reverify.readThrough)) continue;
     const watermark = read.value.readThrough;
     if (watermark === null) return incomplete('the ledger has no readable watermark for task state');
     const runsByTaskId = new Map<string, readonly RunSnapshot[]>();
     for (const [candidateTaskId, runs] of runByTask) runsByTaskId.set(candidateTaskId, runs);
     return { status: 'ready', value: { goalRef, planRef: plan.ref, byTaskId, runsByTaskId,
       reductionsByTaskId: reductionByTask, leasesByTaskId: leaseByTask, roundsByTaskId, chainsByTaskId,
-      requeuesByTaskId, requeueRefusalsByRunId, reworkGuards: rework.guards, readThrough: watermark, guards,
+      requeuesByTaskId, requeueRefusalsByRunId, reverifyRefusalsByRoundId: reverify.refusals,
+      reworkGuards: rework.guards, readThrough: watermark, guards,
       ...(directed ? { taskHasRun } : { goalEndedRuns: countEndedGoalRuns(goalRuns) }) } };
   }
   return { status: 'rejected', code: 'revision_conflict',

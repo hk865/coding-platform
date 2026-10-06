@@ -46,6 +46,7 @@ import {
 import type { ControlIntentSnapshotV1 } from '../../../contracts/control-intent.js';
 import type { GoalDesiredState } from '../../../contracts/ledger.js';
 import type { TaskAutomationVerdictV1 } from '../../../contracts/task-failure.js';
+import type { TrustedCheckConfiguration } from '../../../contracts/verification.js';
 import {
   automationVerdict, buildTaskFailureFacts, type AutomationVerdictResultV1, type WorkFailureInputV1,
 } from '../state/task-failure.js';
@@ -179,6 +180,13 @@ export type PlanServiceDependencies = { records: GoalRecordTransactionPort & Rec
    * `DEFAULT_TASK_AUTOMATION_POLICY` (Host settings wire it in step 5.6).
    */
   automationPolicy?(): TaskAutomationPolicyV1;
+  /**
+   * LA-4 (A.2 step 5.9): the current trusted check configuration of a
+   * workspace (the evidence owner's `configurationFor`); a reverify refusal
+   * that stored a configuration revision is stale once it differs. Absent (or
+   * no configuration) reads as an unknown revision, which never makes one stale.
+   */
+  configurationFor?(scope: { projectId: string; workspaceId: string }): Pick<TrustedCheckConfiguration, 'configurationRevision'> | undefined;
   now(): string; eventId(): string };
 
 const PLAN_PROPOSE_IDENTITY_PREFIX = 'plan-propose:';
@@ -669,6 +677,8 @@ type TaskRowRework = {
   policy: TaskAutomationPolicyV1;
   /** The pointer ControlIntent per selected Run id, read after the fact window. */
   pointers: ReadonlyMap<string, ControlIntentSnapshotV1>;
+  /** LA-4: the Goal workspace's current check configuration revision (`configurationFor`); null when unknown. */
+  configurationRevision: string | null;
 };
 
 /**
@@ -684,8 +694,11 @@ const NO_VERDICT: TaskAutomationVerdictV1 = Object.freeze({ kind: 'none' });
  * from the same canonical read. `automation.verdict` is the TD-9 AV judgement
  * (`automationVerdict`) over the same facts and the live automation policy
  * (A.2 step 5.8; `none` was injected before, lead decision LD-1), except the
- * successor-round rows AV-7a..AV-7d, which read `none` until step 5.9. A gate's
- * facts come from its own chain head (P20, GV) in step 5.9.
+ * successor-round rows AV-7a..AV-7d, which read `none` until step 5.9 part 2.
+ * The latest reverify refusal of the chain head (VR-14, A.2 step 5.9) is read
+ * in the same window and judged stale against the Goal's ended Runs and the
+ * current check configuration revision (LA-4). A gate's facts come from its
+ * own chain head (P20, GV) in step 5.9 part 2.
  */
 function taskFailureRead(definition: RuntimeTask, state: CanonicalTaskState, facts: CanonicalTaskFacts,
   rework: TaskRowRework, goalId: string): { failure: TaskRow['failure']; rework: TaskRow['rework'] } {
@@ -693,22 +706,22 @@ function taskFailureRead(definition: RuntimeTask, state: CanonicalTaskState, fac
   const runs = facts.runsByTaskId.get(definition.taskId) ?? [];
   const execution = state.execution;
   const selectedRun = execution === null ? null : runs.find((run) => sameRef(run.ref, execution)) ?? null;
+  const chain = facts.chainsByTaskId.get(definition.taskId) ?? { kind: 'none' };
   const input: WorkFailureInputV1 = {
     subjectKind: 'work',
     task: { projectId: facts.goalRef.projectId, goalId, taskId: definition.taskId },
     disposition: definition.disposition,
     satisfied: state.reductionRevision !== null,
     goalDesiredState: rework.goalDesiredState,
-    // A reverify refusal and the configuration it depends on exist from step 5.9 (VR-14, LA-4).
-    reverifyRefusal: null,
+    reverifyRefusal: chain.kind === 'head' ? facts.reverifyRefusalsByRoundId.get(chain.head.ref.roundId) ?? null : null,
     goalEndedRuns: facts.goalEndedRuns ?? 0,
-    configurationRevision: null,
+    configurationRevision: rework.configurationRevision,
     // The Kernel `run.failed` text is AgentRuntime's; the read model reads the persisted payloads only.
     kernelRunFailedError: null,
     selectedRun,
     originUnresolvable: selectedRun === null && state.reductionRevision === null && state.effectivePhase === 'blocked',
     pointerIntent: selectedRun === null ? null : rework.pointers.get(selectedRun.ref.runId) ?? null,
-    chain: facts.chainsByTaskId.get(definition.taskId) ?? { kind: 'none' },
+    chain,
     runs,
     requeues: facts.requeuesByTaskId.get(definition.taskId) ?? [],
     requeueRefusal: selectedRun === null ? null : facts.requeueRefusalsByRunId.get(selectedRun.ref.runId) ?? null,
@@ -718,9 +731,14 @@ function taskFailureRead(definition: RuntimeTask, state: CanonicalTaskState, fac
   return { failure: built.failure ?? undefined, rework: built.rework ?? undefined };
 }
 
-/** The read-model inputs after the fact window: the pointer intents of the selected Runs. */
+/**
+ * The read-model inputs after the fact window: the pointer intents of the
+ * selected Runs, and the current check configuration revision of the Goal's
+ * workspace (LA-4).
+ */
 async function taskRowReworkOf(records: GoalRecordTransactionPort, facts: CanonicalTaskFacts,
-  goalDesiredState: GoalDesiredState, policy: TaskAutomationPolicyV1): Promise<TaskRowRework | Rejection> {
+  goal: Pick<GoalSnapshot, 'desiredState' | 'workspaceRef'>, policy: TaskAutomationPolicyV1,
+  configurationFor: PlanServiceDependencies['configurationFor']): Promise<TaskRowRework | Rejection> {
   const selected = [...facts.byTaskId.values()].flatMap((state) => {
     const execution = state.execution;
     if (execution === null) return [];
@@ -729,7 +747,9 @@ async function taskRowReworkOf(records: GoalRecordTransactionPort, facts: Canoni
   });
   const pointers = await readPointerIntents(records, selected);
   if (pointers.status !== 'ready') return pointers;
-  return { goalDesiredState, policy, pointers: pointers.intents };
+  const configuration = configurationFor?.({ projectId: goal.workspaceRef.projectId, workspaceId: goal.workspaceRef.workspaceId });
+  return { goalDesiredState: goal.desiredState, policy, pointers: pointers.intents,
+    configurationRevision: configuration?.configurationRevision ?? null };
 }
 
 function taskRow(plan: PlanRevisionSnapshot, goalId: string,
@@ -1473,7 +1493,7 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     if (authority.status !== 'ok') return authority;
     const requested = input.planRef;
     let activePlan: PlanRevisionSnapshot;
-    let goalDesiredState: GoalDesiredState;
+    let goalFacts: Pick<GoalSnapshot, 'desiredState' | 'workspaceRef'>;
     let windowWatermark: CommitCursor | null;
     let verifyActivePlan = false;
     if (requested === undefined) {
@@ -1485,7 +1505,7 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
       if (scopeError !== null) return scopeError;
       if (window.plan === null) return { status: 'not_found' };
       activePlan = window.plan;
-      goalDesiredState = window.goal.desiredState;
+      goalFacts = window.goal;
       windowWatermark = window.readThrough;
       verifyActivePlan = true;
     } else {
@@ -1499,7 +1519,7 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
       const planRead = await readPlan(records, requested);
       if (planRead.status !== 'ready') return asReadResult(planRead);
       activePlan = planRead.plan;
-      goalDesiredState = goalRead.goal.desiredState;
+      goalFacts = goalRead.goal;
       windowWatermark = laterCursor(goalRead.readThrough, planRead.readThrough);
     }
     if (activePlan.goalRef.goalId !== goalRef.goalId) return { status: 'not_found' };
@@ -1532,7 +1552,7 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     }
     const phases = phasesOf(facts.value);
     const index = buildTaskRowIndex(activePlan);
-    const rework = await taskRowReworkOf(records, facts.value, goalDesiredState, automationPolicy());
+    const rework = await taskRowReworkOf(records, facts.value, goalFacts, automationPolicy(), deps.configurationFor);
     if ('status' in rework) return asReadResult(rework);
     // The task graph always contains every task of the accepted Plan; Run /
     // Lease / Reduction only update each task's state.
@@ -1610,7 +1630,7 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     }
     const phases = phasesOf(facts.value);
     const index = buildTaskRowIndex(plan);
-    const rework = await taskRowReworkOf(records, facts.value, window.goal.desiredState, automationPolicy());
+    const rework = await taskRowReworkOf(records, facts.value, window.goal, automationPolicy(), deps.configurationFor);
     if ('status' in rework) return asReadResult(rework);
     const items: ReadyTask[] = [];
     let started = after === null;
@@ -1762,7 +1782,7 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     watermark = laterCursor(watermark, phaseRead.readThrough);
     const phases = phasesOf(facts.value);
     const index = buildTaskRowIndex(plan);
-    const rework = await taskRowReworkOf(records, facts.value, goal.desiredState, automationPolicy());
+    const rework = await taskRowReworkOf(records, facts.value, goal, automationPolicy(), deps.configurationFor);
     if ('status' in rework) return asReadResult(rework);
     const tasks: GoalDisplayTaskFactsV1[] = [];
     for (const task of plan.tasks) {

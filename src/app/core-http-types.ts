@@ -183,7 +183,11 @@ export type CoreRouteSuffix =
   // Host's own instance lease and start-up reconcile report (§12.1 step 7).
   | 'executions/resolve-unknown'
   | 'queries/resolve-unknown'
-  | 'host/reconcile-report';
+  | 'host/reconcile-report'
+  // A.2 step 5.9 (C5, VR-14): the operator's "重新检查" (work) / "重新验收"
+  // (gate): a successor round of a finalized non-PASS chain head, or its
+  // committed policy refusal.
+  | 'verification/reverify';
 
 type SecondArgument<M> = M extends (ctx: CoreCallContext, argument: infer A) => unknown ? A : never;
 type MethodResult<M> = M extends (ctx: CoreCallContext, argument: never) => infer R ? Awaited<R> : never;

@@ -46,9 +46,16 @@
  *   executing check (`host_restart`) under the instance lease. VR-06 (booking
  *   a stored report) needs a body lookup by origin requestId that does not exist
  *   (§9 注 1, §16 GAP-24): it has no row, and reconcile always takes VR-04.
- * - VR-14/VR-15 (`round_reverified`, 5.9) keep their events in the union: the
- *   guards of §9.4 that need only the round are implemented and the legal cell
- *   returns `illegal`/`invalid` (`notYet`).
+ * - A.2 step 5.9 (C5, VD-12, VD-13): VR-14/VR-15 (`round_reverified`): the
+ *   successor of a finalized non-PASS chain head (`buildSuccessorRound`, the
+ *   slot moved from the head to the successor), or one of the four committed
+ *   policy refusals (`refuse_reverify`, written by the owner through
+ *   `taskReworkRefusalEffects`, §4 TASK-28). The owner stops at the exported
+ *   steps (`reverifyAdmissionProblem` before the capture,
+ *   `reverifyCapRefusal` before the capture, then the full transition after
+ *   it); steps 4–5 (Goal, fence, matrix, note) are `reworkPermission`'s
+ *   answer, handed in as a fact (the one actor × class matrix lives in
+ *   `task-failure.ts`).
  * - The successor helpers (`chainEvidenceIds`, `reverifyExemption`,
  *   `reverifyFailureClass`, `buildSuccessorRound`,
  *   `evidenceSupersededByRequeue`) are implemented in full for 5.4 and 5.9.
@@ -69,11 +76,11 @@ import type {
 } from '../../../contracts/evidence.js';
 import { requirementKeyOf } from '../../../contracts/evidence.js';
 import { canonicalJson } from '../../../contracts/fingerprint.js';
-import type { NewBasisInputRefV1 } from '../../../contracts/no-progress.js';
+import type { NewBasisInputRefV1, SourceStampV1 } from '../../../contracts/no-progress.js';
 import type { GoalDesiredState } from '../../../contracts/ledger.js';
 import type { Disposition, PlanRevisionRef } from '../../../contracts/plan.js';
 import type {
-  ReworkActorClass, ReworkFailureClass, TaskRequeueSnapshotV1,
+  ReworkActorClass, ReworkFailureClass, TaskRequeueSnapshotV1, TaskReworkRefusalCode,
 } from '../../../contracts/task-requeue.js';
 import type {
   CheckHostActor, CheckProcessObservation, ReverifyBasisV1, ReverifyExemption, RoundChainV1,
@@ -85,7 +92,8 @@ import type {
   VerificationRoundMaterialIdentity, VerificationRoundSourceProof,
 } from '../../../contracts/verification-context.js';
 import { roundFailureFacts } from './no-progress.js';
-import { accept, notYet, reject, unreachable, type Rejected, type Transition } from './transition.js';
+import { runUnresolvedBlocker } from './run-machine.js';
+import { accept, reject, unreachable, type Rejected, type Transition } from './transition.js';
 
 // -------------------------------------------------------------------------- //
 // Records and vocabulary (§9.1)                                               //
@@ -262,13 +270,87 @@ export type RoundFoldFactsV1 = {
   contextGaps: readonly RoundGapV1[];
 };
 
+/**
+ * VR-14 facts the owner reads before the capture (§9.3 VR-14 steps 2–5,
+ * §13.2 point 3); the state of `round_reverified` is the requested
+ * predecessor round as read.
+ */
+export type RoundReverifyFactsV1 = {
+  /** Step 2: `reworkActorClassOf(principal, actor)`; the request carries no trigger (VD-12). */
+  actorClass: ReworkActorClass;
+  /**
+   * `roundChainHead` of the predecessor's subject chain (work: its subject
+   * Run, `VerificationRoundBySubject`; gate: every producer,
+   * `VerificationRoundByTask`), read before the capture; the commit's slot
+   * claim settles a concurrent successor or requeue.
+   */
+  chain: RoundChainHeadV1;
+  /** The subject Run (gate: the anchored producer Run) as read now. */
+  subjectRun: RunSnapshot;
+  /** VR-01's subject relation of the predecessor, judged against the Goal's current adopted Plan. */
+  relation: RoundSubjectRelationV1;
+  /** VD-9: the subject's disposition in the Goal's current adopted Plan (the Goal itself is step 4). */
+  activity: RoundActivityFactsV1;
+  /** work: a TaskRequeue covers the subject Run (the new Run opens its own chain); false for a gate. */
+  subjectRunRequeued: boolean;
+  /**
+   * Steps 4–5 as `reworkPermission` (`task-failure.ts`, the one actor × class
+   * matrix) answered them for this request: the Goal `active` (`busy`), the
+   * human-stop fence (`forbidden`, hard limit 3; a gate has none), the
+   * Goal fan-out actor (`forbidden`) and a non-human `note` (`invalid`).
+   * Null when admitted.
+   */
+  permission: Rejected | null;
+};
+
+/** What the owner built after the capture for one successor (§9.3 VR-14 step 9, §13.7). */
+export type RoundSuccessorV1 = {
+  roundId: string;
+  /** `prepareRoundOpening` under the current configuration, the Goal's current adopted Plan and a full capture (LA-5). */
+  build: SuccessorRoundBuildV1;
+  /** `reverifyBasis` over the predecessor, this capture and the configuration the successor freezes (§13.7 point 1). */
+  basis: ReverifyBasisV1;
+  requestedBy: ActorRef;
+  requestedAt: string;
+  /** Verified by `newBasisInputProblem` (ND-9); a stored human `note` is one of them. */
+  newInputRefs: readonly NewBasisInputRefV1[];
+  reason: string | null;
+};
+
+/** The policy refusal codes of a reverify (§13.7, §4 TASK-28). */
+export type ReverifyRefusalCode = Extract<TaskReworkRefusalCode,
+  'auto_rework_cap_reached' | 'verification_uncovered' | 'source_unchanged' | 'no_new_basis'>;
+
+/**
+ * One committed policy refusal (§9.3 VR-14 steps 7, 10, 11): the owner writes
+ * `TaskReworkRefusal{operation:'reverify', subjectId: predecessor}@k+1`
+ * through `taskReworkRefusalEffects` (`task-failure.ts`). The cap refuses
+ * before the capture (no source, no key); `configurationRevision` only on
+ * `verification_uncovered` and `no_new_basis` (LA-4).
+ */
+export type ReverifyRefusalV1 = {
+  code: ReverifyRefusalCode;
+  reason: string;
+  /** The predecessor's class (`reverifyFailureClass`). */
+  failureClass: ReverifyFailureClass;
+  basisDigest: string | null;
+  source: SourceStampV1 | null;
+  configurationRevision: string | null;
+};
+
 export type RoundEvent =
   | { kind: 'round_opened'; opening: RoundOpeningV1; facts: RoundOpenFactsV1 }
   | { kind: 'evidence_submitted' }
   /** `evidenceRefs` are minted by the owner, one per admission of `finalizeRoundOutcome`, in that order. */
   | { kind: 'round_finalized'; reviewerEvidenceCount: number; fold: RoundFoldFactsV1; evidenceRefs: readonly EvidenceRef[] }
-  /** VR-14/15 (新增, step 5.9): the request facts are added with the rows. */
-  | { kind: 'round_reverified'; actorClass: ReworkActorClass }
+  /**
+   * VR-14/15 (step 5.9): the state is the requested predecessor. `successor`
+   * is null before the capture, where only the cap (step 7) can refuse.
+   */
+  | {
+    kind: 'round_reverified'; facts: RoundReverifyFactsV1; onlyIfSourceChanged: boolean; autoReworkLimit: number;
+    successor: RoundSuccessorV1 | null;
+  }
   /** VR-09 (新增, step 5.4): the round side of a requeue of the chain head. */
   | { kind: 'task_requeued'; actorClass: ReworkActorClass };
 
@@ -314,7 +396,15 @@ export type VerdictAdmissionV1 = { ref: EvidenceRef; checkId: string; coverage: 
  * - `guard_finalize_read_set`: Goal, the Plans the fold judged against and the
  *   subject Run as read (VR-07);
  * - `guard_begin_read_set`: the Goal and its current adopted Plan as read (VR-02, VD-9);
- * - `claim_round_slot`: the chain slot CAS (VR-01; VR-14 in 5.9);
+ * - `guard_predecessor`: the predecessor as read, never written (VR-14, VR-15);
+ * - `guard_reverify_read_set`: the Goal, its current adopted Plan, the subject
+ *   Run, the refusal record @k (null when absent), work: the absent
+ *   TaskRequeue of the subject Run, and after the capture the Workspace and
+ *   the pinned policy and baseline (VR-14);
+ * - `claim_round_slot`: the chain slot CAS (VR-01, VR-14; the same owner on a
+ *   requeue VR-09 and a reverify refusal);
+ * - `refuse_reverify`: the policy refusal record the owner writes through
+ *   `taskReworkRefusalEffects` with its `TaskReworkRefused` event (VR-14);
  * - `admit_claim_evidence` / `admit_verdict_evidence`: Evidence@1 rows, each
  *   CAS null (VR-08, VR-07);
  * - `append_task_evidence_index`: the admitted ids through `nextTaskEvidenceIndex`;
@@ -326,7 +416,10 @@ export type VerificationEffect =
   | { kind: 'guard_open_read_set' }
   | { kind: 'guard_finalize_read_set' }
   | { kind: 'guard_begin_read_set' }
+  | { kind: 'guard_predecessor'; ref: VerificationRoundRef; revision: number }
+  | { kind: 'guard_reverify_read_set' }
   | { kind: 'claim_round_slot'; claim: RoundSlotClaimV1 }
+  | { kind: 'refuse_reverify'; refusal: ReverifyRefusalV1 }
   | { kind: 'admit_claim_evidence'; coverage: EvidenceCoverageV1[] }
   | { kind: 'admit_verdict_evidence'; admissions: VerdictAdmissionV1[] }
   | { kind: 'append_task_evidence_index' }
@@ -1100,7 +1193,16 @@ export function roundOpenSubjectProblem(
   facts: Pick<RoundOpenFactsV1, 'relation' | 'subjectRun' | 'subjectRunRequeued'>,
   subject: TaskTriple,
 ): Rejected | null {
-  const relation = facts.relation;
+  const problem = roundRelationProblem(facts.relation, subject) ?? roundSubjectRunProblem(facts.subjectRun);
+  if (problem !== null) return problem;
+  if (facts.subjectRunRequeued) {
+    return reject('guard_failed', 'forbidden', 'the subject Run is covered by a TaskRequeue; its rework belongs to the new Run');
+  }
+  return null;
+}
+
+/** `:537-548`: the subject relation (work: the Run's task is the subject; gate: the adopted gate and its producer). */
+function roundRelationProblem(relation: RoundSubjectRelationV1, subject: TaskTriple): Rejected | null {
   switch (relation.kind) {
     case 'gate':
       if (!relation.gateAdopted) {
@@ -1119,7 +1221,11 @@ export function roundOpenSubjectProblem(
       break;
     default: return unreachable(relation, 'subject relation');
   }
-  const run = facts.subjectRun;
+  return null;
+}
+
+/** VD-3: the subject Run formally ended `completed` and its reconciliation is absent or `done`. */
+function roundSubjectRunProblem(run: Pick<RunSnapshot, 'status' | 'outcome' | 'reconciliation'>): Rejected | null {
   if (run.status !== 'ended') return reject('guard_failed', 'forbidden', 'the subject Run has not formally ended');
   if (run.outcome !== 'completed') {
     return reject('guard_failed', 'forbidden', `the subject Run ended ${run.outcome ?? 'without an outcome'}, not completed`);
@@ -1127,9 +1233,6 @@ export function roundOpenSubjectProblem(
   const reconciliation = run.reconciliation;
   if (reconciliation !== undefined && reconciliation.status !== 'done') {
     return reject('guard_failed', 'forbidden', `the subject Run reconciliation is ${reconciliation.status}`);
-  }
-  if (facts.subjectRunRequeued) {
-    return reject('guard_failed', 'forbidden', 'the subject Run is covered by a TaskRequeue; its rework belongs to the new Run');
   }
   return null;
 }
@@ -1277,7 +1380,7 @@ export function transitionRound(state: RoundSnapshot | null, event: RoundEvent, 
     case 'round_opened': return roundOnOpened(state, event, ctx);
     case 'evidence_submitted': return roundOnEvidenceSubmitted(state, ctx);
     case 'round_finalized': return roundOnFinalized(state, event, ctx);
-    case 'round_reverified': return notYet('VR-14/VR-15 (round_reverified)');
+    case 'round_reverified': return roundOnReverified(state, event, ctx);
     case 'task_requeued': return roundOnTaskRequeued(state);
     default: return unreachable(event, 'round event');
   }
@@ -1305,6 +1408,165 @@ function roundOnTaskRequeued(state: RoundSnapshot | null): RoundTransition {
     { kind: 'guard_round_unchanged', revision: state.revision },
     { kind: 'claim_round_slot', claim: { claimKey: roundSlotKey(roundSlotSubjectOf(state)), expectedOwner: owner,
       nextOwner: owner } },
+  ]);
+}
+
+/**
+ * VR-14 step 3 (§13.2 point 3, §9.4), then steps 4–5, in that order; the
+ * owner stops here before the refusal record read, the new inputs and the
+ * capture. Every refusal commits nothing:
+ * - the requested predecessor is not the chain head, or its pin is stale →
+ *   `revision_conflict` (the owner adds the head pin); a predecessor its
+ *   subject's lookup does not list → `unavailable`;
+ * - the subject Run (gate: the anchored producer): an unresolved end
+ *   (`runUnresolvedBlocker`, hard limit 1) → `busy`; not ended `completed`
+ *   with its reconciliation absent or `done` (VD-3) → `forbidden`;
+ * - the chain is invalid → `incomplete` (no automatic exit, GAP-52); its head
+ *   is open → `busy` (`finalize_first:`); the head is at `ROUND_CHAIN_MAX` →
+ *   `dependency_blocked` (`round_chain_limit:`); a clean PASS head → `invalid`;
+ * - the subject is not active in the Goal's current adopted Plan → `invalid`
+ *   (VD-9), then VR-01's subject relation (gate/producer) with VR-01's code;
+ * - work: a TaskRequeue covers the subject Run → `revision_conflict` (the
+ *   owner adds `current=[TaskRequeue@1]`: the new Run opens its own chain);
+ * - steps 4–5: `facts.permission` (`reworkPermission`'s answer).
+ */
+export function reverifyAdmissionProblem(state: RoundSnapshot, facts: RoundReverifyFactsV1, ctx: RoundGuardContext): Rejected | null {
+  const chain = facts.chain;
+  if (chain.kind === 'none') {
+    return reject('guard_failed', 'unavailable', `round ${state.ref.roundId} is not listed in its subject's round chain`);
+  }
+  if (chain.kind === 'head' && !sameRoundRef(chain.head.ref, state.ref)) {
+    return reject('stale', 'revision_conflict',
+      `round ${state.ref.roundId} is not the chain head; round ${chain.head.ref.roundId} is (another request checked it again)`);
+  }
+  if (pinIsStale(state, ctx)) return staleRound();
+  const blocker = runUnresolvedBlocker(facts.subjectRun);
+  if (blocker !== null) return reject('guard_failed', 'busy', `reconcile the subject Run first: ${blocker}`);
+  const runProblem = roundSubjectRunProblem(facts.subjectRun);
+  if (runProblem !== null) return runProblem;
+  if (chain.kind === 'invalid') {
+    return reject('guard_failed', 'incomplete', `the subject ${state.subject.taskId} round chain is invalid: ${chain.reason}`);
+  }
+  const head = chain.head;
+  if (head.status === 'open') {
+    return reject('guard_failed', 'busy', `finalize_first: round ${head.ref.roundId} is open; finalize it before a successor round`);
+  }
+  const ordinal = roundOrdinalOf(head);
+  if (ordinal + 1 > ROUND_CHAIN_MAX) {
+    return reject('guard_failed', 'dependency_blocked',
+      `round_chain_limit: round ${head.ref.roundId} is round ${ordinal} of a chain of at most ${ROUND_CHAIN_MAX}`);
+  }
+  if (!isFinalizedNonPass(head)) {
+    return reject('illegal', 'invalid', `round ${head.ref.roundId} finalized as a clean PASS; it completes the task, it is not checked again`);
+  }
+  const subjectProblem = roundSubjectActivityProblem(facts.activity.subjectDisposition, state.subject)
+    ?? roundRelationProblem(facts.relation, state.subject);
+  if (subjectProblem !== null) return subjectProblem;
+  if (facts.subjectRunRequeued) {
+    return reject('stale', 'revision_conflict', 'a TaskRequeue covers the subject Run; its rework continues in the new Run');
+  }
+  return facts.permission;
+}
+
+/**
+ * VR-14 step 7 (VD-13, §13.7 point 4), before the capture: an automatic
+ * request (`system`, `agent`) whose successor would count past
+ * `autoReworkLimit` is refused `auto_rework_cap_reached`; a human is never
+ * capped, and a Host-interruption exemption keeps the count. Null when the
+ * cap admits it (or the head has no class: step 3 refuses it first).
+ */
+export function reverifyCapRefusal(predecessor: RoundSnapshot, actorClass: ReworkActorClass,
+  autoReworkLimit: number): ReverifyRefusalV1 | null {
+  const failureClass = reverifyFailureClass(predecessor);
+  if (failureClass === null || actorClass === 'human' || reverifyExemption(predecessor) === 'host_interruption') return null;
+  const autoCount = (predecessor.chain?.autoCount ?? 0) + 1;
+  if (autoCount <= autoReworkLimit) return null;
+  return { code: 'auto_rework_cap_reached', failureClass, basisDigest: null, source: null, configurationRevision: null,
+    reason: `auto rework cap reached: automatic reverify ${autoCount} of round ${predecessor.ref.roundId} exceeds the cap ${autoReworkLimit}` };
+}
+
+/**
+ * VR-14 steps 10–11 after the capture and the compile (§13.7 points 2, 5, 6):
+ * `verification_uncovered` for every class and exemption (the successor
+ * could never PASS; it stores the configuration revision, LA-4); then
+ * `source_unchanged` when the request asks `onlyIfSourceChanged`, the
+ * exemption is `none` and the captured digest is the predecessor's; then the
+ * key: with exemption `none`, a key equal to any earlier key of the chain is
+ * `no_new_basis` (the reason names the round that key opened).
+ */
+export function reverifyPolicyRefusal(predecessor: RoundSnapshot, successor: RoundSuccessorV1,
+  onlyIfSourceChanged: boolean): ReverifyRefusalV1 | null {
+  const failureClass = reverifyFailureClass(predecessor);
+  if (failureClass === null) return null;
+  const { build, basis } = successor;
+  const captured = { basisDigest: basis.digest, source: { ...basis.source } };
+  const uncovered = build.verificationPlan.uncovered ?? [];
+  if (uncovered.length > 0) {
+    return { code: 'verification_uncovered', failureClass, ...captured,
+      configurationRevision: build.configuration.configurationRevision,
+      reason: `verification uncovered: no registered check covers required requirement(s) `
+        + `${uncovered.map((entry) => entry.requirementId).join(', ')}; register a check that covers them` };
+  }
+  const exemption = reverifyExemption(predecessor);
+  if (onlyIfSourceChanged && exemption === 'none' && build.identity.sourceDigest === predecessor.identity.sourceDigest) {
+    return { code: 'source_unchanged', failureClass, ...captured, configurationRevision: null,
+      reason: `source unchanged: the workspace is the source round ${predecessor.ref.roundId} checked; change the work first` };
+  }
+  const matched = exemption === 'none' ? (predecessor.chain?.basisDigests ?? []).indexOf(basis.digest) : -1;
+  if (matched >= 0) {
+    return { code: 'no_new_basis', failureClass, ...captured, configurationRevision: build.configuration.configurationRevision,
+      reason: `no new basis: same failure, source and configuration as the reverify that opened round ${matched + 2} `
+        + 'of this chain; supply new input or change the method' };
+  }
+  return null;
+}
+
+/**
+ * VR-14/VR-15 (C5): either the successor @1 of the finalized non-PASS head
+ * (`buildSuccessorRound`: ordinal + 1, the chain linked to the predecessor,
+ * the configured executor), with the slot moved from the head to the
+ * successor (a legacy slot-less head: `null → successor`) and the predecessor
+ * guarded as read, never written; or a committed policy refusal (TASK-28)
+ * with the predecessor and its slot held by the same owner, so a refusal and
+ * a successor (or a requeue, VR-09) commit at most once. The refusal pin, the
+ * new inputs and the capture are the owner's steps between the calls.
+ */
+function roundOnReverified(
+  state: RoundSnapshot | null,
+  event: Extract<RoundEvent, { kind: 'round_reverified' }>,
+  ctx: RoundGuardContext,
+): RoundTransition {
+  if (state === null) return reject('illegal', 'not_found', 'round_reverified needs the predecessor round');
+  const admission = reverifyAdmissionProblem(state, event.facts, ctx);
+  if (admission !== null) return admission;
+  const claimKey = roundSlotKey(roundSlotSubjectOf(state));
+  const owner = state.chain === undefined ? null : roundSlotOwner(state.ref);
+  const refused = (refusal: ReverifyRefusalV1): RoundTransition => accept(state, [
+    { kind: 'guard_predecessor', ref: state.ref, revision: state.revision },
+    { kind: 'guard_reverify_read_set' },
+    { kind: 'claim_round_slot', claim: { claimKey, expectedOwner: owner, nextOwner: owner } },
+    { kind: 'refuse_reverify', refusal },
+  ]);
+  const cap = reverifyCapRefusal(state, event.facts.actorClass, event.autoReworkLimit);
+  if (cap !== null) return refused(cap);
+  const successor = event.successor;
+  if (successor === null) return reject('illegal', 'invalid', 'a successor round needs the capture and the compiled plan');
+  if (successor.basis.subjectRunId !== state.subjectRunRef.runId || successor.basis.subject.taskId !== state.subject.taskId) {
+    return reject('illegal', 'invalid', 'the reverify key was computed for another subject');
+  }
+  const checksProblem = roundOpenChecksProblem(successor.build.verificationPlan, successor.build.configuration);
+  if (checksProblem !== null) return checksProblem;
+  const policy = reverifyPolicyRefusal(state, successor, event.onlyIfSourceChanged);
+  if (policy !== null) return refused(policy);
+  const next = buildSuccessorRound({ predecessor: state, roundId: successor.roundId, build: successor.build,
+    reverify: { requestedBy: successor.requestedBy, actorClass: event.facts.actorClass, requestedAt: successor.requestedAt,
+      basis: successor.basis, newInputRefs: successor.newInputRefs, reason: successor.reason } });
+  return accept(next, [
+    { kind: 'guard_round', expectedRevision: null },
+    { kind: 'guard_predecessor', ref: state.ref, revision: state.revision },
+    { kind: 'guard_reverify_read_set' },
+    { kind: 'claim_round_slot', claim: { claimKey, expectedOwner: owner, nextOwner: roundSlotOwner(next.ref) } },
+    { kind: 'emit_event', eventType: 'VerificationRoundReverified' },
   ]);
 }
 

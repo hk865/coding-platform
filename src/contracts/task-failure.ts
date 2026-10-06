@@ -155,9 +155,14 @@ export type TaskFailureFactsV1 = {
     requestedBy: ControlIntentRequestV1['requestedBy'];
     requester: StopRequester;
   } | null;
-  /** The chain head. */
+  /**
+   * The chain head. `revision` is the head's current revision: with
+   * `roundRef` it is the predecessor pin of `verification/reverify`
+   * (`meta.expected`, §9 VR-14; A.2 step 5.9).
+   */
   round: {
     roundRef: VerificationRoundRef;
+    revision: number;
     status: RoundSnapshot['status'];
     outcome: EvidenceOutcome | null;
     failingChecks: FailingCheckFactV1[];

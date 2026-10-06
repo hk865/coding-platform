@@ -32,6 +32,7 @@ import type { GoalTaskPort } from '../core/work-graph/tasks/contracts.js';
 import type { PlanTaskPort } from '../core/work-graph/tasks/plan-contracts.js';
 import type { WorkspaceCapturePort, WorkspaceToolsPort } from '../core/workspace/ports.js';
 import type { MaterialPort } from '../core/work-graph/materials/contracts.js';
+import type { EvidencePort } from '../core/work-graph/evidence/contracts.js';
 import type { QueryExecutionRecord, QueryJobPort } from '../core/work-graph/queries/contracts.js';
 import type { GraphWrite } from '../core/work-graph/tasks/contracts.js';
 import type { StartupReconcileReportV1 } from './startup-reconcile.js';
@@ -129,6 +130,8 @@ export type CoreRouteBindings = {
   resolveUnknownRun: NonNullable<CoreRoutePlatform['resolveUnknownRun']>;
   resolveUnknownQueryRun: NonNullable<CoreRoutePlatform['resolveUnknownQueryRun']>;
   readReconcileReport: HostReconcileReportPort['readReconcileReport'];
+  // A.2 step 5.9 (VR-14): the successor round owner.
+  reverifyRound: NonNullable<EvidencePort['reverifyRound']>;
 };
 
 /** A.2 step 5.6 (§12.1 step 7, §12.8): this Host's instance lease and its start-up reconcile report. */
@@ -159,6 +162,8 @@ export type CoreRoutePlatform = {
     & Pick<RuntimeExecutionPort, 'readContinuationBrief'>;
   /** A.2 step 5.4: the requeue owner; a narrow platform without it answers `unsupported`. */
   claims: Pick<TaskClaimPort, 'requeueTask'>;
+  /** A.2 step 5.9 (VR-14): the successor-round owner; a narrow platform without it answers `unsupported`. */
+  evidence: Pick<EvidencePort, 'reverifyRound'>;
   messages: Pick<SessionMailboxPort, 'sendMessage' | 'readInbox' | 'readMessage' | 'readMessageBody'>
     & Required<Pick<SessionMailboxPort, 'readOutbox'>>;
   queries: QueryJobPort;
@@ -270,6 +275,8 @@ export const CORE_ROUTE_SPECS: Record<CoreRouteSuffix, CoreRouteSpec> = {
   'executions/resolve-unknown': { kind: 'graph_write', binding: 'resolveUnknownRun', owner: 'platform.resolveUnknownRun' },
   'queries/resolve-unknown': { kind: 'graph_write', binding: 'resolveUnknownQueryRun', owner: 'platform.resolveUnknownQueryRun' },
   'host/reconcile-report': { kind: 'plain', binding: 'readReconcileReport', owner: 'host.readReconcileReport' },
+  // A.2 step 5.9 (spec §9 VR-14 "调用者"; §15.2 5.9 `verification/reverify`).
+  'verification/reverify': { kind: 'graph_write', binding: 'reverifyRound', owner: 'evidence.reverifyRound' },
 };
 
 export type ParsedCoreRequest =
@@ -500,6 +507,9 @@ export function createPlatformCoreRouteBindings(
     readReconcileReport: hostReport === undefined
       ? unsupported('the Host does not publish its reconcile report')
       : hostReport.readReconcileReport.bind(hostReport),
+    reverifyRound: platform.evidence.reverifyRound === undefined
+      ? unsupported('the Host does not publish the successor-round owner (reverifyRound)')
+      : platform.evidence.reverifyRound.bind(platform.evidence),
   };
 }
 
@@ -611,6 +621,7 @@ export async function dispatchCoreRoute(
       case 'executions/resolve-unknown': return bindings.resolveUnknownRun(ctx, graphWrite.request as never);
       case 'queries/resolve-unknown': return bindings.resolveUnknownQueryRun(ctx, graphWrite.request as never);
       case 'host/reconcile-report': return bindings.readReconcileReport(ctx, plain.input as never);
+      case 'verification/reverify': return bindings.reverifyRound(ctx, graphWrite.request as never);
     }
   })();
   // A GraphWrite rejection is a failed command: preserve its exact body but let

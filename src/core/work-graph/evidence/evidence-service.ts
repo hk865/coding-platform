@@ -12,19 +12,23 @@
  * round + Evidence + TaskEvidenceIndex + event + receipt in ONE records.commit.
  *
  * Every round, check and TaskEvidenceIndex write is decided by
- * `state/verification-machine.ts` (spec §9 VR-01..VR-03, VR-05, VR-07, VR-08,
- * VR-10..VR-13) after the unchanged receipt lookup: the service reads,
+ * `state/verification-machine.ts` (spec §9 VR-01..VR-05, VR-07, VR-08,
+ * VR-10..VR-15) after the unchanged receipt lookup: the service reads,
  * captures and mints ids, stops at the machine's exported guard steps where it
  * stopped before each IO, and translates the machine's effects into the commit.
  * A subject has at most one round chain (VD-1, VD-15): `openVerification`
  * reads the subject's rounds before the capture and claims the subject slot in
  * the commit; `queryRoundChainHead` reads the chain head (VD-14).
+ * `reverifyRound` (A.2 step 5.9, VR-14/VR-15, VD-12, VD-13) opens the
+ * successor of a finalized non-PASS head through the same opening path
+ * (`prepareRoundOpening`, LA-5) and moves the slot from the head to it, or
+ * commits one policy refusal (`TaskReworkRefusal`, operation `reverify`).
  *
  * The service never calls completeTask/completeGoal, never releases or advances
  * a Task/Run/Session, and never fabricates a PASS from a missing/blocked check.
  */
-import type { CommitCursor } from '../../../contracts/command-event.js';
-import type { CoreCallContext } from '../../../contracts/core/call-context.js';
+import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js';
+import type { CoreCallContext, CorePrincipal, MaterialReader } from '../../../contracts/core/call-context.js';
 import type { VersionPin } from '../../../contracts/core/identity.js';
 import type { CoreError, CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import type { ArtifactRef } from '../../../contracts/artifact.js';
@@ -32,10 +36,16 @@ import type {
     EffectivityAnchorV1, EvidenceOutcome, EvidenceRef, EvidenceSnapshot, EvidenceV1,
 } from '../../../contracts/evidence.js';
 import { EVIDENCE_SUMMARY_MAX_BYTES } from '../../../contracts/evidence.js';
-import type { GoalRef } from '../../../contracts/ledger.js';
-import { REPORT_CONTENT_TYPE } from '../../../contracts/no-progress.js';
-import type { PlanRevisionRef, PlanRevisionSnapshot } from '../../../contracts/plan.js';
+import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
+import {
+    MAX_NEW_BASIS_INPUT_REFS, REPORT_CONTENT_TYPE, type NewBasisInputRefV1, type SourceStampV1,
+} from '../../../contracts/no-progress.js';
+import type { PlanRevisionRef, PlanRevisionSnapshot, RuntimeTask } from '../../../contracts/plan.js';
 import type { RunRef, RunSnapshot, SourceRefV1, TaskTriple } from '../../../contracts/dispatch.js';
+import {
+    DEFAULT_TASK_AUTOMATION_POLICY, GOAL_FAN_OUT_ACTOR, TASK_REWORK_REASON_MAX_CHARS, reworkActorClassOf,
+    type TaskReworkRefusalRef, type TaskReworkRefusalSnapshotV1,
+} from '../../../contracts/task-requeue.js';
 import type {
     CheckCapabilityV1, CheckExecutionTicket, CheckProcessObservation, RoundCheckSnapshot, RoundSnapshot,
     TrustedCheckConfiguration, VerificationRoundRef,
@@ -51,23 +61,37 @@ import type {
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import { architectureBaselineDigest, readArchitectureBaselineSnapshot } from '../architecture/catalog-record-codecs.js';
 import {
-    readBatch, readGoal, readPinnedCompletionPolicy, readPlan, readRevisionNumber, type Rejected as ReadRejected,
+    readBatch, readGoal, readGoalRunsForCount, readPinnedCompletionPolicy, readPlan, readPointerIntents, readRevisionNumber,
+    type Rejected as ReadRejected,
 } from '../tasks/plan-readers.js';
 import { planRevisionRefKey } from '../tasks/plan-record-codecs.js';
-import { taskRequeueRefKey } from '../tasks/claim-record-codecs.js';
+import {
+    TASK_REWORK_EVENT_SCHEMA_VERSION, TASK_REWORK_REFUSED_EVENT_TYPE, decodeTaskReworkRefusalSnapshot,
+    encodeTaskReworkRefusalSnapshot, encodeTaskReworkRefusedEvent, taskRequeueRefKey, taskReworkRefusalRefKey,
+    taskReworkRefusedEventFromEvent, type TaskReworkRefusedEvent,
+} from '../tasks/claim-record-codecs.js';
 import {
     buildEffectiveTaskBasis, isBasisUnsupported,
 } from '../tasks/plan-task-basis.js';
 import {
     bindTrustedContext, isRecord, isolateWrite, loadReplayEvent, mapStoreFailure, mergeGuards, nonEmpty, sameRef,
 } from '../tasks/execution-entry-service.js';
+import { authorizeDelegatedWrite, identifyDelegatedWriter, type AgentPlanWriter } from '../tasks/plan-write-admission.js';
+import { REWORK_NOTE_CONTENT_TYPE, newBasisInputsProblem } from '../tasks/requeue-service.js';
+import { newBasisInputRefsProblem } from '../persistence/rework-codecs.js';
+import { reverifyBasis } from '../state/no-progress.js';
+import {
+    countEndedGoalRuns, reworkFenceOf, reworkPermission, taskReworkRefusalEffects, type ReworkFence,
+} from '../state/task-failure.js';
 import {
     checkEventAdmission, finalizeRoundOutcome, foldVerdictChecks, frozenBindingProblem, nextTaskEvidenceIndex, outcomeFor,
+    reverifyAdmissionProblem, reverifyCapRefusal, reverifyFailureClass,
     roundActivityProblem, roundChainHead, roundGoalActivityProblem, roundOpenBasisProblem, roundOpenChainProblem,
     roundOpenChecksProblem, roundOpenPointerProblem, roundOpenSubjectProblem, roundReviewerEvidenceProblem,
     roundSubjectActivityProblem, roundWriteAdmission, taskEvidenceIndexRefOf, transitionCheck, transitionRound,
     type CheckEvent, type RoundActivityFactsV1, type CheckVerdictDecisionV1, type RoundChainHeadV1, type RoundFoldFactsV1, type RoundGuardContext,
-    type RoundOpenFactsV1, type TaskEvidenceIndexReadV1, type TaskEvidenceIndexWrite, type VerificationEffect,
+    type RoundOpenFactsV1, type RoundReverifyFactsV1, type RoundSubjectRelationV1, type RoundSuccessorV1, type SuccessorRoundBuildV1,
+    type TaskEvidenceIndexReadV1, type TaskEvidenceIndexWrite, type VerificationEffect,
 } from '../state/verification-machine.js';
 import { unreachable, type Rejected } from '../state/transition.js';
 import { compileVerificationPlan } from './verification-plan.js';
@@ -77,6 +101,7 @@ import {
     VERIFICATION_CHECK_INTERRUPTED_EVENT_TYPE, VERIFICATION_CHECK_RESULT_RECORDED_EVENT_TYPE,
     VERIFICATION_ROUND_BY_TASK_LOOKUP, VERIFICATION_ROUND_FINALIZED_EVENT_TYPE,
     VERIFICATION_ROUND_OPENED_EVENT_TYPE, VERIFICATION_ROUND_ORIGINAL_LOOKUP, VERIFICATION_ROUND_CHAIN_LOOKUP_LIMIT,
+    VERIFICATION_ROUND_REVERIFIED_EVENT_TYPE,
     checkObservationProblem, decodeVerificationRoundSnapshot,
     encodeEvidenceSnapshot, encodeTaskEvidenceIndexSnapshot, encodeVerificationRoundEvent,
     encodeVerificationRoundSnapshot, verificationRoundEventFromEvent, decodeTaskEvidenceIndexSnapshot,
@@ -84,7 +109,7 @@ import {
 } from './evidence-record-codecs.js';
 import type {
     AbandonCheckInput, EvidencePort, EvidenceServiceDependencies, FinalizedChecks, InterruptCheckInput,
-    OriginalVerificationQuery, RoundChainHeadQuery,
+    OriginalVerificationQuery, ReverifyOutcomeV1, ReverifyRoundInput, RoundChainHeadQuery,
 } from './contracts.js';
 import type { GraphWrite } from '../tasks/contracts.js';
 
@@ -113,7 +138,8 @@ function refKeyOf(value: unknown): string | null {
 }
 function fingerprintOf(value: unknown): string { return sha256Hex(canonicalJson(value as JsonValue)); }
 function digestOf(value: unknown): string { return sha256Hex(canonicalJson(value as JsonValue)); }
-function identityKeyOf(prefix: string, actor: HostActor, projectId: string, workspaceId: string, requestId: string): string {
+function identityKeyOf(prefix: string, actor: Pick<ActorRef, 'kind' | 'id'>, projectId: string, workspaceId: string,
+    requestId: string): string {
     return prefix + sha256Hex(canonicalJson({ actor: { kind: actor.kind, id: actor.id }, projectId, workspaceId, requestId } as unknown as JsonValue));
 }
 function roundRefProblem(ref: unknown): string | null {
@@ -274,6 +300,10 @@ async function commitRoundWrite<T>(records: Records, signal: AbortSignal, write:
                 events = [encodeVerificationRoundEvent(write.event)];
                 break;
             case 'claim_round_slot': claims = [{ ...effect.claim }]; break;
+            case 'guard_predecessor':
+            case 'guard_reverify_read_set':
+            case 'refuse_reverify':
+                throw new Error(`${effect.kind} belongs to a reverify write (commitReverify)`);
             default: return unreachable(effect, 'verification effect');
         }
     }
@@ -516,6 +546,125 @@ function chainRefusal(refusal: Rejected, chain: RoundChainHeadV1): CoreRejection
 }
 
 // -------------------------------------------------------------------------- //
+// VR-14 request helpers (C5, VD-12)                                           //
+// -------------------------------------------------------------------------- //
+
+/** A reverify caller: a Host principal (operator or platform automation) or an Agent's `work_run` principal. */
+type ReverifyCaller =
+    | { kind: 'host'; ctx: CoreCallContext; scope: { projectId: string; workspaceId: string }; signal: AbortSignal; actor: HostActor }
+    | { kind: 'work_run'; ctx: CoreCallContext; scope: { projectId: string; workspaceId: string }; signal: AbortSignal };
+
+/** Bind the caller synchronously before the first await (Host: `bindTrustedContext`; work_run: its own scope and signal). */
+function bindReverifyCaller(ctx: CoreCallContext): ReverifyCaller | CoreRejection {
+    const raw = ctx as unknown as { projectId?: unknown; workspaceId?: unknown; principal?: unknown;
+        materialReader?: unknown; signal?: unknown } | null | undefined;
+    if (raw === null || raw === undefined || !isRecord(raw.principal) || raw.principal['kind'] !== 'work_run') {
+        const bound = bindTrustedContext(ctx);
+        if (!bound.ok) return bound.rejection;
+        return { kind: 'host', ctx: bound.ctx, scope: bound.scope, signal: bound.signal, actor: bound.actor };
+    }
+    const { projectId, workspaceId, signal } = raw;
+    if (!nonEmpty(projectId) || !nonEmpty(workspaceId)) return forbidden('a reverify requires a bound project/workspace context');
+    if (!isRecord(signal) || typeof signal['aborted'] !== 'boolean' || typeof signal['addEventListener'] !== 'function') {
+        return forbidden('a reverify requires the bound AbortSignal');
+    }
+    let principal: unknown;
+    let materialReader: unknown;
+    try {
+        principal = structuredClone(raw.principal);
+        materialReader = structuredClone(raw.materialReader);
+    } catch {
+        return invalid('the call context identity cannot be isolated from the caller');
+    }
+    const bound = signal as unknown as AbortSignal;
+    return { kind: 'work_run', scope: { projectId, workspaceId }, signal: bound, ctx: { projectId, workspaceId,
+        principal: principal as CorePrincipal, materialReader: materialReader as MaterialReader, signal: bound } };
+}
+
+/** The fixed platform attribution of the reverify owner's Host-only reads (WG11, pointer intents). */
+const REVERIFY_READ_ACTOR = Object.freeze({ kind: 'system' as const, id: 'evidence-reverify-reader' });
+
+/** A trusted Host context for exactly this scope and signal with the given actor (reads, or the configured executor's grant). */
+function hostContextOf(scope: { projectId: string; workspaceId: string }, actor: HostActor, signal: AbortSignal): CoreCallContext {
+    const bound = { kind: actor.kind, id: actor.id };
+    return { projectId: scope.projectId, workspaceId: scope.workspaceId, principal: { kind: 'host', actor: bound },
+        materialReader: { kind: 'host', projectId: scope.projectId, workspaceId: scope.workspaceId, actor: bound }, signal };
+}
+
+const REVERIFY_INPUT_KEYS: readonly string[] = ['predecessorRoundRef', 'onlyIfSourceChanged', 'newInputRefs', 'reason', 'note'];
+
+/** The `ReverifyRoundInput` shape (§9 VD-12); the actor-dependent fields (`note`) are judged by the matrix (step 5). */
+function reverifyInputProblem(input: ReverifyRoundInput, scope: { projectId: string; workspaceId: string }): CoreRejection | null {
+    const raw = input as unknown as Record<string, unknown>;
+    if (!Object.keys(raw).every(key => REVERIFY_INPUT_KEYS.includes(key))) return invalid('the reverify input carries unknown fields');
+    const refProblem = roundRefProblem(raw['predecessorRoundRef']);
+    if (refProblem !== null) return invalid(refProblem);
+    if (input.predecessorRoundRef.projectId !== scope.projectId || input.predecessorRoundRef.workspaceId !== scope.workspaceId) {
+        return forbidden('the predecessor round is outside the trusted scope');
+    }
+    if (raw['onlyIfSourceChanged'] !== undefined && typeof raw['onlyIfSourceChanged'] !== 'boolean') {
+        return invalid('onlyIfSourceChanged must be a boolean when present');
+    }
+    if (raw['newInputRefs'] !== undefined) {
+        const inputsProblem = newBasisInputRefsProblem(raw['newInputRefs'], 'reverify newInputRefs');
+        if (inputsProblem !== null) return invalid(inputsProblem);
+    }
+    const reason = raw['reason'];
+    if (reason !== undefined && (typeof reason !== 'string' || reason.trim().length === 0 || reason.length > TASK_REWORK_REASON_MAX_CHARS)) {
+        return invalid(`the reverify reason must be non-empty and at most ${TASK_REWORK_REASON_MAX_CHARS} characters`);
+    }
+    const note = raw['note'];
+    if (note !== undefined && (typeof note !== 'string' || note.trim().length === 0)) return invalid('the reverify note must be non-empty text');
+    return null;
+}
+
+/** §13.7 point 9: exactly the predecessor@rev, and optionally `TaskReworkRefusal(reverify, predecessor)@k` (0 = absent). */
+function reverifyPinsOf(expected: readonly VersionPin[], predecessorRef: VerificationRoundRef, refusalRef: TaskReworkRefusalRef):
+{ ok: true; predecessor: number; refusal: number | null } | CoreRejection {
+    let predecessor: number | null = null;
+    let refusal: number | null = null;
+    for (const pin of expected as readonly unknown[]) {
+        if (!isRecord(pin) || !isRecord(pin['ref']) || !Number.isSafeInteger(pin['revision']) || (pin['revision'] as number) < 0) {
+            return invalid('every expected pin needs a ref and a safe non-negative revision');
+        }
+        const revision = pin['revision'] as number;
+        if (sameRef(pin['ref'], predecessorRef) && predecessor === null && revision >= 1) predecessor = revision;
+        else if (sameRef(pin['ref'], refusalRef) && refusal === null) refusal = revision;
+        else return invalid('meta.expected must be the predecessor round pin and the optional reverify refusal pin without extras');
+    }
+    if (predecessor === null) return invalid('meta.expected must pin the predecessor round');
+    return { ok: true, predecessor, refusal };
+}
+
+/** Canonical pin order for the fingerprint (the same request in another pin order is the same request). */
+function sortedPins(expected: readonly VersionPin[]): { ref: VersionPin['ref']; revision: number }[] {
+    return [...expected].map(pin => ({ ref: pin.ref, revision: pin.revision }))
+        .sort((left, right) => {
+            const leftKey = refKeyOf(left.ref) ?? '';
+            const rightKey = refKeyOf(right.ref) ?? '';
+            return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
+        });
+}
+
+/** The reverify refusal record as read: absent (k = 0), or @k; `unsupported` (no claim schemas) is a confirmed absence. */
+async function readReverifyRefusal(records: Records, ref: TaskReworkRefusalRef):
+Promise<{ ok: true; current: TaskReworkRefusalSnapshotV1 | null; key: string } | { ok: false; rejection: CoreRejection }> {
+    const key = taskReworkRefusalRefKey(ref);
+    let read;
+    try { read = await records.readMany([key]); }
+    catch (error) { return { ok: false, rejection: unavailable(`the reverify refusal read failed: ${messageOf(error)}`) }; }
+    if (read.status !== 'ready') {
+        if (read.code === 'unsupported') return { ok: true, current: null, key };
+        return { ok: false, rejection: mapStoreFailure(read) };
+    }
+    const record = read.value.records.find(candidate => candidate.refKey === key);
+    if (record === undefined) return { ok: true, current: null, key };
+    const decoded = decodeTaskReworkRefusalSnapshot(record);
+    if (decoded.status !== 'decoded') return { ok: false, rejection: unavailable(`the reverify refusal is damaged: ${decoded.reason}`) };
+    return { ok: true, current: decoded.value, key };
+}
+
+// -------------------------------------------------------------------------- //
 // The factory                                                                 //
 // -------------------------------------------------------------------------- //
 
@@ -574,6 +723,114 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         } catch {
             return 'unavailable';
         }
+    }
+
+    type RoundPreparation = {
+        ok: true;
+        build: SuccessorRoundBuildV1;
+        /** The capture's stamp (the reverify key's `source`, LA-5). */
+        source: SourceStampV1;
+        /** The open/reverify read set beyond Goal, Plan and Run: Workspace@rev, the pinned policy and baseline. */
+        workspaceGuard: RecordGuard;
+        policyGuards: readonly RecordGuard[];
+        baselineGuard: RecordGuard;
+    };
+
+    /**
+     * VR-01 / VR-14 step 9 (§9 VD-12, LA-5), one path for a chain root and a
+     * successor: the adopted Plan's pinned policy and baseline, the current
+     * Host root and grant of the configuration (permission revision), the
+     * formal Workspace revision, a full source capture and the compiled
+     * VerificationPlan with every check registered, then the round material
+     * identity, in that order; every failure answers the open's code.
+     */
+    async function prepareRoundOpening(input: {
+        hostCtx: CoreCallContext;
+        scope: { projectId: string; workspaceId: string };
+        signal: AbortSignal;
+        cancelledReason: string;
+        configuration: TrustedCheckConfiguration;
+        goal: GoalSnapshot;
+        plan: PlanRevisionSnapshot;
+        /** The Goal's current adopted Plan (VD-7). */
+        planRef: PlanRevisionRef;
+        taskBasisRef: PlanRevisionRef;
+        subject: TaskTriple;
+        subjectNode: RuntimeTask | undefined;
+        subjectRunRef: RunRef;
+        run: RunSnapshot;
+        gateSubject: 'goal' | 'stage' | 'module' | undefined;
+    }): Promise<RoundPreparation | { ok: false; rejection: CoreRejection }> {
+        const { configuration, goal, plan, scope } = input;
+        const failure = (rejection: CoreRejection) => ({ ok: false as const, rejection });
+        const policyRead = await readPinnedCompletionPolicy(records, plan.effectiveCompletionPolicy);
+        if (policyRead.status !== 'resolved') return failure(mapRejected(policyRead));
+        const baseline = await readPinnedBaseline(records, plan.effectiveArchitectureBaseline);
+        if (!baseline.ok) return baseline;
+        const resolvedRoot = await deps.workspaceHost.resolveRoot(configuration.workspace);
+        if (resolvedRoot.status !== 'ready') return failure(mapWorkspaceRejection(resolvedRoot));
+        const authorization = await deps.workspaceHost.authorize(input.hostCtx, configuration.workspace);
+        if (authorization.status !== 'ready') return failure(mapWorkspaceRejection(authorization));
+        if (authorization.value.permissionRevision !== configuration.permissionRevision) {
+            return failure(forbidden('the current Host permission revision is not the trusted configuration binding'));
+        }
+        const workspaceRead = await readWorkspaceRevision(records, goal.workspaceRef);
+        if (!workspaceRead.ok) return workspaceRead;
+        if (workspaceRead.revision !== resolvedRoot.value.workspaceRevision) {
+            return failure(reject('source_stale', 'the Host access workspace revision is not the current Workspace record revision'));
+        }
+        const captured = await deps.source.capture(resolvedRoot.value.root);
+        if (captured.status !== 'ready') return failure(mapSourceFailure(captured));
+        if (input.signal.aborted) return failure(cancelled(input.cancelledReason));
+
+        let configurationDigest: string;
+        try { configurationDigest = digestOf(configuration); }
+        catch { return failure(invalid('the trusted check configuration is not canonical JSON')); }
+        const capabilities: CheckCapabilityV1[] = configuration.checks.map(check => ({
+            checkId: check.checkId, kind: check.kind, coversKinds: [check.kind], replayable: false }));
+        const compiled = compileVerificationPlan({
+            schemaVersion: 1, taskRef: input.subject, planRef: input.planRef, planSnapshot: plan,
+            workspaceRevision: resolvedRoot.value.workspaceRevision, changeScope: captured.changeScope,
+            semanticChange: 'semantic', risks: [], checkCapabilities: capabilities,
+            policy: { requirementKinds: [...policyRead.policyContent.requirementKinds],
+                ...(policyRead.policyContent.fastPathDiffClasses === undefined
+                    ? {} : { fastPathDiffClasses: [...policyRead.policyContent.fastPathDiffClasses] }) },
+            configurationDigest,
+        });
+        if (compiled.status !== 'ready') {
+            return failure(compiled.code === 'invalid'
+                ? invalid(compiled.issues.map(issue => issue.message).join('; '))
+                : incomplete(`the VerificationPlan could not be compiled (${compiled.code}): ${compiled.issues.map(issue => issue.message).join('; ')}`));
+        }
+        const verificationPlan = compiled.plan;
+        const checksProblem = refusalOf(roundOpenChecksProblem(verificationPlan, configuration));
+        if (checksProblem !== null) return failure(checksProblem);
+        let identityMaterial: VerificationRoundMaterialIdentity;
+        try {
+            identityMaterial = {
+                schemaVersion: 1,
+                scope: { projectId: scope.projectId, workspaceId: scope.workspaceId, goalId: input.subject.goalId,
+                    runId: input.subjectRunRef.runId, taskId: input.subject.taskId,
+                    ...(input.gateSubject === undefined ? {} : { gateSubject: input.gateSubject }) },
+                runRef: input.subjectRunRef, runRevision: input.run.revision, runDigest: digestOf(input.run),
+                planRef: input.planRef, planRevision: plan.planRevision, planDigest: digestOf(plan),
+                taskDigest: digestOf(input.subjectNode ?? input.subject),
+                goalRevision: goal.revision, goalDigest: digestOf(goal),
+                workspaceRevision: resolvedRoot.value.workspaceRevision,
+                workspaceDigest: digestOf({ workspaceRef: goal.workspaceRef, revision: resolvedRoot.value.workspaceRevision }),
+                workspaceRoot: resolvedRoot.value.root,
+                policyPin: plan.effectiveCompletionPolicy, baselinePin: plan.effectiveArchitectureBaseline,
+                sourceDigest: captured.sourceDigest, sourceProofDigest: digestOf(captured.sourceProof),
+            };
+        } catch { return failure(invalid('the round material identity is not canonical JSON')); }
+        const workspaceKey = refKeyOf(goal.workspaceRef);
+        if (workspaceKey === null) return failure(invalid('the open read refs are not canonical JSON'));
+        return { ok: true,
+            build: { adoptedPlanRef: input.planRef, taskBasisRef: input.taskBasisRef, configuration, configurationDigest,
+                identity: identityMaterial, sourceProof: captured.sourceProof, verificationPlan },
+            source: { workspaceRevision: resolvedRoot.value.workspaceRevision, sourceDigest: captured.sourceDigest },
+            workspaceGuard: { refKey: workspaceKey, expectedRevision: workspaceRead.revision },
+            policyGuards: policyRead.guards, baselineGuard: baseline.guard };
     }
 
     async function openVerification(
@@ -697,73 +954,16 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         const chainProblem = roundOpenChainProblem(chainRead.chain, input.subject);
         if (chainProblem !== null) return chainRefusal(chainProblem, chainRead.chain);
         const facts: RoundOpenFactsV1 = { activity, planIsActive, taskBasisResolved, ...subjectFacts, chain: chainRead.chain };
-        const policyRead = await readPinnedCompletionPolicy(records, plan.effectiveCompletionPolicy);
-        if (policyRead.status !== 'resolved') return mapRejected(policyRead);
-        const baseline = await readPinnedBaseline(records, plan.effectiveArchitectureBaseline);
-        if (!baseline.ok) return baseline.rejection;
-        const resolvedRoot = await deps.workspaceHost.resolveRoot(configuration.workspace);
-        if (resolvedRoot.status !== 'ready') return mapWorkspaceRejection(resolvedRoot);
-        const authorization = await deps.workspaceHost.authorize(trusted, configuration.workspace);
-        if (authorization.status !== 'ready') return mapWorkspaceRejection(authorization);
-        if (authorization.value.permissionRevision !== configuration.permissionRevision) {
-            return forbidden('the current Host permission revision is not the trusted configuration binding');
-        }
-        const workspaceRead = await readWorkspaceRevision(records, goal.workspaceRef);
-        if (!workspaceRead.ok) return workspaceRead.rejection;
-        if (workspaceRead.revision !== resolvedRoot.value.workspaceRevision) {
-            return reject('source_stale', 'the Host access workspace revision is not the current Workspace record revision');
-        }
-        const captured = await deps.source.capture(resolvedRoot.value.root);
-        if (captured.status !== 'ready') return mapSourceFailure(captured);
-        if (signal.aborted) return cancelled('the round open was cancelled during source capture');
-
-        let configurationDigest: string;
-        try { configurationDigest = digestOf(configuration); }
-        catch { return invalid('the trusted check configuration is not canonical JSON'); }
-        const capabilities: CheckCapabilityV1[] = configuration.checks.map(check => ({
-            checkId: check.checkId, kind: check.kind, coversKinds: [check.kind], replayable: false }));
-        const compiled = compileVerificationPlan({
-            schemaVersion: 1, taskRef: input.subject, planRef: input.planRef, planSnapshot: plan,
-            workspaceRevision: resolvedRoot.value.workspaceRevision, changeScope: captured.changeScope,
-            semanticChange: 'semantic', risks: [], checkCapabilities: capabilities,
-            policy: { requirementKinds: [...policyRead.policyContent.requirementKinds],
-                ...(policyRead.policyContent.fastPathDiffClasses === undefined
-                    ? {} : { fastPathDiffClasses: [...policyRead.policyContent.fastPathDiffClasses] }) },
-            configurationDigest,
-        });
-        if (compiled.status !== 'ready') {
-            return compiled.code === 'invalid'
-                ? invalid(compiled.issues.map(issue => issue.message).join('; '))
-                : incomplete(`the VerificationPlan could not be compiled (${compiled.code}): ${compiled.issues.map(issue => issue.message).join('; ')}`);
-        }
-        const verificationPlan = compiled.plan;
-        const checksProblem = refusalOf(roundOpenChecksProblem(verificationPlan, configuration));
-        if (checksProblem !== null) return checksProblem;
-        let identityMaterial: VerificationRoundMaterialIdentity;
-        try {
-            identityMaterial = {
-                schemaVersion: 1,
-                scope: { projectId: scope.projectId, workspaceId: scope.workspaceId, goalId: goalRef.goalId,
-                    runId: input.subjectRunRef.runId, taskId: input.subject.taskId,
-                    ...(input.gateSubject === undefined ? {} : { gateSubject: input.gateSubject }) },
-                runRef: input.subjectRunRef, runRevision: run.revision, runDigest: digestOf(run),
-                planRef: input.planRef, planRevision: plan.planRevision, planDigest: digestOf(plan),
-                taskDigest: digestOf(subjectNode ?? input.subject),
-                goalRevision: goal.revision, goalDigest: digestOf(goal),
-                workspaceRevision: resolvedRoot.value.workspaceRevision,
-                workspaceDigest: digestOf({ workspaceRef: goal.workspaceRef, revision: resolvedRoot.value.workspaceRevision }),
-                workspaceRoot: resolvedRoot.value.root,
-                policyPin: plan.effectiveCompletionPolicy, baselinePin: plan.effectiveArchitectureBaseline,
-                sourceDigest: captured.sourceDigest, sourceProofDigest: digestOf(captured.sourceProof),
-            };
-        } catch { return invalid('the round material identity is not canonical JSON'); }
+        const prepared = await prepareRoundOpening({ hostCtx: trusted, scope, signal,
+            cancelledReason: 'the round open was cancelled during source capture', configuration, goal, plan,
+            planRef: input.planRef, taskBasisRef: basis as PlanRevisionRef, subject: input.subject, subjectNode,
+            subjectRunRef: input.subjectRunRef, run, gateSubject: input.gateSubject });
+        if (!prepared.ok) return prepared.rejection;
         const roundRef: VerificationRoundRef = { aggregateType: 'VerificationRound', projectId: scope.projectId,
             workspaceId: scope.workspaceId, goalId: goalRef.goalId, taskId: input.subject.taskId,
             runId: input.subjectRunRef.runId, roundId: deps.newId() };
-        const decided = transitionRound(null, { kind: 'round_opened', facts, opening: { ref: roundRef, subject: input.subject,
-            subjectRunRef: input.subjectRunRef, adoptedPlanRef: input.planRef, taskBasisRef: basis as PlanRevisionRef,
-            executor: actor, configuration, configurationDigest, identity: identityMaterial,
-            sourceProof: captured.sourceProof, verificationPlan } }, guardCtx);
+        const decided = transitionRound(null, { kind: 'round_opened', facts, opening: { ...prepared.build, ref: roundRef,
+            subject: input.subject, subjectRunRef: input.subjectRunRef, executor: actor } }, guardCtx);
         if (!decided.ok) return chainRefusal(decided, chainRead.chain);
         const round = decided.next;
         const occurredAt = deps.now();
@@ -775,9 +975,8 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         // Round absence. A legal W1 future apply during the capture await moves
         // the Goal pointer and conflicts here instead of landing silently.
         const goalKey = refKeyOf(goalRef);
-        const workspaceKey = refKeyOf(goal.workspaceRef);
         const runKey = refKeyOf(run.ref);
-        if (goalKey === null || workspaceKey === null || runKey === null) {
+        if (goalKey === null || runKey === null) {
             return invalid('the open read refs are not canonical JSON');
         }
         // A concurrent open of the same subject took the slot first: read its
@@ -794,11 +993,11 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
             readSet: [
                 { refKey: goalKey, expectedRevision: goal.revision },
                 { refKey: planRevisionRefKey(input.planRef), expectedRevision: plan.revision },
-                { refKey: workspaceKey, expectedRevision: workspaceRead.revision },
+                prepared.workspaceGuard,
                 { refKey: runKey, expectedRevision: run.revision },
                 ...requeueCover.guards,
-                ...policyRead.guards,
-                baseline.guard,
+                ...prepared.policyGuards,
+                prepared.baselineGuard,
             ] });
     }
 
@@ -1304,6 +1503,396 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
             value: finalized, cancelled: 'the round finalize was cancelled before commit' });
     }
 
+    // ---------------------------------------------------------------------- //
+    // VR-14 / VR-15: successor rounds (C5, VD-12, VD-13, §13.7)               //
+    // ---------------------------------------------------------------------- //
+
+    const policyOf = () => deps.automationPolicy?.() ?? DEFAULT_TASK_AUTOMATION_POLICY;
+
+    /** Receipt replay: the recorded `VerificationRoundReverified` or `TaskReworkRefused` restores the original value. */
+    async function replayReverify(
+        receipt: Extract<StoreCommitReceipt, { status: 'committed' }>, identity: string, fingerprint: string,
+    ): Promise<WriteResult<ReverifyOutcomeV1>> {
+        const loaded = await loadReplayEvent(records, receipt);
+        if (!loaded.ok) return loaded.rejection;
+        const event = loaded.event;
+        let recorded: { identityKey: string; fingerprint: string; value: ReverifyOutcomeV1 };
+        if (event.eventType === VERIFICATION_ROUND_REVERIFIED_EVENT_TYPE) {
+            const decoded = verificationRoundEventFromEvent(event);
+            if (decoded.status !== 'decoded') return unavailable(`the recorded successor round event is not decodable: ${decoded.reason}`);
+            const value = decoded.value;
+            if (value.eventType !== VERIFICATION_ROUND_REVERIFIED_EVENT_TYPE) return unavailable('the recorded event type disagrees with the operation');
+            recorded = { identityKey: value.identityKey, fingerprint: value.fingerprint, value: { kind: 'reverified', round: value.result } };
+        } else if (event.eventType === TASK_REWORK_REFUSED_EVENT_TYPE) {
+            const decoded = taskReworkRefusedEventFromEvent(event);
+            if (decoded.status !== 'decoded') return unavailable(`the recorded reverify refusal is not decodable: ${decoded.reason}`);
+            recorded = { identityKey: decoded.value.identityKey, fingerprint: decoded.value.fingerprint,
+                value: { kind: 'refused', refusal: decoded.value.refusal } };
+        } else {
+            return unavailable(`the recorded reverify receipt names a ${event.eventType} event`);
+        }
+        if (recorded.identityKey !== identity || recorded.fingerprint !== fingerprint) {
+            return unavailable('the recorded reverify disagrees with the request identity');
+        }
+        return { status: 'committed', value: recorded.value, replayed: true, cursor: receipt.cursor };
+    }
+
+    type ReverifyCommit = {
+        identity: string;
+        fingerprint: string;
+        signal: AbortSignal;
+        /** The real requester: an operator, a platform automation actor or an Agent. */
+        actor: ActorRef;
+        /** The Host identity the successor's event records; the Agent stays in `chain.reverify.requestedBy` (VR-14). */
+        eventActor: HostActor | null;
+        task: TaskTriple;
+        predecessor: RoundSnapshot;
+        run: RunSnapshot;
+        refusalRef: TaskReworkRefusalRef;
+        refusalKey: string;
+        currentRefusal: TaskReworkRefusalSnapshotV1 | null;
+        goalEndedRunsAtRefusal: number;
+        /** `guard_reverify_read_set` without the refusal record (added here: CAS @k, or the written revision). */
+        readSet: readonly RecordGuard[];
+        decided: { next: RoundSnapshot; effects: readonly VerificationEffect[] };
+        /** A lost slot claim: the head moved, answered from the chain read again. */
+        slotTaken(): Promise<CoreRejection>;
+    };
+
+    /**
+     * VR-14 step 12, the ONE commit of a successor or a policy refusal, from
+     * the machine's effects: the successor @1 (CAS null), the predecessor as
+     * read, the read set, the refusal record @k (CAS), the slot claim, and the
+     * one event (`VerificationRoundReverified`, or `TaskReworkRefused` with
+     * the record `taskReworkRefusalEffects` builds). A replayed or lost commit
+     * restores the original value.
+     */
+    async function commitReverify(write: ReverifyCommit): Promise<WriteResult<ReverifyOutcomeV1>> {
+        const guards: RecordGuard[] = [];
+        const written: EncodedRecord[] = [];
+        let claims: UniqueClaimChange[] = [];
+        let event: EncodedDomainEvent | null = null;
+        let value: ReverifyOutcomeV1 | null = null;
+        let refusalGuard: RecordGuard = { refKey: write.refusalKey, expectedRevision: write.currentRefusal?.revision ?? null };
+        for (const effect of write.decided.effects) {
+            switch (effect.kind) {
+                case 'guard_round': {
+                    const key = refKeyOf(write.decided.next.ref);
+                    if (key === null) return invalid('the successor round ref is not canonical JSON');
+                    written.push(encodeVerificationRoundSnapshot(write.decided.next));
+                    guards.push({ refKey: key, expectedRevision: effect.expectedRevision });
+                    break;
+                }
+                case 'guard_predecessor': {
+                    const key = refKeyOf(effect.ref);
+                    if (key === null) return invalid('the predecessor round ref is not canonical JSON');
+                    guards.push({ refKey: key, expectedRevision: effect.revision });
+                    break;
+                }
+                case 'guard_reverify_read_set': guards.push(...write.readSet); break;
+                case 'claim_round_slot': claims = [{ ...effect.claim }]; break;
+                case 'refuse_reverify': {
+                    const refusedAt = deps.now();
+                    const [record] = taskReworkRefusalEffects({ current: write.currentRefusal, ref: write.refusalRef, task: write.task,
+                        afterRunRef: write.run.ref, subjectRoundRef: write.predecessor.ref, failureClass: effect.refusal.failureClass,
+                        code: effect.refusal.code, reason: effect.refusal.reason, basisDigest: effect.refusal.basisDigest,
+                        source: effect.refusal.source, matchedRequeueRef: null, requestedBy: write.actor, refusedAt,
+                        goalEndedRunsAtRefusal: write.goalEndedRunsAtRefusal, configurationRevision: effect.refusal.configurationRevision });
+                    if (record?.kind !== 'write_task_rework_refusal') throw new Error('a reverify refusal writes its TaskReworkRefusal');
+                    written.push(encodeTaskReworkRefusalSnapshot(record.refusal));
+                    refusalGuard = { refKey: write.refusalKey, expectedRevision: record.expectedRevision };
+                    const refused: TaskReworkRefusedEvent = { eventId: deps.newId(), eventType: TASK_REWORK_REFUSED_EVENT_TYPE,
+                        schemaVersion: TASK_REWORK_EVENT_SCHEMA_VERSION, occurredAt: refusedAt, identityKey: write.identity,
+                        actor: write.actor, fingerprint: write.fingerprint, refusal: record.refusal };
+                    event = encodeTaskReworkRefusedEvent(refused);
+                    value = { kind: 'refused', refusal: record.refusal };
+                    break;
+                }
+                case 'emit_event': {
+                    if (effect.eventType !== VERIFICATION_ROUND_REVERIFIED_EVENT_TYPE || write.eventActor === null) {
+                        throw new Error(`a reverify write emits no ${effect.eventType} event without the Host identity`);
+                    }
+                    const successor = write.decided.next;
+                    event = encodeVerificationRoundEvent({ eventId: deps.newId(), eventType: VERIFICATION_ROUND_REVERIFIED_EVENT_TYPE,
+                        schemaVersion: 1, occurredAt: deps.now(), identityKey: write.identity, roundRef: successor.ref,
+                        actor: write.eventActor, fingerprint: write.fingerprint, result: successor });
+                    value = { kind: 'reverified', round: successor };
+                    break;
+                }
+                default: throw new Error(`a reverify write has no ${effect.kind} effect`);
+            }
+        }
+        if (event === null || value === null) throw new Error('a reverify write commits a successor round or a refusal');
+        const merged = mergeGuards([...guards, refusalGuard]);
+        if (!merged.ok) return merged.rejection;
+        const prepared: PreparedCommit = { identityKey: write.identity, fingerprint: write.fingerprint, guards: merged.guards,
+            records: written, claims, indexGuards: [], indexChanges: [], events: [event] };
+        try {
+            if (write.signal.aborted) return cancelled('the reverify was cancelled before commit');
+            const receipt = await records.commit(prepared);
+            if (receipt.status !== 'committed') {
+                if (receipt.code === 'unique_conflict') return await write.slotTaken();
+                return mapStoreFailure(receipt);
+            }
+            if (receipt.replayed) return await replayReverify(receipt, write.identity, write.fingerprint);
+            return { status: 'committed', value, replayed: false, cursor: receipt.cursor };
+        } catch (error) {
+            const outcome = await lookupReceipt(records, write.identity, write.fingerprint);
+            if (outcome.status === 'found') return await replayReverify(outcome.receipt, write.identity, write.fingerprint);
+            if (outcome.status === 'failed') return outcome.rejection;
+            return unavailable(`the reverify commit result is unknown: ${messageOf(error)}`);
+        }
+    }
+
+    /**
+     * VR-14/VR-15 (§9 VD-12, VD-13, §13.2 point 3, §13.7; C5, C8): the
+     * successor round of a finalized non-PASS chain head, or one committed
+     * policy refusal, never both, in the unified order, each step before the
+     * next IO:
+     *   1. the receipt (a `reverified` and a `refused` value both replay);
+     *   2. the caller and its class: a Host operator `human`, a platform
+     *      automation actor `system`, an Agent `agent` of the same Goal through
+     *      `authorizeDelegatedWrite(…, 'reverify_round')` (no production Role
+     *      grants it before its Agent tool, GAP-46);
+     *   3. the predecessor, its chain, the Goal and its current adopted Plan,
+     *      the subject Run (gate: the anchored producer), work: its TaskRequeue
+     *      cover and pointer intent; `reverifyAdmissionProblem` with steps 4–5
+     *      (`reworkPermission`); then the refusal pin and the new inputs (ND-9);
+     *   7. the cap (`reverifyCapRefusal`), 8. `countEndedGoalRuns`, both
+     *      before any capture (a cap refusal captures nothing);
+     *   9. the current configuration (its executor runs the successor), its
+     *      Host grant, a full capture and the compile (`prepareRoundOpening`,
+     *      VR-01's path, LA-5); a human `note` is then stored as an Artifact
+     *      and joins the new inputs;
+     *  10–11. `transitionRound(round_reverified)`: `verification_uncovered`,
+     *      `source_unchanged`, the key (`reverifyBasis`);
+     *  12. one commit (`commitReverify`).
+     */
+    async function reverifyRound(ctx: CoreCallContext, request: GraphWrite<ReverifyRoundInput>): Promise<WriteResult<ReverifyOutcomeV1>> {
+        const caller = bindReverifyCaller(ctx);
+        if ('status' in caller) return caller;
+        const { scope, signal } = caller;
+        const owned = isolateWrite(request);
+        if (!owned.ok) return owned.rejection;
+        const input = owned.input;
+        const shape = reverifyInputProblem(input, scope);
+        if (shape !== null) return shape;
+        const raw = input.predecessorRoundRef;
+        const predecessorRef: VerificationRoundRef = { aggregateType: 'VerificationRound', projectId: raw.projectId,
+            workspaceId: raw.workspaceId, goalId: raw.goalId, taskId: raw.taskId, runId: raw.runId, roundId: raw.roundId };
+        const task: TaskTriple = { projectId: predecessorRef.projectId, goalId: predecessorRef.goalId, taskId: predecessorRef.taskId };
+        const refusalRef: TaskReworkRefusalRef = { aggregateType: 'TaskReworkRefusal', projectId: task.projectId,
+            goalId: task.goalId, taskId: task.taskId, operation: 'reverify', subjectId: predecessorRef.roundId };
+        const pins = reverifyPinsOf(owned.expected, predecessorRef, refusalRef);
+        if ('status' in pins) return pins;
+        if (signal.aborted) return cancelled('the reverify was cancelled before lookup');
+
+        // 1–2. The requester and the receipt; an Agent's identity is the formal writer (W2).
+        let actor: ActorRef;
+        let agentWriter: AgentPlanWriter | null = null;
+        if (caller.kind === 'host') {
+            actor = caller.actor;
+        } else {
+            if (deps.delegatedWrites === undefined) return forbidden('Agent reverifies are not admitted by this Host');
+            const writer = await identifyDelegatedWriter(deps.delegatedWrites, caller.ctx, scope);
+            if (writer.status !== 'ready') {
+                return writer.status === 'rejected' ? writer : forbidden('the Agent writer identity is not readable');
+            }
+            agentWriter = writer.value;
+            actor = writer.value.actor;
+        }
+        let identity: string;
+        let fingerprint: string;
+        try {
+            identity = identityKeyOf('r3e-reverify:', actor, scope.projectId, scope.workspaceId, owned.requestId);
+            fingerprint = fingerprintOf({ kind: 'r3e-reverify', predecessorRoundRef: predecessorRef,
+                onlyIfSourceChanged: input.onlyIfSourceChanged ?? false, newInputRefs: input.newInputRefs ?? [],
+                reason: input.reason ?? null, note: input.note ?? null, expected: sortedPins(owned.expected) });
+        } catch { return invalid('the reverify request is not canonicalizable JSON'); }
+        const lookup = await lookupReceipt(records, identity, fingerprint);
+        if (lookup.status === 'failed') return lookup.rejection;
+        if (lookup.status === 'found') return await replayReverify(lookup.receipt, identity, fingerprint);
+        const actorClass = reworkActorClassOf(caller.ctx.principal, actor);
+        if (actorClass === null) return forbidden('the caller cannot rework this Task');
+        let admissionGuards: readonly RecordGuard[] = [];
+        if (agentWriter !== null) {
+            if (agentWriter.goalRef.goalId !== task.goalId) return forbidden('an Agent reworks only Tasks of its own Goal');
+            const admitted = await authorizeDelegatedWrite(deps.delegatedWrites!, caller.ctx,
+                { writer: agentWriter, operation: 'reverify_round' });
+            if (admitted.status !== 'ready') {
+                return admitted.status === 'rejected' ? admitted : forbidden('the Agent reverify admission is not readable');
+            }
+            admissionGuards = admitted.value.guards;
+        }
+
+        // 3. The predecessor, its chain, the Goal and its current adopted Plan (VD-7), the subject Run.
+        const readCtx = hostContextOf(scope, REVERIFY_READ_ACTOR, signal);
+        const loaded = await readRoundRecord(records, predecessorRef);
+        if (!loaded.ok) return loaded.rejection;
+        const predecessor = loaded.round;
+        if (!sameRef(predecessor.subject, task)) return unavailable('the predecessor round disagrees with its ref');
+        const gateSubject = predecessor.identity.scope.gateSubject;
+        const chainRun = gateSubject === undefined ? predecessor.subjectRunRef : null;
+        const chainRead = await readSubjectChain(records, scope, predecessor.subject, chainRun);
+        if (!chainRead.ok) return chainRead.rejection;
+        const goalRef: GoalRef = { aggregateType: 'Goal', projectId: task.projectId, goalId: task.goalId };
+        const goalRead = await readGoal(records, goalRef);
+        if (goalRead.status !== 'ready') return mapRejected(goalRead);
+        const goal = goalRead.goal;
+        if (goal.workspaceRef.projectId !== scope.projectId || goal.workspaceRef.workspaceId !== scope.workspaceId) {
+            return forbidden('the subject Goal belongs to another workspace');
+        }
+        const planRef = goal.activePlanRevision;
+        if (planRef === null) return incomplete('the Goal has no adopted Plan; no successor round opens');
+        const planRead = await readPlan(records, planRef);
+        if (planRead.status !== 'ready') return mapRejected(planRead);
+        const plan = planRead.plan;
+        if (plan.goalRef.projectId !== goalRef.projectId || plan.goalRef.goalId !== goalRef.goalId) {
+            return notFound('the adopted Plan belongs to another Goal');
+        }
+        const execution = await deps.executions.readExecution(readCtx, predecessor.subjectRunRef);
+        if (execution.status !== 'ready') return mapRead(execution);
+        const run = execution.value.run;
+        if (!sameRef(run.ref, predecessor.subjectRunRef)) return unavailable('the Run read returned a different aggregate');
+        // VR-01's subject relation, judged against the Goal's current adopted Plan (a gate: its anchored producer, VD-15).
+        const subjectNode = plan.tasks.find(candidate => candidate.taskId === task.taskId);
+        const producerNode = plan.tasks.find(candidate => candidate.taskId === run.task.taskId);
+        const sameGoal = run.task.projectId === task.projectId && run.task.goalId === task.goalId;
+        const relation: RoundSubjectRelationV1 = gateSubject === undefined
+            ? { kind: 'work', runTaskIsSubject: sameGoal && run.task.taskId === task.taskId }
+            : { kind: 'gate', gateSubject,
+                gateAdopted: subjectNode !== undefined && subjectNode.taskKind === 'gate' && subjectNode.scope.kind === gateSubject,
+                producer: !sameGoal || run.task.taskId === task.taskId ? 'not_goal_work_run'
+                    : producerNode === undefined || producerNode.taskKind !== 'work' ? 'not_adopted_work'
+                        : run.workspaceSnapshot.workspaceId !== scope.workspaceId ? 'other_workspace' : 'ok' };
+        // work: the TaskRequeue cover (its absence is guarded) and the pointer intent of the fence; a gate has neither.
+        let cover: { covered: boolean; guards: RecordGuard[] } = { covered: false, guards: [] };
+        let fence: ReworkFence = 'none';
+        if (gateSubject === undefined) {
+            const coverRead = await readRequeueCover(records, run);
+            if (!coverRead.ok) return coverRead.rejection;
+            cover = coverRead;
+            const pointers = await readPointerIntents(records, [run]);
+            if (pointers.status !== 'ready') return reject(pointers.code, pointers.reason);
+            fence = reworkFenceOf(run, pointers.intents.get(run.ref.runId) ?? null);
+        }
+        const failureClass = reverifyFailureClass(predecessor);
+        const facts: RoundReverifyFactsV1 = { actorClass, chain: chainRead.chain, subjectRun: run, relation,
+            activity: { goalDesiredState: goal.desiredState, subjectDisposition: subjectNode?.disposition ?? null },
+            subjectRunRequeued: cover.covered,
+            permission: failureClass === null ? null : reworkPermission({ operation: 'reverify', goalDesiredState: goal.desiredState,
+                failureClass, interruption: null, fence, actorClass,
+                goalFanOut: actor.kind === GOAL_FAN_OUT_ACTOR.kind && actor.id === GOAL_FAN_OUT_ACTOR.id,
+                trigger: false, budget: false, note: input.note !== undefined }) };
+        const guardCtx: RoundGuardContext = { callerIsExecutor: false, expectedRevision: pins.predecessor, instanceLeaseHeld: false };
+        const headPin = (chain: RoundChainHeadV1): VersionPin[] | undefined =>
+            chain.kind === 'head' ? [{ ref: chain.head.ref, revision: chain.head.revision }] : undefined;
+        const admission = reverifyAdmissionProblem(predecessor, facts, guardCtx);
+        if (admission !== null && !admission.ok) {
+            // §9.4: a moved head or a stale pin names the head; a requeued subject Run names its TaskRequeue@1.
+            const moved = chainRead.chain.kind === 'head'
+                && (!sameRef(chainRead.chain.head.ref, predecessor.ref) || pins.predecessor !== predecessor.revision);
+            const current = admission.code !== 'revision_conflict' ? undefined : moved || !cover.covered ? headPin(chainRead.chain)
+                : [{ ref: { aggregateType: 'TaskRequeue' as const, projectId: run.ref.projectId, goalId: run.ref.goalId,
+                    taskId: run.task.taskId, afterRunId: run.ref.runId }, revision: 1 }];
+            return reject(admission.code, admission.detail, current);
+        }
+        // The refusal record under (reverify, predecessor) and the caller's optional pin on it (§13.7 point 9).
+        const refusalRead = await readReverifyRefusal(records, refusalRef);
+        if (!refusalRead.ok) return refusalRead.rejection;
+        const currentRefusal = refusalRead.current;
+        if (pins.refusal !== null && pins.refusal !== (currentRefusal?.revision ?? 0)) {
+            return reject('revision_conflict', 'the reverify refusal changed since the caller read it',
+                currentRefusal === null ? undefined : [{ ref: refusalRef, revision: currentRefusal.revision }]);
+        }
+        // Step 5 (ND-9): every new input as the owner reads it.
+        const requestedInputs = input.newInputRefs ?? [];
+        const inputProblem = await newBasisInputsProblem({ materials: deps.materials, messages: deps.messages }, caller.ctx,
+            scope, requestedInputs);
+        if (inputProblem !== null) return inputProblem;
+        if (signal.aborted) return cancelled('the reverify was cancelled after the input checks');
+
+        // 7–8. The cap, then the Goal's ended Runs (the refusal watermark), both before any capture.
+        const policy = policyOf();
+        const ended = await readGoalRunsForCount(records, goalRef);
+        if (ended.status !== 'ready') return reject(ended.code, ended.reason);
+        const goalKey = refKeyOf(goalRef);
+        const runKey = refKeyOf(run.ref);
+        if (goalKey === null || runKey === null) return invalid('the reverify read refs are not canonical JSON');
+        const readSet: RecordGuard[] = [
+            { refKey: goalKey, expectedRevision: goal.revision },
+            { refKey: planRevisionRefKey(planRef), expectedRevision: plan.revision },
+            { refKey: runKey, expectedRevision: run.revision },
+            ...cover.guards,
+            ...admissionGuards,
+        ];
+        const decide = (successor: RoundSuccessorV1 | null) =>
+            transitionRound(predecessor, { kind: 'round_reverified', facts, onlyIfSourceChanged: input.onlyIfSourceChanged ?? false,
+                autoReworkLimit: policy.autoReworkLimit, successor }, guardCtx);
+        const slotTaken = async (): Promise<CoreRejection> => {
+            const again = await readSubjectChain(records, scope, predecessor.subject, chainRun);
+            if (!again.ok) return again.rejection;
+            return reject('revision_conflict', 'the predecessor is no longer the chain head (a successor round or a requeue committed first)',
+                headPin(again.chain));
+        };
+        const commitBase = { identity, fingerprint, signal, actor, task, predecessor, run, refusalRef, refusalKey: refusalRead.key,
+            currentRefusal, goalEndedRunsAtRefusal: countEndedGoalRuns(ended.runs), slotTaken };
+        if (reverifyCapRefusal(predecessor, actorClass, policy.autoReworkLimit) !== null) {
+            const capped = decide(null);
+            if (!capped.ok) return reject(capped.code, capped.detail);
+            return await commitReverify({ ...commitBase, eventActor: null, readSet, decided: capped });
+        }
+
+        // 9. The current configuration (its executor runs the successor), its Host grant, a full capture and the compile.
+        const configuration = deps.configurationFor !== undefined ? deps.configurationFor(scope) : deps.configuration;
+        if (configuration === undefined) {
+            return unsupported('no trusted check configuration is registered for this workspace; a successor round is unsupported');
+        }
+        if (configuration.workspace.projectId !== scope.projectId || configuration.workspace.workspaceId !== scope.workspaceId) {
+            return forbidden('the trusted check configuration belongs to another workspace');
+        }
+        const basis = buildEffectiveTaskBasis(plan).get(task.taskId);
+        const basisProblem = refusalOf(roundOpenBasisProblem(basis !== undefined && !isBasisUnsupported(basis), task));
+        if (basisProblem !== null) return basisProblem;
+        const prepared = await prepareRoundOpening({ hostCtx: hostContextOf(scope, configuration.executor, signal), scope, signal,
+            cancelledReason: 'the reverify was cancelled during source capture', configuration, goal, plan, planRef,
+            taskBasisRef: basis as PlanRevisionRef, subject: task, subjectNode, subjectRunRef: predecessor.subjectRunRef, run,
+            gateSubject });
+        if (!prepared.ok) return prepared.rejection;
+        // A human note is stored after the capture and joins the new inputs before the key (§13.2 step 9);
+        // the body carries no time, so the same note is the same Artifact (and the same key).
+        const newInputRefs: NewBasisInputRefV1[] = [...requestedInputs];
+        if (input.note !== undefined) {
+            if (caller.kind !== 'host') return invalid('only an operator may attach a note');
+            const stored = await deps.materials.storeArtifact(caller.ctx, { contentType: REWORK_NOTE_CONTENT_TYPE, body: input.note,
+                sources: [{ kind: 'workspace', refId: scope.workspaceId, revision: String(prepared.source.workspaceRevision) }],
+                origin: { kind: 'platform_operation', projectId: scope.projectId, workspaceId: scope.workspaceId,
+                    requestId: owned.requestId, actor: caller.actor } });
+            if (stored.status !== 'stored') {
+                return reject(stored.code === 'size_exceeded' ? 'capacity' : stored.code === 'missing_source' ? 'invalid' : stored.code,
+                    `the note could not be stored: ${stored.reason}`);
+            }
+            if (newInputRefs.length >= MAX_NEW_BASIS_INPUT_REFS) {
+                return invalid(`a reverify carries at most ${MAX_NEW_BASIS_INPUT_REFS} new inputs including its note`);
+            }
+            newInputRefs.push({ kind: 'artifact', ref: stored.ref });
+        }
+        // 11. The key (§13.7 point 1) over this capture and the configuration the successor freezes.
+        const key = reverifyBasis({ subject: task, subjectRunId: run.ref.runId, predecessor, source: prepared.source,
+            configuration: { configurationRevision: configuration.configurationRevision,
+                configurationDigest: prepared.build.configurationDigest },
+            basisPlan: basis, completionPolicyPin: plan.effectiveCompletionPolicy,
+            architectureBaselinePin: plan.effectiveArchitectureBaseline, newInputRefs });
+        if (!key.ok) return reject(key.code, key.detail);
+        // 10–12. The machine: a successor or a policy refusal, then the one commit.
+        const decided = decide({ roundId: deps.newId(), build: prepared.build, basis: key.next, requestedBy: actor,
+            requestedAt: deps.now(), newInputRefs, reason: input.reason ?? null });
+        if (!decided.ok) return reject(decided.code, decided.detail);
+        return await commitReverify({ ...commitBase, decided,
+            eventActor: caller.kind === 'host' ? caller.actor : { kind: configuration.executor.kind, id: configuration.executor.id },
+            readSet: [...readSet, prepared.workspaceGuard, ...prepared.policyGuards, prepared.baselineGuard] });
+    }
+
     return { openVerification, readVerification, queryOriginalVerification, queryRoundChainHead, beginCheck, recordCheckResult,
-        abandonCheck, interruptCheck, submitEvidence, finalizeChecks };
+        abandonCheck, interruptCheck, submitEvidence, finalizeChecks, reverifyRound };
 }

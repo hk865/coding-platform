@@ -1017,14 +1017,6 @@
     },
     {
       "file": "src/core/work-graph/evidence/contracts.ts",
-      "name": "EvidencePort.reverifyRound",
-      "reason": "step5",
-      "substep": "5.9",
-      "wiredBy": "spec §15.2 5.9 C5 重新检查 (reverifyRound); §15.3 VR-14 names evidence-service.ts reverifyRound",
-      "note": "step-1 optional port member (A.2 step 1): no implementation and no caller yet; WorkflowCalls.reverify_round names its type"
-    },
-    {
-      "file": "src/core/work-graph/evidence/contracts.ts",
       "name": "EvidencePort.submitEvidence",
       "reason": "pre-batch",
       "note": "unreached at 790d970; a port operation create-platform.ts publishes, but no route (core-routes.ts), Workflow or script reads it; used only by tests: tests/business/R5c-workflow.test.ts"
@@ -1432,30 +1424,6 @@
       "note": "unreached at 790d970; file-local; referenced nowhere"
     },
     {
-      "file": "src/core/work-graph/state/no-progress.ts",
-      "name": "ReverifyBasisInputV1",
-      "reason": "step5",
-      "substep": "5.9",
-      "wiredBy": "spec §15.2 5.9 (§13.7: reverifyBasis key and exemption)",
-      "note": "helper of reverifyBasis"
-    },
-    {
-      "file": "src/core/work-graph/state/no-progress.ts",
-      "name": "ReverifyBasisResult",
-      "reason": "step5",
-      "substep": "5.9",
-      "wiredBy": "spec §15.2 5.9 (§13.7: reverifyBasis key and exemption)",
-      "note": "helper of reverifyBasis"
-    },
-    {
-      "file": "src/core/work-graph/state/no-progress.ts",
-      "name": "reverifyBasis",
-      "reason": "step5",
-      "substep": "5.9",
-      "wiredBy": "spec §15.2 5.9 (§13.7: reverifyBasis key and exemption)",
-      "note": "reverify key of the successor round"
-    },
-    {
       "file": "src/core/work-graph/state/plan-machine.ts",
       "name": "TracedTaskFactsV1",
       "reason": "step5",
@@ -1526,30 +1494,6 @@
       "substep": "5.10",
       "wiredBy": "STEP5-FLIPS.md §10 plan-machine, flip PLAN-05 + §3.4 TASK-19 rows (C7, 5.10)",
       "note": "helper of tracedDispositionChangeProblem, parallelCarrierFenceProblem"
-    },
-    {
-      "file": "src/core/work-graph/state/verification-machine.ts",
-      "name": "SuccessorRoundBuildV1",
-      "reason": "step5",
-      "substep": "5.9",
-      "wiredBy": "STEP5-FLIPS.md §5 verification-machine, 新增 VR-14/VR-15 (5.9): the pure pieces buildSuccessorRound, roundChainHead, chainEvidenceIds, reverifyExemption, reverifyFailureClass are complete",
-      "note": "helper of buildSuccessorRound"
-    },
-    {
-      "file": "src/core/work-graph/state/verification-machine.ts",
-      "name": "SuccessorRoundInputV1",
-      "reason": "step5",
-      "substep": "5.9",
-      "wiredBy": "STEP5-FLIPS.md §5 verification-machine, 新增 VR-14/VR-15 (5.9): the pure pieces buildSuccessorRound, roundChainHead, chainEvidenceIds, reverifyExemption, reverifyFailureClass are complete",
-      "note": "helper of buildSuccessorRound"
-    },
-    {
-      "file": "src/core/work-graph/state/verification-machine.ts",
-      "name": "buildSuccessorRound",
-      "reason": "step5",
-      "substep": "5.9",
-      "wiredBy": "STEP5-FLIPS.md §5 verification-machine, 新增 VR-14/VR-15 (5.9): the pure pieces buildSuccessorRound, roundChainHead, chainEvidenceIds, reverifyExemption, reverifyFailureClass are complete",
-      "note": "successor round constructor"
     },
     {
       "file": "src/core/work-graph/tasks/claim-contracts.ts",

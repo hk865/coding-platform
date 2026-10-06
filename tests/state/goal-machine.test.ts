@@ -893,7 +893,7 @@ type Failure = NonNullable<GoalDisplayTaskFactsV1['failure']>;
 type Round = NonNullable<TaskFailureFactsV1['round']>;
 
 function roundOf(taskId: string, overrides: Partial<Round> = {}): Round {
-  return { roundRef: roundRef(taskId), status: 'finalized', outcome: 'FAIL', failingChecks: FAILING, gapCodes: [],
+  return { roundRef: roundRef(taskId), revision: 3, status: 'finalized', outcome: 'FAIL', failingChecks: FAILING, gapCodes: [],
     sourceDigest: 'digest-1', workspaceRevision: 1, ordinal: 1, autoCount: 0, ...overrides };
 }
 function failureOf(verdict: TaskAutomationVerdictV1, overrides: { round?: Round | null; requeueAutoCount?: number; cap?: number;
