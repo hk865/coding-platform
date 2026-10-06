@@ -1,16 +1,21 @@
 # 独立仓库工作入口
 
-**2026-10-05 可靠性批次进行中，界面基线正在变更：**
+**2026-10-06 可靠性批次进行中；新界面原型已获批，正待改版：**
 
-*批次状态。* 分支 `feat/reliability-and-structure` 上的可靠性批次（任务书任务 A–E）**没有完成**，也未推送；整个 MVP 也没有完成。任务 B、C、E 和任务 D 的准备已提交；任务 A 做到第 5 步的 5.4b，5.5 正在做；之后还有 5.6–5.10、第 6 步、简化、第 7 步、任务 D（WorkGraph 拆分）和收尾。当前状态、缺口和下一步见 [STATUS](docs/refactor/STATUS.md)。用户 2026-10-04/05 的 19 条决定见 [HANDOFF 顶部](docs/refactor/HANDOFF.md)。
+*批次状态。* 分支 `feat/reliability-and-structure` 上的可靠性批次（任务书任务 A–E）**没有完成**，也未推送；整个 MVP 也没有完成。任务 B、C、E 和任务 D 的准备已提交；任务 A 做到第 5 步的 5.7；之后还有 5.8–5.10、第 6 步、简化、第 7 步、任务 D（WorkGraph 拆分）和收尾。当前状态、缺口和下一步见 [STATUS](docs/refactor/STATUS.md)。用户 2026-10-04 至 10-06 的 30 条决定见 [HANDOFF 顶部](docs/refactor/HANDOFF.md)两节：1–19 和 20–30。
 
-*界面基线。* 按用户 2026-10-04/05 的决定，界面基线正在变更。新原型在 [Design 画布](https://claude.ai/artifact/3e5ynF3rwtMQfvJuim9mL2)上审阅，只有用户本人能打开，还没有获批。获批前，`docs/ui-reference/agent-workbench.html` 仍是验收基线，但只管决定没有替换的部分。已被替换或新增的点，分组与 [UI-WORKBENCH §0](docs/UI-WORKBENCH.md#ui-decisions-2026-10) 一致：
+*界面基线。* 新原型在 [Design 画布](https://claude.ai/artifact/3e5ynF3rwtMQfvJuim9mL2)上，只有用户本人能打开。
+- 用户 2026-10-05 批准了原型（画布第 9 版）。接下来按 HANDOFF 决定 26–28 改版，改版后把画板文件复制进 `docs/ui-reference/`。
+- 在那之前，仓库里以 [UI-WORKBENCH §0](docs/UI-WORKBENCH.md#ui-decisions-2026-10) 的文字为准。`docs/ui-reference/agent-workbench.html` 只管决定没有替换的部分。
+
+已被替换或新增的点，分组与 UI-WORKBENCH §0 一致。
 
 替换旧原型的条目：
 - 悬停：短预览改为信息卡，只读已加载的数据；
-- 双图：画成小方格加连线的树，方格里不放符号，状态用颜色和填充表示；
+- 双图：画成小方格加连线，方格里不放符号，状态用颜色和填充表示，还没开始的任务一律空心；
+- 任务图：整页是 DAG + 大纲 + 轨道，主画面右栏是最多 3 层的方格树缩略；
 - 架构图：分成聚焦视图和完整架构图页，按探索出的语义分组；
-- 时间视图：纵向连续放大镜改为「轨道 + 活动日历」。
+- 时间视图：纵向连续放大镜改为「轨道 + 活动日历」，一条轨道是一条工作线（一个 Session 加上接续它的 Session）。
 
 旧原型没有、新增的条目（举例，完整列表见 §0“新增”）：
 - 主对话：给 2–3 个方案，在对话中迭代后采用；
