@@ -14,6 +14,7 @@
  * `workflow/driver-read`), never an import/type failure or a wrong Host.
  */
 import { createHash } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -29,6 +30,7 @@ import type { TrustedCheckConfiguration } from '../../src/contracts/verification
 import type { RoleBindingRefV1 } from '../../src/contracts/dispatch.js';
 import type { RuntimeBudget } from '../../src/contracts/runtime-budget.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
+import type { PlanRevisionDraft } from '../../src/contracts/plan.js';
 import type { WorkLinkTarget } from '../../src/contracts/core/identity.js';
 import type { ReadResult, WriteResult } from '../../src/contracts/core/results.js';
 import {
@@ -91,7 +93,7 @@ export const AG2B_RESULT_TEXT = 'AG2B_RESULT_FROM_A';
 
 /** A read-only registered check proves the actual artifact. It never changes
  * the source snapshot it is checking; missing/mismatched output fails. */
-const AG2B_CHECK_COMMAND = `node -e "const fs=require('node:fs');const text=fs.readFileSync('${AG2B_RESULT_FILE}','utf8');if(text.trim()!=='${AG2B_RESULT_TEXT}'){process.exit(3)}console.log('AG2B_CHECK_OK')"`;
+export const AG2B_CHECK_COMMAND = `node -e "const fs=require('node:fs');const text=fs.readFileSync('${AG2B_RESULT_FILE}','utf8');if(text.trim()!=='${AG2B_RESULT_TEXT}'){process.exit(3)}console.log('AG2B_CHECK_OK')"`;
 
 const temporary: string[] = [];
 
@@ -134,9 +136,48 @@ export type AG2bOverrides = {
   queryReplies?: readonly ScriptedReply[];
   queryBeforeReply?: (request: ModelRequest, index: number, signal: AbortSignal) => Promise<void>;
   checkCommand?: string;
+  /** A.2 step 6: the registered check's timeout (default 30 s), so a scenario can make it time out. */
+  checkTimeoutMs?: number;
+  /** A.2 step 6: the check configuration revision (default `ag2b-checks@1`); a restart with another check names a new one (LA-4). */
+  checkConfigurationRevision?: string;
+  /** A.2 step 6: the Host's startup actor (default the human `ag2b-operator`); a `kind:'system'` Host is still an operator. */
+  actor?: WorkbenchActor;
   /** A.2 step 5.6: start without the trusted Kernel Store entry (the mapped adapter is then unregistered, `host_config`). */
   noKernelStores?: boolean;
 };
+
+/** The isolated project's source files. Only missing files are written, so a Host restarted on the same
+ * root (tests/scenarios/harness.ts) keeps what a Run or the test changed there. */
+export async function writeAG2bWorkspace(root: string): Promise<void> {
+  await mkdir(join(root, 'src'), { recursive: true });
+  const files: Array<[string, string]> = [
+    [join(root, 'src', 'module.ts'), 'export const ag2bMarker = "AG2B_ISOLATED_SOURCE";\n'],
+    [join(root, 'tsconfig.json'), JSON.stringify({
+      compilerOptions: { target: 'ES2022', module: 'ESNext', strict: true }, include: ['src/**/*.ts'],
+    })],
+  ];
+  for (const [path, text] of files) {
+    if (!existsSync(path)) await writeFile(path, text);
+  }
+}
+
+/** The one registered check configuration (`ag2b-static`, every Task): the Host's startup configuration and the
+ * scenario harness's in-process platforms build it here, so every copy is the same object (tests/scenarios/harness.ts). */
+export function ag2bChecksConfiguration(options: {
+  actor: WorkbenchActor;
+  command?: string;
+  timeoutMs?: number;
+  revision?: string;
+  kind?: TrustedCheckConfiguration['checks'][number]['kind'];
+}): TrustedCheckConfiguration {
+  return {
+    configurationRevision: options.revision ?? 'ag2b-checks@1', workspace: AG2B_WORKSPACE_REF, executor: options.actor,
+    permissionRevision: permissionRevision(options.actor, AG2B_SCOPE, ['.']),
+    sourceAccess: 'verification_workspace', processAccess: 'all_except_denied', deniedPrefixes: ['.git'],
+    checks: [{ checkId: 'ag2b-static', kind: options.kind ?? 'static', command: options.command ?? AG2B_CHECK_COMMAND,
+      cwd: '.', timeoutMs: options.timeoutMs ?? 30000, taskIds: 'all' }],
+  };
+}
 
 /** One real Host over the CLI startup file, a real SQLite ledger/Kernel and a
  * controlled Kernel provider. The vendor Skill root and the real instruction
@@ -148,13 +189,9 @@ export async function startAG2bHost(publicDir: string, overrides: AG2bOverrides 
   if (overrides.root === undefined) temporary.push(root);
   if (overrides.database === undefined) temporary.push(database);
   temporary.push(configDir);
-  await mkdir(join(root, 'src'), { recursive: true });
-  await writeFile(join(root, 'src', 'module.ts'), 'export const ag2bMarker = "AG2B_ISOLATED_SOURCE";\n');
-  await writeFile(join(root, 'tsconfig.json'), JSON.stringify({
-    compilerOptions: { target: 'ES2022', module: 'ESNext', strict: true }, include: ['src/**/*.ts'],
-  }));
+  await writeAG2bWorkspace(root);
   const skillsRoot = fileURLToPath(new URL('../../vendor/coding-agent/resources/skills', import.meta.url));
-  const actor: WorkbenchActor = { kind: 'human', id: 'ag2b-operator' };
+  const actor: WorkbenchActor = overrides.actor ?? { kind: 'human', id: 'ag2b-operator' };
   const scripted = createScriptedModel(overrides.replies ?? [], overrides.beforeReply);
   const queryScripted = createScriptedModel(overrides.queryReplies ?? [], overrides.queryBeforeReply);
   const registry = new ProviderRegistry().register({
@@ -205,13 +242,9 @@ export async function startAG2bHost(publicDir: string, overrides: AG2bOverrides 
     bindings: [{ workspace: AG2B_SCOPE, sessionRole: AG2B_WORK_ROLE, roleBinding: AG2B_WORK_ROLE_BINDING,
       budget: { tokenBudget: 1000000, deadline: null } }],
   };
-  const checks: TrustedCheckConfiguration = {
-    configurationRevision: 'ag2b-checks@1', workspace: AG2B_WORKSPACE_REF, executor: actor,
-    permissionRevision: permissionRevision(actor, AG2B_SCOPE, ['.']),
-    sourceAccess: 'verification_workspace', processAccess: 'all_except_denied', deniedPrefixes: ['.git'],
-    checks: [{ checkId: 'ag2b-static', kind: 'static', command: overrides.checkCommand ?? AG2B_CHECK_COMMAND,
-      cwd: '.', timeoutMs: 30000, taskIds: 'all' }],
-  };
+  const checks = ag2bChecksConfiguration({ actor, ...(overrides.checkCommand === undefined ? {} : { command: overrides.checkCommand }),
+    ...(overrides.checkTimeoutMs === undefined ? {} : { timeoutMs: overrides.checkTimeoutMs }),
+    ...(overrides.checkConfigurationRevision === undefined ? {} : { revision: overrides.checkConfigurationRevision }) });
   const configPath = join(configDir, 'workbench.json');
   await writeFile(configPath, JSON.stringify({
     sqliteDirectory: database,
@@ -268,42 +301,16 @@ export const plain = (scope: CoreScope, input: unknown) => ({ scope, input });
 export const asRecord = (value: unknown): Record<string, unknown> =>
   typeof value === 'object' && value !== null ? value as Record<string, unknown> : {};
 
-/** The frozen R5c graph relationship seed over the real HTTP routes: project,
- * workspace, completion policy, initial architecture, Goal and an adopted Plan
- * with one ordinary work plus the Goal gate. */
-export async function seedAG2bWorkGraph(host: AG2bHost, workIds: readonly string[] = [AG2B_WORK_TASK_ID]): Promise<{ workTarget: WorkLinkTarget; goalRef: GoalRef }> {
-  const post = (suffix: string, body: unknown) => corePost(host.base, suffix, host.token, body);
-  const committed = async (response: Response): Promise<unknown> => {
-    const body = await response.json() as unknown;
-    if (asRecord(body)['status'] !== 'committed') {
-      throw new Error(`the formal seed write did not commit: ${JSON.stringify(body)}`);
-    }
-    return asRecord(body)['value'];
-  };
-  await committed(await post('projects/create', graphWrite(AG2B_SCOPE, { projectId: AG2B_SCOPE.projectId },
-    'ag2b-project', [{ ref: AG2B_PROJECT_REF, revision: 0 }])));
-  await committed(await post('workspaces/register', graphWrite(AG2B_SCOPE, { workspace: AG2B_SCOPE },
-    'ag2b-workspace', [{ ref: AG2B_PROJECT_REF, revision: 1 }, { ref: AG2B_WORKSPACE_REF, revision: 0 }])));
-  const installed = await committed(await post('completion-policies/install', graphWrite(AG2B_SCOPE, {
-    policyId: 'ag2b-policy', contentRevision: 1,
-    content: { schemaVersion: 1, requirementKinds: ['static'], minimumRequiredRequirementsPerObligation: 1 },
-  }, 'ag2b-policy-install', [{ ref: AG2B_PROJECT_REF, revision: 1 }, { ref: AG2B_POLICY_REF, revision: 0 }]))) as Record<string, unknown>;
-  await committed(await post('completion-policies/activate', graphWrite(AG2B_SCOPE, {
-    target: { ref: asRecord(installed)['ref'], digest: asRecord(installed)['contentDigest'] },
-  }, 'ag2b-policy-activate', [{ ref: AG2B_PROJECT_REF, revision: 1 }, { ref: AG2B_POLICY_ACTIVE_REF, revision: 0 }])));
-  await committed(await post('architecture/adopt-initial', graphWrite(AG2B_SCOPE, {
-    baselineId: 'ag2b-baseline', description: 'AG2b isolated module boundary', constraints: [],
-    catalog: { requireDag: true, dependencies: [], modules: [{ ref: { projectId: AG2B_SCOPE.projectId, moduleId: 'ag2b-work' },
-      name: 'AG2b work', responsibility: 'Consult then write the isolated project', paths: ['src'], interfaces: [] }] },
-  }, 'ag2b-architecture', [{ ref: AG2B_PROJECT_REF, revision: 1 }, { ref: AG2B_WORKSPACE_REF, revision: 1 }])));
-  await committed(await post('goals/create', graphWrite(AG2B_SCOPE, {
-    goalId: AG2B_GOAL_REF.goalId, workspace: AG2B_SCOPE, objective: 'Deliver the AG2b continuous communication closure',
-  }, 'ag2b-goal', [{ ref: AG2B_PROJECT_REF, revision: 1 }, { ref: AG2B_WORKSPACE_REF, revision: 1 }])));
-  const draft = {
+/** The seed Plan: the required work Tasks plus the Goal gate, all carrying one
+ * obligation with one registered static requirement. Also seeded by the
+ * scenario harness's platform mode (tests/scenarios/harness.ts). */
+export function ag2bPlanDraft(workIds: readonly string[] = [AG2B_WORK_TASK_ID]): PlanRevisionDraft {
+  return {
     schemaVersion: 2, planId: 'ag2b-plan', planRevision: 1, goalId: AG2B_GOAL_REF.goalId, stages: [],
     tasks: [
-      ...workIds.map(taskId => ({ taskId, title: `Independent work ${taskId}`, requirementLevel: 'required',
-        taskKind: 'work', disposition: 'active', phase: 'pending', scope: { kind: 'goal' }, executionIntent: 'request_execution' })),
+      ...workIds.map(taskId => ({ taskId, title: `Independent work ${taskId}`, requirementLevel: 'required' as const,
+        taskKind: 'work' as const, disposition: 'active' as const, phase: 'pending' as const, scope: { kind: 'goal' as const },
+        executionIntent: 'request_execution' as const })),
       { taskId: AG2B_GATE_TASK_ID, title: 'Goal gate', requirementLevel: 'required', taskKind: 'gate',
         disposition: 'active', phase: 'pending', scope: { kind: 'goal' } },
     ],
@@ -314,16 +321,57 @@ export async function seedAG2bWorkGraph(host: AG2bHost, workIds: readonly string
         description: 'Registered static command check' }] }],
     taskHierarchy: { parentOf: [] }, executionDag: { dependsOn: [] }, taskRelations: [], inputRequirements: [],
   };
-  const proposed = await committed(await post('plans/propose', graphWrite(AG2B_SCOPE, {
-    goalRef: AG2B_GOAL_REF, basedOn: null, draft, reason: { text: 'AG2b initial plan', sources: [] },
-  }, 'ag2b-plan-propose', []))) as Record<string, unknown>;
-  await committed(await post('plans/apply', graphWrite(AG2B_SCOPE, {
-    proposalRef: asRecord(proposed)['ref'], expectedProposalRevision: asRecord(proposed)['revision'], decisionRefs: [],
-  }, 'ag2b-plan-apply', [])));
+}
+
+/** The frozen R5c graph relationship seed over the real HTTP routes: project,
+ * workspace, completion policy, initial architecture, Goal and an adopted Plan
+ * with one ordinary work plus the Goal gate. */
+export async function seedAG2bWorkGraph(host: AG2bHost, workIds: readonly string[] = [AG2B_WORK_TASK_ID]): Promise<{ workTarget: WorkLinkTarget; goalRef: GoalRef }> {
+  await seedAG2bWorkGraphThrough(async (suffix, body) => await (await corePost(host.base, suffix, host.token, body)).json() as unknown, workIds);
   return {
     workTarget: { kind: 'task', ref: { projectId: AG2B_SCOPE.projectId, goalId: AG2B_GOAL_REF.goalId, taskId: AG2B_WORK_TASK_ID } },
     goalRef: AG2B_GOAL_REF,
   };
+}
+
+/** One formal seed write: a core route suffix and its `graphWrite` body; answers the owner's result. */
+export type AG2bSeedWrite = (suffix: string, body: ReturnType<typeof graphWrite>) => Promise<unknown>;
+
+/** The same seed through any writer: the HTTP routes above, or the owners in process (the scenario
+ * harness's platform mode, tests/scenarios/harness.ts). Every write must commit. */
+export async function seedAG2bWorkGraphThrough(write: AG2bSeedWrite, workIds: readonly string[] = [AG2B_WORK_TASK_ID]): Promise<void> {
+  const committed = async (suffix: string, request: ReturnType<typeof graphWrite>): Promise<unknown> => {
+    const body = await write(suffix, request);
+    if (asRecord(body)['status'] !== 'committed') {
+      throw new Error(`the formal seed write did not commit: ${JSON.stringify(body)}`);
+    }
+    return asRecord(body)['value'];
+  };
+  await committed('projects/create', graphWrite(AG2B_SCOPE, { projectId: AG2B_SCOPE.projectId },
+    'ag2b-project', [{ ref: AG2B_PROJECT_REF, revision: 0 }]));
+  await committed('workspaces/register', graphWrite(AG2B_SCOPE, { workspace: AG2B_SCOPE },
+    'ag2b-workspace', [{ ref: AG2B_PROJECT_REF, revision: 1 }, { ref: AG2B_WORKSPACE_REF, revision: 0 }]));
+  const installed = await committed('completion-policies/install', graphWrite(AG2B_SCOPE, {
+    policyId: 'ag2b-policy', contentRevision: 1,
+    content: { schemaVersion: 1, requirementKinds: ['static'], minimumRequiredRequirementsPerObligation: 1 },
+  }, 'ag2b-policy-install', [{ ref: AG2B_PROJECT_REF, revision: 1 }, { ref: AG2B_POLICY_REF, revision: 0 }])) as Record<string, unknown>;
+  await committed('completion-policies/activate', graphWrite(AG2B_SCOPE, {
+    target: { ref: asRecord(installed)['ref'], digest: asRecord(installed)['contentDigest'] },
+  }, 'ag2b-policy-activate', [{ ref: AG2B_PROJECT_REF, revision: 1 }, { ref: AG2B_POLICY_ACTIVE_REF, revision: 0 }]));
+  await committed('architecture/adopt-initial', graphWrite(AG2B_SCOPE, {
+    baselineId: 'ag2b-baseline', description: 'AG2b isolated module boundary', constraints: [],
+    catalog: { requireDag: true, dependencies: [], modules: [{ ref: { projectId: AG2B_SCOPE.projectId, moduleId: 'ag2b-work' },
+      name: 'AG2b work', responsibility: 'Consult then write the isolated project', paths: ['src'], interfaces: [] }] },
+  }, 'ag2b-architecture', [{ ref: AG2B_PROJECT_REF, revision: 1 }, { ref: AG2B_WORKSPACE_REF, revision: 1 }]));
+  await committed('goals/create', graphWrite(AG2B_SCOPE, {
+    goalId: AG2B_GOAL_REF.goalId, workspace: AG2B_SCOPE, objective: 'Deliver the AG2b continuous communication closure',
+  }, 'ag2b-goal', [{ ref: AG2B_PROJECT_REF, revision: 1 }, { ref: AG2B_WORKSPACE_REF, revision: 1 }]));
+  const proposed = await committed('plans/propose', graphWrite(AG2B_SCOPE, {
+    goalRef: AG2B_GOAL_REF, basedOn: null, draft: ag2bPlanDraft(workIds), reason: { text: 'AG2b initial plan', sources: [] },
+  }, 'ag2b-plan-propose', [])) as Record<string, unknown>;
+  await committed('plans/apply', graphWrite(AG2B_SCOPE, {
+    proposalRef: asRecord(proposed)['ref'], expectedProposalRevision: asRecord(proposed)['revision'], decisionRefs: [],
+  }, 'ag2b-plan-apply', []));
 }
 
 export type AG2bSession = { sessionRef: SessionRef; sessionAggregateRef: SessionRef; revision: number };
