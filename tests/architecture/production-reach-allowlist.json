@@ -1,5 +1,5 @@
 {
-  "description": "Unreached src/ nodes allowed by tests/architecture/production-reach.test.ts. reason: step5/step6 (wired by A.2 step 5 or 6; substep names the substep, wiredBy the STEP5-FLIPS.md section or spec §15.2/§15.3 item; none may remain once its substep is closed, nor after step 6), pre-batch (already unreached at 790d970; the user decides later), wire-format (persisted or wire contract that must stay; the note names its reader). First filled 2026-10-05; port members and the review fixes added the same day.",
+  "description": "Unreached src/ nodes allowed by tests/architecture/production-reach.test.ts. reason: step5/step6 (wired by A.2 step 5 or 6; substep names the substep, wiredBy the STEP5-FLIPS.md section or spec §15.2/§15.3 item; none may remain once its substep is closed, nor after step 6), pre-batch (already unreached at 790d970; the user decides later), wire-format (persisted or wire contract that must stay; the note names its reader), kept-for (kept on purpose, not wired yet, for a named later user, decision 34; the note names it: slice N of the orchestration design, or an MVP-BEHAVIOR.md item). First filled 2026-10-05; port members and the review fixes added the same day.",
   "entries": [
     {
       "file": "src/app/collaboration-driver.ts",
@@ -442,8 +442,8 @@
     {
       "file": "src/contracts/human-role-collaboration.ts",
       "name": "CoordinationPolicyPin",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
+      "reason": "kept-for",
+      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; referenced nowhere"
     },
     {
       "file": "src/contracts/plan.ts",
@@ -508,92 +508,92 @@
     {
       "file": "src/contracts/role-material-channels.ts",
       "name": "RoleSourceIndexRequestV1",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from WorkspaceSourceIndexReader"
+      "reason": "kept-for",
+      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; only reached from WorkspaceSourceIndexReader"
     },
     {
       "file": "src/contracts/role-material-channels.ts",
       "name": "RoleSourceIndexEntryV1",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from WorkspaceSourceIndexReader"
+      "reason": "kept-for",
+      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; only reached from WorkspaceSourceIndexReader"
     },
     {
       "file": "src/contracts/role-material-channels.ts",
       "name": "RoleSourceIndexExcerptV1",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from WorkspaceSourceIndexReader"
+      "reason": "kept-for",
+      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; only reached from WorkspaceSourceIndexReader"
     },
     {
       "file": "src/contracts/role-material-channels.ts",
       "name": "RoleSourceIndexResultV1",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from WorkspaceSourceIndexReader"
+      "reason": "kept-for",
+      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; only reached from WorkspaceSourceIndexReader"
     },
     {
       "file": "src/contracts/role-material-channels.ts",
       "name": "RoleSourceIndexPort",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from WorkspaceSourceIndexReader"
+      "reason": "kept-for",
+      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; only reached from WorkspaceSourceIndexReader"
     },
     {
       "file": "src/contracts/role-spec.ts",
       "name": "ROLE_SPEC_REVISION",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from RoleConfigurationPort.installRoleSpec"
+      "reason": "kept-for",
+      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; only reached from RoleConfigurationPort.installRoleSpec"
     },
     {
       "file": "src/contracts/role-spec.ts",
       "name": "roleSpecRevisionRefFor",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
+      "reason": "kept-for",
+      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; referenced nowhere"
     },
     {
       "file": "src/contracts/role-spec.ts",
       "name": "InstallRoleSpecRevisionCommand",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from RoleConfigurationPort.installRoleSpec"
+      "reason": "kept-for",
+      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; only reached from RoleConfigurationPort.installRoleSpec"
     },
     {
       "file": "src/contracts/role-spec.ts",
       "name": "ActivateRoleSpecRevisionCommand",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from RoleConfigurationPort.activateRoleSpec"
+      "reason": "kept-for",
+      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; only reached from RoleConfigurationPort.activateRoleSpec"
     },
     {
       "file": "src/contracts/role-spec.ts",
       "name": "InstallRoleSpecRevisionReceipt",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from RoleConfigurationPort.installRoleSpec"
+      "reason": "kept-for",
+      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; only reached from RoleConfigurationPort.installRoleSpec"
     },
     {
       "file": "src/contracts/role-spec.ts",
       "name": "ActivateRoleSpecRevisionReceipt",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from RoleConfigurationPort.activateRoleSpec"
+      "reason": "kept-for",
+      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; only reached from RoleConfigurationPort.activateRoleSpec"
     },
     {
       "file": "src/contracts/role-spec.ts",
       "name": "installRoleSpecRevisionFingerprint",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from RoleConfigurationPort.installRoleSpec"
+      "reason": "kept-for",
+      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; only reached from RoleConfigurationPort.installRoleSpec"
     },
     {
       "file": "src/contracts/role-spec.ts",
       "name": "activateRoleSpecRevisionFingerprint",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from RoleConfigurationPort.activateRoleSpec"
+      "reason": "kept-for",
+      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; only reached from RoleConfigurationPort.activateRoleSpec"
     },
     {
       "file": "src/contracts/role-spec.ts",
       "name": "RoleSpecInstalledEvent",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from RoleConfigurationPort.installRoleSpec"
+      "reason": "kept-for",
+      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; only reached from RoleConfigurationPort.installRoleSpec"
     },
     {
       "file": "src/contracts/role-spec.ts",
       "name": "RoleSpecActivatedEvent",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from RoleConfigurationPort.activateRoleSpec"
+      "reason": "kept-for",
+      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; only reached from RoleConfigurationPort.activateRoleSpec"
     },
     {
       "file": "src/contracts/validation/common.ts",
@@ -670,20 +670,20 @@
     {
       "file": "src/contracts/validation/role.ts",
       "name": "validateRoleSpecInstallCommon",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from RoleConfigurationPort.installRoleSpec"
+      "reason": "kept-for",
+      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; only reached from RoleConfigurationPort.installRoleSpec"
     },
     {
       "file": "src/contracts/validation/role.ts",
       "name": "validateInstallRoleSpecRevisionCommand",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from RoleConfigurationPort.installRoleSpec"
+      "reason": "kept-for",
+      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; only reached from RoleConfigurationPort.installRoleSpec"
     },
     {
       "file": "src/contracts/validation/role.ts",
       "name": "validateActivateRoleSpecRevisionCommand",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from RoleConfigurationPort.activateRoleSpec"
+      "reason": "kept-for",
+      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; only reached from RoleConfigurationPort.activateRoleSpec"
     },
     {
       "file": "src/contracts/verification-context.ts",
@@ -778,20 +778,20 @@
     {
       "file": "src/core/work-graph/architecture/architecture-delta.ts",
       "name": "changeId",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from ObservedArchitecturePort.compareArchitecture"
+      "reason": "kept-for",
+      "note": "kept for slice 8 of the orchestration design (decision 34: formal-vs-observed comparison and the impact read); decision 6: wired with the new UI, backend first; unreached at 790d970; only reached from ObservedArchitecturePort.compareArchitecture"
     },
     {
       "file": "src/core/work-graph/architecture/architecture-delta.ts",
       "name": "deterministicCycles",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from ObservedArchitecturePort.compareArchitecture"
+      "reason": "kept-for",
+      "note": "kept for slice 8 of the orchestration design (decision 34: formal-vs-observed comparison and the impact read); decision 6: wired with the new UI, backend first; unreached at 790d970; only reached from ObservedArchitecturePort.compareArchitecture"
     },
     {
       "file": "src/core/work-graph/architecture/architecture-delta.ts",
       "name": "compareObservedGraphs",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from ObservedArchitecturePort.compareArchitecture"
+      "reason": "kept-for",
+      "note": "kept for slice 8 of the orchestration design (decision 34: formal-vs-observed comparison and the impact read); decision 6: wired with the new UI, backend first; unreached at 790d970; only reached from ObservedArchitecturePort.compareArchitecture"
     },
     {
       "file": "src/core/work-graph/architecture/architecture-record-codecs.ts",
@@ -802,110 +802,110 @@
     {
       "file": "src/core/work-graph/architecture/catalog-contracts.ts",
       "name": "ReviseArchitectureCatalogInput",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from ArchitectureCatalogPort.reviseArchitectureCatalog"
+      "reason": "kept-for",
+      "note": "kept for slice 8 of the orchestration design (decision 34: the architecture revision interface); decisions 6 and 21: catalog revision is wired after A.2, entered from a work result; unreached at 790d970; only reached from ArchitectureCatalogPort.reviseArchitectureCatalog"
     },
     {
       "file": "src/core/work-graph/architecture/catalog-contracts.ts",
       "name": "ArchitectureCatalogPort.reviseArchitectureCatalog",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; a port operation create-platform.ts publishes, but no route (core-routes.ts), Workflow or script reads it; used only by tests: tests/composition/A1-graph-session-platform.test.ts"
+      "reason": "kept-for",
+      "note": "kept for slice 8 of the orchestration design (decision 34: the architecture revision interface); decisions 6 and 21: catalog revision is wired after A.2, entered from a work result; unreached at 790d970; a port operation create-platform.ts publishes, but no route (core-routes.ts), Workflow or script reads it; used only by tests: tests/composition/A1-graph-session-platform.test.ts"
     },
     {
       "file": "src/core/work-graph/architecture/catalog-record-codecs.ts",
       "name": "ArchitectureCatalogRevisedEventV1",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from ArchitectureCatalogPort.reviseArchitectureCatalog"
+      "reason": "kept-for",
+      "note": "kept for slice 8 of the orchestration design (decision 34: the architecture revision interface); decisions 6 and 21: catalog revision is wired after A.2, entered from a work result; unreached at 790d970; only reached from ArchitectureCatalogPort.reviseArchitectureCatalog"
     },
     {
       "file": "src/core/work-graph/architecture/catalog-record-codecs.ts",
       "name": "encodeArchitectureCatalogRevisedEvent",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from ArchitectureCatalogPort.reviseArchitectureCatalog"
+      "reason": "kept-for",
+      "note": "kept for slice 8 of the orchestration design (decision 34: the architecture revision interface); decisions 6 and 21: catalog revision is wired after A.2, entered from a work result; unreached at 790d970; only reached from ArchitectureCatalogPort.reviseArchitectureCatalog"
     },
     {
       "file": "src/core/work-graph/architecture/catalog-record-codecs.ts",
       "name": "decodeArchitectureCatalogRevisedEvent",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from ArchitectureCatalogPort.reviseArchitectureCatalog"
+      "reason": "kept-for",
+      "note": "kept for slice 8 of the orchestration design (decision 34: the architecture revision interface); decisions 6 and 21: catalog revision is wired after A.2, entered from a work result; unreached at 790d970; only reached from ArchitectureCatalogPort.reviseArchitectureCatalog"
     },
     {
       "file": "src/core/work-graph/architecture/catalog-service.ts",
       "name": "REVISE_IDENTITY_PREFIX",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from ArchitectureCatalogPort.reviseArchitectureCatalog"
+      "reason": "kept-for",
+      "note": "kept for slice 8 of the orchestration design (decision 34: the architecture revision interface); decisions 6 and 21: catalog revision is wired after A.2, entered from a work result; unreached at 790d970; only reached from ArchitectureCatalogPort.reviseArchitectureCatalog"
     },
     {
       "file": "src/core/work-graph/architecture/catalog-service.ts",
       "name": "REVISE_COMMAND_TYPE",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from ArchitectureCatalogPort.reviseArchitectureCatalog"
+      "reason": "kept-for",
+      "note": "kept for slice 8 of the orchestration design (decision 34: the architecture revision interface); decisions 6 and 21: catalog revision is wired after A.2, entered from a work result; unreached at 790d970; only reached from ArchitectureCatalogPort.reviseArchitectureCatalog"
     },
     {
       "file": "src/core/work-graph/architecture/catalog-service.ts",
       "name": "MAX_REVISE_REASON_BYTES",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from ArchitectureCatalogPort.reviseArchitectureCatalog"
+      "reason": "kept-for",
+      "note": "kept for slice 8 of the orchestration design (decision 34: the architecture revision interface); decisions 6 and 21: catalog revision is wired after A.2, entered from a work result; unreached at 790d970; only reached from ArchitectureCatalogPort.reviseArchitectureCatalog"
     },
     {
       "file": "src/core/work-graph/architecture/catalog-service.ts",
       "name": "CallerScope",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from ArchitectureCatalogPort.reviseArchitectureCatalog"
+      "reason": "kept-for",
+      "note": "kept for slice 8 of the orchestration design (decision 34: the architecture revision interface); decisions 6 and 21: catalog revision is wired after A.2, entered from a work result; unreached at 790d970; only reached from ArchitectureCatalogPort.reviseArchitectureCatalog"
     },
     {
       "file": "src/core/work-graph/architecture/catalog-service.ts",
       "name": "readCallerScope",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from ArchitectureCatalogPort.reviseArchitectureCatalog"
+      "reason": "kept-for",
+      "note": "kept for slice 8 of the orchestration design (decision 34: the architecture revision interface); decisions 6 and 21: catalog revision is wired after A.2, entered from a work result; unreached at 790d970; only reached from ArchitectureCatalogPort.reviseArchitectureCatalog"
     },
     {
       "file": "src/core/work-graph/architecture/catalog-service.ts",
       "name": "restoreRevised",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from ArchitectureCatalogPort.reviseArchitectureCatalog"
+      "reason": "kept-for",
+      "note": "kept for slice 8 of the orchestration design (decision 34: the architecture revision interface); decisions 6 and 21: catalog revision is wired after A.2, entered from a work result; unreached at 790d970; only reached from ArchitectureCatalogPort.reviseArchitectureCatalog"
     },
     {
       "file": "src/core/work-graph/architecture/contracts.ts",
       "name": "ObservedArchitectureDeltaChange",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from ObservedArchitecturePort.compareArchitecture"
+      "reason": "kept-for",
+      "note": "kept for slice 8 of the orchestration design (decision 34: formal-vs-observed comparison and the impact read); decision 6: wired with the new UI, backend first; unreached at 790d970; only reached from ObservedArchitecturePort.compareArchitecture"
     },
     {
       "file": "src/core/work-graph/architecture/contracts.ts",
       "name": "ObservedArchitectureComparison",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from ObservedArchitecturePort.compareArchitecture"
+      "reason": "kept-for",
+      "note": "kept for slice 8 of the orchestration design (decision 34: formal-vs-observed comparison and the impact read); decision 6: wired with the new UI, backend first; unreached at 790d970; only reached from ObservedArchitecturePort.compareArchitecture"
     },
     {
       "file": "src/core/work-graph/architecture/contracts.ts",
       "name": "ObservedArchitectureImpact",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from ObservedArchitecturePort.queryImpact"
+      "reason": "kept-for",
+      "note": "kept for slice 8 of the orchestration design (decision 34: formal-vs-observed comparison and the impact read); decision 6: wired with the new UI, backend first; unreached at 790d970; only reached from ObservedArchitecturePort.queryImpact"
     },
     {
       "file": "src/core/work-graph/architecture/contracts.ts",
       "name": "ObservedArchitecturePort.compareArchitecture",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; a port operation create-platform.ts publishes, but no route (core-routes.ts), Workflow or script reads it; used only by tests: tests/composition/R3d-R3g-platform.test.ts, tests/work-graph/R3d-observed-architecture.test.ts"
+      "reason": "kept-for",
+      "note": "kept for slice 8 of the orchestration design (decision 34: formal-vs-observed comparison and the impact read); decision 6: wired with the new UI, backend first; unreached at 790d970; a port operation create-platform.ts publishes, but no route (core-routes.ts), Workflow or script reads it; used only by tests: tests/composition/R3d-R3g-platform.test.ts, tests/work-graph/R3d-observed-architecture.test.ts"
     },
     {
       "file": "src/core/work-graph/architecture/contracts.ts",
       "name": "ObservedArchitecturePort.queryImpact",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; a port operation create-platform.ts publishes, but no route (core-routes.ts), Workflow or script reads it; used only by tests: tests/work-graph/R3d-observed-architecture.test.ts, tests/work-graph/R3d-observed-boundaries.test.ts"
+      "reason": "kept-for",
+      "note": "kept for slice 8 of the orchestration design (decision 34: formal-vs-observed comparison and the impact read); decision 6: wired with the new UI, backend first; unreached at 790d970; a port operation create-platform.ts publishes, but no route (core-routes.ts), Workflow or script reads it; used only by tests: tests/work-graph/R3d-observed-architecture.test.ts, tests/work-graph/R3d-observed-boundaries.test.ts"
     },
     {
       "file": "src/core/work-graph/architecture/graph-index.ts",
       "name": "reverseAdjacency",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from ObservedArchitecturePort.queryImpact"
+      "reason": "kept-for",
+      "note": "kept for slice 8 of the orchestration design (decision 34: formal-vs-observed comparison and the impact read); decision 6: wired with the new UI, backend first; unreached at 790d970; only reached from ObservedArchitecturePort.queryImpact"
     },
     {
       "file": "src/core/work-graph/architecture/graph-index.ts",
       "name": "buildObservedImpact",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from ObservedArchitecturePort.queryImpact"
+      "reason": "kept-for",
+      "note": "kept for slice 8 of the orchestration design (decision 34: formal-vs-observed comparison and the impact read); decision 6: wired with the new UI, backend first; unreached at 790d970; only reached from ObservedArchitecturePort.queryImpact"
     },
     {
       "file": "src/core/work-graph/communication/mailbox-service.ts",
@@ -916,104 +916,104 @@
     {
       "file": "src/core/work-graph/configuration/contracts.ts",
       "name": "RoleReadOptions",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from RoleConfigurationPort.readRoleSpec"
+      "reason": "kept-for",
+      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; only reached from RoleConfigurationPort.readRoleSpec"
     },
     {
       "file": "src/core/work-graph/configuration/contracts.ts",
       "name": "RoleConfigurationPort.installRoleSpec",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; a port operation create-platform.ts publishes, but no route (core-routes.ts), Workflow or script reads it; used only by tests: tests/composition/R3d-R3g-platform.test.ts, tests/helpers/B2-runtime-fixture.ts, tests/helpers/C2-runtime-platform-fixture.ts, tests/work-graph/R3g-role-spec.test.ts, tests/work-graph/R4c-task-claim-boundaries.test.ts"
+      "reason": "kept-for",
+      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; a port operation create-platform.ts publishes, but no route (core-routes.ts), Workflow or script reads it; used only by tests: tests/composition/R3d-R3g-platform.test.ts, tests/helpers/B2-runtime-fixture.ts, tests/helpers/C2-runtime-platform-fixture.ts, tests/work-graph/R3g-role-spec.test.ts, tests/work-graph/R4c-task-claim-boundaries.test.ts"
     },
     {
       "file": "src/core/work-graph/configuration/contracts.ts",
       "name": "RoleConfigurationPort.readRoleSpec",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; a port operation create-platform.ts publishes, but no route (core-routes.ts), Workflow or script reads it; used only by tests: tests/composition/R3d-R3g-platform.test.ts, tests/work-graph/R3g-role-spec.test.ts"
+      "reason": "kept-for",
+      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; a port operation create-platform.ts publishes, but no route (core-routes.ts), Workflow or script reads it; used only by tests: tests/composition/R3d-R3g-platform.test.ts, tests/work-graph/R3g-role-spec.test.ts"
     },
     {
       "file": "src/core/work-graph/configuration/contracts.ts",
       "name": "RoleConfigurationPort.activateRoleSpec",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; a port operation create-platform.ts publishes, but no route (core-routes.ts), Workflow or script reads it; used only by tests: tests/composition/R3d-R3g-platform.test.ts, tests/helpers/B2-runtime-fixture.ts, tests/helpers/C2-runtime-platform-fixture.ts, tests/work-graph/R3g-role-spec.test.ts, tests/work-graph/R4c-task-claim-boundaries.test.ts"
+      "reason": "kept-for",
+      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; a port operation create-platform.ts publishes, but no route (core-routes.ts), Workflow or script reads it; used only by tests: tests/composition/R3d-R3g-platform.test.ts, tests/helpers/B2-runtime-fixture.ts, tests/helpers/C2-runtime-platform-fixture.ts, tests/work-graph/R3g-role-spec.test.ts, tests/work-graph/R4c-task-claim-boundaries.test.ts"
     },
     {
       "file": "src/core/work-graph/configuration/contracts.ts",
       "name": "RoleConfigurationPort.resolveRoleBinding",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; a port operation create-platform.ts publishes, but no route (core-routes.ts), Workflow or script reads it; used only by tests: tests/composition/B2-runtime-platform.test.ts, tests/helpers/B2-runtime-fixture.ts, tests/work-graph/R3g-role-spec.test.ts"
+      "reason": "kept-for",
+      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; a port operation create-platform.ts publishes, but no route (core-routes.ts), Workflow or script reads it; used only by tests: tests/composition/B2-runtime-platform.test.ts, tests/helpers/B2-runtime-fixture.ts, tests/work-graph/R3g-role-spec.test.ts"
     },
     {
       "file": "src/core/work-graph/configuration/role-memory-service.ts",
       "name": "CommittedStoreReceipt",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from RoleConfigurationPort.installRoleSpec, RoleConfigurationPort.activateRoleSpec"
+      "reason": "kept-for",
+      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; only reached from RoleConfigurationPort.installRoleSpec, RoleConfigurationPort.activateRoleSpec"
     },
     {
       "file": "src/core/work-graph/configuration/role-memory-service.ts",
       "name": "ROLE_INSTALL_IDENTITY_PREFIX",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from RoleConfigurationPort.installRoleSpec"
+      "reason": "kept-for",
+      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; only reached from RoleConfigurationPort.installRoleSpec"
     },
     {
       "file": "src/core/work-graph/configuration/role-memory-service.ts",
       "name": "ROLE_ACTIVATE_IDENTITY_PREFIX",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from RoleConfigurationPort.activateRoleSpec"
+      "reason": "kept-for",
+      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; only reached from RoleConfigurationPort.activateRoleSpec"
     },
     {
       "file": "src/core/work-graph/configuration/role-memory-service.ts",
       "name": "actorRefEquals",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from RoleConfigurationPort.installRoleSpec, RoleConfigurationPort.activateRoleSpec"
+      "reason": "kept-for",
+      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; only reached from RoleConfigurationPort.installRoleSpec, RoleConfigurationPort.activateRoleSpec"
     },
     {
       "file": "src/core/work-graph/configuration/role-memory-service.ts",
       "name": "roleInstallIdentityKey",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from RoleConfigurationPort.installRoleSpec"
+      "reason": "kept-for",
+      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; only reached from RoleConfigurationPort.installRoleSpec"
     },
     {
       "file": "src/core/work-graph/configuration/role-memory-service.ts",
       "name": "roleActivateIdentityKey",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from RoleConfigurationPort.activateRoleSpec"
+      "reason": "kept-for",
+      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; only reached from RoleConfigurationPort.activateRoleSpec"
     },
     {
       "file": "src/core/work-graph/configuration/role-memory-service.ts",
       "name": "mapInstallStoreFailure",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from RoleConfigurationPort.installRoleSpec"
+      "reason": "kept-for",
+      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; only reached from RoleConfigurationPort.installRoleSpec"
     },
     {
       "file": "src/core/work-graph/configuration/role-memory-service.ts",
       "name": "mapActivateStoreFailure",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from RoleConfigurationPort.activateRoleSpec"
+      "reason": "kept-for",
+      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; only reached from RoleConfigurationPort.activateRoleSpec"
     },
     {
       "file": "src/core/work-graph/configuration/role-record-codecs.ts",
       "name": "encodeRoleSpecRevisionSnapshot",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from RoleConfigurationPort.installRoleSpec"
+      "reason": "kept-for",
+      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; only reached from RoleConfigurationPort.installRoleSpec"
     },
     {
       "file": "src/core/work-graph/configuration/role-record-codecs.ts",
       "name": "encodeProjectRoleSpecActiveSnapshot",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from RoleConfigurationPort.activateRoleSpec"
+      "reason": "kept-for",
+      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; only reached from RoleConfigurationPort.activateRoleSpec"
     },
     {
       "file": "src/core/work-graph/configuration/role-record-codecs.ts",
       "name": "encodeRoleSpecInstalledEvent",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from RoleConfigurationPort.installRoleSpec"
+      "reason": "kept-for",
+      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; only reached from RoleConfigurationPort.installRoleSpec"
     },
     {
       "file": "src/core/work-graph/configuration/role-record-codecs.ts",
       "name": "encodeRoleSpecActivatedEvent",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from RoleConfigurationPort.activateRoleSpec"
+      "reason": "kept-for",
+      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; only reached from RoleConfigurationPort.activateRoleSpec"
     },
     {
       "file": "src/core/work-graph/evidence/contracts.ts",
@@ -1222,8 +1222,8 @@
     {
       "file": "src/core/workspace/role-source-reader.ts",
       "name": "WorkspaceSourceIndexReader",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; used only by tests: tests/data/workspace-path-boundary.test.ts"
+      "reason": "kept-for",
+      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; used only by tests: tests/data/workspace-path-boundary.test.ts"
     },
     {
       "file": "src/core/workspace/source-workspace-reader.ts",
