@@ -72,6 +72,7 @@ import type {
   AuthorizeConfiguration, KernelExecutionBinding, TaskEntryPermit,
 } from '../../src/core/work-graph/tasks/execution-entry-contracts.js';
 import { createExecutionEntryService } from '../../src/core/work-graph/tasks/execution-entry-service.js';
+import { readGoalPhase } from '../../src/core/work-graph/tasks/plan-readers.js';
 import { createTaskRequeueService } from '../../src/core/work-graph/tasks/requeue-service.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
 import { plainSessionRefToAggregate } from '../../src/core/work-graph/sessions/session-record-codecs.js';
@@ -256,12 +257,16 @@ async function bumpWorkspace(fixture: R3eEvidenceFixture): Promise<void> {
     .toMatchObject({ status: 'committed' });
 }
 
-/** The 5.5 owner `setGoalControl` as the operator, pinned to the Goal as it is now. */
+/** The 5.5 owner `setGoalControl` as the operator, pinned to the Goal and its GoalPhase as they are now (decision 29). */
 async function goalControl(fixture: R3eEvidenceFixture, control: 'pause' | 'resume' | 'cancel', requestId: string): Promise<void> {
   const goal = await fixture.b2.base.plans.queryGoal(fixture.ctx, fixture.goalRef);
   if (goal.status !== 'ready') throw Error('the Goal must be readable');
+  const phaseRef = { aggregateType: 'GoalPhase' as const, projectId: fixture.goalRef.projectId, goalId: fixture.goalRef.goalId };
+  const phase = await readGoalPhase(fixture.records, phaseRef);
+  if (phase.status !== 'ready') throw Error('the GoalPhase must be readable');
   expect(await fixture.b2.base.goals.setGoalControl(fixture.ctx, { input: { goalRef: fixture.goalRef, control,
-    reason: `operator ${control}` }, meta: { requestId, expected: [{ ref: fixture.goalRef, revision: goal.value.goal.revision }] } }))
+    reason: `operator ${control}` }, meta: { requestId, expected: [{ ref: fixture.goalRef, revision: goal.value.goal.revision },
+      { ref: phaseRef, revision: phase.snapshot?.revision ?? 0 }] } }))
     .toMatchObject({ status: 'committed',
       value: { desiredState: control === 'pause' ? 'paused' : control === 'resume' ? 'active' : 'cancelled' } });
 }

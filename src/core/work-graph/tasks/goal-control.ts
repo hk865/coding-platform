@@ -4,9 +4,10 @@
  * entry registered on `GoalTaskPort`.
  *
  * Order: bind the Host context and isolate the request; check the input and
- * the pins (`meta.expected` = the Goal pin, optionally the GoalPhase pin, 0 =
- * none); look up the receipt and replay the ORIGINAL snapshot from the recorded
- * `GoalDesiredStateChanged` event; read the Goal and the GoalPhase; ask
+ * the pins (`meta.expected` = exactly the Goal pin and the GoalPhase pin, 0 =
+ * none stored; both required, HANDOFF decision 29); look up the receipt and
+ * replay the ORIGINAL snapshot from the recorded `GoalDesiredStateChanged`
+ * event; read the Goal and the GoalPhase; ask
  * `transitionGoal` (`state/goal-machine.ts`), which also builds the next Goal
  * (`nextGoalDesiredState`, §14.1); commit the Goal, the event and the
  * receipt ONCE, CASing the Goal and (pause/cancel) the GoalPhase as read.
@@ -73,19 +74,21 @@ function inputProblem(value: unknown, projectId: string): string | null {
   return null;
 }
 
-/** `meta.expected`: exactly the Goal pin, plus at most the GoalPhase pin (0 = none read). */
+/**
+ * `meta.expected`: exactly the Goal pin and the GoalPhase pin (0 = none stored). The GoalPhase pin is
+ * required (HANDOFF decision 29), so a control sent from a stale screen never acts on a newer state;
+ * like the requeue and reverify pins, a missing one is `invalid` before the receipt lookup.
+ */
 function checkPins(expected: readonly VersionPin[], goalRef: GoalRef, phaseRef: GoalPhaseRef):
-{ goal: number; goalPhase: number | null } | CoreRejection {
+{ goal: number; goalPhase: number } | CoreRejection {
   const goalPin = expected.find((pin) => isRecord(pin) && sameRef(pin.ref, goalRef));
   const phasePin = expected.find((pin) => isRecord(pin) && sameRef(pin.ref, phaseRef));
-  if (goalPin === undefined || expected.length !== (phasePin === undefined ? 1 : 2)) {
-    return invalid('meta.expected must pin the Goal and at most its GoalPhase');
+  if (goalPin === undefined || phasePin === undefined || expected.length !== 2) {
+    return invalid('meta.expected must pin the Goal and its GoalPhase (0 = none stored)');
   }
   if (!Number.isSafeInteger(goalPin.revision) || goalPin.revision < 1) return invalid('the Goal pin must be a positive safe revision');
-  if (phasePin !== undefined && (!Number.isSafeInteger(phasePin.revision) || phasePin.revision < 0)) {
-    return invalid('the GoalPhase pin must be revision 0 or higher');
-  }
-  return { goal: goalPin.revision, goalPhase: phasePin === undefined ? null : phasePin.revision };
+  if (!Number.isSafeInteger(phasePin.revision) || phasePin.revision < 0) return invalid('the GoalPhase pin must be revision 0 or higher');
+  return { goal: goalPin.revision, goalPhase: phasePin.revision };
 }
 
 /** Restore the ORIGINAL snapshot from the recorded event (LA-7: the original `desiredStateRequestedBy`). */
@@ -163,8 +166,7 @@ export async function setGoalControlFromHost(
   const decided = transitionGoal(state, {
     type: control === 'pause' ? 'goal_pause_requested' : control === 'resume' ? 'goal_resume_requested' : 'goal_cancel_requested',
     expectedGoalRevision: pins.goal,
-    // No GoalPhase pin: the commit guards the GoalPhase as read.
-    expectedGoalPhaseRevision: pins.goalPhase ?? phaseRead.snapshot?.revision ?? 0,
+    expectedGoalPhaseRevision: pins.goalPhase,
     reason: input.reason,
     requestedBy: actor,
   }, { callerClass: reworkActorClassOf(ownedCtx.ctx.principal, actor), scopePinsAgree: true, goalInWorkspace: true,

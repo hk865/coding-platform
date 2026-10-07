@@ -74,7 +74,7 @@ import {
   AG2B_RUNTIME_BUDGET, AG2B_SCOPE, AG2B_WORK_TASK_ID, createAG2bSession, graphWrite, plain, seedAG2bWorkGraph, startAG2bHost, type AG2bHost,
 } from '../helpers/AG2b-collaboration-fixture.js';
 import {
-  TASK, answer, controlGoal, moveKernelAside, post, publicDirectory, readControl, readExecution, readGoal, selectWork,
+  TASK, answer, controlGoal, goalControlPins, moveKernelAside, post, publicDirectory, readControl, readExecution, readGoal, selectWork,
   submitControl, tempDir, workRow, writeAutomationSettings,
 } from '../helpers/A2-restart-fixture.js';
 import {
@@ -962,11 +962,9 @@ it('GOAL-05 (LA-7): a Goal a person paused is resumed only by a person; the auto
   await assertInvariants(h, 'GOAL-05 paused by the operator');
 
   const platform = await h.direct();
-  const resumeAs = async (ctx: ReturnType<typeof hostCtx>, requestId: string) => {
-    const goal = await readGoal(h.host);
-    return platform.goals.setGoalControl(ctx, { input: { goalRef: AG2B_GOAL_REF, control: 'resume', reason: 'resume without a person' },
-      meta: { requestId, expected: [{ ref: AG2B_GOAL_REF, revision: goal.revision }] } });
-  };
+  const resumeAs = async (ctx: ReturnType<typeof hostCtx>, requestId: string) =>
+    platform.goals.setGoalControl(ctx, { input: { goalRef: AG2B_GOAL_REF, control: 'resume', reason: 'resume without a person' },
+      meta: { requestId, expected: await goalControlPins(h.host) } });
   const before = h.counts();
   // §2.4: the platform automation actors (class system) cannot resume a person's pause (hard limit 3).
   expect(await resumeAs(hostCtx(WORKFLOW_AUTOMATION_ACTOR), 'a7-goal05-automation')).toMatchObject({ status: 'rejected', code: 'forbidden' });
@@ -1156,9 +1154,8 @@ it('G-04 and GOAL-29: a Run the Goal fan-out paused ends paused-interrupted at t
       .toMatchObject({ status: 'rejected', code: 'busy' });
 
     // GOAL-29: the operator resumes the Goal; the fan-out continues the Task with a goal_resume trigger.
-    const goal = await readGoal(second);
     const resumeBody = graphWrite(AG2B_SCOPE, { goalRef: AG2B_GOAL_REF, control: 'resume', reason: 'operator resumes after the restart' },
-      'a2-goal29-resume', [{ ref: AG2B_GOAL_REF, revision: goal.revision }]);
+      'a2-goal29-resume', await goalControlPins(second));
     const resumed = await post<WriteResult<{ fanOut: { continuations?: unknown[] } }>>(second, 'goals/control', resumeBody);
     if (resumed.status !== 'committed') throw new Error(`resume: ${JSON.stringify(resumed)}`);
     expect(resumed.value.fanOut).toMatchObject({ control: 'resume', problem: null, runs: [],

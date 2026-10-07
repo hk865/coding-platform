@@ -72,9 +72,15 @@ async function goalOf(platform: Platform, fixture: TaskClaimFixture): Promise<Go
   return read.value.goal;
 }
 
+/** A Goal control pinned to the Goal and its GoalPhase as the task graph reads it (decision 29; 0 = none stored). */
 async function control(platform: Platform, fixture: TaskClaimFixture, kind: 'pause' | 'resume' | 'cancel', requestId: string) {
+  const graph = await platform.plans.queryTaskGraph(fixture.ctx, { goalRef: fixture.goalRef });
+  if (graph.status !== 'ready') throw new Error('the task graph must be readable');
+  const completion = graph.value.completion;
   return { input: { goalRef: fixture.goalRef, control: kind, reason: `operator ${kind}` },
-    meta: { requestId, expected: [{ ref: fixture.goalRef, revision: (await goalOf(platform, fixture)).revision }] } };
+    meta: { requestId, expected: [{ ref: fixture.goalRef, revision: (await goalOf(platform, fixture)).revision },
+      { ref: { aggregateType: 'GoalPhase' as const, projectId: fixture.goalRef.projectId, goalId: fixture.goalRef.goalId },
+        revision: completion?.status === 'recorded' ? completion.snapshot.revision : 0 }] } };
 }
 
 async function pointerOf(platform: Platform, ctx: CoreCallContext, runRef: RunRef) {
@@ -431,7 +437,8 @@ describe('Goal fan-out re-drive (§2.3 GOAL-14, GOAL-28)', () => {
     const aborted = new AbortController();
     aborted.abort('the client went away');
     const written = await driver.setGoalControl({ ...HOST_CTX, signal: aborted.signal }, { input: { goalRef: GOAL_REF, control: 'pause',
-      reason: null }, meta: { requestId: 'drv-signal-pause', expected: [{ ref: GOAL_REF, revision: 1 }] } });
+      reason: null }, meta: { requestId: 'drv-signal-pause', expected: [{ ref: GOAL_REF, revision: 1 },
+        { ref: { aggregateType: 'GoalPhase', projectId: P, goalId: GOAL_REF.goalId }, revision: 0 }] } });
     expect(written.status === 'committed' && written.value.fanOut.runs).toMatchObject([{ runRef: RUN_REF, outcome: 'submitted' }]);
     expect(world.submissions).toHaveLength(1);
     expect(world.submissions[0]!.signal.aborted).toBe(false);

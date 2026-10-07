@@ -27,6 +27,7 @@ import { UI_PLATFORM_TOKEN_META_NAME } from '../../src/ui/api/protocol.js';
 import { HOST_INSTANCE_LOCK_FILE } from '../../src/app/host-instance-lease.js';
 import type { WorkflowAdvanceInput, WorkflowAdvanceResult } from '../../src/business/workflow/contracts.js';
 import type { ControlIntentSnapshotV1, SubmittedControl } from '../../src/contracts/control-intent.js';
+import type { VersionPin } from '../../src/contracts/core/identity.js';
 import type { ReadResult, WriteResult } from '../../src/contracts/core/results.js';
 import type { RunRef } from '../../src/contracts/dispatch.js';
 import type { GoalSnapshot } from '../../src/contracts/ledger.js';
@@ -150,12 +151,26 @@ export async function submitControl(host: AG2bHost, runRef: RunRef, kind: 'pause
   return submitted.value;
 }
 
+/**
+ * The two pins a goals/control requires (HANDOFF decision 29): the seeded Goal at its current revision
+ * (or the given one) and its GoalPhase as `tasks/query` reads it (`completion`: recorded → its revision,
+ * not recorded → 0), the source the Workflow pins `completeGoal` with.
+ */
+export async function goalControlPins(host: AG2bHost, goalRevision?: number): Promise<VersionPin[]> {
+  const revision = goalRevision ?? (await readGoal(host)).revision;
+  const graph = await post<ReadResult<{ completion?: { status: 'not_recorded' } | { status: 'recorded'; snapshot: { revision: number } } }>>(
+    host, 'tasks/query', plain(AG2B_SCOPE, { goalRef: AG2B_GOAL_REF }));
+  if (graph.status !== 'ready') throw new Error(`the task graph must be readable: ${JSON.stringify(graph)}`);
+  const completion = graph.value.completion;
+  return [{ ref: AG2B_GOAL_REF, revision }, { ref: { aggregateType: 'GoalPhase', projectId: AG2B_GOAL_REF.projectId,
+    goalId: AG2B_GOAL_REF.goalId }, revision: completion?.status === 'recorded' ? completion.snapshot.revision : 0 }];
+}
+
 /** goals/control of the seeded Goal at its current revision. */
 export async function controlGoal(host: AG2bHost, control: 'pause' | 'resume' | 'cancel', requestId: string):
   Promise<WriteResult<GoalControlOutcomeV1>> {
-  const goal = await readGoal(host);
   return post<WriteResult<GoalControlOutcomeV1>>(host, 'goals/control', graphWrite(AG2B_SCOPE,
-    { goalRef: AG2B_GOAL_REF, control, reason: `operator ${control}` }, requestId, [{ ref: AG2B_GOAL_REF, revision: goal.revision }]));
+    { goalRef: AG2B_GOAL_REF, control, reason: `operator ${control}` }, requestId, await goalControlPins(host)));
 }
 
 /** A pid that answers no signal: a short child process that has already exited. */
@@ -258,10 +273,9 @@ Promise<PausedOnClosedHost> {
       const runRef = (await workRow(first)).execution;
       if (runRef === null) throw new Error('the work Task must have a Run while its Turn calls the model');
       if (pause === 'goal') {
-        const goal = await readGoal(first);
         goalPaused = await post<WriteResult<GoalControlOutcomeV1>>(first, 'goals/control', graphWrite(AG2B_SCOPE,
           { goalRef: AG2B_GOAL_REF, control: 'pause', reason: 'operator pauses the Goal before the restart' }, 'a2-restart-goal-pause',
-          [{ ref: AG2B_GOAL_REF, revision: goal.revision }]));
+          await goalControlPins(first)));
         return;
       }
       const run = (await readExecution(first, runRef)).run;

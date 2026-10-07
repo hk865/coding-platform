@@ -42,7 +42,7 @@ import {
   GOAL_RECORD_SCHEMAS, canonicalRefKey, encodeProjectSnapshot, encodeWorkspaceSnapshot,
 } from '../../src/core/work-graph/persistence/record-codecs.js';
 import { PLAN_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/plan-record-codecs.js';
-import { PLAN_STATE_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/plan-readers.js';
+import { PLAN_STATE_RECORD_SCHEMAS, readGoalPhase } from '../../src/core/work-graph/tasks/plan-readers.js';
 import { materialRecordSchemas } from '../../src/core/work-graph/materials/record-readers.js';
 import { CONTROL_RECORD_SCHEMAS, encodeControlIntentSnapshot } from '../../src/core/work-graph/persistence/control-record-codecs.js';
 import { COMPLETION_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/completion-record-codecs.js';
@@ -264,12 +264,16 @@ async function setup() {
       events: [{ ...event, json: JSON.stringify(event) }], claims: [], indexGuards: [], indexChanges: [] });
     if (result.status !== 'committed') throw new Error(`C7 human stop failed: ${JSON.stringify(result)}`);
   }
-  /** GOAL-04: the operator pauses the Goal. */
+  /** GOAL-04: the operator pauses the Goal, pinning the Goal and its GoalPhase as read (decision 29). */
   async function pauseGoal(): Promise<void> {
     const read = await plans.queryGoal(ctx, goalRef);
     if (read.status !== 'ready') throw new Error('the Goal must be readable');
+    const phaseRef = { aggregateType: 'GoalPhase' as const, projectId: goalRef.projectId, goalId: goalRef.goalId };
+    const phase = await readGoalPhase(backend.records, phaseRef);
+    if (phase.status !== 'ready') throw new Error('the GoalPhase must be readable');
     const paused = await goals.setGoalControl(ctx, { meta: { requestId: 'c7-pause-goal',
-      expected: [{ ref: goalRef, revision: read.value.goal.revision }] }, input: { goalRef, control: 'pause', reason: null } });
+      expected: [{ ref: goalRef, revision: read.value.goal.revision }, { ref: phaseRef, revision: phase.snapshot?.revision ?? 0 }] },
+      input: { goalRef, control: 'pause', reason: null } });
     if (paused.status !== 'committed' || paused.value.desiredState !== 'paused') throw new Error(`C7 pause failed: ${JSON.stringify(paused)}`);
   }
   const planServiceOver = (records: typeof backend.records) =>

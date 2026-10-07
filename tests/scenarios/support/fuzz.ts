@@ -30,6 +30,7 @@ import type { WorkflowAdvanceInput, WorkflowAdvanceResult, WorkflowStepReceipt }
 import type { ActorRef } from '../../../src/contracts/command-event.js';
 import type { ControlIntentKindV1, ControlIntentSnapshotV1 } from '../../../src/contracts/control-intent.js';
 import type { CoreCallContext } from '../../../src/contracts/core/call-context.js';
+import type { VersionPin } from '../../../src/contracts/core/identity.js';
 import type { TaskClaim } from '../../../src/contracts/core/task-claim.js';
 import type { RunRef, RunSnapshot, RuntimeEventV1, TaskTriple } from '../../../src/contracts/dispatch.js';
 import { canonicalJson } from '../../../src/contracts/fingerprint.js';
@@ -268,6 +269,12 @@ export function reworkStepKind(answer: unknown, done: FuzzStepKind): FuzzStepKin
 export function pointerIntentIn(world: InvariantWorld, run: RunSnapshot): ControlIntentSnapshotV1 | null {
   const ref = run.controlState?.intentRef;
   return ref === undefined ? null : world.intents.find((intent) => intent.ref.intentId === ref.intentId) ?? null;
+}
+
+/** The GoalPhase pin a Goal control requires (HANDOFF decision 29): the GoalPhase as the checked world read it, 0 = none stored. */
+function goalPhasePinIn(world: InvariantWorld, goalRef: { projectId: string; goalId: string }): VersionPin {
+  const phase = world.goalPhases.find((candidate) => candidate.ref.projectId === goalRef.projectId && candidate.ref.goalId === goalRef.goalId);
+  return { ref: { aggregateType: 'GoalPhase', projectId: goalRef.projectId, goalId: goalRef.goalId }, revision: phase?.revision ?? 0 };
 }
 
 /** `reworkFenceOf` of a Run in a checked world (§4 hard limit 3: the human-stop fence). */
@@ -1264,10 +1271,12 @@ export class HostFuzz {
 
   /** A person resumes the Goal through its owner alone (`goals.setGoalControl` with the Host actor): GOAL-05 commits and no fan-out runs. */
   private async ownerGoalResume(): Promise<void> {
-    const goal = this.world().goals[0]!;
+    const world = this.world();
+    const goal = world.goals[0]!;
     const direct = await this.h.direct();
     const answer = await this.quietRefusal('owner Goal resume', () => direct.goals.setGoalControl(hostCtx(this.h.stepActor()), {
-      meta: { requestId: this.requestId('goal-resume-owner'), expected: [{ ref: AG2B_GOAL_REF, revision: goal.revision }] },
+      meta: { requestId: this.requestId('goal-resume-owner'),
+        expected: [{ ref: AG2B_GOAL_REF, revision: goal.revision }, goalPhasePinIn(world, AG2B_GOAL_REF)] },
       input: { goalRef: AG2B_GOAL_REF, control: 'resume', reason: 'fuzz owner resume (no fan-out)' } }));
     this.counts.add(`goal:resume-owner:${outcomeOf(answer)}`);
     this.record(`  Goal resume through the owner (no fan-out): ${outcomeOf(answer)}${reasonOf(answer)}`);
@@ -1862,9 +1871,11 @@ export class HostFuzz {
   }
 
   private async goalControl(control: 'pause' | 'resume' | 'cancel', what: string): Promise<Answer> {
-    const goal = this.world().goals[0]!;
+    const world = this.world();
+    const goal = world.goals[0]!;
     const answer = await this.quietRefusal(`Goal ${control}`, () => this.h.answer('goals/control', graphWrite(AG2B_SCOPE,
-      { goalRef: AG2B_GOAL_REF, control, reason: `fuzz ${what}` }, this.requestId(`goal-${control}`), [{ ref: AG2B_GOAL_REF, revision: goal.revision }])));
+      { goalRef: AG2B_GOAL_REF, control, reason: `fuzz ${what}` }, this.requestId(`goal-${control}`),
+      [{ ref: AG2B_GOAL_REF, revision: goal.revision }, goalPhasePinIn(world, AG2B_GOAL_REF)])));
     const outcome = outcomeOf(answer);
     const fanOut = ((answer['value'] ?? {}) as { fanOut?: { runs?: Array<{ outcome: string }>; continuations?: Array<{ outcome: string }> } }).fanOut;
     const runs = fanOut?.runs ?? [];
@@ -1900,7 +1911,8 @@ export class HostFuzz {
       const ctx: CoreCallContext = who === 'agent' ? workRunCtx(this.rng.pick(this.world().runs).ref)
         : hostCtx(who === 'system' ? { ...WORKFLOW_AUTOMATION_ACTOR } : { ...GOAL_FAN_OUT_ACTOR });
       const answer = await this.quietRefusal('Goal resume by a non-person', () => platform.goals.setGoalControl(ctx, { meta: { requestId: this.requestId('goal-resume-automatic'),
-        expected: [{ ref: AG2B_GOAL_REF, revision: goal.revision }] }, input: { goalRef: AG2B_GOAL_REF, control: 'resume', reason: 'fuzz automatic resume' } }));
+        expected: [{ ref: AG2B_GOAL_REF, revision: goal.revision }, goalPhasePinIn(this.world(), AG2B_GOAL_REF)] },
+        input: { goalRef: AG2B_GOAL_REF, control: 'resume', reason: 'fuzz automatic resume' } }));
       const outcome = outcomeOf(answer);
       this.counts.add(`goal:resume-by-${who}:${outcome}`);
       this.record(`Goal resume by ${who}: ${outcome}${reasonOf(answer)}`);
@@ -2578,7 +2590,8 @@ export class AgentFuzz {
     const control = goal.desiredState === 'active' ? 'pause' as const : 'resume' as const;
     const caller: AgentCaller = control === 'resume' && this.rng.chance(0.35) ? this.rng.pick<AgentCaller>(['system', 'system', 'agent']) : 'human';
     const answer = await this.quietRefusal(`Goal ${control}`, () => base.goals.setGoalControl(this.ctxFor(caller), { input: { goalRef: base.goalRef, control, reason: `fuzz ${control}` },
-      meta: { requestId: this.requestId(`goal-${control}`), expected: [{ ref: base.goalRef, revision: goal.revision }] } }));
+      meta: { requestId: this.requestId(`goal-${control}`),
+        expected: [{ ref: base.goalRef, revision: goal.revision }, goalPhasePinIn(this.world(), base.goalRef)] } }));
     const outcome = outcomeOf(answer);
     this.counts.add(`goal:${control}:${caller}:${outcome}`);
     this.record(`Goal ${control} by ${caller}: ${outcome}${reasonOf(answer)}`);
@@ -2602,7 +2615,8 @@ export class AgentFuzz {
     const goal = this.goalOf();
     if (goal.desiredState === 'cancelled') return;
     const answer = await this.quietRefusal('Goal cancel', () => base.goals.setGoalControl(this.hostCtx(), { input: { goalRef: base.goalRef, control: 'cancel',
-      reason: 'fuzz cancel' }, meta: { requestId: this.requestId('goal-cancel'), expected: [{ ref: base.goalRef, revision: goal.revision }] } }));
+      reason: 'fuzz cancel' }, meta: { requestId: this.requestId('goal-cancel'), expected: [{ ref: base.goalRef, revision: goal.revision },
+      goalPhasePinIn(this.world(), base.goalRef)] } }));
     this.counts.add(`goal:cancel:${outcomeOf(answer)}`);
     this.record(`Goal cancel by human: ${outcomeOf(answer)}${reasonOf(answer)}`);
     await this.gate.check('Goal cancel');

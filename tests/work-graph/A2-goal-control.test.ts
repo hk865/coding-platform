@@ -9,6 +9,8 @@
  *   reopens and after a later control.
  * - The pins, the §2.4 refusals and LA-7 (an operator's pause is resumed only
  *   by an operator; a Host started with a `kind:'system'` actor is an operator).
+ *   The GoalPhase pin is required (HANDOFF decision 29): without it a control
+ *   is `invalid` before the receipt lookup and nothing is committed.
  * - D-9: a paused Goal makes a claim `busy`, no Task eligible and the
  *   completion `busy`; nothing is written.
  * - The Goal fence of a control submission is a read-only Goal CAS:
@@ -84,13 +86,23 @@ function request(fixture: TaskClaimFixture, control: SetGoalControlInput['contro
   return { input: { goalRef: fixture.goalRef, control, reason }, meta: { requestId, expected } };
 }
 
+/** The GoalPhase pin as the task graph reads it (required since HANDOFF decision 29; 0 = none stored). */
+async function phasePinOf(platform: Platform, fixture: TaskClaimFixture): Promise<VersionPin> {
+  const graph = await platform.plans.queryTaskGraph(fixture.ctx, { goalRef: fixture.goalRef });
+  if (graph.status !== 'ready') throw new Error('the task graph must be readable');
+  const completion = graph.value.completion;
+  return { ref: { aggregateType: 'GoalPhase', projectId: fixture.goalRef.projectId, goalId: fixture.goalRef.goalId },
+    revision: completion?.status === 'recorded' ? completion.snapshot.revision : 0 };
+}
+
 describe('setGoalControl (GOAL-04…06)', () => {
   it('commits the desired state, its epoch and requester; a replay restores the original snapshot', async () => {
     const { fixture, platform: first } = await setup();
     let platform = first;
     const before = await goalOf(platform, fixture);
     expect(before).toMatchObject({ desiredState: 'active', desiredStateRevision: 1, desiredStateRequestedBy: null });
-    const pause = request(fixture, 'pause', 'a2-goal-svc-pause', [{ ref: fixture.goalRef, revision: before.revision }]);
+    const phasePin = await phasePinOf(platform, fixture);
+    const pause = request(fixture, 'pause', 'a2-goal-svc-pause', [{ ref: fixture.goalRef, revision: before.revision }, phasePin]);
     const paused = await platform.goals.setGoalControl(fixture.ctx, pause);
     if (paused.status !== 'committed') throw new Error(`pause: ${JSON.stringify(paused)}`);
     const operator = fixture.ctx.principal.kind === 'host' ? fixture.ctx.principal.actor : null;
@@ -113,25 +125,28 @@ describe('setGoalControl (GOAL-04…06)', () => {
       .toMatchObject({ status: 'committed', replayed: true, value: paused.value });
     // The same identity with other content is not the original request.
     expect(await platform.goals.setGoalControl(fixture.ctx, request(fixture, 'pause', 'a2-goal-svc-pause',
-      [{ ref: fixture.goalRef, revision: before.revision }], 'another reason'))).toMatchObject({ status: 'rejected', code: 'idempotency_conflict' });
+      [{ ref: fixture.goalRef, revision: before.revision }, phasePin], 'another reason'))).toMatchObject({ status: 'rejected', code: 'idempotency_conflict' });
   });
 
   it('checks the input and the pins; a stale pin names the current Goal and writes nothing', async () => {
     const { fixture, platform } = await setup();
     const goal = await goalOf(platform, fixture);
     const goalPin = { ref: fixture.goalRef, revision: goal.revision };
+    const phasePin = await phasePinOf(platform, fixture);
     const control = (input: unknown, expected: unknown[], requestId = 'a2-goal-svc-bad') =>
       platform.goals.setGoalControl(fixture.ctx, { input, meta: { requestId, expected } } as unknown as GraphWrite<SetGoalControlInput>);
-    expect(await control({ goalRef: fixture.goalRef, control: 'stop', reason: null }, [goalPin])).toMatchObject({ code: 'invalid' });
-    expect(await control({ goalRef: fixture.goalRef, control: 'pause', reason: '' }, [goalPin])).toMatchObject({ code: 'invalid' });
-    expect(await control({ goalRef: fixture.goalRef, control: 'pause', reason: 'x'.repeat(2049) }, [goalPin])).toMatchObject({ code: 'invalid' });
-    expect(await control({ goalRef: fixture.goalRef, control: 'pause', reason: null, extra: 1 }, [goalPin])).toMatchObject({ code: 'invalid' });
+    expect(await control({ goalRef: fixture.goalRef, control: 'stop', reason: null }, [goalPin, phasePin])).toMatchObject({ code: 'invalid' });
+    expect(await control({ goalRef: fixture.goalRef, control: 'pause', reason: '' }, [goalPin, phasePin])).toMatchObject({ code: 'invalid' });
+    expect(await control({ goalRef: fixture.goalRef, control: 'pause', reason: 'x'.repeat(2049) }, [goalPin, phasePin]))
+      .toMatchObject({ code: 'invalid' });
+    expect(await control({ goalRef: fixture.goalRef, control: 'pause', reason: null, extra: 1 }, [goalPin, phasePin]))
+      .toMatchObject({ code: 'invalid' });
     expect(await control({ goalRef: fixture.goalRef, control: 'pause', reason: null }, [])).toMatchObject({ code: 'invalid' });
     expect(await control({ goalRef: fixture.goalRef, control: 'pause', reason: null },
       [goalPin, { ref: fixture.planRef, revision: 1 }])).toMatchObject({ code: 'invalid' });
-    expect(await control({ goalRef: { ...fixture.goalRef, projectId: 'p-other' }, control: 'pause', reason: null }, [goalPin]))
+    expect(await control({ goalRef: { ...fixture.goalRef, projectId: 'p-other' }, control: 'pause', reason: null }, [goalPin, phasePin]))
       .toMatchObject({ code: 'invalid' });
-    expect(await control({ goalRef: fixture.goalRef, control: 'pause', reason: null }, [{ ...goalPin, revision: goal.revision - 1 }]))
+    expect(await control({ goalRef: fixture.goalRef, control: 'pause', reason: null }, [{ ...goalPin, revision: goal.revision - 1 }, phasePin]))
       .toEqual({ status: 'rejected', code: 'revision_conflict', reason: 'the Goal changed since the caller read it', current: [goalPin] });
     // A stale GoalPhase pin names the current GoalPhase; 0 when none is stored.
     const phaseRef = { aggregateType: 'GoalPhase' as const, projectId: fixture.goalRef.projectId, goalId: fixture.goalRef.goalId };
@@ -140,13 +155,41 @@ describe('setGoalControl (GOAL-04…06)', () => {
         current: [{ ref: phaseRef, revision: 0 }] });
     expect(await goalOf(platform, fixture)).toEqual(goal);
     // §2.4: a resume of an active Goal is busy.
-    expect(await control({ goalRef: fixture.goalRef, control: 'resume', reason: null }, [goalPin]))
+    expect(await control({ goalRef: fixture.goalRef, control: 'resume', reason: null }, [goalPin, phasePin]))
       .toMatchObject({ code: 'busy', reason: 'the Goal is not paused' });
+  });
+
+  it('decision 29: a control without its GoalPhase pin is refused invalid before the receipt lookup; nothing is committed', async () => {
+    const { fixture, platform } = await setup();
+    const goal = await goalOf(platform, fixture);
+    const goalPin = { ref: fixture.goalRef, revision: goal.revision };
+    const phasePin = await phasePinOf(platform, fixture);
+    const graphBefore = await platform.plans.queryTaskGraph(fixture.ctx, { goalRef: fixture.goalRef });
+    if (graphBefore.status !== 'ready') throw new Error('the task graph must be readable');
+    const missing = { status: 'rejected', code: 'invalid', reason: 'meta.expected must pin the Goal and its GoalPhase (0 = none stored)' };
+    // Every control, before any state guard (a resume of this active Goal would otherwise be busy).
+    for (const control of ['pause', 'resume', 'cancel'] as const) {
+      expect(await platform.goals.setGoalControl(fixture.ctx, request(fixture, control, `a2-d29-${control}`, [goalPin]))).toEqual(missing);
+    }
+    // A second Goal pin is not the GoalPhase pin.
+    expect(await platform.goals.setGoalControl(fixture.ctx, request(fixture, 'pause', 'a2-d29-two-goal-pins', [goalPin, goalPin])))
+      .toEqual(missing);
+    // Nothing was committed: the Goal is unchanged, no commit (and so no GoalDesiredStateChanged event) moved the ledger.
+    expect(await goalOf(platform, fixture)).toEqual(goal);
+    const graphAfter = await platform.plans.queryTaskGraph(fixture.ctx, { goalRef: fixture.goalRef });
+    if (graphAfter.status !== 'ready') throw new Error('the task graph must be readable');
+    expect(graphAfter.value.sourceCursor, 'the refused controls committed nothing').toEqual(graphBefore.value.sourceCursor);
+    // No receipt either: the same requestId with both pins is a fresh request and commits.
+    const paused = await platform.goals.setGoalControl(fixture.ctx, request(fixture, 'pause', 'a2-d29-pause', [goalPin, phasePin]));
+    expect(paused).toMatchObject({ status: 'committed', replayed: false, value: { desiredState: 'paused' } });
+    // The pin check comes before the receipt lookup (as requeue and reverify): that committed identity
+    // without its GoalPhase pin is `invalid`, not a replay and not `idempotency_conflict`.
+    expect(await platform.goals.setGoalControl(fixture.ctx, request(fixture, 'pause', 'a2-d29-pause', [goalPin]))).toEqual(missing);
   });
 
   it('LA-7: an operator pause is resumed only by an operator; the platform actors are refused, a kind:system operator is not', async () => {
     const { fixture, platform } = await setup();
-    const pin = async () => [{ ref: fixture.goalRef, revision: (await goalOf(platform, fixture)).revision }];
+    const pin = async () => [{ ref: fixture.goalRef, revision: (await goalOf(platform, fixture)).revision }, await phasePinOf(platform, fixture)];
     expect(await platform.goals.setGoalControl(fixture.ctx, request(fixture, 'pause', 'a2-la7-pause', await pin())))
       .toMatchObject({ status: 'committed' });
     const paused = await goalOf(platform, fixture);
@@ -176,8 +219,9 @@ describe('setGoalControl (GOAL-04…06)', () => {
   it('D-9: a paused Goal refuses a claim and the completion and shows no Task eligible; a cancel is terminal', async () => {
     const { fixture, platform, secondClaim } = await setup();
     const goal = await goalOf(platform, fixture);
+    const phasePin = await phasePinOf(platform, fixture);
     expect(await platform.goals.setGoalControl(fixture.ctx, request(fixture, 'pause', 'a2-d9-pause',
-      [{ ref: fixture.goalRef, revision: goal.revision }]))).toMatchObject({ status: 'committed' });
+      [{ ref: fixture.goalRef, revision: goal.revision }, phasePin]))).toMatchObject({ status: 'committed' });
     const pausedGoal = await goalOf(platform, fixture);
     // A claim pinned to the paused Goal (fresh pins): `busy` by D-9 (claim-service :514), and nothing is written.
     const freshClaim = { ...secondClaim, meta: { requestId: 'a2-d9-claim-fresh', expected: secondClaim.meta.expected.map(pin =>
@@ -198,12 +242,12 @@ describe('setGoalControl (GOAL-04…06)', () => {
       .toMatchObject({ status: 'rejected', code: 'busy', reason: 'the Goal is paused; a Goal that is not active is not completed' });
     // GOAL-06 from paused; then the Goal is terminal.
     expect(await platform.goals.setGoalControl(fixture.ctx, request(fixture, 'cancel', 'a2-d9-cancel',
-      [{ ref: fixture.goalRef, revision: pausedGoal.revision }]))).toMatchObject({ status: 'committed', value: { desiredState: 'cancelled' } });
+      [{ ref: fixture.goalRef, revision: pausedGoal.revision }, phasePin]))).toMatchObject({ status: 'committed', value: { desiredState: 'cancelled' } });
     const cancelled = await goalOf(platform, fixture);
     expect(await platform.goals.setGoalControl(fixture.ctx, request(fixture, 'resume', 'a2-d9-resume',
-      [{ ref: fixture.goalRef, revision: cancelled.revision }]))).toMatchObject({ code: 'invalid' });
+      [{ ref: fixture.goalRef, revision: cancelled.revision }, phasePin]))).toMatchObject({ code: 'invalid' });
     expect(await platform.goals.setGoalControl(fixture.ctx, request(fixture, 'cancel', 'a2-d9-cancel-2',
-      [{ ref: fixture.goalRef, revision: cancelled.revision }]))).toMatchObject({ code: 'busy' });
+      [{ ref: fixture.goalRef, revision: cancelled.revision }, phasePin]))).toMatchObject({ code: 'busy' });
     expect(await goalOf(platform, fixture)).toEqual(cancelled);
   });
 });
@@ -286,6 +330,14 @@ async function r3eGoal(fixture: R3eEvidenceFixture): Promise<GoalSnapshot> {
   return read.value.goal;
 }
 
+/** The GoalPhase pin as read now (required since HANDOFF decision 29; 0 = none stored). */
+async function r3ePhasePin(fixture: R3eEvidenceFixture): Promise<VersionPin> {
+  const phaseRef = { aggregateType: 'GoalPhase' as const, projectId: fixture.goalRef.projectId, goalId: fixture.goalRef.goalId };
+  const read = await readGoalPhase(fixture.records, phaseRef);
+  if (read.status !== 'ready') throw new Error('the GoalPhase must be readable');
+  return { ref: phaseRef, revision: read.snapshot?.revision ?? 0 };
+}
+
 /** The work Task and the Goal gate satisfied through formal PASS rounds: the Goal can complete. */
 async function completableGoal(fixture: R3eEvidenceFixture): Promise<void> {
   const opened = async (overrides: Parameters<R3eEvidenceFixture['openRequest']>[0]) => {
@@ -338,9 +390,9 @@ describe('the GoalPhase CAS of a Goal pause (§2.4: never paused + COMPLETED for
       if (completed.status !== 'committed') throw new Error(`completeGoal: ${JSON.stringify(completed)}`);
     });
     const racing = createGoalService({ records, now: () => B2_AT, eventId: () => 'a2-phase-race-event' }).tasks;
-    // No GoalPhase pin: the commit still CASes the GoalPhase as read (∅).
+    // The GoalPhase pin as read before the race (∅ = 0); the commit still CASes the GoalPhase as read.
     const pause = { input: { goalRef: fixture.goalRef, control: 'pause' as const, reason: 'race' },
-      meta: { requestId: 'a2-phase-race-pause', expected: [{ ref: fixture.goalRef, revision: goal.revision }] } };
+      meta: { requestId: 'a2-phase-race-pause', expected: [{ ref: fixture.goalRef, revision: goal.revision }, await r3ePhasePin(fixture)] } };
     const refused = await racing.setGoalControl(fixture.ctx, pause);
     expect(records.fired(), 'the completion ran inside the pause').toBe(true);
     expect(refused).toMatchObject({ status: 'rejected', code: 'revision_conflict' });
@@ -359,7 +411,8 @@ describe('the GoalPhase CAS of a Goal pause (§2.4: never paused + COMPLETED for
     const phaseRef = { aggregateType: 'GoalPhase' as const, projectId: fixture.goalRef.projectId, goalId: fixture.goalRef.goalId };
     const records = recordsCommittingFirst(fixture, async () => {
       const paused = await fixture.b2.base.goals.setGoalControl(fixture.ctx, { input: { goalRef: fixture.goalRef, control: 'pause',
-        reason: 'race' }, meta: { requestId: 'a2-phase-race-pause-first', expected: [{ ref: fixture.goalRef, revision: goal.revision }] } });
+        reason: 'race' }, meta: { requestId: 'a2-phase-race-pause-first', expected: [{ ref: fixture.goalRef, revision: goal.revision },
+          await r3ePhasePin(fixture)] } });
       if (paused.status !== 'committed') throw new Error(`pause: ${JSON.stringify(paused)}`);
     });
     const racing = createGoalService({ records, now: () => B2_AT, eventId: () => 'a2-phase-race-event-2' }).tasks;
@@ -386,6 +439,7 @@ describe('VD-9 begin read set (VR-02: the begin guards Goal@rev and the active P
     const round = opened.value;
     const checkId = round.checks[0]!.checkId;
     const goal = await r3eGoal(fixture);
+    const phasePin = await r3ePhasePin(fixture);
     // The source capture runs after the activity read (Host IO) and before the begin commit.
     let armed = false;
     const reader = new VerificationWorkspaceReader();
@@ -396,7 +450,7 @@ describe('VD-9 begin read set (VR-02: the begin guards Goal@rev and the active P
         if (armed) {
           armed = false;
           const paused = await fixture.b2.base.goals.setGoalControl(fixture.ctx, { input: { goalRef: fixture.goalRef, control: 'pause',
-            reason: 'race' }, meta: { requestId: 'a2-vd9-begin-pause', expected: [{ ref: fixture.goalRef, revision: goal.revision }] } });
+            reason: 'race' }, meta: { requestId: 'a2-vd9-begin-pause', expected: [{ ref: fixture.goalRef, revision: goal.revision }, phasePin] } });
           if (paused.status !== 'committed') throw new Error(`pause: ${JSON.stringify(paused)}`);
         }
         return reader.capture(root);
@@ -415,7 +469,7 @@ describe('VD-9 begin read set (VR-02: the begin guards Goal@rev and the active P
       .toMatchObject({ status: 'rejected', code: 'busy' });
     const paused = await r3eGoal(fixture);
     const resumed = await fixture.b2.base.goals.setGoalControl(fixture.ctx, { input: { goalRef: fixture.goalRef, control: 'resume',
-      reason: null }, meta: { requestId: 'a2-vd9-begin-resume', expected: [{ ref: fixture.goalRef, revision: paused.revision }] } });
+      reason: null }, meta: { requestId: 'a2-vd9-begin-resume', expected: [{ ref: fixture.goalRef, revision: paused.revision }, phasePin] } });
     expect(resumed).toMatchObject({ status: 'committed' });
     expect(await evidence.beginCheck(fixture.ctx, fixture.beginRequest(round, checkId)))
       .toMatchObject({ status: 'committed', value: { roundRef: round.ref, checkId } });

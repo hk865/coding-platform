@@ -30,7 +30,7 @@ import {
   AG2B_GOAL_REF, AG2B_RESULT_FILE, AG2B_RESULT_TEXT, AG2B_SCOPE, AG2B_WORK_TASK_ID, corePost, graphWrite, plain, seedAG2bWorkGraph,
   startAG2bHost, type AG2bHost, type AG2bOverrides,
 } from '../../helpers/AG2b-collaboration-fixture.js';
-import { post, publicDirectory, readExecution, readGoal, selectWork } from '../../helpers/A2-restart-fixture.js';
+import { goalControlPins, post, publicDirectory, readExecution, selectWork } from '../../helpers/A2-restart-fixture.js';
 import { CLAIM_FIXTURE_AT, type TaskClaimFixture } from '../../helpers/task-claim-fixture.js';
 import type { InvariantTarget, Platform } from '../harness.js';
 import { driveChecked } from './common.js';
@@ -102,11 +102,10 @@ export async function refused(host: AG2bHost, suffix: string, body: unknown): Pr
   return await response.json() as CoreRejection;
 }
 
-/** A `goals/control` body at the Goal's current revision (or the given one). */
+/** A `goals/control` body at the Goal's current revision (or the given one) and its GoalPhase as read (decision 29). */
 export async function control(host: AG2bHost, kind: 'pause' | 'resume' | 'cancel', requestId: string, goalRevision?: number) {
-  const revision = goalRevision ?? (await readGoal(host)).revision;
   return graphWrite(AG2B_SCOPE, { goalRef: AG2B_GOAL_REF, control: kind, reason: `operator ${kind}` }, requestId,
-    [{ ref: AG2B_GOAL_REF, revision }]);
+    await goalControlPins(host, goalRevision));
 }
 
 export async function display(host: AG2bHost): Promise<GoalDisplayHostReadV1> {

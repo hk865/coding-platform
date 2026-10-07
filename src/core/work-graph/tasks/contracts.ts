@@ -80,8 +80,9 @@ export interface GoalTaskPort {
     request: GraphWrite<{ goalRef: GoalRef }>,
   ): Promise<WriteResult<GoalPhaseSnapshot>>;
   /**
-   * A.2 step 5.5 (G7, D-9): the Goal's desired state. `meta.expected` pins the
-   * Goal and optionally its GoalPhase (0 = none). The commit stops new claims,
+   * A.2 step 5.5 (G7, D-9): the Goal's desired state. `meta.expected` pins
+   * exactly the Goal and its GoalPhase (0 = none stored); both are required
+   * (HANDOFF decision 29, `invalid` otherwise). The commit stops new claims,
    * entries and check processes; it changes no Run (the Host fan-out does,
    * one Run at a time). An operator's pause is resumed only by an operator
    * (LA-7).

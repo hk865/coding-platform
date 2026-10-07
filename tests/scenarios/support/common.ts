@@ -61,7 +61,7 @@ import {
   seedAG2bWorkGraph, startAG2bHost, writeAG2bWorkspace, type AG2bHost,
 } from '../../helpers/AG2b-collaboration-fixture.js';
 import {
-  answer, moveKernelAside, post, readExecution, readGoal, restoreKernel, selectWork, tempDir, workRow, writeStaleLock,
+  answer, goalControlPins, moveKernelAside, post, readExecution, readGoal, restoreKernel, selectWork, tempDir, workRow, writeStaleLock,
   type AdvanceValue, type PausedOnClosedHost,
 } from '../../helpers/A2-restart-fixture.js';
 import type { FuzzStep, FuzzStepKind } from '../../state/invariants.js';
@@ -456,10 +456,9 @@ Promise<PausedOnClosedHost> {
       const runRef = (await workRow(first)).execution;
       if (runRef === null) throw new Error('the work Task must have a Run while its Turn calls the model');
       if (pause === 'goal') {
-        const goal = await readGoal(first);
         goalPaused = await post<WriteResult<GoalControlOutcomeV1>>(first, 'goals/control', graphWrite(AG2B_SCOPE,
           { goalRef: AG2B_GOAL_REF, control: 'pause', reason: 'operator pauses the Goal before the restart' }, 'a2-restart-goal-pause',
-          [{ ref: AG2B_GOAL_REF, revision: goal.revision }]));
+          await goalControlPins(first)));
         return;
       }
       const run = (await readExecution(first, runRef)).run;
