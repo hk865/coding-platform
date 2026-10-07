@@ -279,3 +279,23 @@ DSH 的报告只是输入。每次都要做：
 - 任务 D 的做法：`TASK-D-PLAN.md`；搬移表草稿：`L3-MOVE-TABLE.md`（按 bfb6075 计数，任务 D 前要在删减后的代码上重算，决定 34）。
 - 各级的细节：`<级别>-RESULTS.md`。
 - 运行脚本、每次运行的记录和 `best.diff` 没有入库：在 WSL 的 `~/dsh-work/ladder/` 和本次会话的临时目录里。
+
+## 7. 换一个模型来审查：Codex（2026-10-07 试验）
+
+用户问：能不能在 DSH 实现之后，换一个模型来审查，再让 DSH 返工？试验在 [reviews/evidence/codex-review-trial-2026-10-07](reviews/evidence/codex-review-trial-2026-10-07/README.md)。拿本批 3 个结果已知的提交让 Codex 审：唯一的真问题它找到了（A，xhigh，6.5 分钟），没有一条误报；另外两个只漏了一个小问题和一件它看不到的计划内容。
+
+**放进决定 36 的循环里：**
+1. DSH 按任务书实现；
+2. 同时开始三件事：脚本核对（§6.6）；Codex 只读审查；lead 读 diff；
+3. lead 逐条核实 Codex 的问题，去掉误报，和自己的发现一起写成返工说明（§6.4）；
+4. DSH 返工。
+
+**怎么用：**
+- 命令：`codex exec -s read-only --ephemeral --json -o <输出> "<说明>"`，让它用 `git show <sha>` 看提交。Codex 装在 `%LOCALAPPDATA%\OpenAI\Codex\bin\…\codex.exe`，不在 PATH 上；WSL 里没有。
+- 在一次性副本上审，检出到要审的提交。
+- 推理强度：改状态、改逻辑的片用 xhigh，其余用 high（用户 2026-10-07）。纯搬移不用它审，和参考脚本逐字节对照就够了。
+- 说明里附上任务书和规格的相关行。它只看得到给它的东西，要查“是否照计划做全了”，就得把计划给它。
+- 它的结论和 DSH 的报告一样，只是输入，由 lead 核实。
+- 用的是用户的 ChatGPT 额度，代码会发给 OpenAI。用户同意了这次试验和以后按这个做法审查。
+
+**还没解决：** 在 Windows 沙箱里它跑 shell 命令会失败（目录名无效），这次靠它自带的 JS 读取工具完成了。以后可以试着把副本放到沙箱用户能进的目录。
