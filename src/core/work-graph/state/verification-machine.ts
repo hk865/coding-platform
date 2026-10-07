@@ -603,6 +603,21 @@ export function successorAutoCount(previousAutoCount: number, actorClass: Rework
 }
 
 /**
+ * The VD-13 cap of an automatic request (`system`, `agent`, the only ones it
+ * reaches): one more reverify of this head counts past `limit`, unless a
+ * Host-interruption exemption keeps the count. VR-14 (`reverifyCapRefusal`)
+ * and the verdict rows AV-7a and GV-6 ask this one rule.
+ */
+export function reverifyCapExceeded(head: Pick<RoundSnapshot, 'chain' | 'checks' | 'gaps'>, limit: number): boolean {
+  return (head.chain?.autoCount ?? 0) + 1 > limit && reverifyExemption(head) !== 'host_interruption';
+}
+
+/** I-20: the head is round `ROUND_CHAIN_MAX` of its chain and has no successor (VR-14, AV-7b, GV-7). */
+export function roundChainFull(head: Pick<RoundSnapshot, 'chain'>): boolean {
+  return roundOrdinalOf(head) >= ROUND_CHAIN_MAX;
+}
+
+/**
  * What `prepareRoundOpening` built for a successor; ref, subject and subject
  * Run come from the predecessor and the executor from the configuration. A
  * full `RoundOpeningV1` may be passed: only these fields are read.
@@ -853,10 +868,7 @@ export function finalizeRoundOutcome(input: RoundFoldInputV1): RoundFoldResultV1
     if (!input.sourceCurrent) applicability = 'STALE';
     candidates.push({ checkId: check.checkId, outcome: check.outcome ?? 'INCONCLUSIVE', coverage: check.coverage, applicability });
   }
-  for (const uncovered of round.verificationPlan.uncovered ?? []) {
-    gaps.push({ code: 'uncovered_requirement', message: `no registered check covers required requirement ${uncovered.requirementId}`,
-      coverage: { obligationId: uncovered.obligationId, requirementId: uncovered.requirementId } });
-  }
+  gaps.push(...uncoveredRequirementGaps(round.verificationPlan));
   gaps.push(...input.contextGaps.map((gap) => ({ ...gap })));
 
   const covering = new Map<string, FoldAdmissionV1>();
@@ -922,14 +934,19 @@ export function pendingRoundChecks(
 export function buildOpenedRound(opening: RoundOpeningV1): RoundSnapshot {
   const checks = pendingRoundChecks(opening.verificationPlan, opening.configuration);
   if (!checks.ok) throw new Error(`the compiled plan names an unregistered check ${checks.checkId}`);
-  const gaps: RoundGapV1[] = (opening.verificationPlan.uncovered ?? []).map((uncovered) => ({
-    code: 'uncovered_requirement', message: `no registered check covers required requirement ${uncovered.requirementId}`,
-    coverage: { obligationId: uncovered.obligationId, requirementId: uncovered.requirementId } }));
   return { ref: opening.ref, revision: 1, schemaVersion: 1, subject: { ...opening.subject },
     subjectRunRef: opening.subjectRunRef, adoptedPlanRef: opening.adoptedPlanRef, taskBasisRef: opening.taskBasisRef,
     executor: opening.executor, configuration: opening.configuration, configurationDigest: opening.configurationDigest,
     identity: opening.identity, sourceProof: opening.sourceProof, verificationPlan: opening.verificationPlan,
-    checks: checks.checks, status: 'open', outcome: null, gaps, evidenceRefs: [], chain: rootRoundChain() };
+    checks: checks.checks, status: 'open', outcome: null, gaps: uncoveredRequirementGaps(opening.verificationPlan),
+    evidenceRefs: [], chain: rootRoundChain() };
+}
+
+/** One `uncovered_requirement` gap per required requirement no registered check covers (VR-01 and the D-2 fold). */
+function uncoveredRequirementGaps(verificationPlan: VerificationPlanV1): RoundGapV1[] {
+  return (verificationPlan.uncovered ?? []).map((uncovered) => ({
+    code: 'uncovered_requirement', message: `no registered check covers required requirement ${uncovered.requirementId}`,
+    coverage: { obligationId: uncovered.obligationId, requirementId: uncovered.requirementId } }));
 }
 
 /** The one write of a check's lifecycle fields (§14.1); `incompleteCause` is written only through here. */
@@ -1233,10 +1250,14 @@ export function roundOpenChainProblem(chain: RoundChainHeadV1, subject: TaskTrip
     case 'head':
       return reject('guard_failed', 'busy', `the subject ${subject.taskId} already has a verification round chain `
         + `(head ${chain.head.ref.roundId}); its next round is a successor (VR-14)`);
-    case 'invalid':
-      return reject('guard_failed', 'incomplete', `the subject ${subject.taskId} round chain is invalid: ${chain.reason}`);
+    case 'invalid': return invalidChainProblem(subject, chain.reason);
     default: return unreachable(chain, 'round chain');
   }
+}
+
+/** A chain `roundChainHead` cannot judge (VR-01, VR-14): `incomplete`, no automatic exit (GAP-52). */
+function invalidChainProblem(subject: TaskTriple, reason: string): Rejected {
+  return reject('guard_failed', 'incomplete', `the subject ${subject.taskId} round chain is invalid: ${reason}`);
 }
 
 /** After the compile (`evidence-service.ts:590`): every check the compiled plan names is registered in the configuration. */
@@ -1292,13 +1313,6 @@ function executingPhaseProblem(check: RoundCheckSnapshot, head: Exclude<CheckEve
   switch (check.phase) {
     case 'executing': return null;
     case 'pending':
-      switch (head.kind) {
-        case 'check_result_recorded': return reject('illegal', 'busy', notExecuting);
-        case 'check_interrupted':
-        case 'check_abandoned':
-          return reject('illegal', 'invalid', notExecuting);
-        default: return unreachable(head, 'check event head');
-      }
     case 'finished':
       switch (head.kind) {
         case 'check_result_recorded':
@@ -1385,12 +1399,20 @@ function roundOnTaskRequeued(state: RoundSnapshot | null): RoundTransition {
   if (!isFinalizedNonPass(state)) {
     return reject('illegal', 'invalid', `round ${state.ref.roundId} finalized as a clean PASS; there is nothing to requeue`);
   }
-  const owner = state.chain === undefined ? null : roundSlotOwner(state.ref);
   return accept(state, [
     { kind: 'guard_round_unchanged', revision: state.revision },
-    { kind: 'claim_round_slot', claim: { claimKey: roundSlotKey(roundSlotSubjectOf(state)), expectedOwner: owner,
-      nextOwner: owner } },
+    { kind: 'claim_round_slot', claim: heldSlotClaim(state) },
   ]);
+}
+
+/**
+ * The subject slot held by the chain head as read: the same owner before and
+ * after (`headKey → headKey`; a legacy slot-less root `null → null`). VR-09,
+ * a reverify refusal, and VR-14 with `nextOwner` moved to its successor.
+ */
+function heldSlotClaim(head: RoundSnapshot): RoundSlotClaimV1 {
+  const owner = head.chain === undefined ? null : roundSlotOwner(head.ref);
+  return { claimKey: roundSlotKey(roundSlotSubjectOf(head)), expectedOwner: owner, nextOwner: owner };
 }
 
 /**
@@ -1426,17 +1448,14 @@ export function reverifyAdmissionProblem(state: RoundSnapshot, facts: RoundRever
   if (blocker !== null) return reject('guard_failed', 'busy', `reconcile the subject Run first: ${blocker}`);
   const runProblem = roundSubjectRunProblem(facts.subjectRun);
   if (runProblem !== null) return runProblem;
-  if (chain.kind === 'invalid') {
-    return reject('guard_failed', 'incomplete', `the subject ${state.subject.taskId} round chain is invalid: ${chain.reason}`);
-  }
+  if (chain.kind === 'invalid') return invalidChainProblem(state.subject, chain.reason);
   const head = chain.head;
   if (head.status === 'open') {
     return reject('guard_failed', 'busy', `finalize_first: round ${head.ref.roundId} is open; finalize it before a successor round`);
   }
-  const ordinal = roundOrdinalOf(head);
-  if (ordinal + 1 > ROUND_CHAIN_MAX) {
+  if (roundChainFull(head)) {
     return reject('guard_failed', 'dependency_blocked',
-      `round_chain_limit: round ${head.ref.roundId} is round ${ordinal} of a chain of at most ${ROUND_CHAIN_MAX}`);
+      `round_chain_limit: round ${head.ref.roundId} is round ${roundOrdinalOf(head)} of a chain of at most ${ROUND_CHAIN_MAX}`);
   }
   if (!isFinalizedNonPass(head)) {
     return reject('illegal', 'invalid', `round ${head.ref.roundId} finalized as a clean PASS; it completes the task, it is not checked again`);
@@ -1460,10 +1479,8 @@ export function reverifyAdmissionProblem(state: RoundSnapshot, facts: RoundRever
 export function reverifyCapRefusal(predecessor: RoundSnapshot, actorClass: ReworkActorClass,
   autoReworkLimit: number): ReverifyRefusalV1 | null {
   const failureClass = reverifyFailureClass(predecessor);
-  const exemption = reverifyExemption(predecessor);
-  if (failureClass === null || actorClass === 'human' || exemption === 'host_interruption') return null;
-  const autoCount = successorAutoCount(predecessor.chain?.autoCount ?? 0, actorClass, exemption);
-  if (autoCount <= autoReworkLimit) return null;
+  if (failureClass === null || actorClass === 'human' || !reverifyCapExceeded(predecessor, autoReworkLimit)) return null;
+  const autoCount = successorAutoCount(predecessor.chain?.autoCount ?? 0, actorClass, reverifyExemption(predecessor));
   return { code: 'auto_rework_cap_reached', failureClass, basisDigest: null, source: null, configurationRevision: null,
     reason: `auto rework cap reached: automatic reverify ${autoCount} of round ${predecessor.ref.roundId} exceeds the cap ${autoReworkLimit}` };
 }
@@ -1522,12 +1539,11 @@ function roundOnReverified(
   if (state === null) return reject('illegal', 'not_found', 'round_reverified needs the predecessor round');
   const admission = reverifyAdmissionProblem(state, event.facts, ctx);
   if (admission !== null) return admission;
-  const claimKey = roundSlotKey(roundSlotSubjectOf(state));
-  const owner = state.chain === undefined ? null : roundSlotOwner(state.ref);
+  const held = heldSlotClaim(state);
   const refused = (refusal: ReverifyRefusalV1): RoundTransition => accept(state, [
     { kind: 'guard_predecessor', ref: state.ref, revision: state.revision },
     { kind: 'guard_reverify_read_set' },
-    { kind: 'claim_round_slot', claim: { claimKey, expectedOwner: owner, nextOwner: owner } },
+    { kind: 'claim_round_slot', claim: held },
     { kind: 'refuse_reverify', refusal },
   ]);
   const cap = reverifyCapRefusal(state, event.facts.actorClass, event.autoReworkLimit);
@@ -1548,7 +1564,7 @@ function roundOnReverified(
     { kind: 'guard_round', expectedRevision: null },
     { kind: 'guard_predecessor', ref: state.ref, revision: state.revision },
     { kind: 'guard_reverify_read_set' },
-    { kind: 'claim_round_slot', claim: { claimKey, expectedOwner: owner, nextOwner: roundSlotOwner(next.ref) } },
+    { kind: 'claim_round_slot', claim: { ...held, nextOwner: roundSlotOwner(next.ref) } },
     { kind: 'emit_event', eventType: 'VerificationRoundReverified' },
   ]);
 }
@@ -1616,21 +1632,16 @@ export function transitionCheck(state: RoundSnapshot, event: CheckEvent, ctx: Ro
       // VR-02: the VD-9 Goal/subject guard (5.5), then the VD-8 markers.
       const problem = roundActivityProblem(event.activity, state.subject) ?? frozenBindingProblem(state, event.observed);
       if (problem !== null) return problem;
-      return accept(withCheckPhase(state, event.checkId, { phase: 'executing', invocationId: event.invocationId }), [
-        { kind: 'guard_round', expectedRevision: state.revision },
-        { kind: 'guard_begin_read_set' },
-        { kind: 'emit_event', eventType: 'VerificationCheckBegun' },
-      ]);
+      return checkWritten(state, event.checkId, { phase: 'executing', invocationId: event.invocationId },
+        'VerificationCheckBegun', [{ kind: 'guard_begin_read_set' }]);
     }
     case 'check_result_recorded': {
       // VR-03: an INCONCLUSIVE result carries its `outcomeFor` cause (C5).
       const verdict = outcomeFor(event.observation, event.sourceStatus);
-      return accept(withCheckPhase(state, event.checkId, { phase: 'finished', outcome: verdict.outcome,
+      return checkWritten(state, event.checkId, { phase: 'finished', outcome: verdict.outcome,
         reportRef: event.reportRef, sourceStatus: event.sourceStatus,
-        ...(verdict.incompleteCause === null ? {} : { incompleteCause: verdict.incompleteCause }) }), [
-        { kind: 'guard_round', expectedRevision: state.revision },
-        { kind: 'emit_event', eventType: 'VerificationCheckResultRecorded' },
-      ]);
+        ...(verdict.incompleteCause === null ? {} : { incompleteCause: verdict.incompleteCause }) },
+      'VerificationCheckResultRecorded');
     }
     case 'check_interrupted':
       switch (event.cause) {
@@ -1640,10 +1651,7 @@ export function transitionCheck(state: RoundSnapshot, event: CheckEvent, ctx: Ro
           // VR-04 (D-12): the lease takeover proves the old process (and its
           // `--die-with-parent` check process) gone; nothing is started, and the
           // check runs again only in a successor round (VR-14).
-          return accept(withCheckPhase(state, event.checkId, { phase: 'interrupted', incompleteCause: 'host_restart' }), [
-            { kind: 'guard_round', expectedRevision: state.revision },
-            { kind: 'emit_event', eventType: 'VerificationCheckInterrupted' },
-          ]);
+          break;
         case 'ticket_invalid':
           // Without proof (for example an unknown execute error) the window stays executing for VR-04.
           if (event.ticketProblem === null) {
@@ -1651,24 +1659,32 @@ export function transitionCheck(state: RoundSnapshot, event: CheckEvent, ctx: Ro
           }
           // VR-13: the ticket comes deterministically from the frozen values, so
           // the check never runs again in this round (D-12, VD-6).
-          return accept(withCheckPhase(state, event.checkId, { phase: 'interrupted', incompleteCause: 'ticket_invalid' }), [
-            { kind: 'guard_round', expectedRevision: state.revision },
-            { kind: 'emit_event', eventType: 'VerificationCheckInterrupted' },
-          ]);
+          break;
         default: return unreachable(event, 'interruption cause');
       }
+      return checkWritten(state, event.checkId, { phase: 'interrupted', incompleteCause: event.cause },
+        'VerificationCheckInterrupted');
     case 'check_abandoned':
       if (!event.provenNotStarted) {
         return reject('guard_failed', 'unavailable', 'the process may have started; the executing window waits for reconcile');
       }
       // VR-05 (VD-6): no process ran, so the check returns to pending and a
       // later begin issues a new invocation.
-      return accept(withCheckPhase(state, event.checkId, { phase: 'pending' }), [
-        { kind: 'guard_round', expectedRevision: state.revision },
-        { kind: 'emit_event', eventType: 'VerificationCheckAbandoned' },
-      ]);
+      return checkWritten(state, event.checkId, { phase: 'pending' }, 'VerificationCheckAbandoned');
     default: return unreachable(event, 'check event');
   }
+}
+
+/** One check write: the round @rev+1 with one check changed, its CAS, the row's read set, then the event. */
+function checkWritten(
+  state: RoundSnapshot, checkId: string, change: CheckPhaseChange, eventType: VerificationRoundEventType,
+  readSet: readonly VerificationEffect[] = [],
+): CheckTransition {
+  return accept(withCheckPhase(state, checkId, change), [
+    { kind: 'guard_round', expectedRevision: state.revision },
+    ...readSet,
+    { kind: 'emit_event', eventType },
+  ]);
 }
 
 // -------------------------------------------------------------------------- //

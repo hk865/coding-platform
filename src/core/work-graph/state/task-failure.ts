@@ -52,12 +52,12 @@ import {
   type TaskReworkOperation,
   type TaskReworkRefusalCode, type TaskReworkRefusalRef, type TaskReworkRefusalSnapshotV1,
 } from '../../../contracts/task-requeue.js';
-import { ROUND_CHAIN_MAX, type RoundSnapshot, type VerificationRoundRef } from '../../../contracts/verification.js';
+import type { RoundSnapshot, VerificationRoundRef } from '../../../contracts/verification.js';
 import { roundFailureFacts, runFailureOrigin } from './no-progress.js';
 import { isPausedInterrupted, runUnresolvedBlocker } from './run-machine.js';
 import { reject, unreachable, type Rejected } from './transition.js';
 import {
-  isFinalizedNonPass, reverifyExemption, reverifyFailureClass, roundOrdinalOf, type RoundChainHeadV1,
+  isFinalizedNonPass, reverifyCapExceeded, reverifyFailureClass, roundChainFull, roundOrdinalOf, type RoundChainHeadV1,
 } from './verification-machine.js';
 
 // ------------------------------------------------------------------------ //
@@ -111,9 +111,14 @@ export function stopRequesterOf(intent: Pick<ControlIntentRequestV1, 'kind' | 'r
     default:
       return unreachable(intent.kind, 'control intent kind');
   }
-  if (sameActor(intent.requestedBy, GOAL_FAN_OUT_ACTOR)) return 'goal_fan_out';
+  if (isGoalFanOutActor(intent.requestedBy)) return 'goal_fan_out';
   if (sameActor(intent.requestedBy, WORKFLOW_AUTOMATION_ACTOR)) return 'system';
   return 'human';
+}
+
+/** The actor is canonically `GOAL_FAN_OUT_ACTOR` (kind and id; never decided by the kind alone). */
+export function isGoalFanOutActor(actor: ActorRef): boolean {
+  return sameActor(actor, GOAL_FAN_OUT_ACTOR);
 }
 
 /**
@@ -778,19 +783,31 @@ function workVerdict(view: WorkView, limit: number): { row: WorkVerdictRow; verd
 function incompleteHeadVerdict(
   head: RoundSnapshot, refusal: RefusalView | null, needsFinalize: boolean, limit: number,
 ): { row: WorkVerdictRow; verdict: TaskAutomationVerdictV1 } {
-  if ((head.chain?.autoCount ?? 0) + 1 > limit && reverifyExemption(head) !== 'host_interruption') {
-    return { row: 'AV-7a', verdict: stopped('auto_rework_cap_reached', { operation: 'reverify' }) };
-  }
-  if (roundOrdinalOf(head) >= ROUND_CHAIN_MAX) {
-    return { row: 'AV-7b', verdict: stopped('not_reworkable', { cause: 'round_chain_limit' }) };
-  }
-  if (refusal !== null && !refusal.stale
-    && (refusal.record.code === 'no_new_basis' || refusal.record.code === 'verification_uncovered')) {
-    return { row: 'AV-7c', verdict: stopped(refusal.record.code, { operation: 'reverify' }) };
-  }
+  const stop = reverifyHeadStop(head, refusal, limit);
+  if (stop !== null) return { row: WORK_REVERIFY_STOP_ROW[stop.at], verdict: stop.verdict };
   return { row: 'AV-7d', verdict: { kind: 'reverify', roundRef: { ...head.ref }, needsFinalize, onlyIfSourceChanged: false,
     failureClass: 'check_incomplete', retryAfterRefusal: refusal !== null && refusal.stale } };
 }
+
+/**
+ * What stops an automatic reverify of a finalized non-PASS head, first match
+ * wins: the VD-13 cap (AV-7a, GV-6), the chain at `ROUND_CHAIN_MAX` (AV-7b,
+ * GV-7), a fresh `no_new_basis` or `verification_uncovered` refusal (AV-7c,
+ * GV-8). Null when none does; each table maps `at` to its own row.
+ */
+function reverifyHeadStop(
+  head: RoundSnapshot, refusal: RefusalView | null, limit: number,
+): { at: 'cap' | 'chain_limit' | 'refusal'; verdict: TaskAutomationVerdictV1 } | null {
+  if (reverifyCapExceeded(head, limit)) return { at: 'cap', verdict: stopped('auto_rework_cap_reached', { operation: 'reverify' }) };
+  if (roundChainFull(head)) return { at: 'chain_limit', verdict: stopped('not_reworkable', { cause: 'round_chain_limit' }) };
+  if (refusal !== null && !refusal.stale
+    && (refusal.record.code === 'no_new_basis' || refusal.record.code === 'verification_uncovered')) {
+    return { at: 'refusal', verdict: stopped(refusal.record.code, { operation: 'reverify' }) };
+  }
+  return null;
+}
+const WORK_REVERIFY_STOP_ROW = { cap: 'AV-7a', chain_limit: 'AV-7b', refusal: 'AV-7c' } as const;
+const GATE_REVERIFY_STOP_ROW = { cap: 'GV-6', chain_limit: 'GV-7', refusal: 'GV-8' } as const;
 
 /** GV-0..GV-10 (TD-9, C5): a gate is reworked only by successor rounds on its own chain. */
 function gateVerdict(view: GateView, limit: number): { row: GateVerdictRow; verdict: TaskAutomationVerdictV1 } {
@@ -808,21 +825,11 @@ function gateVerdict(view: GateView, limit: number): { row: GateVerdictRow; verd
   }
   if (!isFinalizedNonPass(head)) return { row: 'GV-4', verdict: NONE };
   if (input.fixInProgress) return { row: 'GV-5', verdict: NONE };
-  if ((head.chain?.autoCount ?? 0) + 1 > limit && reverifyExemption(head) !== 'host_interruption') {
-    return { row: 'GV-6', verdict: stopped('auto_rework_cap_reached', { operation: 'reverify' }) };
-  }
-  if (roundOrdinalOf(head) >= ROUND_CHAIN_MAX) {
-    return { row: 'GV-7', verdict: stopped('not_reworkable', { cause: 'round_chain_limit' }) };
-  }
-  if (refusal !== null && !refusal.stale) {
-    const code = refusal.record.code;
-    if (code === 'no_new_basis' || code === 'verification_uncovered') {
-      return { row: 'GV-8', verdict: stopped(code, { operation: 'reverify' }) };
-    }
-    if (code === 'source_unchanged' && head.outcome === 'FAIL') {
-      return { row: 'GV-8', verdict: stopped('gate_needs_fix',
-        { operation: 'reverify', failingChecks: roundFailureFacts(head).checks }) };
-    }
+  const stop = reverifyHeadStop(head, refusal, limit);
+  if (stop !== null) return { row: GATE_REVERIFY_STOP_ROW[stop.at], verdict: stop.verdict };
+  if (refusal !== null && !refusal.stale && refusal.record.code === 'source_unchanged' && head.outcome === 'FAIL') {
+    return { row: 'GV-8', verdict: stopped('gate_needs_fix',
+      { operation: 'reverify', failingChecks: roundFailureFacts(head).checks }) };
   }
   if (head.outcome === 'FAIL') {
     return { row: 'GV-9', verdict: { kind: 'reverify', roundRef: { ...head.ref }, needsFinalize: false, onlyIfSourceChanged: true,
@@ -940,7 +947,7 @@ function gateFailureClass(head: RoundSnapshot | null): ReworkFailureClass | null
 /** `round_chain_limit` is the one cause that coexists with a class: the chain cannot grow (AV-7b, GV-7). */
 function chainLimitCause(failureClass: ReworkFailureClass | null, head: RoundSnapshot | null): NotReworkableCause | null {
   if (head === null || (failureClass !== 'check_failed' && failureClass !== 'check_incomplete')) return null;
-  return roundOrdinalOf(head) >= ROUND_CHAIN_MAX ? 'round_chain_limit' : null;
+  return roundChainFull(head) ? 'round_chain_limit' : null;
 }
 
 function runIdentity(run: RunSnapshot): Pick<TaskFailureFactsV1, 'runRef' | 'runRevision' | 'attemptRef' | 'sessionRef'> {
@@ -1053,7 +1060,7 @@ function reverifiableSubjectRun(run: RunSnapshot): boolean {
 
 function reverifyActors(head: RoundSnapshot, goalDesiredState: GoalDesiredState, fence: ReworkFence): ReworkActorClass[] {
   const failureClass = reverifyFailureClass(head);
-  if (failureClass === null || roundOrdinalOf(head) + 1 > ROUND_CHAIN_MAX) return [];
+  if (failureClass === null || roundChainFull(head)) return [];
   return permittedActors({ operation: 'reverify', goalDesiredState, failureClass, interruption: null, fence });
 }
 
