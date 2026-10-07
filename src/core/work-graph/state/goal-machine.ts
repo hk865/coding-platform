@@ -54,7 +54,7 @@ import {
   type ReworkActorClass, type ReworkFailureClass, type StopRequester, type TaskRequeueTriggerV1,
   type TaskReworkOperation,
 } from '../../../contracts/task-requeue.js';
-import { GOAL_CANCELLED_PLAN_DETAIL, type PlanProposalRef } from './plan-machine.js';
+import { GOAL_CANCELLED_PLAN_DETAIL, samePlanPointer, type PlanProposalRef } from './plan-machine.js';
 import { isPausedInterrupted, isRunFinished, runUnresolvedBlocker } from './run-machine.js';
 import { stopRequesterOf } from './task-failure.js';
 import { accept, reject, unreachable, type Rejected, type Transition } from './transition.js';
@@ -186,7 +186,7 @@ export type GoalMachineState = {
 export function goalStateOf(goal: GoalSnapshot | null, goalPhase: GoalPhaseSnapshot | null): GoalMachineState {
   const pointer = goal?.activePlanRevision ?? null;
   const completion: GoalCompletionRelation = goalPhase === null ? 'none'
-    : pointer !== null && samePlan(goalPhase.planRef, pointer) ? 'for_active' : 'for_other';
+    : pointer !== null && samePlanPointer(goalPhase.planRef, pointer) ? 'for_active' : 'for_other';
   if (goal === null) {
     return { node: 'absent', desiredStateRevision: 0, activePlanRef: null, completion, desiredStateRequestedByClass: null,
       goal: null, goalPhase };
@@ -294,21 +294,25 @@ export type GoalTransition = Transition<GoalMachineState, GoalEvent, GoalEffect>
 // Shared helpers                                                              //
 // -------------------------------------------------------------------------- //
 
-function refKey(ref: object): string {
-  return canonicalJson(ref as unknown as JsonValue);
-}
-function samePlan(left: PlanRevisionRef, right: PlanRevisionRef): boolean {
-  return refKey(left) === refKey(right);
-}
-function samePlanPointer(left: PlanRevisionRef | null, right: PlanRevisionRef | null): boolean {
-  return left === null || right === null ? left === right : samePlan(left, right);
-}
 function sameIntent(left: ControlIntentRef, right: ControlIntentRef): boolean {
   return left.projectId === right.projectId && left.workspaceId === right.workspaceId && left.intentId === right.intentId;
 }
 
 function guard(value: GoalCommitGuard): GoalEffect {
   return { kind: 'guard', guard: value };
+}
+
+/** The caller's Goal pin against the stored Goal (GOAL-04…08). */
+function goalPinProblem(goal: GoalSnapshot, expectedGoalRevision: number): Rejected | null {
+  return goal.revision === expectedGoalRevision ? null
+    : reject('stale', 'revision_conflict', 'the Goal changed since the caller read it');
+}
+
+/** The caller's GoalPhase pin (0 = it read none) against the stored GoalPhase (GOAL-04, 06, 07, 08). */
+function goalPhasePinProblem(state: GoalMachineState, expectedGoalPhaseRevision: number): Rejected | null {
+  const persisted = state.goalPhase?.revision ?? null;
+  return persisted === (expectedGoalPhaseRevision === 0 ? null : expectedGoalPhaseRevision) ? null
+    : reject('stale', 'revision_conflict', 'the GoalPhase changed since the caller read it');
 }
 
 // -------------------------------------------------------------------------- //
@@ -375,7 +379,7 @@ function onPlanAdopted(state: GoalMachineState, event: Extract<GoalEvent, { type
       ? reject('stale', 'revision_conflict', 'the goal already has an active plan; an initial adoption cannot replace it')
       : reject('stale', 'revision_conflict', 'the source plan is not the Goal current active plan');
   }
-  if (event.basedOn !== null && samePlan(event.basedOn, event.target)) {
+  if (event.basedOn !== null && samePlanPointer(event.basedOn, event.target)) {
     return reject('illegal', 'invalid', 'the target planId must be a new, unused reference');
   }
   return accept<GoalMachineState, GoalEffect>(goalStateOf(nextGoalPointer(goal, event.target), state.goalPhase),
@@ -416,23 +420,19 @@ export function goalCompletionProblem(
   // :522
   if (!ctx.goalInWorkspace) return reject('guard_failed', 'forbidden', 'the Goal belongs to another workspace');
   // :523-525
-  if (goal.revision !== event.expectedGoalRevision) {
-    return reject('stale', 'revision_conflict', 'the Goal changed since the caller read it');
-  }
+  const goalPin = goalPinProblem(goal, event.expectedGoalRevision);
+  if (goalPin !== null) return goalPin;
   // :526-527
   const pointer = state.activePlanRef;
   if (pointer === null) return reject('guard_failed', 'incomplete', 'the Goal has no adopted Plan to complete');
   const facts = ctx.completion;
   if (facts === null) return null;
-  if (!samePlan(facts.plan.ref, pointer)) {
+  if (!samePlanPointer(facts.plan.ref, pointer)) {
     return reject('illegal', 'invalid', 'the completion facts were read for another plan than the Goal active plan');
   }
   // :539-546
-  const persistedPhaseRevision = state.goalPhase?.revision ?? null;
-  const expectedPhaseRevision = event.expectedGoalPhaseRevision === 0 ? null : event.expectedGoalPhaseRevision;
-  if (persistedPhaseRevision !== expectedPhaseRevision) {
-    return reject('stale', 'revision_conflict', 'the GoalPhase changed since the caller read it');
-  }
+  const phasePin = goalPhasePinProblem(state, event.expectedGoalPhaseRevision);
+  if (phasePin !== null) return phasePin;
   if (state.completion === 'for_active') {
     return reject('guard_failed', 'busy', 'the Goal is already completed for its active Plan');
   }
@@ -530,14 +530,10 @@ function onGoalControl(state: GoalMachineState, event: GoalControlEvent, ctx: Go
   if (control === 'resume' && state.desiredStateRequestedByClass === 'human' && ctx.callerClass !== 'human') {
     return reject('guard_failed', 'forbidden', 'an operator paused this Goal; only an operator resumes it');
   }
-  if (goal.revision !== event.expectedGoalRevision) {
-    return reject('stale', 'revision_conflict', 'the Goal changed since the caller read it');
-  }
+  const pin = goalPinProblem(goal, event.expectedGoalRevision)
+    ?? (control === 'resume' ? null : goalPhasePinProblem(state, event.expectedGoalPhaseRevision));
+  if (pin !== null) return pin;
   const persistedPhaseRevision = state.goalPhase?.revision ?? null;
-  const expectedPhaseRevision = event.expectedGoalPhaseRevision === 0 ? null : event.expectedGoalPhaseRevision;
-  if (control !== 'resume' && persistedPhaseRevision !== expectedPhaseRevision) {
-    return reject('stale', 'revision_conflict', 'the GoalPhase changed since the caller read it');
-  }
   const next = nextGoalDesiredState(goal, { to: goalControlTarget(control), requestedBy: event.requestedBy });
   return accept<GoalMachineState, GoalEffect>(goalStateOf(next, state.goalPhase), [
     { kind: 'write_goal' },
@@ -974,7 +970,8 @@ function gateStateOf(gate: GoalDisplayTaskFactsV1, tasks: readonly GoalDisplayTa
 /** GOAL-27: the failure class of the TaskRequeue a `claim_requeued` verdict claims. */
 function claimRequeuedClass(task: GoalDisplayTaskFactsV1, verdict: Extract<TaskAutomationVerdictV1, { kind: 'claim_requeued' }>): ReworkFailureClass | null {
   const covering = verdict.requeueRef;
-  const entry = task.reworkEntries.find((candidate) => refKey(candidate.ref) === refKey(covering));
+  const entry = task.reworkEntries.find((candidate) =>
+    canonicalJson(candidate.ref as unknown as JsonValue) === canonicalJson(covering as unknown as JsonValue));
   return entry?.failureClass ?? task.failure?.failureClass ?? null;
 }
 
@@ -984,10 +981,8 @@ function runningCauses(task: GoalDisplayTaskFactsV1, tasks: readonly GoalDisplay
   const verdict = verdictOf(task);
   switch (verdict.kind) {
     case 'requeue':
-      causes.push({ code: 'auto_rework_pending', taskId: task.taskId, operation: 'requeue', failureClass: verdict.failureClass });
-      break;
     case 'reverify':
-      causes.push({ code: 'auto_rework_pending', taskId: task.taskId, operation: 'reverify', failureClass: verdict.failureClass });
+      causes.push({ code: 'auto_rework_pending', taskId: task.taskId, operation: verdict.kind, failureClass: verdict.failureClass });
       break;
     case 'claim_requeued':
       causes.push({ code: 'auto_rework_pending', taskId: task.taskId, operation: 'requeue',

@@ -472,14 +472,18 @@ export function tracedDispositionChangeProblem(input: {
     return { code: 'invalid', detail: GOAL_CANCELLED_PLAN_DETAIL };
   }
   const affected = new Set(input.affectedTaskIds ?? []);
-  const traced = input.tasks
-    .filter((task) => task.runs.length > 0 || task.lease !== null || task.reduction !== null)
+  const traced = input.tasks.filter(isTracedTask)
     .sort((left, right) => (left.taskId < right.taskId ? -1 : left.taskId > right.taskId ? 1 : 0));
   for (const task of traced) {
     const problem = tracedTaskProblem(task, affected, input.adopterClass);
     if (problem !== null) return problem;
   }
   return null;
+}
+
+/** C7 "traced": the Task has a Run, a TaskLease record or a TaskReduction. */
+function isTracedTask(task: FutureChangeTaskFactsV1): boolean {
+  return task.runs.length > 0 || task.lease !== null || task.reduction !== null;
 }
 
 function tracedTaskProblem(
@@ -712,13 +716,13 @@ function incompleteFacts(): Rejected {
 // Shared guards (each returns today's rejection, null, or UNREAD)
 // --------------------------------------------------------------------------
 
-function refKey(ref: object): string {
-  return canonicalJson(ref as unknown as JsonValue);
-}
+/** Key-order-free equality by canonical JSON; a value it cannot encode throws (the records here always encode). */
 function sameRef(left: object, right: object): boolean {
-  return refKey(left) === refKey(right);
+  return canonicalJson(left as unknown as JsonValue) === canonicalJson(right as unknown as JsonValue);
 }
-function samePlanPointer(left: PlanRevisionRef | null, right: PlanRevisionRef | null): boolean {
+
+/** Two Goal plan pointers (`null` = no active plan) name the same PlanRevision; the Goal machine asks the same. */
+export function samePlanPointer(left: PlanRevisionRef | null, right: PlanRevisionRef | null): boolean {
   return left === null || right === null ? left === right : sameRef(left, right);
 }
 
@@ -792,6 +796,15 @@ function guard(value: PlanCommitGuard): PlanProposalEffect {
   return { kind: 'guard', guard: value };
 }
 
+/** The read facts of each Task id, in id order; a Task whose facts were not read is a broken caller. */
+function factsFor<T extends { taskId: string }>(
+  taskIds: readonly string[], entries: readonly T[], notRead: (taskId: string) => string,
+): T[] | Rejected {
+  const byId = new Map(entries.map((entry) => [entry.taskId, entry]));
+  const missing = taskIds.find((taskId) => !byId.has(taskId));
+  return missing === undefined ? taskIds.map((taskId) => byId.get(taskId)!) : reject('illegal', 'invalid', notRead(missing));
+}
+
 // --------------------------------------------------------------------------
 // Rows
 // --------------------------------------------------------------------------
@@ -811,15 +824,13 @@ function recordedStep(
   if (event.draft.goalId !== event.goalRef.goalId) {
     return reject('illegal', 'invalid', 'the draft goalId does not match the GoalRef');
   }
+  // The Goal scope (Host :955-961, Agent :1941-1950) and the C7 reason shape, asked by every writer.
+  const scope = (): GuardStep => scopeStep(facts, 'the goal does not belong to the requested workspace');
+  const shape = (): GuardStep => reasonShapeStep(event);
   let problem: GuardStep;
   switch (event.writer) {
     case 'host':
-      problem = chain(
-        () => hostProvenanceProblem(event),
-        // :955-961
-        () => scopeStep(facts, 'the goal does not belong to the requested workspace'),
-        () => reasonShapeStep(event),
-      );
+      problem = chain(() => hostProvenanceProblem(event), scope, shape);
       break;
     case 'initial_answer':
       problem = chain(
@@ -827,9 +838,8 @@ function recordedStep(
         () => event.basedOn !== null
           ? reject('illegal', 'invalid', 'an initial-plan answer candidate is never based on a plan') : null,
         () => hostProvenanceProblem(event),
-        // :955-961
-        () => scopeStep(facts, 'the goal does not belong to the requested workspace'),
-        () => reasonShapeStep(event),
+        scope,
+        shape,
       );
       break;
     case 'agent':
@@ -838,8 +848,7 @@ function recordedStep(
         () => agentAdmissionStep(facts),
         () => event.submittedBy === null
           ? reject('illegal', 'invalid', 'an Agent proposal requires the admitted submission provenance') : null,
-        // :1941-1950
-        () => scopeStep(facts, 'the goal does not belong to the requested workspace'),
+        scope,
         // :1954-1958
         () => event.draft.schemaVersion !== 2
           ? reject('guard_failed', 'unsupported', 'an Agent proposal requires a schemaVersion 2 future draft') : null,
@@ -847,7 +856,7 @@ function recordedStep(
           ? reject('guard_failed', 'forbidden', 'an Agent proposal must be based on an accepted source plan') : null,
         // :1959-1970
         () => agentSourceStep(event, facts),
-        () => reasonShapeStep(event),
+        shape,
       );
       break;
     default:
@@ -965,7 +974,7 @@ function hostProvenanceProblem(event: RecordedGuardEvent): GuardStep {
 function sameRecordedCandidate(state: PlanProposalRecord, candidate: CandidatePlanProposal): boolean {
   if (state.kind !== 'candidate_v2' || state.status !== 'candidate' || state.revision !== 1) return false;
   try {
-    return refKey({ ...state, issues: [] }) === refKey({ ...candidate, issues: [] });
+    return sameRef({ ...state, issues: [] }, { ...candidate, issues: [] });
   } catch {
     // A non-JSON value (never produced by the record decoders or the owned input) is not the same content.
     return false;
@@ -974,18 +983,31 @@ function sameRecordedCandidate(state: PlanProposalRecord, candidate: CandidatePl
 
 /** PLAN-02: the source is a real Plan of this Goal and still its active plan (:1959-1970). */
 function agentSourceStep(event: RecordedGuardEvent, facts: PlanProposalReadFacts): GuardStep {
+  const source = sourcePlanStep(facts, event.ref.projectId, event.goalRef.goalId,
+    'an Agent proposal requires the source plan read through basedOn');
+  return source === UNREAD || 'ok' in source ? source : null;
+}
+
+/**
+ * PLAN-02 and PLAN-05: the source Plan read through `basedOn` (`missing` when
+ * it was not), a Plan of the proposal's Goal, still the Goal's active plan:
+ * the pointer only moves forward, so a superseded source is stale. The Goal
+ * was read with the scope, before the source. A refusal carries `ok`.
+ */
+function sourcePlanStep(
+  facts: PlanProposalReadFacts, projectId: string, goalId: string, missing: string,
+): PlanSourceFacts | Rejected | typeof UNREAD {
   const source = facts.source;
   if (source === undefined) return UNREAD;
-  if (source === null) return reject('illegal', 'invalid', 'an Agent proposal requires the source plan read through basedOn');
-  if (source.ref.projectId !== event.ref.projectId || source.goalRef.goalId !== event.goalRef.goalId) {
+  if (source === null) return reject('illegal', 'invalid', missing);
+  if (source.ref.projectId !== projectId || source.goalRef.goalId !== goalId) {
     return reject('illegal', 'not_found', 'the source plan does not belong to the proposal goal');
   }
-  // The Goal was read with the scope, before the source.
   if (facts.goal === undefined) return UNREAD;
   if (!samePlanPointer(facts.goal.activePlanRevision, source.ref)) {
     return reject('stale', 'revision_conflict', 'the source plan is not the Goal current active plan');
   }
-  return null;
+  return source;
 }
 
 /**
@@ -1173,18 +1195,10 @@ function futureAdoptionStep(
   if (event.decisionRefs.length > 0) {
     return reject('guard_failed', 'unsupported', 'a W1 future-only revision does not accept decision references');
   }
-  const source = facts.source;
-  if (source === undefined) return UNREAD;
-  if (source === null) return reject('illegal', 'invalid', 'a future adoption requires the source plan read through basedOn');
-  // :1709-1711
-  if (source.ref.projectId !== event.proposalRef.projectId || source.goalRef.goalId !== proposal.goalRef.goalId) {
-    return reject('illegal', 'not_found', 'the source plan does not belong to the proposal goal');
-  }
-  // :1712-1717 — the pointer only moves forward (a superseded source is stale); the Goal was read with the scope.
-  if (facts.goal === undefined) return UNREAD;
-  if (!samePlanPointer(facts.goal.activePlanRevision, source.ref)) {
-    return reject('stale', 'revision_conflict', 'the source plan is not the Goal current active plan');
-  }
+  // :1709-1717
+  const source = sourcePlanStep(facts, event.proposalRef.projectId, proposal.goalRef.goalId,
+    'a future adoption requires the source plan read through basedOn');
+  if (source === UNREAD || 'ok' in source) return source;
   // :1718-1726
   if (draft.goalId !== proposal.goalRef.goalId) {
     return reject('illegal', 'invalid', 'the draft goalId does not match the proposal goal');
@@ -1231,26 +1245,17 @@ function futureAdoptionStep(
   const touchedFacts = future.touchedTaskFacts;
   if (touchedFacts === undefined) return UNREAD;
   const touched = [...new Set([...delta.changedTaskIds, ...delta.addedTaskIds])];
-  const factsById = new Map(touchedFacts.map((entry) => [entry.taskId, entry]));
-  const judged: FutureChangeTaskFactsV1[] = [];
-  for (const taskId of touched) {
-    const entry = factsById.get(taskId);
-    if (entry === undefined) return reject('illegal', 'invalid', `the future-change facts of task ${taskId} were not read`);
-    judged.push(entry);
-  }
+  const judged = factsFor(touched, touchedFacts, (taskId) => `the future-change facts of task ${taskId} were not read`);
+  if (!Array.isArray(judged)) return judged;
   const trace = futureChangeTraceProblem(judged, delta.carrierRemovals);
   if (trace !== null) return reject('guard_failed', trace.code, trace.detail);
   // C7 (TASK-19, guards 8, 1, 2, 2b, 3–7): the disposition-only Tasks, read by `readDispositionChangeTaskFacts`.
   const dispositionFacts = future.dispositionTaskFacts;
   const adopterClass = future.adopterClass;
   if (dispositionFacts === undefined || adopterClass === undefined) return UNREAD;
-  const dispositionById = new Map(dispositionFacts.map((entry) => [entry.taskId, entry]));
-  const dispositionJudged: TracedTaskFactsV1[] = [];
-  for (const taskId of delta.dispositionOnlyTaskIds) {
-    const entry = dispositionById.get(taskId);
-    if (entry === undefined) return reject('illegal', 'invalid', `the disposition-change facts of task ${taskId} were not read`);
-    dispositionJudged.push(entry);
-  }
+  const dispositionJudged = factsFor(delta.dispositionOnlyTaskIds, dispositionFacts,
+    (taskId) => `the disposition-change facts of task ${taskId} were not read`);
+  if (!Array.isArray(dispositionJudged)) return dispositionJudged;
   // The scope step refused a cancelled Goal (D-9) before any of this; guard 8 is the same check.
   if (facts.goal === undefined) return UNREAD;
   const traced = tracedDispositionChangeProblem({ goalDesiredState: facts.goal.desiredState, tasks: dispositionJudged,
@@ -1267,8 +1272,7 @@ function futureAdoptionStep(
     if (fence !== null) return reject(fence.reason ?? 'guard_failed', fence.code, fence.detail);
     carrierTaskIds = parallelCarrierFactTaskIds({ source: sourceCarriers, target: targetCarriers });
   }
-  const isTraced = (entry: TracedTaskFactsV1): boolean => entry.runs.length > 0 || entry.lease !== null || entry.reduction !== null;
-  const tracedIds = new Set(dispositionJudged.filter(isTraced).map((entry) => entry.taskId));
+  const tracedIds = new Set(dispositionJudged.filter(isTracedTask).map((entry) => entry.taskId));
   return { path: 'future', proposal, source, target: planRevisionTargetOf(event.proposalRef, draft),
     changedTaskIds: delta.changedTaskIds, addedTaskIds: delta.addedTaskIds, touchedTaskIds: touched,
     pinnedPolicy: pinnedPolicy === 'ok',
