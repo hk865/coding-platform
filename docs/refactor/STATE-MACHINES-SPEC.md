@@ -709,7 +709,7 @@ stateDiagram-v2
 
 目标文件：`src/core/work-graph/state/plan-machine.ts`。
 
-简化（2026-10-07，不改行为）：`plan-machine.ts` 导出 `samePlanPointer`，Goal 状态机用同一份比较两个计划指针。
+简化（2026-10-07，不改行为）：`plan-machine.ts` 导出 `samePlanPointer`，Goal 状态机用同一份比较两个计划指针。GOAL-02/03 的三句拒绝文字（已有活动计划时不能首次采用、来源计划不是当前活动计划、目标 planId 必须是新的）也从这里导出，和 Plan 状态机（PLAN-04/05）共用一份，做法同 `GOAL_CANCELLED_PLAN_DETAIL`。
 
 - 状态机与派生：导出 `transitionPlanProposal(state, event, ctx)`、`derivePlanProposalStatus`（candidate/stale/accepted）、`derivePlanRevisionStatus`（adopted/superseded）。
 - 无痕判定：导出 `futureChangeTraceProblem`，纯函数，输入是 `readFutureChangeTaskFacts` 读到的事实。只用于 `changedTaskIds ∪ addedTaskIds`。
