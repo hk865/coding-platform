@@ -181,6 +181,8 @@
 
 2026-09-28 AG2b 将工作推进交给存活 Host driver，页面查询状态，导航/刷新不承担执行续接；显式等待咨询的回复进入原 Work Run 工具结果，可重复往返。原消息详情的手工“处理咨询”入口保留。停止先显示 stopping，原运行排空后才显示 stopped；stopped 不代表 Run 已确认 cancelled，queued/未确认原因须保留。Host 崩溃、Run ended/pause 后自动续跑不在本批范围。
 
+2026-10-07 更正（简化 G4，决定 34）：上面说保留的手工“处理咨询”入口，其实没有调用方。画它的函数 `renderConsultation` 至迟从 2026-09-29（790d970）起就没被调用，页面上没有这个按钮。它已和其它旧界面函数一起删除。成员咨询走成员来信面板的“处理消息”。上面两段按历史保留。
+
 隔离工程真实模型链已通过：13次 DeepSeek 调用、同一 A Run 两轮回复进入后续请求、同一 B Session、实际文件编辑、Work/gate 两个正式检查轮次 PASS及 Goal COMPLETED，成功轮次 transport/provider/tool errors 为0。[本批证据](refactor/reviews/evidence/agent-behavior-2026-09-28/ag2b/README.md)分别记录模型与浏览器验证范围；此处不把模型链验收当成所有工作台交互已通过。
 
 本批浏览器已实际验证：填写已有Goal后继续入口可用；整页刷新后读回相同flow并继续；完成后查看两条回复正文/来源、正式Task/Goal状态和原Session保存记录，未新增模型调用，console warning/error为空。停止路径由受控真实owner场景覆盖，未把该项算作真实模型中途停止验收。
