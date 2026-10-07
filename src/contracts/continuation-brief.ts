@@ -43,7 +43,11 @@ export type ContinuationToolCallV1 = {
 };
 /** Only session messages and artifacts; there is no instruction input. */
 export type ContinuationNewInputV1 =
-  /** `replyBody` is inlined only when the message was answered outside the new Run's Session. */
+  /**
+   * `replyBody` is inlined only when the reply does not go back to the new Run's claim Session, i.e. the message's
+   * sender is not a work Run of that Session (§6.1 contract (e) "发给新 Run 所在 Session 之外时"); otherwise that
+   * Session's input channel supplies the reply and `replyBody` is null.
+   */
   | { kind: 'session_message'; ref: SessionMessageRef; replyBody: BoundedTextV1 | null }
   | { kind: 'artifact'; ref: ArtifactRef; body: BoundedTextV1 | null };
 export type ContinuationSourceCheckpointV1 = {

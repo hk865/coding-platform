@@ -685,7 +685,8 @@ export function createRunStateReader(deps: ExecutionReadDependencies): Execution
    * TaskRequeue of the Task (by each ended Run's `afterRunId`), the afterRun
    * record with its pointer and steer intents, its wait message, the chain
    * head the requeue covered, the bounded bodies of the requeue's own new
-   * inputs (a reply only when answered outside the new claim Session) and,
+   * inputs (a reply only when it goes back to a Session other than the new
+   * claim Session, i.e. the message's sender is not that Session) and,
    * for an afterRun that never entered the Kernel, the nearest entered
    * ancestor along the requeue chain (at most `factsFromHops`). Each read is
    * exact; `readThrough` is the latest watermark read. `not_found` for a Run
@@ -824,8 +825,10 @@ export function createRunStateReader(deps: ExecutionReadDependencies): Execution
         replyBodies.push({ messageRef: input.ref, body: null, reason: 'the message has no saved reply' });
         continue;
       }
-      // The reply is already in the history when it was answered to the new claim Session.
-      if (message.recipient.sessionId === current.value.outbox.claim.sessionRef.sessionId) continue;
+      // The reply is already in the history when it was answered back to the new claim Session: a reply goes to the
+      // message's sender, whose Session's input channel supplies it (`run.input_accepted`), so it is not inlined again.
+      const claimSessionId = current.value.outbox.claim.sessionRef.sessionId;
+      if (message.sender.kind === 'work_run' && message.sender.sessionRef.sessionId === claimSessionId) continue;
       replyBodies.push({ messageRef: input.ref, ...await boundedBody(message.response.bodyRef) });
     }
 
