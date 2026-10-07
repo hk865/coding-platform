@@ -31,7 +31,7 @@
  * Fixture note: the Runs, Leases, Reductions and human stops (a queued operator cancel the Run's pointer
  * names) are seeded directly as read-side fixtures (as in
  * W1-future-plan.test.ts); the adoptions use the public plan service. The real platform path (Workflow,
- * Kernel, human stop, requeue) is tests/composition/A2-disposition-change-platform.test.ts.
+ * Kernel, human stop, requeue) is tests/scenarios/C7-supersede-failed-task.test.ts and C7-defer-reactivate.test.ts.
  */
 import { describe, expect, it } from 'vitest';
 import { createInMemoryRecordBackend } from '../../src/core/record-store/in-memory-record-store.js';

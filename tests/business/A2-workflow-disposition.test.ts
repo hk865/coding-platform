@@ -12,7 +12,7 @@
  *   `waiting`, both with the prefix `task_not_active:`; a satisfied Task still answers first.
  *
  * Only `plans.queryGoal` and `plans.queryTaskGraph` answer; every other port throws if touched. The real
- * platform path is tests/composition/A2-disposition-change-platform.test.ts.
+ * platform path is tests/scenarios/C7-supersede-failed-task.test.ts and C7-defer-reactivate.test.ts.
  */
 import { expect, it } from 'vitest';
 import type { WorkflowAdvanceInput } from '../../src/business/workflow/contracts.js';
