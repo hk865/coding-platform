@@ -135,6 +135,7 @@ export type ReadStamp =
   | { kind: 'plan'; ref: PlanRevisionRef }
   | { kind: 'source'; capture: SourceCaptureRef }
   | { kind: 'session'; ref: SessionRef; cursor: string };
+// 2026-10-07 注：ReadBasis 在代码里从没被用过，已按决定 34 删除；读接口直接带 atLeastCursor。下一行保留原设计。
 export type ReadBasis = { atLeastCursor?: CommitCursor; revision?: number };
 export type Page<T> = { items: T[]; nextCursor: string | null; basis: ReadStamp };
 export type CoreRejection = {

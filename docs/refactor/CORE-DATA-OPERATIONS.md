@@ -86,6 +86,8 @@ type CommandMeta = {
   requestId: string;                 // 适配现有 CommandIdentity / idempotencyKey
   expected: readonly VersionPin[];   // 只包含本操作实际依赖/修改的版本
 };
+// 2026-10-07 注：ReadBasis 从没被任何读接口用过，已按决定 34 从代码删除。读接口直接带 atLeastCursor 字段
+// （例如 queryTaskGraph），没有按 revision 读历史版本的入口。下面保留原设计。
 type ReadBasis = {
   atLeastCursor?: CommitCursor;      // 需要读到某次已提交修改时指定
   revision?: number;                // 读取历史版本时指定
@@ -281,7 +283,7 @@ type PlatformMaterialOrigin = {
 
 | 操作 | 输入 | 返回/效果 | 关键失败 |
 | --- | --- | --- | --- |
-| `queryTaskGraph` | goalRef、planRef/current、关系/范围、ReadBasis | 任务、分组、依赖、当前状态及关联 | 索引滞后为 not_ready |
+| `queryTaskGraph` | goalRef、planRef/current、关系/范围、ReadBasis（2026-10-07 注：代码里是 atLeastCursor 字段，ReadBasis 类型已删除，见 §2） | 任务、分组、依赖、当前状态及关联 | 索引滞后为 not_ready |
 | `queryReadyTasks` | goal/workspace、角色/能力筛选、分页 | 可领取候选及阻塞解释、版本依据 | 不意味着已经占用，不把展示分页当准入证明 |
 | `proposePlan` | 原 planRef（初次可无）、已知 tasks/assignments/obligations/edges、理由 | 计划候选、变化与校验问题；规划未完整是可见诊断 | dangling reference、重复身份、采用的硬依赖 cycle；已有义务不得被静默削弱 |
 | `applyPlanChange` | proposalRef/规范化 plan draft、expected goal/plan、适用决定 | 新 PlanRevision、状态衔接、受影响任务集合 | 不静默删除已执行任务/义务；取消/替换显式处置 |

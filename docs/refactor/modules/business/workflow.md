@@ -345,7 +345,7 @@ R3e.1五生产实现已独审导入；[R3e.3 §9](../../tasks/R3e-completion-ske
 
 | 当前符号 | 本批调用与边界 |
 | --- | --- |
-| `business/workflow/workflow.ts::createWorkflow` / `ports.ts::N0WorkflowPort` | 目前只依赖 `GoalTaskPort`，`advanceWork` 的 trigger 为 never，两入口 unsupported。本批只接已有 Plan 的 advanceWork；保留 handleGoalInput 旧接口/明确缺能力，不顺带做初次规划。 |
+| `business/workflow/workflow.ts::createWorkflow` / `ports.ts::WorkflowPort`（2026-10-07：原写 `N0WorkflowPort`，这个别名已按决定 34 删除） | 目前只依赖 `GoalTaskPort`，`advanceWork` 的 trigger 为 never，两入口 unsupported。本批只接已有 Plan 的 advanceWork；保留 handleGoalInput 旧接口/明确缺能力，不顺带做初次规划。 |
 | `work-graph/tasks/plan-contracts.ts::PlanTaskPort` | 直接调用 queryGoal/queryTaskGraph/queryReadyTasks。沿已采用 Plan 和原 `revisionAssignments` 取任务分配；ready 使用核心 eligibility，不在 Workflow 重做 DAG/材料/source 判定。future-only、缺验收与 required 未完成说明来自图。 |
 | `work-graph/sessions/contracts.ts::SessionDirectoryPort` | findSessions/readSession 返回正式 SessionCard、occupancy 与 links；按同 task、可用性和稳定 sessionId 选择，同配置的既有 Session 优先。显式 Session 忙时等待，不偷偷创建替身。实际占用由 claim CAS 决定。 |
 | `agent-runtime/session-operations.ts::CreateSessionRequest` / `RuntimeExecutionPort.createSession` | 正式创建映射，返回 OperationReceipt：只有 completed 才有 SessionRecord 可领取；accepted/unknown 保留原 operationRef，重发原 create 请求继续既有操作。initialLinks 指向真实 task，不自造 Kernel sessionId/store path。 |
@@ -389,7 +389,7 @@ R3e.1五生产实现已独审导入；[R3e.3 §9](../../tasks/R3e-completion-ske
 1. `src/business/workflow/contracts.ts`：本批明确输入/步骤与结果联合，保留 N0GoalInput；不预建 Query/架构演进/恢复 DTO。
 2. `src/business/workflow/ports.ts`：advanceWork 类型及准确依赖；依赖为 plans、sessions、claims、executions、runtime、evidence、checks、tasks（含 R3e.3 完成）、已有 sourceAuthority 和可信 policy。没有 Store、Kernel、材料库或 Workspace 全仓接口。
 3. `src/business/workflow/workflow.ts`：本批小型选择/续步函数与显式分支；不预建 §2 的全部策略文件，不迁旧 dispatcher/engine。
-4. `src/business/workflow/index.ts`：必要类型导出及兼容别名。
+4. `src/business/workflow/index.ts`：必要类型导出及兼容别名。（2026-10-07 注：兼容别名 `N0WorkflowPort`、`N0WorkflowDependencies` 没有人用，已按决定 34 删除；`index.ts` 只导出正式类型。）
 5. `src/composition/create-platform.ts`：可选纯数据 workflow 配置；注入同一原子 owner 和原 Runtime/Session operations、同一 evidence/check runner 与 sourceAuthority。对外 workflow.advanceWork 沿原 trackedCall 排空；内部依赖使用同实例的 raw ports，避免 close 已开始后嵌套 public trackedCall 误拒已受理编排的后续调用；Runtime 可由现 raw runtime.port 与原 sessionOperations 的薄对象组成，不新建 runtime。关闭时原 promises/Runtime清理机制共用，不启动脱离追踪的 Promise。
 6. `tests/business/R5c-workflow.test.ts`（新）：只验一个正式 Plan 两个 work 的必要选择/正常推进与原 operation 重试；用真实 core writer，注入受控模型响应，不能 fake 领域 PASS 或以 mock Workflow 证明策略。
 7. `tests/composition/R5c-workflow-platform.test.ts`（新）：空 SQLite 经公开 bootstrap/Plan → 真实 Session/Kernel（受控 ModelClient）→ 两 work 顺次正式结束/真实 ProcessSandbox 注册检查/Task完成 → 独立 goal gate/Goal完成 → 读取 TaskGraph。至少第二 work 复用同一 Session 且原历史新 Turn 可定位；required future/reviewer 缺口沿现完成测试能力复用，只保留一次公开 waiting 结果，不另铺矩阵。
