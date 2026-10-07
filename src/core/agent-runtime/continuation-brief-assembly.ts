@@ -294,6 +294,9 @@ export function assembleContinuationBrief(input: AssembleBriefInput): Continuati
   const requeue = basis.requeue;
   const previous = basis.previous;
   const head = basis.round;
+  // Contract (e) `factsFrom`: an afterRun that never entered the Kernel has no round of its own; the failed checks
+  // listed are the facts Run's, the round its own TaskRequeue covered (§15.2 C3-not-entered-chain "来自更早的 Run").
+  const checksRound = head ?? basis.factsChain.at(-1)?.round ?? null;
   // TD-8: the class is re-derived from the facts the requeue covered (the stored one is the audit copy).
   const derivation = deriveReworkClass(previous.run, basis.previousIntents.pointer,
     head === null ? { kind: 'none' } : { kind: 'head', head, chain: [head] });
@@ -403,8 +406,8 @@ export function assembleContinuationBrief(input: AssembleBriefInput): Continuati
         .map((message) => ({ messageRef: { ...message.messageRef }, part: message.part, excerpt: bounded(message.text) })),
       messagesOmitted: Math.max(0, acceptedMessages.length - ACCEPTED_INPUTS_LISTED),
     },
-    checks: head === null ? null : { roundRef: { ...head.ref }, roundOrdinal: head.chain?.ordinal ?? 1,
-      failing: roundFailureFacts(head).checks, gapCodes: roundFailureFacts(head).gapCodes },
+    checks: checksRound === null ? null : { roundRef: { ...checksRound.ref }, roundOrdinal: checksRound.chain?.ordinal ?? 1,
+      failing: roundFailureFacts(checksRound).checks, gapCodes: roundFailureFacts(checksRound).gapCodes },
     requeue: { reason: bounded(requeue.reason), reasonAuthor: actorClass, newInputs },
     workspace: {
       selfChanged,
