@@ -20,32 +20,25 @@ import { fileURLToPath } from 'node:url';
 import {
   PLATFORM_TOKEN_HEADER,
   PLATFORM_TOKEN_PLACEHOLDER,
-  type BootstrapResponse,
 } from '../../src/app/core-http-types.js';
 import {
   UI_BOOTSTRAP_SUFFIX,
   UI_CORE_API_PREFIX,
   UI_PLATFORM_TOKEN_HEADER,
   UI_PLATFORM_TOKEN_META_NAME,
-  createWorkbenchLayout,
   escapeHtml,
   planExecutionContinuation,
   reduceWorkbenchLayout,
   renderExecutionProfiles,
   renderAdoptedGraph,
-  renderBootstrap,
   renderGap,
-  renderInbox,
   renderInitialPlanning,
   renderMessage,
   renderMessageBody,
   renderQueryAnswer,
   renderObservedGraph,
-  renderRouteResponse,
   renderSessionDetail,
-  renderSessionHistory,
   renderSessionHistoryTimeline,
-  renderSessionOperation,
   renderSessionSummary,
   renderTaskGraph,
   renderTaskStructure,
@@ -53,7 +46,7 @@ import {
   renderWorkflowAdvance,
   renderWorkLinkTarget,
 } from '../../src/ui/views.js';
-import type { WorkbenchTab, WorkbenchDraftReference } from '../../src/ui/views.js';
+import type { WorkbenchTab, WorkbenchDraftReference, WorkbenchLayout } from '../../src/ui/views.js';
 import type { ArchitectureRevision } from '../../src/core/work-graph/architecture/catalog-contracts.js';
 import type { ObservedArchitectureNeighborhood } from '../../src/core/work-graph/architecture/contracts.js';
 import type { TaskGraph, TaskRow } from '../../src/core/work-graph/tasks/plan-contracts.js';
@@ -68,7 +61,6 @@ import type {
   CoreScope,
   InitialPlanningGoalInputResult,
   MessageBody,
-  OperationReceipt,
   Page,
   SessionCard,
   SessionHistoryEntry,
@@ -127,19 +119,6 @@ describe('workbench build closure', () => {
 });
 
 describe('pure DTO presentation', () => {
-  it('renders the configured scopes and trusted review material', () => {
-    const bootstrap: BootstrapResponse = {
-      workspaces: [{ scope: { projectId: 'p', workspaceId: 'w' }, name: 'Workbench one', workspaceRevision: 3 }],
-      review: { notes: 'review note', policies: [{ policyId: 'policy-1', contentRevision: 1, content: {} }], goals: [{ goalId: 'g', objective: 'do it' }] },
-      execution: { queryProfiles: [], workflowScopes: [] },
-    };
-    const html = renderBootstrap(bootstrap);
-    expect(html).toContain('Workbench one');
-    expect(html).toContain('workspaceRevision=3');
-    expect(html).toContain('review note');
-    expect(html).toContain('政策 1');
-  });
-
   it('keeps the adopted and observed graphs as two distinct panels', () => {
     const adopted: ReadResult<ArchitectureRevision> = { status: 'ready', value: {
       baseline: { ref: { aggregateType: 'ArchitectureBaselineRevision', projectId: 'p', baselineId: 'baseline-1', revision: 1 } as never,
@@ -186,22 +165,13 @@ describe('pure DTO presentation', () => {
     expect(html).toContain('Task one');
   });
 
-  it('preserves committed/replayed/cursor and rejection discriminators', () => {
-    const committed = renderRouteResponse('projects/create', { status: 'committed', replayed: true, cursor: 'c0000000009', value: { revision: 1 } });
-    expect(committed).toContain('replayed=true');
-    expect(committed).toContain('c0000000009');
-    const rejected = renderRouteResponse('plans/apply', { status: 'rejected', code: 'incomplete', reason: 'no active policy' });
-    expect(rejected).toContain('incomplete');
-    expect(rejected).toContain('no active policy');
-  });
-
   it('escapes interpolated domain text', () => {
     expect(escapeHtml('<script>&"\'')).toBe('&lt;script&gt;&amp;&quot;&#39;');
   });
 
   // R6.1b-1: one pure display chain over the exact public DTOs. It preserves the
-  // real identity/status/cursor and never invents a reply or a created Session.
-  it('renders a Session/message/history display chain without inventing replies or completed work', () => {
+  // real identity/status/cursor and never invents a reply.
+  it('renders a Session/message display chain without inventing replies', () => {
     const sessionRef = { projectId: 'p', sessionId: 'session-1' };
     const record: SessionRecord = {
       ref: { aggregateType: 'Session', ...sessionRef },
@@ -254,10 +224,6 @@ describe('pure DTO presentation', () => {
       response: null,
     };
 
-    const inbox = renderInbox({ status: 'ready', value: { items: [pending], nextCursor: null, sourceCursor: 'commit-1' as never } });
-    expect(inbox).toContain('message-1');
-    expect(inbox).toContain('待处理');
-
     const message = renderMessage({ status: 'ready', value: pending });
     expect(message).toContain('待处理');
     expect(message).toContain('尚无回复');
@@ -267,42 +233,6 @@ describe('pure DTO presentation', () => {
       messageRef, part: 'message', text: 'R6.1b 真实正文', sourceRef: {} as never, usage: 'message',
     };
     expect(renderMessageBody({ status: 'ready', value: body })).toContain('R6.1b 真实正文');
-
-    const history: ReadResult<Page<SessionHistoryEntry>> = {
-      status: 'ready',
-      value: {
-        items: [{
-          recordId: 'kernel:session.created:1',
-          cursor: 'kernhist1.entry',
-          recordedAt: '2026-09-26T00:00:00.000Z',
-          kind: 'session_created',
-          source: { adapterId: 'kernel-adapter', kernelSessionId: 'session-1', position: 1 },
-          body: { encoding: 'kernel_session_record_json', text: '{"recordType":"session.created"}' },
-        }],
-        nextCursor: null,
-        basis: { kind: 'session', ref: sessionRef, cursor: 'kernhist1.basis' },
-      },
-    };
-    const historyHtml = renderSessionHistory(history);
-    expect(historyHtml).toContain('会话创建');
-    expect(historyHtml).toContain('没有更多');
-    expect(historyHtml).toContain('kernhist1.basis');
-
-    const operationRef = { aggregateType: 'CoreOperation' as const, projectId: 'p', operationId: 'operation-1' };
-    const accepted: OperationReceipt<SessionRecord> = {
-      status: 'accepted', operationRef, replayed: false, cursor: 'commit-1' as never,
-    };
-    const acceptedHtml = renderSessionOperation(accepted);
-    expect(acceptedHtml).toContain('创建处理中');
-    expect(acceptedHtml).toContain('operation-1');
-    expect(acceptedHtml).not.toContain('已创建');
-
-    const completed: OperationReceipt<SessionRecord> = {
-      status: 'completed', operationRef, value: record, replayed: false, cursor: 'commit-1' as never,
-    };
-    const completedHtml = renderSessionOperation(completed);
-    expect(completedHtml).toContain('已创建');
-    expect(completedHtml).toContain('session-1');
   });
 
   // R6 UI-layout skeleton (phase-2 target): auxiliary tabs and file-selection
@@ -322,13 +252,11 @@ describe('pure DTO presentation', () => {
       readAt: '2026-09-26T00:00:00.000Z',
     };
 
-    // The factory is the real seam and is already implemented.
-    const layout = createWorkbenchLayout(scope, session, 'active');
-    expect(layout.scope).toEqual(scope);
-    expect(layout.session).toEqual(session); // exact SessionRef: projectId + sessionId only
-    expect(layout.readOnly).toBe(false);
-    expect(createWorkbenchLayout(scope, session, 'archived').readOnly).toBe(true);
-    expect(createWorkbenchLayout(scope, { projectId: 'p', sessionId: 'session-2' }, 'active').tabs).toHaveLength(0);
+    // A plain layout literal bound to the scope and the exact SessionRef, built
+    // the way the browser builds it (`activeLayout`, src/ui/views/tabs/aux-layout.ts).
+    const emptyLayout = (readOnly: boolean): WorkbenchLayout => ({ scope, session, tabs: [], activeTabId: null,
+      composerDraft: { state: 'draft_snapshot', text: '', references: [] }, readOnly });
+    const layout = emptyLayout(false);
 
     const reference: WorkbenchDraftReference = {
       kind: 'selection', path: file.path, text: 'export const done = false;',
@@ -359,7 +287,7 @@ describe('pure DTO presentation', () => {
     // only appends to this conversation composer, never to the file editor.
 
     // Archived browsing opens a real file tab but cannot add/edit a sendable draft.
-    const archivedFile = reduceWorkbenchLayout(createWorkbenchLayout(scope, session, 'archived'),
+    const archivedFile = reduceWorkbenchLayout(emptyLayout(true),
       { kind: 'open_tab', tab: fileTab });
     const archived = reduceWorkbenchLayout(archivedFile, { kind: 'add_reference', reference });
     expect(archived.readOnly).toBe(true);
@@ -527,7 +455,8 @@ describe('pure DTO presentation', () => {
     expect(noExecutionHtml).not.toContain('data-run-id');
     // The original reducer keeps the typed execution_history / Session-history
     // identity; nothing is parsed back out of the title.
-    const displayLayout = createWorkbenchLayout({ projectId: 'p', workspaceId: 'w' }, sessionRef, 'active');
+    const displayLayout: WorkbenchLayout = { scope: { projectId: 'p', workspaceId: 'w' }, session: sessionRef,
+      tabs: [], activeTabId: null, composerDraft: { state: 'draft_snapshot', text: '', references: [] }, readOnly: false };
     const executionTab: WorkbenchTab = { tabId: 'execution:goal-1:run-work-2', kind: 'execution_history',
       title: '本次执行（标题不承载身份）', run: executionRunRef,
       task: { projectId: 'p', goalId: 'goal-1', taskId: 't-child' } };

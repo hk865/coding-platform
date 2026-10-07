@@ -1,30 +1,10 @@
-/** Pure setup renderers: bootstrap summary, module list, Goal and Plan details and the generic route reply. */
+/** Pure setup renderers: the module list and the Goal and Plan details. */
 
 import type {
-  BootstrapResponse,
   CoreRejection,
-  CoreRouteSuffix,
   ModuleDefinition,
 } from '../../../app/core-http-types.js';
 import { detailsFor, escapeHtml, list, record, rejectionPanel, renderGap, shown } from '../../components/html.js';
-
-export function renderBootstrap(bootstrap: BootstrapResponse): string {
-  const rows = bootstrap.workspaces.map(workspace =>
-    `<li><strong>${escapeHtml(workspace.name)}</strong> `
-    + `<code>${escapeHtml(workspace.scope.projectId)}/${escapeHtml(workspace.scope.workspaceId)}</code> `
-    + `<span>workspaceRevision=${escapeHtml(workspace.workspaceRevision)}</span></li>`).join('');
-  const review = bootstrap.review;
-  const summary = review === null ? '<p class="muted">没有提供初始审阅资料</p>' : [
-    review.notes === undefined ? '' : `<p>${escapeHtml(review.notes)}</p>`,
-    `<p>政策 ${list(review.policies).length} · 目标 ${list(review.goals).length} · `
-    + `初始架构 ${list(review.architectures).length} · Plan 草案 ${list(review.plans).length}</p>`,
-  ].join('');
-  const execution = bootstrap.execution;
-  const executionSummary = `<p class="muted">执行配置 · 只读调查 profile ${execution.queryProfiles.length}`
-    + ` · Workflow 范围 ${execution.workflowScopes.length}</p>`;
-  return `<section class="panel" data-view="bootstrap"><h2>工作台</h2>`
-    + `<ul class="workspaces">${rows}</ul>${summary}${executionSummary}</section>`;
-}
 
 export function renderModuleList(modules: ModuleDefinition[]): string {
   if (modules.length === 0) return '<p class="muted">采用图没有任何模块</p>';
@@ -74,22 +54,4 @@ export function renderPlanProposal(result: unknown): string {
     + (issues.length === 0 ? '<p class="muted">校验问题：0</p>'
       : `<ul class="diagnostics">${issues.map(issue => `<li>${shown(record(issue).message)}（${shown(record(issue).code)}）</li>`).join('')}</ul>`)
     + `</section>`;
-}
-
-/** Renders any route response by shape, preserving committed/cursor/rejection. */
-export function renderRouteResponse(suffix: CoreRouteSuffix | string, payload: unknown): string {
-  const value = record(payload);
-  if (value.status === 'rejected') return rejectionPanel(value as unknown as CoreRejection);
-  if (value.status === 'not_found') return renderGap(suffix, 'not found');
-  if (value.status === 'not_ready') return renderGap(suffix, 'not ready');
-  if (value.status === 'committed') {
-    return `<section class="panel committed" data-route="${escapeHtml(suffix)}"><h3>已提交</h3>`
-      + `<p>replayed=${String(value.replayed)} cursor=${escapeHtml(record(value.cursor).sequence ?? value.cursor ?? '')}</p>`
-      + `<pre>${escapeHtml(JSON.stringify(value.value))}</pre></section>`;
-  }
-  if (value.status === 'accepted' || value.status === 'completed') {
-    return `<section class="panel" data-route="${escapeHtml(suffix)}"><h3>操作回执</h3>`
-      + `<pre>${escapeHtml(JSON.stringify(payload))}</pre></section>`;
-  }
-  return `<section class="panel" data-route="${escapeHtml(suffix)}"><pre>${escapeHtml(JSON.stringify(payload))}</pre></section>`;
 }

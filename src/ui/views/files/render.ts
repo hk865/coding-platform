@@ -1,15 +1,14 @@
-/** Pure file renderers: file and source reads, CAS save receipt, text diff and Workspace comparison. */
+/** Pure file renderers: file read, source capture, CAS save receipt, text diff and Workspace comparison. */
 
 import type {
   CaptureSummary,
   CoreRejection,
   SaveWorkbenchFileResult,
-  SourcePage,
   WorkspaceComparison,
   WorkspaceFile,
   WorkspaceResult,
 } from '../../../app/core-http-types.js';
-import { detailsFor, escapeHtml, record, rejectionPanel } from '../../components/html.js';
+import { detailsFor, escapeHtml, rejectionPanel } from '../../components/html.js';
 
 export function renderFileRead(result: WorkspaceResult<WorkspaceFile>): string {
   if (result.status !== 'ready') return rejectionPanel(result as unknown as CoreRejection);
@@ -30,15 +29,6 @@ export function renderSourceCapture(result: WorkspaceResult<CaptureSummary>): st
     + detailsFor('查看捕获详情', `<p>capture <code>${escapeHtml(summary.ref.captureId ?? '')}</code> `
       + `· provider ${escapeHtml(summary.coverage.provider)} · complete ${String(summary.coverage.complete)}</p>`)
     + `</section>`;
-}
-
-export function renderSourcePage(result: WorkspaceResult<SourcePage>): string {
-  if (result.status !== 'ready') return rejectionPanel(result as unknown as CoreRejection);
-  const page = result.value;
-  return `<section class="panel" data-view="source"><h3>来源查询</h3>`
-    + `<p>${page.items.length} 项 · nextCursor ${page.nextCursor === null ? 'none' : 'present'}</p>`
-    + `<ul>${page.items.map(hit => `<li>${escapeHtml(record(hit).kind ?? '')} `
-      + `${escapeHtml(record(record(hit).file).path ?? '')}</li>`).join('')}</ul></section>`;
 }
 
 // --- File save / compare (real Kernel CAS) -----------------------------------

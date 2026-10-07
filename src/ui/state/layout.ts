@@ -1,17 +1,15 @@
-/** Pure workbench layout state: the tab/draft model, its reducer and the tab-strip renderer. */
+/** Pure workbench layout state: the tab/draft model and its reducer. */
 
 import type {
   ArchitectureReadBody,
   CoreScope,
   RunRef,
   SessionCard,
-  SessionRecord,
   SessionRef,
   TaskGraph,
   WorkspaceFile,
   WorkspaceVersion,
 } from '../../app/core-http-types.js';
-import { escapeHtml } from '../components/html.js';
 
 export type WorkLinkTarget = SessionCard['links'][number]['ref']['target'];
 /** The exact original TaskTriple, derived from the public DTO so the UI never
@@ -29,16 +27,6 @@ type TaskTriple = Extract<WorkLinkTarget, { kind: 'task' }>['ref'];
 // the exact fields their DTO carries and never parse a title/tabId to guess a
 // domain ref.
 // ---------------------------------------------------------------------------
-
-/** Auxiliary-workspace page kinds. They are display choices only. */
-export type WorkbenchTabKind =
-  | 'project_chat' | 'session_chat' | 'file' | 'directory'
-  | 'task_detail' | 'module_detail' | 'history' | 'execution_history'
-  | 'setup' | 'task_graph' | 'architecture_graph'
-  // MVP UI connection auxiliary pages: one real command handle and one real
-  // Workspace compare result. Identity is typed; the live snapshot/result lives
-  // in the browser state keyed by this tab.
-  | 'terminal' | 'diff';
 
 /** A selection keeps its exact text/lines and the file version it was based
  * on. Unsaved editor text is explicitly marked as a draft snapshot. */
@@ -118,16 +106,6 @@ export type WorkbenchLayoutAction =
   | { kind: 'select_node'; tabId: string; selection: WorkbenchNodeSelection }
   | { kind: 'toggle_pin'; tabId: string; nodeId: string };
 
-/** The one display-state factory. It binds the layout to the scope and to the
- * exact SessionRef (or the project main conversation) so tabs and drafts can
- * never leak across scopes, Sessions or the archived boundary. */
-export function createWorkbenchLayout(
-  scope: CoreScope, session: SessionRef | null, lifecycle: SessionRecord['lifecycle'] | null,
-): WorkbenchLayout {
-  return { scope, session, tabs: [], activeTabId: null,
-    composerDraft: { state: 'draft_snapshot', text: '', references: [] }, readOnly: lifecycle === 'archived' };
-}
-
 /** The pure tab/draft reducer. Every branch is a display-only move: no HTTP, no
  * send, no file save. On an archived (read-only) layout the edit branches are
  * no-ops so a file can be browsed but never turned into a sendable draft. */
@@ -197,24 +175,4 @@ export function reduceWorkbenchLayout(layout: WorkbenchLayout, action: Workbench
         return { ...tab, display: { selected: tab.display?.selected ?? null, pinned: next } };
       }) };
   }
-}
-
-/** The auxiliary tab strip plus the current conversation draft. It draws only
- * display state; the tab body is composed by the browser entry from the real
- * read results it already holds. */
-export function renderWorkbenchLayout(layout: WorkbenchLayout): string {
-  const tabs = layout.tabs.map(tab => {
-    const active = tab.tabId === layout.activeTabId;
-    const draft = tab.kind === 'file' && tab.editorDraft !== null;
-    return `<button class="tab${active ? ' active' : ''}" role="tab" aria-selected="${String(active)}"`
-      + ` tabindex="${active ? '0' : '-1'}" data-action="activate-tab"`
-      + ` data-tab="${escapeHtml(tab.tabId)}" data-tab-kind="${escapeHtml(tab.kind)}">`
-      + `<span class="tab-title">${escapeHtml(tab.title)}${draft ? ' · 草稿快照' : ''}</span>`
-      + `<span class="tab-close" role="button" tabindex="0" data-action="close-tab"`
-      + ` data-tab="${escapeHtml(tab.tabId)}" aria-label="关闭 ${escapeHtml(tab.title)}">×</span></button>`;
-  }).join('');
-  return `<section class="workbench-aux" data-view="workbench-layout" data-readonly="${String(layout.readOnly)}">`
-    + `<div class="tabbar" role="tablist">${tabs}`
-    + `<button class="tab new" data-action="open-page" data-page="blank" title="新建辅助页">＋</button>`
-    + `</div></section>`;
 }

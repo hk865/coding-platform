@@ -1,12 +1,9 @@
 /** The top bar, the page chooser and the bottom status line. */
 
-import type { CoreRouteSuffix } from '../../../app/core-http-types.js';
 import { routeLabel } from '../../api/routes.js';
-import { escapeHtml, shown } from '../../components/html.js';
+import { escapeHtml } from '../../components/html.js';
 import { topIcon } from '../../components/icons.js';
-import { record } from '../../state/values.js';
 import { bootstrap, scopes, selectedKey, state, view } from '../../state/workbench.js';
-import { renderRouteResponse } from '../setup/render.js';
 
 export function renderTopBar(): string {
   if (bootstrap() === null) return '';
@@ -31,26 +28,6 @@ export function renderPageChooser(): string {
     + item('files', '文件资源管理器', 'file-text') + item('terminal', '命令', 'terminal')
     + item('diff', 'Diff', 'git-compare')
     + `<button data-action="open-setup-tab">${topIcon('settings')}<span>项目设置（次级）</span></button></div>`;
-}
-
-function lastSummary(last: { route: CoreRouteSuffix; payload: unknown }): string {
-  const envelope = record(last.payload);
-  const label = routeLabel(last.route);
-  if (envelope.status === 'committed') {
-    return envelope.replayed === true ? `${label}：已完成（此前已成功，返回原回执）` : `${label}：已完成`;
-  }
-  if (envelope.status === 'rejected') return `${label}：未完成 — ${shown(envelope.reason)}`;
-  if (envelope.status === 'not_found') return `${label}：没有找到对应记录`;
-  if (envelope.status === 'not_ready') return `${label}：暂时没有可读结果`;
-  return `${label}：已返回`;
-}
-
-/** One compact default line; the full receipt stays inside the collapsed
- * disclosure so a read never parks a large result card in the status area. */
-function renderLastResult(last: { route: CoreRouteSuffix; payload: unknown }): string {
-  return `<details class="details last-result" data-view="last"><summary>${escapeHtml(lastSummary(last))}</summary>`
-    + renderRouteResponse(last.route, last.payload)
-    + `</details>`;
 }
 
 export function renderLastPanel(): string {

@@ -280,17 +280,3 @@ export function renderTaskExecutionEntry(row: TaskRow): string {
     + `<button class="link" data-action="open-execution-history" ${identity}>查看本次执行 / 原历史</button>`
     + `<p class="muted">打开后先读取该次执行事实；只有正式记录可用时才按原 claim 会话读取本次执行窗与完整原历史。</p></section>`;
 }
-
-/** The two graphs side by side as distinct sections; a single baseline label is
- * explicitly not sufficient. */
-export function renderGraphPanels(input: {
-  adopted: ReadResult<ArchitectureRevision>;
-  observed: ReadResult<ObservedArchitectureNeighborhood>;
-  tasks?: ReadResult<TaskGraph>;
-}): string {
-  return `<div class="graph-panels">`
-    + renderAdoptedGraph(input.adopted)
-    + renderObservedGraph(input.observed)
-    + (input.tasks === undefined ? '' : renderTaskGraph(input.tasks))
-    + `</div>`;
-}

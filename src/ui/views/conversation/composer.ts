@@ -1,13 +1,11 @@
-/** The composer and the conversation panels it sits with: Goal objective, consultation, new-Goal setup, member mail, governance hint. */
+/** The composer and the conversation panels it sits with: Goal objective, new-Goal setup, member mail. */
 
-import type { InitialPlanningGoalInputResult, MessagesReadResponse, SessionRef } from '../../../app/core-http-types.js';
 import { outcomeRejectionReason } from '../../api/http.js';
-import { actionButton, detailsBlock, escapeHtml } from '../../components/html.js';
+import { detailsBlock, escapeHtml } from '../../components/html.js';
 import { topIcon } from '../../components/icons.js';
 import type { GoalSetupRun, MemberMailState, ScopeState } from '../../state/scope-state.js';
-import { record, sameMessage, sameSession } from '../../state/values.js';
+import { record } from '../../state/values.js';
 import { state } from '../../state/workbench.js';
-import { currentConsultationGoalId } from './member-mail.js';
 import { renderQueryAnswer } from '../execution/render.js';
 import { selectedExecutionProfile } from '../execution/run.js';
 import { memberLabel } from '../sessions/labels.js';
@@ -23,37 +21,6 @@ export function currentGoalObjective(scope: ScopeState): string {
     if (typeof goal.objective === 'string') return goal.objective;
   }
   return scope.forms.objective;
-}
-
-/**
- * The message-detail consultation entry. It reuses the current Goal and the
- * selected read-only Query profile; a missing Goal/profile is explained instead
- * of inventing one. It shows only the real waiting/responded/ended result and
- * never writes "已停止" or "Task 完成".
- */
-function renderConsultation(current: ScopeState, active: SessionRef, result: MessagesReadResponse): string {
-  if (result.status !== 'ready') return '';
-  const message = result.value;
-  const profile = selectedExecutionProfile(current);
-  const goalId = currentConsultationGoalId(current);
-  const missing: string[] = [];
-  if (profile === null) missing.push('当前工作区没有可用的只读调查配置');
-  if (goalId === null) missing.push('没有可用的当前 Goal');
-  const stored = current.consultation !== null && sameSession(current.consultation.session, active)
-    && sameMessage(current.consultation.messageRef, message.ref) ? current.consultation.result : null;
-  const status = stored === null ? ''
-    : stored.status === 'ready'
-      ? `<p data-consultation="${escapeHtml(stored.value.state)}">${stored.value.state === 'responded' ? '已回复'
-        : stored.value.state === 'ended' ? '已结束（无正式答复）' : '等待处理'}`
-        + (stored.value.reason === null ? '' : `：${escapeHtml(stored.value.reason)}`) + `</p>`
-      : `<p data-consultation="rejected">${escapeHtml(outcomeRejectionReason(stored))}</p>`;
-  const disabledReason = message.status === 'responded' ? '该消息已有回复' : missing.join('、');
-  return `<section class="panel" data-view="consultation"><header><h4>处理咨询</h4>`
-    + `<p class="muted">请该成员答复这条消息；成员忙碌时等待处理。</p></header>`
-    + (missing.length > 0 ? `<p class="muted">缺少：${escapeHtml(missing.join('、'))}</p>` : '')
-    + `<div class="buttons">${actionButton('consult-message', '处理咨询',
-      missing.length === 0 && message.status !== 'responded', disabledReason)}</div>`
-    + status + `</section>`;
 }
 
 /** New-Goal cold-start progress: the generated goal id and step, the frozen
@@ -105,22 +72,6 @@ export function renderMemberMail(mail: MemberMailState): string {
       ? `<button data-action="retry-member-send">重新发送原请求（同一 body）</button>` : '')
     + `</div>`
     + receipt + `</section>`;
-}
-
-/** The one narrow "missing governance" prompt for the main planning wait: the
- * owner rejected the proposal because no effective CompletionPolicy/
- * ArchitectureBaseline is active. It only links to the existing setup tab and
- * never adopts, sends or infers an architecture itself. */
-function planningGovernanceHint(result: InitialPlanningGoalInputResult | null): string {
-  if (result === null || result.status !== 'ready' || result.value.state !== 'waiting') return '';
-  const receipt = record(result.value.receipt);
-  if (receipt.status !== 'rejected') return '';
-  const missing = receipt.code === 'incomplete' || receipt.code === 'unavailable';
-  if (!missing) return '';
-  return `<section class="policy-choice" data-view="planning-governance-hint">`
-    + `<p>计划等待处理。请核对上述原因，以及项目的初始架构和完成标准；补齐后继续。</p>`
-    + `<div class="buttons"><button data-action="open-setup-tab">打开设置页采用初始架构</button></div>`
-    + `</section>`;
 }
 
 // Center rendering is renderCenterHead + renderCenterBody (one production renderer).

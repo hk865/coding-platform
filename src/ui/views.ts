@@ -17,8 +17,6 @@
 
 // ---------------------------------------------------------------------------
 // Render contract (stable hooks the tests assert):
-//   - `renderWorkbenchLayout` emits `data-view="workbench-layout"`, each tab as
-//     `data-tab="<tabId>"` with its `data-tab-kind`, and `草稿快照` on a draft.
 //   - `renderSessionHistoryTimeline` emits, per original entry, `data-history`
 //     = recordId and `data-history-kind` in
 //     user_input | assistant_text | tool_result | unknown |
@@ -38,11 +36,9 @@ export {
 } from './api/protocol.js';
 export { escapeHtml, renderGap } from './components/html.js';
 export {
-  renderBootstrap,
   renderModuleList,
   renderGoalDetail,
   renderPlanProposal,
-  renderRouteResponse,
 } from './views/setup/render.js';
 export {
   renderAdoptedGraph,
@@ -50,31 +46,22 @@ export {
   renderTaskRow,
   renderTaskGraph,
   renderTaskExecutionEntry,
-  renderGraphPanels,
 } from './views/graphs/node-link.js';
 export {
   renderFileRead,
   renderSourceCapture,
-  renderSourcePage,
   renderFileSave,
   renderTextDiff,
   renderWorkspaceComparison,
 } from './views/files/render.js';
 export {
-  renderSessionRoleOptions,
   renderSessionSummary,
   renderSessionDetail,
-  renderSessionOperation,
-  renderSessionOperationRead,
-  renderInbox,
   renderMessage,
   renderMessageBody,
-  renderSessionHistory,
-  renderRuntimeCapabilities,
 } from './views/sessions/render.js';
-export { createWorkbenchLayout, reduceWorkbenchLayout, renderWorkbenchLayout } from './state/layout.js';
+export { reduceWorkbenchLayout } from './state/layout.js';
 export type {
-  WorkbenchTabKind,
   WorkbenchDraftReference,
   WorkbenchDraft,
   WorkbenchNodeSelection,
