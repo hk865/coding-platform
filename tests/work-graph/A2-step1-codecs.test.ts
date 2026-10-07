@@ -87,7 +87,7 @@ import {
   taskReworkRefusedEventFromEvent,
 } from '../../src/core/work-graph/tasks/claim-record-codecs.js';
 import { PLAN_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/plan-record-codecs.js';
-import { decodeRun } from '../../src/core/work-graph/tasks/run-state-service.js';
+import { decodeRun } from '../../src/core/work-graph/materials/run-snapshot-decoder.js';
 
 // ------------------------------------------------------------------------ //
 // Shared vocabulary                                                         //

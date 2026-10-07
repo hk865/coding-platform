@@ -91,7 +91,7 @@ import {
   PLAN_GOVERNANCE_RECORD_SCHEMAS, PLAN_STATE_RECORD_SCHEMAS, readCanonicalTaskFacts,
 } from '../../src/core/work-graph/tasks/plan-readers.js';
 import { executionDefinitionsAgree, isBasisUnsupported, planTaskFacts } from '../../src/core/work-graph/tasks/plan-task-basis.js';
-import { decodeRun } from '../../src/core/work-graph/tasks/run-state-service.js';
+import { decodeRun } from '../../src/core/work-graph/materials/run-snapshot-decoder.js';
 import { isPausedInterrupted, leaseOwnedByRun, runUnresolvedBlocker } from '../../src/core/work-graph/state/run-machine.js';
 import { ownsOccupancy } from '../../src/core/work-graph/state/session-availability.js';
 import {

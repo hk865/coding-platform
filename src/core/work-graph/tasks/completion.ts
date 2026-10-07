@@ -61,7 +61,7 @@ import { evidenceApplicabilityWithBasis, evidenceBindingFor, selectEffectiveEvid
 import {
   bindTrustedContext, isolateWrite, isRecord, loadReplayEvent, mapStoreFailure, mergeGuards, nonEmpty, sameRef,
 } from './execution-entry-service.js';
-import { decodeRun } from './run-state-service.js';
+import { decodeRun } from '../materials/run-snapshot-decoder.js';
 import { evaluateGoalCompletion, evaluateTaskCompletion } from './completion-policy.js';
 import {
   GOAL_COMPLETED_EVENT_TYPE, TASK_COMPLETED_EVENT_TYPE, completionEventFromEvent, encodeCompletionEvent,

@@ -65,7 +65,7 @@ import { validateWorkLinkTarget } from './session-targets.js';
 import {
   createSessionRecord, deriveAvailability, sessionMachineStateOf, transitionSession, type SessionTransition,
 } from '../state/session-availability.js';
-import { decodeRun } from '../tasks/run-state-service.js';
+import { decodeRun } from '../materials/run-snapshot-decoder.js';
 
 /** R4b's required physical surface. WorkGraph remains the sole domain writer;
  * Store implements only mechanical guards, claims, index reads and commits. */

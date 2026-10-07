@@ -52,7 +52,7 @@ import { decodeStoredMessageBody } from '../communication/message-body-envelope.
 import { decodeSessionMessageRecord, sessionMessageRefKey } from '../communication/message-record-codecs.js';
 import { decodeVerificationRoundSnapshot } from '../evidence/evidence-record-codecs.js';
 import { decodeControlIntentSnapshot } from '../persistence/control-record-codecs.js';
-import { materialRecordSchemas } from '../materials/record-readers.js';
+import { decodeRun, type Decoded } from '../materials/run-snapshot-decoder.js';
 import {
   decodeSessionRecord,
   plainSessionRefToAggregate,
@@ -84,15 +84,12 @@ import type {
   TaskExecutionPage,
 } from './execution-read-contracts.js';
 
-const RUN_SNAPSHOT_SCHEMA_ID = 'RunSnapshot@1';
 const TASK_LEASE_SCHEMA_ID = 'TaskLeaseSnapshot@1';
 /** Bounded final-window retries before a read is reported `busy`. */
 const MAX_ROUNDS = 4;
 
-/** Selected ONCE from the modules that already own and register these schemas.
+/** Selected ONCE from the module that already owns and registers this schema.
  * The rules are not copied, re-registered or scanned per record. */
-const RUN_VALIDATE = materialRecordSchemas().records
-  .find(candidate => candidate.schemaId === RUN_SNAPSHOT_SCHEMA_ID)?.validate;
 const LEASE_VALIDATE = PLAN_STATE_RECORD_SCHEMAS.records
   .find(candidate => candidate.schemaId === TASK_LEASE_SCHEMA_ID)?.validate;
 
@@ -141,18 +138,6 @@ function presenceOf(batch: ReadBatch, refKey: string): Presence {
   return 'unaccounted';
 }
 
-/** Shared with the C1 mailbox historical-identity reader; this is the ONE Run
- * schema-checked decoder, not a new lenient parser. */
-export type Decoded<T> = { ok: true; value: T } | { ok: false; reason: string };
-
-export function decodeRun(record: EncodedRecord): Decoded<RunSnapshot> {
-  if (RUN_VALIDATE === undefined) return { ok: false, reason: 'the RunSnapshot schema is not registered' };
-  const checked = RUN_VALIDATE(record);
-  if (checked.status !== 'decoded') return { ok: false, reason: checked.reason };
-  const body = parseBody(record.json);
-  if (body === null) return { ok: false, reason: 'the Run snapshot is not a JSON object' };
-  return { ok: true, value: body as unknown as RunSnapshot };
-}
 function decodeLease(record: EncodedRecord): Decoded<TaskLeaseSnapshot> {
   if (LEASE_VALIDATE === undefined) return { ok: false, reason: 'the TaskLeaseSnapshot schema is not registered' };
   const checked = LEASE_VALIDATE(record);

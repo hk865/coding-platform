@@ -65,7 +65,7 @@ import type { TaskExecutionRecord } from '../tasks/execution-read-contracts.js';
 import { decodeDispatchOutboxEntry, dispatchOutboxRefKey } from '../tasks/claim-record-codecs.js';
 import { readStoredManifest, recheckHostRoleAdmission } from '../tasks/execution-entry-service.js';
 import { readBatch, type ReadBatch } from '../tasks/plan-readers.js';
-import { decodeRun } from '../tasks/run-state-service.js';
+import { decodeRun } from '../materials/run-snapshot-decoder.js';
 import {
   SESSION_MESSAGE_BY_RECIPIENT_LOOKUP, SESSION_MESSAGE_BY_RECIPIENT_STATUS_LOOKUP,
   SESSION_MESSAGE_BY_SENDER_RUN_LOOKUP, SESSION_MESSAGE_BY_SENDER_SESSION_LOOKUP,
