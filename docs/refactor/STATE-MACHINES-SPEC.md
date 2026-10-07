@@ -4686,6 +4686,7 @@ A.2 第 2 项要求“服务只通过状态机改状态”，并且能被自动�
   - 任务 D 的 WorkGraph 子模块落地之后：子模块条目 `{ "id": "state", "path": "state/", "dependencies": [], "pure": true }`（任务 D 的 TARGET-DAG 已为 `state` 预留无依赖条目）。`pure: true` 表示除 `src/contracts/` 和声明的子模块依赖之外，不允许任何 import。
   - 任务 D 之前：WorkGraph 还没有子模块划分，单独声明 `state/` 会使其余文件因“没有子模块归属”失败（`check-boundaries.mjs:382`）。因此先加顶层可选字段 `"pureDirectories": ["src/core/work-graph/state/"]`，语义与 `pure: true` 相同。任务 D 落地时删除该字段，改用子模块条目。
   - 两种写法都由 `loadModuleTarget` 校验：路径存在、已规范化、位于某个模块之内。
+  - 2026-10-07 注：任务 D 落地后，子模块规则已写进 `module-target.json`（002e7b28），但换成 `pure: true` 这一步还没做：检查器还不认 `pure` 字段，所以 state 的纯度仍由 `pureDirectories` 管，含义不变。这一步留在收尾，先改检查器和它的测试，见 [STATUS](STATUS.md)“剩余”。
 - **报告格式。** 沿用现有格式，例如 `core/work-graph/state/run-machine.ts:3: pure directory may not import node:fs`。
 - **检查器自身的测试**（`tests/architecture/boundaries.test.ts` 增加）：`state/` 文件 import `node:crypto`、`typescript`、`../tasks/x.js` 时报错；import `../../../contracts/dispatch.js` 时通过；`pureDirectories` 指向不存在的路径时报 module-target 错误。
 

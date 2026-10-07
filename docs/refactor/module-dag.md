@@ -140,5 +140,5 @@ Contracts、Composition、Host（`src/app`）和 UI（`src/ui`）是外层，规
 - 41 条允许的依赖里，现在的代码用到 40 条；没用到的是 `tasks → architecture`，它是设计要的（D-PLACEMENT §3），先声明。
 - 必须一直禁止的方向（D-PLACEMENT §4，方案 `target.json` 的 `forbidden`）都不在上表里，所以都会被拒：persistence 只依赖 model；sessions 不依赖 tasks、queries、communication、evidence；queries 不依赖 tasks、communication、evidence；tasks 不依赖 evidence、communication；materials 不依赖 tasks；state 不依赖任何子模块；model 除了 state 不依赖别的子模块。D-PLACEMENT §4 里关于 notes、views 的两条，等这两个子模块声明时一起写进去。`persistence → state` 要用户确认后才能加。
 - `notes`（L5.5）和 `views`（L7）还没有文件，没有声明；检查器要求声明的路径存在，第一个文件落地时再按 DESIGN §7.2 声明（D-PLACEMENT §3“写入时机”）。
-- state 的纯度仍用顶层 `pureDirectories` 声明。规格 §14.4（L-8）原定任务 D 之后改成 state 子模块条目上的 `pure: true`，但检查器还不认 `pure` 字段，只写上不会被检查；这一步没有改检查器，所以保留 `pureDirectories`，含义相同。要换成 `pure: true`，先改 `scripts/check-boundaries.mjs` 和它的测试。
+- state 的纯度仍用顶层 `pureDirectories` 声明。规格 §14.4 定了（L-8）任务 D 之后改成 state 子模块条目上的 `pure: true`，这一步还没做：检查器还不认 `pure` 字段，只写上不会被检查；写声明这一步没有改检查器，所以保留 `pureDirectories`，含义相同。留在收尾：先让 `scripts/check-boundaries.mjs` 支持 `pure: true` 并补测试，再换（见 [STATUS](STATUS.md)“剩余”）。
 - 文件之间还有两个只靠类型引用才成的环，各在一个子模块内部（model 里 3 个契约文件、state 里两个状态机）。按决定 40 接受：收尾的“无环”按“子模块之间无环、文件之间没有值引用的环”算。检查器只查子模块之间的环。
