@@ -83,7 +83,7 @@
 2. `tasks → architecture`：照设计加。
 3. `model → state`：设计（D-PLACEMENT §6 第 2 行）倾向修法 A，把类型挪到 `src/contracts`；本提案建议修法 B，原因见 §5 第 2 条。
 4. X2：设计提出的拆分，本提案照做，给了具体做法（§5 第 1 条）。
-5. 层次：DESIGN §7.2 就是 TARGET-DAG §1 加上 notes、views，没有冲突。
+5. 层次：DESIGN §7.2 就是 TARGET-DAG §1 加上 notes、views。只有一处例外：修法 B 让同在 L0 的 `model` 依赖 `state`，不是“只依赖更低的层”（`out/submodule-graph-after-X1-X2.txt` 第 74 行报的就是它）。选 B，就要把它写成 L0 内部的一条明确例外，见 §5 第 2 条。
 
 **设计要、但不属于任务 D 的**（任务 D 只搬文件，TASK-D-PLAN §0）：
 - 建 `notes/`、`views/` 和设计里的新记录、新字段（DESIGN §7.2“小件放哪”都落在现有子模块里，D 不碰）；
@@ -188,12 +188,16 @@
 - 这条边是 M6 带进来的。
 - **建议修法 B：在声明里允许 `model → state`**，不改代码。
   - 不会成环：`state` 不依赖 WorkGraph 里的任何东西，检查器的纯目录规则也一直管着它。
-  - model 和 state 都在 L0，state 仍是最底层。
-- **设计书倾向的修法 A**（D-PLACEMENT §6 第 2 行）：把类型挪到 `src/contracts`，让 model 保持无依赖。量下来比设计书估的大：
-  - 不是 3 个类型。`GoalDisplayV1` 还要带上它引用的 `GoalDisplayPhase`、`GoalDisplayRow`、`GoalDisplayCauseV1`、`GoalStopCauseCode`、`GoalRunStopV1`、`GoalRunStopStateV1`，一共至少 9 个导出类型；
-  - 它们都由 goal-machine 里的纯函数算出来，A 会把它们和算它们的函数分到两处；
-  - 有 8 个文件按这些名字从 state/goal-machine 引用（src 4 个、测试 4 个），都要改 import。
-- 所以 lead 建议 B。你要是希望 model 一点依赖都没有，就选 A。A 是 D 之前的第三步代码改动，做完后在严格声明下也是 0 条（`out/submodule-graph-after-X1-X2-A-strict.txt`）。
+  - model 和 state 都在 L0，state 仍是最底层。但这不是“只依赖更低的层”：B 要在层次规则里写一条 L0 内部的明确例外（`model` 可以依赖 `state`，反过来不行）。D-PLACEMENT §6 第 2 行也把 B 列为可选。
+- **设计书倾向的修法 A**（D-PLACEMENT §6 第 2 行）：把类型挪到 `src/contracts`，让 model 保持无依赖。
+  - 不是 3 个类型。`GoalDisplayV1` 还要带上它引用的 `GoalDisplayPhase`、`GoalDisplayRow`、`GoalDisplayCauseV1`、`GoalStopCauseCode`、`GoalRunStopV1`、`GoalRunStopStateV1`，一共至少 9 个导出类型。
+  - 还要多处理一个依赖：`GoalDisplayCauseV1` 用到 `PlanProposalRef`（goal-machine.ts:833），它是从 `state/plan-machine.ts`（第 55 行）引进来的。挪到 `src/contracts` 时不能带着这个 import（契约层不能依赖 WorkGraph，`check-boundaries.mjs` 第 511 行会拒绝），要换成契约层已有的写法（例如 `PlanProposalSnapshot['ref']`），或者把它也挪过去。`code-steps.json` 原先没写这一点。
+  - 它们都由 goal-machine 里的纯函数算出来，A 会把它们和算它们的函数分到两处。
+  - 引用这些名字的 8 个文件（src 4 个、测试 4 个）可以不改：goal-machine.ts 从 `src/contracts` 引进来再原样导出，和它对 `GOAL_FAN_OUT_ACTOR` 的做法一样（第 62 行）；只有 `model/plan-contracts.ts` 改成直接从契约层引用。这一条原先写成“都要改 import”，说多了。
+  - 严格声明下的 0 条模拟（`out/submodule-graph-after-X1-X2-A-strict.txt`）只改了 import 边，没有核对上面这个契约层依赖。
+- **lead 仍建议 B**：不改代码，一行声明，加一条写明的例外。A 的改动比原先写的小，但多一个要另想写法的依赖，名字也会有两个出处。你要是希望层次规则不留例外、model 一点依赖都没有，就选 A；A 是 D 之前的第三步代码改动。
+
+2026-10-07 补注：本节第 2 条、§2 第 5 点和 §5、§9 里写入子模块规则的时机，按 Codex（xhigh）对本方案的审查改过。它没找到必须改的问题，自己重数了 380 处改写、158 个文件，结果和 §7 一致；它的原文在 `out/codex-review.md`。
 
 **第 3 条：`sessions/session-directory.ts:68 → tasks/run-state-service.ts`（值引用 `decodeRun`；sessions → tasks）**
 - 这条边今天就有，不是搬移带来的。
@@ -208,7 +212,7 @@
 1. lead 先做 X1、X2，各自审查后提交（如果选修法 A，A 也在这里做）。
 2. 在那之后的提交 H 上，按 TASK-D-PLAN §2 重算数字。X1、X2 会改到几个 import，下面 §7 的数字会差几处。
 3. 交给 DSH 做 18 次搬移。
-4. D 验收时，子模块规则可以直接写进 `module-target.json`，边界检查马上通过。
+4. D 验收之后，单独一步把子模块规则写进 `module-target.json`（不在 D 的补丁里，TASK-D-PLAN §0），审查后提交，边界检查马上通过。
 
 如果先做 D、后做 X1、X2 也行，只是 D 验收时边界检查要先容忍这 2 条边，片段要等 X1、X2 做完再写。
 
@@ -291,4 +295,4 @@ TASK-D-PLAN §3 两种写法都量了。推荐 canonical：搬走的文件里每
 5. **第 2 条边**（model → state）：声明允许 `model → state`（修法 B，lead 建议）；或者按设计书做修法 A，把 9 个以上的显示类型挪到 `src/contracts`。
 6. **第 3 条边**（sessions → tasks）：D 之前做 X1，`decodeRun` 拆到 `materials/run-snapshot-decoder.ts`。
 7. **文件级两个靠类型引用才成的环**（model 里 3 个契约文件、state 里两个状态机）：接受，收尾的“无环”按子模块之间和值引用来算；或者收尾时拆掉。
-8. **顺序**：X1、X2 先做，然后在新的提交上重算、交 DSH 搬移，D 验收时写入子模块规则。
+8. **顺序**：X1、X2 先做，然后在新的提交上重算、交 DSH 搬移；D 验收以后，再单独一步写入子模块规则。

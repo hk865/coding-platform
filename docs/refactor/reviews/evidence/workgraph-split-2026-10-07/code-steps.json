@@ -28,7 +28,7 @@
     },
     {
       "id": "A",
-      "what": "ALTERNATIVE to declaring model -> state (fix B, proposed): GoalDisplayV1, GoalResumeContinuationV1 and GoalRunControlCapabilityV1, with the display types GoalDisplayV1 names, move from state/goal-machine.ts to src/contracts (D-PLACEMENT §6 row 2, fix A); plan-contracts.ts imports them from src/contracts",
+      "what": "ALTERNATIVE to declaring model -> state (fix B, proposed): GoalDisplayV1, GoalResumeContinuationV1 and GoalRunControlCapabilityV1, with the display types GoalDisplayV1 names, move from state/goal-machine.ts to src/contracts (D-PLACEMENT §6 row 2, fix A); plan-contracts.ts imports them from src/contracts. GoalDisplayCauseV1 uses PlanProposalRef (state/plan-machine.ts), which must be replaced by a contracts-level shape (e.g. PlanProposalSnapshot['ref']) or moved too, because src/contracts may not import WorkGraph. goal-machine.ts re-exports the moved types (as it does GOAL_FAN_OUT_ACTOR), so the other 8 importers keep their imports (Codex review 2026-10-07)",
       "remove": [{ "from": "model/plan-contracts.ts", "to": "state/goal-machine.ts" }]
     }
   ]
