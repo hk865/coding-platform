@@ -709,6 +709,8 @@ stateDiagram-v2
 
 目标文件：`src/core/work-graph/state/plan-machine.ts`。
 
+简化（2026-10-07，不改行为）：`plan-machine.ts` 导出 `samePlanPointer`，Goal 状态机用同一份比较两个计划指针。
+
 - 状态机与派生：导出 `transitionPlanProposal(state, event, ctx)`、`derivePlanProposalStatus`（candidate/stale/accepted）、`derivePlanRevisionStatus`（adopted/superseded）。
 - 无痕判定：导出 `futureChangeTraceProblem`，纯函数，输入是 `readFutureChangeTaskFacts` 读到的事实。只用于 `changedTaskIds ∪ addedTaskIds`。
 - 有痕只改处置与并行载体（新增，C7 与 lead 决定 LA-3（2026-10-03））：导出 `tracedDispositionChangeProblem`（TASK-19 守卫 8、1、2、2b、3–7）和 `parallelCarrierFenceProblem`（守卫 9），都是纯函数。输入是 `state/` 里只用 contracts 类型声明的 `TracedTaskFactsV1`（由 `readDispositionChangeTaskFacts` 的结果转换）、`reason.affectedTaskIds`、采用者的 `ReworkActorClass`（服务用 `reworkActorClassOf(principal, actor)` 求出，不看 `ActorRef.kind`）、Goal `desiredState`，以及守卫 9 所需的 source/目标义务载体列表。它们调用 `state/task-failure.ts` 的 `reworkFenceOf` 和 `state/run-machine.ts` 的 `runUnresolvedBlocker`（由 `tasks/completion-policy.ts:61-81` 的 `runBlocker` 移入，`completion-policy.ts` 改为 import 它）。
@@ -1263,6 +1265,8 @@ stateDiagram-v2
 disposition 在四个值之间可以任意方向改变（W16；无痕 Task 今日已无方向限制，有痕 Task 经 TASK-19，C7）。有痕 Task 受 TASK-19 的守卫约束；gate 的处置仍冻结。
 
 ### 4.6 实现对照
+
+简化（2026-10-07，不改行为）：TASK-01..03 的 Goal/Plan 钉住检查和领取依据检查用 `run-machine.ts` 的 `claimPinProblem`、`claimBasisProblem`，与 RUN-01 同一份；重做许可里“是不是 Goal 扇出身份”用 `task-failure.ts` 的 `isGoalFanOutActor`。
 
 目标导出（`src/core/work-graph/state/task-machine.ts`，只 import `src/contracts`）：
 
@@ -2048,6 +2052,8 @@ stateDiagram-v2
 ### 6.6 实现对照
 
 状态机目标文件：`src/core/work-graph/state/run-machine.ts`，导出 `transitionRun`、`runControlFence`（由 `freshRunControlProblem` 迁入）、`isRunFinished`、`terminalOutcomeOf`（由 `terminalFact` 迁入）、`leaseOwnedByRun`。持有判定 `ownsOccupancy` 来自 `state/session-availability.ts`（§8）；指针计算 `pointerAfterSubmit` 来自 `state/control-intent-machine.ts`（§7）。Kernel Turn 的分类（not_entered、terminal、interrupted_clean、paused、unknown）和 RD-3 的 continuation 重建都需要读取 Kernel 的 RunState 和消息记录，因此留在 Runtime 的新文件 `src/core/agent-runtime/run-reconcile.ts`，不进入 `state/`。
+
+简化（2026-10-07，不改行为）：`run-machine.ts` 另导出 `claimPinProblem`（Goal 为 active、领取钉住当前 Plan）和 `claimBasisProblem`（首次、接续、重入队三种领取依据，再加准入）。RUN-01 和 TASK-01..03 共用这一份，两台状态机各自的 Session、Task、阶段、租约检查仍按原顺序夹在中间。
 
 本批（A.1b）补充：`run-machine.ts` 另导出纯谓词 `isPausedInterrupted(run)`（C4），并按契约 (f) 构造 `terminalPayload`；分类器不看平台指针，RUN-19/RUN-24 由 `transitionRun` 按 `state.pointer` 分开。Kernel 记录的解码与 Turn 归约移到共享的 `src/core/agent-runtime/kernel-turn-facts.ts`（`execution-observation.ts:107-131` 的私有函数移入，观察器改为 import），核对与接续说明（C3）用同一读取器，所以“确定结果”和“`pending` 计为未开始”（LA-7）在两处含义相同。接续说明的组装在 AgentRuntime（`execution-preparation.ts`），WG 只在 RUN-02 比较绑定与渲染文本（契约 (e)）。
 
@@ -3236,6 +3242,8 @@ stateDiagram-v2
 ### 9.6 实现对照
 
 状态机文件：`src/core/work-graph/state/verification-machine.ts`。
+
+简化（2026-10-07，不改行为）：`verification-machine.ts` 另导出 `reverifyCapExceeded`（VD-13 的自动重验上限，Host 中断豁免不计）和 `roundChainFull`（I-20 的链长上限）。VR-14 和 `task-failure.ts` 的 AV-7a/7b、GV-6/7 共用这两条，不再各算一遍。
 
 | 行号 | 状态机函数（目标：src/core/work-graph/state/<file>.ts 中的导出） | 调用服务（file） | 已有测试（file） | 计划新增测试（描述） |
 | --- | --- | --- | --- | --- |
