@@ -2,7 +2,7 @@
 
 **2026-10-07 可靠性批次进行中；新界面原型已冻结：**
 
-*批次状态。* 分支 `feat/reliability-and-structure` 上的可靠性批次（任务书任务 A–E）**没有完成**，也未推送；整个 MVP 也没有完成。任务 B、C、E 和任务 D 的准备已提交；任务 A 的第 5 步、第 6 步、简化（先删走不到的代码，决定 31、34）、决定 29（Goal 控制必须带 GoalPhase 版本号，e070284b）和第 7 步（全量测试与文档同步）都已提交；第 7 步的全量测试在 2ba9b46b 上跑，216 个测试文件、5245 项全部通过。之后还有任务 D（WorkGraph 拆分，在删减后的代码上重算方案，交给本地 DSH 执行，决定 32、34）和收尾。编排、记忆、生命周期的设计和本批并行，只写文档（决定 34）；第一轮的问题用户已按建议定（决定 35），第二轮的设计书已写完，在 [design/orchestration-2026-10](docs/refactor/design/orchestration-2026-10/README.md)。当前状态、缺口和下一步见 [STATUS](docs/refactor/STATUS.md)。用户 2026-10-04 至 10-07 的 38 条决定见 [HANDOFF 顶部](docs/refactor/HANDOFF.md)两节：1–19 和 20–38。
+*批次状态。* 分支 `feat/reliability-and-structure` 上的可靠性批次（任务书任务 A–E）**没有完成**，也未推送；整个 MVP 也没有完成。任务 B、C、E 都已提交；任务 A 的第 5 步、第 6 步、简化（先删走不到的代码，决定 31、34）、决定 29（Goal 控制必须带 GoalPhase 版本号，e070284b）和第 7 步（全量测试与文档同步）都已提交。任务 D（WorkGraph 拆分，纯搬移，决定 32、34、40）也已提交：先做 X2、X1 两小步代码改动（d91208e3、58ea2fdc），再由本地 DSH 按两阶段搬了 18 个文件，结果和 lead 的参考搬移逐字节一致（0cd45508）；搬移后的全量测试 216 个测试文件、5245 项全部通过，和第 7 步（2ba9b46b）相同。之后还有把子模块规则写进 `module-target.json`（决定 40）和收尾。编排、记忆、生命周期的设计和本批并行，只写文档（决定 34）；第一轮的问题用户已按建议定（决定 35），第二轮的设计书已写完，在 [design/orchestration-2026-10](docs/refactor/design/orchestration-2026-10/README.md)。当前状态、缺口和下一步见 [STATUS](docs/refactor/STATUS.md)。用户 2026-10-04 至 10-07 的 40 条决定见 [HANDOFF 顶部](docs/refactor/HANDOFF.md)两节：1–19 和 20–40。
 
 *界面基线。* 新原型在 [Design 画布](https://claude.ai/artifact/3e5ynF3rwtMQfvJuim9mL2)上，只有用户本人能打开。
 - 用户 2026-10-05 批准了原型（画布第 9 版）。2026-10-06 按 HANDOFF 决定 25–30 改版，发布为画布第 14 版；2026-10-07 按决定 33 改了左栏工作线的点击，发布为画布第 16 版。用户确认后冻结（决定 35），画板文件和设计说明复制进 [docs/ui-reference/workbench-2026-10](docs/ui-reference/workbench-2026-10/README.md)。
