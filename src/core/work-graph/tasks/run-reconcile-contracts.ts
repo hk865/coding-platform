@@ -15,11 +15,11 @@ import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
 import type { SessionProbeVerdict } from '../state/session-availability.js';
 import type { RunUnknownCause } from '../state/run-machine.js';
-import type { GraphWrite } from './contracts.js';
+import type { GraphWrite } from '../model/task-contracts.js';
 import type {
   AcceptedSteerV1, HostInstanceFacts, KernelExecutionBinding, KernelObservationSource, ObservedExecutionHistory,
-} from './execution-entry-contracts.js';
-import type { ExecutionReadPort } from './execution-read-contracts.js';
+} from '../model/execution-entry-contracts.js';
+import type { ExecutionReadPort } from '../model/execution-read-contracts.js';
 
 /** The Kernel Turn a reconcile read (§6.2 `reconcile_interrupted_clean`, `stop_paused`, `reconcile_unknown`). */
 export type ReconcileTurnV1 = {

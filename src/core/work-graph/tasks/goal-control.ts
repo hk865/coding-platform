@@ -32,7 +32,7 @@ import {
 } from '../persistence/record-codecs.js';
 import { goalStateOf, transitionGoal, type GoalControl } from '../state/goal-machine.js';
 import { bindTrustedContext, isolateWrite, isRecord, loadReplayEvent, mapStoreFailure, mergeGuards, nonEmpty, sameRef } from './execution-entry-service.js';
-import type { GraphWrite, SetGoalControlInput } from './contracts.js';
+import type { GraphWrite, SetGoalControlInput } from '../model/task-contracts.js';
 import { readGoal, readGoalPhase } from './plan-readers.js';
 
 export type GoalControlDependencies = {

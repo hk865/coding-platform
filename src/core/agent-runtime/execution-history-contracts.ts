@@ -6,7 +6,7 @@ import type { SessionRef } from '../../contracts/core/identity.js';
 import type { Page, ReadResult } from '../../contracts/core/results.js';
 import type { SessionHistoryEntry, SessionHistoryRange, SessionOperationsPort } from './session-operations.js';
 import type { RunRef } from '../../contracts/dispatch.js';
-import type { ExecutionReadPort } from '../work-graph/tasks/execution-read-contracts.js';
+import type { ExecutionReadPort } from '../work-graph/model/execution-read-contracts.js';
 export type KernelExecutionIdentity = { runId: string; turnId: string };
 export type ExecutionHistoryRequest = {
   sessionRef: SessionRef;

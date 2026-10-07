@@ -60,14 +60,14 @@ import type {
 } from '../../record-store/ports.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type { WorkspaceHostBindings } from '../../workspace/access.js';
-import type { SessionMailboxPort } from '../communication/contracts.js';
-import type { MaterialPort } from '../materials/contracts.js';
+import type { SessionMailboxPort } from '../model/communication-contracts.js';
+import type { MaterialPort } from '../model/material-contracts.js';
 import { architectureBaselineDigest, readArchitectureBaselineSnapshot } from '../architecture/catalog-record-codecs.js';
 import {
     readBatch, readGoal, readGoalRunsForCount, readPinnedCompletionPolicy, readPlan, readPointerIntents, readRevisionNumber,
     type Rejected as ReadRejected,
 } from '../tasks/plan-readers.js';
-import { planRevisionRefKey } from '../tasks/plan-record-codecs.js';
+import { planRevisionRefKey } from '../persistence/plan-record-codecs.js';
 import {
     TASK_REWORK_EVENT_SCHEMA_VERSION, TASK_REWORK_REFUSED_EVENT_TYPE, decodeTaskReworkRefusalSnapshot,
     encodeTaskReworkRefusalSnapshot, encodeTaskReworkRefusedEvent, taskRequeueRefKey, taskReworkRefusalRefKey,
@@ -100,7 +100,7 @@ import {
 } from '../state/verification-machine.js';
 import { unreachable, type Rejected } from '../state/transition.js';
 import { compileVerificationPlan } from './verification-plan.js';
-import { evidenceApplicabilityWithBasis } from './coverage.js';
+import { evidenceApplicabilityWithBasis } from '../tasks/evidence-coverage.js';
 import {
     VERIFICATION_CHECK_ABANDONED_EVENT_TYPE, VERIFICATION_CHECK_BEGUN_EVENT_TYPE,
     VERIFICATION_CHECK_INTERRUPTED_EVENT_TYPE, VERIFICATION_CHECK_RESULT_RECORDED_EVENT_TYPE,
@@ -111,13 +111,13 @@ import {
     encodeEvidenceSnapshot, encodeTaskEvidenceIndexSnapshot, encodeVerificationRoundEvent,
     encodeVerificationRoundSnapshot, verificationRoundEventFromEvent, decodeTaskEvidenceIndexSnapshot,
     type VerificationRoundEvent,
-} from './evidence-record-codecs.js';
+} from '../persistence/evidence-record-codecs.js';
 import type {
     AbandonCheckInput, EvidencePort, FinalizedChecks, InterruptCheckInput,
     OriginalVerificationQuery, ReverifyOutcomeV1, ReverifyRoundInput, RoundChainHeadQuery,
-} from './contracts.js';
-import type { ExecutionReadPort } from '../tasks/execution-read-contracts.js';
-import type { GraphWrite } from '../tasks/contracts.js';
+} from '../model/evidence-contracts.js';
+import type { ExecutionReadPort } from '../model/execution-read-contracts.js';
+import type { GraphWrite } from '../model/task-contracts.js';
 
 type Records = GoalRecordTransactionPort & RecordLookupPort;
 type HostActor = { kind: 'human' | 'system'; id: string };

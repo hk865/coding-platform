@@ -32,8 +32,8 @@ import type {
   RecordBackendSchemas,
 } from '../../record-store/ports.js';
 import { isArtifactRef } from '../../record-store/body-codec.js';
-import type { TaskDispatchStateV1 } from '../tasks/claim-contracts.js';
-import type { RuntimeEntryRecord, TaskEntryPermit } from '../tasks/execution-entry-contracts.js';
+import type { TaskDispatchStateV1 } from '../model/claim-contracts.js';
+import type { RuntimeEntryRecord, TaskEntryPermit } from '../model/execution-entry-contracts.js';
 import { controlIntentRefProblem } from './rework-codecs.js';
 
 export type { ExecutionAuthorizationV2, TaskDispatchStateV1, TaskDispatchStateV2, TaskLeaseReleaseV1 };

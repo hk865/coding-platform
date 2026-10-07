@@ -47,7 +47,7 @@ import type { RecordLookupPort, RecordLookupRequest } from '../../record-store/l
 import type {
   GraphWrite, SessionCard, SessionCreationInput, SessionCreationResult, SessionDirectoryPort,
   SessionOperationRecord, SessionPage,
-} from './contracts.js';
+} from '../model/session-contracts.js';
 import {
   SESSION_BY_WORKSPACE_LOOKUP, SESSION_BY_WORKSPACE_LIFECYCLE_LOOKUP,
   SESSION_BY_WORKSPACE_LEGACY_ROLE_LOOKUP, SESSION_BY_WORKSPACE_SPEC_ROLE_LOOKUP,

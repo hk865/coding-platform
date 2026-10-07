@@ -22,7 +22,7 @@ import type { ModuleRef } from '../../../contracts/core/identity.js';
 import type {
   DecodeResult, EncodedDomainEvent, EncodedRecord, EncodedRecordSchema, RecordBackendSchemas,
 } from '../../record-store/ports.js';
-import { hasCycleInEdges } from '../tasks/task-index.js';
+import { hasCycleInEdges } from '../model/task-index.js';
 import type {
   AdoptedArchitecture, ArchitectureBaselineContentV1, ArchitectureBaselineRevisionSnapshot,
   ArchitectureCatalogRecord, ArchitectureCatalogRef, ArchitectureRevision, ModuleContainment,

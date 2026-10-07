@@ -14,7 +14,7 @@ import { canonicalRefKey, encodeProjectSnapshot,
   encodeWorkspaceSnapshot } from '../../src/core/work-graph/persistence/record-codecs.js';
 import { materialRecordSchemas } from '../../src/core/work-graph/materials/record-readers.js';
 import { SESSION_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/session-record-codecs.js';
-import { PLAN_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/plan-record-codecs.js';
+import { PLAN_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/plan-record-codecs.js';
 import { PLAN_GOVERNANCE_RECORD_SCHEMAS, PLAN_STATE_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/plan-readers.js';
 import type { CreateSessionRequest } from '../../src/core/agent-runtime/session-operations.js';
 import type { WorkspaceHostBindings } from '../../src/core/workspace/access.js';

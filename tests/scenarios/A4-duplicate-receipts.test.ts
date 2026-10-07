@@ -59,7 +59,7 @@ import type { WorkflowAdvanceInput } from '../../src/business/workflow/contracts
 import type { SubmittedControl } from '../../src/contracts/control-intent.js';
 import type { ReadResult, WriteResult } from '../../src/contracts/core/results.js';
 import { WORKFLOW_AUTOMATION_ACTOR, type TaskRequeueRef } from '../../src/contracts/task-requeue.js';
-import type { SessionMessage } from '../../src/core/work-graph/communication/contracts.js';
+import type { SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
 import {
   AG2B_QUERY_ROLE, AG2B_SCOPE, AG2B_WORK_TASK_ID, createAG2bSession, graphWrite, plain,
 } from '../helpers/AG2b-collaboration-fixture.js';

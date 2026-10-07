@@ -22,7 +22,7 @@ import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { GoalRef, GoalSnapshot } from '../../src/contracts/ledger.js';
 import type { Disposition, RuntimeTask } from '../../src/contracts/plan.js';
 import type { TaskAutomationVerdictV1 } from '../../src/contracts/task-failure.js';
-import type { TaskRow } from '../../src/core/work-graph/tasks/plan-contracts.js';
+import type { TaskRow } from '../../src/core/work-graph/model/plan-contracts.js';
 
 const P = 'a2-redrive-project', W = 'a2-redrive-workspace';
 const scope = { projectId: P, workspaceId: W };

@@ -15,22 +15,22 @@ import { RawArtifactBodyStore } from '../../src/core/record-store/body-store.js'
 import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
 import { createMaterialService } from '../../src/core/work-graph/materials/material-service.js';
 import { encodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey } from '../../src/core/work-graph/sessions/session-record-codecs.js';
-import { SESSION_MESSAGE_LOOKUP_INDEXES, SESSION_MESSAGE_RECORD_SCHEMAS } from '../../src/core/work-graph/communication/message-record-codecs.js';
+import { SESSION_MESSAGE_LOOKUP_INDEXES, SESSION_MESSAGE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/message-record-codecs.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
 import { SESSION_LIFECYCLE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/lifecycle-record-codecs.js';
 import { createSessionLifecycleService } from '../../src/core/work-graph/sessions/session-lifecycle.js';
 import type { SessionLifecyclePort } from '../../src/core/work-graph/sessions/lifecycle-contracts.js';
-import type { SessionDirectoryPort } from '../../src/core/work-graph/sessions/contracts.js';
+import type { SessionDirectoryPort } from '../../src/core/work-graph/model/session-contracts.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
 import { createSessionMailbox } from '../../src/core/work-graph/communication/mailbox-service.js';
-import type { SessionMailboxDependencies, SessionMailboxPort } from '../../src/core/work-graph/communication/contracts.js';
+import type { SessionMailboxDependencies, SessionMailboxPort } from '../../src/core/work-graph/model/communication-contracts.js';
 import type { RawArtifactStorePort } from '../../src/core/record-store/body-ports.js';
-import type { AuthorizeConfiguration } from '../../src/core/work-graph/tasks/execution-entry-contracts.js';
+import type { AuthorizeConfiguration } from '../../src/core/work-graph/model/execution-entry-contracts.js';
 import { MANIFEST_CONTENT_TYPE } from '../../src/core/work-graph/tasks/execution-entry-service.js';
 import { SESSION_MAILBOX_TOOL_NAMES } from '../../src/core/agent-runtime/communication-tools.js';
 import { createTaskClaimFixture, type ClaimFixtureKind, type TaskClaimFixture } from './task-claim-fixture.js';
-import type { TaskClaim } from '../../src/core/work-graph/tasks/claim-contracts.js';
+import type { TaskClaim } from '../../src/core/work-graph/model/claim-contracts.js';
 
 export const AT = '2026-09-26T00:00:00.000Z';
 const systemActor = { kind: 'system' as const, id: 'c1-mailbox-body-system' };

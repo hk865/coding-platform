@@ -34,7 +34,7 @@ import { DEFAULT_TASK_AUTOMATION_POLICY, type TaskAutomationPolicyV1 } from '../
 import type { RoundSnapshot, TrustedCheckConfiguration } from '../../../src/contracts/verification.js';
 import type { RuntimeHostBindings } from '../../../src/core/agent-runtime/execution-contracts.js';
 import type { WorkspaceHostBindings } from '../../../src/core/workspace/access.js';
-import type { PlanProposalRef } from '../../../src/core/work-graph/tasks/plan-contracts.js';
+import type { PlanProposalRef } from '../../../src/core/work-graph/model/plan-contracts.js';
 import type { FuzzStep } from '../../state/invariants.js';
 import { AG2B_GATE_TASK_ID, AG2B_GOAL_REF } from '../../helpers/AG2b-collaboration-fixture.js';
 import { createScriptedModel, type ScriptedModel, type ScriptedReply } from '../../helpers/B2-runtime-fixture.js';

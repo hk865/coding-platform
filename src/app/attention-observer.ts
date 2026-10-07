@@ -435,9 +435,9 @@ export function attentionSignalToJson(signal: AttentionSignal): JsonValue {
 
 export type AttentionScannerDependencies = {
   workspace: Pick<import('../core/workspace/ports.js').WorkspaceToolsPort, 'readWorkspace'>;
-  plans: Pick<import('../core/work-graph/tasks/plan-contracts.js').PlanTaskPort, 'queryTaskGraph'>;
+  plans: Pick<import('../core/work-graph/model/plan-contracts.js').PlanTaskPort, 'queryTaskGraph'>;
   architecture: Pick<import('../core/work-graph/architecture/catalog-contracts.js').ArchitectureCatalogPort, 'readArchitectureRevision'>;
-  messages: Pick<import('../core/work-graph/communication/contracts.js').SessionMailboxPort, 'readInbox'>;
+  messages: Pick<import('../core/work-graph/model/communication-contracts.js').SessionMailboxPort, 'readInbox'>;
 };
 
 /** Explicit Host-configured attention scope; nothing is hard-coded globally. */

@@ -27,9 +27,9 @@ import type { CoreError, CoreRejection, ReadResult, WriteResult } from '../../co
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { CheckProcessObservation, RoundSnapshot, VerificationRoundRef } from '../../contracts/verification.js';
 import type { WorkspaceHostBindings } from '../workspace/access.js';
-import type { AbandonCheckInput, EvidencePort } from '../work-graph/evidence/contracts.js';
-import type { GraphWrite } from '../work-graph/tasks/contracts.js';
-import { checkExecutionTicketProblem } from '../work-graph/evidence/evidence-record-codecs.js';
+import type { AbandonCheckInput, EvidencePort } from '../work-graph/model/evidence-contracts.js';
+import type { GraphWrite } from '../work-graph/model/task-contracts.js';
+import { checkExecutionTicketProblem } from '../work-graph/persistence/evidence-record-codecs.js';
 import { FROZEN_PERMISSION_CHANGED, frozenBindingReason } from '../work-graph/state/verification-machine.js';
 
 /** The real frozen Kernel public API surface the runner is allowed to call.

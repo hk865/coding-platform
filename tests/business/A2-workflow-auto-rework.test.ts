@@ -38,9 +38,9 @@ import type { RuntimeTask } from '../../src/contracts/plan.js';
 import type { RoundSnapshot } from '../../src/contracts/verification.js';
 import type { TaskAutomationVerdictV1, TaskFailureFactsV1 } from '../../src/contracts/task-failure.js';
 import { WORKFLOW_AUTOMATION_ACTOR, type TaskRequeueOutcomeV1, type TaskRequeueRef } from '../../src/contracts/task-requeue.js';
-import type { GraphWrite } from '../../src/core/work-graph/tasks/contracts.js';
-import type { RequeueTaskInput } from '../../src/core/work-graph/tasks/claim-contracts.js';
-import type { TaskRow } from '../../src/core/work-graph/tasks/plan-contracts.js';
+import type { GraphWrite } from '../../src/core/work-graph/model/task-contracts.js';
+import type { RequeueTaskInput } from '../../src/core/work-graph/model/claim-contracts.js';
+import type { TaskRow } from '../../src/core/work-graph/model/plan-contracts.js';
 
 const P = 'a2-rework-project', W = 'a2-rework-workspace', G = 'a2-rework-goal';
 const actor = { kind: 'human' as const, id: 'a2-rework-operator' };

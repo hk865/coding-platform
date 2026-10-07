@@ -48,9 +48,9 @@ import {
 import {
   VERIFICATION_ROUND_BY_TASK_LOOKUP, VERIFICATION_ROUND_CHAIN_LOOKUP_LIMIT, VERIFICATION_ROUND_ORIGINAL_LOOKUP,
   decodeVerificationRoundSnapshot,
-} from '../evidence/evidence-record-codecs.js';
+} from '../persistence/evidence-record-codecs.js';
 import type { VerifiedGovernance } from './plan-commit-compiler.js';
-import type { PlanProposal, PlanProposalRef } from './plan-contracts.js';
+import type { PlanProposal, PlanProposalRef } from '../model/plan-contracts.js';
 import {
   isBasisUnsupported, planTaskFacts, taskOriginVerdict, verifyBasisDelegation,
   type FrozenTaskDefinition, type PlanTaskFacts,
@@ -61,7 +61,7 @@ import {
   decodePlanRevisionSnapshot,
   planProposalRefKey,
   planRevisionRefKey,
-} from './plan-record-codecs.js';
+} from '../persistence/plan-record-codecs.js';
 import { decodeGoalPhaseSnapshot } from './completion-record-codecs.js';
 import { decodeControlIntentSnapshot } from '../persistence/control-record-codecs.js';
 import type { ControlIntentSnapshotV1 } from '../../../contracts/control-intent.js';

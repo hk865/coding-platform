@@ -15,8 +15,8 @@ import type { PlanRevisionRef } from '../../../contracts/plan.js';
 import type { TaskRequeueOutcomeV1, TaskRequeueRef, TaskRequeueTriggerV1 } from '../../../contracts/task-requeue.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
-import type { RoleBindingFactsPort } from '../configuration/contracts.js';
-import type { GraphWrite } from './contracts.js';
+import type { RoleBindingFactsPort } from './configuration-contracts.js';
+import type { GraphWrite } from './task-contracts.js';
 
 /** Compatibility re-export: the single declaration lives in contracts/core. */
 export type { TaskClaim } from '../../../contracts/core/task-claim.js';

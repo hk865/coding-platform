@@ -32,7 +32,7 @@ import {
   type ToolResult,
   type WorkspaceSandbox,
 } from '../../../vendor/coding-agent/dist/public-api.js';
-import type { SessionMailboxPort, SessionMessage } from '../work-graph/communication/contracts.js';
+import type { SessionMailboxPort, SessionMessage } from '../work-graph/model/communication-contracts.js';
 
 /** Fixed production tool names. The Kernel host-authorization list comes from here. */
 export const SESSION_MAILBOX_TOOL_NAMES = [

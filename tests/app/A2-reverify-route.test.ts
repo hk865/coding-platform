@@ -30,7 +30,7 @@ import type {
 } from '../../src/business/workflow/contracts.js';
 import type { ReadResult, WriteResult } from '../../src/contracts/core/results.js';
 import type { RoundSnapshot } from '../../src/contracts/verification.js';
-import type { ReverifyOutcomeV1 } from '../../src/core/work-graph/evidence/contracts.js';
+import type { ReverifyOutcomeV1 } from '../../src/core/work-graph/model/evidence-contracts.js';
 import {
   AG2B_GOAL_REF, AG2B_RESULT_FILE, AG2B_RESULT_TEXT, AG2B_SCOPE, AG2B_WORK_TASK_ID, cleanupAG2b, corePost, graphWrite, plain,
   seedAG2bWorkGraph, startAG2bHost, type AG2bHost,

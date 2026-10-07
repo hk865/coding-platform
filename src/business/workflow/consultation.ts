@@ -14,11 +14,11 @@ import type {
 } from '../../contracts/query-job.js';
 import { consultationQueryRefs } from '../../contracts/query-job.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../contracts/fingerprint.js';
-import type { SessionMessage } from '../../core/work-graph/communication/contracts.js';
+import type { SessionMessage } from '../../core/work-graph/model/communication-contracts.js';
 import type { QueryJobRecord } from '../../core/work-graph/queries/contracts.js';
-import type { GraphWrite } from '../../core/work-graph/tasks/contracts.js';
-import type { PlanTaskPort } from '../../core/work-graph/tasks/plan-contracts.js';
-import type { SessionDirectoryPort } from '../../core/work-graph/sessions/contracts.js';
+import type { GraphWrite } from '../../core/work-graph/model/task-contracts.js';
+import type { PlanTaskPort } from '../../core/work-graph/model/plan-contracts.js';
+import type { SessionDirectoryPort } from '../../core/work-graph/model/session-contracts.js';
 import type { RuntimeExecutionPort } from '../../core/agent-runtime/ports.js';
 import type { ConsultationInput, ConsultationResult } from './contracts.js';
 import type { ConsultationConsumerDependencies } from './ports.js';

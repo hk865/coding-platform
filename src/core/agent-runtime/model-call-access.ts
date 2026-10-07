@@ -11,7 +11,7 @@
 import { createHash } from 'node:crypto';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { CoreError } from '../../contracts/core/results.js';
-import type { TaskEntryPermit } from '../work-graph/tasks/execution-entry-contracts.js';
+import type { TaskEntryPermit } from '../work-graph/model/execution-entry-contracts.js';
 import type { ModelCallAccess } from '../../contracts/dispatch.js';
 import type { RuntimeExecutionDependencies } from './execution-contracts.js';
 

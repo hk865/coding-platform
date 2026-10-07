@@ -31,10 +31,10 @@ import {
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
 import { createMaterialService } from '../../src/core/work-graph/materials/material-service.js';
 import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
-import type { RequeueTaskInput } from '../../src/core/work-graph/tasks/claim-contracts.js';
+import type { RequeueTaskInput } from '../../src/core/work-graph/model/claim-contracts.js';
 import { taskRequeueRefKey, taskReworkRefusalRefKey } from '../../src/core/work-graph/tasks/claim-record-codecs.js';
-import type { GraphWrite } from '../../src/core/work-graph/tasks/contracts.js';
-import type { AuthorizeConfiguration, KernelExecutionBinding } from '../../src/core/work-graph/tasks/execution-entry-contracts.js';
+import type { GraphWrite } from '../../src/core/work-graph/model/task-contracts.js';
+import type { AuthorizeConfiguration, KernelExecutionBinding } from '../../src/core/work-graph/model/execution-entry-contracts.js';
 import { createExecutionEntryService } from '../../src/core/work-graph/tasks/execution-entry-service.js';
 import { createTaskRequeueService, type TaskRequeueDependencies } from '../../src/core/work-graph/tasks/requeue-service.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';

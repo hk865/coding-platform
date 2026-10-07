@@ -26,12 +26,12 @@ import type { PreparedCommit, RecordGuard } from '../../record-store/ports.js';
 import type { PlannedDispositionChangeV1, PlanProposalEffect } from '../state/plan-machine.js';
 import { encodeGoalSnapshot } from '../persistence/record-codecs.js';
 import { buildTargetTaskBasis, isBasisUnsupported } from './plan-task-basis.js';
-import type { PlanProposal } from './plan-contracts.js';
+import type { PlanProposal } from '../model/plan-contracts.js';
 import {
   encodePlanProposal,
   encodePlanRevisionAcceptedEvent,
   encodePlanRevisionSnapshot,
-} from './plan-record-codecs.js';
+} from '../persistence/plan-record-codecs.js';
 
 export type VerifiedGovernance = {
   completionPolicy: CompletionPolicyPin;

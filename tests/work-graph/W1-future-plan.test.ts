@@ -26,7 +26,7 @@ import {
 } from '../../src/core/work-graph/persistence/record-codecs.js';
 import {
   PLAN_RECORD_SCHEMAS, decodePlanRevisionSnapshot, encodePlanRevisionSnapshot,
-} from '../../src/core/work-graph/tasks/plan-record-codecs.js';
+} from '../../src/core/work-graph/persistence/plan-record-codecs.js';
 import { PLAN_STATE_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/plan-readers.js';
 import { materialRecordSchemas } from '../../src/core/work-graph/materials/record-readers.js';
 import { createGoalService } from '../../src/core/work-graph/tasks/task-service.js';
@@ -38,7 +38,7 @@ import type { GoalRef, GoalSnapshot, ProjectSnapshot, VersionedRef, WorkspaceSna
 import type { AcceptanceObligation, PlanRevisionDraft, PlanRevisionRef, PlanRevisionSnapshot, RuntimeTask } from '../../src/contracts/plan.js';
 import type { RunSnapshot, RunStatus, TaskLeaseRef, TaskLeaseSnapshot } from '../../src/contracts/dispatch.js';
 import type { TaskReductionPhase, TaskReductionSnapshot } from '../../src/contracts/reduction.js';
-import type { PlanProposal, PlanProposalRef } from '../../src/core/work-graph/tasks/plan-contracts.js';
+import type { PlanProposal, PlanProposalRef } from '../../src/core/work-graph/model/plan-contracts.js';
 
 const AT = '2026-09-25T00:00:00.000Z';
 const projectId = 'w1-future-plan';

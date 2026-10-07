@@ -16,8 +16,8 @@ import type { ReadResult, WriteResult } from '../../../contracts/core/results.js
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
 import type { MaterialAuthorityReads } from '../materials/record-ports.js';
-import type { GraphWrite } from './contracts.js';
-import type { ExecutionReadPort } from './execution-read-contracts.js';
+import type { GraphWrite } from '../model/task-contracts.js';
+import type { ExecutionReadPort } from '../model/execution-read-contracts.js';
 
 export interface RunControlPort {
   submitControl(

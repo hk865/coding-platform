@@ -23,7 +23,7 @@ import type {
     RoundSnapshot,
     VerificationRoundRef,
 } from '../../../contracts/verification.js';
-import type { GraphWrite } from '../tasks/contracts.js';
+import type { GraphWrite } from './task-contracts.js';
 
 /** Result of finalizing one frozen round: the persisted snapshot plus the
  * Evidence actually admitted in the same commit. */

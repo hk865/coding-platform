@@ -22,7 +22,7 @@ import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { RunRef } from '../../src/contracts/dispatch.js';
 import type { GoalSnapshot } from '../../src/contracts/ledger.js';
 import type { Disposition, Phase, RuntimeTask } from '../../src/contracts/plan.js';
-import type { TaskRow } from '../../src/core/work-graph/tasks/plan-contracts.js';
+import type { TaskRow } from '../../src/core/work-graph/model/plan-contracts.js';
 
 const P = 'a2-l15-project', W = 'a2-l15-workspace', G = 'a2-l15-goal';
 const actor = { kind: 'human' as const, id: 'a2-l15-operator' };

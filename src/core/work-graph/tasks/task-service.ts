@@ -34,7 +34,7 @@ import type { RecordLookupPort } from "../../record-store/lookup-ports.js";
 import type { CompletionDependencies } from "./completion.js";
 import { completeGoalFromHost, completeTaskFromHost } from "./completion.js";
 import { setGoalControlFromHost } from "./goal-control.js";
-import type { CreateGoalInput, GoalService, GoalServiceDependencies, GoalTaskPort, GraphWrite } from "./contracts.js";
+import type { CreateGoalInput, GoalService, GoalServiceDependencies, GoalTaskPort, GraphWrite } from "../model/task-contracts.js";
 import { compareCallerGoalPins, compileGoalCreate, goalCreateFingerprint, goalCreateIdentityKey, goalRefFor, normalizeCallerGoalPins, projectRefFor, workspaceRefFor } from "../persistence/commit-compiler.js";
 import { createGoalGraphRepository, type CommittedStoreReceipt, type GoalCreateIdentity, type GoalGraphRepository } from "../persistence/graph-repository.js";
 import { cloneActorRef, canonicalRefKey } from "../persistence/record-codecs.js";

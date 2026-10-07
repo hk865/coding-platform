@@ -52,12 +52,12 @@ import { createRoleConfigurationService } from '../../../src/core/work-graph/con
 import { createMaterialRecordReaders } from '../../../src/core/work-graph/materials/record-readers.js';
 import { noProgressKey } from '../../../src/core/work-graph/state/no-progress.js';
 import type { GoalDisplayV1 } from '../../../src/core/work-graph/state/goal-machine.js';
-import type { TaskClaimPort } from '../../../src/core/work-graph/tasks/claim-contracts.js';
+import type { TaskClaimPort } from '../../../src/core/work-graph/model/claim-contracts.js';
 import { createTaskClaimService } from '../../../src/core/work-graph/tasks/claim-service.js';
 import type { RunControlPort } from '../../../src/core/work-graph/tasks/control-contracts.js';
 import { createRunControlService } from '../../../src/core/work-graph/tasks/control-service.js';
-import type { TaskExecutionRecord } from '../../../src/core/work-graph/tasks/execution-read-contracts.js';
-import type { PlanChangeReason, PlanProposalRef, PlanServicePort, TaskRow } from '../../../src/core/work-graph/tasks/plan-contracts.js';
+import type { TaskExecutionRecord } from '../../../src/core/work-graph/model/execution-read-contracts.js';
+import type { PlanChangeReason, PlanProposalRef, PlanServicePort, TaskRow } from '../../../src/core/work-graph/model/plan-contracts.js';
 import { createPlanService } from '../../../src/core/work-graph/tasks/plan-service.js';
 import { buildEffectiveTaskBasis } from '../../../src/core/work-graph/tasks/plan-task-basis.js';
 import { createTaskRequeueService } from '../../../src/core/work-graph/tasks/requeue-service.js';

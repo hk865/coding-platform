@@ -68,7 +68,7 @@ import {
 import type { TrustedCheckConfiguration } from '../../src/contracts/verification.js';
 import type { RuntimeHostBindings } from '../../src/core/agent-runtime/execution-contracts.js';
 import type { WorkspaceHostBindings } from '../../src/core/workspace/access.js';
-import type { GoalDisplayRead, TaskRow } from '../../src/core/work-graph/tasks/plan-contracts.js';
+import type { GoalDisplayRead, TaskRow } from '../../src/core/work-graph/model/plan-contracts.js';
 import type { ModelRequest } from '../../vendor/coding-agent/dist/public-api.js';
 import { createScriptedModel, type ScriptedModel, type ScriptedReply } from '../helpers/B2-runtime-fixture.js';
 import {

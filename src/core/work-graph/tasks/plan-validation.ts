@@ -13,7 +13,7 @@ import {
   buildFrozenTaskDefinitions, executionDefinitionsAgree, frozenTaskDefinitionsAgree, isBasisUnsupported,
   type FrozenObligation, type FrozenTaskDefinition,
 } from './plan-task-basis.js';
-import { buildTaskAdjacency, hasCycleInEdges, hasDirectedCycle } from './task-index.js';
+import { buildTaskAdjacency, hasCycleInEdges, hasDirectedCycle } from '../model/task-index.js';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);

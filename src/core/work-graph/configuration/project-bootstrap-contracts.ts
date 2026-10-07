@@ -22,7 +22,7 @@ import type {
 } from '../../../contracts/governance.js';
 import type { ProjectSnapshot, WorkspaceSnapshot } from '../../../contracts/ledger.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
-import type { GraphWrite } from '../tasks/contracts.js';
+import type { GraphWrite } from '../model/task-contracts.js';
 
 /**
  * Trusted Host Project/Workspace registration.

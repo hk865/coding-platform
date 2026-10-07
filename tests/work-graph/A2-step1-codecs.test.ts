@@ -61,7 +61,7 @@ import {
   EVIDENCE_RECORD_SCHEMAS, VERIFICATION_ROUND_BY_STATUS_LOOKUP, VERIFICATION_ROUND_BY_TASK_LOOKUP,
   VERIFICATION_ROUND_CHAIN_LOOKUP_LIMIT, VERIFICATION_ROUND_ORIGINAL_LOOKUP, decodeVerificationRoundSnapshot,
   encodeVerificationRoundSnapshot,
-} from '../../src/core/work-graph/evidence/evidence-record-codecs.js';
+} from '../../src/core/work-graph/persistence/evidence-record-codecs.js';
 import { materialRecordSchemas } from '../../src/core/work-graph/materials/record-readers.js';
 import {
   CONTROL_RECORD_SCHEMAS, controlIntentSubmittedEventFromEvent, decodeControlIntentSnapshot,
@@ -86,7 +86,7 @@ import {
   encodeTaskReworkRefusalSnapshot, encodeTaskReworkRefusedEvent, taskRequeuedEventFromEvent,
   taskReworkRefusedEventFromEvent,
 } from '../../src/core/work-graph/tasks/claim-record-codecs.js';
-import { PLAN_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/plan-record-codecs.js';
+import { PLAN_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/plan-record-codecs.js';
 import { decodeRun } from '../../src/core/work-graph/materials/run-snapshot-decoder.js';
 
 // ------------------------------------------------------------------------ //

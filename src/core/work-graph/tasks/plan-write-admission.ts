@@ -42,14 +42,14 @@ import {
   sessionAggregateRefKey,
 } from '../sessions/session-record-codecs.js';
 import { dispatchOutboxRefKey, taskAttemptRefKey } from './claim-record-codecs.js';
-import type { ExecutionEntryDependencies } from './execution-entry-contracts.js';
+import type { ExecutionEntryDependencies } from '../model/execution-entry-contracts.js';
 import {
   mergeGuards,
   readStoredManifest,
   recheckHostRoleAdmission,
   sameRef,
 } from './execution-entry-service.js';
-import { planRevisionRefKey } from './plan-record-codecs.js';
+import { planRevisionRefKey } from '../persistence/plan-record-codecs.js';
 import type { DelegatedWriteProvenanceV1 } from '../../../contracts/delegated-write.js';
 
 /**
@@ -227,7 +227,7 @@ export async function identifyDelegatedWriter(
 /** The saved manifest must describe exactly the same formal claim/envelope/Session. */
 function manifestAgainstRun(
   manifest: import('../../../contracts/core/prepared-execution.js').PreparedTaskManifestV1,
-  facts: import('./execution-read-contracts.js').TaskExecutionRecord,
+  facts: import('../model/execution-read-contracts.js').TaskExecutionRecord,
 ): Rejection | null {
   const { run, outbox, session } = facts;
   if (!sameRef(manifest.claim, outbox.claim)) return forbidden('the saved manifest claim disagrees with the persisted claim');

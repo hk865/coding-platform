@@ -31,7 +31,7 @@ import { createGoalFanOutDriver, type GoalFanOutDriverDependencies } from '../..
 import { goalFanOutRequestId, type GoalDisplayV1 } from '../../src/core/work-graph/state/goal-machine.js';
 import { controlIntentRefFor } from '../../src/core/work-graph/tasks/control-service.js';
 import type { RunControlPort } from '../../src/core/work-graph/tasks/control-contracts.js';
-import type { TaskExecutionRecord } from '../../src/core/work-graph/tasks/execution-read-contracts.js';
+import type { TaskExecutionRecord } from '../../src/core/work-graph/model/execution-read-contracts.js';
 import { createTaskClaimFixture, type TaskClaimFixture } from '../helpers/task-claim-fixture.js';
 
 type Platform = Awaited<ReturnType<typeof createTargetPlatform>>;

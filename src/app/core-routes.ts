@@ -1,5 +1,5 @@
 import type { RunControlPort } from '../core/work-graph/tasks/control-contracts.js';
-import type { TaskClaimPort } from '../core/work-graph/tasks/claim-contracts.js';
+import type { TaskClaimPort } from '../core/work-graph/model/claim-contracts.js';
 /**
  * R6.1a per-route parsing and explicit dispatch.
  *
@@ -20,21 +20,21 @@ import { seqOfCommitCursor } from '../contracts/ledger.js';
 import type { RuntimeExecutionPort } from '../core/agent-runtime/ports.js';
 import type { ArchitectureCatalogPort } from '../core/work-graph/architecture/catalog-contracts.js';
 import type { ObservedArchitecturePort } from '../core/work-graph/architecture/contracts.js';
-import type { SessionMailboxPort } from '../core/work-graph/communication/contracts.js';
+import type { SessionMailboxPort } from '../core/work-graph/model/communication-contracts.js';
 import type {
   CompletionPolicyConfigurationPort,
   ProjectRegistrationPort,
 } from '../core/work-graph/configuration/project-bootstrap-contracts.js';
-import type { SessionDirectoryPort } from '../core/work-graph/sessions/contracts.js';
+import type { SessionDirectoryPort } from '../core/work-graph/model/session-contracts.js';
 import type { SessionLifecyclePort } from '../core/work-graph/sessions/lifecycle-contracts.js';
-import type { ExecutionReadPort } from '../core/work-graph/tasks/execution-read-contracts.js';
-import type { GoalTaskPort } from '../core/work-graph/tasks/contracts.js';
-import type { PlanTaskPort } from '../core/work-graph/tasks/plan-contracts.js';
+import type { ExecutionReadPort } from '../core/work-graph/model/execution-read-contracts.js';
+import type { GoalTaskPort } from '../core/work-graph/model/task-contracts.js';
+import type { PlanTaskPort } from '../core/work-graph/model/plan-contracts.js';
 import type { WorkspaceCapturePort, WorkspaceToolsPort } from '../core/workspace/ports.js';
-import type { MaterialPort } from '../core/work-graph/materials/contracts.js';
-import type { EvidencePort } from '../core/work-graph/evidence/contracts.js';
+import type { MaterialPort } from '../core/work-graph/model/material-contracts.js';
+import type { EvidencePort } from '../core/work-graph/model/evidence-contracts.js';
 import type { QueryExecutionRecord, QueryJobPort } from '../core/work-graph/queries/contracts.js';
-import type { GraphWrite } from '../core/work-graph/tasks/contracts.js';
+import type { GraphWrite } from '../core/work-graph/model/task-contracts.js';
 import type { StartupReconcileReportV1 } from './startup-reconcile.js';
 import type { WorkflowPort } from '../business/workflow/ports.js';
 import type { CollaborationDriverPort } from './collaboration-driver.js';

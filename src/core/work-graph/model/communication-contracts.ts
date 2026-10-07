@@ -26,11 +26,11 @@ import type { QueryJobAnswerRef, QueryRunRef } from '../../../contracts/query-jo
 import { canonicalJson, sha256Hex } from '../../../contracts/fingerprint.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
-import type { RoleBindingFactsPort } from '../configuration/contracts.js';
-import type { MaterialPort } from '../materials/contracts.js';
-import type { GraphWrite, SessionDirectoryPort } from '../sessions/contracts.js';
-import type { ExecutionEntryDependencies } from '../tasks/execution-entry-contracts.js';
-import type { ExecutionReadPort } from '../tasks/execution-read-contracts.js';
+import type { RoleBindingFactsPort } from './configuration-contracts.js';
+import type { MaterialPort } from './material-contracts.js';
+import type { GraphWrite, SessionDirectoryPort } from './session-contracts.js';
+import type { ExecutionEntryDependencies } from './execution-entry-contracts.js';
+import type { ExecutionReadPort } from './execution-read-contracts.js';
 
 /** Trusted host actor: a real human/system identity, never fabricated per recipient. */
 export type MessageHostSender = {

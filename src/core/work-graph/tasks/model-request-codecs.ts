@@ -16,7 +16,7 @@
 import type { ActorRef } from '../../../contracts/command-event.js';
 import type { ModelRequestPermitRef } from '../../../contracts/dispatch.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
-import type { ModelRequestPermitV1, ModelRequestPermitSnapshot } from '../tasks/model-call-contracts.js';
+import type { ModelRequestPermitV1, ModelRequestPermitSnapshot } from './model-call-contracts.js';
 import type {
   DecodeResult,
   EncodedDomainEvent,

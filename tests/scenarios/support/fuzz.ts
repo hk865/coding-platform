@@ -42,9 +42,9 @@ import type { CheckProcessObservation, RoundSnapshot } from '../../../src/contra
 import { createSqliteRecordBackend } from '../../../src/core/record-store/sqlite-record-store.js';
 import { createProjectBootstrapServices } from '../../../src/core/work-graph/configuration/project-bootstrap-service.js';
 import { createRoleConfigurationService } from '../../../src/core/work-graph/configuration/role-memory-service.js';
-import type { EvidencePort, ReverifyRoundInput } from '../../../src/core/work-graph/evidence/contracts.js';
+import type { EvidencePort, ReverifyRoundInput } from '../../../src/core/work-graph/model/evidence-contracts.js';
 import { createEvidenceService } from '../../../src/core/work-graph/evidence/evidence-service.js';
-import type { MaterialPort } from '../../../src/core/work-graph/materials/contracts.js';
+import type { MaterialPort } from '../../../src/core/work-graph/model/material-contracts.js';
 import { createMaterialService } from '../../../src/core/work-graph/materials/material-service.js';
 import { createMaterialRecordReaders } from '../../../src/core/work-graph/materials/record-readers.js';
 import { CONTROL_RECORD_SCHEMAS } from '../../../src/core/work-graph/persistence/control-record-codecs.js';
@@ -52,16 +52,16 @@ import { plainSessionRefToAggregate } from '../../../src/core/work-graph/session
 import { isPausedInterrupted } from '../../../src/core/work-graph/state/run-machine.js';
 import { deriveReworkClass, reworkFenceOf, type ReworkFence } from '../../../src/core/work-graph/state/task-failure.js';
 import { isFinalizedNonPass, roundChainHead } from '../../../src/core/work-graph/state/verification-machine.js';
-import type { RequeueTaskInput } from '../../../src/core/work-graph/tasks/claim-contracts.js';
+import type { RequeueTaskInput } from '../../../src/core/work-graph/model/claim-contracts.js';
 import { COMPLETION_RECORD_SCHEMAS } from '../../../src/core/work-graph/tasks/completion-record-codecs.js';
-import type { GraphWrite } from '../../../src/core/work-graph/tasks/contracts.js';
+import type { GraphWrite } from '../../../src/core/work-graph/model/task-contracts.js';
 import type { ControlObservationPort, RunControlPort } from '../../../src/core/work-graph/tasks/control-contracts.js';
 import { createRunControlService } from '../../../src/core/work-graph/tasks/control-service.js';
 import type {
   AuthorizeConfiguration, ExecutionEntryPort, KernelExecutionBinding,
-} from '../../../src/core/work-graph/tasks/execution-entry-contracts.js';
+} from '../../../src/core/work-graph/model/execution-entry-contracts.js';
 import { createExecutionEntryService } from '../../../src/core/work-graph/tasks/execution-entry-service.js';
-import type { PlanChangeReason, PlanProposal, PlanTaskPort } from '../../../src/core/work-graph/tasks/plan-contracts.js';
+import type { PlanChangeReason, PlanProposal, PlanTaskPort } from '../../../src/core/work-graph/model/plan-contracts.js';
 import { createPlanService } from '../../../src/core/work-graph/tasks/plan-service.js';
 import type { PlanDelegatedWriteDependencies } from '../../../src/core/work-graph/tasks/plan-write-admission.js';
 import { createTaskRequeueService } from '../../../src/core/work-graph/tasks/requeue-service.js';

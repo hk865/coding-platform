@@ -30,13 +30,13 @@ import type { RunContinuationV1, RunRef } from '../contracts/dispatch.js';
 import type { GoalRef } from '../contracts/ledger.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../contracts/fingerprint.js';
 import type { RuntimeExecutionPort } from '../core/agent-runtime/ports.js';
-import type { ExecutionReadPort, TaskExecutionRecord } from '../core/work-graph/tasks/execution-read-contracts.js';
+import type { ExecutionReadPort, TaskExecutionRecord } from '../core/work-graph/model/execution-read-contracts.js';
 import type { RunControlPort } from '../core/work-graph/tasks/control-contracts.js';
-import type { SessionDirectoryPort } from '../core/work-graph/sessions/contracts.js';
+import type { SessionDirectoryPort } from '../core/work-graph/model/session-contracts.js';
 import type {
   SessionMailboxPort,
   SessionMessage,
-} from '../core/work-graph/communication/contracts.js';
+} from '../core/work-graph/model/communication-contracts.js';
 import type {
   ConsultationInput,
   ConsultationResult,

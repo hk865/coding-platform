@@ -49,7 +49,7 @@ import {
 import type { WorkbenchTab, WorkbenchDraftReference, WorkbenchLayout } from '../../src/ui/views.js';
 import type { ArchitectureRevision } from '../../src/core/work-graph/architecture/catalog-contracts.js';
 import type { ObservedArchitectureNeighborhood } from '../../src/core/work-graph/architecture/contracts.js';
-import type { TaskGraph, TaskRow } from '../../src/core/work-graph/tasks/plan-contracts.js';
+import type { TaskGraph, TaskRow } from '../../src/core/work-graph/model/plan-contracts.js';
 import type { ReadResult } from '../../src/contracts/core/results.js';
 import type { CommitCursor } from '../../src/contracts/command-event.js';
 import type { Disposition, Phase, PlanRevisionSnapshot } from '../../src/contracts/plan.js';

@@ -15,7 +15,7 @@ import {
   lineDelta,
 } from '../../src/app/attention-observer.js';
 import { createSessionMailboxTools } from '../../src/core/agent-runtime/communication-tools.js';
-import type { SessionMailboxPort, SessionMessage } from '../../src/core/work-graph/communication/contracts.js';
+import type { SessionMailboxPort, SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
 import type { ToolCall, WorkspaceSandbox } from '../../vendor/coding-agent/dist/public-api.js';
 import {
   attentionConfig,

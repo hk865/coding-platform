@@ -10,8 +10,8 @@ import type { SessionRef } from '../../src/contracts/core/identity.js';
 import type { CoreError, CoreRejection } from '../../src/contracts/core/results.js';
 import type { SessionMessageRef } from '../../src/contracts/core/session-message.js';
 import type { RoleBindingRefV1, SourceRefV1 } from '../../src/contracts/dispatch.js';
-import { deriveSessionInputId, type SessionMessage } from '../../src/core/work-graph/communication/contracts.js';
-import { checkSessionMessageBody } from '../../src/core/work-graph/communication/message-record-codecs.js';
+import { deriveSessionInputId, type SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
+import { checkSessionMessageBody } from '../../src/core/work-graph/sessions/message-record-codecs.js';
 import {
   createSessionMessageRecord,
   inputObserverProblem,

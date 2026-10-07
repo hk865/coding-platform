@@ -53,11 +53,11 @@ import {
   readBatch, readCanonicalTaskFacts, readGoal, readGoalPhase, readPinnedCompletionPolicy, readPlan,
   type CanonicalTaskFacts, type CanonicalTaskState, type Rejected,
 } from './plan-readers.js';
-import { decodePlanRevisionSnapshot, planRevisionRefKey } from './plan-record-codecs.js';
+import { decodePlanRevisionSnapshot, planRevisionRefKey } from '../persistence/plan-record-codecs.js';
 import {
   decodeEvidenceSnapshot, decodeTaskEvidenceIndexSnapshot, decodeVerificationRoundSnapshot,
-} from '../evidence/evidence-record-codecs.js';
-import { evidenceApplicabilityWithBasis, evidenceBindingFor, selectEffectiveEvidenceSet } from '../evidence/coverage.js';
+} from '../persistence/evidence-record-codecs.js';
+import { evidenceApplicabilityWithBasis, evidenceBindingFor, selectEffectiveEvidenceSet } from './evidence-coverage.js';
 import {
   bindTrustedContext, isolateWrite, isRecord, loadReplayEvent, mapStoreFailure, mergeGuards, nonEmpty, sameRef,
 } from './execution-entry-service.js';
@@ -68,7 +68,7 @@ import {
   encodeGoalPhaseSnapshot, encodeTaskReductionSnapshot,
   type CompletionEvent, type GoalCompletedEvent, type TaskCompletedEvent,
 } from './completion-record-codecs.js';
-import type { GoalTaskPort } from './contracts.js';
+import type { GoalTaskPort } from '../model/task-contracts.js';
 
 type Records = GoalRecordTransactionPort & RecordLookupPort;
 type HostActor = { kind: 'human' | 'system'; id: string };

@@ -6,7 +6,7 @@ import type { RawArtifactPut, RawArtifactRecord, RawArtifactStorePort } from '..
 import type { StoreFailure, StoreResult } from '../../record-store/ports.js';
 import type { RunRef, RunSnapshot, SourceRefV1 } from '../../../contracts/dispatch.js';
 import { sameArtifactOwnerRunRef } from '../../../contracts/material-access.js';
-import type { MaterialPort, MaterialWriteOrigin, StoreArtifactResult } from './contracts.js';
+import type { MaterialPort, MaterialWriteOrigin, StoreArtifactResult } from '../model/material-contracts.js';
 import type { MaterialAuthorityReads } from './applicability.js';
 import { createMaterialApplicability, materialOwnerFromOrigin } from './applicability.js';
 

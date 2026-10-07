@@ -7,7 +7,7 @@ import type { CommandMeta, RoleConfigurationRef, SessionRef, WorkspaceScope, Wor
 import type { CoreError, CoreRejection, OperationReceipt, Page, ReadResult, WriteResult } from '../../contracts/core/results.js';
 import type { SessionRecord } from '../../contracts/core/session.js';
 import { canonicalJson, type JsonValue } from '../../contracts/fingerprint.js';
-import type { SessionCard, SessionCreationResult, SessionDirectoryPort, SessionOperationRecord } from '../work-graph/sessions/contracts.js';
+import type { SessionCard, SessionCreationResult, SessionDirectoryPort, SessionOperationRecord } from '../work-graph/model/session-contracts.js';
 import type { KernelStoreRegistry } from './kernel-store-locator.js';
 import { StoreError, sessionRecordSchema } from '../../../vendor/coding-agent/dist/public-api.js';
 import type {

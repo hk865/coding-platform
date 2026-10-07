@@ -11,7 +11,7 @@
 import type { ArtifactRef } from '../../../contracts/artifact.js';
 import type { SourceRefV1 } from '../../../contracts/dispatch.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
-import type { SessionMessage } from './contracts.js';
+import type { SessionMessage } from '../model/communication-contracts.js';
 import { SESSION_MESSAGE_CONTENT_TYPE, SESSION_MESSAGE_MAX_TEXT_BYTES } from './message-record-codecs.js';
 
 /** The two parts of a message that each have a stored body. */

@@ -26,7 +26,7 @@ import { SESSION_HEALTH_CONCLUSIONS, type SessionRecord, type SessionWorkLink } 
 import type {
   DecodeResult, EncodedDomainEvent, EncodedRecord, RecordBackendSchemas,
 } from '../../record-store/ports.js';
-import type { SessionOperationRecord } from './contracts.js';
+import type { SessionOperationRecord } from '../model/session-contracts.js';
 
 // --------------------------------------------------------------------------
 // Fixed registration identifiers

@@ -23,7 +23,7 @@ import type {
 } from '../../src/contracts/plan.js';
 import { canonicalJson, type JsonValue } from '../../src/contracts/fingerprint.js';
 import { canonicalRefKey } from '../../src/core/work-graph/persistence/record-codecs.js';
-import { decodePlanRevisionSnapshot } from '../../src/core/work-graph/tasks/plan-record-codecs.js';
+import { decodePlanRevisionSnapshot } from '../../src/core/work-graph/persistence/plan-record-codecs.js';
 import type { EncodedRecord, PreparedCommit } from '../../src/core/record-store/ports.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
 import { createTaskClaimFixture, CLAIM_FIXTURE_AT, type Records, type TaskClaimFixture } from '../helpers/task-claim-fixture.js';

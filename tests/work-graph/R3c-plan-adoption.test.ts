@@ -6,7 +6,7 @@ import { createInMemoryRecordBackend } from '../../src/core/record-store/in-memo
 import { createSqliteRecordBackend } from '../../src/core/record-store/sqlite-record-store.js';
 import type { EncodedRecord, EncodedRecordSchema, PreparedCommit, RecordBackendSchemas } from '../../src/core/record-store/ports.js';
 import { GOAL_RECORD_SCHEMAS, encodeProjectSnapshot, encodeWorkspaceSnapshot, canonicalRefKey } from '../../src/core/work-graph/persistence/record-codecs.js';
-import { PLAN_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/plan-record-codecs.js';
+import { PLAN_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/plan-record-codecs.js';
 import { PLAN_STATE_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/plan-readers.js';
 import { materialRecordSchemas } from '../../src/core/work-graph/materials/record-readers.js';
 import { createGoalService } from '../../src/core/work-graph/tasks/task-service.js';

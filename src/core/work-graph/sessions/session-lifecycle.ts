@@ -48,7 +48,7 @@ import type { RecordLookupPort, RecordLookupRequest } from '../../record-store/l
 import type {
   EncodedRecord, GoalRecordTransactionPort, PreparedCommit, RecordGuard, StoreFailure,
 } from '../../record-store/ports.js';
-import type { GraphWrite } from './contracts.js';
+import type { GraphWrite } from '../model/session-contracts.js';
 import type {
   ArchiveSessionInput, LinkSessionWorkInput, ReactivateSessionInput, SessionLifecyclePort,
   SessionLifecycleStores,

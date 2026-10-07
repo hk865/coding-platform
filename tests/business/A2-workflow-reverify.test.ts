@@ -37,9 +37,9 @@ import type { RuntimeTask } from '../../src/contracts/plan.js';
 import type { FailingCheckFactV1, TaskAutomationVerdictV1, TaskFailureFactsV1 } from '../../src/contracts/task-failure.js';
 import { WORKFLOW_AUTOMATION_ACTOR } from '../../src/contracts/task-requeue.js';
 import type { RoundSnapshot, VerificationRoundRef } from '../../src/contracts/verification.js';
-import type { ReverifyOutcomeV1, ReverifyRoundInput } from '../../src/core/work-graph/evidence/contracts.js';
-import type { GraphWrite } from '../../src/core/work-graph/tasks/contracts.js';
-import type { TaskRow } from '../../src/core/work-graph/tasks/plan-contracts.js';
+import type { ReverifyOutcomeV1, ReverifyRoundInput } from '../../src/core/work-graph/model/evidence-contracts.js';
+import type { GraphWrite } from '../../src/core/work-graph/model/task-contracts.js';
+import type { TaskRow } from '../../src/core/work-graph/model/plan-contracts.js';
 
 const P = 'a2-reverify-wf-project', W = 'a2-reverify-wf-workspace', G = 'a2-reverify-wf-goal';
 const actor = { kind: 'human' as const, id: 'a2-reverify-wf-operator' };

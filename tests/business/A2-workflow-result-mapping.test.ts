@@ -24,7 +24,7 @@ import { createWorkflow } from '../../src/business/workflow/workflow.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { RunOutcome, RunSnapshot } from '../../src/contracts/dispatch.js';
 import type { RoundSnapshot } from '../../src/contracts/verification.js';
-import type { FinalizedChecks } from '../../src/core/work-graph/evidence/contracts.js';
+import type { FinalizedChecks } from '../../src/core/work-graph/model/evidence-contracts.js';
 
 const P = 'a2-mapping-project', W = 'a2-mapping-workspace', G = 'a2-mapping-goal';
 const AT = '2026-10-06T00:00:00.000Z';

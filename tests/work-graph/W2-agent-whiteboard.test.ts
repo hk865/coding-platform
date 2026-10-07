@@ -29,10 +29,10 @@ import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-
 import { canonicalJson, sha256Hex } from '../../src/contracts/fingerprint.js';
 import {
   decodePlanProposalRecord, encodePlanProposal,
-} from '../../src/core/work-graph/tasks/plan-record-codecs.js';
+} from '../../src/core/work-graph/persistence/plan-record-codecs.js';
 import type {
   PlanProposal, PlanWriteProvenanceV1,
-} from '../../src/core/work-graph/tasks/plan-contracts.js';
+} from '../../src/core/work-graph/model/plan-contracts.js';
 
 const fixtures: W2WhiteboardFixture[] = [];
 async function make(kind: 'memory' | 'sqlite' = 'memory'): Promise<W2WhiteboardFixture> {

@@ -32,7 +32,7 @@ import type {
   EncodedDomainEvent,
   RecordBackendSchemas,
 } from '../../record-store/ports.js';
-import type { RecordedExecutionHistory } from '../tasks/execution-history-contracts.js';
+import type { RecordedExecutionHistory } from '../model/execution-history-contracts.js';
 
 export const EXECUTION_HISTORY_RECORDED_EVENT_TYPE = 'ExecutionHistoryRecorded' as const;
 export const EXECUTION_HISTORY_RECORDED_EVENT_SCHEMA_VERSION = 1 as const;

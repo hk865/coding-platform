@@ -23,7 +23,7 @@ import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { RunRef, RoleBindingRefV1 } from '../../src/contracts/dispatch.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
 import type { PlanRevisionDraft, PlanRevisionRef, PlanRevisionSnapshot } from '../../src/contracts/plan.js';
-import type { PlanProposal, PlanProposalRef, PlanTaskPort, TaskGraph } from '../../src/core/work-graph/tasks/plan-contracts.js';
+import type { PlanProposal, PlanProposalRef, PlanTaskPort, TaskGraph } from '../../src/core/work-graph/model/plan-contracts.js';
 import type { ToolCall, ToolDefinition, ToolResult, WorkspaceSandbox } from '../../vendor/coding-agent/dist/public-api.js';
 
 const PROJECT_ID = 'w2-tool-project';

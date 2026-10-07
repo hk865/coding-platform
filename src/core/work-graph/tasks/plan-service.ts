@@ -59,7 +59,7 @@ import type {
 } from '../../../contracts/query-job.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type { RawArtifactStorePort } from '../../record-store/body-ports.js';
-import type { MaterialPort } from '../materials/contracts.js';
+import type { MaterialPort } from '../model/material-contracts.js';
 import type {
   GoalRecordTransactionPort,
   RecordGuard,
@@ -90,7 +90,7 @@ import type {
   TaskPage,
   TaskPlanningDiagnostic,
   TaskRow,
-} from './plan-contracts.js';
+} from '../model/plan-contracts.js';
 import {
   compileFuturePlanAdoption, compileInitialPlanAdoption, type PlanAdoptionCommit, type PlanRevisionWrite,
 } from './plan-commit-compiler.js';
@@ -113,7 +113,7 @@ import {
   planProposalRefKey,
   planRevisionRefKey,
   type PlanProposalRecordedEvent,
-} from './plan-record-codecs.js';
+} from '../persistence/plan-record-codecs.js';
 import {
   confirmActivePlan,
   findPendingProposal,

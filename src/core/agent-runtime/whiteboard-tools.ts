@@ -31,7 +31,7 @@ import type { VersionPin } from '../../contracts/core/identity.js';
 import type { ReadResult, WriteResult } from '../../contracts/core/results.js';
 import type { GoalRef } from '../../contracts/ledger.js';
 import type { PlanRevisionDraft, PlanRevisionRef } from '../../contracts/plan.js';
-import type { PlanChangeReason, PlanProposalRef, PlanTaskPort } from '../work-graph/tasks/plan-contracts.js';
+import type { PlanChangeReason, PlanProposalRef, PlanTaskPort } from '../work-graph/model/plan-contracts.js';
 import {
   toolSchema as z,
   type ToolCall,

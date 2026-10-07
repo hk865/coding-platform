@@ -34,8 +34,8 @@ import type { WriteResult } from '../../../src/contracts/core/results.js';
 import type { RunRef } from '../../../src/contracts/dispatch.js';
 import type { PlanRevisionDraft, PlanRevisionSnapshot } from '../../../src/contracts/plan.js';
 import type { TaskRequeueOutcomeV1 } from '../../../src/contracts/task-requeue.js';
-import type { RequeueTaskInput } from '../../../src/core/work-graph/tasks/claim-contracts.js';
-import type { PlanChangeReason } from '../../../src/core/work-graph/tasks/plan-contracts.js';
+import type { RequeueTaskInput } from '../../../src/core/work-graph/model/claim-contracts.js';
+import type { PlanChangeReason } from '../../../src/core/work-graph/model/plan-contracts.js';
 import {
   AG2B_GOAL_REF, AG2B_SCOPE, AG2B_WORK_TASK_ID, ag2bChecksConfiguration, corePost, plain, type AG2bHost,
 } from '../../helpers/AG2b-collaboration-fixture.js';

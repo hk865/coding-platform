@@ -26,7 +26,7 @@ import type { RecordBackendSchemas } from '../../src/core/record-store/ports.js'
 import { createAgentRuntime } from '../../src/core/agent-runtime/runtime.js';
 import type { AgentRuntimeService } from '../../src/core/agent-runtime/ports.js';
 import type { RuntimeHostBindings } from '../../src/core/agent-runtime/execution-contracts.js';
-import type { ExecutionEntryPort } from '../../src/core/work-graph/tasks/execution-entry-contracts.js';
+import type { ExecutionEntryPort } from '../../src/core/work-graph/model/execution-entry-contracts.js';
 import { createRunControlService } from '../../src/core/work-graph/tasks/control-service.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
 import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';

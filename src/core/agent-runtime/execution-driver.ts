@@ -32,14 +32,14 @@ import { createRuntimeModelCallAccess, RuntimeModelCallRejected } from './model-
 import { createSessionHistoryCursorOwner } from './session-operations.js';
 import { loadPreparedManifest, snapshotRuntimeConfiguration } from './execution-preparation.js';
 import { createRuntimeSourceCaptureFactory } from './source-capture-access.js';
-import type { SessionMailboxPort, SessionMessage } from '../work-graph/communication/contracts.js';
-import type { SessionDirectoryPort } from '../work-graph/sessions/contracts.js';
-import type { PlanTaskPort } from '../work-graph/tasks/plan-contracts.js';
+import type { SessionMailboxPort, SessionMessage } from '../work-graph/model/communication-contracts.js';
+import type { SessionDirectoryPort } from '../work-graph/model/session-contracts.js';
+import type { PlanTaskPort } from '../work-graph/model/plan-contracts.js';
 import type { ExecutionObservationService } from './execution-observation.js';
 import type { RuntimeControlCoordinator, RuntimeControlHandle } from './execution-control.js';
 import type {
   ExecutionEntryPort, KernelExecutionBinding, KernelObservationSource, ObservedExecutionHistory, TaskEntryPermit,
-} from '../work-graph/tasks/execution-entry-contracts.js';
+} from '../work-graph/model/execution-entry-contracts.js';
 import type {
   StartTaskExecutionRequest, RuntimeExecutionDependencies, TaskExecutionRecord,
 } from './execution-contracts.js';

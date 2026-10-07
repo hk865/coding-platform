@@ -39,7 +39,7 @@ import type {
 } from '../../record-store/ports.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import { canonicalRefKey, decodeGoalSnapshot, decodeWorkspaceSnapshot } from '../persistence/record-codecs.js';
-import { decodePlanRevisionSnapshot, planRevisionRefKey } from '../tasks/plan-record-codecs.js';
+import { decodePlanRevisionSnapshot, planRevisionRefKey } from '../persistence/plan-record-codecs.js';
 import {
   decodeSessionRecord, encodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey,
 } from '../sessions/session-record-codecs.js';
@@ -62,7 +62,7 @@ import type {
   QueryEntryIdentity, QueryEntryTicket, QueryExecutionDependencies, QueryExecutionPort,
   QueryExecutionRecord, QueryHistoryObservation, QueryPreparationFacts, QueryReconcileInput, ResolveUnknownQueryRunInput,
 } from './contracts.js';
-import type { GraphWrite } from '../tasks/contracts.js';
+import type { GraphWrite } from '../model/task-contracts.js';
 
 /** Exact manifest content type (declared once in contracts, ND-9); the writer re-reads the body and requires this. */
 export { QUERY_MANIFEST_CONTENT_TYPE };

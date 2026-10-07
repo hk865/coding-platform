@@ -26,14 +26,14 @@ import type { EncodedRecord, RecordBackendSchemas } from '../../src/core/record-
 import { createSqliteRecordBackend } from '../../src/core/record-store/sqlite-record-store.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../src/contracts/fingerprint.js';
 import { canonicalRefKey, encodeProjectSnapshot, encodeWorkspaceSnapshot } from '../../src/core/work-graph/persistence/record-codecs.js';
-import { PLAN_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/plan-record-codecs.js';
+import { PLAN_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/plan-record-codecs.js';
 import { PLAN_GOVERNANCE_RECORD_SCHEMAS, PLAN_STATE_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/plan-readers.js';
 import { materialRecordSchemas } from '../../src/core/work-graph/materials/record-readers.js';
 import { SESSION_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import { TASK_CLAIM_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/claim-record-codecs.js';
 import { createWhiteboardTools, WHITEBOARD_TOOL_NAMES } from '../../src/core/agent-runtime/whiteboard-tools.js';
 import type { ToolCall, ToolDefinition, ToolResult, WorkspaceSandbox } from '../../vendor/coding-agent/dist/public-api.js';
-import type { PlanProposal, TaskGraph } from '../../src/core/work-graph/tasks/plan-contracts.js';
+import type { PlanProposal, TaskGraph } from '../../src/core/work-graph/model/plan-contracts.js';
 import { createTaskClaimFixture } from '../helpers/task-claim-fixture.js';
 import type { WorkspaceHostBindings } from '../../src/core/workspace/access.js';
 import { createTargetPlatform } from '../../src/composition/create-platform.js';

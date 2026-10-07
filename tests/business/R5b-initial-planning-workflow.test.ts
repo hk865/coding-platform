@@ -26,7 +26,7 @@ import { sha256Hex } from '../../src/contracts/fingerprint.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { SessionRef } from '../../src/contracts/core/identity.js';
 import type { InitialPlanningResponseV2 } from '../../src/contracts/initial-planning.js';
-import type { PlanProposal } from '../../src/core/work-graph/tasks/plan-contracts.js';
+import type { PlanProposal } from '../../src/core/work-graph/model/plan-contracts.js';
 import type { QueryJobAnswerRef, QueryJobIntentV1, QueryJobRef, QueryRunRef } from '../../src/contracts/query-job.js';
 import type { TrustedCheckConfiguration } from '../../src/contracts/verification.js';
 import type { WorkspaceHostBindings } from '../../src/core/workspace/access.js';

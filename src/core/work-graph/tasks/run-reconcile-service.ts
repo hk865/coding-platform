@@ -40,13 +40,13 @@ import {
   runStateOf, transitionRun, type RunEffect, type RunEvent, type RunGuardContext, type RunNode, type RunTransition,
 } from '../state/run-machine.js';
 import type { SessionGuardContext, SessionRelease, SessionReleaseCause } from '../state/session-availability.js';
-import type { GraphWrite } from './contracts.js';
+import type { GraphWrite } from '../model/task-contracts.js';
 import {
   bindTrustedContext, checkRunPin, claimEffectRecords, claimLeaseOf, claimSessionOf, executionReadGuards, hostLeaseOf,
   isRecord, isolateWrite, loadReplayEvent, mapStoreFailure, mergeGuards, nonEmpty, readAdmissionFacts,
   type ClaimSessionRelease,
 } from './execution-entry-service.js';
-import type { TaskExecutionRecord } from './execution-read-contracts.js';
+import type { TaskExecutionRecord } from '../model/execution-read-contracts.js';
 import { readGoalScope } from './plan-readers.js';
 import {
   outcomeUnknownIntentsOf, pointerIntentOf, queuedSteersOf, readRunIntents, reconciledIntentRecords,

@@ -23,7 +23,7 @@ import type { ModelClientPort, ModelRequest } from '../../vendor/coding-agent/di
 import type { PreparedTaskExecution } from '../../src/contracts/core/prepared-execution.js';
 import { DEFAULT_RUNTIME_BUDGET, ModelBudget } from '../../src/core/agent-runtime/model-budget.js';
 import { kernelRunLimits } from '../../src/core/agent-runtime/run-limits.js';
-import type { ExecutionEntryPort } from '../../src/core/work-graph/tasks/execution-entry-contracts.js';
+import type { ExecutionEntryPort } from '../../src/core/work-graph/model/execution-entry-contracts.js';
 import { createB2RuntimeFixture, type B2RuntimeFixture } from '../helpers/B2-runtime-fixture.js';
 
 const fixtures: B2RuntimeFixture[] = [];

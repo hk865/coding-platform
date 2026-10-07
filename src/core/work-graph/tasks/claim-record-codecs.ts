@@ -30,7 +30,7 @@ import {
 import type {
   DecodeResult, EncodedDomainEvent, EncodedRecord, RecordBackendSchemas,
 } from '../../record-store/ports.js';
-import type { TaskClaim, TaskClaimOutbox } from './claim-contracts.js';
+import type { TaskClaim, TaskClaimOutbox } from '../model/claim-contracts.js';
 import { taskDispatchStateProblem } from '../persistence/execution-entry-codecs.js';
 import {
   actorRefProblem, controlIntentRefProblem, delegatedWriteProvenanceProblem, goalRefProblem, hasOnlyKeys,

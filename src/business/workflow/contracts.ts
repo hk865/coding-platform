@@ -8,12 +8,12 @@ import type { QueryJobAnswerSnapshot, QueryJobIntentV1 } from '../../contracts/q
 import type { RuntimeBudget } from '../../contracts/runtime-budget.js';
 import type { RoleBindingRefV1, TaskBudgetV1, TaskTriple } from '../../contracts/dispatch.js';
 import type { TaskRequeueRef } from '../../contracts/task-requeue.js';
-import type { SessionMessage } from '../../core/work-graph/communication/contracts.js';
+import type { SessionMessage } from '../../core/work-graph/model/communication-contracts.js';
 import type { QueryJobRecord } from '../../core/work-graph/queries/contracts.js';
-import type { CreateGoalInput, GoalTaskPort } from '../../core/work-graph/tasks/contracts.js';
-import type { TaskClaimPort } from '../../core/work-graph/tasks/claim-contracts.js';
-import type { InitialPlanProposalResult, PlanTaskPort } from '../../core/work-graph/tasks/plan-contracts.js';
-import type { EvidencePort } from '../../core/work-graph/evidence/contracts.js';
+import type { CreateGoalInput, GoalTaskPort } from '../../core/work-graph/model/task-contracts.js';
+import type { TaskClaimPort } from '../../core/work-graph/model/claim-contracts.js';
+import type { InitialPlanProposalResult, PlanTaskPort } from '../../core/work-graph/model/plan-contracts.js';
+import type { EvidencePort } from '../../core/work-graph/model/evidence-contracts.js';
 import type { RuntimeExecutionPort } from '../../core/agent-runtime/ports.js';
 import type { RegisteredCheckRunner } from '../../core/agent-runtime/check-execution.js';
 

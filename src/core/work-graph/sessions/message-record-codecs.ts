@@ -27,8 +27,8 @@ import type {
   DecodeResult, EncodedDomainEvent, EncodedRecord, RecordBackendSchemas,
 } from '../../record-store/ports.js';
 import { isJsonObject, isNonEmptyString, parseJsonObject } from '../../record-store/record-codec.js';
-import { checkArtifactRef, checkPlainSessionRef } from '../sessions/session-record-codecs.js';
-import type { MessageQueryAnswerSender, MessageSender, SessionMessage } from './contracts.js';
+import { checkArtifactRef, checkPlainSessionRef } from './session-record-codecs.js';
+import type { MessageQueryAnswerSender, MessageSender, SessionMessage } from '../model/communication-contracts.js';
 
 /** Encoding selector for the persisted message record. */
 export const SESSION_MESSAGE_SCHEMA_ID = 'SessionMessage@1';

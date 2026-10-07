@@ -55,10 +55,10 @@ import type { RuntimeExecutionPort } from '../core/agent-runtime/ports.js';
 import type { RuntimeCapability } from '../core/agent-runtime/contracts.js';
 import type { RunControlPort } from '../core/work-graph/tasks/control-contracts.js';
 import { controlIntentRefFor } from '../core/work-graph/tasks/control-service.js';
-import type { TaskClaimPort } from '../core/work-graph/tasks/claim-contracts.js';
-import type { GoalTaskPort, GraphWrite, SetGoalControlInput } from '../core/work-graph/tasks/contracts.js';
-import type { ExecutionReadPort, TaskExecutionRecord } from '../core/work-graph/tasks/execution-read-contracts.js';
-import type { GoalDisplayRead, GoalLiveRunsRead, PlanTaskPort } from '../core/work-graph/tasks/plan-contracts.js';
+import type { TaskClaimPort } from '../core/work-graph/model/claim-contracts.js';
+import type { GoalTaskPort, GraphWrite, SetGoalControlInput } from '../core/work-graph/model/task-contracts.js';
+import type { ExecutionReadPort, TaskExecutionRecord } from '../core/work-graph/model/execution-read-contracts.js';
+import type { GoalDisplayRead, GoalLiveRunsRead, PlanTaskPort } from '../core/work-graph/model/plan-contracts.js';
 import {
   GOAL_FAN_OUT_ACTOR, goalFanOutReason, goalFanOutRequestId, type GoalControl, type GoalRunControlCapabilityV1,
 } from '../core/work-graph/state/goal-machine.js';

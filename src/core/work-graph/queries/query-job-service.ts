@@ -54,8 +54,8 @@ import {
   decodeProjectSnapshot,
   decodeWorkspaceSnapshot,
 } from '../persistence/record-codecs.js';
-import { sessionMessageRefKey } from '../communication/message-record-codecs.js';
-import { decodePlanRevisionSnapshot, planRevisionRefKey } from '../tasks/plan-record-codecs.js';
+import { sessionMessageRefKey } from '../sessions/message-record-codecs.js';
+import { decodePlanRevisionSnapshot, planRevisionRefKey } from '../persistence/plan-record-codecs.js';
 import { newPendingQueryRecords } from '../state/query-run-recovery.js';
 import type { QueryJobDependencies, QueryJobPort } from './contracts.js';
 import {

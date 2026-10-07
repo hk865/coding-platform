@@ -943,7 +943,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     ...scope, principal: { kind: 'host', actor: { ...actor } },
     materialReader: { kind: 'host', ...scope, actor: { ...actor } }, signal: attentionAbort.signal,
   });
-  async function inputCompleted(ctx: CoreCallContext, message: import('../core/work-graph/communication/contracts.js').SessionMessage): Promise<boolean> {
+  async function inputCompleted(ctx: CoreCallContext, message: import('../core/work-graph/model/communication-contracts.js').SessionMessage): Promise<boolean> {
     for (const accepted of message.acceptedInputs ?? []) {
       if (accepted.part !== 'message') continue;
       const ref = accepted.executionRef;

@@ -4,8 +4,8 @@
 import { afterEach, expect, it } from 'vitest';
 import { join } from 'node:path';
 import { createTargetPlatform, type TargetPlatformOptions } from '../../src/composition/create-platform.js';
-import type { SessionMailboxPort } from '../../src/core/work-graph/communication/contracts.js';
-import type { MaterialPort } from '../../src/core/work-graph/materials/contracts.js';
+import type { SessionMailboxPort } from '../../src/core/work-graph/model/communication-contracts.js';
+import type { MaterialPort } from '../../src/core/work-graph/model/material-contracts.js';
 import { createTaskClaimFixture, CLAIM_FIXTURE_AT } from '../helpers/task-claim-fixture.js';
 
 type Platform = Awaited<ReturnType<typeof createTargetPlatform>>;

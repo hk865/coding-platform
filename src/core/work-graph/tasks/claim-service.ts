@@ -70,15 +70,15 @@ import {
   encodeDispatchOutboxEntry, encodeTaskAttemptSnapshot,
   encodeTaskClaimedEvent, taskClaimedEventFromEvent, type TaskClaimedEvent,
 } from './claim-record-codecs.js';
-import type { ClaimTaskInput, TaskClaim, TaskClaimDependencies, TaskClaimPort } from './claim-contracts.js';
-import type { GraphWrite } from './contracts.js';
+import type { ClaimTaskInput, TaskClaim, TaskClaimDependencies, TaskClaimPort } from '../model/claim-contracts.js';
+import type { GraphWrite } from '../model/task-contracts.js';
 import { evaluateEligibility } from './eligibility.js';
 import {
   readCanonicalTaskFacts, readGoal, readPlan, sameCursor,
   type CanonicalTaskFacts, type CanonicalTaskState, type Rejected,
 } from './plan-readers.js';
-import type { SessionMessage } from '../communication/contracts.js';
-import { decodeSessionMessageRecord, sessionMessageRefKey } from '../communication/message-record-codecs.js';
+import type { SessionMessage } from '../model/communication-contracts.js';
+import { decodeSessionMessageRecord, sessionMessageRefKey } from '../sessions/message-record-codecs.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import { taskRequeueRefProblem } from '../persistence/rework-codecs.js';
 

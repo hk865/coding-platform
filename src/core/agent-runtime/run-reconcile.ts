@@ -29,13 +29,13 @@ import type { QueryRunRef } from '../../contracts/query-job.js';
 import type { RunContinuationV1, RunReconciliationBasisV1, RunRef, RunSnapshot } from '../../contracts/dispatch.js';
 import { canonicalJson } from '../../contracts/fingerprint.js';
 import { validateRunStateInvariants, type RunState } from '../../../vendor/coding-agent/dist/public-api.js';
-import type { SessionMailboxPort } from '../work-graph/communication/contracts.js';
+import type { SessionMailboxPort } from '../work-graph/model/communication-contracts.js';
 import type { QueryExecutionPort, QueryExecutionRecord, QueryReconcileInput } from '../work-graph/queries/contracts.js';
 import type { RunControlPort } from '../work-graph/tasks/control-contracts.js';
 import type {
   AcceptedSteerV1, ExecutionEntryPort, KernelExecutionBinding, ObservedExecutionHistory,
-} from '../work-graph/tasks/execution-entry-contracts.js';
-import type { TaskExecutionRecord } from '../work-graph/tasks/execution-read-contracts.js';
+} from '../work-graph/model/execution-entry-contracts.js';
+import type { TaskExecutionRecord } from '../work-graph/model/execution-read-contracts.js';
 import type { ReconcileRunInput, ReconcileTurnV1, RunReconcilePort } from '../work-graph/tasks/run-reconcile-contracts.js';
 import { terminalEventOf, transcriptHasOutcomeUnknown, turnIsComplete } from './execution-observation.js';
 import { confirmMailboxInputs } from './execution-inputs.js';

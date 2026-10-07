@@ -30,7 +30,7 @@ import { createMaterialRecordReaders } from '../../src/core/work-graph/materials
 import { CONTROL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/control-record-codecs.js';
 import type { RunControlPort, ControlObservationPort } from '../../src/core/work-graph/tasks/control-contracts.js';
 import { createRunControlService } from '../../src/core/work-graph/tasks/control-service.js';
-import type { ExecutionReadPort } from '../../src/core/work-graph/tasks/execution-read-contracts.js';
+import type { ExecutionReadPort } from '../../src/core/work-graph/model/execution-read-contracts.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
 import {
   B2_AT, b2Key, createB2ExecutionFixture, type B2ExecutionFixture, type B2Records,

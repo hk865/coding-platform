@@ -17,7 +17,7 @@ import type { DependencyRequirement, Disposition, Phase, PlanRevisionDraft, Plan
 import type { TaskFailureFactsV1, TaskPhaseCauseV1, TaskReworkSummaryV1 } from '../../../contracts/task-failure.js';
 import type { TaskRequeueRef } from '../../../contracts/task-requeue.js';
 import type { GoalDisplayV1, GoalResumeContinuationV1, GoalRunControlCapabilityV1 } from '../state/goal-machine.js';
-import type { GraphWrite } from './contracts.js';
+import type { GraphWrite } from './task-contracts.js';
 
 /**
  * Versioned Agent submission provenance (W2 §8.1). The single declaration is

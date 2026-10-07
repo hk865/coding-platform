@@ -11,7 +11,7 @@ import { GOAL_RECORD_SCHEMAS, canonicalRefKey, encodeProjectSnapshot, encodeWork
 import { SESSION_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import type { ProjectSnapshot, WorkspaceSnapshot } from '../../src/contracts/ledger.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
-import type { SessionDirectoryPort } from '../../src/core/work-graph/sessions/contracts.js';
+import type { SessionDirectoryPort } from '../../src/core/work-graph/model/session-contracts.js';
 import { createKernelStoreRegistry } from '../../src/core/agent-runtime/kernel-store-locator.js';
 import { createSessionOperations, type CreateSessionRequest } from '../../src/core/agent-runtime/session-operations.js';
 

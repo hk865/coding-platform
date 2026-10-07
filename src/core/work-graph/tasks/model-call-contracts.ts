@@ -14,8 +14,8 @@ import type {
 } from '../../../contracts/dispatch.js';
 import type { TaskEnvelopeV1 } from '../../../contracts/task-envelope.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
-import type { GraphWrite } from './contracts.js';
-import type { ExecutionEntryDependencies, TaskEntryPermit } from './execution-entry-contracts.js';
+import type { GraphWrite } from '../model/task-contracts.js';
+import type { ExecutionEntryDependencies, TaskEntryPermit } from '../model/execution-entry-contracts.js';
 
 export type ActualModelRequest = {
   permit: TaskEntryPermit;

@@ -27,7 +27,7 @@ import { createKernelStoreRegistry } from '../../src/core/agent-runtime/kernel-s
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
 import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
 import { createSourceAuthorityReader } from '../../src/core/work-graph/source-authority-reader.js';
-import type { EvidencePort } from '../../src/core/work-graph/evidence/contracts.js';
+import type { EvidencePort } from '../../src/core/work-graph/model/evidence-contracts.js';
 import type { RegisteredCheckRunner } from '../../src/core/agent-runtime/check-execution.js';
 import { join } from 'node:path';
 import { createTaskClaimFixture, type TaskClaimFixture } from '../helpers/task-claim-fixture.js';

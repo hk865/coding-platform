@@ -28,7 +28,7 @@ import { join } from 'node:path';
 import type { RunRef } from '../../src/contracts/dispatch.js';
 import type { PlanRevisionDraft } from '../../src/contracts/plan.js';
 import { WORKFLOW_AUTOMATION_ACTOR } from '../../src/contracts/task-requeue.js';
-import type { PlanProposalRef } from '../../src/core/work-graph/tasks/plan-contracts.js';
+import type { PlanProposalRef } from '../../src/core/work-graph/model/plan-contracts.js';
 import type { ScriptedReply } from '../helpers/B2-runtime-fixture.js';
 import {
   AG2B_GATE_TASK_ID, AG2B_GOAL_REF, AG2B_RESULT_FILE, AG2B_RESULT_TEXT, AG2B_SCOPE, AG2B_WORK_TASK_ID, graphWrite,

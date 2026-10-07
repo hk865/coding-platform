@@ -24,7 +24,7 @@ import {
   type ToolResult,
   type WorkspaceSandbox,
 } from '../../../vendor/coding-agent/dist/public-api.js';
-import type { SessionDirectoryPort } from '../work-graph/sessions/contracts.js';
+import type { SessionDirectoryPort } from '../work-graph/model/session-contracts.js';
 
 /** Fixed production tool names. The Kernel host-authorization list comes from here. */
 export const SESSION_DISCOVERY_TOOL_NAMES = ['find_related_sessions', 'read_session_card'] as const;

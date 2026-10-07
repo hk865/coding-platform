@@ -56,14 +56,14 @@ import {
 import { plainSessionRefToAggregate, sessionAggregateRefKey } from '../sessions/session-record-codecs.js';
 import { compileExecutionHistoryBinding } from './execution-history-binding.js';
 import { dispatchOutboxRefKey, taskAttemptRefKey } from './claim-record-codecs.js';
-import type { GraphWrite } from './contracts.js';
+import type { GraphWrite } from '../model/task-contracts.js';
 import type {
   ExecutionHistoryWriteDependencies,
   ExecutionHistoryWritePort,
   RecordExecutionHistoryInput,
   RecordedExecutionHistory,
-} from './execution-history-contracts.js';
-import { planRevisionRefKey } from './plan-record-codecs.js';
+} from '../model/execution-history-contracts.js';
+import { planRevisionRefKey } from '../persistence/plan-record-codecs.js';
 import { sameCursor } from './plan-readers.js';
 import { createRunStateReader } from './run-state-service.js';
 

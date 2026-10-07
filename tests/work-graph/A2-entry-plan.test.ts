@@ -31,7 +31,7 @@ import type {
 } from '../../src/contracts/plan.js';
 import { executionEntryAuthorizedEventFromEvent } from '../../src/core/work-graph/persistence/execution-entry-codecs.js';
 import { readEntryPlanVerdict } from '../../src/core/work-graph/tasks/entry-plan-reader.js';
-import { planRevisionRefKey } from '../../src/core/work-graph/tasks/plan-record-codecs.js';
+import { planRevisionRefKey } from '../../src/core/work-graph/persistence/plan-record-codecs.js';
 import {
   entryPlanVerdict, executionDefinitionsAgree, frozenTaskDefinitionsAgree, planTaskFacts, taskOriginVerdict,
 } from '../../src/core/work-graph/tasks/plan-task-basis.js';

@@ -57,7 +57,7 @@ import {
   type TracedTaskFactsV1,
 } from '../../src/core/work-graph/state/plan-machine.js';
 import type { TransitionRejectReason } from '../../src/core/work-graph/state/transition.js';
-import type { PlanProposal } from '../../src/core/work-graph/tasks/plan-contracts.js';
+import type { PlanProposal } from '../../src/core/work-graph/model/plan-contracts.js';
 
 // --------------------------------------------------------------------------
 // Fixtures

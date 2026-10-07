@@ -46,8 +46,8 @@ import type { RunRef } from '../../src/contracts/dispatch.js';
 import type { PlanRevisionSnapshot } from '../../src/contracts/plan.js';
 import { WORKFLOW_AUTOMATION_ACTOR } from '../../src/contracts/task-requeue.js';
 import type { SessionRef } from '../../src/contracts/core/identity.js';
-import { evidenceApplicabilityWithBasis } from '../../src/core/work-graph/evidence/coverage.js';
-import type { PlanProposalRef } from '../../src/core/work-graph/tasks/plan-contracts.js';
+import { evidenceApplicabilityWithBasis } from '../../src/core/work-graph/tasks/evidence-coverage.js';
+import type { PlanProposalRef } from '../../src/core/work-graph/model/plan-contracts.js';
 import { createScriptedModel } from '../helpers/B2-runtime-fixture.js';
 import {
   AG2B_CONSUMER_ID, AG2B_GOAL_REF, AG2B_QUERY_ROLE, AG2B_SCOPE, AG2B_WORK_TASK_ID, createAG2bSession, graphWrite,

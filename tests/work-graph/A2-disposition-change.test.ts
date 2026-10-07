@@ -41,7 +41,7 @@ import type {
 import {
   GOAL_RECORD_SCHEMAS, canonicalRefKey, encodeProjectSnapshot, encodeWorkspaceSnapshot,
 } from '../../src/core/work-graph/persistence/record-codecs.js';
-import { PLAN_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/plan-record-codecs.js';
+import { PLAN_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/plan-record-codecs.js';
 import { PLAN_STATE_RECORD_SCHEMAS, readGoalPhase } from '../../src/core/work-graph/tasks/plan-readers.js';
 import { materialRecordSchemas } from '../../src/core/work-graph/materials/record-readers.js';
 import { CONTROL_RECORD_SCHEMAS, encodeControlIntentSnapshot } from '../../src/core/work-graph/persistence/control-record-codecs.js';

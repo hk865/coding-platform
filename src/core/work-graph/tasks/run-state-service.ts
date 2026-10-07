@@ -47,10 +47,10 @@ import type { RoundSnapshot } from '../../../contracts/verification.js';
 import type { LookupValue, RecordLookupPort, RecordLookupRequest } from '../../record-store/lookup-ports.js';
 import type { DecodeResult, EncodedRecord } from '../../record-store/ports.js';
 import type { RawArtifactRecord } from '../../record-store/body-ports.js';
-import type { SessionMessage } from '../communication/contracts.js';
-import { decodeStoredMessageBody } from '../communication/message-body-envelope.js';
-import { decodeSessionMessageRecord, sessionMessageRefKey } from '../communication/message-record-codecs.js';
-import { decodeVerificationRoundSnapshot } from '../evidence/evidence-record-codecs.js';
+import type { SessionMessage } from '../model/communication-contracts.js';
+import { decodeStoredMessageBody } from '../sessions/message-body-envelope.js';
+import { decodeSessionMessageRecord, sessionMessageRefKey } from '../sessions/message-record-codecs.js';
+import { decodeVerificationRoundSnapshot } from '../persistence/evidence-record-codecs.js';
 import { decodeControlIntentSnapshot } from '../persistence/control-record-codecs.js';
 import { decodeRun, type Decoded } from '../materials/run-snapshot-decoder.js';
 import {
@@ -66,8 +66,8 @@ import {
   taskAttemptRefKey,
   taskRequeueRefKey,
 } from './claim-record-codecs.js';
-import type { TaskClaimOutbox } from './claim-contracts.js';
-import { decodePlanRevisionSnapshot, planRevisionRefKey } from './plan-record-codecs.js';
+import type { TaskClaimOutbox } from '../model/claim-contracts.js';
+import { decodePlanRevisionSnapshot, planRevisionRefKey } from '../persistence/plan-record-codecs.js';
 import {
   PLAN_STATE_RECORD_SCHEMAS,
   laterCursor,
@@ -82,7 +82,7 @@ import type {
   ExecutionReadPort,
   TaskExecutionRecord,
   TaskExecutionPage,
-} from './execution-read-contracts.js';
+} from '../model/execution-read-contracts.js';
 
 const TASK_LEASE_SCHEMA_ID = 'TaskLeaseSnapshot@1';
 /** Bounded final-window retries before a read is reported `busy`. */

@@ -23,8 +23,8 @@ import { revisionAssignments } from '../../../contracts/plan.js';
 import {
     buildEffectiveTaskBasis, buildFrozenTaskDefinitions, executionDefinitionsAgree,
     isBasisUnsupported, type FrozenTaskDefinition,
-} from '../tasks/plan-task-basis.js';
-import { planRevisionRefKey } from '../tasks/plan-record-codecs.js';
+} from './plan-task-basis.js';
+import { planRevisionRefKey } from '../persistence/plan-record-codecs.js';
 
 /**
  * Build the binding for ONE evidence decision. The original evidence

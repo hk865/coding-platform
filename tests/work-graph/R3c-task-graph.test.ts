@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 import type { PlanRevisionSnapshot } from '../../src/contracts/plan.js';
-import { buildTaskAdjacency } from '../../src/core/work-graph/tasks/task-index.js';
+import { buildTaskAdjacency } from '../../src/core/work-graph/model/task-index.js';
 import { evaluateEligibility } from '../../src/core/work-graph/tasks/eligibility.js';
 
 it('derives reverse and forward dependencies from one accepted Plan, preserving independent tasks', () => {

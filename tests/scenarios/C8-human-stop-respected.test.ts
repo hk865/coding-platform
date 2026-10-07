@@ -47,7 +47,7 @@ import type { WorkbenchActor } from '../../src/app/core-http-types.js';
 import type { ControlIntentRef } from '../../src/contracts/control-intent.js';
 import type { RunRef } from '../../src/contracts/dispatch.js';
 import type { RoundSnapshot } from '../../src/contracts/verification.js';
-import type { PlanProposalRef } from '../../src/core/work-graph/tasks/plan-contracts.js';
+import type { PlanProposalRef } from '../../src/core/work-graph/model/plan-contracts.js';
 import { WORKFLOW_AUTOMATION_ACTOR } from '../../src/contracts/task-requeue.js';
 import type { ScriptedReply } from '../helpers/B2-runtime-fixture.js';
 import { AG2B_GOAL_REF, AG2B_SCOPE, AG2B_WORK_TASK_ID, plain } from '../helpers/AG2b-collaboration-fixture.js';

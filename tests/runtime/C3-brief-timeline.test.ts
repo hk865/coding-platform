@@ -23,7 +23,7 @@ import { WORKFLOW_AUTOMATION_ACTOR, type TaskRequeueSnapshotV1 } from '../../src
 import type { RoundCheckSnapshot, RoundSnapshot } from '../../src/contracts/verification.js';
 import type { VerificationRoundMaterialIdentity } from '../../src/contracts/verification-context.js';
 import { assembleContinuationBrief } from '../../src/core/agent-runtime/continuation-brief-assembly.js';
-import type { ContinuationBasis, TaskExecutionRecord } from '../../src/core/work-graph/tasks/execution-read-contracts.js';
+import type { ContinuationBasis, TaskExecutionRecord } from '../../src/core/work-graph/model/execution-read-contracts.js';
 
 const P = 'c3t-project', G = 'c3t-goal', T = 'c3t-task', W = 'c3t-workspace';
 const sha = (char: string): string => char.repeat(64);

@@ -28,7 +28,7 @@
 import { afterEach, expect, it } from 'vitest';
 import type { PlanRevisionSnapshot } from '../../src/contracts/plan.js';
 import type { RunRef } from '../../src/contracts/dispatch.js';
-import type { PlanProposalRef } from '../../src/core/work-graph/tasks/plan-contracts.js';
+import type { PlanProposalRef } from '../../src/core/work-graph/model/plan-contracts.js';
 import { AG2B_GOAL_REF, AG2B_WORK_TASK_ID } from '../helpers/AG2b-collaboration-fixture.js';
 import { assertInvariants, cleanupScenarios, eventTypesIn, openHostScenario, performs } from './harness.js';
 import {

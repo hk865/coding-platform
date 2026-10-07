@@ -52,7 +52,7 @@ import {
 import type { RoundSnapshot } from '../../../src/contracts/verification.js';
 import { VerificationWorkspaceReader } from '../../../src/core/workspace/verification-workspace-reader.js';
 import type { GoalDisplayV1 } from '../../../src/core/work-graph/state/goal-machine.js';
-import type { TaskRow } from '../../../src/core/work-graph/tasks/plan-contracts.js';
+import type { TaskRow } from '../../../src/core/work-graph/model/plan-contracts.js';
 import type { ModelRequest } from '../../../vendor/coding-agent/dist/public-api.js';
 import { createScriptedModel, type ScriptedModel, type ScriptedReply } from '../../helpers/B2-runtime-fixture.js';
 import {

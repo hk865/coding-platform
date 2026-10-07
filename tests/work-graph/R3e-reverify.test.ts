@@ -58,19 +58,19 @@ import type {
 } from '../../src/contracts/verification.js';
 import type { VerificationRoundSourcePort } from '../../src/contracts/verification-context.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
-import type { EvidencePort, ReverifyOutcomeV1, ReverifyRoundInput } from '../../src/core/work-graph/evidence/contracts.js';
+import type { EvidencePort, ReverifyOutcomeV1, ReverifyRoundInput } from '../../src/core/work-graph/model/evidence-contracts.js';
 import {
   VERIFICATION_ROUND_REVERIFIED_EVENT_TYPE, encodeVerificationRoundSnapshot,
-} from '../../src/core/work-graph/evidence/evidence-record-codecs.js';
+} from '../../src/core/work-graph/persistence/evidence-record-codecs.js';
 import { createEvidenceService, type EvidenceServiceDependencies } from '../../src/core/work-graph/evidence/evidence-service.js';
 import {
   TASK_REWORK_REFUSED_EVENT_TYPE, taskRequeueRefKey, taskReworkRefusalRefKey,
 } from '../../src/core/work-graph/tasks/claim-record-codecs.js';
 import { COMPLETION_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/completion-record-codecs.js';
-import type { GraphWrite } from '../../src/core/work-graph/tasks/contracts.js';
+import type { GraphWrite } from '../../src/core/work-graph/model/task-contracts.js';
 import type {
   AuthorizeConfiguration, KernelExecutionBinding, TaskEntryPermit,
-} from '../../src/core/work-graph/tasks/execution-entry-contracts.js';
+} from '../../src/core/work-graph/model/execution-entry-contracts.js';
 import { createExecutionEntryService } from '../../src/core/work-graph/tasks/execution-entry-service.js';
 import { readGoalPhase } from '../../src/core/work-graph/tasks/plan-readers.js';
 import { createTaskRequeueService } from '../../src/core/work-graph/tasks/requeue-service.js';

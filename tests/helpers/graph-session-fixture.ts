@@ -33,7 +33,7 @@ import { createSqliteRecordBackend } from '../../src/core/record-store/sqlite-re
 import {
   GOAL_RECORD_SCHEMAS, canonicalRefKey, encodeGoalSnapshot, encodeProjectSnapshot, encodeWorkspaceSnapshot,
 } from '../../src/core/work-graph/persistence/record-codecs.js';
-import { PLAN_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/plan-record-codecs.js';
+import { PLAN_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/plan-record-codecs.js';
 import { PLAN_GOVERNANCE_RECORD_SCHEMAS, PLAN_STATE_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/plan-readers.js';
 import { TASK_CLAIM_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/claim-record-codecs.js';
 import { ROLE_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/role-record-codecs.js';
@@ -42,7 +42,7 @@ import {
   SESSION_RECORD_SCHEMAS, encodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey,
 } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
-import type { SessionDirectoryPort } from '../../src/core/work-graph/sessions/contracts.js';
+import type { SessionDirectoryPort } from '../../src/core/work-graph/model/session-contracts.js';
 import { ARCHITECTURE_CATALOG_SCHEMAS } from '../../src/core/work-graph/architecture/catalog-record-codecs.js';
 import { createArchitectureCatalogService } from '../../src/core/work-graph/architecture/catalog-service.js';
 import type {
@@ -54,7 +54,7 @@ import { createSessionLifecycleService } from '../../src/core/work-graph/session
 import { SESSION_LIFECYCLE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/lifecycle-record-codecs.js';
 import type { LinkSessionWorkInput, ArchiveSessionInput } from '../../src/core/work-graph/sessions/lifecycle-contracts.js';
 import type { SessionLifecyclePort } from '../../src/core/work-graph/sessions/lifecycle-contracts.js';
-import type { GraphWrite as SessionGraphWrite } from '../../src/core/work-graph/sessions/contracts.js';
+import type { GraphWrite as SessionGraphWrite } from '../../src/core/work-graph/model/session-contracts.js';
 import { createKernelStoreRegistry } from '../../src/core/agent-runtime/kernel-store-locator.js';
 
 export const GRAPH_FIXTURE_AT = '2026-09-24T00:00:00.000Z';

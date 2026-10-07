@@ -53,7 +53,7 @@ import type {
   EncodedDomainEvent, EncodedRecord, GoalRecordTransactionPort, PreparedCommit, RecordGuard, StoreCommitReceipt, StoreFailure,
   UniqueClaimChange,
 } from '../../record-store/ports.js';
-import type { RoleBindingFacts } from '../configuration/contracts.js';
+import type { RoleBindingFacts } from '../model/configuration-contracts.js';
 import {
   EXECUTION_ENTRY_AUTHORIZED_EVENT_TYPE, EXECUTION_ENTRY_BEGUN_EVENT_TYPE,
   EXECUTION_ENTRY_ENTERED_EVENT_TYPE, EXECUTION_ENTRY_EVENT_SCHEMA_VERSION,
@@ -65,7 +65,7 @@ import {
   inputBindingProblem, taskDispatchStateV1Problem,
 } from '../persistence/execution-entry-codecs.js';
 import { encodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey } from '../sessions/session-record-codecs.js';
-import { decodeSessionMessageRecord, sessionMessageRefKey } from '../communication/message-record-codecs.js';
+import { decodeSessionMessageRecord, sessionMessageRefKey } from '../sessions/message-record-codecs.js';
 import {
   attemptEventFromRunEvent, isTaskLeaseEvent, taskLeaseNodeOf, transitionAttempt, transitionDispatchOutbox,
   transitionTaskLease, type AttemptEvent, type AttemptGuardContext, type DispatchOutboxRecord, type RunEventForAttempt,
@@ -82,19 +82,19 @@ import type { Rejected as MachineRefusal } from '../state/transition.js';
 import {
   dispatchOutboxRefKey, encodeDispatchOutboxEntry, encodeTaskAttemptSnapshot, taskAttemptRefKey, taskClaimProblem,
 } from './claim-record-codecs.js';
-import type { GraphWrite } from './contracts.js';
+import type { GraphWrite } from '../model/task-contracts.js';
 import type {
   AcceptedSteerV1, AuthorizeConfigurationResult, ExecutionEntryDependencies, ExecutionEntryPort, HostInstanceFacts,
   KernelExecutionBinding, KernelObservationSource, ObservedExecutionHistory, RuntimeEntryRecord, TaskEntryPermit,
   TaskResultObservation,
-} from './execution-entry-contracts.js';
+} from '../model/execution-entry-contracts.js';
 import {
   outcomeUnknownIntentsOf, pointerIntentOf, queuedSteersOf, readRunIntents, reconciledIntentRecords,
 } from './reconcile-intents.js';
-import type { TaskExecutionRecord } from './execution-read-contracts.js';
+import type { TaskExecutionRecord } from '../model/execution-read-contracts.js';
 import { readEntryPlanVerdict } from './entry-plan-reader.js';
 import { readGoalScope, sameCursor } from './plan-readers.js';
-import { planRevisionRefKey } from './plan-record-codecs.js';
+import { planRevisionRefKey } from '../persistence/plan-record-codecs.js';
 
 // --------------------------------------------------------------------------
 // Small pure helpers

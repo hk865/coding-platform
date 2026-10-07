@@ -3,7 +3,7 @@ import type { RunExecutionHistoryV1 } from '../../../contracts/core/execution-hi
 import type { WriteResult } from '../../../contracts/core/results.js';
 import type { RunRef } from '../../../contracts/dispatch.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
-import type { GraphWrite } from './contracts.js';
+import type { GraphWrite } from './task-contracts.js';
 
 export type RecordExecutionHistoryInput = {
   runRef: RunRef;

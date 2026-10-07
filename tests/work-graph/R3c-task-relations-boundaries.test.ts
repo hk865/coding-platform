@@ -21,7 +21,7 @@ import { evaluateEligibility } from '../../src/core/work-graph/tasks/eligibility
 import {
   decodePlanRevisionSnapshot,
   encodePlanRevisionSnapshot,
-} from '../../src/core/work-graph/tasks/plan-record-codecs.js';
+} from '../../src/core/work-graph/persistence/plan-record-codecs.js';
 
 const at = '2026-09-24T00:00:00.000Z';
 const projectId = 'r3c-boundaries';

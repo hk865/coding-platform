@@ -19,7 +19,7 @@ import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import { CONTROL_BY_WORKSPACE_STATUS_INDEX, decodeControlIntentSnapshot } from '../persistence/control-record-codecs.js';
 import { decodeGoalSnapshot } from '../persistence/record-codecs.js';
 import type { RoundSnapshot } from '../../../contracts/verification.js';
-import { VERIFICATION_ROUND_BY_STATUS_LOOKUP, decodeVerificationRoundSnapshot } from '../evidence/evidence-record-codecs.js';
+import { VERIFICATION_ROUND_BY_STATUS_LOOKUP, decodeVerificationRoundSnapshot } from '../persistence/evidence-record-codecs.js';
 import { GOAL_BY_WORKSPACE_INDEX, RUN_BY_WORKSPACE_OUTCOME_INDEX, RUN_BY_WORKSPACE_STATUS_INDEX } from './plan-readers.js';
 import { decodeRun } from '../materials/run-snapshot-decoder.js';
 

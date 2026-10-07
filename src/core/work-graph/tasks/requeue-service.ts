@@ -54,8 +54,8 @@ import type {
   GoalRecordTransactionPort, PreparedCommit, RecordGuard, StoreCommitReceipt, UniqueClaimChange,
 } from '../../record-store/ports.js';
 import type { WorkspaceHostBindings } from '../../workspace/access.js';
-import type { SessionMailboxPort } from '../communication/contracts.js';
-import type { MaterialPort } from '../materials/contracts.js';
+import type { SessionMailboxPort } from '../model/communication-contracts.js';
+import type { MaterialPort } from '../model/material-contracts.js';
 import {
   newBasisInputRefsProblem, runRefProblem, taskBudgetProblem, taskTripleProblem,
 } from '../persistence/rework-codecs.js';
@@ -79,16 +79,16 @@ import {
   taskRequeuedEventFromEvent, taskRequeueRefKey, taskReworkRefusalRefKey, taskReworkRefusedEventFromEvent,
   type TaskRequeuedEvent, type TaskReworkRefusedEvent,
 } from './claim-record-codecs.js';
-import type { RequeueTaskInput, TaskClaimPort } from './claim-contracts.js';
-import type { GraphWrite } from './contracts.js';
-import type { ExecutionReadPort } from './execution-read-contracts.js';
+import type { RequeueTaskInput, TaskClaimPort } from '../model/claim-contracts.js';
+import type { GraphWrite } from '../model/task-contracts.js';
+import type { ExecutionReadPort } from '../model/execution-read-contracts.js';
 import { loadReplayEvent, mapStoreFailure, mergeGuards, sameRef } from './execution-entry-service.js';
 import {
   readCanonicalTaskFacts, readGoal, readGoalRunsForCount, readPlan, readPointerIntents, readRunRoundChain, sameCursor,
   type CanonicalTaskFacts, type CanonicalTaskState,
 } from './plan-readers.js';
 import { buildEffectiveTaskBasis, isBasisUnsupported } from './plan-task-basis.js';
-import { planRevisionRefKey } from './plan-record-codecs.js';
+import { planRevisionRefKey } from '../persistence/plan-record-codecs.js';
 import {
   authorizeDelegatedWrite, identifyDelegatedWriter, type AgentPlanWriter, type PlanDelegatedWriteDependencies,
 } from './plan-write-admission.js';

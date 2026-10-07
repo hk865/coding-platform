@@ -58,7 +58,7 @@ import type {
   EncodedRecord, GoalRecordTransactionPort, PreparedCommit, RecordBatchRead, RecordGuard, StoreCommitReceipt,
   StoreFailure,
 } from '../../record-store/ports.js';
-import type { RoleBindingFacts, RoleConfigurationPort, RoleBindingFactsPort } from './contracts.js';
+import type { RoleBindingFacts, RoleConfigurationPort, RoleBindingFactsPort } from '../model/configuration-contracts.js';
 import {
   canonicalRefKey, decodeCoordinationPolicyRevisionSnapshot, decodeProjectCoordinationPolicyActiveSnapshot,
   decodeProjectRoleSpecActiveSnapshot, decodeRoleSpecActivatedEvent, decodeRoleSpecInstalledEvent,

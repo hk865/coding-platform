@@ -48,17 +48,17 @@ import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.
 import { createExecutionEntryService } from '../../src/core/work-graph/tasks/execution-entry-service.js';
 import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
 import { createMaterialService } from '../../src/core/work-graph/materials/material-service.js';
-import type { PlanProposal, PlanWriteProvenanceV1 } from '../../src/core/work-graph/tasks/plan-contracts.js';
-import type { PlanTaskPort } from '../../src/core/work-graph/tasks/plan-contracts.js';
-import type { GraphWrite } from '../../src/core/work-graph/tasks/contracts.js';
+import type { PlanProposal, PlanWriteProvenanceV1 } from '../../src/core/work-graph/model/plan-contracts.js';
+import type { PlanTaskPort } from '../../src/core/work-graph/model/plan-contracts.js';
+import type { GraphWrite } from '../../src/core/work-graph/model/task-contracts.js';
 import type {
   AuthorizeConfiguration, KernelExecutionBinding,
-} from '../../src/core/work-graph/tasks/execution-entry-contracts.js';
+} from '../../src/core/work-graph/model/execution-entry-contracts.js';
 import type { PlanDelegatedWriteDependencies } from '../../src/core/work-graph/tasks/plan-write-admission.js';
-import type { TaskExecutionRecord } from '../../src/core/work-graph/tasks/execution-read-contracts.js';
+import type { TaskExecutionRecord } from '../../src/core/work-graph/model/execution-read-contracts.js';
 import {
   decodePlanRevisionSnapshot, encodePlanProposal, encodePlanProposalRecordedEvent,
-} from '../../src/core/work-graph/tasks/plan-record-codecs.js';
+} from '../../src/core/work-graph/persistence/plan-record-codecs.js';
 import { plainSessionRefToAggregate } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 
 export type W2PlanDraftV2 = Extract<PlanRevisionDraft, { schemaVersion: 2 }>;

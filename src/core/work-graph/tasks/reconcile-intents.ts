@@ -41,7 +41,7 @@ import {
   type ControlGuardContext, type ControlIntentEvent, type ControlPointerIntent,
 } from '../state/control-intent-machine.js';
 import { isPausedInterrupted, runControlNodeOf, runStateOf, type RunEffect, type RunNode } from '../state/run-machine.js';
-import type { AcceptedSteerV1 } from './execution-entry-contracts.js';
+import type { AcceptedSteerV1 } from '../model/execution-entry-contracts.js';
 
 /** The facts one reconciling commit settles its intents with. */
 export type ReconcileIntentFacts = {

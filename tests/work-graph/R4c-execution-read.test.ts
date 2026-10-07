@@ -22,7 +22,7 @@ import {
   plainSessionRefToAggregate,
   sessionAggregateRefKey,
 } from '../../src/core/work-graph/sessions/session-record-codecs.js';
-import type { TaskClaim } from '../../src/core/work-graph/tasks/claim-contracts.js';
+import type { TaskClaim } from '../../src/core/work-graph/model/claim-contracts.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
 import {
   createTaskClaimFixture,

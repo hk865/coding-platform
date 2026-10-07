@@ -28,7 +28,7 @@ import type { PlanRevisionDraft } from '../../../src/contracts/plan.js';
 import { DEFAULT_TASK_AUTOMATION_POLICY, type TaskRequeueOutcomeV1 } from '../../../src/contracts/task-requeue.js';
 import type { RoundSnapshot, TrustedCheckConfiguration } from '../../../src/contracts/verification.js';
 import type { RuntimeHostBindings } from '../../../src/core/agent-runtime/execution-contracts.js';
-import type { RequeueTaskInput } from '../../../src/core/work-graph/tasks/claim-contracts.js';
+import type { RequeueTaskInput } from '../../../src/core/work-graph/model/claim-contracts.js';
 import type { WorkspaceHostBindings } from '../../../src/core/workspace/access.js';
 import { createScriptedModel, type ScriptedModel } from '../../helpers/B2-runtime-fixture.js';
 import { AG2B_GOAL_REF, AG2B_WORK_TASK_ID } from '../../helpers/AG2b-collaboration-fixture.js';

@@ -52,16 +52,16 @@ import type { CoreError, CoreRejection, ReadResult, WriteResult } from '../../..
 import type { RunRef, RunSnapshot } from '../../../contracts/dispatch.js';
 import { consultationQueryRefs } from '../../../contracts/query-job.js';
 import type { QueryJobAnswerRef, QueryJobAnswerSnapshot, QueryJobRef, QueryJobSnapshot, QueryRunRef, QueryRunSnapshot } from '../../../contracts/query-job.js';
-import type { MessageQueryAnswerSender, MessageSender, MessageWorkRunSender, SessionMailboxDependencies, SessionMailboxPort, SessionMessage, SessionMessageStatus } from './contracts.js';
-import { deriveSessionInputId } from './contracts.js';
+import type { MessageQueryAnswerSender, MessageSender, MessageWorkRunSender, SessionMailboxDependencies, SessionMailboxPort, SessionMessage, SessionMessageStatus } from '../model/communication-contracts.js';
+import { deriveSessionInputId } from '../model/communication-contracts.js';
 import { makeCommitCursor, seqOfCommitCursor } from '../../../contracts/ledger.js';
 import { canonicalRefKey, decodeWorkspaceSnapshot } from '../persistence/record-codecs.js';
 import { checkPlainSessionRef, decodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey } from '../sessions/session-record-codecs.js';
-import type { GraphWrite } from '../sessions/contracts.js';
+import type { GraphWrite } from '../model/session-contracts.js';
 import type { RecordBatchRead, EncodedDomainEvent, EncodedRecord, PreparedCommit, RecordGuard, StoreFailure, StoreResult } from '../../record-store/ports.js';
 import type { RecordLookupRequest } from '../../record-store/lookup-ports.js';
-import type { TaskClaimOutbox } from '../tasks/claim-contracts.js';
-import type { TaskExecutionRecord } from '../tasks/execution-read-contracts.js';
+import type { TaskClaimOutbox } from '../model/claim-contracts.js';
+import type { TaskExecutionRecord } from '../model/execution-read-contracts.js';
 import { decodeDispatchOutboxEntry, dispatchOutboxRefKey } from '../tasks/claim-record-codecs.js';
 import { readStoredManifest, recheckHostRoleAdmission } from '../tasks/execution-entry-service.js';
 import { readBatch, type ReadBatch } from '../tasks/plan-readers.js';
@@ -74,8 +74,8 @@ import {
   encodeSessionMessageReadEvent, encodeSessionMessageRecord, encodeSessionMessageRespondedEvent,
   encodeSessionMessageSentEvent, sessionMessageFromEvent, sessionMessageRefKey,
   encodeSessionMessageConsultationDerivedEvent, encodeSessionMessageInputAcceptedEvent, type SessionMessageEventV1,
-} from './message-record-codecs.js';
-import { decodeStoredMessageBody } from './message-body-envelope.js';
+} from '../sessions/message-record-codecs.js';
+import { decodeStoredMessageBody } from '../sessions/message-body-envelope.js';
 import {
   decodeQueryJobAnswerSnapshot, decodeQueryJobSnapshot, decodeQueryRunSnapshotRecord,
 } from '../queries/query-record-codecs.js';
@@ -1535,7 +1535,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
 
   // ---- readMessageBody ----------------------------------------------------
 
-  async function readMessageBody(ctx: CoreCallContext, input: { messageRef: SessionMessageRef; part: 'message' | 'response' }): Promise<ReadResult<import('./contracts.js').MessageBody>> {
+  async function readMessageBody(ctx: CoreCallContext, input: { messageRef: SessionMessageRef; part: 'message' | 'response' }): Promise<ReadResult<import('../model/communication-contracts.js').MessageBody>> {
     const owned = ownContext(ctx);
     if (!owned.ok) return owned.rejection;
     let raw: Unknown;

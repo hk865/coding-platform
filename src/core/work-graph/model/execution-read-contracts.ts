@@ -14,7 +14,7 @@ import type { RoundSnapshot } from '../../../contracts/verification.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type { RawArtifactStorePort } from '../../record-store/body-ports.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
-import type { SessionMessage } from '../communication/contracts.js';
+import type { SessionMessage } from './communication-contracts.js';
 import type { TaskClaimOutbox } from './claim-contracts.js';
 
 /** One final atomic readMany window. Mutable Session/Lease describe the current

@@ -45,7 +45,7 @@ import {
   type TaskStateBasisV1,
 } from '../../../contracts/plan.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
-import { planRevisionRefKey } from './plan-record-codecs.js';
+import { planRevisionRefKey } from '../persistence/plan-record-codecs.js';
 
 /** Explicit invalid/unprovable marker. A helper never invents a valid basis or
  * silently reports two definitions as equal. */

@@ -55,16 +55,16 @@ import { createSqliteRawArtifactStore } from '../../src/core/record-store/sqlite
 import { createSqliteRecordBackend } from '../../src/core/record-store/sqlite-record-store.js';
 import { ARCHITECTURE_CATALOG_SCHEMAS } from '../../src/core/work-graph/architecture/catalog-record-codecs.js';
 import { OBSERVED_ARCHITECTURE_RECORD_SCHEMAS } from '../../src/core/work-graph/architecture/architecture-record-codecs.js';
-import type { SessionMessage } from '../../src/core/work-graph/communication/contracts.js';
+import type { SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
 import {
   decodeSessionMessageRecord, SESSION_MESSAGE_RECORD_SCHEMAS,
-} from '../../src/core/work-graph/communication/message-record-codecs.js';
+} from '../../src/core/work-graph/sessions/message-record-codecs.js';
 import { PROJECT_BOOTSTRAP_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/project-bootstrap-record-codecs.js';
 import { ROLE_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/role-record-codecs.js';
 import {
   decodeEvidenceSnapshot, decodeTaskEvidenceIndexSnapshot, decodeVerificationRoundSnapshot, EVIDENCE_RECORD_SCHEMAS,
   verificationRoundEventFromEvent,
-} from '../../src/core/work-graph/evidence/evidence-record-codecs.js';
+} from '../../src/core/work-graph/persistence/evidence-record-codecs.js';
 import { materialRecordSchemas } from '../../src/core/work-graph/materials/record-readers.js';
 import {
   CONTROL_RECORD_SCHEMAS, controlIntentSubmittedEventFromEvent, decodeControlIntentSnapshot,
@@ -73,7 +73,7 @@ import {
   EXECUTION_ENTRY_RECORD_SCHEMAS, executionEntryAuthorizedEventFromEvent,
 } from '../../src/core/work-graph/persistence/execution-entry-codecs.js';
 import { EXECUTION_HISTORY_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/execution-history-codecs.js';
-import { MODEL_REQUEST_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/model-request-codecs.js';
+import { MODEL_REQUEST_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/model-request-codecs.js';
 import {
   decodeGoalCreatedEvent, decodeGoalDesiredStateChangedEvent, decodeGoalSnapshot,
 } from '../../src/core/work-graph/persistence/record-codecs.js';
@@ -84,9 +84,9 @@ import {
   decodeDispatchOutboxEntry, decodeTaskAttemptSnapshot, decodeTaskRequeueSnapshot, decodeTaskReworkRefusalSnapshot,
   TASK_CLAIM_RECORD_SCHEMAS, taskClaimedEventFromEvent, taskRequeuedEventFromEvent, taskReworkRefusedEventFromEvent,
 } from '../../src/core/work-graph/tasks/claim-record-codecs.js';
-import type { TaskClaimOutbox } from '../../src/core/work-graph/tasks/claim-contracts.js';
+import type { TaskClaimOutbox } from '../../src/core/work-graph/model/claim-contracts.js';
 import { COMPLETION_RECORD_SCHEMAS, decodeGoalPhaseSnapshot } from '../../src/core/work-graph/tasks/completion-record-codecs.js';
-import { decodePlanRevisionSnapshot, PLAN_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/plan-record-codecs.js';
+import { decodePlanRevisionSnapshot, PLAN_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/plan-record-codecs.js';
 import {
   PLAN_GOVERNANCE_RECORD_SCHEMAS, PLAN_STATE_RECORD_SCHEMAS, readCanonicalTaskFacts,
 } from '../../src/core/work-graph/tasks/plan-readers.js';

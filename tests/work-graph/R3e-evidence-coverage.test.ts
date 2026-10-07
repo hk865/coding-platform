@@ -16,7 +16,7 @@ import { afterEach, expect, it } from 'vitest';
 import type { EvidenceApplicability, EvidenceBindingV1, EvidenceV1 } from '../../src/contracts/evidence.js';
 import type { PlanRevisionSnapshot, TaskStateBasisV1 } from '../../src/contracts/plan.js';
 import { compileVerificationPlan, type VerificationPlanCompileInput } from '../../src/core/work-graph/evidence/verification-plan.js';
-import { evidenceApplicabilityWithBasis, selectEffectiveEvidenceSet } from '../../src/core/work-graph/evidence/coverage.js';
+import { evidenceApplicabilityWithBasis, selectEffectiveEvidenceSet } from '../../src/core/work-graph/tasks/evidence-coverage.js';
 import { createR3eEvidenceFixture, R3E_WORK_TASK_ID, type R3eEvidenceFixture } from '../helpers/R3e-evidence-fixture.js';
 
 const fixtures: R3eEvidenceFixture[] = [];

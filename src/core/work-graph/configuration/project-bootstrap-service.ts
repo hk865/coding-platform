@@ -43,7 +43,7 @@ import type {
   StoreCommitReceipt,
   StoreFailure,
 } from '../../record-store/ports.js';
-import type { GraphWrite } from '../tasks/contracts.js';
+import type { GraphWrite } from '../model/task-contracts.js';
 import { decodeProjectSnapshot, decodeWorkspaceSnapshot, encodeProjectSnapshot, encodeWorkspaceSnapshot, cloneActorRef } from '../persistence/record-codecs.js';
 import type { CurrentCompletionPolicyRead, ProjectBootstrapDependencies, ProjectBootstrapServices } from './project-bootstrap-contracts.js';
 import type {

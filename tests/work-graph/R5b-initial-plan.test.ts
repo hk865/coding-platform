@@ -29,8 +29,8 @@ import type { CompletionPolicyContentV1 } from '../../src/contracts/governance.j
 import type { PlanRevisionDraft } from '../../src/contracts/plan.js';
 import { INITIAL_COORDINATION_RESPONSE_GUIDE } from '../../src/core/agent-runtime/query-preparation.js';
 import { parseInitialPlanningResponseV2 } from '../../src/core/work-graph/tasks/initial-plan.js';
-import type { PlanProposal } from '../../src/core/work-graph/tasks/plan-contracts.js';
-import { decodePlanProposalRecord, encodePlanProposal } from '../../src/core/work-graph/tasks/plan-record-codecs.js';
+import type { PlanProposal } from '../../src/core/work-graph/model/plan-contracts.js';
+import { decodePlanProposalRecord, encodePlanProposal } from '../../src/core/work-graph/persistence/plan-record-codecs.js';
 import { planPhaseGuardReasons, validatePlanAssignments, validatePlanDraft } from '../../src/core/work-graph/tasks/plan-validation.js';
 import type { RuntimeHostBindings } from '../../src/core/agent-runtime/execution-contracts.js';
 import type { WorkspaceHostBindings } from '../../src/core/workspace/access.js';

@@ -15,7 +15,7 @@ import { GOAL_RECORD_SCHEMAS, canonicalRefKey, encodeProjectSnapshot,
 import type {
   AdoptedArchitecture, AdoptInitialArchitectureInput, ReviseArchitectureCatalogInput,
 } from '../../src/core/work-graph/architecture/catalog-contracts.js';
-import type { GraphWrite } from '../../src/core/work-graph/sessions/contracts.js';
+import type { GraphWrite } from '../../src/core/work-graph/model/session-contracts.js';
 import type { ArchiveSessionInput, LinkSessionWorkInput } from '../../src/core/work-graph/sessions/lifecycle-contracts.js';
 import type { CreateSessionRequest } from '../../src/core/agent-runtime/session-operations.js';
 import type { WorkspaceHostBindings } from '../../src/core/workspace/access.js';

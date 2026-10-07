@@ -78,11 +78,11 @@ import {
   bindTrustedContext, checkRunPin, claimEffectRecords, claimLeaseOf, claimSessionOf, isRecord, isolateWrite,
   loadReplayEvent, mapStoreFailure, mergeGuards, nonEmpty, sameRef,
 } from './execution-entry-service.js';
-import type { TaskExecutionRecord } from './execution-read-contracts.js';
+import type { TaskExecutionRecord } from '../model/execution-read-contracts.js';
 import type {
   ControlObservationPort, RecordControlObservationInput, RunControlPort, RunControlServiceDependencies,
 } from './control-contracts.js';
-import type { GraphWrite } from './contracts.js';
+import type { GraphWrite } from '../model/task-contracts.js';
 import { readGoal } from './plan-readers.js';
 
 type HostActor = { kind: 'human' | 'system'; id: string };

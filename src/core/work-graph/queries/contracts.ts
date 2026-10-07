@@ -38,9 +38,9 @@ import type { RuntimeBudget } from '../../../contracts/runtime-budget.js';
 import type { RawArtifactStorePort } from '../../record-store/body-ports.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
-import type { RoleBindingFactsPort } from '../configuration/contracts.js';
-import type { SessionMailboxPort } from '../communication/contracts.js';
-import type { GraphWrite } from '../tasks/contracts.js';
+import type { RoleBindingFactsPort } from '../model/configuration-contracts.js';
+import type { SessionMailboxPort } from '../model/communication-contracts.js';
+import type { GraphWrite } from '../model/task-contracts.js';
 
 /** The exact pending pair a submit records: both ids are independent identities. */
 export type SubmitQueryJobInput = {

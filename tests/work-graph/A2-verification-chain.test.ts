@@ -32,10 +32,10 @@ import type { CheckProcessObservation, RoundSnapshot } from '../../src/contracts
 import type { WorkflowAdvanceInput } from '../../src/business/workflow/contracts.js';
 import { createWorkflow } from '../../src/business/workflow/workflow.js';
 import type { RuntimeExecutionPort } from '../../src/core/agent-runtime/ports.js';
-import type { EvidencePort } from '../../src/core/work-graph/evidence/contracts.js';
+import type { EvidencePort } from '../../src/core/work-graph/model/evidence-contracts.js';
 import {
   encodeTaskEvidenceIndexSnapshot, encodeVerificationRoundSnapshot, VERIFICATION_ROUND_ORIGINAL_LOOKUP,
-} from '../../src/core/work-graph/evidence/evidence-record-codecs.js';
+} from '../../src/core/work-graph/persistence/evidence-record-codecs.js';
 import { createEvidenceService } from '../../src/core/work-graph/evidence/evidence-service.js';
 import { createRegisteredCheckRunner, type RegisteredCheckRunner } from '../../src/core/agent-runtime/check-execution.js';
 import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';

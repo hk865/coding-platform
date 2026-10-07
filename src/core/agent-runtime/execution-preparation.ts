@@ -23,7 +23,7 @@ import {
   CONTINUATION_BRIEF_LIMITS, continuationBriefDigest, continuationBriefShapeProblem, renderContinuationBriefZh,
   type ContinuationBriefV1, type ContinuationSourceCheckpointV1,
 } from '../../contracts/continuation-brief.js';
-import type { TaskExecutionRecord } from '../work-graph/tasks/execution-read-contracts.js';
+import type { TaskExecutionRecord } from '../work-graph/model/execution-read-contracts.js';
 import { assembleContinuationBrief, readPreviousTurn, type BriefWorkspaceFacts } from './continuation-brief-assembly.js';
 import { createSessionHistoryCursorOwner } from './session-operations.js';
 import { decodeKernelEntry } from './kernel-turn-facts.js';

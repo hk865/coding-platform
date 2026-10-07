@@ -36,7 +36,7 @@ import type {
   EncodedRecord,
   EncodedRecordSchema,
 } from '../../record-store/ports.js';
-import type { PlanChangeReason, PlanProposal, PlanProposalRef } from './plan-contracts.js';
+import type { PlanChangeReason, PlanProposal, PlanProposalRef } from '../model/plan-contracts.js';
 
 // --------------------------------------------------------------------------
 // Fixed registration identifiers

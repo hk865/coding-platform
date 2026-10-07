@@ -21,7 +21,7 @@ import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import { makeCommitCursor } from '../../src/contracts/ledger.js';
-import type { PlanTaskPort } from '../../src/core/work-graph/tasks/plan-contracts.js';
+import type { PlanTaskPort } from '../../src/core/work-graph/model/plan-contracts.js';
 import { createWhiteboardTools } from '../../src/core/agent-runtime/whiteboard-tools.js';
 import * as kernel from '../../vendor/coding-agent/dist/public-api.js';
 import { FileSkillLoader } from '../../vendor/coding-agent/dist/skills/loader/file-skill-loader.js';

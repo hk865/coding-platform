@@ -10,7 +10,7 @@ import type { GoalRef } from '../../../contracts/ledger.js';
 import type { PlanRevisionRef, PlanRevisionSnapshot } from '../../../contracts/plan.js';
 import type { GoalRecordTransactionPort, RecordGuard } from '../../record-store/ports.js';
 import { readOriginPlans, type Rejected } from './plan-readers.js';
-import { planRevisionRefKey } from './plan-record-codecs.js';
+import { planRevisionRefKey } from '../persistence/plan-record-codecs.js';
 import { entryPlanVerdict, isBasisUnsupported, planTaskFacts } from './plan-task-basis.js';
 
 export type EntryPlanRead = { status: 'ready'; verdict: EntryPlanVerdict; guards: RecordGuard[] };

@@ -16,9 +16,9 @@ import { canonicalJson, type JsonValue } from '../../src/contracts/fingerprint.j
 import { encodeProjectSnapshot } from '../../src/core/work-graph/persistence/record-codecs.js';
 import { plainSessionRefToAggregate, sessionAggregateRefKey } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import { TASK_ATTEMPT_SCHEMA_ID, TASK_CLAIM_OUTBOX_SCHEMA_ID } from '../../src/core/work-graph/tasks/claim-record-codecs.js';
-import type { ClaimTaskInput, TaskClaim } from '../../src/core/work-graph/tasks/claim-contracts.js';
+import type { ClaimTaskInput, TaskClaim } from '../../src/core/work-graph/model/claim-contracts.js';
 import type { PreparedCommit } from '../../src/core/record-store/ports.js';
-import type { GraphWrite } from '../../src/core/work-graph/tasks/contracts.js';
+import type { GraphWrite } from '../../src/core/work-graph/model/task-contracts.js';
 import { CLAIM_FIXTURE_EXPIRED_DEADLINE, createTaskClaimFixture,
   type ClaimFixtureKind, type Records, type TaskClaimFixture } from '../helpers/task-claim-fixture.js';
 

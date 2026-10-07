@@ -32,7 +32,7 @@ import { createTargetPlatform } from '../../src/composition/create-platform.js';
 import { createEvidenceService } from '../../src/core/work-graph/evidence/evidence-service.js';
 import { COMPLETION_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/completion-record-codecs.js';
 import { controlIntentRefFor } from '../../src/core/work-graph/tasks/control-service.js';
-import type { GraphWrite, SetGoalControlInput } from '../../src/core/work-graph/tasks/contracts.js';
+import type { GraphWrite, SetGoalControlInput } from '../../src/core/work-graph/model/task-contracts.js';
 import { readGoalPhase } from '../../src/core/work-graph/tasks/plan-readers.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
 import { createGoalService } from '../../src/core/work-graph/tasks/task-service.js';

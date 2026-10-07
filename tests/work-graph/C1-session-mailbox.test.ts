@@ -8,7 +8,7 @@ import type { SessionMessageRef } from '../../src/contracts/core/session-message
 import { makeCommitCursor, seqOfCommitCursor } from '../../src/contracts/ledger.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
 import { plainSessionRefToAggregate } from '../../src/core/work-graph/sessions/session-record-codecs.js';
-import { SESSION_MESSAGE_LOOKUP_INDEXES, SESSION_MESSAGE_CONTENT_TYPE } from '../../src/core/work-graph/communication/message-record-codecs.js';
+import { SESSION_MESSAGE_LOOKUP_INDEXES, SESSION_MESSAGE_CONTENT_TYPE } from '../../src/core/work-graph/sessions/message-record-codecs.js';
 import { SESSION_MAILBOX_TOOL_NAMES } from '../../src/core/agent-runtime/communication-tools.js';
 import type { ClaimFixtureKind } from '../helpers/task-claim-fixture.js';
 import { AT, createC1Harness, envelopeFor, type C1Harness } from '../helpers/C1-mailbox-fixture.js';

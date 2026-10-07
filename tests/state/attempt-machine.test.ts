@@ -34,7 +34,7 @@ import {
   type DispatchOutboxRecord, type DispatchStateV1, type RunEventForAttempt, type TaskLeaseEvent,
 } from '../../src/core/work-graph/state/attempt-machine.js';
 import type { Transition, TransitionRejectReason } from '../../src/core/work-graph/state/transition.js';
-import type { TaskClaimOutbox, TaskDispatchStateV1 } from '../../src/core/work-graph/tasks/claim-contracts.js';
+import type { TaskClaimOutbox, TaskDispatchStateV1 } from '../../src/core/work-graph/model/claim-contracts.js';
 
 /**
  * The Outbox counterpart of `attemptNodeOf`/`taskLeaseNodeOf` (moved from

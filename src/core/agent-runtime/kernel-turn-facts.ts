@@ -10,7 +10,7 @@
  */
 import { createInitialRunState, reduceRunState, sessionRecordSchema } from '../../../vendor/coding-agent/dist/public-api.js';
 import type { RunState, SessionRecord as KernelSessionRecord } from '../../../vendor/coding-agent/dist/public-api.js';
-import type { KernelExecutionBinding } from '../work-graph/tasks/execution-entry-contracts.js';
+import type { KernelExecutionBinding } from '../work-graph/model/execution-entry-contracts.js';
 import type { SessionHistoryEntry } from './session-operations.js';
 
 /** One original Kernel record at its verified Session position. */

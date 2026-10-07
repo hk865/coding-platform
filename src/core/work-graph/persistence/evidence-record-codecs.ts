@@ -28,10 +28,10 @@ import {
     ROUND_CHAIN_MAX,
     type CheckExecutionTicket, type CheckProcessObservation, type RoundSnapshot, type VerificationRoundRef,
 } from '../../../contracts/verification.js';
-import type { FinalizedChecks } from './contracts.js';
+import type { FinalizedChecks } from '../model/evidence-contracts.js';
 import {
     actorRefProblem, incompleteCauseProblem, isSha256Hex, newBasisInputRefsProblem, reverifyBasisProblem,
-} from '../persistence/rework-codecs.js';
+} from './rework-codecs.js';
 
 // -------------------------------------------------------------------------- //
 // Schema names (frozen)                                                      //

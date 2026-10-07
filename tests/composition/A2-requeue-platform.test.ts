@@ -49,7 +49,7 @@ import type { WorkflowAdvanceInput, WorkflowStepReceipt } from '../../src/busine
 import type { WorkflowHostConfiguration } from '../../src/business/workflow/ports.js';
 import type { RuntimeHostBindings } from '../../src/core/agent-runtime/execution-contracts.js';
 import type { WorkspaceHostBindings } from '../../src/core/workspace/access.js';
-import type { RequeueTaskInput } from '../../src/core/work-graph/tasks/claim-contracts.js';
+import type { RequeueTaskInput } from '../../src/core/work-graph/model/claim-contracts.js';
 import type { RecordCommitObserver } from '../../src/composition/commit-observer.js';
 import { createTargetPlatform } from '../../src/composition/create-platform.js';
 import { createScriptedModel } from '../helpers/B2-runtime-fixture.js';

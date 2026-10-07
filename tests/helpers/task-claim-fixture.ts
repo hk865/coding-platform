@@ -26,7 +26,7 @@ import type { LookupValue, RecordLookupPort } from '../../src/core/record-store/
 import { createInMemoryRecordBackend } from '../../src/core/record-store/in-memory-record-store.js';
 import { createSqliteRecordBackend } from '../../src/core/record-store/sqlite-record-store.js';
 import { canonicalRefKey, encodeProjectSnapshot, encodeWorkspaceSnapshot } from '../../src/core/work-graph/persistence/record-codecs.js';
-import { PLAN_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/plan-record-codecs.js';
+import { PLAN_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/plan-record-codecs.js';
 import { PLAN_GOVERNANCE_RECORD_SCHEMAS, PLAN_STATE_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/plan-readers.js';
 import { SESSION_RECORD_SCHEMAS, encodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import { ROLE_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/role-record-codecs.js';
@@ -37,13 +37,13 @@ import { createGoalService } from '../../src/core/work-graph/tasks/task-service.
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
-import type { RoleConfigurationPort } from '../../src/core/work-graph/configuration/contracts.js';
+import type { RoleConfigurationPort } from '../../src/core/work-graph/model/configuration-contracts.js';
 import { createKernelStoreRegistry } from '../../src/core/agent-runtime/kernel-store-locator.js';
 import { createTaskClaimService } from '../../src/core/work-graph/tasks/claim-service.js';
-import type { ClaimTaskInput, TaskClaimPort } from '../../src/core/work-graph/tasks/claim-contracts.js';
-import type { GoalTaskPort, GraphWrite } from '../../src/core/work-graph/tasks/contracts.js';
-import type { PlanTaskPort } from '../../src/core/work-graph/tasks/plan-contracts.js';
-import type { SessionDirectoryPort } from '../../src/core/work-graph/sessions/contracts.js';
+import type { ClaimTaskInput, TaskClaimPort } from '../../src/core/work-graph/model/claim-contracts.js';
+import type { GoalTaskPort, GraphWrite } from '../../src/core/work-graph/model/task-contracts.js';
+import type { PlanTaskPort } from '../../src/core/work-graph/model/plan-contracts.js';
+import type { SessionDirectoryPort } from '../../src/core/work-graph/model/session-contracts.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../src/contracts/fingerprint.js';
 
 const AT = '2026-09-24T00:00:00.000Z';

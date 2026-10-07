@@ -27,18 +27,18 @@ import type { RawArtifactStorePort } from '../../src/core/record-store/body-port
 import type { RecordBackendSchemas } from '../../src/core/record-store/ports.js';
 import { RawArtifactBodyStore } from '../../src/core/record-store/body-store.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
-import type { MaterialPort } from '../../src/core/work-graph/materials/contracts.js';
+import type { MaterialPort } from '../../src/core/work-graph/model/material-contracts.js';
 import { plainSessionRefToAggregate } from '../../src/core/work-graph/sessions/session-record-codecs.js';
-import type { ClaimTaskInput } from '../../src/core/work-graph/tasks/claim-contracts.js';
-import type { GraphWrite } from '../../src/core/work-graph/tasks/contracts.js';
+import type { ClaimTaskInput } from '../../src/core/work-graph/model/claim-contracts.js';
+import type { GraphWrite } from '../../src/core/work-graph/model/task-contracts.js';
 import type {
   AuthorizeConfiguration, CompletedHistoryBoundary, ExecutionEntryDependencies, ExecutionEntryPort,
   KernelExecutionBinding, ObservedExecutionHistory, TaskEntryPermit, TaskResultObservation,
-} from '../../src/core/work-graph/tasks/execution-entry-contracts.js';
+} from '../../src/core/work-graph/model/execution-entry-contracts.js';
 import { createExecutionEntryService } from '../../src/core/work-graph/tasks/execution-entry-service.js';
 import { EXECUTION_ENTRY_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/execution-entry-codecs.js';
-import { MODEL_REQUEST_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/model-request-codecs.js';
-import type { TaskExecutionRecord } from '../../src/core/work-graph/tasks/execution-read-contracts.js';
+import { MODEL_REQUEST_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/model-request-codecs.js';
+import type { TaskExecutionRecord } from '../../src/core/work-graph/model/execution-read-contracts.js';
 import type { ModelRequestPort, ActualModelRequest } from '../../src/core/work-graph/tasks/model-call-contracts.js';
 import { createModelCallService } from '../../src/core/work-graph/tasks/model-call-service.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';

@@ -19,8 +19,8 @@ import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fin
 import type { EncodedRecord, PreparedCommit, RecordGuard } from '../../record-store/ports.js';
 import { plainSessionRefToAggregate, sessionAggregateRefKey } from '../sessions/session-record-codecs.js';
 import { dispatchOutboxRefKey, taskAttemptRefKey } from './claim-record-codecs.js';
-import { planRevisionRefKey } from './plan-record-codecs.js';
-import type { GraphWrite } from './contracts.js';
+import { planRevisionRefKey } from '../persistence/plan-record-codecs.js';
+import type { GraphWrite } from '../model/task-contracts.js';
 import {
   admitEnteredRun, bindTrustedContext, checkRunAndPermitPins, checkRunPin, isRecord, isSha256Hex,
   isolateWrite, loadReplayEvent, mapStoreFailure, mergeGuards, nonEmpty, sameRef, taskEntryPermitProblem,
@@ -35,7 +35,7 @@ import {
   MODEL_REQUEST_AUTHORIZED_EVENT_TYPE, MODEL_REQUEST_EVENT_SCHEMA_VERSION, MODEL_REQUEST_EVIDENCE_EVENT_TYPE,
   decodeModelRequestPermitSnapshot, encodeModelRequestPermitSnapshot, encodeModelRequestRecordedEvent,
   modelRequestRecordedEventFromEvent, type ModelRequestRecordedEvent,
-} from '../persistence/model-request-codecs.js';
+} from './model-request-codecs.js';
 
 const MODEL_AUTHORIZE_PREFIX = 'b2-model-authorize:';
 const MODEL_CONSUME_PREFIX = 'b2-model-consume:';

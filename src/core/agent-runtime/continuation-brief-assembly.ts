@@ -22,7 +22,7 @@ import {
   type ContinuationToolCallV1,
 } from '../../contracts/continuation-brief.js';
 import { reworkActorClassOf, type ReworkFailureClass } from '../../contracts/task-requeue.js';
-import type { ContinuationBasis, TaskExecutionRecord } from '../work-graph/tasks/execution-read-contracts.js';
+import type { ContinuationBasis, TaskExecutionRecord } from '../work-graph/model/execution-read-contracts.js';
 import { roundFailureFacts, runFailureOrigin } from '../work-graph/state/no-progress.js';
 import { deriveReworkClass, runErrorOf } from '../work-graph/state/task-failure.js';
 import { decodeKernelEntry, reduceTurnFromStart, type DecodedKernelRecord } from './kernel-turn-facts.js';

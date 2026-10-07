@@ -5,8 +5,8 @@
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import type { SessionRef, VersionPin } from '../../src/contracts/core/identity.js';
-import type { SessionMailboxDependencies } from '../../src/core/work-graph/communication/contracts.js';
-import { sessionMessageRefKey } from '../../src/core/work-graph/communication/message-record-codecs.js';
+import type { SessionMailboxDependencies } from '../../src/core/work-graph/model/communication-contracts.js';
+import { sessionMessageRefKey } from '../../src/core/work-graph/sessions/message-record-codecs.js';
 import { readManifestFromEnvelope } from '../../src/core/work-graph/tasks/execution-entry-service.js';
 import type { TaskClaimFixture } from '../helpers/task-claim-fixture.js';
 import { createC1Harness, type C1Harness } from '../helpers/C1-mailbox-fixture.js';

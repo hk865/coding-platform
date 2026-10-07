@@ -44,8 +44,8 @@ import {
 import type { ReverifyBasisV1, RoundSnapshot, TrustedCheckConfiguration } from '../../src/contracts/verification.js';
 import type { RuntimeHostBindings } from '../../src/core/agent-runtime/execution-contracts.js';
 import type { WorkspaceHostBindings } from '../../src/core/workspace/access.js';
-import type { SessionMessage } from '../../src/core/work-graph/communication/contracts.js';
-import type { RequeueTaskInput, TaskClaimOutbox } from '../../src/core/work-graph/tasks/claim-contracts.js';
+import type { SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
+import type { RequeueTaskInput, TaskClaimOutbox } from '../../src/core/work-graph/model/claim-contracts.js';
 import { desiredStateOfKind } from '../../src/core/work-graph/state/control-intent-machine.js';
 import { buildSuccessorRound, reverifyFailureClass } from '../../src/core/work-graph/state/verification-machine.js';
 import { createTargetPlatform } from '../../src/composition/create-platform.js';

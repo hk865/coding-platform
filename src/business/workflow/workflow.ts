@@ -18,15 +18,15 @@ import {
 import { canonicalJson, sha256Hex, type JsonValue } from '../../contracts/fingerprint.js';
 import type { CreateSessionRequest } from '../../core/agent-runtime/session-operations.js';
 import type { PrepareTaskExecutionRequest, StartTaskExecutionRequest } from '../../core/agent-runtime/execution-contracts.js';
-import type { ClaimTaskInput, RequeueTaskInput } from '../../core/work-graph/tasks/claim-contracts.js';
-import type { TaskGraph, TaskRow } from '../../core/work-graph/tasks/plan-contracts.js';
-import type { GraphWrite } from '../../core/work-graph/tasks/contracts.js';
-import type { SessionCard } from '../../core/work-graph/sessions/contracts.js';
+import type { ClaimTaskInput, RequeueTaskInput } from '../../core/work-graph/model/claim-contracts.js';
+import type { TaskGraph, TaskRow } from '../../core/work-graph/model/plan-contracts.js';
+import type { GraphWrite } from '../../core/work-graph/model/task-contracts.js';
+import type { SessionCard } from '../../core/work-graph/model/session-contracts.js';
 import { runUnresolvedBlocker } from '../../core/work-graph/state/run-machine.js';
 import {
   beginRefusalIsPermanent, displayRoundStatus, reverifyExemptionOfFacts, successorAutoCount,
 } from '../../core/work-graph/state/verification-machine.js';
-import type { ReverifyRoundInput } from '../../core/work-graph/evidence/contracts.js';
+import type { ReverifyRoundInput } from '../../core/work-graph/model/evidence-contracts.js';
 import type { ConsultationInput, ConsultationResult, InitialPlanningGoalInput, InitialPlanningGoalInputResult, N0GoalInput, WorkflowAdvanceInput, WorkflowAdvanceResult, WorkflowOperation, WorkflowSessionRequeue, WorkflowStepReceipt } from './contracts.js';
 import type { WorkflowDependencies, WorkflowHostConfiguration, WorkflowPort } from './ports.js';
 import { createConsultationConsumer } from './consultation.js';

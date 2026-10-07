@@ -23,10 +23,10 @@ import type { ReadResult } from '../../contracts/core/results.js';
 import type { RunContinuationV1, RunRef, RunSnapshot, TaskTriple } from '../../contracts/dispatch.js';
 import { canonicalJson } from '../../contracts/fingerprint.js';
 import type { ControlObservationPort, RunControlPort } from '../work-graph/tasks/control-contracts.js';
-import type { KernelExecutionBinding } from '../work-graph/tasks/execution-entry-contracts.js';
+import type { KernelExecutionBinding } from '../work-graph/model/execution-entry-contracts.js';
 import type { SourceSnapshotReads } from '../work-graph/source-authority-ports.js';
 import type { SessionRef } from '../../contracts/core/identity.js';
-import type { SessionMessage } from '../work-graph/communication/contracts.js';
+import type { SessionMessage } from '../work-graph/model/communication-contracts.js';
 import type { DeliverControlRequest } from './execution-contracts.js';
 import type { RuntimeResourceCloseResult } from './observed-model-run.js';
 

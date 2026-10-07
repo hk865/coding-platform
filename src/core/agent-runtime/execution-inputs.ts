@@ -17,9 +17,9 @@ import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { SessionRef } from '../../contracts/core/identity.js';
 import type { QueryRunRef } from '../../contracts/query-job.js';
 import type { SessionRecord as KernelSessionRecord } from '../../../vendor/coding-agent/dist/public-api.js';
-import type { KernelExecutionBinding } from '../work-graph/tasks/execution-entry-contracts.js';
+import type { KernelExecutionBinding } from '../work-graph/model/execution-entry-contracts.js';
 import type { RunRef } from '../../contracts/dispatch.js';
-import { deriveSessionInputId, type SessionMailboxPort, type SessionMessage } from '../work-graph/communication/contracts.js';
+import { deriveSessionInputId, type SessionMailboxPort, type SessionMessage } from '../work-graph/model/communication-contracts.js';
 
 export type InputPart = 'message' | 'response';
 

@@ -16,10 +16,10 @@ import type { CoreCallContext } from '../contracts/core/call-context.js';
 import type { RoleConfigurationRef } from '../contracts/core/identity.js';
 import type { RuntimeExecutionPort } from '../core/agent-runtime/ports.js';
 import type { ExecutionHistoryPage } from '../core/agent-runtime/execution-history-contracts.js';
-import type { ExecutionReadPort, TaskExecutionRecord } from '../core/work-graph/tasks/execution-read-contracts.js';
+import type { ExecutionReadPort, TaskExecutionRecord } from '../core/work-graph/model/execution-read-contracts.js';
 import type { RunRef } from '../contracts/dispatch.js';
-import type { SessionMailboxPort } from '../core/work-graph/communication/contracts.js';
-import type { SessionDirectoryPort } from '../core/work-graph/sessions/contracts.js';
+import type { SessionMailboxPort } from '../core/work-graph/model/communication-contracts.js';
+import type { SessionDirectoryPort } from '../core/work-graph/model/session-contracts.js';
 import type { AdoptInitialArchitectureInput } from '../core/work-graph/architecture/catalog-contracts.js';
 import type { ArchitectureCatalogPort } from '../core/work-graph/architecture/catalog-contracts.js';
 import type { ObservedArchitecturePort } from '../core/work-graph/architecture/contracts.js';
@@ -27,8 +27,8 @@ import type {
   CompletionPolicyConfigurationPort,
   ProjectRegistrationPort,
 } from '../core/work-graph/configuration/project-bootstrap-contracts.js';
-import type { GoalTaskPort } from '../core/work-graph/tasks/contracts.js';
-import type { PlanTaskPort } from '../core/work-graph/tasks/plan-contracts.js';
+import type { GoalTaskPort } from '../core/work-graph/model/task-contracts.js';
+import type { PlanTaskPort } from '../core/work-graph/model/plan-contracts.js';
 import type { WorkspaceCapturePort, WorkspaceToolsPort } from '../core/workspace/ports.js';
 import type { MaterialSourceScope } from '../contracts/material-access.js';
 import type { PlanRevisionDraft } from '../contracts/plan.js';
@@ -36,7 +36,7 @@ import type { RoleBindingRefV1 } from '../contracts/dispatch.js';
 import type { QueryJobAnswerSnapshot, QueryJobIntentV1, QueryJobRef, QueryRunRef } from '../contracts/query-job.js';
 import type { RuntimeBudget } from '../contracts/runtime-budget.js';
 import type { QueryJobPort, QueryExecutionRecord } from '../core/work-graph/queries/contracts.js';
-import type { MaterialPort } from '../core/work-graph/materials/contracts.js';
+import type { MaterialPort } from '../core/work-graph/model/material-contracts.js';
 import type { WorkflowPort } from '../business/workflow/ports.js';
 import type { CollaborationDriverPort } from './collaboration-driver.js';
 import type { WorkbenchCommandState, WorkbenchToolsPort } from './workbench-tools.js';
@@ -47,7 +47,7 @@ import type { InitialPlanningGoalInputResult, WorkflowAdvanceResult, WorkflowSte
 export type { AdoptInitialArchitectureInput, ArchitectureRevision, ModuleDefinition } from '../core/work-graph/architecture/catalog-contracts.js';
 export type { ObservedArchitectureNeighborhood } from '../core/work-graph/architecture/contracts.js';
 export type { CurrentCompletionPolicyRead } from '../core/work-graph/configuration/project-bootstrap-contracts.js';
-export type { TaskGraph, TaskRow } from '../core/work-graph/tasks/plan-contracts.js';
+export type { TaskGraph, TaskRow } from '../core/work-graph/model/plan-contracts.js';
 /** A.2 Task read-model and rework shapes (spec §4.1, §9 VD-12, C3), type-only for the UI. */
 export type {
   FailingCheckFactV1, NotReworkableCause, RunErrorSource, TaskAutomationStopReason, TaskAutomationVerdictV1,
@@ -62,10 +62,10 @@ export type { NewBasisInputRefV1 } from '../contracts/no-progress.js';
 export type { TaskDispositionChangeV1 } from '../contracts/plan.js';
 export type { ContinuationBriefV1, SourceChangeVerdictV1 } from '../contracts/continuation-brief.js';
 export type { RoundChainV1, RoundCheckIncompleteCause, RoundReverifyFactV1 } from '../contracts/verification.js';
-export type { RequeueTaskInput } from '../core/work-graph/tasks/claim-contracts.js';
+export type { RequeueTaskInput } from '../core/work-graph/model/claim-contracts.js';
 /** A.2 step 5.5 Goal control and display shapes (spec §2.1, §2.3), type-only for the UI. */
-export type { SetGoalControlInput } from '../core/work-graph/tasks/contracts.js';
-export type { GoalDisplayRead, GoalResumePendingRunV1 } from '../core/work-graph/tasks/plan-contracts.js';
+export type { SetGoalControlInput } from '../core/work-graph/model/task-contracts.js';
+export type { GoalDisplayRead, GoalResumePendingRunV1 } from '../core/work-graph/model/plan-contracts.js';
 export type {
   GoalDisplayCauseV1, GoalDisplayPhase, GoalDisplayRow, GoalDisplayV1, GoalRunStopStateV1, GoalRunStopV1, GoalStopCauseCode,
 } from '../core/work-graph/state/goal-machine.js';
@@ -79,7 +79,7 @@ export type {
 } from './core-routes.js';
 export type { ReconcileLine, StartupReconcileReportV1 } from './startup-reconcile.js';
 export type { QueryUnknownCauseV1 } from '../contracts/query-job.js';
-export type { ReverifyOutcomeV1, ReverifyRoundInput } from '../core/work-graph/evidence/contracts.js';
+export type { ReverifyOutcomeV1, ReverifyRoundInput } from '../core/work-graph/model/evidence-contracts.js';
 export type { CoreRejection, ReadResult } from '../contracts/core/results.js';
 export type { CaptureSummary, SourcePage, WorkspaceFile, WorkspaceResult } from '../core/workspace/ports.js';
 
@@ -360,8 +360,8 @@ export type CommandsStopResponse = RouteResponse<WorkbenchToolsPort['stopCommand
 
 /** Exact public result/domain shapes the UI and its tests consume. They are
  * re-exported, never restated, so the browser cannot depend on a private copy. */
-export type { SessionCard, SessionOperationRecord, SessionPage } from '../core/work-graph/sessions/contracts.js';
-export type { MessageBody, SessionMessage, SessionMessageStatus } from '../core/work-graph/communication/contracts.js';
+export type { SessionCard, SessionOperationRecord, SessionPage } from '../core/work-graph/model/session-contracts.js';
+export type { MessageBody, SessionMessage, SessionMessageStatus } from '../core/work-graph/model/communication-contracts.js';
 export type { CreateSessionRequest, SessionHistoryEntry, SessionHistoryRequest } from '../core/agent-runtime/session-operations.js';
 export type { RuntimeCapabilities } from '../core/agent-runtime/contracts.js';
 export type { OperationReceipt, Page } from '../contracts/core/results.js';
@@ -371,10 +371,10 @@ export type { ArtifactRecord } from '../contracts/artifact.js';
 export type { QueryJobAnswerSnapshot, QueryJobRef, QueryRunRef } from '../contracts/query-job.js';
 export type { QueryExecutionRecord } from '../core/work-graph/queries/contracts.js';
 export type { RunRef } from '../contracts/dispatch.js';
-export type { TaskExecutionRecord } from '../core/work-graph/tasks/execution-read-contracts.js';
+export type { TaskExecutionRecord } from '../core/work-graph/model/execution-read-contracts.js';
 export type { ExecutionHistoryPage } from '../core/agent-runtime/execution-history-contracts.js';
 export type { PreparedQueryExecution } from '../contracts/core/prepared-execution.js';
-export type { ExecutionListPageRequest, TaskExecutionPage } from '../core/work-graph/tasks/execution-read-contracts.js';
+export type { ExecutionListPageRequest, TaskExecutionPage } from '../core/work-graph/model/execution-read-contracts.js';
 export type { WorkspaceComparison, WorkspaceComparisonRequest, WorkspaceVersion } from '../core/workspace/ports.js';
 export type {
   SaveWorkbenchFileRequest, SaveWorkbenchFileResult,

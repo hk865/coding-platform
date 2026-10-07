@@ -29,11 +29,11 @@ import {
   encodeDispatchOutboxEntry,
   encodeTaskAttemptSnapshot,
 } from '../../src/core/work-graph/tasks/claim-record-codecs.js';
-import type { TaskClaim, TaskClaimOutbox } from '../../src/core/work-graph/tasks/claim-contracts.js';
-import type { GraphWrite } from '../../src/core/work-graph/tasks/contracts.js';
-import type { RecordExecutionHistoryInput } from '../../src/core/work-graph/tasks/execution-history-contracts.js';
+import type { TaskClaim, TaskClaimOutbox } from '../../src/core/work-graph/model/claim-contracts.js';
+import type { GraphWrite } from '../../src/core/work-graph/model/task-contracts.js';
+import type { RecordExecutionHistoryInput } from '../../src/core/work-graph/model/execution-history-contracts.js';
 import { createExecutionHistoryService } from '../../src/core/work-graph/tasks/execution-history-service.js';
-import type { ExecutionReadPort } from '../../src/core/work-graph/tasks/execution-read-contracts.js';
+import type { ExecutionReadPort } from '../../src/core/work-graph/model/execution-read-contracts.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
 import {
   plainSessionRefToAggregate,

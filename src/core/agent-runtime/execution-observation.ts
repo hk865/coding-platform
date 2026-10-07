@@ -29,7 +29,7 @@ import {
 } from './kernel-turn-facts.js';
 import type {
   KernelExecutionBinding, ObservedExecutionHistory, TaskResultObservation,
-} from '../work-graph/tasks/execution-entry-contracts.js';
+} from '../work-graph/model/execution-entry-contracts.js';
 import type { ObserveTaskRunRequest, RuntimeExecutionDependencies, TaskExecutionRecord } from './execution-contracts.js';
 import type { RuntimeControlCoordinator } from './execution-control.js';
 import { confirmMailboxInputs } from './execution-inputs.js';

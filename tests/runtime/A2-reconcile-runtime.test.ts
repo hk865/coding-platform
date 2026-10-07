@@ -25,7 +25,7 @@ import {
   reconcileRunAtStartup, reconcileRunControlsAtStartup, type RunReconcileClassifierDependencies,
 } from '../../src/core/agent-runtime/run-reconcile.js';
 import { createSessionHistoryCursorOwner } from '../../src/core/agent-runtime/session-operations.js';
-import type { ExecutionEntryPort, HostInstanceFacts } from '../../src/core/work-graph/tasks/execution-entry-contracts.js';
+import type { ExecutionEntryPort, HostInstanceFacts } from '../../src/core/work-graph/model/execution-entry-contracts.js';
 import { createRunControlService } from '../../src/core/work-graph/tasks/control-service.js';
 import { createTaskRequeueService } from '../../src/core/work-graph/tasks/requeue-service.js';
 import { GOAL_FAN_OUT_ACTOR, WORKFLOW_AUTOMATION_ACTOR } from '../../src/contracts/task-requeue.js';

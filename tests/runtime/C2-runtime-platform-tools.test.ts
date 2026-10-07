@@ -19,7 +19,7 @@ import type { CommitCursor } from '../../src/contracts/command-event.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { SessionRef } from '../../src/contracts/core/identity.js';
 import type { SessionMessageRef } from '../../src/contracts/core/session-message.js';
-import type { SessionMailboxPort } from '../../src/core/work-graph/communication/contracts.js';
+import type { SessionMailboxPort } from '../../src/core/work-graph/model/communication-contracts.js';
 import { createSessionMailboxTools, SESSION_MAILBOX_TOOL_NAMES } from '../../src/core/agent-runtime/communication-tools.js';
 import { WHITEBOARD_TOOL_NAMES } from '../../src/core/agent-runtime/whiteboard-tools.js';
 import type { ModelRequest, ToolCall, ToolResult, WorkspaceSandbox } from '../../vendor/coding-agent/dist/public-api.js';
