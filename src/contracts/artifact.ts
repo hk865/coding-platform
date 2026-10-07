@@ -6,8 +6,9 @@ import type { RunRef, SourceRefV1 } from "./dispatch.js";
 import type { QueryRunRef } from "./query-job.js";
 export const ARTIFACT_MAX_SIZE_BYTES = 256 * 1024;
 /** Identical body/contentType retains the first recorded reference and owner.
- * Reads require matching owner identity or an applicable exact material grant;
- * TaskAttempt ownership alone grants no Run principal access. */
+ * Reads require matching owner identity (Host historical reads go by project and
+ * workspace); material grants were deleted (decision 34). TaskAttempt ownership
+ * alone grants no Run principal access. */
 export type ArtifactRef = {
     kind: "artifact";
     contentType: string;

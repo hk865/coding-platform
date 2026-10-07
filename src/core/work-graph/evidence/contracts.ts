@@ -9,7 +9,7 @@
  *
  * The dependency set is exactly what the service reads:
  *  - the ONE RecordStore transaction/lookup pair already owned by composition;
- *  - the same Material body writer + read-facts seam;
+ *  - the same Material body port (store/open);
  *  - the existing ExecutionReadPort for the real subject Run;
  *  - the trusted WorkspaceHostBindings + the existing
  *    `VerificationRoundSourcePort` (VerificationWorkspaceReader);

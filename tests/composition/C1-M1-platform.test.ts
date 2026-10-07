@@ -2,10 +2,8 @@
  * Goal/Plan/Session/claims, bodies and messages use their real producers.
  * Missing public wiring fails an explicit surface assertion, never a fake port. */
 import { afterEach, expect, it } from 'vitest';
-import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createTargetPlatform, type TargetPlatformOptions } from '../../src/composition/create-platform.js';
-import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { SessionMailboxPort } from '../../src/core/work-graph/communication/contracts.js';
 import type { MaterialPort } from '../../src/core/work-graph/materials/contracts.js';
 import { createTaskClaimFixture, CLAIM_FIXTURE_AT } from '../helpers/task-claim-fixture.js';
@@ -16,13 +14,10 @@ type ConsumerPlatform = Platform & { messages: SessionMailboxPort; materials: Ma
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const close of cleanups.splice(0).reverse()) await close(); });
 
-async function openFixture(beforeAuthorize?: () => Promise<void>) {
+async function openFixture() {
   const f = await createTaskClaimFixture('sqlite');
   cleanups.push(() => f.close());
-  await mkdir(join(f.directory, 'src'));
-  await writeFile(join(f.directory, 'src/input.txt'), 'selected source version one');
   await f.closeBackend();
-  const authorizations: CoreCallContext[] = [];
   const options: TargetPlatformOptions = {
     storage: { kind: 'sqlite', directory: f.directory }, now: () => CLAIM_FIXTURE_AT,
     kernelStores: { entries: [{ adapterId: 'r4c-claim-kernel', storeKey: 'r4c-claim-kernel-store',
@@ -33,27 +28,12 @@ async function openFixture(beforeAuthorize?: () => Promise<void>) {
           return { status: 'rejected', code: 'forbidden', reason: 'Unknown workspace' };
         return { status: 'ready', value: { root: f.directory, workspaceRevision: 1 } };
       },
-      async authorize(ctx, scope) {
-        // The composition-owned provider must bind the REAL scope to a trusted
-        // Host, including a matching materialReader. No model root/pin. The
-        // existing read resolver has no signal argument; do not invent one here.
-        expect(ctx.signal).toBeInstanceOf(AbortSignal); expect(ctx.signal.aborted).toBe(false);
-        expect(ctx.projectId).toBe(scope.projectId); expect(ctx.workspaceId).toBe(scope.workspaceId);
-        expect(ctx.principal.kind).toBe('host'); expect(ctx.materialReader.kind).toBe('host');
-        if (ctx.principal.kind !== 'host' || ctx.materialReader.kind !== 'host')
-          return { status: 'rejected', code: 'forbidden', reason: 'Host source identity required' };
-        expect(ctx.materialReader).toMatchObject({ projectId: f.scope.projectId, workspaceId: f.scope.workspaceId,
-          actor: ctx.principal.actor });
-        authorizations.push(ctx);
-        await beforeAuthorize?.();
-        return { status: 'ready', value: { subjectKey: `host:${ctx.principal.actor.kind}:${ctx.principal.actor.id}`,
-          permissionRevision: 'c1-m1-platform-read@1', allowsRead: path => path === 'src/input.txt' } };
-      },
+      async authorize() { return { status: 'rejected', code: 'forbidden', reason: 'no source read is needed' }; },
     },
   };
   let platform = await createTargetPlatform(options) as ConsumerPlatform;
   cleanups.push(() => platform.close());
-  return { f, authorizations, get platform() { return platform; },
+  return { f, get platform() { return platform; },
     async reopen() { await platform.close(); platform = await createTargetPlatform(options) as ConsumerPlatform; } };
 }
 

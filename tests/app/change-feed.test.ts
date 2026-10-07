@@ -31,7 +31,7 @@ describe('change kind classification', () => {
       Project: 'project', Workspace: 'project', RoleSpecRevision: 'project', ProjectRoleSpecActive: 'project',
       CompletionPolicyRevision: 'project', ProjectCompletionPolicyActive: 'project',
       CoordinationPolicyRevision: 'project', ProjectCoordinationPolicyActive: 'project',
-      MaterialAccessGrant: 'other', SomethingNew: 'other',
+      SomethingNew: 'other',
     };
     for (const [aggregateType, kind] of Object.entries(expected)) expect([aggregateType, changeKindOf(aggregateType)]).toEqual([aggregateType, kind]);
   });

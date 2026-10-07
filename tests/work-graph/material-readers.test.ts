@@ -40,11 +40,11 @@ const refKey = (ref: Snapshot['ref']) => canonicalJson(ref as unknown as JsonVal
 const encode = (snapshot: Snapshot): EncodedRecord => ({ refKey: refKey(snapshot.ref),
   schemaId: snapshot.ref.aggregateType + 'Snapshot@1', revision: snapshot.revision, json: JSON.stringify(snapshot) });
 let nextSeed = 0;
-function commitRows(rows: Snapshot[], priorRevision: number | null = null): PreparedCommit {
+function commitRows(rows: Snapshot[]): PreparedCommit {
   const seedId = ++nextSeed;
   const event = { eventId: 'fixture-event-' + seedId, eventType: 'FixtureSeeded', schemaVersion: 1, occurredAt: at };
   return { identityKey: 'fixture-seed-' + seedId, fingerprint: 'fixture-seed-' + seedId,
-    guards: rows.map(row => ({ refKey: refKey(row.ref), expectedRevision: priorRevision })),
+    guards: rows.map(row => ({ refKey: refKey(row.ref), expectedRevision: null })),
     records: rows.map(encode), events: [{ ...event, json: JSON.stringify(event) }], claims: [], indexGuards: [], indexChanges: [] };
 }
 const dirs: string[] = [];
@@ -58,8 +58,8 @@ async function backend(kind: 'memory' | 'sqlite'): Promise<Backend> {
   dirs.push(dir);
   return createSqliteRecordBackend({ path: join(dir, 'records.sqlite'), schemas }) as unknown as Backend;
 }
-async function seed(store: Backend, rows: Snapshot[], priorRevision: number | null = null): Promise<void> {
-  expect(await store.records.commit(commitRows(rows, priorRevision))).toMatchObject({ status: 'committed', replayed: false });
+async function seed(store: Backend, rows: Snapshot[]): Promise<void> {
+  expect(await store.records.commit(commitRows(rows))).toMatchObject({ status: 'committed', replayed: false });
 }
 
 it.each(['memory', 'sqlite'] as const)('%s: canonical material records use complete refs and returned values are isolated', async kind => {

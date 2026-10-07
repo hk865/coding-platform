@@ -88,6 +88,7 @@ export type CorePrincipal =
       agentPrincipal?: AgentPrincipalRefV1 }
   | { kind: 'query_run'; queryRunRef: QueryRunRef;
       initiator: Extract<ActorRef, { kind: 'human' | 'system' }> };
+// 2026-10-07 注：代码里的 MaterialReader 已没有 currentBasis，它随材料授权删除（决定 34）。下一行保留原设计。
 export type MaterialReader =
   | { kind: 'run'; requester: ArtifactOwnerRunRef; currentBasis?: MaterialBasisV1 }
   | { kind: 'host'; projectId: string; workspaceId?: string;
