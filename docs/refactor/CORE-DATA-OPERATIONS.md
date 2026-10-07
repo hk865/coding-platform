@@ -292,6 +292,7 @@ type PlatformMaterialOrigin = {
 | `requeueTask` | taskRef、当前失败/检查引用、返工理由、expected | 保留原义务及失败，按既有返工处置建立再次领取的条件 | 未核对副作用不重跑；范围/验收改变需 applyPlanChange |
 | `completeTask` | taskRef、planRef、verification round/证据引用、expected | 完成归约、受影响后继及事件 | 检查缺失/失败、来源过期、仍有未解义务 |
 | `completeGoal` | goalRef、适用完成条件版本 | 目标归约及未完成解释 | 不用 UI 百分比或一句报告替代正式条件 |
+| `setGoalControl`（2026-10-07 补注（第 7 步）：可靠性批次 A.2 5.5 新增，规格 GAP-45 要求补上这一行） | goalRef、control（pause/resume/cancel）、reason（null 或不超过 2048 UTF-8 字节）、expected：Goal pin 与 GoalPhase pin，均必填（GoalPhase 没有记录时为 0，HANDOFF 决定 29） | 记下 Goal 的期望状态（`desiredState`、`desiredStateRevision`、`desiredStateRequestedBy`）和 `GoalDesiredStateChanged` 事件；这一提交起停止新的领取、进入和检查进程。不改任何 Run，Host 扇出驱动随后给每个受影响的 Run 各提交一个控制；路由 `goals/control` 返回 Goal 和这一轮的扇出报告 | 只接受可信 Host；缺 GoalPhase pin 为 invalid（回执查找之前，不写入、不留回执）；pin 过期为 revision_conflict；取消是终态；人暂停的 Goal 只能由人恢复（LA-7）。完整的拒绝顺序见规格 §15.2 第 5.5 行 |
 
 任务领取把“任务允许开始”“Session 可用”“请求没有重复”和“创建待执行意图”放在同一正式提交中。若选择新 Session，先有稳定 Session 映射/创建结果，再领取；初次创建映射不启动模型。特殊只读调查不强行伪造一个编码 Task，可沿现有 QueryRun/探索入口并共用 Session/来源工具。
 
