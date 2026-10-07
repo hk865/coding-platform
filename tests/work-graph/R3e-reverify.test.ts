@@ -58,11 +58,11 @@ import type {
 } from '../../src/contracts/verification.js';
 import type { VerificationRoundSourcePort } from '../../src/contracts/verification-context.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
-import type { EvidencePort, EvidenceServiceDependencies, ReverifyOutcomeV1, ReverifyRoundInput } from '../../src/core/work-graph/evidence/contracts.js';
+import type { EvidencePort, ReverifyOutcomeV1, ReverifyRoundInput } from '../../src/core/work-graph/evidence/contracts.js';
 import {
   VERIFICATION_ROUND_REVERIFIED_EVENT_TYPE, encodeVerificationRoundSnapshot,
 } from '../../src/core/work-graph/evidence/evidence-record-codecs.js';
-import { createEvidenceService } from '../../src/core/work-graph/evidence/evidence-service.js';
+import { createEvidenceService, type EvidenceServiceDependencies } from '../../src/core/work-graph/evidence/evidence-service.js';
 import {
   TASK_REWORK_REFUSED_EVENT_TYPE, taskRequeueRefKey, taskReworkRefusalRefKey,
 } from '../../src/core/work-graph/tasks/claim-record-codecs.js';

@@ -1,5 +1,5 @@
 /**
- * R3e.1 EvidencePort and its exact raw dependencies.
+ * R3e.1 EvidencePort.
  *
  * The port is the ONE trusted Host-facing evidence/verification write path. It
  * owns the round lifecycle, the check begin/record cursor and the single atomic
@@ -7,39 +7,23 @@
  * `resolveVerificationInput`/`resolveCheckProducer` callback and never accepts a
  * caller-supplied digest, coverage, PASS verdict or report body.
  *
- * The dependency set is exactly what the service reads:
- *  - the ONE RecordStore transaction/lookup pair already owned by composition;
- *  - the same Material body port (store/open);
- *  - the existing ExecutionReadPort for the real subject Run;
- *  - the trusted WorkspaceHostBindings + the existing
- *    `VerificationRoundSourcePort` (VerificationWorkspaceReader);
- *  - the optional frozen trusted checks configuration (absent => fresh
- *    open/begin are explicitly unsupported while history reads keep working).
+ * The service's exact raw dependencies (`EvidenceServiceDependencies`) live in
+ * `evidence-service.ts`, beside `createEvidenceService` (task D X2, decision 40).
  */
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
-import type { WorkspaceScope } from '../../../contracts/core/identity.js';
 import type { EvidenceOutcome, EvidenceRef, EvidenceSnapshot } from '../../../contracts/evidence.js';
 import type { ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import type { RunRef, TaskTriple } from '../../../contracts/dispatch.js';
 import type { NewBasisInputRefV1 } from '../../../contracts/no-progress.js';
 import type { PlanRevisionRef } from '../../../contracts/plan.js';
-import type { TaskAutomationPolicyV1, TaskReworkRefusalSnapshotV1 } from '../../../contracts/task-requeue.js';
+import type { TaskReworkRefusalSnapshotV1 } from '../../../contracts/task-requeue.js';
 import type {
     CheckExecutionTicket,
     CheckProcessObservation,
     RoundSnapshot,
-    TrustedCheckConfiguration,
     VerificationRoundRef,
 } from '../../../contracts/verification.js';
-import type { VerificationRoundSourcePort } from '../../../contracts/verification-context.js';
-import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
-import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
-import type { WorkspaceHostBindings } from '../../workspace/access.js';
-import type { SessionMailboxPort } from '../communication/contracts.js';
-import type { MaterialPort } from '../materials/contracts.js';
-import type { ExecutionReadPort } from '../tasks/execution-read-contracts.js';
 import type { GraphWrite } from '../tasks/contracts.js';
-import type { PlanDelegatedWriteDependencies } from '../tasks/plan-write-admission.js';
 
 /** Result of finalizing one frozen round: the persisted snapshot plus the
  * Evidence actually admitted in the same commit. */
@@ -199,42 +183,3 @@ export interface EvidencePort {
         request: GraphWrite<{ roundRef: VerificationRoundRef; reviewerEvidence?: readonly EvidenceRef[] }>,
     ): Promise<WriteResult<FinalizedChecks>>;
 }
-
-/**
- * R6 cold-start scoped checks resolver. It returns the CURRENT trusted checks
- * configuration for exactly one workspace scope, or `undefined` when that scope
- * has none. A fresh round resolves and FREEZES its own configuration; an
- * already-open round/ticket keeps the exact configuration it recorded. The
- * resolver never crosses a workspace and never widens a permission: Stage 2
- * reuses the existing Host workspace authorization to build the configuration.
- */
-export type CheckConfigurationResolver = (scope: WorkspaceScope) => TrustedCheckConfiguration | undefined;
-
-export type EvidenceServiceDependencies = {
-    records: GoalRecordTransactionPort & RecordLookupPort;
-    materials: MaterialPort;
-    executions: ExecutionReadPort;
-    workspaceHost: WorkspaceHostBindings;
-    source: VerificationRoundSourcePort;
-    /** Legacy frozen trusted checks configuration. Kept byte-compatible for
-     * existing callers; a scoped `configurationFor` takes precedence for a
-     * fresh round when both are supplied. Absent keeps history reads/receipts
-     * but makes fresh open/begin explicitly unsupported. */
-    configuration?: TrustedCheckConfiguration;
-    /** R6 scoped resolver; Stage 1 declares the seam only. */
-    configurationFor?: CheckConfigurationResolver;
-    /** A.2 step 5.6: this Host instance and its lease (D-18), for VR-04. */
-    hostInstance?: { hostInstanceId: string; lease: 'owned' | 'held_by_other' };
-    /**
-     * C8 / VD-13 (A.2 step 5.9): the automatic-rework policy whose limit caps
-     * automatic successor rounds; the requeue owner's. Absent is
-     * `DEFAULT_TASK_AUTOMATION_POLICY`.
-     */
-    automationPolicy?(): TaskAutomationPolicyV1;
-    /** VR-14 step 2: the delegated-write admission an Agent reverify goes through; absent refuses an Agent. */
-    delegatedWrites?: PlanDelegatedWriteDependencies;
-    /** ND-9: a session-message new input is read through the mailbox owner; absent refuses one (`unsupported`). */
-    messages?: Pick<SessionMailboxPort, 'readMessage'>;
-    now(): string;
-    newId(): string;
-};

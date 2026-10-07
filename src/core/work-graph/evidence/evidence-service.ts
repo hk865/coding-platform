@@ -29,7 +29,7 @@
  */
 import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext, CorePrincipal, MaterialReader } from '../../../contracts/core/call-context.js';
-import type { VersionPin } from '../../../contracts/core/identity.js';
+import type { VersionPin, WorkspaceScope } from '../../../contracts/core/identity.js';
 import type { CoreError, CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import type { ArtifactRef } from '../../../contracts/artifact.js';
 import type {
@@ -44,14 +44,14 @@ import type { PlanRevisionRef, PlanRevisionSnapshot, RuntimeTask } from '../../.
 import type { RunRef, RunSnapshot, SourceRefV1, TaskTriple } from '../../../contracts/dispatch.js';
 import {
     DEFAULT_TASK_AUTOMATION_POLICY, GOAL_FAN_OUT_ACTOR, TASK_REWORK_REASON_MAX_CHARS, reworkActorClassOf,
-    type TaskReworkRefusalRef, type TaskReworkRefusalSnapshotV1,
+    type TaskAutomationPolicyV1, type TaskReworkRefusalRef, type TaskReworkRefusalSnapshotV1,
 } from '../../../contracts/task-requeue.js';
 import type {
     CheckCapabilityV1, CheckExecutionTicket, CheckProcessObservation, RoundCheckSnapshot, RoundSnapshot,
     TrustedCheckConfiguration, VerificationRoundRef,
 } from '../../../contracts/verification.js';
 import type {
-    VerificationRoundMaterialIdentity, VerificationRoundSourceResult,
+    VerificationRoundMaterialIdentity, VerificationRoundSourcePort, VerificationRoundSourceResult,
 } from '../../../contracts/verification-context.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import type {
@@ -59,6 +59,9 @@ import type {
     UniqueClaimChange,
 } from '../../record-store/ports.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
+import type { WorkspaceHostBindings } from '../../workspace/access.js';
+import type { SessionMailboxPort } from '../communication/contracts.js';
+import type { MaterialPort } from '../materials/contracts.js';
 import { architectureBaselineDigest, readArchitectureBaselineSnapshot } from '../architecture/catalog-record-codecs.js';
 import {
     readBatch, readGoal, readGoalRunsForCount, readPinnedCompletionPolicy, readPlan, readPointerIntents, readRevisionNumber,
@@ -76,7 +79,9 @@ import {
 import {
     bindTrustedContext, isRecord, isolateWrite, loadReplayEvent, mapStoreFailure, mergeGuards, nonEmpty, sameRef,
 } from '../tasks/execution-entry-service.js';
-import { authorizeDelegatedWrite, identifyDelegatedWriter, type AgentPlanWriter } from '../tasks/plan-write-admission.js';
+import {
+    authorizeDelegatedWrite, identifyDelegatedWriter, type AgentPlanWriter, type PlanDelegatedWriteDependencies,
+} from '../tasks/plan-write-admission.js';
 import { REWORK_NOTE_CONTENT_TYPE, newBasisInputsProblem } from '../tasks/requeue-service.js';
 import { newBasisInputRefsProblem } from '../persistence/rework-codecs.js';
 import { reverifyBasis } from '../state/no-progress.js';
@@ -108,9 +113,10 @@ import {
     type VerificationRoundEvent,
 } from './evidence-record-codecs.js';
 import type {
-    AbandonCheckInput, EvidencePort, EvidenceServiceDependencies, FinalizedChecks, InterruptCheckInput,
+    AbandonCheckInput, EvidencePort, FinalizedChecks, InterruptCheckInput,
     OriginalVerificationQuery, ReverifyOutcomeV1, ReverifyRoundInput, RoundChainHeadQuery,
 } from './contracts.js';
+import type { ExecutionReadPort } from '../tasks/execution-read-contracts.js';
 import type { GraphWrite } from '../tasks/contracts.js';
 
 type Records = GoalRecordTransactionPort & RecordLookupPort;
@@ -666,6 +672,57 @@ Promise<{ ok: true; current: TaskReworkRefusalSnapshotV1 | null; key: string } |
 // -------------------------------------------------------------------------- //
 // The factory                                                                 //
 // -------------------------------------------------------------------------- //
+
+/**
+ * R6 cold-start scoped checks resolver. It returns the CURRENT trusted checks
+ * configuration for exactly one workspace scope, or `undefined` when that scope
+ * has none. A fresh round resolves and FREEZES its own configuration; an
+ * already-open round/ticket keeps the exact configuration it recorded. The
+ * resolver never crosses a workspace and never widens a permission: Stage 2
+ * reuses the existing Host workspace authorization to build the configuration.
+ */
+export type CheckConfigurationResolver = (scope: WorkspaceScope) => TrustedCheckConfiguration | undefined;
+
+/**
+ * R3e.1 the service's exact raw dependencies, kept beside the factory that
+ * reads them (task D X2, decision 40). The dependency set is exactly what the
+ * service reads:
+ *  - the ONE RecordStore transaction/lookup pair already owned by composition;
+ *  - the same Material body port (store/open);
+ *  - the existing ExecutionReadPort for the real subject Run;
+ *  - the trusted WorkspaceHostBindings + the existing
+ *    `VerificationRoundSourcePort` (VerificationWorkspaceReader);
+ *  - the optional frozen trusted checks configuration (absent => fresh
+ *    open/begin are explicitly unsupported while history reads keep working).
+ */
+export type EvidenceServiceDependencies = {
+    records: GoalRecordTransactionPort & RecordLookupPort;
+    materials: MaterialPort;
+    executions: ExecutionReadPort;
+    workspaceHost: WorkspaceHostBindings;
+    source: VerificationRoundSourcePort;
+    /** Legacy frozen trusted checks configuration. Kept byte-compatible for
+     * existing callers; a scoped `configurationFor` takes precedence for a
+     * fresh round when both are supplied. Absent keeps history reads/receipts
+     * but makes fresh open/begin explicitly unsupported. */
+    configuration?: TrustedCheckConfiguration;
+    /** R6 scoped resolver; Stage 1 declares the seam only. */
+    configurationFor?: CheckConfigurationResolver;
+    /** A.2 step 5.6: this Host instance and its lease (D-18), for VR-04. */
+    hostInstance?: { hostInstanceId: string; lease: 'owned' | 'held_by_other' };
+    /**
+     * C8 / VD-13 (A.2 step 5.9): the automatic-rework policy whose limit caps
+     * automatic successor rounds; the requeue owner's. Absent is
+     * `DEFAULT_TASK_AUTOMATION_POLICY`.
+     */
+    automationPolicy?(): TaskAutomationPolicyV1;
+    /** VR-14 step 2: the delegated-write admission an Agent reverify goes through; absent refuses an Agent. */
+    delegatedWrites?: PlanDelegatedWriteDependencies;
+    /** ND-9: a session-message new input is read through the mailbox owner; absent refuses one (`unsupported`). */
+    messages?: Pick<SessionMailboxPort, 'readMessage'>;
+    now(): string;
+    newId(): string;
+};
 
 export function createEvidenceService(deps: EvidenceServiceDependencies): EvidencePort {
     const records = deps.records;
