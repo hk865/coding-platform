@@ -17,14 +17,12 @@
  *    `reverify`; the next selection performs `reverify_round` as the platform
  *    automation (`auto-reverify:check_incomplete#1`), the successor round runs on
  *    the same Run and passes, and the Goal completes with no further model call.
- * 4. AV-4 kept as written (STEP5-FLIPS §14): an operator's pause superseded by
- *    the Run's natural completion (CTL-06) fences rework only; the verdict is
- *    `stopped/task_paused` while a new `select_work` still opens the round,
- *    which passes and completes the Task, and no TaskRequeue is written.
+ * 4. (Moved in A.2 step 6 to tests/scenarios/C8-human-stop-respected.test.ts:
+ *    AV-4 kept as written, STEP5-FLIPS §14.)
  *
  * These tests read the verdict, so they stop the Workflow before any selection
  * that follows a failure: since step 5.8 part 2 that selection acts on the
- * verdict (the automatic requeue is tests/app/A2-automation-rework.test.ts).
+ * verdict (the automatic requeue is tests/scenarios/A1-rework-same-session.test.ts).
  * Scripted model replies only; no real model is called.
  */
 import { afterEach, expect, it } from 'vitest';
@@ -44,8 +42,7 @@ import {
   AG2B_GOAL_REF, AG2B_SCOPE, cleanupAG2b, graphWrite, plain, seedAG2bWorkGraph, startAG2bHost, type AG2bHost,
 } from '../helpers/AG2b-collaboration-fixture.js';
 import {
-  advanceUntil, cleanupRestart, driveWorkflow, post, publicDirectory, readControl, readExecution, readGoal, selectWork,
-  submitControl, TASK, workRow,
+  advanceUntil, cleanupRestart, driveWorkflow, post, publicDirectory, readExecution, readGoal, selectWork, TASK, workRow,
 } from '../helpers/A2-restart-fixture.js';
 
 afterEach(async () => {
@@ -248,58 +245,6 @@ it('§15.2 5.9 (AV-7d, C5): check_incomplete reads reverify; the Workflow opens 
     expect(await goalDisplay(host)).toMatchObject({ phase: 'COMPLETED' });
     // A successor round builds no Run: the one Run's two model calls.
     expect(host.scripted.calls()).toBe(2);
-  } finally {
-    await host.host.close();
-  }
-}, 120_000);
-
-it('AV-4 (STEP5-FLIPS §14): a pause superseded by the natural completion fences rework only; the round opens, passes and completes the Task', async () => {
-  let host: AG2bHost | undefined;
-  let pauseRef: Awaited<ReturnType<typeof submitControl>>['intent']['ref'] | undefined;
-  host = await startAG2bHost(await publicDirectory(), {
-    // The check passes without the result file, so the completed Run's round is PASS.
-    checkCommand: 'node -e "console.log(\'A2_AV4_CHECK_OK\')"',
-    replies: [{ kind: 'text', text: 'A2 AV-4: the work is done before any safe point' }],
-    beforeReply: async (_request, index) => {
-      if (index !== 0 || host === undefined) return;
-      const runRef = (await workRow(host)).execution;
-      if (runRef === null) throw new Error('the work Task must have a Run while its Turn calls the model');
-      // The operator pauses the running Turn; it completes before any safe point consumes the pause.
-      pauseRef = (await submitControl(host, runRef, 'pause', 'operator pause before the Run finishes', 'a2-av4-pause')).intent.ref;
-    },
-  });
-  try {
-    await seedAG2bWorkGraph(host);
-    // The open that `start` returned is not performed: the selection must find the round itself.
-    await advanceUntil(host, selectWork('a2-av4'), 'open_checks');
-    if (pauseRef === undefined) throw new Error('the pause must be submitted during the Turn');
-    const row = await workRow(host);
-    const runRef = row.execution;
-    if (runRef === null) throw new Error('the work Task must have a Run');
-    // CTL-06: the natural terminal superseded the queued pause; the pointer stays on the Run as history.
-    expect((await readExecution(host, runRef)).run).toMatchObject({ status: 'ended', outcome: 'completed',
-      controlState: { intentRef: pauseRef, desiredState: 'paused' } });
-    expect(await readControl(host, pauseRef)).toMatchObject({ status: 'superseded',
-      observation: { kind: 'terminal_without_cancel' } });
-    // AV-4 in literal row order: the operator's pause pointer fences the Task (FC-12 has nothing to rework).
-    expect(row).toMatchObject({ effectivePhase: 'verifying', phaseCause: { code: 'awaiting_verification' },
-      failure: { failureClass: null, notReworkableCause: null, stop: { intentRef: pauseRef, kind: 'pause', requester: 'human' },
-        automation: { verdict: { kind: 'stopped', reason: 'task_paused', detail: { fence: 'human_pause', pausedBy: 'human' } } } } });
-    // `stopped` blocks rework only: a new 推进 selects the fenced Task's round (step 5.8 part 2 reads the
-    // verdict first), the round opens, the check passes and the Task completes.
-    const steps = await driveWorkflow(host, selectWork('a2-av4-select'));
-    expect(steps[0]).toMatchObject({ state: 'advance', receipt: null, next: { kind: 'perform', operation: { kind: 'open_checks' } } });
-    expect(steps.slice(1).map(step => step.receipt?.kind)).toEqual(['open_checks', 'run_check', 'finalize_checks', 'complete_task', undefined]);
-    expect(steps.find(step => step.receipt?.kind === 'finalize_checks'))
-      .toMatchObject({ receipt: { result: { status: 'committed', value: { outcome: 'PASS' } } } });
-    expect(steps.at(-1)).toMatchObject({ state: 'completed' });
-    const done = await workRow(host);
-    expect(done).toMatchObject({ effectivePhase: 'satisfied', execution: runRef });
-    expect(done.failure).toBeUndefined();
-    // No TaskRequeue (nor any refusal) was written for the fenced Task.
-    expect(done.rework).toBeUndefined();
-    expect(done.requeueRef).toBeUndefined();
-    expect(host.scripted.calls()).toBe(1);
   } finally {
     await host.host.close();
   }

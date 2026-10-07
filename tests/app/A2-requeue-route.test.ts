@@ -50,7 +50,7 @@ async function post<T>(host: AG2bHost, suffix: string, body: unknown): Promise<T
 /**
  * Drive `workflow/advance` until the Workflow settles. Since A.2 step 5.8 the Workflow requeues a failed
  * Task automatically (C8); this test is the operator's `tasks/requeue`, so the Host stops before that
- * automatic `requeue_task` (tests/app/A2-automation-rework.test.ts drives it).
+ * automatic `requeue_task` (tests/scenarios/A1-rework-same-session.test.ts drives it).
  */
 async function driveWorkflow(host: AG2bHost, flowId: string): Promise<Extract<WorkflowAdvanceResult, { status: 'ready' }>['value']> {
   let input: WorkflowAdvanceInput = { schemaVersion: 1, goalRef: AG2B_GOAL_REF, flowId, sessionHint: null, kind: 'select_work',

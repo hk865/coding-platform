@@ -212,7 +212,7 @@ const select = (flowId: string): WorkflowAdvanceInput =>
 /**
  * The Host drives every returned `next` until the Workflow settles. Since A.2 step 5.8 the Workflow
  * requeues a failed Task automatically (C8); these tests are the operator's requeue, so the Host
- * stops before that automatic `requeue_task` (tests/app/A2-automation-rework.test.ts drives it).
+ * stops before that automatic `requeue_task` (tests/scenarios/A1-rework-same-session.test.ts drives it).
  */
 async function drive(platform: Platform, first: WorkflowAdvanceInput): Promise<WorkflowStepReceipt[]> {
   const receipts: WorkflowStepReceipt[] = [];
