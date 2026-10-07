@@ -266,8 +266,17 @@ export function runUnresolvedBlocker(run: RunSnapshot): string | null {
   return null;
 }
 
-/** The terminal a Runtime event records (moved from `execution-entry-service.ts:1653-1696` `terminalFact`). */
-export type RunTerminalFact = { outcome: RunOutcome; exitCode: number | null };
+/** §6.4 refusal texts that several rows answer with, one copy each. */
+const INPUTS_UNCONFIRMED = 'the Turn input acceptance is not confirmed yet';
+const STALE_RESULT_SEQUENCE = 'the result event sequence is not newer than the applied Run fact';
+const KNOWN_TERMINAL_FINAL = 'a known terminal is never rewritten';
+const ENTERED_CONTROL_ONLY = 'from Entering on a control applies only through the Kernel, RUN-23 or reconcile (D-7)';
+
+/**
+ * The terminal a Runtime event records (moved from `execution-entry-service.ts`
+ * `terminalFact`): always a known outcome, never Kernel `failed` (see below).
+ */
+export type RunTerminalFact = { outcome: Exclude<RunOutcome, 'outcome_unknown' | 'failed'>; exitCode: number | null };
 
 /**
  * The outcome of a terminal Runtime event, with today's codes: an event of
@@ -285,7 +294,7 @@ export function terminalOutcomeOf(event: RuntimeEventV1, runRef: RunRef, lastEve
     return invalid('the result event sequence must be a safe non-negative integer');
   }
   if (event.sequence <= lastEventSeq) {
-    return { status: 'rejected', code: 'revision_conflict', reason: 'the result event sequence is not newer than the applied Run fact' };
+    return { status: 'rejected', code: 'revision_conflict', reason: STALE_RESULT_SEQUENCE };
   }
   const payload: unknown = event.payload;
   if (!isRecord(payload)) return invalid('the result event payload must be an object');
@@ -751,15 +760,20 @@ function endedRunRecord(
   event: Extract<RunEvent, { kind: 'terminal_observed' }>,
 ): RunSnapshot {
   const nextAuthorization: ExecutionAuthorizationV2 = { ...auth, revision: auth.revision + 1, phase: 'settled' };
-  const payload = event.event.payload;
-  // `terminalOutcomeOf` accepted a terminal event, whose payload is never `started`.
-  if (payload.kind === 'started') throw new Error('a terminal Runtime event carries a terminal payload');
+  const payload = terminalPayloadOfEvent(event.event);
   return { ...withHistoryRecord(run, history), status: 'ended', outcome: terminal.outcome,
     exitCode: terminal.exitCode, endedAt: event.endedAt, executionAuthorization: nextAuthorization,
     lastEventSeq: event.event.sequence, lastRuntimeEventId: event.event.eventId,
     lastFactEventId: event.factEventId,
     ...(event.continuation === undefined ? {} : { continuation: structuredClone(event.continuation) }),
     terminalPayload: terminalPayloadOf(payload) };
+}
+
+/** The payload of a terminal event `terminalOutcomeOf` accepted, which is never `started` (RUN-07/17/18/21). */
+function terminalPayloadOfEvent(event: RuntimeEventV1): RunTerminalPayload {
+  const payload = event.payload;
+  if (payload.kind === 'started') throw new Error('a terminal Runtime event carries a terminal payload');
+  return payload;
 }
 
 /** RUN-10..15 (`control-service.ts:412-413`): only the revision and the pointer or steer list move. */
@@ -869,9 +883,47 @@ function synthesizedTerminal(run: RunSnapshot, payload: RunTerminalPayload, even
     runRef: run.ref, sequence: run.lastEventSeq + 1, occurredAt, payload };
 }
 
+/**
+ * RUN-19/24 (`crashed`) and RUN-23 (`cancelled`): the end of a Turn with no
+ * Kernel terminal, the synthesized terminal of `payload` (its kind is the
+ * outcome) and the `interrupted_clean` reconciliation that names it.
+ */
+function interruptedCleanEnd(
+  run: RunSnapshot, auth: ExecutionAuthorizationV2, event: Extract<RunEvent, { kind: 'stop_paused' | 'reconcile_interrupted_clean' }>,
+  ctx: RunGuardContext, entered: EnteredFacts, payload: Extract<RunTerminalPayload, { kind: 'crashed' | 'cancelled' }>,
+  pausedIntentRef: ControlIntentRef | null,
+): RunSnapshot {
+  const terminal = synthesizedTerminal(run, payload, event.factEventId, event.recordedAt);
+  return reconciledEndRecord(run, auth, {
+    phase: 'settled', outcome: payload.kind, exitCode: null, endedAt: event.recordedAt, ...entered,
+    terminal: { event: terminal, factEventId: event.factEventId }, terminalPayload: payload,
+    reconciliation: { status: 'done', observation: { kind: 'interrupted_clean', event: terminal,
+      lastPosition: event.turn.lastPosition, kernelPaused: ctx.kernelPaused, pausedIntentRef },
+    basis: { ...event.basis }, recordedAt: event.recordedAt },
+  });
+}
+
 /** Contract (a) `runtime_terminal`: the Kernel terminal event and its canonical digest. */
 function runtimeTerminalObservation(event: RuntimeEventV1): RunReconciliationV1['observation'] {
   return { kind: 'runtime_terminal', event: structuredClone(event), digest: sha256Hex(canonicalJson(event as unknown as JsonValue)) };
+}
+
+/**
+ * RUN-17/18 and RUN-21: the end a booked Kernel terminal writes (as RUN-07
+ * writes it), with the `runtime_terminal` reconciliation.
+ */
+function runtimeTerminalEnd(
+  run: RunSnapshot, auth: ExecutionAuthorizationV2, event: Extract<RunEvent, { kind: 'reconcile_terminal' | 'late_evidence' }>,
+  terminal: RunTerminalFact, history: RunExecutionHistoryV1, ended: { endedAt: string | null; startedAt: string | null },
+): RunSnapshot {
+  return reconciledEndRecord(run, auth, {
+    phase: 'settled', outcome: terminal.outcome, exitCode: terminal.exitCode, ...ended, history,
+    terminal: { event: event.event, factEventId: event.factEventId },
+    ...(event.continuation === undefined ? {} : { continuation: event.continuation }),
+    terminalPayload: terminalPayloadOfEvent(event.event),
+    reconciliation: { status: 'done', observation: runtimeTerminalObservation(event.event), basis: { ...event.basis },
+      recordedAt: event.recordedAt },
+  });
 }
 
 // -------------------------------------------------------------------------- //
@@ -944,6 +996,22 @@ function persistedClaimGuard(ctx: RunGuardContext, claim: TaskClaim, kind: RunEv
 export function permitClaimGuard(persisted: TaskClaim, permit: RunEntryPermit): Rejected | null {
   return sameRef(persisted, permit.claim) ? null
     : reject('guard_failed', 'invalid', 'the entry permit claim disagrees with the persisted claim');
+}
+
+/** RUN-04/05: `permitClaimGuard` on the persisted Outbox claim the event was sent with. */
+function persistedPermitGuard(ctx: RunGuardContext, kind: RunEvent['kind'], permit: RunEntryPermit): Rejected | null {
+  return ctx.persistedClaim === null ? noPersistedClaim(kind) : permitClaimGuard(ctx.persistedClaim, permit);
+}
+
+/**
+ * The persisted claim (with the row's own mismatch text), then the Run's V2
+ * binding, in that order, as RUN-07/08 and RUN-16..24 ask them after their own
+ * node and proof checks.
+ */
+function claimedV2Binding(
+  state: RunState, run: RunSnapshot, ctx: RunGuardContext, claim: TaskClaim, kind: RunEvent['kind'], detail: string,
+): ExecutionAuthorizationV2 | Rejected {
+  return persistedClaimGuard(ctx, claim, kind, detail) ?? v2Binding(state, run);
 }
 
 /**
@@ -1090,17 +1158,6 @@ function continuationProblem(continuation: unknown, claim: TaskClaim): string | 
     return 'the continuation messageRef is incomplete';
   }
   return null;
-}
-
-/** RUN-07 releases: each only when the Run still holds it (§6.3 表外说明). */
-function releaseEffects(claim: TaskClaim, ctx: RunGuardContext, cursor: string): RunEffect[] {
-  const effects: RunEffect[] = [];
-  if (ctx.session.owned) {
-    effects.push({ kind: 'release_session', holder: claim.runRef, generation: claim.generation,
-      historyCursor: { kind: 'advance', cursor }, kernelTurnOpen: false });
-  }
-  if (ctx.lease === 'owned') effects.push({ kind: 'release_lease' });
-  return effects;
 }
 
 // -------------------------------------------------------------------------- //
@@ -1361,7 +1418,7 @@ function onEntryBegun(
   if (fence !== null) return fence;
   const starting = startingClassOf(run);
   if (starting === 'not_starting') return reject('illegal', 'busy', 'the Run is not in a beginable starting state');
-  const persisted = ctx.persistedClaim === null ? noPersistedClaim(event.kind) : permitClaimGuard(ctx.persistedClaim, event.permit);
+  const persisted = persistedPermitGuard(ctx, event.kind, event.permit);
   if (persisted !== null) return persisted;
   const auth = v2Binding(state, run);
   if (isRejected(auth)) return auth;
@@ -1401,7 +1458,7 @@ function onEntryBegun(
 function onEnteredObserved(
   state: RunState, run: RunSnapshot, event: Extract<RunEvent, { kind: 'entered_observed' }>, ctx: RunGuardContext,
 ): RunTransition {
-  const persisted = ctx.persistedClaim === null ? noPersistedClaim(event.kind) : permitClaimGuard(ctx.persistedClaim, event.permit);
+  const persisted = persistedPermitGuard(ctx, event.kind, event.permit);
   if (persisted !== null) return persisted;
   const auth = v2Binding(state, run);
   if (isRejected(auth)) return auth;
@@ -1460,18 +1517,14 @@ function onTerminalObserved(
   state: RunState, node: Exclude<RunNode, 'Absent'>, run: RunSnapshot,
   event: Extract<RunEvent, { kind: 'terminal_observed' }>, ctx: RunGuardContext,
 ): RunTransition {
-  const persisted = persistedClaimGuard(ctx, event.claim, event.kind, 'the result claim disagrees with the persisted claim');
-  if (persisted !== null) return persisted;
-  const auth = v2Binding(state, run);
+  const auth = claimedV2Binding(state, run, ctx, event.claim, event.kind, 'the result claim disagrees with the persisted claim');
   if (isRejected(auth)) return auth;
   if (node === 'EndedUnknown') {
     // §6.4: re-observing a terminal is not new evidence; only late_evidence/unknown_attested leave it.
     // An unconfirmed input acceptance and an old sequence keep their own §6.4 answers first. No writer
     // produces this node before RUN-08 (step 5.6).
-    if (ctx.inputsConfirmed !== true) return reject('guard_failed', 'unavailable', 'the Turn input acceptance is not confirmed yet');
-    if (event.event.sequence <= state.lastEventSeq) {
-      return reject('stale', 'revision_conflict', 'the result event sequence is not newer than the applied Run fact');
-    }
+    if (ctx.inputsConfirmed !== true) return reject('guard_failed', 'unavailable', INPUTS_UNCONFIRMED);
+    if (event.event.sequence <= state.lastEventSeq) return reject('stale', 'revision_conflict', STALE_RESULT_SEQUENCE);
     return reject('guard_failed', 'incomplete', 'the Run outcome is unknown; only new Kernel evidence or an attestation resolves it');
   }
   // Today's order (`execution-entry-service.ts:1363-1364`), for every other Run including one outside the
@@ -1483,27 +1536,40 @@ function onTerminalObserved(
   }
   if (isRunFinished(run)) return reject('duplicate', 'busy', 'the Run already has a terminal result');
   if (ctx.exitProof === null) return reject('guard_failed', 'incomplete', 'the Kernel call has not exited cleanly; the result is not booked yet');
-  if (ctx.inputsConfirmed !== true) return reject('guard_failed', 'unavailable', 'the Turn input acceptance is not confirmed yet');
+  if (ctx.inputsConfirmed !== true) return reject('guard_failed', 'unavailable', INPUTS_UNCONFIRMED);
   const claim = event.claim;
   if (auth.consumerId !== event.entry.consumerId || auth.generation !== event.entry.entryGeneration) {
     return reject('guard_failed', 'forbidden', 'the result entry projection does not match the current V2 entry binding');
   }
   // RUN-08 (RD-2): a tool call without a determined result makes the end unknown.
   if (event.unresolvedToolCallIds.length > 0) return onUnresolvedTerminal(run, auth, event, ctx);
-  const { completedHistoryBoundary: boundary } = event;
-  const boundaryProblem = terminalBoundaryProblem(auth, event.kernelSource, boundary, event.history);
-  if (boundaryProblem !== null) return boundaryProblem;
-  const terminal = terminalOutcomeOf(event.event, claim.runRef, state.lastEventSeq);
-  if ('status' in terminal) return rejected(terminal);
-  const yieldProblem = continuationGuard(terminal.outcome, event.continuation, claim);
-  if (yieldProblem !== null) return yieldProblem;
+  const terminal = bookedTerminal(state, auth, claim, event);
+  if (isRejected(terminal)) return terminal;
   const history = locatorAfter(run, claim.sessionRef, ctx, event.history as RunObservedHistory);
   if (isRejected(history)) return history;
   return accept(runStateOf(endedRunRecord(run, auth, history, terminal, event)), [
     { kind: 'attempt', event: 'attempt_ended', outcome: terminal.outcome },
     { kind: 'outbox', change: 'settled_entered' },
-    ...releaseEffects(claim, ctx, (boundary as RunHistoryBoundary).cursor),
+    ...endReleaseEffects(claim, ctx, { kernelTurnOpen: false,
+      historyCursor: { kind: 'advance', cursor: (event.completedHistoryBoundary as RunHistoryBoundary).cursor } }),
   ]);
+}
+
+/**
+ * The Kernel terminal a write books (RUN-07, and RUN-17/18/21 through the same
+ * `recordRunResult`), in RUN-07's order: the boundary, the outcome, then the
+ * continuation a yielded outcome carries. Each row asks its own checks after it.
+ */
+function bookedTerminal(
+  state: RunState, auth: ExecutionAuthorizationV2, claim: TaskClaim,
+  evidence: Pick<Extract<RunEvent, { kind: 'terminal_observed' }>,
+    'event' | 'kernelSource' | 'completedHistoryBoundary' | 'history' | 'continuation'>,
+): RunTerminalFact | Rejected {
+  const boundaryProblem = terminalBoundaryProblem(auth, evidence.kernelSource, evidence.completedHistoryBoundary, evidence.history);
+  if (boundaryProblem !== null) return boundaryProblem;
+  const terminal = terminalOutcomeOf(evidence.event, claim.runRef, state.lastEventSeq);
+  if ('status' in terminal) return rejected(terminal);
+  return continuationGuard(terminal.outcome, evidence.continuation, claim) ?? terminal;
 }
 
 /**
@@ -1519,22 +1585,34 @@ function terminalBoundaryProblem(
   if (kernelSource === null || boundary === null || observed === null) {
     return reject('guard_failed', 'incomplete', 'a terminal result requires the complete observed Turn boundary');
   }
-  if (!isKernelSource(kernelSource)) return reject('guard_failed', 'invalid', 'the terminal Kernel source is incomplete');
-  if (auth.kernel === null || !sameKernel(auth.kernel, kernelSource)) {
-    return reject('guard_failed', 'forbidden', 'the terminal Kernel source disagrees with the entered binding');
-  }
+  const source = terminalSourceProblem(auth, kernelSource);
+  if (source !== null) return source;
   if (!isRecord(boundary.source) || !sameKernel(boundary.source, kernelSource)
     || boundary.source.position !== kernelSource.position || !nonEmpty(boundary.cursor)) {
     return reject('guard_failed', 'invalid', 'the completed history boundary disagrees with the terminal source');
   }
-  if (!isRecord(observed.kernel) || !sameKernel(observed.kernel, kernelSource)) {
-    return reject('guard_failed', 'forbidden', 'the observed history Kernel identity disagrees with the terminal source');
-  }
+  const observedKernel = observedKernelProblem(observed, kernelSource);
+  if (observedKernel !== null) return observedKernel;
   if (observed.endPosition !== kernelSource.position || observed.observedThroughPosition < kernelSource.position
     || observed.startPosition > kernelSource.position) {
     return reject('guard_failed', 'incomplete', 'the observed history does not carry the complete Turn end boundary');
   }
   return null;
+}
+
+/** The terminal's Kernel source is complete and the entered binding's (RUN-07, RUN-08 and the booked terminals). */
+function terminalSourceProblem(auth: ExecutionAuthorizationV2, kernelSource: RunKernelSource): Rejected | null {
+  if (!isKernelSource(kernelSource)) return reject('guard_failed', 'invalid', 'the terminal Kernel source is incomplete');
+  if (auth.kernel === null || !sameKernel(auth.kernel, kernelSource)) {
+    return reject('guard_failed', 'forbidden', 'the terminal Kernel source disagrees with the entered binding');
+  }
+  return null;
+}
+
+/** The observed history window is the terminal's Kernel identity (RUN-07, RUN-08 and the booked terminals). */
+function observedKernelProblem(observed: RunObservedHistory, kernelSource: RunKernelSource): Rejected | null {
+  return isRecord(observed.kernel) && sameKernel(observed.kernel, kernelSource) ? null
+    : reject('guard_failed', 'forbidden', 'the observed history Kernel identity disagrees with the terminal source');
 }
 
 /** A yielded terminal carries exactly the continuation of its wait; no other terminal carries one. */
@@ -1565,13 +1643,8 @@ function onUnresolvedTerminal(
   if (kernelSource === null || observed === null) {
     return reject('guard_failed', 'incomplete', 'an unresolved terminal requires the observed Turn window');
   }
-  if (!isKernelSource(kernelSource)) return reject('guard_failed', 'invalid', 'the terminal Kernel source is incomplete');
-  if (auth.kernel === null || !sameKernel(auth.kernel, kernelSource)) {
-    return reject('guard_failed', 'forbidden', 'the terminal Kernel source disagrees with the entered binding');
-  }
-  if (!isRecord(observed.kernel) || !sameKernel(observed.kernel, kernelSource)) {
-    return reject('guard_failed', 'forbidden', 'the observed history Kernel identity disagrees with the terminal source');
-  }
+  const window = terminalSourceProblem(auth, kernelSource) ?? observedKernelProblem(observed, kernelSource);
+  if (window !== null) return window;
   if (observed.endPosition !== null) return reject('guard_failed', 'invalid', 'an unresolved terminal leaves the history end open');
   const history = locatorAfter(run, event.claim.sessionRef, ctx, observed);
   if (isRejected(history)) return history;
@@ -1658,14 +1731,11 @@ function onNotEnteredControl(
   const cls = controlClassOf(node);
   switch (cls) {
     case 'not_entered': break;
-    case 'entered':
-      return reject('illegal', 'invalid', 'from Entering on a control applies only through the Kernel, RUN-23 or reconcile (D-7)');
+    case 'entered': return reject('illegal', 'invalid', ENTERED_CONTROL_ONLY);
     case 'yielded':
       return reject('illegal', 'invalid', 'a yielded wait keeps its control queued as the continuation fence');
     case 'ended':
-      return node === 'EndedUnknown'
-        ? reject('illegal', 'invalid', 'from Entering on a control applies only through the Kernel, RUN-23 or reconcile (D-7)')
-        : endedRunControlRefusal(run);
+      return node === 'EndedUnknown' ? reject('illegal', 'invalid', ENTERED_CONTROL_ONLY) : endedRunControlRefusal(run);
     default: return unreachable(cls, 'control class');
   }
   if (event.source === 'R') return onNotEnteredReconcile(runStateOf(run), run, event, ctx);
@@ -1844,15 +1914,20 @@ function queuedIntentsReconciled(run: RunSnapshot, ctx: RunGuardContext): RunEff
   return effects;
 }
 
+/** The Turn start and history window an end records (`null` each: the end records none). */
+type EnteredFacts = { startedAt: string | null; history: RunExecutionHistoryV1 | null };
+
 /**
  * From `Entering` an end records the Kernel Turn start and its history window
  * in the same commit (RUN-17/19/20/23/24; ATT-31/32): the Turn the reconcile
- * read must be the begin's Kernel identity.
+ * read must be the begin's Kernel identity. An end not from `Entering`
+ * (`fromEntering` false) records neither.
  */
 function enteredFactsOf(
-  run: RunSnapshot, auth: ExecutionAuthorizationV2, claim: TaskClaim, ctx: RunGuardContext,
+  run: RunSnapshot, auth: ExecutionAuthorizationV2, claim: TaskClaim, ctx: RunGuardContext, fromEntering: boolean,
   entered: { enteredAt: string | null; history: RunObservedHistory } | null,
-): { startedAt: string; history: RunExecutionHistoryV1 } | Rejected {
+): EnteredFacts | Rejected {
+  if (!fromEntering) return { startedAt: null, history: null };
   if (entered === null || entered.enteredAt === null) {
     return reject('illegal', 'invalid', 'an end reconciled from Entering records the Kernel Turn start');
   }
@@ -1874,6 +1949,11 @@ function basisGuard(basis: RunReconciliationBasisV1, ctx: RunGuardContext): Reje
     return reject('guard_failed', 'incomplete', 'the reconcile basis is not proven; the Run stays as recorded');
   }
   return hostLeaseGuard(isTakeover(basis), ctx);
+}
+
+/** RUN-17..20, RUN-24: only the start-up reconcile (a restart takeover, the row's text) with its proven basis. */
+function takeoverProof(basis: RunReconciliationBasisV1, ctx: RunGuardContext, notTakeover: string): Rejected | null {
+  return isTakeover(basis) ? basisGuard(basis, ctx) : reject('illegal', 'invalid', notTakeover);
 }
 
 /**
@@ -1920,25 +2000,14 @@ function onStopPaused(
   }
   if (event.basis.kind !== ctx.exitProof) return reject('guard_failed', 'incomplete', 'the stop basis is not the proven exit');
   if (ctx.kernelProbe !== 'ready') return reject('guard_failed', 'unavailable', 'the Kernel Turn of the stop is not readable');
-  if (ctx.inputsConfirmed !== true) return reject('guard_failed', 'unavailable', 'the Turn input acceptance is not confirmed yet');
+  if (ctx.inputsConfirmed !== true) return reject('guard_failed', 'unavailable', INPUTS_UNCONFIRMED);
   const claim = event.claim;
-  const persisted = persistedClaimGuard(ctx, claim, event.kind, 'the stop claim disagrees with the persisted claim');
-  if (persisted !== null) return persisted;
-  const auth = v2Binding(state, run);
+  const auth = claimedV2Binding(state, run, ctx, claim, event.kind, 'the stop claim disagrees with the persisted claim');
   if (isRejected(auth)) return auth;
-  const entered = node === 'Entering' ? enteredFactsOf(run, auth, claim, ctx, event.turn.entered) : null;
-  if (entered !== null && isRejected(entered)) return entered;
-  const payload: RunTerminalPayload = { kind: 'cancelled',
-    reason: ctx.kernelPaused ? 'cancelled_while_paused' : 'cancelled_at_reconcile' };
-  const terminal = synthesizedTerminal(run, payload, event.factEventId, event.recordedAt);
-  const record = reconciledEndRecord(run, auth, {
-    phase: 'settled', outcome: 'cancelled', exitCode: null, endedAt: event.recordedAt,
-    startedAt: entered === null ? null : entered.startedAt, history: entered === null ? null : entered.history,
-    terminal: { event: terminal, factEventId: event.factEventId }, terminalPayload: payload,
-    reconciliation: { status: 'done', observation: { kind: 'interrupted_clean', event: terminal,
-      lastPosition: event.turn.lastPosition, kernelPaused: ctx.kernelPaused, pausedIntentRef: null },
-    basis: { ...event.basis }, recordedAt: event.recordedAt },
-  });
+  const entered = enteredFactsOf(run, auth, claim, ctx, node === 'Entering', event.turn.entered);
+  if (isRejected(entered)) return entered;
+  const record = interruptedCleanEnd(run, auth, event, ctx, entered,
+    { kind: 'cancelled', reason: ctx.kernelPaused ? 'cancelled_while_paused' : 'cancelled_at_reconcile' }, null);
   const restart = isTakeover(event.basis);
   const steers: RunEffect[] = ctx.queuedSteers.map((steer): RunEffect => restart && event.turn.acceptedSteers.some(accepted => sameRef(accepted, steer))
     ? { kind: 'intent', event: 'control_reconciled', intentRef: steer }
@@ -1973,7 +2042,7 @@ function onReconcile(
     case 'unknown':
       return reject('illegal', 'invalid', 'an unknown outcome is resolved only by late_evidence or unknown_attested');
     case 'known_terminal':
-      return reject('illegal', 'busy', 'a known terminal is never rewritten');
+      return reject('illegal', 'busy', KNOWN_TERMINAL_FINAL);
     default: return unreachable(cls, 'reconcile class');
   }
   const probe = ctx.kernelProbe;
@@ -2020,9 +2089,7 @@ function onReconcileNotEntered(
 ): RunTransition {
   const proof = basisGuard(event.basis, ctx);
   if (proof !== null) return proof;
-  const persisted = persistedClaimGuard(ctx, event.claim, event.kind, 'the reconcile claim disagrees with the persisted claim');
-  if (persisted !== null) return persisted;
-  const auth = v2Binding(state, run);
+  const auth = claimedV2Binding(state, run, ctx, event.claim, event.kind, 'the reconcile claim disagrees with the persisted claim');
   if (isRejected(auth)) return auth;
   if (auth.kernel === null || !sameKernel(auth.kernel, event.kernel)) {
     return reject('guard_failed', 'invalid', 'the reconciled Kernel identity is not the begin binding');
@@ -2053,43 +2120,26 @@ function onReconcileTerminal(
   state: RunState, run: RunSnapshot, entering: boolean, event: Extract<RunEvent, { kind: 'reconcile_terminal' }>,
   ctx: RunGuardContext,
 ): RunTransition {
-  if (!isTakeover(event.basis)) {
-    return reject('illegal', 'invalid', 'an unbooked Kernel terminal is reconciled only by the start-up reconcile (RUN-17/18)');
-  }
-  const proof = basisGuard(event.basis, ctx);
+  const proof = takeoverProof(event.basis, ctx,
+    'an unbooked Kernel terminal is reconciled only by the start-up reconcile (RUN-17/18)');
   if (proof !== null) return proof;
   if (ctx.kernelProbe !== 'ready') return reject('guard_failed', 'unavailable', 'the Kernel Turn of the terminal is not readable');
-  if (ctx.inputsConfirmed !== true) return reject('guard_failed', 'unavailable', 'the Turn input acceptance is not confirmed yet');
+  if (ctx.inputsConfirmed !== true) return reject('guard_failed', 'unavailable', INPUTS_UNCONFIRMED);
   if (event.unresolvedToolCallIds.length > 0) {
     return reject('guard_failed', 'incomplete', 'a tool call has no determined result; the end is unknown (RUN-20)');
   }
   const claim = event.claim;
-  const persisted = persistedClaimGuard(ctx, claim, event.kind, 'the reconcile claim disagrees with the persisted claim');
-  if (persisted !== null) return persisted;
-  const auth = v2Binding(state, run);
+  const auth = claimedV2Binding(state, run, ctx, claim, event.kind, 'the reconcile claim disagrees with the persisted claim');
   if (isRejected(auth)) return auth;
-  const boundaryProblem = terminalBoundaryProblem(auth, event.kernelSource, event.completedHistoryBoundary, event.history);
-  if (boundaryProblem !== null) return boundaryProblem;
-  const terminal = terminalOutcomeOf(event.event, claim.runRef, state.lastEventSeq);
-  if ('status' in terminal) return rejected(terminal);
-  const yieldProblem = continuationGuard(terminal.outcome, event.continuation, claim);
-  if (yieldProblem !== null) return yieldProblem;
+  const terminal = bookedTerminal(state, auth, claim, event);
+  if (isRejected(terminal)) return terminal;
   if (entering && event.enteredAt === null) {
     return reject('illegal', 'invalid', 'an end reconciled from Entering records the Kernel Turn start');
   }
   const history = locatorAfter(run, claim.sessionRef, ctx, event.history);
   if (isRejected(history)) return history;
-  const payload = event.event.payload;
-  if (payload.kind === 'started') throw new Error('a terminal Runtime event carries a terminal payload');
-  const record = reconciledEndRecord(run, auth, {
-    phase: 'settled', outcome: terminal.outcome, exitCode: terminal.exitCode, endedAt: event.recordedAt,
-    startedAt: entering ? event.enteredAt : null, history,
-    terminal: { event: event.event, factEventId: event.factEventId },
-    ...(event.continuation === undefined ? {} : { continuation: event.continuation }),
-    terminalPayload: payload,
-    reconciliation: { status: 'done', observation: runtimeTerminalObservation(event.event), basis: { ...event.basis },
-      recordedAt: event.recordedAt },
-  });
+  const record = runtimeTerminalEnd(run, auth, event, terminal, history,
+    { endedAt: event.recordedAt, startedAt: entering ? event.enteredAt : null });
   return accept(runStateOf(record), [
     { kind: 'attempt', event: 'attempt_ended', outcome: terminal.outcome },
     { kind: 'outbox', change: 'settled_entered' },
@@ -2115,17 +2165,15 @@ function onReconcileInterrupted(
   state: RunState, run: RunSnapshot, entering: boolean, event: Extract<RunEvent, { kind: 'reconcile_interrupted_clean' }>,
   ctx: RunGuardContext,
 ): RunTransition {
-  if (!isTakeover(event.basis)) {
-    return reject('illegal', 'invalid', 'a clean interruption is reconciled only by the start-up reconcile (RUN-19/24)');
-  }
-  const proof = basisGuard(event.basis, ctx);
+  const proof = takeoverProof(event.basis, ctx,
+    'a clean interruption is reconciled only by the start-up reconcile (RUN-19/24)');
   if (proof !== null) return proof;
   if (ctx.kernelProbe !== 'ready') return reject('guard_failed', 'unavailable', 'the interrupted Kernel Turn is not readable');
   if (event.turn.terminal) return reject('illegal', 'invalid', 'a Turn with a Kernel terminal is reconciled as a terminal (RUN-17/18)');
   if (event.turn.inFlightToolCallIds.length > 0) {
     return reject('guard_failed', 'incomplete', 'a tool call is in flight; the end is unknown (RUN-20)');
   }
-  if (ctx.inputsConfirmed !== true) return reject('guard_failed', 'unavailable', 'the Turn input acceptance is not confirmed yet');
+  if (ctx.inputsConfirmed !== true) return reject('guard_failed', 'unavailable', INPUTS_UNCONFIRMED);
   const intent = ctx.pointerIntent;
   const control = run.controlState;
   const paused = state.pointer === 'paused';
@@ -2134,23 +2182,13 @@ function onReconcileInterrupted(
     return reject('illegal', 'invalid', 'a paused pointer ends paused-interrupted only for its queued or applied pause (RUN-24)');
   }
   const claim = event.claim;
-  const persisted = persistedClaimGuard(ctx, claim, event.kind, 'the reconcile claim disagrees with the persisted claim');
-  if (persisted !== null) return persisted;
-  const auth = v2Binding(state, run);
+  const auth = claimedV2Binding(state, run, ctx, claim, event.kind, 'the reconcile claim disagrees with the persisted claim');
   if (isRejected(auth)) return auth;
-  const entered = entering ? enteredFactsOf(run, auth, claim, ctx, event.turn.entered) : null;
-  if (entered !== null && isRejected(entered)) return entered;
-  const payload: RunTerminalPayload = { kind: 'crashed', error: paused ? 'host_interrupted_while_paused' : 'host_interrupted' };
-  const terminal = synthesizedTerminal(run, payload, event.factEventId, event.recordedAt);
-  const pausedIntentRef = paused && control !== undefined ? structuredClone(control.intentRef) : null;
-  const record = reconciledEndRecord(run, auth, {
-    phase: 'settled', outcome: 'crashed', exitCode: null, endedAt: event.recordedAt,
-    startedAt: entered === null ? null : entered.startedAt, history: entered === null ? null : entered.history,
-    terminal: { event: terminal, factEventId: event.factEventId }, terminalPayload: payload,
-    reconciliation: { status: 'done', observation: { kind: 'interrupted_clean', event: terminal,
-      lastPosition: event.turn.lastPosition, kernelPaused: ctx.kernelPaused, pausedIntentRef },
-    basis: { ...event.basis }, recordedAt: event.recordedAt },
-  });
+  const entered = enteredFactsOf(run, auth, claim, ctx, entering, event.turn.entered);
+  if (isRejected(entered)) return entered;
+  const record = interruptedCleanEnd(run, auth, event, ctx, entered,
+    { kind: 'crashed', error: paused ? 'host_interrupted_while_paused' : 'host_interrupted' },
+    paused && control !== undefined ? structuredClone(control.intentRef) : null);
   return accept(runStateOf(record), [
     { kind: 'attempt', event: 'attempt_ended', outcome: 'crashed' },
     { kind: 'outbox', change: 'settled_entered' },
@@ -2172,10 +2210,7 @@ function onReconcileUnknown(
   state: RunState, run: RunSnapshot, entering: boolean, event: Extract<RunEvent, { kind: 'reconcile_unknown' }>,
   ctx: RunGuardContext,
 ): RunTransition {
-  if (!isTakeover(event.basis)) {
-    return reject('illegal', 'invalid', 'an unknown end is reconciled only by the start-up reconcile (RUN-20)');
-  }
-  const proof = basisGuard(event.basis, ctx);
+  const proof = takeoverProof(event.basis, ctx, 'an unknown end is reconciled only by the start-up reconcile (RUN-20)');
   if (proof !== null) return proof;
   const unreadable = event.cause === 'kernel_unreadable';
   if (unreadable ? ctx.kernelProbe !== 'missing' && ctx.kernelProbe !== 'damaged' : ctx.kernelProbe !== 'ready') {
@@ -2185,16 +2220,13 @@ function onReconcileUnknown(
     return reject('illegal', 'invalid', 'tool_calls_unresolved names the calls without a result');
   }
   const claim = event.claim;
-  const persisted = persistedClaimGuard(ctx, claim, event.kind, 'the reconcile claim disagrees with the persisted claim');
-  if (persisted !== null) return persisted;
-  const auth = v2Binding(state, run);
+  const auth = claimedV2Binding(state, run, ctx, claim, event.kind, 'the reconcile claim disagrees with the persisted claim');
   if (isRejected(auth)) return auth;
   const withTurn = entering && !unreadable;
-  const entered = withTurn ? enteredFactsOf(run, auth, claim, ctx, event.turn?.entered ?? null) : null;
-  if (entered !== null && isRejected(entered)) return entered;
+  const entered = enteredFactsOf(run, auth, claim, ctx, withTurn, event.turn?.entered ?? null);
+  if (isRejected(entered)) return entered;
   const record = reconciledEndRecord(run, auth, {
-    phase: 'unknown', outcome: 'outcome_unknown', exitCode: null, endedAt: event.recordedAt,
-    startedAt: entered === null ? null : entered.startedAt, history: entered === null ? null : entered.history,
+    phase: 'unknown', outcome: 'outcome_unknown', exitCode: null, endedAt: event.recordedAt, ...entered,
     terminal: null, terminalPayload: null,
     reconciliation: { status: 'quarantined', observation: { kind: 'unresolved', reason: event.cause,
       observedThroughPosition: event.observedThroughPosition, unresolvedToolCallIds: [...event.unresolvedToolCallIds] },
@@ -2225,7 +2257,7 @@ function onLateEvidence(
   switch (cls) {
     case 'unknown': break;
     case 'known_terminal':
-      return reject('illegal', 'busy', 'a known terminal is never rewritten');
+      return reject('illegal', 'busy', KNOWN_TERMINAL_FINAL);
     case 'never_begun':
     case 'revoked':
     case 'entered':
@@ -2235,10 +2267,8 @@ function onLateEvidence(
   if (ctx.exitProof === null) return reject('guard_failed', 'incomplete', 'the Kernel call has not exited cleanly; the evidence is not booked yet');
   const lease = hostLeaseGuard(isTakeover(event.basis), ctx);
   if (lease !== null) return lease;
-  if (ctx.inputsConfirmed !== true) return reject('guard_failed', 'unavailable', 'the Turn input acceptance is not confirmed yet');
-  if (event.event.sequence <= state.lastEventSeq) {
-    return reject('stale', 'revision_conflict', 'the result event sequence is not newer than the applied Run fact');
-  }
+  if (ctx.inputsConfirmed !== true) return reject('guard_failed', 'unavailable', INPUTS_UNCONFIRMED);
+  if (event.event.sequence <= state.lastEventSeq) return reject('stale', 'revision_conflict', STALE_RESULT_SEQUENCE);
   const window = state.unresolved;
   const through = window?.observedThroughPosition ?? null;
   const stillUnresolved = window === null || through === null
@@ -2249,17 +2279,10 @@ function onLateEvidence(
   }
   const run = state.record as RunSnapshot;
   const claim = event.claim;
-  const persisted = persistedClaimGuard(ctx, claim, event.kind, 'the evidence claim disagrees with the persisted claim');
-  if (persisted !== null) return persisted;
-  const auth = v2Binding(state, run);
+  const auth = claimedV2Binding(state, run, ctx, claim, event.kind, 'the evidence claim disagrees with the persisted claim');
   if (isRejected(auth)) return auth;
-  const boundaryProblem = terminalBoundaryProblem(auth, event.kernelSource, event.completedHistoryBoundary, event.history);
-  if (boundaryProblem !== null) return boundaryProblem;
-  const terminal = terminalOutcomeOf(event.event, claim.runRef, state.lastEventSeq);
-  if ('status' in terminal) return rejected(terminal);
-  if (terminal.outcome === 'outcome_unknown') return reject('illegal', 'invalid', 'late evidence carries a known outcome');
-  const yieldProblem = continuationGuard(terminal.outcome, event.continuation, claim);
-  if (yieldProblem !== null) return yieldProblem;
+  const terminal = bookedTerminal(state, auth, claim, event);
+  if (isRejected(terminal)) return terminal;
   // L-2: after RUN-20(ii) the Run never recorded its Turn start; the evidence carries it.
   const recordsStart = run.startedAt === null;
   if (recordsStart && event.enteredAt === null) {
@@ -2267,17 +2290,8 @@ function onLateEvidence(
   }
   const history = locatorAfter(run, claim.sessionRef, ctx, event.history);
   if (isRejected(history)) return history;
-  const payload = event.event.payload;
-  if (payload.kind === 'started') throw new Error('a terminal Runtime event carries a terminal payload');
-  const record = reconciledEndRecord(run, auth, {
-    phase: 'settled', outcome: terminal.outcome, exitCode: terminal.exitCode, endedAt: null,
-    startedAt: recordsStart ? event.enteredAt : null, history,
-    terminal: { event: event.event, factEventId: event.factEventId },
-    ...(event.continuation === undefined ? {} : { continuation: event.continuation }),
-    terminalPayload: payload,
-    reconciliation: { status: 'done', observation: runtimeTerminalObservation(event.event), basis: { ...event.basis },
-      recordedAt: event.recordedAt },
-  });
+  const record = runtimeTerminalEnd(run, auth, event, terminal, history,
+    { endedAt: null, startedAt: recordsStart ? event.enteredAt : null });
   return accept(runStateOf(record), [
     { kind: 'attempt', event: 'attempt_resolved', outcome: terminal.outcome },
     { kind: 'outbox', change: 'settled_entered' },
@@ -2303,7 +2317,7 @@ function onUnknownAttested(
   switch (cls) {
     case 'unknown': break;
     case 'known_terminal':
-      return reject('illegal', 'busy', 'a known terminal is never rewritten');
+      return reject('illegal', 'busy', KNOWN_TERMINAL_FINAL);
     case 'never_begun':
     case 'revoked':
     case 'entered':
@@ -2315,12 +2329,10 @@ function onUnknownAttested(
   const lease = hostLeaseGuard(true, ctx);
   if (lease !== null) return lease;
   // A readable Kernel must have confirmed the Turn's accepted inputs; an unreadable one (null) does not block.
-  if (ctx.inputsConfirmed === false) return reject('guard_failed', 'unavailable', 'the Turn input acceptance is not confirmed yet');
+  if (ctx.inputsConfirmed === false) return reject('guard_failed', 'unavailable', INPUTS_UNCONFIRMED);
   const run = state.record as RunSnapshot;
   const claim = event.claim;
-  const persisted = persistedClaimGuard(ctx, claim, event.kind, 'the attestation claim disagrees with the persisted claim');
-  if (persisted !== null) return persisted;
-  const auth = v2Binding(state, run);
+  const auth = claimedV2Binding(state, run, ctx, claim, event.kind, 'the attestation claim disagrees with the persisted claim');
   if (isRejected(auth)) return auth;
   const record = reconciledEndRecord(run, auth, {
     phase: 'settled', outcome: 'crashed', exitCode: null, endedAt: null, startedAt: null, history: null,
