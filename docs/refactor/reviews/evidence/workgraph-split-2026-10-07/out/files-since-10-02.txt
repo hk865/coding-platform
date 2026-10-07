@@ -1,0 +1,54 @@
+## files per directory: 10-02 (a22ad30) / bfb6075 / H (4404f4dc)
+architecture	8	8	8
+communication	3	3	4
+configuration	6	6	6
+evidence	5	5	5
+materials	9	9	5
+persistence	7	8	8
+queries	4	4	4
+sessions	7	8	8
+source-authority-ports.ts	1	1	1
+source-authority-reader.ts	1	1	1
+state	0	13	13
+tasks	30	37	37
+total	81	103	100
+
+## deleted a22ad30 -> 4404f4dc (commit that deleted it)
+materials/grant-contracts.ts	060e769 refactor: delete the material grant writer (simplification G1, decision 34)
+materials/grant-record-codecs.ts	060e769 refactor: delete the material grant writer (simplification G1, decision 34)
+materials/grant-service.ts	060e769 refactor: delete the material grant writer (simplification G1, decision 34)
+materials/material-facts-service.ts	77b517a refactor: delete the grant-only material read side and the M2 read facts (simplification G3, decision 34)
+
+## added a22ad30 -> 4404f4dc (commit that added it)
+communication/message-body-envelope.ts	a4417b2 fix: an inlined reply is the message text, and a body cut to its bound is marked cut (A.2 step 6)
+persistence/rework-codecs.ts	760e35c feat: add contracts and compatible codecs for the state machine batch (A.2 step 1)
+sessions/session-health.ts	cf22f5a feat: settle what a crashed Host left at the next start, and continue a paused Task in a new Session (A.2 step 5.6)
+state/attempt-machine.ts	cbaed80 feat: add pure state machines with exhaustive tests (A.2 step 2)
+state/control-intent-machine.ts	cbaed80 feat: add pure state machines with exhaustive tests (A.2 step 2)
+state/goal-machine.ts	cbaed80 feat: add pure state machines with exhaustive tests (A.2 step 2)
+state/message-machine.ts	cbaed80 feat: add pure state machines with exhaustive tests (A.2 step 2)
+state/no-progress.ts	cbaed80 feat: add pure state machines with exhaustive tests (A.2 step 2)
+state/plan-machine.ts	cbaed80 feat: add pure state machines with exhaustive tests (A.2 step 2)
+state/query-run-recovery.ts	cbaed80 feat: add pure state machines with exhaustive tests (A.2 step 2)
+state/run-machine.ts	cbaed80 feat: add pure state machines with exhaustive tests (A.2 step 2)
+state/session-availability.ts	cbaed80 feat: add pure state machines with exhaustive tests (A.2 step 2)
+state/task-failure.ts	cbaed80 feat: add pure state machines with exhaustive tests (A.2 step 2)
+state/task-machine.ts	cbaed80 feat: add pure state machines with exhaustive tests (A.2 step 2)
+state/transition.ts	cbaed80 feat: add pure state machines with exhaustive tests (A.2 step 2)
+state/verification-machine.ts	cbaed80 feat: add pure state machines with exhaustive tests (A.2 step 2)
+tasks/entry-plan-reader.ts	0543261 feat: start a claimed Run and keep its material grant when an unrelated Plan adoption carries its Task unchanged (A.2 step 5.4b)
+tasks/goal-control.ts	d5ad9d5 feat: pause, resume and cancel a whole Goal, reaching each of its Runs and stopping new work (A.2 step 5.5)
+tasks/reconcile-intents.ts	cf22f5a feat: settle what a crashed Host left at the next start, and continue a paused Task in a new Session (A.2 step 5.6)
+tasks/reconcile-reads.ts	cf22f5a feat: settle what a crashed Host left at the next start, and continue a paused Task in a new Session (A.2 step 5.6)
+tasks/requeue-service.ts	b67111d feat: requeue a failed Task into a new Run that starts with a continuation brief (A.2 step 5.4)
+tasks/run-reconcile-contracts.ts	cf22f5a feat: settle what a crashed Host left at the next start, and continue a paused Task in a new Session (A.2 step 5.6)
+tasks/run-reconcile-service.ts	cf22f5a feat: settle what a crashed Host left at the next start, and continue a paused Task in a new Session (A.2 step 5.6)
+
+## deleted bfb6075 -> 4404f4dc (commit that deleted it)
+materials/grant-contracts.ts	060e769 refactor: delete the material grant writer (simplification G1, decision 34)
+materials/grant-record-codecs.ts	060e769 refactor: delete the material grant writer (simplification G1, decision 34)
+materials/grant-service.ts	060e769 refactor: delete the material grant writer (simplification G1, decision 34)
+materials/material-facts-service.ts	77b517a refactor: delete the grant-only material read side and the M2 read facts (simplification G3, decision 34)
+
+## added bfb6075 -> 4404f4dc (commit that added it)
+communication/message-body-envelope.ts	a4417b2 fix: an inlined reply is the message text, and a body cut to its bound is marked cut (A.2 step 6)

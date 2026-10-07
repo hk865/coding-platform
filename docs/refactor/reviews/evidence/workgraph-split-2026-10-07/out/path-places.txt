@@ -1,0 +1,200 @@
+## lines naming a work-graph path under tests/architecture/, scripts/, vitest.config.ts (MOVED = names a moved file)
+-      tests/architecture/boundaries.test.ts:79:    "export const a = 1;\nimport '../work-graph/tasks/a.js';\n// comment\nimport '../../../../src/old.js';\n");
+-      tests/architecture/boundaries.test.ts:149:    const dir = await fixture('core/work-graph/persistence/store.ts', "export const store = 1;\n");
+-      tests/architecture/boundaries.test.ts:150:    await source(dir, 'core/work-graph/tasks/claim.ts', "import { store } from '../persistence/store.js';\nexport const claim = store;\n");
+-      tests/architecture/boundaries.test.ts:151:    await source(dir, 'core/work-graph/shared.ts', 'export type Shared = 1;\n');
+-      tests/architecture/boundaries.test.ts:174:    await source(dir, 'core/work-graph/persistence/store.ts',
+-      tests/architecture/boundaries.test.ts:177:      'core/work-graph/persistence/store.ts:2: forbidden submodule edge WorkGraph/persistence -> WorkGraph/tasks',
+-      tests/architecture/boundaries.test.ts:183:    await source(dir, 'core/work-graph/stray.ts', 'export {};\n');
+-      tests/architecture/boundaries.test.ts:185:      `core/work-graph/stray.ts: source file has no WorkGraph submodule owner in ${MODULE_TARGET_PATH}`,
+-      tests/architecture/boundaries.test.ts:191:    await source(dir, 'core/work-graph/model.d.ts', 'export type M = 1;\n');
+-      tests/architecture/boundaries.test.ts:195:    await source(dir, 'core/work-graph/persistence/store.ts',
+-      tests/architecture/boundaries.test.ts:198:      'core/work-graph/persistence/store.ts:2: forbidden submodule edge WorkGraph/persistence -> WorkGraph/decl',
+-      tests/architecture/boundaries.test.ts:199:      'core/work-graph/persistence/store.ts:3: import targets no WorkGraph submodule (../ghost/thing.js)',
+-      tests/architecture/boundaries.test.ts:222:      `${MODULE_TARGET_PATH}: submodule WorkGraph/nested path src/core/work-graph/tasks/inner/ does not exist`,
+-      tests/architecture/boundaries.test.ts:232:    const dir = await fixture('core/work-graph/state/run-machine.ts', [
+-      tests/architecture/boundaries.test.ts:243:      'core/work-graph/state/run-machine.ts:3: pure directory may not import node:crypto',
+-      tests/architecture/boundaries.test.ts:244:      'core/work-graph/state/run-machine.ts:4: pure directory may not import typescript',
+-      tests/architecture/boundaries.test.ts:245:      'core/work-graph/state/run-machine.ts:5: pure directory may not import ../tasks/x.js',
+-      tests/architecture/boundaries.test.ts:246:      'core/work-graph/state/run-machine.ts:6: pure directory may not import ../../../../vendor/coding-agent/dist/public-api.js',
+-      tests/architecture/boundaries.test.ts:247:      'core/work-graph/state/run-machine.ts:7: pure directory may not import ../../record-store/ports.js',
+-      tests/architecture/boundaries.test.ts:252:    const dir = await fixture('core/work-graph/state/run-machine.ts',
+-      tests/architecture/boundaries.test.ts:254:    await source(dir, 'core/work-graph/tasks/claim.ts', "import { createHash } from 'node:crypto';\nimport '../state/run-machine.js';\n");
+-      tests/architecture/boundaries.test.ts:256:    expect((await inspectSourceTree(dir)).pureDirectories).toEqual(['src/core/work-graph/state/']);
+-      tests/architecture/boundaries.test.ts:260:    const dir = await fixture('core/work-graph/state/run-machine.ts', [
+-      tests/architecture/boundaries.test.ts:275:    await source(dir, 'core/work-graph/tasks/clock.ts', 'export const at = Date.now();\n');
+-      tests/architecture/boundaries.test.ts:277:      'core/work-graph/state/run-machine.ts:1: pure directory may not use Date.now',
+-      tests/architecture/boundaries.test.ts:278:      'core/work-graph/state/run-machine.ts:2: pure directory may not use Math.random',
+-      tests/architecture/boundaries.test.ts:279:      'core/work-graph/state/run-machine.ts:3: pure directory may not use new Date()',
+-      tests/architecture/boundaries.test.ts:280:      'core/work-graph/state/run-machine.ts:4: pure directory may not use Date()',
+-      tests/architecture/boundaries.test.ts:281:      'core/work-graph/state/run-machine.ts:5: pure directory may not use process',
+-      tests/architecture/boundaries.test.ts:282:      'core/work-graph/state/run-machine.ts:6: pure directory may not use globalThis',
+-      tests/architecture/boundaries.test.ts:283:      'core/work-graph/state/run-machine.ts:7: pure directory may not use setTimeout',
+-      tests/architecture/boundaries.test.ts:284:      'core/work-graph/state/run-machine.ts:7: pure directory may not use setInterval',
+-      tests/architecture/boundaries.test.ts:285:      'core/work-graph/state/run-machine.ts:7: pure directory may not use fetch',
+-      tests/architecture/boundaries.test.ts:286:      'core/work-graph/state/run-machine.ts:8: pure directory may not use crypto',
+-      tests/architecture/boundaries.test.ts:287:      'core/work-graph/state/run-machine.ts:9: pure directory may not use performance',
+-      tests/architecture/boundaries.test.ts:294:      target.pureDirectories = ['src/core/work-graph/missing/', 'src/core/work-graph/./state/', 'src/business/', 'core/x/'];
+-      tests/architecture/boundaries.test.ts:297:      `${MODULE_TARGET_PATH}: pure directory src/core/work-graph/missing/ does not exist`,
+-      tests/architecture/boundaries.test.ts:298:      `${MODULE_TARGET_PATH}: pure directory src/core/work-graph/./state/ must be normalized (no empty, "." or ".." segments)`,
+-      tests/architecture/boundaries.test.ts:303:    await writeTarget(dir, target => { target.pureDirectories = 'src/core/work-graph/state/'; });
+-      tests/architecture/boundaries.test.ts:331:    "import '../work-graph/tasks/a.js';\nimport '../../../../src/old.js';\nimport '#old/adapter';\nconst name = './x.js'; import(name);\n");
+-      tests/architecture/boundaries.test.ts:342:  const dir = await fixture('contracts/entry.ts', "import '../core/work-graph/tasks/a.js';\n");
+-      tests/architecture/boundaries.test.ts:391:    "import type { Store } from '../core/record-store/ports.js';\nimport type { Goal } from '../core/work-graph/materials/record-ports.js';\n");
+-      tests/architecture/production-reach-allowlist.json:503:      "file": "src/core/work-graph/architecture/architecture-delta.ts",
+-      tests/architecture/production-reach-allowlist.json:509:      "file": "src/core/work-graph/architecture/architecture-delta.ts",
+-      tests/architecture/production-reach-allowlist.json:515:      "file": "src/core/work-graph/architecture/architecture-delta.ts",
+-      tests/architecture/production-reach-allowlist.json:521:      "file": "src/core/work-graph/architecture/catalog-contracts.ts",
+-      tests/architecture/production-reach-allowlist.json:527:      "file": "src/core/work-graph/architecture/catalog-contracts.ts",
+-      tests/architecture/production-reach-allowlist.json:533:      "file": "src/core/work-graph/architecture/catalog-record-codecs.ts",
+-      tests/architecture/production-reach-allowlist.json:539:      "file": "src/core/work-graph/architecture/catalog-record-codecs.ts",
+-      tests/architecture/production-reach-allowlist.json:545:      "file": "src/core/work-graph/architecture/catalog-record-codecs.ts",
+-      tests/architecture/production-reach-allowlist.json:551:      "file": "src/core/work-graph/architecture/catalog-service.ts",
+-      tests/architecture/production-reach-allowlist.json:557:      "file": "src/core/work-graph/architecture/catalog-service.ts",
+-      tests/architecture/production-reach-allowlist.json:563:      "file": "src/core/work-graph/architecture/catalog-service.ts",
+-      tests/architecture/production-reach-allowlist.json:569:      "file": "src/core/work-graph/architecture/catalog-service.ts",
+-      tests/architecture/production-reach-allowlist.json:575:      "file": "src/core/work-graph/architecture/catalog-service.ts",
+-      tests/architecture/production-reach-allowlist.json:581:      "file": "src/core/work-graph/architecture/catalog-service.ts",
+-      tests/architecture/production-reach-allowlist.json:587:      "file": "src/core/work-graph/architecture/contracts.ts",
+-      tests/architecture/production-reach-allowlist.json:593:      "file": "src/core/work-graph/architecture/contracts.ts",
+-      tests/architecture/production-reach-allowlist.json:599:      "file": "src/core/work-graph/architecture/contracts.ts",
+-      tests/architecture/production-reach-allowlist.json:605:      "file": "src/core/work-graph/architecture/contracts.ts",
+-      tests/architecture/production-reach-allowlist.json:608:      "note": "kept for slice 8 of the orchestration design (decision 34: formal-vs-observed comparison and the impact read); decision 6: wired with the new UI, backend first; un …
+-      tests/architecture/production-reach-allowlist.json:611:      "file": "src/core/work-graph/architecture/contracts.ts",
+-      tests/architecture/production-reach-allowlist.json:614:      "note": "kept for slice 8 of the orchestration design (decision 34: formal-vs-observed comparison and the impact read); decision 6: wired with the new UI, backend first; un …
+-      tests/architecture/production-reach-allowlist.json:617:      "file": "src/core/work-graph/architecture/graph-index.ts",
+-      tests/architecture/production-reach-allowlist.json:623:      "file": "src/core/work-graph/architecture/graph-index.ts",
+MOVED  tests/architecture/production-reach-allowlist.json:629:      "file": "src/core/work-graph/configuration/contracts.ts",
+MOVED  tests/architecture/production-reach-allowlist.json:635:      "file": "src/core/work-graph/configuration/contracts.ts",
+-      tests/architecture/production-reach-allowlist.json:638:      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; u …
+MOVED  tests/architecture/production-reach-allowlist.json:641:      "file": "src/core/work-graph/configuration/contracts.ts",
+-      tests/architecture/production-reach-allowlist.json:644:      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; u …
+MOVED  tests/architecture/production-reach-allowlist.json:647:      "file": "src/core/work-graph/configuration/contracts.ts",
+-      tests/architecture/production-reach-allowlist.json:650:      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; u …
+MOVED  tests/architecture/production-reach-allowlist.json:653:      "file": "src/core/work-graph/configuration/contracts.ts",
+-      tests/architecture/production-reach-allowlist.json:656:      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; u …
+-      tests/architecture/production-reach-allowlist.json:659:      "file": "src/core/work-graph/configuration/role-memory-service.ts",
+-      tests/architecture/production-reach-allowlist.json:665:      "file": "src/core/work-graph/configuration/role-memory-service.ts",
+-      tests/architecture/production-reach-allowlist.json:671:      "file": "src/core/work-graph/configuration/role-memory-service.ts",
+-      tests/architecture/production-reach-allowlist.json:677:      "file": "src/core/work-graph/configuration/role-memory-service.ts",
+-      tests/architecture/production-reach-allowlist.json:683:      "file": "src/core/work-graph/configuration/role-memory-service.ts",
+-      tests/architecture/production-reach-allowlist.json:689:      "file": "src/core/work-graph/configuration/role-memory-service.ts",
+-      tests/architecture/production-reach-allowlist.json:695:      "file": "src/core/work-graph/configuration/role-memory-service.ts",
+-      tests/architecture/production-reach-allowlist.json:701:      "file": "src/core/work-graph/configuration/role-memory-service.ts",
+-      tests/architecture/production-reach-allowlist.json:707:      "file": "src/core/work-graph/configuration/role-record-codecs.ts",
+-      tests/architecture/production-reach-allowlist.json:713:      "file": "src/core/work-graph/configuration/role-record-codecs.ts",
+-      tests/architecture/production-reach-allowlist.json:719:      "file": "src/core/work-graph/configuration/role-record-codecs.ts",
+-      tests/architecture/production-reach-allowlist.json:725:      "file": "src/core/work-graph/configuration/role-record-codecs.ts",
+-      tests/architecture/production-reach-allowlist.json:848:      "note": "kept for slice 3 of the orchestration design (decision 34): the consume-time exact-input check (decision 11, an open MVP item) may need a verified current source p …
+-      tests/architecture/production-reach-allowlist.json:854:      "note": "kept for slice 3 of the orchestration design (decision 34): the consume-time exact-input check (decision 11, an open MVP item) may need a verified current source p …
+-      tests/architecture/state-writes.test.ts:3: * constructors of `src/core/work-graph/state/`.
+-      tests/architecture/state-writes.test.ts:48:const STATE_DIRECTORY = 'src/core/work-graph/state/';
+-      tests/architecture/state-writes.test.ts:49:const WORK_GRAPH = 'src/core/work-graph/';
+-      tests/architecture/state-writes.test.ts:50:const PROJECT_TASK_PHASE = { file: 'src/core/work-graph/state/task-machine.ts', name: 'projectTaskPhase' };
+MOVED  tests/architecture/state-writes.test.ts:96:  { file: 'src/core/work-graph/tasks/claim-contracts.ts', name: 'TaskClaimOutbox', kind: 'record',
+-      tests/architecture/state-writes.test.ts:98:  { file: 'src/core/work-graph/state/attempt-machine.ts', name: 'DispatchOutboxRecord', kind: 'record',
+MOVED  tests/architecture/state-writes.test.ts:119:  { file: 'src/core/work-graph/communication/contracts.ts', name: 'SessionMessage', kind: 'record',
+-      tests/architecture/state-writes.test.ts:121:  { file: 'src/core/work-graph/state/message-machine.ts', name: 'SessionMessageRecord', kind: 'record',
+MOVED  tests/architecture/state-writes.test.ts:128:  { file: 'src/core/work-graph/tasks/plan-contracts.ts', name: 'PlanProposal', kind: 'record',
+-      tests/architecture/state-writes.test.ts:130:  { file: 'src/core/work-graph/state/plan-machine.ts', name: 'CandidatePlanProposal', kind: 'record',
+-      tests/architecture/state-writes.test.ts:132:  { file: 'src/core/work-graph/state/plan-machine.ts', name: 'LegacyPlanProposal', kind: 'record',
+-      tests/architecture/state-writes.test.ts:142:  { file: 'src/core/work-graph/tasks/plan-readers.ts', name: 'CanonicalTaskState', kind: 'projection',
+MOVED  tests/architecture/state-writes.test.ts:144:  { file: 'src/core/work-graph/tasks/plan-contracts.ts', name: 'TaskRow', kind: 'projection',
+-      tests/architecture/state-writes.test.ts:155:/** Files are relative to `src/core/work-graph/`; `*` matches any part of a function name. */
+-      tests/architecture/state-writes.test.ts:439:    const text = `${file}:${line}: ${entry.name}.${field} written outside work-graph/state/ (use ${entry.use})`;
+-      tests/architecture/state-writes.test.ts:614:  it('writes every protected lifecycle field only through work-graph/state/ (§14.3)', () => {
+-      tests/architecture/state-writes.test.ts:628:  'core/work-graph/tasks/r1-literal.ts': `
+-      tests/architecture/state-writes.test.ts:639:  'core/work-graph/tasks/r2-spread.ts': `
+-      tests/architecture/state-writes.test.ts:649:  'core/work-graph/tasks/r2-rest.ts': `
+-      tests/architecture/state-writes.test.ts:659:  'core/work-graph/tasks/r3-assignment.ts': `
+-      tests/architecture/state-writes.test.ts:672:  'core/work-graph/tasks/r4-assign-helper.ts': `
+-      tests/architecture/state-writes.test.ts:686:  'core/work-graph/tasks/alias-wrapper.ts': `
+-      tests/architecture/state-writes.test.ts:699:  'core/work-graph/tasks/new-items.ts': `
+-      tests/architecture/state-writes.test.ts:744:  'core/work-graph/persistence/record-codecs.ts': `
+-      tests/architecture/state-writes.test.ts:755:  'core/work-graph/persistence/other-codecs.ts': `
+-      tests/architecture/state-writes.test.ts:762:  'core/work-graph/state/fixture-machine.ts': `
+-      tests/architecture/state-writes.test.ts:778:  'core/work-graph/tasks/read-only.ts': `
+-      tests/architecture/state-writes.test.ts:793:  'core/work-graph/state/task-machine.ts': `
+-      tests/architecture/state-writes.test.ts:799:  'core/work-graph/tasks/plan-readers.ts': `
+-      tests/architecture/state-writes.test.ts:844:    expect(hits('core/work-graph/tasks/r1-literal.ts')).toEqual([
+-      tests/architecture/state-writes.test.ts:845:      'src/core/work-graph/tasks/r1-literal.ts:5: TaskLeaseSnapshot.holderRunId written outside work-graph/state/ '
+-      tests/architecture/state-writes.test.ts:847:      'src/core/work-graph/tasks/r1-literal.ts:6: TaskLeaseSnapshot.attemptId written outside work-graph/state/ '
+-      tests/architecture/state-writes.test.ts:853:    expect(hits('core/work-graph/tasks/r2-spread.ts')).toEqual([
+-      tests/architecture/state-writes.test.ts:854:      'src/core/work-graph/tasks/r2-spread.ts:5: RunSnapshot.status written outside work-graph/state/ '
+-      tests/architecture/state-writes.test.ts:860:    expect(hits('core/work-graph/tasks/r2-rest.ts').map(line => line.split(' written')[0])).toEqual([
+-      tests/architecture/state-writes.test.ts:861:      'src/core/work-graph/tasks/r2-rest.ts:5: RunSnapshot.outcome',
+-      tests/architecture/state-writes.test.ts:862:      'src/core/work-graph/tasks/r2-rest.ts:7: RunSnapshot.status',
+-      tests/architecture/state-writes.test.ts:867:    const fields = hits('core/work-graph/tasks/r3-assignment.ts').map(line => line.split(': ')[1]);
+-      tests/architecture/state-writes.test.ts:868:    expect(hits('core/work-graph/tasks/r3-assignment.ts').map(line => line.split(':')[1])).toEqual(
+-      tests/architecture/state-writes.test.ts:871:      'RunSnapshot.outcome written outside work-graph/state/ (use state/run-machine.ts transitionRun or newRunRecord)',
+-      tests/architecture/state-writes.test.ts:872:      'RunSnapshot.lastEventSeq written outside work-graph/state/ (use state/run-machine.ts transitionRun or newRunRecord)',
+-      tests/architecture/state-writes.test.ts:873:      'RunSnapshot.controlState written outside work-graph/state/ (use state/run-machine.ts transitionRun or newRunRecord)',
+-      tests/architecture/state-writes.test.ts:874:      'RunSnapshot.reconciliation written outside work-graph/state/ (use state/run-machine.ts transitionRun or newRunRecord)',
+-      tests/architecture/state-writes.test.ts:875:      'RunSnapshot.controlInputs written outside work-graph/state/ (use state/run-machine.ts transitionRun or newRunRecord)',
+-      tests/architecture/state-writes.test.ts:876:      'RunSnapshot.endedAt written outside work-graph/state/ (use state/run-machine.ts transitionRun or newRunRecord)',
+-      tests/architecture/state-writes.test.ts:877:      'RunSnapshot.lastEventSeq written outside work-graph/state/ (use state/run-machine.ts transitionRun or newRunRecord)',
+-      tests/architecture/state-writes.test.ts:882:    const lines = hits('core/work-graph/tasks/r4-assign-helper.ts');
+-      tests/architecture/state-writes.test.ts:883:    expect(lines).toContain('src/core/work-graph/tasks/r4-assign-helper.ts:4: TaskAttemptSnapshot.endedAt written outside '
+-      tests/architecture/state-writes.test.ts:884:      + 'work-graph/state/ (use state/attempt-machine.ts newTaskAttemptRecord or transitionAttempt)');
+-      tests/architecture/state-writes.test.ts:887:      expect(lines).toContain(`src/core/work-graph/tasks/r4-assign-helper.ts:${line}: RoundCheckSnapshot.phase written outside `
+-      tests/architecture/state-writes.test.ts:888:        + 'work-graph/state/ (use state/verification-machine.ts withCheckPhase)');
+-      tests/architecture/state-writes.test.ts:889:      expect(lines).toContain(`src/core/work-graph/tasks/r4-assign-helper.ts:${line}: RoundCheckSnapshot.incompleteCause written `
+-      tests/architecture/state-writes.test.ts:890:        + 'outside work-graph/state/ (use state/verification-machine.ts withCheckPhase)');
+-      tests/architecture/state-writes.test.ts:896:    expect(hits('core/work-graph/tasks/alias-wrapper.ts').map(line => line.split(' written')[0])).toEqual([
+-      tests/architecture/state-writes.test.ts:897:      'src/core/work-graph/tasks/alias-wrapper.ts:6: TaskAttemptSnapshot.status',
+-      tests/architecture/state-writes.test.ts:898:      'src/core/work-graph/tasks/alias-wrapper.ts:8: TaskLeaseSnapshot.attemptId',
+-      tests/architecture/state-writes.test.ts:899:      'src/core/work-graph/tasks/alias-wrapper.ts:9: TaskLeaseSnapshot.holderRunId',
+-      tests/architecture/state-writes.test.ts:904:    expect(hits('core/work-graph/tasks/new-items.ts').map(line => line.split(' written')[0])).toEqual([
+-      tests/architecture/state-writes.test.ts:905:      'src/core/work-graph/tasks/new-items.ts:9: TaskReworkRefusalSnapshotV1.code',
+-      tests/architecture/state-writes.test.ts:906:      'src/core/work-graph/tasks/new-items.ts:13: TaskRequeueSnapshotV1.failureClass',
+-      tests/architecture/state-writes.test.ts:907:      'src/core/work-graph/tasks/new-items.ts:17: RoundSnapshot.chain',
+-      tests/architecture/state-writes.test.ts:908:      'src/core/work-graph/tasks/new-items.ts:21: RoundCheckSnapshot.incompleteCause',
+-      tests/architecture/state-writes.test.ts:909:      'src/core/work-graph/tasks/new-items.ts:25: RunSnapshot.terminalPayload',
+-      tests/architecture/state-writes.test.ts:910:      'src/core/work-graph/tasks/new-items.ts:30: RunSnapshot.reconciliation',
+-      tests/architecture/state-writes.test.ts:911:      'src/core/work-graph/tasks/new-items.ts:34: SessionRecord.healthConclusion',
+-      tests/architecture/state-writes.test.ts:912:      'src/core/work-graph/tasks/new-items.ts:38: TaskFailureFactsV1.failureClass',
+-      tests/architecture/state-writes.test.ts:913:      'src/core/work-graph/tasks/new-items.ts:42: GoalSnapshot.desiredStateRequestedBy',
+-      tests/architecture/state-writes.test.ts:918:    expect(hits('core/work-graph/persistence/record-codecs.ts').map(line => line.split(' written')[0])).toEqual([
+-      tests/architecture/state-writes.test.ts:919:      'src/core/work-graph/persistence/record-codecs.ts:8: GoalSnapshot.desiredState',
+-      tests/architecture/state-writes.test.ts:921:    expect(hits('core/work-graph/persistence/other-codecs.ts').map(line => line.split(' written')[0])).toEqual([
+-      tests/architecture/state-writes.test.ts:922:      'src/core/work-graph/persistence/other-codecs.ts:4: GoalSnapshot.desiredState',
+-      tests/architecture/state-writes.test.ts:926:  it('does not scan work-graph/state/', () => {
+-      tests/architecture/state-writes.test.ts:927:    expect(violations.filter(line => line.startsWith('src/core/work-graph/state/'))).toEqual([]);
+-      tests/architecture/state-writes.test.ts:931:    expect(hits('core/work-graph/tasks/read-only.ts')).toEqual([]);
+-      tests/architecture/state-writes.test.ts:935:    expect(hits('core/work-graph/tasks/plan-readers.ts')).toEqual([
+-      tests/architecture/state-writes.test.ts:936:      'src/core/work-graph/tasks/plan-readers.ts:16: CanonicalTaskState.effectivePhase written outside work-graph/state/ '
+-      tests/architecture/state-writes.test.ts:953:  'core/work-graph/tasks/generic-helper.ts': `
+-      tests/architecture/state-writes.test.ts:968:  'core/work-graph/tasks/nested-assign.ts': `
+-      tests/architecture/state-writes.test.ts:976:  'core/work-graph/tasks/double-cast.ts': `
+-      tests/architecture/state-writes.test.ts:983:  'core/work-graph/tasks/destructuring.ts': `
+-      tests/architecture/state-writes.test.ts:993:  'core/work-graph/tasks/plan-readers.ts': `
+-      tests/architecture/state-writes.test.ts:1017:    const lines = hits('core/work-graph/tasks/generic-helper.ts');
+-      tests/architecture/state-writes.test.ts:1019:      'src/core/work-graph/tasks/generic-helper.ts:4: SessionRecord.health',
+-      tests/architecture/state-writes.test.ts:1020:      'src/core/work-graph/tasks/generic-helper.ts:6: SessionRecord.lifecycle',
+-      tests/architecture/state-writes.test.ts:1023:    expect(lines).toContain('src/core/work-graph/tasks/generic-helper.ts:9: RunSnapshot.status');
+-      tests/architecture/state-writes.test.ts:1024:    expect(lines).toContain('src/core/work-graph/tasks/generic-helper.ts:9: RunSnapshot.outcome');
+-      tests/architecture/state-writes.test.ts:1028:    expect(hits('core/work-graph/tasks/nested-assign.ts')).toEqual([
+-      tests/architecture/state-writes.test.ts:1029:      'src/core/work-graph/tasks/nested-assign.ts:4: RunSnapshot.controlState',
+-      tests/architecture/state-writes.test.ts:1030:      'src/core/work-graph/tasks/nested-assign.ts:5: RoundSnapshot.chain',
+-      tests/architecture/state-writes.test.ts:1035:    expect(hits('core/work-graph/tasks/double-cast.ts')).toEqual([
+-      tests/architecture/state-writes.test.ts:1036:      'src/core/work-graph/tasks/double-cast.ts:4: RunSnapshot.status',
+-      tests/architecture/state-writes.test.ts:1041:    expect(hits('core/work-graph/tasks/destructuring.ts')).toEqual([
+-      tests/architecture/state-writes.test.ts:1042:      'src/core/work-graph/tasks/destructuring.ts:3: RunSnapshot.outcome',
+-      tests/architecture/state-writes.test.ts:1043:      'src/core/work-graph/tasks/destructuring.ts:4: RunSnapshot.endedAt',
+-      tests/architecture/state-writes.test.ts:1044:      'src/core/work-graph/tasks/destructuring.ts:5: RunSnapshot.lastEventSeq',
+-      tests/architecture/state-writes.test.ts:1045:      'src/core/work-graph/tasks/destructuring.ts:6: RunSnapshot.status',
+-      tests/architecture/state-writes.test.ts:1052:    expect(hits('core/work-graph/tasks/plan-readers.ts')).toEqual([
+-      tests/architecture/state-writes.test.ts:1053:      'src/core/work-graph/tasks/plan-readers.ts:5: CanonicalTaskState.phaseCause',
+-      tests/architecture/state-writes.test.ts:1054:      'src/core/work-graph/tasks/plan-readers.ts:6: CanonicalTaskState.effectivePhase',
+-      scripts/check-boundaries.d.mts:17:  /** Spec §14.4 pure directories, e.g. `src/core/work-graph/state/`. */
+-      scripts/graph-session-demo.mjs:12:  encodeWorkspaceSnapshot } from '../dist/core/work-graph/persistence/record-codecs.js';
+
+## path strings per moved file in the two data files (the forms wg-move.mjs rewrites)
+tasks/claim-contracts.ts	allowlist=0	state-writes(full)=1	state-writes(file:)=0
+tasks/plan-contracts.ts	allowlist=0	state-writes(full)=2	state-writes(file:)=0
+configuration/contracts.ts	allowlist=5	state-writes(full)=0	state-writes(file:)=0
+communication/contracts.ts	allowlist=0	state-writes(full)=1	state-writes(file:)=0
+tasks/plan-record-codecs.ts	allowlist=0	state-writes(full)=0	state-writes(file:)=1
+evidence/evidence-record-codecs.ts	allowlist=0	state-writes(full)=0	state-writes(file:)=1
+communication/message-record-codecs.ts	allowlist=0	state-writes(full)=0	state-writes(file:)=1
+total path strings: 12

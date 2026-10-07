@@ -1,0 +1,24 @@
+Workflow: directory=true, sourceFiles=5
+WorkGraph: directory=true, sourceFiles=100
+AgentRuntime: directory=true, sourceFiles=34
+WorkspaceTools: directory=true, sourceFiles=23
+RecordStore: directory=true, sourceFiles=13
+observed module edges: 7/8 allowed (AgentRuntime -> RecordStore, AgentRuntime -> WorkGraph, AgentRuntime -> WorkspaceTools, WorkGraph -> RecordStore, WorkGraph -> WorkspaceTools, Workflow -> AgentRuntime, Workflow -> WorkGraph)
+  WorkGraph/model: sourceFiles=12
+  WorkGraph/state: sourceFiles=13
+  WorkGraph/persistence: sourceFiles=9
+  WorkGraph/configuration: sourceFiles=5
+  WorkGraph/materials: sourceFiles=4
+  WorkGraph/architecture: sourceFiles=8
+  WorkGraph/sessions: sourceFiles=9
+  WorkGraph/source-authority-ports: sourceFiles=1
+  WorkGraph/queries: sourceFiles=4
+  WorkGraph/tasks: sourceFiles=31
+  WorkGraph/source-authority-reader: sourceFiles=1
+  WorkGraph/evidence: sourceFiles=2
+  WorkGraph/communication: sourceFiles=1
+observed submodule edges: 38 (WorkGraph/architecture -> WorkGraph/model, WorkGraph/architecture -> WorkGraph/persistence, WorkGraph/communication -> WorkGraph/model, WorkGraph/communication -> WorkGraph/persistence, WorkGraph/communication -> WorkGraph/queries, WorkGraph/communication -> WorkGraph/sessions, WorkGraph/communication -> WorkGraph/state, WorkGraph/communication -> WorkGraph/tasks, WorkGraph/configuration -> WorkGraph/model, WorkGraph/configuration -> WorkGraph/persistence, WorkGraph/evidence -> WorkGraph/architecture, WorkGraph/evidence -> WorkGraph/model, WorkGraph/evidence -> WorkGraph/persistence, WorkGraph/evidence -> WorkGraph/state, WorkGraph/evidence -> WorkGraph/tasks, WorkGraph/materials -> WorkGraph/model, WorkGraph/materials -> WorkGraph/persistence, WorkGraph/model -> WorkGraph/state, WorkGraph/persistence -> WorkGraph/model, WorkGraph/queries -> WorkGraph/materials, WorkGraph/queries -> WorkGraph/model, WorkGraph/queries -> WorkGraph/persistence, WorkGraph/queries -> WorkGraph/sessions, WorkGraph/queries -> WorkGraph/state, WorkGraph/sessions -> WorkGraph/architecture, WorkGraph/sessions -> WorkGraph/model, WorkGraph/sessions -> WorkGraph/persistence, WorkGraph/sessions -> WorkGraph/state, WorkGraph/source-authority-ports -> WorkGraph/materials, WorkGraph/source-authority-reader -> WorkGraph/materials, WorkGraph/source-authority-reader -> WorkGraph/queries, WorkGraph/source-authority-reader -> WorkGraph/source-authority-ports, WorkGraph/tasks -> WorkGraph/materials, WorkGraph/tasks -> WorkGraph/model, WorkGraph/tasks -> WorkGraph/persistence, WorkGraph/tasks -> WorkGraph/queries, WorkGraph/tasks -> WorkGraph/sessions, WorkGraph/tasks -> WorkGraph/state)
+pure directories: src/core/work-graph/state/
+core/work-graph/model/evidence-contracts.ts:42: forbidden submodule edge WorkGraph/model -> WorkGraph/tasks
+core/work-graph/sessions/session-directory.ts:68: forbidden submodule edge WorkGraph/sessions -> WorkGraph/tasks
+check:architecture exit=1

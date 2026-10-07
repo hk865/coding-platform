@@ -1,0 +1,31 @@
+moves: 18
+files the reference move changes: 165 = 18 moved + 145 other files with specifier changes + 2 data files
+canonical: 380 specifier changes in 158 files = 26 in 13 moved files + 354 in 145 other files
+literal: 376 specifier changes in 157 files = 22 in 12 moved files + 354 in 145 other files
+  other files under src/: 68 files, 204 specifier changes
+  other files under tests/: 77 files, 150 specifier changes
+path strings: 12 in 2 data files
+  tests/architecture/production-reach-allowlist.json: 5
+  tests/architecture/state-writes.test.ts: 7
+test files touched: 79 (77 with specifier changes + 2 data files)
+src files touched: 86 (18 moved, 68 others)
+
+per moved file (canonical / literal specifier changes inside it):
+  M2	src/core/work-graph/tasks/claim-contracts.ts -> src/core/work-graph/model/claim-contracts.ts	2	2
+  M10	src/core/work-graph/communication/contracts.ts -> src/core/work-graph/model/communication-contracts.ts	5	5
+  M7	src/core/work-graph/configuration/contracts.ts -> src/core/work-graph/model/configuration-contracts.ts	0	0
+  M11	src/core/work-graph/evidence/contracts.ts -> src/core/work-graph/model/evidence-contracts.ts	4	4
+  M3	src/core/work-graph/tasks/execution-entry-contracts.ts -> src/core/work-graph/model/execution-entry-contracts.ts	3	3
+  M5	src/core/work-graph/tasks/execution-history-contracts.ts -> src/core/work-graph/model/execution-history-contracts.ts	1	1
+  M4	src/core/work-graph/tasks/execution-read-contracts.ts -> src/core/work-graph/model/execution-read-contracts.ts	1	1
+  M8	src/core/work-graph/materials/contracts.ts -> src/core/work-graph/model/material-contracts.ts	0	0
+  M6	src/core/work-graph/tasks/plan-contracts.ts -> src/core/work-graph/model/plan-contracts.ts	1	1
+  M9	src/core/work-graph/sessions/contracts.ts -> src/core/work-graph/model/session-contracts.ts	0	0
+  M1	src/core/work-graph/tasks/contracts.ts -> src/core/work-graph/model/task-contracts.ts	0	0
+  M12	src/core/work-graph/tasks/task-index.ts -> src/core/work-graph/model/task-index.ts	0	0
+  M14	src/core/work-graph/evidence/evidence-record-codecs.ts -> src/core/work-graph/persistence/evidence-record-codecs.ts	2	1
+  M13	src/core/work-graph/tasks/plan-record-codecs.ts -> src/core/work-graph/persistence/plan-record-codecs.ts	1	1
+  M18	src/core/work-graph/communication/message-body-envelope.ts -> src/core/work-graph/sessions/message-body-envelope.ts	1	1
+  M17	src/core/work-graph/communication/message-record-codecs.ts -> src/core/work-graph/sessions/message-record-codecs.ts	2	1
+  M16	src/core/work-graph/evidence/coverage.ts -> src/core/work-graph/tasks/evidence-coverage.ts	2	1
+  M15	src/core/work-graph/persistence/model-request-codecs.ts -> src/core/work-graph/tasks/model-request-codecs.ts	1	0

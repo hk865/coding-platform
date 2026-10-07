@@ -1,0 +1,35 @@
+{
+  "note": "The import-edge effect of the small code steps of README §5 (X1 and X2 before task D; A only if the user prefers it to declaring model -> state). Paths are after the 18 moves, relative to src/core/work-graph/. Used only by scripts/what-if.mjs to check what is left; the code steps themselves are separate commits with their own review, not DSH's.",
+  "steps": [
+    {
+      "id": "X1",
+      "what": "decodeRun, Decoded<T> and the RUN_VALIDATE selection move from tasks/run-state-service.ts to a new materials/run-snapshot-decoder.ts (TARGET-DAG §4); the four src importers and two tests import it from there",
+      "addNodes": [{ "file": "materials/run-snapshot-decoder.ts", "lines": 45 }],
+      "remove": [
+        { "from": "sessions/session-directory.ts", "to": "tasks/run-state-service.ts" },
+        { "from": "communication/mailbox-service.ts", "to": "tasks/run-state-service.ts" },
+        { "from": "tasks/completion.ts", "to": "tasks/run-state-service.ts" },
+        { "from": "tasks/reconcile-reads.ts", "to": "tasks/run-state-service.ts" },
+        { "from": "tasks/run-state-service.ts", "to": "materials/record-readers.ts" }
+      ],
+      "add": [
+        { "from": "materials/run-snapshot-decoder.ts", "to": "materials/record-readers.ts" },
+        { "from": "sessions/session-directory.ts", "to": "materials/run-snapshot-decoder.ts" },
+        { "from": "communication/mailbox-service.ts", "to": "materials/run-snapshot-decoder.ts" },
+        { "from": "tasks/completion.ts", "to": "materials/run-snapshot-decoder.ts" },
+        { "from": "tasks/reconcile-reads.ts", "to": "materials/run-snapshot-decoder.ts" },
+        { "from": "tasks/run-state-service.ts", "to": "materials/run-snapshot-decoder.ts" }
+      ]
+    },
+    {
+      "id": "X2",
+      "what": "EvidenceServiceDependencies and CheckConfigurationResolver move from evidence/contracts.ts into evidence/evidence-service.ts (next to createEvidenceService, which already imports tasks/plan-write-admission.ts); evidence/contracts.ts no longer imports tasks",
+      "remove": [{ "from": "model/evidence-contracts.ts", "to": "tasks/plan-write-admission.ts" }]
+    },
+    {
+      "id": "A",
+      "what": "ALTERNATIVE to declaring model -> state (fix B, proposed): GoalDisplayV1, GoalResumeContinuationV1 and GoalRunControlCapabilityV1, with the display types GoalDisplayV1 names, move from state/goal-machine.ts to src/contracts (D-PLACEMENT §6 row 2, fix A); plan-contracts.ts imports them from src/contracts",
+      "remove": [{ "from": "model/plan-contracts.ts", "to": "state/goal-machine.ts" }]
+    }
+  ]
+}

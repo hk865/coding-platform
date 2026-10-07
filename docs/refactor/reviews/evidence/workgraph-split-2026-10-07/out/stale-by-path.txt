@@ -1,0 +1,16 @@
+## comments and test titles naming a moved file by its old directory path (import/export/vi.mock lines and the two data files excluded)
+src/contracts/core/task-claim.ts:6: * WorkGraph `tasks/claim-contracts.ts` keeps a compatibility type re-export;
+src/contracts/core/session-message.ts:6:// SessionMailbox DTOs stay in `core/work-graph/communication/contracts.ts`.
+src/core/work-graph/state/attempt-machine.ts:32: * `tasks/claim-contracts.ts`, which `state/` may not import (§14.4); the
+src/core/work-graph/state/message-machine.ts:6: * wakes, preempts or creates a dependency (`communication/contracts.ts:6-11`).
+src/core/work-graph/state/message-machine.ts:43: * `SessionMessage` is declared in `communication/contracts.ts:95`, which this
+src/core/work-graph/state/message-machine.ts:58:// Persisted record (structurally identical to communication/contracts.ts:36-145)
+src/core/work-graph/state/verification-machine.ts:41: * `evidence/evidence-record-codecs.ts:57-59`, which this directory may not import.
+src/core/work-graph/state/plan-machine.ts:32: * `PlanProposal` is declared in `tasks/plan-contracts.ts:28-50`, which this
+src/core/work-graph/state/plan-machine.ts:61:// Persisted record (structurally identical to tasks/plan-contracts.ts:28-50)
+src/core/work-graph/state/session-availability.ts:32:/** Derived, never persisted (`SessionCard.availability`, `sessions/contracts.ts:46`). */
+src/core/work-graph/architecture/catalog-record-codecs.ts:13: *   - `hasCycleInEdges` is reused from `tasks/task-index.ts` instead of copying
+src/core/work-graph/tasks/completion.ts:23: * coverage come from `evidence/coverage.ts`, the decoders come from
+src/core/work-graph/tasks/completion.ts:24: * `evidence/evidence-record-codecs.ts`, and the reduced Task/Goal truth comes
+tests/state/plan-machine.test.ts:298:  it('PlanProposalRecord is the same type as tasks/plan-contracts.ts PlanProposal', () => {
+lines: 14

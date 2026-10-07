@@ -1,0 +1,104 @@
+files 100, lines 56993, file edges 404 (type-only 136)
+files no submodule owns: 0
+
+## sizes (files / lines)
+model	L0	12	1477
+state	L0	13	13742
+persistence	L1	9	4814
+configuration	L2	5	3081
+materials	L2	4	887
+architecture	L2	8	2987
+sessions	L3	9	4556
+source-authority-ports	L3	1	63
+queries	L4	4	3620
+tasks	L5	31	17299
+source-authority-reader	L5	1	252
+evidence	L6	2	1981
+communication	L6	1	2234
+
+## used submodule edges (40): value / type-only / allowed by target.json
+architecture -> model	1	0	allowed
+architecture -> persistence	4	0	allowed
+communication -> model	1	5	allowed
+communication -> persistence	1	0	allowed
+communication -> queries	1	0	allowed
+communication -> sessions	3	0	allowed
+communication -> state	2	0	allowed
+communication -> tasks	4	0	allowed
+configuration -> model	0	3	allowed
+configuration -> persistence	1	0	allowed
+evidence -> architecture	1	0	allowed
+evidence -> model	0	2	allowed
+evidence -> persistence	3	0	allowed
+evidence -> state	4	0	allowed
+evidence -> tasks	7	0	allowed
+materials -> model	0	1	allowed
+materials -> persistence	5	0	allowed
+model -> state	0	1	allowed
+model -> tasks	0	1	NOT ALLOWED
+persistence -> model	0	5	allowed
+queries -> materials	1	0	allowed
+queries -> model	0	4	allowed
+queries -> persistence	4	0	allowed
+queries -> sessions	2	0	allowed
+queries -> state	3	0	allowed
+sessions -> architecture	1	0	allowed
+sessions -> model	0	6	allowed
+sessions -> persistence	1	0	allowed
+sessions -> state	3	0	allowed
+sessions -> tasks	1	0	NOT ALLOWED
+source-authority-ports -> materials	0	1	allowed
+source-authority-reader -> materials	0	1	allowed
+source-authority-reader -> queries	1	0	allowed
+source-authority-reader -> source-authority-ports	0	1	allowed
+tasks -> materials	1	1	allowed
+tasks -> model	1	40	allowed
+tasks -> persistence	44	0	allowed
+tasks -> queries	2	0	allowed
+tasks -> sessions	12	0	allowed
+tasks -> state	37	13	allowed
+
+## edges the declared dependencies do not allow: 2 submodule edges, 2 file edges
+model -> tasks
+  type  model/evidence-contracts.ts:42 -> tasks/plan-write-admission.ts
+sessions -> tasks
+  value sessions/session-directory.ts:68 -> tasks/run-state-service.ts
+
+## forbidden directions (target.json "forbidden")
+persistence -> {state, configuration, materials, architecture, sessions, queries, tasks, evidence, communication}: none
+sessions -> {tasks, queries, communication, evidence}: sessions -> tasks (1)
+queries -> {tasks, communication, evidence}: none
+tasks -> {evidence, communication}: none
+materials -> {tasks}: none
+state -> {model, persistence, configuration, materials, architecture, sessions, queries, tasks, evidence, communication, source-authority-ports, source-authority-reader}: none
+model -> {persistence, configuration, materials, architecture, sessions, queries, tasks, evidence, communication, source-authority-ports, source-authority-reader}: model -> tasks (1)
+forbidden submodule edges used: 2
+
+## layer check (DESIGN.md §7.2): edges that do not go to a lower layer
+model (L0) -> state (L0) 1 file edges, declared in target.json
+model (L0) -> tasks (L5) 1 file edges, NOT declared
+sessions (L3) -> tasks (L5) 1 file edges, NOT declared
+
+## cycles
+submodule-level strongly connected components (all imports): 1 {architecture, materials, model, persistence, queries, sessions, tasks}
+submodule-level strongly connected components (value imports only): 1 {queries, sessions, tasks}
+file-level strongly connected components: 3 {model/communication-contracts.ts, model/execution-entry-contracts.ts, model/execution-read-contracts.ts} {state/control-intent-machine.ts, state/run-machine.ts} {model/evidence-contracts.ts, persistence/evidence-record-codecs.ts, tasks/entry-plan-reader.ts, tasks/execution-entry-service.ts, tasks/plan-readers.ts, tasks/plan-write-admission.ts}
+
+## room for the design (DESIGN.md §7.2, D-PLACEMENT §3)
+notes (L5.5) can depend on {model, state, persistence, architecture, sessions, tasks} while evidence -> notes is added: yes (none of them reaches evidence or communication)
+tasks -> architecture can be used without a cycle: NO (architecture reaches tasks)
+views (L7): nothing in WorkGraph can depend on it; it can depend on every submodule (no submodule is above L7)
+every submodule reachable from each one (used edges):
+  model -> {architecture, materials, persistence, queries, sessions, state, tasks}
+  state -> {}
+  persistence -> {architecture, materials, model, queries, sessions, state, tasks}
+  configuration -> {architecture, materials, model, persistence, queries, sessions, state, tasks}
+  materials -> {architecture, model, persistence, queries, sessions, state, tasks}
+  architecture -> {materials, model, persistence, queries, sessions, state, tasks}
+  sessions -> {architecture, materials, model, persistence, queries, state, tasks}
+  source-authority-ports -> {architecture, materials, model, persistence, queries, sessions, state, tasks}
+  queries -> {architecture, materials, model, persistence, sessions, state, tasks}
+  tasks -> {architecture, materials, model, persistence, queries, sessions, state}
+  source-authority-reader -> {architecture, materials, model, persistence, queries, sessions, source-authority-ports, state, tasks}
+  evidence -> {architecture, materials, model, persistence, queries, sessions, state, tasks}
+  communication -> {architecture, materials, model, persistence, queries, sessions, state, tasks}
