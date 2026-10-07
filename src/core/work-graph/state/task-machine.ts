@@ -69,9 +69,10 @@ import type {
 } from '../../../contracts/reduction.js';
 import type { TaskPhaseCauseCode, TaskPhaseCauseDetailV1, TaskPhaseCauseV1 } from '../../../contracts/task-failure.js';
 import {
-  GOAL_FAN_OUT_ACTOR, MAX_AUTO_REWORK_LIMIT, TASK_REWORK_REASON_MAX_CHARS, reworkActorClassOf,
-  type ReworkActorClass, type ReworkFailureClass, type TaskAutomationPolicyV1, type TaskRequeueBasisComparison,
-  type TaskRequeueRef, type TaskRequeueSnapshotV1, type TaskRequeueTriggerV1, type TaskReworkRefusalSnapshotV1,
+  MAX_AUTO_REWORK_LIMIT, TASK_REWORK_REASON_MAX_CHARS, reworkActorClassOf,
+  type ReworkActorClass, type ReworkFailureClass, type TaskAutomationPolicyV1, type TaskRequeueAutomationV1,
+  type TaskRequeueBasisComparison, type TaskRequeueRef, type TaskRequeueSnapshotV1, type TaskRequeueTriggerV1,
+  type TaskReworkRefusalSnapshotV1,
 } from '../../../contracts/task-requeue.js';
 import type { RoundSnapshot, VerificationRoundRef } from '../../../contracts/verification.js';
 import type { AttemptClaimBasis } from './attempt-machine.js';
@@ -82,11 +83,13 @@ import {
   type RunClaimContext,
 } from './run-machine.js';
 import {
-  deriveReworkClass, nextRequeueAutoCount, requeueHistorySourceOf, reworkFenceOf, reworkPermission,
+  deriveReworkClass, isGoalFanOutActor, nextRequeueAutoCount, requeueHistorySourceOf, reworkFenceOf, reworkPermission,
   type ReworkClassDerivationV1, type StopIntentV1,
 } from './task-failure.js';
 import { accept, failed, reject, rejected, unreachable, type Rejected, type Transition } from './transition.js';
-import { chainEvidenceIds, type RoundChainHeadV1, type RoundTaskSignalV1 } from './verification-machine.js';
+import {
+  chainEvidenceIds, isFinalizedNonPass, type RoundChainHeadV1, type RoundTaskSignalV1,
+} from './verification-machine.js';
 
 // -------------------------------------------------------------------------- //
 // Projection (§4.1 投影规则, D-1, TD-1)                                       //
@@ -567,6 +570,12 @@ function sameIntentRef(left: ControlIntentRef, right: ControlIntentRef): boolean
     && left.workspaceId === right.workspaceId && left.intentId === right.intentId;
 }
 
+/** The pointer intent a requeue or a refusal judges with is the Run's own (none without a pointer). */
+function isRunPointerIntent(run: Pick<RunSnapshot, 'controlState'>, pointerIntent: StopIntentV1 | null): boolean {
+  const pointerRef = run.controlState?.intentRef ?? null;
+  return pointerIntent === null ? pointerRef === null : pointerRef !== null && sameIntentRef(pointerIntent.ref, pointerRef);
+}
+
 /** The facts the record reads belong to the requeued Task and its afterRun. */
 function taskRequeueSubjectProblem(input: NewTaskRequeueInput): string | null {
   const { afterRun, chain } = input;
@@ -575,11 +584,7 @@ function taskRequeueSubjectProblem(input: NewTaskRequeueInput): string | null {
     && (chain.head.subjectRunRef.runId !== afterRun.ref.runId || !sameTask(chain.head.subject, input.task))) {
     return 'the round chain is not the afterRun chain';
   }
-  const pointerRef = afterRun.controlState?.intentRef ?? null;
-  if (input.pointerIntent === null ? pointerRef !== null
-    : pointerRef === null || !sameIntentRef(input.pointerIntent.ref, pointerRef)) {
-    return 'the pointer intent is not the afterRun pointer';
-  }
+  if (!isRunPointerIntent(afterRun, input.pointerIntent)) return 'the pointer intent is not the afterRun pointer';
   if (!sameTask(input.basis.taskRef, input.task)) return 'the no-progress key belongs to another task';
   if (input.reason.trim().length === 0 || input.reason.length > TASK_REWORK_REASON_MAX_CHARS) {
     return `the reason is empty or longer than ${TASK_REWORK_REASON_MAX_CHARS} characters`;
@@ -610,7 +615,7 @@ function taskRequeueChainProblem(chain: RoundChainHeadV1, row: string): string |
       if (head.status !== 'finalized') {
         return `the round chain head ${head.ref.roundId} is open; it is finalized before a requeue (${row})`;
       }
-      if (head.outcome === 'PASS' && head.gaps.length === 0) {
+      if (!isFinalizedNonPass(head)) {
         return `the round chain head ${head.ref.roundId} is a clean PASS; there is no round to rework`;
       }
       return null;
@@ -649,11 +654,8 @@ function taskRequeueCombinationProblem(
   if ((input.agentProvenance !== null) !== (actorClass === 'agent')) {
     return 'agent provenance is recorded exactly for an agent requeue';
   }
-  const goalFanOut = input.requestedBy.kind === GOAL_FAN_OUT_ACTOR.kind && input.requestedBy.id === GOAL_FAN_OUT_ACTOR.id;
-  const refusal = reworkPermission({ operation: 'requeue', goalDesiredState: 'active',
-    failureClass: derivation.failureClass, interruption: derivation.interruption,
-    fence: reworkFenceOf(afterRun, input.pointerIntent), actorClass, goalFanOut,
-    trigger: input.trigger !== null, budget: input.budget !== null, note: false });
+  const refusal = requeuePermission(afterRun, input.pointerIntent, derivation, input.requestedBy, actorClass, 'active',
+    { trigger: input.trigger !== null, budget: input.budget !== null });
   if (refusal !== null && !refusal.ok) return refusal.detail;
   const trigger = input.trigger;
   if (trigger !== null) {
@@ -667,6 +669,25 @@ function taskRequeueCombinationProblem(
     return 'a budget_exhausted requeue needs a larger token budget or a new input (budget_not_increased)';
   }
   return null;
+}
+
+/**
+ * Steps 4–5 of a requeue (§4.3 "处理步骤"): `reworkPermission`, the one actor ×
+ * class matrix, over the afterRun's class and fence and the requester; TASK-16/17/27/28.
+ */
+function requeuePermission(
+  afterRun: RunSnapshot, pointerIntent: StopIntentV1 | null, derivation: Extract<ReworkClassDerivationV1, { kind: 'class' }>,
+  requestedBy: ActorRef, actorClass: ReworkActorClass, goalDesiredState: GoalDesiredState,
+  request: { trigger: boolean; budget: boolean },
+): Rejected | null {
+  return reworkPermission({ operation: 'requeue', goalDesiredState, failureClass: derivation.failureClass,
+    interruption: derivation.interruption, fence: reworkFenceOf(afterRun, pointerIntent), actorClass,
+    goalFanOut: isGoalFanOutActor(requestedBy), trigger: request.trigger, budget: request.budget, note: false });
+}
+
+/** G-CAP (C8): a counted automatic requeue past the cap (`nextRequeueAutoCount`). */
+function requeueCapExceeded(automation: TaskRequeueAutomationV1): boolean {
+  return automation.counted && automation.cap !== null && automation.autoCount > automation.cap;
 }
 
 function requeueCannotBeBuilt(problem: string): never {
@@ -703,7 +724,7 @@ export function newTaskRequeueRecord(input: NewTaskRequeueInput): TaskRequeueSna
   const head = chain.kind === 'head' ? chain.head : null;
   const automation = nextRequeueAutoCount({ actorClass, failureClass: derivation.failureClass,
     afterRun, runs: input.runs, requeues: input.requeues, policy: input.policy });
-  if (automation.counted && automation.cap !== null && automation.autoCount > automation.cap) {
+  if (requeueCapExceeded(automation)) {
     return requeueCannotBeBuilt(
       `automatic requeue ${automation.autoCount} exceeds the cap ${automation.cap} (auto_rework_cap_reached)`);
   }
@@ -944,6 +965,16 @@ function sameRoundRef(left: VerificationRoundRef, right: VerificationRoundRef): 
   return canonicalJson(left as unknown as JsonValue) === canonicalJson(right as unknown as JsonValue);
 }
 
+/** §4.4: the round finalizes as a clean PASS (PASS without gaps). */
+function isCleanPassFinalize(event: RoundTaskEvent): boolean {
+  return event.kind === 'round_finalized' && event.outcome === 'PASS' && event.gapCodes.length === 0;
+}
+
+/** §4.4, gate (P20 `check_interrupted`) and work (P9) alike: an interrupted round never finalizes clean. */
+function interruptedCleanPass(): Rejected {
+  return reject('illegal', 'invalid', 'an interrupted check is a gap, so the round cannot finalize as a clean PASS (§9 VD-4)');
+}
+
 /** TASK-09..13, 20, 29, 30 and the §4.4 interrupted-PASS row. */
 function onRoundEvent(state: TaskMachineState, event: RoundTaskEvent): TaskTransition {
   if (state === null) return absentTask(event.kind);
@@ -955,18 +986,13 @@ function onRoundEvent(state: TaskMachineState, event: RoundTaskEvent): TaskTrans
     // a round that is not the head after it is history only.
     const head = signalHeadRef(event.facts.round);
     if (head !== null && !sameRoundRef(head, event.roundRef)) return accept(state);
-    if (event.kind === 'round_finalized' && state.cause?.code === 'check_interrupted' && event.outcome === 'PASS'
-      && event.gapCodes.length === 0) {
-      return reject('illegal', 'invalid', 'an interrupted check is a gap, so the round cannot finalize as a clean PASS (§9 VD-4)');
-    }
+    if (state.cause?.code === 'check_interrupted' && isCleanPassFinalize(event)) return interruptedCleanPass();
     return reprojected(state, event.facts);
   }
   const run = event.facts.selectedRun;
   // TASK-20 (R5): a round of an older Run is history only.
   if (run === null || !sameRunRef(run.ref, event.subjectRunRef)) return accept(state);
-  if (event.kind === 'round_finalized' && state.row === 'P9' && event.outcome === 'PASS' && event.gapCodes.length === 0) {
-    return reject('illegal', 'invalid', 'an interrupted check is a gap, so the round cannot finalize as a clean PASS (§9 VD-4)');
-  }
+  if (state.row === 'P9' && isCleanPassFinalize(event)) return interruptedCleanPass();
   // TASK-09 `verifying`, TASK-12 (D-12) `blocked/check_interrupted` once the
   // last pending/executing check settles with an interrupted one left, TASK-10
   // `failed`, TASK-11 `blocked/round_inconclusive`, TASK-13 `verifying`;
@@ -1140,7 +1166,7 @@ export function taskRequeueStateProblem(state: TaskState, facts: TaskReworkFacts
       }
       // I-12 clause 2: a clean-PASS head on a Run that did not complete (P6
       // today; a completed one is P13, `busy` below) leaves no round to rework.
-      if (run.outcome !== 'completed' && facts.chain.head.outcome === 'PASS' && facts.chain.head.gaps.length === 0) {
+      if (run.outcome !== 'completed' && !isFinalizedNonPass(facts.chain.head)) {
         return reject('illegal', 'invalid', `round ${facts.chain.head.ref.roundId} of the selected Run is a clean PASS; there is no round to rework`);
       }
       break;
@@ -1219,18 +1245,15 @@ function onTaskRequeued(
   if (actorClass === null) return reject('guard_failed', 'forbidden', 'the requester has no rework actor class');
   const derivation = deriveReworkClass(input.afterRun, input.pointerIntent, input.chain);
   if (derivation.kind !== 'class') return reject('illegal', 'invalid', `the selected Run has nothing to rework (${derivation.row})`);
-  const goalFanOut = input.requestedBy.kind === GOAL_FAN_OUT_ACTOR.kind && input.requestedBy.id === GOAL_FAN_OUT_ACTOR.id;
-  const permission = reworkPermission({ operation: 'requeue', goalDesiredState: facts.goalDesiredState,
-    failureClass: derivation.failureClass, interruption: derivation.interruption,
-    fence: reworkFenceOf(input.afterRun, input.pointerIntent), actorClass, goalFanOut,
-    trigger: input.trigger !== null, budget: input.budget !== null, note: false });
+  const permission = requeuePermission(input.afterRun, input.pointerIntent, derivation, input.requestedBy, actorClass,
+    facts.goalDesiredState, { trigger: input.trigger !== null, budget: input.budget !== null });
   if (permission !== null) return permission;
   if (!requeueBudgetIncreased(input.afterRun, input.budget, input.newInputRefs.length)) {
     return reject('illegal', 'invalid', 'budget_not_increased is a TASK-28 policy refusal, not a requeue');
   }
   const automation = nextRequeueAutoCount({ actorClass, failureClass: derivation.failureClass, afterRun: input.afterRun,
     runs: input.runs, requeues: input.requeues, policy: input.policy });
-  if (automation.counted && automation.cap !== null && automation.autoCount > automation.cap) {
+  if (requeueCapExceeded(automation)) {
     return reject('illegal', 'invalid', 'auto_rework_cap_reached is a TASK-28 policy refusal, not a requeue');
   }
   if (requeueBasisCompared(derivation.failureClass, actorClass) && facts.priorBasisDigests.includes(input.basis.digest)) {
@@ -1275,8 +1298,9 @@ function onTaskReworkRefused(
   if (facts.goalDesiredState !== 'active') {
     return reject('guard_failed', 'busy', `the Goal is ${facts.goalDesiredState}; resume the Goal first`);
   }
-  const pointerProblem = pointerIntentProblem(run, event.pointerIntent);
-  if (pointerProblem !== null) return reject('illegal', 'invalid', pointerProblem);
+  if (!isRunPointerIntent(run, event.pointerIntent)) {
+    return reject('illegal', 'invalid', 'the pointer intent is not the selected Run pointer');
+  }
   const derivation = deriveReworkClass(run, event.pointerIntent, facts.chain);
   if (derivation.kind !== 'class') return reject('illegal', 'invalid', `the selected Run has nothing to rework (${derivation.row})`);
   if (derivation.failureClass !== refusal.failureClass) {
@@ -1287,10 +1311,8 @@ function onTaskReworkRefused(
   }
   const actorClass = reworkActorClassOf(null, refusal.requestedBy);
   if (actorClass === null) return reject('guard_failed', 'forbidden', 'the requester has no rework actor class');
-  const goalFanOut = refusal.requestedBy.kind === GOAL_FAN_OUT_ACTOR.kind && refusal.requestedBy.id === GOAL_FAN_OUT_ACTOR.id;
-  const permission = reworkPermission({ operation: 'requeue', goalDesiredState: facts.goalDesiredState,
-    failureClass: derivation.failureClass, interruption: derivation.interruption,
-    fence: reworkFenceOf(run, event.pointerIntent), actorClass, goalFanOut, trigger: false, budget: false, note: false });
+  const permission = requeuePermission(run, event.pointerIntent, derivation, refusal.requestedBy, actorClass,
+    facts.goalDesiredState, { trigger: false, budget: false });
   if (permission !== null) return permission;
   switch (refusal.code) {
     case 'budget_not_increased':
@@ -1315,15 +1337,6 @@ function onTaskReworkRefused(
       return unreachable(refusal.code, 'rework refusal code');
   }
   return accept(state, [{ kind: 'write_task_rework_refusal', refusal }]);
-}
-
-/** The pointer intent a requeue or refusal judges with is the selected Run's own (or none without a pointer). */
-function pointerIntentProblem(run: RunSnapshot, pointerIntent: StopIntentV1 | null): string | null {
-  const pointerRef = run.controlState?.intentRef ?? null;
-  if (pointerIntent === null ? pointerRef !== null : pointerRef === null || !sameIntentRef(pointerIntent.ref, pointerRef)) {
-    return 'the pointer intent is not the selected Run pointer';
-  }
-  return null;
 }
 
 /**
