@@ -298,7 +298,7 @@ Host 先建立共享依赖再创建 Workflow；用用户输入和结果事件调
 - 一轮检查没通过（FAIL、INCONCLUSIVE 或有缺口），或 Run 以已知失败结束（`crashed`、`failed`、`budget_exhausted`、`cancelled`）且没有待核对的事，都回到 `select_work`，由 Task 的失败事实和自动化判定决定（5.8、5.9）。以前这两种情况停在等待。Run 还有待核对、结果未知或被隔离的，仍等待并写明原因。
 - 判定为 `requeue` 时执行 `requeue_task`；预算耗尽、而绑定给的预算更大时，带这个预算重新入队。判定为 `reverify` 时执行 `reverify_round`，在同一 Run 或 gate 自己的轮次链上开后继轮次，不再调用模型。两者都以平台自动化身份 `WORKFLOW_AUTOMATION_ACTOR` 执行，不用 Host 操作者；请求 id 只由请求本身派生（`wf-auto:`），所以任何驱动重发都得到原回执。判定为 `claim_requeued` 时带 `requeueRef` 领取，优先用原领取 Session；它的 Kernel Turn 没有终态（`kernel_turn_open`）时新建 Session（LA-1）。判定为 `stopped` 时这个 Task 不再返工，其它 Task 照常推进。
 - 自动返工次数受 Host 设置 `automation.autoReworkLimit` 约束（默认 3，最多 10），干净的中断不计数。人取消的 Run 也交回选择，但按“尊重人的停止”不自动返工，只有人能重新开始。
-- 等待文本以原因码开头：Goal 不是 active 时说明不选新工作；只剩延后的必需 Task 时以 `required_task_deferred:` 开头；推进一个已改处置的 Task 时以 `task_not_active:` 开头；gate 的自动化停下时以停下原因（如 `gate_needs_fix:`）开头，并写明人能做什么（加修复 Task，或重新检查）。Goal 显示同一原因（规格 GOAL-30）。
+- 等待文本以原因码开头：Goal 不是 active 时说明不选新工作；只剩延后的必需 Task 时以 `required_task_deferred:` 开头；推进一个延后的 Task 时以 `task_not_active:` 开头（已取消或已替换的 Task 不等待，这条推进以同样开头的原因结束）；gate 的自动化停下时以停下原因（如 `gate_needs_fix:`）开头，并写明人能做什么（加修复 Task，或重新检查）。Goal 显示同一原因（规格 GOAL-30）。
 - 计划改动后，已取消或已替换的 Task 不再运行，也不再等待（5.10，L-15）。
 - 没有定时调度：停在 waiting 的推进只由下一次推进、协作驱动启动、Host 启动后的启动重驱或已有提醒唤醒（规格 GAP-48）。启动重驱见 §8 的补注。agent 可调用的返工工具本批没开放（GAP-46），也没有自动提出修复 Task 的角色（GAP-56）。
 
