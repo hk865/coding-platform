@@ -123,6 +123,11 @@ describe('setGoalControl (GOAL-04…06)', () => {
     platform = await openPlatform(fixture.directory);
     expect(await platform.goals.setGoalControl(fixture.ctx, pause))
       .toMatchObject({ status: 'committed', replayed: true, value: paused.value });
+    // The same request with its pins in the other order is the same request (one pin order in the
+    // fingerprint, as requeue and reverify sort theirs).
+    expect(await platform.goals.setGoalControl(fixture.ctx, request(fixture, 'pause', 'a2-goal-svc-pause',
+      [phasePin, { ref: fixture.goalRef, revision: before.revision }])))
+      .toMatchObject({ status: 'committed', replayed: true, value: paused.value });
     // The same identity with other content is not the original request.
     expect(await platform.goals.setGoalControl(fixture.ctx, request(fixture, 'pause', 'a2-goal-svc-pause',
       [{ ref: fixture.goalRef, revision: before.revision }, phasePin], 'another reason'))).toMatchObject({ status: 'rejected', code: 'idempotency_conflict' });

@@ -146,8 +146,12 @@ export async function setGoalControlFromHost(
   try {
     identity = GOAL_CONTROL_IDENTITY_PREFIX + sha256Hex(canonicalJson({ actor: { kind: actor.kind, id: actor.id },
       projectId: scope.projectId, workspaceId: scope.workspaceId, requestId: owned.requestId } as unknown as JsonValue));
+    // The pins in one order, Goal then GoalPhase (the order requeue's and reverify's `sortedPins` gives these
+    // two refs), so the same request with its pins swapped is the same request; a receipt committed with
+    // [Goal, GoalPhase] keeps its fingerprint.
     fingerprint = sha256Hex(canonicalJson({ kind: 'goal-control', actor: { kind: actor.kind, id: actor.id }, goalRef, control,
-      reason: input.reason, expected: owned.expected } as unknown as JsonValue));
+      reason: input.reason, expected: [{ ref: goalRef, revision: pins.goal }, { ref: phaseRef, revision: pins.goalPhase }],
+    } as unknown as JsonValue));
   } catch {
     return invalid('the Goal control request is not canonicalizable JSON');
   }
