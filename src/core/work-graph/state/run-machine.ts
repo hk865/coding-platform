@@ -65,6 +65,7 @@ import {
   type RunSnapshot, type RuntimeEventV1, type RuntimeInputBindingV1, type TaskBudgetV1, type TaskLeaseSnapshot,
 } from '../../../contracts/dispatch.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
+import type { GoalDesiredState } from '../../../contracts/ledger.js';
 import type { PlanRevisionRef } from '../../../contracts/plan.js';
 import type { TaskEnvelopeV1 } from '../../../contracts/task-envelope.js';
 import { leaseHeldByClaim, type AttemptClaimBasis } from './attempt-machine.js';
@@ -527,6 +528,56 @@ export function requeueClaimProblem(requeue: ClaimRequeueFacts | null): Rejected
   }
   if (!requeue.budgetPinned) return reject('illegal', 'invalid', 'the requeue pins the claim budget');
   return null;
+}
+
+/**
+ * RUN-01 and TASK-01..03 (§6.4: Goal not active → busy, Plan pin moved →
+ * stale), the first guards of both machines (`claim-service.ts:513-516`).
+ */
+export function claimPinProblem(goalDesiredState: GoalDesiredState, activePlanMatchesClaim: boolean): Rejected | null {
+  if (goalDesiredState !== 'active') return reject('guard_failed', 'busy', 'the Goal is not active');
+  if (!activePlanMatchesClaim) return reject('stale', 'revision_conflict', 'the requested Plan is not the Goal current pin');
+  return null;
+}
+
+/**
+ * RUN-01 and TASK-01..03 after each machine's own Session, Task, phase and
+ * lease guards, in `claim-service.ts:510-666` order: the claim basis, then the
+ * assignment, role and deadline admission. Both machines answer one claim
+ * commit with this one copy.
+ */
+export function claimBasisProblem(
+  basis: AttemptClaimBasis, facts: Pick<RunClaimContext, 'taskHasRun' | 'prior' | 'requeue' | 'admission'>,
+): Rejected | null {
+  switch (basis.kind) {
+    case 'first':
+      if (facts.taskHasRun) return reject('guard_failed', 'busy', 'this Task already has a Run and cannot be claimed for the first time');
+      break;
+    case 'requeue': {
+      // D-3 (TASK-03, TD-3, ATT-16): only the TaskRequeue covering the selected
+      // Run (P4) admits a new Attempt; the Run records its `requeueRef`.
+      const problem = requeueClaimProblem(facts.requeue);
+      if (problem !== null) return problem;
+      break;
+    }
+    case 'continuation': {
+      const prior = facts.prior;
+      if (prior === null) return reject('guard_failed', 'busy', 'the continuation prior Run is not a Run of this Task');
+      if (prior.node !== 'YieldedWait') {
+        return reject('guard_failed', 'busy', 'the continuation prior Run did not yield with a formal continuation');
+      }
+      if (prior.bindingProblem !== null) return rejected(prior.bindingProblem);
+      // A queued wait-window pause/cancel survives the yield and holds the continuation.
+      if (prior.pointer === 'paused' || prior.pointer === 'cancelled') {
+        return reject('guard_failed', 'busy', `the prior yielded Run has a queued ${prior.pointer} control; the continuation is held`);
+      }
+      if (!prior.leaseReleasedByPrior) return reject('guard_failed', 'busy', 'the continuation prior Run lease is not released by that Run');
+      if (prior.replyProblem !== null) return rejected(prior.replyProblem);
+      break;
+    }
+    default: return unreachable(basis, 'claim basis');
+  }
+  return facts.admission === null ? null : rejected(facts.admission);
 }
 
 /** §6.1 `RunGuardContext`; `session.kernel`, `persistedClaim` and `claim` are additions (see their notes). */
@@ -1166,43 +1217,15 @@ export function transitionRun(state: RunState, event: RunEvent, ctx: RunGuardCon
 function onClaimCommitted(event: Extract<RunEvent, { kind: 'claim_committed' }>, ctx: RunGuardContext): RunTransition {
   const facts = ctx.claim;
   if (facts === null) return reject('illegal', 'invalid', 'claim_committed requires the claim guard facts');
-  if (ctx.goal.desiredState !== 'active') return reject('guard_failed', 'busy', 'the Goal is not active');
-  if (!ctx.goal.activePlanMatchesClaim) return reject('stale', 'revision_conflict', 'the requested Plan is not the Goal current pin');
+  const pin = claimPinProblem(ctx.goal.desiredState, ctx.goal.activePlanMatchesClaim);
+  if (pin !== null) return pin;
   if (!ctx.session.usable) return reject('guard_failed', 'busy', 'the target Session is archived or not available');
   if (facts.sessionOccupied) return reject('guard_failed', 'busy', 'the target Session is already occupied');
   if (facts.eligibility !== null) return rejected(facts.eligibility);
-  const basis = event.basis;
-  switch (basis.kind) {
-    case 'first':
-      if (facts.taskHasRun) return reject('guard_failed', 'busy', 'this Task already has a Run and cannot be claimed for the first time');
-      break;
-    case 'requeue': {
-      // D-3 (TASK-03, ATT-16): only the TaskRequeue covering the selected Run
-      // admits a new Attempt; the Run records its `requeueRef`.
-      const problem = requeueClaimProblem(facts.requeue);
-      if (problem !== null) return problem;
-      break;
-    }
-    case 'continuation': {
-      const prior = facts.prior;
-      if (prior === null) return reject('guard_failed', 'busy', 'the continuation prior Run is not a Run of this Task');
-      if (prior.node !== 'YieldedWait') {
-        return reject('guard_failed', 'busy', 'the continuation prior Run did not yield with a formal continuation');
-      }
-      if (prior.bindingProblem !== null) return rejected(prior.bindingProblem);
-      // A queued wait-window pause/cancel survives the yield and holds the continuation.
-      if (prior.pointer === 'paused' || prior.pointer === 'cancelled') {
-        return reject('guard_failed', 'busy', `the prior yielded Run has a queued ${prior.pointer} control; the continuation is held`);
-      }
-      if (!prior.leaseReleasedByPrior) return reject('guard_failed', 'busy', 'the continuation prior Run lease is not released by that Run');
-      if (prior.replyProblem !== null) return rejected(prior.replyProblem);
-      break;
-    }
-    default: return unreachable(basis, 'claim basis');
-  }
-  if (facts.admission !== null) return rejected(facts.admission);
+  const problem = claimBasisProblem(event.basis, facts);
+  if (problem !== null) return problem;
   const claim = event.claim;
-  return accept(runStateOf(newRunRecord({ ...event, basis })), [
+  return accept(runStateOf(newRunRecord(event)), [
     { kind: 'attempt', event: 'attempt_claimed' },
     { kind: 'outbox', change: 'pending' },
     { kind: 'hold_lease' },

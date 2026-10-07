@@ -78,7 +78,8 @@ import type { AttemptClaimBasis } from './attempt-machine.js';
 import { runFailureOrigin } from './no-progress.js';
 import { tracedDispositionChangeProblem, type TracedTaskFactsV1 } from './plan-machine.js';
 import {
-  isPausedInterrupted, requeueClaimProblem, runUnresolvedBlocker, type ClaimRequeueFacts, type RunClaimContext,
+  claimBasisProblem, claimPinProblem, isPausedInterrupted, runUnresolvedBlocker, type ClaimRequeueFacts,
+  type RunClaimContext,
 } from './run-machine.js';
 import {
   deriveReworkClass, nextRequeueAutoCount, requeueHistorySourceOf, reworkFenceOf, reworkPermission,
@@ -846,7 +847,10 @@ export type TaskClaimSubject = Pick<TaskState, 'taskKind' | 'disposition' | 'pha
 
 /**
  * TASK-01 (first), TASK-02 (continuation), TASK-03 (requeue) guards in
- * `claim-service.ts:510-666` order; `null` when the claim may commit. It needs
+ * `claim-service.ts:510-666` order; `null` when the claim may commit. The pins
+ * and the claim basis are the one copy RUN-01 asks too (`claimPinProblem`,
+ * `claimBasisProblem`); the Session, Task, phase and lease guards between
+ * them are this machine's. It needs
  * no claim ids: `transitionTask` applies it to `task_claimed`, and the claim
  * service also asks it after each read (a fact not read yet holds), so a
  * refused guard stops the claim's reads where they always stopped.
@@ -856,8 +860,8 @@ export function taskClaimProblem(
   claimBasis: AttemptClaimBasis,
   facts: TaskClaimFacts,
 ): Rejected | null {
-  if (facts.goalDesiredState !== 'active') return reject('guard_failed', 'busy', 'the Goal is not active');
-  if (!facts.activePlanMatchesClaim) return reject('stale', 'revision_conflict', 'the requested Plan is not the Goal current pin');
+  const pin = claimPinProblem(facts.goalDesiredState, facts.activePlanMatchesClaim);
+  if (pin !== null) return pin;
   if (facts.sessionProblem !== null) return rejected(facts.sessionProblem);
   if (task === null) return reject('illegal', 'not_found', 'the Task is not part of the accepted Plan');
   if (task.taskKind !== 'work') return reject('illegal', 'invalid', 'only a work task can be claimed');
@@ -868,36 +872,7 @@ export function taskClaimProblem(
   if (facts.lease.status === 'leased') {
     return reject('guard_failed', 'busy', `task already has an active lease (holder run ${facts.lease.holderRunId})`);
   }
-  const basis = claimBasis;
-  switch (basis.kind) {
-    case 'first':
-      if (facts.taskHasRun) return reject('guard_failed', 'busy', 'this Task already has a Run and cannot be claimed for the first time');
-      break;
-    case 'requeue': {
-      // TASK-03 (D-3, TD-3): only with the TaskRequeue covering the selected Run (P4).
-      const problem = requeueClaimProblem(facts.requeue);
-      if (problem !== null) return problem;
-      break;
-    }
-    case 'continuation': {
-      const prior = facts.prior;
-      if (prior === null) return reject('guard_failed', 'busy', 'the continuation prior Run is not a Run of this Task');
-      if (prior.node !== 'YieldedWait') {
-        return reject('guard_failed', 'busy', 'the continuation prior Run did not yield with a formal continuation');
-      }
-      if (prior.bindingProblem !== null) return rejected(prior.bindingProblem);
-      // A queued wait-window pause/cancel survives the yield and holds the continuation.
-      if (prior.pointer === 'paused' || prior.pointer === 'cancelled') {
-        return reject('guard_failed', 'busy', `the prior yielded Run has a queued ${prior.pointer} control; the continuation is held`);
-      }
-      if (!prior.leaseReleasedByPrior) return reject('guard_failed', 'busy', 'the continuation prior Run lease is not released by that Run');
-      if (prior.replyProblem !== null) return rejected(prior.replyProblem);
-      break;
-    }
-    default: return unreachable(basis, 'claim basis');
-  }
-  if (facts.admission !== null) return rejected(facts.admission);
-  return null;
+  return claimBasisProblem(claimBasis, facts);
 }
 
 /** TASK-01..03: `taskClaimProblem`, then the claim's records in one commit. */
