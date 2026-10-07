@@ -410,7 +410,7 @@ it('W-20 then TASK-27 refusals: a Run a person paused before its process ended i
     meta: { requestId, expected: [{ ref: goalRef, revision: await goalRevision() }, { ref: fx.claim.runRef, revision: ended.run.revision }] } });
   // TASK-27: the platform's automation is no operator: forbidden (a person's pause, hard limit 3); the Goal fan-out
   // actor without its goal_resume trigger is no exception. (A person's 继续 while the Goal is paused is `busy`:
-  // `tests/app/A2-host-restart.test.ts`, the G-04 test.)
+  // `tests/scenarios/A7-control.test.ts`, the G-04 test.)
   const system = { ...fx.ctx, principal: { kind: 'host' as const, actor: { ...WORKFLOW_AUTOMATION_ACTOR } } };
   expect(await requeues.requeueTask(system, await request('a2-task27-system'))).toMatchObject({ status: 'rejected', code: 'forbidden' });
   const fanOut = { ...fx.ctx, principal: { kind: 'host' as const, actor: { ...GOAL_FAN_OUT_ACTOR } } };

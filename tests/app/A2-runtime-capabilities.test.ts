@@ -9,7 +9,7 @@
  * continuation is a new Run, never a resume of the original Turn, and a Session
  * whose last Kernel Turn has no terminal takes no new Turn; a pause or cancel of
  * a Run that never entered is the platform's own (step 5.1 proves that
- * behaviour in tests/composition/A2-control-platform.test.ts); a cancel of a Run
+ * behaviour in tests/scenarios/A7-control.test.ts, D-7 and D-8); a cancel of a Run
  * paused at a safe point is applied on the live handle's exit proof (5.6); a Query has no control.
  * Step 5.7 reports `recoverRun` as supported: the start-up reconciliation only, never a fresh
  * resume of the original Turn (D-17); a Run paused when its Host stopped ends paused-interrupted and

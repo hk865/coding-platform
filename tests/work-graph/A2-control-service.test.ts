@@ -12,7 +12,7 @@
  * - D-9 and RD-8: a resume needs the Goal active; a yielded wait whose
  *   continuation a successor consumed takes no control. Both are read-side
  *   facts here: the paused Goal is written by `setGoalControl` since 5.5
- *   (driven end to end in tests/app/A2-goal-control-route.test.ts and
+ *   (driven end to end in tests/scenarios/A7-control.test.ts and
  *   tests/work-graph/A2-goal-control.test.ts), and the successor's
  *   Lease is written by a continuation claim that needs a replied wait
  *   message (the mailbox flow, driven end to end by step 6's
