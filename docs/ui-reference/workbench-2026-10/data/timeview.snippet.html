@@ -1,0 +1,92 @@
+<!-- =====================================================================
+     timeview.snippet.html — G1 「轨道 + 活动日历」 markup. Binds tl = this.timeView({...}) from timeline.js.
+     Main: the 任务图 tab's third view (树 / 大纲 / 轨道) — put this in .pbody instead of the tree while the view is 轨道,
+     with tl.cls = 'tl'. TaskMap: the full page; pass full: true (tl.cls 'tl full': wider lane names, more ticks).
+     Positions are live state (time window, picked hour), so bars, links, marks, ticks and the now line use
+     interpolated left / width style holes (DESIGN.md §18.2) — never a whole-value style hole.
+     ===================================================================== -->
+
+<!-- [1] the view switch in .ptools gains a third button -->
+          <button class="{{viewLanesCls}}" type="button" aria-pressed="{{isLanes}}" onClick="{{showLanes}}">轨道</button>
+
+<!-- [2] the 轨道 view -->
+        <sc-if value="{{isLanes}}" hint-placeholder-val="{{ false }}">
+          <div class="tl-tools">
+            <div class="seg" role="group" aria-label="轨道按什么分">
+              <button class="{{tl.byMemberCls}}" type="button" aria-pressed="{{tl.byMember}}" onClick="{{tl.toMember}}">成员</button>
+              <button class="{{tl.byStageCls}}" type="button" aria-pressed="{{tl.byStage}}" onClick="{{tl.toStage}}">阶段</button>
+            </div>
+            <div class="seg" role="group" aria-label="时间范围">
+              <sc-for list="{{tl.wins}}" as="w" hint-placeholder-count="3"><button class="{{w.cls}}" type="button" aria-pressed="{{w.on}}" onClick="{{w.go}}">{{w.label}}</button></sc-for>
+            </div>
+            <sc-if value="{{tl.hasCell}}" hint-placeholder-val="{{ false }}">
+              <span class="tl-cell">只看 {{tl.cellLabel}}
+                <button class="btn btn-icon btn-xs" type="button" onClick="{{tl.clearCell}}" aria-label="不再只看这一小时" title="回到整段时间">
+                  <svg class="ico xs" viewBox="0 0 16 16" aria-hidden="true"><path d="m4.5 4.5 7 7M11.5 4.5l-7 7"></path></svg>
+                </button>
+              </span>
+            </sc-if>
+          </div>
+
+          <div class="{{tl.cls}}">
+            <div class="tl-axis" aria-hidden="true">
+              <sc-for list="{{tl.ticks}}" as="k" hint-placeholder-count="7"><span class="{{k.cls}}" style="left: {{k.x}}%;">{{k.label}}</span></sc-for>
+            </div>
+            <sc-for list="{{tl.lanes}}" as="l" hint-placeholder-count="5">
+              <div class="{{l.cls}}">
+                <span class="lane-name" title="{{l.title}}">{{l.name}}</span>
+                <div class="lane-track">
+                  <sc-for list="{{l.links}}" as="k" hint-placeholder-count="2"><span class="{{k.cls}}" style="left: {{k.x}}%; width: {{k.w}}%;"></span></sc-for>
+                  <sc-for list="{{l.bars}}" as="b" hint-placeholder-count="4">
+                    <button class="{{b.cls}}" type="button" style="left: {{b.x}}%; width: {{b.w}}%;" onClick="{{b.pick}}" onMouseEnter="{{b.hover}}" onMouseLeave="{{tl.unhover}}" onFocus="{{b.hover}}" onBlur="{{tl.unhover}}" aria-label="{{b.tip}}"></button>
+                  </sc-for>
+                  <sc-for list="{{l.marks}}" as="m" hint-placeholder-count="0"><span class="{{m.cls}}" style="left: {{m.x}}%;" title="{{m.tip}}"></span></sc-for>
+                  <sc-if value="{{l.hasSub}}" hint-placeholder-val="{{ false }}"><span class="lane-sub">{{l.sub}}</span></sc-if>
+                </div>
+              </div>
+            </sc-for>
+            <div class="tl-over">
+              <sc-for list="{{tl.evs}}" as="e" hint-placeholder-count="1"><span class="tl-ev" style="left: {{e.x}}%;"><span class="tl-ev-l">{{e.label}}</span></span></sc-for>
+              <sc-if value="{{tl.hasNow}}" hint-placeholder-val="{{ true }}"><span class="{{tl.nowCls}}" style="left: {{tl.nowX}}%;"><span class="tl-now-l">{{tl.nowLabel}}</span></span></sc-if>
+              <sc-if value="{{tl.card.show}}" hint-placeholder-val="{{ false }}">
+                <div class="hcard" style="left: clamp(0px, calc({{tl.card.x}}% - 8px), calc(100% - 272px)); top: {{tl.card.top}};" role="tooltip">
+                  <div class="hc-head"><span class="{{tl.card.sq}}" aria-hidden="true"></span><span class="hc-name">{{tl.card.name}}</span></div>
+                  <p class="hc-state"><span class="{{tl.card.tx}}">{{tl.card.word}}</span>{{tl.card.why}}</p>
+                  <dl class="hc-dl">
+                    <sc-for list="{{tl.card.rows}}" as="r" hint-placeholder-count="4"><dt>{{r.k}}</dt><dd>{{r.v}}</dd></sc-for>
+                  </dl>
+                  <sc-if value="{{tl.card.hint}}" hint-placeholder-val="{{ false }}"><p class="hc-hint">{{tl.card.hint}}</p></sc-if>
+                </div>
+              </sc-if>
+            </div>
+          </div>
+
+          <div class="{{tl.calCls}}" aria-label="活动日历：每格一小时，越深活动越多">
+            <span class="cal-d" aria-hidden="true"></span>
+            <sc-for list="{{tl.cal.head}}" as="h" hint-placeholder-count="24"><span class="cal-h" aria-hidden="true">{{h.label}}</span></sc-for>
+            <sc-for list="{{tl.cal.rows}}" as="r" hint-placeholder-count="1">
+              <span class="cal-d">{{r.label}}</span>
+              <sc-for list="{{r.cells}}" as="c" hint-placeholder-count="24">
+                <button class="{{c.cls}}" type="button" onClick="{{c.pick}}" onMouseEnter="{{c.hover}}" onMouseLeave="{{tl.unhover}}" onFocus="{{c.hover}}" onBlur="{{tl.unhover}}" aria-label="{{c.tip}}"></button>
+              </sc-for>
+            </sc-for>
+            <sc-if value="{{tl.ccard.show}}" hint-placeholder-val="{{ false }}">
+              <div class="hcard" style="left: clamp(0px, {{tl.ccard.x}}px, calc(100% - 272px)); top: {{tl.ccard.top}};" role="tooltip">
+                <div class="hc-head"><span class="{{tl.ccard.sq}}" aria-hidden="true"></span><span class="hc-name">{{tl.ccard.name}}</span></div>
+                <p class="hc-state"><span class="{{tl.ccard.tx}}">{{tl.ccard.word}}</span></p>
+                <dl class="hc-dl">
+                  <sc-if value="{{tl.ccard.hasTasks}}" hint-placeholder-val="{{ false }}">
+                    <dt>任务</dt>
+                    <dd><span class="hc-items">
+                      <sc-for list="{{tl.ccard.tasks}}" as="ct" hint-placeholder-count="2"><span class="hc-item"><span class="{{ct.sq}}" aria-hidden="true"></span>{{ct.name}}</span></sc-for>
+                      <sc-if value="{{tl.ccard.hasMore}}" hint-placeholder-val="{{ false }}"><span class="hc-more">{{tl.ccard.more}}</span></sc-if>
+                    </span></dd>
+                  </sc-if>
+                  <sc-if value="{{tl.ccard.hasMem}}" hint-placeholder-val="{{ false }}"><dt>成员</dt><dd>{{tl.ccard.mem}}</dd></sc-if>
+                </dl>
+                <sc-if value="{{tl.ccard.hint}}" hint-placeholder-val="{{ false }}"><p class="hc-hint">{{tl.ccard.hint}}</p></sc-if>
+              </div>
+            </sc-if>
+          </div>
+          <p class="tl-sum">{{tl.sum}}<sc-if value="{{tl.hasNote}}" hint-placeholder-val="{{ true }}"><span class="sep"> · </span>{{tl.note}}</sc-if></p>
+        </sc-if>

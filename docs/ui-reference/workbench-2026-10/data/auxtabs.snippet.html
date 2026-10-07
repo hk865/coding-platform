@@ -1,0 +1,190 @@
+<!-- =====================================================================
+     auxtabs.snippet.html — G2 markup. Binds ax = this.axView(s, { at, extra }) from auxtabs.snippet.js.
+     Five pieces, each marked <!-- [n] … -->; copy them into the board where the comment says.
+     Rules kept: {{holes}} are dotted lookups; every sc-if / sc-for has its hint; real buttons with type;
+     icon-only buttons have aria-label + title; no innerHTML. Style holes only for the two widths on the root (px once a divider moved, else "initial" so the CSS widths hold).
+     ===================================================================== -->
+
+<!-- [1] ROOT: replace the board's root opening tag (keep the board's own {{rootMod}}) -->
+<div class="kit app is-split {{rootMod}} {{ax.appCls}}" style="--rail-w: {{ax.railCss}}; --panel-w: {{ax.panelCss}};">
+
+<!-- [2] DIVIDERS: the first right after </nav> (rail | centre), the second right after </main> (centre | panel) -->
+  <div class="{{ax.rail.cls}}" role="separator" aria-orientation="vertical" aria-label="调整左栏宽度" aria-valuemin="{{ax.rail.min}}" aria-valuemax="{{ax.rail.max}}" aria-valuenow="{{ax.rail.now}}" tabindex="0" title="拖动或用左右方向键调整宽度，双击恢复" onPointerDown="{{ax.rail.down}}" onPointerMove="{{ax.rail.move}}" onPointerUp="{{ax.rail.up}}" onPointerCancel="{{ax.rail.up}}" onKeyDown="{{ax.rail.key}}" onDoubleClick="{{ax.rail.reset}}" onFocus="{{ax.rail.seen}}"></div>
+
+  <div class="{{ax.panel.cls}}" role="separator" aria-orientation="vertical" aria-label="调整右栏宽度" aria-valuemin="{{ax.panel.min}}" aria-valuemax="{{ax.panel.max}}" aria-valuenow="{{ax.panel.now}}" tabindex="0" title="拖动或用左右方向键调整宽度，双击恢复" onPointerDown="{{ax.panel.down}}" onPointerMove="{{ax.panel.move}}" onPointerUp="{{ax.panel.up}}" onPointerCancel="{{ax.panel.up}}" onKeyDown="{{ax.panel.key}}" onDoubleClick="{{ax.panel.reset}}" onFocus="{{ax.panel.seen}}"></div>
+
+<!-- [3] TAB STRIP: replaces the panel's <div class="ptabs" …>…</div>. 任务图 / 架构图 stay; 文件 / 命令 / Diff, file pages and
+     node pages (新标签打开) close with ×; + reopens a tool tab; 放大 hides the centre; the last button hides the panel. -->
+    <div class="ptabs aux">
+      <div class="pt-list" role="tablist" aria-label="辅助页">
+        <sc-for list="{{ax.tabs}}" as="t" hint-placeholder-count="6">
+          <span class="{{t.cls}}">
+            <button class="nm" type="button" role="tab" aria-selected="{{t.on}}" onClick="{{t.pick}}" title="{{t.tip}}">{{t.name}}</button>
+            <sc-if value="{{t.dirty}}" hint-placeholder-val="{{ false }}"><span class="dirty" title="有未保存的修改"><span class="sr-only">有未保存的修改</span></span></sc-if>
+            <sc-if value="{{t.canClose}}" hint-placeholder-val="{{ false }}">
+              <button class="x" type="button" onClick="{{t.close}}" aria-label="{{t.closeLabel}}" title="关闭">
+                <svg class="ico xs" viewBox="0 0 16 16" aria-hidden="true"><path d="m4.5 4.5 7 7M11.5 4.5l-7 7"></path></svg>
+              </button>
+            </sc-if>
+          </span>
+        </sc-for>
+      </div>
+      <div class="pt-acts">
+        <!-- 放大 hides the composer: the quotes waiting there are counted here; a click restores the panel -->
+        <sc-if value="{{ax.qMax.show}}" hint-placeholder-val="{{ false }}">
+          <button class="btn-text pt-q" type="button" onClick="{{ax.qMax.go}}" title="还原右栏，回到输入框；引用还没有发送">草稿里 {{ax.qMax.n}} 条引用</button>
+        </sc-if>
+        <div class="menu-wrap">
+          <button class="btn btn-icon btn-sm" type="button" onClick="{{ax.toggleNew}}" aria-expanded="{{ax.newOpen}}" aria-label="新建页签" title="新建页签">
+            <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3.25v9.5M3.25 8h9.5"></path></svg>
+          </button>
+          <sc-if value="{{ax.newOpen}}" hint-placeholder-val="{{ false }}">
+            <div class="menu" role="menu" aria-label="新建页签">
+              <sc-for list="{{ax.newItems}}" as="m" hint-placeholder-count="3">
+                <button class="{{m.cls}}" type="button" role="menuitem" onClick="{{m.go}}">{{m.label}}<sc-if value="{{m.open}}" hint-placeholder-val="{{ false }}"><span class="ck">已打开</span></sc-if></button>
+              </sc-for>
+            </div>
+          </sc-if>
+        </div>
+        <button class="btn btn-icon btn-sm" type="button" onClick="{{ax.toggleMax}}" aria-pressed="{{ax.isMax}}" aria-label="{{ax.maxLabel}}" title="{{ax.maxLabel}}">
+          <sc-if value="{{ax.isMax}}" hint-placeholder-val="{{ false }}"><svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.75 2.75v4h-4M2.75 2.75l4 4M9.25 13.25v-4h4M13.25 13.25l-4-4"></path></svg></sc-if>
+          <sc-if value="{{ax.notMax}}" hint-placeholder-val="{{ true }}"><svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M9.75 2.75h3.5v3.5M13.25 2.75 9.25 6.75M6.25 13.25h-3.5v-3.5M2.75 13.25l4-4"></path></svg></sc-if>
+        </button>
+        <button class="btn btn-icon btn-sm" type="button" onClick="{{ax.hide}}" aria-label="隐藏右栏" title="隐藏右栏">
+          <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><rect x="1.75" y="2.75" width="12.5" height="10.5" rx="1.75"></rect><path d="M10 2.75v10.5"></path><path d="m5.25 6 2 2-2 2"></path></svg>
+        </button>
+      </div>
+    </div>
+
+<!-- [4] PAGES: after the board's <sc-if value="{{isMap}}">…</sc-if> (isMap must be false for these tabs) -->
+    <sc-if value="{{ax.isFiles}}" hint-placeholder-val="{{ false }}">
+      <p class="pnote fnote">{{ax.fileNote}}</p>
+      <div class="pbody">
+        <div class="ftree" aria-label="工作区文件">
+          <sc-for list="{{ax.fileRows}}" as="f" hint-placeholder-count="12">
+            <button class="{{f.cls}}" type="button" onClick="{{f.go}}" aria-expanded="{{f.ex}}">
+              <sc-if value="{{f.isDir}}" hint-placeholder-val="{{ true }}"><svg class="ico xs chev" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4"></path></svg></sc-if>
+              <sc-if value="{{f.isFile}}" hint-placeholder-val="{{ false }}"><span class="fsp" aria-hidden="true"></span></sc-if>
+              <span class="fname">{{f.name}}</span>
+              <sc-if value="{{f.hasMeta}}" hint-placeholder-val="{{ false }}"><span class="fmeta"><span class="add">{{f.addTxt}}</span> <span class="del">{{f.delTxt}}</span></span></sc-if>
+            </button>
+          </sc-for>
+        </div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ax.isFile}}" hint-placeholder-val="{{ false }}">
+      <div class="fpage">
+        <div class="fp-head">
+          <span class="fp-path" title="{{ax.fp.path}}"><sc-for list="{{ax.fp.parts}}" as="p" hint-placeholder-count="4"><span>{{p}}</span></sc-for></span>
+          <span class="{{ax.fp.stateCls}}">{{ax.fp.state}}</span>
+          <sc-if value="{{ax.fp.known}}" hint-placeholder-val="{{ true }}">
+            <span class="fp-acts">
+              <button class="btn btn-sm" type="button" onClick="{{ax.fp.toggleEdit}}">{{ax.fp.editLabel}}</button>
+              <button class="{{ax.fp.saveCls}}" type="button" onClick="{{ax.fp.save}}" aria-disabled="{{ax.fp.cantSave}}">保存</button>
+            </span>
+          </sc-if>
+        </div>
+        <sc-if value="{{ax.fp.conflict}}" hint-placeholder-val="{{ false }}">
+          <div class="fp-note" role="alert">
+            <p><span class="tx-decide">文件在磁盘上改过了</span>：{{ax.fp.conflictText}}保存会覆盖它的改动。</p>
+            <div class="acts">
+              <button class="btn btn-sm btn-line" type="button" onClick="{{ax.fp.reload}}">重新载入</button>
+              <button class="btn btn-sm btn-line" type="button" onClick="{{ax.fp.compare}}">比较</button>
+              <button class="btn btn-sm btn-line" type="button" onClick="{{ax.fp.overwrite}}">仍然保存</button>
+              <button class="btn btn-sm" type="button" onClick="{{ax.fp.dismiss}}">先不保存</button>
+            </div>
+          </div>
+        </sc-if>
+        <sc-if value="{{ax.fp.viewing}}" hint-placeholder-val="{{ true }}">
+          <div class="fcode" aria-label="文件内容">
+            <sc-for list="{{ax.fp.rows}}" as="l" hint-placeholder-count="12">
+              <sc-if value="{{l.fold}}" hint-placeholder-val="{{ false }}"><div class="{{l.cls}}"><span class="fl-t">{{l.text}}</span></div></sc-if>
+              <sc-if value="{{l.line}}" hint-placeholder-val="{{ true }}"><div class="{{l.cls}}"><button class="fl-n" type="button" onClick="{{l.pick}}" aria-label="{{l.label}}">{{l.no}}</button><span class="fl-t">{{l.text}}</span></div></sc-if>
+            </sc-for>
+          </div>
+        </sc-if>
+        <sc-if value="{{ax.fp.editing}}" hint-placeholder-val="{{ false }}">
+          <div class="fcode is-edit">
+            <label class="sr-only" for="ax-fedit">编辑 {{ax.fp.name}}</label>
+            <textarea id="ax-fedit" class="fedit" spellcheck="false" value="{{ax.fp.draftText}}" onChange="{{ax.fp.onEdit}}" onSelect="{{ax.fp.onSelect}}"></textarea>
+          </div>
+        </sc-if>
+        <div class="fp-bar">
+          <span class="t">{{ax.fp.barText}}</span>
+          <sc-if value="{{ax.fp.hasSel}}" hint-placeholder-val="{{ false }}"><button class="btn btn-sm" type="button" onClick="{{ax.fp.clearSel}}">清除选择</button></sc-if>
+          <button class="btn btn-sm btn-line" type="button" onClick="{{ax.fp.quote}}">{{ax.fp.quoteLabel}}</button>
+        </div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ax.isCmd}}" hint-placeholder-val="{{ false }}">
+      <p class="pnote fnote">{{ax.cmdNote}}</p>
+      <div class="pbody">
+        <div class="cmds">
+          <sc-for list="{{ax.cmds}}" as="c" hint-placeholder-count="5">
+            <div class="cmd">
+              <span class="cmd-name">{{c.name}}</span>
+              <span class="cmd-acts">
+                <sc-if value="{{c.canRun}}" hint-placeholder-val="{{ true }}"><button class="btn btn-sm btn-line" type="button" onClick="{{c.run}}">{{c.runLabel}}</button></sc-if>
+                <sc-if value="{{c.canCancel}}" hint-placeholder-val="{{ false }}"><button class="btn btn-sm btn-line" type="button" onClick="{{c.cancel}}">取消</button></sc-if>
+                <sc-if value="{{c.hasOut}}" hint-placeholder-val="{{ false }}"><button class="btn btn-sm" type="button" onClick="{{c.toggle}}" aria-expanded="{{c.shown}}">{{c.toggleLabel}}</button></sc-if>
+              </span>
+              <span class="cmd-line">{{c.line}}</span>
+              <span class="cmd-st"><span class="{{c.dot}}" aria-hidden="true"></span>{{c.word}}</span>
+              <sc-if value="{{c.shown}}" hint-placeholder-val="{{ false }}"><div class="cmd-out">{{c.out}}</div></sc-if>
+              <sc-if value="{{c.kept}}" hint-placeholder-val="{{ false }}"><span class="cmd-kept">{{c.keptText}}</span></sc-if>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ax.isDiff}}" hint-placeholder-val="{{ false }}">
+      <div class="dfiles" aria-label="改动的文件">
+        <sc-for list="{{ax.dfiles}}" as="d" hint-placeholder-count="6">
+          <button class="{{d.cls}}" type="button" onClick="{{d.go}}" title="{{d.path}}">
+            <span class="fname">{{d.name}}</span><span class="fdir">{{d.dir}}</span>
+            <span class="fmeta"><span class="add">{{d.add}}</span> <span class="del">{{d.del}}</span></span>
+          </button>
+        </sc-for>
+      </div>
+      <div class="diff-head">
+        <span class="ellipsis">{{ax.dhead}}</span>
+        <sc-if value="{{ax.isCmp}}" hint-placeholder-val="{{ false }}"><button class="btn-text" type="button" onClick="{{ax.backToGit}}">回到 Git ↔ 工作区</button></sc-if>
+        <sc-if value="{{ax.dOpenShow}}" hint-placeholder-val="{{ true }}"><button class="btn-text" type="button" onClick="{{ax.dOpen}}" title="{{ax.dOpenTip}}">打开文件</button></sc-if>
+      </div>
+      <div class="pbody diff-body">
+        <div class="diff" aria-label="逐行差异">
+          <sc-for list="{{ax.drows}}" as="d" hint-placeholder-count="12">
+            <sc-if value="{{d.hunk}}" hint-placeholder-val="{{ false }}"><div class="dl-hunk">{{d.text}}</div></sc-if>
+            <sc-if value="{{d.line}}" hint-placeholder-val="{{ true }}"><div class="{{d.cls}}"><span class="n">{{d.o}}</span><span class="n">{{d.n}}</span><span class="s">{{d.sign}}</span><span class="t">{{d.text}}</span></div></sc-if>
+          </sc-for>
+        </div>
+        <sc-if value="{{ax.hasDnote}}" hint-placeholder-val="{{ false }}"><p class="pnote">{{ax.dnote}}</p></sc-if>
+      </div>
+    </sc-if>
+
+<!-- [5] COMPOSER QUOTES: inside <div class="composer">, before the <label>/<textarea>; the note goes into .composer-foot (left) -->
+            <sc-for list="{{ax.quotes}}" as="q" hint-placeholder-count="0">
+              <div class="composer-quote">
+                <svg class="ico xs" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 1.75h5.25l3 3v9.5H4Z"></path><path d="M9 1.75V5h3.25"></path></svg>
+                <span class="cq-main"><span class="cq-path" title="{{q.path}}">{{q.path}}</span><span class="cq-lines">{{q.lines}}</span><sc-if value="{{q.snap}}" hint-placeholder-val="{{ false }}"><span class="cq-snap">草稿快照</span></sc-if></span>
+                <button class="btn btn-icon btn-xs" type="button" onClick="{{q.remove}}" aria-label="移除这条引用" title="移除引用">
+                  <svg class="ico xs" viewBox="0 0 16 16" aria-hidden="true"><path d="m4.5 4.5 7 7M11.5 4.5l-7 7"></path></svg>
+                </button>
+                <sc-if value="{{q.hasSnip}}" hint-placeholder-val="{{ false }}"><span class="cq-snip">{{q.snip}}</span></sc-if>
+              </div>
+            </sc-for>
+            <!-- in .composer-foot, before the send button: -->
+            <sc-if value="{{ax.hasQuotes}}" hint-placeholder-val="{{ false }}"><span class="to">{{ax.quoteNote}}</span></sc-if>
+
+<!-- [6] DETAIL FILE ROWS (consistency pass): in the map detail's relation rows, replaces the plain <span class="d-file"> loop;
+     each gr.files item is this.axFileItem(path) (a file opens its page, a folder opens 文件 at it, a changed file offers 看 Diff) -->
+<sc-for list="{{gr.files}}" as="f" hint-placeholder-count="0">
+  <span class="d-fline">
+    <sc-if value="{{f.canOpen}}" hint-placeholder-val="{{ true }}"><button class="d-file is-link" type="button" onClick="{{f.open}}" title="{{f.tip}}"><sc-for list="{{f.parts}}" as="fp" hint-placeholder-count="4"><span>{{fp}}</span></sc-for></button></sc-if>
+    <sc-if value="{{f.cantOpen}}" hint-placeholder-val="{{ false }}"><span class="d-file" title="{{f.tip}}"><sc-for list="{{f.parts}}" as="fp" hint-placeholder-count="4"><span>{{fp}}</span></sc-for></span></sc-if>
+    <sc-if value="{{f.hasDiff}}" hint-placeholder-val="{{ false }}"><button class="btn-text" type="button" onClick="{{f.diff}}" title="Git（HEAD）↔ 工作区，逐行">看 Diff</button></sc-if>
+  </span>
+</sc-for>

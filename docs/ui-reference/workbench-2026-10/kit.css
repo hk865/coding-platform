@@ -1,0 +1,1326 @@
+/* =====================================================================
+   kit.css — coding-platform 工作台, v2 ("black / grey, calm"), revision 4
+   Catalog: proto/v2/DESIGN.md. Reference board: Main.dc.html.
+   Root: class="kit app" (full-screen shell) or class="kit" (anything else);
+   light theme = add "t-light" to that same element.
+   Rules: neutral greys only (R=G=B); colour appears only where a state
+   exists (squares, 6px dots, state words, diff counts); lines only between
+   panes, around pop-overs and in the tree; weights 400/500; sizes 12/13/14/16.
+   ===================================================================== */
+
+sc-for, sc-if { display: contents; }
+
+/* ---------------------------------------------------------------------
+   1. Tokens
+   --------------------------------------------------------------------- */
+.kit {
+  color-scheme: dark;
+  /* surfaces */
+  --side: #181818;        /* rail, right panel, header bars */
+  --ground: #1F1F1F;      /* conversation */
+  --surface: #262626;     /* in-flow surfaces: user bubble, plan, decision, composer, code */
+  --raised: #262626;      /* floating: pop-over, menu */
+  --hover: #2A2A2A;
+  --active: #2E2E2E;      /* selected row */
+  --line: #2B2B2B;        /* pane dividers, pop-over edge */
+  --line-2: #3A3A3A;      /* input / secondary button edge, quote hairline */
+  --tree: #4A4A4A;        /* tree connector lines (2.0:1 on --side) */
+  --lit: #CCCCCC;         /* lit path, selection ring */
+  --rel: #8F8F8F;         /* relation ring and connector */
+  /* text */
+  --text-strong: #E6E6E6; /* titles, selected, lit names */
+  --text: #CCCCCC;        /* body */
+  --text-2: #A3A3A3;      /* secondary */
+  --text-3: #8F8F8F;      /* meta, counts, labels (>= 4.5:1 on side/ground/raised) */
+  --text-4: #5C5C5C;      /* decoration only, never text */
+  /* accent = ink */
+  --ink: #E6E6E6; --ink-text: #181818;
+  /* states: full / half (45 % on --side; red 40 %) / faded (18 %) / text (>= 4.5:1).
+     Done green is the darkest full colour and failed red the lightest of the red/green pair,
+     so the two differ in lightness (dL 18) and stay apart under deutan/protan simulation. */
+  --green: #4A6F62;  --green-half: #2F3F39; --green-faded: #212825; --green-text: #85C2AC;
+  --blue: #6A9DD1;   --blue-half: #3D546B;  --blue-faded: #273039;  --blue-text: #88B6E6;
+  --yellow: #E8C275; --yellow-half: #766542; --yellow-faded: #3D3729; --yellow-text: #EDC980;
+  --red: #E27A6F;    --red-half: #693F3B;   --red-faded: #3C2A28;   --red-text: #EC8C82;
+  --grey: #5B5B5B;   --grey-half: #3A3A3A;  --grey-faded: #2C2C2C;  --grey-text: #8F8F8F;
+  /* group squares: share of 已满足 (GitHub-like steps of green) */
+  --done-2: #3C574D; --done-1: #30423C;
+  --empty: #1F1F1F; --empty-line: rgba(255, 255, 255, .08); /* architecture: untouched by this goal */
+  --add: #85C2AC; --del: #EC8C82;
+  --shadow-pop: 0 8px 24px rgba(0, 0, 0, .45);
+  /* type */
+  --font-ui: "IBM Plex Sans", "Noto Sans SC", "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Consolas, monospace;
+  --dur: 120ms; --dur-2: 160ms; --ease: cubic-bezier(.2, .7, .2, 1);
+
+  font-family: var(--font-ui);
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--text);
+  background: var(--ground);
+  -webkit-font-smoothing: antialiased;
+}
+.kit.t-light {
+  color-scheme: light;
+  --side: #F7F7F7; --ground: #FFFFFF; --surface: #F4F4F4; --raised: #FFFFFF; --hover: #EFEFEF; --active: #E8E8E8;
+  --line: #E5E5E5; --line-2: #D4D4D4; --tree: #C0C0C0; --lit: #3B3B3B; --rel: #707070;
+  --text-strong: #1A1A1A; --text: #3B3B3B; --text-2: #5E5E5E; --text-3: #6B6B6B; --text-4: #B5B5B5;
+  --ink: #1F1F1F; --ink-text: #FFFFFF;
+  --green: #77AB95;  --green-half: #BDD5CB; --green-faded: #E0E9E5; --green-text: #2B7351;
+  --blue: #437AB6;   --blue-half: #A6BFDA;  --blue-faded: #D7E1EB;  --blue-text: #2E65A0;
+  --yellow: #B9842B; --yellow-half: #E3D2B6; --yellow-faded: #ECE2D2; --yellow-text: #8A5F18;
+  --red: #B0423B;    --red-half: #DDB6B3;   --red-faded: #EAD6D5;   --red-text: #A43B35;
+  --grey: #B7B7B7;   --grey-half: #D6D6D6;  --grey-faded: #E6E6E6;  --grey-text: #6B6B6B;
+  --done-2: #9BC0B0; --done-1: #BAD3C8;
+  --empty: #F2F2F2; --empty-line: rgba(0, 0, 0, .08);
+  --add: #2B7351; --del: #A43B35;
+  --shadow-pop: 0 8px 24px rgba(0, 0, 0, .10);
+}
+body:has(.kit.t-light) { background: #FFFFFF; }
+
+/* ---------------------------------------------------------------------
+   2. Base
+   --------------------------------------------------------------------- */
+/* resets use :where() so every component class below wins over them */
+:where(.kit), :where(.kit) *, :where(.kit) *::before, :where(.kit) *::after { box-sizing: border-box; }
+:where(.kit) button { font: inherit; color: inherit; background: none; border: 0; margin: 0; padding: 0; cursor: pointer; text-align: inherit; }
+:where(.kit) a { color: inherit; text-decoration: none; }
+:where(.kit) input, :where(.kit) textarea { font: inherit; color: var(--text); }
+:where(.kit) p { margin: 0; }
+.kit :focus { outline: none; }
+.kit :focus-visible { outline: 1px solid var(--text-strong); outline-offset: 2px; }
+.mono { font-family: var(--font-mono); font-size: 12px; }
+.num { font-variant-numeric: tabular-nums; }
+.sp { flex: 1 1 auto; }
+.t2 { color: var(--text-2); } .t3 { color: var(--text-3); } .strong { color: var(--text-strong); }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.ellipsis { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* icons: inline stroke SVG, 16-unit viewBox, stroke = currentColor */
+.ico { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+.ico.sm { width: 14px; height: 14px; }
+.ico.xs { width: 12px; height: 12px; }
+.ico .fill { fill: currentColor; stroke: none; }
+.chev { transition: transform var(--dur) var(--ease); }
+.is-open > .chev, .chev.is-open { transform: rotate(90deg); }
+
+/* ---------------------------------------------------------------------
+   3. Squares and dots — state = colour + fill level, never a glyph
+      full: s-satisfied s-running s-failed s-decide
+      half: s-verifying s-blocked s-waiting s-pending
+      outline: s-claimable s-future
+      faded: s-deferred s-cancelled; s-none = GitHub's empty cell
+      group squares only: s-done-2 s-done-1 (share of 已满足)
+   --------------------------------------------------------------------- */
+.sq { display: inline-block; flex: none; width: 12px; height: 12px; border-radius: 2px; background: var(--grey-half); }
+.sq.z16 { width: 16px; height: 16px; border-radius: 3px; }
+.sq.z14 { width: 14px; height: 14px; }
+.sq.z10 { width: 10px; height: 10px; }
+.sq.z8 { width: 8px; height: 8px; border-radius: 1.5px; }
+.dot { display: inline-block; flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--grey-half); }
+.s-satisfied { background: var(--green); }
+.s-done-2    { background: var(--done-2); }
+.s-done-1    { background: var(--done-1); }
+.s-running   { background: var(--blue); }
+.s-verifying { background: var(--blue-half); }
+.s-claimable { background: transparent; box-shadow: inset 0 0 0 1.5px var(--blue); }
+.s-failed    { background: var(--red); }
+.s-blocked   { background: var(--red-half); }
+.s-decide    { background: var(--yellow); }
+.s-waiting   { background: var(--yellow-half); }
+.s-pending   { background: var(--grey-half); }
+.s-future    { background: transparent; box-shadow: inset 0 0 0 1.5px var(--grey); }
+.s-deferred, .s-cancelled { background: var(--grey-faded); }
+.s-none      { background: var(--empty); box-shadow: inset 0 0 0 1px var(--empty-line); }
+.s-idle      { background: transparent; box-shadow: inset 0 0 0 1.5px var(--grey); } /* member dot: 待命 */
+/* state words (hover, detail, queue) */
+.tx-satisfied { color: var(--green-text); }
+.tx-running, .tx-verifying, .tx-claimable { color: var(--blue-text); }
+.tx-failed, .tx-blocked { color: var(--red-text); }
+.tx-decide, .tx-waiting { color: var(--yellow-text); }
+.tx-pending, .tx-future, .tx-deferred, .tx-cancelled, .tx-none, .tx-idle, .tx-plain { color: var(--text-3); }
+.add { color: var(--add); } .del { color: var(--del); }
+
+/* ---------------------------------------------------------------------
+   4. Buttons and small controls (no pills, no chips, no badges)
+   --------------------------------------------------------------------- */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 28px; padding: 0 10px; border-radius: 6px; color: var(--text-2); white-space: nowrap; }
+.btn:hover { background: var(--hover); color: var(--text); }
+.btn-sm { height: 24px; padding: 0 8px; font-size: 12px; }
+.btn-icon { width: 28px; padding: 0; }
+.btn-icon.btn-sm { width: 24px; }
+.btn-icon.btn-xs { width: 20px; height: 20px; padding: 0; border-radius: 4px; }
+.btn-line { box-shadow: inset 0 0 0 1px var(--line-2); color: var(--text); }
+.btn-primary { background: var(--ink); color: var(--ink-text); font-weight: 500; }
+.btn-primary:hover { background: var(--ink); color: var(--ink-text); opacity: .88; }
+.btn-text { height: auto; padding: 0; border-radius: 3px; color: var(--text-3); }
+.btn-text:hover { background: none; color: var(--text); }
+.btn[disabled], .btn.is-off { opacity: .45; pointer-events: none; }
+.link { color: var(--text-2); text-decoration: underline; text-decoration-color: var(--text-4); text-underline-offset: 3px; }
+.link:hover { color: var(--text-strong); }
+
+/* quiet text tabs (对话 / 轨迹, 任务图 / 架构图) */
+.tabs { display: flex; align-items: stretch; gap: 20px; align-self: stretch; }
+.tab { display: inline-flex; align-items: center; gap: 6px; color: var(--text-3); box-shadow: inset 0 -1px 0 transparent; white-space: nowrap; flex: none; }
+.tab:hover { color: var(--text); }
+.tab.is-on { color: var(--text-strong); box-shadow: inset 0 -1px 0 var(--text-strong); }
+.tab .x { display: inline-flex; color: var(--text-4); border-radius: 3px; }
+.tab .x:hover { color: var(--text); }
+
+/* quiet text switch (树 / 大纲, density levels) */
+.seg { display: flex; align-items: center; gap: 14px; flex: none; }
+.seg-btn { font-size: 12px; color: var(--text-3); line-height: 24px; white-space: nowrap; flex: none; }
+.seg-btn:hover { color: var(--text); }
+.seg-btn.is-on { color: var(--text-strong); }
+
+/* menu (density chooser, more actions) */
+.menu-wrap { position: relative; display: inline-flex; }
+.menu { position: absolute; z-index: 20; top: calc(100% + 4px); right: 0; min-width: 132px; padding: 4px; border-radius: 8px; background: var(--raised); box-shadow: var(--shadow-pop), 0 0 0 1px var(--line); display: flex; flex-direction: column; }
+.menu-item { display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px; border-radius: 5px; color: var(--text-2); white-space: nowrap; }
+.menu-item:hover { background: var(--hover); color: var(--text); }
+.menu-item.is-on { color: var(--text-strong); }
+.menu-item .ck { margin-left: auto; color: var(--text-2); }
+.menu-note { padding: 6px 8px 4px; font-size: 12px; color: var(--text-3); }
+
+/* search field: no box, one icon */
+.search { display: flex; align-items: center; gap: 6px; min-width: 0; height: 28px; color: var(--text-3); }
+.search input { all: unset; flex: 1 1 auto; min-width: 0; font-size: 12px; color: var(--text); }
+.search input::placeholder { color: var(--text-3); }
+.search .note { font-size: 12px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; max-width: 60%; }
+
+/* search results under the field (<= 6 rows): reach a hit inside a folded group in one step */
+.qlist { flex: none; display: flex; flex-direction: column; padding: 0 8px 8px; }
+.qrow { display: flex; align-items: center; gap: 8px; height: 26px; padding: 0 8px; border-radius: 5px; font-size: 12px; color: var(--text-2); width: 100%; text-align: left; }
+.qrow:hover { background: var(--hover); color: var(--text); }
+.qrow .qname { flex: none; max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qrow .qpath { margin-left: auto; min-width: 0; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qmore { padding: 2px 8px 0; font-size: 12px; color: var(--text-3); }
+
+/* ---------------------------------------------------------------------
+   5. App shell: rail | centre | panel
+   --------------------------------------------------------------------- */
+.app { height: 100vh; min-height: 560px; display: grid; grid-template-columns: 232px minmax(0, 1fr) 480px; overflow: hidden; }
+.app.no-panel { grid-template-columns: 232px minmax(0, 1fr); }
+.app.no-panel .panel { display: none; }
+.rail { background: var(--side); border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; overflow-y: auto; padding: 12px 8px; gap: 20px; }
+.main { background: var(--ground); display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.panel { background: var(--side); border-left: 1px solid var(--line); display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+
+/* ---------------------------------------------------------------------
+   6. Rail: project, queue, goals, members
+   --------------------------------------------------------------------- */
+.rail-sec { display: flex; flex-direction: column; gap: 1px; }
+.rail-label { display: flex; align-items: center; height: 24px; padding: 0 8px; font-size: 12px; color: var(--text-3); }
+.proj { display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 8px; color: var(--text-strong); font-weight: 500; }
+
+/* generic list row: lead (square/dot/number) + name + right meta */
+.row { display: flex; align-items: center; gap: 10px; min-height: 30px; padding: 5px 8px; border-radius: 6px; color: var(--text); width: 100%; text-align: left; }
+.row:hover { background: var(--hover); }
+.row.is-on { background: var(--active); color: var(--text-strong); }
+.row.is-on .row-meta, .row.is-on .row-sub { color: var(--text-2); }
+.row.is-current { color: var(--text-strong); }
+.row-lead { width: 14px; display: inline-flex; justify-content: center; flex: none; }
+.row-main { display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto; }
+.row-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row-sub { font-size: 12px; line-height: 18px; color: var(--text-3); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row-meta { margin-left: auto; flex: none; font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.row-main + .row-meta { margin-left: 0; }
+.row-ord { width: 14px; flex: none; text-align: center; font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.row .hover-only { opacity: 0; }
+.row:hover .hover-only, .row:focus-visible .hover-only { opacity: 1; }
+
+/* inline expansion under a row (member detail) */
+.row-more { display: flex; flex-direction: column; gap: 10px; margin: 2px 0 8px 32px; padding: 0 8px 0 0; font-size: 12px; line-height: 18px; color: var(--text-2); }
+.row-more .acts { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; margin-left: -8px; }
+.row-more .acts .btn { height: 26px; font-size: 12px; color: var(--text-2); }
+.row-more .acts .btn:hover { color: var(--text); }
+.kv { display: grid; grid-template-columns: 52px minmax(0, 1fr); gap: 4px 10px; margin: 0; }
+.kv dt { color: var(--text-3); }
+.kv dd { margin: 0; color: var(--text-2); min-width: 0; }
+.kv.stack { grid-template-columns: minmax(0, 1fr); gap: 0; }
+.kv.stack dd { margin-bottom: 6px; }
+.live { color: var(--text-2); }
+.live .dot { margin-right: 6px; vertical-align: 1px; animation: kit-breathe 2.4s ease-in-out infinite; }
+@keyframes kit-breathe { 50% { opacity: .35; } }
+.rail-foot { margin-top: auto; display: flex; align-items: center; gap: 2px; }
+.rail-note { padding: 4px 8px; font-size: 12px; color: var(--text-3); }
+
+/* ---------------------------------------------------------------------
+   7. Centre header, density menu
+   --------------------------------------------------------------------- */
+.head { flex: none; height: 48px; display: flex; align-items: center; gap: 12px; padding: 0 16px 0 24px; border-bottom: 1px solid var(--line); background: var(--ground); }
+.head-title { color: var(--text-strong); font-size: 14px; font-weight: 500; white-space: nowrap; }
+.head-sub { color: var(--text-3); font-size: 12px; white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* a narrow centre squeezes the subs, never the tabs; the later (less important) sub gives way first */
+.head-sub + .head-sub { flex-shrink: 6; }
+.head .tabs { margin-left: 8px; }
+
+/* ---------------------------------------------------------------------
+   8. Conversation (DSH style: one line per step, folded groups)
+   --------------------------------------------------------------------- */
+.thread { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+.col { width: 100%; max-width: 640px; margin: 0 auto; padding: 28px 32px 32px; display: flex; flex-direction: column; gap: 22px; }
+.col.narrow { gap: 16px; }
+
+/* automatic action / system line: quiet, before what it caused */
+.sys-line { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-3); }
+.sys-line .ico { color: var(--text-3); }
+.sys-line .t { margin-left: auto; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* your words: right, raised bubble */
+.msg-user { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.bubble { max-width: 86%; padding: 9px 14px; border-radius: 10px; background: var(--surface); color: var(--text-strong); font-size: 14px; line-height: 24px; white-space: pre-wrap; text-wrap: pretty; }
+.msg-time { font-size: 12px; color: var(--text-3); opacity: 0; font-variant-numeric: tabular-nums; }
+.msg-user:hover .msg-time, .msg-agent:hover .msg-time { opacity: 1; }
+
+/* one execution folded to one line */
+.run { display: flex; align-items: center; gap: 6px; height: 24px; color: var(--text-3); font-size: 13px; width: 100%; }
+.run:hover { color: var(--text); }
+.run .ico { color: var(--text-3); }
+.run .t { margin-left: auto; font-size: 12px; font-variant-numeric: tabular-nums; opacity: 0; }
+.run:hover .t { opacity: 1; }
+.run.is-live .live-tx { color: var(--text-2); }
+.steps { display: flex; flex-direction: column; margin: 4px 0 0; padding-left: 20px; }
+.step { display: flex; flex-wrap: wrap; align-items: center; column-gap: 6px; min-height: 24px; color: var(--text-2); font-size: 13px; }
+.step > .ico { color: var(--text-3); }
+.step-verb { color: var(--text-2); flex: none; }
+.step-dot { color: var(--text-4); flex: none; }
+.step-obj { color: var(--text-3); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; }
+.step-obj.is-path { font-family: var(--font-mono); font-size: 12px; }
+.step-meta { margin-left: auto; padding-left: 12px; font-size: 12px; color: var(--text-3); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.step.is-fail .step-verb, .step.is-fail .step-obj { color: var(--red-text); }
+.step-detail { flex: 1 0 100%; margin: 2px 0 8px 22px; padding: 8px 12px; border-radius: 6px; background: var(--surface); font-family: var(--font-mono); font-size: 12px; line-height: 18px; color: var(--text-2); white-space: pre-wrap; }
+.step-detail.is-prose { font-family: var(--font-ui); font-size: 13px; line-height: 22px; }
+.attempt-sep { display: flex; align-items: center; gap: 12px; font-size: 12px; color: var(--text-3); }
+.attempt-sep::before, .attempt-sep::after { content: ""; flex: 1 1 auto; border-top: 1px solid var(--line); }
+
+/* the agent's answer: plain prose, never folded, no accented words */
+.msg-agent { display: flex; flex-direction: column; gap: 10px; }
+.msg-from { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-3); }
+.prose { font-size: 14px; line-height: 24px; color: var(--text); text-wrap: pretty; }
+.prose code, .code { font-family: var(--font-mono); font-size: 12.5px; color: var(--text); padding: 0 4px; border-radius: 4px; background: var(--surface); }
+.ref { display: inline-flex; align-items: center; gap: 5px; padding: 0 4px; margin: 0 1px; border-radius: 4px; color: var(--text-strong); text-decoration: underline; text-decoration-color: var(--text-4); text-underline-offset: 4px; }
+.ref:hover { background: var(--hover); }
+.ref .sq { width: 8px; height: 8px; }
+
+/* message delivery (member page: 直接干预) */
+.deliv { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-3); }
+.deliv .sep { color: var(--text-4); }
+.deliv .on { color: var(--text-2); }
+.deliv.is-rejected .on { color: var(--red-text); }
+
+/* trace ledger (轨迹): a column of grid rows (div, or button when a row opens its record), never a <table> —
+   the HTML parser moves <sc-for> / <sc-if> out of a table before the runtime sees them. Columns 时间 · 类型 · 编号 ·
+   摘要; only the 摘要 cell (.lg-w) wraps. A row is .lg-row (+ .is-on for the newest or selected one); the header
+   row is .lg-row.lg-th; a section title between rows is .lg-head. */
+.lg { display: flex; flex-direction: column; min-width: 0; }
+.lg-row { display: grid; grid-template-columns: 76px 68px 100px minmax(0, 1fr); column-gap: 12px; align-items: start; width: 100%; padding: 7px 0; border-bottom: 1px solid var(--line); font-size: 12px; line-height: 18px; color: var(--text-2); text-align: left; }
+.lg-row.lg-th { padding: 0 0 8px; color: var(--text-3); }
+.lg-c { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lg-c.mono { color: var(--text-3); }
+.lg-c.lg-w { overflow: visible; white-space: normal; overflow-wrap: break-word; }
+.lg-row.is-on, .lg-row.is-on .lg-c { color: var(--text-strong); }
+button.lg-row:hover { color: var(--text); }
+.lg-head { font-size: 12px; line-height: 18px; color: var(--text-3); padding: 14px 0 2px; }
+
+/* a rail row that only shows (a member page's own row, rows without an action on another board) */
+.row.is-static { cursor: default; }
+.row.is-static:not(.is-on):hover { background: none; }
+
+/* ---------------------------------------------------------------------
+   9. Plan card (Q1): options, iterate, adopt — also the goal-conflict choice
+   --------------------------------------------------------------------- */
+.plan { display: flex; flex-direction: column; border-radius: 10px; background: var(--surface); padding: 14px 16px 12px; gap: 12px; }
+.plan-head { display: flex; align-items: baseline; gap: 10px; }
+.plan-head .ttl { color: var(--text-strong); font-weight: 500; }
+.plan-head .scope { font-size: 12px; color: var(--text-3); }
+.plan-head .st { margin-left: auto; font-size: 12px; color: var(--text-3); }
+.plan-delta { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; font-size: 13px; color: var(--text-2); }
+.plan-delta li { display: flex; gap: 10px; padding: 3px 8px; border-radius: 5px; animation: kit-tint 1.6s var(--ease) 1; }
+.plan-delta .dm { width: 10px; flex: none; color: var(--text-3); font-family: var(--font-mono); }
+@keyframes kit-tint { from { background: var(--active); } to { background: transparent; } }
+.opts { display: flex; flex-direction: column; gap: 2px; }
+.opt { display: flex; flex-direction: column; border-radius: 8px; padding: 2px 0; }
+.opt.is-on { background: var(--active); }
+.opt-top { display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px; border-radius: 8px; width: 100%; text-align: left; color: var(--text); }
+.opt-top:hover { color: var(--text-strong); }
+.radio { width: 12px; height: 12px; flex: none; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--text-3); }
+.opt.is-on .radio { box-shadow: inset 0 0 0 3.5px var(--text-strong); }
+.opt-key { width: 12px; flex: none; color: var(--text-3); }
+.opt-title { min-width: 0; flex: 0 1 auto; }
+.opt-rec { font-size: 12px; color: var(--text-3); flex: none; }
+.opt.is-on .opt-title { color: var(--text-strong); }
+.opt-est { margin-left: auto; font-size: 12px; color: var(--text-3); white-space: nowrap; }
+.opt-body { display: flex; flex-direction: column; gap: 8px; padding: 0 12px 10px 44px; }
+.opts.no-key .opt-body { padding-left: 32px; }
+.opt-how { font-size: 13px; line-height: 22px; color: var(--text-2); }
+.opt-kv { display: grid; grid-template-columns: 32px minmax(0, 1fr); gap: 4px 12px; margin: 0; font-size: 12px; line-height: 18px; }
+.opt-kv dt { color: var(--text-3); }
+.opt-kv dd { margin: 0; color: var(--text-2); }
+.plan-foot { display: flex; align-items: center; gap: 8px; padding-top: 2px; }
+.plan-foot .note { font-size: 12px; color: var(--text-3); margin-right: auto; min-width: 0; }
+.plan-line { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-3); }
+.plan-line .ico { color: var(--text-3); }
+.plan-line .btn-text { margin-left: auto; font-size: 12px; }
+
+/* ---------------------------------------------------------------------
+   10. Dock: goal bar, composer, decision card (takes the composer's place)
+   --------------------------------------------------------------------- */
+.dock { flex: none; padding: 0 32px 18px; }
+.dock-col { max-width: 576px; margin: 0 auto; display: flex; flex-direction: column; gap: 8px; }
+.goalbar { display: flex; align-items: center; gap: 14px; height: 32px; padding: 0 4px 0 12px; font-size: 12px; color: var(--text-2); }
+.gb-state { display: inline-flex; align-items: center; gap: 8px; color: var(--text); min-width: 0; white-space: nowrap; }
+.gb-why { color: var(--text-3); overflow: hidden; text-overflow: ellipsis; }
+.gb-item { display: inline-flex; align-items: center; gap: 6px; color: var(--text-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.gb-decide { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 6px; margin: 0 -6px; border-radius: 5px; color: var(--text); white-space: nowrap; }
+.gb-decide:hover { background: var(--hover); }
+.gb-acts { margin-left: auto; display: flex; gap: 2px; }
+
+.composer { display: flex; flex-direction: column; gap: 6px; padding: 10px 10px 8px 14px; border-radius: 10px; background: var(--surface); box-shadow: 0 0 0 1px var(--line); }
+.composer textarea { all: unset; display: block; width: 100%; min-height: 44px; font-size: 14px; line-height: 22px; color: var(--text-strong); white-space: pre-wrap; }
+.composer textarea::placeholder { color: var(--text-3); }
+/* quoted node: plain quiet text with one hairline on the left, no fill */
+.composer-ref { display: flex; align-items: center; gap: 6px; max-width: 100%; min-height: 20px; padding-left: 8px; box-shadow: inset 1px 0 0 var(--line-2); font-size: 12px; color: var(--text-3); }
+.composer-to { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-3); }
+.composer-foot { display: flex; align-items: center; gap: 6px; min-height: 28px; }
+.composer-foot .to { font-size: 12px; color: var(--text-3); }
+.send { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 50%; background: var(--ink); color: var(--ink-text); margin-left: auto; }
+.send:hover { opacity: .88; }
+.send.is-off { opacity: .35; }
+
+.decision { display: flex; flex-direction: column; gap: 10px; padding: 12px 14px 12px 16px; border-radius: 10px; background: var(--surface); box-shadow: 0 0 0 1px var(--line); animation: kit-fade var(--dur-2) var(--ease) 1; }
+@keyframes kit-fade { from { opacity: 0; } to { opacity: 1; } }
+.dc-head { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-3); min-height: 24px; }
+.dc-head .lvl { color: var(--text-2); }
+.dc-head .pos { margin-left: auto; font-variant-numeric: tabular-nums; }
+.dc-title { font-size: 14px; line-height: 22px; color: var(--text-strong); }
+.dc-line { font-size: 13px; line-height: 22px; color: var(--text-2); }
+.dc-facts { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 4px 12px; margin: 0; font-size: 12px; line-height: 18px; }
+.dc-facts dt { color: var(--text-3); }
+.dc-facts dd { margin: 0; color: var(--text-2); }
+.dc-foot { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.dc-foot .first { margin-right: auto; }
+.dc-more { align-self: flex-start; font-size: 12px; }
+
+/* ---------------------------------------------------------------------
+   11. Right panel: tabs, tools, crumbs, body, detail, legend
+   --------------------------------------------------------------------- */
+.ptabs { flex: none; height: 48px; display: flex; align-items: stretch; gap: 20px; padding: 0 16px; border-bottom: 1px solid var(--line); }
+.ptools { flex: none; display: flex; align-items: center; gap: 14px; height: 40px; padding: 0 16px; }
+.ptools .search { flex: 1 1 auto; }
+.crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; font-size: 12px; color: var(--text-3); }
+.crumbs .sep { color: var(--text-4); }
+.crumbs .c { color: var(--text-3); border-radius: 3px; }
+.crumbs .c:hover { color: var(--text); }
+.crumbs .c.is-on { color: var(--text-strong); }
+.pbody { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 8px 16px 24px; display: flex; flex-direction: column; gap: 12px; }
+.pnote { font-size: 12px; color: var(--text-3); }
+
+.legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; color: var(--text-3); padding-top: 8px; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend .wide { flex-basis: 100%; }
+
+/* click detail: quiet, one hairline on top, exactly four rows */
+.detail { flex: none; max-height: 48%; overflow-y: auto; border-top: 1px solid var(--line); padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 12px; background: var(--side); }
+.detail.is-page { max-height: none; flex: 1 1 auto; border-top: 0; padding-top: 18px; }
+.d-pins { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; font-size: 12px; color: var(--text-3); margin-bottom: -2px; }
+.d-head { display: flex; align-items: center; gap: 8px; }
+.d-title { color: var(--text-strong); font-size: 14px; font-weight: 500; min-width: 0; }
+.d-pinned { font-size: 12px; color: var(--text-3); flex: none; }
+.d-head .btn { margin-left: auto; }
+.d-state { font-size: 12px; line-height: 18px; color: var(--text-3); margin-top: -6px; }
+.d-dl { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 10px 12px; margin: 0; font-size: 12px; line-height: 18px; }
+.d-dl dt { color: var(--text-3); }
+.d-dl dd { margin: 0; color: var(--text-2); min-width: 0; }
+.d-crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 0 6px; }
+.d-crumbs .sep { color: var(--text-4); }
+.d-crumbs .c { color: var(--text-2); }
+.d-crumbs .c:hover { color: var(--text-strong); }
+.d-crumbs .c.is-on { color: var(--text-strong); }
+.d-rel { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 6px 8px; }
+.d-rel .k { color: var(--text-3); }
+.d-items { display: flex; flex-wrap: wrap; gap: 4px 12px; min-width: 0; }
+.d-item { display: inline-flex; align-items: center; gap: 6px; color: var(--text-2); border-radius: 3px; }
+.d-item:hover, .d-item:focus-visible { color: var(--text-strong); }
+.d-line { flex-basis: 100%; color: var(--text-2); }
+/* a path wraps only after a "/" (each segment is one flex item) */
+.d-file { display: inline-flex; flex-wrap: wrap; min-width: 0; font-family: var(--font-mono); font-size: 11.5px; color: var(--text-2); }
+.d-file > span { white-space: nowrap; }
+.d-acts { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12px; }
+.d-acts .btn-text:first-child { color: var(--text-2); }
+
+/* hover info card (every node of both maps, 树 and 大纲, and ArchOverview): name; state word + reason
+   (or the count line of a group); 归属 (short crumb); 负责 (agent + status); 语义 (one sentence, two lines
+   at most); for a file the tasks that change it; one quiet hint line. Raised, ringed, never over the
+   hovered square: it opens below the hovered row / square, or above it near the bottom of the tree.
+   It appears after a short delay (animation delay, not a timer) and on keyboard focus; never takes the pointer. */
+.hcard { position: absolute; z-index: 10; width: 272px; max-width: 100%; display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: 8px; background: var(--raised); box-shadow: var(--shadow-pop), 0 0 0 1px var(--line); font-size: 12px; line-height: 18px; color: var(--text-2); pointer-events: none; animation: kit-fade var(--dur-2) var(--ease) 280ms both; }
+.hc-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.hc-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-strong); font-size: 13px; font-weight: 500; }
+.hc-state { color: var(--text-3); margin-top: -3px; text-wrap: pretty; }
+.hc-dl { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 3px 10px; margin: 0; }
+.hc-dl dt { color: var(--text-3); }
+.hc-dl dd { margin: 0; min-width: 0; color: var(--text-2); }
+.hc-sem { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.hc-items { display: flex; flex-direction: column; min-width: 0; }
+.hc-item { display: flex; align-items: center; gap: 6px; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hc-more { color: var(--text-3); }
+.hc-hint { color: var(--text-3); }
+
+/* 架构图 scope line: 当前工作 / 全部 (quiet switch) · what is shown · 完整架构图 (a link to the overview board) */
+.pscope { flex: none; display: flex; align-items: center; gap: 14px; height: 28px; padding: 0 16px; margin-top: -6px; font-size: 12px; color: var(--text-3); }
+.pscope .note { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plink { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; font-size: 12px; white-space: nowrap; }
+
+/* ---------------------------------------------------------------------
+   12. Tree of squares — goal → stage → (batch) → task,
+       system → module → submodule → folder → file
+       树: every group is one row; its children hang from a horizontal
+       branch as squares on ticks (a comb); an opened group's children are
+       rows below it. 大纲: every node is a named row.
+       Every line segment is a border on its own box, so lighting a path is
+       classes computed in renderVals(). Numbers must equal geo() in Main.
+   --------------------------------------------------------------------- */
+.tree { position: relative; width: 100%; --r: 3px; }
+.tree.g-tree    { --ind: 22px; --cx: 10px; --pitch: 18px; --pcx: 9px; --tick: 4px; --gap: 2px; }
+.tree.g-outline { --ind: 22px; --cx: 10px; --gap: 2px; }
+.tr { position: relative; display: flex; align-items: stretch; }
+.g-tree .tr         { height: 30px; --mid: 15px; --sqn: 14px; }
+.g-tree .tr.root    { height: 34px; --mid: 17px; --sqn: 16px; }
+.g-tree .tr.comb    { height: 36px; --mid: 11px; }
+.g-tree .tr.ln      { height: 28px; --mid: 14px; }
+.g-outline .tr      { height: 28px; --mid: 14px; --sqn: 12px; }
+.g-outline .tr.root { height: 34px; --mid: 17px; --sqn: 14px; }
+
+/* gutter: an ancestor's sibling line passing through this row */
+.g, .e { position: relative; flex: none; width: var(--ind); }
+.g.v::before { content: ""; position: absolute; left: var(--cx); top: 0; bottom: 0; border-left: 1px solid var(--tree); }
+.g.v.lit::before { border-color: var(--lit); }
+/* elbow: ::before above the joint, <i> rounded joint reaching the square, ::after below (.mid) */
+.e::before { content: ""; position: absolute; left: var(--cx); top: 0; height: calc(var(--mid) - var(--r)); border-left: 1px solid var(--tree); }
+.e > i { position: absolute; left: var(--cx); top: calc(var(--mid) - var(--r)); height: var(--r);
+  width: calc(var(--ind) + (var(--ind) - var(--sqn)) / 2 - var(--gap) - var(--cx) - 1px);
+  border-left: 1px solid var(--tree); border-bottom: 1px solid var(--tree); border-bottom-left-radius: var(--r); }
+.e.mid::after { content: ""; position: absolute; left: var(--cx); top: calc(var(--mid) - var(--r)); bottom: 0; border-left: 1px solid var(--tree); }
+.e.in::before, .e.in > i { border-color: var(--lit); }
+.e.thru::before, .e.thru::after { border-color: var(--lit); }
+.e.none { display: none; }
+
+/* square cell (a button in 树, a span inside the row button in 大纲) */
+.nc { position: relative; flex: none; width: var(--ind); align-self: stretch; display: block; }
+.nc > .sq { position: absolute; left: calc((var(--ind) - var(--sqn)) / 2); top: calc(var(--mid) - var(--sqn) / 2); width: var(--sqn); height: var(--sqn); }
+.tr.root .nc > .sq { border-radius: 3px; }
+.nc.stem::after { content: ""; position: absolute; left: var(--cx); top: calc(var(--mid) + var(--sqn) / 2 + var(--gap)); bottom: 0; border-left: 1px solid var(--tree); }
+.nc.stem.lit::after { border-color: var(--lit); }
+/* 树: stub from the group square to its comb */
+.nc.branch::before { content: ""; position: absolute; left: calc((var(--ind) + var(--sqn)) / 2 + var(--gap)); right: 0; top: var(--mid); border-top: 1px solid var(--tree); }
+.nc.branch.blit::before { border-color: var(--lit); }
+
+/* comb: each child hangs from the branch on its own tick */
+.comb { display: flex; align-self: stretch; flex: none; }
+.cc { position: relative; flex: none; width: var(--pitch); display: block; }
+.cc::before { content: ""; position: absolute; left: 0; width: var(--pcx); top: var(--mid); border-top: 1px solid var(--tree); }
+.cc::after { content: ""; position: absolute; left: var(--pcx); right: 0; top: var(--mid); border-top: 1px solid var(--tree); }
+.cc.last::after { display: none; }
+.cc > i { position: absolute; left: var(--pcx); top: var(--mid); height: var(--tick); border-left: 1px solid var(--tree); }
+.cc > .sq { position: absolute; width: var(--sqn); height: var(--sqn); left: calc((var(--pitch) - var(--sqn)) / 2); top: calc(var(--mid) + var(--tick) + var(--gap)); }
+.cc.on::before, .cc.on > i { border-color: var(--lit); }
+.cc.thru::before, .cc.thru::after { border-color: var(--lit); }
+/* 当前工作 (focused architecture view): the rest of a group's children as compact squares on its branch, no names */
+.comb.mini { --pitch: 12px; --pcx: 6px; --sqn: 8px; }
+.comb.mini .cc > .sq { border-radius: 1.5px; }
+
+/* 树 label: name + count trail the branch, quiet */
+.tr-lb { display: inline-flex; align-items: center; gap: 8px; align-self: flex-start; height: calc(var(--mid) * 2); margin-left: 4px; padding: 0 6px; border-radius: 4px; font-size: 12px; color: var(--text-2); min-width: 0; white-space: nowrap; }
+.tr-lb:hover { background: var(--hover); color: var(--text); }
+.tr.comb .tr-lb { margin-left: 6px; }
+.tr-lb .tr-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.tr-n { color: var(--text-3); font-variant-numeric: tabular-nums; flex: 0 1000 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; } /* the count gives way before the name */
+.tr.root .tr-lb { font-size: 13px; }
+.tr.root .tr-name { color: var(--text-strong); font-weight: 500; }
+.tr.on .tr-name, .tr.is-sel .tr-name { color: var(--text-strong); }
+.tr-chev { opacity: 0; color: var(--text-3); transition: transform var(--dur) var(--ease); }
+.tr:hover .tr-chev, .tr-lb:focus-visible .tr-chev, .nb:focus-visible .tr-chev { opacity: 1; }
+.is-open > .tr-chev { transform: rotate(90deg); }
+
+/* named row (大纲, folders' files, folded runs): one button = square cell + name */
+.nb { display: flex; align-items: center; align-self: stretch; gap: 6px; padding: 0 8px 0 0; border-radius: 4px; color: var(--text-2); text-align: left; min-width: 0; flex: 1 1 auto; }
+.nb:hover { background: var(--hover); color: var(--text); }
+.nb .tr-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.g-tree .tr.ln .nb { flex: 0 1 auto; padding-right: 10px; }
+.g-outline .tr.root .nb .tr-name { color: var(--text-strong); font-weight: 500; }
+.g-outline .tr.is-sel .nb { background: var(--active); }
+.tr-why { color: var(--text-3); font-size: 12px; margin-left: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 0 1000 auto; } /* the reason gives way before the name */
+.tr-sum { flex: none; display: flex; align-items: center; gap: 10px; padding: 0 4px 0 10px; white-space: nowrap; color: var(--text-3); font-size: 12px; font-variant-numeric: tabular-nums; }
+.tr-sum .tr-a { min-width: 34px; text-align: right; }
+.strip { display: flex; gap: 2px; align-items: center; }
+.tr.fold .nb { color: var(--text-3); font-size: 12px; }
+.tr.fold .nc > .sq { width: 8px; height: 8px; left: calc((var(--ind) - 8px) / 2); top: calc(var(--mid) - 4px); }
+
+/* focus: the selection's path and subtree, related squares and search hits stay; the rest fades */
+.tree.focus .tr.dim > .nc > .sq, .tree.focus .tr.dim > .tr-lb, .tree.focus .tr.dim .nb, .tree.focus .tr.dim .tr-sum { opacity: .3; }
+.tree.focus .cc.dim > .sq { opacity: .22; }
+.nc.is-sel > .sq, .cc.is-sel > .sq, .nb.is-sel .nc > .sq { outline: 1px solid var(--lit); outline-offset: 2px; }
+
+/* relation connector: drawn only while a 依赖 / 后续 item in the detail is hovered or focused */
+.deps { position: absolute; left: 0; top: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+.deps .dl { fill: none; stroke: var(--rel); stroke-width: 1.25; stroke-linecap: round; stroke-linejoin: round; }
+
+/* ---------------------------------------------------------------------
+   13. Other boards: member header, mode chooser, goal order, phone root
+   --------------------------------------------------------------------- */
+.member-head { display: flex; align-items: center; gap: 10px; }
+.member-head .acts { margin-left: auto; display: flex; gap: 2px; }
+.mode { display: flex; gap: 2px; padding: 2px; border-radius: 8px; background: var(--side); align-self: flex-start; }
+.mode-btn { height: 26px; padding: 0 10px; border-radius: 6px; font-size: 12px; color: var(--text-3); }
+.mode-btn:hover { color: var(--text); }
+.mode-btn.is-on { background: var(--active); color: var(--text-strong); }
+.mode-note { font-size: 12px; color: var(--text-3); }
+.order-acts { display: inline-flex; gap: 0; opacity: 0; }
+.row:hover .order-acts, .order-acts:focus-within { opacity: 1; }
+.empty { font-size: 13px; color: var(--text-3); padding: 24px 0; }
+.phone { width: 390px; height: 844px; overflow: hidden; display: flex; flex-direction: column; background: var(--ground); }
+
+/* ---------------------------------------------------------------------
+   14. Motion and responsive
+   --------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  .kit *, .kit *::before, .kit *::after { animation-duration: 0s !important; animation-iteration-count: 1 !important; transition-duration: 0s !important; }
+}
+@media (max-width: 1240px) {
+  .app { grid-template-columns: 208px minmax(0, 1fr) 420px; }
+  .app.no-panel { grid-template-columns: 208px minmax(0, 1fr); }
+}
+@media (max-width: 960px) {
+  .app, .app.no-panel { height: auto; min-height: 100vh; grid-template-columns: minmax(0, 1fr); overflow: visible; }
+  .rail { order: 3; border-right: 0; border-top: 1px solid var(--line); overflow: visible; }
+  .main { order: 1; min-height: 100vh; }
+  .panel { order: 2; border-left: 0; border-top: 1px solid var(--line); min-height: 640px; }
+  .col { padding: 20px 16px 24px; }
+  .dock { padding: 0 16px 16px; }
+  .head { padding: 0 12px 0 16px; }
+  .head-sub { display: none; }
+}
+
+/* ---------------------------------------------------------------------
+   15. Gap pass after approval (2026-10-05) — additions only; nothing above changes.
+       Catalog: DESIGN.md §18. Data and logic: proto/v2/data/ (timeline.js, auxtabs.snippet.*, arch-semantic.js).
+   --------------------------------------------------------------------- */
+
+/* 15.1 split shell (G2): rail | divider | centre | divider | panel. The widths are state, set on the root as
+   style="--rail-w: …px; --panel-w: …px;". The panel has no fixed cap: it may take all but 360px of the centre. */
+.app.is-split { grid-template-columns: var(--rail-w, 232px) 0 minmax(0, 1fr) 0 min(var(--panel-w, 480px), calc(100% - var(--rail-w, 232px) - 360px)); }
+.app.is-split > .rail { grid-column: 1; grid-row: 1; }
+.app.is-split > .split-handle.for-rail { grid-column: 2; grid-row: 1; }
+.app.is-split > .main { grid-column: 3; grid-row: 1; }
+.app.is-split > .split-handle.for-panel { grid-column: 4; grid-row: 1; }
+.app.is-split > .panel { grid-column: 5; grid-row: 1; }
+.app.is-split.no-panel { grid-template-columns: var(--rail-w, 232px) 0 minmax(0, 1fr) 0 0; }
+.app.is-split.no-panel > .split-handle.for-panel { display: none; }
+.app.is-split.panel-max { grid-template-columns: var(--rail-w, 232px) 0 0 0 minmax(0, 1fr); }
+.app.is-split.panel-max > .main, .app.is-split.panel-max > .split-handle.for-panel { display: none; }
+/* the divider: no box of its own; an 8px grab area over the pane edge, a 2px line on hover / focus / drag */
+.split-handle { position: relative; z-index: 6; width: 0; min-width: 0; min-height: 0; touch-action: none; cursor: col-resize; }
+.split-handle::before { content: ""; position: absolute; top: 0; bottom: 0; left: -4px; width: 8px; }
+.split-handle::after { content: ""; position: absolute; top: 0; bottom: 0; left: -1px; width: 2px; background: transparent; }
+.split-handle:hover::after { background: var(--line-2); }
+.kit .split-handle:focus-visible { outline: none; }
+.split-handle:focus-visible::after { background: var(--text-3); }
+.split-handle.is-drag::after { background: var(--text-2); }
+.app.is-dragging { cursor: col-resize; user-select: none; }
+
+/* 15.2 auxiliary tab strip (G2): tabs scroll sideways when many; + / 放大 / 隐藏 sit at the right */
+.ptabs.aux { gap: 8px; padding: 0 8px 0 16px; }
+.pt-list { display: flex; align-items: stretch; gap: 14px; flex: 1 1 auto; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.pt-list::-webkit-scrollbar { display: none; }
+.pt-list .tab .nm { display: inline-block; max-width: 168px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pt-list .tab.is-file .nm { font-family: var(--font-mono); font-size: 12px; }
+.tab .dirty { width: 6px; height: 6px; flex: none; border-radius: 50%; background: var(--text-2); }
+.pt-acts { display: flex; align-items: center; gap: 2px; flex: none; }
+.pt-acts .menu { min-width: 148px; }
+
+/* 15.3 file tree (文件): one quiet row per entry; 14px per level; changed files show their diff counts */
+.fnote { flex: none; padding: 10px 16px 2px; }
+.ftree { display: flex; flex-direction: column; margin: 0 -8px; }
+.frow { display: flex; align-items: center; gap: 6px; width: 100%; height: 26px; padding: 0 8px; border-radius: 5px; font-size: 12px; color: var(--text-2); text-align: left; white-space: nowrap; }
+.frow:hover { background: var(--hover); color: var(--text); }
+.frow.is-on { background: var(--active); color: var(--text-strong); }
+.frow .ico { color: var(--text-3); }
+.frow .fsp { width: 12px; flex: none; }
+.frow .fname { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.frow .fdir { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--text-3); font-family: var(--font-mono); font-size: 11.5px; }
+.frow .fmeta { margin-left: auto; padding-left: 8px; flex: none; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.frow.is-more { color: var(--text-3); }
+.frow.d1 { padding-left: 22px; } .frow.d2 { padding-left: 36px; } .frow.d3 { padding-left: 50px; } .frow.d4 { padding-left: 64px; } .frow.d5 { padding-left: 78px; }
+.frow.d6 { padding-left: 92px; } .frow.d7 { padding-left: 106px; } .frow.d8 { padding-left: 120px; } .frow.d9 { padding-left: 134px; }
+
+/* 15.4 file page: path, state, 编辑 / 保存; the conflict notice is a surface you act on; a line gutter that selects */
+.fpage { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+.fp-head { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; min-height: 40px; padding: 6px 16px; }
+.fp-path { display: inline-flex; flex-wrap: wrap; min-width: 0; font-family: var(--font-mono); font-size: 12px; color: var(--text-2); }
+.fp-path > span { white-space: nowrap; }
+.fp-state { font-size: 12px; color: var(--text-3); white-space: nowrap; }
+.fp-acts { margin-left: auto; display: flex; gap: 4px; }
+.fp-note { flex: none; display: flex; flex-direction: column; gap: 8px; margin: 0 16px 8px; padding: 10px 12px; border-radius: 8px; background: var(--surface); font-size: 12px; line-height: 18px; color: var(--text-2); }
+.fp-note .acts { display: flex; flex-wrap: wrap; gap: 6px; }
+.fcode { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 4px 0 12px; font-family: var(--font-mono); font-size: 12px; line-height: 20px; }
+.fl { display: grid; grid-template-columns: 52px minmax(0, 1fr); }
+.fl-n { padding: 0 12px 0 0; text-align: right; color: var(--text-3); font-variant-numeric: tabular-nums; border-radius: 0; }
+.fl-n:hover { color: var(--text); }
+.fl-t { white-space: pre; color: var(--text-2); padding-right: 16px; }
+.fl.is-sel { background: var(--active); }
+.fl.is-sel .fl-n, .fl.is-sel .fl-t { color: var(--text-strong); }
+.fl.is-fold .fl-t { grid-column: 2; font-family: var(--font-ui); font-size: 12px; color: var(--text-3); }
+.fcode.is-edit { display: flex; padding: 4px 0 0; }
+.fedit { all: unset; display: block; flex: 1 1 auto; min-height: 100%; padding: 0 16px 12px 52px; font-family: var(--font-mono); font-size: 12px; line-height: 20px; color: var(--text-strong); white-space: pre; overflow: auto; tab-size: 2; }
+.fp-bar { flex: none; display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 16px; border-top: 1px solid var(--line); font-size: 12px; color: var(--text-3); }
+.fp-bar .t { margin-right: auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 15.5 a quote in the composer (引用到草稿): plain quiet text on one hairline, like .composer-ref — never a filled chip */
+.composer-quote { display: grid; grid-template-columns: 12px minmax(0, 1fr) 20px; column-gap: 6px; align-items: center; padding-left: 8px; box-shadow: inset 1px 0 0 var(--line-2); font-size: 12px; line-height: 18px; color: var(--text-3); }
+.composer-quote .ico { color: var(--text-3); }
+.cq-main { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.cq-path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-size: 11.5px; color: var(--text-2); }
+.cq-lines { flex: none; white-space: nowrap; }
+.cq-snap { flex: none; color: var(--yellow-text); white-space: nowrap; }
+.cq-snip { grid-column: 2; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-size: 11.5px; color: var(--text-3); }
+
+/* 15.6 commands (命令): run / cancel; output folds away and is kept */
+.cmds { display: flex; flex-direction: column; }
+.cmd { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.cmd-name { color: var(--text); }
+.cmd-line { grid-column: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-size: 12px; color: var(--text-3); }
+.cmd-st { grid-column: 1; display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-3); }
+.cmd-acts { grid-column: 2; grid-row: 1 / span 3; display: flex; align-items: center; gap: 4px; }
+.cmd-out { grid-column: 1 / -1; margin-top: 6px; padding: 8px 12px; max-height: 220px; overflow: auto; border-radius: 6px; background: var(--surface); font-family: var(--font-mono); font-size: 12px; line-height: 18px; color: var(--text-2); white-space: pre-wrap; }
+.cmd-kept { grid-column: 1 / -1; font-size: 12px; color: var(--text-3); }
+
+/* 15.7 diff (Git ↔ working tree, or disk ↔ your draft): line level; added / removed rows on the faded state grounds */
+.dfiles { flex: none; display: flex; flex-direction: column; padding: 8px 8px 4px; max-height: 40%; overflow-y: auto; }
+.dfiles .frow { gap: 8px; }
+.diff-head { flex: none; display: flex; align-items: center; gap: 12px; min-height: 32px; padding: 0 16px; border-top: 1px solid var(--line); font-size: 12px; color: var(--text-3); }
+.diff-head .btn-text { margin-left: auto; font-size: 12px; white-space: nowrap; }
+.diff-body { padding: 4px 0 24px; gap: 0; }
+.diff { font-family: var(--font-mono); font-size: 12px; line-height: 20px; min-width: 0; overflow-x: auto; }
+.dl-row { display: grid; grid-template-columns: 40px 40px 18px minmax(0, 1fr); }
+.dl-row .n { padding-right: 8px; text-align: right; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.dl-row .s { text-align: center; color: var(--text-3); }
+.dl-row .t { white-space: pre; color: var(--text-2); padding-right: 16px; }
+.dl-row.is-add { background: var(--green-faded); }
+.dl-row.is-add .s { color: var(--add); }
+.dl-row.is-del { background: var(--red-faded); }
+.dl-row.is-del .s { color: var(--del); }
+.dl-row.is-add .t, .dl-row.is-del .t { color: var(--text); }
+.dl-hunk { padding: 8px 16px 2px 98px; color: var(--text-3); }
+
+/* 15.8 轨道 (G1): one lane per member or stage; time left → right; each run a bar in its result colour
+   (runs 10px, check rounds 4px, read-only consultations and conversation turns an outline); attempts of one
+   task joined by a thin link; a stop (pause, interruption, needs you) is a 2px mark; Host restarts a dashed
+   line; the now line. Rows inside a lane: w0 / w1 / w2 (16px apart); a lane is r1 / r2 / r3 rows high. */
+.tl-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 18px; min-height: 28px; }
+.tl-cell { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text-2); white-space: nowrap; }
+.tl { position: relative; --lane-w: 112px; padding-bottom: 20px; font-size: 12px; }
+.tl.full { --lane-w: 168px; }
+.tl-axis { position: relative; height: 22px; margin-left: var(--lane-w); }
+.tl-tick { position: absolute; top: 2px; transform: translateX(-50%); color: var(--text-3); white-space: nowrap; font-variant-numeric: tabular-nums; line-height: 16px; }
+.tl-tick.last { transform: translateX(-100%); }
+.tl-tick.day { transform: none; padding-left: 4px; box-shadow: inset 1px 0 0 var(--line); }
+.tl-tick.day.is-today { color: var(--text-2); }
+.lane { position: relative; display: flex; }
+.lane.r1 { height: 28px; } .lane.r2 { height: 44px; } .lane.r3 { height: 60px; }
+.lane-name { width: var(--lane-w); flex: none; padding: 6px 12px 0 0; line-height: 16px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lane-track { position: relative; flex: 1 1 auto; min-width: 0; }
+.lane + .lane .lane-track { box-shadow: inset 0 1px 0 var(--line); }
+.lane-sub { position: absolute; left: 4px; top: 6px; line-height: 16px; color: var(--text-3); white-space: nowrap; }
+.tl-b { position: absolute; height: 10px; min-width: 3px; padding: 0; border-radius: 2px; }
+.tl-b.w0 { top: 9px; } .tl-b.w1 { top: 25px; } .tl-b.w2 { top: 41px; }
+.tl-b.k-check { height: 4px; border-radius: 1px; }
+.tl-b.k-check.w0 { top: 12px; } .tl-b.k-check.w1 { top: 28px; } .tl-b.k-check.w2 { top: 44px; }
+.r-ok { background: var(--grey); }
+.r-q { background: transparent; box-shadow: inset 0 0 0 1px var(--text-3); }
+.tl-b:hover, .tl-b:focus-visible { outline: 1px solid var(--lit); outline-offset: 1px; }
+.tl.focus .tl-b:not(.on) { opacity: .3; }
+.tl.focus .tl-link, .tl.focus .tl-mark { opacity: .3; }
+.tl-link { position: absolute; height: 0; border-top: 1px solid var(--tree); pointer-events: none; }
+.tl-link.w0 { top: 14px; } .tl-link.w1 { top: 30px; } .tl-link.w2 { top: 46px; }
+.tl-link.wait { border-top-style: dotted; border-top-color: var(--text-3); }
+.tl-mark { position: absolute; width: 2px; height: 14px; margin-left: -1px; border-radius: 1px; }
+.tl-mark.w0 { top: 7px; } .tl-mark.w1 { top: 23px; } .tl-mark.w2 { top: 39px; }
+.tl-over { position: absolute; left: var(--lane-w); right: 0; top: 0; bottom: 0; pointer-events: none; }
+.tl-now { position: absolute; top: 18px; bottom: 16px; border-left: 1px solid var(--lit); }
+.tl-now-l { position: absolute; top: -18px; transform: translateX(-50%); padding: 0 4px; border-radius: 3px; background: var(--side); color: var(--text-strong); white-space: nowrap; line-height: 16px; }
+.tl-now.at-end .tl-now-l { transform: translateX(-100%); }
+.tl-ev { position: absolute; top: 22px; bottom: 16px; border-left: 1px dashed var(--text-4); }
+.tl-ev-l { position: absolute; bottom: -18px; left: 0; transform: translateX(-50%); color: var(--text-3); white-space: nowrap; line-height: 16px; }
+.tl-sum { font-size: 12px; color: var(--text-3); }
+.tl-sum .sep { color: var(--text-4); }
+/* the lit task (hovered or selected) keeps its attempt links, stop marks and wait line at full strength */
+.tl.focus .tl-link.on, .tl.focus .tl-mark.on { opacity: 1; }
+/* 本周 / 全部 (timeView adds .now-row): the now label has its own row above the day ticks, so it never covers today's
+   date; the axis is 40px instead of 22 and the now line starts under the ticks */
+.tl.now-row .tl-axis { height: 40px; }
+.tl.now-row .tl-tick { top: 20px; }
+.tl.now-row .tl-now { top: 38px; }
+.tl.now-row .tl-now-l { top: -38px; }
+.tl.now-row .tl-ev { top: 40px; }
+
+/* 15.9 活动日历 (G1): day × hour squares (GitHub-like), intensity on the neutral ramp; a picked hour is ringed */
+.cal { position: relative; display: grid; grid-template-columns: var(--cal-label, 72px) repeat(24, 12px); gap: 2px; align-items: center; font-size: 12px; color: var(--text-3); }
+.cal.full { --cal-label: 88px; }
+.cal-h { height: 16px; line-height: 16px; white-space: nowrap; overflow: visible; font-variant-numeric: tabular-nums; }
+.cal-d { line-height: 12px; white-space: nowrap; overflow: hidden; font-variant-numeric: tabular-nums; }
+.cal-c { width: 12px; height: 12px; padding: 0; border-radius: 2px; }
+.cal-l0 { background: var(--empty); box-shadow: inset 0 0 0 1px var(--empty-line); }
+.cal-l1 { background: var(--grey-faded); }
+.cal-l2 { background: var(--grey-half); }
+.cal-l3 { background: var(--grey); }
+.cal-l4 { background: var(--rel); }
+.cal-c.is-future { background: transparent; box-shadow: none; cursor: default; }
+.cal-c:hover, .cal-c:focus-visible { outline: 1px solid var(--text-3); outline-offset: 1px; }
+.cal-c.is-on { outline: 1px solid var(--lit); outline-offset: 1px; }
+.cal-legend { display: inline-flex; align-items: center; gap: 3px; font-size: 12px; color: var(--text-3); }
+.cal-legend .cal-c { display: inline-block; cursor: default; }
+
+@media (max-width: 960px) {
+  .app.is-split, .app.is-split.no-panel, .app.is-split.panel-max { grid-template-columns: minmax(0, 1fr); }
+  .app.is-split > .rail, .app.is-split > .main, .app.is-split > .panel { grid-column: auto; grid-row: auto; }
+  .app.is-split.panel-max > .main { display: flex; }
+  .split-handle { display: none; }
+}
+
+/* 15.10 consistency pass (2026-10-05): one tab strip, one Diff note, one quote line on every board with the auxiliary
+   area (Main, Plan, Goals, Decide, Done). These replace the boards' own copies (Main / Decide 12px · 88px, Done's
+   shrink-and-stick rule and its Diff-note padding, Main's .pt-q). */
+/* the strip: 12px between tabs; a file page's name ends in "…" at 88px (its full path is the tab's title and heads the
+   page). When the tabs still do not fit, inactive tabs give up width first, down to an ellipsis, and the active tab never
+   shrinks; with even more tabs the active tab sticks to the strip's edge over its neighbour, so it and its × stay in view.
+   Its two side shadows sit in the gaps (unseen until it overlaps) and keep a covered neighbour's letters off its name. */
+.ptabs.aux .pt-list { gap: 12px; }
+.ptabs.aux .pt-list .tab { flex: 0 1 auto; min-width: 28px; }
+.ptabs.aux .pt-list .tab .nm { min-width: 0; }
+.ptabs.aux .pt-list .tab.is-file .nm { max-width: 88px; }
+.ptabs.aux .pt-list .tab.is-on { flex: none; position: sticky; left: 0; right: 0; z-index: 1; background: var(--side);
+  box-shadow: inset 0 -1px 0 var(--text-strong), -10px 0 0 var(--side), 10px 0 0 var(--side); }
+/* while 放大 hides the composer, the quotes waiting there are counted beside the strip's buttons (a click restores) */
+.pt-acts .pt-q { margin-right: 6px; font-size: 12px; white-space: nowrap; }
+/* Diff: .diff-body runs its rows edge to edge, so a note under them ("逐行内容在原型里没有收录") gets the side padding back */
+.diff-body > .pnote { padding: 0 16px; }
+/* the split shell keeps the approved ≤ 1240px widths (rail 208, panel 420) until a divider moves: the boards leave the two
+   widths unset ("initial", so var() falls back) until then; the ≤ 960px one-column rule of §15 is untouched */
+@media (min-width: 961px) and (max-width: 1240px) {
+  .kit.app.is-split { grid-template-columns: var(--rail-w, 208px) 0 minmax(0, 1fr) 0 min(var(--panel-w, 420px), calc(100% - var(--rail-w, 208px) - 360px)); }
+  .kit.app.is-split.no-panel { grid-template-columns: var(--rail-w, 208px) 0 minmax(0, 1fr) 0 0; }
+  .kit.app.is-split.panel-max { grid-template-columns: var(--rail-w, 208px) 0 0 0 minmax(0, 1fr); }
+}
+/* a path in a map's detail (文件, 路径) and on node pages opens its file page (a folder: 文件 opened at it); a changed file
+   also offers 看 Diff (auxtabs snippet axFileItem). Main's conversation paths (.step-obj.is-link) look the same */
+.d-file.is-link, .step-obj.is-link { border-radius: 3px; text-align: left; }
+.d-file.is-link:hover, .d-file.is-link:focus-visible, .step-obj.is-link:hover, .step-obj.is-link:focus-visible { color: var(--text-strong); text-decoration: underline; text-decoration-color: var(--text-4); text-underline-offset: 3px; }
+.d-fline { flex: 1 1 100%; display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.d-fline .d-file { flex: 0 1 auto; }
+.d-fline .btn-text { margin-left: auto; font-size: 12px; white-space: nowrap; }
+
+/* ---------------------------------------------------------------------
+   17. Task DAG draft (TaskDAG.dc.html, DESIGN §20; 2026-10-05 night, a direction for the user to judge — nothing
+       approved uses these classes). The DAG of a goal's tasks (top = the start tasks, bottom = the goal's acceptance),
+       its lines, the critical-path light, the 未排定 band, 600-task stage boxes; 轨道 as work lines (one Session + the
+       Sessions that continued it) in groups with packed rows and a concurrency row; the draggable time cursor; the right
+       column's list of the tasks active at the cursor's time; the detail's architecture and lines rows.
+   --------------------------------------------------------------------- */
+/* 17.1 DAG: nodes and lines are placed elements (left / top from renderVals); one <svg> per line, sized to its box */
+.dg-tools { flex: none; display: flex; align-items: center; gap: 16px; min-height: 40px; padding: 6px 24px 0; font-size: 12px; min-width: 0; }
+.dg-hint { color: var(--text-3); min-width: 0; }
+.dg-legend { padding: 0 24px 4px; }
+.dg-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 14px 24px 24px; display: flex; flex-direction: column; gap: 22px; }
+.dg { position: relative; flex: none; }
+.dg-node { position: absolute; z-index: 1; display: inline-flex; align-items: center; gap: 6px; height: 20px; padding: 0 8px 0 3px; border-radius: 4px; font-size: 12px; line-height: 20px; color: var(--text-2); white-space: nowrap; }
+.dg-node > .sq { width: 14px; height: 14px; }
+.dg-node:hover, .dg-node:focus-visible { background: var(--hover); color: var(--text); }
+.dg-name { max-width: 112px; overflow: hidden; text-overflow: ellipsis; }
+.dg-node.is-gate { color: var(--text-strong); }
+.dg-node.is-gate .dg-name { font-weight: 500; }
+/* active at the cursor's time (running, checking, paused, waiting for you): a lit ring, the name strong */
+.dg-node.is-act, .dg-node.is-crit { color: var(--text-strong); }
+.dg-node.is-act > .sq, .dg-ct.is-act > .sq, .dg-clu.is-act .dg-clu-head > .sq { outline: 1px solid var(--lit); outline-offset: 2px; }
+.dg-node.is-sel { background: var(--active); color: var(--text-strong); }
+/* not yet in the plan at that time */
+.dg-node.is-faint, .dg-ct.is-faint { opacity: .38; }
+.dg-edge { position: absolute; overflow: visible; pointer-events: none; }
+.dg-edge .ln { fill: none; stroke: var(--tree); stroke-width: 1; }
+.dg-edge .hit { fill: none; stroke: transparent; stroke-width: 10; pointer-events: stroke; }
+.dg-edge.is-on .ln { stroke: var(--rel); }
+/* the critical path and the hovered line: --lit, a little heavier */
+.dg-edge.is-crit .ln, .dg-edge.is-hov .ln { stroke: var(--lit); stroke-width: 1.5; }
+.dg-edge.is-faint { opacity: .4; }
+.dg.focus .dg-node.dim, .dg.focus .dg-clu.dim, .dg.focus .dg-count.dim { opacity: .3; }
+.dg.focus .dg-edge.dim { opacity: .22; }
+
+/* 17.2 the 未排定 band (future intents without dependencies or acceptance) and the dropped count */
+.dg-band { flex: none; border-top: 1px solid var(--line); padding-top: 12px; }
+.dg-band-h { font-size: 12px; color: var(--text-3); margin-bottom: 10px; }
+.dg-band-area { position: relative; }
+.dg-drop { flex: none; display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: var(--text-3); }
+.dg-drop-btn { align-self: flex-start; font-size: 12px; }
+.dg-drop-row { display: flex; align-items: center; gap: 8px; color: var(--text-2); }
+.dg-drop-why { color: var(--text-3); }
+
+/* 17.3 600 tasks: one box per stage (a surface you act on); the lines between boxes carry a count of the task lines they
+   stand for; an opened box shows its batches as rows of task squares joined in dependency order */
+.dg-clu { position: absolute; z-index: 1; display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; border-radius: 10px; background: var(--surface); }
+.dg-clu.is-sel, .dg-clu.is-crit { box-shadow: 0 0 0 1px var(--lit); }
+.dg-clu.is-faint { opacity: .62; }
+.dg-clu-head { display: flex; align-items: center; gap: 8px; height: 24px; margin: 0 -4px; padding: 0 4px; border-radius: 4px; font-size: 13px; color: var(--text); white-space: nowrap; min-width: 0; text-align: left; }
+.dg-clu-head:hover, .dg-clu-head:focus-visible { background: var(--hover); }
+.dg-clu-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.dg-clu-n { color: var(--text-3); font-size: 12px; font-variant-numeric: tabular-nums; }
+.dg-clu-chev { margin-left: auto; color: var(--text-3); }
+.dg-clu-count { font-size: 12px; line-height: 18px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dg-strip { display: flex; align-items: center; gap: 4px; height: 14px; }
+.dg-sqb { display: block; width: 10px; height: 10px; border-radius: 2px; }
+.dg-sqb > .sq, .dg-ct > .sq { display: block; }
+.dg-sqb.is-sel > .sq, .dg-ct.is-sel > .sq { outline: 1px solid var(--lit); outline-offset: 2px; }
+.dg-brow { display: flex; align-items: center; gap: 8px; height: 22px; }
+.dg-bname { width: 64px; flex: none; font-size: 12px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; border-radius: 3px; }
+.dg-bname:hover, .dg-bname:focus-visible, .dg-bname.is-sel { color: var(--text-strong); }
+.dg-chain { position: relative; display: flex; align-items: center; gap: 4px; }
+.dg-chain::before { content: ""; position: absolute; left: 6px; right: 6px; top: 50%; border-top: 1px solid var(--tree); }
+.dg-ct { position: relative; display: block; width: 12px; height: 12px; }
+.dg-count { position: absolute; z-index: 2; transform: translate(-50%, -50%); min-width: 18px; padding: 0 4px; border-radius: 3px; background: var(--ground); font-size: 12px; line-height: 16px; color: var(--text-3); font-variant-numeric: tabular-nums; text-align: center; }
+.dg-count:hover, .dg-count:focus-visible, .dg-count.is-crit { color: var(--text-strong); }
+
+/* 17.4 轨道 as work lines: the approved .tl lanes (§15.8) inside a scrolling body under a sticky axis */
+.wl-block { --lane-w: 200px; position: relative; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.wl-block.is-dock { flex: none; gap: 6px; padding: 10px 24px 8px; border-top: 1px solid var(--line); background: var(--ground); }
+.wl-block.is-full { gap: 14px; }
+.wl-tools { gap: 4px 18px; }
+.wl-at { font-size: 12px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.wl-stale { font-size: 12px; color: var(--text-2); }
+.tl.full.wl { --lane-w: 200px; padding-bottom: 0; }
+.wl-scroll { position: relative; overflow-x: hidden; overflow-y: auto; }
+.is-dock .wl-scroll { max-height: 236px; }
+.is-full .wl-scroll { max-height: max(280px, calc(100vh - 400px)); }
+.wl-axrow { position: sticky; top: 0; z-index: 4; display: flex; height: 40px; background: var(--ground); }
+.wl-axname { width: var(--lane-w); flex: none; padding-top: 20px; font-size: 12px; line-height: 16px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wl-axis { position: relative; flex: 1 1 auto; min-width: 0; cursor: ew-resize; touch-action: none; }
+.wl-axis .tl-tick { top: 20px; }
+.wl-body { position: relative; padding-bottom: 22px; }
+/* the cursor: a value label on its own row above the ticks, a 2px stem; drag anywhere on the axis, or focus it and use the keys */
+.wl-cur { position: absolute; top: 0; bottom: 0; width: 0; z-index: 2; }
+.wl-cur-l { position: absolute; top: 0; left: 0; transform: translateX(-50%); padding: 0 6px; border-radius: 4px; background: var(--raised); box-shadow: 0 0 0 1px var(--lit); color: var(--text-strong); font-size: 12px; line-height: 18px; white-space: nowrap; font-variant-numeric: tabular-nums; cursor: grab; }
+.wl-cur.at-end .wl-cur-l { transform: translateX(-100%); }
+.wl-cur.at-start .wl-cur-l { transform: none; }
+.wl-cur::after { content: ""; position: absolute; left: -1px; top: 18px; bottom: 0; border-left: 2px solid var(--lit); }
+.wl-cur:focus-visible { outline: none; }
+.wl-cur:focus-visible .wl-cur-l { box-shadow: 0 0 0 2px var(--text-strong); }
+.wl-curline { position: absolute; top: 0; bottom: 18px; margin-left: -1px; border-left: 2px solid var(--lit); pointer-events: none; z-index: 1; }
+/* while replaying, where now is (quiet) */
+.wl-now-l { position: absolute; top: 1px; transform: translateX(-100%); padding-right: 4px; color: var(--text-3); font-size: 12px; line-height: 16px; white-space: nowrap; }
+.wl-nowline { position: absolute; top: 0; bottom: 18px; border-left: 1px solid var(--line-2); }
+.wl-ev { position: absolute; top: 0; bottom: 0; border-left: 1px dashed var(--text-4); }
+.wl-ev-l { position: absolute; bottom: 2px; left: 4px; color: var(--text-3); white-space: nowrap; line-height: 16px; }
+/* a group: one header row; closed, it is one row of how many of its lines were alive at each moment (neutral ramp) */
+.lane.wl-grp { height: 26px; }
+.lane.wl-grp.is-closed { height: 40px; }
+.wl-gname { display: flex; align-items: flex-start; gap: 4px; padding: 5px 12px 0 0; color: var(--text); text-align: left; }
+.wl-gname .ico { margin-top: 2px; color: var(--text-3); }
+.wl-gname:hover .ico, .wl-gname:focus-visible .ico { color: var(--text); }
+.wl-gtext { display: flex; flex-direction: column; min-width: 0; }
+.wl-gn { font-weight: 500; }
+.wl-gs { color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wl-grp .lane-sub { top: 5px; }
+.lane.wl-grp + .lane .lane-track { box-shadow: none; }
+.wl-c { position: absolute; top: 14px; height: 12px; border-radius: 2px; }
+.wl-c1 { background: var(--grey-faded); } .wl-c2 { background: var(--grey-half); } .wl-c3 { background: var(--grey); } .wl-c4 { background: var(--rel); }
+.wl-key-c { display: inline-block; width: 10px; height: 10px; border-radius: 2px; }
+.tl-b-key { display: inline-block; width: 18px; height: 10px; border-radius: 2px; }
+.tl-b-key.k-check { height: 4px; }
+/* a line row (a long-lived role line, or a packed row of short-lived lines that never overlap) */
+.wl-lname { display: flex; align-items: flex-start; gap: 2px; }
+.wl-ln { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wl-row.is-act .wl-ln, .wl-row.is-lit .wl-ln { color: var(--text-strong); }
+.wl-row.is-arch .wl-ln { color: var(--text-3); }
+.wl-pin { margin-top: -2px; color: var(--text-3); opacity: 0; }
+.lane:hover .wl-pin, .wl-pin:focus-visible, .wl-pin.is-on { opacity: 1; }
+.wl-pin.is-on { color: var(--text-strong); }
+.wl .tl-b.is-sel { outline: 1px solid var(--lit); outline-offset: 1px; }
+.lane.wl-fold { height: 26px; }
+.wl-fname { width: auto; padding-top: 5px; color: var(--text-3); }
+.lane.wl-archrow { height: 28px; }
+.wl-arch { width: auto; padding-top: 6px; color: var(--text-3); text-align: left; }
+.wl-arch:hover, .wl-arch:focus-visible { color: var(--text); }
+.wl-selbar { display: flex; align-items: center; gap: 8px; min-height: 24px; font-size: 12px; }
+.wl-selname { color: var(--text-strong); }
+/* a hairline where each work line begins in a row that several lines share */
+.wl-start { position: absolute; top: 5px; height: 18px; margin-left: -3px; border-left: 1px solid var(--text-4); }
+.wl-axis .tl-tick.is-under { opacity: .25; }
+/* bar cards live outside the lanes' scroll: in the dock above the dock, on the full page under the bar's row */
+.wl-pop { position: absolute; left: calc(24px + var(--lane-w)); right: 24px; bottom: 100%; height: 0; z-index: 12; }
+.wl-over2 { position: absolute; left: var(--lane-w); right: 0; top: 0; height: 0; z-index: 12; }
+.wl-note { font-size: 12px; line-height: 18px; color: var(--text-3); }
+.hc-dl.k3 { grid-template-columns: 40px minmax(0, 1fr); }
+
+/* 17.5 the right column: the tasks active at the cursor's time (name, state word at t, one line), then what is held */
+.dg-now { flex: none; display: flex; flex-direction: column; gap: 2px; padding: 14px 16px 12px; border-bottom: 1px solid var(--line); }
+.dg-now-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 6px; font-size: 12px; color: var(--text-3); }
+.dg-now-t { color: var(--text-strong); font-size: 13px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.dg-now-row { display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; column-gap: 8px; row-gap: 1px; align-items: center; padding: 5px 8px; margin: 0 -8px; border-radius: 5px; text-align: left; }
+.dg-now-row:hover { background: var(--hover); }
+.dg-now-row.is-on { background: var(--active); }
+.dg-now-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+.dg-now-w { font-size: 12px; white-space: nowrap; }
+.dg-now-sum { grid-column: 2 / 4; font-size: 12px; line-height: 16px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dg-now-note { font-size: 12px; line-height: 18px; color: var(--text-3); padding: 2px 0; }
+.dg-now-sub { font-size: 12px; color: var(--text-3); margin: 8px 0 2px; }
+
+/* 17.6 the detail on this draft: the state at the cursor's time, 架构 (计划要改 / 实际改过 by semantic crumb), 参与 */
+.dg-at { margin-top: -8px; }
+.d-arch { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.d-arch-sum { color: var(--text-3); margin-bottom: 2px; }
+.d-arch-crumb { color: var(--text-3); margin-top: 4px; }
+.d-arch-file { display: grid; grid-template-columns: 8px minmax(0, 1fr); column-gap: 8px; align-items: center; padding-left: 10px; min-width: 0; }
+.d-arch-file .nm { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.d-arch-file .tag { grid-column: 2; color: var(--text-3); line-height: 16px; }
+.d-arch-file .tag.is-act { color: var(--text-2); }
+.d-lines { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.d-lrow { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; }
+.d-ltext { color: var(--text-3); }
+
+/* 17.7 review pass (2026-10-05 night, DESIGN §20.10) */
+/* 待执行 on this draft: hollow like every not-started task (U5a), a dashed outline (an empty slot in the plan); 未来意图
+   keeps its solid 1.5px --grey ring and 可领取 its blue one. Only this board uses it (approved boards keep the
+   half-filled 待执行). */
+.s-notyet { background: transparent; box-shadow: none; border: 1px dashed var(--grey-text); }
+/* the right column folds to its head line while a node is selected, so the detail is in view */
+.dg-now.is-folded { padding-top: 12px; padding-bottom: 10px; }
+.dg-now.is-folded .dg-now-head { margin-bottom: 0; }
+/* the dock keeps one height whatever its groups do (the DAG above never shifts) */
+.is-dock .wl-scroll { height: 236px; max-height: none; }
+/* the cursor can be grabbed on its stem too: a 9px strip over the lanes */
+.wl-grab { position: absolute; top: 0; bottom: 18px; width: 9px; margin-left: -4.5px; pointer-events: auto; cursor: ew-resize; touch-action: none; }
+/* 600 tasks: the cursor stays at now */
+.wl.is-off .wl-axis { cursor: default; }
+.wl.is-off .wl-grab { pointer-events: none; cursor: default; }
+.wl-cur.is-off .wl-cur-l { cursor: default; color: var(--text-2); box-shadow: 0 0 0 1px var(--line-2); }
+.wl-cur.is-off::after, .wl.is-off .wl-curline { border-left-color: var(--line-2); }
+/* hidden archived lines active at the cursor's time light the 已归档 row */
+.wl-archrow.is-lit .wl-arch { color: var(--text-strong); }
+
+@media (max-width: 960px) {
+  .dg-tools, .dg-legend { padding-left: 16px; padding-right: 16px; }
+  .dg-scroll { padding: 14px 16px 24px; max-height: 70vh; }
+  .wl-block { --lane-w: 120px; }
+  .tl.full.wl { --lane-w: 120px; }
+  .wl-block.is-dock { padding: 10px 16px 8px; }
+  .wl-pop { left: calc(16px + var(--lane-w)); right: 16px; }
+}
+
+/* ---------------------------------------------------------------------
+   18. Rework 2026-10-06 — the user's decisions 25–30 of 2026-10-05/06 (DESIGN §21). Appended: nothing above changes;
+       the rules below win by order or by one more class.
+       Decision 27: a task that has not started is HOLLOW on every board — 待执行 .s-notyet (a dashed grey outline), 可领取
+       .s-claimable (the blue ring, as approved), 未来意图 .s-future (a solid grey ring, thicker than the dashes). Only a
+       TASK's own square changes (data/squares.js sqAt(): tree and outline task rows, comb squares of tasks, DAG nodes, hover
+       cards, detail heads, relation and reference squares, strips made of tasks, queue / search / conversation refs, and the
+       architecture's FILE leaves, which take the state of the tasks that touch them). GROUP squares (goal root, stage,
+       batch, folded groups, folders, modules, the share of 已满足) keep the approved fills — s-pending for a group with
+       nothing done included.
+       Every state stays told apart at 16 / 14 / 12 / 10 / 8 px, dark and light, normal, lit (the selection / active ring)
+       and dimmed (focus mode): sketch/rework/swatch builds the page, shots/rework/sw-* are the pictures, the notes give
+       the measured contrast and ΔE.
+   --------------------------------------------------------------------- */
+/* 18.1 tokens. The fills keep the approved tokens: lifting a group's 都还没做 (s-pending) away from 部分已满足 (s-done-1) helped
+   normal vision (ΔE 2.8 → 4.0) but cost colour-blind separation (deutan 1.3 → 0.6, protan 都还没做 / 受阻 4.5 → 2.1). */
+.kit {
+  --hollow: #8F8F8F;      /* 待执行: 1px dashes (5.5:1 on --side) */
+  --ring-future: #6B6B6B; /* 未来意图: a solid ring (3.3:1), darker and thicker than the dashes */
+  --ring-w: 2px;          /* 1.5px at 8px */
+  --dim-sq: .6;           /* a dimmed square in focus mode keeps its colour and shape at 60 % */
+  --dim-text: .3;         /* a dimmed label, count or reason: the approved .3 */
+}
+.kit.t-light {
+  --hollow: #6B6B6B;      /* 5.0:1 */
+  --ring-future: #A3A3A3; /* 2.4:1 (the approved ring was --grey #B7B7B7, 1.9:1, at 1.5px) */
+}
+
+/* 18.2 the hollow squares. 待执行 = 1px dashes drawn as four edge gradients, so every size gets whole-pixel, symmetric
+   dashes (the browser's own dashed border spaces them differently per size and loses them at 8px): each edge is
+   corner · gap · middle dash · gap · corner — 16: 4 2 4 2 4 · 14: 3 2 4 2 3 · 12: 2 2 4 2 2 · 10: 2 2 2 2 2 · 8: 2 1 2 1 2.
+   This replaces the TaskDAG draft's `border: 1px dashed` (§17.7). */
+.s-notyet {
+  --sq-dm: 4px; --sq-dg: 2px;
+  --sq-dh: linear-gradient(90deg, var(--hollow) 0 calc(50% - var(--sq-dm) / 2 - var(--sq-dg)), transparent 0 calc(50% - var(--sq-dm) / 2), var(--hollow) 0 calc(50% + var(--sq-dm) / 2), transparent 0 calc(50% + var(--sq-dm) / 2 + var(--sq-dg)), var(--hollow) 0);
+  --sq-dv: linear-gradient(180deg, var(--hollow) 0 calc(50% - var(--sq-dm) / 2 - var(--sq-dg)), transparent 0 calc(50% - var(--sq-dm) / 2), var(--hollow) 0 calc(50% + var(--sq-dm) / 2), transparent 0 calc(50% + var(--sq-dm) / 2 + var(--sq-dg)), var(--hollow) 0);
+  border: 0; box-shadow: none;
+  background: var(--sq-dh) left top / 100% 1px no-repeat, var(--sq-dh) left bottom / 100% 1px no-repeat,
+    var(--sq-dv) left top / 1px 100% no-repeat, var(--sq-dv) right top / 1px 100% no-repeat;
+}
+.sq.z10.s-notyet, .dg-sqb > .sq.s-notyet { --sq-dm: 2px; --sq-dg: 2px; }
+.sq.z8.s-notyet, .comb.mini .sq.s-notyet, .tr.fold .nc > .sq.s-notyet { --sq-dm: 2px; --sq-dg: 1px; }
+.s-future { background: transparent; box-shadow: inset 0 0 0 var(--ring-w) var(--ring-future); }
+.sq.z8.s-future, .comb.mini .sq.s-future, .tr.fold .nc > .sq.s-future { --ring-w: 1.5px; }
+/* a hollow square on a line (the 600-task boxes' task chains) is filled with the box's surface, so the line never shows
+   inside it */
+.dg-chain .sq.s-notyet, .dg-chain .sq.s-future, .dg-chain .sq.s-claimable { background-color: var(--surface); }
+
+/* 18.3 focus mode: a dimmed square keeps its state readable. The approved rules faded squares to .22 / .3: a 1px outline
+   vanished, and half fills, greys and greens sank into the ground together. Squares now dim to --dim-sq; names, counts,
+   reasons and lines keep the approved .3 / .22. Where a whole row or node used to fade (大纲 rows, their strips, DAG
+   nodes, the 600-task boxes) its text fades and its squares dim, so a square never inherits the .3. */
+.tree.focus .tr.dim > .nc > .sq, .tree.focus .cc.dim > .sq { opacity: var(--dim-sq); }
+.tree.focus .tr.dim .nb, .tree.focus .tr.dim .tr-sum { opacity: 1; }
+.tree.focus .tr.dim .nb .tr-name, .tree.focus .tr.dim .nb .tr-why, .tree.focus .tr.dim .nb .tr-chev,
+.tree.focus .tr.dim .tr-sum > span:not(.strip), .tree.focus .tr.dim .tr-sum .tr-a { opacity: var(--dim-text); }
+.tree.focus .tr.dim .nb .nc > .sq, .tree.focus .tr.dim .tr-sum .strip .sq { opacity: var(--dim-sq); }
+.dg.focus .dg-node.dim { opacity: 1; }
+.dg.focus .dg-node.dim .dg-name { opacity: var(--dim-text); }
+.dg.focus .dg-node.dim > .sq { opacity: var(--dim-sq); }
+.dg.focus .dg-node.dim.is-faint { opacity: .6; }
+.dg.focus .dg-clu.dim { opacity: 1; background: color-mix(in srgb, var(--surface) 40%, transparent); }
+.dg.focus .dg-clu.dim .dg-clu-name, .dg.focus .dg-clu.dim .dg-clu-n, .dg.focus .dg-clu.dim .dg-clu-chev,
+.dg.focus .dg-clu.dim .dg-clu-count, .dg.focus .dg-clu.dim .dg-bname, .dg.focus .dg-clu.dim .dg-chain::before { opacity: var(--dim-text); }
+.dg.focus .dg-clu.dim .sq { opacity: var(--dim-sq); }
+
+/* 18.4 integration step 2026-10-06 (DESIGN §21.7): rules the board steps carried in their helmets and asked to move here.
+   The helmet copies stay on the boards that have them (a helmet rule of the same specificity wins over the kit by order,
+   so it is the same rule twice, never two looks). §17 above (classes first drafted for the TaskDAG draft) is used by the
+   full-page task graph now, TaskMap.dc.html (decision 26; the draft is retired to v2/prev/retired-taskdag/): its header's
+   "a direction for the user to judge — nothing approved uses these classes" is superseded. */
+
+/* the rail (decisions 25, 30): it scrolls as a whole, so a long list never squeezes the project name; the counts sit on the
+   label line, written apart, and drop under it when the rail is narrow (never cut); a stale order adds "顺序已变 · 重新排序"
+   after them; the archived lines are behind one quiet row that lists their names. The work-line ROW has three forms on the
+   boards (Main / Decide / Done: the word drops under the name; Plan: one line, the name cut; Chain / Member: name, then
+   word, on two lines) — DESIGN §21.10 asks the lead or the user to pick one */
+.rail > * { flex-shrink: 0; }
+.rail-label.wl-label { flex-wrap: wrap; column-gap: 8px; height: auto; min-height: 24px; }
+.rail-label .rail-head { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.rail-label .wl-stale { white-space: nowrap; }
+.row.rail-arch { min-height: 28px; color: var(--text-3); font-size: 12px; }
+.row.rail-arch:hover { color: var(--text-2); }
+.row.rail-arch .row-name { white-space: normal; }
+.rail-archived { gap: 2px; color: var(--text-3); }
+.rail-archived .rail-arch-ln { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* the activity calendar (§15.9) in a narrow panel (Main's right panel at 420px / 360px): its 24 hour cells shrink below
+   12px instead of running past the panel's edge; at 480px and wider they stay 12px (Main, review fix F7) */
+.pbody > .cal { grid-template-columns: var(--cal-label, 72px) repeat(24, minmax(0, 12px)); }
+.pbody > .cal > .cal-c { width: 100%; height: auto; min-width: 0; aspect-ratio: 1 / 1; }
+
+/* the DAG (§17, TaskMap): a task not yet in the plan at the cursor's time (.is-faint) fades its NAME, never its square
+   below --dim-sq — §17 faded the whole node to .38 and in focus mode node .6 × square .6 = .36, so a dashed 待执行 nearly
+   vanished; a mark inside a bright 600-task box fades the batches and task squares it does not hold like dimmed squares */
+.dg-node.is-faint { opacity: 1; }
+.dg-node.is-faint .dg-name { opacity: .38; }
+.dg-node.is-faint > .sq { opacity: var(--dim-sq); }
+.dg.focus .dg-node.dim.is-faint { opacity: 1; }
+.dg.focus .dg-node.dim.is-faint .dg-name { opacity: .2; }
+.dg.focus .dg-ct.dim > .sq, .dg.focus .dg-sqb.dim > .sq { opacity: var(--dim-sq); }
+
+/* 18.5 final fix 2026-10-06 (DESIGN §21.14): the final critic's findings that need the kit. Appended after 18.4; nothing
+   above changes. */
+
+/* (a) focus mode in a TASK map: a dimmed GROUP square with a group-only fill — 都还没做 (s-pending, also a goal 规划中), 部分 /
+   过半已满足 (s-done-1 / s-done-2) — dims to --dim-grp instead of --dim-sq, so the lit stage, batch or goal stands apart from
+   the dimmed ones (lit vs dimmed 都还没做 was 1.23:1 dark / 1.13:1 light at .6; at .35 1.36:1 / 1.22:1, and the dimmed
+   square sinks towards the ground, 1.14:1 / 1.11:1 — sketch/final-fix/grpdim.mjs). The fills are the approved ones (decision
+   27); a group keeps its name and count; task squares (sqAt) keep --dim-sq. Not on the 架构图: there a touched folder
+   (s-pending) must stay apart from an untouched one (s-none) when dimmed. The task maps: the right panel's 任务图
+   (.tp-view.is-task, data/taskpanel.snippet.js), the DAG page's 大纲 (.tm-canvas) and 600-task boxes (.dg), the phone's 进度. */
+.kit { --dim-grp: .35; }
+:is(.tp-view.is-task, .tm-canvas, .ph-prog) .tree.focus :is(.tr.dim > .nc, .tr.dim .nb .nc, .cc.dim) > .sq:is(.s-pending, .s-done-1, .s-done-2),
+:is(.tp-view.is-task, .tm-canvas, .ph-prog) .tree.focus .tr.dim .tr-sum .strip .sq:is(.s-pending, .s-done-1, .s-done-2),
+.dg.focus .dg-clu.dim :is(.dg-clu-head, .dg-sqb) > .sq:is(.s-pending, .s-done-1, .s-done-2),
+.dg.focus .dg-sqb.dim > .sq:is(.s-pending, .s-done-1, .s-done-2) { opacity: var(--dim-grp); }
+
+/* (b) the 600-task boxes: in a task chain and on a batch square the SELECTION has a mark of its own — a 2px --text-strong
+   ring on an --active chip — while a task in progress at the cursor keeps the DAG's in-progress ring (1px --lit, offset
+   2px, §17.1). A selected task that is also in progress shows the selection; the right column and its card say it runs. */
+.dg-ct.is-sel, .dg-sqb.is-sel { border-radius: 3px; background: var(--active); box-shadow: 0 0 0 4px var(--active); }
+.dg-ct.is-sel > .sq, .dg-sqb.is-sel > .sq { outline: 2px solid var(--text-strong); outline-offset: 2px; }
+
+/* (c) the rail's work-line row on the list rails (Main, Plan, Decide, Done; DESIGN §21.10, 1): the name wraps and the word
+   drops under it when they do not fit — a line's name is its whole identity, so it is never cut (Main's .wl-nm form; the
+   page of one line, Chain and Member, keeps its two-line rows). Main's helmet holds the same rules. */
+.rail .row.wl-row { align-items: flex-start; }
+.rail .row.wl-row .row-lead { height: 20px; align-items: center; }
+.rail .row.wl-row .wl-nm { display: flow-root; flex: 1 1 auto; min-width: 0; line-height: 20px; }
+.rail .row.wl-row .wl-nm .row-name { display: inline; white-space: normal; overflow: visible; text-wrap: pretty; }
+.rail .row.wl-row .wl-nm .row-meta { float: right; margin-left: 10px; line-height: 20px; }
+
+/* (d) 轨道's year-style calendar (decision 25: 全部 longer than 14 days) — a column per week (Monday on top), a cell per day,
+   the approved .cal cells, levels and ring — on the DAG page and in the right panel (data/worklines-long.js wlLongView);
+   in the panel it keeps its 12px cells (the narrow-panel rule of 18.4 is for the hour row). TaskMap's helmet holds the same
+   rules. Its crumb (全部 › 日 › 时) sits in the tools row. */
+.cal.yr, .pbody > .cal.yr { grid-template-columns: 28px; grid-auto-columns: 12px; grid-template-rows: 16px repeat(7, 12px); grid-auto-flow: column; }
+.pbody > .cal.yr > .cal-c { width: 12px; height: 12px; aspect-ratio: auto; }
+.cal.yr .yr-m { height: 16px; line-height: 16px; white-space: nowrap; overflow: visible; }
+.cal.yr .hcard { max-width: none; }
+.wl-crumbs { flex: none; }
+.wl-crumbs .c { white-space: nowrap; }
+/* ---------------------------------------------------------------------
+   19. A work line's own conversation in the centre (user decision 33, 2026-10-06; data/lineview.snippet.*; DESIGN §22).
+       A click on any work line in the rail opens that line's conversation in the centre: a back row (回到主对话), the
+       line's facts and the controls that apply, its record as the conversation's rows, a composer addressed to the line
+       (问一问（只读） / 直接干预). The summary the click used to expand is the row's hover / focus card. Appended after §18.5;
+       nothing above changes. Integration 2026-10-07: the rules the six boards carried in their helmets after the independent
+       verification are here now, one value each (DESIGN §22.4); a rule that must hold across an <sc-if> / <sc-for> of
+       data/lineview.snippet.html [3] is written as a descendant rule (the canvas runtime keeps those elements in the page,
+       display: contents, kit §1, so a ">" rule never reaches what they wrap).
+   --------------------------------------------------------------------- */
+/* 19.1 the rail's work-line rows (lvRail): the row whose conversation is in the centre is current (aria-current; --active,
+   like the open goal: a row is now the switch between conversations, so the current one must show); the card opens under
+   the row inside the rail (the rail scrolls, so a card beside it would be cut), above it where the rail has no room under
+   the row (.is-up: measured on hover / focus by lvCardUp; a static page uses the board's rule); its keys are 2 to 4
+   characters (负责 · 正在做 / 原因 · 最近一步), so the key column takes its width. The archived names are buttons now (each
+   opens its line, read-only), quiet as before. */
+.rail .lv-rw { position: relative; display: flex; flex-direction: column; min-width: 0; }
+.rail .row.lv-line.is-current { background: var(--active); color: var(--text-strong); }
+.rail .row.lv-line.is-current .row-meta { color: var(--text-2); }
+.rail .lv-card { left: 0; right: 0; top: calc(100% + 4px); width: auto; max-width: none; }
+.rail .lv-card.is-up { top: auto; bottom: calc(100% + 4px); }
+.hc-dl.lv-dl { grid-template-columns: auto minmax(0, 1fr); }
+.hc-head > .dot { margin: 0 2px; }
+/* a line's name is its identity: the card wraps it (after "执行者 ·" when it can) instead of cutting it, as the row does —
+   the archived names too, which the 208px rail itself still cuts; a run of characters longer than the card still breaks */
+.rail .lv-card .hc-head { align-items: flex-start; }
+.rail .lv-card .hc-head > .dot { margin-top: 6px; }
+.rail .lv-card .hc-name { line-height: 20px; white-space: normal; overflow: visible; text-overflow: clip; word-break: keep-all; overflow-wrap: anywhere; }
+button.rail-arch-ln { display: block; width: calc(100% + 8px); margin-left: -4px; padding: 1px 4px; border-radius: 4px; text-align: left; color: var(--text-3); }
+button.rail-arch-ln:hover { color: var(--text-2); background: var(--hover); }
+button.rail-arch-ln.is-current { color: var(--text-strong); background: var(--active); }
+
+/* 19.2 the head while a line is open: 回到主对话 / the line's name, its goal, 整页查看 where a page exists, the panel button */
+.head.lv-headbar { gap: 10px; }
+.lv-back { flex: none; display: inline-flex; align-items: center; gap: 2px; font-size: 13px; color: var(--text-2); white-space: nowrap; text-decoration: none; }
+.lv-back:hover, .lv-back:focus-visible { color: var(--text-strong); }
+.lv-back .ico { color: var(--text-3); }
+.lv-sep { flex: none; color: var(--text-4); }
+/* the line's name is its identity: the goal under it gives way first */
+.lv-headbar .head-title { flex: 0 0.01 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.lv-headbar .head-sub { flex: 0 100 auto; }
+.lv-headbar .plink { margin-left: 0; }
+.lv-headbar .btn-icon, .lv-headbar .plink { flex: none; }
+/* the centre of the app shell is a query container: the rules below follow its width — the narrow layout (961–1240px: centre
+   333–612px) and a divider you drag alike (a media query sees only the window) */
+.kit.app > .main { container-type: inline-size; }
+/* a centre of 640px or less: two rows instead of a cut name or a goal squeezed to a sliver — "‹ 回到主对话" with 整页查看 and
+   the panel button, then the line's name and its goal (the goal drops under the name when both do not fit). Nothing is cut or
+   hidden. Wider, every line's name and its goal fit on one row (the longest, 40 and 600 tasks, measured at a 641px centre) */
+@container (max-width: 640px) {
+  .head.lv-headbar { flex-wrap: wrap; height: auto; min-height: 48px; padding-top: 8px; padding-bottom: 8px; gap: 2px 8px; }
+  .lv-headbar .lv-back { margin-right: auto; }
+  .lv-headbar .lv-sep { display: none; }
+  .lv-headbar .sp { order: 1; flex: 1 0 100%; height: 0; }
+  .lv-headbar .head-title { order: 2; flex: 0 1 auto; white-space: normal; overflow: visible; line-height: 20px; }
+  .lv-headbar .head-sub { order: 3; flex: 0 1 auto; white-space: normal; overflow: visible; line-height: 20px; }
+}
+
+/* 19.3 the line's facts (状态 · 任务 or 负责 · 尝试 · 工作记录, then 正在做 / 原因 on its own line) and its controls, each with
+   the approved hover card (the member page's .mh, shared) */
+.lv-mh { flex: none; display: flex; flex-wrap: wrap; align-items: flex-start; gap: 10px 24px; padding: 10px 16px 12px 24px; border-bottom: 1px solid var(--line); }
+.lv-facts { flex: 1 1 0; display: flex; flex-wrap: wrap; gap: 8px 24px; min-width: 0; }
+.lv-f { position: relative; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.lv-k { font-size: 12px; line-height: 18px; color: var(--text-3); }
+.lv-v { display: flex; align-items: center; gap: 6px; min-height: 24px; color: var(--text-2); white-space: nowrap; }
+.lv-v .live { color: var(--text); }
+.lv-task { display: inline-flex; align-items: center; gap: 6px; color: var(--text); text-decoration: underline; text-decoration-color: var(--text-4); text-underline-offset: 4px; border-radius: 3px; }
+.lv-task:hover, .lv-task:focus-visible { color: var(--text-strong); }
+/* the 任务 fact where nothing can show the task (lv.task.isPlain: Plan's maps hold goal 2; Main's 600-task map leaves out the
+   story tasks): its name, and its square where the board gives one — no button, nothing to open */
+.lv-task.is-plain { text-decoration: none; color: var(--text-2); cursor: default; }
+.lv-task.is-plain:hover { color: var(--text-2); }
+.lv-adv { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text); }
+.lv-adv:hover { color: var(--text-strong); }
+.lv-why { flex: 1 0 100%; display: flex; gap: 10px; min-width: 0; margin: 0; font-size: 12px; line-height: 18px; color: var(--text-2); text-wrap: pretty; }
+.lv-why .lv-k { flex: none; }
+.lv-acts { position: relative; flex: none; margin-left: auto; padding-top: 18px; display: flex; gap: 2px; }
+.lv-mh .hcard { max-width: none; }
+.lv-acts .hcard { right: 0; top: calc(100% + 6px); }
+.lv-f .hcard { left: -4px; top: calc(100% + 6px); }
+/* a centre of 440px or less (a 1000px window and below): the controls go under the facts, so the facts keep two to a row
+   instead of one per row and the record keeps its room; a line with no control to offer leaves no empty row */
+@container (max-width: 440px) {
+  .lv-facts { flex-basis: 100%; }
+  .lv-acts { margin-left: 0; padding-top: 0; }
+  .lv-acts:not(:has(.btn)) { display: none; }
+  .lv-acts .hcard { left: 0; right: auto; }
+}
+
+/* 19.4 the record: a day line, the approved run row (it wraps instead of cutting a long label), one quiet row for a check, a
+   read-only consultation it answered or a turn, the attempt / Session separators and the system lines of the kit */
+/* the record opens at its newest rows (what the line is doing now): the scroller starts at its end, CSS only; a record
+   shorter than the pane stays at the top */
+.thread.lv-thread { display: flex; flex-direction: column-reverse; }
+.lv-thread > .col { flex: none; margin-bottom: auto; }
+.col.lv-col { gap: 8px; }
+.lv-col .sys-line.lv-note { align-items: flex-start; line-height: 18px; margin-bottom: 8px; }
+.lv-note .ico { margin-top: 2px; }
+.lv-day { margin-top: 10px; font-size: 12px; line-height: 18px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.lv-col .attempt-sep { margin: 6px 0; }
+.lv-it { display: flex; flex-direction: column; }
+.run.lv-run { height: auto; min-height: 24px; align-items: flex-start; padding: 2px 0; line-height: 20px; text-align: left; }
+.run.lv-run > .ico { margin-top: 3px; }
+.lv-rt { flex: 0 1 auto; min-width: 0; text-wrap: pretty; }
+/* the result word follows the label in the same line of text (it wraps with it, never alone at the right); word joiners
+   around the "·" keep it with the word and the label's last character (it never ends or starts a line) */
+.lv-w { white-space: nowrap; }
+.lv-dot { margin: 0 6px; color: var(--text-4); }
+.lv-rt .lv-dot::before, .lv-rt .lv-dot::after { content: "\2060"; }
+.run.lv-run .t { flex: none; padding-left: 12px; }
+.lv-row { display: flex; align-items: flex-start; gap: 6px; min-height: 24px; padding: 2px 0; font-size: 13px; line-height: 20px; color: var(--text-3); }
+.lv-row .ico { flex: none; margin-top: 3px; color: var(--text-3); }
+.lv-row .t { flex: none; margin-left: auto; padding-left: 12px; font-size: 12px; font-variant-numeric: tabular-nums; opacity: 0; }
+.lv-row:hover .t, .lv-it:hover .run .t { opacity: 1; }
+/* a step of a run wraps its words instead of dropping under its verb and being cut (Chain's 完全展开 rule, .stp.is-wrap); a
+   path keeps one line; a one-line step sits where it sat (24px, icon 5px and text 2px from its top) */
+.lv-col .step { align-items: flex-start; padding: 2px 0; }
+.lv-col .step > .ico { margin-top: 3px; }
+.lv-col .step-verb, .lv-col .step-dot, .lv-col .step-meta, .lv-col .step-obj { line-height: 20px; }
+.lv-col .step-obj:not(.is-path) { flex: 1 1 0; white-space: normal; overflow: visible; text-overflow: clip; text-wrap: pretty; }
+.lv-snote { margin: 2px 0 4px; font-size: 12px; line-height: 18px; color: var(--text-3); }
+.lv-brief { display: flex; flex-direction: column; gap: 8px; }
+.lv-brief .d-dl { padding-left: 22px; gap: 6px 12px; }
+
+/* 19.5 what you send it. 问一问: your question, "正在建立咨询…" while the read-only copy is made (a CSS delay, no timer;
+   the answer takes the same place), then its answer. 直接干预: your message with its delivery track (a button that steps it
+   on: each click is the next safe point) and a note under it. The quotes either took along (引用到草稿) lead your bubble, one
+   quiet reference line each; where the board's quote keeps the quoted lines (Main), they fold open under it (Main's .bq) */
+.lv-msg { display: flex; flex-direction: column; gap: 10px; margin-top: 14px; }
+.lv-msg .msg-user .pnote { max-width: 86%; text-align: right; word-break: keep-all; }
+.lv-msg button.deliv:hover, .lv-msg button.deliv:focus-visible { color: var(--text-2); }
+.lv-msg button.deliv:hover .on { color: var(--text); }
+.lv-msg .bubble .bq { display: block; margin: 0 0 6px; padding-left: 8px; box-shadow: inset 1px 0 0 var(--line-2); }
+.lv-msg .bq-ref { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; font-size: 12px; line-height: 20px; color: var(--text-3); white-space: nowrap; }
+.lv-msg button.bq-ref:hover { color: var(--text); }
+.lv-msg .bq-ref .ico { color: var(--text-3); }
+.lv-msg .bq-path { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-family: var(--font-mono); font-size: 11.5px; color: var(--text-2); }
+.lv-msg .bq-text { display: block; margin: 2px 0 4px; font-family: var(--font-mono); font-size: 12px; line-height: 18px; color: var(--text-2); white-space: pre; overflow-x: auto; }
+.lv-ans { display: grid; }
+.lv-ans > *, .lv-ans .lv-wait { grid-area: 1 / 1; min-width: 0; }
+/* the spinner is hidden at both ends of its 1ms animation and keeps the end (forwards, no backwards): shown during the delay,
+   hidden for good after it. A visible → hidden animation that fills both ends a hair short of its last keyframe in Chromium
+   (progress 0.9999…), so a discrete visibility stayed visible and printed over the answer */
+.lv-wait { align-self: start; display: flex; align-items: center; gap: 10px; font-size: 13px; line-height: 20px; color: var(--text-3); animation: lv-out 1ms linear 1.4s forwards; }
+.lv-after { animation: lv-in var(--dur-2) var(--ease) 1.4s both; }
+.lv-spin { display: inline-block; flex: none; width: 12px; height: 12px; border-radius: 50%; border: 1.5px solid var(--text-4); border-top-color: var(--text); animation: lv-spin .9s linear infinite; }
+@keyframes lv-spin { to { transform: rotate(360deg); } }
+@keyframes lv-out { 0%, 100% { visibility: hidden; } }
+@keyframes lv-in { from { opacity: 0; visibility: hidden; } to { opacity: 1; visibility: visible; } }
+
+/* 19.6 the composer addressed to the line: the kit's boxed switch (.mode) with 问一问（只读） / 直接干预 and their cards; 直接干预
+   is off on an archived or ended line (its card says why); the quotes waiting in its draft are the kit's .composer-quote rows
+   (§15.5) */
+.lv-mode-row { position: relative; display: flex; align-items: center; gap: 8px; }
+.lv-mode-row .hcard { left: -4px; bottom: calc(100% + 16px); }
+.mode-btn.lv-mb { display: inline-flex; align-items: center; gap: 6px; }
+.mode-btn.lv-mb.is-off { opacity: .45; cursor: default; }
+.mode-btn.lv-mb.is-off:hover { color: var(--text-3); }
+
+/* 19.7 narrow windows: the facts' padding follows the head's; at 960px and below the head keeps its back row and drops the goal */
+@media (max-width: 1240px) { .lv-mh { gap: 8px 16px; padding: 8px 12px 10px 16px; } .lv-facts { gap: 6px 16px; } }
+@media (max-width: 960px) { .head.lv-headbar .head-sub { display: none; } }
+
+/* 19.8 final fix 2026-10-07 (DESIGN §22.9): 「需要你决定」 in a held message is the kit's .ref inside the note's sentence, without
+   its padding, so it reads as one word of it (the brackets stay outside the underline); the record's 需要你决定 mark is a .ref
+   as it is */
+.lv-msg .pnote .ref { padding: 0; margin: 0; border-radius: 2px; }

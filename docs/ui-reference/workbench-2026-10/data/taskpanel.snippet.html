@@ -1,0 +1,364 @@
+<!-- =====================================================================
+     taskpanel.snippet.html — the right panel's 任务图 tab (user decisions 25, 27, 28, 30; rework 2026-10-06). Binds the
+     values of data/taskpanel.snippet.js: tpv / tpb = this.tpThumb(v, s, {...}).view / .bar (Part A, every board with the
+     任务图 tab: Main, Plan, Goals, Decide, Done) and wl = this.tpLanes(s, {...}) (Part B, 轨道 as work lines: Main).
+     Four pieces, each marked <!-- [n] … -->; copy them into the board where the comment says (data/README.md, "taskpanel",
+     lists what each piece replaces on each board).
+     Positions are live state: the thumbnail's pan offsets the tree with interpolated left / top (style holes, never a
+     whole-value one); bars, links, marks, ticks, segments and the now line use interpolated left / width as approved.
+     Events: onPointerDown / Move / Up / Cancel and onWheel on the thumbnail's viewport (the pointer is captured only once it
+     moved, so a click still reaches a square or a label), as the approved dividers do.
+     ===================================================================== -->
+
+<!-- [0] HELMET STYLE: into the board's <helmet><style> (until the integration step moves these rules into kit.css). PART A:
+     the thumbnail's line, viewport and can-open marks. PART B (Main): 轨道 in the panel; its 图例 uses Main's helmet .lg-*
+     rules (a board that adds 轨道 copies those too). -->
+/* taskpanel · PART A — the 任务图 thumbnail (decision 28) */
+.tp-bar { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 2px 12px; min-height: 18px; font-size: 12px; line-height: 18px; color: var(--text-3); }
+/* the hint stays on one line (cut only when the panel is narrower than the hint itself); 回到起点 wraps under it */
+.tp-bar .tp-hint { flex: 1 0 auto; max-width: 100%; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tp-bar .tp-note { min-width: 0; flex: 1 1 auto; color: var(--text-2); }
+.tp-back { flex: none; font-size: 12px; white-space: nowrap; }
+.tp-view { position: relative; flex: none; }
+.tp-view.is-pan { flex: 1 1 0; min-height: 140px; overflow: hidden; touch-action: none; user-select: none; }
+/* nothing to pan: the viewport is as tall as the tree, so what follows it (the legend, a note) stays right under the tree */
+.tp-view.is-pan:not(.can-pan) { flex: none; overflow: visible; }
+.tp-view.can-pan { cursor: grab; }
+.tp-view.can-pan:active { cursor: grabbing; }
+/* a tree wider than the panel keeps its labels whole, so a sideways drag shows the rest of them */
+.tp-view.is-pan > .tree { width: max-content; min-width: 100%; }
+/* a node whose deeper levels are hidden says it can open: a folded row keeps its chevron (quiet), a comb square that
+   holds more has a short stub under it, as if its branch went on */
+.tp-view.is-pan .tr-lb.tp-more .tr-chev { opacity: .55; }
+.tp-view.is-pan .tr:hover .tr-lb.tp-more .tr-chev, .tp-view.is-pan .tr-lb.tp-more:focus-visible .tr-chev { opacity: 1; }
+.tp-view.is-pan .cc.tp-more > .sq::after { content: ""; position: absolute; left: calc(50% - .5px); top: calc(100% + 2px); height: 4px; border-left: 1px solid var(--tree); }
+/* taskpanel · PART B — 轨道 as work lines in the panel (decision 25): kit §15.8 lanes and §17.4 rows, a sticky axis */
+.tp-lanes { --lane-w: 132px; position: relative; padding-bottom: 20px; }
+.tp-lanes .wl-axrow { position: sticky; top: -8px; z-index: 4; display: flex; height: 22px; background: var(--side); }
+.tp-lanes.now-row .wl-axrow { height: 40px; }
+.tp-lanes .wl-axname { padding-top: 2px; }
+.tp-lanes.now-row .wl-axname { padding-top: 20px; }
+.tp-lanes .wl-axrow > .tl-axis { flex: 1 1 auto; min-width: 0; height: auto; margin-left: 0; }
+.tp-lanes .tp-now { position: absolute; top: 18px; }
+.tp-lanes.now-row .tp-now { top: 18px; }
+.tp-lanes .tp-now .tl-now-l { top: -18px; }
+.tp-lanes .tp-now.at-end .tl-now-l { transform: translateX(-100%); }
+.tp-lanes .wl-body { position: relative; padding-bottom: 0; }
+.tp-lanes .wl-body > .tl-over { top: 0; bottom: 0; }
+.tp-lanes .wl-body .tl-now { top: 0; bottom: 0; }
+.tp-lanes .wl-body .tl-ev { top: 0; bottom: 0; }
+.tp-lanes .wl-body .tl-ev-l { bottom: -18px; }
+.tp-lanes .wl-lname { align-items: flex-start; }
+.tp-lanes .wl-ltext { display: flex; flex-direction: column; min-width: 0; }
+.tp-lanes .wl-lm { color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tp-lanes .lane.wl-more { height: 28px; }
+.tp-lanes .wl-moreln { width: auto; padding-top: 6px; color: var(--text-2); text-decoration: none; }
+.tp-lanes .wl-moreln:hover, .tp-lanes .wl-moreln:focus-visible { color: var(--text-strong); }
+.tp-lanes .lane-sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; right: 4px; }
+/* a group header's sentence sits over the now line and the restart lines; the pin of a line shows over the end of its name */
+.tp-lanes .wl-grp .lane-sub { z-index: 1; right: auto; max-width: calc(100% - 8px); padding-right: 4px; background: var(--side); }
+.tp-lanes .wl-lname { position: relative; }
+.tp-lanes .wl-lname .wl-pin { position: absolute; right: 6px; top: 3px; margin: 0; background: var(--side); }
+/* the quiet rows (fold, 另 n 条, 已归档) name across the track: no separator starting where their words end */
+.tp-lanes .lane.wl-fold .lane-track, .tp-lanes .lane.wl-more .lane-track, .tp-lanes .lane.wl-archrow .lane-track { box-shadow: none; }
+/* final fix 2026-10-06: a closed group's short line ("本段 6 条，最多同时在做 4 条", the DAG page's words) sits under the name on
+   two lines, broken after the comma, never cut (tpLanes gives that row 56px). The year-style calendar's rules are kit §18.5 */
+.tp-lanes .wl-grp.is-closed .wl-gs { white-space: pre-line; overflow: visible; text-overflow: clip; line-height: 16px; }
+.tp-lanes .lane.wl-grp.is-closed.is-wrap { height: 56px; }
+
+<!-- [1] VIEW SWITCH: inside .ptools, replaces the 任务图's <div class="seg" role="group" aria-label="视图">…</div> (Plan, which
+     had no switch: leave it out and keep only the link below). The switch serves both maps; 轨道 shows only on the 任务图 of
+     a board with Part B (Main): tpHasLanes = isTask there, false elsewhere. Its handlers stay the board's (showTree /
+     showOutline / showLanes); the 轨道 title says what a row is now. -->
+        <div class="seg" role="group" aria-label="视图">
+          <button class="{{viewTreeCls}}" type="button" aria-pressed="{{isTree}}" onClick="{{showTree}}">树</button>
+          <button class="{{viewOutlineCls}}" type="button" aria-pressed="{{isOutline}}" onClick="{{showOutline}}">大纲</button>
+          <sc-if value="{{tpHasLanes}}" hint-placeholder-val="{{ true }}">
+            <button class="{{viewLanesCls}}" type="button" aria-pressed="{{isLanes}}" onClick="{{showLanes}}" title="轨道：每条工作线一行，时间从左到右；上面是按小时的活动日历">轨道</button>
+          </sc-if>
+        </div>
+<!-- …and at the end of the same .ptools, on the 任务图 only (pt.isTask on Main; the board's own flag elsewhere): -->
+        <sc-if value="{{tpIsTask}}" hint-placeholder-val="{{ true }}">
+          <a class="btn-text plink" href="TaskMap.dc.html" title="整页的任务图：依赖图（DAG）、大纲和轨道">
+            整页查看
+            <svg class="ico xs" viewBox="0 0 16 16" aria-hidden="true"><path d="M9.25 2.75h4v4M13.25 2.75 7.75 8.25"></path><path d="M11.75 9.5v3.75h-9V4.25h3.75"></path></svg>
+          </a>
+        </sc-if>
+
+<!-- [2] TREE BLOCK: inside .pbody (after the crumbs), replaces the board's <div class="{{treeCls}}">…</div> — the rows, the
+     relation connector and the hover card — for both maps (the 架构图 passes through tpThumb with map 'arch': no pan, no
+     line, the card where it was). The rows template is Main's, verbatim (DESIGN §7.4); the card moved from inside the tree
+     into the viewport so a pan never cuts it. Boards that bind other names (Goals' handlers without onDoubleClick) keep
+     their own row attributes inside; the wrapper, the line and the card's place are what this piece adds. -->
+        <sc-if value="{{tpb.show}}" hint-placeholder-val="{{ false }}">
+          <div class="tp-bar">
+            <span class="{{tpb.cls}}" title="{{tpb.tip}}">{{tpb.text}}</span>
+            <sc-if value="{{tpb.canBack}}" hint-placeholder-val="{{ false }}">
+              <button class="btn-text tp-back" type="button" onClick="{{tpb.back}}" title="树回到原处，你打开的节点收起（三层的起点）">回到起点</button>
+            </sc-if>
+          </div>
+        </sc-if>
+        <div class="{{tpv.cls}}" onPointerDown="{{tpv.down}}" onPointerMove="{{tpv.move}}" onPointerUp="{{tpv.up}}" onPointerCancel="{{tpv.up}}" onWheel="{{tpv.wheel}}">
+          <div class="{{treeCls}}" style="left: {{tpv.x}}px; top: {{tpv.y}}px;">
+            <sc-for list="{{rows}}" as="r" hint-placeholder-count="10">
+              <div class="{{r.cls}}">
+                <sc-for list="{{r.gut}}" as="g" hint-placeholder-count="1"><span class="{{g.cls}}"></span></sc-for>
+                <span class="{{r.elb}}"><i></i></span>
+                <sc-if value="{{r.isBranch}}" hint-placeholder-val="{{ true }}">
+                  <button class="{{r.sqb}}" type="button" onClick="{{r.pick}}" onDoubleClick="{{r.pin}}" onContextMenu="{{r.tab}}" onMouseEnter="{{r.hover}}" onMouseLeave="{{unhover}}" onFocus="{{r.hover}}" onBlur="{{unhover}}" aria-label="{{r.tip}}"><span class="{{r.sq}}"></span></button>
+                  <sc-if value="{{r.hasComb}}" hint-placeholder-val="{{ true }}">
+                    <span class="{{r.combCls}}">
+                      <sc-for list="{{r.leaves}}" as="k" hint-placeholder-count="7">
+                        <button class="{{k.cls}}" type="button" onClick="{{k.pick}}" onDoubleClick="{{k.pin}}" onContextMenu="{{k.tab}}" onMouseEnter="{{k.hover}}" onMouseLeave="{{unhover}}" onFocus="{{k.hover}}" onBlur="{{unhover}}" aria-label="{{k.tip}}"><i></i><span class="{{k.sq}}"></span></button>
+                      </sc-for>
+                    </span>
+                  </sc-if>
+                  <button class="{{r.lb}}" type="button" onClick="{{r.pick}}" onDoubleClick="{{r.pin}}" onContextMenu="{{r.tab}}" onMouseEnter="{{r.hover}}" onMouseLeave="{{unhover}}" onFocus="{{r.hover}}" onBlur="{{unhover}}" aria-expanded="{{r.ex}}">
+                    <span class="tr-name">{{r.name}}</span>
+                    <span class="tr-n">{{r.a}}</span>
+                    <sc-if value="{{r.hasB}}" hint-placeholder-val="{{ false }}"><span class="tr-n">{{r.b}}</span></sc-if>
+                    <sc-if value="{{r.canOpen}}" hint-placeholder-val="{{ false }}">
+                      <svg class="ico xs tr-chev" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4"></path></svg>
+                    </sc-if>
+                  </button>
+                </sc-if>
+                <sc-if value="{{r.isLine}}" hint-placeholder-val="{{ false }}">
+                  <button class="{{r.nb}}" type="button" onClick="{{r.pick}}" onDoubleClick="{{r.pin}}" onContextMenu="{{r.tab}}" onMouseEnter="{{r.hover}}" onMouseLeave="{{unhover}}" onFocus="{{r.hover}}" onBlur="{{unhover}}" aria-expanded="{{r.ex}}" title="{{r.title}}">
+                    <span class="{{r.nc}}"><span class="{{r.sq}}"></span></span>
+                    <span class="tr-name">{{r.name}}</span>
+                    <sc-if value="{{r.hasWhy}}" hint-placeholder-val="{{ false }}"><span class="tr-why">{{r.why}}</span></sc-if>
+                    <sc-if value="{{r.canOpen}}" hint-placeholder-val="{{ false }}">
+                      <svg class="ico xs tr-chev" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4"></path></svg>
+                    </sc-if>
+                  </button>
+                  <span class="tr-sum">
+                    <sc-if value="{{r.hasStrip}}" hint-placeholder-val="{{ false }}">
+                      <span class="strip"><sc-for list="{{r.strip}}" as="s" hint-placeholder-count="6"><span class="{{s.sq}}"></span></sc-for></span>
+                    </sc-if>
+                    <span>{{r.b}}</span>
+                    <span class="tr-a">{{r.a}}</span>
+                  </span>
+                </sc-if>
+              </div>
+            </sc-for>
+            <sc-if value="{{rel.show}}" hint-placeholder-val="{{ false }}">
+              <svg class="deps" aria-hidden="true"><path class="dl" d="{{rel.d}}"></path><path class="dl" d="{{rel.head}}"></path></svg>
+            </sc-if>
+          </div>
+          <sc-if value="{{card.show}}" hint-placeholder-val="{{ false }}">
+            <div class="hcard" style="left: clamp(0px, {{card.x}}px, calc(100% - 272px)); top: {{card.top}}; bottom: {{card.bottom}};" role="tooltip">
+              <div class="hc-head"><span class="{{card.sq}}" aria-hidden="true"></span><span class="hc-name">{{card.name}}</span></div>
+              <p class="hc-state"><span class="{{card.tx}}">{{card.word}}</span>{{card.why}}</p>
+              <dl class="hc-dl">
+                <sc-if value="{{card.hasPath}}" hint-placeholder-val="{{ true }}"><dt>归属</dt><dd>{{card.path}}</dd></sc-if>
+                <dt>负责</dt><dd>{{card.agent}}</dd>
+                <sc-if value="{{card.hasSem}}" hint-placeholder-val="{{ true }}"><dt>语义</dt><dd class="hc-sem">{{card.sem}}</dd></sc-if>
+                <sc-if value="{{card.hasTasks}}" hint-placeholder-val="{{ false }}">
+                  <dt>任务</dt>
+                  <dd>
+                    <span class="hc-items">
+                      <sc-for list="{{card.tasks}}" as="ct" hint-placeholder-count="2"><span class="hc-item"><span class="{{ct.sq}}" aria-hidden="true"></span>{{ct.name}}</span></sc-for>
+                      <sc-if value="{{card.hasMore}}" hint-placeholder-val="{{ false }}"><span class="hc-more">{{card.more}}</span></sc-if>
+                    </span>
+                  </dd>
+                </sc-if>
+              </dl>
+              <p class="hc-hint">{{card.hint}}</p>
+            </div>
+          </sc-if>
+        </div>
+
+<!-- [3] 轨道 (PART B, Main): inside .pbody, replaces the <sc-if value="{{isLanes}}">…</sc-if> block of timeview.snippet.html
+     [2]. The tools (角色 / 模块 / 任务, the window, the picked hour, "顺序已变 · 重新排序"), the approved calendar and sum line,
+     then the lanes: a sticky axis, at most 8 rows of work lines, "另 n 条 · 整页查看", the archived row; the bar card; the
+     图例 (Main's .lg-* helmet rules). -->
+        <sc-if value="{{isLanes}}" hint-placeholder-val="{{ false }}">
+          <div class="tl-tools wl-tools">
+            <div class="seg" role="group" aria-label="工作线按什么分组">
+              <sc-for list="{{wl.bys}}" as="b" hint-placeholder-count="3"><button class="{{b.cls}}" type="button" aria-pressed="{{b.on}}" onClick="{{b.go}}">{{b.label}}</button></sc-for>
+            </div>
+            <div class="seg" role="group" aria-label="时间范围">
+              <sc-for list="{{wl.wins}}" as="w" hint-placeholder-count="3"><button class="{{w.cls}}" type="button" aria-pressed="{{w.on}}" onClick="{{w.go}}">{{w.label}}</button></sc-for>
+            </div>
+            <div class="seg" role="group" aria-label="筛选">
+              <button class="{{wl.attnCls}}" type="button" aria-pressed="{{wl.attnOn}}" onClick="{{wl.toggleAttn}}" title="{{wl.attnTip}}">只看需要关注的</button>
+            </div>
+            <sc-if value="{{wl.hasCell}}" hint-placeholder-val="{{ false }}">
+              <span class="tl-cell">只看 {{wl.cellLabel}}
+                <button class="btn btn-icon btn-xs" type="button" onClick="{{wl.clearCell}}" aria-label="不再只看这一小时" title="回到整段时间">
+                  <svg class="ico xs" viewBox="0 0 16 16" aria-hidden="true"><path d="m4.5 4.5 7 7M11.5 4.5l-7 7"></path></svg>
+                </button>
+              </span>
+            </sc-if>
+            <sc-if value="{{wl.hasCrumb}}" hint-placeholder-val="{{ false }}">
+              <nav class="crumbs wl-crumbs" aria-label="日历里看到哪一层">
+                <sc-for list="{{wl.crumbs}}" as="cb" hint-placeholder-count="3">
+                  <sc-if value="{{cb.sep}}" hint-placeholder-val="{{ false }}"><span class="sep" aria-hidden="true">›</span></sc-if>
+                  <sc-if value="{{cb.link}}" hint-placeholder-val="{{ true }}"><button class="{{cb.cls}}" type="button" onClick="{{cb.go}}">{{cb.label}}</button></sc-if>
+                  <sc-if value="{{cb.here}}" hint-placeholder-val="{{ false }}"><span class="{{cb.cls}}" aria-current="location">{{cb.label}}</span></sc-if>
+                </sc-for>
+              </nav>
+            </sc-if>
+            <sc-if value="{{wl.stale}}" hint-placeholder-val="{{ false }}">
+              <button class="btn-text wl-stale" type="button" onClick="{{wl.resort}}" title="打开视图或换分组、范围、筛选、固定时排好的顺序，看的时候不动；点一下按现在的状态重新排">顺序已变 · 重新排序</button>
+            </sc-if>
+          </div>
+
+          <!-- 全部 longer than 14 days (decision 25; final fix 2026-10-06): the year-style calendar — a column per week, a cell per
+               day; a day → its 24 hours below, an hour → that hour; the crumb above goes back -->
+          <sc-if value="{{wl.hasYr}}" hint-placeholder-val="{{ false }}">
+            <div class="{{wl.yr.cls}}" aria-label="活动日历：每列一周，每格一天，越深活动越多">
+              <span class="cal-d" aria-hidden="true"></span>
+              <sc-for list="{{wl.yr.wdays}}" as="wd" hint-placeholder-count="7"><span class="cal-d" aria-hidden="true">{{wd.label}}</span></sc-for>
+              <sc-for list="{{wl.yr.weeks}}" as="wk" hint-placeholder-count="8">
+                <span class="yr-m" aria-hidden="true">{{wk.label}}</span>
+                <sc-for list="{{wk.days}}" as="yd" hint-placeholder-count="7">
+                  <sc-if value="{{yd.on}}" hint-placeholder-val="{{ true }}">
+                    <button class="{{yd.cls}}" type="button" onClick="{{yd.pick}}" onMouseEnter="{{yd.hover}}" onMouseLeave="{{wl.unhover}}" onFocus="{{yd.hover}}" onBlur="{{wl.unhover}}" aria-label="{{yd.tip}}"></button>
+                  </sc-if>
+                  <sc-if value="{{yd.off}}" hint-placeholder-val="{{ false }}"><span class="{{yd.cls}}" aria-hidden="true"></span></sc-if>
+                </sc-for>
+              </sc-for>
+              <sc-if value="{{wl.yr.card.show}}" hint-placeholder-val="{{ false }}">
+                <div class="hcard" style="left: {{wl.yr.card.x}}px; top: {{wl.yr.card.top}};" role="tooltip">
+                  <div class="hc-head"><span class="{{wl.yr.card.sq}}" aria-hidden="true"></span><span class="hc-name">{{wl.yr.card.name}}</span></div>
+                  <p class="hc-state"><span class="{{wl.yr.card.tx}}">{{wl.yr.card.word}}</span></p>
+                  <dl class="hc-dl k3">
+                    <sc-if value="{{wl.yr.card.hasTasks}}" hint-placeholder-val="{{ false }}">
+                      <dt>任务</dt>
+                      <dd><span class="hc-items">
+                        <sc-for list="{{wl.yr.card.tasks}}" as="yt" hint-placeholder-count="2"><span class="hc-item"><span class="{{yt.sq}}" aria-hidden="true"></span>{{yt.name}}</span></sc-for>
+                        <sc-if value="{{wl.yr.card.hasMore}}" hint-placeholder-val="{{ false }}"><span class="hc-more">{{wl.yr.card.more}}</span></sc-if>
+                      </span></dd>
+                    </sc-if>
+                    <sc-if value="{{wl.yr.card.hasMem}}" hint-placeholder-val="{{ false }}"><dt>工作线</dt><dd>{{wl.yr.card.mem}}</dd></sc-if>
+                  </dl>
+                  <sc-if value="{{wl.yr.card.hint}}" hint-placeholder-val="{{ false }}"><p class="hc-hint">{{wl.yr.card.hint}}</p></sc-if>
+                </div>
+              </sc-if>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{wl.hasCal}}" hint-placeholder-val="{{ true }}">
+          <div class="{{wl.calCls}}" aria-label="活动日历：每格一小时，越深活动越多">
+            <span class="cal-d" aria-hidden="true"></span>
+            <sc-for list="{{wl.cal.head}}" as="h" hint-placeholder-count="24"><span class="cal-h" aria-hidden="true">{{h.label}}</span></sc-for>
+            <sc-for list="{{wl.cal.rows}}" as="cw" hint-placeholder-count="1">
+              <span class="cal-d">{{cw.label}}</span>
+              <sc-for list="{{cw.cells}}" as="c" hint-placeholder-count="24">
+                <button class="{{c.cls}}" type="button" onClick="{{c.pick}}" onMouseEnter="{{c.hover}}" onMouseLeave="{{wl.unhover}}" onFocus="{{c.hover}}" onBlur="{{wl.unhover}}" aria-label="{{c.tip}}"></button>
+              </sc-for>
+            </sc-for>
+            <sc-if value="{{wl.ccard.show}}" hint-placeholder-val="{{ false }}">
+              <div class="hcard" style="left: clamp(0px, {{wl.ccard.x}}px, calc(100% - 272px)); top: {{wl.ccard.top}};" role="tooltip">
+                <div class="hc-head"><span class="{{wl.ccard.sq}}" aria-hidden="true"></span><span class="hc-name">{{wl.ccard.name}}</span></div>
+                <p class="hc-state"><span class="{{wl.ccard.tx}}">{{wl.ccard.word}}</span></p>
+                <dl class="hc-dl k3">
+                  <sc-if value="{{wl.ccard.hasTasks}}" hint-placeholder-val="{{ false }}">
+                    <dt>任务</dt>
+                    <dd><span class="hc-items">
+                      <sc-for list="{{wl.ccard.tasks}}" as="ct" hint-placeholder-count="2"><span class="hc-item"><span class="{{ct.sq}}" aria-hidden="true"></span>{{ct.name}}</span></sc-for>
+                      <sc-if value="{{wl.ccard.hasMore}}" hint-placeholder-val="{{ false }}"><span class="hc-more">{{wl.ccard.more}}</span></sc-if>
+                    </span></dd>
+                  </sc-if>
+                  <sc-if value="{{wl.ccard.hasMem}}" hint-placeholder-val="{{ false }}"><dt>工作线</dt><dd>{{wl.ccard.mem}}</dd></sc-if>
+                </dl>
+                <sc-if value="{{wl.ccard.hint}}" hint-placeholder-val="{{ false }}"><p class="hc-hint">{{wl.ccard.hint}}</p></sc-if>
+              </div>
+            </sc-if>
+          </div>
+          </sc-if>
+          <p class="tl-sum">{{wl.sum}}<sc-if value="{{wl.hasNote}}" hint-placeholder-val="{{ true }}"><span class="sep"> · </span>{{wl.note}}</sc-if></p>
+          <sc-if value="{{wl.hasSynth}}" hint-placeholder-val="{{ false }}"><p class="tl-sum">{{wl.synth}}</p></sc-if>
+
+          <div class="{{wl.cls}}">
+            <div class="wl-axrow">
+              <span class="wl-axname">{{wl.axName}}</span>
+              <div class="tl-axis" aria-hidden="true">
+                <sc-for list="{{wl.ticks}}" as="k" hint-placeholder-count="7"><span class="{{k.cls}}" style="left: {{k.x}}%;">{{k.label}}</span></sc-for>
+                <sc-if value="{{wl.hasNow}}" hint-placeholder-val="{{ true }}"><span class="{{wl.nowTagCls}}" style="left: {{wl.nowX}}%;"><span class="tl-now-l">{{wl.nowLabel}}</span></span></sc-if>
+              </div>
+            </div>
+            <div class="wl-body">
+              <sc-for list="{{wl.rows}}" as="l" hint-placeholder-count="8">
+                <div class="{{l.cls}}">
+                  <sc-if value="{{l.isGrp}}" hint-placeholder-val="{{ false }}">
+                    <button class="lane-name wl-gname" type="button" onClick="{{l.toggle}}" aria-expanded="{{l.ex}}" title="{{l.title}}">
+                      <svg class="ico xs" viewBox="0 0 16 16" aria-hidden="true"><path d="{{l.chev}}"></path></svg>
+                      <span class="wl-gtext"><span class="wl-gn">{{l.name}}</span><sc-if value="{{l.closed}}" hint-placeholder-val="{{ false }}"><span class="wl-gs">{{l.sub}}</span></sc-if></span>
+                    </button>
+                  </sc-if>
+                  <sc-if value="{{l.isLine}}" hint-placeholder-val="{{ true }}">
+                    <span class="lane-name wl-lname">
+                      <span class="wl-ltext"><span class="wl-ln" title="{{l.title}}">{{l.name}}</span><sc-if value="{{l.hasMore}}" hint-placeholder-val="{{ false }}"><span class="wl-lm">{{l.more}}</span></sc-if></span>
+                      <sc-if value="{{l.canPin}}" hint-placeholder-val="{{ false }}">
+                        <button class="{{l.pinCls}}" type="button" onClick="{{l.pin}}" aria-pressed="{{l.pinned}}" aria-label="{{l.pinLabel}}" title="{{l.pinLabel}}">
+                          <svg class="ico xs" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 2.25h4l-.6 4.25 2.35 2.25H4.25L6.6 6.5Z"></path><path d="M8 8.75v5"></path></svg>
+                        </button>
+                      </sc-if>
+                    </span>
+                  </sc-if>
+                  <sc-if value="{{l.isFold}}" hint-placeholder-val="{{ false }}">
+                    <span class="lane-name wl-fname" title="{{l.title}}">{{l.name}}</span>
+                  </sc-if>
+                  <sc-if value="{{l.isMore}}" hint-placeholder-val="{{ false }}">
+                    <a class="lane-name wl-moreln" href="TaskMap.dc.html" title="{{l.title}}">{{l.name}}</a>
+                  </sc-if>
+                  <sc-if value="{{l.isArch}}" hint-placeholder-val="{{ false }}">
+                    <button class="lane-name wl-arch" type="button" onClick="{{l.toggle}}" aria-expanded="{{l.ex}}" title="{{l.title}}">{{l.name}}</button>
+                  </sc-if>
+                  <div class="lane-track">
+                    <sc-for list="{{l.conc}}" as="c" hint-placeholder-count="0"><span class="{{c.cls}}" style="left: {{c.x}}%; width: {{c.w}}%;"></span></sc-for>
+                    <sc-for list="{{l.links}}" as="k" hint-placeholder-count="1"><span class="{{k.cls}}" style="left: {{k.x}}%; width: {{k.w}}%;"></span></sc-for>
+                    <sc-for list="{{l.bars}}" as="b" hint-placeholder-count="3">
+                      <button class="{{b.cls}}" type="button" style="left: {{b.x}}%; width: {{b.w}}%;" onClick="{{b.pick}}" onMouseEnter="{{b.hover}}" onMouseLeave="{{wl.unhover}}" onFocus="{{b.hover}}" onBlur="{{wl.unhover}}" aria-label="{{b.tip}}"></button>
+                    </sc-for>
+                    <sc-for list="{{l.marks}}" as="m" hint-placeholder-count="0"><span class="{{m.cls}}" style="left: {{m.x}}%;" title="{{m.tip}}"></span></sc-for>
+                    <sc-if value="{{l.hasSub}}" hint-placeholder-val="{{ false }}"><span class="lane-sub">{{l.sub}}</span></sc-if>
+                  </div>
+                </div>
+              </sc-for>
+              <div class="tl-over">
+                <sc-for list="{{wl.evs}}" as="e" hint-placeholder-count="1"><span class="tl-ev" style="left: {{e.x}}%;"><span class="tl-ev-l">{{e.label}}</span></span></sc-for>
+                <sc-if value="{{wl.hasNow}}" hint-placeholder-val="{{ true }}"><span class="{{wl.nowCls}}" style="left: {{wl.nowX}}%;"></span></sc-if>
+                <sc-if value="{{wl.card.show}}" hint-placeholder-val="{{ false }}">
+                  <div class="hcard" style="left: clamp(0px, calc({{wl.card.x}}% - 8px), calc(100% - 272px)); top: {{wl.card.top}};" role="tooltip">
+                    <div class="hc-head"><span class="{{wl.card.sq}}" aria-hidden="true"></span><span class="hc-name">{{wl.card.name}}</span></div>
+                    <p class="hc-state"><span class="{{wl.card.tx}}">{{wl.card.word}}</span>{{wl.card.why}}</p>
+                    <dl class="hc-dl k3">
+                      <sc-for list="{{wl.card.rows}}" as="cr" hint-placeholder-count="4"><dt>{{cr.k}}</dt><dd>{{cr.v}}</dd></sc-for>
+                    </dl>
+                    <sc-if value="{{wl.card.hint}}" hint-placeholder-val="{{ false }}"><p class="hc-hint">{{wl.card.hint}}</p></sc-if>
+                  </div>
+                </sc-if>
+              </div>
+            </div>
+          </div>
+          <sc-if value="{{legend}}" hint-placeholder-val="{{ false }}">
+            <div class="legend" aria-label="轨道图例">
+              <span class="wide">每一行是一条工作线：一个工作记录，加上中断后接着它的工作记录。执行者每个任务开一条，互不重叠的几条排在同一行</span>
+              <span><span class="lg-b r-ok"></span>一次执行</span>
+              <span><span class="lg-b k-check s-satisfied"></span>一轮正式检查</span>
+              <span><span class="lg-b r-q"></span>咨询或对话的一轮</span>
+              <span><span class="lg-link"></span>同一任务的下一次尝试、返工或重新检查</span>
+              <span><span class="lg-mark s-blocked"></span>停下的地方，悬停看原因</span>
+              <span class="wide">颜色是这一次的结果：</span>
+              <span><span class="sq z10 r-ok"></span>已结束，已交给正式检查</span>
+              <span><span class="sq z10 s-running"></span>执行中</span>
+              <span><span class="sq z10 s-verifying"></span>检查中</span>
+              <span><span class="sq z10 s-satisfied"></span>通过</span>
+              <span><span class="sq z10 s-failed"></span>检查未通过，执行失败</span>
+              <span><span class="sq z10 s-blocked"></span>平台中断，检查不完整</span>
+              <span><span class="sq z10 s-waiting"></span>已暂停</span>
+              <span><span class="sq z10 s-decide"></span>需要你决定，结果待核对</span>
+              <span><span class="sq z10 s-cancelled"></span>已取消</span>
+              <span><span class="lg-now"></span>现在</span>
+              <span><span class="lg-ev"></span>Host 重启</span>
+              <span class="wide"><span class="wl-key-c wl-c1"></span><span class="wl-key-c wl-c2"></span><span class="wl-key-c wl-c3"></span><span class="wl-key-c wl-c4"></span>收起的一组：同时在做的工作线越多越深</span>
+              <span class="wide"><span class="cal-legend">少<span class="cal-c cal-l0"></span><span class="cal-c cal-l1"></span><span class="cal-c cal-l2"></span><span class="cal-c cal-l3"></span><span class="cal-c cal-l4"></span>多</span>活动日历：一格一小时，步骤、编辑和检查次数越多越深</span>
+              <span class="wide">全部超过 14 天时，日历每列一周、每格一天（周一在上）：点一天看那一天，再点一小时只看那一小时；上面的“全部 › 日 › 时”一层层退回</span>
+              <span class="wide">排序：固定的在前，然后需要你决定、失败、受阻、待核对，然后最近有活动的；看的时候不重排。“只看需要关注的”只留下这四种。右栏最多 8 行，其余在整页</span>
+              <span class="wide">还没开始的任务不画，只算在“未排期”里</span>
+            </div>
+          </sc-if>
+        </sc-if>

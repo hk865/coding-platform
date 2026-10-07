@@ -1,0 +1,388 @@
+<!-- lineview.snippet.html — a work line's own conversation in the centre (user decision 33, 2026-10-06). Three pieces, each
+     pasted where its comment says, bound to lvr = this.lvRail(…) and lv = this.lvView(…) of data/lineview.snippet.js. CSS:
+     kit.css §19. Worked example: sketch/lineview/demo/make-demo.mjs (Main → LineDemo.dc.html). Chain and Member keep their
+     two-line rail rows: they take [1]'s attributes (onClick / onMouseEnter / onMouseLeave / onFocus / onBlur /
+     aria-current and the card) on their own row markup. Integration 2026-10-07 (DESIGN §22.4): every board pastes [3] whole
+     now — the 任务 fact in its three forms (a button to the map shown, a link to Main's task map, plain text), the quotes a
+     message took along in your bubble and the quotes waiting over the composer were board copies before. Final fix 2026-10-07
+     (DESIGN §22.9): the back row's title is lv.backTip; the record's 需要你决定 mark and a held message's 「需要你决定」 are a
+     .ref button or link (lvView's o.decide / o.decideHref); the direct interventions of the record are drawn as the bubbles
+     of what you send now. -->
+
+<!-- [1] the rail's work-line rows. Replaces the board's <sc-for list="{{members}}" …> block (each row and its .row-more
+     summary). A click opens the line's conversation in the centre (秘书（主对话）: back to the main conversation); hover
+     and focus show the card that the click used to expand. No title on the row: the card is its tooltip. -->
+      <sc-for list="{{lvr.rows}}" as="m" hint-placeholder-count="11">
+        <div class="lv-rw">
+          <button class="{{m.cls}}" type="button" onClick="{{m.pick}}" onMouseEnter="{{m.hover}}" onMouseLeave="{{m.unhover}}" onFocus="{{m.hover}}" onBlur="{{m.unhover}}" aria-current="{{m.current}}">
+            <span class="row-lead"><span class="{{m.dot}}" aria-hidden="true"></span></span>
+            <span class="wl-nm"><span class="row-name">{{m.name}}</span><span class="row-meta">{{m.word}}</span></span>
+          </button>
+          <sc-if value="{{m.card}}" hint-placeholder-val="{{ false }}">
+            <div class="{{m.cardCls}}" role="tooltip">
+              <div class="hc-head"><span class="{{m.c.dot}}" aria-hidden="true"></span><span class="hc-name">{{m.name}}</span></div>
+              <p class="hc-state"><span class="{{m.c.tx}}">{{m.c.word}}</span>{{m.c.live}}</p>
+              <dl class="hc-dl lv-dl">
+                <sc-for list="{{m.c.rows}}" as="cr" hint-placeholder-count="3"><dt>{{cr.k}}</dt><dd>{{cr.v}}</dd></sc-for>
+              </dl>
+              <p class="hc-hint">{{m.c.hint}}</p>
+            </div>
+          </sc-if>
+        </div>
+      </sc-for>
+
+<!-- [2] the archived lines. Replaces the <sc-for list="{{…archived}}" …> spans inside .rail-archived: each name opens its
+     line (read-only) and has the same card. -->
+            <sc-for list="{{lvr.archived}}" as="a" hint-placeholder-count="8">
+              <div class="lv-rw">
+                <button class="{{a.cls}}" type="button" onClick="{{a.pick}}" onMouseEnter="{{a.hover}}" onMouseLeave="{{a.unhover}}" onFocus="{{a.hover}}" onBlur="{{a.unhover}}" aria-current="{{a.current}}">{{a.name}}</button>
+                <sc-if value="{{a.card}}" hint-placeholder-val="{{ false }}">
+                  <div class="{{a.cardCls}}" role="tooltip">
+                    <div class="hc-head"><span class="{{a.c.dot}}" aria-hidden="true"></span><span class="hc-name">{{a.name}}</span></div>
+                    <p class="hc-state"><span class="{{a.c.tx}}">{{a.c.word}}</span>{{a.c.live}}</p>
+                    <dl class="hc-dl lv-dl">
+                      <sc-for list="{{a.c.rows}}" as="cr" hint-placeholder-count="3"><dt>{{cr.k}}</dt><dd>{{cr.v}}</dd></sc-for>
+                    </dl>
+                    <p class="hc-hint">{{a.c.hint}}</p>
+                  </div>
+                </sc-if>
+              </div>
+            </sc-for>
+
+<!-- [3] the line's conversation. Inside <main class="main">, after the board's own centre (its header, its threads and its
+     dock), which go inside <sc-if value="{{lv.hide}}" hint-placeholder-val="{{ true }}"> … </sc-if>. The back row is a
+     button (lv.isBackBtn: back to what the centre showed — Main's and Plan's and Done's main conversation, Decide's queue,
+     Chain's and Member's page) or a link to Main.dc.html (lv.isBackLink, o.backHref); 整页查看 exists only for 执行者 · SSE 推送
+     (Member.dc.html) and 执行者 · 重新入队与失败类别 (Chain.dc.html). -->
+    <sc-if value="{{lv.show}}" hint-placeholder-val="{{ false }}">
+      <header class="head lv-headbar">
+        <sc-if value="{{lv.isBackBtn}}" hint-placeholder-val="{{ true }}">
+          <button class="btn-text lv-back" type="button" onClick="{{lv.back}}" title="{{lv.backTip}}">
+            <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="m10 4-4 4 4 4"></path></svg>
+            {{lv.backLabel}}
+          </button>
+        </sc-if>
+        <sc-if value="{{lv.isBackLink}}" hint-placeholder-val="{{ false }}">
+          <a class="btn-text lv-back" href="Main.dc.html" title="{{lv.backTip}}">
+            <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="m10 4-4 4 4 4"></path></svg>
+            {{lv.backLabel}}
+          </a>
+        </sc-if>
+        <span class="lv-sep" aria-hidden="true">/</span>
+        <span class="head-title" title="{{lv.name}}">{{lv.name}}</span>
+        <span class="head-sub">{{lv.sub}}</span>
+        <span class="sp"></span>
+        <sc-if value="{{lv.pageMember}}" hint-placeholder-val="{{ false }}">
+          <a class="btn-text plink" href="Member.dc.html" title="这条工作线的整页：问一问（只读）或直接干预，暂停、继续、取消，它的工作记录和改动">
+            整页查看
+            <svg class="ico xs" viewBox="0 0 16 16" aria-hidden="true"><path d="M9.25 2.75h4v4M13.25 2.75 7.75 8.25"></path><path d="M11.75 9.5v3.75h-9V4.25h3.75"></path></svg>
+          </a>
+        </sc-if>
+        <sc-if value="{{lv.pageChain}}" hint-placeholder-val="{{ false }}">
+          <a class="btn-text plink" href="Chain.dc.html" title="这条工作线的工作记录：每一步、检查和原始记录">
+            整页查看
+            <svg class="ico xs" viewBox="0 0 16 16" aria-hidden="true"><path d="M9.25 2.75h4v4M13.25 2.75 7.75 8.25"></path><path d="M11.75 9.5v3.75h-9V4.25h3.75"></path></svg>
+          </a>
+        </sc-if>
+        <sc-if value="{{lv.hasPanel}}" hint-placeholder-val="{{ true }}">
+          <button class="btn btn-icon btn-sm" type="button" onClick="{{lv.togglePanel}}" aria-label="显示或隐藏右栏" title="右栏">
+            <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><rect x="1.75" y="2.75" width="12.5" height="10.5" rx="1.75"></rect><path d="M10 2.75v10.5"></path></svg>
+          </button>
+        </sc-if>
+      </header>
+
+      <!-- the line's facts and the controls that apply (hover = what each really does) -->
+      <section class="lv-mh" aria-label="工作线信息与控制">
+        <div class="lv-facts">
+          <div class="lv-f">
+            <span class="lv-k">状态</span>
+            <span class="lv-v">
+              <sc-if value="{{lv.st.isLive}}" hint-placeholder-val="{{ true }}">
+                <span class="live"><span class="dot s-running" aria-hidden="true"></span>{{lv.st.word}}</span>
+              </sc-if>
+              <sc-if value="{{lv.st.isAdv}}" hint-placeholder-val="{{ false }}">
+                <button class="btn-text lv-adv" type="button" onClick="{{lv.st.arrive}}" onMouseEnter="{{lv.st.tip}}" onMouseLeave="{{lv.untip}}" onFocus="{{lv.st.tip}}" onBlur="{{lv.untip}}">
+                  <span class="dot s-running" aria-hidden="true"></span>{{lv.st.advText}}
+                  <svg class="ico xs" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4"></path></svg>
+                </button>
+              </sc-if>
+              <sc-if value="{{lv.st.isStill}}" hint-placeholder-val="{{ false }}">
+                <span class="{{lv.dot}}" aria-hidden="true"></span><span>{{lv.st.word}}</span>
+              </sc-if>
+            </span>
+            <sc-if value="{{lv.tipAt.state}}" hint-placeholder-val="{{ false }}">
+              <div class="hcard" role="tooltip">
+                <div class="hc-head"><span class="hc-name">{{lv.tc.name}}</span></div>
+                <p class="hc-state"><span class="{{lv.tc.tx}}">{{lv.tc.word}}</span>{{lv.tc.why}}</p>
+                <dl class="hc-dl">
+                  <sc-for list="{{lv.tc.rows}}" as="tr" hint-placeholder-count="2"><dt>{{tr.k}}</dt><dd>{{tr.v}}</dd></sc-for>
+                </dl>
+                <p class="hc-hint">{{lv.tc.hint}}</p>
+              </div>
+            </sc-if>
+          </div>
+          <sc-if value="{{lv.task.has}}" hint-placeholder-val="{{ true }}">
+            <div class="lv-f">
+              <span class="lv-k">任务</span>
+              <span class="lv-v">
+                <sc-if value="{{lv.task.isBtn}}" hint-placeholder-val="{{ true }}"><button class="lv-task" type="button" onClick="{{lv.task.go}}" title="在任务图里看这个任务"><span class="{{lv.task.sq}}" aria-hidden="true"></span>{{lv.task.name}}</button></sc-if>
+                <sc-if value="{{lv.task.isLink}}" hint-placeholder-val="{{ false }}"><a class="lv-task" href="Main.dc.html" title="在主画面的任务图里看这个任务"><span class="{{lv.task.sq}}" aria-hidden="true"></span>{{lv.task.name}}</a></sc-if>
+                <sc-if value="{{lv.task.isPlain}}" hint-placeholder-val="{{ false }}"><span class="lv-task is-plain" title="{{lv.task.tip}}"><sc-if value="{{lv.task.hasSq}}" hint-placeholder-val="{{ false }}"><span class="{{lv.task.sq}}" aria-hidden="true"></span></sc-if>{{lv.task.name}}</span></sc-if>
+              </span>
+            </div>
+          </sc-if>
+          <sc-if value="{{lv.duty.has}}" hint-placeholder-val="{{ false }}">
+            <div class="lv-f">
+              <span class="lv-k">负责</span>
+              <span class="lv-v">{{lv.duty.text}}</span>
+            </div>
+          </sc-if>
+          <sc-for list="{{lv.facts}}" as="f" hint-placeholder-count="2">
+            <div class="lv-f">
+              <span class="lv-k">{{f.k}}</span>
+              <span class="lv-v">{{f.v}}</span>
+            </div>
+          </sc-for>
+          <sc-if value="{{lv.why.has}}" hint-placeholder-val="{{ true }}">
+            <p class="lv-why"><span class="lv-k">{{lv.why.k}}</span><span>{{lv.why.v}}</span></p>
+          </sc-if>
+        </div>
+        <div class="lv-acts" role="group" aria-label="控制这条工作线">
+          <sc-if value="{{lv.acts.canPause}}" hint-placeholder-val="{{ true }}">
+            <button class="btn btn-sm" type="button" onClick="{{lv.acts.pause}}" onMouseEnter="{{lv.acts.tipPause}}" onMouseLeave="{{lv.untip}}" onFocus="{{lv.acts.tipPause}}" onBlur="{{lv.untip}}">
+              <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M5.75 3.75v8.5M10.25 3.75v8.5"></path></svg>
+              暂停
+            </button>
+          </sc-if>
+          <sc-if value="{{lv.acts.canResume}}" hint-placeholder-val="{{ false }}">
+            <button class="btn btn-sm" type="button" onClick="{{lv.acts.resume}}" onMouseEnter="{{lv.acts.tipResume}}" onMouseLeave="{{lv.untip}}" onFocus="{{lv.acts.tipResume}}" onBlur="{{lv.untip}}">
+              <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M5.25 3.5v9l7-4.5Z"></path></svg>
+              继续
+            </button>
+          </sc-if>
+          <sc-if value="{{lv.acts.canCancel}}" hint-placeholder-val="{{ true }}">
+            <button class="btn btn-sm" type="button" onClick="{{lv.acts.askCancel}}" onMouseEnter="{{lv.acts.tipCancel}}" onMouseLeave="{{lv.untip}}" onFocus="{{lv.acts.tipCancel}}" onBlur="{{lv.untip}}">
+              <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><rect x="4" y="4" width="8" height="8" rx="1.25"></rect></svg>
+              取消
+            </button>
+          </sc-if>
+          <sc-if value="{{lv.acts.canRequeue}}" hint-placeholder-val="{{ false }}">
+            <button class="btn btn-sm" type="button" onClick="{{lv.acts.requeue}}" onMouseEnter="{{lv.acts.tipRequeue}}" onMouseLeave="{{lv.untip}}" onFocus="{{lv.acts.tipRequeue}}" onBlur="{{lv.untip}}">
+              <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M12.75 3.25v3h-3"></path><path d="M12.5 6.25A5 5 0 1 0 13 9.25"></path></svg>
+              重新入队
+            </button>
+          </sc-if>
+          <sc-if value="{{lv.tipAt.acts}}" hint-placeholder-val="{{ false }}">
+            <div class="hcard" role="tooltip">
+              <div class="hc-head"><span class="hc-name">{{lv.tc.name}}</span></div>
+              <p class="hc-state"><span class="{{lv.tc.tx}}">{{lv.tc.word}}</span>{{lv.tc.why}}</p>
+              <dl class="hc-dl">
+                <sc-for list="{{lv.tc.rows}}" as="tr" hint-placeholder-count="3"><dt>{{tr.k}}</dt><dd>{{tr.v}}</dd></sc-for>
+              </dl>
+              <p class="hc-hint">{{lv.tc.hint}}</p>
+            </div>
+          </sc-if>
+        </div>
+      </section>
+
+      <!-- its record (runs, checks, consultations it answered, turns, marks), then what you sent it and what you did here -->
+      <div class="thread lv-thread">
+        <div class="col lv-col">
+          <sc-if value="{{lv.banner.has}}" hint-placeholder-val="{{ false }}">
+            <div class="sys-line lv-note">
+              <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.75 8a5.25 5.25 0 1 0 1.6-3.8"></path><path d="M2.5 2.75v2.5H5"></path><path d="M8 5.25V8l2 1.25"></path></svg>
+              <span>{{lv.banner.text}}</span>
+            </div>
+          </sc-if>
+          <sc-for list="{{lv.items}}" as="e" hint-placeholder-count="8">
+            <sc-if value="{{e.isDay}}" hint-placeholder-val="{{ false }}">
+              <div class="lv-day">{{e.text}}</div>
+            </sc-if>
+            <sc-if value="{{e.isSep}}" hint-placeholder-val="{{ false }}">
+              <div class="attempt-sep">{{e.text}}</div>
+            </sc-if>
+            <sc-if value="{{e.isSys}}" hint-placeholder-val="{{ false }}">
+              <div class="sys-line">
+                <sc-if value="{{e.icPause}}" hint-placeholder-val="{{ false }}"><svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M5.75 3.75v8.5M10.25 3.75v8.5"></path></svg></sc-if>
+                <sc-if value="{{e.icPlay}}" hint-placeholder-val="{{ false }}"><svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M5.25 3.5v9l7-4.5Z"></path></svg></sc-if>
+                <sc-if value="{{e.icStop}}" hint-placeholder-val="{{ false }}"><svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><rect x="4" y="4" width="8" height="8" rx="1.25"></rect></svg></sc-if>
+                <sc-if value="{{e.icRequeue}}" hint-placeholder-val="{{ false }}"><svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M12.75 3.25v3h-3"></path><path d="M12.5 6.25A5 5 0 1 0 13 9.25"></path></svg></sc-if>
+                <sc-if value="{{e.icCheck}}" hint-placeholder-val="{{ false }}"><svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="m3.25 8.5 3 3 6.5-7"></path></svg></sc-if>
+                <span>{{e.text}}</span>
+                <span class="t">{{e.t}}</span>
+              </div>
+            </sc-if>
+            <sc-if value="{{e.isMark}}" hint-placeholder-val="{{ false }}">
+              <div class="sys-line">
+                <span class="{{e.sq}}" aria-hidden="true"></span>
+                <sc-if value="{{e.noGo}}" hint-placeholder-val="{{ true }}"><span>{{e.text}}</span></sc-if>
+                <sc-if value="{{e.goBtn}}" hint-placeholder-val="{{ false }}"><button class="ref" type="button" onClick="{{e.go}}" title="{{e.goTip}}">{{e.text}}</button></sc-if>
+                <sc-if value="{{e.goLink}}" hint-placeholder-val="{{ false }}"><a class="ref" href="Main.dc.html" title="{{e.goTip}}">{{e.text}}</a></sc-if>
+                <span class="t">{{e.t}}</span>
+              </div>
+            </sc-if>
+            <sc-if value="{{e.isBrief}}" hint-placeholder-val="{{ false }}">
+              <div class="lv-brief">
+                <div class="sys-line">
+                  <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.75 8a5.25 5.25 0 1 0 1.6-3.8"></path><path d="M2.5 2.75v2.5H5"></path><path d="M8 5.25V8l2 1.25"></path></svg>
+                  <span>接续说明：只用已保存的事实组装</span>
+                </div>
+                <dl class="d-dl">
+                  <sc-for list="{{e.rows}}" as="b" hint-placeholder-count="2"><dt>{{b.k}}</dt><dd>{{b.v}}</dd></sc-for>
+                </dl>
+              </div>
+            </sc-if>
+            <sc-if value="{{e.isRun}}" hint-placeholder-val="{{ true }}">
+              <div class="lv-it">
+                <button class="{{e.cls}}" type="button" onClick="{{e.toggle}}" aria-expanded="{{e.open}}">
+                  <svg class="ico sm chev" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4"></path></svg>
+                  <span class="{{e.headCls}}">{{e.head}}<sc-if value="{{e.hasWord}}" hint-placeholder-val="{{ true }}"><span class="lv-dot" aria-hidden="true">·</span><span class="{{e.wordCls}}">{{e.word}}</span></sc-if></span>
+                  <span class="t">{{e.time}}</span>
+                </button>
+                <sc-if value="{{e.open}}" hint-placeholder-val="{{ false }}">
+                  <div class="steps">
+                    <sc-for list="{{e.steps}}" as="p" hint-placeholder-count="1">
+                      <div class="{{p.cls}}">
+                        <sc-if value="{{p.isThink}}" hint-placeholder-val="{{ false }}"><svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M5.6 10.4A4 4 0 1 1 10.4 10.4c-.5.4-.65.9-.65 1.35v.5h-3.5v-.5c0-.45-.15-.95-.65-1.35Z"></path><path d="M6.6 14.25h2.8"></path></svg></sc-if>
+                        <sc-if value="{{p.isFile}}" hint-placeholder-val="{{ true }}"><svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 1.75h5.25l3 3v9.5H4Z"></path><path d="M9 1.75V5h3.25"></path></svg></sc-if>
+                        <sc-if value="{{p.isEdit}}" hint-placeholder-val="{{ false }}"><svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M10.75 2.75 13.25 5.25 6 12.5H3.5V10Z"></path><path d="M9.25 4.25l2.5 2.5"></path></svg></sc-if>
+                        <sc-if value="{{p.isCmd}}" hint-placeholder-val="{{ false }}"><svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 4.5 6.25 8 3 11.5"></path><path d="M8.25 11.75h4.75"></path></svg></sc-if>
+                        <sc-if value="{{p.isInt}}" hint-placeholder-val="{{ false }}"><svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.75 3v4.5a2 2 0 0 0 2 2h8.5"></path><path d="m10.25 6.5 3 3-3 3"></path></svg></sc-if>
+                        <span class="step-verb">{{p.verb}}</span><span class="step-dot">·</span><span class="{{p.objCls}}">{{p.obj}}</span>
+                        <sc-if value="{{p.hasMeta}}" hint-placeholder-val="{{ false }}"><span class="step-meta">{{p.meta}}</span></sc-if>
+                        <sc-if value="{{p.isDiff}}" hint-placeholder-val="{{ false }}"><span class="step-meta"><span class="add">{{p.add}}</span> <span class="del">{{p.del}}</span></span></sc-if>
+                        <sc-if value="{{p.hasDetail}}" hint-placeholder-val="{{ false }}"><div class="{{p.detCls}}">{{p.detail}}</div></sc-if>
+                      </div>
+                    </sc-for>
+                    <sc-if value="{{e.hasNote}}" hint-placeholder-val="{{ true }}"><p class="lv-snote">{{e.note}}</p></sc-if>
+                  </div>
+                </sc-if>
+              </div>
+            </sc-if>
+            <sc-if value="{{e.isRow}}" hint-placeholder-val="{{ false }}">
+              <div class="lv-row">
+                <sc-if value="{{e.icCheck}}" hint-placeholder-val="{{ true }}"><svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.75 4.25h6.5M6.75 8h6.5M6.75 11.75h6.5"></path><path d="m2.5 4.25.9.9 1.6-1.65M2.5 8l.9.9L5 7.25M2.75 11.75h1.5"></path></svg></sc-if>
+                <sc-if value="{{e.icAsk}}" hint-placeholder-val="{{ false }}"><svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><circle cx="4.5" cy="3.75" r="1.5"></circle><circle cx="4.5" cy="12.25" r="1.5"></circle><circle cx="11.5" cy="4.75" r="1.5"></circle><path d="M4.5 5.25v5.5M11.5 6.25c0 3-7 2-7 4.5"></path></svg></sc-if>
+                <sc-if value="{{e.icTalk}}" hint-placeholder-val="{{ false }}"><svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.75 3.25h10.5v7.25H8l-3 2.5v-2.5H2.75Z"></path></svg></sc-if>
+                <span class="lv-rt">{{e.head}}<sc-if value="{{e.hasWord}}" hint-placeholder-val="{{ true }}"><span class="lv-dot" aria-hidden="true">·</span><span class="{{e.wordCls}}">{{e.word}}</span></sc-if></span>
+                <span class="t">{{e.time}}</span>
+              </div>
+            </sc-if>
+            <sc-if value="{{e.isAsk}}" hint-placeholder-val="{{ false }}">
+              <div class="lv-msg">
+                <div class="msg-user">
+                  <div class="bubble"><sc-for list="{{e.quotes}}" as="q" hint-placeholder-count="0"><span class="bq"><sc-if value="{{q.canOpen}}" hint-placeholder-val="{{ true }}"><button class="bq-ref" type="button" onClick="{{q.toggle}}" aria-expanded="{{q.open}}" title="{{q.tip}}"><svg class="ico xs chev {{q.chevCls}}" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4"></path></svg><span class="bq-path">{{q.path}}</span><span>{{q.lines}}</span><sc-if value="{{q.snap}}" hint-placeholder-val="{{ false }}"><span class="cq-snap">草稿快照</span></sc-if></button></sc-if><sc-if value="{{q.cantOpen}}" hint-placeholder-val="{{ false }}"><span class="bq-ref"><svg class="ico xs" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 1.75h5.25l3 3v9.5H4Z"></path><path d="M9 1.75V5h3.25"></path></svg><span class="bq-path">{{q.path}}</span><span>{{q.lines}}</span><sc-if value="{{q.snap}}" hint-placeholder-val="{{ false }}"><span class="cq-snap">草稿快照</span></sc-if></span></sc-if><sc-if value="{{q.open}}" hint-placeholder-val="{{ false }}"><span class="bq-text">{{q.text}}</span></sc-if></span></sc-for>{{e.q}}</div>
+                  <span class="msg-time">{{e.t}}</span>
+                </div>
+                <div class="{{e.ansCls}}">
+                  <sc-if value="{{e.creating}}" hint-placeholder-val="{{ false }}">
+                    <div class="lv-wait"><span class="lv-spin" aria-hidden="true"></span><span>正在建立咨询…</span></div>
+                  </sc-if>
+                  <div class="{{e.aCls}}">
+                    <span class="msg-from">
+                      <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><circle cx="4.5" cy="3.75" r="1.5"></circle><circle cx="4.5" cy="12.25" r="1.5"></circle><circle cx="11.5" cy="4.75" r="1.5"></circle><path d="M4.5 5.25v5.5M11.5 6.25c0 3-7 2-7 4.5"></path></svg>
+                      {{e.from}}
+                    </span>
+                    <p class="prose">{{e.a}}</p>
+                  </div>
+                </div>
+              </div>
+            </sc-if>
+            <sc-if value="{{e.isAct}}" hint-placeholder-val="{{ false }}">
+              <div class="lv-msg">
+                <div class="msg-user">
+                  <div class="bubble"><sc-for list="{{e.quotes}}" as="q" hint-placeholder-count="0"><span class="bq"><sc-if value="{{q.canOpen}}" hint-placeholder-val="{{ true }}"><button class="bq-ref" type="button" onClick="{{q.toggle}}" aria-expanded="{{q.open}}" title="{{q.tip}}"><svg class="ico xs chev {{q.chevCls}}" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4"></path></svg><span class="bq-path">{{q.path}}</span><span>{{q.lines}}</span><sc-if value="{{q.snap}}" hint-placeholder-val="{{ false }}"><span class="cq-snap">草稿快照</span></sc-if></button></sc-if><sc-if value="{{q.cantOpen}}" hint-placeholder-val="{{ false }}"><span class="bq-ref"><svg class="ico xs" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 1.75h5.25l3 3v9.5H4Z"></path><path d="M9 1.75V5h3.25"></path></svg><span class="bq-path">{{q.path}}</span><span>{{q.lines}}</span><sc-if value="{{q.snap}}" hint-placeholder-val="{{ false }}"><span class="cq-snap">草稿快照</span></sc-if></span></sc-if><sc-if value="{{q.open}}" hint-placeholder-val="{{ false }}"><span class="bq-text">{{q.text}}</span></sc-if></span></sc-for>{{e.text}}</div>
+                  <span class="msg-time">{{e.t}}</span>
+                  <sc-if value="{{e.canAdv}}" hint-placeholder-val="{{ true }}">
+                    <button class="{{e.dvCls}}" type="button" onClick="{{e.advance}}" aria-label="{{e.dvLabel}}">
+                      <span>直接干预</span><span class="sep">·</span>
+                      <sc-for list="{{e.track}}" as="d" hint-placeholder-count="1">
+                        <sc-if value="{{d.sep}}" hint-placeholder-val="{{ false }}"><span class="sep">→</span></sc-if>
+                        <span class="{{d.cls}}">{{d.word}}</span>
+                      </sc-for>
+                      <svg class="ico xs" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4"></path></svg>
+                    </button>
+                  </sc-if>
+                  <sc-if value="{{e.noAdv}}" hint-placeholder-val="{{ false }}">
+                    <span class="{{e.dvCls}}" aria-label="{{e.dvLabel}}">
+                      <span>直接干预</span><span class="sep">·</span>
+                      <sc-for list="{{e.track}}" as="d" hint-placeholder-count="3">
+                        <sc-if value="{{d.sep}}" hint-placeholder-val="{{ false }}"><span class="sep">→</span></sc-if>
+                        <span class="{{d.cls}}">{{d.word}}</span>
+                      </sc-for>
+                    </span>
+                  </sc-if>
+                  <sc-if value="{{e.noteOnly}}" hint-placeholder-val="{{ true }}"><p class="pnote">{{e.note}}</p></sc-if>
+                  <sc-if value="{{e.noteGo}}" hint-placeholder-val="{{ false }}"><p class="pnote">{{e.noteA}}<button class="ref" type="button" onClick="{{e.go}}" title="{{e.goTip}}">需要你决定</button>{{e.noteB}}</p></sc-if>
+                  <sc-if value="{{e.noteLink}}" hint-placeholder-val="{{ false }}"><p class="pnote">{{e.noteA}}<a class="ref" href="Main.dc.html" title="{{e.goTip}}">需要你决定</a>{{e.noteB}}</p></sc-if>
+                </div>
+                <sc-if value="{{e.hasReply}}" hint-placeholder-val="{{ false }}">
+                  <div class="msg-agent"><p class="prose">{{e.reply}}</p></div>
+                </sc-if>
+              </div>
+            </sc-if>
+          </sc-for>
+        </div>
+      </div>
+
+      <!-- its composer: 问一问（只读） / 直接干预 (or the cancel confirm in its place) -->
+      <div class="dock">
+        <div class="dock-col">
+          <sc-if value="{{lv.confirm.show}}" hint-placeholder-val="{{ false }}">
+            <div class="decision" role="alertdialog" aria-label="确认取消这次执行">
+              <p class="dc-title">取消这次执行？</p>
+              <p class="dc-line">{{lv.confirm.line}}</p>
+              <div class="dc-foot">
+                <button class="btn btn-sm first" type="button" onClick="{{lv.confirm.keep}}">不取消</button>
+                <button class="btn btn-sm btn-primary" type="button" onClick="{{lv.confirm.go}}">取消执行</button>
+              </div>
+            </div>
+          </sc-if>
+          <sc-if value="{{lv.cm.show}}" hint-placeholder-val="{{ true }}">
+            <div class="composer">
+              <div class="lv-mode-row">
+                <div class="mode" role="radiogroup" aria-label="{{lv.cm.groupLabel}}">
+                  <button class="{{lv.cm.askCls}}" type="button" role="radio" aria-checked="{{lv.cm.isAsk}}" onClick="{{lv.cm.pickAsk}}" onMouseEnter="{{lv.cm.tipAsk}}" onMouseLeave="{{lv.untip}}" onFocus="{{lv.cm.tipAsk}}" onBlur="{{lv.untip}}">
+                    <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><circle cx="4.5" cy="3.75" r="1.5"></circle><circle cx="4.5" cy="12.25" r="1.5"></circle><circle cx="11.5" cy="4.75" r="1.5"></circle><path d="M4.5 5.25v5.5M11.5 6.25c0 3-7 2-7 4.5"></path></svg>
+                    问一问（只读）
+                  </button>
+                  <button class="{{lv.cm.actCls}}" type="button" role="radio" aria-checked="{{lv.cm.isAct}}" aria-disabled="{{lv.cm.actOff}}" onClick="{{lv.cm.pickAct}}" onMouseEnter="{{lv.cm.tipAct}}" onMouseLeave="{{lv.untip}}" onFocus="{{lv.cm.tipAct}}" onBlur="{{lv.untip}}">
+                    <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.75 3v4.5a2 2 0 0 0 2 2h8.5"></path><path d="m10.25 6.5 3 3-3 3"></path></svg>
+                    直接干预
+                  </button>
+                </div>
+                <sc-if value="{{lv.tipAt.mode}}" hint-placeholder-val="{{ false }}">
+                  <div class="hcard" role="tooltip">
+                    <div class="hc-head"><span class="hc-name">{{lv.tc.name}}</span></div>
+                    <p class="hc-state"><span class="{{lv.tc.tx}}">{{lv.tc.word}}</span>{{lv.tc.why}}</p>
+                    <dl class="hc-dl">
+                      <sc-for list="{{lv.tc.rows}}" as="tr" hint-placeholder-count="3"><dt>{{tr.k}}</dt><dd>{{tr.v}}</dd></sc-for>
+                    </dl>
+                    <p class="hc-hint">{{lv.tc.hint}}</p>
+                  </div>
+                </sc-if>
+              </div>
+              <!-- the quotes waiting in this draft (引用到草稿 while this conversation is in the centre; kit §15.5) -->
+              <sc-for list="{{lv.cm.quotes}}" as="q" hint-placeholder-count="0">
+                <div class="composer-quote">
+                  <svg class="ico xs" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 1.75h5.25l3 3v9.5H4Z"></path><path d="M9 1.75V5h3.25"></path></svg>
+                  <span class="cq-main"><span class="cq-path" title="{{q.path}}">{{q.path}}</span><span class="cq-lines">{{q.lines}}</span><sc-if value="{{q.snap}}" hint-placeholder-val="{{ false }}"><span class="cq-snap">草稿快照</span></sc-if></span>
+                  <button class="btn btn-icon btn-xs" type="button" onClick="{{q.remove}}" aria-label="移除这条引用" title="移除引用">
+                    <svg class="ico xs" viewBox="0 0 16 16" aria-hidden="true"><path d="m4.5 4.5 7 7M11.5 4.5l-7 7"></path></svg>
+                  </button>
+                  <sc-if value="{{q.hasSnip}}" hint-placeholder-val="{{ false }}"><span class="cq-snip">{{q.snip}}</span></sc-if>
+                </div>
+              </sc-for>
+              <label class="sr-only" for="lv-input">{{lv.cm.label}}</label>
+              <textarea id="lv-input" rows="2" placeholder="{{lv.cm.ph}}" value="{{lv.cm.draft}}" onChange="{{lv.cm.onDraft}}"></textarea>
+              <div class="composer-foot">
+                <span class="to">{{lv.cm.foot}}</span>
+                <button class="{{lv.cm.sendCls}}" type="button" onClick="{{lv.cm.send}}" aria-label="{{lv.cm.sendLabel}}" aria-disabled="{{lv.cm.sendOff}}" title="{{lv.cm.sendLabel}}">
+                  <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 12.75V3.5M4.25 7.25 8 3.5l3.75 3.75"></path></svg>
+                </button>
+              </div>
+            </div>
+          </sc-if>
+        </div>
+      </div>
+    </sc-if>

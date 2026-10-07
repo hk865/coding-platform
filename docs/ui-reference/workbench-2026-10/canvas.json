@@ -1,0 +1,151 @@
+{
+  "v": 3,
+  "attachments": {},
+  "boards": {
+    "ArchOverview.dc.html": {
+      "expand": "fill",
+      "h": 1000,
+      "is_interactive": true,
+      "title": "完整架构图",
+      "w": 1440,
+      "x": 1520,
+      "y": 2840
+    },
+    "Chain.dc.html": {
+      "expand": "fill",
+      "h": 1100,
+      "is_interactive": true,
+      "title": "思维链 · 执行者",
+      "w": 1440,
+      "x": 0,
+      "y": 1320
+    },
+    "Decide.dc.html": {
+      "expand": "fill",
+      "h": 900,
+      "is_interactive": true,
+      "title": "需要你决定",
+      "w": 1440,
+      "x": 3040,
+      "y": 1320
+    },
+    "Done.dc.html": {
+      "expand": "fill",
+      "h": 900,
+      "is_interactive": true,
+      "title": "完成与交付",
+      "w": 1440,
+      "x": 0,
+      "y": 4260
+    },
+    "Goals.dc.html": {
+      "expand": "fill",
+      "h": 900,
+      "is_interactive": true,
+      "title": "目标顺序与冲突",
+      "w": 1440,
+      "x": 3040,
+      "y": 0
+    },
+    "Main.dc.html": {
+      "expand": "fill",
+      "h": 900,
+      "is_interactive": true,
+      "title": "主画面",
+      "w": 1440,
+      "x": 0,
+      "y": 0
+    },
+    "Member.dc.html": {
+      "expand": "fill",
+      "h": 900,
+      "is_interactive": true,
+      "title": "成员页 · 分支与干预",
+      "w": 1440,
+      "x": 1520,
+      "y": 1320
+    },
+    "Phone.dc.html": {
+      "h": 844,
+      "is_interactive": true,
+      "title": "手机 · 对话、待决与进度",
+      "w": 390,
+      "x": 1520,
+      "y": 4260
+    },
+    "Plan.dc.html": {
+      "expand": "fill",
+      "h": 900,
+      "is_interactive": true,
+      "title": "方案选择与迭代",
+      "w": 1440,
+      "x": 1520,
+      "y": 0
+    },
+    "TaskMap.dc.html": {
+      "expand": "fill",
+      "h": 1000,
+      "is_interactive": true,
+      "title": "任务图（整页）· DAG / 大纲 / 轨道",
+      "w": 1440,
+      "x": 0,
+      "y": 2840
+    }
+  },
+  "createdOnFiles": {
+    "at": "2026-10-04T15:40:00Z",
+    "v": 1
+  },
+  "designSystems": [],
+  "launch": {
+    "view": "canvas"
+  },
+  "notes": {
+    "r1": {
+      "kind": "title1",
+      "maxW": 4480,
+      "text": "对话与指挥",
+      "w": 240,
+      "x": 0,
+      "y": -300
+    },
+    "r2": {
+      "kind": "title1",
+      "maxW": 4480,
+      "text": "思维链、成员与决定",
+      "w": 240,
+      "x": 0,
+      "y": 1020
+    },
+    "r3": {
+      "kind": "title1",
+      "maxW": 4480,
+      "text": "看进度与架构",
+      "w": 240,
+      "x": 0,
+      "y": 2540
+    },
+    "r4": {
+      "kind": "title1",
+      "maxW": 4480,
+      "text": "完成与小屏",
+      "w": 240,
+      "x": 0,
+      "y": 3960
+    }
+  },
+  "order": [
+    "Main.dc.html",
+    "Plan.dc.html",
+    "Goals.dc.html",
+    "Chain.dc.html",
+    "Member.dc.html",
+    "Decide.dc.html",
+    "TaskMap.dc.html",
+    "ArchOverview.dc.html",
+    "Done.dc.html",
+    "Phone.dc.html"
+  ],
+  "pages": [],
+  "title": "工作台新原型"
+}
