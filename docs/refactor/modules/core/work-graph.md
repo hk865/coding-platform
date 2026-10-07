@@ -2,6 +2,8 @@
 
 > **2026-09-26 当前实现：** 正式Task执行状态、Session/图索引、通信、材料、Role、未来意图与公开初始化已接通；R3e注册检查及正式Task/Goal完成、Query受理/claim/终态Answer实现已独审导入。Query从原submission locator读请求事实，新的动作守当前权限/占用，终态保留已发生事实。R4.1仅为持久控制受理，物理投递/ack/resume仍待接；CoordinationPolicy writer、正式架构演进和完整治理继续。已有Plan的Workflow推进与初始Host、Session/mailbox已导入，初始Plan消费者及生产UI布局为当前下一批。最新增量、消费者和证据见[能力索引](../../IMPLEMENTED-CAPABILITIES.md)与[交接](../../HANDOFF.md)。最近完整物理隔离仍为R5a/R4.2的102文件/1,007项；后续专项通过不等于当前main或完整产品已全量验收。
 
+> **2026-10-07 补注（第 7 步）：** 上段之后，R4.3a 接通了控制投递与 ack。可靠性批次 A.2 第 2–6 步与简化又改了本模块：状态迁移只经 `work-graph/state/` 的纯状态机（规格 §14，决定 20）；第 5 步加了没进入 Run 的当场控制、每个检查主体一条轮次链、失败 Task 的重新入队、Goal 级暂停/恢复/取消（须钉 GoalPhase 版本，HANDOFF 决定 29）、启动核对与人工认定、重新检查、对已执行 Task 改处置；简化（决定 34）删了材料授权、精确输入读取等走不到的代码。下文 §4.2、§5、§5.1、§6.1、§6.3、§8、§11.3 里过期的说法各自加了补注。当前能力以[能力索引](../../IMPLEMENTED-CAPABILITIES.md)为准（WG3、WG5、WG20、WG22–WG28）。原 Turn 的 fresh resume 不做（D-17）。
+
 > **2026-09-24 并行语义纠偏：** 任务图是协作白板、状态/历史与证据索引；预期依赖和架构影响不自动阻止执行。明确采用的具体输入条件在需要消费时检查，不以生产方整个 Task satisfied 代替。取消每次 Task/Query 领取必须预证明全部未来范围、预占资源的要求；身份、权限、幂等、同 Session 一致性及实际操作的原子性仍保留。下文尚含该旧方案的 scope/reservationRef 必填代码块，标记为**待按具体工具收窄的草案，不得直接冻结施工**。最新行为图见[并行设计 §1.2、§3](../../PARALLEL-COLLABORATION.md)；当前代码差异见[审阅报告](../../reviews/task-graph-orchestration-intent-2026-09-24.md)。
 
 
@@ -319,7 +321,7 @@ flowchart TD
 - 定向 Run 索引、Lease/Reduction 精确读取复用现有 canonical fold / eligibility；不为单任务读取整 Goal，也不把全局账本水位作为提交锁。
 - 同一事务保存五种记录；TaskLease 不存在 CAS 防重复首次领取，Session revision CAS 防同 Session 并发。generation 取 Session 新 revision，不另造计数表或重复唯一槽。新平台后续领取/结束路径必须与这些正式记录同事务协调，不能绕过它们另写 Run。
 - 角色解析保持同一实现，内部额外返回版本 guards；公开查询不变。领取确认身份和当前配置，不能把空权限检查解释成执行授权。
-- 重放恢复原事件中的领取结果；读取 outbox 可查原领取。当前不发布自动释放：旧 TaskLease@1 没有 released 状态，过期时间不能假装释放。
+- 重放恢复原事件中的领取结果；读取 outbox 可查原领取。当前不发布自动释放：旧 TaskLease@1 没有 released 状态，过期时间不能假装释放。（2026-10-07 补注（第 7 步）：B2 起 Run 的真实终态同代次释放占用，TaskLease 留下 `release` 记录；可靠性批次 A.2 5.1 起没进入的 Run 被取消时同一提交释放（D-7）；5.4 起带 `requeueRef` 的重新入队领取重新持有这条已释放的 Lease 记录。见[能力索引](../../IMPLEMENTED-CAPABILITIES.md) WG5、WG20、WG24。）
 - 复用 Session/Run/Lease codec、Memory/SQLite 事务与索引；仅补 Attempt/outbox/领取事件编码和领取服务，不增加模块/存储层。批次准确范围与反例见 [R4c.1 施工要求](../../tasks/R4c-next-claim-skeleton-prompt.md)。
 
 ## 5. TaskPort：目标、计划、领取、完成
@@ -374,6 +376,8 @@ export interface TaskPort {
 }
 ```
 
+（2026-10-07 补注（第 7 步）：上面的 `requeueTask` 已实现，但在 `TaskClaimPort` 上（[claim-contracts.ts](../../../../src/core/work-graph/tasks/claim-contracts.ts)）：输入 `RequeueTaskInput` 是 `taskRef`、`afterRunRef`（即上面的 `failedRunRef`）、`reason`，可选 `budget`、`newInputRefs`、`note`、`trigger`；结果 `TaskRequeueOutcomeV1` 是 `requeued` 或政策拒绝 `refused`，不是 TaskRow（可靠性批次 A.2 5.4）。Goal 的期望状态另由 `GoalTaskPort.setGoalControl` 改（5.5），须钉 Goal 和 GoalPhase 两个版本（HANDOFF 决定 29），不借 `updateGoalIntent`。`releaseTaskClaim`、`assessParallelism` 代码里没有。）
+
 `GoalPhaseSnapshot` 来源 `src/contracts/goal-phase.ts`，`TaskReductionRef` 来源 `src/contracts/reduction.ts`。预算使用用户/项目已有配置，不因新入口自行增加数字。实际权限由角色/当前授权解析，模型不能传一个 tools 数组自行扩大权限。
 
 `ScopeProposal/ParallelCandidate/ParallelAssessment/ResourceReservationRecord` 的目标字段及操作语义见 [并行协作 §4–5](../../PARALLEL-COLLABORATION.md)，领域 DTO 同归 `tasks/contracts.ts`；共享 ResourceTarget/Access/ReservationRef 归 `src/contracts/core/resources.ts`。注释：预检查只提供解释，不能用其成功结果替代 claim 时对当前集合的原子核对。不同模块共享接口属于影响提示，实际路径重叠才按操作模式判断资源冲突。工具返回具体冲突/缺口后由 Agent 修正分工，不自动把任务判失败。
@@ -388,7 +392,7 @@ export interface TaskPort {
 
 **W1 Host future-only 修订已通过独立物理隔离验收**，见 [B1/W1 报告](../../reviews/next-b1-w1-2026-09-25.md)。施工经过骨架/测试中审、DSH 实现和独立返修，范围见 [W1 任务记录](../../tasks/W1-future-plan-skeleton.md)。现有 `PlanTaskPort.proposePlan/applyPlanChange` 已支持 active source 上的 v2 窄候选：从可信源 Plan 和候选计算局部差异，并以原事务采用；未新增白板 Port、Task 状态表或编排总管。W2 Agent 委托复用同一未来采用编排，C2 已接真实 Runtime 工具消费者；完整授权变更和 Workflow 自动规划推进仍未完成，不能扩大为任意 basedOn 变更。
 
-**可改什么。** 执行定义仅可修改从未领取/执行、没有正式归约的未来任务：有界标题/指令、具体输入引用、延后/取消、已授权范围内的新增/拆分。展示分组和提示关系另按下段规则维护。已领取或执行过的任务保留全部执行定义、assignment、inputs、关联的验收语义与状态依据；编辑未来 B 不要求正在运行的 A 停下。取消使用 disposition，不物理删除旧 taskId。已有任务角色重分配、Role/Skill 配置变更、目标/验收义务正文或治理 pin 变化、预算授权增量不属于 W1；reviewAdmissionProtocol 保持原值，原 origin 保留且不能被候选替换。新增任务必须 phase=pending；未标显式意图的 legacy 新节点仍受源计划角色集合约束，显式节点首次声明角色按本节 W2 增量处理，不产生新的权限或预算；实际预算仍由后续真实 claim/Runtime 接受，不能从白板编辑得到。
+**可改什么。** 执行定义仅可修改从未领取/执行、没有正式归约的未来任务：有界标题/指令、具体输入引用、延后/取消、已授权范围内的新增/拆分。展示分组和提示关系另按下段规则维护。已领取或执行过的任务保留全部执行定义、assignment、inputs、关联的验收语义与状态依据；编辑未来 B 不要求正在运行的 A 停下。取消使用 disposition，不物理删除旧 taskId。已有任务角色重分配、Role/Skill 配置变更、目标/验收义务正文或治理 pin 变化、预算授权增量不属于 W1；reviewAdmissionProtocol 保持原值，原 origin 保留且不能被候选替换。新增任务必须 phase=pending；未标显式意图的 legacy 新节点仍受源计划角色集合约束，显式节点首次声明角色按本节 W2 增量处理，不产生新的权限或预算；实际预算仍由后续真实 claim/Runtime 接受，不能从白板编辑得到。（2026-10-07 补注（第 7 步）：可靠性批次 A.2 5.10 起，已领取或执行过的 Task 也可以改处置（延后、恢复、取消、替换；用户决定 C7，规格 TASK-19）：执行定义、basis 照旧冻结，原 Run、轮次、证据保留；要求它的 Run 都已结束、Lease 已释放、Task 未满足，并列在 `reason.affectedTaskIds`；人停下的 Task 只有操作者能改，Agent 或自动化不能给人停下的义务另加并行载体（LA-3）。改动记在新 Plan 的 `dispositionRecord`。见[能力索引](../../IMPLEMENTED-CAPABILITIES.md) WG2。）
 
 差异以执行定义为边界：RuntimeTask 字段、该 task 的 assignment/inputRequirements/所承担义务语义进入未来性检查和 basis 更新集合。纯提示的 taskRelations、展示用 parentOf 不进入该集合，允许编辑连接运行 A 的提示关系而不要求 A 未执行、不重置 A 的 basis。比较 A 的义务语义时排除其他 taskIds 成员变化；给未来 B 调整承担映射不能因此认定 A 被修改。关系结构、legacy 完整定义与原承诺覆盖仍按各自适用规则校验。
 
@@ -466,7 +470,7 @@ export interface SessionDirectoryPort {
 
 `admitSessionCreation` 在操作载荷里保存 initialLinks 和 Host 固定的 kernelStore(adapterId/storeKey)；路由建议不参与业务幂等指纹，重放使用首次持久 action。登记的 adapter 必须匹配该 pin。尚未映射时不能把这些链接当“已开始负责”。`recordSessionCreated` 校验操作的预分配引用、目标 workspace、真实适配实例与唯一 Kernel 映射，写 Session 与初始链接、索引并将操作完成。失败/unknown 保留操作可恢复，不再随机创建另一会话掩盖原操作。
 
-SessionRecord 的完整字段在公共契约中定义：ref/revision、kernel(adapterId/kernelSessionId)、workspaceId、role、lifecycle(active/archived)、health(available/recoverable/unavailable)、occupancy、lastExecutionRef、historyCursor、createdAt/archivedAt。SessionWorkLink 保存 ref/revision/since/until，ref 内含 Session、target 与 relation；until 非空表示已经结束，不删除历史。
+SessionRecord 的完整字段在公共契约中定义：ref/revision、kernel(adapterId/kernelSessionId)、workspaceId、role、lifecycle(active/archived)、health(available/recoverable/unavailable)、occupancy、lastExecutionRef、historyCursor、createdAt/archivedAt。（2026-10-07 补注（第 7 步）：可靠性批次 A.2 5.6 起另有 `healthConclusion`（`missing`、`damaged`、`kernel_turn_open`），说明 unavailable 的原因。health 由启动核对的探针（`sessions/session-health.ts`）和 Run 结束的同一提交写；Kernel Turn 没有终态的 Session 记为 `kernel_turn_open`，不再执行，原历史仍可读。见[能力索引](../../IMPLEMENTED-CAPABILITIES.md) WG6、WG27。）SessionWorkLink 保存 ref/revision/since/until，ref 内含 Session、target 与 relation；until 非空表示已经结束，不删除历史。
 
 SessionWorkLink 与 WorkModuleLink 的 since/until 需要本次真实提交 cursor 时，CommitCompiler 发出 RecordStore 的白名单 commitCursorBindings，Store 在同一事务绑定后完整验证编码。不能由 WG 预猜 cursor，或提交成功后另改关系记录。Catalog 使用独立 aggregateType/key/schema，不能与原 baseline 快照以同一 refKey 竞争。
 
@@ -575,7 +579,7 @@ export interface RunStatePort {
 
 RuntimeEntryRecord是既有Run/QueryRun执行授权的公开结果，持久层复用或版本化executionAuthorization及Query对应入口记录，不新建另一份可独立写的运行真相；Kernel标识只保存核对所需映射，不复制内核日志。
 
-**B 下一批的持久收敛与兼容要求（2026-09-25，尚未实现/验收）：** 当前 [ExecutionAuthorizationV1 / RunSnapshot](../../../../src/contracts/dispatch.ts) 已有 consumerId、generation、phase 和可选 executionHistory/inputBinding；下一批优先在这一 Run 绑定内补齐版本化的 Kernel 身份、输入引用及 fresh-begin 证据，不另建 RuntimeEntry 真相表。下方 entering/observed 等词表达协议阶段，不能直接当作旧 V1 的已实现枚举；旧 V1 只有 authorized/entered/revoked/quarantined/settled，保持其读取与历史解释兼容。新协议须通过可区分的版本/绑定及 codec 验证，旧记录缺少新绑定时明确返回缺口，不把旧 authorized、缺字段或成功重放当成新版启动许可。不得删除旧 schema，或用强制类型转换让损坏/旧授权绕过新入口条件。
+**B 下一批的持久收敛与兼容要求（2026-09-25，尚未实现/验收）：** 当前 [ExecutionAuthorizationV1 / RunSnapshot](../../../../src/contracts/dispatch.ts) 已有 consumerId、generation、phase 和可选 executionHistory/inputBinding；下一批优先在这一 Run 绑定内补齐版本化的 Kernel 身份、输入引用及 fresh-begin 证据，不另建 RuntimeEntry 真相表。下方 entering/observed 等词表达协议阶段，不能直接当作旧 V1 的已实现枚举；旧 V1 只有 authorized/entered/revoked/quarantined/settled，保持其读取与历史解释兼容。新协议须通过可区分的版本/绑定及 codec 验证，旧记录缺少新绑定时明确返回缺口，不把旧 authorized、缺字段或成功重放当成新版启动许可。不得删除旧 schema，或用强制类型转换让损坏/旧授权绕过新入口条件。（2026-10-07 补注（第 7 步，规格 GAP-45 的“§6.3 授权阶段名”）：代码里的 V2 授权阶段是 `authorized`、`entering`、`entered`、`unknown`、`revoked`、`settled`（[dispatch.ts](../../../../src/contracts/dispatch.ts) 的 `ExecutionAuthorizationV2`）。本节的 `observed` 对应 `entered`，另有 `settled`（规格 §6.1）。可靠性批次 A.2 起 `revoked`（启动核对撤销一次开始了却没进入的进入，取消没进入的 Run 时撤销授权）和 `unknown`（结果未知）都有写入者，都只经 `state/run-machine.ts` 写出。）
 
 Prepared 由 Runtime 组装，但不是调用者自授执行权的凭据。WG 的新准入写操作必须根据现有 Artifact 正文、Run.envelope/inputBinding 的固定引用与摘要重读可信装配，并复核正式 Claim、当前 Session 占用代次、角色和材料绑定；不能只接受调用者回传的 Prepared 或 digest。沿已有 Store 条件事务维护输入与进入绑定，不新建 Prepared 数据库。历史正文仍留在 Kernel，WG 只维护定位及正式事实。当前正文 schema 与这些写操作尚需骨架冻结；本段不宣称实现已存在。
 
@@ -587,7 +591,7 @@ entering 不表示模型已经启动，而表示已进入可能执行的窗口�
 
 结果按真实 Kernel 事件身份/序列归因，核对原 entryGeneration 与 Session generation；旧入口的观察可保留供对账，不释放新占用、不覆盖当前期望。Runtime事件须通过可信观察记录带入入口身份，不能让模型自报 consumerId 或凭墙钟决定哪份终态获胜。首版范围仍是现有宿主与可核对的执行实例，不以本协议宣称跨主机恰好一次。
 
-beginRuntimeEntry 同时保存 Runtime 预先固定的 KernelExecutionBinding，并核对真实 Session 的 adapter/session 映射；重复/恢复不换 kernel runId/turnId，不因 consumer 换代重新生成。recordRunResult/reconcileRun 必须把技术观察的 kernelSource 与 completedHistoryBoundary 一起传入，事件指纹包含这些来源。WG 对照该绑定和位置核对，不反调Kernel。只有 Runtime 根据完整已结束 Turn 得到的边界才推进 Session.historyCursor；非终态/缺口为null，不能用“最近看见的位置”或平台事件序号代替。旧未映射执行、证实未进入的拒绝等无Kernel来源时明确null；实际进入后的terminal缺来源不能据此释放未知占用。opaque cursor由Runtime按同一历史读取协议构造，WG保存引用，不自行解析字符串大小。
+beginRuntimeEntry 同时保存 Runtime 预先固定的 KernelExecutionBinding，并核对真实 Session 的 adapter/session 映射；重复/恢复不换 kernel runId/turnId，不因 consumer 换代重新生成。recordRunResult/reconcileRun 必须把技术观察的 kernelSource 与 completedHistoryBoundary 一起传入，事件指纹包含这些来源。WG 对照该绑定和位置核对，不反调Kernel。只有 Runtime 根据完整已结束 Turn 得到的边界才推进 Session.historyCursor；非终态/缺口为null，不能用“最近看见的位置”或平台事件序号代替。旧未映射执行、证实未进入的拒绝等无Kernel来源时明确null；实际进入后的terminal缺来源不能据此释放未知占用。opaque cursor由Runtime按同一历史读取协议构造，WG保存引用，不自行解析字符串大小。（2026-10-07 补注（第 7 步，规格 §8 SD-5）：“实际进入后的terminal缺来源不能据此释放未知占用”一句加例外：有实例租约接管的证明（D-6）或活句柄退出证明（RD-7），且没有在途工具时；或有人工认定（D-4(b)，只在持实例租约的 Host 上）时，没有 Kernel 终态来源也释放占用。这时 `historyCursor` 不前移；Kernel Turn 没有终态的领取 Session 同一提交记为 `unavailable/kernel_turn_open`（LA-1）。结果未知仍保留占用。）
 
 **进入事实的真实生产者：** Runtime 下一批复用 Kernel 已 await 的公开 before_model Hook，在 Kernel 已持久化 turn.started/run.started 后读取并提供精确来源，复用 WG12 定位校验，再确认 entered；确认成功才让模型继续。`onConfiguration` 未被 await，best_effort observer 又不能传播持久化失败，不能单独作为屏障。WorkGraph 仍只接收、核对正式来源，不导入 Kernel。B1 已提供 Runtime 来源工具 first_use 惰性打开组件，正式 driver 后续使用它消除“先读源码才进 Kernel、源码又要求 entered”的接线环，不能由 WG 提前写 running 来放行。源码时序证据与待验证行为见 [AgentRuntime §7.1](agent-runtime.md#71-b-下一批的接线冻结与验证要求2026-09-25)。这条生产链尚未实现，现有 WG12 可写 locator 不等于自动维护已经完成。
 
@@ -601,9 +605,9 @@ readExecution 的 session=null 仅表示旧执行尚无已核对平台目录；�
 
 ModelCallAccess 的现行公开方法只有 bind/beforeCall；前者受理 RuntimeInputBinding，后者签发一次性 permit 并记录实际调用尝试，复用 authorizeModelRequest/recordRunFact。实际 provider 收到或完成并无这里可伪造的 ack。原 RunFactReceipt 明确 replayed=false 且以 duplicate/stale/conflict_event 表达重复，兼容入口保持原样，不能强套 GraphWrite 的幂等回执。QueryRun 保留其独立实际入口守卫，不强转普通Run的调用许可。
 
-原 SubmitControlCommand 只支持其既有 Run/目标范围；对 QueryRun 的控制先沿 QueryJob close/cancel 正式路径，不把 QueryRun 强转成 RunRef。现行 QueryJobEngine.close 会把 QueryRun 协议状态写 closed；这表示查询协议已关闭，不能证明 Kernel 已停止，不能仅据此释放 Session。新适配保留原查询协议，并由 Runtime 观察关闭请求执行实际 abort，再以真实 terminal observation 释放当前占用；未知状态继续 busy。要暴露 QueryRun pause 必须适配真实能力并扩展契约，首批 unsupported，不捏造已暂停。
+原 SubmitControlCommand 只支持其既有 Run/目标范围；对 QueryRun 的控制先沿 QueryJob close/cancel 正式路径，不把 QueryRun 强转成 RunRef。现行 QueryJobEngine.close 会把 QueryRun 协议状态写 closed；这表示查询协议已关闭，不能证明 Kernel 已停止，不能仅据此释放 Session。新适配保留原查询协议，并由 Runtime 观察关闭请求执行实际 abort，再以真实 terminal observation 释放当前占用；未知状态继续 busy。要暴露 QueryRun pause 必须适配真实能力并扩展契约，首批 unsupported，不捏造已暂停。（2026-10-07 补注（第 7 步）：本仓库没有 QueryJob close 的写入者和路由（可靠性批次 A.2 5.2 核实），对 QueryRun 的控制答 invalid，运行中的 Query 只随自己的终态结束；Query 的公开暂停与关闭仍是缺口（规格 GAP-06）。Host 崩溃留下的 QueryRun 由启动核对收束，结果未知的可人工认定（A.2 5.6）。）
 
-**R4.1 当前持久受理已交付。** `platform.controls.submitControl/readControl` 复用唯一Run authority、RecordStore和ControlIntent codec；queued pause/cancel与Run.controlState同事务提交，不释放Session/Lease，不表示Kernel已停。同identity双lookup miss后若另一调用已提交，恢复原receipt；真实commit后失联及eventAt暂时不可读保持可恢复/未知边界，不伪造未提交。authorize/begin/shared admitEnteredRun（model issue/consume）消费fresh控制屏障，原回执及已发生entered/terminal不被阻止。见[领域测试](../../../../tests/work-graph/R4-control-intent.test.ts)、[组合读取/关闭排空](../../../../tests/composition/R4-control-platform.test.ts)及[独审导入](../../reviews/evidence/next-b2-2026-09-26/control-intent-implementation-import.json)。物理投递/ack、原身份恢复和预算保留仍属后续R4.3–5。
+**R4.1 当前持久受理已交付。** `platform.controls.submitControl/readControl` 复用唯一Run authority、RecordStore和ControlIntent codec；queued pause/cancel与Run.controlState同事务提交，不释放Session/Lease，不表示Kernel已停。同identity双lookup miss后若另一调用已提交，恢复原receipt；真实commit后失联及eventAt暂时不可读保持可恢复/未知边界，不伪造未提交。authorize/begin/shared admitEnteredRun（model issue/consume）消费fresh控制屏障，原回执及已发生entered/terminal不被阻止。见[领域测试](../../../../tests/work-graph/R4-control-intent.test.ts)、[组合读取/关闭排空](../../../../tests/composition/R4-control-platform.test.ts)及[独审导入](../../reviews/evidence/next-b2-2026-09-26/control-intent-implementation-import.json)。物理投递/ack、原身份恢复和预算保留仍属后续R4.3–5。（2026-10-07 补注（第 7 步）：投递与 ack 已由 R4.3a 接通。可靠性批次 A.2 5.1 起，没进入 Kernel 的 Run 的控制当场生效，Run 结束时结算它身上仍排队的意图；控制种类有 pause、cancel、resume、steer；5.5 起有 Goal 级控制；5.6 起启动核对结算 Host 崩溃留下的控制。原 Turn 的 fresh resume 不做（D-17），预算的跨进程恢复仍缺（规格 GAP-03）。见[能力索引](../../IMPLEMENTED-CAPABILITIES.md) WG20、WG26、WG27。）
 
 ## 7. MailboxPort：工作主体、投递、响应与等待
 
@@ -712,7 +716,7 @@ export interface EvidencePort {
 
 `VerificationPlanV1` 来源 `src/contracts/verification.ts`；`SubmitEvidenceCommand/Receipt` 来源 `src/contracts/evidence.ts`（2026-10-07 更正：本仓库代码里没有这两个类型；`submitEvidence` 已按决定 34 删除）。`VerificationRoundSourceProof/MaterialIdentity` 是 `src/contracts/verification-context.ts` 中的完整名称。输入须验证真实 Run/Task/Plan pin、配置 digest、轮次 fingerprint、检查身份与来源版本；调用方不能通过随意填写 identity 为另一任务认领 PASS。读轮次将旧 record 与执行记录组合为 view，不写回仅用于显示的 current 字段。
 
-Workflow 选择既有配置并请求检查，AgentRuntime 执行命令/只读审阅，WorkGraph 受理结果。只读审阅使用真实 read witness 和证据引用，不伪造成运行过 shell。recordCheckResult 保留中断/未知影响与原始拒绝细节；同 check/request 指纹重放一致，异内容拒绝。finalizeChecks 依据冻结计划逐 requirement 汇合，缺项/过期/失败均保留；它登记正式 Evidence，但不隐式 completeTask。TaskPort.completeTask 再核对当前采用计划与证据集并归约。
+Workflow 选择既有配置并请求检查，AgentRuntime 执行命令/只读审阅，WorkGraph 受理结果。只读审阅使用真实 read witness 和证据引用，不伪造成运行过 shell。recordCheckResult 保留中断/未知影响与原始拒绝细节；同 check/request 指纹重放一致，异内容拒绝。finalizeChecks 依据冻结计划逐 requirement 汇合，缺项/过期/失败均保留；它登记正式 Evidence，但不隐式 completeTask。TaskPort.completeTask 再核对当前采用计划与证据集并归约。（2026-10-07 补注（第 7 步）：代码里的 EvidencePort 以 [evidence/contracts.ts](../../../../src/core/work-graph/evidence/contracts.ts) 为准，轮次已是正式记录。可靠性批次 A.2 5.3 起每个检查主体（work 的 Run，或 gate 自己）只有一条轮次链，同一 Run 第二次开轮答 `busy`，Task 按链头投影，完成也读链头；5.9 起 `reverifyRound` 在链头没通过时开后继轮次（记 `predecessorRoundRef`，同一提交取代前驱证据），或记政策拒绝；5.6 起运行中被中断的检查由启动核对记为中断（`interruptCheck`），runner 证明未开始的记为放弃（`abandonCheck`）。见[能力索引](../../IMPLEMENTED-CAPABILITIES.md) WG22、WG25。）
 
 角色 requiredOutputs 的现行含义是审计性产出期望；缺少角色建议产物不能新变成完成门禁。旧轮次 reduction.withheld 仅历史可读，新写入不得复活这条已撤回规则。
 
@@ -852,7 +856,7 @@ claimTask(ctx, input, meta):
   6. 返回 TaskClaim；不执行 Kernel。冲突整批回滚，返回 current pins，业务重新查询后决定。
 ```
 
-releaseTaskClaim 只释放确认尚未进入执行的当前 generation，并同步终结待派发记录；运行中改走 request control 与实际观测。不能把“worker没有回复”解释为“没有执行”。recordRunResult 对 eventId/sequence、运行代际和 exact admission 去重；terminal 已确认后释放当前匹配占用，并记录 lastExecutionRef/history cursor。旧代际迟到结果可以保留历史观察，但不能释放新占用或覆盖新运行状态。Run.completed 不调用 completeTask。
+releaseTaskClaim 只释放确认尚未进入执行的当前 generation，并同步终结待派发记录；运行中改走 request control 与实际观测。不能把“worker没有回复”解释为“没有执行”。recordRunResult 对 eventId/sequence、运行代际和 exact admission 去重；terminal 已确认后释放当前匹配占用，并记录 lastExecutionRef/history cursor。旧代际迟到结果可以保留历史观察，但不能释放新占用或覆盖新运行状态。Run.completed 不调用 completeTask。（2026-10-07 补注（第 7 步）：代码里没有 `releaseTaskClaim`。没进入 Kernel 的 Run 由取消控制当场结束并释放（D-7，可靠性批次 A.2 5.1）；进入后由终态释放，或在启动核对、人工认定时按 SD-5 释放（见 §6.3 的补注）。失败 Task 的下一次领取先经 `requeueTask`，再带 `requeueRef` 领取（A.2 5.4）。）
 
 QueryRun 用同一占用函数、独立 QueryJob/QueryRun 协议和授权记录。beginQueryExecution 原子受理 QueryRun 与占用；authorizeRuntimeEntry 才绑定实际 QueryExecutionBinding。pendingDispatch 同时查询正式 outbox 与 Query 待执行 intent，不扫描所有 Session 历史。
 

@@ -2,6 +2,8 @@
 
 > **2026-09-26 当前实现：** 正式B2 prepare/start/observe、C2通信/白板/材料及Role/Skill装配已进入原Kernel执行循环。Query已完成公开受理→Session claim→有界prepare→readonly工具/模型→持久Answer/Job/Run→同generation释放的独立真实链（13项/4文件及types），预算和来源使用原manifest，未另建引擎。Git固定commit及双向working_tree普通文本比较已接工具消费者。R4.1持久控制受理与R4.2工具组安全点已有，R4.3物理投递/ack及后续恢复、维护/重组仍未交付；Query外部材料、多轮/高级恢复与完整Host消费者继续。已有Plan的Workflow及Session/mailbox已导入，初始Plan和UI布局接续。最近完整隔离仍为[R5a/R4.2的102文件/1,007项](../../reviews/evidence/next-b2-2026-09-26/r5a-r4-isolated-result.json)；精确当前增量见[能力索引](../../IMPLEMENTED-CAPABILITIES.md)，不把下文完整目标接口当已实现。
 
+> **2026-10-07 补注（第 7 步）：** 上段之后，R4.3a/b 接了控制投递、ack 和取消后的同 Session 接续。可靠性批次 A.2 第 5 步在本模块又加了：重新入队的 Run 在 prepare 时装配接续说明（`continuation-brief-assembly.ts`，5.4）；接续 Session 从原 Session 已完成的历史起步（`sessionBasis`，5.6）；启动核对的 Kernel 分类（`run-reconcile.ts`）和 Session 探针（`SessionHistoryCursorOwner.probe`，5.6）；能力上报按各自边界把 `continueHistory`、`safePointPause`、`cancel`、`recoverRun` 报为支持（5.2、5.7），`recoverRun` 只指启动核对，原 Turn 的 fresh resume 不做（D-17）。下文 §1、§5、§6、§7.1、§8、§9 里过期的说法各自加了补注。当前能力以[能力索引](../../IMPLEMENTED-CAPABILITIES.md) RT1、RT6、RT10、RT11、RT13 和 WG27 为准。
+
 > **2026-09-24 并行语义纠偏：** 任务图是协作白板、状态/历史与证据索引；预期依赖和架构影响不自动阻止执行。明确采用的具体输入条件在需要消费时检查，不以生产方整个 Task satisfied 代替。取消每次 Task/Query 领取必须预证明全部未来范围、预占资源的要求；身份、权限、幂等、同 Session 一致性及实际操作的原子性仍保留。下文尚含该旧方案的 scope/reservationRef 必填代码块，标记为**待按具体工具收窄的草案，不得直接冻结施工**。最新行为图见[并行设计 §1.2、§3](../../PARALLEL-COLLABORATION.md)；当前代码差异见[审阅报告](../../reviews/task-graph-orchestration-intent-2026-09-24.md)。
 
 
@@ -14,7 +16,7 @@ implementation: B2/W2/C2、R5a、R4.2及R4.1持久受理已合入；Runtime实�
 
 当前源码位置是 `coding-platform/next/src/core/agent-runtime/`：已有模型工具循环、源码工具与来源授权组件，见[迁移验收](../../reviews/next-completed-migration-2026-09-24.md)。Session 创建/目录/历史子集见[next R3c/R4b验收](../../reviews/next-r3c-r4b-2026-09-24.md)；其后 B2 接通正式 Task 执行及完成后原 Session 的下一轮，C2 接通平台工具消费者。范围并行、控制恢复与完整 UI 不据此宣称交付。本文完整文件树/联合接口仍是目标设计，实际接口以 next 代码和已合入批次为准。
 
-**2026-09-24 窄接线实测：** `runObservedModel` 已接可选 sessionContext / executionIdentity，复用真实 Kernel 历史与重放；默认行为保持。54文件/376项隔离通过，见[R4c子集验收](../../reviews/next-r4c-continuity-2026-09-24.md)。当时正式 admission/执行驱动/历史边界选择尚未接通；现已由 B2 消费这一接缝，公共 continueHistory 能力标志仍未全面开放。
+**2026-09-24 窄接线实测：** `runObservedModel` 已接可选 sessionContext / executionIdentity，复用真实 Kernel 历史与重放；默认行为保持。54文件/376项隔离通过，见[R4c子集验收](../../reviews/next-r4c-continuity-2026-09-24.md)。当时正式 admission/执行驱动/历史边界选择尚未接通；现已由 B2 消费这一接缝，公共 continueHistory 能力标志仍未全面开放。（2026-10-07 补注（第 7 步）：可靠性批次 A.2 5.2 起，组合根把 `continueHistory` 报为支持，reason 写明边界：接续是新 Run，不恢复原 Turn；上一 Turn 没有 Kernel 终态时在新 Session 接续（5.6，lead 决定 LA-1）。见[能力索引](../../IMPLEMENTED-CAPABILITIES.md) RT6。）
 
 原工程 R2d/R4a 的来源桥、工具薄适配、资源释放和 Kernel 扩展是行为对照，已完成迁入的实现不得再复制。原工程历史见[批次验收](../../reviews/implementation-batches.md)，不能将旧工程文件路径当作当前施工位置。
 
@@ -26,7 +28,7 @@ implementation: B2/W2/C2、R5a、R4.2及R4.1持久受理已合入；Runtime实�
 
 本模块依赖 WorkGraph、WorkspaceTools、RecordStore。模型循环、原始 Session 日志、历史 Context 选择、工具执行和检查点继续由 Kernel 维护。新增的是平台适配和明确的 Kernel 公共扩展，不在平台复制一套历史消息拼装器。
 
-**已选定最小 Kernel 公共扩展路线，保留默认 CLI 行为；暂不采用平台 ContextBuilder wrapper。** 当前仅传同一个 sessionId 不会继承前一轮 Context，resume 也不能代替完成后的新一轮。扩展必须先通过 §6 独立验收，再把 continueHistory 能力置 true。native compact 当前没有实现，仍返回 unsupported；不能用一个新摘要 Session 冒充原会话压缩。
+**已选定最小 Kernel 公共扩展路线，保留默认 CLI 行为；暂不采用平台 ContextBuilder wrapper。** 当前仅传同一个 sessionId 不会继承前一轮 Context，resume 也不能代替完成后的新一轮。扩展必须先通过 §6 独立验收，再把 continueHistory 能力置 true。native compact 当前没有实现，仍返回 unsupported；不能用一个新摘要 Session 冒充原会话压缩。（2026-10-07 补注（第 7 步）：§6 的扩展已于 2026-09-24 通过[独立验收](../../reviews/R3a-R4a-sol-dsh-acceptance.md)，B2 已接完成边界后的同 Session 新 Turn；可靠性批次 A.2 5.2 据此并按规格 §7.7 与 lead 决定 LA-1 把 `continueHistory` 报为支持，reason 写明它是新 Run、不恢复原 Turn。native compact 仍为不支持。）
 
 Session 是稳定交互身份，ExecutionRef 是一次正式执行，二者不能混用。角色是配置，不制造常驻模型。创建 Session 和读取历史都不调用模型；模型执行才要求 Run/QueryRun。相同会话的执行和维护共用一个占用槽，跨会话独立工作可并行；源码写并行仍受真实工作区能力约束。
 
@@ -243,9 +245,9 @@ initialize只恢复映射/技术观察和待对账列表，不自行规划或调
 | 创建空 Session | `SqliteStores.open` + `SessionStorePort.create/get`；不调用模型 | 直接支持，稳定 create recordId，真实映射后 WG recordSessionCreated |
 | 打开/读历史 | Store get/read，分页位置为数字 | 只读适配；平台游标绑定实例/session/上界，不用恢复函数读历史 |
 | 新 Run | `runCodingAgent`已增加可选executionIdentity；默认仍随机生成runId/turnId，旧Run重放已修复并通过R4a验收 | B2正式Task driver已以固定Kernel身份和fresh begin调用；Query入口仍待接线 |
-| 完成后继续原 Context | Kernel已增加session_history与throughPosition历史入口；只传sessionId仍是默认current_turn | B2已接正式完成边界后的下一Task/Turn；公共continueHistory标志仍未全面开放，不代表任意恢复/维护已支持 |
-| 恢复未完成 Run | `resumeCodingAgent` 调 RecoveryCoordinator，再 resume/continueRecovered | 支持边界内恢复；terminal 和 side_effect_result_unknown 不启动新执行 |
-| 安全点 pause | RuntimeRunner before_model/before_tool有Hook pause；公共组合入口已增加controlHooks，恢复预算/沙箱约束已修复并通过R4a验收 | §6 Kernel扩展已验收；平台未接通返回unsupported |
+| 完成后继续原 Context | Kernel已增加session_history与throughPosition历史入口；只传sessionId仍是默认current_turn | B2已接正式完成边界后的下一Task/Turn；公共continueHistory标志仍未全面开放，不代表任意恢复/维护已支持。2026-10-07 补注（第 7 步）：A.2 5.2 起已报为支持，见上文 §1 的补注 |
+| 恢复未完成 Run | `resumeCodingAgent` 调 RecoveryCoordinator，再 resume/continueRecovered | 支持边界内恢复；terminal 和 side_effect_result_unknown 不启动新执行。2026-10-07 补注（第 7 步）：同一 Host 进程持有活句柄时，暂停的 Run 恢复原 Turn（RUN-14）；Host 重启后平台不沿原 Turn 恢复（D-17），而是启动核对把它记为 paused-interrupted，由人在新 Session 的新 Run 里继续（LA-1）。平台的 `recoverRun` 自 A.2 5.7 起报为支持，只指启动核对 |
+| 安全点 pause | RuntimeRunner before_model/before_tool有Hook pause；公共组合入口已增加controlHooks，恢复预算/沙箱约束已修复并通过R4a验收 | §6 Kernel扩展已验收；平台未接通返回unsupported。2026-10-07 补注（第 7 步）：平台已由 R4.3a 接通；A.2 5.2 起 `safePointPause`、`cancel` 报为支持，reason 写明边界 |
 | cancel | AbortSignal 实际取消；不是 pause | 消费正式控制并 abort，等待真实结果后 ack |
 | 原生 compact | compactor README 明确无 TS 实现；selectContext 只是预算选材 | nativeCompact=false，未来独立 Kernel 能力；当前不写假成功 |
 | 重组/换手 | 没有魔法 Session 合并接口 | 创建目标 Session + 已引用交接材料 + 正式关联更新；旧来源保留 |
@@ -260,7 +262,7 @@ initialize只恢复映射/技术观察和待对账列表，不自行规划或调
 
 这部分属于Kernel受管边界内的独立实现项。R4a已按[并行实现任务](../../tasks/DSH-PARALLEL-IMPLEMENTATION.md)修改本项目受管vendor副本；旧Run重放及暂停恢复的预算/沙箱/配置/工作区约束已完成Sol/dsh返修并通过[2026-09-24独立验收](../../reviews/R3a-R4a-sol-dsh-acceptance.md)。[2026-09-23失败报告](../../reviews/R3a-R4a-independent-acceptance.md)只记录首轮历史。以下契约继续作为验收标准；B2已通过公共run接通正式Task及完成后连续Turn，R4平台控制/精确恢复仍未闭合。不直接拼Runner、provider、policy、sink来复制组合根。
 
-**R4.2 Kernel 工具组安全点已验收。** 公开 `ToolGroupBarrier` 由普通 run、固定 executionIdentity 命中的原 Turn 恢复及公开 resume 三条路径透传到唯一 Runner。`before_group` 在本组 tool.started 前真实 await，`after_group` 在整组结果和 required sink 完成后真实 await，最后一组也执行；暂停必须等待原 run.paused 的 required sink。callback 异常和非法返回在持有最新工具组 state 的接缝内落失败事实，保留已完成工具结果与连续 sequence；取消/unknown 不被 pause 覆盖。真 SQLite 测试验证暂停后以原 identity 恢复，仅执行剩余组、不新增 Turn。见[验收报告](../../reviews/next-r5a-r4-tool-group-2026-09-26.md)及[公开 Kernel 回归](../../../../tests/kernel/R4-tool-group-barrier.test.ts)。这是 Kernel 子能力，当前平台 Runtime 尚未接通持久 intent 投递、清理完成证明和 ack；[R4 任务 §11 候选](../../tasks/R4-control-recovery-skeleton.md#11-r43-候选契约持久控制投递进入事实与原历史确认)规定后续接线，尚未交付，不能把 safePointPause/cancel/recoverRun 标为完整支持。
+**R4.2 Kernel 工具组安全点已验收。** 公开 `ToolGroupBarrier` 由普通 run、固定 executionIdentity 命中的原 Turn 恢复及公开 resume 三条路径透传到唯一 Runner。`before_group` 在本组 tool.started 前真实 await，`after_group` 在整组结果和 required sink 完成后真实 await，最后一组也执行；暂停必须等待原 run.paused 的 required sink。callback 异常和非法返回在持有最新工具组 state 的接缝内落失败事实，保留已完成工具结果与连续 sequence；取消/unknown 不被 pause 覆盖。真 SQLite 测试验证暂停后以原 identity 恢复，仅执行剩余组、不新增 Turn。见[验收报告](../../reviews/next-r5a-r4-tool-group-2026-09-26.md)及[公开 Kernel 回归](../../../../tests/kernel/R4-tool-group-barrier.test.ts)。这是 Kernel 子能力，当前平台 Runtime 尚未接通持久 intent 投递、清理完成证明和 ack；[R4 任务 §11 候选](../../tasks/R4-control-recovery-skeleton.md#11-r43-候选契约持久控制投递进入事实与原历史确认)规定后续接线，尚未交付，不能把 safePointPause/cancel/recoverRun 标为完整支持。（2026-10-07 补注（第 7 步）：R4.3a 已接投递与 ack；可靠性批次 A.2 5.2、5.7 把 `safePointPause`、`cancel`、`recoverRun` 报为支持，每项的 reason 写明边界，`recoverRun` 只指启动核对，从不恢复原 Turn。上报只是声明，单个 Run 的结果仍看控制意图和观察。）
 
 ```ts
 // Kernel public-api 已增加这些导出；version=2不能替代本节独立行为验收。
@@ -381,7 +383,7 @@ C1新写在receipt miss后复用Prepared/Host/Role准入，历史读取只核原
 
 平台工具与文件权限分别装配：仅通信/白板工具的Run仍使用真实Kernel root，但不调用源码authorize/assertCurrent或打开source factory；没有获授的read/edit/shell不会出现在真实清单。平台写不因此打开文件写权限，原readOnly与沙箱约束保持。公开操作沿组合根trackedCall排空，内部持有raw领域服务，不把关闭包装反注入进行中的调用。
 
-真实消费者证据见 [C2 Runtime回合测试](../../../../tests/runtime/C2-runtime-platform-tools.test.ts)、[组合根白板/材料测试](../../../../tests/composition/C2-runtime-platform.test.ts)、[邮箱回执/历史身份测试](../../../../tests/work-graph/C2-mailbox-admission.test.ts)及[三种Skill测试](../../../../tests/runtime/W2-role-skills.test.ts)。这些接线已合入，并随 R5a/R4.2 纳入[最新完整隔离验收](../../reviews/evidence/next-b2-2026-09-26/r5a-r4-isolated-result.json)：102 文件／1,007 项通过，类型、构建、模块边界（实际 6 条／允许 8 条）、24 项 Kernel 产物再生及编译入口 open/close 均通过；8,827 个受保护文件零变化，目标源码 194 个 TypeScript 文件、43,116 行。Query 真实执行/有来源回答、平台持久控制到实际 pause/cancel 及清理后 ack、平台原 identity 恢复、compact/维护/重组和 Workflow 自动推进仍待各自闭环。Kernel 原 identity 恢复及 R4.2 安全点已有子能力证据，公共平台能力标志仍不能整体开启。
+真实消费者证据见 [C2 Runtime回合测试](../../../../tests/runtime/C2-runtime-platform-tools.test.ts)、[组合根白板/材料测试](../../../../tests/composition/C2-runtime-platform.test.ts)、[邮箱回执/历史身份测试](../../../../tests/work-graph/C2-mailbox-admission.test.ts)及[三种Skill测试](../../../../tests/runtime/W2-role-skills.test.ts)。这些接线已合入，并随 R5a/R4.2 纳入[最新完整隔离验收](../../reviews/evidence/next-b2-2026-09-26/r5a-r4-isolated-result.json)：102 文件／1,007 项通过，类型、构建、模块边界（实际 6 条／允许 8 条）、24 项 Kernel 产物再生及编译入口 open/close 均通过；8,827 个受保护文件零变化，目标源码 194 个 TypeScript 文件、43,116 行。Query 真实执行/有来源回答、平台持久控制到实际 pause/cancel 及清理后 ack、平台原 identity 恢复、compact/维护/重组和 Workflow 自动推进仍待各自闭环。Kernel 原 identity 恢复及 R4.2 安全点已有子能力证据，公共平台能力标志仍不能整体开启。（2026-10-07 补注（第 7 步）：其后 R4.3a/b 接了控制投递与取消后的接续，可靠性批次 A.2 第 5 步接了启动核对、接续说明与接续 Session、Workflow 自动返工；能力标志按各自边界开启，见[能力索引](../../IMPLEMENTED-CAPABILITIES.md) RT6、RT13、WG27。compact、维护、重组仍未接。）
 
 ## 8. 创建、控制、重组与命令检查
 
@@ -389,7 +391,7 @@ C1新写在receipt miss后复用Prepared/Host/Role准入，历史读取只核原
 
 **创建：** WG admitSessionCreation 保存稳定plannedSessionRef与操作 →技术映射配置 →Store.create固定sessionId/recordId →WG recordSessionCreated。create响应丢失先get核对原身份，不能随机新建。映射未完成不给claim；claim冲突时已独立创建的Session可闲置，无需回滚删除。
 
-**控制：** applyControl只接已受理intentRef，通过readControl读取期望与当前真实Run再作用。cancel发送AbortSignal后等待真实终止；pause将复用§6的before_model与R4.2工具组屏障，持久投递和ack仍待接线。控制过期或指向另一generation没有副作用；unsupported如实返回。恢复发现side_effect_result_unknown保留占用/租约和具体缺口，不能用cancel成功掩盖此前未知写入。QueryRun cancel沿QueryJob close路径：driver观察正式关闭要求，对该Query的实际controller发送AbortSignal，真实终止/未知观察再归约并释放占用；close提交本身不是Kernel已停。首批不支持QueryRun pause。
+**控制：** applyControl只接已受理intentRef，通过readControl读取期望与当前真实Run再作用。cancel发送AbortSignal后等待真实终止；pause将复用§6的before_model与R4.2工具组屏障，持久投递和ack仍待接线。控制过期或指向另一generation没有副作用；unsupported如实返回。恢复发现side_effect_result_unknown保留占用/租约和具体缺口，不能用cancel成功掩盖此前未知写入。QueryRun cancel沿QueryJob close路径：driver观察正式关闭要求，对该Query的实际controller发送AbortSignal，真实终止/未知观察再归约并释放占用；close提交本身不是Kernel已停。首批不支持QueryRun pause。（2026-10-07 补注（第 7 步）：R4.3a/b 已交付持久投递、ack 和取消后的接续。可靠性批次 A.2 5.1 起，没进入 Kernel 的 Run 的暂停、取消由平台当场生效（D-7）；5.6 起启动核对结算 Host 崩溃留下的控制。本仓库没有 QueryJob close 的写入者和路由，对 QueryRun 的控制答 invalid，运行中的 Query 只随自己的终态结束；Query 的公开暂停与关闭仍是缺口（规格 GAP-06）。）
 
 **重组：** Workflow给出sources、target、版本化handoffRef与角色；WG原子占用所有需变更的Session槽 →确认来源可读取/目标已创建且闲置 →装配交接材料 →WG提交关联及实际结果 →释放同operation generation维护占用。重组不自动运行模型，不自动归档旧Session，不删除历史。需要模型生成交接摘要时先安排单独已授权执行；摘要是来源材料，不能把未生成摘要当Kernel压缩。创建目标与维护失败可分阶段重试，原会话资料保留。
 
@@ -449,6 +451,8 @@ export type RuntimeObservation = {
 | 维护部分完成 | 按operation查实际创建/材料/关联阶段 | 失败即声称旧会话已归档/压缩 |
 
 不承诺跨平台事务和Kernel的exactly-once副作用；稳定身份+持久记录使重复入口可检测，未知区间明确暴露。重启只恢复已保存意图，不启动新的业务规划。
+
+（2026-10-07 补注（第 7 步）：可靠性批次 A.2 5.6 起，上表的窗口在 Host 启动时由启动核对处理，只在持实例租约的 Host 上、任何执行驱动之前：分类在 [run-reconcile.ts](../../../../src/core/agent-runtime/run-reconcile.ts)，写入在 WorkGraph 的 [run-reconcile-service.ts](../../../../src/core/work-graph/tasks/run-reconcile-service.ts)。它只读 Kernel 记录、只记结论，不开 Turn、不重跑工具。证明没进入的撤销这次进入，由同一领取再驱动；证明不了的记为 `outcome_unknown`，保留占用，等人工认定（`executions/resolve-unknown`）。没有另建 `RuntimeOperationRecord`；模型预算 meter 仍不持久，重启后预留不核对（规格 GAP-03）。见[能力索引](../../IMPLEMENTED-CAPABILITIES.md) WG27。）
 
 ## 10. 旧符号迁移、删除点与验收
 

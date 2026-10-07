@@ -7,6 +7,8 @@ target: coding-platform/next/src/business/workflow/
 implementation: next 的 advanceWork 已独审接通真实已有Plan的Work Run→检查→Task完成→独立Goal gate→正式Goal完成；handleGoalInput 初始Plan消费者正在骨架阶段。复杂调度、Reviewer与完整Host消费者仍待接；§2–10 为完整目标而非全部现有 API
 ```
 
+> **2026-10-07 补注（第 7 步）：** 上面 `implementation` 一行是 9-26 的情况。现在 `handleGoalInput`（初始规划采用）和 `consumeConsultation`（显式咨询）也已接。可靠性批次 A.2 第 5 步又加了：没通过的检查和失败结束的 Run 交回选择，由 Task 的自动化判定决定自动重新入队（`requeue_task`）、自动重新检查（`reverify_round`）或停下并写明原因（5.8、5.9）；Host 启动核对后的启动重驱（5.6、5.8）；计划改动后跳过不再 active 的 Task（5.10）。做法见 §7 末尾的补注，§8、§11 里过期的说法各自加了补注。复杂调度、独立 Reviewer 仍未接。当前能力以[能力索引](../../IMPLEMENTED-CAPABILITIES.md)为准。
+
 > **2026-09-24 纠偏：** 任务图是白板/监测/历史检索，Workflow/Agent 根据规范和事实决定并行。预期依赖、架构影响或未来范围未知不自动生成硬阻塞；具体已采用的输入条件在需要时检查。每次执行不必先做全量范围证明或资源预占，已完成结果仍须核对与局部整合；见[当前行为图](../../PARALLEL-COLLABORATION.md#3-当前运行时协作图模型编排工具操作结果反馈)。
 
 ## 1. 产品目的与已确定的决定
@@ -291,6 +293,17 @@ Host 先建立共享依赖再创建 Workflow；用用户输入和结果事件调
 - 同问题、同版本、同动作及同失败无新依据时不再执行，返回原失败并换方法/等待。机械暂时故障沿已有配置重试。
 - 副作用未知先reconcile；补报告不等于重新运行原命令。任务和目标完成通过核心归约，界面百分比不能代替。
 
+**2026-10-07 补注（第 7 步，A.2 第 5 步的实际做法）：** 上面几条返工规则已由 `advanceWork` 实现（[workflow.ts](../../../../src/business/workflow/workflow.ts) 的 `selectNext`、`automaticRequeue`、`automaticReverify`、`claimRequeued`、`advanceGate`）：
+
+- 一轮检查没通过（FAIL、INCONCLUSIVE 或有缺口），或 Run 以已知失败结束（`crashed`、`failed`、`budget_exhausted`、`cancelled`）且没有待核对的事，都回到 `select_work`，由 Task 的失败事实和自动化判定决定（5.8、5.9）。以前这两种情况停在等待。Run 还有待核对、结果未知或被隔离的，仍等待并写明原因。
+- 判定为 `requeue` 时执行 `requeue_task`；预算耗尽、而绑定给的预算更大时，带这个预算重新入队。判定为 `reverify` 时执行 `reverify_round`，在同一 Run 或 gate 自己的轮次链上开后继轮次，不再调用模型。两者都以平台自动化身份 `WORKFLOW_AUTOMATION_ACTOR` 执行，不用 Host 操作者；请求 id 只由请求本身派生（`wf-auto:`），所以任何驱动重发都得到原回执。判定为 `claim_requeued` 时带 `requeueRef` 领取，优先用原领取 Session；它的 Kernel Turn 没有终态（`kernel_turn_open`）时新建 Session（LA-1）。判定为 `stopped` 时这个 Task 不再返工，其它 Task 照常推进。
+- 自动返工次数受 Host 设置 `automation.autoReworkLimit` 约束（默认 3，最多 10），干净的中断不计数。人取消的 Run 也交回选择，但按“尊重人的停止”不自动返工，只有人能重新开始。
+- 等待文本以原因码开头：Goal 不是 active 时说明不选新工作；只剩延后的必需 Task 时以 `required_task_deferred:` 开头；推进一个已改处置的 Task 时以 `task_not_active:` 开头；gate 的自动化停下时以停下原因（如 `gate_needs_fix:`）开头，并写明人能做什么（加修复 Task，或重新检查）。Goal 显示同一原因（规格 GOAL-30）。
+- 计划改动后，已取消或已替换的 Task 不再运行，也不再等待（5.10，L-15）。
+- 没有定时调度：停在 waiting 的推进只由下一次推进、协作驱动启动、Host 启动后的启动重驱或已有提醒唤醒（规格 GAP-48）。启动重驱见 §8 的补注。agent 可调用的返工工具本批没开放（GAP-46），也没有自动提出修复 Task 的角色（GAP-56）。
+
+测试见 [自动返工](../../../../tests/business/A2-workflow-auto-rework.test.ts)、[自动重新检查](../../../../tests/business/A2-workflow-reverify.test.ts)、[结果映射](../../../../tests/business/A2-workflow-result-mapping.test.ts)、[处置](../../../../tests/business/A2-workflow-disposition.test.ts)、[同 Session 返工场景](../../../../tests/scenarios/A1-rework-same-session.test.ts)。
+
 ## 8. 失败与重启时的业务职责
 
 | 中断窗口 | 下一步 | 恢复来源 |
@@ -304,6 +317,8 @@ Host 先建立共享依赖再创建 Workflow；用用户输入和结果事件调
 | Kernel能力unsupported | 明确该能力未接；采用已有授权替代方案 | 能力矩阵及拒绝 |
 
 交互常驻是入口、持久记录和按需恢复可用，不是模型一直运行。恢复解释读取已有目标、方案、决定、结果，不要求人重新描述项目。
+
+**2026-10-07 补注（第 7 步，A.2 5.6、5.8、5.9）：** Host 每次启动先做启动核对（持实例租约的 Host，在任何执行驱动之前；见[能力索引](../../IMPLEMENTED-CAPABILITIES.md) WG27），然后为满足下列之一的 active Goal 启动已有的协作驱动（启动重驱，lead 决定 LA-6）：有必需 active Task 的判定为 `requeue`、`reverify` 或 `claim_requeued`；或有已领取、没进入 Kernel、不是暂停或取消的 Run，由同一领取再驱动。由 Host 设置 `automation.resumeOnStartup` 控制（默认开启）；关掉时核对照常，但之后只在 `workflow/advance`、`workflow/driver-start` 或人工操作时继续。启动重驱每一步仍由 Workflow 和各 owner 判定，暂停中被打断的 Task 仍只由人继续。上表对应：“claim后Host中断”一行，未进入的 Run 由同一领取再驱动，不重新规划；“用户暂停或取消”一行，Goal 级的期望状态走 `goals/control`（能力索引 WG26），Workflow 在 Goal 不是 active 时不选新工作。
 
 ## 9. 旧实现到新文件与删除点
 
@@ -349,7 +364,7 @@ R3e.1五生产实现已独审导入；[R3e.3 §9](../../tasks/R3e-completion-ske
 | `work-graph/tasks/plan-contracts.ts::PlanTaskPort` | 直接调用 queryGoal/queryTaskGraph/queryReadyTasks。沿已采用 Plan 和原 `revisionAssignments` 取任务分配；ready 使用核心 eligibility，不在 Workflow 重做 DAG/材料/source 判定。future-only、缺验收与 required 未完成说明来自图。 |
 | `work-graph/sessions/contracts.ts::SessionDirectoryPort` | findSessions/readSession 返回正式 SessionCard、occupancy 与 links；按同 task、可用性和稳定 sessionId 选择，同配置的既有 Session 优先。显式 Session 忙时等待，不偷偷创建替身。实际占用由 claim CAS 决定。 |
 | `agent-runtime/session-operations.ts::CreateSessionRequest` / `RuntimeExecutionPort.createSession` | 正式创建映射，返回 OperationReceipt：只有 completed 才有 SessionRecord 可领取；accepted/unknown 保留原 operationRef，重发原 create 请求继续既有操作。initialLinks 指向真实 task，不自造 Kernel sessionId/store path。 |
-| `work-graph/tasks/claim-contracts.ts::TaskClaimPort` | claim 输入为 goalRef/planRef/taskId/sessionRef/完整 roleBinding/TaskBudget；结果是正式 TaskClaim。claim 只支持 work 的首次 Run，gate 不 claim，已有失败 Run 不假借新请求触发返工。 |
+| `work-graph/tasks/claim-contracts.ts::TaskClaimPort` | claim 输入为 goalRef/planRef/taskId/sessionRef/完整 roleBinding/TaskBudget；结果是正式 TaskClaim。claim 只支持 work 的首次 Run，gate 不 claim，已有失败 Run 不假借新请求触发返工。（2026-10-07 补注（第 7 步）：A.2 5.4 起另有带 `requeueRef` 的重新入队领取；返工先经 `requeueTask` 写 TaskRequeue，再领取，仍不借新的首次领取请求。gate 仍不 claim。） |
 | `work-graph/source-authority-ports.ts::SourceSnapshotReads` | **实际 pin 缺口**：queryReadyTasks.expected 仅 Goal+Plan；claim 却要求 Goal+Workspace+Session。组合根已有 `sourceAuthority = createSourceAuthorityReader({authority: reads.authority})`，作为内部依赖注入 Workflow，精确 load Goal.workspaceRef 取得 Workspace.revision；Session pin 来自正式 card/创建回执。只组装 claim 所需三 pin，不把 ready 的 Plan pin原样塞进去，不使用 Host permissionRevision 冒领域 revision，不新增 public reader。 |
 | `agent-runtime/ports.ts::RuntimeExecutionPort` | prepareExecution({runRef,requestId}) → 原 PreparedTaskExecution → startRun({prepared,consumerId,requestId})；startRun 实际 await 原 Kernel 循环并观察，返回 TaskExecutionRecord，不存在独立 runCheck/driveAccepted 方法。observeRun 只对原 Run 读历史/归约，绝不重启。内部 work_run ctx 由 Runtime 生成，Workflow 不伪装 Run 主体。 |
 | `work-graph/evidence/contracts.ts::EvidencePort` | openVerification/readVerification/finalizeChecks 使用正式 Round；计划、coverage、来源适用性和 Evidence fold 全归原 owner。Workflow 不提交自报 PASS，不直接调用 recordCheckResult 伪装执行观察。 |
@@ -363,7 +378,7 @@ R3e.1五生产实现已独审导入；[R3e.3 §9](../../tasks/R3e-completion-ske
 首批只把现 `advanceWork` 从 never 扩为明确联合；`WorkflowPort/WorkflowDependencies` 保留 N0 别名，`handleGoalInput` 保持原参数与明确 unsupported。确切 DTO 固定为以下有限形状，完整 Port 类型以 [派工任务 §2](../../tasks/R5-workflow-advancement-skeleton.md#2-有限接口与原请求-continuation) 为准：
 
 - `WorkflowAdvanceInput = {schemaVersion:1; goalRef; flowId; sessionHint:SessionRef|null} & ({kind:'select_work'} | {kind:'perform'; operation:WorkflowOperation})`。flowId 仅关联一条 Host 推进链，不能作所有动作共享的 idempotency key；sessionHint 是延续建议，须从目录读取真实当前事实。
-- `WorkflowOperation` 仅有 create_session、claim_task、prepare、start、observe、open_checks、run_check、finalize_checks、complete_task、complete_goal 十个显式分支；每分支 request 直接取原 Port 方法的第二参数。仅 create_session 额外携带 `taskRef/planRef` 用于创建后领取；其余对象从原请求/正式回执取得，不能另传 PASS、policy、command 或模型能力。
+- `WorkflowOperation` 仅有 create_session、claim_task、prepare、start、observe、open_checks、run_check、finalize_checks、complete_task、complete_goal 十个显式分支；每分支 request 直接取原 Port 方法的第二参数。仅 create_session 额外携带 `taskRef/planRef` 用于创建后领取；其余对象从原请求/正式回执取得，不能另传 PASS、policy、command 或模型能力。（2026-10-07 补注（第 7 步）：A.2 5.8、5.9 另加 `requeue_task`、`reverify_round` 两个分支，现为十二个；`create_session` 为重新入队的 Task 建 Session 时另带 `requeue`。以 [contracts.ts](../../../../src/business/workflow/contracts.ts) 的 `WorkflowCalls` 为准。）
 - `WorkflowStepReceipt` 是同一十种 kind 与对应 `Awaited<ReturnType<PortMethod>>` 的判别联合，保留原 cursor/replayed/current/失败码，不弱化为布尔值。
 - `WorkflowAdvanceResult` 为 `CoreRejection | {status:'ready'; value:{state:'advance'|'waiting'|'completed'; receipt:WorkflowStepReceipt|null; next:WorkflowAdvanceInput|null; reason:string|null}}`。select 只读，receipt=null；有具体新步骤时 state=advance 且 next 非空；waiting/completed 的 next=null，不能由 Host 紧循环轮询。完成只能以正式 GoalPhase/completeGoal 回执为依据。
 
@@ -376,8 +391,8 @@ R3e.1五生产实现已独审导入；[R3e.3 §9](../../tasks/R3e-completion-ske
 ### 11.3 首条真正闭环的策略
 
 1. 读正式 Goal/TaskGraph；active Plan 缺失返回缺口，不启动 Query。从本次 TaskGraph 已有 eligibility 投影选择本批支持的 active work/request_execution（V1 使用原 eligibility），按 required 优先及 adopted task 顺序稳定选择。plan_only、deferred 与 required 缺项保留在图，不改分配/验收来使其可执行，也不因空 ready 推断 Goal 完成。
-2. 从可信配置匹配 assignment，发现相关 Session；适用的闲置原 Session 优先，不以 `Runtime.capabilities.continueHistory=false` 这一尚未同步的宽能力标签否定 B2 已验收的同 Session 新 Turn 路径。真实 claim/prepare/start 仍是许可判据。创建、Session忙、Role不匹配均保留真实结果，创建完成后不因后续claim冲突删除会话。
-3. 按实际 Goal/Workspace/Session pins claim；prepare 使用原 RunRef；start 传原 Prepared 与固定 consumerId。只依据正式 `status:'ended'`、outcome 与 reconciliation 等事实决定后续，Run ended 不等于工作完成。running/unknown/quarantined/paused 返回等待及原 ref，必要时只允许显式 observe，不自动再次 start 或新建 Attempt；failed/cancelled/budget_exhausted 不自动写成功或返工。
+2. 从可信配置匹配 assignment，发现相关 Session；适用的闲置原 Session 优先，不以 `Runtime.capabilities.continueHistory=false` 这一尚未同步的宽能力标签否定 B2 已验收的同 Session 新 Turn 路径。（2026-10-07 补注（第 7 步）：A.2 5.2 起 `continueHistory` 已报为支持，reason 写明接续是新 Run、不恢复原 Turn，上一 Turn 没有 Kernel 终态时在新 Session 接续；这句的前提已不存在。）真实 claim/prepare/start 仍是许可判据。创建、Session忙、Role不匹配均保留真实结果，创建完成后不因后续claim冲突删除会话。
+3. 按实际 Goal/Workspace/Session pins claim；prepare 使用原 RunRef；start 传原 Prepared 与固定 consumerId。只依据正式 `status:'ended'`、outcome 与 reconciliation 等事实决定后续，Run ended 不等于工作完成。running/unknown/quarantined/paused 返回等待及原 ref，必要时只允许显式 observe，不自动再次 start 或新建 Attempt；failed/cancelled/budget_exhausted 不自动写成功或返工。（2026-10-07 补注（第 7 步）：仍不自动写成功；A.2 5.8 起这些已知失败交回 `select_work`，按自动化判定自动返工或停下，见 §7 末尾的补注。）
 4. 对正常 ended Run 打开该 task 的 Round；按 round.checks 逐项调用唯一 registered runner，保留真实 sourceStatus/INCONCLUSIVE/unknown。executing/未知不重跑。finalize 使用最后实际 Round revision；只有正式可采用结论才提出 completeTask，请核心最终核证据、required reviewer 与副作用。缺 reviewer producer 时按核心 incomplete 返回，不合成 PASS、不要求政策未配置的 reviewer。
 5. work 正式 satisfied 后返回下一次 select_work，复用同一 Session 的原历史。所有普通工作无需都先结束才可领取另一独立任务；首批串行是 Host 选择策略，不成为新增全工作区互斥门禁，也不把 DAG 前驱整体完成替代选中材料的实际准入。
 6. 没有可继续的普通工作时，按采用 Plan 处理真实 goal gate：选同 Goal 已正式 ended 的普通 producer，`openVerification` 指定 gate 自身 subject 和 `gateSubject:'goal'`，为 gate 建独立 Round/Evidence，再 completeTask(gate)，不 claim gate、不制造 gate Run。最后 completeGoal；required plan_only/缺义务/reviewer 返回具体 incomplete，optional未来节点不阻塞但仍在图。正式 Goal COMPLETED 后停止，不再选任务。先完成一个 Task 才选下一 Task，Goal 完成是整个 Goal 的终点，不把“Goal 完成→同 Goal 下一任务”当合法自动转移。
@@ -396,4 +411,4 @@ R3e.1五生产实现已独审导入；[R3e.3 §9](../../tasks/R3e-completion-ske
 
 首批只需目标两测试、types及实际变化涉及的边界检查；不为完整异常覆盖新增轮次。阶段一发布完整接口、组合根和最终行为测试，advanceWork 明确 unsupported 后 **STOP** 中审；阶段二仅必要 Workflow 实现文件，测试/接口冻结。测试后段必须真实到达；检查/完成 producer 未到位是前置状态，不把测试种子或类型通过记成闭环完成。
 
-本批与 Query 后续的算法、DB、模型循环无写重叠；共享 composition 在各骨架导入点串行刷新。R3e.3 的 task-service/plan reader/codec 与 Workflow 实现不重叠。R6 当前六生产实施不含 composition，无须等待其 UI 完成；本批公开 `platform.workflow.advanceWork` 是可信 Host 消费入口，R6后续薄 UI 另接，不宣称当前浏览器已自动推进。完整并行策略、返工/requeue、初始规划/Query、Reviewer producer、Workflow冷恢复与R4控制仍是后续产品范围，不以首条串行正常链关闭。
+本批与 Query 后续的算法、DB、模型循环无写重叠；共享 composition 在各骨架导入点串行刷新。R3e.3 的 task-service/plan reader/codec 与 Workflow 实现不重叠。R6 当前六生产实施不含 composition，无须等待其 UI 完成；本批公开 `platform.workflow.advanceWork` 是可信 Host 消费入口，R6后续薄 UI 另接，不宣称当前浏览器已自动推进。完整并行策略、返工/requeue、初始规划/Query、Reviewer producer、Workflow冷恢复与R4控制仍是后续产品范围，不以首条串行正常链关闭。（2026-10-07 补注（第 7 步）：其中初始规划/Query 已由 R5b 接通；返工/requeue（A.2 5.4、5.8、5.9）、Host 启动后的启动重驱（5.6、5.8）和 Goal 级控制（5.5）已在可靠性批次接通。完整并行策略和独立 Reviewer 仍未接。）

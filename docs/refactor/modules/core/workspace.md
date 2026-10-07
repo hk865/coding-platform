@@ -276,7 +276,7 @@ P 页冻结结果只做 O(返回条目) 切页，初始捕获及最终核验仍�
 | ProjectSourceIndex / SourceIndex | 同名目标文件，先迁移再分离冻结查询 | runtime工具/架构/测试全部迁移。架构部分已满足：`architectureMaterials` 2026-10-07 删除 |
 | PythonSourceIndex / CppSourceIndex | 同名文件，固定helper路径按新目录修正 | 引擎身份/能力/隔离验证通过 |
 | WorkspaceSourceIndexReader | purpose-readers/role-source-reader.ts | role消费者切换且有限正文语义保持 |
-| query/reviewer/verification/candidate readers | 同名用途适配器，共同底座接access/capture | 每个真实消费者迁完、额外范围仍有效。2026-10-07：query reader 和 reviewer 的 `readReviewerSource` 已删除（决定 34）；verification、candidate 在用 |
+| query/reviewer/verification/candidate readers | 同名用途适配器，共同底座接access/capture | 每个真实消费者迁完、额外范围仍有效。2026-10-07：query reader 和 reviewer 的 `readReviewerSource` 已删除（决定 34）；verification、candidate 在用。2026-10-07 补注（第 7 步）：verification reader 另有只取 digest 的 `captureDigest`（可靠性批次 A.2 5.4，lead 决定 LA-5），供重新入队的无进展键和接续说明的源码检查点用，不受 64 个改动文件的上限；开轮和重新检查仍用完整的 `capture`（规格 GAP-54） |
 | ExplorationSourceApplicability | purpose-readers/exploration-source.ts | 保留原完整探索摘要、链接/二进制语义。**2026-10-07 删除**（决定 34，没有生产调用方） |
 | source-applicability/verification-source-applicability | 对应用途适配器内部，来源捕获归本模块 | 与WorkGraph领域版本绑定分离后。2026-10-07：verification-source-applicability 已删除；source-applicability 保留、未接线，留给编排设计第 3 片 |
 | WORKSPACE_DENIED_PREFIXES/readSourceIdentity | 同名常量/函数 | 所有读取路径迁完，不留并行副本 |
