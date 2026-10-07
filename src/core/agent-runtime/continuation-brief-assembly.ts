@@ -303,7 +303,8 @@ export function assembleContinuationBrief(input: AssembleBriefInput): Continuati
   const head = basis.round;
   // Contract (e) `factsFrom`: an afterRun that never entered the Kernel has no round of its own; the failed checks
   // listed are the facts Run's, the round its own TaskRequeue covered (§15.2 C3-not-entered-chain "来自更早的 Run").
-  const checksRound = head ?? basis.factsChain.at(-1)?.round ?? null;
+  const factsHop = head === null ? basis.factsChain.at(-1) ?? null : null;
+  const checksRound = head ?? factsHop?.round ?? null;
   // TD-8: the class is re-derived from the facts the requeue covered (the stored one is the audit copy).
   const derivation = deriveReworkClass(previous.run, basis.previousIntents.pointer,
     head === null ? { kind: 'none' } : { kind: 'head', head, chain: [head] });
@@ -341,10 +342,13 @@ export function assembleContinuationBrief(input: AssembleBriefInput): Continuati
       replyBody: boundedBody(basis.replyBodies.find((entry) => entry.messageRef.messageId === ref.ref.messageId)) };
   });
   const checkpoints: ContinuationSourceCheckpointV1[] = [];
-  if (head !== null) {
-    // The round record keeps no instant; its capture is after the previous Run's end.
-    checkpoints.push({ kind: 'round_open', at: previous.run.endedAt ?? requeue.requestedAt,
-      workspaceRevision: head.identity.workspaceRevision, sourceDigest: head.identity.sourceDigest, unavailableReason: null });
+  if (checksRound !== null) {
+    // LA-10: the workspace timeline starts at the round the listed checks come from (the facts Run's when the afterRun
+    // never entered). The round record keeps no instant; its capture is after the end of the Run it checked.
+    const checkedRun = factsHop === null ? previous.run : factsHop.run.run;
+    checkpoints.push({ kind: 'round_open', at: checkedRun.endedAt ?? requeue.requestedAt,
+      workspaceRevision: checksRound.identity.workspaceRevision, sourceDigest: checksRound.identity.sourceDigest,
+      unavailableReason: null });
   }
   checkpoints.push({ kind: 'requeue', at: requeue.requestedAt, workspaceRevision: requeue.basis.source.workspaceRevision,
     sourceDigest: requeue.basis.source.sourceDigest, unavailableReason: null });

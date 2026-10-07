@@ -1,14 +1,16 @@
 /**
  * A.2 step 6, scenario C3 (docs/refactor/STATE-MACHINES-SPEC.md §15.2 "第 6 步" row
  * `tests/scenarios/C3-not-entered-chain.test.ts`; §6.1 contract (e) `factsFrom`, `checks`,
- * `workspace.selfChanged` and the rendering of a not-entered Run; §6 RUN-09 / D-7; §4 TASK-16, C2).
+ * `workspace.selfChanged`, `workspace.checkpoints` (lead decision LA-10) and the rendering of a not-entered
+ * Run; §6 RUN-09 / D-7; §4 TASK-16, C2).
  *
  * Run 1 writes a notes file through its tools and answers without the result file, so the registered
  * static check FAILs; the Workflow requeues the Task automatically and claims the requeue: Run 2 is
  * `Claimed`. A person cancels Run 2 before it starts (D-7: a Run that never began ends cancelled at
  * once, with no Kernel Turn). The person then requeues the Task after Run 2, and Run 3's brief says
  * that Run 2 never entered the Kernel and lists the failed check and the changed file from the earlier
- * Run 1, the nearest entered ancestor on the requeue chain. Run 3 writes the result file and the Goal
+ * Run 1, the nearest entered ancestor on the requeue chain; its workspace timeline starts at the round
+ * those checks come from. Run 3 writes the result file and the Goal
  * completes; only Run 1 and Run 3 call the model.
  *
  * The §11 invariants are checked after every step that changes records. Scripted model replies only;
@@ -82,6 +84,15 @@ it('C3 (D-7, factsFrom): Run 2 cancelled while Claimed never enters the Kernel; 
   expect(brief.toolCalls.confirmed).toMatchObject([{ callId: 'c3-chain-notes', name: 'edit', result: 'success',
     changedPaths: [NOTES_FILE] }]);
   expect(brief.workspace.selfChanged).toEqual({ status: 'known', confirmed: [NOTES_FILE], possible: [], omitted: 0 });
+  // LA-10: the workspace timeline starts at the round those checks come from (Run 1's, opened after Run 1 ended),
+  // then the requeue after Run 2 and the brief; nothing ran in between, so the source digest stays the same.
+  const run1 = await execution(h, run1Ref);
+  expect(brief.workspace.checkpoints).toMatchObject([
+    { kind: 'round_open', at: run1.run.endedAt, workspaceRevision: round1.identity.workspaceRevision,
+      sourceDigest: round1.identity.sourceDigest, unavailableReason: null },
+    { kind: 'requeue' }, { kind: 'brief' }]);
+  expect(brief.workspace.segments.map(({ from, to, verdict }) => ({ from, to, verdict })))
+    .toEqual([{ from: 0, to: 1, verdict: 'unchanged' }, { from: 1, to: 2, verdict: 'unchanged' }]);
 
   // The rendered brief in Run 3's first model request.
   const rendered = renderContinuationBriefZh(brief, digest);
@@ -97,7 +108,6 @@ it('C3 (D-7, factsFrom): Run 2 cancelled while Claimed never enters the Kernel; 
 
   // Only Run 1 and Run 3 called the model, each in its own Kernel Turn; Run 2 has none.
   expect(h.modelCalls(), 'Run 1 (notes edit, text), Run 3 (edit, text)').toBe(4);
-  const run1 = await execution(h, run1Ref);
   const run3 = await execution(h, run3Ref);
   expect(turnStarts(h.database).map(turn => turn.runId)).toEqual([run1.run.executionHistory?.kernel.runId,
     run3.run.executionHistory?.kernel.runId]);
