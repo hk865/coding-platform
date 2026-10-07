@@ -188,11 +188,16 @@ function completeTaskStep(base: Base, goal: GoalSnapshot, planRef: PlanRevisionR
   const input = { taskRef: round.subject, planRef, roundRef: round.ref };
   return { kind: 'complete_task', request: graphWrite(base, 'complete_task', input, expected) };
 }
-function completeGoalStep(base: Base, projectId: string, goal: GoalSnapshot): WorkflowOperation {
+/**
+ * §2 GOAL-07/08 (`goal_completed`: "pin 恰为 Goal + GoalPhase（首次为 0）"): the GoalPhase is pinned at the
+ * revision the Workflow read with the Task graph, so a Goal completed for an earlier Plan completes again for
+ * the newly adopted one (`COMPLETED@r+1`, I-3).
+ */
+function completeGoalStep(base: Base, projectId: string, goal: GoalSnapshot, completion: TaskGraph['completion']): WorkflowOperation {
   const phaseRef: GoalPhaseRef = { aggregateType: 'GoalPhase', projectId, goalId: base.goalRef.goalId };
   const expected: VersionPin[] = [
     { ref: base.goalRef, revision: goal.revision },
-    { ref: phaseRef, revision: 0 },
+    { ref: phaseRef, revision: completion?.status === 'recorded' ? completion.snapshot.revision : 0 },
   ];
   return { kind: 'complete_goal', request: graphWrite(base, 'complete_goal', { goalRef: base.goalRef }, expected) };
 }
@@ -1168,7 +1173,7 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort & Requi
 
     // 4. Only a fully satisfied required set may propose the formal Goal completion.
     if (required.every((task) => !unsatisfied(task))) {
-      return advancing(null, makePerform(base, completeGoalStep(base, owned.projectId, goal)));
+      return advancing(null, makePerform(base, completeGoalStep(base, owned.projectId, goal, graph.completion)));
     }
     return waiting(null, describeGap(ordered, graph));
   }
