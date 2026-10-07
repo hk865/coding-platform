@@ -446,30 +446,6 @@
       "note": "kept for slice 3 of the orchestration design (decision 34): the consume-time exact-input check (decision 11, an open MVP item) may need a verified current source pin, and this pair is the only way to capture one; not constructed since the material grants were deleted (G3, lead call 2026-10-07); delete it once that design settles it does not; only reached from the kept provider pair"
     },
     {
-      "file": "src/contracts/plan.ts",
-      "name": "ApplyPlanRevisionCommand",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from applyPlanRevisionFingerprint, planRevisionRefFor, goalRefFor"
-    },
-    {
-      "file": "src/contracts/plan.ts",
-      "name": "applyPlanRevisionFingerprint",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
-    },
-    {
-      "file": "src/contracts/plan.ts",
-      "name": "planRevisionRefFor",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
-    },
-    {
-      "file": "src/contracts/plan.ts",
-      "name": "goalRefFor",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
-    },
-    {
       "file": "src/contracts/role-material-channels.ts",
       "name": "RoleSourceIndexRequestV1",
       "reason": "kept-for",
@@ -558,78 +534,6 @@
       "name": "RoleSpecActivatedEvent",
       "reason": "kept-for",
       "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; only reached from RoleConfigurationPort.activateRoleSpec"
-    },
-    {
-      "file": "src/contracts/validation/common.ts",
-      "name": "safePositiveIntField",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from validateApplyPlanRevisionCommand"
-    },
-    {
-      "file": "src/contracts/validation/common.ts",
-      "name": "validateEnum",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from validateApplyPlanRevisionCommand"
-    },
-    {
-      "file": "src/contracts/validation/plan.ts",
-      "name": "validateTaskScope",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from validateApplyPlanRevisionCommand"
-    },
-    {
-      "file": "src/contracts/validation/plan.ts",
-      "name": "REQUIREMENT_LEVELS",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from validateApplyPlanRevisionCommand"
-    },
-    {
-      "file": "src/contracts/validation/plan.ts",
-      "name": "TASK_KINDS",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from validateApplyPlanRevisionCommand"
-    },
-    {
-      "file": "src/contracts/validation/plan.ts",
-      "name": "DISPOSITIONS",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from validateApplyPlanRevisionCommand"
-    },
-    {
-      "file": "src/contracts/validation/plan.ts",
-      "name": "PHASES",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from validateApplyPlanRevisionCommand"
-    },
-    {
-      "file": "src/contracts/validation/plan.ts",
-      "name": "validateRuntimeTask",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from validateApplyPlanRevisionCommand"
-    },
-    {
-      "file": "src/contracts/validation/plan.ts",
-      "name": "validateVerificationRequirement",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from validateApplyPlanRevisionCommand"
-    },
-    {
-      "file": "src/contracts/validation/plan.ts",
-      "name": "validateAcceptanceObligation",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from validateApplyPlanRevisionCommand"
-    },
-    {
-      "file": "src/contracts/validation/plan.ts",
-      "name": "validatePlanRevisionDraft",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from validateApplyPlanRevisionCommand"
-    },
-    {
-      "file": "src/contracts/validation/plan.ts",
-      "name": "validateApplyPlanRevisionCommand",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
     },
     {
       "file": "src/contracts/validation/role.ts",

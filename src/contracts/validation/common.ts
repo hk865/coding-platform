@@ -28,24 +28,6 @@ export function stringField(record: UnknownRecord, key: string, issues: Validati
 }
 
 // Completed-capability migration: selected original declarations, no legacy service port.
-export function safePositiveIntField(value: unknown, path: string, issues: ValidationIssue[]): number | null {
-    if (Number.isSafeInteger(value) && (value as number) >= 1)
-        return value as number;
-    if (value === undefined) {
-        issues.push({ path, code: "missing_field", message: path + " is required" });
-    }
-    else {
-        issues.push({ path, code: "bad_revision", message: path + " must be a positive integer" });
-    }
-    return null;
-}
-export function validateEnum(value: unknown, allowed: readonly string[], path: string, issues: ValidationIssue[]): void {
-    if (typeof value !== "string" || !(allowed as readonly string[]).includes(value)) {
-        issues.push({ path, code: "bad_type", message: path + " must be one of " + allowed.join("|") });
-    }
-}
-
-// Completed-capability migration: selected original declarations, no legacy service port.
 export function stringArrayField(record: UnknownRecord, key: string, issues: ValidationIssue[], displayPath: string = key, allowEmpty: boolean = true): string[] | null {
     const value = record[key];
     if (Array.isArray(value) && value.every((v) => typeof v === "string" && v.length > 0)) {

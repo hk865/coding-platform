@@ -1,32 +1,5 @@
 // Migrated contract declarations; source provenance is recorded in the N0 transfer manifest.
 // ------------------------------------------------------------------------ //
-// Refs                                                                      //
-// ------------------------------------------------------------------------ //
-export type ArchitectureInspectionRef = {
-    aggregateType: "ArchitectureInspection";
-    projectId: string;
-    workspaceId: string;
-    inspectionId: string;
-};
-export type ArchitectureFindingRef = {
-    aggregateType: "ArchitectureFinding";
-    projectId: string;
-    workspaceId: string;
-    findingId: string;
-};
-export type ArchitectureDecisionBriefRef = {
-    aggregateType: "ArchitectureDecisionBrief";
-    projectId: string;
-    workspaceId: string;
-    briefId: string;
-};
-export type ArchitectureCandidateProposalRef = {
-    aggregateType: "ArchitectureCandidateProposal";
-    projectId: string;
-    workspaceId: string;
-    proposalId: string;
-};
-// ------------------------------------------------------------------------ //
 // CodeGraph value types                                                     //
 // ------------------------------------------------------------------------ //
 export type CodeGraphNode = {

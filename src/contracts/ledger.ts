@@ -2,11 +2,8 @@
 /** Persisted references, snapshots and cursor helpers required by the target.
  * Formats originate in the reference ledger; no old service interface is exported here. */
 import type { CommitCursor } from "./command-event.js";
-import type { BootstrapManifestRef } from "./bootstrap.js";
 import type { ArchitectureBaselineRevisionRef, CompletionPolicyRevisionRef, ProjectArchitectureBaselineActiveRef, ProjectCompletionPolicyActiveRef } from "./governance.js";
-import type { RemediationPlanPatchRef, RemediationTaskRef } from "./remediation.js";
-import type { ArchitectureChangeDecisionRef, BaselineActivationRef, CandidateArchitectureBaselineRef, MigrationGateTaskRef } from "./baseline-evolution.js";
-import type { CoordinationPolicyRevisionRef, InitialDesignDecisionRef, InitialDesignProposalRef, ProjectCoordinationPolicyActiveRef } from "./human-role-collaboration.js";
+import type { CoordinationPolicyRevisionRef, ProjectCoordinationPolicyActiveRef } from "./human-role-collaboration.js";
 import type { ProjectRoleSpecActiveRef, RoleSpecRevisionRef } from "./role-spec.js";
 import type { PlanRevisionRef } from "./plan.js";
 import type { DispatchOutboxRef, RunRef, TaskAttemptRef, TaskLeaseRef } from "./dispatch.js";
@@ -14,23 +11,16 @@ import type { EvidenceRef, TaskEvidenceIndexRef } from "./evidence.js";
 import type { VerificationRoundRef } from "./verification.js";
 import type { TaskReductionRef } from "./reduction.js";
 import type { GoalPhaseRef } from "./goal-phase.js";
-import type { HandoffPacketRef, ReplacementAttemptRef } from "./handoff.js";
-import type { WorkspaceReadLeaseIndexRef, WorkspaceReadLeaseRef, WorkspaceWriteLeaseIndexRef, WorkspaceWriteLeaseRef } from "./workspace-lease.js";
-import type { IntegrationResultRef } from "./integration.js";
-import type { PatchRecordRef } from "./patch.js";
-import type { ContinuationRecordRef, ExecutionNoteRef, WorkContextRef } from "./context-continuity.js";
-import type { ArchitectureCandidateProposalRef, ArchitectureDecisionBriefRef, ArchitectureFindingRef, ArchitectureInspectionRef } from "./architecture-inspection.js";
+import type { WorkContextRef } from "./context-continuity.js";
 import type { ControlIntentRef } from "./control-intent.js";
 import type { QueryJobAnswerRef, QueryJobRef, QueryRunRef } from "./query-job.js";
-import type { GoalRevisionSnapshot, PlanProposalSnapshot, UserDecisionSnapshot } from "./goal-change.js";
-import type { ArchitectureEvolutionPolicyRevisionRef, ProjectArchitectureEvolutionPolicyActiveRef } from "./architecture-evolution-policy.js";
+import type { PlanProposalSnapshot, UserDecisionSnapshot } from "./goal-change.js";
 import type { MaterialAccessGrantRef } from "./material-access.js";
 import type { SessionMessageRef } from "./core/session-message.js";
 import type { ActorRef } from "./command-event.js";
 import type { TaskRequeueRef, TaskReworkRefusalRef } from "./task-requeue.js";
-// 协作通信：协作通信聚合（AgentInstance / participation / request / subscription /
-// delivery / wait / 机械 intent / 后继 admission）与它们的 commit kind。
-import type { AgentInstanceRef, CommunicationAdmissionRef, CoordinationRegistryRef, WorkMailboxRef, CommunicationIntentRef, DeliveryRef, DirectedRequestRef, SubscriptionRef, WaitConditionRef, WorkParticipationRef } from "./coordination.js";
+// 协作通信：只剩 Agent 归因（AgentPrincipalRefV1）引用的参与关系 ref。
+import type { WorkParticipationRef } from "./coordination.js";
 export type ProjectRef = {
     aggregateType: "Project";
     projectId: string;
@@ -45,7 +35,7 @@ export type GoalRef = {
     projectId: string;
     goalId: string;
 };
-export type AggregateRef = import('./core/identity.js').SessionAggregateRef | import('./core/identity.js').SessionWorkLinkRef | import('./core/operations.js').OperationRef | import("./architecture-review.js").ArchitectureReviewRef | import('./reviewer-work.js').TaskReviewProtocolRef | import('./reviewer-work.js').ReviewWorkRef | import('./reviewer-work.js').ReviewResultRef | ProjectRef | WorkspaceRef | GoalRef | BootstrapManifestRef | CompletionPolicyRevisionRef | ArchitectureBaselineRevisionRef | ProjectCompletionPolicyActiveRef | ProjectArchitectureBaselineActiveRef | PlanRevisionRef | TaskLeaseRef | TaskAttemptRef | RunRef | DispatchOutboxRef | EvidenceRef | TaskEvidenceIndexRef | VerificationRoundRef | TaskReductionRef | GoalPhaseRef | HandoffPacketRef | ReplacementAttemptRef | WorkspaceReadLeaseRef | WorkspaceReadLeaseIndexRef | WorkspaceWriteLeaseRef | WorkspaceWriteLeaseIndexRef | IntegrationResultRef | PatchRecordRef | WorkContextRef | ExecutionNoteRef | ContinuationRecordRef | ArchitectureInspectionRef | ArchitectureFindingRef | ArchitectureDecisionBriefRef | ArchitectureCandidateProposalRef | ControlIntentRef | QueryJobRef | QueryRunRef | QueryJobAnswerRef | PlanProposalSnapshot["ref"] | UserDecisionSnapshot["ref"] | GoalRevisionSnapshot["ref"] | ArchitectureEvolutionPolicyRevisionRef | ProjectArchitectureEvolutionPolicyActiveRef | RemediationPlanPatchRef | RemediationTaskRef | CandidateArchitectureBaselineRef | ArchitectureChangeDecisionRef | MigrationGateTaskRef | BaselineActivationRef | InitialDesignProposalRef | InitialDesignDecisionRef | CoordinationPolicyRevisionRef | ProjectCoordinationPolicyActiveRef | RoleSpecRevisionRef | ProjectRoleSpecActiveRef | MaterialAccessGrantRef | AgentInstanceRef | WorkParticipationRef | DirectedRequestRef | SubscriptionRef | DeliveryRef | WaitConditionRef | CommunicationIntentRef | CommunicationAdmissionRef | CoordinationRegistryRef | WorkMailboxRef | import('./dispatch.js').ModelRequestPermitRef | SessionMessageRef | TaskRequeueRef | TaskReworkRefusalRef;
+export type AggregateRef = import('./core/identity.js').SessionAggregateRef | import('./core/identity.js').SessionWorkLinkRef | import('./core/operations.js').OperationRef | import('./reviewer-work.js').TaskReviewProtocolRef | import('./reviewer-work.js').ReviewWorkRef | import('./reviewer-work.js').ReviewResultRef | ProjectRef | WorkspaceRef | GoalRef | CompletionPolicyRevisionRef | ArchitectureBaselineRevisionRef | ProjectCompletionPolicyActiveRef | ProjectArchitectureBaselineActiveRef | PlanRevisionRef | TaskLeaseRef | TaskAttemptRef | RunRef | DispatchOutboxRef | EvidenceRef | TaskEvidenceIndexRef | VerificationRoundRef | TaskReductionRef | GoalPhaseRef | WorkContextRef | ControlIntentRef | QueryJobRef | QueryRunRef | QueryJobAnswerRef | PlanProposalSnapshot["ref"] | UserDecisionSnapshot["ref"] | CoordinationPolicyRevisionRef | ProjectCoordinationPolicyActiveRef | RoleSpecRevisionRef | ProjectRoleSpecActiveRef | MaterialAccessGrantRef | WorkParticipationRef | import('./dispatch.js').ModelRequestPermitRef | SessionMessageRef | TaskRequeueRef | TaskReworkRefusalRef;
 export type ProjectSnapshot = {
     ref: ProjectRef;
     revision: number;
@@ -73,7 +63,7 @@ export type GoalSnapshot = {
      * before A.2, which decode as null.
      */
     desiredStateRequestedBy?: ActorRef | null;
-    /** null after GoalCreated@1; a PlanRevisionRef after ApplyPlanRevision. */
+    /** null after GoalCreated@1; a PlanRevisionRef once a plan is accepted (applyPlanChange). */
     activePlanRevision: PlanRevisionRef | null;
     /** 1 at creation; 2+ after an accepted plan revision. */
     revision: number;

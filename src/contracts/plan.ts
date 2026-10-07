@@ -132,13 +132,13 @@ export type TaskDispositionRecordV1 = {
 
 // Completed-capability migration: selected original declarations, no legacy service port.
 /**
- * Versioned tasks, assignments, obligations and acceptance commands.
- * Control checks schema, references, non-empty obligations and hierarchy/DAG legality
- * before atomically accepting a revision; rejected commands do not write.
- * Task hierarchy, execution dependencies and display stages have distinct meanings.
+ * Versioned tasks, assignments and obligations of a plan revision.
+ * The WorkGraph plan service checks schema, references, non-empty obligations and
+ * hierarchy/DAG legality before atomically accepting a revision; a rejected revision
+ * writes nothing. Task hierarchy, execution dependencies and display stages have
+ * distinct meanings.
  */
-import type { ActorRef, CommandFingerprint, CommandIdentity } from "./command-event.js";
-import { canonicalJson, sha256Hex } from "./fingerprint.js";
+import type { ActorRef } from "./command-event.js";
 import type { GoalRef } from "./ledger.js";
 import type { ArchitectureBaselinePin, CompletionPolicyPin } from "./governance.js";
 // ------------------------------------------------------------------------ //
@@ -224,24 +224,6 @@ export type PlanRevisionDraft =
         inputRequirements?: TaskInputRequirementV2[];
     });
 // ------------------------------------------------------------------------ //
-// Command / receipt                                                          //
-// ------------------------------------------------------------------------ //
-export type ApplyPlanRevisionCommand = {
-    commandId: string;
-    commandType: "ApplyPlanRevision";
-    schemaVersion: 1;
-    identity: CommandIdentity;
-    /** local goalId (scoped to identity.projectId). */
-    aggregateId: string;
-    /** expected GOAL aggregate revision (CAS; 1 after CreateGoal). */
-    expectedRevision: number;
-    correlationId: string;
-    submittedAt: string;
-    payload: {
-        plan: PlanRevisionDraft;
-    };
-};
-// ------------------------------------------------------------------------ //
 // PlanValidationError                                                        //
 // ------------------------------------------------------------------------ //
 type PlanValidationCode = "missing_required_executable_task" | "missing_active_required_goal_gate" | "missing_required_obligation" | "task_obligation_mapping" | "obligation_task_mapping" | "empty_verification_requirements" | "unknown_requirement_kind" | "dangling_task_ref" | "dangling_stage_ref" | "self_dependency" | "dag_cycle" | "hierarchy_cycle" | "duplicate_requirement_id" | "obligation_semantics_changed" | "gate_definition_changed" | "role_not_authorized" | "task_removed" | "duplicate_task_id" | "unsupported_execution_change" | "missing_task_assignment";
@@ -308,34 +290,8 @@ export type PlanRevisionAcceptedEvent = {
         planRevision: PlanRevisionSnapshot;
     };
 };
-/** Deterministic plan fingerprint (JCS + SHA-256; volatile fields excluded). */
-export function applyPlanRevisionFingerprint(command: ApplyPlanRevisionCommand): CommandFingerprint {
-    const shape = {
-        schemaVersion: command.schemaVersion,
-        commandType: command.commandType,
-        projectId: command.identity.projectId,
-        aggregateId: command.aggregateId,
-        expectedRevision: command.expectedRevision,
-        payload: { plan: command.payload.plan },
-    };
-    return sha256Hex(canonicalJson(shape)) as CommandFingerprint;
-}
 export function planValidationError(path: string, code: PlanValidationCode, message: string): PlanValidationError {
     return { path, code, message };
-}
-export function planRevisionRefFor(command: ApplyPlanRevisionCommand): PlanRevisionRef {
-    return {
-        aggregateType: "PlanRevision",
-        projectId: command.identity.projectId,
-        planId: command.payload.plan.planId,
-    };
-}
-export function goalRefFor(command: ApplyPlanRevisionCommand): GoalRef {
-    return {
-        aggregateType: "Goal",
-        projectId: command.identity.projectId,
-        goalId: command.aggregateId,
-    };
 }
 
 /** Same accepted-snapshot assignment lookup used by the original implementation.

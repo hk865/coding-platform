@@ -4,66 +4,12 @@ import type { WorkContextRef } from "./context-continuity.js";
 // ------------------------------------------------------------------------ //
 // Refs                                                                      //
 // ------------------------------------------------------------------------ //
-export type AgentInstanceRef = {
-    aggregateType: "AgentInstance";
-    projectId: string;
-    workspaceId: string;
-    agentInstanceId: string;
-};
 export type WorkParticipationRef = {
     aggregateType: "WorkParticipation";
     projectId: string;
     workspaceId: string;
     workId: string;
     participationId: string;
-};
-export type DirectedRequestRef = {
-    aggregateType: "DirectedRequest";
-    projectId: string;
-    workspaceId: string;
-    requestId: string;
-};
-export type SubscriptionRef = {
-    aggregateType: "Subscription";
-    projectId: string;
-    workspaceId: string;
-    subscriptionId: string;
-};
-export type DeliveryRef = {
-    aggregateType: "Delivery";
-    projectId: string;
-    workspaceId: string;
-    deliveryId: string;
-};
-export type WaitConditionRef = {
-    aggregateType: "WaitCondition";
-    projectId: string;
-    workspaceId: string;
-    waitId: string;
-};
-export type CommunicationIntentRef = {
-    aggregateType: "CommunicationIntent";
-    projectId: string;
-    workspaceId: string;
-    intentId: string;
-};
-export type CommunicationAdmissionRef = {
-    aggregateType: "CommunicationAdmission";
-    projectId: string;
-    workspaceId: string;
-    waitId: string;
-};
-/** 每个 (project, workspace) 一份的协作登记索引（可重建投影，不是调度权威）。 */
-export type CoordinationRegistryRef = {
-    aggregateType: "CoordinationRegistry";
-    projectId: string;
-    workspaceId: string;
-};
-/** 每个 (project, workspace) 一份的 work 邮箱索引。 */
-export type WorkMailboxRef = {
-    aggregateType: "WorkMailbox";
-    projectId: string;
-    workspaceId: string;
 };
 // ------------------------------------------------------------------------ //
 // Agent principal（参与关系与换手）                                                     //

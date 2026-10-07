@@ -9,17 +9,3 @@ export type WorkContextRef = {
     /** The durable work identity (per (projectId, workspaceId); local id). */
     workId: string;
 };
-export type ExecutionNoteRef = {
-    aggregateType: "ExecutionNote";
-    projectId: string;
-    workspaceId: string;
-    workId: string;
-    noteId: string;
-};
-export type ContinuationRecordRef = {
-    aggregateType: "ContinuationRecord";
-    projectId: string;
-    workspaceId: string;
-    workId: string;
-    reportId: string;
-};

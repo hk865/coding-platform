@@ -1,16 +1,4 @@
 // Migrated contract declarations; source provenance is recorded in the N0 transfer manifest.
-export type InitialDesignProposalRef = {
-    aggregateType: "InitialDesignProposal";
-    projectId: string;
-    workspaceId: string;
-    designId: string;
-};
-export type InitialDesignDecisionRef = {
-    aggregateType: "InitialDesignDecision";
-    projectId: string;
-    workspaceId: string;
-    decisionId: string;
-};
 export type CoordinationPolicyRevisionRef = {
     aggregateType: "CoordinationPolicyRevision";
     projectId: string;

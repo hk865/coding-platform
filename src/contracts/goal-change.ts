@@ -194,25 +194,3 @@ export type UserDecisionSnapshot = {
     decision: UserDecisionV1;
     recordedAt: string;
 };
-export type GoalRevisionV1 = {
-    schemaVersion: 1;
-    goalRef: GoalRef;
-    revision: number;
-    activePlanRef: PlanRevisionRef;
-    supersededPlanRefs: PlanRevisionRef[];
-    changedAt: string;
-    reason: string;
-};
-export type GoalRevisionSnapshot = {
-    ref: {
-        aggregateType: "GoalRevision";
-        projectId: string;
-        workspaceId: string;
-        goalId: string;
-        revision: number;
-    };
-    revision: 1;
-    schemaVersion: 1;
-    change: GoalRevisionV1;
-    recordedAt: string;
-};
