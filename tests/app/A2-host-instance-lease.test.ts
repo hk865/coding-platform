@@ -1,7 +1,7 @@
 /**
  * The Host instance lease file (docs/refactor/STATE-MACHINES-SPEC.md §12.8
  * HL-01..HL-06, A.2 step 5.6). The Host-level rows HL-02/HL-03/HL-07 run end to
- * end in `A2-host-restart.test.ts`; this file covers the lock-file rows a real
+ * end in `tests/scenarios/A8-host-restart-lease.test.ts`; this file covers the lock-file rows a real
  * Host cannot reach on demand: a damaged lock (HL-04), a pid reused by a live
  * process (HL-05), a release after another Host took the lock over (HL-06),
  * two Hosts taking over one stale lock at the same time (HL-03 exclusive) and

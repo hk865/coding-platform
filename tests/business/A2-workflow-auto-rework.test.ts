@@ -19,9 +19,12 @@
  *   (`automationContext`) and maps the answer: a commit (`requeued` or
  *   `refused`) and `revision_conflict` → `select_work`; any other refusal →
  *   `waiting('<code>: …')`.
+ * - (A.2 step 6, OWED §1) W-21's Session choice for a `claim_requeued` Task whose afterRun claim
+ *   Session is `recoverable` (wait) or `not_found` (`chooseSession(null)`): branches no Host scenario
+ *   reaches on clean data.
  *
  * Only the owners a step reads answer; every other port throws if touched. The
- * real platform path is `tests/app/A2-automation-rework.test.ts`.
+ * real platform path is `tests/scenarios/A1-rework-same-session.test.ts`.
  */
 import { expect, it } from 'vitest';
 import type { WorkflowAdvanceInput, WorkflowOperation } from '../../src/business/workflow/contracts.js';
@@ -85,11 +88,12 @@ type RequeueCall = { ctx: CoreCallContext; request: GraphWrite<RequeueTaskInput>
 function workflowWith(rows: TaskRow[], options: {
   requeue?: (request: GraphWrite<RequeueTaskInput>) => WriteResult<TaskRequeueOutcomeV1>; noRequeuePort?: boolean;
   executions?: WorkflowDependencies['executions']; evidence?: WorkflowDependencies['evidence'];
+  sessions?: WorkflowDependencies['sessions'];
 } = {}) {
   const calls: RequeueCall[] = [];
   const tasks = rows.map(row => row.definition);
   const deps: WorkflowDependencies = {
-    tasks: untouched('tasks'), sessions: untouched('sessions'), executions: options.executions ?? untouched('executions'),
+    tasks: untouched('tasks'), sessions: options.sessions ?? untouched('sessions'), executions: options.executions ?? untouched('executions'),
     runtime: untouched('runtime'), evidence: options.evidence ?? untouched('evidence'), checks: untouched('checks'),
     sourceAuthority: untouched('sourceAuthority'),
     plans: { ...untouched<WorkflowDependencies['plans']>('plans'),
@@ -328,4 +332,47 @@ it.each([
   const { next } = await requeueRequestOf(workflow, selectWork('work-1'));
   expect(await workflow.advanceWork(ctx, next)).toEqual({ status: 'ready', value: { state: 'waiting', next: null,
     reason: `${code}: ${reason}`, receipt: { kind: 'requeue_task', result: answer } } });
+});
+
+// A.2 step 6 (OWED §1, W-21 beyond the reusable, occupied, kernel_turn_open and archived branches the Host scenarios
+// drive): `recoverable` health is written by no production path and a claim Session that is `not_found` needs a
+// deleted record, so these two branches are proved here over owner doubles.
+it.each([
+  ['recoverable', 'waits rather than moving the continuation off its history'],
+  ['not_found', 'goes to the default selection without a hint (chooseSession(null)) and opens a new Session with the requeue'],
+])('W-21 (§12.2, A.2 step 6): a requeued Task whose afterRun claim Session is %s %s', async (state: string, _branch: string) => {
+  const requeueRef: TaskRequeueRef = { aggregateType: 'TaskRequeue', projectId: P, goalId: G, taskId: 'work-1', afterRunId: 'run-work-1' };
+  const claimSession = { projectId: P, sessionId: 'claim-session-1' };
+  const reads: string[] = [];
+  const builder = { kind: 'legacy_template' as const, templateId: 'builder', templateRevision: '1' };
+  const executions = { ...untouched<WorkflowDependencies['executions']>('executions'),
+    readExecution: async (_ctx: CoreCallContext, runRef: RunRef) => {
+      reads.push(`readExecution ${runRef.runId}`);
+      return { status: 'ready', value: { run: { ref: runRef }, outbox: { claim: { sessionRef: claimSession } } } } as never;
+    } } as WorkflowDependencies['executions'];
+  const sessions = { ...untouched<WorkflowDependencies['sessions']>('sessions'),
+    readSession: async (_ctx: CoreCallContext, sessionRef: { sessionId: string }) => {
+      reads.push(`readSession ${sessionRef.sessionId}`);
+      if (state === 'not_found') return { status: 'not_found' } as never;
+      return { status: 'ready', value: { record: { ref: { aggregateType: 'Session', ...claimSession }, revision: 4, workspaceId: W,
+        lifecycle: 'active', health: 'recoverable', occupancy: null, role: builder }, links: [] } } as never;
+    },
+    findSessions: async () => {
+      reads.push('findSessions');
+      return { status: 'ready', value: { items: [], nextCursor: null } } as never;
+    } } as WorkflowDependencies['sessions'];
+  const claimRequeued: TaskAutomationVerdictV1 = { kind: 'claim_requeued', requeueRef, budget: null };
+  const { workflow } = workflowWith([rowOf('work-1', failureOf('work-1', claimRequeued), { effectivePhase: 'pending', requeueRef,
+    eligibility: { eligible: true, reasons: [] } as never })], { executions, sessions });
+  const result = await workflow.advanceWork(ctx, selectWork('work-1'));
+  if (state === 'recoverable') {
+    expect(result).toEqual({ status: 'ready', value: { state: 'waiting', next: null, receipt: null,
+      reason: 'the afterRun claim Session is recoverable' } });
+    expect(reads, 'no other Session is looked for').toEqual(['readExecution run-work-1', 'readSession claim-session-1']);
+  } else {
+    expect(result).toMatchObject({ status: 'ready', value: { state: 'advance', receipt: null, next: { kind: 'perform',
+      operation: { kind: 'create_session', requeue: { requeueRef, budget: null } } } } });
+    // chooseSession(hint=null): no hint is read, the directory is (and has no reusable Session of the role).
+    expect(reads).toEqual(['readExecution run-work-1', 'readSession claim-session-1', 'findSessions']);
+  }
 });

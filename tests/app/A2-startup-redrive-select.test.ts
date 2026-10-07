@@ -14,7 +14,7 @@
  *
  * Steps 1..6 find nothing to reconcile here (no Session, Run, round or queued
  * intent), so every port they would write through throws if touched. The real
- * Host path is tests/app/A2-automation-rework.test.ts test 3.
+ * Host path is the W-11 start-up re-drive case of tests/scenarios/A8-host-restart.test.ts.
  */
 import { expect, it } from 'vitest';
 import { runStartupReconcile, type StartupReconcilePlatform } from '../../src/app/startup-reconcile.js';

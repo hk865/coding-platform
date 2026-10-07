@@ -1,7 +1,7 @@
 /**
  * A.2 step 5.6 restart scenarios through real Hosts on one SQLite ledger and
- * Kernel store (docs/refactor/STATE-MACHINES-SPEC.md §12). Shared by
- * `tests/app/A2-host-restart.test.ts` and `tests/app/A2-host-reconcile.test.ts`.
+ * Kernel store (docs/refactor/STATE-MACHINES-SPEC.md §12). Shared by the
+ * restart scenarios (`tests/scenarios/A8-host-restart*.test.ts`) and the scenario help code.
  *
  * Two ways a Host "stops" here:
  * - closed: `host.close()` drains every request and removes its own lock
