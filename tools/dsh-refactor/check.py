@@ -37,7 +37,6 @@ checks = {
     'next-b2-composition': ['node_modules/vitest/vitest.mjs', 'run', 'tests/composition/B2-runtime-platform.test.ts', 'tests/composition/C1-M1-platform.test.ts'],
     'next-whiteboard-tools': ['node_modules/vitest/vitest.mjs', 'run', 'tests/runtime/W2-whiteboard-tools.test.ts', 'tests/runtime/W2-role-skills.test.ts'],
     'next-agent-whiteboard': ['node_modules/vitest/vitest.mjs', 'run', 'tests/work-graph/W2-agent-whiteboard.test.ts'],
-    'next-material-facts': ['node_modules/vitest/vitest.mjs', 'run', 'tests/work-graph/M2-material-read-facts.test.ts'],
     'next-runtime-execution': ['node_modules/vitest/vitest.mjs', 'run', 'tests/runtime/B2-runtime-execution.test.ts', 'tests/composition/B2-runtime-platform.test.ts'],
     'next-material-source-provider': ['node_modules/vitest/vitest.mjs', 'run', 'tests/data/M1-material-source-provider.test.ts'],
     'next-kernel-history-public': ['node_modules/vitest/vitest.mjs', 'run', 'tests/kernel/B2-history-public-export.test.ts'],

@@ -173,7 +173,7 @@ export type GraphPorts = {
 - `PlanRevisionDraft` / `PlanRevisionSnapshot` 显式区分 schemaVersion 1、2。版本2新增白板 `taskRelations`（coordination / expected_dependency）及 `inputRequirements`（本批仅 artifact，持久保存现有精确 ArtifactRef）。PlanProposal@2 的嵌套 draft 自带版本；沿用机械编码器标识 PlanRevisionSnapshot@1（Store 按 aggregateType 选择且不逐条存 schemaId）；正文 schemaVersion 明确区分1/2，拒绝未知版本和v1夹带新字段。旧正文不改写，不表示旧程序可以读取新正文。
 - `TaskRow` 将真实任务状态、提示关系和输入核验分开。图查询与候选查询共用投影/资格规则；默认输入为 `not_checked`，不为显示图而打开材料。旧 executionDag/requires 原样保留为 `legacy_unverifiable`，不会根据 label 或生产 Task satisfied 推断输入可用。
 - `PlanTaskPort.readTaskInput(ctx,{goalRef,planRef,taskId,requirementId})` 只选择已接受计划的指定需求，复用 `MaterialPort.openArtifact(..., usage:'current')`，返回现有 `ReadResult<ArtifactRecord>`。它同时完成本次实际读取与核验，不再叠加一层“先全量 check 再重复 consume”；调用方不能传入替代引用。后续独立消费需要重新核验当时的权限与适用性。显式历史 Plan 可以作为精确引用的选择来源；current 只表示材料对本次 reader 的当前适用性，不表示该历史 Plan 当前活跃或旧任务获准执行，因此不新增 selection Plan 必须等于 Run pin 的门槛。（2026-10-07 更正：`readTaskInput` 和准备阶段对它的调用已删除，决定 34、lead 决定 LA-11。计划的精确输入现在没有执行路径读取；“消费时检查精确输入”由编排设计第 3 片重建。）
-- 当前材料实现的 Host 身份没有可信 current source pin 入口，因此会如实拒绝当前适用性；不能以历史读取成功替代。真实 Run/QueryRun、精确 grant 和来源 pin 的能力继续复用，既不扩权，也不把候选资格当执行许可。
+- 当前材料实现的 Host 身份没有可信 current source pin 入口，因此会如实拒绝当前适用性；不能以历史读取成功替代。真实 Run/QueryRun、精确 grant 和来源 pin 的能力继续复用，既不扩权，也不把候选资格当执行许可。（2026-10-07 更正：精确 grant 的写入和读取已按决定 34 删除，Run/QueryRun 只读自己的材料；取得来源 pin 的代码保留、不接线，留给编排设计第 3 片。）
 - 候选查询删除“前驱整个 Task satisfied”门槛，保留 Plan/Run/Lease/Reduction 的完整事实读取，以及任务自身状态、身份和范围检查。缺事实不默认 pending/free。材料缺失或不能核验不自动禁止整项工作的调查；真正读取时保留缺失、无权、来源过期等明确结果。
 
 ```mermaid
@@ -769,7 +769,7 @@ export interface MaterialPort {
 
 PlatformMaterialOrigin 及 MaterialReader 是公共契约；MaterialWriteOrigin.kind=execution 在内部映射到 RecordStore 的 MaterialOrigin.kind=run/owner，legacy origin 仅用于旧记录解码、不能由写请求伪造。origin 由可信身份核对，不由 Agent 自报 host。正文只有存储效果时返回 stored，不能伪造一条 Ledger commit cursor。storeArtifact 不等于正式证据接受；sendMessage/captureSourceChanges/finalizeChecks 等操作负责随后提交其正式关联，调用业务不用手动同步索引。
 
-open/resolve 使用 ctx.materialReader。工作 Run/QueryRun 保留现有 exact grant、MaterialBasis 和来源适用性；合法 host 可直接读取项目/工作区材料，不创建虚假 Run。需要给 Artifact 元数据补 platform origin 时采用附加来源记录及版本化 codec，不改写原内容引用/原 owner，不令 raw body API 变成越权通道。内容去重不能将另一个 owner 的读取资格自动赠送给新读者。
+open/resolve 使用 ctx.materialReader。工作 Run/QueryRun 保留现有 exact grant、MaterialBasis 和来源适用性（2026-10-07 更正：exact grant 和按 MaterialBasis 判断的读取已按决定 34 删除，工作 Run/QueryRun 只读自己的材料）；合法 host 可直接读取项目/工作区材料，不创建虚假 Run。需要给 Artifact 元数据补 platform origin 时采用附加来源记录及版本化 codec，不改写原内容引用/原 owner，不令 raw body API 变成越权通道。内容去重不能将另一个 owner 的读取资格自动赠送给新读者。
 
 resolveMaterials 解析明确 candidates，按请求给出的顺序和预算去重/截取，返回被排除项及原因；它不自行决定业务上需要哪份方案。若截取正文形成新产物，保留原引用与范围来源，不把截取摘要标成完整材料。当前性验证失败不得自动降成 historical；由调用方明确请求历史解释。历史结果指向 Kernel 时交 AgentRuntime.readSessionHistory 精确读取，WorkGraph 不打开 Kernel Store。平台只索引必要调用结果/明确决定与依据，不复制模型隐含推理或累计原始对话。
 

@@ -47,16 +47,11 @@ import type { RegisteredCheckRunner } from '../../src/core/agent-runtime/check-e
 import { createProjectBootstrapServices } from '../../src/core/work-graph/configuration/project-bootstrap-service.js';
 import { PROJECT_BOOTSTRAP_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/project-bootstrap-record-codecs.js';
 import { createMaterialService } from '../../src/core/work-graph/materials/material-service.js';
-import type { MaterialPort, MaterialReadFactsPort } from '../../src/core/work-graph/materials/contracts.js';
-import { createMaterialReadFactsService } from '../../src/core/work-graph/materials/material-facts-service.js';
+import type { MaterialPort } from '../../src/core/work-graph/materials/contracts.js';
 import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
-import { createMaterialAccessResolver } from '../../src/core/work-graph/materials/applicability.js';
-import { createWorkspaceAccessFactory } from '../../src/core/workspace/access.js';
 import type { WorkspaceHostBindings } from '../../src/core/workspace/access.js';
-import { createMaterialSourceProvider } from '../../src/core/workspace/material-source-provider.js';
 import { VerificationWorkspaceReader } from '../../src/core/workspace/verification-workspace-reader.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
-import { createTaskCarriedUnchanged } from '../../src/core/work-graph/tasks/entry-plan-reader.js';
 import { plainSessionRefToAggregate } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import type { GraphWrite } from '../../src/core/work-graph/tasks/contracts.js';
 import type { ClaimTaskInput } from '../../src/core/work-graph/tasks/claim-contracts.js';
@@ -109,7 +104,6 @@ export type R3eEvidenceFixture = {
     passCheck: RegisteredCommandCheck;
     interruptCheck: RegisteredCommandCheck;
     materials: MaterialPort;
-    materialFacts: MaterialReadFactsPort;
     workspaceHost: WorkspaceHostBindings;
     records: Records;
     evidence: EvidencePort;
@@ -320,23 +314,8 @@ export async function createR3eEvidenceFixture(
             },
         };
 
-        const access = createWorkspaceAccessFactory(workspaceHost);
-        const sourceProvider = createMaterialSourceProvider({
-            access, contextForScope: (sourceScope, signal) => ({
-                projectId: sourceScope.projectId, workspaceId: sourceScope.workspaceId,
-                principal: { kind: 'host', actor },
-                materialReader: { kind: 'host', projectId: sourceScope.projectId, workspaceId: sourceScope.workspaceId, actor },
-                signal,
-            }),
-        });
-        const { authority, index } = createMaterialRecordReaders(b2.base.records);
-        const materials = createMaterialService({
-            bodies: b2.bodies, authority, grants: createMaterialAccessResolver(authority, index, sourceProvider), now,
-        });
-        const materialFacts = createMaterialReadFactsService({
-            authority, index, bodies: b2.bodies, sourceApplicability: sourceProvider,
-            isTaskCarriedUnchanged: createTaskCarriedUnchanged(b2.base.records), now,
-        });
+        const { authority } = createMaterialRecordReaders(b2.base.records);
+        const materials = createMaterialService({ bodies: b2.bodies, authority, now });
         const executions = createRunStateReader({ records: b2.base.records });
         const verificationSource = new VerificationWorkspaceReader();
         let sourceCaptures = 0;
@@ -344,7 +323,7 @@ export async function createR3eEvidenceFixture(
             capture(root) { sourceCaptures += 1; return verificationSource.capture(root); },
         };
         const evidence = createEvidenceService({
-            records: b2.base.records, materials, materialFacts, executions,
+            records: b2.base.records, materials, executions,
             workspaceHost, source: countedSource, configuration, now, newId,
         });
         const runner = createRegisteredCheckRunner({ evidence, workspaceHost, kernel, now });
@@ -352,7 +331,7 @@ export async function createR3eEvidenceFixture(
         const fixture: R3eEvidenceFixture = {
             kind, b2, ctx, scope, projectRef, workspaceRef, goalRef, planRef, plan,
             subjectRunRef, subject, workspaceRoot, hostState, configuration,
-            passCheck, interruptCheck, materials, materialFacts, workspaceHost,
+            passCheck, interruptCheck, materials, workspaceHost,
             records: b2.base.records, evidence, runner,
             openRequest(overrides = {}) {
                 return { input: {

@@ -6,22 +6,18 @@ import { createInMemoryRecordBackend } from '../../src/core/record-store/in-memo
 import { createSqliteRecordBackend } from '../../src/core/record-store/sqlite-record-store.js';
 import { RawArtifactBodyStore } from '../../src/core/record-store/body-store.js';
 import type { GoalRecordTransactionPort, PreparedCommit, RecordBackendSchemas, EncodedRecord } from '../../src/core/record-store/ports.js';
-import type { RecordLookupPort } from '../../src/core/record-store/lookup-ports.js';
 import { canonicalJson, type JsonValue } from '../../src/contracts/fingerprint.js';
 import type { GoalSnapshot, WorkspaceSnapshot } from '../../src/contracts/ledger.js';
 import type { RunRef, RunSnapshot } from '../../src/contracts/dispatch.js';
 import type { QueryRunRef, QueryRunSnapshot } from '../../src/contracts/query-job.js';
-import type { ArtifactRef } from '../../src/contracts/artifact.js';
-import type { MaterialAccessGrantSnapshot, MaterialAccessGrantV1, MaterialBasisV1 } from '../../src/contracts/material-access.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { ProjectSourceAccess } from '../../src/core/workspace/project-source-index.js';
-import { WorkspaceSourceApplicability } from '../../src/core/workspace/source-applicability.js';
+import { materialSourcePinIsCurrent, WorkspaceSourceApplicability } from '../../src/core/workspace/source-applicability.js';
 import { materialRecordSchemas, createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
-import { createMaterialAccessResolver } from '../../src/core/work-graph/materials/applicability.js';
 import { createMaterialService } from '../../src/core/work-graph/materials/material-service.js';
 
-type Snapshot = GoalSnapshot | WorkspaceSnapshot | RunSnapshot | QueryRunSnapshot | MaterialAccessGrantSnapshot;
-type Backend = { records: GoalRecordTransactionPort & RecordLookupPort; close(): Promise<void> };
+type Snapshot = GoalSnapshot | WorkspaceSnapshot | RunSnapshot | QueryRunSnapshot;
+type Backend = { records: GoalRecordTransactionPort; close(): Promise<void> };
 const at = '2026-09-24T00:00:00.000Z', projectId = 'material-project';
 const targetWorkspace = 'workspace-target', sourceWorkspace = 'workspace-source';
 const targetGoal = 'goal-target', sourceGoal = 'goal-source';
@@ -49,10 +45,10 @@ const key = (ref: Snapshot['ref']) => canonicalJson(ref as unknown as JsonValue)
 const encode = (row: Snapshot): EncodedRecord => ({ refKey: key(row.ref),
   schemaId: row.ref.aggregateType + 'Snapshot@1', revision: row.revision, json: JSON.stringify(row) });
 let seedNo = 0;
-function seedCommit(rows: Snapshot[], prior: number | null = null): PreparedCommit {
+function seedCommit(rows: Snapshot[]): PreparedCommit {
   const n = ++seedNo, event = { eventId: 'material-seed-event-' + n, eventType: 'MaterialFixtureSeeded', schemaVersion: 1, occurredAt: at };
   return { identityKey: 'material-seed-' + n, fingerprint: 'material-seed-' + n,
-    guards: rows.map(row => ({ refKey: key(row.ref), expectedRevision: prior })), records: rows.map(encode),
+    guards: rows.map(row => ({ refKey: key(row.ref), expectedRevision: null })), records: rows.map(encode),
     events: [{ ...event, json: JSON.stringify(event) }], claims: [], indexGuards: [], indexChanges: [] };
 }
 const dirs: string[] = [];
@@ -65,9 +61,6 @@ async function open(kind: 'memory' | 'sqlite'): Promise<Backend> {
   const dir = await mkdtemp(join(tmpdir(), 'next-r3b-applicability-')); dirs.push(dir);
   return createSqliteRecordBackend({ path: join(dir, 'records.sqlite'), schemas });
 }
-async function seed(store: Backend, rows: Snapshot[], prior: number | null = null) {
-  expect(await store.records.commit(seedCommit(rows, prior))).toMatchObject({ status: 'committed', replayed: false });
-}
 async function bodyFor(owner: RunRef, body: string) {
   const bodies = new RawArtifactBodyStore();
   const stored = await bodies.put({ body, contentType: 'text/plain',
@@ -76,89 +69,62 @@ async function bodyFor(owner: RunRef, body: string) {
   if (stored.status !== 'ready') throw Error('raw body unavailable');
   return { bodies, ref: stored.value.ref };
 }
-function grant(id: string, reader: RunRef | QueryRunRef, owner: RunRef, ref: ArtifactRef,
-  basis: MaterialBasisV1, historical: boolean, crossWorkspace: boolean): MaterialAccessGrantSnapshot {
-  const value: MaterialAccessGrantV1 = { schemaVersion: 1, grantId: id,
-    scope: { projectId, workspaceId: targetWorkspace, goalId: targetGoal }, materials: [ref], reader,
-    issuedBy: { aggregateType: 'Control', projectId, goalId: targetGoal }, purpose: 'material review', basis, grantedAt: at,
-    ...(historical ? { history: { owner, usage: 'historical_explanation' as const,
-      ...(crossWorkspace ? { crossWorkspace: { sourceWorkspaceId: sourceWorkspace, authorizedBy: actor } } : {}) } } : {}),
-  };
-  return { ref: { aggregateType: 'MaterialAccessGrant', projectId, workspaceId: targetWorkspace, goalId: targetGoal, grantId: id },
-    revision: 1, schemaVersion: 1, grant: value };
-}
-const queryCtx = (reader: QueryRunRef, basis: MaterialBasisV1): CoreCallContext => ({ projectId, workspaceId: targetWorkspace,
+const queryCtx = (reader: QueryRunRef): CoreCallContext => ({ projectId, workspaceId: targetWorkspace,
   principal: { kind: 'query_run', queryRunRef: reader, initiator: actor },
-  materialReader: { kind: 'run', requester: reader, currentBasis: basis }, signal: new AbortController().signal });
-const workCtx = (reader: RunRef, basis: MaterialBasisV1): CoreCallContext => ({ projectId, workspaceId: targetWorkspace,
+  materialReader: { kind: 'run', requester: reader }, signal: new AbortController().signal });
+const workCtx = (reader: RunRef, workspaceId: string): CoreCallContext => ({ projectId, workspaceId,
   principal: { kind: 'work_run', runRef: reader, roleBinding },
-  materialReader: { kind: 'run', requester: reader, currentBasis: basis }, signal: new AbortController().signal });
+  materialReader: { kind: 'run', requester: reader }, signal: new AbortController().signal });
 
-it.each(['memory', 'sqlite'] as const)('%s: exact QueryRun history needs a recorded human cross-workspace grant and respects revocation', async kind => {
+// Material grants were deleted (decision 34): no recorded grant can share a
+// Run's material, so a Run or QueryRun reader opens only its own, never for current use.
+it.each(['memory', 'sqlite'] as const)('%s: a Run or QueryRun reader opens only its own material, and not for current use', async kind => {
   const store = await open(kind);
   try {
     const owner = runRef(sourceGoal, 'source-run');
+    const otherRun = runRef(targetGoal, 'reader-run');
     const reader = queryRef('query-1');
-    const wrongReader = queryRef('query-2');
     const { bodies, ref } = await bodyFor(owner, 'historical source material');
-    const basis: MaterialBasisV1 = { planRef: null, workspaceRevision: 1, sourceDigest: null };
-    const missingCross = grant('missing-cross', reader, owner, ref, basis, true, false);
-    await seed(store, [workspace(sourceWorkspace), workspace(targetWorkspace), goal(sourceGoal, sourceWorkspace),
-      goal(targetGoal, targetWorkspace), run(owner, sourceWorkspace), queryRun(reader), queryRun(wrongReader), missingCross]);
+    expect(await store.records.commit(seedCommit([workspace(sourceWorkspace), workspace(targetWorkspace),
+      goal(sourceGoal, sourceWorkspace), goal(targetGoal, targetWorkspace), run(owner, sourceWorkspace),
+      run(otherRun, targetWorkspace), queryRun(reader)]))).toMatchObject({ status: 'committed', replayed: false });
     const reads = createMaterialRecordReaders(store.records);
-    const materials = createMaterialService({ bodies, authority: reads.authority,
-      grants: createMaterialAccessResolver(reads.authority, reads.index), now: () => at });
-    expect(await materials.openArtifact(queryCtx(reader, basis), { ref, usage: 'historical_explanation' }))
-      .toMatchObject({ status: 'rejected', code: 'forbidden' });
-    const authorized = grant('authorized-cross', reader, owner, ref, basis, true, true);
-    await seed(store, [authorized]);
-    expect(await materials.openArtifact(queryCtx(reader, basis), { ref, usage: 'historical_explanation' }))
+    const materials = createMaterialService({ bodies, authority: reads.authority, now: () => at });
+    const historical = { ref, usage: 'historical_explanation' as const };
+    expect(await materials.openArtifact(workCtx(owner, sourceWorkspace), historical))
       .toMatchObject({ status: 'ready', value: { body: 'historical source material', applicability: 'historical_explanation' } });
-    expect(await materials.openArtifact(queryCtx(wrongReader, basis), { ref, usage: 'historical_explanation' }))
+    expect(await materials.openArtifact(workCtx(owner, sourceWorkspace), { ref, usage: 'current' }))
       .toMatchObject({ status: 'rejected', code: 'forbidden' });
-    const revoked: MaterialAccessGrantSnapshot = { ...authorized, revision: 2,
-      revocation: { reason: 'withdrawn', revokedAt: at, actor, commandId: 'revoke-cross' } };
-    await seed(store, [revoked], 1);
-    expect(await materials.openArtifact(queryCtx(reader, basis), { ref, usage: 'historical_explanation' }))
+    expect(await materials.openArtifact(queryCtx(reader), historical)).toMatchObject({ status: 'rejected', code: 'forbidden' });
+    expect(await materials.openArtifact(workCtx(otherRun, targetWorkspace), historical))
       .toMatchObject({ status: 'rejected', code: 'forbidden' });
   } finally { await store.close(); }
 });
 
-it.each(['memory', 'sqlite'] as const)('%s: current material read rechecks a real source manifest and rejects an edited file', async kind => {
-  const store = await open(kind);
+// The kept source pin pair (decision 34, for slice 3 of the orchestration
+// design): a re-capture of the same selection stays current until a file changes.
+it('a captured source pin stays current until a selected file is edited', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'next-r3b-source-pin-')); dirs.push(dir);
   const file = join(dir, 'src/note.txt'); await mkdir(dirname(file), { recursive: true });
   await writeFile(file, 'original verified source');
-  try {
-    const owner = runRef(targetGoal, 'owner-run'), reader = runRef(targetGoal, 'reader-run');
-    const { bodies, ref } = await bodyFor(owner, 'current shared material');
-    const access: ProjectSourceAccess = {
-      allowed: path => path === 'src/note.txt',
-      inventory: async () => ({ paths: ['src/note.txt'], truncated: false }),
-      read: async (path, maxBytes) => {
-        if (path !== 'src/note.txt') throw Error('ungranted path');
-        const content = await readFile(file, 'utf8');
-        if (Buffer.byteLength(content) > maxBytes) throw Error('capacity');
-        return { content };
-      },
-      sourceIdentity: async () => ({ workspace: dir, commit: null }),
-    };
-    const source = new WorkspaceSourceApplicability(scope => scope.projectId === projectId && scope.workspaceId === targetWorkspace ? access : null);
-    const captured = await source.capture({ projectId, workspaceId: targetWorkspace,
-      sourceSet: { kind: 'workspace_paths', paths: ['src/note.txt'] } });
-    expect(captured.status).toBe('sourced');
-    if (captured.status !== 'sourced') throw Error('source pin not captured');
-    const basis: MaterialBasisV1 = { planRef: null, workspaceRevision: 1, sourceDigest: null, sourcePin: captured.pin };
-    const currentGrant = grant('current', reader, owner, ref, basis, false, false);
-    await seed(store, [workspace(targetWorkspace), goal(targetGoal, targetWorkspace), run(owner, targetWorkspace),
-      run(reader, targetWorkspace), currentGrant]);
-    const reads = createMaterialRecordReaders(store.records);
-    const materials = createMaterialService({ bodies, authority: reads.authority,
-      grants: createMaterialAccessResolver(reads.authority, reads.index, source), now: () => at });
-    expect(await materials.openArtifact(workCtx(reader, basis), { ref, usage: 'current' }))
-      .toMatchObject({ status: 'ready', value: { body: 'current shared material', applicability: 'current' } });
-    await writeFile(file, 'edited verified source');
-    expect(await materials.openArtifact(workCtx(reader, basis), { ref, usage: 'current' }))
-      .toMatchObject({ status: 'rejected', code: 'source_stale' });
-  } finally { await store.close(); }
+  const access: ProjectSourceAccess = {
+    allowed: path => path === 'src/note.txt',
+    inventory: async () => ({ paths: ['src/note.txt'], truncated: false }),
+    read: async (path, maxBytes) => {
+      if (path !== 'src/note.txt') throw Error('ungranted path');
+      const content = await readFile(file, 'utf8');
+      if (Buffer.byteLength(content) > maxBytes) throw Error('capacity');
+      return { content };
+    },
+    sourceIdentity: async () => ({ workspace: dir, commit: null }),
+  };
+  const scope = { projectId, workspaceId: targetWorkspace };
+  const source = new WorkspaceSourceApplicability(asked => asked.projectId === projectId && asked.workspaceId === targetWorkspace ? access : null);
+  const captured = await source.capture({ ...scope, sourceSet: { kind: 'workspace_paths', paths: ['src/note.txt'] } });
+  expect(captured.status).toBe('sourced');
+  if (captured.status !== 'sourced') throw Error('source pin not captured');
+  expect(await materialSourcePinIsCurrent(source, captured.pin, scope)).toBe(true);
+  expect(await materialSourcePinIsCurrent(source, captured.pin, { projectId, workspaceId: sourceWorkspace })).toBe(false);
+  await writeFile(file, 'edited verified source');
+  expect(await materialSourcePinIsCurrent(source, captured.pin, scope)).toBe(false);
 });

@@ -5,7 +5,6 @@ import type { ReadResult } from '../../../contracts/core/results.js';
 import type { RawArtifactPut, RawArtifactRecord, RawArtifactStorePort } from '../../record-store/body-ports.js';
 import type { StoreFailure, StoreResult } from '../../record-store/ports.js';
 import type { RunRef, RunSnapshot, SourceRefV1 } from '../../../contracts/dispatch.js';
-import type { MaterialAccessResolver } from '../../../contracts/material-access.js';
 import { sameArtifactOwnerRunRef } from '../../../contracts/material-access.js';
 import type { MaterialPort, MaterialWriteOrigin, StoreArtifactResult } from './contracts.js';
 import type { MaterialAuthorityReads } from './applicability.js';
@@ -14,7 +13,6 @@ import { createMaterialApplicability, materialOwnerFromOrigin } from './applicab
 export type MaterialServiceDependencies = {
   bodies: RawArtifactStorePort;
   authority: MaterialAuthorityReads;
-  grants: MaterialAccessResolver;
   now(): string;
 };
 
@@ -53,7 +51,7 @@ type MaterialCore = {
 };
 
 function createMaterialCore(deps: MaterialServiceDependencies): MaterialCore {
-  const applicability = createMaterialApplicability({ authority: deps.authority, grants: deps.grants });
+  const applicability = createMaterialApplicability({ authority: deps.authority });
   return {
     async storeRawBody(input) {
       if (typeof input.contentType !== 'string' || input.contentType.length === 0) {
@@ -236,8 +234,7 @@ function snapshotReader(reader: MaterialReader): MaterialReader {
     return { kind: 'host', projectId: reader.projectId,
       ...(reader.workspaceId !== undefined ? { workspaceId: reader.workspaceId } : {}), actor: { ...reader.actor } };
   }
-  return { kind: 'run', requester: structuredClone(reader.requester),
-    ...(reader.currentBasis !== undefined ? { currentBasis: structuredClone(reader.currentBasis) } : {}) };
+  return { kind: 'run', requester: structuredClone(reader.requester) };
 }
 
 function snapshotPrincipal(principal: CorePrincipal): CorePrincipal {

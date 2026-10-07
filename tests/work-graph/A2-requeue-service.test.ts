@@ -29,7 +29,6 @@ import {
   WORKFLOW_AUTOMATION_ACTOR, type TaskAutomationPolicyV1, type TaskRequeueOutcomeV1,
 } from '../../src/contracts/task-requeue.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
-import { createMaterialAccessResolver } from '../../src/core/work-graph/materials/applicability.js';
 import { createMaterialService } from '../../src/core/work-graph/materials/material-service.js';
 import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
 import type { RequeueTaskInput } from '../../src/core/work-graph/tasks/claim-contracts.js';
@@ -94,8 +93,7 @@ async function open(kind: ClaimFixtureKind): Promise<Opened> {
       permissions: structuredClone(input.permissions), hostTemplate: structuredClone(B2_HOST.hostTemplate) } };
   };
   const materialReads = createMaterialRecordReaders(records);
-  const materials = createMaterialService({ bodies: b2.bodies, authority: materialReads.authority,
-    grants: createMaterialAccessResolver(materialReads.authority, materialReads.index), now });
+  const materials = createMaterialService({ bodies: b2.bodies, authority: materialReads.authority, now });
   const entry = createExecutionEntryService({ records, reads, roles, bodies: b2.bodies, materials,
     authorizeConfiguration, now, eventId, newId: () => `a2-requeue-entry-${++seq}` });
   const fixture: Opened = {

@@ -2,16 +2,14 @@
  * C6 (STATE-MACHINES-SPEC §3.3 point 5, §6.1 contract (g); A.2 step 5.4b): the
  * reads behind the pure `entryPlanVerdict`. W3 (`authorizeRuntimeEntry`, and
  * the RUN-03 re-authorization through the same call) asks whether a claim
- * pinned to an older Plan may still enter; materials asks the same question of
- * a reader Run's grant (LA-2) through `createTaskCarriedUnchanged`, which the
- * composition root injects so that `materials/` never reads a PlanRevision.
+ * pinned to an older Plan may still enter. The LA-2 predicate that asked the
+ * same of a reader Run's material grant was deleted with the grants (decision 34).
  */
 import type { EntryPlanVerdict } from '../../../contracts/dispatch.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
 import type { PlanRevisionRef, PlanRevisionSnapshot } from '../../../contracts/plan.js';
 import type { GoalRecordTransactionPort, RecordGuard } from '../../record-store/ports.js';
-import type { TaskCarriedUnchanged } from '../materials/record-ports.js';
-import { readOriginPlans, readPlan, type Rejected } from './plan-readers.js';
+import { readOriginPlans, type Rejected } from './plan-readers.js';
 import { planRevisionRefKey } from './plan-record-codecs.js';
 import { entryPlanVerdict, isBasisUnsupported, planTaskFacts } from './plan-task-basis.js';
 
@@ -64,28 +62,4 @@ export async function readEntryPlanVerdict(
   const guards = verdict.kind !== 'carried_unchanged' ? []
     : [activePlan, ...sources.value.plansByRefKey.values()].map(planGuard);
   return { status: 'ready', verdict, guards };
-}
-
-/**
- * LA-2: the `tasks/` implementation of the materials predicate. The reader
- * Run's Task is carried from its claim Plan `fromPlanRef` into the Goal's
- * active `toPlanRef` exactly when W3 would say `active_plan` or
- * `carried_unchanged` for that claim; the guards then also pin the claim Plan.
- */
-export function createTaskCarriedUnchanged(records: GoalRecordTransactionPort): TaskCarriedUnchanged {
-  return async ({ goalRef, taskId, fromPlanRef, toPlanRef }) => {
-    try {
-      const from = await readPlan(records, fromPlanRef);
-      if (from.status !== 'ready') return { status: 'unavailable', reason: `${from.code}: ${from.reason}` };
-      const read = await readEntryPlanVerdict(records, { goalRef, taskId, claimPlan: from.plan, activePlanRef: toPlanRef });
-      if (read.status !== 'ready') return { status: 'unavailable', reason: `${read.code}: ${read.reason}` };
-      const verdict = read.verdict;
-      if (verdict.kind === 'changed') return { status: 'not_carried', reason: verdict.reason };
-      if (verdict.kind === 'unavailable') return { status: 'unavailable', reason: verdict.reason };
-      return { status: 'carried', guards: [planGuard(from.plan), ...read.guards] };
-    } catch (error) {
-      return { status: 'unavailable',
-        reason: `the Plan read failed: ${error instanceof Error ? error.message : String(error)}` };
-    }
-  };
 }

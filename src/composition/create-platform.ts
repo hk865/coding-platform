@@ -10,16 +10,12 @@ import { createGoalService } from '../core/work-graph/tasks/task-service.js';
 import type { GoalTaskPort, GraphWrite } from '../core/work-graph/tasks/contracts.js';
 import { COMPLETION_RECORD_SCHEMAS } from '../core/work-graph/tasks/completion-record-codecs.js';
 import { createMaterialRecordReaders, materialRecordSchemas } from '../core/work-graph/materials/record-readers.js';
-import { createMaterialAccessResolver } from '../core/work-graph/materials/applicability.js';
 import { createMaterialService } from '../core/work-graph/materials/material-service.js';
-import { createMaterialReadFactsService } from '../core/work-graph/materials/material-facts-service.js';
 import type { MaterialPort } from '../core/work-graph/materials/contracts.js';
 import { createWorkspaceAccessFactory, type WorkspaceHostBindings } from '../core/workspace/access.js';
-import { createMaterialSourceProvider } from '../core/workspace/material-source-provider.js';
 import { createWorkspaceTools, DEFAULT_WORKSPACE_LIMITS } from '../core/workspace/workspace-tools.js';
 import { createAgentRuntime } from '../core/agent-runtime/runtime.js';
 import { createExecutionEntryService } from '../core/work-graph/tasks/execution-entry-service.js';
-import { createTaskCarriedUnchanged } from '../core/work-graph/tasks/entry-plan-reader.js';
 import { createModelCallService } from '../core/work-graph/tasks/model-call-service.js';
 import { createSessionMailbox } from '../core/work-graph/communication/mailbox-service.js';
 import type { SessionMailboxPort } from '../core/work-graph/communication/contracts.js';
@@ -68,7 +64,6 @@ import type { SessionRef } from '../contracts/core/identity.js';
 import type { CoreRejection, ReadResult } from '../contracts/core/results.js';
 import type { VersionPin } from '../contracts/core/identity.js';
 import { canonicalJson, type JsonValue } from '../contracts/fingerprint.js';
-import type { MaterialSourceScope } from '../contracts/material-access.js';
 import type { RuntimeCapabilities } from '../core/agent-runtime/contracts.js';
 import type { RuntimeExecutionDependencies, RuntimeHostBindings } from '../core/agent-runtime/execution-contracts.js';
 import type {
@@ -150,16 +145,6 @@ export type TargetPlatformOptions = {
  * platform material reads and mailbox body storage; it never replaces the real
  * command actor/sender. */
 const SYSTEM_ACTOR = Object.freeze({ kind: 'system' as const, id: 'platform-composition-host' });
-
-function contextForScope(scope: MaterialSourceScope, signal: AbortSignal): CoreCallContext {
-  return {
-    projectId: scope.projectId,
-    workspaceId: scope.workspaceId,
-    principal: { kind: 'host', actor: { ...SYSTEM_ACTOR } },
-    materialReader: { kind: 'host', projectId: scope.projectId, workspaceId: scope.workspaceId, actor: { ...SYSTEM_ACTOR } },
-    signal,
-  };
-}
 
 function sameJson(left: unknown, right: unknown): boolean {
   try { return canonicalJson(left as JsonValue) === canonicalJson(right as JsonValue); } catch { return false; }
@@ -409,10 +394,10 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     const bodies = options.storage.kind === 'memory' ? new RawArtifactBodyStore()
       : createSqliteRawArtifactStore(join(options.storage.directory, 'artifacts.sqlite'));
     if ('close' in bodies) closeBodies = () => bodies.close();
-    // The one Workspace source capability is constructed early so the material
-    // read-side resolver and the M2 facts below share the exact same trusted provider.
+    // The one Workspace access factory, shared by the workspace tools and the
+    // observed architecture below. The material source provider is kept but not
+    // constructed (decision 34): slice 3 of the orchestration design may need it.
     const access = createWorkspaceAccessFactory(options.workspace);
-    const source = createMaterialSourceProvider({ access, contextForScope });
     const reads = createMaterialRecordReaders(backend.records);
     // C2 §3.1: build the unique execution reader and the optional trusted Host
     // authorization BEFORE the single Plan service, so the W2 delegated writes
@@ -424,13 +409,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // public port is wrapped below so close drains an in-flight control call.
     const rawControls = createRunControlService({ records: backend.records, authority: reads.authority,
       reads: executionReader, now, eventId: randomUUID });
-    // LA-2 (A.2 step 5.4b): ONE `tasks/` predicate tells the read-side resolver
-    // and the M2 facts below whether the Goal's active Plan carries a reader
-    // Run's Task unchanged from its claim Plan (materials never reads a
-    // PlanRevision itself; W3 uses the same rule).
-    const isTaskCarriedUnchanged = createTaskCarriedUnchanged(backend.records);
-    const grants = createMaterialAccessResolver(reads.authority, reads.index, source, isTaskCarriedUnchanged);
-    const rawMaterials = createMaterialService({ bodies, authority: reads.authority, grants, now });
+    const rawMaterials = createMaterialService({ bodies, authority: reads.authority, now });
     const rawGoals = createGoalService({ records: backend.records, now, eventId: randomUUID }).tasks;
     const workspace = createWorkspaceTools({ access,
       now, limits: DEFAULT_WORKSPACE_LIMITS });
@@ -513,11 +492,6 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     const historyWriter = createExecutionHistoryService({ records: backend.records, now, eventId: randomUUID });
     const graphHistory = createGraphExecutionHistoryReader({ executions: executionReader, history: executionHistory });
     const sourceAuthority = createSourceAuthorityReader({ authority: reads.authority, records: backend.records });
-    // C2 §3.1: the SAME reads/source/bodies feed the M2 material read-facts seam
-    // held by the evidence owner. It is a fresh per-call observer, not a second
-    // persistent material service.
-    const materialFacts = createMaterialReadFactsService({ authority: reads.authority, index: reads.index,
-      bodies, sourceApplicability: source, isTaskCarriedUnchanged, now });
     // R3e.1: the ONE trusted verification/evidence service and its thin Host
     // check runner share the existing records/material/execution instances. The
     // frozen checks configuration is optional; without it fresh open/begin stay
@@ -527,7 +501,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // mailbox (ND-9), and admits an Agent through the same delegated-write
     // admission (no production Role grants `reverify_round` yet, GAP-46).
     const rawEvidence = createEvidenceService({
-      records: backend.records, materials: rawMaterials, materialFacts, executions: executionReader,
+      records: backend.records, materials: rawMaterials, executions: executionReader,
       workspaceHost: options.workspace, source: verificationWorkspaceReader,
       ...(options.checks === undefined ? {} : { configuration: options.checks }),
       configurationFor: currentCheckConfiguration,
@@ -686,7 +660,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       queryGoalDisplay: (...args) => trackedCall(() => planService.queryGoalDisplay(...args), unavailable),
       queryGoalLiveRuns: (...args) => trackedCall(() => planService.queryGoalLiveRuns(...args), unavailable),
     };
-    // The public material chain spans the ledger, bodies and source I/O, so the
+    // The public material chain spans the ledger and the bodies, so the
     // whole outer call is drained before any owned store closes. The in-flight
     // service keeps the raw materials instance, never these wrappers.
     const materials: MaterialPort = {

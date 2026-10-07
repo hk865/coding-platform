@@ -3,7 +3,6 @@ import type { ActorRef } from '../command-event.js';
 import type { AgentPrincipalRefV1 } from '../coordination.js';
 import type { RoleBindingRefV1, RunRef } from '../dispatch.js';
 import type { ArtifactOwnerRunRef } from '../artifact.js';
-import type { MaterialBasisV1 } from '../material-access.js';
 import type { QueryRunRef } from '../query-job.js';
 /**
  * Core call context (CONTRACTS §3): bound by the trusted Host or a tool adapter,
@@ -31,7 +30,6 @@ export type CorePrincipal = {
 export type MaterialReader = {
     kind: 'run';
     requester: ArtifactOwnerRunRef;
-    currentBasis?: MaterialBasisV1;
 } | {
     kind: 'host';
     projectId: string;

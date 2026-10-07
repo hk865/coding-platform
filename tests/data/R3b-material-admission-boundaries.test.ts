@@ -5,7 +5,6 @@ import type { CoreCallContext, PlatformMaterialOrigin } from '../../src/contract
 import type { RawArtifactRecord, RawArtifactStorePort } from '../../src/core/record-store/body-ports.js';
 import { createMaterialService } from '../../src/core/work-graph/materials/material-service.js';
 import type { MaterialAuthorityReads } from '../../src/core/work-graph/materials/applicability.js';
-import type { MaterialAccessResolver } from '../../src/contracts/material-access.js';
 
 const actor = { kind: 'human' as const, id: 'operator' };
 const source = { kind: 'workspace' as const, refId: 'source-workspace', revision: '1' };
@@ -16,7 +15,6 @@ const origin: PlatformMaterialOrigin = { kind: 'platform_operation', projectId: 
   workspaceId: 'owner-workspace', requestId: 'request-1', actor };
 const record: RawArtifactRecord = { ref, body, sourceRefs: [source], origin };
 const authority = { load: async () => ({ status: 'missing' }) } as unknown as MaterialAuthorityReads;
-const grants: MaterialAccessResolver = { grantsFor: async () => [] };
 const ctx = (projectId: string, workspaceId: string, signal = new AbortController().signal): CoreCallContext => ({
   projectId, workspaceId, principal: { kind: 'host', actor },
   materialReader: { kind: 'host', projectId, workspaceId, actor }, signal,
@@ -26,7 +24,7 @@ const pending = <T>() => {
   const promise = new Promise<T>(accept => { resolve = accept; });
   return { promise, resolve };
 };
-const service = (bodies: RawArtifactStorePort) => createMaterialService({ bodies, authority, grants,
+const service = (bodies: RawArtifactStorePort) => createMaterialService({ bodies, authority,
   now: () => '2026-09-24T00:00:00Z' });
 const historical = { ref, usage: 'historical_explanation' as const };
 
@@ -106,7 +104,7 @@ it('binds a Core work_run owner read to the canonical Run workspace as well as i
     ref.projectId === run.projectId && ref.goalId === run.goalId && ref.runId === run.runId
       ? { status: 'found', snapshot: { ref: run, workspaceSnapshot: { workspaceId: 'actual-workspace' } } }
       : { status: 'missing' } } as unknown as MaterialAuthorityReads;
-  const materials = createMaterialService({ bodies: raw, authority: canonical, grants,
+  const materials = createMaterialService({ bodies: raw, authority: canonical,
     now: () => '2026-09-24T00:00:00Z' });
   const roleBinding = { schemaVersion: 1 as const, bindingId: 'owner-role', templateId: 'worker',
     templateRevision: '1', bindingVersion: 1, policyRevision: 'policy-1' };

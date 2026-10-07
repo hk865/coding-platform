@@ -4,7 +4,7 @@
  * Every fact here comes from the real R3e fixture: an independently created
  * Goal/Plan/Session/claim (static requirement) whose subject Run was ended by
  * the formal B2 claim/prepare/start/terminal path, the real RecordStore, the
- * real material body/read-facts chain and the real VerificationWorkspaceReader.
+ * real material body read and the real VerificationWorkspaceReader.
  * These are FINAL behaviour assertions: until stage 2 lands the production
  * `EvidencePort` returns `unsupported`, so each test stops at its first
  * evidence assertion. Later replay/CAS/close tails are NOT reached.
@@ -94,10 +94,10 @@ it('admits every fixed check body-first and replays the original open receipt wi
   if (reportRef === null) throw Error('the pass check must carry a report ref');
 
   // The report body is read back through the real body-first material seam.
-  const facts = await fixture.materialFacts.openArtifactFacts(fixture.ctx, { ref: reportRef, usage: 'historical_explanation' });
-  expect(facts.result, 'report body must be readable as historical fact').toMatchObject({ status: 'ready' });
-  if (facts.result.status !== 'ready') throw Error('report body read did not succeed');
-  expect(facts.result.value.body).toContain('R3E_OK_r3e-pass');
+  const report = await fixture.materials.openArtifact(fixture.ctx, { ref: reportRef, usage: 'historical_explanation' });
+  expect(report, 'report body must be readable as historical fact').toMatchObject({ status: 'ready' });
+  if (report.status !== 'ready') throw Error('report body read did not succeed');
+  expect(report.value.body).toContain('R3E_OK_r3e-pass');
 
   const read = await fixture.evidence.readVerification(fixture.ctx, round.ref);
   expect(read, 'directed round read returns the persisted view').toEqual({ status: 'ready', value: latest });
@@ -161,10 +161,10 @@ it('refuses mismatched subject/ticket identities but keeps an original executed 
   // The real report body is read back through the existing historical material
   // reader; its observation is the ORIGINAL domain output, not a re-derived one.
   const capturesBeforeBody = fixture.sourceCaptures();
-  const facts = await fixture.materialFacts.openArtifactFacts(fixture.ctx, { ref: reportRef, usage: 'historical_explanation' });
-  expect(facts.result, 'the retained report is readable as a historical fact').toMatchObject({ status: 'ready' });
-  if (facts.result.status !== 'ready') throw Error('retained report body read did not succeed');
-  const body = JSON.parse(facts.result.value.body) as {
+  const report = await fixture.materials.openArtifact(fixture.ctx, { ref: reportRef, usage: 'historical_explanation' });
+  expect(report, 'the retained report is readable as a historical fact').toMatchObject({ status: 'ready' });
+  if (report.status !== 'ready') throw Error('retained report body read did not succeed');
+  const body = JSON.parse(report.value.body) as {
     source?: { actor?: unknown; runRef?: unknown }; subjectRunRef?: unknown; observation?: unknown;
   };
   expect(body.observation, 'the persisted observation is the original recorded observation')
@@ -279,7 +279,6 @@ it('freezes an open round configuration and resolves a fresh round from the curr
   const scoped = createEvidenceService({
     records: fixture.records,
     materials: fixture.materials,
-    materialFacts: fixture.materialFacts,
     executions: createRunStateReader({ records: fixture.records }),
     workspaceHost: fixture.workspaceHost,
     source: new VerificationWorkspaceReader(),

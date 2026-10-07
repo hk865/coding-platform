@@ -5,7 +5,6 @@ import type { RunRef } from '../../src/contracts/dispatch.js';
 import type { RawArtifactStorePort } from '../../src/core/record-store/body-ports.js';
 import type { MaterialAuthorityReads } from '../../src/core/work-graph/materials/applicability.js';
 import { createMaterialService } from '../../src/core/work-graph/materials/material-service.js';
-import type { MaterialAccessResolver } from '../../src/contracts/material-access.js';
 
 const run: RunRef = { aggregateType: 'Run', projectId: 'await-project', goalId: 'await-goal', runId: 'await-run' };
 const workspaceId = 'await-workspace';
@@ -14,7 +13,6 @@ const source = { kind: 'workspace' as const, refId: workspaceId, revision: '1' }
 const body = 'Await boundary material';
 const ref = { kind: 'artifact' as const, contentType: 'text/plain', digest: artifactBodyDigest(body),
   sizeBytes: artifactBodySize(body), source };
-const grants: MaterialAccessResolver = { grantsFor: async () => [] };
 const canonical = (refValue: RunRef) => ({ status: 'found' as const,
   snapshot: { ref: refValue, workspaceSnapshot: { workspaceId } } });
 const workContext = (signal: AbortSignal): CoreCallContext => ({ projectId: run.projectId, workspaceId,
@@ -30,7 +28,7 @@ it('cancels a work-run write after canonical scope lookup without starting raw s
   const authority: MaterialAuthorityReads = { load: vi.fn(() => new Promise(resolve => { release = resolve; })) } as unknown as MaterialAuthorityReads;
   const put = vi.fn<RawArtifactStorePort['put']>(async () => ({ status: 'ready', value: { ref, replayed: false } }));
   const bodies: RawArtifactStorePort = { put, read: async () => { throw Error('unexpected raw read'); } };
-  const materials = createMaterialService({ bodies, authority, grants, now: () => '2026-09-24T00:00:00Z' });
+  const materials = createMaterialService({ bodies, authority, now: () => '2026-09-24T00:00:00Z' });
   const controller = new AbortController();
   const writing = materials.storeArtifact(workContext(controller.signal), {
     contentType: 'text/plain', body, sources: [source], origin: { kind: 'execution', ref: run },
@@ -49,7 +47,7 @@ it('requires the Host history owner load to return the requested canonical full 
       origin: { kind: 'run', owner: run } } }) };
   let loadedRef: RunRef = run;
   const authority: MaterialAuthorityReads = { load: async () => canonical(loadedRef) } as unknown as MaterialAuthorityReads;
-  const materials = createMaterialService({ bodies, authority, grants, now: () => '2026-09-24T00:00:00Z' });
+  const materials = createMaterialService({ bodies, authority, now: () => '2026-09-24T00:00:00Z' });
   const request = { ref, usage: 'historical_explanation' as const };
   expect(await materials.openArtifact(hostContext(), request)).toMatchObject({ status: 'ready', value: { body } });
   loadedRef = { ...run, runId: 'different-run' };

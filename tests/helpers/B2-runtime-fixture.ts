@@ -46,7 +46,6 @@ import { createSessionOperations } from '../../src/core/agent-runtime/session-op
 import { createKernelStoreRegistry } from '../../src/core/agent-runtime/kernel-store-locator.js';
 import { createSourceAuthorityReader } from '../../src/core/work-graph/source-authority-reader.js';
 import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
-import { createMaterialAccessResolver } from '../../src/core/work-graph/materials/applicability.js';
 import { createMaterialService } from '../../src/core/work-graph/materials/material-service.js';
 import { RawArtifactBodyStore } from '../../src/core/record-store/body-store.js';
 import { createTaskClaimFixture, type ClaimFixtureKind, type TaskClaimFixture } from './task-claim-fixture.js';
@@ -219,7 +218,7 @@ export async function createB2RuntimeFixture(options: {
     const executions=createRunStateReader({records});
     const roles=createRoleConfigurationService({records,now,eventId});
     const reads=createMaterialRecordReaders(records);
-    const materials=createMaterialService({bodies,authority:reads.authority,grants:createMaterialAccessResolver(reads.authority,reads.index),now});
+    const materials=createMaterialService({bodies,authority:reads.authority,now});
     const plans=createPlanService({records,materials,now,eventId});
     const sessions=createSessionDirectory({records,lookups:records});
     const selectedKernelStores=overrides.kernelStores??kernelStores;

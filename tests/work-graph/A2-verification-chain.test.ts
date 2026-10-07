@@ -121,7 +121,7 @@ function evidenceOver(fixture: R3eEvidenceFixture, tag: string, overrides: {
 } = {}): EvidencePort {
   let sequence = 0;
   return createEvidenceService({ records: overrides.records ?? fixture.records, materials: fixture.materials,
-    materialFacts: fixture.materialFacts, executions: createRunStateReader({ records: fixture.records }),
+    executions: createRunStateReader({ records: fixture.records }),
     workspaceHost: fixture.workspaceHost, source: overrides.source ?? new VerificationWorkspaceReader(),
     configuration: fixture.configuration, now: () => B2_AT,
     newId: () => { const id = `a2-${tag}-${++sequence}`; overrides.minted?.push(id); return id; } });

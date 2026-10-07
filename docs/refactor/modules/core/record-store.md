@@ -362,7 +362,7 @@ Session正式记录可先进入现有snapshots，通过新schema codec读取；K
 | SqliteStateLedger/InMemoryLedger的事务和事件游标 | sqlite/in-memory-record-store | 相关kind读集/回执/故障/重启一致后 |
 | ledger-validation.ts及validation/*中的领域判据 | WG相应任务/计划/证据/协作组件与legacy compiler | 每kind消费者迁完，不复制第二套政策 |
 | ledger-scope-catalog/dispatch-selection | WG查询判据+Store明确物理索引 | 范围语义与稳定顺序经真实查询验证 |
-| ArtifactVault.open/material-access-policy | WG材料授权/适用性 | 所有旧Run/QueryRun及新Host读入口接通 |
+| ArtifactVault.open/material-access-policy | WG材料适用性（材料授权 2026-10-07 已删除，决定 34） | 所有旧Run/QueryRun及新Host读入口接通 |
 | SqliteArtifactVault的putIfAbsent/正文检查 | sqlite-body-store | 旧owner/来源竞态测试与历史读取通过 |
 | SqliteReadModelIndex的领域reduce/解释 | WG投影编译器 | UI与原读端口切新实现 |
 | ReadModel的SQL/页事务/checkpoint | sqlite-index-store | 原页失败/去重/水位契约保持 |

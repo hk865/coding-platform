@@ -1,19 +1,14 @@
 import type { ArtifactOwnerRunRef, ArtifactRef } from '../../../contracts/artifact.js';
 import type { MaterialReader } from '../../../contracts/core/call-context.js';
-import type { MaterialAccessResolver } from '../../../contracts/material-access.js';
-import type { SourceApplicabilityPort } from '../../../contracts/material-access.js';
 import type { MaterialOrigin } from '../../record-store/body-ports.js';
-import type { GoalSnapshot } from '../../../contracts/ledger.js';
-import type { MaterialAuthorityReads, MaterialCandidateReads, TaskCarriedUnchanged } from './record-ports.js';
+import type { MaterialAuthorityReads } from './record-ports.js';
 export type { MaterialAuthorityReads } from './record-ports.js';
 import type { RunSnapshot } from '../../../contracts/dispatch.js';
-import type { PlanRevisionRef } from '../../../contracts/plan.js';
-import type { MaterialAccessGrantSnapshot, MaterialAccessGrantV1 } from '../../../contracts/material-access.js';
-import { materialBasisEquals, materialBasisIsUnconditional, materialPrincipalInScope, sameArtifactOwnerRunRef, sameArtifactRef, validMaterialSourcePin } from '../../../contracts/material-access.js';
-import { canonicalJson } from '../../../contracts/fingerprint.js';
-import { materialSourcePinIsCurrent } from '../../workspace/source-applicability.js';
+import { sameArtifactOwnerRunRef } from '../../../contracts/material-access.js';
 
-/** Exact material, current basis, revocation, source pin and Host provenance policy live here. */
+/** Host provenance and the Run reader's own-material rule live here. Material
+ * grants, and with them every read of another owner's material by a Run, were
+ * deleted (decision 34). */
 export type MaterialApplicability = {
   reader: MaterialReader;
   ref: ArtifactRef;
@@ -28,12 +23,11 @@ type MaterialAdmission =
 
 export function createMaterialApplicability(deps: {
   authority: MaterialAuthorityReads;
-  grants: MaterialAccessResolver;
 }): (input: MaterialApplicability) => Promise<MaterialAdmission> {
   return async input => {
     const reader = input.reader;
     if (reader.kind === 'host') return hostAdmission(deps.authority, reader, input);
-    return runAdmission(deps.grants, reader, input);
+    return runAdmission(reader, input);
   };
 }
 
@@ -85,11 +79,10 @@ async function hostAdmission(
   return { status: 'allowed', applicability: 'historical_explanation' };
 }
 
-async function runAdmission(
-  grants: MaterialAccessResolver,
+function runAdmission(
   reader: Extract<MaterialReader, { kind: 'run' }>,
   input: MaterialApplicability,
-): Promise<MaterialAdmission> {
+): MaterialAdmission {
   const requester = reader.requester;
   const owner = materialOwnerFromOrigin(input.origin);
   if (input.usage !== 'current' && sameArtifactOwnerRunRef(owner, requester)) {
@@ -97,35 +90,7 @@ async function runAdmission(
       ? { status: 'allowed', applicability: 'historical_explanation' }
       : { status: 'allowed' };
   }
-  const candidates = await grants.grantsFor(input.ref, requester);
-  const forMaterial = candidates.filter(grant =>
-    sameArtifactOwnerRunRef(grant.reader, requester) &&
-    materialPrincipalInScope(grant.reader, grant.scope) &&
-    grant.materials.some(material => sameArtifactRef(material, input.ref)) &&
-    grantIssuerOwnsMaterial(grant, owner));
-  if (forMaterial.length === 0) {
-    return rejected('forbidden', 'the requester is neither the recorded owner run nor authorized by a recorded grant');
-  }
-  const current = reader.currentBasis;
-  const applicable: MaterialAccessGrantV1[] = [];
-  for (const grant of forMaterial) {
-    if (input.usage === 'current' && (grant.history || !validMaterialSourcePin(grant.basis.sourcePin) || !grants.currentBasisValid)) continue;
-    if (!grant.history && (grant.basis.sourceDigest !== null || grant.basis.sourcePin !== undefined) && (!validMaterialSourcePin(grant.basis.sourcePin) || !grants.currentBasisValid)) continue;
-    if (!(materialBasisIsUnconditional(grant.basis) || (current !== undefined && materialBasisEquals(grant.basis, current)))) continue;
-    if (grants.currentBasisValid && !await grants.currentBasisValid(grant)) continue;
-    applicable.push(grant);
-  }
-  if (applicable.length === 0) {
-    return rejected('source_stale', 'a recorded grant covers this material but its current basis/source cannot be verified or it only authorizes history');
-  }
-  if (!applicable.some(grant => grantIssuerOwnsMaterial(grant, owner))) {
-    return rejected('forbidden', 'the recorded grant was not issued by the material owner or by Control');
-  }
-  if (input.usage === 'current') return { status: 'allowed', applicability: 'current' };
-  if (applicable.every(grant => !!grant.history) || input.usage === 'historical_explanation') {
-    return { status: 'allowed', applicability: 'historical_explanation' };
-  }
-  return { status: 'allowed' };
+  return rejected('forbidden', 'a Run reader may open only its own material, and not for current use');
 }
 
 /** The single provenance rule: a raw origin names a Run/QueryRun owner or nothing. */
@@ -137,117 +102,9 @@ export function materialOwnerFromOrigin(origin: MaterialOrigin): MaterialOwner {
   return null;
 }
 
-/** Only the recorded owner run or a Control principal may authorize sharing. */
-export function grantIssuerOwnsMaterial(grant: MaterialAccessGrantV1, ownerRunRef: MaterialOwner): boolean {
-  if (grant.history) {
-    return grant.history.usage === 'historical_explanation' &&
-      sameArtifactOwnerRunRef(grant.history.owner, ownerRunRef) && ownerRunRef?.projectId === grant.scope.projectId &&
-      grant.issuedBy.aggregateType === 'Control' && grant.issuedBy.projectId === grant.scope.projectId && grant.issuedBy.goalId === grant.scope.goalId;
-  }
-  if (ownerRunRef === null || !materialPrincipalInScope(ownerRunRef, grant.scope)) return false;
-  if (grant.issuedBy.aggregateType === 'Control') {
-    return grant.issuedBy.projectId === grant.scope.projectId && grant.issuedBy.goalId === grant.scope.goalId;
-  }
-  return sameArtifactOwnerRunRef(ownerRunRef, grant.issuedBy);
-}
-
 function rejected(code: 'forbidden' | 'source_stale' | 'unsupported', reason: string): MaterialAdmission {
   return { status: 'rejected', code, reason };
 }
 
-/** Legacy resolver will re-export the moved implementation after migration. */
+/** The recorded Run/QueryRun owner of a material, or none. */
 export type MaterialOwner = ArtifactOwnerRunRef | null;
-/**
- * The grant resolver. `isTaskCarriedUnchanged` (LA-2, A.2 step 5.4b) lets a
- * Run reader's grant pinned to an older Plan stay current while the Goal's
- * active Plan carries that Run's Task unchanged. The composition root and the
- * M2 facts service always pass it (the grant writer requires it); like
- * `sourceApplicability` it is optional only for fixtures that never adopt a
- * second Plan, where the exact active Plan pin gives the same answer.
- */
-export function createMaterialAccessResolver(
-  authority: MaterialAuthorityReads,
-  index: MaterialCandidateReads,
-  sourceApplicability?: SourceApplicabilityPort,
-  isTaskCarriedUnchanged?: TaskCarriedUnchanged,
-): MaterialAccessResolver {
-  return {
-    grantsFor: async (material, reader) => {
-      const principal = await authority.load(reader);
-      if (principal.status !== 'found') return [];
-      const workspaceId = reader.aggregateType === 'Run'
-        ? (principal.snapshot as RunSnapshot).workspaceSnapshot.workspaceId
-        : reader.workspaceId;
-      const candidates = await index.materialAccessCandidates({ reader, material });
-      if (candidates.status !== 'ready') return [];
-      const goals = new Map<string, boolean>();
-      const grants: MaterialAccessGrantV1[] = [];
-      for (const candidate of candidates.grants) {
-        // The projection is a candidate finder only. Revocation must take effect
-        // as soon as its ledger transaction commits, even with a lagging index.
-        const canonical = await authority.load(candidate.ref);
-        if (canonical.status !== 'found' || canonical.snapshot.revision !== 1 ||
-          (canonical.snapshot as MaterialAccessGrantSnapshot).revocation) continue;
-        const grant = (canonical.snapshot as MaterialAccessGrantSnapshot).grant;
-        if (grant.history) {
-          const owner = grant.history.owner;
-          if (owner.projectId !== reader.projectId) continue;
-          const source = await authority.load(owner);
-          if (source.status !== 'found') continue;
-          const sourceWorkspace = owner.aggregateType === 'Run'
-            ? (source.snapshot as RunSnapshot).workspaceSnapshot.workspaceId : owner.workspaceId;
-          const cross = grant.history.crossWorkspace;
-          if (sourceWorkspace !== workspaceId
-            ? cross?.sourceWorkspaceId !== sourceWorkspace || cross?.authorizedBy?.kind !== 'human' || !cross.authorizedBy.id
-            : cross !== undefined) continue;
-          if ((await authority.load({ aggregateType: 'Workspace', projectId: reader.projectId, workspaceId: sourceWorkspace })).status !== 'found') continue;
-          if (owner.aggregateType === 'Run') {
-            const sourceGoal = await authority.load({ aggregateType: 'Goal', projectId: owner.projectId, goalId: owner.goalId });
-            if (sourceGoal.status !== 'found' || (sourceGoal.snapshot as GoalSnapshot).workspaceRef.workspaceId !== sourceWorkspace) continue;
-          }
-        }
-        if (grant.scope.projectId !== reader.projectId || grant.scope.workspaceId !== workspaceId ||
-          (reader.aggregateType === 'Run' && grant.scope.goalId !== reader.goalId)) continue;
-        if (!goals.has(grant.scope.goalId)) {
-          const goal = await authority.load({ aggregateType: 'Goal', projectId: reader.projectId, goalId: grant.scope.goalId });
-          const bound = goal.status === 'found' ? (goal.snapshot as GoalSnapshot).workspaceRef : null;
-          goals.set(grant.scope.goalId, bound?.projectId === reader.projectId && bound.workspaceId === workspaceId);
-        }
-        if (goals.get(grant.scope.goalId)) grants.push(grant);
-      }
-      return grants;
-    },
-    currentBasisValid: async grant => {
-      // Source I/O can take time. Do it before the final canonical authority
-      // checks so a revocation committed during capture cannot authorize a read.
-      if (!grant.history && (grant.basis.sourceDigest !== null || grant.basis.sourcePin !== undefined) &&
-        !await materialSourcePinIsCurrent(sourceApplicability, grant.basis.sourcePin, grant.scope)) return false;
-      const workspace = await authority.load({ aggregateType: 'Workspace', projectId: grant.scope.projectId, workspaceId: grant.scope.workspaceId });
-      if (workspace.status !== 'found' || (grant.basis.workspaceRevision !== null && workspace.snapshot.revision !== grant.basis.workspaceRevision)) return false;
-      const goal = await authority.load({ aggregateType: 'Goal', projectId: grant.scope.projectId, goalId: grant.scope.goalId });
-      if (goal.status !== 'found') return false;
-      const activePlan = (goal.snapshot as GoalSnapshot).activePlanRevision;
-      // LA-2: after an adoption the grant stays current only for a Run reader
-      // whose Task the active Plan carries unchanged from `basis.planRef`.
-      let carriedTo: PlanRevisionRef | null = null;
-      if (grant.basis.planRef !== null && activePlan !== null && canonicalJson(activePlan) !== canonicalJson(grant.basis.planRef)) {
-        if (grant.reader.aggregateType !== 'Run' || isTaskCarriedUnchanged === undefined) return false;
-        carriedTo = activePlan;
-      }
-      if (grant.reader.aggregateType === 'Run' && grant.basis.planRef !== null) {
-        const run = await authority.load(grant.reader);
-        if (run.status !== 'found' || canonicalJson((run.snapshot as RunSnapshot).planRef) !== canonicalJson(grant.basis.planRef)) return false;
-        if (carriedTo !== null && isTaskCarriedUnchanged !== undefined) {
-          const carried = await isTaskCarriedUnchanged({
-            goalRef: { aggregateType: 'Goal', projectId: grant.scope.projectId, goalId: grant.scope.goalId },
-            taskId: (run.snapshot as RunSnapshot).task.taskId, fromPlanRef: grant.basis.planRef, toPlanRef: carriedTo });
-          if (carried.status !== 'carried') return false;
-        }
-      }
-      const canonical = await authority.load({ aggregateType: 'MaterialAccessGrant', ...grant.scope, grantId: grant.grantId });
-      return canonical.status === 'found' && canonical.snapshot.revision === 1 &&
-        !(canonical.snapshot as MaterialAccessGrantSnapshot).revocation &&
-        canonicalJson((canonical.snapshot as MaterialAccessGrantSnapshot).grant) === canonicalJson(grant);
-    },
-  };
-}

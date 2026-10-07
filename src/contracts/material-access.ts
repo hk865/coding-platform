@@ -2,48 +2,9 @@
 /**
  * Material access grants — cross-principal read authorization for stored
  * material (ArtifactVault), bound to the source version it was granted against.
- *
- * Authority:
- *   - dev_docs/interfaces/runtime-collaboration.md ("共享引用与角色绑定":
- *     every request carries caller identity, scope, correlation and version;
- *     a source reference carries kind/object/revision/digest — a timestamp is
- *     never a version) and the ArtifactVault row ("put(record) -> immutableRef;
- *     open(ref, accessScope) -> record / unavailable / rejected").
- *   - dev_docs/interfaces/context-lifecycle.md ("后续相关新任务": load current
- *     code/spec plus applicable history, mark the inheritance source; old
- *     authorization and old completion are NOT inherited; a changed
- *     goal/plan/spec invalidates affected material).
- *   - dev_docs/modules/data/artifact-vault.md (owner-only read authorization;
- *     the vault never judges business truth).
- *
- * WHY THIS EXISTS (the gap it closes):
- *   dispatch froze open() as OWNER-ONLY (the recorded owner RunRef, or a query
- *   QueryRunRef). That is deny-by-default and stays the default. But every
- *   later product loop needs a run to read material ANOTHER run produced:
- *   a reviewer reading the executed run's bundle, a successor reading a
- *   predecessor report, a continuation reading the previous run's note bodies,
- *   a query reading a report it did not author. Without an explicit,
- *   version-bound grant those reads are impossible, so the material had to be
- *   copied ("laundered") into a new artifact owned by the consumer, which loses
- *   the original provenance and the original authorization history.
- *
- * VERSIONED SEMANTICS (v1):
- *   - A grant is immutable (created exactly once per grantId) and is registered
- *     through ControlEngine.grantMaterialAccess. The vault reads grants through
- *     an injected resolver; the vault never depends on ControlEngine.
- *   - A grant authorizes ONE reader principal (Run or QueryRun) to open a
- *     BOUNDED set of exact content-addressed materials (1..64).
- *   - A grant carries the basis it was granted against (plan revision,
- *     workspace revision, source digest). Material read under a DIFFERENT
- *     current basis is NOT silently reused: the vault refuses with
- *     rejected/stale, so an inherited material can never advance a new version.
- *   - Only the material's recorded owner or a Control principal may issue a
- *     grant for it. A grant from an unrelated run is ignored (fail-closed).
- *   - A grant never changes task/goal phase, never satisfies evidence and never
- *     proves the material's business truth.
+ * Grants were deleted (decision 34): what stays is the persisted grant ref and
+ * basis, the source pin types and the material identity helpers.
  */
-import type { ActorRef } from "./command-event.js";
-import { canonicalJson } from "./fingerprint.js";
 import type { ArtifactOwnerRunRef, ArtifactRef } from "./artifact.js";
 import type { PlanRevisionRef } from "./plan.js";
 // ------------------------------------------------------------------------ //
@@ -123,73 +84,15 @@ export function validMaterialSourcePin(value: unknown): value is MaterialSourceP
         (pin.identity.commit === null || typeof pin.identity.commit === 'string' && /^[a-f0-9]{40,64}$/.test(pin.identity.commit)) &&
         typeof pin.manifestDigest === 'string' && /^[a-f0-9]{64}$/.test(pin.manifestDigest);
 }
-export function materialBasisIsUnconditional(basis: MaterialBasisV1): boolean {
-    return basis.planRef === null && basis.workspaceRevision === null && basis.sourceDigest === null && basis.sourcePin === undefined;
-}
-export function materialBasisEquals(a: MaterialBasisV1, b: MaterialBasisV1): boolean {
-    return canonicalJson(a as never) === canonicalJson(b as never);
-}
 // ------------------------------------------------------------------------ //
-// Grant record                                                              //
+// Persisted grant ref (no grant is written any more, decision 34)          //
 // ------------------------------------------------------------------------ //
-/** Who may issue a grant for material: the recorded owner run, or Control. */
-export type MaterialGrantIssuer = ArtifactOwnerRunRef | {
-    aggregateType: "Control";
-    projectId: string;
-    goalId: string;
-};
-export type MaterialAccessScopeV1 = {
-    projectId: string;
-    workspaceId: string;
-    goalId: string;
-};
-export type MaterialAccessGrantV1 = {
-    schemaVersion: 1;
-    grantId: string;
-    scope: MaterialAccessScopeV1;
-    /** Exact content-addressed materials authorized by this grant (1..64). */
-    materials: ArtifactRef[];
-    /** The ONE principal allowed to open the materials. */
-    reader: ArtifactOwnerRunRef;
-    /** The principal that issued the grant (owner run, or Control). */
-    issuedBy: MaterialGrantIssuer;
-    /** Audit note: why the material is shared. Never a permission source. */
-    purpose: string;
-    basis: MaterialBasisV1;
-    grantedAt: string;
-    /** Historical read preserves its owner. Old records remain same-workspace only. */
-    history?: {
-        owner: ArtifactOwnerRunRef;
-        usage: 'historical_explanation';
-        /** Human-selected source and exact reader/materials in this immutable grant. */
-        crossWorkspace?: {
-            sourceWorkspaceId: string;
-            authorizedBy: ActorRef & {
-                kind: 'human';
-            };
-        };
-    };
-};
 export type MaterialAccessGrantRef = {
     aggregateType: "MaterialAccessGrant";
     projectId: string;
     workspaceId: string;
     goalId: string;
     grantId: string;
-};
-export type MaterialAccessGrantSnapshot = {
-    ref: MaterialAccessGrantRef;
-    revision: 1 | 2;
-    schemaVersion: 1;
-    grant: MaterialAccessGrantV1;
-    /** Absent on legacy active records. Revocation never alters the original grant. */
-    revocation?: MaterialAccessRevocationV1;
-};
-type MaterialAccessRevocationV1 = {
-    reason: string;
-    revokedAt: string;
-    actor: ActorRef;
-    commandId: string;
 };
 export function sameArtifactRef(a: ArtifactRef, b: ArtifactRef): boolean {
     return a.contentType === b.contentType && a.digest === b.digest && a.sizeBytes === b.sizeBytes;
@@ -208,23 +111,4 @@ export function sameArtifactOwnerRunRef(a: ArtifactOwnerRunRef | null, b: Artifa
         return a.workspaceId === b.workspaceId && a.queryJobId === b.queryJobId && a.runId === b.runId;
     }
     return false;
-}
-// ------------------------------------------------------------------------ //
-// Vault read seam                                                           //
-// ------------------------------------------------------------------------ //
-/**
- * Resolver injected into the ArtifactVault by the host. It returns the grants
- * RECORDED for this reader that include the requested material. The vault then
- * applies its own rules (reader match, basis match, issuer authority) — a
- * resolver result is a candidate, never a decision.
- */
-export interface MaterialAccessResolver {
-    grantsFor(ref: ArtifactRef, reader: ArtifactOwnerRunRef): Promise<readonly MaterialAccessGrantV1[]>;
-    /** Host checks ledger-owned plan/workspace versions; declarations are not authority. */
-    currentBasisValid?(grant: MaterialAccessGrantV1): Promise<boolean>;
-}
-/** v1 has no authority to transfer material across projects or goal/workspace scopes. */
-export function materialPrincipalInScope(principal: ArtifactOwnerRunRef, scope: MaterialAccessScopeV1): boolean {
-    return principal.projectId === scope.projectId && (principal.aggregateType === "Run"
-        ? principal.goalId === scope.goalId : principal.workspaceId === scope.workspaceId);
 }

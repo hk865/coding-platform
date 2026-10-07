@@ -13,7 +13,6 @@ import type { TaskEnvelopeV1 } from '../../src/contracts/task-envelope.js';
 import { createSqliteRawArtifactStore } from '../../src/core/record-store/sqlite-body-store.js';
 import { RawArtifactBodyStore } from '../../src/core/record-store/body-store.js';
 import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
-import { createMaterialAccessResolver } from '../../src/core/work-graph/materials/applicability.js';
 import { createMaterialService } from '../../src/core/work-graph/materials/material-service.js';
 import { encodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import { SESSION_MESSAGE_LOOKUP_INDEXES, SESSION_MESSAGE_RECORD_SCHEMAS } from '../../src/core/work-graph/communication/message-record-codecs.js';
@@ -116,10 +115,9 @@ export async function createC1Harness(kind: ClaimFixtureKind): Promise<C1Harness
   const eventId = () => `c1-message-event-${++eventSeq}`;
   let writeSeq = 0;
   const reads = createMaterialRecordReaders(backend.records);
-  const grants = createMaterialAccessResolver(reads.authority, reads.index);
   const bodyPath = join(fixture.directory, 'c1-bodies.sqlite');
   let bodies = kind === 'sqlite' ? createSqliteRawArtifactStore(bodyPath) : new RawArtifactBodyStore();
-  const materials = createMaterialService({ bodies: {put: input => bodies.put(input), read: ref => bodies.read(ref)}, authority: reads.authority, grants, now });
+  const materials = createMaterialService({ bodies: {put: input => bodies.put(input), read: ref => bodies.read(ref)}, authority: reads.authority, now });
   // C2 migration: the old fixture carried a fake `'f'.repeat(64)` digest. The
   // fresh Host admission needs the real prepared manifest body and a real Host
   // binding, so store the manifest through the same body store and pin it in the
@@ -195,7 +193,7 @@ export async function createC1Harness(kind: ClaimFixtureKind): Promise<C1Harness
       bodies = createSqliteRawArtifactStore(bodyPath);
       secondary = await fixture.reopenService();
       const reopenedReaders = createMaterialRecordReaders(secondary.records);
-      harness.materials = createMaterialService({bodies, authority:reopenedReaders.authority, grants:createMaterialAccessResolver(reopenedReaders.authority,reopenedReaders.index), now});
+      harness.materials = createMaterialService({bodies, authority:reopenedReaders.authority, now});
       harness.mailbox = makeMailbox(secondary.records,harness.materials);
     },
     async commitRun(next) {

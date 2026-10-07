@@ -341,10 +341,7 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
         projectId: runRef.projectId,
         workspaceId: record.session.workspaceId,
         principal: { kind: 'work_run', runRef, roleBinding: structuredClone(record.run.roleBinding) },
-        materialReader: {
-          kind: 'run', requester: runRef,
-          ...(manifest.materialBasis === null ? {} : { currentBasis: structuredClone(manifest.materialBasis) }),
-        },
+        materialReader: { kind: 'run', requester: runRef },
         signal,
       };
       const requestIdForCall = (call: Readonly<ToolCall>): string => {

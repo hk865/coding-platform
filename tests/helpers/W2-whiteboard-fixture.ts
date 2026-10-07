@@ -47,7 +47,6 @@ import { createRoleConfigurationService } from '../../src/core/work-graph/config
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
 import { createExecutionEntryService } from '../../src/core/work-graph/tasks/execution-entry-service.js';
 import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
-import { createMaterialAccessResolver } from '../../src/core/work-graph/materials/applicability.js';
 import { createMaterialService } from '../../src/core/work-graph/materials/material-service.js';
 import type { PlanProposal, PlanWriteProvenanceV1 } from '../../src/core/work-graph/tasks/plan-contracts.js';
 import type { PlanTaskPort } from '../../src/core/work-graph/tasks/plan-contracts.js';
@@ -173,8 +172,7 @@ export async function createW2WhiteboardFixture(kind: ClaimFixtureKind = 'memory
   const plans = createPlanService({ records, now, eventId, delegatedWrites });
 
   const materialReads = createMaterialRecordReaders(records);
-  const materials = createMaterialService({ bodies: b2.bodies, authority: materialReads.authority,
-    grants: createMaterialAccessResolver(materialReads.authority, materialReads.index), now });
+  const materials = createMaterialService({ bodies: b2.bodies, authority: materialReads.authority, now });
   const entry = createExecutionEntryService({ records, reads, roles, bodies: b2.bodies, materials,
     authorizeConfiguration, now, eventId, newId: () => `w2-entry-${++seq}` });
   const prepared = await b2.buildPrepared({ permissions: configuration.permissions });

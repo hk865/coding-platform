@@ -2,6 +2,11 @@
  * M1 workspace material source provider — adapts the existing WorkspaceAccessFactory
  * and WorkspaceSourceApplicability into the read-side SourceApplicabilityPort.
  *
+ * Kept, not constructed (decision 34): the material grants that read source
+ * pins were deleted. It is the only way to capture a verified current source
+ * pin, which slice 3 of the orchestration design (the consume-time exact-input
+ * check, decision 11) may need. Delete it once that design settles it does not.
+ *
  * `contextForScope(scope, signal)` is a trusted Host binding owned by the
  * composition root: it constructs the configured service Host identity for the
  * REAL project/workspace and must never be a model callback. This adapter
@@ -20,8 +25,8 @@
  *  - after the content observation opens a short-lived second access and
  *    re-checks root identity, Workspace revision and subject/permission revision.
  *    Any change returns stale and no sourced pin is published. Both resources
- *    are released in their own finally. This is NOT a filesystem TOCTOU fix: the
- *    read-side resolver still re-captures and re-validates on every use.
+ *    are released in their own finally. This is NOT a filesystem TOCTOU fix: a
+ *    reader must re-capture and re-validate on every use (`materialSourcePinIsCurrent`).
  *
  * Missing provider, truncated inventory, unsafe paths, unreadable paths,
  * revoked permissions, capacity overflow, additions/deletions and mid-capture
@@ -151,8 +156,6 @@ async function releaseAccess(access: WorkspaceReadAccess): Promise<boolean> {
 
 /**
  * Builds the read-side source port over the real workspace access capability.
- * The composition root injects this SAME instance into the grant service and
- * `createMaterialAccessResolver(authority, index, source)`.
  */
 export function createMaterialSourceProvider(deps: MaterialSourceProviderDependencies): SourceApplicabilityPort {
   return {

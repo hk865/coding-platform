@@ -36,7 +36,7 @@ import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type { WorkspaceHostBindings } from '../../workspace/access.js';
 import type { SessionMailboxPort } from '../communication/contracts.js';
-import type { MaterialPort, MaterialReadFactsPort } from '../materials/contracts.js';
+import type { MaterialPort } from '../materials/contracts.js';
 import type { ExecutionReadPort } from '../tasks/execution-read-contracts.js';
 import type { GraphWrite } from '../tasks/contracts.js';
 import type { PlanDelegatedWriteDependencies } from '../tasks/plan-write-admission.js';
@@ -217,7 +217,6 @@ export type CheckConfigurationResolver = (scope: WorkspaceScope) => TrustedCheck
 export type EvidenceServiceDependencies = {
     records: GoalRecordTransactionPort & RecordLookupPort;
     materials: MaterialPort;
-    materialFacts: MaterialReadFactsPort;
     executions: ExecutionReadPort;
     workspaceHost: WorkspaceHostBindings;
     source: VerificationRoundSourcePort;

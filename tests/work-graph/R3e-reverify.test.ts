@@ -119,7 +119,7 @@ function reverifier(fixture: R3eEvidenceFixture, tag: string, extra: Partial<Evi
   const configuration = { current: fixture.configuration };
   const policy = { current: { ...DEFAULT_TASK_AUTOMATION_POLICY } };
   const evidence = createEvidenceService({ records: fixture.records, materials: fixture.materials,
-    materialFacts: fixture.materialFacts, executions: createRunStateReader({ records: fixture.records }),
+    executions: createRunStateReader({ records: fixture.records }),
     workspaceHost: fixture.workspaceHost, source,
     configurationFor: scope => scope.projectId === fixture.scope.projectId && scope.workspaceId === fixture.scope.workspaceId
       ? configuration.current : undefined,
@@ -489,7 +489,7 @@ it.each(KINDS)('%s: two reverifies of one head, and a reverify racing a requeue 
   let race = synchronizeB2Commits(fixture.records);
   const raced = (tag: string) => {
     let sequence = 0;
-    return createEvidenceService({ records: race.records, materials: fixture.materials, materialFacts: fixture.materialFacts,
+    return createEvidenceService({ records: race.records, materials: fixture.materials,
       executions: createRunStateReader({ records: fixture.records }), workspaceHost: fixture.workspaceHost,
       source: new VerificationWorkspaceReader(), configuration: fixture.configuration, now: () => B2_AT,
       newId: () => `r3e-race-${tag}-${++sequence}` });

@@ -390,7 +390,7 @@ describe('VD-9 begin read set (VR-02: the begin guards Goal@rev and the active P
     let armed = false;
     const reader = new VerificationWorkspaceReader();
     let sequence = 0;
-    const evidence = createEvidenceService({ records: fixture.records, materials: fixture.materials, materialFacts: fixture.materialFacts,
+    const evidence = createEvidenceService({ records: fixture.records, materials: fixture.materials,
       executions: createRunStateReader({ records: fixture.records }), workspaceHost: fixture.workspaceHost,
       source: { async capture(root) {
         if (armed) {

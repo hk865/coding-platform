@@ -446,6 +446,18 @@
       "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; referenced nowhere"
     },
     {
+      "file": "src/contracts/material-access.ts",
+      "name": "MaterialSourceCaptureResult",
+      "reason": "kept-for",
+      "note": "kept for slice 3 of the orchestration design (decision 34): the consume-time exact-input check (decision 11, an open MVP item) may need a verified current source pin, and this pair is the only way to capture one; not constructed since the material grants were deleted (G3, lead call 2026-10-07); delete it once that design settles it does not; only reached from SourceApplicabilityPort and the kept provider pair"
+    },
+    {
+      "file": "src/contracts/material-access.ts",
+      "name": "SourceApplicabilityPort",
+      "reason": "kept-for",
+      "note": "kept for slice 3 of the orchestration design (decision 34): the consume-time exact-input check (decision 11, an open MVP item) may need a verified current source pin, and this pair is the only way to capture one; not constructed since the material grants were deleted (G3, lead call 2026-10-07); delete it once that design settles it does not; only reached from the kept provider pair (and the exploration and verification readers G5 deletes)"
+    },
+    {
       "file": "src/contracts/plan.ts",
       "name": "ApplyPlanRevisionCommand",
       "reason": "pre-batch",
@@ -1022,66 +1034,6 @@
       "note": "unreached at 790d970; a port operation create-platform.ts publishes, but no route (core-routes.ts), Workflow or script reads it; used only by tests: tests/business/R5c-workflow.test.ts"
     },
     {
-      "file": "src/core/work-graph/materials/contracts.ts",
-      "name": "MaterialReadFacts",
-      "reason": "pre-batch",
-      "note": "TEMPORARY, decision 34: pre-batch M2 code, reached at 790d970 only through the B2 exact-input admission that G2 deleted; G3 deletes it next, and this entry with it"
-    },
-    {
-      "file": "src/core/work-graph/materials/contracts.ts",
-      "name": "MaterialReadFactsPort.openArtifactFacts",
-      "reason": "pre-batch",
-      "note": "TEMPORARY, decision 34: pre-batch M2 code, reached at 790d970 only through the B2 exact-input admission that G2 deleted; G3 deletes it next, and this entry with it"
-    },
-    {
-      "file": "src/core/work-graph/materials/material-facts-service.ts",
-      "name": "FactsCollector",
-      "reason": "pre-batch",
-      "note": "TEMPORARY, decision 34: pre-batch M2 code, reached at 790d970 only through the B2 exact-input admission that G2 deleted; G3 deletes it next, and this entry with it"
-    },
-    {
-      "file": "src/core/work-graph/materials/material-facts-service.ts",
-      "name": "createFactsCollector",
-      "reason": "pre-batch",
-      "note": "TEMPORARY, decision 34: pre-batch M2 code, reached at 790d970 only through the B2 exact-input admission that G2 deleted; G3 deletes it next, and this entry with it"
-    },
-    {
-      "file": "src/core/work-graph/materials/material-facts-service.ts",
-      "name": "trackAuthorityReads",
-      "reason": "pre-batch",
-      "note": "TEMPORARY, decision 34: pre-batch M2 code, reached at 790d970 only through the B2 exact-input admission that G2 deleted; G3 deletes it next, and this entry with it"
-    },
-    {
-      "file": "src/core/work-graph/materials/material-facts-service.ts",
-      "name": "trackCandidateReads",
-      "reason": "pre-batch",
-      "note": "TEMPORARY, decision 34: pre-batch M2 code, reached at 790d970 only through the B2 exact-input admission that G2 deleted; G3 deletes it next, and this entry with it"
-    },
-    {
-      "file": "src/core/work-graph/materials/material-facts-service.ts",
-      "name": "trackCarriedReads",
-      "reason": "pre-batch",
-      "note": "TEMPORARY, decision 34: pre-batch M2 code, reached at 790d970 only through the B2 exact-input admission that G2 deleted; G3 deletes it next, and this entry with it"
-    },
-    {
-      "file": "src/core/work-graph/materials/material-facts-service.ts",
-      "name": "bindSourceSignal",
-      "reason": "pre-batch",
-      "note": "TEMPORARY, decision 34: pre-batch M2 code, reached at 790d970 only through the B2 exact-input admission that G2 deleted; G3 deletes it next, and this entry with it"
-    },
-    {
-      "file": "src/core/work-graph/materials/material-facts-service.ts",
-      "name": "canonicalKey",
-      "reason": "pre-batch",
-      "note": "TEMPORARY, decision 34: pre-batch M2 code, reached at 790d970 only through the B2 exact-input admission that G2 deleted; G3 deletes it next, and this entry with it"
-    },
-    {
-      "file": "src/core/work-graph/materials/material-facts-service.ts",
-      "name": "rejection",
-      "reason": "pre-batch",
-      "note": "TEMPORARY, decision 34: pre-batch M2 code, reached at 790d970 only through the B2 exact-input admission that G2 deleted; G3 deletes it next, and this entry with it"
-    },
-    {
       "file": "src/core/work-graph/materials/material-service.ts",
       "name": "StoreRejectionCode",
       "reason": "pre-batch",
@@ -1190,6 +1142,90 @@
       "note": "unreached at 790d970; used only by tests: tests/data/exploration-source-applicability.test.ts"
     },
     {
+      "file": "src/core/workspace/material-source-provider.ts",
+      "name": "MaterialSourceProviderDependencies",
+      "reason": "kept-for",
+      "note": "kept for slice 3 of the orchestration design (decision 34): the consume-time exact-input check (decision 11, an open MVP item) may need a verified current source pin, and this pair is the only way to capture one; not constructed since the material grants were deleted (G3, lead call 2026-10-07); delete it once that design settles it does not; only reached from createMaterialSourceProvider"
+    },
+    {
+      "file": "src/core/workspace/material-source-provider.ts",
+      "name": "INVENTORY_LIMIT",
+      "reason": "kept-for",
+      "note": "kept for slice 3 of the orchestration design (decision 34): the consume-time exact-input check (decision 11, an open MVP item) may need a verified current source pin, and this pair is the only way to capture one; not constructed since the material grants were deleted (G3, lead call 2026-10-07); delete it once that design settles it does not; only reached from createMaterialSourceProvider"
+    },
+    {
+      "file": "src/core/workspace/material-source-provider.ts",
+      "name": "isRecord",
+      "reason": "kept-for",
+      "note": "kept for slice 3 of the orchestration design (decision 34): the consume-time exact-input check (decision 11, an open MVP item) may need a verified current source pin, and this pair is the only way to capture one; not constructed since the material grants were deleted (G3, lead call 2026-10-07); delete it once that design settles it does not; only reached from createMaterialSourceProvider"
+    },
+    {
+      "file": "src/core/workspace/material-source-provider.ts",
+      "name": "trustedActor",
+      "reason": "kept-for",
+      "note": "kept for slice 3 of the orchestration design (decision 34): the consume-time exact-input check (decision 11, an open MVP item) may need a verified current source pin, and this pair is the only way to capture one; not constructed since the material grants were deleted (G3, lead call 2026-10-07); delete it once that design settles it does not; only reached from createMaterialSourceProvider"
+    },
+    {
+      "file": "src/core/workspace/material-source-provider.ts",
+      "name": "sameActor",
+      "reason": "kept-for",
+      "note": "kept for slice 3 of the orchestration design (decision 34): the consume-time exact-input check (decision 11, an open MVP item) may need a verified current source pin, and this pair is the only way to capture one; not constructed since the material grants were deleted (G3, lead call 2026-10-07); delete it once that design settles it does not; only reached from createMaterialSourceProvider"
+    },
+    {
+      "file": "src/core/workspace/material-source-provider.ts",
+      "name": "messageOf",
+      "reason": "kept-for",
+      "note": "kept for slice 3 of the orchestration design (decision 34): the consume-time exact-input check (decision 11, an open MVP item) may need a verified current source pin, and this pair is the only way to capture one; not constructed since the material grants were deleted (G3, lead call 2026-10-07); delete it once that design settles it does not; only reached from createMaterialSourceProvider"
+    },
+    {
+      "file": "src/core/workspace/material-source-provider.ts",
+      "name": "unavailable",
+      "reason": "kept-for",
+      "note": "kept for slice 3 of the orchestration design (decision 34): the consume-time exact-input check (decision 11, an open MVP item) may need a verified current source pin, and this pair is the only way to capture one; not constructed since the material grants were deleted (G3, lead call 2026-10-07); delete it once that design settles it does not; only reached from createMaterialSourceProvider"
+    },
+    {
+      "file": "src/core/workspace/material-source-provider.ts",
+      "name": "rejected",
+      "reason": "kept-for",
+      "note": "kept for slice 3 of the orchestration design (decision 34): the consume-time exact-input check (decision 11, an open MVP item) may need a verified current source pin, and this pair is the only way to capture one; not constructed since the material grants were deleted (G3, lead call 2026-10-07); delete it once that design settles it does not; only reached from createMaterialSourceProvider"
+    },
+    {
+      "file": "src/core/workspace/material-source-provider.ts",
+      "name": "contextAligned",
+      "reason": "kept-for",
+      "note": "kept for slice 3 of the orchestration design (decision 34): the consume-time exact-input check (decision 11, an open MVP item) may need a verified current source pin, and this pair is the only way to capture one; not constructed since the material grants were deleted (G3, lead call 2026-10-07); delete it once that design settles it does not; only reached from createMaterialSourceProvider"
+    },
+    {
+      "file": "src/core/workspace/material-source-provider.ts",
+      "name": "adapt",
+      "reason": "kept-for",
+      "note": "kept for slice 3 of the orchestration design (decision 34): the consume-time exact-input check (decision 11, an open MVP item) may need a verified current source pin, and this pair is the only way to capture one; not constructed since the material grants were deleted (G3, lead call 2026-10-07); delete it once that design settles it does not; only reached from createMaterialSourceProvider"
+    },
+    {
+      "file": "src/core/workspace/material-source-provider.ts",
+      "name": "AccessOutcome",
+      "reason": "kept-for",
+      "note": "kept for slice 3 of the orchestration design (decision 34): the consume-time exact-input check (decision 11, an open MVP item) may need a verified current source pin, and this pair is the only way to capture one; not constructed since the material grants were deleted (G3, lead call 2026-10-07); delete it once that design settles it does not; only reached from createMaterialSourceProvider"
+    },
+    {
+      "file": "src/core/workspace/material-source-provider.ts",
+      "name": "openAccess",
+      "reason": "kept-for",
+      "note": "kept for slice 3 of the orchestration design (decision 34): the consume-time exact-input check (decision 11, an open MVP item) may need a verified current source pin, and this pair is the only way to capture one; not constructed since the material grants were deleted (G3, lead call 2026-10-07); delete it once that design settles it does not; only reached from createMaterialSourceProvider"
+    },
+    {
+      "file": "src/core/workspace/material-source-provider.ts",
+      "name": "releaseAccess",
+      "reason": "kept-for",
+      "note": "kept for slice 3 of the orchestration design (decision 34): the consume-time exact-input check (decision 11, an open MVP item) may need a verified current source pin, and this pair is the only way to capture one; not constructed since the material grants were deleted (G3, lead call 2026-10-07); delete it once that design settles it does not; only reached from createMaterialSourceProvider"
+    },
+    {
+      "file": "src/core/workspace/material-source-provider.ts",
+      "name": "createMaterialSourceProvider",
+      "reason": "kept-for",
+      "note": "kept for slice 3 of the orchestration design (decision 34): the consume-time exact-input check (decision 11, an open MVP item) may need a verified current source pin, and this pair is the only way to capture one; not constructed since the material grants were deleted (G3, lead call 2026-10-07); delete it once that design settles it does not; used only by tests: tests/data/M1-material-source-provider.test.ts"
+    },
+    {
       "file": "src/core/workspace/project-source-index.ts",
       "name": "ProjectSourceIndex.architectureMaterials",
       "reason": "pre-batch",
@@ -1224,6 +1260,42 @@
       "name": "WorkspaceSourceIndexReader",
       "reason": "kept-for",
       "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; used only by tests: tests/data/workspace-path-boundary.test.ts"
+    },
+    {
+      "file": "src/core/workspace/source-applicability.ts",
+      "name": "Query",
+      "reason": "kept-for",
+      "note": "kept for slice 3 of the orchestration design (decision 34): the consume-time exact-input check (decision 11, an open MVP item) may need a verified current source pin, and this pair is the only way to capture one; not constructed since the material grants were deleted (G3, lead call 2026-10-07); delete it once that design settles it does not; only reached from WorkspaceSourceApplicability"
+    },
+    {
+      "file": "src/core/workspace/source-applicability.ts",
+      "name": "validPath",
+      "reason": "kept-for",
+      "note": "kept for slice 3 of the orchestration design (decision 34): the consume-time exact-input check (decision 11, an open MVP item) may need a verified current source pin, and this pair is the only way to capture one; not constructed since the material grants were deleted (G3, lead call 2026-10-07); delete it once that design settles it does not; only reached from WorkspaceSourceApplicability"
+    },
+    {
+      "file": "src/core/workspace/source-applicability.ts",
+      "name": "selected",
+      "reason": "kept-for",
+      "note": "kept for slice 3 of the orchestration design (decision 34): the consume-time exact-input check (decision 11, an open MVP item) may need a verified current source pin, and this pair is the only way to capture one; not constructed since the material grants were deleted (G3, lead call 2026-10-07); delete it once that design settles it does not; only reached from WorkspaceSourceApplicability"
+    },
+    {
+      "file": "src/core/workspace/source-applicability.ts",
+      "name": "unavailable",
+      "reason": "kept-for",
+      "note": "kept for slice 3 of the orchestration design (decision 34): the consume-time exact-input check (decision 11, an open MVP item) may need a verified current source pin, and this pair is the only way to capture one; not constructed since the material grants were deleted (G3, lead call 2026-10-07); delete it once that design settles it does not; only reached from WorkspaceSourceApplicability"
+    },
+    {
+      "file": "src/core/workspace/source-applicability.ts",
+      "name": "WorkspaceSourceApplicability",
+      "reason": "kept-for",
+      "note": "kept for slice 3 of the orchestration design (decision 34): the consume-time exact-input check (decision 11, an open MVP item) may need a verified current source pin, and this pair is the only way to capture one; not constructed since the material grants were deleted (G3, lead call 2026-10-07); delete it once that design settles it does not; only reached from createMaterialSourceProvider; tests: tests/work-graph/R3b-material-applicability.test.ts"
+    },
+    {
+      "file": "src/core/workspace/source-applicability.ts",
+      "name": "materialSourcePinIsCurrent",
+      "reason": "kept-for",
+      "note": "kept for slice 3 of the orchestration design (decision 34): the consume-time exact-input check (decision 11, an open MVP item) may need a verified current source pin, and this pair is the only way to capture one; not constructed since the material grants were deleted (G3, lead call 2026-10-07); delete it once that design settles it does not; used only by tests: tests/work-graph/R3b-material-applicability.test.ts, tests/data/exploration-source-applicability.test.ts"
     },
     {
       "file": "src/core/workspace/source-workspace-reader.ts",

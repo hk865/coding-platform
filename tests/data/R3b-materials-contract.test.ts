@@ -12,12 +12,10 @@ import { createSqliteRawArtifactStore } from '../../src/core/record-store/sqlite
 import type { MaterialOrigin, RawArtifactPut, RawArtifactStorePort } from '../../src/core/record-store/body-ports.js';
 import { createMaterialService } from '../../src/core/work-graph/materials/material-service.js';
 import type { MaterialAuthorityReads } from '../../src/core/work-graph/materials/applicability.js';
-import type { MaterialAccessResolver, MaterialAccessGrantV1 } from '../../src/contracts/material-access.js';
 
 const source = (revision: string): SourceRefV1 => ({ kind: 'workspace', refId: 'workspace', revision });
 const runA = { aggregateType: 'Run' as const, projectId: 'project-a', goalId: 'goal', runId: 'run-a' };
 const runB = { aggregateType: 'Run' as const, projectId: 'project-a', goalId: 'goal', runId: 'run-b' };
-const queryRun = { aggregateType: 'QueryRun' as const, projectId: 'project-a', workspaceId: 'workspace', queryJobId: 'query', runId: 'query-run' };
 const ownerInput = (owner = runA, revision = 'first'): RawArtifactPut => ({
   body: 'shared material', contentType: 'text/plain', sourceRefs: [source(revision)],
   origin: { kind: 'run', owner }, requestedAt: '2026-09-24T00:00:00Z',
@@ -29,7 +27,6 @@ const hostContext = (projectId = 'project-a', workspaceId = 'workspace', actorId
   return { projectId, workspaceId, principal: { kind: 'host', actor },
     materialReader: { kind: 'host', projectId, workspaceId, actor }, signal: new AbortController().signal };
 };
-const grants = { grantsFor: async () => [] } as MaterialAccessResolver;
 const authority = { load: async (ref: { aggregateType: string }) =>
   ref.aggregateType === 'Run' || ref.aggregateType === 'QueryRun' ? { status: 'found', snapshot: { ref, workspaceSnapshot: { workspaceId: 'workspace' } } }
     : { status: 'missing' } } as unknown as MaterialAuthorityReads;
@@ -117,7 +114,7 @@ it('stores a Host artifact only for a matching trusted origin and isolates calle
     put: async input => { observed.push(input); return { status: 'ready', value: { ref, replayed: false } }; },
     read: async () => { throw new Error('unexpected body read'); },
   };
-  const service = createMaterialService({ bodies, authority, grants, now: () => '2026-09-24T00:00:00Z' });
+  const service = createMaterialService({ bodies, authority, now: () => '2026-09-24T00:00:00Z' });
   const ctx = hostContext();
   const origin = { kind: 'platform_operation' as const, projectId: 'project-a', workspaceId: 'workspace',
     requestId: 'request-1', actor: { kind: 'human' as const, id: 'local-gui' } };
@@ -134,7 +131,7 @@ it('stores a Host artifact only for a matching trusted origin and isolates calle
 
 it('allows a trustworthy Host historical read without a fabricated Run and rejects scope or actor mismatch', async () => {
   const { bodies, ref } = readyBody();
-  const service = createMaterialService({ bodies, authority, grants, now: () => '2026-09-24T00:00:00Z' });
+  const service = createMaterialService({ bodies, authority, now: () => '2026-09-24T00:00:00Z' });
   const input = { ref, usage: 'historical_explanation' as const };
   expect(await service.openArtifact(hostContext(), input)).toMatchObject({ status: 'ready', value: { body: 'shared material' } });
   expect(await service.openArtifact(hostContext('project-b'), input)).toMatchObject({ status: 'rejected', code: 'forbidden' });
@@ -146,39 +143,16 @@ it('allows a trustworthy Host historical read without a fabricated Run and rejec
 
 it('keeps Host current reads from asserting unverified currentness', async () => {
   const { bodies, ref } = readyBody();
-  const service = createMaterialService({ bodies, authority, grants, now: () => '2026-09-24T00:00:00Z' });
+  const service = createMaterialService({ bodies, authority, now: () => '2026-09-24T00:00:00Z' });
   expect(await service.openArtifact(hostContext(), { ref, usage: 'current' }))
     .toMatchObject({ status: 'rejected', code: 'source_stale' });
 });
 
 it('does not infer a Host-readable scope from a legacy record without an owner', async () => {
   const { bodies, ref } = readyBody({ kind: 'legacy', ownerRunRef: null });
-  const service = createMaterialService({ bodies, authority, grants, now: () => '2026-09-24T00:00:00Z' });
+  const service = createMaterialService({ bodies, authority, now: () => '2026-09-24T00:00:00Z' });
   expect(await service.openArtifact(hostContext(), { ref, usage: 'historical_explanation' }))
     .toMatchObject({ status: 'rejected', code: 'forbidden' });
-});
-
-it('requires an exact QueryRun grant and matching basis, with revocation taking effect', async () => {
-  const { bodies, ref } = readyBody();
-  const basis = { planRef: null, workspaceRevision: 7, sourceDigest: null };
-  const grant: MaterialAccessGrantV1 = { schemaVersion: 1, grantId: 'grant',
-    scope: { projectId: 'project-a', workspaceId: 'workspace', goalId: 'goal' },
-    materials: [ref], reader: queryRun,
-    issuedBy: { aggregateType: 'Control', projectId: 'project-a', goalId: 'goal' }, purpose: 'historical query', basis,
-    grantedAt: '2026-09-24T00:00:00Z', history: { owner: runA, usage: 'historical_explanation' } };
-  let revoked = false;
-  const resolver: MaterialAccessResolver = { grantsFor: async () => revoked ? [] : [grant], currentBasisValid: async () => true };
-  const service = createMaterialService({ bodies, authority, grants: resolver, now: () => '2026-09-24T00:00:00Z' });
-  const actor = { kind: 'human' as const, id: 'query-user' };
-  const context = (workspaceRevision: number): CoreCallContext => ({ projectId: 'project-a', workspaceId: 'workspace',
-    principal: { kind: 'query_run', queryRunRef: queryRun, initiator: actor },
-    materialReader: { kind: 'run', requester: queryRun, currentBasis: { ...basis, workspaceRevision } },
-    signal: new AbortController().signal });
-  const input = { ref, usage: 'historical_explanation' as const };
-  expect(await service.openArtifact(context(7), input)).toMatchObject({ status: 'ready', value: { body: 'shared material' } });
-  expect(await service.openArtifact(context(8), input)).toMatchObject({ status: 'rejected', code: 'source_stale' });
-  revoked = true;
-  expect(await service.openArtifact(context(7), input)).toMatchObject({ status: 'rejected', code: 'forbidden' });
 });
 
 });

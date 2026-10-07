@@ -43,7 +43,6 @@ import { createProjectBootstrapServices } from '../../../src/core/work-graph/con
 import { createRoleConfigurationService } from '../../../src/core/work-graph/configuration/role-memory-service.js';
 import type { EvidencePort, ReverifyRoundInput } from '../../../src/core/work-graph/evidence/contracts.js';
 import { createEvidenceService } from '../../../src/core/work-graph/evidence/evidence-service.js';
-import { createMaterialAccessResolver } from '../../../src/core/work-graph/materials/applicability.js';
 import type { MaterialPort } from '../../../src/core/work-graph/materials/contracts.js';
 import { createMaterialService } from '../../../src/core/work-graph/materials/material-service.js';
 import { createMaterialRecordReaders } from '../../../src/core/work-graph/materials/record-readers.js';
@@ -2153,8 +2152,7 @@ export class AgentFuzz {
         permissions: structuredClone(input.permissions), hostTemplate: structuredClone(B2_HOST.hostTemplate) } };
     };
     const materialReads = createMaterialRecordReaders(records);
-    this.materials = createMaterialService({ bodies: b2.bodies, authority: materialReads.authority,
-      grants: createMaterialAccessResolver(materialReads.authority, materialReads.index), now });
+    this.materials = createMaterialService({ bodies: b2.bodies, authority: materialReads.authority, now });
     this.entry = createExecutionEntryService({ records, reads, roles, bodies: b2.bodies, materials: this.materials,
       authorizeConfiguration, now, eventId, newId: () => `fuzz-agent-${options.seed}-id-${++this.sequence}` });
     this.controls = createRunControlService({ records, authority: materialReads.authority, reads, now, eventId });
@@ -2162,7 +2160,7 @@ export class AgentFuzz {
     this.plans = createPlanService({ records, now, eventId, delegatedWrites: this.delegatedWrites });
     // The 5.9 evidence owner (as tests/work-graph/R3e-reverify.test.ts builds it): the R3e checks configuration for
     // this scope, the fuzz's automation policy and the Agent admission.
-    this.evidence = createEvidenceService({ records, materials: r3e.materials, materialFacts: r3e.materialFacts, executions: reads,
+    this.evidence = createEvidenceService({ records, materials: r3e.materials, executions: reads,
       workspaceHost: r3e.workspaceHost, source: new VerificationWorkspaceReader(),
       configurationFor: (scope) => scope.projectId === r3e.scope.projectId && scope.workspaceId === r3e.scope.workspaceId ? r3e.configuration : undefined,
       automationPolicy: () => this.policy, now, newId: () => `fuzz-agent-${options.seed}-evidence-${++this.sequence}`,

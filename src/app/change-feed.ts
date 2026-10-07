@@ -68,7 +68,6 @@ const KIND_BY_AGGREGATE: Record<string, ChangeKind> = {
   SessionMessage: 'messages',
   QueryJob: 'queries', QueryRun: 'queries', QueryJobAnswer: 'queries',
   Project: 'project', Workspace: 'project', RoleSpecRevision: 'project', ProjectRoleSpecActive: 'project',
-  MaterialAccessGrant: 'other',
 };
 
 /** Classify one aggregate type; the first matching rule wins. */

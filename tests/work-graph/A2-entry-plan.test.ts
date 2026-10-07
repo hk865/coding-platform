@@ -1,7 +1,7 @@
 /**
- * A.2 step 5.4b (C6, LA-2): W3's relaxed Plan guard and the material grant rule
- * by basis (docs/refactor/STATE-MACHINES-SPEC.md §3.3 point 5, §6 RUN-02/RUN-04,
- * §6.1 contract (g)).
+ * A.2 step 5.4b (C6): W3's relaxed Plan guard (docs/refactor/STATE-MACHINES-SPEC.md
+ * §3.3 point 5, §6 RUN-02/RUN-04, §6.1 contract (g)). The LA-2 half, the material
+ * grant rule by basis, was deleted with the grants (decision 34).
  *
  * 1. The pure `entryPlanVerdict` and `executionDefinitionsAgree` over hand-built
  *    accepted Plans: same Plan, a Plan that carries the Task unchanged (with and
@@ -18,8 +18,6 @@
  *    store that cannot return the active Plan gives `unavailable` (with the
  *    verdict reason) and zero writes. `readEntryPlanVerdict` reads and pins the
  *    basis source of a claim Plan two adoptions back.
- * 3. `createTaskCarriedUnchanged`, the predicate the composition root injects
- *    into `materials/`.
  *
  * Not driven through the service: `changed`. On clean data a Task with a Run
  * keeps its execution definition and basis (I-22), so only a forged Plan
@@ -32,9 +30,7 @@ import type {
   PlanRevisionDraft, PlanRevisionRef, PlanRevisionSnapshot, RuntimeTask,
 } from '../../src/contracts/plan.js';
 import { executionEntryAuthorizedEventFromEvent } from '../../src/core/work-graph/persistence/execution-entry-codecs.js';
-import {
-  createTaskCarriedUnchanged, readEntryPlanVerdict,
-} from '../../src/core/work-graph/tasks/entry-plan-reader.js';
+import { readEntryPlanVerdict } from '../../src/core/work-graph/tasks/entry-plan-reader.js';
 import { planRevisionRefKey } from '../../src/core/work-graph/tasks/plan-record-codecs.js';
 import {
   entryPlanVerdict, executionDefinitionsAgree, frozenTaskDefinitionsAgree, planTaskFacts, taskOriginVerdict,
@@ -321,13 +317,9 @@ describe('W3 / W4 with an older claim Plan (RUN-02, RUN-04; C6)', () => {
     const p3 = await adoptUnrelated(f, 'p3');
     const taskId = f.claim.task.taskId;
     const p1Guard = { refKey: planRevisionRefKey(f.base.planRef), expectedRevision: 1 };
-    const p2Guard = { refKey: planRevisionRefKey(p2.ref), expectedRevision: 1 };
     const p3Guard = { refKey: planRevisionRefKey(p3.ref), expectedRevision: 1 };
     expect(await readEntryPlanVerdict(f.base.records, { goalRef: f.base.goalRef, taskId, claimPlan: p2, activePlanRef: p3.ref }))
       .toEqual({ status: 'ready', verdict: { kind: 'carried_unchanged', activePlanRef: p3.ref }, guards: [p3Guard, p1Guard] });
-    // The materials predicate also pins the claim Plan it read.
-    expect(await createTaskCarriedUnchanged(f.base.records)({ goalRef: f.base.goalRef, taskId, fromPlanRef: p2.ref,
-      toPlanRef: p3.ref })).toEqual({ status: 'carried', guards: [p2Guard, p3Guard, p1Guard] });
   });
 
   it('readEntryPlanVerdict: no active Plan is changed, the claim Plan active_plan, a missing one unavailable', async () => {
@@ -340,28 +332,5 @@ describe('W3 / W4 with an older claim Plan (RUN-02, RUN-04; C6)', () => {
     expect(await readEntryPlanVerdict(f.base.records, { goalRef: f.base.goalRef, taskId: f.claim.task.taskId, claimPlan,
       activePlanRef: planRef('ep-no-such-plan') })).toMatchObject({ status: 'ready', guards: [],
       verdict: { kind: 'unavailable', reason: 'the Goal active Plan ep-no-such-plan is missing' } });
-  });
-});
-
-describe('createTaskCarriedUnchanged (LA-2)', () => {
-  it('answers carried with the Plans it read, not_carried for another Task and unavailable for a missing Plan', async () => {
-    const f = await open();
-    const p2 = await adoptUnrelated(f, 'p2');
-    const carried = createTaskCarriedUnchanged(f.base.records);
-    const taskId = f.claim.task.taskId;
-    expect(await carried({ goalRef: f.base.goalRef, taskId, fromPlanRef: f.base.planRef, toPlanRef: p2.ref })).toEqual({
-      status: 'carried', guards: [
-        { refKey: planRevisionRefKey(f.base.planRef), expectedRevision: 1 },
-        { refKey: planRevisionRefKey(p2.ref), expectedRevision: 1 },
-      ] });
-    expect(await carried({ goalRef: f.base.goalRef, taskId, fromPlanRef: p2.ref, toPlanRef: p2.ref }))
-      .toEqual({ status: 'carried', guards: [{ refKey: planRevisionRefKey(p2.ref), expectedRevision: 1 }] });
-    // The new Task is not in the claim Plan: its origin cannot be read there.
-    expect(await carried({ goalRef: f.base.goalRef, taskId: 'ep-future-p2', fromPlanRef: f.base.planRef, toPlanRef: p2.ref }))
-      .toMatchObject({ status: 'unavailable' });
-    expect(await carried({ goalRef: f.base.goalRef, taskId, fromPlanRef: planRef('ep-no-such-plan'), toPlanRef: p2.ref }))
-      .toMatchObject({ status: 'unavailable', reason: expect.stringContaining('not_found') });
-    expect(await carried({ goalRef: f.base.goalRef, taskId, fromPlanRef: p2.ref, toPlanRef: f.base.planRef }))
-      .toMatchObject({ status: 'not_carried' });
   });
 });
