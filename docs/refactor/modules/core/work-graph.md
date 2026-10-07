@@ -701,6 +701,7 @@ export interface EvidencePort {
   readVerification(ctx: CoreCallContext, ref: VerificationRoundRef,
     options?: ReadOptions): Promise<ReadResult<VerificationRead>>;
   recordCheckResult(ctx: CoreCallContext, request: GraphWrite<CheckResultInput>): Promise<WriteResult<RoundSnapshot>>;
+  // 2026-10-07 注：代码里的 EvidencePort 已没有 submitEvidence，它没有调用方，按决定 34 删除（规格 VR-08 标为删除）。下一行保留原设计。
   submitEvidence(ctx: CoreCallContext, command: SubmitEvidenceCommand): Promise<SubmitEvidenceReceipt>;
   finalizeChecks(ctx: CoreCallContext, request: GraphWrite<{
     roundRef: VerificationRoundRef; expectedRoundRevision: number; reviewerEvidence: EvidenceRef[];
@@ -708,7 +709,7 @@ export interface EvidencePort {
 }
 ```
 
-`VerificationPlanV1` 来源 `src/contracts/verification.ts`；`SubmitEvidenceCommand/Receipt` 来源 `src/contracts/evidence.ts`。`VerificationRoundSourceProof/MaterialIdentity` 是 `src/contracts/verification-context.ts` 中的完整名称。输入须验证真实 Run/Task/Plan pin、配置 digest、轮次 fingerprint、检查身份与来源版本；调用方不能通过随意填写 identity 为另一任务认领 PASS。读轮次将旧 record 与执行记录组合为 view，不写回仅用于显示的 current 字段。
+`VerificationPlanV1` 来源 `src/contracts/verification.ts`；`SubmitEvidenceCommand/Receipt` 来源 `src/contracts/evidence.ts`（2026-10-07 更正：本仓库代码里没有这两个类型；`submitEvidence` 已按决定 34 删除）。`VerificationRoundSourceProof/MaterialIdentity` 是 `src/contracts/verification-context.ts` 中的完整名称。输入须验证真实 Run/Task/Plan pin、配置 digest、轮次 fingerprint、检查身份与来源版本；调用方不能通过随意填写 identity 为另一任务认领 PASS。读轮次将旧 record 与执行记录组合为 view，不写回仅用于显示的 current 字段。
 
 Workflow 选择既有配置并请求检查，AgentRuntime 执行命令/只读审阅，WorkGraph 受理结果。只读审阅使用真实 read witness 和证据引用，不伪造成运行过 shell。recordCheckResult 保留中断/未知影响与原始拒绝细节；同 check/request 指纹重放一致，异内容拒绝。finalizeChecks 依据冻结计划逐 requirement 汇合，缺项/过期/失败均保留；它登记正式 Evidence，但不隐式 completeTask。TaskPort.completeTask 再核对当前采用计划与证据集并归约。
 
