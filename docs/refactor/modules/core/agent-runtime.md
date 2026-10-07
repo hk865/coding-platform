@@ -373,7 +373,7 @@ Run 上 fresh begin，固定 Kernel 身份
 
 **C2平台工具与材料已接入真实回合。** [execution-driver.ts](../../../../src/core/agent-runtime/execution-driver.ts) 从正式Run/Session/Prepared固定work_run和材料reader，复用 `createSessionMailboxTools` 的六种通信工具及 `createWhiteboardTools` 的 `query_task_graph/query_ready_tasks/propose_future_plan/apply_future_plan`。工具清单严格取有效manifest授权交集，稳定requestId由实际callId及完整执行/操作身份派生；工厂声明names与实际definitions一致，未知工具或缺依赖在fresh路径拒绝。通信回合真实读取inbox/正文并回应；白板回合真实query→propose→apply→query，沿W2领域授权与future-only规则，不由Runtime另行规划。
 
-[create-platform.ts](../../../../src/composition/create-platform.ts) 使用唯一executionReader、Plan service、mailbox与Host授权投影：W2 delegatedWrites、C1新动作、B2 entry/model复用同一回调；M2 facts由同一个authority/index/source/bodies构造。真实M1 grant→W1接受exact TaskInput→consumer claim→Prepared→模型输入已接，撤销grant后fresh start拒绝，已经发生的终态/原start回执仍可读取。此处交付的是正式材料输入与局部facts/CAS准入；当前driver没有装配通用 `read_material` 模型工具，不扩大这一能力声明。
+[create-platform.ts](../../../../src/composition/create-platform.ts) 使用唯一executionReader、Plan service、mailbox与Host授权投影：W2 delegatedWrites、C1新动作、B2 entry/model复用同一回调；M2 facts由同一个authority/index/source/bodies构造。真实M1 grant→W1接受exact TaskInput→consumer claim→Prepared→模型输入已接，撤销grant后fresh start拒绝，已经发生的终态/原start回执仍可读取。（2026-10-07 更正：M1 grant 的写入方从没有生产调用方，这条链只在测试里接通过；写入方已按决定 34 删除，这条链不再成立。）此处交付的是正式材料输入与局部facts/CAS准入；当前driver没有装配通用 `read_material` 模型工具，不扩大这一能力声明。
 
 C1新写在receipt miss后复用Prepared/Host/Role准入，历史读取只核原Run/outbox/Session身份与实际访问范围，不机械读取当前Plan/Attempt/Lease。相同identity的ack/respond在另一调用真实提交后读取到read/responded时，恢复原committed回执，不重复正文或事件。初始Role身份和外部caller仍核对，不增加运行中换Role生命周期；真实Host grant撤权阻止新动作，不抹去旧事实。
 

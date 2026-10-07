@@ -1,7 +1,7 @@
 /**
  * A.2 step 6, scenario C6-unrelated-adoption (docs/refactor/STATE-MACHINES-SPEC.md §15.2 "第 6 步" row
  * C6-unrelated-adoption; C6 (U-11 → (b)), §3.3 point 5, §6 RUN-02/RUN-03/RUN-04 and contract (g),
- * §9 VD-7, §12.2 W-01, §13.1 `plan` (L-4), §11.19 I-22, lead decision LA-2).
+ * §9 VD-7, §12.2 W-01, §13.1 `plan` (L-4), §11.19 I-22).
  *
  * 1. Main path: the Workflow claims T1 (`ag2b-work`); another Task's running Run (`ag2b-other`, an Agent
  *    with the W2 plan-write tools) proposes and adopts P2, which adds the unrelated intent T3. T1 keeps
@@ -13,27 +13,24 @@
  * 4. Variant W-01: the Host is restarted (a crash) between the claim and the authorization, after the
  *    adoption: the reconcile leaves the claimed Run as it is (W-01, no transition), the next 推进 continues
  *    the same claim and RUN-02's relaxed guard passes (C6).
- * 5. Variant LA-2 (moved case): a claimed Run reading an authorized external material is granted after an
- *    unrelated adoption and runs on through another adoption while it is in the Kernel.
+ * 5. (Deleted 2026-10-07, decision 34: the LA-2 variant needed a material grant, and the grant writer was
+ *    deleted as unreachable code.)
  * 6. Variant RUN-03 (§12.10 A8-1c supplement): an Entering Run revoked at a restart (W-05 → W-03) is re-authorized
  *    after an unrelated adoption: the relaxed guard passes under P2 (generation 2) and the same claim completes.
  *
- * Moved here (A.2 step 6, user decision 31), assertions kept: cases 2, 3 and 5 are the three cases of
- * tests/composition/A2-entry-plan-platform.test.ts (that file is deleted); their environment is
+ * Moved here (A.2 step 6, user decision 31), assertions kept: cases 2, 3 and 5 were the three cases of
+ * tests/composition/A2-entry-plan-platform.test.ts (that file is deleted; case 5 is deleted too); their environment is
  * tests/scenarios/support/plan.ts `c6Case`. Added to them: the §11 invariants after every step and write,
  * and (case 2) the claims of the main path that hold for the Host variant.
  *
  * Scripted model replies only; no real model is called.
  */
 import { afterEach, expect, it } from 'vitest';
-import type { PlanRevisionDraft, PlanRevisionSnapshot } from '../../src/contracts/plan.js';
+import type { PlanRevisionSnapshot } from '../../src/contracts/plan.js';
 import type { RunRef } from '../../src/contracts/dispatch.js';
 import type { PlanProposalRef } from '../../src/core/work-graph/tasks/plan-contracts.js';
 import { AG2B_GOAL_REF, AG2B_WORK_TASK_ID } from '../helpers/AG2b-collaboration-fixture.js';
-import { createC2RuntimePlatform, type C2RuntimePlatformFixture } from '../helpers/C2-runtime-platform-fixture.js';
-import {
-  assertInvariants, assertInvariantsAt, cleanupScenarios, eventTypesIn, openHostScenario, performs, type InvariantTarget,
-} from './harness.js';
+import { assertInvariants, cleanupScenarios, eventTypesIn, openHostScenario, performs } from './harness.js';
 import {
   PlanBoard, cleanupCommon, execution, putKernelBack, startWithKernelAside, toolOutputJson, type PhaseLog,
 } from './support/common.js';
@@ -44,9 +41,7 @@ import {
 
 const { goalRef, ctx, openEnvironment, adoptUnrelatedFuture, select, drive, taskRow, claimOf, authorizedEvents } = c6Case;
 
-const c2Fixtures: C2RuntimePlatformFixture[] = [];
 afterEach(async () => {
-  for (const fixture of c2Fixtures.splice(0)) await fixture.close().catch(() => undefined);
   await cleanupPlan();
   await cleanupCommon();
   await cleanupScenarios();
@@ -346,91 +341,3 @@ it('C6 variant RUN-03 (W-05 → W-03, §12.10 A8-1c supplement): an Entering Run
   expect(h.modelCalls()).toBe(2);
   await h.drainAbandoned();
 }, 120_000);
-
-// Moved from tests/composition/A2-entry-plan-platform.test.ts:314 (05125db): the LA-2 variant.
-it('LA-2: a consumer reading a granted Plan input runs through two unrelated adoptions', async () => {
-  const holder: { fx?: C2RuntimePlatformFixture; p4?: PlanRevisionSnapshot } = {};
-  const la2: InvariantTarget = { database: '' };   // A.2 step 6: the fixture's files, set once it exists
-  const fx = await createC2RuntimePlatform({ toolNames: ['read'], allowSourceRead: true,
-    scriptedReplies: [
-      { kind: 'calls', calls: [{ callId: 'la2-read', name: 'read', args: { path: 'c2-read.txt' } }] },
-      { kind: 'text', text: 'LA-2 consumer finished' },
-    ],
-    beforeReply: async (_request, index) => {
-      // The consumer Run is in the Kernel: one more unrelated adoption before its second model request.
-      if (index === 0) holder.p4 = await adoptUnrelatedFuture(holder.fx!.platform.plans, holder.fx!.ctx, holder.fx!.fixture.goalRef, 'p4');
-      if (index === 0) await assertInvariantsAt(la2, 'LA-2 P4 adopted while the consumer is in the Kernel');   // A.2 step 6
-    } });
-  holder.fx = fx;
-  c2Fixtures.push(fx);
-  Object.assign(la2, { database: fx.directory, projectId: fx.scope.projectId });   // A.2 step 6
-  await assertInvariantsAt(la2, 'LA-2 fixture claimed');   // A.2 step 6
-  const goal = fx.fixture.goalRef;
-  const goalPin = async () => {
-    const read = await fx.platform.plans.queryGoal(fx.ctx, goal);
-    if (read.status !== 'ready') throw new Error('the Goal must be readable');
-    return { ref: goal, revision: read.value.goal.revision };
-  };
-  // The producer stores a material; P2 selects it as implement-b's input; implement-b is claimed on P2.
-  const stored = await fx.platform.materials.storeArtifact({ projectId: fx.scope.projectId, workspaceId: fx.scope.workspaceId,
-    principal: { kind: 'work_run', runRef: fx.claim.runRef, roleBinding: fx.fixture.roleBinding },
-    materialReader: { kind: 'run', requester: fx.claim.runRef }, signal: new AbortController().signal }, {
-    body: 'LA-2 producer material, read by the consumer', contentType: 'text/plain',
-    sources: [{ kind: 'workspace', refId: fx.scope.workspaceId, revision: '1' }],
-    origin: { kind: 'execution', ref: fx.claim.runRef } });
-  if (stored.status !== 'stored') throw new Error(`store failed: ${JSON.stringify(stored)}`);
-  await assertInvariantsAt(la2, 'LA-2 material stored');   // A.2 step 6
-  const base = fx.fixture.plan;
-  const draft: PlanRevisionDraft = { schemaVersion: 2, planId: 'la2-input-plan', planRevision: base.planRevision + 1,
-    goalId: goal.goalId, stages: structuredClone(base.stages), tasks: structuredClone(base.tasks),
-    assignments: structuredClone(base.assignments ?? []), obligations: structuredClone(base.obligations),
-    taskHierarchy: structuredClone(base.taskHierarchy), executionDag: structuredClone(base.executionDag), taskRelations: [],
-    inputRequirements: [{ requirementId: 'producer-note', consumerTaskId: 'implement-b', kind: 'artifact', artifactRef: stored.ref }] };
-  const proposal = await fx.platform.plans.proposePlan(fx.ctx, { meta: { requestId: 'la2-input-propose', expected: [await goalPin()] },
-    input: { goalRef: goal, basedOn: fx.fixture.planRef, draft, reason: { text: 'Select the producer note', sources: [] } } });
-  if (proposal.status !== 'committed') throw new Error(`proposal failed: ${JSON.stringify(proposal)}`);
-  const p2 = await fx.platform.plans.applyPlanChange(fx.ctx, { meta: { requestId: 'la2-input-apply', expected: [await goalPin()] },
-    input: { proposalRef: proposal.value.ref, expectedProposalRevision: proposal.value.revision, decisionRefs: [] } });
-  if (p2.status !== 'committed') throw new Error(`adoption failed: ${JSON.stringify(p2)}`);
-  await assertInvariantsAt(la2, 'LA-2 P2 adopted');   // A.2 step 6
-  const card = await fx.platform.sessions.readSession(fx.ctx, fx.secondSession);
-  if (card.status !== 'ready') throw new Error('the consumer Session must be readable');
-  const consumer = await fx.platform.claims.claimTask(fx.ctx, {
-    meta: { requestId: 'la2-consumer-claim', expected: [await goalPin(), { ref: fx.fixture.workspaceRef, revision: 1 },
-      { ref: card.value.record.ref, revision: card.value.record.revision }] },
-    input: { goalRef: goal, planRef: p2.value.ref, taskId: 'implement-b', sessionRef: fx.secondSession,
-      roleBinding: fx.fixture.roleBinding, budget: fx.fixture.budget } });
-  if (consumer.status !== 'committed') throw new Error(`consumer claim failed: ${JSON.stringify(consumer)}`);
-  await assertInvariantsAt(la2, 'LA-2 consumer claimed');   // A.2 step 6
-
-  // P3: an unrelated adoption. The Host still grants the reader (LA-2), bound to its claim Plan P2.
-  const p3 = await adoptUnrelatedFuture(fx.platform.plans, fx.ctx, goal, 'p3');
-  await assertInvariantsAt(la2, 'LA-2 P3 adopted');   // A.2 step 6
-  const granted = await fx.platform.materials.grantMaterialAccess(fx.ctx, {
-    meta: { requestId: 'la2-grant', expected: [await goalPin(), { ref: fx.fixture.workspaceRef, revision: 1 }] },
-    input: { goalRef: goal, reader: consumer.value.runRef, materials: [stored.ref],
-      sourceSet: { kind: 'workspace_paths', paths: ['c2-read.txt'] }, purpose: 'Read the producer note after P3' } });
-  expect(granted, JSON.stringify(granted)).toMatchObject({ status: 'committed',
-    value: { grant: { basis: { planRef: p2.value.ref } } } });
-  if (granted.status !== 'committed') return;
-  await assertInvariantsAt(la2, 'LA-2 reader granted');   // A.2 step 6
-  fx.allowRun(consumer.value.runRef);
-  fx.setMaterialBasis(granted.value.grant.basis);
-
-  // Prepare, W3 (the claim on P2 under the active P3), W4 and the first model request.
-  const prepared = await fx.platform.runtime.prepareExecution(fx.ctx, { runRef: consumer.value.runRef, requestId: 'la2-prepare' });
-  expect(prepared.status, JSON.stringify(prepared)).toBe('ready');
-  if (prepared.status !== 'ready') return;
-  const started = await fx.platform.runtime.startRun(fx.ctx, { prepared: prepared.value, consumerId: 'la2-driver',
-    requestId: 'la2-start' });
-  expect(started, JSON.stringify(started)).toMatchObject({ status: 'ready',
-    value: { run: { status: 'ended', outcome: 'completed', planRef: p2.value.ref }, session: { occupancy: null } } });
-  await assertInvariantsAt(la2, 'LA-2 consumer ended');   // A.2 step 6
-  // P4 landed while the Run was in the Kernel; the second model request still passed the material barrier.
-  expect(holder.p4?.planRevision).toBe(p3.planRevision + 1);
-  expect(fx.scripted.calls()).toBe(2);
-  const firstUser = fx.scripted.requests[0]?.messages.find(message => message.role === 'user');
-  expect(firstUser?.content).toContain('LA-2 producer material, read by the consumer');
-  const goalNow = await fx.platform.plans.queryGoal(fx.ctx, goal);
-  expect(goalNow).toMatchObject({ status: 'ready', value: { goal: { activePlanRevision: holder.p4?.ref } } });
-});

@@ -19,7 +19,6 @@ import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { RoleConfigurationRef } from '../../src/contracts/core/identity.js';
 import type { TaskClaim } from '../../src/contracts/core/task-claim.js';
 import type { RunRef } from '../../src/contracts/dispatch.js';
-import type { MaterialBasisV1 } from '../../src/contracts/material-access.js';
 import type { RuntimeHostBindings, RuntimeExecutionDependencies } from '../../src/core/agent-runtime/execution-contracts.js';
 import { createTargetPlatform } from '../../src/composition/create-platform.js';
 import { roleSpecContentDigest, type RoleSpecContentV1 } from '../../src/contracts/role-spec.js';
@@ -66,7 +65,6 @@ export type C2RuntimePlatformFixture = {
   skillRoot: string;
   authorizeCalls(): number;
   allowRun(ref: RunRef): void;
-  setMaterialBasis(basis: MaterialBasisV1 | null): void;
   close(): Promise<void>;
 };
 
@@ -126,7 +124,6 @@ export async function createC2RuntimePlatform(options: C2RuntimePlatformOptions 
 
   const scripted = createScriptedModel(options.scriptedReplies ?? [{ kind: 'text', text: 'C2 scripted answer' }], options.beforeReply);
   const allowedRuns = new Set<string>([canonicalJson(claim.runRef as unknown as JsonValue)]);
-  let materialBasis: MaterialBasisV1 | null = null;
   let authorizeCalls = 0;
   const host: RuntimeHostBindings = {
     async resolveConfiguration(ctx, request) {
@@ -145,7 +142,7 @@ export async function createC2RuntimePlatform(options: C2RuntimePlatformOptions 
         tools: [...toolNames], writeScope: [...(options.writeScope ?? [])], hostTemplate: null,
         skills: { resourceRoot: C2_SKILL_ROOT, enabledIds: [...(options.skillIds ?? C2_SKILL_IDS)] },
         systemInstruction,
-        deniedPrefixes: [], processSandboxOptions: {}, materialBasis,
+        deniedPrefixes: [], processSandboxOptions: {}, materialBasis: null,
       } };
     },
   };
@@ -184,7 +181,6 @@ export async function createC2RuntimePlatform(options: C2RuntimePlatformOptions 
     firstSession, secondSession, sessionRef: firstSession, toolNames, directory, skillRoot: C2_SKILL_ROOT,
     authorizeCalls: () => authorizeCalls,
     allowRun: ref => { allowedRuns.add(canonicalJson(ref as unknown as JsonValue)); },
-    setMaterialBasis: basis => { materialBasis = basis; },
     async close() { await platform.close(); await f.close(); },
   };
 }

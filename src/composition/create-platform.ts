@@ -12,11 +12,8 @@ import { COMPLETION_RECORD_SCHEMAS } from '../core/work-graph/tasks/completion-r
 import { createMaterialRecordReaders, materialRecordSchemas } from '../core/work-graph/materials/record-readers.js';
 import { createMaterialAccessResolver } from '../core/work-graph/materials/applicability.js';
 import { createMaterialService } from '../core/work-graph/materials/material-service.js';
-import { createMaterialGrantService } from '../core/work-graph/materials/grant-service.js';
 import { createMaterialReadFactsService } from '../core/work-graph/materials/material-facts-service.js';
-import type { MaterialGrantPort } from '../core/work-graph/materials/grant-contracts.js';
 import type { MaterialPort } from '../core/work-graph/materials/contracts.js';
-import { MATERIAL_GRANT_EVENT_SCHEMAS } from '../core/work-graph/materials/grant-record-codecs.js';
 import { createWorkspaceAccessFactory, type WorkspaceHostBindings } from '../core/workspace/access.js';
 import { createMaterialSourceProvider } from '../core/workspace/material-source-provider.js';
 import { createWorkspaceTools, DEFAULT_WORKSPACE_LIMITS } from '../core/workspace/workspace-tools.js';
@@ -388,7 +385,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       ...ROLE_RECORD_SCHEMAS.events, ...OBSERVED_ARCHITECTURE_RECORD_SCHEMAS.events, ...ARCHITECTURE_CATALOG_SCHEMAS.events,
       ...TASK_CLAIM_RECORD_SCHEMAS.events, ...EXECUTION_HISTORY_RECORD_SCHEMAS.events,
       ...EXECUTION_ENTRY_RECORD_SCHEMAS.events, ...MODEL_REQUEST_RECORD_SCHEMAS.events,
-      ...SESSION_MESSAGE_RECORD_SCHEMAS.events, ...MATERIAL_GRANT_EVENT_SCHEMAS,
+      ...SESSION_MESSAGE_RECORD_SCHEMAS.events,
       ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.events, ...CONTROL_RECORD_SCHEMAS.events, ...EVIDENCE_RECORD_SCHEMAS.events, ...QUERY_JOB_RECORD_SCHEMAS.events,
       ...COMPLETION_RECORD_SCHEMAS.events],
     lookups: [...materialsSchema.lookups ?? [], ...PLAN_RECORD_SCHEMAS.lookups ?? [], ...PLAN_STATE_RECORD_SCHEMAS.lookups ?? [],
@@ -413,7 +410,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       : createSqliteRawArtifactStore(join(options.storage.directory, 'artifacts.sqlite'));
     if ('close' in bodies) closeBodies = () => bodies.close();
     // The one Workspace source capability is constructed early so the material
-    // reader/writer and the grant writer share the exact same trusted provider.
+    // read-side resolver and the M2 facts below share the exact same trusted provider.
     const access = createWorkspaceAccessFactory(options.workspace);
     const source = createMaterialSourceProvider({ access, contextForScope });
     const reads = createMaterialRecordReaders(backend.records);
@@ -427,15 +424,13 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // public port is wrapped below so close drains an in-flight control call.
     const rawControls = createRunControlService({ records: backend.records, authority: reads.authority,
       reads: executionReader, now, eventId: randomUUID });
-    // LA-2 (A.2 step 5.4b): ONE `tasks/` predicate tells the grant writer, the
-    // read-side resolver and the M2 facts below whether the Goal's active Plan
-    // carries a reader Run's Task unchanged from its claim Plan (materials never
-    // reads a PlanRevision itself; W3 uses the same rule).
+    // LA-2 (A.2 step 5.4b): ONE `tasks/` predicate tells the read-side resolver
+    // and the M2 facts below whether the Goal's active Plan carries a reader
+    // Run's Task unchanged from its claim Plan (materials never reads a
+    // PlanRevision itself; W3 uses the same rule).
     const isTaskCarriedUnchanged = createTaskCarriedUnchanged(backend.records);
     const grants = createMaterialAccessResolver(reads.authority, reads.index, source, isTaskCarriedUnchanged);
     const rawMaterials = createMaterialService({ bodies, authority: reads.authority, grants, now });
-    const grantService = createMaterialGrantService({ records: backend.records, authority: reads.authority,
-      materials: rawMaterials, source, isTaskCarriedUnchanged, now, eventId: randomUUID });
     const rawGoals = createGoalService({ records: backend.records, now, eventId: randomUUID }).tasks;
     const workspace = createWorkspaceTools({ access,
       now, limits: DEFAULT_WORKSPACE_LIMITS });
@@ -694,12 +689,10 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     };
     // The public material chain spans the ledger, bodies and source I/O, so the
     // whole outer call is drained before any owned store closes. The in-flight
-    // service keeps the raw materials/grant instances, never these wrappers.
-    const materials: MaterialPort & MaterialGrantPort = {
+    // service keeps the raw materials instance, never these wrappers.
+    const materials: MaterialPort = {
       storeArtifact: (...args) => trackedCall(() => rawMaterials.storeArtifact(...args), unavailable),
       openArtifact: (...args) => trackedCall(() => rawMaterials.openArtifact(...args), unavailable),
-      grantMaterialAccess: (...args) => trackedCall(() => grantService.grantMaterialAccess(...args), unavailable),
-      revokeMaterialAccess: (...args) => trackedCall(() => grantService.revokeMaterialAccess(...args), unavailable),
     };
     const messages: SessionMailboxPort & Required<Pick<SessionMailboxPort, 'readOutbox'>> = {
       sendMessage: (...args) => trackedCall(() => mailbox.sendMessage(...args), unavailable),

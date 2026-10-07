@@ -65,7 +65,6 @@ import {
   decodeEvidenceSnapshot, decodeTaskEvidenceIndexSnapshot, decodeVerificationRoundSnapshot, EVIDENCE_RECORD_SCHEMAS,
   verificationRoundEventFromEvent,
 } from '../../src/core/work-graph/evidence/evidence-record-codecs.js';
-import { MATERIAL_GRANT_EVENT_SCHEMAS } from '../../src/core/work-graph/materials/grant-record-codecs.js';
 import { materialRecordSchemas } from '../../src/core/work-graph/materials/record-readers.js';
 import {
   CONTROL_RECORD_SCHEMAS, controlIntentSubmittedEventFromEvent, decodeControlIntentSnapshot,
@@ -285,7 +284,7 @@ export function platformRecordSchemas(): RecordBackendSchemas {
     COMPLETION_RECORD_SCHEMAS];
   return {
     records: groups.flatMap((group) => group.records),
-    events: [...groups.flatMap((group) => group.events), ...EXECUTION_HISTORY_RECORD_SCHEMAS.events, ...MATERIAL_GRANT_EVENT_SCHEMAS],
+    events: [...groups.flatMap((group) => group.events), ...EXECUTION_HISTORY_RECORD_SCHEMAS.events],
     lookups: groups.flatMap((group) => group.lookups ?? []),
   };
 }

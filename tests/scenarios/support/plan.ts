@@ -403,7 +403,7 @@ async function c6AdoptUnrelatedFuture(
   return applied.value;
 }
 
-/** The moved C6 platform whose `plans` port this is (none for the C2 fixture of the LA-2 case). */
+/** The moved C6 platform whose `plans` port this is. */
 function c6PlatformsOf(plans: Platform['plans']): Array<[Platform, MovedTarget]> {
   return platforms.filter(platform => platform.plans === plans && movedTargets.has(platform))
     .map(platform => [platform, movedTargetOf(platform)]);
