@@ -3,13 +3,11 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ArchitectureSourceMapping } from '../../src/contracts/architecture-source.js';
-import { architectureSourceDigest } from '../../src/contracts/architecture-source.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { WorkspaceRef } from '../../src/contracts/ledger.js';
 import { canonicalJson } from '../../src/contracts/fingerprint.js';
-import { captureArchitectureSource } from '../../src/core/workspace/architecture-source.js';
 import { createWorkspaceAccessFactory, type WorkspaceAccessFactory } from '../../src/core/workspace/access.js';
-import { ProjectArchitectureSourceReader, workspaceProjectIndex } from '../../src/core/workspace/source-workspace-reader.js';
+import type { WorkspaceResult } from '../../src/core/workspace/ports.js';
 import { TypeScriptSourceAnalyzer } from '../../src/core/workspace/typescript-source-query.js';
 import { createWorkspaceTools, DEFAULT_WORKSPACE_LIMITS } from '../../src/core/workspace/workspace-tools.js';
 
@@ -19,7 +17,13 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
 
-it('preserves the entire legacy graph, including cycles and unresolved imports, with only two source observations and one import analysis', async () => {
+function ready<T>(result: WorkspaceResult<T>): T {
+  expect(result.status).toBe('ready');
+  if (result.status !== 'ready') throw Error(`${result.code}: ${result.reason}`);
+  return result.value;
+}
+
+it('maps the entire graph, including cycles and unresolved imports, with only two source observations and one import analysis', async () => {
   const root = await mkdtemp(join(tmpdir(), 'capture-architecture-compatibility-'));
   cleanups.push(() => rm(root, { recursive: true, force: true }));
   await mkdir(join(root, 'src'));
@@ -39,20 +43,6 @@ it('preserves the entire legacy graph, including cycles and unresolved imports, 
     { id: 'Alpha', kind: 'module', paths: ['src/alpha.ts'] },
     { id: 'Beta', kind: 'module', paths: ['src/beta.ts'] },
   ];
-
-  // The real legacy adapter is the compatibility oracle; it uses the same actual files
-  // and TypeScript implementation, not a hand-written imitation of the graph mapper.
-  const legacyIndex = await workspaceProjectIndex(root);
-  cleanups.push(async () => { legacyIndex.dispose(); });
-  const legacy = await captureArchitectureSource(legacyIndex, scope, mappings, 'tsconfig.json');
-  expect(legacy.nodes.map(node => node.nodeId)).toEqual(['module:Alpha', 'module:Beta']);
-  expect(legacy.edges.map(edge => [edge.fromNode, edge.toNode])).toEqual([
-    ['module:Alpha', 'module:Beta'], ['module:Beta', 'module:Alpha'],
-  ]);
-  expect(legacy.unresolved).toEqual([
-    'unmapped source: src/unmapped.ts',
-    'unresolved import: src/alpha.ts:2 -> ./missing',
-  ]);
 
   const actor = { kind: 'human' as const, id: 'explicit-graph-test-reader' };
   const context: CoreCallContext = {
@@ -110,8 +100,22 @@ it('preserves the entire legacy graph, including cycles and unresolved imports, 
   });
   cleanups.push(() => handle.close());
   const analyses = vi.spyOn(TypeScriptSourceAnalyzer.prototype, 'analyze');
-  const reader = new ProjectArchitectureSourceReader({ tools: handle.tools, context });
-  const captured = await reader.capture({ ...scope, mappings, configPath: 'tsconfig.json' });
+  // The platform chain WG10 uses: one TS capture, the mapping over it, then release.
+  const captured = ready(await handle.tools.captureSourceChanges(context, {
+    workspace, workspaceRevision: scope.workspaceRevision, provider: 'typescript', configPath: 'tsconfig.json',
+  }));
+  const graph = ready(await handle.tools.captureArchitectureSource(context, { capture: captured.ref, mappings }));
+  ready(await handle.tools.releaseCapture(context, captured.ref));
+
+  expect(graph).toMatchObject({ ...scope, configPath: 'tsconfig.json' });
+  expect(graph.nodes.map(node => node.nodeId)).toEqual(['module:Alpha', 'module:Beta']);
+  expect(graph.edges.map(edge => [edge.fromNode, edge.toNode])).toEqual([
+    ['module:Alpha', 'module:Beta'], ['module:Beta', 'module:Alpha'],
+  ]);
+  expect(graph.unresolved).toEqual([
+    'unmapped source: src/unmapped.ts',
+    'unresolved import: src/alpha.ts:2 -> ./missing',
+  ]);
 
   expect(count.inventories).toBe(2);
   expect(count.identities).toBe(2);
@@ -119,10 +123,4 @@ it('preserves the entire legacy graph, including cycles and unresolved imports, 
   expect(count.bytes).toBe(2 * [...files.values()].reduce((sum, content) => sum + Buffer.byteLength(content), 0));
   expect(count.releases).toBe(count.opens);
   expect(analyses.mock.calls.map(([, query]) => query.operation)).toEqual(['imports']);
-
-  // Compare every field, then the externally consumed canonical bytes/digest. In
-  // particular, added capture metadata must not enter the old node content digests.
-  expect(captured).toEqual(legacy);
-  expect(canonicalJson(captured)).toBe(canonicalJson(legacy));
-  expect(architectureSourceDigest(captured)).toBe(architectureSourceDigest(legacy));
 });

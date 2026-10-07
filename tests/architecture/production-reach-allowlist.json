@@ -410,18 +410,6 @@
       "note": "unreached at 790d970; referenced nowhere"
     },
     {
-      "file": "src/contracts/architecture-source.ts",
-      "name": "ArchitectureSourceCapturePort",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from ProjectArchitectureSourceReader"
-    },
-    {
-      "file": "src/contracts/architecture-source.ts",
-      "name": "architectureSourceDigest",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; used only by tests: tests/data/workspace-capture-architecture.test.ts"
-    },
-    {
       "file": "src/contracts/core/results.ts",
       "name": "ReadBasis",
       "reason": "pre-batch",
@@ -480,42 +468,6 @@
       "name": "goalRefFor",
       "reason": "pre-batch",
       "note": "unreached at 790d970; referenced nowhere"
-    },
-    {
-      "file": "src/contracts/query-execution-context.ts",
-      "name": "QuerySourceRevisionPort",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from QueryWorkspaceSourceReader"
-    },
-    {
-      "file": "src/contracts/reviewer-context.ts",
-      "name": "REVIEWER_MATERIAL_PAGE_MAX_BYTES",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from readReviewerSource"
-    },
-    {
-      "file": "src/contracts/reviewer-context.ts",
-      "name": "REVIEWER_SOURCE_MAX_LINES",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from readReviewerSource"
-    },
-    {
-      "file": "src/contracts/reviewer-context.ts",
-      "name": "ReviewerMaterialError",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from readReviewerSource"
-    },
-    {
-      "file": "src/contracts/reviewer-context.ts",
-      "name": "ReviewerSourceRequest",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from readReviewerSource"
-    },
-    {
-      "file": "src/contracts/reviewer-context.ts",
-      "name": "ReviewerSourcePage",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from readReviewerSource"
     },
     {
       "file": "src/contracts/role-material-channels.ts",
@@ -696,18 +648,6 @@
       "name": "validateActivateRoleSpecRevisionCommand",
       "reason": "kept-for",
       "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; only reached from RoleConfigurationPort.activateRoleSpec"
-    },
-    {
-      "file": "src/contracts/verification-context.ts",
-      "name": "ReadonlySourceRead",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from ReadonlyReadWitnessReader"
-    },
-    {
-      "file": "src/contracts/verification-context.ts",
-      "name": "ReadonlyReadWitnessPort",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from ReadonlyReadWitnessReader"
     },
     {
       "file": "src/contracts/verification.ts",
@@ -1088,48 +1028,6 @@
       "note": "unreached at 790d970; file-local; referenced nowhere"
     },
     {
-      "file": "src/core/workspace/architecture-source.ts",
-      "name": "captureArchitectureSource",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; used only by tests: tests/data/workspace-capture-architecture.test.ts, tests/work-graph/R3d-record-integrity.test.ts"
-    },
-    {
-      "file": "src/core/workspace/exploration-source.ts",
-      "name": "Limits",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from ExplorationSourceApplicability"
-    },
-    {
-      "file": "src/core/workspace/exploration-source.ts",
-      "name": "defaults",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from ExplorationSourceApplicability"
-    },
-    {
-      "file": "src/core/workspace/exploration-source.ts",
-      "name": "sameIdentity",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from ExplorationSourceApplicability"
-    },
-    {
-      "file": "src/core/workspace/exploration-source.ts",
-      "name": "ensure",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from ExplorationSourceApplicability"
-    },
-    {
-      "file": "src/core/workspace/exploration-source.ts",
-      "name": "explorationSourceDigest",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from ExplorationSourceApplicability"
-    },
-    {
-      "file": "src/core/workspace/exploration-source.ts",
-      "name": "ExplorationSourceApplicability",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; used only by tests: tests/data/exploration-source-applicability.test.ts"
-    },
-    {
       "file": "src/core/workspace/material-source-provider.ts",
       "name": "MaterialSourceProviderDependencies",
       "reason": "kept-for",
@@ -1214,36 +1112,6 @@
       "note": "kept for slice 3 of the orchestration design (decision 34): the consume-time exact-input check (decision 11, an open MVP item) may need a verified current source pin, and this pair is the only way to capture one; not constructed since the material grants were deleted (G3, lead call 2026-10-07); delete it once that design settles it does not; used only by tests: tests/data/M1-material-source-provider.test.ts"
     },
     {
-      "file": "src/core/workspace/project-source-index.ts",
-      "name": "ProjectSourceIndex.architectureMaterials",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from captureArchitectureSource"
-    },
-    {
-      "file": "src/core/workspace/query-workspace-source-reader.ts",
-      "name": "QueryWorkspaceSourceReader",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
-    },
-    {
-      "file": "src/core/workspace/readonly-read-witness-reader.ts",
-      "name": "ReadonlyReadWitnessReader",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
-    },
-    {
-      "file": "src/core/workspace/reviewer-source-reader.ts",
-      "name": "ensure",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from readReviewerSource"
-    },
-    {
-      "file": "src/core/workspace/reviewer-source-reader.ts",
-      "name": "readReviewerSource",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
-    },
-    {
       "file": "src/core/workspace/role-source-reader.ts",
       "name": "WorkspaceSourceIndexReader",
       "reason": "kept-for",
@@ -1283,25 +1151,7 @@
       "file": "src/core/workspace/source-applicability.ts",
       "name": "materialSourcePinIsCurrent",
       "reason": "kept-for",
-      "note": "kept for slice 3 of the orchestration design (decision 34): the consume-time exact-input check (decision 11, an open MVP item) may need a verified current source pin, and this pair is the only way to capture one; not constructed since the material grants were deleted (G3, lead call 2026-10-07); delete it once that design settles it does not; used only by tests: tests/work-graph/R3b-material-applicability.test.ts, tests/data/exploration-source-applicability.test.ts"
-    },
-    {
-      "file": "src/core/workspace/source-workspace-reader.ts",
-      "name": "workspaceProjectIndex",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; used only by tests: tests/data/workspace-capture-architecture.test.ts"
-    },
-    {
-      "file": "src/core/workspace/source-workspace-reader.ts",
-      "name": "ProjectArchitectureSourceReader",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; used only by tests: tests/data/workspace-capture-architecture.test.ts"
-    },
-    {
-      "file": "src/core/workspace/verification-source-applicability.ts",
-      "name": "VerificationSourceApplicability",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
+      "note": "kept for slice 3 of the orchestration design (decision 34): the consume-time exact-input check (decision 11, an open MVP item) may need a verified current source pin, and this pair is the only way to capture one; not constructed since the material grants were deleted (G3, lead call 2026-10-07); delete it once that design settles it does not; used only by tests: tests/work-graph/R3b-material-applicability.test.ts"
     },
     {
       "file": "src/ui/state/layout.ts",

@@ -2,7 +2,6 @@ import { createHash } from 'node:crypto';
 import { readdir, readFile, lstat, readlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { canonicalJson } from '../../contracts/fingerprint.js';
-import type { CandidateWorkspaceSourcePort } from '../../contracts/verification-source.js';
 const digest = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
 const ignored = new Set(['.git', '.platform-runtime', 'node_modules', 'dist', 'coverage', 'test-results', '.cache']);
 /** The existing candidate digest scope, shared by labelled source comparisons. */
@@ -62,10 +61,7 @@ async function candidateWorkspaceSnapshot(root: string, includeGitEntries = fals
 }
 
 /** WorkspaceReader owns the candidate-specific ignore, ordering and byte identity rules. */
-export class CandidateWorkspaceReader implements CandidateWorkspaceSourcePort {
-  async digest(root: string): Promise<string> {
-    return (await candidateWorkspaceSnapshot(root)).digest;
-  }
+export class CandidateWorkspaceReader {
   /** Same traversal/hash rules with its observed path inventory; not a diff. */
   snapshot(root: string): Promise<{ digest: string; files: string[]; gitEntries: CandidateWorkspaceGitEntry[] }> {
     return candidateWorkspaceSnapshot(root, true);

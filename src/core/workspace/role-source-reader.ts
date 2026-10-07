@@ -9,8 +9,7 @@
  * ── 不变的是能力，不是新开一条读取路径 ───────────────────────────────────────
  * 真实工作区的读取能力属于 WorkspaceReader 与内核：检出根只有宿主知道；路径边界、符号链接竞态、
  * 拒绝前缀与逐文件 revision 都由内核的 `WorkspaceSandbox` 提供——本 Module 的
- * `source-workspace-reader.ts`／`query-workspace-source-reader.ts` 与 WorkerRuntime 的
- * `coding-agent-runtime.ts`／`exploration-tools.ts` 用的是同一份能力。本文件把这份既有能力
+ * `access.ts` 与 AgentRuntime 的 `exploration-tools.ts` 用的是同一份能力。本文件把这份既有能力
  * 包成一个宿主注入的窄端口，供 ContextCompiler 在派发准备阶段读取**有界的索引与更小的有界正文**。
  *
  * ── 为什么不用 WorkspaceReadPort 的图读取（保留的设计取舍）───────────────────

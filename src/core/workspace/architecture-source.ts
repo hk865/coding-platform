@@ -2,7 +2,6 @@ import { canonicalJson, sha256Hex } from '../../contracts/fingerprint.js';
 import type { ArchitectureSourceSnapshotV1, ArchitectureSourceMapping } from '../../contracts/architecture-source.js';
 import { architectureSourceIssues } from '../../contracts/architecture-source.js';
 import type { CodeGraphEdge } from '../../contracts/architecture-inspection.js';
-import { ProjectSourceIndex } from './project-source-index.js';
 
 /** Frozen material needed to collapse explicit baseline mappings into a source graph. */
 export type ArchitectureSourceMaterial = {
@@ -19,8 +18,8 @@ export type ArchitectureSourceMaterial = {
 };
 
 /**
- * The one pure mapping used by both the legacy ProjectSourceIndex helper and the capture
- * registry port: semantic TS/JS imports collapsed only through explicit baseline mappings.
+ * The one pure mapping behind the capture registry's architecture port: semantic TS/JS
+ * imports collapsed only through explicit baseline mappings.
  */
 export function mapArchitectureSource(material: ArchitectureSourceMaterial,
   scope: {projectId:string;workspaceId:string;workspaceRevision:number}, mappings: ArchitectureSourceMapping[]): ArchitectureSourceSnapshotV1 {
@@ -48,17 +47,4 @@ export function mapArchitectureSource(material: ArchitectureSourceMaterial,
     edges:[...edges.values()].sort((a,b)=>a.structuralKey.localeCompare(b.structuralKey)),unresolved:[...new Set(unresolved)].sort()};
   const errors=architectureSourceIssues(snapshot); if(errors.length) throw Error(errors.join('; '));
   return snapshot;
-}
-
-/** Legacy helper over the public ProjectSourceIndex; request/response are unchanged. */
-export async function captureArchitectureSource(index: ProjectSourceIndex,
-  scope: {projectId:string;workspaceId:string;workspaceRevision:number}, mappings: ArchitectureSourceMapping[], configPath?: string): Promise<ArchitectureSourceSnapshotV1> {
-  const material = await index.architectureMaterials(configPath);
-  return mapArchitectureSource({
-    sources: material.sources,
-    imports: material.imports.map(relation => ({ path: String(relation['path']), digest: String(relation['digest']), line: Number(relation['line']), module: String(relation['module']),
-      resolution: String(relation['resolution']), targets: (relation['targets'] as { path: string; digest: string }[]).map(target => ({ path: target.path, digest: target.digest })) })),
-    manifestDigest: material.provenance.manifestDigest, commit: material.provenance.commit,
-    engine: material.provenance.engine, engineVersion: material.provenance.engineVersion, configPath: material.configPath,
-  }, scope, mappings);
 }

@@ -63,18 +63,3 @@ export function architectureSourceIssues(value: unknown): string[] {
         errors.push('source binding exceeds capacity');
     return errors;
 }
-
-// Completed-capability migration: selected original declarations, no legacy service port.
-import { canonicalJson, sha256Hex } from './fingerprint.js';
-/** WorkspaceTools supplies frozen source facts; WorkGraph binds their observed
- * graph to canonical records through RecordStore. This port does not persist. */
-export interface ArchitectureSourceCapturePort {
-    capture(request: {
-        projectId: string;
-        workspaceId: string;
-        workspaceRevision: number;
-        mappings: ArchitectureSourceMapping[];
-        configPath?: string;
-    }): Promise<ArchitectureSourceSnapshotV1>;
-}
-export const architectureSourceDigest = (value: ArchitectureSourceSnapshotV1) => sha256Hex(canonicalJson(value));

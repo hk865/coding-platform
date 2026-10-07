@@ -23,7 +23,7 @@ async function fixture(withGit = false) {
 it('preserves the original current digest and exposes unknown scope for non-Git workspaces', async () => {
   const root = await fixture(), reader = new VerificationWorkspaceReader();
   const first = await reader.capture(root);
-  expect(first).toMatchObject({ status: 'ready', sourceDigest: await new CandidateWorkspaceReader().digest(root),
+  expect(first).toMatchObject({ status: 'ready', sourceDigest: (await new CandidateWorkspaceReader().snapshot(root)).digest,
     sourceProof: { kind: 'current-workspace-only', runBaselineKnown: false },
     changeScope: { changedFiles: [], diffClass: 'unclassified-current-workspace' } });
   await mkdir(join(root, '.cache')); await writeFile(join(root, '.cache', 'check-count'), '1');
@@ -43,7 +43,7 @@ it('observes actual tracked/untracked/deleted/renamed paths including files igno
   await writeFile(join(root, 'ignored.txt'), 'still in candidate digest\n');
   await writeFile(join(root, '.cache', 'tracked'), 'check result\n');
   const result = await reader.capture(root);
-  expect(result).toMatchObject({ status: 'ready', sourceDigest: await new CandidateWorkspaceReader().digest(root),
+  expect(result).toMatchObject({ status: 'ready', sourceDigest: (await new CandidateWorkspaceReader().snapshot(root)).digest,
     sourceProof: { kind: 'git-head-worktree', comparison: 'current-head-to-worktree', runBaselineKnown: false,
       changedFiles: ['deleted.txt', 'ignored.txt', 'renamed.txt', 'source.txt', 'untracked.txt'] } });
   await writeFile(join(root, '.cache', 'tracked'), 'next check result\n');

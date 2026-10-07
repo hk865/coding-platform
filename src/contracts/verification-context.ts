@@ -2,18 +2,6 @@
 // Completed-capability migration: selected original declarations, no legacy service port.
 import type { VerificationScope } from './verification-import.js';
 import type { VerificationIssue, ChangeScopeV1 } from './verification.js';
-export type ReadonlySourceRead = {
-    path: string;
-    revision: string;
-    startLine: number;
-    endLine: number;
-    callId: string;
-};
-export interface ReadonlyReadWitnessPort {
-    assertCurrent(scope: VerificationScope, reads: readonly ReadonlySourceRead[]): Promise<{
-        completeReadPaths: string[];
-    }>;
-}
 /** The comparison is explicit. Neither variant proves the Run's before-state. */
 export type VerificationRoundSourceProof = {
     kind: 'git-head-worktree';

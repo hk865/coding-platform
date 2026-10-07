@@ -2,7 +2,7 @@ import { afterEach, expect, it } from 'vitest';
 import { mkdtemp, writeFile, mkdir, rm, rename } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ProjectSourceIndex, type ProjectSourceAccess } from '../../src/core/workspace/project-source-index.js';
+import { ProjectSourceIndex, type ProjectSourceAccess, type TypeScriptQueryResult } from '../../src/core/workspace/project-source-index.js';
 import { WorkspaceSandbox } from '../../vendor/coding-agent/dist/public-api.js';
 
 const roots: string[] = [];
@@ -99,30 +99,32 @@ function memoryProject(importCount: number, beforeCapture?: (capture: number) =>
     changeCommit: () => { commit = 'b'.repeat(40); }, failReads: () => { failRead = true; } };
 }
 
-it('captures all architecture imports and indexed sources with one capture/verification pair, independently of display pages', async () => {
+it('analyses all imports with one capture/verification pair per request, independently of display pages', async () => {
   const project = memoryProject(401);
-  const material = await project.index.architectureMaterials();
-  expect(material.imports).toHaveLength(401);
-  expect(material.imports.every(relation => relation['resolution'] === 'resolved')).toBe(true);
-  expect(material.sources).toHaveLength(402);
-  expect(material.sources.some(source => source.path === 'src/unit400.ts')).toBe(true);
-  expect(material.sources.some(source => ['excluded.ts', 'tsconfig.json', 'private/secret.ts'].includes(source.path))).toBe(false);
+  const first = await project.index.query({ operation: 'imports', limit: 200 });
+  if (first.status !== 'sourced') throw Error('missing page');
+  expect(first).toMatchObject({ totalResults: 401, coverage: { indexedSourceCount: 402 } });
   expect(project.captures()).toBe(2);
   expect(project.reads()).toBe(2 * (project.files.size - project.denied.size));
 
   // The public tool still revalidates each separate request and limits its display manifest.
+  const imports: TypeScriptQueryResult[] = [];
   for (const offset of [0, 200, 400]) {
-    const page = await project.index.query({ operation: 'imports', expectedSnapshot: material.snapshot, offset, limit: 200 });
-    expect(page).toMatchObject({ status: 'sourced', totalResults: 401, results: material.imports.slice(offset, offset + 200),
+    const page = await project.index.query({ operation: 'imports', expectedSnapshot: first.snapshot, offset, limit: 200 });
+    expect(page).toMatchObject({ status: 'sourced', totalResults: 401,
       nextOffset: offset < 400 ? offset + 200 : null, sourceCount: 404, sourcesTruncated: true });
     if (page.status !== 'sourced') throw Error('missing page');
     expect(page.sources).toHaveLength(200);
     expect(page).not.toHaveProperty('indexedSources');
+    imports.push(...page.results);
   }
+  expect(imports).toHaveLength(401);
+  expect(imports.slice(0, 200)).toEqual(first.results);
+  expect(imports.every(relation => 'resolution' in relation && relation.resolution === 'resolved')).toBe(true);
   expect(project.captures()).toBe(8);
 });
 
-it('keeps architecture sources bound to their analysis while another query selects a different config', async () => {
+it('keeps an imports analysis bound to its own config while another query selects a different config', async () => {
   let resumeVerification!: () => void, reachedVerification!: () => void;
   const gate = new Promise<void>(resolve => { resumeVerification = resolve; });
   const reached = new Promise<void>(resolve => { reachedVerification = resolve; });
@@ -130,20 +132,20 @@ it('keeps architecture sources bound to their analysis while another query selec
     if (capture === 2) { reachedVerification(); return gate; }
   });
   project.files.set('other.json', '{"files":["src/base.ts"]}');
-  const pending = project.index.architectureMaterials();
+  const pending = project.index.query({ operation: 'imports' });
   await reached;
   try {
     expect(await project.index.query({ operation: 'symbols', configPath: 'other.json' })).toMatchObject({
       status: 'sourced', coverage: { projectConfiguration: 'other.json', indexedSourceCount: 1 },
     });
   } finally { resumeVerification(); }
-  expect(await pending).toMatchObject({ configPath: 'tsconfig.json', sources: [
-    { path: 'src/base.ts', digest: expect.any(String) }, { path: 'src/unit0.ts', digest: expect.any(String) },
-  ] });
+  expect(await pending).toMatchObject({ status: 'sourced', coverage: { projectConfiguration: 'tsconfig.json', indexedSourceCount: 2 },
+    results: [expect.objectContaining({ path: 'src/unit0.ts', module: './base', resolution: 'resolved',
+      targets: [expect.objectContaining({ path: 'src/base.ts' })] })] });
 });
 
 it.each(['content', 'inventory', 'permissions', 'commit', 'read_failure', 'cancelled'] as const)(
-  'does not publish architecture material after %s changes during capture', async change => {
+  'does not publish an imports analysis after %s changes during capture', async change => {
     const abort = new AbortController();
     const project = memoryProject(1, capture => {
       if (capture !== 2) return;
@@ -155,15 +157,18 @@ it.each(['content', 'inventory', 'permissions', 'commit', 'read_failure', 'cance
       if (change === 'cancelled') abort.abort();
     });
     const status = change === 'read_failure' ? 'rejected' : change === 'cancelled' ? 'cancelled' : 'stale';
-    await expect(project.index.architectureMaterials(undefined, abort.signal)).rejects.toThrow(`"status":"${status}"`);
+    expect(await project.index.query({ operation: 'imports' }, abort.signal)).toMatchObject({ status });
     expect(project.captures()).toBe(2);
   },
 );
 
-it('preserves architecture import capacity and public pagination bounds', async () => {
+it('pages a large import set within the public bounds and rejects invalid pagination before capturing', async () => {
   const project = memoryProject(1);
   project.files.set('src/unit0.ts', 'import "./base";\n'.repeat(10001));
-  await expect(project.index.architectureMaterials()).rejects.toThrow('architecture import capacity exceeded');
+  const page = await project.index.query({ operation: 'imports', limit: 200 });
+  expect(page).toMatchObject({ status: 'sourced', totalResults: 10001, nextOffset: 200 });
+  if (page.status !== 'sourced') throw Error('missing page');
+  expect(page.results).toHaveLength(200);
   expect(project.captures()).toBe(2);
   expect(await project.index.query({ operation: 'imports', limit: 201 })).toMatchObject({ status: 'rejected' });
   expect(await project.index.query({ operation: 'imports', offset: -1 })).toMatchObject({ status: 'rejected' });

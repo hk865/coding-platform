@@ -25,10 +25,10 @@ async function fixture() {
     await writeFile(join(root, 'src', directory, 'excluded.ts'), 'export const PIN_EXCLUDED_SECRET = "needle";\n');
   }
   const workspace = await WorkspaceSandbox.create(root, { deniedPrefixes: ['.git'] });
-  const reader = new CandidateWorkspaceReader(), pinned = await reader.digest(root);
+  const reader = new CandidateWorkspaceReader(), pinned = (await reader.snapshot(root)).digest;
   const group = createExplorationTools(workspace, {
     includeReadSource: true, allowedPath: candidateWorkspaceIncludesPath,
-    assertCurrent: async () => { if (await reader.digest(root) !== pinned) throw Error('Pinned review source changed'); },
+    assertCurrent: async () => { if ((await reader.snapshot(root)).digest !== pinned) throw Error('Pinned review source changed'); },
   });
   groups.push(group);
   const tools = group.tools;
