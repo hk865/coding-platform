@@ -106,7 +106,7 @@ R4.2 已在所属 Kernel 的唯一循环接通可选工具组 awaited barrier，
 | CodeGraphNode/CodeGraphEdge、ArchitectureDeltaChange | `src/contracts/architecture-inspection.ts` |
 | ArchitectureSourceSnapshotV1、ArchitectureSourceMapping | `src/contracts/architecture-source.ts` |
 | ControlIntentRef、ControlIntentSnapshot、SubmitControlCommand/Receipt、RecordSafePointAckCommand/Receipt | `src/contracts/control-intent.ts` |
-| DirectedRequestRef/Snapshot、DeliveryRef/Snapshot、WorkParticipationRef、WaitConditionRef/Snapshot/TermV1、ReportMaterialV1 | `src/contracts/coordination.ts` |
+| DirectedRequestRef/Snapshot、DeliveryRef/Snapshot、WorkParticipationRef、WaitConditionRef/Snapshot/TermV1、ReportMaterialV1 | `src/contracts/coordination.ts`（2026-10-07 注：本仓库从没存过 DirectedRequest、Delivery、WaitCondition，这三个 ref 已按决定 34 删除；Snapshot、TermV1、ReportMaterialV1 代码里本来就没有。这个文件现在只剩 `WorkParticipationRef` 和 `AgentPrincipalRefV1`） |
 | WorkContextRef | `src/contracts/context-continuity.ts` |
 | VerificationRoundRecord/View/ConfigurationInput、VerificationRegisteredCheck | `src/contracts/verification-round.ts` |
 | VerificationRoundScope/MaterialIdentity/SourceProof | `src/contracts/verification-context.ts` |
@@ -286,7 +286,7 @@ export interface ArchitecturePort {
 }
 ```
 
-`CandidateArchitectureBaselineRef/ArchitectureChangeDecisionRef/MigrationGateTaskRef` 均导入 `src/contracts/baseline-evolution.ts`。initial 只适用于没有正式 baseline 的初始接受；evolution 必须校验真实 candidate、已接受 decision 和 pass gate 的完整来源链，不因 authorization.kind 的字符串直接放行。旧目录缺失时可逐版补入正式 catalog，但不能猜历史职责。
+`CandidateArchitectureBaselineRef/ArchitectureChangeDecisionRef/MigrationGateTaskRef` 均导入 `src/contracts/baseline-evolution.ts`（2026-10-07 更正：本仓库从没存过这三种记录，代码里的架构目录只有初始采用，没有 evolution 分支；`baseline-evolution.ts` 只有这几个 ref，已按决定 34 删除。以后做架构演进时按新设计重定 ref）。initial 只适用于没有正式 baseline 的初始接受；evolution 必须校验真实 candidate、已接受 decision 和 pass gate 的完整来源链，不因 authorization.kind 的字符串直接放行。旧目录缺失时可逐版补入正式 catalog，但不能猜历史职责。
 
 `captureSourceChanges` 先由 WorkspaceTools 捕获并验证，后存正文，再登记引用；工作区变化失败时不更新“当前观测”指针。任务未分配 Session 也可直接通过 WorkModuleLink 关联模块；WorkContext 同理。现有 Task.scope.kind=module 的“计划归属”仍从不可变 Plan 解释，不另写同义可修改归属记录；implements/investigates/affects 是不同的显式工作关联。session 分支委托同一 SessionWorkLink 写者，不创建第二条 Session→Module 真相。propose/apply 是完整结构替换的版本化命令，组件内部计算增量；不暴露任意节点属性 patch。依赖闭包用 visited 集，正式 DAG 增边检测逆向可达性；requireDag 必须符合当前适用结构策略，调用者不能改成 false 绕过正式模块 DAG 约束。observed 图保留真实环。架构比较不得要求普通读取先存在 Plan/Run；若请求的是某 Run 的基线，则使用其既有 Plan pin，不能偷换为当前默认基线。
 
@@ -593,7 +593,7 @@ beginRuntimeEntry 同时保存 Runtime 预先固定的 KernelExecutionBinding，
 
 **结果与待命仍是 B 的必要后续消费者：** 实际观察驱动 Run/Attempt 归约及同一 owner/generation 的占用释放；复用原历史区间，不再扫全 Session。旧代次终态只能补历史，不能释放新占用。确认结束并释放占用后，Session 保持 active 及有效架构关联；health=available 时派生 availability 回到 idle，支持后续沿图咨询，其他健康状态按目录规则如实表达。不自动归档，也不把结果未知当作可咨询的空闲。Run 结束、Task 完成和 Session 归档分别处理。缺少观察、归约、释放、目录/图查询消费者任意一项，都不能把整个执行生命周期标为完成。
 
-readExecution 的 session=null 仅表示旧执行尚无已核对平台目录；新受理执行必须有映射，不能据 null 创建/认领新的历史身份。TaskAttemptSnapshot/DispatchOutboxEntrySnapshot、AuthorizeModelRequestCommand/Receipt、RunFactCommand/Receipt 导入 `src/contracts/dispatch.ts`；三个租约 Command/Receipt 导入 `src/contracts/workspace-lease.ts`。读控制/执行只返回该身份的正式记录，不向 Runtime 暴露通用 Ledger。
+readExecution 的 session=null 仅表示旧执行尚无已核对平台目录；新受理执行必须有映射，不能据 null 创建/认领新的历史身份。TaskAttemptSnapshot/DispatchOutboxEntrySnapshot、AuthorizeModelRequestCommand/Receipt、RunFactCommand/Receipt 导入 `src/contracts/dispatch.ts`；三个租约 Command/Receipt 导入 `src/contracts/workspace-lease.ts`（2026-10-07 更正：本仓库的这个文件只有四个租约 ref，没有这些 Command/Receipt，也从没存过租约记录，已按决定 34 删除）。读控制/执行只返回该身份的正式记录，不向 Runtime 暴露通用 Ledger。
 
 资源范围占用与 Session 占用约束不同：前者约束实际文件/共享副作用，后者约束同一会话变更。按用户最新决定，同一工作区支持不冲突范围的多个 writer，不保留全工作区独占目标。ConfiguredWorkspaceCapabilityPolicy 迁移保留真实支持与授权的交集；模型不能自报扩大范围。旧 V1 租约及 `ConflictScope.module` 路径前缀语义只做显式兼容，不能把 ModuleRef 冒充路径。新旧写者在混用期纳入同一资源查询：旧全根 writer 是实际全根占用；未退出旧 writer 时不能仅在新索引宣称根空闲。
 
@@ -622,6 +622,7 @@ next 不为此新增 WorkContextBinding、WorkParticipation、AgentInstance 的�
 以下保留旧方案用于行为追溯；不能直接按其中 registerAgentInstance/startWorkParticipation 生成 next 首批依赖。`communication/contracts.ts` 若接入旧地址兼容，须核对旧 identity 与 ctx，WorkParticipation/WorkContext/Session 不能合并为一个 ID；普通 Session 咨询按 §7.1 实施。
 
 ```ts
+// 2026-10-07 注：DeliveryRef、DirectedRequestRef 已按决定 34 从代码删除（见本节末尾）。下面保留原草案。
 export type MessageBody =
   | { kind: 'text'; text: string; contentType: string; sources: SourceRefV1[] }
   | { kind: 'artifact'; ref: ArtifactRef };
@@ -665,7 +666,7 @@ export interface MailboxPort {
 }
 ```
 
-所有未在上文表中展开的通信类型都直接来自 `src/contracts/coordination.ts`，包括上述 Command 与对应 Receipt，不另造弱类型副本。`cancelCommunication.payload.target` 已区分 request/subscription/wait，故不增加三个重复 wrapper。AgentRuntime 机械消费路由 intent 并调用 claim/settle；本模块完成有界路由规则与原子状态更新，不自行启动 Agent。
+所有未在上文表中展开的通信类型都直接来自 `src/contracts/coordination.ts`，包括上述 Command 与对应 Receipt，不另造弱类型副本。（2026-10-07 更正：本仓库的 `coordination.ts` 从没有这些 Command、Receipt 和 Snapshot。草案用到的 DeliveryRef、DirectedRequestRef 等协作 ref 本仓库从不存储，已按决定 34 删除；这个文件只剩 `WorkParticipationRef` 和 `AgentPrincipalRefV1`。现在的消息走 §7.1 的 Session 消息。）`cancelCommunication.payload.target` 已区分 request/subscription/wait，故不增加三个重复 wrapper。AgentRuntime 机械消费路由 intent 并调用 claim/settle；本模块完成有界路由规则与原子状态更新，不自行启动 Agent。
 
 send/respond 的工作主体、当前参与者、Run、RoleBinding 从可信 work_run 及现存关联解析。正文先存、后将正文引用与 request/response 和投递意图同事务提交；不能先发布消息再补正文。旧 v1 ReportMaterial 的作者是 RunRef，因此首批新门面同样要求真实工作 Run。host/query_run 不借用工作 Run 伪造身份；已有 HumanRequest 走 Workflow 的人类交互入口，未来若支持非工作主体直接发送，应明确升级通信契约。
 
@@ -820,7 +821,7 @@ Memory 更新保留 human/system 限制、entry revision、条件/过期、容�
 | SessionWorkLink | Session+target(kind/ref)+relation；since/until | 正式责任关联不能从索引凭空恢复；关闭旧段保留历史，多对多合法 |
 | Session 检索索引 | workspace+lifecycle、target、role、executionRef、kernel mapping | 同事务维护；按索引交集选候选再核对目录，不能用文本相关性决定占用 |
 | SessionOperationRecord | OperationRef、request identity、planned SessionRef | 受理先于 Kernel 副作用；unknown 保留可恢复关联，不自动释放维护占用 |
-| 消息/参与/等待/投递 | 沿用 DirectedRequest/WorkParticipation/WaitCondition/Delivery 等旧 ref | 消息正文只引用；正式响应/等待/唯一后继具领域约束 |
+| 消息/参与/等待/投递 | 沿用 DirectedRequest/WorkParticipation/WaitCondition/Delivery 等旧 ref | 消息正文只引用；正式响应/等待/唯一后继具领域约束。2026-10-07 注：DirectedRequest、WaitCondition、Delivery 的旧 ref 本仓库从没存过，已按决定 34 删除；现在的消息用 Session 消息记录（§7.1） |
 | MessageAckRecord / mailbox索引 | delivery+recipient；inbox按 recipient+event cursor 排序 | ack 独立且单调；消息/响应事务内同步必要等待和收件索引 |
 | RoundSnapshot / check绑定索引 | scope+roundId、check requestId+fingerprint | journal逐轮迁移；冻结配置和来源保留；结果 admission 可重放 |
 | history/material索引 | project/workspace+target/session+kind+时间、artifact digest | 文本检索是有水位的派生能力；不能凭摘要更新正式状态 |
@@ -915,7 +916,7 @@ compact/regroup 先以一致排序读取全部 source/target Session，并一次
 | `control/control-engine/plan-acceptance.ts::applyPlanGuardIssues` | tasks/task-service + task-index，保留 policy/义务/DAG 判据 | 初始规划和计划变更两类真实调用均经过新入口 |
 | `control/control-engine/task-reducer.ts::reduceTask`、`goal-reducer.ts::reduceGoal` | tasks/completion + task-service；复用纯归约，不复制第二套完成规则 | 旧 fixture/历史证据与新入口结果一致，范围读集完备 |
 | `control/architecture-reconciler/architecture-reconciler.ts::ArchitectureReconcilerImpl` | 架构来源和机械差分迁 architecture 组件；策略流程迁 Workflow | 普通查询无 Plan/Run 门槛，正式接受仍守原规则 |
-| `control/control-engine/architecture-inspection.ts`、`baseline-evolution.ts` | architecture-service 保存检查/提议/决策/接受；业务顺序迁 Workflow | 原 finding/decision/gate/activation 引用不丢；不以新 draft 替掉所有旧治理记录 |
+| `control/control-engine/architecture-inspection.ts`、`baseline-evolution.ts` | architecture-service 保存检查/提议/决策/接受；业务顺序迁 Workflow | 原 finding/decision/gate/activation 引用不丢；不以新 draft 替掉所有旧治理记录。2026-10-07 注：本仓库从没存过这些记录，`contracts/` 里对应的 ref 已按决定 34 删除，没有要保留的引用 |
 | `control/control-engine/coordination/directed-request-operations.ts`、`waiting-successor-operations.ts`、`participation-operations.ts` | mailbox-service + routing-rules；旧 request/wait/participation 规则 | 回复、换手、超时/取消、唯一后继与新 Session 占用同时验证 |
 | `control/control-engine/coordination/mailbox-view.ts::readMailboxView` | 增量 mailbox/history 索引；原重建逻辑仅作为迁移/核对工具 | 普通收件箱不再全事件扫描；历史和水位可对账 |
 | `control/verification-engine/verification-rounds.ts::VerificationRounds` | 纯覆盖/入账迁 evidence；执行与调度分别迁 Runtime/Workflow | 旧 journal 可读，轮次/命令/result/source 绑定等价，中断恢复保持 |
@@ -940,7 +941,7 @@ export interface ArchitectureLegacyPort {
 }
 ```
 
-前四组 Command/Receipt 精确导入 `src/contracts/architecture-inspection.ts`，后四组导入 `src/contracts/baseline-evolution.ts`。新 applyArchitectureChange 与原 activation 复用一次接受实现及一次 active 指针变更；不能先用兼容方法激活再让新方法重复激活。移除兼容 Port 的条件是所有原业务均以新 typed 输入覆盖、原历史与拒绝细分仍可读，不能以“只有旧名字”为理由删除这些业务动作。
+前四组 Command/Receipt 精确导入 `src/contracts/architecture-inspection.ts`，后四组导入 `src/contracts/baseline-evolution.ts`。（2026-10-07 更正：本仓库从没有这些 Command/Receipt，`ArchitectureLegacyPort` 也没有实现。两个文件里的旧 ref 本仓库从不存储，已按决定 34 删除：`baseline-evolution.ts` 整个删掉，`architecture-inspection.ts` 只剩 `CodeGraphNode/CodeGraphEdge`。）新 applyArchitectureChange 与原 activation 复用一次接受实现及一次 active 指针变更；不能先用兼容方法激活再让新方法重复激活。移除兼容 Port 的条件是所有原业务均以新 typed 输入覆盖、原历史与拒绝细分仍可读，不能以“只有旧名字”为理由删除这些业务动作。
 
 本页接口未复制这些旧治理命令的整套 payload。迁移保留其原类型和 legacy-adapter 注册表，ArchitectureService 的新 propose/apply 应调用相应正式受理步骤；**不能为了更短 Port 跳过现有 inspection/finding/decision/gate 语义**。根交接清单列逐 kind 消费者与退出状态；未覆盖的旧入口持续可用而不能偷偷回落通用数据库写。
 
@@ -998,7 +999,7 @@ export type WorkGraphDependencies = {
 export function createWorkGraph(deps: WorkGraphDependencies): GraphPorts;
 ```
 
-迁移阶段工厂可额外显式注入 legacy 适配组合，目标工厂不依赖整个 PlatformService。ConflictScopeV1 精确导入 `src/contracts/workspace-lease.ts`；executionSupport 是 Host 真实静态能力配置，null 表示 unsupported；scopedWorkspaceWrites必须来自实际工具/沙箱接线能力，不因新Port存在就设true。maxWriteScope是能力上限，不是每次执行必须持有的全根锁。依赖的 now/newId 仅用于首次受理的机制，不作跨进程身份判定；重复请求从既存受理记录或规范化 identity 派生稳定 ID，不再次随机生成。旧命令已有 ID 时原样沿用。Workspace 工厂返回的 tools（WorkspaceToolsPort）注入此处，所有工作区操作使用 ctx.signal，不额外传第三份取消信号。
+迁移阶段工厂可额外显式注入 legacy 适配组合，目标工厂不依赖整个 PlatformService。ConflictScopeV1 精确导入 `src/contracts/workspace-lease.ts`（2026-10-07 更正：本仓库没有 ConflictScopeV1；这个文件只有四个租约 ref，从没存过，已按决定 34 删除）；executionSupport 是 Host 真实静态能力配置，null 表示 unsupported；scopedWorkspaceWrites必须来自实际工具/沙箱接线能力，不因新Port存在就设true。maxWriteScope是能力上限，不是每次执行必须持有的全根锁。依赖的 now/newId 仅用于首次受理的机制，不作跨进程身份判定；重复请求从既存受理记录或规范化 identity 派生稳定 ID，不再次随机生成。旧命令已有 ID 时原样沿用。Workspace 工厂返回的 tools（WorkspaceToolsPort）注入此处，所有工作区操作使用 ctx.signal，不额外传第三份取消信号。
 
 | 实际入口/消费者 | 新消费能力 | 不可退化的交接 |
 | --- | --- | --- |

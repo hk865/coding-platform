@@ -384,7 +384,7 @@ Run 结束不等于 Task 完成；暂停请求不等于暂停成功；一次工�
 
 ## 9. D6：Agent 协作图与邮箱
 
-继续复用 `DirectedRequest/Delivery/WaitCondition/WorkParticipation`。当前 WorkContext 是持久责任地址：更换执行 Session 后未处理请求仍可找到负责人。不为了邮箱再给每条消息创造一个 Work；平台可以展示 Session 地址，但工具内部解析到现有责任地址及参与关系。
+继续复用 `DirectedRequest/Delivery/WaitCondition/WorkParticipation`。当前 WorkContext 是持久责任地址：更换执行 Session 后未处理请求仍可找到负责人。不为了邮箱再给每条消息创造一个 Work；平台可以展示 Session 地址，但工具内部解析到现有责任地址及参与关系。（2026-10-07 补注：本仓库从没存过 DirectedRequest、Delivery、WaitCondition，这几个从原产品搬来的 ref 已按决定 34 删除，只留下 Agent 归因用的 `WorkParticipationRef`。现在的消息走 Session 消息。）
 
 | 操作 | 输入 | 输出/效果 |
 | --- | --- | --- |
