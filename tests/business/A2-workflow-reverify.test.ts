@@ -22,7 +22,7 @@
  *   `select_work`; `busy` on a round still open waits.
  *
  * Only the owners a step reads answer; every other port throws if touched. The real platform paths are
- * `tests/app/A2-automation-verdict.test.ts` (work) and `tests/composition/A2-gate-reverify-platform.test.ts`
+ * `tests/app/A2-automation-verdict.test.ts` (work) and `tests/scenarios/C5-gate-fix.test.ts`
  * (gate).
  */
 import { expect, it } from 'vitest';

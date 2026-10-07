@@ -27,8 +27,8 @@
  *    attempts (`frozen_source_changed:`), so the Workflow finalizes the round
  *    INCONCLUSIVE instead of retrying the check forever (since 5.9 the next
  *    selection opens a successor round, AV-7d).
- * 6. VR-03: a timed-out check records its INCONCLUSIVE cause; the automatic
- *    re-verification of an unchanged workspace stops at no_new_basis (§13.7, 5.9).
+ * 6. (Moved in A.2 step 6 to tests/scenarios/C5-reverify-guards.test.ts, row (d): VR-03, a
+ *    timed-out check, and the automatic re-verification stopping at no_new_basis.)
  *
  * No real model is called: the scripted model answers with text replies.
  */
@@ -510,24 +510,4 @@ it('VD-8: a source changed after the open ends the check attempts and the round 
   expect(next).toMatchObject({ status: 'ready', value: { state: 'advance', next: { kind: 'perform', operation: {
     kind: 'reverify_round', request: { input: { predecessorRoundRef: roundRef, reason: 'auto-reverify:check_incomplete#1' } } } } } });
   expect(scripted.calls()).toBe(1);
-});
-
-it('VR-03: a timed-out check records its INCONCLUSIVE cause and blocks the Task as round_inconclusive', async () => {
-  const { platform } = await openEnvironment({ command: 'sleep 5', timeoutMs: 300 });
-  const driven = await drive(platform, select('a2-timeout-flow', 'work-1'));
-  const finalize = driven.receipts.find(receipt => receipt.kind === 'finalize_checks');
-  expect(finalize).toMatchObject({ result: { status: 'committed', value: { outcome: 'INCONCLUSIVE' } } });
-  if (finalize?.kind !== 'finalize_checks' || finalize.result.status !== 'committed') throw new Error('the round must finalize');
-  expect(finalize.result.value.snapshot.checks[0]).toMatchObject({ checkId: CHECK_ID, phase: 'finished', outcome: 'INCONCLUSIVE',
-    incompleteCause: 'process_timed_out' });
-  expect(await taskRow(platform, 'work-1')).toMatchObject({ effectivePhase: 'blocked',
-    phaseCause: { code: 'round_inconclusive' } });
-  // §13.7 example (5.9): with an unchanged workspace the first automatic re-verification passes (no earlier key);
-  // its successor times out the same way, so the second has the same key: no_new_basis, and the Task stops (AV-7c).
-  expect(driven.receipts.filter(receipt => receipt.kind === 'reverify_round')).toMatchObject([
-    { result: { status: 'committed', value: { kind: 'reverified', round: { chain: { ordinal: 2, autoCount: 1 } } } } },
-    { result: { status: 'committed', value: { kind: 'refused', refusal: { code: 'no_new_basis', revision: 1 } } } }]);
-  expect(driven).toMatchObject({ state: 'waiting', reason: 'the selected Task work-1 is not executable right now' });
-  expect(await taskRow(platform, 'work-1')).toMatchObject({ phaseCause: { detail: { ordinal: 2 } }, failure: { automation: {
-    verdict: { kind: 'stopped', reason: 'no_new_basis', detail: { operation: 'reverify' } } } } });
 });

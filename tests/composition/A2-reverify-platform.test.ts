@@ -12,17 +12,10 @@
  *    Task follows it (TASK-29); the Workflow runs its check on the same Run,
  *    completes the Task, the gate and the Goal; the predecessor is unchanged;
  *    one model call in all (a successor round builds no Run).
- * 2. The policy refusals are committed values the read model shows: the cap
- *    refuses the platform automation (`registerAutomationPolicy`, limit 0);
- *    a configuration whose checks cover no requirement refuses even the
- *    operator (`verification_uncovered`, the configuration revision stored);
- *    registering a covering configuration makes that refusal stale on
- *    `TaskRow.failure` (LA-4, the read path's `configurationFor`), and the
- *    operator's next reverify opens the successor under it.
- * 3. Hard limit 3 (VR-14 step 5, I-17): an operator pauses the running Turn,
- *    which completes first (CTL-06, the pointer stays on the Run); the round
- *    finalizes INCONCLUSIVE; the platform automation's reverify is
- *    `forbidden` with nothing written, the operator's opens the successor.
+ * 2. (Moved in A.2 step 6 to tests/scenarios/C5-reverify-guards.test.ts: the
+ *    cap and `verification_uncovered` refusals and their staleness, LA-4.)
+ * 3. (Moved in A.2 step 6 to tests/scenarios/C8-human-stop-respected.test.ts:
+ *    hard limit 3 on a successor round, VR-14 step 5, I-17.)
  */
 import { afterEach, expect, it } from 'vitest';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -30,10 +23,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { sha256Hex } from '../../src/contracts/fingerprint.js';
-import type { ControlIntentRef } from '../../src/contracts/control-intent.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { PlanRevisionDraft } from '../../src/contracts/plan.js';
-import { WORKFLOW_AUTOMATION_ACTOR } from '../../src/contracts/task-requeue.js';
 import type { RoundSnapshot, TrustedCheckConfiguration } from '../../src/contracts/verification.js';
 import type { WorkspaceHostBindings } from '../../src/core/workspace/access.js';
 import type { RuntimeHostBindings } from '../../src/core/agent-runtime/execution-contracts.js';
@@ -66,9 +57,9 @@ afterEach(async () => {
   for (const directory of directories.splice(0)) await rm(directory, { recursive: true, force: true });
 });
 
-function ctx(actor: { kind: 'human' | 'system'; id: string } = hostActor): CoreCallContext {
-  return { projectId, workspaceId, principal: { kind: 'host', actor },
-    materialReader: { kind: 'host', projectId, workspaceId, actor }, signal: new AbortController().signal };
+function ctx(): CoreCallContext {
+  return { projectId, workspaceId, principal: { kind: 'host', actor: hostActor },
+    materialReader: { kind: 'host', projectId, workspaceId, actor: hostActor }, signal: new AbortController().signal };
 }
 
 function workspaceBindings(directory: string, state: { revision: number }): WorkspaceHostBindings {
@@ -130,26 +121,22 @@ function planDraft(): PlanRevisionDraft {
   };
 }
 
-function checksConfiguration(revision: string, kind: 'static' | 'dynamic' = 'static'): TrustedCheckConfiguration {
+function checksConfiguration(revision: string): TrustedCheckConfiguration {
   return { configurationRevision: revision, workspace: workspaceRef, executor: hostActor, permissionRevision: 'a2-reverify-grant-1',
     sourceAccess: 'verification_workspace', processAccess: 'all_except_denied', deniedPrefixes: ['.git'],
-    checks: [{ checkId: CHECK_ID, kind, command: 'echo A2_REVERIFY_OK', cwd: '.', timeoutMs: 60_000, taskIds: 'all' }] };
+    checks: [{ checkId: CHECK_ID, kind: 'static', command: 'echo A2_REVERIFY_OK', cwd: '.', timeoutMs: 60_000, taskIds: 'all' }] };
 }
 
 type Environment = { platform: Platform; scripted: ReturnType<typeof createScriptedModel>; workspaceRoot: string };
 
-/** `duringTurn` runs inside the work Run's one model call, before the scripted answer. */
-async function openEnvironment(duringTurn?: (platform: Platform) => Promise<void>): Promise<Environment> {
+async function openEnvironment(): Promise<Environment> {
   const directory = await mkdtemp(join(tmpdir(), 'next-a2-reverify-'));
   directories.push(directory);
   const workspaceRoot = await mkdtemp(join(tmpdir(), 'next-a2-reverify-source-'));
   directories.push(workspaceRoot);
   await writeFile(join(workspaceRoot, 'source.txt'), 'A2 reverify registered workspace source\n');
   const state = { revision: 1 };
-  let opened: Platform | undefined;
-  const scripted = createScriptedModel([{ kind: 'text' as const, text: 'A2 reverify work result' }], async () => {
-    if (duringTurn !== undefined && opened !== undefined) await duringTurn(opened);
-  });
+  const scripted = createScriptedModel([{ kind: 'text' as const, text: 'A2 reverify work result' }]);
   const workflow: WorkflowHostConfiguration = {
     consumerId: 'a2-reverify-consumer',
     bindings: [{ workspace: scope, sessionRole: { kind: 'legacy_template', templateId: 'builder', templateRevision: '1' },
@@ -162,7 +149,6 @@ async function openEnvironment(duringTurn?: (platform: Platform) => Promise<void
     runtime: runtimeHost(scripted), checks: checksConfiguration('a2-reverify-checks-1'), workflow,
   });
   platforms.push(platform);
-  opened = platform;
   const host = ctx();
   expect(await platform.projects.createProject(host, { meta: { requestId: 'a2-project',
     expected: [{ ref: projectRef, revision: 0 }] }, input: { projectId } })).toMatchObject({ status: 'committed' });
@@ -238,12 +224,9 @@ async function inconclusiveHead(platform: Platform, workspaceRoot: string): Prom
   return finalize.result.value.snapshot;
 }
 
-const reverifyRequest = (round: RoundSnapshot, requestId: string, refusalRevision?: number, reason?: string) => ({
-  input: { predecessorRoundRef: round.ref, ...(reason === undefined ? {} : { reason }) },
-  meta: { requestId, expected: [{ ref: round.ref, revision: round.revision },
-    ...(refusalRevision === undefined ? [] : [{ ref: { aggregateType: 'TaskReworkRefusal' as const, projectId,
-      goalId: goalRef.goalId, taskId: round.ref.taskId, operation: 'reverify' as const, subjectId: round.ref.roundId },
-      revision: refusalRevision }])] },
+const reverifyRequest = (round: RoundSnapshot, requestId: string, reason: string) => ({
+  input: { predecessorRoundRef: round.ref, reason },
+  meta: { requestId, expected: [{ ref: round.ref, revision: round.revision }] },
 });
 
 it('C5 (§15.2 5.9, VR-14/15, TASK-29): an operator reverifies an INCONCLUSIVE head; the Workflow runs the successor and completes the Goal', async () => {
@@ -254,7 +237,7 @@ it('C5 (§15.2 5.9, VR-14/15, TASK-29): an operator reverifies an INCONCLUSIVE h
       reverifyActors: ['human', 'system', 'agent'] } });
   const before = JSON.stringify(r1);
 
-  const reverified = await platform.evidence.reverifyRound!(ctx(), reverifyRequest(r1, 'a2-reverify-operator', undefined,
+  const reverified = await platform.evidence.reverifyRound!(ctx(), reverifyRequest(r1, 'a2-reverify-operator',
     'the source moved under the round'));
   if (reverified.status !== 'committed' || reverified.value.kind !== 'reverified') throw new Error(`reverify: ${JSON.stringify(reverified)}`);
   const r2 = reverified.value.round;
@@ -278,71 +261,5 @@ it('C5 (§15.2 5.9, VR-14/15, TASK-29): an operator reverifies an INCONCLUSIVE h
   // VR-15: the predecessor is not rewritten and stays readable.
   expect(JSON.stringify(await platform.evidence.readVerification(ctx(), r1.ref)))
     .toBe(JSON.stringify({ status: 'ready', value: JSON.parse(before) }));
-  expect(scripted.calls()).toBe(1);
-}, 90_000);
-
-it('§13.7 / LA-4: the cap and verification_uncovered are committed refusals on TaskRow.failure; a covering configuration makes them stale', async () => {
-  const { platform, scripted, workspaceRoot } = await openEnvironment();
-  const r1 = await inconclusiveHead(platform, workspaceRoot);
-
-  // The platform automation (the Workflow's actor) is capped: limit 0 refuses before any capture.
-  platform.registerAutomationPolicy({ schemaVersion: 1, autoReworkLimit: 0, resumeOnStartup: false });
-  expect(await platform.evidence.reverifyRound!(ctx({ ...WORKFLOW_AUTOMATION_ACTOR }), reverifyRequest(r1, 'a2-reverify-cap')))
-    .toMatchObject({ status: 'committed', value: { kind: 'refused', refusal: { revision: 1, code: 'auto_rework_cap_reached',
-      requestedBy: WORKFLOW_AUTOMATION_ACTOR, configurationRevision: null, source: null } } });
-  expect(await taskRow(platform, 'work-1')).toMatchObject({ failure: { automation: {
-    lastReverifyRefusal: { code: 'auto_rework_cap_reached', revision: 1, stale: false } } } });
-
-  // No registered check covers the static requirement: refused for the operator too, storing the revision.
-  platform.registerCheckConfiguration({ configuration: checksConfiguration('a2-reverify-dynamic', 'dynamic') });
-  expect(await platform.evidence.reverifyRound!(ctx(), reverifyRequest(r1, 'a2-reverify-uncovered', 1)))
-    .toMatchObject({ status: 'committed', value: { kind: 'refused', refusal: { revision: 2, code: 'verification_uncovered',
-      configurationRevision: 'a2-reverify-dynamic', requestedBy: hostActor } } });
-  expect(await taskRow(platform, 'work-1')).toMatchObject({ effectivePhase: 'blocked', failure: { automation: {
-    lastReverifyRefusal: { code: 'verification_uncovered', revision: 2, stale: false } } } });
-
-  // LA-4: once a covering configuration (another revision) is registered, the stored refusal is stale.
-  platform.registerCheckConfiguration({ configuration: checksConfiguration('a2-reverify-checks-2') });
-  expect(await taskRow(platform, 'work-1')).toMatchObject({ failure: { automation: {
-    lastReverifyRefusal: { code: 'verification_uncovered', revision: 2, stale: true } } } });
-  const reverified = await platform.evidence.reverifyRound!(ctx(), reverifyRequest(r1, 'a2-reverify-covered', 2));
-  expect(reverified).toMatchObject({ status: 'committed', value: { kind: 'reverified', round: { chain: { ordinal: 2 },
-    configuration: { configurationRevision: 'a2-reverify-checks-2' } } } });
-  expect(scripted.calls()).toBe(1);
-}, 90_000);
-
-it('VR-14 step 5 (hard limit 3, I-17): an operator pause superseded by the natural completion fences the automation, not the operator', async () => {
-  let pauseRef: ControlIntentRef | undefined;
-  const { platform, scripted, workspaceRoot } = await openEnvironment(async (current) => {
-    if (pauseRef !== undefined) return;
-    // The operator pauses the running Turn; the Turn completes before any safe point consumes the pause (CTL-06).
-    const runRef = (await taskRow(current, 'work-1')).execution;
-    if (runRef === null) throw new Error('the work Task must have a Run while its Turn calls the model');
-    const read = await current.executions.readExecution(ctx(), runRef);
-    if (read.status !== 'ready') throw new Error('the Run must be readable');
-    const submitted = await current.controls.submitControl(ctx(), { input: { runRef, kind: 'pause',
-      reason: 'operator pause before the Run finishes' }, meta: { requestId: 'a2-reverify-pause',
-      expected: [{ ref: runRef, revision: read.value.run.revision }] } });
-    if (submitted.status !== 'committed') throw new Error(`the pause must commit: ${JSON.stringify(submitted)}`);
-    pauseRef = submitted.value.intent.ref;
-  });
-  const r1 = await inconclusiveHead(platform, workspaceRoot);
-  if (pauseRef === undefined) throw new Error('the pause must be submitted during the Turn');
-  // CTL-06: the natural terminal superseded the queued pause; the pointer stays on the completed Run.
-  expect(await platform.executions.readExecution(ctx(), r1.subjectRunRef)).toMatchObject({ status: 'ready', value: { run: {
-    status: 'ended', outcome: 'completed', controlState: { intentRef: pauseRef, desiredState: 'paused' } } } });
-  expect(await platform.controls.readControl(ctx(), pauseRef)).toMatchObject({ status: 'ready', value: { status: 'superseded' } });
-  expect(await taskRow(platform, 'work-1')).toMatchObject({ effectivePhase: 'blocked', failure: { failureClass: 'check_incomplete',
-    stop: { intentRef: pauseRef, kind: 'pause', requester: 'human' }, reverifyActors: ['human'] } });
-
-  // The platform automation (the Workflow's actor) may not rework what a human stopped: forbidden, nothing written.
-  expect(await platform.evidence.reverifyRound!(ctx({ ...WORKFLOW_AUTOMATION_ACTOR }), reverifyRequest(r1, 'a2-reverify-fenced')))
-    .toMatchObject({ status: 'rejected', code: 'forbidden', reason: 'a human stopped this work; only an operator may rework it' });
-  expect(await taskRow(platform, 'work-1')).toMatchObject({ effectivePhase: 'blocked',
-    failure: { round: { roundRef: r1.ref, revision: r1.revision }, automation: { lastReverifyRefusal: null } } });
-  // The operator may: the successor round opens on the same Run.
-  const reverified = await platform.evidence.reverifyRound!(ctx(), reverifyRequest(r1, 'a2-reverify-fenced-operator'));
-  expect(reverified).toMatchObject({ status: 'committed', value: { kind: 'reverified', round: { subjectRunRef: r1.subjectRunRef,
-    chain: { ordinal: 2, autoCount: 0, reverify: { actorClass: 'human', requestedBy: hostActor } } } } });
   expect(scripted.calls()).toBe(1);
 }, 90_000);

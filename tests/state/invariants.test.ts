@@ -307,7 +307,7 @@ beforeAll(async () => {
     await observe(env, observations, 'requeue-2', step('task_requeued', 'requeue-2'));
     await writeFile(join(env.workspaceRoot, 'fixed.txt'), 'fixed\n');
     await drive(env, observations, 'inv-flow-3');
-    // The Goal-level selection reaches the gate (`tests/composition/A2-gate-reverify-platform.test.ts`).
+    // The Goal-level selection reaches the gate (`tests/scenarios/C5-gate-fix.test.ts`).
     await drive(env, observations, 'inv-flow-gate', null);
     expect(env.scripted.calls(), 'one model call per Run').toBe(3);
     flow = { observations, final: observations.at(-1)!.world, afterRequeue, afterRefusal, beforeRefusal };
