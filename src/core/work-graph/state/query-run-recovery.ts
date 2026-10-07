@@ -17,7 +17,7 @@
  */
 import type { CoreError } from '../../../contracts/core/results.js';
 import type { RunExecutionHistoryV1 } from '../../../contracts/core/execution-history.js';
-import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
+import { sameJson } from '../../../contracts/fingerprint.js';
 import type {
   QueryExecutionBindingV1,
   QueryExecutionStateV1,
@@ -668,9 +668,4 @@ function queryJobRefOf(queryRunRef: QueryRunRef): QueryJobRef {
 
 function answerRefOf(queryRunRef: QueryRunRef, answerId: string): QueryJobAnswerRef {
   return { aggregateType: 'QueryJobAnswer', projectId: queryRunRef.projectId, workspaceId: queryRunRef.workspaceId, queryJobId: queryRunRef.queryJobId, answerId };
-}
-
-/** `sameRef` of the owner service: canonical JSON equality, false when not serializable. */
-function sameJson(left: unknown, right: unknown): boolean {
-  try { return canonicalJson(left as JsonValue) === canonicalJson(right as JsonValue); } catch { return false; }
 }

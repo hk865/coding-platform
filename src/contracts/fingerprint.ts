@@ -47,6 +47,15 @@ function encode(value: JsonValue): string {
     const parts = keys.map((key) => `${JSON.stringify(key)}:${encode(value[key] as JsonValue)}`);
     return `{${parts.join(",")}}`;
 }
+/** Key-order-free equality by canonical JSON; a value it cannot encode (`undefined`, a non-finite number) is never equal. */
+export function sameJson(left: unknown, right: unknown): boolean {
+    try {
+        return canonicalJson(left as JsonValue) === canonicalJson(right as JsonValue);
+    }
+    catch {
+        return false;
+    }
+}
 /** SHA-256 of UTF-8 bytes, lowercase hex. */
 export function sha256Hex(input: string): string {
     return createHash("sha256").update(input, "utf8").digest("hex");

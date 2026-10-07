@@ -64,7 +64,7 @@ import {
   type RunContinuationV1, type RunOutcome, type RunReconciliationBasisV1, type RunReconciliationV1, type RunRef,
   type RunSnapshot, type RuntimeEventV1, type RuntimeInputBindingV1, type TaskBudgetV1, type TaskLeaseSnapshot,
 } from '../../../contracts/dispatch.js';
-import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
+import { canonicalJson, sameJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { GoalDesiredState } from '../../../contracts/ledger.js';
 import type { PlanRevisionRef } from '../../../contracts/plan.js';
 import type { TaskEnvelopeV1 } from '../../../contracts/task-envelope.js';
@@ -287,7 +287,7 @@ export type RunTerminalFact = { outcome: Exclude<RunOutcome, 'outcome_unknown' |
 export function terminalOutcomeOf(event: RuntimeEventV1, runRef: RunRef, lastEventSeq: number): RunTerminalFact | CoreRejection {
   const invalid = (reason: string): CoreRejection => ({ status: 'rejected', code: 'invalid', reason });
   if (!isRecord(event)) return invalid('the result event must be an object');
-  if (!sameRef(event.runRef, runRef)) return invalid('the result event names another Run');
+  if (!sameJson(event.runRef, runRef)) return invalid('the result event names another Run');
   if (!nonEmpty(event.eventId)) return invalid('the result event requires an eventId');
   if (event.schemaVersion !== 1) return invalid('the result event schemaVersion must be 1');
   if (!Number.isSafeInteger(event.sequence) || event.sequence < 0) {
@@ -985,7 +985,7 @@ function noPersistedClaim(kind: RunEvent['kind']): Rejected {
 /** The event's claim against the persisted Outbox claim (`sameRef(outbox.claim, claim)`), with today's reason. */
 function persistedClaimGuard(ctx: RunGuardContext, claim: TaskClaim, kind: RunEvent['kind'], detail: string): Rejected | null {
   if (ctx.persistedClaim === null) return noPersistedClaim(kind);
-  return sameRef(ctx.persistedClaim, claim) ? null : reject('guard_failed', 'invalid', detail);
+  return sameJson(ctx.persistedClaim, claim) ? null : reject('guard_failed', 'invalid', detail);
 }
 
 /**
@@ -994,7 +994,7 @@ function persistedClaimGuard(ctx: RunGuardContext, claim: TaskClaim, kind: RunEv
  * `admitEnteredRun`) asks the same on the Outbox it read.
  */
 export function permitClaimGuard(persisted: TaskClaim, permit: RunEntryPermit): Rejected | null {
-  return sameRef(persisted, permit.claim) ? null
+  return sameJson(persisted, permit.claim) ? null
     : reject('guard_failed', 'invalid', 'the entry permit claim disagrees with the persisted claim');
 }
 
@@ -1019,11 +1019,11 @@ function claimedV2Binding(
  * role binding, budget and workspace snapshot, each by canonical JSON.
  */
 function preparedBindingGuard(run: RunSnapshot, envelope: TaskEnvelopeV1): Rejected | null {
-  if (!sameRef(envelope.roleBinding, run.roleBinding)) {
+  if (!sameJson(envelope.roleBinding, run.roleBinding)) {
     return reject('guard_failed', 'forbidden', 'the prepared role binding disagrees with the Run');
   }
-  if (!sameRef(envelope.budget, run.budget)) return reject('guard_failed', 'forbidden', 'the prepared budget disagrees with the Run');
-  if (!sameRef(envelope.workspaceSnapshot, run.workspaceSnapshot)) {
+  if (!sameJson(envelope.budget, run.budget)) return reject('guard_failed', 'forbidden', 'the prepared budget disagrees with the Run');
+  if (!sameJson(envelope.workspaceSnapshot, run.workspaceSnapshot)) {
     return reject('guard_failed', 'forbidden', 'the prepared workspace snapshot disagrees with the Run');
   }
   return null;
@@ -1127,7 +1127,7 @@ function locatorAfter(
   if (existing !== undefined) {
     if (!locatorShapeOk(existing)) return failed('unavailable', 'the stored executionHistory is malformed');
     // The stored locator against the claim SessionRef as given, whole (`execution-history-binding.ts:115`).
-    if (!sameRef(existing.sessionRef, sessionRef)
+    if (!sameJson(existing.sessionRef, sessionRef)
       || !sameKernel(existing.kernel, kernel) || existing.startPosition !== history.startPosition) {
       return failed('revision_conflict', 'the execution-history identity/start is already fixed');
     }
@@ -1352,8 +1352,8 @@ function preparedFixedBindingGuard(run: RunSnapshot, event: Extract<RunEvent, { 
   const fixed = run.inputBinding;
   const normalized = (binding: RuntimeInputBindingV1): RuntimeInputBindingV1 =>
     ({ ...binding, additionalMaterialRefs: binding.additionalMaterialRefs ?? [] });
-  if (fixed === undefined || run.envelope === null || !sameRef(normalized(event.inputBinding), normalized(fixed))
-    || !sameRef(event.envelope, run.envelope)) {
+  if (fixed === undefined || run.envelope === null || !sameJson(normalized(event.inputBinding), normalized(fixed))
+    || !sameJson(event.envelope, run.envelope)) {
     return reject('guard_failed', 'invalid', 'the Prepared input binding or envelope disagrees with the binding fixed on the revoked Run');
   }
   return null;
@@ -1812,7 +1812,7 @@ function onNotEnteredReconcile(
   const kind = NOT_ENTERED_KIND[event.kind];
   const control = run.controlState;
   const intent = ctx.pointerIntent;
-  if (control === undefined || control.desiredState !== NOT_ENTERED_POINTER[kind] || !sameRef(control.intentRef, event.intentRef)
+  if (control === undefined || control.desiredState !== NOT_ENTERED_POINTER[kind] || !sameJson(control.intentRef, event.intentRef)
     || intent === null || intent.kind !== kind || intent.status !== 'queued') {
     return reject('illegal', 'invalid', `${NOT_ENTERED_ROW[event.kind]} (R) settles only the queued ${kind} the pointer names`);
   }
@@ -1994,7 +1994,7 @@ function onStopPaused(
   }
   const run = state.record as RunSnapshot;
   const control = run.controlState;
-  if (state.pointer !== 'cancelled' || control === undefined || !sameRef(control.intentRef, event.cancelIntentRef)
+  if (state.pointer !== 'cancelled' || control === undefined || !sameJson(control.intentRef, event.cancelIntentRef)
     || ctx.pointerIntent === null || ctx.pointerIntent.kind !== 'cancel' || ctx.pointerIntent.status !== 'queued') {
     return reject('illegal', 'invalid', 'stop_paused applies the queued cancel the pointer names');
   }
@@ -2009,7 +2009,7 @@ function onStopPaused(
   const record = interruptedCleanEnd(run, auth, event, ctx, entered,
     { kind: 'cancelled', reason: ctx.kernelPaused ? 'cancelled_while_paused' : 'cancelled_at_reconcile' }, null);
   const restart = isTakeover(event.basis);
-  const steers: RunEffect[] = ctx.queuedSteers.map((steer): RunEffect => restart && event.turn.acceptedSteers.some(accepted => sameRef(accepted, steer))
+  const steers: RunEffect[] = ctx.queuedSteers.map((steer): RunEffect => restart && event.turn.acceptedSteers.some(accepted => sameJson(accepted, steer))
     ? { kind: 'intent', event: 'control_reconciled', intentRef: steer }
     : { kind: 'intent', event: 'control_superseded_by_newer', intentRef: steer });
   return accept(runStateOf(record), [
@@ -2360,11 +2360,3 @@ function nonEmpty(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0;
 }
 
-/**
- * Key-order-free equality by canonical JSON (`execution-entry-service.ts:98-100`
- * `sameRef`, restated: `state/` imports only contracts). A value canonical
- * JSON cannot encode (`undefined`, a non-finite number) is never equal.
- */
-function sameRef(left: unknown, right: unknown): boolean {
-  try { return canonicalJson(left as JsonValue) === canonicalJson(right as JsonValue); } catch { return false; }
-}
