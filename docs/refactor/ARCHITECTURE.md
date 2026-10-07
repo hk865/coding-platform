@@ -87,6 +87,8 @@ implementation: 在 coding-platform/next 独立目标工程分批实现；原 sr
 
 五个模块是本次推导结果，不是先验优化指标。WorkGraph 内部按结构分责，不堆成一个大类；RecordStore 可继续使用原数据库／表，不为合并模块强行合库。数据结构数量也不等于顶层模块数量。
 
+2026-10-07 补注（任务 D，决定 40）：WorkGraph 内部现在分成 13 个子模块，按层上层依赖下层，规则写在 [module-target.json](module-target.json) 的 `submodules` 里，由边界检查执行；唯一的同层依赖是 model 可以依赖 state（L0 内部的例外，决定 40 修法 B），state 不依赖 WorkGraph 里的任何东西。表和禁止的方向见 [module-dag §6](module-dag.md#6-workgraph-的子模块2026-10-07决定-40)。五模块八条边不变。
+
 Host／UI、Contracts、fixtures／testing 是支撑面。Host 装配并驱动流程；核心不反调 Workflow 策略。核心返回意图受理或执行结果，业务调用方选择后续动作。
 
 ## 6. 允许依赖

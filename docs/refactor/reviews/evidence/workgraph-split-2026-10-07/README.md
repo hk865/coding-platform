@@ -2,6 +2,8 @@
 
 > **2026-10-07 已执行（决定 40）：** 用户确认后按本方案做完了。X2 是 d91208e3，X1 是 58ea2fdc；18 个文件的搬移由本地 DSH 按 [TASK-D-PLAN](../dsh-ladder-2026-10-07/TASK-D-PLAN.md) 两阶段执行，和参考搬移逐字节一致，提交为 0cd45508（165 个文件 +392/−392 行，全量测试 216 个文件、5245 项全部通过）。在 58ea2fdc 上重算，总数和下文相同；只有 X2 让 3 处 import 改写从搬走的文件里挪到了不搬的 `evidence-service.ts`，所以分配是搬走的文件里 23 处、其它文件里 357 处（下文是 26 和 354）。把子模块规则写进 `module-target.json` 是验收后单独的一步，还没做。下文按提案时的原样保留。
 
+> **2026-10-07 子模块规则已写入（决定 40）：** `target.json` 的 `submodules`（13 个子模块、41 条允许的依赖）照原样写进了 `docs/refactor/module-target.json` 的 WorkGraph 条目，提交为 002e7b28。`level`、`reserved`、`forbidden` 没有写进去：检查器只读 `id`、`path`、`dependencies`，禁止的方向靠依赖清单里没有它们来保证。L0 内部的例外写在 model 条目的 `note` 上：model 可以依赖 state（L0 内部的例外，决定 40 修法 B）；state 不依赖 WorkGraph 里的任何东西。state 的纯度仍由 `pureDirectories` 管。在 002e7b28 上 `check:architecture` 通过，用到 41 条里的 40 条（`tasks → architecture` 还没用到）。说明和表见 [module-dag §6](../../../module-dag.md)。
+
 > **状态：提案，等用户确认。** 本目录只有文档、脚本和测量输出，没有改 `src/`、`tests/`、`module-target.json`，没有调用模型，没有跑 DSH。搬移只在一份临时副本上做过，用来量数字和查边，量完副本已删。
 
 **为什么做。** 决定 32、34：任务 D（WorkGraph 拆分，纯搬移）要在简化删减后的代码上重算方案，对照编排设计的结构部分（[DESIGN.md](../../../design/orchestration-2026-10/DESIGN.md) §7、[D-PLACEMENT.md](../../../design/orchestration-2026-10/D-PLACEMENT.md)），用户确认后才交给 DSH。10-02 的方案在 [workgraph-split-2026-10-02/TARGET-DAG.md](../workgraph-split-2026-10-02/TARGET-DAG.md)，bfb6075 上的搬移表草稿在 [dsh-ladder-2026-10-07/L3-MOVE-TABLE.md](../dsh-ladder-2026-10-07/L3-MOVE-TABLE.md)，执行做法在同目录的 [TASK-D-PLAN.md](../dsh-ladder-2026-10-07/TASK-D-PLAN.md)。

@@ -89,7 +89,7 @@ flowchart LR
 
 `module-target.json`（schemaVersion 2）是模块路径和允许边的唯一来源：`scripts/check-boundaries.mjs` 直接读取它，不再在脚本里另写一份 `MODULES/ALLOWED`。`projectRoot`、`implementationOwnership` 相对该 JSON 所在目录解析，必须分别指向本仓库根与 `scripts/check-boundaries.mjs`；模块 `path` 相对仓库根。检查脚本对以下情况明确报错，并跳过全部源码文件检查（归属、import、symlink、UI 规则；退出码仍为失败）：JSON 不可读、缺字段、模块 id 占用外层名（Contracts/Composition/Host/UI）、路径未规范化、模块/子模块路径不存在或互相重叠、依赖指向未知 id、自依赖、模块或子模块依赖成环。import 违规的报错带 `src` 内相对路径和 1 起算的行号（如 `core/workspace/entry.ts:3: forbidden module edge ...`）。
 
-模块可以声明 `submodules`：每项 `{ id, path, dependencies }`，`path` 相对模块目录，可以是以 `/` 结尾的目录或单个源码文件；声明后模块内每个源码文件必须恰好属于一个子模块，子模块之间（含 type-only import）只允许沿声明的 `dependencies` 方向依赖，且子模块依赖图必须无环；解析不到任何子模块的 import 按失败处理（fail closed）。WorkGraph 的具体子模块分层由任务 D 决定后写入同一 JSON。
+模块可以声明 `submodules`：每项 `{ id, path, dependencies }`，`path` 相对模块目录，可以是以 `/` 结尾的目录或单个源码文件；声明后模块内每个源码文件必须恰好属于一个子模块，子模块之间（含 type-only import）只允许沿声明的 `dependencies` 方向依赖，且子模块依赖图必须无环；解析不到任何子模块的 import 按失败处理（fail closed）。WorkGraph 的具体子模块分层由任务 D 决定后写入同一 JSON。（2026-10-07：已写入，见 §6。）
 
 Contracts、Composition、Host（`src/app`）和 UI（`src/ui`）是外层，规则仍由脚本内的固定分支实现（UI 仅可 type-only 引用 Host DTO 等），不在 JSON 中重复声明。
 
@@ -112,3 +112,33 @@ Contracts、Composition、Host（`src/app`）和 UI（`src/ui`）是外层，规
 | ReadModelIndex | WorkGraph、RecordStore |
 | ContextCompiler | WorkGraph、Workflow、AgentRuntime |
 | WorkspaceReader | WorkspaceTools |
+
+## 6. WorkGraph 的子模块（2026-10-07，决定 40）
+
+任务 D（0cd45508）把 WorkGraph 的文件搬进了子模块目录。验收后，子模块规则写进了 [module-target.json](module-target.json) 里 WorkGraph 的 `submodules`，内容就是方案 [workgraph-split-2026-10-07](reviews/evidence/workgraph-split-2026-10-07/README.md) 的 `target.json` 里的 `submodules`：13 个子模块，41 条允许的依赖。`check:architecture` 从这时起按它检查。
+
+**方向规则。** 上层可以依赖下层，反过来不行；层号是 [DESIGN §7.2](design/orchestration-2026-10/DESIGN.md#72-workgraph-分层) 的。检查器不读层号，只认每个子模块的 `dependencies`：子模块之间的 import（包括只引用类型的）必须沿声明的方向，子模块依赖图必须无环，解析不到任何子模块的 import 也算违规（§5）。违规报 `src` 内的文件和行，例如 `core/work-graph/tasks/plan-service.ts:30: forbidden submodule edge WorkGraph/tasks -> WorkGraph/evidence`。
+
+**L0 内部的例外。** model 可以依赖 state（L0 内部的例外，决定 40 修法 B）；state 不依赖 WorkGraph 里的任何东西。这是唯一一条不往下走的边，现在只有一处用到它：`model/plan-contracts.ts:19` 以类型引用 `state/goal-machine.ts` 的三个类型（目标显示、恢复接续、控制能力）。反方向一直禁止：state 是纯目录，只能依赖 `src/contracts`，由顶层的 `pureDirectories` 管；它在子模块里也没有声明任何依赖。这条例外在 JSON 里写在 model 条目的 `note` 上（检查器不读 `note`）。
+
+| 子模块 | 层 | 路径（相对 `src/core/work-graph/`） | 允许依赖 | 文件数（2026-10-07） |
+| --- | --- | --- | --- | ---: |
+| model | L0 | `model/` | state（L0 内部的例外） | 12 |
+| state | L0 | `state/` | —（纯目录，只依赖 `src/contracts`） | 13 |
+| persistence | L1 | `persistence/` | model | 9 |
+| configuration | L2 | `configuration/` | model, persistence | 5 |
+| materials | L2 | `materials/` | model, persistence | 5 |
+| architecture | L2 | `architecture/` | model, persistence | 8 |
+| sessions | L3 | `sessions/` | model, state, persistence, materials, architecture | 9 |
+| source-authority-ports | L3 | `source-authority-ports.ts` | materials | 1 |
+| queries | L4 | `queries/` | model, state, persistence, materials, sessions | 4 |
+| tasks | L5 | `tasks/` | model, state, persistence, materials, architecture, sessions, queries | 31 |
+| source-authority-reader | L5 | `source-authority-reader.ts` | source-authority-ports, materials, queries | 1 |
+| evidence | L6 | `evidence/` | model, state, persistence, architecture, tasks | 2 |
+| communication | L6 | `communication/` | model, state, persistence, materials, sessions, queries, tasks | 1 |
+
+- 41 条允许的依赖里，现在的代码用到 40 条；没用到的是 `tasks → architecture`，它是设计要的（D-PLACEMENT §3），先声明。
+- 必须一直禁止的方向（D-PLACEMENT §4，方案 `target.json` 的 `forbidden`）都不在上表里，所以都会被拒：persistence 只依赖 model；sessions 不依赖 tasks、queries、communication、evidence；queries 不依赖 tasks、communication、evidence；tasks 不依赖 evidence、communication；materials 不依赖 tasks；state 不依赖任何子模块；model 除了 state 不依赖别的子模块。D-PLACEMENT §4 里关于 notes、views 的两条，等这两个子模块声明时一起写进去。`persistence → state` 要用户确认后才能加。
+- `notes`（L5.5）和 `views`（L7）还没有文件，没有声明；检查器要求声明的路径存在，第一个文件落地时再按 DESIGN §7.2 声明（D-PLACEMENT §3“写入时机”）。
+- state 的纯度仍用顶层 `pureDirectories` 声明。规格 §14.4（L-8）原定任务 D 之后改成 state 子模块条目上的 `pure: true`，但检查器还不认 `pure` 字段，只写上不会被检查；这一步没有改检查器，所以保留 `pureDirectories`，含义相同。要换成 `pure: true`，先改 `scripts/check-boundaries.mjs` 和它的测试。
+- 文件之间还有两个只靠类型引用才成的环，各在一个子模块内部（model 里 3 个契约文件、state 里两个状态机）。按决定 40 接受：收尾的“无环”按“子模块之间无环、文件之间没有值引用的环”算。检查器只查子模块之间的环。

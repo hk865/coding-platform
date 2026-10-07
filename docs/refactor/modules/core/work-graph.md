@@ -24,6 +24,8 @@ WorkGraph 保存和操作任务、正式架构、Session 目录、通信、证�
 
 ## 2. 文件与内部依赖
 
+> **2026-10-07 补注（任务 D，决定 40）：** 下表是 2026-09-23 的目标文件表，按原样保留；里面不少文件名和目录已经不对。现在的目录是任务 D（0cd45508）搬完以后的 13 个子模块，按层（DESIGN §7.2）从下往上：L0 `model/`、`state/`；L1 `persistence/`；L2 `configuration/`、`materials/`、`architecture/`；L3 `sessions/`、`source-authority-ports.ts`；L4 `queries/`；L5 `tasks/`、`source-authority-reader.ts`；L6 `evidence/`、`communication/`。上层可以依赖下层，反过来不行；每个子模块允许依赖哪些，写在 [module-target.json](../../module-target.json) 的 `submodules` 里，`check:architecture` 按它逐条检查（包括只引用类型的 import）。唯一的同层依赖：model 可以依赖 state（L0 内部的例外，决定 40 修法 B）；state 不依赖 WorkGraph 里的任何东西，只依赖 `src/contracts`。共享契约在 `model/`（任务 D 从 tasks、configuration、materials、sessions、communication、evidence 挪下来的 12 个文件）；`notes`（L5.5）、`views`（L7）留了位置，还没有文件。完整的表、禁止的方向和例外的来历见 [module-dag §6](../../module-dag.md#6-workgraph-的子模块2026-10-07决定-40)。
+
 `ports.ts` 只导出下面的窄 Port 与 DTO；`index.ts` 只导出 `createWorkGraph`、依赖类型及 ports。工厂返回分组 Port，不创建转发所有方法的大类。消费者按能力注入，不获得数据库句柄。
 
 | 目标文件（均在 src/core/work-graph/） | 导出与责任 | 直接依赖/状态所有权 |

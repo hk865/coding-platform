@@ -5,7 +5,7 @@
 ## 当前状态
 
 - 分支 `feat/reliability-and-structure`，未推送。任务书 `CLAUDE-CODE-TASK.md`（任务 A–E）在主检出目录，未纳入仓库。
-- **本批没有完成。** 任务 A 的第 5 步、第 6 步、简化和第 7 步都已提交；简化里留下的决定 29（Goal 控制必须带 GoalPhase 版本号）也在第 7 步做完了（5.10 为 05125db；第 6 步的场景测试到 fd935387，之后是收尾的 eb73da2e、4d922c0f、cb7ece47 和审阅修正 9c7ff9c7；简化从 060e7696 到 7f137117；决定 29 和第 7 步的提交见“已完成”）。任务 D（WorkGraph 拆分，纯搬移，决定 32、34、40）也做完了：先做 X2、X1 两小步代码改动，再由本地 DSH 按两阶段搬了 18 个文件，结果和 lead 的参考搬移逐字节一致，提交为 0cd45508。这里的 D 不是 HANDOFF 里“D 控制、连续性与产品完成”那条主线。余下把子模块规则写进 `module-target.json`（决定 40，验收后单独一步）和收尾。**整个 MVP 也没有完成。**
+- **本批没有完成。** 任务 A 的第 5 步、第 6 步、简化和第 7 步都已提交；简化里留下的决定 29（Goal 控制必须带 GoalPhase 版本号）也在第 7 步做完了（5.10 为 05125db；第 6 步的场景测试到 fd935387，之后是收尾的 eb73da2e、4d922c0f、cb7ece47 和审阅修正 9c7ff9c7；简化从 060e7696 到 7f137117；决定 29 和第 7 步的提交见“已完成”）。任务 D（WorkGraph 拆分，纯搬移，决定 32、34、40）也做完了：先做 X2、X1 两小步代码改动，再由本地 DSH 按两阶段搬了 18 个文件，结果和 lead 的参考搬移逐字节一致，提交为 0cd45508。这里的 D 不是 HANDOFF 里“D 控制、连续性与产品完成”那条主线。验收后，子模块规则也写进了 `module-target.json`（决定 40，002e7b28），模块边界检查从此按子模块检查。余下收尾。**整个 MVP 也没有完成。**
 - 本批测试中的模型都是脚本化或回放的（部分集成测试跑真实的冻结 Kernel），没有调用真实模型。最近一次全量测试在任务 D 搬移后的代码（0cd45508）上跑：216 个测试文件、5245 项全部通过，和第 7 步做完后（2ba9b46b）的数字相同，逐个文件的测试数也相同；类型检查、模块边界检查和构建也都通过。`verify:isolated` 还没跑，留在收尾。再上一次在简化完成后的代码（7f137117）上：216 个测试文件、5244 项全部通过，那次也覆盖了第 6 步收尾之后的代码；2ba9b46b 比它多 1 项，是决定 29 加的测试用例。第 6 步定稿时那次是 219 个文件、5340 项，1 项失败（A8-3p，冻结 Kernel 的限制；收尾按 lead 决定 LA-9 改成断言这条限制）。项数变少，是因为简化删了只测被删代码的 5 个测试文件和一些用例。5.7 时第一次跑有 1 项失败（B2-runtime-execution“超过 200 条记录后进入第二个真实 Turn”），单独重跑和整套重跑都通过，和 AG2b 一样记为负载下的测试时序问题。批次开始时的基线（790d970）是 137 个文件、1199 项，其中 7 项失败，原因是环境、耗时和过期断言，见[基线证据](reviews/evidence/cc-baseline-2026-10-02/README.md)。
 - 与任务书的已知偏差：SSE 流端点 `GET /api/real/core/changes` 放在 `src/app/server.ts`，没有放进任务书写的 `core-routes.ts`。原因是 core-routes 是统一的 POST JSON 路由表，而流是长连接 GET。用户 2026-10-05 决定保持现状。
 
@@ -42,6 +42,7 @@
 | D 的方案重算（决定 34、40） | 在简化后的代码上重算 WorkGraph 拆分方案：13 个子模块，搬 18 个文件（M1–M18），搬移前先做 X1、X2 两小步代码改动，`model → state` 用修法 B；Codex 审过后改定，用户确认（决定 40）。见[方案](reviews/evidence/workgraph-split-2026-10-07/README.md) | 688589cc、Codex 审查修正 6d5b3024；决定 40 d8cfa5b1 |
 | D 的 X2、X1（决定 40） | 搬移前消掉检查器会拒绝的两条依赖。X2：证据服务的两个依赖类型从 `evidence/contracts.ts`（搬移后是 `model/evidence-contracts.ts`）挪进 `evidence/evidence-service.ts`。X1：`decodeRun` 从 `tasks/run-state-service.ts` 拆到新文件 `materials/run-snapshot-decoder.ts`，6 处 import 改指新文件。文字原样搬，不改行为；每个导出名只有一处，旧位置不留转出。相关的 140 个测试文件、4548 项通过；Codex（推理强度 xhigh，约 10 分钟、输入 146 万 token，其中 133 万走缓存）审过，没有要改的 | X2 d91208e3、X1 58ea2fdc |
 | D WorkGraph 拆分（决定 32、34、40） | 纯搬移：18 个文件搬进目标子目录（`model/` 是新目录，7 个文件改名），其余 83 个不动。165 个文件 +392/−392 行：git 记成 18 个改名，另有 158 个文件里 380 处 import 路径、两个架构数据文件里 12 处路径字符串；`src/`、`tests/` 以外没有改动。搬移前在 58ea2fdc 上重算，总数和方案相同。本地 DSH（deepseek-flash，headless profile，bubblewrap）按两阶段做：第一段只列出每一处要改的地方后停下，和预期逐行一致（392 行）；第二段在同一 Session 里照做，没用到带指导的返工轮。DSH 的结果和 lead 的参考搬移逐字节一致，本分支上的提交也和它逐字节一致；按 [DSH-WORKFLOW](DSH-WORKFLOW.md) §7，纯搬移靠这个对照来审，没另请审查者，也没跑 Codex。检查：类型检查、模块边界检查、构建通过；全量测试 216 个文件、5245 项全部通过，逐文件测试数和搬移前相同；568 个模块的 3600 个导出名搬移前后相同。DSH 用量（决定 36）：第一段 183 秒、100 万 token、26 次工具调用；第二段约 205 秒（墙钟 292 秒，其间主机睡眠 87 秒）、117 万 token、14 次；共约 6.5 分钟、217 万 token、40 次，在计划估计（6–10 分钟、200–380 万 token）之内。lead 用量（笔记里记下的）：DSH 阶段约 56 次工具调用、47 分钟，其中约 37 分钟在等（22 分钟是主机睡眠），读和查约 10–15 分钟；带回本分支并跑检查约 47 次、25 分钟，其中全量测试约 17 分钟；X1、X2 和准备阶段的笔记没记调用次数；lead 的 token 数没有记 | 0cd45508 |
+| D 的子模块声明（决定 40） | `module-target.json` 里 WorkGraph 加上方案 `target.json` 的 13 个子模块和 41 条允许的依赖（含还没用到的 `tasks → architecture`）；`model → state` 写成 L0 内部的明确例外（修法 B），state 仍由 `pureDirectories` 管，`notes`、`views` 没有文件，不声明。模块边界检查通过（用到 40 条）；在副本里埋的反向边都报出文件和行（model → tasks、persistence → state、sessions → tasks、tasks → evidence；state → tasks 由纯目录规则报）；类型检查和 `tests/architecture` 3 个文件 50 项通过。[module-dag §6](module-dag.md)、WorkGraph 模块文档和 ARCHITECTURE 补了日期注 | 002e7b28；文档为本行同一次提交 |
 | 新界面原型 | 用户 2026-10-05 批准（画布第 9 版），按决定 25–30、33 改版后 2026-10-07 冻结（画布第 16 版，决定 35）。画板和设计说明在 [docs/ui-reference/workbench-2026-10](../ui-reference/workbench-2026-10/README.md) | 本行同一次提交 |
 | E 前端拆分与 SSE | E1 拆分前端 759e6a2；E2 用 SSE 推送代替轮询 cdf6e4d；合入本分支 9523ea8。重构前后 23 张截图逐像素一致，见[证据](reviews/evidence/ui-split-sse-2026-10-04/README.md) | 见左 |
 | AG2b 偶发失败 | 原因是测试时序，不是产品问题；测试改为等待派生咨询 Session 出现（用户 2026-10-05 同意） | 31474d5 |
@@ -108,8 +109,7 @@
 
 ## 剩余（按顺序）
 
-1. 把 WorkGraph 的子模块规则写进 `module-target.json`（决定 40：任务 D 验收后单独一步，lead 做）。按方案的 `target.json`：13 个子模块和允许的依赖，含新加的 `tasks → architecture`，`model → state` 用修法 B 写成 L0 内部的明确例外（model 可以依赖 state，反过来不行）。在参考搬移的树上量过（它的 `src/`、`tests/` 和 0cd45508 相同）：按这份声明 0 条违规、子模块之间无环；按 10-02 的严格声明只报 `model/plan-contracts.ts:19` 这一条 model → state，就是修法 B 要写明的那条。
-2. 收尾：
+1. 收尾：
    - 更新 HANDOFF；在 AGENTS.md 约束里补“2026-10-02 起状态迁移必须经过 `work-graph/state/`”；
    - 任务 D 留下的旧路径。纯搬移不改注释和文档，清单在 lead 临时目录的 `taskd/stale-paths.md`（搬移表、逐行位置和查找命令）：
      - `src/`、`tests/` 里 38 处注释和测试标题：24 处已经不对（14 处写旧目录，10 处写的文件名改了），另外 14 处写的文件名没变，仍然对；
@@ -129,6 +129,7 @@
      - 规格 GAP-46 说的“Runtime 拒绝两个返工工具名”的负向测试从没写过，现在只有准入层的覆盖（规格已改为如实写）；
      - 规格 §12.10 的 A8-1d、A8-3j、A8-3k 没有哪个测试点名，没有逐个核对没点名的用例是否覆盖；补不补测试由 lead 定；
      - [CORE-DATA-OPERATIONS](CORE-DATA-OPERATIONS.md) 只补了 `setGoalControl`；规格 GAP-45 列的 `resolveUnknownRun`、`reverifyRound`、有痕 Task 的处置修改（TASK-19）、Host 自动化设置还没写，`requeueTask` 一行没按 5.4 核对。
+   - 写子模块声明时记下的（不影响行为）：规格 §14.4（L-8）原定任务 D 之后把 state 的 `pureDirectories` 换成子模块条目上的 `pure: true`，但检查器还不认 `pure` 字段，所以保留 `pureDirectories`（含义相同，见 [module-dag §6](module-dag.md)）；要换，先改 `check-boundaries.mjs` 和它的测试，换不换由 lead 定；
    - 全量测试和 `verify:isolated`；
    - 最终报告，附每个服务的净行数表（方法和简化后的数见上面“简化后的行数”）。
 
