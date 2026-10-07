@@ -1771,7 +1771,9 @@ PreparedTaskManifestV1.sessionBasis?: { sourceKernelSessionId: string; throughPo
 //     // 规则：永远不声称“没有变化”；无法确定时写明无法确定（§16 GAP-49）
 //     // A.2 第 6 步收尾同步（lead 决定 LA-10（2026-10-07））：afterRun 未进入 Kernel 时，checks 取 factsFrom Run 的轮次
 //     //   （它那条 TaskRequeue 覆盖的轮次）；round_open 检查点和从它开始的分段也取这一轮，at 取该 Run 的结束时间。
-//     //   所以“检查轮次开始以来的变化”从所列检查所在的位置算起。afterRun 进入过时不变，仍取它自己的轮次
+//     //   所以“检查轮次开始以来的变化”从所列检查所在的位置算起。unobserved 的 previousEndedAt 同样取该 Run 的结束时间，
+//     //   该 Run 没有轮次时也一样：工作区一节只说这一次执行（与 selfChanged 相同），无法观察的区间不会倒着走。
+//     //   afterRun 进入过时不变，仍取它自己的轮次和结束时间
 //   session: { continuity: 'same_session_history' | 'same_session_without_previous_turn' | 'other_session_seeded' | 'other_session';
 //              sessionRef: SessionRef（新 Run 的领取 Session）; seededFrom: { sessionRef; throughPosition } | null; boundaryPosition: number | null };
 //   standingInstructionVersion: 1;   // 固定文本块，必含“文件可能已经变化，编辑前先重新读取”；改动文本即升版本
@@ -5445,7 +5447,7 @@ lead 已定的实现层决定 L-1..L-12 不在此列。用户已于 2026-10-03 �
 | L-15 | Workflow 选择任务时跳过非 active 的 Task（VD-11 第二处改动），这是正确性修复，与 U-10 无关 |
 | L-16 | 附录 A 第 C 节的各节补充决定，按各节写明的默认做法实施 |
 
-### lead 决定（2026-10-03，A.1b）
+### lead 决定（2026-10-03 A.1b；2026-10-07 第 6 步收尾）
 
 LA-1..LA-7 七条是 2026-10-03 修订（A.1b）时，lead 对用户决定 C1..C8 落地时留下的问题作出的裁定。正文各节引作“lead 决定 LA-n（2026-10-03）”，已经按此书写。优先级低于用户决定 C1..C8，高于 L-1..L-16 与其余 lead 裁定（§0.7）。lead 同日按用户总体取向裁定的 10 项解释列在 §0.7，不在本表重复。LA-7 之后的各条是 2026-10-07 A.2 第 6 步收尾时，lead 对第 6 步提议 P-1..P-4 的裁定，正文引作“lead 决定 LA-n（2026-10-07）”，优先级与前七条相同。你不同意哪一条，指出后再改。
 
@@ -5458,16 +5460,16 @@ LA-1..LA-7 七条是 2026-10-03 修订（A.1b）时，lead 对用户决定 C1..C
 | LA-5 | requeue 的无进展键只需要 `sourceDigest`，改用只取 digest 的来源捕获，不受改动文件数上限（今天超过 64 个文件时在算出 digest 之前就返回 `incomplete/source_unavailable`，`src/core/workspace/verification-workspace-reader.ts:58`）。开轮（VR-01）与重验（VR-14）保留今天的完整捕获。GAP-54 缩小到这两处 | §13 ND-2、13.1 `source`；§9 VD-12；GAP-54 |
 | LA-6 | 启动重驱。启动核对完成后，持有实例租约（L-10）的 Host 为每个 `desiredState='active'` 且满足下列之一的 Goal 启动既有协作驱动：(a) 有必需 active Task 的判定为 `requeue`、`reverify` 或 `claim_requeued`；(b) 有已领取或已授权、未进入的 Run（W-01、W-02）需要重驱。由 `TaskAutomationPolicyV1.resumeOnStartup` 控制（Host 设置 `automation.resumeOnStartup`，默认 `true`）。这不是盲目重启：一切仍经 Workflow 与 owner 守卫，paused-interrupted 的 Task 仍只由人继续。不加定时调度：停在 `waiting` 的驱动只由推进、驱动启动、启动重驱或既有注意力触发唤醒，GAP-48 缩小到这一点 | §12.1 第 6b 步（第 6 步之后新增）；§2 GOAL-14 说明；§7.7；§15 第 5.6、5.8 步；§12.10 A8 断言；GAP-48 |
 | LA-7 | (1) RUN-19 判断“工具都有结果”时，Kernel `pending`（已声明、从未开始）的工具调用计为未开始，与 RUN-23、RUN-24 一致；只有 `running` 或 `outcome_unknown` 的调用算在途（U-6 按原推荐）。(2) RUN-23 推广为“排队的 cancel + 干净的 Kernel Turn”，不论 Kernel 是否已到 paused。(3) GOAL-05：人暂停的 Goal 只能由人恢复（暂停者与恢复者都按 `reworkActorClassOf` 分类，判为 `human` 的才是人）。(4) GOAL-14 的重启后重驱即 LA-6 | §5 ATT-09；§6 RUN-19、RUN-23；§7 CTL-10；§2 GOAL-05、GOAL-14；§13 ND-5 |
-| LA-8 | （2026-10-07，采纳提议 P-1、P-2）人工认定（RUN-22、QRR-06）的幂等指纹只含请求本身（目标、理由、pin），不含 Host 入口读到的 Kernel 事实（`kernelTurnOpen`、`inputsConfirmed`）。所以同一身份的重试即使 Kernel 读法变了，也得到原回执，不写入；同一身份换了理由仍为 `idempotency_conflict`（§1.2）。Host 入口在租约检查之后、准入与 Kernel 读取之前按身份查原回执；没有实例租约的 Host 对重试仍返回 `busy`（L-1） | §6 RUN-22；§8 QRR-06；§6.1 契约 (d)；§15.2 第 6 步同步；`tests/scenarios/A8-host-restart-attestation.test.ts`（所有者）、`A8-host-restart-entry.test.ts`（A8-2b）、`A8-host-restart-lease.test.ts`（Q-05、QRR-06） |
+| LA-8 | （2026-10-07，采纳提议 P-1、P-2）人工认定（RUN-22、QRR-06）的幂等指纹只含请求本身（目标、理由、pin），不含 Host 入口读到的 Kernel 事实（`kernelTurnOpen`、`inputsConfirmed`）。所以同一身份的重试即使 Kernel 读法变了，也得到原回执，不写入；同一身份换了理由仍为 `idempotency_conflict`（§1.2）。Host 入口在租约检查之后、准入与 Kernel 读取之前按身份查原回执；没有实例租约的 Host 对重试仍返回 `busy`（L-1） | §6 RUN-22；§8 QRR-06；§6.1 契约 (d)；§15.2 第 6 步同步；`tests/scenarios/A8-host-restart-attestation.test.ts`（所有者。它放在 A8 重启场景旁边，不在 `tests/work-graph/` 的所有者测试旁边，因为未知的 Run 和 QueryRun 要由真实的启动核对造出，这要用场景测试的工具）、`A8-host-restart-entry.test.ts`（A8-2b）、`A8-host-restart-lease.test.ts`（Q-05、QRR-06） |
 | LA-9 | （2026-10-07，提议 P-3 选 (b)）本批接受冻结 Kernel 的这条限制：接续 Session 里之后的 Turn 只保留该 Session 自己的 Turn，不保留种子前缀；种子前缀只到达接续 Session 的第一个 Run。原因：冻结 Kernel 只按一个 Session 的记录恢复历史（`vendor/coding-agent/dist/app/composition/composition-root.js:158-170`）。平台只能传种子来源或本 Session 之一，也不能写 Kernel 存储。Kernel 补丁以后做，不在本批。A8-3p 的测试断言这条限制；以后 Kernel 补丁保留了前缀，这个测试会失败，那时同步本规格 | §12.10 A8-3p；§16 GAP-50 (ii)；`tests/scenarios/A8-host-restart-paused.test.ts`；STATUS.md 缺口“接续的代价” |
-| LA-10 | （2026-10-07，提议 P-4 选 (a)）afterRun 未进入 Kernel 时，接续说明的 `round_open` 工作区检查点和从它开始的分段，与 `checks` 一样取 factsFrom Run 的轮次（`continuation-brief-assembly.ts` 的 `checksRound`），`at` 取该 Run 的结束时间。所以“检查轮次开始以来的变化”从所列检查所在的位置算起 | §6.1 契约 (e)；`src/core/agent-runtime/continuation-brief-assembly.ts`；`tests/scenarios/C3-not-entered-chain.test.ts` |
+| LA-10 | （2026-10-07，提议 P-4 选 (a)）afterRun 未进入 Kernel 时，接续说明的 `round_open` 工作区检查点和从它开始的分段，与 `checks` 一样取 factsFrom Run 的轮次（`continuation-brief-assembly.ts` 的 `checksRound`），`at` 取该 Run 的结束时间。所以“检查轮次开始以来的变化”从所列检查所在的位置算起。`unobserved` 的 `previousEndedAt` 同样取该 Run 的结束时间，该 Run 没有轮次时也一样，所以无法观察的区间不会倒着走（收尾审阅补充，2026-10-07） | §6.1 契约 (e)；`src/core/agent-runtime/continuation-brief-assembly.ts`；`tests/scenarios/C3-not-entered-chain.test.ts`；`tests/runtime/C3-brief-timeline.test.ts`（各 Run 结束时间不同） |
 
 
 ## 附录 C　设计决定 D-1..D-18（文中的“brief”）
 
 正文中的“brief”和“D-n”都指本附录。它们是起草规格前由 lead 定下的约束，各节都按此书写。其中会改变产品可见行为的，已在 §0.4 和附录 A 中列为 U-n。用户已于 2026-10-03 全部确认：U-1、U-2、U-4..U-8、U-14 按原推荐；U-3、U-9..U-13、U-15 按用户决定 C1..C8 改变。没有单独 U 编号的 D-8、D-10、D-11、D-13、D-15、D-17 继续有效。
 
-下表“决定”一栏保留起草时的原文。只有 D-16 按 C8 改写，因为它原写“待用户确认”；原文保留在行内。最后一栏“2026-10-03（对应 C 项）”是新增的，写明每条的现状：“按原推荐”或“不变”表示原文照常有效；写了 Cn 或 LA-n 的，按该决定修订或补充。较长的说明见表后的修订注 1–5，C 项到 D 项的反向对照也在表后。原文与最后一栏或修订注冲突时，以后两者为准。优先级：用户决定 C1..C8 > lead 决定 LA-1..LA-7 > 其余 lead 裁定（§0.7）。
+下表“决定”一栏保留起草时的原文。只有 D-16 按 C8 改写，因为它原写“待用户确认”；原文保留在行内。最后一栏“2026-10-03（对应 C 项）”是新增的，写明每条的现状：“按原推荐”或“不变”表示原文照常有效；写了 Cn 或 LA-n 的，按该决定修订或补充。较长的说明见表后的修订注 1–5，C 项到 D 项的反向对照也在表后。原文与最后一栏或修订注冲突时，以后两者为准。优先级：用户决定 C1..C8 > lead 决定 LA-1..LA-7（LA-8..LA-10 同级，见附录 B）> 其余 lead 裁定（§0.7）。
 
 | 编号 | 决定 | 对应 U 项 | 2026-10-03（对应 C 项） |
 | --- | --- | --- | --- |

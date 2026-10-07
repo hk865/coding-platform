@@ -137,7 +137,10 @@ export type ContinuationBriefV1 = {
     checkpoints: ContinuationSourceCheckpointV1[];
     /** `from`/`to` are indexes into `checkpoints`; the verdict comes from `compareSourceCheckpoints`. */
     segments: Array<{ from: number; to: number; verdict: SourceChangeVerdictV1; reason: string }>;
-    /** Previous Run end → first checkpoint (index `to`, null without one) is never observed. */
+    /**
+     * Previous Run end → first checkpoint (index `to`, null without one) is never observed. LA-10: when the afterRun
+     * never entered, `previousEndedAt` is the end of the `factsFrom` Run.
+     */
     unobserved: { from: 'previous_run_end'; to: number | null; previousEndedAt: string | null };
     uncommitted: { status: 'git' | 'not_git' | 'unavailable'; baseCommit: string | null; paths: string[]; omitted: number; reason: string | null };
   };
