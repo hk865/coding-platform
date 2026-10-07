@@ -132,10 +132,11 @@ describe.each(KINDS)('R4c.1 real %s atomic claim', kind => {
       occupancy: { kind: 'execution', generation: 2 },
       lastExecutionRef: { aggregateType: 'Run', runId: claim.runRef.runId } });
 
-    const restored = await fixture.service.readTaskClaim(fixture.ctx, claim.outboxRef);
-    expect(restored).toMatchObject({ status: 'ready', value: { outboxRef: claim.outboxRef,
+    // The claim restores from its receipt: the same request replays it; another project gets nothing.
+    const restored = await fixture.service.claimTask(fixture.ctx, request);
+    expect(restored).toMatchObject({ status: 'committed', replayed: true, value: { outboxRef: claim.outboxRef,
       runRef: claim.runRef, task: claim.task, claimedAt: claim.claimedAt } });
-    expect(await fixture.service.readTaskClaim({ ...fixture.ctx, projectId: 'other-project' }, claim.outboxRef))
+    expect(await fixture.service.claimTask({ ...fixture.ctx, projectId: 'other-project' }, request))
       .toMatchObject({ status: 'rejected' });
 
     // Directed reads only: no whole-Goal Run scan and no material read.

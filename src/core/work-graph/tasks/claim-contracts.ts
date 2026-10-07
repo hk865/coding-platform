@@ -5,7 +5,7 @@
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { SessionRef } from '../../../contracts/core/identity.js';
 import type { TaskClaim } from '../../../contracts/core/task-claim.js';
-import type { ReadResult, WriteResult } from '../../../contracts/core/results.js';
+import type { WriteResult } from '../../../contracts/core/results.js';
 import type {
   ConsumedWaitV1, DispatchOutboxRef, RoleBindingRefV1, RunRef, TaskAttemptRef, TaskBudgetV1, TaskDispatchStateV2, TaskTriple,
 } from '../../../contracts/dispatch.js';
@@ -90,7 +90,6 @@ export type TaskClaimOutbox = {
 };
 export interface TaskClaimPort {
   claimTask(ctx: CoreCallContext, request: GraphWrite<ClaimTaskInput>): Promise<WriteResult<TaskClaim>>;
-  readTaskClaim(ctx: CoreCallContext, ref: DispatchOutboxRef): Promise<ReadResult<TaskClaim>>;
   /**
    * Spec §4 TASK-16/17/27/28: let a Task whose selected Run ended open a new
    * Attempt. A committed policy refusal is the `refused` value, not a

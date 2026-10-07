@@ -12,7 +12,7 @@
  * round + Evidence + TaskEvidenceIndex + event + receipt in ONE records.commit.
  *
  * Every round, check and TaskEvidenceIndex write is decided by
- * `state/verification-machine.ts` (spec §9 VR-01..VR-05, VR-07, VR-08,
+ * `state/verification-machine.ts` (spec §9 VR-01..VR-05, VR-07,
  * VR-10..VR-15) after the unchanged receipt lookup: the service reads,
  * captures and mints ids, stops at the machine's exported guard steps where it
  * stopped before each IO, and translates the machine's effects into the commit.
@@ -97,7 +97,7 @@ import { unreachable, type Rejected } from '../state/transition.js';
 import { compileVerificationPlan } from './verification-plan.js';
 import { evidenceApplicabilityWithBasis } from './coverage.js';
 import {
-    EVIDENCE_ADMITTED_EVENT_TYPE, VERIFICATION_CHECK_ABANDONED_EVENT_TYPE, VERIFICATION_CHECK_BEGUN_EVENT_TYPE,
+    VERIFICATION_CHECK_ABANDONED_EVENT_TYPE, VERIFICATION_CHECK_BEGUN_EVENT_TYPE,
     VERIFICATION_CHECK_INTERRUPTED_EVENT_TYPE, VERIFICATION_CHECK_RESULT_RECORDED_EVENT_TYPE,
     VERIFICATION_ROUND_BY_TASK_LOOKUP, VERIFICATION_ROUND_FINALIZED_EVENT_TYPE,
     VERIFICATION_ROUND_OPENED_EVENT_TYPE, VERIFICATION_ROUND_ORIGINAL_LOOKUP, VERIFICATION_ROUND_CHAIN_LOOKUP_LIMIT,
@@ -243,7 +243,7 @@ type RoundWrite<T> = {
     round: RoundSnapshot;
     /** `guard_open_read_set` / `guard_finalize_read_set` / `guard_begin_read_set`: the CAS of every record the operation read. */
     readSet?: readonly RecordGuard[];
-    /** `admit_claim_evidence` / `admit_verdict_evidence`: the Evidence@1 rows built from the effect. */
+    /** `admit_verdict_evidence`: the Evidence@1 rows built from the effect. */
     evidence?: readonly EvidenceSnapshot[];
     /** `append_task_evidence_index`. */
     index?: TaskEvidenceIndexWrite;
@@ -288,7 +288,6 @@ async function commitRoundWrite<T>(records: Records, signal: AbortSignal, write:
             case 'guard_begin_read_set':
                 readSet = write.readSet ?? [];
                 break;
-            case 'admit_claim_evidence':
             case 'admit_verdict_evidence':
                 evidence = (write.evidence ?? []).map(snapshot => guarded(encodeEvidenceSnapshot(snapshot), null));
                 break;
@@ -1303,55 +1302,6 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         return settleExecutingCheck(ctx, request, 'interrupt');
     }
 
-    async function submitEvidence(ctx: CoreCallContext, request: GraphWrite<{ roundRef: VerificationRoundRef; claim: string }>):
-    Promise<WriteResult<EvidenceSnapshot>> {
-        const ownedCtx = bindTrustedContext(ctx);
-        if (!ownedCtx.ok) return ownedCtx.rejection;
-        const { scope, actor, signal } = ownedCtx;
-        const owned = isolateWrite(request);
-        if (!owned.ok) return owned.rejection;
-        const input = owned.input;
-        const refProblem = roundRefProblem(input.roundRef);
-        if (refProblem !== null) return invalid(refProblem);
-        if (!nonEmpty(input.claim)) return invalid('submitEvidence requires a non-empty claim');
-        if (input.roundRef.projectId !== scope.projectId || input.roundRef.workspaceId !== scope.workspaceId) {
-            return forbidden('the round ref is outside the trusted Host scope');
-        }
-        let identity = '';
-        let fingerprint = '';
-        try {
-            identity = identityKeyOf('r3e-submit:', actor, scope.projectId, scope.workspaceId, owned.requestId);
-            fingerprint = fingerprintOf({ kind: 'r3e-submit', roundRef: input.roundRef, claim: input.claim, expected: owned.expected });
-        } catch { return invalid('the submit request is not canonicalizable JSON'); }
-        const lookup = await lookupReceipt(records, identity, fingerprint);
-        if (lookup.status === 'failed') return lookup.rejection;
-        if (lookup.status === 'found') {
-            return await replayEvent(records, lookup.receipt, identity, fingerprint, EVIDENCE_ADMITTED_EVENT_TYPE) as WriteResult<EvidenceSnapshot>;
-        }
-        const loaded = await readRoundRecord(records, input.roundRef);
-        if (!loaded.ok) return loaded.rejection;
-        const round = loaded.round;
-        // VR-08: the executor's claim attaches to the round's required coverage; the round itself is not written.
-        const decided = transitionRound(round, { kind: 'evidence_submitted' }, roundCtx(round.executor, actor, null));
-        if (!decided.ok) return refusalOf(decided, round);
-        const evidenceId = deps.newId();
-        const admittedAt = deps.now();
-        const evidence: EvidenceV1 = { schemaVersion: 1, evidenceId, kind: 'claim', outcome: 'INCONCLUSIVE',
-            source: { actor: round.executor, runRef: null, checkId: null }, subject: { ...round.subject },
-            coverage: effectOf(decided.effects, 'admit_claim_evidence')?.coverage ?? [], anchor: anchorOf(round),
-            verificationPlanRef: { planId: round.verificationPlan.planId, planDigest: round.verificationPlan.planDigest },
-            summary: { text: boundedSummary(input.claim), artifactRef: null } };
-        const snapshot: EvidenceSnapshot = { ref: { aggregateType: 'Evidence', projectId: round.ref.projectId, evidenceId },
-            revision: 1, schemaVersion: 1, evidence, admittedAt };
-        const indexRead = await readIndex(records, round);
-        if (!indexRead.ok) return indexRead.rejection;
-        return await commitRoundWrite(records, signal, { identity, fingerprint, effects: decided.effects, round,
-            evidence: [snapshot], index: nextTaskEvidenceIndex(indexRead.index, [evidenceId]),
-            event: { eventId: deps.newId(), eventType: EVIDENCE_ADMITTED_EVENT_TYPE, schemaVersion: 1, occurredAt: admittedAt,
-                identityKey: identity, roundRef: round.ref, actor, fingerprint, result: snapshot },
-            value: snapshot, cancelled: 'the evidence claim was cancelled before commit' });
-    }
-
     async function finalizeChecks(ctx: CoreCallContext, request: GraphWrite<{
         roundRef: VerificationRoundRef; reviewerEvidence?: readonly EvidenceRef[];
     }>): Promise<WriteResult<FinalizedChecks>> {
@@ -1894,5 +1844,5 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
     }
 
     return { openVerification, readVerification, queryOriginalVerification, queryRoundChainHead, beginCheck, recordCheckResult,
-        abandonCheck, interruptCheck, submitEvidence, finalizeChecks, reverifyRound };
+        abandonCheck, interruptCheck, finalizeChecks, reverifyRound };
 }

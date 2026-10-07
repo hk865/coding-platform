@@ -9,7 +9,7 @@
  *   and `code` (§9.4).
  * - A.2 step 5.3 rows at their target: the VR-01 chain root, slot claim, VD-1
  *   busy and VD-3; the VR-02 VD-8 markers; the VR-03 `incompleteCause`; VR-05
- *   and VR-13; the D-2 fold of VR-07 with its read-set guard; VD-2 on VR-08;
+ *   and VR-13; the D-2 fold of VR-07 with its read-set guard;
  *   the VR-11/VR-12 index. Rows of later substeps return `illegal`/`invalid`
  *   at the legal cell (VR-04/06, 5.6); the VD-9 guards are 5.5. Step 5.4:
  *   VR-09 (`task_requeued` guards the finalized non-clean-PASS head and claims
@@ -40,7 +40,7 @@ import type { VerificationRoundMaterialIdentity } from '../../src/contracts/veri
 import {
   beginRefusalIsPermanent, buildFinalizedRound, buildOpenedRound, buildSuccessorRound, chainEvidenceIds,
   checkEventAdmission, displayRoundStatus, evidenceSupersededByRequeue, finalizeRoundOutcome, foldVerdictChecks, frozenBindingProblem,
-  isFinalizedNonPass, nextTaskEvidenceIndex, outcomeFor, pendingRoundChecks, requiredRoundCoverage, reverifyAdmissionProblem,
+  isFinalizedNonPass, nextTaskEvidenceIndex, outcomeFor, pendingRoundChecks, reverifyAdmissionProblem,
   reverifyCapRefusal, reverifyExemption, reverifyExemptionOfFacts, reverifyFailureClass, reverifyPolicyRefusal, rootRoundChain,
   roundChainHead, successorAutoCount,
   roundOpenBasisProblem, roundOpenChainProblem, roundOpenChecksProblem,
@@ -244,7 +244,6 @@ const finalizeEvent = (state: RoundSnapshot | null): RoundEvent => ({ kind: 'rou
 
 const ROUND_EVENTS = {
   round_opened: (): RoundEvent => ({ kind: 'round_opened', opening: OPENING, facts: OPEN_FACTS }),
-  evidence_submitted: (): RoundEvent => ({ kind: 'evidence_submitted' }),
   round_finalized: finalizeEvent,
   // VR-14 (5.9): the state is the requested predecessor and the chain's head; the successor is built.
   round_reverified: (state: RoundSnapshot | null): RoundEvent => reverifyEvent(state),
@@ -265,10 +264,6 @@ const requeuedEffects = (head: RoundSnapshot): VerificationEffect[] => {
   return [{ kind: 'guard_round_unchanged', revision: head.revision },
     { kind: 'claim_round_slot', claim: { claimKey: roundSlotKey(roundSlotSubjectOf(head)), expectedOwner: owner, nextOwner: owner } }];
 };
-/** VR-08 effects: the round guarded as read (not written), the claim Evidence, the index, the event. */
-const claimEffects = (revision: number): VerificationEffect[] => [{ kind: 'guard_round_unchanged', revision },
-  { kind: 'admit_claim_evidence', coverage: [cov('r1'), cov('r2')] },
-  { kind: 'append_task_evidence_index' }, { kind: 'emit_event', eventType: 'EvidenceAdmitted' }];
 const finalizedEffects = (revision: number, admissions: { ref: EvidenceRef; checkId: string; coverage: EvidenceCoverageV1 }[]):
 VerificationEffect[] => [{ kind: 'guard_round', expectedRevision: revision }, { kind: 'guard_finalize_read_set' },
   { kind: 'admit_verdict_evidence', admissions },
@@ -286,9 +281,6 @@ const FINALIZED_FROM_SETTLED: RoundSnapshot = { ...OPEN_SETTLED, revision: 6, st
 const ROUND_TABLE: Record<RoundEventLabel, () => Record<RoundStateLabel, Expect>> = {
   // VR-01 from ∅ only; an existing round is never re-opened (§9.4 "回到 open").
   round_opened: () => r(to(OPENED, OPENED_EFFECTS), II, II, II, II, II, II, II, II),
-  // VR-08 on an open round only (VD-2: a finalized round is busy); the round is guarded, not written.
-  evidence_submitted: () => r(II, keep(claimEffects(1)), keep(claimEffects(2)), keep(claimEffects(4)), keep(claimEffects(5)),
-    IB, IB, IB, IB),
   // VR-07 (D-2): executing refuses (`finalizeRoundOutcome`), interrupted is a gap; finalized is busy (`roundWriteAdmission`).
   round_finalized: () => r(II, to(FINALIZED_FROM_PENDING, finalizedEffects(1, [])), GI,
     to(FINALIZED_FROM_INTERRUPTED, finalizedEffects(4, [{ ref: evidence('e-1'), checkId: 'lint', coverage: cov('r1') }])),
@@ -551,7 +543,7 @@ describe('VR-01 round_opened guards', () => {
   });
 });
 
-describe('VR-07 / VR-08 guards', () => {
+describe('VR-07 guards', () => {
   const finalize = (state: RoundSnapshot, over: Partial<Extract<RoundEvent, { kind: 'round_finalized' }>> = {},
     ctx: Partial<RoundGuardContext> = {}) =>
     transitionRound(state, { ...(finalizeEvent(state) as Extract<RoundEvent, { kind: 'round_finalized' }>), ...over }, ctxOf(state, ctx));
@@ -590,23 +582,9 @@ describe('VR-07 / VR-08 guards', () => {
     expect(result.ok && result.effects[1]).toEqual({ kind: 'guard_finalize_read_set' });
   });
 
-  it('VR-08: refuses a non-executor, a finalized round (VD-2) and a round without required coverage', () => {
-    expect(transitionRound(OPEN_PENDING, { kind: 'evidence_submitted' }, ctxOf(OPEN_PENDING, { callerIsExecutor: false })))
-      .toEqual({ ok: false, reason: 'guard_failed', code: 'forbidden', detail: 'the evidence author is not the round executor' });
-    expect(transitionRound(FINAL_PASS, { kind: 'evidence_submitted' }, ctxOf(FINAL_PASS, { callerIsExecutor: false })))
-      .toEqual({ ok: false, reason: 'illegal', code: 'busy', detail: 'the round is finalized; no further claim may be submitted' });
-    const bare: RoundSnapshot = { ...OPEN_PENDING, verificationPlan: verificationPlan([]), checks: [] };
-    expect(transitionRound(bare, { kind: 'evidence_submitted' }, ctxOf(bare))).toEqual({ ok: false, reason: 'guard_failed',
-      code: 'incomplete', detail: 'the round has no required verification coverage to attach a claim to' });
-    // The caller pins nothing; the commit guards the round as read (`guard_round_unchanged`).
-    expect(transitionRound(OPEN_PENDING, { kind: 'evidence_submitted' }, ctxOf(OPEN_PENDING, { expectedRevision: 9 })))
-      .toEqual({ ok: true, next: OPEN_PENDING, effects: claimEffects(1) });
-  });
-
   it('roundWriteAdmission is the pre-IO part of the same rows', () => {
     expect(roundWriteAdmission(OPEN_PENDING, { kind: 'round_opened' }, ctxOf(OPEN_PENDING))).toMatchObject({ code: 'invalid' });
     expect(roundWriteAdmission(null, { kind: 'round_opened' }, ctxOf(null))).toBeNull();
-    expect(roundWriteAdmission(null, { kind: 'evidence_submitted' }, ctxOf(null))).toMatchObject({ code: 'invalid' });
     expect(roundWriteAdmission(OPEN_EXECUTING, { kind: 'round_finalized', reviewerEvidenceCount: 0 }, ctxOf(OPEN_EXECUTING))).toBeNull();
     expect(roundOpenProblem(OPEN_FACTS, task)).toBeNull();
   });
@@ -1010,12 +988,6 @@ describe('display, coverage, refusal markers and slots', () => {
     expect(displayRoundStatus(OPEN_SETTLED)).toBe('incomplete');
     expect(displayRoundStatus(OPEN_PENDING)).toBe('incomplete');
     expect(displayRoundStatus(FINAL_FAIL)).toBe('completed');
-  });
-
-  it('requiredRoundCoverage dedupes the plan coverage and adds the uncovered requirements', () => {
-    const plan = verificationPlan([{ checkId: 'lint', coverage: [cov('r1'), cov('r2')] }, { checkId: 'unit', coverage: [cov('r1')] }],
-      [{ obligationId: 'ob-1', requirementId: 'r2', kind: 'static' }, { obligationId: 'ob-2', requirementId: 'r9', kind: 'dynamic' }]);
-    expect(requiredRoundCoverage({ verificationPlan: plan })).toEqual([cov('r1'), cov('r2'), cov('r9', 'ob-2')]);
   });
 
   it('beginRefusalIsPermanent reads only the three L-9 prefixes', () => {

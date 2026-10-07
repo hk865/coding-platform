@@ -250,12 +250,14 @@ it('wires one durable Goal/Plan/Session graph and reopens the same Kernel Sessio
       value: { task: { taskId: 'implement' }, generation: record.revision + 1 } });
     await closing;
     if (claimed.status !== 'committed') throw Error('Composed claim failed');
-    expect(await reopened.claims.readTaskClaim(ctx, claimed.value.outboxRef))
+    expect(await reopened.executions.readExecution(ctx, claimed.value.runRef))
       .toMatchObject({ status: 'rejected', code: 'unavailable' });
     const third = await createTargetPlatform(options);
     try {
-      expect(await third.claims.readTaskClaim(ctx, claimed.value.outboxRef))
-        .toEqual({ status: 'ready', value: claimed.value });
+      const restored = await third.executions.readExecution(ctx, claimed.value.runRef);
+      expect(restored.status).toBe('ready');
+      if (restored.status !== 'ready') throw Error('the claimed execution must read back');
+      expect(restored.value.outbox.claim).toEqual(claimed.value);
       expect(await third.sessions.readSession(ctx, sessionRef)).toMatchObject({ status: 'ready', value: { record: {
         occupancy: { kind: 'execution', executionRef: claimed.value.runRef, generation: claimed.value.generation },
       } } });

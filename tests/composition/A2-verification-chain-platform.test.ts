@@ -1,6 +1,6 @@
 /**
  * A.2 step 5.3 through the public composition root on SQLite
- * (docs/refactor/STATE-MACHINES-SPEC.md §4 P1..P18, TASK-04..14; §9 VR-01..08,
+ * (docs/refactor/STATE-MACHINES-SPEC.md §4 P1..P18, TASK-04..14; §9 VR-01..07,
  * VR-10..13, VD-1..VD-10, VD-14, VD-15).
  *
  * The Host drives the real Workflow (`workflow.advanceWork`) over a real
@@ -11,8 +11,7 @@
  *    claimed): a second open on the same Run is `busy` with the head pin, the
  *    chain head reads without a Plan, the projection follows the head
  *    (`verifying` while open, `failed/check_failed` once an applicable FAIL
- *    finalizes it, D-2), a claim on the finalized round is `busy` (VD-2) and
- *    the failed Task cannot complete (TASK-14).
+ *    finalizes it, D-2) and the failed Task cannot complete (TASK-14).
  * 2. VD-7: a future-only adoption before the round opens, between its
  *    finalize and the completion, while the Run is still in the Kernel, or
  *    between the checks and the finalize never strands the Task: the Workflow
@@ -294,7 +293,7 @@ function openedRound(receipts: readonly WorkflowStepReceipt[]): RoundSnapshot {
   return receipt.result.value;
 }
 
-it('VR-01..VR-08: one chain per subject Run, the projection follows its head, and an applicable FAIL fails the Task', async () => {
+it('VR-01..VR-07: one chain per subject Run, the projection follows its head, and an applicable FAIL fails the Task', async () => {
   const { platform, scripted } = await openEnvironment({ command: 'exit 1' });
   // 1. The work Run completes; before its round opens the Task waits for verification (P11).
   const beforeOpen = await drive(platform, select('a2-chain-flow'), performs('open_checks'));
@@ -336,10 +335,7 @@ it('VR-01..VR-08: one chain per subject Run, the projection follows its head, an
   expect(await taskRow(platform, 'work-1')).toMatchObject({ effectivePhase: 'failed',
     phaseCause: { code: 'check_failed', detail: { checkIds: [CHECK_ID] } } });
 
-  // 5. VD-2: a claim never lands on the finalized round.
-  expect(await platform.evidence.submitEvidence(ctx(), { input: { roundRef: round.ref, claim: 'late claim' },
-    meta: { requestId: 'a2-late-claim', expected: [] } })).toMatchObject({ status: 'rejected', code: 'busy' });
-  // TASK-14 (§4.4): the failed Task is not completed from any round.
+  // 5. TASK-14 (§4.4): the failed Task is not completed from any round.
   const goal = await platform.plans.queryGoal(ctx(), goalRef);
   if (goal.status !== 'ready' || goal.value.goal.activePlanRevision === null) throw new Error('the Goal must be readable');
   expect(await platform.goals.completeTask(ctx(), { input: { taskRef: round.subject, planRef: goal.value.goal.activePlanRevision,

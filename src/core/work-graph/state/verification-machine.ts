@@ -1,6 +1,7 @@
 /**
  * VerificationRound, round-check and TaskEvidenceIndex machines
- * (docs/refactor/STATE-MACHINES-SPEC.md §9, rows VR-01..VR-15; forbidden
+ * (docs/refactor/STATE-MACHINES-SPEC.md §9, rows VR-01..VR-15 without VR-08,
+ * deleted with `submitEvidence` (decision 34); forbidden
  * transitions §9.4; round chain helpers VD-5, VD-12..VD-15; D-2 fold).
  *
  * The owner is `evidence/evidence-service.ts` (and, for the check rows,
@@ -33,9 +34,8 @@
  *   markers. VR-03 writes the INCONCLUSIVE `incompleteCause`; VR-05 (VD-6) and
  *   VR-13 are written. VR-07 is the D-2 fold (an applicable FAIL is FAIL, an
  *   `interrupted` check is the gap `interrupted_check`, PASS ⇒ no gaps) and
- *   guards the read set; VR-08 refuses a finalized round (VD-2) and guards the
- *   round as read; VR-11 guards a stored @0 index at 0 and VR-12 writes no
- *   index for zero appended ids.
+ *   guards the read set; VR-11 guards a stored @0 index at 0 and VR-12 writes
+ *   no index for zero appended ids.
  * - A.2 step 5.4 (D-3): VR-01 refuses a subject Run a TaskRequeue covers, and
  *   VR-09 answers a requeue of the chain head (the head guarded as read and the
  *   slot held with a same-owner claim).
@@ -113,6 +113,7 @@ export type VerificationRoundEventType =
   | 'VerificationCheckResultRecorded'
   | 'VerificationCheckInterrupted'
   | 'VerificationCheckAbandoned'
+  /** Written only by VR-08, deleted with `submitEvidence` (decision 34); kept so stored rounds still decode. */
   | 'EvidenceAdmitted'
   | 'VerificationRoundFinalized'
   | 'VerificationRoundReverified';
@@ -182,11 +183,11 @@ export type RoundSlotClaimV1 = { claimKey: string; expectedOwner: string | null;
 export type RoundGuardContext = {
   /**
    * The caller is the round's frozen executor (`evidence-service.ts:755`, `:831`,
-   * `:882`, `:937`); for `round_opened`, the trusted configuration's executor
+   * `:937`); for `round_opened`, the trusted configuration's executor
    * (`:500`). Not read by the reconcile row VR-04 (`host_restart`).
    */
   callerIsExecutor: boolean;
-  /** The caller's `meta.expected` round revision; null when the operation pins none (`submitEvidence` today). */
+  /** The caller's `meta.expected` round revision; null when the operation pins none (`round_opened`: no round yet). */
   expectedRevision: number | null;
   /** The reconciling Host holds the D-18 instance lease (VR-04); otherwise another live Host does. */
   instanceLeaseHeld: boolean;
@@ -340,7 +341,6 @@ export type ReverifyRefusalV1 = {
 
 export type RoundEvent =
   | { kind: 'round_opened'; opening: RoundOpeningV1; facts: RoundOpenFactsV1 }
-  | { kind: 'evidence_submitted' }
   /** `evidenceRefs` are minted by the owner, one per admission of `finalizeRoundOutcome`, in that order. */
   | { kind: 'round_finalized'; reviewerEvidenceCount: number; fold: RoundFoldFactsV1; evidenceRefs: readonly EvidenceRef[] }
   /**
@@ -381,7 +381,6 @@ export type CheckEventHead =
 /** The part of a round event that the pre-IO admission reads. */
 export type RoundEventHead =
   | { kind: 'round_opened' }
-  | { kind: 'evidence_submitted' }
   | { kind: 'round_finalized'; reviewerEvidenceCount: number };
 
 /** One verdict Evidence@1 of VR-07: the owner copies the check's candidate verdict with this ref and coverage. */
@@ -390,7 +389,7 @@ export type VerdictAdmissionV1 = { ref: EvidenceRef; checkId: string; coverage: 
 /**
  * Same-commit intents the owner translates:
  * - `guard_round`: the round CAS (`null` = the key must not exist), writing `next`;
- * - `guard_round_unchanged`: the round as read, not written (VR-08);
+ * - `guard_round_unchanged`: the round as read, not written (VR-09);
  * - `guard_open_read_set`: Goal, adopted Plan, Workspace, subject Run, pinned
  *   policy and baseline as read (`evidence-service.ts:635-642`);
  * - `guard_finalize_read_set`: Goal, the Plans the fold judged against and the
@@ -405,8 +404,7 @@ export type VerdictAdmissionV1 = { ref: EvidenceRef; checkId: string; coverage: 
  *   requeue VR-09 and a reverify refusal);
  * - `refuse_reverify`: the policy refusal record the owner writes through
  *   `taskReworkRefusalEffects` with its `TaskReworkRefused` event (VR-14);
- * - `admit_claim_evidence` / `admit_verdict_evidence`: Evidence@1 rows, each
- *   CAS null (VR-08, VR-07);
+ * - `admit_verdict_evidence`: Evidence@1 rows, each CAS null (VR-07);
  * - `append_task_evidence_index`: the admitted ids through `nextTaskEvidenceIndex`;
  * - `emit_event`: the durable round event.
  */
@@ -420,7 +418,6 @@ export type VerificationEffect =
   | { kind: 'guard_reverify_read_set' }
   | { kind: 'claim_round_slot'; claim: RoundSlotClaimV1 }
   | { kind: 'refuse_reverify'; refusal: ReverifyRefusalV1 }
-  | { kind: 'admit_claim_evidence'; coverage: EvidenceCoverageV1[] }
   | { kind: 'admit_verdict_evidence'; admissions: VerdictAdmissionV1[] }
   | { kind: 'append_task_evidence_index' }
   | { kind: 'emit_event'; eventType: VerificationRoundEventType };
@@ -448,27 +445,6 @@ export function outcomeFor(observation: CheckProcessObservation, sourceStatus: C
     return { outcome: 'INCONCLUSIVE', incompleteCause: 'process_abnormal' };
   }
   return { outcome: observation.exitCode === 0 ? 'PASS' : 'FAIL', incompleteCause: null };
-}
-
-/** The required coverage a claim attaches to (the service's former `collectRequiredCoverage`). */
-export function requiredRoundCoverage(round: Pick<RoundSnapshot, 'verificationPlan'>): EvidenceCoverageV1[] {
-  const seen = new Set<string>();
-  const coverage: EvidenceCoverageV1[] = [];
-  for (const check of round.verificationPlan.checks) {
-    for (const entry of check.coverage) {
-      const key = requirementKeyOf(entry);
-      if (seen.has(key)) continue;
-      seen.add(key);
-      coverage.push({ ...entry });
-    }
-  }
-  for (const uncovered of round.verificationPlan.uncovered ?? []) {
-    const key = requirementKeyOf(uncovered);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    coverage.push({ obligationId: uncovered.obligationId, requirementId: uncovered.requirementId });
-  }
-  return coverage;
 }
 
 /** §9.1 design names; display only, never stored. A superseded predecessor (VR-15) is still `completed`. */
@@ -1099,27 +1075,17 @@ function pinIsStale(state: RoundSnapshot, ctx: RoundGuardContext): boolean {
 
 /**
  * Pre-IO guards of the round-level writes, in today's order: `round_opened`
- * (`evidence-service.ts:500-502`; the round key must be absent),
- * `evidence_submitted` (`:882`) and `round_finalized` (`:937-938`): the
- * reviewer evidence before anything else (`roundReviewerEvidenceProblem`,
- * which the owner also runs on its own at `:913-916`, ahead of the scope
- * check and the receipt lookup), then open, executor and the pin.
+ * (`evidence-service.ts:500-502`; the round key must be absent) and
+ * `round_finalized` (`:937-938`): the reviewer evidence before anything else
+ * (`roundReviewerEvidenceProblem`, which the owner also runs on its own at
+ * `:913-916`, ahead of the scope check and the receipt lookup), then open,
+ * executor and the pin.
  */
 export function roundWriteAdmission(state: RoundSnapshot | null, head: RoundEventHead, ctx: RoundGuardContext): Rejected | null {
   switch (head.kind) {
     case 'round_opened':
       if (state !== null) return reject('illegal', 'invalid', 'a round is opened once; a new round on the subject is a successor (VR-14)');
       if (!ctx.callerIsExecutor) return reject('guard_failed', 'forbidden', 'the call context is not the registered check Host executor');
-      return null;
-    case 'evidence_submitted':
-      if (state === null) return reject('illegal', 'invalid', 'evidence_submitted needs an existing round');
-      switch (state.status) {
-        case 'open': break;
-        // VD-2: like a fresh begin or result, a claim never lands on a finalized round.
-        case 'finalized': return reject('illegal', 'busy', 'the round is finalized; no further claim may be submitted');
-        default: return unreachable(state.status, 'round status');
-      }
-      if (!ctx.callerIsExecutor) return reject('guard_failed', 'forbidden', 'the evidence author is not the round executor');
       return null;
     case 'round_finalized': {
       const reviewerProblem = roundReviewerEvidenceProblem(head.reviewerEvidenceCount);
@@ -1389,13 +1355,12 @@ export function frozenBindingProblem(
 }
 
 // -------------------------------------------------------------------------- //
-// Round (§9.3 VR-01, VR-07, VR-08, VR-09, VR-14, VR-15)                       //
+// Round (§9.3 VR-01, VR-07, VR-09, VR-14, VR-15)                              //
 // -------------------------------------------------------------------------- //
 
 export function transitionRound(state: RoundSnapshot | null, event: RoundEvent, ctx: RoundGuardContext): RoundTransition {
   switch (event.kind) {
     case 'round_opened': return roundOnOpened(state, event, ctx);
-    case 'evidence_submitted': return roundOnEvidenceSubmitted(state, ctx);
     case 'round_finalized': return roundOnFinalized(state, event, ctx);
     case 'round_reverified': return roundOnReverified(state, event, ctx);
     case 'task_requeued': return roundOnTaskRequeued(state);
@@ -1610,27 +1575,6 @@ function roundOnOpened(
     { kind: 'claim_round_slot', claim: { claimKey: roundSlotKey(roundSlotSubjectOf(round)), expectedOwner: null,
       nextOwner: roundSlotOwner(round.ref) } },
     { kind: 'emit_event', eventType: 'VerificationRoundOpened' },
-  ]);
-}
-
-/**
- * VR-08 (and VR-10..12 through the index effect): an open round only (VD-2);
- * the round is not written but guarded as read, so a claim and a finalize do
- * not both commit.
- */
-function roundOnEvidenceSubmitted(state: RoundSnapshot | null, ctx: RoundGuardContext): RoundTransition {
-  const admission = roundWriteAdmission(state, { kind: 'evidence_submitted' }, ctx);
-  if (admission !== null) return admission;
-  const round = state as RoundSnapshot;
-  const coverage = requiredRoundCoverage(round);
-  if (coverage.length === 0) {
-    return reject('guard_failed', 'incomplete', 'the round has no required verification coverage to attach a claim to');
-  }
-  return accept(round, [
-    { kind: 'guard_round_unchanged', revision: round.revision },
-    { kind: 'admit_claim_evidence', coverage },
-    { kind: 'append_task_evidence_index' },
-    { kind: 'emit_event', eventType: 'EvidenceAdmitted' },
   ]);
 }
 

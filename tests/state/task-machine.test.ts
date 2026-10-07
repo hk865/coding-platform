@@ -528,7 +528,6 @@ const EVENTS = {
   'check_result_recorded': roundEvent('check_result_recorded', ROW.P12.facts),
   'check_interrupted': roundEvent('check_interrupted', ROW.P9.facts),
   'check_abandoned': roundEvent('check_abandoned', ROW.P12.facts),
-  'evidence_submitted': roundEvent('evidence_submitted', ROW.P12.facts),
   'round_finalized:FAIL': finalized('FAIL', ROW.P7.facts),
   'round_finalized:INCONCLUSIVE': finalized('INCONCLUSIVE', ROW.P8.facts, ['pending_check']),
   'round_finalized:PASS': finalized('PASS', ROW.P13.facts),
@@ -647,7 +646,6 @@ function reprojectionExpect(label: StateLabel, event: EventLabel): Expect {
     case 'check_begun':
     case 'check_result_recorded':
     case 'check_abandoned':
-    case 'evidence_submitted':
       return gate ? reprojectTo(label, P20.open) : reproject(label, 'P12');
     // TASK-12: the last pending/executing check settled with an interrupted one left.
     case 'check_interrupted': return gate ? reprojectTo(label, P20.interrupted) : reproject(label, 'P9');

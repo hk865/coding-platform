@@ -194,10 +194,6 @@ export interface EvidencePort {
             observation: CheckProcessObservation;
         }>,
     ): Promise<WriteResult<RoundSnapshot>>;
-    submitEvidence(
-        ctx: CoreCallContext,
-        request: GraphWrite<{ roundRef: VerificationRoundRef; claim: string }>,
-    ): Promise<WriteResult<EvidenceSnapshot>>;
     finalizeChecks(
         ctx: CoreCallContext,
         request: GraphWrite<{ roundRef: VerificationRoundRef; reviewerEvidence?: readonly EvidenceRef[] }>,

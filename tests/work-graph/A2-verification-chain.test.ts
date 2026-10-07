@@ -13,8 +13,8 @@
  *   a later adoption too; a gate without a chain has none.
  * - VR-07 read set: an adoption or a subject Run write committed while the
  *   finalize runs refuses it (`revision_conflict`) and writes nothing.
- * - VR-08 (VD-2) and VR-10..12: no claim on a finalized round, no index row for
- *   a zero-evidence finalize, a stored legacy @0 index row is repaired.
+ * - VR-10..12: no index row for a zero-evidence finalize, a stored legacy @0
+ *   index row is repaired.
  * - Projection read (§4.1, VD-14): the chain is read in the Run's window (a
  *   round committed in between retries the read); an unreadable chain makes the
  *   task graph unavailable.
@@ -266,7 +266,7 @@ it.each([
   expect(await readKeys(fixture, [indexKey])).toEqual([indexKey]);
 });
 
-it('VR-08 (VD-2) and VR-10..12: no claim on a finalized round, no index row for zero evidence, a legacy @0 row repaired', async () => {
+it('VR-10..12: no index row for zero evidence, a legacy @0 row repaired', async () => {
   const fixture = await openFixture();
   const indexRef = { aggregateType: 'TaskEvidenceIndex' as const, projectId: fixture.scope.projectId,
     goalId: fixture.goalRef.goalId, taskId: R3E_WORK_TASK_ID };
@@ -281,10 +281,6 @@ it('VR-08 (VD-2) and VR-10..12: no claim on a finalized round, no index row for 
   const finalized = await fixture.evidence.finalizeChecks(fixture.ctx, fixture.finalizeRequest(round));
   expect(finalized).toMatchObject({ status: 'committed', value: { outcome: 'INCONCLUSIVE', evidence: [] } });
   expect(await readIndex()).toBeNull();
-  // VR-08 (VD-2): a claim never lands on the finalized round.
-  expect(await fixture.evidence.submitEvidence(fixture.ctx, { input: { roundRef: round.ref, claim: 'late claim' },
-    meta: { requestId: 'a2-late-claim', expected: [] } })).toMatchObject({ status: 'rejected', code: 'busy',
-    reason: 'the round is finalized; no further claim may be submitted' });
   // VR-11: a stored legacy @0 row is guarded at 0 and repaired by the next append (the gate's own index).
   const gateIndexRef = { ...indexRef, taskId: R3E_GATE_TASK_ID };
   expect(await fixture.b2.base.commitRaw([encodeTaskEvidenceIndexSnapshot({ ref: gateIndexRef, revision: 0, schemaVersion: 1,

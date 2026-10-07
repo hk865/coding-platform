@@ -563,9 +563,5 @@ it('a future definition refinement and the first claim on an adopted request_exe
       occupancy: claimResult.status === 'committed'
         ? { kind: 'execution', executionRef: claimResult.value.runRef } : null,
     } } });
-    if (claimResult.status === 'committed') {
-      expect(await f.service.readTaskClaim(f.ctx, claimResult.value.outboxRef))
-        .toMatchObject({ status: 'ready', value: claimResult.value });
-    }
   } finally { await f.close(); }
 });

@@ -62,7 +62,6 @@ async function assemble(fixture: TaskClaimFixture) {
     readVerification: async () => unsupported('R5c business test does not read checks'),
     beginCheck: async () => unsupported('R5c business test does not begin checks'),
     recordCheckResult: async () => unsupported('R5c business test does not record checks'),
-    submitEvidence: async () => unsupported('R5c business test does not submit evidence'),
     finalizeChecks: async () => unsupported('R5c business test does not finalize checks'),
   };
   const checks: RegisteredCheckRunner = {

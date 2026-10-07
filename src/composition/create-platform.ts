@@ -602,7 +602,6 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     };
     const claims: TaskClaimPort = {
       claimTask: (...args) => trackedCall(() => claimService.claimTask(...args), unavailable),
-      readTaskClaim: (...args) => trackedCall(() => claimService.readTaskClaim(...args), unavailable),
       requeueTask: (...args) => trackedCall(() => requeueService.requeueTask(...args), unavailable),
     };
     const roles: RoleConfigurationPort = {
@@ -694,7 +693,6 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       queryRoundChainHead: (...args) => trackedCall(() => rawEvidence.queryRoundChainHead!(...args), unavailable),
       beginCheck: (...args) => trackedCall(() => rawEvidence.beginCheck(...args), unavailable),
       recordCheckResult: (...args) => trackedCall(() => rawEvidence.recordCheckResult(...args), unavailable),
-      submitEvidence: (...args) => trackedCall(() => rawEvidence.submitEvidence(...args), unavailable),
       finalizeChecks: (...args) => trackedCall(() => rawEvidence.finalizeChecks(...args), unavailable),
       // A.2 step 5.9 (VR-14): the successor round or its policy refusal (`verification/reverify`).
       reverifyRound: (...args) => trackedCall(() => rawEvidence.reverifyRound!(...args), unavailable),

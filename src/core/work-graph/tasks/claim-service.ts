@@ -67,7 +67,7 @@ import {
 } from '../state/task-machine.js';
 import type { Rejected as Refusal } from '../state/transition.js';
 import {
-  decodeDispatchOutboxEntry, dispatchOutboxRefKey, encodeDispatchOutboxEntry, encodeTaskAttemptSnapshot,
+  encodeDispatchOutboxEntry, encodeTaskAttemptSnapshot,
   encodeTaskClaimedEvent, taskClaimedEventFromEvent, type TaskClaimedEvent,
 } from './claim-record-codecs.js';
 import type { ClaimTaskInput, TaskClaim, TaskClaimDependencies, TaskClaimPort } from './claim-contracts.js';
@@ -998,37 +998,5 @@ export function createTaskClaimService(deps: TaskClaimDependencies): TaskClaimPo
     return { status: 'committed', value: claim, replayed: false, cursor: receipt.cursor };
   }
 
-  async function readTaskClaim(ctx: CoreCallContext, ref: DispatchOutboxRef): Promise<ReadResult<TaskClaim>> {
-    const ownedCtx = ownCallContext(ctx);
-    if (!ownedCtx.ok) return ownedCtx.rejection;
-    const scope = ownedCtx.ctx;
-    if (!isRecord(ref) || ref.aggregateType !== 'DispatchOutboxEntry' || !nonEmpty(ref.projectId)
-      || !nonEmpty(ref.goalId) || !nonEmpty(ref.taskId) || !nonEmpty(ref.attemptId)) {
-      return reject('invalid', 'readTaskClaim requires a complete DispatchOutboxRef');
-    }
-    if (ref.projectId !== scope.projectId) return forbidden('the outbox entry belongs to another project');
-    if (scope.signal.aborted) return reject('cancelled', 'the Task claim read was cancelled before the store read');
-    let key: string;
-    try {
-      // Cycle / unsupported depth / non-JSON values are rejected here; only
-      // this JSON boundary is guarded, never the Store read below.
-      if (!isCanonicalJsonValue(ref)) return reject('invalid', 'the outbox ref is not canonicalizable JSON');
-      key = dispatchOutboxRefKey(ref);
-    } catch {
-      return reject('invalid', 'the outbox ref is not canonicalizable JSON');
-    }
-    const read = await records.readMany([key]);
-    if (read.status !== 'ready') return mapStoreFailure(read);
-    if (scope.signal.aborted) return reject('cancelled', 'the Task claim read was cancelled during the store read');
-    const record = read.value.records.find(candidate => candidate.refKey === key);
-    if (record === undefined) return { status: 'not_found' };
-    const decoded = decodeDispatchOutboxEntry(record);
-    if (decoded.status !== 'decoded') return unavailable(`the outbox entry is damaged: ${decoded.reason}`);
-    const outbox = decoded.value;
-    if (outbox.ref.projectId !== scope.projectId) return forbidden('the outbox entry belongs to another project');
-    if (outbox.claim.workspaceId !== scope.workspaceId) return forbidden('the outbox entry belongs to another workspace');
-    return { status: 'ready', value: outbox.claim };
-  }
-
-  return { claimTask, readTaskClaim };
+  return { claimTask };
 }

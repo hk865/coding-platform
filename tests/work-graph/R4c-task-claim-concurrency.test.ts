@@ -126,10 +126,6 @@ it('cyclic request/ref values reject at the JSON boundary without escaping the p
     const request = await f.buildRequest();
     const pin = request.meta.expected[0]!.ref; Object.assign(pin, { self: pin });
     await expect(f.service.claimTask(f.ctx, request)).resolves.toMatchObject({ status: 'rejected', code: 'invalid' });
-    const ref = { aggregateType: 'DispatchOutboxEntry' as const, projectId: f.scope.projectId,
-      goalId: f.tasks.first.goalId, taskId: f.tasks.first.taskId, attemptId: 'never-created' };
-    Object.assign(ref, { self: ref });
-    await expect(f.service.readTaskClaim(f.ctx, ref)).resolves.toMatchObject({ status: 'rejected', code: 'invalid' });
     expect(f.spy.commits).toBe(0);
   } finally { await f.close(); }
 });

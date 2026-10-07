@@ -101,8 +101,8 @@ function workflowWith(rows: TaskRow[], options: {
       queryTaskGraph: async () => ({ status: 'ready', value: { plan: { ref: planRef, tasks,
         assignments: tasks.map(task => ({ taskId: task.taskId, role: 'builder', instruction: 'work' })) }, tasks: rows } }) as never },
     // A claim owner without the optional `requeueTask` member (the Proxy would answer every member).
-    claims: options.noRequeuePort === true ? { claimTask: untouched<WorkflowDependencies['claims']>('claims').claimTask,
-      readTaskClaim: untouched<WorkflowDependencies['claims']>('claims').readTaskClaim } : { ...untouched<WorkflowDependencies['claims']>('claims'),
+    claims: options.noRequeuePort === true ? { claimTask: untouched<WorkflowDependencies['claims']>('claims').claimTask }
+      : { ...untouched<WorkflowDependencies['claims']>('claims'),
       requeueTask: async (callCtx, request) => {
         calls.push({ ctx: callCtx, request });
         if (options.requeue === undefined) throw new Error('requeueTask must not be called');

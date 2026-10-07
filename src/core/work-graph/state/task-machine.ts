@@ -381,7 +381,7 @@ export type TaskReworkFacts = {
 
 /** §9 events that reach a Task only through its round-chain head. */
 export type TaskRoundEventKind = 'round_opened' | 'check_begun' | 'check_result_recorded' | 'check_interrupted'
-  | 'check_abandoned' | 'evidence_submitted';
+  | 'check_abandoned';
 
 /**
  * §4.2. Every event another machine judges carries `facts`: the projection
@@ -782,7 +782,6 @@ export function transitionTask(state: TaskMachineState, event: TaskEvent, ctx: T
     case 'check_result_recorded':
     case 'check_interrupted':
     case 'check_abandoned':
-    case 'evidence_submitted':
     case 'round_finalized':
     case 'round_reverified':
       return onRoundEvent(state, event);

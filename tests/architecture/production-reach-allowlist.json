@@ -1028,12 +1028,6 @@
       "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; only reached from RoleConfigurationPort.activateRoleSpec"
     },
     {
-      "file": "src/core/work-graph/evidence/contracts.ts",
-      "name": "EvidencePort.submitEvidence",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; a port operation create-platform.ts publishes, but no route (core-routes.ts), Workflow or script reads it; used only by tests: tests/business/R5c-workflow.test.ts"
-    },
-    {
       "file": "src/core/work-graph/materials/material-service.ts",
       "name": "StoreRejectionCode",
       "reason": "pre-batch",
@@ -1074,12 +1068,6 @@
       "name": "nonEmpty",
       "reason": "pre-batch",
       "note": "unreached at 790d970; file-local; referenced nowhere"
-    },
-    {
-      "file": "src/core/work-graph/tasks/claim-contracts.ts",
-      "name": "TaskClaimPort.readTaskClaim",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; a port operation create-platform.ts publishes, but no route (core-routes.ts), Workflow or script reads it; used only by tests: tests/composition/R3c-R4b-platform.test.ts, tests/work-graph/R4c-task-claim-concurrency.test.ts, tests/work-graph/R4c-task-claim.test.ts, tests/work-graph/W2-future-intent.test.ts"
     },
     {
       "file": "src/core/work-graph/tasks/initial-plan.ts",

@@ -134,8 +134,7 @@ function workflowWith(rows: TaskRow[], options: {
         assignments: tasks.filter(task => task.taskKind === 'work').map(task => ({ taskId: task.taskId, role: 'builder',
           instruction: 'work' })) }, tasks: rows } }) as never },
     // No automatic requeue: the claim owner publishes none.
-    claims: { claimTask: untouched<WorkflowDependencies['claims']>('claims').claimTask,
-      readTaskClaim: untouched<WorkflowDependencies['claims']>('claims').readTaskClaim },
+    claims: { claimTask: untouched<WorkflowDependencies['claims']>('claims').claimTask },
     configuration: { consumerId: 'a2-reverify-wf-consumer', bindings: [{ workspace: { projectId: P, workspaceId: W },
       sessionRole: { kind: 'legacy_template', templateId: 'builder', templateRevision: '1' },
       roleBinding: { schemaVersion: 1, bindingId: 'b', templateId: 'builder', templateRevision: '1', bindingVersion: 1,
