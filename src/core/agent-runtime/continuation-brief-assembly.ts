@@ -171,6 +171,13 @@ function bounded(text: string): BoundedTextV1 {
   return text.length > cap ? { text: text.slice(0, cap), truncated: true } : { text, truncated: false };
 }
 
+/** A body the basis reader already bounded: cut there, it stays marked cut (contract (e) "…Omitted / truncated"). */
+function boundedBody(entry: { body: string | null; truncated: boolean } | undefined): BoundedTextV1 | null {
+  if (entry === undefined || entry.body === null) return null;
+  const text = bounded(entry.body);
+  return entry.truncated ? { text: text.text, truncated: true } : text;
+}
+
 /** A tool call's target: its path, file or command argument, when it has one. */
 function targetOf(args: Record<string, unknown>): BoundedTextV1 | null {
   for (const key of ['path', 'file', 'filePath', 'command']) {
@@ -327,11 +334,11 @@ export function assembleContinuationBrief(input: AssembleBriefInput): Continuati
   const acceptedMessages = continuity === 'same_session_history' || turn.kernel !== 'read' ? [] : turn.acceptedMessages;
   const newInputs: ContinuationNewInputV1[] = requeue.newInputRefs.slice(0, CONTINUATION_BRIEF_LIMITS.newInputs).map((ref) => {
     if (ref.kind === 'artifact') {
-      const body = basis.newInputBodies.find((entry) => entry.ref.digest === ref.ref.digest)?.body ?? null;
-      return { kind: 'artifact', ref: ref.ref, body: body === null ? null : bounded(body) };
+      return { kind: 'artifact', ref: ref.ref,
+        body: boundedBody(basis.newInputBodies.find((entry) => entry.ref.digest === ref.ref.digest)) };
     }
-    const reply = basis.replyBodies.find((entry) => entry.messageRef.messageId === ref.ref.messageId)?.body ?? null;
-    return { kind: 'session_message', ref: ref.ref, replyBody: reply === null ? null : bounded(reply) };
+    return { kind: 'session_message', ref: ref.ref,
+      replyBody: boundedBody(basis.replyBodies.find((entry) => entry.messageRef.messageId === ref.ref.messageId)) };
   });
   const checkpoints: ContinuationSourceCheckpointV1[] = [];
   if (head !== null) {

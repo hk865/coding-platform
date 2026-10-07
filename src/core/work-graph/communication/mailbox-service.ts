@@ -75,6 +75,7 @@ import {
   encodeSessionMessageSentEvent, sessionMessageFromEvent, sessionMessageRefKey,
   encodeSessionMessageConsultationDerivedEvent, encodeSessionMessageInputAcceptedEvent, type SessionMessageEventV1,
 } from './message-record-codecs.js';
+import { decodeStoredMessageBody } from './message-body-envelope.js';
 import {
   decodeQueryJobAnswerSnapshot, decodeQueryJobSnapshot, decodeQueryRunSnapshotRecord,
 } from '../queries/query-record-codecs.js';
@@ -1585,38 +1586,11 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     }
     if (opened.status === 'not_found') return reject('unavailable', 'the message body is missing');
     if (opened.status !== 'ready') return mapReadResult(opened) as CoreRejection;
-    const record = opened.value;
-    if (record.ref.contentType !== SESSION_MESSAGE_CONTENT_TYPE
-      || record.ref.digest !== bodyRef.digest || record.ref.sizeBytes !== bodyRef.sizeBytes
-      || canonicalOf(record.ref.source) !== canonicalOf(sourceRef)) {
-      return reject('unavailable', 'the stored message body ref disagrees with the message record');
-    }
-    if (!record.sourceRefs.some((candidate) => canonicalOf(candidate) === canonicalOf(sourceRef))) {
-      return reject('unavailable', 'the stored message body source disagrees with the message record');
-    }
-    let envelope: unknown;
-    try {
-      envelope = JSON.parse(record.body);
-    } catch {
-      return reject('unavailable', 'the stored message body is not parseable JSON');
-    }
-    if (!isObject(envelope)) return reject('unavailable', 'the stored message body is not an object');
-    const expectedSender = part === 'message' ? message.sender : message.response?.sender;
-    if (envelope['schemaVersion'] !== 1
-      || envelope['projectId'] !== message.ref.projectId
-      || envelope['workspaceId'] !== message.ref.workspaceId
-      || envelope['messageId'] !== message.ref.messageId
-      || envelope['part'] !== part
-      || canonicalOf(envelope['sender']) !== canonicalOf(expectedSender)) {
-      return reject('unavailable', 'the stored message body envelope disagrees with the message record');
-    }
-    const bodyText = envelope['text'];
-    if (typeof bodyText !== 'string' || bodyText.length === 0 || Buffer.byteLength(bodyText, 'utf8') > SESSION_MESSAGE_MAX_TEXT_BYTES) {
-      return reject('unavailable', 'the stored message body text is invalid');
-    }
+    const decoded = decodeStoredMessageBody(message, part, opened.value);
+    if ('reason' in decoded) return reject('unavailable', decoded.reason);
     return {
       status: 'ready',
-      value: { messageRef: message.ref, part, text: bodyText, sourceRef, usage: 'message' },
+      value: { messageRef: message.ref, part, text: decoded.text, sourceRef, usage: 'message' },
     };
   }
 

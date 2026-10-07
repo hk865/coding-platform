@@ -46,7 +46,9 @@ import type { TaskRequeueSnapshotV1 } from '../../../contracts/task-requeue.js';
 import type { RoundSnapshot } from '../../../contracts/verification.js';
 import type { LookupValue, RecordLookupPort, RecordLookupRequest } from '../../record-store/lookup-ports.js';
 import type { DecodeResult, EncodedRecord } from '../../record-store/ports.js';
+import type { RawArtifactRecord } from '../../record-store/body-ports.js';
 import type { SessionMessage } from '../communication/contracts.js';
+import { decodeStoredMessageBody } from '../communication/message-body-envelope.js';
 import { decodeSessionMessageRecord, sessionMessageRefKey } from '../communication/message-record-codecs.js';
 import { decodeVerificationRoundSnapshot } from '../evidence/evidence-record-codecs.js';
 import { decodeControlIntentSnapshot } from '../persistence/control-record-codecs.js';
@@ -665,17 +667,26 @@ export function createRunStateReader(deps: ExecutionReadDependencies): Execution
     return { ok: true, value: decoded.value, readThrough: read.batch.readThrough };
   }
 
-  /** A bounded body of the raw store; null with the reason when it cannot be read. */
-  async function boundedBody(ref: ArtifactRef): Promise<{ body: string | null; reason: string | null }> {
-    if (deps.bodies === undefined) return { body: null, reason: 'the body store is not readable by this reader' };
+  /**
+   * A bounded body of the raw store; null with the reason when it cannot be read. `text` picks the text out of the
+   * stored body (a reason when it cannot). A body over `textChars` is cut and says so (`truncated`, contract (e)
+   * "超限按字段截断并记 truncated"), so the brief never presents a cut text as complete.
+   */
+  async function boundedBody(
+    ref: ArtifactRef, text: (stored: RawArtifactRecord) => { text: string } | { reason: string } = stored => ({ text: stored.body }),
+  ): Promise<{ body: string | null; truncated: boolean; reason: string | null }> {
+    const unreadable = (reason: string) => ({ body: null, truncated: false, reason });
+    if (deps.bodies === undefined) return unreadable('the body store is not readable by this reader');
     try {
       const read = await deps.bodies.read(ref);
-      if (read.status !== 'ready') return { body: null, reason: `the body is not readable: ${read.reason}` };
-      const body = read.value.body;
-      return { body: body.length > CONTINUATION_BRIEF_LIMITS.textChars ? body.slice(0, CONTINUATION_BRIEF_LIMITS.textChars) : body,
-        reason: null };
+      if (read.status !== 'ready') return unreadable(`the body is not readable: ${read.reason}`);
+      const picked = text(read.value);
+      if ('reason' in picked) return unreadable(picked.reason);
+      const cap = CONTINUATION_BRIEF_LIMITS.textChars;
+      return picked.text.length > cap ? { body: picked.text.slice(0, cap), truncated: true, reason: null }
+        : { body: picked.text, truncated: false, reason: null };
     } catch (error) {
-      return { body: null, reason: `the body read failed: ${error instanceof Error ? error.message : String(error)}` };
+      return unreadable(`the body read failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
@@ -814,7 +825,8 @@ export function createRunStateReader(deps: ExecutionReadDependencies): Execution
       }
       // ND-9: a message outside the Run's project and workspace is never read into its brief.
       if (input.ref.projectId !== run.ref.projectId || input.ref.workspaceId !== current.value.session.workspaceId) {
-        replyBodies.push({ messageRef: input.ref, body: null, reason: 'the message belongs to another project or workspace' });
+        replyBodies.push({ messageRef: input.ref, body: null, truncated: false,
+          reason: 'the message belongs to another project or workspace' });
         continue;
       }
       const read = await readOne(sessionMessageRefKey(input.ref), decodeSessionMessageRecord, 'session message');
@@ -822,14 +834,17 @@ export function createRunStateReader(deps: ExecutionReadDependencies): Execution
       later(read.readThrough);
       const message = read.value;
       if (message === null || message.response === null) {
-        replyBodies.push({ messageRef: input.ref, body: null, reason: 'the message has no saved reply' });
+        replyBodies.push({ messageRef: input.ref, body: null, truncated: false, reason: 'the message has no saved reply' });
         continue;
       }
       // The reply is already in the history when it was answered back to the new claim Session: a reply goes to the
       // message's sender, whose Session's input channel supplies it (`run.input_accepted`), so it is not inlined again.
       const claimSessionId = current.value.outbox.claim.sessionRef.sessionId;
       if (message.sender.kind === 'work_run' && message.sender.sessionRef.sessionId === claimSessionId) continue;
-      replyBodies.push({ messageRef: input.ref, ...await boundedBody(message.response.bodyRef) });
+      // Contract (e) `replyBody` (§15.2 C3-reply-other-session "内联有界的回复正文"): the text of the stored reply
+      // envelope, decoded as the mailbox decodes it.
+      replyBodies.push({ messageRef: input.ref,
+        ...await boundedBody(message.response.bodyRef, stored => decodeStoredMessageBody(message, 'response', stored)) });
     }
 
     // An afterRun that never entered: the nearest entered ancestor along the requeue chain.

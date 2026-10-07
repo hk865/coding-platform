@@ -71,10 +71,13 @@ export type ContinuationBasis = {
   previousWait: SessionMessage | null;
   /** `requeue.afterRoundRef` (the chain head). */
   round: RoundSnapshot | null;
-  /** Bounded Artifact bodies listed in `requeue.newInputRefs`. */
-  newInputBodies: { ref: ArtifactRef; body: string | null; reason: string | null }[];
-  /** Bounded reply bodies of listed messages whose sender is not the new claim Session. */
-  replyBodies: { messageRef: SessionMessageRef; body: string | null; reason: string | null }[];
+  /** Bounded Artifact bodies listed in `requeue.newInputRefs`; `truncated` when the reader cut the body. */
+  newInputBodies: { ref: ArtifactRef; body: string | null; truncated: boolean; reason: string | null }[];
+  /**
+   * Bounded reply texts (the text of the stored message envelope) of listed messages whose sender is not the new
+   * claim Session; `truncated` when the reader cut the text.
+   */
+  replyBodies: { messageRef: SessionMessageRef; body: string | null; truncated: boolean; reason: string | null }[];
   /** Nearest entered ancestor when the afterRun never entered (at most 4 hops); `[]` otherwise. */
   factsChain: { requeue: TaskRequeueSnapshotV1; run: TaskExecutionRecord; round: RoundSnapshot | null }[];
   readThrough: CommitCursor | null;
