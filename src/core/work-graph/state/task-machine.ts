@@ -7,47 +7,23 @@
  * selected Run (with its control pointer), the applicable TaskReduction, the
  * selected Run's round-chain head (`roundTaskSignal`, §9) and the covering
  * TaskRequeue, all read by `readCanonicalTaskFacts` in one window. The writes
- * that touch a Task (claim, completion, disposition change and, from step 5,
- * requeue and its refusal) ask `transitionTask` first. The events other
+ * that touch a Task (claim, completion, disposition change, requeue and its
+ * refusal) ask `transitionTask` first. The events other
  * machines judge (Run end, control, round and check events, plan adoption)
  * only re-project: `ok:true`, `effects:[]`, and `next` is the projection of
  * the facts after that event's own commit (SD-1); an event of an older Run
  * leaves the state as is (TASK-20, R5). The machine never reads storage, mints
  * ids or reads a clock: instants and ids come in the event payload.
  *
- * A.2 step 5.3 (§15.2) scope:
- * - Projection rows P1..P18 have their target values (D-1, TD-5): P6 and P7
- *   are `failed`, P11..P13 `verifying`, and P17/P18 hold a yielded wait whose
- *   pointer is cancelled (`failed`) or paused (`blocked`).
- * - The re-projection rows TASK-04..13 and TASK-20..23 follow the projection;
- *   TASK-14 adds the projection guard (`verifying`, §4.4) and the chain-head
- *   guard (the round is the selected Run's chain head, C5). Its TD-2 evidence
- *   exclusion is the completion owner's (`evidenceSupersededByRequeue`; the
- *   successor-round part is 5.9).
- * - 已有 rows keep today's codes in today's order (`claim-service.ts:510-666`,
- *   pre-step-3 `completion.ts:316-395`, `plan-service.ts:1737-1767`,
- *   `plan-readers.ts:1269-1297`).
- * - A.2 step 5.4 (D-3, C1, C2, C8): P4 (`pending/requeued`), TASK-03 (a claim
- *   with the `requeueRef` covering the selected Run re-holds the lease),
- *   TASK-16/17 (`task_requeued`, TaskRequeue@1) and TASK-28 for a requeue
- *   (`task_rework_refused`). The reverify part of TASK-28 is decided by the
- *   round side (§9 VR-14, step 5.9): a reverify `task_rework_refused` is
- *   `illegal`/`invalid` here.
- * - A.2 step 5.9 part 1: TASK-29 (`round_reverified` on a work Task)
- *   re-projects to the open successor head (P12 with its ordinal).
- * - A.2 step 5.9 part 2 (C5): P20 projects a gate from its own chain head
- *   (right after P1, `detail.gate` and `ordinal`); TASK-30 re-projects a gate
- *   on its chain head's round events; TASK-15 completes a gate from P20
- *   `verifying(awaiting_completion)` with the chain-head guard.
- * - A.2 step 5.6 (C4): P19 (`blocked/paused_interrupted`, before P6), TASK-26
- *   (the RUN-24 end re-projects to it) and TASK-27 (the operator's "继续", or the
- *   Goal-resume continuation, as a `task_requeued`).
- * - A.2 step 5.10 (C7): TASK-18 (an untraced Task) and TASK-19 (a traced Task
- *   whose disposition alone changes, `tracedDispositionChangeProblem` of §3)
- *   both record the change (`record_disposition_change`, the compiler's
- *   `PlanRevisionSnapshot.dispositionRecord`); the phase and its cause never
- *   change. A traced Task whose execution definition changes is the untraced
- *   rule's refusal (§3 PLAN-05) and never reaches this machine.
+ * Owners: `claim-service.ts` (TASK-01..03), `completion.ts` (TASK-14/15/24;
+ * the TD-2 evidence exclusion is its `evidenceSupersededByRequeue`),
+ * `requeue-service.ts` (TASK-16/17/27/28; a reverify refusal is the round
+ * side's, §9 VR-14) and `plan-service.ts` (TASK-18/19; a traced Task whose
+ * execution definition changes is refused by §3 PLAN-05 and never reaches this
+ * machine). Rows and their status: spec §15.2/§15.3.
+ *
+ * Line references (`file.ts:NNN`) cite the code of 2026-10-02 (before A.2 step 3),
+ * as the spec does; the names next to them find today's code.
  *
  * Pure: imports only `src/contracts` and this directory (§14.4).
  */
@@ -1099,7 +1075,7 @@ export function taskCompletionProjectionProblem(
  * TASK-14 (work), TASK-15 (gate), TASK-24 (already satisfied, new identity):
  * the projection and chain-head guards (`taskCompletionProjectionProblem`),
  * then the round, its producer and the fold. The TD-2 evidence exclusion is
- * step 5.4/5.9.
+ * the completion owner's (`evidenceSupersededByRequeue`).
  */
 function onTaskCompleted(
   state: TaskMachineState,

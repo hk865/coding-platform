@@ -22,16 +22,12 @@
  * service needed) stay with the service, as do the input-shape checks it makes
  * before the receipt lookup.
  *
- * Step 2 (§15.2) implements the pre-A.2 results; step 5.5 adds the Goal
- * `cancelled` guard (D-9, `scopeStep`). Step 5.10 (C7, lead decision LA-3)
- * adds the `affectedTaskIds` shape and draft `dispositionRecord` checks of
- * PLAN-01/02 (`reasonShapeStep`), and splits W16 into changed and
- * disposition-only Tasks: the untraced rule for the changed and added ones,
- * TASK-19 (`tracedDispositionChangeProblem`) for the traced disposition-only
- * ones, then guard 9 (`parallelCarrierFenceProblem`) for an `agent`/`system`
- * adopter. Each disposition change of the adoption is named as a
- * `change_task_disposition` effect, which the owner asks the Task machine
- * (TASK-18/19) about, as it asks the Goal machine about `move_goal_pointer`.
+ * W16 (§3.3, C7): the untraced rule for the changed and added Tasks, TASK-19
+ * (`tracedDispositionChangeProblem`) for the traced disposition-only ones, then
+ * guard 9 (`parallelCarrierFenceProblem`, LA-3) for an `agent`/`system` adopter.
+ * Each disposition change is a `change_task_disposition` effect the owner asks
+ * the Task machine (TASK-18/19) about, as it asks the Goal machine about
+ * `move_goal_pointer`. Rows and their status: spec §15.2/§15.3.
  *
  * `PlanProposal` is declared in `tasks/plan-contracts.ts:28-50`, which this
  * directory may not import. `PlanProposalRecord` below is the same shape built

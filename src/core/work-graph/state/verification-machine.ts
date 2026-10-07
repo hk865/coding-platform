@@ -26,45 +26,22 @@
  * the call scope), and the VR-01 Host grant, workspace revision, capture and
  * compile results stay with the service (§1.1).
  *
- * A.2 step 5.3 (§15.2) scope:
- * - VR-01 writes the chain root (`rootRoundChain`) and claims the subject slot
- *   (work per subject Run, gate per gate, VD-1/VD-15); an existing chain is
- *   `busy` and an invalid one `incomplete`; VD-3 needs a `completed` subject
- *   Run whose reconciliation is absent or `done`. VR-02 prefixes the VD-8
- *   markers. VR-03 writes the INCONCLUSIVE `incompleteCause`; VR-05 (VD-6) and
- *   VR-13 are written. VR-07 is the D-2 fold (an applicable FAIL is FAIL, an
- *   `interrupted` check is the gap `interrupted_check`, PASS ⇒ no gaps) and
- *   guards the read set; VR-11 guards a stored @0 index at 0 and VR-12 writes
- *   no index for zero appended ids.
- * - A.2 step 5.4 (D-3): VR-01 refuses a subject Run a TaskRequeue covers, and
- *   VR-09 answers a requeue of the chain head (the head guarded as read and the
- *   slot held with a same-owner claim).
- * - A.2 step 5.5 (VD-9): VR-01 and VR-02 refuse a Goal that is not active
- *   (`busy`) and a subject task that is not active in the Goal's current
- *   adopted Plan (`invalid`); VR-02 guards the Goal and that Plan as read.
- * - A.2 step 5.6 (D-12, D-18): VR-04, the start-up reconcile interrupts an
- *   executing check (`host_restart`) under the instance lease. VR-06 (booking
- *   a stored report) needs a body lookup by origin requestId that does not exist
- *   (§9 注 1, §16 GAP-24): it has no row, and reconcile always takes VR-04.
- * - A.2 step 5.9 (C5, VD-12, VD-13): VR-14/VR-15 (`round_reverified`): the
- *   successor of a finalized non-PASS chain head (`buildSuccessorRound`, the
- *   slot moved from the head to the successor), or one of the four committed
- *   policy refusals (`refuse_reverify`, written by the owner through
- *   `taskReworkRefusalEffects`, §4 TASK-28). The owner stops at the exported
- *   steps (`reverifyAdmissionProblem` before the capture,
- *   `reverifyCapRefusal` before the capture, then the full transition after
- *   it); steps 4–5 (Goal, fence, matrix, note) are `reworkPermission`'s
- *   answer, handed in as a fact (the one actor × class matrix lives in
- *   `task-failure.ts`).
- * - The successor helpers (`chainEvidenceIds`, `reverifyExemption`,
- *   `reverifyFailureClass`, `buildSuccessorRound`,
- *   `evidenceSupersededByRequeue`) are implemented in full for 5.4 and 5.9.
+ * VR-06 (booking a stored report) has no row: the body lookup by origin
+ * requestId it needs does not exist (§9 注 1, §16 GAP-24), so the start-up
+ * reconcile always takes VR-04. For VR-14 the owner stops at
+ * `reverifyAdmissionProblem` and `reverifyCapRefusal` before the capture; its
+ * steps 4–5 (Goal, fence, matrix, note) are `reworkPermission`'s answer
+ * (`task-failure.ts`), handed in as a fact. Rows and their status: spec
+ * §15.2/§15.3.
  *
  * `transitionCheck` takes the round, not the check, as its state: §9.4 rows
  * such as "checkId 不在轮次中" and "轮次 finalized" are round-level, and the
  * record written is the round (rev+1). The check's phase is read from it.
  * `CheckInterruptionCause`/`CheckAbandonCause` restate the codec unions of
  * `evidence/evidence-record-codecs.ts:57-59`, which this directory may not import.
+ *
+ * Line references (`file.ts:NNN`) cite the code of 2026-10-02 (before A.2 step 3),
+ * as the spec does; the names next to them find today's code.
  */
 import type { ArtifactRef } from '../../../contracts/artifact.js';
 import type { ActorRef } from '../../../contracts/command-event.js';
@@ -603,10 +580,8 @@ export function successorAutoCount(previousAutoCount: number, actorClass: Rework
 }
 
 /**
- * The VD-13 cap of an automatic request (`system`, `agent`, the only ones it
- * reaches): one more reverify of this head counts past `limit`, unless a
- * Host-interruption exemption keeps the count. VR-14 (`reverifyCapRefusal`)
- * and the verdict rows AV-7a and GV-6 ask this one rule.
+ * VD-13 cap: one more automatic (`system`, `agent`) reverify of this head counts past `limit`; a
+ * Host-interruption exemption keeps the count. VR-14 (`reverifyCapRefusal`), AV-7a and GV-6 ask it.
  */
 export function reverifyCapExceeded(head: Pick<RoundSnapshot, 'chain' | 'checks' | 'gaps'>, limit: number): boolean {
   return (head.chain?.autoCount ?? 0) + 1 > limit && reverifyExemption(head) !== 'host_interruption';
@@ -1406,9 +1381,8 @@ function roundOnTaskRequeued(state: RoundSnapshot | null): RoundTransition {
 }
 
 /**
- * The subject slot held by the chain head as read: the same owner before and
- * after (`headKey → headKey`; a legacy slot-less root `null → null`). VR-09,
- * a reverify refusal, and VR-14 with `nextOwner` moved to its successor.
+ * The subject slot held by the head as read (`headKey → headKey`, a legacy slot-less root `null → null`):
+ * VR-09 and a reverify refusal; VR-14 moves `nextOwner` to its successor.
  */
 function heldSlotClaim(head: RoundSnapshot): RoundSlotClaimV1 {
   const owner = head.chain === undefined ? null : roundSlotOwner(head.ref);

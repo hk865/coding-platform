@@ -19,13 +19,11 @@
  *  - `newTaskReworkRefusalRecord`, the only writer of `TaskReworkRefusal@k`
  *    (§14.1), and the TASK-28 / VR-14 refusal effect.
  *
- * A.2 step 2 (§15.2) scope: these tables have no 现状 row in today's code; they
- * are pure and implemented in full. The owners wire them in step 5 (5.4 FC and
- * the facts, 5.8 AV, 5.9 AV-7a..AV-7d and GV); TASK-16/17/27/28 stay in
- * `task-machine.ts` and VR-14 in `verification-machine.ts`. Since 5.4 (lead
- * decision LD-1) `buildTaskFailureFacts` takes the verdict from its owner;
- * since 5.8 the owner judges it with `automationVerdict`, the successor-round
- * rows AV-7a..AV-7d and a gate's facts with the GV table since 5.9.
+ * Users: `plan-service.ts` judges the verdict with `automationVerdict` and hands
+ * it to `buildTaskFailureFacts` (lead decision LD-1); `requeue-service.ts` and
+ * `evidence-service.ts` write the refusal effects; TASK-16/17/27/28 stay in
+ * `task-machine.ts` and VR-14 in `verification-machine.ts`. Rows and their
+ * status: spec §15.2/§15.3.
  *
  * The owner does every read: the Runs of the Task, the pointer ControlIntent
  * (immutable request fields, read after the window), the chain heads, the
@@ -790,10 +788,8 @@ function incompleteHeadVerdict(
 }
 
 /**
- * What stops an automatic reverify of a finalized non-PASS head, first match
- * wins: the VD-13 cap (AV-7a, GV-6), the chain at `ROUND_CHAIN_MAX` (AV-7b,
- * GV-7), a fresh `no_new_basis` or `verification_uncovered` refusal (AV-7c,
- * GV-8). Null when none does; each table maps `at` to its own row.
+ * What stops an automatic reverify of a finalized non-PASS head, first match wins: the cap (AV-7a, GV-6),
+ * the chain limit (AV-7b, GV-7), a fresh key or coverage refusal (AV-7c, GV-8). Each table names its row.
  */
 function reverifyHeadStop(
   head: RoundSnapshot, refusal: RefusalView | null, limit: number,

@@ -20,17 +20,13 @@
  *   `findGoalResumeContinuations`. Each fan-out commit is a Run/ControlIntent
  *   or TaskRequeue commit judged by its own machine, never part of a Goal commit.
  *
- * A.2 scope:
- * - 已有 rows keep the pre-A.2 records byte for byte (pre-step-3 `commit-compiler.ts:113-120`,
- *   pre-step-3 `plan-commit-compiler.ts:144,293`, pre-step-3 `completion.ts:572-582`) and their
- *   CoreError codes, checked in the pre-A.2 service order.
- * - Step 5.5 (G7, D-9, LA-7): GOAL-04…06 (`setGoalControl`, `tasks/goal-control.ts`)
- *   with their §2.4 refusals; the `desiredState = active` guard of GOAL-07/08
- *   (`busy`), the `busy` of a new completion for the active plan (§2.4, before
- *   5.5 a second `COMPLETED@r+1`), and the `cancelled` refusal of GOAL-02/03
- *   (§2.4, `invalid`). The fan-out (`src/app/goal-fan-out-driver.ts`) and the
- *   display read (`plan-service.ts` `queryGoalDisplay`) use the identities and
- *   the reduction below. The GOAL-29 selection is wired in step 5.6.
+ * Owners: `task-service.ts` (GOAL-01), `plan-service.ts` (GOAL-02/03, the
+ * display read `queryGoalDisplay` and the GOAL-29 selection), `goal-control.ts`
+ * (GOAL-04…06), `completion.ts` (GOAL-07/08); `src/app/goal-fan-out-driver.ts`
+ * uses the fan-out identities. Rows and their status: spec §15.2/§15.3.
+ *
+ * Line references (`file.ts:NNN`) cite the code of 2026-10-02 (before A.2 step 3),
+ * as the spec does; the names next to them find today's code.
  *
  * Pure: imports only `src/contracts` and this directory (§14.4). Ids, instants
  * and pins come in the event payload; read facts in the guard context.

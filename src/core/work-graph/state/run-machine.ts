@@ -14,42 +14,15 @@
  * The machine never reads storage, mints ids or reads a clock: instants, ids
  * and pins come in the event payload, read facts in the guard context.
  *
- * A.2 step 2 (§15.2) scope:
- * - 已有 rows keep today's records byte for byte (literal key order of
- *   `claim-service.ts:698-703`, `execution-entry-service.ts:986-992`, `:1121-1122`,
- *   `:1256-1258`, `:1420-1425`, `control-service.ts:412-413`,
- *   `execution-history-binding.ts:146`) and today's CoreError codes.
- * - 改造 rows: step 5.4b flipped RUN-02 to the C6 entry Plan verdict
- *   (`carried_unchanged` passes, `entryPlanGuard`). Step 5.4 flipped RUN-01 to the D-3
- *   requeue claim (`requeueClaimProblem`), RUN-02 to the C3 continuation
- *   brief guard and RUN-07 to write `terminalPayload` (C1). Step 5.1 flipped RUN-09..11 (U) to D-7 (a
- *   control on a Run that never entered applies at once; a cancel ends it and
- *   releases its claim) and RUN-12..15 to D-8 (the older queued pointer intent
- *   is superseded in the same commit), D-9 (resume needs the Goal active) and
- *   RD-8 (a consumed continuation takes no control).
- * - Step 5.6 (S8, A8, C4): RUN-03 (the same claim re-authorized after RUN-16),
- *   RUN-08 (an in-process terminal with an unresolved tool call ends
- *   `outcome_unknown`), the R source of RUN-09..11 (CTL-08(a)), RUN-16..20 and
- *   RUN-24 (the start-up reconcile, `reconcileRun`/`recordRunResult`),
- *   RUN-21 (late evidence), RUN-22 (the operator's attestation) and RUN-23
- *   (the paused stop, in process and at a restart), plus the C4 refusal of a
- *   control on a paused-interrupted Run.
+ * Owners: `claim-service.ts` (RUN-01), `execution-entry-service.ts` (RUN-02..05,
+ * and RUN-07/08, 17/18, 21 through `recordRunResult`), `execution-history-binding.ts`
+ * (RUN-06), `control-service.ts` (RUN-09..15 (U), event picked by
+ * `controlSubmissionRunEvent`) and `run-reconcile-service.ts` (RUN-09..11 (R),
+ * RUN-16, 19, 20, 22..24). Each row keeps the record key order, codes and texts
+ * of the service code it replaced. Rows and their status: spec §15.2/§15.3.
  *
- * A.2 step 3 routes `execution-entry-service.ts` (RUN-02/04/05/07) through
- * this file. Those rows read the Run, the claim Session and the caller's
- * observation as that service did: a fresh entry by `status` then the V2
- * phase, entered/terminal by the V2 phase (also for a Run outside the eight
- * states), today's refusal texts, and the caller's Kernel source, boundary and
- * history shapes in its order.
- *
- * It also routes `control-service.ts` `submitControl` (RUN-09..15 (U)): the
- * service picks the event with `controlSubmissionRunEvent`, and the rows read
- * the Run node as that service did (`runControlNodeOf`).
- *
- * And `execution-history-service.ts` `recordExecutionHistory` (RUN-06, through
- * `execution-history-binding.ts`): the row reads only the claim Session's
- * Kernel mapping, and the begin-held Kernel slot that service recovered from
- * the V2 binding is read here.
+ * Line references (`file.ts:NNN`) cite the code of 2026-10-02 (before A.2 step 3),
+ * as the spec does; the names next to them find today's code.
  *
  * Pure: imports only `src/contracts` and this directory (§14.4).
  */
@@ -1521,8 +1494,8 @@ function onTerminalObserved(
   if (isRejected(auth)) return auth;
   if (node === 'EndedUnknown') {
     // §6.4: re-observing a terminal is not new evidence; only late_evidence/unknown_attested leave it.
-    // An unconfirmed input acceptance and an old sequence keep their own §6.4 answers first. No writer
-    // produces this node before RUN-08 (step 5.6).
+    // An unconfirmed input acceptance and an old sequence keep their own §6.4 answers first. RUN-08 and
+    // RUN-20 write this node.
     if (ctx.inputsConfirmed !== true) return reject('guard_failed', 'unavailable', INPUTS_UNCONFIRMED);
     if (event.event.sequence <= state.lastEventSeq) return reject('stale', 'revision_conflict', STALE_RESULT_SEQUENCE);
     return reject('guard_failed', 'incomplete', 'the Run outcome is unknown; only new Kernel evidence or an attestation resolves it');
@@ -1721,7 +1694,7 @@ export function controlSubmissionRunEvent(
  * (ATT-05), settles the Outbox as not entered (ATT-30), and releases the Lease
  * (ATT-23) and the Session occupancy (SES-05, `historyCursor` kept) the Run
  * still holds. (R), the reconcile of a leftover queued intent (CTL-08(a)), is
- * step 5.6.
+ * `onNotEnteredReconcile`.
  */
 function onNotEnteredControl(
   stateNode: Exclude<RunNode, 'Absent'>, run: RunSnapshot,
