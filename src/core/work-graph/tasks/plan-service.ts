@@ -1701,68 +1701,6 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     return { status: 'ready', value: { items: pageItems, nextCursor, sourceCursor: watermark } };
   }
 
-  async function readTaskInput(
-    ctx: CoreCallContext,
-    input: { goalRef: GoalRef; planRef: PlanRevisionRef; taskId: string; requirementId: string },
-  ): Promise<ReadResult<import('../../../contracts/artifact.js').ArtifactRecord>> {
-    if (ctx?.signal?.aborted) return rejected('cancelled', 'task input read was cancelled');
-    const ownedInput = ownJsonInput(input, 'readTaskInput input');
-    if (ownedInput.status === 'invalid') return rejected('invalid', ownedInput.reason);
-    const body = ownedInput.value as unknown;
-    if (!isRecord(body)) return rejected('invalid', 'readTaskInput requires an input object');
-    // Identity/scope/signal are fixed here, synchronously, before any await.
-    const ownedContext = ownCallContext(ctx);
-    if (ownedContext.status === 'invalid') return rejected('invalid', ownedContext.reason);
-    const bound = ownedContext.value;
-    const rawGoalRef = body['goalRef'];
-    if (!isRecord(rawGoalRef)) return rejected('invalid', 'readTaskInput requires a full GoalRef');
-    const goalProjectId = rawGoalRef['projectId'];
-    if (!nonEmpty(goalProjectId)) return rejected('invalid', 'readTaskInput requires a full GoalRef');
-    const goalRef = goalRefFromUnknown(rawGoalRef, goalProjectId);
-    if (goalRef === null) return rejected('invalid', 'readTaskInput requires a full GoalRef in this project');
-    const rawPlanRef = body['planRef'];
-    if (!isRecord(rawPlanRef)) return rejected('invalid', 'readTaskInput requires a full PlanRevisionRef');
-    const planProjectId = rawPlanRef['projectId'];
-    const planId = rawPlanRef['planId'];
-    if (rawPlanRef['aggregateType'] !== 'PlanRevision' || !nonEmpty(planProjectId)
-      || planProjectId !== goalRef.projectId || !nonEmpty(planId)) {
-      return rejected('invalid', 'readTaskInput requires a full PlanRevisionRef in this project');
-    }
-    const planRef: PlanRevisionRef = { aggregateType: 'PlanRevision', projectId: goalRef.projectId, planId };
-    const taskId = body['taskId'];
-    const requirementId = body['requirementId'];
-    if (!nonEmpty(taskId) || !nonEmpty(requirementId)) {
-      return rejected('invalid', 'readTaskInput requires taskId and requirementId');
-    }
-    const authority = authorizeReadContext(bound, goalRef.projectId);
-    if (authority.status !== 'ok') return authority;
-    const goalRead = await readGoal(records, goalRef);
-    if (bound.signal.aborted) return rejected('cancelled', 'task input read was cancelled');
-    if (goalRead.status !== 'ready') return asReadResult(goalRead);
-    const scopeError = authorizeGoal(authority.principal, goalRead.goal);
-    if (scopeError !== null) return scopeError;
-    const planRead = await readPlan(records, planRef);
-    if (bound.signal.aborted) return rejected('cancelled', 'task input read was cancelled');
-    if (planRead.status !== 'ready') return asReadResult(planRead);
-    const plan = planRead.plan;
-    // An explicit PlanRevision is an immutable pin: it must be the accepted
-    // plan of the requested Goal. An unrelated Goal with the same local
-    // requirementId is never an acceptable selection source.
-    if (plan.ref.projectId !== goalRef.projectId || plan.goalRef.goalId !== goalRef.goalId) {
-      return { status: 'not_found' };
-    }
-    const requirement = (plan.schemaVersion === 2 ? (plan.inputRequirements ?? []) : [])
-      .find((candidate) => candidate.requirementId === requirementId
-        && candidate.consumerTaskId === taskId);
-    if (requirement === undefined) return { status: 'not_found' };
-    if (deps.materials === undefined) {
-      return rejected('unsupported', 'exact task input reading requires injected materials');
-    }
-    // The single material call uses the synchronously captured identity and the
-    // ORIGINAL AbortSignal, never the live caller objects.
-    return deps.materials.openArtifact(bound, { ref: requirement.artifactRef, usage: 'current' });
-  }
-
   /**
    * A.2 step 5.5 (§2.1 展示读取 `readGoalDisplayFacts`, GOAL-17..30): one read
    * window of the Goal and its active Plan (`readGoalPlanWindow`), the pending
@@ -1952,7 +1890,7 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
   }
 
   return { queryGoal, readPlanProposal, proposePlan, applyPlanChange, proposeInitialPlanFromAnswer,
-    queryTaskGraph, queryReadyTasks, readTaskInput, queryGoalDisplay, queryGoalLiveRuns, queryGoalResumeContinuations };
+    queryTaskGraph, queryReadyTasks, queryGoalDisplay, queryGoalLiveRuns, queryGoalResumeContinuations };
 }
 
 /** §2.3 受影响集合: the `starting|running` Runs of the active Plan's Tasks, in plan task order. */

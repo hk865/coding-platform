@@ -355,7 +355,7 @@ Run 上 fresh begin，固定 Kernel 身份
 
 同一 Run 共享一次打开 Promise，并缓存同步抛错与异步拒绝；后续调用不重试、不回落 project_index。惰性打开失败作为工具 error 交给 Kernel，不假定整个 Run 必须抛异常。工具组先取消并排空在途操作，再等待已开始的 factory，最后关闭实际创建的 source 一次；当前性检查期间发生取消不再启动 factory，打开期间取消则等待并清理。清理不覆盖原执行错误，也不把清理失败伪报成功。正式driver现选择first_use；进入之后仍核对实际材料撤权及真实Run绑定。C2只选择平台工具的Run不打开源码factory，不因没有文件读授权阻挡已获准的平台操作。
 
-**Prepared 的信任边界。** 复用已有 Artifact/RecordStore body 保存有界装配清单，由 Run.envelope/inputBinding 固定引用、版本与摘要；start 依据这些可信记录重读、核对，并从 Host 绑定取得模型和受信根。调用者回传的 Prepared、摘要或字段不能授予 tools、sandbox、Role、Kernel 身份。正文若需新形状，交付版本化 codec/reader，不能把任意 delta 塞进旧 bundle。清单只含必要当前输入和双图、材料、Session 区间定位；原历史继续通过 RT7/RT1/Kernel 读取，不复制 transcript。B2已实现版本化Prepared清单及reader，C2复用同一正文与M2 facts，不另建装配状态。
+**Prepared 的信任边界。** 复用已有 Artifact/RecordStore body 保存有界装配清单，由 Run.envelope/inputBinding 固定引用、版本与摘要；start 依据这些可信记录重读、核对，并从 Host 绑定取得模型和受信根。调用者回传的 Prepared、摘要或字段不能授予 tools、sandbox、Role、Kernel 身份。正文若需新形状，交付版本化 codec/reader，不能把任意 delta 塞进旧 bundle。清单只含必要当前输入和双图、材料、Session 区间定位；原历史继续通过 RT7/RT1/Kernel 读取，不复制 transcript。B2已实现版本化Prepared清单及reader，C2复用同一正文与M2 facts，不另建装配状态。（2026-10-07 更正：入口不再读 M2 facts，清单的 `selectedTaskInputs` 总是空，lead 决定 LA-11。）
 
 **正式Task执行消费者已接。** `model-call-access.ts` 已将 bind/beforeCall 接入真实 WG 模型许可，driver 依据最终请求指纹签发/消费，重放不再次调用 provider。`execution-observation.ts` 沿原历史归约真实终态，WG仅释放相同owner/generation，Session挂靠保持；未知结果不释放。Task/Goal是否完成仍归正式证据/义务归约，Query咨询、控制/恢复、维护与Workflow不因这条Task路径完成而视为已交付。
 
@@ -363,7 +363,7 @@ Run 上 fresh begin，固定 Kernel 身份
 
 | 接线面 | 复用入口 | 已接Task路径的约束 |
 | --- | --- | --- |
-| Role / TaskInput / Session 装配 | [configuration/contracts.ts](../../../../src/core/work-graph/configuration/contracts.ts) 的 `resolveRoleBindingFacts/readRoleSpec`、[plan-contracts.ts](../../../../src/core/work-graph/tasks/plan-contracts.ts) 的 `readTaskInput`、[sessions/contracts.ts](../../../../src/core/work-graph/sessions/contracts.ts) 的 `readSession` | 受信 Host 将精确 Role pin 映射到稳定 Skill/工具配置；保留 resolved/absent/inadmissible。通过既有 Artifact body 保存有界装配清单，引用本次 Task/Module、材料和 Session 区间，不复制原历史。 |
+| Role / TaskInput / Session 装配 | [configuration/contracts.ts](../../../../src/core/work-graph/configuration/contracts.ts) 的 `resolveRoleBindingFacts/readRoleSpec`、[plan-contracts.ts](../../../../src/core/work-graph/tasks/plan-contracts.ts) 的 `readTaskInput`（2026-10-07 已删除，lead 决定 LA-11）、[sessions/contracts.ts](../../../../src/core/work-graph/sessions/contracts.ts) 的 `readSession` | 受信 Host 将精确 Role pin 映射到稳定 Skill/工具配置；保留 resolved/absent/inadmissible。通过既有 Artifact body 保存有界装配清单，引用本次 Task/Module、材料和 Session 区间，不复制原历史。 |
 | Run 固定授权与 fresh 进入 | WG11 `readExecution`；[dispatch.ts](../../../../src/contracts/dispatch.ts) 的 Run `inputBinding/executionAuthorization`；唯一 Run schema owner [record-readers.ts](../../../../src/core/work-graph/materials/record-readers.ts) | 在原 Run 绑定上版本化核对输入、固定 Kernel 身份、Session generation 与 entryGeneration；已接 `authorizeRuntimeEntry/beginRuntimeEntry`，仅 fresh 提交允许调用 Kernel，重放只观察/对账。同步原 codec，不另建进入状态源。 |
 | entered 与历史定位同事务 | B1 `runObservedModel.controlHooks`；WG12 [execution-history-service.ts](../../../../src/core/work-graph/tasks/execution-history-service.ts) 的 `recordExecutionHistory` | 提取并共用 WG12 的内部校验/编译逻辑，在 before_model 核对真实 Turn/Run 起始证据后，将 entered 与历史定位合成一次 WG 提交；不串行重复写同一 Run，不以 best_effort observer 代替屏障。 |
 | 增量观察与真实终态 | RT8 [graph-execution-history.ts](../../../../src/core/agent-runtime/graph-execution-history.ts) → RT7 [observation-recovery.ts](../../../../src/core/agent-runtime/observation-recovery.ts) → RT1 原历史读取 | 沿已存位置补读并归约原事件；核对持久终态与完整 Turn 后才推进完成边界，不能只依据 Kernel 返回状态。paused、记录缺口和未知工具副作用分别保留，用户分页游标不能直接当跨主体的续轮授权。 |
@@ -373,7 +373,7 @@ Run 上 fresh begin，固定 Kernel 身份
 
 **C2平台工具与材料已接入真实回合。** [execution-driver.ts](../../../../src/core/agent-runtime/execution-driver.ts) 从正式Run/Session/Prepared固定work_run和材料reader，复用 `createSessionMailboxTools` 的六种通信工具及 `createWhiteboardTools` 的 `query_task_graph/query_ready_tasks/propose_future_plan/apply_future_plan`。工具清单严格取有效manifest授权交集，稳定requestId由实际callId及完整执行/操作身份派生；工厂声明names与实际definitions一致，未知工具或缺依赖在fresh路径拒绝。通信回合真实读取inbox/正文并回应；白板回合真实query→propose→apply→query，沿W2领域授权与future-only规则，不由Runtime另行规划。
 
-[create-platform.ts](../../../../src/composition/create-platform.ts) 使用唯一executionReader、Plan service、mailbox与Host授权投影：W2 delegatedWrites、C1新动作、B2 entry/model复用同一回调；M2 facts由同一个authority/index/source/bodies构造。真实M1 grant→W1接受exact TaskInput→consumer claim→Prepared→模型输入已接，撤销grant后fresh start拒绝，已经发生的终态/原start回执仍可读取。（2026-10-07 更正：M1 grant 的写入方从没有生产调用方，这条链只在测试里接通过；写入方已按决定 34 删除，这条链不再成立。）此处交付的是正式材料输入与局部facts/CAS准入；当前driver没有装配通用 `read_material` 模型工具，不扩大这一能力声明。
+[create-platform.ts](../../../../src/composition/create-platform.ts) 使用唯一executionReader、Plan service、mailbox与Host授权投影：W2 delegatedWrites、C1新动作、B2 entry/model复用同一回调；M2 facts由同一个authority/index/source/bodies构造。真实M1 grant→W1接受exact TaskInput→consumer claim→Prepared→模型输入已接，撤销grant后fresh start拒绝，已经发生的终态/原start回执仍可读取。（2026-10-07 更正：M1 grant 的写入方从没有生产调用方，这条链只在测试里接通过；写入方已按决定 34 删除，这条链不再成立。同日，准备阶段的精确输入读取和入口的材料 facts 准入也已删除，lead 决定 LA-11。）此处原先交付的是正式材料输入与局部facts/CAS准入，现在两者都已删除；当前driver没有装配通用 `read_material` 模型工具，不扩大这一能力声明。
 
 C1新写在receipt miss后复用Prepared/Host/Role准入，历史读取只核原Run/outbox/Session身份与实际访问范围，不机械读取当前Plan/Attempt/Lease。相同identity的ack/respond在另一调用真实提交后读取到read/responded时，恢复原committed回执，不重复正文或事件。初始Role身份和外部caller仍核对，不增加运行中换Role生命周期；真实Host grant撤权阻止新动作，不抹去旧事实。
 

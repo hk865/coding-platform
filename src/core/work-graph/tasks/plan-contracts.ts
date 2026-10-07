@@ -1,6 +1,6 @@
 /** R3c plan/task slice. WorkGraph owns the rules; the Store owns atomic bytes. */
 import type { CommitCursor } from '../../../contracts/command-event.js';
-import type { ArtifactRecord, ArtifactRef } from '../../../contracts/artifact.js';
+import type { ArtifactRef } from '../../../contracts/artifact.js';
 import type { ControlIntentRef, ControlIntentSnapshotV1 } from '../../../contracts/control-intent.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { VersionPin } from '../../../contracts/core/identity.js';
@@ -226,11 +226,6 @@ export interface PlanTaskPort {
    * `requeueTask` with the `goal_resume` trigger. Optional like the reads above.
    */
   queryGoalResumeContinuations?(ctx: CoreCallContext, input: { goalRef: GoalRef }): Promise<ReadResult<GoalResumeContinuationsRead>>;
-  /** Reads the exact artifact pinned by an accepted v2 Plan for this task.
-   * Uses MaterialPort.openArtifact(current); its real reader, grant and source
-   * failures are preserved. No caller-supplied ArtifactRef may replace the pin. */
-  readTaskInput(ctx: CoreCallContext, input: { goalRef: GoalRef; planRef: PlanRevisionRef;
-    taskId: string; requirementId: string }): Promise<ReadResult<ArtifactRecord>>;
 }
 
 /**

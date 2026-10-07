@@ -172,7 +172,7 @@ export type GraphPorts = {
 
 - `PlanRevisionDraft` / `PlanRevisionSnapshot` 显式区分 schemaVersion 1、2。版本2新增白板 `taskRelations`（coordination / expected_dependency）及 `inputRequirements`（本批仅 artifact，持久保存现有精确 ArtifactRef）。PlanProposal@2 的嵌套 draft 自带版本；沿用机械编码器标识 PlanRevisionSnapshot@1（Store 按 aggregateType 选择且不逐条存 schemaId）；正文 schemaVersion 明确区分1/2，拒绝未知版本和v1夹带新字段。旧正文不改写，不表示旧程序可以读取新正文。
 - `TaskRow` 将真实任务状态、提示关系和输入核验分开。图查询与候选查询共用投影/资格规则；默认输入为 `not_checked`，不为显示图而打开材料。旧 executionDag/requires 原样保留为 `legacy_unverifiable`，不会根据 label 或生产 Task satisfied 推断输入可用。
-- `PlanTaskPort.readTaskInput(ctx,{goalRef,planRef,taskId,requirementId})` 只选择已接受计划的指定需求，复用 `MaterialPort.openArtifact(..., usage:'current')`，返回现有 `ReadResult<ArtifactRecord>`。它同时完成本次实际读取与核验，不再叠加一层“先全量 check 再重复 consume”；调用方不能传入替代引用。后续独立消费需要重新核验当时的权限与适用性。显式历史 Plan 可以作为精确引用的选择来源；current 只表示材料对本次 reader 的当前适用性，不表示该历史 Plan 当前活跃或旧任务获准执行，因此不新增 selection Plan 必须等于 Run pin 的门槛。
+- `PlanTaskPort.readTaskInput(ctx,{goalRef,planRef,taskId,requirementId})` 只选择已接受计划的指定需求，复用 `MaterialPort.openArtifact(..., usage:'current')`，返回现有 `ReadResult<ArtifactRecord>`。它同时完成本次实际读取与核验，不再叠加一层“先全量 check 再重复 consume”；调用方不能传入替代引用。后续独立消费需要重新核验当时的权限与适用性。显式历史 Plan 可以作为精确引用的选择来源；current 只表示材料对本次 reader 的当前适用性，不表示该历史 Plan 当前活跃或旧任务获准执行，因此不新增 selection Plan 必须等于 Run pin 的门槛。（2026-10-07 更正：`readTaskInput` 和准备阶段对它的调用已删除，决定 34、lead 决定 LA-11。计划的精确输入现在没有执行路径读取；“消费时检查精确输入”由编排设计第 3 片重建。）
 - 当前材料实现的 Host 身份没有可信 current source pin 入口，因此会如实拒绝当前适用性；不能以历史读取成功替代。真实 Run/QueryRun、精确 grant 和来源 pin 的能力继续复用，既不扩权，也不把候选资格当执行许可。
 - 候选查询删除“前驱整个 Task satisfied”门槛，保留 Plan/Run/Lease/Reduction 的完整事实读取，以及任务自身状态、身份和范围检查。缺事实不默认 pending/free。材料缺失或不能核验不自动禁止整项工作的调查；真正读取时保留缺失、无权、来源过期等明确结果。
 

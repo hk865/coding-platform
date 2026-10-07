@@ -130,7 +130,6 @@ function recordingPlans(): { plans: PlanTaskPort; recorded: Recorded } {
       recorded.queryReadyTasks.push({ ctx, input });
       return { status: 'ready', value: { items: [], nextCursor: null, sourceCursor: cursor(3) } };
     },
-    async readTaskInput() { return { status: 'not_found' }; },
   };
   return { plans, recorded };
 }

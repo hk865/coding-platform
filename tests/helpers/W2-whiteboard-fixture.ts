@@ -176,7 +176,7 @@ export async function createW2WhiteboardFixture(kind: ClaimFixtureKind = 'memory
   const materials = createMaterialService({ bodies: b2.bodies, authority: materialReads.authority,
     grants: createMaterialAccessResolver(materialReads.authority, materialReads.index), now });
   const entry = createExecutionEntryService({ records, reads, roles, bodies: b2.bodies, materials,
-    plans: base.plans, authorizeConfiguration, now, eventId, newId: () => `w2-entry-${++seq}` });
+    authorizeConfiguration, now, eventId, newId: () => `w2-entry-${++seq}` });
   const prepared = await b2.buildPrepared({ permissions: configuration.permissions });
   const entered = await b2.enter({ prepared, ports: { entry, model: b2.model } });
   const claim = b2.claim;

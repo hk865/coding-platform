@@ -167,7 +167,7 @@ describe('W2 role skills in a real scripted Kernel request', () => {
     const unsupported = async () => ({ status: 'rejected' as const, code: 'unsupported' as const, reason: 'unused adapter port' });
     const plans: PlanTaskPort = {
       queryGoal: unsupported, readPlanProposal: unsupported, proposePlan: unsupported,
-      applyPlanChange: unsupported, queryTaskGraph: unsupported, readTaskInput: unsupported,
+      applyPlanChange: unsupported, queryTaskGraph: unsupported,
       async queryReadyTasks(ctx, input) { delivered.push({ ctx, input }); return result; },
     };
     const runRef = { aggregateType: 'Run' as const, projectId: 'w2-project', goalId: 'w2-goal', runId: 'w2-run' };

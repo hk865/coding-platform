@@ -514,8 +514,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     const graphHistory = createGraphExecutionHistoryReader({ executions: executionReader, history: executionHistory });
     const sourceAuthority = createSourceAuthorityReader({ authority: reads.authority, records: backend.records });
     // C2 §3.1: the SAME reads/source/bodies feed the M2 material read-facts seam
-    // consumed by the B2 entry and model barriers. It is a fresh per-call
-    // observer, not a second persistent material service.
+    // held by the evidence owner. It is a fresh per-call observer, not a second
+    // persistent material service.
     const materialFacts = createMaterialReadFactsService({ authority: reads.authority, index: reads.index,
       bodies, sourceApplicability: source, isTaskCarriedUnchanged, now });
     // R3e.1: the ONE trusted verification/evidence service and its thin Host
@@ -556,8 +556,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       // The hoisted optional instance is guaranteed present by `options.runtime`.
       const entryAuthorizeConfiguration = authorizeConfiguration as AuthorizeConfiguration;
       const entryDependencies: ExecutionEntryDependencies = {
-        records: backend.records, reads: executionReader, roles: roleService, plans: planService,
-        materials: rawMaterials, materialFacts, bodies, authorizeConfiguration: entryAuthorizeConfiguration,
+        records: backend.records, reads: executionReader, roles: roleService,
+        materials: rawMaterials, bodies, authorizeConfiguration: entryAuthorizeConfiguration,
         ...(hostInstance === undefined ? {} : { hostInstance }),
         now, eventId: randomUUID, newId: randomUUID,
       };
@@ -677,11 +677,10 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       reviseArchitectureCatalog: (...args) => trackedCall(() => catalog.reviseArchitectureCatalog(...args), unavailable),
       readArchitectureRevision: (...args) => trackedCall(() => catalog.readArchitectureRevision(...args), unavailable),
     };
-    // Explicit task-input reads span the ledger and material store. Drain them
-    // before closing either store, preserving the service's synchronous input snapshot.
+    // Drain these Plan calls before closing the stores (initial planning also reads
+    // the answer body), preserving the service's synchronous input snapshot.
     const plans: typeof planService = {
       ...planService,
-      readTaskInput: (...args) => trackedCall(() => planService.readTaskInput(...args), unavailable),
       proposeInitialPlanFromAnswer: (...args) =>
         trackedCall(() => planService.proposeInitialPlanFromAnswer(...args), unavailable),
       queryGoalDisplay: (...args) => trackedCall(() => planService.queryGoalDisplay(...args), unavailable),

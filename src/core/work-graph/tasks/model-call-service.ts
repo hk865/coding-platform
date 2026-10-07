@@ -78,7 +78,6 @@ function claimChainGuards(admission: EnteredAdmission, runPinRevision: number): 
     { refKey: sessionAggregateRefKey(plainSessionRefToAggregate(outbox.claim.sessionRef)), expectedRevision: session.revision },
     ...(lease === null ? [] : [{ refKey: canonicalJson(lease.ref as unknown as JsonValue), expectedRevision: lease.revision }]),
     ...admission.roleFacts.guards,
-    ...admission.materialGuards,
   ];
 }
 

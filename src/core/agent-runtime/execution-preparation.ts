@@ -2,16 +2,15 @@
  * B2 execution preparation.
  *
  * Reads the real WG11 claim/execution facts, resolves the original Role through
- * the WorkGraph role facts port, reads the exact Plan/Task contract and the
- * exact v2 task inputs through MaterialPort, resolves the trusted Host
- * configuration, stores one bounded manifest body and returns only verifiable
- * references. Nothing is fabricated: a missing required material, an
- * inadmissible Role, a revoked Host grant or a manifest over the Artifact
- * capacity is an explicit rejection.
+ * the WorkGraph role facts port, reads the exact Plan/Task contract, resolves
+ * the trusted Host configuration, stores one bounded manifest body and returns
+ * only verifiable references. Nothing is fabricated: a missing required
+ * material, an inadmissible Role, a revoked Host grant or a manifest over the
+ * Artifact capacity is an explicit rejection.
  */
 import type { ArtifactRef } from '../../contracts/artifact.js';
 import { ARTIFACT_MAX_SIZE_BYTES } from '../../contracts/artifact.js';
-import type { CoreCallContext, CorePrincipal } from '../../contracts/core/call-context.js';
+import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { CoreRejection, ReadResult } from '../../contracts/core/results.js';
 import type { PreparedTaskExecution, PreparedTaskManifestV1 } from '../../contracts/core/prepared-execution.js';
 import type { RoleSpecResolutionV1 } from '../../contracts/role-spec-materials.js';
@@ -31,7 +30,7 @@ import { decodeKernelEntry } from './kernel-turn-facts.js';
 import type { PrepareTaskExecutionRequest, ResolvedRuntimeConfiguration, RuntimeExecutionDependencies } from './execution-contracts.js';
 
 export type ExecutionPreparationDependencies = Pick<RuntimeExecutionDependencies,
-  'claims' | 'executions' | 'roles' | 'plans' | 'sessions' | 'materials' | 'bodies' | 'host' | 'now' | 'newId'>
+  'claims' | 'executions' | 'roles' | 'sessions' | 'materials' | 'bodies' | 'host' | 'now' | 'newId'>
   & Partial<Pick<RuntimeExecutionDependencies, 'kernelStores' | 'workspaceHost' | 'workspaceSource'>>;
 
 export type ExecutionPreparationService = {
@@ -111,9 +110,6 @@ function buildInput(input: {
   workspaceId: string;
   workspaceRevision: number;
   permissions: TaskEnvelopeV1['permissions'];
-  selectedInputs: { requirementId: string; ref: ArtifactRef; body: string }[];
-  /** The exact saved wait reply this continuation Run consumes; null on a first Run. */
-  consumedReply: string | null;
 }): string {
   const sections: string[] = [];
   sections.push('# Verified runtime task input');
@@ -136,14 +132,6 @@ function buildInput(input: {
     ].join('\n'));
   } else {
     sections.push(['## Role specification', `role: ${role.roleId} (${role.status})`, role.status === 'absent' ? role.reason : role.reasons.map(reason => JSON.stringify(reason)).join('; ')].join('\n'));
-  }
-  for (const selected of input.selectedInputs) {
-    sections.push(['## Exact task input', `requirement: ${selected.requirementId}`, `artifact: ${selected.ref.contentType} ${selected.ref.digest}`, '', selected.body].join('\n'));
-  }
-  if (input.consumedReply !== null) {
-    sections.push(['## Consumed wait reply',
-      'The original Run yielded on this exact saved reply; it is a received statement, not a current-source/evidence grant.',
-      '', input.consumedReply].join('\n'));
   }
   return sections.join('\n\n');
 }
@@ -395,7 +383,8 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
 
       // 3. Exact Plan/Task contract: the assignment instruction is the formal
       //    task input; a required material kind this batch cannot source is a
-      //    real gap, never replaced by a summary.
+      //    real gap, never replaced by a summary. A Plan's exact inputs
+      //    (`inputRequirements`) are not read here (lead decision LA-11).
       const assignments = revisionAssignments(plan);
       const assignment = assignments.find(candidate => candidate.taskId === claim.task.taskId);
       if (assignment === undefined) return rejected('incomplete', 'the accepted Plan has no assignment for this Task');
@@ -409,38 +398,10 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
       }
       if (!contractSatisfied) return rejected('incomplete', 'the Role required materials cannot be satisfied from the formal Plan/Task contract');
 
-      const selectedInputs: { requirementId: string; ref: ArtifactRef; body: string }[] = [];
-      const selectedTaskInputs: PreparedTaskManifestV1['selectedTaskInputs'] = [];
-      const materialCtx: CoreCallContext = {
-        projectId: owned.projectId,
-        ...(owned.workspaceId === undefined ? {} : { workspaceId: owned.workspaceId }),
-        principal: { kind: 'work_run', runRef, roleBinding: run.roleBinding } as CorePrincipal,
-        materialReader: { kind: 'run', requester: runRef, ...(hostConfig.materialBasis === null ? {} : { currentBasis: hostConfig.materialBasis }) },
-        signal,
-      };
-      const requirements = plan.schemaVersion === 2 ? (plan.inputRequirements ?? []) : [];
-      for (const requirement of requirements) {
-        if (requirement.consumerTaskId !== claim.task.taskId) continue;
-        let read;
-        try {
-          read = await deps.plans.readTaskInput(materialCtx, { goalRef: plan.goalRef, planRef: plan.ref, taskId: claim.task.taskId, requirementId: requirement.requirementId });
-        } catch (error) {
-          return rejected('unavailable', `the exact task input read failed: ${messageOf(error)}`);
-        }
-        if (read.status !== 'ready') return mapRead(read);
-        selectedTaskInputs.push({ requirementId: requirement.requirementId, ref: read.value.ref });
-        selectedInputs.push({ requirementId: requirement.requirementId, ref: read.value.ref, body: read.value.body });
-      }
-      if (signal.aborted) return rejected('cancelled', 'the preparation was cancelled after reading task inputs');
-
       const sourceRefs: SourceRefV1[] = [
         { kind: 'plan-revision', refId: plan.ref.planId, revision: String(plan.revision) },
         { kind: 'workspace', refId: session.workspaceId, revision: String(run.workspaceSnapshot.revision) },
       ];
-      // The saved reply is NO LONGER concatenated into the prepared input: it is
-      // supplied through the unified Kernel input channel as its ORIGINAL source
-      // (messageRef+response), so the second delivery cannot bypass input_accepted.
-      const consumedReply: string | null = null;
       const additionalMaterialRefs: ArtifactRef[] = [];
       // C3: a Run of a requeue claim starts with its continuation brief, rendered as the last input section.
       let brief: ContinuationBriefV1 | null = null;
@@ -456,7 +417,7 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
       const taskInput = buildInput({
         roleResolution, assignmentInstruction: assignment.instruction, taskTitle: plan.tasks.find(task => task.taskId === claim.task.taskId)?.title ?? claim.task.taskId,
         taskId: claim.task.taskId, planRef: plan.ref, workspaceId: session.workspaceId, workspaceRevision: run.workspaceSnapshot.revision,
-        permissions, selectedInputs, consumedReply,
+        permissions,
       });
       const input = brief === null || briefDigest === null ? taskInput : `${taskInput}\n\n${renderContinuationBriefZh(brief, briefDigest)}`;
       const inputDigest = sha256Hex(input);
@@ -465,7 +426,7 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
         hostTemplate: roleResolution.status === 'resolved' ? null : hostConfig.hostTemplate,
         roleBinding: run.roleBinding, hostConfigurationRevision: hostConfig.configurationRevision, sessionRole: session.role,
         workspaceSnapshot: { workspaceId: session.workspaceId, revision: run.workspaceSnapshot.revision },
-        permissions, budget: run.budget, selectedTaskInputs, materialBasis: hostConfig.materialBasis,
+        permissions, budget: run.budget, selectedTaskInputs: [], materialBasis: hostConfig.materialBasis,
         materialAccessRefs: [], additionalMaterialRefs, deliveryRefs: [], sourceRefs,
         ...(brief === null ? {} : { continuationBrief: brief }),
         ...(sessionBasis === null || sessionBasis === undefined ? {} : { sessionBasis }),

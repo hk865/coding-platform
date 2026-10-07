@@ -1022,6 +1022,66 @@
       "note": "unreached at 790d970; a port operation create-platform.ts publishes, but no route (core-routes.ts), Workflow or script reads it; used only by tests: tests/business/R5c-workflow.test.ts"
     },
     {
+      "file": "src/core/work-graph/materials/contracts.ts",
+      "name": "MaterialReadFacts",
+      "reason": "pre-batch",
+      "note": "TEMPORARY, decision 34: pre-batch M2 code, reached at 790d970 only through the B2 exact-input admission that G2 deleted; G3 deletes it next, and this entry with it"
+    },
+    {
+      "file": "src/core/work-graph/materials/contracts.ts",
+      "name": "MaterialReadFactsPort.openArtifactFacts",
+      "reason": "pre-batch",
+      "note": "TEMPORARY, decision 34: pre-batch M2 code, reached at 790d970 only through the B2 exact-input admission that G2 deleted; G3 deletes it next, and this entry with it"
+    },
+    {
+      "file": "src/core/work-graph/materials/material-facts-service.ts",
+      "name": "FactsCollector",
+      "reason": "pre-batch",
+      "note": "TEMPORARY, decision 34: pre-batch M2 code, reached at 790d970 only through the B2 exact-input admission that G2 deleted; G3 deletes it next, and this entry with it"
+    },
+    {
+      "file": "src/core/work-graph/materials/material-facts-service.ts",
+      "name": "createFactsCollector",
+      "reason": "pre-batch",
+      "note": "TEMPORARY, decision 34: pre-batch M2 code, reached at 790d970 only through the B2 exact-input admission that G2 deleted; G3 deletes it next, and this entry with it"
+    },
+    {
+      "file": "src/core/work-graph/materials/material-facts-service.ts",
+      "name": "trackAuthorityReads",
+      "reason": "pre-batch",
+      "note": "TEMPORARY, decision 34: pre-batch M2 code, reached at 790d970 only through the B2 exact-input admission that G2 deleted; G3 deletes it next, and this entry with it"
+    },
+    {
+      "file": "src/core/work-graph/materials/material-facts-service.ts",
+      "name": "trackCandidateReads",
+      "reason": "pre-batch",
+      "note": "TEMPORARY, decision 34: pre-batch M2 code, reached at 790d970 only through the B2 exact-input admission that G2 deleted; G3 deletes it next, and this entry with it"
+    },
+    {
+      "file": "src/core/work-graph/materials/material-facts-service.ts",
+      "name": "trackCarriedReads",
+      "reason": "pre-batch",
+      "note": "TEMPORARY, decision 34: pre-batch M2 code, reached at 790d970 only through the B2 exact-input admission that G2 deleted; G3 deletes it next, and this entry with it"
+    },
+    {
+      "file": "src/core/work-graph/materials/material-facts-service.ts",
+      "name": "bindSourceSignal",
+      "reason": "pre-batch",
+      "note": "TEMPORARY, decision 34: pre-batch M2 code, reached at 790d970 only through the B2 exact-input admission that G2 deleted; G3 deletes it next, and this entry with it"
+    },
+    {
+      "file": "src/core/work-graph/materials/material-facts-service.ts",
+      "name": "canonicalKey",
+      "reason": "pre-batch",
+      "note": "TEMPORARY, decision 34: pre-batch M2 code, reached at 790d970 only through the B2 exact-input admission that G2 deleted; G3 deletes it next, and this entry with it"
+    },
+    {
+      "file": "src/core/work-graph/materials/material-facts-service.ts",
+      "name": "rejection",
+      "reason": "pre-batch",
+      "note": "TEMPORARY, decision 34: pre-batch M2 code, reached at 790d970 only through the B2 exact-input admission that G2 deleted; G3 deletes it next, and this entry with it"
+    },
+    {
       "file": "src/core/work-graph/materials/material-service.ts",
       "name": "StoreRejectionCode",
       "reason": "pre-batch",

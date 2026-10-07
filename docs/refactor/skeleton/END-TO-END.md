@@ -145,7 +145,7 @@ sequenceDiagram
 | 架构图 | `architecture.readArchitectureRevision/adoptInitialArchitecture`、`queryArchitecture/compareArchitecture/queryImpact` | 正式采用目录与 observed 图分别展示来源及版本；源码观察不自动采用 |
 | 任务图 | `plans.queryGoal/queryTaskGraph/queryReadyTasks/readPlanProposal`，写操作 `proposePlan/applyPlanChange` | 显式意图、optional/deferred、首次分配、明确激活及只读 planning diagnostics 已接通；诊断为空或 Run ended 都不代表正式完成 |
 | Session | `sessions.findSessions/readSession/getSessionOperation`、关联/归档/重新启用；`runtime.createSession` | 创建不启动模型；以真实 WorkLink 连接模块、任务与 Session，操作查询由 SessionDirectoryPort 拥有 |
-| 材料与历史 | `materials.openArtifact`、`plans.readTaskInput`；`runtime.readSessionHistory/readExecutionHistory/readTaskExecutionHistory` | 精确引用与分页读取，区分 current 和 historical_explanation；尚无 `searchHistory` 或材料全库浏览 port |
+| 材料与历史 | `materials.openArtifact`（`plans.readTaskInput` 2026-10-07 已删除，lead 决定 LA-11）；`runtime.readSessionHistory/readExecutionHistory/readTaskExecutionHistory` | 精确引用与分页读取，区分 current 和 historical_explanation；尚无 `searchHistory` 或材料全库浏览 port |
 | 消息 | `messages.readInbox/readMessage/readMessageBody/sendMessage/ackMessage/respondMessage` | C1 正式收件箱与正文；查看不自动 ack，Host 发信使用真实 Host 身份，不代造 work_run |
 
 R6.1a/b 已交付的 **本地 Host 启动与薄工作台、Session/mailbox** 继续保持：直接装配上述组合根，完成真实初始化、文件/双图/Session/材料/历史/消息的引用导航，以及 Session 创建、Host 发信。以明确的 actions/queries 和 JSON DTO 连接展示组件；共享导航只保存选择、布局和带版本的读结果，不新增业务状态库。项目/Goal 初始入口使用配置 scope 与正式创建回执，不虚构全库列表。实际入口见 next/app/core-http-types.ts 与 core-routes.ts；生产UI已接确认的三栏/页签/图与草稿交互，当前范围已真实浏览器复验；调查/规划执行入口[六生产实现已导入](../reviews/evidence/next-b2-2026-09-26/r6-execution-entry-implementation-import.json)，[真实CUA验收](../reviews/evidence/next-b2-2026-09-26/r6-execution-entry-browser-final.json)已从一键规划执行到正式Goal COMPLETED；完整回答默认收起可展开，TaskGraph.completion直接显示。

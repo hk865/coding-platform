@@ -1654,7 +1654,7 @@ type RunGuardContext = {
   goal: { desiredState: 'active' | 'paused' | 'cancelled'; activePlanMatchesClaim: boolean }; // activePlanMatchesClaim 只用于 RUN-01（领取钉住活动计划）
   entryPlan: 'active_plan' | 'carried_unchanged' | 'changed' | 'unavailable'; // RUN-02/03（C6）：EntryPlanVerdict['kind']，服务用 entryPlanVerdict 计算，见契约 (g)
   continuationBrief: 'absent_ok' | 'bound' | 'missing' | 'unexpected' | 'mismatch'; // RUN-02/03（C3）：服务比较，机器只看取值，见契约 (e)
-  freshAdmission: CoreRejection | null;    // Host/Role/材料/deadline 复核结果；IO 留在服务
+  freshAdmission: CoreRejection | null;    // Host/Role/材料/deadline 复核结果；IO 留在服务（2026-10-07 起不再复核材料，lead 决定 LA-11）
   pointerIntent: { kind: ControlIntentKindV1; status: ControlIntentSnapshotV1['status']; observed: string | null } | null;
   queuedSteers: readonly ControlIntentRef[]; // controlInputs 中仍 queued 的 steer（RUN-09/23 同提交取代；A.2 5.1 同步：由计数改为 ref 列表，取代效果要逐个点名 intent）
   continuationConsumed: boolean;           // YieldedWait：Lease holder 已换成继任 Run（RD-8）
@@ -1807,6 +1807,7 @@ type EntryPlanVerdict =
 // 外部材料：授权有效性按同一 basis 规则判定（lead 决定 LA-2（2026-10-03）：组合时注入谓词，materials 不 import tasks/），
 //   所以 carried_unchanged 的 Run 的 freshAdmission 不因无关的计划采用而失败；材料本身被拒时照常返回该拒绝
 //   （2026-10-07，决定 34：授权写入方已删除，此后没有授权可读；只为授权存在的读取分支随后删除）
+//   （2026-10-07，lead 决定 LA-11：入口的外部材料准入已删除，freshAdmission 只复核 Host/Role 与 deadline）
 ```
 
 `completion-policy.ts:71-75` 的 `runBlocker`（按 §4 移到 `state/`，改名 `runUnresolvedBlocker`）要按扩展后的联合类型读取：`not_entered`/`interrupted_clean`/`human_attested`/`runtime_terminal` 不阻塞，`quarantined`/`unresolved` 继续阻塞。`workflow.ts:216-217` 无需改动，因为新写入都用 `done`。另外，Outbox 的“未进入结算”需要一个新的 `dispatchState` 变体，因为今天 `taskDispatchStateV1Problem` 要求 `consumerId` 非空、`entryGeneration≥1`（`execution-entry-codecs.ts:281-282`）。这一项由 §5 AD-2 定义。ControlIntent 的平台观察见 §7.1。
@@ -1852,9 +1853,9 @@ T（超时/截止）不是 Run 事件：`deadlineProblem` 只拒绝 fresh 进入
 | # | from | event | guard（守卫） | to | effects（同事务副作用意图） | 幂等/重复事件 | 原文编号 | 现状 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | RUN-01 | Absent | `claim_committed` | Goal desiredState=active 且活动 Plan=claim.planRef；Session active/available 且无占用；Task 为 work+active 且资格通过；首次领取要求无 Run，或最新 TaskRequeue 覆盖最近结束的 Run（D-3，§4）；接续领取要求前 Run 为 YieldedWait、其指针不是 paused/cancelled、Lease 由前 Run 释放 | `Claimed` | Attempt `attempt_claimed`；Outbox pending；Lease @1 或 @k+1；§8 `occupancy_acquired`（gen=rev+1）；`lastExecutionRef` | 先 lookupCommit 回放原回执；接续领取的身份与 actor 无关（`claim-service.ts:381-405`） | T2、S3 | 已有 `claim-service.ts:698-707`（守卫 `:514-517`、`:541-545`、`:590-641`） |
-| RUN-02 | `Claimed` | `entry_authorized` | 指针不是 paused/cancelled（`steered` 时为 unsupported）；status=starting；`session.usable && session.owned`；lease=owned；无授权；Goal desiredState=active；`entryPlan ∈ {active_plan, carried_unchanged}`（C6：活动 Plan 等于 claim.planRef，或活动 Plan 原样承载该 Task；`changed` → stale/`revision_conflict`，`unavailable` → guard_failed/`unavailable`，契约 (g)）；`continuationBrief ∈ {absent_ok, bound}`（C3：有 `requeueRef` 的 Run 必须绑定接续说明，其他 Run 不得带，契约 (e)）；`freshAdmission=null`（外部材料按 basis 判定，lead 决定 LA-2（2026-10-03）） | `Authorized`（V2：gen 1，rev 1，kernel null） | 写 envelope、inputBinding（requeue Run 时含 `continuationBriefDigest`，之后不可变，§11 I-19）；`carried_unchanged` 时事件带 `activePlanRef`，提交另钉活动 Plan@1 与 basis 源 Plan@1；Goal@rev 守卫（已有）让授权与 W16 串行 | 原回执回放（指纹不含活动 Plan）；另一 consumer → busy | T3、§3.1；C3、C6 | 已有 `execution-entry-service.ts:914-971`；改造 `:936-942`、`:973-977`、`:979-992`（C6 放宽计划守卫与读集守卫）；改造 `:861-971` 的授权读取、`:471-523`（manifest 形状）、`:1525-1556`（`manifestAgainstPrepared` 比较摘要与渲染后缀）、`execution-entry-codecs.ts:173-199`（允许并校验 `continuationBriefDigest`）（C3） |
+| RUN-02 | `Claimed` | `entry_authorized` | 指针不是 paused/cancelled（`steered` 时为 unsupported）；status=starting；`session.usable && session.owned`；lease=owned；无授权；Goal desiredState=active；`entryPlan ∈ {active_plan, carried_unchanged}`（C6：活动 Plan 等于 claim.planRef，或活动 Plan 原样承载该 Task；`changed` → stale/`revision_conflict`，`unavailable` → guard_failed/`unavailable`，契约 (g)）；`continuationBrief ∈ {absent_ok, bound}`（C3：有 `requeueRef` 的 Run 必须绑定接续说明，其他 Run 不得带，契约 (e)）；`freshAdmission=null`（外部材料按 basis 判定，lead 决定 LA-2（2026-10-03）；2026-10-07 起 freshAdmission 不再复核材料，lead 决定 LA-11） | `Authorized`（V2：gen 1，rev 1，kernel null） | 写 envelope、inputBinding（requeue Run 时含 `continuationBriefDigest`，之后不可变，§11 I-19）；`carried_unchanged` 时事件带 `activePlanRef`，提交另钉活动 Plan@1 与 basis 源 Plan@1；Goal@rev 守卫（已有）让授权与 W16 串行 | 原回执回放（指纹不含活动 Plan）；另一 consumer → busy | T3、§3.1；C3、C6 | 已有 `execution-entry-service.ts:914-971`；改造 `:936-942`、`:973-977`、`:979-992`（C6 放宽计划守卫与读集守卫）；改造 `:861-971` 的授权读取、`:471-523`（manifest 形状）、`:1525-1556`（`manifestAgainstPrepared` 比较摘要与渲染后缀）、`execution-entry-codecs.ts:173-199`（允许并校验 `continuationBriefDigest`）（C3） |
 | RUN-03 | `Revoked` | `entry_authorized` | 同 RUN-02（“无授权”改为“现有 V2 phase=revoked”；放宽的计划守卫 C6 与接续说明守卫 C3 同样适用）；Prepared 的 `inputBinding` 与 Run 上已固定的 `inputBinding` 逐字段相等（含 `continuationBriefDigest`），envelope 相等，即 Prepared 由 `rehydratePreparedExecution(record)` 从 Run 重建（inputBinding 不可变，`dispatch.ts:157`；C3）；新 generation=旧值+1；sessionGeneration=claim.generation；kernel 沿用旧绑定；consumer 可以是新的；Session 须已重验为 available（§8 SES-13） | `Authorized`（gen+1，rev 1，kernel 保留） | 不改写 envelope、inputBinding；不重新组装接续说明；不新建 Attempt（§9 机械重试）；`entryPlan=carried_unchanged` 时事件带 `activePlanRef`，提交另钉活动 Plan@1 与读到的 basis 源 Plan@1；Goal@rev 守卫（已有）让重新授权与 W16 串行（C6） | 同 RUN-02 | S8、A8、D-5；C3、C6 | 改造 `execution-entry-service.ts:930-934`、`:961-971`（今天已有授权时一律 busy 或 forbidden）；改造 `execution-driver.ts:287-291`、`:402-406`（今天除 authorized 外的 V2 phase 都只走观察，revoked 永远不会被重新授权）；新增 `execution-preparation.ts` 的 `rehydratePreparedExecution`，`prepare` 对已有 inputBinding 的 Run 返回它（C3） |
-| RUN-04 | `Authorized` | `entry_begun` | 指针栅栏同 RUN-02；status=starting；permit 与 V2 绑定逐项相等；sessionGeneration=claim.generation；session.owned、lease=owned；inputBinding 摘要等于 permit；`freshAdmission=null`。不读 Goal（L-6），所以 W3 之后的无关 W16 不影响进入；外部材料的授权按 basis 规则保持有效（lead 决定 LA-2（2026-10-03）），无关的计划采用不会让 `freshAdmission` 失败 | `Entering`（auth rev+1，kernel 固定） | `claim_kernel_slot`：gen 1 时 none→self；gen>1 且 kernel 相同时 self→self | 回放只观察，不再调用 Kernel（`execution-driver.ts:442`） | T3、§6.3；C6 | 已有 `execution-entry-service.ts:1061-1101`；改造 `:1127`（gen>1 时槽位 owner→owner）；改造 `materials/applicability.ts:219-223`、`materials/grant-service.ts:674-676`、`:750-752`、`:767`（在 `create-platform.ts:294` 组装处注入 basis 谓词，LA-2；`grant-service.ts` 2026-10-07 已删除，决定 34） |
+| RUN-04 | `Authorized` | `entry_begun` | 指针栅栏同 RUN-02；status=starting；permit 与 V2 绑定逐项相等；sessionGeneration=claim.generation；session.owned、lease=owned；inputBinding 摘要等于 permit；`freshAdmission=null`。不读 Goal（L-6），所以 W3 之后的无关 W16 不影响进入；外部材料的授权按 basis 规则保持有效（lead 决定 LA-2（2026-10-03）），无关的计划采用不会让 `freshAdmission` 失败（2026-10-07 起 freshAdmission 不再复核材料，lead 决定 LA-11） | `Entering`（auth rev+1，kernel 固定） | `claim_kernel_slot`：gen 1 时 none→self；gen>1 且 kernel 相同时 self→self | 回放只观察，不再调用 Kernel（`execution-driver.ts:442`） | T3、§6.3；C6 | 已有 `execution-entry-service.ts:1061-1101`；改造 `:1127`（gen>1 时槽位 owner→owner）；改造 `materials/applicability.ts:219-223`、`materials/grant-service.ts:674-676`、`:750-752`、`:767`（在 `create-platform.ts:294` 组装处注入 basis 谓词，LA-2；`grant-service.ts` 2026-10-07 已删除，决定 34） |
 | RUN-05 | `Entering` | `entered_observed` | auth=entering 且 permit 相等；session.owned、lease=owned；kernelSource 等于 begin 绑定；位置在 history 窗口内。不复核 Host/Role/材料，因为这是已发生的事实 | `Running`（startedAt，auth entered） | `attempt:attempt_started`；`outbox:entered`；`bind_history` | 原回执回放 | T3、RT3 | 已有 `execution-entry-service.ts:1200-1246` |
 | RUN-06 | `Claimed`/`Authorized`/`Entering`/`Running` | `history_recorded` | 身份与起点固定；observedThrough 单调；end 只写一次；Kernel session 映射一致 | 节点不变（rev+1） | `bind_history`；Kernel 槽位 owner CAS | 原回执回放 | T3、S3 | 已有 `execution-history-binding.ts:113-162`、`execution-history-service.ts:407-461` |
 | RUN-07 | `Running` | `terminal_observed` | auth=entered 且 consumer/generation 相等；Run 未终结；`input_accepted` 已确认（`execution-observation.ts:534-537`）；kernelSource=auth.kernel；边界与 history 完整一致；`event.sequence>lastEventSeq`（排序）；终态类型；yielded 当且仅当带 continuation；工具全部有确定结果（`abandoned` 计为确定，`:581-583`）；`exitProof≠null` | `Ended`，或 yielded 时为 `YieldedWait`；outcome 取 `terminalFact`；auth settled | `attempt:attempt_ended(outcome)`；`outbox:settled(entered)`；`release_session`（historyCursor=边界 cursor）；`release_lease`；yielded 时 `set_continuation`；写 `terminalPayload`=Kernel 终态事件的 payload（契约 (f)，C1）；lastEventSeq 等前移。提交之后，观察者按 §7 CTL-06 给仍 queued 的 intent 写观察（不在同一提交中） | 原回执回放；已终结后的重复见 6.4 | T5、R5、A8；C1 | 已有 `execution-entry-service.ts:1340-1435`；Runtime 门 `execution-observation.ts:671-673`；改造 `:1400-1404`（写 `terminalPayload`，C1） |
@@ -4821,6 +4822,8 @@ A.2 第 2 项要求“服务只通过状态机改状态”，并且能被自动�
 
 **A.2 第 6 步收尾同步**（测试文件名，2026-10-07）：第 6 步把 `tests/app/`、`tests/composition/` 中的一些集成用例移进了 `tests/scenarios/`，每个用例只留一份。上文第 5 步各行和 §8 LD-4 说明里的测试文件名已改为移入后的文件；每个用例的去向写在第 6 步各提交的说明里。
 
+**简化同步**（精确输入，决定 34，lead 决定 LA-11（2026-10-07））：按计划“精确输入”读材料的路径已删除（准备阶段的读取、`readTaskInput`、入口与模型屏障的外部材料准入），`tests/work-graph/R3c-task-inputs.test.ts` 随之删除。计划写了精确输入的 Task 现在照常启动，不带这份输入，不再停在 `waiting`。“消费时检查精确输入”（决定 11）由编排设计的第 3 片重建。lead 同日批准改一处断言：`tests/composition/R3c-R4b-platform.test.ts` 关闭后的排空探针从 `readTaskInput` 改为 `queryGoalDisplay`。
+
 **第 7 步：全量测试与文档。**
 
 - 全量测试通过。
@@ -5130,6 +5133,8 @@ D-17 原列表六项为 GAP-03…08；lead 决定 L-7 把 GAP-41 补入这一列
 | --- | --- | --- | --- |
 | GAP-14 | PLAN-01 不检查 `basedOn`（lead 决定 L-11：A.2 不加守卫）。指向尚不存在的 planId 的候选先派生为 `stale`，该 planId 之后被采用时，它会重新成为待决 | §3.1、§3.5 | 之后给 PLAN-01 加「`basedOn` 为 null 或本 Goal 已有的 PlanRevision」守卫 |
 | GAP-15 | `entry_begun`（RUN-04，W4）不检查 Goal `desiredState`（lead 决定 L-6：不采纳）。已授权的 Run 可以在扇出落地前进入 Kernel，之后由安全点控制收尾，结果仍正确 | §2.4 表后说明、§6 RUN-04 | 不计划改动：claim 与授权的期望状态守卫加上 I-9 已足够 |
+
+2026-10-07 补注（lead 决定 LA-11，决定 34）：计划的精确输入（`inputRequirements`）现在没有任何执行路径读取。写了精确输入的 Task 照常启动，不带这份输入。出口：编排设计的第 3 片重建“消费时检查精确输入”（决定 11，仍是未完成的 MVP 项）。
 
 **恢复与核对**
 
@@ -5448,9 +5453,9 @@ lead 已定的实现层决定 L-1..L-12 不在此列。用户已于 2026-10-03 �
 | L-15 | Workflow 选择任务时跳过非 active 的 Task（VD-11 第二处改动），这是正确性修复，与 U-10 无关 |
 | L-16 | 附录 A 第 C 节的各节补充决定，按各节写明的默认做法实施 |
 
-### lead 决定（2026-10-03 A.1b；2026-10-07 第 6 步收尾）
+### lead 决定（2026-10-03 A.1b；2026-10-07 第 6 步收尾、简化）
 
-LA-1..LA-7 七条是 2026-10-03 修订（A.1b）时，lead 对用户决定 C1..C8 落地时留下的问题作出的裁定。正文各节引作“lead 决定 LA-n（2026-10-03）”，已经按此书写。优先级低于用户决定 C1..C8，高于 L-1..L-16 与其余 lead 裁定（§0.7）。lead 同日按用户总体取向裁定的 10 项解释列在 §0.7，不在本表重复。LA-7 之后的各条是 2026-10-07 A.2 第 6 步收尾时，lead 对第 6 步提议 P-1..P-4 的裁定，正文引作“lead 决定 LA-n（2026-10-07）”，优先级与前七条相同。你不同意哪一条，指出后再改。
+LA-1..LA-7 七条是 2026-10-03 修订（A.1b）时，lead 对用户决定 C1..C8 落地时留下的问题作出的裁定。正文各节引作“lead 决定 LA-n（2026-10-03）”，已经按此书写。优先级低于用户决定 C1..C8，高于 L-1..L-16 与其余 lead 裁定（§0.7）。lead 同日按用户总体取向裁定的 10 项解释列在 §0.7，不在本表重复。LA-8..LA-10 是 2026-10-07 A.2 第 6 步收尾时，lead 对第 6 步提议 P-1..P-4 的裁定；LA-11 是同日简化（决定 34）时的裁定。正文引作“lead 决定 LA-n（2026-10-07）”，优先级与前七条相同。你不同意哪一条，指出后再改。
 
 | 编号 | 决定 | 落点 |
 | --- | --- | --- |
@@ -5464,13 +5469,14 @@ LA-1..LA-7 七条是 2026-10-03 修订（A.1b）时，lead 对用户决定 C1..C
 | LA-8 | （2026-10-07，采纳提议 P-1、P-2）人工认定（RUN-22、QRR-06）的幂等指纹只含请求本身（目标、理由、pin），不含 Host 入口读到的 Kernel 事实（`kernelTurnOpen`、`inputsConfirmed`）。所以同一身份的重试即使 Kernel 读法变了，也得到原回执，不写入；同一身份换了理由仍为 `idempotency_conflict`（§1.2）。Host 入口在租约检查之后、准入与 Kernel 读取之前按身份查原回执；没有实例租约的 Host 对重试仍返回 `busy`（L-1） | §6 RUN-22；§8 QRR-06；§6.1 契约 (d)；§15.2 第 6 步同步；`tests/scenarios/A8-host-restart-attestation.test.ts`（所有者。它放在 A8 重启场景旁边，不在 `tests/work-graph/` 的所有者测试旁边，因为未知的 Run 和 QueryRun 要由真实的启动核对造出，这要用场景测试的工具）、`A8-host-restart-entry.test.ts`（A8-2b）、`A8-host-restart-lease.test.ts`（Q-05、QRR-06） |
 | LA-9 | （2026-10-07，提议 P-3 选 (b)）本批接受冻结 Kernel 的这条限制：接续 Session 里之后的 Turn 只保留该 Session 自己的 Turn，不保留种子前缀；种子前缀只到达接续 Session 的第一个 Run。原因：冻结 Kernel 只按一个 Session 的记录恢复历史（`vendor/coding-agent/dist/app/composition/composition-root.js:158-170`）。平台只能传种子来源或本 Session 之一，也不能写 Kernel 存储。Kernel 补丁以后做，不在本批。A8-3p 的测试断言这条限制；以后 Kernel 补丁保留了前缀，这个测试会失败，那时同步本规格 | §12.10 A8-3p；§16 GAP-50 (ii)；`tests/scenarios/A8-host-restart-paused.test.ts`；STATUS.md 缺口“接续的代价” |
 | LA-10 | （2026-10-07，提议 P-4 选 (a)）afterRun 未进入 Kernel 时，接续说明的 `round_open` 工作区检查点和从它开始的分段，与 `checks` 一样取 factsFrom Run 的轮次（`continuation-brief-assembly.ts` 的 `checksRound`），`at` 取该 Run 的结束时间。所以“检查轮次开始以来的变化”从所列检查所在的位置算起。`unobserved` 的 `previousEndedAt` 同样取该 Run 的结束时间，该 Run 没有轮次时也一样，所以无法观察的区间不会倒着走（收尾审阅补充，2026-10-07） | §6.1 契约 (e)；`src/core/agent-runtime/continuation-brief-assembly.ts`；`tests/scenarios/C3-not-entered-chain.test.ts`；`tests/runtime/C3-brief-timeline.test.ts`（各 Run 结束时间不同） |
+| LA-11 | （2026-10-07，简化，决定 34）删除按计划“精确输入”读材料的路径：准备阶段的读取循环（`execution-preparation.ts`）、计划服务的 `readTaskInput`、入口与模型屏障的外部材料准入（`admitExternalMaterials`），以及规划提示和白板工具说明里的 `inputRequirements` 字段。**这改变行为。** 以前，活动计划给已领取的 Task 写了精确输入时，准备被拒绝，Workflow 让 Task 停在 `waiting`。现在这个 Run 照常准备并启动，只是不带这份输入，agent 也不知道有这份输入。真实模型的记录里没出现过这种计划。保留的：计划的 `inputRequirements` 字段及其校验和显示；manifest 的 `selectedTaskInputs`、`additionalMaterialRefs` 及其形状检查（已存的格式）。准备写入的 `selectedTaskInputs` 总是空；旧 manifest 里这两项非空时，入口不再复核材料。“消费时检查精确输入”仍是未完成的 MVP 项（决定 11），由编排设计（决定 34）的第 3 片重建 | §6 RUN-02、RUN-04、`RunGuardContext.freshAdmission`、契约 (g)；§15.2 简化同步；§16.4；STATUS.md 缺口 |
 
 
 ## 附录 C　设计决定 D-1..D-18（文中的“brief”）
 
 正文中的“brief”和“D-n”都指本附录。它们是起草规格前由 lead 定下的约束，各节都按此书写。其中会改变产品可见行为的，已在 §0.4 和附录 A 中列为 U-n。用户已于 2026-10-03 全部确认：U-1、U-2、U-4..U-8、U-14 按原推荐；U-3、U-9..U-13、U-15 按用户决定 C1..C8 改变。没有单独 U 编号的 D-8、D-10、D-11、D-13、D-15、D-17 继续有效。
 
-下表“决定”一栏保留起草时的原文。只有 D-16 按 C8 改写，因为它原写“待用户确认”；原文保留在行内。最后一栏“2026-10-03（对应 C 项）”是新增的，写明每条的现状：“按原推荐”或“不变”表示原文照常有效；写了 Cn 或 LA-n 的，按该决定修订或补充。较长的说明见表后的修订注 1–5，C 项到 D 项的反向对照也在表后。原文与最后一栏或修订注冲突时，以后两者为准。优先级：用户决定 C1..C8 > lead 决定 LA-1..LA-7（LA-8..LA-10 同级，见附录 B）> 其余 lead 裁定（§0.7）。
+下表“决定”一栏保留起草时的原文。只有 D-16 按 C8 改写，因为它原写“待用户确认”；原文保留在行内。最后一栏“2026-10-03（对应 C 项）”是新增的，写明每条的现状：“按原推荐”或“不变”表示原文照常有效；写了 Cn 或 LA-n 的，按该决定修订或补充。较长的说明见表后的修订注 1–5，C 项到 D 项的反向对照也在表后。原文与最后一栏或修订注冲突时，以后两者为准。优先级：用户决定 C1..C8 > lead 决定 LA-1..LA-7（LA-8..LA-11 同级，见附录 B）> 其余 lead 裁定（§0.7）。
 
 | 编号 | 决定 | 对应 U 项 | 2026-10-03（对应 C 项） |
 | --- | --- | --- | --- |

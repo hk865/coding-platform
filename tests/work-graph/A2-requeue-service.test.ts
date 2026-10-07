@@ -97,7 +97,7 @@ async function open(kind: ClaimFixtureKind): Promise<Opened> {
   const materials = createMaterialService({ bodies: b2.bodies, authority: materialReads.authority,
     grants: createMaterialAccessResolver(materialReads.authority, materialReads.index), now });
   const entry = createExecutionEntryService({ records, reads, roles, bodies: b2.bodies, materials,
-    plans: base.plans, authorizeConfiguration, now, eventId, newId: () => `a2-requeue-entry-${++seq}` });
+    authorizeConfiguration, now, eventId, newId: () => `a2-requeue-entry-${++seq}` });
   const fixture: Opened = {
     b2, records, host, captures: [], messageReads: 0,
     service(options = {}) {

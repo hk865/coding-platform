@@ -32,7 +32,7 @@ import type { PreparedTaskExecution, PreparedTaskManifestV1 } from '../../../con
 import type { CoreError, CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import type { SessionRecord } from '../../../contracts/core/session.js';
 import type { TaskClaim } from '../../../contracts/core/task-claim.js';
-import { ARTIFACT_MAX_SIZE_BYTES, artifactBodyDigest, artifactBodySize, type ArtifactRecord, type ArtifactRef } from '../../../contracts/artifact.js';
+import { ARTIFACT_MAX_SIZE_BYTES, artifactBodyDigest, artifactBodySize, type ArtifactRef } from '../../../contracts/artifact.js';
 import type {
   ExecutionAuthorizationV2, RoleBindingRefV1, RunReconciliationBasisV1, RunRef, RunSnapshot,
   RuntimeInputBindingV1, TaskAttemptSnapshot, TaskBudgetV1, TaskLeaseSnapshot, TaskTriple,
@@ -44,7 +44,6 @@ import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fin
 import type { GoalRef } from '../../../contracts/ledger.js';
 import { sameArtifactRef, validMaterialSourcePin, type MaterialBasisV1 } from '../../../contracts/material-access.js';
 import { MANIFEST_CONTENT_TYPE } from '../../../contracts/no-progress.js';
-import type { PlanRevisionSnapshot, TaskInputRequirementV2 } from '../../../contracts/plan.js';
 import type { RoleSpecResolutionV1 } from '../../../contracts/role-spec-materials.js';
 import type { TaskEnvelopeV1 } from '../../../contracts/task-envelope.js';
 import { isAutomationActor } from '../../../contracts/task-requeue.js';
@@ -55,7 +54,6 @@ import type {
   UniqueClaimChange,
 } from '../../record-store/ports.js';
 import type { RoleBindingFacts } from '../configuration/contracts.js';
-import type { MaterialReadFacts } from '../materials/contracts.js';
 import {
   EXECUTION_ENTRY_AUTHORIZED_EVENT_TYPE, EXECUTION_ENTRY_BEGUN_EVENT_TYPE,
   EXECUTION_ENTRY_ENTERED_EVENT_TYPE, EXECUTION_ENTRY_EVENT_SCHEMA_VERSION,
@@ -634,152 +632,12 @@ function deadlineProblem(run: RunSnapshot, nowIso: string): CoreRejection | null
   return null;
 }
 
-type MaterialAdmission = { guards: readonly RecordGuard[] };
-
-/**
- * A selected input is a formal choice ONLY when the accepted `facts.plan`
- * itself names exactly one matching input requirement for this consumer Task
- * and its complete `ArtifactRef` is the manifest's exact selection. A manifest
- * may never self-report a selection the immutable Plan does not carry.
- */
-function formalInputRequirement(
-  plan: PlanRevisionSnapshot,
-  consumerTaskId: string,
-  selection: { requirementId: string; ref: ArtifactRef },
-): { ok: true; value: TaskInputRequirementV2 } | Rejected {
-  const requirements = plan.schemaVersion === 2 ? (plan.inputRequirements ?? []) : [];
-  const matches = requirements.filter(requirement =>
-    requirement.requirementId === selection.requirementId && requirement.consumerTaskId === consumerTaskId);
-  if (matches.length === 0) {
-    return { ok: false, rejection: forbidden('the selected material is not an exact input requirement of the accepted Plan for this consumer Task') };
-  }
-  if (matches.length > 1) {
-    return { ok: false, rejection: forbidden('the accepted Plan carries ambiguous input requirements for this selection') };
-  }
-  const requirement = matches[0]!;
-  if (requirement.kind !== 'artifact' || !sameRef(requirement.artifactRef, selection.ref)) {
-    return { ok: false, rejection: forbidden('the selected material ref does not match the accepted Plan input requirement') };
-  }
-  return { ok: true, value: requirement };
-}
-
-/**
- * The ONE fresh external-material admission shared by authorizeRuntimeEntry,
- * fresh beginRuntimeEntry and both model-request barriers. It is called at the
- * point where that barrier is about to assemble its ONE `PreparedCommit`, after
- * every other formal fact was re-read, so the exact canonical material versions
- * this decision observed can be merged into that same commit window.
- *
- * The caller already verified identity, Claim, Run/Session/lease, manifest
- * body/digest and Host/Role. This helper only consumes those verified
- * `facts`/`manifest`; it must never re-bind a caller-supplied Run or widen the
- * Host write identity.
- *
- * No external selected/additional material keeps the existing compatible path
- * with empty guards. With external material the helper rebuilds the REAL reader
- * for the formal Run (a `work_run` principal and that Run's `run` material
- * reader/`currentBasis`), checks the accepted Plan selection, reads the exact
- * current body through the reused M2 facts port and returns the exact canonical
- * versions that decision observed. It owns no authorization algorithm and no
- * second material state; `materialFacts` absent stays an explicit
- * `unsupported`, never a bare `openArtifact` that commits without guards.
- */
-async function admitExternalMaterials(
-  deps: Pick<ExecutionEntryDependencies, 'plans' | 'materialFacts'>,
-  ctx: CoreCallContext,
-  facts: TaskExecutionRecord,
-  manifest: PreparedTaskManifestV1,
-): Promise<{ ok: true; value: MaterialAdmission } | Rejected> {
-  const selected = manifest.selectedTaskInputs;
-  const additional = manifest.additionalMaterialRefs;
-  if (selected.length === 0 && additional.length === 0) return { ok: true, value: { guards: [] } };
-  const materialFacts = deps.materialFacts;
-  if (materialFacts === undefined) {
-    return { ok: false, rejection: reject('unsupported',
-      'external selected/additional materials require the M2 material-facts grant guard seam; refusing a fresh entry authorization without grant CAS facts') };
-  }
-  // Narrow once for the closure below; the port is the same instance.
-  const factsPort = materialFacts;
-  const run = facts.run;
-  const claim = facts.outbox.claim;
-  const workspaceId = run.workspaceSnapshot.workspaceId;
-  // The B2 write context is a trusted Host; a material read must run as the
-  // actual claimed Run. This narrows an already-verified execution only, never
-  // the Host write identity and never a caller-chosen Run.
-  if (run.ref.projectId !== claim.task.projectId || workspaceId !== claim.workspaceId
-    || !sameRef(run.ref, claim.runRef)) {
-    return { ok: false, rejection: forbidden('the formal Run scope disagrees with the persisted claim') };
-  }
-  const runCtx: CoreCallContext = {
-    projectId: run.ref.projectId,
-    workspaceId,
-    principal: { kind: 'work_run', runRef: run.ref, roleBinding: run.roleBinding },
-    materialReader: { kind: 'run', requester: run.ref,
-      ...(manifest.materialBasis === null ? {} : { currentBasis: manifest.materialBasis }) },
-    // The original AbortSignal is kept by reference; material admission never
-    // creates a second cancellation source.
-    signal: ctx.signal,
-  };
-  const goalRef = goalRefOf(claim.task);
-  const guards: RecordGuard[] = [];
-  // One exact current read may be reused strictly WITHIN this barrier when a
-  // selected and an additional ref coincide; nothing is cached across barriers.
-  const exactCurrent = new Map<string, MaterialReadFacts>();
-
-  async function readExactCurrent(ref: ArtifactRef): Promise<{ ok: true; value: ArtifactRecord } | Rejected> {
-    const key = refKeyOf(ref);
-    if (key === null) return { ok: false, rejection: invalid('the external material ref is not canonicalizable JSON') };
-    let observed: MaterialReadFacts | undefined = exactCurrent.get(key);
-    if (observed === undefined) {
-      observed = await factsPort.openArtifactFacts(runCtx, { ref, usage: 'current' });
-      exactCurrent.set(key, observed);
-    }
-    if (observed.result.status !== 'ready') return { ok: false, rejection: mapReadResult(observed.result) };
-    if (!sameRef(observed.result.value.ref, ref)) {
-      return { ok: false, rejection: unavailable('the current material read returned a different exact ref than requested') };
-    }
-    guards.push(...observed.guards);
-    return { ok: true, value: observed.result.value };
-  }
-
-  const selectedIds = new Set<string>();
-  for (const selection of selected) {
-    if (selectedIds.has(selection.requirementId)) {
-      return { ok: false, rejection: forbidden('the manifest repeats one selected input requirement') };
-    }
-    selectedIds.add(selection.requirementId);
-    const formal = formalInputRequirement(facts.plan, claim.task.taskId, selection);
-    if (!formal.ok) return formal;
-    const formalRead = await deps.plans.readTaskInput(runCtx, {
-      goalRef, planRef: facts.plan.ref, taskId: claim.task.taskId, requirementId: formal.value.requirementId });
-    if (formalRead.status !== 'ready') return { ok: false, rejection: mapReadResult(formalRead) };
-    if (!sameRef(formalRead.value.ref, selection.ref)) {
-      return { ok: false, rejection: forbidden('the accepted Plan input read returned a different exact ref than the manifest selection') };
-    }
-    const current = await readExactCurrent(selection.ref);
-    if (!current.ok) return current;
-    // Two independent reads of one immutable digest must agree on the body; the
-    // later read never silently replaces the material the Plan selected.
-    if (current.value.body !== formalRead.value.body) {
-      return { ok: false, rejection: unavailable('the accepted Plan selection and the current material read disagree on the body of the same exact ref') };
-    }
-  }
-  for (const ref of additional) {
-    const current = await readExactCurrent(ref);
-    if (!current.ok) return current;
-  }
-  return { ok: true, value: { guards } };
-}
-
 export type EnteredAdmission = {
   facts: TaskExecutionRecord;
   auth: ExecutionAuthorizationV2;
   manifest: PreparedTaskManifestV1;
   inputBinding: RuntimeInputBindingV1;
   roleFacts: RoleBindingFacts;
-  /** Exact fresh material-facts guards read by this admission; merged into the
-   * model barrier's ONE commit, never cached across barriers. */
-  materialGuards: readonly RecordGuard[];
 };
 
 /**
@@ -829,13 +687,13 @@ export async function admitEnteredRun(
   return { ok: true, value: { facts: factsRead.value, auth, manifest, inputBinding, ...admitted.value } };
 }
 
-type ManifestAdmission = Pick<EnteredAdmission, 'roleFacts' | 'materialGuards'>;
+type ManifestAdmission = Pick<EnteredAdmission, 'roleFacts'>;
 type Admitted = { ok: true; value: ManifestAdmission } | Rejected;
 
 /**
  * The fresh re-admission of a saved manifest that authorize, begin and the
- * model barrier share, in today's order: the current Host/Role, the deadline,
- * then the external materials.
+ * model barrier share, in today's order: the current Host/Role, then the
+ * deadline.
  */
 async function admitManifest(
   deps: Omit<ExecutionEntryDependencies, 'newId'>, ctx: CoreCallContext, facts: TaskExecutionRecord,
@@ -849,9 +707,7 @@ async function admitManifest(
   if (!hostRole.ok) return hostRole;
   const deadline = deadlineProblem(facts.run, deps.now());
   if (deadline !== null) return { ok: false, rejection: deadline };
-  const material = await admitExternalMaterials(deps, ctx, facts, manifest);
-  if (!material.ok) return material;
-  return { ok: true, value: { roleFacts: hostRole.value.roleFacts, materialGuards: material.value.guards } };
+  return { ok: true, value: { roleFacts: hostRole.value.roleFacts } };
 }
 
 // --------------------------------------------------------------------------
@@ -1150,16 +1006,16 @@ export function executionReadGuards(facts: TaskExecutionRecord, runKey: string, 
   ];
 }
 
-/** A fresh entry admission as RUN-02/04 read it: its refusal, or the guards it read (role facts, then materials). */
+/** A fresh entry admission as RUN-02/04 read it: its refusal, or the role-fact guards it read. */
 function freshAdmissionOf(admitted: Admitted): { problem: CoreRejection | null; guards: readonly RecordGuard[] } {
-  return admitted.ok ? { problem: null, guards: [...admitted.value.roleFacts.guards, ...admitted.value.materialGuards] }
+  return admitted.ok ? { problem: null, guards: admitted.value.roleFacts.guards }
     : { problem: admitted.rejection, guards: [] };
 }
 
 /**
  * RUN-02's `freshAdmission`, in today's order and with its own IO: the Goal
  * workspace, the saved manifest against the prepared input, the current
- * Host/Role, the deadline and the external materials.
+ * Host/Role and the deadline.
  */
 async function authorizeAdmission(
   deps: ExecutionEntryDependencies, ctx: CoreCallContext, scope: WorkspaceScope,

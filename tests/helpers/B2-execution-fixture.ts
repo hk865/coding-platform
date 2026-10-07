@@ -17,10 +17,9 @@ import { canonicalJson, type JsonValue } from '../../src/contracts/fingerprint.j
 import type { VersionPin } from '../../src/contracts/core/identity.js';
 import type { PreparedTaskExecution, PreparedTaskManifestV1 } from '../../src/contracts/core/prepared-execution.js';
 import type { TaskClaim } from '../../src/contracts/core/task-claim.js';
-import { artifactBodyDigest, type ArtifactRef } from '../../src/contracts/artifact.js';
+import { artifactBodyDigest } from '../../src/contracts/artifact.js';
 import type { RunRef, RunSnapshot, RuntimeEventV1 } from '../../src/contracts/dispatch.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
-import type { MaterialAccessGrantRef, MaterialBasisV1 } from '../../src/contracts/material-access.js';
 import type { PlanRevisionDraft, PlanRevisionRef } from '../../src/contracts/plan.js';
 import type { RoleSpecResolutionV1 } from '../../src/contracts/role-spec-materials.js';
 import type { TaskEnvelopeV1 } from '../../src/contracts/task-envelope.js';
@@ -28,7 +27,7 @@ import type { RawArtifactStorePort } from '../../src/core/record-store/body-port
 import type { RecordBackendSchemas } from '../../src/core/record-store/ports.js';
 import { RawArtifactBodyStore } from '../../src/core/record-store/body-store.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
-import type { MaterialPort, MaterialReadFactsPort } from '../../src/core/work-graph/materials/contracts.js';
+import type { MaterialPort } from '../../src/core/work-graph/materials/contracts.js';
 import { plainSessionRefToAggregate } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import type { ClaimTaskInput } from '../../src/core/work-graph/tasks/claim-contracts.js';
 import type { GraphWrite } from '../../src/core/work-graph/tasks/contracts.js';
@@ -61,27 +60,12 @@ export type B2TerminalObservation = TaskResultObservation & {
 };
 
 
-/**
- * Optional real material dependencies. The default `ports()` still wires the
- * explicit unsupported fixture seam; a caller injects the SAME real
- * authority/index/bodies/source chain (plans/materials/materialFacts) here.
- */
-export type B2PortOverrides = {
-  plans?: ExecutionEntryDependencies['plans'];
-  materials?: MaterialPort;
-  materialFacts?: MaterialReadFactsPort;
-};
-
 export type B2PreparedOptions = {
   claim?: TaskClaim;
   input?: string;
   role?: RoleSpecResolutionV1;
   hostTemplate?: PreparedTaskManifestV1['hostTemplate'];
   permissions?: TaskEnvelopeV1['permissions'];
-  selectedTaskInputs?: Array<{ requirementId: string; ref: ArtifactRef }>;
-  materialBasis?: MaterialBasisV1 | null;
-  additionalMaterialRefs?: ArtifactRef[];
-  materialAccessRefs?: MaterialAccessGrantRef[];
 };
 
 export type B2ExecutionFixture = {
@@ -104,7 +88,7 @@ export type B2ExecutionFixture = {
   completedBoundary(position?: number): CompletedHistoryBoundary;
   observedHistory(position?: number): ObservedExecutionHistory;
   sessionAvailability(): Promise<string | null>;
-  ports(records?: B2Records, overrides?: B2PortOverrides): B2Ports;
+  ports(records?: B2Records): B2Ports;
   host: { enabled: boolean; calls: number };
   read(claim?: TaskClaim, records?: B2Records): Promise<TaskExecutionRecord>;
   authorize(options?: { prepared?: PreparedTaskExecution; ports?: B2Ports; consumerId?: string }): Promise<B2Admitted>;
@@ -207,13 +191,11 @@ export async function createB2ExecutionFixture(
     }
     return { status: 'ready', value: structuredClone(B2_HOST) };
   };
-  function ports(records: B2Records = base.records, overrides: B2PortOverrides = {}): B2Ports {
+  function ports(records: B2Records = base.records): B2Ports {
     const deps: ExecutionEntryDependencies = {
       records, reads: createRunStateReader({ records }),
       roles: createRoleConfigurationService({ records, now, eventId }),
-      plans: overrides.plans ?? base.plans, materials: overrides.materials ?? materials,
-      ...(overrides.materialFacts !== undefined ? { materialFacts: overrides.materialFacts } : {}),
-      bodies, authorizeConfiguration,
+      materials, bodies, authorizeConfiguration,
       now, eventId, newId: () => `b2-id-${++seq}`,
     };
     return { entry: createExecutionEntryService(deps), model: createModelCallService(deps) };
@@ -231,16 +213,12 @@ export async function createB2ExecutionFixture(
     const role = options.role ?? roleFacts.result.value;
     const hostTemplate = options.hostTemplate === undefined ? structuredClone(B2_HOST.hostTemplate) : options.hostTemplate;
     const workspaceSnapshot = { workspaceId: targetClaim.workspaceId, revision: 1 };
-    const selectedTaskInputs = options.selectedTaskInputs ?? [];
-    const materialBasis = options.materialBasis === undefined ? null : options.materialBasis;
-    const additionalMaterialRefs = options.additionalMaterialRefs ?? [];
-    const materialAccessRefs = options.materialAccessRefs ?? [];
     const manifest: PreparedTaskManifestV1 = {
       schemaVersion: 1, kind: 'task_execution', claim: targetClaim, role, hostTemplate,
       roleBinding: base.roleBinding, hostConfigurationRevision: 'b2-host-config-1',
       sessionRole: target.session.role,
-      workspaceSnapshot, permissions, budget: base.budget, selectedTaskInputs,
-      materialBasis, materialAccessRefs, additionalMaterialRefs, deliveryRefs: [],
+      workspaceSnapshot, permissions, budget: base.budget, selectedTaskInputs: [],
+      materialBasis: null, materialAccessRefs: [], additionalMaterialRefs: [], deliveryRefs: [],
       sourceRefs: [], input, inputDigest,
     };
     const manifestJson = JSON.stringify(manifest);
@@ -257,8 +235,8 @@ export async function createB2ExecutionFixture(
       sourceRefs: [], bundleRef: stored.value.ref,
     };
     const inputBinding: PreparedTaskExecution['inputBinding'] = {
-      schemaVersion: 1, inputDigest, manifestDigest: artifactBodyDigest(manifestJson), materialAccessRefs,
-      ...(additionalMaterialRefs.length > 0 ? { additionalMaterialRefs } : {}), deliveryRefs: [] };
+      schemaVersion: 1, inputDigest, manifestDigest: artifactBodyDigest(manifestJson), materialAccessRefs: [],
+      deliveryRefs: [] };
     return { kind: 'task', claim: targetClaim, envelope, inputBinding };
   }
   function permit(overrides: Partial<TaskEntryPermit> = {}): TaskEntryPermit {

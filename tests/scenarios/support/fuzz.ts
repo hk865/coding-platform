@@ -2156,7 +2156,7 @@ export class AgentFuzz {
     this.materials = createMaterialService({ bodies: b2.bodies, authority: materialReads.authority,
       grants: createMaterialAccessResolver(materialReads.authority, materialReads.index), now });
     this.entry = createExecutionEntryService({ records, reads, roles, bodies: b2.bodies, materials: this.materials,
-      plans: b2.base.plans, authorizeConfiguration, now, eventId, newId: () => `fuzz-agent-${options.seed}-id-${++this.sequence}` });
+      authorizeConfiguration, now, eventId, newId: () => `fuzz-agent-${options.seed}-id-${++this.sequence}` });
     this.controls = createRunControlService({ records, authority: materialReads.authority, reads, now, eventId });
     this.delegatedWrites = { reads, roles, bodies: b2.bodies, authorizeConfiguration };
     this.plans = createPlanService({ records, now, eventId, delegatedWrites: this.delegatedWrites });

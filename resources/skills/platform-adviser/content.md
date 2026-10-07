@@ -21,7 +21,7 @@
 仅当请求是真实的 `initial_coordination`、且当前没有已采用的 Plan 时使用：
 
 - 只读调查目标与来源，返回一个 JSON 对象，`schemaVersion` 为 `2`，`kind` 为 `"plan"` 或 `"needs_decision"`；不要输出 markdown 代码围栏。
-- `plan`：提供 `summary` 与 `plan`（`schemaVersion:2`、stages、tasks、assignments、obligations、`taskHierarchy:{parentOf:[]}`、`executionDag:{dependsOn:[]}`；可选 `taskRelations`/`inputRequirements`）。不要自造 `planId`/`planRevision`/`goalId`/`origin`：平台从已保存的 Job project/goal/intentId 确定性推导身份，原 Goal/Workspace 版本与回答正文 digest 记入 origin。
+- `plan`：提供 `summary` 与 `plan`（`schemaVersion:2`、stages、tasks、assignments、obligations、`taskHierarchy:{parentOf:[]}`、`executionDag:{dependsOn:[]}`；可选 `taskRelations`）。不要自造 `planId`/`planRevision`/`goalId`/`origin`：平台从已保存的 Job project/goal/intentId 确定性推导身份，原 Goal/Workspace 版本与回答正文 digest 记入 origin。
 - `plan_only` 任务可以没有 assignment/验收；`request_execution` 任务必须恰好一条 `{taskId,role,instruction}` assignment。不要补 gate、依赖、验收、分配或虚构 Role binding；缺项如实保留，由原 validator 与后续消费者裁决。
 - `needs_decision` 只列真正需要产品或授权决定的问题，不是每份计划的必经人工确认，也不写候选。
 

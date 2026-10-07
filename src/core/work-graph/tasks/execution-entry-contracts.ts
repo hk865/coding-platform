@@ -23,11 +23,10 @@ import type { RawArtifactStorePort } from '../../record-store/body-ports.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
 import type { RoleBindingFactsPort } from '../configuration/contracts.js';
-import type { MaterialPort, MaterialReadFactsPort } from '../materials/contracts.js';
+import type { MaterialPort } from '../materials/contracts.js';
 import type { GraphWrite } from './contracts.js';
 import type { ExecutionReadPort } from './execution-read-contracts.js';
 import type { RecordExecutionHistoryInput } from './execution-history-contracts.js';
-import type { PlanTaskPort } from './plan-contracts.js';
 
 /** Existing shared Kernel identity shape; no second declaration. */
 export type KernelExecutionBinding = RunExecutionHistoryV1['kernel'];
@@ -148,16 +147,7 @@ export type ExecutionEntryDependencies = {
   records: GoalRecordTransactionPort & RecordLookupPort;
   reads: ExecutionReadPort;
   roles: RoleBindingFactsPort;
-  plans: Pick<PlanTaskPort, 'readTaskInput'>;
   materials: MaterialPort;
-  /**
-   * Optional fresh material read-facts seam (M2). It is absent in the current
-   * production composition until the next reviewed seam injects it. A manifest
-   * with external selected/additional material must fail closed as `unsupported`
-   * when this dependency is missing; it is never replaced by a bare
-   * `openArtifact` that commits without grant CAS guards.
-   */
-  materialFacts?: MaterialReadFactsPort;
   bodies: Pick<RawArtifactStorePort, 'read'>;
   authorizeConfiguration: AuthorizeConfiguration;
   /** The Host instance (D-18): the reconcile terminal and late evidence (RUN-17/18/21) need its lease. */

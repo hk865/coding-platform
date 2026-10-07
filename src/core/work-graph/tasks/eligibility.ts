@@ -23,11 +23,11 @@ export type TaskStateEligibilityFacts = {
  * those are R4c claim-admission inputs, and a display candidate is never a
  * dispatch/start authorization.
  *
- * A hard `executionDag.dependsOn` edge is NOT a candidate gate here: the exact
- * required input is verified when it is actually consumed (`readTaskInput`),
- * never by the predecessor Task's whole completion. An absent phase for THIS
- * task is incomplete state (`task_state_incomplete`), never a default
- * `pending`.
+ * A hard `executionDag.dependsOn` edge is NOT a candidate gate here: an exact
+ * required input is to be verified when it is actually consumed (not built
+ * yet, lead decision LA-11), never by the predecessor Task's whole completion.
+ * An absent phase for THIS task is incomplete state (`task_state_incomplete`),
+ * never a default `pending`.
  */
 export function evaluateEligibility(facts: TaskStateEligibilityFacts): TaskEligibility {
   const reasons: TaskIneligibilityReason[] = [];

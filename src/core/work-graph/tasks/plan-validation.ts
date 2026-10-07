@@ -154,9 +154,9 @@ export function validatePlanDraft(draft: PlanRevisionDraft, policy: CompletionPo
     issues.push(planValidationError('taskHierarchy', 'hierarchy_cycle', 'TaskHierarchy must be acyclic'));
   }
   // v2 whiteboard relations are advisory and may cycle; only plan membership is
-  // judged. Exact input requirements are pinned by ArtifactRef and consumed via
-  // the real material reader; admission only checks id uniqueness and consumer
-  // membership, never current availability.
+  // judged. Exact input requirements are pinned by ArtifactRef (nothing reads
+  // them at execution yet, lead decision LA-11); admission only checks id
+  // uniqueness and consumer membership, never current availability.
   const v2 = draft as unknown as { taskRelations?: unknown; inputRequirements?: unknown };
   if (Array.isArray(v2.taskRelations)) {
     v2.taskRelations.forEach((relation, index) => {

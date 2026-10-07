@@ -144,12 +144,9 @@ it('wires one durable Goal/Plan/Session graph and reopens the same Kernel Sessio
         effectiveCompletionPolicy: { ref: policyRef, digest: digest(policyFixture) },
         effectiveArchitectureBaseline: { ref: architectureRef, digest: digest(architectureFixture) } } });
     if (applied.status !== 'committed') throw Error('Initial Plan adoption failed');
-    // This must reach the real material reader: Host historical readability is
-    // not proof of current applicability, and missing injection is not success.
+    // This must reach the real material reader: missing injection is not success.
     expect(await first.materials.openArtifact(ctx, { ref: material.ref, usage: 'historical_explanation' }))
       .toMatchObject({ status: 'ready', value: { body: 'Exact input for the composed task' } });
-    expect(await first.plans.readTaskInput(ctx, { goalRef: goal.value.ref, planRef: applied.value.ref,
-      taskId: 'implement', requirementId: 'input-1' })).toMatchObject({ status: 'rejected', code: 'source_stale' });
     expect(await first.plans.queryTaskGraph(ctx, { goalRef: goal.value.ref,
       atLeastCursor: applied.cursor })).toMatchObject({ status: 'ready', value: {
       plan: applied.value, tasks: [{ ref: { taskId: 'implement' } }, { ref: { taskId: 'goal-gate' } }],
@@ -289,9 +286,7 @@ it('wires one durable Goal/Plan/Session graph and reopens the same Kernel Sessio
         .toMatchObject({ status: 'rejected', code: 'unavailable' });
     } finally { await third.close(); }
   } finally { await reopened.close(); }
-  expect(await reopened.plans.readTaskInput(ctx, {
+  expect(await reopened.plans.queryGoalDisplay(ctx, {
     goalRef: { aggregateType: 'Goal', projectId, goalId: 'goal-1' },
-    planRef: { aggregateType: 'PlanRevision', projectId, planId: 'composed-plan' },
-    taskId: 'implement', requirementId: 'input-1',
   })).toMatchObject({ status: 'rejected', code: 'unavailable' });
 });
