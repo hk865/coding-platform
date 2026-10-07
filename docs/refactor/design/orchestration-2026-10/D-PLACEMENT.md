@@ -136,7 +136,7 @@ TARGET-DAG（`docs/refactor/reviews/evidence/workgraph-split-2026-10-02/TARGET-D
 | communication ↔ queries | queries → communication | M10 + M17 |
 | tasks ↔ configuration | configuration → tasks；tasks → configuration | M1；M7（+ M2、M3） |
 | tasks ↔ evidence | tasks → evidence | M14（证据编码移到 persistence）+ M16 |
-| tasks ↔ materials | materials → tasks | M1。删减时去掉材料授权的写入部分，可能连这条边一起消失（这条边只来自 `materials/grant-contracts.ts`、`grant-service.ts`） |
+| tasks ↔ materials | materials → tasks | M1。删减时去掉材料授权的写入部分，可能连这条边一起消失（这条边只来自 `materials/grant-contracts.ts`、`grant-service.ts`）（2026-10-07：这条边已随简化 G1、G3 消失，这个环已经不在了：`core/work-graph/materials/` 下没有文件 import `../tasks`，见 §9。） |
 | tasks ↔ persistence | persistence → tasks | M2、M3、M5、M15 |
 | tasks ↔ queries | queries → tasks | M1 + M13 |
 | tasks ↔ sessions | sessions → tasks | X1（`sessions/session-directory.ts:68` 引用的运行解码移到 materials） |
