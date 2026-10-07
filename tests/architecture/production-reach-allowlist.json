@@ -443,7 +443,7 @@
       "file": "src/contracts/material-access.ts",
       "name": "SourceApplicabilityPort",
       "reason": "kept-for",
-      "note": "kept for slice 3 of the orchestration design (decision 34): the consume-time exact-input check (decision 11, an open MVP item) may need a verified current source pin, and this pair is the only way to capture one; not constructed since the material grants were deleted (G3, lead call 2026-10-07); delete it once that design settles it does not; only reached from the kept provider pair (and the exploration and verification readers G5 deletes)"
+      "note": "kept for slice 3 of the orchestration design (decision 34): the consume-time exact-input check (decision 11, an open MVP item) may need a verified current source pin, and this pair is the only way to capture one; not constructed since the material grants were deleted (G3, lead call 2026-10-07); delete it once that design settles it does not; only reached from the kept provider pair"
     },
     {
       "file": "src/contracts/plan.ts",
