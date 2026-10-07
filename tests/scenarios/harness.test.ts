@@ -21,38 +21,31 @@
 import { afterEach, expect, it } from 'vitest';
 import type { WorkflowStepReceipt } from '../../src/business/workflow/contracts.js';
 import { WORKFLOW_AUTOMATION_ACTOR } from '../../src/contracts/task-requeue.js';
-import { AG2B_RESULT_FILE, AG2B_RESULT_TEXT, AG2B_SCOPE, AG2B_WORK_TASK_ID, plain } from '../helpers/AG2b-collaboration-fixture.js';
-import type { ScriptedReply } from '../helpers/B2-runtime-fixture.js';
+import { AG2B_SCOPE, AG2B_WORK_TASK_ID, plain } from '../helpers/AG2b-collaboration-fixture.js';
 import {
   assertInvariants, checkRevisionOf, cleanupScenarios, hostCtx, openHostScenario, openPlatformScenario, performs, SCENARIO_OPERATOR,
   stepOfReceipt, type Driven,
 } from './harness.js';
+import { committedOutcomesOf, editThenText } from './support/common.js';
 
 afterEach(cleanupScenarios);
 
 const WORK_2 = 'ag2b-work-2';
-const EDIT_THEN_TEXT = (label: string): ScriptedReply[] => [
-  { kind: 'calls', calls: [{ callId: `${label}-edit`, name: 'edit', args: { mode: 'create', path: AG2B_RESULT_FILE, newText: AG2B_RESULT_TEXT } }] },
-  { kind: 'text', text: `scenario ${label}: the result file is written` }];
 
 function kinds(driven: Driven): string[] {
   return driven.receipts.map(receipt => receipt.kind);
 }
-function finalizeOutcomes(driven: Driven): unknown[] {
-  return driven.receipts.flatMap(receipt => receipt.kind === 'finalize_checks' && receipt.result.status === 'committed'
-    ? [receipt.result.value.outcome] : []);
-}
 
 it('host mode: claim → Run → PASS → satisfied; a clean restart and a peer Host write nothing; the next Host continues the script and the counters add up', async () => {
   const h = await openHostScenario({ workIds: [AG2B_WORK_TASK_ID, WORK_2],
-    script: { replies: [...EDIT_THEN_TEXT('smoke-work-1'), { kind: 'text', text: 'scenario smoke: work-2 finds the result file' }] } });
+    script: { replies: [...editThenText('smoke-work-1'), { kind: 'text', text: 'scenario smoke: work-2 finds the result file' }] } });
   await assertInvariants(h, 'seeded');
   expect(h.counts()).toMatchObject({ modelCalls: 0, kernelRecords: 0, kernelTurnsStarted: 0, kernelSessionRevisions: 0, checksBegun: 0 });
 
   const first = await h.advance(h.select('smoke-1', AG2B_WORK_TASK_ID));
   expect(kinds(first)).toEqual(expect.arrayContaining(['create_session', 'claim_task', 'start', 'open_checks', 'run_check',
     'finalize_checks', 'complete_task']));
-  expect(finalizeOutcomes(first)).toEqual(['PASS']);
+  expect(committedOutcomesOf(first)).toEqual(['PASS']);
   // advance() checked the invariants after every receipt, with the step's kind.
   expect(h.invariantLabels).toEqual(['seeded', 'smoke-1#1 create_session', 'smoke-1#2 claim_task', 'smoke-1#3 prepare', 'smoke-1#4 start',
     'smoke-1#5 open_checks', 'smoke-1#6 run_check', 'smoke-1#7 finalize_checks', 'smoke-1#8 complete_task']);
@@ -87,7 +80,7 @@ it('host mode: claim → Run → PASS → satisfied; a clean restart and a peer 
   // The second Host answers with the script's third reply: work-2, then the gate, then the Goal.
   const second = await h.advance(h.select('smoke-2'));
   expect(second.state).toBe('completed');
-  expect(finalizeOutcomes(second)).toEqual(['PASS', 'PASS']);
+  expect(committedOutcomesOf(second)).toEqual(['PASS', 'PASS']);
   expect(h.host.scripted.calls(), 'the second Host made one call').toBe(1);
   expect(h.modelCalls(), 'both Hosts, counted together; the peer made none').toBe(3);
   expect(h.counts()).toMatchObject({ kernelTurnsStarted: 2, checksBegun: 3 });
@@ -135,7 +128,7 @@ it('host mode crash: a Host abandoned mid-Turn is taken over (HL-03); the Run en
   secondCall.release();
   const second = await drive;
   expect(kinds(second)).toEqual(expect.arrayContaining(['requeue_task', 'create_session', 'claim_task', 'start', 'complete_task']));
-  expect(finalizeOutcomes(second)).toEqual(['PASS']);
+  expect(committedOutcomesOf(second)).toEqual(['PASS']);
   expect(await h.taskRow()).toMatchObject({ effectivePhase: 'satisfied' });
   expect(h.lastWorld?.requeues).toMatchObject([{ failureClass: 'interrupted', automation: { automatic: true, counted: false, cap: 3 } }]);
   expect(h.abandonedCalls(), 'the abandoned Host started no model call').toEqual([]);
@@ -149,10 +142,10 @@ it('host mode crash: a Host abandoned mid-Turn is taken over (HL-03); the Run en
 
 it('platform mode: claim → Run → PASS → satisfied in process; a reopen keeps the records and the counters, and the script continues', async () => {
   const h = await openPlatformScenario({ workIds: [AG2B_WORK_TASK_ID, WORK_2],
-    script: { replies: [...EDIT_THEN_TEXT('smoke-platform'), { kind: 'text', text: 'scenario smoke: work-2 finds the result file' }] } });
+    script: { replies: [...editThenText('smoke-platform'), { kind: 'text', text: 'scenario smoke: work-2 finds the result file' }] } });
   await assertInvariants(h, 'seeded');
   const first = await h.advance(h.select('smoke-platform-1', AG2B_WORK_TASK_ID), { invariants: { label: 'platform-1' } });
-  expect(finalizeOutcomes(first)).toEqual(['PASS']);
+  expect(committedOutcomesOf(first)).toEqual(['PASS']);
   expect(await h.taskRow()).toMatchObject({ effectivePhase: 'satisfied' });
   const afterRun = h.counts();
   expect(afterRun).toMatchObject({ modelCalls: 2, kernelTurnsStarted: 1 });
@@ -194,7 +187,7 @@ it('platform mode seams: a registered check is a new configuration revision; cap
   const reworked = await h.advance(h.select('smoke-seams', AG2B_WORK_TASK_ID), { stopBefore: (input) => input.kind === 'perform'
     && input.operation.kind === 'requeue_task' && h.lastWorld !== undefined && h.lastWorld.requeues.length === 1 });
   expect(reworked.state).toBe('stopped');
-  expect(finalizeOutcomes(reworked)).toEqual(['FAIL', 'FAIL']);
+  expect(committedOutcomesOf(reworked)).toEqual(['FAIL', 'FAIL']);
   expect(h.lastWorld?.rounds.map(round => round.configuration.configurationRevision)).toEqual([checkRevisionOf(2), checkRevisionOf(2)]);
   expect(h.lastWorld?.requeues).toMatchObject([{ failureClass: 'check_failed', automation: { automatic: true, counted: true,
     autoCount: 1, cap: 3 } }]);

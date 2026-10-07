@@ -10,8 +10,8 @@
  * - host mode (`openHostScenario`): the real Host over HTTP, with its start-up
  *   reconcile and re-drive. `restart()` closes the Host (HL-06) or abandons it
  *   as a crash (its lock rewritten to an exited pid, HL-03; its held model call
- *   stays held) and starts a new Host on the same files, as
- *   tests/app/A2-host-restart.test.ts and A2-host-reconcile.test.ts do.
+ *   stays held) and starts a new Host on the same files, as the restart
+ *   scenarios (tests/scenarios/A8-host-restart*.test.ts) do.
  *   `direct()` opens the composition root on the same files for owner calls as
  *   the automation or an agent, which no route accepts; `startPeer()` starts a
  *   second live Host without the lease (HL-02).
@@ -72,9 +72,9 @@ import type { GoalDisplayRead, TaskRow } from '../../src/core/work-graph/tasks/p
 import type { ModelRequest } from '../../vendor/coding-agent/dist/public-api.js';
 import { createScriptedModel, type ScriptedModel, type ScriptedReply } from '../helpers/B2-runtime-fixture.js';
 import {
-  AG2B_CHECK_COMMAND, AG2B_CONSUMER_ID, AG2B_GOAL_REF, AG2B_RUNTIME_BUDGET, AG2B_SCOPE, AG2B_WORK_INSTRUCTION, AG2B_WORK_ROLE,
-  AG2B_WORK_ROLE_BINDING, AG2B_WORK_TASK_ID, ag2bChecksConfiguration, cleanupAG2b, permissionRevision, plain, seedAG2bWorkGraph,
-  seedAG2bWorkGraphThrough, startAG2bHost, writeAG2bWorkspace, type AG2bHost,
+  AG2B_CHECK_COMMAND, AG2B_CONSUMER_ID, AG2B_GOAL_REF, AG2B_QUERY_INSTRUCTION, AG2B_RUNTIME_BUDGET, AG2B_SCOPE, AG2B_WORK_INSTRUCTION,
+  AG2B_WORK_ROLE, AG2B_WORK_ROLE_BINDING, AG2B_WORK_TASK_ID, ag2bChecksConfiguration, cleanupAG2b, permissionRevision, plain,
+  seedAG2bWorkGraph, seedAG2bWorkGraphThrough, startAG2bHost, writeAG2bWorkspace, type AG2bHost,
 } from '../helpers/AG2b-collaboration-fixture.js';
 import {
   answer, cleanupRestart, deferred, post, publicDirectory, tempDir, writeAutomationSettings, writeStaleLock, type AdvanceValue, type Deferred,
@@ -186,10 +186,51 @@ export type KernelSessionSnapshot = {
 export type KernelSnapshot = { sessions: KernelSessionSnapshot[]; checkpoints: number };
 
 /** Reads one SQLite file with its own connection (the Host's stays untouched); a missing file reads `empty`. */
-function readSqlite<T>(path: string, read: (database: DatabaseSync) => T, empty: T): T {
+export function readSqlite<T>(path: string, read: (database: DatabaseSync) => T, empty: T): T {
   if (!existsSync(path)) return empty;
   const database = new DatabaseSync(path, { readOnly: true });
   try { return read(database); } finally { database.close(); }
+}
+
+/** A store's ledger event types in commit order (none without the file). */
+export function eventTypesIn(database: string): string[] {
+  return readSqlite(join(database, 'ledger.sqlite'), ledger => (ledger.prepare('SELECT event_json FROM events ORDER BY id')
+    .all() as Array<{ event_json: string }>).map(row => (JSON.parse(row.event_json) as { eventType: string }).eventType), []);
+}
+
+/** `ScenarioCounts` without the model calls. */
+export type FileCounts = Omit<ScenarioCounts, 'modelCalls'>;
+
+function tablesOf(database: DatabaseSync): Set<string> {
+  return new Set((database.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>)
+    .map(row => row.name));
+}
+
+/**
+ * The write counts of a store's files (`ScenarioBase.counts()`, or a moved case's own files): ledger events and
+ * begun checks; Kernel records, Turn starts, the sum of the Kernel Session header revisions and the checkpoints
+ * (a Kernel store moved aside, or an empty one a reader opened in its place, reads as 0).
+ */
+export function fileCounts(database: string): FileCounts {
+  const events = eventTypesIn(database);
+  const counts: FileCounts = { kernelRecords: 0, kernelTurnsStarted: 0, kernelSessionRevisions: 0, kernelCheckpoints: 0,
+    ledgerEvents: events.length, checksBegun: events.filter(type => type === 'VerificationCheckBegun').length };
+  return readSqlite(join(database, 'kernel.sqlite'), (kernel) => {
+    const tables = tablesOf(kernel);
+    if (tables.has('session_records')) {
+      const rows = kernel.prepare('SELECT record_type AS type, COUNT(*) AS n FROM session_records GROUP BY record_type')
+        .all() as Array<{ type: string; n: number }>;
+      counts.kernelRecords = rows.reduce((sum, row) => sum + Number(row.n), 0);
+      counts.kernelTurnsStarted = Number(rows.find(row => row.type === 'turn.started')?.n ?? 0);
+    }
+    if (tables.has('sessions')) {
+      counts.kernelSessionRevisions = Number((kernel.prepare('SELECT COALESCE(SUM(revision), 0) AS n FROM sessions').get() as { n: number }).n);
+    }
+    if (tables.has('checkpoints')) {
+      counts.kernelCheckpoints = Number((kernel.prepare('SELECT COUNT(*) AS n FROM checkpoints').get() as { n: number }).n);
+    }
+    return counts;
+  }, counts);
 }
 
 type Instance = {
@@ -438,19 +479,8 @@ export abstract class ScenarioBase {
     }, { sessions: [], checkpoints: 0 });
   }
   /** The ledger's event types in commit order. */
-  ledgerEventTypes(): string[] {
-    return readSqlite(join(this.database, 'ledger.sqlite'), database => (database.prepare('SELECT event_json FROM events ORDER BY id')
-      .all() as Array<{ event_json: string }>).map(row => (JSON.parse(row.event_json) as { eventType: string }).eventType), []);
-  }
-  counts(): ScenarioCounts {
-    const kernel = this.kernelRecords();
-    const snapshot = this.kernelSnapshot();
-    const events = this.ledgerEventTypes();
-    return { modelCalls: this.modelCalls(), kernelRecords: kernel.total, kernelTurnsStarted: kernel.byType['turn.started'] ?? 0,
-      kernelSessionRevisions: snapshot.sessions.reduce((sum, session) => sum + session.revision, 0),
-      kernelCheckpoints: snapshot.checkpoints, ledgerEvents: events.length,
-      checksBegun: events.filter((type) => type === 'VerificationCheckBegun').length };
-  }
+  ledgerEventTypes(): string[] { return eventTypesIn(this.database); }
+  counts(): ScenarioCounts { return { modelCalls: this.modelCalls(), ...fileCounts(this.database) }; }
 
   /** `select_work` on the seeded Goal; Goal-level unless `taskId` is given. */
   select(flowId: string, taskId?: string): WorkflowAdvanceInput {
@@ -525,7 +555,7 @@ export async function assertInvariants(h: ScenarioBase, label: string, step?: Fu
 // Polling (start-up re-drive and other background drivers)
 // ---------------------------------------------------------------------------
 
-/** Re-reads every 50 ms, at most 300 times (as tests/app/A2-automation-rework.test.ts does), until `done`. */
+/** Re-reads every 50 ms, at most 300 times (the start-up re-drive cases' own wait), until `done`. */
 export async function waitFor<T>(read: () => Promise<T>, done: (value: T) => boolean, what: string): Promise<T> {
   let value = await read();
   for (let attempt = 0; attempt < 300 && !done(value); attempt += 1) {
@@ -551,7 +581,8 @@ export function workRunCtx(runRef: RunRef, roleBinding: RoleBindingRefV1 = AG2B_
     materialReader: { kind: 'run', requester: runRef }, signal: new AbortController().signal };
 }
 
-function workspaceBindings(root: string, revision: { value: number }, grant: string): WorkspaceHostBindings {
+/** The AG2b workspace at `root` for a Host grant `grant` (every source read allowed). */
+export function ag2bWorkspaceBindings(root: string, revision: { value: number }, grant: string): WorkspaceHostBindings {
   return {
     async resolveRoot(requested) {
       if (requested.projectId !== AG2B_SCOPE.projectId || requested.workspaceId !== AG2B_SCOPE.workspaceId) {
@@ -565,8 +596,17 @@ function workspaceBindings(root: string, revision: { value: number }, grant: str
   };
 }
 
-/** The AG2b work binding's grant over a scripted client (the Host builds the same from its startup file). */
-function runtimeBindings(model: () => ScriptedModel): RuntimeHostBindings {
+/** The AG2b work binding's tools (the Host's startup grant). */
+export const AG2B_WORK_TOOLS: readonly string[] = ['read', 'write', 'find_related_sessions', 'read_session_card', 'send_session_message'];
+
+/**
+ * The AG2b work binding's grant over a scripted client (the Host builds the same from its startup file). `tools`
+ * replaces the work tools (a root whose Agent adopts plans through the W2 tools); `queryModel` adds the AG2b query
+ * binding as the Host builds it (the advisor template, read-only tools).
+ */
+export function ag2bWorkRuntime(model: () => ScriptedModel,
+  options: { tools?: readonly string[]; queryModel?: ScriptedModel } = {}): RuntimeHostBindings {
+  const queryModel = options.queryModel;
   return {
     async resolveConfiguration(context, request) {
       if (context.projectId !== AG2B_SCOPE.projectId || context.workspaceId !== AG2B_SCOPE.workspaceId) {
@@ -583,11 +623,29 @@ function runtimeBindings(model: () => ScriptedModel): RuntimeHostBindings {
         budget: AG2B_RUNTIME_BUDGET,
         hostTemplate: request.role.kind === 'legacy_template'
           ? { templateId: 'builder', revision: '1', digest: sha256Hex(AG2B_WORK_INSTRUCTION) } : null,
-        tools: ['read', 'write', 'find_related_sessions', 'read_session_card', 'send_session_message'], writeScope: ['.'],
+        tools: [...(options.tools ?? AG2B_WORK_TOOLS)], writeScope: ['.'],
         skills: { resourceRoot: SKILLS_ROOT, enabledIds: [] }, systemInstruction: AG2B_WORK_INSTRUCTION,
         deniedPrefixes: [], processSandboxOptions: {}, materialBasis: null,
       } };
     },
+    ...(queryModel === undefined ? {} : {
+      async resolveQueryConfiguration(context: CoreCallContext) {
+        if (context.projectId !== AG2B_SCOPE.projectId || context.workspaceId !== AG2B_SCOPE.workspaceId) {
+          return { status: 'rejected' as const, code: 'forbidden' as const, reason: 'the runtime Host is not bound to this workspace' };
+        }
+        return { status: 'ready' as const, value: {
+          configurationRevision: 'ag2b-query-host@1',
+          model: { configuration: { revision: 'ag2b-query-model@1', provider: 'deepseek', model: 'ag2b-scripted-query',
+            baseUrl: 'http://127.0.0.1' }, client: queryModel.client,
+          inputCounter: { count: () => ({ tokens: 256, method: 'model_tokenizer' as const, tokenizer: 'scenario-counter' }) } },
+          budget: AG2B_RUNTIME_BUDGET,
+          hostTemplate: { templateId: 'advisor', revision: '1', digest: sha256Hex(AG2B_QUERY_INSTRUCTION) },
+          tools: ['read', 'project_source'], writeScope: [],
+          skills: { resourceRoot: SKILLS_ROOT, enabledIds: [] }, systemInstruction: AG2B_QUERY_INSTRUCTION,
+          deniedPrefixes: [], processSandboxOptions: {}, materialBasis: null,
+        } };
+      },
+    }),
   };
 }
 
@@ -603,11 +661,11 @@ async function openComposition(root: string, database: string, settings: Composi
   model: (() => ScriptedModel) | null): Promise<Platform> {
   const platform = await createTargetPlatform({
     storage: { kind: 'sqlite', directory: database },
-    workspace: workspaceBindings(root, { value: 1 }, permissionRevision(settings.actor, AG2B_SCOPE, ['.'])),
+    workspace: ag2bWorkspaceBindings(root, { value: 1 }, permissionRevision(settings.actor, AG2B_SCOPE, ['.'])),
     now: () => '2026-10-06T00:00:00.000Z',
     kernelStores: { entries: [{ adapterId: 'ag2b-kernel', storeKey: 'ag2b-kernel-store', workspace: AG2B_SCOPE,
       databasePath: join(database, 'kernel.sqlite') }] },
-    ...(model === null ? {} : { runtime: runtimeBindings(model) }),
+    ...(model === null ? {} : { runtime: ag2bWorkRuntime(model) }),
     checks: checksConfiguration(settings.actor, settings.check, settings.checkRevision),
     workflow: { consumerId: AG2B_CONSUMER_ID, bindings: [workflowBinding(settings.tokenBudget)] },
   });
@@ -616,7 +674,7 @@ async function openComposition(root: string, database: string, settings: Composi
 }
 
 /** The AG2b seed through the owners in process (the same writes as the HTTP seed). */
-async function seedThroughOwners(platform: Platform, actor: WorkbenchActor, workIds: readonly string[]): Promise<void> {
+export async function seedThroughOwners(platform: Platform, actor: WorkbenchActor, workIds: readonly string[]): Promise<void> {
   type OwnerCall = (ctx: CoreCallContext, request: never) => Promise<unknown>;
   const owners: Record<string, OwnerCall> = {
     'projects/create': (ctx, request) => platform.projects.createProject(ctx, request),

@@ -273,9 +273,10 @@ export function invariantStoreOf(directory: string): InvariantStore {
  * The record schemas `createTargetPlatform` registers (`create-platform.ts`),
  * so the copy is read with the production codecs and every lookup the
  * canonical reader uses is registered (an unregistered lookup would read as
- * a confirmed absence).
+ * a confirmed absence). Exported for a second backend on a scenario ledger
+ * (tests/scenarios/support/plan.ts `raceWindow`).
  */
-function platformRecordSchemas(): RecordBackendSchemas {
+export function platformRecordSchemas(): RecordBackendSchemas {
   const groups: RecordBackendSchemas[] = [materialRecordSchemas(), PLAN_RECORD_SCHEMAS, PLAN_STATE_RECORD_SCHEMAS,
     PLAN_GOVERNANCE_RECORD_SCHEMAS, SESSION_RECORD_SCHEMAS, SESSION_LIFECYCLE_RECORD_SCHEMAS, ROLE_RECORD_SCHEMAS,
     OBSERVED_ARCHITECTURE_RECORD_SCHEMAS, ARCHITECTURE_CATALOG_SCHEMAS, TASK_CLAIM_RECORD_SCHEMAS,
