@@ -4809,6 +4809,8 @@ A.2 第 2 项要求“服务只通过状态机改状态”，并且能被自动�
 
 `tests/composition/` 中已有 `A1-graph-session-platform.test.ts`，其中 A1 指 Session 生命周期，与 ORCHESTRATION §11 的 A1 无关。所以场景测试放在新目录 `tests/scenarios/`，避免重名。新目录 `tests/state/` 与 `tests/scenarios/` 已由 lead 采纳（L-8）。2026-10-03 决定新增的场景以决定编号作前缀（C3-、C5-、C6-、C7-、C8-），不占用 ORCHESTRATION 的场景号 A1–A12（A12 不在本批，GAP-44）。
 
+**A.2 第 6 步 同步**（人工认定的同请求身份重放，提议 P-1、P-2，待 lead 确认）：§6 RUN-22 与 §8 QRR-06 的“原回执回放”按 §12.10 第 4 步“同一身份的请求得到原回执”实现。Host 入口在租约检查之后、pin 与状态的准入和 Kernel 读取之前，先按请求身份向所有者查原回执；没有实例租约的 Host 仍返回 `busy`（L-1）。幂等指纹只含请求本身（Run 或 QueryRun、理由、pin），不含 Host 入口读到的 Kernel 事实（`kernelTurnOpen`、`inputsConfirmed`），所以 Kernel 读法不同的同身份重试也得到原回执；同身份不同内容仍为 `idempotency_conflict`（§1.2）。见 `A8-host-restart-entry.test.ts`（A8-2b）与 `A8-host-restart-lease.test.ts`（Q-05、QRR-06）。
+
 **第 7 步：全量测试与文档。**
 
 - 全量测试通过。

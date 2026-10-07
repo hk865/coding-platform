@@ -73,6 +73,9 @@ export type ResolveUnknownRunInput = {
   inputsConfirmed: boolean | null;
 };
 
+/** What the operator's attestation request itself carries (its fingerprint), before the Host entry reads the Kernel. */
+export type AttestationRequest = Pick<ResolveUnknownRunInput, 'runRef' | 'reason'>;
+
 /**
  * CTL-08(a)/(d)/(e): the start-up reconcile settles the queued intents a Run
  * keeps without any other reconcile write: on a Run that never entered
@@ -92,6 +95,16 @@ export interface RunReconcilePort {
   resolveUnknownRun(ctx: CoreCallContext, request: GraphWrite<ResolveUnknownRunInput>): Promise<WriteResult<RunSnapshot>>;
   /** CTL-08(a)/(d)/(e); a Run with nothing queued is answered `ready`-like with the Run as read (no commit). */
   reconcileRunControls(ctx: CoreCallContext, request: GraphWrite<ReconcileRunControlsInput>): Promise<WriteResult<RunSnapshot>>;
+}
+
+/** The service the Host composes: the port plus the attestation replay its Host entry asks first. */
+export interface RunReconcileService extends RunReconcilePort {
+  /**
+   * RUN-22 原回执回放 (§12.10 step 4): the original receipt of an attestation
+   * committed under this request identity, or `null` when none was; the same
+   * identity with other content is `idempotency_conflict` (§1.2).
+   */
+  replayResolveUnknownRun(ctx: CoreCallContext, request: GraphWrite<AttestationRequest>): Promise<WriteResult<RunSnapshot> | null>;
 }
 
 export type RunReconcileDependencies = {

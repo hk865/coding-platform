@@ -53,8 +53,8 @@ import {
   type ReconcileIntentFacts,
 } from './reconcile-intents.js';
 import type {
-  ReconcileRunControlsInput, ReconcileRunInput, ReconcileTurnV1, ResolveUnknownRunInput, RunReconcileDependencies,
-  RunReconcilePort,
+  AttestationRequest, ReconcileRunControlsInput, ReconcileRunInput, ReconcileTurnV1, ResolveUnknownRunInput,
+  RunReconcileDependencies, RunReconcileService,
 } from './run-reconcile-contracts.js';
 
 type HostActor = { kind: 'human' | 'system'; id: string };
@@ -66,6 +66,7 @@ type IntentFacts = Omit<ReconcileIntentFacts, 'runBefore' | 'runAfter' | 'observ
 const RUN_SNAPSHOT_SCHEMA_ID = 'RunSnapshot@1';
 const RECONCILE_PREFIX = 'a2-run-reconcile:';
 const RESOLVE_PREFIX = 'a2-run-resolve:';
+const RESOLVE_KIND = 'a2-run-resolve';
 const CONTROLS_PREFIX = 'a2-run-controls:';
 const MAX_ATTESTATION_REASON_CHARS = 2000;
 const PROBE_VERDICTS: readonly string[] = ['ready', 'missing', 'damaged', 'host_config', 'transient', 'cancelled'];
@@ -92,6 +93,23 @@ function runRefusal(refused: Extract<RunTransition, { ok: false }>): CoreRejecti
 }
 function isRunRef(value: unknown): boolean {
   return isRecord(value) && value['aggregateType'] === 'Run' && nonEmpty(value['projectId']) && nonEmpty(value['runId']);
+}
+function attestationProblem(input: AttestationRequest): string | null {
+  if (!isRunRef(input.runRef)) return 'resolveUnknownRun requires a complete RunRef';
+  if (typeof input.reason !== 'string' || input.reason.length > MAX_ATTESTATION_REASON_CHARS) {
+    return `the attestation reason must be a string of at most ${MAX_ATTESTATION_REASON_CHARS} characters`;
+  }
+  return null;
+}
+/**
+ * RUN-22's request content: what the caller sent (the Run, the reason; the pin
+ * is added by `identify`). The Kernel facts the Host entry reads are not part
+ * of it, so a retry under the same identity replays the original receipt even
+ * when the Kernel now reads differently (§12.10 step 4; like RUN-02, whose
+ * fingerprint leaves out the active Plan).
+ */
+function attestationContent(input: AttestationRequest): unknown {
+  return { runRef: input.runRef, reason: input.reason };
 }
 
 // --------------------------------------------------------------------------
@@ -319,7 +337,7 @@ function pairingOf(node: RunNode, facts: TaskExecutionRecord, runCtx: RunGuardCo
 // The factory
 // --------------------------------------------------------------------------
 
-export function createRunReconcileService(deps: RunReconcileDependencies): RunReconcilePort {
+export function createRunReconcileService(deps: RunReconcileDependencies): RunReconcileService {
   const records = deps.records;
 
   async function replay(
@@ -382,35 +400,53 @@ export function createRunReconcileService(deps: RunReconcileDependencies): RunRe
     return { status: 'committed', value: nextRun, replayed: false, cursor: receipt.cursor };
   }
 
-  /** The shared front of the three writes: trusted context, isolation, shape, pin, identity, replay, reads. */
-  async function begin<T extends { runRef: RunSnapshot['ref'] }>(
-    ctx: CoreCallContext, request: GraphWrite<T>, prefix: string, kind: string, operation: Operation,
-    problemOf: (input: T) => string | null,
-  ): Promise<{ ok: false; result: WriteResult<RunSnapshot> } | {
-    ok: true; input: T; actor: HostActor; signal: AbortSignal; identity: string; fingerprint: string; pin: VersionPin;
-    facts: TaskExecutionRecord; intents: ControlIntentSnapshotV1[];
-  }> {
+  /**
+   * Trusted context, isolation, shape, pin and request identity of one write;
+   * nothing is read. `contentOf` names what the fingerprint covers (the whole
+   * input, or for an attestation only what the caller sent).
+   */
+  function identify<T extends { runRef: RunSnapshot['ref'] }>(
+    ctx: CoreCallContext, request: GraphWrite<T>, prefix: string, kind: string, problemOf: (input: T) => string | null,
+    contentOf: (input: T) => unknown,
+  ): { ok: false; rejection: CoreRejection } | {
+    ok: true; input: T; scopeCtx: CoreCallContext; scope: { projectId: string; workspaceId: string }; actor: HostActor;
+    signal: AbortSignal; identity: string; fingerprint: string; pin: VersionPin;
+  } {
     const ownedCtx = bindTrustedContext(ctx);
-    if (!ownedCtx.ok) return { ok: false, result: ownedCtx.rejection };
+    if (!ownedCtx.ok) return { ok: false, rejection: ownedCtx.rejection };
     const { ctx: scopeCtx, scope, actor, signal } = ownedCtx;
     const owned = isolateWrite(request);
-    if (!owned.ok) return { ok: false, result: owned.rejection };
+    if (!owned.ok) return { ok: false, rejection: owned.rejection };
     const input = owned.input;
     const problem = problemOf(input);
-    if (problem !== null) return { ok: false, result: invalid(problem) };
-    if (input.runRef.projectId !== scope.projectId) return { ok: false, result: forbidden('the Run belongs to another project') };
+    if (problem !== null) return { ok: false, rejection: invalid(problem) };
+    if (input.runRef.projectId !== scope.projectId) return { ok: false, rejection: forbidden('the Run belongs to another project') };
     const checked = checkRunPin(owned.expected, input.runRef);
-    if (!checked.ok) return { ok: false, result: checked.rejection };
+    if (!checked.ok) return { ok: false, rejection: checked.rejection };
     let identity: string;
     let fingerprint: string;
     try {
       identity = identityKey(prefix, actor, scope, owned.requestId);
-      fingerprint = fingerprintOf({ kind, actor, input, expected: [checked.pin] });
-    } catch { return { ok: false, result: invalid('the reconcile request is not canonicalizable JSON') }; }
+      fingerprint = fingerprintOf({ kind, actor, input: contentOf(input), expected: [checked.pin] });
+    } catch { return { ok: false, rejection: invalid('the reconcile request is not canonicalizable JSON') }; }
+    return { ok: true, input, scopeCtx, scope, actor, signal, identity, fingerprint, pin: checked.pin };
+  }
+
+  /** The shared front of the three writes: trusted context, isolation, shape, pin, identity, replay, reads. */
+  async function begin<T extends { runRef: RunSnapshot['ref'] }>(
+    ctx: CoreCallContext, request: GraphWrite<T>, prefix: string, kind: string, operation: Operation,
+    problemOf: (input: T) => string | null, contentOf: (input: T) => unknown = input => input,
+  ): Promise<{ ok: false; result: WriteResult<RunSnapshot> } | {
+    ok: true; input: T; actor: HostActor; signal: AbortSignal; identity: string; fingerprint: string; pin: VersionPin;
+    facts: TaskExecutionRecord; intents: ControlIntentSnapshotV1[];
+  }> {
+    const front = identify(ctx, request, prefix, kind, problemOf, contentOf);
+    if (!front.ok) return { ok: false, result: front.rejection };
+    const { input, scopeCtx, scope, actor, signal, identity, fingerprint, pin } = front;
     const lookup = await records.lookupCommit({ identityKey: identity, fingerprint });
     if (lookup.status === 'ready') return { ok: false, result: await replay(lookup.value, identity, fingerprint, actor, operation) };
     if (lookup.code !== 'not_found') return { ok: false, result: mapStoreFailure(lookup) };
-    const factsRead = await readAdmissionFacts(deps, scopeCtx, input.runRef, checked.pin);
+    const factsRead = await readAdmissionFacts(deps, scopeCtx, input.runRef, pin);
     if (!factsRead.ok) return { ok: false, result: factsRead.rejection };
     const facts = factsRead.value;
     if (facts.run.workspaceSnapshot.workspaceId !== scope.workspaceId) {
@@ -418,7 +454,7 @@ export function createRunReconcileService(deps: RunReconcileDependencies): RunRe
     }
     const intentsRead = await readRunIntents(records, facts.run);
     if (!intentsRead.ok) return { ok: false, result: intentsRead.rejection };
-    return { ok: true, input, actor, signal, identity, fingerprint, pin: checked.pin, facts, intents: intentsRead.value };
+    return { ok: true, input, actor, signal, identity, fingerprint, pin, facts, intents: intentsRead.value };
   }
 
   function stamp(): { ok: true; nowIso: string; eventId: string } | { ok: false; rejection: CoreRejection } {
@@ -478,16 +514,14 @@ export function createRunReconcileService(deps: RunReconcileDependencies): RunRe
     ctx: CoreCallContext, request: GraphWrite<ResolveUnknownRunInput>,
   ): Promise<WriteResult<RunSnapshot>> {
     try {
-      const begun = await begin(ctx, request, RESOLVE_PREFIX, 'a2-run-resolve', 'resolve_unknown', input => {
-        if (!isRunRef(input.runRef)) return 'resolveUnknownRun requires a complete RunRef';
-        if (typeof input.reason !== 'string' || input.reason.length > MAX_ATTESTATION_REASON_CHARS) {
-          return `the attestation reason must be a string of at most ${MAX_ATTESTATION_REASON_CHARS} characters`;
-        }
+      const begun = await begin(ctx, request, RESOLVE_PREFIX, RESOLVE_KIND, 'resolve_unknown', input => {
+        const problem = attestationProblem(input);
+        if (problem !== null) return problem;
         if (typeof input.kernelTurnOpen !== 'boolean' || !(input.inputsConfirmed === null || typeof input.inputsConfirmed === 'boolean')) {
           return 'resolveUnknownRun requires the Kernel facts read before the attestation';
         }
         return null;
-      });
+      }, attestationContent);
       if (!begun.ok) return begun.result;
       const { input, facts, intents, actor } = begun;
       // L-1: the attestation names this Host instance; without the held lease the machine answers `busy`.
@@ -518,6 +552,29 @@ export function createRunReconcileService(deps: RunReconcileDependencies): RunRe
           cancelRef: null, pausedStop: null, kernelPaused: false } });
     } catch (error) {
       return unavailable(`the attestation write failed: ${messageOf(error)}`);
+    }
+  }
+
+  /**
+   * RUN-22 replay (原回执回放, §12.10 step 4): the original receipt of an
+   * attestation already committed under this request identity, or `null` when
+   * none was. The Host entry asks before it compares the pin and the Run's
+   * state, both of which the attestation itself changed; nothing is read but
+   * the commit lookup and the recorded event. The same identity with other
+   * content is `idempotency_conflict` (§1.2), and a store failure is mapped,
+   * so neither falls through to the state comparison.
+   */
+  async function replayResolveUnknownRun(
+    ctx: CoreCallContext, request: GraphWrite<AttestationRequest>,
+  ): Promise<WriteResult<RunSnapshot> | null> {
+    try {
+      const front = identify(ctx, request, RESOLVE_PREFIX, RESOLVE_KIND, attestationProblem, attestationContent);
+      if (!front.ok) return null;
+      const lookup = await records.lookupCommit({ identityKey: front.identity, fingerprint: front.fingerprint });
+      if (lookup.status !== 'ready') return lookup.code === 'not_found' ? null : mapStoreFailure(lookup);
+      return await replay(lookup.value, front.identity, front.fingerprint, front.actor, 'resolve_unknown');
+    } catch (error) {
+      return unavailable(`the attestation replay failed: ${messageOf(error)}`);
     }
   }
 
@@ -604,5 +661,5 @@ export function createRunReconcileService(deps: RunReconcileDependencies): RunRe
     }
   }
 
-  return { reconcileRun, resolveUnknownRun, reconcileRunControls };
+  return { reconcileRun, resolveUnknownRun, replayResolveUnknownRun, reconcileRunControls };
 }

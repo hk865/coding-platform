@@ -167,6 +167,13 @@ export interface QueryExecutionPort {
   reconcileQueryRun?(ctx: CoreCallContext, request: GraphWrite<QueryReconcileInput>): Promise<WriteResult<QueryExecutionRecord>>;
   /** A.2 step 5.6: the operator's attestation of an unknown QueryRun, only under this Host's lease (QRR-06, L-1). */
   resolveUnknownQueryRun?(ctx: CoreCallContext, request: GraphWrite<ResolveUnknownQueryRunInput>): Promise<WriteResult<QueryExecutionRecord>>;
+  /**
+   * QRR-06 同请求身份重放 (§12.10 step 4): the original receipt of an attestation committed under this request
+   * identity, or `null` when none was (the same identity with other content is `idempotency_conflict`, §1.2); the
+   * Host entry asks before its admission compares the pin and the phase.
+   */
+  replayResolveUnknownQueryRun?(ctx: CoreCallContext, request: GraphWrite<Pick<ResolveUnknownQueryRunInput, 'queryRunRef' | 'reason'>>):
+    Promise<WriteResult<QueryExecutionRecord> | null>;
 }
 
 /** §12.3: the Runtime classifier's result for one QueryRun the start-up reconcile reads. */

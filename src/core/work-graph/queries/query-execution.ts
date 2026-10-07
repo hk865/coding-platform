@@ -693,6 +693,16 @@ function requestFingerprint(
   }
 }
 
+/**
+ * QRR-06's request content: what the caller sent (the QueryRun, the reason;
+ * the pin is in the fingerprint's `expected`). The Kernel facts the Host entry
+ * reads are not part of it, so a retry under the same identity replays the
+ * original receipt even when the Kernel now reads differently (§12.10 step 4).
+ */
+function attestationContent(input: Pick<ResolveUnknownQueryRunInput, 'queryRunRef' | 'reason'>): unknown {
+  return { queryRunRef: input.queryRunRef, reason: input.reason };
+}
+
 function revisionConflict(reads: readonly { refKey: string; revision: number }[]): CoreRejection {
   return rejected('revision_conflict', 'the supplied version pins do not match the versions read in this call', pinsFromCurrent(reads));
 }
@@ -1425,6 +1435,25 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     });
   }
 
+  /** The trusted Host actor and the request identity of one recovery write (`content` is what the fingerprint covers). */
+  function recoveryIdentity(
+    ctx: CoreCallContext, queryRunRef: QueryRunRef, requestId: string, expectedRun: number, content: unknown,
+  ): { ok: true; actor: HostActor; identityKey: string; fingerprint: string } | { ok: false; rejection: CoreRejection } {
+    const owned = ownContext(ctx);
+    if (owned === null) return { ok: false, rejection: rejected('invalid', 'the call context cannot be isolated from the caller') };
+    const actor = hostActor(owned);
+    if (actor === null) {
+      return { ok: false, rejection: rejected('forbidden', 'a QueryRun reconcile requires a trusted Host call context') };
+    }
+    if (queryRunRef.projectId !== owned.projectId || queryRunRef.workspaceId !== owned.workspaceId) {
+      return { ok: false, rejection: rejected('forbidden', 'the QueryRun is outside the Host call scope') };
+    }
+    const identityKey = `a2-query-recovery:${queryRunRef.runId}:${sha256Hex(canonicalJson({ actor, requestId } as unknown as JsonValue))}`;
+    const fingerprint = requestFingerprint('observed', requestId, { job: null, run: expectedRun, session: null }, content);
+    if (fingerprint === null) return { ok: false, rejection: rejected('invalid', 'the reconcile request is not serializable') };
+    return { ok: true, actor, identityKey, fingerprint };
+  }
+
   /**
    * QRR-01/02/04/05 (R) and QRR-06 (U): one stranded QueryRun settled or marked
    * unknown in one commit with its QueryJob and the Session release (SES-09,
@@ -1433,19 +1462,12 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
    * a repeated reconcile replays its receipt.
    */
   async function settleRecovery(
-    ctx: CoreCallContext, queryRunRef: QueryRunRef, requestId: string, expectedRun: number, input: unknown,
+    ctx: CoreCallContext, queryRunRef: QueryRunRef, requestId: string, expectedRun: number, content: unknown,
     eventOf: (state: QueryExecutionStateV1) => RecoveryStep,
   ): Promise<WriteResult<QueryExecutionRecord>> {
-    const owned = ownContext(ctx);
-    if (owned === null) return rejected('invalid', 'the call context cannot be isolated from the caller');
-    const actor = hostActor(owned);
-    if (actor === null) return rejected('forbidden', 'a QueryRun reconcile requires a trusted Host call context');
-    if (queryRunRef.projectId !== owned.projectId || queryRunRef.workspaceId !== owned.workspaceId) {
-      return rejected('forbidden', 'the QueryRun is outside the Host call scope');
-    }
-    const identityKey = `a2-query-recovery:${queryRunRef.runId}:${sha256Hex(canonicalJson({ actor, requestId } as unknown as JsonValue))}`;
-    const fingerprint = requestFingerprint('observed', requestId, { job: null, run: expectedRun, session: null }, input);
-    if (fingerprint === null) return rejected('invalid', 'the reconcile request is not serializable');
+    const identity = recoveryIdentity(ctx, queryRunRef, requestId, expectedRun, content);
+    if (!identity.ok) return identity.rejection;
+    const { actor, identityKey, fingerprint } = identity;
     const replay = await replayOriginal<QueryExecutionRecord>(deps, identityKey, fingerprint, 'observed');
     if (replay !== null) return replay;
     const read = await readCore(deps, queryRunRef, null);
@@ -1574,7 +1596,7 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     }
     const actor = hostActor(ctx);
     const host = deps.hostInstance;
-    return settleRecovery(ctx, input.queryRunRef, requestId, expectedRun, input, (): RecoveryStep => ({
+    return settleRecovery(ctx, input.queryRunRef, requestId, expectedRun, attestationContent(input), (): RecoveryStep => ({
       event: { kind: 'query_unknown_attested' },
       guard: { caller: 'host_entry', hostLease: host === undefined ? null : host.lease, probe: null, kernel: null,
         inputsConfirmed: input.inputsConfirmed === null ? 'kernel_unreadable' : input.inputsConfirmed,
@@ -1583,9 +1605,38 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     }));
   }
 
+  /**
+   * QRR-06 同请求身份重放 (§12.10 step 4): the original receipt of an
+   * attestation committed under this request identity, or `null` when none
+   * was. The Host entry asks before it compares the pin and the QueryRun's
+   * phase, both of which the attestation itself changed. The same identity
+   * with other content is `idempotency_conflict` (§1.2), and a failed lookup
+   * is reported, so neither falls through to the phase comparison.
+   */
+  async function replayResolveUnknownQuery(
+    ctx: CoreCallContext, request: GraphWrite<Pick<ResolveUnknownQueryRunInput, 'queryRunRef' | 'reason'>>,
+  ): Promise<WriteResult<QueryExecutionRecord> | null> {
+    let input: Pick<ResolveUnknownQueryRunInput, 'queryRunRef' | 'reason'>;
+    let requestId: string;
+    let expectedRun: number | null;
+    try {
+      input = structuredClone(request.input);
+      requestId = request.meta.requestId;
+      expectedRun = queryRunPinOf(request.meta.expected, (input as { queryRunRef?: unknown } | null)?.queryRunRef);
+    } catch { return null; }
+    if (expectedRun === null || !isRecord(input) || !isRecord(input.queryRunRef) || typeof input.reason !== 'string'
+      || !nonEmpty(requestId)) {
+      return null;
+    }
+    const identity = recoveryIdentity(ctx, input.queryRunRef, requestId, expectedRun, attestationContent(input));
+    if (!identity.ok) return null;
+    return replayOriginal<QueryExecutionRecord>(deps, identity.identityKey, identity.fingerprint, 'observed');
+  }
+
   return {
     async reconcileQueryRun(ctx, request) { return reconcileQuery(ctx, request); },
     async resolveUnknownQueryRun(ctx, request) { return resolveUnknownQuery(ctx, request); },
+    async replayResolveUnknownQueryRun(ctx, request) { return replayResolveUnknownQuery(ctx, request); },
     async readQueryExecution(ctx, ref) {
       const owned = ownContext(ctx);
       if (owned === null) return rejected('invalid', 'the call context cannot be isolated from the caller');

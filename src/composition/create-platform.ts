@@ -97,7 +97,7 @@ import { ARCHITECTURE_CATALOG_SCHEMAS } from '../core/work-graph/architecture/ca
 import { observeRecordCommits, type RecordCommitObserver } from './commit-observer.js';
 import type { HostInstanceFacts } from '../core/work-graph/tasks/execution-entry-contracts.js';
 import { createRunReconcileService } from '../core/work-graph/tasks/run-reconcile-service.js';
-import type { RunReconcilePort } from '../core/work-graph/tasks/run-reconcile-contracts.js';
+import type { RunReconcileService } from '../core/work-graph/tasks/run-reconcile-contracts.js';
 import { createReconcileCandidateReader } from '../core/work-graph/tasks/reconcile-reads.js';
 import { createSessionHealthService } from '../core/work-graph/sessions/session-health.js';
 import {
@@ -548,7 +548,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       workspaceHost: options.workspace, kernel, now });
     // A.2 step 5.6 (S8, A8): the reconcile owners share the ONE records/reader pair; the Runtime
     // classifier reads the Kernel through the same history owner the observer uses.
-    const runReconcile: RunReconcilePort = createRunReconcileService({ records: backend.records, reads: executionReader,
+    const runReconcile: RunReconcileService = createRunReconcileService({ records: backend.records, reads: executionReader,
       ...(hostInstance === undefined ? {} : { hostInstance }), now, eventId: randomUUID });
     const sessionHealth = createSessionHealthService({ records: backend.records,
       ...(hostInstance === undefined ? {} : { hostInstance }), now, eventId: randomUUID });
@@ -894,7 +894,11 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
      * write (this Host's lease, a reason, an unknown target at the pinned
      * revision; L-1 "busy，不改任何事实"), then reads the Kernel facts (an open
      * Turn, the input confirmation, which may record the mailbox acceptance),
-     * and the owner judges the attestation.
+     * and the owner judges the attestation. A request the owner already
+     * committed under its identity gets the original receipt before the pin
+     * and the state are compared (原回执回放, §12.10 step 4): the attestation
+     * itself moved both. The same identity with other content gets
+     * `idempotency_conflict` there (§1.2).
      */
     function attestationAdmission(request: GraphWrite<unknown> | undefined, ref: object, revision: number, unknown: boolean,
       what: string): CoreRejection | null {
@@ -927,6 +931,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       if (hostInstance === undefined || hostInstance.lease !== 'owned') {
         return { status: 'rejected', code: 'busy', reason: 'this Host does not hold the Host instance lease; only that Host attests (L-1)' };
       }
+      const replayed = await runReconcile.replayResolveUnknownRun(ctx, { input: { runRef, reason: input.reason }, meta: request.meta });
+      if (replayed !== null) return replayed;
       const read = await executionReader.readExecution(ctx, runRef);
       if (read.status !== 'ready') {
         return read.status === 'rejected' ? read : { status: 'rejected', code: 'not_found', reason: 'the Run is not readable' };
@@ -958,6 +964,9 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       if (hostInstance === undefined || hostInstance.lease !== 'owned') {
         return { status: 'rejected', code: 'busy', reason: 'this Host does not hold the Host instance lease; only that Host attests (L-1)' };
       }
+      const replayed = await queryExecution.replayResolveUnknownQueryRun?.(ctx,
+        { input: { queryRunRef, reason: input.reason }, meta: request.meta }) ?? null;
+      if (replayed !== null) return replayed;
       const read = await queryExecution.readQueryExecution(ctx, queryRunRef);
       if (read.status !== 'ready') {
         return read.status === 'rejected' ? read : { status: 'rejected', code: 'not_found', reason: 'the QueryRun is not readable' };
