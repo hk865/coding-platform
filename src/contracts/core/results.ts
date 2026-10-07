@@ -41,7 +41,6 @@ export type ReadStamp =
   | { kind: 'plan'; ref: import('../plan.js').PlanRevisionRef }
   | { kind: 'source'; capture: import('./source.js').SourceCaptureRef }
   | { kind: 'session'; ref: import('./identity.js').SessionRef; cursor: string };
-export type ReadBasis = { atLeastCursor?: CommitCursor; revision?: number };
 export type Page<T> = { items: T[]; nextCursor: string | null; basis: ReadStamp };
 export type OperationReceipt<T> =
   | { status: 'accepted'; operationRef: import('./operations.js').OperationRef; replayed: boolean; cursor: CommitCursor }

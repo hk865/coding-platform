@@ -87,7 +87,3 @@ export interface WorkflowPort {
    */
   consumeConsultation?(ctx: CoreCallContext, input: ConsultationInput): Promise<ConsultationResult>;
 }
-
-/** Compatibility aliases pointing at the one narrow new surface. */
-export type N0WorkflowPort = WorkflowPort;
-export type N0WorkflowDependencies = WorkflowDependencies;

@@ -8,7 +8,7 @@
  * formal `ProjectArchitectureBaselineActive`.
  */
 import type { ArtifactRef } from '../../../contracts/artifact.js';
-import type { ArchitectureSourceMapping, ArchitectureSourceSnapshotV1 } from '../../../contracts/architecture-source.js';
+import type { ArchitectureSourceSnapshotV1 } from '../../../contracts/architecture-source.js';
 import { architectureSourceIssues } from '../../../contracts/architecture-source.js';
 import type { ActorRef } from '../../../contracts/command-event.js';
 import type { PersistedSourceCaptureRef, SourceCaptureRef } from '../../../contracts/core/source.js';
@@ -383,6 +383,3 @@ export function decodeArchitectureSourceObservedEvent(event: EncodedDomainEvent)
   if (checked.status !== 'decoded') return checked;
   return { status: 'decoded', value: JSON.parse(event.json) as ArchitectureSourceObservedEventV1 };
 }
-
-/** Keeps the explicit mapping type part of the codec's public facts. */
-export type ObservedArchitectureMapping = ArchitectureSourceMapping;

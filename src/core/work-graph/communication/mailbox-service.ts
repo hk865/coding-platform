@@ -106,9 +106,6 @@ function nonEmpty(value: unknown): value is string {
 function isPositiveInt(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1;
 }
-function isNonNegInt(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
-}
 function canonicalOf(value: unknown): string | null {
   try {
     return canonicalJson(value as JsonValue);

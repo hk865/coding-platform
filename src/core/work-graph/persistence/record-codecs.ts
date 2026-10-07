@@ -673,8 +673,3 @@ export function decodeGoalDesiredStateChangedEvent(event: EncodedDomainEvent): D
 export function goalSnapshotFromDesiredStateChangedEvent(event: GoalDesiredStateChangedEvent): GoalSnapshot {
   return structuredClone(event.goal);
 }
-
-/** Selects a registered record codec by the aggregateType of the full ref. */
-export function recordSchemaForAggregateType(aggregateType: string): EncodedRecordSchema | undefined {
-  return GOAL_RECORD_SCHEMAS.records.find((schema) => schema.aggregateType === aggregateType);
-}

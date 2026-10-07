@@ -85,7 +85,6 @@ const LOOKUP_MAX_PAGES = 25;
 const WINDOW_MAX_ATTEMPTS = 4;
 
 export type Rejected = { status: 'rejected'; code: CoreError; reason: string };
-export type Ready<T> = { status: 'ready'; value: T };
 
 function incomplete(reason: string): Rejected {
   return { status: 'rejected', code: 'incomplete', reason };

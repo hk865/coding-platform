@@ -45,7 +45,6 @@ import {
   BOOTSTRAP_SUFFIX,
   CORE_API_PREFIX,
   PLATFORM_TOKEN_HEADER,
-  PLATFORM_TOKEN_META_NAME,
   type BootstrapResponse,
   type CoreScope,
   type CreateSessionRequest,
@@ -58,6 +57,7 @@ import {
   type SessionRecord,
   type SessionRef,
 } from '../../src/app/core-http-types.js';
+import { UI_PLATFORM_TOKEN_META_NAME } from '../../src/ui/api/protocol.js';
 
 const projectDir = resolve(fileURLToPath(new URL('../../', import.meta.url)));
 const at = '2026-09-28T00:00:00.000Z';
@@ -182,7 +182,7 @@ async function readPageToken(base: string): Promise<string> {
   const response = await fetch(base);
   expect(response.status).toBe(200);
   const html = await response.text();
-  const match = new RegExp(`<meta name="${PLATFORM_TOKEN_META_NAME}" content="([^"]+)">`).exec(html);
+  const match = new RegExp(`<meta name="${UI_PLATFORM_TOKEN_META_NAME}" content="([^"]+)">`).exec(html);
   if (match?.[1] === undefined) throw new Error('the page did not expose the runtime token meta');
   return match[1];
 }

@@ -80,8 +80,3 @@ export type AgentRuntimeService = {
   initialize?(): Promise<void>;
   close?(): Promise<void>;
 };
-
-/** Compatibility aliases for the existing index export surface. The composition
- * supplies execution dependencies when a trusted Runtime Host is configured. */
-export type N0RuntimeExecutionPort = RuntimeExecutionPort;
-export type N0AgentRuntimeService = AgentRuntimeService;

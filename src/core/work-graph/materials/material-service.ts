@@ -20,7 +20,6 @@ type BodyPutOrigin = RawArtifactPut['origin'];
 type StorePutResult = StoreResult<{ ref: ArtifactRef; replayed: boolean }>;
 type ApplicabilityFn = ReturnType<typeof createMaterialApplicability>;
 type MaterialAdmission = Awaited<ReturnType<ApplicabilityFn>>;
-type StoreRejectionCode = Extract<StoreArtifactResult, { status: 'rejected' }>['code'];
 type RunPrincipal = Extract<CorePrincipal, { kind: 'work_run' }>;
 
 /** Internal read outcome keeps the physical error semantics until each protocol

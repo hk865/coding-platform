@@ -165,9 +165,6 @@ function operationIdentity(operation: QueryExecutionOperation, actor: HostActor,
     actor: { kind: actor.kind, id: actor.id }, requestId,
   } as JsonValue));
 }
-function fingerprintOf(operation: QueryExecutionOperation, content: unknown): string {
-  return sha256Hex(canonicalJson({ schemaVersion: 1, operation, content } as unknown as JsonValue));
-}
 function queryJobRefFor(queryRunRef: QueryRunRef): QueryJobRef {
   return { aggregateType: 'QueryJob', projectId: queryRunRef.projectId, workspaceId: queryRunRef.workspaceId, queryJobId: queryRunRef.queryJobId };
 }
@@ -532,15 +529,6 @@ async function commitOperation<T extends QueryEventResult>(input: {
   return { status: 'committed', value: input.value, replayed: false, cursor: receipt.cursor };
 }
 
-function mergeGuards(guards: readonly RecordGuard[]): RecordGuard[] {
-  const map = new Map<string, number | null>();
-  for (const guard of guards) {
-    const existing = map.get(guard.refKey);
-    if (existing === undefined || (existing === null && guard.expectedRevision !== null)) map.set(guard.refKey, guard.expectedRevision);
-  }
-  return [...map].map(([refKey, expectedRevision]) => ({ refKey, expectedRevision }));
-}
-
 // --------------------------------------------------------------------------
 // State machines (§1.1): Session occupancy and the QueryRun settle
 // --------------------------------------------------------------------------
@@ -612,8 +600,6 @@ function settledRecords(core: Core, before: QueryRecoveryPhase, effects: readonl
 // --------------------------------------------------------------------------
 // Original-request expected pins, identity/fingerprint and replay
 // --------------------------------------------------------------------------
-
-type ExpectedPins = { job: number | null; run: number | null; session: number | null };
 
 type ExpectedRefs = { projectId: string; workspaceId: string; queryJobId: string; runId: string };
 

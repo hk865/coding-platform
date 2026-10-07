@@ -21,7 +21,7 @@ import type {
   ArchitectureBaselineRevisionRef,
   CompletionPolicyRevisionRef,
 } from '../../../contracts/governance.js';
-import type { GoalRef, ProjectRef, WorkspaceRef } from '../../../contracts/ledger.js';
+import type { GoalRef } from '../../../contracts/ledger.js';
 import type {
   PlanRevisionAcceptedEvent,
   PlanRevisionRef,
@@ -150,14 +150,6 @@ function goalRefFromValue(value: unknown, projectId: string): GoalRef | null {
   if (!isNonEmptyString(value['projectId']) || value['projectId'] !== projectId) return null;
   if (!isNonEmptyString(value['goalId'])) return null;
   return { aggregateType: 'Goal', projectId: value['projectId'], goalId: value['goalId'] };
-}
-
-function workspaceRefFromValue(value: unknown, projectId: string): WorkspaceRef | null {
-  if (!isRecord(value)) return null;
-  if (value['aggregateType'] !== 'Workspace') return null;
-  if (!isNonEmptyString(value['projectId']) || value['projectId'] !== projectId) return null;
-  if (!isNonEmptyString(value['workspaceId'])) return null;
-  return { aggregateType: 'Workspace', projectId: value['projectId'], workspaceId: value['workspaceId'] };
 }
 
 function completionPolicyRefFromValue(value: unknown, projectId: string): CompletionPolicyRevisionRef | null {

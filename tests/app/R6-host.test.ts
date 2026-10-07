@@ -36,7 +36,6 @@ import {
   BOOTSTRAP_SUFFIX,
   CORE_API_PREFIX,
   PLATFORM_TOKEN_HEADER,
-  PLATFORM_TOKEN_META_NAME,
   PLATFORM_TOKEN_PLACEHOLDER,
   type BootstrapResponse,
   type BootstrapReviewMaterial,
@@ -65,6 +64,7 @@ import {
   type WorkflowAdvanceResult,
   type WorkflowStepReceipt,
 } from '../../src/app/core-http-types.js';
+import { UI_PLATFORM_TOKEN_META_NAME } from '../../src/ui/api/protocol.js';
 import type { WriteResult } from '../../src/contracts/core/results.js';
 import type { TargetPlatformOptions } from '../../src/composition/create-platform.js';
 
@@ -138,7 +138,7 @@ async function readPageToken(base: string): Promise<string> {
   const response = await fetch(base);
   expect(response.status).toBe(200);
   const html = await response.text();
-  const match = new RegExp(`<meta name="${PLATFORM_TOKEN_META_NAME}" content="([^"]+)">`).exec(html);
+  const match = new RegExp(`<meta name="${UI_PLATFORM_TOKEN_META_NAME}" content="([^"]+)">`).exec(html);
   if (match?.[1] === undefined) throw new Error('the page did not expose the runtime token meta');
   return match[1];
 }
@@ -216,7 +216,7 @@ describe('R6.1a Host HTTP/static shell', () => {
       expect(page.headers.get('content-type')).toContain('text/html');
       expect(page.headers.get('cache-control')).toContain('no-store');
       expect(html).not.toContain(PLATFORM_TOKEN_PLACEHOLDER);
-      expect(html).toContain(`<meta name="${PLATFORM_TOKEN_META_NAME}" content="${started.token}">`);
+      expect(html).toContain(`<meta name="${UI_PLATFORM_TOKEN_META_NAME}" content="${started.token}">`);
       const script = await fetch(`${started.base}main.js`);
       expect(script.status).toBe(200);
       expect(script.headers.get('content-type')).toContain('javascript');

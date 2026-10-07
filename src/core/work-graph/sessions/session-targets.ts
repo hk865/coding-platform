@@ -29,9 +29,6 @@ type UnknownRecord = Record<string, unknown>;
 function isObject(value: unknown): value is UnknownRecord {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
-function nonEmpty(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
 function canonicalOf(value: unknown): string | null {
   try {
     return canonicalJson(value as JsonValue);

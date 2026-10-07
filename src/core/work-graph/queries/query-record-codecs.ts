@@ -698,17 +698,6 @@ function validateQueryJobAnsweredEvent(event: EncodedDomainEvent): DecodeResult<
   return { status: 'decoded', value: copyEvent(event) };
 }
 
-/** Decodes one stored answered event. */
-export function decodeQueryJobAnsweredEvent(event: EncodedDomainEvent): DecodeResult<QueryJobAnsweredEventV1> {
-  const checked = validateQueryJobAnsweredEvent(event);
-  if (checked.status !== 'decoded') return checked;
-  try {
-    return { status: 'decoded', value: JSON.parse(event.json) as QueryJobAnsweredEventV1 };
-  } catch {
-    return invalid('QueryJobAnswered event JSON is not parseable');
-  }
-}
-
 // --------------------------------------------------------------------------
 // QueryRun: pure encode/decode reusing the ONE material owner's validator
 // --------------------------------------------------------------------------

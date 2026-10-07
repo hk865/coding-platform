@@ -133,12 +133,6 @@ export interface WorkbenchToolsPort {
     Promise<WorkspaceResult<WorkbenchCommandSnapshot>>;
 }
 
-/** The per-workspace Kernel handles this factory owns. */
-export type WorkbenchKernelHandles = {
-  workspace: WorkspaceSandbox;
-  process: ProcessSandbox | null;
-};
-
 export type WorkbenchToolsHandle = {
   tools: WorkbenchToolsPort;
   /**

@@ -246,9 +246,6 @@ export type VerificationCheckPlan = {
     noChangeFastPath?: { diffClass: string; reason: string };
 };
 
-export const REVIEWER_SEMANTIC_CHECK_ID = "reviewer-semantic-check";
-export const NO_CHANGE_FAST_PATH_CHECK_ID = "no-change-fast-path";
-
 export type RiskV1 = {
     level: "low" | "medium" | "high";
     description: string;

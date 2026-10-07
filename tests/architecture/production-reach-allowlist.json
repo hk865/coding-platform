@@ -2,18 +2,6 @@
   "description": "Unreached src/ nodes allowed by tests/architecture/production-reach.test.ts. reason: step5/step6 (wired by A.2 step 5 or 6; substep names the substep, wiredBy the STEP5-FLIPS.md section or spec §15.2/§15.3 item; none may remain once its substep is closed, nor after step 6), pre-batch (already unreached at 790d970; the user decides later), wire-format (persisted or wire contract that must stay; the note names its reader), kept-for (kept on purpose, not wired yet, for a named later user, decision 34; the note names it: slice N of the orchestration design, or an MVP-BEHAVIOR.md item). First filled 2026-10-05; port members and the review fixes added the same day.",
   "entries": [
     {
-      "file": "src/app/collaboration-driver.ts",
-      "name": "CollaborationOutboxPage",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
-    },
-    {
-      "file": "src/app/core-http-types.ts",
-      "name": "PLATFORM_TOKEN_META_NAME",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; used only by tests: tests/app/AG2-consultation.test.ts, tests/app/MVP-ui-entry.test.ts, tests/app/R6-host.test.ts, tests/app/R6-workbench.test.ts, tests/app/change-commit-observer.test.ts, tests/app/host-settings.test.ts, tests/helpers/AG2b-collaboration-fixture.ts"
-    },
-    {
       "file": "src/app/core-http-types.ts",
       "name": "ProjectsCreateBody",
       "reason": "pre-batch",
@@ -374,12 +362,6 @@
       "note": "unreached at 790d970; referenced nowhere"
     },
     {
-      "file": "src/app/core-http-types.ts",
-      "name": "UnsupportedResponse",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
-    },
-    {
       "file": "src/app/main.ts",
       "name": "WorkbenchCliWorkspace",
       "reason": "pre-batch",
@@ -388,42 +370,6 @@
     {
       "file": "src/app/main.ts",
       "name": "WorkbenchCliConfig",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
-    },
-    {
-      "file": "src/app/workbench-tools.ts",
-      "name": "WorkbenchKernelHandles",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
-    },
-    {
-      "file": "src/business/workflow/ports.ts",
-      "name": "N0WorkflowPort",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
-    },
-    {
-      "file": "src/business/workflow/ports.ts",
-      "name": "N0WorkflowDependencies",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
-    },
-    {
-      "file": "src/contracts/core/results.ts",
-      "name": "ReadBasis",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
-    },
-    {
-      "file": "src/contracts/evidence.ts",
-      "name": "MAX_EVIDENCE_PER_TASK",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
-    },
-    {
-      "file": "src/contracts/evidence.ts",
-      "name": "EVIDENCE_KINDS",
       "reason": "pre-batch",
       "note": "unreached at 790d970; referenced nowhere"
     },
@@ -554,84 +500,6 @@
       "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; only reached from RoleConfigurationPort.activateRoleSpec"
     },
     {
-      "file": "src/contracts/verification.ts",
-      "name": "REVIEWER_SEMANTIC_CHECK_ID",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
-    },
-    {
-      "file": "src/contracts/verification.ts",
-      "name": "NO_CHANGE_FAST_PATH_CHECK_ID",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
-    },
-    {
-      "file": "src/core/agent-runtime/communication-tools.ts",
-      "name": "SessionMailboxToolName",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
-    },
-    {
-      "file": "src/core/agent-runtime/execution-contracts.ts",
-      "name": "RuntimePreparedExecution",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
-    },
-    {
-      "file": "src/core/agent-runtime/execution-contracts.ts",
-      "name": "RuntimePreparedQueryExecution",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
-    },
-    {
-      "file": "src/core/agent-runtime/execution-contracts.ts",
-      "name": "RuntimeQueryExecutionRecord",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
-    },
-    {
-      "file": "src/core/agent-runtime/execution-contracts.ts",
-      "name": "RuntimeExecutionRecord",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
-    },
-    {
-      "file": "src/core/agent-runtime/execution-contracts.ts",
-      "name": "RuntimeSessionRef",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
-    },
-    {
-      "file": "src/core/agent-runtime/execution-contracts.ts",
-      "name": "RuntimeReadPage",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
-    },
-    {
-      "file": "src/core/agent-runtime/ports.ts",
-      "name": "N0RuntimeExecutionPort",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
-    },
-    {
-      "file": "src/core/agent-runtime/ports.ts",
-      "name": "N0AgentRuntimeService",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
-    },
-    {
-      "file": "src/core/agent-runtime/query-preparation.ts",
-      "name": "initialCoordinationResponseGuide",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
-    },
-    {
-      "file": "src/core/agent-runtime/session-discovery-tools.ts",
-      "name": "SessionDiscoveryToolName",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
-    },
-    {
       "file": "src/core/work-graph/architecture/architecture-delta.ts",
       "name": "changeId",
       "reason": "kept-for",
@@ -648,12 +516,6 @@
       "name": "compareObservedGraphs",
       "reason": "kept-for",
       "note": "kept for slice 8 of the orchestration design (decision 34: formal-vs-observed comparison and the impact read); decision 6: wired with the new UI, backend first; unreached at 790d970; only reached from ObservedArchitecturePort.compareArchitecture"
-    },
-    {
-      "file": "src/core/work-graph/architecture/architecture-record-codecs.ts",
-      "name": "ObservedArchitectureMapping",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
     },
     {
       "file": "src/core/work-graph/architecture/catalog-contracts.ts",
@@ -764,12 +626,6 @@
       "note": "kept for slice 8 of the orchestration design (decision 34: formal-vs-observed comparison and the impact read); decision 6: wired with the new UI, backend first; unreached at 790d970; only reached from ObservedArchitecturePort.queryImpact"
     },
     {
-      "file": "src/core/work-graph/communication/mailbox-service.ts",
-      "name": "isNonNegInt",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; file-local; referenced nowhere"
-    },
-    {
       "file": "src/core/work-graph/configuration/contracts.ts",
       "name": "RoleReadOptions",
       "reason": "kept-for",
@@ -870,66 +726,6 @@
       "name": "encodeRoleSpecActivatedEvent",
       "reason": "kept-for",
       "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; only reached from RoleConfigurationPort.activateRoleSpec"
-    },
-    {
-      "file": "src/core/work-graph/materials/material-service.ts",
-      "name": "StoreRejectionCode",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; file-local; referenced nowhere"
-    },
-    {
-      "file": "src/core/work-graph/persistence/record-codecs.ts",
-      "name": "recordSchemaForAggregateType",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
-    },
-    {
-      "file": "src/core/work-graph/queries/query-execution.ts",
-      "name": "fingerprintOf",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; file-local; referenced nowhere"
-    },
-    {
-      "file": "src/core/work-graph/queries/query-execution.ts",
-      "name": "mergeGuards",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; file-local; referenced nowhere"
-    },
-    {
-      "file": "src/core/work-graph/queries/query-execution.ts",
-      "name": "ExpectedPins",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; file-local; referenced nowhere"
-    },
-    {
-      "file": "src/core/work-graph/queries/query-record-codecs.ts",
-      "name": "decodeQueryJobAnsweredEvent",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
-    },
-    {
-      "file": "src/core/work-graph/sessions/session-targets.ts",
-      "name": "nonEmpty",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; file-local; referenced nowhere"
-    },
-    {
-      "file": "src/core/work-graph/tasks/initial-plan.ts",
-      "name": "InitialPlanFactReader",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
-    },
-    {
-      "file": "src/core/work-graph/tasks/plan-readers.ts",
-      "name": "Ready",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
-    },
-    {
-      "file": "src/core/work-graph/tasks/plan-record-codecs.ts",
-      "name": "workspaceRefFromValue",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; file-local; referenced nowhere"
     },
     {
       "file": "src/core/workspace/material-source-provider.ts",

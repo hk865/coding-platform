@@ -44,8 +44,6 @@ export const SESSION_MAILBOX_TOOL_NAMES = [
   'respond_session_message',
 ] as const;
 
-export type SessionMailboxToolName = (typeof SESSION_MAILBOX_TOOL_NAMES)[number];
-
 export type SessionMailboxToolsConfig = {
   mailbox: SessionMailboxPort;
   /** Trusted, already-bound context. Snapshotted per call; never model JSON. */

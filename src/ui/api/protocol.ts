@@ -1,6 +1,7 @@
 /** UI-side mirrors of the Host protocol constants. `R6-workbench.test.ts`
  * asserts they equal the Host values, so the browser never value-imports the
- * Host module. */
+ * Host module. The meta name has no Host copy: the test checks the built page
+ * carries it. */
 export const UI_PLATFORM_TOKEN_HEADER = 'x-platform-token';
 export const UI_PLATFORM_TOKEN_META_NAME = 'platform-token';
 export const UI_CORE_API_PREFIX = '/api/real/core/';

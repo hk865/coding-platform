@@ -25,7 +25,7 @@ import type { BoundModel } from './source-tool-ports.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { ControlIntentRef } from '../../contracts/control-intent.js';
 import type { RoleConfigurationRef, SessionRef } from '../../contracts/core/identity.js';
-import type { Page, ReadResult } from '../../contracts/core/results.js';
+import type { ReadResult } from '../../contracts/core/results.js';
 import type { PreparedQueryExecution, PreparedTaskExecution, PreparedTaskManifestV1 } from '../../contracts/core/prepared-execution.js';
 import type { QueryRunRef } from '../../contracts/query-job.js';
 import type { MaterialBasisV1 } from '../../contracts/material-access.js';
@@ -46,7 +46,7 @@ import type { ControlObservationPort, RunControlPort } from '../work-graph/tasks
 import type { SessionMailboxPort } from '../work-graph/communication/contracts.js';
 import type { SessionDirectoryPort } from '../work-graph/sessions/contracts.js';
 import type { SourceSnapshotReads } from '../work-graph/source-authority-ports.js';
-import type { QueryExecutionPort, QueryExecutionRecord } from '../work-graph/queries/contracts.js';
+import type { QueryExecutionPort } from '../work-graph/queries/contracts.js';
 import type { SessionHistoryEntry, SessionHistoryRequest, SessionOperationsPort } from './session-operations.js';
 import type { ExecutionHistoryPage, ExecutionHistoryPort, GraphExecutionHistoryReadPort } from './execution-history-contracts.js';
 import type { KernelStoreRegistry } from './kernel-store-locator.js';
@@ -228,11 +228,5 @@ export type ContinuationWorkspaceSource = {
 };
 
 // Re-export the exact shared shapes the port consumes so callers do not import
-// WorkGraph paths by accident. These are type-only aliases, not second shapes.
+// WorkGraph paths by accident.
 export type { TaskExecutionRecord, SessionHistoryEntry, SessionHistoryRequest, ExecutionHistoryPage };
-export type RuntimePreparedExecution = PreparedTaskExecution;
-export type RuntimePreparedQueryExecution = PreparedQueryExecution;
-export type RuntimeQueryExecutionRecord = QueryExecutionRecord;
-export type RuntimeExecutionRecord = TaskExecutionRecord;
-export type RuntimeSessionRef = SessionRef;
-export type RuntimeReadPage<T> = Page<T>;

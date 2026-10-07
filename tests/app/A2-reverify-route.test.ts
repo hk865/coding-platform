@@ -23,7 +23,8 @@ import { afterEach, expect, it } from 'vitest';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { PLATFORM_TOKEN_META_NAME, PLATFORM_TOKEN_PLACEHOLDER } from '../../src/app/core-http-types.js';
+import { PLATFORM_TOKEN_PLACEHOLDER } from '../../src/app/core-http-types.js';
+import { UI_PLATFORM_TOKEN_META_NAME } from '../../src/ui/api/protocol.js';
 import type {
   WorkflowAdvanceInput, WorkflowAdvanceResult, WorkflowStepReceipt,
 } from '../../src/business/workflow/contracts.js';
@@ -81,7 +82,7 @@ it('verification/reverify: a FAIL head is refused source_unchanged, then after t
   const publicDir = await mkdtemp(join(tmpdir(), 'a2-reverify-public-'));
   temporary.push(publicDir);
   await writeFile(join(publicDir, 'index.html'),
-    `<!doctype html><meta name="${PLATFORM_TOKEN_META_NAME}" content="${PLATFORM_TOKEN_PLACEHOLDER}">`);
+    `<!doctype html><meta name="${UI_PLATFORM_TOKEN_META_NAME}" content="${PLATFORM_TOKEN_PLACEHOLDER}">`);
   const host = await startAG2bHost(publicDir, { replies: [{ kind: 'text', text: 'A2 reverify: an answer without the file' }] });
   try {
     await seedAG2bWorkGraph(host);

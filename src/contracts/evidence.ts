@@ -52,15 +52,12 @@ export type EffectivityAnchorV1 = {
 // Evidence (R3e.1 restoration: selected original declarations)              //
 // ------------------------------------------------------------------------ //
 
-/** Hard per-task evidence cap — the reducer/index stay bounded by design. */
-export const MAX_EVIDENCE_PER_TASK = 512;
 /** Bounded summary text cap (full body goes to the vault). */
 export const EVIDENCE_SUMMARY_MAX_BYTES = 4096;
 
 export type EvidenceKind = "claim" | "observation" | "verdict";
 export type EvidenceOutcome = "PASS" | "FAIL" | "INCONCLUSIVE";
 
-export const EVIDENCE_KINDS: readonly EvidenceKind[] = ["claim", "observation", "verdict"];
 export const EVIDENCE_OUTCOMES: readonly EvidenceOutcome[] = ["PASS", "FAIL", "INCONCLUSIVE"];
 
 export type EvidenceSourceV1 = {

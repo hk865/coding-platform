@@ -24,8 +24,9 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  PLATFORM_TOKEN_META_NAME, PLATFORM_TOKEN_PLACEHOLDER, type SessionRef, type TaskExecutionRecord,
+  PLATFORM_TOKEN_PLACEHOLDER, type SessionRef, type TaskExecutionRecord,
 } from '../../src/app/core-http-types.js';
+import { UI_PLATFORM_TOKEN_META_NAME } from '../../src/ui/api/protocol.js';
 import type { WorkflowAdvanceInput, WorkflowAdvanceResult } from '../../src/business/workflow/contracts.js';
 import type { ControlIntentKindV1, SubmittedControl } from '../../src/contracts/control-intent.js';
 import type { ReadResult, WriteResult } from '../../src/contracts/core/results.js';
@@ -82,7 +83,7 @@ it('TD-5: a paused yielded wait is blocked, a resumed one ready, a cancelled one
   const publicDir = await mkdtemp(join(tmpdir(), 'a2-td5-public-'));
   temporary.push(publicDir);
   await writeFile(join(publicDir, 'index.html'),
-    `<!doctype html><meta name="${PLATFORM_TOKEN_META_NAME}" content="${PLATFORM_TOKEN_PLACEHOLDER}">`);
+    `<!doctype html><meta name="${UI_PLATFORM_TOKEN_META_NAME}" content="${PLATFORM_TOKEN_PLACEHOLDER}">`);
   let recipient: SessionRef | undefined;
   const send = { callId: 'a2-td5-send', name: 'send_session_message',
     args: { recipient: {}, text: 'A2 TD-5 question that nobody answers', replyMode: 'wait' } as Record<string, unknown> };

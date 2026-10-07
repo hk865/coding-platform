@@ -14,7 +14,6 @@
 import type { ActorRef } from '../contracts/command-event.js';
 import type { CoreCallContext } from '../contracts/core/call-context.js';
 import type { RoleConfigurationRef } from '../contracts/core/identity.js';
-import type { CoreRejection } from '../contracts/core/results.js';
 import type { RuntimeExecutionPort } from '../core/agent-runtime/ports.js';
 import type { ExecutionHistoryPage } from '../core/agent-runtime/execution-history-contracts.js';
 import type { ExecutionReadPort, TaskExecutionRecord } from '../core/work-graph/tasks/execution-read-contracts.js';
@@ -90,7 +89,6 @@ export type CoreScope = MaterialSourceScope;
 export type WorkbenchActor = Extract<ActorRef, { kind: 'human' | 'system' }>;
 
 export const PLATFORM_TOKEN_HEADER = 'x-platform-token';
-export const PLATFORM_TOKEN_META_NAME = 'platform-token';
 /** Literal placeholder the static build ships; `server.ts` substitutes it per
  * response and never writes the real token back to disk. */
 export const PLATFORM_TOKEN_PLACEHOLDER = '__PLATFORM_TOKEN__';
@@ -387,9 +385,6 @@ export type {
 export type { InitialPlanningGoalInputResult, WorkflowAdvanceResult, WorkflowStepReceipt,
   ConsultationInput, ConsultationResult } from '../business/workflow/contracts.js';
 export type { CollaborationDriverPort, CollaborationSnapshot, CollaborationState } from './collaboration-driver.js';
-
-/** Explicitly unsupported capability gap surfaced verbatim to the browser. */
-export type UnsupportedResponse = CoreRejection & { status: 'rejected'; code: 'unsupported' };
 
 /** `GET /api/real/core/bootstrap` omits root, authorization predicate and every
  * technical handle. `review` is whatever trusted startup configuration

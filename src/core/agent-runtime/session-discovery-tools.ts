@@ -29,8 +29,6 @@ import type { SessionDirectoryPort } from '../work-graph/sessions/contracts.js';
 /** Fixed production tool names. The Kernel host-authorization list comes from here. */
 export const SESSION_DISCOVERY_TOOL_NAMES = ['find_related_sessions', 'read_session_card'] as const;
 
-export type SessionDiscoveryToolName = (typeof SESSION_DISCOVERY_TOOL_NAMES)[number];
-
 export type SessionDiscoveryToolsConfig = {
   sessions: Pick<SessionDirectoryPort, 'findSessions' | 'readSession'>;
   /** Trusted, already-bound context. Snapshotted per call; never model JSON. */

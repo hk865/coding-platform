@@ -19,7 +19,6 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   PLATFORM_TOKEN_HEADER,
-  PLATFORM_TOKEN_META_NAME,
   PLATFORM_TOKEN_PLACEHOLDER,
   type BootstrapResponse,
 } from '../../src/app/core-http-types.js';
@@ -113,6 +112,7 @@ describe('workbench build closure', () => {
     }
     const html = await readFile(join(publicDir, 'index.html'), 'utf8');
     expect(html).toContain(PLATFORM_TOKEN_PLACEHOLDER);
+    expect(html).toContain(`<meta name="${UI_PLATFORM_TOKEN_META_NAME}"`);
     expect(html).toContain('/workbench/main.js');
     expect(html).toContain('/workbench/styles.css');
     // A real 64-hex token must never be baked into the shipped artifact.
@@ -121,7 +121,6 @@ describe('workbench build closure', () => {
 
   it('keeps the UI protocol literals equal to the Host contract', () => {
     expect(UI_PLATFORM_TOKEN_HEADER).toBe(PLATFORM_TOKEN_HEADER);
-    expect(UI_PLATFORM_TOKEN_META_NAME).toBe(PLATFORM_TOKEN_META_NAME);
     expect(UI_BOOTSTRAP_SUFFIX).toBe('bootstrap');
     expect(UI_CORE_API_PREFIX.endsWith('/')).toBe(true);
   });

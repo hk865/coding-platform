@@ -1,5 +1,5 @@
 /**
- * R5b.4 §11.3 the ONE pure v2 normalization and narrow fact-read seam.
+ * R5b.4 §11.3 the ONE pure v2 normalization and the exact facts it consumes.
  *
  * This file owns the deterministic JSON -> (draft, origin) conversion and the
  * exact fact shape it consumes. It creates no service instance, no port and no
@@ -12,9 +12,8 @@
  * acceptance or Role binding, and it never turns an omitted optional field into
  * a required one.
  */
-import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { PreparedQueryManifestV1 } from '../../../contracts/core/prepared-execution.js';
-import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
+import type { CoreRejection } from '../../../contracts/core/results.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import type {
   QueryJobAnswerRef,
@@ -42,16 +41,6 @@ export type InitialPlanAnswerFacts = {
   manifest: PreparedQueryManifestV1;
   answerText: string;
 };
-
-/**
- * The narrow, one-way read seam. The implementation is supplied by the Plan
- * service with the same `records`/`materials`/`initialPlanning.bodies`
- * instances it already owns; this module declares only the shape.
- */
-export type InitialPlanFactReader = (
-  ctx: CoreCallContext,
-  answerRef: QueryJobAnswerRef,
-) => Promise<ReadResult<InitialPlanAnswerFacts>>;
 
 /** The unique normalization value: a real plan draft/origin, or the answer's
  * explicit questions. It is not a proposal, a decision record or a Plan. */

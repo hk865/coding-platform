@@ -36,7 +36,6 @@ import type { SessionDirectoryPort } from '../core/work-graph/sessions/contracts
 import type {
   SessionMailboxPort,
   SessionMessage,
-  SessionMessagePage,
 } from '../core/work-graph/communication/contracts.js';
 import type {
   ConsultationInput,
@@ -75,9 +74,6 @@ export type CollaborationSnapshot = {
   messages: SessionMessage[];
   reason: string | null;
 };
-
-/** The same keyset page shape as the inbox; one independent sender-Run cursor. */
-export type CollaborationOutboxPage = SessionMessagePage;
 
 /**
  * The narrow mailbox surface. `readOutbox` is optional on the shared port only

@@ -130,12 +130,6 @@ BEGIN_INITIAL_PLAN_EXAMPLE
 }
 END_INITIAL_PLAN_EXAMPLE`;
 
-/** The declared call seam consumed by the stage-two `initial_coordination`
- * preparation; it grants nothing and ordinary Query never calls it. */
-export function initialCoordinationResponseGuide(): string {
-  return INITIAL_COORDINATION_RESPONSE_GUIDE;
-}
-
 /**
  * The read-only Query ceiling: no file mutation, no shell and no platform
  * communication/whiteboard writers, regardless of what the Host grant or the

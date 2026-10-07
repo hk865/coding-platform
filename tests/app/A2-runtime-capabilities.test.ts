@@ -36,12 +36,12 @@ import { writeAutomationSettings } from '../helpers/A2-restart-fixture.js';
 import {
   CORE_API_PREFIX,
   PLATFORM_TOKEN_HEADER,
-  PLATFORM_TOKEN_META_NAME,
   PLATFORM_TOKEN_PLACEHOLDER,
   type CoreScope,
   type RuntimeCapabilities,
   type RuntimeCapabilitiesResponse,
 } from '../../src/app/core-http-types.js';
+import { UI_PLATFORM_TOKEN_META_NAME } from '../../src/ui/api/protocol.js';
 
 const at = '2026-10-05T00:00:00.000Z';
 const scope: CoreScope = { projectId: 'a2-capabilities-project', workspaceId: 'a2-capabilities-workspace' };
@@ -75,7 +75,7 @@ async function startHost(paths: { publicDir: string; root: string; database: str
   hosts.push(host);
   const address = await host.listen(0);
   const page = await (await fetch(address.url)).text();
-  const token = new RegExp(`<meta name="${PLATFORM_TOKEN_META_NAME}" content="([^"]+)">`).exec(page)?.[1];
+  const token = new RegExp(`<meta name="${UI_PLATFORM_TOKEN_META_NAME}" content="([^"]+)">`).exec(page)?.[1];
   if (token === undefined) throw new Error('the page did not carry the token');
   return { host, origin: `http://${address.host}:${address.port}`, token };
 }
@@ -143,7 +143,7 @@ it('reports continuation, safe-point pause, cancel and start-up reconciliation a
     database: await directory('a2-capabilities-db-'),
   };
   await writeFile(join(paths.publicDir, 'index.html'),
-    `<!doctype html><meta name="${PLATFORM_TOKEN_META_NAME}" content="${PLATFORM_TOKEN_PLACEHOLDER}">`);
+    `<!doctype html><meta name="${UI_PLATFORM_TOKEN_META_NAME}" content="${PLATFORM_TOKEN_PLACEHOLDER}">`);
   const first = await startHost(paths);
   const report = await readCapabilities(first.origin, first.token);
 
@@ -231,7 +231,7 @@ it('says in the recoverRun reason that this Host has the setting automation.resu
     database: await directory('a2-capabilities-db-'),
   };
   await writeFile(join(paths.publicDir, 'index.html'),
-    `<!doctype html><meta name="${PLATFORM_TOKEN_META_NAME}" content="${PLATFORM_TOKEN_PLACEHOLDER}">`);
+    `<!doctype html><meta name="${UI_PLATFORM_TOKEN_META_NAME}" content="${PLATFORM_TOKEN_PLACEHOLDER}">`);
   // The Host installs `automation` from its private settings at start (C8 wiring, 5.6).
   await writeAutomationSettings(paths.database, { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: false });
   const off = await startHost(paths);
