@@ -117,7 +117,7 @@ type CoreError =
 - 命令在同一请求身份、同一内容下重放原回执；同一身份不同内容返回 `idempotency_conflict`。旧 expected version 返回 `revision_conflict`，不静默覆盖。
 - `requestId` 由适配层映射到现有 `CommandIdentity` 的幂等键；完整身份仍含 project、真实 actor，以及 Agent 调用适用的 principal。它不是全系统无作用域的请求键，也不取代旧 commandId/correlationId。
 - 参数中的版本由查询回执或正式引用获得，不要求业务自行计算 digest。只对改变决定的对象进行版本核对，不对每个只读操作附加整项目版本门禁。
-- **目标分页协议**：cursor 绑定查询条件与来源版本；读下一页复用已捕获来源，来源已无法继续读取时显式失效，不能拼接不同版本的页。**本轮代码不宣称已实现所有公开分页的捕获复用**：它只移除 `architectureMaterials` 内部按页反复调用 query 的循环，公开 `project_index` 分页与来源验证保持现有语义；公开 capture/cursor 协议及跨请求复用属于后续迁移。
+- **目标分页协议**：cursor 绑定查询条件与来源版本；读下一页复用已捕获来源，来源已无法继续读取时显式失效，不能拼接不同版本的页。**本轮代码不宣称已实现所有公开分页的捕获复用**：它只移除 `architectureMaterials` 内部按页反复调用 query 的循环，公开 `project_index` 分页与来源验证保持现有语义；公开 capture/cursor 协议及跨请求复用属于后续迁移。（2026-10-07 补注：`architectureMaterials` 没有生产调用方，已按决定 34 删除；架构图只走 capture registry。）
 - 长操作复用现有 Run/outbox/control-intent 的 `accepted → observed` 路径。返回“已受理”不表示模型已启动、文件已修改或 Session 已暂停。简单查询和内存算法不额外创建长期作业。
 - 原子操作表示一个完整、受约束的业务动作，不等同于通用数据库 CRUD。数据库更新能原子提交；Kernel、文件与数据库之间使用可重试意图及结果核对，不假定跨系统事务。
 
@@ -472,7 +472,7 @@ Artifact 保留 contentType/digest/sizeBytes/source；引用记录保留对应 T
 
 | 热路径 | 已核实事实或待实现约束 | 预期工作量与保留理由 |
 | --- | --- | --- |
-| 架构图捕获 | 改前 `architectureMaterials` 内部每页 imports 再调用 query，重复全量捕获/摘要、关系遍历与诊断；TS 服务已经复用未变脚本，不能称每页重新 parse 全仓 | 本轮 R1 已改为一次关系提取，保留 capture 与 verify 两遍捕获。3 页场景由 6 次捕获/3 次关系提取降为 2/1；公开跨请求分页仍待迁移 |
+| 架构图捕获 | 改前 `architectureMaterials` 内部每页 imports 再调用 query，重复全量捕获/摘要、关系遍历与诊断；TS 服务已经复用未变脚本，不能称每页重新 parse 全仓 | 本轮 R1 已改为一次关系提取，保留 capture 与 verify 两遍捕获。3 页场景由 6 次捕获/3 次关系提取降为 2/1；公开跨请求分页仍待迁移。2026-10-07：`architectureMaterials` 已删除（决定 34），架构图只走 capture registry 的一次捕获（WS4） |
 | ready 查询/推进 | 已核实 `task-eligibility` 的 tasks.find、dependsOn.filter 与前驱查找；未证明每个事件都扫描全部历史 | 依赖索引与相关后继更新；计划/政策整体变化允许重新评估 |
 | Session 选择 | 完整候选器尚未实现；避免从全部 Run/transcript 重建是目标约束，不是现有性能测量 | 按任务/模块/角色命中关联索引，正文按需读 |
 | 连续执行 | 当前每新 Run 组装所选材料，存在有界 bundle/selection；尚未贯通 Session 延续，不等于每轮装全部历史 | 同 Session 延续；只解析新增引用/变化来源；真正重组才构造新输入 |

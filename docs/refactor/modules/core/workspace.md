@@ -37,12 +37,12 @@ src/core/workspace/
   architecture-source.ts           # 按显式映射折叠观测关系
   purpose-readers/                 # 原窄 Source Port，逐消费者迁入
     role-source-reader.ts
-    query-workspace-source-reader.ts
-    reviewer-source-reader.ts
+    reviewer-source-reader.ts      # 2026-10-07 起只剩 reviewerSourcePathAllowed
     verification-workspace-reader.ts
     candidate-workspace-reader.ts
-    exploration-source.ts
-    readonly-read-witness-reader.ts
+    # 2026-10-07 删除（决定 34，从没有生产调用方）：query-workspace-source-reader.ts、
+    # exploration-source.ts、readonly-read-witness-reader.ts，以及 source-workspace-reader.ts、
+    # verification-source-applicability.ts
 ```
 
 | 文件 | 导出/责任 | 读写与内部依赖 |
@@ -270,15 +270,15 @@ P 页冻结结果只做 O(返回条目) 切页，初始捕获及最终核验仍�
 
 | 现有源码/符号 | 目标/复用方式 | 旧路径退出条件 |
 | --- | --- | --- |
-| source-workspace-reader.ts::workspaceProjectIndex | access.ts + provider工厂，复用Sandbox/policy | 图/宿主消费者切换且路径测试通过 |
-| ProjectArchitectureSourceReader | facade捕获适配，暂保留 ArchitectureSourceCapturePort | SourceGraph/WorkGraph全部切新Port |
-| architecture-source.ts::captureArchitectureSource | 同名文件，保留映射/unresolved/容量/digest | 旧imports清零，不重编码历史snapshot |
-| ProjectSourceIndex / SourceIndex | 同名目标文件，先迁移再分离冻结查询 | runtime工具/架构/测试全部迁移 |
+| source-workspace-reader.ts::workspaceProjectIndex | access.ts + provider工厂，复用Sandbox/policy | 图/宿主消费者切换且路径测试通过。**已满足，2026-10-07 删除**（决定 34） |
+| ProjectArchitectureSourceReader | facade捕获适配，暂保留 ArchitectureSourceCapturePort | SourceGraph/WorkGraph全部切新Port。**已满足，2026-10-07 连同 ArchitectureSourceCapturePort 删除** |
+| architecture-source.ts::captureArchitectureSource | 同名文件，保留映射/unresolved/容量/digest | 旧imports清零，不重编码历史snapshot。**已满足，2026-10-07 删除旧辅助入口**；`mapArchitectureSource` 留在同名文件，平台走 WS4 的 `captureArchitectureSource` |
+| ProjectSourceIndex / SourceIndex | 同名目标文件，先迁移再分离冻结查询 | runtime工具/架构/测试全部迁移。架构部分已满足：`architectureMaterials` 2026-10-07 删除 |
 | PythonSourceIndex / CppSourceIndex | 同名文件，固定helper路径按新目录修正 | 引擎身份/能力/隔离验证通过 |
 | WorkspaceSourceIndexReader | purpose-readers/role-source-reader.ts | role消费者切换且有限正文语义保持 |
-| query/reviewer/verification/candidate readers | 同名用途适配器，共同底座接access/capture | 每个真实消费者迁完、额外范围仍有效 |
-| ExplorationSourceApplicability | purpose-readers/exploration-source.ts | 保留原完整探索摘要、链接/二进制语义 |
-| source-applicability/verification-source-applicability | 对应用途适配器内部，来源捕获归本模块 | 与WorkGraph领域版本绑定分离后 |
+| query/reviewer/verification/candidate readers | 同名用途适配器，共同底座接access/capture | 每个真实消费者迁完、额外范围仍有效。2026-10-07：query reader 和 reviewer 的 `readReviewerSource` 已删除（决定 34）；verification、candidate 在用 |
+| ExplorationSourceApplicability | purpose-readers/exploration-source.ts | 保留原完整探索摘要、链接/二进制语义。**2026-10-07 删除**（决定 34，没有生产调用方） |
+| source-applicability/verification-source-applicability | 对应用途适配器内部，来源捕获归本模块 | 与WorkGraph领域版本绑定分离后。2026-10-07：verification-source-applicability 已删除；source-applicability 保留、未接线，留给编排设计第 3 片 |
 | WORKSPACE_DENIED_PREFIXES/readSourceIdentity | 同名常量/函数 | 所有读取路径迁完，不留并行副本 |
 
 SourceGraphContextCompiler 的 Run/Plan/baseline 资格及 Vault 保存归 WorkGraph，不随纯源读取迁入。exploration-tools.ts 的模型注册、Kernel 生命周期归 AgentRuntime，其源读取改调本 Port。
@@ -339,9 +339,9 @@ Host只把handle.tools注入Workflow/WorkGraph/Runtime；handle.close只由组�
 
 | 当前真实入口 | 新接线 | 验收 |
 | --- | --- | --- |
-| app/service.ts→SourceGraphContextCompiler→ProjectArchitectureSourceReader | WorkGraph捕获/映射→保存精确材料→使用前verify | 正式差异仍区分unknown与真实依赖 |
+| app/service.ts→SourceGraphContextCompiler→ProjectArchitectureSourceReader | WorkGraph捕获/映射→保存精确材料→使用前verify | 正式差异仍区分unknown与真实依赖。2026-10-07：左栏是原工程的入口；本仓库的 ProjectArchitectureSourceReader 没有调用方，已删除（决定 34），架构捕获只走 WorkGraph 捕获/映射（WS4） |
 | worker-runtime/exploration-tools.ts的project_index/code_index/source_excerpt | AgentRuntime工具adapter→WorkspaceTools，旧响应先保留 | 真正模型工具能读源，不额外开Run/LLM |
-| role/query/reviewer/verification的Source Port | 逐一换实现及路径，保留用途限制 | 原真实场景继续通过 |
+| role/query/reviewer/verification的Source Port | 逐一换实现及路径，保留用途限制 | 原真实场景继续通过。2026-10-07：query 的 Source Port 和 reviewer 的正文读取没有调用方，已删除 |
 
 顺序：R2a 迁所有权和消费者→R2b 分离 frozen provider→R2c 接真实 access/capture 与即时架构读取→R2d 模型冻结续页→后续 WorkGraph 持久材料与兼容退役。移动代码时同步实际 module-map；不把目标空目录提前当已实现。
 
@@ -360,6 +360,8 @@ Host只把handle.tools注入Workflow/WorkGraph/Runtime；handle.close只由组�
 现有 ProjectSourceIndex.architectureMaterials 已从逐页完整query改为一次inspect，公开query对完整结果展示分页。401条imports原三页产生6次捕获/3次关系提取，现为初始读取与核验两次捕获/1次提取。TS Language Service 原已复用未变脚本，不能说每页重建解析器。
 
 结果在await核验前绑定来源，另一请求切config不污染sources。22项定向测试、类型和模块边界通过，见[实施证据](../../reviews/core-design-implementation-evidence.md)。生产代码净增4行，不声称全仓LOC下降。
+
+2026-10-07 补注：`architectureMaterials` 没有生产调用方，已按决定 34 删除。架构源码只走 capture registry（`captureSourceChanges` → `captureArchitectureSource`）。它的测试改成经公开 `query()` 断言同样的行为：一次请求两次捕获、分页、并发换 config 不串来源。上面两段是当时的记录。
 
 后续已完成R2a目录与真实消费者迁移、R2b冻结分析与单服务复用、R2c真实Host授权/有界capture/游标/完整架构映射。R2c独立16文件/110项通过；R2d.1新project_source协议三页已验证2次捕获/1次imports，正式模型切换沿R2d.2/3串行实施。精确验收和后续补测状态见[批次证据](../../reviews/implementation-batches.md)。
 
