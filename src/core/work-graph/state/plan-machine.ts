@@ -300,6 +300,10 @@ export type FutureAdoptionFacts = PlanDraftAdmissionFacts & {
 
 /** §2.4/§3.4 (D-9): the refusal of every plan write on a cancelled Goal (shared with GOAL-02/03 and TASK-19 guard 8). */
 export const GOAL_CANCELLED_PLAN_DETAIL = 'the Goal is cancelled; its plan can no longer change';
+/** PLAN-04/05's stale and reused plan pointers, answered alike by GOAL-02/03 on the same adoption commit. */
+export const INITIAL_ADOPTION_STALE_DETAIL = 'the goal already has an active plan; an initial adoption cannot replace it';
+export const SOURCE_PLAN_STALE_DETAIL = 'the source plan is not the Goal current active plan';
+export const TARGET_PLAN_NOT_NEW_DETAIL = 'the target planId must be a new, unused reference';
 
 /**
  * What the service read and validated. Sections an event does not use are
@@ -1001,7 +1005,7 @@ function sourcePlanStep(
   }
   if (facts.goal === undefined) return UNREAD;
   if (!samePlanPointer(facts.goal.activePlanRevision, source.ref)) {
-    return reject('stale', 'revision_conflict', 'the source plan is not the Goal current active plan');
+    return reject('stale', 'revision_conflict', SOURCE_PLAN_STALE_DETAIL);
   }
   return source;
 }
@@ -1150,7 +1154,7 @@ function initialAdoptionStep(
   // :1166-1170 (the Goal was read with the scope)
   if (facts.goal === undefined) return UNREAD;
   if (facts.goal.activePlanRevision !== null) {
-    return reject('stale', 'revision_conflict', 'the goal already has an active plan; an initial adoption cannot replace it');
+    return reject('stale', 'revision_conflict', INITIAL_ADOPTION_STALE_DETAIL);
   }
   const initial = facts.initial;
   if (initial === undefined) return UNREAD;
@@ -1203,7 +1207,7 @@ function futureAdoptionStep(
     return reject('stale', 'revision_conflict', 'the target planRevision must be exactly source+1');
   }
   if (draft.planId === source.planId) {
-    return reject('illegal', 'invalid', 'the target planId must be a new, unused reference');
+    return reject('illegal', 'invalid', TARGET_PLAN_NOT_NEW_DETAIL);
   }
   const future = facts.future;
   if (future === undefined) return UNREAD;

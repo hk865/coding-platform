@@ -955,7 +955,7 @@ function noPersistedClaim(kind: RunEvent['kind']): Rejected {
   return reject('illegal', 'invalid', `${kind} requires the persisted DispatchOutbox claim`);
 }
 
-/** The event's claim against the persisted Outbox claim (`sameRef(outbox.claim, claim)`), with today's reason. */
+/** The event's claim against the persisted Outbox claim by canonical JSON (`sameJson`), with today's reason. */
 function persistedClaimGuard(ctx: RunGuardContext, claim: TaskClaim, kind: RunEvent['kind'], detail: string): Rejected | null {
   if (ctx.persistedClaim === null) return noPersistedClaim(kind);
   return sameJson(ctx.persistedClaim, claim) ? null : reject('guard_failed', 'invalid', detail);
@@ -1861,11 +1861,10 @@ function endReleaseEffects(claim: TaskClaim, ctx: RunGuardContext, release:
   { kernelTurnOpen: false; historyCursor: SessionRelease['historyCursor'] } | { kernelTurnOpen: true }): RunEffect[] {
   const effects: RunEffect[] = [];
   if (ctx.session.owned) {
-    effects.push(release.kernelTurnOpen
-      ? { kind: 'release_session', holder: claim.runRef, generation: claim.generation, historyCursor: { kind: 'keep' },
-        kernelTurnOpen: true }
-      : { kind: 'release_session', holder: claim.runRef, generation: claim.generation, historyCursor: release.historyCursor,
-        kernelTurnOpen: false });
+    const cursor = release.kernelTurnOpen
+      ? { historyCursor: { kind: 'keep' as const }, kernelTurnOpen: true as const }
+      : { historyCursor: release.historyCursor, kernelTurnOpen: false as const };
+    effects.push({ kind: 'release_session', holder: claim.runRef, generation: claim.generation, ...cursor });
   }
   if (ctx.lease === 'owned') effects.push({ kind: 'release_lease' });
   return effects;

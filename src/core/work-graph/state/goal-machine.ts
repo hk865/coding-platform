@@ -50,7 +50,10 @@ import {
   type ReworkActorClass, type ReworkFailureClass, type StopRequester, type TaskRequeueTriggerV1,
   type TaskReworkOperation,
 } from '../../../contracts/task-requeue.js';
-import { GOAL_CANCELLED_PLAN_DETAIL, samePlanPointer, type PlanProposalRef } from './plan-machine.js';
+import {
+  GOAL_CANCELLED_PLAN_DETAIL, INITIAL_ADOPTION_STALE_DETAIL, samePlanPointer, SOURCE_PLAN_STALE_DETAIL, TARGET_PLAN_NOT_NEW_DETAIL,
+  type PlanProposalRef,
+} from './plan-machine.js';
 import { isPausedInterrupted, isRunFinished, runUnresolvedBlocker } from './run-machine.js';
 import { stopRequesterOf } from './task-failure.js';
 import { accept, reject, unreachable, type Rejected, type Transition } from './transition.js';
@@ -372,11 +375,11 @@ function onPlanAdopted(state: GoalMachineState, event: Extract<GoalEvent, { type
   if (goal === null) return reject('illegal', 'not_found', 'the goal does not exist');
   if (!samePlanPointer(state.activePlanRef, event.basedOn)) {
     return event.basedOn === null
-      ? reject('stale', 'revision_conflict', 'the goal already has an active plan; an initial adoption cannot replace it')
-      : reject('stale', 'revision_conflict', 'the source plan is not the Goal current active plan');
+      ? reject('stale', 'revision_conflict', INITIAL_ADOPTION_STALE_DETAIL)
+      : reject('stale', 'revision_conflict', SOURCE_PLAN_STALE_DETAIL);
   }
   if (event.basedOn !== null && samePlanPointer(event.basedOn, event.target)) {
-    return reject('illegal', 'invalid', 'the target planId must be a new, unused reference');
+    return reject('illegal', 'invalid', TARGET_PLAN_NOT_NEW_DETAIL);
   }
   return accept<GoalMachineState, GoalEffect>(goalStateOf(nextGoalPointer(goal, event.target), state.goalPhase),
     [{ kind: 'write_goal' }]);
