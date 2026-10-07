@@ -165,7 +165,7 @@ TARGET-DAG（`docs/refactor/reviews/evidence/workgraph-split-2026-10-02/TARGET-D
   - **要留下的两条读取路**【本草案提议】：`materials/applicability.ts` 里的 Host 读取（第 40–86 行）和“Run 读自己的材料”（第 93–98 行）。独立审阅者读被审 Session 的原历史要靠前一条（STRUCTURE-DRAFT §1.7）。只删靠授权的分支（第 100–128 行）。
   - **精确输入的读取要先定去留**：`tasks/plan-service.ts` 的 `readTaskInput`（第 1704–1763 行）以“当前”方式读产物，只有授权能满足，所以在“只有授权才能满足的读取分支”这张删除清单上。可它对应的“消费时检查精确输入”仍是 MVP 项（决定 11）。lead 在简化前定：删掉，第 3 片按 STRUCTURE-DRAFT §1.6 重做；还是留下，改接新的受信任读取。同一组的还有 `tasks/execution-entry-service.ts:640-664` 和 `agent-runtime/execution-preparation.ts:413-433`。
 - `apply_future_plan` 工具：本草案不授予 agent（STRUCTURE-DRAFT §4.3），它在生产上本来就没授予 [src/app/host.ts:509]。是删除候选，lead 定。在 AgentRuntime，不影响 WorkGraph。
-- 没有写入者的引用类型：`HandoffPacketRef`（`src/contracts/handoff.ts:5-11`）、`ExecutionNoteRef` 和 `ContinuationRecordRef`（`src/contracts/context-continuity.ts:12-25`）。本草案的换手和注记都不用它们，可以删。它们在 `src/contracts`，不影响 WorkGraph 的环。
+- 没有写入者的引用类型：`HandoffPacketRef`（`src/contracts/handoff.ts:5-11`）、`ExecutionNoteRef` 和 `ContinuationRecordRef`（`src/contracts/context-continuity.ts:12-25`）。本草案的换手和注记都不用它们，可以删。它们在 `src/contracts`，不影响 WorkGraph 的环。（2026-10-07：已按决定 34 随简化 G6 删除，255442b9；`handoff.ts` 整个删掉，`context-continuity.ts` 只剩 `WorkContextRef`。）
 - 旧的决定记录类型 `UserDecisionV1`（`src/contracts/goal-change.ts:153-196`）和计划状态机里引用它的拒绝分支：本草案用消息表示决定，用不到它。**lead 接受 COMPARE D1 之前先别删。**
 - 一段永远不会执行的“已消费回复”分支（`src/core/agent-runtime/execution-preparation.ts:440-443`）。在 AgentRuntime，不影响 WorkGraph。
 - 要保留的（本草案会用）：角色规格；架构目录修订、比较、影响分析的端口；审阅者契约；输入来源里的“记忆”类；查询的“关注哪些任务”；重新入队的历史来源；消息上的咨询派生。
