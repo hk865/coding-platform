@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-- **本批已做完，全部提交在分支 `feat/reliability-and-structure`，没有推送。** 推不推送由用户定；任务 B 的 CI 要等推送后才会在 GitHub 上运行。任务书 `CLAUDE-CODE-TASK.md`（任务 A–E）在主检出目录，未纳入仓库。
+- **本批已做完，全部提交在分支 `feat/reliability-and-structure`。** 2026-10-08 按用户决定 44，由 Codex 推到远端新分支 `feat/reliability-and-structure`（9b94fc55）；远端 `next-main` 不动；本地主检出目录的 `next-main` 已快进到 9b94fc55。任务 B 的 CI 在 GitHub 上随推送运行。任务书 `CLAUDE-CODE-TASK.md`（任务 A–E）在主检出目录，未纳入仓库。
 - 做完的是：任务 A（规格、第 1–7 步、简化）、任务 B、C、D、E，以及决定 29、31–34、40。最后一段是收尾（2026-10-08）：小尾巴、`pure: true`、任务 D 留下的旧路径和证据、补测试、独立审查和它的保留 / 删除 / 合并 / 挪位置清单、全量测试和 `verify:isolated`。逐项见“已完成”。这里的任务 D 是 WorkGraph 拆分，不是 HANDOFF 里“D 控制、连续性与产品完成”那条主线。
 - **整个 MVP 没有完成。** 下一阶段是编排后端，先做第 0、1、3、5 片（见“下一步”）；对使用者有影响的缺口见“缺口”。
 - **最后一次检查**（收尾最后一段，代码是 676a7a7b，WSL 槽位 main，机器空闲时跑）：
