@@ -100,6 +100,10 @@ const ROUTE_LABELS: Record<CoreRouteSuffix, string> = {
   'tasks/archive-state': '查看任务归档状态',
   'anomalies/list': '列出异常锚点',
   'messages/undelivered-replies': '查看未送达回复',
+  // Slice 3 suffixes: display labels only (the table is total over
+  // CoreRouteSuffix); the action is the new UI's (task E3).
+  'graph/look': '查看图节点',
+  'graph/find': '查找节点',
 };
 
 export const routeLabel = (route: CoreRouteSuffix): string => ROUTE_LABELS[route];

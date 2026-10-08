@@ -21,6 +21,8 @@ import { QUERY_MANIFEST_CONTENT_TYPE } from '../../contracts/no-progress.js';
 import { plainSessionRefToAggregate } from '../work-graph/sessions/session-record-codecs.js';
 import { SESSION_MAILBOX_TOOL_NAMES } from './communication-tools.js';
 import { WHITEBOARD_TOOL_NAMES } from './whiteboard-tools.js';
+import type { ContextAssembler } from './context-assembler.js';
+import { createContextAssembler } from './context-assembler.js';
 import type {
   PrepareQueryExecutionRequest, ResolvedRuntimeConfiguration, RuntimeExecutionDependencies,
 } from './execution-contracts.js';
@@ -217,45 +219,9 @@ export function projectQueryConfiguration(input: {
   };
 }
 
-function buildQueryInput(input: {
-  goalId: string;
-  goalObjective: string;
-  workspaceId: string;
-  workspaceRevision: number;
-  question: string;
-  roleResolution: Exclude<RoleSpecResolutionV1, { status: 'inadmissible' }>;
-  permissions: { tools: string[]; writeScope: string[] };
-}): string {
-  const sections: string[] = [];
-  sections.push('# Verified read-only Query input');
-  sections.push('This is the current bounded Query context assembled from formal platform facts; it is not a transcript.');
-  sections.push([
-    '## Goal',
-    `goal: ${input.goalId}`,
-    `objective: ${input.goalObjective}`,
-    `workspace: ${input.workspaceId}@${String(input.workspaceRevision)}`,
-  ].join('\n'));
-  sections.push(['## Question', input.question].join('\n'));
-  sections.push([
-    '## Runtime binding',
-    `tools: ${input.permissions.tools.join(', ') || '(none)'}`,
-    'writeScope: (read-only)',
-  ].join('\n'));
-  const role = input.roleResolution;
-  if (role.status === 'resolved') {
-    sections.push([
-      '## Role specification',
-      `role: ${role.roleId}@${String(role.revision.revision)}`,
-      `label: ${role.spec.label}`,
-      `purpose: ${role.spec.purpose}`,
-    ].join('\n'));
-  } else {
-    sections.push(['## Role specification', `role: ${role.roleId} (${role.status})`, role.reason].join('\n'));
-  }
-  return sections.join('\n\n');
-}
-
-export function createQueryPreparation(deps: RuntimeExecutionDependencies): QueryPreparationPort {
+export function createQueryPreparation(deps: RuntimeExecutionDependencies, contextAssembler?: ContextAssembler): QueryPreparationPort {
+  // §4.2/G5.7: a missing second argument constructs the same one assembler once.
+  const assembler = contextAssembler ?? createContextAssembler(deps);
   return {
     async prepare(ctx: CoreCallContext, request: PrepareQueryExecutionRequest): Promise<ReadResult<PreparedQueryExecution>> {
       if (deps.queryExecution === undefined) {
@@ -343,21 +309,27 @@ export function createQueryPreparation(deps: RuntimeExecutionDependencies): Quer
       if (focusPlan !== null) {
         sourceRefs.push({ kind: 'plan-revision', refId: focusPlan.ref.planId, revision: String(focusPlan.planRevision) });
       }
-      const baseInput = buildQueryInput({
-        goalId: goal.ref.goalId,
-        goalObjective: goal.objective,
-        workspaceId: workspace.ref.workspaceId,
-        workspaceRevision,
-        question: record.job.job.intent.question,
-        roleResolution: executionState.roleResolution,
-        permissions: projected.permissions,
-      });
-      // R5b.4 §11.3: exactly the verified initial_coordination request gets the
-      // same v2 response guide appended to its bounded input. Ordinary Query and
-      // Work preparation are untouched, and no write tool is granted.
-      const input = execution.kind === 'initial_coordination'
-        ? `${baseInput}\n\n${INITIAL_COORDINATION_RESPONSE_GUIDE}`
-        : baseInput;
+      const question = execution.kind === 'initial_coordination'
+        ? `${record.job.job.intent.question}\n\n${INITIAL_COORDINATION_RESPONSE_GUIDE}`
+        : record.job.job.intent.question;
+      // Slice 3 C7 (§4.2/§4.3): the ONE assembler owns the Query text and its
+      // binding. A non-ready assembler result is propagated unchanged; its
+      // rejection (in particular a failing `graphContext` read) is passed back as-is.
+      let assembled;
+      try {
+        assembled = await assembler.assembleQuery(owned, {
+          facts: facts.value,
+          role: executionState.roleResolution,
+          configuration: configured.value,
+          permissions: projected.permissions,
+          question,
+        });
+      } catch (error) {
+        return rejected('unavailable', `the Query context assembly failed: ${messageOf(error)}`);
+      }
+      if (assembled.status !== 'ready') return assembled;
+      const input = assembled.value.input;
+      const contextAssembly = assembled.value.binding;
       const inputDigest = sha256Hex(input);
       // The query's formal isolated derivation decides the Kernel session basis.
       const consultationDerivation = execution.kind === 'semantic_query' ? execution.consultation?.derivation : undefined;
@@ -384,6 +356,7 @@ export function createQueryPreparation(deps: RuntimeExecutionDependencies): Quer
         budget: { tokenBudget: record.job.job.intent.budget.maxTokens, deadline: record.job.job.intent.budget.deadline },
         sourceRefs,
         ...(sessionBasis === undefined ? {} : { sessionBasis }),
+        ...(contextAssembly === undefined ? {} : { contextAssembly }),
         input,
         inputDigest,
       };

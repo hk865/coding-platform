@@ -26,6 +26,7 @@ import type { PlanRevisionSnapshot } from '../plan.js';
 import type { RuntimeBudget } from '../runtime-budget.js';
 import type { TaskClaim } from './task-claim.js';
 import type { ContinuationBriefV1 } from '../continuation-brief.js';
+import type { ContextAssemblyBindingV1 } from '../graph-context.js';
 
 export type PreparedTaskManifestV1 = {
   schemaVersion: 1;
@@ -53,6 +54,11 @@ export type PreparedTaskManifestV1 = {
    * `inputBinding.continuationBriefDigest`, rendered as the last section of `input`.
    */
   continuationBrief?: ContinuationBriefV1;
+  /**
+   * Slice 3: the assembled context binding fixed at prepare. Absent means a
+   * `legacy_unversioned` input; it is never synthesized for an old manifest.
+   */
+  contextAssembly?: ContextAssemblyBindingV1;
   /**
    * LA-1: model history seed filled by AgentRuntime `prepare` (never Workflow)
    * from `TaskRequeue.historySource` when the claim Session is a fresh Session
@@ -103,6 +109,8 @@ export type PreparedQueryManifestV1 = {
    * Session history behavior.
    */
   sessionBasis?: { sourceKernelSessionId: string; throughPosition: number | null };
+  /** Slice 3: the assembled Query context binding fixed at prepare. */
+  contextAssembly?: ContextAssemblyBindingV1;
   input: string;
   inputDigest: string;
 };

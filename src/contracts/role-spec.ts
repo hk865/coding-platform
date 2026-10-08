@@ -37,6 +37,7 @@ export type RoleSpecPinV1 = {
  * 没有安装过规格的项目，其 claim 语义与引入角色矩阵前完全一致（ControlEngine 不编造角色目录）。
  */
 import type { ActorRef, CommandFingerprint, CommandIdentity, CommitCursor } from "./command-event.js";
+import type { PlatformDutyV1 } from "./platform-duty.js";
 import { canonicalJson, sha256Hex } from "./fingerprint.js";
 /**
  * 旧调用方省略 revision 时安装版本 1。每个 (roleId, revision) 独立 CAS@0；
@@ -112,6 +113,11 @@ export type RoleSpecExitV1 = {
 };
 export type RoleSpecContentV1 = {
     schemaVersion: 1;
+    /**
+     * Slice 3 optional platform duty. Absent stays absent (no default is written
+     * into old content); the effective duty of an old Role reads as `executor`.
+     */
+    platformDuty?: PlatformDutyV1;
     /** 面向人的角色标签。 */
     label: string;
     /** 这次角色存在要回答的问题或有界工作。 */

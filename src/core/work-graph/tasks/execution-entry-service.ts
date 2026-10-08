@@ -48,6 +48,10 @@ import { MANIFEST_CONTENT_TYPE } from '../../../contracts/no-progress.js';
 import type { RoleSpecResolutionV1 } from '../../../contracts/role-spec-materials.js';
 import type { TaskEnvelopeV1 } from '../../../contracts/task-envelope.js';
 import { isAutomationActor } from '../../../contracts/task-requeue.js';
+import type {
+  ContextAssemblyBindingV1, ContextCallKindV1, InputDeclarationV1, PlatformDutyV1,
+} from '../../../contracts/graph-context.js';
+import type { PlanRevisionSnapshot } from '../../../contracts/plan.js';
 import { isArtifactRef } from '../../record-store/body-codec.js';
 import type { RawArtifactRecord } from '../../record-store/body-ports.js';
 import type {
@@ -96,6 +100,7 @@ import type { TaskExecutionRecord } from '../model/execution-read-contracts.js';
 import { readEntryPlanVerdict } from './entry-plan-reader.js';
 import { readGoalScope, sameCursor } from './plan-readers.js';
 import { planRevisionRefKey } from '../persistence/plan-record-codecs.js';
+import { contextAssemblyProblem, declaredInputProblem, effectivePlatformDuty } from '../state/context-input.js';
 
 // --------------------------------------------------------------------------
 // Small pure helpers
@@ -688,7 +693,10 @@ export async function admitEnteredRun(
   return { ok: true, value: { facts: factsRead.value, auth, manifest, inputBinding, ...admitted.value } };
 }
 
-type ManifestAdmission = Pick<EnteredAdmission, 'roleFacts'>;
+type ManifestAdmission = Pick<EnteredAdmission, 'roleFacts'> & {
+  /** §3.6: same-commit guards for the mutable record sources the saved binding consumed. */
+  consumptionGuards?: readonly RecordGuard[];
+};
 type Admitted = { ok: true; value: ManifestAdmission } | Rejected;
 
 /**
@@ -1007,10 +1015,180 @@ export function executionReadGuards(facts: TaskExecutionRecord, runKey: string, 
   ];
 }
 
-/** A fresh entry admission as RUN-02/04 read it: its refusal, or the role-fact guards it read. */
+/** A fresh entry admission as RUN-02/04 read it: its refusal, or the role-fact and binding-source guards it read. */
 function freshAdmissionOf(admitted: Admitted): { problem: CoreRejection | null; guards: readonly RecordGuard[] } {
-  return admitted.ok ? { problem: null, guards: admitted.value.roleFacts.guards }
+  return admitted.ok
+    ? { problem: null, guards: [...admitted.value.roleFacts.guards, ...(admitted.value.consumptionGuards ?? [])] }
     : { problem: admitted.rejection, guards: [] };
+}
+
+/** The resolved Role's explicit duty, if this Session's Role resolution is a real spec body. */
+function roleDutyOf(role: RoleSpecResolutionV1): PlatformDutyV1 | undefined {
+  return role.status === 'resolved' ? role.spec.platformDuty : undefined;
+}
+
+/**
+ * §2.4 item 3 / §2.5: the duty a legacy Session role ref fixes, when it is one
+ * of the five versioned profile templates `platform-<duty>@s3.1`; otherwise
+ * none (a custom legacy ref is `executor`). The five template refs are the same
+ * table `platformRoleProfile` publishes.
+ */
+function legacyTemplateDutyOf(role: RoleConfigurationRef): PlatformDutyV1 | undefined {
+  if (role.kind !== 'legacy_template' || role.templateRevision !== 's3.1') return undefined;
+  const duties: readonly PlatformDutyV1[] = ['executor', 'secretary', 'adviser', 'scribe', 'reviewer'];
+  return duties.find(duty => role.templateId === `platform-${duty}`);
+}
+
+/**
+ * The rendered continuation brief of a saved manifest, or null when the manifest
+ * carries none. Only a continuation/handoff binding names a continuation section.
+ */
+function continuationSuffixOf(
+  manifest: PreparedTaskManifestV1, binding: ContextAssemblyBindingV1 | undefined,
+): string | null {
+  if (binding === undefined || manifest.continuationBrief === undefined) return null;
+  return renderContinuationBriefZh(manifest.continuationBrief, continuationBriefDigest(manifest.continuationBrief));
+}
+
+/**
+ * The declarations of the claim's Plan for one consumer Task: every exact
+ * `inputRequirements` entry as its `legacy:` declaration and every execution-DAG
+ * edge as its content-derived `edge:` declaration (§2.4 items 4/5). Only the
+ * declaration id is the identity; `upstream` is filled from the edge and left
+ * null for a legacy requirement (the canonical owner Run is an IO derivation the
+ * caller does not need to re-prove here).
+ */
+function inputDeclarationsOf(plan: PlanRevisionSnapshot, consumer: TaskTriple): InputDeclarationV1[] {
+  const declarations: InputDeclarationV1[] = [];
+  if (plan.schemaVersion !== 2) return declarations;
+  for (const requirement of plan.inputRequirements ?? []) {
+    if (requirement.consumerTaskId !== consumer.taskId) continue;
+    declarations.push({
+      declarationId: `legacy:${requirement.requirementId}`,
+      consumer: { ...consumer },
+      planRef: plan.ref,
+      upstream: null,
+      requires: { kind: 'artifact', label: requirement.requirementId },
+      legacyArtifactRef: requirement.artifactRef,
+    });
+  }
+  for (const edge of plan.executionDag.dependsOn) {
+    if (edge.taskId !== consumer.taskId) continue;
+    declarations.push({
+      declarationId: `edge:${sha256Hex(canonicalJson({
+        planRef: plan.ref, consumerTaskId: edge.taskId, dependsOnId: edge.dependsOnId, requires: edge.requires,
+      } as unknown as JsonValue))}`,
+      consumer: { ...consumer },
+      planRef: plan.ref,
+      upstream: { projectId: consumer.projectId, goalId: consumer.goalId, taskId: edge.dependsOnId },
+      requires: { ...edge.requires },
+      legacyArtifactRef: null,
+    });
+  }
+  return declarations;
+}
+
+/**
+ * CTX-01/02's G-CTX + G-INPUT (spec §3.2, inside RUN-02's fresh admission): the
+ * saved manifest's context binding is legal, its call scope and duty match the
+ * canonical Work facts and its selections come from the claim Plan. The
+ * expected duty is the resolved Role's `platformDuty`, else the duty the
+ * Session's versioned legacy template fixes (§2.4 item 3/§2.5), else
+ * `executor`. A binding that named a different Workspace revision is a
+ * `revision_conflict`.
+ */
+function contextConsumptionProblem(input: {
+  manifest: PreparedTaskManifestV1;
+  plan: PlanRevisionSnapshot;
+  claim: TaskClaim;
+  scope: WorkspaceScope;
+  workspaceRevision: number;
+  /** CTX-02: re-authorizing an already bound manifest validates it, it does not re-pin its sources. */
+  rebinding: boolean;
+}): CoreRejection | null {
+  const binding = input.manifest.contextAssembly;
+  const roleDuty = roleDutyOf(input.manifest.role);
+  const templateDuty = legacyTemplateDutyOf(input.manifest.sessionRole);
+  const duty = effectivePlatformDuty({ roleDuty, hostDuty: templateDuty });
+  if (duty.status !== 'ready') {
+    return duty.status === 'rejected' ? duty : reject('invalid', 'the effective platform duty is not available');
+  }
+  const assemblyProblem = contextAssemblyProblem({
+    binding,
+    text: input.manifest.input,
+    selectedTaskInputs: input.manifest.selectedTaskInputs,
+    continuationSuffix: continuationSuffixOf(input.manifest, binding),
+  });
+  if (assemblyProblem !== null) return assemblyProblem;
+  if (binding === undefined) return null;
+  // §3.2 G-CTX: the saved call scope (the manifest's continuation brief fixes a
+  // continuation call) and duty must agree with the canonical Run facts.
+  // Only a duty the Role or the Session's versioned template fixes is compared; otherwise the
+  // Host decided it, and the Host configuration revision of the manifest pins that choice.
+  if ((roleDuty !== undefined || templateDuty !== undefined) && binding.duty !== duty.value) {
+    return forbidden('the assembled context duty disagrees with the saved Work binding');
+  }
+  const expectedCallKind: ContextCallKindV1 = input.manifest.continuationBrief === undefined ? 'work' : 'continuation';
+  if (binding.callKind !== expectedCallKind) {
+    return forbidden('the assembled context callKind disagrees with the saved Work binding');
+  }
+  for (const source of input.rebinding ? [] : binding.sources) {
+    if (source.kind === 'record' && source.ref.aggregateType === 'Workspace'
+      && source.ref.projectId === input.scope.projectId && source.ref.workspaceId === input.scope.workspaceId
+      && source.revision !== input.workspaceRevision) {
+      return reject('revision_conflict', 'the assembled context named another Workspace revision');
+    }
+  }
+  const allowedDeclarations = inputDeclarationsOf(input.plan, input.claim.task);
+  const scope = { projectId: input.scope.projectId, workspaceId: input.scope.workspaceId, goalId: input.claim.task.goalId };
+  for (const selection of binding.inputSelections) {
+    const selectionProblem = declaredInputProblem({
+      declaration: selection.declaration,
+      selections: [selection],
+      allowedDeclarations,
+      scope,
+    });
+    if (selectionProblem !== null) return selectionProblem;
+  }
+  return null;
+}
+
+/**
+ * §3.6: the mutable record revisions the saved binding consumed, as same-commit
+ * guards. Only `kind: 'record'` sources and the selected check/decision inputs
+ * name mutable records; an Artifact content address is immutable and gets none.
+ * The guards flow into `mergeGuards` next to `admission.guards`, so a source
+ * that moved after assembly fails the commit with the existing
+ * `revision_conflict` path.
+ *
+ * The Run being admitted (`faceRunRef`) is the subject of this very transition,
+ * not an external mutable source the binding consumed: assembly read it before
+ * the entry commit that advances its revision, so guarding it would conflict
+ * with the transition's own guard. Every other record source stays guarded.
+ */
+function contextConsumptionGuards(binding: ContextAssemblyBindingV1 | undefined, faceRunRef: RunRef): readonly RecordGuard[] {
+  if (binding === undefined) return [];
+  const faceRunKey = refKeyOf(faceRunRef);
+  const guards: RecordGuard[] = [];
+  const add = (ref: object, revision: number): void => {
+    const refKey = refKeyOf(ref);
+    if (refKey !== null) guards.push({ refKey, expectedRevision: revision });
+  };
+  for (const source of binding.sources) {
+    if (source.kind !== 'record') continue;
+    if (faceRunKey !== null && refKeyOf(source.ref) === faceRunKey) continue;
+    add(source.ref, source.revision);
+  }
+  for (const selection of binding.inputSelections) {
+    const source = selection.source;
+    if (source === null) continue;
+    if (source.kind === 'check') add(source.ref, source.revision);
+    else if (source.kind === 'decision') {
+      add(source.ref, source.revision);
+      for (const application of source.application) add(application.ref, application.revision);
+    }
+  }
+  return guards;
 }
 
 /**
@@ -1021,6 +1199,7 @@ function freshAdmissionOf(admitted: Admitted): { problem: CoreRejection | null; 
 async function authorizeAdmission(
   deps: ExecutionEntryDependencies, ctx: CoreCallContext, scope: WorkspaceScope,
   prepared: PreparedTaskExecution, facts: TaskExecutionRecord, goalWorkspaceId: string,
+  workspaceRevision: number,
 ): Promise<Admitted> {
   const claim = prepared.claim;
   if (goalWorkspaceId !== claim.workspaceId) return { ok: false, rejection: forbidden('the Goal belongs to another workspace') };
@@ -1029,7 +1208,19 @@ async function authorizeAdmission(
   const manifest = stored.value.manifest;
   const manifestRejection = manifestAgainstPrepared(manifest, prepared, facts, stored.value.bodyDigest, scope);
   if (manifestRejection !== null) return { ok: false, rejection: manifestRejection };
-  return admitManifest(deps, ctx, facts, manifest);
+  // The original Host/Role/deadline admission still runs first; G-CTX/G-INPUT is
+  // added inside the same fresh admission and only decides when it passed.
+  const admitted = await admitManifest(deps, ctx, facts, manifest);
+  if (!admitted.ok) return admitted;
+  // CTX-01 pins the sources the binding consumed; CTX-02 (an already bound manifest whose
+  // authorization was revoked) only validates it and never refuses for sources that moved on.
+  const rebinding = facts.run.executionAuthorization?.phase === 'revoked';
+  const consumption = contextConsumptionProblem({
+    manifest, plan: facts.plan, claim, scope, workspaceRevision, rebinding,
+  });
+  if (consumption !== null) return { ok: false, rejection: consumption };
+  return { ok: true, value: { ...admitted.value,
+    consumptionGuards: rebinding ? [] : contextConsumptionGuards(manifest.contextAssembly, claim.runRef) } };
 }
 
 /**
@@ -1280,7 +1471,8 @@ export function createExecutionEntryService(deps: ExecutionEntryDependencies): E
         // binding's canonical refs; an old brief without the section holds.
         anomalyRefsMatch: anomalyAnchorRefsMatch(manifestBrief, prepared.inputBinding) };
       const admission = freshAdmissionOf(
-        await authorizeAdmission(deps, scopeCtx, scope, prepared, facts, goalScope.goal.workspaceRef.workspaceId));
+        await authorizeAdmission(deps, scopeCtx, scope, prepared, facts,
+          goalScope.goal.workspaceRef.workspaceId, goalScope.workspaceRevision));
       const authorized = transitionRun(state, runEvent, { ...runCtx, freshAdmission: admission.problem });
       if (!authorized.ok) return runRefusal(authorized, admission.problem);
       const nextRun = nextRunOf(authorized.next);

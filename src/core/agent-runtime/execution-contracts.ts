@@ -31,6 +31,7 @@ import type { QueryRunRef } from '../../contracts/query-job.js';
 import type { MaterialBasisV1 } from '../../contracts/material-access.js';
 import type { RuntimeBudget } from '../../contracts/runtime-budget.js';
 import type { RoleSpecResolutionV1 } from '../../contracts/role-spec-materials.js';
+import type { PlatformDutyV1 } from '../../contracts/graph-context.js';
 import type { RunRef } from '../../contracts/dispatch.js';
 import type { VerificationRoundSourceResult } from '../../contracts/verification-context.js';
 import type { RawArtifactStorePort } from '../record-store/body-ports.js';
@@ -40,6 +41,8 @@ import type { TaskClaimPort } from '../work-graph/model/claim-contracts.js';
 import type { ExecutionHistoryWritePort } from '../work-graph/model/execution-history-contracts.js';
 import type { ExecutionEntryPort } from '../work-graph/model/execution-entry-contracts.js';
 import type { ExecutionReadPort, TaskExecutionRecord } from '../work-graph/model/execution-read-contracts.js';
+import type { GraphContextReadPort } from '../work-graph/model/graph-context-contracts.js';
+import type { TaskContextInputPort } from '../work-graph/model/context-input-contracts.js';
 import type { ModelRequestPort } from '../work-graph/tasks/model-call-contracts.js';
 import type { PlanTaskPort } from '../work-graph/model/plan-contracts.js';
 import type { ControlObservationPort, RunControlPort } from '../work-graph/tasks/control-contracts.js';
@@ -128,6 +131,10 @@ export type ResolvedRuntimeConfiguration = {
   processSandboxOptions: { readOnlyPaths?: string[]; executablePath?: string };
   /** Current material basis the Host can prove, or null when it cannot. */
   materialBasis: MaterialBasisV1 | null;
+  /** Slice 3 optional explicit Host duty; when present it must match the Role. */
+  platformDuty?: PlatformDutyV1;
+  /** Slice 3 resident budget of the four optional sections; default 4096. */
+  contextResidentBytes?: number;
 };
 
 /** R5b.2 trusted Query Host configuration input. */
@@ -202,6 +209,13 @@ export type RuntimeExecutionDependencies = {
   controls?: RunControlPort & ControlObservationPort;
   /** R5b.2 internal Query writer. Optional only to keep Work callers working. */
   queryExecution?: QueryExecutionPort;
+  /**
+   * Slice 3 read model. Optional only so a narrow old caller/test double keeps
+   * compiling; a real grant that selects look/find without them fails closed.
+   */
+  graphContext?: GraphContextReadPort;
+  /** Slice 3 exact task-input owner (the same instance the routes use). */
+  taskInputs?: TaskContextInputPort;
   /**
    * C3 (spec §6.1 (e)): the verification workspace reader (the same instance
    * the evidence owner captures with) the continuation brief takes its own

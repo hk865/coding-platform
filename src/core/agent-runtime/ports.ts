@@ -81,6 +81,12 @@ export interface RuntimeExecutionPort {
    * it for the real dependency bundle.
    */
   readArchiveChangedFiles?(ctx: CoreCallContext, input: { runRef: RunRef }): Promise<ReadResult<ArchiveChangedFilesV1>>;
+  /**
+   * Slice 3: the same assembler instance the attention scanner reads its graph
+   * facts through. Optional only so an old port literal stays type-compatible;
+   * `createAgentRuntime` always publishes it.
+   */
+  readAttentionGraph?: import('./context-assembler.js').ContextAssembler['readAttentionGraph'];
 }
 
 export type AgentRuntimeService = {

@@ -19,6 +19,7 @@
  * heartbeat.
  */
 import type { JsonValue } from '../contracts/fingerprint.js';
+import type { AttentionNodeChangeV1, GraphAttentionDetailV1, GraphChangesV1 } from '../contracts/graph-context.js';
 
 /** Explicit Host configuration; no default value is invented here. */
 export type AttentionConfigV1 = {
@@ -50,6 +51,11 @@ export type GraphAttentionStamp = {
   statuses: Readonly<Record<string, string>>;
   /** Formal source revision (Plan revision / Architecture catalog digest). */
   revision?: string;
+  /**
+   * Slice 3 per-node details. Only a real new snapshot carries them; an old
+   * no-details caller keeps the old `graphChangedElements` behavior.
+   */
+  details?: Record<string, GraphAttentionDetailV1>;
 };
 
 export type AttentionMemberFeedback = { id: string; source: string };
@@ -68,7 +74,8 @@ export type AttentionSnapshot = {
 
 export type AttentionSignal =
   | { kind: 'file_delta'; added: number; deleted: number; changedFiles: readonly string[] }
-  | { kind: 'graph_delta'; changedElements: number; nodes: number; edges: number; statuses: number }
+  | { kind: 'graph_delta'; changedElements: number; nodes: number; edges: number; statuses: number;
+      changes?: GraphChangesV1 }
   | { kind: 'heartbeat'; pendingInputs: number; messageCursor: string | null }
   | { kind: 'member_feedback'; items: readonly string[] };
 
@@ -232,6 +239,96 @@ export function graphChangedElements(
   return { changedElements: nodes.length + edges.length + statuses + revision, nodes: nodes.length, edges: edges.length, statuses };
 }
 
+/**
+ * Slice 3 detailed graph diff (§4.5). Node existence/state/name/summary/
+ * contentDigest decide added/removed/changed; every changed edge contributes
+ * added/removed rows built from the slice-0 `depends:` signature (never a
+ * stringified `requires` object), and its endpoints are added as locatable
+ * changed nodes. A revision-only change yields one `revision_change` and no
+ * node rows.
+ */
+export function graphChanges(
+  previous: GraphAttentionStamp | null,
+  current: GraphAttentionStamp | null,
+): GraphChangesV1 {
+  const previousDetails = previous?.details ?? {};
+  const currentDetails = current?.details ?? {};
+  const previousNodes = new Set(previous?.nodes ?? []);
+  const currentNodes = new Set(current?.nodes ?? []);
+  const keys = new Set<string>([
+    ...previousNodes, ...currentNodes, ...Object.keys(previousDetails), ...Object.keys(currentDetails),
+  ]);
+  const changes = new Map<string, AttentionNodeChangeV1>();
+  for (const key of keys) {
+    const before = previousDetails[key];
+    const after = currentDetails[key];
+    const beforeExists = previousNodes.has(key) || before !== undefined;
+    const afterExists = currentNodes.has(key) || after !== undefined;
+    if (beforeExists && !afterExists) {
+      if (before !== undefined) changes.set(key, { key, change: 'removed', beforeVersion: before.version, afterVersion: null, detail: before });
+      continue;
+    }
+    if (!beforeExists && afterExists) {
+      if (after !== undefined) changes.set(key, { key, change: 'added', beforeVersion: null, afterVersion: after.version, detail: after });
+      continue;
+    }
+    if (before === undefined || after === undefined) continue;
+    if (before.name !== after.name || before.summary !== after.summary || before.state !== after.state
+      || before.contentDigest !== after.contentDigest || previous?.statuses?.[key] !== current?.statuses?.[key]) {
+      changes.set(key, { key, change: 'changed', beforeVersion: before.version, afterVersion: after.version, detail: after });
+    }
+  }
+
+  const previousEdges = new Set(previous?.edges ?? []);
+  const currentEdges = new Set(current?.edges ?? []);
+  const edges: { key: string; change: 'added' | 'removed' }[] = [];
+  for (const key of previousEdges) if (!currentEdges.has(key)) edges.push({ key, change: 'removed' });
+  for (const key of currentEdges) if (!previousEdges.has(key)) edges.push({ key, change: 'added' });
+  edges.sort((left, right) => (left.key < right.key ? -1 : left.key > right.key ? 1 : 0));
+
+  // The two endpoints of every changed edge are locatable changed nodes.
+  for (const edge of edges) {
+    for (const endpoint of edgeEndpoints(edge.key)) {
+      if (changes.has(endpoint)) continue;
+      const detail = currentDetails[endpoint] ?? previousDetails[endpoint];
+      if (detail === undefined) continue;
+      changes.set(endpoint, {
+        key: endpoint, change: 'changed',
+        beforeVersion: previousDetails[endpoint]?.version ?? null,
+        afterVersion: currentDetails[endpoint]?.version ?? null,
+        detail: currentDetails[endpoint] ?? detail,
+      });
+    }
+  }
+
+  const beforeRevision = previous?.revision ?? null;
+  const afterRevision = current?.revision ?? null;
+  const revision = beforeRevision === afterRevision ? null : { before: beforeRevision, after: afterRevision };
+  const nodes = [...changes.values()].sort((left, right) => (left.key < right.key ? -1 : left.key > right.key ? 1 : 0));
+  return { nodes, edges, revision };
+}
+
+/** The task/module endpoints encoded in one graph edge signature. */
+function edgeEndpoints(key: string): string[] {
+  const endpoints = (prefix: string, separator: string, label: string): string[] => {
+    if (!key.startsWith(prefix)) return [];
+    const rest = key.slice(prefix.length);
+    const at = rest.indexOf(separator);
+    if (at < 0) return [];
+    const from = rest.slice(0, at);
+    const to = rest.slice(at + separator.length).split(':')[0] ?? '';
+    return [`${label}:${from}`, `${label}:${to}`];
+  };
+  return [
+    ...endpoints('depends:', '->', 'task'),
+    ...endpoints('parent:', '->', 'task'),
+    ...endpoints('relation:', '->', 'task'),
+    ...endpoints('arch-depends:', '->', 'module'),
+    ...endpoints('arch-parent:', '->', 'module'),
+  ];
+}
+
+
 type FileBaseline = { version: string | null; content: string | null };
 type FileDelta = { added: number; deleted: number; changedFiles: string[] };
 
@@ -270,6 +367,22 @@ function fileDelta(
   return delta;
 }
 
+function sameDetail(left: GraphAttentionDetailV1 | undefined, right: GraphAttentionDetailV1 | undefined): boolean {
+  if (left === undefined || right === undefined) return left === right;
+  return left.name === right.name && left.summary === right.summary && left.state === right.state
+    && left.version === right.version && left.contentDigest === right.contentDigest;
+}
+function sameDetails(
+  left: Record<string, GraphAttentionDetailV1> | undefined,
+  right: Record<string, GraphAttentionDetailV1> | undefined,
+): boolean {
+  if (left === undefined || right === undefined) return left === right;
+  const leftKeys = Object.keys(left);
+  const rightKeys = Object.keys(right);
+  if (leftKeys.length !== rightKeys.length) return false;
+  return leftKeys.every((key) => sameDetail(left[key], right[key]));
+}
+
 function sameGraph(left: GraphAttentionStamp | null, right: GraphAttentionStamp | null): boolean {
   if (left === null || right === null) return left === right;
   return left.nodes.length === right.nodes.length && left.edges.length === right.edges.length
@@ -277,12 +390,43 @@ function sameGraph(left: GraphAttentionStamp | null, right: GraphAttentionStamp 
     && left.edges.every((edge, index) => edge === right.edges[index])
     && Object.keys(left.statuses).length === Object.keys(right.statuses).length
     && Object.keys(left.statuses).every(key => left.statuses[key] === right.statuses[key])
-    && (left.revision ?? '') === (right.revision ?? '');
+    && (left.revision ?? '') === (right.revision ?? '')
+    && sameDetails(left.details, right.details);
+}
+
+/**
+ * Slice 3: the node keys whose name/summary/contentDigest/state changed but that
+ * `graphChangedElements` did not already count through existence or its status
+ * map. The old `nodes`/`edges`/`statuses` numbers stay untouched.
+ */
+function graphDetailsChanged(previous: GraphAttentionStamp | null, current: GraphAttentionStamp | null): number {
+  const previousDetails = previous?.details ?? {};
+  const currentDetails = current?.details ?? {};
+  const previousNodes = new Set(previous?.nodes ?? []);
+  const currentNodes = new Set(current?.nodes ?? []);
+  let changed = 0;
+  for (const key of Object.keys(previousDetails)) {
+    const before = previousDetails[key];
+    const after = currentDetails[key];
+    if (before === undefined || after === undefined) continue;
+    if (previousNodes.has(key) !== currentNodes.has(key)) continue;
+    if (previous?.statuses?.[key] !== current?.statuses?.[key]) continue;
+    if (before.name !== after.name || before.summary !== after.summary || before.state !== after.state
+      || before.contentDigest !== after.contentDigest) changed += 1;
+  }
+  return changed;
+}
+
+function cloneDetails(details: Record<string, GraphAttentionDetailV1>): Record<string, GraphAttentionDetailV1> {
+  const copy: Record<string, GraphAttentionDetailV1> = {};
+  for (const [key, detail] of Object.entries(details)) copy[key] = structuredClone(detail);
+  return copy;
 }
 
 function cloneGraph(graph: GraphAttentionStamp): GraphAttentionStamp {
   return { nodes: [...graph.nodes], edges: [...graph.edges], statuses: { ...graph.statuses },
-    ...(graph.revision === undefined ? {} : { revision: graph.revision }) };
+    ...(graph.revision === undefined ? {} : { revision: graph.revision }),
+    ...(graph.details === undefined ? {} : { details: cloneDetails(graph.details) }) };
 }
 
 export function createAttentionObserver(configInput: AttentionConfigV1): AttentionObserver {
@@ -342,7 +486,8 @@ export function createAttentionObserver(configInput: AttentionConfigV1): Attenti
 
       let graphChanged = 0;
       if (snapshot.graphUnreadable !== true && !sameGraph(deliveredGraph, snapshot.graph)) {
-        graphChanged = graphChangedElements(processedGraph, snapshot.graph).changedElements;
+        graphChanged = graphChangedElements(processedGraph, snapshot.graph).changedElements
+          + graphDetailsChanged(processedGraph, snapshot.graph);
       }
       let graphReady = false;
       if (graphChanged === 0) {
@@ -355,7 +500,14 @@ export function createAttentionObserver(configInput: AttentionConfigV1): Attenti
         else if (atMs - bufferedGraphAtMs >= config.maxCoalesceMs) { graphReady = true; coalesced = true; }
       }
       if (graphReady) {
-        signals.push({ kind: 'graph_delta', ...graphChangedElements(processedGraph, snapshot.graph) });
+        // The old nodes/edges/statuses numbers keep `graphChangedElements`' shape;
+        // `changedElements` also counts the details-only rows, and the detailed
+        // added/removed/changed dispositions ride along for the notification.
+        const base = graphChangedElements(processedGraph, snapshot.graph);
+        signals.push({
+          kind: 'graph_delta', nodes: base.nodes, edges: base.edges, statuses: base.statuses,
+          changedElements: graphChanged, changes: graphChanges(processedGraph, snapshot.graph),
+        });
         bufferedGraphAtMs = null;
       }
 
@@ -438,6 +590,13 @@ export type AttentionScannerDependencies = {
   plans: Pick<import('../core/work-graph/model/plan-contracts.js').PlanTaskPort, 'queryTaskGraph'>;
   architecture: Pick<import('../core/work-graph/architecture/catalog-contracts.js').ArchitectureCatalogPort, 'readArchitectureRevision'>;
   messages: Pick<import('../core/work-graph/model/communication-contracts.js').SessionMailboxPort, 'readInbox'>;
+  /**
+   * Slice 3: the assembler's `readAttentionGraph`, the same instance the Runtime
+   * exposes. Absent keeps the legacy direct `plans`/`architecture` read.
+   */
+  readAttentionGraph?: (ctx: import('../contracts/core/call-context.js').CoreCallContext,
+    request: import('../contracts/graph-context.js').AttentionGraphReadRequestV1)
+    => Promise<import('../contracts/core/results.js').ReadResult<import('../contracts/graph-context.js').GraphAttentionFactsV1>>;
 };
 
 /** Explicit Host-configured attention scope; nothing is hard-coded globally. */
@@ -489,51 +648,70 @@ export function createAttentionScanner(deps: AttentionScannerDependencies): Atte
       }
       let graph: GraphAttentionStamp | null = null;
       let graphUnreadable = false;
-      const nodes: string[] = [];
-      const edges: string[] = [];
-      const statuses: Record<string, string> = {};
-      let revision: string | null = null;
-      if (scope.goalRef !== null) {
-        const read = await deps.plans.queryTaskGraph(ctx, { goalRef: scope.goalRef });
-        if (read.status === 'ready') {
-          const plan = read.value.plan;
-          for (const row of read.value.tasks) {
-            nodes.push('task:' + row.ref.taskId);
-            statuses['task:' + row.ref.taskId] = row.effectivePhase;
+      if (deps.readAttentionGraph !== undefined) {
+        // Slice 3: the graph is read ONLY through the assembler's
+        // `readAttentionGraph`. The legacy direct plans/catalog reads never run.
+        try {
+          const read = await deps.readAttentionGraph(ctx, { goalRef: scope.goalRef, focusTaskIds: [] });
+          if (read.status === 'ready') {
+            graph = {
+              nodes: [...read.value.nodes],
+              edges: [...read.value.edges],
+              statuses: { ...read.value.statuses },
+              ...(read.value.revision === undefined ? {} : { revision: read.value.revision }),
+              ...(read.value.details === undefined ? {} : { details: read.value.details }),
+            };
+          } else if (read.status !== 'not_found') {
+            graphUnreadable = true;
           }
-          for (const edge of plan.executionDag.dependsOn) edges.push('depends:' + edge.dependsOnId + '->' + edge.taskId + ':' + edge.requires.kind + ':' + edge.requires.label);
-          for (const edge of plan.taskHierarchy.parentOf) edges.push('parent:' + edge.parentTaskId + '->' + edge.childTaskId);
-          for (const row of read.value.tasks) {
-            for (const relation of row.relations) edges.push('relation:' + relation.fromTaskId + '->' + relation.toTaskId + ':' + relation.kind);
-          }
-          revision = 'plan:' + plan.ref.planId;
-        } else if (read.status !== 'not_found') {
-          graphUnreadable = true;
-        }
-      }
-      // The FORMAL Architecture Catalog is a second real graph owner; a read
-      // failure is unknown, never an empty graph.
-      try {
-        const arch = await deps.architecture.readArchitectureRevision(ctx, { selection: { kind: 'current' } });
-        if (arch.status === 'ready') {
-          const catalog = arch.value.catalog === null ? null : arch.value.catalog.catalog;
-          if (catalog !== null) {
-            for (const module of catalog.modules) {
-              nodes.push('module:' + module.ref.moduleId);
-              statuses['module:' + module.ref.moduleId] = module.name;
+        } catch { graphUnreadable = true; }
+      } else {
+        const nodes: string[] = [];
+        const edges: string[] = [];
+        const statuses: Record<string, string> = {};
+        let revision: string | null = null;
+        if (scope.goalRef !== null) {
+          const read = await deps.plans.queryTaskGraph(ctx, { goalRef: scope.goalRef });
+          if (read.status === 'ready') {
+            const plan = read.value.plan;
+            for (const row of read.value.tasks) {
+              nodes.push('task:' + row.ref.taskId);
+              statuses['task:' + row.ref.taskId] = row.effectivePhase;
             }
-            for (const dep of catalog.dependencies) edges.push('arch-depends:' + dep.from.moduleId + '->' + dep.to.moduleId);
-            for (const pair of catalog.containment?.parentOf ?? []) edges.push('arch-parent:' + pair.parent.moduleId + '->' + pair.child.moduleId);
+            for (const edge of plan.executionDag.dependsOn) edges.push('depends:' + edge.dependsOnId + '->' + edge.taskId + ':' + edge.requires.kind + ':' + edge.requires.label);
+            for (const edge of plan.taskHierarchy.parentOf) edges.push('parent:' + edge.parentTaskId + '->' + edge.childTaskId);
+            for (const row of read.value.tasks) {
+              for (const relation of row.relations) edges.push('relation:' + relation.fromTaskId + '->' + relation.toTaskId + ':' + relation.kind);
+            }
+            revision = 'plan:' + plan.ref.planId;
+          } else if (read.status !== 'not_found') {
+            graphUnreadable = true;
           }
-          // The baseline content digest is the formal architecture VERSION, so a
-          // re-adoption with identical names still registers as a change.
-          revision = (revision === null ? '' : revision + '|') + 'arch:' + arch.value.baseline.contentDigest;
-        } else if (arch.status !== 'not_found') {
-          graphUnreadable = true;
         }
-      } catch { graphUnreadable = true; }
-      if (nodes.length > 0 || edges.length > 0 || revision !== null) {
-        graph = { nodes: nodes.sort(), edges: edges.sort(), statuses, ...(revision === null ? {} : { revision }) };
+        // The FORMAL Architecture Catalog is a second real graph owner; a read
+        // failure is unknown, never an empty graph.
+        try {
+          const arch = await deps.architecture.readArchitectureRevision(ctx, { selection: { kind: 'current' } });
+          if (arch.status === 'ready') {
+            const catalog = arch.value.catalog === null ? null : arch.value.catalog.catalog;
+            if (catalog !== null) {
+              for (const module of catalog.modules) {
+                nodes.push('module:' + module.ref.moduleId);
+                statuses['module:' + module.ref.moduleId] = module.name;
+              }
+              for (const dep of catalog.dependencies) edges.push('arch-depends:' + dep.from.moduleId + '->' + dep.to.moduleId);
+              for (const pair of catalog.containment?.parentOf ?? []) edges.push('arch-parent:' + pair.parent.moduleId + '->' + pair.child.moduleId);
+            }
+            // The baseline content digest is the formal architecture VERSION, so a
+            // re-adoption with identical names still registers as a change.
+            revision = (revision === null ? '' : revision + '|') + 'arch:' + arch.value.baseline.contentDigest;
+          } else if (arch.status !== 'not_found') {
+            graphUnreadable = true;
+          }
+        } catch { graphUnreadable = true; }
+        if (nodes.length > 0 || edges.length > 0 || revision !== null) {
+          graph = { nodes: nodes.sort(), edges: edges.sort(), statuses, ...(revision === null ? {} : { revision }) };
+        }
       }
       // The target inbox is deliberately NOT a source here: the Host also delivers
       // its own mechanical notifications into it, which would self-oscillate.

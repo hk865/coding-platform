@@ -23,6 +23,7 @@ import type { PreparedQueryExecution, PreparedQueryManifestV1 } from '../../../c
 import type { CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import type { SessionProvenanceV1, SessionRecord } from '../../../contracts/core/session.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
+import type { ContextCallKindV1, PlatformDutyV1 } from '../../../contracts/graph-context.js';
 import { consultationQueryRefs } from '../../../contracts/query-job.js';
 import { isAutomationActor } from '../../../contracts/task-requeue.js';
 import type { GoalSnapshot, WorkspaceSnapshot } from '../../../contracts/ledger.js';
@@ -48,6 +49,7 @@ import {
   transitionQueryRunRecovery, type QueryRecoveryEffect, type QueryRecoveryEvent, type QueryRecoveryGuardContext,
   type QueryRecoveryPhase,
 } from '../state/query-run-recovery.js';
+import { contextAssemblyProblem } from '../state/context-input.js';
 import {
   occupySessionRecord, ownsQuery, releaseSessionRecord, sessionDispatchAdmissionProblem, sessionMachineStateOf,
   transitionSession, type SessionGuardContext, type SessionRelease, type SessionReleaseCause,
@@ -97,6 +99,31 @@ function nonEmpty(value: unknown): value is string {
 }
 function sameRef(left: unknown, right: unknown): boolean {
   try { return canonicalJson(left as JsonValue) === canonicalJson(right as JsonValue); } catch { return false; }
+}
+/** §2.4 item 3 / §2.5: the duty a versioned legacy Session role ref fixes, or none. */
+function legacyTemplateDutyOf(role: PreparedQueryManifestV1['sessionRole']): PlatformDutyV1 | undefined {
+  if (role.kind !== 'legacy_template' || role.templateRevision !== 's3.1') return undefined;
+  const duties: readonly PlatformDutyV1[] = ['executor', 'secretary', 'adviser', 'scribe', 'reviewer'];
+  return duties.find(duty => role.templateId === `platform-${duty}`);
+}
+/**
+ * §4.3/G-CTX: the duty the Query's resolved Role or its Session's versioned legacy template
+ * fixes, or undefined when neither does (then the Host chose it and the manifest's Host
+ * configuration revision pins that choice).
+ */
+function expectedQueryDuty(manifest: PreparedQueryManifestV1): PlatformDutyV1 | undefined {
+  const roleDuty = manifest.role.status === 'resolved' ? manifest.role.spec.platformDuty : undefined;
+  return roleDuty ?? legacyTemplateDutyOf(manifest.sessionRole);
+}
+/**
+ * §4.3/G-CTX: an initial coordination assembles as `planning` when the graph
+ * context port is wired and as `copy` when it is not (context-assembler.ts:
+ * `planning = facts !== null && kind === 'initial_coordination'`), so both are
+ * legal for that kind; a semantic Query (and every other Query kind) is a
+ * `copy` assembly. Every other callKind remains forbidden.
+ */
+function expectedQueryCallKinds(job: QueryJobSnapshot): readonly ContextCallKindV1[] {
+  return job.job.intent.execution?.kind === 'initial_coordination' ? ['planning', 'copy'] : ['copy'];
 }
 /** QRR-06, like RUN-22: the attestation reason becomes the close message, bounded. */
 const MAX_ATTESTATION_REASON_CHARS = 2000;
@@ -1012,6 +1039,29 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     if (manifest.sessionGeneration !== state.sessionGeneration) return rejected('invalid', 'the Query manifest Session generation disagrees');
     if (!sameRef(manifest.roleBinding, state.roleBinding) || !sameRef(manifest.sessionRole, state.role)) {
       return rejected('forbidden', 'the Query manifest Role disagrees with the claimed Role');
+    }
+    // CTX-03 G-CTX: a saved Query context binding must be a legal s3-context-v1
+    // value. A Query manifest carries no legacy `selectedTaskInputs`, so its
+    // Artifact selections project to the empty array.
+    const assemblyProblem = contextAssemblyProblem({
+      binding: manifest.contextAssembly,
+      text: manifest.input,
+      selectedTaskInputs: [],
+      continuationSuffix: null,
+    });
+    if (assemblyProblem !== null) return assemblyProblem;
+    if (manifest.contextAssembly !== undefined) {
+      // §3.2 G-CTX: the saved call scope and duty must match the canonical Query
+      // facts (the intent's execution kind and the Query's resolved Role). An
+      // initial coordination accepts `planning` or `copy` (see
+      // `expectedQueryCallKinds`); every other Query kind requires `copy`.
+      const fixedDuty = expectedQueryDuty(manifest);
+      if (fixedDuty !== undefined && manifest.contextAssembly.duty !== fixedDuty) {
+        return rejected('forbidden', 'the assembled Query context duty disagrees with the resolved Role');
+      }
+      if (!expectedQueryCallKinds(job).includes(manifest.contextAssembly.callKind)) {
+        return rejected('forbidden', 'the assembled Query context callKind disagrees with the Query execution kind');
+      }
     }
     if (state.phase === 'prepared') {
       if (state.prepared === null || !sameRef(state.prepared.bundleRef, loaded.value.bundleRef)) {

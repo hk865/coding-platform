@@ -24,6 +24,8 @@ import {
   type SecretSource,
 } from '../../vendor/coding-agent/dist/public-api.js';
 import type { RoleConfigurationRef, WorkspaceScope } from '../contracts/core/identity.js';
+import type { PlatformDutyV1 } from '../contracts/platform-duty.js';
+import { platformRoleProfile } from '../core/agent-runtime/role-profiles.js';
 import type { CoreRejection, ReadResult } from '../contracts/core/results.js';
 import type { RoleBindingRefV1 } from '../contracts/dispatch.js';
 import type { JsonValue } from '../contracts/fingerprint.js';
@@ -66,6 +68,9 @@ export type WorkbenchSkillConfiguration = WorkbenchSkillResourceSelection | Work
 /** The behaviors the trusted `platform` bundle accepts; order is always the
  * caller's explicit input order, never this list order. */
 const PLATFORM_BEHAVIORS: readonly PlatformBehavior[] = ['secretary', 'adviser', 'scribe', 'reviewer'];
+
+/** The closed platform-duty enum, validated only when an explicit grant names it. */
+const PLATFORM_DUTIES = ['executor', 'secretary', 'adviser', 'scribe', 'reviewer'] as const;
 
 /** The repository `resources/skills` root derived from this module's own location
  * (`src/app` in source, `dist/app` after the build). Both point two levels up at
@@ -229,6 +234,27 @@ export function validateWorkbenchRuntimeConfiguration(
     if (!nonEmpty(binding.configurationRevision)) return { code: 'invalid', reason: `bindings[${index}] requires a configurationRevision` };
     if (!isPlainObject(binding.model) || !nonEmpty(binding.model.model)) return { code: 'invalid', reason: `bindings[${index}] requires a model description` };
     if (!isPlainObject(binding.grant)) return { code: 'invalid', reason: `bindings[${index}] requires a trusted grant` };
+    // Slice 3 §2.4 item 3 / §2.5: the optional resident budget and duty are
+    // validated here; an explicit legacy duty must name exactly the versioned
+    // template of that duty, and the four optional sections default to 4096.
+    const residentBytes = binding.grant['contextResidentBytes'];
+    if (residentBytes !== undefined
+      && (typeof residentBytes !== 'number' || !Number.isSafeInteger(residentBytes) || residentBytes < 0)) {
+      return { code: 'invalid', reason: `bindings[${index}].grant.contextResidentBytes must be a non-negative safe integer` };
+    }
+    const duty = binding.grant['platformDuty'];
+    if (duty !== undefined) {
+      if (typeof duty !== 'string' || !(PLATFORM_DUTIES as readonly string[]).includes(duty)) {
+        return { code: 'invalid', reason: `bindings[${index}].grant.platformDuty must be one of ${PLATFORM_DUTIES.join('|')}` };
+      }
+      if (binding.role.kind === 'legacy_template') {
+        const profile = platformRoleProfile(duty as PlatformDutyV1);
+        if (binding.role.templateId !== profile.template.templateId
+          || binding.role.templateRevision !== profile.template.templateRevision) {
+          return { code: 'invalid', reason: `bindings[${index}].grant.platformDuty does not match its versioned legacy template` };
+        }
+      }
+    }
     const skills: Record<string, unknown> | undefined = isPlainObject(binding.grant['skills'])
       ? binding.grant['skills'] : undefined;
     if (skills !== undefined && (skills['bundle'] !== undefined || skills['behaviors'] !== undefined)) {

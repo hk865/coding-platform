@@ -16,24 +16,37 @@ import type { PreparedTaskExecution, PreparedTaskManifestV1 } from '../../contra
 import type { RoleSpecResolutionV1 } from '../../contracts/role-spec-materials.js';
 import type { SourceRefV1, RuntimeInputBindingV1 } from '../../contracts/dispatch.js';
 import type { TaskEnvelopeV1 } from '../../contracts/task-envelope.js';
-import type { TaskRequeueSnapshotV1 } from '../../contracts/task-requeue.js';
 import type { SessionAnomalyAnchorRef } from '../../contracts/session-anomaly.js';
 import { revisionAssignments } from '../../contracts/plan.js';
 import { sha256Hex } from '../../contracts/fingerprint.js';
 import { MANIFEST_CONTENT_TYPE } from '../../contracts/no-progress.js';
-import {
-  CONTINUATION_BRIEF_LIMITS, ContinuationBriefCapacityError, continuationBriefDigest, continuationBriefShapeProblem,
-  renderContinuationBriefZh, type ContinuationBriefV1, type ContinuationSourceCheckpointV1,
-} from '../../contracts/continuation-brief.js';
+import { continuationBriefDigest, type ContinuationBriefV1 } from '../../contracts/continuation-brief.js';
 import type { TaskExecutionRecord } from '../work-graph/model/execution-read-contracts.js';
-import { assembleContinuationBrief, assembleAnomalySection, readPreviousTurn, type BriefWorkspaceFacts } from './continuation-brief-assembly.js';
-import { createSessionHistoryCursorOwner } from './session-operations.js';
-import { decodeKernelEntry } from './kernel-turn-facts.js';
+import {
+  briefWorkspaceFactsFor, createContextAssembler, type ContextAssembler, type ContextAssemblerDependencies,
+} from './context-assembler.js';
+import type { BriefWorkspaceFacts } from './continuation-brief-assembly.js';
 import type { PrepareTaskExecutionRequest, ResolvedRuntimeConfiguration, RuntimeExecutionDependencies } from './execution-contracts.js';
 
 export type ExecutionPreparationDependencies = Pick<RuntimeExecutionDependencies,
   'executions' | 'roles' | 'bodies' | 'host' | 'now' | 'newId'>
-  & Partial<Pick<RuntimeExecutionDependencies, 'kernelStores' | 'workspaceHost' | 'workspaceSource'>>;
+  & Partial<Pick<RuntimeExecutionDependencies, 'kernelStores' | 'workspaceHost' | 'workspaceSource' | 'graphContext' | 'taskInputs'>>;
+
+// Slice 1 §4.1 (T10): the archive-origin rule lives with the brief assembly (slice 3 moved the brief into the
+// context assembler); re-exported here, where slice 1 declared it.
+export { archiveOriginSkipsHistorySeed } from './context-assembler.js';
+
+/** The reads `briefWorkspaceFacts` needs: the clock and the workspace host/source. */
+export type BriefWorkspaceFactsDependencies =
+  Pick<RuntimeExecutionDependencies, 'now'> & Partial<Pick<RuntimeExecutionDependencies, 'workspaceHost' | 'workspaceSource'>>;
+
+/**
+ * The brief's own source checkpoint (digest-only, LA-5) and the uncommitted paths of the workspace. Slice 1
+ * (§2.6) reads it for the archive changed-file snapshot; the one implementation is the context assembler's.
+ */
+export async function briefWorkspaceFacts(deps: BriefWorkspaceFactsDependencies, record: TaskExecutionRecord): Promise<BriefWorkspaceFacts> {
+  return briefWorkspaceFactsFor(deps, () => deps.now(), record);
+}
 
 export type ExecutionPreparationService = {
   prepare(ctx: CoreCallContext, request: PrepareTaskExecutionRequest): Promise<ReadResult<PreparedTaskExecution>>;
@@ -103,41 +116,6 @@ function validateWriteScope(hostWriteScope: readonly string[], roleResolution: R
   return { ok: true, writeScope };
 }
 
-function buildInput(input: {
-  roleResolution: RoleSpecResolutionV1;
-  assignmentInstruction: string;
-  taskTitle: string;
-  taskId: string;
-  planRef: { projectId: string; planId: string };
-  workspaceId: string;
-  workspaceRevision: number;
-  permissions: TaskEnvelopeV1['permissions'];
-}): string {
-  const sections: string[] = [];
-  sections.push('# Verified runtime task input');
-  sections.push('This is the current task context assembled from formal platform facts; it is not a transcript.');
-  sections.push(['## Accepted task', `task: ${input.taskTitle} (${input.taskId})`, `instruction: ${input.assignmentInstruction}`, `plan: ${input.planRef.planId}`, `workspace: ${input.workspaceId}@${String(input.workspaceRevision)}`].join('\n'));
-  sections.push(['## Runtime binding', `roleBinding: ${JSON.stringify(input.permissions)}`, `tools: ${input.permissions.tools.join(', ') || '(none)'}`, `writeScope: ${input.permissions.writeScope.join(', ') || '(none)'}`].join('\n'));
-  const role = input.roleResolution;
-  if (role.status === 'resolved') {
-    sections.push([
-      '## Role specification',
-      `role: ${role.roleId}@${String(role.revision.revision)}`,
-      `label: ${role.spec.label}`,
-      `purpose: ${role.spec.purpose}`,
-      `responsibility: ${role.spec.responsibility.join(', ')}`,
-      `required materials: ${role.spec.requiredMaterials.map(material => `${material.kind} (${material.reason})`).join('; ')}`,
-      `required outputs: ${role.spec.requiredOutputs.map(output => `${output.kind} (${output.reason})`).join('; ')}`,
-      `exit success: ${role.spec.exit.success}`,
-      `exit stop: ${role.spec.exit.stop}`,
-      `exit handoff: ${role.spec.exit.handoff}`,
-    ].join('\n'));
-  } else {
-    sections.push(['## Role specification', `role: ${role.roleId} (${role.status})`, role.status === 'absent' ? role.reason : role.reasons.map(reason => JSON.stringify(reason)).join('; ')].join('\n'));
-  }
-  return sections.join('\n\n');
-}
-
 /**
  * C3 / §6.1 contract (e): the Prepared value of a Run whose input is already
  * bound (Authorized, Entering or Revoked are all `starting`). Nothing is
@@ -152,167 +130,10 @@ export function rehydratePreparedExecution(record: Pick<TaskExecutionRecord, 'ru
     inputBinding: structuredClone(run.inputBinding) };
 }
 
-/**
- * The continuation brief of a requeue Run (C3): the WorkGraph basis, the
- * previous Run's Turn (or that of its nearest entered ancestor) and the
- * workspace checkpoints, assembled without any model call.
- */
-async function prepareContinuationBrief(
-  deps: ExecutionPreparationDependencies, ctx: CoreCallContext, record: TaskExecutionRecord,
-): Promise<{ ok: true; brief: ContinuationBriefV1; sessionBasis: PreparedTaskManifestV1['sessionBasis'] | null;
-    anomalyAnchorRefs: SessionAnomalyAnchorRef[] | null }
-  | { ok: false; rejection: CoreRejection }> {
-  const readBasis = deps.executions.readContinuationBasis;
-  if (readBasis === undefined || deps.kernelStores === undefined) {
-    return { ok: false, rejection: rejected('unsupported', 'a requeue Run needs the continuation basis reader and the Kernel stores') };
-  }
-  let basis;
-  try { basis = await readBasis.call(deps.executions, ctx, { runRef: record.run.ref }); }
-  catch (error) { return { ok: false, rejection: rejected('unavailable', `the continuation basis read failed: ${messageOf(error)}`) }; }
-  if (basis.status !== 'ready') return { ok: false, rejection: mapRead(basis) };
-  const facts = basis.value.factsChain.at(-1)?.run ?? basis.value.previous;
-  const truncated = facts.run.executionHistory === undefined
-    && basis.value.factsChain.length >= CONTINUATION_BRIEF_LIMITS.factsFromHops && facts.run.requeueRef !== undefined;
-  const turn = await readPreviousTurn(createSessionHistoryCursorOwner({ kernelStores: deps.kernelStores }), facts, ctx.signal);
-  // W-25 (SD-2): a transient or Host-side Kernel read is no evidence; retry instead of pinning a degraded brief.
-  if (turn.kernel === 'retry') return { ok: false, rejection: rejected(turn.code, `the previous Turn is not readable now: ${turn.reason}`) };
-  const workspace = await briefWorkspaceFacts(deps, record);
-  // LA-1, contract (e): the seeded history is decided first, so the brief says how the new Session continues.
-  // §4.1 T10: an archive-origin ordinary claim is a NEW pickup, never the old line's continuation, so it skips
-  // the history seed entirely (the real TaskRequeue chain and the anchors are kept).
-  const sessionBasis = archiveOriginSkipsHistorySeed(basis.value.requeue)
-    ? null
-    : await sessionBasisOf(deps, record, basis.value, ctx.signal);
-  const source = basis.value.requeue.historySource;
-  const seededFrom = sessionBasis === null || sessionBasis === undefined || sessionBasis.throughPosition === null || source === null ? null
-    : { sessionRef: { projectId: source.sessionRef.projectId, sessionId: source.sessionRef.sessionId },
-      throughPosition: sessionBasis.throughPosition };
-  // §2.7: this Task's not-yet-picked-up anchors, bounded to the earliest eight.
-  const anomalies = assembleAnomalySection(basis.value.pendingAnomalies ?? []);
-  const brief = assembleContinuationBrief({ basis: basis.value, factsRecord: facts, factsHops: basis.value.factsChain.length,
-    factsTruncated: truncated, turn, workspace, claimSessionRef: record.outbox.claim.sessionRef, seededFrom, anomalies });
-  const problem = continuationBriefShapeProblem(brief);
-  if (problem !== null) return { ok: false, rejection: rejected('unavailable', `the assembled continuation brief is malformed: ${problem}`) };
-  const anomalyAnchorRefs = anomalies === null ? null : anomalies.anchors.map((anchor) => anchor.ref);
-  return { ok: true, brief, sessionBasis, anomalyAnchorRefs };
-}
-
-/**
- * Slice 1 §4.1 (T10): `TaskRequeue.archiveOrigin != null` marks an archive
- * ordinary claim. It keeps the real TaskRequeue fact chain and the anchored
- * brief but never seeds the old line's full Kernel history: `sessionBasisOf` is
- * skipped, so `sessionBasis`/`seededFrom` stay null and the brief's continuity
- * is `other_session`. The condition is deliberately NOT "the Task has an
- * anchor", which would break the existing human-continue continuation case.
- */
-export function archiveOriginSkipsHistorySeed(
-  requeue: Pick<TaskRequeueSnapshotV1, 'archiveOrigin'>,
-): boolean {
-  return requeue.archiveOrigin !== undefined && requeue.archiveOrigin !== null;
-}
-
-/**
- * LA-1 (§6.1 contract (e), A.2 step 5.6): the model history a continuation Run
- * in a NEW Session is seeded with, from `TaskRequeue.historySource`. Filled only
- * when (1) the requeue names a source, (2) the claim Session is a fresh Session
- * other than the source (no completed history of its own), (3) on the same
- * Kernel adapter, and (4) the source Session's Kernel history is readable; its
- * boundary is the last Kernel terminal at or before the source's upper bound
- * (an interrupted Turn is never part of it; the brief covers it). Anything else
- * leaves the brief alone (`null`). The source Session is the one
- * `historySource` names, wherever it sits on the requeue chain (I-12 clause
- * 10: a requeue after a continuation that never entered carries the earlier
- * source): the afterRun's, or that of the nearest entered ancestor.
- */
-async function sessionBasisOf(
-  deps: ExecutionPreparationDependencies, record: TaskExecutionRecord,
-  basis: { requeue: { historySource: import('../../contracts/task-requeue.js').TaskRequeueHistorySourceV1 | null };
-    previous: TaskExecutionRecord; factsChain: { run: TaskExecutionRecord }[] },
-  signal: AbortSignal,
-): Promise<PreparedTaskManifestV1['sessionBasis'] | null> {
-  const source = basis.requeue.historySource;
-  if (source === null || deps.kernelStores === undefined) return null;
-  const claimSession = record.session;
-  if (sameRef(source.sessionRef, record.outbox.claim.sessionRef) || claimSession.historyCursor !== null) return null;
-  if (source.adapterId !== claimSession.kernel.adapterId) return null;
-  if (source.throughPosition === null) return { sourceKernelSessionId: source.kernelSessionId, throughPosition: null };
-  const onChain = [basis.previous, ...basis.factsChain.map(hop => hop.run)].find(candidate =>
-    candidate.session.ref.projectId === source.sessionRef.projectId && candidate.session.ref.sessionId === source.sessionRef.sessionId);
-  // Beyond the bounded chain the source is read by the identity the TaskRequeue fixed (same adapter, checked above);
-  // the window read uses only the Session ref and its Kernel mapping.
-  const sourceSession = onChain?.session ?? { ...claimSession,
-    ref: { ...claimSession.ref, projectId: source.sessionRef.projectId, sessionId: source.sessionRef.sessionId },
-    kernel: { ...claimSession.kernel, adapterId: source.adapterId, kernelSessionId: source.kernelSessionId } };
-  if (sourceSession.kernel.kernelSessionId !== source.kernelSessionId || sourceSession.kernel.adapterId !== source.adapterId) {
-    return null;
-  }
-  const owner = createSessionHistoryCursorOwner({ kernelStores: deps.kernelStores });
-  let boundary: number | null = null;
-  let cursor = 0;
-  for (let page = 0; page < 64 && cursor < source.throughPosition; page += 1) {
-    let window;
-    try {
-      window = await owner.readPositionWindow({ session: sourceSession, afterPosition: cursor,
-        throughPosition: source.throughPosition, limit: 200, signal });
-    } catch { return null; }
-    if (window.status !== 'ready') return null;
-    for (const entry of window.value.entries) {
-      const item = decodeKernelEntry(entry);
-      if (item === null) return null;
-      if (item.record.recordType === 'agent.event' && KERNEL_TERMINAL_EVENTS.includes(item.record.payload.event.type)) {
-        boundary = item.position;
-      }
-    }
-    cursor = window.value.nextPosition;
-    if (!window.value.hasMore) break;
-  }
-  return { sourceKernelSessionId: source.kernelSessionId, throughPosition: boundary };
-}
-
-/** The Kernel `agent.event` types that end a Turn: a completed history boundary (LA-1). */
-const KERNEL_TERMINAL_EVENTS: readonly string[] = ['run.completed', 'run.failed', 'run.cancelled', 'run.limit_exceeded', 'run.yielded'];
-
-/** The reads `briefWorkspaceFacts` needs: the clock and the workspace host/source. */
-export type BriefWorkspaceFactsDependencies =
-  Pick<RuntimeExecutionDependencies, 'now'> & Partial<Pick<RuntimeExecutionDependencies, 'workspaceHost' | 'workspaceSource'>>;
-
-/** The brief's own source checkpoint (digest-only, LA-5) and the uncommitted paths of the workspace. */
-export async function briefWorkspaceFacts(deps: BriefWorkspaceFactsDependencies, record: TaskExecutionRecord): Promise<BriefWorkspaceFacts> {
-  const at = deps.now();
-  const unavailable = (reason: string): BriefWorkspaceFacts => ({
-    briefCheckpoint: { kind: 'brief', at, workspaceRevision: null, sourceDigest: null, unavailableReason: reason },
-    uncommitted: { status: 'unavailable', baseCommit: null, paths: [], omitted: 0, reason },
-  });
-  const source = deps.workspaceSource;
-  if (source === undefined || deps.workspaceHost === undefined) return unavailable('the workspace source reader is not configured');
-  let resolved;
-  try {
-    resolved = await deps.workspaceHost.resolveRoot({ aggregateType: 'Workspace', projectId: record.run.ref.projectId,
-      workspaceId: record.session.workspaceId });
-  } catch (error) { return unavailable(`the workspace root could not be resolved: ${messageOf(error)}`); }
-  if (resolved.status !== 'ready') return unavailable(`the workspace root could not be resolved: ${resolved.reason}`);
-  const digest = await source.captureDigest(resolved.value.root).catch((error: unknown) =>
-    ({ status: 'unavailable' as const, reason: messageOf(error) }));
-  const briefCheckpoint: ContinuationSourceCheckpointV1 = digest.status === 'ready'
-    ? { kind: 'brief', at, workspaceRevision: resolved.value.workspaceRevision, sourceDigest: digest.sourceDigest, unavailableReason: null }
-    : { kind: 'brief', at, workspaceRevision: resolved.value.workspaceRevision, sourceDigest: null, unavailableReason: digest.reason };
-  const captured = await source.capture(resolved.value.root).catch(() => null);
-  let uncommitted: BriefWorkspaceFacts['uncommitted'];
-  if (captured === null || captured.status !== 'ready') {
-    uncommitted = { status: 'unavailable', baseCommit: null, paths: [], omitted: 0,
-      reason: captured === null ? 'the workspace capture failed' : `the workspace capture is ${captured.status}` };
-  } else if (captured.sourceProof.kind === 'git-head-worktree') {
-    const paths = captured.sourceProof.changedFiles;
-    uncommitted = { status: 'git', baseCommit: captured.sourceProof.baseCommit,
-      paths: paths.slice(0, CONTINUATION_BRIEF_LIMITS.paths), omitted: Math.max(0, paths.length - CONTINUATION_BRIEF_LIMITS.paths),
-      reason: null };
-  } else {
-    uncommitted = { status: 'not_git', baseCommit: null, paths: [], omitted: 0, reason: null };
-  }
-  return { briefCheckpoint, uncommitted };
-}
-
-export function createExecutionPreparation(deps: ExecutionPreparationDependencies): ExecutionPreparationService {
+export function createExecutionPreparation(deps: ExecutionPreparationDependencies, contextAssembler?: ContextAssembler): ExecutionPreparationService {
+  // §4.2/G5.7: a missing second argument constructs the same one assembler once;
+  // the legacy text builder is unreachable and gone.
+  const assembler = contextAssembler ?? createContextAssembler(deps as unknown as ContextAssemblerDependencies);
   return {
     async prepare(ctx: CoreCallContext, request: PrepareTaskExecutionRequest): Promise<ReadResult<PreparedTaskExecution>> {
       const owned = ownContext(ctx);
@@ -411,8 +232,8 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
 
       // 3. Exact Plan/Task contract: the assignment instruction is the formal
       //    task input; a required material kind this batch cannot source is a
-      //    real gap, never replaced by a summary. A Plan's exact inputs
-      //    (`inputRequirements`) are not read here (lead decision LA-11).
+      //    real gap, never replaced by a summary. The claim Plan's declarations
+      //    (legacy inputRequirements + edges) are read by the assembler below.
       const assignments = revisionAssignments(plan);
       const assignment = assignments.find(candidate => candidate.taskId === claim.task.taskId);
       if (assignment === undefined) return rejected('incomplete', 'the accepted Plan has no assignment for this Task');
@@ -428,44 +249,44 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
         { kind: 'workspace', refId: session.workspaceId, revision: String(run.workspaceSnapshot.revision) },
       ];
       const additionalMaterialRefs: ArtifactRef[] = [];
-      // C3: a Run of a requeue claim starts with its continuation brief, rendered as the last input section.
-      let brief: ContinuationBriefV1 | null = null;
-      let sessionBasis: PreparedTaskManifestV1['sessionBasis'] | null = null;
-      let anomalyAnchorRefs: SessionAnomalyAnchorRef[] | null = null;
-      if (run.requeueRef !== undefined) {
-        const assembled = await prepareContinuationBrief(deps, owned, record.value);
-        if (!assembled.ok) return assembled.rejection;
-        brief = assembled.brief;
-        sessionBasis = assembled.sessionBasis;
-        anomalyAnchorRefs = assembled.anomalyAnchorRefs;
-        if (signal.aborted) return rejected('cancelled', 'the preparation was cancelled after the continuation brief');
-      }
-      const briefDigest = brief === null ? null : continuationBriefDigest(brief);
-      const taskInput = buildInput({
-        roleResolution, assignmentInstruction: assignment.instruction, taskTitle: plan.tasks.find(task => task.taskId === claim.task.taskId)?.title ?? claim.task.taskId,
-        taskId: claim.task.taskId, planRef: plan.ref, workspaceId: session.workspaceId, workspaceRevision: run.workspaceSnapshot.revision,
-        permissions,
-      });
-      // N7 (§2.7): the anomaly section is budgeted; when even the mandatory
-      // content cannot fit the 16 KiB brief the preparation is refused
-      // `capacity`, never rendered truncated or thrown out of the port.
+      // Slice 3 (§4.2/§4.3, C7): the ONE context assembler owns the eight
+      // sections and the byte budget. Its rejection (in particular a failing
+      // `graphContext` read) is propagated unchanged; the manifest is built from
+      // the assembled input/binding/brief/sessionBasis/inputs.
       let input: string;
+      let inputDigest: string;
+      let brief: ContinuationBriefV1 | null;
+      let sessionBasis: PreparedTaskManifestV1['sessionBasis'];
+      let selectedTaskInputs: PreparedTaskManifestV1['selectedTaskInputs'];
+      let contextAssembly: PreparedTaskManifestV1['contextAssembly'];
+      let assembled;
       try {
-        input = brief === null || briefDigest === null ? taskInput : `${taskInput}\n\n${renderContinuationBriefZh(brief, briefDigest)}`;
+        assembled = await assembler.assembleTask(owned, {
+          execution: record.value, role: roleResolution, configuration: hostConfig, permissions,
+        });
       } catch (error) {
-        if (error instanceof ContinuationBriefCapacityError) return rejected('capacity', error.message);
-        throw error;
+        return rejected('unavailable', `the context assembly failed: ${messageOf(error)}`);
       }
-      const inputDigest = sha256Hex(input);
+      if (assembled.status !== 'ready') return assembled;
+      input = assembled.value.input;
+      inputDigest = sha256Hex(input);
+      brief = assembled.value.continuationBrief;
+      sessionBasis = assembled.value.sessionBasis;
+      selectedTaskInputs = assembled.value.selectedTaskInputs;
+      contextAssembly = assembled.value.binding;
+      // Slice 1 §2.7: the anchors the brief's anomaly section names are bound with the input.
+      const anomalyAnchorRefs: SessionAnomalyAnchorRef[] | null = assembled.value.anomalyAnchorRefs ?? null;
+      const briefDigest = brief === null ? null : continuationBriefDigest(brief);
       const manifest: PreparedTaskManifestV1 = {
         schemaVersion: 1, kind: 'task_execution', claim, role: roleResolution,
         hostTemplate: roleResolution.status === 'resolved' ? null : hostConfig.hostTemplate,
         roleBinding: run.roleBinding, hostConfigurationRevision: hostConfig.configurationRevision, sessionRole: session.role,
         workspaceSnapshot: { workspaceId: session.workspaceId, revision: run.workspaceSnapshot.revision },
-        permissions, budget: run.budget, selectedTaskInputs: [], materialBasis: hostConfig.materialBasis,
+        permissions, budget: run.budget, selectedTaskInputs, materialBasis: hostConfig.materialBasis,
         materialAccessRefs: [], additionalMaterialRefs, deliveryRefs: [], sourceRefs,
+        ...(contextAssembly === undefined ? {} : { contextAssembly }),
         ...(brief === null ? {} : { continuationBrief: brief }),
-        ...(sessionBasis === null || sessionBasis === undefined ? {} : { sessionBasis }),
+        ...(sessionBasis === undefined ? {} : { sessionBasis }),
         input, inputDigest,
       };
       const manifestJson = JSON.stringify(manifest);
@@ -529,6 +350,9 @@ export function snapshotRuntimeConfiguration(config: ResolvedRuntimeConfiguratio
     deniedPrefixes: [...config.deniedPrefixes],
     processSandboxOptions,
     materialBasis: config.materialBasis === null ? null : structuredClone(config.materialBasis),
+    // Slice 3 (§2.4 item 3): the Host's explicit duty and resident budget reach the assembler.
+    ...(config.platformDuty === undefined ? {} : { platformDuty: config.platformDuty }),
+    ...(config.contextResidentBytes === undefined ? {} : { contextResidentBytes: config.contextResidentBytes }),
   };
 }
 

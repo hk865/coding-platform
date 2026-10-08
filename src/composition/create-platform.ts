@@ -85,6 +85,10 @@ import { createProjectBootstrapServices } from '../core/work-graph/configuration
 import { createQueryExecution } from '../core/work-graph/queries/query-execution.js';
 import { SESSION_ANOMALY_RECORD_SCHEMAS } from '../core/work-graph/tasks/session-anomaly-codecs.js';
 import { projectQueryConfiguration } from '../core/agent-runtime/query-preparation.js';
+import { createTaskContextInputService } from '../core/work-graph/tasks/context-input-service.js';
+import { createGraphContextReader } from '../core/work-graph/views/graph-context-reader.js';
+import type { GraphContextReadPort } from '../core/work-graph/model/graph-context-contracts.js';
+import type { TaskContextInputPort } from '../core/work-graph/model/context-input-contracts.js';
 import { createQueryJobService } from '../core/work-graph/queries/query-job-service.js';
 import type {
   CompletionPolicyConfigurationPort, ProjectRegistrationPort,
@@ -625,6 +629,51 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       ...(hostInstance === undefined ? {} : { hostInstance }), now, eventId: randomUUID });
     const reconcileCandidates = createReconcileCandidateReader({ records: backend.records });
     const historyOwner = createSessionHistoryCursorOwner({ kernelStores });
+    // Slice 3: the two read-only owners. They are constructed once and the SAME
+    // instances reach the Runtime, the graph routes and (through the Runtime's
+    // assembler) the attention scanner.
+    const taskInputsOwner = createTaskContextInputService({
+      records: backend.records,
+      materials: rawMaterials,
+      bodies,
+      hostActor: SYSTEM_ACTOR,
+    });
+    const graphContextOwner = createGraphContextReader({
+      records: backend.records,
+      goals: planService,
+      plans: planService,
+      architecture: catalog,
+      sessions: sessionDirectory,
+      executions: executionReader,
+      inputs: taskInputsOwner,
+      hostActor: SYSTEM_ACTOR,
+    });
+    // A Session operation spans both stores. Drain the complete operation before
+    // closing the platform Store, not merely its short Kernel callback.
+    let isClosing = false;
+    const pending = new Set<Promise<unknown>>();
+    function trackedCall<T>(call: () => Promise<T>, whenClosed: () => T): Promise<T> {
+      if (isClosing) return Promise.resolve(whenClosed());
+      // Start synchronously so each port snapshots inputs before its first await.
+      const result = call();
+      pending.add(result);
+      void result.then(() => pending.delete(result), () => pending.delete(result));
+      return result;
+    }
+    const unavailable = (): CoreRejection => ({ status: 'rejected', code: 'unavailable', reason: 'platform is closing' });
+    // Slice 3 C6: the SAME two read-only owners reach the Runtime, the graph
+    // routes and the attention scanner, each with every read drained through the
+    // one trackedCall/close path. The raw owners are never handed out.
+    const graphContext: GraphContextReadPort = {
+      readContextFacts: (...args) => trackedCall(() => graphContextOwner.readContextFacts(...args), unavailable),
+      lookGraph: (...args) => trackedCall(() => graphContextOwner.lookGraph(...args), unavailable),
+      findGraph: (...args) => trackedCall(() => graphContextOwner.findGraph(...args), unavailable),
+      readAttentionFacts: (...args) => trackedCall(() => graphContextOwner.readAttentionFacts(...args), unavailable),
+    };
+    const taskInputs: TaskContextInputPort = {
+      readTaskInputs: (...args) => trackedCall(() => taskInputsOwner.readTaskInputs(...args), unavailable),
+      readTaskInputPage: (...args) => trackedCall(() => taskInputsOwner.readTaskInputPage(...args), unavailable),
+    };
     let resultWriter: Pick<ExecutionEntryPort, 'recordRunResult'> | undefined;
     let runtime = createAgentRuntime();
     if (options.runtime !== undefined) {
@@ -655,23 +704,11 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         workspaceSource: verificationWorkspaceReader,
         // A.2 step 5.6: the in-process ends without a Kernel terminal (RUN-16, RUN-23).
         runReconcile,
+        graphContext, taskInputs,
         host, kernel, now, newId: randomUUID,
       };
       runtime = createAgentRuntime(dependencies);
     }
-    // A Session operation spans both stores. Drain the complete operation before
-    // closing the platform Store, not merely its short Kernel callback.
-    let isClosing = false;
-    const pending = new Set<Promise<unknown>>();
-    function trackedCall<T>(call: () => Promise<T>, whenClosed: () => T): Promise<T> {
-      if (isClosing) return Promise.resolve(whenClosed());
-      // Start synchronously so each port snapshots inputs before its first await.
-      const result = call();
-      pending.add(result);
-      void result.then(() => pending.delete(result), () => pending.delete(result));
-      return result;
-    }
-    const unavailable = (): CoreRejection => ({ status: 'rejected', code: 'unavailable', reason: 'platform is closing' });
     // The completion methods are published on the SAME Goal service and drained
     // through the one trackedCall/close path; no second service or store exists.
     const goals: GoalTaskPort = {
@@ -862,6 +899,16 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       },
       observeRun(...args: Parameters<typeof runtime.port.observeRun>) {
         return sessionCall(() => runtime.port.observeRun(...args));
+      },
+      // Slice 3 C6: the assembler-backed attention graph read reaches the Host
+      // scanner on the SAME trackedCall/close path as every other Runtime read.
+      readAttentionGraph(...args: Parameters<NonNullable<typeof runtime.port.readAttentionGraph>>) {
+        const read = runtime.port.readAttentionGraph;
+        if (read === undefined) {
+          return Promise.resolve<CoreRejection>({ status: 'rejected', code: 'unsupported',
+            reason: 'the attention graph read needs the trusted Runtime binding' });
+        }
+        return sessionCall(() => read(...args));
       },
       // C3 `executions/brief`: drained like every other Runtime read.
       readContinuationBrief(...args: Parameters<NonNullable<typeof runtime.port.readContinuationBrief>>) {
@@ -1149,6 +1196,9 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       // the same instances injected into `sessions`, `queries` and the Workflow.
       sessionFacts, responsibilities, sessionAnomalies,
       workspace: workspace.tools, runtime: runtimePort, workflow, kernelStores,
+      // Slice 3: the same owner instances the Runtime received; the graph routes
+      // read through `graphContext` and a caller could reuse `taskInputs`.
+      graphContext, taskInputs,
       reconcile,
       /** RUN-22 (U): the operator's attestation through the Host entry; drained like every write. */
       resolveUnknownRun: (...args: Parameters<typeof resolveUnknownRun>) => trackedCall(() => resolveUnknownRun(...args), unavailable),

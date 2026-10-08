@@ -24,6 +24,11 @@
  * `code`/`reason`/`current`). A typed rejection is never turned into a fake
  * success, and a write that already committed is never reported as
  * "not committed" because the signal changed afterwards.
+ *
+ * Deprecated read tools (slice 3, T5): `query_task_graph` and `query_ready_tasks`
+ * are superseded by the read-only `look_graph`/`find_graph` graph tools in new
+ * grants. The exports and behaviour stay unchanged for already-bound Runs and
+ * explicit old callers; the two writer tools are unaffected.
  */
 import type { CommitCursor } from '../../contracts/command-event.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';

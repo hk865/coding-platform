@@ -32,6 +32,7 @@ import type { SessionFactsPort } from '../core/work-graph/model/session-facts-co
 import type { SessionResponsibilityPort } from '../core/work-graph/sessions/session-responsibility-service.js';
 import type { SessionAnomalyPort } from '../core/work-graph/tasks/session-anomaly-service.js';
 import type { ExecutionReadPort } from '../core/work-graph/model/execution-read-contracts.js';
+import type { GraphContextReadPort } from '../core/work-graph/model/graph-context-contracts.js';
 import type { GoalTaskPort } from '../core/work-graph/model/task-contracts.js';
 import type { PlanTaskPort } from '../core/work-graph/model/plan-contracts.js';
 import type { WorkspaceCapturePort, WorkspaceToolsPort } from '../core/workspace/ports.js';
@@ -153,6 +154,9 @@ export type CoreRouteBindings = {
   readTaskArchiveState: SessionAnomalyPort['readTaskArchiveState'];
   listSessionAnomalies: SessionAnomalyPort['listSessionAnomalies'];
   readUndeliveredReplies: NonNullable<SessionMailboxPort['readUndeliveredReplies']>;
+  // Slice 3: the two read-only graph routes, forwarded verbatim.
+  lookGraph: GraphContextReadPort['lookGraph'];
+  findGraph: GraphContextReadPort['findGraph'];
 };
 
 /** A.2 step 5.6 (§12.1 step 7, §12.8): this Host's instance lease and its start-up reconcile report. */
@@ -202,6 +206,8 @@ export type CoreRoutePlatform = {
   /** A.2 step 5.6 (QRR-06). */
   resolveUnknownQueryRun?(ctx: CoreCallContext, request: GraphWrite<ResolveUnknownQueryRunRequestV1>):
     Promise<WriteResult<QueryExecutionRecord>>;
+  /** Slice 3 read model; a narrow platform without it answers `unsupported`. */
+  graphContext: GraphContextReadPort;
 };
 
 /** `executions/resolve-unknown` input (RUN-22): the unknown Run and the operator's reason. */
@@ -317,6 +323,9 @@ export const CORE_ROUTE_SPECS: Record<CoreRouteSuffix, CoreRouteSpec> = {
   'tasks/archive-state': { kind: 'plain', binding: 'readTaskArchiveState', owner: 'sessionAnomalies.readTaskArchiveState' },
   'anomalies/list': { kind: 'plain', binding: 'listSessionAnomalies', owner: 'sessionAnomalies.listSessionAnomalies' },
   'messages/undelivered-replies': { kind: 'plain', binding: 'readUndeliveredReplies', owner: 'messages.readUndeliveredReplies' },
+  // Slice 3: the two public read-only graph routes.
+  'graph/look': { kind: 'plain', binding: 'lookGraph', owner: 'graphContext.lookGraph' },
+  'graph/find': { kind: 'plain', binding: 'findGraph', owner: 'graphContext.findGraph' },
 };
 
 export type ParsedCoreRequest =
@@ -570,6 +579,8 @@ export function createPlatformCoreRouteBindings(
     readUndeliveredReplies: platform.messages.readUndeliveredReplies === undefined
       ? unsupported('the Host mailbox does not publish the undelivered-reply read (readUndeliveredReplies)')
       : platform.messages.readUndeliveredReplies.bind(platform.messages),
+    lookGraph: platform.graphContext.lookGraph.bind(platform.graphContext),
+    findGraph: platform.graphContext.findGraph.bind(platform.graphContext),
   };
 }
 
@@ -699,6 +710,8 @@ export async function dispatchCoreRoute(
       case 'tasks/archive-state': return bindings.readTaskArchiveState(ctx, plain.input as never);
       case 'anomalies/list': return bindings.listSessionAnomalies(ctx, plain.input as never);
       case 'messages/undelivered-replies': return bindings.readUndeliveredReplies(ctx, plain.input as never);
+      case 'graph/look': return bindings.lookGraph(ctx, plain.input as never);
+      case 'graph/find': return bindings.findGraph(ctx, plain.input as never);
     }
   })();
   // A GraphWrite rejection is a failed command: preserve its exact body but let

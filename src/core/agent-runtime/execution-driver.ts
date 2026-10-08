@@ -32,8 +32,14 @@ import { createRuntimeModelCallAccess, RuntimeModelCallRejected } from './model-
 import { createSessionHistoryCursorOwner } from './session-operations.js';
 import { loadPreparedManifest, snapshotRuntimeConfiguration } from './execution-preparation.js';
 import { createRuntimeSourceCaptureFactory } from './source-capture-access.js';
+import { createGraphTools, GRAPH_TOOL_NAMES } from './graph-tools.js';
 import type { SessionMailboxPort, SessionMessage } from '../work-graph/model/communication-contracts.js';
 import type { SessionDirectoryPort } from '../work-graph/model/session-contracts.js';
+import type { GraphContextReadPort } from '../work-graph/model/graph-context-contracts.js';
+import type { TaskContextInputPort } from '../work-graph/model/context-input-contracts.js';
+import type {
+  ExecutionHistoryPage, GraphExecutionHistoryReadPort, TaskExecutionHistoryRequest,
+} from './execution-history-contracts.js';
 import type { PlanTaskPort } from '../work-graph/model/plan-contracts.js';
 import type { ExecutionObservationService } from './execution-observation.js';
 import type { RuntimeControlCoordinator, RuntimeControlHandle } from './execution-control.js';
@@ -47,7 +53,8 @@ import type {
 export type ExecutionDriverDependencies = Pick<RuntimeExecutionDependencies,
   | 'entry' | 'historyWriter' | 'executions' | 'sessionOperations' | 'kernelStores' | 'workspaceHost'
   | 'sourceAuthority' | 'sourcePolicyFor' | 'host' | 'kernel' | 'now' | 'newId'
-  | 'modelRequests' | 'roles' | 'materials' | 'bodies' | 'plans' | 'messages' | 'sessions' | 'runReconcile'> & {
+  | 'modelRequests' | 'roles' | 'materials' | 'bodies' | 'plans' | 'messages' | 'sessions' | 'runReconcile'
+  | 'graphHistory' | 'graphContext' | 'taskInputs'> & {
   /** The same observer instance backs start and explicit observe calls. */
   observation: ExecutionObservationService;
   /**
@@ -70,6 +77,7 @@ type KernelSessionReader = Pick<SqliteStores, 'get' | 'read'>;
  * re-checked above. */
 const PLATFORM_COORDINATION_TOOL_NAMES = new Set<string>([
   ...SESSION_MAILBOX_TOOL_NAMES, ...WHITEBOARD_TOOL_NAMES, ...SESSION_DISCOVERY_TOOL_NAMES,
+  ...GRAPH_TOOL_NAMES,
 ]);
 
 function rejected(code: CoreRejection['code'], reason: string): CoreRejection {
@@ -95,6 +103,72 @@ const RESERVED_TOOL_NAMES = new Set<string>([
 type CoordinationTools = { names: readonly string[]; create: (workspace: WorkspaceSandbox) => ToolDefinition[] };
 
 /**
+ * The narrow history proxy the graph tools receive as their `history`
+ * dependency. It is NOT the Host-only RT8: every call first re-validates the
+ * requested Run card through the ORIGINAL tool context (its own principal and
+ * signal) against the tool config's trusted Goal, then delegates to RT8 with
+ * the driver's own same-scope trusted Host context and THIS tool call's signal.
+ * The Host context is never handed to the model, and RT8's own
+ * `source_stale`/cursor rejections pass through unchanged.
+ *
+ * Work passes the original `startRun` Host context and the Work Run's canonical
+ * Goal; Query passes the `queryExecution.readPreparationFacts` original
+ * initiator for both `principal` and `materialReader` (the caller builds that
+ * context) and the QueryJob's canonical Goal.
+ */
+export function createGraphHistoryProxy(input: {
+  graph: GraphContextReadPort;
+  history: GraphExecutionHistoryReadPort;
+  goalRef: GoalRef;
+  hostContext: CoreCallContext;
+}): GraphExecutionHistoryReadPort {
+  return {
+    async readTaskExecutionHistory(toolCtx, request: TaskExecutionHistoryRequest): Promise<ReadResult<ExecutionHistoryPage>> {
+      // The Run card is validated under the ORIGINAL tool identity (its own
+      // principal and its own signal) against the tool config's trusted Goal:
+      // the tool can never widen its own scope to another Goal. The trusted Host
+      // context is used only for the RT8 read below.
+      let looked;
+      try {
+        looked = await input.graph.lookGraph(toolCtx, {
+          goalRef: input.goalRef,
+          target: { kind: 'node', node: { kind: 'run', ref: request.runRef } },
+          relation: 'card',
+          page: { afterCursor: null, limit: 1 },
+        });
+      } catch (error) {
+        return rejected('unavailable', `the Run card could not be read before the history read: ${messageOf(error)}`);
+      }
+      // A canonical scope/identity rejection from the card read (including a Run
+      // of another Goal) is returned as is; no history owner is reached.
+      if (looked.status !== 'ready') return looked;
+      const card = looked.value.items[0];
+      if (card === undefined) return rejected('not_found', 'the graph did not return the requested Run card');
+      if (request.runRef.projectId !== input.goalRef.projectId || request.runRef.goalId !== input.goalRef.goalId) {
+        return rejected('forbidden', 'the requested Run is not in the bound Goal');
+      }
+      const node = card.node;
+      if (node.kind !== 'run' || node.ref.projectId !== request.runRef.projectId
+        || node.ref.goalId !== request.runRef.goalId || node.ref.runId !== request.runRef.runId) {
+        return rejected('unavailable', 'the graph returned a different node than the requested Run');
+      }
+      if (card.run === null || card.run.ref.runId !== request.runRef.runId
+        || card.run.workspaceSnapshot.workspaceId !== input.hostContext.workspaceId) {
+        return rejected('forbidden', 'the Run belongs to another workspace');
+      }
+      const trusted: CoreCallContext = { ...input.hostContext, signal: toolCtx.signal };
+      const result = await input.history.readTaskExecutionHistory(trusted, request);
+      // Keep RT8's own code and result shape, but make the result name the Run it
+      // was reading: a history page or rejection is always locatable to one Run.
+      if (result.status === 'rejected') {
+        return { ...result, reason: `${result.reason} (Run ${request.runRef.runId})` };
+      }
+      return result;
+    },
+  };
+}
+
+/**
  * Filter the already-reviewed coordination factories down to the effective manifest
  * intersection. An unknown selected name or a selected platform tool whose
  * dependency is unbound fails closed here, before any provider, authorize/begin
@@ -114,6 +188,14 @@ function selectCoordinationTools(input: {
   /** Real registration seam for an explicit waitAfterSend; the Runtime owns the
    * per-Run wait and the Kernel barrier commits the yielded terminal. */
   onWaitRegistered?: (message: SessionMessage) => void;
+  /** Slice 3 read-only graph tools and the trusted Host context their narrow
+   * history proxy delegates with. Absent, a selection of look/find fails closed. */
+  graph?: {
+    graphContext: GraphContextReadPort;
+    taskInputs: TaskContextInputPort;
+    graphHistory: GraphExecutionHistoryReadPort;
+    hostContext: CoreCallContext;
+  };
 }): { ok: true; value: CoordinationTools | null } | { ok: false; rejection: CoreRejection } {
   const unknown = input.selected.filter(name => !BUILTIN_TOOL_NAMES.has(name) && !PLATFORM_COORDINATION_TOOL_NAMES.has(name));
   if (unknown.length > 0) {
@@ -123,11 +205,15 @@ function selectCoordinationTools(input: {
   const mailboxNames = SESSION_MAILBOX_TOOL_NAMES.filter(name => wanted.has(name));
   const whiteboardNames = WHITEBOARD_TOOL_NAMES.filter(name => wanted.has(name));
   const discoveryNames = SESSION_DISCOVERY_TOOL_NAMES.filter(name => wanted.has(name));
-  if (mailboxNames.length === 0 && whiteboardNames.length === 0 && discoveryNames.length === 0) {
+  const graphNames = GRAPH_TOOL_NAMES.filter(name => wanted.has(name));
+  if (mailboxNames.length === 0 && whiteboardNames.length === 0 && discoveryNames.length === 0 && graphNames.length === 0) {
     return { ok: true, value: null };
   }
   if (mailboxNames.length > 0 && input.mailbox === undefined) {
     return { ok: false, rejection: rejected('unsupported', `the Run selects communication tools but no SessionMailbox dependency is bound: ${mailboxNames.join(', ')}`) };
+  }
+  if (graphNames.length > 0 && input.graph === undefined) {
+    return { ok: false, rejection: rejected('unsupported', `the Run selects graph read tools but no graph read dependency is bound: ${graphNames.join(', ')}`) };
   }
   const handles: Array<{ names: readonly string[]; create: (workspace: WorkspaceSandbox) => ToolDefinition[] }> = [];
   if (mailboxNames.length > 0) {
@@ -150,7 +236,22 @@ function selectCoordinationTools(input: {
   if (discoveryNames.length > 0) {
     handles.push(createSessionDiscoveryTools({ sessions: input.sessions, context: input.context }));
   }
-  const names = [...mailboxNames, ...whiteboardNames, ...discoveryNames];
+  if (graphNames.length > 0) {
+    const graphDeps = input.graph as NonNullable<typeof input.graph>;
+    handles.push(createGraphTools({
+      context: input.context,
+      goalRef: input.goalRef,
+      graph: graphDeps.graphContext,
+      inputs: graphDeps.taskInputs,
+      history: createGraphHistoryProxy({
+        graph: graphDeps.graphContext,
+        history: graphDeps.graphHistory,
+        goalRef: input.goalRef,
+        hostContext: graphDeps.hostContext,
+      }),
+    }));
+  }
+  const names = [...mailboxNames, ...whiteboardNames, ...discoveryNames, ...graphNames];
   if (new Set(names).size !== names.length) {
     return { ok: false, rejection: rejected('unsupported', 'the selected coordination tool names are duplicated') };
   }
@@ -372,6 +473,16 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
         goalRef,
         requestIdForCall,
         onWaitRegistered,
+        ...(deps.graphContext === undefined || deps.taskInputs === undefined ? {} : {
+          graph: {
+            graphContext: deps.graphContext,
+            taskInputs: deps.taskInputs,
+            graphHistory: deps.graphHistory,
+            // Work uses the ORIGINAL startRun Host context; the proxy swaps only
+            // this tool call's signal in and never exposes it to the model.
+            hostContext: owned,
+          },
+        }),
       });
       if (!coordination.ok) return coordination.rejection;
       const coordinationTools = coordination.value;

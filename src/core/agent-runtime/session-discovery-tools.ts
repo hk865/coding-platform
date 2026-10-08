@@ -12,6 +12,10 @@
  * There is no mailbox write identity, replay run, material/Role check, manager,
  * owner, cache or lock here. A success output keeps the FULL `ReadResult`; a
  * non-ready result keeps its typed value and never claims success.
+ *
+ * Deprecated (slice 3, T5): new grants use the read-only `look_graph`/`find_graph`
+ * graph tools instead. These exports and their behaviour are kept unchanged for
+ * already-bound Runs and explicit old callers.
  */
 import type { CommitCursor } from '../../contracts/command-event.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';

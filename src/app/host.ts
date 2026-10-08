@@ -44,8 +44,9 @@ import { createCollaborationDriver } from './collaboration-driver.js';
 import { createGoalFanOutDriver } from './goal-fan-out-driver.js';
 import { createWorkbenchTools } from './workbench-tools.js';
 import {
-  attentionSignalToJson, createAttentionObserver, createAttentionScanner, type AttentionScopeV1,
+  attentionSignalToJson, createAttentionObserver, createAttentionScanner, type AttentionScopeV1, type AttentionSignal,
 } from './attention-observer.js';
+import { renderAttentionChanges } from '../core/agent-runtime/context-assembler.js';
 import type { BootstrapExecution, BootstrapResponse, BootstrapReviewMaterial, CoreScope, WorkbenchActor } from './core-http-types.js';
 import {
   createHostRuntimeResolverRegistry,
@@ -502,16 +503,13 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     return {
       budget: localWorkbenchBudget(model),
       hostTemplate: { ...LOCAL_WORKBENCH_HOST_TEMPLATE },
-      // R6 cold-start: an explicitly write-enabled Work may reuse the EXISTING
-      // validated collaboration read/notify tools so it can find related
-      // Sessions, read their cards, read its mailbox and read the task graph.
-      // The read-only Query ceiling still strips every mailbox/whiteboard name,
-      // and no governance writer (`apply_future_plan` or similar) is granted.
-      // Query expands the read capability into its source tools. project_source
-      // is not a Work Kernel grant name; passing it here prevents Work startup.
-      tools: ['read',
-        ...(writeAllowed ? ['write', 'find_related_sessions', 'read_session_card', 'send_session_message',
-          'read_session_inbox', 'read_session_message', 'read_session_message_body', 'query_task_graph'] : []),
+      // Slice 3 (T5): the new grant lists the read-only graph tools `look_graph`
+      // and `find_graph` instead of the three old read names. The old adapters
+      // keep their exports and behavior for already-bound Runs and explicit
+      // callers; the read-only Query ceiling still strips every mailbox name.
+      tools: ['read', 'look_graph', 'find_graph',
+        ...(writeAllowed ? ['write', 'send_session_message',
+          'read_session_inbox', 'read_session_message', 'read_session_message_body'] : []),
         ...(commandsAllowed ? ['shell'] : [])],
       writeScope: writeAllowed ? ['.'] : [],
       skills: { resourceRoot: PLATFORM_SKILL_RESOURCE_ROOT, enabledIds: ['platform-work'] },
@@ -569,14 +567,27 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       const selected = selectedId === null ? undefined : snapshot.models.find(entry => entry.id === selectedId);
       if (selected === undefined) continue;
       const bindingId = `local-workbench-binding-${sha256Hex(key).slice(0, 16)}`;
+      const grant = localWorkbenchGrant(workspace, selected);
+      const boundModel = settingsModelBinding(selected);
+      // Slice 3 (§4.6): the revision is a function of the explicit resolved
+      // fields, so a change to the duty, budget, tools, write scope or model is
+      // a new Host configuration version instead of the same scope-only digest.
+      const configurationRevision = `local-workbench:s3@${sha256Hex(canonicalJson({
+        scope: { projectId: workspace.scope.projectId, workspaceId: workspace.scope.workspaceId },
+        duty: grant.platformDuty ?? 'executor',
+        residentBytes: grant.contextResidentBytes ?? 4096,
+        tools: grant.tools,
+        writeScope: grant.writeScope,
+        modelRevision: boundModel.revision,
+      } as unknown as JsonValue)).slice(0, 16)}`;
       nextBindings.push({
         id: bindingId,
         label: 'Local workbench',
         scope: { projectId: workspace.scope.projectId, workspaceId: workspace.scope.workspaceId },
         role: structuredClone(LOCAL_WORKBENCH_ROLE),
-        configurationRevision: `local-workbench@${sha256Hex(key).slice(0, 16)}`,
-        model: settingsModelBinding(selected),
-        grant: localWorkbenchGrant(workspace, selected),
+        configurationRevision,
+        model: boundModel,
+        grant,
       });
       nextProfiles.push(localWorkbenchProfile(workspace.scope, bindingId, selected));
     }
@@ -1016,7 +1027,10 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   }
   // L-10: without the instance lease this Host delivers no attention and wakes no consumer (no execution driver).
   const attentionDone: Promise<void> = (attentionScopes.length === 0 && inputConsumers.length === 0) || !leaseOwned ? Promise.resolve() : (async () => {
-    const scanner = createAttentionScanner({ workspace: platform.workspace, plans: platform.plans, messages: platform.messages, architecture: platform.architecture });
+    const scanner = createAttentionScanner({ workspace: platform.workspace, plans: platform.plans, messages: platform.messages, architecture: platform.architecture,
+      ...(platform.runtime.readAttentionGraph === undefined ? {} : {
+        readAttentionGraph: platform.runtime.readAttentionGraph.bind(platform.runtime),
+      }) });
     const entries = attentionScopes.map(scope => ({
       scope, observer: createAttentionObserver(scope.config),
       confirmedSequences: new Map<string, number>(), nextSequence: 0,
@@ -1066,14 +1080,31 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         if (entry.observer.processed === null) entry.observer.prime(snapshot);
         const delivery = entry.observer.observe(snapshot, Date.now());
         if (delivery === null || entry.scope.targetSession === null) continue;
-        const text = JSON.stringify({ signals: delivery.signals.map(attentionSignalToJson),
-          sources: { scope, goalRef: entry.scope.goalRef, files: snapshot.files.map(file => ({ path: file.path, version: file.version })), graph: snapshot.graph },
+        // Slice 3 C8 (§4.5): the notification text carries only the CHANGES of
+        // this delivery, never the full snapshot or every file. The same
+        // snapshot therefore renders the same text and the same requestId.
+        const graphSignal = delivery.signals.find((signal): signal is Extract<AttentionSignal, { kind: 'graph_delta' }> => signal.kind === 'graph_delta');
+        const fileSignal = delivery.signals.find((signal): signal is Extract<AttentionSignal, { kind: 'file_delta' }> => signal.kind === 'file_delta');
+        const heartbeatSignal = delivery.signals.find((signal): signal is Extract<AttentionSignal, { kind: 'heartbeat' }> => signal.kind === 'heartbeat');
+        const feedbackSignal = delivery.signals.find((signal): signal is Extract<AttentionSignal, { kind: 'member_feedback' }> => signal.kind === 'member_feedback');
+        const text = renderAttentionChanges({
+          scope,
+          goalRef: entry.scope.goalRef,
+          nodes: graphSignal?.changes?.nodes ?? [],
+          edges: graphSignal?.changes?.edges ?? [],
+          revision: graphSignal?.changes?.revision ?? null,
+          files: (fileSignal?.changedFiles ?? []).map(path => ({
+            path, version: snapshot.files.find(file => file.path === path)?.version ?? null,
+          })),
+          heartbeat: heartbeatSignal === undefined ? null
+            : { pendingInputs: heartbeatSignal.pendingInputs, messageCursor: heartbeatSignal.messageCursor },
+          feedbackIds: [...(feedbackSignal?.items ?? [])],
         });
         const requestId = 'attention:' + scope.workspaceId + ':' + sha256Hex(canonicalJson({
           targetSession: entry.scope.targetSession, paths: entry.scope.paths,
           files: snapshot.files.map(file => ({ path: file.path, version: file.version })),
           graph: snapshot.graph,
-          signals: delivery.signals,
+          signals: delivery.signals.map(attentionSignalToJson),
         } as never));
         try {
           const sent = await platform.messages.sendMessage(hostCtx, {

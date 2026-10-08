@@ -5,6 +5,8 @@ import { ROLE_MATERIAL_KINDS, ROLE_OUTPUT_KINDS, ROLE_RESPONSIBILITIES } from '.
 import type { ValidationIssue, UnknownRecord } from './common.js';
 import { isRecord, stringField, stringArrayField } from './common.js';
 import { validateCommandIdentity } from './identity.js';
+/** Slice 3: the closed platform-duty enum, validated only when present. */
+const PLATFORM_DUTIES = ['executor', 'secretary', 'adviser', 'scribe', 'reviewer'] as const;
 /**
  * 角色规格正文的形状校验（安装期判据，零写入）。
  *
@@ -20,6 +22,14 @@ export function validateRoleSpecContent(value: unknown, path: string, issues: Va
     }
     if (value["schemaVersion"] !== 1) {
         issues.push({ path: path + ".schemaVersion", code: "unknown_schema_version", message: "only schemaVersion 1 is supported" });
+    }
+    if (value["platformDuty"] !== undefined
+        && (typeof value["platformDuty"] !== "string" || !(PLATFORM_DUTIES as readonly string[]).includes(value["platformDuty"]))) {
+        issues.push({
+            path: path + ".platformDuty",
+            code: "bad_enum",
+            message: path + ".platformDuty must be one of " + PLATFORM_DUTIES.join("|"),
+        });
     }
     stringField(value, "label", issues, path + ".label");
     stringField(value, "purpose", issues, path + ".purpose");

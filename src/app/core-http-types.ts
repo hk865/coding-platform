@@ -204,7 +204,10 @@ export type CoreRouteSuffix =
   | 'sessions/transfer-responsibility'
   | 'tasks/archive-state'
   | 'anomalies/list'
-  | 'messages/undelivered-replies';
+  | 'messages/undelivered-replies'
+  // Slice 3: the two public read-only graph routes.
+  | 'graph/look'
+  | 'graph/find';
 
 type SecondArgument<M> = M extends (ctx: CoreCallContext, argument: infer A) => unknown ? A : never;
 type MethodResult<M> = M extends (ctx: CoreCallContext, argument: never) => infer R ? Awaited<R> : never;

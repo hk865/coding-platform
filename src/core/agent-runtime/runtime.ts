@@ -20,6 +20,7 @@ import { createExecutionDriver } from './execution-driver.js';
 import { createExecutionObservation } from './execution-observation.js';
 import { createRuntimeControlCoordinator } from './execution-control.js';
 import { createExecutionPreparation, loadPreparedManifest, rehydratePreparedExecution } from './execution-preparation.js';
+import { createContextAssembler } from './context-assembler.js';
 import { continuationBriefDigest } from '../../contracts/continuation-brief.js';
 import { createSessionHistoryCursorOwner } from './session-operations.js';
 import { createArchiveChangedFilesReader } from './session-anomaly-facts.js';
@@ -79,13 +80,17 @@ function basePort(): RuntimeExecutionPort {
     async observeQuery() {
       return unsupported('R5b.2 skeleton: observeQuery is not implemented');
     },
+    async readAttentionGraph() {
+      return unsupported('B2 skeleton: readAttentionGraph is not implemented');
+    },
   };
 }
 
 export function createAgentRuntime(deps?: RuntimeExecutionDependencies): AgentRuntimeService {
   if (deps === undefined) return { port: basePort() };
 
-  const preparation = createExecutionPreparation(deps);
+  const contextAssembler = createContextAssembler(deps);
+  const preparation = createExecutionPreparation(deps, contextAssembler);
   // R4.3a: the ONE internal control coordinator is assembled before the observer
   // and driver so both share the exact same instance and its private
   // exit/cleanup proof seam. The raw `controls` dependency is optional; without
@@ -202,7 +207,7 @@ export function createAgentRuntime(deps?: RuntimeExecutionDependencies): AgentRu
     return reread.status === 'ready' ? reread : observed;
   };
   const driver = createExecutionDriver({ ...deps, observation, control });
-  const queryPreparation = createQueryPreparation(deps);
+  const queryPreparation = createQueryPreparation(deps, contextAssembler);
   const queryDriver = createQueryExecutionDriver(deps);
   const queryObservation = createQueryObservation(deps);
   const base = basePort();
@@ -219,6 +224,7 @@ export function createAgentRuntime(deps?: RuntimeExecutionDependencies): AgentRu
       prepareQuery: (ctx, request) => queryPreparation.prepare(ctx, request),
       startQuery: (ctx, request) => queryDriver.start(ctx, request),
       observeQuery: (ctx, request) => queryObservation.observe(ctx, request),
+      readAttentionGraph: (ctx, request) => contextAssembler.readAttentionGraph(ctx, request),
     },
   };
 }

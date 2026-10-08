@@ -1,0 +1,821 @@
+/**
+ * Slice 3 CA01–CA15 (spec §5.5): the context assembler of
+ * `src/core/agent-runtime/context-assembler.ts`.
+ *
+ * The pure formatting/budget rows (CA01, CA02, CA05–CA08, CA12) reach
+ * `renderContext`/`renderContinuationBriefZh` directly. The prepare/binding rows
+ * (CA03, CA04, CA15) reach the assembler through the real preparation service
+ * `createExecutionPreparation(deps, assembler)`, whose dependencies are narrow
+ * doubles for what the row does not test. The remaining assembler rows
+ * (CA09–CA11, CA13, CA14) reach the assembler entry the row names with the
+ * §5.1 execution record, role resolution, Host configuration, permissions, and
+ * narrow `graphContext`/`taskInputs` ports.
+ *
+ * One `it` per case row. `H(s)=sha256Hex(s)` and `B(s)=Buffer.byteLength(s,'utf8')`
+ * are written as those exact expressions (§5.1). Part 1 of the slice leaves the
+ * assembler a stub, so the assembler rows are red with
+ * `not implemented: …`; that is the expected part-1 state.
+ */
+import { describe, expect, it } from 'vitest';
+import type { ArtifactRef } from '../../src/contracts/artifact.js';
+import { artifactBodyDigest } from '../../src/contracts/artifact.js';
+import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
+import type { RoleConfigurationRef } from '../../src/contracts/core/identity.js';
+import type { SessionRecord } from '../../src/contracts/core/session.js';
+import type { TaskClaim } from '../../src/contracts/core/task-claim.js';
+import type { ContinuationBriefV1, ContinuationToolCallV1 } from '../../src/contracts/continuation-brief.js';
+import { continuationBriefDigest, renderContinuationBriefZh } from '../../src/contracts/continuation-brief.js';
+import type {
+  DispatchOutboxRef, RoleBindingRefV1, RunRef, RunSnapshot, SourceRefV1, TaskAttemptRef, TaskAttemptSnapshot,
+  TaskBudgetV1, TaskTriple,
+} from '../../src/contracts/dispatch.js';
+import { sha256Hex } from '../../src/contracts/fingerprint.js';
+import type {
+  ContextExtensionsV1, InputDeclarationV1, InputSelectionV1, TaskInputPageV1,
+} from '../../src/contracts/graph-context.js';
+import type { GoalRef, GoalSnapshot, WorkspaceRef, WorkspaceSnapshot } from '../../src/contracts/ledger.js';
+import type { PlanRevisionRef, PlanRevisionSnapshot } from '../../src/contracts/plan.js';
+import type { RoleSpecContentV1, RoleSpecRevisionRef } from '../../src/contracts/role-spec.js';
+import type { RoleSpecResolutionV1 } from '../../src/contracts/role-spec-materials.js';
+import type { TaskEnvelopeV1 } from '../../src/contracts/task-envelope.js';
+import type { ContextAssemblerDependencies } from '../../src/core/agent-runtime/context-assembler.js';
+import { INITIAL_COORDINATION_RESPONSE_GUIDE } from '../../src/core/agent-runtime/query-preparation.js';
+import type { ResolvedRuntimeConfiguration } from '../../src/core/agent-runtime/execution-contracts.js';
+import type { ExecutionPreparationDependencies } from '../../src/core/agent-runtime/execution-preparation.js';
+import { createExecutionPreparation } from '../../src/core/agent-runtime/execution-preparation.js';
+import type { RawArtifactPut, RawArtifactRecord, RawArtifactStorePort } from '../../src/core/record-store/body-ports.js';
+import type { StoreResult } from '../../src/core/record-store/ports.js';
+import type { TaskClaimOutbox } from '../../src/core/work-graph/model/claim-contracts.js';
+import type { TaskContextInputPort } from '../../src/core/work-graph/model/context-input-contracts.js';
+import type { TaskExecutionRecord } from '../../src/core/work-graph/model/execution-read-contracts.js';
+import type { GraphContextFactsV1, GraphContextReadPort } from '../../src/core/work-graph/model/graph-context-contracts.js';
+import type { MaterialPort } from '../../src/core/work-graph/model/material-contracts.js';
+import type { QueryPreparationFacts } from '../../src/core/work-graph/queries/contracts.js';
+import {
+  CONTEXT_FORMAT_VERSION, CONTEXT_SECTION_HEADERS, CONTEXT_SECTION_ORDER, QUERY_CONTEXT_PRELUDE,
+  WORK_CONTEXT_PRELUDE, createContextAssembler, renderAttentionChanges, renderContext,
+} from '../../src/core/agent-runtime/context-assembler.js';
+
+void renderAttentionChanges;
+
+const H = (s: string): string => sha256Hex(s);
+const B = (s: string): number => Buffer.byteLength(s, 'utf8');
+
+// -------------------------------------------------------------------------- //
+// §5.1 unified fixture values                                                 //
+// -------------------------------------------------------------------------- //
+
+const AT = '2026-09-24T00:00:00.000Z';
+const HOST_ACTOR = { kind: 'human' as const, id: 's3-ca-operator' };
+
+const GOAL_REF: GoalRef = { aggregateType: 'Goal', projectId: 'p', goalId: 'g' };
+const PLAN_REF: PlanRevisionRef = { aggregateType: 'PlanRevision', projectId: 'p', planId: 'p1' };
+const WORKSPACE_REF: WorkspaceRef = { aggregateType: 'Workspace', projectId: 'p', workspaceId: 'w' };
+const TASK_A: TaskTriple = { projectId: 'p', goalId: 'g', taskId: 'tA' };
+const TASK_B: TaskTriple = { projectId: 'p', goalId: 'g', taskId: 'tB' };
+const TASK_F: TaskTriple = { projectId: 'p', goalId: 'g', taskId: 'tF' };
+const RUN_A_REF: RunRef = { aggregateType: 'Run', projectId: 'p', goalId: 'g', runId: 'runA' };
+const RUN_B_REF: RunRef = { aggregateType: 'Run', projectId: 'p', goalId: 'g', runId: 'runB' };
+
+/** §5.1: legacy artifact body `old-A`, digests/size derived from the body. */
+const OLD_A: ArtifactRef = {
+  kind: 'artifact', contentType: 'text/plain', digest: H('old-A'), sizeBytes: B('old-A'),
+  source: { kind: 'artifact', refId: 'old-A', revision: '1' },
+};
+
+const ROLE_BINDING: RoleBindingRefV1 = {
+  schemaVersion: 1, bindingId: 's3-ca-binding', templateId: 'builder', templateRevision: '1',
+  bindingVersion: 1, policyRevision: 'legacy-template',
+};
+const TASK_BUDGET: TaskBudgetV1 = { tokenBudget: 4096, deadline: null };
+const HOST_CONFIGURATION_REVISION = 's3-ca-host@1';
+const CA_PERMISSIONS: TaskEnvelopeV1['permissions'] = {
+  policyRevision: 'legacy-template', tools: ['read'], writeScope: [],
+};
+
+const GOAL_SNAPSHOT: GoalSnapshot = {
+  ref: GOAL_REF, workspaceRef: WORKSPACE_REF, objective: 'Ship platform', desiredState: 'active',
+  activePlanRevision: PLAN_REF, revision: 1,
+};
+const WORKSPACE_SNAPSHOT: WorkspaceSnapshot = { ref: WORKSPACE_REF, revision: 7 };
+
+const ROLE_SPEC_REF: RoleSpecRevisionRef = {
+  aggregateType: 'RoleSpecRevision', projectId: 'p', roleId: 'builder', revision: 1,
+};
+const SESSION_ROLE: RoleConfigurationRef = {
+  kind: 'role_spec', pin: { ref: ROLE_SPEC_REF, digest: H('builder-role-spec-content') },
+};
+
+function roleSpec(): RoleSpecContentV1 {
+  return {
+    schemaVersion: 1, platformDuty: 'executor', label: 'Executor', purpose: 'Execute the assigned task.',
+    responsibility: ['execution'], requiredMaterials: [], optionalMaterials: [],
+    permissions: { tools: ['read'], writeScope: 'none' },
+    budget: { source: 'task-budget', scope: 'assigned-task' },
+    requiredOutputs: [],
+    exit: { success: 'the task is delivered', stop: 'the task cannot continue', handoff: 'state the facts and next step' },
+  };
+}
+
+function resolvedRole(): Extract<RoleSpecResolutionV1, { status: 'resolved' }> {
+  return { status: 'resolved', roleId: 'builder', revision: ROLE_SPEC_REF, spec: roleSpec() };
+}
+
+function roleResolution(): RoleSpecResolutionV1 {
+  return resolvedRole();
+}
+
+function runtimeConfiguration(): ResolvedRuntimeConfiguration {
+  return {
+    configurationRevision: HOST_CONFIGURATION_REVISION,
+    model: {
+      configuration: { revision: 's3-ca-model@1', provider: 'scripted', model: 's3-test', baseUrl: 'http://127.0.0.1' },
+      client: {} as unknown as ResolvedRuntimeConfiguration['model']['client'],
+    },
+    budget: {
+      contextWindowTokens: 128000, inputTokens: null, outputTokens: null,
+      maxRequests: 4, maxToolCalls: 8, timeoutMs: null, perResponseTokens: 512,
+    },
+    hostTemplate: { templateId: 'builder', revision: '1', digest: H('builder-template-revision-1') },
+    tools: ['read'], writeScope: [],
+    skills: { resourceRoot: 'resources/skills', enabledIds: [] },
+    systemInstruction: 'Static executor system instruction: platform facts only.',
+    deniedPrefixes: [], processSandboxOptions: {}, materialBasis: null,
+    platformDuty: 'executor', contextResidentBytes: 4096,
+  };
+}
+
+const CTX: CoreCallContext = {
+  projectId: 'p', workspaceId: 'w',
+  principal: { kind: 'host', actor: HOST_ACTOR },
+  materialReader: { kind: 'host', projectId: 'p', workspaceId: 'w', actor: HOST_ACTOR },
+  signal: new AbortController().signal,
+};
+
+/** The default §5.1 accepted Plan: stage s (Main) with tA/tB, obligation oB/vB, edge A.out. */
+function planSnapshot(): PlanRevisionSnapshot {
+  return {
+    schemaVersion: 2, ref: PLAN_REF, revision: 1, goalRef: GOAL_REF, planId: 'p1', planRevision: 1,
+    acceptedAt: AT,
+    effectiveCompletionPolicy: {
+      ref: { aggregateType: 'CompletionPolicyRevision', projectId: 'p', policyId: 's3-policy', revision: 1 },
+      digest: H('s3-policy-content'),
+    },
+    effectiveArchitectureBaseline: {
+      ref: { aggregateType: 'ArchitectureBaselineRevision', projectId: 'p', baselineId: 's3-baseline', revision: 1 },
+      digest: H('s3-baseline-content'),
+    },
+    stages: [{ stageId: 's', title: 'Main' }],
+    tasks: [
+      { taskId: 'tA', stageId: 's', title: 'A', requirementLevel: 'required', taskKind: 'work',
+        disposition: 'active', phase: 'pending', scope: { kind: 'goal' }, executionIntent: 'request_execution' },
+      { taskId: 'tB', stageId: 's', title: 'B', requirementLevel: 'required', taskKind: 'work',
+        disposition: 'active', phase: 'pending', scope: { kind: 'goal' }, executionIntent: 'request_execution' },
+    ],
+    assignments: [
+      { taskId: 'tA', role: 'builder', instruction: 'Implement A' },
+      { taskId: 'tB', role: 'builder', instruction: 'Implement B' },
+    ],
+    obligations: [{
+      obligationId: 'oB', title: 'Deliver B', requirementLevel: 'required', taskIds: ['tB'],
+      verificationRequirements: [{
+        requirementId: 'vB', requirementLevel: 'required', kind: 'static', description: 'node check-b.js',
+      }],
+    }],
+    taskHierarchy: { parentOf: [] },
+    executionDag: { dependsOn: [{ taskId: 'tB', dependsOnId: 'tA', requires: { kind: 'artifact', label: 'A.out' } }] },
+    inputRequirements: [{ requirementId: 'legacy-old-a', consumerTaskId: 'tB', kind: 'artifact', artifactRef: OLD_A }],
+  };
+}
+
+/** A `plan_only` task with no assignment, obligations or acceptance (CA10). */
+function planOnlySnapshot(): PlanRevisionSnapshot {
+  const plan = planSnapshot();
+  return {
+    ...plan,
+    tasks: [{
+      taskId: 'tF', title: 'Future F', requirementLevel: 'required', taskKind: 'work',
+      disposition: 'active', phase: 'pending', scope: { kind: 'goal' }, executionIntent: 'plan_only',
+    }],
+    assignments: [],
+    obligations: [],
+    executionDag: { dependsOn: [] },
+    inputRequirements: [],
+  } as PlanRevisionSnapshot;
+}
+
+function taskRecord(input: {
+  task: TaskTriple; runId: string; plan: PlanRevisionSnapshot; sessionId: string;
+}): TaskExecutionRecord {
+  const runRef: RunRef = { aggregateType: 'Run', projectId: 'p', goalId: 'g', runId: input.runId };
+  const attemptRef: TaskAttemptRef = {
+    aggregateType: 'TaskAttempt', projectId: 'p', goalId: 'g', taskId: input.task.taskId,
+    attemptId: `attempt-${input.runId}`,
+  };
+  const outboxRef: DispatchOutboxRef = {
+    aggregateType: 'DispatchOutboxEntry', projectId: 'p', goalId: 'g', taskId: input.task.taskId,
+    attemptId: attemptRef.attemptId,
+  };
+  const claim: TaskClaim = {
+    task: input.task, planRef: input.plan.ref, workspaceId: 'w',
+    sessionRef: { projectId: 'p', sessionId: input.sessionId }, sessionRevision: 1, generation: 1,
+    runRef, attemptRef, outboxRef, claimedAt: AT,
+  };
+  const outbox: TaskClaimOutbox = { ref: outboxRef, revision: 1, schemaVersion: 1, status: 'pending', claim };
+  const run: RunSnapshot = {
+    ref: runRef, revision: 1, schemaVersion: 1, task: input.task, attemptId: attemptRef.attemptId,
+    planRef: input.plan.ref, roleBinding: ROLE_BINDING, budget: TASK_BUDGET,
+    workspaceSnapshot: { workspaceId: 'w', revision: 7 }, status: 'starting', outcome: null, exitCode: null,
+    lastEventSeq: 0, lastRuntimeEventId: '', lastFactEventId: '', envelope: null, startedAt: null, endedAt: null,
+  };
+  const attempt: TaskAttemptSnapshot = {
+    ref: attemptRef, revision: 1, schemaVersion: 1, runId: input.runId, planRef: input.plan.ref,
+    status: 'claimed', startedAt: null, endedAt: null, endOutcome: null,
+  };
+  const session: SessionRecord = {
+    ref: { aggregateType: 'Session', projectId: 'p', sessionId: input.sessionId }, revision: 1,
+    kernel: { adapterId: 's3-ca-kernel', kernelSessionId: `ks-${input.sessionId}` },
+    lifecycle: 'active', health: 'available', role: SESSION_ROLE, workspaceId: 'w',
+    lastExecutionRef: null, occupancy: null, historyCursor: null, createdAt: AT, archivedAt: null,
+  };
+  return { run, attempt, outbox, plan: input.plan, session, lease: null, readThrough: null };
+}
+
+function workRecord(): TaskExecutionRecord {
+  return taskRecord({ task: TASK_B, runId: 'runB', plan: planSnapshot(), sessionId: 'sb' });
+}
+
+function endedRecordA(): TaskExecutionRecord {
+  const record = taskRecord({ task: TASK_A, runId: 'runA', plan: planSnapshot(), sessionId: 'sa' });
+  record.run = { ...record.run, status: 'ended', outcome: 'completed', exitCode: 0, endedAt: AT };
+  return record;
+}
+
+function assemblerInput(record: TaskExecutionRecord) {
+  return { execution: record, role: roleResolution(), configuration: runtimeConfiguration(), permissions: CA_PERMISSIONS };
+}
+
+const CA_ASSEMBLER_INPUT = assemblerInput(workRecord());
+
+// -------------------------------------------------------------------------- //
+// Narrow dependency doubles (the row names what it tests; everything else is a //
+// narrow port, never the code under test).                                    //
+// -------------------------------------------------------------------------- //
+
+/** The five extension seams are unassembled by default (CA14). */
+function notImplementedExtensions(): ContextExtensionsV1 {
+  return {
+    notes: { availability: 'not_implemented', rows: [] },
+    anomalies: { availability: 'not_implemented', rows: [] },
+    footprint: { availability: 'not_implemented', rows: [] },
+    goalSettings: { availability: 'not_implemented', autonomy: null },
+    decisions: { availability: 'not_implemented', rows: [] },
+  };
+}
+
+function graphFacts(overrides: Partial<GraphContextFactsV1> = {}): GraphContextFactsV1 {
+  return {
+    goal: GOAL_SNAPSHOT, graph: null, architecture: null, executions: [], inputs: [],
+    extensions: notImplementedExtensions(), sources: [], readThrough: null, ...overrides,
+  };
+}
+
+function graphContextOf(facts: GraphContextFactsV1 | (() => GraphContextFactsV1)): GraphContextReadPort {
+  return {
+    async readContextFacts() {
+      return { status: 'ready', value: typeof facts === 'function' ? facts() : facts };
+    },
+    async lookGraph() { return { status: 'not_found' }; },
+    async findGraph() { return { status: 'not_found' }; },
+    async readAttentionFacts() { return { status: 'not_found' }; },
+  };
+}
+
+function taskInputsOf(selections: InputSelectionV1[], page: TaskInputPageV1 | null = null): TaskContextInputPort {
+  return {
+    async readTaskInputs() { return { status: 'ready', value: selections }; },
+    async readTaskInputPage() {
+      return page === null ? { status: 'not_found' } : { status: 'ready', value: page };
+    },
+  };
+}
+
+/** A material double so the assembler can be constructed; these rows never open material. */
+function materialDouble(): MaterialPort {
+  return {
+    async storeArtifact() {
+      return { status: 'rejected', code: 'unsupported', reason: 'the CA fixture does not store material' };
+    },
+    async openArtifact() {
+      return { status: 'rejected', code: 'unsupported', reason: 'the CA fixture does not open material' };
+    },
+  };
+}
+
+function bodyStore() {
+  const records = new Map<string, RawArtifactRecord>();
+  let puts = 0;
+  return {
+    async put(input: RawArtifactPut): Promise<StoreResult<{ ref: ArtifactRef; replayed: boolean }>> {
+      puts += 1;
+      const fallbackSource: SourceRefV1 = { kind: 'workspace', refId: 'w', revision: '7' };
+      const ref: ArtifactRef = {
+        kind: 'artifact', contentType: input.contentType, digest: artifactBodyDigest(input.body),
+        sizeBytes: B(input.body), source: input.sourceRefs[0] ?? fallbackSource,
+      };
+      if (!records.has(ref.digest)) {
+        records.set(ref.digest, { ref, body: input.body, sourceRefs: input.sourceRefs, origin: input.origin });
+      }
+      return { status: 'ready', value: { ref, replayed: false } };
+    },
+    async read(ref: ArtifactRef): Promise<StoreResult<RawArtifactRecord>> {
+      const record = records.get(ref.digest);
+      return record === undefined
+        ? { status: 'rejected', code: 'not_found', reason: `no body for ${ref.digest}` }
+        : { status: 'ready', value: record };
+    },
+    putCount: (): number => puts,
+    size: (): number => records.size,
+  };
+}
+
+function assemblerBase(): ContextAssemblerDependencies {
+  return {
+    executions: { readExecution: async () => ({ status: 'not_found' }) },
+    roles: { resolveRoleBindingFacts: async () => ({ result: { status: 'not_found' }, guards: [] }) },
+    materials: materialDouble(),
+    bodies: bodyStore(),
+  };
+}
+
+/** The assembler with only the minimum substitution; every row names its own deps. */
+function assemblerWith(deps: { graphContext?: GraphContextReadPort; taskInputs?: TaskContextInputPort } = {}) {
+  const base = assemblerBase();
+  return createContextAssembler({
+    ...base,
+    ...(deps.graphContext === undefined ? {} : { graphContext: deps.graphContext }),
+    ...(deps.taskInputs === undefined ? {} : { taskInputs: deps.taskInputs }),
+  });
+}
+
+type ReadCounts = { graph: number; inputs: number; brief: number };
+
+/**
+ * CA03/CA04/CA15: the real preparation service on narrow owner doubles. The
+ * `execution` record is the §5.1 fact; `graphContext`/`taskInputs` are counting
+ * ports so a bound prepare is provably rehydrated without any reread.
+ */
+function preparationHarness(options: {
+  record?: TaskExecutionRecord;
+  graphContext?: GraphContextReadPort;
+  taskInputs?: TaskContextInputPort;
+} = {}) {
+  const record = options.record ?? workRecord();
+  const bodies = bodyStore();
+  const counts: ReadCounts = { graph: 0, inputs: 0, brief: 0 };
+  const facts: { current: GraphContextFactsV1 } = { current: graphFacts() };
+  const graphContext: GraphContextReadPort = options.graphContext ?? {
+    async readContextFacts() {
+      counts.graph += 1;
+      return { status: 'ready', value: structuredClone(facts.current) };
+    },
+    async lookGraph() { return { status: 'not_found' }; },
+    async findGraph() { return { status: 'not_found' }; },
+    async readAttentionFacts() { counts.brief += 1; return { status: 'not_found' }; },
+  };
+  const taskInputs: TaskContextInputPort = options.taskInputs ?? {
+    async readTaskInputs() { counts.inputs += 1; return { status: 'ready', value: [] }; },
+    async readTaskInputPage() { counts.inputs += 1; return { status: 'not_found' }; },
+  };
+  const assembler = assemblerWith({ graphContext, taskInputs });
+  const deps: ExecutionPreparationDependencies = {
+    executions: { readExecution: async () => ({ status: 'ready', value: record }) },
+    roles: { resolveRoleBindingFacts: async () => ({ result: { status: 'ready', value: roleResolution() }, guards: [] }) },
+    bodies,
+    host: { resolveConfiguration: async () => ({ status: 'ready', value: runtimeConfiguration() }) },
+    now: () => AT,
+    newId: () => 's3-ca-id',
+    graphContext,
+    taskInputs,
+  };
+  return { record, bodies, counts, facts, assembler, preparation: createExecutionPreparation(deps, assembler) };
+}
+
+/** Narrows a `ReadResult` to its ready branch for the prepare rows. */
+function ready<T>(result: T): Extract<T, { status: 'ready' }> {
+  if ((result as { status?: string }).status !== 'ready') {
+    throw new Error(`expected a ready result, got ${String((result as { status?: string }).status)}`);
+  }
+  return result as Extract<T, { status: 'ready' }>;
+}
+
+// -------------------------------------------------------------------------- //
+// Pure renderer fixtures (CA01/CA02/CA05–CA08/CA12)                           //
+// -------------------------------------------------------------------------- //
+
+const REQUIRED = { role: 'R', goal: 'G', task: 'T' };
+const ROWS = {
+  footprint: [{ key: 'F', text: 'F' }],
+  notes: [{ key: 'N', text: 'N' }],
+  reminders: [{ key: 'M', text: 'M' }],
+  inputs: [{ key: 'I', text: 'I' }],
+};
+const CA01_INPUT = `${WORK_CONTEXT_PRELUDE}\n\n## Runtime context\nR\n\n## Goal\nG\n\n## Accepted task\nT`
+  + '\n\n## Footprint\nF\n\n## Note index\nN\n\n## Reminders\nM\n\n## Selected inputs\nI';
+
+/** The optional part of CA01, used as the exact CA06 budget and string. */
+const OPTIONAL_BILLED = '\n\n## Footprint\nF\n\n## Note index\nN\n\n## Reminders\nM\n\n## Selected inputs\nI';
+
+const MULTI_ROWS = {
+  footprint: [{ key: 'F1', text: 'F1' }, { key: 'F2', text: 'F2' }],
+  notes: [{ key: 'N1', text: 'N1' }, { key: 'N2', text: 'N2' }],
+  reminders: [{ key: 'M1', text: 'M1' }, { key: 'M2', text: 'M2' }],
+  inputs: [{ key: 'I1', text: 'I1' }, { key: 'I2', text: 'I2' }],
+};
+/** The same rows, with the per-section item order and the section insertion order scrambled. */
+const MULTI_ROWS_SCRAMBLED = {
+  inputs: [{ key: 'I2', text: 'I2' }, { key: 'I1', text: 'I1' }],
+  reminders: [{ key: 'M2', text: 'M2' }, { key: 'M1', text: 'M1' }],
+  notes: [{ key: 'N2', text: 'N2' }, { key: 'N1', text: 'N1' }],
+  footprint: [{ key: 'F2', text: 'F2' }, { key: 'F1', text: 'F1' }],
+};
+
+/** Returns the text of one frozen section, between its header and the next header. */
+function sectionText(input: string, header: string, nextHeader: string): string {
+  const start = input.indexOf(header);
+  if (start < 0) return '';
+  const end = nextHeader === '' ? input.length : input.indexOf(nextHeader, start + header.length);
+  return input.slice(start + header.length, end < 0 ? input.length : end);
+}
+
+// -------------------------------------------------------------------------- //
+// CA12: a complete legal C3 brief, rendered by the real renderer.             //
+// -------------------------------------------------------------------------- //
+
+const sha = (character: string): string => character.repeat(64);
+function c3RunRef(runId: string): RunRef { return { aggregateType: 'Run', projectId: 'p', goalId: 'g', runId }; }
+function c3Artifact(contentType: string, digest = sha('a')): ArtifactRef {
+  return { kind: 'artifact', contentType, digest, sizeBytes: 12, source: { kind: 'workspace', refId: 'w', revision: '3' } };
+}
+function c3ToolCall(callId: string): ContinuationToolCallV1 {
+  return { callId, name: 'write_file', target: { text: 'src/a.ts', truncated: false }, result: 'success',
+    sideEffect: 'confirmed', changedPaths: ['src/a.ts'], changedPathsOmitted: 0, error: null };
+}
+
+/** A complete `check_failed` rework brief continuing in another, seeded Session. */
+function c3Brief(): ContinuationBriefV1 {
+  const previousRun = c3RunRef('runB');
+  const roundRef = { aggregateType: 'VerificationRound' as const, projectId: 'p', workspaceId: 'w', goalId: 'g', taskId: 'tB',
+    runId: 'runB', roundId: 'rb' };
+  return {
+    schemaVersion: 1,
+    runRef: c3RunRef('runB2'),
+    task: TASK_B,
+    requeueRef: { aggregateType: 'TaskRequeue', projectId: 'p', goalId: 'g', taskId: 'tB', afterRunId: 'runB' },
+    mode: 'rework',
+    failureClass: 'check_failed',
+    trigger: { actorClass: 'system', goalResume: false, requeueNumber: 2, autoRework: { count: 1, cap: 3 },
+      earlierRequeues: [{ afterRunId: 'runB1', failureClass: 'run_failed' }] },
+    previous: {
+      runRef: previousRun,
+      attemptRef: { aggregateType: 'TaskAttempt', projectId: 'p', goalId: 'g', taskId: 'tB', attemptId: 'attempt-b' },
+      sessionRef: { projectId: 'p', sessionId: 'sb' },
+      outcome: 'completed', origin: 'observed', interruption: null, cancelledBy: null, error: null, limit: null, budget: null,
+      wait: { messageRef: { aggregateType: 'SessionMessage', projectId: 'p', workspaceId: 'w', messageId: 'm-1' }, status: 'responded' },
+      unacceptedSteers: [{ intentRef: { aggregateType: 'ControlIntent', projectId: 'p', workspaceId: 'w', intentId: 'i-1' },
+        text: { text: 'use the new helper', truncated: false } }],
+      endedAt: AT,
+    },
+    factsFrom: { runRef: previousRun, hops: 0, truncated: false },
+    stoppedAt: { kernel: 'read', reason: null, turnStatus: 'completed', lastPosition: 42,
+      lastToolGroup: { sourceMessageId: 'msg-9', calls: 2 }, lastAssistant: { text: 'Done.', truncated: false },
+      window: { fromPosition: 1, throughPosition: 42, omittedRecords: 0 } },
+    toolCalls: { confirmed: [c3ToolCall('call-1')], notExecuted: [], unknown: [],
+      confirmedOmitted: 0, notExecutedOmitted: 0, unknownOmitted: 0 },
+    acceptedInputs: { steers: [], steersOmitted: 0,
+      messages: [{ messageRef: { aggregateType: 'SessionMessage', projectId: 'p', workspaceId: 'w', messageId: 'm-1' },
+        part: 'response', excerpt: { text: 'answer', truncated: false } }], messagesOmitted: 0 },
+    checks: { roundRef, roundOrdinal: 1,
+      failing: [{ checkId: 'lint', phase: 'finished', outcome: 'FAIL', cause: null,
+        reportRef: c3Artifact('application/vnd.coding-platform.verification-check-report+json;version=1') }],
+      gapCodes: [] },
+    requeue: { reason: { text: 'auto-rework: check_failed', truncated: false }, reasonAuthor: 'system',
+      newInputs: [{ kind: 'artifact', ref: c3Artifact('text/markdown', sha('c')), body: { text: 'diagnosis', truncated: false } }] },
+    workspace: {
+      selfChanged: { status: 'known', confirmed: ['src/a.ts'], possible: [], omitted: 0 },
+      checkpoints: [
+        { kind: 'round_open', at: AT, workspaceRevision: 4, sourceDigest: sha('d'), unavailableReason: null },
+        { kind: 'requeue', at: AT, workspaceRevision: null, sourceDigest: null, unavailableReason: 'too many files' },
+        { kind: 'brief', at: AT, workspaceRevision: 5, sourceDigest: sha('e'), unavailableReason: null },
+      ],
+      segments: [{ from: 0, to: 1, verdict: 'unknown', reason: 'the later checkpoint has no source digest' },
+        { from: 1, to: 2, verdict: 'unknown', reason: 'the earlier checkpoint has no source digest' }],
+      unobserved: { from: 'previous_run_end', to: 0, previousEndedAt: AT },
+      uncommitted: { status: 'git', baseCommit: 'abc123', paths: ['src/a.ts'], omitted: 0, reason: null },
+    },
+    session: { continuity: 'other_session_seeded', sessionRef: { projectId: 'p', sessionId: 'sb2' },
+      seededFrom: { sessionRef: { projectId: 'p', sessionId: 'sb' }, throughPosition: 40 }, boundaryPosition: null },
+    standingInstructionVersion: 1,
+  };
+}
+
+// -------------------------------------------------------------------------- //
+// CA09/CA11: missing and oversized selected inputs.                           //
+// -------------------------------------------------------------------------- //
+
+const MISSING_DECLARATION: InputDeclarationV1 = {
+  declarationId: 'd1:missing-a', consumer: TASK_B, planRef: PLAN_REF, upstream: TASK_A,
+  requires: { kind: 'artifact', label: 'A.out' }, legacyArtifactRef: null,
+};
+const MISSING_SELECTION: InputSelectionV1 = {
+  declaration: MISSING_DECLARATION, state: 'missing', source: null, candidates: [],
+  usage: 'historical_explanation', reason: 'no_labeled_output', errorCode: null,
+};
+
+const LONG_BODY = 'x'.repeat(5000);
+const LONG_REF: ArtifactRef = {
+  kind: 'artifact', contentType: 'text/plain', digest: H(LONG_BODY), sizeBytes: B(LONG_BODY),
+  source: { kind: 'artifact', refId: 'long-body', revision: '1' },
+};
+const LONG_DECLARATION: InputDeclarationV1 = {
+  declarationId: 'd1:long-body', consumer: TASK_B, planRef: PLAN_REF, upstream: null,
+  requires: { kind: 'artifact', label: 'long-body' }, legacyArtifactRef: LONG_REF,
+};
+const LONG_SELECTION: InputSelectionV1 = {
+  declaration: LONG_DECLARATION, state: 'selected', source: { kind: 'artifact', ref: LONG_REF, provenance: { kind: 'run', owner: RUN_A_REF } },
+  candidates: [{ kind: 'artifact', ref: LONG_REF, provenance: { kind: 'run', owner: RUN_A_REF } }],
+  usage: 'historical_explanation', reason: null, errorCode: null,
+};
+
+/** CA13: the formal Query facts, with the §5.1 Goal/Workspace and the original initiator. */
+function queryFacts(): QueryPreparationFacts {
+  return {
+    record: {} as QueryPreparationFacts['record'],
+    goal: GOAL_SNAPSHOT,
+    workspace: WORKSPACE_SNAPSHOT,
+    focusPlan: null,
+    initiator: HOST_ACTOR,
+  };
+}
+
+/** CA15: only the injected extension reader throws; the surrounding facts are valid. */
+function extensionsThrowingGraphContext(): GraphContextReadPort {
+  const extensionsReader = async (): Promise<ContextExtensionsV1> => {
+    throw new Error('extensions corrupt');
+  };
+  return {
+    async readContextFacts() {
+      const surrounding = graphFacts();
+      try {
+        const extensions = await extensionsReader();
+        return { status: 'ready', value: { ...surrounding, extensions } };
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        return { status: 'rejected', code: 'unavailable', reason: `the extension projection failed: ${reason}` };
+      }
+    },
+    async lookGraph() { return { status: 'not_found' }; },
+    async findGraph() { return { status: 'not_found' }; },
+    async readAttentionFacts() { return { status: 'not_found' }; },
+  };
+}
+
+describe('S3 context assembler CA01-CA15', () => {
+  it('CA01 renders the fixed work prelude and all seven sections byte for byte', () => {
+    const result = renderContext({
+      prelude: WORK_CONTEXT_PRELUDE, required: REQUIRED, optional: ROWS,
+      continuationSuffix: null, residentBudgetBytes: 4096,
+    });
+    expect(result.input).toBe(CA01_INPUT);
+    expect(result.totalBytes).toBe(B(CA01_INPUT));
+    expect(H(result.input)).toBe(H(CA01_INPUT));
+    expect(CONTEXT_FORMAT_VERSION).toBe('s3-context-v1');
+    expect(CONTEXT_SECTION_ORDER).toEqual(['role', 'goal', 'task', 'footprint', 'notes', 'reminders', 'inputs', 'continuation']);
+  });
+
+  it('CA02 ignores the insertion order of the optional row arrays', () => {
+    const ordered = renderContext({
+      prelude: WORK_CONTEXT_PRELUDE, required: REQUIRED, optional: MULTI_ROWS,
+      continuationSuffix: null, residentBudgetBytes: 4096,
+    });
+    const scrambled = renderContext({
+      prelude: WORK_CONTEXT_PRELUDE, required: REQUIRED, optional: MULTI_ROWS_SCRAMBLED,
+      continuationSuffix: null, residentBudgetBytes: 4096,
+    });
+    expect(scrambled).toEqual(ordered);
+    expect(scrambled.input).toBe(ordered.input);
+    expect(scrambled.totalBytes).toBe(ordered.totalBytes);
+    expect(scrambled.residentBytes).toBe(ordered.residentBytes);
+    expect(scrambled.sections).toEqual(ordered.sections);
+  });
+
+  it('CA03 two unbound preparations of the same facts share bytes and ArtifactRefs', async () => {
+    const harness = preparationHarness();
+    const first = ready(await harness.preparation.prepare(CTX, { runRef: RUN_B_REF, requestId: 'ca03-first' })).value;
+    const second = ready(await harness.preparation.prepare(CTX, { runRef: RUN_B_REF, requestId: 'ca03-second' })).value;
+    expect(second.inputBinding.inputDigest).toBe(first.inputBinding.inputDigest);
+    expect(second.envelope.bundleRef).toEqual(first.envelope.bundleRef);
+    expect(second.envelope.bundleRef.digest).toBe(first.envelope.bundleRef.digest);
+    // The identical manifest is the same content-addressed body, never a second body.
+    expect(harness.bodies.size()).toBe(1);
+  });
+
+  it('CA04 a bound context ignores changed Goal/notes and never rereads graph or inputs', async () => {
+    const harness = preparationHarness();
+    const first = ready(await harness.preparation.prepare(CTX, { runRef: RUN_B_REF, requestId: 'ca04-first' })).value;
+    // The entry owner binds the Prepared value; the Run now carries its inputBinding.
+    harness.record.run = { ...harness.record.run, inputBinding: first.inputBinding, envelope: first.envelope };
+    // Both upsteam facts change after the bind.
+    harness.facts.current.goal = { ...harness.facts.current.goal, objective: 'Changed objective after bind' };
+    harness.facts.current.extensions = {
+      ...harness.facts.current.extensions,
+      notes: { availability: 'available', rows: [{ key: 'n1', node: { kind: 'task', ref: TASK_B, planRef: PLAN_REF }, text: 'changed note', sources: [] }] },
+    };
+    harness.counts.graph = 0;
+    harness.counts.inputs = 0;
+    harness.counts.brief = 0;
+    const second = ready(await harness.preparation.prepare(CTX, { runRef: RUN_B_REF, requestId: 'ca04-second' })).value;
+    expect(second).toEqual(first);
+    expect(harness.counts.graph).toBe(0);
+    expect(harness.counts.inputs).toBe(0);
+    expect(harness.counts.brief).toBe(0);
+  });
+
+  it('CA05 obligations, acceptance and the brief are never cut even past 4096 bytes', () => {
+    const obligations = 'obligations: Deliver B';
+    const acceptance = 'acceptance: vB/static: node check-b.js';
+    const brief = `continuation: ${'c'.repeat(5000)}`;
+    const longTask = `plan: p1@1\n${obligations}\n${acceptance}\n${'t'.repeat(5000)}`;
+    const result = renderContext({
+      prelude: WORK_CONTEXT_PRELUDE, required: { role: 'R', goal: 'G', task: longTask },
+      optional: {}, continuationSuffix: brief, residentBudgetBytes: 4096,
+    });
+    expect(result.input).toContain(obligations);
+    expect(result.input).toContain(acceptance);
+    expect(result.input).toContain(brief);
+    expect(result.totalBytes).toBeGreaterThan(4096);
+    expect(result.residentBytes).toBe(0);
+  });
+
+  it('CA06 a budget equal to the full billed string keeps every row and omits nothing', () => {
+    const result = renderContext({
+      prelude: WORK_CONTEXT_PRELUDE, required: REQUIRED, optional: ROWS,
+      continuationSuffix: null, residentBudgetBytes: B(OPTIONAL_BILLED),
+    });
+    expect(result.input).toBe(CA01_INPUT);
+    expect(result.residentBytes).toBe(B(OPTIONAL_BILLED));
+    expect(result.sections.filter((section) => section.omitted > 0)).toEqual([]);
+    for (const name of ['footprint', 'notes', 'reminders', 'inputs'] as const) {
+      expect(result.sections.find((section) => section.name === name)?.omitted).toBe(0);
+    }
+  });
+
+  it('CA07 keeps the longest global prefix and omits the rows that would not fit', () => {
+    const rowF = 'F'.repeat(100);
+    const rowX = 'X'.repeat(200);
+    const rowY = 'Y';
+    const billed = `\n\n## Footprint\n${rowF}\n另有 2 条，用‘看’读`;
+    const result = renderContext({
+      prelude: WORK_CONTEXT_PRELUDE, required: REQUIRED,
+      optional: { footprint: [{ key: 'F', text: rowF }, { key: 'X', text: rowX }, { key: 'Y', text: rowY }] },
+      continuationSuffix: null, residentBudgetBytes: B(billed),
+    });
+    expect(result.residentBytes).toBe(B(billed));
+    expect(result.input).toContain(rowF);
+    expect(result.input).not.toContain(rowX);
+    expect(result.input).not.toContain(rowY);
+    expect(result.sections.find((section) => section.name === 'footprint')?.omitted).toBe(2);
+  });
+
+  it('CA08 a zero budget omits all four optional sections and lists them on the task card', () => {
+    const omissions = `\n\n## Context omissions\nfootprint: 另有 1 条，用‘看’读\nnotes: 另有 1 条，用‘看’读`
+      + `\nreminders: 另有 1 条，用‘看’读\ninputs: 另有 1 条，用‘看’读`;
+    const expected = `${WORK_CONTEXT_PRELUDE}\n\n## Runtime context\nR\n\n## Goal\nG\n\n## Accepted task\nT${omissions}`;
+    const result = renderContext({
+      prelude: WORK_CONTEXT_PRELUDE, required: REQUIRED, optional: ROWS,
+      continuationSuffix: null, residentBudgetBytes: 0,
+    });
+    expect(result.input).toBe(expected);
+    expect(result.residentBytes).toBe(0);
+    expect(result.totalBytes).toBe(B(expected));
+    for (const name of ['footprint', 'notes', 'reminders', 'inputs'] as const) {
+      const section = result.sections.find((candidate) => candidate.name === name);
+      expect(section?.omitted).toBe(1);
+      expect(section?.startByte).toBeNull();
+      expect(section?.endByte).toBeNull();
+    }
+    expect(result.input).not.toContain(CONTEXT_SECTION_HEADERS.footprint);
+    expect(result.input).not.toContain(CONTEXT_SECTION_HEADERS.notes);
+    expect(result.input).not.toContain(CONTEXT_SECTION_HEADERS.reminders);
+    expect(result.input).not.toContain(CONTEXT_SECTION_HEADERS.inputs);
+    expect(result.input).toContain('## Runtime context\nR');
+    expect(result.input).toContain('## Goal\nG');
+    expect(result.input).toContain('## Accepted task\nT');
+  });
+
+  it('CA09 a single 5000-byte input row is omitted whole, never truncated', async () => {
+    const assembler = assemblerWith({
+      graphContext: graphContextOf(graphFacts({ inputs: [LONG_SELECTION] })),
+      taskInputs: taskInputsOf([LONG_SELECTION], {
+        selection: LONG_SELECTION, body: LONG_BODY, nextCursor: 'more', selectedTaskInputs: [],
+      }),
+    });
+    const result = ready(await assembler.assembleTask(CTX, CA_ASSEMBLER_INPUT)).value;
+    expect(result.input).not.toContain(LONG_BODY);
+    expect(result.input).toContain('另有 1 条');
+    expect(result.input).not.toContain('bodyExcerpt');
+    expect(result.binding.sections.find((section) => section.name === 'inputs')?.omitted).toBe(1);
+    // The fixed selection and its exact ArtifactRef version survive the omission.
+    expect(result.binding.inputSelections).toEqual([LONG_SELECTION]);
+    expect(result.binding.inputSelections[0]?.source).toMatchObject({ kind: 'artifact', ref: LONG_REF });
+  });
+
+  it('CA10 a plan-only future task writes obligations: 未定义 and never invents acceptance', async () => {
+    const assembler = assemblerWith({});
+    const result = ready(await assembler.assembleTask(CTX, assemblerInput(
+      taskRecord({ task: TASK_F, runId: 'runF', plan: planOnlySnapshot(), sessionId: 'sf' })))).value;
+    expect(result.input).toContain('obligations: 未定义');
+    expect(result.input).not.toContain('satisfied');
+    expect(result.input).toContain('acceptance: 未定义');
+  });
+
+  it('CA11 a legal missing upstream stays ready and reminds with its declaration and tA facts', async () => {
+    const assembler = assemblerWith({
+      graphContext: graphContextOf(graphFacts({ executions: [endedRecordA()], inputs: [MISSING_SELECTION] })),
+      taskInputs: taskInputsOf([]),
+    });
+    const result = await assembler.assembleTask(CTX, CA_ASSEMBLER_INPUT);
+    expect(result.status).toBe('ready');
+    const input = ready(result).value.input;
+    // The missing declaration and tA's current facts are reminders, not a silent empty section.
+    const reminders = sectionText(input, CONTEXT_SECTION_HEADERS.reminders, CONTEXT_SECTION_HEADERS.inputs);
+    expect(reminders).toContain('d1');
+    expect(reminders).toContain('tA');
+    // Lead fix after the freeze: the fixture's extensions are not_implemented, so spec §4.3
+    // (the not-connected wording) and CA14 require the 未接入 reminders here too; the CA11 row
+    // asks only for the missing declaration and tA's facts.
+  });
+
+  it('CA12 the continuation brief is last and anomaly anchors live in the reminders index', () => {
+    const brief = c3Brief();
+    const digest = continuationBriefDigest(brief);
+    const suffix = renderContinuationBriefZh(brief, digest);
+    const anchorKey = 'anomaly:anchor-1';
+    const anomaliesProjection: ContextExtensionsV1 = {
+      ...notImplementedExtensions(),
+      anomalies: {
+        availability: 'available',
+        rows: [{ key: anchorKey, node: { kind: 'task', ref: TASK_B, planRef: PLAN_REF }, text: `reminder ${anchorKey}`, sources: [] }],
+      },
+    };
+    const reminderRows = anomaliesProjection.anomalies.rows.map((row) => ({ key: row.key, text: row.text }));
+    const result = renderContext({
+      prelude: WORK_CONTEXT_PRELUDE, required: REQUIRED,
+      optional: { reminders: reminderRows }, continuationSuffix: suffix, residentBudgetBytes: 4096,
+    });
+    expect(result.input.endsWith(`\n\n${suffix}`)).toBe(true);
+    expect(sectionText(result.input, CONTEXT_SECTION_HEADERS.reminders, CONTEXT_SECTION_HEADERS.inputs)).toContain(anchorKey);
+    expect(result.sections.at(-1)?.name).toBe('continuation');
+    // Nothing follows the rendered brief.
+    expect(result.input.slice(result.input.indexOf(suffix) + suffix.length)).toBe('');
+  });
+
+  it('CA13 a Query question with CRLF and Chinese keeps the question and guide verbatim', async () => {
+    const question = '第一行\r\n第二行: keep exactly';
+    const assembler = assemblerWith({ graphContext: graphContextOf(graphFacts()), taskInputs: taskInputsOf([]) });
+    const result = ready(await assembler.assembleQuery(CTX, {
+      facts: queryFacts(),
+      role: resolvedRole(),
+      configuration: runtimeConfiguration(),
+      permissions: { tools: ['read'], writeScope: [] as [] },
+      question: `${question}\n\n${INITIAL_COORDINATION_RESPONSE_GUIDE}`,
+    })).value;
+    expect(result.input).toContain(question);
+    expect(result.input).toContain(INITIAL_COORDINATION_RESPONSE_GUIDE);
+    expect(result.input).toContain('Ship platform');
+    // Dynamic Goal facts live in the user input, never in the static system prompt.
+    expect(runtimeConfiguration().systemInstruction).not.toContain(question);
+    expect(runtimeConfiguration().systemInstruction).not.toContain('Ship platform');
+    expect(QUERY_CONTEXT_PRELUDE).not.toContain(question);
+  });
+
+  it('CA14 without extensions all five availability values are not_implemented', async () => {
+    const assembler = assemblerWith({});
+    const result = ready(await assembler.assembleTask(CTX, CA_ASSEMBLER_INPUT)).value;
+    expect(result.binding.extensions).toEqual({
+      notes: 'not_implemented', anomalies: 'not_implemented', footprint: 'not_implemented',
+      goalSettings: 'not_implemented', decisions: 'not_implemented',
+    });
+    // The specific not-connected wording of §4.3, never an empty-but-available section.
+    const reminders = sectionText(result.input, CONTEXT_SECTION_HEADERS.reminders, CONTEXT_SECTION_HEADERS.inputs);
+    expect(reminders).toContain('注记索引尚未接入');
+    expect(reminders).toContain('异常锚点投影尚未接入');
+  });
+
+  it('CA15 a throwing extension reader rejects unavailable instead of an empty array', async () => {
+    const harness = preparationHarness({ graphContext: extensionsThrowingGraphContext() });
+    const result = await harness.preparation.prepare(CTX, { runRef: RUN_B_REF, requestId: 'ca15' });
+    expect(result).toMatchObject({ status: 'rejected', code: 'unavailable' });
+    expect(harness.bodies.putCount()).toBe(0);
+  });
+});
