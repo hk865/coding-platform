@@ -13,7 +13,7 @@ const RESERVED_MODULE_IDS = new Set(['Contracts', 'Composition', 'Host', 'UI']);
 const sourceExtensions = new Set(['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs']);
 const APPROVED_NEXT_PACKAGES = new Set(['typescript', 'vitest', '@types/node', 'marked', 'esbuild']);
 const APPROVED_KERNEL_PACKAGES = new Set(['openai', 'zod']);
-// Spec §14.5: globals a pure directory may not use (besides `Date.now`, `Math.random` and an argument-less `Date`).
+// Spec §14.5: globals a pure submodule may not use (besides `Date.now`, `Math.random` and an argument-less `Date`).
 const PURE_FORBIDDEN_GLOBALS = new Set(['process', 'globalThis', 'fetch', 'setTimeout', 'setInterval', 'setImmediate',
   'queueMicrotask', 'crypto', 'performance']);
 const inside =(root, path) => path === root || path.startsWith(root + sep);
@@ -79,9 +79,9 @@ export async function loadModuleTarget(projectDir) {
   try { raw = JSON.parse(await readFile(targetFile, 'utf8')); }
   catch (error) {
     fail(`cannot be read as JSON (${error?.code ?? error?.message ?? String(error)})`);
-    return { modules: [], pureDirectories: [], issues };
+    return { modules: [], issues };
   }
-  if (!isObject(raw)) { fail('top level must be a JSON object'); return { modules: [], pureDirectories: [], issues }; }
+  if (!isObject(raw)) { fail('top level must be a JSON object'); return { modules: [], issues }; }
   if (raw.schemaVersion !== MODULE_TARGET_SCHEMA)
     fail(`schemaVersion must be ${MODULE_TARGET_SCHEMA}, found ${JSON.stringify(raw.schemaVersion)}`);
   const base = dirname(targetFile);
@@ -95,9 +95,13 @@ export async function loadModuleTarget(projectDir) {
       fail(`implementationOwnership ${raw.implementationOwnership} must point to scripts/check-boundaries.mjs in this repository`);
     else if (!await isRealFile(checker)) fail(`implementationOwnership ${raw.implementationOwnership} does not exist`);
   }
+  // Spec §14.4 (L-8): the top-level list was replaced by `pure: true` on a submodule; a
+  // leftover list would otherwise be ignored without a word, so it is refused.
+  if (raw.pureDirectories !== undefined)
+    fail('"pureDirectories" is no longer read; declare "pure": true on the submodule instead');
   if (!Array.isArray(raw.modules) || raw.modules.length === 0) {
     fail('"modules" must be a non-empty array');
-    return { modules: [], pureDirectories: [], issues };
+    return { modules: [], issues };
   }
   const ids = new Set();
   for (const [index, entry] of raw.modules.entries()) {
@@ -137,34 +141,16 @@ export async function loadModuleTarget(projectDir) {
   const byId = new Map(modules.map(module => [module.id, module]));
   const cycle = findCycle(modules.map(module => module.id), id => byId.get(id)?.dependencies ?? []);
   if (cycle) fail(`module dependency cycle ${cycle.join(' -> ')}`);
-  const pureDirectories = await loadPureDirectories(project, raw.pureDirectories, modules, fail);
-  return { modules, pureDirectories, issues };
+  return { modules, issues };
 }
 
 /**
- * Optional top-level "pureDirectories" (spec §14.4; replaced by a `pure: true`
- * submodule once WorkGraph has submodules): source directories whose files may
- * import only src/contracts/ and files of the same directory.
+ * A submodule entry: `id`, `path` (a directory ending in / or one source file,
+ * relative to the module), `dependencies` (sibling submodule ids) and the
+ * optional `pure: true` (spec §14.4, L-8): a pure directory whose files import
+ * only src/contracts/, their own submodule and its declared dependencies, and
+ * reach no clock, randomness, timer, network or process global (§14.5).
  */
-async function loadPureDirectories(project, value, modules, fail) {
-  if (value === undefined) return [];
-  if (!Array.isArray(value) || value.some(entry => typeof entry !== 'string')) {
-    fail('"pureDirectories" must be an array of directory paths');
-    return [];
-  }
-  const directories = [];
-  for (const path of value) {
-    const label = `pure directory ${path}`;
-    if (!/^src\/.+\/$/.test(path) || path.includes('\\')) { fail(`${label} is not of the form src/<dir>/`); continue; }
-    if (!isNormalizedPath(path)) { fail(`${label} must be normalized (no empty, "." or ".." segments)`); continue; }
-    if (directories.includes(path)) { fail(`${label} is declared twice`); continue; }
-    if (!await isRealDirectory(resolve(project, path))) fail(`${label} does not exist`);
-    if (!modules.some(module => path.startsWith(module.path))) fail(`${label} is not inside a module`);
-    directories.push(path);
-  }
-  return directories;
-}
-
 async function loadSubmodules(project, module, value, fail) {
   const label = `module ${module.id}`;
   if (!Array.isArray(value) || value.length === 0) { fail(`${label} "submodules" must be a non-empty array`); return null; }
@@ -196,7 +182,10 @@ async function loadSubmodules(project, module, value, fail) {
     if (!(directory ? await isRealDirectory(absolute) : await isRealFile(absolute)))
       fail(`${subLabel} path ${module.path}${path} does not exist`);
     const dependencies = checkDependencyList(subLabel, entry.id, entry.dependencies, ids, fail);
-    submodules.push({ id: entry.id, path, directory, dependencies });
+    if (entry.pure !== undefined && typeof entry.pure !== 'boolean') fail(`${subLabel} "pure" must be true or false`);
+    const pure = entry.pure === true;
+    if (pure && !directory) fail(`${subLabel} is pure, so its path must be a directory ending in /`);
+    submodules.push({ id: entry.id, path, directory, dependencies, pure });
   }
   for (const a of submodules) for (const b of submodules) {
     if (a === b) continue;
@@ -231,7 +220,6 @@ export async function inspectSourceTree(projectDir) {
   const MODULE_BY_NAME = new Map(MODULES.map(module => [module.id, module]));
   const MODULE_NAMES = new Set(MODULE_BY_NAME.keys());
   const ALLOWED = Object.fromEntries(MODULES.map(module => [module.id, new Set(module.dependencies)]));
-  const PURE_PREFIXES = target.pureDirectories.map(path => path.slice('src/'.length));
   const owner = rel => rel.startsWith('contracts/') ? 'Contracts'
     : rel.startsWith('composition/') ? 'Composition'
     : rel.startsWith('app/') ? 'Host'
@@ -407,6 +395,8 @@ export async function inspectSourceTree(projectDir) {
     if (!from) issues.push(`${rel}: source file has no target module or contracts owner`);
     const fromModule = MODULE_BY_NAME.get(from);
     const fromSubmodule = fromModule?.submodules ? submoduleOwner(fromModule, rel.slice(fromModule.prefix.length + 1)) : null;
+    const fromSubmoduleEntry = fromSubmodule ? fromModule.submodules.find(submodule => submodule.id === fromSubmodule) : null;
+    const pure = fromSubmoduleEntry?.pure === true;
     if (fromModule?.submodules) {
       if (!fromSubmodule) issues.push(`${rel}: source file has no ${from} submodule owner in ${MODULE_TARGET_PATH}`);
       else {
@@ -420,16 +410,19 @@ export async function inspectSourceTree(projectDir) {
     const at = node => `${rel}:${file.getLineAndCharacterOfPosition(node.getStart(file)).line + 1}`;
     const uiDtoModules = new Set(['core-http-types', 'host-settings-types'].map(name => resolve(sourceRoot, 'app', name)));
     const withoutJsExtension = candidate => candidate.replace(/\.(mjs|cjs|js|jsx)$/, '');
-    const purePrefix = PURE_PREFIXES.find(prefix => rel.startsWith(prefix)) ?? null;
-    // Spec §14.4: a pure directory imports only src/contracts/ and its own files
-    // (types or values). Checked BEFORE the generic exemptions, so a `node:`
-    // builtin, a package, the Kernel entry or another source cannot pass.
+    // Spec §14.4: a pure submodule imports only src/contracts/, its own files and
+    // its declared submodule dependencies (types or values). Checked BEFORE the
+    // generic exemptions, so a `node:` builtin, a package, the Kernel entry or
+    // another source cannot pass; an allowed sibling still meets the submodule rules.
     function pureImportAllowed(specifier) {
       if (!specifier.startsWith('.')) return false;
       const targetRel = relative(sourceRoot, resolve(dirname(path), specifier)).split(sep).join('/');
-      return targetRel.startsWith('contracts/') || targetRel.startsWith(purePrefix);
+      if (targetRel.startsWith('contracts/')) return true;
+      if (!targetRel.startsWith(fromModule.prefix + '/')) return false;
+      const toSubmodule = submoduleOwner(fromModule, targetRel.slice(fromModule.prefix.length + 1));
+      return toSubmodule === fromSubmodule || fromSubmoduleEntry.dependencies.includes(toSubmodule);
     }
-    // Spec §14.1/§14.5: a pure directory does no IO and reads no clock, so it
+    // Spec §14.1/§14.5: a pure submodule does no IO and reads no clock, so it
     // may not reach the clock, randomness, timers, the network or the process
     // through globals either; `now` and ids arrive through ctx or event payloads.
     function pureGlobalUse(node) {
@@ -471,7 +464,7 @@ export async function inspectSourceTree(projectDir) {
       const loc = at(node);
       if (from === 'UI') { checkUiSpecifier(specifier, typeOnly, loc); return; }
       if (typeof specifier !== 'string') { issues.push(`${loc}: computed import/require is forbidden`); return; }
-      if (purePrefix !== null && !pureImportAllowed(specifier)) {
+      if (pure && !pureImportAllowed(specifier)) {
         issues.push(`${loc}: pure directory may not import ${specifier}`);
         return;
       }
@@ -543,7 +536,7 @@ export async function inspectSourceTree(projectDir) {
         const arg = node.arguments[0];
         checkSpecifier(arg && ts.isStringLiteral(arg) ? arg.text : null, false, node);
       }
-      if (purePrefix !== null) {
+      if (pure) {
         const global = pureGlobalUse(node);
         if (global !== null) issues.push(`${at(node)}: pure directory may not use ${global}`);
       }
@@ -560,11 +553,14 @@ export async function inspectSourceTree(projectDir) {
   for (const { id, path } of MODULES)
     modules.push({ name: id, directory: await isRealDirectory(resolve(project, path)), sourceFiles: moduleFileCounts.get(id) });
   const submodules = [];
-  for (const module of MODULES) for (const submodule of module.submodules ?? [])
+  const pureSubmodules = [];
+  for (const module of MODULES) for (const submodule of module.submodules ?? []) {
     submodules.push({ name: `${module.id}/${submodule.id}`, sourceFiles: submoduleFileCounts.get(`${module.id}/${submodule.id}`) ?? 0 });
+    if (submodule.pure) pureSubmodules.push(`${module.id}/${submodule.id}`);
+  }
   const allowedEdgeCount = MODULES.reduce((count, module) => count + module.dependencies.length, 0);
   return {
-    issues, modules, submodules, allowedEdgeCount, pureDirectories: target.pureDirectories,
+    issues, modules, submodules, allowedEdgeCount, pureSubmodules,
     observedEdges: [...observedEdges].sort(), observedSubmoduleEdges: [...observedSubmoduleEdges].sort(),
   };
 }
@@ -574,14 +570,14 @@ export async function auditSourceTree(projectDir) {
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const { issues, modules, submodules, allowedEdgeCount, pureDirectories, observedEdges, observedSubmoduleEdges } =
+  const { issues, modules, submodules, allowedEdgeCount, pureSubmodules, observedEdges, observedSubmoduleEdges } =
     await inspectSourceTree(resolve(dirname(fileURLToPath(import.meta.url)), '..'));
   for (const module of modules) process.stdout.write(`${module.name}: directory=${module.directory}, sourceFiles=${module.sourceFiles}\n`);
   process.stdout.write(`observed module edges: ${observedEdges.length}/${allowedEdgeCount} allowed (${observedEdges.join(', ') || 'none'})\n`);
   for (const submodule of submodules) process.stdout.write(`  ${submodule.name}: sourceFiles=${submodule.sourceFiles}\n`);
   if (submodules.length)
     process.stdout.write(`observed submodule edges: ${observedSubmoduleEdges.length} (${observedSubmoduleEdges.join(', ') || 'none'})\n`);
-  if (pureDirectories.length) process.stdout.write(`pure directories: ${pureDirectories.join(', ')}\n`);
+  if (pureSubmodules.length) process.stdout.write(`pure submodules: ${pureSubmodules.join(', ')}\n`);
   if (issues.length) { for (const issue of issues) process.stderr.write(`${issue}\n`); process.exitCode = 1; }
   else process.stdout.write('next source boundaries: OK\n');
 }

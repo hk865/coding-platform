@@ -3,7 +3,7 @@ import { cp, mkdtemp, mkdir, rm, symlink, writeFile, rename, readFile } from 'no
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { auditSourceTree, inspectSourceTree, MODULE_TARGET_PATH } from '../../scripts/check-boundaries.mjs';
+import { auditSourceTree, inspectSourceTree, loadModuleTarget, MODULE_TARGET_PATH } from '../../scripts/check-boundaries.mjs';
 
 const project = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const temporary: string[] = [];
@@ -12,7 +12,7 @@ afterEach(async () => { for (const dir of temporary.splice(0)) await rm(dir, { r
 type ModuleTarget = {
   schemaVersion?: number; projectRoot?: string; implementationOwnership?: string; pureDirectories?: unknown;
   modules: Array<{ id: string; path?: string; dependencies?: string[];
-    submodules?: Array<{ id: string; path: string; dependencies: string[] }> }>;
+    submodules?: Array<{ id: string; path: string; dependencies: string[]; pure?: unknown }> }>;
 };
 
 async function fixture(path: string, source: string) {
@@ -31,9 +31,6 @@ async function fixture(path: string, source: string) {
   const copied = await readTarget(dir);
   for (const module of copied.modules)
     if (module.path) await mkdir(join(dir, module.path), { recursive: true });
-  // The real pure directories (spec §14.4) must exist too; they stay empty unless a test writes a file.
-  for (const pure of Array.isArray(copied.pureDirectories) ? copied.pureDirectories as string[] : [])
-    await mkdir(join(dir, pure), { recursive: true });
   const file = join(dir, 'src', path);
   await mkdir(dirname(file), { recursive: true });
   await writeFile(file, source);
@@ -227,9 +224,38 @@ describe('submodule rules', () => {
   });
 });
 
-describe('pure directories (spec §14.4)', () => {
-  it('rejects a Node builtin, a package and another work-graph directory in state/ with file and line', async () => {
-    const dir = await fixture('core/work-graph/state/run-machine.ts', [
+describe('pure submodules (spec §14.4)', () => {
+  /**
+   * WorkGraph in small: a pure state/ (with the given declared dependencies)
+   * beside model/ and tasks/. The real layout belongs to the real tree; the
+   * first test reads it.
+   */
+  async function pureFixture(path: string, text: string, stateDependencies: string[] = []) {
+    const dir = await fixture(path, text);
+    for (const name of ['model', 'state', 'tasks']) await mkdir(join(dir, 'src/core/work-graph', name), { recursive: true });
+    await writeTarget(dir, target => {
+      target.modules.find(m => m.id === 'WorkGraph')!.submodules = [
+        { id: 'model', path: 'model/', dependencies: [] },
+        { id: 'state', path: 'state/', dependencies: stateDependencies, pure: true },
+        { id: 'tasks', path: 'tasks/', dependencies: ['model', 'state'] },
+      ];
+    });
+    return dir;
+  }
+
+  it('reads the real state submodule as pure, with no other pure submodule and no top-level list', async () => {
+    const target = await loadModuleTarget(project);
+    expect(target.issues).toEqual([]);
+    const pure = target.modules.flatMap(module => (module.submodules ?? [])
+      .filter(submodule => submodule.pure).map(submodule => `${module.id}/${submodule.id}`));
+    expect(pure).toEqual(['WorkGraph/state']);
+    expect(target.modules.find(m => m.id === 'WorkGraph')!.submodules!.find(s => s.id === 'state')!.dependencies).toEqual([]);
+    expect(Object.keys(JSON.parse(await readFile(join(project, MODULE_TARGET_PATH), 'utf8')) as object))
+      .not.toContain('pureDirectories');
+  });
+
+  it('rejects a Node builtin, a package, a sibling submodule and another module in state/ with file and line', async () => {
+    const dir = await pureFixture('core/work-graph/state/run-machine.ts', [
       "import type { RunSnapshot } from '../../../contracts/dispatch.js';",
       "import { accept } from './transition.js';",
       "import { createHash } from 'node:crypto';",
@@ -237,6 +263,8 @@ describe('pure directories (spec §14.4)', () => {
       "import type { Claim } from '../tasks/x.js';",
       "import '../../../../vendor/coding-agent/dist/public-api.js';",
       "export type { Store } from '../../record-store/ports.js';",
+      "import { codec } from '../model/codec.js';",
+      "import '../stray.js';",
       '',
     ].join('\n'));
     expect(await auditSourceTree(dir)).toEqual([
@@ -245,19 +273,32 @@ describe('pure directories (spec §14.4)', () => {
       'core/work-graph/state/run-machine.ts:5: pure directory may not import ../tasks/x.js',
       'core/work-graph/state/run-machine.ts:6: pure directory may not import ../../../../vendor/coding-agent/dist/public-api.js',
       'core/work-graph/state/run-machine.ts:7: pure directory may not import ../../record-store/ports.js',
+      'core/work-graph/state/run-machine.ts:8: pure directory may not import ../model/codec.js',
+      'core/work-graph/state/run-machine.ts:9: pure directory may not import ../stray.js',
     ]);
   });
 
-  it('accepts contracts and same-directory imports, and leaves files outside the directory to the module rules', async () => {
-    const dir = await fixture('core/work-graph/state/run-machine.ts',
+  it('accepts contracts and same-submodule imports, and leaves files outside it to the submodule rules', async () => {
+    const dir = await pureFixture('core/work-graph/state/run-machine.ts',
       "import type { RunSnapshot } from '../../../contracts/dispatch.js';\nimport { accept } from './transition.js';\n");
     await source(dir, 'core/work-graph/tasks/claim.ts', "import { createHash } from 'node:crypto';\nimport '../state/run-machine.js';\n");
     expect(await auditSourceTree(dir)).toEqual([]);
-    expect((await inspectSourceTree(dir)).pureDirectories).toEqual(['src/core/work-graph/state/']);
+    const report = await inspectSourceTree(dir);
+    expect(report.pureSubmodules).toEqual(['WorkGraph/state']);
+    expect(report.observedSubmoduleEdges).toEqual(['WorkGraph/tasks -> WorkGraph/state']);
+  });
+
+  it('accepts a declared submodule dependency of a pure submodule (spec §14.4)', async () => {
+    const dir = await pureFixture('core/work-graph/state/run-machine.ts',
+      "import type { Codec } from '../model/codec.js';\nimport '../tasks/x.js';\n", ['model']);
+    expect(await auditSourceTree(dir)).toEqual([
+      'core/work-graph/state/run-machine.ts:2: pure directory may not import ../tasks/x.js',
+    ]);
+    expect((await inspectSourceTree(dir)).observedSubmoduleEdges).toEqual(['WorkGraph/state -> WorkGraph/model']);
   });
 
   it('rejects the clock, randomness, timers, the network and the process through globals in state/ (§14.5)', async () => {
-    const dir = await fixture('core/work-graph/state/run-machine.ts', [
+    const dir = await pureFixture('core/work-graph/state/run-machine.ts', [
       'export const at = Date.now();',
       'export const nonce = Math.random();',
       'export const today = new Date();',
@@ -288,22 +329,20 @@ describe('pure directories (spec §14.4)', () => {
     ]);
   });
 
-  it('validates pureDirectories in module-target.json', async () => {
-    const dir = await fixture('core/workspace/entry.ts', 'export {};\n');
+  it('validates "pure" in module-target.json and refuses the replaced top-level "pureDirectories"', async () => {
+    const dir = await pureFixture('core/work-graph/ports.ts', 'export {};\n');
     await writeTarget(dir, target => {
-      target.pureDirectories = ['src/core/work-graph/missing/', 'src/core/work-graph/./state/', 'src/business/', 'core/x/'];
+      target.pureDirectories = ['src/core/work-graph/state/'];
+      const graph = target.modules.find(m => m.id === 'WorkGraph')!;
+      graph.submodules!.find(s => s.id === 'state')!.pure = 'yes';
+      graph.submodules!.push({ id: 'ports', path: 'ports.ts', dependencies: [], pure: true });
     });
     expect(await auditSourceTree(dir)).toEqual([
-      `${MODULE_TARGET_PATH}: pure directory src/core/work-graph/missing/ does not exist`,
-      `${MODULE_TARGET_PATH}: pure directory src/core/work-graph/./state/ must be normalized (no empty, "." or ".." segments)`,
-      `${MODULE_TARGET_PATH}: pure directory src/business/ is not inside a module`,
-      `${MODULE_TARGET_PATH}: pure directory core/x/ is not of the form src/<dir>/`,
+      `${MODULE_TARGET_PATH}: "pureDirectories" is no longer read; declare "pure": true on the submodule instead`,
+      `${MODULE_TARGET_PATH}: submodule WorkGraph/state "pure" must be true or false`,
+      `${MODULE_TARGET_PATH}: submodule WorkGraph/ports is pure, so its path must be a directory ending in /`,
       'source files were not checked (ownership, imports, symlinks, UI rules) because docs/refactor/module-target.json is invalid',
     ]);
-    await writeTarget(dir, target => { target.pureDirectories = 'src/core/work-graph/state/'; });
-    expect(await auditSourceTree(dir)).toEqual(expect.arrayContaining([
-      `${MODULE_TARGET_PATH}: "pureDirectories" must be an array of directory paths`,
-    ]));
   });
 });
 
