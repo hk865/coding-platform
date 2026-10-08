@@ -1,7 +1,8 @@
 /**
  * VerificationRound, round-check and TaskEvidenceIndex machines
- * (docs/refactor/STATE-MACHINES-SPEC.md §9, rows VR-01..VR-15 without VR-08,
- * deleted with `submitEvidence` (decision 34); forbidden
+ * (docs/refactor/STATE-MACHINES-SPEC.md §9, rows VR-01..VR-15 without VR-06,
+ * deleted in A.2 step 5.6 (GAP-24, see below), and VR-08, deleted with
+ * `submitEvidence` (decision 34); forbidden
  * transitions §9.4; round chain helpers VD-5, VD-12..VD-15; D-2 fold).
  *
  * The owner is `evidence/evidence-service.ts` (and, for the check rows,
@@ -38,7 +39,7 @@
  * such as "checkId 不在轮次中" and "轮次 finalized" are round-level, and the
  * record written is the round (rev+1). The check's phase is read from it.
  * `CheckInterruptionCause`/`CheckAbandonCause` restate the codec unions of
- * `evidence/evidence-record-codecs.ts:57-59`, which this directory may not import.
+ * `persistence/evidence-record-codecs.ts:57-59`, which this directory may not import.
  *
  * Line references (`file.ts:NNN`) cite the code of 2026-10-02 (before A.2 step 3),
  * as the spec does; the names next to them find today's code.
@@ -801,7 +802,7 @@ export function foldVerdictChecks(round: Pick<RoundSnapshot, 'checks' | 'verific
  *   requirement has an applicable INCONCLUSIVE blocker or no applicable PASS;
  *   otherwise PASS, so PASS ⇒ `gaps = []` (VD-4);
  * - admissions: the applicable PASS coverage per requirement, then every
- *   blocker, in `selectEffectiveEvidenceSet` order (`coverage.ts:76-121`).
+ *   blocker, in `selectEffectiveEvidenceSet` order (`evidence-coverage.ts:76-121`).
  */
 export function finalizeRoundOutcome(input: RoundFoldInputV1): RoundFoldResultV1 {
   const { round } = input;
@@ -1595,7 +1596,7 @@ function roundOnFinalized(
 }
 
 // -------------------------------------------------------------------------- //
-// Checks (§9.3 VR-02..VR-06, VR-13)                                           //
+// Checks (§9.3 VR-02..VR-05, VR-13; VR-06 deleted, GAP-24)                    //
 // -------------------------------------------------------------------------- //
 
 export function transitionCheck(state: RoundSnapshot, event: CheckEvent, ctx: RoundGuardContext): CheckTransition {

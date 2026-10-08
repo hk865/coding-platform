@@ -99,7 +99,8 @@ export function createRegisteredCheckRunner(deps: RegisteredCheckRunnerDependenc
      * store is retried under a refreshed pin with the same request id. A retry
      * that meets `idempotency_conflict` means an earlier attempt committed: the
      * round is read again instead. When the attempts run out the window stays
-     * executing until the start-up reconcile (VR-04/VR-06).
+     * executing until the start-up reconcile interrupts it (VR-04; VR-06,
+     * booking the stored report, is deleted, GAP-24).
      */
     async function recordResult(
         ctx: CoreCallContext, roundRef: VerificationRoundRef, checkId: string, invocationId: string,

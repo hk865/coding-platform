@@ -295,7 +295,7 @@ function pausedInterruptedFacts(taskId: string, requestedBy: Extract<ActorRef, {
 // --------------------------------------------------------------------------
 
 describe('§14.1 PlanProposal record constructors', () => {
-  it('PlanProposalRecord is the same type as tasks/plan-contracts.ts PlanProposal', () => {
+  it('PlanProposalRecord is the same type as model/plan-contracts.ts PlanProposal', () => {
     type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;
     const same: Equal<PlanProposalRecord, PlanProposal> = true;
     expect(same).toBe(true);

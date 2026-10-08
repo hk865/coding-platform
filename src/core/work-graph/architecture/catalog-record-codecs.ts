@@ -10,7 +10,7 @@
  * Validation is pure and closed:
  *   - the catalog is checked for explicit fields, in-scope module refs, unique
  *     module/interface ids, existing dependency endpoints and a formal DAG;
- *   - `hasCycleInEdges` is reused from `tasks/task-index.ts` instead of copying
+ *   - `hasCycleInEdges` is reused from `model/task-index.ts` instead of copying
  *     a second graph walk;
  *   - every set membership test uses a Map/Set, so a forged `__proto__` or
  *     Unicode key is treated as an ordinary unknown field, never as a prototype.

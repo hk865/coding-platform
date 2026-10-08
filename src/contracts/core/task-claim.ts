@@ -3,7 +3,7 @@
  *
  * It lives in the shared contracts layer so the B2 prepared-execution and entry
  * contracts can reference the claim without importing the WorkGraph. The
- * WorkGraph `tasks/claim-contracts.ts` keeps a compatibility type re-export;
+ * WorkGraph `model/claim-contracts.ts` keeps a compatibility type re-export;
  * exactly one declaration of the shape exists in the tree.
  */
 import type { DispatchOutboxRef, RunRef, TaskAttemptRef, TaskTriple } from '../dispatch.js';

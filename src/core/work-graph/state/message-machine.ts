@@ -3,7 +3,7 @@
  * rows MSG-01..MSG-10; forbidden transitions §10.4; invariant I-8 §11.8).
  *
  * A message is a received statement, not a task obligation: receiving never
- * wakes, preempts or creates a dependency (`communication/contracts.ts:6-11`).
+ * wakes, preempts or creates a dependency (`model/communication-contracts.ts:6-11`).
  * Its status is only `pending < read < responded` and never moves back.
  * "Delivered into an execution" (`acceptedInputs`), the fixed A′ derivation
  * and "the wait is satisfied" (MSG-10) are other facts, never extra statuses.
@@ -40,7 +40,7 @@
  *   input, are likewise preceded by `recheckAfterMiss`, so a concurrent request
  *   of the same identity replays its original receipt instead of being rejected.
  *
- * `SessionMessage` is declared in `communication/contracts.ts:95`, which this
+ * `SessionMessage` is declared in `model/communication-contracts.ts:95`, which this
  * directory may not import (§14.4). `SessionMessageRecord` below is the same
  * shape built from `src/contracts` types only; tests/state/message-machine.test.ts
  * asserts the two types are identical.
@@ -55,16 +55,16 @@ import type { QueryJobAnswerRef, QueryRunRef } from '../../../contracts/query-jo
 import { accept, reject, unreachable, type Rejected, type Transition } from './transition.js';
 
 // --------------------------------------------------------------------------
-// Persisted record (structurally identical to communication/contracts.ts:36-145)
+// Persisted record (structurally identical to model/communication-contracts.ts:36-145)
 // --------------------------------------------------------------------------
 
-/** Trusted Host sender (`contracts.ts:36-39`). */
+/** Trusted Host sender (`communication-contracts.ts:36-39`). */
 export type MessageHostSenderRecord = {
   kind: 'host';
   actor: Extract<ActorRef, { kind: 'human' | 'system' }>;
 };
 
-/** Formal work_run sender (`contracts.ts:46-52`). */
+/** Formal work_run sender (`communication-contracts.ts:46-52`). */
 export type MessageWorkRunSenderRecord = {
   kind: 'work_run';
   sessionRef: SessionRef;
@@ -73,7 +73,7 @@ export type MessageWorkRunSenderRecord = {
   generation: number;
 };
 
-/** Derived formal Query Answer sender; only the response slot accepts it (`contracts.ts:67-73`). */
+/** Derived formal Query Answer sender; only the response slot accepts it (`communication-contracts.ts:67-73`). */
 export type MessageQueryAnswerSenderRecord = {
   kind: 'query_run';
   sessionRef: SessionRef;
@@ -82,7 +82,7 @@ export type MessageQueryAnswerSenderRecord = {
   generation: number;
 };
 
-/** The single response slot (`contracts.ts:81-86`); written once. */
+/** The single response slot (`communication-contracts.ts:81-86`); written once. */
 export type MessageResponseRecord = {
   sender: MessageWorkRunSenderRecord | MessageQueryAnswerSenderRecord;
   bodyRef: ArtifactRef;
@@ -92,7 +92,7 @@ export type MessageResponseRecord = {
 
 export type SessionMessageStatus = 'pending' | 'read' | 'responded';
 
-/** One committed Kernel `run.input_accepted` observation (`contracts.ts:132-138`); append-only. */
+/** One committed Kernel `run.input_accepted` observation (`communication-contracts.ts:132-138`); append-only. */
 export type MessageAcceptedInput = {
   inputId: string;
   part: 'message' | 'response';
@@ -101,7 +101,7 @@ export type MessageAcceptedInput = {
   acceptedAt: string;
 };
 
-/** The fixed A′ derivation (`contracts.ts:139-144`); the first writer wins. */
+/** The fixed A′ derivation (`communication-contracts.ts:139-144`); the first writer wins. */
 export type MessageConsultationDerivation = {
   childSessionRef: SessionRef;
   sourceSessionRef: SessionRef;
@@ -109,7 +109,7 @@ export type MessageConsultationDerivation = {
   throughPosition: number | null;
 };
 
-/** `SessionMessage` (`contracts.ts:95-145`). */
+/** `SessionMessage` (`communication-contracts.ts:95-145`). */
 export type SessionMessageRecord = {
   ref: SessionMessageRef;
   schemaVersion: 1;
@@ -152,7 +152,7 @@ type PresentMessageState = Exclude<MessageMachineState, { status: 'absent' }>;
  * §10.2. `message_responded.via`: `text` is the work_run reply (MSG-04/05),
  * `query_answer` the Host association of a formal Query Answer (MSG-06).
  * `input_accepted.inputId` is `deriveSessionInputId(messageRef, part)`
- * (`contracts.ts:57-59`), computed by the service. `task_claimed` is the
+ * (`communication-contracts.ts:57-59`), computed by the service. `task_claimed` is the
  * read-only continuation-claim check (MSG-10).
  */
 export type MessageEvent =

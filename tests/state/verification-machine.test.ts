@@ -945,7 +945,7 @@ describe('finalizeRoundOutcome (the D-2 fold)', () => {
         { checkId: 'unit', coverage: cov('r1') }, { checkId: 'c-fin', coverage: cov('r1') }] });
   });
 
-  it('two applicable PASS on one requirement: the first in plan-check order is admitted (`coverage.ts:96-101`)', () => {
+  it('two applicable PASS on one requirement: the first in plan-check order is admitted (`evidence-coverage.ts:96-101`)', () => {
     const lint = finishedCheck(LINT, 'PASS');
     const unitOnR1 = finishedCheck(pendingCheck('unit', cov('r1')), 'PASS');
     const both = { decisions: { lint: APPLICABLE, unit: APPLICABLE } };

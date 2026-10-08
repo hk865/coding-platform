@@ -29,7 +29,7 @@
  * the Task machine (TASK-18/19) about, as it asks the Goal machine about
  * `move_goal_pointer`. Rows and their status: spec §15.2/§15.3.
  *
- * `PlanProposal` is declared in `tasks/plan-contracts.ts:28-50`, which this
+ * `PlanProposal` is declared in `model/plan-contracts.ts:28-50`, which this
  * directory may not import. `PlanProposalRecord` below is the same shape built
  * from `src/contracts` types only; tests/state/plan-machine.test.ts asserts the
  * two types are identical.
@@ -58,7 +58,7 @@ import {
 } from './transition.js';
 
 // --------------------------------------------------------------------------
-// Persisted record (structurally identical to tasks/plan-contracts.ts:28-50)
+// Persisted record (structurally identical to model/plan-contracts.ts:28-50)
 // --------------------------------------------------------------------------
 
 /** Same full identity as legacy PlanProposal@1 (`plan-contracts.ts:28-29`). */

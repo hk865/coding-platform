@@ -29,7 +29,7 @@
  *   of this section (`attemptEventFromRunEvent` maps it to `null`).
  *
  * `TaskClaimOutbox` and its V1 dispatch state are declared in
- * `tasks/claim-contracts.ts`, which `state/` may not import (§14.4); the
+ * `model/claim-contracts.ts`, which `state/` may not import (§14.4); the
  * structurally identical `DispatchOutboxRecord` below is the same record.
  */
 import type { SessionRef } from '../../../contracts/core/identity.js';

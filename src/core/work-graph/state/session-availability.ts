@@ -29,7 +29,7 @@ import { accept, reject, unreachable, type Rejected, type Transition } from './t
 
 export type SessionLifecycle = SessionRecord['lifecycle'];
 export type SessionHealth = SessionRecord['health'];
-/** Derived, never persisted (`SessionCard.availability`, `sessions/contracts.ts:46`). */
+/** Derived, never persisted (`SessionCard.availability`, `model/session-contracts.ts:46`). */
 export type SessionAvailability = 'idle' | 'busy' | 'recoverable' | 'unavailable';
 export type SessionHolderRef = RunRef | QueryRunRef | OperationRef;
 export type SessionMachineOccupancy = { kind: 'execution' | 'maintenance'; holder: SessionHolderRef; generation: number };

@@ -20,8 +20,8 @@
  * problem functions, so a refusal stops the reads where it always stopped.
  *
  * It is not a second RecordStore, manager or evidence fold: applicability and
- * coverage come from `evidence/coverage.ts`, the decoders come from
- * `evidence/evidence-record-codecs.ts`, and the reduced Task/Goal truth comes
+ * coverage come from `evidence-coverage.ts`, the decoders come from
+ * `persistence/evidence-record-codecs.ts`, and the reduced Task/Goal truth comes
  * from `completion-policy.ts`.
  */
 import type { CommitCursor } from '../../../contracts/command-event.js';
