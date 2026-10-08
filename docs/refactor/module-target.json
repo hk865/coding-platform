@@ -23,7 +23,7 @@
         "WorkspaceTools",
         "RecordStore"
       ],
-      "note": "子模块和允许的依赖照 reviews/evidence/workgraph-split-2026-10-07/target.json 的 submodules（决定 40，任务 D 验收后写入）。上层可以依赖下层，反过来不行，层号是 DESIGN §7.2 的，见 module-dag.md §6；检查器只按每个子模块的 dependencies 检查。唯一的同层依赖是 model → state，见 model 的 note。notes（L5.5）、views（L7）还没有文件，第一个文件落地时再声明。state 是纯子模块（pure: true，规格 §14.4）：只能依赖 src/contracts 和自己声明的子模块依赖（它没有声明任何依赖），也不能用时钟、随机数、计时器、网络和进程这些全局量。",
+      "note": "子模块和允许的依赖照 reviews/evidence/workgraph-split-2026-10-07/target.json 的 submodules（决定 40，任务 D 验收后写入）。上层可以依赖下层，反过来不行，层号是 DESIGN §7.2 的，见 module-dag.md §6；检查器只按每个子模块的 dependencies 检查。唯一的同层依赖是 model → state，见 model 的 note。notes（L5.5）还没有文件，第一个文件落地时再声明；views（L7）在编排第 3、5 片之前声明（design/orchestration-2026-10/slices/README.md 的 B0）。state 是纯子模块（pure: true，规格 §14.4）：只能依赖 src/contracts 和自己声明的子模块依赖（它没有声明任何依赖），也不能用时钟、随机数、计时器、网络和进程这些全局量。",
       "submodules": [
         {
           "id": "model",
@@ -51,6 +51,7 @@
           "path": "configuration/",
           "dependencies": [
             "model",
+            "state",
             "persistence"
           ]
         },
@@ -144,6 +145,24 @@
             "queries",
             "tasks"
           ]
+        },
+        {
+          "id": "views",
+          "path": "views/",
+          "dependencies": [
+            "model",
+            "state",
+            "persistence",
+            "configuration",
+            "materials",
+            "architecture",
+            "sessions",
+            "queries",
+            "tasks",
+            "evidence",
+            "communication"
+          ],
+          "note": "读模型（L7，DESIGN §7.2）：只读，不写记录。编排第 3 片（上下文与图读取）和第 5 片（决定队列、冲突提示、请知悉）在这里建文件。"
         }
       ]
     },
