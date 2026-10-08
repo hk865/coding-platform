@@ -85,7 +85,7 @@ R6 调查/规划执行入口六生产实现已[最终导入](reviews/evidence/ne
 | WorkspaceTools | 来源捕获、冻结读/查询、部分比较/语言工具；作为 observed graph 的实际来源 | 为涉及的图更新/结果核对复用已有工具；Git固定commit读取/比较及git↔working_tree普通文本比较已接通，mixed binary/Git-capture、语言覆盖及写入能力按 R2 余项独立收口 | Agent/Session 身份与生命周期事实权威 |
 | RecordStore | Memory/SQLite、条件事务、幂等、唯一声明、正文及注册索引 | 在原设施上登记新增关联/状态所需最小记录和索引；证明局部查询及原子变化，不新增第二事务 owner | 选人、语义上的并行判断或恢复策略 |
 
-源码核查入口：[`sessions/contracts.ts`](../../src/core/work-graph/sessions/contracts.ts)、[`lifecycle-contracts.ts`](../../src/core/work-graph/sessions/lifecycle-contracts.ts)、[`session-directory.ts`](../../src/core/work-graph/sessions/session-directory.ts)、[`SessionRecord`](../../src/contracts/core/session.ts)、[`create-platform.ts`](../../src/composition/create-platform.ts)。A1 证据见[验收报告](reviews/next-a1-graph-session-2026-09-25.md)；后续批次继续在[能力索引](IMPLEMENTED-CAPABILITIES.md)更新实际接线，不能由上表剩余目标反推已完成。
+源码核查入口：[`model/session-contracts.ts`](../../src/core/work-graph/model/session-contracts.ts)、[`lifecycle-contracts.ts`](../../src/core/work-graph/sessions/lifecycle-contracts.ts)、[`session-directory.ts`](../../src/core/work-graph/sessions/session-directory.ts)、[`SessionRecord`](../../src/contracts/core/session.ts)、[`create-platform.ts`](../../src/composition/create-platform.ts)。A1 证据见[验收报告](reviews/next-a1-graph-session-2026-09-25.md)；后续批次继续在[能力索引](IMPLEMENTED-CAPABILITIES.md)更新实际接线，不能由上表剩余目标反推已完成。
 
 ### 0.2 生命周期操作与调用责任
 

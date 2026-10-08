@@ -125,7 +125,7 @@ flowchart TD
 
 ## 5. 先前公开接口草案（普遍范围预占要求已撤销）
 
-以下代码块是纠偏前的设计快照，保留便于核对撤回的要求，不是当前可直接冻结的契约。不能仅将 scope 改为空或伪造 reservationRef 绕过语义问题；应按 §1.2 拆开工作受理与具体资源操作。共同资源 DTO 归 `src/contracts/core/resources.ts`；任务侧方案/检查 DTO 归 `src/core/work-graph/tasks/contracts.ts`。资源 ID 由 Host/WorkspaceTools 登记和归一，模型不能传绝对物理路径伪造它。
+以下代码块是纠偏前的设计快照，保留便于核对撤回的要求，不是当前可直接冻结的契约。不能仅将 scope 改为空或伪造 reservationRef 绕过语义问题；应按 §1.2 拆开工作受理与具体资源操作。共同资源 DTO 归 `src/contracts/core/resources.ts`；任务侧方案/检查 DTO 归 `src/core/work-graph/model/task-contracts.ts`。资源 ID 由 Host/WorkspaceTools 登记和归一，模型不能传绝对物理路径伪造它。
 
 ```ts
 // 共享 DTO；不从 contracts 反向导入模块实现。

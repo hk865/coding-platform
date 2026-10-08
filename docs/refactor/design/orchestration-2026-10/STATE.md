@@ -54,8 +54,8 @@
 **已有（都不是记忆本身）：**
 - 名字带 memory 的代码只有一个用途枚举和角色规格服务 [src/contracts/memory.ts:3; work-graph/configuration/role-memory-service.ts:1-37]。
 - 输入来源里“记忆”这一类有 6 处校验接受，但没有任何代码产生它 [src/contracts/dispatch.ts:58]。
-- 任务行上已有失败、返工、处置变化的事实；处置变化是 5.10 新加的 [tasks/plan-contracts.ts:75-105]。
-- 计划改动带原因 [tasks/plan-contracts.ts:31-38]；架构目录的每次修订都是不可变版本，但修订没有接口可用 [src/composition/create-platform.ts:676-683]。
+- 任务行上已有失败、返工、处置变化的事实；处置变化是 5.10 新加的 [model/plan-contracts.ts:75-105]。
+- 计划改动带原因 [model/plan-contracts.ts:31-38]；架构目录的每次修订都是不可变版本，但修订没有接口可用 [src/composition/create-platform.ts:676-683]。
 - 接续说明：单个任务用，只放事实，有上限，不调模型 [src/contracts/continuation-brief.ts:65-168]。
 - 可以按路径读文件摘要，用来判断代码变没变 [src/core/workspace/ports.ts:85-98]。
 - “不可变版本 + 当前指针”的写法已有先例 [role-memory-service.ts:16-20]。
@@ -74,7 +74,7 @@
 - 中断后旧 Session 退役，原历史仍可读（决定 8）[state/session-availability.ts:313-331; session-operations.ts:760-765]。
 - 归档、重新启用只有界面按钮 [core-routes.ts:233-235]。
 - 打开或关闭“负责”关联只有一个原始接口，没人调用 [sessions/session-lifecycle.ts:547; core-routes.ts:235]。
-- 只读副本和原 Session 的关系只记在消息上 [work-graph/communication/contracts.ts:139-144]。
+- 只读副本和原 Session 的关系只记在消息上 [work-graph/model/communication-contracts.ts:139-144]。
 - 接续 Session 和旧 Session 的关系只间接记在重新入队记录里，没有索引 [src/contracts/task-requeue.ts:134-144]。
 
 **读代码发现的问题（没有运行验证）：**
@@ -128,7 +128,7 @@
 - 观测图只有模块和接口两种节点；上限 512 个节点、1,024 条边、240 KB [src/contracts/architecture-source.ts:47-62]。
 - 目录本身支持包含关系，但冷启动给模型的格式里没有 [src/contracts/architecture-catalog.ts:26-44; query-preparation.ts:60]。
 - 写模块负责人的服务有，生产代码没人调用 [sessions/session-targets.ts:154]。
-- 任务的“所属模块”只是一个随便写的字符串，不检查 [tasks/plan-record-codecs.ts:290]。
+- 任务的“所属模块”只是一个随便写的字符串，不检查 [persistence/plan-record-codecs.ts:282]。
 
 **缺：** 从工作结果修订架构；正式与观测的比较；文件级观测图；冷启动声明包含关系；模块负责人；给 agent 的读图工具。
 
@@ -151,7 +151,7 @@
 6. 退役 Session 的原历史：原来担心读不到，现在可读（决定 8）[session-operations.ts:760-765]。
 7. 能力上报的“恢复执行”：原来报“不支持”，现在报“只做启动核对”[create-platform.ts:214]。
 8. 目标的“需要你决定”原因码：原来是计划，现在已实现 [goal-machine.ts:832-855]。
-9. 任务行上“过去的事实”：除了失败，5.10 起还有处置变化 [tasks/plan-contracts.ts:75-105]。
+9. 任务行上“过去的事实”：除了失败，5.10 起还有处置变化 [model/plan-contracts.ts:75-105]。
 10. agent 返工：服务已接受 agent 调用，只差工具（原来说整件事都缺）。
 
 **原来说要问你，现在已定或已记下：**

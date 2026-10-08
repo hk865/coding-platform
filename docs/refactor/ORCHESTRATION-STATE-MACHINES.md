@@ -198,7 +198,7 @@ sequenceDiagram
 | 控制 | ControlIntent `queued/applied/superseded/outcome_unknown` 及实际 `paused/cancelled/terminal_without_cancel/outcome_unknown` 观察 | Work 已接 pause/cancel/resume/steer 与实际执行观察。期望 paused 不代表实际暂停；Query 没有同等公开控制入口 |
 | 等待与唤醒依据 | 原请求/回复、工作/Run 引用、等待原因、实际交付/处理位置及控制事实 | 原 Run 的 yielded 终态与 continuation 保存等待关联，后继 Run 记录 consumedWait；回复接入原 Task/Session。Host 句柄仍在内存，持久关联不等于进程重启后自动续跑 |
 
-字段来源：[Session](../../src/contracts/core/session.ts)、[SessionCard](../../src/core/work-graph/sessions/contracts.ts)、[Work Run](../../src/contracts/dispatch.ts)、[Query](../../src/contracts/query-job.ts)、[控制](../../src/contracts/control-intent.ts)。当前卡片 availability 的归约是：archived/health unavailable → unavailable；否则有占用 → busy；否则 health recoverable → recoverable；否则 idle。它是**可用性**，不能直接代替下面的活动状态。
+字段来源：[Session](../../src/contracts/core/session.ts)、[SessionCard](../../src/core/work-graph/model/session-contracts.ts)、[Work Run](../../src/contracts/dispatch.ts)、[Query](../../src/contracts/query-job.ts)、[控制](../../src/contracts/control-intent.ts)。当前卡片 availability 的归约是：archived/health unavailable → unavailable；否则有占用 → busy；否则 health recoverable → recoverable；否则 idle。它是**可用性**，不能直接代替下面的活动状态。
 
 #### 用户看到的状态应该由什么证明
 
@@ -239,7 +239,7 @@ sequenceDiagram
 | 机制 | 当前已接部分 | 保留的能力边界 |
 | --- | --- | --- |
 | 秘书/参谋/书记工作约束 | [秘书](../../resources/skills/platform-secretary/content.md)、[参谋](../../resources/skills/platform-adviser/content.md)、[书记](../../resources/skills/platform-scribe/content.md)资源与AG6装配；沟通、调查/取舍、事实核查已有指令 | 复用角色 Skill 与共同装配；指令加载不等于语义判断正确，也不自动完成决定回流 |
-| 调查→初始计划与未来细化 | 正式Query/Answer、[计划服务](../../src/core/work-graph/tasks/plan-contracts.ts)的初始候选与采用、[白板工具](../../src/core/agent-runtime/whiteboard-tools.ts)的future-only修订 | `needs_decision`只返回问题；Agent apply的decisionRefs由平台置空，不能当通用决定登记或修改运行中工作 |
+| 调查→初始计划与未来细化 | 正式Query/Answer、[计划服务](../../src/core/work-graph/model/plan-contracts.ts)的初始候选与采用、[白板工具](../../src/core/agent-runtime/whiteboard-tools.ts)的future-only修订 | `needs_decision`只返回问题；Agent apply的decisionRefs由平台置空，不能当通用决定登记或修改运行中工作 |
 | 架构、政策与决定来源 | [Catalog/Baseline契约](../../src/core/work-graph/architecture/catalog-contracts.ts)、初始采用/读取、CompletionPolicy安装/启用、Artifact和消息来源 | 持续架构修订对外消费者、通用决定提交、适用双图调整与实际落实链未接齐。政策安装不等于激活，正文保存不等于决定已采用 |
 | 全局对齐与状态驱动 | 双图/成员查询、A′、yield 后同 Session 接续、Work 控制、archive/reactivate、同 Goal 多 Task 句柄，以及显式配置的文件/双图通知和输入消费者 | Host 句柄不持久，重开后须显式请求沿正式关联续接；无默认角色调度器、Query 公开控制或原生 compact。机械变化通知不代替项目语义判断，处理结果不自动成为正式决定 |
 

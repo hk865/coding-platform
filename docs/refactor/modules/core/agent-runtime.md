@@ -82,7 +82,7 @@ src/core/agent-runtime/
 
 ## 3. 本地类型：执行与维护分别表达
 
-代码路径按目标目录。以下 `ExecutionAdmission/PreparedExecution/ExecutionObservation/EntryPermit/KernelObservationSource/CompletedHistoryBoundary` 是由 WorkGraph 持有的**目标接口草案**，不是宣称当前 `tasks/contracts.ts` 已导出这些类型：前者为 `{kind:'task',claim:TaskClaim}` 或 `{kind:'query',queryJobRef,queryRunRef,sessionRef,generation}`；PreparedExecution 为现有 TaskEnvelopeV1 或 QueryExecutionBindingV1 的带 kind 联合。任务与查询不得互相强转。当前 Runtime [ports.ts](../../../../src/core/agent-runtime/ports.ts) 已有 B2 的 Task 专用 prepare/start/observe 实现，复用真实 Claim、WG11/WG12、固定 Kernel 身份及终态事实；Query 联合入口、控制/维护仍未交付。下方完整联合类型仍是目标草案，不能据其声称 Query 已接通。
+代码路径按目标目录。以下 `ExecutionAdmission/PreparedExecution/ExecutionObservation/EntryPermit/KernelObservationSource/CompletedHistoryBoundary` 是由 WorkGraph 持有的**目标接口草案**，不是宣称当前 `model/task-contracts.ts` 已导出这些类型：前者为 `{kind:'task',claim:TaskClaim}` 或 `{kind:'query',queryJobRef,queryRunRef,sessionRef,generation}`；PreparedExecution 为现有 TaskEnvelopeV1 或 QueryExecutionBindingV1 的带 kind 联合。任务与查询不得互相强转。当前 Runtime [ports.ts](../../../../src/core/agent-runtime/ports.ts) 已有 B2 的 Task 专用 prepare/start/observe 实现，复用真实 Claim、WG11/WG12、固定 Kernel 身份及终态事实；Query 联合入口、控制/维护仍未交付。下方完整联合类型仍是目标草案，不能据其声称 Query 已接通。
 
 ```ts
 import type { ArtifactRef } from '../../contracts/artifact.js';
@@ -99,8 +99,8 @@ import type { OperationRef, OperationReceipt, OperationProgress } from '../../co
 import type { ReadResult, CoreRejection, Page } from '../../contracts/core/results.js';
 import type { SessionRecord } from '../../contracts/core/session.js';
 import type { ExecutionAdmission, PreparedExecution, ExecutionObservation,
-  EntryPermit } from '../work-graph/tasks/contracts.js';
-import type { SessionAction, SessionOperationRecord } from '../work-graph/sessions/contracts.js';
+  EntryPermit } from '../work-graph/model/task-contracts.js';
+import type { SessionAction, SessionOperationRecord } from '../work-graph/model/session-contracts.js';
 
 export type RuntimeCapability = { supported: boolean; reason: string };
 export type RuntimeCapabilities = {
@@ -365,11 +365,11 @@ Run 上 fresh begin，固定 Kernel 身份
 
 | 接线面 | 复用入口 | 已接Task路径的约束 |
 | --- | --- | --- |
-| Role / TaskInput / Session 装配 | [configuration/contracts.ts](../../../../src/core/work-graph/configuration/contracts.ts) 的 `resolveRoleBindingFacts/readRoleSpec`、[plan-contracts.ts](../../../../src/core/work-graph/tasks/plan-contracts.ts) 的 `readTaskInput`（2026-10-07 已删除，lead 决定 LA-11）、[sessions/contracts.ts](../../../../src/core/work-graph/sessions/contracts.ts) 的 `readSession` | 受信 Host 将精确 Role pin 映射到稳定 Skill/工具配置；保留 resolved/absent/inadmissible。通过既有 Artifact body 保存有界装配清单，引用本次 Task/Module、材料和 Session 区间，不复制原历史。 |
+| Role / TaskInput / Session 装配 | [model/configuration-contracts.ts](../../../../src/core/work-graph/model/configuration-contracts.ts) 的 `resolveRoleBindingFacts/readRoleSpec`、[plan-contracts.ts](../../../../src/core/work-graph/model/plan-contracts.ts) 的 `readTaskInput`（2026-10-07 已删除，lead 决定 LA-11）、[model/session-contracts.ts](../../../../src/core/work-graph/model/session-contracts.ts) 的 `readSession` | 受信 Host 将精确 Role pin 映射到稳定 Skill/工具配置；保留 resolved/absent/inadmissible。通过既有 Artifact body 保存有界装配清单，引用本次 Task/Module、材料和 Session 区间，不复制原历史。 |
 | Run 固定授权与 fresh 进入 | WG11 `readExecution`；[dispatch.ts](../../../../src/contracts/dispatch.ts) 的 Run `inputBinding/executionAuthorization`；唯一 Run schema owner [record-readers.ts](../../../../src/core/work-graph/materials/record-readers.ts) | 在原 Run 绑定上版本化核对输入、固定 Kernel 身份、Session generation 与 entryGeneration；已接 `authorizeRuntimeEntry/beginRuntimeEntry`，仅 fresh 提交允许调用 Kernel，重放只观察/对账。同步原 codec，不另建进入状态源。 |
 | entered 与历史定位同事务 | B1 `runObservedModel.controlHooks`；WG12 [execution-history-service.ts](../../../../src/core/work-graph/tasks/execution-history-service.ts) 的 `recordExecutionHistory` | 提取并共用 WG12 的内部校验/编译逻辑，在 before_model 核对真实 Turn/Run 起始证据后，将 entered 与历史定位合成一次 WG 提交；不串行重复写同一 Run，不以 best_effort observer 代替屏障。 |
 | 增量观察与真实终态 | RT8 [graph-execution-history.ts](../../../../src/core/agent-runtime/graph-execution-history.ts) → RT7 [observation-recovery.ts](../../../../src/core/agent-runtime/observation-recovery.ts) → RT1 原历史读取 | 沿已存位置补读并归约原事件；核对持久终态与完整 Turn 后才推进完成边界，不能只依据 Kernel 返回状态。paused、记录缺口和未知工具副作用分别保留，用户分页游标不能直接当跨主体的续轮授权。 |
-| 相同 owner 的终态释放 | 原 Run/Attempt、Session occupancy、`TaskLeaseSnapshot`；[claim-contracts.ts](../../../../src/core/work-graph/tasks/claim-contracts.ts) 的 `TaskClaimOutbox` | 给既有 Lease/outbox 补 released/终态语义并同步原 codec、领取与资格 reader；结果归约仅释放匹配 owner/generation 的占用，下一次领取 CAS 当前版本。Run 结束不自动完成 Task/Goal，也不移除待命 Session 的图挂靠。 |
+| 相同 owner 的终态释放 | 原 Run/Attempt、Session occupancy、`TaskLeaseSnapshot`；[claim-contracts.ts](../../../../src/core/work-graph/model/claim-contracts.ts) 的 `TaskClaimOutbox` | 给既有 Lease/outbox 补 released/终态语义并同步原 codec、领取与资格 reader；结果归约仅释放匹配 owner/generation 的占用，下一次领取 CAS 当前版本。Run 结束不自动完成 Task/Goal，也不移除待命 Session 的图挂靠。 |
 | 每次模型调用的正式准入 | `ModelCallAccess.bind/beforeCall` 与 [observed-model-run.ts](../../../../src/core/agent-runtime/observed-model-run.ts) 的最终请求核对调用点 | Runtime薄适配与WG正式输入/请求准入已接；绑定真实装配摘要，按最终请求指纹取得并消费许可。正式 driver 不跳过该接口，重放许可不再次调用 provider，不虚构完成 ack。 |
 
 

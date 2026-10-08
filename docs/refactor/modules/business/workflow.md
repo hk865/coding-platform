@@ -72,7 +72,7 @@ import type { GoalRef } from '../../contracts/ledger.js';
 import type { PlanRevisionRef } from '../../contracts/plan.js';
 import type { SourceRefV1 } from '../../contracts/dispatch.js';
 import type { QueryJobAnswerRef, QueryJobRef } from '../../contracts/query-job.js';
-import type { PlanProposalRef } from '../../core/work-graph/tasks/contracts.js';
+import type { PlanProposalRef } from '../../core/work-graph/model/plan-contracts.js';
 import type { ArchitecturePort, ArchitectureDraftRef, ArchitectureRevision,
   ArchitectureSelection } from '../../core/work-graph/architecture/contracts.js';
 import type { VerificationRoundScope } from '../../contracts/verification-context.js';
@@ -361,13 +361,13 @@ R3e.1五生产实现已独审导入；[R3e.3 §9](../../tasks/R3e-completion-ske
 | 当前符号 | 本批调用与边界 |
 | --- | --- |
 | `business/workflow/workflow.ts::createWorkflow` / `ports.ts::WorkflowPort`（2026-10-07：原写 `N0WorkflowPort`，这个别名已按决定 34 删除） | 目前只依赖 `GoalTaskPort`，`advanceWork` 的 trigger 为 never，两入口 unsupported。本批只接已有 Plan 的 advanceWork；保留 handleGoalInput 旧接口/明确缺能力，不顺带做初次规划。 |
-| `work-graph/tasks/plan-contracts.ts::PlanTaskPort` | 直接调用 queryGoal/queryTaskGraph/queryReadyTasks。沿已采用 Plan 和原 `revisionAssignments` 取任务分配；ready 使用核心 eligibility，不在 Workflow 重做 DAG/材料/source 判定。future-only、缺验收与 required 未完成说明来自图。 |
-| `work-graph/sessions/contracts.ts::SessionDirectoryPort` | findSessions/readSession 返回正式 SessionCard、occupancy 与 links；按同 task、可用性和稳定 sessionId 选择，同配置的既有 Session 优先。显式 Session 忙时等待，不偷偷创建替身。实际占用由 claim CAS 决定。 |
+| `work-graph/model/plan-contracts.ts::PlanTaskPort` | 直接调用 queryGoal/queryTaskGraph/queryReadyTasks。沿已采用 Plan 和原 `revisionAssignments` 取任务分配；ready 使用核心 eligibility，不在 Workflow 重做 DAG/材料/source 判定。future-only、缺验收与 required 未完成说明来自图。 |
+| `work-graph/model/session-contracts.ts::SessionDirectoryPort` | findSessions/readSession 返回正式 SessionCard、occupancy 与 links；按同 task、可用性和稳定 sessionId 选择，同配置的既有 Session 优先。显式 Session 忙时等待，不偷偷创建替身。实际占用由 claim CAS 决定。 |
 | `agent-runtime/session-operations.ts::CreateSessionRequest` / `RuntimeExecutionPort.createSession` | 正式创建映射，返回 OperationReceipt：只有 completed 才有 SessionRecord 可领取；accepted/unknown 保留原 operationRef，重发原 create 请求继续既有操作。initialLinks 指向真实 task，不自造 Kernel sessionId/store path。 |
-| `work-graph/tasks/claim-contracts.ts::TaskClaimPort` | claim 输入为 goalRef/planRef/taskId/sessionRef/完整 roleBinding/TaskBudget；结果是正式 TaskClaim。claim 只支持 work 的首次 Run，gate 不 claim，已有失败 Run 不假借新请求触发返工。（2026-10-07 补注（第 7 步）：A.2 5.4 起另有带 `requeueRef` 的重新入队领取；返工先经 `requeueTask` 写 TaskRequeue，再领取，仍不借新的首次领取请求。gate 仍不 claim。） |
+| `work-graph/model/claim-contracts.ts::TaskClaimPort` | claim 输入为 goalRef/planRef/taskId/sessionRef/完整 roleBinding/TaskBudget；结果是正式 TaskClaim。claim 只支持 work 的首次 Run，gate 不 claim，已有失败 Run 不假借新请求触发返工。（2026-10-07 补注（第 7 步）：A.2 5.4 起另有带 `requeueRef` 的重新入队领取；返工先经 `requeueTask` 写 TaskRequeue，再领取，仍不借新的首次领取请求。gate 仍不 claim。） |
 | `work-graph/source-authority-ports.ts::SourceSnapshotReads` | **实际 pin 缺口**：queryReadyTasks.expected 仅 Goal+Plan；claim 却要求 Goal+Workspace+Session。组合根已有 `sourceAuthority = createSourceAuthorityReader({authority: reads.authority})`，作为内部依赖注入 Workflow，精确 load Goal.workspaceRef 取得 Workspace.revision；Session pin 来自正式 card/创建回执。只组装 claim 所需三 pin，不把 ready 的 Plan pin原样塞进去，不使用 Host permissionRevision 冒领域 revision，不新增 public reader。 |
 | `agent-runtime/ports.ts::RuntimeExecutionPort` | prepareExecution({runRef,requestId}) → 原 PreparedTaskExecution → startRun({prepared,consumerId,requestId})；startRun 实际 await 原 Kernel 循环并观察，返回 TaskExecutionRecord，不存在独立 runCheck/driveAccepted 方法。observeRun 只对原 Run 读历史/归约，绝不重启。内部 work_run ctx 由 Runtime 生成，Workflow 不伪装 Run 主体。 |
-| `work-graph/evidence/contracts.ts::EvidencePort` | openVerification/readVerification/finalizeChecks 使用正式 Round；计划、coverage、来源适用性和 Evidence fold 全归原 owner。Workflow 不提交自报 PASS，不直接调用 recordCheckResult 伪装执行观察。 |
+| `work-graph/model/evidence-contracts.ts::EvidencePort` | openVerification/readVerification/finalizeChecks 使用正式 Round；计划、coverage、来源适用性和 Evidence fold 全归原 owner。Workflow 不提交自报 PASS，不直接调用 recordCheckResult 伪装执行观察。 |
 | `agent-runtime/check-execution.ts::RegisteredCheckRunner` | 真实方法是 runRegisteredCheck(ctx, GraphWrite<{roundRef,checkId}>)，返回 ReadResult<RoundSnapshot>。按已持久化 round.checks 的固定 checkId 逐项执行，用每次原回执的实际 Round revision；命令、源码捕获与 ProcessSandbox 均由既有 owner 管理。 |
 | R3e.3 `GoalTaskPort.completeTask/completeGoal` | 复用冻结的 GraphWrite：Task 为 taskRef/planRef/roundRef，Goal 为 goalRef；原 WriteResult 完整返回。completeTask 首次 expected 为 Goal+TaskReduction@0，completeGoal 为 Goal+GoalPhase@0，具体 ref 复用既有 contracts。既有 reduction/版本冲突按正式 current/图返回处理，不绕过核心重跑 fold。 |
 

@@ -20,11 +20,13 @@ WorkGraph 保存和操作任务、正式架构、Session 目录、通信、证�
 - Session 创建先登记操作、由 AgentRuntime 创建 Kernel Session、再登记映射；映射完成才可领取。领取将 TaskAttempt、Run、Session 占用和 outbox 一起提交。
 - 模型查询使用真实 QueryRunRef，不能伪造一个 Task。`ExecutionRef = RunRef | QueryRunRef`；原 RunRef/TaskAttemptRef 的键与历史格式保留。
 
-共同类型的精确来源见 [公共契约骨架](../../skeleton/CONTRACTS.md)。本页重述调用所需含义，领域 Port 与 DTO 归本模块各 `contracts.ts`；机械持久编码协议归 `src/core/record-store/ports.ts`，共同业务身份仍归 `src/contracts/core/`；WorkGraph→RecordStore 是已允许依赖，不能让 RecordStore 反向导入本模块。
+共同类型的精确来源见 [公共契约骨架](../../skeleton/CONTRACTS.md)。本页重述调用所需含义，领域 Port 与 DTO 归本模块各 `contracts.ts`（2026-10-08 补注：任务 D 以后大多在 `model/` 下，按领域加了前缀，例如 `model/task-contracts.ts`；`architecture/contracts.ts`、`queries/contracts.ts` 没有搬）；机械持久编码协议归 `src/core/record-store/ports.ts`，共同业务身份仍归 `src/contracts/core/`；WorkGraph→RecordStore 是已允许依赖，不能让 RecordStore 反向导入本模块。
 
 ## 2. 文件与内部依赖
 
 > **2026-10-07 补注（任务 D，决定 40）：** 下表是 2026-09-23 的目标文件表，按原样保留；里面不少文件名和目录已经不对。现在的目录是任务 D（0cd45508）搬完以后的 13 个子模块，按层（DESIGN §7.2）从下往上：L0 `model/`、`state/`；L1 `persistence/`；L2 `configuration/`、`materials/`、`architecture/`；L3 `sessions/`、`source-authority-ports.ts`；L4 `queries/`；L5 `tasks/`、`source-authority-reader.ts`；L6 `evidence/`、`communication/`。上层可以依赖下层，反过来不行；每个子模块允许依赖哪些，写在 [module-target.json](../../module-target.json) 的 `submodules` 里，`check:architecture` 按它逐条检查（包括只引用类型的 import）。唯一的同层依赖：model 可以依赖 state（L0 内部的例外，决定 40 修法 B）；state 不依赖 WorkGraph 里的任何东西，只依赖 `src/contracts`。共享契约在 `model/`（任务 D 从 tasks、configuration、materials、sessions、communication、evidence 挪下来的 12 个文件）；`notes`（L5.5）、`views`（L7）留了位置，还没有文件。完整的表、禁止的方向和例外的来历见 [module-dag §6](../../module-dag.md#6-workgraph-的子模块2026-10-07决定-40)。
+
+> **2026-10-08 补注（任务 D 收尾）：** 下表按原样保留，所以下面 8 行写的还是搬移前的位置。任务 D 以后：`tasks/contracts.ts` 是 `model/task-contracts.ts`，`tasks/task-index.ts` 是 `model/task-index.ts`，`sessions/contracts.ts` 是 `model/session-contracts.ts`，`communication/contracts.ts` 是 `model/communication-contracts.ts`，`evidence/contracts.ts` 是 `model/evidence-contracts.ts`，`evidence/coverage.ts` 是 `tasks/evidence-coverage.ts`，`materials/contracts.ts` 是 `model/material-contracts.ts`，`configuration/contracts.ts` 是 `model/configuration-contracts.ts`。完整的搬移表（18 个文件）见 [moves.json](../../reviews/evidence/workgraph-split-2026-10-07/moves.json)。本页其它地方的路径已改成搬移后的。
 
 `ports.ts` 只导出下面的窄 Port 与 DTO；`index.ts` 只导出 `createWorkGraph`、依赖类型及 ports。工厂返回分组 Port，不创建转发所有方法的大类。消费者按能力注入，不获得数据库句柄。
 
@@ -304,7 +306,7 @@ observed 邻域按指定关系作 depth 有界的双向邻接遍历，边随 fro
 
 ## 4.2 R4c.1 当前冻结的 Task 领取接口（2026-09-24）
 
-施工状态：已通过Astra骨架/测试审核、DSH实现、独立审阅与物理隔离验收；60文件/422项PASS，见[验收报告](../../reviews/next-r4c-claim-2026-09-24.md)。当前窄接口以 `next/src/core/work-graph/tasks/claim-contracts.ts` 为准；本节覆盖下文旧 `scope` / `reservationRef` 必填草案。整体 R4c 仍需 prepare、真实 entry、Query、观察与释放。
+施工状态：已通过Astra骨架/测试审核、DSH实现、独立审阅与物理隔离验收；60文件/422项PASS，见[验收报告](../../reviews/next-r4c-claim-2026-09-24.md)。当前窄接口以 `next/src/core/work-graph/model/claim-contracts.ts` 为准；本节覆盖下文旧 `scope` / `reservationRef` 必填草案。整体 R4c 仍需 prepare、真实 entry、Query、观察与释放。
 
 ```mermaid
 flowchart TD
@@ -328,9 +330,9 @@ flowchart TD
 
 ## 5. TaskPort：目标、计划、领取、完成
 
-**2026-09-24 实施澄清：** `next` 当前 Goal 已实装，计划子接口落在 `tasks/plan-contracts.ts`，本轮冻结范围见 [R3c任务书](../../tasks/R3c-next-plan-skeleton.md)。PlanProposal 沿既有 workspace 作用域完整键，Goal 为 body 关联；v1 只有 patch，读视图明确无完整 draft。`queryReadyTasks` 是 task_state 候选，领取时再核验真实角色、Session、资源和预算；查询不创造许可。新 v2 全量草稿已支持初始受理及 §5.1 的 W1/W2 窄未来修订，不能靠非空 decisionRefs 绕过其 source/delta 与局部事实检查。单 Goal 邻接与注册lookup已足以支撑本轮；同步ready分区索引另批实现，不以当前读lookup冒充。TaskGraph 始终保留全部 Plan 任务；运行/归约事实只更新状态，不能过滤掉没有执行记录的任务。候选 lookup 与 canonical 复读须同水位，否则重读或 not_ready，不能给漏项集合贴较新水位。已有 ended Run 但未有正式归约/重新入队依据时不得退回首次 pending/free。
+**2026-09-24 实施澄清：** `next` 当前 Goal 已实装，计划子接口落在 `model/plan-contracts.ts`，本轮冻结范围见 [R3c任务书](../../tasks/R3c-next-plan-skeleton.md)。PlanProposal 沿既有 workspace 作用域完整键，Goal 为 body 关联；v1 只有 patch，读视图明确无完整 draft。`queryReadyTasks` 是 task_state 候选，领取时再核验真实角色、Session、资源和预算；查询不创造许可。新 v2 全量草稿已支持初始受理及 §5.1 的 W1/W2 窄未来修订，不能靠非空 decisionRefs 绕过其 source/delta 与局部事实检查。单 Goal 邻接与注册lookup已足以支撑本轮；同步ready分区索引另批实现，不以当前读lookup冒充。TaskGraph 始终保留全部 Plan 任务；运行/归约事实只更新状态，不能过滤掉没有执行记录的任务。候选 lookup 与 canonical 复读须同水位，否则重读或 not_ready，不能给漏项集合贴较新水位。已有 ended Run 但未有正式归约/重新入队依据时不得退回首次 pending/free。
 
-DTO 定义在 `tasks/contracts.ts`。TaskGraph 的 definition 保留 PlanRevision 中的原值，effectivePhase 从正式 reduction/Run/处置解释。下列 Goal/Plan 命令不自动启动任何执行。
+DTO 定义在 `model/task-contracts.ts`。TaskGraph 的 definition 保留 PlanRevision 中的原值，effectivePhase 从正式 reduction/Run/处置解释。下列 Goal/Plan 命令不自动启动任何执行。
 
 ```ts
 export type GoalDetail = { goal: GoalSnapshot; phase: GoalPhaseSnapshot | null; pendingPlan: PlanProposal | null };
@@ -378,11 +380,11 @@ export interface TaskPort {
 }
 ```
 
-（2026-10-07 补注（第 7 步）：上面的 `requeueTask` 已实现，但在 `TaskClaimPort` 上（[claim-contracts.ts](../../../../src/core/work-graph/tasks/claim-contracts.ts)）：输入 `RequeueTaskInput` 是 `taskRef`、`afterRunRef`（即上面的 `failedRunRef`）、`reason`，可选 `budget`、`newInputRefs`、`note`、`trigger`；结果 `TaskRequeueOutcomeV1` 是 `requeued` 或政策拒绝 `refused`，不是 TaskRow（可靠性批次 A.2 5.4）。Goal 的期望状态另由 `GoalTaskPort.setGoalControl` 改（5.5），须钉 Goal 和 GoalPhase 两个版本（HANDOFF 决定 29），不借 `updateGoalIntent`。`releaseTaskClaim`、`assessParallelism` 代码里没有。）
+（2026-10-07 补注（第 7 步）：上面的 `requeueTask` 已实现，但在 `TaskClaimPort` 上（[claim-contracts.ts](../../../../src/core/work-graph/model/claim-contracts.ts)）：输入 `RequeueTaskInput` 是 `taskRef`、`afterRunRef`（即上面的 `failedRunRef`）、`reason`，可选 `budget`、`newInputRefs`、`note`、`trigger`；结果 `TaskRequeueOutcomeV1` 是 `requeued` 或政策拒绝 `refused`，不是 TaskRow（可靠性批次 A.2 5.4）。Goal 的期望状态另由 `GoalTaskPort.setGoalControl` 改（5.5），须钉 Goal 和 GoalPhase 两个版本（HANDOFF 决定 29），不借 `updateGoalIntent`。`releaseTaskClaim`、`assessParallelism` 代码里没有。）
 
 `GoalPhaseSnapshot` 来源 `src/contracts/goal-phase.ts`，`TaskReductionRef` 来源 `src/contracts/reduction.ts`。预算使用用户/项目已有配置，不因新入口自行增加数字。实际权限由角色/当前授权解析，模型不能传一个 tools 数组自行扩大权限。
 
-`ScopeProposal/ParallelCandidate/ParallelAssessment/ResourceReservationRecord` 的目标字段及操作语义见 [并行协作 §4–5](../../PARALLEL-COLLABORATION.md)，领域 DTO 同归 `tasks/contracts.ts`；共享 ResourceTarget/Access/ReservationRef 归 `src/contracts/core/resources.ts`。注释：预检查只提供解释，不能用其成功结果替代 claim 时对当前集合的原子核对。不同模块共享接口属于影响提示，实际路径重叠才按操作模式判断资源冲突。工具返回具体冲突/缺口后由 Agent 修正分工，不自动把任务判失败。
+`ScopeProposal/ParallelCandidate/ParallelAssessment/ResourceReservationRecord` 的目标字段及操作语义见 [并行协作 §4–5](../../PARALLEL-COLLABORATION.md)，领域 DTO 同归 `model/task-contracts.ts`；共享 ResourceTarget/Access/ReservationRef 归 `src/contracts/core/resources.ts`。注释：预检查只提供解释，不能用其成功结果替代 claim 时对当前集合的原子核对。不同模块共享接口属于影响提示，实际路径重叠才按操作模式判断资源冲突。工具返回具体冲突/缺口后由 Agent 修正分工，不自动把任务判失败。
 
 `updateGoalIntent` 复用现有 goal-change 受理规则；只是目标文字变化不自动使全部旧证据有效或无效。PlanProposal 是目标统一候选外形，迁移器适配已有初始规划/计划变更提案引用，不复制保存第二个活动计划。原接受计划必须检查政策、义务、引用和 DAG；首个 baseline 前的调查/草案可用，但任务真正执行仍需完成其适用正式前置条件。
 
@@ -431,7 +433,7 @@ archive 隐藏活跃发现而保留关联/历史；module responsible 不等于�
 
 ### 6.1 Session 目录及受理记录
 
-`sessions/contracts.ts` 保存 Session 操作载荷；SessionRecord/SessionWorkLink/ExecutionRef 共享定义。创建意图存在时 Session 仅有 plannedSessionRef，不能凭此读取成 active/idle。
+`model/session-contracts.ts` 保存 Session 操作载荷；SessionRecord/SessionWorkLink/ExecutionRef 共享定义。创建意图存在时 Session 仅有 plannedSessionRef，不能凭此读取成 active/idle。
 
 ```ts
 export type SessionAction =
@@ -480,13 +482,13 @@ SessionWorkLink 与 WorkModuleLink 的 since/until 需要本次真实提交 curs
 
 ### 6.2 执行状态及 QueryRun 兼容
 
-**2026-09-25 R4c.2a 已验收子集（[报告](../../reviews/next-r4c-execution-reads-2026-09-25.md)）：** 已实现 Task 的 `ExecutionReadPort.readExecution`，具体签名见 [execution-read-contracts.ts](../../../../src/core/work-graph/tasks/execution-read-contracts.ts)。下方联合契约是完整目标；本子批不对 Query、入口授权、启动或结束作已实现承诺。
+**2026-09-25 R4c.2a 已验收子集（[报告](../../reviews/next-r4c-execution-reads-2026-09-25.md)）：** 已实现 Task 的 `ExecutionReadPort.readExecution`，具体签名见 [execution-read-contracts.ts](../../../../src/core/work-graph/model/execution-read-contracts.ts)。下方联合契约是完整目标；本子批不对 Query、入口授权、启动或结束作已实现承诺。
 
 `run-state-service.ts` 复用既有 Run / Attempt / TaskClaimOutbox / Plan / Session / TaskLease 编码：先由 Run 定位 outbox，再由其不可变 claim 定位 Session，最后一次 `RecordStore.readMany` 返回六者的同窗口事实。发现阶段用于定位键，不要求其全局水位与最后读取相等；只在相关引用变化时有界重试。读取成本不随无关任务增长，无全图扫描、写入或新锁。既有 pending outbox 不是旧 `DispatchOutboxEntrySnapshot` 完整类型，当前使用真实 `TaskClaimOutbox`，以后状态迁移须版本化扩展。
 
 Run 在满足请求水位后确证缺失才是 `not_found`；Run 已存在而必需关联缺失为 `incomplete`，损坏/错链为 `unavailable`。Lease 明确缺失可返回 null，新领取的 Session 不可缺失。Session 和 Lease 返回当前事实，已释放或被后续执行占用不妨碍查阅历史；该查询不产生进入许可，不再次执行角色/材料准入，也不以当前 Goal 的 activePlan 隐藏旧执行。结果 `readThrough` 仅是本次读水位。
 
-**R4c.2b 已验收契约（2026-09-25，[报告](../../reviews/next-r4c-history-and-source-2026-09-25.md)）：** 细粒度历史定位直接保存到 `RunSnapshot.executionHistory`，见 [版本化字段](../../../../src/contracts/core/execution-history.ts)及[写契约](../../../../src/core/work-graph/tasks/execution-history-contracts.ts)。字段包含从原 claim 取得的 SessionRef、固定 Kernel adapter/session/run/turn、包含式 startPosition、连续核验水位 observedThroughPosition、可空 endPosition。缺字段是尚未索引，不能推断从未执行；一次 Task 的多次 Run 分别保存区间。起点来自真实进入记录，终点来自完整终态证据；不能用下发时间、当前尾部或消费水位冒充。
+**R4c.2b 已验收契约（2026-09-25，[报告](../../reviews/next-r4c-history-and-source-2026-09-25.md)）：** 细粒度历史定位直接保存到 `RunSnapshot.executionHistory`，见 [版本化字段](../../../../src/contracts/core/execution-history.ts)及[写契约](../../../../src/core/work-graph/model/execution-history-contracts.ts)。字段包含从原 claim 取得的 SessionRef、固定 Kernel adapter/session/run/turn、包含式 startPosition、连续核验水位 observedThroughPosition、可空 endPosition。缺字段是尚未索引，不能推断从未执行；一次 Task 的多次 Run 分别保存区间。起点来自真实进入记录，终点来自完整终态证据；不能用下发时间、当前尾部或消费水位冒充。
 
 `recordExecutionHistory` 复用既有 WG11 与 Store 条件事务，只更新完整保留旧字段的 Run（revision+1）、一个来源事件和 Kernel 执行身份的唯一归属槽；没有新图/聚合/历史库。固定身份和起点不可更换，水位单调，终点一旦记录不可清除或改动；原请求重放返回原事件结果。Run/Attempt/Session 的业务状态不由这一定位操作改变，历史补录不要求仍占用当前 Session。Runtime 从真实来源提供事实；后续进入/观察归约应复用这组校验和维护逻辑，在需要同时更新业务状态时编译进同一事务，不复制一套区间维护。
 
@@ -496,7 +498,7 @@ Run 在满足请求水位后确证缺失才是 `not_found`；Run 已存在而必
 
 QueryRun也有独立 ResourceReservationRecord；仅查平台记录/冻结内容时 resources=[]，不产生文件占用。需要保护现场读取时加入明确 read 范围，动态扩展用同一 reviseExecutionScope；Query权限拒绝任何write/shared写副作用。普通无模型查询仍不创建QueryRun。这个联合由真实Query授予和工具能力解析，不能把empty范围解释为可无约束读写整个根。
 
-以下定义是由 WorkGraph 持有的**完整目标接口草案**，不是当前 `tasks/contracts.ts` 的已实现导出清单。当前精确读入口以 WG11 `execution-read-contracts.ts`、历史写入口以 WG12 `execution-history-contracts.ts` 为准；B 下一批按 §6.3 冻结增量接口。WorkGraph 不查询 Kernel；reconcile 的 input 必须由 AgentRuntime 从真实日志/句柄取得。平台入账返回 WriteResult；AgentRuntime 对用户返回长操作 OperationReceipt。
+以下定义是由 WorkGraph 持有的**完整目标接口草案**，不是当前 `model/task-contracts.ts` 的已实现导出清单。当前精确读入口以 WG11 `execution-read-contracts.ts`、历史写入口以 WG12 `execution-history-contracts.ts` 为准；B 下一批按 §6.3 冻结增量接口。WorkGraph 不查询 Kernel；reconcile 的 input 必须由 AgentRuntime 从真实日志/句柄取得。平台入账返回 WriteResult；AgentRuntime 对用户返回长操作 OperationReceipt。
 
 ```ts
 export type QueryClaim = { kind: 'query'; queryJobRef: QueryJobRef; queryRunRef: QueryRunRef; sessionRef: SessionRef; generation: number; reservationRef: ResourceReservationRef };
@@ -617,7 +619,7 @@ ModelCallAccess 的现行公开方法只有 bind/beforeCall；前者受理 Runti
 
 2026-09-25 重新核对后采用：`findSessions(module) → SessionRef → send/readInbox/ack/respond → Runtime 消费`。Session 是即时收件地址，发送方从可信 Host 或真实执行绑定解析；消息保留关联 Task/Run 与来源引用。正文可以复用材料/正文存储，大段原历史只传已有定位。WorkGraph 提交消息和处理状态，Runtime 只在可实际占用时送入会话；busy 先投递，不抢占同一 Session；archived 不自动唤醒。读取不标已读，收到/阅读/答复均不等于任务完成。
 
-首批内部文件仍沿用本模块 `communication/contracts.ts`、消息操作与 mailbox 查询组件；存储复用 RecordStore 按收件 Session/状态的 lookup，不另建消息中间件。旧 `coordination/mailbox-view.ts` 从事件头最多扫描 200×1000 条再读快照的实现不迁入热路径。可复用旧纯 fold、严格工具参数和正式提交后返回成功的机制，不搬旧模块总门面。
+首批内部文件仍沿用本模块 `model/communication-contracts.ts`、消息操作与 mailbox 查询组件；存储复用 RecordStore 按收件 Session/状态的 lookup，不另建消息中间件。旧 `coordination/mailbox-view.ts` 从事件头最多扫描 200×1000 条再读快照的实现不迁入热路径。可复用旧纯 fold、严格工具参数和正式提交后返回成功的机制，不搬旧模块总门面。
 
 C1 的 `SessionMailboxPort` 与 C2 的真实 Runtime 工具消费者已接通，见[本批审阅](../../reviews/next-b2-c1-middle-review-2026-09-26.md)。fresh work_run 写入先查原回执，未命中才核真实执行绑定、当前 Host/Role 及 Session/Lease 局部 guards；历史读取和原回执恢复仅按原 Run、claim outbox、Session 核身份，不因无关 Plan/Attempt/Lease 或当前源码授权阻塞历史。ack/respond 的同身份并发也恢复原回执，读 inbox 不自动 ack。正文先存再同事务发布引用，真实调用上下文固定 Run/Session 与工具 callId；仅调用平台工具不额外要求源码读取权限。
 
@@ -625,7 +627,7 @@ next 不为此新增 WorkContextBinding、WorkParticipation、AgentInstance 的�
 
 ### 7.2 原 Work 地址兼容草案（非 next 首批施工契约）
 
-以下保留旧方案用于行为追溯；不能直接按其中 registerAgentInstance/startWorkParticipation 生成 next 首批依赖。`communication/contracts.ts` 若接入旧地址兼容，须核对旧 identity 与 ctx，WorkParticipation/WorkContext/Session 不能合并为一个 ID；普通 Session 咨询按 §7.1 实施。
+以下保留旧方案用于行为追溯；不能直接按其中 registerAgentInstance/startWorkParticipation 生成 next 首批依赖。`model/communication-contracts.ts` 若接入旧地址兼容，须核对旧 identity 与 ctx，WorkParticipation/WorkContext/Session 不能合并为一个 ID；普通 Session 咨询按 §7.1 实施。
 
 ```ts
 // 2026-10-07 注：DeliveryRef、DirectedRequestRef 已按决定 34 从代码删除（见本节末尾）。下面保留原草案。
@@ -680,7 +682,7 @@ send/respond 的工作主体、当前参与者、Run、RoleBinding 从可信 wor
 
 ## 8. EvidencePort：轮次、检查记录和证据
 
-`evidence/contracts.ts` 保留已有 VerificationRoundRecord/View、CommandCheckRecord 和 Evidence 的语义。当前轮次由 VerificationJournal 保存，**不是已实现的 Ledger 聚合**；下面 RoundSnapshot 是目标正式存储外壳，迁移前读取旧 journal，不假装已有 round 表。
+`model/evidence-contracts.ts` 保留已有 VerificationRoundRecord/View、CommandCheckRecord 和 Evidence 的语义。当前轮次由 VerificationJournal 保存，**不是已实现的 Ledger 聚合**；下面 RoundSnapshot 是目标正式存储外壳，迁移前读取旧 journal，不假装已有 round 表。
 
 ```ts
 export type VerificationRoundRef = {
@@ -718,13 +720,13 @@ export interface EvidencePort {
 
 `VerificationPlanV1` 来源 `src/contracts/verification.ts`；`SubmitEvidenceCommand/Receipt` 来源 `src/contracts/evidence.ts`（2026-10-07 更正：本仓库代码里没有这两个类型；`submitEvidence` 已按决定 34 删除）。`VerificationRoundSourceProof/MaterialIdentity` 是 `src/contracts/verification-context.ts` 中的完整名称。输入须验证真实 Run/Task/Plan pin、配置 digest、轮次 fingerprint、检查身份与来源版本；调用方不能通过随意填写 identity 为另一任务认领 PASS。读轮次将旧 record 与执行记录组合为 view，不写回仅用于显示的 current 字段。
 
-Workflow 选择既有配置并请求检查，AgentRuntime 执行命令/只读审阅，WorkGraph 受理结果。只读审阅使用真实 read witness 和证据引用，不伪造成运行过 shell。recordCheckResult 保留中断/未知影响与原始拒绝细节；同 check/request 指纹重放一致，异内容拒绝。finalizeChecks 依据冻结计划逐 requirement 汇合，缺项/过期/失败均保留；它登记正式 Evidence，但不隐式 completeTask。TaskPort.completeTask 再核对当前采用计划与证据集并归约。（2026-10-07 补注（第 7 步）：代码里的 EvidencePort 以 [evidence/contracts.ts](../../../../src/core/work-graph/evidence/contracts.ts) 为准，轮次已是正式记录。可靠性批次 A.2 5.3 起每个检查主体（work 的 Run，或 gate 自己）只有一条轮次链，同一 Run 第二次开轮答 `busy`，Task 按链头投影，完成也读链头；5.9 起 `reverifyRound` 在链头没通过时开后继轮次（记 `predecessorRoundRef`，同一提交取代前驱证据），或记政策拒绝；5.6 起运行中被中断的检查由启动核对记为中断（`interruptCheck`），runner 证明未开始的记为放弃（`abandonCheck`）。见[能力索引](../../IMPLEMENTED-CAPABILITIES.md) WG22、WG25。）
+Workflow 选择既有配置并请求检查，AgentRuntime 执行命令/只读审阅，WorkGraph 受理结果。只读审阅使用真实 read witness 和证据引用，不伪造成运行过 shell。recordCheckResult 保留中断/未知影响与原始拒绝细节；同 check/request 指纹重放一致，异内容拒绝。finalizeChecks 依据冻结计划逐 requirement 汇合，缺项/过期/失败均保留；它登记正式 Evidence，但不隐式 completeTask。TaskPort.completeTask 再核对当前采用计划与证据集并归约。（2026-10-07 补注（第 7 步）：代码里的 EvidencePort 以 [model/evidence-contracts.ts](../../../../src/core/work-graph/model/evidence-contracts.ts) 为准，轮次已是正式记录。可靠性批次 A.2 5.3 起每个检查主体（work 的 Run，或 gate 自己）只有一条轮次链，同一 Run 第二次开轮答 `busy`，Task 按链头投影，完成也读链头；5.9 起 `reverifyRound` 在链头没通过时开后继轮次（记 `predecessorRoundRef`，同一提交取代前驱证据），或记政策拒绝；5.6 起运行中被中断的检查由启动核对记为中断（`interruptCheck`），runner 证明未开始的记为放弃（`abandonCheck`）。见[能力索引](../../IMPLEMENTED-CAPABILITIES.md) WG22、WG25。）
 
 角色 requiredOutputs 的现行含义是审计性产出期望；缺少角色建议产物不能新变成完成门禁。旧轮次 reduction.withheld 仅历史可读，新写入不得复活这条已撤回规则。
 
 ## 9. MaterialPort：精确来源读取与有界材料选择
 
-`materials/contracts.ts` 定义材料定位与选择，不包含业务角色提示词，不保存第二份 Kernel transcript。按引用读取应跳过不必要的图搜索；需要发现位置时才使用图邻域和历史索引。
+`model/material-contracts.ts` 定义材料定位与选择，不包含业务角色提示词，不保存第二份 Kernel transcript。按引用读取应跳过不必要的图搜索；需要发现位置时才使用图邻域和历史索引。
 
 ```ts
 export type MaterialWriteOrigin =
@@ -958,7 +960,7 @@ export interface ArchitectureLegacyPort {
 [R3a 任务书](../../tasks/R3a-goal-record-store.md) 首批仅实现 `GoalTaskPort.createGoal`，与 TaskPort 同方法签名。以下子服务是任务组件自身的实际子集，不先创建包含其它操作空壳的 createWorkGraph：
 
 ```ts
-// tasks/contracts.ts：Command/Receipt 从 ../../../contracts/command-event.js 导入；
+// model/task-contracts.ts：Command/Receipt 从 ../../../contracts/command-event.js 导入；
 // Goal/旧 batch 从 ../../../contracts/ledger.js，Store 从 ../../record-store/ports.js 导入。
 export interface GoalTaskPort {
   createGoal(ctx: CoreCallContext, request: GraphWrite<CreateGoalInput>): Promise<WriteResult<GoalSnapshot>>;
