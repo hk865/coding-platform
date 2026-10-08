@@ -531,7 +531,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       const entryAuthorizeConfiguration = authorizeConfiguration as AuthorizeConfiguration;
       const entryDependencies: ExecutionEntryDependencies = {
         records: backend.records, reads: executionReader, roles: roleService,
-        materials: rawMaterials, bodies, authorizeConfiguration: entryAuthorizeConfiguration,
+        bodies, authorizeConfiguration: entryAuthorizeConfiguration,
         ...(hostInstance === undefined ? {} : { hostInstance }),
         now, eventId: randomUUID, newId: randomUUID,
       };

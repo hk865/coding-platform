@@ -274,7 +274,6 @@ async function commitRoundWrite<T>(records: Records, signal: AbortSignal, write:
     type Guarded = { record: EncodedRecord; guard: RecordGuard };
     const guarded = (record: EncodedRecord, expectedRevision: number | null): Guarded => ({ record, guard: { refKey: record.refKey, expectedRevision } });
     let round: Guarded[] = [];
-    let roundGuard: RecordGuard[] = [];
     let readSet: readonly RecordGuard[] = [];
     let evidence: Guarded[] = [];
     let index: Guarded[] = [];
@@ -283,12 +282,6 @@ async function commitRoundWrite<T>(records: Records, signal: AbortSignal, write:
     for (const effect of write.effects) {
         switch (effect.kind) {
             case 'guard_round': round = [guarded(encodeVerificationRoundSnapshot(write.round), effect.expectedRevision)]; break;
-            case 'guard_round_unchanged': {
-                const key = refKeyOf(write.round.ref);
-                if (key === null) return invalid('the round ref is not canonical JSON');
-                roundGuard = [{ refKey: key, expectedRevision: effect.revision }];
-                break;
-            }
             case 'guard_open_read_set':
             case 'guard_finalize_read_set':
             case 'guard_begin_read_set':
@@ -309,10 +302,14 @@ async function commitRoundWrite<T>(records: Records, signal: AbortSignal, write:
             case 'guard_reverify_read_set':
             case 'refuse_reverify':
                 throw new Error(`${effect.kind} belongs to a reverify write (commitReverify)`);
+            // Only VR-09 (`task_requeued`) decides it, and no operation of this service passes that event:
+            // the requeue owner translates it in its own commit (`tasks/requeue-service.ts`).
+            case 'guard_round_unchanged':
+                throw new Error(`${effect.kind} belongs to a requeue write (requeue-service)`);
             default: return unreachable(effect, 'verification effect');
         }
     }
-    const merged = mergeGuards([...round.map(entry => entry.guard), ...roundGuard, ...readSet,
+    const merged = mergeGuards([...round.map(entry => entry.guard), ...readSet,
         ...[...index, ...evidence].map(entry => entry.guard)]);
     if (!merged.ok) return merged.rejection;
     const prepared: PreparedCommit = { identityKey: write.identity, fingerprint: write.fingerprint, guards: merged.guards,

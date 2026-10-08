@@ -94,7 +94,7 @@ async function open(kind: ClaimFixtureKind): Promise<Opened> {
   };
   const materialReads = createMaterialRecordReaders(records);
   const materials = createMaterialService({ bodies: b2.bodies, authority: materialReads.authority, now });
-  const entry = createExecutionEntryService({ records, reads, roles, bodies: b2.bodies, materials,
+  const entry = createExecutionEntryService({ records, reads, roles, bodies: b2.bodies,
     authorizeConfiguration, now, eventId, newId: () => `a2-requeue-entry-${++seq}` });
   const fixture: Opened = {
     b2, records, host, captures: [], messageReads: 0,

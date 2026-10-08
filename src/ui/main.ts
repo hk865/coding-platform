@@ -24,7 +24,6 @@ import {
   UI_BOOTSTRAP_SUFFIX,
   UI_CORE_API_PREFIX,
   UI_PLATFORM_TOKEN_HEADER,
-  renderProjectRead,
 } from './views.js';
 import type {
   BootstrapResponse,

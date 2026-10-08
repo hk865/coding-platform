@@ -247,7 +247,7 @@ export async function createB2RuntimeFixture(options: {
         return {status:'rejected',code:'forbidden',reason:'Persisted configuration differs from real current Host grant'};
       return {status:'ready',value:{configurationRevision:value.configurationRevision,permissions:structuredClone(permissions),hostTemplate:template}};
     };
-    const common={records,reads:executions,roles,materials,bodies,authorizeConfiguration,
+    const common={records,reads:executions,roles,bodies,authorizeConfiguration,
       ...(overrides.hostInstance===undefined?{}:{hostInstance:overrides.hostInstance}),now,eventId,newId};
     entry=createExecutionEntryService(common);modelRequests=createModelCallService(common);
     const runReconcile=overrides.runReconcile===true?createRunReconcileService({records,reads:executions,

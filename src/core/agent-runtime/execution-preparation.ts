@@ -30,7 +30,7 @@ import { decodeKernelEntry } from './kernel-turn-facts.js';
 import type { PrepareTaskExecutionRequest, ResolvedRuntimeConfiguration, RuntimeExecutionDependencies } from './execution-contracts.js';
 
 export type ExecutionPreparationDependencies = Pick<RuntimeExecutionDependencies,
-  'claims' | 'executions' | 'roles' | 'sessions' | 'materials' | 'bodies' | 'host' | 'now' | 'newId'>
+  'executions' | 'roles' | 'bodies' | 'host' | 'now' | 'newId'>
   & Partial<Pick<RuntimeExecutionDependencies, 'kernelStores' | 'workspaceHost' | 'workspaceSource'>>;
 
 export type ExecutionPreparationService = {

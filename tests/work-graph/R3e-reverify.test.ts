@@ -701,7 +701,7 @@ it('an entered Agent of the same Goal with the reverify_round grant opens a succ
     return { status: 'ready', value: { configurationRevision: B2_HOST.configurationRevision,
       permissions: structuredClone(input.permissions), hostTemplate: structuredClone(B2_HOST.hostTemplate) } };
   };
-  const entry = createExecutionEntryService({ records: fixture.records, reads, roles, bodies: b2.bodies, materials: fixture.materials,
+  const entry = createExecutionEntryService({ records: fixture.records, reads, roles, bodies: b2.bodies,
     authorizeConfiguration, now, eventId, newId: () => `r3e-agent-entry-${++sequence}` });
   const enterAgent = async (claim: TaskClaim, kernelRunId: string):
   Promise<{ run: RunSnapshot; permit: TaskEntryPermit; kernel: KernelExecutionBinding }> => {

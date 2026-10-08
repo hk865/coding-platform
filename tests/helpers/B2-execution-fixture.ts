@@ -27,7 +27,6 @@ import type { RawArtifactStorePort } from '../../src/core/record-store/body-port
 import type { RecordBackendSchemas } from '../../src/core/record-store/ports.js';
 import { RawArtifactBodyStore } from '../../src/core/record-store/body-store.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
-import type { MaterialPort } from '../../src/core/work-graph/model/material-contracts.js';
 import { plainSessionRefToAggregate } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import type { ClaimTaskInput } from '../../src/core/work-graph/model/claim-contracts.js';
 import type { GraphWrite } from '../../src/core/work-graph/model/task-contracts.js';
@@ -173,10 +172,6 @@ export async function createB2ExecutionFixture(
   const eventId = () => `b2-event-${++seq}`;
   const roles = createRoleConfigurationService({ records: base.records, now, eventId });
   const bodies = new RawArtifactBodyStore();
-  const materials: MaterialPort = {
-    async storeArtifact() { return { status: 'rejected', code: 'unsupported', reason: 'B2 fixture does not write material' }; },
-    async openArtifact() { return { status: 'rejected', code: 'unsupported', reason: 'B2 fixture does not open material' }; },
-  };
   const host = { enabled: true, calls: 0 };
   const authorizeConfiguration: AuthorizeConfiguration = async (ctx, input) => {
     host.calls++;
@@ -195,7 +190,7 @@ export async function createB2ExecutionFixture(
     const deps: ExecutionEntryDependencies = {
       records, reads: createRunStateReader({ records }),
       roles: createRoleConfigurationService({ records, now, eventId }),
-      materials, bodies, authorizeConfiguration,
+      bodies, authorizeConfiguration,
       now, eventId, newId: () => `b2-id-${++seq}`,
     };
     return { entry: createExecutionEntryService(deps), model: createModelCallService(deps) };

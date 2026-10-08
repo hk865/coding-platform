@@ -23,7 +23,6 @@ import type { RawArtifactStorePort } from '../../record-store/body-ports.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
 import type { RoleBindingFactsPort } from './configuration-contracts.js';
-import type { MaterialPort } from './material-contracts.js';
 import type { GraphWrite } from './task-contracts.js';
 import type { ExecutionReadPort } from './execution-read-contracts.js';
 import type { RecordExecutionHistoryInput } from './execution-history-contracts.js';
@@ -147,7 +146,6 @@ export type ExecutionEntryDependencies = {
   records: GoalRecordTransactionPort & RecordLookupPort;
   reads: ExecutionReadPort;
   roles: RoleBindingFactsPort;
-  materials: MaterialPort;
   bodies: Pick<RawArtifactStorePort, 'read'>;
   authorizeConfiguration: AuthorizeConfiguration;
   /** The Host instance (D-18): the reconcile terminal and late evidence (RUN-17/18/21) need its lease. */

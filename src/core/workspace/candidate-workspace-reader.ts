@@ -21,7 +21,7 @@ function ensure(value: unknown, message: string): asserts value {
     throw Error(message);
 }
 /** Hash actual contents, never invent a numeric Workspace revision from a hash. */
-async function candidateWorkspaceSnapshot(root: string, includeGitEntries = false): Promise<{ digest: string; files: string[]; gitEntries: CandidateWorkspaceGitEntry[] }> {
+async function candidateWorkspaceSnapshot(root: string): Promise<{ digest: string; files: string[]; gitEntries: CandidateWorkspaceGitEntry[] }> {
   const hash = createHash('sha256');
   const files: string[] = [];
   const gitEntries: CandidateWorkspaceGitEntry[] = [];
@@ -39,7 +39,7 @@ async function candidateWorkspaceSnapshot(root: string, includeGitEntries = fals
         files.push(path);
         const target = await readlink(absolute);
         hash.update(canonicalJson([path, 'link', target]));
-        if (includeGitEntries) gitEntries.push(gitEntry(path, '120000', Buffer.from(target)));
+        gitEntries.push(gitEntry(path, '120000', Buffer.from(target)));
       }
       else if (stat.isDirectory())
         await walk(absolute, path);
@@ -49,7 +49,7 @@ async function candidateWorkspaceSnapshot(root: string, includeGitEntries = fals
         ensure(bytes <= 512 * 1024 * 1024, '工作区超出候选快照上限');
         const body = await readFile(absolute);
         hash.update(canonicalJson([path, stat.mode & 511, digest(body)]));
-        if (includeGitEntries) gitEntries.push(gitEntry(path, stat.mode & 0o100 ? '100755' : '100644', body));
+        gitEntries.push(gitEntry(path, stat.mode & 0o100 ? '100755' : '100644', body));
       }
       else
         throw Error('工作区包含不支持的特殊文件');
@@ -64,6 +64,6 @@ async function candidateWorkspaceSnapshot(root: string, includeGitEntries = fals
 export class CandidateWorkspaceReader {
   /** Same traversal/hash rules with its observed path inventory; not a diff. */
   snapshot(root: string): Promise<{ digest: string; files: string[]; gitEntries: CandidateWorkspaceGitEntry[] }> {
-    return candidateWorkspaceSnapshot(root, true);
+    return candidateWorkspaceSnapshot(root);
   }
 }
