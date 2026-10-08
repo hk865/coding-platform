@@ -1,8 +1,8 @@
 # 独立仓库工作入口
 
-**2026-10-07 可靠性批次进行中；新界面原型已冻结：**
+**2026-10-08 可靠性批次已做完（未推送）；新界面原型已冻结：**
 
-*批次状态。* 分支 `feat/reliability-and-structure` 上的可靠性批次（任务书任务 A–E）**没有完成**，也未推送；整个 MVP 也没有完成。任务 B、C、E 都已提交；任务 A 的第 5 步、第 6 步、简化（先删走不到的代码，决定 31、34）、决定 29（Goal 控制必须带 GoalPhase 版本号，e070284b）和第 7 步（全量测试与文档同步）都已提交。任务 D（WorkGraph 拆分，纯搬移，决定 32、34、40）也已提交：先做 X2、X1 两小步代码改动（d91208e3、58ea2fdc），再由本地 DSH 按两阶段搬了 18 个文件，结果和 lead 的参考搬移逐字节一致（0cd45508）；搬移后的全量测试 216 个测试文件、5245 项全部通过，和第 7 步（2ba9b46b）相同。之后还有把子模块规则写进 `module-target.json`（决定 40）和收尾。编排、记忆、生命周期的设计和本批并行，只写文档（决定 34）；第一轮的问题用户已按建议定（决定 35），第二轮的设计书已写完，在 [design/orchestration-2026-10](docs/refactor/design/orchestration-2026-10/README.md)。当前状态、缺口和下一步见 [STATUS](docs/refactor/STATUS.md)。用户 2026-10-04 至 10-07 的 40 条决定见 [HANDOFF 顶部](docs/refactor/HANDOFF.md)两节：1–19 和 20–40。
+*批次状态。* 分支 `feat/reliability-and-structure` 上的可靠性批次（任务书任务 A–E）**已做完，全部提交，没有推送**，推不推送由用户定；**整个 MVP 没有完成**。做完的有：任务 A（规格，第 1–7 步，简化：先删走不到的代码，决定 31、34）；任务 B、C、E；决定 29（Goal 控制必须带 GoalPhase 版本号，e070284b）；任务 D（WorkGraph 拆分，纯搬移，决定 32、34、40：先做 X2、X1 两小步 d91208e3、58ea2fdc，再由本地 DSH 按两阶段搬了 18 个文件，和 lead 的参考搬移逐字节一致，0cd45508）；子模块规则写进 `module-target.json`（决定 40，002e7b28；state 改用 `pure: true`，820817c3）；2026-10-08 的收尾（独立审查和保留 / 删除 / 合并 / 挪位置清单，见[收尾审查证据](docs/refactor/reviews/evidence/batch-wrapup-2026-10-08/README.md)）。收尾后的全量测试 215 个测试文件、5234 项全部通过，`verify:isolated` 也通过；本批没有调用真实模型，之后也还没用真实模型重跑过。下一阶段是编排后端：按 [design/orchestration-2026-10](docs/refactor/design/orchestration-2026-10/README.md) 的设计书分片施工，先做第 0、1、3、5 片，实现都交给 DSH（决定 36、43）；然后是新界面（E3）。当前状态、缺口和下一步见 [STATUS](docs/refactor/STATUS.md)。用户 2026-10-04 至 10-08 的 43 条决定见 [HANDOFF 顶部](docs/refactor/HANDOFF.md)两节：1–19 和 20–43。
 
 *界面基线。* 新原型在 [Design 画布](https://claude.ai/artifact/3e5ynF3rwtMQfvJuim9mL2)上，只有用户本人能打开。
 - 用户 2026-10-05 批准了原型（画布第 9 版）。2026-10-06 按 HANDOFF 决定 25–30 改版，发布为画布第 14 版；2026-10-07 按决定 33 改了左栏工作线的点击，发布为画布第 16 版。用户确认后冻结（决定 35），画板文件和设计说明复制进 [docs/ui-reference/workbench-2026-10](docs/ui-reference/workbench-2026-10/README.md)。
@@ -75,3 +75,4 @@
 6. 独立构建和检查用根 package.json；两个npm锁文件一起维护。vendor/coding-agent/dist 是冻结运行依赖，必须保留；补丁更新沿 scripts/build-kernel-patch.mjs 与既有证据，不手改生成物。不要引回父目录源码或依赖回退。
 7. 测试只运行改动所需范围；通过后不要反复扩大局部测试。更新已有 HANDOFF/能力/实施计划和相关证据，保留历史报告原义，不另建重复事实体系。
 8. 提交只涵盖本次任务相关文件；保留用户改动。没有授权不要推送远端、发布、删除旧工程或访问候选测试工作区写入。
+9. 2026-10-02 起，状态迁移必须经过 `src/core/work-graph/state/`（状态写入限制检查强制）。

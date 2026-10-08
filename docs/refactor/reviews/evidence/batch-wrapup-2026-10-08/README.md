@@ -43,7 +43,7 @@
 | DEAD-3 已知 | `src/core/workspace/candidate-workspace-reader.ts:24,42,52,67` | 唯一调用传 `true` | 60d946ff 删参数，照旧总是收集 git 条目 |
 | DEAD-4 已知 | `src/ui/main.ts:27` | `renderProjectRead` 导入了没用 | 60d946ff 删这个 import |
 | DEAD-5 已知 | `WG/evidence/evidence-service.ts:278,286,314` | `commitRoundWrite` 的五个调用方都不会收到 `guard_round_unchanged`，它只由重新入队（VR-09）发出，重新入队的 owner 自己翻译（`tasks/requeue-service.ts:686`） | 60d946ff 删掉这一支和 `roundGuard`；为了 switch 仍穷尽，留一个 `throw`（HEAD `:305-308`），和同一处只属于重新检查的几种效果一样 |
-| DEAD-6 新 | `src/core/workspace/material-source-provider.ts`、`source-applicability.ts`；`src/contracts/material-access.ts:51,60` 的 `MaterialSourceCaptureResult`、`SourceApplicabilityPort`；允许清单 22 条 | 引用只在这两个文件之间、两个只给它们用的契约类型、测试和允许清单；允许清单的原因写着“第 3 片定下不需要就删”，设计书 §2.8（AMB-37，决定 42 所列）已定第 3 片按“历史说明 + 记下版本”读、删这两个文件 | 7e0b7f56 删两个文件（317 行）、两个类型、允许清单 22 条（142 → 120）、`tests/data/M1-material-source-provider.test.ts`（7 项）、R3b 里 source pin 那 1 项、`tools/dsh-refactor/check.py` 里它的检查名。保留 `MaterialSourcePinV1` 和校验（执行入口、查询反馈还在读） |
+| DEAD-6 新 | `src/core/workspace/material-source-provider.ts`、`source-applicability.ts`；`src/contracts/material-access.ts:51,60` 的 `MaterialSourceCaptureResult`、`SourceApplicabilityPort`；允许清单 22 条 | 引用只在这两个文件之间、两个只给它们用的契约类型、测试和允许清单；允许清单的原因写着“第 3 片定下不需要就删”，设计书 §2.8（AMB-37，决定 42 所列）已定第 3 片按“历史说明 + 记下版本”读、删这两个文件 | 7e0b7f56 删两个文件（317 行）、两个类型、允许清单 22 条（142 → 120）、`tests/data/M1-material-source-provider.test.ts`（7 个 `it` 和 2 个 `it.each`，全量测试里算 16 项）、R3b 里 source pin 那 1 项、`tools/dsh-refactor/check.py` 里它的检查名。保留 `MaterialSourcePinV1` 和校验（执行入口、查询反馈还在读） |
 | DEAD-7 新 | `RT/execution-preparation.ts:391-399` | 上一句已经对每个非 contract 的必需材料返回 `unsupported`，所以走到 `if (!contractSatisfied)` 时它一定是 true，`incomplete` 那句拒绝永远到不了；`every` 和 `filter` 对同一个数组判断互补的条件 | 7e0b7f56 删这个布尔值和那句拒绝，`unsupported` 的拒绝不动；没有测试断言那句拒绝文字 |
 | DEAD-8 新 | `src/contracts/runtime-budget.ts:29` | `_legacyContextOnlyTask` 只出现在声明里；三个生产调用（`app/runtime-configuration.ts:257,277`、`contracts/query-job.ts:269`）都只传一个参数，也没有把它当回调传（`.map(validateRuntimeBudget)` 会把下标传进第二个参数）；`model-budget.ts:4` 只是转出 | 7e0b7f56 删这个参数 |
 
@@ -141,7 +141,7 @@ STATUS“下一步”第 1 项写了：编排后端的第一步是结构设计�
   - `npm run check:architecture` 通过（40 条子模块边，`pure submodules: WorkGraph/state`）；
   - `npx vitest run` 跑 `tests/architecture` 和所有 import 了改动模块的测试文件，共 26 个文件、261 项全部通过，含生产可达和状态写入限制两项检查（日志 `w4-s2-tests-1`）；
   - `node scripts/import-graph.mjs`：WorkGraph 101 个文件，组级强连通分量 0、组级环 0；文件级强连通分量 2 个，都只靠类型引用，只含值引用的 0 个（`import-graph-head.md`）。
-  - 全量测试和 `verify:isolated` 不在本段，留给收尾最后一段。预计比收尾第 2 段之后少 1 个测试文件、8 项（M1 那个文件 7 项，R3b 1 项）。
+  - 全量测试和 `verify:isolated` 不在本段，留给收尾最后一段。预计比收尾第 2 段之后少 1 个测试文件、8 项（M1 那个文件 7 项，R3b 1 项）。（2026-10-08 收尾最后一段更正：M1 那个文件在全量测试里是 16 项，7 是 `it` 的个数，没算两个 `it.each` 展开的 9 项；所以少的是 17 项。全量测试的数字见 [STATUS](../../../STATUS.md)。）
 
 ## 驳回和更正
 
@@ -217,6 +217,8 @@ STATUS“下一步”第 1 项写了：编排后端的第一步是结构设计�
 - STATUS 和 HANDOFF：第 125、161 行等还写着 source pin 两个文件保留、允许清单 142 条；按本页改写。
 - 全量测试和 `verify:isolated`。
 - 最终报告：每个服务的净行数表就是上面的按区域表。
+
+2026-10-08 补注：这三项已在收尾最后一段做完，和 STATUS、HANDOFF、AGENTS.md 的改写是同一次提交；全量测试和 `verify:isolated` 都是 215 个测试文件、5234 项全部通过，见 [STATUS](../../../STATUS.md)“当前状态”。
 
 ## 文件
 
