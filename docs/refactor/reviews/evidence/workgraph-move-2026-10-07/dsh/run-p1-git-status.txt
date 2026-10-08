@@ -1,0 +1,7 @@
+?? .dsh-scratch/check-architecture.log
+?? .dsh-scratch/check-typecheck.log
+?? .dsh-scratch/check-vitest.log
+?? .dsh-scratch/move-dry.txt
+?? .dsh-scratch/move-tool.mjs
+?? .dsh-scratch/stale-search.log
+?? .dsh-scratch/stale.txt

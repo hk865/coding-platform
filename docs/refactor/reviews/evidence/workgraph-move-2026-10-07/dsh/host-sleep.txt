@@ -1,0 +1,8 @@
+Windows host sleep periods during this stage (System log, Microsoft-Windows-Power-Troubleshooter event 1; local time = UTC+8):
+  20:38:05.8 - 20:39:33.0   87 s   during DSH part 2 (run 20:36:27 - 20:41:18, wallSeconds 292 -> about 205 s active)
+  20:41:50.6 - 20:43:13.2   83 s   during LTd/check.sh (started 20:41:20)
+  20:45:36.8 - 20:46:08.1   31 s   during LTd/check.sh
+  20:48:30.9 - 21:08:28.7 1198 s   during LTd/check.sh (checkerSeconds 1818 -> about 506 s active; oracle runs took 404-409 s)
+No sleep during DSH part 1 (20:32:31 - 20:35:34). The WSL VM paused with the host (journal: "Clock change detected").
+The app's keep-awake was already on (request_keep_awake: "already keeps this computer awake ... under the user's current settings"),
+so the sleeps came from the user's power settings (e.g. battery) or the user. No test failed or flaked across them.

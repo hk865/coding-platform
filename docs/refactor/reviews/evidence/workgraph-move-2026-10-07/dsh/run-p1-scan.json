@@ -1,0 +1,53 @@
+{
+ "sessionId": "session-49a1c63a-6066-4eb7-907a-162fc0cb0871",
+ "steps": 24,
+ "toolCalls": 26,
+ "byTool": {
+  "bash": 21,
+  "write": 2,
+  "job_output": 2,
+  "read": 1
+ },
+ "tokens": {
+  "input": 31431,
+  "cacheRead": 932736,
+  "cacheWrite": 0,
+  "output": 36373,
+  "total": 1000540
+ },
+ "turnEnd": {
+  "kind": "completed"
+ },
+ "errors": 0,
+ "contamination": "attempted-outside",
+ "sandboxed": true,
+ "privateTmpUses": 0,
+ "pathHits": [
+  {
+   "event": 110,
+   "tool": "bash",
+   "pattern": "dotdot",
+   "excerpt": "pe-position import old? show all lines from moved files with ../../../ etc ===\\\"; grep -n \\\"record-store/ports.js\\\" src/core/work-graph/mode"
+  }
+ ],
+ "pathHitCount": 1,
+ "canaryHits": [],
+ "canaryHitCount": 0,
+ "lookups": {},
+ "writes": [
+  "<copy>/.dsh-scratch/move-tool.mjs",
+  "<copy>/.dsh-scratch/stale.txt"
+ ],
+ "report": {
+  "present": [
+   "CHECKS",
+   "UNSPECIFIED",
+   "NOTES"
+  ],
+  "missing": [
+   "FILES CHANGED"
+  ],
+  "chars": 6628,
+  "hasFinal": true
+ }
+}

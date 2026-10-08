@@ -1,0 +1,44 @@
+{
+ "sessionId": "session-49a1c63a-6066-4eb7-907a-162fc0cb0871",
+ "steps": 15,
+ "toolCalls": 14,
+ "byTool": {
+  "bash": 11,
+  "write": 2,
+  "read": 1
+ },
+ "tokens": {
+  "input": 7372,
+  "cacheRead": 1147648,
+  "cacheWrite": 0,
+  "output": 17774,
+  "total": 1172794
+ },
+ "turnEnd": {
+  "kind": "completed"
+ },
+ "errors": 0,
+ "contamination": "none",
+ "sandboxed": true,
+ "privateTmpUses": 0,
+ "pathHits": [],
+ "pathHitCount": 0,
+ "canaryHits": [],
+ "canaryHitCount": 0,
+ "lookups": {},
+ "writes": [
+  "<copy>/.dsh-scratch/apply.mjs",
+  "<copy>/.dsh-scratch/verify-diff.mjs"
+ ],
+ "report": {
+  "present": [
+   "FILES CHANGED",
+   "CHECKS",
+   "UNSPECIFIED",
+   "NOTES"
+  ],
+  "missing": [],
+  "chars": 14902,
+  "hasFinal": true
+ }
+}

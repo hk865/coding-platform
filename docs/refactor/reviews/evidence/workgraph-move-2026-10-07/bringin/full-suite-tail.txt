@@ -1,0 +1,61 @@
+ ✓ tests/work-graph/material-readers.test.ts (2 tests) 95ms
+ ✓ tests/state/run-machine.test.ts (279 tests) 89ms
+ ✓ tests/state/task-machine.test.ts (1084 tests) 103ms
+ ✓ tests/work-graph/goal-independent.test.ts (2 tests) 113ms
+ ✓ tests/work-graph/R3b-material-applicability.test.ts (3 tests) 86ms
+ ✓ tests/app/exploration-tools.test.ts (9 tests) 101ms
+ ✓ tests/data/R3b-materials-contract.test.ts (7 tests) 108ms
+ ✓ tests/data/workspace-capture-architecture.test.ts (1 test) 61ms
+ ✓ tests/data/typescript-source-query.test.ts (5 tests) 63ms
+ ✓ tests/app/A2-host-instance-lease.test.ts (9 tests) 55ms
+ ✓ tests/data/typescript-source-reuse.test.ts (2 tests) 60ms
+ ✓ tests/data/candidate-workspace-reader.test.ts (3 tests) 26ms
+ ✓ tests/app/reviewer-source-tools.test.ts (2 tests) 50ms
+ ✓ tests/work-graph/R3c-canonical-task-state.test.ts (2 tests) 67ms
+ ✓ tests/app/ui-live.test.ts (18 tests) 46ms
+ ✓ tests/app/A2-settings-automation.test.ts (23 tests) 44ms
+ ✓ tests/data/workspace-capture-access.test.ts (6 tests) 47ms
+ ✓ tests/state/session-availability.test.ts (125 tests) 40ms
+ ✓ tests/runtime/source-binding-migration.test.ts (7 tests) 39ms
+ ✓ tests/state/verification-machine.test.ts (138 tests) 37ms
+ ✓ tests/data/R3b-body-boundaries.test.ts (4 tests) 40ms
+ ✓ tests/state/no-progress.test.ts (337 tests) 40ms
+ ✓ tests/state/plan-machine.test.ts (228 tests) 30ms
+ ✓ tests/state/attempt-machine.test.ts (310 tests) 35ms
+ ✓ tests/work-graph/R5b-query-job.test.ts (8 tests) 29ms
+ ✓ tests/app/session-rendering.test.ts (15 tests) 31ms
+ ✓ tests/app/ui-live-wiring.test.ts (7 tests) 26ms
+ ✓ tests/data/R2e-text-boundaries.test.ts (2 tests) 24ms
+ ✓ tests/work-graph/R5a-project-bootstrap.test.ts (19 tests) 24ms
+ ✓ tests/data/workspace-path-boundary.test.ts (4 tests) 26ms
+ ✓ tests/contracts/A2-rework-contract-helpers.test.ts (45 tests) 20ms
+ ✓ tests/app/ui-change-refetch.test.ts (5 tests) 21ms
+ ✓ tests/state/query-run-recovery.test.ts (76 tests) 20ms
+ ✓ tests/runtime/W2-whiteboard-tools.test.ts (10 tests) 17ms
+ ✓ tests/business/A2-workflow-auto-rework.test.ts (18 tests) 13ms
+ ✓ tests/business/A2-workflow-reverify.test.ts (20 tests) 12ms
+ ✓ tests/app/ui-refresh.test.ts (11 tests) 11ms
+ ✓ tests/app/ui-sse.test.ts (11 tests) 10ms
+ ✓ tests/app/goal-conversation-start.test.ts (11 tests) 7ms
+ ✓ tests/kernel/B2-history-public-export.test.ts (10 tests) 7ms
+ ✓ tests/app/settings-ui.test.ts (5 tests) 5ms
+ ✓ tests/business/A2-workflow-result-mapping.test.ts (13 tests) 6ms
+ ✓ tests/app/change-feed.test.ts (8 tests) 7ms
+ ✓ tests/app/ui-store.test.ts (16 tests) 8ms
+ ✓ tests/runtime/C3-brief-timeline.test.ts (3 tests) 6ms
+ ✓ tests/data/project-source-snapshot.test.ts (7 tests) 6ms
+ ✓ tests/app/ui-actions.test.ts (5 tests) 6ms
+ ✓ tests/business/A2-workflow-disposition.test.ts (8 tests) 5ms
+ ✓ tests/data/R3b-material-await-boundaries.test.ts (2 tests) 5ms
+ ✓ tests/data/R3b-material-admission-boundaries.test.ts (6 tests) 5ms
+ ✓ tests/work-graph/R3c-task-relations-boundaries.test.ts (3 tests) 3ms
+ ✓ tests/app/A2-startup-redrive-select.test.ts (2 tests) 4ms
+ ✓ tests/work-graph/R3c-task-graph.test.ts (2 tests) 2ms
+
+ Test Files  216 passed (216)
+      Tests  5245 passed (5245)
+   Start at  21:23:50
+   Duration  995.98s (transform 5.00s, setup 0ms, import 61.41s, tests 918.38s, environment 12ms)
+
+[wsl-side] exit=0 seconds=1036
+exit=0

@@ -1,0 +1,32 @@
+{
+ "runName": "LTd-1-p1",
+ "copy": "/home/han001/dsh-work/ladder/LTd-1",
+ "level": "LTd",
+ "task": "/home/han001/dsh-work/ladder/LTd/task-part1.md",
+ "taskSha256": "1e4650cabde1b5959b6a4d869c9f3074c1938e6ad2e55844147a114b0cbdef95",
+ "model": "headless default (deepseek-flash)",
+ "sessionIdIn": null,
+ "sessionId": "session-49a1c63a-6066-4eb7-907a-162fc0cb0871",
+ "startedAt": "2026-10-07T12:32:31.466Z",
+ "endedAt": "2026-10-07T12:35:34.563Z",
+ "wallSeconds": 183,
+ "exitCode": 0,
+ "signal": null,
+ "stoppedBy": null,
+ "limits": {
+  "maxMinutes": 20,
+  "maxTokens": 10000000
+ },
+ "sandbox": "bubblewrap",
+ "toolCalls": 26,
+ "steps": 24,
+ "tokens": {
+  "input": 31431,
+  "cacheRead": 932736,
+  "cacheWrite": 0,
+  "output": 36373,
+  "total": 1000540
+ },
+ "contamination": "attempted-outside",
+ "changedPaths": 7
+}

@@ -1,0 +1,1 @@
+{ "commands": ["npm run typecheck", "npm run check:architecture", "npx vitest run tests/architecture tests/state tests/work-graph"], "tailLines": 60 }

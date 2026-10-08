@@ -1,0 +1,87 @@
+# stale-reference search log (part 1)
+
+## Commands
+$ grep -rnE 'tasks\/contracts.ts' src tests --include=*.ts
+--- [1] tasks/contracts.ts result:
+  (no matches)
+
+$ grep -rnE 'tasks\/claim-contracts.ts' src tests --include=*.ts
+--- [2] tasks/claim-contracts.ts result:
+src/contracts/core/task-claim.ts:6: * WorkGraph `tasks/claim-contracts.ts` keeps a compatibility type re-export;
+src/core/work-graph/state/attempt-machine.ts:32: * `tasks/claim-contracts.ts`, which `state/` may not import (§14.4); the
+tests/architecture/state-writes.test.ts:96:  { file: 'src/core/work-graph/tasks/claim-contracts.ts', name: 'TaskClaimOutbox', kind: 'record',
+
+$ grep -rnE 'tasks\/execution-entry-contracts.ts' src tests --include=*.ts
+--- [3] tasks/execution-entry-contracts.ts result:
+  (no matches)
+
+$ grep -rnE 'tasks\/execution-read-contracts.ts' src tests --include=*.ts
+--- [4] tasks/execution-read-contracts.ts result:
+  (no matches)
+
+$ grep -rnE 'tasks\/execution-history-contracts.ts' src tests --include=*.ts
+--- [5] tasks/execution-history-contracts.ts result:
+  (no matches)
+
+$ grep -rnE 'tasks\/plan-contracts.ts' src tests --include=*.ts
+--- [6] tasks/plan-contracts.ts result:
+src/core/work-graph/state/plan-machine.ts:32: * `PlanProposal` is declared in `tasks/plan-contracts.ts:28-50`, which this
+src/core/work-graph/state/plan-machine.ts:61:// Persisted record (structurally identical to tasks/plan-contracts.ts:28-50)
+tests/state/plan-machine.test.ts:298:  it('PlanProposalRecord is the same type as tasks/plan-contracts.ts PlanProposal', () => {
+tests/architecture/state-writes.test.ts:128:  { file: 'src/core/work-graph/tasks/plan-contracts.ts', name: 'PlanProposal', kind: 'record',
+tests/architecture/state-writes.test.ts:144:  { file: 'src/core/work-graph/tasks/plan-contracts.ts', name: 'TaskRow', kind: 'projection',
+
+$ grep -rnE 'configuration\/contracts.ts' src tests --include=*.ts
+--- [7] configuration/contracts.ts result:
+  (no matches)
+
+$ grep -rnE 'materials\/contracts.ts' src tests --include=*.ts
+--- [8] materials/contracts.ts result:
+  (no matches)
+
+$ grep -rnE 'sessions\/contracts.ts' src tests --include=*.ts
+--- [9] sessions/contracts.ts result:
+src/core/work-graph/state/session-availability.ts:32:/** Derived, never persisted (`SessionCard.availability`, `sessions/contracts.ts:46`). */
+
+$ grep -rnE 'communication\/contracts.ts' src tests --include=*.ts
+--- [10] communication/contracts.ts result:
+src/contracts/core/session-message.ts:6:// SessionMailbox DTOs stay in `core/work-graph/communication/contracts.ts`.
+src/core/work-graph/state/message-machine.ts:6: * wakes, preempts or creates a dependency (`communication/contracts.ts:6-11`).
+src/core/work-graph/state/message-machine.ts:43: * `SessionMessage` is declared in `communication/contracts.ts:95`, which this
+src/core/work-graph/state/message-machine.ts:58:// Persisted record (structurally identical to communication/contracts.ts:36-145)
+tests/architecture/state-writes.test.ts:119:  { file: 'src/core/work-graph/communication/contracts.ts', name: 'SessionMessage', kind: 'record',
+
+$ grep -rnE 'evidence\/contracts.ts' src tests --include=*.ts
+--- [11] evidence/contracts.ts result:
+  (no matches)
+
+$ grep -rnE 'tasks\/task-index.ts' src tests --include=*.ts
+--- [12] tasks/task-index.ts result:
+src/core/work-graph/architecture/catalog-record-codecs.ts:13: *   - `hasCycleInEdges` is reused from `tasks/task-index.ts` instead of copying
+
+$ grep -rnE 'tasks\/plan-record-codecs.ts' src tests --include=*.ts
+--- [13] tasks/plan-record-codecs.ts result:
+tests/architecture/state-writes.test.ts:166:  { file: 'tasks/plan-record-codecs.ts', functions: ['decodePlanProposalRecord', 'decodePlanRevisionSnapshot',
+
+$ grep -rnE 'evidence\/evidence-record-codecs.ts' src tests --include=*.ts
+--- [14] evidence/evidence-record-codecs.ts result:
+src/core/work-graph/state/verification-machine.ts:41: * `evidence/evidence-record-codecs.ts:57-59`, which this directory may not import.
+src/core/work-graph/tasks/completion.ts:24: * `evidence/evidence-record-codecs.ts`, and the reduced Task/Goal truth comes
+tests/architecture/state-writes.test.ts:172:  { file: 'evidence/evidence-record-codecs.ts', functions: ['decodeVerificationRoundSnapshot',
+
+$ grep -rnE 'persistence\/model-request-codecs.ts' src tests --include=*.ts
+--- [15] persistence/model-request-codecs.ts result:
+  (no matches)
+
+$ grep -rnE 'evidence\/coverage.ts' src tests --include=*.ts
+--- [16] evidence/coverage.ts result:
+src/core/work-graph/tasks/completion.ts:23: * coverage come from `evidence/coverage.ts`, the decoders come from
+
+$ grep -rnE 'communication\/message-record-codecs.ts' src tests --include=*.ts
+--- [17] communication/message-record-codecs.ts result:
+tests/architecture/state-writes.test.ts:170:  { file: 'communication/message-record-codecs.ts', functions: ['decodeSessionMessageRecord',
+
+$ grep -rnE 'communication\/message-body-envelope.ts' src tests --include=*.ts
+--- [18] communication/message-body-envelope.ts result:
+  (no matches)
+
