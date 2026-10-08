@@ -1265,7 +1265,9 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // the public composition surface. They stay reachable and are the SAME
     // instances injected into `sessions`, `queries` and the Workflow, but are
     // not part of the enumerable public keys the frozen composition test checks.
-    for (const key of ['sessionFacts', 'responsibilities', 'sessionAnomalies'] as const) {
+    // Slice 3 (spec §4.6: create-platform adds `graphContext` and `taskInputs` as
+    // internal owners) follows the same rule (integration fix).
+    for (const key of ['sessionFacts', 'responsibilities', 'sessionAnomalies', 'graphContext', 'taskInputs'] as const) {
       Object.defineProperty(platform, key, { enumerable: false });
     }
     return platform;

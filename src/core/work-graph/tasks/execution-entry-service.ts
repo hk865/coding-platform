@@ -1164,7 +1164,13 @@ function contextConsumptionProblem(input: {
  * The Run being admitted (`faceRunRef`) is the subject of this very transition,
  * not an external mutable source the binding consumed: assembly read it before
  * the entry commit that advances its revision, so guarding it would conflict
- * with the transition's own guard. Every other record source stays guarded.
+ * with the transition's own guard.
+ *
+ * The Goal is not re-pinned here either (integration fix, C6 / U-11): the entry
+ * already guards the Goal at its CURRENT revision and decides by the W3 rule
+ * whether a newer Goal revision (an unrelated Plan adoption) still admits the
+ * claim; a second guard at the consumed revision would contradict it and stall
+ * the claimed Run (`conflicting guards`). Every other record source stays guarded.
  */
 function contextConsumptionGuards(binding: ContextAssemblyBindingV1 | undefined, faceRunRef: RunRef): readonly RecordGuard[] {
   if (binding === undefined) return [];
@@ -1177,6 +1183,7 @@ function contextConsumptionGuards(binding: ContextAssemblyBindingV1 | undefined,
   for (const source of binding.sources) {
     if (source.kind !== 'record') continue;
     if (faceRunKey !== null && refKeyOf(source.ref) === faceRunKey) continue;
+    if ((source.ref as { aggregateType?: unknown }).aggregateType === 'Goal') continue;
     add(source.ref, source.revision);
   }
   for (const selection of binding.inputSelections) {
