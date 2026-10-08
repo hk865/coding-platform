@@ -501,7 +501,7 @@ export function createAttentionScanner(deps: AttentionScannerDependencies): Atte
             nodes.push('task:' + row.ref.taskId);
             statuses['task:' + row.ref.taskId] = row.effectivePhase;
           }
-          for (const edge of plan.executionDag.dependsOn) edges.push('depends:' + edge.dependsOnId + '->' + edge.taskId + ':' + edge.requires);
+          for (const edge of plan.executionDag.dependsOn) edges.push('depends:' + edge.dependsOnId + '->' + edge.taskId + ':' + edge.requires.kind + ':' + edge.requires.label);
           for (const edge of plan.taskHierarchy.parentOf) edges.push('parent:' + edge.parentTaskId + '->' + edge.childTaskId);
           for (const row of read.value.tasks) {
             for (const relation of row.relations) edges.push('relation:' + relation.fromTaskId + '->' + relation.toTaskId + ':' + relation.kind);
