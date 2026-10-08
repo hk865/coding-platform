@@ -211,7 +211,7 @@ Kernel创建/停止发生在事务外。首次创建为WG正式操作意图→Ru
 
 ## 5. 原始正文与领域授权分离
 
-原ArtifactRef继续来自 `src/contracts/artifact.ts`，SourceRefV1来自 `src/contracts/dispatch.ts`；PlatformMaterialOrigin新增于共享call-context。旧owner-only/grant/current-source适用性在WG材料入口维持，不在RawArtifactStore重复实现。
+原ArtifactRef继续来自 `src/contracts/artifact.ts`，SourceRefV1来自 `src/contracts/dispatch.ts`；PlatformMaterialOrigin新增于共享call-context。旧owner-only/grant/current-source适用性在WG材料入口维持，不在RawArtifactStore重复实现。（2026-10-08 注：grant 和 current-source 两部分已不在了。材料授权的写入和读取 2026-10-07 删除，取得已核实来源版本的代码 2026-10-08 删除；WG 材料入口现在只认两条：Host 按项目和工作区读历史说明，Run 读自己的材料，按“当前”读一律拒绝，见 `work-graph/materials/applicability.ts`。下文 §5 末段按此读。）
 
 ```ts
 import type { ArtifactRef, ArtifactOwnerRunRef } from '../../contracts/artifact.js';
@@ -234,7 +234,7 @@ export interface RawArtifactStorePort {
 }
 ```
 
-Raw入口仅向可信WG/Runtime组件开放；UI/模型拿到ArtifactRef不能直接绕过WG读取。去掉Store的领域授权回调不等于取消产品权限。WG先依据真实MaterialReader、正式grant/来源版本判断，再读正文，并在需要当前来源时做正确时点核对。
+Raw入口仅向可信WG/Runtime组件开放；UI/模型拿到ArtifactRef不能直接绕过WG读取。去掉Store的领域授权回调不等于取消产品权限。WG先依据真实MaterialReader、正式grant/来源版本判断，再读正文，并在需要当前来源时做正确时点核对。（2026-10-08 注：这句写的是当时的目标，grant 和当前来源核对已删，现行规则见本节第一段的注。）
 
 复用现有artifactBodyDigest/artifactBodySize、contentType+digest寻址和putIfAbsent获胜者。相同正文重复put不覆盖第一次owner/来源，新增使用关系由WG单独记录。旧StoredRecord缺新origin时按原ownerRunRef解码为legacy，不把null猜成某个人或新Run。
 

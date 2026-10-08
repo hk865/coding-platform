@@ -2,7 +2,7 @@
 
 > **2026-09-26 next当前实现：** 文件当前/捕获版本读取比较、正式来源与Runtime工具消费者已有；固定Git commit读取/比较已独审，git↔working_tree普通文本raw摘要与mode双向比较也已独审导入（15项/2文件与types，单次有界观察）。Git/capture、mixed binary、Git写版本、语言扩展与完整Host目录/保存/diff消费者仍待完成。以下带日期的旧工程实施记录保留历史含义；next当前证据以[能力索引](../../IMPLEMENTED-CAPABILITIES.md)为准。
 
-状态：目标详细设计及分批实施，2026-09-23。R2a 已把 18 个 TS 实现与真实消费者迁至 `src/core/workspace/` 并独立验收。本文可单独作为 R2 施工入口；跨模块约定见[公共契约](../../skeleton/CONTRACTS.md)、[核心数据 D2](../../CORE-DATA-OPERATIONS.md)和[状态机](../../ORCHESTRATION-STATE-MACHINES.md)。§10 的 R1、R2a、R2b及R2c真实访问/捕获/游标/架构接线已独立验收。R2d.1模型协议及错误优先级补测已通过；R2d.2 Work/explore/Reviewer真实运行接线已验收，Query R2d.3也已验收。readWorkspace/compareWorkspace、Git历史以及非TS的统一冻结provider仍待实施，旧Python/C++工具已有真实能力。当前精确进度见[批次证据](../../reviews/implementation-batches.md)。
+状态：目标详细设计及分批实施，2026-09-23。R2a 已把 18 个 TS 实现与真实消费者迁至 `src/core/workspace/` 并独立验收。本文可单独作为 R2 施工入口；跨模块约定见[公共契约](../../skeleton/CONTRACTS.md)、[核心数据 D2](../../CORE-DATA-OPERATIONS.md)和[状态机](../../ORCHESTRATION-STATE-MACHINES.md)。§10 的 R1、R2a、R2b及R2c真实访问/捕获/游标/架构接线已独立验收。R2d.1模型协议及错误优先级补测已通过；R2d.2 Work/explore/Reviewer真实运行接线已验收，Query R2d.3也已验收。readWorkspace/compareWorkspace、Git历史以及非TS的统一冻结provider仍待实施，旧Python/C++工具已有真实能力。（2026-10-08 注：上一句写于 09-23，`readWorkspace/compareWorkspace` 和 Git 固定版本读取、比较后来已接通一个子集：读工作树单个文件、capture 冻结正文和某个 commit 的文本，比较同范围的两次 capture、两个 commit，以及 git↔工作树的普通文本，见能力索引 WS3、WS7；仍没有的是非 TS 的冻结 provider、Git/capture 混合比较、二进制的混合比较、三方 merge 和 Git 写版本。）当前精确进度见[批次证据](../../reviews/implementation-batches.md)。
 
 ## 1. 业务目的和职责
 
@@ -278,7 +278,7 @@ P 页冻结结果只做 O(返回条目) 切页，初始捕获及最终核验仍�
 | WorkspaceSourceIndexReader | purpose-readers/role-source-reader.ts | role消费者切换且有限正文语义保持 |
 | query/reviewer/verification/candidate readers | 同名用途适配器，共同底座接access/capture | 每个真实消费者迁完、额外范围仍有效。2026-10-07：query reader 和 reviewer 的 `readReviewerSource` 已删除（决定 34）；verification、candidate 在用。2026-10-07 补注（第 7 步）：verification reader 另有只取 digest 的 `captureDigest`（可靠性批次 A.2 5.4，lead 决定 LA-5），供重新入队的无进展键和接续说明的源码检查点用，不受 64 个改动文件的上限；开轮和重新检查仍用完整的 `capture`（规格 GAP-54） |
 | ExplorationSourceApplicability | purpose-readers/exploration-source.ts | 保留原完整探索摘要、链接/二进制语义。**2026-10-07 删除**（决定 34，没有生产调用方） |
-| source-applicability/verification-source-applicability | 对应用途适配器内部，来源捕获归本模块 | 与WorkGraph领域版本绑定分离后。2026-10-07：verification-source-applicability 已删除；source-applicability 保留、未接线，留给编排设计第 3 片 |
+| source-applicability/verification-source-applicability | 对应用途适配器内部，来源捕获归本模块 | 与WorkGraph领域版本绑定分离后。2026-10-07：verification-source-applicability 已删除；source-applicability 保留、未接线，留给编排设计第 3 片。2026-10-08：设计书 §2.8 定了第 3 片不接已核实的来源版本，source-applicability 和 material-source-provider 收尾时删除（能力索引 WG18） |
 | WORKSPACE_DENIED_PREFIXES/readSourceIdentity | 同名常量/函数 | 所有读取路径迁完，不留并行副本 |
 
 SourceGraphContextCompiler 的 Run/Plan/baseline 资格及 Vault 保存归 WorkGraph，不随纯源读取迁入。exploration-tools.ts 的模型注册、Kernel 生命周期归 AgentRuntime，其源读取改调本 Port。
@@ -365,4 +365,4 @@ Host只把handle.tools注入Workflow/WorkGraph/Runtime；handle.close只由组�
 
 后续已完成R2a目录与真实消费者迁移、R2b冻结分析与单服务复用、R2c真实Host授权/有界capture/游标/完整架构映射。R2c独立16文件/110项通过；R2d.1新project_source协议三页已验证2次捕获/1次imports，正式模型切换沿R2d.2/3串行实施。精确验收和后续补测状态见[批次证据](../../reviews/implementation-batches.md)。
 
-完整target Port尚未交付：readWorkspace/compareWorkspace、paths/text新分支、Git历史、Python/C++冻结provider仍是后续范围；现有python_index/cpp_index是真实旧能力，不能当缺失算法重写。现有兼容project_index仍逐次核验。捕获是临时数据，持久材料由后续WorkGraph/RecordStore承担，不能宣称已建完整历史库。剩余差异与准确来源见[R2e能力调查](../../reviews/workspace-remaining-capabilities.md)。
+完整target Port尚未交付：readWorkspace/compareWorkspace、paths/text新分支、Git历史、Python/C++冻结provider仍是后续范围（2026-10-08 注：其中 readWorkspace/compareWorkspace 和 Git 固定版本读取、比较已接通文本子集，见本页开头“状态”一段的注和能力索引 WS3、WS7）；现有python_index/cpp_index是真实旧能力，不能当缺失算法重写。现有兼容project_index仍逐次核验。捕获是临时数据，持久材料由后续WorkGraph/RecordStore承担，不能宣称已建完整历史库。剩余差异与准确来源见[R2e能力调查](../../reviews/workspace-remaining-capabilities.md)。

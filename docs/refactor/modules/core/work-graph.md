@@ -148,7 +148,7 @@ export type GraphPorts = {
 
 所有方法的首参 ctx 为可信 CoreCallContext；读方法可取消；写方法只有明确未提交时才报告取消。已提交后取消等待不撤销事实，按 requestId 可取原回执。分页 limit 在 schema 中设明确上限并返回 continuation，不能静默截断完整性要求。事务提交不会包住文件、模型或正文网络 I/O。
 
-读取上下文与协作参与分开：普通工作 Run 用真实 RunRef/RoleBinding，不要求先创建 WorkParticipation；通信发送、回复、等待、订阅和结束参与仍解析完整 AgentPrincipal，并核对当前工作地址。Agent 的 inbox/ack 限合法工作地址，Host 查看不伪造 Agent；现有 architecture_report 的 coordination grant 也不因归入图能力而删除。注册 AgentInstance、创建参与有原有引导资格，不能要求待创建的关系先存在；system 的投递/超时/后继受理继续使用真实机械执行身份。共用上下文的 agentPrincipal 可选不改变这些逐操作准入。
+读取上下文与协作参与分开：普通工作 Run 用真实 RunRef/RoleBinding，不要求先创建 WorkParticipation；通信发送、回复、等待、订阅和结束参与仍解析完整 AgentPrincipal，并核对当前工作地址。Agent 的 inbox/ack 限合法工作地址，Host 查看不伪造 Agent；现有 architecture_report 的 coordination grant 也不因归入图能力而删除。注册 AgentInstance、创建参与有原有引导资格，不能要求待创建的关系先存在；system 的投递/超时/后继受理继续使用真实机械执行身份。共用上下文的 agentPrincipal 可选不改变这些逐操作准入。（2026-10-08 注：这一段是旧的 Work 地址方案，和下文 §7.2 一样只作行为追溯。现在的代码里没有注册 AgentInstance、创建 WorkParticipation 或按 AgentPrincipal 收发的生产链，也没有 architecture_report 的 coordination grant；通信按 §7.1 走：发送方是可信 Host 或真实 work_run（从领取事实重新推出），收件地址是 Session，见 `communication/mailbox-service.ts` 的文件头和 `ownContext`。）
 
 ## 4. ArchitecturePort：正式架构、观测和关联
 
