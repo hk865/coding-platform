@@ -7,11 +7,13 @@
 | 片 | 规格 | 任务书 | 要用户定（OPEN） |
 | --- | --- | --- | --- |
 | 0 | [slice-0-SPEC.md](slice-0-SPEC.md) | [第一段](slice-0-book-part1.md)、[第二段](slice-0-book-part2.md) | 无 |
-| 1 | [slice-1-SPEC.md](slice-1-SPEC.md) | [第一段](slice-1-book-part1.md)、[第二段](slice-1-book-part2.md) | U1（见下） |
+| 1 | [slice-1-SPEC.md](slice-1-SPEC.md) | [第一段](slice-1-book-part1.md)、[第二段](slice-1-book-part2.md) | 无（U1 已由决定 45 定为甲） |
 | 3 | [slice-3-SPEC.md](slice-3-SPEC.md) | [第一段](slice-3-book-part1.md)、[第二段](slice-3-book-part2.md) | 无 |
 | 5 | [slice-5-SPEC.md](slice-5-SPEC.md) | [第一段](slice-5-book-part1.md)、[第二段](slice-5-book-part2.md) | 无 |
 
 第 1、3、5 片的规格由 Codex（推理强度 xhigh）按 585f1ac0 起草，lead 核对设计和代码后冻结：每份规格的 §0 是 lead 的冻结说明（OPEN、lead 定的技术选择、对草稿的改动、和别的片的接缝、抽查的代码出处、精确数量），正文里改过的地方标【lead 改】、技术选择标【lead 定】。§0 与正文不一致时以 §0 为准。
+
+**2026-10-08 已定：** 用户选甲（等人认定，HANDOFF 决定 45），和下面的冻结做法一致，规格和代码都不用改。原 OPEN 条目留作出处：
 
 **OPEN（要用户定，只有一条）：** 第 1 片 U1，退役、没有接续的线手上的执行结果未知时，自动归档是等人“认定”（lead 建议），还是平台自动认定。两条已定的话（决定 38“马上归档”、决定 42“自动归档只走不需要人选的路”）在这一支上冲突。规格把这一支冻结为“不新增行为”（跳过，记在维护结果里），其余部分可以先施工；详见 [slice-1-SPEC §0.1](slice-1-SPEC.md#01-open要用户定施工到这一支之前停下问)。
 
