@@ -43,7 +43,7 @@ lead 另定的 4 项：
 - **和第 1 片同改的文件**（合入本片时由 lead 合并，两边的新增都保留）：`state/message-machine.ts`、`model/communication-contracts.ts`、`sessions/message-record-codecs.ts`、`communication/mailbox-service.ts`、`agent-runtime/execution-inputs.ts`、`tasks/claim-record-codecs.ts`、`tasks/claim-service.ts`、`tasks/requeue-service.ts`、`tasks/plan-readers.ts`、`tasks/execution-entry-service.ts`、`queries/query-record-codecs.ts`、`contracts/ledger.ts`、`business/workflow/` 下的 `workflow.ts`、`ports.ts`、`contracts.ts`、`consultation.ts`，`app/` 下的 `core-routes.ts`、`core-http-types.ts`、`collaboration-driver.ts`，`composition/create-platform.ts`，`tests/architecture/state-writes.test.ts`。第 1 片在消息上加 `replyHandler`、`archiveWaitDisposition` 两个可选字段和一个 `replyHandler` 索引，在 `TaskRequeueSnapshotV1` 上加 `archiveOrigin`；本片不碰这些字段。
 - **和第 3 片同改的文件：** `app/core-routes.ts`、`app/core-http-types.ts`、`composition/create-platform.ts`、`agent-runtime/execution-contracts.ts`、`agent-runtime/execution-driver.ts`、`tasks/execution-entry-service.ts`、`tests/architecture/production-reach-allowlist.json`。
 - **执行改过的文件**（冲突提示的一半）要第 2 片；本片按草稿用 `executed-files-stub.ts` 如实读作 `not_available`。
-- **合入后的接线：** README 的 I-2（发信职责读第 3 片的职责）、I-4（第 3 片装配器的 goalSettings 接本片的自治级别）。
+- **合入后的接线：** README 的 I-2（发信职责读第 3 片的职责）、I-4（第 3 片装配器的 goalSettings 接本片的自治级别）、I-5（本片“请知悉”的 `undelivered_reply` 类别接第 1 片的未送达回复）、I-6（第 3 片装配器的 decisions 接本片的决定队列）。【审查改】I-5、I-6 原来没有；本片这两处在接上之前如实读作 `not_available`。
 
 ### 0.5 lead 抽查的代码出处
 
@@ -52,8 +52,8 @@ lead 另定的 4 项：
 ### 0.6 精确数量（冻结）
 
 - 新正式 aggregate 0；已有记录上的新字段：Goal 的 `settings`、Workspace 的 `decisionSettings`、消息的收信方“你”/`goalRef`/`decision`/`application`/新答复形状、候选计划的 `requestRef`/`notAdopted`；新事件类型 4 个（`GoalSettingsChanged`、`WorkspaceNoticeSeenChanged`、`SessionMessageDecisionAnswered`、`SessionMessageDecisionApplied`）；新索引 5 个（§2.5 的 4 个加 §4.2 的 `query-job-by-workspace-goal`）；状态行 23 行（S5-GS-01…06、S5-AU-01…04、S5-MSG-01…06、S5-PLAN-01…05、S5-NT-01/02，见 §3.1 表；其中 S5-MSG-01、S5-PLAN-03、S5-PLAN-05 是改造已有行，其余新增）；新路由 12 个（§4.5）；新工具 3 个（`send_user_message`、`read_user_decision`、`record_decision_application`）。
-- 文件 81 个：新建 40、修改 41。其中源码 62（新建 23、修改 39；新建里含共用文件 `src/contracts/platform-duty.ts`，§6 F89），新测试文件 15 和测试支持文件 2，改动的已有测试文件和检查 2（`tests/architecture/state-writes.test.ts`、`tests/architecture/production-reach-allowlist.json`）。逐个文件见 §6（去掉 F77、F79–F85，加 F89 之后的 81 行）。
-- 用例 145 个：单元 63（GS 15、PO 16、MD 14、PC 10、NS 8）、服务 65（SS 14、UM 12、RC 11、DQ 9、AP 11、NR 8）、路由 8、Runtime 7、场景 2。服务用例在 memory 和 SQLite 各跑一次，共 210 次。
+- 文件 82 个：新建 41、修改 41。其中源码 62（新建 23、修改 39；新建里含共用文件 `src/contracts/platform-duty.ts`，§6 F89），新测试文件 16 和测试支持文件 2，改动的已有测试文件和检查 2（`tests/architecture/state-writes.test.ts`、`tests/architecture/production-reach-allowlist.json`）。逐个文件见 §6（去掉 F77、F79–F85，加 F89、F90 之后的 82 行）。【审查改】加了 F90 `tests/business/S5-decision-workflow.test.ts`。
+- 用例 153 个：单元 63（GS 15、PO 16、MD 14、PC 10、NS 8）、服务 71（SS 16、UM 13、RC 11、DQ 9、AP 14、NR 8）、路由 8、Runtime 7、Workflow 2（WF01、WF02）、场景 2。服务用例在 memory 和 SQLite 各跑一次，共 224 次。【审查改】加了 SS15、SS16、UM13、AP14–AP16、WF01、WF02（审查发现的测试缺口）。
 - 估计行数（不是验收数字）：生产代码约 4,700–6,700 行，测试约 1,800–2,600 行。
 - 任务书：[slice-5-book-part1.md](slice-5-book-part1.md)（骨架和测试，然后停）、[slice-5-book-part2.md](slice-5-book-part2.md)（实现）。
 
@@ -194,7 +194,7 @@ type UserMessageResponseV1 = {
   sender: MessageHostSender;
   bodyRef: ArtifactRef; sourceRef: SourceRefV1; respondedAt: string;
   decision: {
-    selection: DecisionSelectionV1;
+    selection: DecisionSelectionV1; source: DecisionSourceV1; // 【审查改】答复时 owner 生成的 canonical 来源（含 pins、goalBases），§2.3、§2.8、§3.3 读的 response.decision.source
     annotations: DecisionAnnotationV1[];
     requiresApplication: boolean;
   };
@@ -205,7 +205,7 @@ type DecisionApplicationReceiptV1 = {
 type DecisionApplicationV1 = {
   schemaVersion: 1; actor: ActorRef; appliedAt: string;
   receipt: DecisionApplicationReceiptV1;
-  changes: { before: VersionPin; after: VersionPin }[];
+  changes: { before: VersionPin; after: VersionPin }[]; basisRebases?: GoalControlRebaseV1[]; // 【审查改】§2.8 的控制重定位证明；缺省读作 []（AP09）
 };
 // SessionMessage.recipient: MessageRecipient
 // SessionMessage.response: 旧 MessageResponse | UserMessageResponseV1 | null
@@ -397,7 +397,7 @@ interface NoticePositionComparatorPort {
 
 每个用于答复的新source包含canonical goalBases；它由owner从正式Goal生成，不能信caller自报基础。旧消息/source缺goalBases默认[]，既有逻辑不改；这些旧答复若需要跨控制revision落实而缺基础，回incomplete并留待落实，不能从当前Goal补造过去基础。basis中的settings先用§2.2 default标准化；parallelRisks按otherGoal key确定排序后比较。message.response.decision.source是答复basis，不能拿提问时的message.decision.source代替。缺新application.basisRebases默认[]；异常形状仍unavailable。
 
-暂停时答复捕获Goal@r；继续后Goal@r+k可能只改了desiredState、desiredStateRevision、desiredStateRequestedBy及revision。服务读当前Goal，state `goalDecisionBasisMatches(captured,current)` 比较ref/workspaceRef/objective/activePlanRevision/规范化settings逐字段深等；相同且当前active才可执行。实际提交用当前Goal pin CAS，正式修改事件保存capturedPins和basisRebases。暂停继续过程中Plan/设置/目标内容任一变化，即使又恰巧设置回相同值，若原receipt链不能证明只发生控制变化也回revision_conflict；不能以仅最终快照相同放行。
+暂停时答复捕获Goal@r；继续后Goal@r+k可能只改了desiredState、desiredStateRevision、desiredStateRequestedBy及revision。服务读当前Goal，state `goalDecisionBasisMatches(captured,current)` 比较ref/workspaceRef/objective/activePlanRevision/规范化settings逐字段深等；相同且当前active才可执行。实际提交用当前Goal pin CAS，正式修改事件保存capturedPins和basisRebases。【审查改】只比答复捕获的内容基础和当前 Goal 的内容（与下一段、§0.2 T02、任务书规则 4、GS14/GS15、SS11/SS12 一致）：暂停中内容改过又改回到与捕获完全相同，按相同处理，可以落实（SS15）；当前内容任一字段不同就回 revision_conflict。不读中间的 Goal 事件链（`GoalRecordTransactionPort` 没有按版本扫事件的接口）。
 
 控制重定位只适用于Goal aggregate。T02-A按同内容基础和实际CAS证明：保留captured pin，当前owner核对ref/workspace/objective/Plan/settings深等，当前active且未取消，用当前Goal revision guard提交；事件明确记captured/actualBefore。比较的是当前内容，曾经改过又改回相同内容不产生新的内容授权差异；并发变化由当前pin拒绝。其他source对象（候选、注记、消息、Query Answer、架构/政策active pointer）仍按原pin。T02-B在内部显式重新核对后生成具名basis，不要求用户重答；若lead选它，须冻结重新核对输入/原答复引用的proof字段和case，不留给DSH自定。
 
@@ -466,9 +466,30 @@ function goalStartPolicy(input: {
   predecessor: null | { exists: boolean; cancelled: boolean;
     formallyCompletedForActivePlan: boolean };
 }): { allowed: boolean; reason: 'goal_stopped' | 'waiting_predecessor' | null };
+// 【审查改】§3.1、§2.8 点名、原来没给签名的纯函数，冻结如下（state 只 import contracts；Transition 来自同目录）。
+function buildGoalSettingsRecord(goal: GoalSnapshot, settings: GoalSettingsV1): GoalSnapshot;
+// 只写 settings 和 revision+1；desiredState、desiredStateRevision、desiredStateRequestedBy、activePlanRef 等其余字段逐字段原样。
+function buildWorkspaceDecisionSettingsRecord(workspace: WorkspaceSnapshot,
+  settings: WorkspaceDecisionSettingsV1): WorkspaceSnapshot; // 只写 decisionSettings 和 revision+1
+type NoticeSeenUpdateV1 = { category: NoticeCategoryV1; position: NoticePositionV1;
+  movement: 'forward' | 'same' | 'backward' }; // movement 由服务用 NoticePositionComparatorPort 算好
+type NoticeSettingsEventV1 = { type: 'notices_seen'; updates: NoticeSeenUpdateV1[] };
+type NoticeSettingsGuardV1 = { operator: boolean; tokenValid: boolean; tokenCoversUpdates: boolean;
+  pinMatches: boolean }; // tokenValid 由服务验过 HMAC、Workspace、过滤后给出；state 不碰密钥
+type NoticeSettingsEffectV1 = { type: 'workspace_notice_seen_changed' };
+function transitionNoticeSettings(state: WorkspaceSnapshot, event: NoticeSettingsEventV1,
+  facts: NoticeSettingsGuardV1): Transition<WorkspaceSnapshot, NoticeSettingsEventV1, NoticeSettingsEffectV1>;
+// 拒绝的先后：operator=false→forbidden；tokenValid=false 或 tokenCoversUpdates=false→invalid；pinMatches=false→revision_conflict。
+// 只有 movement='forward' 的类别改成新位置；一项 forward 都没有时 next 等于原值、effects=[]（NS03、NS04）；
+// 否则 next 经 buildWorkspaceDecisionSettingsRecord，effects=[{type:'workspace_notice_seen_changed'}]。
+function automationDecisionCause(input: {
+  autonomy: GoalAutonomyV1; action: DecisionActionV1; actorClass: ReworkActorClass;
+  countedNext: number | null; cap: number; affected: VersionPin[];
+}): null | { code: 'automation_confirmation_required'; action: DecisionActionV1; affected: VersionPin[] };
+// 同样输入下 decisionActionPolicy 返回 'needs_decision' 时非 null（affected 按 canonical ref 排序、去重），其余返回 null。
 ```
 
-state 声明不能 import model/GraphWrite/RecordGuard；下述签名中的 contracts 类型需实际 import，Transition 来自同目录。source 读失败由服务先返回，不用 `exists=false` 吞 unavailable。
+state 声明不能 import model/GraphWrite/RecordGuard；下述签名中的 contracts 类型需实际 import，Transition 来自同目录。source 读失败由服务先返回，不用 `exists=false` 吞 unavailable。【审查改】message-machine、plan-machine 的扩展沿各自现有写法加成员：S5-MSG-01 沿用 `message_sent`（改造 MSG-02）；`MessageEvent` 加 `{ type: 'user_decision_answered' }`、`{ type: 'synthetic_decision_answered' }`、`{ type: 'decision_application_recorded' }`（S5-MSG-05 是同一事件在 requiresApplication=false 时的拒绝）；`SessionMessageChange` 加 `decision_answered`、`decision_applied` 两种；plan-machine 的事件名照下表 event 列。每行 guard 列的事实写成守卫上下文的布尔或枚举字段，DSH 在第一段逐个列进 UNSPECIFIED，lead 审第一段时冻结（这是类型的写法，不是新行为；行为以下表为准）。
 
 | # | from | event | guard（拒绝） | to | effects | 幂等/重复事件 | 原文编号 | 现状 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -639,7 +660,7 @@ interface MessageWriteOwnerPort {
     event: SessionMessageEventV1;
     guards: readonly RecordGuard[];
     claims: readonly UniqueClaimChange[];
-  }>): Promise<WriteResult<SessionMessage>>;
+  }> & { identityKey: string; fingerprint: string }): Promise<WriteResult<SessionMessage>>; // 【审查改】入口已算好的身份，persist 原样用于回执查找和 PreparedCommit（同现有 writeMessage 的 MessageWrite，mailbox-service.ts:1301–1304）
 }
 interface DecisionSourceFactsPort {
   readSource(ctx: CoreCallContext, source: DecisionSourceV1):
@@ -750,7 +771,7 @@ interface WorkspaceDecisionSettingsPort {
 
 limit=1..100，默认 50；source lookup 每页≤200，单次窗口≤25页/5000项、Goal≤200，窗口一致性重试≤4。超界回 capacity，连续并发无法得到稳定窗口回 unavailable，不伪造完整计数或新水位。Workspace 内可过滤 Goal；“全局队列”由 Host 汇总其真实授权 Workspace，不把不同库 cursor 合并成一个全局游标；本片 core 不提供跨项目授权读。
 
-卡 key 是 §3.3 的 source identity，两入口共用。根据原来源、单 response/答复 claim 和 application 派生状态；不存 Card 表。原来源即使不再在 open 查询里，也从答复消息 source 回读出 answered_pending_application；sender 归档不丢卡。requiresApplication=false 不进待落实，显示已答且无需落实，不谎称完成了对象变更。
+卡 key 是 §3.3 的 source identity，两入口共用。根据原来源、单 response/答复 claim 和 application 派生状态；不存 Card 表。原来源即使不再在 open 查询里，也从答复消息 source 回读出 answered_pending_application；sender 归档不丢卡。requiresApplication=false 不进待落实，显示已答且无需落实，不谎称完成了对象变更。【审查改】非消息卡的 options：冲突卡见 §4.3；goal_cause、candidate、planning_question 三种 options=[]（规划问题本来只有文字问题，`tasks/initial-plan.ts:49`；候选和目标原因能做的事放在 `actions` 里，走已有接口）。这三种卡的答复只用自由文字和批注，记 selection=other、requiresApplication=true。
 
 ### 4.2 七来源的精确装配
 
@@ -807,7 +828,7 @@ source ports声明在model/decision-contracts，views只调用reader；queryGoal
 
 卡和标签按无序 Goal pair + 双 Plan pointer 识别，普通 order/Goal revision 不影响身份。Goal paused 仍可出现可答卡；cancelled 或正式 COMPLETED 的 Goal 不生成新的冲突待答，原历史保留。接受风险保存在当时后 Goal；两边仍同计划时两个目标都有 `与 <另一个目标> 并行，已接受风险` 标签。换任一 pointer 标签消失；仍有交集且没有这一双版本答复才重出卡。
 
-wait/order/parallel 选项并列，options 顺序固定 wait,order,parallel，**无 recommended/default**。wait 取该冲突对在当时顺序靠前的 Goal（不是后来重排出的其他 Goal）；完成或取消解锁。调整顺序的 goalOrder 从卡内提交，写目标设置；正在运行的工作不被停止。
+wait/order/parallel 选项并列，options 顺序固定 wait,order,parallel，**无 recommended/default**。【审查改】三项精确为 `{id:'wait',label:'等前一个目标',effect:'apply'}`、`{id:'order',label:'调整顺序',effect:'apply'}`、`{id:'parallel',label:'接受风险并行',effect:'apply'}`，措辞照 UI-WORKBENCH §0 的冲突提示；用户选了以后，答复的 selection 记 conflict_wait / conflict_order / conflict_parallel，不记 option。wait 取该冲突对在当时顺序靠前的 Goal（不是后来重排出的其他 Goal）；完成或取消解锁。调整顺序的 goalOrder 从卡内提交，写目标设置；正在运行的工作不被停止。
 
 同版本已答的 wait/order 卡也由合成用户消息 join 关闭，不能因为两边仍重叠下一次读又变未处理。free-text other 的卡到已答待落实，留给提问方/片6处理；不得自行把它记成接受风险。
 
@@ -864,7 +885,7 @@ Workflow/decision-actions.ts：①answerDecision（一个提交）②仅 conflic
 
 冲突重试/继续应用需恢复原答复（不能让用户重新答），保留原捕获 source pins 和 goalBases；仅控制状态变化按§2.8核对后使用当前Goal pin CAS，其他对象/计划/设置变化回 revision_conflict，不能拿新 pin 静默应用旧决定。reject/defer 无②③。free text other 不进入机械 settings 路径。采用候选仍调用原 plans/apply；UI/片6以同原答复 acknowledgementRef 关联后补记，完整决策授权属片6。
 
-Workflow/workflow.ts 的 select_work 与 perform 共享 policy：自动 refine/requeue/reverify 前读当前 Goal 设置；每步确认返回 waiting/next=null 和正式事实派生的 GoalDecisionCauseReadV1（来源2；不伪写 GoalPhase 或改变其展示归约），不直接进行；可继续已经开始的检查/Run 不按新的自治设置追溯停止。所有绕过 select_work 的直接 claim/entry owner 也必须读等待 Goal 与 predecessor GoalPhase，并把观察版本 guards 编入 commit，防止“看完能做再设等待”的竞态。
+Workflow/workflow.ts 的 select_work 与 perform 共享 policy：自动 refine/requeue/reverify 前读当前 Goal 设置；每步确认返回 waiting/next=null 和正式事实派生的 GoalDecisionCauseReadV1（来源2；不伪写 GoalPhase 或改变其展示归约；【审查改】放在 `WorkflowAdvanceResult.value` 新加的可选字段 `decisionCause?: GoalDecisionCauseReadV1 | null`（`business/workflow/contracts.ts`，F48），`reason` 写 `automation_confirmation_required:<action>`），不直接进行；可继续已经开始的检查/Run 不按新的自治设置追溯停止。所有绕过 select_work 的直接 claim/entry owner 也必须读等待 Goal 与 predecessor GoalPhase，并把观察版本 guards 编入 commit，防止“看完能做再设等待”的竞态。
 
 抢同一 Session 的默认顺序：Host 的现有 collaboration-driver 只在领取/创建选择这个安全点，将当前 pending advances 交给 orderGoalAdvances，按 Goal.settings.order、Goal key、flowId/taskId 稳定排序，再逐个调用原 Workflow。已占用成员不抢占；其他成员能并行；人工/agent 的明确改派仍走原权限/占用 CAS。有限排序不新增持久调度器、队列或 Host 类型。本规则作用于同一安全点已排队的竞争；后来的高顺位目标不能撤回已成功领取的低顺位任务。跨 Host 唯一执行实例仍由原 lease 保证。
 
@@ -919,7 +940,7 @@ formatDecisionResponseInput的确定值=`'用户答复\n'+canonicalJson(body)`�
 | GS03 | paused B@7 设置自治 | Goal@8 仍 paused，effects=[goal_settings_changed] |
 | GS04 | cancelled B 设置 | ok=false,code=invalid，无 next/effects |
 | GS05 | actor=automation 设置 | forbidden |
-| GS06 | B 等 A，之后 order B/A | waitForGoalRef=A；new_work.allowed=false |
+| GS06 | B 等 A，之后 order B/A | waitForGoalRef=A；claim.allowed=false（【审查改】GoalStartActionV1 没有 new_work，用 claim） |
 | GS07 | A cancelled，B 等 A | claim allowed=true |
 | GS08 | A GPC 对 PA1，B 等 A | enter allowed=true；GPC 对 PA0 时 false |
 | GS09 | A 等 B，再 B 等 A | cycle；B 原设置不变 |
@@ -1018,6 +1039,8 @@ formatDecisionResponseInput的确定值=`'用户答复\n'+canonicalJson(body)`�
 | SS12 | 同SS11但继续后自治变every_step/Goal@9 | revision_conflict，0写；原答复待落实保留 |
 | SS13 | 领取commit先赢→设置等待提交 | 已领取Run保留；等待设置成功；后续新claim busy/waiting_predecessor |
 | SS14 | 已设every_step/order2/waitA/risks，原Goal控制暂停→继续→读原回执 | settings每字段深等；当前Goal rev每步+1、desiredStateRevision照原epoch；原各回执保持当时完整settings |
+| SS15 | 【审查改】paused B@7冲突答复（捕获B@7）→暂停中setGoalSettings改every_step（B@8）再改回after_plan_confirmation（B@9）→继续（B@10）→应用风险 | committed settings B@11；proof captured B@7/actualBefore B@10、basisRebases恰一项；不要求重答 |
+| SS16 | 【审查改】Goal B 上一个已claim、未entered的Run RB；之后setGoalSettings让B等A（A active、未完成）；对RB调authorizeRuntimeEntry | rejected/busy，reason以`waiting_predecessor:`开头；RB仍Starting.Unbound；inputBinding/authorization写入0 |
 
 `tests/work-graph/S5-user-messages.test.ts`（12×2）：
 
@@ -1035,6 +1058,7 @@ formatDecisionResponseInput的确定值=`'用户答复\n'+canonicalJson(body)`�
 | UM10 | 旧 Session addressed message 用用户 answer入口 | invalid；旧 work_run respondMessage 流程不变 |
 | UM11 | 另一身份在第一次answer已提交后才读取并回答 | invalid，0写；原response不覆盖 |
 | UM12 | 原Session消息无goalRef/decision/application/since，ack→重放 | 原公开DTO/receipt与旧expect完全深等；0用户源/新claim；无回填origin |
+| UM13 | 【审查改】UM06前后各按S5_MESSAGE_BY_WORKSPACE_STATUS查pending、responded两桶；SQLite另关闭重开再查 | 答前pending桶含该消息、responded桶不含；答后pending桶不含、responded桶含；重开后相同 |
 
 `tests/work-graph/S5-request-candidates.test.ts`（11×2）：
 
@@ -1066,7 +1090,7 @@ formatDecisionResponseInput的确定值=`'用户答复\n'+canonicalJson(body)`�
 | DQ08 | 主面readDecisionCard与queue找到同source | cardKey/answerMessageRef完全相同；一处答后两处answered |
 | DQ09 | 读全部页/刷新 | message status、Workspace cursor、模型调用计数全不变 |
 
-`tests/work-graph/S5-decision-application.test.ts`（13×2）：
+`tests/work-graph/S5-decision-application.test.ts`（14×2）：
 
 | case | 操作 | 精确期望 |
 | --- | --- | --- |
@@ -1079,9 +1103,12 @@ formatDecisionResponseInput的确定值=`'用户答复\n'+canonicalJson(body)`�
 | AP07 | 应用后对象再变版，补同原receipt | 仍可证明历史应用；changes.after为原版本，不填当前版本 |
 | AP08 | automation尝试answer | forbidden；0写 |
 | AP09 | 当前pin不同但正式proof为同内容控制重定位 | application.basisRebases恰为原proof；changes.before真实版本；队列applied |
-【lead 改：L1】AP10、AP11 删去（初始化采用的补记推到第 6 片），用例 ID 不重排；本文件共 11 个用例。
+【lead 改：L1】AP10、AP11 删去（初始化采用的补记推到第 6 片），用例 ID 不重排；本文件共 14 个用例（含审查加的 AP14–AP16）。
 | AP12 | 正式receipt声称eventId但eventAt损坏decoder | unavailable；application=null；0写 |
 | AP13 | 提供cursor与lookupCommit原cursor不等 | revision_conflict；application=null；0写 |
+| AP14 | 【审查改】修改由operator做；Session S的work_run（不是修改者，也不是operator）用同一receipt补记 | forbidden；application=null；0写 |
+| AP15 | 【审查改】AP03补记成功后，新requestId、同一receipt再补记 | 返回的application与AP03深等；message revision不变 |
+| AP16 | 【审查改】AP03补记成功后，新requestId、另一次真实修改的receipt再补记 | invalid；application仍为AP03的值；0写 |
 
 `tests/work-graph/S5-notices.test.ts`（8×2）：
 
@@ -1097,6 +1124,13 @@ formatDecisionResponseInput的确定值=`'用户答复\n'+canonicalJson(body)`�
 | NR08 | 旧system自动reverify事实有count1但wire没有cap | notice1，cap=null，summary含上限未记录；当前cap变化不改此值 |
 
 ### 5.4 路由与场景
+
+`tests/business/S5-decision-workflow.test.ts`（2 行；【审查改】新文件 F90。装配照 `tests/business/R5c-workflow.test.ts`：真实 WorkGraph memory 夹具和真实 Session 目录，只把执行、检查 owner 换成受控替身；不跑模型）：
+
+| case | 给定 / 动作 | 精确期望 |
+| --- | --- | --- |
+| WF01 | B用真实setGoalSettings设every_step；B的tB上一个Run failed、可自动重新入队（prior=0、cap=3）；`Workflow.advance`一步 | value.state=waiting、next=null、reason=`automation_confirmation_required:system_requeue`；value.decisionCause：code=automation_confirmation_required、action=system_requeue、taskRef=tB；TaskRequeue 0、新Run 0、requeue owner调用0 |
+| WF02 | 用真实reorderGoals设B order0、A order1；`orderGoalAdvances`收到[A的advance, B的advance]（同一个空闲Session能接两边） | 返回[B的, A的]；输入数组不变；records/events增量0 |
 
 `tests/app/S5-decision-routes.test.ts`（8 行）：
 
@@ -1134,7 +1168,7 @@ formatDecisionResponseInput的确定值=`'用户答复\n'+canonicalJson(body)`�
 
 | case | 用原 openHostScenario/脚本模型的行为组合 | 精确期望 |
 | --- | --- | --- |
-| SC02 | 两Goal：A计划M、B执行改fm→冲突卡→接受风险→重排→一个系统和一个agent自动返工→一次自动重新检查→只看一类第一页→重启→换一方Plan | 1张并列三选项卡；接受后卡0/标签2，重排仍标签2；requeuecount按既有链1→2；reverify独立chain count1，notice恰好3；未展示条目重启仍在；换Plan标签0/卡1；已占用Run不被重排/等待追溯取消 |
+| SC02 | 【审查改】两Goal：A、B的活动计划都有scope为M的work Task（本片执行文件只来自executed-files stub，读作not_available；“计划模块对已改文件”只在GS11测）→冲突卡→接受风险→重排→一个系统和一个agent自动返工→一次自动重新检查→只看一类第一页→重启→换一方Plan | 1张并列三选项卡，footprintCompleteness两项executedFiles=not_available、possiblyIncomplete=true；接受后卡0/标签2，重排仍标签2；requeuecount按既有链1→2；reverify独立chain count1，notice恰好3；未展示条目重启仍在；换Plan标签0/卡1；已占用Run不被重排/等待追溯取消 |
 
 场景支持扩 `tests/scenarios/support/S5-decisions.ts`，不改 harness.ts 的其他组默认 seed/actor/检查配置；不能预置假 MessageDecision/PASS 绕过入口。脚本只提供业务模型回答，provider调用预算由夹具固定，额外读/重放/补记调用增量=0。
 
@@ -1249,10 +1283,11 @@ Runtime 接线只为使 slice 5 的“按职责发给用户/收到用户话和�
 | F78 | tests/architecture/production-reach-allowlist.json | M / architecture checks | 只为后片未接消费写具体 kept-for，不屏蔽已接入口 | 1、3、4、6、7 |
 | F86 | src/business/workflow/consultation.ts | M / Workflow | User recipient窄guard，禁止当Session咨询发Query | 1、7 |
 | F89 | src/contracts/platform-duty.ts | N / contracts | 【lead 改：L3】共用的 `PlatformDutyV1`，原文见 README“共用文件”，逐字节相同 | 1、3 |
+| F90 | tests/business/S5-decision-workflow.test.ts | N / Workflow tests | 【审查改】WF01、WF02：每步确认挡自动动作、按顺序排 advance | — |
 | F87 | src/core/work-graph/state/goal-machine.ts | M / state | 原nextGoalDesiredState保留已有settings，旧缺省shape不动 | 1 |
 | F88 | src/ui/views/execution/actions.ts | M / 既有UI边界 | 仅Session recipient类型guard，不施工新画面 | E3 |
 
-【lead 改】草稿的 F77、F79–F83 移出 DSH 写范围（L2：`module-target.json` 由 B0 写，其余文档由 lead 验收后同步），F84、F85 删去（L1），ID 不重排。冻结的写范围是 81 个文件：40 N、41 M（源码 62、测试/支持/检查 19；含新加的 F89），见 §0.6。下面是草稿原文：未来推荐清单共 **88 文件：39 N、49 M**（源码63、测试/检查20、权威文档5）。不改旧测试来替换其已定期望；architecture 两个测试的规则登记是明确例外。将来产生验收日志时先在实际 taskbook 给一个具名证据目录/文件清单，它们不在这份源码清单里，也不自动获得写权限。
+【lead 改】草稿的 F77、F79–F83 移出 DSH 写范围（L2：`module-target.json` 由 B0 写，其余文档由 lead 验收后同步），F84、F85 删去（L1），ID 不重排。冻结的写范围是 82 个文件：41 N、41 M（源码 62、测试/支持/检查 20；含新加的 F89、审查加的 F90），见 §0.6。下面是草稿原文：未来推荐清单共 **88 文件：39 N、49 M**（源码63、测试/检查20、权威文档5）。不改旧测试来替换其已定期望；architecture 两个测试的规则登记是明确例外。将来产生验收日志时先在实际 taskbook 给一个具名证据目录/文件清单，它们不在这份源码清单里，也不自动获得写权限。
 
 【lead 改】合入方法以 README 为准：三片从同一基线各自施工，各自验收后由 lead 按 1 → 3 → 5 合并共享文件，不先合骨架。草稿原文：共享文件单写者：lead 汇总 F01–07/F11–18/F21–23/F30–35/F48–58/F76–88，DSH只落冻结的slice5字段/行/注册项。另片重基于这些改变，不能覆盖同文件全体；若slice1/3同时施工，先由lead合并骨架再分别派实现。注册索引、route union、state保护清单的共同修改必须按具名片段合入。
 
@@ -1304,7 +1339,7 @@ Runtime 接线只为使 slice 5 的“按职责发给用户/收到用户话和�
 | 权威文档同步 | 5 M | 220–400 |
 | 合计 | 88（39 N、49 M） | 6,970–10,090 |
 
-【lead 改】冻结数：**145 个逻辑 case、210 个运行 case、15 个 test 文件** = unit63 + service65×2 + routes8 + Runtime7 + scenarios2（AP10、AP11 删去，L1）。草稿原文：新增测试精确数：**147个逻辑case、214个运行case、15个test文件** = unit63 + service67×2 + routes8 + Runtime7 + scenarios2；另2个support文件不算test文件。测试表的运行数量按§5逐行而不是按“约”发给DSH。每个memory/SQLite行生成两个具名case；场景只SQLite，不再复制backend矩阵；旧测试不计新case总数。骨架阶段必须记录新增case逐项id/名字/hash；实现阶段不得改它们。
+【lead 改】冻结数：**153 个逻辑 case、224 个运行 case、16 个 test 文件** = unit63 + service71×2 + routes8 + Runtime7 + Workflow2 + scenarios2（AP10、AP11 删去，L1；【审查改】加 SS15、SS16、UM13、AP14–AP16、WF01、WF02）。草稿原文：新增测试精确数：**147个逻辑case、214个运行case、15个test文件** = unit63 + service67×2 + routes8 + Runtime7 + scenarios2；另2个support文件不算test文件。测试表的运行数量按§5逐行而不是按“约”发给DSH。每个memory/SQLite行生成两个具名case；场景只SQLite，不再复制backend矩阵；旧测试不计新case总数。骨架阶段必须记录新增case逐项id/名字/hash；实现阶段不得改它们。
 
 这片范围跨度大，风险主要是语义接缝，不能用行数拆成几个自由设计批。按STATE-MACHINES-SPEC §15约定顺序：①contracts/default codecs/index/保护清单 ②纯state行与unit tests ③owner/ports骨架和memory/SQLite测试 ④views/routes/Workflow/Runtime接线骨架与场景 ⑤lead中审冻结 ⑥DSH实现 ⑦限定检查、lead独审与既有文档同步。①–④是同一个第一阶段；完成骨架与tests即STOP，不先偷偷实现易写的状态机。
 

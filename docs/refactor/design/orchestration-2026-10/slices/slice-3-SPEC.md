@@ -47,7 +47,7 @@ lead 另定的 5 项：
 - **第 0 片先合入。** 本片改 `src/app/attention-observer.ts`，要在第 0 片的写法（`depends:t1->t2:artifact:schema.json`）之上做（AT04 依赖它）。
 - **和第 1 片同改的文件**（合入本片时由 lead 合并，两边的新增都保留）：`agent-runtime/` 下的 `execution-preparation.ts`、`ports.ts`、`runtime.ts`，`queries/query-execution.ts`，`tasks/execution-entry-service.ts`，`app/core-routes.ts`、`app/core-http-types.ts`，`composition/create-platform.ts`。第 1 片给 `ContinuationBriefV1` 加 `anomalies` 段；本片把接续说明原样放在最后（`renderContinuationBriefZh` 的输出），不改它，所以合并后自然带上锚点段。
 - **和第 5 片同改的文件：** `app/core-routes.ts`、`app/core-http-types.ts`、`composition/create-platform.ts`、`agent-runtime/execution-contracts.ts`、`agent-runtime/execution-driver.ts`、`tasks/execution-entry-service.ts`、`tests/architecture/production-reach-allowlist.json`。
-- **扩展接缝。** 本片的 `extensions`（notes、anomalies、footprint、goalSettings、decisions）在未装配时如实读作 `not_implemented`。合入后的接线由 README 的 I-1（第 1 片读本片的职责）、I-2（第 5 片的发信职责读本片的职责）、I-3（anomalies 接第 1 片的锚点）、I-4（goalSettings 接第 5 片的自治级别）做；本片不预先接，也不写假实现。
+- **扩展接缝。** 本片的 `extensions`（notes、anomalies、footprint、goalSettings、decisions）在未装配时如实读作 `not_implemented`。合入后的接线由 README 的 I-1（第 1 片读本片的职责）、I-2（第 5 片的发信职责读本片的职责）、I-3（anomalies 接第 1 片的锚点）、I-4（goalSettings 接第 5 片的自治级别）、I-6（decisions 接第 5 片的决定队列，【审查改】原来没有这一项）做；本片不预先接，也不写假实现。
 
 ### 0.5 lead 抽查的代码出处
 
@@ -116,7 +116,7 @@ lead 另定的 5 项：
 
 已有正文新增三个可选字段：两个 manifest 各加 `contextAssembly?: ContextAssemblyBindingV1`；`RoleSpecContentV1` 加 `platformDuty?: PlatformDutyV1`。`ResolvedRuntimeConfiguration` 和由它 Omit 派生的 Host grant 加两个可选配置项 `platformDuty?: PlatformDutyV1`、`contextResidentBytes?: number`。注意力 DTO 增加 `GraphAttentionStamp.details?:Record<string,GraphAttentionDetailV1>` 和 `graph_delta.changes?:GraphChangesV1`，仅内存派生、非持久记录。
 
-准备时已存在的 `selectedTaskInputs: Array<{requirementId:string;ref:ArtifactRef}>` 保持原类型。新输入声明可能选的是 Round、Workspace、Message，所以完整选择存在 `contextAssembly.inputSelections`；只有 source.kind=artifact 的 selected 条目投影进旧数组。legacy 使用原 requirementId（去掉 declarationId 的 `legacy:`），边声明用完整 declarationId，按 requirementId 排序；不同声明指向同一 body 仍保留两条，不按 digest 合并。运行中“看”重新读取的选择写入它自己的工具结果，不改绑定 manifest、envelope 或 Run。这是本规格推荐的技术取舍 T1，lead 审定前不可交 DSH。
+准备时已存在的 `selectedTaskInputs: Array<{requirementId:string;ref:ArtifactRef}>` 保持原类型。新输入声明可能选的是 Round、Workspace、Message，所以完整选择存在 `contextAssembly.inputSelections`；只有 source.kind=artifact 的 selected 条目投影进旧数组。legacy 使用原 requirementId（去掉 declarationId 的 `legacy:`），边声明用完整 declarationId，按 requirementId 排序；不同声明指向同一 body 仍保留两条，不按 digest 合并。运行中“看”重新读取的选择写入它自己的工具结果，不改绑定 manifest、envelope 或 Run。这是技术取舍 T1（【审查改】lead 已定为 A，§0.2）。
 
 ### 2.2 公共纯 DTO：`src/contracts/graph-context.ts`
 
@@ -198,7 +198,7 @@ export type ContextExtensionsV1 = {
   anomalies: { availability: ExtensionAvailabilityV1; rows: ContextIndexRowV1[] };
   footprint: { availability: ExtensionAvailabilityV1; rows: ContextIndexRowV1[] };
   goalSettings: { availability: ExtensionAvailabilityV1;
-    autonomy: 'after_plan_confirmation' | 'step_confirmation' | null };
+    autonomy: 'every_step' | 'after_plan_confirmation' | null }; // 【审查改】取值与第 5 片 GoalAutonomyV1 相同（I-4 原样转交）
   decisions: { availability: ExtensionAvailabilityV1; rows: ContextIndexRowV1[] };
 };
 ```
@@ -590,6 +590,21 @@ observer 的触发检查也要使用 details：保留旧计数 `graphChangedElem
 `createAttentionScanner` 图部分只调用 assembler.readAttentionGraph，不继续独立读取 plans/catalog；files/message/feedback的原采集与阈值/coalesce不改。`AttentionGraphReadRequestV1.goalRef=null` 时照旧可以读采用架构，不能编一个 Goal id；此时 assembler 调同一个 graph reader 的 readAttentionFacts。图读取失败仍 graphUnreadable=true，保留旧基线，绝不是删全部节点。
 
 Host用 renderAttentionChanges 输出**变化行**和版本，仅发送 signal相关变化文件；不得输出 snapshot.graph或全部snapshot.files。格式首行 `[attention s3-v1]`，后续每行 `JSON.stringify`一个 `{kind,key,change,beforeVersion,afterVersion,...}`对象，键的插入顺序固定，所有值scope/refs来自可信snapshot。大集合按kind/key排序装完整行；完整文本上限 `16384` UTF-8 bytes，计入首行、LF和最后省略标记。最后行格式 `{"kind":"omitted","count":N,"hint":"另有 n 条，用‘看’读"}`，其中hint中的n为实际N十进制；预留该行后装入最长前缀，单项过大也整项省略。不能输出半个JSON/UTF8、不能超限后依靠 mailbox拒绝。
+
+【审查改】每种行的精确写法（键按表里从左到右的顺序插入；值为 null 时写 null，不省略键）：
+
+| kind | 行对象 | 什么时候有 |
+| --- | --- | --- |
+| `scope` | `{kind:'scope',projectId,workspaceId,goalId}`（没有 Goal 时 goalId 为 null） | 每条通知恰好一行，紧跟首行 |
+| `revision` | `{kind:'revision',key:'graph',change:'revision_change',beforeVersion,afterVersion}` | `revision` 不为 null |
+| `node` | `{kind:'node',key,change,beforeVersion,afterVersion,node,name,summary,state}`（后四个取自 detail；removed 用旧 detail） | 每个节点变化一行 |
+| `edge` | `{kind:'edge',key,change}` | 每条边变化一行 |
+| `file` | `{kind:'file',key,version}`（key 是路径；version 为 null 表示文件没了） | signal 相关的每个变化文件一行 |
+| `feedback` | `{kind:'feedback',key}`（key 是 feedbackId） | 每个 feedbackId 一行 |
+| `heartbeat` | `{kind:'heartbeat',key:'heartbeat',pendingInputs,messageCursor}` | `heartbeat` 不为 null |
+| `omitted` | `{kind:'omitted',count,hint}`（见上段） | 有省略时，最后一行 |
+
+行序：首行 `[attention s3-v1]`，然后 scope 行，然后按 kind 依次 revision、node、edge、file、feedback、heartbeat，同一 kind 内按 key 的 UTF-16 码元序（`<`），最后是 omitted 行。行与行之间一个 LF，末尾没有 LF。首行和 scope 行总保留、不计入省略；装不下时只保留上述顺序的最长前缀，其余计入 omitted.count。
 
 requestId保持原 scope/target/paths/版本/signals 的可信hash身份，可以hash完整snapshot以防变化冲突，但通知正文只变化。sent committed后才markDelivered；原acceptedInputs确认后才markProcessed；省略的变化也属于这次通知已标记的snapshot（Agent通过look获得其详情），不把同一个大变化无限重发。重试同一snapshot→同requestId/同文本；新snapshot→新身份。初次prime不通知既有状态；targetSession/current消费者策略不改，第7片再改投参谋。
 

@@ -35,7 +35,7 @@ At the end `git grep -n "not implemented: " -- src` prints nothing.
 12. **Stop is not success.** A queued cancel does not release the Session (`archive_execution_pending:`); an `outcome_unknown` Run is not stopped until a human attests it through the existing `resolveUnknownRun` path (`src/composition/create-platform.ts:887`); a Query is never cancelled or paused by an archive (IT14); an archive never completes a Task, never starts a check and never reverts files.
 13. **A composite failure is not zero writes.** When a later step of `archiveLine` fails after earlier steps committed, return `ready` with `state: 'partial'`, the committed receipts, the original rejection and the exact message `处置已完成，归档没成功` (IT13). Never undo a committed step.
 14. **The rework cap exemption is narrow.** Only a stop caused by this archive request (its cancel, its wait cancel) or a real `interrupted` fact of that Run counts as `interrupted` and is not counted (UT32, UT33, SV35, SV57); a forged or unmatched archive origin is refused (UT34, SV36, SV48, SV49), and an ordinary failure that happened before the retirement keeps its class and its count (SV59). Earlier human pause and cancel fences keep their meaning (UT35, SV37).
-15. **Maintenance starts nothing.** No timer, at most one page per call, no model call, no Kernel start, no check (IT06–IT11, IT31, IT33).
+15. **Maintenance starts nothing.** No timer, at most one page per call, no model call, no Kernel start, no check (IT06–IT11, IT31, IT33, IT34).
 16. **Changed files are honest.** Kernel-confirmed paths go to `confirmed`, the rest to `possible`; the worktree fallback puts everything in `possible` with `runBaselineKnown: false`; when nothing can be read the status is `unavailable` with a reason, never an empty “no changes” (IT01, IT02, IT32, SV27).
 
 ## Checks
@@ -44,7 +44,7 @@ Run the commands of part 1, then `npm run build`. Do not run any other tests.
 
 Expected at the end of part 2:
 - `npm run typecheck`, `npm run check:architecture` and `npm run build` exit 0.
-- New tests: 23 files, 211 tests, all pass.
+- New tests: 23 files, 212 tests, all pass.
 - Regression command: every file equals the baseline of part 1, except `tests/state/session-availability.test.ts` and `tests/state/message-machine.test.ts`, whose test counts grow by the matrix rows you added in part 1 and which all pass, and `tests/architecture/state-writes.test.ts` and `tests/architecture/production-reach.test.ts`, which pass. A test that failed in the baseline only because `/usr/bin/bwrap` is missing may still fail for that reason; name it.
 - If `tests/architecture/production-reach.test.ts` reports a new unreached declaration, wire it as the spec says or report it; do not add an allowlist entry.
 

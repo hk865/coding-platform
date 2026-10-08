@@ -44,7 +44,7 @@ for (const edge of plan.executionDag.dependsOn) edges.push('depends:' + edge.dep
 - `scope`：`{ scope: { projectId: 'p', workspaceId: 'w' }, paths: [], maxBytes: 1024, goalRef: { aggregateType: 'Goal', projectId: 'p', goalId: 'g' }, targetSession: null, config: attentionConfig() }`；`attentionConfig` 来自 `tests/helpers/orchestration-fixture.ts:178`。
 - `deps.workspace.readWorkspace`：不会被调用（`paths` 为空）；被调用就抛错。
 - `deps.messages.readInbox`：不会被调用（`targetSession` 为 null）；被调用就抛错。
-- `deps.architecture.readArchitectureRevision`：返回 `{ status: 'rejected', code: 'not_found', reason: 'no architecture' }`。
+- `deps.architecture.readArchitectureRevision`：返回 `{ status: 'not_found' }`（`ReadResult` 的未找到分支，`src/contracts/core/results.ts:30`）。【审查改】原写的 `{ status: 'rejected', code: 'not_found' }` 是拒绝，scan 会把它当“图读不到”（`attention-observer.ts:531`，`arch.status !== 'not_found'` → `graphUnreadable = true`），S0-01 的 `graphUnreadable === false` 就永远不成立。
 - `deps.plans.queryTaskGraph`：返回 `{ status: 'ready', value: G(req) }`，其中 `G(req)` 的 `plan` 是 `{ ref: { planId: 'p1' }, executionDag: { dependsOn: [{ taskId: 't2', dependsOnId: 't1', requires: req }] }, taskHierarchy: { parentOf: [] } }`，`tasks` 是 `[{ ref: { taskId: 't1' }, effectivePhase: 'satisfied', relations: [] }, { ref: { taskId: 't2' }, effectivePhase: 'ready', relations: [] }]`。只给 scan 读到的字段；用类型断言（`as never`）交给 `Pick<PlanTaskPort, 'queryTaskGraph'>`。
 - `ctx`：scan 只把它转交给依赖，假依赖不读它；用类型断言给一个空对象。
 
@@ -73,4 +73,4 @@ for (const edge of plan.executionDag.dependsOn) edges.push('depends:' + edge.dep
 
 ## 8. 大小与检查
 
-生产代码 1 行；测试约 60–90 行。检查：`npm run typecheck`、`npm run check:architecture`、`npx vitest run tests/app/S0-attention-edge-label.test.ts tests/app/orchestration-mechanism.test.ts`。任务书是 [slice-0-book.md](slice-0-book.md)（一段完成，太小，不分两段）。
+生产代码 1 行；测试约 60–90 行。检查：`npm run typecheck`、`npm run check:architecture`、`npx vitest run tests/app/S0-attention-edge-label.test.ts tests/app/orchestration-mechanism.test.ts`。任务书是 [第一段](slice-0-book-part1.md)（写 3 个用例，看它们失败，停下）和 [第二段](slice-0-book-part2.md)（改那一行）。【审查改】原来写的是“一段完成，太小，不分两段”；决定 43 要第 0 片也走两段（DSH 写测试后停下 → lead 审、冻结 → DSH 实现）。第一段的失败来自现有代码本身，不是桩。

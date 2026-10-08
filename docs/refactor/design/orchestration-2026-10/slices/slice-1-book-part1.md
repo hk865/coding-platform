@@ -10,11 +10,11 @@ The frozen spec is `docs/refactor/design/orchestration-2026-10/slices/slice-1-SP
 
 1. §0 freeze note: lines 5–76. In particular §0.2 L1–L6 (where the Session facts reader lives, no `replyDeadline`, no anchor without an execution, duty type, route union file, the U1 branch).
 2. §2 data, codecs, compatibility, indexes, events: lines 131–449.
-3. §3 state rows, refusals, owner signatures, check order, pure state types: lines 450–748.
-4. §4 Workflow, Runtime, routes: lines 749–857.
-5. §5 test cases: lines 858–1062.
-6. §6 file list: lines 1063–1162.
-7. §8 rules: lines 1193–1214.
+3. §3 state rows, refusals, owner signatures, check order, pure state types: lines 450–757.
+4. §4 Workflow, Runtime, routes: lines 758–866.
+5. §5 test cases: lines 867–1072.
+6. §6 file list: lines 1073–1172.
+7. §8 rules: lines 1203–1224.
 8. `docs/refactor/design/orchestration-2026-10/slices/README.md`, section “共用文件” (the exact content of `src/contracts/platform-duty.ts`).
 
 Then read the code templates under “Reading list” below. Everything else you need is in this copy.
@@ -36,7 +36,7 @@ Then read the code templates under “Reading list” below. Everything else you
 
 Do not change any existing function body. One exception: when a new union member makes an existing exhaustive `switch` or `never` check fail the typecheck, add one branch for that member whose body is `throw new Error('not implemented: <function> <member>')`.
 
-**C. New tests.** Write the 23 new test files of spec §5, exactly the 150 case rows, one `it` per row:
+**C. New tests.** Write the 23 new test files of spec §5, exactly the 151 case rows, one `it` per row:
 - The `it` title starts with the case id (`UT01`, `SV01`, `IT01` …), then a short description.
 - Service rows (`SV01`–`SV61`) run on both backends: put them inside `describe.each(['memory', 'sqlite'] as const)` and open the backend the way `tests/work-graph/A2-requeue-service.test.ts:74` (`open`) does. Each service row therefore runs twice.
 - Use the given values and the expected values of the row exactly (spec §5.1 fixes `t0 = '2026-10-08T00:00:00.000Z'`, `t1 = '2026-10-09T00:00:00.000Z'`, project `p`, workspace `w`, Sessions `S`/`D`, Tasks `A`/`B`, Runs `r0`/`r1`, message `m`, request `a`). Assert the exact expected values; do not loosen an assertion.
@@ -63,13 +63,13 @@ Do not change any existing function body. One exception: when a new union member
 | tests/work-graph/S1-requeue.test.ts | 9 (SV35–38, 48–50, 57, 59) | 18 |
 | tests/work-graph/S1-dispatch-guards.test.ts | 6 (SV39–41, 51, 52, 58) | 12 |
 | tests/runtime/S1-archive-files-brief.test.ts | 6 (IT01–05, 32) | 6 |
-| tests/business/S1-session-maintenance.test.ts | 8 (IT06–11, 31, 33) | 8 |
+| tests/business/S1-session-maintenance.test.ts | 9 (IT06–11, 31, 33, 34) | 9 |
 | tests/business/S1-archive-flow.test.ts | 7 (IT12–16, 26, 27) | 7 |
 | tests/app/S1-session-routes.test.ts | 2 (IT17, 18) | 2 |
 | tests/scenarios/S1-archive-restart.test.ts | 6 (IT19, 21–25) | 6 |
 | tests/scenarios/S1-wait-copy-retirement.test.ts | 1 (IT20) | 1 |
 | tests/runtime/S1-routed-replies.test.ts | 3 (IT28–30) | 3 |
-| **total** | **150** | **211** |
+| **total** | **151** | **212** |
 
 **D. Existing test files.** Change exactly these four, as spec §5.2 (last paragraph), §5.5 and §6 rows F78–F81 say:
 - `tests/architecture/state-writes.test.ts`: add the new protected fields (Session `provenance`, `archiveRequest`; message `replyHandler`, `archiveWaitDisposition`; the whole `SessionAnomalyAnchor` record) and the named decoders that may set them. Do not widen an allowance to a whole file.
@@ -166,7 +166,7 @@ That is 15 new source files + 23 new test files = 38 `N`, and 45 source files + 
 4. **Old data.** A record written before this slice lacks the new optional fields; it decodes with the defaults of spec §2.9 (`provenance: null`, `archiveRequest: null`, `replyHandler: null`, `archiveWaitDisposition: null`, `archiveOrigin: null`) and its stored bytes, digests and receipts do not change. A new field that is present but malformed is refused (`invalid` at an entry, `unavailable` from a stored record), never replaced by the default. Example of an optional field with a default on decode: `src/contracts/ledger.ts` `GoalSnapshot.desiredStateRevision` (“Absent on records written before A.2, which read as 1”).
 5. **No `replyDeadline`** in this slice (§0.2 L2). A transfer keeps the message's sender, recipient, body, status and response unchanged.
 6. **No anchor without an execution** (§0.2 L3). A Session that never had a Run for a Task gets no anchor for it; its responsibility is still dropped or handed over.
-7. **The U1 branch** (§0.1): automatic maintenance meeting a retired Session whose Run is still `outcome_unknown` and occupying it does nothing to it and lists it in `failures` with `busy` and a reason starting `archive_unknown_confirmation_required:`.
+7. **The U1 branch** (§0.1): automatic maintenance meeting a retired Session whose Run is still `outcome_unknown` and occupying it does nothing to it (zero commits: no archive request, no anchor, no dropped responsibility, the Run untouched) and lists it in `failures` with `busy` and a reason starting `archive_unknown_confirmation_required:` (IT34).
 8. **Waiting is not idle.** A Work wait whose reply is stored but not yet consumed is still a wait (UT28, SV08). An archive request, a copy provenance or a wait excludes a Session from new Work and Query claims at every claim entry, not only in `chooseSession` (SV39–SV41, SV51, SV52).
 9. **Soft ordering is not a gate** (spec §4.3). `orderTasksByDependency` only reorders; `selectNext` still tries each candidate, and `claim-service.ts` gets no new “upstream satisfied” check.
 10. **No new module edges.** Do not edit `docs/refactor/module-target.json`. If `npm run check:architecture` reports an edge, change the import, not the target file.
@@ -200,7 +200,7 @@ npx vitest run tests/work-graph/A1-session-lifecycle.test.ts tests/work-graph/R4
 
 Expected at the end of part 1:
 - `npm run typecheck` and `npm run check:architecture` exit 0.
-- New tests: exactly 23 files and 211 tests run. A test may fail only because a stub threw `not implemented: …` or because an expected value is not produced yet; a compile error, a fixture error or a timeout is a defect of part 1 that you fix before stopping. List every new test that passes in part 1 by id (expected: only rows that assert unchanged old behaviour, such as SV01's old-brief bytes or UT41).
+- New tests: exactly 23 files and 212 tests run. A test may fail only because a stub threw `not implemented: …` or because an expected value is not produced yet; a compile error, a fixture error or a timeout is a defect of part 1 that you fix before stopping. List every new test that passes in part 1 by id (expected: only rows that assert unchanged old behaviour, such as SV01's old-brief bytes or UT41).
 - Regression command: the first run (before any change) equals the baseline below. At the end of part 1, list each file whose numbers differ from the baseline and the failing test titles; `tests/architecture/state-writes.test.ts`, `tests/architecture/production-reach.test.ts`, `tests/state/session-availability.test.ts` and `tests/state/message-machine.test.ts` may differ in part 1, the others may not.
 
 Baseline numbers for the regression command on the untouched copy (the lead fills this in before sending; tests that fail only because `/usr/bin/bwrap` is missing in this environment are named here):

@@ -11,10 +11,10 @@ The frozen spec is `docs/refactor/design/orchestration-2026-10/slices/slice-3-SP
 1. §0 freeze note: lines 5–70. In particular C1 (the two source pin files are already deleted; do not touch `src/contracts/material-access.ts`), C2 (`RuntimeExecutionDependencies.graphHistory` already exists and is required; do not add it), C4 (`PlatformDutyV1`), C5 (`views` is already declared).
 2. §2 DTOs, ownership, old data, the five duty profiles: lines 111–249.
 3. §3 guards CTX-01..03, pure functions, the input owner and its resolution table: lines 250–356.
-4. §4 read model, assembler, the frozen section and byte rules, look/find, attention, routes: lines 357–611.
-5. §5 test cases and the existing text assertions that must not change: lines 612–847.
-6. §6 file list: lines 848–905.
-7. §8.3 rules: lines 941–958.
+4. §4 read model, assembler, the frozen section and byte rules, look/find, attention (including the exact notification row table), routes: lines 357–626.
+5. §5 test cases and the existing text assertions that must not change: lines 627–862.
+6. §6 file list: lines 863–920.
+7. §8.3 rules: lines 956–973.
 8. `docs/refactor/design/orchestration-2026-10/slices/README.md`, section “共用文件” (the exact content of `src/contracts/platform-duty.ts`).
 
 Then read the code templates under “Reading list” below. Everything else you need is in this copy.
@@ -118,7 +118,7 @@ That is 10 new source files + 11 new test files = 21 `N`, and 20 source files + 
 7. **Not a gate.** `missing`, `ambiguous`, `unavailable`, an omitted row and `not_implemented` are read results; none of them blocks a claim, fails a Run or satisfies a Task (ST14, IN06, CA11, CA14).
 8. **Query tools take three steps.** Register `look_graph` and `find_graph` through the existing coordination-tool seam (`src/core/agent-runtime/execution-driver.ts:377`), grant them, and let the Query owner re-check the grant; the read-only check of the observed model run stays as it is, and no mailbox or whiteboard write tool is injected into a Query (GT10, GT11, AD07).
 9. **Host-only owners stay Host-only.** A Query reads Sessions only through the views bridge that verifies the canonical QueryRun and the original submission initiator (GR17, GR18); history goes through the driver's proxy (GT05, GT06). Do not widen `src/core/work-graph/sessions/session-directory.ts:1119` (`readContext`) or `src/core/work-graph/tasks/run-state-service.ts:198` (`ownCallContext`) to accept other principals.
-10. **Attention.** Delivered and processed stay two separate watermarks; an unreadable graph is unknown, never an empty graph (AT11); the notification text is at most 16384 UTF-8 bytes and never contains half a JSON line (AT07, AT08).
+10. **Attention.** Delivered and processed stay two separate watermarks; an unreadable graph is unknown, never an empty graph (AT11); the notification text is at most 16384 UTF-8 bytes and never contains half a JSON line (AT07, AT08). Each line is exactly one row of the table after spec §4.5 “Host用 renderAttentionChanges …” (kinds, key order, null handling, line order, no trailing LF); do not add or drop a field.
 11. **Old role content keeps its digest.** A RoleSpec without `platformDuty` reads as `executor` without writing the field (RP02); the duty never comes from skills, labels or instructions (RP06).
 12. **Old tools stay.** `WHITEBOARD_TOOL_NAMES` and the old read adapters keep their exports and behaviour; only the new grant lists `look_graph` and `find_graph` instead of the three old read names (spec §4.6, §0.2 T5).
 13. **Allowlist.** In `tests/architecture/production-reach-allowlist.json`, remove exactly the `kept-for` entries that `tests/architecture/production-reach.test.ts` reports as reached after your wiring (they name “slice 3”); add no entry. Edit the JSON as text; do not re-serialize the file.

@@ -11,7 +11,7 @@
 - 两条已定的话在这一支上不能同时成立：自动维护不能替人“认定已停下”，Session 不放开就归档不了。
 - 选项：(a) 等人：这条线保持“已退役”（不归档），它的执行照今天显示“待核对”；你用已有的“认定”确认以后，下一次维护马上把它归档（写锚点、放下任务）。(b) 平台自动认定：Session 已退役、Kernel 读不到、没有接续时，平台把这次执行认定为“已停下”再归档；要新加一行状态规则，认定人记“平台”。
 - lead 的建议：(a)。理由：认定是“停没停下”的事实判断，今天只有人能做；(b) 让平台在证据不全时下结论。
-- **本规格对这一支冻结为“不新增行为”**：自动维护遇到它就跳过，在 `SessionMaintenanceResultV1.failures` 里记 `busy` / `archive_unknown_confirmation_required:`（今天被占用的 Session 本来就不能归档）。选 (a) 不用再改；选 (b) 要加一行 S1-AUTO-04 和 2 个用例。其余各支不受影响，可以先施工。
+- **本规格对这一支冻结为“不新增行为”**：自动维护遇到它就跳过，在 `SessionMaintenanceResultV1.failures` 里记 `busy` / `archive_unknown_confirmation_required:`（今天被占用的 Session 本来就不能归档）。跳过是指对这个 Session 零提交：不登记归档请求、不写锚点、不放下负责关系、不碰那个 Run（IT34 锁住）。选 (a) 不用再改；选 (b) 要加一行 S1-AUTO-04 和 2 个用例，并改 IT34。其余各支不受影响，可以先施工。
 
 ### 0.2 lead 定的技术选择（一行一项，理由在括号里）
 
@@ -55,7 +55,7 @@ lead 另定的 6 项（草稿没列，或和设计不一致）：
 - **共用类型。** `PlatformDutyV1` 用 `src/contracts/platform-duty.ts`：本片按 README“共用文件”的原文逐字节新建（第 3、5 片也建同一个文件，内容相同，合并时不冲突），不另定义别的职责类型。
 - **和第 5 片同改的文件**（合入第 5 片时由 lead 合并，两边的新增都保留）：`state/message-machine.ts`、`model/communication-contracts.ts`、`sessions/message-record-codecs.ts`、`communication/mailbox-service.ts`、`agent-runtime/execution-inputs.ts`、`tasks/claim-record-codecs.ts`、`tasks/claim-service.ts`、`tasks/requeue-service.ts`、`tasks/plan-readers.ts`、`tasks/execution-entry-service.ts`、`queries/query-record-codecs.ts`、`contracts/ledger.ts`、`business/workflow/` 下的 `workflow.ts`、`ports.ts`、`contracts.ts`、`consultation.ts`，`app/` 下的 `core-routes.ts`、`core-http-types.ts`、`collaboration-driver.ts`，`composition/create-platform.ts`，`tests/architecture/state-writes.test.ts`。本片在消息上只加 `replyHandler`、`archiveWaitDisposition` 两个可选字段和一个索引；第 5 片加收信方“你”、决定元数据、落实等。两边互不改对方的字段。
 - **和第 3 片同改的文件：** `agent-runtime/` 下的 `execution-preparation.ts`、`ports.ts`、`runtime.ts`，`queries/query-execution.ts`，`tasks/execution-entry-service.ts`，`app/core-routes.ts`、`app/core-http-types.ts`，`composition/create-platform.ts`。本片在接续说明（`ContinuationBriefV1`）上加 `anomalies` 段；第 3 片的装配器把接续说明原样放在最后一段，不改它的内容。
-- **合入后的接线（README 的 I-1、I-3）：** 第 3 片合入后，`SessionDutyResolver` 改为读第 3 片的职责（I-1）；第 3 片装配器的 `extensions.anomalies` 接本片的 `listSessionAnomalies`（I-3）。本片不预先接，也不为它们留假实现。
+- **合入后的接线（README 的 I-1、I-3、I-5）：** 第 3 片合入后，`SessionDutyResolver` 改为读第 3 片的职责（I-1）；第 3 片装配器的 `extensions.anomalies` 接本片的 `listSessionAnomalies`（I-3）；第 5 片合入后，它“请知悉”的 `undelivered_reply` 类别接本片的 `readUndeliveredReplies`（I-5，【审查改】原来没有这一项）。本片不预先接，也不为它们留假实现。
 
 ### 0.5 lead 抽查的代码出处
 
@@ -66,7 +66,7 @@ lead 另定的 6 项（草稿没列，或和设计不一致）：
 - 状态行 19 行：S1-SES-01…06、S1-LINK-01/02、S1-DISPATCH-01/02、S1-MSG-01/02、S1-ANCHOR-01/02、S1-TASK-01/02、S1-AUTO-01…03。
 - 新索引 6 个；新正式记录 1 种（`SessionAnomalyAnchor`）；新事件类型 6 个（§2.9）；新路由 11 个。
 - 文件 87 个：新建 38、修改 49。其中源码 60（新建 15、修改 45；新建里含共用文件 `src/contracts/platform-duty.ts`，§6 F88），新测试文件 23，改动的已有测试文件和测试工具 4（`tests/architecture/state-writes.test.ts`、`tests/state/invariants.ts`、`tests/state/session-availability.test.ts`、`tests/state/message-machine.test.ts`）。逐个文件见 §6。
-- 用例 150 个：单元 56（UT01–UT56）、服务 61（SV01–SV61）、集成和场景 33（IT01–IT33）。服务用例在 memory 和 SQLite 各跑一次，共 211 次。已有状态测试的穷尽矩阵扩展不计入这 149 个（§5.2 末段）。
+- 用例 151 个：单元 56（UT01–UT56）、服务 61（SV01–SV61）、集成和场景 34（IT01–IT34）。服务用例在 memory 和 SQLite 各跑一次，共 212 次。已有状态测试的穷尽矩阵扩展不计入这 151 个（§5.2 末段）。【审查改】加了 IT34（§0.1 冻结的 U1 跳过，原来没有用例锁住）。
 - 估计行数（不是验收数字）：生产代码新增约 2,600–4,100 行，测试约 2,100–3,200 行。
 - 任务书：[slice-1-book-part1.md](slice-1-book-part1.md)（骨架和测试，然后停）、[slice-1-book-part2.md](slice-1-book-part2.md)（实现）。
 
@@ -397,7 +397,7 @@ export type SessionArchivePolicyV1 = {
 // TargetPlatformOptions.sessionArchivePolicy?: SessionArchivePolicyV1
 ```
 
-数值必须 positive safe integer；pageSize 1..100。缺省沿用上述值；这是 Host 启动注入的数据，同 Host 已有 automation 配置模式，重启未配置仍为一天。以后项目设置写入口可注入同一 getter，不在第 1 片增设项目表或通用设置系统。secretary/adviser/scribe/module-maintainer 不按这个阈值归档。
+数值必须 positive safe integer；pageSize 1..100。缺省沿用上述值；这是 Host 启动注入的数据，同 Host 已有 automation 配置模式，重启未配置仍为一天。以后项目设置写入口可注入同一 getter，不在第 1 片增设项目表或通用设置系统。secretary/adviser/scribe/reviewer、职责 unknown 的线，以及有开放 `module` 负责关系的线，不按这个阈值归档（【审查改】L4 之后没有 module-maintainer 职责）。
 
 `SessionDutyResolver = (role: RoleConfigurationRef) => Promise<ReadResult<PlatformDutyV1 | 'unknown'>>`（【lead 改：L4】`PlatformDutyV1` 从 `src/contracts/platform-duty.ts` import，取值 `'executor' | 'secretary' | 'adviser' | 'scribe' | 'reviewer'`，没有 `module_maintainer`）是可信 Host/第 3 片接缝，不是模型输入、不存 Session 热切换字段。当前 Host 的普通 Work binding 明确标 executor；没有可信映射→unknown→不做一天自动归档，退役和 copy 规则照做。不能把所有同角色 Session 当 executor。
 
@@ -726,7 +726,16 @@ export function deriveSessionAnomalyView(
   entered: readonly { runRef: RunRef; sessionRef: SessionRef; enteredAt: string;
     anchorRefs: readonly SessionAnomalyAnchorRef[] }[],
 ): SessionAnomalyViewV1;
-// label由pending数与现有Task phaseCause/Goal desiredState纯读算出，不另存Task状态。
+// label由pending数与现有Task phaseCause/Goal desiredState纯读算出，不另存Task状态。【审查改】纯函数如下；readTaskArchiveState（§3.3）只读出输入再调它。
+export type TaskArchiveNextV1 = { kind: 'dispatch' } | { kind: 'human_continue' }
+  | { kind: 'goal_stopped'; desiredState: 'paused' | 'cancelled' } | { kind: 'rework_blocked'; code: TaskReworkRefusalCode };
+export function deriveTaskArchiveState(input: {
+  views: readonly SessionAnomalyViewV1[]; // 这个 Task 的全部锚点，各自先经 deriveSessionAnomalyView
+  goalDesiredState: GoalDesiredState; phaseCause: TaskPhaseCauseV1 | null; // contracts/ledger.ts、contracts/task-failure.ts
+  reworkRefusal: TaskReworkRefusalCode | null; claimable: boolean; // 本次归档重新入队的正式拒绝码；owner 按现有 eligibility 读出的“现在可领取”
+}): { pending: SessionAnomalyViewV1[]; label: '中断，待核对' | null; next: TaskArchiveNextV1 | null };
+// pending = views 里 pickedUpBy===null 的项（顺序不变）。pending 为空 → label=null、next=null。否则 label='中断，待核对'，next 取下面第一个成立的：
+// goalDesiredState!=='active' → goal_stopped；phaseCause?.code==='paused_interrupted' → human_continue；reworkRefusal!==null → rework_blocked；claimable → dispatch；都不成立 → null。
 
 // state/task-failure.ts：追加可选第四参数，旧三参调用行为逐字不变。
 export type VerifiedArchiveInterruptionV1 =
@@ -881,15 +890,15 @@ codec坏shape案例只直接给纯decoder输入坏编码，或从公开写入口
 | UT08 | 同上 | archived/available/null rev9；reactivate | active rev10，archivedAt=null，health不变 |
 | UT09 | 同上 | legacy provenance=null rev3；unique basis | rev4；provenance continuation from S |
 | UT10 | 同上 | 已有new provenance；backfill | revision_conflict，无改 |
-| UT11 | tests/state/S1-responsibility.test.ts | 源开放rev2，目标absent；transfer | 源rev3 until=P；目标rev1 since=P/until=null；双方Session各+1 |
+| UT11 | tests/state/S1-responsibility.test.ts | 源开放rev2，目标absent；transfer | 【审查改】纯 state 拿不到提交游标：write_responsibility 的 closed=源link rev3、until=null（待绑定）；opened=目标link rev1、since=null、until=null，openedBound='since'；双方Session各+1。P 的绑定由 SV16 在 owner 上核 |
 | UT12 | 同上 | 源任务旧Run仍running；transfer | busy，无构造记录 |
 | UT13 | 同上 | 目标已有开放rev4；transfer | 源关闭；目标rev4/since原值；不重开目标 |
 | UT14 | 同上 | retired目标；transfer | unavailable，无记录 |
-| UT15 | 同上 | Task satisfied正式proof；close | until=P；Task phase不变；无Task cancelled效果 |
+| UT15 | 同上 | Task satisfied正式proof；close | 【审查改】closed.until=null（待绑定，绑定由 SV19 核）、opened=null；Task phase不变；无Task cancelled效果 |
 | UT16 | tests/state/S1-anomaly.test.ts | 已停Work/Task未完；anchor | anchor.rev1/resultVerification=not_checked；1 write+1 event |
 | UT17 | 同上 | Work仍outcome_unknown；anchor | busy，无anchor |
 | UT18 | 同上 | Query；anchor | invalid，无anchor |
-| UT19 | 同上 | 只有claimed r1携anchor | pickedUpBy=null；label=中断，待核对 |
+| UT19 | 同上 | 只有claimed r1携anchor | pickedUpBy=null；label=中断，待核对（【审查改】UT19–22、UT42、UT48 的 label/next 经 deriveTaskArchiveState 断言，行里没给的输入取 goalDesiredState='active'、phaseCause=null、reworkRefusal=null、claimable=true） |
 | UT20 | 同上 | r1真实entered、别的Session、携anchor | pickedUpBy=r1；label=null；anchor本体deepEqual原值 |
 | UT21 | 同上 | r1not_entered cancelled携anchor | pickedUpBy=null |
 | UT22 | 同上 | 原paused_interrupted+pending anchor | label=中断，待核对；next={kind:'human_continue'} |
@@ -1010,7 +1019,7 @@ codec坏shape案例只直接给纯decoder输入坏编码，或从公开写入口
 | IT06 | tests/business/S1-session-maintenance.test.ts | finishedAt=t0，now=t1-1ms | archived=[]；lifecycle active |
 | IT07 | 同上 | finishedAt=t0，now=t1 | archived=[S]；archivedAt=t1；无模型调用 |
 | IT08 | 同上 | deadline前接新未完Task | 不归档；新Task做完后用新finishedAt+86400000，不沿旧时钟 |
-| IT09 | 同上 | adviser/scribe/module-maintainer/unknown同样闲一天 | archived=[]；不按executor阈值处理 |
+| IT09 | 同上 | 【审查改：L4】secretary/adviser/scribe/reviewer/unknown 五个 Session（`SessionDutyResolver` 依次返回这四种职责和 `'unknown'`）同样闲一天 | archived=[]；不按executor阈值处理 |
 | IT10 | 同上 | 有新retired无continuation且释放占用 | 本次维护即archived；未完Task drop/anchor；不是等一天 |
 | IT11 | 同上 | copy已答，原source仍跑 | copy archived；source rev/occupancy不变；Query/provider不重跑 |
 | IT12 | tests/business/S1-archive-flow.test.ts | cancel已发但Kernel仍跑 | state=pending/message=归档中 · 停止中；R存在；0责任转移/0requeue |
@@ -1035,6 +1044,7 @@ codec坏shape案例只直接给纯decoder输入坏编码，或从公开写入口
 | IT31 | tests/business/S1-session-maintenance.test.ts | t0正式Task终结并terminal关闭责任；随后计划改同Task定义但没重新交给S；now=t1 | 从关闭事件taskBasis.finishedAt=t0算due；archived=[S]；不以新计划时间重置；0模型调用 |
 | IT32 | tests/runtime/S1-archive-files-brief.test.ts | 正式Run事实证明not_entered，工作区已有别的执行改动a | source=kernel/status=not_entered；confirmed=[]/possible=[]/omitted=0；runBaselineKnown=false；工作区capture调用0 |
 | IT33 | tests/business/S1-session-maintenance.test.ts | 【lead 改：L3】S退役、无接续，对Task A有开放负责关系（createSession的初始link），但S从没为A跑过执行；维护一步 | archived=[S]；A的负责link关闭（until=本次提交cursor）；SessionAnomalyAnchor总数0；A的effectivePhase不变；TaskRequeue 0；读A的archive-state得label=null；模型调用0 |
+| IT34 | tests/business/S1-session-maintenance.test.ts | 【审查改：§0.1 U1 冻结】S 退役、无接续；S 手上 r0 的结果未知（outcome_unknown），r0 仍占着 S；S 对 Task A 有开放负责关系；维护一步 | archived=[]；pending=[]；failures 恰一项：sessionRef=S、rejection.code=busy、reason 以 `archive_unknown_confirmation_required:` 开头；对 S 零提交（archiveRequest 仍 null、SessionAnomalyAnchor 总数 0、A 的负责 link 仍开放、r0 仍 outcome_unknown、S 的占用不变）；模型调用 0 |
 
 IT19、IT21–25分别是一条崩溃点案例，可以在同一文件用`it.each`组织，但总数就是6，每条检查invariants。IT20是一个串联场景，有3条相互独立Session线，不冒充大规模验收。Work等待/R拒绝分别由UT27/30覆盖，Query对应UT43/46，不另重复计purpose子例。骨架阶段全新主案例 RED 应来自指定unsupported/stub，不能 TypeScript不通过或fixture失败；DSH必须把未执行到的断言另报，不能“fail正确所以已覆盖”。
 
@@ -1050,7 +1060,7 @@ IT19、IT21–25分别是一条崩溃点案例，可以在同一文件用`it.eac
 - `tests/scenarios/C8-human-stop-respected.test.ts`、`C8-auto-rework-cap.test.ts`、`A8-host-restart-paused.test.ts`、`C3-not-entered-chain.test.ts`、`C3-brief-idempotency.test.ts`：不复活旧Run、不误解paused、不把未进入算接手、不重装manifest。
 - `tests/record-store/lookup.test.ts`、`tests/architecture/boundaries.test.ts`：既有lookup/子模块纯度不弱化。
 
-不把全仓5245项全部标为“预期不改”：新排除行为可能揭示旧测试依赖错误的原Session查询；遇此情况列原case、原行为和新规则，交lead审，只改对应fixture/必要行为断言，不能删测试或改数量凑绿。`tests/architecture/state-writes.test.ts`必须扩受保护字段/解码白名单，下面明确列为改动文件。
+不把全仓5234项（9b94fc55）全部标为“预期不改”：新排除行为可能揭示旧测试依赖错误的原Session查询；遇此情况列原case、原行为和新规则，交lead审，只改对应fixture/必要行为断言，不能删测试或改数量凑绿。`tests/architecture/state-writes.test.ts`必须扩受保护字段/解码白名单，下面明确列为改动文件。
 
 ### 5.6 点名检查与两阶段顺序
 
@@ -1137,7 +1147,7 @@ DSH阶段1仅在lead冻结的副本写类型、真实兼容codec、state/owner�
 | F70 | N | tests/work-graph/S1-requeue.test.ts | tests/work-graph | SV35–38/48–50/57/59 |
 | F71 | N | tests/work-graph/S1-dispatch-guards.test.ts | tests/work-graph | SV39–41/51–52/58 |
 | F72 | N | tests/runtime/S1-archive-files-brief.test.ts | tests/runtime | IT01–05/32 |
-| F73 | N | tests/business/S1-session-maintenance.test.ts | tests/business | IT06–11/31/33 |
+| F73 | N | tests/business/S1-session-maintenance.test.ts | tests/business | IT06–11/31/33/34 |
 | F74 | N | tests/business/S1-archive-flow.test.ts | tests/business | IT12–16/26–27 |
 | F75 | N | tests/app/S1-session-routes.test.ts | tests/app | IT17–18 |
 | F76 | N | tests/scenarios/S1-archive-restart.test.ts | tests/scenarios | IT19/21–25，6崩溃点分别一行 |
@@ -1156,7 +1166,7 @@ DSH阶段1仅在lead冻结的副本写类型、真实兼容codec、state/owner�
 
 【lead 改】草稿的 F19（`persistence/claim-outbox-codec.ts`）删去（L1），ID 不重排。
 
-不需要改package.json/锁文件、RecordStore后端、WorkspaceTools、module-target.json、vendor/dist、src/ui。outbox下移保留所有原export和schema注册；不得带着本片做其它codec重排。Runtime 直接利用已有 executions.readContinuationBasis、kernelStores、workspaceHost/workspaceSource；`src/core/agent-runtime/execution-contracts.ts:RuntimeExecutionDependencies` 不增加新依赖口，不在清单中。清单外的真实依赖问题须报UNSPECIFIED交lead核对，不能隐含扩大写范围。
+不需要改package.json/锁文件、RecordStore后端、WorkspaceTools、module-target.json、vendor/dist、src/ui。【审查改】Outbox codec 不下移（§0.2 L1），不得带着本片做任何 codec 重排。Runtime 直接利用已有 executions.readContinuationBasis、kernelStores、workspaceHost/workspaceSource；`src/core/agent-runtime/execution-contracts.ts:RuntimeExecutionDependencies` 不增加新依赖口，不在清单中。清单外的真实依赖问题须报UNSPECIFIED交lead核对，不能隐含扩大写范围。
 
 本次文档写入只有 `model-work/slice-1/SPEC.md`。正常施工验收后主仓HANDOFF/能力/实施计划/证据同步由lead另给明确写范围；本任务禁止改这些真源，不能假装已经完成文档同步。
 
@@ -1167,7 +1177,7 @@ DSH阶段1仅在lead冻结的副本写类型、真实兼容codec、state/owner�
 | ID | 选项 A | 选项 B | 推荐及冻结后要改的地方 |
 | --- | --- | --- | --- |
 | T1 changed-files fallback | 不存执行起点baseline；Kernel→当前HEADworktree→unknown，始终披露归属不明 | 在start前保存完整/有界路径hash baseline，结束按该baseline比对；只保存HEAD commit不足以发现已有dirty文件的变化 | 【lead 定：A】A，本草案按A列类型/文件/测试。B需另列Run字段、baseline Artifact容量/并发/失败/重启策略、state构造、codec兼容、workspace reader、开始capture失败行为；不得只写“baseline已知”。仍必须警示可能混别的执行 |
-| T2 Work按Session索引 | 索引已有Outbox.claim，generation可靠；纯codec下移并保留re-export | Run新增claimSessionRef/generation，所有旧Run用outbox回填 | 【lead 定：A】A，少两份同步事实、旧数据已有索引路径；设计所需3个Session相关lookup不变 |
+| T2 Work按Session索引 | 索引已有Outbox.claim，generation可靠；（【审查改】codec 不下移，见 §0.2 L1） | Run新增claimSessionRef/generation，所有旧Run用outbox回填 | 【lead 定：A】A，少两份同步事实、旧数据已有索引路径；设计所需3个Session相关lookup不变 |
 | T3 组合恢复身份 | 内部ArchiveStepRef从不可变R派生；R保存首次executionPins供既有控制/认定API，内部fingerprint不含动态读guards | 每步的完整公开GraphWrite/pins持久保存回Session，再执行 | 【lead 定：A】A，见§2.3；不能把公开API的expected从fingerprint删掉或在重试中换掉。B增加request progress fields和额外提交，不另建Operation |
 | T4 旧来历 | 一次性null→事实补齐，由state和事件记录依据；lookup直接覆盖 | 永久只读时恢复，所有forward查询额外扫描旧Session和manifest | 【lead 定：A】A，明确限定旧数据；没有证据就根线，冲突显式incomplete |
 | T5 软排序 | 稳定Kahn，所有真实依赖优先，ready平局required/plan/id | required/optional先分桶，各桶内拓扑，跨桶边只提示 | 【lead 定：A】A，依赖顺序才完整；本片不增加eligibility门，测试UT36/39锁住语义 |
@@ -1192,7 +1202,7 @@ DSH阶段1仅在lead冻结的副本写类型、真实兼容codec、state/owner�
 
 ## 8. 大小、验收边界与DSH风险规则
 
-【lead 改】冻结的数量以 §0.6 为准（87 个文件，新建 38、修改 49；150 个用例，211 次）。下面是草稿原文：按本稿推荐选项、U1/U2未扩展时：**86个计划源码/测试文件**（59源码、23新测试文件、4现有测试工具/门禁/矩阵文件），其中新建38、修改48；19条状态行、6新lookup（3设计Session索引+2anchor索引+1技术handler索引）、1新正式aggregate、11新route；**148个逐行案例**（55 unit、61双后端service、32集成/场景），双后端展开为209个案例（额外61）；6崩溃点已分别列入，不能再加5虚计。另有状态穷尽矩阵和route表项子例，准确最终it数由阶段1固定清单报告，不把未知矩阵数假报成确定总数。
+【lead 改】冻结的数量以 §0.6 为准（87 个文件，新建 38、修改 49；151 个用例，212 次）。下面是草稿原文：按本稿推荐选项、U1/U2未扩展时：**86个计划源码/测试文件**（59源码、23新测试文件、4现有测试工具/门禁/矩阵文件），其中新建38、修改48；19条状态行、6新lookup（3设计Session索引+2anchor索引+1技术handler索引）、1新正式aggregate、11新route；**148个逐行案例**（55 unit、61双后端service、32集成/场景），双后端展开为209个案例（额外61）；6崩溃点已分别列入，不能再加5虚计。另有状态穷尽矩阵和route表项子例，准确最终it数由阶段1固定清单报告，不把未知矩阵数假报成确定总数。
 
 行数是估算而非DSH验收数字：生产净新增约2,600–4,100行（contracts/codec/index约700–1050；state约450–700；owner/取证约800–1150；Workflow/Runtime/Host约650–1200），新增/扩展测试约2,100–3,200行；codec下移约100–180行只有位置变化不计新增。U1/U2或T1-B会扩大范围，必须重算；不为压行删state规则注释（决定35）。建议DSH按骨架/测试与实现两阶段，不按文件量机械切成多批，保留每片DSH/lead用量记录（决定43）。
 
