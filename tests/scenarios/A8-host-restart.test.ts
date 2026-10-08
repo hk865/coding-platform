@@ -17,6 +17,10 @@
  *   and its control acks were lost; the restart settles the queued steer (from its Kernel event) and pause.
  *   Both crash points are inside one Runtime call, so a composition root on the same files runs the Run and
  *   the test locks the ledger right after one named commit (support/common.ts `lockLedgerAfter`).
+ * - A8-3j (W-18, D-17): the wait message was saved and the Kernel never recorded the send's result (the test
+ *   locks the Kernel store too, at the same commit); the restart handles it as W-13 (RUN-20(i)), the message stays
+ *   as saved and its wait association is lost. A8-1d (W-04) and A8-3k (W-19) need states the Host cannot reach
+ *   on demand (a pre-D-7 queued intent, a tool that ignores a cancel): tests/runtime/A2-reconcile-runtime.test.ts.
  * - A8-3d with the Kernel paused (W-12, CI-04): a cancel queued on a Run paused at a safe point (submitted on a
  *   Host without the lease, HL-07) stops it at the restart by the paused stop (RUN-23, CTL-10).
  * - A8-3 (W-11, W-12, W-14, W-15, W-17; moved cases): crashes mid-Turn and the start-up re-drive of an
@@ -29,8 +33,10 @@
  * `expectQuietRestart`). Scripted model replies only; no real model is called.
  */
 import { afterEach, expect, it } from 'vitest';
+import { join } from 'node:path';
 import type { SessionRef, TaskExecutionRecord } from '../../src/app/core-http-types.js';
 import type { ControlIntentSnapshotV1, SubmittedControl } from '../../src/contracts/control-intent.js';
+import type { SessionMessageRef } from '../../src/contracts/core/session-message.js';
 import type { WriteResult } from '../../src/contracts/core/results.js';
 import type { RunRef } from '../../src/contracts/dispatch.js';
 import { DEFAULT_TASK_AUTOMATION_POLICY, WORKFLOW_AUTOMATION_ACTOR } from '../../src/contracts/task-requeue.js';
@@ -45,8 +51,8 @@ import {
 } from '../helpers/A2-restart-fixture.js';
 import type { FuzzStep } from '../state/invariants.js';
 import {
-  assertInvariants, assertInvariantsAt, cleanupScenarios, hostCtx, openHostScenario, performs, SCENARIO_OPERATOR, stepOfReceipt,
-  type HostScenario, type InvariantTarget,
+  assertInvariants, assertInvariantsAt, cleanupScenarios, hostCtx, openHostScenario, performs, readSqlite, SCENARIO_OPERATOR,
+  stepOfReceipt, type HostScenario, type InvariantTarget,
 } from './harness.js';
 import {
   driveChecked, editThenText, execution, hostGoalDisplay, lockLedger, lockLedgerAfter, openWorkRoot, pausedRunOnClosedHostChecked,
@@ -63,6 +69,7 @@ const readBrief = async (host: AG2bHost, runRef: RunRef) => (await requiredBrief
 const attestedStep: FuzzStep = { kind: 'other', actor: SCENARIO_OPERATOR, automationPolicy: DEFAULT_TASK_AUTOMATION_POLICY };
 
 const A8_3B_QUESTION = 'restart scenario A8-3b: a question that waits for its reply';
+const A8_3J_QUESTION = 'restart scenario A8-3j: a question whose wait the crash loses';
 const A8_3H_STEER = 'restart scenario A8-3h: also read the tests';
 
 it('A8-3a (W-09, RUN-18, ATT-08, SES-06): the Kernel wrote the Turn\'s terminal but its result was never booked; the restart books the Kernel\'s own terminal, releases the Session at the full boundary, and the Workflow goes on', async () => {
@@ -205,6 +212,71 @@ it('A8-3b (W-10, RD-3, L-5, RUN-18, contract (f)): the Kernel yielded on a saved
   // Turn (`tool_group_yield_unsettled`), so the state is not reachable; the guarded branch is
   // tests/composition/A2-reconcile-classifier-platform.test.ts:116 (OWED §1 RELATED), not repeated here.
   await expectQuietHarnessRestart(h, 'a8-3b');
+}, 180_000);
+
+it('A8-3j (W-18, D-17, W-13, RUN-20(i)): the wait message was saved and the Host stopped before the Kernel recorded the send; the restart ends the Run outcome_unknown on the send still in flight; the message stays as saved and no continuation waits for its reply', async () => {
+  const h = await openHostScenario({ automation: redrivePolicy(false), check: 'pass' });
+  const recipient = (await createAG2bSession(h.host, 'a8-3j-recipient', AG2B_QUERY_ROLE,
+    [{ target: WORK_TARGET, relation: 'participates' }])).sessionRef;
+  await assertInvariants(h, 'a8-3j recipient', stepOf(h, 'other', 'a8-3j recipient'));
+  const toStart = await h.advance(h.select('a8-3j', AG2B_WORK_TASK_ID), { stopBefore: performs('start') });
+  const prepared = preparedOf(toStart.next);
+  // The crash point (§12.10 step 1, 故障注入; D-17: until the yield the wait lives only in the Runtime): right after
+  // the wait message is saved the test takes the write locks of the ledger and of the Kernel store, so the Kernel
+  // cannot record the send's result (its call stays started) and the Runtime books nothing.
+  const lock = lockLedgerAfter(h.database, 'SessionMessageSent', { kernelStore: true });
+  const model = createScriptedModel([{ kind: 'calls', calls: [{ callId: 'a8-3j-send', name: 'send_session_message',
+    args: { recipient: { projectId: recipient.projectId, sessionId: recipient.sessionId }, text: A8_3J_QUESTION, replyMode: 'wait' } }] }]);
+  const root = await openWorkRoot(h, model, lock.observer);
+  let started: unknown;
+  try {
+    started = await root.runtime.startRun(hostCtx(), { prepared, consumerId: AG2B_CONSUMER_ID, requestId: 'a8-3j-start' });
+  } finally {
+    lock.release();
+    await root.close();
+  }
+  expect(lock.locked(), 'the locks were taken right after the message commit').toBe(true);
+  // The start answers the Run as the ledger holds it: every write after the message failed, so nothing is booked.
+  expect(started).toMatchObject({ status: 'ready', value: { run: { status: 'running', outcome: null } } });
+  expect(model.calls(), 'one model reply: the send').toBe(1);
+  await assertInvariants(h, 'a8-3j saved, not yielded', stepOf(h, 'entry_authorized', 'a8-3j saved, not yielded'));
+  const runRef = (await h.taskRow()).execution;
+  if (runRef === null) throw new Error('the work Task must select its Run');
+  const running = await execution(h, runRef);
+  expect(running.run).toMatchObject({ status: 'running', outcome: null, executionAuthorization: { phase: 'entered' } });
+  expect(running.run.continuation).toBeUndefined();
+  const binding = running.run.executionAuthorization;
+  if (binding === undefined || !('schemaVersion' in binding) || binding.kernel === null) throw new Error('the Run must hold a Kernel binding');
+  // The Kernel recorded the send as started and nothing after it: no result, no yielded terminal.
+  const turn = kernelTurnOf(h.database, binding.kernel.runId);
+  expect(turn?.eventTypes.at(-1)).toBe('tool.started');
+  expect(turn?.eventTypes).not.toContain('run.yielded');
+  const messageRefs = readSqlite(join(h.database, 'ledger.sqlite'), ledger => (ledger.prepare(
+    "SELECT ref_key FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = 'SessionMessage'").all() as { ref_key: string }[])
+    .map(row => JSON.parse(row.ref_key) as SessionMessageRef), [] as SessionMessageRef[]);
+  expect(messageRefs, 'one saved wait message').toHaveLength(1);
+  const saved = await readMessage(h, messageRefs[0]!);
+  expect(saved).toMatchObject({ status: 'pending', waitAfterSend: true, recipient: { sessionId: recipient.sessionId },
+    sender: { kind: 'work_run', runRef: { runId: runRef.runId } } });
+  const atCrash = h.counts();
+
+  // The crash. W-18 is handled as W-13 here: the send has no recorded result, so RUN-20(i) ends the Run unknown and
+  // keeps its Session and Lease (D-4); the wait association is lost (no continuation), the message is not touched.
+  const report = await h.restart({ crash: true });
+  expect(report).toMatchObject({ lease: 'owned', leaseRow: 'HL-03', report: {
+    runs: [{ ref: JSON.stringify(runRef), row: 'W-13', status: 'reconciled', reason: 'unknown' }],
+    queries: [], checks: [], problems: [] } });
+  expect(h.counts(), 'no model request, Kernel Turn or check process during the reconcile').toMatchObject({
+    modelCalls: atCrash.modelCalls, kernelTurnsStarted: atCrash.kernelTurnsStarted, checksBegun: atCrash.checksBegun,
+    kernelRecords: atCrash.kernelRecords });
+  const unknown = await execution(h, runRef);
+  expect(unknown.run).toMatchObject({ status: 'ended', outcome: 'outcome_unknown',
+    reconciliation: { status: 'quarantined', basis: { kind: 'host_instance_takeover', hostInstanceId: report.hostInstanceId },
+      observation: { kind: 'unresolved', unresolvedToolCallIds: ['a8-3j-send'] } } });
+  expect(unknown.run.continuation, 'the wait association is lost').toBeUndefined();
+  expect(unknown.session.occupancy).toMatchObject({ kind: 'execution', executionRef: { runId: runRef.runId } });
+  expect(await readMessage(h, messageRefs[0]!), 'the message stays as saved').toEqual(saved);
+  await expectQuietHarnessRestart(h, 'a8-3j');
 }, 180_000);
 
 it('A8-3d (W-12, RUN-23, CI-04, CTL-10, LA-1): a cancel queued on a Run paused at a safe point (submitted on a Host without the lease) stops the Run at the restart; the cancel is applied by the paused stop', async () => {

@@ -230,4 +230,23 @@ describe('C2 real Runtime consumer over the production composition (phase-2 targ
     const requestText = JSON.stringify(fx.scripted.requests[1]?.messages ?? []);
     expect(requestText).not.toContain('C2_REAL_READ_CONTENT');
   });
+
+  it('refuses a Run granted the two rework tool names at the start, before any provider call (GAP-46)', async () => {
+    // GAP-46: the owners accept an Agent's requeue and reverify, but no Runtime tool carries them yet. A Role and a
+    // Host that grant the two names anyway meet the driver's unknown-name refusal; one case covers both names.
+    const fx = await createC2RuntimePlatform({ toolNames: ['read_session_inbox', 'requeue_task', 'reverify_round'],
+      allowSourceRead: false, scriptedReplies: [{ kind: 'text', text: 'C2 never reached: the start is refused' }] });
+    fixtures.push(fx);
+    const prepared = await fx.platform.runtime.prepareExecution(fx.ctx, { runRef: fx.runRef, requestId: 'c2-prepare-rework-tools' });
+    expect(prepared.status, JSON.stringify(prepared)).toBe('ready');
+    if (prepared.status !== 'ready') return;
+    const started = await fx.platform.runtime.startRun(fx.ctx, { prepared: prepared.value, consumerId: 'c2-driver', requestId: 'c2-start-rework-tools' });
+    expect(started, JSON.stringify(started)).toMatchObject({ status: 'rejected', code: 'unsupported' });
+    const reason = started.status === 'rejected' ? started.reason : '';
+    expect(reason).toMatch(/^the Run selects tool names this Runtime does not know: /);
+    for (const name of ['requeue_task', 'reverify_round']) expect(reason).toContain(name);
+    expect(reason).not.toContain('read_session_inbox');
+    expect(fx.scripted.calls(), 'no provider call').toBe(0);
+    expect(fx.authorizeCalls(), 'no source authorization').toBe(0);
+  });
 });

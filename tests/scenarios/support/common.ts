@@ -359,11 +359,20 @@ export function turnStarts(database: string): Array<{ sessionId: string; runId: 
  * store. `release()` rolls back and closes the connection.
  */
 export function lockLedger(database: string): { release(): void } {
-  const ledger = new DatabaseSync(join(database, 'ledger.sqlite'));
-  ledger.exec('BEGIN IMMEDIATE');
+  return lockStore(join(database, 'ledger.sqlite'));
+}
+
+/** The same write lock on the Kernel's own store: its next write fails after the Kernel's 1 s busy wait. */
+export function lockKernelStore(database: string): { release(): void } {
+  return lockStore(join(database, 'kernel.sqlite'));
+}
+
+function lockStore(path: string): { release(): void } {
+  const store = new DatabaseSync(path);
+  store.exec('BEGIN IMMEDIATE');
   return { release() {
-    if (ledger.isTransaction) ledger.exec('ROLLBACK');
-    ledger.close();
+    if (store.isTransaction) store.exec('ROLLBACK');
+    store.close();
   } };
 }
 
@@ -383,27 +392,32 @@ export function lastEventType(database: string): string | null {
  * crash point between two commits of one Runtime call the Host has no seam for (§12.10 step 1, "故障注入"): the
  * begin committed and the entered fact not (A8-2d), the wait message saved and the yielded terminal not booked
  * (A8-3b), the terminal booked and its control acks not (A8-3h), a Query's last usage saved and its terminal not
- * booked (A8-Q3), a restart's control settle inside another writer's window (C7). `eventType` may be a predicate
- * over the last event type (for a commit the caller arms). `release()` rolls the lock back (call it once the
+ * booked (A8-Q3), a restart's control settle inside another writer's window (C7). With `kernelStore` the
+ * Kernel's store is locked at the same instant (`lockKernelStore`), so the Kernel cannot record what comes next
+ * either: the wait message saved and the send's result never recorded (A8-3j). `eventType` may be a predicate
+ * over the last event type (for a commit the caller arms). `release()` rolls the locks back (call it once the
  * root's call returned).
  */
-export function lockLedgerAfter(database: string, eventType: string | ((last: string | null) => boolean)): {
+export function lockLedgerAfter(database: string, eventType: string | ((last: string | null) => boolean),
+  options: { kernelStore?: boolean } = {}): {
   observer: RecordCommitObserver; locked(): boolean; release(): void;
 } {
   const matches = typeof eventType === 'string' ? (last: string | null) => last === eventType : eventType;
-  let lock: { release(): void } | null = null;
+  let locks: { release(): void }[] | null = null;
   let released = false;
   return {
     observer: {
       started() { /* the head is not needed */ },
       committed() {
-        if (lock === null && !released && matches(lastEventType(database))) lock = lockLedger(database);
+        if (locks === null && !released && matches(lastEventType(database))) {
+          locks = [lockLedger(database), ...(options.kernelStore === true ? [lockKernelStore(database)] : [])];
+        }
       },
     },
-    locked: () => lock !== null,
+    locked: () => locks !== null,
     release() {
       released = true;
-      lock?.release();
+      for (const lock of locks ?? []) lock.release();
     },
   };
 }
