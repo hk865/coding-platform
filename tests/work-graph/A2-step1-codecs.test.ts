@@ -681,7 +681,10 @@ describe('other step-1 decoders', () => {
     const unavailable: SessionRecord = { ...session, health: 'unavailable', healthConclusion: 'damaged' };
     for (const value of [session, { ...session, healthConclusion: null }, unavailable,
       { ...unavailable, healthConclusion: 'missing' as const }, { ...unavailable, healthConclusion: 'kernel_turn_open' as const }]) {
-      expect(decodeSessionRecord(encodeSessionRecord(value))).toEqual({ status: 'decoded', value });
+      // Slice 1 §2.9 (lead update 2026-10-09): a stored Session without the two new optional fields decodes
+      // with their null defaults.
+      expect(decodeSessionRecord(encodeSessionRecord(value))).toEqual({ status: 'decoded',
+        value: { ...value, provenance: null, archiveRequest: null } });
     }
     expect(decodeSessionRecord(encodeSessionRecord({ ...unavailable,
       healthConclusion: 'gone' as unknown as SessionHealthConclusion })).status).toBe('invalid');

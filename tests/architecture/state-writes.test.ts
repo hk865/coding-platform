@@ -71,10 +71,12 @@ const RUN_FIELDS = ['status', 'outcome', 'executionAuthorization', 'controlState
 const ATTEMPT_USE = 'state/attempt-machine.ts newTaskAttemptRecord or transitionAttempt';
 const OUTBOX_USE = 'state/attempt-machine.ts newDispatchOutboxRecord or transitionDispatchOutbox';
 const SESSION_USE = 'state/session-availability.ts createSessionRecord, occupySessionRecord, releaseSessionRecord, '
-  + 'archiveSessionRecord, reactivateSessionRecord or observeSessionHealthRecord';
+  + 'archiveSessionRecord, reactivateSessionRecord, observeSessionHealthRecord, requestSessionArchiveRecord, '
+  + 'releaseSessionArchiveRequestRecord or backfillSessionProvenanceRecord';
 const ROUND_USE = 'state/verification-machine.ts buildOpenedRound, withCheckPhase, buildFinalizedRound or buildSuccessorRound';
 const MESSAGE_USE = 'state/message-machine.ts createSessionMessageRecord or nextSessionMessageRecord';
-const MESSAGE_FIELDS = ['status', 'readAt', 'response', 'acceptedInputs', 'consultationDerivation'] as const;
+const MESSAGE_FIELDS = ['status', 'readAt', 'response', 'acceptedInputs', 'consultationDerivation',
+  'replyHandler', 'archiveWaitDisposition'] as const;
 const PROPOSAL_USE = 'state/plan-machine.ts newCandidateProposal or acceptProposalRecord';
 const QUERY_USE = 'state/query-run-recovery.ts newPendingQueryRecords, advanceQueryExecutionRecord, '
   + 'markQueryRunUnknownRecord or settleQueryRunRecord';
@@ -103,11 +105,14 @@ const PROTECTED_TYPES: readonly ProtectedType[] = [
     fields: 'all', use: 'state/task-machine.ts newTaskRequeueRecord' },
   { file: 'src/contracts/task-requeue.ts', name: 'TaskReworkRefusalSnapshotV1', kind: 'record',
     fields: 'all', use: 'state/task-failure.ts newTaskReworkRefusalRecord' },
+  { file: 'src/contracts/session-anomaly.ts', name: 'SessionAnomalyAnchorV1', kind: 'record',
+    fields: 'all', use: 'state/session-anomaly.ts newSessionAnomalyAnchorRecord' },
   { file: 'src/contracts/control-intent.ts', name: 'ControlIntentSnapshotV1', kind: 'record',
     fields: ['status', 'observation', 'revision'],
     use: 'state/control-intent-machine.ts newQueuedControlIntentRecord or controlIntentRecordOf' },
   { file: 'src/contracts/core/session.ts', name: 'SessionRecord', kind: 'record',
-    fields: ['lifecycle', 'health', 'occupancy', 'archivedAt', 'lastExecutionRef', 'historyCursor', 'healthConclusion'],
+    fields: ['lifecycle', 'health', 'occupancy', 'archivedAt', 'lastExecutionRef', 'historyCursor', 'healthConclusion',
+      'provenance', 'archiveRequest'],
     use: SESSION_USE },
   { file: 'src/contracts/verification.ts', name: 'RoundSnapshot', kind: 'record',
     fields: ['status', 'outcome', 'gaps', 'evidenceRefs', 'checks', 'chain'], use: ROUND_USE },
@@ -163,6 +168,9 @@ const ALLOWED_DECODERS: readonly { file: string; functions: readonly string[] }[
     'taskClaimedEventFromEvent', 'decodeTaskRequeueSnapshot', 'decodeTaskReworkRefusalSnapshot',
     'taskRequeuedEventFromEvent', 'taskReworkRefusedEventFromEvent'] },
   { file: 'tasks/completion-record-codecs.ts', functions: ['decodeGoalPhaseSnapshot', 'completionEventFromEvent'] },
+  { file: 'tasks/session-anomaly-codecs.ts', functions: ['decodeSessionAnomalyAnchor', 'sessionAnomalyRecordedEventFromEvent'] },
+  { file: 'sessions/lifecycle-record-codecs.ts', functions: ['sessionArchiveChangedEventFromEvent',
+    'sessionProvenanceBackfilledEventFromEvent', 'sessionResponsibilityChangedEventFromEvent'] },
   { file: 'persistence/plan-record-codecs.ts', functions: ['decodePlanProposalRecord', 'decodePlanRevisionSnapshot',
     'decodePlanProposalRecordedEvent', 'decodePlanRevisionAcceptedEvent'] },
   { file: 'sessions/session-record-codecs.ts', functions: ['decodeSessionRecord', 'decodeSessionOperationRecord',

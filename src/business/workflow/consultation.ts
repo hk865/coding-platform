@@ -22,6 +22,9 @@ import type { SessionDirectoryPort } from '../../core/work-graph/model/session-c
 import type { RuntimeExecutionPort } from '../../core/agent-runtime/ports.js';
 import type { ConsultationInput, ConsultationResult } from './contracts.js';
 import type { ConsultationConsumerDependencies } from './ports.js';
+import type { InternalSessionArchivePort, SessionArchivePort } from './session-archive.js';
+import type { RequestSessionArchiveInput } from '../../contracts/core/session-archive.js';
+import { SESSION_ARCHIVE_AUTOMATION_ACTOR } from '../../contracts/task-requeue.js';
 import { ownContext, type Owned } from './workflow.js';
 
 // --------------------------------------------------------------------------
@@ -103,7 +106,18 @@ export function createConsultationConsumer(deps: {
   plans: PlanTaskPort;
   runtime: RuntimeExecutionPort;
   consultations: ConsultationConsumerDependencies;
+  /**
+   * Slice 1 §4.2/E9: when present, a copy whose formal Answer has been
+   * associated with the original message runs the final archive; a failed
+   * archive returns the formal answer plus a pending archive and a retry only
+   * resumes the archive. The internal `archiveLineInternal` entry is used when
+   * published, because the public `archiveLine` refuses a caller-supplied
+   * `mode`. Absent keeps the existing answer-only behavior, so old consumers
+   * stay compatible.
+   */
+  sessionArchive?: SessionArchivePort & Partial<InternalSessionArchivePort>;
 }): (ctx: CoreCallContext, input: ConsultationInput) => Promise<ConsultationResult> {
+  const sessionArchive = deps.sessionArchive;
   const waiting = (message: SessionMessage, query: QueryJobRecord | null,
     answer: QueryJobAnswerSnapshot | null, reason: string): ConsultationResult =>
     ({ status: 'ready', value: { state: 'waiting', message, query, answer, reason } });
@@ -286,7 +300,7 @@ export function createConsultationConsumer(deps: {
     return driveAccepted(owned, message.ref, message, input.consumerId, claimed.record);
   }
 
-  return async (ctx, input) => {
+  const consume = async (ctx: CoreCallContext, input: ConsultationInput): Promise<ConsultationResult> => {
     const owned = ownContext(ctx);
     if ('rejection' in owned) return owned.rejection;
     const isolated = isolateInput(input);
@@ -360,6 +374,11 @@ export function createConsultationConsumer(deps: {
         role: structuredClone(card.record.role),
         recommendedRefs: [],
         initialLinks: [],
+        // §2.2: the isolated consultation copy records the recipient Session it
+        // was derived from and the exact inquiry message.
+        provenance: { schemaVersion: 1, kind: 'readonly_copy',
+          from: { projectId: message.recipient.projectId, sessionId: message.recipient.sessionId },
+          messageRef: { ...messageRef } },
         meta: { requestId: `consultation-child:${hashOf(messageRef)}`, expected: [] },
       });
       if (child.status !== 'completed') {
@@ -445,5 +464,71 @@ export function createConsultationConsumer(deps: {
     const claimed = await claim(owned, messageRef, refs.queryRunRef, childCard.record.ref, childCard.record.revision, value.part);
     if (claimed.kind === 'fail') return waiting(message, record, null, claimed.reason);
     return driveAccepted(owned, messageRef, message, value.consumerId, claimed.record);
+  };
+
+  /**
+   * §4.2: after the formal Answer and the original-message association commit,
+   * a readonly copy runs the final archive under the platform automation. A
+   * failure returns the formal answer plus a pending-archive reason; a retry
+   * only resumes the archive and never re-runs the model.
+   */
+  function automationCtx(ctx: CoreCallContext): CoreCallContext {
+    const actor = SESSION_ARCHIVE_AUTOMATION_ACTOR;
+    const workspaceId = ctx.workspaceId;
+    return {
+      projectId: ctx.projectId,
+      ...(workspaceId === undefined ? {} : { workspaceId }),
+      principal: { kind: 'host', actor: { ...actor } },
+      materialReader: { kind: 'host', projectId: ctx.projectId,
+        ...(workspaceId === undefined ? {} : { workspaceId }), actor: { ...actor } },
+      signal: ctx.signal,
+    };
+  }
+
+  async function archiveAnsweredCopy(ctx: CoreCallContext, message: SessionMessage,
+    query: QueryJobRecord | null): Promise<string | null> {
+    if (sessionArchive === undefined) return null;
+    const copyRef = query?.job.job.intent.execution?.consultation?.derivation?.childSessionRef
+      ?? message.consultationDerivation?.childSessionRef;
+    if (copyRef === undefined) return null;
+    const read = await deps.sessions.readSession(ctx, copyRef);
+    if (read.status !== 'ready') return 'the answered copy Session is not readable for its archive';
+    const record = read.value.record;
+    if (record.provenance?.kind !== 'readonly_copy') return null;
+    if (record.lifecycle === 'archived') return null;
+    const automation = automationCtx(ctx);
+    if (record.archiveRequest !== null && record.archiveRequest !== undefined) {
+      const resumed = await sessionArchive.continueArchiveLine(automation,
+        { sessionRef: copyRef, archiveRequestId: record.archiveRequest.requestId });
+      return resumed.status === 'ready' && resumed.value.state === 'archived'
+        ? null : 'the formal answer is saved but the copy archive is still pending';
+    }
+    const request = {
+      input: { sessionRef: copyRef, reason: 'the read-only copy has a formal answer', tasks: [], wait: null,
+        mode: 'answered_copy' },
+      meta: { requestId: `consultation-copy-archive:${copyRef.projectId}:${copyRef.sessionId}:${record.revision}`,
+        expected: [{ ref: record.ref, revision: record.revision }] },
+    } as unknown as GraphWrite<RequestSessionArchiveInput>;
+    // E9: the copy archive selects a non-operator `mode`, which only the
+    // internal entry accepts. Without it the public entry would refuse
+    // `archive_input_invalid: mode is an internal-only archive input`, so the
+    // copy archive is reported unsupported rather than silently not done.
+    const internal = sessionArchive.archiveLineInternal;
+    if (internal === undefined) {
+      return 'unsupported: the internal archive entry is not published, so the answered copy is not archived';
+    }
+    const archived = await internal.call(sessionArchive, automation, request);
+    return archived.status === 'ready' && archived.value.state === 'archived'
+      ? null : 'the formal answer is saved but the copy archive is still pending';
+  }
+
+  return async (ctx: CoreCallContext, input: ConsultationInput): Promise<ConsultationResult> => {
+    const result = await consume(ctx, input);
+    if (result.status !== 'ready') return result;
+    const state = result.value.state;
+    if (state !== 'responded' && state !== 'processed') return result;
+    const note = await archiveAnsweredCopy(ctx, result.value.message, result.value.query);
+    if (note === null) return result;
+    return { status: 'ready', value: { ...result.value, reason: note } };
   };
 }

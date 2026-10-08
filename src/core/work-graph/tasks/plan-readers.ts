@@ -23,6 +23,7 @@ import type { Phase, PlanRevisionRef, PlanRevisionSnapshot } from '../../../cont
 import type { TaskReductionSnapshot } from '../../../contracts/reduction.js';
 import type { GoalPhaseRef, GoalPhaseSnapshot } from '../../../contracts/goal-phase.js';
 import type { TaskPhaseCauseV1 } from '../../../contracts/task-failure.js';
+import type { SessionAnomalyAnchorV1 } from '../../../contracts/session-anomaly.js';
 import type {
   TaskRequeueRef, TaskRequeueSnapshotV1, TaskReworkRefusalRef, TaskReworkRefusalSnapshotV1,
 } from '../../../contracts/task-requeue.js';
@@ -51,6 +52,7 @@ import {
 } from '../persistence/evidence-record-codecs.js';
 import type { VerifiedGovernance } from './plan-commit-compiler.js';
 import type { PlanProposal, PlanProposalRef } from '../model/plan-contracts.js';
+import type { SessionResponsibilityBasisPort } from '../model/session-facts-contracts.js';
 import {
   isBasisUnsupported, planTaskFacts, taskOriginVerdict, verifyBasisDelegation,
   type FrozenTaskDefinition, type PlanTaskFacts,
@@ -71,7 +73,7 @@ import {
 
 const RUN_BY_GOAL_INDEX = 'r3c-run-by-goal';
 /** R4c.1 directed candidate index: exactly one Task's Runs, any Plan. */
-const RUN_BY_TASK_INDEX = 'r4c-run-by-task';
+export const RUN_BY_TASK_INDEX = 'r4c-run-by-task';
 /** A.2 step 5.6: the Runs of one workspace in one status (start-up reconcile, §12.1 steps 2 and 5). */
 export const RUN_BY_WORKSPACE_STATUS_INDEX = 'a2-run-by-workspace-status';
 /** A.2 step 5.6: the Goals of one workspace (start-up reconcile, §12.1 steps 6 and 6b). */
@@ -824,6 +826,12 @@ export type CanonicalTaskFacts = {
   /** Directed read only: at least one Run exists for THIS task, even one pinned
    * to an older Plan. A fresh claim must reject rather than read it as pending. */
   taskHasRun?: boolean;
+  /**
+   * Slice 1 §6 F28 (1/3/5): the archive anomaly anchors of each selected Task's
+   * Runs, read in THIS window. Absent means this read did not cover them, so
+   * the failure read has no verified archive interruption to use.
+   */
+  anomalyAnchorsByTaskId?: ReadonlyMap<string, readonly SessionAnomalyAnchorV1[]>;
 };
 export type CanonicalTaskFactRead =
   | { status: 'ready'; value: CanonicalTaskFacts }
@@ -1640,4 +1648,131 @@ export async function readOriginPlans(
     plansByRefKey.set(key, decoded.value);
   }
   return { status: 'ready', value: { plansByRefKey, missing, readThrough: read.batch.readThrough } };
+}
+
+/**
+ * Slice 1 §3.3/§3.4: the trusted Session-responsibility basis reader. It builds
+ * the canonical Task facts and their `RecordGuard`s in `tasks` and publishes
+ * them through the narrow `SessionResponsibilityBasisPort` the composition
+ * injects into `sessions` (no `sessions` → `tasks` import).
+ *
+ * `terminal` is the CURRENT Task projection (`effectivePhase==='satisfied'` or a
+ * cancelled/superseded disposition), never a finished Run. `finishedAt` is the
+ * terminal closing fact: the formal reduction's `reducedAt` for satisfied, the
+ * first terminal disposition Plan's `acceptedAt` otherwise. `writerStopped`
+ * means the Task's old writer has no live occupancy. A `work` (or `module`)
+ * target cannot be mapped to a Task and stays `incomplete`.
+ */
+export function createSessionResponsibilityBasisReader(
+  records: GoalRecordTransactionPort & RecordLookupPort,
+): SessionResponsibilityBasisPort {
+  return {
+    readResponsibilityBasis: async (ctx, input) => {
+      const raw = input as unknown as { sessionRef?: unknown; target?: unknown } | null | undefined;
+      if (raw === null || raw === undefined || !isRecord(raw.target) || !nonEmpty(raw.target['kind'])) {
+        return { status: 'rejected', code: 'invalid', reason: 'readResponsibilityBasis requires a sessionRef and a work-link target' };
+      }
+      const sessionRef = raw.sessionRef as { projectId?: unknown; sessionId?: unknown } | undefined;
+      if (!isRecord(sessionRef) || !nonEmpty(sessionRef['projectId']) || !nonEmpty(sessionRef['sessionId'])) {
+        return { status: 'rejected', code: 'invalid', reason: 'readResponsibilityBasis requires a complete SessionRef' };
+      }
+      const bound = ctx as unknown as { projectId?: unknown; workspaceId?: unknown };
+      if (!nonEmpty(bound.projectId) || !nonEmpty(bound.workspaceId)) {
+        return { status: 'rejected', code: 'forbidden', reason: 'readResponsibilityBasis requires a bound project/workspace context' };
+      }
+      if (sessionRef['projectId'] !== bound.projectId) {
+        return { status: 'rejected', code: 'forbidden', reason: 'the Session belongs to another project' };
+      }
+      const target = raw.target as Record<string, unknown>;
+      if (target['kind'] !== 'task') {
+        return incomplete('work_responsibility_unresolved: this work link has no Task basis');
+      }
+      const task = target['ref'];
+      if (!isRecord(task) || !nonEmpty(task['projectId']) || !nonEmpty(task['goalId']) || !nonEmpty(task['taskId'])) {
+        return { status: 'rejected', code: 'invalid', reason: 'readResponsibilityBasis requires a complete TaskTriple' };
+      }
+      if (task['projectId'] !== bound.projectId) {
+        return { status: 'rejected', code: 'forbidden', reason: 'the Task belongs to another project' };
+      }
+      const goalRef: GoalRef = { aggregateType: 'Goal', projectId: task['projectId'], goalId: task['goalId'] };
+      const goalRead = await readGoal(records, goalRef);
+      if (goalRead.status !== 'ready') return goalRead;
+      const planRef = goalRead.goal.activePlanRevision;
+      if (planRef === null) {
+        return { status: 'rejected', code: 'incomplete', reason: 'the Goal has no adopted Plan for the Task basis' };
+      }
+      const planRead = await readPlan(records, planRef);
+      if (planRead.status !== 'ready') return planRead;
+      const plan = planRead.plan;
+      const definition = plan.tasks.find((candidate) => candidate.taskId === task['taskId']);
+      if (definition === undefined) {
+        return { status: 'rejected', code: 'not_found', reason: 'the Task is not part of the active Plan' };
+      }
+      const factsRead = await readCanonicalTaskFacts(records, goalRef, plan, task['taskId']);
+      if (factsRead.status !== 'ready') return factsRead;
+      const facts = factsRead.value;
+      const state = facts.byTaskId.get(task['taskId']);
+      if (state === undefined) {
+        return { status: 'rejected', code: 'incomplete', reason: 'the directed task state was not read' };
+      }
+      const satisfied = state.effectivePhase === 'satisfied';
+      const dispositionTerminal = definition.disposition === 'cancelled' || definition.disposition === 'superseded';
+      const terminalCause: 'satisfied' | 'cancelled' | 'superseded' | null = satisfied
+        ? 'satisfied' : definition.disposition === 'cancelled' ? 'cancelled'
+          : definition.disposition === 'superseded' ? 'superseded' : null;
+      let finishedAt: string | null = null;
+      let originPlan: { ref: PlanRevisionRef; revision: number } | null = null;
+      if (satisfied) {
+        const reduction = facts.reductionsByTaskId.get(task['taskId']);
+        finishedAt = reduction === undefined ? null : reduction.reducedAt;
+      } else if (dispositionTerminal) {
+        // The FIRST terminal disposition Plan's acceptedAt: the active plan may
+        // only inherit the change (W16 `dispositionRecord.setIn`).
+        finishedAt = plan.acceptedAt;
+        const change = plan.schemaVersion === 2
+          ? plan.dispositionRecord?.entries.find((entry) => entry.taskId === task['taskId']
+            && (entry.to === 'cancelled' || entry.to === 'superseded'))
+          : undefined;
+        if (change !== undefined && planRevisionRefKey(change.setIn) !== planRevisionRefKey(plan.ref)) {
+          const originRead = await readPlan(records, change.setIn);
+          // E2: the original terminal Plan carries the real `acceptedAt`; a
+          // failed read must be propagated, never replaced by the active Plan's
+          // time.
+          if (originRead.status !== 'ready') return originRead;
+          finishedAt = originRead.plan.acceptedAt;
+          originPlan = { ref: originRead.plan.ref, revision: originRead.plan.revision };
+        }
+      }
+      const runs = facts.runsByTaskId.get(task['taskId']) ?? [];
+      const selectedRun = state.execution === null ? null
+        : runs.find((run) => canonicalJson(run.ref as unknown as JsonValue) === canonicalJson(state.execution as unknown as JsonValue)) ?? null;
+      // D7: an `outcome_unknown` Run is NOT a stopped writer; only the existing
+      // human attestation resolves it. A held lease also keeps the writer live.
+      const selectedRunStopped = selectedRun !== null && selectedRun.status === 'ended'
+        && selectedRun.outcome !== 'outcome_unknown';
+      const writerStopped = selectedRun === null ? state.lease.status === 'free'
+        : selectedRunStopped || state.lease.status === 'free';
+      // §3.4 S:614: guard every record the proof used, including the Goal and
+      // the active/origin Plan reads, not only the canonical Task window.
+      const guards: RecordGuard[] = [
+        ...facts.guards,
+        { refKey: canonicalJson(goalRef as unknown as JsonValue), expectedRevision: goalRead.goal.revision },
+        { refKey: planRevisionRefKey(plan.ref), expectedRevision: plan.revision },
+        ...(originPlan === null ? [] : [{
+          refKey: planRevisionRefKey(originPlan.ref), expectedRevision: originPlan.revision,
+        }]),
+      ];
+      return { status: 'ready', value: {
+        task: { projectId: task['projectId'], goalId: task['goalId'], taskId: task['taskId'] },
+        planRef: plan.ref,
+        terminal: terminalCause !== null,
+        finishedAt,
+        terminalCause,
+        sourceRun: selectedRun,
+        writerStopped,
+        guards,
+        sourceCursor: facts.readThrough,
+      } };
+    },
+  };
 }

@@ -12,6 +12,7 @@
 import type { ArtifactRef } from './artifact.js';
 import type { SessionRef } from './core/identity.js';
 import type { SessionMessageRef } from './core/session-message.js';
+import type { SessionAnomalyAnchorV1 } from './session-anomaly.js';
 import type { ControlIntentRef } from './control-intent.js';
 import type { RunOutcome, RunRef, TaskAttemptRef, TaskTriple } from './dispatch.js';
 import { EVIDENCE_OUTCOMES } from './evidence.js';
@@ -66,6 +67,10 @@ export type ContinuationSessionContinuity =
  * Every field is required (null when absent) so the canonical digest is total.
  * The previous Run is always the requeue's afterRun.
  */
+export type ContinuationAnomalySectionV1 = {
+  anchors: SessionAnomalyAnchorV1[]; omitted: number;
+  instructionVersion: 1;
+};
 export type ContinuationBriefV1 = {
   schemaVersion: 1;
   /** The new (continuing) Run. */
@@ -153,6 +158,11 @@ export type ContinuationBriefV1 = {
   };
   /** Fixed instruction block (must say files may have changed; re-read before editing). Text change ⇒ new version. */
   standingInstructionVersion: 1;
+  /**
+   * Slice 1 §2.7: the anomaly anchors actually carried into this brief. Absent
+   * means no such section; it is never added to a historical brief's digest.
+   */
+  anomalies?: ContinuationAnomalySectionV1;
 };
 
 /** Bounds of the brief; over-long fields are truncated and counted in `…Omitted` / `truncated`. */
@@ -265,14 +275,46 @@ export function renderContinuationBriefZh(brief: ContinuationBriefV1, digest: st
   const head = ['## 接续说明', continuationBriefMarker(digest)];
   const tail = ['', ...CONTINUATION_STANDING_INSTRUCTIONS_ZH_V1];
   const limit = CONTINUATION_BRIEF_LIMITS.renderedBytes;
+  const allPaths = brief.anomalies === undefined ? 0 : anomalyPathLineCount(brief.anomalies);
   let body: string[] = [];
+  let anomaly: string[] = [];
   for (const cap of RENDER_TEXT_CAPS) {
     body = briefBodyZh(brief, cap);
-    const text = [...head, ...body, ...tail].join('\n');
+    anomaly = anomalyLinesZh(brief, cap, allPaths);
+    const text = [...head, ...body, ...anomaly, ...tail].join('\n');
     if (utf8Length(text) <= limit) return text;
   }
-  // Still too long with the shortest texts: keep the longest prefix of body lines that fits.
-  const fixed = utf8Length([...head, ...tail].join('\n'));
+  if (brief.anomalies === undefined) {
+    // A brief without the anomaly section keeps its old bytes: this is the
+    // original bounded fallback, the longest prefix of ordinary body lines.
+    const fixed = utf8Length([...head, ...tail].join('\n'));
+    let used = fixed;
+    let kept = 0;
+    for (const line of body) {
+      const next = used + 1 + utf8Length(line);
+      if (next + 1 + utf8Length(omittedNoteZh(body.length - kept - 1)) > limit) break;
+      used = next;
+      kept += 1;
+    }
+    return [...head, ...body.slice(0, kept), omittedNoteZh(body.length - kept), ...tail].join('\n');
+  }
+  // Still too long with the shortest texts. The anomaly section is mandatory
+  // (spec §2.7): keep every carried anchor's ref, cause, unknown/mixed-ownership
+  // warning and the fixed closing sentence, and budget only its path lists,
+  // counting what is left out. If even that does not fit, refuse `capacity`
+  // instead of silently dropping the section.
+  const cap = RENDER_TEXT_CAPS[RENDER_TEXT_CAPS.length - 1]!;
+  let budgeted: string[] | null = null;
+  for (let allowed = allPaths; allowed >= 0; allowed -= 1) {
+    const candidate = anomalyLinesZh(brief, cap, allowed);
+    if (utf8Length([...head, ...candidate, ...tail].join('\n')) <= limit) { budgeted = candidate; break; }
+  }
+  if (budgeted === null) {
+    throw new ContinuationBriefCapacityError(
+      `the mandatory anomaly section does not fit in the ${String(limit)}-byte continuation brief limit`);
+  }
+  const suffix = [...budgeted, ...tail];
+  const fixed = utf8Length([...head, ...suffix].join('\n'));
   let used = fixed;
   let kept = 0;
   for (const line of body) {
@@ -281,7 +323,8 @@ export function renderContinuationBriefZh(brief: ContinuationBriefV1, digest: st
     used = next;
     kept += 1;
   }
-  return [...head, ...body.slice(0, kept), omittedNoteZh(body.length - kept), ...tail].join('\n');
+  const withNote = [...head, ...body.slice(0, kept), omittedNoteZh(body.length - kept), ...suffix].join('\n');
+  return kept === 0 && utf8Length(withNote) > limit ? [...head, ...suffix].join('\n') : withNote;
 }
 
 function omittedNoteZh(lines: number): string {
@@ -450,8 +493,78 @@ function briefBodyZh(brief: ContinuationBriefV1, cap: number): string[] {
   return lines;
 }
 
-function endingZh(brief: ContinuationBriefV1): string {
-  const previous = brief.previous;
+const ANOMALY_CAUSE_ZH: Readonly<Record<SessionAnomalyAnchorV1['cause'], string>> = {
+  archive_interrupted: '归档中断了这次执行',
+  retired_archive: '退役后归档',
+};
+/** The fixed mixed-ownership warning for a worktree-sourced changed-file read (spec §2.6). */
+const ANOMALY_MIXED_OWNERSHIP_ZH =
+  '工作区里还没提交的改动，可能混有别的执行的改动，不一定是这次执行改的';
+/** The fixed closing sentence of the anomaly section (spec §2.7). */
+const ANOMALY_LAST_SENTENCE_ZH = '这些改动在工作区里，没撤销，也没核对；先看清它们再接着做。';
+
+/**
+ * Slice 1 §2.7: the `### 异常锚点` section. Empty without `anomalies`, so an
+ * old brief renders byte-identically. Each carried anchor keeps its ref, cause,
+ * the unknown/mixed-ownership warning where it applies and the fixed closing
+ * sentence; only the path lists are clipped by `cap`. `pathLimit` is the number
+ * of path lines that may still be written (spec §2.7 budgets them first under
+ * the `renderedBytes` bound); every path line left out is counted once.
+ */
+function anomalyLinesZh(brief: ContinuationBriefV1, cap: number, pathLimit: number): string[] {
+  const section = brief.anomalies;
+  if (section === undefined) return [];
+  const lines: string[] = ['', '### 异常锚点'];
+  let pathLines = 0;
+  let droppedPaths = 0;
+  for (const anchor of section.anchors) {
+    const files = anchor.changedFiles;
+    lines.push(`- 锚点执行 ${anchor.runRef.runId}（Session ${anchor.sessionRef.sessionId}，任务 ${anchor.task.taskId}）：`
+      + `原因：${ANOMALY_CAUSE_ZH[anchor.cause]}，记录时间：${anchor.recordedAt}，结果没核对。`);
+    if (files.status === 'unavailable') {
+      lines.push(`  - 改动的文件无法确定${files.reason === null ? '' : `（${clip(files.reason, cap)}）`}。`);
+    } else if (files.status === 'not_entered') {
+      lines.push('  - 这次执行没有进入 Kernel，没有经工具改动文件。');
+    } else if (pathLines < pathLimit) {
+      pathLines += 1;
+      lines.push(`  - 已确认改动：${listZh(files.confirmed, cap)}`
+        + `${files.possible.length === 0 ? '' : `；可能改动：${listZh(files.possible, cap)}`}${moreZh(files.omitted)}。`);
+    } else {
+      pathLines += 1;
+      droppedPaths += 1;
+    }
+    if (files.source === 'worktree') lines.push(`  - 注意：${ANOMALY_MIXED_OWNERSHIP_ZH}。`);
+  }
+  if (section.omitted > 0) lines.push(`- 另有 ${String(section.omitted)} 条异常锚点没有装入本说明。`);
+  if (droppedPaths > 0) lines.push(`- 另有 ${String(droppedPaths)} 条异常锚点的改动路径没有装入本说明。`);
+  lines.push(ANOMALY_LAST_SENTENCE_ZH);
+  return lines;
+}
+
+/** The number of optional path lines the anomaly section can render. */
+function anomalyPathLineCount(section: ContinuationAnomalySectionV1): number {
+  let count = 0;
+  for (const anchor of section.anchors) {
+    const status = anchor.changedFiles.status;
+    if (status !== 'unavailable' && status !== 'not_entered') count += 1;
+  }
+  return count;
+}
+
+/**
+ * Slice 1 §2.7: `renderContinuationBriefZh` refuses `capacity` when even the
+ * mandatory part of the anomaly section cannot fit in `renderedBytes`, instead
+ * of silently dropping the section. The preparation owner maps this to a
+ * `capacity` rejection.
+ */
+export class ContinuationBriefCapacityError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ContinuationBriefCapacityError';
+  }
+}
+
+function endingZh(brief: ContinuationBriefV1): string {  const previous = brief.previous;
   // `factsFrom.hops > 0` only when the previous Run itself never entered the Kernel.
   if (brief.stoppedAt.kernel === 'not_entered' || brief.factsFrom.hops > 0) return `没有进入 Kernel 就结束（${previous.outcome}）`;
   if (previous.outcome === 'cancelled' && brief.stoppedAt.reason === 'cancelled_at_reconcile') return '在 Host 重启核对时按你的取消结束';
@@ -518,10 +631,12 @@ const CONTINUITIES: readonly ContinuationSessionContinuity[] = [
 function isObj(value: unknown): value is Obj {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
-/** The object with exactly `keys` (all required), or the problem. */
-function exact(value: unknown, path: string, keys: readonly string[]): Obj | string {
+/** The object with exactly `keys` (all required) plus `optional` keys, or the problem. */
+function exact(value: unknown, path: string, keys: readonly string[], optional: readonly string[] = []): Obj | string {
   if (!isObj(value)) return `${path} must be an object`;
-  for (const key of Object.keys(value)) if (!keys.includes(key)) return `${path} carries unknown field ${key}`;
+  for (const key of Object.keys(value)) {
+    if (!keys.includes(key) && !optional.includes(key)) return `${path} carries unknown field ${key}`;
+  }
   for (const key of keys) if (!Object.hasOwn(value, key)) return `${path}.${key} is required`;
   return value;
 }
@@ -617,7 +732,7 @@ const BRIEF_KEYS = [
 
 /** Null when `value` is a well-formed `ContinuationBriefV1`; otherwise the first problem. */
 export function continuationBriefShapeProblem(value: unknown): string | null {
-  const brief = exact(value, 'continuationBrief', BRIEF_KEYS);
+  const brief = exact(value, 'continuationBrief', BRIEF_KEYS, ['anomalies']);
   if (typeof brief === 'string') return brief;
   if (brief['schemaVersion'] !== 1) return 'continuationBrief.schemaVersion must be 1';
   if (brief['standingInstructionVersion'] !== 1) return 'continuationBrief.standingInstructionVersion must be 1';
@@ -635,7 +750,8 @@ export function continuationBriefShapeProblem(value: unknown): string | null {
     ?? checksProblem(brief['checks'])
     ?? requeueProblem(brief['requeue'])
     ?? workspaceProblem(brief['workspace'])
-    ?? sessionProblem(brief['session']);
+    ?? sessionProblem(brief['session'])
+    ?? anomaliesProblem(brief['anomalies']);
   if (shape !== null) return shape;
   if ((brief['failureClass'] === 'interrupted') !== (brief['mode'] === 'resume_after_interruption')) {
     return 'continuationBrief.mode must be resume_after_interruption exactly when failureClass is interrupted';
@@ -911,4 +1027,129 @@ function seededFromProblem(value: unknown, path: string): Problem {
   if (typeof seeded === 'string') return seeded;
   return sessionRef(seeded['sessionRef'], `${path}.sessionRef`)
     ?? nullableCount(seeded['throughPosition'], `${path}.throughPosition`);
+}
+
+// ------------------------------------------------------------------------ //
+// Slice 1 §2.7: anomaly section shape                                       //
+// ------------------------------------------------------------------------ //
+const ANOMALY_SECTION_KEYS = ['anchors', 'omitted', 'instructionVersion'] as const;
+const ANOMALY_ANCHOR_LIMIT = 8;
+const ANOMALY_CAUSES: readonly string[] = ['archive_interrupted', 'retired_archive'];
+const ARCHIVE_CHANGED_SOURCES: readonly string[] = ['kernel', 'worktree', 'unknown'];
+const ARCHIVE_CHANGED_STATUSES: readonly string[] = ['known', 'partial', 'not_entered', 'unavailable'];
+
+function recordRef(value: unknown, path: string): Problem {
+  const result = exact(value, path, ['identityKey', 'fingerprint']);
+  if (typeof result === 'string') return result;
+  if (!nonEmpty(result['identityKey']) || !nonEmpty(result['fingerprint'])) return `${path} must name a real receipt`;
+  return null;
+}
+function planRef(value: unknown, path: string): Problem {
+  return ref(value, path, 'PlanRevision', ['projectId', 'planId']);
+}
+function roleRef(value: unknown, path: string): Problem {
+  if (!isObj(value)) return `${path} must be an object`;
+  if (value['kind'] === 'legacy_template') {
+    const role = exact(value, path, ['kind', 'templateId', 'templateRevision']);
+    if (typeof role === 'string') return role;
+    return nonEmpty(role['templateId']) && nonEmpty(role['templateRevision'])
+      ? null : `${path} legacy_template requires templateId and templateRevision`;
+  }
+  if (value['kind'] === 'role_spec') {
+    const role = exact(value, path, ['kind', 'pin']);
+    if (typeof role === 'string') return role;
+    const pin = role['pin'];
+    if (!isObj(pin)) return `${path}.pin must be an object`;
+    const pinShape = exact(pin, `${path}.pin`, ['ref', 'digest']);
+    if (typeof pinShape === 'string') return pinShape;
+    if (!nonEmpty(pin['digest'])) return `${path}.pin.digest is required`;
+    const reference = exact(pin['ref'], `${path}.pin.ref`, ['aggregateType', 'projectId', 'roleId', 'revision']);
+    if (typeof reference === 'string') return reference;
+    if (reference['aggregateType'] !== 'RoleSpecRevision' || !nonEmpty(reference['projectId'])
+      || !nonEmpty(reference['roleId']) || !isCount(reference['revision']) || reference['revision'] < 1) {
+      return `${path}.pin.ref must be a complete RoleSpecRevisionRef`;
+    }
+    return null;
+  }
+  return `${path}.kind must be role_spec or legacy_template`;
+}
+function changedFilesProblem(value: unknown, path: string): Problem {
+  const files = exact(value, path, ['source', 'status', 'confirmed', 'possible', 'omitted', 'baseCommit',
+    'runBaselineKnown', 'reason']);
+  if (typeof files === 'string') return files;
+  const shape = inList(files['source'], ARCHIVE_CHANGED_SOURCES, `${path}.source`)
+    ?? inList(files['status'], ARCHIVE_CHANGED_STATUSES, `${path}.status`)
+    ?? pathList(files['confirmed'], `${path}.confirmed`, LIMITS.paths)
+    ?? pathList(files['possible'], `${path}.possible`, LIMITS.paths)
+    ?? count(files['omitted'], `${path}.omitted`)
+    ?? nullableString(files['baseCommit'], `${path}.baseCommit`)
+    ?? (files['runBaselineKnown'] === false ? null : `${path}.runBaselineKnown must be false`)
+    ?? nullableString(files['reason'], `${path}.reason`);
+  return shape;
+}
+function anomalyAnchorProblem(value: unknown, path: string): Problem {
+  const anchor = exact(value, path, ['ref', 'revision', 'schemaVersion', 'workspaceId', 'task', 'planRef',
+    'lineHead', 'sessionRef', 'role', 'runRef', 'attemptRef', 'cause', 'archiveRequestId',
+    'archiveRequestReceipt', 'archivedBy', 'recordedAt', 'changedFiles', 'resultVerification']);
+  if (typeof anchor === 'string') return anchor;
+  if (anchor['revision'] !== 1) return `${path}.revision must be 1`;
+  if (anchor['schemaVersion'] !== 1) return `${path}.schemaVersion must be 1`;
+  const anchorRef = exact(anchor['ref'], `${path}.ref`, ['aggregateType', 'projectId', 'goalId', 'runId']);
+  if (typeof anchorRef === 'string') return anchorRef;
+  if (anchorRef['aggregateType'] !== 'SessionAnomalyAnchor') return `${path}.ref must be a SessionAnomalyAnchorRef`;
+  const run = runRef(anchor['runRef'], `${path}.runRef`);
+  if (run !== null) return run;
+  const runValue = anchor['runRef'] as Obj;
+  const shape = inList(anchor['cause'], ANOMALY_CAUSES, `${path}.cause`)
+    ?? (nonEmpty(anchor['workspaceId']) ? null : `${path}.workspaceId is required`)
+    ?? taskTriple(anchor['task'], `${path}.task`)
+    ?? planRef(anchor['planRef'], `${path}.planRef`)
+    ?? sessionRef(anchor['lineHead'], `${path}.lineHead`)
+    ?? sessionRef(anchor['sessionRef'], `${path}.sessionRef`)
+    ?? roleRef(anchor['role'], `${path}.role`)
+    ?? attemptRef(anchor['attemptRef'], `${path}.attemptRef`)
+    ?? (nonEmpty(anchor['archiveRequestId']) ? null : `${path}.archiveRequestId is required`)
+    ?? recordRef(anchor['archiveRequestReceipt'], `${path}.archiveRequestReceipt`)
+    ?? ((isObj(anchor['archivedBy']) && hasOnlyKeys(anchor['archivedBy'], ['kind', 'id'])
+      && (anchor['archivedBy']['kind'] === 'human' || anchor['archivedBy']['kind'] === 'system')
+      && nonEmpty(anchor['archivedBy']['id'])) ? null : `${path}.archivedBy must be a human/system actor`)
+    ?? (nonEmpty(anchor['recordedAt']) ? null : `${path}.recordedAt is required`)
+    ?? changedFilesProblem(anchor['changedFiles'], `${path}.changedFiles`)
+    ?? (anchor['resultVerification'] === 'not_checked' ? null : `${path}.resultVerification must be not_checked`);
+  if (shape !== null) return shape;
+  if (anchorRef['projectId'] !== runValue['projectId'] || anchorRef['goalId'] !== runValue['goalId']
+    || anchorRef['runId'] !== runValue['runId']) return `${path}.ref disagrees with its runRef`;
+  return null;
+}
+function hasOnlyKeys(value: Obj, allowed: readonly string[]): boolean {
+  return Object.keys(value).every((key) => allowed.includes(key));
+}
+function anomaliesProblem(value: unknown): Problem {
+  if (value === undefined) return null;
+  const section = exact(value, 'continuationBrief.anomalies', ANOMALY_SECTION_KEYS);
+  if (typeof section === 'string') return section;
+  if (section['instructionVersion'] !== 1) return 'continuationBrief.anomalies.instructionVersion must be 1';
+  if (!isCount(section['omitted'])) return 'continuationBrief.anomalies.omitted must be a non-negative safe integer';
+  const anchors = section['anchors'];
+  if (!Array.isArray(anchors)) return 'continuationBrief.anomalies.anchors must be an array';
+  if (anchors.length > ANOMALY_ANCHOR_LIMIT) {
+    return `continuationBrief.anomalies.anchors holds more than ${String(ANOMALY_ANCHOR_LIMIT)} entries`;
+  }
+  let previous: { recordedAt: string; refKey: string } | null = null;
+  for (const [index, entry] of anchors.entries()) {
+    const at = `continuationBrief.anomalies.anchors[${index}]`;
+    const problem = anomalyAnchorProblem(entry, at);
+    if (problem !== null) return problem;
+    const anchor = entry as Obj;
+    let refKey: string;
+    try { refKey = canonicalJson(anchor['ref'] as JsonValue); } catch { return `${at}.ref cannot be encoded`; }
+    const current = { recordedAt: anchor['recordedAt'] as string, refKey };
+    if (previous !== null
+      && (current.recordedAt < previous.recordedAt
+        || (current.recordedAt === previous.recordedAt && current.refKey < previous.refKey))) {
+      return 'continuationBrief.anomalies.anchors must be sorted by recordedAt then canonical ref';
+    }
+    previous = current;
+  }
+  return null;
 }

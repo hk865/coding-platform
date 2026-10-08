@@ -5,7 +5,7 @@ import type { CommitCursor } from '../../contracts/command-event.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { CommandMeta, RoleConfigurationRef, SessionRef, WorkspaceScope, WorkLinkRelation, WorkLinkTarget } from '../../contracts/core/identity.js';
 import type { CoreError, CoreRejection, OperationReceipt, Page, ReadResult, WriteResult } from '../../contracts/core/results.js';
-import type { SessionRecord } from '../../contracts/core/session.js';
+import type { SessionProvenanceV1, SessionRecord } from '../../contracts/core/session.js';
 import { canonicalJson, type JsonValue } from '../../contracts/fingerprint.js';
 import type { SessionCard, SessionCreationResult, SessionDirectoryPort, SessionOperationRecord } from '../work-graph/model/session-contracts.js';
 import type { KernelStoreRegistry } from './kernel-store-locator.js';
@@ -22,6 +22,12 @@ export type CreateSessionRequest = {
   recommendedRefs: ArtifactRef[];
   initialLinks: { target: WorkLinkTarget; relation: WorkLinkRelation }[];
   meta: CommandMeta;
+  /**
+   * Slice 1 §2.2: the recorded origin of the Session. Absent means a new
+   * Session (the admission normalizes `{schemaVersion:1,kind:'new'}`); a
+   * continuation/handoff/readonly_copy carries its predecessor here.
+   */
+  provenance?: SessionProvenanceV1;
 };
 /** Trusted locator from the task graph; positions are inclusive. */
 export type SessionHistoryRange = {
@@ -95,6 +101,8 @@ type CreateSessionValue = {
   recommendedRefs: ArtifactRef[];
   initialLinks: { target: WorkLinkTarget; relation: WorkLinkRelation }[];
   meta: CommandMeta;
+  /** Slice 1 §2.2: threaded through the isolated creation snapshot. */
+  provenance?: SessionProvenanceV1;
 };
 
 type HistoryRequestValue = {
@@ -123,6 +131,7 @@ function ownCreateRequest(request: unknown): { ok: true; value: CreateSessionVal
     role: raw.role,
     recommendedRefs: raw.recommendedRefs,
     initialLinks: raw.initialLinks,
+    ...(raw.provenance === undefined ? {} : { provenance: raw.provenance }),
     meta: raw.meta,
   };
   try {
@@ -587,6 +596,9 @@ export function createSessionOperations(deps: {
             role: value.role,
             recommendedRefs: value.recommendedRefs ?? [],
             initialLinks: value.initialLinks ?? [],
+            // §2.2: absent keeps the historical key set (normalized to `new`);
+            // a continuation/handoff/readonly_copy carries its predecessor.
+            ...(value.provenance === undefined ? {} : { provenance: value.provenance }),
           },
           meta: value.meta,
         });
@@ -972,7 +984,11 @@ export function createSessionHistoryCursorOwner(deps: { kernelStores: KernelStor
         const lower = request.afterPosition + 1;
         const entries = records.map(record => toHistoryEntry(record, binding, frozenThrough, lower));
         const nextPosition = records.at(-1)?.position ?? request.afterPosition;
-        return { entries, throughPosition: frozenThrough, nextPosition, hasMore: nextPosition < frozenThrough };
+        // A page that returned no record while the claimed window continues is a
+        // gap, not "more to come": reporting hasMore here makes the position
+        // loop in readPreviousTurn spin forever (it only advances with entries).
+        return { entries, throughPosition: frozenThrough, nextPosition,
+          hasMore: records.length > 0 && nextPosition < frozenThrough };
       });
       if (!read.ok) return read.rejection;
       return { status: 'ready', value: read.value };

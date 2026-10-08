@@ -193,7 +193,7 @@ function deliveryPinProblem(value: unknown): string | null {
 export function inputBindingProblem(value: unknown): string | null {
   if (!isJsonObject(value)) return 'inputBinding must be an object';
   if (!hasOnlyKeys(value, ['schemaVersion', 'inputDigest', 'manifestDigest',
-    'materialAccessRefs', 'deliveryRefs', 'additionalMaterialRefs', 'continuationBriefDigest'])) {
+    'materialAccessRefs', 'deliveryRefs', 'additionalMaterialRefs', 'continuationBriefDigest', 'anomalyAnchorRefs'])) {
     return 'inputBinding carries unknown fields';
   }
   if (value['continuationBriefDigest'] !== undefined && !isSha256Hex(value['continuationBriefDigest'])) {
@@ -217,6 +217,37 @@ export function inputBindingProblem(value: unknown): string | null {
     for (const artifact of value['additionalMaterialRefs']) {
       if (!isArtifactRef(artifact)) return 'inputBinding additionalMaterialRefs entries must be complete ArtifactRefs';
     }
+  }
+  if (value['anomalyAnchorRefs'] !== undefined) {
+    const anchors = anomalyAnchorRefsProblem(value['anomalyAnchorRefs']);
+    if (anchors !== null) return anchors;
+  }
+  return null;
+}
+
+/**
+ * Slice 1 §3.5/F83: strict shape of the optional `inputBinding.anomalyAnchorRefs`
+ * (complete refs, at most 8, no duplicates). Absent stays legal.
+ */
+const ANOMALY_ANCHOR_REF_LIMIT = 8;
+
+export function anomalyAnchorRefsProblem(value: unknown): string | null {
+  if (value === undefined) return null;
+  if (!Array.isArray(value)) return 'inputBinding anomalyAnchorRefs must be an array';
+  if (value.length > ANOMALY_ANCHOR_REF_LIMIT) {
+    return `inputBinding anomalyAnchorRefs holds more than ${String(ANOMALY_ANCHOR_REF_LIMIT)} entries`;
+  }
+  const seen = new Set<string>();
+  for (const ref of value) {
+    if (!isJsonObject(ref)
+      || !hasOnlyKeys(ref, ['aggregateType', 'projectId', 'goalId', 'runId'])
+      || ref['aggregateType'] !== 'SessionAnomalyAnchor'
+      || !nonEmpty(ref['projectId']) || !nonEmpty(ref['goalId']) || !nonEmpty(ref['runId'])) {
+      return 'inputBinding anomalyAnchorRefs entries must be complete SessionAnomalyAnchorRefs';
+    }
+    const key = JSON.stringify([ref['projectId'], ref['goalId'], ref['runId']]);
+    if (seen.has(key)) return 'inputBinding anomalyAnchorRefs must not repeat the same anchor';
+    seen.add(key);
   }
   return null;
 }

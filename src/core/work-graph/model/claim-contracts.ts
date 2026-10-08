@@ -5,16 +5,19 @@
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { SessionRef } from '../../../contracts/core/identity.js';
 import type { TaskClaim } from '../../../contracts/core/task-claim.js';
-import type { WriteResult } from '../../../contracts/core/results.js';
+import type { WriteResult, ReadResult } from '../../../contracts/core/results.js';
+import type { CommitCursor } from '../../../contracts/command-event.js';
 import type {
   ConsumedWaitV1, DispatchOutboxRef, RoleBindingRefV1, RunRef, TaskAttemptRef, TaskBudgetV1, TaskDispatchStateV2, TaskTriple,
 } from '../../../contracts/dispatch.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
 import type { NewBasisInputRefV1 } from '../../../contracts/no-progress.js';
 import type { PlanRevisionRef } from '../../../contracts/plan.js';
-import type { TaskRequeueOutcomeV1, TaskRequeueRef, TaskRequeueTriggerV1 } from '../../../contracts/task-requeue.js';
+import type { TaskRequeueOutcomeV1, TaskRequeueRef, TaskRequeueSnapshotV1, TaskRequeueTriggerV1 } from '../../../contracts/task-requeue.js';
+import type { ArchiveRequeueOriginV1 } from '../../../contracts/session-anomaly.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
+import type { RawArtifactStorePort } from '../../record-store/body-ports.js';
 import type { RoleBindingFactsPort } from './configuration-contracts.js';
 import type { GraphWrite } from './task-contracts.js';
 
@@ -58,6 +61,8 @@ export type RequeueTaskInput = {
   budget?: TaskBudgetV1;
   trigger?: TaskRequeueTriggerV1;
   note?: string;
+  /** Slice 1 §2.6: present only when this requeue is caused by an archive. */
+  archiveOrigin?: ArchiveRequeueOriginV1 | null;
 };
 /**
  * Versioned dispatch phase nested in the @1 outbox body. `entered`/`settled`
@@ -88,6 +93,15 @@ export type TaskClaimOutbox = {
   dispatchState?: TaskDispatchStateV1 | TaskDispatchStateV2;
   claim: TaskClaim;
 };
+/**
+ * E5 (§2.3 S:622, L-d): the already committed `TaskRequeue` of a `(Task,
+ * afterRun)` pair with the cursor of its original `TaskRequeued` event, so the
+ * Workflow can report the original receipt without a second write.
+ */
+export type TaskRequeueReadV1 = {
+  requeue: TaskRequeueSnapshotV1;
+  cursor: CommitCursor;
+};
 export interface TaskClaimPort {
   claimTask(ctx: CoreCallContext, request: GraphWrite<ClaimTaskInput>): Promise<WriteResult<TaskClaim>>;
   /**
@@ -98,10 +112,23 @@ export interface TaskClaimPort {
    * always publishes it once implemented (A.2 step 5.4).
    */
   requeueTask?(ctx: CoreCallContext, request: GraphWrite<RequeueTaskInput>): Promise<WriteResult<TaskRequeueOutcomeV1>>;
+  /**
+   * E5: the smallest no-write read of an already committed requeue. It restores
+   * the original `TaskRequeued` event (via `lookupCommit`/`eventAt`) when the
+   * exact request identity has committed and the event covers `(Task,
+   * afterRun)`; `not_found` otherwise. Never writes or changes state.
+   */
+  readTaskRequeue?(ctx: CoreCallContext, request: GraphWrite<RequeueTaskInput>): Promise<ReadResult<TaskRequeueReadV1>>;
 }
 export type TaskClaimDependencies = {
   records: GoalRecordTransactionPort & RecordLookupPort;
   roles: RoleBindingFactsPort;
+  /**
+   * B2: the raw artifact body store, needed by the direct-claim legacy
+   * provenance reader to verify a `manifest_seed` basis (the directory path
+   * already takes it). Optional so an old narrower double stays compatible.
+   */
+  bodies?: RawArtifactStorePort;
   now(): string;
   newId(): string;
 };

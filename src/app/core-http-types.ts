@@ -20,6 +20,11 @@ import type { ExecutionReadPort, TaskExecutionRecord } from '../core/work-graph/
 import type { RunRef } from '../contracts/dispatch.js';
 import type { SessionMailboxPort } from '../core/work-graph/model/communication-contracts.js';
 import type { SessionDirectoryPort } from '../core/work-graph/model/session-contracts.js';
+// Slice 1 (spec §4.4, §0.2 L5): the owner ports of the eleven new suffixes.
+import type { SessionLifecyclePort } from '../core/work-graph/sessions/lifecycle-contracts.js';
+import type { SessionFactsPort } from '../core/work-graph/model/session-facts-contracts.js';
+import type { SessionResponsibilityPort } from '../core/work-graph/sessions/session-responsibility-service.js';
+import type { SessionAnomalyPort } from '../core/work-graph/tasks/session-anomaly-service.js';
 import type { AdoptInitialArchitectureInput } from '../core/work-graph/architecture/catalog-contracts.js';
 import type { ArchitectureCatalogPort } from '../core/work-graph/architecture/catalog-contracts.js';
 import type { ObservedArchitecturePort } from '../core/work-graph/architecture/contracts.js';
@@ -185,7 +190,21 @@ export type CoreRouteSuffix =
   // A.2 step 5.9 (C5, VR-14): the operator's "重新检查" (work) / "重新验收"
   // (gate): a successor round of a finalized non-PASS chain head, or its
   // committed policy refusal.
-  | 'verification/reverify';
+  | 'verification/reverify'
+  // Slice 1 (spec §4.4, §0.2 L5): the Session facts, corrections and archive
+  // suffixes. `CoreRouteSuffix` is declared ONLY here; `core-routes.ts` adds the
+  // table rows, binding types and dispatch cases.
+  | 'sessions/archive-line'
+  | 'sessions/archive-continue'
+  | 'sessions/archive-release'
+  | 'sessions/facts'
+  | 'sessions/successors'
+  | 'sessions/executions'
+  | 'sessions/queries'
+  | 'sessions/transfer-responsibility'
+  | 'tasks/archive-state'
+  | 'anomalies/list'
+  | 'messages/undelivered-replies';
 
 type SecondArgument<M> = M extends (ctx: CoreCallContext, argument: infer A) => unknown ? A : never;
 type MethodResult<M> = M extends (ctx: CoreCallContext, argument: never) => infer R ? Awaited<R> : never;
@@ -358,6 +377,65 @@ export type CommandsReadResponse = RouteResponse<WorkbenchToolsPort['readCommand
 export type CommandsStopBody = PlainBody<WorkbenchToolsPort['stopCommand']>;
 export type CommandsStopResponse = RouteResponse<WorkbenchToolsPort['stopCommand']>;
 
+// ---------------------------------------------------------------------------
+// Slice 1 (spec §4.4): the eleven Session facts / corrections / archive routes.
+//
+// Each alias derives from the exact public owner method the frozen route table
+// names. A `graph_write` route keeps the domain `{input,meta}` envelope; a
+// `plain` route carries the port's exact second argument. No internal write
+// payload is exposed: `recordSessionAnomaly`, the raw `requestSessionArchive`
+// and `finishSessionArchive` steps stay off the HTTP surface, and
+// `sessions/archive-line` is the ONLY new archive button (spec §4.4).
+// ---------------------------------------------------------------------------
+export type SessionsArchiveLineBody = GraphWriteBody<NonNullable<WorkflowPort['archiveLine']>>;
+export type SessionsArchiveLineResponse = RouteResponse<NonNullable<WorkflowPort['archiveLine']>>;
+export type SessionsArchiveContinueBody = PlainBody<NonNullable<WorkflowPort['continueArchiveLine']>>;
+export type SessionsArchiveContinueResponse = RouteResponse<NonNullable<WorkflowPort['continueArchiveLine']>>;
+export type SessionsArchiveReleaseBody = GraphWriteBody<SessionLifecyclePort['releaseSessionArchiveRequest']>;
+export type SessionsArchiveReleaseResponse = RouteResponse<SessionLifecyclePort['releaseSessionArchiveRequest']>;
+export type SessionsFactsBody = PlainBody<SessionFactsPort['readSessionFacts']>;
+export type SessionsFactsResponse = RouteResponse<SessionFactsPort['readSessionFacts']>;
+export type SessionsSuccessorsBody = PlainBody<SessionFactsPort['findSessionSuccessors']>;
+export type SessionsSuccessorsResponse = RouteResponse<SessionFactsPort['findSessionSuccessors']>;
+export type SessionsExecutionsBody = PlainBody<SessionFactsPort['listSessionExecutions']>;
+export type SessionsExecutionsResponse = RouteResponse<SessionFactsPort['listSessionExecutions']>;
+export type SessionsQueriesBody = PlainBody<SessionFactsPort['listSessionQueries']>;
+export type SessionsQueriesResponse = RouteResponse<SessionFactsPort['listSessionQueries']>;
+export type SessionsTransferResponsibilityBody = GraphWriteBody<SessionResponsibilityPort['transferSessionResponsibility']>;
+export type SessionsTransferResponsibilityResponse = RouteResponse<SessionResponsibilityPort['transferSessionResponsibility']>;
+export type TasksArchiveStateBody = PlainBody<SessionAnomalyPort['readTaskArchiveState']>;
+export type TasksArchiveStateResponse = RouteResponse<SessionAnomalyPort['readTaskArchiveState']>;
+export type AnomaliesListBody = PlainBody<SessionAnomalyPort['listSessionAnomalies']>;
+export type AnomaliesListResponse = RouteResponse<SessionAnomalyPort['listSessionAnomalies']>;
+export type MessagesUndeliveredRepliesBody = PlainBody<NonNullable<SessionMailboxPort['readUndeliveredReplies']>>;
+export type MessagesUndeliveredRepliesResponse = RouteResponse<NonNullable<SessionMailboxPort['readUndeliveredReplies']>>;
+
+/**
+ * The compile-time typed assembly of the eleven slice-1 suffixes (spec §4.4):
+ * each suffix paired with the exact body and exact public result its owner
+ * method produces. The parser and dispatcher use the aliases above directly;
+ * this table is the one place that names them all together, so the DTO contract
+ * and the route suffixes stay in sync and every alias is part of the production
+ * graph (K6). It is a type only: no runtime value exists.
+ */
+export type Slice1CoreRouteDto = {
+  'sessions/archive-line': { body: SessionsArchiveLineBody; response: SessionsArchiveLineResponse };
+  'sessions/archive-continue': { body: SessionsArchiveContinueBody; response: SessionsArchiveContinueResponse };
+  'sessions/archive-release': { body: SessionsArchiveReleaseBody; response: SessionsArchiveReleaseResponse };
+  'sessions/facts': { body: SessionsFactsBody; response: SessionsFactsResponse };
+  'sessions/successors': { body: SessionsSuccessorsBody; response: SessionsSuccessorsResponse };
+  'sessions/executions': { body: SessionsExecutionsBody; response: SessionsExecutionsResponse };
+  'sessions/queries': { body: SessionsQueriesBody; response: SessionsQueriesResponse };
+  'sessions/transfer-responsibility': {
+    body: SessionsTransferResponsibilityBody; response: SessionsTransferResponsibilityResponse;
+  };
+  'tasks/archive-state': { body: TasksArchiveStateBody; response: TasksArchiveStateResponse };
+  'anomalies/list': { body: AnomaliesListBody; response: AnomaliesListResponse };
+  'messages/undelivered-replies': {
+    body: MessagesUndeliveredRepliesBody; response: MessagesUndeliveredRepliesResponse;
+  };
+};
+
 /** Exact public result/domain shapes the UI and its tests consume. They are
  * re-exported, never restated, so the browser cannot depend on a private copy. */
 export type { SessionCard, SessionOperationRecord, SessionPage } from '../core/work-graph/model/session-contracts.js';
@@ -385,6 +463,12 @@ export type {
 export type { InitialPlanningGoalInputResult, WorkflowAdvanceResult, WorkflowStepReceipt,
   ConsultationInput, ConsultationResult } from '../business/workflow/contracts.js';
 export type { CollaborationDriverPort, CollaborationSnapshot, CollaborationState } from './collaboration-driver.js';
+// Slice 1 (spec §4.4): the result shapes of the new read routes and the archive
+// composite, re-exported rather than restated for the UI.
+export type { ArchiveLineInput, ArchiveLineResultV1, ArchiveStepReceiptV1 } from '../business/workflow/session-archive.js';
+export type { SessionFactsV1, SessionWorkWaitV1 } from '../core/work-graph/model/session-facts-contracts.js';
+export type { SessionAnomalyViewV1 } from '../contracts/session-anomaly.js';
+export type { UndeliveredReplyV1 } from '../core/work-graph/model/communication-contracts.js';
 
 /** `GET /api/real/core/bootstrap` omits root, authorization predicate and every
  * technical handle. `review` is whatever trusted startup configuration

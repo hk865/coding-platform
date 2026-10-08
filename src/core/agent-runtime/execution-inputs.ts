@@ -49,8 +49,19 @@ function alreadyAcceptedBySource(message: SessionMessage, inputId: string): bool
   return (message.acceptedInputs ?? []).some(entry => entry.inputId === inputId);
 }
 
+/** Compare two plain Session refs without importing a wider identity helper. */
+function sameSession(left: { projectId: string; sessionId: string }, right: { projectId: string; sessionId: string }): boolean {
+  return left.projectId === right.projectId && left.sessionId === right.sessionId;
+}
+
 export type MailboxInputSupplyDependencies = {
-  messages: Pick<SessionMailboxPort, 'readInbox' | 'readMessageBody' | 'readOutbox' | 'readMessage'>;
+  /**
+   * Slice 1 §2.5 / §6 F82: the same channel also reads the replies whose
+   * effective reply handler is this Session (`readRoutedReplies`), merged with
+   * `readOutbox` under the one `deriveSessionInputId(messageRef, 'response')`
+   * identity. Optional on the port, so an existing narrow double stays valid.
+   */
+  messages: Pick<SessionMailboxPort, 'readInbox' | 'readMessageBody' | 'readOutbox' | 'readMessage' | 'readRoutedReplies'>;
   /** The trusted Run context; the same identity the Kernel tool calls use. */
   context: () => CoreCallContext;
   sessionRef: SessionRef;
@@ -70,6 +81,10 @@ export function createMailboxInputSupply(deps: MailboxInputSupplyDependencies): 
     results: SuppliedInput[]): Promise<void> => {
     if (message === undefined) return;
     if (message.status !== 'responded' || message.response === null) return;
+    // §2.5: the effective reply handler is the recorded `replyHandler` when set,
+    // otherwise the original work_run sender. A transferred reply is supplied
+    // only to the handler, never to the original sender (`readOutbox`).
+    if (message.replyHandler != null && !sameSession(message.replyHandler.sessionRef, sessionRef)) return;
     const inputId = deriveInputId(message.ref, 'response');
     if (seen.has(inputId) || alreadyAcceptedBySource(message, inputId)) return;
     const body = await deps.messages.readMessageBody(ctx, { messageRef: message.ref, part: 'response' });
@@ -121,7 +136,28 @@ export function createMailboxInputSupply(deps: MailboxInputSupplyDependencies): 
         }
         const next = read.value.nextCursor ?? undefined;
         if (next === undefined) break;
-      if (next === cursor) throw new Error('input cursor did not advance');
+        if (next === cursor) throw new Error('input cursor did not advance');
+        cursor = next;
+      }
+    }
+
+    // 2b. Slice 1 §2.5: replies whose effective reply handler is this Session (a
+    //     wait transferred to it). The same `readResponse`, the same original
+    //     messageRef and the same `deriveSessionInputId(...,'response')` identity
+    //     as the outbox, so a page that repeats a candidate is supplied once.
+    const readRoutedReplies = deps.messages.readRoutedReplies;
+    if (readRoutedReplies !== undefined) {
+      let cursor: string | undefined;
+      while (!signal.aborted) {
+        const read = await readRoutedReplies(ctx, { handler: sessionRef, page: { limit: 100, ...(cursor === undefined ? {} : { cursor }) } });
+        if (read.status !== 'ready') throw new Error(`input index unavailable: ${read.status}`);
+        for (const message of read.value.items) {
+          if (signal.aborted) return results;
+          await readResponse(ctx, message, seen, results);
+        }
+        const next = read.value.nextCursor ?? undefined;
+        if (next === undefined) break;
+        if (next === cursor) throw new Error('input cursor did not advance');
         cursor = next;
       }
     }

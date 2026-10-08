@@ -50,6 +50,7 @@ import type { ActorRef } from '../../../contracts/command-event.js';
 import type { SessionRef } from '../../../contracts/core/identity.js';
 import type { CoreError, CoreRejection } from '../../../contracts/core/results.js';
 import type { SessionMessageIntentV1, SessionMessageRef } from '../../../contracts/core/session-message.js';
+import type { ArchiveWaitChoiceV1 } from '../../../contracts/core/session-archive.js';
 import type { RoleBindingRefV1, RunRef, SourceRefV1 } from '../../../contracts/dispatch.js';
 import type { QueryJobAnswerRef, QueryRunRef } from '../../../contracts/query-job.js';
 import { accept, reject, unreachable, type Rejected, type Transition } from './transition.js';
@@ -128,6 +129,21 @@ export type SessionMessageRecord = {
   waitAfterSend?: boolean;
   acceptedInputs?: MessageAcceptedInput[];
   consultationDerivation?: MessageConsultationDerivation;
+  /** Slice 1 §2.5: the effective reply handler; absent and null both mean the original sender. */
+  replyHandler?: {
+    sessionRef: SessionRef;
+    archiveSessionRef: SessionRef;
+    archiveRequestId: string;
+    changedAt: string;
+  } | null;
+  /** Slice 1 §2.5: the recorded disposal of this wait during an archive; absent and null mean none. */
+  archiveWaitDisposition?: {
+    kind: 'cancel' | 'transfer';
+    runRef: RunRef;
+    archiveSessionRef: SessionRef;
+    archiveRequestId: string;
+    recordedAt: string;
+  } | null;
 };
 
 // --------------------------------------------------------------------------
@@ -161,7 +177,8 @@ export type MessageEvent =
   | { type: 'message_responded'; via: 'text' | 'query_answer' }
   | { type: 'input_accepted'; part: 'message' | 'response'; inputId: string }
   | { type: 'consultation_derived' }
-  | { type: 'task_claimed' };
+  | { type: 'task_claimed' }
+  | { type: 'archive_wait_disposed' };
 
 /** §10.1. IO stays in the service; it fills in what it read and authorized. */
 export type MessageGuardContext = {
@@ -220,6 +237,11 @@ export type MessageGuardContext = {
   };
   /** MSG-10 only. */
   consumedWait: null | { responseRefMatches: boolean; sameWorkspace: boolean };
+  /** Slice 1 §3.5: `archive_wait_disposed` only. */
+  archiveWait?: {
+    choice: ArchiveWaitChoiceV1; archiveSessionRef: SessionRef; archiveRequestId: string; now: string;
+    requestMatches: boolean; waitMatches: boolean; targetEligible: boolean; responseAccepted: boolean;
+  };
 };
 
 /** MSG-06 consultation binding verdict, in today's check order. */
@@ -236,7 +258,8 @@ export type SessionMessageEventType =
   | 'SessionMessageRead'
   | 'SessionMessageResponded'
   | 'SessionMessageInputAccepted'
-  | 'SessionMessageConsultationDerived';
+  | 'SessionMessageConsultationDerived'
+  | 'ArchiveWaitDisposed';
 
 /**
  * Effects the owner service translates (§10.3 effects column):
@@ -742,6 +765,38 @@ function onTaskClaimed(state: MessageMachineState, ctx: MessageGuardContext): Me
   return accept<MessageMachineState, MessageEffect>(state);
 }
 
+/**
+ * S1-MSG-01/02: the archive disposes the original wait by transferring the
+ * reply handler or recording a cancel. The message status, response, sender and
+ * recipient never change; only the handler/disposition (and the revision) do.
+ * An already accepted response consumes the wait, so it is `busy`.
+ */
+function onArchiveWaitDisposed(state: MessageMachineState, ctx: MessageGuardContext): MessageTransition {
+  if (state.status === 'absent') return absentMessage();
+  const facts = ctx.archiveWait;
+  if (facts === undefined) return reject('illegal', 'invalid', 'archive_wait_disposed requires the archive wait facts');
+  if (facts.responseAccepted) {
+    return reject('guard_failed', 'busy', 'the wait response was already accepted into an execution');
+  }
+  if (!facts.requestMatches) {
+    return reject('guard_failed', 'invalid', 'archive_input_invalid: the archive request does not match this wait disposal');
+  }
+  if (!facts.waitMatches) {
+    return reject('guard_failed', 'invalid', 'the wait disposal does not match the original wait');
+  }
+  if (!facts.targetEligible) {
+    return reject('guard_failed', 'unavailable', 'the reply-handler target Session is not eligible');
+  }
+  return accept<MessageMachineState, MessageEffect>(
+    { ...state, revision: state.revision + 1 },
+    [
+      { kind: 'write_message', change: 'archive_wait_disposed' },
+      { kind: 'append_event', eventType: 'ArchiveWaitDisposed' },
+      { kind: 'guard_message', expectedRevision: state.revision },
+    ],
+  );
+}
+
 export function transitionMessage(state: MessageMachineState, event: MessageEvent, ctx: MessageGuardContext): MessageTransition {
   switch (event.type) {
     case 'message_sent':
@@ -763,6 +818,8 @@ export function transitionMessage(state: MessageMachineState, event: MessageEven
       return onConsultationDerived(state, ctx);
     case 'task_claimed':
       return onTaskClaimed(state, ctx);
+    case 'archive_wait_disposed':
+      return onArchiveWaitDisposed(state, ctx);
     default:
       return unreachable(event, 'message event');
   }
@@ -820,7 +877,9 @@ export type SessionMessageChange =
   | { kind: 'read'; readAt: string }
   | { kind: 'responded'; response: MessageResponseRecord }
   | { kind: 'input_accepted'; input: MessageAcceptedInput }
-  | { kind: 'consultation_derived'; derivation: MessageConsultationDerivation };
+  | { kind: 'consultation_derived'; derivation: MessageConsultationDerivation }
+  | { kind: 'archive_wait_disposed'; choice: ArchiveWaitChoiceV1; archiveSessionRef: SessionRef;
+      archiveRequestId: string; now: string };
 
 /**
  * MSG-03..09: the next revision of `message`. Every change bumps the revision
@@ -871,6 +930,31 @@ export function nextSessionMessageRecord(message: SessionMessageRecord, change: 
         throw new Error('nextSessionMessageRecord: the consultation derivation is already fixed');
       }
       return { ...message, revision, consultationDerivation: change.derivation };
+    case 'archive_wait_disposed': {
+      const choice = change.choice;
+      const disposition = {
+        kind: choice.kind,
+        runRef: choice.runRef,
+        archiveSessionRef: change.archiveSessionRef,
+        archiveRequestId: change.archiveRequestId,
+        recordedAt: change.now,
+      };
+      if (choice.kind === 'transfer') {
+        return {
+          ...message,
+          revision,
+          replyHandler: {
+            sessionRef: choice.to,
+            archiveSessionRef: change.archiveSessionRef,
+            archiveRequestId: change.archiveRequestId,
+            changedAt: change.now,
+          },
+          archiveWaitDisposition: disposition,
+        };
+      }
+      // S1-MSG-02: a cancel records the disposition and keeps the original handler.
+      return { ...message, revision, archiveWaitDisposition: disposition };
+    }
     default:
       return unreachable(change, 'message change');
   }

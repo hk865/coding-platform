@@ -29,6 +29,7 @@
 import type { CoreCallContext, MaterialReader } from '../../../contracts/core/call-context.js';
 import type { RoleConfigurationRef, VersionPin, WorkspaceScope } from '../../../contracts/core/identity.js';
 import type { PreparedTaskExecution, PreparedTaskManifestV1 } from '../../../contracts/core/prepared-execution.js';
+import type { SessionAnomalyAnchorRef } from '../../../contracts/session-anomaly.js';
 import type { CoreError, CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import type { SessionRecord } from '../../../contracts/core/session.js';
 import type { TaskClaim } from '../../../contracts/core/task-claim.js';
@@ -1057,6 +1058,26 @@ function continuationBriefVerdict(
   return 'bound';
 }
 
+/**
+ * Slice 1 §3.5/F84: the equality the authorization-time caller assembles for
+ * the Run machine's `anomalyRefsMatch` guard. It compares the brief's actual
+ * `anomalies.anchors` with the binding's `anomalyAnchorRefs` in canonical
+ * order; an old brief without the section and an old binding without the refs
+ * both read as true. The comparison itself is part 2.
+ */
+export function anomalyAnchorRefsMatch(
+  brief: PreparedTaskManifestV1['continuationBrief'],
+  binding: RuntimeInputBindingV1,
+): boolean {
+  // An old brief without the anomaly section binds no refs: the guard holds.
+  if (brief === undefined || brief.anomalies === undefined) return true;
+  const normalize = (refs: readonly SessionAnomalyAnchorRef[]): string[] =>
+    refs.map(ref => canonicalJson(ref as unknown as JsonValue)).sort();
+  const installed = normalize(brief.anomalies.anchors.map(anchor => anchor.ref));
+  const bound = normalize(binding.anomalyAnchorRefs ?? []);
+  return installed.length === bound.length && installed.every((value, index) => value === bound[index]);
+}
+
 /** RUN-04's `freshAdmission`: the saved manifest of the Run, then as RUN-02 from the Host/Role on. */
 async function beginAdmission(
   deps: ExecutionEntryDependencies, ctx: CoreCallContext, facts: TaskExecutionRecord,
@@ -1251,8 +1272,13 @@ export function createExecutionEntryService(deps: ExecutionEntryDependencies): E
 
       // C3 (RUN-02, contract (e)): the continuation brief binding of the prepared manifest.
       const briefManifest = await readManifestFromEnvelope(deps, prepared.envelope as unknown as Record<string, unknown>, claim.runRef);
-      runCtx = { ...runCtx, continuationBrief: continuationBriefVerdict(facts.run, claim, prepared.inputBinding,
-        briefManifest.ok ? briefManifest.value.manifest : null) };
+      const manifestBrief = briefManifest.ok ? briefManifest.value.manifest.continuationBrief : undefined;
+      runCtx = { ...runCtx,
+        continuationBrief: continuationBriefVerdict(facts.run, claim, prepared.inputBinding,
+          briefManifest.ok ? briefManifest.value.manifest : null),
+        // Slice 1 §3.5/F84: the actually installed anchor refs must equal the
+        // binding's canonical refs; an old brief without the section holds.
+        anomalyRefsMatch: anomalyAnchorRefsMatch(manifestBrief, prepared.inputBinding) };
       const admission = freshAdmissionOf(
         await authorizeAdmission(deps, scopeCtx, scope, prepared, facts, goalScope.goal.workspaceRef.workspaceId));
       const authorized = transitionRun(state, runEvent, { ...runCtx, freshAdmission: admission.problem });

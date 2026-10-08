@@ -87,6 +87,19 @@ const ROUTE_LABELS: Record<CoreRouteSuffix, string> = {
   // A.2 step 5.9 suffix: display label only (the table is total over
   // CoreRouteSuffix); the action is the new UI's (task E3).
   'verification/reverify': '重新检查 / 重新验收',
+  // Slice 1 (Session facts, corrections and archive) suffixes: display labels
+  // only (this table is total over CoreRouteSuffix); the actions are the new UI's.
+  'sessions/archive-line': '归档会话（组合）',
+  'sessions/archive-continue': '继续归档',
+  'sessions/archive-release': '释放归档请求',
+  'sessions/facts': '查看会话事实',
+  'sessions/successors': '查看后继会话',
+  'sessions/executions': '查看会话执行',
+  'sessions/queries': '查看会话调查',
+  'sessions/transfer-responsibility': '转移负责关系',
+  'tasks/archive-state': '查看任务归档状态',
+  'anomalies/list': '列出异常锚点',
+  'messages/undelivered-replies': '查看未送达回复',
 };
 
 export const routeLabel = (route: CoreRouteSuffix): string => ROUTE_LABELS[route];

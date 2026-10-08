@@ -22,7 +22,10 @@ import type { SessionMailboxPort } from '../core/work-graph/model/communication-
 import { SESSION_MESSAGE_RECORD_SCHEMAS } from '../core/work-graph/sessions/message-record-codecs.js';
 import { createSourceAuthorityReader } from '../core/work-graph/source-authority-reader.js';
 import { createWorkflow } from '../business/workflow/workflow.js';
-import type { WorkflowDependencies, WorkflowHostConfiguration, WorkflowPort } from '../business/workflow/ports.js';
+import { DEFAULT_SESSION_ARCHIVE_POLICY } from '../business/workflow/ports.js';
+import type {
+  SessionArchivePolicyV1, SessionDutyResolver, WorkflowDependencies, WorkflowHostConfiguration, WorkflowPort,
+} from '../business/workflow/ports.js';
 
 import { createEvidenceService } from '../core/work-graph/evidence/evidence-service.js';
 import { EVIDENCE_RECORD_SCHEMAS } from '../core/work-graph/persistence/evidence-record-codecs.js';
@@ -50,13 +53,20 @@ import type { TaskClaimPort } from '../core/work-graph/model/claim-contracts.js'
 import type { RoleConfigurationPort } from '../core/work-graph/model/configuration-contracts.js';
 import { createPlanService } from '../core/work-graph/tasks/plan-service.js';
 import { PLAN_RECORD_SCHEMAS } from '../core/work-graph/persistence/plan-record-codecs.js';
-import { PLAN_STATE_RECORD_SCHEMAS, PLAN_GOVERNANCE_RECORD_SCHEMAS } from '../core/work-graph/tasks/plan-readers.js';
+import { PLAN_STATE_RECORD_SCHEMAS, PLAN_GOVERNANCE_RECORD_SCHEMAS, createSessionResponsibilityBasisReader } from '../core/work-graph/tasks/plan-readers.js';
 import { createSessionDirectory } from '../core/work-graph/sessions/session-directory.js';
 import type { SessionDirectoryPort } from '../core/work-graph/model/session-contracts.js';
 import { SESSION_RECORD_SCHEMAS } from '../core/work-graph/sessions/session-record-codecs.js';
 import { createSessionLifecycleService } from '../core/work-graph/sessions/session-lifecycle.js';
 import type { SessionLifecyclePort } from '../core/work-graph/sessions/lifecycle-contracts.js';
 import { SESSION_LIFECYCLE_RECORD_SCHEMAS } from '../core/work-graph/sessions/lifecycle-record-codecs.js';
+// Slice 1 (spec §3.3, §4.4): the Session-facts, responsibility and anomaly owners
+// constructed by this composition root and injected through the narrow ports.
+import { createSessionFactsService } from '../core/work-graph/tasks/session-facts.js';
+import { createSessionResponsibilityService } from '../core/work-graph/sessions/session-responsibility-service.js';
+import { createSessionAnomalyService } from '../core/work-graph/tasks/session-anomaly-service.js';
+import { createLegacySessionProvenanceReader } from '../core/work-graph/tasks/session-provenance-facts.js';
+import { SLICE1_LOOKUP_INDEXES } from '../core/work-graph/model/session-facts-contracts.js';
 import { createKernelStoreRegistry } from '../core/agent-runtime/kernel-store-locator.js';
 import { createSessionHistoryCursorOwner, createSessionOperations } from '../core/agent-runtime/session-operations.js';
 import type { CoreCallContext } from '../contracts/core/call-context.js';
@@ -73,6 +83,7 @@ import { createRoleConfigurationService } from '../core/work-graph/configuration
 import { ROLE_RECORD_SCHEMAS } from '../core/work-graph/configuration/role-record-codecs.js';
 import { createProjectBootstrapServices } from '../core/work-graph/configuration/project-bootstrap-service.js';
 import { createQueryExecution } from '../core/work-graph/queries/query-execution.js';
+import { SESSION_ANOMALY_RECORD_SCHEMAS } from '../core/work-graph/tasks/session-anomaly-codecs.js';
 import { projectQueryConfiguration } from '../core/agent-runtime/query-preparation.js';
 import { createQueryJobService } from '../core/work-graph/queries/query-job-service.js';
 import type {
@@ -139,6 +150,18 @@ export type TargetPlatformOptions = {
    * R-source write are admitted only under `owned`; absent, they answer `busy`.
    */
   hostInstance?: HostInstanceFacts;
+  /**
+   * Slice 1 (spec §2.8, §3.3): the trusted archive timing policy. It is Host
+   * startup data, not a project setting; absent reads as
+   * `DEFAULT_SESSION_ARCHIVE_POLICY` (one day / 100 per page).
+   */
+  sessionArchivePolicy?: SessionArchivePolicyV1;
+  /**
+   * Slice 1 (spec §2.8, L4): the trusted duty resolver. Absent derives executor
+   * from `WorkflowHostConfiguration.bindings[].sessionRole` only; the resolver
+   * is a trusted Host callback, never a model input or a stored Session field.
+   */
+  sessionDutyResolver?: SessionDutyResolver;
 };
 
 /** The composition-owned service identity. It is used only to execute trusted
@@ -148,6 +171,44 @@ const SYSTEM_ACTOR = Object.freeze({ kind: 'system' as const, id: 'platform-comp
 
 function sameJson(left: unknown, right: unknown): boolean {
   try { return canonicalJson(left as JsonValue) === canonicalJson(right as JsonValue); } catch { return false; }
+}
+
+/**
+ * Slice 1 (spec §2.8, T6): validate the trusted Host archive timing policy.
+ * Both values must be positive safe integers and the page size must be 1..100;
+ * an absent policy is the frozen default. A malformed policy is a startup
+ * configuration error, never a silently clamped default.
+ */
+function sessionArchivePolicyOf(policy: SessionArchivePolicyV1 | undefined): SessionArchivePolicyV1 {
+  if (policy === undefined) return { ...DEFAULT_SESSION_ARCHIVE_POLICY };
+  const { executorArchiveAfterMs, maintenancePageSize } = policy;
+  if (policy.schemaVersion !== 1
+    || !Number.isSafeInteger(executorArchiveAfterMs) || executorArchiveAfterMs <= 0
+    || !Number.isSafeInteger(maintenancePageSize) || maintenancePageSize < 1 || maintenancePageSize > 100) {
+    throw new Error('the Session archive policy is malformed: positive safe integers and a maintenance page size of 1..100 are required');
+  }
+  return { schemaVersion: 1, executorArchiveAfterMs, maintenancePageSize };
+}
+
+/**
+ * Slice 1 (spec §2.8, L4): the resolver used when the Host installed none. Only
+ * a role whose COMPLETE canonical `RoleConfigurationRef` is one of the Host's
+ * ordinary Work bindings resolves to `executor`; every other role is `unknown`,
+ * so a same-named Session is never treated as an executor. The optional Host
+ * callback stays a trusted function and always wins when installed.
+ */
+function defaultSessionDutyResolver(configuration: WorkflowHostConfiguration | undefined): SessionDutyResolver {
+  const executors = new Set<string>();
+  for (const binding of configuration?.bindings ?? []) {
+    try { executors.add(canonicalJson(binding.sessionRole as unknown as JsonValue)); }
+    catch { /* an unencodable role contributes no executor mapping */ }
+  }
+  return async (role) => {
+    let key: string;
+    try { key = canonicalJson(role as unknown as JsonValue); }
+    catch { return { status: 'ready', value: 'unknown' }; }
+    return { status: 'ready', value: executors.has(key) ? 'executor' : 'unknown' };
+  };
 }
 
 /**
@@ -349,6 +410,8 @@ function createAuthorizeQueryConfiguration(host: RuntimeHostBindings): Authorize
  * supplied. No business bootstrap/claim API is invented by the storage factory. */
 export async function createTargetPlatform(options: TargetPlatformOptions) {
   const now = options.now ?? (() => new Date().toISOString());
+  // Slice 1 (spec §2.8): the validated archive policy this Host runs with.
+  const archivePolicy = sessionArchivePolicyOf(options.sessionArchivePolicy);
   const hostInstance: HostInstanceFacts | undefined = options.hostInstance === undefined ? undefined
     : { hostInstanceId: options.hostInstance.hostInstanceId, lease: options.hostInstance.lease };
   // C8 (A.2 step 5.6): the Host-installed automatic-rework policy; the defaults (3 / true) until the
@@ -364,6 +427,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       ...EXECUTION_ENTRY_RECORD_SCHEMAS.records, ...MODEL_REQUEST_RECORD_SCHEMAS.records,
       ...SESSION_MESSAGE_RECORD_SCHEMAS.records, ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.records,
       ...CONTROL_RECORD_SCHEMAS.records, ...EVIDENCE_RECORD_SCHEMAS.records, ...QUERY_JOB_RECORD_SCHEMAS.records,
+      ...SESSION_ANOMALY_RECORD_SCHEMAS.records,
       ...COMPLETION_RECORD_SCHEMAS.records],
     events: [...materialsSchema.events, ...PLAN_RECORD_SCHEMAS.events, ...PLAN_STATE_RECORD_SCHEMAS.events,
       ...PLAN_GOVERNANCE_RECORD_SCHEMAS.events, ...SESSION_RECORD_SCHEMAS.events, ...SESSION_LIFECYCLE_RECORD_SCHEMAS.events,
@@ -372,6 +436,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       ...EXECUTION_ENTRY_RECORD_SCHEMAS.events, ...MODEL_REQUEST_RECORD_SCHEMAS.events,
       ...SESSION_MESSAGE_RECORD_SCHEMAS.events,
       ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.events, ...CONTROL_RECORD_SCHEMAS.events, ...EVIDENCE_RECORD_SCHEMAS.events, ...QUERY_JOB_RECORD_SCHEMAS.events,
+      ...SESSION_ANOMALY_RECORD_SCHEMAS.events,
       ...COMPLETION_RECORD_SCHEMAS.events],
     lookups: [...materialsSchema.lookups ?? [], ...PLAN_RECORD_SCHEMAS.lookups ?? [], ...PLAN_STATE_RECORD_SCHEMAS.lookups ?? [],
       ...PLAN_GOVERNANCE_RECORD_SCHEMAS.lookups ?? [], ...SESSION_RECORD_SCHEMAS.lookups ?? [],
@@ -380,8 +445,18 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       ...TASK_CLAIM_RECORD_SCHEMAS.lookups ?? [], ...EXECUTION_ENTRY_RECORD_SCHEMAS.lookups ?? [],
       ...MODEL_REQUEST_RECORD_SCHEMAS.lookups ?? [], ...SESSION_MESSAGE_RECORD_SCHEMAS.lookups ?? [],
       ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.lookups ?? [], ...CONTROL_RECORD_SCHEMAS.lookups ?? [], ...EVIDENCE_RECORD_SCHEMAS.lookups ?? [], ...QUERY_JOB_RECORD_SCHEMAS.lookups ?? [],
+      ...SESSION_ANOMALY_RECORD_SCHEMAS.lookups ?? [],
       ...COMPLETION_RECORD_SCHEMAS.lookups ?? []],
   };
+  // Slice 1 (spec §2.8): every one of the six new indexes must be part of the
+  // real record-store schema set this Host opens. The declared
+  // `SLICE1_LOOKUP_INDEXES` table and the codec-owned bundles stay in sync.
+  const registeredLookupNames = new Set(schemas.lookups.map((lookup) => lookup.name));
+  for (const index of SLICE1_LOOKUP_INDEXES) {
+    if (!registeredLookupNames.has(index.name)) {
+      throw new Error(`the Slice 1 lookup index ${index.name} is not registered in the record-store schema set`);
+    }
+  }
   if (options.storage.kind === 'sqlite') mkdirSync(options.storage.directory, { recursive: true });
   const rawBackend = options.storage.kind === 'memory'
     ? createInMemoryRecordBackend({ schemas })
@@ -417,7 +492,28 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     const bootstrap = createProjectBootstrapServices({ records: backend.records, now, eventId: randomUUID });
     const authorizeConfiguration = options.runtime === undefined
       ? undefined : createAuthorizeConfiguration(options.runtime);
-    const sessionDirectory = createSessionDirectory({ records: backend.records, lookups: backend.records });
+    // Slice 1 (spec §0.2 L1, §3.3): the ONE `SessionFactsPort` instance. It is
+    // injected into the Session directory, the lifecycle service, the anomaly
+    // owner and the Workflow, and `sessions`/`queries` never import `tasks`.
+    const sessionFacts = createSessionFactsService({ records: backend.records });
+    const responsibilityBasis = createSessionResponsibilityBasisReader(backend.records);
+    const sessionResponsibility = createSessionResponsibilityService({
+      records: backend.records, lookups: backend.records,
+      // The trusted Task basis stays in `tasks` and arrives through the narrow port.
+      basis: responsibilityBasis, now,
+    });
+    const sessionAnomalies = createSessionAnomalyService({
+      records: backend.records, lookups: backend.records, sessionFacts, now,
+    });
+    // Slice 1 E14 (§2.2): the SAME legacy-provenance reader reaches the Session
+    // directory and maintenance's provenance backfill, never a second instance.
+    const legacyProvenance = createLegacySessionProvenanceReader(backend.records, sessionFacts, bodies);
+    const sessionDirectory = createSessionDirectory({ records: backend.records, lookups: backend.records,
+      legacyProvenance });
+    // Slice 1 (spec §3.3): the Host-only legacy provenance backfill entry. Its
+    // member is read here, in the assembly, so the public port member and the
+    // directory's implementation are part of the production graph.
+    const backfillSessionProvenance = sessionDirectory.backfillSessionProvenance!.bind(sessionDirectory);
     // The public mailbox is real even without a model Host binding; internal
     // calls use the raw service so an in-flight operation is never rejected by
     // the public tracked wrapper after close has already begun. It is built
@@ -435,7 +531,12 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     const queryExecution = options.runtime === undefined ? undefined : createQueryExecution({
       records: backend.records, roles: roleService, bodies,
       authorizeConfiguration: createAuthorizeQueryConfiguration(options.runtime),
-      now, eventId: randomUUID, ...(hostInstance === undefined ? {} : { hostInstance }),
+      now, eventId: randomUUID, sessionFacts,
+      // Slice 1 N3 (§3.4 S:630): the SAME hoisted legacy-provenance reader the
+      // Session directory and the Workflow use judges a legacy Query claim; a
+      // second instance would derive a different provenance/guard set.
+      legacyProvenance,
+      ...(hostInstance === undefined ? {} : { hostInstance }),
     });
     const queryJobs = createQueryJobService({
       records: backend.records, now, eventId: randomUUID,
@@ -468,7 +569,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         delegatedWrites: { reads: executionReader, roles: roleService, bodies, authorizeConfiguration },
       }) });
     const claimService = createTaskClaimService({ records: backend.records, roles: roleService,
-      now, newId: randomUUID });
+      bodies, now, newId: randomUUID });
     // The ONE verification workspace reader: the evidence owner captures rounds
     // with it and the requeue owner takes its digest-only source (LA-5).
     const verificationWorkspaceReader = new VerificationWorkspaceReader();
@@ -483,7 +584,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       }),
       automationPolicy: currentAutomationPolicy,
       now, eventId: randomUUID });
-    const sessionLifecycle = createSessionLifecycleService({ records: backend.records, lookups: backend.records });
+    const sessionLifecycle = createSessionLifecycleService({ records: backend.records, lookups: backend.records,
+      sessionFacts });
     const kernelStores = await createKernelStoreRegistry(options.kernelStores ?? { entries: [] });
     // Internal calls retain the raw directory. The outer Runtime operation is
     // drained once as a whole, so close cannot reject its later registration.
@@ -590,6 +692,14 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       linkSessionWork: (...args) => trackedCall(() => sessionLifecycle.linkSessionWork(...args), unavailable),
       archiveSession: (...args) => trackedCall(() => sessionLifecycle.archiveSession(...args), unavailable),
       reactivateSession: (...args) => trackedCall(() => sessionLifecycle.reactivateSession(...args), unavailable),
+      // Slice 1 (spec §3.3): the archive request/receipt/step entries and the
+      // Host-only legacy provenance backfill. The low-level public
+      // `sessions/archive` signature/return is unchanged.
+      requestSessionArchive: (...args) => trackedCall(() => sessionLifecycle.requestSessionArchive(...args), unavailable),
+      readSessionArchiveRequestReceipt: (...args) => trackedCall(() => sessionLifecycle.readSessionArchiveRequestReceipt(...args), unavailable),
+      finishSessionArchive: (...args) => trackedCall(() => sessionLifecycle.finishSessionArchive(...args), unavailable),
+      releaseSessionArchiveRequest: (...args) => trackedCall(() => sessionLifecycle.releaseSessionArchiveRequest(...args), unavailable),
+      backfillSessionProvenance: (...args) => trackedCall(() => backfillSessionProvenance(...args), unavailable),
     };
     const executions: ExecutionReadPort & ExecutionHistoryWritePort
       & Required<Pick<ExecutionReadPort, 'listExecutions'>> = {
@@ -603,6 +713,10 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     const claims: TaskClaimPort = {
       claimTask: (...args) => trackedCall(() => claimService.claimTask(...args), unavailable),
       requeueTask: (...args) => trackedCall(() => requeueService.requeueTask(...args), unavailable),
+      // Slice 1 E5/K6 (§3.3): the requeue read the Session-archive path uses to
+      // reuse an existing TaskRequeue instead of rewriting it. The same owner
+      // instance as `requeueTask`, never a second service.
+      readTaskRequeue: (...args) => trackedCall(() => requeueService.readTaskRequeue(...args), unavailable),
     };
     const roles: RoleConfigurationPort = {
       installRoleSpec: (ctx, command) => trackedCall(() => roleService.installRoleSpec(ctx, command),
@@ -674,6 +788,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       readOutbox: (...args) => trackedCall(() => mailbox.readOutbox(...args), unavailable),
       ackMessage: (...args) => trackedCall(() => mailbox.ackMessage(...args), unavailable),
       respondMessage: (...args) => trackedCall(() => mailbox.respondMessage(...args), unavailable),
+      // Slice 1 (spec §4.4): the read-only undelivered-reply source page.
+      readUndeliveredReplies: (...args) => trackedCall(() => mailbox.readUndeliveredReplies!(...args), unavailable),
     };
     // The public control port is real even without a Runtime Host binding: the
     // raw service depends only on the store and exact Run reads. Both operations
@@ -788,12 +904,63 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     };
     const workflowConfiguration = options.workflow === undefined
       ? undefined : structuredClone(options.workflow);
+    // Slice 1 (spec §3.3): the responsibility port's three public writes. Every
+    // member is read here so the public `closeTerminalResponsibility` write (a
+    // task's terminal relationship close) is part of the production assembly.
+    const closeTerminalResponsibility = sessionResponsibility.closeTerminalResponsibility.bind(sessionResponsibility);
+    const responsibilities: typeof sessionResponsibility = {
+      transferSessionResponsibility: sessionResponsibility.transferSessionResponsibility.bind(sessionResponsibility),
+      disposeArchiveResponsibility: sessionResponsibility.disposeArchiveResponsibility.bind(sessionResponsibility),
+      closeTerminalResponsibility,
+    };
     const workflowDependencies: WorkflowDependencies = {
       tasks: rawGoals, plans: planService, sessions: sessionDirectory,
-      claims: { ...claimService, requeueTask: requeueService.requeueTask },
+      claims: { ...claimService, requeueTask: requeueService.requeueTask,
+        readTaskRequeue: requeueService.readTaskRequeue },
       executions: executionReader, runtime: rawRuntime, evidence: rawEvidence, checks: rawCheckRunner,
       sourceAuthority,
+      // Slice 1 (spec §3.3): the new optional narrow ports. The SAME
+      // `sessionFacts` instance reaches the Workflow; `controls` and the two
+      // attestations bind this Host's existing wrappers; the archive policy and
+      // duty resolver are trusted Host data (default one day; bindings-only duty
+      // when no resolver is installed). The archive/maintenance services are
+      // built by `createWorkflow` from these ports.
+      sessionLifecycle,
+      sessionFacts,
+      responsibilities,
+      sessionAnomalies,
+      controls: rawControls,
+      attestUnknownRun: resolveUnknownRun,
+      attestUnknownQueryRun: resolveUnknownQueryRun,
+      archivePolicy,
+      // Slice 1 (L-g): every new Workflow archive/maintenance time comes from
+      // this injected clock, the SAME one the rest of the platform runs on.
+      now,
+      // Slice 1 E2/E14: the trusted terminal-time basis and the legacy
+      // provenance reader; both are the narrow ports the owners already use.
+      responsibilityBasis,
+      legacyProvenance,
+      // The trusted Host callback, when installed, wins; otherwise only the
+      // ordinary Work bindings resolve to `executor` (L4).
+      sessionDuty: options.sessionDutyResolver ?? defaultSessionDutyResolver(workflowConfiguration),
       ...(workflowConfiguration === undefined ? {} : { configuration: workflowConfiguration }),
+      // Slice 1 (spec §4.1): the full mailbox owns `disposeArchiveWait`; without
+      // it an ordinary transferred-wait archive answers unsupported. It is the
+      // SAME mailbox instance the Runtime and routes use, never a second copy.
+      messages: mailbox,
+      // Slice 1 (spec §4.2): the exact close-event reader maintenance uses to
+      // derive an executor's `finishedAt` from the terminal responsibility close.
+      // The RecordStore's own result is translated to the Workflow's read shape;
+      // a damaged (`corrupt`) or unique-slot failure is an explicit `unavailable`.
+      records: {
+        async eventAt(cursor) {
+          const at = await backend.records.eventAt(cursor);
+          if (at.status === 'ready') return { status: 'ready', value: { cursor: at.value.cursor, event: at.value.event } };
+          const code: CoreRejection['code'] = at.code === 'corrupt' || at.code === 'unique_conflict'
+            ? 'unavailable' : at.code;
+          return { status: 'rejected', code, reason: at.reason };
+        },
+      },
       // The explicit-consultation consumer reuses the SAME mailbox/Query/Project
       // owners. The mailbox half is read-only plus the ONE Host-only answer
       // association; it is never a second mailbox or a new service.
@@ -806,12 +973,35 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       },
     };
     const rawWorkflow = createWorkflow(workflowDependencies);
+    /**
+     * Slice 1 E8 (§3.4 S:620): the composite archive and the bounded maintenance
+     * step run only on the Host that holds the instance lease; an internal
+     * recovery still verifies the CURRENT Host's lease, so a recovery on a Host
+     * that lost the lease is refused before any step. This is the same admission
+     * `resolveUnknownRun`/`resolveUnknownQueryRun` apply, with the archive's own
+     * wording.
+     */
+    const archiveLeaseAdmission = (): CoreRejection | null =>
+      hostInstance === undefined || hostInstance.lease === 'owned' ? null : {
+        status: 'rejected', code: 'busy',
+        reason: 'this Host does not hold the Host instance lease; only that Host archives or maintains Sessions (L-1)',
+      };
     // The public advancement port drains the complete call before any owned
     // store closes; the in-flight raw workflow keeps the raw owner instances.
-    const workflow: WorkflowPort & Required<Pick<WorkflowPort, 'consumeConsultation'>> = {
+    const workflow: WorkflowPort & Required<Pick<WorkflowPort,
+      'consumeConsultation' | 'archiveLine' | 'continueArchiveLine' | 'maintainSessions'>> = {
       handleGoalInput: (...args) => trackedCall(() => rawWorkflow.handleGoalInput(...args), unavailable),
       advanceWork: (...args) => trackedCall(() => rawWorkflow.advanceWork(...args), unavailable),
       consumeConsultation: (...args) => trackedCall(() => rawWorkflow.consumeConsultation(...args), unavailable),
+      // Slice 1 (spec §4.1, §4.2): the composite archive action, its recovery
+      // entry and the bounded maintenance step, published by the Workflow. Each
+      // is admitted by the Host instance lease before the composition runs.
+      archiveLine: (...args) => trackedCall(async () => archiveLeaseAdmission()
+        ?? await rawWorkflow.archiveLine!(...args), unavailable),
+      continueArchiveLine: (...args) => trackedCall(async () => archiveLeaseAdmission()
+        ?? await rawWorkflow.continueArchiveLine!(...args), unavailable),
+      maintainSessions: (...args) => trackedCall(async () => archiveLeaseAdmission()
+        ?? await rawWorkflow.maintainSessions!(...args), unavailable),
     };
     // A.2 step 5.6 (§12.1): the start-up reconcile's internal seam. Only the Host
     // that holds the instance lease calls it, before any execution driver starts;
@@ -851,6 +1041,11 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
           () => ({ runRef: input.record.run.ref, row: 'W-*', status: 'failed' as const, reason: 'platform is closing' })),
       interruptCheck: (...args: Parameters<NonNullable<typeof rawEvidence.interruptCheck>>) =>
         trackedCall(() => rawEvidence.interruptCheck!(...args), unavailable),
+      // Slice 1 (spec §4.2, K5): the start-up reconcile's step 6c runs at most
+      // one Workflow maintenance page after the Goal fan-out and before the
+      // re-drive selection. It starts no Kernel Turn, check or model call.
+      maintainSessions: (...args: Parameters<NonNullable<WorkflowPort['maintainSessions']>>) =>
+        trackedCall(() => rawWorkflow.maintainSessions!(...args), unavailable),
     };
     /**
      * RUN-22 / QRR-06 (contract (d), L-1): the operator attests an unknown end
@@ -947,9 +1142,12 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         kernelTurnOpen: facts.kernelTurnOpen, inputsConfirmed: facts.inputsConfirmed }, meta: request.meta });
     }
     let closing: Promise<void> | undefined;
-    return {
+    const platform = {
       goals, plans, claims, executions, sessions, materials, messages, controls, evidence, checks, roles, architecture, projects, completionPolicies,
       queries,
+      // Slice 1 (spec §4.4): the new owner groups the route layer binds. They are
+      // the same instances injected into `sessions`, `queries` and the Workflow.
+      sessionFacts, responsibilities, sessionAnomalies,
       workspace: workspace.tools, runtime: runtimePort, workflow, kernelStores,
       reconcile,
       /** RUN-22 (U): the operator's attestation through the Host entry; drained like every write. */
@@ -1012,6 +1210,15 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         return closing;
       },
     };
+    // Slice 1 R4 (spec §4.4): the route layer reads these three owner groups by
+    // property (`platform.sessionFacts`, ...), but the spec does not add them to
+    // the public composition surface. They stay reachable and are the SAME
+    // instances injected into `sessions`, `queries` and the Workflow, but are
+    // not part of the enumerable public keys the frozen composition test checks.
+    for (const key of ['sessionFacts', 'responsibilities', 'sessionAnomalies'] as const) {
+      Object.defineProperty(platform, key, { enumerable: false });
+    }
+    return platform;
   } catch (error) {
     // Close every owned resource while preserving the initialization error.
     try { await closeBodies?.(); } catch { /* keep original error */ }

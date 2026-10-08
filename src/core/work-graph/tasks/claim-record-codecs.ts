@@ -31,6 +31,7 @@ import type {
   DecodeResult, EncodedDomainEvent, EncodedRecord, RecordBackendSchemas,
 } from '../../record-store/ports.js';
 import type { TaskClaim, TaskClaimOutbox } from '../model/claim-contracts.js';
+import { WORK_EXECUTION_BY_SESSION_LOOKUP } from '../model/session-facts-contracts.js';
 import { taskDispatchStateProblem } from '../persistence/execution-entry-codecs.js';
 import {
   actorRefProblem, controlIntentRefProblem, delegatedWriteProvenanceProblem, goalRefProblem, hasOnlyKeys,
@@ -373,7 +374,7 @@ const BASIS_COMPARISONS: readonly string[] = ['compared', 'skipped_interrupted',
 const TASK_REQUEUE_KEYS: readonly string[] = ['ref', 'revision', 'schemaVersion', 'task', 'planRef', 'afterRunRef',
   'afterAttemptRef', 'afterOutcome', 'afterRoundRef', 'failureClass', 'interruption', 'stopIntentRef', 'stopRequester',
   'trigger', 'basis', 'basisComparison', 'supersededEvidenceIds', 'newInputRefs', 'budget', 'reason', 'requestedBy',
-  'requestedAt', 'agentProvenance', 'automation', 'historySource'];
+  'requestedAt', 'agentProvenance', 'automation', 'historySource', 'archiveOrigin'];
 const TASK_REWORK_REFUSAL_KEYS: readonly string[] = ['ref', 'revision', 'schemaVersion', 'task', 'afterRunRef',
   'subjectRoundRef', 'failureClass', 'code', 'reason', 'basisDigest', 'source', 'matchedRequeueRef', 'requestedBy',
   'refusedAt', 'goalEndedRunsAtRefusal', 'configurationRevision'];
@@ -389,6 +390,58 @@ function boundedReasonProblem(value: unknown, label: string): string | null {
 /** A Run or round of the same Goal as the record's Task. */
 function sameGoal(value: unknown, task: Record<string, unknown>): boolean {
   return isRecord(value) && value['projectId'] === task['projectId'] && value['goalId'] === task['goalId'];
+}
+
+/** Slice 1 §2.6: the optional archive origin of a requeue. */
+function anomalyAnchorRefProblem(value: unknown, label: string): string | null {
+  if (!isRecord(value) || !hasOnlyKeys(value, ['aggregateType', 'projectId', 'goalId', 'runId'])
+    || value['aggregateType'] !== 'SessionAnomalyAnchor' || !nonEmpty(value['projectId'])
+    || !nonEmpty(value['goalId']) || !nonEmpty(value['runId'])) {
+    return `${label} must be a complete SessionAnomalyAnchorRef`;
+  }
+  return null;
+}
+function messageRefProblem(value: unknown, label: string): string | null {
+  if (!isRecord(value) || !hasOnlyKeys(value, ['aggregateType', 'projectId', 'workspaceId', 'messageId'])
+    || value['aggregateType'] !== 'SessionMessage' || !nonEmpty(value['projectId'])
+    || !nonEmpty(value['workspaceId']) || !nonEmpty(value['messageId'])) {
+    return `${label} must be a complete SessionMessageRef`;
+  }
+  return null;
+}
+function archiveRequeueOriginProblem(value: unknown, projectId: string): string | null {
+  if (!isRecord(value)) return 'TaskRequeue archiveOrigin must be an object';
+  if (value['kind'] === 'execution') {
+    if (!hasOnlyKeys(value, ['kind', 'anchorRef', 'archiveSessionRef', 'archiveRequestId'])) {
+      return 'TaskRequeue archiveOrigin execution carries unknown fields';
+    }
+    const anchorProblem = anomalyAnchorRefProblem(value['anchorRef'], 'TaskRequeue archiveOrigin anchorRef');
+    if (anchorProblem !== null) return anchorProblem;
+    const sessionProblem = sessionRefProblem(value['archiveSessionRef'], 'TaskRequeue archiveOrigin archiveSessionRef');
+    if (sessionProblem !== null) return sessionProblem;
+    if (!nonEmpty(value['archiveRequestId'])) return 'TaskRequeue archiveOrigin archiveRequestId is required';
+    if ((value['archiveSessionRef'] as Record<string, unknown>)['projectId'] !== projectId) {
+      return 'TaskRequeue archiveOrigin archive Session belongs to another project';
+    }
+    return null;
+  }
+  if (value['kind'] === 'wait') {
+    if (!hasOnlyKeys(value, ['kind', 'runRef', 'messageRef', 'archiveSessionRef', 'archiveRequestId'])) {
+      return 'TaskRequeue archiveOrigin wait carries unknown fields';
+    }
+    const runProblem = runRefProblem(value['runRef'], 'TaskRequeue archiveOrigin runRef');
+    if (runProblem !== null) return runProblem;
+    const messageProblem = messageRefProblem(value['messageRef'], 'TaskRequeue archiveOrigin messageRef');
+    if (messageProblem !== null) return messageProblem;
+    const sessionProblem = sessionRefProblem(value['archiveSessionRef'], 'TaskRequeue archiveOrigin archiveSessionRef');
+    if (sessionProblem !== null) return sessionProblem;
+    if (!nonEmpty(value['archiveRequestId'])) return 'TaskRequeue archiveOrigin archiveRequestId is required';
+    if ((value['archiveSessionRef'] as Record<string, unknown>)['projectId'] !== projectId) {
+      return 'TaskRequeue archiveOrigin archive Session belongs to another project';
+    }
+    return null;
+  }
+  return 'TaskRequeue archiveOrigin kind is not recognized';
 }
 
 /**
@@ -502,6 +555,10 @@ export function taskRequeueSnapshotProblem(value: unknown): string | null {
       return 'TaskRequeue historySource throughPosition must be null or a non-negative safe integer';
     }
   }
+  if (value['archiveOrigin'] !== undefined && value['archiveOrigin'] !== null) {
+    const originProblem = archiveRequeueOriginProblem(value['archiveOrigin'], projectId);
+    if (originProblem !== null) return originProblem;
+  }
   return null;
 }
 
@@ -609,6 +666,8 @@ export function decodeTaskRequeueSnapshot(record: EncodedRecord): DecodeResult<T
   if (typeof body === 'string') return invalid(body);
   const problem = taskRequeueSnapshotProblem(body);
   if (problem !== null) return invalid(problem);
+  // Slice 1 §2.9 default: an old requeue without the optional origin stays
+  // absent; every reader applies `archiveOrigin ?? null` (R2).
   return { status: 'decoded', value: body as unknown as TaskRequeueSnapshotV1 };
 }
 
@@ -664,6 +723,7 @@ export function taskRequeuedEventFromEvent(event: EncodedDomainEvent): DecodeRes
   if (!sameJson((body['requeue'] as Record<string, unknown>)['requestedBy'], body['actor'])) {
     return invalid('TaskRequeued requestedBy disagrees with the event actor');
   }
+  // R2: an absent `archiveOrigin` key stays absent; readers apply `?? null`.
   return { status: 'decoded', value: body as unknown as TaskRequeuedEvent };
 }
 
@@ -733,5 +793,8 @@ export const TASK_CLAIM_RECORD_SCHEMAS: RecordBackendSchemas = {
     { eventType: TASK_REQUEUED_EVENT_TYPE, schemaVersion: TASK_REWORK_EVENT_SCHEMA_VERSION, validate: validateRequeuedEvent },
     { eventType: TASK_REWORK_REFUSED_EVENT_TYPE, schemaVersion: TASK_REWORK_EVENT_SCHEMA_VERSION, validate: validateReworkRefusedEvent },
   ],
-  lookups: [],
+  lookups: [
+    { name: WORK_EXECUTION_BY_SESSION_LOOKUP, aggregateType: 'DispatchOutboxEntry',
+      paths: ['claim.task.projectId', 'claim.workspaceId', 'claim.sessionRef.sessionId'] },
+  ],
 };

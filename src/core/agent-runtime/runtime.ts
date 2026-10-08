@@ -22,6 +22,7 @@ import { createRuntimeControlCoordinator } from './execution-control.js';
 import { createExecutionPreparation, loadPreparedManifest, rehydratePreparedExecution } from './execution-preparation.js';
 import { continuationBriefDigest } from '../../contracts/continuation-brief.js';
 import { createSessionHistoryCursorOwner } from './session-operations.js';
+import { createArchiveChangedFilesReader } from './session-anomaly-facts.js';
 import { bookLateEvidenceInProcess, stopPausedRunInProcess } from './run-reconcile.js';
 import { createQueryPreparation } from './query-preparation.js';
 import { createQueryExecutionDriver } from './query-execution.js';
@@ -94,6 +95,18 @@ export function createAgentRuntime(deps?: RuntimeExecutionDependencies): AgentRu
     sourceAuthority: deps.sourceAuthority,
   });
   const historyCursorOwner = createSessionHistoryCursorOwner({ kernelStores: deps.kernelStores });
+  /**
+   * Slice 1 §3.3/§2.6: the changed-files reader the runtime publishes for the
+   * archive anchor. Part 1 wires the factory (whose method is a stub), so the
+   * port is reachable without changing any existing execution behaviour.
+   */
+  const archiveChangedFiles = createArchiveChangedFilesReader({
+    executions: deps.executions,
+    kernelStores: deps.kernelStores,
+    workspaceHost: deps.workspaceHost,
+    now: deps.now,
+    ...(deps.workspaceSource === undefined ? {} : { workspaceSource: deps.workspaceSource }),
+  });
   const readCompletedBoundary: NonNullable<RuntimeExecutionPort['readCompletedBoundary']> = async (ctx, request) => {
     if (ctx.principal.kind !== 'host') {
       return { status: 'rejected', code: 'forbidden', reason: 'the completed boundary read requires the Host principal' };
@@ -198,6 +211,7 @@ export function createAgentRuntime(deps?: RuntimeExecutionDependencies): AgentRu
       ...base,
       readCompletedBoundary,
       readContinuationBrief,
+      readArchiveChangedFiles: (ctx, request) => archiveChangedFiles.readArchiveChangedFiles(ctx, request),
       prepareExecution: (ctx, request) => preparation.prepare(ctx, request),
       startRun: (ctx, request) => driver.start(ctx, request),
       observeRun: (ctx, request) => observeRun(ctx, request),

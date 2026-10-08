@@ -105,13 +105,14 @@ const EVENTS = {
   acceptResponse: { type: 'input_accepted', part: 'response', inputId: RESPONSE_INPUT },
   derived: { type: 'consultation_derived' },
   claimed: { type: 'task_claimed' },
+  archiveDisposed: { type: 'archive_wait_disposed' },
 } as const satisfies Record<string, MessageEvent>;
 type EventName = keyof typeof EVENTS;
 const EVENT_NAMES = Object.keys(EVENTS) as EventName[];
 // Every event type of the union has at least one fixture.
 const EVENT_COVERAGE: Record<MessageEvent['type'], EventName> = {
   message_sent: 'sent', message_read: 'read', message_responded: 'respondText', input_accepted: 'acceptMessage',
-  consultation_derived: 'derived', task_claimed: 'claimed',
+  consultation_derived: 'derived', task_claimed: 'claimed', archive_wait_disposed: 'archiveDisposed',
 };
 
 function revisionOf(state: MessageMachineState): number {
@@ -175,6 +176,17 @@ function happyCtx(event: EventName, state: MessageMachineState): MessageGuardCon
       return { ...base, pins: pinFor(state) };
     case 'claimed':
       return { ...base, consumedWait: { responseRefMatches: true, sameWorkspace: true } };
+    case 'archiveDisposed':
+      return {
+        ...base,
+        archiveWait: {
+          choice: { kind: 'cancel', runRef: WORK_RUN_SENDER.runRef, messageRef: MESSAGE_REF },
+          archiveSessionRef: SENDER_SESSION, archiveRequestId: 'a', now: '2026-10-08T00:00:00.000Z',
+          requestMatches: true, waitMatches: true, targetEligible: true,
+          // S1-MSG-01/02: only an accepted response consumes the wait and makes the disposal busy.
+          responseAccepted: state.status !== 'absent' && state.acceptedInputIds.includes(RESPONSE_INPUT),
+        },
+      };
   }
 }
 
@@ -224,6 +236,12 @@ const DERIVE_EFFECTS = (revision: number): readonly MessageEffect[] => [
   { kind: 'append_event', eventType: 'SessionMessageConsultationDerived' },
   { kind: 'guard_message', expectedRevision: revision },
 ];
+/** S1-MSG-01/02: the wait disposal writes the record on the read CAS and emits its event. */
+const ARCHIVE_DISPOSED_EFFECTS = (revision: number): readonly MessageEffect[] => [
+  { kind: 'write_message', change: 'archive_wait_disposed' },
+  { kind: 'append_event', eventType: 'ArchiveWaitDisposed' },
+  { kind: 'guard_message', expectedRevision: revision },
+];
 
 const S = STATES;
 const NOT_FOUND = no('illegal', 'not_found');
@@ -240,6 +258,7 @@ const TABLE: Record<StateName, Record<EventName, Expected>> = {
     acceptResponse: NOT_FOUND,
     derived: NOT_FOUND,
     claimed: no('guard_failed', 'busy'),
+    archiveDisposed: NOT_FOUND,
   },
   pending: {
     sent: EXISTS,
@@ -250,6 +269,7 @@ const TABLE: Record<StateName, Record<EventName, Expected>> = {
     acceptResponse: no('guard_failed', 'forbidden'),
     derived: ok({ ...S.pending, hasDerivation: true, revision: 2 }, DERIVE_EFFECTS(1)), // MSG-09
     claimed: no('guard_failed', 'busy'),
+    archiveDisposed: ok({ ...S.pending, revision: 2 }, ARCHIVE_DISPOSED_EFFECTS(1)),
   },
   read: {
     sent: EXISTS,
@@ -260,6 +280,7 @@ const TABLE: Record<StateName, Record<EventName, Expected>> = {
     acceptResponse: no('guard_failed', 'forbidden'),
     derived: ok({ ...S.read, hasDerivation: true, revision: 3 }, DERIVE_EFFECTS(2)), // MSG-09
     claimed: no('guard_failed', 'busy'),
+    archiveDisposed: ok({ ...S.read, revision: 3 }, ARCHIVE_DISPOSED_EFFECTS(2)),
   },
   responded: {
     sent: EXISTS,
@@ -270,6 +291,7 @@ const TABLE: Record<StateName, Record<EventName, Expected>> = {
     acceptResponse: ok({ ...S.responded, acceptedInputIds: [RESPONSE_INPUT], revision: 4 }, ACCEPT_EFFECTS(3)), // MSG-08
     derived: ok({ ...S.responded, hasDerivation: true, revision: 4 }, DERIVE_EFFECTS(3)), // MSG-09
     claimed: ok(S.responded, []), // MSG-10 (SD-1)
+    archiveDisposed: ok({ ...S.responded, revision: 4 }, ARCHIVE_DISPOSED_EFFECTS(3)),
   },
   pendingDerivedDelivered: {
     sent: EXISTS,
@@ -280,6 +302,7 @@ const TABLE: Record<StateName, Record<EventName, Expected>> = {
     acceptResponse: no('guard_failed', 'forbidden'),
     derived: no('illegal', 'invalid'),
     claimed: no('guard_failed', 'busy'),
+    archiveDisposed: ok({ ...S.pendingDerivedDelivered, revision: 4 }, ARCHIVE_DISPOSED_EFFECTS(3)),
   },
   respondedComplete: {
     sent: EXISTS,
@@ -290,6 +313,7 @@ const TABLE: Record<StateName, Record<EventName, Expected>> = {
     acceptResponse: no('duplicate', 'invalid'),
     derived: no('illegal', 'invalid'),
     claimed: ok(S.respondedComplete, []),
+    archiveDisposed: no('guard_failed', 'busy'),
   },
 };
 
@@ -323,7 +347,7 @@ describe('transitionMessage: every (state, event) pair', () => {
   it('covers every status and every event type', () => {
     expect(Object.keys(STATUS_COVERAGE).sort()).toEqual(['absent', 'pending', 'read', 'responded']);
     expect(Object.keys(EVENT_COVERAGE).sort()).toEqual(
-      ['consultation_derived', 'input_accepted', 'message_read', 'message_responded', 'message_sent', 'task_claimed'],
+      ['archive_wait_disposed', 'consultation_derived', 'input_accepted', 'message_read', 'message_responded', 'message_sent', 'task_claimed'],
     );
     expect(Object.keys(TABLE)).toEqual(STATE_NAMES);
     for (const name of STATE_NAMES) expect(Object.keys(TABLE[name])).toEqual(EVENT_NAMES);
@@ -1024,6 +1048,12 @@ function applyToRecord(record: SessionMessageRecord | null, event: EventName, at
       return nextSessionMessageRecord(record!, { kind: 'consultation_derived', derivation: DERIVATION });
     case 'claimed':
       return record!;
+    case 'archiveDisposed':
+      return nextSessionMessageRecord(record!, {
+        kind: 'archive_wait_disposed',
+        choice: { kind: 'cancel', runRef: WORK_RUN_SENDER.runRef, messageRef: MESSAGE_REF },
+        archiveSessionRef: SENDER_SESSION, archiveRequestId: 'a', now: at,
+      });
   }
 }
 

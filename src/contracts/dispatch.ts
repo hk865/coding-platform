@@ -292,6 +292,11 @@ export type RuntimeInputBindingV1 = {
      * by RUN-02 like every other field here.
      */
     continuationBriefDigest?: string;
+    /**
+     * Slice 1 §2.7: the anomaly anchors actually assembled into the continuation
+     * brief, in canonical order. Absent on historical bindings (read as none).
+     */
+    anomalyAnchorRefs?: import("./session-anomaly.js").SessionAnomalyAnchorRef[];
 };
 /**
  * **一次性模型调用许可**（协作通信可靠投递规则中的“调用证据”）。

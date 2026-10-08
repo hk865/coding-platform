@@ -27,6 +27,10 @@ import type {
 } from '../core/work-graph/configuration/project-bootstrap-contracts.js';
 import type { SessionDirectoryPort } from '../core/work-graph/model/session-contracts.js';
 import type { SessionLifecyclePort } from '../core/work-graph/sessions/lifecycle-contracts.js';
+// Slice 1 (spec §4.4): the owner ports of the eleven new suffixes.
+import type { SessionFactsPort } from '../core/work-graph/model/session-facts-contracts.js';
+import type { SessionResponsibilityPort } from '../core/work-graph/sessions/session-responsibility-service.js';
+import type { SessionAnomalyPort } from '../core/work-graph/tasks/session-anomaly-service.js';
 import type { ExecutionReadPort } from '../core/work-graph/model/execution-read-contracts.js';
 import type { GoalTaskPort } from '../core/work-graph/model/task-contracts.js';
 import type { PlanTaskPort } from '../core/work-graph/model/plan-contracts.js';
@@ -44,6 +48,9 @@ import {
   type CoreRouteKind,
   type CoreRouteSuffix,
   type CoreScope,
+  // Slice 1 (spec §4.4, "typed assembly"): the compile-time DTO pairing of the
+  // eleven new suffixes with their body/result aliases.
+  type Slice1CoreRouteDto,
 } from './core-http-types.js';
 
 /** One named binding per route. The types are the exact public port methods;
@@ -132,6 +139,20 @@ export type CoreRouteBindings = {
   readReconcileReport: HostReconcileReportPort['readReconcileReport'];
   // A.2 step 5.9 (VR-14): the successor round owner.
   reverifyRound: NonNullable<EvidencePort['reverifyRound']>;
+  // Slice 1 (spec §4.4): the Session facts, corrections and archive entries.
+  // `archiveLine`/`continueArchiveLine` stay optional on `WorkflowPort` for the
+  // old narrow doubles; the real composition always publishes them.
+  archiveLine: NonNullable<WorkflowPort['archiveLine']>;
+  continueArchiveLine: NonNullable<WorkflowPort['continueArchiveLine']>;
+  releaseSessionArchiveRequest: SessionLifecyclePort['releaseSessionArchiveRequest'];
+  readSessionFacts: SessionFactsPort['readSessionFacts'];
+  findSessionSuccessors: SessionFactsPort['findSessionSuccessors'];
+  listSessionExecutions: SessionFactsPort['listSessionExecutions'];
+  listSessionQueries: SessionFactsPort['listSessionQueries'];
+  transferSessionResponsibility: SessionResponsibilityPort['transferSessionResponsibility'];
+  readTaskArchiveState: SessionAnomalyPort['readTaskArchiveState'];
+  listSessionAnomalies: SessionAnomalyPort['listSessionAnomalies'];
+  readUndeliveredReplies: NonNullable<SessionMailboxPort['readUndeliveredReplies']>;
 };
 
 /** A.2 step 5.6 (§12.1 step 7, §12.8): this Host's instance lease and its start-up reconcile report. */
@@ -154,7 +175,7 @@ export type CoreRoutePlatform = {
   architecture: ArchitectureCatalogPort & ObservedArchitecturePort;
   workspace: WorkspaceToolsPort;
   sessions: Pick<SessionDirectoryPort, 'findSessions' | 'readSession' | 'getSessionOperation'>
-    & Pick<SessionLifecyclePort, 'archiveSession' | 'reactivateSession' | 'linkSessionWork'>;
+    & Pick<SessionLifecyclePort, 'archiveSession' | 'reactivateSession' | 'linkSessionWork' | 'releaseSessionArchiveRequest'>;
   executions: Pick<ExecutionReadPort, 'readExecution'> & Required<Pick<ExecutionReadPort, 'listExecutions'>>;
   runtime: Pick<RuntimeExecutionPort,
     'capabilities' | 'createSession' | 'readSessionHistory' | 'readTaskExecutionHistory' | 'startRun' | 'deliverControl'>
@@ -165,10 +186,17 @@ export type CoreRoutePlatform = {
   /** A.2 step 5.9 (VR-14): the successor-round owner; a narrow platform without it answers `unsupported`. */
   evidence: Pick<EvidencePort, 'reverifyRound'>;
   messages: Pick<SessionMailboxPort, 'sendMessage' | 'readInbox' | 'readMessage' | 'readMessageBody'>
-    & Required<Pick<SessionMailboxPort, 'readOutbox'>>;
+    & Required<Pick<SessionMailboxPort, 'readOutbox'>>
+    & Pick<SessionMailboxPort, 'readUndeliveredReplies'>;
   queries: QueryJobPort;
   materials: Pick<MaterialPort, 'openArtifact'>;
   workflow: WorkflowPort & Required<Pick<WorkflowPort, 'consumeConsultation'>>;
+  /** Slice 1 (spec §4.4): the Session-facts read owner (the same instance injected into sessions/queries). */
+  sessionFacts: SessionFactsPort;
+  /** Slice 1 (spec §4.4): the responsibility write owner. */
+  responsibilities: Pick<SessionResponsibilityPort, 'transferSessionResponsibility'>;
+  /** Slice 1 (spec §4.4): the anchor read owner; `recordSessionAnomaly` stays off HTTP. */
+  sessionAnomalies: Pick<SessionAnomalyPort, 'readTaskArchiveState' | 'listSessionAnomalies'>;
   /** A.2 step 5.6 (RUN-22): optional so a narrow platform answers `unsupported`. */
   resolveUnknownRun?(ctx: CoreCallContext, request: GraphWrite<ResolveUnknownRunRequestV1>): Promise<WriteResult<RunSnapshot>>;
   /** A.2 step 5.6 (QRR-06). */
@@ -277,6 +305,18 @@ export const CORE_ROUTE_SPECS: Record<CoreRouteSuffix, CoreRouteSpec> = {
   'host/reconcile-report': { kind: 'plain', binding: 'readReconcileReport', owner: 'host.readReconcileReport' },
   // A.2 step 5.9 (spec §9 VR-14 "调用者"; §15.2 5.9 `verification/reverify`).
   'verification/reverify': { kind: 'graph_write', binding: 'reverifyRound', owner: 'evidence.reverifyRound' },
+  // Slice 1 (spec §4.4): the eleven Session facts / corrections / archive routes.
+  'sessions/archive-line': { kind: 'graph_write', binding: 'archiveLine', owner: 'workflow.archiveLine' },
+  'sessions/archive-continue': { kind: 'plain', binding: 'continueArchiveLine', owner: 'workflow.continueArchiveLine' },
+  'sessions/archive-release': { kind: 'graph_write', binding: 'releaseSessionArchiveRequest', owner: 'sessions.releaseSessionArchiveRequest' },
+  'sessions/facts': { kind: 'plain', binding: 'readSessionFacts', owner: 'sessionFacts.readSessionFacts' },
+  'sessions/successors': { kind: 'plain', binding: 'findSessionSuccessors', owner: 'sessionFacts.findSessionSuccessors' },
+  'sessions/executions': { kind: 'plain', binding: 'listSessionExecutions', owner: 'sessionFacts.listSessionExecutions' },
+  'sessions/queries': { kind: 'plain', binding: 'listSessionQueries', owner: 'sessionFacts.listSessionQueries' },
+  'sessions/transfer-responsibility': { kind: 'graph_write', binding: 'transferSessionResponsibility', owner: 'responsibilities.transferSessionResponsibility' },
+  'tasks/archive-state': { kind: 'plain', binding: 'readTaskArchiveState', owner: 'sessionAnomalies.readTaskArchiveState' },
+  'anomalies/list': { kind: 'plain', binding: 'listSessionAnomalies', owner: 'sessionAnomalies.listSessionAnomalies' },
+  'messages/undelivered-replies': { kind: 'plain', binding: 'readUndeliveredReplies', owner: 'messages.readUndeliveredReplies' },
 };
 
 export type ParsedCoreRequest =
@@ -510,6 +550,26 @@ export function createPlatformCoreRouteBindings(
     reverifyRound: platform.evidence.reverifyRound === undefined
       ? unsupported('the Host does not publish the successor-round owner (reverifyRound)')
       : platform.evidence.reverifyRound.bind(platform.evidence),
+    // Slice 1 (spec §4.4): the new owners. `archiveLine`/`continueArchiveLine`
+    // are optional only for an old narrow Workflow double; the real composition
+    // publishes them, and `readUndeliveredReplies` likewise.
+    archiveLine: platform.workflow.archiveLine === undefined
+      ? unsupported('the Host Workflow does not publish the archive composite (archiveLine)')
+      : platform.workflow.archiveLine.bind(platform.workflow),
+    continueArchiveLine: platform.workflow.continueArchiveLine === undefined
+      ? unsupported('the Host Workflow does not publish the archive continuation (continueArchiveLine)')
+      : platform.workflow.continueArchiveLine.bind(platform.workflow),
+    releaseSessionArchiveRequest: platform.sessions.releaseSessionArchiveRequest.bind(platform.sessions),
+    readSessionFacts: platform.sessionFacts.readSessionFacts.bind(platform.sessionFacts),
+    findSessionSuccessors: platform.sessionFacts.findSessionSuccessors.bind(platform.sessionFacts),
+    listSessionExecutions: platform.sessionFacts.listSessionExecutions.bind(platform.sessionFacts),
+    listSessionQueries: platform.sessionFacts.listSessionQueries.bind(platform.sessionFacts),
+    transferSessionResponsibility: platform.responsibilities.transferSessionResponsibility.bind(platform.responsibilities),
+    readTaskArchiveState: platform.sessionAnomalies.readTaskArchiveState.bind(platform.sessionAnomalies),
+    listSessionAnomalies: platform.sessionAnomalies.listSessionAnomalies.bind(platform.sessionAnomalies),
+    readUndeliveredReplies: platform.messages.readUndeliveredReplies === undefined
+      ? unsupported('the Host mailbox does not publish the undelivered-reply read (readUndeliveredReplies)')
+      : platform.messages.readUndeliveredReplies.bind(platform.messages),
   };
 }
 
@@ -535,6 +595,11 @@ export async function dispatchCoreRoute(
 ): Promise<unknown> {
   if (!parsed.ok) throw new CoreRouteRejectionError(parsed.rejection);
   const spec = CORE_ROUTE_SPECS[suffix];
+  // Type-only anchor for the slice-1 DTO assembly: this dispatcher is reached
+  // from the Host server, so naming the table here keeps every new body/result
+  // alias reachable from production (spec §4.4 "typed assembly", K6). Nothing
+  // at runtime reads this alias.
+  type Slice1Dto = Slice1CoreRouteDto;
   if (parsed.kind !== spec.kind) {
     throw new CoreRouteRejectionError({
       status: 'rejected', code: 'invalid',
@@ -622,6 +687,18 @@ export async function dispatchCoreRoute(
       case 'queries/resolve-unknown': return bindings.resolveUnknownQueryRun(ctx, graphWrite.request as never);
       case 'host/reconcile-report': return bindings.readReconcileReport(ctx, plain.input as never);
       case 'verification/reverify': return bindings.reverifyRound(ctx, graphWrite.request as never);
+      // Slice 1 (spec §4.4): explicit arms, one per new suffix.
+      case 'sessions/archive-line': return bindings.archiveLine(ctx, graphWrite.request as never);
+      case 'sessions/archive-continue': return bindings.continueArchiveLine(ctx, plain.input as never);
+      case 'sessions/archive-release': return bindings.releaseSessionArchiveRequest(ctx, graphWrite.request as never);
+      case 'sessions/facts': return bindings.readSessionFacts(ctx, plain.input as never);
+      case 'sessions/successors': return bindings.findSessionSuccessors(ctx, plain.input as never);
+      case 'sessions/executions': return bindings.listSessionExecutions(ctx, plain.input as never);
+      case 'sessions/queries': return bindings.listSessionQueries(ctx, plain.input as never);
+      case 'sessions/transfer-responsibility': return bindings.transferSessionResponsibility(ctx, graphWrite.request as never);
+      case 'tasks/archive-state': return bindings.readTaskArchiveState(ctx, plain.input as never);
+      case 'anomalies/list': return bindings.listSessionAnomalies(ctx, plain.input as never);
+      case 'messages/undelivered-replies': return bindings.readUndeliveredReplies(ctx, plain.input as never);
     }
   })();
   // A GraphWrite rejection is a failed command: preserve its exact body but let

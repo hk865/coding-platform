@@ -49,6 +49,7 @@ import type { ReconcileCandidateReader } from '../core/work-graph/tasks/reconcil
 import type { RunControlPort } from '../core/work-graph/tasks/control-contracts.js';
 import type { WriteResult } from '../contracts/core/results.js';
 import type { GoalFanOutPassOptions, GoalFanOutReportV1 } from './goal-fan-out-driver.js';
+import type { WorkflowPort } from '../business/workflow/ports.js';
 
 type Scope = { projectId: string; workspaceId: string };
 
@@ -80,6 +81,13 @@ export type StartupReconcilePlatform = {
     reconcileControls(ctx: CoreCallContext, input: { record: TaskExecutionRecord; hostInstanceId: string; queuedSteers: boolean }):
       Promise<RunReconcileReport>;
     interruptCheck(ctx: CoreCallContext, request: GraphWrite<InterruptCheckInput>): Promise<WriteResult<RoundSnapshot>>;
+    /**
+     * Slice 1 (spec §4.2): after the Goal fan-out, the Workflow processes at
+     * most one maintenance page before the start-up re-drive. The hook is the
+     * exact optional `WorkflowPort.maintainSessions`; a platform that does not
+     * publish it skips the step.
+     */
+    maintainSessions?: NonNullable<WorkflowPort['maintainSessions']>;
   };
 };
 
@@ -320,6 +328,35 @@ export async function runStartupReconcile(deps: StartupReconcileDependencies): P
           continuations: pass.continuations?.length ?? 0 });
       } catch (error) {
         out.fanOut.push({ goalId: goal.ref.goalId, control: null, problem: messageOf(error), runs: 0, continuations: 0 });
+      }
+    }
+
+    // Step 6c (slice 1 §4.2): after the Goal fan-out, the Workflow processes at
+    // most one maintenance page before the start-up re-drive. This is a stub
+    // seam only: the Host does not now publish it (the Workflow implementation
+    // and its composition wiring land in part 2), and when it does the Workflow
+    // starts no Kernel Turn, check or model call. A throw or a real per-Session
+    // maintenance failure is visible in `problems` and never blocks another
+    // Session's work (E17).
+    if (platform.reconcile.maintainSessions !== undefined) {
+      try {
+        const page = await platform.reconcile.maintainSessions(ctx, { workspace: scope, after: null });
+        if (page.status === 'ready') {
+          for (const failure of page.value.failures) {
+            // §0.1 U1 (IT34): a retired line whose Run outcome is still unknown
+            // is a by-design skip that needs human attestation, not a reconcile
+            // problem; IT34 already locks the `busy` failure on the maintenance
+            // owner, and A8 W-07/W-14 expect an otherwise clean report.
+            if (failure.rejection.code === 'busy'
+              && failure.rejection.reason.startsWith('archive_unknown_confirmation_required:')) continue;
+            out.problems.push(`${scope.workspaceId}: maintenance left ${failure.sessionRef.sessionId} `
+              + `(${failure.rejection.code}): ${failure.rejection.reason}`);
+          }
+        } else {
+          out.problems.push(`${scope.workspaceId}: the Workflow maintenance is not ready (${rejectionText(page)})`);
+        }
+      } catch (error) {
+        out.problems.push(`${scope.workspaceId}: the Workflow maintenance failed: ${messageOf(error)}`);
       }
     }
 

@@ -43,9 +43,10 @@ import type { ArtifactRef } from '../../../contracts/artifact.js';
 import { CONTINUATION_BRIEF_LIMITS } from '../../../contracts/continuation-brief.js';
 import type { ControlIntentRef, ControlIntentSnapshotV1 } from '../../../contracts/control-intent.js';
 import type { TaskRequeueSnapshotV1 } from '../../../contracts/task-requeue.js';
+import type { SessionAnomalyAnchorV1 } from '../../../contracts/session-anomaly.js';
 import type { RoundSnapshot } from '../../../contracts/verification.js';
 import type { LookupValue, RecordLookupPort, RecordLookupRequest } from '../../record-store/lookup-ports.js';
-import type { DecodeResult, EncodedRecord } from '../../record-store/ports.js';
+import type { DecodeResult, EncodedRecord, GoalRecordTransactionPort } from '../../record-store/ports.js';
 import type { RawArtifactRecord } from '../../record-store/body-ports.js';
 import type { SessionMessage } from '../model/communication-contracts.js';
 import { decodeStoredMessageBody } from '../sessions/message-body-envelope.js';
@@ -53,6 +54,9 @@ import { decodeSessionMessageRecord, sessionMessageRefKey } from '../sessions/me
 import { decodeVerificationRoundSnapshot } from '../persistence/evidence-record-codecs.js';
 import { decodeControlIntentSnapshot } from '../persistence/control-record-codecs.js';
 import { decodeRun, type Decoded } from '../materials/run-snapshot-decoder.js';
+import { SESSION_ANOMALY_BY_TASK_LOOKUP } from '../model/session-facts-contracts.js';
+import { decodeSessionAnomalyAnchor } from './session-anomaly-codecs.js';
+import { deriveSessionAnomalyView } from '../state/session-anomaly.js';
 import {
   decodeSessionRecord,
   plainSessionRefToAggregate,
@@ -391,6 +395,67 @@ async function collectRunCandidateKeys(
     return unavailable(`${result.code}: ${result.reason}`);
   }
   return { status: 'ready', refKeys: result.value.records.map(record => record.refKey) };
+}
+
+/** `canonicalJson` equality for two refs (the anchor refs are plain JSON records). */
+function sameJsonRef(left: unknown, right: unknown): boolean {
+  try { return canonicalJson(left as JsonValue) === canonicalJson(right as JsonValue); } catch { return false; }
+}
+
+const ANCHOR_LOOKUP_PAGE_LIMIT = 100;
+const ANCHOR_LOOKUP_MAX_PAGES = 25;
+
+/**
+ * Slice 1 §2.7 (K4): this Task's anchors read completely from the task index
+ * and rechecked canonically in one window, with `pickedUpBy` derived from the
+ * later, really entered Runs of the Task. Only the not-yet-picked-up anchors
+ * are `pendingAnomalies`; the read watermark is returned so the caller's
+ * `readThrough` covers them.
+ */
+async function readTaskPendingAnchors(
+  records: GoalRecordTransactionPort,
+  lookups: RecordLookupPort,
+  task: TaskTriple,
+  workspaceId: string,
+  runs: readonly RunSnapshot[],
+): Promise<{ status: 'ready'; anchors: SessionAnomalyAnchorV1[]; readThrough: CommitCursor | null } | CoreRejection> {
+  const refKeys: string[] = [];
+  let after: string | undefined;
+  let watermark: CommitCursor | null = null;
+  for (let page = 0; page < ANCHOR_LOOKUP_MAX_PAGES; page += 1) {
+    const request: RecordLookupRequest = { index: SESSION_ANOMALY_BY_TASK_LOOKUP,
+      values: [task.projectId, workspaceId, task.goalId, task.taskId], limit: ANCHOR_LOOKUP_PAGE_LIMIT,
+      ...(after === undefined ? {} : { after }) };
+    const result = await lookups.lookup(request);
+    if (result.status !== 'ready') {
+      if (result.code === 'unsupported') return incomplete(`session_facts_page_limit: lookup index ${SESSION_ANOMALY_BY_TASK_LOOKUP} is not registered`);
+      if (result.code === 'invalid') return incomplete(`session_facts_page_limit: lookup index ${SESSION_ANOMALY_BY_TASK_LOOKUP} rejected the request: ${result.reason}`);
+      return unavailable(`${result.code}: ${result.reason}`);
+    }
+    for (const record of result.value.records) refKeys.push(record.refKey);
+    watermark = laterCursor(watermark, result.value.readThrough);
+    if (result.value.next === null) break;
+    after = result.value.next;
+    if (page === ANCHOR_LOOKUP_MAX_PAGES - 1) return incomplete('session_facts_page_limit: the session-anomaly lookup did not terminate within the bounded page budget');
+  }
+  if (refKeys.length === 0) return { status: 'ready', anchors: [], readThrough: watermark };
+  const read = await readBatch(records, unique(refKeys));
+  if (read.status !== 'ready') return mapRejected(read);
+  watermark = laterCursor(watermark, read.batch.readThrough);
+  const anchors: SessionAnomalyAnchorV1[] = [];
+  for (const record of read.batch.present.values()) {
+    const decoded = decodeSessionAnomalyAnchor(record);
+    if (decoded.status !== 'decoded') return unavailable(`a SessionAnomalyAnchor is damaged: ${decoded.reason}`);
+    const anchor = decoded.value;
+    if (anchor.workspaceId !== workspaceId || anchor.task.taskId !== task.taskId || anchor.task.goalId !== task.goalId) continue;
+    const entered = runs
+      .filter(run => run.ref.runId !== anchor.runRef.runId && run.executionHistory !== undefined
+        && run.inputBinding?.anomalyAnchorRefs?.some(ref => sameJsonRef(ref, anchor.ref)))
+      .map(run => ({ runRef: run.ref, sessionRef: run.executionHistory!.sessionRef,
+        enteredAt: run.startedAt ?? run.endedAt ?? '', anchorRefs: run.inputBinding!.anomalyAnchorRefs! }));
+    if (deriveSessionAnomalyView(anchor, entered).pickedUpBy === null) anchors.push(anchor);
+  }
+  return { status: 'ready', anchors, readThrough: watermark };
 }
 
 // --------------------------------------------------------------------------
@@ -854,8 +919,18 @@ export function createRunStateReader(deps: ExecutionReadDependencies): Execution
       factsChain.push({ requeue: cursorRequeue, run: ancestor.value, round: ancestorRound });
       cursor = ancestor.value;
     }
+
+    // Slice 1 §2.7/§2.9 (K4): the Task's not-yet-picked-up anchors, read
+    // completely from the task index in this same window. `[]` is only the
+    // decode default of an OLD in-memory basis; the production reader always
+    // returns the real section.
+    const pending = await readTaskPendingAnchors(records, lookups, run.task, current.value.session.workspaceId,
+      [...runsById.values()]);
+    if (pending.status !== 'ready') return pending;
+    later(pending.readThrough);
     return { status: 'ready', value: { run, requeue, allRequeues, previous: previous.value,
-      previousIntents: { pointer, steers }, previousWait, round, newInputBodies, replyBodies, factsChain, readThrough } };
+      previousIntents: { pointer, steers }, previousWait, round, newInputBodies, replyBodies, factsChain, readThrough,
+      pendingAnomalies: pending.anchors } };
   };
   return { readExecution, listExecutions, readContinuationBasis };
 }

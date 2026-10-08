@@ -29,7 +29,7 @@
  */
 import type { ActorRef } from '../../../contracts/command-event.js';
 import type { CoreCallContext, MaterialReader } from '../../../contracts/core/call-context.js';
-import type { RoleConfigurationRef, VersionPin, WorkspaceScope } from '../../../contracts/core/identity.js';
+import type { RoleConfigurationRef, SessionRef, VersionPin, WorkspaceScope } from '../../../contracts/core/identity.js';
 import type { SessionRecord } from '../../../contracts/core/session.js';
 import type { CoreError, CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import type {
@@ -59,7 +59,8 @@ import {
   runControlNodeOf, runStateOf, transitionRun, type ClaimRequeueFacts, type RunEvent, type RunGuardContext,
 } from '../state/run-machine.js';
 import {
-  occupancyAdmissionProblem, occupySessionRecord, sessionMachineStateOf, transitionSession, type SessionOccupation,
+  occupancyAdmissionProblem, occupySessionRecord, sessionDispatchAdmissionProblem, sessionMachineStateOf,
+  transitionSession, type SessionOccupation,
 } from '../state/session-availability.js';
 import {
   taskClaimProblem, taskMachineStateOf, transitionTask,
@@ -71,6 +72,7 @@ import {
   encodeTaskClaimedEvent, taskClaimedEventFromEvent, type TaskClaimedEvent,
 } from './claim-record-codecs.js';
 import type { ClaimTaskInput, TaskClaim, TaskClaimDependencies, TaskClaimPort } from '../model/claim-contracts.js';
+import type { SessionFactsV1, SessionWorkWaitV1 } from '../model/session-facts-contracts.js';
 import type { GraphWrite } from '../model/task-contracts.js';
 import { evaluateEligibility } from './eligibility.js';
 import {
@@ -81,6 +83,8 @@ import type { SessionMessage } from '../model/communication-contracts.js';
 import { decodeSessionMessageRecord, sessionMessageRefKey } from '../sessions/message-record-codecs.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import { taskRequeueRefProblem } from '../persistence/rework-codecs.js';
+import { createSessionFactsService } from './session-facts.js';
+import { createLegacySessionProvenanceReader } from './session-provenance-facts.js';
 
 const RUN_SCHEMA_ID = 'RunSnapshot@1';
 const TASK_LEASE_SCHEMA_ID = 'TaskLeaseSnapshot@1';
@@ -163,6 +167,34 @@ function mapReadResult<T>(result: Exclude<ReadResult<T>, { status: 'ready' }>): 
 
 /** A machine refusal keeps its CoreError and text (STATE-MACHINES-SPEC §1.2). */
 function rejectionOf(refusal: Refusal | null): CoreRejection | null {
+  return refusal === null || refusal.ok ? null : reject(refusal.code, refusal.detail);
+}
+
+// --------------------------------------------------------------------------
+// S1-DISPATCH-01: the direct Work-claim exclusion (spec §3.2, §3.3)
+// --------------------------------------------------------------------------
+
+/**
+ * S1-DISPATCH-01: the direct Work-claim Session exclusion. `facts` is the
+ * trusted Session read (`tasks/session-facts.ts`; this service uses that
+ * submodule directly, §0.2 L1) and `consumedWait` is the continuation wait the
+ * claim names, or `null` for a first/requeue claim. The two only admit the exact
+ * same-Task/Run/message `consumedWait` exception; a copy provenance is
+ * `forbidden`, a pending archive request or another wait is `busy`. Returns the
+ * owner rejection, or `null` to admit. The machine decision itself is
+ * `state/session-availability.ts:sessionDispatchAdmissionProblem`.
+ */
+export function workClaimDispatchProblem(
+  facts: SessionFactsV1,
+  consumedWait: SessionWorkWaitV1 | null,
+): CoreRejection | null {
+  const refusal = sessionDispatchAdmissionProblem(facts.session, {
+    purpose: 'work',
+    waiting: facts.wait,
+    consumedWait,
+    readonlyQueryMatches: false,
+    legacyProvenance: null,
+  });
   return refusal === null || refusal.ok ? null : reject(refusal.code, refusal.detail);
 }
 
@@ -645,6 +677,59 @@ function roleMatchRejection(
 
 export function createTaskClaimService(deps: TaskClaimDependencies): TaskClaimPort {
   const records: Records = deps.records;
+  // Slice 1 §0.2 L1: the direct Work claim uses the same-submodule Session facts
+  // reader and the trusted legacy-provenance reader; an absent provenance is
+  // never treated as `new`.
+  const sessionFactsService = createSessionFactsService({ records });
+  const legacyProvenance = createLegacySessionProvenanceReader(records, sessionFactsService, deps.bodies);
+
+  /**
+   * S1-DISPATCH-01 at the direct claim entry: read the trusted Session facts,
+   * resolve a legacy provenance from reliable evidence when the record has
+   * none, and let the Session machine decide. A copy, a pending archive request
+   * or a wait is refused here, not only in `chooseSession`.
+   *
+   * §3.4 S:630: the evidence the derivation read is part of this claim's
+   * commit, so a concurrent Session write between the read and the commit is a
+   * revision conflict instead of a claim on stale facts.
+   */
+  async function claimDispatchProblem(
+    ctx: CoreCallContext,
+    sessionRef: SessionRef,
+    taskTriple: TaskTriple,
+    consumedWait: ClaimTaskInput['consumedWait'],
+  ): Promise<{ rejection: CoreRejection } | { guards: readonly RecordGuard[] }> {
+    const factsRead = await sessionFactsService.readSessionFacts(ctx, sessionRef);
+    if (factsRead.status !== 'ready') {
+      if (factsRead.status === 'not_found') return { rejection: reject('not_found', 'the target Session does not exist') };
+      if (factsRead.status === 'not_ready') return { rejection: incomplete('the Session facts are not readable at the required watermark') };
+      return { rejection: factsRead };
+    }
+    const facts = factsRead.value;
+    const consumed: SessionWorkWaitV1 | null = consumedWait === undefined ? null
+      : { runRef: consumedWait.runRef, messageRef: consumedWait.messageRef, task: taskTriple };
+    if ((facts.session.provenance ?? null) !== null) {
+      const refusal = workClaimDispatchProblem(facts, consumed);
+      return refusal === null ? { guards: [] } : { rejection: refusal };
+    }
+    const derived = await legacyProvenance.deriveLegacySessionProvenance(ctx, sessionRef);
+    if (derived.status === 'rejected' && derived.code === 'cycle') return { rejection: reject('cycle', derived.reason) };
+    if (derived.status !== 'ready') {
+      // §3.2 refusal table: keep the reader's own code and reason (`unavailable`,
+      // `cancelled`, `forbidden`, …); only a genuinely unreadable provenance is
+      // an incomplete ambiguity.
+      if (derived.status === 'rejected') return { rejection: reject(derived.code, derived.reason, derived.current) };
+      return { rejection: incomplete('legacy_provenance_ambiguous: the Session provenance is not readable and no trusted legacy basis proves it') };
+    }
+    // The trusted legacy provenance is passed as the guard fact; the Session
+    // record itself is never rewritten outside `state/session-availability.ts`.
+    const refusal = sessionDispatchAdmissionProblem(facts.session, {
+      purpose: 'work', waiting: facts.wait, consumedWait: consumed, readonlyQueryMatches: false,
+      legacyProvenance: derived.value.provenance,
+    });
+    if (refusal !== null && !refusal.ok) return { rejection: reject(refusal.code, refusal.detail) };
+    return { guards: derived.value.guards };
+  }
 
   /**
    * A continuation is identified ONLY by (prior Run, saved message) in the bound
@@ -882,6 +967,13 @@ export function createTaskClaimService(deps: TaskClaimDependencies): TaskClaimPo
     refused = judge({ structuralProblem: structuralProblemOf(eligibility), lease: state.lease,
       taskHasRun: facts.taskHasRun === true, prior, requeue });
     if (refused !== null) return refused;
+    // S1-DISPATCH-01: the direct Work claim refuses a copy provenance, a pending
+    // archive request and a Work wait here, not only in `chooseSession`. The ONE
+    // consumed-wait exception must name exactly this Task/Run/message.
+    const dispatchTask: TaskTriple = { projectId: scope.projectId, goalId: input.goalRef.goalId, taskId: input.taskId };
+    const dispatch = await claimDispatchProblem(scopeCtx, input.sessionRef, dispatchTask, consumedWait);
+    if ('rejection' in dispatch) return dispatch.rejection;
+    const dispatchGuards = dispatch.guards;
     if (consumedWait !== undefined) {
       // MSG-10: read the FORMAL saved reply from the same records transaction
       // instead of trusting the caller's responseRef: a pending message or an
@@ -977,6 +1069,9 @@ export function createTaskClaimService(deps: TaskClaimDependencies): TaskClaimPo
     addGuard(workspaceKey, workspaceRecord.revision);
     addGuard(refKeyOf(input.planRef), plan.revision);
     addGuard(sessionKey, session.revision);
+    // S1-DISPATCH-01 / §3.4 S:630: the trusted legacy derivation's guards are
+    // part of the claim commit, not dropped after the read.
+    for (const guard of dispatchGuards) addGuard(guard.refKey, guard.expectedRevision);
     for (const guard of facts.guards) addGuard(guard.refKey, guard.expectedRevision);
     // TASK-03: the requeue claim guards the TaskRequeue@1 it consumes (and the rework records it read).
     if (requeueRef !== undefined) for (const guard of facts.reworkGuards) addGuard(guard.refKey, guard.expectedRevision);

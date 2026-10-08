@@ -47,17 +47,25 @@ import type { CoreCallContext, CorePrincipal, MaterialReader } from '../../../co
 import type { SessionRef, VersionPin } from '../../../contracts/core/identity.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { SessionRecord } from '../../../contracts/core/session.js';
+import {
+  deriveArchiveStepCommitIdentityV1, type ArchiveStepRefV1, type ArchiveWaitChoiceV1,
+  type SessionArchiveRequestV1,
+} from '../../../contracts/core/session-archive.js';
 import type { PreparedTaskManifestV1 } from '../../../contracts/core/prepared-execution.js';
 import type { CoreError, CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import type { RunRef, RunSnapshot } from '../../../contracts/dispatch.js';
 import { consultationQueryRefs } from '../../../contracts/query-job.js';
 import type { QueryJobAnswerRef, QueryJobAnswerSnapshot, QueryJobRef, QueryJobSnapshot, QueryRunRef, QueryRunSnapshot } from '../../../contracts/query-job.js';
-import type { MessageQueryAnswerSender, MessageSender, MessageWorkRunSender, SessionMailboxDependencies, SessionMailboxPort, SessionMessage, SessionMessageStatus } from '../model/communication-contracts.js';
+import type { MessageQueryAnswerSender, MessageSender, MessageWorkRunSender, SessionMailboxDependencies, SessionMailboxPort, SessionMessage, SessionMessageStatus, UndeliveredReplyV1 } from '../model/communication-contracts.js';
 import { deriveSessionInputId } from '../model/communication-contracts.js';
 import { makeCommitCursor, seqOfCommitCursor } from '../../../contracts/ledger.js';
 import { canonicalRefKey, decodeWorkspaceSnapshot } from '../persistence/record-codecs.js';
-import { checkPlainSessionRef, decodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey } from '../sessions/session-record-codecs.js';
-import type { GraphWrite } from '../model/session-contracts.js';
+import { checkPlainSessionRef, decodeSessionRecord, encodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey } from '../sessions/session-record-codecs.js';
+import {
+  SESSION_ARCHIVE_REQUESTED_EVENT, sessionArchiveChangedEventFromEvent, type SessionArchiveChangedEventV1,
+} from '../sessions/lifecycle-record-codecs.js';
+import type { GraphWrite, SessionPage, SessionPageRequest } from '../model/session-contracts.js';
+import { SESSION_BY_PROVENANCE_LOOKUP, SESSION_REPLY_BY_HANDLER_LOOKUP } from '../model/session-facts-contracts.js';
 import type { RecordBatchRead, EncodedDomainEvent, EncodedRecord, PreparedCommit, RecordGuard, StoreFailure, StoreResult } from '../../record-store/ports.js';
 import type { RecordLookupRequest } from '../../record-store/lookup-ports.js';
 import type { TaskClaimOutbox } from '../model/claim-contracts.js';
@@ -70,8 +78,8 @@ import {
   SESSION_MESSAGE_BY_RECIPIENT_LOOKUP, SESSION_MESSAGE_BY_RECIPIENT_STATUS_LOOKUP,
   SESSION_MESSAGE_BY_SENDER_RUN_LOOKUP, SESSION_MESSAGE_BY_SENDER_SESSION_LOOKUP,
   SESSION_MESSAGE_CONTENT_TYPE, SESSION_MESSAGE_MAX_TEXT_BYTES,
-  checkMessageSender, checkSessionMessageRef, decodeSessionMessageRecord,
-  encodeSessionMessageReadEvent, encodeSessionMessageRecord, encodeSessionMessageRespondedEvent,
+  archiveWaitDisposedEventFromEvent, checkMessageSender, checkSessionMessageRef, decodeSessionMessageRecord,
+  encodeArchiveWaitDisposedEvent, encodeSessionMessageReadEvent, encodeSessionMessageRecord, encodeSessionMessageRespondedEvent,
   encodeSessionMessageSentEvent, sessionMessageFromEvent, sessionMessageRefKey,
   encodeSessionMessageConsultationDerivedEvent, encodeSessionMessageInputAcceptedEvent, type SessionMessageEventV1,
 } from '../sessions/message-record-codecs.js';
@@ -295,6 +303,61 @@ function scopeOfMessageRef(owned: Owned, ref: SessionMessageRef): CoreRejection 
   return null;
 }
 
+/**
+ * Slice 1 §2.9/§3.4: an internal archive wait-disposal step. It accepts no
+ * `GraphWrite` meta: the commit identity is derived from the durable archive
+ * request, and only the two disposal steps are accepted here.
+ */
+function normalizeArchiveStep(raw: unknown): { ok: true; step: ArchiveStepRefV1 } | { ok: false; rejection: CoreRejection } {
+  if (!isObject(raw)) return { ok: false, rejection: reject('invalid', 'archive_input_invalid: a wait disposal requires an ArchiveStepRefV1') };
+  if (Object.keys(raw).some((key) => !['sessionRef', 'archiveRequestId', 'requestReceipt', 'step', 'subjectKey'].includes(key))) {
+    return { ok: false, rejection: reject('invalid', 'archive_input_invalid: the archive step carries unknown fields') };
+  }
+  const sessionProblem = checkPlainSessionRef(raw['sessionRef']);
+  if (sessionProblem !== null) return { ok: false, rejection: reject('invalid', `archive_input_invalid: ${sessionProblem}`) };
+  const name = raw['step'];
+  if (name !== 'reply_handler' && name !== 'wait_cancel') {
+    return { ok: false, rejection: reject('invalid', 'archive_input_invalid: the archive step is not a wait disposal') };
+  }
+  const receipt = raw['requestReceipt'];
+  if (!isObject(receipt) || Object.keys(receipt).some((key) => key !== 'identityKey' && key !== 'fingerprint')
+    || !nonEmpty(receipt['identityKey']) || !nonEmpty(receipt['fingerprint'])) {
+    return { ok: false, rejection: reject('invalid', 'archive_input_invalid: the archive step needs the original request receipt') };
+  }
+  if (!nonEmpty(raw['archiveRequestId'])) {
+    return { ok: false, rejection: reject('invalid', 'archive_input_invalid: the archive step needs an archiveRequestId') };
+  }
+  if (!nonEmpty(raw['subjectKey'])) {
+    return { ok: false, rejection: reject('invalid', 'archive_input_invalid: the archive step needs a subjectKey') };
+  }
+  try {
+    return { ok: true, step: structuredClone(raw) as unknown as ArchiveStepRefV1 };
+  } catch {
+    return { ok: false, rejection: reject('invalid', 'archive_input_invalid: the archive step cannot be isolated from the caller') };
+  }
+}
+
+/**
+ * Slice 1 §4.5 step 7: the wait choice a step records. `reply_handler` is the
+ * transfer's first step; `wait_cancel` records a cancel for BOTH a transfer and
+ * a cancel request (it cancels the original yielded wait, keeping any handler).
+ */
+function waitChoiceForStep(wait: ArchiveWaitChoiceV1 | null, step: ArchiveStepRefV1): ArchiveWaitChoiceV1 | null {
+  if (wait === null) return null;
+  if (step.step === 'reply_handler') return wait.kind === 'transfer' ? wait : null;
+  return { kind: 'cancel', runRef: wait.runRef, messageRef: wait.messageRef };
+}
+
+/** Slice 1 S1-MSG-01: the target Session is same-workspace, active, not retired/archiving and not a readonly copy. */
+function replyTargetEligible(owned: Owned, target: SessionRecord): boolean {
+  const provenance = target.provenance ?? null;
+  return target.workspaceId === owned.workspaceId
+    && target.lifecycle === 'active'
+    && target.health !== 'unavailable'
+    && (target.archiveRequest ?? null) === null
+    && (provenance === null || provenance.kind !== 'readonly_copy');
+}
+
 // --------------------------------------------------------------------------
 // Message machine calls (STATE-MACHINES-SPEC §10)
 // --------------------------------------------------------------------------
@@ -458,9 +521,22 @@ type MessageEventEnvelope = { schemaVersion: 1; occurredAt: string; projectId: s
  * `SessionMessageResponded` event may name a derived query_run Answer (MSG-06).
  */
 function encodeMessageEvent(eventType: SessionMessageEventType, eventId: string, envelope: MessageEventEnvelope,
-  actor: MessageSender | MessageQueryAnswerSender, message: SessionMessage): EncodedDomainEvent {
+  actor: MessageSender | MessageQueryAnswerSender, message: SessionMessage,
+  disposal?: { source: SessionRecord; archiveStep: ArchiveStepRefV1 }): EncodedDomainEvent {
   if (eventType === 'SessionMessageResponded') {
     return encodeSessionMessageRespondedEvent({ eventId, eventType, ...envelope, actor, message });
+  }
+  if (eventType === 'ArchiveWaitDisposed') {
+    // Slice 1 §2.9: the wait-disposal replay event carries the changed message
+    // and source Session plus the exact step. It has no actor/requestId; the
+    // commit identity (and the original operator) come from the durable request.
+    if (disposal === undefined) throw new Error('an ArchiveWaitDisposed event needs the changed source Session and step');
+    return encodeArchiveWaitDisposedEvent({
+      eventId, eventType,
+      schemaVersion: envelope.schemaVersion, occurredAt: envelope.occurredAt,
+      projectId: envelope.projectId, workspaceId: envelope.workspaceId,
+      message, source: disposal.source, archiveStep: disposal.archiveStep,
+    });
   }
   if (actor.kind === 'query_run') throw new Error(`a ${eventType} event cannot name a query_run actor`);
   const event: Exclude<SessionMessageEventV1, { eventType: 'SessionMessageResponded' }> = { eventId, eventType, ...envelope, actor, message };
@@ -528,6 +604,7 @@ const EVENT_ID_SUFFIX: Record<SessionMessageEventType, string> = {
   SessionMessageResponded: 'responded',
   SessionMessageConsultationDerived: 'consultation-derived',
   SessionMessageInputAccepted: 'input-accepted',
+  ArchiveWaitDisposed: 'archive-wait-disposed',
 };
 
 function eventIdOf(identityKey: string, eventType: SessionMessageEventType): string {
@@ -604,6 +681,38 @@ function decodeOutboxCursor(raw: string): OutboxCursorV1 | null {
   return { v: 1, projectId, workspaceId, callerKey, after,
     ...(senderRun === undefined ? { senderSession: senderSession as SessionRef } : { senderRun: senderRun as RunRef }) };
 
+}
+
+// --------------------------------------------------------------------------
+// Reply cursor: binds scope, the exact source/handler Session, the kind and the
+// caller to the after key. It is a THIRD keyset namespace (inbox/outbox/reply).
+// --------------------------------------------------------------------------
+
+type ReplyCursorV1 = {
+  v: 1;
+  kind: 'routed' | 'undelivered';
+  projectId: string;
+  workspaceId: string;
+  sessionId: string;
+  callerKey: string;
+  after: string;
+};
+
+function encodeReplyCursor(cursor: ReplyCursorV1): string {
+  return Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url');
+}
+function decodeReplyCursor(raw: string): ReplyCursorV1 | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8'));
+  } catch {
+    return null;
+  }
+  if (!isObject(parsed) || parsed['v'] !== 1) return null;
+  const { kind, projectId, workspaceId, sessionId, callerKey, after } = parsed;
+  if (kind !== 'routed' && kind !== 'undelivered') return null;
+  if (!nonEmpty(projectId) || !nonEmpty(workspaceId) || !nonEmpty(sessionId) || !nonEmpty(callerKey) || !nonEmpty(after)) return null;
+  return { v: 1, kind, projectId, workspaceId, sessionId, callerKey, after };
 }
 
 // --------------------------------------------------------------------------
@@ -1249,11 +1358,16 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     if (located.value.event.eventId !== receipt.eventIds[0]) {
       return reject('unavailable', 'the recorded mailbox event id disagrees with the receipt');
     }
-    const decoded = sessionMessageFromEvent(located.value.event);
+    const decoded = located.value.event.eventType === 'ArchiveWaitDisposed'
+      ? archiveWaitDisposedEventFromEvent(located.value.event)
+      : sessionMessageFromEvent(located.value.event);
     if (decoded.status !== 'decoded') {
       return reject('unavailable', `the recorded mailbox event is not decodable: ${decoded.reason}`);
     }
-    const message = decoded.value;
+    // The disposal replay event carries the changed message under its own field.
+    const message = located.value.event.eventType === 'ArchiveWaitDisposed'
+      ? (decoded.value as { message: SessionMessage }).message
+      : decoded.value as SessionMessage;
     const version = receipt.versions.find((entry) => entry.refKey === sessionMessageRefKey(message.ref));
     if (version === undefined || version.revision !== message.revision) {
       return reject('unavailable', 'the recorded mailbox event disagrees with the receipt revision');
@@ -1377,11 +1491,29 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
 
   // ---- read authority -----------------------------------------------------
 
+  /**
+   * Slice 1 §2.5: the effective reply handler of a wait. A recorded `replyHandler`
+   * wins; otherwise the original `work_run` sender Session handles the reply. A
+   * Host-sent message has no effective handler.
+   */
+  function effectiveReplyHandler(message: SessionMessage): SessionRef | null {
+    const handler = message.replyHandler ?? null;
+    if (handler !== null) return handler.sessionRef;
+    return message.sender.kind === 'work_run' ? message.sender.sessionRef : null;
+  }
+
   function canReadMessage(sessionRef: SessionRef, message: SessionMessage): boolean {
     if (message.recipient.projectId === sessionRef.projectId && message.recipient.sessionId === sessionRef.sessionId) return true;
-    return message.sender.kind === 'work_run'
+    if (message.sender.kind === 'work_run'
       && message.sender.sessionRef.projectId === sessionRef.projectId
-      && message.sender.sessionRef.sessionId === sessionRef.sessionId;
+      && message.sender.sessionRef.sessionId === sessionRef.sessionId) return true;
+    // Slice 1 §2.5: the effective reply handler may read the original message
+    // and its response body, but this never widens ack/respond rights (those
+    // still use `ownsInbox`, i.e. the original recipient).
+    const handler = message.replyHandler ?? null;
+    return handler !== null
+      && handler.sessionRef.projectId === sessionRef.projectId
+      && handler.sessionRef.sessionId === sessionRef.sessionId;
   }
 
   function ownsInbox(sessionRef: SessionRef, message: SessionMessage): boolean {
@@ -2204,7 +2336,8 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
         claimedSessionMatches: raw['executionSessionRef'] === undefined
           || canonicalOf(raw['executionSessionRef']) === canonicalOf(actualSession),
         executionSessionMatches: part === 'response'
-          ? message.sender.kind === 'work_run' && canonicalOf(message.sender.sessionRef) === canonicalOf(actualSession)
+          ? effectiveReplyHandler(message) !== null
+            && canonicalOf(effectiveReplyHandler(message)) === canonicalOf(actualSession)
           : canonicalOf(message.recipient) === canonicalOf(actualSession),
         inputIdTakenByOtherEvent: accepted !== undefined
           && (canonicalOf(accepted.executionRef) !== canonicalOf(executionRef) || canonicalOf(accepted.kernel) !== canonicalOf(kernel)),
@@ -2229,5 +2362,511 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     });
   }
 
-  return { sendMessage, readMessage, readMessageBody, readInbox, readOutbox, ackMessage, respondMessage, respondFromQueryAnswer, recordConsultationDerivation, recordInputAccepted };
+  // ---- disposeArchiveWait (S1-MSG-01/02) ----------------------------------
+
+  type DurableArchiveRequestRead =
+    | { ok: true; session: SessionRecord; request: SessionArchiveRequestV1; revision: number }
+    | { ok: false; rejection: CoreRejection };
+
+  /** §3.4: the durable R is read first, so a replay never needs the current record. */
+  async function readDurableArchiveRequest(owned: Owned, step: ArchiveStepRefV1): Promise<DurableArchiveRequestRead> {
+    const key = sessionAggregateRefKey(plainSessionRefToAggregate(step.sessionRef));
+    const read = await readBatch(records, [key]);
+    if (read.status !== 'ready') return { ok: false, rejection: mapBatchFailure(read) };
+    const presence = presenceOf(read.batch, key);
+    if (presence === 'missing') return { ok: false, rejection: reject('not_found', 'the archive source Session does not exist') };
+    if (presence === 'unaccounted') return { ok: false, rejection: reject('unavailable', 'the archive source Session was neither returned nor reported missing') };
+    const record = read.batch.present.get(key) as EncodedRecord;
+    const decoded = decodeSessionRecord(record);
+    if (decoded.status !== 'decoded') return { ok: false, rejection: reject('unavailable', `the archive source Session is damaged: ${decoded.reason}`) };
+    const session = decoded.value;
+    const request = session.archiveRequest ?? null;
+    if (request === null || request.requestId !== step.archiveRequestId
+      || step.requestReceipt.identityKey !== request.receipt.identityKey
+      || step.requestReceipt.fingerprint !== request.receipt.fingerprint) {
+      return { ok: false, rejection: reject('invalid', 'archive_disposal_required: the Session has no matching pending archive request') };
+    }
+    return { ok: true, session, request, revision: record.revision };
+  }
+
+  type StoredArchiveRequestRead =
+    | { ok: true; request: SessionArchiveRequestV1 }
+    | { ok: false; rejection: CoreRejection };
+
+  /**
+   * §2.3/D10: recover the immutable ORIGINAL request through the step's stored
+   * `requestReceipt` (lookupCommit → eventAt of the SessionArchiveRequested
+   * event), exactly as the sessions owner does for SV56. This never depends on
+   * the current Session record, so a committed internal `reply_handler` /
+   * `wait_cancel` step can still replay after the final archive cleared R.
+   */
+  async function loadStoredArchiveRequest(owned: Owned, step: ArchiveStepRefV1): Promise<StoredArchiveRequestRead> {
+    let found: StoreResult<Receipt>;
+    try {
+      found = await records.lookupCommit({
+        identityKey: step.requestReceipt.identityKey, fingerprint: step.requestReceipt.fingerprint,
+      });
+    } catch {
+      return { ok: false, rejection: reject('unavailable', 'the archive request receipt could not be read') };
+    }
+    if (found.status !== 'ready') {
+      if (found.code === 'not_found') return { ok: false, rejection: reject('not_found', 'the archive request receipt was not found') };
+      return { ok: false, rejection: mapStoreFailure(found) };
+    }
+    let at: StoreResult<{ cursor: CommitCursor; event: EncodedDomainEvent }>;
+    try {
+      at = await records.eventAt(found.value.cursor);
+    } catch {
+      return { ok: false, rejection: reject('unavailable', 'the archive request event could not be read') };
+    }
+    if (at.status !== 'ready') return { ok: false, rejection: mapStoreFailure(at) };
+    if (String(at.value.cursor) !== String(found.value.cursor)) {
+      return { ok: false, rejection: reject('unavailable', 'the archive request cursor disagrees with its receipt') };
+    }
+    const decoded = sessionArchiveChangedEventFromEvent(at.value.event);
+    if (decoded.status !== 'decoded') {
+      return { ok: false, rejection: reject('unavailable', `the archive request event is not decodable: ${decoded.reason}`) };
+    }
+    const event: SessionArchiveChangedEventV1 = decoded.value;
+    if (event.eventType !== SESSION_ARCHIVE_REQUESTED_EVENT) {
+      return { ok: false, rejection: reject('unavailable', 'the recorded archive event is not a request') };
+    }
+    if (!found.value.eventIds.includes(event.eventId)) {
+      return { ok: false, rejection: reject('unavailable', 'the archive request event id disagrees with its receipt') };
+    }
+    if (event.projectId !== owned.projectId || event.workspaceId !== owned.workspaceId) {
+      return { ok: false, rejection: reject('unavailable', 'the archive request event belongs to another scope') };
+    }
+    if (event.archiveRequestId !== step.archiveRequestId) {
+      return { ok: false, rejection: reject('unavailable', 'the archive step names another request') };
+    }
+    const sessionKey = sessionAggregateRefKey(plainSessionRefToAggregate(step.sessionRef));
+    if (canonicalOf(event.session.ref) !== sessionKey) {
+      return { ok: false, rejection: reject('unavailable', 'the archive request event belongs to another Session') };
+    }
+    const request = event.session.archiveRequest;
+    if (request === null || request === undefined) {
+      return { ok: false, rejection: reject('unavailable', 'the archive request event carries no request') };
+    }
+    if (canonicalOf(request.receipt) !== canonicalOf(step.requestReceipt)) {
+      return { ok: false, rejection: reject('unavailable', 'the archive step receipt disagrees with the stored request') };
+    }
+    return { ok: true, request };
+  }
+
+  type WaitRunRead =
+    | { ok: true; run: RunSnapshot; revision: number; refKey: string }
+    | { ok: false; rejection: CoreRejection };
+
+  /** The exact original wait Run and its CAS revision from one read window. */
+  async function readWaitRun(owned: Owned, runRef: RunRef): Promise<WaitRunRead> {
+    const refKey = canonicalOf(runRef);
+    if (refKey === null) return { ok: false, rejection: reject('invalid', 'archive_input_invalid: the wait RunRef is not canonicalizable JSON') };
+    const read = await readBatch(records, [refKey]);
+    if (read.status !== 'ready') return { ok: false, rejection: mapBatchFailure(read) };
+    const presence = presenceOf(read.batch, refKey);
+    if (presence === 'missing') return { ok: false, rejection: reject('not_found', 'the original wait Run does not exist') };
+    if (presence === 'unaccounted') return { ok: false, rejection: reject('unavailable', 'the original wait Run was neither returned nor reported missing') };
+    const record = read.batch.present.get(refKey) as EncodedRecord;
+    const decoded = decodeRun(record);
+    if (!decoded.ok) return { ok: false, rejection: reject('unavailable', `the original wait Run is damaged: ${decoded.reason}`) };
+    return { ok: true, run: decoded.value, revision: record.revision, refKey };
+  }
+
+  /**
+   * S1-MSG-01/02: write the changed message and the bumped source Session in ONE
+   * commit with the message, Run and both Session CAS guards. The event is the
+   * codec-owned `ArchiveWaitDisposed` replay carrier.
+   */
+  async function writeArchiveWaitDisposal(args: {
+    owned: Owned; identityKey: string; fingerprint: string; eventId: string; now: string;
+    message: SessionMessage; accepted: Accepted; source: SessionRecord;
+    archiveStep: ArchiveStepRefV1; choice: ArchiveWaitChoiceV1; guards: readonly RecordGuard[];
+  }): Promise<WriteResult<SessionMessage>> {
+    const plan = messageCommitPlan(args.accepted.effects);
+    if (plan.eventType !== 'ArchiveWaitDisposed') throw new Error('the wait-disposal machine did not name its event');
+    if (!nonEmpty(args.now)) return reject('invalid', 'the injected clock is not a legal instant');
+    const message = nextSessionMessageRecord(args.message, {
+      kind: 'archive_wait_disposed', choice: args.choice, archiveSessionRef: args.archiveStep.sessionRef,
+      archiveRequestId: args.archiveStep.archiveRequestId, now: args.now,
+    });
+    if (canonicalOf(messageMachineStateOf(message)) !== canonicalOf(args.accepted.next)) {
+      throw new Error('the written SessionMessage is not the state the message machine accepted');
+    }
+    const source: SessionRecord = { ...args.source, revision: args.source.revision + 1 };
+    const event = encodeMessageEvent('ArchiveWaitDisposed', args.eventId, {
+      schemaVersion: 1, occurredAt: args.now, projectId: args.owned.projectId,
+      workspaceId: args.owned.workspaceId, requestId: '',
+    }, { kind: 'host', actor: { ...deps.systemActor } }, message, { source, archiveStep: args.archiveStep });
+    if (args.owned.signal.aborted) return reject('cancelled', 'the wait disposal was cancelled before commit');
+    const guards: RecordGuard[] = [
+      { refKey: sessionMessageRefKey(message.ref), expectedRevision: plan.messageRevision as number },
+      { refKey: sessionAggregateRefKey(source.ref), expectedRevision: args.source.revision },
+      ...args.guards,
+    ];
+    const prepared: PreparedCommit = {
+      identityKey: args.identityKey, fingerprint: args.fingerprint, guards: dedupeGuards(guards),
+      records: [encodeSessionMessageRecord(message), encodeSessionRecord(source)],
+      claims: [], indexGuards: [], indexChanges: [], events: [event],
+    };
+    let receipt: Awaited<ReturnType<SessionMailboxDependencies['records']['commit']>>;
+    try {
+      receipt = await records.commit(prepared);
+    } catch {
+      const restored = await recheckAfterMiss(args.identityKey, args.fingerprint);
+      return restored ?? reject('unavailable', 'the wait disposal commit failed before completing');
+    }
+    if (receipt.status !== 'committed') {
+      const restored = await recheckAfterMiss(args.identityKey, args.fingerprint);
+      return restored ?? mapStoreFailure(receipt);
+    }
+    if (receipt.replayed) return replayMessage(receipt);
+    return { status: 'committed', value: message, replayed: false, cursor: receipt.cursor };
+  }
+
+  async function disposeArchiveWait(ctx: CoreCallContext, step: ArchiveStepRefV1): Promise<WriteResult<SessionMessage>> {
+    const owned = ownContext(ctx);
+    if (!owned.ok) return owned.rejection;
+    // §3.4/S1-MSG-01: only the trusted Host/Workflow may dispose an archive wait.
+    if (owned.principal.kind !== 'host') {
+      return reject('forbidden', 'archive_host_only: only the trusted Host may dispose an archive wait');
+    }
+    if (owned.signal.aborted) return reject('cancelled', 'the wait disposal was cancelled before validation');
+    const normalized = normalizeArchiveStep(step as unknown);
+    if (!normalized.ok) return normalized.rejection;
+    const ownedStep = normalized.step;
+    if (ownedStep.sessionRef.projectId !== owned.projectId) {
+      return reject('forbidden', 'archive_scope: the archive step names a Session outside the bound project');
+    }
+    const stored = await loadStoredArchiveRequest(owned, ownedStep);
+    if (!stored.ok) return stored.rejection;
+    const request = stored.request;
+    let identity: { identityKey: string; fingerprint: string; eventId: string };
+    try {
+      identity = deriveArchiveStepCommitIdentityV1(
+        { projectId: owned.projectId, workspaceId: owned.workspaceId }, request, ownedStep);
+    } catch {
+      return reject('invalid', 'archive_input_invalid: the archive step does not belong to the stored archive request');
+    }
+    const existing = await records.lookupCommit({ identityKey: identity.identityKey, fingerprint: identity.fingerprint });
+    if (existing.status === 'ready') return replayMessage(existing.value);
+    if (existing.code !== 'not_found') return mapStoreFailure(existing);
+
+    // A NEW commit still needs the matching CURRENT request on the Session.
+    const durable = await readDurableArchiveRequest(owned, ownedStep);
+    if (!durable.ok) return durable.rejection;
+    const source = durable.session;
+    if (source.ref.projectId !== owned.projectId || source.workspaceId !== owned.workspaceId) {
+      return reject('forbidden', 'archive_scope: the archive source Session is outside the bound scope');
+    }
+
+    const choice = waitChoiceForStep(request.wait ?? null, ownedStep);
+    if (choice === null) {
+      return reject('invalid', 'archive_input_invalid: the archive request has no wait choice for this step');
+    }
+    // §2.3 fixed subjectKey: transfer names the message, cancel names the Run.
+    const subject = ownedStep.step === 'reply_handler' ? canonicalOf(choice.messageRef) : canonicalOf(choice.runRef);
+    if (subject === null || ownedStep.subjectKey !== subject) {
+      return reject('invalid', 'archive_input_invalid: the archive step subjectKey does not match the original wait');
+    }
+    const messageRead = await loadMessageForWrite(owned, choice.messageRef);
+    if (!messageRead.ok) return messageRead.rejection;
+    const message = messageRead.message;
+    const runRead = await readWaitRun(owned, choice.runRef);
+    if (!runRead.ok) return runRead.rejection;
+    const run = runRead.run;
+
+    let target: SessionRecord | null = null;
+    if (ownedStep.step === 'reply_handler') {
+      if (choice.kind !== 'transfer') {
+        return reject('invalid', 'archive_input_invalid: the reply-handler step needs a transfer choice');
+      }
+      const targetKey = sessionAggregateRefKey(plainSessionRefToAggregate(choice.to));
+      const targetRead = await readBatch(records, [targetKey]);
+      if (targetRead.status !== 'ready') return mapBatchFailure(targetRead);
+      const presence = presenceOf(targetRead.batch, targetKey);
+      if (presence === 'missing') return reject('unavailable', 'the reply-handler target Session does not exist');
+      if (presence === 'unaccounted') return reject('unavailable', 'the reply-handler target Session was neither returned nor reported missing');
+      const decoded = decodeSessionRecord(targetRead.batch.present.get(targetKey) as EncodedRecord);
+      if (decoded.status !== 'decoded') return reject('unavailable', `the reply-handler target Session is damaged: ${decoded.reason}`);
+      target = decoded.value;
+      if (target.ref.projectId !== owned.projectId) {
+        return reject('forbidden', 'archive_scope: the reply-handler target is outside the bound project');
+      }
+    }
+
+    const waitMatches = message !== null
+      && message.ref.projectId === owned.projectId && message.ref.workspaceId === owned.workspaceId
+      && canonicalOf(message.ref) === canonicalOf(choice.messageRef)
+      && message.sender.kind === 'work_run'
+      && canonicalOf(message.sender.runRef) === canonicalOf(choice.runRef)
+      && canonicalOf(message.sender.sessionRef) === canonicalOf(ownedStep.sessionRef)
+      && run.outcome === 'yielded'
+      && run.continuation !== undefined
+      && canonicalOf(run.continuation.messageRef) === canonicalOf(choice.messageRef);
+    const responseAccepted = message !== null && (message.acceptedInputs ?? []).some((entry) => entry.part === 'response');
+    const targetEligible = ownedStep.step === 'reply_handler'
+      ? target !== null && replyTargetEligible(owned, target)
+      : true;
+    const now = deps.now();
+    if (!nonEmpty(now)) return reject('invalid', 'the injected clock is not a legal instant');
+    const archiveWaitFacts: NonNullable<MessageGuardContext['archiveWait']> = {
+      choice, archiveSessionRef: ownedStep.sessionRef, archiveRequestId: request.requestId, now,
+      requestMatches: true, waitMatches, targetEligible, responseAccepted,
+    };
+    const { decided, ctx: messageCtx } = judge(owned.principal, message, { type: 'archive_wait_disposed' }, { archiveWait: archiveWaitFacts });
+    if (!decided.ok) return refuse(decided, messageCtx, identity.identityKey, identity.fingerprint);
+    const current = acceptedMessage(message);
+    const guards: RecordGuard[] = [{ refKey: runRead.refKey, expectedRevision: runRead.revision }];
+    if (target !== null) {
+      guards.push({ refKey: sessionAggregateRefKey(target.ref), expectedRevision: target.revision });
+    }
+    return writeArchiveWaitDisposal({
+      owned, identityKey: identity.identityKey, fingerprint: identity.fingerprint, eventId: identity.eventId,
+      now, message: current, accepted: decided, source, archiveStep: ownedStep, choice, guards,
+    });
+  }
+
+  // ---- readRoutedReplies / readUndeliveredReplies (slice 1 §2.5) ----------
+
+  /** The `SessionPageRequest` shared by the two reply reads. */
+  function replyPageProblem(page: unknown): { ok: true; limit: number; rawCursor: unknown; rawAtLeast: unknown }
+    | { ok: false; rejection: CoreRejection } {
+    if (!isObject(page)) return { ok: false, rejection: reject('invalid', 'the reply page must be an object') };
+    if (Object.keys(page).some((key) => key !== 'limit' && key !== 'cursor' && key !== 'atLeastCursor')) {
+      return { ok: false, rejection: reject('invalid', 'the reply page does not accept extra fields') };
+    }
+    const limit = page['limit'];
+    if (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1 || limit > 100) {
+      return { ok: false, rejection: reject('invalid', 'the reply limit must be an integer between 1 and 100') };
+    }
+    return { ok: true, limit, rawCursor: page['cursor'], rawAtLeast: page['atLeastCursor'] };
+  }
+
+  /** A work_run reads only its own Session; a Host reads within its workspace. */
+  async function replyCallerKey(owned: Owned, session: SessionRef, what: string):
+  Promise<{ ok: true; key: string } | { ok: false; rejection: CoreRejection }> {
+    if (owned.principal.kind === 'host') {
+      return { ok: true, key: canonicalOf({ kind: 'host', actor: { ...owned.principal.actor } }) ?? '' };
+    }
+    if (owned.principal.kind === 'work_run') {
+      const identity = await readWorkRunIdentity(owned, owned.principal, owned.principal.runRef);
+      if (!identity.ok) return { ok: false, rejection: identity.rejection };
+      if (canonicalOf(identity.claim.sessionRef) !== canonicalOf(session)) {
+        return { ok: false, rejection: reject('forbidden', `a work_run ${what} read is limited to its own Session`) };
+      }
+      return { ok: true, key: canonicalOf({ kind: 'work_run', sessionRef: identity.claim.sessionRef, runRef: identity.run.ref }) ?? '' };
+    }
+    return { ok: false, rejection: reject('forbidden', 'the mailbox reader principal is not supported') };
+  }
+
+  async function readRoutedReplies(
+    ctx: CoreCallContext, input: { handler: SessionRef; page: SessionPageRequest },
+  ): Promise<ReadResult<SessionPage<SessionMessage>>> {
+    const owned = ownContext(ctx);
+    if (!owned.ok) return owned.rejection;
+    const raw = input as unknown as Unknown;
+    if (!isObject(raw)) return reject('invalid', 'readRoutedReplies requires an input object');
+    if (Object.keys(raw).some((key) => key !== 'handler' && key !== 'page')) {
+      return reject('invalid', 'readRoutedReplies does not accept extra fields');
+    }
+    const handlerProblem = checkPlainSessionRef(raw['handler']);
+    if (handlerProblem !== null) return reject('invalid', `readRoutedReplies handler: ${handlerProblem}`);
+    const handler = structuredClone(raw['handler']) as SessionRef;
+    if (handler.projectId !== owned.projectId) return reject('forbidden', 'the reply handler belongs to another project');
+    const page = replyPageProblem(raw['page']);
+    if (!page.ok) return page.rejection;
+    const caller = await replyCallerKey(owned, handler, 'routed-replies');
+    if (!caller.ok) return caller.rejection;
+    if (page.rawCursor !== undefined && !nonEmpty(page.rawCursor)) {
+      return reject('invalid', 'the reply cursor must be a non-empty string');
+    }
+    let decodedCursor: ReplyCursorV1 | null = null;
+    if (page.rawCursor !== undefined) {
+      decodedCursor = decodeReplyCursor(page.rawCursor);
+      if (decodedCursor === null) return reject('invalid', 'the reply cursor is not a valid continuation token');
+      if (decodedCursor.kind !== 'routed' || decodedCursor.projectId !== owned.projectId
+        || decodedCursor.workspaceId !== owned.workspaceId || decodedCursor.sessionId !== handler.sessionId) {
+        return reject('invalid', 'the reply cursor belongs to another scope or handler');
+      }
+    }
+    let atLeastSeq: number | undefined;
+    if (page.rawAtLeast !== undefined) {
+      const parsed = cursorSequence(page.rawAtLeast);
+      if (parsed === null) return reject('invalid', 'atLeastCursor is not a ledger commit cursor');
+      atLeastSeq = parsed;
+    }
+    if (decodedCursor !== null && decodedCursor.callerKey !== caller.key) {
+      return reject('invalid', 'the reply cursor does not belong to the current caller');
+    }
+    const after = decodedCursor?.after;
+    const request: RecordLookupRequest = {
+      index: SESSION_REPLY_BY_HANDLER_LOOKUP,
+      values: [owned.projectId, owned.workspaceId, handler.sessionId],
+      limit: page.limit,
+      ...(after === undefined ? {} : { after }),
+    };
+    let pageResult: StoreResult<{ records: EncodedRecord[]; next: string | null; readThrough: CommitCursor | null }>;
+    try {
+      pageResult = await records.lookup(request);
+    } catch {
+      return reject('unavailable', 'the routed-reply lookup failed');
+    }
+    if (pageResult.status !== 'ready') return mapStoreFailure(pageResult);
+    const readThrough = pageResult.value.readThrough;
+    if (atLeastSeq !== undefined) {
+      const observed = readThrough === null ? null : cursorSequence(readThrough);
+      if (observed === null || observed < atLeastSeq) {
+        return {
+          status: 'not_ready',
+          observed: readThrough === null ? null : { kind: 'platform', cursor: readThrough },
+          required: { kind: 'platform', cursor: page.rawAtLeast as CommitCursor },
+        };
+      }
+    }
+    if (readThrough === null) {
+      return { status: 'not_ready', observed: null, required: { kind: 'platform', cursor: MIN_CURSOR } };
+    }
+    const items: SessionMessage[] = [];
+    for (const record of pageResult.value.records) {
+      const decoded = decodeSessionMessageRecord(record);
+      if (decoded.status !== 'decoded') return reject('unavailable', `a routed-reply candidate is damaged: ${decoded.reason}`);
+      const message = decoded.value;
+      const handlerRef = message.replyHandler ?? null;
+      if (sessionMessageRefKey(message.ref) !== record.refKey
+        || message.ref.projectId !== owned.projectId || message.ref.workspaceId !== owned.workspaceId
+        || handlerRef === null || canonicalOf(handlerRef.sessionRef) !== canonicalOf(handler)) {
+        return reject('unavailable', 'a routed-reply candidate disagrees with the requested handler');
+      }
+      items.push(message);
+    }
+    const nextCursor = pageResult.value.next === null ? null : encodeReplyCursor({
+      v: 1, kind: 'routed', projectId: owned.projectId, workspaceId: owned.workspaceId,
+      sessionId: handler.sessionId, callerKey: caller.key, after: pageResult.value.next,
+    });
+    return { status: 'ready', value: { items, nextCursor, sourceCursor: readThrough } };
+  }
+
+  async function readUndeliveredReplies(
+    ctx: CoreCallContext, input: { sessionRef: SessionRef; page: SessionPageRequest },
+  ): Promise<ReadResult<SessionPage<UndeliveredReplyV1>>> {
+    const owned = ownContext(ctx);
+    if (!owned.ok) return owned.rejection;
+    const raw = input as unknown as Unknown;
+    if (!isObject(raw)) return reject('invalid', 'readUndeliveredReplies requires an input object');
+    if (Object.keys(raw).some((key) => key !== 'sessionRef' && key !== 'page')) {
+      return reject('invalid', 'readUndeliveredReplies does not accept extra fields');
+    }
+    const sessionProblem = checkPlainSessionRef(raw['sessionRef']);
+    if (sessionProblem !== null) return reject('invalid', `readUndeliveredReplies sessionRef: ${sessionProblem}`);
+    const sessionRef = structuredClone(raw['sessionRef']) as SessionRef;
+    if (sessionRef.projectId !== owned.projectId) return reject('forbidden', 'the reply source belongs to another project');
+    const page = replyPageProblem(raw['page']);
+    if (!page.ok) return page.rejection;
+    const caller = await replyCallerKey(owned, sessionRef, 'undelivered-replies');
+    if (!caller.ok) return caller.rejection;
+    if (page.rawCursor !== undefined && !nonEmpty(page.rawCursor)) {
+      return reject('invalid', 'the reply cursor must be a non-empty string');
+    }
+    let decodedCursor: ReplyCursorV1 | null = null;
+    if (page.rawCursor !== undefined) {
+      decodedCursor = decodeReplyCursor(page.rawCursor);
+      if (decodedCursor === null) return reject('invalid', 'the reply cursor is not a valid continuation token');
+      if (decodedCursor.kind !== 'undelivered' || decodedCursor.projectId !== owned.projectId
+        || decodedCursor.workspaceId !== owned.workspaceId || decodedCursor.sessionId !== sessionRef.sessionId) {
+        return reject('invalid', 'the reply cursor belongs to another scope or source Session');
+      }
+    }
+    let atLeastSeq: number | undefined;
+    if (page.rawAtLeast !== undefined) {
+      const parsed = cursorSequence(page.rawAtLeast);
+      if (parsed === null) return reject('invalid', 'atLeastCursor is not a ledger commit cursor');
+      atLeastSeq = parsed;
+    }
+    if (decodedCursor !== null && decodedCursor.callerKey !== caller.key) {
+      return reject('invalid', 'the reply cursor does not belong to the current caller');
+    }
+    const after = decodedCursor?.after;
+    // The source Session's retirement is the durable fact; without it nothing is
+    // an undelivered reply. The read is otherwise pure and never acks.
+    const sourceKey = sessionAggregateRefKey(plainSessionRefToAggregate(sessionRef));
+    const sourceRead = await readBatch(records, [sourceKey]);
+    if (sourceRead.status !== 'ready') return mapBatchFailure(sourceRead);
+    const sourcePresence = presenceOf(sourceRead.batch, sourceKey);
+    if (sourcePresence === 'missing') return reject('not_found', 'the undelivered-reply source Session does not exist');
+    if (sourcePresence === 'unaccounted') return reject('unavailable', 'the source Session was neither returned nor reported missing');
+    const sourceDecoded = decodeSessionRecord(sourceRead.batch.present.get(sourceKey) as EncodedRecord);
+    if (sourceDecoded.status !== 'decoded') return reject('unavailable', `the source Session is damaged: ${sourceDecoded.reason}`);
+    const retired = sourceDecoded.value.health === 'unavailable';
+    let hasContinuation = false;
+    if (retired) {
+      let continuationRead: StoreResult<{ records: EncodedRecord[]; next: string | null; readThrough: CommitCursor | null }>;
+      try {
+        continuationRead = await records.lookup({
+          index: SESSION_BY_PROVENANCE_LOOKUP,
+          values: [owned.projectId, owned.workspaceId, sessionRef.sessionId],
+          limit: 1,
+        });
+      } catch {
+        return reject('unavailable', 'the Session continuation lookup failed');
+      }
+      if (continuationRead.status !== 'ready') return mapStoreFailure(continuationRead);
+      hasContinuation = continuationRead.value.records.length > 0;
+    }
+    const request: RecordLookupRequest = {
+      index: SESSION_MESSAGE_BY_SENDER_SESSION_LOOKUP,
+      values: [owned.projectId, owned.workspaceId, sessionRef.sessionId],
+      limit: page.limit,
+      ...(after === undefined ? {} : { after }),
+    };
+    let pageResult: StoreResult<{ records: EncodedRecord[]; next: string | null; readThrough: CommitCursor | null }>;
+    try {
+      pageResult = await records.lookup(request);
+    } catch {
+      return reject('unavailable', 'the undelivered-reply lookup failed');
+    }
+    if (pageResult.status !== 'ready') return mapStoreFailure(pageResult);
+    const readThrough = pageResult.value.readThrough;
+    if (atLeastSeq !== undefined) {
+      const observed = readThrough === null ? null : cursorSequence(readThrough);
+      if (observed === null || observed < atLeastSeq) {
+        return {
+          status: 'not_ready',
+          observed: readThrough === null ? null : { kind: 'platform', cursor: readThrough },
+          required: { kind: 'platform', cursor: page.rawAtLeast as CommitCursor },
+        };
+      }
+    }
+    if (readThrough === null) {
+      return { status: 'not_ready', observed: null, required: { kind: 'platform', cursor: MIN_CURSOR } };
+    }
+    const items: UndeliveredReplyV1[] = [];
+    for (const record of pageResult.value.records) {
+      const decoded = decodeSessionMessageRecord(record);
+      if (decoded.status !== 'decoded') return reject('unavailable', `an undelivered-reply candidate is damaged: ${decoded.reason}`);
+      const message = decoded.value;
+      if (sessionMessageRefKey(message.ref) !== record.refKey || message.ref.projectId !== owned.projectId
+        || message.ref.workspaceId !== owned.workspaceId || message.sender.kind !== 'work_run'
+        || canonicalOf(message.sender.sessionRef) !== canonicalOf(sessionRef)) {
+        return reject('unavailable', 'an undelivered-reply candidate disagrees with the requested source Session');
+      }
+      if (!retired || message.response === null) continue;
+      const response = message.response;
+      // A reply already used by an execution is delivered, never undelivered.
+      if ((message.acceptedInputs ?? []).some((entry) => entry.part === 'response')) continue;
+      items.push({
+        kind: 'retired_reply', messageRef: message.ref, sourceSessionRef: sessionRef,
+        responseRef: response.bodyRef, respondedAt: response.respondedAt,
+        hasContinuation, requiresUserRecipient: !hasContinuation,
+      });
+    }
+    const nextCursor = pageResult.value.next === null ? null : encodeReplyCursor({
+      v: 1, kind: 'undelivered', projectId: owned.projectId, workspaceId: owned.workspaceId,
+      sessionId: sessionRef.sessionId, callerKey: caller.key, after: pageResult.value.next,
+    });
+    return { status: 'ready', value: { items, nextCursor, sourceCursor: readThrough } };
+  }
+
+  return { sendMessage, readMessage, readMessageBody, readInbox, readOutbox, ackMessage, respondMessage, respondFromQueryAnswer, recordConsultationDerivation, recordInputAccepted,
+    disposeArchiveWait, readUndeliveredReplies, readRoutedReplies };
 }

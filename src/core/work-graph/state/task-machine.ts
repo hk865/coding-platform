@@ -43,6 +43,7 @@ import type {
 import type {
   TaskReductionCause, TaskReductionPhase, TaskReductionRef, TaskReductionSnapshot,
 } from '../../../contracts/reduction.js';
+import type { ArchiveRequeueOriginV1 } from '../../../contracts/session-anomaly.js';
 import type { TaskPhaseCauseCode, TaskPhaseCauseDetailV1, TaskPhaseCauseV1 } from '../../../contracts/task-failure.js';
 import {
   MAX_AUTO_REWORK_LIMIT, TASK_REWORK_REASON_MAX_CHARS, reworkActorClassOf,
@@ -60,7 +61,7 @@ import {
 } from './run-machine.js';
 import {
   deriveReworkClass, isGoalFanOutActor, nextRequeueAutoCount, requeueHistorySourceOf, reworkFenceOf, reworkPermission,
-  type ReworkClassDerivationV1, type StopIntentV1,
+  type ReworkClassDerivationV1, type StopIntentV1, type VerifiedArchiveInterruptionV1,
 } from './task-failure.js';
 import { accept, failed, reject, rejected, unreachable, type Rejected, type Transition } from './transition.js';
 import {
@@ -357,6 +358,13 @@ export type TaskReworkFacts = {
   goalDesiredState: GoalDesiredState;
   /** ND-3: `basis.digest` of every TaskRequeue of the Task read in the window. */
   priorBasisDigests: readonly string[];
+  /**
+   * Slice 1 §3.2 S1-TASK-01: the owner-verified archive interruption of this
+   * requeue (from the durable request/anchor or the exact wait disposition);
+   * absent is null, and `deriveReworkClass` then keeps its old three-argument
+   * classification.
+   */
+  archive?: VerifiedArchiveInterruptionV1 | null;
 };
 
 /** §9 events that reach a Task only through its round-chain head. */
@@ -528,6 +536,10 @@ export type NewTaskRequeueInput = {
   /** The Task's TaskRequeues of the same window (the C8 count and the one-hop history source). */
   requeues: readonly Pick<TaskRequeueSnapshotV1, 'ref' | 'automation' | 'historySource'>[];
   policy: Pick<TaskAutomationPolicyV1, 'autoReworkLimit'>;
+  /** Slice 1 §2.6: set only on a requeue caused by an archive; absent is null. */
+  archiveOrigin?: ArchiveRequeueOriginV1 | null;
+  /** Slice 1 §3.5: the owner-verified archive interruption `deriveReworkClass` may use; absent is null. */
+  archive?: VerifiedArchiveInterruptionV1 | null;
 };
 
 /** ND-5 / ND-6: `interrupted` and a human requeue of a cancel skip the key comparison. */
@@ -690,7 +702,7 @@ export function newTaskRequeueRecord(input: NewTaskRequeueInput): TaskRequeueSna
   const actorClass = reworkActorClassOf(null, input.requestedBy);
   if (actorClass === null) return requeueCannotBeBuilt('the requester has no rework actor class');
   const { afterRun, chain } = input;
-  const derivation = deriveReworkClass(afterRun, input.pointerIntent, chain);
+  const derivation = deriveReworkClass(afterRun, input.pointerIntent, chain, input.archive ?? null);
   const afterOutcome = afterRun.outcome;
   if (derivation.kind !== 'class' || afterOutcome === null || afterOutcome === 'outcome_unknown') {
     return requeueCannotBeBuilt(`run ${afterRun.ref.runId} has no rework class (${derivation.row})`);
@@ -732,6 +744,7 @@ export function newTaskRequeueRecord(input: NewTaskRequeueInput): TaskRequeueSna
     agentProvenance: input.agentProvenance,
     automation,
     historySource: requeueHistorySourceOf(afterRun, input.requeues),
+    ...(input.archiveOrigin == null ? {} : { archiveOrigin: input.archiveOrigin }),
   };
 }
 
@@ -1155,8 +1168,18 @@ export function taskRequeueStateProblem(state: TaskState, facts: TaskReworkFacts
       return reject('guard_failed', 'busy', 'the yielded wait is paused; resume or cancel it first');
     case 'P1':
     case 'P5':
-    case 'P14':
+    case 'P14': {
+      // S1-TASK-01 / §4.1 step 7: a verified wait-cancel archive of this exact
+      // yielded Run is the durable authority to requeue; the ordinary
+      // "nothing to requeue" refusal is for requeues without that authority.
+      const archivedWait = facts.archive?.kind === 'wait'
+        && facts.archive.cause === 'archive_wait_cancel'
+        && facts.archive.runRef.projectId === run.ref.projectId
+        && facts.archive.runRef.goalId === run.ref.goalId
+        && facts.archive.runRef.runId === run.ref.runId;
+      if (archivedWait) break;
       return reject('illegal', 'invalid', `the task is ${state.phase}; there is nothing to requeue`);
+    }
     case 'P11':
     case 'P13':
     case 'P12':
@@ -1219,7 +1242,7 @@ function onTaskRequeued(
   }
   const actorClass = reworkActorClassOf(null, input.requestedBy);
   if (actorClass === null) return reject('guard_failed', 'forbidden', 'the requester has no rework actor class');
-  const derivation = deriveReworkClass(input.afterRun, input.pointerIntent, input.chain);
+  const derivation = deriveReworkClass(input.afterRun, input.pointerIntent, input.chain, input.archive ?? null);
   if (derivation.kind !== 'class') return reject('illegal', 'invalid', `the selected Run has nothing to rework (${derivation.row})`);
   const permission = requeuePermission(input.afterRun, input.pointerIntent, derivation, input.requestedBy, actorClass,
     facts.goalDesiredState, { trigger: input.trigger !== null, budget: input.budget !== null });
@@ -1277,7 +1300,7 @@ function onTaskReworkRefused(
   if (!isRunPointerIntent(run, event.pointerIntent)) {
     return reject('illegal', 'invalid', 'the pointer intent is not the selected Run pointer');
   }
-  const derivation = deriveReworkClass(run, event.pointerIntent, facts.chain);
+  const derivation = deriveReworkClass(run, event.pointerIntent, facts.chain, facts.archive ?? null);
   if (derivation.kind !== 'class') return reject('illegal', 'invalid', `the selected Run has nothing to rework (${derivation.row})`);
   if (derivation.failureClass !== refusal.failureClass) {
     return reject('illegal', 'invalid', `the refusal class ${refusal.failureClass} is not the selected Run's class ${derivation.failureClass}`);

@@ -27,6 +27,7 @@ import type {
   DecodeResult, EncodedDomainEvent, EncodedRecord, RecordBackendSchemas,
 } from '../../record-store/ports.js';
 import type { SessionOperationRecord } from '../model/session-contracts.js';
+import { SESSION_BY_PROVENANCE_LOOKUP } from '../model/session-facts-contracts.js';
 
 // --------------------------------------------------------------------------
 // Fixed registration identifiers
@@ -378,13 +379,273 @@ export function checkWorkLinkRef(value: unknown): Problem {
 const OPERATION_BODY_KEYS: readonly string[] = [
   'ref', 'revision', 'action', 'phase', 'requestedAt', 'updatedAt', 'observation', 'failure',
 ];
-const ACTION_KEYS: readonly string[] = ['kind', 'plannedSessionRef', 'workspace', 'kernelStore', 'role', 'recommendedRefs', 'initialLinks'];
+const ACTION_KEYS: readonly string[] = ['kind', 'plannedSessionRef', 'workspace', 'kernelStore', 'role', 'recommendedRefs', 'initialLinks', 'provenance'];
 const OPERATION_PHASES: readonly string[] = ['accepted', 'running', 'completed', 'failed', 'unknown'];
 const SESSION_BODY_KEYS: readonly string[] = [
   'ref', 'revision', 'kernel', 'lifecycle', 'health', 'healthConclusion', 'role', 'workspaceId', 'lastExecutionRef',
-  'occupancy', 'historyCursor', 'createdAt', 'archivedAt',
+  'occupancy', 'historyCursor', 'createdAt', 'archivedAt', 'provenance', 'archiveRequest',
 ];
 const WORK_LINK_BODY_KEYS: readonly string[] = ['ref', 'revision', 'since', 'until'];
+
+// --------------------------------------------------------------------------
+// Slice 1 §2.2/§2.3: provenance and the immutable archive request
+// --------------------------------------------------------------------------
+
+/**
+ * Strict shape of `SessionProvenanceV1` (K3: present but malformed is refused;
+ * absent is the caller's default). `ownProjectId` is the project of the record
+ * that carries the provenance; `ownSessionId` is its Session, which its own
+ * predecessor may never be.
+ */
+export function checkSessionProvenance(value: unknown, ownProjectId: string, ownSessionId: string | null): Problem {
+  if (!isObject(value)) return 'provenance must be an object';
+  if (value['schemaVersion'] !== 1) return 'provenance schemaVersion must be 1';
+  const from = (): Problem => {
+    const problem = checkPlainSessionRef(value['from']);
+    if (problem !== null) return `provenance from: ${problem}`;
+    const reference = value['from'] as UnknownRecord;
+    if (reference['projectId'] !== ownProjectId) return 'provenance predecessor belongs to another project';
+    if (ownSessionId !== null && reference['sessionId'] === ownSessionId) {
+      return 'a Session cannot name itself as its predecessor';
+    }
+    return null;
+  };
+  switch (value['kind']) {
+    case 'new':
+      return hasOnlyKeys(value, ['schemaVersion', 'kind']) ? null : 'new provenance carries unknown fields';
+    case 'continuation': {
+      if (!hasOnlyKeys(value, ['schemaVersion', 'kind', 'from', 'reason', 'task'])) {
+        return 'continuation provenance carries unknown fields';
+      }
+      const predecessor = from();
+      if (predecessor !== null) return predecessor;
+      if (!['interrupted', 'archived', 'damaged', 'role_mismatch'].includes(String(value['reason']))) {
+        return 'continuation provenance reason is not recognized';
+      }
+      const task = value['task'];
+      if (!isObject(task) || !hasOnlyKeys(task, ['projectId', 'goalId', 'taskId'])
+        || !nonEmpty(task['projectId']) || !nonEmpty(task['goalId']) || !nonEmpty(task['taskId'])) {
+        return 'continuation provenance task must be a complete TaskTriple';
+      }
+      if (task['projectId'] !== ownProjectId) return 'continuation provenance task belongs to another project';
+      return null;
+    }
+    case 'handoff': {
+      if (!hasOnlyKeys(value, ['schemaVersion', 'kind', 'from'])) return 'handoff provenance carries unknown fields';
+      return from();
+    }
+    case 'readonly_copy': {
+      if (!hasOnlyKeys(value, ['schemaVersion', 'kind', 'from', 'messageRef'])) {
+        return 'readonly_copy provenance carries unknown fields';
+      }
+      const predecessor = from();
+      if (predecessor !== null) return predecessor;
+      const message = value['messageRef'];
+      if (!isObject(message) || !hasOnlyKeys(message, ['aggregateType', 'projectId', 'workspaceId', 'messageId'])
+        || message['aggregateType'] !== 'SessionMessage' || !nonEmpty(message['projectId'])
+        || !nonEmpty(message['workspaceId']) || !nonEmpty(message['messageId'])) {
+        return 'readonly_copy provenance messageRef must be a complete SessionMessageRef';
+      }
+      if (message['projectId'] !== ownProjectId) return 'readonly_copy provenance message belongs to another project';
+      return null;
+    }
+    default:
+      return 'provenance kind is not recognized';
+  }
+}
+
+function checkArchiveTaskChoice(value: unknown, ownProjectId: string): Problem {
+  if (!isObject(value) || !hasOnlyKeys(value, ['target', 'disposition'])) return 'archive task choice carries unknown fields';
+  const target = value['target'];
+  if (!isObject(target) || (target['kind'] !== 'task' && target['kind'] !== 'work')) {
+    return 'archive task choice target must be a task or work target';
+  }
+  const targetRef = target['ref'];
+  if (!isObject(targetRef)) return 'archive task choice target ref must be an object';
+  if (target['kind'] === 'task') {
+    if (!hasOnlyKeys(targetRef, ['projectId', 'goalId', 'taskId'])
+      || !nonEmpty(targetRef['projectId']) || !nonEmpty(targetRef['goalId']) || !nonEmpty(targetRef['taskId'])) {
+      return 'archive task choice target must be a complete TaskTriple';
+    }
+  } else if (!hasOnlyKeys(targetRef, ['aggregateType', 'projectId', 'workspaceId', 'workId'])
+    || targetRef['aggregateType'] !== 'WorkContextBinding' || !nonEmpty(targetRef['projectId'])
+    || !nonEmpty(targetRef['workspaceId']) || !nonEmpty(targetRef['workId'])) {
+    return 'archive task choice target must be a complete WorkContextRef';
+  }
+  if (targetRef['projectId'] !== ownProjectId) return 'archive task choice target belongs to another project';
+  const disposition = value['disposition'];
+  if (!isObject(disposition)) return 'archive task choice disposition must be an object';
+  if (disposition['kind'] === 'drop') {
+    return hasOnlyKeys(disposition, ['kind']) ? null : 'drop disposition carries unknown fields';
+  }
+  if (disposition['kind'] === 'transfer') {
+    if (!hasOnlyKeys(disposition, ['kind', 'to'])) return 'transfer disposition carries unknown fields';
+    const to = checkPlainSessionRef(disposition['to']);
+    if (to !== null) return `transfer disposition to: ${to}`;
+    if ((disposition['to'] as UnknownRecord)['projectId'] !== ownProjectId) {
+      return 'transfer disposition target belongs to another project';
+    }
+    return null;
+  }
+  return 'archive task choice disposition kind is not recognized';
+}
+
+function checkArchiveWaitChoice(value: unknown, ownProjectId: string): Problem {
+  if (!isObject(value)) return 'archive wait choice must be an object';
+  const cancel = value['kind'] === 'cancel';
+  const transfer = value['kind'] === 'transfer';
+  if (!cancel && !transfer) return 'archive wait choice kind is not recognized';
+  if (!hasOnlyKeys(value, cancel ? ['kind', 'runRef', 'messageRef'] : ['kind', 'runRef', 'messageRef', 'to'])) {
+    return 'archive wait choice carries unknown fields';
+  }
+  const run = value['runRef'];
+  if (!isObject(run) || !hasOnlyKeys(run, ['aggregateType', 'projectId', 'goalId', 'runId'])
+    || run['aggregateType'] !== 'Run' || !nonEmpty(run['projectId']) || !nonEmpty(run['goalId']) || !nonEmpty(run['runId'])) {
+    return 'archive wait choice runRef must be a complete RunRef';
+  }
+  if (run['projectId'] !== ownProjectId) return 'archive wait choice runRef belongs to another project';
+  const message = value['messageRef'];
+  if (!isObject(message) || !hasOnlyKeys(message, ['aggregateType', 'projectId', 'workspaceId', 'messageId'])
+    || message['aggregateType'] !== 'SessionMessage' || !nonEmpty(message['projectId'])
+    || !nonEmpty(message['workspaceId']) || !nonEmpty(message['messageId'])) {
+    return 'archive wait choice messageRef must be a complete SessionMessageRef';
+  }
+  if (message['projectId'] !== ownProjectId) return 'archive wait choice messageRef belongs to another project';
+  if (transfer) {
+    const to = checkPlainSessionRef(value['to']);
+    if (to !== null) return `archive wait choice to: ${to}`;
+    // §2.1/K3: the immutable wait target, like every Task choice, must belong to
+    // the Session's own project; a stored cross-project target is refused.
+    if ((value['to'] as UnknownRecord)['projectId'] !== ownProjectId) {
+      return 'archive wait choice transfer target belongs to another project';
+    }
+  }
+  return null;
+}
+
+function checkArchiveExecution(value: unknown): Problem {
+  if (!isObject(value)) return 'archive execution must be an object';
+  switch (value['kind']) {
+    case 'none':
+      return hasOnlyKeys(value, ['kind']) ? null : 'none execution carries unknown fields';
+    case 'work': {
+      if (!hasOnlyKeys(value, ['kind', 'runRef', 'attemptRef'])) return 'work execution carries unknown fields';
+      const run = value['runRef'];
+      if (!isObject(run) || !hasOnlyKeys(run, ['aggregateType', 'projectId', 'goalId', 'runId'])
+        || run['aggregateType'] !== 'Run' || !nonEmpty(run['projectId']) || !nonEmpty(run['goalId']) || !nonEmpty(run['runId'])) {
+        return 'work execution runRef must be a complete RunRef';
+      }
+      const attempt = value['attemptRef'];
+      if (!isObject(attempt)
+        || !hasOnlyKeys(attempt, ['aggregateType', 'projectId', 'goalId', 'taskId', 'attemptId'])
+        || attempt['aggregateType'] !== 'TaskAttempt' || !nonEmpty(attempt['projectId'])
+        || !nonEmpty(attempt['goalId']) || !nonEmpty(attempt['taskId']) || !nonEmpty(attempt['attemptId'])) {
+        return 'work execution attemptRef must be a complete TaskAttemptRef';
+      }
+      return null;
+    }
+    case 'query': {
+      if (!hasOnlyKeys(value, ['kind', 'queryRunRef'])) return 'query execution carries unknown fields';
+      const queryRun = value['queryRunRef'];
+      if (!isObject(queryRun)
+        || !hasOnlyKeys(queryRun, ['aggregateType', 'projectId', 'workspaceId', 'queryJobId', 'runId'])
+        || queryRun['aggregateType'] !== 'QueryRun' || !nonEmpty(queryRun['projectId'])
+        || !nonEmpty(queryRun['workspaceId']) || !nonEmpty(queryRun['queryJobId']) || !nonEmpty(queryRun['runId'])) {
+        return 'query execution queryRunRef must be a complete QueryRunRef';
+      }
+      return null;
+    }
+    default:
+      return 'archive execution kind is not recognized';
+  }
+}
+
+/**
+ * Strict shape of `SessionArchiveRequestV1` (K3). The immutable choices, the
+ * original actor and the receipt are all checked; the owner enforces the
+ * business bounds (task count, reason length) before writing.
+ */
+export function checkSessionArchiveRequest(value: unknown, ownProjectId: string): Problem {
+  if (!isObject(value)) return 'archiveRequest must be an object';
+  if (!hasOnlyKeys(value, ['schemaVersion', 'requestId', 'requestedBy', 'requestedAt', 'reason', 'mode',
+    'tasks', 'wait', 'execution', 'executionPins', 'confirmUnknownStopped', 'receipt'])) {
+    return 'archiveRequest carries unknown fields';
+  }
+  if (value['schemaVersion'] !== 1) return 'archiveRequest schemaVersion must be 1';
+  if (!nonEmpty(value['requestId'])) return 'archiveRequest requestId is required';
+  const requestedBy = value['requestedBy'];
+  if (!isObject(requestedBy) || !hasOnlyKeys(requestedBy, ['kind', 'id'])
+    || (requestedBy['kind'] !== 'human' && requestedBy['kind'] !== 'system') || !nonEmpty(requestedBy['id'])) {
+    return 'archiveRequest requestedBy must be a trusted human/system actor';
+  }
+  if (!nonEmpty(value['requestedAt'])) return 'archiveRequest requestedAt is required';
+  if (!nonEmpty(value['reason'])) return 'archiveRequest reason is required';
+  if (!['operator', 'executor_idle', 'retired', 'answered_copy', 'handoff_complete'].includes(String(value['mode']))) {
+    return 'archiveRequest mode is not recognized';
+  }
+  if (!Array.isArray(value['tasks'])) return 'archiveRequest tasks must be an array';
+  for (const choice of value['tasks']) {
+    const problem = checkArchiveTaskChoice(choice, ownProjectId);
+    if (problem !== null) return `archiveRequest task choice: ${problem}`;
+  }
+  if (value['wait'] !== null) {
+    const wait = checkArchiveWaitChoice(value['wait'], ownProjectId);
+    if (wait !== null) return `archiveRequest wait: ${wait}`;
+  }
+  const execution = checkArchiveExecution(value['execution']);
+  if (execution !== null) return `archiveRequest execution: ${execution}`;
+  if (!Array.isArray(value['executionPins'])) return 'archiveRequest executionPins must be an array';
+  const pins = value['executionPins'] as readonly unknown[];
+  if (pins.length > 2) return 'archiveRequest executionPins must carry at most two Run/QueryRun pins';
+  const pinKeys: string[] = [];
+  for (const pin of pins) {
+    if (!isObject(pin) || !hasOnlyKeys(pin, ['ref', 'revision']) || !isObject(pin['ref'])
+      || !Number.isSafeInteger(pin['revision']) || (pin['revision'] as number) < 0) {
+      return 'archiveRequest executionPins entries must be complete VersionPins';
+    }
+    const refProblem = checkExecutionRef(pin['ref']);
+    if (refProblem !== null) return `archiveRequest executionPins ref: ${refProblem}`;
+    const pinKey = canonicalOf(pin['ref']);
+    if (pinKey === null) return 'archiveRequest executionPins entries must carry a canonical ref';
+    if (pinKeys.includes(pinKey)) return 'archiveRequest executionPins must not repeat a Run/QueryRun';
+    pinKeys.push(pinKey);
+  }
+  // §2.3: the owner writes the pins in canonical ref order (sorted, deduped, at
+  // most two); a stored list that is out of order or repeated is damaged.
+  for (let index = 1; index < pinKeys.length; index += 1) {
+    if (!(pinKeys[index - 1]! < pinKeys[index]!)) {
+      return 'archiveRequest executionPins must be in canonical ref order';
+    }
+  }
+  // §2.3: no execution and no wait means the request pins nothing; a stray pin
+  // is never a legal no-execution request.
+  const executionValue = value['execution'] as UnknownRecord;
+  const executionRef = executionValue['kind'] === 'work' ? executionValue['runRef']
+    : executionValue['kind'] === 'query' ? executionValue['queryRunRef'] : null;
+  if (executionRef === null && value['wait'] === null && pinKeys.length !== 0) {
+    return 'archiveRequest executionPins must be empty when there is no execution or wait';
+  }
+  // §2.3: a new request that names an execution or a wait must carry that exact
+  // Run/QueryRun in its pins; a fake pin is never derived from the current Run.
+  if (executionRef !== null) {
+    const executionKey = canonicalOf(executionRef);
+    if (executionKey === null || !pinKeys.includes(executionKey)) {
+      return 'archiveRequest execution has no matching executionPin';
+    }
+  }
+  if (value['wait'] !== null) {
+    const waitRef = (value['wait'] as UnknownRecord)['runRef'];
+    const waitKey = canonicalOf(waitRef);
+    if (waitKey === null || !pinKeys.includes(waitKey)) return 'archiveRequest wait has no matching executionPin';
+  }
+  if (typeof value['confirmUnknownStopped'] !== 'boolean') return 'archiveRequest confirmUnknownStopped must be a boolean';
+  const receipt = value['receipt'];
+  if (!isObject(receipt) || !hasOnlyKeys(receipt, ['identityKey', 'fingerprint'])
+    || !nonEmpty(receipt['identityKey']) || !nonEmpty(receipt['fingerprint'])) {
+    return 'archiveRequest receipt must be {identityKey,fingerprint}';
+  }
+  return null;
+}
 
 function checkSessionOperationBody(body: UnknownRecord): Problem {
   if (!hasOnlyKeys(body, OPERATION_BODY_KEYS)) return 'operation record carries unknown fields';
@@ -414,6 +675,11 @@ function checkSessionOperationBody(body: UnknownRecord): Problem {
     }
     if (refProject !== plannedValue['projectId']) {
       return 'operation ref project disagrees with the planned Session project';
+    }
+    if ('provenance' in action && action['provenance'] !== undefined && action['provenance'] !== null) {
+      const provenance = checkSessionProvenance(action['provenance'], refProject as string,
+        plannedValue['sessionId'] as string);
+      if (provenance !== null) return `operation provenance: ${provenance}`;
     }
   }
   const refs = action['recommendedRefs'];
@@ -484,6 +750,16 @@ export function checkSessionBody(body: UnknownRecord): Problem {
   if (body['lastExecutionRef'] !== null) {
     const execution = checkExecutionRef(body['lastExecutionRef']);
     if (execution !== null) return execution;
+  }
+  const refValue = body['ref'] as UnknownRecord;
+  if (body['provenance'] !== undefined && body['provenance'] !== null) {
+    const provenance = checkSessionProvenance(body['provenance'], refValue['projectId'] as string,
+      refValue['sessionId'] as string);
+    if (provenance !== null) return `session provenance: ${provenance}`;
+  }
+  if (body['archiveRequest'] !== undefined && body['archiveRequest'] !== null) {
+    const archiveRequest = checkSessionArchiveRequest(body['archiveRequest'], refValue['projectId'] as string);
+    if (archiveRequest !== null) return `session archiveRequest: ${archiveRequest}`;
   }
   return null;
 }
@@ -661,6 +937,8 @@ export const SESSION_RECORD_SCHEMAS: RecordBackendSchemas = {
       paths: ['ref.projectId', 'ref.target.kind', 'ref.target.ref.goalId', 'ref.target.ref.taskId', 'ref.relation'] },
     { name: SESSION_LINKS_BY_WORK_LOOKUP, aggregateType: 'SessionWorkLink',
       paths: ['ref.projectId', 'ref.target.ref.workspaceId', 'ref.target.kind', 'ref.target.ref.workId', 'ref.relation'] },
+    { name: SESSION_BY_PROVENANCE_LOOKUP, aggregateType: 'Session',
+      paths: ['ref.projectId', 'workspaceId', 'provenance.from.sessionId'] },
   ],
 };
 
@@ -745,7 +1023,12 @@ export function decodeSessionRecord(record: EncodedRecord): DecodeResult<Session
   if (checked.status !== 'decoded') return checked;
   const body = parseObject(record.json);
   if (body === null) return invalid('Session record json is not an object');
-  return { status: 'decoded', value: body as unknown as SessionRecord };
+  // R2 exception (reported): the frozen S1 test `S1-codecs-indexes` SV01 and
+  // `S1-dispatch-guards` SV58 assert an explicit `null` on a decoded old record,
+  // so this codec keeps the §2.9 null default instead of leaving the key absent.
+  return { status: 'decoded', value: { ...(body as unknown as SessionRecord),
+    provenance: (body['provenance'] as SessionRecord['provenance'] | undefined) ?? null,
+    archiveRequest: (body['archiveRequest'] as SessionRecord['archiveRequest'] | undefined) ?? null } };
 }
 
 export function decodeSessionWorkLink(record: EncodedRecord): DecodeResult<SessionWorkLink> {
@@ -788,6 +1071,9 @@ export function sessionCreatedPayloadFromEvent(event: EncodedDomainEvent): Decod
     status: 'decoded',
     value: {
       operationRef: body['operationRef'] as unknown as OperationRef,
+      // Rule 1 (lead fix 2026-10-09): a replay returns the ORIGINAL event value, so
+      // the payload keeps exactly the keys it was written with; only the record
+      // decoder applies the §2.9 null default (SV01). Readers use `?? null`.
       session: body['session'] as unknown as SessionRecord,
     },
   };

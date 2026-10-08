@@ -5,6 +5,7 @@ import type { RunRef } from '../../contracts/dispatch.js';
 import type { WorkspaceScope } from '../../contracts/core/identity.js';
 import type { OperationReceipt, Page, ReadResult } from '../../contracts/core/results.js';
 import type { SessionRecord } from '../../contracts/core/session.js';
+import type { ArchiveChangedFilesV1 } from '../../contracts/session-anomaly.js';
 import type { PreparedQueryExecution, PreparedTaskExecution } from '../../contracts/core/prepared-execution.js';
 import type { RuntimeCapabilities } from './contracts.js';
 import type {
@@ -73,6 +74,13 @@ export interface RuntimeExecutionPort {
    * Optional like the members above; `createAgentRuntime` publishes it.
    */
   readContinuationBrief?(ctx: CoreCallContext, request: { runRef: RunRef }): Promise<ReadResult<{ brief: ContinuationBriefV1; digest: string } | null>>;
+  /**
+   * Slice 1 §3.3: the exact changed-file snapshot recorded beside an archive
+   * anomaly anchor (Kernel window → current worktree → unknown; §2.6 last
+   * paragraph). Optional like the members above; `createAgentRuntime` publishes
+   * it for the real dependency bundle.
+   */
+  readArchiveChangedFiles?(ctx: CoreCallContext, input: { runRef: RunRef }): Promise<ReadResult<ArchiveChangedFilesV1>>;
 }
 
 export type AgentRuntimeService = {

@@ -597,6 +597,13 @@ export type RunGuardContext = {
   entryPlan: EntryPlanVerdict['kind'];
   /** RUN-02/03 (C3): the service's comparison, contract (e). */
   continuationBrief: 'absent_ok' | 'bound' | 'missing' | 'unexpected' | 'mismatch';
+  /**
+   * Slice 1 §3.5/F84: the authorization-time equality of the brief's actual
+   * anomaly refs and the binding's `anomalyAnchorRefs`. Absent (an old brief
+   * without the section) reads as true; a new brief with a section must pass
+   * explicit `true` or the entry is `invalid`.
+   */
+  anomalyRefsMatch?: boolean;
   /** Host/Role/material/deadline re-admission of a fresh action; the IO stays in the service. */
   freshAdmission: CoreRejection | null;
   /**
@@ -1305,6 +1312,12 @@ function onEntryAuthorized(
   if (plan !== null) return plan;
   const brief = continuationBriefGuard(run, ctx.continuationBrief);
   if (brief !== null) return brief;
+  // Slice 1 §3.5/F84: a brief that carries an anomaly section must match the
+  // Run's input binding exactly; an old brief without one reads as true.
+  if (ctx.anomalyRefsMatch === false) {
+    return reject('guard_failed', 'invalid',
+      'the continuation brief anomaly refs do not match the input binding anomalyAnchorRefs');
+  }
   if (ctx.freshAdmission !== null) return freshAdmissionRejected(ctx.freshAdmission);
   if (starting === 'revoked') {
     const auth = v2Binding(state, run);

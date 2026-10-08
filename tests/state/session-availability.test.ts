@@ -15,10 +15,12 @@
  * No RecordStore, no Kernel.
  */
 import { describe, expect, it } from 'vitest';
+import type { ActorRef } from '../../src/contracts/command-event.js';
 import type {
   RoleConfigurationRef, SessionAggregateRef, WorkLinkRelation, WorkLinkTarget,
 } from '../../src/contracts/core/identity.js';
 import type { OperationRef } from '../../src/contracts/core/operations.js';
+import type { SessionArchiveRequestV1 } from '../../src/contracts/core/session-archive.js';
 import type { SessionHealthConclusion, SessionRecord, SessionWorkLink } from '../../src/contracts/core/session.js';
 import type { RunRef } from '../../src/contracts/dispatch.js';
 import { makeCommitCursor } from '../../src/contracts/ledger.js';
@@ -27,7 +29,8 @@ import {
   archiveSessionRecord, createSessionRecord, deriveAvailability, nextOccupancyGeneration,
   observeSessionHealthRecord, occupancyAdmissionProblem, occupySessionRecord, openResponsibleLinkOf, ownsOccupancy, ownsQuery,
   reactivateSessionRecord, releaseSessionRecord, sessionMachineStateOf, transitionSession,
-  type HolderPhase, type SessionEffect, type SessionEvent, type SessionGuardContext, type SessionHealth,
+  type HolderPhase, type SessionArchiveGuardV1, type SessionDispatchGuardV1, type SessionEffect, type SessionEvent,
+  type SessionGuardContext, type SessionHealth,
   type SessionHolderContext, type SessionLifecycle, type SessionMachineState, type SessionReleaseCause,
   type SessionTransition,
 } from '../../src/core/work-graph/state/session-availability.js';
@@ -54,6 +57,14 @@ const OPERATION: OperationRef = { aggregateType: 'CoreOperation', projectId: 'p1
 const REVISION = 9;
 const GENERATION = 7;
 const BOUNDARY = 'cursor-boundary-2';
+/** Slice 1 §2.3: the minimal immutable archive request the new matrix events carry. */
+const ARCHIVE_REQUEST: SessionArchiveRequestV1 = {
+  schemaVersion: 1, requestId: 'a',
+  requestedBy: { kind: 'human', id: 'operator-1' } as Extract<ActorRef, { kind: 'human' | 'system' }>,
+  requestedAt: '2026-10-08T00:00:00.000Z', reason: 'the operator asked to archive this line',
+  mode: 'operator', tasks: [], wait: null, execution: { kind: 'none' }, executionPins: [],
+  confirmUnknownStopped: false, receipt: { identityKey: 's1-archive-step:k', fingerprint: 'f' },
+};
 
 type Occ = 'none' | 'run' | 'query' | 'maintenance';
 type StateDesc = { lifecycle: SessionLifecycle; health: SessionHealth; conclusion: SessionHealthConclusion | null; occ: Occ };
@@ -63,7 +74,10 @@ function machineState(desc: StateDesc): Exclude<SessionMachineState, 'absent'> {
     : desc.occ === 'run' ? { kind: 'execution' as const, holder: RUN_A, generation: GENERATION }
       : desc.occ === 'query' ? { kind: 'execution' as const, holder: QUERY_A, generation: GENERATION }
         : { kind: 'maintenance' as const, holder: OPERATION, generation: GENERATION };
-  return { lifecycle: desc.lifecycle, health: desc.health, healthConclusion: desc.conclusion, occupancy, revision: REVISION };
+  return {
+    lifecycle: desc.lifecycle, health: desc.health, healthConclusion: desc.conclusion, occupancy, revision: REVISION,
+    provenance: null, archiveRequest: null,
+  };
 }
 
 const HEALTH_VARIANTS: readonly { health: SessionHealth; conclusion: SessionHealthConclusion | null }[] = [
@@ -148,14 +162,33 @@ const RELEASE_CASES: readonly Case[] = SESSION_RELEASE_CAUSES.map((cause) => ({
   name: `occupancy_released(${cause})`, event: { kind: 'occupancy_released', cause }, ctx: releaseCtx(cause),
 }));
 const HEALTH_CTX = ctxOf({ caller: 'reconcile', hostLease: 'owned' });
+/**
+ * §5.2 last paragraph: the narrow fixture provides the ordinary facts the new
+ * guards read, so the old rows keep their old expectations. `not_waiting` is
+ * the archive wait fact (`session_archived`); the dispatch facts are the
+ * ordinary non-copy, non-waiting Work/Query admission.
+ */
+const ARCHIVE_GUARD: SessionArchiveGuardV1 = {
+  requestMatches: true, choicesValid: true, authorityValid: true, wait: 'not_waiting', retired: false,
+  sourceExecutionStopped: true, stopQueued: false, failedDisposal: false, provenanceBasisValid: true,
+};
+function ordinaryDispatch(purpose: 'work' | 'query'): SessionDispatchGuardV1 {
+  return {
+    purpose, waiting: null, consumedWait: null, readonlyQueryMatches: false,
+    legacyProvenance: { schemaVersion: 1, kind: 'new' },
+  };
+}
 const CASES: readonly Case[] = [
   { name: 'session_created', event: { kind: 'session_created' }, ctx: ctxOf({ creation: CREATION }) },
-  { name: 'occupancy_acquired(Run)', event: { kind: 'occupancy_acquired', holder: RUN_B }, ctx: ctxOf({ pin: REVISION }) },
-  { name: 'occupancy_acquired(QueryRun)', event: { kind: 'occupancy_acquired', holder: QUERY_B }, ctx: ctxOf({ pin: REVISION }) },
-  { name: 'occupancy_acquired(maintenance)', event: { kind: 'occupancy_acquired', holder: OPERATION }, ctx: ctxOf({ pin: REVISION }) },
+  { name: 'occupancy_acquired(Run)', event: { kind: 'occupancy_acquired', holder: RUN_B }, ctx: ctxOf({ pin: REVISION, dispatch: ordinaryDispatch('work') }) },
+  { name: 'occupancy_acquired(QueryRun)', event: { kind: 'occupancy_acquired', holder: QUERY_B }, ctx: ctxOf({ pin: REVISION, dispatch: ordinaryDispatch('query') }) },
+  { name: 'occupancy_acquired(maintenance)', event: { kind: 'occupancy_acquired', holder: OPERATION }, ctx: ctxOf({ pin: REVISION, dispatch: ordinaryDispatch('work') }) },
   ...RELEASE_CASES,
-  { name: 'session_archived', event: { kind: 'session_archived' }, ctx: ctxOf({ pin: REVISION, openResponsibleLink: false }) },
+  { name: 'session_archived', event: { kind: 'session_archived' }, ctx: ctxOf({ pin: REVISION, openResponsibleLink: false, archive: ARCHIVE_GUARD }) },
   { name: 'session_reactivated', event: { kind: 'session_reactivated' }, ctx: ctxOf({ pin: REVISION }) },
+  { name: 'archive_requested', event: { kind: 'archive_requested', archive: ARCHIVE_REQUEST }, ctx: ctxOf({ pin: REVISION }) },
+  { name: 'archive_request_released', event: { kind: 'archive_request_released', archiveRequestId: 'a' }, ctx: ctxOf({ pin: REVISION }) },
+  { name: 'legacy_provenance_backfilled', event: { kind: 'legacy_provenance_backfilled', provenance: { schemaVersion: 1, kind: 'new' } }, ctx: ctxOf({ pin: REVISION }) },
   {
     name: 'health_observed(available, closed head)', event: { kind: 'health_observed', observed: 'available' },
     ctx: { ...HEALTH_CTX, probe: 'ready', kernelHeader: { activeRunId: null } },
@@ -201,7 +234,10 @@ function expectedFor(desc: StateDesc | 'absent', c: Case): Expected {
   const event = c.event;
   if (desc === 'absent') {
     return event.kind === 'session_created'
-      ? legal({ lifecycle: 'active', health: 'available', healthConclusion: null, occupancy: null, revision: 1 }, [
+      ? legal({
+        lifecycle: 'active', health: 'available', healthConclusion: null, occupancy: null, revision: 1,
+        provenance: null, archiveRequest: null,
+      }, [
         { kind: 'create_session' }, { kind: 'complete_creation_operation' }, { kind: 'write_initial_links' },
         { kind: 'emit_event', eventType: 'SessionCreated' },
       ])
@@ -239,8 +275,59 @@ function expectedFor(desc: StateDesc | 'absent', c: Case): Expected {
         [{ kind: 'archive_session' }, { kind: 'emit_event', eventType: 'SessionArchived' }]);
     case 'session_reactivated':
       if (desc.lifecycle === 'active') return refused('illegal', 'invalid');
+      // S1-SES-05 (decision 38): a retired (unavailable) Session cannot be reactivated.
+      if (desc.health === 'unavailable') return refused('guard_failed', 'unavailable');
       return legal({ ...state, lifecycle: 'active', revision: REVISION + 1 },
         [{ kind: 'reactivate_session' }, { kind: 'emit_event', eventType: 'SessionReactivated' }]);
+    case 'archive_requested': {
+      // §3.5: the new events refuse incomplete when the owner did not read the archive facts.
+      const archive = c.ctx.archive;
+      if (archive === undefined) return refused('guard_failed', 'incomplete');
+      // S1-SES-03: archived → invalid; a different pending request → busy; else record R at rev+1.
+      if (desc.lifecycle === 'archived') return refused('illegal', 'invalid');
+      if (!archive.choicesValid) return refused('illegal', 'invalid');
+      if (!archive.authorityValid) return refused('illegal', 'forbidden');
+      if (state.archiveRequest !== undefined && state.archiveRequest !== null) {
+        return state.archiveRequest.requestId === event.archive.requestId
+          ? legal(state) : refused('guard_failed', 'busy');
+      }
+      if (c.ctx.pin !== null && c.ctx.pin !== state.revision) return refused('stale', 'revision_conflict');
+      return legal({ ...state, archiveRequest: event.archive, revision: REVISION + 1 }, [
+        { kind: 'write_archive_request', archive: event.archive },
+        { kind: 'emit_event', eventType: 'SessionArchiveRequested' },
+      ]);
+    }
+    case 'archive_request_released': {
+      // §3.5: the new events refuse incomplete when the owner did not read the archive facts.
+      const archive = c.ctx.archive;
+      if (archive === undefined) return refused('guard_failed', 'incomplete');
+      // S1-SES-06: only the matching request after a failed disposal clears it; a queued stop stays busy.
+      if (state.archiveRequest === undefined || state.archiveRequest === null
+        || state.archiveRequest.requestId !== event.archiveRequestId) {
+        return refused('stale', 'revision_conflict');
+      }
+      if (!archive.failedDisposal) return refused('guard_failed', 'busy');
+      if (archive.stopQueued) return refused('guard_failed', 'busy');
+      if (!archive.sourceExecutionStopped) return refused('guard_failed', 'busy');
+      if (c.ctx.pin !== null && c.ctx.pin !== state.revision) return refused('stale', 'revision_conflict');
+      return legal({ ...state, archiveRequest: null, revision: REVISION + 1 }, [
+        { kind: 'clear_archive_request' },
+        { kind: 'emit_event', eventType: 'SessionArchiveRequestReleased' },
+      ]);
+    }
+    case 'legacy_provenance_backfilled': {
+      // §3.5: the new events refuse incomplete when the owner did not read the archive facts.
+      const archive = c.ctx.archive;
+      if (archive === undefined) return refused('guard_failed', 'incomplete');
+      // S1-SES-02: only a null provenance is backfilled once; an existing value is a revision conflict.
+      if (state.provenance !== undefined && state.provenance !== null) return refused('stale', 'revision_conflict');
+      if (!archive.provenanceBasisValid) return refused('guard_failed', 'incomplete');
+      if (c.ctx.pin !== null && c.ctx.pin !== state.revision) return refused('stale', 'revision_conflict');
+      return legal({ ...state, provenance: event.provenance, revision: REVISION + 1 }, [
+        { kind: 'write_session_provenance', provenance: event.provenance },
+        { kind: 'emit_event', eventType: 'SessionProvenanceBackfilled' },
+      ]);
+    }
     case 'health_observed': {
       if (event.observed === 'recoverable') return refused('illegal', 'unsupported');
       if (desc.lifecycle === 'archived') return refused('illegal', 'invalid');
@@ -290,6 +377,7 @@ describe('transitionSession: every (state, event) combination', () => {
     const allKinds: Record<SessionEvent['kind'], true> = {
       session_created: true, occupancy_acquired: true, occupancy_released: true, session_archived: true,
       session_reactivated: true, health_observed: true, work_linked: true,
+      archive_requested: true, archive_request_released: true, legacy_provenance_backfilled: true,
     };
     expect([...kinds].sort()).toEqual(Object.keys(allKinds).sort());
     expect(Object.keys(CAUSES).sort()).toEqual([...SESSION_RELEASE_CAUSES].sort());
@@ -697,13 +785,11 @@ describe('SES-11 session_archived / SES-14 session_reactivated', () => {
     expect(run(IDLE, archive, ctxOf({ pin: 1, openResponsibleLink: false }))).toEqual(refused('stale', 'revision_conflict'));
   });
 
-  it('reactivation keeps health: availability then follows it, and the Session is still not claimable', () => {
+  it('reactivation of an unavailable Session is refused with unavailable (decision 38, S1-SES-05)', () => {
+    // Slice 1: retire/reactivation keeps the old archived-unavailable refusal; the
+    // health is no longer silently carried into a new active life.
     const archivedUnavailable = { ...TURN_OPEN, lifecycle: 'archived' as const };
-    const result = transitionSession(archivedUnavailable, reactivate, ctxOf({ pin: REVISION }));
-    expect(result.ok && result.next).toEqual({ ...TURN_OPEN, revision: REVISION + 1 });
-    if (!result.ok || result.next === 'absent') throw new Error('expected a legal reactivation');
-    expect(deriveAvailability(result.next)).toBe('unavailable');
-    expect(run(result.next, { kind: 'occupancy_acquired', holder: RUN_B }, ctxOf())).toEqual(refused('guard_failed', 'busy'));
+    expect(run(archivedUnavailable, reactivate, ctxOf({ pin: REVISION }))).toEqual(refused('guard_failed', 'unavailable'));
   });
 
   it('reactivation: active is invalid, a stale pin is revision_conflict', () => {
@@ -996,7 +1082,9 @@ describe('releaseSessionRecord', () => {
 
 describe('archiveSessionRecord / reactivateSessionRecord', () => {
   it('are the records of SES-11 and SES-14 and leave health and history alone', () => {
-    const record = recordOf({ health: 'unavailable', healthConclusion: 'damaged' });
+    // S1-SES-05 (decision 38): an unavailable (retired) Session cannot be reactivated, so this record row uses a
+    // non-default health that reactivation is allowed to keep (lead fix of the frozen test, 2026-10-09).
+    const record = recordOf({ health: 'recoverable', healthConclusion: null });
     const archived = expectConsistent(record, { kind: 'session_archived' }, ctxOf({ pin: REVISION, openResponsibleLink: false }),
       (effect) => effect.kind === 'archive_session' ? archiveSessionRecord(record, '2026-10-04T01:00:00.000Z') : null);
     expect(archived).toEqual({ ...record, revision: REVISION + 1, lifecycle: 'archived', archivedAt: '2026-10-04T01:00:00.000Z' });

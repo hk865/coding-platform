@@ -5,7 +5,7 @@ import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { CommandMeta, RoleConfigurationRef, SessionRef, WorkspaceScope, WorkLinkRelation, WorkLinkTarget } from '../../../contracts/core/identity.js';
 import type { OperationRef } from '../../../contracts/core/operations.js';
-import type { SessionRecord, SessionWorkLink } from '../../../contracts/core/session.js';
+import type { SessionRecord, SessionProvenanceV1, LegacyProvenanceBasisV1, SessionWorkLink } from '../../../contracts/core/session.js';
 import type { ReadResult, WriteResult } from '../../../contracts/core/results.js';
 
 export type GraphWrite<T> = { input: T; meta: CommandMeta };
@@ -18,6 +18,8 @@ export type SessionCreationInput = {
   role: RoleConfigurationRef;
   recommendedRefs: ArtifactRef[];
   initialLinks: { target: WorkLinkTarget; relation: WorkLinkRelation }[];
+  /** Slice 1 §2.2: absent is equivalent to `{schemaVersion:1,kind:'new'}` for a new admission. */
+  provenance?: SessionProvenanceV1;
 };
 export type SessionOperationRecord = {
   ref: OperationRef;
@@ -56,4 +58,8 @@ export interface SessionDirectoryPort {
     workspace: WorkspaceScope; target?: WorkLinkTarget; role?: RoleConfigurationRef;
     includeArchived: boolean; page: SessionPageRequest;
   }): Promise<ReadResult<SessionPage<SessionCard>>>;
+  /** Slice 1 §3.3: Host-only one-time legacy provenance backfill. */
+  backfillSessionProvenance?(ctx: CoreCallContext, request: GraphWrite<{
+    sessionRef: SessionRef; provenance: SessionProvenanceV1; basis: LegacyProvenanceBasisV1;
+  }>): Promise<WriteResult<SessionRecord>>;
 }

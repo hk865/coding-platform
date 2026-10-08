@@ -16,15 +16,17 @@ import type { PreparedTaskExecution, PreparedTaskManifestV1 } from '../../contra
 import type { RoleSpecResolutionV1 } from '../../contracts/role-spec-materials.js';
 import type { SourceRefV1, RuntimeInputBindingV1 } from '../../contracts/dispatch.js';
 import type { TaskEnvelopeV1 } from '../../contracts/task-envelope.js';
+import type { TaskRequeueSnapshotV1 } from '../../contracts/task-requeue.js';
+import type { SessionAnomalyAnchorRef } from '../../contracts/session-anomaly.js';
 import { revisionAssignments } from '../../contracts/plan.js';
 import { sha256Hex } from '../../contracts/fingerprint.js';
 import { MANIFEST_CONTENT_TYPE } from '../../contracts/no-progress.js';
 import {
-  CONTINUATION_BRIEF_LIMITS, continuationBriefDigest, continuationBriefShapeProblem, renderContinuationBriefZh,
-  type ContinuationBriefV1, type ContinuationSourceCheckpointV1,
+  CONTINUATION_BRIEF_LIMITS, ContinuationBriefCapacityError, continuationBriefDigest, continuationBriefShapeProblem,
+  renderContinuationBriefZh, type ContinuationBriefV1, type ContinuationSourceCheckpointV1,
 } from '../../contracts/continuation-brief.js';
 import type { TaskExecutionRecord } from '../work-graph/model/execution-read-contracts.js';
-import { assembleContinuationBrief, readPreviousTurn, type BriefWorkspaceFacts } from './continuation-brief-assembly.js';
+import { assembleContinuationBrief, assembleAnomalySection, readPreviousTurn, type BriefWorkspaceFacts } from './continuation-brief-assembly.js';
 import { createSessionHistoryCursorOwner } from './session-operations.js';
 import { decodeKernelEntry } from './kernel-turn-facts.js';
 import type { PrepareTaskExecutionRequest, ResolvedRuntimeConfiguration, RuntimeExecutionDependencies } from './execution-contracts.js';
@@ -157,7 +159,8 @@ export function rehydratePreparedExecution(record: Pick<TaskExecutionRecord, 'ru
  */
 async function prepareContinuationBrief(
   deps: ExecutionPreparationDependencies, ctx: CoreCallContext, record: TaskExecutionRecord,
-): Promise<{ ok: true; brief: ContinuationBriefV1; sessionBasis: PreparedTaskManifestV1['sessionBasis'] | null }
+): Promise<{ ok: true; brief: ContinuationBriefV1; sessionBasis: PreparedTaskManifestV1['sessionBasis'] | null;
+    anomalyAnchorRefs: SessionAnomalyAnchorRef[] | null }
   | { ok: false; rejection: CoreRejection }> {
   const readBasis = deps.executions.readContinuationBasis;
   if (readBasis === undefined || deps.kernelStores === undefined) {
@@ -175,16 +178,37 @@ async function prepareContinuationBrief(
   if (turn.kernel === 'retry') return { ok: false, rejection: rejected(turn.code, `the previous Turn is not readable now: ${turn.reason}`) };
   const workspace = await briefWorkspaceFacts(deps, record);
   // LA-1, contract (e): the seeded history is decided first, so the brief says how the new Session continues.
-  const sessionBasis = await sessionBasisOf(deps, record, basis.value, ctx.signal);
+  // §4.1 T10: an archive-origin ordinary claim is a NEW pickup, never the old line's continuation, so it skips
+  // the history seed entirely (the real TaskRequeue chain and the anchors are kept).
+  const sessionBasis = archiveOriginSkipsHistorySeed(basis.value.requeue)
+    ? null
+    : await sessionBasisOf(deps, record, basis.value, ctx.signal);
   const source = basis.value.requeue.historySource;
   const seededFrom = sessionBasis === null || sessionBasis === undefined || sessionBasis.throughPosition === null || source === null ? null
     : { sessionRef: { projectId: source.sessionRef.projectId, sessionId: source.sessionRef.sessionId },
       throughPosition: sessionBasis.throughPosition };
+  // §2.7: this Task's not-yet-picked-up anchors, bounded to the earliest eight.
+  const anomalies = assembleAnomalySection(basis.value.pendingAnomalies ?? []);
   const brief = assembleContinuationBrief({ basis: basis.value, factsRecord: facts, factsHops: basis.value.factsChain.length,
-    factsTruncated: truncated, turn, workspace, claimSessionRef: record.outbox.claim.sessionRef, seededFrom });
+    factsTruncated: truncated, turn, workspace, claimSessionRef: record.outbox.claim.sessionRef, seededFrom, anomalies });
   const problem = continuationBriefShapeProblem(brief);
   if (problem !== null) return { ok: false, rejection: rejected('unavailable', `the assembled continuation brief is malformed: ${problem}`) };
-  return { ok: true, brief, sessionBasis };
+  const anomalyAnchorRefs = anomalies === null ? null : anomalies.anchors.map((anchor) => anchor.ref);
+  return { ok: true, brief, sessionBasis, anomalyAnchorRefs };
+}
+
+/**
+ * Slice 1 §4.1 (T10): `TaskRequeue.archiveOrigin != null` marks an archive
+ * ordinary claim. It keeps the real TaskRequeue fact chain and the anchored
+ * brief but never seeds the old line's full Kernel history: `sessionBasisOf` is
+ * skipped, so `sessionBasis`/`seededFrom` stay null and the brief's continuity
+ * is `other_session`. The condition is deliberately NOT "the Task has an
+ * anchor", which would break the existing human-continue continuation case.
+ */
+export function archiveOriginSkipsHistorySeed(
+  requeue: Pick<TaskRequeueSnapshotV1, 'archiveOrigin'>,
+): boolean {
+  return requeue.archiveOrigin !== undefined && requeue.archiveOrigin !== null;
 }
 
 /**
@@ -248,8 +272,12 @@ async function sessionBasisOf(
 /** The Kernel `agent.event` types that end a Turn: a completed history boundary (LA-1). */
 const KERNEL_TERMINAL_EVENTS: readonly string[] = ['run.completed', 'run.failed', 'run.cancelled', 'run.limit_exceeded', 'run.yielded'];
 
+/** The reads `briefWorkspaceFacts` needs: the clock and the workspace host/source. */
+export type BriefWorkspaceFactsDependencies =
+  Pick<RuntimeExecutionDependencies, 'now'> & Partial<Pick<RuntimeExecutionDependencies, 'workspaceHost' | 'workspaceSource'>>;
+
 /** The brief's own source checkpoint (digest-only, LA-5) and the uncommitted paths of the workspace. */
-async function briefWorkspaceFacts(deps: ExecutionPreparationDependencies, record: TaskExecutionRecord): Promise<BriefWorkspaceFacts> {
+export async function briefWorkspaceFacts(deps: BriefWorkspaceFactsDependencies, record: TaskExecutionRecord): Promise<BriefWorkspaceFacts> {
   const at = deps.now();
   const unavailable = (reason: string): BriefWorkspaceFacts => ({
     briefCheckpoint: { kind: 'brief', at, workspaceRevision: null, sourceDigest: null, unavailableReason: reason },
@@ -403,11 +431,13 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
       // C3: a Run of a requeue claim starts with its continuation brief, rendered as the last input section.
       let brief: ContinuationBriefV1 | null = null;
       let sessionBasis: PreparedTaskManifestV1['sessionBasis'] | null = null;
+      let anomalyAnchorRefs: SessionAnomalyAnchorRef[] | null = null;
       if (run.requeueRef !== undefined) {
         const assembled = await prepareContinuationBrief(deps, owned, record.value);
         if (!assembled.ok) return assembled.rejection;
         brief = assembled.brief;
         sessionBasis = assembled.sessionBasis;
+        anomalyAnchorRefs = assembled.anomalyAnchorRefs;
         if (signal.aborted) return rejected('cancelled', 'the preparation was cancelled after the continuation brief');
       }
       const briefDigest = brief === null ? null : continuationBriefDigest(brief);
@@ -416,7 +446,16 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
         taskId: claim.task.taskId, planRef: plan.ref, workspaceId: session.workspaceId, workspaceRevision: run.workspaceSnapshot.revision,
         permissions,
       });
-      const input = brief === null || briefDigest === null ? taskInput : `${taskInput}\n\n${renderContinuationBriefZh(brief, briefDigest)}`;
+      // N7 (§2.7): the anomaly section is budgeted; when even the mandatory
+      // content cannot fit the 16 KiB brief the preparation is refused
+      // `capacity`, never rendered truncated or thrown out of the port.
+      let input: string;
+      try {
+        input = brief === null || briefDigest === null ? taskInput : `${taskInput}\n\n${renderContinuationBriefZh(brief, briefDigest)}`;
+      } catch (error) {
+        if (error instanceof ContinuationBriefCapacityError) return rejected('capacity', error.message);
+        throw error;
+      }
       const inputDigest = sha256Hex(input);
       const manifest: PreparedTaskManifestV1 = {
         schemaVersion: 1, kind: 'task_execution', claim, role: roleResolution,
@@ -457,6 +496,7 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
         schemaVersion: 1, inputDigest, manifestDigest: bundleRef.digest,
         materialAccessRefs: [], additionalMaterialRefs, deliveryRefs: [],
         ...(briefDigest === null ? {} : { continuationBriefDigest: briefDigest }),
+        ...(anomalyAnchorRefs === null || anomalyAnchorRefs.length === 0 ? {} : { anomalyAnchorRefs }),
       };
       return { status: 'ready', value: { kind: 'task', claim, envelope, inputBinding } };
     },

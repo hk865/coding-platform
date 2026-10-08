@@ -11,7 +11,10 @@
  * ORIGINAL receipt cursor; it never scans the current link or guesses a cursor.
  */
 import type { SessionRef } from '../../../contracts/core/identity.js';
-import type { SessionRecord } from '../../../contracts/core/session.js';
+import type { LegacyProvenanceBasisV1, SessionRecord } from '../../../contracts/core/session.js';
+import type { ArchiveStepRefV1 } from '../../../contracts/core/session-archive.js';
+import type { TaskTriple } from '../../../contracts/dispatch.js';
+import type { PlanRevisionRef } from '../../../contracts/plan.js';
 import type {
   DecodeResult, EncodedDomainEvent, RecordBackendSchemas,
 } from '../../record-store/ports.js';
@@ -73,6 +76,45 @@ export type SessionHealthObservedEventV1 = {
   kernelHeader: { activeRunId: string | null } | null;
   session: SessionRecord;
 };
+
+// --------------------------------------------------------------------------
+// Slice 1 (spec §2.9): archive request, provenance backfill and responsibility
+// change events. Each eventType carries schemaVersion 1; the header shape is
+// copied rather than imported by the anomaly codec.
+// --------------------------------------------------------------------------
+
+export type Slice1EventHeaderV1 = {
+  eventId: string; schemaVersion: 1; occurredAt: string;
+  projectId: string; workspaceId: string;
+};
+
+export type SessionArchiveChangedEventV1 = Slice1EventHeaderV1 & {
+  eventType: 'SessionArchiveRequested' | 'SessionArchiveRequestReleased';
+  session: SessionRecord; archiveRequestId: string; reason: string;
+};
+
+export type SessionProvenanceBackfilledEventV1 = Slice1EventHeaderV1 & {
+  eventType: 'SessionProvenanceBackfilled'; session: SessionRecord;
+  basis: LegacyProvenanceBasisV1;
+};
+
+export type SessionResponsibilityChangedEventV1 = Slice1EventHeaderV1 & {
+  eventType: 'SessionResponsibilityChanged';
+  mode: 'transfer' | 'drop' | 'terminal';
+  source: SessionRecord; destination: SessionRecord | null;
+  closed: PendingSessionWorkLink; opened: PendingSessionWorkLink | null;
+  openedBound: 'since' | null;
+  archiveStep: ArchiveStepRefV1 | null;
+  taskBasis: { task: TaskTriple; planRef: PlanRevisionRef;
+    terminalCause: 'satisfied' | 'cancelled' | 'superseded' | null;
+    finishedAt: string | null };
+};
+
+/** Event type selectors of the three slice-1 replay events. */
+export const SESSION_ARCHIVE_REQUESTED_EVENT = 'SessionArchiveRequested';
+export const SESSION_ARCHIVE_REQUEST_RELEASED_EVENT = 'SessionArchiveRequestReleased';
+export const SESSION_PROVENANCE_BACKFILLED_EVENT = 'SessionProvenanceBackfilled';
+export const SESSION_RESPONSIBILITY_CHANGED_EVENT = 'SessionResponsibilityChanged';
 
 // --------------------------------------------------------------------------
 // Small pure helpers (mirrors the Session codec style; no Store access)
@@ -223,9 +265,251 @@ function checkHealthObservedBody(body: UnknownRecord): Problem {
 }
 
 // --------------------------------------------------------------------------
-// Envelope validation
+// Slice 1 event bodies (spec §2.9)
 // --------------------------------------------------------------------------
 
+const ARCHIVE_CHANGED_EVENT_KEYS: readonly string[] = [
+  'eventId', 'eventType', 'schemaVersion', 'occurredAt', 'projectId', 'workspaceId',
+  'session', 'archiveRequestId', 'reason',
+];
+const PROVENANCE_BACKFILLED_EVENT_KEYS: readonly string[] = [
+  'eventId', 'eventType', 'schemaVersion', 'occurredAt', 'projectId', 'workspaceId', 'session', 'basis',
+];
+const RESPONSIBILITY_CHANGED_EVENT_KEYS: readonly string[] = [
+  'eventId', 'eventType', 'schemaVersion', 'occurredAt', 'projectId', 'workspaceId',
+  'mode', 'source', 'destination', 'closed', 'opened', 'openedBound', 'archiveStep', 'taskBasis',
+];
+const ARCHIVE_STEP_KINDS: readonly string[] = [
+  'stop', 'anchor', 'requeue', 'responsibility', 'reply_handler', 'wait_cancel', 'archive',
+];
+
+function checkSlice1Receipt(value: unknown): Problem {
+  if (!isObject(value) || !hasOnlyKeys(value, ['identityKey', 'fingerprint'])
+    || !nonEmpty(value['identityKey']) || !nonEmpty(value['fingerprint'])) {
+    return 'receipt must be {identityKey,fingerprint}';
+  }
+  return null;
+}
+function checkArchiveStep(value: unknown): Problem {
+  if (!isObject(value) || !hasOnlyKeys(value, ['sessionRef', 'archiveRequestId', 'requestReceipt', 'step', 'subjectKey'])) {
+    return 'archiveStep carries unknown fields';
+  }
+  const sessionProblem = checkPlainSessionRef(value['sessionRef']);
+  if (sessionProblem !== null) return `archiveStep sessionRef: ${sessionProblem}`;
+  if (!nonEmpty(value['archiveRequestId'])) return 'archiveStep archiveRequestId is required';
+  const receipt = checkSlice1Receipt(value['requestReceipt']);
+  if (receipt !== null) return `archiveStep ${receipt}`;
+  if (!ARCHIVE_STEP_KINDS.includes(String(value['step']))) return 'archiveStep step is not recognized';
+  if (!nonEmpty(value['subjectKey'])) return 'archiveStep subjectKey is required';
+  return null;
+}
+function checkPlanRef(value: unknown): Problem {
+  if (!isObject(value) || !hasOnlyKeys(value, ['aggregateType', 'projectId', 'planId'])
+    || value['aggregateType'] !== 'PlanRevision' || !nonEmpty(value['projectId']) || !nonEmpty(value['planId'])) {
+    return 'planRef must be a complete PlanRevisionRef';
+  }
+  return null;
+}
+function checkTaskTriple(value: unknown): Problem {
+  if (!isObject(value) || !hasOnlyKeys(value, ['projectId', 'goalId', 'taskId'])
+    || !nonEmpty(value['projectId']) || !nonEmpty(value['goalId']) || !nonEmpty(value['taskId'])) {
+    return 'task must be a complete TaskTriple';
+  }
+  return null;
+}
+function checkOperationRef(value: unknown): Problem {
+  if (!isObject(value) || !hasOnlyKeys(value, ['aggregateType', 'projectId', 'operationId'])
+    || value['aggregateType'] !== 'CoreOperation' || !nonEmpty(value['projectId']) || !nonEmpty(value['operationId'])) {
+    return 'operationRef must be a complete OperationRef';
+  }
+  return null;
+}
+function checkMessageRef(value: unknown): Problem {
+  if (!isObject(value) || !hasOnlyKeys(value, ['aggregateType', 'projectId', 'workspaceId', 'messageId'])
+    || value['aggregateType'] !== 'SessionMessage'
+    || !nonEmpty(value['projectId']) || !nonEmpty(value['workspaceId']) || !nonEmpty(value['messageId'])) {
+    return 'messageRef must be a complete SessionMessageRef';
+  }
+  return null;
+}
+function checkRequeueRef(value: unknown): Problem {
+  if (!isObject(value) || !hasOnlyKeys(value, ['aggregateType', 'projectId', 'goalId', 'taskId', 'afterRunId'])
+    || value['aggregateType'] !== 'TaskRequeue'
+    || !nonEmpty(value['projectId']) || !nonEmpty(value['goalId']) || !nonEmpty(value['taskId']) || !nonEmpty(value['afterRunId'])) {
+    return 'requeueRef must be a complete TaskRequeueRef';
+  }
+  return null;
+}
+function checkRunRef(value: unknown): Problem {
+  if (!isObject(value) || !hasOnlyKeys(value, ['aggregateType', 'projectId', 'goalId', 'runId'])
+    || value['aggregateType'] !== 'Run'
+    || !nonEmpty(value['projectId']) || !nonEmpty(value['goalId']) || !nonEmpty(value['runId'])) {
+    return 'runRef must be a complete RunRef';
+  }
+  return null;
+}
+function checkOutboxRef(value: unknown): Problem {
+  if (!isObject(value) || !hasOnlyKeys(value, ['aggregateType', 'projectId', 'goalId', 'taskId', 'attemptId'])
+    || value['aggregateType'] !== 'DispatchOutboxEntry'
+    || !nonEmpty(value['projectId']) || !nonEmpty(value['goalId']) || !nonEmpty(value['taskId']) || !nonEmpty(value['attemptId'])) {
+    return 'firstClaimRef must be a complete DispatchOutboxRef';
+  }
+  return null;
+}
+function checkArtifactRef(value: unknown): Problem {
+  if (!isObject(value) || !hasOnlyKeys(value, ['kind', 'contentType', 'digest', 'sizeBytes', 'source'])
+    || value['kind'] !== 'artifact' || !nonEmpty(value['contentType']) || !nonEmpty(value['digest'])
+    || !Number.isSafeInteger(value['sizeBytes']) || !isObject(value['source'])) {
+    return 'manifestRef must be a complete ArtifactRef';
+  }
+  return null;
+}
+function checkLegacyProvenanceBasis(value: unknown): Problem {
+  if (!isObject(value)) return 'basis must be an object';
+  switch (value['kind']) {
+    case 'consultation':
+      if (!hasOnlyKeys(value, ['kind', 'messageRef'])) return 'consultation basis carries unknown fields';
+      return checkMessageRef(value['messageRef']);
+    case 'requeue_creation': {
+      if (!hasOnlyKeys(value, ['kind', 'operationRef', 'creationCursor', 'requeueRef', 'firstClaimRef'])) {
+        return 'requeue_creation basis carries unknown fields';
+      }
+      return checkOperationRef(value['operationRef'])
+        ?? (nonEmpty(value['creationCursor']) ? null : 'requeue_creation basis creationCursor must be a cursor')
+        ?? checkRequeueRef(value['requeueRef'])
+        ?? checkOutboxRef(value['firstClaimRef']);
+    }
+    case 'manifest_seed': {
+      if (!hasOnlyKeys(value, ['kind', 'operationRef', 'creationCursor', 'runRef', 'manifestRef'])) {
+        return 'manifest_seed basis carries unknown fields';
+      }
+      return checkOperationRef(value['operationRef'])
+        ?? (nonEmpty(value['creationCursor']) ? null : 'manifest_seed basis creationCursor must be a cursor')
+        ?? checkRunRef(value['runRef'])
+        ?? checkArtifactRef(value['manifestRef']);
+    }
+    case 'no_reliable_predecessor':
+      return hasOnlyKeys(value, ['kind']) ? null : 'no_reliable_predecessor basis carries unknown fields';
+    default:
+      return 'basis kind is not recognized';
+  }
+}
+function checkArchiveChangedBody(body: UnknownRecord, eventType: string): Problem {
+  if (!hasOnlyKeys(body, ARCHIVE_CHANGED_EVENT_KEYS)) return 'Session archive event carries unknown fields';
+  if (!nonEmpty(body['projectId']) || !nonEmpty(body['workspaceId'])) {
+    return 'Session archive event requires projectId and workspaceId';
+  }
+  if (!nonEmpty(body['archiveRequestId'])) return 'Session archive event requires an archiveRequestId';
+  if (!nonEmpty(body['reason'])) return 'Session archive event requires a reason';
+  const session = body['session'];
+  if (!isObject(session)) return 'Session archive event requires the transitioned SessionRecord';
+  const sessionProblem = checkSessionBody(session);
+  if (sessionProblem !== null) return `Session archive event session: ${sessionProblem}`;
+  const ref = session['ref'];
+  if (!isObject(ref) || ref['projectId'] !== body['projectId'] || session['workspaceId'] !== body['workspaceId']) {
+    return 'Session archive event Session disagrees with the event scope';
+  }
+  const request = session['archiveRequest'];
+  if (eventType === SESSION_ARCHIVE_REQUESTED_EVENT) {
+    if (!isObject(request) || request['requestId'] !== body['archiveRequestId']) {
+      return 'SessionArchiveRequested must carry the recorded archive request';
+    }
+  } else if (request !== null && request !== undefined) {
+    return 'SessionArchiveRequestReleased must carry the cleared Session';
+  }
+  return null;
+}
+function checkProvenanceBackfilledBody(body: UnknownRecord): Problem {
+  if (!hasOnlyKeys(body, PROVENANCE_BACKFILLED_EVENT_KEYS)) return 'SessionProvenanceBackfilled carries unknown fields';
+  if (!nonEmpty(body['projectId']) || !nonEmpty(body['workspaceId'])) {
+    return 'SessionProvenanceBackfilled requires projectId and workspaceId';
+  }
+  const session = body['session'];
+  if (!isObject(session)) return 'SessionProvenanceBackfilled requires the transitioned SessionRecord';
+  const sessionProblem = checkSessionBody(session);
+  if (sessionProblem !== null) return `SessionProvenanceBackfilled session: ${sessionProblem}`;
+  const ref = session['ref'];
+  if (!isObject(ref) || ref['projectId'] !== body['projectId'] || session['workspaceId'] !== body['workspaceId']) {
+    return 'SessionProvenanceBackfilled Session disagrees with the event scope';
+  }
+  if (session['provenance'] === null || session['provenance'] === undefined) {
+    return 'SessionProvenanceBackfilled requires a written provenance';
+  }
+  const basis = checkLegacyProvenanceBasis(body['basis']);
+  if (basis !== null) return `SessionProvenanceBackfilled basis: ${basis}`;
+  return null;
+}
+function checkPendingLink(value: unknown): Problem {
+  if (!isObject(value)) return 'link must be a pending work-link body';
+  return checkWorkLinkBody(value, false);
+}
+function checkResponsibilityChangedBody(body: UnknownRecord): Problem {
+  if (!hasOnlyKeys(body, RESPONSIBILITY_CHANGED_EVENT_KEYS)) return 'SessionResponsibilityChanged carries unknown fields';
+  if (!nonEmpty(body['projectId']) || !nonEmpty(body['workspaceId'])) {
+    return 'SessionResponsibilityChanged requires projectId and workspaceId';
+  }
+  if (body['mode'] !== 'transfer' && body['mode'] !== 'drop' && body['mode'] !== 'terminal') {
+    return 'SessionResponsibilityChanged mode is not recognized';
+  }
+  const source = body['source'];
+  if (!isObject(source)) return 'SessionResponsibilityChanged requires the source SessionRecord';
+  const sourceProblem = checkSessionBody(source);
+  if (sourceProblem !== null) return `SessionResponsibilityChanged source: ${sourceProblem}`;
+  const sourceRef = source['ref'];
+  if (!isObject(sourceRef) || sourceRef['projectId'] !== body['projectId'] || source['workspaceId'] !== body['workspaceId']) {
+    return 'SessionResponsibilityChanged source disagrees with the event scope';
+  }
+  const destination = body['destination'];
+  if (destination !== null) {
+    if (!isObject(destination)) return 'SessionResponsibilityChanged destination must be a SessionRecord or null';
+    const destinationProblem = checkSessionBody(destination);
+    if (destinationProblem !== null) return `SessionResponsibilityChanged destination: ${destinationProblem}`;
+    const destinationRef = destination['ref'];
+    if (!isObject(destinationRef) || destinationRef['projectId'] !== body['projectId']
+      || destination['workspaceId'] !== body['workspaceId']) {
+      return 'SessionResponsibilityChanged destination disagrees with the event scope';
+    }
+    if (body['mode'] === 'terminal') return 'a terminal responsibility change has no destination';
+  } else if (body['mode'] === 'transfer') {
+    return 'a transfer responsibility change requires a destination';
+  }
+  const closed = checkPendingLink(body['closed']);
+  if (closed !== null) return `SessionResponsibilityChanged closed: ${closed}`;
+  if (body['opened'] !== null) {
+    const opened = checkPendingLink(body['opened']);
+    if (opened !== null) return `SessionResponsibilityChanged opened: ${opened}`;
+  }
+  if (body['openedBound'] !== null && body['openedBound'] !== 'since') {
+    return 'SessionResponsibilityChanged openedBound must be since or null';
+  }
+  if (body['archiveStep'] !== null) {
+    const step = checkArchiveStep(body['archiveStep']);
+    if (step !== null) return `SessionResponsibilityChanged archiveStep: ${step}`;
+  }
+  const taskBasis = body['taskBasis'];
+  if (!isObject(taskBasis) || !hasOnlyKeys(taskBasis, ['task', 'planRef', 'terminalCause', 'finishedAt'])) {
+    return 'SessionResponsibilityChanged taskBasis carries unknown fields';
+  }
+  const task = checkTaskTriple(taskBasis['task']);
+  if (task !== null) return `SessionResponsibilityChanged taskBasis task: ${task}`;
+  const plan = checkPlanRef(taskBasis['planRef']);
+  if (plan !== null) return `SessionResponsibilityChanged taskBasis planRef: ${plan}`;
+  const cause = taskBasis['terminalCause'];
+  if (cause !== null && cause !== 'satisfied' && cause !== 'cancelled' && cause !== 'superseded') {
+    return 'SessionResponsibilityChanged taskBasis terminalCause is not recognized';
+  }
+  if (!(taskBasis['finishedAt'] === null || nonEmpty(taskBasis['finishedAt']))) {
+    return 'SessionResponsibilityChanged taskBasis finishedAt must be null or a string';
+  }
+  if (body['mode'] === 'terminal' && cause === null) {
+    return 'a terminal responsibility change requires a terminal cause';
+  }
+  return null;
+}
+
+// --------------------------------------------------------------------------
+// Envelope validation
+// --------------------------------------------------------------------------
 function validateEventBody(
   event: EncodedDomainEvent,
   expectedType: string,
@@ -276,6 +560,28 @@ export const SESSION_LIFECYCLE_RECORD_SCHEMAS: RecordBackendSchemas = {
       schemaVersion: SESSION_LIFECYCLE_EVENT_VERSION,
       validate: (event) => validateEventBody(event, SESSION_HEALTH_OBSERVED_EVENT, checkHealthObservedBody),
     },
+    {
+      eventType: SESSION_ARCHIVE_REQUESTED_EVENT,
+      schemaVersion: SESSION_LIFECYCLE_EVENT_VERSION,
+      validate: (event) => validateEventBody(event, SESSION_ARCHIVE_REQUESTED_EVENT,
+        (body) => checkArchiveChangedBody(body, SESSION_ARCHIVE_REQUESTED_EVENT)),
+    },
+    {
+      eventType: SESSION_ARCHIVE_REQUEST_RELEASED_EVENT,
+      schemaVersion: SESSION_LIFECYCLE_EVENT_VERSION,
+      validate: (event) => validateEventBody(event, SESSION_ARCHIVE_REQUEST_RELEASED_EVENT,
+        (body) => checkArchiveChangedBody(body, SESSION_ARCHIVE_REQUEST_RELEASED_EVENT)),
+    },
+    {
+      eventType: SESSION_PROVENANCE_BACKFILLED_EVENT,
+      schemaVersion: SESSION_LIFECYCLE_EVENT_VERSION,
+      validate: (event) => validateEventBody(event, SESSION_PROVENANCE_BACKFILLED_EVENT, checkProvenanceBackfilledBody),
+    },
+    {
+      eventType: SESSION_RESPONSIBILITY_CHANGED_EVENT,
+      schemaVersion: SESSION_LIFECYCLE_EVENT_VERSION,
+      validate: (event) => validateEventBody(event, SESSION_RESPONSIBILITY_CHANGED_EVENT, checkResponsibilityChangedBody),
+    },
   ],
   lookups: [],
 };
@@ -305,6 +611,36 @@ export function encodeSessionLifecycleChangedEvent(event: SessionLifecycleChange
 }
 
 export function encodeSessionHealthObservedEvent(event: SessionHealthObservedEventV1): EncodedDomainEvent {
+  return {
+    eventId: event.eventId,
+    eventType: event.eventType,
+    schemaVersion: event.schemaVersion,
+    occurredAt: event.occurredAt,
+    json: JSON.stringify(event),
+  };
+}
+
+export function encodeSessionArchiveChangedEvent(event: SessionArchiveChangedEventV1): EncodedDomainEvent {
+  return {
+    eventId: event.eventId,
+    eventType: event.eventType,
+    schemaVersion: event.schemaVersion,
+    occurredAt: event.occurredAt,
+    json: JSON.stringify(event),
+  };
+}
+
+export function encodeSessionProvenanceBackfilledEvent(event: SessionProvenanceBackfilledEventV1): EncodedDomainEvent {
+  return {
+    eventId: event.eventId,
+    eventType: event.eventType,
+    schemaVersion: event.schemaVersion,
+    occurredAt: event.occurredAt,
+    json: JSON.stringify(event),
+  };
+}
+
+export function encodeSessionResponsibilityChangedEvent(event: SessionResponsibilityChangedEventV1): EncodedDomainEvent {
   return {
     eventId: event.eventId,
     eventType: event.eventType,
@@ -350,4 +686,38 @@ export function sessionHealthObservedPayloadFromEvent(
   const body = parseObject(event.json);
   if (body === null) return invalid('SessionHealthObserved event json is not an object');
   return { status: 'decoded', value: body as unknown as SessionHealthObservedEventV1 };
+}
+
+export function sessionArchiveChangedEventFromEvent(
+  event: EncodedDomainEvent,
+): DecodeResult<SessionArchiveChangedEventV1> {
+  if (event.eventType !== SESSION_ARCHIVE_REQUESTED_EVENT && event.eventType !== SESSION_ARCHIVE_REQUEST_RELEASED_EVENT) {
+    return invalid(`expected a Session archive event, got ${event.eventType}`);
+  }
+  const eventType = event.eventType;
+  const checked = validateEventBody(event, eventType, (body) => checkArchiveChangedBody(body, eventType));
+  if (checked.status !== 'decoded') return checked;
+  const body = parseObject(event.json);
+  if (body === null) return invalid(`${eventType} event json is not an object`);
+  return { status: 'decoded', value: body as unknown as SessionArchiveChangedEventV1 };
+}
+
+export function sessionProvenanceBackfilledEventFromEvent(
+  event: EncodedDomainEvent,
+): DecodeResult<SessionProvenanceBackfilledEventV1> {
+  const checked = validateEventBody(event, SESSION_PROVENANCE_BACKFILLED_EVENT, checkProvenanceBackfilledBody);
+  if (checked.status !== 'decoded') return checked;
+  const body = parseObject(event.json);
+  if (body === null) return invalid('SessionProvenanceBackfilled event json is not an object');
+  return { status: 'decoded', value: body as unknown as SessionProvenanceBackfilledEventV1 };
+}
+
+export function sessionResponsibilityChangedEventFromEvent(
+  event: EncodedDomainEvent,
+): DecodeResult<SessionResponsibilityChangedEventV1> {
+  const checked = validateEventBody(event, SESSION_RESPONSIBILITY_CHANGED_EVENT, checkResponsibilityChangedBody);
+  if (checked.status !== 'decoded') return checked;
+  const body = parseObject(event.json);
+  if (body === null) return invalid('SessionResponsibilityChanged event json is not an object');
+  return { status: 'decoded', value: body as unknown as SessionResponsibilityChangedEventV1 };
 }

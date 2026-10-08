@@ -21,6 +21,7 @@ import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { SessionRef } from '../../../contracts/core/identity.js';
 import type { ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import type { SessionMessageIntentFields, SessionMessageIntentV1, SessionMessageRef } from '../../../contracts/core/session-message.js';
+import type { ArchiveStepRefV1 } from '../../../contracts/core/session-archive.js';
 import type { RoleBindingRefV1, RunRef, SourceRefV1 } from '../../../contracts/dispatch.js';
 import type { QueryJobAnswerRef, QueryRunRef } from '../../../contracts/query-job.js';
 import { canonicalJson, sha256Hex } from '../../../contracts/fingerprint.js';
@@ -28,7 +29,7 @@ import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
 import type { RoleBindingFactsPort } from './configuration-contracts.js';
 import type { MaterialPort } from './material-contracts.js';
-import type { GraphWrite, SessionDirectoryPort } from './session-contracts.js';
+import type { GraphWrite, SessionDirectoryPort, SessionPage, SessionPageRequest } from './session-contracts.js';
 import type { ExecutionEntryDependencies } from './execution-entry-contracts.js';
 import type { ExecutionReadPort } from './execution-read-contracts.js';
 
@@ -142,6 +143,31 @@ export type SessionMessage = {
     sourceKernel: { adapterId: string; kernelSessionId: string };
     throughPosition: number | null;
   };
+  /**
+   * Slice 1 §2.5: the effective reply handler for this wait. Absent and null
+   * both mean the original `sender.sessionRef` still handles it.
+   */
+  replyHandler?: {
+    sessionRef: SessionRef;
+    archiveSessionRef: SessionRef;
+    archiveRequestId: string;
+    changedAt: string;
+  } | null;
+  /** Slice 1 §2.5: the recorded disposal of this wait during an archive; absent and null mean none. */
+  archiveWaitDisposition?: {
+    kind: 'cancel' | 'transfer';
+    runRef: RunRef;
+    archiveSessionRef: SessionRef;
+    archiveRequestId: string;
+    recordedAt: string;
+  } | null;
+};
+
+/** Slice 1 §2.5: a read-only source item for a reply that reached a retired line. */
+export type UndeliveredReplyV1 = {
+  kind: 'retired_reply'; messageRef: SessionMessageRef; sourceSessionRef: SessionRef;
+  responseRef: ArtifactRef; respondedAt: string; hasContinuation: boolean;
+  requiresUserRecipient: boolean; // 无 continuation 为 true。
 };
 
 /** One keyset page shared by the inbox and the sender-Run outbox. */
@@ -242,6 +268,16 @@ export interface SessionMailboxPort {
     ctx: CoreCallContext,
     request: GraphWrite<{ messageRef: SessionMessageRef; derivation: NonNullable<SessionMessage['consultationDerivation']> }>,
   ): Promise<WriteResult<SessionMessage>>;
+  /** Slice 1 §3.3: transfer or cancel the original yielded wait of a pending archive step. */
+  disposeArchiveWait?(ctx: CoreCallContext, step: ArchiveStepRefV1): Promise<WriteResult<SessionMessage>>;
+  /** Slice 1 §2.5: read-only source items for replies that reached a retired line. */
+  readUndeliveredReplies?(
+    ctx: CoreCallContext, input: { sessionRef: SessionRef; page: SessionPageRequest },
+  ): Promise<ReadResult<SessionPage<UndeliveredReplyV1>>>;
+  /** Slice 1 §2.5: the messages whose effective reply handler is this Session. */
+  readRoutedReplies?(
+    ctx: CoreCallContext, input: { handler: SessionRef; page: SessionPageRequest },
+  ): Promise<ReadResult<SessionPage<SessionMessage>>>;
 }
 
 /**

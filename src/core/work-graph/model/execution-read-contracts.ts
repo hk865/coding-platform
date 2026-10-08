@@ -6,6 +6,7 @@ import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { ReadResult } from '../../../contracts/core/results.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { SessionRecord } from '../../../contracts/core/session.js';
+import type { SessionAnomalyAnchorV1 } from '../../../contracts/session-anomaly.js';
 import type { RunRef, RunSnapshot, TaskAttemptSnapshot, TaskLeaseSnapshot } from '../../../contracts/dispatch.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
 import type { PlanRevisionSnapshot } from '../../../contracts/plan.js';
@@ -80,6 +81,8 @@ export type ContinuationBasis = {
   replyBodies: { messageRef: SessionMessageRef; body: string | null; truncated: boolean; reason: string | null }[];
   /** Nearest entered ancestor when the afterRun never entered (at most 4 hops); `[]` otherwise. */
   factsChain: { requeue: TaskRequeueSnapshotV1; run: TaskExecutionRecord; round: RoundSnapshot | null }[];
+  /** Slice 1 §2.7: this Task's not-yet-picked-up anchors; the real production reader always returns it. */
+  pendingAnomalies?: SessionAnomalyAnchorV1[];
   readThrough: CommitCursor | null;
 };
 

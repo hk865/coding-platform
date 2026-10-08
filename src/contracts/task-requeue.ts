@@ -15,6 +15,7 @@ import type { SessionRef } from './core/identity.js';
 import type { ControlIntentRef } from './control-intent.js';
 import type { DelegatedWriteProvenanceV1 } from './delegated-write.js';
 import type { RunOutcome, RunRef, TaskAttemptRef, TaskBudgetV1, TaskTriple } from './dispatch.js';
+import type { ArchiveRequeueOriginV1 } from './session-anomaly.js';
 import type { GoalRef } from './ledger.js';
 import type { NewBasisInputRefV1, NoProgressKeyV1, SourceStampV1 } from './no-progress.js';
 import type { PlanRevisionRef } from './plan.js';
@@ -45,9 +46,12 @@ export const WORKFLOW_AUTOMATION_ACTOR: Readonly<{ kind: 'system'; id: 'workflow
 /** Host Goal-resume fan-out; only valid with a `goal_resume` trigger (GOAL-29). */
 export const GOAL_FAN_OUT_ACTOR: Readonly<{ kind: 'system'; id: 'host:goal-fan-out' }> =
   Object.freeze({ kind: 'system', id: 'host:goal-fan-out' });
+/** Slice 1: the automatic Session-archive maintenance rework actor. */
+export const SESSION_ARCHIVE_AUTOMATION_ACTOR: Readonly<{ kind: 'system'; id: 'workflow:session-archive' }> =
+  Object.freeze({ kind: 'system', id: 'workflow:session-archive' });
 /** The ONLY actors classified `system`. Every other Host actor is an operator. */
 export const PLATFORM_AUTOMATION_ACTORS: readonly Readonly<HostActorRef>[] =
-  Object.freeze([WORKFLOW_AUTOMATION_ACTOR, GOAL_FAN_OUT_ACTOR]);
+  Object.freeze([WORKFLOW_AUTOMATION_ACTOR, GOAL_FAN_OUT_ACTOR, SESSION_ARCHIVE_AUTOMATION_ACTOR]);
 
 /** Canonical equality with one member of `PLATFORM_AUTOMATION_ACTORS`. */
 export function isAutomationActor(actor: ActorRef): boolean {
@@ -191,6 +195,8 @@ export type TaskRequeueSnapshotV1 = {
   agentProvenance: DelegatedWriteProvenanceV1 | null;
   automation: TaskRequeueAutomationV1;
   historySource: TaskRequeueHistorySourceV1 | null;
+  /** Slice 1 §2.6: set only on a requeue caused by an archive; absent is null. */
+  archiveOrigin?: ArchiveRequeueOriginV1 | null;
 };
 
 // ------------------------------------------------------------------------ //

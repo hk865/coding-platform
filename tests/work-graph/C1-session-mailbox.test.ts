@@ -312,6 +312,9 @@ describe.each(KINDS)('C1 SessionMailbox real %s', kind => {
         paths: ['ref.projectId', 'ref.workspaceId', 'recipient.sessionId', 'status'] },
       { name: 'session-message-by-sender-run', aggregateType: 'SessionMessage',
         paths: ['ref.projectId', 'ref.workspaceId', 'sender.runRef.goalId', 'sender.runRef.runId'] },
+      // Slice 1 §2.8 IDX-S6 (lead update 2026-10-09): the reply-handler index of the same aggregate.
+      { name: 'session-reply-by-handler', aggregateType: 'SessionMessage',
+        paths: ['ref.projectId', 'ref.workspaceId', 'replyHandler.sessionRef.sessionId'] },
     ]);
   });
 

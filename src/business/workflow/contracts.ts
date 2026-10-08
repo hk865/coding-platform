@@ -1,4 +1,5 @@
 import type { ArtifactRef } from '../../contracts/artifact.js';
+import type { CommitCursor } from '../../contracts/command-event.js';
 import type { CommandMeta, SessionRef } from '../../contracts/core/identity.js';
 import type { CoreRejection, ReadResult, WriteResult } from '../../contracts/core/results.js';
 import type { SessionMessageRef } from '../../contracts/core/session-message.js';
@@ -115,6 +116,13 @@ export type WorkflowAdvanceResult = CoreRejection | {
     receipt: WorkflowStepReceipt | null;
     next: WorkflowAdvanceInput | null;
     reason: string | null;
+    /**
+     * Slice 1 E17 (§4.2 S:823): the per-Session failures of the bounded
+     * maintenance page this advancement ran with, made visible without changing
+     * the state or blocking the selected work. Absent when the page reported
+     * none.
+     */
+    maintenanceFailures?: { sessionRef: SessionRef; rejection: CoreRejection }[];
   };
 };
 
@@ -189,3 +197,28 @@ export type ConsultationResult = ReadResult<{
   answer: QueryJobAnswerSnapshot | null;
   reason: string | null;
 }>;
+
+/**
+ * Slice 1 §4.1/§4.2: the Workflow archive and maintenance public result types,
+ * re-exported so callers of this contracts module see them next to the other
+ * Workflow inputs/results. The declarations live in the new Workflow files.
+ */
+export type {
+  ArchiveLineInput, ArchiveStepReceiptV1, ArchiveLineResultV1,
+} from './session-archive.js';
+export type {
+  SessionMaintenanceInput, SessionMaintenanceResultV1,
+} from './session-maintenance.js';
+
+/**
+ * Slice 1 §4.2: the minimal encoded-event shape the maintenance step reads to
+ * derive the executor `finishedAt` from the terminal responsibility close. It is
+ * structurally the RecordStore encoded event; declaring it here keeps
+ * `business/workflow/` free of any `record-store` module specifier.
+ */
+export type WorkflowCloseEventV1 = {
+  eventId: string; eventType: string; schemaVersion: number; occurredAt: string; json: string;
+};
+export type WorkflowCloseEventReader = {
+  eventAt(cursor: CommitCursor): Promise<ReadResult<{ cursor: CommitCursor; event: WorkflowCloseEventV1 }>>;
+};

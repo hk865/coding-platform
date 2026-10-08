@@ -1,7 +1,7 @@
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { CoreError, CoreRejection, ReadResult } from '../../contracts/core/results.js';
 import type { SessionRef, VersionPin } from '../../contracts/core/identity.js';
-import type { SessionRecord } from '../../contracts/core/session.js';
+import type { SessionProvenanceV1, SessionRecord } from '../../contracts/core/session.js';
 import type { RunRef, RunSnapshot, TaskBudgetV1, TaskTriple } from '../../contracts/dispatch.js';
 import type { GoalRef, GoalSnapshot, WorkspaceRef } from '../../contracts/ledger.js';
 import type { PlanRevisionRef, PlanRevisionSnapshot, RuntimeTask, TaskScope } from '../../contracts/plan.js';
@@ -30,6 +30,11 @@ import type { ReverifyRoundInput } from '../../core/work-graph/model/evidence-co
 import type { ConsultationInput, ConsultationResult, InitialPlanningGoalInput, InitialPlanningGoalInputResult, N0GoalInput, WorkflowAdvanceInput, WorkflowAdvanceResult, WorkflowOperation, WorkflowSessionRequeue, WorkflowStepReceipt } from './contracts.js';
 import type { WorkflowDependencies, WorkflowHostConfiguration, WorkflowPort } from './ports.js';
 import { createConsultationConsumer } from './consultation.js';
+import { orderTasksByDependency } from './task-order.js';
+import { createSessionArchiveService } from './session-archive.js';
+import type { InternalSessionArchivePort, SessionArchivePort } from './session-archive.js';
+import type { RequestSessionArchiveInput } from '../../contracts/core/session-archive.js';
+import { createSessionMaintenanceService } from './session-maintenance.js';
 
 /**
  * R5c.1 stage-two adoption-first advancement loop.
@@ -129,6 +134,7 @@ function createSessionStep(
   const requestWithoutRequestId = {
     workspace: value.workspace, role: value.role, recommendedRefs: value.recommendedRefs,
     initialLinks: value.initialLinks, meta: { expected },
+    ...(value.provenance === undefined ? {} : { provenance: value.provenance }),
     ...(requeue === undefined ? {} : { requeueRef: requeue.requeueRef }),
   };
   const requestId = requestIdFor(base, 'create_session', requestWithoutRequestId);
@@ -335,9 +341,9 @@ function receiptReason(result: unknown, fallback: string): string {
   return fallback;
 }
 
-function orderTasks(tasks: readonly RuntimeTask[]): RuntimeTask[] {
-  return [...tasks.filter((task) => task.requirementLevel === 'required'),
-    ...tasks.filter((task) => task.requirementLevel === 'optional')];
+/** §4.3: thin stable-ordering delegate; only reorders, never gates. */
+function orderTasks(tasks: readonly RuntimeTask[], dependsOn: Parameters<typeof orderTasksByDependency>[1]): RuntimeTask[] {
+  return orderTasksByDependency(tasks, dependsOn);
 }
 /**
  * L-15 (§9 VD-11, C7): a cancelled or superseded Task carries no work any more
@@ -646,15 +652,105 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort & Requi
     | { kind: 'waiting'; reason: string }
     | { kind: 'rejection'; rejection: CoreRejection };
 
+  /**
+   * Rule 7: a readonly copy, an archive-requested or a waiting Session is never
+   * chosen for NEW work or Query claims. The original yielded-wait continuation
+   * claim does not pass through here and keeps its legitimate reuse.
+   */
+  async function chooseExcluded(owned: Owned, card: SessionCard): Promise<boolean> {
+    const record = card.record;
+    if (record.provenance?.kind === 'readonly_copy') return true;
+    if (record.archiveRequest !== null && record.archiveRequest !== undefined) return true;
+    if (deps.sessionFacts !== undefined) {
+      const facts = await deps.sessionFacts.readSessionFacts(owned.ctx, {
+        projectId: record.ref.projectId, sessionId: record.ref.sessionId,
+      });
+      if (facts.status === 'ready' && facts.value.wait !== null) return true;
+    }
+    return false;
+  }
+
+  /**
+   * E16 (§4.1 S:799): a Task transferred to a chosen Session carries an OPEN
+   * responsible link on that Session, and its next pickup is claimed there
+   * first (before the hint and the directory order). Ordinary drops leave no
+   * open link, so the existing `chooseSession` order stays. The lookup is only
+   * attempted when the responsibility owner is installed; an unreadable target
+   * page falls through to the existing selection instead of failing it.
+   */
+  async function responsibleSessionFor(
+    owned: Owned, goal: GoalSnapshot, binding: Binding, task: TaskTriple,
+  ): Promise<SessionCard | null> {
+    if (deps.responsibilities === undefined) return null;
+    if (deps.sessions.findSessions === undefined) return null;
+    const workspaceId = goal.workspaceRef.workspaceId;
+    const target = { kind: 'task' as const, ref: task };
+    let cursor: string | null = null;
+    for (let page = 0; page < 8; page += 1) {
+      const found = await deps.sessions.findSessions(owned.ctx, {
+        workspace: { projectId: owned.projectId, workspaceId },
+        target,
+        includeArchived: false,
+        page: cursor === null ? { limit: 50 } : { limit: 50, cursor },
+      });
+      if (found.status !== 'ready') return null;
+      for (const card of found.value.items) {
+        if (!roleReusable(card, workspaceId, binding)) continue;
+        const openResponsible = card.links.some((link) => link.ref.relation === 'responsible'
+          && link.until === null && sameCanonical(link.ref.target, target));
+        if (!openResponsible) continue;
+        if (await chooseExcluded(owned, card)) continue;
+        return card;
+      }
+      if (found.value.nextCursor === null) break;
+      cursor = found.value.nextCursor;
+    }
+    return null;
+  }
+
+  /**
+   * E15 / §4.1 S:799 (T10): a replacement Session created to continue a Task a
+   * LIVE Session already held is a `continuation` (C3 interruption, kernel
+   * turn open or role mismatch). A predecessor that is already archived, of
+   * another scope or absent is the archive-origin ordinary pickup and stays
+   * `new`; a Task is never unconditionally continued just because it ran once.
+   */
+  function continuationProvenanceFor(
+    claimSession: ReadResult<SessionCard>, workspaceId: string, binding: Binding, task: TaskTriple,
+  ): SessionProvenanceV1 | null {
+    if (claimSession.status !== 'ready') return null;
+    const record = claimSession.value.record;
+    if (record.lifecycle !== 'active' || record.workspaceId !== workspaceId) return null;
+    // T10: a predecessor with a durable archive request is an archive-origin
+    // pickup, never an ordinary continuation (even before it is finally archived).
+    if (record.archiveRequest !== null && record.archiveRequest !== undefined) return null;
+    const reason: 'interrupted' | 'damaged' | 'role_mismatch' =
+      !sameCanonical(record.role, binding.sessionRole) ? 'role_mismatch'
+        : record.health === 'unavailable'
+          && (record.healthConclusion === 'missing' || record.healthConclusion === 'damaged') ? 'damaged'
+          : 'interrupted';
+    return {
+      schemaVersion: 1, kind: 'continuation',
+      from: { projectId: record.ref.projectId, sessionId: record.ref.sessionId },
+      reason, task: { ...task },
+    };
+  }
+
   async function chooseSession(
-    owned: Owned, goal: GoalSnapshot, binding: Binding, sessionHint: SessionRef | null,
+    owned: Owned, goal: GoalSnapshot, binding: Binding, sessionHint: SessionRef | null, task: TaskTriple | null,
   ): Promise<SessionChoice> {
     const workspaceId = goal.workspaceRef.workspaceId;
+    if (task !== null) {
+      const transferred = await responsibleSessionFor(owned, goal, binding, task);
+      if (transferred !== null) return { kind: 'reuse', card: transferred };
+    }
     if (sessionHint !== null) {
       const read = await deps.sessions.readSession(owned.ctx, sessionHint);
       if (read.status === 'ready') {
         const card = read.value;
-        if (roleReusable(card, workspaceId, binding)) return { kind: 'reuse', card };
+        if (roleReusable(card, workspaceId, binding) && !await chooseExcluded(owned, card)) {
+          return { kind: 'reuse', card };
+        }
         if (card.record.workspaceId === workspaceId && card.record.occupancy !== null) {
           return { kind: 'waiting', reason: `the continued Session is busy with a ${card.record.occupancy.kind}` };
         }
@@ -677,7 +773,9 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort & Requi
         return { kind: 'waiting', reason: 'the Session directory is not readable' };
       }
       for (const card of found.value.items) {
-        if (roleReusable(card, workspaceId, binding)) return { kind: 'reuse', card };
+        if (roleReusable(card, workspaceId, binding) && !await chooseExcluded(owned, card)) {
+          return { kind: 'reuse', card };
+        }
       }
       if (found.value.nextCursor === null) break;
       cursor = found.value.nextCursor;
@@ -899,16 +997,25 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort & Requi
     if (afterRun.status !== 'ready') return waiting(null, receiptReason(afterRun, 'the requeued Task afterRun is not readable'));
     const workspaceId = goal.workspaceRef.workspaceId;
     const claimSession = await deps.sessions.readSession(owned.ctx, afterRun.value.outbox.claim.sessionRef);
+    // E16 (§4.1 S:799, rule 7): the continuation of a requeued Task follows the
+    // same destination-first order as `chooseSession` — an open responsible link
+    // of a transfer destination wins — and a source that is excluded (an archive
+    // request, a wait, a readonly copy) is never retried; it goes through the
+    // ordinary selection instead.
+    const transferred = await responsibleSessionFor(owned, goal, binding, row.ref);
     let chosen: SessionChoice;
-    if (claimSession.status === 'ready') {
+    if (transferred !== null) {
+      chosen = { kind: 'reuse', card: transferred };
+    } else if (claimSession.status === 'ready') {
       const card = claimSession.value;
       const record = card.record;
-      if (roleReusable(card, workspaceId, binding)) {
+      const excluded = await chooseExcluded(owned, card);
+      if (roleReusable(card, workspaceId, binding) && !excluded) {
         chosen = { kind: 'reuse', card };
-      } else if (record.lifecycle === 'archived' || record.workspaceId !== workspaceId
+      } else if (excluded || record.lifecycle === 'archived' || record.workspaceId !== workspaceId
         || !sameCanonical(record.role, binding.sessionRole)
         || (record.health === 'unavailable' && (record.healthConclusion === 'missing' || record.healthConclusion === 'damaged'))) {
-        chosen = await chooseSession(owned, goal, binding, null);
+        chosen = await chooseSession(owned, goal, binding, null, row.ref);
       } else if (record.occupancy === null && record.health === 'unavailable' && record.healthConclusion === 'kernel_turn_open') {
         // LA-1 (A.2 step 5.6): the Kernel refuses a new Turn in a Session whose last Turn has no Kernel
         // terminal; the continuation gets a NEW linked Session (never another Task's), seeded by
@@ -921,7 +1028,7 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort & Requi
           + `${record.healthConclusion === undefined || record.healthConclusion === null ? '' : ` (${record.healthConclusion})`}`);
       }
     } else if (claimSession.status === 'not_found') {
-      chosen = await chooseSession(owned, goal, binding, null);
+      chosen = await chooseSession(owned, goal, binding, null, row.ref);
     } else if (claimSession.status === 'rejected' && (claimSession.code === 'cancelled' || claimSession.code === 'forbidden')) {
       return claimSession;
     } else {
@@ -932,10 +1039,12 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort & Requi
     const taskRef: TaskTriple = row.ref;
     const requeue: WorkflowSessionRequeue = { requeueRef, budget: row.requeueBudget ?? null };
     if (chosen.kind === 'create') {
+      const provenance = continuationProvenanceFor(claimSession, workspaceId, binding, taskRef);
       return advancing(null, makePerform(base, createSessionStep(base, {
         workspace: { projectId: owned.projectId, workspaceId },
         role: binding.sessionRole, recommendedRefs: [],
         initialLinks: [{ target: { kind: 'task', ref: taskRef }, relation: 'responsible' }],
+        ...(provenance === null ? {} : { provenance }),
       }, taskRef, planRef, requeue)));
     }
     const sessionRef: SessionRef = { projectId: owned.projectId, sessionId: chosen.card.record.ref.sessionId };
@@ -1032,7 +1141,7 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort & Requi
       }
     }
     // 1. The first eligible active ordinary work in required-first / plan order.
-    const ordered = orderTasks(graph.plan.tasks);
+    const ordered = orderTasks(graph.plan.tasks, graph.plan.executionDag?.dependsOn ?? []);
     for (const task of ordered) {
       if (base.taskId !== null && task.taskId !== base.taskId) continue;
       const row = graph.tasks.find((candidate) => candidate.ref.taskId === task.taskId);
@@ -1112,6 +1221,7 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort & Requi
       // selection. Reopening the Host must never create or choose a substitute.
       let consumedWait: ConsumedWaitV1 | undefined;
       let chosen: SessionChoice;
+      const taskRef: TaskTriple = { projectId: owned.projectId, goalId: base.goalRef.goalId, taskId: task.taskId };
       if (row.execution !== null) {
         const continuation = await readContinuation(owned, row.execution);
         if ('rejection' in continuation) return continuation.rejection;
@@ -1124,11 +1234,10 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort & Requi
         }
         chosen = { kind: 'reuse', card: original.value };
       } else {
-        chosen = await chooseSession(owned, goal, binding, base.sessionHint);
+        chosen = await chooseSession(owned, goal, binding, base.sessionHint, taskRef);
       }
       if (chosen.kind === 'rejection') return chosen.rejection;
       if (chosen.kind === 'waiting') return waiting(null, chosen.reason);
-      const taskRef: TaskTriple = { projectId: owned.projectId, goalId: base.goalRef.goalId, taskId: task.taskId };
       if (chosen.kind === 'create') {
         const operation = createSessionStep(base, {
           workspace: { projectId: owned.projectId, workspaceId: goal.workspaceRef.workspaceId },
@@ -1344,6 +1453,29 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort & Requi
     }
   }
 
+  // L-b (E17, §4.2 S:823): each explicit advance — a `select_work` or a
+  // `perform` continuation — runs at most ONE bounded maintenance page:
+  // before choosing work (continuing pending archives first), and after a
+  // `perform` step that committed something new. Only when
+  // the archive dependencies are installed; otherwise the advance behaves
+  // exactly as before and never reports maintenance as done. The page's real
+  // per-Session failures are made visible on the result and never block the
+  // selected work.
+  const canMaintain = deps.sessionLifecycle !== undefined && deps.sessionFacts !== undefined;
+  type MaintenanceFailure = { sessionRef: SessionRef; rejection: CoreRejection };
+  const runMaintenancePage = async (owned: Owned): Promise<MaintenanceFailure[]> => {
+    if (!canMaintain) return [];
+    try {
+      const result = await maintenanceService.maintainSessions(owned.ctx,
+        { workspace: { projectId: owned.projectId, workspaceId: owned.workspaceId }, after: null });
+      return result.status === 'ready' ? result.value.failures : [];
+    } catch { /* a platform fault never blocks the selected work */ return []; }
+  };
+  const withMaintenance = (result: WorkflowAdvanceResult, failures: MaintenanceFailure[]): WorkflowAdvanceResult =>
+    result.status === 'ready' && failures.length > 0
+      ? { ...result, value: { ...result.value, maintenanceFailures: failures } }
+      : result;
+
   const advanceWork = async (ctx: CoreCallContext, input: WorkflowAdvanceInput): Promise<WorkflowAdvanceResult> => {
     let isolated: WorkflowAdvanceInput;
     try { isolated = structuredClone(input); }
@@ -1352,15 +1484,56 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort & Requi
     if ('rejection' in owned) return owned.rejection;
     const base = baseFromInput(isolated, owned);
     if ('rejection' in base) return base.rejection;
-    if (isolated.kind === 'select_work') return await selectNext(owned, base);
-    return await performStep(owned, base, isolated.operation);
+    if (isolated.kind === 'select_work') {
+      const maintenanceFailures = await runMaintenancePage(owned);
+      return withMaintenance(await selectNext(owned, base), maintenanceFailures);
+    }
+    // A `perform` continuation runs its maintenance page AFTER the step, and only
+    // when the step really committed something new: a re-sent request whose
+    // owner replayed the original receipt adds no write at all (rule 1; lead fix
+    // 2026-10-09, A4 "the copy started nothing and wrote nothing").
+    const performed = await performStep(owned, base, isolated.operation);
+    const stepResult = performed.status === 'ready' ? performed.value.receipt?.result : undefined;
+    const replayed = stepResult !== undefined && stepResult !== null && typeof stepResult === 'object'
+      && 'replayed' in stepResult && (stepResult as { replayed?: unknown }).replayed === true;
+    if (replayed) return performed;
+    return withMaintenance(performed, await runMaintenancePage(owned));
   };
+
+  // Slice 1 §4.1/§4.2: the ONE archive composition and the bounded maintenance
+  // step. Both are published on the SAME Workflow port and share the wired
+  // owner seams; an old narrow double simply lacks the optional ports.
+  const archiveMessages: WorkflowDependencies['messages'] | undefined =
+    deps.messages ?? (deps.consultations?.messages as unknown as WorkflowDependencies['messages']);
+  const archiveService = createSessionArchiveService({
+    ...deps,
+    ...(archiveMessages === undefined ? {} : { messages: archiveMessages }),
+  });
+  // E9/E17: the maintenance composer selects a non-operator `mode`, which only
+  // the internal archive entry accepts. The public `archiveLine` refuses a
+  // present `mode`, so route the composer's `archiveLine` to the internal entry
+  // (the same composition) and keep `archiveLineInternal` available for a
+  // composer that calls it directly.
+  const maintenanceArchive: SessionArchivePort & Partial<InternalSessionArchivePort> = {
+    archiveLine: (maintenanceCtx, request) => {
+      const internal = archiveService.archiveLineInternal;
+      if (internal === undefined) return archiveService.archiveLine(maintenanceCtx, request);
+      return internal(maintenanceCtx, request as unknown as GraphWrite<RequestSessionArchiveInput>);
+    },
+    continueArchiveLine: archiveService.continueArchiveLine,
+    ...(archiveService.archiveLineInternal === undefined
+      ? {} : { archiveLineInternal: archiveService.archiveLineInternal }),
+  };
+  const maintenanceService = createSessionMaintenanceService({
+    ...deps, archive: maintenanceArchive,
+  });
 
   // AG2a: the explicit-consultation consumer is published on the SAME Workflow
   // port. Without the optional consultation dependencies it stays explicitly
   // unsupported, so existing Workflow fixtures are never forced to extend.
   const consultation = deps.consultations === undefined ? null : createConsultationConsumer({
     sessions: deps.sessions, plans: deps.plans, runtime: deps.runtime, consultations: deps.consultations,
+    sessionArchive: archiveService,
   });
   const consumeConsultation = async (ctx: CoreCallContext, input: ConsultationInput): Promise<ConsultationResult> => {
     if (consultation === null) {
@@ -1369,5 +1542,12 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort & Requi
     return consultation(ctx, input);
   };
 
-  return { handleGoalInput, advanceWork, consumeConsultation };
+  return {
+    handleGoalInput, advanceWork, consumeConsultation,
+    // Slice 1 §4.1/§4.2: the real archive/maintenance services are published
+    // on the port; an outer `ready` never implies archived.
+    archiveLine: archiveService.archiveLine,
+    continueArchiveLine: archiveService.continueArchiveLine,
+    maintainSessions: maintenanceService.maintainSessions,
+  };
 }

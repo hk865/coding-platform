@@ -21,7 +21,7 @@ import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { SessionRef, VersionPin } from '../../../contracts/core/identity.js';
 import type { PreparedQueryExecution, PreparedQueryManifestV1 } from '../../../contracts/core/prepared-execution.js';
 import type { CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
-import type { SessionRecord } from '../../../contracts/core/session.js';
+import type { SessionProvenanceV1, SessionRecord } from '../../../contracts/core/session.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import { consultationQueryRefs } from '../../../contracts/query-job.js';
 import { isAutomationActor } from '../../../contracts/task-requeue.js';
@@ -49,8 +49,8 @@ import {
   type QueryRecoveryPhase,
 } from '../state/query-run-recovery.js';
 import {
-  occupySessionRecord, ownsQuery, releaseSessionRecord, sessionMachineStateOf, transitionSession,
-  type SessionGuardContext, type SessionRelease, type SessionReleaseCause,
+  occupySessionRecord, ownsQuery, releaseSessionRecord, sessionDispatchAdmissionProblem, sessionMachineStateOf,
+  transitionSession, type SessionGuardContext, type SessionRelease, type SessionReleaseCause,
 } from '../state/session-availability.js';
 import {
   decodeQueryExecutionRecordedEvent, decodeQueryJobAnswerSnapshot, decodeQueryJobSnapshot,
@@ -63,6 +63,7 @@ import type {
   QueryExecutionRecord, QueryHistoryObservation, QueryPreparationFacts, QueryReconcileInput, ResolveUnknownQueryRunInput,
 } from './contracts.js';
 import type { GraphWrite } from '../model/task-contracts.js';
+import type { SessionFactsV1 } from '../model/session-facts-contracts.js';
 
 /** Exact manifest content type (declared once in contracts, ND-9); the writer re-reads the body and requires this. */
 export { QUERY_MANIFEST_CONTENT_TYPE };
@@ -81,6 +82,12 @@ function rejected(code: CoreRejection['code'], reason: string, current?: Version
   return current === undefined || current.length === 0
     ? { status: 'rejected', code, reason }
     : { status: 'rejected', code, reason, current };
+}
+/** The store refuses duplicate guards; keep the first pin of each record. */
+function dedupeGuards(guards: readonly RecordGuard[]): RecordGuard[] {
+  const seen = new Map<string, RecordGuard>();
+  for (const guard of guards) if (!seen.has(guard.refKey)) seen.set(guard.refKey, guard);
+  return [...seen.values()];
 }
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -179,6 +186,36 @@ function queryJobAnswerRefKey(ref: QueryJobAnswerRef): string {
 }
 function sessionKeyOf(ref: SessionRecord['ref']): string {
   return sessionAggregateRefKey(ref);
+}
+
+// --------------------------------------------------------------------------
+// S1-DISPATCH-02: the Query-claim exclusion (spec §3.2, §3.3)
+// --------------------------------------------------------------------------
+
+/**
+ * S1-DISPATCH-02: the Query-claim Session exclusion. `facts` is the trusted
+ * Session read injected through `QueryExecutionDependencies.sessionFacts`
+ * (composition fills the same `tasks/session-facts.ts` instance; absent, this
+ * owner keeps its old behaviour for the narrow doubles). A pending archive
+ * request or a Work wait is `busy`; a copy provenance admits only its own pinned
+ * consultation Query (`readonlyQueryMatches`), every other query is `forbidden`.
+ * The Query's own Job/Run pins are checked before this guard. Returns the owner
+ * rejection, or `null` to admit; the machine decision itself is
+ * `state/session-availability.ts:sessionDispatchAdmissionProblem`.
+ */
+export function queryClaimDispatchProblem(
+  facts: SessionFactsV1,
+  readonlyQueryMatches: boolean,
+  legacyProvenance: SessionProvenanceV1 | null = null,
+): CoreRejection | null {
+  const refusal = sessionDispatchAdmissionProblem(facts.session, {
+    purpose: 'query',
+    waiting: facts.wait,
+    consumedWait: null,
+    readonlyQueryMatches,
+    legacyProvenance,
+  });
+  return refusal === null || refusal.ok ? null : rejected(refusal.code, refusal.detail);
 }
 
 // --------------------------------------------------------------------------
@@ -826,6 +863,36 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
         return rejected('invalid', 'the consultation Query is not the deterministic identity of its message');
       }
     }
+    // S1-DISPATCH-02: when the trusted Session-facts reader is injected, a
+    // pending archive request or a Work wait is `busy`; a copy provenance admits
+    // only its own pinned consultation Query and refuses every other Query.
+    let derivedDispatchGuards: readonly RecordGuard[] = [];
+    if (deps.sessionFacts !== undefined) {
+      const factsRead = await deps.sessionFacts.readSessionFacts(owned, sessionRef);
+      if (factsRead.status === 'not_found') return rejected('not_found', 'the target Session does not exist');
+      if (factsRead.status === 'not_ready') return rejected('incomplete', 'the Session facts are not readable at the required watermark');
+      if (factsRead.status !== 'ready') return factsRead;
+      const facts = factsRead.value;
+      const recorded = facts.session.provenance ?? null;
+      // N3 (§3.4 S:630): a legacy Session has no recorded provenance. Obtain the
+      // trusted derivation and its guards through the injected model-level port;
+      // without that port the L1 `incomplete` refusal stands.
+      let legacyProvenance: SessionProvenanceV1 | null = null;
+      if (recorded === null && deps.legacyProvenance !== undefined) {
+        const derived = await deps.legacyProvenance.deriveLegacySessionProvenance(owned, sessionRef);
+        if (derived.status === 'not_found') return rejected('not_found', 'the target Session does not exist');
+        if (derived.status === 'not_ready') return rejected('incomplete', 'the legacy provenance is not readable at the required watermark');
+        if (derived.status !== 'ready') return derived;
+        legacyProvenance = derived.value.provenance;
+        derivedDispatchGuards = derived.value.guards;
+      }
+      const effectiveProvenance = recorded ?? legacyProvenance;
+      const readonlyQueryMatches = effectiveProvenance !== null && effectiveProvenance.kind === 'readonly_copy'
+        && execution.consultation !== undefined
+        && sameRef(execution.consultation.messageRef, effectiveProvenance.messageRef);
+      const problem = queryClaimDispatchProblem(facts, readonlyQueryMatches, legacyProvenance);
+      if (problem !== null) return problem;
+    }
     if (signal.aborted) return rejected('cancelled', 'the Query claim was cancelled before Role resolution');
 
     let roleFacts;
@@ -869,12 +936,13 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
       eventId, identityKey, fingerprint, actor, occurredAt, queryRunRef, requestId,
       correlationId: job.job.intent.correlationId, operation: 'claimed', result: nextRecord, run: nextRun,
     });
-    const guards: RecordGuard[] = [
+    const guards: RecordGuard[] = dedupeGuards([
       { refKey: queryJobRefKey(queryJobRef), expectedRevision: expected.job! },
       { refKey: queryRunRefKey(queryRunRef), expectedRevision: expected.run! },
       { refKey: sessionKeyOf(session.ref), expectedRevision: expected.session! },
       ...roleFacts.guards,
-    ];
+      ...derivedDispatchGuards,
+    ]);
     return commitOperation({
       deps, identityKey, fingerprint, guards,
       records: [encodeQueryRunSnapshotRecord(nextRun), encodeSessionRecord(nextSession)],

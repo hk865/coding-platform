@@ -32,9 +32,11 @@
  *  12. one commit through `transitionTask` (and VR-09 on the chain head).
  */
 import type { ActorRef } from '../../../contracts/command-event.js';
+import type { ControlIntentRef } from '../../../contracts/control-intent.js';
 import type { CoreCallContext, CorePrincipal, MaterialReader } from '../../../contracts/core/call-context.js';
-import type { VersionPin } from '../../../contracts/core/identity.js';
-import type { CoreError, CoreRejection, WriteResult } from '../../../contracts/core/results.js';
+import type { SessionRef, VersionPin } from '../../../contracts/core/identity.js';
+import type { CoreError, CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
+import type { SessionArchiveRequestV1 } from '../../../contracts/core/session-archive.js';
 import type { DelegatedWriteProvenanceV1 } from '../../../contracts/delegated-write.js';
 import type { RunRef, RunSnapshot, TaskBudgetV1, TaskTriple } from '../../../contracts/dispatch.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
@@ -44,6 +46,7 @@ import {
   type SourceStampV1,
 } from '../../../contracts/no-progress.js';
 import type { PlanRevisionSnapshot, RuntimeTask } from '../../../contracts/plan.js';
+import type { ArchiveRequeueOriginV1, SessionAnomalyAnchorV1 } from '../../../contracts/session-anomaly.js';
 import {
   DEFAULT_TASK_AUTOMATION_POLICY, GOAL_FAN_OUT_ACTOR, TASK_REWORK_REASON_MAX_CHARS, reworkActorClassOf,
   type ReworkActorClass, type TaskAutomationPolicyV1, type TaskRequeueOutcomeV1, type TaskRequeueTriggerV1,
@@ -59,11 +62,13 @@ import type { MaterialPort } from '../model/material-contracts.js';
 import {
   newBasisInputRefsProblem, runRefProblem, taskBudgetProblem, taskTripleProblem,
 } from '../persistence/rework-codecs.js';
-import { sessionAggregateRefKey } from '../sessions/session-record-codecs.js';
+import { sessionAggregateRefKey, decodeSessionRecord, plainSessionRefToAggregate } from '../sessions/session-record-codecs.js';
+import { decodeSessionMessageRecord, sessionMessageRefKey } from '../sessions/message-record-codecs.js';
+import { sessionArchiveChangedEventFromEvent } from '../sessions/lifecycle-record-codecs.js';
 import { noProgressKey } from '../state/no-progress.js';
 import {
   countEndedGoalRuns, deriveReworkClass, nextRequeueAutoCount, reworkFenceOf, reworkPermission, taskReworkRefusalEffects,
-  type StopIntentV1,
+  type StopIntentV1, type VerifiedArchiveInterruptionV1,
 } from '../state/task-failure.js';
 import {
   requeueBasisCompared, requeueBudgetIncreased, taskMachineStateOf, taskRequeueStateProblem, transitionTask,
@@ -79,7 +84,7 @@ import {
   taskRequeuedEventFromEvent, taskRequeueRefKey, taskReworkRefusalRefKey, taskReworkRefusedEventFromEvent,
   type TaskRequeuedEvent, type TaskReworkRefusedEvent,
 } from './claim-record-codecs.js';
-import type { RequeueTaskInput, TaskClaimPort } from '../model/claim-contracts.js';
+import type { RequeueTaskInput, TaskClaimPort, TaskRequeueReadV1 } from '../model/claim-contracts.js';
 import type { GraphWrite } from '../model/task-contracts.js';
 import type { ExecutionReadPort } from '../model/execution-read-contracts.js';
 import { loadReplayEvent, mapStoreFailure, mergeGuards, sameRef } from './execution-entry-service.js';
@@ -89,6 +94,9 @@ import {
 } from './plan-readers.js';
 import { buildEffectiveTaskBasis, isBasisUnsupported } from './plan-task-basis.js';
 import { planRevisionRefKey } from '../persistence/plan-record-codecs.js';
+import {
+  decodeSessionAnomalyAnchor, sessionAnomalyRefKey,
+} from './session-anomaly-codecs.js';
 import {
   authorizeDelegatedWrite, identifyDelegatedWriter, type AgentPlanWriter, type PlanDelegatedWriteDependencies,
 } from './plan-write-admission.js';
@@ -137,6 +145,36 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 function nonEmpty(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0;
+}
+/**
+ * The plain `{projectId,sessionId}` of an archive-origin Session, whether the
+ * caller held a plain `SessionRef` or a full `SessionAggregateRef`
+ * (`aggregateType:'Session'`); other aggregate types and missing ids are null
+ * (mirrors `sessions/session-lifecycle.ts:normalizeSessionRef`).
+ */
+function plainOriginSessionRef(value: unknown): SessionRef | null {
+  if (!isRecord(value) || (value['aggregateType'] !== undefined && value['aggregateType'] !== 'Session')
+    || !nonEmpty(value['projectId']) || !nonEmpty(value['sessionId'])) return null;
+  return { projectId: value['projectId'], sessionId: value['sessionId'] };
+}
+/** C4a: the `archiveOrigin` refs are shape-checked before any canonical key or store read. */
+function originAnchorRefProblem(value: unknown): string | null {
+  if (!isRecord(value)
+    || !Object.keys(value).every((key) => ['aggregateType', 'projectId', 'goalId', 'runId'].includes(key))
+    || value['aggregateType'] !== 'SessionAnomalyAnchor'
+    || !nonEmpty(value['projectId']) || !nonEmpty(value['goalId']) || !nonEmpty(value['runId'])) {
+    return 'the archive origin anchorRef must be a complete SessionAnomalyAnchorRef';
+  }
+  return null;
+}
+function originMessageRefProblem(value: unknown): string | null {
+  if (!isRecord(value)
+    || !Object.keys(value).every((key) => ['aggregateType', 'projectId', 'workspaceId', 'messageId'].includes(key))
+    || value['aggregateType'] !== 'SessionMessage'
+    || !nonEmpty(value['projectId']) || !nonEmpty(value['workspaceId']) || !nonEmpty(value['messageId'])) {
+    return 'the archive origin messageRef must be a complete SessionMessageRef';
+  }
+  return null;
 }
 function reject(code: CoreError, reason: string, current?: VersionPin[]): Rejection {
   return { status: 'rejected', code, reason, ...(current === undefined || current.length === 0 ? {} : { current }) };
@@ -230,7 +268,7 @@ function ownRequest(request: GraphWrite<RequeueTaskInput>): { ok: true; value: O
   }
 }
 
-const INPUT_KEYS = ['taskRef', 'afterRunRef', 'reason', 'newInputRefs', 'budget', 'trigger', 'note'];
+const INPUT_KEYS = ['taskRef', 'afterRunRef', 'reason', 'newInputRefs', 'budget', 'trigger', 'note', 'archiveOrigin'];
 
 /** The request shape (§4.1 `RequeueTaskInput`); the actor-dependent fields are judged by the matrix (step 5). */
 function inputProblem(input: RequeueTaskInput, scope: { projectId: string }): Rejection | null {
@@ -266,6 +304,27 @@ function inputProblem(input: RequeueTaskInput, scope: { projectId: string }): Re
   }
   if (input.note !== undefined && (typeof input.note !== 'string' || input.note.trim().length === 0)) {
     return reject('invalid', 'the requeue note must be non-empty text');
+  }
+  if (input.archiveOrigin !== undefined && input.archiveOrigin !== null) {
+    const origin = input.archiveOrigin as unknown;
+    if (!isRecord(origin) || (origin['kind'] !== 'execution' && origin['kind'] !== 'wait')) {
+      return reject('invalid', 'archive_input_invalid: the requeue archiveOrigin must be an execution or wait origin');
+    }
+    if (!nonEmpty(origin['archiveRequestId'])) {
+      return reject('invalid', 'archive_input_invalid: the archive origin requires an archiveRequestId');
+    }
+    if (plainOriginSessionRef(origin['archiveSessionRef']) === null) {
+      return reject('invalid', 'archive_input_invalid: the archive origin requires a complete SessionRef');
+    }
+    if (origin['kind'] === 'execution') {
+      const anchorProblem = originAnchorRefProblem(origin['anchorRef']);
+      if (anchorProblem !== null) return reject('invalid', `archive_input_invalid: ${anchorProblem}`);
+    } else {
+      const originRunProblem = runRefProblem(origin['runRef'], 'archive origin runRef');
+      if (originRunProblem !== null) return reject('invalid', `archive_input_invalid: ${originRunProblem}`);
+      const messageProblem = originMessageRefProblem(origin['messageRef']);
+      if (messageProblem !== null) return reject('invalid', `archive_input_invalid: ${messageProblem}`);
+    }
   }
   return null;
 }
@@ -427,6 +486,64 @@ export async function newBasisInputsProblem(
   return null;
 }
 
+/**
+ * S1-TASK-01 / §3.4: the verified archive interruption a `requeueTask` with an
+ * `archiveOrigin` may pass to `deriveReworkClass`. `anchor` is the anchor the
+ * caller read for an `execution` origin (an anchor that does not belong to this
+ * archive request or run verifies nothing); a `wait` origin verifies from the
+ * message's recorded disposal and cancel intent instead, never from a fabricated
+ * anchor. Returns `null` when the requeue is not archive-caused or its durable
+ * evidence does not verify, in which case the original FC-1/FC-2/paused fences
+ * still decide.
+ */
+export function verifiedArchiveInterruptionOf(
+  input: RequeueTaskInput,
+  anchor: SessionAnomalyAnchorV1 | null,
+): VerifiedArchiveInterruptionV1 | null {
+  const origin = input.archiveOrigin;
+  if (origin === undefined || origin === null) return null;
+  if (origin.kind === 'execution') {
+    // The durable request and the anchor are verified by the owner before this
+    // pure match; an anchor of another request, Run or line verifies nothing.
+    if (anchor === null) return null;
+    const originSession = plainOriginSessionRef(origin.archiveSessionRef);
+    if (originSession === null) return null;
+    if (!sameRef(anchor.ref, origin.anchorRef)) return null;
+    if (!sameRef(anchor.runRef, input.afterRunRef)) return null;
+    if (!sameRef(anchor.sessionRef, originSession)) return null;
+    if (anchor.archiveRequestId !== origin.archiveRequestId) return null;
+    if (!sameRef(anchor.task, input.taskRef)) return null;
+    return { kind: 'execution', anchorRef: anchor.ref, runRef: input.afterRunRef,
+      cause: anchor.cause === 'retired_archive' ? 'retired_interruption' : 'archive_cancel' };
+  }
+  // kind === 'wait'
+  if (!sameRef(origin.runRef, input.afterRunRef)) return null;
+  return { kind: 'wait', runRef: input.afterRunRef, messageRef: origin.messageRef, cause: 'archive_wait_cancel' };
+}
+
+/**
+ * §2.3/rule 10: the exact `s1-archive-control:` cancel intent the archive
+ * Workflow mints for this durable request and Run. A different cancel (or an
+ * earlier operator stop) never makes the Run an archive-caused stop.
+ */
+function archiveCancelIntentRef(
+  request: SessionArchiveRequestV1, scope: { projectId: string; workspaceId: string }, runRef: RunRef,
+): ControlIntentRef {
+  const archiveControlId = 's1-archive-control:' + sha256Hex(canonicalJson({
+    requestReceipt: request.receipt, runRef, action: 'cancel' } as unknown as JsonValue));
+  return controlIntentRefFor(request.requestedBy, scope, archiveControlId);
+}
+
+/** Whether the Run's pointer is exactly this request's archive cancel intent. */
+function isArchiveCancelIntent(
+  pointerIntent: StopIntentV1 | null, request: SessionArchiveRequestV1,
+  scope: { projectId: string; workspaceId: string }, runRef: RunRef,
+): boolean {
+  return pointerIntent !== null && pointerIntent.kind === 'cancel'
+    && sameRef(pointerIntent.requestedBy, request.requestedBy)
+    && sameRef(pointerIntent.ref, archiveCancelIntentRef(request, scope, runRef));
+}
+
 /** The §4.4 refusal with the version pins §13.3 names: the selected Run, or the TaskRequeue@1 already covering it. */
 function stateRefusal(refused: MachineRefusal, window: RequeueWindow): Rejection {
   if (refused.ok) throw new Error('stateRefusal needs a refusal');
@@ -444,7 +561,7 @@ function stateRefusal(refused: MachineRefusal, window: RequeueWindow): Rejection
 // The service
 // --------------------------------------------------------------------------
 
-export function createTaskRequeueService(deps: TaskRequeueDependencies): Required<Pick<TaskClaimPort, 'requeueTask'>> {
+export function createTaskRequeueService(deps: TaskRequeueDependencies): Required<Pick<TaskClaimPort, 'requeueTask' | 'readTaskRequeue'>> {
   const records = deps.records;
   const policyOf = (): TaskAutomationPolicyV1 => deps.automationPolicy?.() ?? DEFAULT_TASK_AUTOMATION_POLICY;
 
@@ -517,6 +634,120 @@ export function createTaskRequeueService(deps: TaskRequeueDependencies): Require
     return { ok: true, stamp: { workspaceRevision: resolved.value.workspaceRevision, sourceDigest: captured.sourceDigest } };
   }
 
+  /**
+   * §3.4 `requeueTask(archiveOrigin)`: the durable request plus the exact
+   * anchor (kind `execution`) or the recorded wait disposal and the old Run's
+   * cancel intent (kind `wait`). A missing, foreign or unmatched origin is
+   * `forbidden` with zero writes; the anchor never authorizes bypassing an
+   * unknown Run outcome.
+   */
+  async function verifyArchiveOrigin(
+    input: RequeueTaskInput, afterRun: RunSnapshot, pointerIntent: StopIntentV1 | null,
+    scope: { projectId: string; workspaceId: string },
+  ): Promise<{ ok: true; value: VerifiedArchiveInterruptionV1 | null } | Rejected> {
+    const origin = input.archiveOrigin as ArchiveRequeueOriginV1;
+    const originSession = plainOriginSessionRef(origin.archiveSessionRef);
+    if (originSession === null) {
+      return { ok: false, rejection: reject('invalid', 'the archive origin sessionRef must be a Session reference') };
+    }
+    if (origin.kind === 'execution') {
+      const anchorKey = sessionAnomalyRefKey(origin.anchorRef);
+      const read = await records.readMany([anchorKey]);
+      if (read.status !== 'ready') return { ok: false, rejection: mapStoreFailure(read) };
+      const record = read.value.records.find((candidate) => candidate.refKey === anchorKey);
+      if (record === undefined) return { ok: false, rejection: reject('forbidden', 'the archive origin anchor does not exist') };
+      const decoded = decodeSessionAnomalyAnchor(record);
+      if (decoded.status !== 'decoded') {
+        return { ok: false, rejection: reject('unavailable', `the archive origin anchor is damaged: ${decoded.reason}`) };
+      }
+      const anchor = decoded.value;
+      // The anchor's recorded receipt locates the durable archive request; the
+      // current Session may already have cleared it (final archive).
+      const requestLookup = await records.lookupCommit({ identityKey: anchor.archiveRequestReceipt.identityKey,
+        fingerprint: anchor.archiveRequestReceipt.fingerprint });
+      if (requestLookup.status !== 'ready') {
+        return { ok: false, rejection: requestLookup.code === 'not_found'
+          ? reject('forbidden', 'the archive origin names no durable request') : mapStoreFailure(requestLookup) };
+      }
+      const at = await records.eventAt(requestLookup.value.cursor);
+      if (at.status !== 'ready') return { ok: false, rejection: mapStoreFailure(at) };
+      const event = sessionArchiveChangedEventFromEvent(at.value.event);
+      if (event.status !== 'decoded') {
+        return { ok: false, rejection: reject('unavailable', `the durable archive request is not decodable: ${event.reason}`) };
+      }
+      const request = event.value.session.archiveRequest ?? null;
+      const executionMatches = request !== null && (request.execution.kind === 'work'
+        ? sameRef(request.execution.runRef, anchor.runRef)
+          && request.execution.attemptRef.attemptId === anchor.attemptRef.attemptId
+        : request.execution.kind === 'none');
+      if (request === null || request.requestId !== origin.archiveRequestId || !executionMatches
+        || !sameRef(anchor.sessionRef, originSession)) {
+        return { ok: false, rejection: reject('forbidden', 'the archive origin does not match its durable request and anchor') };
+      }
+      const matched = verifiedArchiveInterruptionOf(input, anchor);
+      if (matched === null) {
+        return { ok: false, rejection: reject('forbidden', 'the archive origin anchor does not authorize this Run') };
+      }
+      // §3.4/rule 10: `archive_cancel` exempts a cancelled Run only when the
+      // stop was THIS request's derived `s1-archive-control:` cancel intent. A
+      // real anchor whose Run another cancel stopped keeps the ordinary class:
+      // it hands over no verified interruption (the wait branch does the same).
+      if (matched.cause === 'archive_cancel' && afterRun.outcome === 'cancelled'
+        && !isArchiveCancelIntent(pointerIntent, request, scope, anchor.runRef)) {
+        return { ok: true, value: null };
+      }
+      return { ok: true, value: matched };
+    }
+
+    // kind === 'wait': durable request + the message's recorded cancel disposal + the old Run's cancel intent.
+    const sessionKey = sessionAggregateRefKey(plainSessionRefToAggregate(originSession));
+    const sessionRead = await records.readMany([sessionKey]);
+    if (sessionRead.status !== 'ready') return { ok: false, rejection: mapStoreFailure(sessionRead) };
+    const sessionRecord = sessionRead.value.records.find((candidate) => candidate.refKey === sessionKey);
+    if (sessionRecord === undefined) return { ok: false, rejection: reject('forbidden', 'the archive origin Session does not exist') };
+    const sessionDecoded = decodeSessionRecord(sessionRecord);
+    if (sessionDecoded.status !== 'decoded') {
+      return { ok: false, rejection: reject('unavailable', `the archive origin Session is damaged: ${sessionDecoded.reason}`) };
+    }
+    const request = sessionDecoded.value.archiveRequest ?? null;
+    const waitChoice = request?.wait ?? null;
+    // §4.1 step 7: an ordinary cancel request, or a transfer whose following
+    // wait_cancel step records the cancel disposition on the message, both
+    // authorize this wait-origin requeue.
+    if (request === null || request.requestId !== origin.archiveRequestId
+      || waitChoice === null
+      || !sameRef(waitChoice.runRef, origin.runRef) || !sameRef(waitChoice.messageRef, origin.messageRef)) {
+      return { ok: false, rejection: reject('forbidden', 'the archive origin does not match its durable wait request') };
+    }
+    const messageKey = sessionMessageRefKey(origin.messageRef);
+    const messageRead = await records.readMany([messageKey]);
+    if (messageRead.status !== 'ready') return { ok: false, rejection: mapStoreFailure(messageRead) };
+    const messageRecord = messageRead.value.records.find((candidate) => candidate.refKey === messageKey);
+    if (messageRecord === undefined) return { ok: false, rejection: reject('forbidden', 'the archive wait message does not exist') };
+    const messageDecoded = decodeSessionMessageRecord(messageRecord);
+    if (messageDecoded.status !== 'decoded') {
+      return { ok: false, rejection: reject('unavailable', `the archive wait message is damaged: ${messageDecoded.reason}`) };
+    }
+    const disposition = messageDecoded.value.archiveWaitDisposition ?? null;
+    if (disposition === null || disposition.kind !== 'cancel' || !sameRef(disposition.runRef, origin.runRef)
+      || disposition.archiveRequestId !== request.requestId
+      || !sameRef(disposition.archiveSessionRef, originSession)) {
+      return { ok: false, rejection: reject('forbidden', 'the archive wait message carries no matching disposal') };
+    }
+    // §3.4/rule 10: the exemption needs the wait cancel of THIS request — the
+    // exact `s1-archive-control:` intent its step 7 submits for the wait Run.
+    // A forged/mismatched Run is still forbidden; a genuine wait whose pointer
+    // is another intent keeps the ordinary class (no exemption).
+    const matched = verifiedArchiveInterruptionOf(input, null);
+    if (matched === null) {
+      return { ok: false, rejection: reject('forbidden', 'the archive wait origin does not authorize this Run') };
+    }
+    if (!isArchiveCancelIntent(pointerIntent, request, scope, waitChoice.runRef)) {
+      return { ok: true, value: null };
+    }
+    return { ok: true, value: matched };
+  }
+
   async function requeueTask(ctx: CoreCallContext, request: GraphWrite<RequeueTaskInput>): Promise<WriteResult<TaskRequeueOutcomeV1>> {
     const ownedCall = ownCall(ctx);
     if (!ownedCall.ok) return ownedCall.rejection;
@@ -586,9 +817,15 @@ export function createTaskRequeueService(deps: TaskRequeueDependencies): Require
     const goal = window.goal;
     if (goal.workspaceRef.workspaceId !== owned.scope.workspaceId) return reject('forbidden', 'the Goal belongs to another workspace');
     if (owned.signal.aborted) return reject('cancelled', 'the requeue was cancelled during the read');
-    const stateProblem = taskRequeueStateProblem(window.state, window.rework);
-    if (stateProblem !== null) return stateRefusal(stateProblem, window);
     const afterRun = window.rework.selectedRun as RunSnapshot;
+    // §3.4: with an archive origin the Task machine runs only after the origin
+    // is verified (below), because a verified wait-cancel is what makes the
+    // ordinary yielded row requeueable. Without one the old early check stays.
+    const hasArchiveOrigin = input.archiveOrigin !== undefined && input.archiveOrigin !== null;
+    if (!hasArchiveOrigin) {
+      const stateProblem = taskRequeueStateProblem(window.state, window.rework);
+      if (stateProblem !== null) return stateRefusal(stateProblem, window);
+    }
     if (pins.value.goal.revision !== goal.revision) {
       return reject('revision_conflict', 'the Goal changed since the caller read it', [{ ref: goalRef, revision: goal.revision }]);
     }
@@ -622,7 +859,21 @@ export function createTaskRequeueService(deps: TaskRequeueDependencies): Require
     const pointerIntent = pointers.intents.get(afterRun.ref.runId) ?? null;
 
     // 4-5. The Goal, the class and the actor × class matrix with the fence; then the new inputs.
-    const derivation = deriveReworkClass(afterRun, pointerIntent, window.rework.chain);
+    // §3.4: an archive origin is verified against its durable request and its
+    // anchor (or the recorded wait disposal and old Run cancel intent) BEFORE
+    // the class is derived; a forged/unmatched origin is forbidden with zero writes.
+    let archive: VerifiedArchiveInterruptionV1 | null = null;
+    if (input.archiveOrigin !== undefined && input.archiveOrigin !== null) {
+      const verifiedArchive = await verifyArchiveOrigin(input, afterRun, pointerIntent, owned.scope);
+      if (!verifiedArchive.ok) return verifiedArchive.rejection;
+      archive = verifiedArchive.value;
+      window.rework.archive = archive;
+    }
+    if (hasArchiveOrigin) {
+      const stateProblem = taskRequeueStateProblem(window.state, window.rework);
+      if (stateProblem !== null) return stateRefusal(stateProblem, window);
+    }
+    const derivation = deriveReworkClass(afterRun, pointerIntent, window.rework.chain, archive);
     if (derivation.kind !== 'class') return reject('invalid', `the selected Run has nothing to rework (${derivation.row})`);
     const goalFanOut = actor.kind === GOAL_FAN_OUT_ACTOR.kind && actor.id === GOAL_FAN_OUT_ACTOR.id;
     const permission = refusalOf(reworkPermission({ operation: 'requeue', goalDesiredState: goal.desiredState,
@@ -752,7 +1003,7 @@ export function createTaskRequeueService(deps: TaskRequeueDependencies): Require
     const requeued = transitionTask(window.state, { kind: 'task_requeued', requeue: {
       task, planRef: window.plan.ref, afterRun, pointerIntent, chain: window.rework.chain, requestedBy: actor,
       requestedAt: deps.now(), reason: input.reason, basis, newInputRefs, budget, trigger, agentProvenance,
-      runs, requeues, policy,
+      runs, requeues, policy, archiveOrigin: input.archiveOrigin ?? null, archive,
     } }, { taskId: task.taskId, claim: null, completion: null, disposition: null, rework: window.rework });
     if (!requeued.ok) return reject(requeued.code, requeued.detail);
     const [written, ...others] = requeued.effects;
@@ -767,6 +1018,63 @@ export function createTaskRequeueService(deps: TaskRequeueDependencies): Require
       event: encodeTaskRequeuedEvent(event),
       value: { kind: 'requeued', requeue },
     });
+  }
+
+  /**
+   * E5 (§2.3 S:622, L-d): a no-write read that restores the existing
+   * `TaskRequeue` of `(Task, afterRun)` with the cursor of its original
+   * `TaskRequeued` event. It recomputes the request identity exactly as
+   * `requeueTask` does and uses `lookupCommit`/`eventAt`; a missing or
+   * mismatched identity is `not_found`/the store failure, never a new write.
+   */
+  async function readTaskRequeue(ctx: CoreCallContext, request: GraphWrite<RequeueTaskInput>): Promise<ReadResult<TaskRequeueReadV1>> {
+    const ownedCall = ownCall(ctx);
+    if (!ownedCall.ok) return ownedCall.rejection;
+    const owned = ownedCall.value;
+    const ownedRequest = ownRequest(request);
+    if (!ownedRequest.ok) return ownedRequest.rejection;
+    const { input, requestId, expected } = ownedRequest.value;
+    const shape = inputProblem(input, owned.scope);
+    if (shape !== null) return shape;
+    const task: TaskTriple = { projectId: input.taskRef.projectId, goalId: input.taskRef.goalId, taskId: input.taskRef.taskId };
+    const goalRef: GoalRef = { aggregateType: 'Goal', projectId: task.projectId, goalId: task.goalId };
+    const afterRunRef: RunRef = { aggregateType: 'Run', projectId: input.afterRunRef.projectId,
+      goalId: input.afterRunRef.goalId, runId: input.afterRunRef.runId };
+    const refusalRef: TaskReworkRefusalRef = { aggregateType: 'TaskReworkRefusal', projectId: task.projectId,
+      goalId: task.goalId, taskId: task.taskId, operation: 'requeue', subjectId: afterRunRef.runId };
+    const pins = expectedPinsOf(expected, goalRef, afterRunRef, refusalRef);
+    if (!pins.ok) return pins.rejection;
+    // The archive requeue is written by the Host; an Agent identity is not a
+    // supported reader of an automation receipt (the same rule as the write).
+    if (owned.principal.kind !== 'host') return reject('forbidden', 'only a Host can read a committed requeue receipt');
+    const host = hostActorOf(owned);
+    if (!host.ok) return host.rejection;
+    const actor = host.actor;
+    let identity: string;
+    let fingerprint: string;
+    try {
+      identity = identityOf(actor, owned.scope, requestId);
+      fingerprint = sha256Hex(canonicalJson({ kind: 'task-requeue', actor, projectId: owned.scope.projectId,
+        workspaceId: owned.scope.workspaceId, input, expected: sortedPins(expected) } as unknown as JsonValue));
+    } catch { return reject('invalid', 'the requeue request is not canonicalizable JSON'); }
+    const lookup = await records.lookupCommit({ identityKey: identity, fingerprint });
+    if (lookup.status !== 'ready') {
+      if (lookup.code === 'not_found') return { status: 'not_found' };
+      return mapStoreFailure(lookup);
+    }
+    const loaded = await loadReplayEvent(records, lookup.value);
+    if (!loaded.ok) return loaded.rejection;
+    if (loaded.event.eventType !== TASK_REQUEUED_EVENT_TYPE) {
+      return reject('unavailable', `the committed requeue identity names a ${loaded.event.eventType} event`);
+    }
+    const decoded = taskRequeuedEventFromEvent(loaded.event);
+    if (decoded.status !== 'decoded') return reject('unavailable', `the recorded requeue event is not decodable: ${decoded.reason}`);
+    const requeue = decoded.value.requeue;
+    if (requeue.task.projectId !== task.projectId || requeue.task.goalId !== task.goalId
+      || requeue.task.taskId !== task.taskId || requeue.ref.afterRunId !== afterRunRef.runId) {
+      return reject('unavailable', 'the recorded requeue does not cover the requested Task and afterRun');
+    }
+    return { status: 'ready', value: { requeue, cursor: lookup.value.cursor } };
   }
 
   type CommitBase = {
@@ -851,5 +1159,5 @@ export function createTaskRequeueService(deps: TaskRequeueDependencies): Require
     return { status: 'committed', value: write.value, replayed: false, cursor: receipt.cursor };
   }
 
-  return { requeueTask };
+  return { requeueTask, readTaskRequeue };
 }

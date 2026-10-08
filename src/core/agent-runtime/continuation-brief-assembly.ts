@@ -18,9 +18,11 @@ import type { SessionRef } from '../../contracts/core/identity.js';
 import type { SessionMessageRef } from '../../contracts/core/session-message.js';
 import {
   CONTINUATION_BRIEF_LIMITS, compareSourceCheckpoints,
-  type BoundedTextV1, type ContinuationBriefV1, type ContinuationNewInputV1, type ContinuationSourceCheckpointV1,
-  type ContinuationToolCallV1,
+  type BoundedTextV1, type ContinuationAnomalySectionV1, type ContinuationBriefV1, type ContinuationNewInputV1,
+  type ContinuationSourceCheckpointV1, type ContinuationToolCallV1,
 } from '../../contracts/continuation-brief.js';
+import { canonicalJson, type JsonValue } from '../../contracts/fingerprint.js';
+import type { SessionAnomalyAnchorV1 } from '../../contracts/session-anomaly.js';
 import { reworkActorClassOf, type ReworkFailureClass } from '../../contracts/task-requeue.js';
 import type { ContinuationBasis, TaskExecutionRecord } from '../work-graph/model/execution-read-contracts.js';
 import { roundFailureFacts, runFailureOrigin } from '../work-graph/state/no-progress.js';
@@ -61,7 +63,36 @@ export type AssembleBriefInput = {
    * position; absent or null when nothing is seeded.
    */
   seededFrom?: { sessionRef: SessionRef; throughPosition: number } | null;
+  /**
+   * Slice 1 §2.7: the anomaly anchors actually carried into this brief. Absent
+   * or null means no section (the old brief bytes and digest stay unchanged).
+   */
+  anomalies?: ContinuationAnomalySectionV1 | null;
 };
+
+/** Slice 1 §2.7: at most this many anchors are loaded into one brief. */
+export const ANOMALY_ANCHOR_LIMIT = 8;
+
+/**
+ * Slice 1 §2.7: the bounded anomaly section of the brief. At most 8 anchors,
+ * ordered by `recordedAt` then canonical ref; `omitted` counts the anchors not
+ * carried. `null`/empty input has no section, so a brief without anomalies
+ * keeps its old bytes and digest.
+ */
+export function assembleAnomalySection(
+  anchors: readonly SessionAnomalyAnchorV1[],
+): ContinuationAnomalySectionV1 | null {
+  if (anchors.length === 0) return null;
+  const ordered = [...anchors].sort((left, right) => {
+    if (left.recordedAt < right.recordedAt) return -1;
+    if (left.recordedAt > right.recordedAt) return 1;
+    const leftKey = canonicalJson(left.ref as unknown as JsonValue);
+    const rightKey = canonicalJson(right.ref as unknown as JsonValue);
+    return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
+  });
+  const carried = ordered.slice(0, ANOMALY_ANCHOR_LIMIT);
+  return { anchors: carried, omitted: ordered.length - carried.length, instructionVersion: 1 };
+}
 
 const PAGE_LIMIT = 200;
 /**
@@ -187,7 +218,35 @@ function targetOf(args: Record<string, unknown>): BoundedTextV1 | null {
   return null;
 }
 
-type ToolFacts = { calls: ContinuationBriefV1['toolCalls']; confirmedPaths: string[]; possiblePaths: string[]; unknownCount: number };
+type ToolFacts = { calls: ContinuationBriefV1['toolCalls']; confirmedPaths: string[]; possiblePaths: string[]; unknownCount: number;
+  /** Edit-type calls with no recorded result (K7): never confirmed. */
+  unobserved: number };
+
+/** The Kernel file-mutating tools whose requested path can be read from the call arguments. */
+const EDIT_TOOL_NAMES = new Set<string>(['edit', 'write']);
+
+/** The workspace-relative path argument of an edit-type call, or null. */
+function editPathArgumentOf(args: Record<string, unknown>): string | null {
+  for (const key of ['path', 'file', 'filePath']) {
+    const value = args[key];
+    if (typeof value === 'string' && value.length > 0) return value;
+  }
+  return null;
+}
+
+/**
+ * The changed-file split shared by the brief's `workspace.selfChanged` and the
+ * archive anchor's `changedFiles` (§2.6, K7): a recorded result contributes its
+ * Kernel `effects` (confirmed/possible); an edit-type call with no recorded
+ * result contributes its requested path as `possible` only, never `confirmed`.
+ */
+export function selfChangedFactsOf(state: RunState): {
+  confirmed: string[]; possible: string[]; unobserved: number; unknownCount: number;
+} {
+  const tools = toolFactsOf(state);
+  return { confirmed: tools.confirmedPaths, possible: tools.possiblePaths, unobserved: tools.unobserved,
+    unknownCount: tools.unknownCount };
+}
 
 /**
  * The Turn's tool calls in three groups (C3): a call with a recorded result is
@@ -249,13 +308,23 @@ function toolFactsOf(state: RunState): ToolFacts {
     if (call.status === 'pending' || call.status === 'abandoned') notExecuted.push(callOf(callId, 'not_started', null, [], null));
     else if (call.status === 'running' || call.status === 'outcome_unknown') unknown.push(callOf(callId, 'outcome_unknown', 'possible', [], null));
   }
+  // K7: an edit-type call with no recorded result is never a confirmed change;
+  // its requested path stays "possible" (and makes the window partial).
+  let unobserved = 0;
+  for (const [callId, call] of requested) {
+    if (seen.has(callId) || !EDIT_TOOL_NAMES.has(call.name)) continue;
+    unobserved += 1;
+    const path = editPathArgumentOf(call.args);
+    if (path !== null) possiblePaths.push(path);
+  }
   const cut = (list: ContinuationToolCallV1[], cap: number) => ({ listed: list.slice(0, cap), omitted: Math.max(0, list.length - cap) });
   const c = cut(confirmed, CONTINUATION_BRIEF_LIMITS.confirmedToolCalls);
   const n = cut(notExecuted, CONTINUATION_BRIEF_LIMITS.notExecutedToolCalls);
   const u = cut(unknown, CONTINUATION_BRIEF_LIMITS.unknownToolCalls);
   return { calls: { confirmed: c.listed, notExecuted: n.listed, unknown: u.listed, confirmedOmitted: c.omitted,
     notExecutedOmitted: n.omitted, unknownOmitted: u.omitted },
-    confirmedPaths: [...new Set(confirmedPaths)], possiblePaths: [...new Set(possiblePaths)], unknownCount: unknown.length };
+    confirmedPaths: [...new Set(confirmedPaths)], possiblePaths: [...new Set(possiblePaths)], unknownCount: unknown.length,
+    unobserved };
 }
 
 const TURN_STATUSES = ['completed', 'failed', 'cancelled', 'limit_exceeded', 'yielded', 'paused', 'running'] as const;
@@ -368,7 +437,7 @@ export function assembleContinuationBrief(input: AssembleBriefInput): Continuati
         const possible = tools.possiblePaths.filter((path) => !confirmed.includes(path))
           .slice(0, CONTINUATION_BRIEF_LIMITS.paths - confirmed.length);
         const omitted = tools.confirmedPaths.length + tools.possiblePaths.length - confirmed.length - possible.length;
-        return { status: tools.unknownCount > 0 || turn.window.omittedRecords > 0 ? 'partial' as const : 'known' as const,
+        return { status: tools.unknownCount > 0 || tools.unobserved > 0 || turn.window.omittedRecords > 0 ? 'partial' as const : 'known' as const,
           confirmed, possible, omitted: Math.max(0, omitted) };
       })();
   return {
@@ -438,5 +507,8 @@ export function assembleContinuationBrief(input: AssembleBriefInput): Continuati
       boundaryPosition: continuity === 'same_session_history' ? previousEnd : null,
     },
     standingInstructionVersion: 1,
+    // Slice 1 §2.7: absent (never null) without a section, so an old brief's
+    // bytes and digest stay unchanged.
+    ...(input.anomalies === undefined || input.anomalies === null ? {} : { anomalies: input.anomalies }),
   };
 }

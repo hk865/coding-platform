@@ -49,6 +49,7 @@ import type {
   RecordBackendSchemas,
 } from '../../record-store/ports.js';
 import { QUERY_RUN_RECORD_SCHEMA, validateQueryRunSnapshot } from '../materials/record-readers.js';
+import { QUERY_RUN_BY_SESSION_LOOKUP } from '../model/session-facts-contracts.js';
 
 export const QUERY_JOB_SUBMITTED_EVENT = 'QueryJobSubmitted';
 export const QUERY_JOB_EVENT_SCHEMA_VERSION = 1;
@@ -756,5 +757,8 @@ const QUERY_JOB_ANSWERED_SCHEMA: EncodedEventSchema = {
 export const QUERY_JOB_RECORD_SCHEMAS: RecordBackendSchemas = {
   records: [QUERY_JOB_SNAPSHOT_SCHEMA, QUERY_JOB_ANSWER_SNAPSHOT_SCHEMA],
   events: [QUERY_JOB_SUBMITTED_SCHEMA, QUERY_EXECUTION_RECORDED_SCHEMA, QUERY_JOB_ANSWERED_SCHEMA],
-  lookups: [],
+  lookups: [
+    { name: QUERY_RUN_BY_SESSION_LOOKUP, aggregateType: 'QueryRun',
+      paths: ['ref.projectId', 'ref.workspaceId', 'run.executionState.sessionRef.sessionId'] },
+  ],
 };

@@ -42,6 +42,7 @@ import type { GoalDesiredState, GoalSnapshot } from '../../src/contracts/ledger.
 import type { Phase, PlanRevisionSnapshot, RuntimeTask, TaskKind } from '../../src/contracts/plan.js';
 import type { QueryRunSnapshot } from '../../src/contracts/query-job.js';
 import type { TaskReductionSnapshot } from '../../src/contracts/reduction.js';
+import type { SessionAnomalyAnchorV1 } from '../../src/contracts/session-anomaly.js';
 import type { TaskPhaseCauseV1 } from '../../src/contracts/task-failure.js';
 import {
   GOAL_FAN_OUT_ACTOR, MAX_AUTO_REWORK_LIMIT, reworkActorClassOf, type ReworkActorClass, type TaskAutomationPolicyV1,
@@ -78,6 +79,9 @@ import {
   decodeGoalCreatedEvent, decodeGoalDesiredStateChangedEvent, decodeGoalSnapshot,
 } from '../../src/core/work-graph/persistence/record-codecs.js';
 import { decodeQueryRunSnapshotRecord, QUERY_JOB_RECORD_SCHEMAS } from '../../src/core/work-graph/queries/query-record-codecs.js';
+import {
+  decodeSessionAnomalyAnchor, SESSION_ANOMALY_RECORD_SCHEMAS,
+} from '../../src/core/work-graph/tasks/session-anomaly-codecs.js';
 import { SESSION_LIFECYCLE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/lifecycle-record-codecs.js';
 import { decodeSessionRecord, SESSION_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import {
@@ -96,6 +100,7 @@ import { isPausedInterrupted, leaseOwnedByRun, runUnresolvedBlocker } from '../.
 import { ownsOccupancy } from '../../src/core/work-graph/state/session-availability.js';
 import {
   countEndedGoalRuns, deriveReworkClass, reworkFenceOf, stopRequesterOf, type ReworkFence,
+  type VerifiedArchiveInterruptionV1,
 } from '../../src/core/work-graph/state/task-failure.js';
 import { unreachable } from '../../src/core/work-graph/state/transition.js';
 import {
@@ -149,13 +154,16 @@ export type InvariantId =
   | 'I-1' | 'I-2' | 'I-3' | 'I-4' | 'I-5' | 'I-6' | 'I-7' | 'I-8' | 'I-9' | 'I-10' | 'I-11'
   | 'I-12' | 'I-13' | 'I-14' | 'I-15' | 'I-16' | 'I-17' | 'I-18' | 'I-19' | 'I-20' | 'I-21' | 'I-22';
 
+/** Slice 1 §5.1 additions; kept out of `INVARIANT_CHECKERS` so the §11 I-1..I-22 list stays frozen. */
+export type Slice1InvariantId = 'S1-1' | 'S1-2' | 'S1-3' | 'S1-4' | 'S1-5' | 'S1-6';
+
 /**
  * One finding: the invariant, the canonical key of the record it is about and
  * one sentence. `legacy` marks what §11 reports as `legacy` instead of a
  * violation (data written before the rule existed); `checkAllInvariants`
  * drops those and `legacyFindings` returns them.
  */
-export type InvariantViolation = { invariant: InvariantId; ref: string; message: string; legacy?: true };
+export type InvariantViolation = { invariant: InvariantId | Slice1InvariantId; ref: string; message: string; legacy?: true };
 
 /** The operation a fuzz or scenario step committed (§11.11 `FuzzStep`). */
 export type FuzzStepKind =
@@ -239,6 +247,8 @@ export type InvariantWorld = {
   plans: PlanRevisionSnapshot[];
   events: InvariantEvent[];
   taskStates: InvariantTaskState[];
+  /** Slice 1: the immutable anomaly anchors in the window (none on legacy stores). */
+  anchors?: SessionAnomalyAnchorV1[];
   /** Absent when the store named no artifact file. */
   manifests?: InvariantManifest[];
 };
@@ -247,7 +257,7 @@ export type InvariantWorld = {
 export function emptyInvariantWorld(projectId: string): InvariantWorld {
   return { projectId, runs: [], attempts: [], outboxes: [], leases: [], sessions: [], queryRuns: [], intents: [], rounds: [],
     evidence: [], evidenceIndexes: [], messages: [], goals: [], goalPhases: [], reductions: [], requeues: [], refusals: [],
-    plans: [], events: [], taskStates: [] };
+    plans: [], events: [], taskStates: [], anchors: [] };
 }
 
 // ------------------------------------------------------------------------ //
@@ -281,7 +291,7 @@ export function platformRecordSchemas(): RecordBackendSchemas {
     OBSERVED_ARCHITECTURE_RECORD_SCHEMAS, ARCHITECTURE_CATALOG_SCHEMAS, TASK_CLAIM_RECORD_SCHEMAS,
     EXECUTION_ENTRY_RECORD_SCHEMAS, MODEL_REQUEST_RECORD_SCHEMAS, SESSION_MESSAGE_RECORD_SCHEMAS,
     PROJECT_BOOTSTRAP_RECORD_SCHEMAS, CONTROL_RECORD_SCHEMAS, EVIDENCE_RECORD_SCHEMAS, QUERY_JOB_RECORD_SCHEMAS,
-    COMPLETION_RECORD_SCHEMAS];
+    COMPLETION_RECORD_SCHEMAS, SESSION_ANOMALY_RECORD_SCHEMAS];
   return {
     records: groups.flatMap((group) => group.records),
     events: [...groups.flatMap((group) => group.events), ...EXECUTION_HISTORY_RECORD_SCHEMAS.events],
@@ -293,7 +303,7 @@ export function platformRecordSchemas(): RecordBackendSchemas {
 const WORLD_AGGREGATE_TYPES: ReadonlySet<string> = new Set([
   'Run', 'TaskAttempt', 'DispatchOutboxEntry', 'TaskLease', 'Session', 'QueryRun', 'ControlIntent', 'VerificationRound',
   'Evidence', 'TaskEvidenceIndex', 'SessionMessage', 'Goal', 'GoalPhase', 'TaskReduction', 'TaskRequeue',
-  'TaskReworkRefusal', 'PlanRevision',
+  'TaskReworkRefusal', 'PlanRevision', 'SessionAnomalyAnchor',
 ]);
 
 const WORLD_EVENT_TYPES: ReadonlySet<string> = new Set<InvariantEventType>([
@@ -324,6 +334,11 @@ function snapshotDatabase(source: string, target: string): void {
  * the requeue Runs. A record or event that does not decode throws: a damaged
  * store is not a world. The live files are never written.
  */
+// S1-5 needs adjacent commits, not merely adjacent scenario observations: a
+// restart may stop, anchor, drop, requeue and archive between two reads.
+// Keep this reader metadata out of the exported world/signatures.
+const slice1CommitCounts = new WeakMap<InvariantWorld, number>();
+
 export async function readInvariantWorld(store: InvariantStore, projectId: string): Promise<InvariantWorld> {
   const scratch = await mkdtemp(join(tmpdir(), 'invariant-world-'));
   try {
@@ -336,6 +351,11 @@ export async function readInvariantWorld(store: InvariantStore, projectId: strin
       if (read.status !== 'ready') throw new Error(`readInvariantWorld: the records are not readable: ${read.code}: ${read.reason}`);
       if (read.value.missing.length > 0) throw new Error(`readInvariantWorld: records vanished from the copy: ${read.value.missing.join(', ')}`);
       const world = decodeWorldRecords(projectId, read.value.records);
+      const commitReader = new DatabaseSync(ledger, { readOnly: true });
+      try {
+        const row = commitReader.prepare('SELECT COUNT(*) AS n FROM idempotency').get() as { n: number };
+        slice1CommitCounts.set(world, Number(row.n));
+      } finally { commitReader.close(); }
       world.events = decodeWorldEvents(projectId, rows.events);
       world.taskStates = await readTaskStates(backend.records, world);
       if (store.artifactsPath !== undefined) world.manifests = await readManifests(store.artifactsPath, scratch, world);
@@ -398,6 +418,11 @@ function decodeWorldRecords(projectId: string, records: readonly EncodedRecord[]
       case 'TaskRequeue': world.requeues.push(decoded(decodeTaskRequeueSnapshot(record), record.refKey)); break;
       case 'TaskReworkRefusal': world.refusals.push(decoded(decodeTaskReworkRefusalSnapshot(record), record.refKey)); break;
       case 'PlanRevision': world.plans.push(decoded(decodePlanRevisionSnapshot(record), record.refKey)); break;
+      case 'SessionAnomalyAnchor': {
+        const anchors = world.anchors ?? (world.anchors = []);
+        anchors.push(decoded(decodeSessionAnomalyAnchor(record), record.refKey));
+        break;
+      }
       default: throw new Error(`readInvariantWorld: unexpected aggregate type ${aggregateType}`);
     }
   }
@@ -703,11 +728,11 @@ function indexOf(world: InvariantWorld): WorldIndex {
   return index;
 }
 
-function finding(invariant: InvariantId, ref: object | string, message: string): InvariantViolation {
+function finding(invariant: InvariantId | Slice1InvariantId, ref: object | string, message: string): InvariantViolation {
   return { invariant, ref: typeof ref === 'string' ? ref : refKey(ref), message };
 }
 
-function legacy(invariant: InvariantId, ref: object | string, message: string): InvariantViolation {
+function legacy(invariant: InvariantId | Slice1InvariantId, ref: object | string, message: string): InvariantViolation {
   return { ...finding(invariant, ref, message), legacy: true };
 }
 
@@ -1317,6 +1342,27 @@ function priorAutoCount(index: WorldIndex, run: RunSnapshot): { count: number; m
   return { count: 0, missing: null };
 }
 
+/**
+ * Slice 1 (spec §3.4, §3.5, lead 2026-10-08): an archive requeue's class is re-derived with the
+ * verified interruption that the persisted facts support: an execution origin only through an
+ * anchor in the window for that afterRun (cause retired_archive → retired_interruption, otherwise
+ * archive_cancel); a wait origin only for that afterRun. A forged or unmatched origin gives null,
+ * so the plain three-argument derivation decides (and differs from an exempted class).
+ */
+function archiveInterruptionOf(requeue: InvariantWorld['requeues'][number],
+  anchors: readonly SessionAnomalyAnchorV1[]): VerifiedArchiveInterruptionV1 | null {
+  const origin = requeue.archiveOrigin ?? null;
+  if (origin === null) return null;
+  if (origin.kind === 'wait') {
+    return sameRef(origin.runRef, requeue.afterRunRef)
+      ? { kind: 'wait', runRef: origin.runRef, messageRef: origin.messageRef, cause: 'archive_wait_cancel' } : null;
+  }
+  const anchor = anchors.find(candidate => sameRef(candidate.ref, origin.anchorRef));
+  if (anchor === undefined || !sameRef(anchor.runRef, requeue.afterRunRef)) return null;
+  return { kind: 'execution', anchorRef: anchor.ref, runRef: anchor.runRef,
+    cause: anchor.cause === 'retired_archive' ? 'retired_interruption' : 'archive_cancel' };
+}
+
 /** §11.12 I-12: every TaskRequeue equals what the persistent facts re-derive (clauses 1–10), plus the step-local clause. */
 export function checkI12RequeueFacts(world: InvariantWorld, prev?: InvariantWorld, step?: FuzzStep): InvariantViolation[] {
   const index = indexOf(world);
@@ -1355,7 +1401,7 @@ export function checkI12RequeueFacts(world: InvariantWorld, prev?: InvariantWorl
       out.push(finding('I-12', at, `the pointer intent ${pointer.ref.intentId} of Run ${run.ref.runId} is not in the window`));
     } else {
       const intent = pointer.status === 'found' ? pointer.intent : null;
-      const derived = deriveReworkClass(run, intent, chain);
+      const derived = deriveReworkClass(run, intent, chain, archiveInterruptionOf(requeue, world.anchors ?? []));
       if (derived.kind !== 'class') out.push(finding('I-12', at, `the afterRun derives ${derived.row} (${derived.kind}), not a rework class`));
       else if (derived.failureClass !== requeue.failureClass || derived.interruption !== requeue.interruption) {
         out.push(finding('I-12', at, `failureClass/interruption ${requeue.failureClass}/${String(requeue.interruption)} ≠ derived ${derived.failureClass}/${String(derived.interruption)}`));
@@ -2131,7 +2177,88 @@ export const INVARIANT_CHECKERS: Readonly<Record<InvariantId, InvariantChecker>>
 });
 
 function allFindings(world: InvariantWorld, prev?: InvariantWorld, step?: FuzzStep): InvariantViolation[] {
-  return Object.values(INVARIANT_CHECKERS).flatMap((checker) => checker(world, prev, step));
+  return [...Object.values(INVARIANT_CHECKERS).flatMap((checker) => checker(world, prev, step)),
+    ...checkSlice1Invariants(world, prev)];
+}
+
+/**
+ * Slice 1 §5.1 additions: an archived Session has no occupancy and no archive
+ * request (S1-1, S1-2); a readonly copy has no open Work claim (S1-3); an
+ * archived source is not claimed again (S1-6); one Run has at most one
+ * immutable anomaly anchor (S1-4); writing an anchor never changes its Task's
+ * phase and a retired Session cannot be reactivated (S1-5, the two cross-step
+ * clauses, run only when `prev` is given). Anchors are read through the
+ * decoded world (`SESSION_ANOMALY_RECORD_SCHEMAS` is registered by
+ * `platformRecordSchemas`), never from raw rows.
+ */
+export function checkSlice1Invariants(world: InvariantWorld, prev?: InvariantWorld): InvariantViolation[] {
+  const out: InvariantViolation[] = [];
+  const sessionKey = (ref: { projectId: string; sessionId: string }): string => `${ref.projectId}\u0000${ref.sessionId}`;
+  const archived = new Set(world.sessions.filter((session) => session.lifecycle === 'archived').map((session) => sessionKey(session.ref)));
+  const copies = new Set(world.sessions
+    .filter((session) => session.provenance?.kind === 'readonly_copy').map((session) => sessionKey(session.ref)));
+  for (const session of world.sessions) {
+    if (session.lifecycle !== 'archived') continue;
+    if (session.occupancy !== null) {
+      out.push(finding('S1-1', session.ref, `archived Session ${session.ref.sessionId} still has an occupancy`));
+    }
+    if ((session.archiveRequest ?? null) !== null) {
+      out.push(finding('S1-2', session.ref, `archived Session ${session.ref.sessionId} still carries an archive request`));
+    }
+  }
+  for (const outbox of world.outboxes) {
+    if (outbox.status === 'settled') continue;
+    const key = sessionKey(outbox.claim.sessionRef);
+    if (copies.has(key)) {
+      out.push(finding('S1-3', outbox.ref, `readonly copy Session ${outbox.claim.sessionRef.sessionId} holds an open Work claim`));
+    }
+    if (archived.has(key)) {
+      out.push(finding('S1-6', outbox.ref, `archived Session ${outbox.claim.sessionRef.sessionId} holds an open Work claim`));
+    }
+  }
+  const byRun = group(world.anchors ?? [], (anchor) => refKey(anchor.runRef));
+  for (const anchors of byRun.values()) {
+    const first = anchors[0]!;
+    if (anchors.length > 1) {
+      out.push(finding('S1-4', first.ref, `Run ${first.runRef.runId} has ${anchors.length} anomaly anchors`));
+    }
+  }
+  if (prev !== undefined) {
+    // S1-5: an anchor is an immutable fact about an already stopped execution;
+    // writing it never re-projects the Task's phase (§5.1, SV37).
+    const beforeCommits = slice1CommitCounts.get(prev);
+    const afterCommits = slice1CommitCounts.get(world);
+    // Hand-built unit worlds describe one transition. Persisted worlds must
+    // prove that exactly one commit separates them. Owner fixtures check each
+    // commit, whereas a Host restart intentionally observes several commits.
+    const anchorCommitOnly = beforeCommits === undefined && afterCommits === undefined
+      || beforeCommits !== undefined && afterCommits === beforeCommits + 1;
+    const phaseBefore = new Map(prev.taskStates.map((state) => [taskKey(state.goalId, state.taskId), state.phase]));
+    for (const anchor of anchorCommitOnly ? written(prev.anchors ?? [], world.anchors ?? []) : []) {
+      const key = taskKey(anchor.task.goalId, anchor.task.taskId);
+      const before = phaseBefore.get(key);
+      const after = world.taskStates.find((state) => taskKey(state.goalId, state.taskId) === key)?.phase;
+      if (before !== undefined && before !== null && after !== undefined && after !== null && before !== after) {
+        out.push(finding('S1-5', anchor.ref,
+          `writing the anchor of Run ${anchor.runRef.runId} moved Task ${anchor.task.taskId} from ${before} to ${after}`));
+      }
+    }
+    // S1-5: a retired Session cannot be reactivated. S1-SES-05 refuses an
+    // archived unavailable Session with `unavailable` and leaves its lifecycle
+    // alone; the retired_archive anchor is the other durable retired fact.
+    const retired = new Set((world.anchors ?? [])
+      .filter((anchor) => anchor.cause === 'retired_archive').map((anchor) => sessionKey(anchor.sessionRef)));
+    const archivedBefore = new Set(prev.sessions
+      .filter((session) => session.lifecycle === 'archived').map((session) => sessionKey(session.ref)));
+    for (const session of world.sessions) {
+      if (session.lifecycle !== 'active') continue;
+      const key = sessionKey(session.ref);
+      if (archivedBefore.has(key) && (session.health === 'unavailable' || retired.has(key))) {
+        out.push(finding('S1-5', session.ref, `retired Session ${session.ref.sessionId} was reactivated`));
+      }
+    }
+  }
+  return out;
 }
 
 /** §11.11: I-1..I-22 over one world (cross-step clauses with `prev`, step-local ones with `step`); `legacy` findings dropped. */

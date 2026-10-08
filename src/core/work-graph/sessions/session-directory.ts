@@ -36,7 +36,7 @@ import type {
 } from '../../../contracts/core/identity.js';
 import type { OperationRef } from '../../../contracts/core/operations.js';
 import type { CoreError, CoreRejection, ReadResult, ReadStamp, WriteResult } from '../../../contracts/core/results.js';
-import type { SessionRecord, SessionWorkLink } from '../../../contracts/core/session.js';
+import type { SessionRecord, SessionWorkLink, SessionProvenanceV1, LegacyProvenanceBasisV1 } from '../../../contracts/core/session.js';
 import { makeCommitCursor, seqOfCommitCursor } from '../../../contracts/ledger.js';
 import type { AggregateRef } from '../../../contracts/ledger.js';
 import type {
@@ -44,6 +44,7 @@ import type {
   StoreFailure, UniqueClaimChange,
 } from '../../record-store/ports.js';
 import type { RecordLookupPort, RecordLookupRequest } from '../../record-store/lookup-ports.js';
+import type { LegacySessionProvenancePort } from '../model/session-facts-contracts.js';
 import type {
   GraphWrite, SessionCard, SessionCreationInput, SessionCreationResult, SessionDirectoryPort,
   SessionOperationRecord, SessionPage,
@@ -54,16 +55,21 @@ import {
   SESSION_CREATED_EVENT_TYPE, SESSION_LINKS_BY_MODULE_LOOKUP, SESSION_LINKS_BY_TASK_LOOKUP,
   SESSION_LINKS_BY_WORK_LOOKUP, SESSION_WORK_LINK_RELATIONS, SESSION_WORK_LINKS_LOOKUP,
   checkArtifactRef, checkOperationRef,
-  checkPlainSessionRef, checkRole, checkTarget, decodeSessionOperationRecord, decodeSessionRecord,
+  checkPlainSessionRef, checkRole, checkSessionProvenance, checkTarget, decodeSessionOperationRecord, decodeSessionRecord,
   decodeSessionWorkLink, encodePendingSessionWorkLink, encodeSessionCreationAdmittedEvent,
   encodeSessionCreatedEvent, encodeSessionOperationRecord, encodeSessionRecord, isPlatformCursor,
   operationRefKey, plainSessionRefToAggregate, sessionAggregateRefKey, sessionCreatedPayloadFromEvent,
   sessionOperationFromAdmittedEvent, sessionWorkLinkRefKey, type PendingSessionWorkLink,
   type SessionCreatedEvent,
 } from './session-record-codecs.js';
+import {
+  SESSION_PROVENANCE_BACKFILLED_EVENT, encodeSessionProvenanceBackfilledEvent,
+  sessionProvenanceBackfilledEventFromEvent, type SessionProvenanceBackfilledEventV1,
+} from './lifecycle-record-codecs.js';
 import { validateWorkLinkTarget } from './session-targets.js';
 import {
-  createSessionRecord, deriveAvailability, sessionMachineStateOf, transitionSession, type SessionTransition,
+  backfillSessionProvenanceRecord, createSessionRecord, deriveAvailability, sessionMachineStateOf, transitionSession,
+  type SessionGuardContext, type SessionTransition,
 } from '../state/session-availability.js';
 import { decodeRun } from '../materials/run-snapshot-decoder.js';
 
@@ -72,6 +78,8 @@ import { decodeRun } from '../materials/run-snapshot-decoder.js';
 export type SessionDirectoryStores = {
   records: GoalRecordTransactionPort;
   lookups: RecordLookupPort;
+  /** Slice 1 §3.3: only the backfill entry reads it; absent returns unsupported. */
+  legacyProvenance?: LegacySessionProvenancePort;
 };
 
 // --------------------------------------------------------------------------
@@ -585,6 +593,8 @@ function directoryCandidatePlan(scope: WorkspaceScope, role: RoleConfigurationRe
 
 export function createSessionDirectory(stores: SessionDirectoryStores): SessionDirectoryPort {
   const { records, lookups } = stores;
+  // Slice 1 §3.3: only the legacy-provenance backfill reads this injected port.
+  const legacyProvenance = stores.legacyProvenance;
 
   // ------------------------------------------------------------------------
   // Replay restore
@@ -682,6 +692,63 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
     return { ok: true, value: session };
   }
 
+  /**
+   * S1-SES-01: a Session that names a predecessor must name a real Session in
+   * the same project/workspace, must not be its own predecessor and must not
+   * close a provenance loop. The chain is walked at most this many hops; every
+   * record read for the decision is returned as a CAS guard of the admission
+   * commit, so a concurrent provenance rewrite fails the commit instead of
+   * admitting a stale decision.
+   */
+  async function provenanceChainGuards(
+    from: SessionRef, ownSessionId: string, scope: WorkspaceScope,
+  ): Promise<{ ok: true; guards: RecordGuard[] } | { ok: false; rejection: CoreRejection }> {
+    const guards: RecordGuard[] = [];
+    const seen = new Set<string>([ownSessionId]);
+    let current: SessionRef | null = from;
+    for (let depth = 0; current !== null && depth < 64; depth += 1) {
+      if (seen.has(current.sessionId)) {
+        return {
+          ok: false,
+          rejection: reject('cycle', `session_provenance_cycle: the predecessor chain of Session ${ownSessionId} closes a loop`),
+        };
+      }
+      seen.add(current.sessionId);
+      const key = sessionAggregateRefKey(plainSessionRefToAggregate(current));
+      const read = await records.readMany([key]);
+      if (read.status !== 'ready') return { ok: false, rejection: mapStoreFailure(read) };
+      const record = read.value.records.find((entry) => entry.refKey === key);
+      if (record === undefined) {
+        return { ok: false, rejection: reject('not_found', `the provenance predecessor Session ${current.sessionId} does not exist`) };
+      }
+      const decoded = decodeSessionRecord(record);
+      if (decoded.status !== 'decoded') {
+        return { ok: false, rejection: reject('unavailable', `the provenance predecessor Session is damaged: ${decoded.reason}`) };
+      }
+      const predecessor = decoded.value;
+      if (predecessor.ref.projectId !== scope.projectId) {
+        return { ok: false, rejection: reject('forbidden', 'the provenance predecessor belongs to another project') };
+      }
+      if (predecessor.workspaceId !== scope.workspaceId) {
+        return { ok: false, rejection: reject('forbidden', 'the provenance predecessor belongs to another workspace') };
+      }
+      guards.push({ refKey: key, expectedRevision: predecessor.revision });
+      const recorded = predecessor.provenance ?? null;
+      current = recorded !== null && recorded.kind !== 'new' ? (recorded as { from: SessionRef }).from : null;
+    }
+    // A1/S1-SES-01: the walk is bounded. A chain that is still not resolved after
+    // the hop budget cannot be proven acyclic, so it is refused `incomplete`
+    // rather than admitted by default.
+    if (current !== null) {
+      return {
+        ok: false,
+        rejection: reject('incomplete',
+          `session_provenance_cycle: the predecessor chain of Session ${ownSessionId} exceeds 64 hops without resolving`),
+      };
+    }
+    return { ok: true, guards };
+  }
+
   // ------------------------------------------------------------------------
   // admitSessionCreation
   // ------------------------------------------------------------------------
@@ -712,6 +779,26 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
     const identityKey = sessionCreateIdentityKey(actor, scope.projectId, requestId);
     const { operationId, sessionId } = stableIds(actor, scope.projectId, requestId);
     const plannedSessionRef: SessionRef = { projectId: scope.projectId, sessionId };
+    // Slice 1 §2.2: the caller may name the new Session's provenance, but only
+    // the accepted operation's normalized value is authoritative. A present but
+    // malformed value is refused here with zero writes (SV05); an absent one is
+    // today's `new` and, for a truly old caller, keeps the historical
+    // fingerprint key set (no invented provenance key).
+    const rawInput = raw['input'];
+    // N5/K3: "present" means the key exists, not that its value is non-null. An
+    // explicit `provenance: null` is a present but malformed field and is refused
+    // below; only a missing key gets today's `new` default and the compatibility
+    // fingerprint (no invented provenance key).
+    const hasProvenance = isObject(rawInput) && 'provenance' in rawInput;
+    const providedProvenance = hasProvenance ? rawInput['provenance'] : undefined;
+    let createdProvenance: SessionProvenanceV1;
+    if (!hasProvenance) {
+      createdProvenance = { schemaVersion: 1, kind: 'new' };
+    } else {
+      const provenanceProblem = checkSessionProvenance(providedProvenance, scope.projectId, sessionId);
+      if (provenanceProblem !== null) return reject('invalid', `session provenance: ${provenanceProblem}`);
+      createdProvenance = providedProvenance as SessionProvenanceV1;
+    }
     const fingerprint = sha256Hex(canonicalJson({
       kind: 'session-create-request',
       actor: actorIdentity(actor),
@@ -720,6 +807,7 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
       role: input.role,
       recommendedRefs: input.recommendedRefs,
       initialLinks: input.initialLinks,
+      ...(hasProvenance ? { provenance: createdProvenance } : {}),
     } as unknown as JsonValue));
 
     const existing = await records.lookupCommit({ identityKey, fingerprint });
@@ -756,6 +844,17 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
         [{ ref: { aggregateType: 'Workspace', projectId: scope.projectId, workspaceId: scope.workspaceId }, revision: workspace.revision }]);
     }
 
+    // S1-SES-01: a named predecessor must exist in this scope and must not close
+    // a provenance loop. This runs only after the receipt miss, so a replay of the
+    // original admission never depends on the predecessor still being readable.
+    let provenanceGuards: RecordGuard[] = [];
+    if (providedProvenance !== undefined && (createdProvenance as { kind: string }).kind !== 'new') {
+      const predecessor = (createdProvenance as { from: SessionRef }).from;
+      const chain = await provenanceChainGuards(predecessor, sessionId, scope);
+      if (!chain.ok) return chain.rejection;
+      provenanceGuards = chain.guards;
+    }
+
     const now = new Date().toISOString();
     const operation: SessionOperationRecord = {
       ref: { aggregateType: 'CoreOperation', projectId: scope.projectId, operationId },
@@ -768,6 +867,7 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
         role: input.role,
         recommendedRefs: input.recommendedRefs,
         initialLinks: input.initialLinks,
+        provenance: createdProvenance,
       },
       phase: 'accepted',
       requestedAt: now,
@@ -790,6 +890,7 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
       { refKey: workspaceKey, expectedRevision: workspace.revision },
       { refKey: operationRefKey(operation.ref), expectedRevision: null },
       { refKey: sessionAggregateRefKey(plainSessionRefToAggregate(plannedSessionRef)), expectedRevision: null },
+      ...provenanceGuards,
     ];
     const prepared: PreparedCommit = {
       identityKey,
@@ -940,12 +1041,17 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
     }
 
     const createdAt = new Date().toISOString();
+    // Slice 1 §2.2: the accepted operation's normalized provenance is the only
+    // source; a legacy accepted action without the key leaves the Session's
+    // provenance absent (read as the legacy null) for the one-time backfill.
+    const acceptedProvenance = storedOperation.action.provenance;
     const session = createSessionRecord({
       ref: plainSessionRefToAggregate(registration.sessionRef),
       kernel: { adapterId: registration.adapterId, kernelSessionId: registration.kernelSessionId },
       role: storedOperation.action.role,
       workspaceId: scope.workspaceId,
       createdAt,
+      ...(acceptedProvenance === undefined ? {} : { provenance: acceptedProvenance }),
     });
     const completedOperation: SessionOperationRecord = {
       ...storedOperation,
@@ -1602,5 +1708,209 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
     return { status: 'ready', value: { items, nextCursor, sourceCursor } };
   }
 
-  return { admitSessionCreation, recordSessionCreated, getSessionOperation, readSession, findSessions };
+  // ------------------------------------------------------------------------
+  // Slice 1 §2.2/§3.3: one-time legacy provenance backfill
+  // ------------------------------------------------------------------------
+
+  function mapReadRejection<T>(result: ReadResult<T>): CoreRejection {
+    if (result.status === 'rejected') return result;
+    if (result.status === 'not_found') return reject('not_found', 'the legacy provenance facts do not exist');
+    return reject('unavailable', 'the legacy provenance facts are not ready at the requested read window');
+  }
+
+  function provenanceFingerprint(
+    actor: HostActor, scope: WorkspaceScope, payload: Record<string, unknown>, expected: readonly VersionPin[],
+  ): string {
+    const pins = [...expected].map((pin) => ({ ref: pin.ref, revision: pin.revision }))
+      .sort((left, right) => {
+        const leftKey = canonicalOf(left.ref) ?? '';
+        const rightKey = canonicalOf(right.ref) ?? '';
+        return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
+      });
+    return sha256Hex(canonicalJson({
+      kind: 'session-provenance-backfill-request',
+      actor: actorIdentity(actor),
+      projectId: scope.projectId,
+      workspaceId: scope.workspaceId,
+      ...payload,
+      expected: pins,
+    } as unknown as JsonValue));
+  }
+
+  function normalizeSessionExpected(
+    raw: unknown, scope: WorkspaceScope, sessionRef: SessionRef,
+  ): { ok: true; session: VersionPin } | { ok: false; reason: string } {
+    if (!Array.isArray(raw) || raw.length !== 1) {
+      return { ok: false, reason: 'meta.expected must contain exactly the Session pin' };
+    }
+    const entry = raw[0];
+    if (!isObject(entry)) return { ok: false, reason: 'version pin must be an object' };
+    const revision = entry['revision'];
+    if (typeof revision !== 'number' || !Number.isSafeInteger(revision) || revision < 0) {
+      return { ok: false, reason: 'version pin revision must be a safe non-negative integer' };
+    }
+    const ref = entry['ref'];
+    if (!isObject(ref)) return { ok: false, reason: 'version pin ref must be an object' };
+    const sessionKey = sessionAggregateRefKey(plainSessionRefToAggregate(sessionRef));
+    if (canonicalOf(ref) !== sessionKey) {
+      return { ok: false, reason: 'meta.expected pins a ref that is not this Session' };
+    }
+    if (ref['projectId'] !== scope.projectId) {
+      return { ok: false, reason: 'the Session pin belongs to another project' };
+    }
+    return { ok: true, session: { ref: ref as VersionPin['ref'], revision } };
+  }
+
+  async function readProvenanceBackfilledReplay(
+    receipt: Extract<Awaited<ReturnType<GoalRecordTransactionPort['commit']>>, { status: 'committed' }>,
+    scope: WorkspaceScope,
+    sessionRef: SessionRef,
+  ): Promise<WriteResult<SessionRecord>> {
+    if (receipt.eventIds.length !== 1 || !nonEmpty(receipt.eventIds[0])) {
+      return reject('unavailable', 'the recorded provenance receipt does not name exactly one event');
+    }
+    const at = await records.eventAt(receipt.cursor);
+    if (at.status !== 'ready') return mapStoreFailure(at);
+    if (String(at.value.cursor) !== String(receipt.cursor)) {
+      return reject('unavailable', 'the recorded provenance event cursor disagrees with the receipt');
+    }
+    const decoded = sessionProvenanceBackfilledEventFromEvent(at.value.event);
+    if (decoded.status !== 'decoded') {
+      return reject('unavailable', `the recorded provenance event is not decodable: ${decoded.reason}`);
+    }
+    const event: SessionProvenanceBackfilledEventV1 = decoded.value;
+    if (event.eventId !== receipt.eventIds[0]) {
+      return reject('unavailable', 'the recorded provenance event id disagrees with the receipt');
+    }
+    if (event.projectId !== scope.projectId || event.workspaceId !== scope.workspaceId) {
+      return reject('unavailable', 'the recorded provenance event belongs to another scope');
+    }
+    const sessionKey = sessionAggregateRefKey(plainSessionRefToAggregate(sessionRef));
+    if (canonicalOf(event.session.ref) !== sessionKey) {
+      return reject('unavailable', 'the recorded provenance event belongs to another Session');
+    }
+    const version = receipt.versions.find((entry) => entry.refKey === sessionKey);
+    if (version === undefined || version.revision !== event.session.revision) {
+      return reject('unavailable', 'the recorded provenance event disagrees with the receipt Session version');
+    }
+    return { status: 'committed', value: event.session, replayed: true, cursor: receipt.cursor };
+  }
+
+  async function backfillSessionProvenance(
+    ctx: CoreCallContext,
+    request: GraphWrite<{ sessionRef: SessionRef; provenance: SessionProvenanceV1; basis: LegacyProvenanceBasisV1 }>,
+  ): Promise<WriteResult<SessionRecord>> {
+    const trusted = trustedContext(ctx);
+    if (!trusted.ok) return trusted.rejection;
+    const { scope, actor } = trusted;
+    if (legacyProvenance === undefined) {
+      return reject('unsupported', 'the legacy provenance backfill needs the injected legacy provenance reader');
+    }
+    if (ctx.signal?.aborted) return reject('cancelled', 'the legacy provenance backfill was cancelled before validation');
+    const owned = ownRequest<unknown>(request, 'backfillSessionProvenance request');
+    if (!owned.ok) return reject('invalid', owned.reason);
+    const raw = owned.value as Record<string, unknown> | null | undefined;
+    if (!isObject(raw)) return reject('invalid', 'backfillSessionProvenance requires a request object');
+    const meta = raw['meta'];
+    if (!isObject(meta) || !nonEmpty(meta['requestId'])) {
+      return reject('invalid', 'backfillSessionProvenance requires meta.requestId');
+    }
+    const requestId = meta['requestId'];
+    const rawInput = raw['input'];
+    if (!isObject(rawInput)) return reject('invalid', 'backfillSessionProvenance requires an input object');
+    const refProblem = checkPlainSessionRef(rawInput['sessionRef']);
+    if (refProblem !== null) return reject('invalid', refProblem);
+    const sessionRef = rawInput['sessionRef'] as SessionRef;
+    if (sessionRef.projectId !== scope.projectId) {
+      return reject('forbidden', 'archive_scope: the Session belongs to another project');
+    }
+    const provenanceProblem = checkSessionProvenance(rawInput['provenance'], scope.projectId, sessionRef.sessionId);
+    if (provenanceProblem !== null) return reject('invalid', `session provenance: ${provenanceProblem}`);
+    const provenance = rawInput['provenance'] as SessionProvenanceV1;
+    const basis = rawInput['basis'];
+    if (!isObject(basis)) return reject('invalid', 'backfillSessionProvenance requires a legacy provenance basis');
+    const expected = normalizeSessionExpected(meta['expected'], scope, sessionRef);
+    if (!expected.ok) return reject('invalid', expected.reason);
+    const identityKey = 'session-provenance:' + sha256Hex(canonicalJson({
+      actor: actorIdentity(actor), projectId: scope.projectId, workspaceId: scope.workspaceId, requestId,
+    } as unknown as JsonValue));
+    const fingerprint = provenanceFingerprint(actor, scope, {
+      sessionRef, provenance, basis,
+    }, Array.isArray(meta['expected']) ? (meta['expected'] as VersionPin[]) : []);
+    if (ctx.signal?.aborted) return reject('cancelled', 'the legacy provenance backfill was cancelled before lookup');
+    const existing = await records.lookupCommit({ identityKey, fingerprint });
+    if (existing.status === 'ready') return readProvenanceBackfilledReplay(existing.value, scope, sessionRef);
+    if (existing.code !== 'not_found') return mapStoreFailure(existing);
+
+    const sessionKey = sessionAggregateRefKey(plainSessionRefToAggregate(sessionRef));
+    const read = await records.readMany([sessionKey]);
+    if (read.status !== 'ready') return mapStoreFailure(read);
+    const record = read.value.records.find((entry) => entry.refKey === sessionKey);
+    if (record === undefined) return reject('not_found', 'the Session does not exist');
+    const decoded = decodeSessionRecord(record);
+    if (decoded.status !== 'decoded') return reject('unavailable', `the Session is damaged: ${decoded.reason}`);
+    const session = decoded.value;
+    if (session.ref.projectId !== scope.projectId || session.workspaceId !== scope.workspaceId) {
+      return reject('not_found', 'the Session belongs to another project or workspace');
+    }
+    const derived = await legacyProvenance.deriveLegacySessionProvenance(ctx, sessionRef);
+    if (derived.status !== 'ready') return mapReadRejection(derived);
+    const trustedBasis = derived.value;
+    if (canonicalOf(trustedBasis.provenance) !== canonicalOf(provenance)
+      || canonicalOf(trustedBasis.basis) !== canonicalOf(basis)) {
+      return reject('invalid', 'archive_input_invalid: the backfill does not match the trusted legacy provenance derivation');
+    }
+    const verdict = transitionSession(sessionMachineStateOf(session), { kind: 'legacy_provenance_backfilled', provenance }, {
+      caller: 'service', hostLease: null, pin: expected.session.revision, holder: null, probe: null, kernelHeader: null,
+      openResponsibleLink: null, creation: null, link: null,
+      archive: {
+        requestMatches: true, choicesValid: true, authorityValid: true, wait: 'not_read', retired: false,
+        sourceExecutionStopped: true, stopQueued: false, failedDisposal: false, provenanceBasisValid: true,
+      },
+    });
+    if (!verdict.ok) {
+      return reject(verdict.code, verdict.detail,
+        verdict.code === 'revision_conflict' ? [{ ref: session.ref, revision: session.revision }] : undefined);
+    }
+    const next = backfillSessionProvenanceRecord(session, provenance);
+    const occurredAt = new Date().toISOString();
+    const event: SessionProvenanceBackfilledEventV1 = {
+      eventId: sha256Hex(`${identityKey}|backfilled`),
+      eventType: SESSION_PROVENANCE_BACKFILLED_EVENT,
+      schemaVersion: 1,
+      occurredAt,
+      projectId: scope.projectId,
+      workspaceId: scope.workspaceId,
+      session: next,
+      basis: basis as LegacyProvenanceBasisV1,
+    };
+    const guardByKey = new Map<string, RecordGuard>();
+    for (const guard of trustedBasis.guards) guardByKey.set(guard.refKey, guard);
+    guardByKey.set(sessionKey, { refKey: sessionKey, expectedRevision: expected.session.revision });
+    const prepared: PreparedCommit = {
+      identityKey,
+      fingerprint,
+      guards: [...guardByKey.values()],
+      records: [encodeSessionRecord(next)],
+      claims: [],
+      indexGuards: [],
+      indexChanges: [],
+      events: [encodeSessionProvenanceBackfilledEvent(event)],
+    };
+    if (ctx.signal?.aborted) return reject('cancelled', 'the legacy provenance backfill was cancelled before commit');
+    let committed: Awaited<ReturnType<GoalRecordTransactionPort['commit']>>;
+    try {
+      committed = await records.commit(prepared);
+    } catch {
+      return reject('unavailable', 'the legacy provenance backfill commit failed before completing');
+    }
+    if (committed.status !== 'committed') return mapStoreFailure(committed);
+    if (committed.replayed) return readProvenanceBackfilledReplay(committed, scope, sessionRef);
+    return { status: 'committed', value: next, replayed: false, cursor: committed.cursor };
+  }
+
+  return {
+    admitSessionCreation, recordSessionCreated, getSessionOperation, readSession, findSessions,
+    backfillSessionProvenance,
+  };
 }

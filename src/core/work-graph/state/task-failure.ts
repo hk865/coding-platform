@@ -35,10 +35,12 @@
 import type { ActorRef } from '../../../contracts/command-event.js';
 import { compareSourceCheckpoints } from '../../../contracts/continuation-brief.js';
 import type { ControlIntentRef, ControlIntentRequestV1 } from '../../../contracts/control-intent.js';
+import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { RunRef, RunSnapshot, TaskAttemptRef, TaskTriple } from '../../../contracts/dispatch.js';
 import type { GoalDesiredState } from '../../../contracts/ledger.js';
 import type { SourceStampV1 } from '../../../contracts/no-progress.js';
 import type { Disposition } from '../../../contracts/plan.js';
+import type { SessionAnomalyAnchorRef } from '../../../contracts/session-anomaly.js';
 import type {
   NotReworkableCause, RunErrorSource, TaskAutomationStopDetailV1, TaskAutomationStopReason, TaskAutomationVerdictV1,
   TaskFailureFactsV1, TaskReworkRefusalFactV1, TaskReworkSummaryEntryV1, TaskReworkSummaryV1,
@@ -161,12 +163,18 @@ export type ReworkClassDerivationV1 =
     stop: ReworkStopV1;
   }
   | {
-    row: 'FC-3' | 'FC-6' | 'FC-7' | 'FC-8' | 'FC-9' | 'FC-10' | 'FC-13' | 'FC-15' | 'FC-16';
+    row: 'FC-3' | 'FC-6' | 'FC-7' | 'FC-8' | 'FC-9' | 'FC-10' | 'FC-13' | 'FC-15' | 'FC-16' | 'S1-FC-ARCHIVE';
     kind: 'class';
     failureClass: ReworkFailureClass;
     interruption: 'executing' | 'paused' | null;
     stop: ReworkStopV1;
   };
+
+/** Slice 1 §3.5: the narrow verified interruption the archive flow passes to `deriveReworkClass`. */
+export type VerifiedArchiveInterruptionV1 =
+  | { kind: 'execution'; anchorRef: SessionAnomalyAnchorRef; runRef: RunRef;
+      cause: 'archive_cancel' | 'retired_interruption' }
+  | { kind: 'wait'; runRef: RunRef; messageRef: SessionMessageRef; cause: 'archive_wait_cancel' };
 
 /**
  * TD-8 `deriveReworkClass` over the selected Run, its pointer intent and the
@@ -196,7 +204,8 @@ export type ReworkClassDerivationV1 =
  * An ended Run without an outcome is not a known outcome either: it reads as
  * FC-2 (reconcile first), like `noProgressKey`'s "ended without an outcome".
  */
-export function deriveReworkClass(run: RunSnapshot, pointerIntent: StopIntentV1 | null, chain: RoundChainHeadV1): ReworkClassDerivationV1 {
+export function deriveReworkClass(run: RunSnapshot, pointerIntent: StopIntentV1 | null, chain: RoundChainHeadV1,
+  archive?: VerifiedArchiveInterruptionV1 | null): ReworkClassDerivationV1 {
   const stop = reworkStopOf(pointerIntent);
   if (run.status !== 'ended') return { row: 'FC-1', kind: 'no_rework', stop };
   const blocker = runUnresolvedBlocker(run);
@@ -209,6 +218,10 @@ export function deriveReworkClass(run: RunSnapshot, pointerIntent: StopIntentV1 
   const rework = (row: Extract<ReworkClassDerivationV1, { kind: 'class' }>['row'], failureClass: ReworkFailureClass,
     interruption: 'executing' | 'paused' | null = null): ReworkClassDerivationV1 =>
     ({ row, kind: 'class', failureClass, interruption, stop });
+  // A narrow, owner-verified archive interruption outranks the ordinary stop
+  // class, but never an earlier paused fence (a paused Run keeps FC-6).
+  const archiveInterruption = verifiedArchiveInterruptionOf(run, archive);
+  if (archiveInterruption !== null) return rework('S1-FC-ARCHIVE', 'interrupted', archiveInterruption);
   switch (outcome) {
     case 'yielded': {
       const pointer = run.controlState?.desiredState;
@@ -242,6 +255,41 @@ export function deriveReworkClass(run: RunSnapshot, pointerIntent: StopIntentV1 
         detail: `run ${run.ref.runId} ended with an unknown outcome`, stop };
     default:
       return unreachable(outcome, 'run outcome');
+  }
+}
+
+/**
+ * Slice 1 §3.5/rule 14: whether the owner-verified archive interruption
+ * actually matches this Run's own stop fact. Only the archive's cancel, its
+ * wait cancel or a real `interrupted_clean` fact of the same Run qualifies; a
+ * forged or unmatched origin returns null and the ordinary class stands.
+ */
+function verifiedArchiveInterruptionOf(
+  run: RunSnapshot, archive: VerifiedArchiveInterruptionV1 | null | undefined,
+): 'executing' | null {
+  if (archive === null || archive === undefined) return null;
+  if (!sameRunRef(archive.runRef, run.ref)) return null;
+  const observation = run.reconciliation?.observation;
+  const interruptedClean = run.outcome === 'crashed'
+    && observation !== undefined && observation.kind === 'interrupted_clean';
+  // An earlier paused fence keeps FC-6 (`interrupted` / `paused`) and its human-only continuation.
+  if (interruptedClean && observation.pausedIntentRef !== null) return null;
+  if (archive.kind === 'execution') {
+    switch (archive.cause) {
+      case 'archive_cancel':
+        return run.outcome === 'cancelled' ? 'executing' : null;
+      case 'retired_interruption':
+        return interruptedClean ? 'executing' : null;
+      default:
+        return null;
+    }
+  }
+  switch (archive.cause) {
+    case 'archive_wait_cancel':
+      if (run.outcome === 'yielded') return run.controlState?.desiredState === 'paused' ? null : 'executing';
+      return run.outcome === 'cancelled' ? 'executing' : null;
+    default:
+      return null;
   }
 }
 
@@ -1265,6 +1313,10 @@ export function taskReworkRefusalEffects(input: NewTaskReworkRefusalInputV1): Ta
 // ------------------------------------------------------------------------ //
 function sameActor(left: ActorRef, right: { kind: string; id: string }): boolean {
   return left.kind === right.kind && left.id === right.id;
+}
+function sameRunRef(left: RunRef, right: RunRef): boolean {
+  return left.aggregateType === right.aggregateType && left.projectId === right.projectId
+    && left.goalId === right.goalId && left.runId === right.runId;
 }
 function sameRequeueRef(left: TaskRequeueRef, right: TaskRequeueRef): boolean {
   return left.aggregateType === right.aggregateType && left.projectId === right.projectId && left.goalId === right.goalId

@@ -27,7 +27,11 @@ import type {
   DecodeResult, EncodedDomainEvent, EncodedRecord, RecordBackendSchemas,
 } from '../../record-store/ports.js';
 import { isJsonObject, isNonEmptyString, parseJsonObject } from '../../record-store/record-codec.js';
-import { checkArtifactRef, checkPlainSessionRef } from './session-record-codecs.js';
+import { checkArtifactRef, checkPlainSessionRef, checkSessionBody } from './session-record-codecs.js';
+import type { Slice1EventHeaderV1 } from './lifecycle-record-codecs.js';
+import type { SessionRecord } from '../../../contracts/core/session.js';
+import type { ArchiveStepRefV1 } from '../../../contracts/core/session-archive.js';
+import { SESSION_REPLY_BY_HANDLER_LOOKUP } from '../model/session-facts-contracts.js';
 import type { MessageQueryAnswerSender, MessageSender, SessionMessage } from '../model/communication-contracts.js';
 
 /** Encoding selector for the persisted message record. */
@@ -40,6 +44,8 @@ export const SESSION_MESSAGE_RESPONDED_EVENT_TYPE = 'SessionMessageResponded';
 export const SESSION_MESSAGE_DERIVATION_EVENT_TYPE = 'SessionMessageConsultationDerived';
 export const SESSION_MESSAGE_INPUT_ACCEPTED_EVENT_TYPE = 'SessionMessageInputAccepted';
 export const SESSION_MESSAGE_EVENT_SCHEMA_VERSION = 1;
+/** Slice 1 §2.9: the wait-disposal replay event written by the mailbox owner. */
+export const ARCHIVE_WAIT_DISPOSED_EVENT_TYPE = 'ArchiveWaitDisposed';
 
 /** Registered lookup index names (`core/record-store/lookup-ports.ts`). */
 export const SESSION_MESSAGE_BY_RECIPIENT_LOOKUP = 'session-message-by-recipient';
@@ -80,6 +86,11 @@ export const SESSION_MESSAGE_LOOKUP_INDEXES: readonly RecordLookupIndex[] = [
     aggregateType: 'SessionMessage',
     paths: ['ref.projectId', 'ref.workspaceId', 'sender.runRef.goalId', 'sender.runRef.runId'],
   },
+  {
+    name: SESSION_REPLY_BY_HANDLER_LOOKUP,
+    aggregateType: 'SessionMessage',
+    paths: ['ref.projectId', 'ref.workspaceId', 'replyHandler.sessionRef.sessionId'],
+  },
 ];
 
 // --------------------------------------------------------------------------
@@ -112,6 +123,14 @@ export type SessionMessageEventV1 =
   | SessionMessageRespondedEventV1
   | SessionMessageConsultationDerivedEventV1
   | SessionMessageInputAcceptedEventV1;
+
+/** Slice 1 (spec §2.9): one wait disposal. The header comes from the lifecycle
+ * codec; the changed source Session makes its revision participate in the
+ * actual guard. */
+export type ArchiveWaitDisposedEventV1 = Slice1EventHeaderV1 & {
+  eventType: 'ArchiveWaitDisposed'; message: SessionMessage;
+  source: SessionRecord; archiveStep: ArchiveStepRefV1;
+};
 
 // --------------------------------------------------------------------------
 // Pure shape helpers
@@ -291,7 +310,37 @@ const MESSAGE_KEYS: readonly string[] = [
   'ref', 'schemaVersion', 'revision', 'sender', 'recipient', 'bodyRef', 'sourceRef',
   'createdAt', 'status', 'readAt', 'response', 'replyMode',
   'intent', 'needsReply', 'waitAfterSend', 'consultationDerivation', 'acceptedInputs',
+  'replyHandler', 'archiveWaitDisposition',
 ];
+
+/** Slice 1 §2.5: the effective reply handler of a wait; absent reads as null. */
+function checkReplyHandler(value: unknown, path: string): Problem {
+  if (!isObject(value) || !hasOnlyKeys(value, ['sessionRef', 'archiveSessionRef', 'archiveRequestId', 'changedAt'])) {
+    return `${path} carries unknown fields`;
+  }
+  const session = checkPlainSessionRef(value['sessionRef']);
+  if (session !== null) return `${path}.sessionRef: ${session}`;
+  const archiveSession = checkPlainSessionRef(value['archiveSessionRef']);
+  if (archiveSession !== null) return `${path}.archiveSessionRef: ${archiveSession}`;
+  if (!nonEmpty(value['archiveRequestId'])) return `${path}.archiveRequestId is required`;
+  if (!nonEmpty(value['changedAt'])) return `${path}.changedAt is required`;
+  return null;
+}
+
+/** Slice 1 §2.5: the recorded disposal of a wait during an archive; absent reads as null. */
+function checkArchiveWaitDisposition(value: unknown, path: string): Problem {
+  if (!isObject(value) || !hasOnlyKeys(value, ['kind', 'runRef', 'archiveSessionRef', 'archiveRequestId', 'recordedAt'])) {
+    return `${path} carries unknown fields`;
+  }
+  if (value['kind'] !== 'cancel' && value['kind'] !== 'transfer') return `${path}.kind is not recognized`;
+  const run = checkRunRef(value['runRef']);
+  if (run !== null) return `${path}.runRef: ${run}`;
+  const archiveSession = checkPlainSessionRef(value['archiveSessionRef']);
+  if (archiveSession !== null) return `${path}.archiveSessionRef: ${archiveSession}`;
+  if (!nonEmpty(value['archiveRequestId'])) return `${path}.archiveRequestId is required`;
+  if (!nonEmpty(value['recordedAt'])) return `${path}.recordedAt is required`;
+  return null;
+}
 
 export function checkSessionMessageBody(body: UnknownRecord): Problem {
   if (!hasOnlyKeys(body, MESSAGE_KEYS)) return 'SessionMessage record carries unknown fields';
@@ -374,6 +423,24 @@ export function checkSessionMessageBody(body: UnknownRecord): Problem {
     const responseProblem = checkMessageResponse(response);
     if (responseProblem !== null) return `SessionMessage response: ${responseProblem}`;
   }
+  const replyHandler = body['replyHandler'];
+  if (replyHandler !== undefined && replyHandler !== null) {
+    const problem = checkReplyHandler(replyHandler, 'SessionMessage.replyHandler');
+    if (problem !== null) return problem;
+    if (isObject(body['ref']) && isObject(replyHandler)
+      && (replyHandler['sessionRef'] as Record<string, unknown>)['projectId'] !== body['ref']['projectId']) {
+      return 'SessionMessage replyHandler belongs to another project';
+    }
+  }
+  const archiveWaitDisposition = body['archiveWaitDisposition'];
+  if (archiveWaitDisposition !== undefined && archiveWaitDisposition !== null) {
+    const problem = checkArchiveWaitDisposition(archiveWaitDisposition, 'SessionMessage.archiveWaitDisposition');
+    if (problem !== null) return problem;
+    if (isObject(body['ref']) && isObject(archiveWaitDisposition)
+      && (archiveWaitDisposition['archiveSessionRef'] as Record<string, unknown>)['projectId'] !== body['ref']['projectId']) {
+      return 'SessionMessage archiveWaitDisposition belongs to another project';
+    }
+  }
   // The status/readAt/response triple is monotone and consistent.
   if (status === 'pending' && (readAt !== null || response !== null)) {
     return 'a pending message must be unread and unanswered';
@@ -444,6 +511,88 @@ function checkEventBody(body: UnknownRecord, eventType: string): Problem {
 // Registered validators
 // --------------------------------------------------------------------------
 
+const ARCHIVE_WAIT_DISPOSED_EVENT_KEYS: readonly string[] = [
+  'eventId', 'eventType', 'schemaVersion', 'occurredAt', 'projectId', 'workspaceId',
+  'message', 'source', 'archiveStep',
+];
+const ARCHIVE_STEP_KINDS: readonly string[] = [
+  'stop', 'anchor', 'requeue', 'responsibility', 'reply_handler', 'wait_cancel', 'archive',
+];
+
+function checkArchiveStep(value: unknown): Problem {
+  if (!isObject(value) || !hasOnlyKeys(value, ['sessionRef', 'archiveRequestId', 'requestReceipt', 'step', 'subjectKey'])) {
+    return 'archiveStep carries unknown fields';
+  }
+  const session = checkPlainSessionRef(value['sessionRef']);
+  if (session !== null) return `archiveStep.sessionRef: ${session}`;
+  if (!nonEmpty(value['archiveRequestId'])) return 'archiveStep.archiveRequestId is required';
+  const receipt = value['requestReceipt'];
+  if (!isObject(receipt) || !hasOnlyKeys(receipt, ['identityKey', 'fingerprint'])
+    || !nonEmpty(receipt['identityKey']) || !nonEmpty(receipt['fingerprint'])) {
+    return 'archiveStep.requestReceipt must be {identityKey,fingerprint}';
+  }
+  if (!ARCHIVE_STEP_KINDS.includes(String(value['step']))) return 'archiveStep.step is not recognized';
+  if (!nonEmpty(value['subjectKey'])) return 'archiveStep.subjectKey is required';
+  return null;
+}
+
+function checkArchiveWaitDisposedBody(body: UnknownRecord): Problem {
+  if (!hasOnlyKeys(body, ARCHIVE_WAIT_DISPOSED_EVENT_KEYS)) return 'ArchiveWaitDisposed carries unknown fields';
+  if (!nonEmpty(body['projectId']) || !nonEmpty(body['workspaceId'])) {
+    return 'ArchiveWaitDisposed requires projectId and workspaceId';
+  }
+  const message = body['message'];
+  if (!isObject(message)) return 'ArchiveWaitDisposed requires the changed message';
+  const messageProblem = checkSessionMessageBody(message);
+  if (messageProblem !== null) return `ArchiveWaitDisposed message: ${messageProblem}`;
+  if (!isObject(message['ref']) || message['ref']['projectId'] !== body['projectId']
+    || message['ref']['workspaceId'] !== body['workspaceId']) {
+    return 'ArchiveWaitDisposed message scope disagrees with the event scope';
+  }
+  const source = body['source'];
+  if (!isObject(source)) return 'ArchiveWaitDisposed requires the changed source SessionRecord';
+  const sourceProblem = checkSessionBody(source);
+  if (sourceProblem !== null) return `ArchiveWaitDisposed source: ${sourceProblem}`;
+  if (!isObject(source['ref']) || source['ref']['projectId'] !== body['projectId']
+    || source['workspaceId'] !== body['workspaceId']) {
+    return 'ArchiveWaitDisposed source disagrees with the event scope';
+  }
+  const step = checkArchiveStep(body['archiveStep']);
+  if (step !== null) return `ArchiveWaitDisposed archiveStep: ${step}`;
+  const stepValue = body['archiveStep'] as UnknownRecord;
+  const stepSession = stepValue['sessionRef'] as UnknownRecord;
+  if (stepSession['sessionId'] !== (source['ref'] as UnknownRecord)['sessionId']) {
+    return 'ArchiveWaitDisposed archiveStep does not name the source Session';
+  }
+  if (stepValue['step'] !== 'reply_handler' && stepValue['step'] !== 'wait_cancel') {
+    return 'ArchiveWaitDisposed archiveStep must be reply_handler or wait_cancel';
+  }
+  if (stepValue['step'] === 'reply_handler') {
+    const handler = message['replyHandler'];
+    if (!isObject(handler) || handler['archiveRequestId'] !== stepValue['archiveRequestId']
+      || (handler['archiveSessionRef'] as Record<string, unknown>)['sessionId'] !== stepSession['sessionId']) {
+      return 'ArchiveWaitDisposed transfer must record the transferred reply handler';
+    }
+  } else {
+    const disposition = message['archiveWaitDisposition'];
+    if (!isObject(disposition) || disposition['kind'] !== 'cancel'
+      || disposition['archiveRequestId'] !== stepValue['archiveRequestId']
+      || (disposition['archiveSessionRef'] as Record<string, unknown>)['sessionId'] !== stepSession['sessionId']) {
+      return 'ArchiveWaitDisposed cancel must record the cancelled wait disposition';
+    }
+  }
+  return null;
+}
+
+function validateArchiveWaitDisposedEvent(event: EncodedDomainEvent): DecodeResult<EncodedDomainEvent> {
+  const decoded = archiveWaitDisposedEventFromEvent(event);
+  return decoded.status === 'decoded' ? { status: 'decoded', value: event } : decoded;
+}
+
+// --------------------------------------------------------------------------
+// Registered validators
+// --------------------------------------------------------------------------
+
 function validateRecord(record: EncodedRecord): DecodeResult<EncodedRecord> {
   if (record.schemaId !== SESSION_MESSAGE_SCHEMA_ID) {
     return invalid(`expected schemaId ${SESSION_MESSAGE_SCHEMA_ID}, got ${record.schemaId}`);
@@ -504,6 +653,8 @@ export const SESSION_MESSAGE_RECORD_SCHEMAS: RecordBackendSchemas = {
       validate: (event) => validateEvent(event, SESSION_MESSAGE_DERIVATION_EVENT_TYPE) },
     { eventType: SESSION_MESSAGE_INPUT_ACCEPTED_EVENT_TYPE, schemaVersion: SESSION_MESSAGE_EVENT_SCHEMA_VERSION,
       validate: (event) => validateEvent(event, SESSION_MESSAGE_INPUT_ACCEPTED_EVENT_TYPE) },
+    { eventType: ARCHIVE_WAIT_DISPOSED_EVENT_TYPE, schemaVersion: SESSION_MESSAGE_EVENT_SCHEMA_VERSION,
+      validate: validateArchiveWaitDisposedEvent },
   ],
   lookups: SESSION_MESSAGE_LOOKUP_INDEXES,
 };
@@ -552,6 +703,16 @@ export function encodeSessionMessageInputAcceptedEvent(event: SessionMessageInpu
   return encodeMessageEvent(event);
 }
 
+export function encodeArchiveWaitDisposedEvent(event: ArchiveWaitDisposedEventV1): EncodedDomainEvent {
+  return {
+    eventId: event.eventId,
+    eventType: event.eventType,
+    schemaVersion: event.schemaVersion,
+    occurredAt: event.occurredAt,
+    json: JSON.stringify(event),
+  };
+}
+
 // --------------------------------------------------------------------------
 // Typed decoders (read/replay path)
 // --------------------------------------------------------------------------
@@ -561,7 +722,12 @@ export function decodeSessionMessageRecord(record: EncodedRecord): DecodeResult<
   if (checked.status !== 'decoded') return checked;
   const parsed = parseJsonObject(record.json);
   if (parsed.status === 'invalid') return invalid('SessionMessage record json is not an object');
-  return { status: 'decoded', value: parsed.value as unknown as SessionMessage };
+  // R2 exception (reported): the frozen S1 test `S1-codecs-indexes` SV01 asserts
+  // an explicit `null` on a decoded old Message, so this codec keeps the §2.9
+  // null default for the two optional wait fields.
+  const message = parsed.value as SessionMessage;
+  return { status: 'decoded', value: { ...message,
+    replyHandler: message.replyHandler ?? null, archiveWaitDisposition: message.archiveWaitDisposition ?? null } };
 }
 
 /**
@@ -579,6 +745,32 @@ export function sessionMessageFromEvent(event: EncodedDomainEvent): DecodeResult
   if (checked.status !== 'decoded') return checked;
   const parsed = parseJsonObject(event.json);
   if (parsed.status === 'invalid') return invalid(`${eventType} event json is not an object`);
-  return { status: 'decoded', value: parsed.value['message'] as unknown as SessionMessage };
+  // Rule 1 (lead fix 2026-10-09): a replay returns the ORIGINAL event value, so the
+  // event payload keeps exactly the keys it was written with; only the record
+  // decoder applies the §2.9 null default (SV01). Readers use `?? null`.
+  const message = parsed.value['message'] as SessionMessage;
+  return { status: 'decoded', value: message };
+}
+
+export function archiveWaitDisposedEventFromEvent(
+  event: EncodedDomainEvent,
+): DecodeResult<ArchiveWaitDisposedEventV1> {
+  if (event.eventType !== ARCHIVE_WAIT_DISPOSED_EVENT_TYPE) {
+    return invalid(`expected eventType ArchiveWaitDisposed, got ${event.eventType}`);
+  }
+  if (event.schemaVersion !== SESSION_MESSAGE_EVENT_SCHEMA_VERSION) {
+    return invalid(`expected schemaVersion ${String(SESSION_MESSAGE_EVENT_SCHEMA_VERSION)}, got ${String(event.schemaVersion)}`);
+  }
+  if (!nonEmpty(event.eventId) || !nonEmpty(event.occurredAt)) return invalid('ArchiveWaitDisposed envelope is incomplete');
+  const parsed = parseJsonObject(event.json);
+  if (parsed.status === 'invalid') return invalid(`ArchiveWaitDisposed event json is not an object: ${parsed.reason}`);
+  const body = parsed.value;
+  if (body['eventId'] !== event.eventId || body['eventType'] !== event.eventType
+    || body['schemaVersion'] !== event.schemaVersion || body['occurredAt'] !== event.occurredAt) {
+    return invalid('ArchiveWaitDisposed event envelope disagrees with the event json');
+  }
+  const problem = checkArchiveWaitDisposedBody(body);
+  if (problem !== null) return invalid(`ArchiveWaitDisposed event payload is invalid: ${problem}`);
+  return { status: 'decoded', value: body as unknown as ArchiveWaitDisposedEventV1 };
 }
 
