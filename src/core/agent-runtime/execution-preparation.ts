@@ -388,15 +388,12 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
       const assignments = revisionAssignments(plan);
       const assignment = assignments.find(candidate => candidate.taskId === claim.task.taskId);
       if (assignment === undefined) return rejected('incomplete', 'the accepted Plan has no assignment for this Task');
-      const contractSatisfied = roleResolution.status !== 'resolved'
-        || roleResolution.spec.requiredMaterials.every(material => material.kind === 'contract');
       const unsourceable = roleResolution.status === 'resolved'
         ? roleResolution.spec.requiredMaterials.filter(material => material.kind !== 'contract')
         : [];
       if (unsourceable.length > 0) {
         return rejected('unsupported', `required Role materials of kinds ${unsourceable.map(material => material.kind).join(', ')} have no exact producer in this runtime batch`);
       }
-      if (!contractSatisfied) return rejected('incomplete', 'the Role required materials cannot be satisfied from the formal Plan/Task contract');
 
       const sourceRefs: SourceRefV1[] = [
         { kind: 'plan-revision', refId: plan.ref.planId, revision: String(plan.revision) },

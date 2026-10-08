@@ -1,7 +1,7 @@
 import { afterEach, expect, it } from 'vitest';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { createInMemoryRecordBackend } from '../../src/core/record-store/in-memory-record-store.js';
 import { createSqliteRecordBackend } from '../../src/core/record-store/sqlite-record-store.js';
 import { RawArtifactBodyStore } from '../../src/core/record-store/body-store.js';
@@ -11,8 +11,6 @@ import type { GoalSnapshot, WorkspaceSnapshot } from '../../src/contracts/ledger
 import type { RunRef, RunSnapshot } from '../../src/contracts/dispatch.js';
 import type { QueryRunRef, QueryRunSnapshot } from '../../src/contracts/query-job.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
-import type { ProjectSourceAccess } from '../../src/core/workspace/project-source-index.js';
-import { materialSourcePinIsCurrent, WorkspaceSourceApplicability } from '../../src/core/workspace/source-applicability.js';
 import { materialRecordSchemas, createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
 import { createMaterialService } from '../../src/core/work-graph/materials/material-service.js';
 
@@ -99,32 +97,4 @@ it.each(['memory', 'sqlite'] as const)('%s: a Run or QueryRun reader opens only 
     expect(await materials.openArtifact(workCtx(otherRun, targetWorkspace), historical))
       .toMatchObject({ status: 'rejected', code: 'forbidden' });
   } finally { await store.close(); }
-});
-
-// The kept source pin pair (decision 34, for slice 3 of the orchestration
-// design): a re-capture of the same selection stays current until a file changes.
-it('a captured source pin stays current until a selected file is edited', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'next-r3b-source-pin-')); dirs.push(dir);
-  const file = join(dir, 'src/note.txt'); await mkdir(dirname(file), { recursive: true });
-  await writeFile(file, 'original verified source');
-  const access: ProjectSourceAccess = {
-    allowed: path => path === 'src/note.txt',
-    inventory: async () => ({ paths: ['src/note.txt'], truncated: false }),
-    read: async (path, maxBytes) => {
-      if (path !== 'src/note.txt') throw Error('ungranted path');
-      const content = await readFile(file, 'utf8');
-      if (Buffer.byteLength(content) > maxBytes) throw Error('capacity');
-      return { content };
-    },
-    sourceIdentity: async () => ({ workspace: dir, commit: null }),
-  };
-  const scope = { projectId, workspaceId: targetWorkspace };
-  const source = new WorkspaceSourceApplicability(asked => asked.projectId === projectId && asked.workspaceId === targetWorkspace ? access : null);
-  const captured = await source.capture({ ...scope, sourceSet: { kind: 'workspace_paths', paths: ['src/note.txt'] } });
-  expect(captured.status).toBe('sourced');
-  if (captured.status !== 'sourced') throw Error('source pin not captured');
-  expect(await materialSourcePinIsCurrent(source, captured.pin, scope)).toBe(true);
-  expect(await materialSourcePinIsCurrent(source, captured.pin, { projectId, workspaceId: sourceWorkspace })).toBe(false);
-  await writeFile(file, 'edited verified source');
-  expect(await materialSourcePinIsCurrent(source, captured.pin, scope)).toBe(false);
 });

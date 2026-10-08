@@ -26,7 +26,7 @@ export const MAX_RESPONSE_TOKENS = 393216;
  *     substitutes a hidden default cap;
  *   - declared capacities must be positive and stay within the transport bounds.
  */
-export function validateRuntimeBudget(value: unknown, _legacyContextOnlyTask = false): RuntimeBudget {
+export function validateRuntimeBudget(value: unknown): RuntimeBudget {
   if (value === undefined) return { ...DEFAULT_RUNTIME_BUDGET };
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw Error('预算格式错误');
   const b = { ...DEFAULT_RUNTIME_BUDGET, ...value };

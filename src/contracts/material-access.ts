@@ -3,7 +3,9 @@
  * Material access grants — cross-principal read authorization for stored
  * material (ArtifactVault), bound to the source version it was granted against.
  * Grants were deleted (decision 34): what stays is the persisted grant ref and
- * basis, the source pin types and the material identity helpers.
+ * basis, the source pin types and the material identity helpers. The source pin
+ * capture pair (provider and applicability) was deleted too (2026-10-08): slice 3
+ * of the orchestration design reads upstream material as recorded, not as current.
  */
 import type { ArtifactOwnerRunRef, ArtifactRef } from "./artifact.js";
 import type { PlanRevisionRef } from "./plan.js";
@@ -20,7 +22,8 @@ export type MaterialBasisV1 = {
     workspaceRevision: number | null;
     /** Source snapshot digest when the material came from an explicit source set. */
     sourceDigest: string | null;
-    /** Actual source identity, captured and re-read by an explicit host capability.
+    /** Actual source identity, as recorded; the capability that captured and re-read it
+     * was deleted (2026-10-08), so a recorded pin names a version and never proves it current.
      * sourceDigest retains its producer-defined meaning; it is never proof of currentness. */
     sourcePin?: MaterialSourcePinV1;
 };
@@ -48,20 +51,6 @@ export type MaterialSourcePinV1 = MaterialSourceScope & {
     };
     manifestDigest: string;
 };
-export type MaterialSourceCaptureResult = {
-    status: 'sourced';
-    pin: MaterialSourcePinV1;
-} | {
-    status: 'unavailable' | 'rejected' | 'stale';
-    issues: string[];
-};
-/** Capability bound by the host to real, permission-checked workspace access.
- * No current digest is accepted from the caller of ArtifactVault.open. */
-export interface SourceApplicabilityPort {
-    capture(query: MaterialSourceScope & {
-        sourceSet: MaterialSourceSetV1;
-    }, signal?: AbortSignal): Promise<MaterialSourceCaptureResult>;
-}
 export function validMaterialSourceSet(value: unknown): value is MaterialSourceSetV1 {
     if (!value || typeof value !== 'object')
         return false;

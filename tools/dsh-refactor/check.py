@@ -38,7 +38,6 @@ checks = {
     'next-whiteboard-tools': ['node_modules/vitest/vitest.mjs', 'run', 'tests/runtime/W2-whiteboard-tools.test.ts', 'tests/runtime/W2-role-skills.test.ts'],
     'next-agent-whiteboard': ['node_modules/vitest/vitest.mjs', 'run', 'tests/work-graph/W2-agent-whiteboard.test.ts'],
     'next-runtime-execution': ['node_modules/vitest/vitest.mjs', 'run', 'tests/runtime/B2-runtime-execution.test.ts', 'tests/composition/B2-runtime-platform.test.ts'],
-    'next-material-source-provider': ['node_modules/vitest/vitest.mjs', 'run', 'tests/data/M1-material-source-provider.test.ts'],
     'next-kernel-history-public': ['node_modules/vitest/vitest.mjs', 'run', 'tests/kernel/B2-history-public-export.test.ts'],
     'next-execution-state': ['node_modules/vitest/vitest.mjs', 'run', 'tests/work-graph/B2-execution-entry.test.ts', 'tests/work-graph/B2-execution-result.test.ts', 'tests/work-graph/B2-model-request.test.ts'],
     'next-session-mailbox': ['node_modules/vitest/vitest.mjs', 'run', 'tests/work-graph/C1-session-mailbox.test.ts', 'tests/runtime/C1-communication-tools.test.ts'],
