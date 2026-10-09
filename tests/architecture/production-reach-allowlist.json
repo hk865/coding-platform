@@ -615,21 +615,9 @@
     },
     {
       "file": "src/core/work-graph/model/configuration-contracts.ts",
-      "name": "RoleReadOptions",
-      "reason": "kept-for",
-      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; only reached from RoleConfigurationPort.readRoleSpec"
-    },
-    {
-      "file": "src/core/work-graph/model/configuration-contracts.ts",
       "name": "RoleConfigurationPort.installRoleSpec",
       "reason": "kept-for",
       "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; a port operation create-platform.ts publishes, but no route (core-routes.ts), Workflow or script reads it; used only by tests: tests/composition/R3d-R3g-platform.test.ts, tests/helpers/B2-runtime-fixture.ts, tests/helpers/C2-runtime-platform-fixture.ts, tests/work-graph/R3g-role-spec.test.ts, tests/work-graph/R4c-task-claim-boundaries.test.ts"
-    },
-    {
-      "file": "src/core/work-graph/model/configuration-contracts.ts",
-      "name": "RoleConfigurationPort.readRoleSpec",
-      "reason": "kept-for",
-      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; a port operation create-platform.ts publishes, but no route (core-routes.ts), Workflow or script reads it; used only by tests: tests/composition/R3d-R3g-platform.test.ts, tests/work-graph/R3g-role-spec.test.ts"
     },
     {
       "file": "src/core/work-graph/model/configuration-contracts.ts",

@@ -68,7 +68,7 @@ export const DEFAULT_SESSION_ARCHIVE_POLICY: SessionArchivePolicyV1 = {
  * and copy rules still apply.
  */
 export type SessionDutyResolver =
-  (role: RoleConfigurationRef) => Promise<ReadResult<PlatformDutyV1 | 'unknown'>>;
+  (role: RoleConfigurationRef, ctx?: CoreCallContext) => Promise<ReadResult<PlatformDutyV1 | 'unknown'>>;
 
 /**
  * The exact owners the Workflow composes. It reads and calls only these ports;

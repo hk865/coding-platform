@@ -318,6 +318,42 @@ export function contextAssemblyProblem(input: ContextAssemblyProblemInput): Core
   return null;
 }
 
+/**
+ * Wiring 1 W1-CTX-01/G (§2.2, L2/L4): the pure Goal-content check of a saved
+ * `ContextAssemblyBindingV1`. It compares only the digest of the Goal-record
+ * content the Work Goal section shows, stored on the binding's own Goal
+ * `record` source, against the current Goal digest. A missing binding, a
+ * rebinding, no matching source, and a `null` digest all pass (legacy prepared
+ * manifests stay valid); only a present, different string rejects, with the
+ * exact `context_goal_changed:` reason the Workflow's `start` mapping reads.
+ */
+export function contextGoalContentProblem(input: {
+  binding: ContextAssemblyBindingV1 | undefined;
+  claimGoal: { projectId: string; goalId: string };
+  currentGoalDigest: string;
+  rebinding: boolean;
+}): CoreRejection | null {
+  const { binding, claimGoal, currentGoalDigest, rebinding } = input;
+  if (binding === undefined) return null;
+  // CTX-02: an already bound manifest is only validated, never re-pinned (§3.2).
+  if (rebinding) return null;
+  for (const source of binding.sources) {
+    if (source.kind !== 'record') continue;
+    if (source.ref.aggregateType !== 'Goal') continue;
+    if (source.ref.projectId !== claimGoal.projectId || source.ref.goalId !== claimGoal.goalId) continue;
+    // Only a present, different string rejects; a null digest is a legacy manifest
+    // that never stored the shown Goal content (L2) and stays valid.
+    if (typeof source.digest === 'string' && source.digest !== currentGoalDigest) {
+      return {
+        status: 'rejected',
+        code: 'revision_conflict',
+        reason: 'context_goal_changed: the Goal content shown by the prepared context changed after preparation; prepare the context again',
+      };
+    }
+  }
+  return null;
+}
+
 export type DeclaredInputProblemInput = {
   declaration: InputDeclarationV1;
   selections: InputSelectionV1[];

@@ -1047,6 +1047,13 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort & Requi
         ...(provenance === null ? {} : { provenance }),
       }, taskRef, planRef, requeue)));
     }
+    // E15 (W1-HO-04, §4.4.7, L17): a reused Session that continues exactly this
+    // Task from a predecessor still open and unarchived re-derives the same
+    // handover step from durable facts BEFORE the claim pin is computed. The
+    // crash between `create_session` and its handover therefore recovers here,
+    // and the (live, idle) predecessor can still be archived in one composition.
+    const recovered = await recoveryHandoverStep(owned, base, chosen.card, taskRef, planRef, requeue);
+    if (recovered !== null) return advancing(null, makePerform(base, recovered));
     const sessionRef: SessionRef = { projectId: owned.projectId, sessionId: chosen.card.record.ref.sessionId };
     const built = await buildClaimOperation(owned, base, goal, planRef, task, binding,
       sessionRef.sessionId, chosen.card.record.revision, undefined, requeue);
@@ -1287,6 +1294,195 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort & Requi
     return waiting(null, describeGap(ordered, graph));
   }
 
+  // --------------------------------------------------------------------------
+  // E15 (wiring 1 §4.4): the ordinary-continuation handover
+  // --------------------------------------------------------------------------
+
+  /** A handover step carries the continued Task/Plan/Session so the claim can follow it (L10). */
+  type HandoverContinuation = {
+    predecessor: SessionRef;
+    task: TaskTriple;
+    successor: SessionRef;
+    planRef: PlanRevisionRef;
+    requeue?: WorkflowSessionRequeue;
+  };
+  type HandoverOperation = Extract<WorkflowOperation,
+    { kind: 'transfer_responsibility' | 'archive_predecessor' }>;
+
+  /** The open `responsible` link of one exact task, or null (the handover guard, §4.4.3/§4.4.5). */
+  function openResponsibleLink(card: SessionCard, task: TaskTriple) {
+    return card.links.find((link) => link.ref.relation === 'responsible' && link.until === null
+      && link.ref.target.kind === 'task' && sameCanonical(link.ref.target.ref, task)) ?? null;
+  }
+
+  /**
+   * F1/W1-HO-01 (§4.4.5): the `responsible` link of one exact task whatever
+   * its `until`, or null when the Session has no such link record at all. A
+   * C→T link closed later still carries its own ref and revision and must be
+   * pinned as it is; only a missing record uses revision 0 for the `cas`.
+   */
+  function responsibleLink(card: SessionCard, task: TaskTriple) {
+    return card.links.find((link) => link.ref.relation === 'responsible'
+      && link.ref.target.kind === 'task' && sameCanonical(link.ref.target.ref, task)) ?? null;
+  }
+
+  /**
+   * E15 §4.4.3 (L11): the predecessor is a LIVE, idle, not-waiting line with no
+   * archive request and no occupancy, and the Workflow has both the facts reader
+   * and the archive composition. The caller additionally requires that its only
+   * open responsibility (module included) is this Task. Only then are transfer
+   * and final archive one step.
+   */
+  async function canArchivePredecessor(owned: Owned, card: SessionCard): Promise<boolean> {
+    const record = card.record;
+    if (record.lifecycle !== 'active') return false;
+    if (record.health === 'unavailable') return false;
+    if (record.archiveRequest !== null && record.archiveRequest !== undefined) return false;
+    if (record.occupancy !== null) return false;
+    if (deps.sessionFacts === undefined || deps.sessionLifecycle === undefined) return false;
+    try {
+      const facts = await deps.sessionFacts.readSessionFacts(owned.ctx,
+        { projectId: record.ref.projectId, sessionId: record.ref.sessionId });
+      if (facts.status !== 'ready' || facts.value.wait !== null) return false;
+    } catch { return false; }
+    return true;
+  }
+
+  /**
+   * E15 §4.4.2: read the predecessor and new Session cards. A failed read of
+   * either means no handover at all — the ordinary claim follows unchanged.
+   */
+  async function readHandoverCards(owned: Owned, continuation: HandoverContinuation):
+  Promise<{ predecessor: SessionCard; successor: SessionCard } | null> {
+    const predecessor = await deps.sessions.readSession(owned.ctx, continuation.predecessor);
+    if (predecessor.status !== 'ready') return null;
+    const successor = await deps.sessions.readSession(owned.ctx, continuation.successor);
+    if (successor.status !== 'ready') return null;
+    return { predecessor: predecessor.value, successor: successor.value };
+  }
+
+  /**
+   * E15 §4.4.5 (L10/L13): the four exact pins of `transferSessionResponsibility`:
+   * both Session revisions, the open predecessor link, and the successor's own
+   * link record whatever its `until` (revision 0 for the `cas` "does not exist"
+   * case). Null when the predecessor no longer holds the Task open or either
+   * card is unreadable.
+   */
+  async function transferStepFor(owned: Owned, base: Base, continuation: HandoverContinuation):
+  Promise<HandoverOperation | null> {
+    if (deps.responsibilities === undefined) return null;
+    const cards = await readHandoverCards(owned, continuation);
+    if (cards === null) return null;
+    const predecessorLink = openResponsibleLink(cards.predecessor, continuation.task);
+    if (predecessorLink === null) return null;
+    const successorLink = responsibleLink(cards.successor, continuation.task);
+    const successorRef: SessionRef = {
+      projectId: cards.successor.record.ref.projectId, sessionId: cards.successor.record.ref.sessionId,
+    };
+    const expected: VersionPin[] = [
+      { ref: cards.predecessor.record.ref, revision: cards.predecessor.record.revision },
+      { ref: cards.successor.record.ref, revision: cards.successor.record.revision },
+      { ref: predecessorLink.ref, revision: predecessorLink.revision },
+      successorLink === null
+        ? { ref: { ...successorRef, aggregateType: 'SessionWorkLink', target: { kind: 'task', ref: continuation.task }, relation: 'responsible' }, revision: 0 }
+        : { ref: successorLink.ref, revision: successorLink.revision },
+    ];
+    const input = { from: continuation.predecessor, to: successorRef, target: { kind: 'task' as const, ref: continuation.task } };
+    return { kind: 'transfer_responsibility', request: automaticGraphWrite(base, 'transfer_responsibility', input, expected),
+      taskRef: continuation.task, planRef: continuation.planRef, successor: successorRef,
+      ...(continuation.requeue === undefined ? {} : { requeue: continuation.requeue }) };
+  }
+
+  /**
+   * E15 §4.4.3–§4.4.5: the one handover decision used both after `create_session`
+   * (W1-HO-01) and on the crash-recovery reuse path (W1-HO-04). Null keeps the
+   * caller's original claim (guards not met, no responsibility seam).
+   */
+  async function buildHandoverStep(owned: Owned, base: Base, continuation: HandoverContinuation):
+  Promise<HandoverOperation | null> {
+    if (deps.responsibilities === undefined) return null;
+    const cards = await readHandoverCards(owned, continuation);
+    if (cards === null) return null;
+    const record = cards.predecessor.record;
+    if (record.archiveRequest !== null && record.archiveRequest !== undefined) return null;
+    const openResponsible = cards.predecessor.links.filter((link) => link.ref.relation === 'responsible' && link.until === null);
+    if (openResponsibleLink(cards.predecessor, continuation.task) === null) return null;
+    if (openResponsible.length === 1 && await canArchivePredecessor(owned, cards.predecessor)) {
+      const input: RequestSessionArchiveInput = {
+        sessionRef: continuation.predecessor,
+        reason: `continuation handover: task ${continuation.task.taskId} continues in Session ${continuation.successor.sessionId}`,
+        tasks: [{ target: { kind: 'task', ref: continuation.task }, disposition: { kind: 'transfer', to: continuation.successor } }],
+        wait: null,
+        mode: 'handoff_complete',
+      };
+      const expected: VersionPin[] = [{ ref: record.ref, revision: record.revision }];
+      return { kind: 'archive_predecessor', request: automaticGraphWrite(base, 'archive_predecessor', input, expected),
+        taskRef: continuation.task, planRef: continuation.planRef, successor: continuation.successor,
+        ...(continuation.requeue === undefined ? {} : { requeue: continuation.requeue }) };
+    }
+    return await transferStepFor(owned, base, continuation);
+  }
+
+  /**
+   * E15 §4.4.7 (W1-HO-04, L17): crash recovery recomputes the same handover
+   * from durable facts — a reused Session whose provenance continues exactly
+   * this Task from a predecessor that is still open and unarchived.
+   */
+  async function recoveryHandoverStep(owned: Owned, base: Base, card: SessionCard, task: TaskTriple,
+    planRef: PlanRevisionRef, requeue: WorkflowSessionRequeue): Promise<HandoverOperation | null> {
+    const provenance = card.record.provenance;
+    if (provenance === undefined || provenance === null || provenance.kind !== 'continuation') return null;
+    if (!sameCanonical(provenance.task, task)) return null;
+    return await buildHandoverStep(owned, base, {
+      predecessor: provenance.from, task,
+      successor: { projectId: card.record.ref.projectId, sessionId: card.record.ref.sessionId },
+      planRef, requeue,
+    });
+  }
+
+  /** E15 §4.4.6: after a handover step the claim follows as the `create_session` branch built it, with the successor's CURRENT revision. */
+  async function claimAfterHandover(owned: Owned, base: Base, operation: HandoverOperation,
+    receipt: WorkflowStepReceipt): Promise<WorkflowAdvanceResult> {
+    const config = deps.configuration;
+    if (config === undefined) {
+      return waiting(receipt, 'no trusted Workflow configuration is registered for the handover Task claim');
+    }
+    const goalRead = await deps.plans.queryGoal(owned.ctx, base.goalRef);
+    if (goalRead.status !== 'ready') {
+      return waiting(receipt, receiptReason(goalRead, 'the Goal could not be read for the handover Task claim'));
+    }
+    const goal = goalRead.value.goal;
+    const graphRead = await deps.plans.queryTaskGraph(owned.ctx, { goalRef: base.goalRef });
+    if (graphRead.status !== 'ready') {
+      return waiting(receipt, receiptReason(graphRead, 'the TaskGraph could not be read for the handover Task claim'));
+    }
+    const task = graphRead.value.plan.tasks.find((candidate) => candidate.taskId === operation.taskRef.taskId);
+    if (task === undefined) return waiting(receipt, 'the handover Task is not in the adopted Plan');
+    const assignment = revisionAssignments(graphRead.value.plan).find((candidate) => candidate.taskId === task.taskId);
+    if (assignment === undefined) return waiting(receipt, 'the handover Task has no assignment');
+    const binding = bindingForRole(config, owned.projectId, goal.workspaceRef.workspaceId, assignment.role);
+    if (binding === null) {
+      return waiting(receipt,
+        `no trusted Workflow binding matches workspace ${goal.workspaceRef.workspaceId} and role ${assignment.role}`);
+    }
+    const card = await deps.sessions.readSession(owned.ctx, operation.successor);
+    if (card.status !== 'ready') {
+      return waiting(receipt, receiptReason(card, 'the handover successor Session is not readable'));
+    }
+    const built = await buildClaimOperation(owned, base, goal, graphRead.value.plan.ref, task, binding,
+      operation.successor.sessionId, card.value.record.revision, undefined, operation.requeue);
+    if ('rejection' in built) return waiting(receipt, built.rejection.reason);
+    const nextBase: Base = { ...base, sessionHint: operation.successor };
+    return advancing(receipt, makePerform(nextBase, built.operation));
+  }
+
+  /** W1-HO-03: after a `pending`/`partial` archive, is the predecessor's Task link still open? */
+  async function predecessorStillOpen(owned: Owned, predecessor: SessionRef, task: TaskTriple): Promise<boolean> {
+    const card = await deps.sessions.readSession(owned.ctx, predecessor);
+    if (card.status !== 'ready') return true;
+    return openResponsibleLink(card.value, task) !== null;
+  }
+
   async function performStep(owned: Owned, base: Base, operation: WorkflowOperation): Promise<WorkflowAdvanceResult> {
     // The original owner request is always performed first and its complete
     // receipt is preserved. The trusted configuration is re-checked only when a
@@ -1327,8 +1523,36 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort & Requi
           return waiting(receipt,
             `no trusted Workflow binding matches workspace ${goal.workspaceRef.workspaceId} and role ${assignment.role}`);
         }
+        // E15 (W1-HO-01, §4.4.1): only a completed `create_session` whose request
+        // carried a `continuation` provenance is a handover; the decision reads
+        // the predecessor and the new Session and either archives the live,
+        // idle predecessor in one composition or transfers only.
+        const provenance = operation.request.provenance;
+        if (provenance !== undefined && provenance !== null && provenance.kind === 'continuation') {
+          const handover = await buildHandoverStep(owned, base, {
+            predecessor: provenance.from, task: operation.taskRef,
+            successor: { projectId: owned.projectId, sessionId: session.ref.sessionId },
+            planRef: graphRead.value.plan.ref,
+            ...(operation.requeue === undefined ? {} : { requeue: operation.requeue }),
+          });
+          if (handover !== null) return advancing(receipt, makePerform(base, handover));
+        }
+        // F2/§7 rule 2 (L10, W1-HO-01): on the E15 path the claim's Session
+        // revision is read after the handover decision, not taken from the
+        // `create_session` receipt. A replayed receipt whose handover already
+        // committed still carries C's creation-time revision, while the
+        // transfer raised it; reading now recomputes from current facts. An
+        // unreadable C means no handover and the direct claim (§4.4 item 2),
+        // which keeps the receipt's revision.
+        let claimRevision = session.revision;
+        if (provenance !== undefined && provenance !== null && provenance.kind === 'continuation'
+          && deps.responsibilities !== undefined) {
+          const card = await deps.sessions.readSession(owned.ctx,
+            { projectId: owned.projectId, sessionId: session.ref.sessionId });
+          if (card.status === 'ready') claimRevision = card.value.record.revision;
+        }
         const built = await buildClaimOperation(owned, base, goal, graphRead.value.plan.ref, task, binding,
-          session.ref.sessionId, session.revision, undefined, operation.requeue);
+          session.ref.sessionId, claimRevision, undefined, operation.requeue);
         if ('rejection' in built) return waiting(receipt, built.rejection.reason);
         const nextBase: Base = { ...base, sessionHint: { projectId: owned.projectId, sessionId: session.ref.sessionId } };
         return advancing(receipt, makePerform(nextBase, built.operation));
@@ -1353,6 +1577,19 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort & Requi
       case 'start': {
         const result = await deps.runtime.startRun(owned.ctx, operation.request);
         const receipt: WorkflowStepReceipt = { kind: 'start', result };
+        // W1-WF-01 (§4.3 item 3, L4): the Goal-content entry guard's refusal
+        // (`revision_conflict` with the exact `context_goal_changed:` prefix)
+        // re-prepares the SAME Run instead of waiting. `prepareStep` hashes the
+        // unchanged base and Run ref, so the prepare request id is unchanged;
+        // `prepareExecution` of an unbound Run assembles a fresh manifest
+        // instead of replaying by request id, so the new manifest makes the
+        // following `start` request id different. Every other refusal keeps the
+        // original waiting behavior.
+        if (result.status === 'rejected' && result.code === 'revision_conflict'
+          && result.reason.startsWith('context_goal_changed:')) {
+          return advancing(receipt, makePerform(base,
+            { kind: 'prepare', request: prepareStep(base, operation.request.prepared.claim.runRef) }));
+        }
         if (result.status !== 'ready') return waiting(receipt, receiptReason(result, 'the Run did not return a formal record'));
         const ended = normalEnd(result.value.run);
         if (!ended.ok) return afterNotNormalEnd(receipt, result.value.run, ended.reason, base);
@@ -1449,6 +1686,53 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort & Requi
         // `run_check`); any other refusal waits with its code.
         if (result.status === 'committed' || result.code === 'revision_conflict') return advancing(receipt, selectWorkStep(base));
         return waiting(receipt, `${result.code}: ${result.reason}`);
+      }
+      case 'transfer_responsibility': {
+        const responsibilities = deps.responsibilities;
+        if (responsibilities === undefined) {
+          return rejection('unsupported', 'the responsibility owner is not installed');
+        }
+        // E15 (W1-HO-02, L13): performed as the platform automation actor with a
+        // deterministic `wf-auto:` request id. A commit claims; a conflict goes
+        // back to the selection (another writer moved first); every other refusal
+        // still claims — a failed handover never blocks the continuation.
+        const result = await responsibilities.transferSessionResponsibility(automationContext(owned), operation.request);
+        const receipt: WorkflowStepReceipt = { kind: 'transfer_responsibility', result };
+        if (result.status === 'rejected' && result.code === 'revision_conflict') {
+          return advancing(receipt, selectWorkStep(base));
+        }
+        return await claimAfterHandover(owned, base, operation, receipt);
+      }
+      case 'archive_predecessor': {
+        const internal = archiveService.archiveLineInternal;
+        if (internal === undefined) {
+          return rejection('unsupported', 'the Workflow archive composition is not installed');
+        }
+        // E15 (W1-HO-03, L11/L13/L14): the same composition's internal entry,
+        // mode `handoff_complete`, no anchor and no requeue (execution `none`).
+        const result = await internal(automationContext(owned), operation.request);
+        const receipt: WorkflowStepReceipt = { kind: 'archive_predecessor', result };
+        if (result.status === 'ready') {
+          if (result.value.state === 'archived') return await claimAfterHandover(owned, base, operation, receipt);
+          // `pending`/`partial`: read the predecessor now. A closed Task link
+          // means the transfer committed and only the final archive lagged; an
+          // open one (or an unreadable card) returns to the selection, where the
+          // registered request and the same advancement's maintenance continue.
+          const stillOpen = await predecessorStillOpen(owned, operation.request.input.sessionRef, operation.taskRef);
+          return stillOpen ? advancing(receipt, selectWorkStep(base)) : await claimAfterHandover(owned, base, operation, receipt);
+        }
+        if (result.status === 'rejected' && result.code === 'revision_conflict') {
+          return advancing(receipt, selectWorkStep(base));
+        }
+        // Any other refusal: fall back to the one-step transfer when the
+        // predecessor still holds the Task open; otherwise the claim proceeds.
+        const fallback = await transferStepFor(owned, base, {
+          predecessor: operation.request.input.sessionRef, task: operation.taskRef,
+          successor: operation.successor, planRef: operation.planRef,
+          ...(operation.requeue === undefined ? {} : { requeue: operation.requeue }),
+        });
+        if (fallback !== null) return advancing(receipt, makePerform(base, fallback));
+        return await claimAfterHandover(owned, base, operation, receipt);
       }
     }
   }

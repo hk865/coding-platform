@@ -9,11 +9,12 @@ import type { ModuleRef, SessionRef } from './core/identity.js';
 import type { CoreError } from './core/results.js';
 import type { SessionMessageRef } from './core/session-message.js';
 import type { RunRef, TaskTriple } from './dispatch.js';
-import type { AggregateRef, GoalRef, WorkspaceRef } from './ledger.js';
+import type { AggregateRef, GoalRef, GoalSnapshot, WorkspaceRef } from './ledger.js';
 import type { PlanRevisionRef } from './plan.js';
 import type { PlatformDutyV1 } from './platform-duty.js';
 import type { DependencyRequirement } from './plan.js';
 import type { VerificationRoundRef } from './verification.js';
+import { canonicalJson, sha256Hex, type JsonValue } from './fingerprint.js';
 
 export type { PlatformDutyV1 };
 
@@ -132,3 +133,40 @@ export type AttentionChangesV1 = {
   feedbackIds: string[];
 };
 export type GraphChangesV1 = Pick<AttentionChangesV1, 'nodes' | 'edges' | 'revision'>;
+
+// ------------------------------------------------------------------------ //
+// Wiring package 1 (G): the Goal-record content the Work Goal section shows. //
+// ------------------------------------------------------------------------ //
+
+/**
+ * The Goal-record content the Work context's Goal section shows (decision 47
+ * (2), wiring-1 §2.1, L2): exactly the fields the Goal section renders from the
+ * Goal record itself. A new shown Goal-record field (I-4's autonomy first) must
+ * be added here and `contentVersion` raised (L3); the entry compares the stored
+ * digest, it does not interpret the version.
+ */
+export type GoalContextContentV1 = {
+  contentVersion: 1;
+  goalId: string;
+  objective: string;
+  workspaceId: string;
+};
+
+/** The current Goal-record content of one Goal (§2.1). Pure: no clock, no store. */
+export function goalContextContentV1(
+  goal: Pick<GoalSnapshot, 'ref' | 'objective' | 'workspaceRef'>,
+): GoalContextContentV1 {
+  return {
+    contentVersion: 1,
+    goalId: goal.ref.goalId,
+    objective: goal.objective,
+    workspaceId: goal.workspaceRef.workspaceId,
+  };
+}
+
+/** The canonical digest of `goalContextContentV1(goal)` (§2.1). Pure. */
+export function goalContextDigestV1(
+  goal: Pick<GoalSnapshot, 'ref' | 'objective' | 'workspaceRef'>,
+): string {
+  return sha256Hex(canonicalJson(goalContextContentV1(goal) as unknown as JsonValue));
+}

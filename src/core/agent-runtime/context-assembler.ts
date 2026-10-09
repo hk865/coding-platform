@@ -26,6 +26,7 @@ import type {
   ContextExtensionsV1, ContextIndexRowV1, ContextSectionNameV1, ContextSourceV1, GraphAttentionFactsV1,
   InputDeclarationV1, InputSelectionV1, PlatformDutyV1, TaskInputPageV1,
 } from '../../contracts/graph-context.js';
+import { goalContextDigestV1 } from '../../contracts/graph-context.js';
 import type { GoalSnapshot } from '../../contracts/ledger.js';
 import type { PlanRevisionSnapshot, RuntimeTask } from '../../contracts/plan.js';
 import { revisionAssignments } from '../../contracts/plan.js';
@@ -919,6 +920,16 @@ export function createContextAssembler(deps: ContextAssemblerDependencies): Cont
       }))
       .sort((left, right) => (left.requirementId < right.requirementId ? -1 : left.requirementId > right.requirementId ? 1 : 0));
 
+    // §4.3/G (wiring 1 W1-CTX-01, L2): the Work binding replaces only this claim
+    // Goal's `record` source digest with the Goal-record content the Goal section
+    // shows. Map first, then sort, so the digest takes part in the canonical key.
+    const bindingSources = (facts?.sources ?? []).map((source): ContextSourceV1 => {
+      if (facts === null || claim === undefined) return source;
+      if (source.kind !== 'record' || source.ref.aggregateType !== 'Goal') return source;
+      if (source.ref.projectId !== claim.task.projectId || source.ref.goalId !== claim.task.goalId) return source;
+      return { ...source, digest: goalContextDigestV1(facts.goal) };
+    });
+
     const binding: ContextAssemblyBindingV1 = {
       schemaVersion: 1,
       formatVersion: CONTEXT_FORMAT_VERSION,
@@ -928,7 +939,7 @@ export function createContextAssembler(deps: ContextAssemblerDependencies): Cont
       residentBytes: rendered.residentBytes,
       totalBytes: rendered.totalBytes,
       sections: rendered.sections,
-      sources: sortedSources(facts?.sources ?? []),
+      sources: sortedSources(bindingSources),
       inputSelections: [...inputSelections],
       extensions: annotations(extensions),
     };

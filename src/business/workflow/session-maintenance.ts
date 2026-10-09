@@ -388,9 +388,11 @@ export function createSessionMaintenanceService(
     }
   }
 
-  async function dutyOf(record: SessionRecord): Promise<PlatformDutyV1 | 'unknown'> {
+  async function dutyOf(ctx: CoreCallContext, record: SessionRecord): Promise<PlatformDutyV1 | 'unknown'> {
     if (deps.sessionDuty === undefined) return 'unknown';
-    const resolved = await deps.sessionDuty(record.role);
+    // L6: hand the already-checked caller ctx to the resolver so a `role_spec`
+    // Session can read its pinned RoleSpec body's own duty.
+    const resolved = await deps.sessionDuty(record.role, ctx);
     if (resolved.status === 'ready') return resolved.value;
     return 'unknown';
   }
@@ -499,31 +501,43 @@ export function createSessionMaintenanceService(
           record = closed.record;
           links = closed.links;
 
-          let mode: 'retired' | 'answered_copy' | 'executor_idle' | null = null;
+          let mode: 'retired' | 'answered_copy' | 'executor_idle' | 'handoff_complete' | null = null;
           let reason = '';
           if (retired) {
-            if (record.occupancy !== null || facts.continuations.length > 0) continue;
-            // A8 Q-01/H-04 (LA-1, SES-07) + §4.2 S:807: a `kernel_turn_open`
-            // line is left for the explicit route when the platform has nothing
-            // to dispose (no open responsibility: the retired Query Session of
-            // A8 Q-01) or when an original human pause fence still holds (the
-            // paused-interrupted Work line of A8-3o/3q). A plain host-takeover
-            // interruption with an open responsibility is still auto-archived
-            // (S1-AUTO-02 drops it: IT10); a retired wait is exempt from
-            // disposal (S1-AUTO-02) and still archives.
-            if (record.healthConclusion === 'kernel_turn_open' && facts.wait === null
-              && (openResponsibleLinks(record, links).length === 0
-                || !(await platformCleanInterruption(automation, facts.latestWork)))) continue;
-            // E14 (§2.2 S:190): while the workspace still has unchecked
-            // provenance-null Sessions, or this line's own legacy provenance
-            // could not be resolved, the absence of a continuation is unproven.
-            if (facts.legacyPending || (record.provenance ?? null) === null) {
-              failures.push({ sessionRef, rejection: reject('incomplete',
-                'the legacy provenance of this line is unresolved; the absence of a continuation cannot be proven') });
-              continue;
+            if (record.occupancy !== null) continue;
+            // W1-AUTO-01 (L12): a retired line that already has a continuation
+            // is handed over. Once its own terminal responsibility links are
+            // closed, a remaining open task/work relation means the handover is
+            // not finished (HM02) and the line stays put; an open module link is
+            // not a responsibility to dispose (HM04). Otherwise the continuation
+            // took the work and this line is archived as `handoff_complete`.
+            if (facts.continuations.length > 0) {
+              if (openResponsibleLinks(record, links).some((link) => link.ref.target.kind !== 'module')) continue;
+              mode = 'handoff_complete';
+              reason = 'the retired line was handed over to its continuation';
+            } else {
+              // A8 Q-01/H-04 (LA-1, SES-07) + §4.2 S:807: a `kernel_turn_open`
+              // line is left for the explicit route when the platform has nothing
+              // to dispose (no open responsibility: the retired Query Session of
+              // A8 Q-01) or when an original human pause fence still holds (the
+              // paused-interrupted Work line of A8-3o/3q). A plain host-takeover
+              // interruption with an open responsibility is still auto-archived
+              // (S1-AUTO-02 drops it: IT10); a retired wait is exempt from
+              // disposal (S1-AUTO-02) and still archives.
+              if (record.healthConclusion === 'kernel_turn_open' && facts.wait === null
+                && (openResponsibleLinks(record, links).length === 0
+                  || !(await platformCleanInterruption(automation, facts.latestWork)))) continue;
+              // E14 (§2.2 S:190): while the workspace still has unchecked
+              // provenance-null Sessions, or this line's own legacy provenance
+              // could not be resolved, the absence of a continuation is unproven.
+              if (facts.legacyPending || (record.provenance ?? null) === null) {
+                failures.push({ sessionRef, rejection: reject('incomplete',
+                  'the legacy provenance of this line is unresolved; the absence of a continuation cannot be proven') });
+                continue;
+              }
+              mode = 'retired';
+              reason = 'the Session is retired with no continuation';
             }
-            mode = 'retired';
-            reason = 'the Session is retired with no continuation';
           } else if (copy) {
             if (record.occupancy !== null) continue;
             const answer = await copyAnswerState(automation, sessionRef, record);
@@ -535,7 +549,7 @@ export function createSessionMaintenanceService(
             mode = 'answered_copy';
             reason = 'the read-only copy has a formal answer';
           } else {
-            const duty = await dutyOf(record);
+            const duty = await dutyOf(ctx, record);
             if (duty !== 'executor') continue;
             const open = openResponsibleLinks(record, links);
             const waiting = facts.wait !== null;

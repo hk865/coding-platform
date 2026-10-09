@@ -42,7 +42,7 @@ import {
   continuationBriefDigest, continuationBriefShapeProblem, renderContinuationBriefZh,
 } from '../../../contracts/continuation-brief.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
-import type { GoalRef } from '../../../contracts/ledger.js';
+import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
 import { sameArtifactRef, validMaterialSourcePin, type MaterialBasisV1 } from '../../../contracts/material-access.js';
 import { MANIFEST_CONTENT_TYPE } from '../../../contracts/no-progress.js';
 import type { RoleSpecResolutionV1 } from '../../../contracts/role-spec-materials.js';
@@ -51,6 +51,7 @@ import { isAutomationActor } from '../../../contracts/task-requeue.js';
 import type {
   ContextAssemblyBindingV1, ContextCallKindV1, InputDeclarationV1, PlatformDutyV1,
 } from '../../../contracts/graph-context.js';
+import { goalContextDigestV1 } from '../../../contracts/graph-context.js';
 import type { PlanRevisionSnapshot } from '../../../contracts/plan.js';
 import { isArtifactRef } from '../../record-store/body-codec.js';
 import type { RawArtifactRecord } from '../../record-store/body-ports.js';
@@ -100,7 +101,7 @@ import type { TaskExecutionRecord } from '../model/execution-read-contracts.js';
 import { readEntryPlanVerdict } from './entry-plan-reader.js';
 import { readGoalScope, sameCursor } from './plan-readers.js';
 import { planRevisionRefKey } from '../persistence/plan-record-codecs.js';
-import { contextAssemblyProblem, declaredInputProblem, effectivePlatformDuty } from '../state/context-input.js';
+import { contextAssemblyProblem, contextGoalContentProblem, declaredInputProblem, effectivePlatformDuty } from '../state/context-input.js';
 
 // --------------------------------------------------------------------------
 // Small pure helpers
@@ -1094,8 +1095,10 @@ function inputDeclarationsOf(plan: PlanRevisionSnapshot, consumer: TaskTriple): 
  * canonical Work facts and its selections come from the claim Plan. The
  * expected duty is the resolved Role's `platformDuty`, else the duty the
  * Session's versioned legacy template fixes (§2.4 item 3/§2.5), else
- * `executor`. A binding that named a different Workspace revision is a
- * `revision_conflict`.
+ * `executor`. The saved manifest's Goal record source, when it carries a digest,
+ * must match the current Goal content (W1-CTX-01); a mismatch is a
+ * `revision_conflict` with reason `context_goal_changed:`. A binding that named a
+ * different Workspace revision is also a `revision_conflict`.
  */
 function contextConsumptionProblem(input: {
   manifest: PreparedTaskManifestV1;
@@ -1103,6 +1106,8 @@ function contextConsumptionProblem(input: {
   claim: TaskClaim;
   scope: WorkspaceScope;
   workspaceRevision: number;
+  /** The current Goal `authorizeRuntimeEntry` read, the same one its current-version guard uses. */
+  goal: GoalSnapshot;
   /** CTX-02: re-authorizing an already bound manifest validates it, it does not re-pin its sources. */
   rebinding: boolean;
 }): CoreRejection | null {
@@ -1139,6 +1144,16 @@ function contextConsumptionProblem(input: {
       return reject('revision_conflict', 'the assembled context named another Workspace revision');
     }
   }
+  // W1-CTX-01 (wiring 1 §2.2, L2/L4): after the Workspace revision and before the
+  // input declarations, compare the shown Goal content the binding stored against
+  // the current Goal; a change re-prepares, it does not re-pin the Goal version.
+  const goalContent = contextGoalContentProblem({
+    binding,
+    claimGoal: { projectId: input.claim.task.projectId, goalId: input.claim.task.goalId },
+    currentGoalDigest: goalContextDigestV1(input.goal),
+    rebinding: input.rebinding,
+  });
+  if (goalContent !== null) return goalContent;
   const allowedDeclarations = inputDeclarationsOf(input.plan, input.claim.task);
   const scope = { projectId: input.scope.projectId, workspaceId: input.scope.workspaceId, goalId: input.claim.task.goalId };
   for (const selection of binding.inputSelections) {
@@ -1170,7 +1185,8 @@ function contextConsumptionProblem(input: {
  * already guards the Goal at its CURRENT revision and decides by the W3 rule
  * whether a newer Goal revision (an unrelated Plan adoption) still admits the
  * claim; a second guard at the consumed revision would contradict it and stall
- * the claimed Run (`conflicting guards`). Every other record source stays guarded.
+ * the claimed Run (`conflicting guards`). Every other record source stays guarded;
+ * the shown Goal content is compared instead (wiring 1 W1-CTX-01).
  */
 function contextConsumptionGuards(binding: ContextAssemblyBindingV1 | undefined, faceRunRef: RunRef): readonly RecordGuard[] {
   if (binding === undefined) return [];
@@ -1206,7 +1222,7 @@ function contextConsumptionGuards(binding: ContextAssemblyBindingV1 | undefined,
 async function authorizeAdmission(
   deps: ExecutionEntryDependencies, ctx: CoreCallContext, scope: WorkspaceScope,
   prepared: PreparedTaskExecution, facts: TaskExecutionRecord, goalWorkspaceId: string,
-  workspaceRevision: number,
+  goal: GoalSnapshot, workspaceRevision: number,
 ): Promise<Admitted> {
   const claim = prepared.claim;
   if (goalWorkspaceId !== claim.workspaceId) return { ok: false, rejection: forbidden('the Goal belongs to another workspace') };
@@ -1223,7 +1239,7 @@ async function authorizeAdmission(
   // authorization was revoked) only validates it and never refuses for sources that moved on.
   const rebinding = facts.run.executionAuthorization?.phase === 'revoked';
   const consumption = contextConsumptionProblem({
-    manifest, plan: facts.plan, claim, scope, workspaceRevision, rebinding,
+    manifest, plan: facts.plan, claim, scope, workspaceRevision, goal, rebinding,
   });
   if (consumption !== null) return { ok: false, rejection: consumption };
   return { ok: true, value: { ...admitted.value,
@@ -1479,7 +1495,7 @@ export function createExecutionEntryService(deps: ExecutionEntryDependencies): E
         anomalyRefsMatch: anomalyAnchorRefsMatch(manifestBrief, prepared.inputBinding) };
       const admission = freshAdmissionOf(
         await authorizeAdmission(deps, scopeCtx, scope, prepared, facts,
-          goalScope.goal.workspaceRef.workspaceId, goalScope.workspaceRevision));
+          goalScope.goal.workspaceRef.workspaceId, goalScope.goal, goalScope.workspaceRevision));
       const authorized = transitionRun(state, runEvent, { ...runCtx, freshAdmission: admission.problem });
       if (!authorized.ok) return runRefusal(authorized, admission.problem);
       const nextRun = nextRunOf(authorized.next);

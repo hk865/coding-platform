@@ -22,6 +22,7 @@ import type { SessionMailboxPort } from '../core/work-graph/model/communication-
 import { SESSION_MESSAGE_RECORD_SCHEMAS } from '../core/work-graph/sessions/message-record-codecs.js';
 import { createSourceAuthorityReader } from '../core/work-graph/source-authority-reader.js';
 import { createWorkflow } from '../business/workflow/workflow.js';
+import { createSessionDutyResolver } from './session-duty.js';
 import { DEFAULT_SESSION_ARCHIVE_POLICY } from '../business/workflow/ports.js';
 import type {
   SessionArchivePolicyV1, SessionDutyResolver, WorkflowDependencies, WorkflowHostConfiguration, WorkflowPort,
@@ -87,6 +88,7 @@ import { SESSION_ANOMALY_RECORD_SCHEMAS } from '../core/work-graph/tasks/session
 import { projectQueryConfiguration } from '../core/agent-runtime/query-preparation.js';
 import { createTaskContextInputService } from '../core/work-graph/tasks/context-input-service.js';
 import { createGraphContextReader } from '../core/work-graph/views/graph-context-reader.js';
+import { createContextExtensionsReader } from '../core/work-graph/views/context-extensions.js';
 import type { GraphContextReadPort } from '../core/work-graph/model/graph-context-contracts.js';
 import type { TaskContextInputPort } from '../core/work-graph/model/context-input-contracts.js';
 import { createQueryJobService } from '../core/work-graph/queries/query-job-service.js';
@@ -161,9 +163,12 @@ export type TargetPlatformOptions = {
    */
   sessionArchivePolicy?: SessionArchivePolicyV1;
   /**
-   * Slice 1 (spec §2.8, L4): the trusted duty resolver. Absent derives executor
-   * from `WorkflowHostConfiguration.bindings[].sessionRole` only; the resolver
-   * is a trusted Host callback, never a model input or a stored Session field.
+   * Slice 1 (spec §2.8, L4) with wiring 1 I-1 (§2.4, L5): the trusted duty
+   * resolver. Absent resolves from the Session's own fixed role facts (the
+   * pinned RoleSpec's `platformDuty` or the exact platform legacy template),
+   * and falls back to `WorkflowHostConfiguration.bindings[].sessionRole` only
+   * when both are absent; the resolver is a trusted Host callback, never a
+   * model input or a stored Session field.
    */
   sessionDutyResolver?: SessionDutyResolver;
 };
@@ -192,27 +197,6 @@ function sessionArchivePolicyOf(policy: SessionArchivePolicyV1 | undefined): Ses
     throw new Error('the Session archive policy is malformed: positive safe integers and a maintenance page size of 1..100 are required');
   }
   return { schemaVersion: 1, executorArchiveAfterMs, maintenancePageSize };
-}
-
-/**
- * Slice 1 (spec §2.8, L4): the resolver used when the Host installed none. Only
- * a role whose COMPLETE canonical `RoleConfigurationRef` is one of the Host's
- * ordinary Work bindings resolves to `executor`; every other role is `unknown`,
- * so a same-named Session is never treated as an executor. The optional Host
- * callback stays a trusted function and always wins when installed.
- */
-function defaultSessionDutyResolver(configuration: WorkflowHostConfiguration | undefined): SessionDutyResolver {
-  const executors = new Set<string>();
-  for (const binding of configuration?.bindings ?? []) {
-    try { executors.add(canonicalJson(binding.sessionRole as unknown as JsonValue)); }
-    catch { /* an unencodable role contributes no executor mapping */ }
-  }
-  return async (role) => {
-    let key: string;
-    try { key = canonicalJson(role as unknown as JsonValue); }
-    catch { return { status: 'ready', value: 'unknown' }; }
-    return { status: 'ready', value: executors.has(key) ? 'executor' : 'unknown' };
-  };
 }
 
 /**
@@ -647,6 +631,11 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       executions: executionReader,
       inputs: taskInputsOwner,
       hostActor: SYSTEM_ACTOR,
+      // Wiring 1 I-3 (§2.5, L7): the anomaly projection is installed ONLY here,
+      // on the graph-context reader. The provider rebinds the caller's ctx to
+      // this same project/workspace as the Host actor; it is never exported to a
+      // model, an HTTP route or another module.
+      extensions: createContextExtensionsReader({ anomalies: sessionAnomalies, hostActor: SYSTEM_ACTOR }),
     });
     // A Session operation spans both stores. Drain the complete operation before
     // closing the platform Store, not merely its short Kernel callback.
@@ -969,8 +958,9 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       // Slice 1 (spec §3.3): the new optional narrow ports. The SAME
       // `sessionFacts` instance reaches the Workflow; `controls` and the two
       // attestations bind this Host's existing wrappers; the archive policy and
-      // duty resolver are trusted Host data (default one day; bindings-only duty
-      // when no resolver is installed). The archive/maintenance services are
+      // duty resolver are trusted Host data (default one day; with no injected
+      // resolver the duty resolver reads the Session's own role facts first, see
+      // below). The archive/maintenance services are
       // built by `createWorkflow` from these ports.
       sessionLifecycle,
       sessionFacts,
@@ -987,9 +977,14 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       // provenance reader; both are the narrow ports the owners already use.
       responsibilityBasis,
       legacyProvenance,
-      // The trusted Host callback, when installed, wins; otherwise only the
-      // ordinary Work bindings resolve to `executor` (L4).
-      sessionDuty: options.sessionDutyResolver ?? defaultSessionDutyResolver(workflowConfiguration),
+      // The trusted Host callback, when installed, always wins. Otherwise the
+      // resolver reads the Session's own fixed role facts and, only when neither
+      // the pinned RoleSpec nor the legacy platform template names a duty, falls
+      // back to the ordinary Work bindings' `sessionRole` (I-1, L5).
+      sessionDuty: options.sessionDutyResolver ?? createSessionDutyResolver({
+        readRoleSpec: roleService.readRoleSpec.bind(roleService),
+        configuration: workflowConfiguration,
+      }),
       ...(workflowConfiguration === undefined ? {} : { configuration: workflowConfiguration }),
       // Slice 1 (spec §4.1): the full mailbox owns `disposeArchiveWait`; without
       // it an ordinary transferred-wait archive answers unsupported. It is the

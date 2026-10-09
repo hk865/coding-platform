@@ -17,6 +17,8 @@ import type { InitialPlanProposalResult, PlanTaskPort } from '../../core/work-gr
 import type { EvidencePort } from '../../core/work-graph/model/evidence-contracts.js';
 import type { RuntimeExecutionPort } from '../../core/agent-runtime/ports.js';
 import type { RegisteredCheckRunner } from '../../core/agent-runtime/check-execution.js';
+import type { SessionResponsibilityPort } from '../../core/work-graph/sessions/session-responsibility-service.js';
+import type { InternalSessionArchivePort } from './session-archive.js';
 
 /** N0-only accepted shape. The full GoalInput proposal/decision protocol is
  * deliberately absent until WorkGraph publishes its real proposal Port. */
@@ -55,6 +57,21 @@ export type WorkflowCalls = {
    */
   requeue_task: NonNullable<TaskClaimPort['requeueTask']>;
   reverify_round: NonNullable<EvidencePort['reverifyRound']>;
+  /**
+   * E15 (wiring 1 §4.4, L10): hand the continued Task's responsibility to the
+   * new Session. This is exactly `SessionResponsibilityPort`'s own method,
+   * called as the platform automation actor with a deterministic `wf-auto:`
+   * request id.
+   */
+  transfer_responsibility: SessionResponsibilityPort['transferSessionResponsibility'];
+  /**
+   * E15 (wiring 1 §4.4, L11): transfer the Task and archive a live predecessor
+   * line in one composition (mode `handoff_complete`). This is deliberately NOT
+   * a WorkGraph owner method: it is the Workflow's own archive composition entry
+   * (`InternalSessionArchivePort.archiveLineInternal`), the one intended
+   * exception to the "exact owner method" rule above.
+   */
+  archive_predecessor: InternalSessionArchivePort['archiveLineInternal'];
 };
 
 export type WorkflowStepKind = keyof WorkflowCalls;
@@ -66,17 +83,32 @@ export type WorkflowStepKind = keyof WorkflowCalls;
 export type WorkflowSessionRequeue = { requeueRef: TaskRequeueRef; budget: TaskBudgetV1 | null };
 
 /**
+ * What a handover step carries so the claim of the continuation can follow it
+ * (wiring 1 §2.3, L10/L17): the continued Task and its Plan, the new Session,
+ * and, on the crash-recovery path, the requeue this advancement claims with.
+ */
+export type WorkflowHandoverContinuation = {
+  taskRef: TaskTriple;
+  planRef: PlanRevisionRef;
+  successor: SessionRef;
+  requeue?: WorkflowSessionRequeue;
+};
+
+/**
  * One explicit perform step. The request is the owner's real second argument.
  * Only Session creation additionally carries the formal Task/Plan to link after
  * the owner receipt confirms a Session record exists (and, for a requeued Task,
  * the requeue to claim with); every other object comes from the original
  * request or a formal receipt, never from a caller-supplied PASS, policy,
- * command or capability.
+ * command or capability. The two handover steps also carry
+ * `WorkflowHandoverContinuation` so the following claim knows the successor.
  */
 export type WorkflowOperation = {
   [K in WorkflowStepKind]: { kind: K; request: Parameters<WorkflowCalls[K]>[1] }
     & (K extends 'create_session'
-      ? { taskRef: TaskTriple; planRef: PlanRevisionRef; requeue?: WorkflowSessionRequeue } : {})
+      ? { taskRef: TaskTriple; planRef: PlanRevisionRef; requeue?: WorkflowSessionRequeue }
+      : K extends 'transfer_responsibility' | 'archive_predecessor'
+        ? WorkflowHandoverContinuation : {})
 }[WorkflowStepKind];
 
 /** The owner's complete, un-weakened result for one performed step. */
