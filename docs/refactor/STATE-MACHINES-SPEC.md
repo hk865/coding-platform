@@ -5257,7 +5257,7 @@ D-17 原列表六项为 GAP-03…08；lead 决定 L-7 把 GAP-41 补入这一列
 编排第 1、3 片（DESIGN §8.2）合入以后，状态机多了下面这些行。行的完整写法（from、event、guard、to、effects、幂等、原文编号）以各片的冻结规格为准，这里不重抄：第 1 片 19 行在 [slice-1-SPEC §3.2](design/orchestration-2026-10/slices/slice-1-SPEC.md#32-迁移表)（另有补充拒绝表），第 3 片 3 行在 [slice-3-SPEC §3.2](design/orchestration-2026-10/slices/slice-3-SPEC.md#32-state-machines-spec-表格)。新行号用各片自己的前缀，已有的 `SES-*`、`TASK-*`、`MSG-*`、`RUN-*` 不重编号。表格约定同 §1.4，缩写同 §15.3；测试一列写测试文件和规格里的用例号，每个用例号都是一个 `it`（work-graph 下的 SV 用例在 memory 和 SQLite 各跑一次）。
 
 - 第 0 片没有状态行（只改注意力边的字符串）。
-- 第 5 片的 23 行（S5-*）在 [slice-5-SPEC](design/orchestration-2026-10/slices/slice-5-SPEC.md) 里冻结了，但第 5 片没有验收、没有合入（见[第 5 片证据](reviews/evidence/orchestration-slice-5-2026-10-08/README.md)），等合入时再补进本节。（2026-10-09 补注：决定 47 又做了一轮，仍没有合入；决定 48 再给一轮。行仍只在规格里。）
+- 第 5 片的 23 行（S5-*）在 [slice-5-SPEC](design/orchestration-2026-10/slices/slice-5-SPEC.md) 里冻结了，但第 5 片没有验收、没有合入（见[第 5 片证据](reviews/evidence/orchestration-slice-5-2026-10-08/README.md)），等合入时再补进本节。（2026-10-09 补注：决定 47 又做了一轮，仍没有合入；决定 48 再给一轮。行仍只在规格里。）（2026-10-09 夜补注：决定 48 那一轮做完，第 5 片合入（a7cafccc），23 行见 §17.4。）
 - 提交：第 1 片 327ec020，第 3 片 ccecc016 和合入修正 e48218a5。证据在 `reviews/evidence/orchestration-slice-<n>-2026-10-08/`。
 - 2026-10-09 补：接线包 1（决定 47）的 9 行（W1-*）在 §17.3，规格 [wiring-1-SPEC §3](design/orchestration-2026-10/slices/wiring-1-SPEC.md#3-状态行)，提交 6180adfc，证据 [orchestration-wiring-1-2026-10-09](reviews/evidence/orchestration-wiring-1-2026-10-09/README.md)。
 
@@ -5330,6 +5330,45 @@ D-17 原列表六项为 GAP-03…08；lead 决定 L-7 把 GAP-41 补入这一列
 - §17.2 的 CTX-01：e48218a5 留下的代价由 W1-CTX-01 补上（见上）。今天生产代码里还没有改 Goal 目标文字的写入方，这条守卫要等 I-4 或第 6 片才会真的拦下一次进入（规格 L1）。
 - Work 的执行清单绑定里，这个 Goal 来源的 `digest` 由 null 变为摘要；喂给模型的输入文字不变。Query 的绑定不变。
 - 第 1 片的普通接续（§17.1 S1-SES-01 写的 `continuation` 来历）从此会转走负责关系、能归档时归档前任；原来证据里记的“普通接续不转走负责关系、不归档前任”已补上。
+
+### 17.4 第 5 片：目标设置与决定（S5-*，2026-10-09 夜）
+
+第 5 片合入在 a7cafccc（决定 36、43、46、47、48；[证据](reviews/evidence/orchestration-slice-5-2026-10-08/README.md)）。23 行的完整写法见 [slice-5-SPEC §3.1](design/orchestration-2026-10/slices/slice-5-SPEC.md#31-纯状态机和固定迁移表)，其中 S5-MSG-01、S5-PLAN-03、S5-PLAN-05 改造已有的 MSG-02、计划采用和 `derivePlanProposalStatus`，其余是新行。§0 的 L1 和决定 48 定了：“初始化采用”的补记不在这一片（第 6 片）。用例号的出处：GS、PO、MD、PC、NS、SS、UM、RC、DQ、AP、NR、RT、WF、TU、SC 见 slice-5-SPEC §5；R2A–R2D 是决定 48 补的 37 行，见 [slice-5-round2-TESTS](design/orchestration-2026-10/slices/slice-5-round2-TESTS.md)。测试文件都在 `tests/` 下：`state/S5-*.test.ts` 是单元；`work-graph/S5-*.test.ts` 的服务用例在 memory 和 SQLite 各跑一次；R2 的文件是 `work-graph/S5R2-queue-history`、`business/S5R2-automation-cards`、`business/S5R2-settings-replay`、`runtime/S5R2-agent-application`、`app/S5R2-driver-safe-point`。测试一列是 lead 按用例的给定和期望归到行上的主要用例，不是每个碰到这一行的用例都列。
+
+| 行号 | 摘要 | state 文件 | 服务文件 | 测试（用例） |
+| --- | --- | --- | --- | --- |
+| S5-GS-01 | active/paused Goal → `settings_set` → 只写 settings，Goal 版本 +1，desiredState 不变 | goal-settings-machine.ts（`transitionGoalSettings`、`buildGoalSettingsRecord`） | wg/tasks/goal-settings-service.ts（`setGoalSettings`） | state/S5-goal-settings GS01–GS05；work-graph/S5-goal-settings SS01–SS03、SS10、SS14；app/S5-decision-routes RT05 |
+| S5-GS-02 | 同 Workspace 的 Goal 全集 → `order_set` → 每个 order = 下标，一次提交 | goal-settings-machine.ts | goal-settings-service.ts（`reorderGoals`） | SS04、SS05；business/S5-decision-workflow WF02；S5R2-settings-replay R2C06（别的 Workspace 的决定消息 `forbidden`，LZ2） |
+| S5-GS-03 | 冲突对后一个 Goal → `wait_selected` → `waitForGoalRef` 定为所选的前一个 | goal-settings-machine.ts | goal-settings-service.ts（`setGoalSettings`、`resolveGoalConflict`） | GS06、GS09；SS08、SS09、SS13；S5R2-settings-replay R2C01、R2C02 |
+| S5-GS-04 | 冲突对后一个 Goal → `risk_accepted` → 同一对的风险替换 | goal-settings-machine.ts | goal-settings-service.ts（`resolveGoalConflict`） | SS06、SS07；R2C07（LZ2）；scenarios/S5-goal-conflict-rework SC02 |
+| S5-GS-05 | cancelled Goal → 任一设置写 → `invalid`（先查原回执） | goal-settings-machine.ts | goal-settings-service.ts | GS04；SS02 |
+| S5-GS-06 | 已答的冲突、Goal 只因控制变了版本 → 按当前 pin 应用，记下 `basisRebases`，不重答 | goal-settings-machine.ts（`goalDecisionBasisMatches`） | goal-settings-service.ts；wf/decision-actions.ts（`resolveDecision`） | GS14、GS15；SS11、SS12、SS15；R2C03、R2C04、R2C05（LZ3）；work-graph/S5-decision-application AP09 |
+| S5-AU-01 | 新的修改工作（领取、进入、新接续、小任务、派工）：等前一个目标没完时不允许（`waiting_predecessor:<goalId>`） | goal-settings-machine.ts（`goalStartPolicy`） | wg/tasks/claim-service.ts；wg/tasks/execution-entry-service.ts | GS06–GS08；SS08、SS09、SS13、SS16 |
+| S5-AU-02 | 只读查询、出方案、已有执行接着跑：不加等待的门槛 | goal-settings-machine.ts（`goalStartPolicy`） | 同上 | GS10；SS13（已领取的 Run 保留） |
+| S5-AU-03 | 自治级别的动作表：“每步确认”下自动动作 → `needs_decision` | decision-policy.ts（`decisionActionPolicy`、`automationConfirmationCause`、暂停时的 `pausedAutomationAction`） | wg/tasks/requeue-service.ts；wg/evidence/evidence-service.ts；wf/workflow.ts（`automationConfirmation`）；wg/tasks/goal-decision-reader.ts | state/S5-decision-policy PO01–PO12；WF01；business/S5R2-automation-cards R2B01–R2B05；SC02 |
+| S5-AU-04 | 谁能发给用户：`decision_request` 只有秘书、参谋、书记；`notify` 五种职责都可以；只读副本和独立审阅不行；没有映射 `unsupported` | decision-policy.ts（`canSendUserMessage`） | wg/configuration/message-duties-adapter.ts；wg/communication/mailbox-service.ts | PO13–PO16；work-graph/S5-user-messages UM02、UM04、UM05；runtime/S5-user-message-tools TU03 |
+| S5-MSG-01 | absent → `user_message_sent` → pending@1，收件方是用户（改造 MSG-02） | message-machine.ts | mailbox-service.ts（`sendUserMessage`） | state/S5-message-decision MD01、MD02；UM01、UM03、UM09、UM13；TU01；RT07（旧 `messages/send` 不变） |
+| S5-MSG-02 | pending/read 的用户决定消息 → `user_decision_answered` → responded，`application=null`；暂停可答 | message-machine.ts | wg/communication/decision-service.ts（`answerDecision`） | MD03–MD10；UM06–UM08、UM10、UM11；work-graph/S5-decision-queue DQ04–DQ06、DQ08；work-graph/S5-decision-application AP08；RT02；TU04–TU06 |
+| S5-MSG-03 | 不是消息的卡 → `synthetic_decision_answered` → 新建用户发的消息，直接 responded@1 | message-machine.ts | decision-service.ts；wg/communication/decision-source-facts.ts | MD11；AP01；R2B01、R2B02、R2B04（Workflow 发出的自动化确认卡，暂停后照样能答） |
+| S5-MSG-04 | responded、要落实、还没记 → `decision_application_recorded` → 记下正式回执的改动 | message-machine.ts | decision-service.ts（`recordDecisionApplication`）；wg/communication/decision-application.ts | MD13、MD14；AP02–AP07、AP12–AP16；scenarios/S5-two-request-decisions SC01；runtime/S5R2-agent-application R2D02、R2D03 |
+| S5-MSG-05 | responded、不要落实（拒绝、延期） → 补记 → `invalid` | message-machine.ts | decision-service.ts | MD12；DQ05 |
+| S5-MSG-06 | 取消的 Goal 上的任一卡 → 新答复或答复动作 → `invalid`（`goal_cancelled`），只读历史 | message-machine.ts | decision-service.ts | DQ07（读的一侧：卡进只读历史、没有回答和落实的动作）；直接回答被取消目标的卡被拒，没有点名的用例 |
+| S5-PLAN-01 | 请求的槽空 → `proposal_recorded` → candidate@1，占槽（同一次提交） | plan-machine.ts | wg/tasks/plan-service.ts；wg/tasks/plan-commit-compiler.ts | state/S5-request-candidate PC01、PC04、PC05、PC09；work-graph/S5-request-candidates RC01、RC02、RC07、RC09–RC11；RT03 |
+| S5-PLAN-02 | 请求的当前候选 → `proposal_replaced` → 旧的未采用（被替换），新的 candidate@1，槽转过去 | plan-machine.ts | plan-service.ts；plan-commit-compiler.ts | PC02、PC03；RC03、RC04；S5R2-queue-history R2A04 |
+| S5-PLAN-03 | 当前候选 → `proposal_adopted` → accepted，Goal 的计划指针移动，槽释放（改造计划采用） | plan-machine.ts | plan-service.ts（Host 的 `applyPlanChange`；Agent 的 `apply_future_plan` 带 `acknowledgementRef` 时按答复里保存的来源记出处，T-R2-1） | PC06、PC07；RC05；SC01；R2A03、R2A05、R2A06；R2D01、R2D04–R2D06 |
+| S5-PLAN-04 | candidate/stale 的当前候选 → `proposal_abandoned` → 未采用（放弃），槽释放 | plan-machine.ts | plan-service.ts（`abandonPlanProposal`） | PC08；RC06；RT04；R2A01、R2A02 |
+| S5-PLAN-05 | 读候选：存的终态优先，其次取消目标的关闭原因，其次按 basedOn 派生 stale（改造 `derivePlanProposalStatus`）；已关闭请求的历史取最后一条链的末端（T-R2-2，按 `since`） | plan-machine.ts | wg/tasks/plan-readers.ts（`enumerateClosedGoalCandidates`）；wg/views/decision-read-model.ts；wg/persistence/plan-record-codecs.ts（`compareProposalChainPositions`） | PC05、PC06、PC10；RC05、RC08；DQ07；R2A01–R2A06 |
+| S5-NT-01 | Workspace 的已读位置 → `notices_seen`（往前）→ 只改那一类，Workspace 版本 +1 | notice-settings-machine.ts（`transitionNoticeSettings`） | wg/configuration/decision-settings-service.ts（`markNoticesSeen`）；wg/views/notice-display-token.ts | state/S5-notice-settings NS01–NS03、NS05；work-graph/S5-notices NR02、NR06 |
+| S5-NT-02 | 往后、同一位置、伪造或不符的显示页 token → no-op 或 `invalid`，旧 pin `revision_conflict` | notice-settings-machine.ts | decision-settings-service.ts | NS03、NS04、NS06–NS08；NR03；RT06 |
+
+不是状态行的用例：决定队列和读卡（DQ01、DQ02、DQ09；R2A07–R2A09 的“容量不足”和 200 个 Goal 的上限，T-R2-3；R2A10、R2A11 的直接读卡，LZ5）；冲突提示（GS11–GS13；R2C08，只有当前活动计划的完成才算前一个目标做完，LZ1）；自动返工的“请知悉”（NR01、NR04、NR05、NR07、NR08）；路由（RT01、RT08）；Runtime 的咨询消费者不接用户消息（TU07）；协作驱动在领取、创建处按目标顺序排（WF02 的排序本身；R2D07–R2D13 的安全点，LC1、LC2）。
+
+**改到的已有部分：**
+- §10 Message：消息的收件方多了“用户”，多 `goalRef`、`decision`、`application` 和新的答复形状；多两个事件 `SessionMessageDecisionAnswered`、`SessionMessageDecisionApplied` 和三个索引（发给用户的消息按目标、消息按“工作区 + 状态”、答复按来源）；候选计划多一个按“目标 + 请求”的索引（slice-5-SPEC §2.5）。和第 1 片加的 `replyHandler`、`archiveWaitDisposition` 互不影响，旧记录照旧解码。
+- 计划：候选多 `requestRef`、`notAdopted`，以及只在记录里存的 `since`（链的创建位置，公开 DTO 不带）；计划采纳事件可选带 `acknowledgementRef`、`decisionApplication`，带决定证明时另带 `identityKey`、`fingerprint`（T-R2-1b）；不带出处的事件形状不变。
+- Goal、Workspace：Goal 多 `settings`（没有时读作默认），Workspace 多 `decisionSettings`；两个新事件 `GoalSettingsChanged`、`WorkspaceNoticeSeenChanged`。
+- §14 状态写入检查：受保护的字段加上这些新字段（`tests/architecture/state-writes.test.ts`）。
+- 第 5 片有一处（决定 48 定的）放进第 6 片：回答了“缺初始架构 / 缺完成标准”的卡，初始化被采纳后应关闭为“来源已解决”，现在仍停在“已答复，待落实”。
 
 ## 附录 A　决定全文（2026-10-03 已确认）
 

@@ -1,0 +1,25 @@
+> node scripts/check-boundaries.mjs
+
+Workflow: directory=true, sourceFiles=9
+WorkGraph: directory=true, sourceFiles=135
+AgentRuntime: directory=true, sourceFiles=38
+WorkspaceTools: directory=true, sourceFiles=21
+RecordStore: directory=true, sourceFiles=13
+observed module edges: 7/8 allowed (AgentRuntime -> RecordStore, AgentRuntime -> WorkGraph, AgentRuntime -> WorkspaceTools, WorkGraph -> RecordStore, WorkGraph -> WorkspaceTools, Workflow -> AgentRuntime, Workflow -> WorkGraph)
+  WorkGraph/model: sourceFiles=16
+  WorkGraph/state: sourceFiles=19
+  WorkGraph/persistence: sourceFiles=10
+  WorkGraph/configuration: sourceFiles=7
+  WorkGraph/materials: sourceFiles=5
+  WorkGraph/architecture: sourceFiles=8
+  WorkGraph/sessions: sourceFiles=10
+  WorkGraph/source-authority-ports: sourceFiles=1
+  WorkGraph/queries: sourceFiles=4
+  WorkGraph/tasks: sourceFiles=41
+  WorkGraph/source-authority-reader: sourceFiles=1
+  WorkGraph/evidence: sourceFiles=2
+  WorkGraph/communication: sourceFiles=4
+  WorkGraph/views: sourceFiles=7
+observed submodule edges: 49 (WorkGraph/architecture -> WorkGraph/model, WorkGraph/architecture -> WorkGraph/persistence, WorkGraph/communication -> WorkGraph/materials, WorkGraph/communication -> WorkGraph/model, WorkGraph/communication -> WorkGraph/persistence, WorkGraph/communication -> WorkGraph/queries, WorkGraph/communication -> WorkGraph/sessions, WorkGraph/communication -> WorkGraph/state, WorkGraph/communication -> WorkGraph/tasks, WorkGraph/configuration -> WorkGraph/model, WorkGraph/configuration -> WorkGraph/persistence, WorkGraph/configuration -> WorkGraph/state, WorkGraph/evidence -> WorkGraph/architecture, WorkGraph/evidence -> WorkGraph/model, WorkGraph/evidence -> WorkGraph/persistence, WorkGraph/evidence -> WorkGraph/state, WorkGraph/evidence -> WorkGraph/tasks, WorkGraph/materials -> WorkGraph/model, WorkGraph/materials -> WorkGraph/persistence, WorkGraph/model -> WorkGraph/state, WorkGraph/persistence -> WorkGraph/model, WorkGraph/queries -> WorkGraph/materials, WorkGraph/queries -> WorkGraph/model, WorkGraph/queries -> WorkGraph/persistence, WorkGraph/queries -> WorkGraph/sessions, WorkGraph/queries -> WorkGraph/state, WorkGraph/sessions -> WorkGraph/architecture, WorkGraph/sessions -> WorkGraph/materials, WorkGraph/sessions -> WorkGraph/model, WorkGraph/sessions -> WorkGraph/persistence, WorkGraph/sessions -> WorkGraph/state, WorkGraph/source-authority-ports -> WorkGraph/materials, WorkGraph/source-authority-reader -> WorkGraph/materials, WorkGraph/source-authority-reader -> WorkGraph/queries, WorkGraph/source-authority-reader -> WorkGraph/source-authority-ports, WorkGraph/tasks -> WorkGraph/materials, WorkGraph/tasks -> WorkGraph/model, WorkGraph/tasks -> WorkGraph/persistence, WorkGraph/tasks -> WorkGraph/queries, WorkGraph/tasks -> WorkGraph/sessions, WorkGraph/tasks -> WorkGraph/state, WorkGraph/views -> WorkGraph/architecture, WorkGraph/views -> WorkGraph/materials, WorkGraph/views -> WorkGraph/model, WorkGraph/views -> WorkGraph/persistence, WorkGraph/views -> WorkGraph/queries, WorkGraph/views -> WorkGraph/sessions, WorkGraph/views -> WorkGraph/state, WorkGraph/views -> WorkGraph/tasks)
+pure submodules: WorkGraph/state
+next source boundaries: OK

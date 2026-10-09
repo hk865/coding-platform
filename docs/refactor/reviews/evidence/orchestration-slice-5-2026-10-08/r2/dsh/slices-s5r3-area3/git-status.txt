@@ -1,0 +1,103 @@
+ M src/app/collaboration-driver.ts
+ M src/app/core-http-types.ts
+ M src/app/core-routes.ts
+ M src/app/host.ts
+ M src/business/workflow/consultation.ts
+ M src/business/workflow/contracts.ts
+ M src/business/workflow/ports.ts
+ M src/business/workflow/workflow.ts
+ M src/composition/create-platform.ts
+ M src/contracts/core/session-message.ts
+ M src/contracts/ledger.ts
+ M src/contracts/plan.ts
+ M src/contracts/query-job.ts
+ M src/core/agent-runtime/communication-tools.ts
+ M src/core/agent-runtime/execution-contracts.ts
+ M src/core/agent-runtime/execution-driver.ts
+ M src/core/agent-runtime/execution-inputs.ts
+ M src/core/work-graph/communication/mailbox-service.ts
+ M src/core/work-graph/configuration/project-bootstrap-record-codecs.ts
+ M src/core/work-graph/evidence/evidence-service.ts
+ M src/core/work-graph/model/communication-contracts.ts
+ M src/core/work-graph/model/plan-contracts.ts
+ M src/core/work-graph/persistence/evidence-record-codecs.ts
+ M src/core/work-graph/persistence/plan-record-codecs.ts
+ M src/core/work-graph/persistence/record-codecs.ts
+ M src/core/work-graph/persistence/rework-codecs.ts
+ M src/core/work-graph/queries/query-job-service.ts
+ M src/core/work-graph/queries/query-record-codecs.ts
+ M src/core/work-graph/sessions/message-body-envelope.ts
+ M src/core/work-graph/sessions/message-record-codecs.ts
+ M src/core/work-graph/state/goal-machine.ts
+ M src/core/work-graph/state/message-machine.ts
+ M src/core/work-graph/state/plan-machine.ts
+ M src/core/work-graph/tasks/claim-record-codecs.ts
+ M src/core/work-graph/tasks/claim-service.ts
+ M src/core/work-graph/tasks/execution-entry-service.ts
+ M src/core/work-graph/tasks/initial-plan.ts
+ M src/core/work-graph/tasks/plan-commit-compiler.ts
+ M src/core/work-graph/tasks/plan-readers.ts
+ M src/core/work-graph/tasks/plan-service.ts
+ M src/core/work-graph/tasks/requeue-service.ts
+ M src/ui/api/routes.ts
+ M src/ui/views/execution/actions.ts
+ M src/ui/views/sessions/render.ts
+ M tests/app/orchestration-mechanism.test.ts
+ M tests/architecture/production-reach-allowlist.json
+ M tests/architecture/state-writes.test.ts
+ M tests/helpers/S1-session-facts-fixture.ts
+ M tests/state/message-machine.test.ts
+?? docs/refactor/design/orchestration-2026-10/slices/slice-5-round2-TESTS.md
+?? src/business/workflow/decision-actions.ts
+?? src/contracts/goal-decisions.ts
+?? src/core/work-graph/communication/decision-application.ts
+?? src/core/work-graph/communication/decision-service.ts
+?? src/core/work-graph/communication/decision-source-facts.ts
+?? src/core/work-graph/configuration/decision-settings-service.ts
+?? src/core/work-graph/configuration/message-duties-adapter.ts
+?? src/core/work-graph/model/decision-contracts.ts
+?? src/core/work-graph/persistence/decision-record-codecs.ts
+?? src/core/work-graph/state/decision-policy.ts
+?? src/core/work-graph/state/goal-settings-machine.ts
+?? src/core/work-graph/state/notice-settings-machine.ts
+?? src/core/work-graph/tasks/executed-files-stub.ts
+?? src/core/work-graph/tasks/goal-decision-reader.ts
+?? src/core/work-graph/tasks/goal-settings-service.ts
+?? src/core/work-graph/tasks/planning-question-reader.ts
+?? src/core/work-graph/tasks/request-facts-reader.ts
+?? src/core/work-graph/views/automatic-rework-notices.ts
+?? src/core/work-graph/views/decision-read-model.ts
+?? src/core/work-graph/views/goal-conflicts.ts
+?? src/core/work-graph/views/notice-display-token.ts
+?? src/core/work-graph/views/notice-position.ts
+?? tests/app/S5-decision-routes.test.ts
+?? tests/app/S5R2-driver-safe-point.test.ts
+?? tests/business/S5-decision-workflow.test.ts
+?? tests/business/S5R2-automation-cards.test.ts
+?? tests/business/S5R2-settings-replay.test.ts
+?? tests/helpers/S5-application-support.ts
+?? tests/helpers/S5-decision-fixture.ts
+?? tests/helpers/S5-goal-settings-support.ts
+?? tests/helpers/S5-queue-support.ts
+?? tests/helpers/S5-user-message-support.ts
+?? tests/helpers/S5R2-a-support.ts
+?? tests/helpers/S5R2-b-support.ts
+?? tests/helpers/S5R2-c-support.ts
+?? tests/helpers/S5R2-d-support.ts
+?? tests/runtime/S5-user-message-tools.test.ts
+?? tests/runtime/S5R2-agent-application.test.ts
+?? tests/scenarios/S5-goal-conflict-rework.test.ts
+?? tests/scenarios/S5-two-request-decisions.test.ts
+?? tests/scenarios/support/S5-decisions.ts
+?? tests/state/S5-decision-policy.test.ts
+?? tests/state/S5-goal-settings.test.ts
+?? tests/state/S5-message-decision.test.ts
+?? tests/state/S5-notice-settings.test.ts
+?? tests/state/S5-request-candidate.test.ts
+?? tests/work-graph/S5-decision-application.test.ts
+?? tests/work-graph/S5-decision-queue.test.ts
+?? tests/work-graph/S5-goal-settings.test.ts
+?? tests/work-graph/S5-notices.test.ts
+?? tests/work-graph/S5-request-candidates.test.ts
+?? tests/work-graph/S5-user-messages.test.ts
+?? tests/work-graph/S5R2-queue-history.test.ts

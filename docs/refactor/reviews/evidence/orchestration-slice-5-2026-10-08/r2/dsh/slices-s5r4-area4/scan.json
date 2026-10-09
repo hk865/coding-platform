@@ -1,0 +1,74 @@
+{
+ "sessionId": "session-b27cc391-7174-43ef-8c31-32b4d3b22b88",
+ "steps": 24,
+ "toolCalls": 25,
+ "byTool": {
+  "bash": 16,
+  "subagent": 4,
+  "job_output": 1,
+  "read": 3,
+  "list_agents": 1
+ },
+ "tokens": {
+  "input": 48625,
+  "cacheRead": 1390720,
+  "cacheWrite": 0,
+  "output": 51248,
+  "total": 1490593
+ },
+ "turnEnd": {
+  "kind": "completed"
+ },
+ "errors": 0,
+ "contamination": "none",
+ "sandboxed": true,
+ "privateTmpUses": 5,
+ "pathHits": [
+  {
+   "event": 11,
+   "tool": "subagent",
+   "pattern": "/tmp",
+   "excerpt": "under `./.dsh-scratch/` and delete it at the end. Never use `/tmp`. At the end `sha256sum <file>` must print exactly (the 25 slice-5 test an"
+  },
+  {
+   "event": 12,
+   "tool": "subagent",
+   "pattern": "/tmp",
+   "excerpt": "under `./.dsh-scratch/` and delete it at the end. Never use `/tmp`. At the end `sha256sum <file>` must print exactly (the 25 slice-5 test an"
+  },
+  {
+   "event": 31,
+   "tool": "subagent",
+   "pattern": "/tmp",
+   "excerpt": "T edit any file, NOT run the full suite, NOT commit, NOT use /tmp. You may read files and run `git diff`, `npm run typecheck`, and targeted "
+  },
+  {
+   "event": 32,
+   "tool": "subagent",
+   "pattern": "/tmp",
+   "excerpt": "T edit any file, NOT run the full suite, NOT commit, NOT use /tmp. You may read files and run `git diff`, `npm run typecheck`, and targeted "
+  },
+  {
+   "event": 130,
+   "tool": "bash",
+   "pattern": "/tmp",
+   "excerpt": "log --oneline | wc -l && git log --oneline && echo \\\"=== any /tmp probe? ===\\\" && ls /tmp 2>/dev/null | head -3 || true\",\"description\":\"Dele"
+  }
+ ],
+ "pathHitCount": 5,
+ "canaryHits": [],
+ "canaryHitCount": 0,
+ "lookups": {},
+ "writes": [],
+ "report": {
+  "present": [
+   "FILES CHANGED",
+   "CHECKS",
+   "UNSPECIFIED",
+   "NOTES"
+  ],
+  "missing": [],
+  "chars": 11895,
+  "hasFinal": true
+ }
+}

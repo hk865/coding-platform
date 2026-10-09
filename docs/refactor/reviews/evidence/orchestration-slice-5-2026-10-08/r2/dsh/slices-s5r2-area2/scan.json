@@ -1,0 +1,81 @@
+{
+ "sessionId": "session-8e6c0ade-9cf4-47f0-8cfb-737e5c44a79f",
+ "steps": 37,
+ "toolCalls": 49,
+ "byTool": {
+  "bash": 23,
+  "todo_write": 3,
+  "subagent": 4,
+  "grep": 3,
+  "read": 9,
+  "send_message": 2,
+  "list_agents": 1,
+  "job_output": 2,
+  "write": 1,
+  "job_kill": 1
+ },
+ "tokens": {
+  "input": 58963,
+  "cacheRead": 2277760,
+  "cacheWrite": 0,
+  "output": 63428,
+  "total": 2400151
+ },
+ "turnEnd": {
+  "kind": "completed"
+ },
+ "errors": 0,
+ "contamination": "none",
+ "sandboxed": true,
+ "privateTmpUses": 5,
+ "pathHits": [
+  {
+   "event": 19,
+   "tool": "subagent",
+   "pattern": "/tmp",
+   "excerpt": "even temporarily, not even to debug and revert). Do NOT use `/tmp`; if you need to probe, write a throw-away script/test under `./.dsh-scrat"
+  },
+  {
+   "event": 20,
+   "tool": "subagent",
+   "pattern": "/tmp",
+   "excerpt": "even temporarily, not even to debug and revert). Do NOT use `/tmp`; if you need to probe, write a throw-away script/test under `./.dsh-scrat"
+  },
+  {
+   "event": 113,
+   "tool": "send_message",
+   "pattern": "/tmp",
+   "excerpt": "stay green.\\n3. Make sure `.dsh-scratch/` is deleted and no `/tmp` path remains. Report `git status --short | wc -l`.\\n\\nReply with FILES, C"
+  },
+  {
+   "event": 115,
+   "tool": "bash",
+   "pattern": "/tmp",
+   "excerpt": "\"== scratch ==\\\"; ls -la .dsh-scratch 2>&1 | head; echo \\\"== /tmp/cur.txt ==\\\"; ls -la /tmp/cur.txt 2>&1 | head -1; echo \\\"== status count ="
+  },
+  {
+   "event": 223,
+   "tool": "bash",
+   "pattern": "/tmp",
+   "excerpt": "scratch && echo yes || echo no)\\\"; echo \\\"tmp cur? $(test -e /tmp/cur.txt && echo yes || echo no)\\\"; echo \\\"commit count: $(git log --onelin"
+  }
+ ],
+ "pathHitCount": 5,
+ "canaryHits": [],
+ "canaryHitCount": 0,
+ "lookups": {},
+ "writes": [
+  "<copy>/.dsh-scratch/check.sh"
+ ],
+ "report": {
+  "present": [
+   "FILES CHANGED",
+   "CHECKS",
+   "UNSPECIFIED",
+   "NOTES"
+  ],
+  "missing": [],
+  "chars": 9466,
+  "hasFinal": true
+ }
+}

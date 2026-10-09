@@ -49,6 +49,7 @@
 - I-4、I-6 要在 `createContextExtensionsReader` 里接上 `goalSettings`、`decisions` 两格；I-2、I-5 不碰本包的文件。这四项等第 5 片合入。
 - p2g 的独立审查提到两处原来就有、不在三条之内的小地方，没改：交接判断里读了两次前任的卡片（钉用后一次，不影响结果）；读不到前任时 `predecessorStillOpen` 当作仍开放。
 - 第 5 片合入时要和本包三方合并：两边都改了 `workflow.ts`、Workflow 的 `contracts.ts`、`ports.ts`、`create-platform.ts`、`context-assembler.ts`、`execution-entry-service.ts`、`context-input.ts`（规格 §0.3）。
+- 2026-10-09 夜补注：第 5 片已合入（a7cafccc）。三方合并时两边实际都改了的是 6 个文件（Workflow 的 `contracts.ts`、`ports.ts`、`workflow.ts`，`create-platform.ts`，`execution-entry-service.ts`，允许清单），`git apply -3` 都自动合好；`context-assembler.ts`、`context-input.ts` 第 5 片没有改。上面等第 5 片的 I-2、I-4、I-5、I-6 现在可以做。见[第 5 片证据](../orchestration-slice-5-2026-10-08/README.md#2026-10-09-夜决定-48-的一轮先补测试验收合入)。
 
 ## DSH 的每次运行（都是新 Session，`--max-context 360000 --max-minutes 120`）
 
