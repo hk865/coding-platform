@@ -1,0 +1,18 @@
+93
+48c8d47 build: declare the views submodule and configuration -> state (orchestration B0)
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.10 [39m[90m/home/han001/cc-work/slot-s5[39m
+
+ [32m✓[39m tests/scenarios/S5-goal-conflict-rework.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 8105[2mms[22m[39m
+   [33m[2m✓[22m[39m SC02 two Goals conflicting on module M: no labels before the accepted risk, one system and one agent requeue, one automatic reverify and three notices, restart, then one Plan change [33m 8104[2mms[22m[39m
+ [32m✓[39m tests/app/orchestration-mechanism.test.ts [2m([22m[2m15 tests[22m[2m)[22m[33m 18459[2mms[22m[39m
+   [33m[2m✓[22m[39m runs two explicitly selected same-Goal Tasks in independent Sessions with overlapping real provider calls [33m 6529[2mms[22m[39m
+   [33m[2m✓[22m[39m delivers a real Host attention change into the original idle Session once [33m 6168[2mms[22m[39m
+   [33m[2m✓[22m[39m automatically answers an inquiry without making its sender wait [33m 5614[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m2 passed[39m[22m[90m (2)[39m
+[2m      Tests [22m [1m[32m16 passed[39m[22m[90m (16)[39m
+[2m   Start at [22m 03:07:50
+[2m   Duration [22m 19.99s[2m (transform 2.68s, setup 0ms, import 3.62s, tests 26.56s, environment 0ms)[22m
+
+EXIT 0

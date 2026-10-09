@@ -100,6 +100,32 @@ STATE-MACHINES-SPEC（新行和 §15 的行→文件→用例对照）、`module
 - 第 5 片：补上 `response.decision.source`、`application.basisRebases` 两个字段；共享消息写入 `persist` 带上入口算好的身份；暂停后落实只比“答复时”和“现在”的内容（删掉要求读中间事件链的那句）；SC02 改成两边计划都有模块 M（本片没有执行改过的文件）；补四个纯函数的签名、消息和计划状态机成员的名字；冲突卡的三个选项照 UI-WORKBENCH §0 的措辞，别的非消息卡 `options: []`；Workflow 结果里放决定原因的字段；加 8 个用例（SS15、SS16、UM13、AP14–AP16、WF01、WF02）和 1 个测试文件。
 - 接线加 I-5、I-6，接线任务书也照两段做。
 
+## 施工结果（2026-10-09）
+
+| 片 | 结果 | 提交 | 证据 |
+| --- | --- | --- | --- |
+| 0 | 做完，合入 | 21a99915（B0 是 48c8d473） | [orchestration-slice-0-2026-10-08](../../../reviews/evidence/orchestration-slice-0-2026-10-08/README.md) |
+| 1 | 做完，合入 | 327ec020 | [orchestration-slice-1-2026-10-08](../../../reviews/evidence/orchestration-slice-1-2026-10-08/README.md) |
+| 3 | 做完，合入；合入时 lead 修了两处第 3 片的回归 | ccecc016、e48218a5 | [orchestration-slice-3-2026-10-08](../../../reviews/evidence/orchestration-slice-3-2026-10-08/README.md)（含第 1、3 片的合入） |
+| 5 | 实现完、冻结测试全过，但唯一一轮返工之后审查仍有大的必改问题，**没有接受，没有合入**；结果留在副本里，下一步要用户或 lead 定 | 无 | [orchestration-slice-5-2026-10-08](../../../reviews/evidence/orchestration-slice-5-2026-10-08/README.md) |
+
+合入第 1、3 片后（e48218a5），类型检查、模块边界检查、构建通过，全量测试 250 个测试文件、5626 项全部通过，`verify:isolated` 通过。和 9b94fc55 的 215 个文件、5234 项比，只多了第 0 片 1 个文件 3 项、第 1 片 23 个文件 212 项（另有它改过的已有状态测试多 9 项）、第 3 片 11 个文件 168 项；原有的一个不少，没有新失败。没有调用真实模型。
+
+**写范围比规格 §6 多出来的**（lead 逐条定的，都不改用户看到的行为，除了第 5 片的 L1）：
+- 三片都多 `src/ui/api/routes.ts`：`ROUTE_LABELS` 按 `CoreRouteSuffix` 穷举，新后缀不加标签 `tsconfig.ui.json` 就不过；只加本片新后缀的标签。三份规格都漏了这个文件。
+- 第 1 片（最终 95 个路径，规格是 87 个）：`src/core/work-graph/queries/contracts.ts`（`QueryExecutionDependencies.sessionFacts?`，后来加 `legacyProvenance?`）；4 个新的测试辅助文件（Codex 写夹具时加的）；3 个已有测试按规格 §5.5 最后一段改期望（`A2-rework-contract-helpers`、`C1-session-mailbox`、`A2-step1-codecs`）；Workflow 的可选依赖 `records`、`now`、`responsibilityBasis`、`legacyProvenance`，`WorkflowAdvanceResult.value.maintenanceFailures?`，Host 用的 `readTaskRequeue`。`src/app/collaboration-driver.ts` 改过又改回，净不变。
+- 第 3 片（42 个路径）：允许清单没改（第 3 片的 `kept-for` 条目一个也没用到），所以规格的 42 个去掉它、加 `routes.ts`。合入时 `tests/work-graph/S3-graph-context.test.ts` 的夹具补注册第 1 片新读的记录（5 行）。
+- 第 5 片（副本里 93 个路径，没合入）：A1 接受 6 个类型逼出来的文件（`src/contracts/query-job.ts`、`queries/query-job-service.ts`、`src/ui/views/sessions/render.ts`、`routes.ts`、两个已有测试）；L1 让 `src/app/host.ts` 在已有的 `createTargetPlatform` 调用里加一行 `operatorActor: actor`（不加的话生产 Host 没有操作者，每个新的用户写入都是 `unsupported`）。
+
+**合并时的语义交叉**，比上面“三片在哪些文件上碰头”列的多一处：第 3 片把接续说明的组装从 `execution-preparation.ts` 搬进了 `context-assembler.ts`，而第 1 片改的正是这段（归档来源不带历史种子、异常锚点一段、超大时拒为 `capacity`）。lead 把第 1 片的行为搬进装配器（第 3 片证据“合入”）。
+
+**核对的教训：**
+- 第 3 片的验收只跑了点名的回归集，两处回归（平台公开键、C6 的已领取 Run 卡住）到合入后的全量才发现。以后每片在合入前跑一次全量。
+- 沙箱没有 bwrap 时，“逐文件数字和基线相同”会盖住失败原因的变化；lead 的核对也要比较失败信息，并在有 bwrap 的 WSL 槽位里复跑这些文件。
+- 运行上限按决定 46 改了：token 只记不拦，单步上下文超过 36 万就停，每段最多 120 分钟。第二段和返工都用新 Session、只写关键信息的说明书、分组交给子任务。实测见 [DSH-WORKFLOW §6.10](../../../DSH-WORKFLOW.md#610-大片怎么交给-dsh决定-46)。
+
+**合入以后的接线：** 第 1、3 片都已合入，I-1、I-3 现在可以做；I-2、I-4、I-5、I-6 要等第 5 片。接线任务书照决定 46 写。
+
 ## 怎么来的
 
 Codex 三份草稿同时起草（第 1 片 65 分钟、第 3 片 72 分钟、第 5 片 39 分钟；见 lead 临时目录的 `slices/DRAFTS.md`）。lead 冻结时：在 9b94fc55 上抽查了约 110 个 `file:symbol` 引用（都存在），找到四处和当前代码不符（第 1 片漏了 `core-http-types.ts`；第 3 片要删的两个文件已在 7e0b7f56 删掉、`graphHistory` 已是必填依赖；第 5 片说的 `pureDirectories` 已退役），并统一了三片共用的东西（职责类型、`views` 的依赖、合入顺序）。冻结记录在 lead 临时目录的 `slices/FREEZE.md`。

@@ -1,0 +1,80 @@
+{
+ "sessionId": "session-62e5d1c2-ee75-47b5-ab5d-9a02ce19da09",
+ "steps": 7,
+ "toolCalls": 14,
+ "byTool": {
+  "bash": 3,
+  "todo_write": 1,
+  "subagent": 6,
+  "read": 3,
+  "list_agents": 1
+ },
+ "tokens": {
+  "input": 26479,
+  "cacheRead": 267264,
+  "cacheWrite": 0,
+  "output": 23985,
+  "total": 317728
+ },
+ "turnEnd": {
+  "kind": "completed"
+ },
+ "errors": 0,
+ "contamination": "none",
+ "sandboxed": true,
+ "privateTmpUses": 6,
+ "pathHits": [
+  {
+   "event": 15,
+   "tool": "subagent",
+   "pattern": "/tmp",
+   "excerpt": "n   network. Scratch files only in `./.dsh-scratch/` (never `/tmp`, never anywhere else); delete it at the end.\\n7. Comments: keep them true"
+  },
+  {
+   "event": 16,
+   "tool": "subagent",
+   "pattern": "/tmp",
+   "excerpt": "n   network. Scratch files only in `./.dsh-scratch/` (never `/tmp`, never anywhere else); delete it at the end.\\n7. Comments: keep them true"
+  },
+  {
+   "event": 17,
+   "tool": "subagent",
+   "pattern": "/tmp",
+   "excerpt": "n   network. Scratch files only in `./.dsh-scratch/` (never `/tmp`, never anywhere else); delete it at the end.\\n7. Comments: keep them true"
+  },
+  {
+   "event": 18,
+   "tool": "subagent",
+   "pattern": "/tmp",
+   "excerpt": "n   network. Scratch files only in `./.dsh-scratch/` (never `/tmp`, never anywhere else); delete it at the end.\\n7. Comments: keep them true"
+  },
+  {
+   "event": 19,
+   "tool": "subagent",
+   "pattern": "/tmp",
+   "excerpt": "n   network. Scratch files only in `./.dsh-scratch/` (never `/tmp`, never anywhere else); delete it at the end.\\n7. Comments: keep them true"
+  },
+  {
+   "event": 20,
+   "tool": "subagent",
+   "pattern": "/tmp",
+   "excerpt": "n   network. Scratch files only in `./.dsh-scratch/` (never `/tmp`, never anywhere else); delete it at the end.\\n7. Comments: keep them true"
+  }
+ ],
+ "pathHitCount": 6,
+ "canaryHits": [],
+ "canaryHitCount": 0,
+ "lookups": {},
+ "writes": [],
+ "report": {
+  "present": [],
+  "missing": [
+   "FILES CHANGED",
+   "CHECKS",
+   "UNSPECIFIED",
+   "NOTES"
+  ],
+  "chars": 149,
+  "hasFinal": true
+ }
+}

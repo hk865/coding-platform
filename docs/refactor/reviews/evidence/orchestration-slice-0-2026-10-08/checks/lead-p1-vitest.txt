@@ -1,0 +1,118 @@
+
+ RUN  v4.1.10 /home/han001/dsh-work/slices/s0
+
+ × tests/app/S0-attention-edge-label.test.ts > S0 attention edge label > S0-01 writes the requirement kind and label into the depends edge, not [object Object] 5ms
+   → expected [ 'depends:t1->t2:[object Object]' ] to deeply equal [ Array(1) ]
+ × tests/app/S0-attention-edge-label.test.ts > S0 attention edge label > S0-02 reports both changed edges when only the requirement label changes 1ms
+   → expected { Object (changedElements, nodes, ...) } to deeply equal { changedElements: 2, nodes: +0, …(2) }
+ × tests/app/S0-attention-edge-label.test.ts > S0 attention edge label > S0-03 reports both changed edges when only the requirement kind changes 1ms
+   → expected { Object (changedElements, nodes, ...) } to deeply equal { changedElements: 2, nodes: +0, …(2) }
+ ✓ tests/app/orchestration-mechanism.test.ts > mechanical attention observer > produces no delivery and no model work when nothing changed 1ms
+ ✓ tests/app/orchestration-mechanism.test.ts > mechanical attention observer > derives a real same-size replacement from the two texts 1ms
+ ✓ tests/app/orchestration-mechanism.test.ts > mechanical attention observer > treats a removed path as a real tombstone deletion 0ms
+ ✓ tests/app/orchestration-mechanism.test.ts > mechanical attention observer > does not re-deliver an unchanged version and clears a reverted buffered change 0ms
+ ✓ tests/app/orchestration-mechanism.test.ts > mechanical attention observer > buffers a below-threshold change and still runs the heartbeat 1ms
+ ✓ tests/app/orchestration-mechanism.test.ts > mechanical attention observer > delivers explicit member feedback once, deduped by id 0ms
+ ✓ tests/app/orchestration-mechanism.test.ts > mechanical attention observer > keeps delivery separate from the processed watermark and scopes files 1ms
+ ✓ tests/app/orchestration-mechanism.test.ts > mechanical attention observer > carries independent file and graph changes in one mechanical notification 0ms
+ ✓ tests/app/orchestration-mechanism.test.ts > unified SessionMailbox send intent > persists explicit intent/needsReply/waitAfterSend and registers exactly one real wait 3ms
+ ✓ tests/app/orchestration-mechanism.test.ts > unified SessionMailbox send intent > normalizes the legacy replyMode=wait into the same single wait path 1ms
+ ✓ tests/app/orchestration-mechanism.test.ts > unified SessionMailbox send intent > never registers a wait for a plain fire-and-forget notice 1ms
+ ✓ tests/app/orchestration-mechanism.test.ts > unified send intent against the real mailbox > persists and reads back intent/needsReply/waitAfterSend through the real service 38ms
+ × tests/app/orchestration-mechanism.test.ts > runs two explicitly selected same-Goal Tasks in independent Sessions with overlapping real provider calls 4348ms
+   → Task parallel-left stopped: {"state":"waiting","receipt":{"kind":"run_check","result":{"status":"rejected","code":"unsupported","reason":"ENOENT: no such file or directory, access '/usr/bin/bwrap'"}},"next":null,"reason":"ENOENT: no such file or directory, access '/usr/bin/bwrap'"}
+ ✓ tests/app/orchestration-mechanism.test.ts > delivers a real Host attention change into the original idle Session once 3751ms
+ ✓ tests/app/orchestration-mechanism.test.ts > automatically answers an inquiry without making its sender wait 3608ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/app/S0-attention-edge-label.test.ts > S0 attention edge label > S0-01 writes the requirement kind and label into the depends edge, not [object Object]
+AssertionError: expected [ 'depends:t1->t2:[object Object]' ] to deeply equal [ Array(1) ]
+
+- Expected
++ Received
+
+  [
+-   "depends:t1->t2:artifact:schema.json",
++   "depends:t1->t2:[object Object]",
+  ]
+
+ ❯ tests/app/S0-attention-edge-label.test.ts:70:35
+     68|   it('S0-01 writes the requirement kind and label into the depends edg…
+     69|     const snapshot = await scan({ kind: 'artifact', label: 'schema.jso…
+     70|     expect(snapshot.graph?.edges).toEqual(['depends:t1->t2:artifact:sc…
+       |                                   ^
+     71|     expect(snapshot.graph?.revision).toBe('plan:p1');
+     72|     expect(snapshot.graphUnreadable).toBe(false);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+
+ FAIL  tests/app/S0-attention-edge-label.test.ts > S0 attention edge label > S0-02 reports both changed edges when only the requirement label changes
+AssertionError: expected { Object (changedElements, nodes, ...) } to deeply equal { changedElements: 2, nodes: +0, …(2) }
+
+- Expected
++ Received
+
+  {
+-   "changedElements": 2,
+-   "edges": 2,
++   "changedElements": 0,
++   "edges": 0,
+    "nodes": 0,
+    "statuses": 0,
+  }
+
+ ❯ tests/app/S0-attention-edge-label.test.ts:79:61
+     77|     const first = await scan({ kind: 'artifact', label: 'schema.json' …
+     78|     const second = await scan({ kind: 'artifact', label: 'schema-v2.js…
+     79|     expect(graphChangedElements(first.graph, second.graph)).toEqual({
+       |                                                             ^
+     80|       changedElements: 2,
+     81|       nodes: 0,
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/4]⎯
+
+ FAIL  tests/app/S0-attention-edge-label.test.ts > S0 attention edge label > S0-03 reports both changed edges when only the requirement kind changes
+AssertionError: expected { Object (changedElements, nodes, ...) } to deeply equal { changedElements: 2, nodes: +0, …(2) }
+
+- Expected
++ Received
+
+  {
+-   "changedElements": 2,
+-   "edges": 2,
++   "changedElements": 0,
++   "edges": 0,
+    "nodes": 0,
+    "statuses": 0,
+  }
+
+ ❯ tests/app/S0-attention-edge-label.test.ts:90:61
+     88|     const first = await scan({ kind: 'artifact', label: 'schema.json' …
+     89|     const second = await scan({ kind: 'decision', label: 'schema.json'…
+     90|     expect(graphChangedElements(first.graph, second.graph)).toEqual({
+       |                                                             ^
+     91|       changedElements: 2,
+     92|       nodes: 0,
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/4]⎯
+
+ FAIL  tests/app/orchestration-mechanism.test.ts > runs two explicitly selected same-Goal Tasks in independent Sessions with overlapping real provider calls
+Error: Task parallel-left stopped: {"state":"waiting","receipt":{"kind":"run_check","result":{"status":"rejected","code":"unsupported","reason":"ENOENT: no such file or directory, access '/usr/bin/bwrap'"}},"next":null,"reason":"ENOENT: no such file or directory, access '/usr/bin/bwrap'"}
+ ❯ tests/app/orchestration-mechanism.test.ts:317:41
+    315|           break;
+    316|         }
+    317|         if (result.next === null) throw new Error(`Task ${taskIds[inde…
+       |                                         ^
+    318|         result = await advance(result.next);
+    319|       }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/4]⎯
+
+
+ Test Files  2 failed (2)
+      Tests  4 failed | 14 passed (18)
+   Start at  15:11:41
+   Duration  13.02s (transform 1.70s, setup 0ms, import 1.59s, tests 11.76s, environment 0ms)
+
+EXIT vitest 1

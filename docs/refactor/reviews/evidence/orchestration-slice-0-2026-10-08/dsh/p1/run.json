@@ -1,0 +1,32 @@
+{
+ "runName": "slices-s0-p1",
+ "copy": "/home/han001/dsh-work/slices/s0",
+ "level": "slices",
+ "task": "/home/han001/dsh-work/slices/_books/s0-p1.md",
+ "taskSha256": "9ccc6c25ac75786700feb9a75447b13acf32c9e6eec901ea8f04b41fc2324ebe",
+ "model": "headless default (deepseek-flash)",
+ "sessionIdIn": null,
+ "sessionId": "session-462d3a02-19a7-48c8-8cb4-e7a68b6dc147",
+ "startedAt": "2026-10-08T07:09:15.411Z",
+ "endedAt": "2026-10-08T07:10:44.321Z",
+ "wallSeconds": 89,
+ "exitCode": 0,
+ "signal": null,
+ "stoppedBy": null,
+ "limits": {
+  "maxMinutes": 60,
+  "maxTokens": 30000000
+ },
+ "sandbox": "bubblewrap",
+ "toolCalls": 20,
+ "steps": 13,
+ "tokens": {
+  "input": 40113,
+  "cacheRead": 396032,
+  "cacheWrite": 0,
+  "output": 11158,
+  "total": 447303
+ },
+ "contamination": "attempted-outside",
+ "changedPaths": 4
+}

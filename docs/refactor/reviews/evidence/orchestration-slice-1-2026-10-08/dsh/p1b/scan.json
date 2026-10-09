@@ -1,0 +1,116 @@
+{
+ "sessionId": "session-ce6ba84a-bb41-4547-b600-448180ea7e02",
+ "steps": 64,
+ "toolCalls": 71,
+ "byTool": {
+  "bash": 43,
+  "read": 6,
+  "edit": 8,
+  "subagent": 10,
+  "list_agents": 2,
+  "job_output": 2
+ },
+ "tokens": {
+  "input": 36033,
+  "cacheRead": 20563840,
+  "cacheWrite": 0,
+  "output": 38175,
+  "total": 20638048
+ },
+ "turnEnd": {
+  "kind": "completed"
+ },
+ "errors": 0,
+ "contamination": "attempted-outside",
+ "sandboxed": true,
+ "privateTmpUses": 0,
+ "pathHits": [
+  {
+   "event": 90,
+   "tool": "subagent",
+   "pattern": "dotdot",
+   "excerpt": "UT10, UT49, UT50, UT54, UT55, UT56. Pure state: import from `../../src/core/work-graph/state/session-availability.js` (`transitionSession`, "
+  },
+  {
+   "event": 91,
+   "tool": "subagent",
+   "pattern": "dotdot",
+   "excerpt": "13, UT14, UT15, UT51, using `transitionResponsibility` from `../../src/core/work-graph/state/session-responsibility.js`.\\n2. `tests/state/S1"
+  },
+  {
+   "event": 92,
+   "tool": "subagent",
+   "pattern": "dotdot",
+   "excerpt": ", `deriveSessionAnomalyView`, `deriveTaskArchiveState` from `../../src/core/work-graph/state/session-anomaly.js`. For UT19–22/UT42/UT48 defa"
+  },
+  {
+   "event": 93,
+   "tool": "subagent",
+   "pattern": "dotdot",
+   "excerpt": "41, calling `orderTasksByDependency(tasks, dependsOn)` from `../../src/business/workflow/task-order.js`; use the exact expected arrays from "
+  },
+  {
+   "event": 94,
+   "tool": "subagent",
+   "pattern": "dotdot",
+   "excerpt": " SV11, SV53 (14 runs). Use `createSessionFactsService` from `../../src/core/work-graph/tasks/session-facts.js` as `SessionFactsPort`.\\n2. `t"
+  },
+  {
+   "event": 95,
+   "tool": "subagent",
+   "pattern": "dotdot",
+   "excerpt": "47 (12 runs). Use `createSessionResponsibilityService` from `../../src/core/work-graph/sessions/session-responsibility-service.js`; build th"
+  },
+  {
+   "event": 96,
+   "tool": "subagent",
+   "pattern": "dotdot",
+   "excerpt": "SV28, SV29 (8 runs). Use `createSessionAnomalyService` from `../../src/core/work-graph/tasks/session-anomaly-service.js`.\\n2. `tests/work-gr"
+  },
+  {
+   "event": 97,
+   "tool": "subagent",
+   "pattern": "dotdot",
+   "excerpt": "V41, SV51, SV52, SV58 (12 runs). Use the claim service from `../../src/core/work-graph/tasks/claim-service.js` and the Query claim from `../"
+  },
+  {
+   "event": 125,
+   "tool": "subagent",
+   "pattern": "dotdot",
+   "excerpt": "T31, IT33, IT34. Use `createSessionMaintenanceService` from `../../src/business/workflow/session-maintenance.js` (it takes the optional Work"
+  },
+  {
+   "event": 218,
+   "tool": "bash",
+   "pattern": "dotdot",
+   "excerpt": "<copy> && grep -n \\\"SESSION_LIFECYCLE_RECORD_SCHEMAS\\\\|from '../../src/core/work-graph/sessions/lifecycle-record-codecs\\\" tests/business/S1-"
+  },
+  {
+   "event": 223,
+   "tool": "edit",
+   "pattern": "dotdot",
+   "excerpt": " { createB2ExecutionFixture, type B2ExecutionFixture } from '../helpers/B2-execution-fixture.js';\\nimport { SESSION_LIFECYCLE_RECORD_SCHEMAS"
+  }
+ ],
+ "pathHitCount": 11,
+ "canaryHits": [],
+ "canaryHitCount": 0,
+ "lookups": {},
+ "writes": [
+  "src/core/work-graph/persistence/execution-entry-codecs.ts",
+  "src/business/workflow/workflow.ts",
+  "src/ui/api/routes.ts",
+  "tests/business/S1-session-maintenance.test.ts"
+ ],
+ "report": {
+  "present": [
+   "FILES CHANGED",
+   "CHECKS",
+   "UNSPECIFIED",
+   "NOTES"
+  ],
+  "missing": [],
+  "chars": 14908,
+  "hasFinal": true
+ }
+}

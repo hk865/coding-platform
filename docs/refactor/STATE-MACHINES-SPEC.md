@@ -85,6 +85,8 @@ lead 已裁定的实现层决定（L-1..L-16），以及 brief 中没有单独�
 
 §1 通用约定｜§2 Goal｜§3 PlanProposal/PlanRevision｜§4 Task（含失败事实与自动化判定）｜§5 TaskAttempt｜§6 Run｜§7 ControlIntent｜§8 Session（含 QueryRun 恢复）｜§9 VerificationRound（含后继轮次）｜§10 Message｜§11 跨状态机不变量｜§12 崩溃恢复矩阵｜§13 无进展防护（含 13.7 重新检查的防护）｜§14 自动检查｜§15 实现顺序与对照汇总｜§16 剩余缺口｜附录 A 决定全文（2026-10-03 已确认）｜附录 B lead 决定｜附录 C 设计决定 D-1..D-18（文中的“brief”）
 
+2026-10-09：加 §17“编排各片新增的行”（第 1 片 S1-* 19 行、第 3 片 CTX-01..03 三行补充守卫，以及它们的文件和用例对照）。第 5 片的行等它合入后再补。
+
 ### 0.7 本次修订（A.1b）要点
 
 A.1 草案经用户 2026-10-03 审阅，按下列决定修订。优先级：用户决定 C1..C8 > lead 决定 LA-1..LA-7 > 其余 lead 裁定。
@@ -4881,6 +4883,8 @@ A.2 第 2 项要求“服务只通过状态机改状态”，并且能被自动�
 
 每一行另有 `tests/state/<state 文件名>.test.ts` 中的穷尽测试，表中不再重复。测试列写“已有”测试与新增的场景测试；“新”表示只有穷尽测试和该节 N.6 描述的新增服务测试。
 
+2026-10-09 补注：编排第 1、3 片的新行和它们的状态文件、服务文件、用例对照在 §17，不并进下表。
+
 2026-10-07 补注（第 7 步）：下表写于实施之前，有些测试文件后来移动或没有建。下表的原文不改。写到没有建的文件名的各行，以及用例在别的文件里的 TASK-27、TASK-28、RUN-24，另加了简短补注；A8 用例的去向只写在下面第一条，其余写作 `A8-host-restart.test.ts（A8-xx）` 的各行不逐行另注。
 
 - **重启场景分成了五个文件**（第 6 步，按崩溃点分组，各文件开头写明分组）。下表写作 `scenarios/A8-host-restart.test.ts（A8-xx）` 的用例，现在：A8-2a..A8-2d 和 A8-1b、A8-1c 在 `scenarios/A8-host-restart-entry.test.ts`；A8-3l..A8-3r 在 `scenarios/A8-host-restart-paused.test.ts`；A8-R1、A8-R2 在 `scenarios/A8-host-restart-rework.test.ts`；A8-L*、A8-Q* 和 A8-H4 在 `scenarios/A8-host-restart-lease.test.ts`；人工认定两个所有者的幂等指纹在 `scenarios/A8-host-restart-attestation.test.ts`（LA-8）；A8-1a、A8-3a..A8-3i（A8-3e 除外，见下）留在 `scenarios/A8-host-restart.test.ts`（A8-1a 的 requeue 变体在 entry 文件；这里另有一例 A8-2c 与 A8-3g 合在一起的用例）。§12.10 的编号 A8-1d、A8-3e、A8-3j、A8-3k、A8-H1..A8-H3 在测试里没有出现。其中 A8-3e 和 A8-H1..A8-H3 的用例按矩阵行号标注：A8-3e 就是 W-13，在 `runtime/A2-reconcile-runtime.test.ts` 的 W-13 用例里；H-01..H-03 在 entry 文件等处。A8-1d（W-04、CI-01、CI-02）、A8-3j（W-18）、A8-3k（W-19、CI-05）两种编号都没有任何测试写到，第 6 步 A8 行说的“§12.10 的全部用例”对这三组不成立。没写编号的用例是否覆盖了它们，没有逐例核对。顺带看到的只有部分覆盖：`runtime/A2-reconcile-runtime.test.ts` 的 W-05 用例里，排队的 cancel 让一个从没进入、已被收回的 Run 在重启时同一提交结束（CTL-08(a) 经 RUN-09 (R)，和 W-04、CI-01 里 cancel 的处理相同，但这个 Run 崩溃时在 `Entering`，不是 W-01..W-03 的状态）；它的 W-13 用例里，排队的 steer 在同一提交记为 `outcome_unknown`（CTL-08(d)，是 CI-05 里“本次 RUN-20”的情形）。W-18 按 W-11、W-20 或 W-13 处理，这三行都有用例。
@@ -5246,6 +5250,63 @@ D-17 原列表六项为 GAP-03…08；lead 决定 L-7 把 GAP-41 补入这一列
 | --- | --- | --- |
 | GAP-44 | ORCHESTRATION §11 的 A2、A3、A5、A6、A9、A12 不在 A.2 的场景测试范围内（任务书只要求 A1、A4、A7、A8、A10、A11） | 任务书 A.2 第 4 项 |
 | GAP-45 | A.2 实施时要同步的文档（相关决定已于 2026-10-03 确认）：`docs/refactor/modules/core/work-graph.md:590` 末句（§8 SD-5）、§6.3 的授权阶段名、`CORE-DATA-OPERATIONS.md` 中的 `requeueTask`、`reconcileRun`、`resolveUnknownRun`、`setGoalControl`，以及本次新增的 `reverifyRound`、有痕 Task 的处置修改（TASK-19）、Host 设置 `automation.autoReworkLimit` 与 `automation.resumeOnStartup`；`ORCHESTRATION-STATE-MACHINES.md` 共同状态表“用户已暂停 → 准备/工作中”一行（`:228`，“同 Task 新 Run 接续”）按 LA-1（用户 2026-10-05 确认）写明 Session 的选择：上一 Turn 在 Kernel 中已有终态（如 yielded）时在同一 Session 接续；没有终态（Host 重启时 Turn 未结束、暂停中被中断、人工认定时 Turn 未结束或 Kernel 不可读）时，在一个关联原 Session、带入其已完成历史的新 Session 中接续，原 Session 记为 `unavailable/kernel_turn_open`（该行 2026-10-05 已更正，A.2 5.6 核对与本处一致）。2026-10-07 补注（第 7 步，决定 29）：`CORE-DATA-OPERATIONS.md` §6.2 已补 `setGoalControl` 一行，写明两个 pin 都必填；本条其余各项这次没有核对。2026-10-08 补注（收尾）：`CORE-DATA-OPERATIONS.md` 又补了 `resolveUnknownRun` 和 Host 设置 `automation`（§8）、`reverifyRound`（§10）、有痕 Task 只改处置（§6.2 第二个 `applyPlanChange` 行），`requeueTask` 一行按 5.4 改写；`reconcileRun` 一行、`work-graph.md` 的 SD-5 末句和 §6.3 的授权阶段名仍没有核对 | §8 SD-5、§4、§6；§3、§9、§12.1；LA-1 |
+
+
+## 17. 编排各片新增的行（2026-10-09）
+
+编排第 1、3 片（DESIGN §8.2）合入以后，状态机多了下面这些行。行的完整写法（from、event、guard、to、effects、幂等、原文编号）以各片的冻结规格为准，这里不重抄：第 1 片 19 行在 [slice-1-SPEC §3.2](design/orchestration-2026-10/slices/slice-1-SPEC.md#32-迁移表)（另有补充拒绝表），第 3 片 3 行在 [slice-3-SPEC §3.2](design/orchestration-2026-10/slices/slice-3-SPEC.md#32-state-machines-spec-表格)。新行号用各片自己的前缀，已有的 `SES-*`、`TASK-*`、`MSG-*`、`RUN-*` 不重编号。表格约定同 §1.4，缩写同 §15.3；测试一列写测试文件和规格里的用例号，每个用例号都是一个 `it`（work-graph 下的 SV 用例在 memory 和 SQLite 各跑一次）。
+
+- 第 0 片没有状态行（只改注意力边的字符串）。
+- 第 5 片的 23 行（S5-*）在 [slice-5-SPEC](design/orchestration-2026-10/slices/slice-5-SPEC.md) 里冻结了，但第 5 片没有验收、没有合入（见[第 5 片证据](reviews/evidence/orchestration-slice-5-2026-10-08/README.md)），等合入时再补进本节。
+- 提交：第 1 片 327ec020，第 3 片 ccecc016 和合入修正 e48218a5。证据在 `reviews/evidence/orchestration-slice-<n>-2026-10-08/`。
+
+### 17.1 第 1 片：Session 事实、纠错与归档（S1-*）
+
+摘要一列只写从哪到哪，guard 见 slice-1-SPEC §3.2。`R` 是 Session 上的归档请求（SessionArchiveRequest）。
+
+| 行号 | 摘要 | state 文件 | 服务文件 | 测试（用例） |
+| --- | --- | --- | --- | --- |
+| S1-SES-01 | absent → `session_created(provenance)` → active/available，创建时写来历（改造 SES-01） | session-availability.ts（`createSessionRecord`） | wg/sessions/session-directory.ts | state/session-availability.test.ts（SES-01 字面量不变）；work-graph/S1-codecs-indexes.test.ts SV04；work-graph/S1-provenance.test.ts SV12、SV14 |
+| S1-SES-02 | 旧 Session `provenance=null` → `legacy_provenance_backfilled`，只在唯一可靠依据时补一次 | session-availability.ts | wg/sessions/session-directory.ts；依据由 wg/tasks/session-provenance-facts.ts 读 | state/S1-session-archive.test.ts UT09、UT10；work-graph/S1-provenance.test.ts SV12、SV13、SV15、SV45、SV46 |
+| S1-SES-03 | active、R=null → `archive_requested` → R 非空，三维不变 | session-availability.ts | wg/sessions/session-lifecycle.ts（`requestSessionArchive`） | state/S1-session-archive.test.ts UT01–UT03；work-graph/S1-archive-owner.test.ts SV21、SV24 |
+| S1-SES-04 | active、无占用 → `session_archived` → archived，同次清 R（改造 SES 归档行：先无占用 → 无开放负责 → 不在等；退役免等待） | session-availability.ts | wg/sessions/session-lifecycle.ts（`finishSessionArchive`） | state/S1-session-archive.test.ts UT04–UT06；work-graph/S1-archive-owner.test.ts SV22、SV23、SV25、SV56；business/S1-archive-flow.test.ts IT13、IT14 |
+| S1-SES-05 | archived → `session_reactivated`；退役或不可用的拒为 `unavailable`（改造重新启用行，决定 38） | session-availability.ts | wg/sessions/session-lifecycle.ts | state/S1-session-archive.test.ts UT07、UT08；work-graph/S1-archive-owner.test.ts SV25 |
+| S1-SES-06 | active、R 非空 → `archive_request_released` → R=null（只能在处置失败、执行已停之后） | session-availability.ts | wg/sessions/session-lifecycle.ts（`releaseSessionArchiveRequest`） | state/S1-session-archive.test.ts UT49、UT50 |
+| S1-LINK-01 | 源开放负责关系 → `responsibility_transferred` → 源关闭、目标开放 | session-responsibility.ts | wg/sessions/session-responsibility-service.ts（`transferSessionResponsibility`） | state/S1-responsibility.test.ts UT11–UT14、UT51；work-graph/S1-responsibility.test.ts SV16–SV18、SV47 |
+| S1-LINK-02 | 开放负责关系 → `responsibility_released` → 关闭，不改 Task | session-responsibility.ts | wg/sessions/session-responsibility-service.ts（`disposeArchiveResponsibility`、`closeTerminalResponsibility`） | state/S1-responsibility.test.ts UT15；work-graph/S1-responsibility.test.ts SV19、SV20 |
+| S1-DISPATCH-01 | Work 选择 / 领取：只读副本 `forbidden`；R 非空、在等 `busy`；同一条等待被精确消费的例外（改造 SES-02 的派工） | session-availability.ts | wg/tasks/claim-service.ts；wf/workflow.ts 选 Session | state/S1-dispatch.test.ts UT26–UT30、UT44、UT45、UT52、UT53；work-graph/S1-dispatch-guards.test.ts SV39、SV41、SV51、SV52、SV58 |
+| S1-DISPATCH-02 | Query 领取：R 非空、在 Work 等待 `busy`；只读副本只跑自己固定的咨询（改造 SES-03） | session-availability.ts | wg/queries/query-execution.ts | state/S1-dispatch.test.ts UT31、UT43、UT46、UT47；work-graph/S1-dispatch-guards.test.ts SV40 |
+| S1-MSG-01 | 未消费的原等待消息 → `reply_handler_transferred` → 加“回复改由谁接”，状态和回复不变 | message-machine.ts | wg/communication/mailbox-service.ts（`disposeArchiveWait`） | state/S1-message-routing.test.ts UT23、UT24；work-graph/S1-wait-disposal.test.ts SV30、SV32、SV54、SV55；runtime/S1-routed-replies.test.ts IT28–IT30；scenarios/S1-wait-copy-retirement.test.ts IT20 |
+| S1-MSG-02 | 未处置的原等待消息 → `archive_wait_cancelled` → 记下取消，状态不变 | message-machine.ts | wg/communication/mailbox-service.ts；wf/session-archive.ts | state/S1-message-routing.test.ts UT25；work-graph/S1-wait-disposal.test.ts SV31；work-graph/S1-session-facts.test.ts SV09 |
+| S1-ANCHOR-01 | absent → `archive_anomaly_recorded` → 锚点 @1（不可改；一个 Run 至多一条） | session-anomaly.ts（`newSessionAnomalyAnchorRecord`） | wg/tasks/session-anomaly-service.ts | state/S1-anomaly.test.ts UT16–UT18；work-graph/S1-anomaly-owner.test.ts SV26–SV29；business/S1-archive-flow.test.ts IT12 |
+| S1-ANCHOR-02 | absent → `retired_anomaly_recorded`：退役、没有接续的线手上没完成的 Task（这个 Session 从没为它跑过执行时不写，lead L3） | session-anomaly.ts | wg/tasks/session-anomaly-service.ts；wf/session-archive.ts | work-graph/S1-requeue.test.ts SV37、SV59；business/S1-session-maintenance.test.ts IT10、IT33 |
+| S1-TASK-01 | 归档停下后的 Task → `archive_task_requeued`：真实 TaskRequeue，`archiveOrigin`，失败类别 `interrupted`（S1-FC-ARCHIVE），不加自动次数；人停下的仍要人（改造 TASK-16、17、27） | task-machine.ts；task-failure.ts（`deriveReworkClass` 第 4 个参数） | wg/tasks/requeue-service.ts | state/S1-archive-rework.test.ts UT32–UT35；work-graph/S1-requeue.test.ts SV35、SV36、SV38、SV48–SV50、SV57；business/S1-archive-flow.test.ts IT16、IT27 |
+| S1-TASK-02 | 有待处理锚点的 Task → 读作“中断，待核对”，`pickedUpBy` 从后续真实进入的 Run 推出（只读，不存 phase） | session-anomaly.ts（`deriveTaskArchiveState`） | wg/tasks/session-anomaly-service.ts（`readTaskArchiveState`） | state/S1-anomaly.test.ts UT19–UT22、UT42、UT48 |
+| S1-AUTO-01 | 执行者线任务都结束满阈值（默认 1 天）、空闲、不在等 → 经 S1-SES-03/04 归档 | session-availability.ts（`executorArchiveDue`） | wf/session-maintenance.ts；app/startup-reconcile.ts（第 6c 步） | state/S1-session-archive.test.ts UT54–UT56；business/S1-session-maintenance.test.ts IT06–IT09、IT31 |
+| S1-AUTO-02 | 退役线：有接续只处理已转走的负责关系；没有接续则放下未完 Task、写锚点、马上归档；执行结果未知且没人认定时跳过（决定 45） | —（组合动作） | wf/session-archive.ts、wf/session-maintenance.ts | business/S1-session-maintenance.test.ts IT10、IT33、IT34；work-graph/S1-wait-disposal.test.ts SV33、SV34 |
+| S1-AUTO-03 | 只读副本的 Query 已答、已附回原消息 → 归档 | —（组合动作） | wf/consultation.ts、wf/session-maintenance.ts | business/S1-session-maintenance.test.ts IT11；scenarios/S1-wait-copy-retirement.test.ts IT20 |
+
+其它用例：归档组合动作的路由和 HTTP 返回（app/S1-session-routes.test.ts IT17、IT18）；Host 在每一步提交后重启都能按原请求接着做（scenarios/S1-archive-restart.test.ts IT19、IT21–IT25）；接续说明的异常锚点一段和归档改过的文件（runtime/S1-archive-files-brief.test.ts IT01–IT05、IT32）；按依赖软排序（business/S1-task-order.test.ts UT36–UT41，纯 Workflow 算法，不是状态行）；Session 事实和索引（work-graph/S1-session-facts.test.ts SV06–SV08、SV10、SV11、SV53；work-graph/S1-codecs-indexes.test.ts SV01–SV03、SV05、SV42–SV44）；归档请求钉住的执行版本（work-graph/S1-archive-owner.test.ts SV60、SV61）。
+
+**改到的已有部分：**
+- §8 Session：机器状态多两个字段 `provenance`、`archiveRequest`，`sessionMachineStateOf` 总是填（没有时为 null）；`state/session-availability.test.ts` 的穷尽矩阵加了新事件，窄夹具补上这两个字段（lead 决定 K2）。
+- §10 Message：消息多 `replyHandler`、`archiveWaitDisposition` 两个可选字段和一个按接手者的索引；`state/message-machine.test.ts` 的矩阵加了两种新事件。旧记录解码给 null 默认值，事件回放保留原来写入的键。
+- §4 Task：`TaskRequeueSnapshotV1` 多 `archiveOrigin`；失败类别加归档中断的豁免（S1-FC-ARCHIVE）；不变量 I-12 的重新推导带上从锚点推出的中断（`tests/state/invariants.ts`）；另加 S1-1..S1-6：归档后没有占用、没有归档请求，只读副本没有开放的 Work 领取，一个 Run 至多一条锚点，写锚点不改 Task 的阶段、退役 Session 不能重新启用（S1-5，跨两次提交比较），已归档的 Session 不再被领取。
+- §14 状态写入检查：受保护的字段加上 Session 的来历和归档请求、消息的两个新字段、锚点记录（`tests/architecture/state-writes.test.ts`）。
+
+### 17.2 第 3 片：准入守卫的补充（CTX-01..03）
+
+第 3 片不加新状态，只给三条已有的准入转换补守卫。G-CTX 校验装配好的上下文（格式版本、段名、字节区间、省略标记、来源版本、接续说明是最后一段）；G-INPUT 校验精确输入的选择（已选恰好一个来源、缺的没有来源、有歧义的至少两个候选、用途只能是历史说明）。缺输入的合法结果照常通过，不改 Task 状态。
+
+| 行号 | 补充哪一行 | state 文件 | 服务文件 | 测试（用例） |
+| --- | --- | --- | --- | --- |
+| CTX-01 | RUN-02（`Starting.Unbound` → `entry_authorized` → `Starting.Authorized`）：新准入时加 G-CTX、G-INPUT | context-input.ts（`contextAssemblyProblem`、`declaredInputProblem`）；run-machine.ts | wg/tasks/execution-entry-service.ts（`authorizeRuntimeEntry`） | state/context-input.test.ts ST01–ST15；work-graph/S3-prepared-context-admission.test.ts AD01–AD05、AD08 |
+| CTX-02 | RUN-03（`Starting.Revoked` → 再授权）：只核已绑定的清单，不重新选输入、不重装上下文 | run-machine.ts | wg/tasks/execution-entry-service.ts | work-graph/S3-prepared-context-admission.test.ts AD06 |
+| CTX-03 | Query 的 prepared 一步（`claimed` → `prepared`）：加 G-CTX；Query 只能多 look、find 两个只读工具名 | query-run-recovery.ts（`advanceQueryExecutionRecord`） | wg/queries/query-execution.ts（`bindPrepared`） | work-graph/S3-prepared-context-admission.test.ts AD07 |
+
+其余第 3 片的用例测的是读取和装配，不是状态行：输入读取（work-graph/S3-context-inputs.test.ts IN01–IN19）、图读取（work-graph/S3-graph-context.test.ts GR01–GR19）、装配器（runtime/S3-context-assembler.test.ts CA01–CA15）、职责配置（work-graph/S3-role-profiles.test.ts RP01–RP06）、图工具（runtime/S3-graph-tools.test.ts GT01–GT14）、注意力（app/S3-attention-context.test.ts AT01–AT12）、路由（app/S3-graph-routes.test.ts RT01–RT06）、场景（scenarios/S3-context-and-inputs.test.ts SC01、S3-query-graph.test.ts SC02）。
+
+**合入时定的两处**（e48218a5，lead）：§3.6 的消费守卫不再把 Goal 钉在读上下文时的版本，Goal 只由入口按当前版本守卫、W3 规则判断（否则和用户决定 C6 / U-11 冲突：无关的计划采用会卡住已领取的 Run，`tests/scenarios/C6-unrelated-adoption.test.ts`）；代价是准备之后改了 Goal 的目标文字，入口不再因此拒绝。再授权（CTX-02）不跑新加的来源守卫和工作区版本比较（lead L4）。
 
 
 ## 附录 A　决定全文（2026-10-03 已确认）

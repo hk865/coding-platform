@@ -1,0 +1,61 @@
+{
+ "sessionId": "session-f8ceb6a6-568c-4ff7-ab85-40d9a740468f",
+ "steps": 48,
+ "toolCalls": 53,
+ "byTool": {
+  "job_output": 5,
+  "bash": 33,
+  "subagent": 7,
+  "read": 4,
+  "write": 1,
+  "edit": 3
+ },
+ "tokens": {
+  "input": 37734,
+  "cacheRead": 14371456,
+  "cacheWrite": 0,
+  "output": 33970,
+  "total": 14443160
+ },
+ "turnEnd": {
+  "kind": "completed"
+ },
+ "errors": 0,
+ "contamination": "attempted-outside",
+ "sandboxed": true,
+ "privateTmpUses": 0,
+ "pathHits": [
+  {
+   "event": 77,
+   "tool": "write",
+   "pattern": "dotdot",
+   "excerpt": " it } from 'vitest';\\nimport type { DecisionSourceV1 } from '../../src/contracts/goal-decisions.js';\\nimport type { DecisionReadPort } from "
+  },
+  {
+   "event": 87,
+   "tool": "edit",
+   "pattern": "dotdot",
+   "excerpt": "es.test.ts\",\"new_string\":\"import type { NoticeItemV1 } from '../../src/core/work-graph/model/decision-contracts.js';\\nimport type { Decision"
+  }
+ ],
+ "pathHitCount": 2,
+ "canaryHits": [],
+ "canaryHitCount": 0,
+ "lookups": {},
+ "writes": [
+  "tests/work-graph/S5-decision-queue.test.ts",
+  "tests/work-graph/S5-notices.test.ts",
+  "tests/work-graph/S5-decision-application.test.ts"
+ ],
+ "report": {
+  "present": [
+   "FILES CHANGED",
+   "CHECKS",
+   "UNSPECIFIED",
+   "NOTES"
+  ],
+  "missing": [],
+  "chars": 17947,
+  "hasFinal": true
+ }
+}

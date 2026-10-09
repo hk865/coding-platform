@@ -1,0 +1,24 @@
+## Slice-1 part-2 review — findings
+
+Read-only review; no files edited. `npm run typecheck` → exit 0. Report also sent to the parent agent.
+
+Ordered by severity (`file:line — spec — deviation — counter-example`):
+
+1. `session-directory.ts:730-741` — §2.2:172 — `admitSessionCreation` only shape-checks `provenance`; the creation checks (predecessor exists, copy message exists + derivation match, continuation Task adopted) are never read — counter-example: a `continuation` from `{projectId:'p',sessionId:'ghost'}` is admitted and writes SessionCreated + initialLinks.
+2. `mailbox-service.ts:2380-2384` (call `:2473`, receipt lookup `:2486`) — §2.3:242/248, D10 — `disposeArchiveWait` demands the **current** `archiveRequest` before its receipt lookup, so an internal step cannot replay after the final cleared R — counter-example: retry a committed `wait_cancel` after the final → `invalid/archive_disposal_required` instead of replaying.
+3. `session-lifecycle.ts:901-902` — §2.3:238 / §3.2:490 — `readPin` maps a failed/absent `readMany` to `{ref,revision:0}` and persists the fabricated pin in `executionPins` — counter-example: corrupt read for the occupying Run → R commits a revision-0 pin.
+4. `session-provenance-facts.ts:351-355` — §2.2:188 — `locateCreation` silently `continue`s on `eventAt`/decode failure and can fall through to `{kind:'new'}` — counter-example: eventAt unavailable for the only creation link.
+5. `session-anomaly-service.ts:491-499` — §3.2:477 (S1-ANCHOR-02) — `cause:'retired_archive'` taken from `request.mode` without verifying retirement/no-continuation/occupancy-released — counter-example: mode:'retired' on an active Session writes a retired_archive anchor.
+6. `session-anomaly-service.ts:494` + `session-anomaly-codecs.ts:139-177` — §2.6:343 — `changedFiles` is passed through; no 64-path cap, dedupe, order, truncation, or reason length — counter-example: 70 confirmed paths commit.
+7. `session-lifecycle.ts:873` — §3.1/§3.4 — `wait.messageRef.projectId` dereferenced without shape check; malformed wait throws TypeError instead of `invalid/archive_input_invalid` — counter-example: `{kind:'cancel',runRef:{…}}`.
+8. `session-facts.ts:241,246` — §3.2:490 — damaged/unreadable latest Work Run reported `incomplete` instead of `unavailable` with detail — counter-example: `decodeRun` failure.
+9. `claim-service.ts:711` — §2.2:188 — every non-cycle rejected legacy-provenance result (`unavailable`/`forbidden`) is relabeled `incomplete` — counter-example: damaged message → incomplete.
+10. `session-provenance-facts.ts:431-453` — §2.2:186 — `manifest_seed` basis is never derived — counter-example: manifest-seeded legacy Session → `no_reliable_predecessor`.
+11. `session-lifecycle.ts:1359-1362` — §3.2:469 (S1-SES-06) — `failedDisposal:true` hardcoded, bypassing the state guard — counter-example: stopped-but-unfinished request can be released.
+12. `session-lifecycle.ts:919-935` — §2.3:238 — occupancy Run ≠ `latestWork` leaves `execution:none` yet adds the holder pin — counter-example: mismatched Run.
+13. `session-record-codecs.ts:360-372` — §2.1:151/K3 — wait-choice transfer `to.projectId` not cross-checked (task choice is) — counter-example: cross-project `wait.to` decodes.
+14. `session-anomaly-service.ts:78-79,231-250`, `run-state-service.ts:433-441` — §2.8:385 — internal anchor reads page at 200 (spec 100) — counter-example: `LOOKUP_PAGE_LIMIT=200`.
+
+**No deviation found:** §2.3 `deriveArchiveStepCommitIdentityV1` material/prefix/fingerprint/eventId (`session-archive.ts:52-85`); the six §2.8 lookups (names/aggregate/paths/order/registration); §2.9 decode defaults + K3 strict keys (including `inputBindingProblem`→`anomalyAnchorRefsProblem`); rule 2 state purity (`Date.parse` is explicitly allowed by the boundaries test); rule 4 old bytes/digests; K2 fill and `deriveTaskArchiveState`/`executorArchiveDue` semantics.
+
+**Out-of-scope note:** the rule-9 `state:'partial'` + exact `处置已完成，归档没成功` text lives in `business/workflow/session-archive.ts:167-168`, which was not in the review list and was not audited.

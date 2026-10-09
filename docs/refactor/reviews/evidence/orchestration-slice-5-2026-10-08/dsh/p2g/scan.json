@@ -1,0 +1,57 @@
+{
+ "sessionId": "session-da1cee5f-c523-4258-9a52-94075847328e",
+ "steps": 68,
+ "toolCalls": 85,
+ "byTool": {
+  "bash": 43,
+  "write": 1,
+  "subagent": 10,
+  "read": 16,
+  "list_agents": 4,
+  "send_message": 7,
+  "grep": 1,
+  "edit": 3
+ },
+ "tokens": {
+  "input": 93211,
+  "cacheRead": 6292224,
+  "cacheWrite": 0,
+  "output": 76282,
+  "total": 6461717
+ },
+ "turnEnd": {
+  "kind": "completed"
+ },
+ "errors": 0,
+ "contamination": "none",
+ "sandboxed": true,
+ "privateTmpUses": 1,
+ "pathHits": [
+  {
+   "event": 37,
+   "tool": "write",
+   "pattern": "/tmp",
+   "excerpt": "nder `./.dsh-scratch/` and delete it at the end. Never use\\n`/tmp`. At the end `sha256sum <file>` must print exactly:\\n\\n```\\n50a7d9771d0361"
+  }
+ ],
+ "pathHitCount": 1,
+ "canaryHits": [],
+ "canaryHitCount": 0,
+ "lookups": {},
+ "writes": [
+  "<copy>/.dsh-scratch/BRIEF.md",
+  "<copy>/src/composition/create-platform.ts",
+  "<copy>/src/app/host.ts"
+ ],
+ "report": {
+  "present": [
+   "FILES CHANGED",
+   "CHECKS",
+   "UNSPECIFIED",
+   "NOTES"
+  ],
+  "missing": [],
+  "chars": 11286,
+  "hasFinal": true
+ }
+}

@@ -142,3 +142,12 @@ Contracts、Composition、Host（`src/app`）和 UI（`src/ui`）是外层，规
 - `notes`（L5.5）和 `views`（L7）还没有文件，没有声明；检查器要求声明的路径存在，第一个文件落地时再按 DESIGN §7.2 声明（D-PLACEMENT §3“写入时机”）。
 - state 的纯度仍用顶层 `pureDirectories` 声明。规格 §14.4 定了（L-8）任务 D 之后改成 state 子模块条目上的 `pure: true`，这一步还没做：检查器还不认 `pure` 字段，只写上不会被检查；写声明这一步没有改检查器，所以保留 `pureDirectories`，含义相同。留在收尾：先让 `scripts/check-boundaries.mjs` 支持 `pure: true` 并补测试，再换（见 [STATUS](STATUS.md)“剩余”）。
 - 文件之间还有两个只靠类型引用才成的环，各在一个子模块内部（model 里 3 个契约文件、state 里两个状态机）。按决定 40 接受：收尾的“无环”按“子模块之间无环、文件之间没有值引用的环”算。检查器只查子模块之间的环。
+
+**2026-10-09 补注（收尾、编排第 0、1、3 片之后）。** 上面的表和几条说明写于 2026-10-07，原文保留；现在的情况：
+- **state 的纯度已改用 `pure: true`**（收尾，820817c3）。上面“state 的纯度仍用顶层 `pureDirectories` 声明……这一步还没做”已过期：检查器认子模块条目上的 `"pure": true`，顶层 `pureDirectories` 退役，再写就报错；检查输出 `pure submodules: WorkGraph/state`。“state 是纯目录……由顶层的 `pureDirectories` 管”一句也按这条读。
+- **B0（48c8d473，编排第 3、5 片之前）声明了 `views`，并允许 `configuration → state`。** 子模块从 13 个变成 14 个，允许的依赖从 41 条变成 53 条：
+  - `views`（L7，路径 `views/`）：只读的读模型，可以依赖除 notes 以外的其余 11 个目录子模块（model、state、persistence、configuration、materials、architecture、sessions、queries、tasks、evidence、communication）；没有任何子模块声明依赖 views，所以 D-PLACEMENT §4“任何子模块依赖 views”这一条由检查器拒绝。第一个文件是第 3 片的 `views/graph-context-reader.ts`。
+  - `configuration` 的依赖改为 model、state、persistence：第 5 片的通知位置要用 state 里的状态机（第 5 片规格 §0.2 T03）。第 5 片没有合入，这条边现在还没用到。
+  - `notes`（L5.5）仍没有文件，没有声明。
+- **现在的检查结果**（e48218a5，`npm run check:architecture`）：WorkGraph 114 个源码文件；用到的子模块边 47 条（原来的 40 条，加 views 用到的 7 条：architecture、materials、model、persistence、queries、sessions、tasks）；没用到的允许边 6 条：`tasks → architecture`、`configuration → state`，以及 views 到 state、configuration、evidence、communication。
+- **文件数（2026-10-09）**：model 15、state 16、persistence 9、configuration 5、materials 5、architecture 8、sessions 10、source-authority-ports 1、queries 4、tasks 36、source-authority-reader 1、evidence 2、communication 1、views 1。比上表多出来的都是第 1、3 片新建的：model 3（`session-facts-contracts.ts`、`context-input-contracts.ts`、`graph-context-contracts.ts`）、state 3（`session-anomaly.ts`、`session-responsibility.ts`、`context-input.ts`）、sessions 1（`session-responsibility-service.ts`）、tasks 5（`session-anomaly-codecs.ts`、`session-anomaly-service.ts`、`session-facts.ts`、`session-provenance-facts.ts`、`context-input-service.ts`）、views 1。

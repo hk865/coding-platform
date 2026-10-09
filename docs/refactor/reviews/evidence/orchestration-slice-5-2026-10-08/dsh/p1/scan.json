@@ -1,0 +1,106 @@
+{
+ "sessionId": "session-f8ceb6a6-568c-4ff7-ab85-40d9a740468f",
+ "steps": 143,
+ "toolCalls": 145,
+ "byTool": {
+  "bash": 48,
+  "read": 43,
+  "create_goal": 1,
+  "job_output": 1,
+  "subagent": 23,
+  "list_agents": 6,
+  "edit": 23
+ },
+ "tokens": {
+  "input": 185735,
+  "cacheRead": 21898624,
+  "cacheWrite": 0,
+  "output": 94098,
+  "total": 22178457
+ },
+ "turnEnd": null,
+ "errors": 0,
+ "contamination": "attempted-outside",
+ "sandboxed": true,
+ "privateTmpUses": 0,
+ "pathHits": [
+  {
+   "event": 134,
+   "tool": "subagent",
+   "pattern": "dotdot",
+   "excerpt": "t them here; they may import from `./goal-decisions.js` and `../../contracts/core/...`), and `export function isUserMessageRecipient(...)` s"
+  },
+  {
+   "event": 355,
+   "tool": "edit",
+   "pattern": "dotdot",
+   "excerpt": ",\"old_string\":\"import type { PreparedQueryManifestV1 } from '../../../contracts/core/prepared-execution.js';\\nimport type { CoreRejection } "
+  },
+  {
+   "event": 365,
+   "tool": "edit",
+   "pattern": "dotdot",
+   "excerpt": "contracts.js';\\nimport type { InitialPlanAnswerFacts } from '../../../contracts/query-job.js';\\n\\nexport type { InitialPlanAnswerFacts };\",\""
+  },
+  {
+   "event": 390,
+   "tool": "edit",
+   "pattern": "dotdot",
+   "excerpt": "geDecisionAppliedEventV1,\\n  SessionMessageEventV1,\\n} from '../model/communication-contracts.js';\\nimport type {\\n  SessionMessageSentEvent"
+  },
+  {
+   "event": 395,
+   "tool": "edit",
+   "pattern": "dotdot",
+   "excerpt": "port type { GoalRef, GoalSnapshot, WorkspaceSnapshot } from '../../../contracts/ledger.js';\\nimport type { PlatformDutyV1 } from '../../../c"
+  },
+  {
+   "event": 410,
+   "tool": "edit",
+   "pattern": "dotdot",
+   "excerpt": "ontracts.ts\",\"new_string\":\"import type { QueryJobRef } from '../../../contracts/query-job.js';\",\"old_string\":\"import type { InitialPlanAnswe"
+  },
+  {
+   "event": 491,
+   "tool": "edit",
+   "pattern": "dotdot",
+   "excerpt": "\",\"new_string\":\"import type { InitialPlanAnswerFacts } from '../../../contracts/query-job.js';\\nexport type { InitialPlanAnswerFacts } from "
+  },
+  {
+   "event": 522,
+   "tool": "subagent",
+   "pattern": "dotdot",
+   "excerpt": "g`) (SPEC §4.6 lines 896-900), importing the port type from `../../work-graph/model/decision-contracts.js`. Keep the existing config fields."
+  }
+ ],
+ "pathHitCount": 8,
+ "canaryHits": [],
+ "canaryHitCount": 0,
+ "lookups": {},
+ "writes": [
+  "?",
+  "src/contracts/query-job.ts",
+  "src/core/work-graph/tasks/initial-plan.ts",
+  "src/core/work-graph/model/plan-contracts.ts",
+  "src/core/work-graph/model/communication-contracts.ts",
+  "src/core/work-graph/sessions/message-record-codecs.ts",
+  "src/core/work-graph/model/decision-contracts.ts",
+  "src/ui/views/sessions/render.ts",
+  "tests/app/orchestration-mechanism.test.ts",
+  "tests/state/message-machine.test.ts",
+  "src/core/work-graph/queries/query-job-service.ts",
+  "src/ui/views/execution/actions.ts",
+  "tests/architecture/state-writes.test.ts"
+ ],
+ "report": {
+  "present": [],
+  "missing": [
+   "FILES CHANGED",
+   "CHECKS",
+   "UNSPECIFIED",
+   "NOTES"
+  ],
+  "chars": 0,
+  "hasFinal": false
+ }
+}

@@ -1,0 +1,93 @@
+ M src/app/collaboration-driver.ts
+ M src/app/core-http-types.ts
+ M src/app/core-routes.ts
+ M src/app/startup-reconcile.ts
+ M src/business/workflow/consultation.ts
+ M src/business/workflow/contracts.ts
+ M src/business/workflow/ports.ts
+ M src/business/workflow/workflow.ts
+ M src/composition/create-platform.ts
+ M src/contracts/continuation-brief.ts
+ M src/contracts/core/session.ts
+ M src/contracts/dispatch.ts
+ M src/contracts/ledger.ts
+ M src/contracts/task-requeue.ts
+ M src/core/agent-runtime/continuation-brief-assembly.ts
+ M src/core/agent-runtime/execution-inputs.ts
+ M src/core/agent-runtime/execution-preparation.ts
+ M src/core/agent-runtime/ports.ts
+ M src/core/agent-runtime/runtime.ts
+ M src/core/agent-runtime/session-operations.ts
+ M src/core/work-graph/communication/mailbox-service.ts
+ M src/core/work-graph/model/claim-contracts.ts
+ M src/core/work-graph/model/communication-contracts.ts
+ M src/core/work-graph/model/execution-read-contracts.ts
+ M src/core/work-graph/model/session-contracts.ts
+ M src/core/work-graph/persistence/execution-entry-codecs.ts
+ M src/core/work-graph/queries/contracts.ts
+ M src/core/work-graph/queries/query-execution.ts
+ M src/core/work-graph/queries/query-record-codecs.ts
+ M src/core/work-graph/sessions/lifecycle-contracts.ts
+ M src/core/work-graph/sessions/lifecycle-record-codecs.ts
+ M src/core/work-graph/sessions/message-record-codecs.ts
+ M src/core/work-graph/sessions/session-directory.ts
+ M src/core/work-graph/sessions/session-lifecycle.ts
+ M src/core/work-graph/sessions/session-record-codecs.ts
+ M src/core/work-graph/state/message-machine.ts
+ M src/core/work-graph/state/run-machine.ts
+ M src/core/work-graph/state/session-availability.ts
+ M src/core/work-graph/state/task-failure.ts
+ M src/core/work-graph/state/task-machine.ts
+ M src/core/work-graph/tasks/claim-record-codecs.ts
+ M src/core/work-graph/tasks/claim-service.ts
+ M src/core/work-graph/tasks/execution-entry-service.ts
+ M src/core/work-graph/tasks/plan-readers.ts
+ M src/core/work-graph/tasks/requeue-service.ts
+ M src/core/work-graph/tasks/run-state-service.ts
+ M src/ui/api/routes.ts
+ M tests/architecture/state-writes.test.ts
+ M tests/state/invariants.ts
+ M tests/state/message-machine.test.ts
+ M tests/state/session-availability.test.ts
+?? src/business/workflow/session-archive.ts
+?? src/business/workflow/session-maintenance.ts
+?? src/business/workflow/task-order.ts
+?? src/contracts/core/session-archive.ts
+?? src/contracts/platform-duty.ts
+?? src/contracts/session-anomaly.ts
+?? src/core/agent-runtime/session-anomaly-facts.ts
+?? src/core/work-graph/model/session-facts-contracts.ts
+?? src/core/work-graph/sessions/session-responsibility-service.ts
+?? src/core/work-graph/state/session-anomaly.ts
+?? src/core/work-graph/state/session-responsibility.ts
+?? src/core/work-graph/tasks/session-anomaly-codecs.ts
+?? src/core/work-graph/tasks/session-anomaly-service.ts
+?? src/core/work-graph/tasks/session-facts.ts
+?? src/core/work-graph/tasks/session-provenance-facts.ts
+?? tests/app/S1-session-routes.test.ts
+?? tests/business/S1-archive-flow.test.ts
+?? tests/business/S1-session-maintenance.test.ts
+?? tests/business/S1-task-order.test.ts
+?? tests/helpers/S1-archive-service-fixture.ts
+?? tests/helpers/S1-runtime-scenario-fixture.ts
+?? tests/helpers/S1-session-facts-fixture.ts
+?? tests/helpers/S1-workflow-archive-fixture.ts
+?? tests/runtime/S1-archive-files-brief.test.ts
+?? tests/runtime/S1-routed-replies.test.ts
+?? tests/scenarios/S1-archive-restart.test.ts
+?? tests/scenarios/S1-wait-copy-retirement.test.ts
+?? tests/state/S1-anomaly.test.ts
+?? tests/state/S1-archive-rework.test.ts
+?? tests/state/S1-dispatch.test.ts
+?? tests/state/S1-message-routing.test.ts
+?? tests/state/S1-responsibility.test.ts
+?? tests/state/S1-session-archive.test.ts
+?? tests/work-graph/S1-anomaly-owner.test.ts
+?? tests/work-graph/S1-archive-owner.test.ts
+?? tests/work-graph/S1-codecs-indexes.test.ts
+?? tests/work-graph/S1-dispatch-guards.test.ts
+?? tests/work-graph/S1-provenance.test.ts
+?? tests/work-graph/S1-requeue.test.ts
+?? tests/work-graph/S1-responsibility.test.ts
+?? tests/work-graph/S1-session-facts.test.ts
+?? tests/work-graph/S1-wait-disposal.test.ts

@@ -1,0 +1,44 @@
+{
+ "sessionId": "session-41fddfd8-8bce-4b2f-8b2d-959111c66d19",
+ "steps": 27,
+ "toolCalls": 37,
+ "byTool": {
+  "bash": 14,
+  "grep": 1,
+  "read": 16,
+  "todo_write": 1,
+  "subagent": 4,
+  "list_agents": 1
+ },
+ "tokens": {
+  "input": 52781,
+  "cacheRead": 1195136,
+  "cacheWrite": 0,
+  "output": 18472,
+  "total": 1266389
+ },
+ "turnEnd": {
+  "kind": "completed"
+ },
+ "errors": 0,
+ "contamination": "none",
+ "sandboxed": true,
+ "privateTmpUses": 0,
+ "pathHits": [],
+ "pathHitCount": 0,
+ "canaryHits": [],
+ "canaryHitCount": 0,
+ "lookups": {},
+ "writes": [],
+ "report": {
+  "present": [],
+  "missing": [
+   "FILES CHANGED",
+   "CHECKS",
+   "UNSPECIFIED",
+   "NOTES"
+  ],
+  "chars": 112,
+  "hasFinal": true
+ }
+}

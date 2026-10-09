@@ -1,0 +1,56 @@
+{
+ "sessionId": "session-43540800-f4ea-4e5d-8c9b-3de53be91ee9",
+ "steps": 66,
+ "toolCalls": 91,
+ "byTool": {
+  "bash": 47,
+  "read": 17,
+  "write": 2,
+  "subagent": 13,
+  "todo_write": 3,
+  "grep": 2,
+  "send_message": 4,
+  "list_agents": 3
+ },
+ "tokens": {
+  "input": 92471,
+  "cacheRead": 7935104,
+  "cacheWrite": 0,
+  "output": 91503,
+  "total": 8119078
+ },
+ "turnEnd": {
+  "kind": "completed"
+ },
+ "errors": 0,
+ "contamination": "none",
+ "sandboxed": true,
+ "privateTmpUses": 1,
+ "pathHits": [
+  {
+   "event": 22,
+   "tool": "write",
+   "pattern": "/tmp",
+   "excerpt": "n   network. Scratch files only in `./.dsh-scratch/` (never `/tmp`, never anywhere else); delete it at the end.\\n7. Comments: keep them true"
+  }
+ ],
+ "pathHitCount": 1,
+ "canaryHits": [],
+ "canaryHitCount": 0,
+ "lookups": {},
+ "writes": [
+  ".dsh-scratch/brief-common.md",
+  ".dsh-scratch/regression-files.txt"
+ ],
+ "report": {
+  "present": [
+   "FILES CHANGED",
+   "CHECKS",
+   "UNSPECIFIED",
+   "NOTES"
+  ],
+  "missing": [],
+  "chars": 5243,
+  "hasFinal": true
+ }
+}

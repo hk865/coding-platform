@@ -1,0 +1,87 @@
+{
+ "sessionId": "session-e3a149cf-ed9c-4a4b-af1d-c97bb23048f5",
+ "steps": 76,
+ "toolCalls": 97,
+ "byTool": {
+  "bash": 66,
+  "read": 7,
+  "write": 1,
+  "subagent": 17,
+  "edit": 5,
+  "job_output": 1
+ },
+ "tokens": {
+  "input": 99323,
+  "cacheRead": 9483008,
+  "cacheWrite": 0,
+  "output": 114296,
+  "total": 9696627
+ },
+ "turnEnd": {
+  "kind": "completed"
+ },
+ "errors": 0,
+ "contamination": "attempted-outside",
+ "sandboxed": true,
+ "privateTmpUses": 3,
+ "pathHits": [
+  {
+   "event": 101,
+   "tool": "bash",
+   "pattern": "dotdot",
+   "excerpt": "re.ts; echo \\\"=== all SESSION imports ===\\\"; grep -n \\\"from '../../src/core/work-graph/sessions\\\" tests/helpers/S5-decision-fixture.ts | hea"
+  },
+  {
+   "event": 122,
+   "tool": "bash",
+   "pattern": "dotdot",
+   "excerpt": " it } from 'vitest';\\nimport { openS5DecisionFixture } from '../helpers/S5-decision-fixture.js';\\nimport { createSessionDirectory } from '.."
+  },
+  {
+   "event": 132,
+   "tool": "bash",
+   "pattern": "dotdot",
+   "excerpt": " it } from 'vitest';\\nimport { openS5DecisionFixture } from '../helpers/S5-decision-fixture.js';\\nimport { createSessionDirectory } from '.."
+  },
+  {
+   "event": 282,
+   "tool": "bash",
+   "pattern": "/tmp",
+   "excerpt": "d <copy> && echo \\\"=== TYPECHECK ===\\\" && npm run typecheck >/tmp/tc.log 2>&1; echo \\\"typecheck=$?\\\"; tail -3 /tmp/tc.log; echo \\\"=== ARCH ="
+  },
+  {
+   "event": 381,
+   "tool": "bash",
+   "pattern": "/tmp",
+   "excerpt": " tests/scenarios/harness.ts && cp tests/scenarios/harness.ts /tmp/harness.bak && python3 - <<'EOF'\\nimport re\\np='tests/scenarios/harness.ts"
+  },
+  {
+   "event": 417,
+   "tool": "bash",
+   "pattern": "/tmp",
+   "excerpt": "chitecture >/dev/null 2>&1; echo \\\"arch=$?\\\"; npm run build >/tmp/build2.log 2>&1; echo \\\"build=$?\\\"; echo \\\"stubs=$(grep -rn 'not implement"
+  }
+ ],
+ "pathHitCount": 6,
+ "canaryHits": [],
+ "canaryHitCount": 0,
+ "lookups": {},
+ "writes": [
+  "<copy>/.dsh-scratch/BRIEFING.md",
+  "<copy>/src/core/work-graph/views/decision-read-model.ts",
+  "<copy>/src/composition/create-platform.ts",
+  "<copy>/src/core/work-graph/communication/decision-application.ts",
+  "<copy>/src/core/work-graph/communication/decision-service.ts"
+ ],
+ "report": {
+  "present": [
+   "FILES CHANGED",
+   "CHECKS",
+   "UNSPECIFIED",
+   "NOTES"
+  ],
+  "missing": [],
+  "chars": 16012,
+  "hasFinal": true
+ }
+}

@@ -1,0 +1,53 @@
+{
+ "sessionId": "session-6ffe4f52-9e47-4e57-88fc-a978dda56498",
+ "steps": 14,
+ "toolCalls": 21,
+ "byTool": {
+  "bash": 7,
+  "read": 3,
+  "write": 8,
+  "subagent": 2,
+  "create_goal": 1
+ },
+ "tokens": {
+  "input": 37218,
+  "cacheRead": 603520,
+  "cacheWrite": 0,
+  "output": 21171,
+  "total": 661909
+ },
+ "turnEnd": {
+  "kind": "completed"
+ },
+ "errors": 0,
+ "contamination": "none",
+ "sandboxed": true,
+ "privateTmpUses": 0,
+ "pathHits": [],
+ "pathHitCount": 0,
+ "canaryHits": [],
+ "canaryHitCount": 0,
+ "lookups": {},
+ "writes": [
+  "<copy>/.dsh-scratch/context.md",
+  "<copy>/.dsh-scratch/G1.md",
+  "<copy>/.dsh-scratch/G2.md",
+  "<copy>/.dsh-scratch/G3.md",
+  "<copy>/.dsh-scratch/G4.md",
+  "<copy>/.dsh-scratch/G5.md",
+  "<copy>/.dsh-scratch/G6.md",
+  "?",
+  "<copy>/.dsh-scratch/REVIEW-TEMPLATE.md"
+ ],
+ "report": {
+  "present": [],
+  "missing": [
+   "FILES CHANGED",
+   "CHECKS",
+   "UNSPECIFIED",
+   "NOTES"
+  ],
+  "chars": 138,
+  "hasFinal": true
+ }
+}

@@ -1,0 +1,43 @@
+{
+ "sessionId": "session-462d3a02-19a7-48c8-8cb4-e7a68b6dc147",
+ "steps": 9,
+ "toolCalls": 8,
+ "byTool": {
+  "bash": 5,
+  "edit": 2,
+  "read": 1
+ },
+ "tokens": {
+  "input": 4035,
+  "cacheRead": 475264,
+  "cacheWrite": 0,
+  "output": 3263,
+  "total": 482562
+ },
+ "turnEnd": {
+  "kind": "completed"
+ },
+ "errors": 0,
+ "contamination": "none",
+ "sandboxed": true,
+ "privateTmpUses": 0,
+ "pathHits": [],
+ "pathHitCount": 0,
+ "canaryHits": [],
+ "canaryHitCount": 0,
+ "lookups": {},
+ "writes": [
+  "src/app/attention-observer.ts"
+ ],
+ "report": {
+  "present": [
+   "FILES CHANGED",
+   "CHECKS",
+   "UNSPECIFIED",
+   "NOTES"
+  ],
+  "missing": [],
+  "chars": 1948,
+  "hasFinal": true
+ }
+}

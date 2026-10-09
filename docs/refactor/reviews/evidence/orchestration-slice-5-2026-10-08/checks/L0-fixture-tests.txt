@@ -1,0 +1,25 @@
+
+ RUN  v4.1.10 /home/han001/dsh-work/slices/s5
+
+ ✓ tests/business/S5-decision-workflow.test.ts (2 tests) 261ms
+ ✓ tests/app/S5-decision-routes.test.ts (8 tests) 459ms
+   ✓ RT06 decisions/notices/seen with a mismatched display token is invalid and changes no Workspace  352ms
+ ✓ tests/runtime/S5-user-message-tools.test.ts (7 tests) 2796ms
+     ✓ TU07 keeps a user decision wait out of the real Session consultation consumer and pump  2153ms
+ ✓ tests/work-graph/S5-decision-queue.test.ts (18 tests) 2913ms
+     ✓ DQ09 reads all pages and refreshes without writes or model calls  314ms
+ ✓ tests/work-graph/S5-notices.test.ts (16 tests) 3071ms
+     ✓ NR01: system and agent requeues plus a reverify yield three distinct notices  371ms
+     ✓ NR01: system and agent requeues plus a reverify yield three distinct notices  453ms
+     ✓ NR05: legacy precedes a bound creation position and corrupt null origin is unavailable  314ms
+ ✓ tests/work-graph/S5-request-candidates.test.ts (22 tests) 3046ms
+ ✓ tests/work-graph/S5-user-messages.test.ts (26 tests) 3468ms
+ ✓ tests/work-graph/S5-decision-application.test.ts (28 tests) 3656ms
+ ✓ tests/work-graph/S5-goal-settings.test.ts (32 tests) 5044ms
+
+ Test Files  9 passed (9)
+      Tests  159 passed (159)
+   Start at  01:53:40
+   Duration  6.82s (transform 9.40s, setup 0ms, import 16.89s, tests 24.71s, environment 1ms)
+
+EXIT 0

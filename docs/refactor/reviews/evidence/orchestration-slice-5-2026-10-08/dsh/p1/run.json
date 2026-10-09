@@ -1,0 +1,32 @@
+{
+ "runName": "slices-s5-p1",
+ "copy": "/home/han001/dsh-work/slices/s5",
+ "level": "slices",
+ "task": "/home/han001/dsh-work/slices/_books/s5-p1.md",
+ "taskSha256": "7d7e329cc3573191428e1e562001ca1ba484253375798c674831e801b24fd332",
+ "model": "headless default (deepseek-flash)",
+ "sessionIdIn": null,
+ "sessionId": "session-f8ceb6a6-568c-4ff7-ab85-40d9a740468f",
+ "startedAt": "2026-10-08T07:31:41.185Z",
+ "endedAt": "2026-10-08T08:28:01.573Z",
+ "wallSeconds": 3380,
+ "exitCode": null,
+ "signal": "SIGTERM",
+ "stoppedBy": "stopped: limit:time (60 min)",
+ "limits": {
+  "maxMinutes": 60,
+  "maxTokens": 30000000
+ },
+ "sandbox": "bubblewrap",
+ "toolCalls": 145,
+ "steps": 143,
+ "tokens": {
+  "input": 185735,
+  "cacheRead": 21898624,
+  "cacheWrite": 0,
+  "output": 94098,
+  "total": 22178457
+ },
+ "contamination": "attempted-outside",
+ "changedPaths": 87
+}

@@ -1,0 +1,20 @@
+Review complete; result sent to parent. Summary of deviations found (read-only, no files edited):
+
+**High**
+1. `src/business/workflow/session-archive.ts:493` — §4.1 step 1 / §2.3:240 / §3.4:492 — archiveLine never reads open responsible links or the current Task graph, so an omitted new unfinished responsibility is accepted, R is committed, and the result is `partial`/`dependency_blocked` instead of the required zero-commit `invalid/archive_disposal_required:`.
+2. `tests/scenarios/S1-archive-restart.test.ts:194` — IT19 fails: post-archive successor advance returns `waiting`, not `completed` (archive itself succeeded; IT21–25 pass).
+
+**Medium**
+3. `src/business/workflow/session-maintenance.ts:243` — §4.2:827 — `finishedAtFromRuns` falls back to last `Run.endedAt`, which the spec forbids.
+4. `tests/business/S1-session-maintenance.test.ts:316` — IT31 throws `missing_required_executable_task` in fixture setup and never asserts.
+5. `src/business/workflow/session-archive.ts:386` — §4.1 step 7 — required requeue is silently skipped (and can still report `archived`) when a dependency is absent.
+6. `src/core/agent-runtime/continuation-brief-assembly.ts:314-319` — K7/rule 12 — never-ran `pending`/`abandoned` edit calls are counted as unobserved and put in `possible`.
+7. `src/app/collaboration-driver.ts:147,153` — §4.2:823 — `maintenance` hook not wired by `host.ts:395`, so no per-advance maintenance; `readRoutedReplies` unused.
+
+**Low**
+8. `src/business/workflow/session-archive.ts:264-271` — `attestUnknownQueryRun` injected but never invoked.
+9. `src/business/workflow/session-archive.ts:446,463` — public `mode` accepted though `ArchiveLineInput` omits it.
+10. `src/composition/create-platform.ts:897-901` — `closeTerminalResponsibility` bound but never invoked in production.
+11. `src/business/workflow/session-archive.ts:229` — unknown-Run attestation falls back to the current revision instead of `R.executionPins`.
+
+**Clean areas:** `orderTasksByDependency` (c), the 11 routes + K1 (d), K6 production reach (allowlist untouched), and D2/D6/D10 handling including no durable invented cancel for naturally-ended Runs. `npm run check:architecture` and the frozen files S1-archive-flow, S1-task-order, S1-archive-files-brief, S1-routed-replies, S1-session-routes, S1-wait-copy-retirement all pass.

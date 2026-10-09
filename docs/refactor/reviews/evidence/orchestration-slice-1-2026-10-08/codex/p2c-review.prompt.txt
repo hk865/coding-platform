@@ -1,0 +1,170 @@
+You are reviewing an uncommitted change in this repository checkout. READ-ONLY: do not modify, create or delete any file; do not run tests, npm, node or package scripts (Node is not available); reason from the files with read/grep/git only. HEAD is 48c8d473. The change (`git status`, `git diff`, untracked files) is slice 1 of the orchestration work: 62 source files plus 31 frozen test files (tests/**/S1-*.test.ts, 4 changed existing tests, 4 helpers under tests/helpers/S1-*.ts). The tests are frozen and are NOT under review; review the IMPLEMENTATION (the 62 files under src/).
+
+The required behaviour is fixed by docs/refactor/design/orchestration-2026-10/slices/slice-1-SPEC.md. Its section 0 (lead freeze notes, 0.1 U1, 0.2 T1-T10 and L1-L6) WINS over the body wherever they disagree. Sections: 2 data/codecs/compat defaults/lookups/events; 3.2 state rows S1-* and the refusal table (exact CoreRejection codes and reason prefixes); 3.3 owner signatures and dependency ownership; 3.4 check order, authorisation, receipts (incl. archiveOrigin / requeue); 3.5 pure state; 4.1 archiveLine / continueArchiveLine (8 steps, return values, partial failure message); 4.2 maintenance, plain continue, executor due, copy archive after the answer; 4.3 soft ordering; 4.4 routes; 6 file list; 8 risk rules. Also docs/refactor/design/orchestration-2026-10/slices/README.md (shared file src/contracts/platform-duty.ts must be unchanged; seams with slices 3 and 5).
+
+Lead decisions that bind the reading (do not report these as defects): K1 src/ui/api/routes.ts may change only ROUTE_LABELS for the 11 new suffixes; src/core/work-graph/queries/contracts.ts only QueryExecutionDependencies.sessionFacts?. K2 sessionMachineStateOf always fills provenance and archiveRequest (null when absent); createSessionRecord without provenance writes today's 12-key literal. K3 a PRESENT new optional field is validated strictly; absent -> 2.9 default. K4 pendingAnomalies come from complete durable anchor reads. K5 start-up step 6c (maintenance after reconciliation) and the 4th parameter of deriveReworkClass stay. K6 every new declaration reachable from production. K7 an edit-type tool call never observed goes to `possible`, Kernel-confirmed edits to `confirmed`. D1 TaskReworkRefusalSnapshotV1 gets no new field. D2 a stale stop pin gives ready/partial/revision_conflict, R kept. D6 a stop counts only after the terminal observation of the Run. D7/D8 outcome_unknown is resolved only by resolveUnknownRun; maintenance reports busy / archive_unknown_confirmation_required:. D10 plain continueArchiveLine after the final returns receipts: [], the originals come from replaying the original archiveLine GraphWrite. Queries without injected SessionFactsPort keep old behaviour (0.2 L1).
+
+Check especially, with file:line evidence:
+1. Section 8 rules and the 3.2 rows: every refusal code / reason prefix, every check in the 3.4 order, every return value of 4.1 (incl. `partial` and the exact message 处置已完成，归档没成功, never undoing a committed step).
+2. State transitions only through src/core/work-graph/state/ (no direct record mutation of state fields in owners); state/ imports only src/contracts and state/, no clock/random/timer/process.
+3. Versioning / CAS: expected pins, revision_conflict with the right `current`, idempotency (GraphWrite fingerprint includes expected pins; replay returns the original value and cursor, not the current record; internal archive steps use deriveArchiveStepCommitIdentityV1).
+4. Error and not-found branches (unsupported without injected port, unavailable for malformed stored fields, incomplete / session_facts_page_limit: paging at 100 per page and at most 25 pages).
+5. Both storage backends (memory and SQLite): anything that works only on one (lookup registration, schema registration, ordering of reads).
+6. Module boundaries: sessions/ and queries/ never import tasks/; no new module edge vs docs/refactor/module-target.json; codecs not moved.
+7. Rework cap exemption is narrow (rule 10), waiting is not idle (rule 7), maintenance starts nothing (rule 11), changed files are honest (rule 12), soft ordering is not a gate (rule 13).
+8. Anything left as a stub, a TODO, dead code, or behaviour the spec does not state (invented codes, invented fields).
+
+Output in English: a list of findings, each with file:line, severity (must-fix / should-fix / nit), the spec row/section/rule violated, short evidence, and the correct direction (no code). Then a short list of the areas you checked and found consistent. Do not report style issues.
+
+This is a SECOND review. The first review (yours, earlier) found the gaps listed below; a continuation implemented fixes. Lead decisions for that round (binding, do not report as defects): L-a release: stopQueued from durable facts, failedDisposal stays true for the explicit release entry. L-b bounded maintenance runs inside the Workflow (advanceWork / continue), src/app/host.ts is outside the write scope. L-c executor due: close event taskBasis.finishedAt -> formal Task/Plan history -> otherwise incomplete; never Run.endedAt. L-d archive requeue recovery first reuses the existing TaskRequeue of (Task, afterRun). The optional Workflow dependency records?: WorkflowCloseEventReader is approved. The frozen test fixture tests/helpers/S1-workflow-archive-fixture.ts now passes that reader.
+
+Task 1: for EACH gap id below say CLOSED, PARTLY or OPEN with file:line evidence (the ids and directions are in the list). Task 2: judge the implementer's UNSPECIFIED report (appended) item by item: is the claimed obstacle real (no port/dependency the spec names can provide it), and what is the narrowest spec-consistent direction? Task 3: report any NEW defect the fixes introduced (regressions of rules 1-14, state purity, idempotency/replay, CAS, module boundaries, both backends).
+
+--- gap list (from the continuation brief) ---
+## 3. The gaps to close, by group (file:line refers to the copy now; direction, not code)
+
+Severity: M = must, S = should. Each item names its spec place.
+
+### G-A sessions owners — `src/core/work-graph/sessions/session-directory.ts`, `session-lifecycle.ts`,
+`session-record-codecs.ts`, `session-responsibility-service.ts`
+
+- A1 M `session-directory.ts:730` admitSessionCreation only shape-checks `provenance`. S1-SES-01 (S:464) guard:
+  legal scope and predecessor, no self, no cycle. Read the predecessor Session (exists, same project/workspace),
+  refuse self/cycle, guard it in the admission commit; zero writes on refusal.
+- A2 M `session-lifecycle.ts:904` `readPin` turns a failed/absent read into `{ref, revision:0}` that is persisted
+  in `executionPins`. §2.3 S:238: never fabricate a pin; propagate `unavailable` / `not_found`.
+- A3 M `session-lifecycle.ts:~1046` the R commit guards only the Session. §2.3 S:238 "和这些pins相同的RecordGuard纳入R
+  提交" and §3.4 requestSessionArchive row (S:612): guard the exact claim and the Run/QueryRun of every pin.
+  `session-record-codecs.ts:~590`: a new R whose execution (or wait) has no matching pin must be refused at decode
+  (S:238 "新R有execution却缺匹配pin拒解码").
+- A4 M `session-lifecycle.ts:1365` release passes `stopQueued:false` unconditionally. Derive it (L-a).
+- A5 S `session-lifecycle.ts:919-935` an occupying Work Run that does not match `latestWork` leaves `execution:none`
+  but still adds its pin. §3.4 S:612: refuse the request (`incomplete`) instead of registering contradictory facts.
+- A6 S `session-lifecycle.ts:~870` `wait.runRef: null` is dereferenced. Refuse `invalid` / `archive_input_invalid:`
+  (refusal table S:488) before any dereference.
+- A7 S `session-record-codecs.ts:493` stored wait `transfer.to` is not checked to be in the Session's project (task
+  choices are). §2.1 / K3: refuse at decode.
+- A8 M `session-responsibility-service.ts:639` `disposeArchiveResponsibility` reads the source/link but does not
+  check that the CURRENT R still matches the step's request before a NEW commit. Receipt replay of an already
+  committed step stays allowed (D10); a new commit for a released or replaced request is refused `invalid` /
+  `archive_disposal_required:` (S:620, §4.1 step 8).
+- A9 S `session-responsibility-service.ts:475-497` and `:824` (terminal close): §3.4 transfer/close row (S:614) order
+  is: both Sessions scope/lifecycle -> old link open and pin -> Task membership / terminal evidence -> old writer
+  stopped -> machine; a pin mismatch is `revision_conflict` with `current` naming the real conflicting record.
+
+### G-B Session facts, provenance, claim guards — `src/core/work-graph/tasks/session-facts.ts`,
+`tasks/session-provenance-facts.ts`, `tasks/claim-service.ts`, `tasks/plan-readers.ts`
+
+- B1 M `session-provenance-facts.ts:351-355` a failed `eventAt` / decode of the creation event is skipped, and the
+  result can fall through to `new` (`:444-448`). §2.2 S:190: "读取失败报告 incomplete/unavailable，不直接补 new".
+  Only the absence of reliable evidence gives `new / no_reliable_predecessor`.
+- B2 M `session-provenance-facts.ts:431-453` the `manifest_seed` evidence is never derived. §2.2 S:183-188: with a
+  manifest, check the pinned digest, `seededFrom` and the same creation operation; it is one of the reliable
+  sources and takes part in the conflict rule (`incomplete / legacy_provenance_ambiguous:`).
+- B3 M `session-provenance-facts.ts:82` a guard Map shared between derivations; `claim-service.ts:708` drops the
+  derivation guards. §3.4 S:630: keep evidence per call; the committing claim includes the derivation's guards.
+- B4 S `claim-service.ts:711` every non-cycle rejection of the legacy reader becomes `incomplete`. Keep the original
+  code (`unavailable`, `cancelled`, …) and reason.
+- B5 S `session-facts.ts:241,246` an unreadable or undecodable latest Work Run gives `incomplete`. Refusal table
+  S:490: technical damage is `unavailable` with the detail (a missing Run at `:243` stays `incomplete`).
+- B6 M `session-facts.ts:264-276` `continuations` includes handoffs and copies, and unchecked legacy Sessions are not
+  represented. Count only Sessions whose provenance is `continuation` from this Session; while legacy candidates
+  are unresolved, report that uncertainty (`legacyPending`) instead of a definite empty list (S:190, S1-AUTO rows).
+- B7 S `session-facts.ts:78` a malformed page cursor reaches `startsWith`. Refuse `invalid` first.
+- B8 S `session-facts.ts:387` the `lastExecutionRef` legacy Query locator is appended only when the final page has
+  room; a full final page loses it. §2.8 (S:385): merge it into the paging so it is always reachable.
+- B9 M `plan-readers.ts:1743` the responsibility basis treats any ended Run (incl. `outcome_unknown`) as stopped, and
+  the guards at `:1753` omit the Goal / active Plan read of `:1698-1705`. S1-LINK-01/02 and S:614: unknown is not
+  stopped (D7); guard every record the proof used.
+
+### G-C anomaly anchors and requeue — `src/core/work-graph/tasks/session-anomaly-service.ts`,
+`tasks/session-anomaly-codecs.ts`, `tasks/requeue-service.ts`, `tasks/run-state-service.ts`,
+`src/core/work-graph/state/task-failure.ts`
+
+- C1 M `session-anomaly-service.ts:473-491` `execution:none` is accepted without proving the Run belongs to this
+  Session, and `cause:'retired_archive'` is taken from `request.mode`. S1-ANCHOR-01/02 and §3.4: read the claim
+  (Run of this Session), and for `retired_archive` verify retired, no continuation, occupancy released and the
+  current R matching the step.
+- C2 S `session-anomaly-codecs.ts:134-177` and the owner at `session-anomaly-service.ts:494` accept any
+  `changedFiles`. §2.6 S:345: confirmed+possible at most 64, deduplicated, forward-slash relative, stable
+  lexicographic order, confirmed first then possible truncated, the rest counted in `omitted`, reason at most 2000;
+  refuse anything else at the persistence boundary.
+- C3 S `session-anomaly-service.ts:78-79` and `run-state-service.ts:433-441` page internal anchor reads at 200. §2.8:
+  100 per page, at most 25 pages; unfinished -> `incomplete / session_facts_page_limit:`.
+- C4 M `requeue-service.ts:585` (execution origin) verifies the anchor and request but not the exact archive cancel;
+  `:669` (wait origin) checks only kind and actor; `state/task-failure.ts:279` then accepts any cancelled outcome as
+  `archive_cancel`. Rule 10 and S:622: the exemption needs the durable archive-caused stop of THIS request (the cancel
+  intent with the request's derived `s1-archive-control:` identity, or the wait cancel of this R); anything else
+  keeps the ordinary class and count. Keep UT32-35, SV35-38, SV48-50, SV57, SV59 green.
+
+### G-D mailbox — `src/core/work-graph/communication/mailbox-service.ts`
+
+- D1 M `mailbox-service.ts:2380` `disposeArchiveWait` requires the CURRENT `archiveRequest` before its receipt lookup
+  (`:2486`), so a committed `reply_handler` / `wait_cancel` step cannot replay after the final cleared R. D10 and
+  §4.2 last sentence (S:809): recover the original R through `step.requestReceipt` (lookupCommit -> eventAt of the
+  SessionArchiveRequested event, the same way the sessions owner does for SV56), replay the original event and
+  cursor; a NEW commit still needs the matching current R.
+
+### G-E Workflow — `src/business/workflow/session-archive.ts`, `session-maintenance.ts`, `workflow.ts`,
+`contracts.ts`, `ports.ts`, `consultation.ts`, and `src/app/collaboration-driver.ts`
+
+- E1 M `session-archive.ts:493` the first-acceptance preflight does not read the open responsible links and the
+  current Task states. §2.3 S:240 and §4.1 step 1: an unfinished responsibility without a choice is refused with
+  zero commits, `invalid / archive_disposal_required:`; a Task already terminal may be ignored.
+- E2 M `session-maintenance.ts:98-128,243` the Run.endedAt fallback and the silent skip of unreadable close events.
+  Apply L-c.
+- E3 M `session-archive.ts:386-394` the requeue block is skipped when dependencies are absent or a read fails, and the
+  archive can still finish. §4.1 step 7, §4.2 S:807: a required requeue that cannot be done returns `partial` with
+  the rejection and keeps R.
+- E4 M `session-archive.ts:340-348` the wait requeue target is taken from the current `facts.wait`; after the wait
+  cancel commits it disappears and recovery skips the requeue. Take it from the immutable R (`R.wait`) and the
+  original Run.
+- E5 M `session-archive.ts:399-405` requeue recovery reuses the requestId with the CURRENT Goal/Run revisions, so a
+  later legal Goal update turns recovery into `idempotency_conflict`. Apply L-d.
+- E6 M `session-archive.ts:264-271` a confirmed unknown Query never calls `attestUnknownQueryRun`. §3.3 S:596 and
+  §4.1 step 4: when `R.confirmUnknownStopped` and the Query is formally unknown, call it with R's original pin and
+  the `s1-archive-attest:` identity (action `attest_query`).
+- E7 S `session-archive.ts:229` the unknown-Run attestation falls back to the current revision when R has no pin.
+  S:238/S:596: no fallback; refuse (`unavailable`).
+- E8 M `session-archive.ts:523` (`continueArchiveLine`) and `session-maintenance.ts:263` adopt R's durable
+  authority / the automation actor after scope-only checks. S:620 and the refusal table: validate the current caller
+  (Host principal, scope, lease) first; an Agent caller is `forbidden / archive_host_only:`.
+- E9 S `session-archive.ts:446` public `archiveLine` accepts `mode` although `ArchiveLineInput` omits it (S:765).
+  Refuse it on the public input; internal callers (maintenance, consultation) use an internal path.
+- E10 S `session-archive.ts:474` a malformed `confirmUnknownStopped` is coerced to false. Refuse `invalid`.
+- E11 M `session-archive.ts:287` a retired line's unfinished Task whose Run ended `completed` gets no anchor.
+  S1-ANCHOR-02 (S:477 region) judges the Task (not satisfied/terminal), not the Run outcome.
+- E12 M terminal responsibility closure has no production caller (`closeTerminalResponsibility` is bound in
+  `create-platform.ts:897` only); maintenance treats every open responsible link as unfinished
+  (`session-maintenance.ts:239`). §4.1 step 6 ("关闭终结责任") and §4.2: before judging due / disposing, close the
+  responsibilities whose Task is formally terminal through `responsibilities.closeTerminalResponsibility`.
+- E13 M `session-maintenance.ts:131,231-235` an answered copy is archived when the Query is `answered`. S1-AUTO-03:
+  all three facts are needed: answer saved, answer attached to the original message, input acceptance confirmed.
+- E14 M maintenance never calls backfill (`session-maintenance.ts:188`). S:628 "Workflow维护分页调用backfill": for
+  provenance=null Sessions of the current page, call the existing `backfillSessionProvenance` (bounded by the same
+  page budget); if a dependency the spec does not name would be needed, report it under UNSPECIFIED instead.
+- E15 M `workflow.ts:959` ordinary continuation creation (C3 interruption, role mismatch) creates the replacement
+  without `continuation` provenance and without the responsibility transfer and predecessor archive. §4.1 S:799:
+  the existing continuation branches write `continuation` provenance, transfer the responsibility and archive the
+  predecessor; the archive-origin ordinary pickup stays `new` (T10).
+- E16 M `workflow.ts:674` and the requeue path `:936-949` ignore a transferred responsible Session. S:799: a Task
+  with an open responsible link to a transfer destination is claimed on that Session first, then hint, then
+  directory order, then create.
+- E17 M per-advance maintenance (L-b): `collaboration-driver.ts:606` depends on a hook `host.ts` never supplies;
+  `workflow.ts` does no maintenance.
+
+
+--- implementer's UNSPECIFIED section ---
+## UNSPECIFIED
+
+- **B6 (partly closed)** — `src/core/work-graph/tasks/session-facts.ts:271-289`. `legacyPending` is set only by a successor-sweep budget hit or a null-provenance successor returned by `SESSION_BY_PROVENANCE_LOOKUP`; the index keys on `provenance.from.sessionId`, so an unchecked null-provenance Session in the workspace that is not a successor is not observable and the `:284` branch is effectively dead. A workspace-wide scan is not described by §2.8/the slice, and no frozen test covers it.
+- **B8 (partly closed)** — `session-facts.ts:398-410`. The supplementary `lastExecutionRef` locator is appended only on the final page and deduped only against the current page, so a pointer already returned by the index on an earlier page can be delivered twice; §2.8 S:383 says "merge by full ref" but does not define the stateless-paging interaction. No frozen test covers it.
+- **E2 (partly closed)** — `src/business/workflow/session-maintenance.ts:166-174`. The `Run.endedAt` fallback is removed and the close-event `taskBasis.finishedAt` path is implemented, but for an old close with no `finishedAt`: (a) a formally **satisfied** Task should recover `TaskReductionSnapshot.reducedAt`, and the Workflow deps expose only `plans.queryTaskGraph` (whose `TaskRow` has no reduction), so such Sessions record `incomplete`; (b) **cancelled/superseded** uses the active plan's `acceptedAt`, not the first terminal PlanRevision's `acceptedAt` (the correct `setIn` logic exists in `plan-readers.ts:1732-1741` but is not reachable from the Workflow). A reduction/first-terminal-plan reader is not named by spec §3.3.
+- **E5 (partly closed)** — `src/business/workflow/session-archive.ts:551-570`. L-d's "return the existing TaskRequeue as replayed" is implemented for detection/reuse, but the step receipt cannot carry the existing TaskRequeue's real commit cursor: no injected port exposes it and `TaskRow.requeueRef` has no cursor/Goal revision. Recovery therefore finishes the archive and reuses the durable record without a fabricated receipt; on a later legal Goal update this still avoids the previous `idempotency_conflict` stop. A TaskRequeue receipt reader is not named by the spec.
+- **E13 (partly closed)** — `session-maintenance.ts:265-289`. All three facts (answer saved, attached to the original message, input acceptance confirmed) are enforced only when a mailbox reader is wired (production via `consultations.messages`). The frozen maintenance fixture (`tests/helpers/S1-workflow-archive-fixture.ts:1222-1251`) wires no reader, so the saved-answer-only fallback is what keeps IT11 green.
+- **E14 (not closed)** — `session-maintenance.ts` has no backfill call. `SessionDirectoryPort.backfillSessionProvenance` requires the derived `provenance`+`basis`, and `WorkflowDependencies` exposes no `LegacySessionProvenancePort`/derive seam; the spec's §3.3 addition list for `WorkflowDependencies` does not name one. Per the E14 item's own instruction this is reported under UNSPECIFIED rather than adding an unnamed dependency.
+- **E15 (partly closed)** — `src/business/workflow/workflow.ts:1029-1036`. The ordinary continuation branch now writes `continuation` provenance (with the archive-origin pickup staying `new`, T10), but the responsibility transfer + predecessor archive half cannot be expressed in the one-owner-call `WorkflowCalls`/`WorkflowOperation` per-`perform` state machine without adding new exported step kinds. Left for a main-Session signature decision.
+- **Spec-undecided cases met** (choices made, not decided by the spec): A4 a missing/undecodable Run is treated as not queued and an unreadable cancel intent as queued (conservative); A5 refusal prefix `work_responsibility_unresolved:`; B1 `eventAt` not-found uses `legacy_provenance_ambiguous:`; B2 checks only the first (min-generation) claim's Run, requires the manifest's embedded claim to equal it and `locateCreation` to succeed, and splits damage→`unavailable` vs absent/other-content-type/`seededFrom:null`→no evidence; C1 keeps `request.mode==='retired'` as the S1-ANCHOR-02 row selector while verifying the retired facts; C4b a real execution origin with a foreign cancel now yields no exemption (ordinary class) while forged/unmatched origins stay `forbidden` (`tests/state/invariants.ts` still derives `archive_cancel` from any non-retired stored anchor, so a future fixture with a real anchor + foreign cancel could disagree); E2/E8 validate Host principal + actor + project/workspace scope but no "lease" is available at the Workflow seam; E15 reason mapping (`role_mismatch`/`damaged`/`interrupted`); E17 "explicit continue" read as the driver continuation through `advanceWork`; the optional `readRoutedReplies?` seam was restored to `CollaborationDriverDependencies` (type-only, unconsumed) to keep `collaboration-driver.ts` inside reference §5 and the 62-src/93-path count.
+- **Frozen test vs spec (IT11)** — `tests/business/S1-session-maintenance.test.ts:522-523` asserts an answered read-only copy is archived, while `workflowForFixture` (helper `:1222-1251`) wires no mailbox reader; S1-AUTO-03 (S:482) and §4.2 S:829 require all three copy facts (answer saved, answer attached to the original message, input acceptance confirmed). Counter-example: a strict implementation that returns `unsupported`/not-archived when the attachment/acceptance facts cannot be read would fail IT11. The code therefore enforces all three only when a reader is present and otherwise falls back to the saved answer.
+
+Note: file:line references in the gap list refer to the PREVIOUS state of the code; locate them by symbol. The implementer's file:line references refer to this checkout.

@@ -1,0 +1,1 @@
+All six are running. I'll hold here and act on each report as it arrives; then run the section-6 checks once, followed by the self-check review pass.

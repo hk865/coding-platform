@@ -1,0 +1,44 @@
+
+ RUN  v4.1.10 /home/han001/dsh-work/slices/s0
+
+ ✓ tests/app/S0-attention-edge-label.test.ts > S0 attention edge label > S0-01 writes the requirement kind and label into the depends edge, not [object Object] 2ms
+ ✓ tests/app/S0-attention-edge-label.test.ts > S0 attention edge label > S0-02 reports both changed edges when only the requirement label changes 0ms
+ ✓ tests/app/S0-attention-edge-label.test.ts > S0 attention edge label > S0-03 reports both changed edges when only the requirement kind changes 0ms
+ ✓ tests/app/orchestration-mechanism.test.ts > mechanical attention observer > produces no delivery and no model work when nothing changed 1ms
+ ✓ tests/app/orchestration-mechanism.test.ts > mechanical attention observer > derives a real same-size replacement from the two texts 1ms
+ ✓ tests/app/orchestration-mechanism.test.ts > mechanical attention observer > treats a removed path as a real tombstone deletion 0ms
+ ✓ tests/app/orchestration-mechanism.test.ts > mechanical attention observer > does not re-deliver an unchanged version and clears a reverted buffered change 0ms
+ ✓ tests/app/orchestration-mechanism.test.ts > mechanical attention observer > buffers a below-threshold change and still runs the heartbeat 1ms
+ ✓ tests/app/orchestration-mechanism.test.ts > mechanical attention observer > delivers explicit member feedback once, deduped by id 0ms
+ ✓ tests/app/orchestration-mechanism.test.ts > mechanical attention observer > keeps delivery separate from the processed watermark and scopes files 1ms
+ ✓ tests/app/orchestration-mechanism.test.ts > mechanical attention observer > carries independent file and graph changes in one mechanical notification 0ms
+ ✓ tests/app/orchestration-mechanism.test.ts > unified SessionMailbox send intent > persists explicit intent/needsReply/waitAfterSend and registers exactly one real wait 3ms
+ ✓ tests/app/orchestration-mechanism.test.ts > unified SessionMailbox send intent > normalizes the legacy replyMode=wait into the same single wait path 2ms
+ ✓ tests/app/orchestration-mechanism.test.ts > unified SessionMailbox send intent > never registers a wait for a plain fire-and-forget notice 1ms
+ ✓ tests/app/orchestration-mechanism.test.ts > unified send intent against the real mailbox > persists and reads back intent/needsReply/waitAfterSend through the real service 41ms
+ × tests/app/orchestration-mechanism.test.ts > runs two explicitly selected same-Goal Tasks in independent Sessions with overlapping real provider calls 4334ms
+   → Task parallel-left stopped: {"state":"waiting","receipt":{"kind":"run_check","result":{"status":"rejected","code":"unsupported","reason":"ENOENT: no such file or directory, access '/usr/bin/bwrap'"}},"next":null,"reason":"ENOENT: no such file or directory, access '/usr/bin/bwrap'"}
+ ✓ tests/app/orchestration-mechanism.test.ts > delivers a real Host attention change into the original idle Session once 3764ms
+ ✓ tests/app/orchestration-mechanism.test.ts > automatically answers an inquiry without making its sender wait 3626ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/app/orchestration-mechanism.test.ts > runs two explicitly selected same-Goal Tasks in independent Sessions with overlapping real provider calls
+Error: Task parallel-left stopped: {"state":"waiting","receipt":{"kind":"run_check","result":{"status":"rejected","code":"unsupported","reason":"ENOENT: no such file or directory, access '/usr/bin/bwrap'"}},"next":null,"reason":"ENOENT: no such file or directory, access '/usr/bin/bwrap'"}
+ ❯ tests/app/orchestration-mechanism.test.ts:317:41
+    315|           break;
+    316|         }
+    317|         if (result.next === null) throw new Error(`Task ${taskIds[inde…
+       |                                         ^
+    318|         result = await advance(result.next);
+    319|       }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 1 passed (2)
+      Tests  1 failed | 17 passed (18)
+   Start at  15:14:21
+   Duration  13.03s (transform 1.67s, setup 0ms, import 1.58s, tests 11.78s, environment 0ms)
+
+EXIT vitest 1

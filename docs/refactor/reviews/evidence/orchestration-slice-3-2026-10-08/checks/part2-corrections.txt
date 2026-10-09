@@ -1,0 +1,52 @@
+C1. Write scope and file count. src/ui/api/routes.ts is accepted as a type-forced 43rd file
+    (its ROUTE_LABELS table is total over CoreRouteSuffix): exactly the two labels for
+    graph/look and graph/find, nothing else in that file. Wherever part 1 or this part says
+    "the 42 files" or "42 lines" (also "21 modified"), read 43 (21 new + 22 modified);
+    `git status --short` at the end shows these 43 and FILES CHANGED has 43 lines.
+C2. Early part-1 behaviour is accepted and stays: the platformDuty enum check in
+    src/contracts/validation/role.ts (issue path content.platformDuty, code bad_enum, the existing
+    enum convention; RP03), the new local workbench grant and the s3 configurationRevision in
+    src/app/host.ts (spec §4.6), the lookup in src/core/agent-runtime/role-profiles.ts (§2.5).
+    Keep them consistent with §2.4 item 3, §2.5 and §4.6; do not rewrite them.
+C3. TaskInputPageV1.selectedTaskInputs (§3.4) is the §2.1 projection for the consumer: all of its
+    `selected` Artifact selections (legacy requirementId without `legacy:`, edge declarations with
+    the full declarationId), sorted by requirementId, two declarations of one body stay two entries
+    (IN01, IN09). It is not limited to the declaration being paged.
+C4. decision inputs (§3.4 `decisionApplications?`, §3.5 `decision` row): dependency absent ->
+    unavailable with errorCode `unsupported`; dependency present and it reports no application for
+    the replied Message (ready with an empty list, or null) -> missing, reason `decision_not_applied`
+    (IN14); one or more applications -> selected, fixing the Message revision and the application
+    versions. The read never changes the Message.
+C5. IN08: InputSelectionV1 has no field for upstream Run facts. The upstream fact is the
+    declaration's `upstream` (tA); do not add a field. The Agent reaches runA through look.
+C6. Close protection (§4.6 "所有读调用沿现有trackedCall关闭保护"): the graphContext and taskInputs
+    owners and the Runtime's readAttentionGraph are published to the routes, the Runtime and the
+    attention scanner through the existing trackedCall wrapping in src/composition/create-platform.ts,
+    one underlying instance each (part 1 passes the raw owners).
+C7. createExecutionPreparation(deps, contextAssembler?) and createQueryPreparation(deps,
+    contextAssembler?) must use the second parameter when given (§4.2 factory signatures); a
+    rejection from graphContext or its extensions reaches the caller unchanged (§4.2 "graphContext
+    存在却读取失败必须传回原拒绝"; CA15 currently gets `ready` because part 1 ignores the parameter).
+C8. Attention (§4.5): when readAttentionGraph is wired, createAttentionScanner reads the graph only
+    through it and never calls the legacy plans/architecture ports (AT04, AT11 fail fast on a legacy
+    read). AT01/AT09/AT10/AT12 drive the real observer and renderAttentionChanges through an in-test
+    copy of the Host delivery glue of src/app/host.ts:1075-1101, because the Host exposes no seam for
+    requestId or watermark counts. The real Host loop in host.ts must therefore behave exactly like
+    that copy: the message text is renderAttentionChanges of the delivery's changes (never the
+    snapshot or all files); a retry of the same snapshot keeps requestId and text; markDelivered only
+    after a committed send; markProcessed only after acceptedInputs; targetSession unchanged. The lead
+    compares host.ts with that test copy in the part-2 review. The same holds for the attention half
+    of SC02, which uses the scanner, observer and renderer directly.
+C9. Tools (§4.4): SC01 and SC02 now fail because the Work and Query drivers
+    reject `look_graph, find_graph` as unknown tool names (lead probe: "the Run selects tool names
+    this Runtime does not know"); GT05 and GT10-GT12 fail on the same missing registration as far as
+    the lead can tell. Register both through the coordination-tool seam
+    (execution-driver.ts:377) for Work and Query, grant them only when the grant names them, and
+    keep the read-only Query ceiling.
+C10. Plan identity: keep the existing required numeric `planRevision` of PlanRevisionDraft; §5.1's
+    "no business planRevision" sentence means version refs use the PlanRevisionRef (planId p1) and
+    the record revision, not a new field (§2.4 item 4: storage shape unchanged).
+C11. CA01: renderContext returns no inputDigest; the assembler's inputDigest is sha256Hex(input)
+    of exactly the rendered input (§4.3 last paragraph). Do not add a field to renderContext.
+C12. No file outside the write scope and ./.dsh-scratch/, not even temporarily, and no /tmp: in
+    the correction round two subagents wrote to /tmp. Scratch files go in ./.dsh-scratch/ only.
