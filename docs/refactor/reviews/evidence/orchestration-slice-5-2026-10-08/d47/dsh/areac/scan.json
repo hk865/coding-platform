@@ -1,0 +1,60 @@
+{
+ "sessionId": "session-9244279d-2784-4484-ae6d-f8eb40df51a4",
+ "steps": 22,
+ "toolCalls": 26,
+ "byTool": {
+  "todo_write": 5,
+  "bash": 13,
+  "write": 2,
+  "subagent": 3,
+  "list_agents": 2,
+  "send_message": 1
+ },
+ "tokens": {
+  "input": 41909,
+  "cacheRead": 791040,
+  "cacheWrite": 0,
+  "output": 35854,
+  "total": 868803
+ },
+ "turnEnd": {
+  "kind": "completed"
+ },
+ "errors": 0,
+ "contamination": "none",
+ "sandboxed": true,
+ "privateTmpUses": 2,
+ "pathHits": [
+  {
+   "event": 12,
+   "tool": "write",
+   "pattern": "/tmp",
+   "excerpt": "under `./.dsh-scratch/` and delete it at the end. Never use `/tmp`. At the end\\n`sha256sum <file>` must print exactly:\\n\\n```\\n50a7d9771d036"
+  },
+  {
+   "event": 17,
+   "tool": "subagent",
+   "pattern": "/tmp",
+   "excerpt": "way script under `./.dsh-scratch/` and delete it; never use `/tmp`), section 4 (lead decisions; `git status --short` must stay exactly 93 pa"
+  }
+ ],
+ "pathHitCount": 2,
+ "canaryHits": [],
+ "canaryHitCount": 0,
+ "lookups": {},
+ "writes": [
+  "<copy>/.dsh-scratch/area-C-brief.md",
+  "<copy>/.dsh-scratch/named-run.sh"
+ ],
+ "report": {
+  "present": [
+   "FILES CHANGED",
+   "CHECKS",
+   "UNSPECIFIED",
+   "NOTES"
+  ],
+  "missing": [],
+  "chars": 23022,
+  "hasFinal": true
+ }
+}

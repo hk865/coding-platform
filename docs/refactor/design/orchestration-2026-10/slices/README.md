@@ -10,6 +10,7 @@
 | 1 | [slice-1-SPEC.md](slice-1-SPEC.md) | [第一段](slice-1-book-part1.md)、[第二段](slice-1-book-part2.md) | 无（U1 已由决定 45 定为甲） |
 | 3 | [slice-3-SPEC.md](slice-3-SPEC.md) | [第一段](slice-3-book-part1.md)、[第二段](slice-3-book-part2.md) | 无 |
 | 5 | [slice-5-SPEC.md](slice-5-SPEC.md) | [第一段](slice-5-book-part1.md)、[第二段](slice-5-book-part2.md) | 无 |
+| 接线包 1（2026-10-09 补） | [wiring-1-SPEC.md](wiring-1-SPEC.md) | 发给 DSH 的说明书在[证据](../../../reviews/evidence/orchestration-wiring-1-2026-10-09/README.md)的 `books/` | 无（L13 由决定 48 确认） |
 
 第 1、3、5 片的规格由 Codex（推理强度 xhigh）按 585f1ac0 起草，lead 核对设计和代码后冻结：每份规格的 §0 是 lead 的冻结说明（OPEN、lead 定的技术选择、对草稿的改动、和别的片的接缝、抽查的代码出处、精确数量），正文里改过的地方标【lead 改】、技术选择标【lead 定】。§0 与正文不一致时以 §0 为准。
 
@@ -125,6 +126,26 @@ STATE-MACHINES-SPEC（新行和 §15 的行→文件→用例对照）、`module
 - 运行上限按决定 46 改了：token 只记不拦，单步上下文超过 36 万就停，每段最多 120 分钟。第二段和返工都用新 Session、只写关键信息的说明书、分组交给子任务。实测见 [DSH-WORKFLOW §6.10](../../../DSH-WORKFLOW.md#610-大片怎么交给-dsh决定-46)。
 
 **合入以后的接线：** 第 1、3 片都已合入，I-1、I-3 现在可以做；I-2、I-4、I-5、I-6 要等第 5 片。接线任务书照决定 46 写。
+
+## 施工结果（2026-10-09 晚：接线包 1，第 5 片决定 47 的一轮）
+
+| 项 | 结果 | 提交 | 证据 |
+| --- | --- | --- | --- |
+| 接线包 1：I-1、I-3、改目标说明的检查、普通接续的交接（决定 47 第 2–4 条） | 做完，合入 | 规格 67dfee7a，实现 6180adfc | [orchestration-wiring-1-2026-10-09](../../../reviews/evidence/orchestration-wiring-1-2026-10-09/README.md) |
+| 第 5 片，决定 47 破例多给的一轮 | 四个区域都做完、全量全过，但仍有 6 处用户看得到的问题，**没有接受，没有合入**；决定 48 再给一轮，先补测试 | 无 | [第 5 片证据](../../../reviews/evidence/orchestration-slice-5-2026-10-08/README.md#2026-10-09决定-47-的一轮仍没有合入) |
+
+合入接线包 1 后（6180adfc），类型检查、模块边界检查、构建通过，全量测试 258 个测试文件、5,689 项全部通过，`verify:isolated` 通过。和 e48218a5 的 250 个文件、5,626 项比，逐文件只多接线包的 8 个文件 63 项。没有调用真实模型。
+
+**接线包 1 的写范围比规格 §6 多出来的**（lead 定的，不改用户看到的行为）：测试辅助文件 4 个（规格允许最多 3 个；夹具按 4 组分，一组一个）；`tests/architecture/production-reach-allowlist.json` 删 2 条 `kept-for`（`RoleReadOptions`、`RoleConfigurationPort.readRoleSpec`，现在被 I-1 走到了；lead 决定 W-I1）。共 25 个路径。
+
+**现在的接线状态：** I-1、I-3 已接；I-2、I-4、I-5、I-6 等第 5 片合入。I-4 接自治级别时，要按接线包规格 L3 把它加进 Goal 内容摘要（`contentVersion` 升到 2），I-4、I-6 都在 `views/context-extensions.ts` 的提供方里接。第 5 片合入时要和接线包三方合并（两边都改了 Workflow 的 `workflow.ts`、`contracts.ts`、`ports.ts`，`create-platform.ts`、`context-assembler.ts`、`execution-entry-service.ts`、`context-input.ts`；接线包规格 §0.3）。
+
+**第 5 片这一轮的情况：** 先换到合入第 0、1、3 片后的基线（18 个文件 53 处冲突，lead 按规则合并；合并后的 6 处问题 M1–M6 和两处第 5 片自己的回归 R1、R2 由 lead 修，R2 只有全量才跑出来），lead 改了决定 47 点名的 5 个小问题，再把大的分成四个区域（队列历史、决定来源和答复、排序的安全点、设置的重放）各交一个新的 DSH 会话，每个区域之后 Codex 复审、lead 修小的；B 区用了那一次破例多做一轮。合起来全量 266 个文件、5,850 项全过。剩下的 6 条（暂停后自动化确认卡消失、Agent 采纳计划记不下按谁的决定、重试读失败挡住重放、关闭历史没有先后、超量不报“容量不足”、初始化采纳后卡不关闭）和“这些地方都没有测试覆盖”见证据。
+
+**核对的教训（补充）：**
+- 第 5 片前几轮“冻结测试全过、问题靠审查找出来”的根本原因是测试没覆盖；每一轮修好一些，审查又找到一些。决定 48 改成先由 Codex 补测试、lead 冻结，再修。
+- 换基线时只有全量才跑出一处回归（R2：格式不对的请求让第 5 片的闸门抛异常），点名集合没覆盖到。合入前跑全量这条规则照旧。
+- 两条轨道同时做时，测试一次只跑一个成了瓶颈：接线包这边为等测试锁花了约 76 分钟（第 5 片那边的全量用 `--maxWorkers=1`，一次 26–31 分钟）。
 
 ## 怎么来的
 

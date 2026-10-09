@@ -1,0 +1,97 @@
+{
+ "sessionId": "session-c9795639-6d5a-4c31-9f03-5921131ae0df",
+ "steps": 45,
+ "toolCalls": 68,
+ "byTool": {
+  "bash": 36,
+  "read": 24,
+  "subagent": 6,
+  "list_agents": 2
+ },
+ "tokens": {
+  "input": 97227,
+  "cacheRead": 3789952,
+  "cacheWrite": 0,
+  "output": 41873,
+  "total": 3929052
+ },
+ "turnEnd": {
+  "kind": "completed"
+ },
+ "errors": 0,
+ "contamination": "attempted-outside",
+ "sandboxed": true,
+ "privateTmpUses": 8,
+ "pathHits": [
+  {
+   "event": 190,
+   "tool": "subagent",
+   "pattern": "dotdot",
+   "excerpt": " from the codec module, so import the constant/decoder from `../../src/core/work-graph/sessions/lifecycle-record-codecs.js`, exactly like th"
+  },
+  {
+   "event": 215,
+   "tool": "bash",
+   "pattern": "/tmp",
+   "excerpt": " | sha256sum; echo \\\"=== TYPECHECK ===\\\"; npm run typecheck >/tmp/w1-typecheck.log 2>&1; echo \\\"typecheck exit=$?\\\"; tail -5 /tmp/w1-typeche"
+  },
+  {
+   "event": 221,
+   "tool": "bash",
+   "pattern": "/tmp",
+   "excerpt": "sts/composition/WP1-session-duty.test.ts --reporter=verbose >/tmp/w1-vitest.log 2>&1; echo \\\"VITEST EXIT=$?\\\"; echo \\\"=== TAIL SUMMARY ===\\\""
+  },
+  {
+   "event": 226,
+   "tool": "bash",
+   "pattern": "/tmp",
+   "excerpt": " <copy>; echo \\\"=== PASS LINES ===\\\"; grep -E \\\"^\\\\s*(✓|√)\\\" /tmp/w1-vitest.log | sed 's/^[[:space:]]*//'; echo; echo \\\"=== COUNT PASS ===\\\""
+  },
+  {
+   "event": 231,
+   "tool": "bash",
+   "pattern": "/tmp",
+   "excerpt": "ror|Timeout|timed out|setup|Cannot find|ENOENT|bwrap|ECONN\\\" /tmp/w1-vitest.log | head -40; echo; echo \\\"=== distinct Error/Assertion messag"
+  },
+  {
+   "event": 255,
+   "tool": "bash",
+   "pattern": "/tmp",
+   "excerpt": ":/ && NF>0){ if(getline<=0) break } print name \\\" || \\\" $0}' /tmp/w1-vitest.log | sed -E 's/^ FAIL  //' | head -60\",\"description\":\"Map faili"
+  },
+  {
+   "event": 260,
+   "tool": "bash",
+   "pattern": "/tmp",
+   "excerpt": "onError|Error):/ && NF>0){ if(getline<=0) break } print $0}' /tmp/w1-vitest.log | sed -E 's/^[[:space:]]*//' | sort | uniq -c | sort -rn; ec"
+  },
+  {
+   "event": 265,
+   "tool": "bash",
+   "pattern": "/tmp",
+   "excerpt": "{\"command\":\"cd <copy>; grep -nE \\\"FAIL .*\\\\(sqlite\\\\)\\\" /tmp/w1-vitest.log | head -30\",\"description\":\"List sqlite FAIL headers\"}"
+  },
+  {
+   "event": 270,
+   "tool": "read",
+   "pattern": "/tmp",
+   "excerpt": "{\"file_path\":\"/tmp/w1-vitest.log\",\"limit\":75,\"offset\":895}"
+  }
+ ],
+ "pathHitCount": 9,
+ "canaryHits": [],
+ "canaryHitCount": 0,
+ "lookups": {},
+ "writes": [],
+ "report": {
+  "present": [
+   "FILES CHANGED",
+   "CHECKS",
+   "UNSPECIFIED",
+   "NOTES"
+  ],
+  "missing": [],
+  "chars": 5944,
+  "hasFinal": true
+ }
+}

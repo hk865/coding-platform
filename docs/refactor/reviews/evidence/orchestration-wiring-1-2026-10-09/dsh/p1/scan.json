@@ -1,0 +1,81 @@
+{
+ "sessionId": "session-ef8c9406-0072-4f0e-81e2-b38edc8d074e",
+ "steps": 61,
+ "toolCalls": 81,
+ "byTool": {
+  "bash": 34,
+  "read": 22,
+  "todo_write": 1,
+  "edit": 10,
+  "write": 4,
+  "subagent": 10
+ },
+ "tokens": {
+  "input": 109813,
+  "cacheRead": 5440384,
+  "cacheWrite": 0,
+  "output": 43406,
+  "total": 5593603
+ },
+ "turnEnd": {
+  "kind": "completed"
+ },
+ "errors": 0,
+ "contamination": "attempted-outside",
+ "sandboxed": true,
+ "privateTmpUses": 1,
+ "pathHits": [
+  {
+   "event": 123,
+   "tool": "edit",
+   "pattern": "dotdot",
+   "excerpt": "s\",\"new_string\":\"import type { RegisteredCheckRunner } from '../../core/agent-runtime/check-execution.js';\\nimport type { SessionResponsibil"
+  },
+  {
+   "event": 148,
+   "tool": "write",
+   "pattern": "dotdot",
+   "excerpt": "er writes.\\n */\\nimport type { RoleConfigurationPort } from '../core/work-graph/model/configuration-contracts.js';\\nimport type { SessionDut"
+  },
+  {
+   "event": 153,
+   "tool": "write",
+   "pattern": "dotdot",
+   "excerpt": "rned into an empty row.\\n */\\nimport type { ActorRef } from '../../../contracts/command-event.js';\\nimport type { CoreCallContext } from '.."
+  },
+  {
+   "event": 184,
+   "tool": "write",
+   "pattern": "/tmp",
+   "excerpt": "et, rm). Scratch files only in\\n   `./.dsh-scratch/` (never `/tmp`); the main Session deletes it at the end.\\n   Never touch ports 3080, 309"
+  }
+ ],
+ "pathHitCount": 4,
+ "canaryHits": [],
+ "canaryHitCount": 0,
+ "lookups": {},
+ "writes": [
+  "src/contracts/graph-context.ts",
+  "src/core/work-graph/state/context-input.ts",
+  "src/business/workflow/contracts.ts",
+  "src/business/workflow/workflow.ts",
+  "src/business/workflow/ports.ts",
+  "src/composition/session-duty.ts",
+  "src/core/work-graph/views/context-extensions.ts",
+  "src/business/workflow/index.ts",
+  ".dsh-scratch/BRIEF.md",
+  ".dsh-scratch/reg.txt",
+  "tests/business/WP1-continuation-handover.test.ts"
+ ],
+ "report": {
+  "present": [
+   "FILES CHANGED",
+   "CHECKS",
+   "UNSPECIFIED",
+   "NOTES"
+  ],
+  "missing": [],
+  "chars": 7272,
+  "hasFinal": true
+ }
+}

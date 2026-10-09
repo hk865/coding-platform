@@ -1,0 +1,16 @@
+ M src/business/workflow/contracts.ts
+ M src/business/workflow/index.ts
+ M src/business/workflow/ports.ts
+ M src/business/workflow/workflow.ts
+ M src/contracts/graph-context.ts
+ M src/core/work-graph/state/context-input.ts
+?? src/composition/session-duty.ts
+?? src/core/work-graph/views/context-extensions.ts
+?? tests/business/WP1-continuation-handover.test.ts
+?? tests/business/WP1-start-refusal.test.ts
+?? tests/composition/WP1-session-duty.test.ts
+?? tests/runtime/WP1-context-assembly.test.ts
+?? tests/scenarios/WP1-wiring.test.ts
+?? tests/state/WP1-goal-content.test.ts
+?? tests/work-graph/WP1-context-anomalies.test.ts
+?? tests/work-graph/WP1-goal-content-entry.test.ts

@@ -5257,8 +5257,9 @@ D-17 原列表六项为 GAP-03…08；lead 决定 L-7 把 GAP-41 补入这一列
 编排第 1、3 片（DESIGN §8.2）合入以后，状态机多了下面这些行。行的完整写法（from、event、guard、to、effects、幂等、原文编号）以各片的冻结规格为准，这里不重抄：第 1 片 19 行在 [slice-1-SPEC §3.2](design/orchestration-2026-10/slices/slice-1-SPEC.md#32-迁移表)（另有补充拒绝表），第 3 片 3 行在 [slice-3-SPEC §3.2](design/orchestration-2026-10/slices/slice-3-SPEC.md#32-state-machines-spec-表格)。新行号用各片自己的前缀，已有的 `SES-*`、`TASK-*`、`MSG-*`、`RUN-*` 不重编号。表格约定同 §1.4，缩写同 §15.3；测试一列写测试文件和规格里的用例号，每个用例号都是一个 `it`（work-graph 下的 SV 用例在 memory 和 SQLite 各跑一次）。
 
 - 第 0 片没有状态行（只改注意力边的字符串）。
-- 第 5 片的 23 行（S5-*）在 [slice-5-SPEC](design/orchestration-2026-10/slices/slice-5-SPEC.md) 里冻结了，但第 5 片没有验收、没有合入（见[第 5 片证据](reviews/evidence/orchestration-slice-5-2026-10-08/README.md)），等合入时再补进本节。
+- 第 5 片的 23 行（S5-*）在 [slice-5-SPEC](design/orchestration-2026-10/slices/slice-5-SPEC.md) 里冻结了，但第 5 片没有验收、没有合入（见[第 5 片证据](reviews/evidence/orchestration-slice-5-2026-10-08/README.md)），等合入时再补进本节。（2026-10-09 补注：决定 47 又做了一轮，仍没有合入；决定 48 再给一轮。行仍只在规格里。）
 - 提交：第 1 片 327ec020，第 3 片 ccecc016 和合入修正 e48218a5。证据在 `reviews/evidence/orchestration-slice-<n>-2026-10-08/`。
+- 2026-10-09 补：接线包 1（决定 47）的 9 行（W1-*）在 §17.3，规格 [wiring-1-SPEC §3](design/orchestration-2026-10/slices/wiring-1-SPEC.md#3-状态行)，提交 6180adfc，证据 [orchestration-wiring-1-2026-10-09](reviews/evidence/orchestration-wiring-1-2026-10-09/README.md)。
 
 ### 17.1 第 1 片：Session 事实、纠错与归档（S1-*）
 
@@ -5306,8 +5307,29 @@ D-17 原列表六项为 GAP-03…08；lead 决定 L-7 把 GAP-41 补入这一列
 
 其余第 3 片的用例测的是读取和装配，不是状态行：输入读取（work-graph/S3-context-inputs.test.ts IN01–IN19）、图读取（work-graph/S3-graph-context.test.ts GR01–GR19）、装配器（runtime/S3-context-assembler.test.ts CA01–CA15）、职责配置（work-graph/S3-role-profiles.test.ts RP01–RP06）、图工具（runtime/S3-graph-tools.test.ts GT01–GT14）、注意力（app/S3-attention-context.test.ts AT01–AT12）、路由（app/S3-graph-routes.test.ts RT01–RT06）、场景（scenarios/S3-context-and-inputs.test.ts SC01、S3-query-graph.test.ts SC02）。
 
-**合入时定的两处**（e48218a5，lead）：§3.6 的消费守卫不再把 Goal 钉在读上下文时的版本，Goal 只由入口按当前版本守卫、W3 规则判断（否则和用户决定 C6 / U-11 冲突：无关的计划采用会卡住已领取的 Run，`tests/scenarios/C6-unrelated-adoption.test.ts`）；代价是准备之后改了 Goal 的目标文字，入口不再因此拒绝。再授权（CTX-02）不跑新加的来源守卫和工作区版本比较（lead L4）。
+**合入时定的两处**（e48218a5，lead）：§3.6 的消费守卫不再把 Goal 钉在读上下文时的版本，Goal 只由入口按当前版本守卫、W3 规则判断（否则和用户决定 C6 / U-11 冲突：无关的计划采用会卡住已领取的 Run，`tests/scenarios/C6-unrelated-adoption.test.ts`）；代价是准备之后改了 Goal 的目标文字，入口不再因此拒绝。再授权（CTX-02）不跑新加的来源守卫和工作区版本比较（lead L4）。（2026-10-09 补注：这个代价由接线包 1 的 W1-CTX-01 补上，只比上下文实际展示的 Goal 内容，不钉 Goal 版本，C6 不变，见 §17.3。）
 
+### 17.3 接线包 1：交接、改目标说明的检查和两处读取（W1-*，2026-10-09）
+
+接线包 1 不加新状态、不改任何状态机的构造函数，也没有新记录、新事件、新索引、新路由、新工具；它给 CTX-01 补一条守卫，给 Workflow 加两个步（`transfer_responsibility`、`archive_predecessor`）和几条分支，改维护的退役分支。owner 一侧的写入都走已有的行（S1-LINK-01、S1-SES-03/04）。完整写法见 [wiring-1-SPEC §3](design/orchestration-2026-10/slices/wiring-1-SPEC.md#3-状态行) 和 §0 的 L1–L17。测试文件都在 `tests/` 下，名字以 `WP1-` 开头；GE 和 AN07 在 memory 和 SQLite 各跑一次。P 是前一条线，C 是接续它的新 Session，T 是这个任务。
+
+| 行号 | 摘要 | state 文件 | 服务文件 | 测试（用例） |
+| --- | --- | --- | --- | --- |
+| W1-CTX-01 | CTX-01 补充：新准入时，绑定里这个 Goal 来源的内容摘要和当前 Goal 重算的不同 → `revision_conflict`，原因以 `context_goal_changed:` 开头。在 Workspace 版本核对之后、输入声明核对之前；再授权（CTX-02）不比；摘要为 null、没有这条来源或没有绑定的旧清单照旧通过 | context-input.ts（`contextGoalContentProblem`）；摘要在 `src/contracts/graph-context.ts`（`goalContextContentV1`、`goalContextDigestV1`） | wg/tasks/execution-entry-service.ts（`contextConsumptionProblem`）；摘要由 agent-runtime/context-assembler.ts 的 `assembleTask` 写进绑定 | state/WP1-goal-content.test.ts GC01、GC02、CG01–CG05；runtime/WP1-context-assembly.test.ts GC03、GC04；work-graph/WP1-goal-content-entry.test.ts GE01–GE07；scenarios/C6-unrelated-adoption.test.ts（不改，照过） |
+| W1-WF-01 | Workflow 的 `start` 回执被拒，码是 `revision_conflict`、原因以 `context_goal_changed:` 开头 → 下一步对同一个 Run 重新 `prepare`；别的拒绝照旧 `waiting` | — | wf/workflow.ts（`performStep` 的 `start`） | business/WP1-start-refusal.test.ts WF01、WF02 |
+| W1-HO-01 | 带 `continuation` 来历的 `create_session` 完成后：P 可当场交接归档（活着、空闲、不在等、没有归档请求、开放的负责关系只有 T）→ `archive_predecessor`；否则 P 仍对 T 负责 → `transfer_responsibility`；条件不满足（P 有归档请求、Workflow 没装负责关系的 port 等）→ 原来的 `claim_task` | — | wf/workflow.ts（`create_session` 分支） | business/WP1-continuation-handover.test.ts HO01、HO03、HO04、HO05、HO09、HO10 |
+| W1-HO-02 | `transfer_responsibility` 的回执：`committed` → `claim_task`（C 的版本现读）；`revision_conflict` → `select_work`；别的拒绝 → `claim_task`。owner 写入走 S1-LINK-01：P 对 T 的关系关闭，P、C 版本各 +1 | session-responsibility.ts | wf/workflow.ts；wg/sessions/session-responsibility-service.ts（`transferSessionResponsibility`） | 同上 HO02、HO04、HO05、HO08、HO12 |
+| W1-HO-03 | `archive_predecessor` 的结果：`archived` → `claim_task`；`pending`/`partial` 时 P 对 T 已关 → `claim_task`，仍开放 → `select_work`；冲突 → `select_work`；别的拒绝 → 转交或领取。owner 写入走 S1-SES-03、S1-LINK-01、S1-SES-04，模式 `handoff_complete`，不写锚点、不重新入队 | session-availability.ts；session-responsibility.ts | wf/workflow.ts；wf/session-archive.ts（`archiveLineInternal`） | 同上 HO03、HO07、HO13 |
+| W1-HO-04 | `claimRequeued` 复用的 Session C 是 T 的接续、P 没有归档请求且仍对 T 负责 → 先发 W1-HO-01 同样判断出的交接步，再领取（建好 C 后崩溃的恢复） | — | wf/workflow.ts（`claimRequeued`） | 同上 HO06、HO07、HO08、HO11 |
+| W1-AUTO-01 | 维护的退役分支：P 退役、有接续、没有占用、没有开放的 task/work 负责关系 → 以 `handoff_complete` 归档（经 S1-SES-03/04）；还有开放的 task/work 关系 → 跳过，零提交。决定 45 的 U1 跳过仍在它前面 | session-availability.ts | wf/session-maintenance.ts | 同上 HM01–HM04、HO02；scenarios/WP1-wiring.test.ts SC01 |
+| W1-DUTY-01 | 职责解析（纯读，不是状态转换）：Role 定的职责和 legacy 模板的职责经 `effectivePlatformDuty` 定；两者都没有时，只有 Work 绑定里用到的角色算执行者，否则 `'unknown'`；读失败也是 `'unknown'` | context-input.ts（`effectivePlatformDuty`） | composition/session-duty.ts（`createSessionDutyResolver`）；wf/session-maintenance.ts（`dutyOf`） | composition/WP1-session-duty.test.ts DU01–DU09 |
+| W1-ANOM-01 | 上下文扩展里的锚点行（纯读）：这个目标里没被接手的锚点，每条一行 `anomaly:<refkey>`，按键升序；读不到 → 整次上下文读取失败；最多读 25 页 | — | wg/views/context-extensions.ts（`createContextExtensionsReader`），只装进 wg/views/graph-context-reader.ts 的 `extensions` | work-graph/WP1-context-anomalies.test.ts AN01–AN07、AN09；runtime/WP1-context-assembly.test.ts AN08；scenarios/WP1-wiring.test.ts SC02 |
+
+**改到的已有部分：**
+- §17.1 的 S1-AUTO-02：退役、有接续的线，原来只处理已转走的负责关系，线一直挂着；现在没有开放的 task/work 负责关系时以 `handoff_complete` 归档（W1-AUTO-01）。
+- §17.2 的 CTX-01：e48218a5 留下的代价由 W1-CTX-01 补上（见上）。今天生产代码里还没有改 Goal 目标文字的写入方，这条守卫要等 I-4 或第 6 片才会真的拦下一次进入（规格 L1）。
+- Work 的执行清单绑定里，这个 Goal 来源的 `digest` 由 null 变为摘要；喂给模型的输入文字不变。Query 的绑定不变。
+- 第 1 片的普通接续（§17.1 S1-SES-01 写的 `continuation` 来历）从此会转走负责关系、能归档时归档前任；原来证据里记的“普通接续不转走负责关系、不归档前任”已补上。
 
 ## 附录 A　决定全文（2026-10-03 已确认）
 

@@ -1,0 +1,34 @@
+{
+ "runName": "slices-s5b-areab",
+ "copy": "/home/han001/dsh-work/slices/s5b",
+ "level": "slices",
+ "task": "/home/han001/dsh-work/slices/_books/s5-areab.md",
+ "taskSha256": "c78e13ed6d57e78dad71df781f3e97618fedd5f82b4439ba3d8d888a58b95c20",
+ "model": "headless default (deepseek-flash)",
+ "sessionIdIn": null,
+ "sessionId": "session-bd12fc0d-fb2f-4491-a98f-14998e5733d7",
+ "startedAt": "2026-10-09T05:34:55.920Z",
+ "endedAt": "2026-10-09T06:26:35.665Z",
+ "wallSeconds": 3100,
+ "exitCode": 0,
+ "signal": null,
+ "stoppedBy": null,
+ "limits": {
+  "maxMinutes": 120,
+  "maxTokensReportedOnly": null,
+  "maxContext": 360000
+ },
+ "peakContext": 124833,
+ "sandbox": "bubblewrap",
+ "toolCalls": 41,
+ "steps": 31,
+ "tokens": {
+  "input": 68006,
+  "cacheRead": 2397056,
+  "cacheWrite": 0,
+  "output": 66904,
+  "total": 2531966
+ },
+ "contamination": "attempted-outside",
+ "changedPaths": 93
+}

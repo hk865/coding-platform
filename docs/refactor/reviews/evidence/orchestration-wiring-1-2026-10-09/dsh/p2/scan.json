@@ -1,0 +1,56 @@
+{
+ "sessionId": "session-e13c5252-993d-4ea5-9abc-a4b6eea4c04c",
+ "steps": 29,
+ "toolCalls": 44,
+ "byTool": {
+  "bash": 25,
+  "write": 1,
+  "subagent": 8,
+  "todo_write": 2,
+  "read": 5,
+  "edit": 3
+ },
+ "tokens": {
+  "input": 46491,
+  "cacheRead": 1419264,
+  "cacheWrite": 0,
+  "output": 31944,
+  "total": 1497699
+ },
+ "turnEnd": {
+  "kind": "completed"
+ },
+ "errors": 0,
+ "contamination": "none",
+ "sandboxed": true,
+ "privateTmpUses": 1,
+ "pathHits": [
+  {
+   "event": 22,
+   "tool": "write",
+   "pattern": "/tmp",
+   "excerpt": "enance).\\n5. Scratch files only in `./.dsh-scratch/` (never `/tmp`); delete it at the end.\\n6. This sandbox has no `/usr/bin/bwrap`: any sce"
+  }
+ ],
+ "pathHitCount": 1,
+ "canaryHits": [],
+ "canaryHitCount": 0,
+ "lookups": {},
+ "writes": [
+  "<copy>/.dsh-scratch/brief-common.md",
+  "<copy>/src/composition/create-platform.ts",
+  "<copy>/src/business/workflow/workflow.ts",
+  "<copy>/src/core/work-graph/tasks/execution-entry-service.ts"
+ ],
+ "report": {
+  "present": [
+   "FILES CHANGED",
+   "CHECKS",
+   "UNSPECIFIED",
+   "NOTES"
+  ],
+  "missing": [],
+  "chars": 5581,
+  "hasFinal": true
+ }
+}

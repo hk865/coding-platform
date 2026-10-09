@@ -1,0 +1,20 @@
+ M src/business/workflow/contracts.ts
+ M src/business/workflow/index.ts
+ M src/business/workflow/ports.ts
+ M src/business/workflow/session-maintenance.ts
+ M src/business/workflow/workflow.ts
+ M src/composition/create-platform.ts
+ M src/contracts/graph-context.ts
+ M src/core/agent-runtime/context-assembler.ts
+ M src/core/work-graph/state/context-input.ts
+ M src/core/work-graph/tasks/execution-entry-service.ts
+?? src/composition/session-duty.ts
+?? src/core/work-graph/views/context-extensions.ts
+?? tests/business/WP1-continuation-handover.test.ts
+?? tests/business/WP1-start-refusal.test.ts
+?? tests/composition/WP1-session-duty.test.ts
+?? tests/runtime/WP1-context-assembly.test.ts
+?? tests/scenarios/WP1-wiring.test.ts
+?? tests/state/WP1-goal-content.test.ts
+?? tests/work-graph/WP1-context-anomalies.test.ts
+?? tests/work-graph/WP1-goal-content-entry.test.ts

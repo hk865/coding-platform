@@ -1,0 +1,64 @@
+--- codex/WP1-handover-fixture.ts
++++ frozen/WP1-handover-fixture.ts
+@@ -388,7 +388,7 @@
+       ? await createHandoverWorkflow(f.b2, { now: f.now,
+         configuration: { ...configuration(f.b2), consumerId: 'wp1-no-responsibilities' }, responsibilities: false })
+       : f.composition1;
+-    return { ...f, composition, workflow: composition.workflow, requeue, requeueRef: requeue.ref };
++    return { ...f, composition, workflow: composition.workflow, requeueRecord: requeue, requeueRef: requeue.ref };
+   } catch (error) { await f.close(); throw error; }
+ }
+ export type InterruptedHandoverFixture = Awaited<ReturnType<typeof createInterruptedHandoverFixture>>;
+@@ -454,7 +454,7 @@
+     const composition = await createHandoverWorkflow(f.b2, {
+       now: f.now, configuration: configuration(f.b2, true), failFinalArchive,
+     });
+-    return { ...f, composition, workflow: composition.workflow, requeue, requeueRef: requeue.ref, T2, otherClaim };
++    return { ...f, composition, workflow: composition.workflow, requeueRecord: requeue, requeueRef: requeue.ref, T2, otherClaim };
+   } catch (error) { await f.close(); throw error; }
+ }
+ export async function createRoleMismatchHandoverFixture(options: { failFinalArchive?: boolean } = {}) {
+@@ -469,7 +469,7 @@
+   try {
+     await observedCrash(f);
+     const requeue = await f.requeue();
+-    return { ...f, composition: f.composition1, workflow: f.workflow1, requeue, requeueRef: requeue.ref };
++    return { ...f, composition: f.composition1, workflow: f.workflow1, requeueRecord: requeue, requeueRef: requeue.ref };
+   } catch (error) { await f.close(); throw error; }
+ }
+ export type ReusablePredecessorFixture = Awaited<ReturnType<typeof createReusablePredecessorFixture>>;
+--- codex/WP1-scenario-fixture.ts
++++ frozen/WP1-scenario-fixture.ts
+@@ -251,7 +251,7 @@
+     const all: SessionAnomalyViewV1[] = [];
+     let cursor: string | null = null;
+     for (let page = 0; page < 25; page += 1) {
+-      const result = ready(await h.post<ReadResult<SessionPage<SessionAnomalyViewV1>>>('anomalies/list', plain(AG2B_SCOPE,
++      const result: SessionPage<SessionAnomalyViewV1> = ready(await h.post<ReadResult<SessionPage<SessionAnomalyViewV1>>>('anomalies/list', plain(AG2B_SCOPE,
+         { goalRef: AG2B_GOAL_REF, page: cursor === null ? { limit: 100 } : { limit: 100, cursor } })));
+       all.push(...result.items);
+       if (result.nextCursor === null) return all;
+--- codex/WP1-units-fixture.ts
++++ frozen/WP1-units-fixture.ts
+@@ -135,8 +135,9 @@
+       const content: RoleSpecContentV1 = {
+         schemaVersion: 1, ...(secretary ? { platformDuty: 'secretary' as const } : {}),
+         label: roleId, purpose: 'Own the assigned task', responsibility: ['execution'],
+-        requiredMaterials: [], optionalMaterials: [], permissions: { tools: ['read'], writeScope: 'none' },
+-        budget: { source: 'task-budget', scope: 'assigned-task' }, requiredOutputs: [],
++        requiredMaterials: [{ kind: 'contract', reason: 'Read the assigned Plan/Task' }], optionalMaterials: [],
++        permissions: { tools: ['read'], writeScope: 'none' }, budget: { source: 'task-budget', scope: 'assigned-task' },
++        requiredOutputs: [{ kind: 'implementation-result', reason: 'Report actual results' }],
+         exit: { success: 'Report the result', stop: 'Report the blocker', handoff: 'Keep references' },
+       };
+       // role-memory-service.ts:317-345: trusted actor, canonical content digest;
+@@ -241,7 +242,8 @@
+       // session-lifecycle.ts:494-535 accepts the real same-Goal target and current Session pin.
+       const link = writeValue(await lifecycle.linkSessionWork(ctx, {
+         input: { sessionRef: session, target: { kind: 'task', ref: task }, relation: 'responsible', active: true },
+-        meta: { requestId: `link-${task.taskId}`, expected: [await base.sessionPin(session)] },
++        meta: { requestId: `link-${task.taskId}`, expected: [await base.sessionPin(session),
++          { ref: { ...session, aggregateType: 'SessionWorkLink', target: { kind: 'task', ref: task }, relation: 'responsible' }, revision: 0 }] },
+       }));
+       const producer = await base.createSession(`producer-${task.taskId}`);
+       const goal = readValue(await base.plans.queryGoal(ctx, goalRef)).goal;
