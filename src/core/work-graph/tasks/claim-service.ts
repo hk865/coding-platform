@@ -73,12 +73,14 @@ import {
 } from './claim-record-codecs.js';
 import type { ClaimTaskInput, TaskClaim, TaskClaimDependencies, TaskClaimPort } from '../model/claim-contracts.js';
 import type { SessionFactsV1, SessionWorkWaitV1 } from '../model/session-facts-contracts.js';
+import type { GoalSettingsPort } from '../model/decision-contracts.js';
 import type { GraphWrite } from '../model/task-contracts.js';
 import { evaluateEligibility } from './eligibility.js';
 import {
-  readCanonicalTaskFacts, readGoal, readPlan, sameCursor,
+  readCanonicalTaskFacts, readGoal, readGoalPhase, readPlan, sameCursor,
   type CanonicalTaskFacts, type CanonicalTaskState, type Rejected,
 } from './plan-readers.js';
+import { goalStartPolicy } from '../state/goal-settings-machine.js';
 import type { SessionMessage } from '../model/communication-contracts.js';
 import { decodeSessionMessageRecord, sessionMessageRefKey } from '../sessions/message-record-codecs.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
@@ -675,7 +677,17 @@ function roleMatchRejection(
 // The service
 // --------------------------------------------------------------------------
 
-export function createTaskClaimService(deps: TaskClaimDependencies): TaskClaimPort {
+/**
+ * Slice 5 §3.2/§8.2: the optional Goal-settings seam the claim entry reads
+ * before it starts new modifying work (the waiting/autonomy guards are part 2).
+ * The intersection only ADDS an optional field, so every existing composition
+ * parameter keeps compiling and the factory never throws.
+ */
+export type TaskClaimGoalSettingsDependencies = TaskClaimDependencies & {
+  goalSettings?: GoalSettingsPort;
+};
+
+export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies): TaskClaimPort {
   const records: Records = deps.records;
   // Slice 1 §0.2 L1: the direct Work claim uses the same-submodule Session facts
   // reader and the trusted legacy-provenance reader; an absent provenance is
@@ -873,6 +885,36 @@ export function createTaskClaimService(deps: TaskClaimDependencies): TaskClaimPo
     if (scopeCtx.signal.aborted) return reject('cancelled', 'the Task claim was cancelled during the goal read');
     const goal: GoalSnapshot = goalRead.goal;
     if (goal.workspaceRef.workspaceId !== scope.workspaceId) return forbidden('the Goal belongs to another workspace');
+    // Slice 5 §3.1 S5-AU-01 / rule 5: a Goal waiting for a predecessor starts no
+    // new modifying work. The read versions join this claim's commit CAS, so a
+    // settings change after this read makes the claim lose (SS13); an existing
+    // Run is never stopped.
+    const waitingGuards: RecordGuard[] = [];
+    const waitingRef = goal.settings?.waitForGoalRef ?? null;
+    if (waitingRef !== null) {
+      const predecessorRead = await readGoal(records, waitingRef);
+      // S5-AU-01: a missing predecessor Goal is `incomplete`; only a read
+      // failure is `unavailable` (never the reader's `not_found`).
+      if (predecessorRead.status !== 'ready') {
+        return predecessorRead.code === 'not_found'
+          ? reject('incomplete', `the predecessor Goal ${waitingRef.goalId} is missing`)
+          : mapReaderRejection(predecessorRead);
+      }
+      const phaseRef = { aggregateType: 'GoalPhase' as const, projectId: waitingRef.projectId, goalId: waitingRef.goalId };
+      const phaseRead = await readGoalPhase(records, phaseRef);
+      if (phaseRead.status !== 'ready') return mapReaderRejection(phaseRead);
+      const formallyCompleted = phaseRead.snapshot !== null && predecessorRead.goal.activePlanRevision !== null
+        && sameRef(phaseRead.snapshot.planRef, predecessorRead.goal.activePlanRevision);
+      const policy = goalStartPolicy({
+        action: input.consumedWait === undefined ? 'claim' : 'continue_work',
+        goal,
+        predecessor: { exists: true, cancelled: predecessorRead.goal.desiredState === 'cancelled',
+          formallyCompletedForActivePlan: formallyCompleted },
+      });
+      if (!policy.allowed) return busy(`waiting_predecessor:${waitingRef.goalId}`);
+      waitingGuards.push({ refKey: refKeyOf(waitingRef), expectedRevision: predecessorRead.goal.revision });
+      waitingGuards.push(phaseRead.guard);
+    }
     let subject: TaskClaimSubject | null = UNREAD_TASK;
     let claimFacts: TaskClaimFacts = {
       goalDesiredState: goal.desiredState,
@@ -1066,6 +1108,7 @@ export function createTaskClaimService(deps: TaskClaimDependencies): TaskClaimPo
       if (existing === undefined || (existing === null && expectedRevision !== null)) guardMap.set(refKey, expectedRevision);
     };
     addGuard(refKeyOf(input.goalRef), goal.revision);
+    for (const guard of waitingGuards) addGuard(guard.refKey, guard.expectedRevision);
     addGuard(workspaceKey, workspaceRecord.revision);
     addGuard(refKeyOf(input.planRef), plan.revision);
     addGuard(sessionKey, session.revision);

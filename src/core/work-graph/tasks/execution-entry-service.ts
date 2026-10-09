@@ -94,12 +94,14 @@ import type {
   KernelExecutionBinding, KernelObservationSource, ObservedExecutionHistory, RuntimeEntryRecord, TaskEntryPermit,
   TaskResultObservation,
 } from '../model/execution-entry-contracts.js';
+import type { GoalSettingsPort } from '../model/decision-contracts.js';
 import {
   outcomeUnknownIntentsOf, pointerIntentOf, queuedSteersOf, readRunIntents, reconciledIntentRecords,
 } from './reconcile-intents.js';
 import type { TaskExecutionRecord } from '../model/execution-read-contracts.js';
 import { readEntryPlanVerdict } from './entry-plan-reader.js';
-import { readGoalScope, sameCursor } from './plan-readers.js';
+import { readGoal, readGoalPhase, readGoalScope, sameCursor } from './plan-readers.js';
+import { goalStartPolicy } from '../state/goal-settings-machine.js';
 import { planRevisionRefKey } from '../persistence/plan-record-codecs.js';
 import { contextAssemblyProblem, contextGoalContentProblem, declaredInputProblem, effectivePlatformDuty } from '../state/context-input.js';
 
@@ -1352,7 +1354,17 @@ const ENTRY_BEGIN_PREFIX = 'b2-entry-begin:';
 const ENTRY_ENTERED_PREFIX = 'b2-entry-entered:';
 const ENTRY_RESULT_PREFIX = 'b2-entry-result:';
 
-export function createExecutionEntryService(deps: ExecutionEntryDependencies): ExecutionEntryPort {
+/**
+ * Slice 5 §3.2/§8.2: the optional Goal-settings seam the execution entry reads
+ * before it starts a new continuation (the waiting guard is part 2). The
+ * intersection only ADDS an optional field, so existing composition parameters
+ * keep compiling and the factory never throws.
+ */
+export type ExecutionEntryGoalSettingsDependencies = ExecutionEntryDependencies & {
+  goalSettings?: GoalSettingsPort;
+};
+
+export function createExecutionEntryService(deps: ExecutionEntryGoalSettingsDependencies): ExecutionEntryPort {
   const records = deps.records;
 
   /**
@@ -1466,6 +1478,33 @@ export function createExecutionEntryService(deps: ExecutionEntryDependencies): E
       // active Plan is the claim's Plan or carries the claimed Task unchanged from it.
       const goalScope = await readGoalScope(records, goalRefOf(claim.task));
       if (goalScope.status !== 'ready') return mapReaderRejection(goalScope);
+      // Slice 5 §3.1 S5-AU-01 / rule 5: a Goal waiting for a predecessor never
+      // authorizes a new entry; the predecessor read versions join this commit's
+      // CAS guards so a new wait still wins the race.
+      const waitingGuards: RecordGuard[] = [];
+      const waitingRef = goalScope.goal.settings?.waitForGoalRef ?? null;
+      if (waitingRef !== null) {
+        const predecessorRead = await readGoal(records, waitingRef);
+        // S5-AU-01: a missing predecessor Goal is `incomplete`; only a read
+        // failure is `unavailable` (never the reader's `not_found`).
+        if (predecessorRead.status !== 'ready') {
+          return predecessorRead.code === 'not_found'
+            ? reject('incomplete', `the predecessor Goal ${waitingRef.goalId} is missing`)
+            : mapReaderRejection(predecessorRead);
+        }
+        const phaseRead = await readGoalPhase(records, { aggregateType: 'GoalPhase', projectId: waitingRef.projectId, goalId: waitingRef.goalId });
+        if (phaseRead.status !== 'ready') return mapReaderRejection(phaseRead);
+        const formallyCompleted = phaseRead.snapshot !== null && predecessorRead.goal.activePlanRevision !== null
+          && sameRef(phaseRead.snapshot.planRef, predecessorRead.goal.activePlanRevision);
+        const policy = goalStartPolicy({ action: 'enter', goal: goalScope.goal,
+          predecessor: { exists: true, cancelled: predecessorRead.goal.desiredState === 'cancelled',
+            formallyCompletedForActivePlan: formallyCompleted } });
+        if (!policy.allowed) return reject('busy', `waiting_predecessor:${waitingRef.goalId}`);
+        const waitingKey = refKeyOf(waitingRef);
+        if (waitingKey === null) return invalid('the wait predecessor ref is not canonicalizable JSON');
+        waitingGuards.push({ refKey: waitingKey, expectedRevision: predecessorRead.goal.revision });
+        waitingGuards.push(phaseRead.guard);
+      }
       const activePlan = goalScope.goal.activePlanRevision;
       runCtx = { ...runCtx, goal: { desiredState: goalScope.goal.desiredState,
         activePlanMatchesClaim: activePlan !== null && sameRef(activePlan, claim.planRef) } };
@@ -1519,6 +1558,7 @@ export function createExecutionEntryService(deps: ExecutionEntryDependencies): E
         ...executionReadGuards(facts, runRecord.refKey, runPin),
         { refKey: goalKey, expectedRevision: goalScope.goal.revision },
         { refKey: goalScope.workspaceKey, expectedRevision: goalScope.workspaceRevision },
+        ...waitingGuards,
         // C6: with `carried_unchanged`, the active Plan and the basis sources the verdict read.
         ...entryPlan.guards,
         ...admission.guards,

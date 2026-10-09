@@ -76,7 +76,8 @@ const SESSION_USE = 'state/session-availability.ts createSessionRecord, occupySe
 const ROUND_USE = 'state/verification-machine.ts buildOpenedRound, withCheckPhase, buildFinalizedRound or buildSuccessorRound';
 const MESSAGE_USE = 'state/message-machine.ts createSessionMessageRecord or nextSessionMessageRecord';
 const MESSAGE_FIELDS = ['status', 'readAt', 'response', 'acceptedInputs', 'consultationDerivation',
-  'replyHandler', 'archiveWaitDisposition'] as const;
+  'replyHandler', 'archiveWaitDisposition', 'decision', 'application'] as const;
+const WORKSPACE_USE = 'state/notice-settings-machine.ts buildWorkspaceDecisionSettingsRecord';
 const PROPOSAL_USE = 'state/plan-machine.ts newCandidateProposal or acceptProposalRecord';
 const QUERY_USE = 'state/query-run-recovery.ts newPendingQueryRecords, advanceQueryExecutionRecord, '
   + 'markQueryRunUnknownRecord or settleQueryRunRecord';
@@ -126,14 +127,16 @@ const PROTECTED_TYPES: readonly ProtectedType[] = [
   { file: 'src/core/work-graph/state/message-machine.ts', name: 'SessionMessageRecord', kind: 'record',
     fields: MESSAGE_FIELDS, use: MESSAGE_USE },
   { file: 'src/contracts/ledger.ts', name: 'GoalSnapshot', kind: 'record',
-    fields: ['desiredState', 'desiredStateRevision', 'activePlanRevision', 'desiredStateRequestedBy'],
+    fields: ['desiredState', 'desiredStateRevision', 'activePlanRevision', 'desiredStateRequestedBy', 'settings'],
     use: 'state/goal-machine.ts newGoalSnapshot, nextGoalPointer or nextGoalDesiredState' },
+  { file: 'src/contracts/ledger.ts', name: 'WorkspaceSnapshot', kind: 'record',
+    fields: ['decisionSettings'], use: WORKSPACE_USE },
   { file: 'src/contracts/goal-phase.ts', name: 'GoalPhaseSnapshot', kind: 'record',
     fields: ['phase', 'planRef', 'adoptedTaskReductions'], use: 'state/goal-machine.ts buildGoalPhaseSnapshot' },
   { file: 'src/core/work-graph/model/plan-contracts.ts', name: 'PlanProposal', kind: 'record',
-    fields: ['status'], use: PROPOSAL_USE },
+    fields: ['status', 'requestRef', 'notAdopted'], use: PROPOSAL_USE },
   { file: 'src/core/work-graph/state/plan-machine.ts', name: 'CandidatePlanProposal', kind: 'record',
-    fields: ['status'], use: PROPOSAL_USE },
+    fields: ['status', 'requestRef', 'notAdopted'], use: PROPOSAL_USE },
   { file: 'src/core/work-graph/state/plan-machine.ts', name: 'LegacyPlanProposal', kind: 'record',
     fields: ['status'], use: PROPOSAL_USE },
   { file: 'src/contracts/query-job.ts', name: 'QueryRunV1', kind: 'record',
@@ -160,7 +163,10 @@ const PROTECTED_TYPES: readonly ProtectedType[] = [
 /** Files are relative to `src/core/work-graph/`; `*` matches any part of a function name. */
 const ALLOWED_DECODERS: readonly { file: string; functions: readonly string[] }[] = [
   { file: 'persistence/record-codecs.ts', functions: ['decodeGoalSnapshot', 'decodeGoalCreatedEvent',
-    'goalSnapshotFromCreatedEvent'] },
+    'goalSnapshotFromCreatedEvent', 'decodeWorkspaceSnapshot'] },
+  { file: 'persistence/decision-record-codecs.ts', functions: ['decodeGoalSettingsChangedEvent',
+    'decodeWorkspaceNoticeSeenChangedEvent'] },
+  { file: 'configuration/project-bootstrap-record-codecs.ts', functions: ['workspaceSnapshotFromValue'] },
   { file: 'persistence/control-record-codecs.ts', functions: ['decodeControlIntentSnapshot',
     'controlIntentSubmittedEventFromEvent', 'controlIntentObservedEventFromEvent'] },
   { file: 'persistence/execution-entry-codecs.ts', functions: ['*EventFromEvent', '*Problem'] },

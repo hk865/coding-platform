@@ -1,4 +1,6 @@
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
+import type { CommitCursor } from '../../contracts/command-event.js';
+import type { DecisionApplicationReceiptV1 } from '../../contracts/core/session-message.js';
 import type { RoleConfigurationRef, SessionRef, WorkspaceScope } from '../../contracts/core/identity.js';
 import type { CoreRejection, ReadResult, WriteResult } from '../../contracts/core/results.js';
 import type { RoleBindingRefV1, RunRef, RunSnapshot, TaskBudgetV1 } from '../../contracts/dispatch.js';
@@ -21,12 +23,16 @@ import type { RuntimeExecutionPort } from '../../core/agent-runtime/ports.js';
 import type { RegisteredCheckRunner } from '../../core/agent-runtime/check-execution.js';
 import type { SourceSnapshotReads } from '../../core/work-graph/source-authority-ports.js';
 import type { SessionMailboxPort } from '../../core/work-graph/model/communication-contracts.js';
+import type {
+  DecisionMessagePort, DecisionReadPort, DecisionSourceFactsPort, GoalExecutedFilesPort,
+  GoalSettingsPort, MessageDutiesFactsPort,
+} from '../../core/work-graph/model/decision-contracts.js';
 import type { ProjectRegistrationPort } from '../../core/work-graph/configuration/project-bootstrap-contracts.js';
 import type { QueryExecutionRecord, QueryJobPort } from '../../core/work-graph/queries/contracts.js';
 import type { SessionArchivePort } from './session-archive.js';
 import type { SessionMaintenancePort } from './session-maintenance.js';
 import type { ConsultationInput, ConsultationResult, InitialPlanningGoalInput, InitialPlanningGoalInputResult,
-  N0GoalInput, WorkflowAdvanceInput, WorkflowAdvanceResult, WorkflowCloseEventReader } from './contracts.js';
+  N0GoalInput, ResolveDecisionInputV1, ResolveDecisionReadV1, WorkflowAdvanceInput, WorkflowAdvanceResult, WorkflowCloseEventReader } from './contracts.js';
 
 /**
  * Trusted Host advancement policy. It is pure data snapshotted by the
@@ -147,6 +153,27 @@ export type WorkflowDependencies = {
    * explicitly unsupported and every other Workflow behavior is unchanged.
    */
   consultations?: ConsultationConsumerDependencies;
+  /**
+   * Slice 5 §3.3/§4.5 decision seams. They reuse the SAME settings/message/read
+   * owners the composition already builds; every one is optional so an old
+   * composition keeps starting and the historical `select_work`/`perform`
+   * behavior is unchanged. Without `goalSettings`/`decisionMessages` the new
+   * `resolveDecision`/`orderGoalAdvances` surface reports `unsupported`.
+   */
+  goalSettings?: GoalSettingsPort;
+  decisionMessages?: DecisionMessagePort;
+  decisionReads?: DecisionReadPort;
+  decisionSources?: DecisionSourceFactsPort;
+  decisionDuties?: MessageDutiesFactsPort;
+  goalExecutedFiles?: GoalExecutedFilesPort;
+  /**
+   * Slice 5 §4.5: read the formal identity/fingerprint of a settings commit at
+   * its returned cursor, so the finite `resolveDecision` coordinator can hand
+   * `recordDecisionApplication` the real receipt without knowing an owner-private
+   * identity algorithm. Optional; without it an answered conflict stays
+   * `application_not_recorded`.
+   */
+  applicationReceipt?: (ctx: CoreCallContext, cursor: CommitCursor) => Promise<DecisionApplicationReceiptV1 | null>;
 };
 
 /**
@@ -186,4 +213,18 @@ export interface WorkflowPort {
   continueArchiveLine?: SessionArchivePort['continueArchiveLine'];
   /** Slice 1 §4.2: at most one bounded maintenance page per call. */
   maintainSessions?: SessionMaintenancePort['maintainSessions'];
+  /**
+   * Slice 5 §4.5 finite decision coordination: `answerDecision` first, then the
+   * structured conflict action (only for an active Goal's conflict card), then
+   * `recordDecisionApplication`. Optional so every existing composition and
+   * fixture keeps starting; `createWorkflow` implements it as a stub in part 1.
+   */
+  resolveDecision?(ctx: CoreCallContext, request: GraphWrite<ResolveDecisionInputV1>): Promise<ReadResult<ResolveDecisionReadV1>>;
+  /**
+   * Slice 5 §4.5 read-only ordering safe point: sorts the already-pending
+   * advances by `Goal.settings.order`, then the Goal key, then flowId/taskId,
+   * with no scheduler, queue or persisted Host state. Optional for old
+   * compositions; `createWorkflow` implements it as a stub in part 1.
+   */
+  orderGoalAdvances?(ctx: CoreCallContext, input: { advances: WorkflowAdvanceInput[] }): Promise<ReadResult<{ advances: WorkflowAdvanceInput[] }>>;
 }

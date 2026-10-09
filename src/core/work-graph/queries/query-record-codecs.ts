@@ -48,6 +48,7 @@ import type {
   EncodedRecordSchema,
   RecordBackendSchemas,
 } from '../../record-store/ports.js';
+import type { RecordLookupIndex } from '../../record-store/lookup-ports.js';
 import { QUERY_RUN_RECORD_SCHEMA, validateQueryRunSnapshot } from '../materials/record-readers.js';
 import { QUERY_RUN_BY_SESSION_LOOKUP } from '../model/session-facts-contracts.js';
 
@@ -55,6 +56,11 @@ export const QUERY_JOB_SUBMITTED_EVENT = 'QueryJobSubmitted';
 export const QUERY_JOB_EVENT_SCHEMA_VERSION = 1;
 export const QUERY_JOB_SNAPSHOT_SCHEMA_ID = 'QueryJobSnapshot@1';
 export const QUERY_JOB_ANSWER_SNAPSHOT_SCHEMA_ID = 'QueryJobAnswerSnapshot@1';
+/**
+ * Slice 5 §4.2 source-5 index: the formal questions of one Goal's workspace.
+ * The name/paths are frozen for later slices; a missing `job.goalId` is null.
+ */
+export const S5_QUERY_JOB_BY_GOAL = 'query-job-by-workspace-goal';
 export const QUERY_EXECUTION_EVENT = 'QueryExecutionRecorded';
 export const QUERY_EXECUTION_EVENT_SCHEMA_VERSION = 1;
 export const QUERY_JOB_ANSWERED_EVENT = 'QueryJobAnswered';
@@ -754,11 +760,22 @@ const QUERY_JOB_ANSWERED_SCHEMA: EncodedEventSchema = {
   validate: validateQueryJobAnsweredEvent,
 };
 
+/**
+ * Slice 5 §4.2: a QueryJob's formal workspace+Goal index. It is a candidate
+ * lookup only; the question reader rechecks the decoded canonical Job/Run.
+ */
+const QUERY_JOB_BY_WORKSPACE_GOAL_LOOKUP: RecordLookupIndex = {
+  name: S5_QUERY_JOB_BY_GOAL,
+  aggregateType: 'QueryJob',
+  paths: ['ref.projectId', 'ref.workspaceId', 'job.goalId'],
+};
+
 export const QUERY_JOB_RECORD_SCHEMAS: RecordBackendSchemas = {
   records: [QUERY_JOB_SNAPSHOT_SCHEMA, QUERY_JOB_ANSWER_SNAPSHOT_SCHEMA],
   events: [QUERY_JOB_SUBMITTED_SCHEMA, QUERY_EXECUTION_RECORDED_SCHEMA, QUERY_JOB_ANSWERED_SCHEMA],
   lookups: [
     { name: QUERY_RUN_BY_SESSION_LOOKUP, aggregateType: 'QueryRun',
       paths: ['ref.projectId', 'ref.workspaceId', 'run.executionState.sessionRef.sessionId'] },
+    QUERY_JOB_BY_WORKSPACE_GOAL_LOOKUP,
   ],
 };

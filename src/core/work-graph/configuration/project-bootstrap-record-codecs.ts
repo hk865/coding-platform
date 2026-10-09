@@ -31,6 +31,7 @@ import type {
   EncodedEventSchema,
   RecordBackendSchemas,
 } from '../../record-store/ports.js';
+import { workspaceDecisionSettingsProblem } from '../persistence/record-codecs.js';
 
 export const PROJECT_REGISTERED_EVENT = 'ProjectRegistered';
 export const PROJECT_WORKSPACE_REGISTERED_EVENT = 'ProjectWorkspaceRegistered';
@@ -196,7 +197,25 @@ function workspaceSnapshotFromValue(value: unknown, projectId: string): DecodeRe
   if (ref === null) return invalid('ProjectWorkspaceRegistered value has no valid WorkspaceRef');
   if (ref.projectId !== projectId) return invalid('ProjectWorkspaceRegistered value belongs to another project');
   if (value['revision'] !== 1) return invalid('a registered Workspace snapshot revision must be 1');
-  return { status: 'decoded', value: { ref, revision: 1 } };
+  // Slice 5 §2.2: accept the optional decision settings ONLY when they are a
+  // complete legal shape, and preserve them byte for byte; an old event without
+  // the field is NOT backfilled with a default, and a corrupt present field is
+  // rejected instead of being cast.
+  const decisionSettings = value['decisionSettings'];
+  if (decisionSettings !== undefined) {
+    const problem = workspaceDecisionSettingsProblem(decisionSettings);
+    if (problem !== null) return invalid(`ProjectWorkspaceRegistered decisionSettings: ${problem}`);
+  }
+  return {
+    status: 'decoded',
+    value: {
+      ref,
+      revision: 1,
+      ...(decisionSettings === undefined
+        ? {}
+        : { decisionSettings: decisionSettings as NonNullable<WorkspaceSnapshot['decisionSettings']> }),
+    },
+  };
 }
 
 function policySnapshotFromValue(value: unknown, projectId: string): DecodeResult<CompletionPolicyRevisionSnapshot> {

@@ -8,8 +8,11 @@
  * file builds only the compiler-owned PlanRevisionSnapshot and the
  * PlanRevisionAccepted event, and encodes the one PreparedCommit. */
 import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js';
+import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
+import type { DecisionChangeProofV1 } from '../../../contracts/goal-decisions.js';
 import type { ArchitectureBaselinePin, CompletionPolicyPin } from '../../../contracts/governance.js';
 import type { GoalSnapshot } from '../../../contracts/ledger.js';
+import type { QueryJobRef } from '../../../contracts/query-job.js';
 import {
   revisionAssignments,
   type PlanRevisionAcceptedEvent,
@@ -22,7 +25,7 @@ import {
   type TaskDispositionRecordV1,
   type TaskInputRequirementV2,
 } from '../../../contracts/plan.js';
-import type { PreparedCommit, RecordGuard } from '../../record-store/ports.js';
+import type { PreparedCommit, RecordGuard, UniqueClaimChange } from '../../record-store/ports.js';
 import type { PlannedDispositionChangeV1, PlanProposalEffect } from '../state/plan-machine.js';
 import { encodeGoalSnapshot } from '../persistence/record-codecs.js';
 import { buildTargetTaskBasis, isBasisUnsupported } from './plan-task-basis.js';
@@ -31,6 +34,7 @@ import {
   encodePlanProposal,
   encodePlanRevisionAcceptedEvent,
   encodePlanRevisionSnapshot,
+  type NoticeOriginWireV1,
 } from '../persistence/plan-record-codecs.js';
 
 export type VerifiedGovernance = {
@@ -46,6 +50,30 @@ export type VerifiedGovernance = {
 
 /** PLAN-08: the new Plan an adoption writes, as the plan machine names it (`ref`, and `build` from the draft or the delta). */
 export type PlanRevisionWrite = Extract<PlanProposalEffect, { kind: 'write_plan_revision' }>;
+
+/**
+ * Slice 5 §2.4 precise request-slot change: the owner already read the real
+ * head and computed the unique claim
+ * (`s5-request-candidate:` + canonicalJson({goalRef,requestRef}), owner = the
+ * full proposal ref key). This type only NAMES that exact change so the one
+ * plan commit carries it; it adds no second claim protocol.
+ */
+export type PlanRequestSlotChangeV1 = {
+  requestRef: QueryJobRef | null;
+  claim: UniqueClaimChange;
+};
+
+/**
+ * Slice 5 §2.8 precise acceptance proof: the original user answer
+ * (`acknowledgementRef` is attribution only) and, when the caller passed a
+ * captured `DecisionSourceV1`, the exact change proof the accepted
+ * `PlanRevisionAccepted` event records. Its presence never grants a new
+ * authorization.
+ */
+export type PlanAcceptanceDecisionProofV1 = {
+  acknowledgementRef: SessionMessageRef;
+  decisionApplication?: DecisionChangeProofV1;
+};
 
 /** One adoption commit as the state machines named it (PLAN-04/05); the owner reads it off their effects. */
 export type PlanAdoptionCommit = {
@@ -78,6 +106,21 @@ export type InitialPlanAdoptionInput = {
   correlationId: string;
   idempotencyKey: string;
   actor: ActorRef;
+  /**
+   * Slice 5 §2.4: the candidate's request-slot change compiled into the SAME
+   * commit (absent/null for an independent or pre-slice-5 candidate).
+   */
+  requestSlot?: PlanRequestSlotChangeV1 | null;
+  /**
+   * Slice 5 §2.8: the accepted event's acknowledgement attribution and change
+   * proof (absent for the existing adoption paths).
+   */
+  decisionProof?: PlanAcceptanceDecisionProofV1 | null;
+  /**
+   * Slice 5 §2.5/T-R2-2: the accepted proposal record's preserved wire-only
+   * creation origin (`since`). The adopt write copies it, never rebinds.
+   */
+  origin?: NoticeOriginWireV1;
 };
 export type CompiledPlanAdoption = { snapshot: PlanRevisionSnapshot; prepared: PreparedCommit };
 
@@ -132,6 +175,11 @@ function planRevisionAcceptedEvent(input: {
   correlationId: string;
   idempotencyKey: string;
   actor: ActorRef;
+  /** Slice 5 §4.5/T-R2-1: written only when this acceptance is attributed. */
+  identityKey: string;
+  fingerprint: string;
+  /** Slice 5 §2.8: the user acknowledgement this acceptance answers, attribution only. */
+  decisionProof?: PlanAcceptanceDecisionProofV1 | null;
 }): PlanRevisionAcceptedEvent {
   return {
     eventId: input.eventId,
@@ -147,10 +195,19 @@ function planRevisionAcceptedEvent(input: {
     idempotencyKey: input.idempotencyKey,
     actor: input.actor,
     occurredAt: input.occurredAt,
+    // T-R2-1: only an attributed acceptance records the formal receipt identity;
+    // an unattributed adoption keeps its exact pre-slice event shape.
+    ...(input.decisionProof === null || input.decisionProof === undefined ? {}
+      : { identityKey: input.identityKey, fingerprint: input.fingerprint }),
     payload: {
       goalId: input.goalRef.goalId,
       goalAggregateRevision: input.goalRevision,
       planRevision: input.snapshot,
+      ...(input.decisionProof === null || input.decisionProof === undefined ? {} : {
+        acknowledgementRef: input.decisionProof.acknowledgementRef,
+        ...(input.decisionProof.decisionApplication === undefined
+          ? {} : { decisionApplication: input.decisionProof.decisionApplication }),
+      }),
     },
   };
 }
@@ -180,13 +237,16 @@ export function compileInitialPlanAdoption(input: InitialPlanAdoptionInput): Com
     correlationId: input.correlationId,
     idempotencyKey: input.idempotencyKey,
     actor: input.actor,
+    identityKey: input.identityKey,
+    fingerprint: input.fingerprint,
+    decisionProof: input.decisionProof ?? null,
   });
   const prepared: PreparedCommit = {
     identityKey: input.identityKey,
     fingerprint: input.fingerprint,
     guards: input.commit.guards,
-    records: [encodeGoalSnapshot(nextGoal), encodePlanRevisionSnapshot(snapshot), encodePlanProposal(acceptedProposal)],
-    claims: [],
+    records: [encodeGoalSnapshot(nextGoal), encodePlanRevisionSnapshot(snapshot), encodePlanProposal(acceptedProposal, input.origin)],
+    claims: input.requestSlot === null || input.requestSlot === undefined ? [] : [input.requestSlot.claim],
     indexGuards: [],
     indexChanges: [],
     events: [encodePlanRevisionAcceptedEvent(event)],
@@ -225,6 +285,15 @@ export type FuturePlanAdoptionInput = {
   correlationId: string;
   idempotencyKey: string;
   actor: ActorRef;
+  /** Slice 5 §2.4: the candidate's request-slot change compiled into the SAME commit. */
+  requestSlot?: PlanRequestSlotChangeV1 | null;
+  /** Slice 5 §2.8: the accepted event's acknowledgement attribution and change proof. */
+  decisionProof?: PlanAcceptanceDecisionProofV1 | null;
+  /**
+   * Slice 5 §2.5/T-R2-2: the accepted proposal record's preserved wire-only
+   * creation origin (`since`). The adopt write copies it, never rebinds.
+   */
+  origin?: NoticeOriginWireV1;
 };
 
 export type FuturePlanAdoptionCompile =
@@ -359,13 +428,16 @@ export function compileFuturePlanAdoption(input: FuturePlanAdoptionInput): Futur
     correlationId: input.correlationId,
     idempotencyKey: input.idempotencyKey,
     actor: input.actor,
+    identityKey: input.identityKey,
+    fingerprint: input.fingerprint,
+    decisionProof: input.decisionProof ?? null,
   });
   const prepared: PreparedCommit = {
     identityKey: input.identityKey,
     fingerprint: input.fingerprint,
     guards: input.commit.guards,
-    records: [encodeGoalSnapshot(nextGoal), encodePlanRevisionSnapshot(snapshot), encodePlanProposal(acceptedProposal)],
-    claims: [],
+    records: [encodeGoalSnapshot(nextGoal), encodePlanRevisionSnapshot(snapshot), encodePlanProposal(acceptedProposal, input.origin)],
+    claims: input.requestSlot === null || input.requestSlot === undefined ? [] : [input.requestSlot.claim],
     indexGuards: [],
     indexChanges: [],
     events: [encodePlanRevisionAcceptedEvent(event)],

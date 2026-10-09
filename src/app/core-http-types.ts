@@ -34,6 +34,13 @@ import type {
 } from '../core/work-graph/configuration/project-bootstrap-contracts.js';
 import type { GoalTaskPort } from '../core/work-graph/model/task-contracts.js';
 import type { PlanTaskPort } from '../core/work-graph/model/plan-contracts.js';
+import type {
+  DecisionMessagePort,
+  DecisionReadPort,
+  GoalSettingsPort,
+  RequestCandidatePort,
+  WorkspaceDecisionSettingsPort,
+} from '../core/work-graph/model/decision-contracts.js';
 import type { WorkspaceCapturePort, WorkspaceToolsPort } from '../core/workspace/ports.js';
 import type { MaterialSourceScope } from '../contracts/material-access.js';
 import type { PlanRevisionDraft } from '../contracts/plan.js';
@@ -207,7 +214,21 @@ export type CoreRouteSuffix =
   | 'messages/undelivered-replies'
   // Slice 3: the two public read-only graph routes.
   | 'graph/look'
-  | 'graph/find';
+  | 'graph/find'
+  // Slice 5 §4.5: Goal settings/order/conflicts, per-request candidates, the
+  // decision queue/card/answer/application, the notice cursor and the user send.
+  | 'goals/settings'
+  | 'goals/settings/set'
+  | 'goals/reorder'
+  | 'goals/conflicts'
+  | 'plans/request-candidate'
+  | 'plans/abandon'
+  | 'decisions/queue'
+  | 'decisions/card'
+  | 'decisions/answer'
+  | 'decisions/application'
+  | 'decisions/notices/seen'
+  | 'messages/user-send';
 
 type SecondArgument<M> = M extends (ctx: CoreCallContext, argument: infer A) => unknown ? A : never;
 type MethodResult<M> = M extends (ctx: CoreCallContext, argument: never) => infer R ? Awaited<R> : never;
@@ -295,6 +316,40 @@ export type MessagesBodyBody = PlainBody<SessionMailboxPort['readMessageBody']>;
 export type MessagesBodyResponse = RouteResponse<SessionMailboxPort['readMessageBody']>;
 export type MessagesOutboxBody = PlainBody<NonNullable<SessionMailboxPort['readOutbox']>>;
 export type MessagesOutboxResponse = RouteResponse<NonNullable<SessionMailboxPort['readOutbox']>>;
+
+// ---------------------------------------------------------------------------
+// Slice 5 §4.5 decision routes. Each alias derives from the exact owner method
+// named by the frozen route table (`platform.goalSettings`, `platform.decisions`,
+// `platform.requestCandidates`, `platform.decisionMessages`,
+// `platform.workspaceDecisionSettings`, and the Workflow `resolveDecision`).
+// `resolveDecision` stays optional on the port so an old composition keeps
+// compiling; the composition root always publishes it.
+// ---------------------------------------------------------------------------
+export type GoalsSettingsBody = PlainBody<GoalSettingsPort['readGoalSettings']>;
+export type GoalsSettingsResponse = RouteResponse<GoalSettingsPort['readGoalSettings']>;
+export type GoalsSettingsSetBody = GraphWriteBody<GoalSettingsPort['setGoalSettings']>;
+export type GoalsSettingsSetResponse = RouteResponse<GoalSettingsPort['setGoalSettings']>;
+export type GoalsReorderBody = GraphWriteBody<GoalSettingsPort['reorderGoals']>;
+export type GoalsReorderResponse = RouteResponse<GoalSettingsPort['reorderGoals']>;
+export type GoalsConflictsBody = PlainBody<DecisionReadPort['queryGoalConflicts']>;
+export type GoalsConflictsResponse = RouteResponse<DecisionReadPort['queryGoalConflicts']>;
+export type PlansRequestCandidateBody = PlainBody<RequestCandidatePort['readRequestCandidate']>;
+export type PlansRequestCandidateResponse = RouteResponse<RequestCandidatePort['readRequestCandidate']>;
+export type PlansAbandonBody = GraphWriteBody<RequestCandidatePort['abandonPlanProposal']>;
+export type PlansAbandonResponse = RouteResponse<RequestCandidatePort['abandonPlanProposal']>;
+export type DecisionsQueueBody = PlainBody<DecisionReadPort['queryDecisionQueue']>;
+export type DecisionsQueueResponse = RouteResponse<DecisionReadPort['queryDecisionQueue']>;
+export type DecisionsCardBody = PlainBody<DecisionReadPort['readDecisionCard']>;
+export type DecisionsCardResponse = RouteResponse<DecisionReadPort['readDecisionCard']>;
+/** `decisions/answer` is the finite Workflow coordination (§4.5), not a bare owner. */
+export type DecisionsAnswerBody = GraphWriteBody<NonNullable<WorkflowPort['resolveDecision']>>;
+export type DecisionsAnswerResponse = RouteResponse<NonNullable<WorkflowPort['resolveDecision']>>;
+export type DecisionsApplicationBody = GraphWriteBody<DecisionMessagePort['recordDecisionApplication']>;
+export type DecisionsApplicationResponse = RouteResponse<DecisionMessagePort['recordDecisionApplication']>;
+export type DecisionsNoticesSeenBody = GraphWriteBody<WorkspaceDecisionSettingsPort['markNoticesSeen']>;
+export type DecisionsNoticesSeenResponse = RouteResponse<WorkspaceDecisionSettingsPort['markNoticesSeen']>;
+export type MessagesUserSendBody = GraphWriteBody<DecisionMessagePort['sendUserMessage']>;
+export type MessagesUserSendResponse = RouteResponse<DecisionMessagePort['sendUserMessage']>;
 
 // ---------------------------------------------------------------------------
 // R6 execution-entry routes: each alias is derived from the exact public owner

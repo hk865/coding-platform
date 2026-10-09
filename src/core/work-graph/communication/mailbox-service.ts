@@ -40,12 +40,17 @@
  * acceptedInputs and the derivation are written only by the machine's record
  * constructors (§14.1).
  */
-import type { ArtifactRef } from '../../../contracts/artifact.js';
+import type { ArtifactRecord, ArtifactRef } from '../../../contracts/artifact.js';
 import type { CommitCursor } from '../../../contracts/command-event.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { CoreCallContext, CorePrincipal, MaterialReader } from '../../../contracts/core/call-context.js';
-import type { SessionRef, VersionPin } from '../../../contracts/core/identity.js';
-import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
+import type { SessionRef, VersionPin, WorkspaceScope } from '../../../contracts/core/identity.js';
+import type { DecisionHostSenderV1, MessageRecipient, SessionMessageRef, UserMessageRecipientV1,
+  DecisionMessageMetadataV1 } from '../../../contracts/core/session-message.js';
+import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
+import type { DecisionObjectV1, DecisionOptionV1,
+  GoalDecisionBasisV1 } from '../../../contracts/goal-decisions.js';
+import { DEFAULT_GOAL_SETTINGS_V1, decisionSourceKey } from '../../../contracts/goal-decisions.js';
 import type { SessionRecord } from '../../../contracts/core/session.js';
 import {
   deriveArchiveStepCommitIdentityV1, type ArchiveStepRefV1, type ArchiveWaitChoiceV1,
@@ -59,14 +64,17 @@ import type { QueryJobAnswerRef, QueryJobAnswerSnapshot, QueryJobRef, QueryJobSn
 import type { MessageQueryAnswerSender, MessageSender, MessageWorkRunSender, SessionMailboxDependencies, SessionMailboxPort, SessionMessage, SessionMessageStatus, UndeliveredReplyV1 } from '../model/communication-contracts.js';
 import { deriveSessionInputId } from '../model/communication-contracts.js';
 import { makeCommitCursor, seqOfCommitCursor } from '../../../contracts/ledger.js';
-import { canonicalRefKey, decodeWorkspaceSnapshot } from '../persistence/record-codecs.js';
+import { canonicalRefKey, decodeGoalSnapshot, decodeWorkspaceSnapshot } from '../persistence/record-codecs.js';
+import { decodePlanRevisionSnapshot } from '../persistence/plan-record-codecs.js';
+import { decodeEvidenceSnapshot } from '../persistence/evidence-record-codecs.js';
 import { checkPlainSessionRef, decodeSessionRecord, encodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey } from '../sessions/session-record-codecs.js';
 import {
   SESSION_ARCHIVE_REQUESTED_EVENT, sessionArchiveChangedEventFromEvent, type SessionArchiveChangedEventV1,
 } from '../sessions/lifecycle-record-codecs.js';
 import type { GraphWrite, SessionPage, SessionPageRequest } from '../model/session-contracts.js';
 import { SESSION_BY_PROVENANCE_LOOKUP, SESSION_REPLY_BY_HANDLER_LOOKUP } from '../model/session-facts-contracts.js';
-import type { RecordBatchRead, EncodedDomainEvent, EncodedRecord, PreparedCommit, RecordGuard, StoreFailure, StoreResult } from '../../record-store/ports.js';
+import type { DecisionMessagePort, MessageWriteOwnerPort } from '../model/decision-contracts.js';
+import type { RecordBatchRead, EncodedDomainEvent, EncodedRecord, CommitCursorBinding, PreparedCommit, RecordGuard, StoreFailure, StoreResult, UniqueClaimChange } from '../../record-store/ports.js';
 import type { RecordLookupRequest } from '../../record-store/lookup-ports.js';
 import type { TaskClaimOutbox } from '../model/claim-contracts.js';
 import type { TaskExecutionRecord } from '../model/execution-read-contracts.js';
@@ -81,9 +89,12 @@ import {
   archiveWaitDisposedEventFromEvent, checkMessageSender, checkSessionMessageRef, decodeSessionMessageRecord,
   encodeArchiveWaitDisposedEvent, encodeSessionMessageReadEvent, encodeSessionMessageRecord, encodeSessionMessageRespondedEvent,
   encodeSessionMessageSentEvent, sessionMessageFromEvent, sessionMessageRefKey,
-  encodeSessionMessageConsultationDerivedEvent, encodeSessionMessageInputAcceptedEvent, type SessionMessageEventV1,
+  encodeSessionMessageConsultationDerivedEvent, encodeSessionMessageInputAcceptedEvent,
+  encodeSessionMessageDecisionAnsweredEvent, encodeSessionMessageDecisionAppliedEvent,
+  type SessionMessageEventV1,
 } from '../sessions/message-record-codecs.js';
-import { decodeStoredMessageBody } from '../sessions/message-body-envelope.js';
+import { decodeStoredMessageBody, decodeStoredUserDecisionBody, isUserDecisionAnswerPart } from '../sessions/message-body-envelope.js';
+import { decodeNoticeOrigin, type NoticeOriginWireV1 } from '../persistence/decision-record-codecs.js';
 import {
   decodeQueryJobAnswerSnapshot, decodeQueryJobSnapshot, decodeQueryRunSnapshotRecord,
 } from '../queries/query-record-codecs.js';
@@ -94,6 +105,7 @@ import {
   type SessionMessageEventType,
 } from '../state/message-machine.js';
 import { unreachable, type Rejected } from '../state/transition.js';
+import { canSendUserMessage } from '../state/decision-policy.js';
 
 type Unknown = Record<string, unknown>;
 /** `ownContext` admits only these two principals. */
@@ -114,6 +126,10 @@ function nonEmpty(value: unknown): value is string {
 function isPositiveInt(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1;
 }
+/** §2.1: revision 0 is the legal absence pin of a non-stored aggregate (Task). */
+function isNonNegativeInt(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+}
 function canonicalOf(value: unknown): string | null {
   try {
     return canonicalJson(value as JsonValue);
@@ -124,9 +140,25 @@ function canonicalOf(value: unknown): string | null {
 function sameActor(left: unknown, right: unknown): boolean {
   return isObject(left) && isObject(right) && left['kind'] === right['kind'] && left['id'] === right['id'];
 }
+
+/**
+ * Slice 5 widened `SessionMessage.recipient` to
+ * `SessionRef | UserMessageRecipientV1`. The historical mailbox paths here
+ * address a Session, so this pure discriminator narrows the union without
+ * changing any Session behaviour; the new member's behaviour lands in part 2.
+ * It deliberately does not call the shared `isUserMessageRecipient` helper,
+ * which is itself still a part-1 stub.
+ */
+function isUserRecipient(recipient: MessageRecipient): recipient is UserMessageRecipientV1 {
+  return 'kind' in recipient && recipient.kind === 'user';
+}
 function isRunRef(value: unknown): boolean {
   return isObject(value) && value['aggregateType'] === 'Run'
     && nonEmpty(value['projectId']) && nonEmpty(value['goalId']) && nonEmpty(value['runId']);
+}
+function isGoalRef(value: unknown): boolean {
+  return isObject(value) && value['aggregateType'] === 'Goal'
+    && nonEmpty(value['projectId']) && nonEmpty(value['goalId']);
 }
 function isRoleBindingRef(value: unknown): boolean {
   return isObject(value) && value['schemaVersion'] === 1
@@ -172,6 +204,160 @@ function dedupeGuards(guards: readonly RecordGuard[]): RecordGuard[] {
     }
   }
   return [...map].map(([refKey, expectedRevision]) => ({ refKey, expectedRevision }));
+}
+
+/**
+ * SPEC §2.5: a later update copies the original wire origin (`since`), never
+ * re-binds it. An old record without `since` stays without one (no backfill).
+ */
+async function preservedNoticeOrigin(records: SessionMailboxDependencies['records'], refKey: string): Promise<
+  { ok: true; value: NoticeOriginWireV1 } | { ok: false; rejection: CoreRejection }> {
+  let read: StoreResult<RecordBatchRead>;
+  try {
+    read = await records.readMany([refKey]);
+  } catch {
+    return { ok: false, rejection: reject('unavailable', 'the notice origin could not be read') };
+  }
+  if (read.status !== 'ready') return { ok: false, rejection: mapStoreFailure(read) };
+  const record = read.value.records.find((candidate) => candidate.refKey === refKey);
+  if (record === undefined) return { ok: false, rejection: reject('unavailable', 'the updated record is missing') };
+  const decoded = decodeNoticeOrigin(record);
+  if (decoded.status !== 'decoded') {
+    return { ok: false, rejection: reject('unavailable', `the notice origin is damaged: ${decoded.reason}`) };
+  }
+  const origin: NoticeOriginWireV1 = {};
+  if (decoded.value.since !== undefined) origin.since = decoded.value.since;
+  if (decoded.value.noticeAutomationCap !== undefined) origin.noticeAutomationCap = decoded.value.noticeAutomationCap;
+  return { ok: true, value: origin };
+}
+
+// --------------------------------------------------------------------------
+// The ONE SessionMessage writer (SPEC §3.3 line 684)
+// --------------------------------------------------------------------------
+//
+// The original `sendMessage`/`respond*`/`ack`/`sendUserMessage` path and the
+// slice-5 `MessageWriteOwnerPort.persist` facade share exactly this commit
+// tail: the decoded receipt replay, the creation/update origin, the message
+// CAS (from the caller's ACCEPTED pin, never a re-read `before.revision`), the
+// single PreparedCommit and the receipt re-check. Body storage stays outside
+// the commit on both paths.
+
+type SessionMessageStore = SessionMailboxDependencies['records'];
+type MessageCommitReceipt = Extract<Awaited<ReturnType<SessionMessageStore['commit']>>, { status: 'committed' }>;
+
+/** §3.3 line 627: the original event's value and cursor, restored before any new business read. */
+async function replaySessionMessageReceipt(
+  records: SessionMessageStore,
+  receipt: MessageCommitReceipt,
+): Promise<WriteResult<SessionMessage>> {
+  if (receipt.eventIds.length !== 1 || !nonEmpty(receipt.eventIds[0])) {
+    return reject('unavailable', 'the mailbox receipt does not name exactly one event');
+  }
+  let located: StoreResult<{ cursor: CommitCursor; event: EncodedDomainEvent }>;
+  try {
+    located = await records.eventAt(receipt.cursor);
+  } catch {
+    return reject('unavailable', 'the recorded mailbox event could not be read');
+  }
+  if (located.status !== 'ready') return mapStoreFailure(located);
+  if (String(located.value.cursor) !== String(receipt.cursor)) {
+    return reject('unavailable', 'the recorded mailbox event cursor disagrees with the receipt');
+  }
+  if (located.value.event.eventId !== receipt.eventIds[0]) {
+    return reject('unavailable', 'the recorded mailbox event id disagrees with the receipt');
+  }
+  // Slice 1 §2.9 (kept on the rebase onto slice 5): the wait-disposal replay
+  // event carries the changed message under its own field.
+  const disposal = located.value.event.eventType === 'ArchiveWaitDisposed';
+  const decoded = disposal
+    ? archiveWaitDisposedEventFromEvent(located.value.event)
+    : sessionMessageFromEvent(located.value.event);
+  if (decoded.status !== 'decoded') {
+    return reject('unavailable', `the recorded mailbox event is not decodable: ${decoded.reason}`);
+  }
+  const message = disposal
+    ? (decoded.value as { message: SessionMessage }).message
+    : decoded.value as SessionMessage;
+  const version = receipt.versions.find((entry) => entry.refKey === sessionMessageRefKey(message.ref));
+  if (version === undefined || version.revision !== message.revision) {
+    return reject('unavailable', 'the recorded mailbox event disagrees with the receipt revision');
+  }
+  return { status: 'committed', value: message, replayed: true, cursor: receipt.cursor };
+}
+
+/** Receipt-miss recovery uses only the same identity; it never re-runs business. */
+async function recheckSessionMessageReceipt(
+  records: SessionMessageStore,
+  identityKey: string,
+  fingerprint: string,
+): Promise<WriteResult<SessionMessage> | null> {
+  let again: StoreResult<MessageCommitReceipt>;
+  try {
+    again = await records.lookupCommit({ identityKey, fingerprint });
+  } catch {
+    return reject('unavailable', 'the mailbox idempotency receipt could not be re-checked');
+  }
+  if (again.status === 'ready') return replaySessionMessageReceipt(records, again.value);
+  if (again.code !== 'not_found') return mapStoreFailure(again);
+  return null;
+}
+
+type PreparedSessionMessageWrite = {
+  owned: { projectId: string; workspaceId: string; signal: AbortSignal };
+  identityKey: string;
+  fingerprint: string;
+  message: SessionMessage;
+  event: EncodedDomainEvent;
+  /** The ACCEPTED message pin of the caller; `null` = the message must not exist yet. */
+  messageRevision: number | null;
+  guards: readonly RecordGuard[];
+  claims: readonly UniqueClaimChange[];
+  cancelledReason: string;
+  commitFailureReason: string;
+};
+
+/** The one commit tail both writer paths use. */
+async function commitPreparedSessionMessage(
+  records: SessionMessageStore,
+  spec: PreparedSessionMessageWrite,
+): Promise<WriteResult<SessionMessage>> {
+  const refKey = sessionMessageRefKey(spec.message.ref);
+  let origin: NoticeOriginWireV1 | undefined;
+  let bindings: CommitCursorBinding[] = [];
+  if (spec.messageRevision === null) {
+    origin = { since: null };
+    bindings = [{ refKey, field: 'since' }];
+  } else {
+    const preserved = await preservedNoticeOrigin(records, refKey);
+    if (!preserved.ok) return preserved.rejection;
+    origin = preserved.value;
+  }
+  const accepted: RecordGuard = { refKey, expectedRevision: spec.messageRevision };
+  const prepared: PreparedCommit = {
+    identityKey: spec.identityKey,
+    fingerprint: spec.fingerprint,
+    guards: dedupeGuards([accepted, ...spec.guards]),
+    records: [encodeSessionMessageRecord(spec.message, origin)],
+    claims: [...spec.claims],
+    indexGuards: [],
+    indexChanges: [],
+    events: [spec.event],
+    ...(bindings.length === 0 ? {} : { commitCursorBindings: bindings }),
+  };
+  if (spec.owned.signal.aborted) return reject('cancelled', spec.cancelledReason);
+  let receipt: Awaited<ReturnType<SessionMessageStore['commit']>>;
+  try {
+    receipt = await records.commit(prepared);
+  } catch {
+    const restored = await recheckSessionMessageReceipt(records, spec.identityKey, spec.fingerprint);
+    return restored ?? reject('unavailable', spec.commitFailureReason);
+  }
+  if (receipt.status !== 'committed') {
+    const restored = await recheckSessionMessageReceipt(records, spec.identityKey, spec.fingerprint);
+    return restored ?? mapStoreFailure(receipt);
+  }
+  if (receipt.replayed) return replaySessionMessageReceipt(records, receipt);
+  return { status: 'committed', value: spec.message, replayed: false, cursor: receipt.cursor };
 }
 
 // --------------------------------------------------------------------------
@@ -517,36 +703,21 @@ function messageCommitPlan(effects: readonly MessageEffect[]): MessageCommitPlan
 type MessageEventEnvelope = { schemaVersion: 1; occurredAt: string; projectId: string; workspaceId: string; requestId: string };
 
 /**
- * The `append_event` event in today's key order (so the same bytes). Only a
- * `SessionMessageResponded` event may name a derived query_run Answer (MSG-06).
+ * Slice 1 §2.9: the wait-disposal replay event carries the changed message
+ * and source Session plus the exact step. It has no actor/requestId; the
+ * commit identity (and the original operator) come from the durable request.
+ * Rebase onto slice 5 (lead): every other message event is encoded by the one
+ * writer's `encodePersistEvent`; this is the only event outside it, because the
+ * disposal commit also writes the source Session.
  */
-function encodeMessageEvent(eventType: SessionMessageEventType, eventId: string, envelope: MessageEventEnvelope,
-  actor: MessageSender | MessageQueryAnswerSender, message: SessionMessage,
-  disposal?: { source: SessionRecord; archiveStep: ArchiveStepRefV1 }): EncodedDomainEvent {
-  if (eventType === 'SessionMessageResponded') {
-    return encodeSessionMessageRespondedEvent({ eventId, eventType, ...envelope, actor, message });
-  }
-  if (eventType === 'ArchiveWaitDisposed') {
-    // Slice 1 §2.9: the wait-disposal replay event carries the changed message
-    // and source Session plus the exact step. It has no actor/requestId; the
-    // commit identity (and the original operator) come from the durable request.
-    if (disposal === undefined) throw new Error('an ArchiveWaitDisposed event needs the changed source Session and step');
-    return encodeArchiveWaitDisposedEvent({
-      eventId, eventType,
-      schemaVersion: envelope.schemaVersion, occurredAt: envelope.occurredAt,
-      projectId: envelope.projectId, workspaceId: envelope.workspaceId,
-      message, source: disposal.source, archiveStep: disposal.archiveStep,
-    });
-  }
-  if (actor.kind === 'query_run') throw new Error(`a ${eventType} event cannot name a query_run actor`);
-  const event: Exclude<SessionMessageEventV1, { eventType: 'SessionMessageResponded' }> = { eventId, eventType, ...envelope, actor, message };
-  switch (event.eventType) {
-    case 'SessionMessageSent': return encodeSessionMessageSentEvent(event);
-    case 'SessionMessageRead': return encodeSessionMessageReadEvent(event);
-    case 'SessionMessageConsultationDerived': return encodeSessionMessageConsultationDerivedEvent(event);
-    case 'SessionMessageInputAccepted': return encodeSessionMessageInputAcceptedEvent(event);
-    default: return unreachable(event, 'message event');
-  }
+function encodeArchiveWaitDisposalEvent(eventId: string, envelope: MessageEventEnvelope, message: SessionMessage,
+  disposal: { source: SessionRecord; archiveStep: ArchiveStepRefV1 }): EncodedDomainEvent {
+  return encodeArchiveWaitDisposedEvent({
+    eventId, eventType: 'ArchiveWaitDisposed',
+    schemaVersion: envelope.schemaVersion, occurredAt: envelope.occurredAt,
+    projectId: envelope.projectId, workspaceId: envelope.workspaceId,
+    message, source: disposal.source, archiveStep: disposal.archiveStep,
+  });
 }
 
 // --------------------------------------------------------------------------
@@ -605,6 +776,8 @@ const EVENT_ID_SUFFIX: Record<SessionMessageEventType, string> = {
   SessionMessageConsultationDerived: 'consultation-derived',
   SessionMessageInputAccepted: 'input-accepted',
   ArchiveWaitDisposed: 'archive-wait-disposed',
+  SessionMessageDecisionAnswered: 'decision-answered',
+  SessionMessageDecisionApplied: 'decision-applied',
 };
 
 function eventIdOf(identityKey: string, eventType: SessionMessageEventType): string {
@@ -719,19 +892,166 @@ function decodeReplyCursor(raw: string): ReplyCursorV1 | null {
 // The factory
 // --------------------------------------------------------------------------
 
-export function createSessionMailbox(deps: SessionMailboxDependencies): SessionMailboxPort & Required<Pick<SessionMailboxPort, 'respondFromQueryAnswer' | 'readOutbox'>> {
+/**
+ * The full result `createSessionMailbox` provides: the frozen `SessionMailboxPort`
+ * plus the two methods that are always present and the slice-5 user-send owner
+ * (`DecisionMessagePort.sendUserMessage`). The user address never enters the
+ * legacy `SessionRef` `sendMessage` admission.
+ */
+export type SessionMailboxWithUserSend = SessionMailboxPort
+  & Required<Pick<SessionMailboxPort, 'respondFromQueryAnswer' | 'readOutbox'>>
+  & Pick<DecisionMessagePort, 'sendUserMessage'>;
+
+// --------------------------------------------------------------------------
+// One body-storage implementation (SPEC §3.3 line 684)
+// --------------------------------------------------------------------------
+//
+// The original send/respond path (`storePlannedBody`) and the write-owner
+// facade (`createMessageWriteOwner.storeBody`) share THIS one implementation.
+// Each caller keeps its ORIGINAL operation identity (the `bodyRequestId` it
+// passes), so the C1/C2 receipts and bytes are unchanged.
+
+type MessageBodySender = MessageSender | MessageQueryAnswerSender | DecisionHostSenderV1;
+
+/** The internal platform body executor; never the command actor. */
+function hostWriterContext(deps: SessionMailboxDependencies, owned: Owned): CoreCallContext {
+  const actor: HostActor = { kind: deps.systemActor.kind, id: deps.systemActor.id };
+  return {
+    projectId: owned.projectId,
+    workspaceId: owned.workspaceId,
+    principal: { kind: 'host', actor },
+    materialReader: { kind: 'host', projectId: owned.projectId, workspaceId: owned.workspaceId, actor: { ...actor } },
+    signal: owned.signal,
+  };
+}
+
+/** The current Workspace source revision a generic body is bound to. */
+async function readCurrentWorkspaceSource(records: SessionMailboxDependencies['records'], owned: Owned): Promise<
+  { ok: true; value: ArtifactRef['source'] } | { ok: false; rejection: CoreRejection }> {
+  const key = canonicalRefKey({ aggregateType: 'Workspace', projectId: owned.projectId, workspaceId: owned.workspaceId });
+  let read: StoreResult<RecordBatchRead>;
+  try {
+    read = await records.readMany([key]);
+  } catch {
+    return { ok: false, rejection: reject('unavailable', 'the workspace source revision could not be read') };
+  }
+  if (read.status !== 'ready') return { ok: false, rejection: mapStoreFailure(read) };
+  const record = read.value.records.find((candidate) => candidate.refKey === key);
+  if (record === undefined) return { ok: false, rejection: reject('unavailable', 'the workspace source record is missing') };
+  const decoded = decodeWorkspaceSnapshot(record);
+  if (decoded.status !== 'decoded') {
+    return { ok: false, rejection: reject('unavailable', `the workspace source record is damaged: ${decoded.reason}`) };
+  }
+  return { ok: true, value: { kind: 'workspace', refId: owned.workspaceId, revision: String(decoded.value.revision) } };
+}
+
+async function verifyStoredMessageBody(deps: SessionMailboxDependencies, owned: Owned, ref: ArtifactRef,
+  expectedBody: string, expectedSource?: ArtifactRef['source']): Promise<{ ok: true } | { ok: false; rejection: CoreRejection }> {
+  if (ref.contentType !== SESSION_MESSAGE_CONTENT_TYPE) {
+    return { ok: false, rejection: reject('unavailable', 'the stored message body contentType disagrees with the expected envelope') };
+  }
+  if (expectedSource !== undefined) {
+    // A formal Query answer reply keeps the ACTUAL source of the verified
+    // Answer body (possibly an earlier workspace revision); the generic
+    // current-workspace check must not rewrite that provenance.
+    if (canonicalOf(ref.source) !== canonicalOf(expectedSource)) {
+      return { ok: false, rejection: reject('unavailable', 'the stored message body provenance is not the verified Query answer source') };
+    }
+  } else if (ref.source.kind !== 'workspace' || ref.source.refId !== owned.workspaceId || !nonEmpty(ref.source.revision)) {
+    // The original body provenance is authoritative: it must be a legal
+    // workspace source for THIS workspace. It need not be the CURRENT revision,
+    // because a deduplicated body keeps its first writer's source.
+    return { ok: false, rejection: reject('unavailable', 'the stored message body provenance is not a legal source for this workspace') };
+  }
+  if (ref.sizeBytes !== Buffer.byteLength(expectedBody, 'utf8')) {
+    return { ok: false, rejection: reject('unavailable', 'the stored message body size disagrees with the expected envelope') };
+  }
+  const systemCtx = hostWriterContext(deps, owned);
+  if (owned.signal.aborted) return { ok: false, rejection: reject('cancelled', 'the message body verification was cancelled') };
+  let opened: ReadResult<ArtifactRecord>;
+  try {
+    opened = await deps.materials.openArtifact(systemCtx, { ref, usage: 'historical_explanation' });
+  } catch {
+    return { ok: false, rejection: reject('unavailable', 'the stored message body could not be read back') };
+  }
+  if (opened.status === 'not_found') return { ok: false, rejection: reject('unavailable', 'the stored message body is missing') };
+  if (opened.status !== 'ready') return { ok: false, rejection: mapReadResult(opened) as CoreRejection };
+  const stored = opened.value;
+  // A full ref equality already includes its source; the second comparison is
+  // pure duplication. The body, source and provenance checks stay.
+  if (canonicalOf(stored.ref) !== canonicalOf(ref)) {
+    return { ok: false, rejection: reject('unavailable', 'the stored message body ref is not the requested ref') };
+  }
+  if (stored.body !== expectedBody) {
+    return { ok: false, rejection: reject('unavailable', 'the stored message body does not match the canonical scoped envelope') };
+  }
+  if (!stored.sourceRefs.some((candidate) => canonicalOf(candidate) === canonicalOf(ref.source))) {
+    return { ok: false, rejection: reject('unavailable', 'the stored message body source disagrees with its own ref') };
+  }
+  return { ok: true };
+}
+
+/** Store + verify one bounded body envelope with the current workspace provenance. */
+async function storeScopedMessageBody(deps: SessionMailboxDependencies, args: {
+  owned: Owned;
+  sender: MessageBodySender;
+  part: 'message' | 'response';
+  messageRef: SessionMessageRef;
+  text: string;
+  sourceRef: ArtifactRef['source'];
+  /** When set, the saved body provenance must equal this exact source instead
+   * of the generic current-workspace check. Used ONLY for a formal Query
+   * answer reply, whose original source may be an earlier workspace revision. */
+  expectedSource?: ArtifactRef['source'];
+  bodyRequestId: string;
+}): Promise<ReadResult<{ bodyRef: ArtifactRef; sourceRef: ArtifactRef['source'] }>> {
+  const { owned, sender, part, messageRef, text, sourceRef, expectedSource, bodyRequestId } = args;
+  const envelope: Unknown = {
+    schemaVersion: 1, projectId: messageRef.projectId, workspaceId: messageRef.workspaceId,
+    messageId: messageRef.messageId, part, sender, text,
+  };
+  let body: string;
+  try {
+    body = canonicalJson(envelope as unknown as JsonValue);
+  } catch {
+    return reject('invalid', 'the message body envelope is not canonicalizable JSON');
+  }
+  const systemCtx = hostWriterContext(deps, owned);
+  if (owned.signal.aborted) return reject('cancelled', 'the message body store was cancelled');
+  let stored: Awaited<ReturnType<SessionMailboxDependencies['materials']['storeArtifact']>>;
+  try {
+    stored = await deps.materials.storeArtifact(systemCtx, {
+      contentType: SESSION_MESSAGE_CONTENT_TYPE,
+      body,
+      sources: [sourceRef],
+      origin: {
+        kind: 'platform_operation', projectId: owned.projectId, workspaceId: owned.workspaceId,
+        requestId: bodyRequestId, actor: { kind: deps.systemActor.kind, id: deps.systemActor.id },
+      },
+    });
+  } catch {
+    return reject('unavailable', 'the message body store failed before completing');
+  }
+  if (stored.status !== 'stored') {
+    const code: CoreError = stored.code === 'size_exceeded' ? 'capacity' : stored.code === 'missing_source' ? 'invalid' : stored.code;
+    return reject(code, `the message body was not stored: ${stored.reason}`);
+  }
+  const verified = await verifyStoredMessageBody(deps, owned, stored.ref, body, expectedSource);
+  if (!verified.ok) return verified.rejection;
+  return { status: 'ready', value: { bodyRef: stored.ref, sourceRef: stored.ref.source } };
+}
+
+export function createSessionMailbox(deps: SessionMailboxDependencies): SessionMailboxWithUserSend {
   const records = deps.records;
+  // SPEC §3.3 line 684: the original send/respond/ack/user-send paths commit
+  // through the SAME `createMessageWriteOwner` facade the decision service uses
+  // (`writeMessage` below is only the body+record builder that calls it), so
+  // there is one writer, one replay and one CAS rule for every SessionMessage.
+  const messageWrites = createMessageWriteOwner(deps);
   const MIN_CURSOR: CommitCursor = makeCommitCursor(1);
 
   function internalHostContext(owned: Owned): CoreCallContext {
-    const actor: HostActor = { kind: deps.systemActor.kind, id: deps.systemActor.id };
-    return {
-      projectId: owned.projectId,
-      workspaceId: owned.workspaceId,
-      principal: { kind: 'host', actor },
-      materialReader: { kind: 'host', projectId: owned.projectId, workspaceId: owned.workspaceId, actor: { ...actor } },
-      signal: owned.signal,
-    };
+    return hostWriterContext(deps, owned);
   }
 
   function cursorSequence(cursor: unknown): number | null {
@@ -1077,20 +1397,252 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
   }
 
   async function readWorkspaceSource(owned: Owned): Promise<{ ok: true; value: ArtifactRef['source'] } | { ok: false; rejection: CoreRejection }> {
-    const key = canonicalRefKey({ aggregateType: 'Workspace', projectId: owned.projectId, workspaceId: owned.workspaceId });
+    return readCurrentWorkspaceSource(records, owned);
+  }
+
+  // ---- slice-5 user-send helpers ------------------------------------------
+
+  async function loadGoal(owned: Owned, ref: GoalRef): Promise<ReadResult<GoalSnapshot>> {
+    if (owned.signal.aborted) return reject('cancelled', 'the Goal read was cancelled');
+    const key = canonicalOf(ref);
+    if (key === null) return reject('invalid', 'the Goal ref is not canonicalizable JSON');
     let read: StoreResult<RecordBatchRead>;
     try {
       read = await records.readMany([key]);
     } catch {
-      return { ok: false, rejection: reject('unavailable', 'the workspace source revision could not be read') };
+      return reject('unavailable', 'the Goal record could not be read');
+    }
+    if (read.status !== 'ready') return mapStoreFailure(read);
+    const record = read.value.records.find((candidate) => candidate.refKey === key);
+    if (record === undefined) {
+      return read.value.missing.includes(key)
+        ? { status: 'not_found' }
+        : reject('unavailable', 'the record store neither returned nor reported missing the Goal');
+    }
+    const decoded = decodeGoalSnapshot(record);
+    if (decoded.status !== 'decoded') return reject('unavailable', `the Goal record is damaged: ${decoded.reason}`);
+    return { status: 'ready', value: decoded.value };
+  }
+
+  function goalBasis(goal: GoalSnapshot): GoalDecisionBasisV1 {
+    return {
+      goalRef: structuredClone(goal.ref),
+      workspaceRef: structuredClone(goal.workspaceRef),
+      objective: goal.objective,
+      activePlanRef: structuredClone(goal.activePlanRevision),
+      settings: structuredClone(goal.settings ?? DEFAULT_GOAL_SETTINGS_V1),
+    };
+  }
+
+  /**
+   * §3.3 line 614: the aggregate objects' required pins. Every aggregate was
+   * shape-validated by `verifyDecisionObjectWorkspaces` before this extraction,
+   * so a malformed pin is never silently dropped here.
+   */
+  function aggregateObjectPins(objects: readonly DecisionObjectV1[]): VersionPin[] {
+    const pins: VersionPin[] = [];
+    for (const object of objects) {
+      if (isObject(object) && object['kind'] === 'aggregate') {
+        pins.push(structuredClone((object as Unknown)['pin']) as unknown as VersionPin);
+      }
+    }
+    return pins;
+  }
+
+  /**
+   * SPEC §3.3 line 614: every allowed decision object kind must ESTABLISH its
+   * owning Workspace. A `file` object carries its Workspace directly; a kind
+   * that names none is refused as `invalid`, and a Workspace other than the
+   * bound one as `forbidden`. `aggregate` objects are established through the
+   * pin their kind carries by `verifyDecisionObjectPins`.
+   */
+  function verifyDecisionObjectWorkspaces(owned: Owned, objects: readonly DecisionObjectV1[]): CoreRejection | null {
+    for (const object of objects) {
+      if (!isObject(object)) return reject('invalid', 'a decision object is not an object');
+      const kind = object['kind'];
+      if (kind === 'aggregate') {
+        // §3.3 line 614: an aggregate object establishes its owning Workspace
+        // through its pin, so the pin is mandatory. A missing or malformed pin
+        // is refused as `invalid` BEFORE any pin extraction or body effect,
+        // never dropped for the store codec to reject after body storage.
+        const pin = object['pin'];
+        if (!isObject(pin) || !isObject(pin['ref']) || !isPositiveInt(pin['revision'])) {
+          return reject('invalid', 'an aggregate decision object does not carry a complete version pin');
+        }
+        continue;
+      }
+      if (kind !== 'file') {
+        return reject('invalid', 'a decision object of this kind does not establish its owning Workspace');
+      }
+      const workspace = object['workspace'];
+      if (!isObject(workspace)) {
+        return reject('invalid', 'a file decision object does not establish its owning Workspace');
+      }
+      const projectId = workspace['projectId'];
+      const workspaceId = workspace['workspaceId'];
+      if (typeof projectId !== 'string' || projectId.length === 0
+        || typeof workspaceId !== 'string' || workspaceId.length === 0) {
+        return reject('invalid', 'a file decision object does not establish its owning Workspace');
+      }
+      if (projectId !== owned.projectId || workspaceId !== owned.workspaceId) {
+        return reject('forbidden', 'a file decision object belongs to another Workspace');
+      }
+    }
+    return null;
+  }
+
+  function dedupePins(pins: readonly VersionPin[]): VersionPin[] {
+    const byKey = new Map<string, VersionPin>();
+    for (const pin of pins) {
+      const key = canonicalOf(pin.ref);
+      if (key !== null) byKey.set(key, pin);
+    }
+    return [...byKey.values()];
+  }
+
+  /** §3.3 line 614: the owning Goal a goal-scoped object ref names, or null. */
+  function goalRefOfDecisionObject(ref: Record<string, unknown>): GoalRef | null {
+    const projectId = ref['projectId'];
+    if (typeof projectId !== 'string' || projectId.length === 0) return null;
+    const goalId = ref['goalId'];
+    if (typeof goalId !== 'string' || goalId.length === 0) return null;
+    return { aggregateType: 'Goal', projectId, goalId };
+  }
+
+  /** §3.3 line 614: read the owning Goal and return its REAL Workspace. */
+  async function owningGoalWorkspace(owned: Owned, goalRef: GoalRef): Promise<
+    { ok: true; workspace: WorkspaceScope } | { ok: false; rejection: CoreRejection }> {
+    const goal = await loadGoal(owned, goalRef);
+    if (goal.status === 'ready') return { ok: true, workspace: goal.value.workspaceRef };
+    if (goal.status === 'not_found') {
+      return { ok: false, rejection: reject('not_found', 'a decision object owning Goal does not exist') };
+    }
+    return { ok: false, rejection: mapReadResult(goal) as CoreRejection };
+  }
+
+  async function readDecisionObjectRecord(key: string): Promise<
+    { ok: true; record: EncodedRecord } | { ok: false; rejection: CoreRejection }> {
+    let read: StoreResult<RecordBatchRead>;
+    try {
+      read = await records.readMany([key]);
+    } catch {
+      return { ok: false, rejection: reject('unavailable', 'a decision object could not be read') };
     }
     if (read.status !== 'ready') return { ok: false, rejection: mapStoreFailure(read) };
     const record = read.value.records.find((candidate) => candidate.refKey === key);
-    if (record === undefined) return { ok: false, rejection: reject('unavailable', 'the workspace source record is missing') };
-    const decoded = decodeWorkspaceSnapshot(record);
-    if (decoded.status !== 'decoded') return { ok: false, rejection: reject('unavailable', `the workspace source record is damaged: ${decoded.reason}`) };
-    return { ok: true, value: { kind: 'workspace', refId: owned.workspaceId, revision: String(decoded.value.revision) } };
+    if (record === undefined) {
+      return read.value.missing.includes(key)
+        ? { ok: false, rejection: reject('not_found', 'a decision object does not exist') }
+        : { ok: false, rejection: reject('unavailable', 'the record store neither returned nor reported missing the decision object') };
+    }
+    return { ok: true, record };
   }
+
+  /**
+   * SPEC §3.3 line 614: a decision request's object pins are REAL facts, not
+   * caller claims. Before any foreign record is read, a ref that carries another
+   * project/Workspace is refused. Every allowed kind must then ESTABLISH its
+   * owning Workspace — directly from its ref, through the Goal its `goalId`
+   * names, or through the owning Goal named by its own record (Goal,
+   * PlanRevision, Evidence). A kind whose Workspace cannot be established is
+   * refused as `invalid`, never accepted. Only a same-Workspace object that
+   * reads at the pin's exact revision joins the source metadata and the guards.
+   */
+  async function verifyDecisionObjectPins(owned: Owned, pins: readonly VersionPin[]): Promise<CoreRejection | null> {
+    for (const pin of pins) {
+      if (!isObject(pin) || !isObject(pin.ref) || !isPositiveInt(pin.revision)) {
+        return reject('invalid', 'a decision object pin is not a complete positive-integer version pin');
+      }
+      const ref = pin.ref as unknown as Record<string, unknown>;
+      const projectId = ref['projectId'];
+      const workspaceId = ref['workspaceId'];
+      if (typeof projectId === 'string' && projectId.length > 0 && projectId !== owned.projectId) {
+        return reject('forbidden', 'a decision object pin belongs to another project');
+      }
+      if (typeof workspaceId === 'string' && workspaceId.length > 0 && workspaceId !== owned.workspaceId) {
+        return reject('forbidden', 'a decision object pin belongs to another Workspace');
+      }
+      const key = canonicalOf(pin.ref);
+      if (key === null) return reject('invalid', 'a decision object pin ref is not canonicalizable JSON');
+      const aggregateType = ref['aggregateType'];
+      const directWorkspace = typeof workspaceId === 'string' && workspaceId.length > 0;
+      let record: EncodedRecord | null = null;
+      let goalRef: GoalRef | null = null;
+      if (!directWorkspace) {
+        goalRef = goalRefOfDecisionObject(ref);
+        if (goalRef !== null && aggregateType !== 'Goal') {
+          const owner = await owningGoalWorkspace(owned, goalRef);
+          if (!owner.ok) return owner.rejection;
+          if (owner.workspace.projectId !== owned.projectId
+            || owner.workspace.workspaceId !== owned.workspaceId) {
+            return reject('forbidden', 'a decision object belongs to another Workspace Goal');
+          }
+        } else if (aggregateType === 'Goal' || aggregateType === 'PlanRevision' || aggregateType === 'Evidence') {
+          const loaded = await readDecisionObjectRecord(key);
+          if (!loaded.ok) return loaded.rejection;
+          record = loaded.record;
+          if (aggregateType === 'Goal') {
+            const decoded = decodeGoalSnapshot(record);
+            if (decoded.status !== 'decoded') {
+              return reject('unavailable', `the decision object Goal is damaged: ${decoded.reason}`);
+            }
+            if (decoded.value.workspaceRef.projectId !== owned.projectId
+              || decoded.value.workspaceRef.workspaceId !== owned.workspaceId) {
+              return reject('forbidden', 'a decision object Goal belongs to another Workspace');
+            }
+          } else if (aggregateType === 'PlanRevision') {
+            const decoded = decodePlanRevisionSnapshot(record);
+            if (decoded.status !== 'decoded') {
+              return reject('unavailable', `the decision object PlanRevision is damaged: ${decoded.reason}`);
+            }
+            goalRef = decoded.value.goalRef;
+          } else {
+            const decoded = decodeEvidenceSnapshot(record);
+            if (decoded.status !== 'decoded') {
+              return reject('unavailable', `the decision object Evidence is damaged: ${decoded.reason}`);
+            }
+            const subject = decoded.value.evidence.subject;
+            goalRef = { aggregateType: 'Goal', projectId: subject.projectId, goalId: subject.goalId };
+          }
+          if (aggregateType !== 'Goal') {
+            const owner = await owningGoalWorkspace(owned, goalRef as GoalRef);
+            if (!owner.ok) return owner.rejection;
+            if (owner.workspace.projectId !== owned.projectId
+              || owner.workspace.workspaceId !== owned.workspaceId) {
+              return reject('forbidden', 'a decision object belongs to another Workspace Goal');
+            }
+          }
+        } else {
+          return reject('invalid', 'a decision object of this kind does not establish its owning Workspace');
+        }
+      }
+      if (record === null) {
+        const loaded = await readDecisionObjectRecord(key);
+        if (!loaded.ok) return loaded.rejection;
+        record = loaded.record;
+      }
+      if (record.revision !== pin.revision) {
+        return reject('revision_conflict', 'a decision object changed since it was read', [pin]);
+      }
+    }
+    return null;
+  }
+
+  function validOptionObjects(options: readonly DecisionOptionV1[], objects: readonly DecisionObjectV1[]): boolean {
+    if (!Array.isArray(options) || options.length < 2 || options.length > 4) return false;
+    if (!Array.isArray(objects) || objects.length > 32) return false;
+    const ids = new Set<string>();
+    for (const option of options) {
+      if (!isObject(option) || !nonEmpty(option['id']) || typeof option['label'] !== 'string') return false;
+      if (option['effect'] !== 'apply' && option['effect'] !== 'reject' && option['effect'] !== 'defer') return false;
+      if (Buffer.byteLength(String(option['id']), 'utf8') > 64 || Buffer.byteLength(String(option['label']), 'utf8') > 512) return false;
+      if (ids.has(String(option['id']))) return false;
+      ids.add(String(option['id']));
+    }
+    return true;
+  }
+
+  /** The `user_message_sent` facts (spec §3.1 S5-MSG-01) are built inline. */
 
   // ---- official Query answer reads (read-only, codec-owned) ----------------
 
@@ -1172,7 +1724,13 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     if (runRead.status !== 'ready') return { ok: false, rejection: mapReadResult(runRead) as CoreRejection };
     const run = runRead.value;
 
-    const recipient = { projectId: message.recipient.projectId, sessionId: message.recipient.sessionId };
+    const messageRecipient = message.recipient;
+    if (isUserRecipient(messageRecipient)) {
+      // Slice 5: a user-recipient decision card is answered through the decision
+      // owner, never by associating a formal Query Answer with it.
+      return { ok: false, rejection: reject('invalid', 'a user-recipient message cannot be answered by a Query Answer association') };
+    }
+    const recipient = { projectId: messageRecipient.projectId, sessionId: messageRecipient.sessionId };
     const { binding, answererSession } = consultationBindingOf(job, run, message.ref, recipient);
     const state = run.run.executionState;
     const settlement: QueryAnswerFacts['verdict']['run'] = state === undefined || state.phase !== 'settled' ? 'not_settled'
@@ -1210,6 +1768,12 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
 
   type BodyOutcome = { ok: true; ref: ArtifactRef } | { ok: false; rejection: CoreRejection };
 
+  /**
+   * The original send/respond body effect: a thin adapter over the ONE shared
+   * implementation (`storeScopedMessageBody`, SPEC §3.3 line 684). The caller's
+   * `bodyRequestId` keeps the original operation identity, so the C1/C2 receipts
+   * and bytes are unchanged.
+   */
   async function storeMessageBody(args: {
     owned: Owned;
     sender: MessageSender | MessageQueryAnswerSender;
@@ -1223,98 +1787,9 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     expectedSource?: ArtifactRef['source'];
     bodyRequestId: string;
   }): Promise<BodyOutcome> {
-    const { owned, sender, part, messageRef, text, sourceRef, expectedSource, bodyRequestId } = args;
-    const envelope: Unknown = {
-      schemaVersion: 1,
-      projectId: messageRef.projectId,
-      workspaceId: messageRef.workspaceId,
-      messageId: messageRef.messageId,
-      part,
-      sender,
-      text,
-    };
-    let body: string;
-    try {
-      body = canonicalJson(envelope as unknown as JsonValue);
-    } catch {
-      return { ok: false, rejection: reject('invalid', 'the message body envelope is not canonicalizable JSON') };
-    }
-    const systemCtx = internalHostContext(owned);
-    if (owned.signal.aborted) return { ok: false, rejection: reject('cancelled', 'the message body store was cancelled') };
-    let stored: Awaited<ReturnType<SessionMailboxDependencies['materials']['storeArtifact']>>;
-    try {
-      stored = await deps.materials.storeArtifact(systemCtx, {
-        contentType: SESSION_MESSAGE_CONTENT_TYPE,
-        body,
-        sources: [sourceRef],
-        origin: {
-          kind: 'platform_operation',
-          projectId: owned.projectId,
-          workspaceId: owned.workspaceId,
-          requestId: bodyRequestId,
-          actor: { kind: deps.systemActor.kind, id: deps.systemActor.id },
-        },
-      });
-    } catch {
-      return { ok: false, rejection: reject('unavailable', 'the message body store failed before completing') };
-    }
-    if (stored.status !== 'stored') {
-      const code: CoreError = stored.code === 'size_exceeded' ? 'capacity' : stored.code === 'missing_source' ? 'invalid' : stored.code;
-      return { ok: false, rejection: reject(code, `the message body was not stored: ${stored.reason}`) };
-    }
-    // Verify the real stored row before the metadata can be published. A
-    // content-addressed store may return an earlier writer's exact ref/source;
-    // the message is not source evidence, so the ACTUAL stored provenance is
-    // accepted once it is a legal workspace provenance for this workspace.
-    const verified = await verifyStoredBody(owned, stored.ref, body, expectedSource);
-    if (!verified.ok) return { ok: false, rejection: verified.rejection };
-    return { ok: true, ref: stored.ref };
-  }
-
-  async function verifyStoredBody(owned: Owned, ref: ArtifactRef, expectedBody: string,
-    expectedSource?: ArtifactRef['source']): Promise<{ ok: true } | { ok: false; rejection: CoreRejection }> {
-    if (ref.contentType !== SESSION_MESSAGE_CONTENT_TYPE) {
-      return { ok: false, rejection: reject('unavailable', 'the stored message body contentType disagrees with the expected envelope') };
-    }
-    if (expectedSource !== undefined) {
-      // A formal Query answer reply keeps the ACTUAL source of the verified
-      // Answer body (possibly an earlier workspace revision); the generic
-      // current-workspace check must not rewrite that provenance.
-      if (canonicalOf(ref.source) !== canonicalOf(expectedSource)) {
-        return { ok: false, rejection: reject('unavailable', 'the stored message body provenance is not the verified Query answer source') };
-      }
-    } else if (ref.source.kind !== 'workspace' || ref.source.refId !== owned.workspaceId || !nonEmpty(ref.source.revision)) {
-      // The original body provenance is authoritative: it must be a legal
-      // workspace source for THIS workspace. It need not be the CURRENT revision,
-      // because a deduplicated body keeps its first writer's source.
-      return { ok: false, rejection: reject('unavailable', 'the stored message body provenance is not a legal source for this workspace') };
-    }
-    if (ref.sizeBytes !== Buffer.byteLength(expectedBody, 'utf8')) {
-      return { ok: false, rejection: reject('unavailable', 'the stored message body size disagrees with the expected envelope') };
-    }
-    const systemCtx = internalHostContext(owned);
-    if (owned.signal.aborted) return { ok: false, rejection: reject('cancelled', 'the message body verification was cancelled') };
-    let opened: ReadResult<import('../../../contracts/artifact.js').ArtifactRecord>;
-    try {
-      opened = await deps.materials.openArtifact(systemCtx, { ref, usage: 'historical_explanation' });
-    } catch {
-      return { ok: false, rejection: reject('unavailable', 'the stored message body could not be read back') };
-    }
-    if (opened.status === 'not_found') return { ok: false, rejection: reject('unavailable', 'the stored message body is missing') };
-    if (opened.status !== 'ready') return { ok: false, rejection: mapReadResult(opened) as CoreRejection };
-    const stored = opened.value;
-    // A full ref equality already includes its source; the second comparison is
-    // pure duplication. The body, source and provenance checks stay.
-    if (canonicalOf(stored.ref) !== canonicalOf(ref)) {
-      return { ok: false, rejection: reject('unavailable', 'the stored message body ref is not the requested ref') };
-    }
-    if (stored.body !== expectedBody) {
-      return { ok: false, rejection: reject('unavailable', 'the stored message body does not match the canonical scoped envelope') };
-    }
-    if (!stored.sourceRefs.some((candidate) => canonicalOf(candidate) === canonicalOf(ref.source))) {
-      return { ok: false, rejection: reject('unavailable', 'the stored message body source disagrees with its own ref') };
-    }
-    return { ok: true };
+    const stored = await storeScopedMessageBody(deps, args);
+    if (stored.status !== 'ready') return { ok: false, rejection: mapReadResult(stored) as CoreRejection };
+    return { ok: true, ref: stored.value.bodyRef };
   }
 
   /**
@@ -1342,50 +1817,12 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
   type Receipt = Extract<Awaited<ReturnType<SessionMailboxDependencies['records']['commit']>>, { status: 'committed' }>;
 
   async function replayMessage(receipt: Receipt): Promise<WriteResult<SessionMessage>> {
-    if (receipt.eventIds.length !== 1 || !nonEmpty(receipt.eventIds[0])) {
-      return reject('unavailable', 'the mailbox receipt does not name exactly one event');
-    }
-    let located: StoreResult<{ cursor: CommitCursor; event: import('../../record-store/ports.js').EncodedDomainEvent }>;
-    try {
-      located = await records.eventAt(receipt.cursor);
-    } catch {
-      return reject('unavailable', 'the recorded mailbox event could not be read');
-    }
-    if (located.status !== 'ready') return mapStoreFailure(located);
-    if (String(located.value.cursor) !== String(receipt.cursor)) {
-      return reject('unavailable', 'the recorded mailbox event cursor disagrees with the receipt');
-    }
-    if (located.value.event.eventId !== receipt.eventIds[0]) {
-      return reject('unavailable', 'the recorded mailbox event id disagrees with the receipt');
-    }
-    const decoded = located.value.event.eventType === 'ArchiveWaitDisposed'
-      ? archiveWaitDisposedEventFromEvent(located.value.event)
-      : sessionMessageFromEvent(located.value.event);
-    if (decoded.status !== 'decoded') {
-      return reject('unavailable', `the recorded mailbox event is not decodable: ${decoded.reason}`);
-    }
-    // The disposal replay event carries the changed message under its own field.
-    const message = located.value.event.eventType === 'ArchiveWaitDisposed'
-      ? (decoded.value as { message: SessionMessage }).message
-      : decoded.value as SessionMessage;
-    const version = receipt.versions.find((entry) => entry.refKey === sessionMessageRefKey(message.ref));
-    if (version === undefined || version.revision !== message.revision) {
-      return reject('unavailable', 'the recorded mailbox event disagrees with the receipt revision');
-    }
-    return { status: 'committed', value: message, replayed: true, cursor: receipt.cursor };
+    return replaySessionMessageReceipt(records, receipt);
   }
 
   /** Receipt-miss recovery uses only the same identity; it never re-runs business. */
   async function recheckAfterMiss(identityKey: string, fingerprint: string): Promise<WriteResult<SessionMessage> | null> {
-    let again: StoreResult<Receipt>;
-    try {
-      again = await records.lookupCommit({ identityKey, fingerprint });
-    } catch {
-      return reject('unavailable', 'the mailbox idempotency receipt could not be re-checked');
-    }
-    if (again.status === 'ready') return replayMessage(again.value);
-    if (again.code !== 'not_found') return mapStoreFailure(again);
-    return null;
+    return recheckSessionMessageReceipt(records, identityKey, fingerprint);
   }
 
   /**
@@ -1423,6 +1860,8 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     admission: AuthOutcome | null;
     /** The reason of the cancellation check right before the commit. */
     cancelled: string;
+    /** Slice 5 read-fact guards (duties, Goal) the user-message row joins to its one commit. */
+    extraGuards?: readonly RecordGuard[];
   } & (
     /** `write_message`: the record the machine's constructor builds at the write's clock instant, around the stored body. */
     | { body: BodyInput; record: (at: string, bodyRef: ArtifactRef) => SessionMessage }
@@ -1455,38 +1894,40 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     if (canonicalOf(messageMachineStateOf(message)) !== canonicalOf(accepted.next)) {
       throw new Error('the written SessionMessage is not the state the message machine accepted');
     }
-    const event = encodeMessageEvent(plan.eventType, eventIdOf(identityKey, plan.eventType), {
-      schemaVersion: 1, occurredAt: at, projectId: owned.projectId, workspaceId: owned.workspaceId, requestId: write.requestId,
-    }, write.actor, message);
+    const event = {
+      eventId: eventIdOf(identityKey, plan.eventType),
+      eventType: plan.eventType, schemaVersion: 1, occurredAt: at,
+      projectId: owned.projectId, workspaceId: owned.workspaceId, requestId: write.requestId,
+      actor: write.actor, message,
+    } as unknown as SessionMessageEventV1;
     if (owned.signal.aborted) return reject('cancelled', write.cancelled);
-    const guards: RecordGuard[] = [{ refKey: sessionMessageRefKey(message.ref), expectedRevision: plan.messageRevision }];
+    const guards: RecordGuard[] = [];
     if (plan.workRunFacts) {
       if (write.admission === null || !write.admission.ok) throw new Error('only an admitted work_run write guards its admission facts');
       guards.push(...write.admission.guards);
     }
-    const prepared: PreparedCommit = {
+    guards.push(...(write.extraGuards ?? []));
+    // §3.3 line 684: the ONE writer. `persist` re-checks the same identity
+    // receipt, binds the origin, compiles the accepted message pin into the
+    // CAS and encodes the event through the same codec as the original path.
+    const persistCtx: CoreCallContext = {
+      projectId: owned.projectId, workspaceId: owned.workspaceId,
+      principal: structuredClone(owned.principal), materialReader: structuredClone(owned.reader), signal: owned.signal,
+    };
+    return messageWrites.persist(persistCtx, {
+      input: {
+        // Only the null-ness is read by `persist` (create vs update); the CAS
+        // itself is the accepted pin below, never this record's revision.
+        before: plan.messageRevision === null ? null : message,
+        next: message, event, guards, claims: [],
+      },
+      meta: {
+        requestId: write.requestId,
+        expected: plan.messageRevision === null ? [] : [{ ref: message.ref, revision: plan.messageRevision }],
+      },
       identityKey,
       fingerprint,
-      guards: dedupeGuards(guards),
-      records: [encodeSessionMessageRecord(message)],
-      claims: [],
-      indexGuards: [],
-      indexChanges: [],
-      events: [event],
-    };
-    let receipt: Awaited<ReturnType<SessionMailboxDependencies['records']['commit']>>;
-    try {
-      receipt = await records.commit(prepared);
-    } catch {
-      const restored = await recheckAfterMiss(identityKey, fingerprint);
-      return restored ?? reject('unavailable', 'the mailbox commit failed before completing');
-    }
-    if (receipt.status !== 'committed') {
-      const restored = await recheckAfterMiss(identityKey, fingerprint);
-      return restored ?? mapStoreFailure(receipt);
-    }
-    if (receipt.replayed) return replayMessage(receipt);
-    return { status: 'committed', value: message, replayed: false, cursor: receipt.cursor };
+    });
   }
 
   // ---- read authority -----------------------------------------------------
@@ -1503,7 +1944,9 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
   }
 
   function canReadMessage(sessionRef: SessionRef, message: SessionMessage): boolean {
-    if (message.recipient.projectId === sessionRef.projectId && message.recipient.sessionId === sessionRef.sessionId) return true;
+    const recipient = message.recipient;
+    if (!isUserRecipient(recipient)
+      && recipient.projectId === sessionRef.projectId && recipient.sessionId === sessionRef.sessionId) return true;
     if (message.sender.kind === 'work_run'
       && message.sender.sessionRef.projectId === sessionRef.projectId
       && message.sender.sessionRef.sessionId === sessionRef.sessionId) return true;
@@ -1517,7 +1960,10 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
   }
 
   function ownsInbox(sessionRef: SessionRef, message: SessionMessage): boolean {
-    return message.recipient.projectId === sessionRef.projectId && message.recipient.sessionId === sessionRef.sessionId;
+    const recipient = message.recipient;
+    return !isUserRecipient(recipient)
+      && recipient.projectId === sessionRef.projectId
+      && recipient.sessionId === sessionRef.sessionId;
   }
 
   // ---- sendMessage --------------------------------------------------------
@@ -1715,7 +2161,9 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     }
     if (opened.status === 'not_found') return reject('unavailable', 'the message body is missing');
     if (opened.status !== 'ready') return mapReadResult(opened) as CoreRejection;
-    const decoded = decodeStoredMessageBody(message, part, opened.value);
+    const decoded = isUserDecisionAnswerPart(message, part)
+      ? decodeStoredUserDecisionBody(message, part, opened.value)
+      : decodeStoredMessageBody(message, part, opened.value);
     if ('reason' in decoded) return reject('unavailable', decoded.reason);
     return {
       status: 'ready',
@@ -1836,11 +2284,13 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
       const decoded = decodeSessionMessageRecord(record);
       if (decoded.status !== 'decoded') return reject('unavailable', `an inbox candidate is damaged: ${decoded.reason}`);
       const message = decoded.value;
+      const candidateRecipient = message.recipient;
       if (sessionMessageRefKey(message.ref) !== record.refKey
         || message.ref.projectId !== owned.projectId
         || message.ref.workspaceId !== owned.workspaceId
-        || message.recipient.projectId !== owned.projectId
-        || message.recipient.sessionId !== recipient.sessionId
+        || isUserRecipient(candidateRecipient)
+        || candidateRecipient.projectId !== owned.projectId
+        || candidateRecipient.sessionId !== recipient.sessionId
         || (status !== undefined && message.status !== status)) {
         return reject('unavailable', 'an inbox candidate disagrees with the requested recipient or filter');
       }
@@ -2494,10 +2944,10 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
       throw new Error('the written SessionMessage is not the state the message machine accepted');
     }
     const source: SessionRecord = { ...args.source, revision: args.source.revision + 1 };
-    const event = encodeMessageEvent('ArchiveWaitDisposed', args.eventId, {
+    const event = encodeArchiveWaitDisposalEvent(args.eventId, {
       schemaVersion: 1, occurredAt: args.now, projectId: args.owned.projectId,
       workspaceId: args.owned.workspaceId, requestId: '',
-    }, { kind: 'host', actor: { ...deps.systemActor } }, message, { source, archiveStep: args.archiveStep });
+    }, message, { source, archiveStep: args.archiveStep });
     if (args.owned.signal.aborted) return reject('cancelled', 'the wait disposal was cancelled before commit');
     const guards: RecordGuard[] = [
       { refKey: sessionMessageRefKey(message.ref), expectedRevision: plan.messageRevision as number },
@@ -2867,6 +3317,347 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     return { status: 'ready', value: { items, nextCursor, sourceCursor: readThrough } };
   }
 
-  return { sendMessage, readMessage, readMessageBody, readInbox, readOutbox, ackMessage, respondMessage, respondFromQueryAnswer, recordConsultationDerivation, recordInputAccepted,
+  // ---- sendUserMessage (slice 5 user-send owner) --------------------------
+
+  /**
+   * The slice-5 user-message owner (SPEC §3.3 table line 614, row S5-MSG-01).
+   * The user is not a Session: the recipient is the bound workspace's user
+   * address and this method never enters the legacy `sendMessage` admission.
+   * The sender identity/duties always come from the trusted context and the
+   * configured duties adapter, never from the input.
+   */
+  async function sendUserMessage(ctx: CoreCallContext, request: GraphWrite<{
+    goalRef: GoalRef; intent: 'notify' | 'decision_request'; text: string;
+    needsReply: boolean; waitAfterSend: boolean;
+    options: DecisionOptionV1[]; objects: DecisionObjectV1[];
+    forwardedFrom?: SessionMessageRef;
+  }>): Promise<WriteResult<SessionMessage>> {
+    const owned = ownContext(ctx);
+    if (!owned.ok) return owned.rejection;
+    if (owned.signal.aborted) return reject('cancelled', 'the user send was cancelled before validation');
+    const write = ownWrite(request);
+    if (!write.ok) return write.rejection;
+    const raw = write.input as unknown as Unknown | null | undefined;
+    if (!isObject(raw)) return reject('invalid', 'sendUserMessage requires an input object');
+
+    const rawGoal = raw['goalRef'];
+    if (!isGoalRef(rawGoal)) return reject('invalid', 'sendUserMessage requires a complete GoalRef');
+    const goalRef = structuredClone(rawGoal) as unknown as GoalRef;
+    if (goalRef.projectId !== owned.projectId) return reject('forbidden', 'the user message Goal is outside the bound project');
+
+    const intent = raw['intent'];
+    if (intent !== 'notify' && intent !== 'decision_request') {
+      return reject('invalid', 'the user message intent must be notify or decision_request');
+    }
+    const text = normalizeText(raw['text']);
+    if (!text.ok) return text.rejection;
+    const needsReply = raw['needsReply'];
+    const waitAfterSend = raw['waitAfterSend'];
+    if (typeof needsReply !== 'boolean' || typeof waitAfterSend !== 'boolean') {
+      return reject('invalid', 'sendUserMessage requires boolean needsReply and waitAfterSend');
+    }
+    if (waitAfterSend && !needsReply) return reject('invalid', 'waitAfterSend requires needsReply');
+    if (intent === 'decision_request' && !needsReply) {
+      return reject('invalid', 'a decision_request must expect a reply');
+    }
+    const rawOptions = raw['options'];
+    const rawObjects = raw['objects'];
+    if (!Array.isArray(rawOptions) || !Array.isArray(rawObjects)) {
+      return reject('invalid', 'sendUserMessage requires option and object arrays');
+    }
+    let options: DecisionOptionV1[];
+    let objects: DecisionObjectV1[];
+    const forwardedFrom = raw['forwardedFrom'];
+    try {
+      options = structuredClone(rawOptions) as DecisionOptionV1[];
+      objects = structuredClone(rawObjects) as DecisionObjectV1[];
+      if (forwardedFrom !== undefined) structuredClone(forwardedFrom);
+    } catch {
+      return reject('invalid', 'the user message decision inputs cannot be isolated from the caller');
+    }
+    if (forwardedFrom !== undefined && checkSessionMessageRef(forwardedFrom) !== null) {
+      return reject('invalid', 'the forwardedFrom ref must be a complete SessionMessageRef');
+    }
+
+    let sender: MessageSender;
+    let workRunPrincipal: WorkRunPrincipal | null = null;
+    if (owned.principal.kind === 'host') {
+      sender = { kind: 'host', actor: { ...owned.principal.actor } };
+    } else if (owned.principal.kind === 'work_run') {
+      const identity = await readWorkRunIdentity(owned, owned.principal, owned.principal.runRef);
+      if (!identity.ok) return identity.rejection;
+      const derived = deriveWorkRunSender(identity);
+      if (!derived.ok) return derived.rejection;
+      sender = derived.sender;
+      workRunPrincipal = owned.principal;
+    } else {
+      return reject('unsupported', 'the user-message sender principal is not supported');
+    }
+    if (sender.kind === 'work_run'
+      && (sender.runRef.projectId !== goalRef.projectId || sender.runRef.goalId !== goalRef.goalId)) {
+      return reject('forbidden', 'the user message Goal is not the sender Run Goal');
+    }
+
+    const senderIdentity = senderIdentityOf(sender);
+    const messageRef: SessionMessageRef = {
+      aggregateType: 'SessionMessage', projectId: owned.projectId, workspaceId: owned.workspaceId,
+      messageId: messageIdOf(owned, senderIdentity, write.requestId),
+    };
+    const identityKey = identityKeyOf('user-send', owned, senderIdentity, write.requestId);
+    const fingerprint = fingerprintOf('user-send', owned, senderIdentity, {
+      goalRef, intent, text: text.text, needsReply, waitAfterSend, options, objects,
+      ...(forwardedFrom === undefined ? {} : { forwardedFrom }),
+    }, write.expected);
+    if (owned.signal.aborted) return reject('cancelled', 'the user send was cancelled before the idempotency lookup');
+    const existing = await records.lookupCommit({ identityKey, fingerprint });
+    if (existing.status === 'ready') return replayMessage(existing.value);
+    if (existing.code !== 'not_found') return mapStoreFailure(existing);
+
+    // S5-MSG-01: the legacy work_run admission still runs; a refused admission
+    // never reads the Goal or the duties facts.
+    let authorized: AuthOutcome | null = null;
+    if (workRunPrincipal !== null) {
+      authorized = await authorizeNewWorkRunAction({ owned, principal: workRunPrincipal, operationToolName: 'send_user_message' });
+    }
+    // D3: the trusted duties seam is the ONLY duties source. Absent => unsupported.
+    if (sender.kind !== 'work_run') {
+      return reject('unsupported', 'a user message must be sent by a trusted Session');
+    }
+    if (deps.duties === undefined) {
+      return reject('unsupported', 'the trusted duties adapter is not configured for a new user message');
+    }
+    if (owned.signal.aborted) return reject('cancelled', 'the user send was cancelled before the duties read');
+    const facts = await deps.duties.readMessageDutiesFacts(internalHostContext(owned), {
+      sessionRef: sender.sessionRef, roleBinding: sender.roleBinding,
+    });
+    if (facts.status !== 'ready') {
+      if (facts.status === 'rejected') return facts;
+      return mapReadResult(facts) as CoreRejection;
+    }
+    const duties = facts.value;
+    const dutiesAllowSend = canSendUserMessage({
+      duties: duties.duties, readOnlyCopy: duties.readOnlyCopy, independentReview: duties.independentReview, intent,
+    });
+
+    // S5-MSG-01: the real owning Goal of the recipient user workspace.
+    if (owned.signal.aborted) return reject('cancelled', 'the user send was cancelled before the Goal read');
+    const goalRead = await loadGoal(owned, goalRef);
+    if (goalRead.status !== 'ready') return mapReadResult(goalRead) as CoreRejection;
+    const goal = goalRead.value;
+    if (goal.workspaceRef.projectId !== owned.projectId || goal.workspaceRef.workspaceId !== owned.workspaceId) {
+      return reject('forbidden', 'the user message Goal is outside the bound workspace');
+    }
+    for (const pin of write.expected) {
+      if (canonicalOf(pin.ref) === canonicalOf(goal.ref) && pin.revision !== goal.revision) {
+        return reject('revision_conflict', 'the Goal revision changed since it was read', [pin]);
+      }
+    }
+
+    // S5-MSG-01 decision parameters; only a decision_request carries metadata.
+    let decisionMetadata: DecisionMessageMetadataV1 | null = null;
+    let decisionObjectPins: VersionPin[] = [];
+    if (intent === 'decision_request') {
+      if (!validOptionObjects(options, objects)) {
+        return reject('invalid', 'the decision request options or objects are invalid');
+      }
+      // §3.3 line 614: establish every object kind's owning Workspace first.
+      const objectWorkspaceProblem = verifyDecisionObjectWorkspaces(owned, objects);
+      if (objectWorkspaceProblem !== null) return objectWorkspaceProblem;
+      // §3.3 line 614: read every real source object before state and guard it.
+      decisionObjectPins = aggregateObjectPins(objects);
+      const objectProblem = await verifyDecisionObjectPins(owned, decisionObjectPins);
+      if (objectProblem !== null) return objectProblem;
+      const sourcePins = dedupePins([{ ref: structuredClone(goal.ref), revision: goal.revision }, ...decisionObjectPins])
+        .filter((pin) => canonicalOf(pin.ref) !== canonicalOf(messageRef));
+      const source = {
+        kind: 'message' as const,
+        key: decisionSourceKey({ kind: 'message', messageRef }),
+        goalRef: structuredClone(goalRef),
+        pins: sourcePins,
+        goalBases: [goalBasis(goal)],
+      };
+      const metadata: DecisionMessageMetadataV1 = {
+        schemaVersion: 1, source, objects, options, syntheticAnswer: false,
+        forwardedFrom: forwardedFrom === undefined ? null : structuredClone(forwardedFrom) as SessionMessageRef,
+      };
+      if (Buffer.byteLength(source.key, 'utf8') > 8192
+        || Buffer.byteLength(canonicalJson(metadata as never), 'utf8') > 64 * 1024) {
+        return reject('capacity', 'the decision message metadata exceeds its bound');
+      }
+      decisionMetadata = metadata;
+    } else if (options.length > 0 || objects.length > 0) {
+      return reject('invalid', 'a notify user message carries no options or objects');
+    }
+
+    const userRecipient: MessageRecipient = { kind: 'user', projectId: owned.projectId, workspaceId: owned.workspaceId };
+    const { decided, ctx: messageCtx } = judge(owned.principal, null, { type: 'message_sent' }, {
+      recipientScope: 'same_workspace',
+      sendFlags: { needsReply, waitAfterSend, replyMode: null, pinCount: 0 },
+      userSend: { goalScopeMatches: true, dutiesAllowSend, decisionParamsValid: true },
+      workRunAuthorization: authorized === null ? null : authorized.ok ? 'ok' : authorized.rejection,
+    });
+    if (!decided.ok) return refuse(decided, messageCtx, identityKey, fingerprint);
+
+    const extraGuards: RecordGuard[] = [...duties.guards,
+      { refKey: canonicalRefKey(goal.ref), expectedRevision: goal.revision }];
+    for (const pin of decisionObjectPins) {
+      const refKey = canonicalOf(pin.ref);
+      if (refKey !== null) extraGuards.push({ refKey, expectedRevision: pin.revision });
+    }
+    for (const pin of write.expected) {
+      const refKey = canonicalOf(pin.ref);
+      if (refKey !== null && isPositiveInt(pin.revision)) extraGuards.push({ refKey, expectedRevision: pin.revision });
+    }
+    return writeMessage(decided, {
+      owned, identityKey, fingerprint, requestId: write.requestId, actor: sender, admission: authorized,
+      cancelled: 'the user send was cancelled before commit',
+      body: { messageRef, text: text.text, answerSource: null },
+      extraGuards,
+      record: (createdAt, bodyRef) => createSessionMessageRecord({
+        ref: messageRef, sender, recipient: userRecipient, bodyRef, sourceRef: bodyRef.source, createdAt,
+        replyMode: null, intent, needsReply, waitAfterSend,
+        goalRef: structuredClone(goalRef),
+        ...(decisionMetadata === null ? {} : { decision: decisionMetadata }),
+      }),
+    });
+  }
+
+  return { sendMessage, readMessage, readMessageBody, readInbox, readOutbox, ackMessage, respondMessage, respondFromQueryAnswer, recordConsultationDerivation, recordInputAccepted, sendUserMessage,
     disposeArchiveWait, readUndeliveredReplies, readRoutedReplies };
+}
+
+/**
+ * The shared body/persist facade over the mailbox's private helpers
+ * (SPEC §3.3 line 684): `storeBody`/`persist` keep the original
+ * `storeMessageBody`/`writeMessage`/receipt rules, while the public
+ * `SessionMailboxPort` gains no internal method. Part 1 declares the factory
+ * only; the facade lands in part 2 and both callers (`sendMessage`/`respond*`
+ * and `createDecisionMessageService`) share this one instance.
+ */
+export function createMessageWriteOwner(deps: SessionMailboxDependencies): MessageWriteOwnerPort {
+  const records = deps.records;
+  type WriteReceipt = Extract<Awaited<ReturnType<SessionMailboxDependencies['records']['commit']>>, { status: 'committed' }>;
+
+  function encodePersistEvent(event: SessionMessageEventV1): EncodedDomainEvent {
+    switch (event.eventType) {
+      case 'SessionMessageSent': return encodeSessionMessageSentEvent(event);
+      case 'SessionMessageRead': return encodeSessionMessageReadEvent(event);
+      case 'SessionMessageResponded': return encodeSessionMessageRespondedEvent(event);
+      case 'SessionMessageConsultationDerived': return encodeSessionMessageConsultationDerivedEvent(event);
+      case 'SessionMessageInputAccepted': return encodeSessionMessageInputAcceptedEvent(event);
+      case 'SessionMessageDecisionAnswered': return encodeSessionMessageDecisionAnsweredEvent(event);
+      case 'SessionMessageDecisionApplied': return encodeSessionMessageDecisionAppliedEvent(event);
+      default: return unreachable(event, 'message event');
+    }
+  }
+
+  async function replayReceipt(receipt: WriteReceipt): Promise<WriteResult<SessionMessage>> {
+    return replaySessionMessageReceipt(records, receipt);
+  }
+
+  async function recheckPersist(identityKey: string, fingerprint: string): Promise<WriteResult<SessionMessage> | null> {
+    return recheckSessionMessageReceipt(records, identityKey, fingerprint);
+  }
+
+  return {
+    async storeBody(ctx, input): Promise<ReadResult<{ bodyRef: ArtifactRef; sourceRef: ArtifactRef['source'] }>> {
+      const owned = ownContext(ctx);
+      if (!owned.ok) return owned.rejection;
+      const raw = input as unknown as Unknown | null | undefined;
+      if (!isObject(raw)) return reject('invalid', 'storeBody requires an input object');
+      const normalized = normalizeMessageRef(raw['messageRef']);
+      if (!normalized.ok) return reject('invalid', normalized.reason);
+      const scopeProblem = scopeOfMessageRef(owned, normalized.ref);
+      if (scopeProblem !== null) return scopeProblem;
+      const part = raw['part'];
+      if (part !== 'message' && part !== 'response') return reject('invalid', 'storeBody part must be message or response');
+      const text = raw['text'];
+      if (typeof text !== 'string' || text.length === 0) return reject('invalid', 'storeBody text must be a non-empty string');
+      if (Buffer.byteLength(text, 'utf8') > SESSION_MESSAGE_MAX_TEXT_BYTES) {
+        return reject('capacity', `message text exceeds ${SESSION_MESSAGE_MAX_TEXT_BYTES} UTF-8 bytes`);
+      }
+      const sender = raw['sender'];
+      if (!isObject(sender) || !nonEmpty(sender['kind'])) return reject('invalid', 'storeBody requires a sender');
+      const source = await readCurrentWorkspaceSource(records, owned);
+      if (!source.ok) return source.rejection;
+      return storeScopedMessageBody(deps, {
+        owned, sender: sender as unknown as MessageBodySender, part, messageRef: normalized.ref, text,
+        sourceRef: source.value,
+        // The facade keeps its own original operation identity.
+        bodyRequestId: `session-message-body:${sha256Hex(`${normalized.ref.messageId}|${part}`)}`,
+      });
+    },
+
+    async persist(ctx, request): Promise<WriteResult<SessionMessage>> {
+      const owned = ownContext(ctx);
+      if (!owned.ok) return owned.rejection;
+      const raw = request as unknown as Unknown | null | undefined;
+      if (!isObject(raw)) return reject('invalid', 'persist requires a request object');
+      const meta = raw['meta'];
+      if (!isObject(meta) || !nonEmpty(meta['requestId']) || !Array.isArray(meta['expected'])) {
+        return reject('invalid', 'persist requires meta.requestId and meta.expected');
+      }
+      const input = raw['input'];
+      if (!isObject(input)) return reject('invalid', 'persist requires an input object');
+      const identityKey = raw['identityKey'];
+      const fingerprint = raw['fingerprint'];
+      if (!nonEmpty(identityKey) || !nonEmpty(fingerprint)) {
+        return reject('invalid', 'persist requires the entry identityKey and fingerprint');
+      }
+      const existing = await records.lookupCommit({ identityKey, fingerprint });
+      if (existing.status === 'ready') return replayReceipt(existing.value);
+      if (existing.code !== 'not_found') return mapStoreFailure(existing);
+
+      const next = input['next'] as SessionMessage;
+      if (!isObject(next) || !isObject(next.ref)) return reject('invalid', 'persist requires the next SessionMessage');
+      const before = (input['before'] ?? null) as SessionMessage | null;
+      const event = input['event'] as SessionMessageEventV1;
+      if (!isObject(event) || !nonEmpty(event.eventType)) return reject('invalid', 'persist requires the appended event');
+      const guards: RecordGuard[] = Array.isArray(input['guards']) ? input['guards'] as RecordGuard[] : [];
+      const claims: UniqueClaimChange[] = Array.isArray(input['claims']) ? input['claims'] as UniqueClaimChange[] : [];
+
+      // §3.3 line 625 / §8.2: the caller's ACCEPTED pins become the commit
+      // guards. The message's own pin is the CAS — never a re-read
+      // `before.revision`, so a stale accepted pin is a real revision_conflict.
+      const expectedRaw = meta['expected'];
+      if (!Array.isArray(expectedRaw)) return reject('invalid', 'persist requires an expected pin array');
+      const nextRefKey = sessionMessageRefKey(next.ref);
+      const acceptedGuards: RecordGuard[] = [];
+      const messagePins: VersionPin[] = [];
+      for (const pin of expectedRaw as VersionPin[]) {
+        // §2.1: a non-stored aggregate's absence pin is revision 0; the message
+        // pin itself (the CAS) must still be a real stored revision.
+        if (!isObject(pin) || !isObject(pin.ref) || !isNonNegativeInt(pin.revision)) {
+          return reject('invalid', 'persist requires complete, non-negative-integer version pins');
+        }
+        const refKey = canonicalOf(pin.ref);
+        if (refKey === null) return reject('invalid', 'a persist version pin ref is not canonicalizable JSON');
+        if (refKey === nextRefKey) {
+          if (!isPositiveInt(pin.revision)) {
+            return reject('invalid', 'the accepted message pin must be a positive integer');
+          }
+          messagePins.push(pin);
+          continue;
+        }
+        // §2.1: a revision-0 absence pin (virtual Task focus) has no stored
+        // record schema and must never become a Store guard.
+        if (pin.revision === 0) continue;
+        acceptedGuards.push({ refKey, expectedRevision: pin.revision });
+      }
+      if (messagePins.length > 1) return reject('invalid', 'persist names the message pin more than once');
+      const isCreate = before === null || before === undefined;
+      if (isCreate) {
+        if (messagePins.length > 0) return reject('invalid', 'persist must not pin a message that does not exist yet');
+      } else if (messagePins.length !== 1) {
+        return reject('invalid', 'persist requires exactly the accepted message pin for an update');
+      }
+      return commitPreparedSessionMessage(records, {
+        owned, identityKey, fingerprint, message: next, event: encodePersistEvent(event),
+        messageRevision: isCreate ? null : messagePins[0]!.revision,
+        guards: [...guards, ...acceptedGuards], claims,
+        cancelledReason: 'the message write was cancelled before commit',
+        commitFailureReason: 'the message commit failed before completing',
+      });
+    },
+  };
 }

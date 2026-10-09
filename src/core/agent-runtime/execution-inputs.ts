@@ -16,6 +16,8 @@
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { SessionRef } from '../../contracts/core/identity.js';
 import type { QueryRunRef } from '../../contracts/query-job.js';
+import type { UserDecisionBodyV1 } from '../../contracts/goal-decisions.js';
+import { canonicalJson, type JsonValue } from '../../contracts/fingerprint.js';
 import type { SessionRecord as KernelSessionRecord } from '../../../vendor/coding-agent/dist/public-api.js';
 import type { KernelExecutionBinding } from '../work-graph/model/execution-entry-contracts.js';
 import type { RunRef } from '../../contracts/dispatch.js';
@@ -43,6 +45,33 @@ export type InputSupply = (
 /** The stable identity of one persisted source part; never a time/random id. */
 export function deriveInputId(messageRef: SessionMessage['ref'], part: InputPart): string {
   return deriveSessionInputId(messageRef, part);
+}
+
+/**
+ * Slice 5 §4.6: the deterministic text a new user decision response supplies to
+ * the asking Run. The fixed value is `'用户答复\n' + canonicalJson(body)`, so
+ * the selection, the exact free text and every annotation reach the model
+ * without a prose guess. `createMailboxInputSupply` uses this formatter for a
+ * new user response and keeps the historical raw `body.text` for an old reply.
+ * Part 1 fixes the signature only; Part 2 supplies the canonical encoding.
+ */
+export function formatDecisionResponseInput(body: UserDecisionBodyV1): string {
+  return '用户答复\n' + canonicalJson(body as unknown as JsonValue);
+}
+
+/**
+ * The formal `UserDecisionBodyV1` of a message response whose metadata carries
+ * the user's decision; `null` for every historical reply. The original free text
+ * is read from the stored body, so the formatter receives exactly the saved
+ * selection/text/annotations and never a re-derived guess.
+ */
+function decisionResponseBody(message: SessionMessage, text: string): UserDecisionBodyV1 | null {
+  const response: unknown = message.response;
+  if (response === null || typeof response !== 'object' || !('decision' in response)) return null;
+  const decision = (response as { decision: {
+    selection: UserDecisionBodyV1['selection']; annotations: UserDecisionBodyV1['annotations'];
+  } }).decision;
+  return { schemaVersion: 1, kind: 'user_decision_response', selection: decision.selection, text, annotations: decision.annotations };
 }
 
 function alreadyAcceptedBySource(message: SessionMessage, inputId: string): boolean {
@@ -89,8 +118,10 @@ export function createMailboxInputSupply(deps: MailboxInputSupplyDependencies): 
     if (seen.has(inputId) || alreadyAcceptedBySource(message, inputId)) return;
     const body = await deps.messages.readMessageBody(ctx, { messageRef: message.ref, part: 'response' });
     if (body.status !== 'ready') throw new Error(`input body unavailable: ${body.status}`);
+    const decisionBody = decisionResponseBody(message, body.value.text);
     seen.add(inputId);
-    results.push({ inputId, text: body.value.text, sourceRef: sourceRef(message.ref, 'response') });
+    results.push({ inputId, text: decisionBody === null ? body.value.text : formatDecisionResponseInput(decisionBody),
+      sourceRef: sourceRef(message.ref, 'response') });
   };
   const readMessagePart = async (ctx: CoreCallContext, message: SessionMessage, seen: Set<string>,
     results: SuppliedInput[]): Promise<void> => {

@@ -22,7 +22,9 @@
  * intersection before it authorizes anything.
  */
 import type { BoundModel } from './source-tool-ports.js';
+import type { CommitCursor } from '../../contracts/command-event.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
+import type { DecisionApplicationReceiptV1 } from '../../contracts/core/session-message.js';
 import type { ControlIntentRef } from '../../contracts/control-intent.js';
 import type { RoleConfigurationRef, SessionRef } from '../../contracts/core/identity.js';
 import type { ReadResult } from '../../contracts/core/results.js';
@@ -47,6 +49,7 @@ import type { ModelRequestPort } from '../work-graph/tasks/model-call-contracts.
 import type { PlanTaskPort } from '../work-graph/model/plan-contracts.js';
 import type { ControlObservationPort, RunControlPort } from '../work-graph/tasks/control-contracts.js';
 import type { SessionMailboxPort } from '../work-graph/model/communication-contracts.js';
+import type { DecisionMessagePort } from '../work-graph/model/decision-contracts.js';
 import type { SessionDirectoryPort } from '../work-graph/model/session-contracts.js';
 import type { SourceSnapshotReads } from '../work-graph/source-authority-ports.js';
 import type { QueryExecutionPort } from '../work-graph/queries/contracts.js';
@@ -180,6 +183,25 @@ export type RuntimeExecutionDependencies = {
    * with this dependency absent must fail closed as `unsupported` before the model.
    */
   messages?: SessionMailboxPort;
+  /**
+   * Slice 5 §4.6: the user-decision owner. Optional so an existing composition
+   * that never selects a user-decision tool keeps working; a formal grant that
+   * selects `send_user_message`/`read_user_decision`/
+   * `record_decision_application` with this dependency absent fails closed as
+   * `unsupported` before the model. The three tools are registered through the
+   * SAME SessionMailbox tool factory only when this is present.
+   */
+  decisionMessages?: Pick<DecisionMessagePort,
+    'sendUserMessage' | 'recordDecisionApplication' | 'readDecisionAnswer'>;
+  /**
+   * Slice 5 §4.5/T-R2-1: the SAME receipt reader the composition gives the
+   * Workflow. The Runtime hands it to the whiteboard tool factory so an Agent
+   * that acknowledged a user answer can receive the formal
+   * `applicationReceipt` (identityKey/fingerprint at the plan acceptance
+   * cursor) it needs for `record_decision_application`. Optional so an old
+   * composition keeps the old tool result shape.
+   */
+  applicationReceipt?: (ctx: CoreCallContext, cursor: CommitCursor) => Promise<DecisionApplicationReceiptV1 | null>;
   sessions: SessionDirectoryPort;
   materials: MaterialPort;
   bodies: Pick<RawArtifactStorePort, 'put' | 'read'>;

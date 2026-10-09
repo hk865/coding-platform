@@ -20,24 +20,26 @@ import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { SessionRef } from '../../../contracts/core/identity.js';
 import type { ReadResult, WriteResult } from '../../../contracts/core/results.js';
-import type { SessionMessageIntentFields, SessionMessageIntentV1, SessionMessageRef } from '../../../contracts/core/session-message.js';
+import type { SessionMessageIntentFields, SessionMessageIntentV1, SessionMessageRef,
+  DecisionApplicationV1, DecisionHostSenderV1, DecisionMessageMetadataV1, MessageRecipient,
+  UserMessageResponseV1 } from '../../../contracts/core/session-message.js';
 import type { ArchiveStepRefV1 } from '../../../contracts/core/session-archive.js';
 import type { RoleBindingRefV1, RunRef, SourceRefV1 } from '../../../contracts/dispatch.js';
+import type { GoalRef } from '../../../contracts/ledger.js';
 import type { QueryJobAnswerRef, QueryRunRef } from '../../../contracts/query-job.js';
 import { canonicalJson, sha256Hex } from '../../../contracts/fingerprint.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
 import type { RoleBindingFactsPort } from './configuration-contracts.js';
+import type { MessageDutiesFactsPort } from './decision-contracts.js';
 import type { MaterialPort } from './material-contracts.js';
 import type { GraphWrite, SessionDirectoryPort, SessionPage, SessionPageRequest } from './session-contracts.js';
 import type { ExecutionEntryDependencies } from './execution-entry-contracts.js';
 import type { ExecutionReadPort } from './execution-read-contracts.js';
 
-/** Trusted host actor: a real human/system identity, never fabricated per recipient. */
-export type MessageHostSender = {
-  kind: 'host';
-  actor: Extract<ActorRef, { kind: 'human' | 'system' }>;
-};
+/** Trusted host actor: a real human/system identity, never fabricated per recipient.
+ * Compatibility alias: the shared declaration lives in `contracts/core/session-message.ts`. */
+export type MessageHostSender = DecisionHostSenderV1;
 
 /**
  * Formal work-run sender. `sessionRef`/`runRef`/`roleBinding`/`generation` must
@@ -98,13 +100,19 @@ export type SessionMessage = {
   schemaVersion: 1;
   revision: number;
   sender: MessageSender;
-  recipient: SessionRef;
+  recipient: MessageRecipient;
   bodyRef: ArtifactRef;
   sourceRef: SourceRefV1;
   createdAt: string;
   status: SessionMessageStatus;
   readAt: string | null;
-  response: MessageResponse | null;
+  response: MessageResponse | UserMessageResponseV1 | null;
+  /** Slice 5: the owning Goal; absent/null keeps the historical message shape. */
+  goalRef?: GoalRef | null;
+  /** Slice 5: decision metadata, only on a user decision request or synthetic answer. */
+  decision?: DecisionMessageMetadataV1;
+  /** Slice 5: the recorded application of the user's answer, when requirements demanded one. */
+  application?: DecisionApplicationV1 | null;
   /**
    * Optional explicit reply expectation. ABSENT is the entire historical
    * fire-and-forget behavior; the ONLY accepted legacy value is `'wait'`, which is
@@ -169,6 +177,52 @@ export type UndeliveredReplyV1 = {
   responseRef: ArtifactRef; respondedAt: string; hasContinuation: boolean;
   requiresUserRecipient: boolean; // 无 continuation 为 true。
 };
+
+/**
+ * Persisted SessionMessage event bodies (stable replay carriers). Declared here,
+ * in `model`, rather than in `sessions/`, so the `model`-layer write facade
+ * (`decision-contracts.ts` `MessageWriteOwnerPort.persist`) can name the event
+ * union without a `model -> sessions` import (module-target allows
+ * `model -> state` only). `sessions/message-record-codecs.ts` re-exports them.
+ */
+type MessageSessionEventBaseV1 = {
+  eventId: string;
+  schemaVersion: 1;
+  occurredAt: string;
+  projectId: string;
+  workspaceId: string;
+  requestId: string;
+  actor: MessageSender;
+  message: SessionMessage;
+};
+
+export type SessionMessageSentEventV1 = MessageSessionEventBaseV1 & { eventType: 'SessionMessageSent' };
+export type SessionMessageReadEventV1 = MessageSessionEventBaseV1 & { eventType: 'SessionMessageRead' };
+export type SessionMessageConsultationDerivedEventV1 = MessageSessionEventBaseV1 & { eventType: 'SessionMessageConsultationDerived' };
+export type SessionMessageInputAcceptedEventV1 = MessageSessionEventBaseV1 & { eventType: 'SessionMessageInputAccepted' };
+export type SessionMessageRespondedEventV1 = Omit<MessageSessionEventBaseV1, 'actor'> & {
+  eventType: 'SessionMessageResponded';
+  /** The formal responder identity: a work_run or a derived query_run Answer. */
+  actor: MessageSender | MessageQueryAnswerSender;
+};
+/** Slice 5: a synthetic (non-message) decision was answered. */
+export type SessionMessageDecisionAnsweredEventV1 = Omit<MessageSessionEventBaseV1, 'actor'> & {
+  eventType: 'SessionMessageDecisionAnswered';
+  actor: MessageHostSender;
+};
+/** Slice 5: the application of an answered decision was recorded. */
+export type SessionMessageDecisionAppliedEventV1 = Omit<MessageSessionEventBaseV1, 'actor'> & {
+  eventType: 'SessionMessageDecisionApplied';
+  actor: ActorRef;
+};
+export type SessionMessageEventV1 =
+  | SessionMessageSentEventV1
+  | SessionMessageReadEventV1
+  | SessionMessageRespondedEventV1
+  | SessionMessageConsultationDerivedEventV1
+  | SessionMessageInputAcceptedEventV1
+  | SessionMessageDecisionAnsweredEventV1
+  | SessionMessageDecisionAppliedEventV1;
 
 /** One keyset page shared by the inbox and the sender-Run outbox. */
 export type SessionMessagePage = {
@@ -302,6 +356,14 @@ export type SessionMailboxDependencies = {
    * algorithm is never built here.
    */
   runtimeAdmission?: Pick<ExecutionEntryDependencies, 'bodies' | 'authorizeConfiguration'>;
+  /**
+   * [lead S5-T3-D3] Slice 5 §2.6 / S5-AU-04: the trusted duties seam
+   * (`configuration/message-duties-adapter.ts` in the composition). The
+   * mailbox reads the sender's duties ONLY from here, never from caller/model
+   * JSON. Absent: a NEW user-recipient send is `unsupported`; every old
+   * Session→Session path is unchanged and never reads it.
+   */
+  duties?: MessageDutiesFactsPort;
   systemActor: Extract<ActorRef, { kind: 'human' | 'system' }>;
   now(): string;
   newId(): string;

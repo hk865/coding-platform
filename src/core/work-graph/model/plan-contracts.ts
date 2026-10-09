@@ -1,16 +1,18 @@
 /** R3c plan/task slice. WorkGraph owns the rules; the Store owns atomic bytes. */
-import type { CommitCursor } from '../../../contracts/command-event.js';
+import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js';
 import type { ArtifactRef } from '../../../contracts/artifact.js';
 import type { ControlIntentRef, ControlIntentSnapshotV1 } from '../../../contracts/control-intent.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { VersionPin } from '../../../contracts/core/identity.js';
 import type { ReadResult, WriteResult } from '../../../contracts/core/results.js';
+import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
+import type { DecisionSourceV1 } from '../../../contracts/goal-decisions.js';
 import type { TaskTriple, TaskAttemptRef, RunRef, TaskBudgetV1, TaskEligibility } from '../../../contracts/dispatch.js';
 import type { PlanWriteProvenanceV1 } from '../../../contracts/delegated-write.js';
 import type { GoalRef, GoalSnapshot, VersionedRef } from '../../../contracts/ledger.js';
 import type { GoalPhaseSnapshot } from '../../../contracts/goal-phase.js';
 import type { PlanProposalSnapshot } from '../../../contracts/goal-change.js';
-import type { QueryJobAnswerRef } from '../../../contracts/query-job.js';
+import type { QueryJobAnswerRef, QueryJobRef } from '../../../contracts/query-job.js';
 import type { DependencyRequirement, Disposition, Phase, PlanRevisionDraft, PlanRevisionRef,
   PlanRevisionSnapshot, PlanValidationError, RuntimeTask, TaskDispositionChangeV1, TaskInputRequirementV2,
   TaskRelationV2 } from '../../../contracts/plan.js';
@@ -18,6 +20,9 @@ import type { TaskFailureFactsV1, TaskPhaseCauseV1, TaskReworkSummaryV1 } from '
 import type { TaskRequeueRef } from '../../../contracts/task-requeue.js';
 import type { GoalDisplayV1, GoalResumeContinuationV1, GoalRunControlCapabilityV1 } from '../state/goal-machine.js';
 import type { GraphWrite } from './task-contracts.js';
+import type { InitialPlanAnswerFacts } from '../../../contracts/query-job.js';
+
+export type { InitialPlanAnswerFacts };
 
 /**
  * Versioned Agent submission provenance (W2 §8.1). The single declaration is
@@ -36,11 +41,36 @@ export type PlanChangeReason = { text: string; sources: ArtifactRef[];
    * adoption requires every traced disposition-only Task in it (TASK-19 guard 6).
    */
   affectedTaskIds?: string[] };
+
+/**
+ * Slice 5 request-candidate extension (spec §2.4). `requestRef` names the first
+ * user-initiated QueryJob this candidate belongs to; `notAdopted` records the
+ * exact non-adoption fact. Both are optional so old records keep their shape.
+ */
+export type CandidateRequestExtensionV1 = {
+  requestRef?: QueryJobRef | null;
+  notAdopted?: {
+    reason: 'replaced' | 'not_selected' | 'abandoned';
+    requestedBy: ActorRef; at: string; replacedBy: PlanProposalRef | null;
+  };
+};
+
+/** Slice 5 proposePlan input (spec §2.4): the original fields plus the request slot facts. */
+export type ProposedPlanRequestV1 = {
+  goalRef: GoalRef; basedOn: PlanRevisionRef | null;
+  draft: PlanRevisionDraft; reason: PlanChangeReason;
+  requestRef?: QueryJobRef | null;
+  replaces?: { proposalRef: PlanProposalRef; revision: number } | null;
+};
 export type PlanProposal =
   | { kind: 'candidate_v2'; ref: PlanProposalRef; revision: number; schemaVersion: 2;
       goalRef: GoalRef; basedOn: PlanRevisionRef | null; draft: PlanRevisionDraft;
-      reason: PlanChangeReason; status: 'candidate' | 'accepted' | 'rejected';
+      reason: PlanChangeReason; status: 'candidate' | 'accepted' | 'rejected' | 'not_adopted';
       issues: PlanValidationError[];
+      /** Slice 5: first user-initiated request this candidate belongs to; absent = independent. */
+      requestRef?: QueryJobRef | null;
+      /** Slice 5: the exact non-adoption fact, when this candidate was not adopted. */
+      notAdopted?: CandidateRequestExtensionV1['notAdopted'];
       /** W2 Agent branch only; absent on every legacy/Host candidate. */
       submittedBy?: PlanWriteProvenanceV1 }
   | { kind: 'legacy_v1'; ref: PlanProposalRef; revision: 1; schemaVersion: 1;
@@ -188,11 +218,30 @@ export type InitialPlanProposalResult = WriteResult<PlanProposal> | InitialPlanD
 export interface PlanTaskPort {
   queryGoal(ctx: CoreCallContext, ref: GoalRef): Promise<ReadResult<GoalDetail>>;
   readPlanProposal(ctx: CoreCallContext, ref: PlanProposalRef): Promise<ReadResult<PlanProposal>>;
-  proposePlan(ctx: CoreCallContext, request: GraphWrite<{ goalRef: GoalRef;
-    basedOn: PlanRevisionRef | null; draft: PlanRevisionDraft;
-    reason: PlanChangeReason }>): Promise<WriteResult<PlanProposal>>;
+  proposePlan(ctx: CoreCallContext, request: GraphWrite<ProposedPlanRequestV1>): Promise<WriteResult<PlanProposal>>;
   applyPlanChange(ctx: CoreCallContext, request: GraphWrite<{ proposalRef: PlanProposalRef;
-    expectedProposalRevision: number; decisionRefs: VersionedRef[] }>): Promise<WriteResult<PlanRevisionSnapshot>>;
+    expectedProposalRevision: number; decisionRefs: VersionedRef[];
+    acknowledgementRef?: SessionMessageRef;
+    /**
+     * [lead S5-T3-D8] Slice 5 §2.8: the answer's `response.decision.source`
+     * (captured pins + goalBases), passed by the trusted caller together with
+     * `acknowledgementRef`. PROOF DATA ONLY, never authorization (decisionRefs
+     * and every existing PLAN guard are unchanged; tasks never read
+     * communication records). With it the PlanRevisionAccepted event's
+     * `decisionApplication` = {acknowledgementRef, capturedPins: source.pins,
+     * changes: exact before/after, basisRebases}. Only aggregates that THIS
+     * change modifies and that appear in `source.pins` are checked (§3.3 "receipt
+     * 中每个被改对象 before 必须对应答复捕获版本，不要求把所有读取 guard 也修改"):
+     * their before must equal the captured pin, except the Goal, whose newer
+     * revision yields a §2.8 control rebase only when
+     * `goalDecisionBasisMatches(basis, current)` and the Goal is active
+     * (else revision_conflict). Captured pins of objects this change does not
+     * modify are recorded as-is and not re-checked (e.g. SC01: the answered
+     * stale candidate was replaced before the adopting change). CAS stays on
+     * `meta.expected` as today. Without it the proof has capturedPins [] and
+     * basisRebases [].
+     */
+    decisionSource?: DecisionSourceV1 }>): Promise<WriteResult<PlanRevisionSnapshot>>;
   /**
    * R5b.4 §11.2 the ONE thin consumer of a formal `initial_coordination` answer.
    * It accepts no caller draft/origin/assignments/digest: the candidate is the
@@ -207,6 +256,13 @@ export interface PlanTaskPort {
   proposeInitialPlanFromAnswer?(ctx: CoreCallContext, request: GraphWrite<{
     answerRef: QueryJobAnswerRef; reason: PlanChangeReason
   }>): Promise<InitialPlanProposalResult>;
+  /**
+   * Slice 5 read-only seam (spec §4.2): the formal facts the v2 normalization
+   * consumes, read without creating a candidate. Optional for the same reason
+   * as the other read-only seams; the real Plan service publishes it.
+   */
+  readInitialPlanAnswerFacts?(ctx: CoreCallContext, answerRef: QueryJobAnswerRef):
+    Promise<ReadResult<InitialPlanAnswerFacts>>;
   queryTaskGraph(ctx: CoreCallContext, input: { goalRef: GoalRef; planRef?: PlanRevisionRef;
     atLeastCursor?: CommitCursor }): Promise<ReadResult<TaskGraph>>;
   queryReadyTasks(ctx: CoreCallContext, input: { goalRef: GoalRef; roleIds?: string[];

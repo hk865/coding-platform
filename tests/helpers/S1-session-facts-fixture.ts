@@ -350,7 +350,7 @@ export async function pendingQuery(b2: B2ExecutionFixture, id: string, injectFac
     multiTurn: { maxRounds: 1 }, correlationId: id,
     execution: { kind: message === undefined ? 'initial_coordination' : 'semantic_query',
       roleBinding: base.roleBinding, runtimeBudget: DEFAULT_RUNTIME_BUDGET,
-      ...(message === undefined ? {} : { consultation: { messageRef: message.ref, recipient: message.recipient,
+      ...(message === undefined ? {} : { consultation: { messageRef: message.ref, recipient: message.recipient as SessionRef,
         ...(message.consultationDerivation === undefined ? {} : { derivation: message.consultationDerivation }) } }) } };
   committed(await jobs.submitQueryJob(base.ctx, {
     input: { queryJobId: queryJobRef.queryJobId, runId: queryRunRef.runId, intent },

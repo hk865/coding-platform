@@ -1,0 +1,789 @@
+/**
+ * Slice 5 §3.3 canonical decision-source facts (F41).
+ *
+ * The read-only seam that turns a `DecisionSourceV1` into its formal Goal,
+ * objects, options, guards, `closed` flag and allowed reader Sessions, and that
+ * proves one recorded application through its real receipt. It does not depend
+ * on `views`; the source is re-derived from the lower-level records and the
+ * shared `decisionSourceKey` contract, so a caller can never merely assert
+ * "this card exists" (SPEC §4.2 line 790, S5-MSG-03).
+ *
+ * Every kind re-derives its identity, objects, pins, closure and allowed
+ * readers from the formal records: a candidate is the real per-request head (or
+ * the named proposal), a planning question is a real saved Answer question, a
+ * goal cause names real affected objects (or a real missing active pointer) and
+ * a goal conflict proves both Goals, both active Plan pointers and a real §4.3
+ * overlap. The caller's `source.pins` are never trusted as authorization.
+ */
+import type { CoreCallContext } from '../../../contracts/core/call-context.js';
+import type { ModuleRef, SessionRef, VersionPin } from '../../../contracts/core/identity.js';
+import type { CoreError, CoreRejection, ReadResult } from '../../../contracts/core/results.js';
+import type { DecisionObjectV1, DecisionOptionV1, DecisionSourceIdentityV1,
+  DecisionSourceV1, GoalDecisionBasisV1, GoalFootprintV1 } from '../../../contracts/goal-decisions.js';
+import { DEFAULT_GOAL_SETTINGS_V1, decisionSourceKey } from '../../../contracts/goal-decisions.js';
+import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
+import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
+import type { DecodeResult, EncodedRecord, StoreFailure } from '../../record-store/ports.js';
+import type { DecisionSourceFactsPort, S5RecordPort } from '../model/decision-contracts.js';
+import type { PlanProposal, PlanProposalRef, PlanTaskPort } from '../model/plan-contracts.js';
+import { decodeQueryJobAnswerSnapshot, decodeQueryJobSnapshot, decodeQueryRunSnapshotRecord } from '../queries/query-record-codecs.js';
+import { decodeGoalPhaseSnapshot } from '../tasks/completion-record-codecs.js';
+import { createGoalDecisionCauseReader } from '../tasks/goal-decision-reader.js';
+import { parseInitialPlanningResponseV2 } from '../tasks/initial-plan.js';
+import { readProposal, readRequestCandidateHead } from '../tasks/plan-readers.js';
+import { decodePlanRevisionSnapshot } from '../persistence/plan-record-codecs.js';
+import { decodeGoalSnapshot } from '../persistence/record-codecs.js';
+import { goalConflictFacts } from '../state/goal-settings-machine.js';
+import { decodeSessionMessageRecord } from '../sessions/message-record-codecs.js';
+import { readApplicationReceiptFacts } from './decision-application.js';
+
+/** The one Store seam this reader uses, the same instance every other WorkGraph reader shares. */
+export type DecisionSourceFactsDependencies = {
+  records: S5RecordPort;
+  /**
+   * §4.2 source 2: the formal Goal-cause reader seam (`queryGoalDisplay` and
+   * `readInitialPlanAnswerFacts`). It is OPTIONAL so the frozen
+   * `createDecisionSourceFacts({ records })` construction keeps compiling and
+   * working; when present, a `goal_cause` source is proven to match one REAL
+   * formal cause. Production wiring should pass the SAME Plan-service instance
+   * the read model uses: `plans?: Pick<PlanTaskPort,
+   * 'queryGoalDisplay' | 'readInitialPlanAnswerFacts'>`.
+   */
+  plans?: Pick<PlanTaskPort, 'queryGoalDisplay' | 'readInitialPlanAnswerFacts'>;
+};
+
+/**
+ * §2.1/§3.3 line 629: a virtual/absence pin is not a stored aggregate. The
+ * canonical `goal-decision-reader` emits `{aggregateType:'Task',…,revision:0}`
+ * Task focus pins (a Task has no record schema); such a pin is satisfied by its
+ * revision 0 and must never be read as a stored record. A non-zero revision, or
+ * a revision-0 pin for a genuinely stored aggregate, is still read/CASed.
+ */
+const STORED_PIN_AGGREGATES: ReadonlySet<string> = new Set([
+  'Goal', 'GoalPhase', 'Workspace', 'PlanRevision', 'PlanProposal', 'Run',
+  'TaskAttempt', 'TaskLease', 'SessionMessage', 'QueryJob', 'QueryRun', 'QueryJobAnswer',
+]);
+
+function isAbsencePin(pin: VersionPin): boolean {
+  if (!isObject(pin.ref) || pin.revision !== 0) return false;
+  const aggregateType = (pin.ref as { aggregateType?: unknown })['aggregateType'];
+  if (typeof aggregateType !== 'string') return false;
+  return aggregateType === 'Task' || !STORED_PIN_AGGREGATES.has(aggregateType);
+}
+
+/** §2.8: only the Goal aggregate has the named control-rebase exception. */
+function isGoalPin(pin: VersionPin): boolean {
+  return isObject(pin.ref) && (pin.ref as { aggregateType?: unknown })['aggregateType'] === 'Goal';
+}
+
+type Scope = { projectId: string; workspaceId: string };
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isUserRecipient(recipient: unknown): boolean {
+  return isObject(recipient) && recipient['kind'] === 'user';
+}
+
+function canonicalOf(value: unknown): string | null {
+  try {
+    return canonicalJson(value as JsonValue);
+  } catch {
+    return null;
+  }
+}
+
+function sameJson(left: unknown, right: unknown): boolean {
+  const leftKey = canonicalOf(left);
+  return leftKey !== null && leftKey === canonicalOf(right);
+}
+
+function clonePins(pins: readonly VersionPin[]): VersionPin[] {
+  return pins.map((pin) => structuredClone(pin));
+}
+
+function goalBasis(goal: GoalSnapshot): GoalDecisionBasisV1 {
+  return {
+    goalRef: structuredClone(goal.ref),
+    workspaceRef: structuredClone(goal.workspaceRef),
+    objective: goal.objective,
+    activePlanRef: structuredClone(goal.activePlanRevision),
+    settings: structuredClone(goal.settings ?? DEFAULT_GOAL_SETTINGS_V1),
+  };
+}
+
+/** SPEC §4.3: the three fixed conflict options, in the fixed wait/order/parallel order. */
+const CONFLICT_OPTIONS: readonly DecisionOptionV1[] = [
+  { id: 'wait', label: '等前一个目标', effect: 'apply' },
+  { id: 'order', label: '调整顺序', effect: 'apply' },
+  { id: 'parallel', label: '接受风险并行', effect: 'apply' },
+];
+
+/** §4.2 source 2: the concrete persisted "must decide" codes the reader can yield. */
+const KNOWN_CAUSE_CODES: ReadonlySet<string> = new Set([
+  'initial_plan_pending', 'change_pending', 'required_task_deferred',
+  'auto_rework_count', 'auto_rework_pending',
+  'auto_rework_cap_reached', 'no_new_basis', 'verification_uncovered',
+  'budget_exhausted', 'not_reworkable', 'unknown_outcome',
+  'automation_confirmation_required',
+  'missing_initial_architecture', 'missing_initial_completion_policy',
+]);
+
+/** Builds the canonical source/application facts reader. */
+export function createDecisionSourceFacts(
+  deps: DecisionSourceFactsDependencies,
+): DecisionSourceFactsPort {
+  const records = deps.records;
+  // §4.2 source 2: when the composition injects the formal Goal-cause reader,
+  // every `goal_cause` source is verified against the real derived cause. When
+  // it is absent (the frozen `{ records }` construction), only the named-code
+  // check plus the affected-object reads below apply.
+  const goalCauses = deps.plans === undefined
+    ? null : createGoalDecisionCauseReader({ records, plans: deps.plans });
+
+  function reject(code: CoreError, reason: string, current?: VersionPin[]): CoreRejection {
+    return { status: 'rejected', code, reason, ...(current === undefined ? {} : { current }) };
+  }
+
+  function mapStoreFailure(failure: StoreFailure): CoreRejection {
+    switch (failure.code) {
+      case 'not_found': return reject('not_found', failure.reason);
+      case 'revision_conflict': return reject('revision_conflict', failure.reason);
+      case 'unsupported': return reject('unsupported', failure.reason);
+      default: return reject('unavailable', failure.reason);
+    }
+  }
+
+  /** §3.3 line 625 / §8.2: a foreign Workspace is refused before any foreign object is read. */
+  function scopeProblem(ref: unknown, scope: Scope): ReadResult<never> | null {
+    if (!isObject(ref)) return reject('invalid', 'the decision source object ref is not a JSON object');
+    const projectId = ref['projectId'];
+    if (typeof projectId === 'string' && projectId.length > 0 && projectId !== scope.projectId) {
+      return reject('forbidden', 'a decision source object belongs to another project');
+    }
+    const workspaceId = ref['workspaceId'];
+    if (typeof workspaceId === 'string' && workspaceId.length > 0 && workspaceId !== scope.workspaceId) {
+      return reject('forbidden', 'a decision source object belongs to another workspace');
+    }
+    return null;
+  }
+
+  async function readEncoded(ref: unknown): Promise<{ ok: true; record: EncodedRecord } | { ok: false; rejection: CoreRejection }> {
+    const key = canonicalOf(ref);
+    if (key === null) return { ok: false, rejection: reject('invalid', 'the decision source ref is not canonicalizable JSON') };
+    let read: Awaited<ReturnType<S5RecordPort['readMany']>>;
+    try {
+      read = await records.readMany([key]);
+    } catch {
+      return { ok: false, rejection: reject('unavailable', 'the decision source record could not be read') };
+    }
+    if (read.status !== 'ready') return { ok: false, rejection: mapStoreFailure(read) };
+    const record = read.value.records.find((candidate) => candidate.refKey === key);
+    if (record === undefined) {
+      // F5/§4.2 line 821/§8.2 line 1367: only the Store's own missing report is
+      // `not_found`; an unaccounted omission is an unavailable read.
+      return read.value.missing.includes(key)
+        ? { ok: false, rejection: reject('not_found', 'the decision source record does not exist') }
+        : { ok: false, rejection: reject('unavailable', 'the decision source read neither returned nor reported missing the record') };
+    }
+    return { ok: true, record };
+  }
+
+  async function readDecoded<T>(
+    ref: unknown,
+    decode: (record: EncodedRecord) => DecodeResult<T>,
+    label: string,
+  ): Promise<ReadResult<T>> {
+    const loaded = await readEncoded(ref);
+    if (!loaded.ok) return loaded.rejection;
+    const decoded = decode(loaded.record);
+    if (decoded.status !== 'decoded') return reject('unavailable', `the ${label} record is damaged: ${decoded.reason}`);
+    return { status: 'ready', value: decoded.value };
+  }
+
+  async function readGoal(ref: GoalRef): Promise<ReadResult<GoalSnapshot>> {
+    return readDecoded(ref, decodeGoalSnapshot, 'Goal');
+  }
+
+  /**
+   * §2.8 / §3.3 line 625 / S5-MSG-03: only the Goal aggregate's CONTROL
+   * revision may be refreshed (the named control-rebase exception). Every other
+   * source object keeps its captured revision; `verifyPins` then proves it
+   * still reads at that version, so a moved object is `revision_conflict`.
+   */
+  async function refreshPins(pins: readonly VersionPin[], scope: Scope): Promise<ReadResult<VersionPin[]>> {
+    const refreshed: VersionPin[] = [];
+    for (const pin of pins) {
+      const problem = scopeProblem(pin.ref, scope);
+      if (problem !== null) return problem;
+      if (!isGoalPin(pin)) {
+        refreshed.push(structuredClone(pin));
+        continue;
+      }
+      const loaded = await readEncoded(pin.ref);
+      if (!loaded.ok) return loaded.rejection;
+      refreshed.push({ ref: structuredClone(pin.ref), revision: loaded.record.revision });
+    }
+    return { status: 'ready', value: refreshed };
+  }
+
+  /** §4.3: the active Plan's planned module scopes (work Tasks only). */
+  async function plannedModules(goal: GoalSnapshot): Promise<ReadResult<ModuleRef[]>> {
+    if (goal.activePlanRevision === null) return { status: 'ready', value: [] };
+    const read = await readDecoded(goal.activePlanRevision, decodePlanRevisionSnapshot, 'PlanRevision');
+    if (read.status !== 'ready') return read;
+    const modules: ModuleRef[] = [];
+    const seen = new Set<string>();
+    for (const task of read.value.tasks) {
+      if (task.taskKind !== 'work' || task.disposition === 'cancelled' || task.disposition === 'superseded'
+        || task.scope.kind !== 'module') continue;
+      const module = { projectId: goal.ref.projectId, moduleId: task.scope.moduleRef };
+      const key = canonicalOf(module) ?? '';
+      if (seen.has(key)) continue;
+      seen.add(key);
+      modules.push(module);
+    }
+    return { status: 'ready', value: modules };
+  }
+
+  async function footprintOf(goal: GoalSnapshot): Promise<ReadResult<GoalFootprintV1>> {
+    const modules = await plannedModules(goal);
+    if (modules.status !== 'ready') return modules;
+    return { status: 'ready', value: {
+      goalRef: structuredClone(goal.ref),
+      planRef: structuredClone(goal.activePlanRevision),
+      plannedModules: modules.value,
+      executedFiles: [],
+      executedFilesAvailable: false,
+      possiblyIncomplete: true,
+    } };
+  }
+
+  async function goalTerminal(goal: GoalSnapshot): Promise<{ cancelled: boolean; completed: boolean } | ReadResult<never>> {
+    if (goal.desiredState === 'cancelled') return { cancelled: true, completed: false };
+    const phaseRef = { aggregateType: 'GoalPhase' as const, projectId: goal.ref.projectId, goalId: goal.ref.goalId };
+    const decoded = await readDecoded(phaseRef, decodeGoalPhaseSnapshot, 'GoalPhase');
+    if (decoded.status === 'ready') {
+      // §4.3 line 829 (lead, accept review NEW-2): only a completion of the CURRENT active Plan is terminal.
+      const completedPlanIsActive = goal.activePlanRevision !== null
+        && canonicalJson(decoded.value.planRef as unknown as JsonValue) === canonicalJson(goal.activePlanRevision as unknown as JsonValue);
+      return { cancelled: false, completed: decoded.value.phase === 'COMPLETED' && completedPlanIsActive };
+    }
+    // §8.2 data row (lead, final review D8): only an absent GoalPhase means no recorded completion.
+    if (decoded.status === 'not_found' || (decoded.status === 'rejected' && decoded.code === 'not_found')) {
+      return { cancelled: false, completed: false };
+    }
+    return decoded.status === 'rejected' ? decoded : reject('unavailable', 'the GoalPhase is not readable');
+  }
+
+  /** §3.3 line 625: every pinned object must still read at the captured version. */
+  async function verifyPins(pins: readonly VersionPin[]): Promise<ReadResult<never> | null> {
+    for (const pin of pins) {
+      const key = canonicalOf(pin.ref);
+      if (key === null) return reject('invalid', 'a decision source pin ref is not canonicalizable JSON');
+      // A virtual Task/absence pin has no record schema: revision 0 is its fact.
+      if (isAbsencePin(pin)) continue;
+      const loaded = await readEncoded(pin.ref);
+      if (!loaded.ok) return loaded.rejection;
+      if (loaded.record.revision !== pin.revision) {
+        return reject('revision_conflict', 'a decision source pin no longer reads at its captured version',
+          [{ ref: structuredClone(pin.ref), revision: loaded.record.revision }]);
+      }
+    }
+    return null;
+  }
+
+  /**
+   * §4.2 source 2 / S5-MSG-03: prove a `goal_cause` source against the formal
+   * reader. A cause that is absent is `not_found`; a read failure is returned
+   * (`unavailable`/`forbidden`), never turned into "no such cause".
+   */
+  async function verifyRealCause(
+    ctx: CoreCallContext,
+    identity: Extract<DecisionSourceIdentityV1, { kind: 'goal_cause' }>,
+  ): Promise<ReadResult<never> | null> {
+    if (goalCauses === null) return null;
+    let read: Awaited<ReturnType<typeof goalCauses.readGoalDecisionCauses>>;
+    try {
+      read = await goalCauses.readGoalDecisionCauses(ctx, { goalRef: identity.goalRef });
+    } catch {
+      return reject('unavailable', 'the formal Goal causes could not be read');
+    }
+    if (read.status !== 'ready') {
+      return read.status === 'rejected' ? read : reject('unavailable', 'the formal Goal causes are not readable');
+    }
+    const match = read.value.some((cause) => cause.source.key === decisionSourceKey(identity));
+    if (!match) return reject('not_found', 'the named Goal cause does not exist');
+    return null;
+  }
+
+  /**
+   * §4.6 line 915: the QueryRun's formal Session is the planning question's
+   * reader fact, when saved. The saved answer's `runRef` is a REQUIRED formal
+   * fact (the QueryJobAnswer codec refuses a missing one), so a missing or
+   * damaged QueryRun is a read failure returned to the caller
+   * (`unavailable`/`incomplete`) — never silently folded into an empty reader
+   * set, which would make the asking Session `forbidden` instead of
+   * `unavailable` (DEFECT 1). A readable QueryRun that genuinely carries no
+   * Session stays an empty reader list.
+   */
+  async function questionReaderSessions(runRef: unknown): Promise<ReadResult<SessionRef[]>> {
+    if (!isObject(runRef)) {
+      return reject('unavailable', 'the planning QueryJobAnswer names no formal QueryRun');
+    }
+    const read = await readDecoded(runRef, decodeQueryRunSnapshotRecord, 'QueryRun');
+    if (read.status !== 'ready') {
+      return read.status === 'rejected' && read.code === 'not_found'
+        ? reject('unavailable', 'the planning question QueryRun record does not exist')
+        : read;
+    }
+    const sessionRef = read.value.run.executionState?.sessionRef;
+    return { status: 'ready', value: sessionRef === undefined
+      ? [] : [{ projectId: sessionRef.projectId, sessionId: sessionRef.sessionId }] };
+  }
+
+  return {
+    async readSource(ctx: CoreCallContext, source: DecisionSourceV1): Promise<ReadResult<{
+      source: DecisionSourceV1; goal: GoalSnapshot;
+      objects: DecisionObjectV1[]; options: DecisionOptionV1[];
+      guards: readonly import('../../record-store/ports.js').RecordGuard[]; closed: boolean;
+      allowedReaderSessionRefs: SessionRef[];
+    }>> {
+      if (!isObject(source) || typeof source.key !== 'string' || source.key.length === 0) {
+        return reject('invalid', 'readSource requires a decision source with its canonical key');
+      }
+      if (typeof ctx.projectId !== 'string' || ctx.projectId.length === 0
+        || typeof ctx.workspaceId !== 'string' || ctx.workspaceId.length === 0) {
+        return reject('forbidden', 'readSource requires a trusted bound project/workspace scope');
+      }
+      const scope: Scope = { projectId: ctx.projectId, workspaceId: ctx.workspaceId };
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(source.key);
+      } catch {
+        return reject('invalid', 'the decision source key is not parseable JSON');
+      }
+      if (!isObject(parsed) || parsed['kind'] !== source.kind) {
+        return reject('invalid', 'the decision source key does not match its declared kind');
+      }
+      const identity = parsed as unknown as DecisionSourceIdentityV1;
+      if (decisionSourceKey(identity) !== source.key) {
+        return reject('invalid', 'the decision source key is not the canonical natural identity');
+      }
+
+      let goal: GoalSnapshot;
+      let objects: DecisionObjectV1[] = [];
+      let options: DecisionOptionV1[] = [];
+      let pins: VersionPin[] = [];
+      let goalBases: GoalDecisionBasisV1[] = [];
+      let closed = false;
+      let allowedReaderSessionRefs: SessionRef[] = [];
+
+      switch (identity.kind) {
+        case 'message': {
+          const messageProblem = scopeProblem(identity.messageRef, scope);
+          if (messageProblem !== null) return messageProblem;
+          const loaded = await readEncoded(identity.messageRef);
+          if (!loaded.ok) return loaded.rejection;
+          const decoded = decodeSessionMessageRecord(loaded.record);
+          if (decoded.status !== 'decoded') return reject('unavailable', `the message record is damaged: ${decoded.reason}`);
+          const message = decoded.value;
+          if (!isUserRecipient(message.recipient) || message.decision === undefined
+            || message.decision.syntheticAnswer || message.intent !== 'decision_request') {
+            return reject('invalid', 'the decision source message is not an answerable user decision card');
+          }
+          const goalRead = await readGoal(message.goalRef ?? message.decision.source.goalRef);
+          if (goalRead.status !== 'ready') return goalRead;
+          goal = goalRead.value;
+          if (goal.ref.projectId !== scope.projectId || goal.workspaceRef.workspaceId !== scope.workspaceId) {
+            return reject('forbidden', 'the decision source Goal is outside the bound scope');
+          }
+          // §2.3 line 224: the answer source is generated in the current window;
+          // the Goal pin follows the current Goal revision and the basis is the
+          // formal Goal. The message's own pin stays out of `source.pins`.
+          const refreshed = await refreshPins(message.decision.source.pins, scope);
+          if (refreshed.status !== 'ready') return refreshed;
+          pins = refreshed.value.filter((pin) => !sameJson(pin.ref, message.ref));
+          objects = message.decision.objects.map((object) => structuredClone(object));
+          options = message.decision.options.map((option) => structuredClone(option));
+          goalBases = [goalBasis(goal)];
+          closed = goal.desiredState === 'cancelled';
+          allowedReaderSessionRefs = message.sender.kind === 'work_run'
+            ? [{ projectId: message.sender.sessionRef.projectId, sessionId: message.sender.sessionRef.sessionId }] : [];
+          break;
+        }
+        case 'goal_cause': {
+          const goalProblem = scopeProblem(identity.goalRef, scope);
+          if (goalProblem !== null) return goalProblem;
+          if (!KNOWN_CAUSE_CODES.has(identity.code)) {
+            return reject('not_found', 'the named Goal cause does not exist');
+          }
+          const goalRead = await readGoal(identity.goalRef);
+          if (goalRead.status !== 'ready') return goalRead;
+          goal = goalRead.value;
+          if (goal.workspaceRef.projectId !== scope.projectId || goal.workspaceRef.workspaceId !== scope.workspaceId) {
+            return reject('forbidden', 'the decision source Goal is outside the bound scope');
+          }
+          // §4.2 source 2: with the formal reader injected, the (goalRef, code,
+          // affected) identity must match one real derived cause.
+          const realCause = await verifyRealCause(ctx, identity);
+          if (realCause !== null) return realCause;
+          for (const pin of identity.affected) {
+            const pinProblem = scopeProblem(pin.ref, scope);
+            if (pinProblem !== null) return pinProblem;
+            // §2.1: a revision-0 Task/virtual focus pin is not a stored record.
+            if (isAbsencePin(pin)) continue;
+            const pinRead = await readEncoded(pin.ref);
+            if (!pinRead.ok) return pinRead.rejection;
+            if (pinRead.record.revision !== pin.revision) {
+              return reject('revision_conflict', 'a Goal cause affected object moved since the cause was read',
+                [{ ref: structuredClone(pin.ref), revision: pinRead.record.revision }]);
+            }
+          }
+          if (identity.code === 'missing_initial_architecture' || identity.code === 'missing_initial_completion_policy') {
+            const active = identity.code === 'missing_initial_architecture'
+              ? { aggregateType: 'ProjectArchitectureBaselineActive', projectId: scope.projectId }
+              : { aggregateType: 'ProjectCompletionPolicyActive', projectId: scope.projectId };
+            const read = await readEncoded(active);
+            // Present = the cause has been resolved; a genuine read failure is
+            // returned, never folded into "absent".
+            if (read.ok) return reject('not_found', 'the named Goal cause has already been resolved');
+            if (read.rejection.code !== 'not_found') return read.rejection;
+          }
+          if (identity.code === 'change_pending' || identity.code === 'initial_plan_pending') {
+            // These causes are the real pending proposal; an affected proposal
+            // that is absent or already resolved is not a live cause. A read
+            // failure (`unavailable`) is returned unchanged.
+            if (identity.affected.length !== 1) return reject('not_found', 'the pending Goal cause names no live proposal');
+            const proposalRef = identity.affected[0]!.ref;
+            if (!isObject(proposalRef) || proposalRef['aggregateType'] !== 'PlanProposal') {
+              return reject('not_found', 'the pending Goal cause does not name a proposal');
+            }
+            const proposal = await readProposal(records, proposalRef as unknown as PlanProposalRef);
+            if (proposal.status !== 'ready') return proposal;
+            if (proposal.proposal.status === 'accepted' || proposal.proposal.status === 'rejected') {
+              return reject('not_found', 'the pending Goal cause proposal is already resolved');
+            }
+            if (proposal.proposal.goalRef.projectId !== goal.ref.projectId
+              || proposal.proposal.goalRef.goalId !== goal.ref.goalId) {
+              return reject('not_found', 'the pending Goal cause proposal belongs to another Goal');
+            }
+          }
+          pins = [{ ref: structuredClone(goal.ref), revision: goal.revision },
+            ...identity.affected.map((pin) => structuredClone(pin))];
+          objects = identity.affected.map((pin) => ({
+            kind: 'aggregate' as const, pin: structuredClone(pin), label: identity.code,
+          }));
+          options = [];
+          goalBases = [goalBasis(goal)];
+          closed = goal.desiredState === 'cancelled';
+          break;
+        }
+        case 'candidate': {
+          const goalProblem = scopeProblem(identity.goalRef, scope);
+          if (goalProblem !== null) return goalProblem;
+          const goalRead = await readGoal(identity.goalRef);
+          if (goalRead.status !== 'ready') return goalRead;
+          goal = goalRead.value;
+          if (goal.workspaceRef.projectId !== scope.projectId || goal.workspaceRef.workspaceId !== scope.workspaceId) {
+            return reject('forbidden', 'the decision source Goal is outside the bound scope');
+          }
+          let proposal: PlanProposal | null;
+          if ('requestRef' in identity) {
+            if (identity.requestRef.projectId !== goal.ref.projectId
+              || identity.requestRef.workspaceId !== goal.workspaceRef.workspaceId) {
+              return reject('forbidden', 'the candidate request belongs to another Goal scope');
+            }
+            const head = await readRequestCandidateHead(records, { goalRef: goal.ref, requestRef: identity.requestRef });
+            if (head.status !== 'ready') return head;
+            proposal = head.head;
+          } else {
+            const named = await readProposal(records, identity.proposalRef);
+            if (named.status !== 'ready') return named;
+            proposal = named.proposal;
+          }
+          if (proposal === null || proposal.kind !== 'candidate_v2'
+            || proposal.status === 'accepted' || proposal.status === 'rejected') {
+            return reject('not_found', 'the candidate decision source no longer exists');
+          }
+          if (proposal.goalRef.projectId !== goal.ref.projectId || proposal.goalRef.goalId !== goal.ref.goalId) {
+            return reject('not_found', 'the candidate decision source belongs to another Goal');
+          }
+          pins = [{ ref: structuredClone(goal.ref), revision: goal.revision },
+            { ref: structuredClone(proposal.ref), revision: proposal.revision }];
+          if (proposal.basedOn !== null) {
+            pins.push({ ref: structuredClone(proposal.basedOn), revision: 1 });
+          }
+          objects = pins.map((pin) => ({ kind: 'aggregate' as const, pin: structuredClone(pin), label: 'candidate' }));
+          options = [];
+          goalBases = [goalBasis(goal)];
+          closed = goal.desiredState === 'cancelled' || proposal.status === 'not_adopted';
+          // §4.6 line 915: the candidate's formal saved proposer is the Agent
+          // work_run that submitted it; without one there is no reader Session.
+          const submittedBy = proposal.submittedBy;
+          allowedReaderSessionRefs = submittedBy === undefined ? [] : [{
+            projectId: submittedBy.sessionRef.projectId, sessionId: submittedBy.sessionRef.sessionId,
+          }];
+          break;
+        }
+        case 'planning_question': {
+          const answerProblem = scopeProblem(identity.answerRef, scope);
+          if (answerProblem !== null) return answerProblem;
+          const answerRead = await readDecoded(identity.answerRef, decodeQueryJobAnswerSnapshot, 'QueryJobAnswer');
+          if (answerRead.status !== 'ready') return answerRead;
+          const answer = answerRead.value;
+          const jobRead = await readDecoded(answer.answer.queryJobRef, decodeQueryJobSnapshot, 'QueryJob');
+          if (jobRead.status !== 'ready') return jobRead;
+          const job = jobRead.value;
+          const jobGoalId = job.job.goalId;
+          if (jobGoalId === null || jobGoalId.length === 0) return reject('incomplete', 'the planning QueryJob names no Goal');
+          if (source.goalRef.goalId !== jobGoalId || source.goalRef.projectId !== scope.projectId) {
+            return reject('invalid', 'the planning question does not belong to the named Goal');
+          }
+          const goalRead = await readGoal(source.goalRef);
+          if (goalRead.status !== 'ready') return goalRead;
+          goal = goalRead.value;
+          if (goal.workspaceRef.projectId !== scope.projectId || goal.workspaceRef.workspaceId !== scope.workspaceId) {
+            return reject('forbidden', 'the planning question Goal is outside the bound scope');
+          }
+          if (job.job.status !== 'answered'
+            || !job.job.answerRefs.some((ref) => sameJson(ref, identity.answerRef))) {
+            return reject('not_found', 'the planning question has no saved formal answer');
+          }
+          const parsed = parseInitialPlanningResponseV2(answer.answer.answer);
+          if (parsed.status !== 'parsed' || parsed.response.kind !== 'needs_decision'
+            || !Number.isSafeInteger(identity.questionIndex) || identity.questionIndex < 0
+            || identity.questionIndex >= parsed.response.questions.length) {
+            return reject('not_found', 'the named planning question does not exist');
+          }
+          pins = [{ ref: structuredClone(goal.ref), revision: goal.revision },
+            { ref: structuredClone(identity.answerRef), revision: 1 },
+            { ref: structuredClone(job.ref), revision: job.revision }];
+          objects = [];
+          options = [];
+          goalBases = [goalBasis(goal)];
+          closed = goal.desiredState === 'cancelled';
+          const readerSessions = await questionReaderSessions(answer.answer.runRef);
+          if (readerSessions.status !== 'ready') return readerSessions;
+          allowedReaderSessionRefs = readerSessions.value;
+          break;
+        }
+        case 'goal_conflict': {
+          // §8.2: both Goals are scope-checked BEFORE either record is read.
+          for (const member of identity.pair) {
+            const memberProblem = scopeProblem(member.goalRef, scope);
+            if (memberProblem !== null) return memberProblem;
+          }
+          const goals: GoalSnapshot[] = [];
+          for (const member of identity.pair) {
+            const goalRead = await readGoal(member.goalRef);
+            if (goalRead.status !== 'ready') return goalRead;
+            const memberGoal = goalRead.value;
+            if (memberGoal.workspaceRef.projectId !== scope.projectId || memberGoal.workspaceRef.workspaceId !== scope.workspaceId) {
+              return reject('forbidden', 'a conflict Goal is outside the bound scope');
+            }
+            if (!sameJson(memberGoal.activePlanRevision, member.activePlanRef)) {
+              return reject('revision_conflict', 'a conflict Goal active Plan pointer moved since the pair was read',
+                [{ ref: structuredClone(memberGoal.ref), revision: memberGoal.revision }]);
+            }
+            goals.push(memberGoal);
+          }
+          if (goals.length !== 2 || sameJson(goals[0]!.ref, goals[1]!.ref)) {
+            return reject('invalid', 'a goal conflict names two distinct Goals');
+          }
+          const leftFootprint = await footprintOf(goals[0]!);
+          if (leftFootprint.status !== 'ready') return leftFootprint;
+          const rightFootprint = await footprintOf(goals[1]!);
+          if (rightFootprint.status !== 'ready') return rightFootprint;
+          if (!goalConflictFacts(leftFootprint.value, rightFootprint.value).overlaps) {
+            return reject('not_found', 'the two Goals have no §4.3 footprint conflict');
+          }
+          const named = goals.find((candidate) => sameJson(candidate.ref, source.goalRef));
+          if (named === undefined) return reject('invalid', 'the conflict source does not name one of its Goals');
+          goal = named;
+          pins = goals.map((member) => ({ ref: structuredClone(member.ref), revision: member.revision }));
+          for (const member of goals) {
+            if (member.activePlanRevision !== null) {
+              pins.push({ ref: structuredClone(member.activePlanRevision), revision: 1 });
+            }
+          }
+          objects = [];
+          options = CONFLICT_OPTIONS.map((option) => ({ ...option }));
+          goalBases = goals.map(goalBasis);
+          const terminals = await Promise.all(goals.map(goalTerminal));
+          const unreadable = terminals.find((terminal) => 'status' in terminal);
+          if (unreadable !== undefined && 'status' in unreadable) return unreadable;
+          closed = terminals.some((terminal) => !('status' in terminal) && (terminal.cancelled || terminal.completed));
+          break;
+        }
+        case 'note_review':
+        case 'message_release':
+          return reject('unsupported', 'this decision source is not available in this slice');
+        default:
+          return reject('invalid', 'the decision source kind is not recognized');
+      }
+
+      if (pins.length > 0) {
+        const pinProblem = await verifyPins(pins);
+        if (pinProblem !== null) return pinProblem;
+      }
+      const canonicalSource: DecisionSourceV1 = {
+        kind: source.kind,
+        key: source.key,
+        goalRef: structuredClone(goal.ref),
+        pins: clonePins(pins),
+        goalBases: goalBases.map((basis) => structuredClone(basis)),
+      };
+      // §2.1/§3.3: a virtual absence pin (Task@0) is part of the source
+      // identity and the accepted pin set, but it has no stored record schema,
+      // so it must never become a Store commit guard.
+      const guards = pins.filter((pin) => !isAbsencePin(pin)).map((pin) => {
+        const refKey = canonicalOf(pin.ref);
+        if (refKey === null) throw new Error('a verified decision source pin ref must canonicalize');
+        return { refKey, expectedRevision: pin.revision };
+      });
+      return {
+        status: 'ready',
+        value: { source: canonicalSource, goal, objects, options, guards, closed, allowedReaderSessionRefs },
+      };
+    },
+    readApplication: readApplicationReceiptFacts(records),
+  };
+}
+
+// -------------------------------------------------------------------------- //
+// §4.6 line 915 / N6: the SAVED answer's historical reader facts             //
+// -------------------------------------------------------------------------- //
+
+function readerScopeProblem(ref: unknown, scope: { projectId: string; workspaceId: string }): CoreRejection | null {
+  if (!isObject(ref)) {
+    return { status: 'rejected', code: 'invalid', reason: 'a saved answer source ref is not a JSON object' };
+  }
+  const projectId = ref['projectId'];
+  if (typeof projectId === 'string' && projectId.length > 0 && projectId !== scope.projectId) {
+    return { status: 'rejected', code: 'forbidden', reason: 'a saved answer source object belongs to another project' };
+  }
+  const workspaceId = ref['workspaceId'];
+  if (typeof workspaceId === 'string' && workspaceId.length > 0 && workspaceId !== scope.workspaceId) {
+    return { status: 'rejected', code: 'forbidden', reason: 'a saved answer source object belongs to another workspace' };
+  }
+  return null;
+}
+
+async function readerReadRecord(
+  records: S5RecordPort, ref: unknown,
+): Promise<{ ok: true; record: EncodedRecord } | { ok: false; rejection: CoreRejection }> {
+  const key = canonicalOf(ref);
+  if (key === null) {
+    return { ok: false, rejection: { status: 'rejected', code: 'invalid', reason: 'a saved answer source ref is not canonicalizable JSON' } };
+  }
+  let read: Awaited<ReturnType<S5RecordPort['readMany']>>;
+  try {
+    read = await records.readMany([key]);
+  } catch {
+    return { ok: false, rejection: { status: 'rejected', code: 'unavailable', reason: 'the saved answer source record could not be read' } };
+  }
+  if (read.status !== 'ready') {
+    const code: CoreError = read.code === 'not_found' ? 'not_found'
+      : read.code === 'revision_conflict' ? 'revision_conflict'
+        : read.code === 'unsupported' ? 'unsupported' : 'unavailable';
+    return { ok: false, rejection: { status: 'rejected', code, reason: read.reason } };
+  }
+  const record = read.value.records.find((candidate) => candidate.refKey === key);
+  if (record === undefined) {
+    // F5/§4.2 line 821/§8.2 line 1367: a ready batch that does NOT report the
+    // key as missing is an inconsistent/incomplete read, not an absent record.
+    // Only the store's own missing report may become `not_found`.
+    return read.value.missing.includes(key)
+      ? { ok: false, rejection: { status: 'rejected', code: 'not_found', reason: 'the saved answer source record does not exist' } }
+      : { ok: false, rejection: { status: 'rejected', code: 'unavailable', reason: 'the saved answer source read neither returned nor reported missing the record' } };
+  }
+  return { ok: true, record };
+}
+
+async function readerDecode<T>(
+  records: S5RecordPort, ref: unknown, decode: (record: EncodedRecord) => DecodeResult<T>, label: string,
+): Promise<ReadResult<T>> {
+  const loaded = await readerReadRecord(records, ref);
+  if (!loaded.ok) return loaded.rejection;
+  const decoded = decode(loaded.record);
+  if (decoded.status !== 'decoded') {
+    return { status: 'rejected', code: 'unavailable', reason: `the saved answer ${label} record is damaged: ${decoded.reason}` };
+  }
+  return { status: 'ready', value: decoded.value };
+}
+
+/**
+ * §4.6 line 915 / N6: derive the formal allowed reader Sessions of a SAVED
+ * answer from the historical source captured with it, independent of whether
+ * that source is still answerable. `readSource` is the answerability seam and
+ * refuses a resolved candidate; this reader only re-derives the saved formal
+ * proposer / request Session facts so the asking Session can read back the
+ * answer it acted on. A read failure is returned (`unavailable`/`forbidden`),
+ * never folded into "no reader".
+ */
+export async function readSavedAnswerReaderSessions(
+  records: S5RecordPort,
+  captured: DecisionSourceV1,
+  scope: { projectId: string; workspaceId: string },
+): Promise<ReadResult<SessionRef[]>> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(captured.key);
+  } catch {
+    return { status: 'rejected', code: 'invalid', reason: 'the saved answer source key is not parseable JSON' };
+  }
+  if (!isObject(parsed) || parsed['kind'] !== captured.kind) {
+    return { status: 'rejected', code: 'invalid', reason: 'the saved answer source key does not match its declared kind' };
+  }
+  const identity = parsed as unknown as DecisionSourceIdentityV1;
+  if (decisionSourceKey(identity) !== captured.key) {
+    return { status: 'rejected', code: 'invalid', reason: 'the saved answer source key is not the canonical natural identity' };
+  }
+  switch (identity.kind) {
+    case 'message': {
+      const problem = readerScopeProblem(identity.messageRef, scope);
+      if (problem !== null) return problem;
+      const read = await readerDecode(records, identity.messageRef, decodeSessionMessageRecord, 'SessionMessage');
+      if (read.status !== 'ready') return read;
+      const sender = read.value.sender;
+      return { status: 'ready', value: sender.kind === 'work_run'
+        ? [{ projectId: sender.sessionRef.projectId, sessionId: sender.sessionRef.sessionId }] : [] };
+    }
+    case 'candidate': {
+      // The captured answer's proposal pin proves the formal proposer even after
+      // the head stopped being live (an accepted candidate is still stored).
+      const proposalPin = captured.pins.find((pin) => isObject(pin.ref) && pin.ref['aggregateType'] === 'PlanProposal');
+      if (proposalPin === undefined) return { status: 'ready', value: [] };
+      const problem = readerScopeProblem(proposalPin.ref, scope);
+      if (problem !== null) return problem;
+      const proposal = await readProposal(records, proposalPin.ref as unknown as PlanProposalRef);
+      if (proposal.status !== 'ready') return proposal;
+      if (proposal.proposal.kind !== 'candidate_v2') return { status: 'ready', value: [] };
+      const submittedBy = proposal.proposal.submittedBy;
+      return { status: 'ready', value: submittedBy === undefined ? [] : [{
+        projectId: submittedBy.sessionRef.projectId, sessionId: submittedBy.sessionRef.sessionId,
+      }] };
+    }
+    case 'planning_question': {
+      const problem = readerScopeProblem(identity.answerRef, scope);
+      if (problem !== null) return problem;
+      const answer = await readerDecode(records, identity.answerRef, decodeQueryJobAnswerSnapshot, 'QueryJobAnswer');
+      if (answer.status !== 'ready') return answer;
+      const runRef = answer.value.answer.runRef;
+      if (!isObject(runRef)) return { status: 'ready', value: [] };
+      const run = await readerDecode(records, runRef, decodeQueryRunSnapshotRecord, 'QueryRun');
+      if (run.status !== 'ready') return run;
+      const sessionRef = run.value.run.executionState?.sessionRef;
+      return { status: 'ready', value: sessionRef === undefined ? [] : [{
+        projectId: sessionRef.projectId, sessionId: sessionRef.sessionId,
+      }] };
+    }
+    case 'goal_cause':
+    case 'goal_conflict':
+      return { status: 'ready', value: [] };
+    default:
+      return { status: 'ready', value: [] };
+  }
+}

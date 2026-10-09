@@ -375,6 +375,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       ...(checks === undefined ? {} : { checks }),
       ...(workflow === undefined ? {} : { workflow }),
       sourcePolicyFor,
+      operatorActor: actor,
     });
   } catch (error) {
     await instanceLease.release().catch(() => undefined);

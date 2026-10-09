@@ -19,6 +19,12 @@ import type { ActorRef, GoalCreatedEvent } from "../../../contracts/command-even
 import type {
   GoalDesiredState, GoalRef, GoalSnapshot, ProjectRef, ProjectSnapshot, WorkspaceRef, WorkspaceSnapshot,
 } from "../../../contracts/ledger.js";
+import {
+  DEFAULT_GOAL_SETTINGS_V1,
+  DEFAULT_WORKSPACE_DECISION_SETTINGS_V1,
+  type GoalSettingsV1,
+  type WorkspaceDecisionSettingsV1,
+} from "../../../contracts/goal-decisions.js";
 import type { PlanRevisionRef } from "../../../contracts/plan.js";
 import { canonicalJson, type JsonValue } from "../../../contracts/fingerprint.js";
 import type { DecodeResult, EncodedDomainEvent, EncodedRecord, EncodedRecordSchema, RecordBackendSchemas } from "../../record-store/ports.js";
@@ -232,7 +238,62 @@ function validateWorkspaceSnapshot(record: EncodedRecord): DecodeResult<EncodedR
   if (canonicalRefKey(ref) !== record.refKey) {
     return invalid("Workspace snapshot ref is not the outer canonical ref_key");
   }
+  if (parsed["decisionSettings"] !== undefined) {
+    const settingsProblem = workspaceDecisionSettingsProblem(parsed["decisionSettings"]);
+    if (settingsProblem !== null) return invalid(settingsProblem);
+  }
   return { status: "decoded", value: copyRecord(record) };
+}
+
+const NOTICE_CATEGORIES: readonly string[] = [
+  "member_notice", "second_expiry", "handoff", "note_review",
+  "undelivered_reply", "automatic_rework", "continuation",
+];
+
+/**
+ * Pure `NoticePositionV1` shape check. A legacy position is ordered by its
+ * `occurredAt`; a commit position carries the ledger cursor bound at creation.
+ * Neither is a new aggregate and neither is written back to an old record.
+ */
+function noticePositionProblem(value: unknown): string | null {
+  if (!isRecord(value)) return "Workspace decisionSettings notice position must be an object";
+  if (value["kind"] === "legacy") {
+    if (!hasExactKeys(value, ["kind", "occurredAt", "itemKey"])) {
+      return "a legacy notice position must carry exactly kind, occurredAt and itemKey";
+    }
+    if (!nonEmptyString(value["occurredAt"])) return "a legacy notice position occurredAt must be a non-empty string";
+    return nonEmptyString(value["itemKey"]) ? null : "a notice position itemKey must be a non-empty string";
+  }
+  if (value["kind"] === "commit") {
+    if (!hasExactKeys(value, ["kind", "cursor", "itemKey"])) {
+      return "a commit notice position must carry exactly kind, cursor and itemKey";
+    }
+    const cursor = value["cursor"];
+    if (!(typeof cursor === "string" && /^c\d{10}$/.test(cursor))) {
+      return "a commit notice position cursor must be a CommitCursor";
+    }
+    return nonEmptyString(value["itemKey"]) ? null : "a notice position itemKey must be a non-empty string";
+  }
+  return 'a notice position kind must be "legacy" or "commit"';
+}
+
+/** Pure `WorkspaceDecisionSettingsV1` shape check (missing field is handled by the caller). */
+export function workspaceDecisionSettingsProblem(value: unknown): string | null {
+  if (!hasExactKeys(value, ["schemaVersion", "noticeSeen"])) {
+    return "Workspace decisionSettings must carry exactly schemaVersion and noticeSeen";
+  }
+  const parsed = value as UnknownRecord;
+  if (parsed["schemaVersion"] !== 1) return "Workspace decisionSettings schemaVersion must be 1";
+  const noticeSeen = parsed["noticeSeen"];
+  if (!isRecord(noticeSeen)) return "Workspace decisionSettings noticeSeen must be an object";
+  for (const key of Object.keys(noticeSeen)) {
+    if (!NOTICE_CATEGORIES.includes(key)) {
+      return "Workspace decisionSettings noticeSeen carries an unknown notice category";
+    }
+    const positionProblem = noticePositionProblem(noticeSeen[key]);
+    if (positionProblem !== null) return positionProblem;
+  }
+  return null;
 }
 
 function isGoalDesiredState(value: unknown): value is GoalDesiredState {
@@ -245,7 +306,7 @@ function isGoalDesiredState(value: unknown): value is GoalDesiredState {
  * the three stored values; `desiredStateRevision` and `desiredStateRequestedBy`
  * are absent on records written before A.2 (read as 1 / null).
  */
-function goalSnapshotProblem(parsed: UnknownRecord): string | null {
+export function goalSnapshotProblem(parsed: UnknownRecord): string | null {
   const ref = goalRefFromValue(parsed["ref"]);
   if (ref === null) return "Goal snapshot has no valid GoalRef";
   const workspaceRef = workspaceRefFromValue(parsed["workspaceRef"]);
@@ -278,6 +339,67 @@ function goalSnapshotProblem(parsed: UnknownRecord): string | null {
     if (actor === null || actor.kind === "agent") {
       return "Goal snapshot desiredStateRequestedBy must be null or a Host (human/system) actor";
     }
+  }
+  // Slice 5: the optional §2.2 settings. Absent stays absent (the default helper
+  // applies it at consumption); present must be a complete legal shape, so a
+  // corrupt ref/enum/float/negative order can never be read as "no settings".
+  if (parsed["settings"] !== undefined) {
+    const settingsProblem = goalSettingsProblem(parsed["settings"], ref.projectId);
+    if (settingsProblem !== null) return settingsProblem;
+  }
+  return null;
+}
+
+const GOAL_SETTINGS_KEYS: readonly string[] = [
+  "schemaVersion", "autonomy", "order", "waitForGoalRef", "parallelRisks",
+];
+const GOAL_AUTONOMIES: readonly string[] = ["every_step", "after_plan_confirmation"];
+
+/** Pure `GoalParallelRiskV1` shape check; both plan refs may be an explicit null. */
+function goalParallelRiskProblem(value: unknown, projectId: string): string | null {
+  if (!hasExactKeys(value, ["otherGoalRef", "selfPlanRef", "otherPlanRef"])) {
+    return "Goal settings parallelRisks entry must carry exactly otherGoalRef, selfPlanRef and otherPlanRef";
+  }
+  const risk = value as UnknownRecord;
+  const other = goalRefFromValue(risk["otherGoalRef"]);
+  if (other === null || other.projectId !== projectId) {
+    return "Goal settings parallelRisks.otherGoalRef must be a GoalRef in this project";
+  }
+  for (const field of ["selfPlanRef", "otherPlanRef"]) {
+    const planRef = risk[field];
+    if (planRef !== null && planRevisionRefFromValue(planRef, projectId) === null) {
+      return `Goal settings parallelRisks.${field} must be null or a PlanRevisionRef in this project`;
+    }
+  }
+  return null;
+}
+
+/** Pure `GoalSettingsV1` shape check; the caller only invokes it for a present field. */
+export function goalSettingsProblem(value: unknown, projectId: string): string | null {
+  if (!hasExactKeys(value, GOAL_SETTINGS_KEYS)) {
+    return "Goal snapshot settings must carry exactly the GoalSettingsV1 fields";
+  }
+  const settings = value as UnknownRecord;
+  if (settings["schemaVersion"] !== 1) return "Goal settings schemaVersion must be 1";
+  if (!GOAL_AUTONOMIES.includes(settings["autonomy"] as string)) {
+    return "Goal settings autonomy is not a legal GoalAutonomyV1";
+  }
+  // order is a non-negative integer; a float or negative order is corrupt.
+  if (!isSafeRevision(settings["order"])) {
+    return "Goal settings order must be a safe non-negative integer";
+  }
+  const wait = settings["waitForGoalRef"];
+  if (wait !== null) {
+    const waitRef = goalRefFromValue(wait);
+    if (waitRef === null || waitRef.projectId !== projectId) {
+      return "Goal settings waitForGoalRef must be null or a GoalRef in this project";
+    }
+  }
+  const risks = settings["parallelRisks"];
+  if (!Array.isArray(risks)) return "Goal settings parallelRisks must be an array";
+  for (const risk of risks) {
+    const riskProblem = goalParallelRiskProblem(risk, projectId);
+    if (riskProblem !== null) return riskProblem;
   }
   return null;
 }
@@ -363,17 +485,57 @@ function hasExactKeys(value: unknown, keys: readonly string[]): boolean {
 /**
  * The Goal a `GoalDesiredStateChanged` event carries has no unknown or missing
  * field at any level, so a receipt replay can return it as the written
- * snapshot (shape-checked separately by `goalSnapshotProblem`).
+ * snapshot (shape-checked separately by `goalSnapshotProblem`). Slice 5 makes
+ * `settings` an optional extra whose presence is preserved, never defaulted in.
  */
+const WRITTEN_GOAL_KEYS: readonly string[] = [
+  "ref", "workspaceRef", "objective", "desiredState", "desiredStateRevision", "desiredStateRequestedBy",
+  "activePlanRevision", "revision",
+];
+
 function writtenGoalHasExactShape(goal: UnknownRecord): boolean {
-  return hasExactKeys(goal, [
-    "ref", "workspaceRef", "objective", "desiredState", "desiredStateRevision", "desiredStateRequestedBy",
-    "activePlanRevision", "revision",
-  ])
+  const hasSettings = Object.prototype.hasOwnProperty.call(goal, "settings");
+  return hasExactKeys(goal, hasSettings ? [...WRITTEN_GOAL_KEYS, "settings"] : WRITTEN_GOAL_KEYS)
     && hasExactKeys(goal["ref"], ["aggregateType", "projectId", "goalId"])
     && hasExactKeys(goal["workspaceRef"], ["aggregateType", "projectId", "workspaceId"])
     && (goal["activePlanRevision"] === null || hasExactKeys(goal["activePlanRevision"], ["aggregateType", "projectId", "planId"]))
-    && (goal["desiredStateRequestedBy"] === null || hasExactKeys(goal["desiredStateRequestedBy"], ["kind", "id"]));
+    && (goal["desiredStateRequestedBy"] === null || hasExactKeys(goal["desiredStateRequestedBy"], ["kind", "id"]))
+    && (!hasSettings || hasExactKeys(goal["settings"], GOAL_SETTINGS_KEYS));
+}
+
+/**
+ * Full `GoalSnapshot` value check for the slice-5 write events: the record
+ * validator's field rules plus the exact written field set (a present
+ * `settings` is preserved, an absent one stays absent).
+ */
+export function goalSnapshotValueProblem(value: unknown): string | null {
+  if (!isRecord(value)) return "Goal value must be an object";
+  const problem = goalSnapshotProblem(value);
+  if (problem !== null) return problem;
+  return writtenGoalHasExactShape(value) ? null : "Goal value must carry exactly the Goal snapshot fields";
+}
+
+const WORKSPACE_VALUE_KEYS: readonly string[] = ["ref", "revision", "decisionSettings"];
+
+/**
+ * Full `WorkspaceSnapshot` value check for the slice-5 write events: the exact
+ * `ref`/`revision` (and an optional, validated `decisionSettings`), never a
+ * defaulted field.
+ */
+export function workspaceSnapshotValueProblem(value: unknown): string | null {
+  if (!isRecord(value)) return "Workspace value must be an object";
+  const hasSettings = Object.prototype.hasOwnProperty.call(value, "decisionSettings");
+  if (!hasExactKeys(value, hasSettings ? WORKSPACE_VALUE_KEYS : ["ref", "revision"])) {
+    return "Workspace value must carry exactly its ref, revision and optional decisionSettings";
+  }
+  const ref = workspaceRefFromValue(value["ref"]);
+  if (ref === null) return "Workspace value has no valid WorkspaceRef";
+  if (!isSafeRevision(value["revision"])) return "Workspace value revision must be a safe non-negative integer";
+  if (hasSettings) {
+    const settingsProblem = workspaceDecisionSettingsProblem(value["decisionSettings"]);
+    if (settingsProblem !== null) return settingsProblem;
+  }
+  return null;
 }
 
 /** The legal `(control, from, to)` triples of GOAL-04…06 (D-9). */
@@ -564,7 +726,16 @@ export function decodeWorkspaceSnapshot(record: EncodedRecord): DecodeResult<Wor
   if (checked.status !== "decoded") return checked;
   const parsed = JSON.parse(record.json) as WorkspaceSnapshot;
   const ref = workspaceRefFromValue(parsed.ref)!;
-  return { status: "decoded", value: { ref, revision: record.revision } };
+  const decisionSettings = parsed.decisionSettings;
+  return {
+    status: "decoded",
+    value: {
+      ref,
+      revision: record.revision,
+      // Present stays byte-identical; absent stays absent (no default is stored).
+      ...(decisionSettings === undefined ? {} : { decisionSettings }),
+    },
+  };
 }
 
 export function decodeGoalSnapshot(record: EncodedRecord): DecodeResult<GoalSnapshot> {
@@ -575,6 +746,7 @@ export function decodeGoalSnapshot(record: EncodedRecord): DecodeResult<GoalSnap
   const workspaceRef = workspaceRefFromValue(parsed.workspaceRef)!;
   const active = parsed.activePlanRevision;
   const requestedBy = parsed.desiredStateRequestedBy;
+  const settings = parsed.settings;
   return {
     status: "decoded",
     value: {
@@ -592,8 +764,32 @@ export function decodeGoalSnapshot(record: EncodedRecord): DecodeResult<GoalSnap
       activePlanRevision:
         active === null ? null : planRevisionRefFromValue(active, ref.projectId),
       revision: record.revision,
+      // Slice 5: present stays byte-identical, absent stays absent (the default
+      // is applied by `readGoalSettings` at the consumption point, never stored).
+      ...(settings === undefined ? {} : { settings }),
     },
   };
+}
+
+/**
+ * The default-applying read helper (spec §2.2): returns the saved Goal settings
+ * or the exact §2.2 defaults when the record predates the field. It never
+ * backfills the stored record.
+ */
+export function readGoalSettings(goal: GoalSnapshot): GoalSettingsV1 {
+  // Present settings are returned exactly as stored; an old record reads the
+  // §2.2 default, freshly cloned so a caller can never mutate the shared const.
+  return goal.settings === undefined ? structuredClone(DEFAULT_GOAL_SETTINGS_V1) : goal.settings;
+}
+
+/**
+ * The default-applying read helper (spec §2.2): returns the saved Workspace
+ * decision settings or the exact §2.2 defaults for an old Workspace record.
+ */
+export function effectiveWorkspaceDecisionSettings(workspace: WorkspaceSnapshot): WorkspaceDecisionSettingsV1 {
+  return workspace.decisionSettings === undefined
+    ? structuredClone(DEFAULT_WORKSPACE_DECISION_SETTINGS_V1)
+    : workspace.decisionSettings;
 }
 
 export function decodeGoalCreatedEvent(event: EncodedDomainEvent): DecodeResult<GoalCreatedEvent> {

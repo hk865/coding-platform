@@ -104,6 +104,20 @@ const ROUTE_LABELS: Record<CoreRouteSuffix, string> = {
   // CoreRouteSuffix); the action is the new UI's (task E3).
   'graph/look': '查看图节点',
   'graph/find': '查找节点',
+  // Slice 5 §4.5 suffixes: display labels only (the table is total over
+  // CoreRouteSuffix); the actions are the new UI's (task E3).
+  'goals/settings': '查看目标设置',
+  'goals/settings/set': '修改目标设置',
+  'goals/reorder': '调整目标顺序',
+  'goals/conflicts': '查看目标冲突',
+  'plans/request-candidate': '查看请求候选',
+  'plans/abandon': '放弃计划候选',
+  'decisions/queue': '查看决定队列',
+  'decisions/card': '查看决定卡',
+  'decisions/answer': '答复决定',
+  'decisions/application': '记录决定落实',
+  'decisions/notices/seen': '标记通知已读',
+  'messages/user-send': '向用户发送消息',
 };
 
 export const routeLabel = (route: CoreRouteSuffix): string => ROUTE_LABELS[route];

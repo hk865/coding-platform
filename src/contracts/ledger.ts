@@ -18,6 +18,7 @@ import type { PlanProposalSnapshot, UserDecisionSnapshot } from "./goal-change.j
 import type { MaterialAccessGrantRef } from "./material-access.js";
 import type { SessionMessageRef } from "./core/session-message.js";
 import type { ActorRef } from "./command-event.js";
+import type { GoalSettingsV1, WorkspaceDecisionSettingsV1 } from "./goal-decisions.js";
 import type { TaskRequeueRef, TaskReworkRefusalRef } from "./task-requeue.js";
 import type { SessionAnomalyAnchorRef } from "./session-anomaly.js";
 // 协作通信：只剩 Agent 归因（AgentPrincipalRefV1）引用的参与关系 ref。
@@ -44,6 +45,8 @@ export type ProjectSnapshot = {
 export type WorkspaceSnapshot = {
     ref: WorkspaceRef;
     revision: number;
+    /** Slice 5 optional per-category notice positions; absent reads as the default. */
+    decisionSettings?: WorkspaceDecisionSettingsV1;
 };
 /** D-9 durable desired state; `GoalCreated` still writes only "active". */
 export type GoalDesiredState = "active" | "paused" | "cancelled";
@@ -68,6 +71,8 @@ export type GoalSnapshot = {
     activePlanRevision: PlanRevisionRef | null;
     /** 1 at creation; 2+ after an accepted plan revision. */
     revision: number;
+    /** Slice 5 optional Goal settings; absent reads as the default. */
+    settings?: GoalSettingsV1;
 };
 export type VersionedRef = {
     ref: AggregateRef;

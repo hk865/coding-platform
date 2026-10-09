@@ -31,6 +31,7 @@ import {
 import type { FinalizedChecks } from '../model/evidence-contracts.js';
 import {
     actorRefProblem, incompleteCauseProblem, isSha256Hex, newBasisInputRefsProblem, reverifyBasisProblem,
+    noticeOriginFieldsProblem, NOTICE_ORIGIN_COMMIT_CURSOR_FIELDS, type NoticeOriginWireV1,
 } from './rework-codecs.js';
 
 // -------------------------------------------------------------------------- //
@@ -285,7 +286,8 @@ function roundSnapshotProblem(value: unknown): string | null {
     if (!isRecord(value)) return 'VerificationRoundSnapshot must be an object';
     if (!hasOnlyKeys(value, ['ref', 'revision', 'schemaVersion', 'subject', 'subjectRunRef', 'adoptedPlanRef',
         'taskBasisRef', 'executor', 'configuration', 'configurationDigest', 'identity', 'sourceProof',
-        'verificationPlan', 'checks', 'status', 'outcome', 'gaps', 'evidenceRefs', 'chain'])) {
+        'verificationPlan', 'checks', 'status', 'outcome', 'gaps', 'evidenceRefs', 'chain',
+        'since', 'noticeAutomationCap'])) {
         return 'VerificationRoundSnapshot carries unknown fields';
     }
     const ref = roundRefProblem(value['ref']);
@@ -315,6 +317,10 @@ function roundSnapshotProblem(value: unknown): string | null {
     if (value['outcome'] !== null && !OUTCOMES.includes(value['outcome'] as typeof OUTCOMES[number])) return 'VerificationRoundSnapshot outcome is not recognized';
     if (!Array.isArray(value['gaps'])) return 'VerificationRoundSnapshot gaps must be an array';
     if (!Array.isArray(value['evidenceRefs'])) return 'VerificationRoundSnapshot evidenceRefs must be an array';
+    // Slice 5 §2.5 wire-only notice origin (absent on old rounds): the creating
+    // commit cursor and, for an automatic reverify, the cap at write time.
+    const originProblem = noticeOriginFieldsProblem(value, 'VerificationRoundSnapshot');
+    if (originProblem !== null) return originProblem;
     // Absent = legacy slot-less chain root (ordinal 1); every A.2 round carries it.
     if (value['chain'] !== undefined) return roundChainProblem(value['chain'], value['ref'] as UnknownRecord);
     return null;
@@ -333,18 +339,34 @@ function roundRecordProblem(record: EncodedRecord): string | null {
     return null;
 }
 
-/** Encode a round snapshot into its immutable RecordStore record. */
-export function encodeVerificationRoundSnapshot(snapshot: RoundSnapshot): EncodedRecord {
-    const refKey = canonicalOf(snapshot.ref);
-    if (refKey === null) throw new Error('VerificationRound ref is not canonical JSON');
-    return { refKey, schemaId: VERIFICATION_ROUND_SNAPSHOT_SCHEMA_ID, revision: snapshot.revision, json: JSON.stringify(snapshot) };
+/** Removes the wire-only notice origin from a decoded public DTO (SPEC §2.5). */
+function withoutNoticeOrigin<T extends Record<string, unknown>>(value: T): T {
+    const copy = { ...value };
+    delete copy['since'];
+    delete copy['noticeAutomationCap'];
+    return copy;
 }
 
-/** Decode and validate one `VerificationRoundSnapshot@1` record. */
+/**
+ * Encode a round snapshot into its immutable RecordStore record. An overload
+ * with `origin` writes the wire-only notice origin (`since` and, for an
+ * automatic reverify, `noticeAutomationCap`); the public DTO is never extended.
+ * The single-argument overload keeps the historical `records.map(encode…)` use.
+ */
+export function encodeVerificationRoundSnapshot(snapshot: RoundSnapshot): EncodedRecord;
+export function encodeVerificationRoundSnapshot(snapshot: RoundSnapshot, origin: NoticeOriginWireV1): EncodedRecord;
+export function encodeVerificationRoundSnapshot(snapshot: RoundSnapshot, origin?: NoticeOriginWireV1): EncodedRecord {
+    const refKey = canonicalOf(snapshot.ref);
+    if (refKey === null) throw new Error('VerificationRound ref is not canonical JSON');
+    return { refKey, schemaId: VERIFICATION_ROUND_SNAPSHOT_SCHEMA_ID, revision: snapshot.revision,
+        json: JSON.stringify(origin === undefined ? snapshot : { ...snapshot, ...origin }) };
+}
+
+/** Decode and validate one `VerificationRoundSnapshot@1` record; the public DTO never carries the origin. */
 export function decodeVerificationRoundSnapshot(record: EncodedRecord): DecodeResult<RoundSnapshot> {
     const problem = roundRecordProblem(record);
     if (problem !== null) return invalid(problem);
-    return { status: 'decoded', value: parseObject(record.json) as unknown as RoundSnapshot };
+    return { status: 'decoded', value: withoutNoticeOrigin(parseObject(record.json)!) as unknown as RoundSnapshot };
 }
 
 // -------------------------------------------------------------------------- //
@@ -474,7 +496,8 @@ export function verificationRoundEventFromEvent(event: EncodedDomainEvent): Deco
     if (problem !== null) return invalid(problem);
     const a2Problem = a2RoundEventProblem(body);
     if (a2Problem !== null) return invalid(a2Problem);
-    return { status: 'decoded', value: body as unknown as VerificationRoundEvent };
+    const result = withoutNoticeOrigin(body['result'] as UnknownRecord);
+    return { status: 'decoded', value: { ...body, result } as unknown as VerificationRoundEvent };
 }
 
 const INTERRUPTION_CAUSES: readonly string[] = ['host_restart', 'ticket_invalid'];
@@ -639,7 +662,8 @@ export const VERIFICATION_ROUND_BY_STATUS_LOOKUP = 'VerificationRoundByStatus' a
 /** The ONE R3e registration. Run/Plan/policy/baseline schemas keep their owners. */
 export const EVIDENCE_RECORD_SCHEMAS: RecordBackendSchemas = {
     records: [
-        { schemaId: VERIFICATION_ROUND_SNAPSHOT_SCHEMA_ID, aggregateType: 'VerificationRound', validate: validateRoundRecord },
+        { schemaId: VERIFICATION_ROUND_SNAPSHOT_SCHEMA_ID, aggregateType: 'VerificationRound', validate: validateRoundRecord,
+            commitCursorFields: NOTICE_ORIGIN_COMMIT_CURSOR_FIELDS },
         { schemaId: EVIDENCE_SNAPSHOT_SCHEMA_ID, aggregateType: 'Evidence', validate: validateEvidenceRecord },
         { schemaId: TASK_EVIDENCE_INDEX_SNAPSHOT_SCHEMA_ID, aggregateType: 'TaskEvidenceIndex', validate: validateIndexRecord },
     ],

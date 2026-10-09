@@ -24,6 +24,7 @@ import type { TaskReductionSnapshot } from '../../../contracts/reduction.js';
 import type { GoalPhaseRef, GoalPhaseSnapshot } from '../../../contracts/goal-phase.js';
 import type { TaskPhaseCauseV1 } from '../../../contracts/task-failure.js';
 import type { SessionAnomalyAnchorV1 } from '../../../contracts/session-anomaly.js';
+import type { QueryJobRef } from '../../../contracts/query-job.js';
 import type {
   TaskRequeueRef, TaskRequeueSnapshotV1, TaskReworkRefusalRef, TaskReworkRefusalSnapshotV1,
 } from '../../../contracts/task-requeue.js';
@@ -59,10 +60,15 @@ import {
 } from './plan-task-basis.js';
 import {
   PLAN_PROPOSAL_LOOKUP_INDEX,
+  S5_PLAN_PROPOSAL_BY_REQUEST,
+  candidateRequestRef,
+  compareProposalChainPositions,
+  decodePlanProposalOrigin,
   decodePlanProposalRecord,
   decodePlanRevisionSnapshot,
   planProposalRefKey,
   planRevisionRefKey,
+  type NoticeOriginWireV1,
 } from '../persistence/plan-record-codecs.js';
 import { decodeGoalPhaseSnapshot } from './completion-record-codecs.js';
 import { decodeControlIntentSnapshot } from '../persistence/control-record-codecs.js';
@@ -70,6 +76,13 @@ import type { ControlIntentSnapshotV1 } from '../../../contracts/control-intent.
 import {
   decodeTaskRequeueSnapshot, decodeTaskReworkRefusalSnapshot, taskRequeueRefKey, taskReworkRefusalRefKey,
 } from './claim-record-codecs.js';
+
+/**
+ * Slice 5 §2.2/§2.4: the default-applying read of a candidate's request slot
+ * (`candidateRequestRef`). It lives with the `PlanProposal` codec; re-exported
+ * here so the tasks-side plan readers and services share the one declaration.
+ */
+export { candidateRequestRef } from '../persistence/plan-record-codecs.js';
 
 const RUN_BY_GOAL_INDEX = 'r3c-run-by-goal';
 /** R4c.1 directed candidate index: exactly one Task's Runs, any Plan. */
@@ -443,6 +456,28 @@ export async function readProposal(
   return { status: 'ready', proposal: decoded.value, readThrough: read.batch.readThrough };
 }
 
+/**
+ * Slice 5 §2.5/T-R2-2: the wire-only creation origin of one stored proposal,
+ * read separately from the public DTO so a replace/accept/abandon rewrites the
+ * record with the SAME `since` (never rebinds). A record without `since` keeps
+ * the absent origin; a damaged origin is `unavailable`, never silently absent.
+ */
+export async function readProposalOrigin(
+  records: GoalRecordTransactionPort,
+  ref: PlanProposalRef,
+): Promise<{ status: 'ready'; origin: NoticeOriginWireV1; readThrough: CommitCursor | null } | Rejected> {
+  const key = planProposalRefKey(ref);
+  const read = await readBatch(records, [key]);
+  if (read.status !== 'ready') return read;
+  const record = read.batch.present.get(key);
+  if (record === undefined) return { status: 'rejected', code: 'not_found', reason: `proposal ${ref.proposalId} does not exist` };
+  const decoded = decodePlanProposalOrigin(record);
+  if (decoded.status !== 'decoded') {
+    return unavailable(`proposal ${ref.proposalId} origin is corrupt: ${decoded.reason}`);
+  }
+  return { status: 'ready', origin: decoded.value, readThrough: read.batch.readThrough };
+}
+
 async function readLookupKeys(
   records: GoalRecordTransactionPort & RecordLookupPort,
   index: string,
@@ -526,6 +561,197 @@ export async function findPendingProposal(
   }
   return { status: 'rejected', code: 'revision_conflict',
     reason: 'the pending-plan window changed while it was being read' };
+}
+
+/**
+ * Slice 5 §2.4 per-request head read: the current candidate of ONE saved
+ * request (`s5-plan-proposal-by-goal-request`). The returned head is a live
+ * candidate even when it is derived stale; only `accepted`/`not_adopted`
+ * candidates are closed. Part 1 declares the signature; the read lands in
+ * part 2 together with the service that compiles the slot commit.
+ */
+export async function readRequestCandidateHead(
+  records: GoalRecordTransactionPort & RecordLookupPort,
+  input: { goalRef: GoalRef; requestRef: QueryJobRef },
+): Promise<{ status: 'ready'; head: PlanProposal | null; readThrough: CommitCursor | null } | Rejected> {
+  const { goalRef, requestRef } = input;
+  const values = [goalRef.projectId, requestRef.workspaceId, goalRef.goalId, requestRef.queryJobId];
+  for (let attempt = 0; attempt < WINDOW_MAX_ATTEMPTS; attempt += 1) {
+    const found = await readLookupKeys(records, S5_PLAN_PROPOSAL_BY_REQUEST, values);
+    if (found.status !== 'ready') return found;
+    if (found.refKeys.length === 0) {
+      return { status: 'ready', head: null, readThrough: found.readThrough };
+    }
+    const canonical = await readBatch(records, found.refKeys);
+    if (canonical.status !== 'ready') return canonical;
+    if (!found.stable || !sameCursor(found.readThrough, canonical.batch.readThrough)) continue;
+    let head: PlanProposal | null = null;
+    for (const key of found.refKeys) {
+      const record = canonical.batch.present.get(key);
+      if (record === undefined) continue;
+      const decoded = decodePlanProposalRecord(record);
+      if (decoded.status !== 'decoded') continue;
+      const proposal = decoded.value;
+      // §4.2 source 3: one live head per request. Only a stored `candidate` is
+      // live (it may still be derived stale); accepted/not_adopted are closed.
+      if (proposal.kind !== 'candidate_v2' || proposal.status !== 'candidate') continue;
+      if (proposal.goalRef.projectId !== goalRef.projectId || proposal.goalRef.goalId !== goalRef.goalId) continue;
+      if (candidateRequestRef(proposal) === null
+        || candidateRequestRef(proposal)!.queryJobId !== requestRef.queryJobId) continue;
+      if (head === null || planProposalRefKey(proposal.ref) < planProposalRefKey(head.ref)) head = proposal;
+    }
+    return { status: 'ready', head, readThrough: canonical.batch.readThrough };
+  }
+  return { status: 'rejected', code: 'revision_conflict',
+    reason: 'the request-candidate window changed while it was being read' };
+}
+
+/**
+ * Slice 5 §2.4 all-candidate enumeration: every saved candidate of one Goal
+ * (each request's head plus the independent/legacy candidates). The caller
+ * must never treat one `findPendingProposal` result as the whole set (spec
+ * §8.2 "request head 并发"). Part 1 declares the signature.
+ */
+export async function enumerateGoalCandidates(
+  records: GoalRecordTransactionPort & RecordLookupPort,
+  goalRef: GoalRef,
+): Promise<{ status: 'ready'; proposals: PlanProposal[]; readThrough: CommitCursor | null } | Rejected> {
+  const values = [goalRef.projectId, goalRef.goalId];
+  for (let attempt = 0; attempt < WINDOW_MAX_ATTEMPTS; attempt += 1) {
+    const found = await readLookupKeys(records, PLAN_PROPOSAL_LOOKUP_INDEX, values);
+    if (found.status !== 'ready') return found;
+    const canonical = await readBatch(records, uniqueKeys(found.refKeys));
+    if (canonical.status !== 'ready') return canonical;
+    if (!found.stable || !sameCursor(found.readThrough, canonical.batch.readThrough)) continue;
+    const proposals: PlanProposal[] = [];
+    for (const key of found.refKeys) {
+      const record = canonical.batch.present.get(key);
+      if (record === undefined) continue;
+      const decoded = decodePlanProposalRecord(record);
+      if (decoded.status !== 'decoded') continue;
+      const proposal = decoded.value;
+      // §4.2 source 3: the live candidates of one Goal (each request's head plus
+      // the independent candidates). Terminal (accepted/not_adopted) and legacy
+      // rows are history, not candidates.
+      if (proposal.kind !== 'candidate_v2' || proposal.status !== 'candidate') continue;
+      if (proposal.goalRef.projectId !== goalRef.projectId || proposal.goalRef.goalId !== goalRef.goalId) continue;
+      proposals.push(proposal);
+    }
+    proposals.sort((left, right) => {
+      const leftKey = planProposalRefKey(left.ref);
+      const rightKey = planProposalRefKey(right.ref);
+      return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
+    });
+    return { status: 'ready', proposals, readThrough: canonical.batch.readThrough };
+  }
+  return { status: 'rejected', code: 'revision_conflict',
+    reason: 'the candidate enumeration window changed while it was being read' };
+}
+
+/**
+ * Slice 5 §4.2 source 3 CLOSED history: the terminal request candidates of one
+ * Goal (`accepted`/`not_adopted` `candidate_v2` proposals), one per request,
+ * using the request's LAST head. The live head of a request stays with
+ * `enumerateGoalCandidates`; a request is closed history only once no live
+ * candidate is left for it. The last head is the proposal no other proposal of
+ * the same request replaced (`notAdopted.replacedBy`), so an answered card and
+ * its closure keep the SAME per-request identity and merge into one card. Same
+ * window/limit/failure rules as the live enumeration: a window that cannot be
+ * finished is a failure, never a short page.
+ */
+export async function enumerateClosedGoalCandidates(
+  records: GoalRecordTransactionPort & RecordLookupPort,
+  goalRef: GoalRef,
+): Promise<{ status: 'ready'; proposals: PlanProposal[]; readThrough: CommitCursor | null } | Rejected> {
+  const values = [goalRef.projectId, goalRef.goalId];
+  for (let attempt = 0; attempt < WINDOW_MAX_ATTEMPTS; attempt += 1) {
+    const found = await readLookupKeys(records, PLAN_PROPOSAL_LOOKUP_INDEX, values);
+    if (found.status !== 'ready') return found;
+    const canonical = await readBatch(records, uniqueKeys(found.refKeys));
+    if (canonical.status !== 'ready') return canonical;
+    if (!found.stable || !sameCursor(found.readThrough, canonical.batch.readThrough)) continue;
+    // §4.2 source 3: one card per request. Every v2 candidate that names a
+    // request is grouped by that request; an independent (null-request)
+    // candidate is not per-request history.
+    const byRequest = new Map<string, PlanProposal[]>();
+    const independent: PlanProposal[] = [];
+    // Slice 5 §2.5/T-R2-2: each chain's creation position is its first
+    // candidate's wire-only `since`, read beside the public DTO.
+    const positions = new Map<string, CommitCursor | null>();
+    for (const key of found.refKeys) {
+      const record = canonical.batch.present.get(key);
+      if (record === undefined) continue;
+      const decoded = decodePlanProposalRecord(record);
+      // §8.2 data row: a damaged proposal is `unavailable`, never skipped. A
+      // dropped terminal head would hide a real closure, and a dropped successor
+      // would break the replacement chain of its request.
+      if (decoded.status !== 'decoded') {
+        return unavailable(`plan proposal ${record.refKey}: ${decoded.reason}`);
+      }
+      const proposal = decoded.value;
+      if (proposal.kind !== 'candidate_v2') continue;
+      if (proposal.goalRef.projectId !== goalRef.projectId || proposal.goalRef.goalId !== goalRef.goalId) continue;
+      const origin = decodePlanProposalOrigin(record);
+      if (origin.status !== 'decoded') {
+        return unavailable(`plan proposal ${record.refKey} origin: ${origin.reason}`);
+      }
+      positions.set(planProposalRefKey(proposal.ref), origin.value.since ?? null);
+      const requestRef = candidateRequestRef(proposal);
+      if (requestRef === null) {
+        // §4.2 source 3 / §3.3 line 629: an independent candidate is keyed by its
+        // own proposal; a stored terminal one is its own closed history card.
+        if (proposal.status === 'accepted' || proposal.status === 'not_adopted') independent.push(proposal);
+        continue;
+      }
+      const groupKey = canonicalJson(requestRef as unknown as JsonValue);
+      const group = byRequest.get(groupKey);
+      if (group === undefined) byRequest.set(groupKey, [proposal]);
+      else group.push(proposal);
+    }
+    const proposals: PlanProposal[] = [];
+    for (const group of byRequest.values()) {
+      // The replacement link is stored on the replaced (old) head: a
+      // `not_adopted` head with `replacedBy` is superseded by its successor, so
+      // the request's last head is the proposal no other proposal replaced.
+      const superseded = new Set<string>();
+      for (const proposal of group) {
+        if (proposal.kind !== 'candidate_v2' || proposal.status !== 'not_adopted') continue;
+        if ((proposal.notAdopted?.replacedBy ?? null) === null) continue;
+        superseded.add(planProposalRefKey(proposal.ref));
+      }
+      const heads = group.filter((proposal) => !superseded.has(planProposalRefKey(proposal.ref)));
+      // A still-live head is owned by the live enumeration; do not fabricate a
+      // second closed card for the same per-request identity.
+      if (heads.some((proposal) => proposal.status === 'candidate')) continue;
+      // §2.4/T-R2-2: the request's terminal is the head whose chain was created
+      // LAST (its first candidate's creation commit), never the last in refKey
+      // order and never "accepted first". `findCandidateProposal` compares the
+      // same positions, so both entrances select the same terminal.
+      let terminal: PlanProposal | null = null;
+      for (const proposal of heads) {
+        if (proposal.kind !== 'candidate_v2') continue;
+        if (proposal.status !== 'accepted' && proposal.status !== 'not_adopted') continue;
+        if (terminal === null) {
+          terminal = proposal;
+          continue;
+        }
+        const position = compareProposalChainPositions(
+          { refKey: planProposalRefKey(proposal.ref), since: positions.get(planProposalRefKey(proposal.ref)) ?? null },
+          { refKey: planProposalRefKey(terminal.ref), since: positions.get(planProposalRefKey(terminal.ref)) ?? null });
+        if (position > 0) terminal = proposal;
+      }
+      if (terminal !== null) proposals.push(terminal);
+    }
+    proposals.push(...independent);
+    proposals.sort((left, right) => {
+      const leftKey = planProposalRefKey(left.ref);
+      const rightKey = planProposalRefKey(right.ref);
+      return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
+    });
+    return { status: 'ready', proposals, readThrough: canonical.batch.readThrough };
+  }
+  return { status: 'rejected', code: 'unavailable',
+    reason: 'the closed-candidate enumeration window changed while it was being read' };
 }
 
 // --------------------------------------------------------------------------

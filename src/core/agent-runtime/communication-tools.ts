@@ -24,6 +24,8 @@ import type { CommitCursor } from '../../contracts/command-event.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { SessionRef } from '../../contracts/core/identity.js';
 import type { SessionMessageIntentV1, SessionMessageRef } from '../../contracts/core/session-message.js';
+import { decisionSourceKey } from '../../contracts/goal-decisions.js';
+import type { DecisionSourceV1 } from '../../contracts/goal-decisions.js';
 import type { ReadResult, WriteResult } from '../../contracts/core/results.js';
 import {
   toolSchema as z,
@@ -33,6 +35,7 @@ import {
   type WorkspaceSandbox,
 } from '../../../vendor/coding-agent/dist/public-api.js';
 import type { SessionMailboxPort, SessionMessage } from '../work-graph/model/communication-contracts.js';
+import type { DecisionMessagePort } from '../work-graph/model/decision-contracts.js';
 
 /** Fixed production tool names. The Kernel host-authorization list comes from here. */
 export const SESSION_MAILBOX_TOOL_NAMES = [
@@ -42,6 +45,17 @@ export const SESSION_MAILBOX_TOOL_NAMES = [
   'read_session_message_body',
   'ack_session_message',
   'respond_session_message',
+] as const;
+
+/**
+ * Slice 5 §4.6 user-decision tool names. They are registered ONLY when the
+ * mailbox tool config carries a real `decisionMessages` dependency; an old
+ * composition keeps exactly the original six `SESSION_MAILBOX_TOOL_NAMES`.
+ */
+export const USER_DECISION_TOOL_NAMES = [
+  'send_user_message',
+  'read_user_decision',
+  'record_decision_application',
 ] as const;
 
 export type SessionMailboxToolsConfig = {
@@ -59,6 +73,14 @@ export type SessionMailboxToolsConfig = {
    * Absent keeps the message a normal durable send with no wait fact.
    */
   onWaitRegistered?: (message: SessionMessage) => void;
+  /**
+   * Slice 5 §4.6: the user-decision owner. Optional so an old composition keeps
+   * exactly the original six tools and starts as before; when present the three
+   * `USER_DECISION_TOOL_NAMES` are added. The model supplies no actor/duties/
+   * operator/requestId field for any of them.
+   */
+  decisionMessages?: Pick<DecisionMessagePort,
+    'sendUserMessage' | 'recordDecisionApplication' | 'readDecisionAnswer'>;
 };
 
 /** The Kernel dispatcher timeout for `send_session_message`. The tool never
@@ -119,6 +141,158 @@ function mapRead(callId: string, result: ReadResult<unknown>): ToolResult {
   return rejectedResult(callId, result, result.reason);
 }
 
+// -------------------------------------------------------------------------- //
+// Slice 5 user-decision tool schemas (spec §4.6).                             //
+// -------------------------------------------------------------------------- //
+//
+// The three user-decision tools reuse the SAME strict model-argument discipline
+// as the mailbox tools: every object is `.strict()`, so an actor/duties/
+// operator/requestId field supplied by the model is an unknown key and fails as
+// `invalid_arguments`. The nested refs are the canonical decision-source refs
+// (spec §3.3); they are strict too and never carry an authority field.
+
+const decisionGoalRefSchema = z.object({
+  aggregateType: z.literal('Goal'),
+  projectId: z.string().min(1),
+  goalId: z.string().min(1),
+}).strict();
+
+const decisionWorkspaceRefSchema = z.object({
+  aggregateType: z.literal('Workspace'),
+  projectId: z.string().min(1),
+  workspaceId: z.string().min(1),
+}).strict();
+
+const decisionWorkspaceScopeSchema = z.object({
+  projectId: z.string().min(1),
+  workspaceId: z.string().min(1),
+}).strict();
+
+const decisionMessageRefSchema = z.object({
+  aggregateType: z.literal('SessionMessage'),
+  projectId: z.string().min(1),
+  workspaceId: z.string().min(1),
+  messageId: z.string().min(1),
+}).strict();
+
+const decisionPlanRevisionRefSchema = z.object({
+  aggregateType: z.literal('PlanRevision'),
+  projectId: z.string().min(1),
+  planId: z.string().min(1),
+}).strict();
+
+const decisionPlanProposalRefSchema = z.object({
+  aggregateType: z.literal('PlanProposal'),
+  projectId: z.string().min(1),
+  workspaceId: z.string().min(1),
+  proposalId: z.string().min(1),
+}).strict();
+
+const decisionQueryJobRefSchema = z.object({
+  aggregateType: z.literal('QueryJob'),
+  projectId: z.string().min(1),
+  workspaceId: z.string().min(1),
+  queryJobId: z.string().min(1),
+}).strict();
+
+const decisionQueryRunRefSchema = z.object({
+  aggregateType: z.literal('QueryRun'),
+  projectId: z.string().min(1),
+  workspaceId: z.string().min(1),
+  queryJobId: z.string().min(1),
+  runId: z.string().min(1),
+}).strict();
+
+const decisionQueryJobAnswerRefSchema = z.object({
+  aggregateType: z.literal('QueryJobAnswer'),
+  projectId: z.string().min(1),
+  workspaceId: z.string().min(1),
+  queryJobId: z.string().min(1),
+  answerId: z.string().min(1),
+}).strict();
+
+/** One `VersionPin` of a decision source (spec §2.3, §3.3). */
+const decisionVersionPinSchema = z.object({
+  ref: z.discriminatedUnion('aggregateType', [
+    decisionGoalRefSchema, decisionWorkspaceRefSchema, decisionMessageRefSchema,
+    decisionPlanRevisionRefSchema, decisionPlanProposalRefSchema,
+    decisionQueryJobRefSchema, decisionQueryRunRefSchema, decisionQueryJobAnswerRefSchema,
+  ]),
+  revision: z.number().int().min(0),
+}).strict();
+
+const decisionParallelRiskSchema = z.object({
+  otherGoalRef: decisionGoalRefSchema,
+  selfPlanRef: decisionPlanRevisionRefSchema.nullable(),
+  otherPlanRef: decisionPlanRevisionRefSchema.nullable(),
+}).strict();
+
+const decisionGoalSettingsSchema = z.object({
+  schemaVersion: z.literal(1),
+  autonomy: z.enum(['every_step', 'after_plan_confirmation']),
+  order: z.number().int(),
+  waitForGoalRef: decisionGoalRefSchema.nullable(),
+  parallelRisks: z.array(decisionParallelRiskSchema),
+}).strict();
+
+const decisionGoalBasisSchema = z.object({
+  goalRef: decisionGoalRefSchema,
+  workspaceRef: decisionWorkspaceRefSchema,
+  objective: z.string(),
+  activePlanRef: decisionPlanRevisionRefSchema.nullable(),
+  settings: decisionGoalSettingsSchema,
+}).strict();
+
+/** Canonical `DecisionSourceV1` the model names for a read/record call. */
+const decisionSourceSchema = z.object({
+  kind: z.enum(['message', 'goal_cause', 'candidate', 'note_review',
+    'planning_question', 'goal_conflict', 'message_release']),
+  key: z.string().min(1),
+  goalRef: decisionGoalRefSchema,
+  pins: z.array(decisionVersionPinSchema),
+  goalBases: z.array(decisionGoalBasisSchema).optional(),
+}).strict();
+
+const decisionOptionSchema = z.object({
+  id: z.string().min(1), label: z.string(),
+  effect: z.enum(['apply', 'reject', 'defer']),
+}).strict();
+
+const decisionObjectSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('aggregate'), pin: decisionVersionPinSchema, label: z.string() }).strict(),
+  z.object({ kind: z.literal('file'), workspace: decisionWorkspaceScopeSchema,
+    path: z.string().min(1), digest: z.string().nullable(), label: z.string() }).strict(),
+]);
+
+const decisionApplicationReceiptSchema = z.object({
+  identityKey: z.string().min(1),
+  fingerprint: z.string().min(1),
+  cursor: z.string().min(1),
+}).strict();
+
+/** Strict args of the three tools, index-aligned with `USER_DECISION_TOOL_NAMES`. */
+const USER_DECISION_TOOL_SCHEMAS: readonly z.ZodType[] = [
+  // send_user_message = the §3.3 `sendUserMessage` input, never its meta.
+  z.object({
+    goalRef: decisionGoalRefSchema,
+    intent: z.enum(['notify', 'decision_request']),
+    text: z.string(),
+    needsReply: z.boolean(),
+    waitAfterSend: z.boolean(),
+    options: z.array(decisionOptionSchema),
+    objects: z.array(decisionObjectSchema),
+    forwardedFrom: decisionMessageRefSchema.optional(),
+  }).strict(),
+  // read_user_decision = { source: DecisionSourceV1 }
+  z.object({ source: decisionSourceSchema }).strict(),
+  // record_decision_application = { messageRef, receipt }
+  z.object({
+    messageRef: decisionMessageRefSchema,
+    receipt: decisionApplicationReceiptSchema,
+  }).strict(),
+];
+
+
 export function createSessionMailboxTools(config: SessionMailboxToolsConfig): SessionMailboxToolsHandle {
   const session = z.object({ projectId: z.string().min(1), sessionId: z.string().min(1) }).strict();
   const message = z.object({
@@ -165,6 +339,13 @@ export function createSessionMailboxTools(config: SessionMailboxToolsConfig): Se
     };
   }
 
+  /**
+   * Slice 5 §4.6: the user-decision read keeps the caller's REAL principal.
+   * The owner checks the bound scope and the formal allowed-reader Session
+   * itself, so an agent can only read a card whose canonical source names its
+   * own Run/Query Session; a synthesized Host principal would silently bypass
+   * that gate. The model still supplies no actor.
+   */
   async function execute<Args>(
     call: Readonly<ToolCall>,
     signal: AbortSignal,
@@ -303,8 +484,146 @@ export function createSessionMailboxTools(config: SessionMailboxToolsConfig): Se
     };
   }
 
+  /**
+   * The three user-decision tools. Part 1 registers their strict schemas and
+   * stub handlers only; Part 2 replaces the handlers with the real
+   * `decisionMessages` calls. None of them carries an actor/duties/operator/
+   * requestId model field.
+   */
+  function decisionDefinitionFor(index: number): ToolDefinition {
+    const name = USER_DECISION_TOOL_NAMES[index]!;
+    const schema = USER_DECISION_TOOL_SCHEMAS[index]!;
+    const readOnly = name === 'read_user_decision';
+    return {
+      name,
+      description: `User decision: ${name}`,
+      inputSchema: schema,
+      effectClass: readOnly ? 'read_only' : 'workspace_write',
+      requiredCapabilities: readOnly ? ['workspace_read'] : [],
+      defaultTimeoutMs: name === 'send_user_message' ? SESSION_MESSAGE_SEND_TIMEOUT_MS : 10000,
+      outputLimitBytes: 64 * 1024,
+      independentReadOnly: readOnly,
+      summarize: () => ({ paths: [], cwd: null, commandPreview: null }),
+      handler: {
+        async execute(call: Readonly<ToolCall>, options: Readonly<{ signal: AbortSignal }>): Promise<ToolResult> {
+          return execute(call, options.signal, schema, async (args, requestId, context) => {
+            const decisions = config.decisionMessages;
+            if (decisions === undefined) {
+              return failure(call.callId, 'execution_failed', 'no user decision owner is bound for this tool');
+            }
+            switch (name) {
+              case 'send_user_message': {
+                const input = args as Parameters<DecisionMessagePort['sendUserMessage']>[1]['input'];
+                const result = await decisions.sendUserMessage(context, {
+                  input: { ...input },
+                  meta: { requestId, expected: [] },
+                });
+                if (result.status !== 'committed') return mapWrite(call.callId, result);
+                // The message is already durably saved; registration never changes
+                // the send receipt and never starts a model or a poll loop.
+                if (input.waitAfterSend) config.onWaitRegistered?.(result.value);
+                return success(call.callId, { message: result.value, waiting: input.waitAfterSend });
+              }
+              case 'read_user_decision': {
+                const input = args as Parameters<DecisionMessagePort['readDecisionAnswer']>[1];
+                const result = await decisions.readDecisionAnswer(context, { source: input.source });
+                return mapRead(call.callId, result);
+              }
+              case 'record_decision_application': {
+                const input = args as Parameters<DecisionMessagePort['recordDecisionApplication']>[1]['input'];
+                const messageRef: SessionMessageRef = { ...input.messageRef };
+                // §4.6/N7: the message pin is read through the decision-authorised
+                // read, never the Session inbox admission — a synthetic Host→User
+                // answer is not addressed to the asking Session, so the mailbox
+                // reader would refuse it. The stored message is resolved by this
+                // canonical message key, so only the key is an input here.
+                const messageSource = {
+                  kind: 'message' as const,
+                  key: decisionSourceKey({ kind: 'message', messageRef }),
+                  pins: [],
+                } as unknown as DecisionSourceV1;
+                // §4.6/DEFECT 4: prefer the additive pin-only read so a missing
+                // answer BODY artifact cannot fail an otherwise valid application
+                // record. `readDecisionAnswer` (frozen port) stays the fallback
+                // when the bound owner does not expose the additive read.
+                const pinReader = (decisions as unknown as {
+                  readDecisionMessagePin?: (ctx: CoreCallContext, value: { source: DecisionSourceV1 }) =>
+                    Promise<ReadResult<{ message: SessionMessage | null }>>;
+                }).readDecisionMessagePin;
+                const preRead = () => (pinReader === undefined
+                  ? decisions.readDecisionAnswer(context, { source: messageSource })
+                  : pinReader.call(decisions, context, { source: messageSource }));
+                let read: Awaited<ReturnType<typeof preRead>>;
+                try {
+                  read = await preRead();
+                } catch (error) {
+                  // Lead LR3 (§8.2 line 1366): a pre-read that throws is a read
+                  // failure too; it must not hide the original receipt below.
+                  read = { status: 'rejected', code: 'unavailable',
+                    reason: `the decision answer pre-read failed: ${error instanceof Error ? error.message : String(error)}` };
+                }
+                if (read.status !== 'ready') {
+                  // F2 (blocker 3, runtime half) / §8.2 line 1366: the pin
+                  // pre-read is a NEW business read, so a failure here must not
+                  // hide the ORIGINAL receipt of an identical retried call. Ask
+                  // the owner's read-only replay entry — which uses the SAME
+                  // identity and fingerprint as recordDecisionApplication and
+                  // never writes — for the replayed committed result before
+                  // returning the read failure. A fresh, never-committed call
+                  // gets the unchanged read failure back. When the bound owner
+                  // has no replay entry (old composition) today's path stays.
+                  const replayReader = (decisions as unknown as {
+                    replayDecisionApplication?: (ctx: CoreCallContext, request: {
+                      input: { messageRef: SessionMessageRef; receipt: typeof input.receipt };
+                      meta: { requestId: string };
+                    }) => Promise<ReadResult<{
+                      replayed: Extract<WriteResult<SessionMessage>, { status: 'committed' }> | null;
+                    }>>;
+                  }).replayDecisionApplication;
+                  if (replayReader !== undefined) {
+                    const replay = await replayReader.call(decisions, context, {
+                      input: { messageRef, receipt: input.receipt }, meta: { requestId },
+                    });
+                    if (replay.status === 'ready') {
+                      if (replay.value.replayed !== null) return mapWrite(call.callId, replay.value.replayed);
+                    } else {
+                      // The replay lookup itself failed; return that read
+                      // failure rather than masking it with the pre-read one.
+                      return mapRead(call.callId, replay);
+                    }
+                  }
+                  return mapRead(call.callId, read);
+                }
+                const saved = read.value.message;
+                if (saved === null) {
+                  return rejectedResult(call.callId,
+                    { status: 'not_found', reason: 'the decision answer message does not exist' },
+                    'the decision answer message does not exist');
+                }
+                const result = await decisions.recordDecisionApplication(context, {
+                  input: { messageRef: saved.ref, receipt: input.receipt },
+                  meta: { requestId, expected: [{ ref: saved.ref, revision: saved.revision }] },
+                });
+                return mapWrite(call.callId, result);
+              }
+              default:
+                return failure(call.callId, 'execution_failed', 'the user decision tool name is not recognized');
+            }
+          });
+        },
+      },
+    };
+  }
+
+  // The three user-decision names exist only when the real decision owner is
+  // bound. Without it the factory still returns exactly the original six.
+  const decisionNames: readonly string[] = config.decisionMessages === undefined ? [] : USER_DECISION_TOOL_NAMES;
+
   return {
-    names: SESSION_MAILBOX_TOOL_NAMES,
-    create: () => SESSION_MAILBOX_TOOL_NAMES.map((_name, index) => definitionFor(index)),
+    names: [...SESSION_MAILBOX_TOOL_NAMES, ...decisionNames],
+    create: () => [
+      ...SESSION_MAILBOX_TOOL_NAMES.map((_name, index) => definitionFor(index)),
+      ...decisionNames.map((_name, index) => decisionDefinitionFor(index)),
+    ],
   };
 }

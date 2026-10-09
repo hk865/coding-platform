@@ -468,7 +468,9 @@ it('automatically answers an inquiry without making its sender wait', async () =
     expect(message?.waitAfterSend).not.toBe(true);
     expect(message?.replyMode).not.toBe('wait');
     expect(message?.consultationDerivation?.childSessionRef).not.toEqual(member.sessionRef);
-    expect(message?.response?.sender.sessionRef).toEqual(message?.consultationDerivation?.childSessionRef);
+    const responseSender = message?.response?.sender;
+    expect(responseSender !== undefined && responseSender.kind !== 'host' ? responseSender.sessionRef : undefined)
+      .toEqual(message?.consultationDerivation?.childSessionRef);
     const accepted = message?.acceptedInputs?.find(input => input.part === 'response');
     expect(accepted?.executionRef.aggregateType).toBe('QueryRun');
     const senderCard = (await f.listSessions(host)).find(card => card.record.ref.sessionId === sender.sessionRef.sessionId)!;

@@ -235,6 +235,14 @@ export function createConsultationConsumer(deps: {
 
   async function continueExisting(owned: Owned, input: ConsultationInput, message: SessionMessage,
     record: QueryJobRecord): Promise<ConsultationResult> {
+    // §4.6 last paragraph: a message addressed to the user is never turned into
+    // a Query or readSession; it is explicitly unsupported here. The inline
+    // discriminant narrows MessageRecipient -> SessionRef for the ordinary
+    // Session flow without entering the `isUserMessageRecipient` part-2 stub.
+    if ('kind' in message.recipient) {
+      return reject('unsupported', 'a user-recipient message is not a Session consultation');
+    }
+    const sessionRecipient = message.recipient;
     const job = record.job;
     const run = record.run;
     const execution = job.job.intent.execution;
@@ -245,7 +253,7 @@ export function createConsultationConsumer(deps: {
     if (!sameCanonical(consultation.messageRef, message.ref)) {
       return reject('forbidden', 'the existing consultation Query belongs to another message');
     }
-    const target = input.part === 'response' && message.sender.kind === 'work_run' ? message.sender.sessionRef : message.recipient;
+    const target = input.part === 'response' && message.sender.kind === 'work_run' ? message.sender.sessionRef : sessionRecipient;
     if (consultation.part !== input.part || !sameCanonical(consultation.recipient, { projectId: target.projectId, sessionId: target.sessionId })) {
       return reject('forbidden', 'the existing consultation Query recipient is not the original message recipient');
     }
@@ -321,6 +329,13 @@ export function createConsultationConsumer(deps: {
     if (message.ref.projectId !== owned.projectId || message.ref.workspaceId !== owned.workspaceId) {
       return reject('forbidden', 'the consultation message is outside the bound project/workspace');
     }
+    // §4.6 last paragraph: the widened `MessageRecipient` union explicitly
+    // rejects the user recipient here; it is never turned into a Query or a
+    // `readSession`, and the ordinary Session consultation flow is unchanged.
+    if ('kind' in message.recipient) {
+      return reject('unsupported', 'a user-recipient message is not a Session consultation');
+    }
+    const sessionRecipient = message.recipient;
 
     // Read the existing deterministic Query/Answer BEFORE any Session
     // busy/archive judgment: a saved Answer is an original fact and stays valid
@@ -345,7 +360,7 @@ export function createConsultationConsumer(deps: {
     // it, so a source that advanced after a failed submit can never move the child
     // or the boundary. A null throughPosition is the explicit empty baseline,
     // distinct from a non-empty inherited prefix.
-    const target = value.part === 'response' && message.sender.kind === 'work_run' ? message.sender.sessionRef : message.recipient;
+    const target = value.part === 'response' && message.sender.kind === 'work_run' ? message.sender.sessionRef : sessionRecipient;
     const isolatedInquiry = value.part !== 'response' && (message.intent === 'inquiry' || (message.intent === undefined && message.replyMode === 'wait'));
     let derivation = value.part === 'response' ? undefined : message.consultationDerivation;
     if (isolatedInquiry && derivation === undefined) {
@@ -353,7 +368,7 @@ export function createConsultationConsumer(deps: {
       if (recordDerivation === undefined) {
         return waiting(message, null, null, 'the mailbox does not expose the formal consultation-derivation writer');
       }
-      const recipientRead = await deps.sessions.readSession(owned.ctx, message.recipient);
+      const recipientRead = await deps.sessions.readSession(owned.ctx, sessionRecipient);
       if (recipientRead.status !== 'ready') {
         return waiting(message, null, null, asRejection(recipientRead, 'the recipient Session').reason);
       }
@@ -364,7 +379,7 @@ export function createConsultationConsumer(deps: {
       if (deps.runtime.readCompletedBoundary === undefined) {
         return waiting(message, null, null, 'the Runtime does not expose the Kernel completed-boundary reader required for an isolated derivation');
       }
-      const boundary = await deps.runtime.readCompletedBoundary(owned.ctx, { sessionRef: message.recipient });
+      const boundary = await deps.runtime.readCompletedBoundary(owned.ctx, { sessionRef: sessionRecipient });
       if (boundary.status !== 'ready') {
         return waiting(message, null, null, asRejection(boundary, 'the recipient completed boundary').reason);
       }
@@ -389,7 +404,7 @@ export function createConsultationConsumer(deps: {
           messageRef: { ...messageRef },
           derivation: {
             childSessionRef: { projectId: owned.projectId, sessionId: child.value.ref.sessionId },
-            sourceSessionRef: { projectId: message.recipient.projectId, sessionId: message.recipient.sessionId },
+            sourceSessionRef: { projectId: sessionRecipient.projectId, sessionId: sessionRecipient.sessionId },
             sourceKernel: { adapterId: card.record.kernel.adapterId, kernelSessionId: card.record.kernel.kernelSessionId },
             throughPosition: hasCompletedPrefix ? boundary.value.position : null,
           },

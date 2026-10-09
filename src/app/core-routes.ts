@@ -40,6 +40,13 @@ import type { MaterialPort } from '../core/work-graph/model/material-contracts.j
 import type { EvidencePort } from '../core/work-graph/model/evidence-contracts.js';
 import type { QueryExecutionRecord, QueryJobPort } from '../core/work-graph/queries/contracts.js';
 import type { GraphWrite } from '../core/work-graph/model/task-contracts.js';
+import type {
+  DecisionMessagePort,
+  DecisionReadPort,
+  GoalSettingsPort,
+  RequestCandidatePort,
+  WorkspaceDecisionSettingsPort,
+} from '../core/work-graph/model/decision-contracts.js';
 import type { StartupReconcileReportV1 } from './startup-reconcile.js';
 import type { WorkflowPort } from '../business/workflow/ports.js';
 import type { CollaborationDriverPort } from './collaboration-driver.js';
@@ -157,6 +164,20 @@ export type CoreRouteBindings = {
   // Slice 3: the two read-only graph routes, forwarded verbatim.
   lookGraph: GraphContextReadPort['lookGraph'];
   findGraph: GraphContextReadPort['findGraph'];
+  // Slice 5 §4.5 decision routes: one named binding per exact owner method. The
+  // binding names are the frozen names from the route table; no dynamic access.
+  readGoalSettings: GoalSettingsPort['readGoalSettings'];
+  setGoalSettings: GoalSettingsPort['setGoalSettings'];
+  reorderGoals: GoalSettingsPort['reorderGoals'];
+  queryGoalConflicts: DecisionReadPort['queryGoalConflicts'];
+  readRequestCandidate: RequestCandidatePort['readRequestCandidate'];
+  abandonPlanProposal: RequestCandidatePort['abandonPlanProposal'];
+  queryDecisionQueue: DecisionReadPort['queryDecisionQueue'];
+  readDecisionCard: DecisionReadPort['readDecisionCard'];
+  resolveDecision: NonNullable<WorkflowPort['resolveDecision']>;
+  recordDecisionApplication: DecisionMessagePort['recordDecisionApplication'];
+  markNoticesSeen: WorkspaceDecisionSettingsPort['markNoticesSeen'];
+  sendUserMessage: DecisionMessagePort['sendUserMessage'];
 };
 
 /** A.2 step 5.6 (§12.1 step 7, §12.8): this Host's instance lease and its start-up reconcile report. */
@@ -194,6 +215,14 @@ export type CoreRoutePlatform = {
     & Pick<SessionMailboxPort, 'readUndeliveredReplies'>;
   queries: QueryJobPort;
   materials: Pick<MaterialPort, 'openArtifact'>;
+  /** Slice 5 §4.5 decision owners: Goal settings/order, the workspace notice
+   * cursor, the user-facing decision messages, the read-only decision queue and
+   * the per-request candidate head. The composition root always publishes them. */
+  goalSettings: GoalSettingsPort;
+  workspaceDecisionSettings: WorkspaceDecisionSettingsPort;
+  decisionMessages: DecisionMessagePort;
+  decisions: DecisionReadPort;
+  requestCandidates: RequestCandidatePort;
   workflow: WorkflowPort & Required<Pick<WorkflowPort, 'consumeConsultation'>>;
   /** Slice 1 (spec §4.4): the Session-facts read owner (the same instance injected into sessions/queries). */
   sessionFacts: SessionFactsPort;
@@ -326,6 +355,21 @@ export const CORE_ROUTE_SPECS: Record<CoreRouteSuffix, CoreRouteSpec> = {
   // Slice 3: the two public read-only graph routes.
   'graph/look': { kind: 'plain', binding: 'lookGraph', owner: 'graphContext.lookGraph' },
   'graph/find': { kind: 'plain', binding: 'findGraph', owner: 'graphContext.findGraph' },
+  // Slice 5 §4.5: Goal settings/order/conflicts, per-request candidate head and
+  // abandonment, the decision queue/card/answer/application, the notice cursor
+  // and the explicit user send.
+  'goals/settings': { kind: 'plain', binding: 'readGoalSettings', owner: 'goalSettings.readGoalSettings' },
+  'goals/settings/set': { kind: 'graph_write', binding: 'setGoalSettings', owner: 'goalSettings.setGoalSettings' },
+  'goals/reorder': { kind: 'graph_write', binding: 'reorderGoals', owner: 'goalSettings.reorderGoals' },
+  'goals/conflicts': { kind: 'plain', binding: 'queryGoalConflicts', owner: 'decisions.queryGoalConflicts' },
+  'plans/request-candidate': { kind: 'plain', binding: 'readRequestCandidate', owner: 'requestCandidates.readRequestCandidate' },
+  'plans/abandon': { kind: 'graph_write', binding: 'abandonPlanProposal', owner: 'requestCandidates.abandonPlanProposal' },
+  'decisions/queue': { kind: 'plain', binding: 'queryDecisionQueue', owner: 'decisions.queryDecisionQueue' },
+  'decisions/card': { kind: 'plain', binding: 'readDecisionCard', owner: 'decisions.readDecisionCard' },
+  'decisions/answer': { kind: 'graph_write', binding: 'resolveDecision', owner: 'workflow.resolveDecision' },
+  'decisions/application': { kind: 'graph_write', binding: 'recordDecisionApplication', owner: 'decisionMessages.recordDecisionApplication' },
+  'decisions/notices/seen': { kind: 'graph_write', binding: 'markNoticesSeen', owner: 'workspaceDecisionSettings.markNoticesSeen' },
+  'messages/user-send': { kind: 'graph_write', binding: 'sendUserMessage', owner: 'decisionMessages.sendUserMessage' },
 };
 
 export type ParsedCoreRequest =
@@ -569,18 +613,58 @@ export function createPlatformCoreRouteBindings(
       ? unsupported('the Host Workflow does not publish the archive continuation (continueArchiveLine)')
       : platform.workflow.continueArchiveLine.bind(platform.workflow),
     releaseSessionArchiveRequest: platform.sessions.releaseSessionArchiveRequest.bind(platform.sessions),
-    readSessionFacts: platform.sessionFacts.readSessionFacts.bind(platform.sessionFacts),
-    findSessionSuccessors: platform.sessionFacts.findSessionSuccessors.bind(platform.sessionFacts),
-    listSessionExecutions: platform.sessionFacts.listSessionExecutions.bind(platform.sessionFacts),
-    listSessionQueries: platform.sessionFacts.listSessionQueries.bind(platform.sessionFacts),
-    transferSessionResponsibility: platform.responsibilities.transferSessionResponsibility.bind(platform.responsibilities),
-    readTaskArchiveState: platform.sessionAnomalies.readTaskArchiveState.bind(platform.sessionAnomalies),
-    listSessionAnomalies: platform.sessionAnomalies.listSessionAnomalies.bind(platform.sessionAnomalies),
+    // Rebase of slice 5 onto slices 1/3 (lead): the internal owners of slices 1,
+    // 3 and 5 are non-enumerable on the composed platform (not public keys), so
+    // a `{ ...platform }` copy lacks them; such a binding answers `unsupported`.
+    readSessionFacts: platform.sessionFacts === undefined ? unsupported('the platform does not publish sessionFacts.readSessionFacts')
+      : platform.sessionFacts.readSessionFacts.bind(platform.sessionFacts),
+    findSessionSuccessors: platform.sessionFacts === undefined ? unsupported('the platform does not publish sessionFacts.findSessionSuccessors')
+      : platform.sessionFacts.findSessionSuccessors.bind(platform.sessionFacts),
+    listSessionExecutions: platform.sessionFacts === undefined ? unsupported('the platform does not publish sessionFacts.listSessionExecutions')
+      : platform.sessionFacts.listSessionExecutions.bind(platform.sessionFacts),
+    listSessionQueries: platform.sessionFacts === undefined ? unsupported('the platform does not publish sessionFacts.listSessionQueries')
+      : platform.sessionFacts.listSessionQueries.bind(platform.sessionFacts),
+    transferSessionResponsibility: platform.responsibilities === undefined ? unsupported('the platform does not publish responsibilities.transferSessionResponsibility')
+      : platform.responsibilities.transferSessionResponsibility.bind(platform.responsibilities),
+    readTaskArchiveState: platform.sessionAnomalies === undefined ? unsupported('the platform does not publish sessionAnomalies.readTaskArchiveState')
+      : platform.sessionAnomalies.readTaskArchiveState.bind(platform.sessionAnomalies),
+    listSessionAnomalies: platform.sessionAnomalies === undefined ? unsupported('the platform does not publish sessionAnomalies.listSessionAnomalies')
+      : platform.sessionAnomalies.listSessionAnomalies.bind(platform.sessionAnomalies),
     readUndeliveredReplies: platform.messages.readUndeliveredReplies === undefined
       ? unsupported('the Host mailbox does not publish the undelivered-reply read (readUndeliveredReplies)')
       : platform.messages.readUndeliveredReplies.bind(platform.messages),
-    lookGraph: platform.graphContext.lookGraph.bind(platform.graphContext),
-    findGraph: platform.graphContext.findGraph.bind(platform.graphContext),
+    lookGraph: platform.graphContext === undefined ? unsupported('the platform does not publish graphContext.lookGraph')
+      : platform.graphContext.lookGraph.bind(platform.graphContext),
+    findGraph: platform.graphContext === undefined ? unsupported('the platform does not publish graphContext.findGraph')
+      : platform.graphContext.findGraph.bind(platform.graphContext),
+    // Slice 5 §4.5: each suffix calls its exact named owner method; there is no
+    // `platform[group][method]` access. `resolveDecision` stays optional on the
+    // Workflow port, so a Host without it keeps an explicit unsupported gap.
+    readGoalSettings: platform.goalSettings === undefined ? unsupported('the platform does not publish goalSettings.readGoalSettings')
+      : platform.goalSettings.readGoalSettings.bind(platform.goalSettings),
+    setGoalSettings: platform.goalSettings === undefined ? unsupported('the platform does not publish goalSettings.setGoalSettings')
+      : platform.goalSettings.setGoalSettings.bind(platform.goalSettings),
+    reorderGoals: platform.goalSettings === undefined ? unsupported('the platform does not publish goalSettings.reorderGoals')
+      : platform.goalSettings.reorderGoals.bind(platform.goalSettings),
+    queryGoalConflicts: platform.decisions === undefined ? unsupported('the platform does not publish decisions.queryGoalConflicts')
+      : platform.decisions.queryGoalConflicts.bind(platform.decisions),
+    readRequestCandidate: platform.requestCandidates === undefined ? unsupported('the platform does not publish requestCandidates.readRequestCandidate')
+      : platform.requestCandidates.readRequestCandidate.bind(platform.requestCandidates),
+    abandonPlanProposal: platform.requestCandidates === undefined ? unsupported('the platform does not publish requestCandidates.abandonPlanProposal')
+      : platform.requestCandidates.abandonPlanProposal.bind(platform.requestCandidates),
+    queryDecisionQueue: platform.decisions === undefined ? unsupported('the platform does not publish decisions.queryDecisionQueue')
+      : platform.decisions.queryDecisionQueue.bind(platform.decisions),
+    readDecisionCard: platform.decisions === undefined ? unsupported('the platform does not publish decisions.readDecisionCard')
+      : platform.decisions.readDecisionCard.bind(platform.decisions),
+    resolveDecision: platform.workflow.resolveDecision === undefined
+      ? unsupported('the Workflow does not publish the finite decision coordinator (resolveDecision)')
+      : platform.workflow.resolveDecision.bind(platform.workflow),
+    recordDecisionApplication: platform.decisionMessages === undefined ? unsupported('the platform does not publish decisionMessages.recordDecisionApplication')
+      : platform.decisionMessages.recordDecisionApplication.bind(platform.decisionMessages),
+    markNoticesSeen: platform.workspaceDecisionSettings === undefined ? unsupported('the platform does not publish workspaceDecisionSettings.markNoticesSeen')
+      : platform.workspaceDecisionSettings.markNoticesSeen.bind(platform.workspaceDecisionSettings),
+    sendUserMessage: platform.decisionMessages === undefined ? unsupported('the platform does not publish decisionMessages.sendUserMessage')
+      : platform.decisionMessages.sendUserMessage.bind(platform.decisionMessages),
   };
 }
 
@@ -712,6 +796,19 @@ export async function dispatchCoreRoute(
       case 'messages/undelivered-replies': return bindings.readUndeliveredReplies(ctx, plain.input as never);
       case 'graph/look': return bindings.lookGraph(ctx, plain.input as never);
       case 'graph/find': return bindings.findGraph(ctx, plain.input as never);
+      // Slice 5 §4.5 decision routes.
+      case 'goals/settings': return bindings.readGoalSettings(ctx, plain.input as never);
+      case 'goals/settings/set': return bindings.setGoalSettings(ctx, graphWrite.request as never);
+      case 'goals/reorder': return bindings.reorderGoals(ctx, graphWrite.request as never);
+      case 'goals/conflicts': return bindings.queryGoalConflicts(ctx, plain.input as never);
+      case 'plans/request-candidate': return bindings.readRequestCandidate(ctx, plain.input as never);
+      case 'plans/abandon': return bindings.abandonPlanProposal(ctx, graphWrite.request as never);
+      case 'decisions/queue': return bindings.queryDecisionQueue(ctx, plain.input as never);
+      case 'decisions/card': return bindings.readDecisionCard(ctx, plain.input as never);
+      case 'decisions/answer': return bindings.resolveDecision(ctx, graphWrite.request as never);
+      case 'decisions/application': return bindings.recordDecisionApplication(ctx, graphWrite.request as never);
+      case 'decisions/notices/seen': return bindings.markNoticesSeen(ctx, graphWrite.request as never);
+      case 'messages/user-send': return bindings.sendUserMessage(ctx, graphWrite.request as never);
     }
   })();
   // A GraphWrite rejection is a failed command: preserve its exact body but let

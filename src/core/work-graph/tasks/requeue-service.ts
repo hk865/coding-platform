@@ -62,10 +62,12 @@ import type { MaterialPort } from '../model/material-contracts.js';
 import {
   newBasisInputRefsProblem, runRefProblem, taskBudgetProblem, taskTripleProblem,
 } from '../persistence/rework-codecs.js';
+import { readGoalSettings as goalSettingsOf } from '../persistence/record-codecs.js';
 import { sessionAggregateRefKey, decodeSessionRecord, plainSessionRefToAggregate } from '../sessions/session-record-codecs.js';
 import { decodeSessionMessageRecord, sessionMessageRefKey } from '../sessions/message-record-codecs.js';
 import { sessionArchiveChangedEventFromEvent } from '../sessions/lifecycle-record-codecs.js';
 import { noProgressKey } from '../state/no-progress.js';
+import { decisionActionPolicy } from '../state/decision-policy.js';
 import {
   countEndedGoalRuns, deriveReworkClass, nextRequeueAutoCount, reworkFenceOf, reworkPermission, taskReworkRefusalEffects,
   type StopIntentV1, type VerifiedArchiveInterruptionV1,
@@ -85,6 +87,7 @@ import {
   type TaskRequeuedEvent, type TaskReworkRefusedEvent,
 } from './claim-record-codecs.js';
 import type { RequeueTaskInput, TaskClaimPort, TaskRequeueReadV1 } from '../model/claim-contracts.js';
+import type { GoalSettingsPort } from '../model/decision-contracts.js';
 import type { GraphWrite } from '../model/task-contracts.js';
 import type { ExecutionReadPort } from '../model/execution-read-contracts.js';
 import { loadReplayEvent, mapStoreFailure, mergeGuards, sameRef } from './execution-entry-service.js';
@@ -123,6 +126,12 @@ export type TaskRequeueDependencies = {
   messages: Pick<SessionMailboxPort, 'readMessage'>;
   /** C8 policy; absent is `DEFAULT_TASK_AUTOMATION_POLICY` (Host settings wire it in step 5.6). */
   automationPolicy?(): TaskAutomationPolicyV1;
+  /**
+   * Slice 5 §3.2/§4.4: the Goal-settings read seam for the automatic-rework
+   * autonomy policy and the notice origin. Absent keeps the existing requeue
+   * behaviour; the waiting/autonomy guards are part 2.
+   */
+  goalSettings?: GoalSettingsPort;
   /** W2/TD-6: the delegated-write admission an Agent requeue goes through; absent refuses an Agent. */
   delegatedWrites?: PlanDelegatedWriteDependencies;
   now(): string;
@@ -919,6 +928,34 @@ export function createTaskRequeueService(deps: TaskRequeueDependencies): Require
     } else if (automation.counted && automation.cap !== null && automation.autoCount > automation.cap) {
       policyCode = 'auto_rework_cap_reached';
     }
+    // Slice 5 §3.2/S5-AU-03: an automatic (agent/system) requeue consults the
+    // current Goal autonomy; `needs_decision` refuses with `forbidden` and
+    // writes nothing. A person's explicit requeue keeps its existing rights, and
+    // the existing budget/cap fences stay first. The injected settings owner is
+    // read when present; otherwise the Goal already read (and guarded) here is
+    // the current settings source.
+    if (policyCode === null && actorClass !== 'human') {
+      let autonomy = goalSettingsOf(goal).autonomy;
+      if (deps.goalSettings !== undefined) {
+        const settingsRead = await deps.goalSettings.readGoalSettings(owned.ctx, { goalRef });
+        if (settingsRead.status !== 'ready') {
+          return settingsRead.status === 'rejected'
+            ? reject(settingsRead.code, settingsRead.reason)
+            : reject('unavailable', 'the Goal settings are unavailable');
+        }
+        autonomy = settingsRead.value.settings.autonomy;
+      }
+      const verdict = decisionActionPolicy({
+        autonomy,
+        action: actorClass === 'agent' ? 'agent_requeue' : 'system_requeue',
+        actorClass,
+        countedNext: automation.counted ? automation.autoCount : null,
+        cap: automation.cap ?? Number.MAX_SAFE_INTEGER,
+      });
+      if (verdict === 'needs_decision' || verdict === 'user_only') {
+        return reject('forbidden', 'the Goal autonomy requires a user decision before an automatic requeue');
+      }
+    }
     const ended = await readGoalRunsForCount(records, goalRef);
     if (ended.status !== 'ready') return reject(ended.code, ended.reason);
     const goalEndedRunsAtRefusal = countEndedGoalRuns(ended.runs);
@@ -1013,10 +1050,13 @@ export function createTaskRequeueService(deps: TaskRequeueDependencies): Require
       schemaVersion: TASK_REWORK_EVENT_SCHEMA_VERSION, occurredAt: requeue.requestedAt, identityKey: identity, actor,
       fingerprint, requeue };
     return commit(commitBase, {
-      records: [encodeTaskRequeueSnapshot(requeue)],
+      records: [encodeTaskRequeueSnapshot(requeue, { since: null })],
       extraGuards: [{ refKey: taskRequeueRefKey(requeue.ref), expectedRevision: null }],
       event: encodeTaskRequeuedEvent(event),
       value: { kind: 'requeued', requeue },
+      // Slice 5 §2.5: the Store binds this creation commit cursor to the wire
+      // `since`; a later update never rebinds it.
+      commitCursorBindings: [{ refKey: taskRequeueRefKey(requeue.ref), field: 'since' }],
     });
   }
 
@@ -1128,6 +1168,8 @@ export function createTaskRequeueService(deps: TaskRequeueDependencies): Require
   async function commit(base: CommitBase, write: {
     records: PreparedCommit['records']; extraGuards: readonly RecordGuard[];
     event: PreparedCommit['events'][number]; value: TaskRequeueOutcomeV1;
+    /** Slice 5 §2.5: the wire origin bindings of the records this commit creates. */
+    commitCursorBindings?: PreparedCommit['commitCursorBindings'];
   }): Promise<WriteResult<TaskRequeueOutcomeV1>> {
     const { window } = base;
     const writtenKeys = new Set(write.extraGuards.map((guard) => guard.refKey));
@@ -1145,7 +1187,8 @@ export function createTaskRequeueService(deps: TaskRequeueDependencies): Require
     if (!merged.ok) return merged.rejection;
     const prepared: PreparedCommit = { identityKey: base.identity, fingerprint: base.fingerprint, guards: merged.guards,
       records: write.records, claims: base.roundClaims.map((claim) => ({ ...claim })), indexGuards: [], indexChanges: [],
-      events: [write.event] };
+      events: [write.event],
+      ...(write.commitCursorBindings === undefined ? {} : { commitCursorBindings: write.commitCursorBindings }) };
     if (base.owned.signal.aborted) return reject('cancelled', 'the requeue was cancelled before commit');
     const receipt = await records.commit(prepared);
     if (receipt.status !== 'committed') {

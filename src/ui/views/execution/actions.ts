@@ -136,6 +136,9 @@ export const executionActions = {
     }
     const message = collab.result.value.messages.find(candidate => candidate.ref.messageId === messageId);
     if (message === undefined) { scope.error = '该消息不在当前协同快照中。'; renderScopeIfSelected(scope); return; }
+    // Slice 5 widened the recipient union; this Session action only applies to a
+    // Session recipient (the user address is not a Session).
+    if ('kind' in message.recipient) { scope.error = '该消息的收件方不是成员会话。'; renderScopeIfSelected(scope); return; }
     const recipient: SessionRef = { projectId: message.recipient.projectId, sessionId: message.recipient.sessionId };
     const ref = message.ref;
     scope.activeSession = recipient;

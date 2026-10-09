@@ -679,7 +679,8 @@ async function submit(
     if (messageRead.status !== 'ready') return messageRead;
     const message = messageRead.value;
     const target = draft.consultation.part === 'response'
-      ? (message.sender.kind === 'work_run' ? message.sender.sessionRef : null) : message.recipient;
+      ? (message.sender.kind === 'work_run' ? message.sender.sessionRef : null)
+      : ('kind' in message.recipient ? null : message.recipient);
     if (target === null || target.projectId !== draft.consultation.recipient.projectId
       || target.sessionId !== draft.consultation.recipient.sessionId) {
       return reject('forbidden', 'the consultation recipient is not the original message recipient');

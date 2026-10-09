@@ -31,6 +31,15 @@ import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js
 import { commandIdentityKey } from '../../../contracts/command-event.js';
 import type { CoreCallContext, CorePrincipal } from '../../../contracts/core/call-context.js';
 import type { SessionRef, VersionPin } from '../../../contracts/core/identity.js';
+import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
+import type {
+  DecisionActionV1,
+  DecisionChangeProofV1,
+  DecisionSourceV1,
+  GoalControlRebaseV1,
+  GoalDecisionBasisV1,
+} from '../../../contracts/goal-decisions.js';
+import { DEFAULT_GOAL_SETTINGS_V1, decisionSourceKey } from '../../../contracts/goal-decisions.js';
 import type { CoreError, CoreRejection, ReadResult, ReadStamp, WriteResult } from '../../../contracts/core/results.js';
 import type { PreparedQueryManifestV1 } from '../../../contracts/core/prepared-execution.js';
 import type { RunRef, RunSnapshot } from '../../../contracts/dispatch.js';
@@ -41,14 +50,17 @@ import type { CompletionPolicyContentV1 } from '../../../contracts/governance.js
 import type { Phase, PlanRevisionDraft, PlanRevisionRef, PlanRevisionSnapshot,
   RuntimeTask, TaskInputRequirementV2, TaskRelationV2 } from '../../../contracts/plan.js';
 import {
-  DEFAULT_TASK_AUTOMATION_POLICY, reworkActorClassOf, type ReworkActorClass, type TaskAutomationPolicyV1,
+  DEFAULT_TASK_AUTOMATION_POLICY, isAutomationActor, reworkActorClassOf, type ReworkActorClass,
+  type TaskAutomationPolicyV1,
 } from '../../../contracts/task-requeue.js';
 import type { ControlIntentSnapshotV1 } from '../../../contracts/control-intent.js';
 import type { GoalDesiredState } from '../../../contracts/ledger.js';
 import type { TrustedCheckConfiguration } from '../../../contracts/verification.js';
 import {
-  automationVerdict, buildTaskFailureFacts, type GateFailureInputV1, type WorkFailureInputV1,
+  automationVerdict, buildTaskFailureFacts,
+  type GateFailureInputV1, type WorkFailureInputV1,
 } from '../state/task-failure.js';
+import { gateCoveredTaskIds, gateFixInProgress } from '../state/decision-policy.js';
 import type { GoalPhaseRef } from '../../../contracts/goal-phase.js';
 import type {
   QueryJobAnswerRef,
@@ -65,6 +77,7 @@ import type {
   RecordGuard,
   StoreCommitReceipt,
   StoreFailure,
+  UniqueClaimChange,
 } from '../../record-store/ports.js';
 import { cloneActorRef } from '../persistence/record-codecs.js';
 import { goalRefFor, projectRefFor, workspaceRefFor } from '../persistence/commit-compiler.js';
@@ -85,14 +98,18 @@ import type {
   PlanProposalRef,
   PlanServicePort,
   PlanTaskPort,
+  ProposedPlanRequestV1,
   ReadyTask,
   TaskGraph,
   TaskPage,
   TaskPlanningDiagnostic,
   TaskRow,
 } from '../model/plan-contracts.js';
+import type { RequestCandidatePort } from '../model/decision-contracts.js';
+import type { GraphWrite } from '../model/task-contracts.js';
 import {
-  compileFuturePlanAdoption, compileInitialPlanAdoption, type PlanAdoptionCommit, type PlanRevisionWrite,
+  compileFuturePlanAdoption, compileInitialPlanAdoption, type PlanAcceptanceDecisionProofV1,
+  type PlanAdoptionCommit, type PlanRequestSlotChangeV1, type PlanRevisionWrite,
 } from './plan-commit-compiler.js';
 import {
   decodeQueryJobAnswerSnapshot,
@@ -112,8 +129,10 @@ import {
   encodePlanProposalRecordedEvent,
   planProposalRefKey,
   planRevisionRefKey,
+  type NoticeOriginWireV1,
   type PlanProposalRecordedEvent,
 } from '../persistence/plan-record-codecs.js';
+import { decodeSessionMessageRecord, sessionMessageRefKey } from '../sessions/message-record-codecs.js';
 import {
   confirmActivePlan,
   findPendingProposal,
@@ -129,6 +148,9 @@ import {
   readPlan,
   readPointerIntents,
   readProposal,
+  readProposalOrigin,
+  readRequestCandidateHead,
+  candidateRequestRef,
   resolveGovernance,
   sameCursor,
   taskRecordRefKey,
@@ -161,11 +183,16 @@ import { notEnteredEntryPhase } from '../state/control-intent-machine.js';
 import { runControlNodeOf } from '../state/run-machine.js';
 import { controlIntentRefFor } from './control-service.js';
 import {
-  derivePlanRevisionStatus, parallelCarrierFactTaskIds, planProposalProblem, planRevisionTargetOf, transitionPlanProposal,
-  type FutureAdoptionFacts, type FuturePlanDeltaVerdict, type InitialAdoptionFacts, type PlanCarrierViewV1, type PlanCommitGuard,
-  type PlanProposalEvent, type PlanProposalGuardContext, type PlanProposalReadFacts, type PlanProposalTransition,
-  type PlannedDispositionChangeV1, type PlanSourceFacts, type TracedTaskFactsV1,
+  derivePlanProposalReadVerdict, derivePlanRevisionStatus, parallelCarrierFactTaskIds, planProposalProblem,
+  planRevisionTargetOf, transitionPlanProposal,
+  type CandidatePlanProposal, type FutureAdoptionFacts, type FuturePlanDeltaVerdict, type InitialAdoptionFacts,
+  type PlanCarrierViewV1, type PlanCommitGuard, type PlanProposalEffect, type PlanProposalEvent,
+  type PlanProposalGuardContext, type PlanProposalReadFacts, type PlanProposalTransition,
+  type PlanRequestCandidateFacts, type PlannedDispositionChangeV1, type PlanSourceFacts, type TracedTaskFactsV1,
 } from '../state/plan-machine.js';
+import { goalDecisionBasisMatches } from '../state/goal-settings-machine.js';
+import { decisionActionPolicy } from '../state/decision-policy.js';
+import { createCandidateRequestFactsReader } from './request-facts-reader.js';
 import { taskMachineStateOf, transitionTask, type TaskPhaseFacts } from '../state/task-machine.js';
 import type { Rejected as MachineRefusal } from '../state/transition.js';
 
@@ -190,10 +217,19 @@ export type PlanServiceDependencies = { records: GoalRecordTransactionPort & Rec
    * no configuration) reads as an unknown revision, which never makes one stale.
    */
   configurationFor?(scope: { projectId: string; workspaceId: string }): Pick<TrustedCheckConfiguration, 'configurationRevision'> | undefined;
+  /**
+   * Slice 5 §3.2: the exact configured operator a request-candidate
+   * adoption/abandon is compared against. Absent leaves the frozen fixtures
+   * (whose trusted Host context binds the operator) working; a configured value
+   * must match the trusted Host actor exactly and never be a platform
+   * automation actor.
+   */
+  operatorActor?: Extract<ActorRef, { kind: 'human' | 'system' }>;
   now(): string; eventId(): string };
 
 const PLAN_PROPOSE_IDENTITY_PREFIX = 'plan-propose:';
 const PLAN_APPLY_IDENTITY_PREFIX = 'plan-apply:';
+const PLAN_ABANDON_IDENTITY_PREFIX = 'plan-abandon:';
 const PLAN_PROPOSAL_ID_PREFIX = 'plan-proposal-';
 const MAX_READY_PAGE = 200;
 
@@ -301,6 +337,30 @@ function planProposalRefFromUnknown(value: unknown): PlanProposalRef | null {
   return { aggregateType: 'PlanProposal', projectId: value['projectId'],
     workspaceId: value['workspaceId'], proposalId: value['proposalId'] };
 }
+function sessionMessageRefFromUnknown(value: unknown): SessionMessageRef | null {
+  if (!isRecord(value)) return null;
+  if (value['aggregateType'] !== 'SessionMessage' || !nonEmpty(value['projectId'])
+    || !nonEmpty(value['workspaceId']) || !nonEmpty(value['messageId'])) return null;
+  return { aggregateType: 'SessionMessage', projectId: value['projectId'],
+    workspaceId: value['workspaceId'], messageId: value['messageId'] };
+}
+const DECISION_SOURCE_KINDS: readonly DecisionSourceV1['kind'][] = ['message', 'goal_cause', 'candidate', 'note_review',
+  'planning_question', 'goal_conflict', 'message_release'];
+function decisionSourceFromUnknown(value: unknown): DecisionSourceV1 | null {
+  if (!isRecord(value)) return null;
+  if (typeof value['kind'] !== 'string'
+    || !(DECISION_SOURCE_KINDS as readonly string[]).includes(value['kind'])) return null;
+  if (!nonEmpty(value['key'])) return null;
+  const goalRef = value['goalRef'];
+  if (!isRecord(goalRef) || goalRef['aggregateType'] !== 'Goal' || !nonEmpty(goalRef['projectId'])
+    || !nonEmpty(goalRef['goalId'])) return null;
+  if (!Array.isArray(value['pins'])) return null;
+  for (const pin of value['pins'] as unknown[]) {
+    if (!isRecord(pin) || !isRecord(pin['ref']) || typeof pin['revision'] !== 'number'
+      || !Number.isSafeInteger(pin['revision']) || pin['revision'] < 0) return null;
+  }
+  return value as unknown as DecisionSourceV1;
+}
 
 // --------------------------------------------------------------------------
 // Identity, fingerprint and command-shape derivation
@@ -329,6 +389,8 @@ function initialPlanProposalIdFor(input: { projectId: string; workspaceId: strin
 function proposeFingerprint(input: {
   projectId: string; workspaceId: string; goalRef: GoalRef;
   basedOn: PlanRevisionRef | null; draft: PlanRevisionDraft; reason: unknown;
+  requestRef?: QueryJobRef | null;
+  replaces?: { proposalRef: PlanProposalRef; revision: number } | null;
 }): string {
   return sha256Hex(canonicalJson({ schemaVersion: 2, commandType: 'PlanPropose', ...input } as unknown as JsonValue));
 }
@@ -350,8 +412,110 @@ function initialProposeFingerprint(input: {
 function applyFingerprint(input: {
   projectId: string; workspaceId: string; proposalRef: PlanProposalRef;
   expectedProposalRevision: number; decisionRefs: unknown;
+  acknowledgementRef?: SessionMessageRef | null;
+  decisionSource?: DecisionSourceV1 | null;
 }): string {
-  return sha256Hex(canonicalJson({ schemaVersion: 1, commandType: 'PlanApply', ...input } as unknown as JsonValue));
+  // Slice 5 (lead, LB3): attribution enters the fingerprint only when present, so
+  // a request without it keeps the pre-slice canonical payload byte-identical.
+  const { acknowledgementRef, decisionSource, ...base } = input;
+  return sha256Hex(canonicalJson({ schemaVersion: 1, commandType: 'PlanApply', ...base,
+    ...(acknowledgementRef === undefined || acknowledgementRef === null ? {} : { acknowledgementRef }),
+    ...(decisionSource === undefined || decisionSource === null ? {} : { decisionSource }),
+  } as unknown as JsonValue));
+}
+
+/**
+ * Slice 5 §2.8 D8: the `PlanRevisionAccepted` attribution/proof. The
+ * acknowledgement ref is attribution, never authorization. Every modified
+ * aggregate that `source.pins` captured is checked against its captured
+ * version; the Goal alone may rebase when its newer revision keeps an exactly
+ * matching content basis and the Goal is active. Without a `decisionSource`
+ * the proof carries `capturedPins: []` and `basisRebases: []`, and still names
+ * every change (#21, lead).
+ */
+function planAcceptanceProof(input: {
+  acknowledgementRef: SessionMessageRef;
+  decisionSource: DecisionSourceV1 | null;
+  candidate: CandidatePlanProposal;
+  goal: GoalSnapshot;
+  afterProposalRevision: number;
+}): { proof: DecisionChangeProofV1 } | Rejection {
+  const { acknowledgementRef, decisionSource, candidate, goal } = input;
+  const capturedPins = decisionSource === null ? [] : decisionSource.pins;
+  const changes: { before: VersionPin; after: VersionPin }[] = [];
+  const basisRebases: GoalControlRebaseV1[] = [];
+  // D8: `changes` is the exact before/after of EVERY changed aggregate, so the
+  // adoption always records the proposal and the moved Goal. Only an aggregate
+  // the answer captured is CHECKED against its captured version; a modified
+  // aggregate without a captured pin is recorded as-is and not re-checked.
+  const proposalKey = planProposalRefKey(candidate.ref);
+  const proposalPin = capturedPins.find((pin) => refKeyOf(pin.ref) === proposalKey);
+  if (proposalPin !== undefined && proposalPin.revision !== candidate.revision) {
+    return rejected('revision_conflict', 'the candidate revision changed since the answer captured it');
+  }
+  changes.push({ before: { ref: candidate.ref, revision: candidate.revision },
+    after: { ref: candidate.ref, revision: input.afterProposalRevision } });
+  const goalKey = refKeyOf(goal.ref);
+  const goalPin = capturedPins.find((pin) => refKeyOf(pin.ref) === goalKey);
+  const before = { ref: goal.ref, revision: goal.revision };
+  const after = { ref: goal.ref, revision: goal.revision + 1 };
+  if (goalPin !== undefined && goalPin.revision !== goal.revision) {
+    const basis = (decisionSource?.goalBases ?? []).find((candidateBasis) =>
+      refKeyOf(candidateBasis.goalRef) === goalKey);
+    if (goalPin.revision > goal.revision || basis === undefined || !goalDecisionBasisMatches(basis, goal)
+      || goal.desiredState !== 'active') {
+      return rejected('revision_conflict', 'the Goal content changed since the answer captured it');
+    }
+    basisRebases.push({ captured: goalPin, actualBefore: before, basis });
+  }
+  changes.push({ before, after });
+  // D8: adoption also CREATES the target PlanRevision (before = the §2.1
+  // absence pin revision 0, after = revision 1); the proof must name every
+  // changed aggregate, not only the proposal and the Goal.
+  const target = planRevisionTargetOf(candidate.ref, candidate.draft);
+  changes.push({ before: { ref: target, revision: 0 }, after: { ref: target, revision: 1 } });
+  return { proof: { acknowledgementRef, capturedPins, changes, basisRebases } };
+}
+
+/**
+ * Slice 5 §2.8/T-R2-1: the Agent branch reads the formal answer the
+ * acknowledgement names and uses its SAVED `response.decision.source` as the
+ * decision basis. The source is never taken from model/caller JSON. This is new
+ * business I/O, so it runs only after the original receipt replay; a missing
+ * answer is `not_found` and a damaged/unreadable one is returned as its store
+ * rejection. The caller has already refused another Workspace before any
+ * foreign read.
+ */
+async function readAcknowledgedAnswerSource(
+  records: GoalRecordTransactionPort & RecordLookupPort,
+  acknowledgementRef: SessionMessageRef,
+): Promise<{ status: 'ready'; source: DecisionSourceV1 } | Rejection> {
+  const key = sessionMessageRefKey(acknowledgementRef);
+  let read: Awaited<ReturnType<typeof records.readMany>>;
+  try { read = await records.readMany([key]); }
+  catch (error) { return rejected('unavailable', `the acknowledged answer read failed: ${messageOf(error)}`); }
+  if (read.status !== 'ready') return mapStoreReadFailure(read, 'the acknowledged answer is not readable');
+  const record = read.value.records.find((candidate) => candidate.refKey === key);
+  if (record === undefined) {
+    return read.value.missing.includes(key)
+      ? rejected('not_found', 'the acknowledged answer does not exist')
+      : rejected('unavailable', 'the acknowledged answer read was not reported');
+  }
+  const decoded = decodeSessionMessageRecord(record);
+  if (decoded.status !== 'decoded') {
+    return rejected('unavailable', `the acknowledged answer is damaged: ${decoded.reason}`);
+  }
+  const message = decoded.value;
+  if (message.ref.projectId !== acknowledgementRef.projectId
+    || message.ref.workspaceId !== acknowledgementRef.workspaceId
+    || message.ref.messageId !== acknowledgementRef.messageId) {
+    return rejected('unavailable', 'the stored acknowledged answer does not match the requested identity');
+  }
+  const response = message.response;
+  if (response === null || !('decision' in response)) {
+    return rejected('not_found', 'the acknowledged message does not carry a user decision answer');
+  }
+  return { status: 'ready', source: response.decision.source };
 }
 
 // --------------------------------------------------------------------------
@@ -506,14 +670,20 @@ async function restoreProposal(
     idempotencyKey: string; actor: ActorRef },
 ): Promise<{ status: 'restored'; proposal: PlanProposal } | Rejection> {
   if (receipt.identityKey !== expected.identityKey) return rejected('unavailable', 'idempotency receipt belongs to another identity');
-  if (receipt.eventIds.length !== 1) return rejected('unavailable', 'a proposal receipt must reference exactly one event');
+  // A PLAN-01 proposal writes one event; a PLAN-02 replacement writes the
+  // replaced head's event first and the candidate's last, so the commit cursor
+  // (and this replay) always names the candidate.
+  if (receipt.eventIds.length < 1 || !nonEmpty(receipt.eventIds[receipt.eventIds.length - 1])) {
+    return rejected('unavailable', 'a proposal receipt must reference at least one event');
+  }
+  const lastEventId = receipt.eventIds[receipt.eventIds.length - 1]!;
   const located = await records.eventAt(receipt.cursor);
   if (located.status !== 'ready') return mapStoreReadFailure(located, 'the original proposal event is unavailable');
   if (String(located.value.cursor) !== String(receipt.cursor)) return rejected('unavailable', 'eventAt returned a different cursor');
   const decoded = decodePlanProposalRecordedEvent(located.value.event);
   if (decoded.status !== 'decoded') return rejected('unavailable', `the original proposal event is corrupt: ${decoded.reason}`);
   const event = decoded.value;
-  if (event.eventId !== receipt.eventIds[0]) return rejected('unavailable', 'the receipt points at another event');
+  if (event.eventId !== lastEventId) return rejected('unavailable', 'the receipt points at another event');
   if (event.projectId !== expected.projectId || event.workspaceId !== expected.workspaceId
     || event.aggregateId !== expected.proposalId) return rejected('unavailable', 'the original proposal event is outside the recovered scope');
   if (event.idempotencyKey !== expected.idempotencyKey || !actorsAgree(event.actor, expected.actor)) {
@@ -576,6 +746,16 @@ function mapCommitFailure(receipt: StoreFailure): Rejection & { current?: Versio
     case 'unsupported': return rejected('incomplete', `unsupported: ${receipt.reason}`);
     default: return rejected('unavailable', receipt.reason);
   }
+}
+
+/**
+ * Slice 5 §3.1 line 520: a lost request-slot unique claim is the NEW operation's
+ * conflict and maps to `revision_conflict`; the old Store mapping rules for
+ * everything else are unchanged.
+ */
+function mapRequestSlotCommitFailure(receipt: StoreFailure, hasSlot: boolean): Rejection & { current?: VersionPin[] } {
+  if (hasSlot && receipt.code === 'unique_conflict') return rejected('revision_conflict', receipt.reason);
+  return mapCommitFailure(receipt);
 }
 
 // --------------------------------------------------------------------------
@@ -743,11 +923,10 @@ function gateFailureInput(plan: PlanRevisionSnapshot, definition: RuntimeTask, s
   const head = chain.kind === 'head' ? chain.head : null;
   const anchorRun = head === null ? null
     : [...facts.runsByTaskId.values()].flat().find((run) => sameRef(run.ref, head.subjectRunRef)) ?? null;
-  const fixInProgress = gateCoverage(plan, definition).some((taskId) => {
-    const covered = plan.tasks.find((candidate) => candidate.taskId === taskId);
-    return covered !== undefined && covered.requirementLevel === 'required' && covered.disposition === 'active'
-      && facts.byTaskId.get(taskId)?.effectivePhase !== 'satisfied';
-  });
+  // GV-5 from the ONE shared `gateFixInProgress` (coverage + covered Tasks'
+  // requirement/disposition/effective phase); the §4.2 reader uses the same.
+  const fixInProgress = gateFixInProgress(plan.tasks, definition,
+    (taskId) => facts.byTaskId.get(taskId)?.effectivePhase);
   return {
     subjectKind: 'gate',
     task: { projectId: facts.goalRef.projectId, goalId, taskId: definition.taskId },
@@ -886,6 +1065,8 @@ function sameRoleFilter(left: readonly string[], right: readonly string[]): bool
 
 export function createPlanService(deps: PlanServiceDependencies): PlanServicePort {
   const { records } = deps;
+  /** Slice 5 §2.6: the transitional request-facts seam, built over the same records instance. */
+  const requestFactsReader = createCandidateRequestFactsReader({ records });
   /** C8 policy of the failure facts, read fresh on every graph read (a settings change applies at once). */
   const automationPolicy = (): TaskAutomationPolicyV1 => deps.automationPolicy?.() ?? DEFAULT_TASK_AUTOMATION_POLICY;
 
@@ -1100,6 +1281,7 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
    * actually read); it never becomes a second commit algorithm.
    */
   async function commitHostPlanProposal(input: {
+    ctx: CoreCallContext;
     writer: 'host' | 'initial_answer';
     goalRef: GoalRef;
     workspaceId: string;
@@ -1114,8 +1296,13 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     requestId: string;
     expected: unknown;
     extraGuards: readonly RecordGuard[];
+    /** Slice 5 §2.4: the first user-initiated request this candidate belongs to. */
+    requestRef: QueryJobRef | null;
+    /** Slice 5 §2.4: the current request head this candidate replaces, or null. */
+    replaces: { proposalRef: PlanProposalRef; revision: number } | null;
   }): Promise<WriteResult<PlanProposal>> {
-    const { goalRef, workspaceId } = input;
+    const { goalRef, workspaceId, requestRef, replaces } = input;
+    const ctx = input.ctx;
     const pins = normalizeCallerPlanPins({ projectId: goalRef.projectId, workspaceId, goalId: goalRef.goalId }, input.expected);
     if (pins.status === 'invalid') return rejected('invalid', pins.reason);
 
@@ -1132,46 +1319,135 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
 
     const scoped = await readPlanScope(records, goalRef, workspaceId, pins.pins);
     if (scoped.status !== 'ready') return scoped;
-    // PLAN-01/03 judge the scope before the policy read. The proposal is not
-    // read: its absence is the commit's CAS ∅ guard (state ∅).
-    const recorded = { type: 'proposal_recorded' as const, writer: input.writer, ref: input.ref, goalRef,
-      basedOn: input.basedOn, draft: input.draft, reason: input.reason as unknown as PlanChangeReason, submittedBy: null };
-    const ctx: PlanProposalGuardContext = { ...scoped.facts, agentAdmission: null, source: null, initial: null, future: null };
-    const refused = planProposalProblem(null, recorded, ctx);
-    if (refused?.ok === false) return refusalOf(refused, pinsCurrent(refused, scoped.comparison));
+
+    // Slice 5 §2.4/§2.6: the request seam proves the real same-Goal root and
+    // reads the current per-request head. It runs after the scope read and
+    // before the draft admission; a missing/foreign/not-user root is refused
+    // without guessing.
+    let requestFacts: PlanRequestCandidateFacts | null = null;
+    let requestGuards: readonly RecordGuard[] = [];
+    let oldHead: CandidatePlanProposal | null = null;
+    // Slice 5 §2.5/T-R2-2: a replacement copies the replaced chain's wire-only
+    // creation origin; it never rebinds. `undefined` means the old record
+    // carried no `since` (a legacy/pre-slice chain), so the successor keeps none.
+    let replacedOrigin: NoticeOriginWireV1 | undefined;
+    if (requestRef !== null) {
+      const factsRead = await requestFactsReader.readCandidateRequestFacts(ctx, { requestRef, goalRef });
+      if (factsRead.status !== 'ready') return asWriteRejection(factsRead, 'the request facts are unavailable');
+      if (!factsRead.value.root) return rejected('invalid', 'the requestRef root does not belong to this Goal');
+      if (!factsRead.value.initiatedByOperator) {
+        return rejected('unsupported', 'the requestRef is not a user-initiated first-round QueryJob');
+      }
+      requestGuards = factsRead.value.guards;
+      const headRead = await readRequestCandidateHead(records, { goalRef, requestRef });
+      if (headRead.status !== 'ready') return asWriteRejection(headRead, 'the request head is unavailable');
+      const head = headRead.head;
+      if (replaces === null) {
+        requestFacts = requestCandidateFacts({ requestRootSameGoal: true, replacesIsNull: true,
+          slotExpectedOwnerIsNull: head === null });
+      } else {
+        const oldRead = await readProposal(records, replaces.proposalRef);
+        if (oldRead.status !== 'ready') return asWriteRejection(oldRead, 'the replaced head is unavailable');
+        if (oldRead.proposal.kind !== 'candidate_v2') return rejected('unsupported', 'a legacy v1 proposal cannot be replaced');
+        oldHead = oldRead.proposal;
+        const oldOrigin = await readProposalOrigin(records, replaces.proposalRef);
+        if (oldOrigin.status !== 'ready') return asWriteRejection(oldOrigin, 'the replaced head origin is unavailable');
+        replacedOrigin = oldOrigin.origin;
+        const headMatches = head !== null && planProposalRefKey(head.ref) === planProposalRefKey(replaces.proposalRef);
+        const headRevisionMatches = head !== null && head.revision === replaces.revision;
+        requestFacts = requestCandidateFacts({ requestRootSameGoal: true, replacesIsNull: false,
+          headMatches, headRevisionMatches, requestGoalMatches: true,
+          replacesComplete: headMatches && headRevisionMatches });
+      }
+    } else if (replaces !== null) {
+      return rejected('invalid', 'a replacement candidate requires the request it replaces');
+    }
 
     const policyRead = await tryPolicyContent(records, goalRef.projectId);
-    const decided = transitionPlanProposal(null, { ...recorded, issues: validatePlanDraft(input.draft, policyRead.policy) }, ctx);
-    if (!decided.ok) return refusalOf(decided);
-    const commit = planCommitOf(decided, { scope: scoped.scope, actor: input.actor, answerFacts: input.extraGuards });
-    if (commit.status !== 'ready') return commit;
-    const candidate = commit.proposal;
+    const issues = validatePlanDraft(input.draft, policyRead.policy);
+    let candidate: PlanProposal;
+    let replacedRecord: CandidatePlanProposal | null = null;
+    let requestSlotEffect: Extract<PlanProposalEffect, { kind: 'request_slot' }> | null = null;
+    let commitGuards: readonly RecordGuard[] = [];
+
+    if (replaces !== null) {
+      // S5-PLAN-02: the replacement transition over the real old head. The old
+      // head's complete next record and the slot move are separate effects.
+      const event = { type: 'proposal_replaced' as const, writer: input.writer, ref: input.ref, goalRef,
+        basedOn: input.basedOn, draft: input.draft, reason: input.reason as unknown as PlanChangeReason,
+        issues, submittedBy: null, expectedHeadRevision: replaces.revision, requestedBy: input.actor,
+        at: deps.now(), head: { proposalRef: replaces.proposalRef, revision: replaces.revision },
+        replaces, requestRef: requestRef! };
+      const guardCtx: PlanProposalGuardContext = { ...scoped.facts, agentAdmission: null, source: null,
+        initial: null, future: null, requestCandidate: requestFacts };
+      const decided = transitionPlanProposal(oldHead, event, guardCtx);
+      if (!decided.ok) return refusalOf(decided);
+      const commit = planCommitOf(decided, { scope: scoped.scope, actor: input.actor, answerFacts: input.extraGuards });
+      if (commit.status !== 'ready') return commit;
+      candidate = commit.proposal;
+      replacedRecord = commit.replaced;
+      requestSlotEffect = commit.requestSlot;
+      commitGuards = commit.guards;
+    } else {
+      // PLAN-01/03 judge the scope before the policy read. The proposal is not
+      // read: its absence is the commit's CAS ∅ guard (state ∅).
+      const recorded = { type: 'proposal_recorded' as const, writer: input.writer, ref: input.ref, goalRef,
+        basedOn: input.basedOn, draft: input.draft, reason: input.reason as unknown as PlanChangeReason, submittedBy: null,
+        ...(requestRef === null ? {} : { requestRef }) };
+      const guardCtx: PlanProposalGuardContext = { ...scoped.facts, agentAdmission: null, source: null, initial: null,
+        future: null, requestCandidate: requestFacts };
+      const refused = planProposalProblem(null, recorded, guardCtx);
+      if (refused?.ok === false) return refusalOf(refused, pinsCurrent(refused, scoped.comparison));
+      const decided = transitionPlanProposal(null, { ...recorded, issues }, guardCtx);
+      if (!decided.ok) return refusalOf(decided);
+      const commit = planCommitOf(decided, { scope: scoped.scope, actor: input.actor, answerFacts: input.extraGuards });
+      if (commit.status !== 'ready') return commit;
+      candidate = commit.proposal;
+      requestSlotEffect = commit.requestSlot;
+      commitGuards = commit.guards;
+    }
+
     const identity = { projectId: goalRef.projectId, actor: input.actor, idempotencyKey: input.requestId };
     const derived = deriveCommandIds(identity, 'plan-propose');
-    const event: PlanProposalRecordedEvent = {
+    const eventFor = (proposal: PlanProposal): PlanProposalRecordedEvent => ({
       eventId: deps.eventId(), eventType: 'PlanProposalRecorded', schemaVersion: 2,
-      projectId: goalRef.projectId, workspaceId, aggregateType: 'PlanProposal', aggregateId: input.proposalId,
-      aggregateRevision: 1, causationId: derived.commandId, correlationId: derived.correlationId,
-      idempotencyKey: input.requestId, actor: input.actor, occurredAt: deps.now(), payload: { proposal: candidate },
-    };
+      projectId: goalRef.projectId, workspaceId, aggregateType: 'PlanProposal', aggregateId: proposal.ref.proposalId,
+      aggregateRevision: proposal.revision, causationId: derived.commandId, correlationId: derived.correlationId,
+      idempotencyKey: input.requestId, actor: input.actor, occurredAt: deps.now(), payload: { proposal },
+    });
+    // The replaced record's event goes FIRST and the candidate LAST, so the
+    // commit cursor's event is always the candidate: replay needs no scan.
+    const encodedEvents = (replacedRecord === null ? [] : [encodePlanProposalRecordedEvent(eventFor(replacedRecord))])
+      .concat([encodePlanProposalRecordedEvent(eventFor(candidate))]);
+    // Slice 5 §2.5/T-R2-2: a NEW chain's first candidate binds its creation
+    // commit cursor to the wire `since`; a replacement copies the old chain's
+    // preserved origin into both the rewritten old head and the new candidate.
+    const replacing = replacedRecord !== null;
+    const encodedRecords = (replacedRecord === null ? [] : [encodePlanProposal(replacedRecord, replacedOrigin)])
+      .concat([encodePlanProposal(candidate, replacing ? replacedOrigin : { since: null })]);
+    const cursorBindings = replacing ? [] : [{ refKey: planProposalRefKey(candidate.ref), field: 'since' as const }];
+    const merged = mergeGuards([...commitGuards, ...requestGuards]);
+    if (!merged.ok) return merged.rejection;
+    const claims: UniqueClaimChange[] = requestSlotEffect === null ? [] : [requestSlotClaim(requestSlotEffect)];
     // The FIRST read of the window is the horizon: any fact added after it must
     // conflict, even if a later optional read observed a newer head.
     const horizon = scoped.scope.readThrough;
     if (horizon === null) return rejected('incomplete', 'the ledger has no readable watermark for the proposal');
     const committed = await records.commit({ identityKey: input.identityKey, fingerprint: input.fingerprint,
-      guards: commit.guards, records: [encodePlanProposal(candidate)], claims: [], indexGuards: [], indexChanges: [],
-      events: [encodePlanProposalRecordedEvent(event)], ledgerHorizon: horizon });
-    if (committed.status !== 'committed') return mapCommitFailure(committed);
+      guards: merged.guards, records: encodedRecords, claims, indexGuards: [], indexChanges: [],
+      events: encodedEvents, ledgerHorizon: horizon,
+      ...(cursorBindings.length === 0 ? {} : { commitCursorBindings: cursorBindings }) });
+    if (committed.status !== 'committed') return mapRequestSlotCommitFailure(committed, claims.length > 0);
     if (!committed.replayed) return { status: 'committed', value: candidate, replayed: false, cursor: committed.cursor };
     const restored = await restoreProposal(records, committed, receiptExpected);
     if (restored.status !== 'restored') return rejected(restored.code, restored.reason);
     return { status: 'committed', value: restored.proposal, replayed: true, cursor: committed.cursor };
   }
 
+
   async function proposePlan(
     ctx: CoreCallContext,
-    request: { input: { goalRef: GoalRef; basedOn: PlanRevisionRef | null; draft: PlanRevisionDraft;
-      reason: unknown }; meta: { requestId: string; expected: readonly VersionPin[] } },
+    request: GraphWrite<ProposedPlanRequestV1>,
   ): Promise<WriteResult<PlanProposal>> {
     if (ctx?.signal?.aborted) return rejected('cancelled', 'plan proposal was cancelled before admission');
     const owned = ownJsonInput(request, 'proposePlan request');
@@ -1202,12 +1478,39 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
 
     const workspaceId = ctx.workspaceId;
     if (!nonEmpty(workspaceId)) return forbidden('proposePlan requires a workspace-bound context');
+    // Slice 5 §2.4: the optional request association and the replaced head. A
+    // requestRef is a complete QueryJobRef in this project/workspace; replaces
+    // names the current head ref plus its revision.
+    const requestRefRaw = rawInput['requestRef'];
+    let requestRef: QueryJobRef | null = null;
+    if (requestRefRaw !== undefined && requestRefRaw !== null) {
+      if (!isRecord(requestRefRaw) || requestRefRaw['aggregateType'] !== 'QueryJob'
+        || requestRefRaw['projectId'] !== goalRef.projectId || requestRefRaw['workspaceId'] !== workspaceId
+        || !nonEmpty(requestRefRaw['queryJobId'])) {
+        return rejected('invalid', 'proposePlan requestRef must be a complete QueryJobRef in this project/workspace');
+      }
+      requestRef = requestRefRaw as unknown as QueryJobRef;
+    }
+    const replacesRaw = rawInput['replaces'];
+    let replaces: { proposalRef: PlanProposalRef; revision: number } | null = null;
+    if (replacesRaw !== undefined && replacesRaw !== null) {
+      if (!isRecord(replacesRaw) || typeof replacesRaw['revision'] !== 'number'
+        || !Number.isSafeInteger(replacesRaw['revision']) || replacesRaw['revision'] < 1) {
+        return rejected('invalid', 'proposePlan replaces must name a proposal revision');
+      }
+      const replacedRef = planProposalRefFromUnknown(replacesRaw['proposalRef']);
+      if (replacedRef === null || replacedRef.workspaceId !== workspaceId) {
+        return rejected('invalid', 'proposePlan replaces must name a PlanProposalRef in this workspace');
+      }
+      replaces = { proposalRef: replacedRef, revision: replacesRaw['revision'] };
+    }
     // W2 Agent branch is recognized first and never falls through to the Host-only binding.
     if (isWorkRunCaller(ctx)) {
       const ownedContext = ownCallContext(ctx);
       if (ownedContext.status === 'invalid') return rejected('invalid', ownedContext.reason);
       return proposePlanAsAgent(deps, records, ownedContext.value, {
         goalRef, basedOn, draft, reason: reasonRaw, requestId, expected: rawMeta['expected'], workspaceId,
+        requestRef, replaces,
       });
     }
     const bound = boundWriteActor(ctx, goalRef.projectId, workspaceId);
@@ -1218,18 +1521,22 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     const identityKey = PLAN_PROPOSE_IDENTITY_PREFIX + commandIdentityKey(identity);
     const proposalId = planProposalIdFor({ projectId: goalRef.projectId, workspaceId, goalId: goalRef.goalId, requestId });
     const ref: PlanProposalRef = { aggregateType: 'PlanProposal', projectId: goalRef.projectId, workspaceId, proposalId };
-    const fingerprint = proposeFingerprint({ projectId: goalRef.projectId, workspaceId, goalRef, basedOn, draft, reason: reasonRaw });
+    const fingerprint = proposeFingerprint({ projectId: goalRef.projectId, workspaceId, goalRef, basedOn, draft, reason: reasonRaw,
+      requestRef, replaces });
 
     return commitHostPlanProposal({
-      writer: 'host', goalRef, workspaceId, actor: bound.actor, identityKey, fingerprint, proposalId, ref,
+      ctx, writer: 'host', goalRef, workspaceId, actor: bound.actor, identityKey, fingerprint, proposalId, ref,
       basedOn, draft, reason: reasonRaw, requestId, expected: rawMeta['expected'], extraGuards: [],
+      requestRef, replaces,
     });
   }
 
   async function applyPlanChange(
     ctx: CoreCallContext,
-    request: { input: { proposalRef: PlanProposalRef; expectedProposalRevision: number;
-      decisionRefs: readonly VersionPin[] }; meta: { requestId: string; expected: readonly VersionPin[] } },
+    request: GraphWrite<{ proposalRef: PlanProposalRef; expectedProposalRevision: number;
+      decisionRefs: readonly VersionPin[]; acknowledgementRef?: SessionMessageRef;
+      /** [lead S5-T3-D8] proof data only (never authorization); see PlanTaskPort.applyPlanChange. */
+      decisionSource?: DecisionSourceV1 }>,
   ): Promise<WriteResult<import('../../../contracts/plan.js').PlanRevisionSnapshot>> {
     if (ctx?.signal?.aborted) return rejected('cancelled', 'plan adoption was cancelled before admission');
     // The model-origin body read below is new I/O: its material identity is owned
@@ -1255,6 +1562,22 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
         return rejected('invalid', 'every decisionRef must be a versioned ref');
       }
     }
+    // Slice 5 §2.8 D8: attribution and proof data only, never authorization.
+    const acknowledgementRef = sessionMessageRefFromUnknown(rawInput['acknowledgementRef']);
+    if (rawInput['acknowledgementRef'] !== undefined && rawInput['acknowledgementRef'] !== null
+      && acknowledgementRef === null) {
+      return rejected('invalid', 'acknowledgementRef must be a complete SessionMessageRef');
+    }
+    // §8.2 scope row (lead, accept review NEW-3): the attributed answer must be in the adopting proposal's own
+    // Workspace; an answer of another Workspace is never attribution for this change.
+    if (acknowledgementRef !== null && (acknowledgementRef.projectId !== proposalRef.projectId
+      || acknowledgementRef.workspaceId !== proposalRef.workspaceId)) {
+      return rejected('forbidden', 'acknowledgementRef names an answer in another workspace');
+    }
+    const decisionSource = decisionSourceFromUnknown(rawInput['decisionSource']);
+    if (rawInput['decisionSource'] !== undefined && rawInput['decisionSource'] !== null && decisionSource === null) {
+      return rejected('invalid', 'decisionSource must be a DecisionSourceV1 shape');
+    }
     const requestId = rawMeta['requestId'];
     if (!nonEmpty(requestId)) return rejected('invalid', 'applyPlanChange requires meta.requestId');
     // W2 Agent branch is recognized first and never falls through to the Host-only binding.
@@ -1264,6 +1587,10 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
       return applyPlanChangeAsAgent(deps, records, ownedContext.value, {
         proposalRef, expectedProposalRevision, decisionRefs: rawInput['decisionRefs'],
         requestId, expected: rawMeta['expected'],
+        // Slice 5 §2.8 D8/T-R2-1: the Agent branch receives attribution only.
+        // It reads the formal answer itself and never accepts a caller-supplied
+        // `decisionSource` (the parsed Host `decisionSource` below is unused here).
+        acknowledgementRef,
       });
     }
     const bound = boundWriteActor(ctx, proposalRef.projectId, proposalRef.workspaceId);
@@ -1273,7 +1600,7 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     const identity = { projectId: proposalRef.projectId, actor: bound.actor, idempotencyKey: requestId };
     const identityKey = PLAN_APPLY_IDENTITY_PREFIX + commandIdentityKey(identity);
     const fingerprint = applyFingerprint({ projectId: proposalRef.projectId, workspaceId: proposalRef.workspaceId,
-      proposalRef, expectedProposalRevision, decisionRefs: rawInput['decisionRefs'] });
+      proposalRef, expectedProposalRevision, decisionRefs: rawInput['decisionRefs'], acknowledgementRef, decisionSource });
 
     const prePins = normalizeCallerPlanPins({ projectId: proposalRef.projectId, workspaceId: proposalRef.workspaceId }, rawMeta['expected']);
     if (prePins.status === 'invalid') return rejected('invalid', prePins.reason);
@@ -1297,11 +1624,50 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
       const read = await readAdoption(records, adoption, null, rawMeta['expected']);
       if (read.status !== 'ready') return read;
       const { candidate, scope, adoptionScope } = read;
+      // Slice 5 §2.8 D8: attribution/proof data only, computed from the answer
+      // source captured by the trusted caller; never a new authorization.
+      let decisionProof: PlanAcceptanceDecisionProofV1 | null = null;
+      if (acknowledgementRef !== null) {
+        const proof = planAcceptanceProof({ acknowledgementRef, decisionSource, candidate, goal: scope.goal,
+          afterProposalRevision: candidate.revision + 1 });
+        if ('status' in proof) return proof;
+        decisionProof = { acknowledgementRef, decisionApplication: proof.proof };
+      }
       if (candidate.basedOn !== null) {
         // The Host principal as `boundWriteActor` bound it (its actor is the principal's own).
         return applyFutureRevision({ records, read, adoption, receipt: receiptExpected,
           principal: { kind: 'host', actor: bound.actor as Extract<CorePrincipal, { kind: 'host' }>['actor'] },
-          extraGuards: [], preCommitSignal: null, eventId: deps.eventId, now: deps.now });
+          operatorActor: deps.operatorActor,
+          extraGuards: [], preCommitSignal: null, eventId: deps.eventId, now: deps.now, decisionProof });
+      }
+
+      // S5-PLAN-03: a request-associated initial candidate releases its slot in
+      // the same commit; an independent candidate keeps the old accepted path.
+      const requestRef = candidateRequestRef(candidate);
+      let requestFacts: PlanRequestCandidateFacts | null = null;
+      let adoptedEvent: PlanProposalEvent = adoption;
+      if (requestRef !== null) {
+        const headRead = await readRequestCandidateHead(records, { goalRef: candidate.goalRef, requestRef });
+        if (headRead.status !== 'ready') return asWriteRejection(headRead, 'the request head is unavailable');
+        const slotOwnerMatches = headRead.head !== null
+          && planProposalRefKey(headRead.head.ref) === planProposalRefKey(candidate.ref);
+        // S5-PLAN-03/D2: null/null is the valid initial relationship (the
+        // legitimate first plan); a non-null candidate `basedOn` must equal the
+        // Goal's active pointer, and a one-sided null is never a match.
+        const basedOnIsActivePointer = candidate.basedOn === null
+          ? scope.goal.activePlanRevision === null
+          : scope.goal.activePlanRevision !== null
+            && refKeyOf(candidate.basedOn) === refKeyOf(scope.goal.activePlanRevision);
+        // Slice 5 §3.1 S5-PLAN-03/§3.2: the first plan is user-only and the
+        // adopting action's autonomy verdict is not hardcoded. `bound` is the
+        // trusted Host operator; an Agent never reaches here (W2 branch above).
+        const operatorMatches = hostOperatorMatches(deps.operatorActor, bound.actor, true);
+        const adopterClass = reworkActorClassOf(null, bound.actor) ?? 'human';
+        requestFacts = requestCandidateFacts({ replacesIsNull: true, basedOnIsActivePointer,
+          firstPlanUserOnly: operatorMatches, slotOwnerMatches, operatorMatches,
+          goalNotCancelled: scope.goal.desiredState !== 'cancelled',
+          adoptionPolicy: operatorMatches ? null : adoptionPolicyOf(scope.goal, 'adopt_first_plan', adopterClass) });
+        adoptedEvent = { ...adoption, type: 'proposal_adopted', requestRef };
       }
 
       let originGuards: RecordGuard[] = [];
@@ -1331,12 +1697,15 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
       const phaseReasons = planPhaseGuardReasons(candidate.draft.tasks);
 
       // PLAN-04 + GOAL-02: the accepted candidate, the moved Goal and the guards of the one commit.
-      const decided = transitionPlanProposal(candidate, adoption, { ...adoptionScope, source: null,
-        initial: { origin, governance, draftIssues, assignmentReasons, phaseReasons }, future: null });
+      const decided = transitionPlanProposal(candidate, adoptedEvent, { ...adoptionScope, source: null,
+        initial: { origin, governance, draftIssues, assignmentReasons, phaseReasons }, future: null,
+        requestCandidate: requestFacts });
       if (!decided.ok) return refusalOf(decided);
       const commit = planCommitOf(decided, { scope, actor: bound.actor,
         originSources: originGuards, governance: resolved!.governance.guards });
       if (commit.status !== 'ready') return commit;
+      const requestSlot: PlanRequestSlotChangeV1 | null = commit.requestSlot === null ? null
+        : { requestRef, claim: requestSlotClaim(commit.requestSlot) };
       if (read.horizon === null) return rejected('incomplete', 'the ledger has no readable watermark for the plan adoption');
       const acceptedAt = deps.now();
       const derived = deriveCommandIds(identity, 'plan-apply');
@@ -1352,9 +1721,12 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
         correlationId: derived.correlationId,
         idempotencyKey: requestId,
         actor: bound.actor,
+        requestSlot,
+        decisionProof,
+        origin: read.origin,
       });
       const committed = await records.commit(compiled.prepared);
-      if (committed.status !== 'committed') return mapCommitFailure(committed);
+      if (committed.status !== 'committed') return mapRequestSlotCommitFailure(committed, compiled.prepared.claims.length > 0);
       if (!committed.replayed) return { status: 'committed', value: compiled.snapshot, replayed: false, cursor: committed.cursor };
       const restored = await restoreAcceptedPlan(records, committed, receiptExpected);
       if (restored.status !== 'restored') return rejected(restored.code, restored.reason);
@@ -1471,9 +1843,9 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
       { refKey: canonicalJson(facts.job.ref as unknown as JsonValue), expectedRevision: facts.job.revision },
       { refKey: canonicalJson(facts.run.ref as unknown as JsonValue), expectedRevision: facts.run.revision },
     ];
-    return commitHostPlanProposal({ writer: 'initial_answer', goalRef, workspaceId, actor: bound.actor, identityKey, fingerprint,
+    return commitHostPlanProposal({ ctx, writer: 'initial_answer', goalRef, workspaceId, actor: bound.actor, identityKey, fingerprint,
       proposalId, ref, basedOn: null, draft: normalized.draft, reason: rawReason, requestId,
-      expected, extraGuards: originGuards });
+      expected, extraGuards: originGuards, requestRef: null, replaces: null });
   }
 
   async function queryGoal(ctx: CoreCallContext, ref: GoalRef): Promise<ReadResult<GoalDetail>> {
@@ -1890,7 +2262,186 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
   }
 
   return { queryGoal, readPlanProposal, proposePlan, applyPlanChange, proposeInitialPlanFromAnswer,
+    readInitialPlanAnswerFacts,
     queryTaskGraph, queryReadyTasks, queryGoalDisplay, queryGoalLiveRuns, queryGoalResumeContinuations };
+}
+
+/**
+ * Slice 5 §3.3 RequestCandidatePort (F30): the per-request candidate head read
+ * and the abandon write. It is a named factory that uses the SAME Plan owner
+ * dependencies, so part 2 can compile the request-slot commit without a second
+ * plan service. Part 1 declares the port methods only; the factory never throws.
+ */
+export function createRequestCandidateService(deps: PlanServiceDependencies): RequestCandidatePort {
+  const { records } = deps;
+  /** Slice 5 §2.6: the same transitional request-facts seam the plan service uses. */
+  const requestFactsReader = createCandidateRequestFactsReader({ records });
+
+  return {
+    async readRequestCandidate(ctx: CoreCallContext, input: { goalRef: GoalRef; requestRef: QueryJobRef }) {
+      if (input.goalRef.projectId !== ctx.projectId) return forbidden('the Goal belongs to another project');
+      // Rule 1/RC10: another workspace is refused BEFORE any foreign record read.
+      if (input.requestRef.projectId !== ctx.projectId || input.requestRef.workspaceId !== ctx.workspaceId) {
+        return forbidden('the request belongs to another project or workspace');
+      }
+      const goalRead = await readGoal(records, input.goalRef);
+      if (goalRead.status !== 'ready') return asReadResult(goalRead);
+      if (goalRead.goal.workspaceRef.workspaceId !== ctx.workspaceId) {
+        return forbidden('the Goal belongs to another workspace');
+      }
+      // §3.1/§3.3 request facts: a same-workspace request that does not exist is
+      // `not_found`, never a `{head:null,status:'closed'}` result.
+      const factsRead = await requestFactsReader.readCandidateRequestFacts(ctx,
+        { requestRef: input.requestRef, goalRef: input.goalRef });
+      if (factsRead.status !== 'ready') {
+        if (factsRead.status === 'not_found') return { status: 'not_found' };
+        if (factsRead.status === 'rejected') return { status: 'rejected', code: factsRead.code, reason: factsRead.reason };
+        return rejected('incomplete', 'the request facts are unavailable');
+      }
+      if (!factsRead.value.root) return { status: 'not_found' };
+      const headRead = await readRequestCandidateHead(records, { goalRef: input.goalRef, requestRef: input.requestRef });
+      if (headRead.status !== 'ready') return asReadResult(headRead);
+      const head = headRead.head;
+      if (head === null) {
+        return { status: 'ready', value: { head: null, status: 'closed', closedReason: null } };
+      }
+      const verdict = derivePlanProposalReadVerdict(head, goalRead.goal.activePlanRevision, goalRead.goal.desiredState);
+      return { status: 'ready', value: { head, status: verdict.status, closedReason: verdict.closedReason } };
+    },
+
+    async abandonPlanProposal(ctx: CoreCallContext, request: GraphWrite<{ proposalRef: PlanProposalRef }>) {
+      if (ctx?.signal?.aborted) return rejected('cancelled', 'the plan proposal abandonment was cancelled before admission');
+      const owned = ownJsonInput(request, 'abandonPlanProposal request');
+      if (owned.status === 'invalid') return rejected('invalid', owned.reason);
+      const body = owned.value as unknown as { input?: unknown; meta?: unknown } | undefined;
+      const rawInput = body?.input;
+      const rawMeta = body?.meta;
+      if (!isRecord(rawInput) || !isRecord(rawMeta)) {
+        return rejected('invalid', 'abandonPlanProposal requires an input and meta object');
+      }
+      const proposalRef = planProposalRefFromUnknown(rawInput['proposalRef']);
+      if (proposalRef === null) return rejected('invalid', 'abandonPlanProposal requires a full PlanProposalRef');
+      const requestId = rawMeta['requestId'];
+      if (!nonEmpty(requestId)) return rejected('invalid', 'abandonPlanProposal requires meta.requestId');
+      const expectedProposalRevision = proposalRevisionPinOf(rawMeta['expected'], proposalRef);
+      if (expectedProposalRevision === null) {
+        return rejected('invalid', 'abandonPlanProposal requires the proposal pin in meta.expected');
+      }
+      const bound = boundWriteActor(ctx, proposalRef.projectId, proposalRef.workspaceId);
+      if (bound.status !== 'ok') return rejected(bound.code, bound.reason);
+      if (bound.aborted) return rejected('cancelled', 'the plan proposal abandonment was cancelled before admission');
+      const actor = bound.actor;
+
+      const pins = normalizeCallerPlanPins({ projectId: proposalRef.projectId, workspaceId: proposalRef.workspaceId },
+        rawMeta['expected']);
+      if (pins.status === 'invalid') return rejected('invalid', pins.reason);
+
+      const identity = { projectId: proposalRef.projectId, actor, idempotencyKey: requestId };
+      const identityKey = PLAN_ABANDON_IDENTITY_PREFIX + commandIdentityKey(identity);
+      const fingerprint = sha256Hex(canonicalJson({ schemaVersion: 1, commandType: 'PlanAbandon',
+        projectId: proposalRef.projectId, workspaceId: proposalRef.workspaceId, proposalRef,
+        expectedProposalRevision, expected: orderedPlanPins(rawMeta['expected']) } as unknown as JsonValue));
+      const receiptExpected = { identityKey, fingerprint, projectId: proposalRef.projectId,
+        workspaceId: proposalRef.workspaceId, proposalId: proposalRef.proposalId, idempotencyKey: requestId, actor };
+
+      const early = await records.lookupCommit({ identityKey, fingerprint });
+      if (early.status === 'ready') {
+        const restored = await restoreProposal(records, early.value, receiptExpected);
+        if (restored.status !== 'restored') return rejected(restored.code, restored.reason);
+        return { status: 'committed', value: restored.proposal, replayed: true, cursor: early.value.cursor };
+      }
+      if (early.code === 'idempotency_conflict') return rejected('idempotency_conflict', early.reason);
+      if (early.code !== 'not_found') return rejected('unavailable', `${early.code}: ${early.reason}`);
+
+      const proposalRead = await readProposal(records, proposalRef);
+      if (proposalRead.status !== 'ready') return asWriteRejection(proposalRead, 'the proposal is unavailable');
+      if (proposalRead.proposal.kind !== 'candidate_v2') {
+        return rejected('unsupported', 'a legacy v1 proposal cannot be abandoned by a request candidate');
+      }
+      const proposal = proposalRead.proposal;
+      // Slice 5 §2.5/T-R2-2: an abandon rewrites the same proposal; it copies
+      // the preserved creation origin and never rebinds.
+      const proposalOrigin = await readProposalOrigin(records, proposalRef);
+      if (proposalOrigin.status !== 'ready') return asWriteRejection(proposalOrigin, 'the proposal origin is unavailable');
+      const requestRef = candidateRequestRef(proposal);
+      const scoped = await readPlanScope(records, proposal.goalRef, proposalRef.workspaceId, pins.pins);
+      if (scoped.status !== 'ready') return scoped;
+      // §3.3 line 625: `abandon` pins exactly the proposal and the Goal.
+      if (!Array.isArray(rawMeta['expected']) || rawMeta['expected'].length !== 2
+        || pins.pins.goal === undefined || pins.pins.goal === null) {
+        return rejected('invalid', 'abandonPlanProposal requires exactly the proposal and Goal pins in meta.expected');
+      }
+      const suppliedGoalPin = (rawMeta['expected'] as unknown[]).find((entry) =>
+        isRecord(entry) && isRecord(entry['ref']) && entry['ref']['aggregateType'] === 'Goal'
+        && refKeyOf(entry['ref']) === refKeyOf(proposal.goalRef));
+      if (suppliedGoalPin === undefined) {
+        return rejected('invalid', 'abandonPlanProposal requires the proposal Goal pin in meta.expected');
+      }
+      // §3.3 line 625 + "source.pins 用于 CAS": the supplied accepted Goal pin is
+      // the CAS basis, so a value that disagrees with the Goal read in this call
+      // is `revision_conflict` and writes nothing (a malformed/absent pin is the
+      // `invalid` above).
+      if (pins.pins.goal !== scoped.scope.goal.revision) {
+        return { status: 'rejected', code: 'revision_conflict', reason: 'the Goal changed since it was read',
+          current: [{ ref: proposal.goalRef, revision: scoped.scope.goal.revision }] };
+      }
+
+      let requestGuards: readonly RecordGuard[] = [];
+      if (requestRef !== null) {
+        const factsRead = await requestFactsReader.readCandidateRequestFacts(ctx, { requestRef, goalRef: proposal.goalRef });
+        if (factsRead.status !== 'ready') return asWriteRejection(factsRead, 'the request facts are unavailable');
+        if (!factsRead.value.root) return rejected('invalid', 'the requestRef root does not belong to this Goal');
+        requestGuards = factsRead.value.guards;
+      }
+      const goalNotCancelled = scoped.scope.goal.desiredState !== 'cancelled';
+      const headPinMatches = proposal.revision === expectedProposalRevision;
+      // Slice 5 §3.1 S5-PLAN-04/§3.2: only the configured operator may abandon a
+      // request candidate; the fact is never hardcoded (`boundWriteActor` above
+      // already bound the trusted Host actor).
+      const operatorMatches = hostOperatorMatches(deps.operatorActor, actor, true);
+      const guardCtx: PlanProposalGuardContext = { ...scoped.facts, agentAdmission: null, source: null, initial: null,
+        future: null, requestCandidate: requestCandidateFacts({ operatorMatches, headPinMatches, goalNotCancelled,
+          replacesIsNull: true }) };
+      const decided = transitionPlanProposal(proposal, { type: 'proposal_abandoned', proposalRef,
+        requestedBy: actor, at: deps.now(), expectedProposalRevision, requestRef }, guardCtx);
+      if (!decided.ok) return refusalOf(decided);
+      const commit = planCommitOf(decided, { scope: scoped.scope, actor });
+      if (commit.status !== 'ready') return commit;
+      const abandoned = commit.proposal;
+      const derived = deriveCommandIds(identity, 'plan-abandon');
+      const event: PlanProposalRecordedEvent = {
+        eventId: deps.eventId(), eventType: 'PlanProposalRecorded', schemaVersion: 2,
+        projectId: proposalRef.projectId, workspaceId: proposalRef.workspaceId, aggregateType: 'PlanProposal',
+        aggregateId: proposalRef.proposalId, aggregateRevision: abandoned.revision,
+        causationId: derived.commandId, correlationId: derived.correlationId, idempotencyKey: requestId,
+        actor, occurredAt: deps.now(), payload: { proposal: abandoned },
+      };
+      const merged = mergeGuards([...commit.guards, ...requestGuards]);
+      if (!merged.ok) return merged.rejection;
+      const claims: UniqueClaimChange[] = commit.requestSlot === null ? [] : [requestSlotClaim(commit.requestSlot)];
+      const committed = await records.commit({ identityKey, fingerprint, guards: merged.guards,
+        records: [encodePlanProposal(abandoned, proposalOrigin.origin)], claims, indexGuards: [], indexChanges: [],
+        events: [encodePlanProposalRecordedEvent(event)] });
+      if (committed.status !== 'committed') return mapRequestSlotCommitFailure(committed, claims.length > 0);
+      if (!committed.replayed) return { status: 'committed', value: abandoned, replayed: false, cursor: committed.cursor };
+      const restored = await restoreProposal(records, committed, receiptExpected);
+      if (restored.status !== 'restored') return rejected(restored.code, restored.reason);
+      return { status: 'committed', value: restored.proposal, replayed: true, cursor: committed.cursor };
+    },
+  };
+}
+
+/** The caller's `meta.expected` pin of one PlanProposal ref, or null when absent/malformed. */
+function proposalRevisionPinOf(expected: unknown, proposalRef: PlanProposalRef): number | null {
+  if (!Array.isArray(expected)) return null;
+  const key = planProposalRefKey(proposalRef);
+  for (const entry of expected as unknown[]) {
+    if (!isRecord(entry) || refKeyOf(entry['ref']) !== key) continue;
+    const revision = entry['revision'];
+    if (typeof revision === 'number' && Number.isSafeInteger(revision) && revision >= 1) return revision;
+    return null;
+  }
+  return null;
 }
 
 /** §2.3 受影响集合: the `starting|running` Runs of the active Plan's Tasks, in plan task order. */
@@ -1923,20 +2474,10 @@ function entryCapabilityOf(value: unknown): GoalRunControlCapabilityV1 | null {
   return null;
 }
 
-/** GOAL-27 `awaiting_gate`: the work Tasks inside a gate's scope (goal: every one; stage: its stage; module: its module). */
+/** GOAL-27 `awaiting_gate`: the work Tasks inside a gate's scope (goal: every one; stage: its stage; module: its module).
+ * Delegates to the ONE `gateCoveredTaskIds` so the read model and GV-5 never diverge. */
 function gateCoverage(plan: PlanRevisionSnapshot, gate: RuntimeTask): string[] {
-  if (gate.taskKind !== 'gate') return [];
-  const scope = gate.scope;
-  return plan.tasks.filter((task) => {
-    if (task.taskKind !== 'work') return false;
-    switch (scope.kind) {
-      case 'goal': return true;
-      case 'stage': return task.scope.kind !== 'goal' && task.scope.stageId === scope.stageId;
-      case 'module': return task.scope.kind === 'module' && task.scope.stageId === scope.stageId
-        && task.scope.moduleRef === scope.moduleRef;
-      default: return false;
-    }
-  }).map((task) => task.taskId);
+  return gateCoveredTaskIds(plan.tasks, gate);
 }
 
 // --------------------------------------------------------------------------
@@ -2037,7 +2578,13 @@ type AdoptionDispositionFacts = {
 };
 
 /** One plan commit as the state machines named it: a proposal (PLAN-01..03) moves no Goal and writes no Plan. */
-type PlanCommit = Omit<PlanAdoptionCommit, 'nextGoal' | 'plan'> & { nextGoal: GoalSnapshot | null; plan: PlanRevisionWrite | null };
+type PlanCommit = Omit<PlanAdoptionCommit, 'nextGoal' | 'plan'> & {
+  nextGoal: GoalSnapshot | null; plan: PlanRevisionWrite | null;
+  /** S5-PLAN-02: the replaced old head's complete next record, written in the same commit. */
+  replaced: CandidatePlanProposal | null;
+  /** S5-PLAN-01..04: the request-slot unique claim change, compiled into the same commit. */
+  requestSlot: Extract<PlanProposalEffect, { kind: 'request_slot' }> | null;
+};
 
 /**
  * The one commit a plan transition names, read off its effects (§3.3 effects
@@ -2057,6 +2604,8 @@ function planCommitOf(
   if (proposal === null || proposal.kind !== 'candidate_v2') throw new Error('a plan transition must write the candidate');
   let nextGoal: GoalSnapshot | null = null;
   let plan: PlanRevisionWrite | null = null;
+  let replaced: CandidatePlanProposal | null = null;
+  let requestSlot: Extract<PlanProposalEffect, { kind: 'request_slot' }> | null = null;
   const guards: RecordGuard[] = [];
   const dispositionChanges: PlannedDispositionChangeV1[] = [];
   for (const effect of decided.effects) {
@@ -2084,7 +2633,22 @@ function planCommitOf(
         break;
       }
       case 'guard':
-        guards.push(...recordGuardsOf(effect.guard, proposal, sources));
+        // S5-PLAN-02: the machine names both the old head's pin and the new
+        // candidate's ∅ with one `proposal` guard target; the replaced record is
+        // the non-null one. Every other guard names `next`.
+        if (effect.guard.target === 'proposal' && effect.guard.expectedRevision !== null && replaced !== null) {
+          guards.push({ refKey: planProposalRefKey(replaced.ref), expectedRevision: effect.guard.expectedRevision });
+        } else {
+          guards.push(...recordGuardsOf(effect.guard, proposal, sources));
+        }
+        break;
+      // [lead S5-T3-D2] Slice 5 request-slot effects: the replaced old head and
+      // the unique claim change, both compiled into this same commit.
+      case 'write_replaced_proposal':
+        replaced = effect.record;
+        break;
+      case 'request_slot':
+        requestSlot = effect;
         break;
       default: {
         const unknown: never = effect;
@@ -2092,7 +2656,7 @@ function planCommitOf(
       }
     }
   }
-  return { status: 'ready', proposal, nextGoal, plan, dispositionChanges, guards };
+  return { status: 'ready', proposal, nextGoal, plan, dispositionChanges, guards, replaced, requestSlot };
 }
 
 /**
@@ -2120,6 +2684,62 @@ function adoptionCommitOf(commit: PlanCommit): PlanAdoptionCommit {
   const { proposal, nextGoal, plan, dispositionChanges, guards } = commit;
   if (nextGoal === null || plan === null) throw new Error('a plan adoption moves the Goal pointer and writes its PlanRevision');
   return { proposal, nextGoal, plan, dispositionChanges, guards };
+}
+
+/** Slice 5 §2.4: a complete `PlanRequestCandidateFacts` with every unused fact neutral. */
+function requestCandidateFacts(overrides: Partial<PlanRequestCandidateFacts>): PlanRequestCandidateFacts {
+  return {
+    requestRootSameGoal: true, replacesIsNull: true, slotExpectedOwnerIsNull: false,
+    headMatches: false, headRevisionMatches: false, requestGoalMatches: true, replacesComplete: false,
+    firstPlanUserOnly: true, slotOwnerMatches: false, basedOnIsActivePointer: false,
+    operatorMatches: false, headPinMatches: false, goalNotCancelled: true,
+    storedTerminalStatus: false, goalCancelled: false, basedOnDerivesStale: false,
+    adoptionPolicy: null, ...overrides,
+  };
+}
+
+/**
+ * Slice 5 §3.2: the configured operator is never `actor.kind === 'human'`. A
+ * request-candidate adoption/abandon compares the trusted Host actor with the
+ * exact configured `operatorActor` when one is injected and excludes
+ * `PLATFORM_AUTOMATION_ACTORS`; an Agent or query-run caller is never the
+ * operator. An unconfigured composition treats the bound trusted Host actor as
+ * that operator (the frozen fixtures bind it in `ctx`).
+ */
+function hostOperatorMatches(
+  configured: PlanServiceDependencies['operatorActor'], actor: ActorRef, hostPrincipal: boolean,
+): boolean {
+  if (!hostPrincipal || isAutomationActor(actor)) return false;
+  if (configured === undefined) return true;
+  return configured.kind === actor.kind && configured.id === actor.id;
+}
+
+/**
+ * Slice 5 §3.1 S5-PLAN-03/§3.2: the `decisionActionPolicy` verdict for this
+ * adopting action and adopter (`adopt_first_plan` for a first plan,
+ * `refine_future` for a future revision). `null` is reserved for the explicit
+ * configured-operator adoption, which §3.2 never asks again.
+ */
+function adoptionPolicyOf(
+  goal: GoalSnapshot, action: DecisionActionV1, actorClass: ReworkActorClass,
+): PlanRequestCandidateFacts['adoptionPolicy'] {
+  return decisionActionPolicy({
+    autonomy: (goal.settings ?? DEFAULT_GOAL_SETTINGS_V1).autonomy,
+    action, actorClass, countedNext: null, cap: 0,
+  });
+}
+
+/**
+ * Slice 5 §2.4/T01: the ONE unique claim change of a request slot. Key =
+ * `s5-request-candidate:` + canonicalJson({goalRef, requestRef}); owner = the
+ * full proposal ref key. It adds no second claim protocol.
+ */
+function requestSlotClaim(effect: Extract<PlanProposalEffect, { kind: 'request_slot' }>): UniqueClaimChange {
+  return {
+    claimKey: `s5-request-candidate:${canonicalJson({ goalRef: effect.goalRef, requestRef: effect.requestRef } as unknown as JsonValue)}`,
+    expectedOwner: effect.expectedOwner === null ? null : planProposalRefKey(effect.expectedOwner),
+    nextOwner: effect.nextOwner === null ? null : planProposalRefKey(effect.nextOwner),
+  };
 }
 
 /** One `guard` effect as the record guards of the record it names, at the version read in this call. */
@@ -2161,6 +2781,11 @@ type AdoptionRead = {
   candidate: PlanCommit['proposal'];
   scope: GoalScopeFacts;
   adoptionScope: PlanAdoptionScope;
+  /**
+   * Slice 5 §2.5/T-R2-2: the accepted proposal's preserved creation origin, so
+   * the adopt write copies `since` instead of dropping/rebinding it.
+   */
+  origin: NoticeOriginWireV1;
   /** The proposal read is the FIRST read of the window: the commit horizon. */
   horizon: CommitCursor | null;
 };
@@ -2188,6 +2813,9 @@ async function readAdoption(
   }
   // PLAN-04/05 refused a legacy proposal above.
   if (proposal.kind !== 'candidate_v2') throw new Error('PLAN-04/05 admitted a legacy proposal');
+  // Slice 5 §2.5/T-R2-2: the accepted write copies this preserved origin.
+  const originRead = await readProposalOrigin(records, proposalRef);
+  if (originRead.status !== 'ready') return originRead;
   const pins = normalizeCallerPlanPins({ projectId: proposalRef.projectId, workspaceId: proposalRef.workspaceId,
     goalId: proposal.goalRef.goalId }, expected);
   if (pins.status === 'invalid') return rejected('invalid', pins.reason);
@@ -2201,7 +2829,7 @@ async function readAdoption(
     return refusalOf(refused, pinsCurrent(refused, scoped.comparison)
       ?? (refused.reason === 'stale' && active !== null ? [{ ref: active, revision: 1 }] : undefined));
   }
-  return { status: 'ready', candidate: proposal, scope: scoped.scope, adoptionScope,
+  return { status: 'ready', candidate: proposal, scope: scoped.scope, adoptionScope, origin: originRead.origin,
     horizon: proposalRead.readThrough ?? scoped.scope.readThrough };
 }
 
@@ -2238,11 +2866,15 @@ async function applyFutureRevision(input: {
   receipt: ApplyReceipt;
   /** The caller's principal (Host or work Run), for the adopter's rework class (C7). */
   principal: CorePrincipal;
+  /** Slice 5 §3.2: the exact configured operator, or absent (the trusted Host actor). */
+  operatorActor?: PlanServiceDependencies['operatorActor'];
   /** The Agent's fresh admission guards (`agent_admission`); none for the Host. */
   extraGuards: readonly RecordGuard[];
   preCommitSignal: AbortSignal | null;
   eventId: () => string;
   now: () => string;
+  /** Slice 5 §2.8 D8: the accepted event's acknowledgement attribution/proof, or null. */
+  decisionProof?: PlanAcceptanceDecisionProofV1 | null;
 }): Promise<WriteResult<PlanRevisionSnapshot>> {
   const { records, adoption, receipt } = input;
   const { actor } = receipt;
@@ -2349,9 +2981,34 @@ async function applyFutureRevision(input: {
     carrierRead = read.tasks;
   }
   const carrierFacts = carrierRead.map((entry) => entry.facts);
+  // Slice 5 §2.4/§3.1 S5-PLAN-03 and §3.2 S5-AU-03: the request-slot ownership
+  // and the `refine_future` autonomy verdict are judged for EVERY future
+  // candidate, request-associated or not; a person's explicit adoption keeps
+  // its existing rights (`adoptionPolicy` is asked only of a non-operator).
+  const requestRef = candidateRequestRef(proposal);
+  let requestSlot: PlanRequestSlotChangeV1 | null = null;
+  let slotOwnerMatches = true;
+  if (requestRef !== null) {
+    const headRead = await readRequestCandidateHead(records, { goalRef: proposal.goalRef, requestRef });
+    if (headRead.status !== 'ready') return asWriteRejection(headRead, 'the request head is unavailable');
+    slotOwnerMatches = headRead.head !== null
+      && planProposalRefKey(headRead.head.ref) === planProposalRefKey(proposal.ref);
+  }
+  const basedOnIsActivePointer = proposal.basedOn === null
+    ? goalScope.goal.activePlanRevision === null
+    : goalScope.goal.activePlanRevision !== null
+      && refKeyOf(proposal.basedOn) === refKeyOf(goalScope.goal.activePlanRevision);
+  const operatorMatches = hostOperatorMatches(input.operatorActor, actor, input.principal.kind === 'host');
+  const requestFacts: PlanRequestCandidateFacts = requestCandidateFacts({ replacesIsNull: true, basedOnIsActivePointer,
+    firstPlanUserOnly: true, slotOwnerMatches, operatorMatches,
+    goalNotCancelled: goalScope.goal.desiredState !== 'cancelled',
+    adoptionPolicy: adopterClass !== 'human' && !operatorMatches
+      ? adoptionPolicyOf(goalScope.goal, 'refine_future', adopterClass) : null });
+  const adoptedEvent: PlanProposalEvent = { ...adoption, type: 'proposal_adopted', requestRef };
   // PLAN-05 (the untraced rule, TASK-19 and guard 9 judge the facts just read) + GOAL-03: the
   // accepted candidate, the moved Goal and the guards of the one commit.
-  const decided = transitionPlanProposal(proposal, adoption, { ...adoptionScope, source: sourceFacts, initial: null,
+  const decided = transitionPlanProposal(proposal, adoptedEvent, { ...adoptionScope, source: sourceFacts, initial: null,
+    requestCandidate: requestFacts,
     future: { targetExists, delta, coverage, pinnedPolicy, draftIssues, assignmentReasons, phaseReasons,
       touchedTaskFacts: futureFacts.value.tasks, adopterClass, dispositionTaskFacts, sourceCarriers, carrierFacts } });
   if (!decided.ok) return refusalOf(decided);
@@ -2360,6 +3017,7 @@ async function applyFutureRevision(input: {
     disposition: adoptionDispositionFacts({ source, delta: supported!, read: dispositionRead.tasks, carriers: carrierRead,
       goalDesiredState: goalScope.goal.desiredState, affectedTaskIds: proposal.reason.affectedTaskIds, adopterClass }) });
   if (commit.status !== 'ready') return commit;
+  if (commit.requestSlot !== null) requestSlot = { requestRef, claim: requestSlotClaim(commit.requestSlot) };
   // mergeGuards keeps first occurrences in order, so the target Plan ∅ guard stays last.
   const merged = mergeGuards(commit.guards);
   if (!merged.ok) return merged.rejection;
@@ -2378,10 +3036,13 @@ async function applyFutureRevision(input: {
     correlationId: derived.correlationId,
     idempotencyKey: receipt.idempotencyKey,
     actor,
+    requestSlot,
+    decisionProof: input.decisionProof ?? null,
+    origin: input.read.origin,
   });
   if (compiled.status !== 'compiled') return rejected('unsupported', compiled.reason);
   const committed = await records.commit(compiled.value.prepared);
-  if (committed.status !== 'committed') return mapCommitFailure(committed);
+  if (committed.status !== 'committed') return mapRequestSlotCommitFailure(committed, compiled.value.prepared.claims.length > 0);
   if (!committed.replayed) {
     return { status: 'committed', value: compiled.value.snapshot, replayed: false, cursor: committed.cursor };
   }
@@ -2491,7 +3152,11 @@ async function proposePlanAsAgent(
   records: GoalRecordTransactionPort & RecordLookupPort,
   ctx: CoreCallContext,
   input: { goalRef: GoalRef; basedOn: PlanRevisionRef | null; draft: PlanRevisionDraft;
-    reason: unknown; requestId: string; expected: unknown; workspaceId: string },
+    reason: unknown; requestId: string; expected: unknown; workspaceId: string;
+    /** Slice 5 §2.4: the first user-initiated request this candidate belongs to. */
+    requestRef: QueryJobRef | null;
+    /** Slice 5 §2.4: the current request head this candidate replaces, or null. */
+    replaces: { proposalRef: PlanProposalRef; revision: number } | null },
 ): Promise<WriteResult<PlanProposal>> {
   const delegated = deps.delegatedWrites;
   if (delegated === undefined) {
@@ -2503,6 +3168,7 @@ async function proposePlanAsAgent(
   const writer = identified.value;
   if (!sameRef(writer.goalRef, input.goalRef)) return forbidden('the Agent Run is not scoped to this goal');
   if (writer.workspaceId !== input.workspaceId) return forbidden('the Agent Run is not scoped to this workspace');
+  const requestFactsReader = createCandidateRequestFactsReader({ records });
 
   const pins = normalizeCallerPlanPins({ projectId: scope.projectId, workspaceId: scope.workspaceId,
     goalId: input.goalRef.goalId }, input.expected);
@@ -2515,9 +3181,12 @@ async function proposePlanAsAgent(
     sessionRef: writer.sessionRef, requestId: input.requestId });
   const ref: PlanProposalRef = { aggregateType: 'PlanProposal', projectId: scope.projectId,
     workspaceId: input.workspaceId, proposalId };
+  // Slice 5 §2.4: the Agent path fingerprints the request association and the
+  // replaced head exactly as the Host path does.
   const fingerprint = agentCommandFingerprint('PlanProposeAgent', {
     projectId: scope.projectId, workspaceId: input.workspaceId, goalRef: input.goalRef,
-    basedOn: input.basedOn, draft: input.draft, reason: input.reason, expected });
+    basedOn: input.basedOn, draft: input.draft, reason: input.reason, expected,
+    requestRef: input.requestRef, replaces: input.replaces });
   const receiptExpected = { identityKey, fingerprint, projectId: scope.projectId,
     workspaceId: input.workspaceId, proposalId, idempotencyKey: input.requestId, actor: writer.actor };
 
@@ -2532,11 +3201,13 @@ async function proposePlanAsAgent(
 
   const authorized = await authorizePlanWrite(delegated, ctx, { writer, operation: 'propose_future_plan' });
   const freshAdmission = authorized.status === 'ready' ? authorized.value : null;
-  const recorded = { type: 'proposal_recorded' as const, writer: 'agent' as const, ref, goalRef: input.goalRef,
+  // The recorded-shaped event judges exactly the writer facts a replacement
+  // shares with a first record; the replacement transition re-checks them.
+  const admissionRecorded = { type: 'proposal_recorded' as const, writer: 'agent' as const, ref, goalRef: input.goalRef,
     basedOn: input.basedOn, draft: input.draft, reason: input.reason as unknown as PlanChangeReason,
     submittedBy: freshAdmission === null ? null : freshAdmission.provenance };
   // PLAN-02: the fresh admission first; a refused write re-reads the same-identity receipt.
-  const refusedAdmission = planProposalProblem(null, recorded, { agentAdmission: freshAdmission === null
+  const refusedAdmission = planProposalProblem(null, admissionRecorded, { agentAdmission: freshAdmission === null
     ? asWriteRejection(authorized, 'the Agent plan write is not authorized') : 'ok' });
   if (refusedAdmission?.ok === false) {
     const concurrent = await recheckAgentProposal(records, receiptExpected);
@@ -2549,43 +3220,111 @@ async function proposePlanAsAgent(
   const evaluate = async (): Promise<WriteResult<PlanProposal>> => {
     const scoped = await readPlanScope(records, input.goalRef, input.workspaceId, pins.pins);
     if (scoped.status !== 'ready') return scoped;
+    // Slice 5 §2.4/§2.6: the request seam and the current per-request head run
+    // after the scope read and before the draft admission; both records of a
+    // replacement and the slot claim are compiled into the ONE commit below.
+    let requestFacts: PlanRequestCandidateFacts | null = null;
+    let requestGuards: readonly RecordGuard[] = [];
+    let oldHead: CandidatePlanProposal | null = null;
+    // Slice 5 §2.5/T-R2-2: a replacement copies the replaced chain's wire-only
+    // creation origin; `undefined` keeps a legacy chain without `since`.
+    let replacedOrigin: NoticeOriginWireV1 | undefined;
+    if (input.requestRef !== null) {
+      const factsRead = await requestFactsReader.readCandidateRequestFacts(ctx, { requestRef: input.requestRef, goalRef: input.goalRef });
+      if (factsRead.status !== 'ready') return asWriteRejection(factsRead, 'the request facts are unavailable');
+      if (!factsRead.value.root) return rejected('invalid', 'the requestRef root does not belong to this Goal');
+      if (!factsRead.value.initiatedByOperator) {
+        return rejected('unsupported', 'the requestRef is not a user-initiated first-round QueryJob');
+      }
+      requestGuards = factsRead.value.guards;
+      const headRead = await readRequestCandidateHead(records, { goalRef: input.goalRef, requestRef: input.requestRef });
+      if (headRead.status !== 'ready') return asWriteRejection(headRead, 'the request head is unavailable');
+      const head = headRead.head;
+      if (input.replaces === null) {
+        requestFacts = requestCandidateFacts({ requestRootSameGoal: true, replacesIsNull: true,
+          slotExpectedOwnerIsNull: head === null });
+      } else {
+        const oldRead = await readProposal(records, input.replaces.proposalRef);
+        if (oldRead.status !== 'ready') return asWriteRejection(oldRead, 'the replaced head is unavailable');
+        if (oldRead.proposal.kind !== 'candidate_v2') return rejected('unsupported', 'a legacy v1 proposal cannot be replaced');
+        oldHead = oldRead.proposal;
+        const oldOrigin = await readProposalOrigin(records, input.replaces.proposalRef);
+        if (oldOrigin.status !== 'ready') return asWriteRejection(oldOrigin, 'the replaced head origin is unavailable');
+        replacedOrigin = oldOrigin.origin;
+        const headMatches = head !== null && planProposalRefKey(head.ref) === planProposalRefKey(input.replaces.proposalRef);
+        const headRevisionMatches = head !== null && head.revision === input.replaces.revision;
+        requestFacts = requestCandidateFacts({ requestRootSameGoal: true, replacesIsNull: false,
+          headMatches, headRevisionMatches, requestGoalMatches: true, replacesComplete: headMatches && headRevisionMatches });
+      }
+    } else if (input.replaces !== null) {
+      return rejected('invalid', 'a replacement candidate requires the request it replaces');
+    }
     // Agent scope: a proposal is a future revision of a REAL accepted source
     // that is still the Goal active plan. The proposal keeps its diagnostic
     // issues; the full execution rules stay in apply. PLAN-02 judges the scope,
     // the draft schema and basedOn before the source read, then the source.
-    let refused = planProposalProblem(null, recorded, { ...scoped.facts, agentAdmission: 'ok' });
-    if (refused?.ok === false) return refusalOf(refused, pinsCurrent(refused, scoped.comparison));
+    const recorded = { type: 'proposal_recorded' as const, writer: 'agent' as const, ref, goalRef: input.goalRef,
+      basedOn: input.basedOn, draft: input.draft, reason: input.reason as unknown as PlanChangeReason,
+      submittedBy: admission.provenance };
+    // N4 (lead): a replacement is an Agent future revision too; the scoped
+    // check (scope, schema, basedOn) runs before the source read for both.
+    {
+      const refused = planProposalProblem(null, recorded, { ...scoped.facts, agentAdmission: 'ok' });
+      if (refused?.ok === false) return refusalOf(refused, pinsCurrent(refused, scoped.comparison));
+    }
     // PLAN-02 refused a proposal without basedOn above.
     const sourceRead = await readPlan(records, input.basedOn!);
     if (sourceRead.status !== 'ready') return sourceRead;
     const source = sourceRead.plan;
     const ctxFacts: PlanProposalGuardContext = { ...scoped.facts, agentAdmission: 'ok', source: planSourceFactsOf(source),
-      initial: null, future: null };
-    refused = planProposalProblem(null, recorded, ctxFacts);
-    // The stale source refusal is "not the active plan": it reports the source, as today.
-    if (refused?.ok === false) {
-      return refusalOf(refused, refused.reason === 'stale' ? [{ ref: source.ref, revision: source.revision }] : undefined);
+      initial: null, future: null, requestCandidate: requestFacts };
+    if (input.replaces === null) {
+      const refused = planProposalProblem(null, recorded, ctxFacts);
+      // The stale source refusal is "not the active plan": it reports the source, as today.
+      if (refused?.ok === false) {
+        return refusalOf(refused, refused.reason === 'stale' ? [{ ref: source.ref, revision: source.revision }] : undefined);
+      }
     }
     const policyRead = await tryPolicyContent(records, input.goalRef.projectId);
-    const decided = transitionPlanProposal(null, { ...recorded, issues: validatePlanDraft(input.draft, policyRead.policy) }, ctxFacts);
+    const issues = validatePlanDraft(input.draft, policyRead.policy);
+    const decided = oldHead === null
+      ? transitionPlanProposal(null, { ...recorded, issues,
+        ...(input.requestRef === null ? {} : { requestRef: input.requestRef }) }, ctxFacts)
+      : transitionPlanProposal(oldHead, { type: 'proposal_replaced' as const, writer: 'agent' as const, ref,
+        goalRef: input.goalRef, basedOn: input.basedOn, draft: input.draft,
+        reason: input.reason as unknown as PlanChangeReason, issues, submittedBy: admission.provenance,
+        expectedHeadRevision: input.replaces!.revision, requestedBy: writer.actor, at: deps.now(),
+        head: { proposalRef: input.replaces!.proposalRef, revision: input.replaces!.revision },
+        replaces: input.replaces!, requestRef: input.requestRef! }, ctxFacts);
     if (!decided.ok) return refusalOf(decided);
     const commit = planCommitOf(decided, { scope: scoped.scope, actor: writer.actor, agentAdmission: admission.guards });
     if (commit.status !== 'ready') return commit;
     const candidate = commit.proposal;
     const derived = deriveCommandIds(identity, 'plan-propose-agent');
-    const event: PlanProposalRecordedEvent = {
+    const eventFor = (proposal: PlanProposal): PlanProposalRecordedEvent => ({
       eventId: deps.eventId(), eventType: 'PlanProposalRecorded', schemaVersion: 2,
       projectId: scope.projectId, workspaceId: input.workspaceId, aggregateType: 'PlanProposal',
-      aggregateId: proposalId, aggregateRevision: 1, causationId: derived.commandId,
+      aggregateId: proposal.ref.proposalId, aggregateRevision: proposal.revision, causationId: derived.commandId,
       correlationId: derived.correlationId, idempotencyKey: input.requestId, actor: writer.actor,
-      occurredAt: deps.now(), payload: { proposal: candidate } };
-    const merged = mergeGuards(commit.guards);
+      occurredAt: deps.now(), payload: { proposal } });
+    // The replaced record's event goes FIRST and the candidate LAST, exactly as
+    // the Host path orders them; the commit cursor's event is always the candidate.
+    const encodedEvents = (commit.replaced === null ? [] : [encodePlanProposalRecordedEvent(eventFor(commit.replaced))])
+      .concat([encodePlanProposalRecordedEvent(eventFor(candidate))]);
+    // Slice 5 §2.5/T-R2-2: a NEW chain's first candidate binds its creation
+    // commit cursor to `since`; a replacement copies the old chain's origin.
+    const replacing = commit.replaced !== null;
+    const encodedRecords = (commit.replaced === null ? [] : [encodePlanProposal(commit.replaced, replacedOrigin)])
+      .concat([encodePlanProposal(candidate, replacing ? replacedOrigin : { since: null })]);
+    const cursorBindings = replacing ? [] : [{ refKey: planProposalRefKey(candidate.ref), field: 'since' as const }];
+    const merged = mergeGuards([...commit.guards, ...requestGuards]);
     if (!merged.ok) return merged.rejection;
+    const claims: UniqueClaimChange[] = commit.requestSlot === null ? [] : [requestSlotClaim(commit.requestSlot)];
     if (ctx.signal.aborted) return rejected('cancelled', 'the Agent plan proposal was cancelled before commit');
     const committed = await records.commit({ identityKey, fingerprint, guards: merged.guards,
-      records: [encodePlanProposal(candidate)], claims: [], indexGuards: [], indexChanges: [],
-      events: [encodePlanProposalRecordedEvent(event)] });
-    if (committed.status !== 'committed') return mapCommitFailure(committed);
+      records: encodedRecords, claims, indexGuards: [], indexChanges: [], events: encodedEvents,
+      ...(cursorBindings.length === 0 ? {} : { commitCursorBindings: cursorBindings }) });
+    if (committed.status !== 'committed') return mapRequestSlotCommitFailure(committed, claims.length > 0);
     if (!committed.replayed) return { status: 'committed', value: candidate, replayed: false, cursor: committed.cursor };
     const restored = await restoreProposal(records, committed, receiptExpected);
     if (restored.status !== 'restored') return rejected(restored.code, restored.reason);
@@ -2612,7 +3351,9 @@ async function applyPlanChangeAsAgent(
   records: GoalRecordTransactionPort & RecordLookupPort,
   ctx: CoreCallContext,
   input: { proposalRef: PlanProposalRef; expectedProposalRevision: number; decisionRefs: unknown;
-    requestId: string; expected: unknown },
+    requestId: string; expected: unknown;
+    /** Slice 5 §2.8 D8: the answer attribution passed through by `applyPlanChange`; proof data only. */
+    acknowledgementRef: SessionMessageRef | null },
 ): Promise<WriteResult<PlanRevisionSnapshot>> {
   const delegated = deps.delegatedWrites;
   if (delegated === undefined) {
@@ -2635,7 +3376,14 @@ async function applyPlanChangeAsAgent(
   const identityKey = PLAN_APPLY_IDENTITY_PREFIX + commandIdentityKey(identity);
   const fingerprint = agentCommandFingerprint('PlanApplyAgent', {
     projectId: scope.projectId, workspaceId: scope.workspaceId, proposalRef: input.proposalRef,
-    expectedProposalRevision: input.expectedProposalRevision, decisionRefs: input.decisionRefs, expected });
+    expectedProposalRevision: input.expectedProposalRevision, decisionRefs: input.decisionRefs, expected,
+    // §2.8 D8/T-R2-1: only a present answer changes the Agent command identity;
+    // an Agent apply without attribution keeps its byte-identical fingerprint.
+    // The answer's decision source is NOT part of the fingerprint: it is read
+    // from the formal answer after the original receipt replay, so a retry can
+    // restore the first receipt even when the answer read is unavailable.
+    ...(input.acknowledgementRef === null ? {} : { acknowledgementRef: input.acknowledgementRef }),
+  });
   const receiptExpected = { identityKey, fingerprint, projectId: scope.projectId,
     workspaceId: scope.workspaceId, idempotencyKey: input.requestId, actor: writer.actor };
 
@@ -2666,8 +3414,26 @@ async function applyPlanChangeAsAgent(
     // and decisionRefs, before the source read.
     const read = await readAdoption(records, adoption, 'ok', input.expected);
     if (read.status !== 'ready') return read;
+    // Slice 5 §2.8 D8: the same acceptance proof the Host branch builds, but the
+    // Agent branch reads the formal answer itself and uses its SAVED
+    // `response.decision.source` as the basis. It is attribution data only; the
+    // Agent's fresh admission above remains the sole authorization.
+    let decisionProof: PlanAcceptanceDecisionProofV1 | null = null;
+    if (input.acknowledgementRef !== null) {
+      // §8.2 line 1366: this is the first new business read, so it happens only
+      // after the original receipt replay above.
+      const derived = await readAcknowledgedAnswerSource(records, input.acknowledgementRef);
+      if (derived.status !== 'ready') return derived;
+      const proof = planAcceptanceProof({ acknowledgementRef: input.acknowledgementRef,
+        decisionSource: derived.source, candidate: read.candidate, goal: read.scope.goal,
+        afterProposalRevision: read.candidate.revision + 1 });
+      if ('status' in proof) return proof;
+      decisionProof = { acknowledgementRef: input.acknowledgementRef, decisionApplication: proof.proof };
+    }
     return applyFutureRevision({ records, read, adoption, receipt: receiptExpected, principal: ctx.principal,
-      extraGuards: admission.guards, preCommitSignal: ctx.signal, eventId: deps.eventId, now: deps.now });
+      operatorActor: deps.operatorActor,
+      extraGuards: admission.guards, preCommitSignal: ctx.signal, eventId: deps.eventId, now: deps.now,
+      decisionProof });
   };
 
   const outcome = await evaluate();

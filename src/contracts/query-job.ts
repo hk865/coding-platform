@@ -1,5 +1,6 @@
 // Migrated contract declarations; source provenance is recorded in the N0 transfer manifest.
 import type { ArtifactRef } from "./artifact.js";
+import type { PreparedQueryManifestV1 } from "./core/prepared-execution.js";
 export type QueryJobRef = {
     aggregateType: "QueryJob";
     projectId: string;
@@ -422,4 +423,18 @@ export type QueryJobAnswerSnapshot = {
     revision: 1;
     schemaVersion: 1;
     answer: QueryJobAnswerV1;
+};
+/**
+ * The exact formal facts the initial-plan normalization consumes. Declared in
+ * contracts (pure data) so the WorkGraph `model` layer can name the seam's result
+ * without importing `tasks/` (module-target `model -> state` only); the task
+ * parser re-exports it.
+ */
+export type InitialPlanAnswerFacts = {
+    answer: QueryJobAnswerV1;
+    answerRef: QueryJobAnswerRef;
+    job: QueryJobSnapshot;
+    run: QueryRunSnapshot;
+    manifest: PreparedQueryManifestV1;
+    answerText: string;
 };

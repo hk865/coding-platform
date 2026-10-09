@@ -28,6 +28,8 @@ import type { CoreCallContext } from '../contracts/core/call-context.js';
 import type { CoreRejection, ReadResult } from '../contracts/core/results.js';
 import type { RunContinuationV1, RunRef } from '../contracts/dispatch.js';
 import type { GoalRef } from '../contracts/ledger.js';
+import type { SessionRef } from '../contracts/core/identity.js';
+import type { MessageRecipient } from '../contracts/core/session-message.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../contracts/fingerprint.js';
 import type { RuntimeExecutionPort } from '../core/agent-runtime/ports.js';
 import type { ExecutionReadPort, TaskExecutionRecord } from '../core/work-graph/model/execution-read-contracts.js';
@@ -172,6 +174,15 @@ function isGoalRef(value: unknown): value is GoalRef {
   return isRecord(value) && value['aggregateType'] === 'Goal'
     && nonEmpty(value['projectId']) && nonEmpty(value['goalId']);
 }
+/**
+ * §4.6 recipient narrowing: the widened `MessageRecipient` union is a Session
+ * ref or the workspace user address. `SessionRef` has no `kind`, so its absence
+ * is the exact Session discriminator; the user address is never treated as a
+ * Session and never consulted through `readSession`.
+ */
+function isSessionRecipient(recipient: MessageRecipient): recipient is SessionRef {
+  return !('kind' in recipient);
+}
 /** A snapshot of the caller's trusted identity; each handle owns its own signals. */
 type TrustedContext = Pick<CoreCallContext, 'projectId' | 'principal' | 'materialReader'>;
 function snapshotContext(ctx: CoreCallContext): TrustedContext {
@@ -281,8 +292,40 @@ type Handle = {
   announced: string | null;
 };
 
+/**
+ * §4.5 line 890: one advance waiting at a claim/create safe point. The per-scope
+ * rendezvous pass releases it only when its turn in the single computed order
+ * arrives; the entries behind it then wait on its `proceeded`.
+ */
+type PendingAdvance = {
+  advance: WorkflowAdvanceInput;
+  /** Resolves when the pass releases this entry to make its Workflow call. */
+  released: Promise<void>;
+  release: () => void;
+  /** Resolves when this advance made (or will never make) its Workflow call. */
+  proceeded: Promise<void>;
+  /** Resolve `proceeded` and leave the pending set. Idempotent. */
+  proceed: () => void;
+};
+
+/** The caller's release for the safe point it was admitted at. */
+type AdvanceAdmission = { proceed: () => void };
+
+function safePointScopeKey(projectId: string, workspaceId: string): string {
+  return `${projectId}\u0000${workspaceId}`;
+}
+
 export function createCollaborationDriver(dependencies: CollaborationDriverDependencies): CollaborationDriver {
   const handles = new Map<string, Handle>();
+  /**
+   * §4.5 line 890: the in-memory pending advances at the claim/create safe point
+   * and the one running rendezvous pass of each bound scope. There is no
+   * persisted queue and no scheduler type.
+   */
+  const pendingAdvances = new Map<string, PendingAdvance[]>();
+  const rendezvousPasses = new Map<string, Promise<void>>();
+  /** The safe-point wait of a handle, released at once by a stop. */
+  const admissionWaits = new Map<Handle, () => void>();
   const trustedProfiles = dependencies.profiles.map(profile => structuredClone(profile));
   let closed = false;
 
@@ -389,6 +432,9 @@ export function createCollaborationDriver(dependencies: CollaborationDriverDepen
   async function consultFor(
     handle: Handle, message: SessionMessage, signal: AbortSignal,
   ): Promise<{ ok: true; profile: WorkbenchQueryProfile } | { ok: false; reason: string }> {
+    if (!isSessionRecipient(message.recipient)) {
+      return { ok: false, reason: 'the wait recipient is the workspace user, not a Session' };
+    }
     const cardRead = await dependencies.sessions.readSession(
       contextWith(handle.context, handle.workspaceId, signal), message.recipient);
     if (cardRead.status !== 'ready') return { ok: false, reason: 'the wait recipient Session is not readable' };
@@ -423,6 +469,144 @@ export function createCollaborationDriver(dependencies: CollaborationDriverDepen
         contextWith(handle.context, handle.workspaceId, signal), input);
     } catch (error) {
       return rejected('unavailable', `the consultation consumer failed: ${messageOf(error)}`);
+    }
+  }
+
+  /**
+   * §4.5 `orderGoalAdvances` safe point. The Host calls it only at the
+   * claim/create selection point, handing the currently pending competing
+   * advances to the Workflow, which orders them by `Goal.settings.order`, then
+   * the Goal key, then flowId/taskId and changes nothing. The seam is consulted
+   * whenever there is a real pending set; a refused/foreign result falls back to
+   * the caller's original order.
+   */
+  async function orderAdvanceSelection(
+    ctx: CoreCallContext, advances: WorkflowAdvanceInput[],
+  ): Promise<WorkflowAdvanceInput[]> {
+    if (advances.length === 0) return advances;
+    const order = dependencies.workflow.orderGoalAdvances;
+    if (order === undefined) return advances;
+    const ordered = await order.call(dependencies.workflow, ctx, { advances });
+    return ordered.status === 'ready' && ordered.value.advances.length === advances.length
+      ? ordered.value.advances : advances;
+  }
+
+  /**
+   * §4.5 line 890 safe point. One rendezvous pass per bound scope takes the
+   * advances pending together, hands that ONE set to `orderGoalAdvances`, and
+   * releases the entries in that one returned order, waiting only until each
+   * released advance has made its Workflow call. A single shared ordering makes
+   * the wait graph acyclic by construction: no entry can wait on an entry that
+   * waits back on it, because both were released by the same pass order.
+   * `sessionHint: null` selections take part; a handle that already made its
+   * call, holds a claimed/started Run, waits for a reply or observes a completed
+   * step is not pending and never competes. The wait is bounded (one microtask
+   * to batch a turn, then only the earlier Workflow calls): no sleep loop, no
+   * persisted state, no new scheduler type. Returns the ticket the caller must
+   * `proceed()` immediately before the Workflow call, or null when this handle
+   * was stopped/aborted before admission.
+   */
+  async function awaitAdvanceAdmission(handle: Handle, advance: WorkflowAdvanceInput): Promise<AdvanceAdmission | null> {
+    if (handle.abort.signal.aborted || handle.stopRequested) return null;
+    if (dependencies.workflow.orderGoalAdvances === undefined) {
+      // An absent seam is refused/unsupported ordering: keep the caller's
+      // (arrival) order with no waiting at all and no extra microtask hop.
+      return { proceed: () => { /* no pending entry */ } };
+    }
+    const scopeKey = safePointScopeKey(handle.projectId, handle.workspaceId);
+    let pending = pendingAdvances.get(scopeKey);
+    if (pending === undefined) { pending = []; pendingAdvances.set(scopeKey, pending); }
+
+    let resolveReleased!: () => void;
+    const released = new Promise<void>(resolvePromise => { resolveReleased = resolvePromise; });
+    let resolveProceeded!: () => void;
+    const proceeded = new Promise<void>(resolvePromise => { resolveProceeded = resolvePromise; });
+    let left = false;
+    const entry: PendingAdvance = {
+      advance,
+      released,
+      release: () => resolveReleased(),
+      proceeded,
+      proceed: () => {
+        if (left) return;
+        left = true;
+        resolveProceeded();
+        const list = pendingAdvances.get(scopeKey);
+        if (list === undefined) return;
+        const index = list.indexOf(entry);
+        if (index >= 0) list.splice(index, 1);
+        if (list.length === 0) pendingAdvances.delete(scopeKey);
+      },
+    };
+    pending.push(entry);
+    if (!rendezvousPasses.has(scopeKey)) {
+      // The pass runs one ordering function over the whole batch; its context is
+      // read-only and the seam only binds project/workspace (all handles in this
+      // bound scope share those).
+      const pass = runRendezvous(scopeKey, loopContext(handle));
+      rendezvousPasses.set(scopeKey, pass);
+      void pass.catch(() => { /* runRendezvous releases every entry, even on failure */ });
+    }
+    let handedOff = false;
+    admissionWaits.set(handle, entry.release);
+    try {
+      await released;
+      if (handle.abort.signal.aborted || handle.stopRequested) return null;
+      handedOff = true;
+      return { proceed: entry.proceed };
+    } finally {
+      admissionWaits.delete(handle);
+      // A handle that never reaches its Workflow call (stop, close, read failure)
+      // still releases the pass waiting on it.
+      if (!handedOff) entry.proceed();
+    }
+  }
+
+  /**
+   * The one ordering pass of a bound scope. It batches the advances that reach
+   * the safe point in the same turn, orders that single set once, then releases
+   * the entries one by one and waits only until each has made its Workflow call.
+   * Every entry is released by this one order, so the wait graph has no cycle.
+   * Later arrivals are handled by the same pass in a following batch (or by a
+   * fresh pass once this one has drained).
+   */
+  async function runRendezvous(scopeKey: string, ctx: CoreCallContext): Promise<void> {
+    try {
+      for (;;) {
+        // Let advances that reach this same safe point in the same turn join the
+        // batch before the seam reads it. One microtask, not a sleep loop.
+        await Promise.resolve();
+        const pending = pendingAdvances.get(scopeKey);
+        if (pending === undefined || pending.length === 0) return;
+        const snapshot = pending.slice();
+        let ordered: WorkflowAdvanceInput[];
+        try {
+          ordered = await orderAdvanceSelection(ctx, snapshot.map(candidate => candidate.advance));
+        } catch {
+          // A throwing seam is refused/unsupported: keep the caller's arrival order.
+          ordered = snapshot.map(candidate => candidate.advance);
+        }
+        const orderedEntries: PendingAdvance[] = [];
+        for (const candidate of ordered) {
+          const found = snapshot.find(other => other.advance === candidate);
+          if (found !== undefined && !orderedEntries.includes(found)) orderedEntries.push(found);
+        }
+        // Any entry the seam did not return keeps the caller's order at the end.
+        for (const entry of snapshot) if (!orderedEntries.includes(entry)) orderedEntries.push(entry);
+        for (const entry of orderedEntries) {
+          const list = pendingAdvances.get(scopeKey);
+          if (list === undefined || !list.includes(entry)) { entry.proceed(); continue; }
+          entry.release();
+          // The wait ends as soon as this advance has made its Workflow call.
+          await entry.proceeded;
+        }
+      }
+    } finally {
+      // This pass is over; a later arrival starts a fresh pass. Release anything
+      // still pending so no handle can wait forever.
+      rendezvousPasses.delete(scopeKey);
+      const leftover = pendingAdvances.get(scopeKey);
+      if (leftover !== undefined) for (const entry of leftover) entry.release();
     }
   }
 
@@ -463,12 +647,21 @@ export function createCollaborationDriver(dependencies: CollaborationDriverDepen
       try {
         const all = await readAllOutbox(handle, runRef, signal);
         if (all !== null) {
-          const waiting = all.filter(message => message.sender.kind === 'work_run'
-            && (message.intent === 'inquiry' || (message.intent === undefined && message.replyMode === 'wait')) && message.status !== 'responded');
-          if (waiting.length === 0) {
+          // §4.6: a message addressed to the workspace user counts as a live
+          // wait but is never consulted as a Session; only Session recipients
+          // enter `consultOne`. The user reply is consumed by the ordinary
+          // `awaitWake`/Goal continuation rules, not by this pump.
+          const needsReply = all.filter(message => message.status !== 'responded'
+            && (isSessionRecipient(message.recipient)
+              ? message.sender.kind === 'work_run'
+                && (message.intent === 'inquiry' || (message.intent === undefined && message.replyMode === 'wait'))
+              : message.intent === 'decision_request' && message.needsReply === true));
+          const waiting = needsReply.filter(message => isSessionRecipient(message.recipient));
+          if (needsReply.length === 0) {
             if (manageState && handle.state === 'waiting_for_reply') handle.state = 'running';
           } else {
-            if (manageState && waiting.some(message => message.waitAfterSend === true || message.replyMode === 'wait')) handle.state = 'waiting_for_reply';
+            if (manageState && needsReply.some(message => message.waitAfterSend === true || message.replyMode === 'wait'
+              || !isSessionRecipient(message.recipient))) handle.state = 'waiting_for_reply';
             for (const message of waiting) {
               if (signal.aborted || handle.stopRequested) break;
               // A consultation can run a whole Query; announce the wait first.
@@ -538,7 +731,8 @@ export function createCollaborationDriver(dependencies: CollaborationDriverDepen
     }
   }
 
-  async function runWithPump(handle: Handle, runRef: RunRef, input: WorkflowAdvanceInput): Promise<WorkflowAdvanceResult> {
+  async function runWithPump(handle: Handle, runRef: RunRef, input: WorkflowAdvanceInput,
+    admission: AdvanceAdmission | null = null): Promise<WorkflowAdvanceResult> {
     handle.currentRun = structuredClone(runRef);
     const fresh = await freshStart(handle, runRef);
     const pumpAbort = new AbortController();
@@ -553,6 +747,8 @@ export function createCollaborationDriver(dependencies: CollaborationDriverDepen
     if (!fresh) handle.reason = 'the Run was already entered or settled; only observing the original facts';
     changed(handle);
     try {
+      // The safe-point wait ends here: the Workflow call is about to be made.
+      admission?.proceed();
       return await dependencies.workflow.advanceWork(loopContext(handle), input);
     } finally {
       // Sender completion/yield is not cancellation of an already-started
@@ -563,6 +759,13 @@ export function createCollaborationDriver(dependencies: CollaborationDriverDepen
       handle.abort.signal.removeEventListener('abort', onLoopAbort);
       if (handle.activePumpAbort === pumpAbort) handle.activePumpAbort = null;
     }
+  }
+
+  /** Make the claim/create Workflow call, releasing the safe-point waiters first. */
+  async function advanceWorkNow(handle: Handle, input: WorkflowAdvanceInput,
+    admission: AdvanceAdmission | null): Promise<WorkflowAdvanceResult> {
+    admission?.proceed();
+    return dependencies.workflow.advanceWork(loopContext(handle), input);
   }
 
 /** The real continuation of a yielded start/observe receipt, if present. */
@@ -580,14 +783,32 @@ function yieldedContinuationOf(value: WorkflowAdvanceResult): RunContinuationV1 
 }
 
   async function runHandle(handle: Handle): Promise<void> {
+    let openAdmission: AdvanceAdmission | null = null;
     try {
       let input = handle.current;
+      // The `select_work` the Workflow returns after `complete_task`, pinned to
+      // that same Task, only observes the satisfied Task; it never claims or
+      // creates work, so it never enters the ordering safe point and never waits.
+      let observingCompletedStep = false;
       while (input !== null && !handle.stopRequested) {
         changed(handle);
+        const observation = observingCompletedStep;
+        observingCompletedStep = false;
+        // §4.5 line 890 safe point: a `select_work` step claims/creates work. Only
+        // the advances pending together in the same bound scope compete; the
+        // order decides which calls the Workflow first and the others wait only
+        // until that call is made. An already-admitted handle (holding a
+        // claimed/started Run, waiting for a reply, observing a completed step)
+        // is never a competitor and never waits.
+        if (input.kind === 'select_work' && !observation) {
+          openAdmission = await awaitAdvanceAdmission(handle, input);
+          if (openAdmission === null) return;
+        }
         const startRun = startRunRefOf(input);
         const result = startRun === null
-          ? await dependencies.workflow.advanceWork(loopContext(handle), input)
-          : await runWithPump(handle, startRun, input);
+          ? await advanceWorkNow(handle, input, openAdmission)
+          : await runWithPump(handle, startRun, input, openAdmission);
+        openAdmission = null;
         // Record the REAL receipt/Run BEFORE honoring a concurrent stop, so a Run
         // claimed/prepared while stop was requested is never lost.
         handle.last = result;
@@ -614,6 +835,8 @@ function yieldedContinuationOf(value: WorkflowAdvanceResult): RunContinuationV1 
             };
             handle.current = next;
             input = next;
+            // This Goal-scope selection may claim/create other work of the Goal,
+            // so it takes part in the ordering safe point like any selection.
             continue;
           }
           handle.state = 'completed'; handle.reason = value.reason; return;
@@ -660,6 +883,8 @@ function yieldedContinuationOf(value: WorkflowAdvanceResult): RunContinuationV1 
         if (value.next === null) { handle.state = 'waiting'; handle.reason = 'the Workflow returned no next step'; return; }
         handle.current = value.next;
         input = value.next;
+        observingCompletedStep = value.receipt?.kind === 'complete_task'
+          && value.next.kind === 'select_work' && value.next.taskId !== undefined;
       }
     } catch (error) {
       if (!handle.stopRequested) {
@@ -667,6 +892,9 @@ function yieldedContinuationOf(value: WorkflowAdvanceResult): RunContinuationV1 
         handle.reason = `the Workflow advancement failed: ${messageOf(error)}`;
       }
     } finally {
+      // A safe point that never reached its Workflow call must still release the
+      // advances ordered behind it; `proceed` is idempotent.
+      openAdmission?.proceed();
       handle.current = null;
       // A stop drain owns the final `stopped` transition; never claim it here.
       if (!handle.stopRequested && (handle.state === 'running' || handle.state === 'waiting_for_reply')) {
@@ -754,6 +982,7 @@ function yieldedContinuationOf(value: WorkflowAdvanceResult): RunContinuationV1 
     handle.state = 'stopping';
     changed(handle);
     handle.activePumpAbort?.abort('driver_stopped');
+    admissionWaits.get(handle)?.();
     handle.stopDrain = (async () => {
       // Cancel the currently-known Run, let the loop drain (a Run claimed while
       // stopping is recorded by the loop before it breaks), then do the final
@@ -793,6 +1022,11 @@ function yieldedContinuationOf(value: WorkflowAdvanceResult): RunContinuationV1 
       const seed = canonicalOf(seedMaterial) ?? sha256Hex(canonicalJson(seedMaterial as unknown as JsonValue));
       const taskId = nonEmpty(advance['taskId']) ? advance['taskId'] : null;
       const key = handleKey(ctx.projectId, ctx.workspaceId!, goalRef.goalId, taskId);
+      // §4.5 line 890 safe point: the busy check and `handles.set` stay in one
+      // synchronous block (no second concurrent start can slip between them).
+      // The handle always advances its OWN request; ordering among the advances
+      // pending together at the claim/create point is enforced by
+      // `awaitAdvanceAdmission` inside the loop, never by a discarded call here.
       const existing = handles.get(key);
       if (existing !== undefined) {
         // Same seed always replays the ORIGINAL snapshot without a model call,

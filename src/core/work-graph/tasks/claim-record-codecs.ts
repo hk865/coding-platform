@@ -36,6 +36,7 @@ import { taskDispatchStateProblem } from '../persistence/execution-entry-codecs.
 import {
   actorRefProblem, controlIntentRefProblem, delegatedWriteProvenanceProblem, goalRefProblem, hasOnlyKeys,
   isNonNegativeSafeInteger, isPositiveSafeInteger, isSha256Hex, newBasisInputRefsProblem, noProgressKeyProblem,
+  noticeOriginFieldsProblem, NOTICE_ORIGIN_COMMIT_CURSOR_FIELDS, type NoticeOriginWireV1,
   planRevisionRefProblem, reworkFailureClassProblem, runRefProblem, sameJson, sessionRefProblem, sourceStampProblem,
   taskAttemptRefProblem, taskBudgetProblem, taskRequeueRefProblem, taskTripleProblem, verificationRoundRefProblem,
 } from '../persistence/rework-codecs.js';
@@ -374,7 +375,7 @@ const BASIS_COMPARISONS: readonly string[] = ['compared', 'skipped_interrupted',
 const TASK_REQUEUE_KEYS: readonly string[] = ['ref', 'revision', 'schemaVersion', 'task', 'planRef', 'afterRunRef',
   'afterAttemptRef', 'afterOutcome', 'afterRoundRef', 'failureClass', 'interruption', 'stopIntentRef', 'stopRequester',
   'trigger', 'basis', 'basisComparison', 'supersededEvidenceIds', 'newInputRefs', 'budget', 'reason', 'requestedBy',
-  'requestedAt', 'agentProvenance', 'automation', 'historySource', 'archiveOrigin'];
+  'requestedAt', 'agentProvenance', 'automation', 'historySource', 'archiveOrigin', 'since', 'noticeAutomationCap'];
 const TASK_REWORK_REFUSAL_KEYS: readonly string[] = ['ref', 'revision', 'schemaVersion', 'task', 'afterRunRef',
   'subjectRoundRef', 'failureClass', 'code', 'reason', 'basisDigest', 'source', 'matchedRequeueRef', 'requestedBy',
   'refusedAt', 'goalEndedRunsAtRefusal', 'configurationRevision'];
@@ -556,9 +557,13 @@ export function taskRequeueSnapshotProblem(value: unknown): string | null {
     }
   }
   if (value['archiveOrigin'] !== undefined && value['archiveOrigin'] !== null) {
-    const originProblem = archiveRequeueOriginProblem(value['archiveOrigin'], projectId);
-    if (originProblem !== null) return originProblem;
+    const archiveOriginProblem = archiveRequeueOriginProblem(value['archiveOrigin'], projectId);
+    if (archiveOriginProblem !== null) return archiveOriginProblem;
   }
+  // Slice 5 §2.5 wire-only notice origin (absent on old records): the creating
+  // commit cursor and, for automatic rework, the auto-rework cap at write time.
+  const originProblem = noticeOriginFieldsProblem(value, 'TaskRequeue');
+  if (originProblem !== null) return originProblem;
   return null;
 }
 
@@ -654,13 +659,36 @@ function parseRecordEnvelope(record: EncodedRecord, schemaId: string, what: stri
   return body;
 }
 
-/** Encodes the immutable `TaskRequeue@1` snapshot. */
-export function encodeTaskRequeueSnapshot(snapshot: TaskRequeueSnapshotV1): EncodedRecord {
-  return { refKey: taskRequeueRefKey(snapshot.ref), schemaId: TASK_REQUEUE_SCHEMA_ID,
-    revision: snapshot.revision, json: JSON.stringify(snapshot) };
+/**
+ * Removes the wire-only notice origin from a decoded public DTO. The persisted
+ * record still carries `since`/`noticeAutomationCap`; only `decodeNoticeOrigin`
+ * may read them (SPEC §2.5: origin separate from the public domain DTO).
+ */
+function withoutNoticeOrigin<T extends Record<string, unknown>>(value: T): T {
+  const copy = { ...value };
+  delete copy['since'];
+  delete copy['noticeAutomationCap'];
+  return copy;
 }
 
-/** Decodes one `TaskRequeue@1` record. */
+/**
+ * Encodes the immutable `TaskRequeue@1` snapshot. An optional `origin` writes
+ * the wire-only notice origin (`since: null` plus the Store commit-cursor
+ * binding); the public DTO is never extended. The origin fields are merged on
+ * the parsed wire object (not a protected-record spread) because state/ is the
+ * only writer of the snapshot's own fields.
+ */
+export function encodeTaskRequeueSnapshot(snapshot: TaskRequeueSnapshotV1, origin?: NoticeOriginWireV1): EncodedRecord {
+  const record: EncodedRecord = { refKey: taskRequeueRefKey(snapshot.ref), schemaId: TASK_REQUEUE_SCHEMA_ID,
+    revision: snapshot.revision, json: JSON.stringify(snapshot) };
+  if (origin === undefined) return record;
+  const wire = JSON.parse(record.json) as Record<string, unknown>;
+  if (origin.since !== undefined) wire['since'] = origin.since;
+  if (origin.noticeAutomationCap !== undefined) wire['noticeAutomationCap'] = origin.noticeAutomationCap;
+  return { ...record, json: JSON.stringify(wire) };
+}
+
+/** Decodes one `TaskRequeue@1` record; the public DTO never carries the origin. */
 export function decodeTaskRequeueSnapshot(record: EncodedRecord): DecodeResult<TaskRequeueSnapshotV1> {
   const body = parseRecordEnvelope(record, TASK_REQUEUE_SCHEMA_ID, 'TaskRequeue');
   if (typeof body === 'string') return invalid(body);
@@ -668,7 +696,7 @@ export function decodeTaskRequeueSnapshot(record: EncodedRecord): DecodeResult<T
   if (problem !== null) return invalid(problem);
   // Slice 1 §2.9 default: an old requeue without the optional origin stays
   // absent; every reader applies `archiveOrigin ?? null` (R2).
-  return { status: 'decoded', value: body as unknown as TaskRequeueSnapshotV1 };
+  return { status: 'decoded', value: withoutNoticeOrigin(body) as unknown as TaskRequeueSnapshotV1 };
 }
 
 /** Encodes one revision of a `TaskReworkRefusal` (each revision is written whole). */
@@ -724,7 +752,8 @@ export function taskRequeuedEventFromEvent(event: EncodedDomainEvent): DecodeRes
     return invalid('TaskRequeued requestedBy disagrees with the event actor');
   }
   // R2: an absent `archiveOrigin` key stays absent; readers apply `?? null`.
-  return { status: 'decoded', value: body as unknown as TaskRequeuedEvent };
+  const requeue = withoutNoticeOrigin(body['requeue'] as Record<string, unknown>);
+  return { status: 'decoded', value: { ...body, requeue } as unknown as TaskRequeuedEvent };
 }
 
 /** Encodes the `TaskReworkRefused` replay event. */
@@ -785,7 +814,8 @@ export const TASK_CLAIM_RECORD_SCHEMAS: RecordBackendSchemas = {
   records: [
     { schemaId: TASK_ATTEMPT_SCHEMA_ID, aggregateType: 'TaskAttempt', validate: validateAttemptRecord },
     { schemaId: TASK_CLAIM_OUTBOX_SCHEMA_ID, aggregateType: 'DispatchOutboxEntry', validate: validateOutboxRecord },
-    { schemaId: TASK_REQUEUE_SCHEMA_ID, aggregateType: 'TaskRequeue', validate: validateRequeueRecord },
+    { schemaId: TASK_REQUEUE_SCHEMA_ID, aggregateType: 'TaskRequeue', validate: validateRequeueRecord,
+      commitCursorFields: NOTICE_ORIGIN_COMMIT_CURSOR_FIELDS },
     { schemaId: TASK_REWORK_REFUSAL_SCHEMA_ID, aggregateType: 'TaskReworkRefusal', validate: validateReworkRefusalRecord },
   ],
   events: [

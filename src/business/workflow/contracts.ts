@@ -10,6 +10,7 @@ import type { RuntimeBudget } from '../../contracts/runtime-budget.js';
 import type { RoleBindingRefV1, TaskBudgetV1, TaskTriple } from '../../contracts/dispatch.js';
 import type { TaskRequeueRef } from '../../contracts/task-requeue.js';
 import type { SessionMessage } from '../../core/work-graph/model/communication-contracts.js';
+import type { GoalDecisionCauseReadV1 } from '../../core/work-graph/model/decision-contracts.js';
 import type { QueryJobRecord } from '../../core/work-graph/queries/contracts.js';
 import type { CreateGoalInput, GoalTaskPort } from '../../core/work-graph/model/task-contracts.js';
 import type { TaskClaimPort } from '../../core/work-graph/model/claim-contracts.js';
@@ -19,6 +20,15 @@ import type { RuntimeExecutionPort } from '../../core/agent-runtime/ports.js';
 import type { RegisteredCheckRunner } from '../../core/agent-runtime/check-execution.js';
 import type { SessionResponsibilityPort } from '../../core/work-graph/sessions/session-responsibility-service.js';
 import type { InternalSessionArchivePort } from './session-archive.js';
+
+/**
+ * Slice 5 §4.5 (F48): the finite decision-resolution DTOs are declared ONCE in
+ * the WorkGraph model (`model/decision-contracts.ts`, spec §0.2 T08) and
+ * re-exported here so the Workflow surface shares the exact same shapes.
+ */
+export type {
+  ResolveDecisionInputV1, ResolveDecisionReadV1,
+} from '../../core/work-graph/model/decision-contracts.js';
 
 /** N0-only accepted shape. The full GoalInput proposal/decision protocol is
  * deliberately absent until WorkGraph publishes its real proposal Port. */
@@ -155,6 +165,13 @@ export type WorkflowAdvanceResult = CoreRejection | {
      * none.
      */
     maintenanceFailures?: { sessionRef: SessionRef; rejection: CoreRejection }[];
+    /**
+     * Slice 5 §4.5 (F48): the formally derived Goal decision cause when an
+     * automatic refine/requeue/reverify step is gated by the Goal's current
+     * settings (source 2). Absent/null keeps the historical no-cause result; it
+     * never fabricates a GoalPhase or changes the display reduction.
+     */
+    decisionCause?: GoalDecisionCauseReadV1 | null;
   };
 };
 

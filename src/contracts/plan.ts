@@ -141,6 +141,8 @@ export type TaskDispositionRecordV1 = {
 import type { ActorRef } from "./command-event.js";
 import type { GoalRef } from "./ledger.js";
 import type { ArchitectureBaselinePin, CompletionPolicyPin } from "./governance.js";
+import type { SessionMessageRef } from "./core/session-message.js";
+import type { DecisionChangeProofV1 } from "./goal-decisions.js";
 // ------------------------------------------------------------------------ //
 // Plan structures                                                           //
 // ------------------------------------------------------------------------ //
@@ -282,12 +284,25 @@ export type PlanRevisionAcceptedEvent = {
     idempotencyKey: string;
     actor: ActorRef;
     occurredAt: string;
+    /**
+     * Slice 5 §4.5/T-R2-1: the formal command identity of an ATTRIBUTED
+     * acceptance (one carrying `payload.acknowledgementRef`). It lets the
+     * `applicationReceipt` reader rebuild the exact `DecisionApplicationReceiptV1`
+     * the Agent needs for `record_decision_application`. Optional so an
+     * unattributed/pre-slice event keeps its exact old shape and stays readable.
+     */
+    identityKey?: string;
+    fingerprint?: string;
     payload: {
         goalId: string;
         /** Goal aggregate revision after acceptance (canonical = expectedGoal + 1). */
         goalAggregateRevision: number;
         /** Full accepted snapshot (the ONLY source the ReadModel replays from). */
         planRevision: PlanRevisionSnapshot;
+        /** Slice 5: the user acknowledgement this acceptance answers, when any. */
+        acknowledgementRef?: SessionMessageRef;
+        /** Slice 5: the exact change proof for a recorded decision application. */
+        decisionApplication?: DecisionChangeProofV1;
     };
 };
 export function planValidationError(path: string, code: PlanValidationCode, message: string): PlanValidationError {

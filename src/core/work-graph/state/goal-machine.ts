@@ -129,6 +129,9 @@ export function nextGoalDesiredState(goal: GoalSnapshot, input: {
     desiredStateRequestedBy: { kind: input.requestedBy.kind, id: input.requestedBy.id },
     activePlanRevision: goal.activePlanRevision,
     revision,
+    // Slice 5 F87: an explicitly configured Goal keeps its settings; a Goal
+    // written before the field keeps its exact old shape (no `settings` key).
+    ...(goal.settings === undefined ? {} : { settings: goal.settings }),
   };
 }
 

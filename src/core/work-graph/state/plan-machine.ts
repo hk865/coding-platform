@@ -38,6 +38,7 @@
  * references below cite the pre-step-3 worktree (2026-10-02, as the spec does).
  */
 import type { ArtifactRef } from '../../../contracts/artifact.js';
+import type { ActorRef } from '../../../contracts/command-event.js';
 import type { ControlIntentSnapshotV1 } from '../../../contracts/control-intent.js';
 import type { SessionRef, VersionPin } from '../../../contracts/core/identity.js';
 import type { CoreError, CoreRejection } from '../../../contracts/core/results.js';
@@ -49,6 +50,7 @@ import type { GoalDesiredState, GoalRef } from '../../../contracts/ledger.js';
 import type {
   AcceptanceObligation, Disposition, PlanRevisionDraft, PlanRevisionRef, PlanValidationError, RuntimeTask,
 } from '../../../contracts/plan.js';
+import type { QueryJobRef } from '../../../contracts/query-job.js';
 import type { TaskReductionSnapshot } from '../../../contracts/reduction.js';
 import type { ReworkActorClass } from '../../../contracts/task-requeue.js';
 import { runUnresolvedBlocker } from './run-machine.js';
@@ -64,15 +66,32 @@ import {
 /** Same full identity as legacy PlanProposal@1 (`plan-contracts.ts:28-29`). */
 export type PlanProposalRef = { aggregateType: 'PlanProposal'; projectId: string; workspaceId: string; proposalId: string };
 
-/** `plan-contracts.ts:30-35`; `affectedTaskIds` is the optional C7 list. */
+/** `plan-contracts.ts:37-44`; `affectedTaskIds` is the optional C7 list. */
 export type PlanChangeReason = { text: string; sources: ArtifactRef[]; affectedTaskIds?: string[] };
 
-/** `plan-contracts.ts:37-44`. Only `status` is protected (§14.1). */
+/**
+ * Slice 5 request-candidate extension mirror (`plan-contracts.ts:49-55`): the
+ * first user-initiated request a candidate belongs to and the exact
+ * non-adoption fact. Both optional so old records keep their shape.
+ */
+export type CandidateRequestExtensionV1 = {
+  requestRef?: QueryJobRef | null;
+  notAdopted?: {
+    reason: 'replaced' | 'not_selected' | 'abandoned';
+    requestedBy: ActorRef; at: string; replacedBy: PlanProposalRef | null;
+  };
+};
+
+/** `plan-contracts.ts:56-66`. Only `status` is protected (§14.1). */
 export type CandidatePlanProposal = {
   kind: 'candidate_v2'; ref: PlanProposalRef; revision: number; schemaVersion: 2;
   goalRef: GoalRef; basedOn: PlanRevisionRef | null; draft: PlanRevisionDraft;
-  reason: PlanChangeReason; status: 'candidate' | 'accepted' | 'rejected';
+  reason: PlanChangeReason; status: 'candidate' | 'accepted' | 'rejected' | 'not_adopted';
   issues: PlanValidationError[];
+  /** Slice 5: first user-initiated request this candidate belongs to; absent = independent. */
+  requestRef?: QueryJobRef | null;
+  /** Slice 5: the exact non-adoption fact, when this candidate was not adopted. */
+  notAdopted?: CandidateRequestExtensionV1['notAdopted'];
   /** W2 Agent branch only; absent on every legacy/Host candidate. */
   submittedBy?: PlanWriteProvenanceV1;
 };
@@ -140,9 +159,40 @@ export function derivePlanProposalStatus(
       return proposal.status;
     case 'candidate':
       return samePlanPointer(proposal.basedOn, activePlanRevision) ? 'candidate' : 'stale';
+    // S5-PLAN-04: `not_adopted` is a stored terminal non-adoption; it is never
+    // pending. `derivePlanProposalReadVerdict` reports it as `closed`.
+    case 'not_adopted':
+      return 'rejected';
     default:
       return unreachable(proposal, 'plan proposal status');
   }
+}
+
+/**
+ * A4 / S5-PLAN-05 (spec §2.4, §3.1 row S5-PLAN-05): the read verdict of a
+ * candidate, including the `closedReason`. It is a pure function so the read
+ * model (PC10) can assert `closedReason === 'goal_cancelled'`; it writes
+ * nothing and never rewrites the stored record. Order: a stored terminal
+ * status wins (`closed`, no reason), then a cancelled Goal (`closed`,
+ * `goal_cancelled`), then `basedOn` against the active pointer.
+ */
+export type PlanProposalReadVerdict = {
+  status: 'candidate' | 'stale' | 'closed';
+  closedReason: 'goal_cancelled' | null;
+};
+
+export function derivePlanProposalReadVerdict(
+  proposal: PlanProposalRecord,
+  activePlanRevision: PlanRevisionRef | null,
+  goalDesiredState: GoalDesiredState,
+): PlanProposalReadVerdict {
+  // 存终态优先: accepted/rejected/not_adopted are terminal stored statuses.
+  if (proposal.status !== 'candidate') return { status: 'closed', closedReason: null };
+  if (goalDesiredState === 'cancelled') return { status: 'closed', closedReason: 'goal_cancelled' };
+  return {
+    status: samePlanPointer(proposal.basedOn, activePlanRevision) ? 'candidate' : 'stale',
+    closedReason: null,
+  };
 }
 
 export type PlanRevisionStatus = 'adopted' | 'superseded';
@@ -209,6 +259,14 @@ export type PlanProposalEvent =
     reason: PlanChangeReason;
     issues: PlanValidationError[];
     submittedBy: PlanWriteProvenanceV1 | null;
+    /**
+     * S5-PLAN-01 request association (spec §2.4): the first user-initiated
+     * request this candidate belongs to, and the head it replaces. Both are
+     * optional/nullable exactly like the persisted `Recorded@2` fields, so an
+     * independent candidate keeps its old shape.
+     */
+    requestRef?: QueryJobRef | null;
+    replaces?: { proposalRef: PlanProposalRef; revision: number } | null;
   }
   | {
     type: 'proposal_accepted';
@@ -219,7 +277,56 @@ export type PlanProposalEvent =
     agentWriter: AgentPlanWriterIdentity | null;
   }
   | { type: 'proposal_stale' }
-  | { type: 'proposal_rejected' };
+  | { type: 'proposal_rejected' }
+  // Slice 5 §3.1 rows S5-PLAN-02..05 (S5-PLAN-01 keeps `proposal_recorded`).
+  | {
+    type: 'proposal_replaced';
+    /**
+     * The COMPLETE `proposal_recorded` payload of the replacement candidate
+     * (writer/ref/goalRef/basedOn/draft/reason/issues/submittedBy), so the new
+     * candidate record can be constructed from this event alone.
+     */
+    writer: PlanProposalWriter;
+    ref: PlanProposalRef;
+    goalRef: GoalRef;
+    basedOn: PlanRevisionRef | null;
+    draft: PlanRevisionDraft;
+    reason: PlanChangeReason;
+    issues: PlanValidationError[];
+    submittedBy: PlanWriteProvenanceV1 | null;
+    expectedHeadRevision: number;
+    /**
+     * [lead S5-T3-D2] Who replaced the head and when: the old head's
+     * `notAdopted.requestedBy` / `notAdopted.at` come from here.
+     */
+    requestedBy: ActorRef;
+    at: string;
+    /** The complete current-head + replacement pair of the request slot. */
+    head: { proposalRef: PlanProposalRef; revision: number };
+    replaces: { proposalRef: PlanProposalRef; revision: number };
+    requestRef: QueryJobRef;
+  }
+  | {
+    type: 'proposal_adopted';
+    /** Every field `proposal_accepted` carries, plus the request association. */
+    adopter: PlanAdopter;
+    proposalRef: PlanProposalRef;
+    expectedProposalRevision: number;
+    decisionRefs: readonly VersionPin[];
+    agentWriter: AgentPlanWriterIdentity | null;
+    requestRef: QueryJobRef | null;
+  }
+  | {
+    type: 'proposal_abandoned';
+    proposalRef: PlanProposalRef;
+    /** [lead S5-T3-D2] `notAdopted.requestedBy` / `notAdopted.at`. */
+    requestedBy: ActorRef;
+    at: string;
+    /** S5-PLAN-04 head pin (spec §3.1). */
+    expectedProposalRevision: number;
+    requestRef: QueryJobRef | null;
+  }
+  | { type: 'proposal_read'; proposalRef: PlanProposalRef; requestRef: QueryJobRef | null };
 
 /** The source PlanRevision read through `basedOn`. */
 export type PlanSourceFacts = { ref: PlanRevisionRef; goalRef: GoalRef; planId: string; planRevision: number };
@@ -306,6 +413,43 @@ export const SOURCE_PLAN_STALE_DETAIL = 'the source plan is not the Goal current
 export const TARGET_PLAN_NOT_NEW_DETAIL = 'the target planId must be a new, unused reference';
 
 /**
+ * Slice 5 request-slot guard facts (spec §3.1 rows S5-PLAN-01..05).
+ * UNSPECIFIED-GUARDS: the lead freezes these field names at the part-1 review.
+ */
+export type PlanRequestCandidateFacts = {
+  /** S5-PLAN-01 `proposal_recorded`: request root same Goal, `replaces=null`, empty slot. */
+  requestRootSameGoal: boolean;
+  replacesIsNull: boolean;
+  slotExpectedOwnerIsNull: boolean;
+  /** S5-PLAN-02 `proposal_replaced`: current head, its revision pin, same request/Goal, complete `replaces`. */
+  headMatches: boolean;
+  headRevisionMatches: boolean;
+  requestGoalMatches: boolean;
+  replacesComplete: boolean;
+  /** S5-PLAN-03 `proposal_adopted`: first plan needs the user, slot owner matches, `basedOn` is the active pointer. */
+  firstPlanUserOnly: boolean;
+  slotOwnerMatches: boolean;
+  basedOnIsActivePointer: boolean;
+  /** S5-PLAN-04 `proposal_abandoned`: operator, head pin, Goal not cancelled. */
+  operatorMatches: boolean;
+  headPinMatches: boolean;
+  goalNotCancelled: boolean;
+  /** S5-PLAN-05 `proposal_read`: stored terminal status wins, else cancelled Goal, else `basedOn` derives stale. */
+  storedTerminalStatus: boolean;
+  goalCancelled: boolean;
+  basedOnDerivesStale: boolean;
+  /**
+   * [lead S5-T3-D2] S5-PLAN-03 "+ §3.2": the `decisionActionPolicy` verdict the
+   * service computed for this adopting action and adopter (`adopt_first_plan`
+   * for a first plan, otherwise the future-revision action), or `null` for an
+   * explicit configured-operator adoption (an explicit human operation is not
+   * asked again, §3.2). `user_only` / `needs_decision` reject `forbidden`; the
+   * existing PLAN-04/05/06 guards still run unchanged.
+   */
+  adoptionPolicy: 'user_only' | 'needs_decision' | 'automatic' | 'automatic_notice' | null;
+};
+
+/**
  * What the service read and validated. Sections an event does not use are
  * `null`. `goal.desiredState` is read for D-9 (step 5.5): a cancelled Goal
  * records and adopts no Plan; a paused one does (W16 is not rework).
@@ -325,6 +469,8 @@ export type PlanProposalGuardContext = {
   initial: InitialAdoptionFacts | null;
   /** `proposal_accepted` with `basedOn ≠ null` (PLAN-05). */
   future: FutureAdoptionFacts | null;
+  /** Slice 5 request-candidate rows only (S5-PLAN-01..05). */
+  requestCandidate?: PlanRequestCandidateFacts | null;
 };
 
 /**
@@ -384,7 +530,22 @@ export type PlanProposalEffect =
   | { kind: 'move_goal_pointer'; from: PlanRevisionRef | null; to: PlanRevisionRef }
   | { kind: 'change_task_disposition'; change: PlannedDispositionChangeV1 }
   | { kind: 'append_event'; eventType: 'PlanProposalRecorded' | 'PlanRevisionAccepted' }
-  | { kind: 'guard'; guard: PlanCommitGuard };
+  | { kind: 'guard'; guard: PlanCommitGuard }
+  /**
+   * [lead S5-T3-D2] S5-PLAN-02: the replaced old head's complete next record
+   * (`not_adopted`, `notAdopted.reason='replaced'`, `replacedBy` = the new
+   * candidate, revision+1); `next` stays the new candidate. Written in the
+   * same commit with a second `PlanProposalRecorded` event.
+   */
+  | { kind: 'write_replaced_proposal'; record: CandidatePlanProposal }
+  /**
+   * [lead S5-T3-D2] The request slot unique claim (§2.4, T01) as a pure
+   * change: PLAN-01 null→new, PLAN-02 old head→new head, PLAN-03/04 owner→null.
+   * The service maps it to one `UniqueClaimChange` (key = full Goal + request).
+   * A candidate with a null `requestRef` never has this effect.
+   */
+  | { kind: 'request_slot'; goalRef: GoalRef; requestRef: QueryJobRef;
+      expectedOwner: PlanProposalRef | null; nextOwner: PlanProposalRef | null };
 
 export type PlanProposalTransition = Transition<PlanProposalMachineState, PlanProposalEvent, PlanProposalEffect>;
 
@@ -640,10 +801,19 @@ export type PlanProposalReadFacts = {
   source?: PlanSourceFacts | null;
   initial?: Partial<InitialAdoptionFacts> | null;
   future?: Partial<FutureAdoptionFacts> | null;
+  /** Slice 5 request-candidate rows only (S5-PLAN-01..05). */
+  requestCandidate?: PlanRequestCandidateFacts | null;
 };
 
 type RecordedGuardEvent = Omit<Extract<PlanProposalEvent, { type: 'proposal_recorded' }>, 'issues'>;
 type AcceptedEvent = Extract<PlanProposalEvent, { type: 'proposal_accepted' }>;
+
+/**
+ * The writer fields every recorded-shaped event shares: `proposal_recorded`
+ * (PLAN-01/03) and the replacement event (`proposal_replaced`, PLAN-02).
+ */
+type RecordedWriterEvent = Pick<RecordedGuardEvent,
+  'writer' | 'ref' | 'goalRef' | 'basedOn' | 'draft' | 'reason' | 'submittedBy'>;
 
 /** What the guards read of an event: a recorded candidate's `issues` are diagnostics no guard reads (PLAN-01). */
 export type PlanProposalGuardEvent = RecordedGuardEvent | AcceptedEvent;
@@ -820,6 +990,31 @@ function recordedStep(
   event: RecordedGuardEvent,
   facts: PlanProposalReadFacts,
 ): GuardStep {
+  const writer = recordedWriterStep(event, facts);
+  if (writer !== null) return writer;
+  const request = requestRecordedStep(event, facts);
+  if (request !== null) return request;
+  if (state === undefined) return UNREAD;
+  // The proposalId is derived from the request id (:269-271, :1836-1839). The
+  // receipt lookup runs first (:942-951, :1921-1925); a record found after it
+  // was committed in between. Today the store replays a same-identity commit
+  // before its guards (in-memory-record-store.ts:256-265), so the record that
+  // this event would write is `duplicate` (§1.2): the service re-queries the
+  // receipt (replay, or `idempotency_conflict`), and with no receipt for this
+  // identity keeps today's create CAS ∅ code, `revision_conflict` (:985, :1991).
+  if (state !== null) {
+    const candidate = withRequestRef(newCandidateProposal({ ref: event.ref, goalRef: event.goalRef, basedOn: event.basedOn,
+      draft: event.draft, reason: event.reason, issues: [], submittedBy: event.submittedBy }), event.requestRef);
+    return sameRecordedCandidate(state, candidate)
+      ? reject('duplicate', 'revision_conflict',
+        `proposal ${event.ref.proposalId} is already recorded with the same content; only its original receipt replays`)
+      : reject('illegal', 'revision_conflict', `proposal ${event.ref.proposalId} already exists; only the original receipt replays`);
+  }
+  return null;
+}
+
+/** The writer-specific checks every recorded-shaped event shares (without the state duplicate check). */
+function recordedWriterStep(event: RecordedWriterEvent, facts: PlanProposalReadFacts): GuardStep {
   // :1029 — the shared entry check of every writer.
   if (event.draft.goalId !== event.goalRef.goalId) {
     return reject('illegal', 'invalid', 'the draft goalId does not match the GoalRef');
@@ -827,13 +1022,11 @@ function recordedStep(
   // The Goal scope (Host :955-961, Agent :1941-1950) and the C7 reason shape, asked by every writer.
   const scope = (): GuardStep => scopeStep(facts, 'the goal does not belong to the requested workspace');
   const shape = (): GuardStep => reasonShapeStep(event);
-  let problem: GuardStep;
   switch (event.writer) {
     case 'host':
-      problem = chain(() => hostProvenanceProblem(event), scope, shape);
-      break;
+      return chain(() => hostProvenanceProblem(event), scope, shape);
     case 'initial_answer':
-      problem = chain(
+      return chain(
         // PLAN-03: the answer-derived candidate is an initial plan (:1331).
         () => event.basedOn !== null
           ? reject('illegal', 'invalid', 'an initial-plan answer candidate is never based on a plan') : null,
@@ -841,9 +1034,8 @@ function recordedStep(
         scope,
         shape,
       );
-      break;
     case 'agent':
-      problem = chain(
+      return chain(
         // :1930-1936 — the fresh admission comes first; its provenance is `submittedBy`.
         () => agentAdmissionStep(facts),
         () => event.submittedBy === null
@@ -858,28 +1050,35 @@ function recordedStep(
         () => agentSourceStep(event, facts),
         shape,
       );
-      break;
     default:
       return unreachable(event.writer, 'plan proposal writer');
   }
-  if (problem !== null) return problem;
-  if (state === undefined) return UNREAD;
-  // The proposalId is derived from the request id (:269-271, :1836-1839). The
-  // receipt lookup runs first (:942-951, :1921-1925); a record found after it
-  // was committed in between. Today the store replays a same-identity commit
-  // before its guards (in-memory-record-store.ts:256-265), so the record that
-  // this event would write is `duplicate` (§1.2): the service re-queries the
-  // receipt (replay, or `idempotency_conflict`), and with no receipt for this
-  // identity keeps today's create CAS ∅ code, `revision_conflict` (:985, :1991).
-  if (state !== null) {
-    const candidate = newCandidateProposal({ ref: event.ref, goalRef: event.goalRef, basedOn: event.basedOn,
-      draft: event.draft, reason: event.reason, issues: [], submittedBy: event.submittedBy });
-    return sameRecordedCandidate(state, candidate)
-      ? reject('duplicate', 'revision_conflict',
-        `proposal ${event.ref.proposalId} is already recorded with the same content; only its original receipt replays`)
-      : reject('illegal', 'revision_conflict', `proposal ${event.ref.proposalId} already exists; only the original receipt replays`);
+}
+
+/**
+ * S5-PLAN-01's request association on a recorded candidate: the request root is
+ * the same Goal, the candidate does not replace a head, and the slot is free.
+ * A candidate without a request is independent (PC09) and takes no slot.
+ */
+function requestRecordedStep(event: RecordedGuardEvent, facts: PlanProposalReadFacts): GuardStep {
+  if (event.requestRef === undefined || event.requestRef === null) return null;
+  const request = facts.requestCandidate;
+  if (request === undefined || request === null) return UNREAD;
+  if (!request.requestRootSameGoal) {
+    return reject('illegal', 'not_found', 'the request root does not belong to the candidate Goal');
+  }
+  if (!request.replacesIsNull) {
+    return reject('guard_failed', 'invalid', 'a newly recorded request candidate must not replace a head');
+  }
+  if (!request.slotExpectedOwnerIsNull) {
+    return reject('stale', 'revision_conflict', 'the request already has a current candidate');
   }
   return null;
+}
+
+/** S5-PLAN-01/02: attach the request association only when the candidate names one. */
+function withRequestRef(candidate: CandidatePlanProposal, requestRef: QueryJobRef | null | undefined): CandidatePlanProposal {
+  return requestRef === undefined || requestRef === null ? candidate : { ...candidate, requestRef };
 }
 
 function onProposalRecorded(
@@ -890,8 +1089,8 @@ function onProposalRecorded(
   const problem = recordedStep(state, event, ctx);
   if (problem === UNREAD) return incompleteFacts();
   if (problem !== null) return problem;
-  const candidate = newCandidateProposal({ ref: event.ref, goalRef: event.goalRef, basedOn: event.basedOn,
-    draft: event.draft, reason: event.reason, issues: event.issues, submittedBy: event.submittedBy });
+  const candidate = withRequestRef(newCandidateProposal({ ref: event.ref, goalRef: event.goalRef, basedOn: event.basedOn,
+    draft: event.draft, reason: event.reason, issues: event.issues, submittedBy: event.submittedBy }), event.requestRef);
   /** The writer's own CAS guards: `before` the Goal scope guards, `after` them (the source Plan). */
   let writerGuards: { before: PlanCommitGuard[]; after: PlanCommitGuard[] };
   switch (event.writer) {
@@ -918,6 +1117,12 @@ function onProposalRecorded(
     ...writerGuards.after.map(guard),
     guard({ target: 'proposal', expectedRevision: null }),
   ];
+  // S5-PLAN-01: a request-associated candidate claims the request slot in the
+  // same commit; an independent candidate (no requestRef) takes no slot (PC09).
+  if (event.requestRef !== undefined && event.requestRef !== null) {
+    effects.push({ kind: 'request_slot', goalRef: event.goalRef, requestRef: event.requestRef,
+      expectedOwner: null, nextOwner: candidate.ref });
+  }
   return accept<PlanProposalMachineState, PlanProposalEffect>(candidate, effects);
 }
 
@@ -931,7 +1136,7 @@ const MAX_AFFECTED_TASK_IDS = 200;
  * non-empty task ids of the draft. Whether a traced Task is listed is judged
  * at adoption (TASK-19 guard 6).
  */
-function reasonShapeStep(event: RecordedGuardEvent): GuardStep {
+function reasonShapeStep(event: RecordedWriterEvent): GuardStep {
   if ((event.draft as unknown as Record<string, unknown>)['dispositionRecord'] !== undefined) {
     return reject('guard_failed', 'invalid', 'the draft carries dispositionRecord, which only the adoption compiler writes');
   }
@@ -960,7 +1165,7 @@ function reasonShapeStep(event: RecordedGuardEvent): GuardStep {
 }
 
 /** A Host or answer-derived candidate never carries an Agent submission provenance. */
-function hostProvenanceProblem(event: RecordedGuardEvent): GuardStep {
+function hostProvenanceProblem(event: RecordedWriterEvent): GuardStep {
   return event.submittedBy !== null
     ? reject('illegal', 'invalid', 'only an Agent candidate carries a submission provenance') : null;
 }
@@ -982,7 +1187,7 @@ function sameRecordedCandidate(state: PlanProposalRecord, candidate: CandidatePl
 }
 
 /** PLAN-02: the source is a real Plan of this Goal and still its active plan (:1959-1970). */
-function agentSourceStep(event: RecordedGuardEvent, facts: PlanProposalReadFacts): GuardStep {
+function agentSourceStep(event: RecordedWriterEvent, facts: PlanProposalReadFacts): GuardStep {
   const source = sourcePlanStep(facts, event.ref.projectId, event.goalRef.goalId,
     'an Agent proposal requires the source plan read through basedOn');
   return source === UNREAD || 'ok' in source ? source : null;
@@ -1048,6 +1253,9 @@ function acceptedStep(
           return reject('illegal', 'invalid', `proposal ${event.proposalRef.proposalId} is not a pending candidate`);
         case 'candidate':
           return candidateStep(state, event, facts);
+        // S5-PLAN-04: `not_adopted` is final; it is not a pending candidate.
+        case 'not_adopted':
+          return reject('illegal', 'invalid', `proposal ${event.proposalRef.proposalId} is not a pending candidate`);
         default:
           return unreachable(state, 'plan proposal status');
       }
@@ -1354,6 +1562,9 @@ function onProposalStale(state: PlanProposalMachineState, ctx: PlanProposalGuard
     case 'accepted':
     case 'rejected':
       return reject('illegal', 'invalid', `a ${state.status} proposal is never read as stale`);
+    // S5-PLAN-04: a not_adopted candidate is closed; it is never read as stale.
+    case 'not_adopted':
+      return reject('illegal', 'invalid', 'a not_adopted proposal is terminal; it is never read as stale');
     default:
       return unreachable(state, 'plan proposal status');
   }
@@ -1372,9 +1583,151 @@ function onProposalRejected(state: PlanProposalMachineState): PlanProposalTransi
       return reject('illegal', 'invalid', 'an accepted proposal is final; it cannot be rejected');
     case 'rejected':
       return reject('illegal', 'invalid', 'the proposal is already rejected; rejection has no writer in this batch');
+    // S5-PLAN-04: a not_adopted candidate is final and has no rejection writer.
+    case 'not_adopted':
+      return reject('illegal', 'invalid', 'the proposal is already not_adopted; it is final');
     default:
       return unreachable(state, 'plan proposal status');
   }
+}
+
+/**
+ * S5-PLAN-05: `proposal_read` is a read-only member. The stored record is
+ * returned unchanged with no effects; the closed/goal_cancelled verdict is
+ * derived by `derivePlanProposalReadVerdict`, so a cancelled Goal never
+ * rewrites the candidate here.
+ */
+function onProposalRead(state: PlanProposalMachineState): PlanProposalTransition {
+  if (state === null) return reject('illegal', 'not_found', 'there is no proposal to read');
+  return accept<PlanProposalMachineState, PlanProposalEffect>(state);
+}
+
+/**
+ * S5-PLAN-02: replace the current request head. `next` is the new candidate; the
+ * old head's complete next record (`not_adopted/replaced`) is a separate effect
+ * written in the same commit with a second `PlanProposalRecorded` event, and the
+ * request slot moves from the old head to the new one (spec §2.4, D2).
+ */
+function onProposalReplaced(
+  state: PlanProposalMachineState,
+  event: Extract<PlanProposalEvent, { type: 'proposal_replaced' }>,
+  ctx: PlanProposalGuardContext,
+): PlanProposalTransition {
+  const writer = recordedWriterStep(event, ctx);
+  if (writer !== null) return writer === UNREAD ? incompleteFacts() : writer;
+  if (state === null) return reject('illegal', 'not_found', `proposal ${event.head.proposalRef.proposalId} does not exist`);
+  if (state.kind === 'legacy_v1') {
+    return reject('illegal', 'unsupported', 'a legacy v1 proposal cannot be replaced by a request candidate');
+  }
+  if (state.status !== 'candidate') {
+    return reject('illegal', 'invalid', `proposal ${event.ref.proposalId} is not a pending candidate`);
+  }
+  const request = ctx.requestCandidate;
+  if (request === undefined || request === null) return incompleteFacts();
+  if (!request.headMatches) return reject('guard_failed', 'invalid', 'the replaced head is not the current candidate');
+  if (!request.headRevisionMatches || state.revision !== event.head.revision) {
+    return reject('stale', 'revision_conflict', 'the replaced head revision changed');
+  }
+  if (!request.requestGoalMatches) {
+    return reject('guard_failed', 'invalid', 'the replacement does not belong to the request Goal');
+  }
+  if (!request.replacesComplete) {
+    return reject('guard_failed', 'invalid', 'the replacement does not name the complete current head');
+  }
+  const candidate = withRequestRef(newCandidateProposal({ ref: event.ref, goalRef: event.goalRef, basedOn: event.basedOn,
+    draft: event.draft, reason: event.reason, issues: event.issues, submittedBy: event.submittedBy }), event.requestRef);
+  const replaced: CandidatePlanProposal = { ...state, revision: state.revision + 1, status: 'not_adopted',
+    notAdopted: { reason: 'replaced', requestedBy: event.requestedBy, at: event.at, replacedBy: candidate.ref } };
+  const effects: PlanProposalEffect[] = [
+    { kind: 'write_proposal' },
+    { kind: 'append_event', eventType: 'PlanProposalRecorded' },
+    { kind: 'write_replaced_proposal', record: replaced },
+    { kind: 'append_event', eventType: 'PlanProposalRecorded' },
+    guard({ target: 'project' }), guard({ target: 'workspace' }), guard({ target: 'goal' }),
+    guard({ target: 'proposal', expectedRevision: state.revision }),
+    guard({ target: 'proposal', expectedRevision: null }),
+    { kind: 'request_slot', goalRef: event.goalRef, requestRef: event.requestRef,
+      expectedOwner: state.ref, nextOwner: candidate.ref },
+  ];
+  return accept<PlanProposalMachineState, PlanProposalEffect>(candidate, effects);
+}
+
+/**
+ * S5-PLAN-03: adopt a request candidate. The existing PLAN-04/05/06 guards run
+ * unchanged; then the §3.2 autonomy verdict and the request-slot ownership are
+ * checked, and the slot is released in the same commit (spec §2.4, D2).
+ */
+function onProposalAdopted(
+  state: PlanProposalMachineState,
+  event: Extract<PlanProposalEvent, { type: 'proposal_adopted' }>,
+  ctx: PlanProposalGuardContext,
+): PlanProposalTransition {
+  const accepted: AcceptedEvent = { type: 'proposal_accepted', adopter: event.adopter,
+    proposalRef: event.proposalRef, expectedProposalRevision: event.expectedProposalRevision,
+    decisionRefs: event.decisionRefs, agentWriter: event.agentWriter };
+  const step = acceptedStep(state, accepted, ctx);
+  if (step === UNREAD) return incompleteFacts();
+  if (!isAdmitted(step)) return step;
+  const request = ctx.requestCandidate;
+  if (request !== undefined && request !== null) {
+    if (!request.basedOnIsActivePointer) {
+      return reject('stale', 'revision_conflict', 'the candidate is not based on the Goal active plan pointer');
+    }
+    if (!request.firstPlanUserOnly) {
+      return reject('guard_failed', 'forbidden', 'the first plan may only be adopted by the configured user');
+    }
+    if (event.requestRef !== null && !request.slotOwnerMatches) {
+      return reject('stale', 'revision_conflict', 'the request slot is owned by another candidate');
+    }
+    if (request.adoptionPolicy === 'user_only' || request.adoptionPolicy === 'needs_decision') {
+      return reject('guard_failed', 'forbidden', 'the autonomy policy requires a user decision before this adoption');
+    }
+  }
+  const effects = adoptionEffects(step, event.adopter);
+  if (event.requestRef !== null) {
+    effects.push({ kind: 'request_slot', goalRef: step.proposal.goalRef, requestRef: event.requestRef,
+      expectedOwner: step.proposal.ref, nextOwner: null });
+  }
+  return accept<PlanProposalMachineState, PlanProposalEffect>(acceptProposalRecord(step.proposal), effects);
+}
+
+/**
+ * S5-PLAN-04: abandon the current candidate head (candidate or derived stale;
+ * no `basedOn` check). `not_adopted/replacedBy:null` is written and the request
+ * slot is released in the same commit (spec §2.4, D2).
+ */
+function onProposalAbandoned(
+  state: PlanProposalMachineState,
+  event: Extract<PlanProposalEvent, { type: 'proposal_abandoned' }>,
+  ctx: PlanProposalGuardContext,
+): PlanProposalTransition {
+  if (state === null) return reject('illegal', 'not_found', `proposal ${event.proposalRef.proposalId} does not exist`);
+  if (state.kind === 'legacy_v1') {
+    return reject('illegal', 'unsupported', 'a legacy v1 proposal cannot be abandoned by a request candidate');
+  }
+  if (state.status !== 'candidate') {
+    return reject('illegal', 'invalid', `proposal ${event.proposalRef.proposalId} is not a pending candidate`);
+  }
+  const request = ctx.requestCandidate;
+  if (request === undefined || request === null) return incompleteFacts();
+  if (!request.operatorMatches) return reject('guard_failed', 'forbidden', 'only the configured operator may abandon a proposal');
+  if (!request.headPinMatches || state.revision !== event.expectedProposalRevision) {
+    return reject('stale', 'revision_conflict', 'the proposal revision changed');
+  }
+  if (!request.goalNotCancelled) return reject('illegal', 'invalid', GOAL_CANCELLED_PLAN_DETAIL);
+  const abandoned: CandidatePlanProposal = { ...state, revision: state.revision + 1, status: 'not_adopted',
+    notAdopted: { reason: 'abandoned', requestedBy: event.requestedBy, at: event.at, replacedBy: null } };
+  const effects: PlanProposalEffect[] = [
+    { kind: 'write_proposal' },
+    { kind: 'append_event', eventType: 'PlanProposalRecorded' },
+    guard({ target: 'project' }), guard({ target: 'workspace' }), guard({ target: 'goal' }),
+    guard({ target: 'proposal', expectedRevision: state.revision }),
+  ];
+  if (event.requestRef !== null) {
+    effects.push({ kind: 'request_slot', goalRef: state.goalRef, requestRef: event.requestRef,
+      expectedOwner: state.ref, nextOwner: null });
+  }
+  return accept<PlanProposalMachineState, PlanProposalEffect>(abandoned, effects);
 }
 
 /** §3 PlanProposal machine (PLAN-01..07 and the §3.4 rows). */
@@ -1392,6 +1745,18 @@ export function transitionPlanProposal(
       return onProposalStale(state, ctx);
     case 'proposal_rejected':
       return onProposalRejected(state);
+    // S5-PLAN-05: a read-only member. The transition returns the stored record
+    // unchanged with no effects; the closed/goal_cancelled verdict is derived
+    // separately by `derivePlanProposalReadVerdict`.
+    case 'proposal_read':
+      return onProposalRead(state);
+    // Slice 5 §3.1 request-candidate rows S5-PLAN-02..04.
+    case 'proposal_replaced':
+      return onProposalReplaced(state, event, ctx);
+    case 'proposal_adopted':
+      return onProposalAdopted(state, event, ctx);
+    case 'proposal_abandoned':
+      return onProposalAbandoned(state, event, ctx);
     default:
       return unreachable(event, 'plan proposal event');
   }

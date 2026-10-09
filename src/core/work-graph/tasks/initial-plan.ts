@@ -12,15 +12,8 @@
  * acceptance or Role binding, and it never turns an omitted optional field into
  * a required one.
  */
-import type { PreparedQueryManifestV1 } from '../../../contracts/core/prepared-execution.js';
 import type { CoreRejection } from '../../../contracts/core/results.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
-import type {
-  QueryJobAnswerRef,
-  QueryJobAnswerV1,
-  QueryJobSnapshot,
-  QueryRunSnapshot,
-} from '../../../contracts/query-job.js';
 import type { PlanRevisionDraft } from '../../../contracts/plan.js';
 import type {
   InitialPlanAssignment,
@@ -29,18 +22,13 @@ import type {
 } from '../../../contracts/initial-planning.js';
 
 /**
- * The exact formal facts the normalization may consume. Every field is read from
- * the persisted Query/Plan owners; the Plan service never re-scans the Kernel
- * history or opens the Kernel store to prove the answer again.
+ * The exact formal facts the normalization may consume. The type is declared in
+ * `contracts/query-job.ts` (pure data) so the WorkGraph `model` layer can name
+ * the read seam without importing `tasks/`; this module re-exports it for the
+ * existing importers.
  */
-export type InitialPlanAnswerFacts = {
-  answer: QueryJobAnswerV1;
-  answerRef: QueryJobAnswerRef;
-  job: QueryJobSnapshot;
-  run: QueryRunSnapshot;
-  manifest: PreparedQueryManifestV1;
-  answerText: string;
-};
+import type { InitialPlanAnswerFacts } from '../../../contracts/query-job.js';
+export type { InitialPlanAnswerFacts } from '../../../contracts/query-job.js';
 
 /** The unique normalization value: a real plan draft/origin, or the answer's
  * explicit questions. It is not a proposal, a decision record or a Plan. */

@@ -12,7 +12,8 @@
  * This file performs no I/O: it only checks pure encoding, identity, version and
  * plan structure, and it computes no digest and starts no transaction.
  */
-import type { ActorRef } from '../../../contracts/command-event.js';
+import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js';
+import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { SessionRef } from '../../../contracts/core/identity.js';
 import type { RoleBindingRefV1, RunRef } from '../../../contracts/dispatch.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
@@ -22,12 +23,18 @@ import type {
   CompletionPolicyRevisionRef,
 } from '../../../contracts/governance.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
+import { seqOfCommitCursor } from '../../../contracts/ledger.js';
+import type { QueryJobRef } from '../../../contracts/query-job.js';
 import type {
   PlanRevisionAcceptedEvent,
   PlanRevisionRef,
   PlanRevisionSnapshot,
 } from '../../../contracts/plan.js';
 import { isArtifactRef } from '../../record-store/body-codec.js';
+import { aggregateRefProblem } from './decision-record-codecs.js';
+import {
+  noticeOriginFieldsProblem, NOTICE_ORIGIN_COMMIT_CURSOR_FIELDS, type NoticeOriginWireV1,
+} from './rework-codecs.js';
 import type { RecordLookupIndex } from '../../record-store/lookup-ports.js';
 import type {
   DecodeResult,
@@ -49,6 +56,8 @@ export const PLAN_PROPOSAL_RECORDED_SCHEMA_VERSION = 2;
 export const PLAN_REVISION_ACCEPTED_EVENT = 'PlanRevisionAccepted';
 export const PLAN_REVISION_ACCEPTED_SCHEMA_VERSION = 1;
 export const PLAN_PROPOSAL_LOOKUP_INDEX = 'plan-proposal-by-goal';
+/** Slice 5 §2.5 request-candidate index: one PlanProposal head per Goal+first QueryJob. */
+export const S5_PLAN_PROPOSAL_BY_REQUEST = 's5-plan-proposal-by-goal-request';
 
 /** The event that records one candidate/status transition of a proposal. */
 export type PlanProposalRecordedEvent = {
@@ -126,6 +135,30 @@ export function planRevisionRefKey(ref: PlanRevisionRef): string {
   return canonicalJson(ref as unknown as JsonValue);
 }
 
+export type { NoticeOriginWireV1 } from './rework-codecs.js';
+
+/**
+ * Slice 5 §2.4/T-R2-2 closed-request order. A proposal chain's position is its
+ * first candidate's creation commit (`since`); a chain with no `since` sorts
+ * before every chain with one, and equal (or both absent) origins fall back to
+ * the canonical refKey. Both the queue history and the direct read use exactly
+ * this comparison; position is never inferred from `notAdopted.at` or refKey
+ * order alone.
+ */
+export function compareProposalChainPositions(
+  left: { refKey: string; since: CommitCursor | null },
+  right: { refKey: string; since: CommitCursor | null },
+): number {
+  if (left.since === null && right.since !== null) return -1;
+  if (left.since !== null && right.since === null) return 1;
+  if (left.since !== null && right.since !== null) {
+    const leftSeq = seqOfCommitCursor(left.since);
+    const rightSeq = seqOfCommitCursor(right.since);
+    if (leftSeq !== rightSeq) return leftSeq < rightSeq ? -1 : 1;
+  }
+  return left.refKey < right.refKey ? -1 : left.refKey > right.refKey ? 1 : 0;
+}
+
 function planProposalRefFromValue(value: unknown): PlanProposalRef | null {
   if (!isRecord(value)) return null;
   if (value['aggregateType'] !== 'PlanProposal') return null;
@@ -150,6 +183,34 @@ function goalRefFromValue(value: unknown, projectId: string): GoalRef | null {
   if (!isNonEmptyString(value['projectId']) || value['projectId'] !== projectId) return null;
   if (!isNonEmptyString(value['goalId'])) return null;
   return { aggregateType: 'Goal', projectId: value['projectId'], goalId: value['goalId'] };
+}
+
+/** Slice 5 `QueryJobRef`: the first user request this candidate belongs to. */
+function queryJobRefFromValue(value: unknown, projectId: string, workspaceId: string): QueryJobRef | null {
+  if (!isRecord(value)) return null;
+  if (value['aggregateType'] !== 'QueryJob') return null;
+  if (!isNonEmptyString(value['projectId']) || value['projectId'] !== projectId) return null;
+  if (!isNonEmptyString(value['workspaceId']) || value['workspaceId'] !== workspaceId) return null;
+  if (!isNonEmptyString(value['queryJobId'])) return null;
+  return {
+    aggregateType: 'QueryJob',
+    projectId: value['projectId'],
+    workspaceId: value['workspaceId'],
+    queryJobId: value['queryJobId'],
+  };
+}
+
+function sessionMessageRefFromValue(value: unknown): SessionMessageRef | null {
+  if (!isRecord(value)) return null;
+  if (value['aggregateType'] !== 'SessionMessage') return null;
+  if (!isNonEmptyString(value['projectId']) || !isNonEmptyString(value['workspaceId'])
+    || !isNonEmptyString(value['messageId'])) return null;
+  return {
+    aggregateType: 'SessionMessage',
+    projectId: value['projectId'],
+    workspaceId: value['workspaceId'],
+    messageId: value['messageId'],
+  };
 }
 
 function completionPolicyRefFromValue(value: unknown, projectId: string): CompletionPolicyRevisionRef | null {
@@ -599,6 +660,111 @@ function structuralPlanIssues(value: unknown, requireGoalId: boolean): string[] 
 // Record validators / decoders
 // --------------------------------------------------------------------------
 
+const NOT_ADOPTION_REASONS: readonly string[] = ['replaced', 'not_selected', 'abandoned'];
+
+/**
+ * Slice 5 §2.4 `notAdopted`: the exact, saved non-adoption fact. Its shape is
+ * pure data; whether the proposal may be abandoned is a service rule.
+ */
+function notAdoptedIssues(value: unknown, projectId: string, workspaceId: string): string[] {
+  if (!isRecord(value)) return ['candidate_v2.notAdopted must be an object'];
+  const issues: string[] = [];
+  if (!NOT_ADOPTION_REASONS.includes(value['reason'] as string)) {
+    issues.push('candidate_v2.notAdopted.reason must be replaced|not_selected|abandoned');
+  }
+  if (actorFromValue(value['requestedBy']) === null) {
+    issues.push('candidate_v2.notAdopted.requestedBy must be an ActorRef');
+  }
+  if (!isNonEmptyString(value['at'])) issues.push('candidate_v2.notAdopted.at must be a non-empty string');
+  const replacedBy = value['replacedBy'];
+  if (replacedBy !== null) {
+    const ref = planProposalRefFromValue(replacedBy);
+    if (ref === null || ref.projectId !== projectId || ref.workspaceId !== workspaceId) {
+      issues.push('candidate_v2.notAdopted.replacedBy must be null or a PlanProposal ref in this project/workspace');
+    }
+  }
+  return issues;
+}
+
+/**
+ * Pure `VersionPin` shape check (a complete aggregate-specific ref plus a
+ * positive revision). `allowAbsence` relaxes the revision to the §2.1 pin-0
+ * form, which the Store translates to `expectedRevision: null` (a confirmed
+ * absence); it is used only for a change proof's `changes[].before`. The
+ * complete-ref check is the shared `aggregateRefProblem`.
+ */
+function versionPinIssues(value: unknown, label: string, allowAbsence = false): string[] {
+  if (!isRecord(value)) return [`${label} must be a VersionPin`];
+  const refProblem = aggregateRefProblem(value['ref']);
+  if (refProblem !== null) return [`${label}.ref: ${refProblem}`];
+  if (allowAbsence ? !isSafeRevision(value['revision']) : !isPositiveRevision(value['revision'])) {
+    return [`${label}.revision must be ${allowAbsence ? 'a non-negative' : 'a positive'} integer`];
+  }
+  return [];
+}
+
+function versionPinArrayIssues(value: unknown, label: string): string[] {
+  if (!Array.isArray(value)) return [`${label} must be an array`];
+  const issues: string[] = [];
+  (value as unknown[]).forEach((pin, index) => issues.push(...versionPinIssues(pin, `${label}[${index}]`)));
+  return issues;
+}
+
+function goalControlRebaseIssues(value: unknown, label: string): string[] {
+  if (!isRecord(value) || !['captured', 'actualBefore', 'basis'].every((key) => key in value)) {
+    return [`${label} must be a GoalControlRebaseV1`];
+  }
+  const issues: string[] = [];
+  issues.push(...versionPinIssues(value['captured'], `${label}.captured`));
+  issues.push(...versionPinIssues(value['actualBefore'], `${label}.actualBefore`));
+  if (!isRecord(value['basis'])) issues.push(`${label}.basis must be a GoalDecisionBasisV1`);
+  return issues;
+}
+
+/**
+ * Slice 5 §2.8 `DecisionChangeProofV1` shape check. `PlanRevisionAccepted` may
+ * carry it as `payload.decisionApplication`; the old event without the field
+ * stays readable, so this is only invoked for a present value.
+ */
+function decisionChangeProofIssues(value: unknown, label: string): string[] {
+  if (!isRecord(value)) return [`${label} must be a DecisionChangeProofV1`];
+  const issues: string[] = [];
+  if (sessionMessageRefFromValue(value['acknowledgementRef']) === null) {
+    issues.push(`${label}.acknowledgementRef must be a complete SessionMessageRef`);
+  }
+  issues.push(...versionPinArrayIssues(value['capturedPins'], `${label}.capturedPins`));
+  const changes = value['changes'];
+  if (!Array.isArray(changes)) {
+    issues.push(`${label}.changes must be an array`);
+  } else {
+    changes.forEach((change, index) => {
+      if (!isRecord(change)) {
+        issues.push(`${label}.changes[${index}] must be an object`);
+        return;
+      }
+      // §2.1: a `before` of revision 0 is the named absence pin (∅); the `after`
+      // side and every other proof pin still require a positive revision.
+      issues.push(...versionPinIssues(change['before'], `${label}.changes[${index}].before`, true));
+      issues.push(...versionPinIssues(change['after'], `${label}.changes[${index}].after`));
+    });
+  }
+  const rebases = value['basisRebases'];
+  if (!Array.isArray(rebases)) issues.push(`${label}.basisRebases must be an array`);
+  else rebases.forEach((rebase, index) => issues.push(...goalControlRebaseIssues(rebase, `${label}.basisRebases[${index}]`)));
+  return issues;
+}
+
+/**
+ * The default-applying read of the request slot (spec §2.2/§2.4): a missing
+ * `requestRef` reads as the explicit null "independent candidate". Behaviour is
+ * owned by the tasks-side proposePlan service; part 1 fixes the signature.
+ */
+export function candidateRequestRef(proposal: PlanProposal): QueryJobRef | null {
+  // Only a v2 candidate can belong to a request; a legacy v1 candidate and an
+  // absent raw field both read as the explicit null "independent candidate".
+  return proposal.kind === 'candidate_v2' ? proposal.requestRef ?? null : null;
+}
+
 function proposalValueIssues(value: unknown, expectedRef: PlanProposalRef | null): string[] {
   if (!isRecord(value)) return ['PlanProposal must be an object'];
   const ref = planProposalRefFromValue(value['ref']);
@@ -621,6 +787,17 @@ function proposalValueIssues(value: unknown, expectedRef: PlanProposalRef | null
     if (basedOn !== null && planRevisionRefFromValue(basedOn, ref.projectId) === null) {
       issues.push('candidate_v2.basedOn must be null or a PlanRevisionRef in this project');
     }
+    // Slice 5 §2.4 request-candidate extension. Absent means an independent
+    // candidate (never a Null candidate grouped into a request); present must be
+    // a complete QueryJobRef of this project/workspace.
+    const requestRef = value['requestRef'];
+    if (requestRef !== undefined && requestRef !== null
+      && queryJobRefFromValue(requestRef, ref.projectId, ref.workspaceId) === null) {
+      issues.push('candidate_v2.requestRef must be null or a QueryJobRef in this project/workspace');
+    }
+    if (value['notAdopted'] !== undefined) {
+      issues.push(...notAdoptedIssues(value['notAdopted'], ref.projectId, ref.workspaceId));
+    }
     issues.push(...structuralPlanIssues(value['draft'], true));
     const reason = value['reason'];
     if (!isRecord(reason) || !isNonEmptyString(reason['text']) || !Array.isArray(reason['sources'])) {
@@ -642,8 +819,8 @@ function proposalValueIssues(value: unknown, expectedRef: PlanProposalRef | null
       }
     }
     const status = value['status'];
-    if (status !== 'candidate' && status !== 'accepted' && status !== 'rejected') {
-      issues.push('candidate_v2.status must be candidate|accepted|rejected');
+    if (status !== 'candidate' && status !== 'accepted' && status !== 'rejected' && status !== 'not_adopted') {
+      issues.push('candidate_v2.status must be candidate|accepted|rejected|not_adopted');
     }
     issues.push(...planValidationErrorArrayIssues(value['issues']));
     return issues;
@@ -671,6 +848,11 @@ function validatePlanProposalRecord(record: EncodedRecord): DecodeResult<Encoded
   }
   const parsed = parseJsonObject(record.json, 'PlanProposal');
   if (typeof parsed === 'string') return invalid(parsed);
+  // Slice 5 §2.5/T-R2-2: the wire-only creation origin lives beside the body;
+  // the placeholder `null` is bound by the Store before this validator runs on
+  // a bound record (see the record schema's `commitCursorFields`).
+  const originProblem = noticeOriginFieldsProblem(parsed, 'PlanProposal');
+  if (originProblem !== null) return invalid(`PlanProposal origin is invalid: ${originProblem}`);
   const ref = planProposalRefFromValue(parsed['ref']);
   if (ref === null) return invalid('PlanProposal has no valid full ref');
   if (canonicalJson(parsed['ref'] as JsonValue) !== record.refKey) {
@@ -816,6 +998,16 @@ function validatePlanRevisionAcceptedEvent(event: EncodedDomainEvent): DecodeRes
       }
     }
     issues.push(...planRevisionSnapshotIssues(snapshot));
+    // Slice 5 §2.8: the optional acknowledgement and the exact change proof a
+    // recorded decision application carries. Absent on every old event.
+    if (payload['acknowledgementRef'] !== undefined) {
+      if (sessionMessageRefFromValue(payload['acknowledgementRef']) === null) {
+        issues.push('PlanRevisionAccepted payload.acknowledgementRef must be a complete SessionMessageRef');
+      }
+    }
+    if (payload['decisionApplication'] !== undefined) {
+      issues.push(...decisionChangeProofIssues(payload['decisionApplication'], 'PlanRevisionAccepted payload.decisionApplication'));
+    }
   }
   if (issues.length > 0) return invalid(`PlanRevisionAccepted is invalid: ${issues.join('; ')}`);
   return { status: 'decoded', value: copyEvent(event) };
@@ -827,7 +1019,12 @@ export function decodePlanProposalRecord(record: EncodedRecord): DecodeResult<Pl
   if (checked.status !== 'decoded') return checked;
   const parsed = JSON.parse(record.json) as UnknownRecord;
   if (parsed['kind'] === 'candidate_v2') {
-    return { status: 'decoded', value: parsed as unknown as PlanProposal };
+    // Slice 5 §2.5: the wire-only creation origin (`since`) is NOT part of the
+    // public DTO; `decodePlanProposalOrigin` reads it separately.
+    const wire = { ...parsed };
+    delete wire['since'];
+    delete wire['noticeAutomationCap'];
+    return { status: 'decoded', value: wire as unknown as PlanProposal };
   }
   const legacy = parsed as unknown as PlanProposalSnapshot;
   return {
@@ -845,6 +1042,27 @@ export function decodePlanProposalRecord(record: EncodedRecord): DecodeResult<Pl
       issues: [],
     },
   };
+}
+
+/**
+ * Slice 5 §2.5/T-R2-2: the wire-only creation origin of a stored PlanProposal,
+ * read beside `decodePlanProposalRecord` and never merged into its public DTO.
+ * A record without `since` reads as `{}` (the legacy position); a persisted
+ * `null` is the PreparedCommit placeholder and reads as unavailable.
+ */
+export function decodePlanProposalOrigin(record: EncodedRecord): DecodeResult<NoticeOriginWireV1> {
+  const parsed = parseJsonObject(record.json, 'PlanProposal origin');
+  if (typeof parsed === 'string') return invalid(parsed);
+  const problem = noticeOriginFieldsProblem(parsed, 'PlanProposal origin');
+  if (problem !== null) return invalid(problem);
+  if (parsed['since'] === null) {
+    return invalid('a persisted PlanProposal origin since must be a commit cursor');
+  }
+  const origin: NoticeOriginWireV1 = {};
+  if (parsed['since'] !== undefined) {
+    origin.since = parsed['since'] as NonNullable<NoticeOriginWireV1['since']>;
+  }
+  return { status: 'decoded', value: origin };
 }
 
 export function decodePlanRevisionSnapshot(record: EncodedRecord): DecodeResult<PlanRevisionSnapshot> {
@@ -869,9 +1087,19 @@ export function decodePlanRevisionAcceptedEvent(event: EncodedDomainEvent): Deco
 // Encoders
 // --------------------------------------------------------------------------
 
-export function encodePlanProposal(proposal: PlanProposal): EncodedRecord {
-  return { refKey: planProposalRefKey(proposal.ref), schemaId: PLAN_PROPOSAL_SCHEMA_ID,
+/**
+ * Encodes one `PlanProposal`. An optional `origin` writes the wire-only notice
+ * origin beside the public DTO (SPEC §2.5): the creating commit passes
+ * `{ since: null }` for the Store cursor binding, and every later update passes
+ * the preserved origin; the public DTO itself is never extended.
+ */
+export function encodePlanProposal(proposal: PlanProposal, origin?: NoticeOriginWireV1): EncodedRecord {
+  const record: EncodedRecord = { refKey: planProposalRefKey(proposal.ref), schemaId: PLAN_PROPOSAL_SCHEMA_ID,
     revision: proposal.revision, json: JSON.stringify(proposal) };
+  if (origin === undefined || origin.since === undefined) return record;
+  const wire = JSON.parse(record.json) as UnknownRecord;
+  wire['since'] = origin.since;
+  return { ...record, json: JSON.stringify(wire) };
 }
 
 export function encodePlanRevisionSnapshot(snapshot: PlanRevisionSnapshot): EncodedRecord {
@@ -896,6 +1124,9 @@ export function encodePlanRevisionAcceptedEvent(event: PlanRevisionAcceptedEvent
 const PLAN_PROPOSAL_RECORD_SCHEMA: EncodedRecordSchema = {
   schemaId: PLAN_PROPOSAL_SCHEMA_ID,
   aggregateType: 'PlanProposal',
+  // Slice 5 §2.5/T-R2-2: a new candidate binds its creation commit cursor to
+  // the wire-only `since`; later updates copy it and never rebind.
+  commitCursorFields: NOTICE_ORIGIN_COMMIT_CURSOR_FIELDS,
   validate: validatePlanProposalRecord,
 };
 
@@ -913,6 +1144,13 @@ const PLAN_PROPOSAL_GOAL_LOOKUP: RecordLookupIndex = {
   paths: ['goalRef.projectId', 'goalRef.goalId'],
 };
 
+/** Slice 5 §2.5 request-head lookup; a missing `requestRef` is stored as null. */
+const PLAN_PROPOSAL_REQUEST_LOOKUP: RecordLookupIndex = {
+  name: S5_PLAN_PROPOSAL_BY_REQUEST,
+  aggregateType: 'PlanProposal',
+  paths: ['ref.projectId', 'ref.workspaceId', 'goalRef.goalId', 'requestRef.queryJobId'],
+};
+
 export const PLAN_RECORD_SCHEMAS: {
   records: readonly EncodedRecordSchema[];
   events: readonly EncodedEventSchema[];
@@ -925,5 +1163,5 @@ export const PLAN_RECORD_SCHEMAS: {
     { eventType: PLAN_REVISION_ACCEPTED_EVENT, schemaVersion: PLAN_REVISION_ACCEPTED_SCHEMA_VERSION,
       validate: validatePlanRevisionAcceptedEvent },
   ],
-  lookups: [PLAN_PROPOSAL_GOAL_LOOKUP],
+  lookups: [PLAN_PROPOSAL_GOAL_LOOKUP, PLAN_PROPOSAL_REQUEST_LOOKUP],
 };

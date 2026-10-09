@@ -1,6 +1,6 @@
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import * as kernel from '../../vendor/coding-agent/dist/public-api.js';
 import { createInMemoryRecordBackend } from '../core/record-store/in-memory-record-store.js';
 import { createSqliteRecordBackend } from '../core/record-store/sqlite-record-store.js';
@@ -17,7 +17,28 @@ import { createWorkspaceTools, DEFAULT_WORKSPACE_LIMITS } from '../core/workspac
 import { createAgentRuntime } from '../core/agent-runtime/runtime.js';
 import { createExecutionEntryService } from '../core/work-graph/tasks/execution-entry-service.js';
 import { createModelCallService } from '../core/work-graph/tasks/model-call-service.js';
-import { createSessionMailbox } from '../core/work-graph/communication/mailbox-service.js';
+import { createSessionMailbox, createMessageWriteOwner } from '../core/work-graph/communication/mailbox-service.js';
+import { createDecisionMessageService } from '../core/work-graph/communication/decision-service.js';
+import { createDecisionSourceFacts } from '../core/work-graph/communication/decision-source-facts.js';
+import { createGoalSettingsService } from '../core/work-graph/tasks/goal-settings-service.js';
+import { decisionActionPolicy } from '../core/work-graph/state/decision-policy.js';
+import { readGoalSettings as readEffectiveGoalSettings } from '../core/work-graph/persistence/record-codecs.js';
+import { createExecutedFilesStub } from '../core/work-graph/tasks/executed-files-stub.js';
+import { createGoalDecisionCauseReader } from '../core/work-graph/tasks/goal-decision-reader.js';
+import { createPlanningQuestionReader } from '../core/work-graph/tasks/planning-question-reader.js';
+import { createDecisionSettingsService } from '../core/work-graph/configuration/decision-settings-service.js';
+import { createMessageDutiesFactsAdapter, type MessageDutiesMappingPort } from '../core/work-graph/configuration/message-duties-adapter.js';
+import {
+  createDecisionReadModel, createGoalCauseCardSource, createPlanningQuestionCardSource,
+} from '../core/work-graph/views/decision-read-model.js';
+import { createGoalConflictAssembler } from '../core/work-graph/views/goal-conflicts.js';
+import { createAutomaticReworkNoticeSource } from '../core/work-graph/views/automatic-rework-notices.js';
+import { createNoticePositionComparator } from '../core/work-graph/views/notice-position.js';
+import { createNoticeDisplayToken } from '../core/work-graph/views/notice-display-token.js';
+import type {
+  DecisionMessagePort, DecisionReadPort, GoalSettingsPort,
+  RequestCandidatePort, WorkspaceDecisionSettingsPort,
+} from '../core/work-graph/model/decision-contracts.js';
 import type { SessionMailboxPort } from '../core/work-graph/model/communication-contracts.js';
 import { SESSION_MESSAGE_RECORD_SCHEMAS } from '../core/work-graph/sessions/message-record-codecs.js';
 import { createSourceAuthorityReader } from '../core/work-graph/source-authority-reader.js';
@@ -29,6 +50,7 @@ import type {
 } from '../business/workflow/ports.js';
 
 import { createEvidenceService } from '../core/work-graph/evidence/evidence-service.js';
+import type { AutomaticReverifyPolicyV1 } from '../core/work-graph/evidence/evidence-service.js';
 import { EVIDENCE_RECORD_SCHEMAS } from '../core/work-graph/persistence/evidence-record-codecs.js';
 import type { EvidencePort } from '../core/work-graph/model/evidence-contracts.js';
 import { VerificationWorkspaceReader } from '../core/workspace/verification-workspace-reader.js';
@@ -52,8 +74,10 @@ import { createTaskRequeueService } from '../core/work-graph/tasks/requeue-servi
 import { TASK_CLAIM_RECORD_SCHEMAS } from '../core/work-graph/tasks/claim-record-codecs.js';
 import type { TaskClaimPort } from '../core/work-graph/model/claim-contracts.js';
 import type { RoleConfigurationPort } from '../core/work-graph/model/configuration-contracts.js';
-import { createPlanService } from '../core/work-graph/tasks/plan-service.js';
+import { createPlanService, createRequestCandidateService } from '../core/work-graph/tasks/plan-service.js';
+import type { PlanServiceDependencies } from '../core/work-graph/tasks/plan-service.js';
 import { PLAN_RECORD_SCHEMAS } from '../core/work-graph/persistence/plan-record-codecs.js';
+import { DECISION_RECORD_SCHEMAS } from '../core/work-graph/persistence/decision-record-codecs.js';
 import { PLAN_STATE_RECORD_SCHEMAS, PLAN_GOVERNANCE_RECORD_SCHEMAS, createSessionResponsibilityBasisReader } from '../core/work-graph/tasks/plan-readers.js';
 import { createSessionDirectory } from '../core/work-graph/sessions/session-directory.js';
 import type { SessionDirectoryPort } from '../core/work-graph/model/session-contracts.js';
@@ -71,6 +95,8 @@ import { SLICE1_LOOKUP_INDEXES } from '../core/work-graph/model/session-facts-co
 import { createKernelStoreRegistry } from '../core/agent-runtime/kernel-store-locator.js';
 import { createSessionHistoryCursorOwner, createSessionOperations } from '../core/agent-runtime/session-operations.js';
 import type { CoreCallContext } from '../contracts/core/call-context.js';
+import type { CommitCursor } from '../contracts/command-event.js';
+import type { DecisionApplicationReceiptV1 } from '../contracts/core/session-message.js';
 import type { SessionRef } from '../contracts/core/identity.js';
 import type { CoreRejection, ReadResult } from '../contracts/core/results.js';
 import type { VersionPin } from '../contracts/core/identity.js';
@@ -171,6 +197,20 @@ export type TargetPlatformOptions = {
    * model input or a stored Session field.
    */
   sessionDutyResolver?: SessionDutyResolver;
+  /**
+   * Slice 5 §3.2/§2.6: the exact configured operator of this Host. It is the
+   * Host's real start actor (a human or system actor, never a platform
+   * automation actor), injected here and never taken from HTTP JSON. Without it
+   * the new user write entries answer `unsupported`.
+   */
+  operatorActor?: { kind: 'human' | 'system'; id: string };
+  /**
+   * Slice 5 §2.6: the transitional exact Role binding → duties map the message
+   * owner reads. An unmapped new user send is `unsupported` (this slice does not
+   * guess duties from a template name, Skill text or model JSON); slice 3
+   * replaces the seam. Absent maps nothing.
+   */
+  messageDutiesMapping?: MessageDutiesMappingPort;
 };
 
 /** The composition-owned service identity. It is used only to execute trusted
@@ -416,7 +456,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       ...SESSION_MESSAGE_RECORD_SCHEMAS.records, ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.records,
       ...CONTROL_RECORD_SCHEMAS.records, ...EVIDENCE_RECORD_SCHEMAS.records, ...QUERY_JOB_RECORD_SCHEMAS.records,
       ...SESSION_ANOMALY_RECORD_SCHEMAS.records,
-      ...COMPLETION_RECORD_SCHEMAS.records],
+      ...COMPLETION_RECORD_SCHEMAS.records, ...DECISION_RECORD_SCHEMAS.records],
     events: [...materialsSchema.events, ...PLAN_RECORD_SCHEMAS.events, ...PLAN_STATE_RECORD_SCHEMAS.events,
       ...PLAN_GOVERNANCE_RECORD_SCHEMAS.events, ...SESSION_RECORD_SCHEMAS.events, ...SESSION_LIFECYCLE_RECORD_SCHEMAS.events,
       ...ROLE_RECORD_SCHEMAS.events, ...OBSERVED_ARCHITECTURE_RECORD_SCHEMAS.events, ...ARCHITECTURE_CATALOG_SCHEMAS.events,
@@ -425,7 +465,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       ...SESSION_MESSAGE_RECORD_SCHEMAS.events,
       ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.events, ...CONTROL_RECORD_SCHEMAS.events, ...EVIDENCE_RECORD_SCHEMAS.events, ...QUERY_JOB_RECORD_SCHEMAS.events,
       ...SESSION_ANOMALY_RECORD_SCHEMAS.events,
-      ...COMPLETION_RECORD_SCHEMAS.events],
+      ...COMPLETION_RECORD_SCHEMAS.events, ...DECISION_RECORD_SCHEMAS.events],
     lookups: [...materialsSchema.lookups ?? [], ...PLAN_RECORD_SCHEMAS.lookups ?? [], ...PLAN_STATE_RECORD_SCHEMAS.lookups ?? [],
       ...PLAN_GOVERNANCE_RECORD_SCHEMAS.lookups ?? [], ...SESSION_RECORD_SCHEMAS.lookups ?? [],
       ...SESSION_LIFECYCLE_RECORD_SCHEMAS.lookups ?? [], ...ROLE_RECORD_SCHEMAS.lookups ?? [],
@@ -434,7 +474,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       ...MODEL_REQUEST_RECORD_SCHEMAS.lookups ?? [], ...SESSION_MESSAGE_RECORD_SCHEMAS.lookups ?? [],
       ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.lookups ?? [], ...CONTROL_RECORD_SCHEMAS.lookups ?? [], ...EVIDENCE_RECORD_SCHEMAS.lookups ?? [], ...QUERY_JOB_RECORD_SCHEMAS.lookups ?? [],
       ...SESSION_ANOMALY_RECORD_SCHEMAS.lookups ?? [],
-      ...COMPLETION_RECORD_SCHEMAS.lookups ?? []],
+      ...COMPLETION_RECORD_SCHEMAS.lookups ?? [], ...DECISION_RECORD_SCHEMAS.lookups ?? []],
   };
   // Slice 1 (spec §2.8): every one of the six new indexes must be part of the
   // real record-store schema set this Host opens. The declared
@@ -478,6 +518,21 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       now, limits: DEFAULT_WORKSPACE_LIMITS });
     const roleService = createRoleConfigurationService({ records: backend.records, now, eventId: randomUUID });
     const bootstrap = createProjectBootstrapServices({ records: backend.records, now, eventId: randomUUID });
+    // Slice 5 §3.2: the configured operator is the Host's real start actor. The
+    // production Host injects `operatorActor` from its trusted start snapshot,
+    // never from HTTP JSON or a model tool argument. The checks-executor
+    // fallback remains for independent compositions (the frozen scenario
+    // harness builds one with only `checks`, so removing it would make the
+    // frozen SC01/SC02 answer `unsupported`); see UNSPECIFIED.
+    const operatorActor = options.operatorActor ?? options.checks?.executor;
+    // Slice 5 §2.6: the transitional duties adapter reads the existing Role
+    // binding facts and applies the composition-injected exact mapping. An
+    // unmapped new user send is `unsupported`; no template-name guess exists.
+    const messageDutiesMapping: MessageDutiesMappingPort = options.messageDutiesMapping ?? {
+      dutiesForRoleSpecPin: () => null,
+      dutiesForLegacyTemplate: () => null,
+    };
+    const messageDuties = createMessageDutiesFactsAdapter({ roles: roleService, mapping: messageDutiesMapping });
     const authorizeConfiguration = options.runtime === undefined
       ? undefined : createAuthorizeConfiguration(options.runtime);
     // Slice 1 (spec §0.2 L1, §3.3): the ONE `SessionFactsPort` instance. It is
@@ -506,11 +561,15 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // calls use the raw service so an in-flight operation is never rejected by
     // the public tracked wrapper after close has already begun. It is built
     // BEFORE the Query jobs so a consultation submit can use its read-only
-    // message seam; no second mailbox/service instance exists.
-    const mailbox = createSessionMailbox({ records: backend.records, sessions: sessionDirectory,
+    // message seam; no second mailbox/service instance exists. The same
+    // dependency bag builds the slice-5 `MessageWriteOwnerPort` so the message
+    // body/persist helpers have exactly one owner.
+    const mailboxDependencies = { records: backend.records, sessions: sessionDirectory,
       executions: executionReader, roles: roleService, materials: rawMaterials,
-      systemActor: SYSTEM_ACTOR, now, newId: randomUUID,
-      ...(authorizeConfiguration === undefined ? {} : { runtimeAdmission: { bodies, authorizeConfiguration } }) });
+      systemActor: SYSTEM_ACTOR, now, newId: randomUUID, duties: messageDuties,
+      ...(authorizeConfiguration === undefined ? {} : { runtimeAdmission: { bodies, authorizeConfiguration } }) };
+    const mailbox = createSessionMailbox(mailboxDependencies);
+    const messageWrites = createMessageWriteOwner(mailboxDependencies);
     // R5b.2: the ONE internal Query writer shares this records/roles/bodies
     // instance. It is injected into the QueryJob claim/read adapter and the
     // Runtime thin path, never published as a public terminal port. Without a
@@ -549,13 +608,76 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
           && options.checks.workspace.projectId === scope.projectId
           && options.checks.workspace.workspaceId === scope.workspaceId
           ? options.checks : undefined);
-    const planService = createPlanService({ records: backend.records, materials: rawMaterials, now, eventId: randomUUID,
+    const planDependencies: PlanServiceDependencies = { records: backend.records, materials: rawMaterials, now, eventId: randomUUID,
       automationPolicy: currentAutomationPolicy, configurationFor: currentCheckConfiguration,
+      // Slice 5 §3.2: the SAME resolved operator the settings/message owners use,
+      // so plan adoption/abandon compare the exact configured Host actor.
+      ...(operatorActor === undefined ? {} : { operatorActor }),
       // R5b.4: the SAME raw body store already owned by the composition root.
       initialPlanning: { bodies },
       ...(authorizeConfiguration === undefined ? {} : {
         delegatedWrites: { reads: executionReader, roles: roleService, bodies, authorizeConfiguration },
-      }) });
+      }) };
+    const planService = createPlanService(planDependencies);
+    // Slice 5 §3.3: the request-candidate owner shares the SAME Plan dependency
+    // bag, so no second plan service/store is created.
+    const requestCandidates = createRequestCandidateService(planDependencies);
+    // Slice 5 §3.3/§4: the ONE settings/decision-message/read owner set. Each
+    // uses the SAME records/materials/mailbox instances as every other owner;
+    // the message body/persist facade is the mailbox's single write owner.
+    const decisionSources = createDecisionSourceFacts({ records: backend.records, plans: planService });
+    // §4.5: the formal identity/fingerprint of a settings commit are persisted
+    // verbatim in its event body, so the finite coordinator can hand the real
+    // `DecisionApplicationReceiptV1` to `recordDecisionApplication` from the
+    // commit cursor alone (no owner-private identity algorithm is duplicated).
+    const applicationReceipt = async (_ctx: CoreCallContext, cursor: CommitCursor):
+      Promise<DecisionApplicationReceiptV1 | null> => {
+      let located: Awaited<ReturnType<typeof backend.records.eventAt>>;
+      try { located = await backend.records.eventAt(cursor); } catch { return null; }
+      if (located.status !== 'ready') return null;
+      try {
+        const parsed = JSON.parse(located.value.event.json) as { identityKey?: unknown; fingerprint?: unknown };
+        if (typeof parsed.identityKey !== 'string' || parsed.identityKey.length === 0
+          || typeof parsed.fingerprint !== 'string' || parsed.fingerprint.length === 0) return null;
+        return { identityKey: parsed.identityKey, fingerprint: parsed.fingerprint, cursor };
+      } catch { return null; }
+    };
+    const rawGoalSettings = createGoalSettingsService({ records: backend.records, now, newId: randomUUID,
+      ...(operatorActor === undefined ? {} : { operatorActor }) });
+    const rawDecisionMessages: DecisionMessagePort = {
+      ...createDecisionMessageService({ records: backend.records, now, newId: randomUUID,
+        ...(operatorActor === undefined ? {} : { operatorActor }),
+        messages: mailbox, materials: rawMaterials, messageWrites, sources: decisionSources }),
+      sendUserMessage: mailbox.sendUserMessage.bind(mailbox),
+    };
+    // §2.8/§4.1: the single in-process display-token key and the one notice
+    // position comparator. The key is never persisted and never enters `state`.
+    const noticeDisplayKey = randomBytes(32);
+    const displayTokens = createNoticeDisplayToken(noticeDisplayKey);
+    const noticePositions = createNoticePositionComparator();
+    const rawWorkspaceDecisionSettings = createDecisionSettingsService({ records: backend.records, now, newId: randomUUID,
+      displayTokens, positions: noticePositions, ...(operatorActor === undefined ? {} : { operatorActor }) });
+    const goalExecutedFiles = createExecutedFilesStub();
+    const goalConflicts = createGoalConflictAssembler({ records: backend.records, catalog, executedFiles: goalExecutedFiles });
+    // §4.2: the card sources available in this slice. Both readers are built
+    // once from the SAME records/Plan-service dependency bag the Plan owner
+    // uses, and the two card-source adapters wrap them into the read model's
+    // `DecisionCardSourcePort` seam. The remaining card kinds have no adapter
+    // factory yet and are reported `not_available` by the read model; the
+    // automatic-rework projector is the one notice source built here.
+    const goalDecisionCauseReader = createGoalDecisionCauseReader({ records: backend.records, plans: planService });
+    const planningQuestionReader = createPlanningQuestionReader({ records: backend.records, plans: planService });
+    const goalCauseCards = createGoalCauseCardSource(goalDecisionCauseReader);
+    const planningQuestionCards = createPlanningQuestionCardSource(planningQuestionReader);
+    const automaticReworkNotices = createAutomaticReworkNoticeSource({ records: backend.records });
+    const rawDecisionReads = createDecisionReadModel({
+      records: backend.records,
+      cardSources: [goalCauseCards, planningQuestionCards],
+      noticeSources: [automaticReworkNotices],
+      conflicts: goalConflicts,
+      positions: noticePositions,
+      displayTokens,
+    });
     const claimService = createTaskClaimService({ records: backend.records, roles: roleService,
       bodies, now, newId: randomUUID });
     // The ONE verification workspace reader: the evidence owner captures rounds
@@ -567,6 +689,9 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     const requeueService = createTaskRequeueService({ records: backend.records, reads: executionReader,
       workspaceHost: options.workspace, source: verificationWorkspaceReader, materials: rawMaterials,
       messages: { readMessage: mailbox.readMessage.bind(mailbox) },
+      // Slice 5 §3.2/§4.4: the SAME Goal-settings owner the platform publishes,
+      // so an automatic requeue consults the current effective autonomy.
+      goalSettings: rawGoalSettings,
       ...(authorizeConfiguration === undefined ? {} : {
         delegatedWrites: { reads: executionReader, roles: roleService, bodies, authorizeConfiguration },
       }),
@@ -590,6 +715,15 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // policy as the requeue owner (VD-13 cap), a new input message through the
     // mailbox (ND-9), and admits an Agent through the same delegated-write
     // admission (no production Role grants `reverify_round` yet, GAP-46).
+    // Slice 5 §3.2/S5-AU-03: the SAME autonomy table the Workflow and requeue
+    // owner use, over the effective Goal settings (the record-codecs default
+    // reader the Goal-settings owner also applies), so an automatic reverify
+    // under `every_step` returns `needs_decision` and writes nothing.
+    const automaticReverifyPolicy: AutomaticReverifyPolicyV1 = ({ goal, actorClass, countedNext, cap }) => {
+      const verdict = decisionActionPolicy({ autonomy: readEffectiveGoalSettings(goal).autonomy,
+        action: 'auto_reverify', actorClass, countedNext, cap });
+      return verdict === 'needs_decision' ? 'needs_decision' : 'automatic_notice';
+    };
     const rawEvidence = createEvidenceService({
       records: backend.records, materials: rawMaterials, executions: executionReader,
       workspaceHost: options.workspace, source: verificationWorkspaceReader,
@@ -597,6 +731,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       configurationFor: currentCheckConfiguration,
       ...(hostInstance === undefined ? {} : { hostInstance }),
       automationPolicy: currentAutomationPolicy,
+      automaticReverifyPolicy,
       messages: { readMessage: mailbox.readMessage.bind(mailbox) },
       ...(authorizeConfiguration === undefined ? {} : {
         delegatedWrites: { reads: executionReader, roles: roleService, bodies, authorizeConfiguration },
@@ -681,6 +816,13 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       const dependencies: RuntimeExecutionDependencies = {
         claims: claimService, executions: executionReader, entry, historyWriter, modelRequests,
         roles: roleService, plans: planService, messages: mailbox, sessions: sessionDirectory,
+        // Slice 5 §4.6: the SAME user-decision owner the platform publishes, so
+        // the three user tools call the real owners and never fail closed.
+        decisionMessages: rawDecisionMessages,
+        // Slice 5 §4.5/T-R2-1: the SAME receipt reader the Workflow receives, so
+        // an acknowledged Agent plan adoption returns the formal receipt the
+        // Agent needs for `record_decision_application`.
+        applicationReceipt,
         materials: rawMaterials, bodies, activity: executionHistory, graphHistory, sessionOperations,
         // R4.3a: the SAME raw control service `platform.controls` wraps. The
         // Runtime gets the internal observation writer intersection while the
@@ -816,6 +958,32 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       respondMessage: (...args) => trackedCall(() => mailbox.respondMessage(...args), unavailable),
       // Slice 1 (spec §4.4): the read-only undelivered-reply source page.
       readUndeliveredReplies: (...args) => trackedCall(() => mailbox.readUndeliveredReplies!(...args), unavailable),
+    };
+    // Slice 5 §4.5 platform ports: the same trackedCall drain convention as every
+    // other owner, so an in-flight decision write is accounted for before close.
+    const goalSettings: GoalSettingsPort = {
+      readGoalSettings: (...args) => trackedCall(() => rawGoalSettings.readGoalSettings(...args), unavailable),
+      setGoalSettings: (...args) => trackedCall(() => rawGoalSettings.setGoalSettings(...args), unavailable),
+      reorderGoals: (...args) => trackedCall(() => rawGoalSettings.reorderGoals(...args), unavailable),
+      resolveGoalConflict: (...args) => trackedCall(() => rawGoalSettings.resolveGoalConflict(...args), unavailable),
+    };
+    const workspaceDecisionSettings: WorkspaceDecisionSettingsPort = {
+      markNoticesSeen: (...args) => trackedCall(() => rawWorkspaceDecisionSettings.markNoticesSeen(...args), unavailable),
+    };
+    const decisionMessages: DecisionMessagePort = {
+      sendUserMessage: (...args) => trackedCall(() => rawDecisionMessages.sendUserMessage(...args), unavailable),
+      answerDecision: (...args) => trackedCall(() => rawDecisionMessages.answerDecision(...args), unavailable),
+      readDecisionAnswer: (...args) => trackedCall(() => rawDecisionMessages.readDecisionAnswer(...args), unavailable),
+      recordDecisionApplication: (...args) => trackedCall(() => rawDecisionMessages.recordDecisionApplication(...args), unavailable),
+    };
+    const decisions: DecisionReadPort = {
+      queryDecisionQueue: (...args) => trackedCall(() => rawDecisionReads.queryDecisionQueue(...args), unavailable),
+      readDecisionCard: (...args) => trackedCall(() => rawDecisionReads.readDecisionCard(...args), unavailable),
+      queryGoalConflicts: (...args) => trackedCall(() => rawDecisionReads.queryGoalConflicts(...args), unavailable),
+    };
+    const requestCandidatePort: RequestCandidatePort = {
+      readRequestCandidate: (...args) => trackedCall(() => requestCandidates.readRequestCandidate(...args), unavailable),
+      abandonPlanProposal: (...args) => trackedCall(() => requestCandidates.abandonPlanProposal(...args), unavailable),
     };
     // The public control port is real even without a Runtime Host binding: the
     // raw service depends only on the store and exact Run reads. Both operations
@@ -1013,6 +1181,16 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         queries: queryJobs,
         projects: bootstrap.projects,
       },
+      // Slice 5 §3.3/§4.5: the SAME settings/message/read owners. They are
+      // optional on the Workflow port so an old composition still starts; this
+      // composition always supplies them.
+      goalSettings: rawGoalSettings,
+      decisionMessages: rawDecisionMessages,
+      decisionReads: rawDecisionReads,
+      decisionSources,
+      decisionDuties: messageDuties,
+      goalExecutedFiles,
+      applicationReceipt,
     };
     const rawWorkflow = createWorkflow(workflowDependencies);
     /**
@@ -1044,6 +1222,10 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         ?? await rawWorkflow.continueArchiveLine!(...args), unavailable),
       maintainSessions: (...args) => trackedCall(async () => archiveLeaseAdmission()
         ?? await rawWorkflow.maintainSessions!(...args), unavailable),
+      // Slice 5 §4.5: the finite decision coordinator and the read-only advance
+      // ordering safe point are drained like every other Workflow call.
+      resolveDecision: (...args) => trackedCall(() => rawWorkflow.resolveDecision(...args), unavailable),
+      orderGoalAdvances: (...args) => trackedCall(() => rawWorkflow.orderGoalAdvances(...args), unavailable),
     };
     // A.2 step 5.6 (§12.1): the start-up reconcile's internal seam. Only the Host
     // that holds the instance lease calls it, before any execution driver starts;
@@ -1194,6 +1376,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       // Slice 3: the same owner instances the Runtime received; the graph routes
       // read through `graphContext` and a caller could reuse `taskInputs`.
       graphContext, taskInputs,
+      // Slice 5 §4.5 platform ports consumed by the frozen route table.
+      goalSettings, workspaceDecisionSettings, decisionMessages, decisions, requestCandidates: requestCandidatePort,
       reconcile,
       /** RUN-22 (U): the operator's attestation through the Host entry; drained like every write. */
       resolveUnknownRun: (...args: Parameters<typeof resolveUnknownRun>) => trackedCall(() => resolveUnknownRun(...args), unavailable),
@@ -1262,7 +1446,10 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // not part of the enumerable public keys the frozen composition test checks.
     // Slice 3 (spec §4.6: create-platform adds `graphContext` and `taskInputs` as
     // internal owners) follows the same rule (integration fix).
-    for (const key of ['sessionFacts', 'responsibilities', 'sessionAnomalies', 'graphContext', 'taskInputs'] as const) {
+    // Slice 5 (rebase, lead): the five decision ports the route table reads are
+    // internal owners by the same rule; the frozen public key list stays exact.
+    for (const key of ['sessionFacts', 'responsibilities', 'sessionAnomalies', 'graphContext', 'taskInputs',
+      'goalSettings', 'workspaceDecisionSettings', 'decisionMessages', 'decisions', 'requestCandidates'] as const) {
       Object.defineProperty(platform, key, { enumerable: false });
     }
     return platform;

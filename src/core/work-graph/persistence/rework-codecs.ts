@@ -9,8 +9,9 @@
  * counts, key digests) are produced by the `state/` constructors and checked by
  * the invariant checks, never re-derived here. No I/O, no Store access.
  */
+import type { CommitCursor } from '../../../contracts/command-event.js';
 import { MAX_NEW_BASIS_INPUT_REFS } from '../../../contracts/no-progress.js';
-import { REWORK_FAILURE_CLASSES } from '../../../contracts/task-requeue.js';
+import { MAX_AUTO_REWORK_LIMIT, REWORK_FAILURE_CLASSES } from '../../../contracts/task-requeue.js';
 import { ROUND_CHECK_INCOMPLETE_CAUSES } from '../../../contracts/verification.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import { isArtifactRef } from '../../record-store/body-codec.js';
@@ -44,6 +45,45 @@ export function sameJson(left: unknown, right: unknown): boolean {
   } catch {
     return false;
   }
+}
+
+// --------------------------------------------------------------------------
+// Notice origin wire (spec §2.5)
+// --------------------------------------------------------------------------
+
+/**
+ * The wire-only notice origin carried at the TOP LEVEL of a notice record
+ * (`SessionMessage`, `TaskRequeue`, `VerificationRound`). It is deliberately
+ * NOT part of the old public domain DTO: `decodeNoticeOrigin` reads it, the old
+ * decoder returns the original DTO, and `commitCursorFields: ['since']` lets the
+ * Store bind the creating commit cursor to `since`. `noticeAutomationCap` is
+ * only set by the evidence owner on an automatic reverify notice.
+ */
+export type NoticeOriginWireV1 = {
+  since?: CommitCursor | null;
+  noticeAutomationCap?: number;
+};
+
+/** The only top-level fields the RecordStore may bind a commit cursor to. */
+export const NOTICE_ORIGIN_COMMIT_CURSOR_FIELDS: readonly ('since')[] = ['since'];
+
+const COMMIT_CURSOR_PATTERN = /^c\d{10}$/;
+
+/** Pure check of the optional origin fields; the old body keeps every other key. */
+export function noticeOriginFieldsProblem(value: UnknownRecord, label: string): Problem {
+  const since = value['since'];
+  // `null` is the PreparedCommit placeholder the Store fills with the commit
+  // cursor; the record shape check accepts it, and `decodeNoticeOrigin` maps a
+  // persisted null to unavailable (SPEC §2.5), never to a legacy position.
+  if (since !== undefined && since !== null
+    && !(typeof since === 'string' && COMMIT_CURSOR_PATTERN.test(since))) {
+    return `${label}.since must be a CommitCursor or null`;
+  }
+  const cap = value['noticeAutomationCap'];
+  if (cap !== undefined && (!isNonNegativeSafeInteger(cap) || cap > MAX_AUTO_REWORK_LIMIT)) {
+    return `${label}.noticeAutomationCap must be an integer between 0 and ${String(MAX_AUTO_REWORK_LIMIT)}`;
+  }
+  return null;
 }
 
 // --------------------------------------------------------------------------

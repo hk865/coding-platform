@@ -49,9 +49,17 @@ import type { ArtifactRef } from '../../../contracts/artifact.js';
 import type { ActorRef } from '../../../contracts/command-event.js';
 import type { SessionRef } from '../../../contracts/core/identity.js';
 import type { CoreError, CoreRejection } from '../../../contracts/core/results.js';
-import type { SessionMessageIntentV1, SessionMessageRef } from '../../../contracts/core/session-message.js';
+import type {
+  DecisionApplicationV1,
+  DecisionMessageMetadataV1,
+  MessageRecipient,
+  SessionMessageIntentV1,
+  SessionMessageRef,
+  UserMessageResponseV1,
+} from '../../../contracts/core/session-message.js';
 import type { ArchiveWaitChoiceV1 } from '../../../contracts/core/session-archive.js';
 import type { RoleBindingRefV1, RunRef, SourceRefV1 } from '../../../contracts/dispatch.js';
+import type { GoalRef } from '../../../contracts/ledger.js';
 import type { QueryJobAnswerRef, QueryRunRef } from '../../../contracts/query-job.js';
 import { accept, reject, unreachable, type Rejected, type Transition } from './transition.js';
 
@@ -110,19 +118,25 @@ export type MessageConsultationDerivation = {
   throughPosition: number | null;
 };
 
-/** `SessionMessage` (`communication-contracts.ts:95-145`). */
+/** `SessionMessage` (`communication-contracts.ts:96-152`). */
 export type SessionMessageRecord = {
   ref: SessionMessageRef;
   schemaVersion: 1;
   revision: number;
   sender: MessageHostSenderRecord | MessageWorkRunSenderRecord;
-  recipient: SessionRef;
+  recipient: MessageRecipient;
   bodyRef: ArtifactRef;
   sourceRef: SourceRefV1;
   createdAt: string;
   status: SessionMessageStatus;
   readAt: string | null;
-  response: MessageResponseRecord | null;
+  response: MessageResponseRecord | UserMessageResponseV1 | null;
+  /** Slice 5: the owning Goal; absent/null keeps the historical message shape. */
+  goalRef?: GoalRef | null;
+  /** Slice 5: decision metadata, only on a user decision request or synthetic answer. */
+  decision?: DecisionMessageMetadataV1;
+  /** Slice 5: the recorded application of the user's answer, when requirements demanded one. */
+  application?: DecisionApplicationV1 | null;
   replyMode?: 'wait';
   intent?: SessionMessageIntentV1;
   needsReply?: boolean;
@@ -178,7 +192,61 @@ export type MessageEvent =
   | { type: 'input_accepted'; part: 'message' | 'response'; inputId: string }
   | { type: 'consultation_derived' }
   | { type: 'task_claimed' }
-  | { type: 'archive_wait_disposed' };
+  | { type: 'archive_wait_disposed' }
+  // Slice 5 §3.1: the user-decision rows (S5-MSG-02/03/04; S5-MSG-05 is the
+  // same `decision_application_recorded` event when `requiresApplication=false`).
+  | { type: 'user_decision_answered' }
+  | { type: 'synthetic_decision_answered' }
+  | { type: 'decision_application_recorded' };
+
+/**
+ * S5-MSG-01 extension (`user_message_sent`) guard facts (spec §3.1 guard column).
+ * UNSPECIFIED-GUARDS: the lead freezes these field names at the part-1 review.
+ */
+export type MessageUserSendFacts = {
+  /** The named Goal is the real owning Goal of the recipient user workspace. */
+  goalScopeMatches: boolean;
+  /** S5-AU-04: the sender's trusted duties admit the requested user-message intent. */
+  dutiesAllowSend: boolean;
+  /** The `decision_request` object/option/annotation parameters are legal. */
+  decisionParamsValid: boolean;
+};
+
+/** S5-MSG-02/03/06 guard facts (spec §3.1 guard column). */
+export type MessageDecisionAnswerFacts = {
+  /** The caller is the composition's configured operator (never `actor.kind` alone). */
+  operatorMatches: boolean;
+  /** The caller's pin names the original message version read in this call. */
+  messagePinMatches: boolean;
+  /** The owning Goal is not `cancelled` (S5-MSG-06). */
+  goalNotCancelled: boolean;
+  /** A valid stored option id or the explicit `other` selection. */
+  selectionValid: boolean;
+  /** Every annotation key comes from the card's objects. */
+  annotationsFromObjects: boolean;
+  /** The canonical source facts/pins read in this call (S5-MSG-03). */
+  sourceFactsMatch: boolean;
+  /** The source is a formal reader result, not a UI-only self-report (S5-MSG-03). */
+  sourceNotUiOnly: boolean;
+  /** The single answer slot is still empty (S5-MSG-03). */
+  answerSlotEmpty: boolean;
+};
+
+/** S5-MSG-04/05 guard facts (spec §3.1 guard column). */
+export type MessageDecisionApplicationFacts = {
+  /** The formal receipt/event is readable and self-consistent. */
+  receiptReadable: boolean;
+  /** Every changed object's before pin equals the answer's captured source pin (or §2.8 rebase proof). */
+  changedBeforeMatchesReceipt: boolean;
+  /** The receipt's after versions match the formal versions. */
+  receiptAfterMatches: boolean;
+  /** This answer is associated with the acknowledgement the receipt names. */
+  answerAssociationExists: boolean;
+  /** The caller is the actual modifier or the configured operator. */
+  modifierOrOperator: boolean;
+  /** `requiresApplication`; when false the row is `invalid` (S5-MSG-05). */
+  requiresApplication: boolean;
+};
 
 /** §10.1. IO stays in the service; it fills in what it read and authorized. */
 export type MessageGuardContext = {
@@ -242,6 +310,12 @@ export type MessageGuardContext = {
     choice: ArchiveWaitChoiceV1; archiveSessionRef: SessionRef; archiveRequestId: string; now: string;
     requestMatches: boolean; waitMatches: boolean; targetEligible: boolean; responseAccepted: boolean;
   };
+  /** S5-MSG-01 extension only. */
+  userSend?: MessageUserSendFacts | null;
+  /** S5-MSG-02/03/06 only. */
+  decisionAnswer?: MessageDecisionAnswerFacts | null;
+  /** S5-MSG-04/05 only. */
+  decisionApplication?: MessageDecisionApplicationFacts | null;
 };
 
 /** MSG-06 consultation binding verdict, in today's check order. */
@@ -259,7 +333,10 @@ export type SessionMessageEventType =
   | 'SessionMessageResponded'
   | 'SessionMessageInputAccepted'
   | 'SessionMessageConsultationDerived'
-  | 'ArchiveWaitDisposed';
+  | 'ArchiveWaitDisposed'
+  // Slice 5 §3.1 rows S5-MSG-03/04 (spec §2.8 event bodies).
+  | 'SessionMessageDecisionAnswered'
+  | 'SessionMessageDecisionApplied';
 
 /**
  * Effects the owner service translates (§10.3 effects column):
@@ -451,6 +528,22 @@ function onMessageSent(state: MessageMachineState, ctx: MessageGuardContext): Me
       return reject('illegal', 'unsupported', 'the mailbox sender principal is not supported');
     default:
       return unreachable(ctx.principal, 'message principal');
+  }
+  // S5-MSG-01 / S5-AU-04: a user-recipient message carries its trusted facts.
+  // Sending does NOT consult the Goal start policy (the user message itself is
+  // never a work change); only the scope, the duties admission and the decision
+  // request parameters are checked.
+  if (ctx.userSend !== undefined && ctx.userSend !== null) {
+    const userSend = ctx.userSend;
+    const userSendProblem = first(
+      () => userSend.goalScopeMatches ? null
+        : reject('guard_failed', 'forbidden', 'the user message does not belong to its recipient workspace Goal'),
+      () => userSend.dutiesAllowSend ? null
+        : reject('guard_failed', 'forbidden', 'the sender trusted duties do not allow this user message'),
+      () => userSend.decisionParamsValid ? null
+        : reject('guard_failed', 'invalid', 'the decision request parameters are invalid'),
+    );
+    if (userSendProblem !== null) return userSendProblem;
   }
   // :1126-1134 — busy or archived recipients still receive durable mail. An
   // unresolved recipient is today's `mapReadResult` refusal of the Session read.
@@ -797,6 +890,136 @@ function onArchiveWaitDisposed(state: MessageMachineState, ctx: MessageGuardCont
   );
 }
 
+/**
+ * S5-MSG-02/06: an operator answers a user decision card. Answering changes the
+ * response slot only: no Plan, Task or Run effect (rule 3). A paused Goal may
+ * still answer (`goalNotCancelled` is not `active`); a cancelled Goal refuses
+ * `invalid` (S5-MSG-06).
+ */
+function onUserDecisionAnswered(state: MessageMachineState, ctx: MessageGuardContext): MessageTransition {
+  const facts = ctx.decisionAnswer;
+  if (facts === null || facts === undefined) {
+    return reject('illegal', 'invalid', 'user_decision_answered requires the decision answer facts');
+  }
+  const problem = first(
+    () => facts.operatorMatches ? null
+      : reject('guard_failed', 'forbidden', 'only the configured operator may answer a user decision card'),
+    () => messagePinProblem(ctx.pins),
+    () => facts.messagePinMatches ? null
+      : reject('stale', 'revision_conflict', 'the answer pin does not name the message version read in this call'),
+    () => facts.goalNotCancelled ? null : reject('illegal', 'invalid', 'goal_cancelled'),
+    () => facts.selectionValid ? null
+      : reject('guard_failed', 'invalid', 'the answer names neither a stored option nor the explicit other selection'),
+    () => facts.annotationsFromObjects ? null
+      : reject('guard_failed', 'invalid', 'an annotation names an object outside the card'),
+  );
+  if (problem !== null) return problem;
+  switch (state.status) {
+    case 'absent':
+      return absentMessage();
+    case 'pending':
+    case 'read':
+      // The ordinary answer writes the ORIGINAL response slot and appends
+      // `SessionMessageResponded`; the decision-answer event is only for the
+      // synthetic non-message card (S5-MSG-03).
+      return accept<MessageMachineState, MessageEffect>(respondedState(state), [
+        { kind: 'store_body', part: 'response', source: 'workspace' },
+        { kind: 'write_message', change: 'decision_answered' },
+        { kind: 'append_event', eventType: 'SessionMessageResponded' },
+        { kind: 'guard_message', expectedRevision: pinnedRevision(ctx) },
+      ]);
+    case 'responded':
+      return reject('illegal', 'invalid', 'the message already has a response');
+    default:
+      return unreachable(state, 'message state');
+  }
+}
+
+/**
+ * S5-MSG-03/06: the answer of a NON-message card creates the synthetic user
+ * message directly at `responded@1`. The `s5-decision-answer:` claim and the
+ * service-side persistence stay with the owner.
+ */
+function onSyntheticDecisionAnswered(state: MessageMachineState, ctx: MessageGuardContext): MessageTransition {
+  const facts = ctx.decisionAnswer;
+  if (facts === null || facts === undefined) {
+    return reject('illegal', 'invalid', 'synthetic_decision_answered requires the decision answer facts');
+  }
+  const problem = first(
+    () => facts.operatorMatches ? null
+      : reject('guard_failed', 'forbidden', 'only the configured operator may answer a user decision card'),
+    () => facts.goalNotCancelled ? null : reject('illegal', 'invalid', 'goal_cancelled'),
+    () => facts.sourceFactsMatch ? null
+      : reject('stale', 'revision_conflict', 'the canonical source facts changed since they were read'),
+    () => facts.sourceNotUiOnly ? null
+      : reject('guard_failed', 'invalid', 'the decision source is only a UI self-report'),
+    () => facts.answerSlotEmpty ? null
+      : reject('stale', 'revision_conflict', 'the answer slot is already written for this source'),
+    () => facts.selectionValid ? null
+      : reject('guard_failed', 'invalid', 'the answer names neither a stored option nor the explicit other selection'),
+    () => facts.annotationsFromObjects ? null
+      : reject('guard_failed', 'invalid', 'an annotation names an object outside the card'),
+  );
+  if (problem !== null) return problem;
+  if (state.status !== 'absent') {
+    return reject('illegal', 'revision_conflict', 'the synthetic answer message already exists; only its original receipt replays');
+  }
+  return accept<MessageMachineState, MessageEffect>(
+    { status: 'responded', hasReadAt: true, hasResponse: true, acceptedInputIds: [], hasDerivation: false, revision: 1 },
+    [
+      { kind: 'store_body', part: 'message', source: 'workspace' },
+      { kind: 'store_body', part: 'response', source: 'workspace' },
+      { kind: 'write_message', change: 'created' },
+      { kind: 'append_event', eventType: 'SessionMessageDecisionAnswered' },
+      { kind: 'guard_message', expectedRevision: null },
+    ],
+  );
+}
+
+/**
+ * S5-MSG-04/05: records the formal application proof on a responded decision
+ * card. `requiresApplication=false` is the same event refused `invalid`
+ * (S5-MSG-05); a false "current version"/PASS is `revision_conflict`.
+ */
+function onDecisionApplicationRecorded(state: MessageMachineState, ctx: MessageGuardContext): MessageTransition {
+  const facts = ctx.decisionApplication;
+  if (facts === null || facts === undefined) {
+    return reject('illegal', 'invalid', 'decision_application_recorded requires the application facts');
+  }
+  const problem = first(
+    () => facts.receiptReadable ? null
+      : reject('guard_failed', 'incomplete', 'the formal receipt and its event were not found'),
+    () => facts.requiresApplication ? null
+      : reject('guard_failed', 'invalid', 'a requiresApplication=false answer needs no application (S5-MSG-05)'),
+    () => facts.changedBeforeMatchesReceipt ? null
+      : reject('stale', 'revision_conflict', 'a changed object does not match the captured source pin'),
+    () => facts.receiptAfterMatches ? null
+      : reject('stale', 'revision_conflict', 'the receipt after versions do not match the formal versions'),
+    () => facts.answerAssociationExists ? null
+      : reject('guard_failed', 'invalid', 'the receipt is not associated with this answer'),
+    () => facts.modifierOrOperator ? null
+      : reject('guard_failed', 'forbidden', 'only the actual modifier or the configured operator may record the application'),
+    () => messagePinProblem(ctx.pins),
+  );
+  if (problem !== null) return problem;
+  switch (state.status) {
+    case 'absent':
+      return absentMessage();
+    case 'pending':
+    case 'read':
+      return reject('illegal', 'invalid', 'only a responded decision card can record an application');
+    case 'responded':
+      if (!state.hasResponse) return reject('illegal', 'invalid', 'only a responded decision card can record an application');
+      return accept<MessageMachineState, MessageEffect>({ ...state, revision: state.revision + 1 }, [
+        { kind: 'write_message', change: 'decision_applied' },
+        { kind: 'append_event', eventType: 'SessionMessageDecisionApplied' },
+        { kind: 'guard_message', expectedRevision: pinnedRevision(ctx) },
+      ]);
+    default:
+      return unreachable(state, 'message state');
+  }
+}
+
 export function transitionMessage(state: MessageMachineState, event: MessageEvent, ctx: MessageGuardContext): MessageTransition {
   switch (event.type) {
     case 'message_sent':
@@ -820,6 +1043,14 @@ export function transitionMessage(state: MessageMachineState, event: MessageEven
       return onTaskClaimed(state, ctx);
     case 'archive_wait_disposed':
       return onArchiveWaitDisposed(state, ctx);
+    // Slice 5 §3.1: the user-decision rows (S5-MSG-02/03/04; S5-MSG-05 is the
+    // same `decision_application_recorded` event refused when `requiresApplication=false`).
+    case 'user_decision_answered':
+      return onUserDecisionAnswered(state, ctx);
+    case 'synthetic_decision_answered':
+      return onSyntheticDecisionAnswered(state, ctx);
+    case 'decision_application_recorded':
+      return onDecisionApplicationRecorded(state, ctx);
     default:
       return unreachable(event, 'message event');
   }
@@ -833,7 +1064,7 @@ export function transitionMessage(state: MessageMachineState, event: MessageEven
 export type NewSessionMessageInput = {
   ref: SessionMessageRef;
   sender: MessageHostSenderRecord | MessageWorkRunSenderRecord;
-  recipient: SessionRef;
+  recipient: MessageRecipient;
   bodyRef: ArtifactRef;
   sourceRef: SourceRefV1;
   createdAt: string;
@@ -842,7 +1073,62 @@ export type NewSessionMessageInput = {
   intent: SessionMessageIntentV1 | null;
   needsReply: boolean;
   waitAfterSend: boolean;
+  /**
+   * [lead S5-T3-D7] S5-MSG-01 (spec §2.3, §2.7): the owning Goal and the
+   * decision metadata of a new user-recipient message. Written only when
+   * present, so a historical message keeps its shape; only this constructor
+   * writes them (protected fields).
+   */
+  goalRef?: GoalRef;
+  decision?: DecisionMessageMetadataV1;
 };
+
+/**
+ * [lead S5-T3-D7] S5-MSG-03 (spec §0.2 T06, §2.3, §3.1): the synthetic user
+ * message that holds the answer of a NON-message card. `sender` is the
+ * configured operator as Host sender; `decision.syntheticAnswer` is true;
+ * `response` is the answer (its `decision.source` is the card source).
+ */
+export type NewSyntheticDecisionAnswerInput = {
+  ref: SessionMessageRef;
+  sender: MessageHostSenderRecord;
+  recipient: MessageRecipient;
+  bodyRef: ArtifactRef;
+  sourceRef: SourceRefV1;
+  createdAt: string;
+  goalRef: GoalRef;
+  decision: DecisionMessageMetadataV1;
+  response: UserMessageResponseV1;
+};
+
+/**
+ * [lead S5-T3-D7] S5-MSG-03: the synthetic answer record, written directly as
+ * `responded` at revision 1 with `intent: 'notify'` (spec §2.3), `readAt` =
+ * the answer time, `application` null.
+ * The service adds the `s5-decision-answer:` unique claim (spec §2.5) and the
+ * `SessionMessageDecisionAnswered` event.
+ */
+export function createSyntheticDecisionAnswerRecord(input: NewSyntheticDecisionAnswerInput): SessionMessageRecord {
+  return {
+    ref: input.ref,
+    schemaVersion: 1,
+    revision: 1,
+    sender: input.sender,
+    recipient: input.recipient,
+    bodyRef: input.bodyRef,
+    sourceRef: input.sourceRef,
+    createdAt: input.createdAt,
+    status: 'responded',
+    readAt: input.createdAt,
+    response: input.response,
+    intent: 'notify',
+    goalRef: input.goalRef,
+    // §2.7 protected field: this constructor alone establishes the synthetic
+    // marker, so a caller can never save a synthetic answer card as a normal one.
+    decision: { ...input.decision, syntheticAnswer: true },
+    application: null,
+  };
+}
 
 /**
  * MSG-01/02: `pending` at revision 1 (send CAS@0). Optional fields are written
@@ -869,6 +1155,10 @@ export function createSessionMessageRecord(input: NewSessionMessageInput): Sessi
     ...(input.intent === null ? {} : { intent: input.intent }),
     ...(input.needsReply ? { needsReply: true } : {}),
     ...(input.waitAfterSend ? { waitAfterSend: true } : {}),
+    // [lead S5-T3-D7] S5-MSG-01: the owning Goal and the decision metadata are
+    // written only when present, so a historical message keeps its exact shape.
+    ...(input.goalRef === undefined ? {} : { goalRef: input.goalRef }),
+    ...(input.decision === undefined ? {} : { decision: input.decision }),
   };
 }
 
@@ -879,7 +1169,10 @@ export type SessionMessageChange =
   | { kind: 'input_accepted'; input: MessageAcceptedInput }
   | { kind: 'consultation_derived'; derivation: MessageConsultationDerivation }
   | { kind: 'archive_wait_disposed'; choice: ArchiveWaitChoiceV1; archiveSessionRef: SessionRef;
-      archiveRequestId: string; now: string };
+      archiveRequestId: string; now: string }
+  // Slice 5 §3.1: the user-decision rows.
+  | { kind: 'decision_answered'; response: UserMessageResponseV1 }
+  | { kind: 'decision_applied'; application: DecisionApplicationV1 };
 
 /**
  * MSG-03..09: the next revision of `message`. Every change bumps the revision
@@ -954,6 +1247,25 @@ export function nextSessionMessageRecord(message: SessionMessageRecord, change: 
       }
       // S1-MSG-02: a cancel records the disposition and keeps the original handler.
       return { ...message, revision, archiveWaitDisposition: disposition };
+    }
+    // Slice 5 §3.1: the user-decision rows.
+    case 'decision_answered': {
+      // S5-MSG-02: the ORIGINAL response slot, filled once; readAt ??= respondedAt.
+      if (message.status === 'responded' || message.response !== null) {
+        throw new Error('nextSessionMessageRecord: the response slot is already written');
+      }
+      return { ...message, revision, status: 'responded',
+        readAt: message.readAt ?? change.response.respondedAt, response: change.response, application: null };
+    }
+    case 'decision_applied': {
+      // S5-MSG-04/05: the application proof is recorded once on an answered card.
+      if (message.application !== undefined && message.application !== null) {
+        throw new Error('nextSessionMessageRecord: the application is already recorded');
+      }
+      if (message.response === null) {
+        throw new Error('nextSessionMessageRecord: an application needs an answered message');
+      }
+      return { ...message, revision, application: change.application };
     }
     default:
       return unreachable(change, 'message change');

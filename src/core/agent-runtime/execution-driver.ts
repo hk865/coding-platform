@@ -24,7 +24,7 @@ import { runObservedModel } from './observed-model-run.js';
 import { createMailboxInputSupply } from './execution-inputs.js';
 import type { SourceToolOptions } from './exploration-tools.js';
 import type { RuntimeSourceCaptureFactory } from './source-tool-ports.js';
-import { createSessionMailboxTools, SESSION_MAILBOX_TOOL_NAMES } from './communication-tools.js';
+import { createSessionMailboxTools, SESSION_MAILBOX_TOOL_NAMES, USER_DECISION_TOOL_NAMES } from './communication-tools.js';
 import { createWhiteboardTools, WHITEBOARD_TOOL_NAMES } from './whiteboard-tools.js';
 import { createSessionDiscoveryTools, SESSION_DISCOVERY_TOOL_NAMES } from './session-discovery-tools.js';
 import { ModelBudget } from './model-budget.js';
@@ -53,7 +53,8 @@ import type {
 export type ExecutionDriverDependencies = Pick<RuntimeExecutionDependencies,
   | 'entry' | 'historyWriter' | 'executions' | 'sessionOperations' | 'kernelStores' | 'workspaceHost'
   | 'sourceAuthority' | 'sourcePolicyFor' | 'host' | 'kernel' | 'now' | 'newId'
-  | 'modelRequests' | 'roles' | 'materials' | 'bodies' | 'plans' | 'messages' | 'sessions' | 'runReconcile'
+  | 'modelRequests' | 'roles' | 'materials' | 'bodies' | 'plans' | 'messages' | 'decisionMessages' | 'applicationReceipt'
+  | 'sessions' | 'runReconcile'
   | 'graphHistory' | 'graphContext' | 'taskInputs'> & {
   /** The same observer instance backs start and explicit observe calls. */
   observation: ExecutionObservationService;
@@ -76,7 +77,7 @@ type KernelSessionReader = Pick<SqliteStores, 'get' | 'read'>;
  * grants nothing: the real selection set is the manifest/Role/Host intersection
  * re-checked above. */
 const PLATFORM_COORDINATION_TOOL_NAMES = new Set<string>([
-  ...SESSION_MAILBOX_TOOL_NAMES, ...WHITEBOARD_TOOL_NAMES, ...SESSION_DISCOVERY_TOOL_NAMES,
+  ...SESSION_MAILBOX_TOOL_NAMES, ...USER_DECISION_TOOL_NAMES, ...WHITEBOARD_TOOL_NAMES, ...SESSION_DISCOVERY_TOOL_NAMES,
   ...GRAPH_TOOL_NAMES,
 ]);
 
@@ -179,6 +180,10 @@ export function createGraphHistoryProxy(input: {
 function selectCoordinationTools(input: {
   selected: readonly string[];
   mailbox: SessionMailboxPort | undefined;
+  /** Slice 5 §4.6 user-decision owner; absent makes the three tools unregisterable. */
+  decisionMessages?: RuntimeExecutionDependencies['decisionMessages'];
+  /** Slice 5 §4.5/T-R2-1 plan-application receipt reader; absent keeps the old tool result shape. */
+  applicationReceipt?: RuntimeExecutionDependencies['applicationReceipt'];
   sessions: SessionDirectoryPort;
   plans: PlanTaskPort;
   context: CoreCallContext;
@@ -203,22 +208,27 @@ function selectCoordinationTools(input: {
   }
   const wanted = new Set(input.selected);
   const mailboxNames = SESSION_MAILBOX_TOOL_NAMES.filter(name => wanted.has(name));
+  const decisionNames = USER_DECISION_TOOL_NAMES.filter(name => wanted.has(name));
   const whiteboardNames = WHITEBOARD_TOOL_NAMES.filter(name => wanted.has(name));
   const discoveryNames = SESSION_DISCOVERY_TOOL_NAMES.filter(name => wanted.has(name));
   const graphNames = GRAPH_TOOL_NAMES.filter(name => wanted.has(name));
-  if (mailboxNames.length === 0 && whiteboardNames.length === 0 && discoveryNames.length === 0 && graphNames.length === 0) {
+  if (mailboxNames.length === 0 && decisionNames.length === 0 && whiteboardNames.length === 0 && discoveryNames.length === 0 && graphNames.length === 0) {
     return { ok: true, value: null };
   }
-  if (mailboxNames.length > 0 && input.mailbox === undefined) {
-    return { ok: false, rejection: rejected('unsupported', `the Run selects communication tools but no SessionMailbox dependency is bound: ${mailboxNames.join(', ')}`) };
+  if ((mailboxNames.length > 0 || decisionNames.length > 0) && input.mailbox === undefined) {
+    return { ok: false, rejection: rejected('unsupported', `the Run selects communication tools but no SessionMailbox dependency is bound: ${[...mailboxNames, ...decisionNames].join(', ')}`) };
+  }
+  if (decisionNames.length > 0 && input.decisionMessages === undefined) {
+    return { ok: false, rejection: rejected('unsupported', `the Run selects user decision tools but no decisionMessages dependency is bound: ${decisionNames.join(', ')}`) };
   }
   if (graphNames.length > 0 && input.graph === undefined) {
     return { ok: false, rejection: rejected('unsupported', `the Run selects graph read tools but no graph read dependency is bound: ${graphNames.join(', ')}`) };
   }
   const handles: Array<{ names: readonly string[]; create: (workspace: WorkspaceSandbox) => ToolDefinition[] }> = [];
-  if (mailboxNames.length > 0) {
+  if (mailboxNames.length > 0 || decisionNames.length > 0) {
     handles.push(createSessionMailboxTools({
       mailbox: input.mailbox as SessionMailboxPort,
+      ...(input.decisionMessages === undefined ? {} : { decisionMessages: input.decisionMessages }),
       context: input.context,
       sessionRef: input.sessionRef,
       requestIdForCall: input.requestIdForCall,
@@ -231,6 +241,7 @@ function selectCoordinationTools(input: {
       context: input.context,
       goalRef: input.goalRef,
       requestIdForCall: input.requestIdForCall,
+      ...(input.applicationReceipt === undefined ? {} : { applicationReceipt: input.applicationReceipt }),
     }));
   }
   if (discoveryNames.length > 0) {
@@ -251,7 +262,7 @@ function selectCoordinationTools(input: {
       }),
     }));
   }
-  const names = [...mailboxNames, ...whiteboardNames, ...discoveryNames, ...graphNames];
+  const names = [...mailboxNames, ...decisionNames, ...whiteboardNames, ...discoveryNames, ...graphNames];
   if (new Set(names).size !== names.length) {
     return { ok: false, rejection: rejected('unsupported', 'the selected coordination tool names are duplicated') };
   }
@@ -466,6 +477,8 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
       const coordination = selectCoordinationTools({
         selected: manifest.permissions.tools,
         mailbox: deps.messages,
+        ...(deps.decisionMessages === undefined ? {} : { decisionMessages: deps.decisionMessages }),
+        ...(deps.applicationReceipt === undefined ? {} : { applicationReceipt: deps.applicationReceipt }),
         sessions: deps.sessions,
         plans: deps.plans,
         context: toolContext,

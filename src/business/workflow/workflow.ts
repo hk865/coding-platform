@@ -16,18 +16,21 @@ import {
   WORKFLOW_AUTOMATION_ACTOR, type ReworkFailureClass, type TaskRequeueRef, type TaskReworkRefusalRef,
 } from '../../contracts/task-requeue.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../contracts/fingerprint.js';
+import { DEFAULT_GOAL_SETTINGS_V1, decisionSourceKey } from '../../contracts/goal-decisions.js';
 import type { CreateSessionRequest } from '../../core/agent-runtime/session-operations.js';
 import type { PrepareTaskExecutionRequest, StartTaskExecutionRequest } from '../../core/agent-runtime/execution-contracts.js';
 import type { ClaimTaskInput, RequeueTaskInput } from '../../core/work-graph/model/claim-contracts.js';
 import type { TaskGraph, TaskRow } from '../../core/work-graph/model/plan-contracts.js';
 import type { GraphWrite } from '../../core/work-graph/model/task-contracts.js';
+import type { GoalDecisionCauseReadV1 } from '../../core/work-graph/model/decision-contracts.js';
 import type { SessionCard } from '../../core/work-graph/model/session-contracts.js';
 import { runUnresolvedBlocker } from '../../core/work-graph/state/run-machine.js';
+import { automationConfirmationCause } from '../../core/work-graph/state/decision-policy.js';
 import {
   beginRefusalIsPermanent, displayRoundStatus, reverifyExemptionOfFacts, successorAutoCount,
 } from '../../core/work-graph/state/verification-machine.js';
 import type { ReverifyRoundInput } from '../../core/work-graph/model/evidence-contracts.js';
-import type { ConsultationInput, ConsultationResult, InitialPlanningGoalInput, InitialPlanningGoalInputResult, N0GoalInput, WorkflowAdvanceInput, WorkflowAdvanceResult, WorkflowOperation, WorkflowSessionRequeue, WorkflowStepReceipt } from './contracts.js';
+import type { ConsultationInput, ConsultationResult, InitialPlanningGoalInput, InitialPlanningGoalInputResult, N0GoalInput, ResolveDecisionInputV1, ResolveDecisionReadV1, WorkflowAdvanceInput, WorkflowAdvanceResult, WorkflowOperation, WorkflowSessionRequeue, WorkflowStepReceipt } from './contracts.js';
 import type { WorkflowDependencies, WorkflowHostConfiguration, WorkflowPort } from './ports.js';
 import { createConsultationConsumer } from './consultation.js';
 import { orderTasksByDependency } from './task-order.js';
@@ -35,6 +38,7 @@ import { createSessionArchiveService } from './session-archive.js';
 import type { InternalSessionArchivePort, SessionArchivePort } from './session-archive.js';
 import type { RequestSessionArchiveInput } from '../../contracts/core/session-archive.js';
 import { createSessionMaintenanceService } from './session-maintenance.js';
+import { createDecisionActions, type DecisionActionsPort } from './decision-actions.js';
 
 /**
  * R5c.1 stage-two adoption-first advancement loop.
@@ -315,6 +319,12 @@ type WorkflowAdvanceValue = {
   receipt: WorkflowStepReceipt | null;
   next: WorkflowAdvanceInput | null;
   reason: string | null;
+  /**
+   * Slice 5 §4.5: an automatic refine/requeue/reverify step gated by the Goal's
+   * current settings carries the formally derived cause. Part 1 only plumbs the
+   * field through the result type; no selection behaviour changes yet.
+   */
+  decisionCause?: GoalDecisionCauseReadV1 | null;
 };
 function readyValue(value: WorkflowAdvanceValue): WorkflowAdvanceResult {
   return { status: 'ready', value };
@@ -548,7 +558,8 @@ function initialPlanningBase(
 // The factory
 // --------------------------------------------------------------------------
 
-export function createWorkflow(deps: WorkflowDependencies): WorkflowPort & Required<Pick<WorkflowPort, 'consumeConsultation'>> {
+export function createWorkflow(deps: WorkflowDependencies): WorkflowPort
+  & Required<Pick<WorkflowPort, 'consumeConsultation' | 'resolveDecision' | 'orderGoalAdvances'>> {
   /**
    * R5b.4 §11.5 finite first-consumer handoff. Each call delegates exactly ONE
    * original owner (`proposeInitialPlanFromAnswer` or `applyPlanChange`) and
@@ -1107,6 +1118,135 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort & Requi
     return reverifyRoundStep(base, row.ref, failure, verdict);
   }
 
+  /**
+   * §4.5 (rule 16): the automation policy is shared by `select_work` and
+   * `perform`. Before an automatic requeue/reverify the current Goal settings
+   * decide; when the action needs a person the step returns a formal
+   * `waiting`/`next=null` result carrying the derived source-2 cause and starts
+   * nothing. `post_process`/`after_plan_confirmation` keeps the historical
+   * behavior. The helper reads no clock, writes nothing and fabricates no
+   * GoalPhase.
+   */
+  async function automationConfirmation(base: Base, goal: GoalSnapshot, row: TaskRow,
+    operation: WorkflowOperation): Promise<WorkflowAdvanceResult | null> {
+    const failure = row.failure;
+    if (failure === undefined) return null;
+    // Lead (accept review, known #7): a requeue already covering this failure means the action was committed;
+    // the owner's original receipt decides, never a new card under a changed autonomy.
+    if (operation.kind === 'requeue_task' && failure.automation.coveringRequeue !== null) return null;
+    let action: 'system_requeue' | 'auto_reverify';
+    let countedNext: number;
+    if (operation.kind === 'requeue_task') {
+      action = 'system_requeue';
+      countedNext = failure.automation.requeueAutoCount + (failure.failureClass === 'interrupted' ? 0 : 1);
+    } else if (operation.kind === 'reverify_round') {
+      const head = failure.round;
+      if (head === null) return null;
+      const exemption = reverifyExemptionOfFacts({ checks: head.failingChecks, gapCodes: head.gapCodes });
+      action = 'auto_reverify';
+      countedNext = successorAutoCount(head.autoCount, 'system', exemption);
+    } else {
+      return null;
+    }
+    // Lead (rebase, A11 #15 / ND-7): past the automatic cap the existing fence
+    // stays — the requeue/reverify owner commits its cap refusal and the Goal
+    // shows that cause; the gate adds only the autonomy rule (spec §3.2
+    // "countedNext>cap ... existing fences stay").
+    if (countedNext > failure.automation.cap) return null;
+    const settings = goal.settings ?? DEFAULT_GOAL_SETTINGS_V1;
+    // §4.5 line 888 / F8: decide with the shared pure policy FIRST, before the
+    // Run revision read below. Under the default `after_plan_confirmation`
+    // autonomy no card is needed (`automatic_notice`), and that read must not be
+    // able to refuse a step the existing owner would have performed; no card
+    // needed means no new read (brief section 5, §8.2 line 1363). The probe uses
+    // the same `automationConfirmationCause` with no Run revision, so it only
+    // asks whether a card is derived.
+    if (automationConfirmationCause({
+      autonomy: settings.autonomy, action, countedNext, cap: failure.automation.cap,
+      goalRef: goal.ref, taskId: row.ref.taskId, runRef: null, runRevision: null,
+    }) === null) return null;
+    // §3.3 line 629 / defect-1: a Run is a STORED aggregate, so its pin must be
+    // its formal revision, never a fabricated 0 (the §3.3 pin check would then
+    // reject the card with `revision_conflict`). The failure facts of a gate
+    // whose anchored producer Run was not in the read window carry a `runRef`
+    // with a null `runRevision`; read that Run's formal revision through the
+    // SAME source-authority reader this Workflow already uses for pins. A read
+    // failure is returned (`unavailable`/`incomplete`), never folded into a
+    // fabricated pin. The §4.2 source-2 reader resolves the same canonical Run
+    // revision, so both entries produce the same `decisionSourceKey`.
+    let runRevision = failure.runRevision;
+    if (failure.runRef !== null && runRevision === null) {
+      let loaded;
+      try { loaded = await deps.sourceAuthority.load(failure.runRef); }
+      catch { return rejection('unavailable', 'the failure Run source read failed'); }
+      if (loaded.status === 'not_found') {
+        return rejection('incomplete', 'the failure Run record does not exist');
+      }
+      if (loaded.status !== 'found') {
+        return rejection(loaded.status === 'unsupported' ? 'unsupported' : 'unavailable',
+          'the failure Run record is not readable');
+      }
+      runRevision = loaded.snapshot.revision;
+    }
+    // §3.3 line 629: the automation cause's affected set is the Task/Run pins of
+    // the failure (a Task is not a stored aggregate, so its pin is the §2.1
+    // absence revision 0). The ONE shared derivation keeps this identical to the
+    // §4.2 source-2 reader's `source.key`.
+    const cause = automationConfirmationCause({
+      autonomy: settings.autonomy, action, countedNext, cap: failure.automation.cap,
+      goalRef: goal.ref, taskId: row.ref.taskId, runRef: failure.runRef, runRevision,
+    });
+    if (cause === null) return null;
+    const goalPin: VersionPin = { ref: goal.ref, revision: goal.revision };
+    // N-R2-1(a) / §2.8 line 345: every new source used for answering carries the
+    // canonical content basis of the formal Goal this step read, built exactly
+    // like the §4.2 source-2 reader's `basisOf` (goalRef, workspaceRef,
+    // objective, activePlanRef, normalized settings). The read model resolves
+    // the answer's Workspace through `goalBases[0]`. Key and pins unchanged.
+    const goalBasis = {
+      goalRef: goal.ref,
+      workspaceRef: goal.workspaceRef,
+      objective: goal.objective,
+      activePlanRef: goal.activePlanRevision,
+      settings: goal.settings ?? DEFAULT_GOAL_SETTINGS_V1,
+    };
+    return readyValue({
+      state: 'waiting', receipt: null, next: null,
+      reason: `automation_confirmation_required:${cause.action}`,
+      decisionCause: {
+        source: {
+          kind: 'goal_cause',
+          key: decisionSourceKey({ kind: 'goal_cause', goalRef: goal.ref, code: cause.code, affected: cause.affected }),
+          goalRef: goal.ref,
+          pins: [goalPin, ...cause.affected],
+          goalBases: [goalBasis],
+        },
+        code: cause.code, taskRef: { ...row.ref }, runRef: failure.runRef,
+        action: cause.action, objects: [], options: [],
+      },
+    });
+  }
+
+  /** The `perform` half of the shared policy: recover the row by Task or round. */
+  async function gatePerform(owned: Owned, base: Base,
+    operation: WorkflowOperation): Promise<WorkflowAdvanceResult | null> {
+    if (operation.kind !== 'requeue_task' && operation.kind !== 'reverify_round') return null;
+    // Lead (rebase, A2-workflow-auto-rework): a malformed perform request is
+    // judged by the existing step (owner presence, input checks), never here.
+    const requestInput: unknown = (operation.request as { input?: unknown } | undefined)?.input;
+    if (!isRecord(requestInput)) return null;
+    if (operation.kind === 'requeue_task' && !isRecord(requestInput['taskRef'])) return null;
+    const goalRead = await deps.plans.queryGoal(owned.ctx, base.goalRef);
+    if (goalRead.status !== 'ready') return null;
+    const graphRead = await deps.plans.queryTaskGraph(owned.ctx, { goalRef: base.goalRef });
+    if (graphRead.status !== 'ready') return null;
+    const row = graphRead.value.tasks.find((candidate) => operation.kind === 'requeue_task'
+      ? candidate.ref.taskId === operation.request.input.taskRef.taskId
+      : sameCanonical(candidate.failure?.round?.roundRef, operation.request.input.predecessorRoundRef));
+    if (row === undefined) return null;
+    return await automationConfirmation(base, goalRead.value.goal, row, operation);
+  }
+
   /** Read-only deterministic first-step selection shared by `select_work`. */
   async function selectNext(owned: Owned, base: Base): Promise<WorkflowAdvanceResult> {
     const config = deps.configuration;
@@ -1163,7 +1303,13 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort & Requi
       // by requeueRef), so a completed Run's round still opens, runs, finalizes and completes
       // (AV-4, STEP5-FLIPS §14), except on an invalid chain (`round_ambiguous`, skipped below).
       const rework = automaticRequeue(config, owned, base, goal, graph.plan, task, row) ?? automaticReverify(base, row);
-      if (rework !== null) return advancing(null, makePerform(base, rework));
+      if (rework !== null) {
+        // §4.5: the Goal's current settings decide before any automatic rework;
+        // a gated step waits with its formal cause and writes nothing.
+        const gated = await automationConfirmation(base, goal, row, rework);
+        if (gated !== null) return gated;
+        return advancing(null, makePerform(base, rework));
+      }
       // D-3 (TASK-03): a requeued Task (P4) is claimed with its covering TaskRequeue,
       // before the ended Run's round chain is resumed, while its verdict is
       // `claim_requeued` (AV-3); any other verdict claims nothing.
@@ -1484,6 +1630,10 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort & Requi
   }
 
   async function performStep(owned: Owned, base: Base, operation: WorkflowOperation): Promise<WorkflowAdvanceResult> {
+    // §4.5 (rule 16): `perform` shares the automation policy with `select_work`.
+    // A gated automatic rework waits with its formal cause and performs nothing.
+    const gatedRework = await gatePerform(owned, base, operation);
+    if (gatedRework !== null) return gatedRework;
     // The original owner request is always performed first and its complete
     // receipt is preserved. The trusted configuration is re-checked only when a
     // successful successor genuinely needs a binding or the fixed consumerId.
@@ -1826,8 +1976,54 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort & Requi
     return consultation(ctx, input);
   };
 
+  // Slice 5 §4.5 finite decision coordination and the read-only ordering safe
+  // point. The finite coordinator is built from the SAME optional owner seams;
+  // without the goal-settings/decision-message owners it stays explicitly
+  // unsupported, so the historical advance behavior is unchanged.
+  const decisionActions: DecisionActionsPort | null = deps.goalSettings === undefined ? null : createDecisionActions({
+    goalSettings: deps.goalSettings,
+    ...(deps.decisionMessages === undefined ? {} : { decisionMessages: {
+      answerDecision: deps.decisionMessages.answerDecision.bind(deps.decisionMessages),
+      readDecisionAnswer: deps.decisionMessages.readDecisionAnswer.bind(deps.decisionMessages),
+      recordDecisionApplication: deps.decisionMessages.recordDecisionApplication.bind(deps.decisionMessages),
+    } }),
+    ...(deps.decisionSources === undefined ? {} : { decisionSources: deps.decisionSources }),
+    ...(deps.decisionDuties === undefined ? {} : { decisionDuties: deps.decisionDuties }),
+    ...(deps.goalExecutedFiles === undefined ? {} : { goalExecutedFiles: deps.goalExecutedFiles }),
+    ...(deps.applicationReceipt === undefined ? {} : { applicationReceipt: deps.applicationReceipt }),
+    // §3.3 line 625: a `conflict_wait` settings command pins the earlier Goal's
+    // current GoalPhase (absent = revision 0), read from the formal completion
+    // projection the goal-control owner writes, never a fabricated phase.
+    goalPhasePin: async (ctx, goalRef) => {
+      const read = await deps.plans.queryTaskGraph(ctx, { goalRef });
+      if (read.status !== 'ready') {
+        return read.status === 'rejected' ? read
+          : { status: 'rejected', code: 'incomplete', reason: 'the earlier Goal phase is not readable' };
+      }
+      const revision = read.value.completion !== undefined && read.value.completion.status === 'recorded'
+        ? read.value.completion.snapshot.revision : 0;
+      return { ref: { aggregateType: 'GoalPhase', projectId: goalRef.projectId, goalId: goalRef.goalId }, revision };
+    },
+  });
+  const resolveDecision = async (
+    ctx: CoreCallContext, request: GraphWrite<ResolveDecisionInputV1>,
+  ): Promise<ReadResult<ResolveDecisionReadV1>> => {
+    if (decisionActions === null) {
+      return rejection('unsupported', 'the Workflow has no decision coordinator dependencies');
+    }
+    return decisionActions.resolveDecision(ctx, request);
+  };
+  const orderGoalAdvances = async (
+    ctx: CoreCallContext, input: { advances: WorkflowAdvanceInput[] },
+  ): Promise<ReadResult<{ advances: WorkflowAdvanceInput[] }>> => {
+    if (decisionActions === null) {
+      return rejection('unsupported', 'the Workflow has no Goal-settings owner for advance ordering');
+    }
+    return decisionActions.orderGoalAdvances(ctx, input);
+  };
+
   return {
-    handleGoalInput, advanceWork, consumeConsultation,
+    handleGoalInput, advanceWork, consumeConsultation, resolveDecision, orderGoalAdvances,
     // Slice 1 §4.1/§4.2: the real archive/maintenance services are published
     // on the port; an outer `ready` never implies archived.
     archiveLine: archiveService.archiveLine,

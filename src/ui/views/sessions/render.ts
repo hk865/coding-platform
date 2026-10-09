@@ -90,7 +90,7 @@ export function renderMessage(result: ReadResult<SessionMessage>): string {
   const message = result.value;
   const response = message.response === null
     ? '<p class="muted" data-reply="none">尚无回复</p>'
-    : `<div data-reply="present"><p>回复者 ${escapeHtml(message.response.sender.sessionRef.sessionId)}`
+    : `<div data-reply="present"><p>回复者 ${escapeHtml(message.response.sender.kind === 'host' ? message.response.sender.actor.id : message.response.sender.sessionRef.sessionId)}`
       + ` · ${escapeHtml(message.response.respondedAt)}</p>`
       + `<button class="link" data-action="read-message-body" data-part="response" data-message="${escapeHtml(message.ref.messageId)}">查看回复正文</button></div>`;
   return `<section class="panel" data-view="message"><header><h3>消息 ${escapeHtml(message.ref.messageId)}</h3>`

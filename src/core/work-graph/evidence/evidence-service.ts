@@ -43,8 +43,8 @@ import {
 import type { PlanRevisionRef, PlanRevisionSnapshot, RuntimeTask } from '../../../contracts/plan.js';
 import type { RunRef, RunSnapshot, SourceRefV1, TaskTriple } from '../../../contracts/dispatch.js';
 import {
-    DEFAULT_TASK_AUTOMATION_POLICY, GOAL_FAN_OUT_ACTOR, TASK_REWORK_REASON_MAX_CHARS, reworkActorClassOf,
-    type TaskAutomationPolicyV1, type TaskReworkRefusalRef, type TaskReworkRefusalSnapshotV1,
+    DEFAULT_TASK_AUTOMATION_POLICY, GOAL_FAN_OUT_ACTOR, MAX_AUTO_REWORK_LIMIT, TASK_REWORK_REASON_MAX_CHARS, reworkActorClassOf,
+    type ReworkActorClass, type TaskAutomationPolicyV1, type TaskReworkRefusalRef, type TaskReworkRefusalSnapshotV1,
 } from '../../../contracts/task-requeue.js';
 import type {
     CheckCapabilityV1, CheckExecutionTicket, CheckProcessObservation, RoundCheckSnapshot, RoundSnapshot,
@@ -85,12 +85,14 @@ import {
 import { REWORK_NOTE_CONTENT_TYPE, newBasisInputsProblem } from '../tasks/requeue-service.js';
 import { newBasisInputRefsProblem } from '../persistence/rework-codecs.js';
 import { reverifyBasis } from '../state/no-progress.js';
+import { decisionActionPolicy } from '../state/decision-policy.js';
+import { readGoalSettings as goalSettingsOf } from '../persistence/record-codecs.js';
 import {
     countEndedGoalRuns, reworkFenceOf, reworkPermission, taskReworkRefusalEffects, type ReworkFence,
 } from '../state/task-failure.js';
 import {
     checkEventAdmission, finalizeRoundOutcome, foldVerdictChecks, frozenBindingProblem, nextTaskEvidenceIndex, outcomeFor,
-    reverifyAdmissionProblem, reverifyCapRefusal, reverifyFailureClass,
+    reverifyAdmissionProblem, reverifyCapRefusal, reverifyExemption, reverifyFailureClass, successorAutoCount,
     roundActivityProblem, roundChainHead, roundGoalActivityProblem, roundOpenBasisProblem, roundOpenChainProblem,
     roundOpenChecksProblem, roundOpenPointerProblem, roundOpenSubjectProblem, roundReviewerEvidenceProblem,
     roundSubjectActivityProblem, roundWriteAdmission, taskEvidenceIndexRefOf, transitionCheck, transitionRound,
@@ -112,6 +114,9 @@ import {
     encodeVerificationRoundSnapshot, verificationRoundEventFromEvent, decodeTaskEvidenceIndexSnapshot,
     type VerificationRoundEvent,
 } from '../persistence/evidence-record-codecs.js';
+import {
+    decodeNoticeOrigin, type NoticeOriginWireV1,
+} from '../persistence/decision-record-codecs.js';
 import type {
     AbandonCheckInput, EvidencePort, FinalizedChecks, InterruptCheckInput,
     OriginalVerificationQuery, ReverifyOutcomeV1, ReverifyRoundInput, RoundChainHeadQuery,
@@ -265,6 +270,35 @@ type RoundWrite<T> = {
 };
 
 /**
+ * SPEC §2.5: a later update of an existing round copies its creation wire origin
+ * (`since`, and the automatic `noticeAutomationCap`) verbatim and never re-binds
+ * it. An old record without an origin stays without one (no backfill). This is
+ * the exact analogue of the mailbox's `preservedNoticeOrigin`.
+ */
+async function preservedRoundNoticeOrigin(records: Records, ref: VerificationRoundRef): Promise<
+    { ok: true; value: NoticeOriginWireV1 } | { ok: false; rejection: CoreRejection }> {
+    const key = refKeyOf(ref);
+    if (key === null) return { ok: false, rejection: invalid('the round ref is not canonical JSON') };
+    let read: Awaited<ReturnType<Records['readMany']>>;
+    try {
+        read = await records.readMany([key]);
+    } catch {
+        return { ok: false, rejection: unavailable('the round notice origin could not be read') };
+    }
+    if (read.status !== 'ready') return { ok: false, rejection: mapStoreFailure(read) };
+    const record = read.value.records.find(candidate => candidate.refKey === key);
+    if (record === undefined) return { ok: false, rejection: unavailable('the updated round is missing') };
+    const decoded = decodeNoticeOrigin(record);
+    if (decoded.status !== 'decoded') {
+        return { ok: false, rejection: unavailable(`the round notice origin is damaged: ${decoded.reason}`) };
+    }
+    const origin: NoticeOriginWireV1 = {};
+    if (decoded.value.since !== undefined) origin.since = decoded.value.since;
+    if (decoded.value.noticeAutomationCap !== undefined) origin.noticeAutomationCap = decoded.value.noticeAutomationCap;
+    return { ok: true, value: origin };
+}
+
+/**
  * Translates the effects into ONE RecordStore commit and commits it. Guards:
  * round, read set, index, then each Evidence (CAS null); records: round,
  * Evidence, index; claims: the round slot. A replayed or lost commit restores
@@ -281,7 +315,20 @@ async function commitRoundWrite<T>(records: Records, signal: AbortSignal, write:
     let events: EncodedDomainEvent[] = [];
     for (const effect of write.effects) {
         switch (effect.kind) {
-            case 'guard_round': round = [guarded(encodeVerificationRoundSnapshot(write.round), effect.expectedRevision)]; break;
+            case 'guard_round': {
+                // §2.5: an update copies the round's stored creation origin
+                // (`since`/`noticeAutomationCap`) instead of dropping it; the
+                // creating commit keeps the current behaviour (the automatic
+                // successor's own origin is written by `commitReverify`).
+                let record = encodeVerificationRoundSnapshot(write.round);
+                if (effect.expectedRevision !== null) {
+                    const preserved = await preservedRoundNoticeOrigin(records, write.round.ref);
+                    if (!preserved.ok) return preserved.rejection;
+                    record = encodeVerificationRoundSnapshot(write.round, preserved.value);
+                }
+                round = [guarded(record, effect.expectedRevision)];
+                break;
+            }
             case 'guard_open_read_set':
             case 'guard_finalize_read_set':
             case 'guard_begin_read_set':
@@ -681,6 +728,20 @@ Promise<{ ok: true; current: TaskReworkRefusalSnapshotV1 | null; key: string } |
 export type CheckConfigurationResolver = (scope: WorkspaceScope) => TrustedCheckConfiguration | undefined;
 
 /**
+ * Slice 5 §3.2/§4.4 (F37) seam: the autonomy verdict for an automatic reverify.
+ * The evidence owner keeps every existing cap, chain and admission check; this
+ * injected seam only decides whether `auto_reverify` proceeds automatically (a
+ * "请知悉" notice) or must become a `needs_decision` cause instead. Absent keeps
+ * the part-1 admission. Behaviour lands in part 2.
+ */
+export type AutomaticReverifyPolicyV1 = (input: {
+    goal: GoalSnapshot;
+    actorClass: ReworkActorClass;
+    countedNext: number | null;
+    cap: number;
+}) => 'automatic_notice' | 'needs_decision';
+
+/**
  * R3e.1 the service's exact raw dependencies, kept beside the factory that
  * reads them (task D X2, decision 40). The dependency set is exactly what the
  * service reads:
@@ -713,6 +774,11 @@ export type EvidenceServiceDependencies = {
      * `DEFAULT_TASK_AUTOMATION_POLICY`.
      */
     automationPolicy?(): TaskAutomationPolicyV1;
+    /**
+     * Slice 5 §3.2/§4.4 (F37): the Goal autonomy/action policy seam consulted
+     * for an automatic reverify; absent keeps the existing admission.
+     */
+    automaticReverifyPolicy?: AutomaticReverifyPolicyV1;
     /** VR-14 step 2: the delegated-write admission an Agent reverify goes through; absent refuses an Agent. */
     delegatedWrites?: PlanDelegatedWriteDependencies;
     /** ND-9: a session-message new input is read through the mailbox owner; absent refuses one (`unsupported`). */
@@ -1559,6 +1625,13 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         /** `guard_reverify_read_set` without the refusal record (added here: CAS @k, or the written revision). */
         readSet: readonly RecordGuard[];
         decided: { next: RoundSnapshot; effects: readonly VerificationEffect[] };
+        /**
+         * §2.5 notice-origin wiring: the creating `policy.autoReworkLimit` an
+         * automatic successor round writes to its wire `noticeAutomationCap`
+         * (0..`MAX_AUTO_REWORK_LIMIT`); absent on a refusal. It is wire notice
+         * metadata only and never changes the chain count or the old public DTO.
+         */
+        noticeAutomationCap?: number;
         /** A lost slot claim: the head moved, answered from the chain read again. */
         slotTaken(): Promise<CoreRejection>;
     };
@@ -1577,13 +1650,21 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         let claims: UniqueClaimChange[] = [];
         let event: EncodedDomainEvent | null = null;
         let value: ReverifyOutcomeV1 | null = null;
+        let roundOriginBinding: PreparedCommit['commitCursorBindings'] = undefined;
         let refusalGuard: RecordGuard = { refKey: write.refusalKey, expectedRevision: write.currentRefusal?.revision ?? null };
         for (const effect of write.decided.effects) {
             switch (effect.kind) {
                 case 'guard_round': {
                     const key = refKeyOf(write.decided.next.ref);
                     if (key === null) return invalid('the successor round ref is not canonical JSON');
-                    written.push(encodeVerificationRoundSnapshot(write.decided.next));
+                    // Slice 5 §2.5: the successor round carries the wire-only
+                    // notice origin; the Store binds this creation commit's
+                    // cursor to `since` and the automatic cap is recorded here.
+                    const cap = write.noticeAutomationCap === undefined ? undefined
+                        : Math.min(Math.max(0, Math.trunc(write.noticeAutomationCap)), MAX_AUTO_REWORK_LIMIT);
+                    written.push(encodeVerificationRoundSnapshot(write.decided.next,
+                        cap === undefined ? { since: null } : { since: null, noticeAutomationCap: cap }));
+                    roundOriginBinding = [{ refKey: key, field: 'since' }];
                     guards.push({ refKey: key, expectedRevision: effect.expectedRevision });
                     break;
                 }
@@ -1630,7 +1711,8 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         const merged = mergeGuards([...guards, refusalGuard]);
         if (!merged.ok) return merged.rejection;
         const prepared: PreparedCommit = { identityKey: write.identity, fingerprint: write.fingerprint, guards: merged.guards,
-            records: written, claims, indexGuards: [], indexChanges: [], events: [event] };
+            records: written, claims, indexGuards: [], indexChanges: [], events: [event],
+            ...(roundOriginBinding === undefined ? {} : { commitCursorBindings: roundOriginBinding }) };
         try {
             if (write.signal.aborted) return cancelled('the reverify was cancelled before commit');
             const receipt = await records.commit(prepared);
@@ -1847,6 +1929,22 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
             return await commitReverify({ ...commitBase, eventActor: null, readSet, decided: capped });
         }
 
+        // Slice 5 §3.2/S5-AU-03: an automatic (agent/system) reverify consults
+        // the current Goal autonomy; `needs_decision` refuses with `forbidden`
+        // and writes nothing. A person's explicit reverify keeps its existing
+        // rights. The cap fence above stays first (旧上限先有效).
+        if (actorClass !== 'human') {
+            const countedNext = successorAutoCount(predecessor.chain?.autoCount ?? 0, actorClass, reverifyExemption(predecessor));
+            const cap = policy.autoReworkLimit;
+            const verdict = deps.automaticReverifyPolicy !== undefined
+                ? deps.automaticReverifyPolicy({ goal, actorClass, countedNext, cap })
+                : decisionActionPolicy({ autonomy: goalSettingsOf(goal).autonomy, action: 'auto_reverify',
+                    actorClass, countedNext, cap });
+            if (verdict === 'needs_decision' || verdict === 'user_only') {
+                return forbidden('the Goal autonomy requires a user decision before an automatic reverify');
+            }
+        }
+
         // 9. The current configuration (its executor runs the successor), its Host grant, a full capture and the compile.
         const configuration = deps.configurationFor !== undefined ? deps.configurationFor(scope) : deps.configuration;
         if (configuration === undefined) {
@@ -1894,6 +1992,7 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         if (!decided.ok) return reject(decided.code, decided.detail);
         return await commitReverify({ ...commitBase, decided,
             eventActor: caller.kind === 'host' ? caller.actor : { kind: configuration.executor.kind, id: configuration.executor.id },
+            noticeAutomationCap: policy.autoReworkLimit,
             readSet: [...readSet, prepared.workspaceGuard, ...prepared.policyGuards, prepared.baselineGuard] });
     }
 

@@ -18,21 +18,24 @@
  *     no hand-written SQL table or second index exists.
  */
 import type { ArtifactRef } from '../../../contracts/artifact.js';
-import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
+import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { RoleBindingRefV1, RunRef, SourceRefV1 } from '../../../contracts/dispatch.js';
 import type { QueryJobAnswerRef, QueryRunRef } from '../../../contracts/query-job.js';
+import { MAX_AUTO_REWORK_LIMIT } from '../../../contracts/task-requeue.js';
 import type { RecordLookupIndex } from '../../record-store/lookup-ports.js';
 import type {
   DecodeResult, EncodedDomainEvent, EncodedRecord, RecordBackendSchemas,
 } from '../../record-store/ports.js';
 import { isJsonObject, isNonEmptyString, parseJsonObject } from '../../record-store/record-codec.js';
-import { checkArtifactRef, checkPlainSessionRef, checkSessionBody } from './session-record-codecs.js';
+import { checkArtifactRef, checkPlainSessionRef, checkSessionBody, isPlatformCursor } from './session-record-codecs.js';
 import type { Slice1EventHeaderV1 } from './lifecycle-record-codecs.js';
 import type { SessionRecord } from '../../../contracts/core/session.js';
 import type { ArchiveStepRefV1 } from '../../../contracts/core/session-archive.js';
 import { SESSION_REPLY_BY_HANDLER_LOOKUP } from '../model/session-facts-contracts.js';
 import type { MessageQueryAnswerSender, MessageSender, SessionMessage } from '../model/communication-contracts.js';
+import type { NoticeOriginWireV1 } from '../persistence/decision-record-codecs.js';
+import { aggregateRefProblem } from '../persistence/decision-record-codecs.js';
 
 /** Encoding selector for the persisted message record. */
 export const SESSION_MESSAGE_SCHEMA_ID = 'SessionMessage@1';
@@ -43,6 +46,9 @@ export const SESSION_MESSAGE_READ_EVENT_TYPE = 'SessionMessageRead';
 export const SESSION_MESSAGE_RESPONDED_EVENT_TYPE = 'SessionMessageResponded';
 export const SESSION_MESSAGE_DERIVATION_EVENT_TYPE = 'SessionMessageConsultationDerived';
 export const SESSION_MESSAGE_INPUT_ACCEPTED_EVENT_TYPE = 'SessionMessageInputAccepted';
+/** Slice 5 replay event selectors (SPEC §2.3, §2.8). */
+export const SESSION_MESSAGE_DECISION_ANSWERED_EVENT_TYPE = 'SessionMessageDecisionAnswered';
+export const SESSION_MESSAGE_DECISION_APPLIED_EVENT_TYPE = 'SessionMessageDecisionApplied';
 export const SESSION_MESSAGE_EVENT_SCHEMA_VERSION = 1;
 /** Slice 1 §2.9: the wait-disposal replay event written by the mailbox owner. */
 export const ARCHIVE_WAIT_DISPOSED_EVENT_TYPE = 'ArchiveWaitDisposed';
@@ -55,6 +61,22 @@ export const SESSION_MESSAGE_BY_RECIPIENT_STATUS_LOOKUP = 'session-message-by-re
  * become a candidate of a concrete Run query. */
 export const SESSION_MESSAGE_BY_SENDER_RUN_LOOKUP = 'session-message-by-sender-run';
 export const SESSION_MESSAGE_BY_SENDER_SESSION_LOOKUP = 'session-message-by-sender-session';
+/** Slice 5 decision indexes on the SAME SessionMessage aggregate codec (SPEC §2.5). */
+export const S5_USER_MESSAGE_BY_GOAL = 's5-user-message-by-goal';
+export const S5_MESSAGE_BY_WORKSPACE_STATUS = 's5-message-by-workspace-status';
+export const S5_DECISION_ANSWER_BY_SOURCE = 's5-decision-answer-by-source';
+
+/**
+ * Slice 5 notification origin wire (SPEC §2.5 line 289). The single
+ * declaration lives in `persistence/rework-codecs.ts` and the single
+ * `decodeNoticeOrigin` export lives in `persistence/decision-record-codecs.ts`
+ * (A7); this module re-exports both for its historical importers. These are
+ * OPTIONAL top-level wire fields, NOT part of the public `SessionMessage` DTO:
+ * the record validator accepts them and `encodeSessionMessageRecord` writes
+ * them through its optional `origin` parameter.
+ */
+export type { NoticeOriginWireV1 } from '../persistence/decision-record-codecs.js';
+export { decodeNoticeOrigin } from '../persistence/decision-record-codecs.js';
 
 /**
  * Fixed body contentType for the canonical JSON envelope:
@@ -93,36 +115,56 @@ export const SESSION_MESSAGE_LOOKUP_INDEXES: readonly RecordLookupIndex[] = [
   },
 ];
 
+/**
+ * Slice 5 additive indexes (SPEC §2.5 table, lines 280-282), registered on the
+ * SAME original SessionMessage aggregate codec — never a second registration.
+ * Kept separate from `SESSION_MESSAGE_LOOKUP_INDEXES` so the frozen historical
+ * constant (and its exact-shape test) stays byte-compatible.
+ */
+export const S5_SESSION_MESSAGE_LOOKUP_INDEXES: readonly RecordLookupIndex[] = [
+  {
+    name: S5_USER_MESSAGE_BY_GOAL,
+    aggregateType: 'SessionMessage',
+    paths: ['ref.projectId', 'ref.workspaceId', 'recipient.kind', 'goalRef.goalId'],
+  },
+  {
+    name: S5_MESSAGE_BY_WORKSPACE_STATUS,
+    aggregateType: 'SessionMessage',
+    paths: ['ref.projectId', 'ref.workspaceId', 'status'],
+  },
+  {
+    name: S5_DECISION_ANSWER_BY_SOURCE,
+    aggregateType: 'SessionMessage',
+    paths: ['ref.projectId', 'ref.workspaceId', 'decision.source.kind', 'decision.source.key'],
+  },
+];
+
 // --------------------------------------------------------------------------
 // Event bodies (stable replay carriers)
 // --------------------------------------------------------------------------
-
-type SentEventBase = {
-  eventId: string;
-  schemaVersion: 1;
-  occurredAt: string;
-  projectId: string;
-  workspaceId: string;
-  requestId: string;
-  actor: MessageSender;
-  message: SessionMessage;
-};
-
-export type SessionMessageSentEventV1 = SentEventBase & { eventType: 'SessionMessageSent' };
-export type SessionMessageReadEventV1 = SentEventBase & { eventType: 'SessionMessageRead' };
-export type SessionMessageConsultationDerivedEventV1 = SentEventBase & { eventType: 'SessionMessageConsultationDerived' };
-export type SessionMessageInputAcceptedEventV1 = SentEventBase & { eventType: 'SessionMessageInputAccepted' };
-export type SessionMessageRespondedEventV1 = Omit<SentEventBase, 'actor'> & {
-  eventType: 'SessionMessageResponded';
-  /** The formal responder identity: a work_run or a derived query_run Answer. */
-  actor: MessageSender | MessageQueryAnswerSender;
-};
-export type SessionMessageEventV1 =
-  | SessionMessageSentEventV1
-  | SessionMessageReadEventV1
-  | SessionMessageRespondedEventV1
-  | SessionMessageConsultationDerivedEventV1
-  | SessionMessageInputAcceptedEventV1;
+// Declared in `model/communication-contracts.ts` so the model-layer write
+// facade can name the union without a `model -> sessions` import; re-exported
+// here for every existing importer (slice 5, SPEC §2.8).
+export type {
+  SessionMessageSentEventV1,
+  SessionMessageReadEventV1,
+  SessionMessageConsultationDerivedEventV1,
+  SessionMessageInputAcceptedEventV1,
+  SessionMessageRespondedEventV1,
+  SessionMessageDecisionAnsweredEventV1,
+  SessionMessageDecisionAppliedEventV1,
+  SessionMessageEventV1,
+} from '../model/communication-contracts.js';
+import type {
+  SessionMessageSentEventV1,
+  SessionMessageReadEventV1,
+  SessionMessageConsultationDerivedEventV1,
+  SessionMessageInputAcceptedEventV1,
+  SessionMessageRespondedEventV1,
+  SessionMessageDecisionAnsweredEventV1,
+  SessionMessageDecisionAppliedEventV1,
+  SessionMessageEventV1,
+} from '../model/communication-contracts.js';
 
 /** Slice 1 (spec §2.9): one wait disposal. The header comes from the lifecycle
  * codec; the changed source Session makes its revision participate in the
@@ -292,7 +334,364 @@ export function checkResponseSender(value: unknown): Problem {
   return null;
 }
 
+// --------------------------------------------------------------------------
+// Slice 5 additive shapes (SPEC §2.3): user recipient, goalRef, decision
+// metadata, application and the widened user response. Pure shape checks only.
+// --------------------------------------------------------------------------
+
+function checkGoalRefShape(value: unknown): Problem {
+  if (!isObject(value) || !hasOnlyKeys(value, ['aggregateType', 'projectId', 'goalId'])) {
+    return 'goal ref must be a GoalRef';
+  }
+  if (value['aggregateType'] !== 'Goal' || !nonEmpty(value['projectId']) || !nonEmpty(value['goalId'])) {
+    return 'goal ref is not a valid GoalRef';
+  }
+  return null;
+}
+
+function checkWorkspaceRefShape(value: unknown): Problem {
+  if (!isObject(value) || !hasOnlyKeys(value, ['aggregateType', 'projectId', 'workspaceId'])) {
+    return 'workspace ref must be a WorkspaceRef';
+  }
+  if (value['aggregateType'] !== 'Workspace' || !nonEmpty(value['projectId']) || !nonEmpty(value['workspaceId'])) {
+    return 'workspace ref is not a valid WorkspaceRef';
+  }
+  return null;
+}
+
+function checkPlanRevisionRefShape(value: unknown): Problem {
+  if (!isObject(value) || !hasOnlyKeys(value, ['aggregateType', 'projectId', 'planId'])) {
+    return 'plan revision ref must be a PlanRevisionRef';
+  }
+  if (value['aggregateType'] !== 'PlanRevision' || !nonEmpty(value['projectId']) || !nonEmpty(value['planId'])) {
+    return 'plan revision ref is not a valid PlanRevisionRef';
+  }
+  return null;
+}
+
+function checkVersionPinShape(value: unknown): Problem {
+  if (!isObject(value) || !hasOnlyKeys(value, ['ref', 'revision'])) return 'version pin must carry ref and revision';
+  const refProblem = aggregateRefProblem(value['ref']);
+  if (refProblem !== null) return refProblem;
+  const revision = value['revision'];
+  if (typeof revision !== 'number' || !Number.isSafeInteger(revision) || revision < 0) {
+    return 'version pin revision must be a non-negative integer';
+  }
+  return null;
+}
+
+function checkVersionPinList(value: unknown): Problem {
+  if (!Array.isArray(value)) return 'version pins must be an array';
+  for (const pin of value) {
+    const problem = checkVersionPinShape(pin);
+    if (problem !== null) return problem;
+  }
+  return null;
+}
+
+function checkGoalSettingsShape(value: unknown): Problem {
+  if (!isObject(value)
+    || !hasOnlyKeys(value, ['schemaVersion', 'autonomy', 'order', 'waitForGoalRef', 'parallelRisks'])) {
+    return 'goal settings carries unknown fields';
+  }
+  if (value['schemaVersion'] !== 1) return 'goal settings schemaVersion must be 1';
+  if (value['autonomy'] !== 'every_step' && value['autonomy'] !== 'after_plan_confirmation') {
+    return 'goal settings autonomy is not recognized';
+  }
+  const order = value['order'];
+  if (typeof order !== 'number' || !Number.isSafeInteger(order) || order < 0) {
+    return 'goal settings order must be a non-negative integer';
+  }
+  if (value['waitForGoalRef'] !== null) {
+    const wait = checkGoalRefShape(value['waitForGoalRef']);
+    if (wait !== null) return `goal settings waitForGoalRef: ${wait}`;
+  }
+  const risks = value['parallelRisks'];
+  if (!Array.isArray(risks)) return 'goal settings parallelRisks must be an array';
+  for (const risk of risks) {
+    if (!isObject(risk) || !hasOnlyKeys(risk, ['otherGoalRef', 'selfPlanRef', 'otherPlanRef'])) {
+      return 'goal settings parallel risk carries unknown fields';
+    }
+    const other = checkGoalRefShape(risk['otherGoalRef']);
+    if (other !== null) return `goal settings parallel risk otherGoalRef: ${other}`;
+    for (const key of ['selfPlanRef', 'otherPlanRef']) {
+      if (risk[key] !== null) {
+        const plan = checkPlanRevisionRefShape(risk[key]);
+        if (plan !== null) return `goal settings parallel risk ${key}: ${plan}`;
+      }
+    }
+  }
+  return null;
+}
+
+function checkGoalDecisionBasisShape(value: unknown): Problem {
+  if (!isObject(value)
+    || !hasOnlyKeys(value, ['goalRef', 'workspaceRef', 'objective', 'activePlanRef', 'settings'])) {
+    return 'goal decision basis carries unknown fields';
+  }
+  const goal = checkGoalRefShape(value['goalRef']);
+  if (goal !== null) return `goal decision basis goalRef: ${goal}`;
+  const workspace = checkWorkspaceRefShape(value['workspaceRef']);
+  if (workspace !== null) return `goal decision basis workspaceRef: ${workspace}`;
+  if (!nonEmpty(value['objective'])) return 'goal decision basis requires objective';
+  if (value['activePlanRef'] !== null) {
+    const plan = checkPlanRevisionRefShape(value['activePlanRef']);
+    if (plan !== null) return `goal decision basis activePlanRef: ${plan}`;
+  }
+  const settings = checkGoalSettingsShape(value['settings']);
+  if (settings !== null) return `goal decision basis settings: ${settings}`;
+  return null;
+}
+
+function checkGoalControlRebaseShape(value: unknown): Problem {
+  if (!isObject(value) || !hasOnlyKeys(value, ['captured', 'actualBefore', 'basis'])) {
+    return 'goal control rebase carries unknown fields';
+  }
+  const captured = checkVersionPinShape(value['captured']);
+  if (captured !== null) return `goal control rebase captured: ${captured}`;
+  const actual = checkVersionPinShape(value['actualBefore']);
+  if (actual !== null) return `goal control rebase actualBefore: ${actual}`;
+  const basis = checkGoalDecisionBasisShape(value['basis']);
+  if (basis !== null) return `goal control rebase basis: ${basis}`;
+  return null;
+}
+
+function checkDecisionAnnotationShape(value: unknown): Problem {
+  if (!isObject(value) || !hasOnlyKeys(value, ['objectKey', 'text'])) {
+    return 'decision annotation carries unknown fields';
+  }
+  if (!nonEmpty(value['objectKey']) || typeof value['text'] !== 'string') {
+    return 'decision annotation requires objectKey and text';
+  }
+  return null;
+}
+
+function checkDecisionObjectShape(value: unknown): Problem {
+  if (!isObject(value)) return 'decision object must be an object';
+  if (value['kind'] === 'aggregate') {
+    if (!hasOnlyKeys(value, ['kind', 'pin', 'label'])) return 'aggregate decision object carries unknown fields';
+    const pin = checkVersionPinShape(value['pin']);
+    if (pin !== null) return `aggregate decision object pin: ${pin}`;
+    if (!nonEmpty(value['label'])) return 'aggregate decision object requires label';
+    return null;
+  }
+  if (value['kind'] === 'file') {
+    if (!hasOnlyKeys(value, ['kind', 'workspace', 'path', 'digest', 'label'])) {
+      return 'file decision object carries unknown fields';
+    }
+    const workspace = value['workspace'];
+    if (!isObject(workspace) || !hasOnlyKeys(workspace, ['projectId', 'workspaceId'])
+      || !nonEmpty(workspace['projectId']) || !nonEmpty(workspace['workspaceId'])) {
+      return 'file decision object workspace must be a WorkspaceScope';
+    }
+    if (!nonEmpty(value['path']) || !nonEmpty(value['label'])) return 'file decision object requires path and label';
+    if (value['digest'] !== null && !nonEmpty(value['digest'])) {
+      return 'file decision object digest must be null or a non-empty string';
+    }
+    return null;
+  }
+  return 'decision object kind is not recognized';
+}
+
+function checkDecisionOptionShape(value: unknown): Problem {
+  if (!isObject(value) || !hasOnlyKeys(value, ['id', 'label', 'effect'])) {
+    return 'decision option carries unknown fields';
+  }
+  if (!nonEmpty(value['id']) || !nonEmpty(value['label'])) return 'decision option requires id and label';
+  if (value['effect'] !== 'apply' && value['effect'] !== 'reject' && value['effect'] !== 'defer') {
+    return 'decision option effect is not recognized';
+  }
+  return null;
+}
+
+const DECISION_SOURCE_KINDS: readonly string[] = [
+  'message', 'goal_cause', 'candidate', 'note_review', 'planning_question', 'goal_conflict', 'message_release',
+];
+
+function checkDecisionSourceShape(value: unknown): Problem {
+  if (!isObject(value) || !hasOnlyKeys(value, ['kind', 'key', 'goalRef', 'pins', 'goalBases'])) {
+    return 'decision source carries unknown fields';
+  }
+  if (!DECISION_SOURCE_KINDS.includes(String(value['kind']))) return 'decision source kind is not recognized';
+  if (!nonEmpty(value['key'])) return 'decision source requires a non-empty key';
+  const goal = checkGoalRefShape(value['goalRef']);
+  if (goal !== null) return `decision source goalRef: ${goal}`;
+  const pins = checkVersionPinList(value['pins']);
+  if (pins !== null) return `decision source pins: ${pins}`;
+  const bases = value['goalBases'];
+  if (bases !== undefined) {
+    if (!Array.isArray(bases)) return 'decision source goalBases must be an array';
+    for (const basis of bases) {
+      const problem = checkGoalDecisionBasisShape(basis);
+      if (problem !== null) return `decision source goalBases: ${problem}`;
+    }
+  }
+  return null;
+}
+
+function checkDecisionSelectionShape(value: unknown): Problem {
+  if (!isObject(value)) return 'decision selection must be an object';
+  switch (value['kind']) {
+    case 'option':
+      if (!hasOnlyKeys(value, ['kind', 'optionId']) || !nonEmpty(value['optionId'])) {
+        return 'option decision selection requires optionId';
+      }
+      return null;
+    case 'other':
+      return hasOnlyKeys(value, ['kind']) ? null : 'other decision selection carries unknown fields';
+    case 'conflict_wait':
+    case 'conflict_parallel': {
+      if (!hasOnlyKeys(value, ['kind', 'earlier', 'later'])) return 'conflict decision selection carries unknown fields';
+      const earlier = checkGoalRefShape(value['earlier']);
+      if (earlier !== null) return `conflict decision selection earlier: ${earlier}`;
+      const later = checkGoalRefShape(value['later']);
+      if (later !== null) return `conflict decision selection later: ${later}`;
+      return null;
+    }
+    case 'conflict_order': {
+      if (!hasOnlyKeys(value, ['kind', 'goalOrder'])) return 'conflict order selection carries unknown fields';
+      const order = value['goalOrder'];
+      if (!Array.isArray(order)) return 'conflict order selection goalOrder must be an array';
+      for (const goal of order) {
+        const problem = checkGoalRefShape(goal);
+        if (problem !== null) return `conflict order selection goalOrder: ${problem}`;
+      }
+      return null;
+    }
+    default:
+      return 'decision selection kind is not recognized';
+  }
+}
+
+function checkActorRefShape(value: unknown): Problem {
+  if (!isObject(value)) return 'actor must be an object';
+  if (value['kind'] === 'human' || value['kind'] === 'system') {
+    if (!hasOnlyKeys(value, ['kind', 'id'])) return 'actor carries unknown fields';
+    return nonEmpty(value['id']) ? null : 'actor requires a non-empty id';
+  }
+  if (value['kind'] === 'agent') {
+    if (!hasOnlyKeys(value, ['kind', 'id', 'runRef'])) return 'agent actor carries unknown fields';
+    if (!nonEmpty(value['id'])) return 'agent actor requires a non-empty id';
+    return checkRunRef(value['runRef']);
+  }
+  return 'actor kind is not recognized';
+}
+
+function checkDecisionMessageMetadataShape(value: unknown): Problem {
+  if (!isObject(value) || !hasOnlyKeys(value,
+    ['schemaVersion', 'source', 'objects', 'options', 'syntheticAnswer', 'forwardedFrom'])) {
+    return 'decision metadata carries unknown fields';
+  }
+  if (value['schemaVersion'] !== 1) return 'decision metadata schemaVersion must be 1';
+  const source = checkDecisionSourceShape(value['source']);
+  if (source !== null) return `decision metadata source: ${source}`;
+  const objects = value['objects'];
+  if (!Array.isArray(objects)) return 'decision metadata objects must be an array';
+  for (const object of objects) {
+    const problem = checkDecisionObjectShape(object);
+    if (problem !== null) return `decision metadata objects: ${problem}`;
+  }
+  const options = value['options'];
+  if (!Array.isArray(options)) return 'decision metadata options must be an array';
+  for (const option of options) {
+    const problem = checkDecisionOptionShape(option);
+    if (problem !== null) return `decision metadata options: ${problem}`;
+  }
+  if (typeof value['syntheticAnswer'] !== 'boolean') return 'decision metadata syntheticAnswer must be boolean';
+  if (value['forwardedFrom'] !== null) {
+    const forwarded = checkSessionMessageRef(value['forwardedFrom']);
+    if (forwarded !== null) return `decision metadata forwardedFrom: ${forwarded}`;
+  }
+  return null;
+}
+
+function checkDecisionApplicationShape(value: unknown): Problem {
+  if (!isObject(value)
+    || !hasOnlyKeys(value, ['schemaVersion', 'actor', 'appliedAt', 'receipt', 'changes', 'basisRebases'])) {
+    return 'decision application carries unknown fields';
+  }
+  if (value['schemaVersion'] !== 1) return 'decision application schemaVersion must be 1';
+  const actor = checkActorRefShape(value['actor']);
+  if (actor !== null) return `decision application actor: ${actor}`;
+  if (!nonEmpty(value['appliedAt'])) return 'decision application requires appliedAt';
+  const receipt = value['receipt'];
+  if (!isObject(receipt) || !hasOnlyKeys(receipt, ['identityKey', 'fingerprint', 'cursor'])
+    || !nonEmpty(receipt['identityKey']) || !nonEmpty(receipt['fingerprint']) || !isPlatformCursor(receipt['cursor'])) {
+    return 'decision application receipt is incomplete';
+  }
+  const changes = value['changes'];
+  if (!Array.isArray(changes)) return 'decision application changes must be an array';
+  for (const change of changes) {
+    if (!isObject(change) || !hasOnlyKeys(change, ['before', 'after'])) {
+      return 'decision application change carries unknown fields';
+    }
+    const before = checkVersionPinShape(change['before']);
+    if (before !== null) return `decision application change before: ${before}`;
+    const after = checkVersionPinShape(change['after']);
+    if (after !== null) return `decision application change after: ${after}`;
+  }
+  const rebases = value['basisRebases'];
+  if (rebases !== undefined) {
+    if (!Array.isArray(rebases)) return 'decision application basisRebases must be an array';
+    for (const rebase of rebases) {
+      const problem = checkGoalControlRebaseShape(rebase);
+      if (problem !== null) return `decision application basisRebases: ${problem}`;
+    }
+  }
+  return null;
+}
+
+/** A user recipient is a workspace address, never a fabricated Session. */
+function checkMessageRecipientShape(value: unknown): Problem {
+  if (isObject(value) && value['kind'] === 'user') {
+    if (!hasOnlyKeys(value, ['kind', 'projectId', 'workspaceId'])) return 'user recipient carries unknown fields';
+    if (!nonEmpty(value['projectId']) || !nonEmpty(value['workspaceId'])) {
+      return 'user recipient requires projectId and workspaceId';
+    }
+    return null;
+  }
+  return checkPlainSessionRef(value);
+}
+
+/** The user answer's response slot: trusted Host sender plus the answer decision. */
+function checkUserMessageResponse(value: UnknownRecord): Problem {
+  if (!hasOnlyKeys(value, ['sender', 'bodyRef', 'sourceRef', 'respondedAt', 'decision'])) {
+    return 'user message response carries unknown fields';
+  }
+  const sender = checkMessageSender(value['sender']);
+  if (sender !== null) return `user message response sender: ${sender}`;
+  if (!isObject(value['sender']) || value['sender']['kind'] !== 'host') {
+    return 'user message response sender must be the trusted Host identity';
+  }
+  const body = checkArtifactRef(value['bodyRef']);
+  if (body !== null) return `user message response body: ${body}`;
+  const source = checkSourceRef(value['sourceRef']);
+  if (source !== null) return `user message response source: ${source}`;
+  if (!nonEmpty(value['respondedAt'])) return 'user message response requires respondedAt';
+  const decision = value['decision'];
+  if (!isObject(decision)
+    || !hasOnlyKeys(decision, ['selection', 'source', 'annotations', 'requiresApplication'])) {
+    return 'user message response decision carries unknown fields';
+  }
+  const selection = checkDecisionSelectionShape(decision['selection']);
+  if (selection !== null) return `user message response selection: ${selection}`;
+  const decisionSource = checkDecisionSourceShape(decision['source']);
+  if (decisionSource !== null) return `user message response decision source: ${decisionSource}`;
+  const annotations = decision['annotations'];
+  if (!Array.isArray(annotations)) return 'user message response annotations must be an array';
+  for (const annotation of annotations) {
+    const problem = checkDecisionAnnotationShape(annotation);
+    if (problem !== null) return `user message response annotations: ${problem}`;
+  }
+  if (typeof decision['requiresApplication'] !== 'boolean') {
+    return 'user message response requiresApplication must be boolean';
+  }
+  return null;
+}
+
 function checkMessageResponse(value: unknown): Problem {
+  // Slice 5: the presence of `decision` selects the widened user-answer variant.
+  if (isObject(value) && 'decision' in value) return checkUserMessageResponse(value);
   if (!isObject(value) || !hasOnlyKeys(value, ['sender', 'bodyRef', 'sourceRef', 'respondedAt'])) {
     return 'message response carries unknown fields';
   }
@@ -311,6 +710,8 @@ const MESSAGE_KEYS: readonly string[] = [
   'createdAt', 'status', 'readAt', 'response', 'replyMode',
   'intent', 'needsReply', 'waitAfterSend', 'consultationDerivation', 'acceptedInputs',
   'replyHandler', 'archiveWaitDisposition',
+  // Slice 5 additive fields (SPEC §2.3, §2.5).
+  'goalRef', 'decision', 'application', 'since', 'noticeAutomationCap',
 ];
 
 /** Slice 1 §2.5: the effective reply handler of a wait; absent reads as null. */
@@ -350,7 +751,7 @@ export function checkSessionMessageBody(body: UnknownRecord): Problem {
   if (!isPositiveInt(body['revision'])) return 'SessionMessage revision must be a positive integer';
   const sender = checkMessageSender(body['sender']);
   if (sender !== null) return `SessionMessage sender: ${sender}`;
-  const recipient = checkPlainSessionRef(body['recipient']);
+  const recipient = checkMessageRecipientShape(body['recipient']);
   if (recipient !== null) return `SessionMessage recipient: ${recipient}`;
   const bodyRef = checkArtifactRef(body['bodyRef']);
   if (bodyRef !== null) return `SessionMessage body: ${bodyRef}`;
@@ -366,7 +767,8 @@ export function checkSessionMessageBody(body: UnknownRecord): Problem {
   const replyMode = body['replyMode'];
   if (replyMode !== undefined && replyMode !== 'wait') return 'SessionMessage replyMode must be omitted or wait';
   const intent = body['intent'];
-  if (intent !== undefined && intent !== 'notify' && intent !== 'inquiry' && intent !== 'action_request') {
+  if (intent !== undefined && intent !== 'notify' && intent !== 'inquiry'
+    && intent !== 'action_request' && intent !== 'decision_request') {
     return 'SessionMessage intent is not recognized';
   }
   if (body['needsReply'] !== undefined && typeof body['needsReply'] !== 'boolean') return 'SessionMessage needsReply must be boolean';
@@ -441,6 +843,32 @@ export function checkSessionMessageBody(body: UnknownRecord): Problem {
       return 'SessionMessage archiveWaitDisposition belongs to another project';
     }
   }
+  // Slice 5 additive fields (SPEC §2.3): optional, and NEVER backfilled here.
+  const goalRef = body['goalRef'];
+  if (goalRef !== undefined && goalRef !== null) {
+    const goalRefProblem = checkGoalRefShape(goalRef);
+    if (goalRefProblem !== null) return `SessionMessage goalRef: ${goalRefProblem}`;
+  }
+  const decision = body['decision'];
+  if (decision !== undefined) {
+    const decisionProblem = checkDecisionMessageMetadataShape(decision);
+    if (decisionProblem !== null) return `SessionMessage decision: ${decisionProblem}`;
+  }
+  const application = body['application'];
+  if (application !== undefined && application !== null) {
+    const applicationProblem = checkDecisionApplicationShape(application);
+    if (applicationProblem !== null) return `SessionMessage application: ${applicationProblem}`;
+  }
+  const since = body['since'];
+  if (since !== undefined && since !== null && !isPlatformCursor(since)) {
+    return 'SessionMessage since must be null or a ledger commit cursor';
+  }
+  const noticeAutomationCap = body['noticeAutomationCap'];
+  if (noticeAutomationCap !== undefined
+    && (typeof noticeAutomationCap !== 'number' || !Number.isSafeInteger(noticeAutomationCap)
+      || noticeAutomationCap < 0 || noticeAutomationCap > MAX_AUTO_REWORK_LIMIT)) {
+    return `SessionMessage noticeAutomationCap must be an integer between 0 and ${MAX_AUTO_REWORK_LIMIT}`;
+  }
   // The status/readAt/response triple is monotone and consistent.
   if (status === 'pending' && (readAt !== null || response !== null)) {
     return 'a pending message must be unread and unanswered';
@@ -472,9 +900,15 @@ function checkEventBody(body: UnknownRecord, eventType: string): Problem {
   if (!nonEmpty(body['projectId']) || !nonEmpty(body['workspaceId']) || !nonEmpty(body['requestId'])) {
     return `${eventType} requires projectId, workspaceId and requestId`;
   }
+  // [lead S5-T3-D9] a Host actor on SessionMessageResponded is shape-checked as a
+  // Host sender here and admitted below only for a user decision card answer.
   const actor = eventType === SESSION_MESSAGE_RESPONDED_EVENT_TYPE
-    ? checkResponseSender(body['actor'])
-    : checkMessageSender(body['actor']);
+    ? (isObject(body['actor']) && body['actor']['kind'] === 'host'
+      ? checkMessageSender(body['actor'])
+      : checkResponseSender(body['actor']))
+    : eventType === SESSION_MESSAGE_DECISION_APPLIED_EVENT_TYPE
+      ? checkActorRefShape(body['actor'])
+      : checkMessageSender(body['actor']);
   if (actor !== null) return `${eventType} actor: ${actor}`;
   const message = body['message'];
   if (!isObject(message)) return `${eventType} requires the complete message`;
@@ -500,9 +934,23 @@ function checkEventBody(body: UnknownRecord, eventType: string): Problem {
     && (!isObject(body['actor']) || (body['actor']['kind'] !== 'work_run' && body['actor']['kind'] !== 'host'))) {
     return `${eventType} actor must be the observing Host or executing work_run identity`;
   }
-  if (eventType === SESSION_MESSAGE_RESPONDED_EVENT_TYPE
-    && (!isObject(body['actor']) || (body['actor']['kind'] !== 'work_run' && body['actor']['kind'] !== 'query_run'))) {
-    return `${eventType} actor must be the formal work_run or query_run command identity`;
+  if (eventType === SESSION_MESSAGE_RESPONDED_EVENT_TYPE) {
+    const actorKind = isObject(body['actor']) ? body['actor']['kind'] : undefined;
+    // [lead S5-T3-D9, A10 defect 6] Slice 5 §2.3: the configured operator
+    // answering a user decision card writes the original single response slot
+    // with `SessionMessageResponded`; its actor is the trusted Host. Only a
+    // user-recipient message whose response carries the decision metadata
+    // admits it; every old Session reply keeps the work_run/query_run rule.
+    const userDecisionAnswer = actorKind === 'host'
+      && isObject(message['recipient']) && message['recipient']['kind'] === 'user'
+      && isObject(message['response']) && isObject(message['response']['decision']);
+    if (actorKind !== 'work_run' && actorKind !== 'query_run' && !userDecisionAnswer) {
+      return `${eventType} actor must be the formal work_run or query_run command identity, or the trusted Host answering a user decision`;
+    }
+  }
+  if (eventType === SESSION_MESSAGE_DECISION_ANSWERED_EVENT_TYPE
+    && (!isObject(body['actor']) || body['actor']['kind'] !== 'host')) {
+    return `${eventType} actor must be the trusted Host identity`;
   }
   return null;
 }
@@ -639,6 +1087,9 @@ export const SESSION_MESSAGE_RECORD_SCHEMAS: RecordBackendSchemas = {
     {
       aggregateType: 'SessionMessage',
       schemaId: SESSION_MESSAGE_SCHEMA_ID,
+      // Slice 5: the notification origin `since` is bound from the real commit
+      // cursor in the same transaction (SPEC §2.5 line 289).
+      commitCursorFields: ['since'],
       validate: validateRecord,
     },
   ],
@@ -655,8 +1106,12 @@ export const SESSION_MESSAGE_RECORD_SCHEMAS: RecordBackendSchemas = {
       validate: (event) => validateEvent(event, SESSION_MESSAGE_INPUT_ACCEPTED_EVENT_TYPE) },
     { eventType: ARCHIVE_WAIT_DISPOSED_EVENT_TYPE, schemaVersion: SESSION_MESSAGE_EVENT_SCHEMA_VERSION,
       validate: validateArchiveWaitDisposedEvent },
+    { eventType: SESSION_MESSAGE_DECISION_ANSWERED_EVENT_TYPE, schemaVersion: SESSION_MESSAGE_EVENT_SCHEMA_VERSION,
+      validate: (event) => validateEvent(event, SESSION_MESSAGE_DECISION_ANSWERED_EVENT_TYPE) },
+    { eventType: SESSION_MESSAGE_DECISION_APPLIED_EVENT_TYPE, schemaVersion: SESSION_MESSAGE_EVENT_SCHEMA_VERSION,
+      validate: (event) => validateEvent(event, SESSION_MESSAGE_DECISION_APPLIED_EVENT_TYPE) },
   ],
-  lookups: SESSION_MESSAGE_LOOKUP_INDEXES,
+  lookups: [...SESSION_MESSAGE_LOOKUP_INDEXES, ...S5_SESSION_MESSAGE_LOOKUP_INDEXES],
 };
 
 // --------------------------------------------------------------------------
@@ -668,12 +1123,14 @@ export function sessionMessageRefKey(ref: SessionMessageRef): string {
   return canonicalJson(ref as unknown as JsonValue);
 }
 
-export function encodeSessionMessageRecord(message: SessionMessage): EncodedRecord {
+export function encodeSessionMessageRecord(message: SessionMessage, origin?: NoticeOriginWireV1): EncodedRecord {
+  // The public DTO is written byte-for-byte; the optional origin wire fields are
+  // merged on top only when the caller supplies them (SPEC §2.5 line 291).
   return {
     refKey: sessionMessageRefKey(message.ref),
     schemaId: SESSION_MESSAGE_SCHEMA_ID,
     revision: message.revision,
-    json: JSON.stringify(message),
+    json: JSON.stringify(origin === undefined ? message : { ...message, ...origin }),
   };
 }
 
@@ -702,6 +1159,12 @@ export function encodeSessionMessageConsultationDerivedEvent(event: SessionMessa
 export function encodeSessionMessageInputAcceptedEvent(event: SessionMessageInputAcceptedEventV1): EncodedDomainEvent {
   return encodeMessageEvent(event);
 }
+export function encodeSessionMessageDecisionAnsweredEvent(event: SessionMessageDecisionAnsweredEventV1): EncodedDomainEvent {
+  return encodeMessageEvent(event);
+}
+export function encodeSessionMessageDecisionAppliedEvent(event: SessionMessageDecisionAppliedEventV1): EncodedDomainEvent {
+  return encodeMessageEvent(event);
+}
 
 export function encodeArchiveWaitDisposedEvent(event: ArchiveWaitDisposedEventV1): EncodedDomainEvent {
   return {
@@ -725,10 +1188,18 @@ export function decodeSessionMessageRecord(record: EncodedRecord): DecodeResult<
   // R2 exception (reported): the frozen S1 test `S1-codecs-indexes` SV01 asserts
   // an explicit `null` on a decoded old Message, so this codec keeps the §2.9
   // null default for the two optional wait fields.
-  const message = parsed.value as SessionMessage;
+  // The origin wire (`since`/`noticeAutomationCap`) is NOT part of the old
+  // public DTO; `decodeNoticeOrigin` reads it separately (SPEC §2.5 line 291).
+  const wire = { ...parsed.value };
+  delete wire['since'];
+  delete wire['noticeAutomationCap'];
+  const message = wire as unknown as SessionMessage;
   return { status: 'decoded', value: { ...message,
     replyHandler: message.replyHandler ?? null, archiveWaitDisposition: message.archiveWaitDisposition ?? null } };
 }
+
+// `decodeNoticeOrigin` is re-exported at the top of this module from its single
+// declaration in `persistence/decision-record-codecs.ts` (A7).
 
 /**
  * Restores the ORIGINAL message of a recorded send/read/respond event. This is
@@ -738,7 +1209,9 @@ export function sessionMessageFromEvent(event: EncodedDomainEvent): DecodeResult
   const eventType = event.eventType;
   if (eventType !== SESSION_MESSAGE_SENT_EVENT_TYPE && eventType !== SESSION_MESSAGE_READ_EVENT_TYPE
     && eventType !== SESSION_MESSAGE_RESPONDED_EVENT_TYPE && eventType !== SESSION_MESSAGE_DERIVATION_EVENT_TYPE
-    && eventType !== SESSION_MESSAGE_INPUT_ACCEPTED_EVENT_TYPE) {
+    && eventType !== SESSION_MESSAGE_INPUT_ACCEPTED_EVENT_TYPE
+    && eventType !== SESSION_MESSAGE_DECISION_ANSWERED_EVENT_TYPE
+    && eventType !== SESSION_MESSAGE_DECISION_APPLIED_EVENT_TYPE) {
     return invalid(`eventType ${String(eventType)} is not a SessionMessage event`);
   }
   const checked = validateEvent(event, eventType);

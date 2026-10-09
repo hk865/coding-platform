@@ -708,6 +708,168 @@
       "name": "WorkspaceSourceIndexReader",
       "reason": "kept-for",
       "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; used only by tests: tests/data/workspace-path-boundary.test.ts"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "GoalsSettingsBody",
+      "reason": "wire-format",
+      "note": "the frozen §4.5 goals/settings route DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the new workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "GoalsSettingsResponse",
+      "reason": "wire-format",
+      "note": "the frozen §4.5 goals/settings route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the new workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "GoalsSettingsSetBody",
+      "reason": "wire-format",
+      "note": "the frozen §4.5 goals/settings/set route DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the new workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "GoalsSettingsSetResponse",
+      "reason": "wire-format",
+      "note": "the frozen §4.5 goals/settings/set route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the new workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "GoalsReorderBody",
+      "reason": "wire-format",
+      "note": "the frozen §4.5 goals/reorder route DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the new workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "GoalsReorderResponse",
+      "reason": "wire-format",
+      "note": "the frozen §4.5 goals/reorder route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the new workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "GoalsConflictsBody",
+      "reason": "wire-format",
+      "note": "the frozen §4.5 goals/conflicts route DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the new workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "GoalsConflictsResponse",
+      "reason": "wire-format",
+      "note": "the frozen §4.5 goals/conflicts route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the new workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "PlansRequestCandidateBody",
+      "reason": "wire-format",
+      "note": "the frozen §4.5 plans/request-candidate route DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the new workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "PlansRequestCandidateResponse",
+      "reason": "wire-format",
+      "note": "the frozen §4.5 plans/request-candidate route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the new workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "PlansAbandonBody",
+      "reason": "wire-format",
+      "note": "the frozen §4.5 plans/abandon route DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the new workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "PlansAbandonResponse",
+      "reason": "wire-format",
+      "note": "the frozen §4.5 plans/abandon route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the new workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "DecisionsQueueBody",
+      "reason": "wire-format",
+      "note": "the frozen §4.5 decisions/queue route DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the new workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "DecisionsQueueResponse",
+      "reason": "wire-format",
+      "note": "the frozen §4.5 decisions/queue route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the new workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "DecisionsCardBody",
+      "reason": "wire-format",
+      "note": "the frozen §4.5 decisions/card route DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the new workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "DecisionsCardResponse",
+      "reason": "wire-format",
+      "note": "the frozen §4.5 decisions/card route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the new workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "DecisionsAnswerBody",
+      "reason": "wire-format",
+      "note": "the frozen §4.5 decisions/answer route DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the new workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "DecisionsAnswerResponse",
+      "reason": "wire-format",
+      "note": "the frozen §4.5 decisions/answer route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the new workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "DecisionsApplicationBody",
+      "reason": "wire-format",
+      "note": "the frozen §4.5 decisions/application route DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the new workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "DecisionsApplicationResponse",
+      "reason": "wire-format",
+      "note": "the frozen §4.5 decisions/application route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the new workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "DecisionsNoticesSeenBody",
+      "reason": "wire-format",
+      "note": "the frozen §4.5 decisions/notices/seen route DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the new workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "DecisionsNoticesSeenResponse",
+      "reason": "wire-format",
+      "note": "the frozen §4.5 decisions/notices/seen route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the new workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "MessagesUserSendBody",
+      "reason": "wire-format",
+      "note": "the frozen §4.5 messages/user-send route DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the new workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "MessagesUserSendResponse",
+      "reason": "wire-format",
+      "note": "the frozen §4.5 messages/user-send route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the new workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/core/work-graph/persistence/decision-record-codecs.ts",
+      "name": "GOAL_SETTINGS_CHANGED_SCHEMA_ID",
+      "reason": "wire-format",
+      "note": "the persisted GoalSettingsChanged@1 schema selector; its reader is DECISION_RECORD_SCHEMAS / decodeGoalSettingsChangedEvent"
+    },
+    {
+      "file": "src/core/work-graph/persistence/decision-record-codecs.ts",
+      "name": "WORKSPACE_NOTICE_SEEN_CHANGED_SCHEMA_ID",
+      "reason": "wire-format",
+      "note": "the persisted WorkspaceNoticeSeenChanged@1 schema selector; its reader is DECISION_RECORD_SCHEMAS / decodeWorkspaceNoticeSeenChangedEvent"
+    },
+    {
+      "file": "src/core/work-graph/sessions/message-body-envelope.ts",
+      "name": "UserDecisionBodyEnvelopeV1",
+      "reason": "wire-format",
+      "note": "the persisted user-decision answer body envelope; its reader is decodeStoredUserDecisionBody in the same file"
     }
   ]
 }
