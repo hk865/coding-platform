@@ -9,9 +9,11 @@
 
 此文件是分析模型，不是生产实现、接口冻结或提议批准。基线 HEAD：`facbb61fd791361c943caaddcd1c3cd559be5842`。来源行号按本次读取的 DESIGN（1481 行）。优先第 1、3、5 片，再第 6、7 片。
 
-对象 54，规则 59，场景 80，歧义 40，选项值 80。对象数包括 3 个选项专用对象 O51–O53 和 1 个外部回执对象 O54。它们不是承诺新增四种生产记录。其余 50 个包括记录、外部快照、派生值和有名字的值类型。字段里的小元组不另计对象。
+对象 54，规则 59，场景 80，歧义 40，选项值 80。对象数沿用初稿口径；O51、O53 的行为已由决定 49 选定，仍非新增生产记录，O52 沿原说明，O54 是外部回执。它们不是承诺新增四种生产记录。其余 50 个包括记录、外部快照、派生值和有名字的值类型。字段里的小元组不另计对象。
 
-权威顺序：HANDOFF 决定 20–41（最新 37–40）→ 已定产品行为/冻结原型 → DESIGN 正文 → 历史 QUESTIONS、D-PLACEMENT。决定 41 授权做模型，不批准 §9.1 的提议。§9.2 的技术提议没有 §9.1 编号，保留原标签，不能编造编号。
+权威顺序：HANDOFF 决定（本次最新为 49）→ 已定产品行为/冻结原型 → DESIGN 正文 → 历史 QUESTIONS、D-PLACEMENT。决定 41 授权做模型，不批准 §9.1 的提议。§9.2 的技术提议没有 §9.1 编号，保留原标签，不能编造编号。
+
+本次按决定 49 更新所定行为，旧行号仅供追溯，落点以 DESIGN 章节为准。类型写法仍是分析表示，不表示生产接口已冻结；未被决定 49 涉及的行保留原状态。
 
 “推断”表示本分析补的表示或技术顺序，仍需 lead 冻结。ids 与代码中的 ref 对齐只是表示约定。未确定的用户行为都用 AMB 参数，默认第一值只用于隔离测试，不是建议、批准或产品默认。
 
@@ -19,7 +21,7 @@
 
 Run、Task、Round、GoalPhase 只给本模型读取快照，或接收本模型输出的正式 owner 请求。模型不实现它们的转移/完成算法。既有邮箱的 pending/read/responded 和 acceptedInputs 是外部事实；新 release、expiry、application 不覆盖原语。既有 Session 的 lifecycle/health/occupancy 维度保留。
 
-源码抽查：`src/contracts/core/session.ts`、`src/core/work-graph/model/session-contracts.ts`、`model/communication-contracts.ts`、`src/contracts/core/session-message.ts`、`state/{session-availability,goal,plan,message}-machine.ts`。PLAN-06：候选 stale 是派生，采用拒 revision_conflict。SES-14 当前仅改归档，不验 Kernel；第1片按决定38新增守卫。MSG-01/02 当前禁止发送 pin；三版派工是新提议，不能说已经支持。
+源码抽查：`src/contracts/core/session.ts`、`src/core/work-graph/model/session-contracts.ts`、`model/communication-contracts.ts`、`src/contracts/core/session-message.ts`、`state/{session-availability,goal,plan,message}-machine.ts`。PLAN-06：候选 stale 是派生，采用拒 revision_conflict。SES-14 当前仅改归档，不验 Kernel；第1片按决定38新增守卫。MSG-01/02 当前禁止发送 pin；三版派工按决定 49 已定，尚不能说已经支持。
 
 Goal 控制是薄外部调用。`pause/cancel/resume` 都须恰好 Goal 和 GoalPhase 两个 pin，Phase不存在填0。pause/cancel比较两版；resume只比较Goal但仍携带Phase（决定29；E3 5.5-1）。cancelled恢复拒invalid。这不是新增机器规则。
 
@@ -106,17 +108,17 @@ type Provenance = { kind: 'new'|'continuation'|'handoff'|'copy'; from: string|nu
 
 ### O06 ProjectSettings
 
-类型：record。片：7。依据：DESIGN §1.9 / L314–317；§9.3 / L1205–1218。状态：已定（Q20）；提议 §9.1 #15、#19。
+类型：record。片：7。依据：DESIGN §1.9 / L314–317；§9.3 / L1205–1218。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。
 
 标识：id；派生值只在这次读取里确定，不额外持久化。
 
 ```typescript
-type ProjectSettings = { id: string; scope: Scope; version: number; replyMs: number; longTokens: number; archiveMs: number; autoCap: number; pageSize: number; lineLimit: number; contextBytes: number; noteReadFiles: number; compactKeep: number; wakeLimit: number };
+type ProjectSettings = { id: string; scope: Scope; version: number; replyMs: number; longTokens: number; compactTokens: number; archiveMs: number; autoCap: number; pageSize: number; lineLimit: number; contextBytes: number; noteReadFiles: number; compactKeep: number; wakeLimit: number };
 ```
 
 写入者与时机：Host 设置入口。
 
-不变量：数字可配。分析默认值是 1800000、500000、86400000、3、100、32、4096、256、3、16。不是实测值。
+不变量：换手 longTokens 与压缩触发条件分开配置，先压缩，失败或不支持沿换手规则；本类型暂列数值表示，压缩条件与阈值在 K2 冻结前核定。数字初值及新记忆上限统一见 DESIGN §9.3，未实测。
 
 ### O07 WorkspaceSettings
 
@@ -232,7 +234,7 @@ type GoalPhaseFact = { id: string; scope: Scope; version: number; goalId: string
 
 ### O15 Goal
 
-类型：record。片：5。依据：DESIGN §1.2–1.3；§1.6 / L124–159、276–282。状态：已定（决定 39）；提议 §9.1 #22。
+类型：record。片：5。依据：DESIGN §1.2–1.3；§1.6 / L124–159、276–282。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。
 
 标识：id；派生值只在这次读取里确定，不额外持久化。
 
@@ -242,7 +244,7 @@ type Goal = { id: string; scope: Scope; version: number; desired: 'active'|'paus
 
 写入者与时机：目标 owner；用户确认、目标设置和新目标复制时写。
 
-不变量：cancelled 终态。copiedFrom 指已取消旧目标。复制不改旧目标历史。
+不变量：cancelled 终态，复制不改旧目标；目标卡、自治和原活跃顺序位置复制，等待/风险重确认。新工作遇 completed 先确认新 Goal，不覆盖旧完成事实。
 
 ### O16 GoalSettings
 
@@ -288,7 +290,7 @@ type PlanFact = { id: string; scope: Scope; version: number; goalId: string; mod
 
 ### O19 QueryRound
 
-类型：record。片：6。依据：DESIGN §1.1 / L82–94；§2.11 / L501–508。状态：提议 §9.1 #15、#24。
+类型：record。片：6。依据：DESIGN §1.1 / L82–94；§2.11 / L501–508。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。
 
 标识：id；派生值只在这次读取里确定，不额外持久化。
 
@@ -298,11 +300,11 @@ type QueryRound = { id: string; scope: Scope; version: number; rootId: string; g
 
 写入者与时机：queries/Runtime 提交轮次和正式回答。
 
-不变量：rootId 指第一轮。秘书不领取 Task。发请回答后结束这一轮，不让出 Work Run。
+不变量：rootId 指第一轮，秘书不领取 Task；后续归属按轮次创建提交顺序及既有查询上的显式转交读，旧轮迟到完成不夺回。发请回答后结束本轮，不让出 Work Run。
 
 ### O20 Request
 
-类型：derived。片：6。依据：DESIGN §1.1 / L82–94。状态：提议 §9.1 #24。
+类型：derived。片：6。依据：DESIGN §1.1 / L82–94。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。
 
 标识：id；派生值只在这次读取里确定，不额外持久化。
 
@@ -312,7 +314,7 @@ type Request = { id: string; scope: Scope; goalId: string|null; roundIds: string
 
 写入者与时机：views 每次读时算。
 
-不变量：id=第一轮 id。processing 恰好是四类未结事项的或。没有另存 Request 表。
+不变量：id=第一轮 id；processing 为运行/排队轮次、未答询问、待放行、待采用（含过期）候选的或。无 Request 表，显式转交优先，换手后回复、到期跟接任者。
 
 ### O21 Candidate
 
@@ -344,7 +346,7 @@ type CandidateView = { id: string; stored: Candidate; status: 'candidate'|'stale
 
 ### O23 DispatchCounter
 
-类型：record。片：7。依据：DESIGN §2.11 / L510–519。状态：提议 §9.1 #25。
+类型：record。片：7。依据：DESIGN §2.11 / L510–519。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。
 
 标识：id；派生值只在这次读取里确定，不额外持久化。
 
@@ -354,21 +356,23 @@ type DispatchCounter = { id: string; scope: Scope; goalId: string; version: numb
 
 写入者与时机：communication 在发出请动手的同一提交里加一。
 
-不变量：只批准不发消息时不增加。请回答不核对三个版本。
+不变量：所有有权派工者核对计划、当前理解指针和序号；首次无理解用明确空值表示“尚无”，sequence 从 0 起。首次成功才增序号，重试回原回执，请回答不核对。
 
 ### O24 Message
 
-类型：record。片：5。依据：DESIGN §1.4；§2.7；§4.6 / L176–197、436、764–776。状态：已定（决定 37 / Q20）；提议 §9.1 #7、#13、#20、#25。
+类型：record。片：5。依据：DESIGN §1.4；§2.7；§4.6 / L176–197、436、764–776。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。
 
 标识：id；派生值只在这次读取里确定，不额外持久化。
 
 ```typescript
-type Message = { id: string; scope: Scope; version: number; goalId: string|null; sender: Actor; recipient: 'user'|string; intent: 'action'|'answer'|'notice'|'decision'; taskId: string|null; body: string; needsReply: boolean; waitAfterSend: boolean; deadline: number|null; createdAt: number; release: 'released'|'awaiting'|'denied'; delivery: 'queued'|'delivered'|'undelivered'; response: Reply|null; expiredAt: number|null; transferredTo: string|null; withdrawnAt: number|null; appliedAt: number|null; rejectedAt: number|null; application: Application|null; requestId: string|null; originalId: string|null; followupOf: string|null; options: string[]; objects: Ref[]; pins: {plan:number;understanding:number;dispatch:number}|null; consumed: {executionId:string;kind:'response'|'expiry'}[] };
+type Message = { id: string; scope: Scope; version: number; goalId: string|null; sender: Actor; recipient: 'user'|string; intent: 'action'|'answer'|'notice'|'decision'; taskId: string|null; body: string; needsReply: boolean; waitAfterSend: boolean; deadline: number|null; createdAt: number; release: 'released'|'awaiting'|'denied'; delivery: 'queued'|'delivered'|'undelivered'; response: Reply|null; expiredAt: number|null; transferredTo: string|null; withdrawnAt: number|null; appliedAt: number|null; rejectedAt: number|null; application: Application|null; requestId: string|null; originalId: string|null; followupOf: string|null; options: string[]; objects: Ref[]; pins: {plan:number;understanding:number|null;dispatch:number}|null; consumed: {executionId:string;kind:'response'|'expiry'}[] };
 ```
 
 写入者与时机：communication。身份由存下的 Run/Query 核对。用户答复/放行。Runtime 以已观察输入确认送达。
 
 不变量：pending/read/responded 是旧邮箱外部状态；新 release、delivery、expiry、落实彼此独立。读取不 ack。
+
+【已定（决定 49）】 用户干预、agent 行动分清来源，正文、对象、时间及处置用原消息事实；原线后来进入未送达也记一次新提醒的位置，持久载体待 I-5 的 U1=甲 冻结，不在此增造字段。
 
 ### O25 Reply
 
@@ -400,7 +404,7 @@ type Application = { objects: Ref[]; actor: Actor; appliedAt: number; evidence: 
 
 ### O27 WaitView
 
-类型：derived。片：7。依据：DESIGN §4.2；§4.6 / L671、764–774。状态：已定（Q20）；提议 §9.1 #7、#24。
+类型：derived。片：7。依据：DESIGN §4.2；§4.6 / L671、764–774。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。
 
 标识：id；派生值只在这次读取里确定，不额外持久化。
 
@@ -410,7 +414,7 @@ type WaitView = { id: string; messageId: string; runId: string|null; requestId: 
 
 写入者与时机：views 读消息、让出 Run 和当前请求归属。
 
-不变量：没有等待表。秘书等待按请求算，不占其查询 Session。到期不释放占用。
+不变量：没有等待表；秘书等待按请求，不占查询 Session。到期不释放占用；已让出等待的 Session 在安全点先接用户输入，默认保留等待，不伪装为原问题的回复。
 
 ### O28 Card
 
@@ -428,7 +432,7 @@ type Card = { id: string; scope: Scope; goalId: string|null; source: 'message'|'
 
 ### O29 Queue
 
-类型：derived。片：5。依据：DESIGN §1.4；§6 / L966、978–981。状态：提议 §9.1 #10、#13；已定（决定 15）。
+类型：derived。片：5。依据：DESIGN §1.4；§6 / L966、978–981。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。
 
 标识：id；派生值只在这次读取里确定，不额外持久化。
 
@@ -440,9 +444,11 @@ type Queue = { id: string; scope: Scope; decision: Card[]; notice: Card[]; curso
 
 不变量：读队列不调用模型。不把通知当行动授权。
 
+【已定（决定 49）】 相关决定和未解决来源用窄索引完整分页，待答和待落实不按年龄丢弃；请知悉按类别已见位置推进，后来未送达用进入该状态的新位置。局部结果、错误都不能当完整空结果。
+
 ### O30 MainSurface
 
-类型：derived。片：6。依据：DESIGN §1.1；§1.4 / L67–78、167–174。状态：已定（决定 37）；提议 §9.1 #15、#21。
+类型：derived。片：6。依据：DESIGN §1.1；§1.4 / L67–78、167–174。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。
 
 标识：id；派生值只在这次读取里确定，不额外持久化。
 
@@ -452,11 +458,11 @@ type MainSurface = { id: string; scope: Scope; selectedGoalId: string|null; requ
 
 写入者与时机：views 按目标读。
 
-不变量：面不是 Session，不占用一个秘书，不产生自己的线。
+不变量：面不是 Session，不产生工作线；回答在对应请求下，步骤在线上，通知按目标折叠，转来决定带成员/任务来源，详情用正式对象和版本引用。
 
 ### O31 Line
 
-类型：derived。片：1。依据：DESIGN §1.5；§4.9 / L201–210、797–804。状态：已定（决定 25 / Q3）；提议 §9.2。
+类型：derived。片：1。依据：DESIGN §1.5；§4.9 / L201–210、797–804。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。
 
 标识：id；派生值只在这次读取里确定，不额外持久化。
 
@@ -468,9 +474,11 @@ type Line = { id: string; scope: Scope; headId: string; sessionIds: string[]; co
 
 不变量：id 是线头 Session 引用，不存稳定成员编号。handoff 新线；copy 画在原线。
 
+【已定（决定 49）】 执行者用当前/最近任务，多项显示首项等 n 项，悬停列全；秘书用最近请求的目标或短话题。成员查找沿图锚点和参与、负责事实，不凭名字猜身份。
+
 ### O32 LineStatus
 
-类型：derived。片：2。依据：DESIGN §1.5 / L213–246；§4.8。状态：已定（决定 38 / Q4；冻结原型）；提议 §9.2。
+类型：derived。片：2。依据：DESIGN §1.5 / L213–246；§4.8。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。
 
 标识：id；派生值只在这次读取里确定，不额外持久化。
 
@@ -480,7 +488,7 @@ type LineStatus = { id: string; own: 'working'|'waiting'|'idle'|'paused'|'unknow
 
 写入者与时机：views 读真实可用性、执行、任务和副本。
 
-不变量：已做完可干预；已退役不可跑。副本回答会使原线计数 working，但不证明原 Session 工作中。
+不变量：后端统一算自身状态与最急关注原因，两者同返，列表、悬停、详情一致；暂停不盖待决，退役而结果未知仍待核对。已做完可干预、已退役不可跑；副本活动不冒充原 Session 正在工作。
 
 ### O33 LineCounts
 
@@ -498,7 +506,7 @@ type LineCounts = { id: string; working: number; standby: number; archived: numb
 
 ### O34 Note
 
-类型：record。片：4。依据：DESIGN §3.3–3.7 / L555–631。状态：已定（决定 20、23 / Q7）；提议 §9.2。
+类型：record。片：4。依据：DESIGN §3.3–3.7 / L555–631。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。
 
 标识：id；派生值只在这次读取里确定，不额外持久化。
 
@@ -508,11 +516,15 @@ type Note = { id: string; scope: Scope; version: number; anchor: Anchor; extraAn
 
 写入者与时机：notes 唯一写入口；agent 顺手写；书记审；用户编辑撤下。
 
-不变量：记忆不改状态，不授权。已撤下保留历史。锚点不包括线或永久成员。
+不变量：记忆不改执行状态、不授予权限，锚点不包括线或永久成员。replaces、contradicts 只能引用至少共享一个锚点的注记，anchor 和 extraAnchors 都算；拒绝、撤下、取代保留历史，不自动恢复旧结论。
+
+【已定（决定 49）】 不加字段：A 沿用现有 anchor/extraAnchors、facts、replaces、contradicts，像 AST 一样严格定型、校验，工具在读时可无损推导关系视图。B（独立关系记录）是实测证明 A 不够后的升级路径；有实测需要可先加可重建反向索引，本次不加关系记录或邻接索引。
+
+【已定（决定 49）】 结论最多 200 Unicode 码点，不另限更窄字节数；正文 3072、当前理解正文 6144 UTF-8 字节，事实 16、依据文件 32 分开计。一个主锚点、附加最多 4；每锚点暂用 5 条收下项，目标/阶段各 1 条理解，每目标 200 条活动注记，未实测初值见 DESIGN §9.3。
 
 ### O35 CurrentPointer
 
-类型：record。片：4。依据：DESIGN §3.3 / L571；§3.6 / L618。状态：提议 §9.1 #25。
+类型：record。片：4。依据：DESIGN §3.3 / L571；§3.6 / L618。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。
 
 标识：id；派生值只在这次读取里确定，不额外持久化。
 
@@ -522,11 +534,11 @@ type CurrentPointer = { id: string; scope: Scope; version: number; anchor: Ancho
 
 写入者与时机：notes 在新理解写入的同次提交 CAS。
 
-不变量：每锚点一个 current。先写胜；后写重读合并，不能静默覆盖。
+不变量：新理解与指针按已读指针版同次 CAS；竞写失败保留草稿、重读合并。读取不等写者，只读已提交版；拒绝/撤下后保留历史引用并显示当前理解不可用，不自动回退。
 
 ### O36 NoteView
 
-类型：derived。片：4。依据：DESIGN §3.3、3.5、3.7 / L566–570、591、628–631。状态：已定（决定 23；推出 7）；提议 §9.2。
+类型：derived。片：4。依据：DESIGN §3.3、3.5、3.7 / L566–570、591、628–631。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。
 
 标识：id；派生值只在这次读取里确定，不额外持久化。
 
@@ -536,11 +548,11 @@ type NoteView = { id: string; stored: Note; usable: boolean; reviewNeeded: boole
 
 写入者与时机：notes 算过时/作废/该更新；views 算跨层来源可读性。
 
-不变量：未核对不是有效。需复查不是撤下。来源不可用不删除正文。
+不变量：现行结论只取范围可见的 accepted/reviewed、已核对且无未决冲突、未作废者；未核对、需复查、来源不可用不能充作有效。本目标先用，跨目标已审项标“书记已审 · 未经你确认”，排在用户确认内容后。
 
 ### O37 Anchor
 
-类型：value。片：4。依据：DESIGN §3.4 / L578–587。状态：已定（决定 23 / Q9）；提议 §9.2。
+类型：value。片：4。依据：DESIGN §3.4 / L578–587。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。
 
 标识：kind/id。
 
@@ -550,7 +562,7 @@ type Anchor = { kind: 'module'|'interface'|'file'|'goal'|'stage'|'task'|'project
 
 写入者与时机：平台由节点位置补齐。
 
-不变量：理解仅挂 goal/stage；一般注记可挂七类节点。
+不变量：理解挂 goal/stage；文件用规范路径及模块归属，符号用文件下带语言、限定名、签名摘要、捕获位置和来源版本的定位，改名须明确映射，不新增 symbol 锚点或永久身份。主、附加锚点都进入原锚点索引。
 
 ### O38 InputRequirement
 
@@ -582,7 +594,7 @@ type SelectedInput = { requirement: InputRequirement; state: 'selected'|'missing
 
 ### O40 Assembly
 
-类型：derived。片：3。依据：DESIGN §5.1–5.2 / L882–906。状态：提议 §9.2；已定（决定 34）。
+类型：derived。片：3。依据：DESIGN §5.1–5.2 / L882–906。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。
 
 标识：id；派生值只在这次读取里确定，不额外持久化。
 
@@ -593,6 +605,8 @@ type Assembly = { id: string; scope: Scope; callKind: 'work'|'continuation'|'han
 写入者与时机：Runtime 一次装配并绑定。
 
 不变量：同样事实得到同样字节。接续段最后。已绑定不重拼。
+
+【已定（决定 49）】 notes 接线前分开 goalPayload 与 optionalRowsFromExtensions：Goal 卡只放选中理解索引，一般注记进入预算区并排除已放项，单轮每条只出现一次；保留实际 note 版本及来源，绑定后不暗换。
 
 ### O41 NodeCard
 
@@ -610,7 +624,7 @@ type NodeCard = { id: string; scope: Scope; node: Ref; name: string; path: strin
 
 ### O42 SearchPage
 
-类型：derived。片：3。依据：DESIGN §5.3 / L933；推出 3。状态：已定（决定 22；推出 3）。
+类型：derived。片：3。依据：DESIGN §5.3 / L933；推出 3。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。
 
 标识：id；派生值只在这次读取里确定，不额外持久化。
 
@@ -620,7 +634,7 @@ type SearchPage = { id: string; scope: Scope; needle: string; items: Ref[]; curs
 
 写入者与时机：views 找名字、路径、一句话语义。
 
-不变量：只做包含匹配，无检索排序，不搜注记全文。
+不变量：图分支仍作原名称/路径/说明的包含匹配；第 4 片给 look/find 各加 memory 分支，含全文与状态查找。工具无模型，确定分页、来源核对、覆盖和不完整提示；跨页依据变更要求重读。此类型保留图分支表示，memory 分支契约由第 4 片冻结，不往旧严格参数里暗塞字段。
 
 ### O43 Footprint
 
@@ -652,7 +666,7 @@ type WakeSet = { id: string; scope: Scope; waits: {goalId:string;recordKinds:str
 
 ### O45 KernelFact
 
-类型：external。片：K。依据：DESIGN §4.3 / L683–710；§5.3 / L923–924。状态：已定（决定 7）；提议 §9.1 #1、#18。
+类型：external。片：K。依据：DESIGN §4.3 / L683–710；§5.3 / L923–924。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。
 
 标识：id；派生值只在这次读取里确定，不额外持久化。
 
@@ -662,11 +676,11 @@ type KernelFact = { id: string; sessionId: string; adapterId: string; historyRea
 
 写入者与时机：Kernel/Runtime 已观察结果输入。模型不跑 Kernel 或命令。
 
-不变量：K 关闭不是原 Turn 恢复。无沙箱不退宿主 shell。
+不变量：K 关闭不是原 Turn 恢复；成功同 Session 新 Run，失败/不支持走接续。只读沙箱给所有获授权只读角色，无 bubblewrap 能力明确不支持，不退宿主 shell。
 
 ### O46 Compaction
 
-类型：external。片：K2。依据：DESIGN §4.11 / L835–862。状态：提议 §9.1 #19；边界已定（决定 39）。
+类型：external。片：K2。依据：DESIGN §4.11 / L835–862。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。
 
 标识：id；派生值只在这次读取里确定，不额外持久化。
 
@@ -676,7 +690,7 @@ type Compaction = { id: string; sessionId: string; version: number; fromPosition
 
 写入者与时机：K2 Kernel 新压缩记录；平台仅读。
 
-不变量：Session 不变。工具对成对保留。原历史不删。K2 不算 MVP 门槛。
+不变量：Session 不变、原历史不删；先旧工具桩，再必需段落摘要，调用结果成对。压缩与换手条件独立，失败或不支持沿既有换手规则；运行中明确未执行，K2 的决定 39 边界不变。
 
 ### O47 Timeline
 
@@ -694,17 +708,17 @@ type Timeline = { id: string; taskId: string; points: {at:number;kind:'run_start
 
 ### O48 Activity
 
-类型：value。片：2。依据：DESIGN §1.10 / L329；附录 C #15。状态：已定（Q5 B）；提议 §9.2（旧数据）。
+类型：value。片：2。依据：DESIGN §1.10 / L329；附录 C #15。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。
 
 标识：Run id/hour。
 
 ```typescript
-type Activity = { hour: number; steps: number; edits: number; checks: number; complete: boolean };
+type Activity = { hour: number; steps: number|null; edits: number|null; checks: number|null; complete: boolean };
 ```
 
 写入者与时机：Runtime 结束时采集，查询只聚合。
 
-不变量：缺旧计数不能填零装作实际没有活动。
+不变量：新 Run 正常收尾保存按小时实际计数，缺失算错误；旧近期自动分批补，远期用户选窗口，补算幂等且不调模型。缺失、失败、未算均未知并给原因，不填 0。
 
 ### O49 Usage
 
@@ -722,7 +736,7 @@ type Usage = { at: number; inputTokens: number; outputTokens: number; cachedToke
 
 ### O50 ToolGrant
 
-类型：derived。片：3。依据：DESIGN §2.7；§4.10；§5.3 / L431–437、808–814、928–950。状态：已定（决定 37）；提议 §9.2。
+类型：derived。片：3。依据：DESIGN §2.7；§4.10；§5.3 / L431–437、808–814、928–950。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。
 
 标识：id；派生值只在这次读取里确定，不额外持久化。
 
@@ -732,21 +746,21 @@ type ToolGrant = { id: string; role: Role; autonomy: 'step'|'auto'; tools: strin
 
 写入者与时机：Host/Runtime 按职责和自治授予。writer 再核权。
 
-不变量：副本不能记。秘书不能领取、改代码、改目标、采用。秘书记自己的理解是提议。
+不变量：副本不能记；秘书可记自身注记/理解，但不领任务、改代码或采用计划。参谋和具委托权限的执行者可建人，其他工作变更权限见 R52；用户话任何成员可起草，须用户点击记下才归用户来源。
 
 ### O51 RequestRoute
 
-类型：option-only。片：6。依据：DESIGN §1.1 L89–93；§4.4 L721。状态：推断（AMB-17 技术分支，未定）。
+类型：value。片：6。依据：DESIGN §1.1 L89–93；§4.4 L721。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。
 
 标识：id；派生值只在这次读取里确定，不额外持久化。
 
 ```typescript
-type RequestRoute = { id:string; requestId:string; from:string; to:string; at:number; kind:'routing_round'|'handoff_marker' };
+type RequestRoute = { id:string; requestId:string; from:string; to:string; at:number; kind:'routing_round' };
 ```
 
-写入者与时机：只有 AMB-17 对应分支写。
+写入者与时机：转交时经既有查询入口保存；具体字段映射待第 6 片冻结。
 
-不变量：这是分析用路由表示，不宣称设计已决定新增记录。
+不变量：转交使用既有查询记录，不新增 RequestRoute 生产记录；此值仅表示一次显式转交的内容，归属按查询创建提交顺序及转交优先读。
 
 ### O52 AnswerReceipt
 
@@ -764,7 +778,7 @@ type AnswerReceipt = { id:string; scope:Scope; sourceKind:string; sourceId:strin
 
 ### O53 CloneChoice
 
-类型：option-only。片：6。依据：DESIGN §1.6 L282。状态：推断（AMB-30 时序分支，未定）。
+类型：value。片：6。依据：DESIGN §1.6 L282。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。
 
 标识：id；派生值只在这次读取里确定，不额外持久化。
 
@@ -774,11 +788,11 @@ type CloneChoice = { id:string; sourceGoalId:string; newGoalId:string; selectedM
 
 写入者与时机：模型模拟用户确认到首计划采用之间的选择。
 
-不变量：只表达分阶段操作材料；生产持久载体未定，不自动转消息。
+不变量：确认创建新目标时未选项撤回，选中项等首方案采用后转交；取消创建草稿不改旧消息。只是阶段操作材料，不承诺独立持久记录。
 
 ### O54 DispatchReceipt
 
-类型：external。片：7。依据：DESIGN §2.11 L513；既有邮箱重放 MSG-01/02。状态：已定（既有回执）；推断（AMB-22 新规则先后）。
+类型：external。片：7。依据：DESIGN §2.11 L513；既有邮箱重放 MSG-01/02。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。
 
 标识：id；派生值只在这次读取里确定，不额外持久化。
 
@@ -788,7 +802,7 @@ type DispatchReceipt = { id:string; messageId:string; fingerprint:string };
 
 写入者与时机：可信记录存储回执。
 
-不变量：同内容重放是否先于新版本检查由 AMB-22 选。不能重复增序号。
+不变量：同内容成功重试先回既有回执，再谈新请求版本核对，不能重复发消息或增加序号。
 
 ## 行为总约定
 
@@ -834,7 +848,7 @@ type DispatchReceipt = { id:string; messageId:string; fingerprint:string };
 
 ### R03 createContinuation
 
-依据：DESIGN §4.3 L685–710。状态：已定（决定 7、8）；提议 §9.1 #1。片：1。
+依据：DESIGN §4.3 L685–710。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。片：1。
 
 触发：收到 `createContinuation` 动作或该规则对应的正式观察。执行者：Workflow/Runtime。
 
@@ -849,6 +863,8 @@ type DispatchReceipt = { id:string; messageId:string; fingerprint:string };
 前置、效果与拒绝：旧 Turn 有终态且原 Session 可用，发 continue_run。K 关成功也在原 Session 新 Run。K 无能力、读不到、跨适配器或失败，建 continuation 并转本任务责任。旧历史保留。不能恢复原 Run。退路creationCompleted是可信完成观察；false只提创建，不能登记Session或转责任。
 
 拒绝码：`busy, invalid, unavailable`。所有未列拒绝均保留输入状态。例子和精确正反断言见 SCENARIOS 的 S20、S42。
+
+【已定（决定 49）】 K 补丁不复活之前已退役 Session，执行结果未知仍先按正式规则核对。
 
 ### R04 finishResponsibilities
 
@@ -924,7 +940,7 @@ type DispatchReceipt = { id:string; messageId:string; fingerprint:string };
 
 ### R08 pickExecutor
 
-依据：DESIGN §2.4 L372、376；J1。状态：已定（决定 11 / Q19）；提议 §9.2。片：1（排除和依赖软排序）；按含义排序是第 7 片（〔lead 改〕原文只写“片：1”，§2.4 L376 写“排除：1；排序：7”）。
+依据：DESIGN §2.4 L372、376；J1。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。片：1（排除和依赖软排序）；按含义排序是第 7 片（〔lead 改〕原文只写“片：1”，§2.4 L376 写“排除：1；排序：7”）。
 
 触发：收到 `pickExecutor` 动作或该规则对应的正式观察。执行者：Workflow。
 
@@ -939,6 +955,8 @@ type DispatchReceipt = { id:string; messageId:string; fingerprint:string };
 前置、效果与拒绝：排除 archived、非available、occupied、copy 和 Work等待。按任务关联、模块关联、同目标历史、职责、最近活动、id排。依赖仅软排序，没有完成前置守卫。无成员只发创建建议。
 
 拒绝码：`not_found`。所有未列拒绝均保留输入状态。例子和精确正反断言见 SCENARIOS 的 S03。
+
+【已定（决定 49）】 这里排除等待者只管普通派工；已让出等待者处理用户安全点输入走 R39/R40，默认保留等待。优先并行派文件、模块不重叠的任务，重叠先由参谋等协调者定接口契约，余下冲突由正式检查和返工处理。
 
 ### R09 askCopy
 
@@ -978,7 +996,7 @@ type DispatchReceipt = { id:string; messageId:string; fingerprint:string };
 
 ### R11 deriveLineStatus
 
-依据：DESIGN §1.5 L213–246；§4.8。状态：已定（决定 38 / Q4；冻结原型）；提议 §9.2。片：2。
+依据：DESIGN §1.5 L213–246；§4.8。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。片：2。
 
 触发：收到 `deriveLineStatus` 动作或该规则对应的正式观察。执行者：views。
 
@@ -990,7 +1008,7 @@ type DispatchReceipt = { id:string; messageId:string; fingerprint:string };
 {sessionId:string;attention:string|null}
 ```
 
-前置、效果与拒绝：归档优先；再退役、未知、启动、运行、等待、暂停、做完、待命。stopPending 独立标记。非运行时 Task attention 是左栏词，own 仍给详情。计数看执行/检查/查询/副本活动。此顺序是标明的技术推断。
+前置、效果与拒绝：后端统一返回 own 与最急 attention，左栏、悬停及详情同源；关注按待决定、失败、受阻、待核对排序，暂停不掩待决，退役结果未知仍保留待核对。stopPending 独立，计数仍按执行/检查/查询/副本活动，不把关注原因当另一条线。
 
 拒绝码：`not_found`。所有未列拒绝均保留输入状态。例子和精确正反断言见 SCENARIOS 的 S13。
 
@@ -1068,7 +1086,7 @@ type DispatchReceipt = { id:string; messageId:string; fingerprint:string };
 
 ### R16 gateAction
 
-依据：DESIGN §1.3 L141–154；§2.7。状态：已定（决定 37 / Q12、Q21）；提议 §9.1 #8、#12、#16。片：5。
+依据：DESIGN §1.3 L141–154；§2.7。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。片：5。
 
 触发：收到 `gateAction` 动作或该规则对应的正式观察。执行者：Workflow/工具。
 
@@ -1084,9 +1102,11 @@ type DispatchReceipt = { id:string; messageId:string; fingerprint:string };
 
 拒绝码：`invalid`。所有未列拒绝均保留输入状态。例子和精确正反断言见 SCENARIOS 的 S23、S24、S25、S26、S27、S28、S29、S30、S31、S32、S33、S34、S35、S36、S37、S38、S39、S40。
 
+【已定（决定 49）】 短期线每步确认先写理解再批，批准后重核版本；暂停只读可用，但不放行工作，恢复后重核。秘书在每步确认下请回答仍须放行。
+
 ### R17 sendMessage
 
-依据：DESIGN §1.4 L169–183；§2.11 L503–505。状态：已定（决定 37）；提议 §9.1 #13、#25。片：5。
+依据：DESIGN §1.4 L169–183；§2.11 L503–505。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。片：5。
 
 触发：收到 `sendMessage` 动作或该规则对应的正式观察。执行者：受信发送者。
 
@@ -1095,16 +1115,16 @@ type DispatchReceipt = { id:string; messageId:string; fingerprint:string };
 输入：
 
 ```typescript
-{message:Message;dispatchObserved?:{plan:number;understanding:number;dispatch:number};isReplay?:boolean}
+{message:Message;dispatchObserved?:{plan:number;understanding:number|null;dispatch:number};isReplay?:boolean}
 ```
 
-前置、效果与拒绝：先核可信 sender 与保存的Query/Run及scope。decision只给秘书/参谋/书记，user收件，2–4选项；copy不能发。秘书action/answer在step存awaiting，收件不可见。action发出原子核plan/current/dispatch并加sequence。answer不核三版。旧pin失败不写消息。重放AMB-22，其他派工AMB-23。
+前置、效果与拒绝：核可信 sender、已存 Query/Run 与 scope，沿既有职责限制；秘书 action/answer 在 step 存 awaiting。所有有权者首次发 action 都原子核 plan/current/dispatch 并递增，首次缺 current 明确 pin=null；成功重试先返回原回执，不重发、不增号，answer 不核三项。版本失败不写消息；这里只查版本，不查语义、不充作文件/目录检查。
 
 拒绝码：`forbidden, invalid, revision_conflict, idempotency_conflict`。所有未列拒绝均保留输入状态。例子和精确正反断言见 SCENARIOS 的 S06、S62、S63。
 
 ### R18 releaseMessage
 
-依据：DESIGN §2.7 L436；§2.11 L516。状态：已定（决定 37）；提议 §9.1 #25。片：7。
+依据：DESIGN §2.7 L436；§2.11 L516。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。片：7。
 
 触发：收到 `releaseMessage` 动作或该规则对应的正式观察。执行者：用户。
 
@@ -1120,9 +1140,11 @@ type DispatchReceipt = { id:string; messageId:string; fingerprint:string };
 
 拒绝码：`forbidden, invalid, revision_conflict`。所有未列拒绝均保留输入状态。例子和精确正反断言见 SCENARIOS 的 S06。
 
+【已定（决定 49）】 暂停时答复可存，但不得放行工作；恢复后重核，过期重出或不发，不由批准自动恢复目标。
+
 ### R19 deriveRequest
 
-依据：DESIGN §1.1 L82–94。状态：提议 §9.1 #24。片：6。
+依据：DESIGN §1.1 L82–94。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。片：6。
 
 触发：收到 `deriveRequest` 动作或该规则对应的正式观察。执行者：views。
 
@@ -1134,13 +1156,13 @@ type DispatchReceipt = { id:string; messageId:string; fingerprint:string };
 {requestId:string}
 ```
 
-前置、效果与拒绝：按root查轮次。最近按createdAt、id（〔lead 改〕这个次序是技术推断，正文没定，见 AMB-19），沿handoff找接任。processing是round、reply、release、candidate四项或。已归档无接任返回重选需求。stale候选是否未结AMB-32。手动转已有Session按AMB-17。
+前置、效果与拒绝：按 root 查轮次，归属以创建提交顺序确定，显式转交优先，再跟换手接任者，旧轮迟到结束不抢回。processing 是轮次、等待、待放行、候选（含过期）四类未完事项的或；已归档无接任按挑选规则另选，不建请求表。
 
 拒绝码：`not_found`。所有未列拒绝均保留输入状态。例子和精确正反断言见 SCENARIOS 的 S07、S72。
 
 ### R20 pickSecretary
 
-依据：DESIGN §1.1 L73–90。状态：已定（决定 37）；提议 §9.1 #15、#24。片：6。
+依据：DESIGN §1.1 L73–90。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。片：6。
 
 触发：收到 `pickSecretary` 动作或该规则对应的正式观察。执行者：Workflow。
 
@@ -1152,13 +1174,13 @@ type DispatchReceipt = { id:string; messageId:string; fingerprint:string };
 {goalId:string|null;requestId:string|null}
 ```
 
-前置、效果与拒绝：同请求优先当前owner，忙也排队。新请求先同目标空闲短、再其他目标空闲短、再建。归档/退役/副本/有排队运行轮排除，未回请回答本身不占用。并列/无用量AMB-16。
+前置、效果与拒绝：同请求优先当前 owner，忙也排队，换手跟接任；新请求先同目标空闲且不太长，再其他目标，最后新开。同级按最近活动，缺用量读已存计量，仍未知者可选但排在已知不太长者后，不直接判过长；@ 明确指定收件，归属不清给可纠正建议，不静默换人。
 
 拒绝码：`not_found`。所有未列拒绝均保留输入状态。例子和精确正反断言见 SCENARIOS 的 S56。
 
 ### R21 submitRequestRound
 
-依据：DESIGN §1.1 L69、77–94；§2.11 L506。状态：提议 §9.1 #15、#21、#24。片：6。
+依据：DESIGN §1.1 L69、77–94；§2.11 L506。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。片：6。
 
 触发：收到 `submitRequestRound` 动作或该规则对应的正式观察。执行者：用户/Host。
 
@@ -1170,13 +1192,13 @@ type DispatchReceipt = { id:string; messageId:string; fingerprint:string };
 {round:QueryRound;eventIds:string[];sameSafePoint:boolean}
 ```
 
-前置、效果与拒绝：root轮rootId=id；后续轮保原root和goal。回复/到期交当前owner。稳定eventId重放无变化（〔lead 改〕重放键是技术推断，不是 DESIGN L506 定下的规则），同点合并AMB-20。只排队，不伪造Kernel开始。
+前置、效果与拒绝：root 轮 rootId=id，后续保 root/goal；下一处理点对同一根请求已排队输入按顺序/来源合批去重，不改写正文。回复在该点已到则不处理到期；已处理到期后迟回另作普通输入。只排队，不伪造 Kernel 开始。
 
 拒绝码：`invalid, not_found`。所有未列拒绝均保留输入状态。例子和精确正反断言见 SCENARIOS 的 S60。
 
 ### R22 answerRound
 
-依据：DESIGN §1.1 L111–114；§2.11 L506。状态：已定（Q16）；提议 §9.1 #15。片：6。
+依据：DESIGN §1.1 L111–114；§2.11 L506。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。片：6。
 
 触发：收到 `answerRound` 动作或该规则对应的正式观察。执行者：Runtime。
 
@@ -1191,6 +1213,8 @@ type DispatchReceipt = { id:string; messageId:string; fingerprint:string };
 前置、效果与拒绝：Runtime提交正式回答结束轮，ideas为空或2–3个。只释放匹配Query占用。不改Task完成。
 
 拒绝码：`invalid, forbidden`。所有未列拒绝均保留输入状态。例子和精确正反断言见 SCENARIOS 的 S07。
+
+【已定（决定 49）】 主对话只显示对应请求的答复/方案/改动说明，步骤留在线上；卡和详情沿真实对象、版本及证据链接读取。
 
 ### R23 selectIdea
 
@@ -1284,7 +1308,7 @@ type DispatchReceipt = { id:string; messageId:string; fingerprint:string };
 
 ### R28 applyDecision
 
-依据：DESIGN §2.3 L357–359；§2.6 L423–426。状态：提议 §9.2；已定（MVP B09）。片：6。
+依据：DESIGN §2.3 L357–359；§2.6 L423–426。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。片：6。
 
 触发：收到 `applyDecision` 动作或该规则对应的正式观察。执行者：用户/提问者。
 
@@ -1296,13 +1320,13 @@ type DispatchReceipt = { id:string; messageId:string; fingerprint:string };
 {messageId:string;objectVersions:{[id:string]:number};change:'future'|'traced';externalApplied:boolean}
 ```
 
-前置、效果与拒绝：必须接受答复与对象版本匹配。拒绝/延期no_op。未来变更发正式计划变更请求，带decisionRef。有痕影响AMB-13。此步不写application。
+前置、效果与拒绝：已接受答复及对象版本须匹配；未来变更走正式计划入口，带 decisionRef，列旧任务/产物/证据“仍适用、修改或复查、依据不足”及理由。已执行任务定义变了用替代任务保留证据，只重做受影响部分，不自动回退工作区；此步不记 application。
 
 拒绝码：`invalid, revision_conflict, unsupported`。所有未列拒绝均保留输入状态。例子和精确正反断言见 SCENARIOS 的 S10、S53。
 
 ### R29 ackApplication
 
-依据：DESIGN §2.6 L424–426；§6 L980。状态：提议 §9.1 #9；已定（推出 8）。片：5。
+依据：DESIGN §2.6 L424–426；§6 L980。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。片：5。
 
 触发：收到 `ackApplication` 动作或该规则对应的正式观察。执行者：实际改动者/用户接口。
 
@@ -1314,13 +1338,13 @@ type DispatchReceipt = { id:string; messageId:string; fingerprint:string };
 {messageId:string;application:Application;actualVersions:{[id:string]:number}}
 ```
 
-前置、效果与拒绝：实际正式版本和来源证据匹配才补记application。同样重放no_op，不同已记拒idempotency_conflict。秘书是否能ack按AMB-21。不能拿答复文字冒充落实。
+前置、效果与拒绝：实际正式版本和来源证据匹配才记 application，同样重放 no_op，不同已记拒 idempotency_conflict。按已存查询轮次和根请求核秘书/接任者处理答复、撤回的权限，不改原 sender；不能借接任替实际执行者声称已落实。
 
 拒绝码：`forbidden, incomplete, revision_conflict, idempotency_conflict`。所有未列拒绝均保留输入状态。例子和精确正反断言见 SCENARIOS 的 S10、S61。
 
 ### R30 deriveQueue
 
-依据：DESIGN §1.4 L176–197；§6 L978–981。状态：提议 §9.1 #10、#13；已定（决定 37）。片：5。
+依据：DESIGN §1.4 L176–197；§6 L978–981。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。片：5。
 
 触发：收到 `deriveQueue` 动作或该规则对应的正式观察。执行者：views。
 
@@ -1335,6 +1359,8 @@ type DispatchReceipt = { id:string; messageId:string; fingerprint:string };
 前置、效果与拒绝：七来源分别按sourceKind:sourceId聚合，不建卡库。候选按request。主面共用id。通知按工作区水位。缺初始化AMB-14；取消AMB-28。注记书记待办不自动当用户审批。
 
 拒绝码：`invalid`。所有未列拒绝均保留输入状态。例子和精确正反断言见 SCENARIOS 的 S10、S51、S54、S68。
+
+【已定（决定 49）】 第 2 片缩窄相关决定、未解决来源的索引并完整分页，待答/待落实不按年龄丢弃；旧执行按时间窗，请知悉按类别位置。后进入未送达按新持久位置提醒一次，不在读取时生成事实；故障与部分结果明确显示。
 
 ### R31 markNoticesSeen
 
@@ -1356,7 +1382,7 @@ type DispatchReceipt = { id:string; messageId:string; fingerprint:string };
 
 ### R32 secretaryHandoff
 
-依据：DESIGN §1.1 L106–108；§4.4 L728。状态：已定（决定 37 / Q8）；提议 §9.1 #16、#17、#24。片：6。
+依据：DESIGN §1.1 L106–108；§4.4 L728。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。片：6。
 
 触发：收到 `secretaryHandoff` 动作或该规则对应的正式观察。执行者：Workflow/秘书。
 
@@ -1368,13 +1394,13 @@ type DispatchReceipt = { id:string; messageId:string; fingerprint:string };
 {from:string;to:string;understandingGoals:string[];targetExists:boolean;creationCompleted:boolean}
 ```
 
-前置、效果与拒绝：无running Query，换前先有应写理解。多目标AMB-18；排队AMB-19；已有目标秘书AMB-17。新目标creationCompleted=false只提创建，不转归属/归档；完成观察true才新建handoff秘书另起线，旧归档；请求和请回答沿归属读到接任，消息原sender不改。两档发notice。
+前置、效果与拒绝：先写全部目标、阶段理解，列全未完请求、待决定/放行、等待、候选和历史入口；无运行写者后，在既有查询上明确转交，排队轮次按新归属处理。创建完成前不转、不归档，成功后接任另起线、旧线归档，原 sender 不改；两档都通知原因、时间、接任者与旧线。
 
 拒绝码：`busy, incomplete, revision_conflict`。所有未列拒绝均保留输入状态。例子和精确正反断言见 SCENARIOS 的 S07、S58、S59。
 
 ### R33 secretaryAutoArchive
 
-依据：DESIGN §1.1 L108；§4.5 L751。状态：提议 §9.1 #17、#24。片：6。
+依据：DESIGN §1.1 L108；§4.5 L751。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。片：6。
 
 触发：收到 `secretaryAutoArchive` 动作或该规则对应的正式观察。执行者：Workflow。
 
@@ -1390,9 +1416,11 @@ type DispatchReceipt = { id:string; messageId:string; fingerprint:string };
 
 拒绝码：`busy`。所有未列拒绝均保留输入状态。例子和精确正反断言见 SCENARIOS 的 S05、S07。
 
+【已定（决定 49）】 未答询问、待放行和过期候选均算未完，不能因无活动 Run 就归档。
+
 ### R34 expireWait
 
-依据：DESIGN §1.9 L314–319；§4.6 L766–773。状态：已定（Q20）；提议 §9.1 #7、#20、#24。片：7。
+依据：DESIGN §1.9 L314–319；§4.6 L766–773。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。片：7。
 
 触发：收到 `expireWait` 动作或该规则对应的正式观察。执行者：Host/现有驱动。
 
@@ -1401,16 +1429,16 @@ type DispatchReceipt = { id:string; messageId:string; fingerprint:string };
 输入：
 
 ```typescript
-{messageId:string;replyAtSameTime:boolean;firstCommit:'reply'|'expiry';priorChainExpiries:number;priorRequestExpiries:number}
+{messageId:string;replyAvailableAtProcessing:boolean;priorChainExpiries:number}
 ```
 
-前置、效果与拒绝：过deadline且无答复、未用掉才写expiredAt。并发及第二次统计AMB-25。绝不释放未知占用。Work发原Task/Session接续效果，秘书新请求轮；退役发信者AMB-26。
+前置、效果与拒绝：处理点超过期限且尚无回复、未处理该等待才记到期；同问题追问链第二次实际到期才提示第二次，重复扫描不加次数。发信者退役仅记事实和通知、不唤醒；Work 按原任务/Session、秘书按当前请求归属接续，未知占用不释放。
 
 拒绝码：`invalid`。所有未列拒绝均保留输入状态。例子和精确正反断言见 SCENARIOS 的 S11、S18、S65、S66。
 
 ### R35 receiveReply
 
-依据：DESIGN §1.9 L318–319；§4.6 L771–772。状态：已定（决定 7 / Q20）；提议 §9.1 #7、#20、#24。片：7。
+依据：DESIGN §1.9 L318–319；§4.6 L771–772。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。片：7。
 
 触发：收到 `receiveReply` 动作或该规则对应的正式观察。执行者：受信收件者/用户。
 
@@ -1425,6 +1453,8 @@ type DispatchReceipt = { id:string; messageId:string; fingerprint:string };
 前置、效果与拒绝：真实收件者与版本核对，保存response。action明确reject同时记rejectedAt，Reply.text留理由；不写appliedAt、不改Task。这是字段映射推断。同样重放无变化，不同回复冲突。秘书找当前请求owner。Work用原Session。expired/consumed后的回复是普通输入。退役sender标undelivered，用户才转交。
 
 拒绝码：`forbidden, revision_conflict, idempotency_conflict`。所有未列拒绝均保留输入状态。例子和精确正反断言见 SCENARIOS 的 S07、S11、S13。
+
+【已定（决定 49）】 归档线新消息保存为未送达，不启用旧线；原回复后来进入未送达也是新提醒，保存进入位置并幂等，I-5 的持久形状待冻结。确认通信断开时向相关双方和用户发原因/时间/接管事实，普通工具失败不自动等同断开或退役。
 
 ### R36 consumeWait
 
@@ -1446,7 +1476,7 @@ type DispatchReceipt = { id:string; messageId:string; fingerprint:string };
 
 ### R37 forwardUndelivered
 
-依据：DESIGN §1.9 L319；§4.6 L772。状态：已定（决定 7 / Q20）；提议 §9.1 #20。片：7。
+依据：DESIGN §1.9 L319；§4.6 L772。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。片：7。
 
 触发：收到 `forwardUndelivered` 动作或该规则对应的正式观察。执行者：用户。
 
@@ -1462,9 +1492,11 @@ type DispatchReceipt = { id:string; messageId:string; fingerprint:string };
 
 拒绝码：`forbidden, invalid, revision_conflict`。所有未列拒绝均保留输入状态。例子和精确正反断言见 SCENARIOS 的 S11。
 
+【已定（决定 49）】 转交到暂停 Goal 先排队，取消 Goal 拒绝新转交；不自动选收件人。
+
 ### R38 disposeWait
 
-依据：DESIGN §4.5 L737；§4.6 L774。状态：提议 §9.1 #3、#20、#24。片：7。
+依据：DESIGN §4.5 L737；§4.6 L774。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。片：7。
 
 触发：收到 `disposeWait` 动作或该规则对应的正式观察。执行者：用户/Workflow。
 
@@ -1476,15 +1508,15 @@ type DispatchReceipt = { id:string; messageId:string; fingerprint:string };
 {messageId:string;mode:'cancel'|'transfer';to:string;newMessageId:string}
 ```
 
-前置、效果与拒绝：cancel视作expiry输入，不释放占用。transfer按AMB-27改变等待处理方，或撤原等待新发询问。秘书等待随请求转，不逐项取消。
+前置、效果与拒绝：cancel 明确记录取消，不能冒充自然到期，不释放未知占用；transfer 改回复接收方，保原问题及期限，不要求重新答。秘书等待随请求明确转交。
 
 拒绝码：`invalid, busy`。所有未列拒绝均保留输入状态。例子和精确正反断言见 SCENARIOS 的 S67。
 
 ### R39 directIntervention
 
-依据：DESIGN §1.6 L268–282。状态：已定（决定 38 / Q18；冻结原型）；提议 §9.1 #22。片：7。
+依据：DESIGN §1.6 L268–282。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。片：7。
 
-触发：收到 `directIntervention` 动作或该规则对应的正式观察。执行者：用户。
+触发：收到 `directIntervention` 动作或该规则对应的正式观察。执行者：用户/有权 agent。
 
 读取：O09、O15、O12、O24。写入：O24。
 
@@ -1494,13 +1526,13 @@ type DispatchReceipt = { id:string; messageId:string; fingerprint:string };
 {message:Message;decisionOpen:boolean;goalCompleted:boolean}
 ```
 
-前置、效果与拒绝：目标Session归档/退役拒绝。保存直接干预queued。Goal暂停/取消或decisionOpen不叫醒。忙时等安全点；空闲有未完Task提接续，无Task且Goal未完成按Q18提独立小任务；原GoalPhase已完成才按AMB-31提新计划载体或新Goal，自治另核。satisfied Task不改。
+前置、效果与拒绝：核人或 agent 的真实来源及权限，归档/退役原 Session 不启动修改。暂停、取消、待决定、未知结果均排队并给原因；用户输入在安全点优先，已让出等待也适用，默认保留原等待并通知实际委托方、等待上游及相关秘书/参谋。空闲未完 Task 续做，无 Task 的活跃 Goal 建正式小任务；Goal 已完成先确认新 Goal 再建任务，旧完成事实不改。
 
 拒绝码：`invalid, unavailable`。所有未列拒绝均保留输入状态。例子和精确正反断言见 SCENARIOS 的 S13、S71。
 
 ### R40 deliverSafePoint
 
-依据：DESIGN §1.6 L268、273–275；E3 输入已接受。状态：已定（冻结原型）；提议 §9.2。片：7。
+依据：DESIGN §1.6 L268、273–275；E3 输入已接受。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。片：7。
 
 触发：收到 `deliverSafePoint` 动作或该规则对应的正式观察。执行者：Runtime。
 
@@ -1512,13 +1544,13 @@ type DispatchReceipt = { id:string; messageId:string; fingerprint:string };
 {messageId:string;decisionOpen:boolean;inputAccepted:boolean}
 ```
 
-前置、效果与拒绝：release必须released，delivery必须queued。Goal active、没有阻挡决定、收件者可用、真实inputAccepted才delivery=delivered。否则仍queued。送达不写appliedAt。
+前置、效果与拒绝：release=released、delivery=queued，Goal active、无阻挡决定、结果已核对且真实 inputAccepted 才送达；其他保持排队，恢复后重核版本。用户优先于 agent 新行动，已让出等待默认保留，不伪装原询问回复、不并开修改 Run；送达、响应、落实分开。
 
 拒绝码：`unavailable, incomplete`。所有未列拒绝均保留输入状态。例子和精确正反断言见 SCENARIOS 的 S13。
 
 ### R41 copyCancelledGoal
 
-依据：DESIGN §1.6 L276–282。状态：已定（决定 39）；提议 §9.1 #22。片：6。
+依据：DESIGN §1.6 L276–282。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。片：6。
 
 触发：收到 `copyCancelledGoal` 动作或该规则对应的正式观察。执行者：用户。
 
@@ -1530,13 +1562,13 @@ type DispatchReceipt = { id:string; messageId:string; fingerprint:string };
 {sourceId:string;newId:string;confirmed:boolean;selectedMessageIds:string[]}
 ```
 
-前置、效果与拒绝：只从cancelled复制。未确认仅草稿；确认新Goal v1、plan0、copiedFrom，旧Goal不写。初方案用户。理解链接旧目标，不搬旧记忆。顺序等待AMB-29；未选消息撤回时点AMB-30。
+前置、效果与拒绝：只从 cancelled 复制；未确认只草稿，确认建新 Goal、复制卡和自治、放原活跃顺序位置，等待/风险重确认，旧目标历史不动。初方案仍用户采用，理解链接旧目标；此时未勾干预撤回，勾选留待初方案采用，取消草稿不改旧消息。
 
 拒绝码：`invalid, forbidden`。所有未列拒绝均保留输入状态。例子和精确正反断言见 SCENARIOS 的 S12、S69、S70。
 
 ### R42 transferCopiedInterventions
 
-依据：DESIGN §1.6 L282；§4.6 L776。状态：提议 §9.1 #22。片：7。
+依据：DESIGN §1.6 L282；§4.6 L776。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。片：7。
 
 触发：收到 `transferCopiedInterventions` 动作或该规则对应的正式观察。执行者：用户/Workflow。
 
@@ -1548,13 +1580,13 @@ type DispatchReceipt = { id:string; messageId:string; fingerprint:string };
 {sourceGoalId:string;newGoalId:string;selected:string[];destinations:{[messageId:string]:string};firstPlanAdopted:boolean}
 ```
 
-前置、效果与拒绝：新目标确从旧目标复制且初方案正式采用。已选新messageId=新Goal:旧消息，引用originalId；原消息标转交。退役/归档原线须指定新收件者。未选撤回。每消息对原子，重复不再发。
+前置、效果与拒绝：新目标来自旧目标且首方案已采用才发勾选的新消息，引用旧消息并标旧消息已转交；原线归档/退役须指定新收件者。未选项已在创建确认时撤回，此步不再处理；重复不再发送。
 
 拒绝码：`invalid, unavailable`。所有未列拒绝均保留输入状态。例子和精确正反断言见 SCENARIOS 的 S12。
 
 ### R43 writeNote
 
-依据：DESIGN §3.1 L536；§3.3；§3.6 L610–619。状态：已定（决定 22 / Q7）；提议 §9.1 #16、#25。片：4。
+依据：DESIGN §3.1 L536；§3.3；§3.6 L610–619。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。片：4。
 
 触发：收到 `writeNote` 动作或该规则对应的正式观察。执行者：agent/用户。
 
@@ -1566,13 +1598,13 @@ type DispatchReceipt = { id:string; messageId:string; fingerprint:string };
 {note:Note;mode:'replace'|'coexist'|null;currentVersion:number;anchorExists:boolean;quotaUsed:number;goalQuotaFull:boolean}
 ```
 
-前置、效果与拒绝：scope/锚点/可信source合法；copy拒，秘书限自己的note/理解。尺寸口径AMB-36，facts≤16、extra≤4、files≤32。同topic没mode拒。结构/矛盾用户待审；锚点quotaUsed≥5或受信goalQuotaFull为true时书记待审；repair暂存于Run。新理解写时current CAS成功即推进；Q7允许本目标先用。当前条撤下/被拒后的指针AMB-33，用户来源AMB-35。
+前置、效果与拒绝：先校验 scope、锚点、来源和严格关系：replaces/contradicts 必须共享主或附加锚点；再查 O34 长度及独立额度。文字超限拒并留草稿，结构/矛盾先用户审、额度随后书记；同话题现行项未说明取代/并存则退回，拒绝/撤下历史不阻止新项。repair 暂存；生效新项、旧项取代与 current CAS 同次提交，待审不提前取代，已拒/撤下终态保留。所有成员可起草用户话，只有用户点击才存用户来源；副本不写。
 
 拒绝码：`invalid, forbidden, revision_conflict`。所有未列拒绝均保留输入状态。例子和精确正反断言见 SCENARIOS 的 S09、S76。
 
 ### R44 reviewNote
 
-依据：DESIGN §1.7 L292–294；§3.6 L614–616。状态：已定（Q7、Q23）；提议 §9.1 #14。片：4。
+依据：DESIGN §1.7 L292–294；§3.6 L614–616。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。片：4。
 
 触发：收到 `reviewNote` 动作或该规则对应的正式观察。执行者：书记/用户。
 
@@ -1584,13 +1616,13 @@ type DispatchReceipt = { id:string; messageId:string; fingerprint:string };
 {noteId:string;verdict:'accept'|'reject'|'merge';humanDecision:boolean}
 ```
 
-前置、效果与拒绝：书记普通accepted→reviewed全项目并notice。结构/矛盾须用户humanDecision。reject拒绝留史；merge只给合并建议，须下一次显式正文+replace写入。已审只改变跨目标可用范围；当前理解被拒后的指针按AMB-33，不复活已取代条。
+前置、效果与拒绝：普通 accepted 由书记审为 reviewed，全项目仅供参考，标“书记已审 · 未经你确认”；结构/矛盾先用户决定，再整理额度。已审项纠正新写取代或撤下，不能重新审为拒绝；拒绝/撤下保留历史，当前引用不可用且不回退。
 
 拒绝码：`forbidden, invalid`。所有未列拒绝均保留输入状态。例子和精确正反断言见 SCENARIOS 的 S16。
 
 ### R45 withdrawNote
 
-依据：DESIGN §1.7 L289–291；§3.6 L616。状态：已定（Q23）；提议 §9.2。片：4。
+依据：DESIGN §1.7 L289–291；§3.6 L616。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。片：4。
 
 触发：收到 `withdrawNote` 动作或该规则对应的正式观察。执行者：作者/书记/用户。
 
@@ -1602,13 +1634,13 @@ type DispatchReceipt = { id:string; messageId:string; fingerprint:string };
 {noteId:string}
 ```
 
-前置、效果与拒绝：用户、原作者、书记可撤，用户条目AMB-35。state=withdrawn保正文事实。若为current需清或回退非撤下已审前版，不让默认读取继续用撤下条。
+前置、效果与拒绝：有权用户、作者、书记可撤，保正文、来源与经过；若是 current 保留历史引用并明确当前理解不可用，不恢复旧项。新用户来源仍须用户点击，不能把 agent 撤改冒充用户原话。
 
 拒绝码：`forbidden`。所有未列拒绝均保留输入状态。例子和精确正反断言见 SCENARIOS 的 S16、S73、S75。
 
 ### R46 deriveNote
 
-依据：DESIGN §3.3 L566–570；§3.5 L591；§3.7 L628–631。状态：已定（决定 23；推出 7）；提议 §9.2。片：4。
+依据：DESIGN §3.3 L566–570；§3.5 L591；§3.7 L628–631。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。片：4。
 
 触发：收到 `deriveNote` 动作或该规则对应的正式观察。执行者：views/notes。
 
@@ -1620,13 +1652,13 @@ type DispatchReceipt = { id:string; messageId:string; fingerprint:string };
 {noteId:string;goalId:string|null;digests:{[path:string]:string};anchorChanged:boolean;eventsAfter:boolean;fileBudget:number}
 ```
 
-前置、效果与拒绝：只有accepted/reviewed且scope可用的才可供当前输入。摘要变化/锚定义变化复查。未核对条目不可用，原source读不到保留并标记。staged任务取消/替代invalid。plan失效范围AMB-34。later相关事件updateDue。
+前置、效果与拒绝：currentEligible 只取范围可见 accepted/reviewed、已核对有效、无未决冲突且未作废者；本目标先用、跨目标只已审。摘要或相关定义变化需复查，未核对和来源不可用不能当有效，staged 所属任务取消/替代作废；撤下/冲突警示指向旧 id、版本、锚点和消息，不复制历史，updateDue 读时算。
 
 拒绝码：`not_found`。所有未列拒绝均保留输入状态。例子和精确正反断言见 SCENARIOS 的 S16、S74。
 
 ### R47 applySemanticRepair
 
-依据：DESIGN §3.6 L617；§1.3 L148–149；决定 21。状态：已定（决定 21 / Q12）；提议 §9.2。片：8。
+依据：DESIGN §3.6 L617；§1.3 L148–149；决定 21。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。片：8。
 
 触发：收到 `applySemanticRepair` 动作或该规则对应的正式观察。执行者：evidence/架构 owner。
 
@@ -1642,9 +1674,11 @@ type DispatchReceipt = { id:string; messageId:string; fingerprint:string };
 
 拒绝码：`invalid, incomplete, forbidden, revision_conflict`。所有未列拒绝均保留输入状态。例子和精确正反断言见 SCENARIOS 的 S16。
 
+【已定（决定 49）】 正式检查及架构修订成功后先 accepted 供本目标使用，书记审成 reviewed 后才供跨目标参考。
+
 ### R48 updateUnderstandingDue
 
-依据：DESIGN §3.5 L591–602。状态：已定（Q8）；提议 §9.2。片：4。
+依据：DESIGN §3.5 L591–602。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。片：4。
 
 触发：收到 `updateUnderstandingDue` 动作或该规则对应的正式观察。执行者：views/装配器。
 
@@ -1659,6 +1693,8 @@ type DispatchReceipt = { id:string; messageId:string; fingerprint:string };
 前置、效果与拒绝：current缺或其写后相关task_end/rework/adopt/archive/regroup则updateDue。工作agent顺手写，手动无人时书记。纯读不存标志、不额外调模型。
 
 拒绝码：`invalid`。所有未列拒绝均保留输入状态。例子和精确正反断言见 SCENARIOS 的 S16。
+
+【已定（决定 49）】 独立审阅结果由下一次工作的成员补入理解；到归档仍无人时书记补，不为记忆另开模型审阅。
 
 ### R49 selectInputs
 
@@ -1680,7 +1716,7 @@ type DispatchReceipt = { id:string; messageId:string; fingerprint:string };
 
 ### R50 assembleContext
 
-依据：DESIGN §5.1–5.2 L882–909。状态：已定（决定 34；推出 4）；提议 §9.2。片：3。
+依据：DESIGN §5.1–5.2 L882–909。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。片：3。
 
 触发：收到 `assembleContext` 动作或该规则对应的正式观察。执行者：Runtime。
 
@@ -1696,9 +1732,11 @@ type DispatchReceipt = { id:string; messageId:string; fingerprint:string };
 
 拒绝码：`incomplete, invalid`。所有未列拒绝均保留输入状态。例子和精确正反断言见 SCENARIOS 的 S22、S78。
 
+【已定（决定 49）】 接 notes 前先拆 goalPayload/optionalRowsFromExtensions：Goal 当前理解索引与预算区一般注记去重，正文按需读。已绑定不改，后续主动读新版标明，实际使用版本和来源留在装配记录。
+
 ### R51 lookFind
 
-依据：DESIGN §5.3 L932–933；Q6。状态：已定（决定 22 / Q6；推出 3）。片：3。
+依据：DESIGN §5.3 L932–933；Q6。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。片：3。
 
 触发：收到 `lookFind` 动作或该规则对应的正式观察。执行者：所有职责。
 
@@ -1710,13 +1748,13 @@ type DispatchReceipt = { id:string; messageId:string; fingerprint:string };
 {mode:'look'|'find';needle:string;nodes:{id:string;name:string;path:string;summary:string;noteBody:string}[];historyRequested:boolean;scope:Scope}
 ```
 
-前置、效果与拒绝：look按明确路径/id查卡，再子邻居/执行/有范围历史。find只name/path/summary大小写敏感包含，保持索引顺序。noteBody不检索。读取不ack、不调模型。
+前置、效果与拒绝：图分支保留原 look/find 行为；第 4 片 look.memory 含 lookup/neighbors/history/conflicts，find.memory 含 find/stale，不增六个公开工具。无模型、确定过滤分页；RecordStore 文本窄端口两后端一致，内存子串扫描、SQLite FTS5 中文预切 2 字片段，回正式注记复核状态/权限/来源，跨页依据变更重读。
 
 拒绝码：`not_found, forbidden`。所有未列拒绝均保留输入状态。例子和精确正反断言见 SCENARIOS 的 S14。
 
 ### R52 deriveTools
 
-依据：DESIGN §2.7；§5.3 L928–950。状态：已定（决定 37）；提议 §9.2。片：3。
+依据：DESIGN §2.7；§5.3 L928–950。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。片：3。
 
 触发：收到 `deriveTools` 动作或该规则对应的正式观察。执行者：Host/Runtime。
 
@@ -1728,15 +1766,15 @@ type DispatchReceipt = { id:string; messageId:string; fingerprint:string };
 {sessionId:string;goalId:string;kCommandEnabled:boolean}
 ```
 
-前置、效果与拒绝：按固定role/autonomy授工具，writer仍核权。所有look/find。copy无记。秘书记自身、发四意图、只读文件；K且沙箱可用才只读命令。无apply_plan、无秘书claim/write。ack/respond AMB-21。
+前置、效果与拒绝：工具按职责、明确授权和自治给，写入口再核权；参谋/书记可请回答，返工/重查/工作计划修改只给执行者/参谋，秘书的请求候选另算。参谋与具委托权限执行者可建人，每步先批；固定工人、秘书、书记、独立审阅轮不自行建，秘书/书记请参谋。秘书可记自身理解/注记，不改代码、不采用；所有获授权只读角色共享沙箱命令。
 
 拒绝码：`not_found`。所有未列拒绝均保留输入状态。例子和精确正反断言见 SCENARIOS 的 S19。
 
 ### R53 readOnlyCommand
 
-依据：DESIGN §5.3 L917–926。状态：提议 §9.1 #18；已定（决定 37）。片：K。
+依据：DESIGN §5.3 L917–926。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。片：K。
 
-触发：收到 `readOnlyCommand` 动作或该规则对应的正式观察。执行者：秘书。
+触发：收到 `readOnlyCommand` 动作或该规则对应的正式观察。执行者：所有获授权的只读角色。
 
 读取：O45、O50。写入：无；只返回派生值或外部动作请求。
 
@@ -1750,9 +1788,11 @@ type DispatchReceipt = { id:string; messageId:string; fingerprint:string };
 
 拒绝码：`unsupported, unavailable, forbidden`。所有未列拒绝均保留输入状态。例子和精确正反断言见 SCENARIOS 的 S19。
 
+【已定（决定 49）】 适用于所有获授权的只读角色；Linux/WSL 的 bubblewrap 能力缺失明确 unsupported。
+
 ### R54 closeKernelTurn
 
-依据：DESIGN §4.3 L697–705；§9.4 风险 7。状态：提议 §9.1 #1。片：K。
+依据：DESIGN §4.3 L697–705；§9.4 风险 7。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。片：K。
 
 触发：收到 `closeKernelTurn` 动作或该规则对应的正式观察。执行者：Runtime。
 
@@ -1764,13 +1804,13 @@ type DispatchReceipt = { id:string; messageId:string; fingerprint:string };
 {sessionId:string;kEnabled:boolean}
 ```
 
-前置、效果与拒绝：仅platformRunEnded且无实际活动执行可关；否则busy。无能力unsupported，失败unavailable并给接续退路。成功清活动Turn并标interrupted。重复已终态no_op。半截投影AMB-39，原记录保留。
+前置、效果与拒绝：仅平台 Run 已结束且无实际活动执行可关；否则 busy。成功清活动 Turn、标 interrupted，在原 Session 开新 Run；失败或不支持按接续退路。半截调用和结果保留原历史，未完成 Turn 不进模型输入，用接续说明补，不重跑有副作用工具来补齐；不复活之前已退役线。
 
 拒绝码：`busy, unsupported, unavailable`。所有未列拒绝均保留输入状态。例子和精确正反断言见 SCENARIOS 的 S79。
 
 ### R55 compact
 
-依据：DESIGN §4.11 L835–864。状态：提议 §9.1 #19；边界已定（决定 39）。片：K2。
+依据：DESIGN §4.11 L835–864。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。片：K2。
 
 触发：收到 `compact` 动作或该规则对应的正式观察。执行者：Workflow/Runtime。
 
@@ -1782,7 +1822,7 @@ type DispatchReceipt = { id:string; messageId:string; fingerprint:string };
 {sessionId:string;supported:boolean;long:boolean;stubsEnough:boolean;sourcesValid:boolean;summaryValid:boolean}
 ```
 
-前置、效果与拒绝：unsupported披露并提换手；占用busy，未超长no_op。空闲两轮间先旧工具桩，保最近compactKeep轮与调用结果对。不够按AMB-40摘要或incomplete。用户话原文、五段、来源/尺寸校验。只返回Kernel写效果，平台无新记录。
+前置、效果与拒绝：压缩触发与换手条件独立；运行中明确本轮未结束、未执行，轮次之间先旧工具桩，留最近 compactKeep 轮与调用结果对，不够再摘要。摘要保目标/验收、用户原话决定、未完请求等待及待放行、尝试和来源，记忆只固定引用，计划/派工版本恢复重读。摘要超限或缺必需内容失败，坏链接标不可用；失败或不支持按已有自治规则换手，原记录不删，K2/MVP 边界仍决定 39。
 
 拒绝码：`busy, unsupported, incomplete`。所有未列拒绝均保留输入状态。例子和精确正反断言见 SCENARIOS 的 S21、S80。
 
@@ -1806,7 +1846,7 @@ type DispatchReceipt = { id:string; messageId:string; fingerprint:string };
 
 ### R57 handoffWork
 
-依据：DESIGN §4.4 L718–730；§1.3 L152–154。状态：已定（Q8、Q21）；提议 §9.1 #8。片：7。
+依据：DESIGN §4.4 L718–730；§1.3 L152–154。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。片：7。
 
 触发：收到 `handoffWork` 动作或该规则对应的正式观察。执行者：agent/用户。
 
@@ -1822,9 +1862,11 @@ type DispatchReceipt = { id:string; messageId:string; fingerprint:string };
 
 拒绝码：`busy, incomplete, forbidden, revision_conflict`。所有未列拒绝均保留输入状态。例子和精确正反断言见 SCENARIOS 的 S17。
 
+【已定（决定 49）】 先写理解、再出批准卡、批准后重核版本、停妥旧写者后转。执行者仅自己的线，参谋可处理别人的；秘书、书记请参谋，独立审阅不给换手，秘书太长例外见 R32。
+
 ### R58 readActivity
 
-依据：DESIGN §1.10 L328–329；§6 L991–992。状态：已定（Q5 A、B）；提议 §9.2。片：2。
+依据：DESIGN §1.10 L328–329；§6 L991–992。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。片：2。
 
 触发：收到 `readActivity` 动作或该规则对应的正式观察。执行者：views。
 
@@ -1836,7 +1878,7 @@ type DispatchReceipt = { id:string; messageId:string; fingerprint:string };
 {runIds:string[];from:number;to:number;backfill:boolean}
 ```
 
-前置、效果与拒绝：按hour与检查id去重聚合，时间窗[from,to)。〔lead 改〕旧Run没有计数时补不补算、缺的时候怎么显示，正文没定（DESIGN L329：第 2 片动工前由 lead 定；合并后见 AMB-46）；原文写的“标unknown，不填零，不按总量平摊”超出正文。AMB-46 的三个选项都不填零。backfill只请求Runtime数原史；时间点只已有事实并approximate。
+前置、效果与拒绝：新 Run 收尾保存实际按小时计数，缺失算错误；旧近期自动分批、远期用户选窗口幂等补算，不调模型。读不到事件、失败、未算都未知并给原因，不填零、不把总量摊到小时；按 hour/检查 id 去重，时间窗 [from,to)，仅用已有时间事实。
 
 拒绝码：`invalid`。所有未列拒绝均保留输入状态。例子和精确正反断言见 SCENARIOS 的 S22。
 
@@ -1882,9 +1924,9 @@ I10。冲突提示不是领取门；没有交集不证明没有冲突。
 
 I11。秘书 step 下的 action/answer 未放行前收件者看不到；notice/decision 不待放行。
 
-I12。核三版并增派工序号与实际发出同次提交；拒发不增序号。
+I12。【已定（决定 49）】所有有权派工者核三版并递增与首次发出同次提交；拒发和成功重试不增，首次无理解显式空值。只做版本检查，不作语义检查。
 
-I13。请求的后续轮 rootId 和 goalId 保持；归属沿接任而非修改消息 sender。
+I13。【已定（决定 49）】后续轮 rootId/goalId 保持；归属按创建提交顺序及既有查询上的显式转交，旧轮不抢回，原消息 sender 不改。
 
 I14。同一请求至多一个存储 candidate；别请求采用只派生 stale。
 
@@ -1892,9 +1934,9 @@ I15。答复与落实独立；拒绝/延期不自动推动计划。
 
 I16。同一等待至多一个 consumed 结果；迟到回复保留但不重开已用等待。
 
-I17。每锚点至多一个 current 指针；版本冲突不覆盖旧理解。
+I17。【已定（决定 49）】每锚点至多一个 current 指针，与生效理解同次 CAS；读取不等写者，撤下/拒绝后不可用、不回退。
 
-I18。记忆不授权、不改机器状态；撤下、取代、来源不可用都保留历史。
+I18。【已定（决定 49）】记忆不授权、不改执行状态；撤下、取代、来源不可用保留历史；replaces/contradicts 必须共享主或附加锚点，字段严格定型校验。
 
 I19。所有只读规则返回不变状态；拒绝也不写，唯明确的 staged归档 partial 分支例外。
 
@@ -1902,13 +1944,13 @@ I20。K/K2不能声称恢复原Run；K2不删原历史、不换Session、不算M
 
 ## 技术推断与边界
 
-Line用headId作这次读的key；置顶输入可用线内Session引用匹配后续线，不造稳定成员身份。旧Session恢复来历用AMB-1。R11同时状态的优先顺序、find大小写敏感、固定LF、CAS错误映射、id平局按字典序是分析用技术约定，待lead冻结。现有规格明确停机/未知/完成条件优先，不能用这个顺序改既有机器。
+Line用headId作这次读的key；置顶输入可用线内Session引用匹配后续线，不造稳定成员身份。旧Session恢复来历用AMB-1。R11 状态与关注原因按决定 49；图分支 find 大小写敏感、固定 LF、CAS 错误映射及未规定的 id 平局是分析技术表示，待 lead 冻结。现有规格明确停机/未知/完成条件优先，不能用这个顺序改既有机器。
 
 输入声明由Plan读取；旧inputRequirements只作为声明，无预先预测版本。selectedInputs每次使用产物都返回精确Source与observedAt，真实持久位置仍由第3片定。命令足迹不全如实标记。
 
-当前理解的“版本”是CurrentPointer的CAS版；Note本身仍有固定版。派工pin的dispatch是sequence，不是记录version。每次发送返回新sequence；新记录absence=0。新本目标理解写入成功即推进current，不能等书记审才让本目标使用；撤下/拒绝当前条的清空或回退是AMB-33。此区分是技术推断。重放先后仍AMB-22。
+当前理解的“版本”是CurrentPointer的CAS版；Note本身仍有固定版。派工pin的dispatch是sequence，不是记录version。每次发送返回新sequence；派工序号的缺记录初值为 0，尚无当前理解的 pin 用 null。新本目标理解生效写入成功即推进 current，不能等书记审才让本目标使用；撤下/拒绝后保留历史引用、显示不可用，不自动回退（决定 49）。成功重试先返回原回执（决定 49）。
 
-空Goal、多个候选产物、旧数据断链、未知Kernel事实没有虚构成功。工具产生哪些文字、谁语义上该做哪个任务、谁认为该升级冲突，都由显式输入表示。单目标注记总额度的数字未定。用受信goalQuotaFull输入表示额度结果，不偷偷取5。模型不测实际模型质量、Kernel文件原子性、进程沙箱真实性、Token/缓存收益或真实大规模分页性能。
+空Goal、多个候选产物、旧数据断链、未知Kernel事实没有虚构成功。工具产生哪些文字、谁语义上该做哪个任务、谁认为该升级冲突，都由显式输入表示。单目标活动注记总额度暂用 200（决定 49），与每锚点 5 条分开；均未实测，见 DESIGN §9.3。受信 goalQuotaFull 表示额度结果。模型不测实际模型质量、Kernel文件原子性、进程沙箱真实性、Token/缓存收益或真实大规模分页性能。
 
 ## 装配器的精确段落表
 
