@@ -1,5 +1,7 @@
 # Agent 通用行为与按需分工
 
+> **历史（2026-10-13 标注）：** 本页记录 2026-09-27 的情况，现已不是当前状态；当前状态见 [STATUS](STATUS.md)，决定见 [HANDOFF 顶部](HANDOFF.md)。
+
 2026-09-27。本文展开[Agent 行为计划](AGENT-BEHAVIOR-PLAN.md)中的角色职责，对应**架构图、Task 图**，并对应计划中的[当前模块交互图](AGENT-BEHAVIOR-PLAN.md#21-与当前模块的交互)和[咨询路径图](AGENT-BEHAVIOR-PLAN.md#22-当前已跑通的咨询路径以及缺的下一段)。这是行为定义与当前入口对账，不是新增模块、权限配置或完成声明；交付状态仍以[能力索引](IMPLEMENTED-CAPABILITIES.md)与实际验收为准。
 
 依据：[产品定位](../PRODUCT.md)、[MVP 用户行为](../MVP-BEHAVIOR.md)、[双图与生命周期对齐](../AGENT-GRAPH-LIFECYCLE-ALIGNMENT-2026-09-25.md)。表中的动作不自动授予权限，也不新增强制验收条件。

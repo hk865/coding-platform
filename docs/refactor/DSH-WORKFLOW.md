@@ -72,7 +72,7 @@ node ~/dsh-work/ladder/_common/run-dsh.mjs run <副本> <任务书> <运行名> 
 
 ## 2. 派发与接收规则
 
-1. 先读[独立目标工程迁移与验收](reviews/next-completed-migration-2026-09-24.md)和 next 当前实现，再用已有 Prompt 5 [调查](../history/before-2026-09-22/refactor/source-analysis.md)定位必要旧行为；不重做全仓调查。主 Agent 细化[执行计划](refactor-plan.md)中 next 的一批。
+1. 先读[独立目标工程迁移与验收](reviews/next-completed-migration-2026-09-24.md)和 next 当前实现，再用已有 Prompt 5 [调查](../history/before-2026-09-22/refactor/source-analysis.md)定位必要旧行为；不重做全仓调查。主 Agent 细化[执行计划](archive/2026-10-13-old-entry/refactor-plan.md)中 next 的一批。
 2. 主 Agent 写任务书：只读旧行为对照、next 目标入口、固定接口/版本、允许修改文件、共享文件负责人、真实前置、保持行为及独立验收。默认不授权修改原 C/src，不要求把新实现重新接回旧系统。
 3. 新行为由 Astra 冻结架构、接口和行为标准；DSH 4.1F 第一阶段只写骨架与测试，交付后停止。Astra 审查调用链、断言、正反例和红测原因，再冻结文件及测试 hash，才能派发第二阶段实现。测试由实现模型编写，不能因此称为独立验收；Astra须补查遗漏，必要时增加独立反例。已写好的Sol骨架和测试可复用，不为换分工而重写。独立批次的骨架 / 测试可并行准备，但不把缺少契约测试的范围交给 dsh 自行定义验收。目录移动仍使用逐字节比对、归属和相关既有测试，不重复造实现镜像测试。
 4. 第二阶段的 dsh 只实现该批，能读/运行验收测试，不能放宽断言或自行修改设计。类型/边界失败由它修；涉及核心身份、权限、数据权威或范围的差异报主 Agent 判断。 若冻结测试与产品/接口语义冲突，给出具体断言和最小反例，由主审修正测试；不得为了数组长度、默认值或局部绿灯改变整体业务含义。主审也审查测试本身，测试不是免于审阅的真理。
@@ -126,7 +126,7 @@ Astra 的当批 prompt 指明相关能力编号/路径和用途；DSH 在第一�
 
 ## 4. 继续入口
 
-先读 [HANDOFF](HANDOFF.md) 与[独立目标工程迁移与验收](reviews/next-completed-migration-2026-09-24.md)，确认 reader/index 实际验收状态，再读 [refactor-plan](refactor-plan.md) 中 next 当前子批及任务书。原工程[批次证据](reviews/implementation-batches.md)只作历史对照。R2c 必须在 R2b 验收后实施；R3–R6 有细化清单，但不应把全部大任务一次交给 dsh 自由推演。没有新的产品取舍时继续执行已有授权，无需再次向用户询问是否开工。
+先读 [HANDOFF](HANDOFF.md) 与[独立目标工程迁移与验收](reviews/next-completed-migration-2026-09-24.md)，确认 reader/index 实际验收状态，再读 [refactor-plan](archive/2026-10-13-old-entry/refactor-plan.md) 中 next 当前子批及任务书。原工程[批次证据](reviews/implementation-batches.md)只作历史对照。R2c 必须在 R2b 验收后实施；R3–R6 有细化清单，但不应把全部大任务一次交给 dsh 自由推演。没有新的产品取舍时继续执行已有授权，无需再次向用户询问是否开工。
 
 原工程[并行任务](tasks/DSH-PARALLEL-IMPLEMENTATION.md)及后续 Sol / dsh 返修已完成，Store/WG Goal 与 Kernel 公开扩展通过[独立验收](reviews/R3a-R4a-sol-dsh-acceptance.md)。后续按 refactor-plan 的真实依赖准备骨架与契约测试，再派发 dsh；不重做已完成任务，也不把 Kernel 子集通过当作平台 Session 已接通。
 

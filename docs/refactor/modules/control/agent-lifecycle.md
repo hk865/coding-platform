@@ -1,5 +1,7 @@
 # AgentLifecycle：旧模块迁移入口
 
+> **历史（2026-10-13 标注）：** 本页是旧模块迁移导航，所述旧实现不存在于本仓库；模块导航见 [modules/README](../README.md)，当前状态见 [STATUS](../../STATUS.md)，决定见 [HANDOFF 顶部](../../HANDOFF.md)。
+
 2026-09-23。旧 13 模块设计已由[当前架构](../../ARCHITECTURE.md)替代。旧稿曾计划新增本模块，实际源码尚无独立实现。新设计按策略、记录和执行拆分承担，不再新增这一层包装。
 
 本模块的目标职责移交至：[Workflow](../business/workflow.md)、[WorkGraph](../core/work-graph.md)、[AgentRuntime](../core/agent-runtime.md)。逐项复用、重写、删除及退出条件见[迁移表](../ownership-map.md)与[实施方案](../../IMPLEMENTATION-PLAN.md)；数据操作和状态转换分别以[核心设计](../../CORE-DATA-OPERATIONS.md)、[状态机](../../ORCHESTRATION-STATE-MACHINES.md)为准。

@@ -1,5 +1,7 @@
 # R4.1 持久控制与 R2e.2 Git读取：在途独立审阅
 
+> **历史（2026-10-13 标注）：** 本页记录 2026-09-26 的情况，现已不是当前状态；当前状态见 [STATUS](../STATUS.md)，决定见 [HANDOFF 顶部](../HANDOFF.md)。
+
 2026-09-26。最近完整隔离基线仍为 [R5a/R4.2 的102文件/1,007项](next-r5a-r4-tool-group-2026-09-26.md)。本报告记录其后增量：R4.1持久受理、Git固定commit读取/比较、R3e注册检查、Query pending受理及R6初始Host/UI实现已独审导入；R3e.3正式完成及Workflow已有Plan推进实现已导入，Query execution与R6 Session/mailbox实现已独审导入。当前main含骨架占位，未重新完整隔离，不宣称完整控制产品可用。
 
 ## R4.1 中审与冻结

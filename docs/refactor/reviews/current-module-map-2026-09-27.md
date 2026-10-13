@@ -1,5 +1,7 @@
 # 当前模块关系与代码规模
 
+> **历史（2026-10-13 标注）：** 本页记录 2026-09-27 的情况，现已不是当前状态；当前状态见 [STATUS](../STATUS.md)，决定见 [HANDOFF 顶部](../HANDOFF.md)。
+
 **后续AG1接线：** AgentRuntime已增加当前关联Session发现/卡片读取并消费原邮箱，沿原AgentRuntime→WorkGraph依赖，未新增模块或owner。真实模型已完成发现→选择→发送咨询；职责与后续顺序见[Agent行为计划](../AGENT-BEHAVIOR-PLAN.md)。本页原行数是AG1前快照，后续生产TS+307见[增量证据](evidence/agent-behavior-2026-09-27/ag1/verification.json)。
 
 后续逐文件增量与逻辑见[新增代码清单](new-code-and-logic-2026-09-27.md)：覆盖B1到当前工作树的108个变化生产文件及58个变化测试文件。下文保留原提交快照的规模与关系，不用该旧快照替代新清单。

@@ -1,5 +1,7 @@
 # 代码质量规范调研与模块文档融入方案
 
+> **历史（2026-10-13 标注）：** 本页记录 2026-09-22 的情况，现已不是当前状态；当前状态见 [STATUS](STATUS.md)，决定见 [HANDOFF 顶部](HANDOFF.md)。
+
 ```yaml
 status: research-with-document-integration
 updated: 2026-09-22

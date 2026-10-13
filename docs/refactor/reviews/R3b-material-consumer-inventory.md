@@ -1,5 +1,7 @@
 # R3b 材料读消费者、真实前置与退役清单
 
+> **历史（2026-10-13 标注）：** 本页记录 2026-09-24 的情况，现已不是当前状态；当前状态见 [STATUS](../STATUS.md)，决定见 [HANDOFF 顶部](../HANDOFF.md)。
+
 > 最终更新：R3b 材料功能、History Host 与真实 Run / Query 已通过[功能验收](R3b-sol-dsh-acceptance.md)并导入；H1/H2已切Host，以下其余旧wire退出批次仍未完成。两条legacy reader临时依赖另在验收/模块图列示。正文清单保留集成前定位基线，不能当作所有消费者已退役。
 
 日期：2026-09-24。初次核对点：Raw / WorkGraph 材料组件经主审返修后已导入，`r3b-integration-sol-01` 的 7 文件真实接线仍在实施，本文不预标 R3b 完成。依据：[R3b 原计划](../refactor-plan.md#r3b--材料正文与普通-host-读取贯通)、[集成任务](../tasks/R3b-integration-dsh-execution.md)、[7 文件范围](../tasks/R3b-integration-dsh-write-scope.json)、[Sol 骨架与冻结测试](../tasks/R3b-sol-skeleton.md)。后续最终验收应在本清单逐项登记通过范围。

@@ -2,13 +2,15 @@
 
 **这是什么。** 把 [DESIGN.md](../DESIGN.md) 拆成对象、行为规则、图、场景和模糊点，在冻结分片接口之前找出设计书没写清的地方，并告诉以后干活的模型：哪些结果原文写定了，哪些是推断出来的，哪些还没定。
 
-- 它是读设计书的结果，**不是产品代码**，也不是规格或接口冻结；它不批准 §9.1 的任何提议。
-- 设计书正文没有改，只在设计目录的 README 和 DESIGN §8.2 表前各加了一行指向这里。你答了 [REVIEW-SLICES-1-3-5.md](REVIEW-SLICES-1-3-5.md) 以后，lead 再按答案改设计书。（2026-10-08：你已答复，决定 42；设计书已按答案改，AMBIGUITIES.md 里第 1、3、5 片的 23 项和 AMB-12 标了已定。SCENARIOS.md 和 MODEL.md 没有跟着改，它们的“未定”“靠推断”以设计书和 AMBIGUITIES.md 为准。）
-- 和设计书、HANDOFF 的决定说法不同时，以它们为准。这里标“推断”“技术约定”的地方，要等 lead 冻结那一片时再定。
+- 它是读设计书的结果，**不是产品代码**，也不是规格或接口冻结。行为是否已定，以 [HANDOFF 顶部](../../../HANDOFF.md)的决定 1–49 和设计书为准。
+- 2026-10-13：MODEL、AMBIGUITIES 已按决定 49 修订；DIAGRAMS 已按决定 42–49 和接线包 2 L10–L12 更新。SCENARIOS 和 readers 保留当时分析，其中“未定”“靠推断”不代表今天仍未定。
+- 决定 42 已答复第 1、3、5 片；决定 49 收口其余相关 47 项并补定 AMB-43 的未送达提醒，AMB-69 保持原状。技术细节由 lead 在相应片冻结时核定。
 
 **先看哪个。**
-- 你：[REVIEW-SLICES-1-3-5.md](REVIEW-SLICES-1-3-5.md)，冻结第 1、3、5 片之前要你定的 11 条，约 10 分钟。
-- 以后施工某一片的模型：先在 [AMBIGUITIES.md](AMBIGUITIES.md) 里找“阻挡”是这一片的项，再在 [SCENARIOS.md](SCENARIOS.md) 里找相关条目；状态不是“定”的，都是容易读错的地方。
+- 当前状态和下一步：[STATUS](../../../STATUS.md)；当前设计：[设计目录](../README.md)和 [DESIGN](../DESIGN.md)。
+- 查决定来历：下面两组审查页及用户回复，均已有答复，不再作为待答清单。
+- 施工某一片：先读 [slices](../slices/README.md)的规格和当前做法，再查 [AMBIGUITIES](AMBIGUITIES.md)各项顶部的答复、[MODEL](MODEL.md)和相关场景。场景与决定不一致时按决定。
+- 核对用户看到的行为：[冻结原型](../../../../ui-reference/workbench-2026-10/README.md)、[UI-WORKBENCH §0](../../../../UI-WORKBENCH.md#ui-decisions-2026-10)和 [E3 清单](../E3-UI-ITEMS.md)。
 
 ## 文件
 
@@ -18,12 +20,18 @@
 | [DIAGRAMS.md](DIAGRAMS.md) | Mermaid 图：2 张对象关系和写入边界、9 张状态图、12 个组合时序 | Codex 第 1 步；lead 改了 1 处 |
 | [SCENARIOS.md](SCENARIOS.md) | 合并后的 400 条场景，每条有状态、原文引用、来源块和挂的模糊点；文末附 Codex 合并时的核对记录 | Codex 合并；lead 改了 8 条引文，加了开头的说明 |
 | [AMBIGUITIES.md](AMBIGUITIES.md) | 合并后的 74 项模糊点（AMB-1–74），每项有选项、挡住哪一片、以后的模型会怎么读错 | Codex 合并；开头的说明和“谁定”重分表是 lead 的 |
-| [REVIEW-SLICES-1-3-5.md](REVIEW-SLICES-1-3-5.md) | 给你的一页：第 1、3、5 片要你定的 11 条，和 lead 自己定的 7 个技术问题 | lead |
+| [REVIEW-SLICES-1-3-5.md](REVIEW-SLICES-1-3-5.md) | 第 1、3、5 片的 11 条问题和 7 个技术问题；决定 42 已答复 | lead |
+| [REVIEW-SLICES-2-4-6-7.md](REVIEW-SLICES-2-4-6-7.md) | 第 2、4、6、7、K、K2 片的 29 条问题；决定 49 已答复 | lead |
+| [USER-REPLIES](REVIEW-SLICES-2-4-6-7-USER-REPLIES.md) | 用户逐条回复，原话保留；选定内容已记为决定 49 | 用户 |
+| [LEAD-ANSWERS](REVIEW-SLICES-2-4-6-7-LEAD-ANSWERS.md) | 对回复的解释和写进规格的规则；按决定 49 选定范围采用 | lead |
+| [OPINIONS](REVIEW-SLICES-2-4-6-7-OPINIONS.md) | 决定前的意见合并稿，已被决定 49 取代 | lead 合并 |
 | [readers/](readers/) | 六个读者的原始输出，作证据，原样保留 | DSH |
 
 `readers/` 里每个读者一个目录：`R<n>.md` 是场景块；R1、R2、R4、R5 有覆盖文件（`-coverage.md`），R2–R5 有矩阵（`-matrix.md`），R1 另有动作表（`R1-actions.md`）。块的格式见 SCENARIOS.md 开头的说明。
 
-**行号。** 所有文件里的行号（`DESIGN:121`、`L121`）都指 ddce07be 上的文本。本次提交在 DESIGN §8.2 表前加了 1 行，所以在今天的 DESIGN.md 里，第 1080 行起的行号要加 1。其余被引用的文件（E3-UI-ITEMS、HANDOFF 第 3–195 行、MVP-BEHAVIOR、UI-WORKBENCH §0）本次没改。
+**行号。** 最初分析的 `DESIGN:121`、`L121` 等指 ddce07be 上的文本。后续文件已修订，旧行号只作追溯，不能当作当前文件的位置；新引用沿章节和对象编号核对。
+
+以下保留 2026-10-07 至 10-08 的分析过程、统计和当时未覆盖项，数字不是当前待定项数量。
 
 ## 怎么做的
 
@@ -158,7 +166,7 @@ R6 和 Codex 一致 75 个，不一致 5 个（S08、S22、S44、S46、S52）。
 - **没有测任何东西：** 性能、模型答得好不好、Kernel 和沙箱的真实行为、主对话在真实规模下挤不挤，都没测。
 - **MODEL.md 的细节是分析用的约定。** 错误名、状态的优先顺序、平局怎么排、字段的形状，都要冻结那一片时由 lead 定。
 - **Codex 的 49 处状态更正没有逐条核。** lead 只核了 3 处（R2-68、R2-32、R4-30），加上面的 5 条抽查。Codex 还指出 7 个读者块结果写得比正文宽或窄（R1-10、R1-26、R2-62、R4-44、R4-60、R4-76、R5-45），状态没改，原样留在 SCENARIOS.md 附录。
-- **“谁定”只重分了第 1、3、5 片。** 其余 51 项在那几片冻结前再重分；AMBIGUITIES.md 各项里的“谁定”还是 Codex 的分法。
+- **当时只重分了第 1、3、5 片。** 2026-10-10 决定 49 已收口其余相关 47 项，另补 AMB-43；AMB-69 未在本次决定范围，保持原状。当前状态读 AMBIGUITIES 各项顶部，不按旧“谁定”分布重新提问。
 - **readers/ 里的原始输出没改。** 它们的引文都过了读者的检查脚本；合并时发现的状态更正只在 SCENARIOS.md 里。
 - **没进仓库的：**
   - Codex 第 1 步的 SCENARIOS.md（S01–S80，含每个模糊点选项下的精确断言）和第 1 版 AMBIGUITIES.md（已被合并版取代）；
