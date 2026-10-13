@@ -168,6 +168,8 @@ stateDiagram-v2
 
 〔决定 51〕K 片之后：经人认定、Turn 还开着的线，维护关闭悬空 Turn，经 SES-13 回到可用，不归档；认定之前的未知占用仍零写入。
 
+〔决定 52，K3 草稿〕之后：认定或重启自动收尾（RUN-25）以后，先按工具种类核对结果未知的调用；有跑程序的先跑只读核对轮。核对记录的状态是 `pending_review → resolved`，或 `pending_review → needs_decision →（你答复落实）→ resolved`；只有 `resolved` 以后才照 K 片接着做。状态图等 K3 冻结后补。
+
 DESIGN §1.5 与 MODEL O09、R03/R54 的“退役不能恢复”概括不能覆盖 active Session 的 SES-13；本图按 DESIGN §4.3 和接线包 2 L10 区分“健康恢复”与“已归档退役线重新启用”。MODEL R05/R06 的立即归档概括也须带上决定 45 的未知占用例外，不用旧概括覆盖现有守卫。
 
 ## Request 和秘书归属
