@@ -920,6 +920,8 @@ type DispatchReceipt = { id:string; messageId:string; fingerprint:string };
 
 〔2026-10-13 lead 补，决定 45〕例外：退役、没有接续的线，如果手上那次执行的结果未知（Run 为 outcome_unknown，Session 仍被占用），不自动归档，等人认定结果以后再归档（第 1 片 U1 选甲，已做）。R05 的“无接续退役直接放下并归档”同样受这个例外限制。
 
+〔2026-10-13 lead 补，决定 51〕认定以后，Kernel Turn 还开着的线不再归档：维护用 K 片的关闭把悬空 Turn 收尾，线回到可用，不写锚点、不放下任务。Kernel 读不到、关闭不支持或失败时，仍按上一段归档。重启后结果未知的自动收尾另开一小片，规格待用户看。
+
 拒绝码：`busy`。所有未列拒绝均保留输入状态。例子和精确正反断言见 SCENARIOS 的 S05。
 
 ### R07 reactivate

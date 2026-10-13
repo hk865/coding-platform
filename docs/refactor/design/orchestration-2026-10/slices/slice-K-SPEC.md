@@ -1,6 +1,6 @@
 # K 片规格：关闭悬空 Turn 后留在原 Session；只读命令
 
-> **状态：lead 起草，2026-10-13；测试入口已确认（决定 50）；按 Codex 两轮审查改过（第一轮 `D:/cc-lead-notes/codex2/kspecrev.out.md` 16 条，第二轮 `kspecrev2.out.md` 9 条）。§0.1 的 U1 等用户定，定了以后冻结。**
+> **状态：已冻结（lead，2026-10-13）。** 测试入口已确认（决定 50）；按 Codex 两轮审查改过（`D:/cc-lead-notes/codex2/kspecrev.out.md` 16 条、`kspecrev2.out.md` 9 条）；U1 用户选丙（决定 51）。
 > - 代码基线：6c63f069（第 0、1、3、5 片和接线包 1 已合入；接线包 2 在施工，不碰本片的文件，除了 §0.3 列的几处）。
 > - 依据：
 >   - DESIGN 分片表 K 行和 §4.3“Kernel 补丁（K 片）”、§5.3；
@@ -19,13 +19,15 @@
   - 决定 49 第 25 项选 (a)：中断后关闭悬空的 Turn，在原 Session 开新 Run；关不掉、读不到或不支持时，走今天的新 Session 退路。
   - 第 26 项选 (a)：只读命令，所有获授权的只读角色都能用（DESIGN §5.3 表：独立审阅、秘书回合、问一问、规划）。
 - **测试入口用户 2026-10-13 已确认**（§5.1，决定 50）。
-- **审查后 lead 的两处取舍，都不改用户已定的事：**
-  1. **维护不碰经人认定的线和人暂停的线。** 经人认定结束的线（RUN-22）和人暂停后被中断的线（RUN-24），维护的处理和今天的代码一样。只有人点“继续”或人恢复目标（L4 第 2 条核对请求者）时才关闭。维护里自动关闭的，只有平台自己证明的干净中断：RUN-19，以及带干净 Turn 的排队取消 RUN-23。
+- **U1 已定（决定 51，用户 2026-10-13 选丙）：经人认定以后、Kernel Turn 还开着的线，维护关闭悬空 Turn，线回到可用，不归档。**
+  - 背景：决定 45 说认定以后下一次维护归档这条线、写异常锚点、放下任务；今天的代码对 Turn 还开着的这种线却是跳过（`session-maintenance.ts` 的 `platformCleanInterruption`）。两者不一致，是本片之前就有的。
+  - 决定 51 改掉决定 45 的“归档、写锚点、放下任务”这一部分，只对这种线：你的认定已经证明它停了，所以关闭是安全的；之后任务照常按规则接着做，多半回到这条线，接续说明列出结果未知的那几步。
+  - 决定 45 的其余部分不变：认定之前，结果未知、仍占着 Session 的线零写入，等你认定。
+  - Kernel 读不到的、关闭不支持或失败的，仍按今天归档（决定 45）。
+- **lead 的两处取舍（用户已知）：**
+  1. **人暂停的线（RUN-24）维护不碰。** 只有人点“继续”或人恢复目标（L4 第 2 条核对请求者）时才关闭。维护里自动关闭的是：RUN-19、带干净 Turn 的 RUN-23，以及决定 51 的经人认定的线（RUN-22）。
   2. **只读命令按“这次执行是只读的”来给，不按“是不是 Query”来给。** 包括 Query，和写范围为空的 Work（例如独立审阅）。第一稿写成“只给 Query”，和 DESIGN §5.3 的表不符，已改。
-- **审查中发现、本片不改、要用户定的一处（U1）：经人认定以后、Kernel Turn 还开着的线。**
-  - 决定 45 说：你认定以后，下一次维护马上把这条线归档，写异常锚点，放下任务。
-  - 今天的代码：认定以后 Kernel 读不到的线照此归档；Kernel Turn 还开着（结论 `kernel_turn_open`）的线，维护跳过，留给人“继续”或明确归档（`session-maintenance.ts` 的 `platformCleanInterruption`，A8 H-04/W-14/W-15 锁住）。两者在这一种线上不一致，是本片之前就有的。
-  - 本片照今天的代码做，不改维护对它的处理。用户定了以后另改；有了 K，也可以选“认定以后关闭悬空 Turn、线回到可用”。
+- **另开的一小片（决定 51）：** 重启后“结果未知”的自动收尾。方向是凭 Host 实例租约证明旧进程已不在，平台自动收尾、下一轮先核对；证明不了才等人认定。规格另写、先给用户看。本片不做；本片的结束方式表（L4 第 2 条）是它以后接入的地方。
 
 ### 0.2 lead 定的技术选择
 
@@ -88,8 +90,8 @@
     2. **结束方式和授权：**
        - RUN-19（`interrupted_clean`，`pausedIntentRef === null`）或 RUN-23（`cancelled`，`interrupted_clean`）：不要 TaskRequeue；
        - RUN-24（`isPausedInterrupted`）：必须带 `requeueRef`，这条 TaskRequeue 覆盖的正是 `afterRunRef`，而且请求者是人，或是带 `goal_resume` 触发的目标恢复（TASK-27 的两种合法请求者）；
-       - RUN-22（`outcome: 'crashed'`，核对观察是 `human_attested`）：必须带 `requeueRef`，覆盖 `afterRunRef`，而且请求者是人。系统或成员的自动重排对这种 Run 是允许的（它按普通失败处理），但不能拿来关闭：`refused('continuation_not_authorized')`；
-       - 上面两种没带、不覆盖或请求者不对：`refused('continuation_not_authorized')`；
+       - RUN-22（`outcome: 'crashed'`，核对观察是 `human_attested`）：不要 TaskRequeue。你的认定本身就是授权（决定 51）；
+       - RUN-24 没带、不覆盖或请求者不对：`refused('continuation_not_authorized')`；
        - 其它结束方式：`refused('not_closable_run')`。
        - 各结束方式在平台 Run 记录上的区分：RUN-19 是 `crashed` + `interrupted_clean` + 暂停意图为空；RUN-23 是 `cancelled` + `interrupted_clean` + 暂停意图为空；RUN-24 是 `crashed` + `interrupted_clean` + 暂停意图不为空；RUN-22 是 `crashed` + `human_attested`（`run-machine.ts`）。
     3. **Session：** `lifecycle === 'active'`，没有归档请求，`occupancy === null`，没有记录在案的接续 Session（来历指向它的）。否则分别 `refused('archived' | 'archive_requested' | 'occupied' | 'handed_over')`。
@@ -143,7 +145,7 @@
     - **插入点：** 没有接续的退役线，在今天判断 `kernel_turn_open` 豁免的那一处（`platformCleanInterruption` 所在的条件）之前。下面四条都成立才调 `closeOpenTurn`（不带 `requeueRef`）：
       1. 结论是 `kernel_turn_open`；
       2. 最近一次工作执行是 Run；
-      3. `platformCleanInterruption` 为真，即 RUN-19，或带干净 Turn 的 RUN-23，暂停意图为空；
+      3. 最近那次 Run 的结束方式是：RUN-19，或带干净 Turn 的 RUN-23（即 `platformCleanInterruption` 为真，暂停意图为空），或经人认定的 RUN-22（核对观察 `human_attested`，决定 51）；
       4. 来历已核清：`facts.legacyPending` 为假，这条线自己的来历不为空。否则“没有接续”没法证明，不关。
     - 关闭的结果：
       - 成功：这条线本次不归档，跳过。
@@ -152,7 +154,8 @@
         - `kernel_turn_open` 豁免照旧；
         - 然后来历核不清的报 `incomplete`；
         - 然后按退役归档。
-    - 经人认定的线、人暂停的线、Query 线不满足第 3 条（或第 2 条），处理和今天一字不差。
+    - 人暂停的线、Query 线不满足第 3 条（或第 2 条），处理和今天一字不差。
+    - 经人认定的线关闭成功以后不归档、不写异常锚点、不放下任务（决定 51）；关闭确定失败时，照今天的逻辑走（决定 45）。
   - **Workflow（`workflow.ts:claimRequeued`）：** 前面的顺序不变：转去的 Session 优先（E16）；被排除、已归档、职责不对、`missing/damaged` 的走普通选择。遇到 `occupancy === null`、`unavailable/kernel_turn_open` 时：
     - 原 Session 已有为这个任务建的接续 Session（退路已经开始）：照今天走 `create_session{requeue}` 的重放和 E15 交接恢复，不关；
     - 否则返回一步 `close_open_turn`，请求是 `{ sessionRef, afterRunRef, requeueRef }`。
@@ -316,7 +319,7 @@
 - 压缩（K2）。
 - 界面（E3）。
 - 自动转发发给退路前任的回复。
-- 改决定 45 对经人认定的线的处理。
+- 重启后“结果未知”的自动收尾（决定 51 另开的一小片）。
 - 给有写范围的 Work 加只读命令（它们已有 `shell`）。
 
 ## 2. 接口（新名字以此为准）
@@ -370,9 +373,9 @@ allowReadonlyCommands?: boolean;               // 默认 true，L18
 
 | 行 | 何时 | 做什么 | 结果 |
 | --- | --- | --- | --- |
-| KA1 | 维护第 6 步：退役的 Work 线，`kernel_turn_open`，RUN-19 或干净 Turn 的 RUN-23，前 5 步都没命中 | `closeOpenTurn`（不带 TaskRequeue） | 成功：SES-13 回到 available，本次不归档。否则落到今天的退役规则 |
+| KA1 | 维护（L7 的插入点）：退役的 Work 线，`kernel_turn_open`，RUN-19、干净 Turn 的 RUN-23 或经人认定的 RUN-22（决定 51），前面的步骤都没命中 | `closeOpenTurn`（不带 TaskRequeue） | 成功：SES-13 回到 available，本次不归档。否则落到今天的退役规则 |
 | KA2 | `claimRequeued` 遇到 `kernel_turn_open`，原 Session 还没有接续 | 返回步 `close_open_turn`（带 TaskRequeue） | 按 L7 的回执表：成功后在原 Session 领取、开新 Run；`unsupported/unreadable/mismatch` 走退路；`conflict/transient` 等下次 |
-| KA3 | 人点“继续”一条人暂停的线（TASK-27），或目标恢复带动（GOAL-29）；人对经人认定的线重新入队 | 走 KA2，TaskRequeue 就是授权 | 同上 |
+| KA3 | 人点“继续”一条人暂停的线（TASK-27），或目标恢复带动（GOAL-29） | 走 KA2，TaskRequeue 就是授权 | 同上 |
 | KA4 | 关闭已提交、健康没写，Host 还在或已重启 | 可以重试：维护和 Workflow 都不归档、不走退路；再调一次，或启动核对第 1 步 | `already_closed`，探测，SES-13 |
 | KA5 | 关闭不支持、读不到、头上是别的 Run | 退路 | 新 Session 接续，交接照接线包 1 |
 | KB1 | 只读执行调用 `run_readonly_command` | 只读沙箱执行 | 见 B 部分 |
@@ -383,7 +386,7 @@ allowReadonlyCommands?: boolean;               // 默认 true，L18
 2. 关闭只能作用在平台已证明结束、并且按 L4 有权关的那次 Run 的 Kernel Turn 上。其它情况什么也不写。
 3. 被中断 Turn 的原始过程（transcript）永远不进模型历史；它的边界和身份照常参与校验；原记录永远可读。其中已接受的输入和工具事实，经接续说明给出（L9）。
 4. 健康只经已有的探测和 SES-13 恢复（L5）；不新加状态行；`state/` 以外不写健康。
-5. 维护的先后顺序（L7）不变，关闭只插在第 6 步；人的暂停、经人认定、结果未知、已有接续、归档请求，都在关闭之前按今天的规则处理。
+5. 维护原有的先后不变，关闭只插在 L7 写明的那一处；人的暂停、结果未知的占用、已有接续、归档请求，都在关闭之前按今天的规则处理。经人认定的线按决定 51 关闭。
 6. 退路的行为、交接和异常锚点与今天完全一样（L8）；只有确定的失败（不支持、读不到、头上是别的 Run）才走退路。
 7. 只读命令不能改工作区，不能联网，不能退回主机命令行；只在 Host 授权整个工作区可读时给，根目录以外的同名敏感文件读得到（L17，和 `shell` 一样）；没授权就看不到这个工具。
 8. 读取和探测不调用模型。
@@ -424,11 +427,11 @@ allowReadonlyCommands?: boolean;               // 默认 true，L18
 | KA-07 | KE3 | 人暂停、Host 重启、人点“继续”（RUN-24 → TASK-27）：同一 Session、新 Run；步骤里没有 `create_session`、交接和归档；领取前 Session 已回到 available，领取后被新 Run 占用 | L4、L7、DESIGN §4.3 |
 | KA-08 | KE3 | 中断期间发给原 Session 的回复，在新 Run 的安全点作为新输入送达；被中断那一步已经接受的消息不重复送，只出现在接续说明里 | DESIGN §4.3、L9 |
 | KA-09 | KE3 | 接续说明：接续方式是 `same_session_without_previous_turn`，按已知的消息 ID、工具调用 ID 列出被中断那一步已接受的消息、已生效的插话和工具事实。另有三种情况，每种一个例子：关闭和领取之间 Host 重启一次，结果相同；平台 Run 上的位置记录落后于 Kernel 里的记录，后面的事实也列出；从 Entering 进入结果未知、经人认定、没有位置记录的 Run，按 Kernel 身份读到它的 Turn，不说“没进入过”。afterRun 没进入过 Kernel 的链，事实来源照现有规则 | L9 |
-| KA-10 | KE3 | 维护，每种一个例子，结果逐条写明：RUN-19 的线关闭、回到 available、不归档；带干净 Turn 的 RUN-23 的线同上；人暂停的线（RUN-24）不关闭、不归档、零写入；经人认定、Turn 还开着的线（RUN-22）不关闭、不归档、零写入；有接续且交接做完的线按 `handoff_complete` 归档，不关闭；有接续、交接没做完的线零写入；有归档请求的线接着归档，不关闭；来历核不清的线不关闭，照今天报 `incomplete` | L7 |
+| KA-10 | KE3 | 维护，每种一个例子，结果逐条写明：RUN-19 的线关闭、回到 available、不归档；带干净 Turn 的 RUN-23 的线同上；人暂停的线（RUN-24）不关闭、不归档、零写入；经人认定、Turn 还开着的线（RUN-22）关闭、回到 available、不归档、不写异常锚点、负责关系不放下（决定 51）；有接续且交接做完的线按 `handoff_complete` 归档，不关闭；有接续、交接没做完的线零写入；有归档请求的线接着归档，不关闭；来历核不清的线不关闭，照今天报 `incomplete` | L7 |
 | KA-11 | KE3 | 崩溃和回执丢失，故障点逐条固定：(a) 关闭的追加提交后，紧接着的那次 Kernel 存储读取失败一次（探测不 ready），本次 `waiting`，这条线没被归档，下一次推进完成恢复；(b) 同 (a)，然后重建 Host 再推进，启动核对第 1 步走 SES-13；(c) 关闭步返回成功、健康已写之后重建 Host，下一次推进直接复用，不再关、不建新 Session。三种最后都在原 Session 领取 | L6、L7 |
 | KA-12 | KE4 | 只有 legacy 读取器、适配器不同、存储读不到、头上是别的 Run，四种都退回新 Session，交接和归档与今天一样。原历史：存储可读时照常读得到；读不到时如实报读不到，引用保留 | L8；现有 WP1 交接规则 |
 | KA-13 | KE4 | 退路的新 Session 已建、交接还没提交时 Host 重启：不关闭前任，照 E15 恢复交接，最后只有一个接续 Session | L6、L4 第 3 条 |
-| KA-14 | KE3 | 结果未知、仍占着 Session 的线：零写入（不关、不改健康、不建归档请求，决定 45）。经人认定、但没人“继续”的线：不关闭 | L4、决定 45 |
+| KA-14 | KE3 | 结果未知、仍占着 Session 的线：零写入（不关、不改健康、不建归档请求，决定 45）。你认定以后的下一次维护：关闭，回到 available，之后系统自动重排的任务在原 Session 领取，接续说明列出结果未知的那几步（决定 51） | L4、L7、决定 45、51 |
 | KA-15 | KE3 | 关闭时 Kernel 版本被别人改了（在 Kernel 存储边界注入一次并发追加）：本次 `waiting`，不走退路，线没被归档；之后关闭成功（可能在同一次推进的维护里，也可能在下一次推进），最后在原 Session 领取 | L7 |
 | KA-16 | KE3 | Query 线（SES-09、SES-10）：不关闭，和今天一样 | L10 |
 | KA-17 | 能力上报的公开读取（`A2-runtime-capabilities` 用的同一入口） | `continueHistory` 写明：Work 线关闭后在原 Session 接续；Query 线换新 Session；列出 L8 的退路；不出现“恢复原执行” | L11 |
@@ -522,7 +525,7 @@ KE5 的行要真实的 bubblewrap。DSH 的沙箱里没有 bwrap，这些测试�
 - 不改 `shell`，不改冻结的分派器和权限策略；
 - 不给写范围不为空的 Work 加只读命令；
 - 不在本片关 Query 的线；
-- 不改决定 45 对经人认定的线、和人暂停的线的维护处理；
+- 不改人暂停的线的维护处理；经人认定的线只按决定 51 改；
 - 不复活已归档的 Session；
 - 不手改 `dist`；
 - 不调用真实模型。
