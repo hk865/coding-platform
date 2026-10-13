@@ -1,13 +1,16 @@
 # 2A 片规格：决定队列只读相关的条目，不再拒绝，完整分页
 
-> **状态：lead 起草，2026-10-13；按 Codex 审查（`D:/cc-lead-notes/codex2/s2arev.out.md`，结论“不能冻结”，15 条）重写一轮。测试入口用户已同意（决定 51）。2026-10-14 lead 把按顺序查找挪到单独的端口（L1、§2），合入顺序改成接线包 2 → K 片 B → K 片 A → 2A；再审一轮后冻结。**
-> - 代码基线：ee9e7a33 的工作树，第 5 片已合入。
+> **状态：lead 起草，2026-10-13；按 Codex 审查（`D:/cc-lead-notes/codex2/s2arev.out.md`，结论“不能冻结”，15 条）重写一轮。测试入口用户已同意（决定 51）。2026-10-14 lead 把按顺序查找挪到单独的端口（L1、§2），合入顺序改成接线包 2 → K 片 B → K 片 A → 2A。2026-10-14 按 Codex 第二轮审查（`D:/cc-lead-notes/codex2/s2a-spec2.out.md`，7 条）改了一轮，同日按 2C 的审查加了整数排序（D8）；怎么处理的见 §9。lead 2026-10-14 逐行审过；Codex 快速复核后冻结。**
+> - 代码基线：ee9e7a33 的工作树，第 5 片已合入。第二轮审查对的是 5893c271，代码相同。
+> - 接线包 2 的代码不在这个基线里。§0.4 表里接线包 2 的几行按它的规格行号写；接线包 2 合入以后、施工以前，在合入后的基线上重核文件和行号。
 > - 依据：
->   - HANDOFF 决定 42、48、49（第 28 项选 (a)）、50（第 2 片拆成 2A/2B/2C）；
+>   - HANDOFF 决定 42、48、49（第 28 项选 (a)）、50（第 2 片拆成 2A/2B/2C）、51（测试入口）；
 >   - DESIGN §1.4、§6“第 2 片补齐决定队列的规模读取”；
 >   - [lead 答复页第 28 项](../model/REVIEW-SLICES-2-4-6-7-LEAD-ANSWERS.md)；
->   - 代码事实：`D:/cc-lead-notes/codex2/s2facts.out.md` 第 15 项；2026-10-13 的决定队列读取图（子任务只读整理）；Codex 审查对字段路径和两个后端的核对。
-> - 2B（执行计数、日历）要用本片的“按顺序查找”，所以 2A 先做。
+>   - [接线包 2 规格](wiring-2-SPEC.md) L6、L7（它加的临时防护，写明第 2 片要撤）；
+>   - 代码事实：`D:/cc-lead-notes/codex2/s2facts.out.md` 第 15 项；2026-10-13 的决定队列读取图（子任务只读整理）；Codex 两轮审查对字段路径和两个后端的核对；
+>   - lead 2026-10-14 的 D1–D8（第二轮审查和 2C 审查之后）。
+> - 2B（执行计数、日历）要用本片的“按顺序查找”，所以 2A 先做。2C 也用它，包括整数排序（D8）。
 
 ## 0. 冻结说明（lead）
 
@@ -19,7 +22,7 @@
   - 请知悉按类别的已看位置往后读；
   - 200 个目标的上限一并处理；
   - 读取故障仍报故障，局部数不当总数。
-- **待确认：** §5.1 的测试入口。
+- **已定（决定 51）：** §5.1 的四个测试入口，用户 2026-10-13 同意。
 - **第一稿里“历史改成最新在前”撤回。** 审查指出：记录上能排序的位置是“卡出现的时候”，不是“最后处理的时候”。按它排出来的“最新”会误导人；要按处理时间排，得另存一个位置。这不是第 28 项要解决的事，本片不改历史的顺序。
 
 ### 0.2 今天的问题（代码事实）
@@ -30,46 +33,72 @@
 - **到上限就整个拒绝。**
   - 每个来源最多 5,000 条、25 页，超了整个队列报 `capacity`；
   - 没按目标筛选、目标超过 200 个，也整个拒绝；
-  - 候选计划、规划问题自己的读取超过 25 页报 `incomplete`。
+  - 候选计划、规划问题自己的读取超过 25 页报 `incomplete`；
+  - **共用的读取也有上限。** 目标原因卡经 `queryTaskGraph`（`tasks/goal-decision-reader.ts:210`）和 `queryGoalDisplay`（`:266`）读任务事实，两者都走 `readCanonicalTaskFacts`。它按目标读执行用的 `readLookupKeys` 超过 25 页报 `incomplete`（`tasks/plan-readers.ts:481–510、1431–1434`）。一个目标的执行超过 5,000 个，原因卡就算不出来，整个队列失败。
+  - **接线包 2 加的临时防护。** 待答卡进上下文提醒的读取，最多 50 页/5,000 张；未送达回复来源的目录、每条线、输出各有上限。超了都报 `capacity`。接线包 2 自己写明第 2 片要撤（wiring-2-SPEC.md:55）。
 - **一个会丢通知的缺陷。** 归档时处置等待的那条写入（`mailbox-service.ts` 的 `writeArchiveWaitDisposal`）重新编码消息时丢了提交位置 `since`。那条消息从此按“旧式位置”排，可能被已看位置挡掉。
 
 ### 0.3 lead 定的技术选择
 
 **总的做法：** 卡片怎么拼、怎么合并、最终状态怎么定、怎么分节、怎么在内存里分页，这条现有的流水线**一点不改**（`readDecisionQueueWindow` 里的 `messageCard`、`syntheticAnswerCard`、`candidateCard`、`mergeCards`、`finalizeCard`、`sortCards`，游标格式 `v: 1`）。本片只改两件事：
 - 喂给它的数据只取相关的；
-- 去掉所有“到上限就拒绝”。
+- 去掉所有让整个队列拒绝的“到上限就拒绝”（§0.4 的表）。领域上限不动。
 
 这样卡片的语义、合并和历史都保持今天的样子。审查指出的“答过的卡重新冒出来”“候选链选错”“取消目标的历史丢失”都不会发生。
 
-- **L1 RecordStore 加“按顺序查找”，两个后端行为一致。**
-  - 索引登记可以多带一个排序路径：`{ name, aggregateType, paths, orderBy?: { path } }`。排序值只用文字（`since` 和 ISO 时间都是文字）。
-  - **哪些行是候选：**
-    - 排序值必须是文字。缺失、为空或不是文字的行，不是这个按顺序索引的候选。
-    - 这样排序时不出现空值，空值行另用普通等值查找读（L4 的旧式组）。
+- **L1 RecordStore 加“按顺序查找”，两个后端行为一致。**（lead 2026-10-14 按 D3、D4、D8 补全）
+  - **登记：** `{ name, aggregateType, paths, orderBy?: { path, valueType?: 'text' | 'integer' } }`。
+    - `orderBy.path` 用等值路径的同一套安全路径规则校验（`record-store/lookup-index.ts:44–50`），登记后和 `paths` 一起留在登记表里（同 `:83–85` 的复制）。不合法照今天报登记错误。
+    - `valueType` 缺省是 `'text'`，2A、2B 的索引都用它。只能是 `'text'` 或 `'integer'`，别的报登记错误（D8）。
+  - **哪些行是候选**（看排序值，D4、D8）：
+    - `text` 索引：排序值是非空文字。缺失、`null`、不是文字、空字符串 `""` 的行都不是候选。`since` 是定长的 `c` 加 10 位数字（`contracts/ledger.ts:87–92`），文字序就是提交序；ISO 时间也是文字。
+    - `integer` 索引：排序值是 JSON 整数（SQLite 里 `json_type = 'integer'`），并且是安全整数（±(2^53−1) 以内）。`real` 的行（如 `2.5`）、数字样子的文字（如 `"10"`）、`null`、缺失都不是候选。记录都由编码器的 `JSON.stringify` 写出，整数不会写成 `2.0`，两个后端判得一样。
+    - 这样排序时不出现空值。不是候选的行另用普通等值查找读（L4 的旧式组）。2C 的计数用同一条候选规则（2C L3）。
+  - **等值部分只用文字**（D3）：
+    - 请求的 `values` 每一个都必须是非空文字；`null`、数字、布尔、`""` 都报 `invalid`。
+    - SQLite 对每个等值路径比 `json_type = 'text'` 和相等。这样每个请求只约束一段连续的索引前缀，排序那一列在这段里是连续的。
+    - 原因：今天数字等值的谓词是 `json_type IN ('integer','real')`（`sqlite-record-store.ts:111–115`），而索引把 `json_type` 放在排序列前面（`:86–95`）。一个数字等值会跨两段各自排好序的范围。
+    - 普通 `lookup` 不变。
+    - lead 2026-10-14 核过 2A、2B（L14）、2C（L4）要登记的按顺序索引：等值路径都是文字（各种 id、`lifecycle`、`relation`、`target.kind`、`chain.reverify.actorClass`）。以后要非文字的等值路径，另议，不放宽这一条。
+    - 2C 的 `s2c-work-claim-by-session-at` 改成按领取的 `generation`（整数）排序的 `integer` 索引，2C 会改名（D8；`tasks/claim-service.ts:1061–1089`；今天 `tasks/session-facts.ts:240` 取最大的 generation）。
   - 放在单独的端口 `RecordOrderedLookupPort` 上，`RecordLookupPort` 不变（§2，lead 2026-10-14）。
   - **请求** `lookupOrdered`：
-    - `values`：等值部分，每个路径一个值，**必须是非空标量**；有空值报 `invalid`。这样索引前缀全部被等值约束，排序那一列才能连续扫。
+    - `values`：等值部分，每个路径一个非空文字。
     - `direction`：`'asc' | 'desc'`。
-    - `bound?: { value: string, inclusive: boolean }`：正序时是下界，倒序时是上界。
-    - `after?: { order: string, refKey: string }`：上一页最后一条，不含。
-    - `limit`：1–200。
-  - **顺序：**
-    - 先按排序值，再按完整规范 refKey，两者都按 UTF-8 字节序（SQLite 的 BINARY）；
-    - 内存后端用 `Buffer.compare`，不用 JS 字符串比较。
-  - **请求不合法报 `invalid`：**
-    - 索引没登记排序；
-    - 值的个数不对，或有空值；
-    - `limit` 越界；
-    - `after.refKey` 不是同一个聚合类型的规范 refKey；
-    - `after.order` 或 `bound.value` 不是文字。
-  - 索引不存在：`unsupported`。都不抛异常。
+    - `bound?: { value, inclusive }`：正序时是下界，倒序时是上界。
+    - `after?: { order, refKey }`：上一页最后一条，不含。
+    - `bound.value`、`after.order` 的类型跟着索引：`text` 索引是非空文字，`integer` 索引是安全整数。
+    - `limit`：1–200 的整数。
+  - **请求不合法报 `invalid`，不抛异常**（D4）：
+    - 请求不是对象；`index` 不是非空文字；
+    - 索引登记了但没有排序；
+    - `values` 不是数组、个数不对、有一个不是非空文字；
+    - `direction` 不是 `'asc'` 也不是 `'desc'`；
+    - `limit` 不是 1–200 的整数（`0`、`201`、`1.5`、`"10"` 都不行）；
+    - 给了 `bound`，但它不是对象，或 `inclusive` 不是布尔，或 `value` 的类型和索引不符；
+    - 给了 `after`，但它不是对象，或 `order` 的类型和索引不符，或 `refKey` 不是同一个聚合类型的规范 refKey。
+    - 索引不存在：`unsupported`。
+  - **返回哪些、什么顺序：**
+    - 只返回候选。
+    - 先按排序值，再按完整规范 refKey。`text` 的排序值按 UTF-8 字节序（SQLite 的 BINARY；内存后端用 `Buffer.compare`，不用 JS 字符串比较）。`integer` 的排序值按数值比。refKey 总是按 UTF-8 字节序。倒序时两者都倒过来。
+    - `bound` 和 `after` 一起给，两个条件都要满足（取交集）。`after` 在下界之前时，结果从下界开始。
+    - `next`：这一页最后一条之后，这个请求再没有候选，`next` 为 `null`；否则是最后一条的 `{ order, refKey }`。所以不足 `limit` 条的页、空页，`next` 一定是 `null`；正好 `limit` 条而后面没有了，也是 `null`。做法同今天的 `lookup` 多取一条来判断（`sqlite-record-store.ts:553–563`）。
+    - 每页返回 `readThrough`。
+  - **续读：**
+    - 续读带同一个 `index`、`values`、`direction`、`bound`，只换 `after`。调用方（决定队列、2B、2C）翻页时自己保持这四项不变。
+    - 存储不记上一次请求。能从请求本身看出来的错（`after` 的类型或聚合类型不对）报 `invalid`。看不出来的（换了 `values` 或 `bound` 又带着旧的 `after`），按一次新的读取回答：结果就是新请求的候选里满足 `bound`、排在 `after` 之后的那些，不保证是旧请求的下一页。
   - **SQLite：**
     - 索引列依次是：aggregateType、各等值路径（`json_type`、`json_extract`）、`json_extract(排序路径)`、`ref_key`；
-    - 索引名的指纹把 `orderBy` 算进去；
-    - 查询：等值谓词同今天，加 `json_type(排序路径) = 'text'`；续读用 `(排序值, ref_key)` 的行值比较（两边都非空，不受 NULL 影响）；`ORDER BY 排序值, ref_key`，方向一致。
+    - 索引名的指纹把 `orderBy.path` 和 `valueType` 都算进去（缺省按 `'text'` 算）；
+    - 查询：
+      - 等值：每个路径 `json_type = 'text'` 加相等；
+      - 候选：`text` 是 `json_type(排序路径) = 'text'` 且不等于 `''`；`integer` 是 `json_type(排序路径) = 'integer'` 且在安全整数范围内；
+      - 下/上界和续读用 `(排序值, ref_key)` 的行值比较（两边都非空，不受 NULL 影响）；
+      - `ORDER BY 排序值, ref_key`，方向一致。
+    - 等值前缀固定，排序值在这段里连续，一段扫下来就是顺序，不另排序。
     - 新索引在打开数据库时建在已有的行上（今天的做法）。
-  - 内存后端可以每次调用时排序，语义必须和 SQLite 逐条相同。每页仍返回 `readThrough`。
-  - **验收时 lead 另做一项：** 用 `EXPLAIN QUERY PLAN` 确认 SQLite 走的是这个索引。这不进单元测试。
+  - 内存后端可以每次调用时排序，语义必须和 SQLite 逐条相同（整数按数值，文字按 `Buffer.compare`）。每页仍返回 `readThrough`。
+  - **验收时 lead 另做一项**（D3）：用 `EXPLAIN QUERY PLAN` 看 2A 的每个按顺序查询（正序、倒序、带 `bound` 和 `after`）：走这个索引，按前缀范围查找，**没有** `USE TEMP B-TREE FOR ORDER BY`。只看到索引名不算。这不进单元测试。
   - 今天的 `lookup` 不变。
 - **L2 消息只读发给你的。**
   - 新等值索引 `s2a-user-messages`：`ref.projectId`、`ref.workspaceId`、`recipient.kind` → `user`。按页读到底，没有条数上限。
@@ -79,8 +108,12 @@
 - **L3 目标、候选、规划问题、冲突：分页读到底，不拒绝；计算范围和今天一样。**
   - 目标列表（`listWorkspaceGoals`）按页读到底。删掉 `GOAL_LIMIT` 和 5,000 条的拒绝。
   - 目标原因卡、规划问题、目标冲突仍对列出的**所有**目标算，和今天一样。这样取消、完成的目标上的卡，照今天进历史或留在原处，不改语义。目标冲突读自己的目标列表时，今天不检查截断，改成同样读到底。
-  - 候选（`enumerateGoalCandidates`、`enumerateClosedGoalCandidates`）和规划问题（`planning-question-reader.ts`）自己的 25 页上限去掉，按页读到底，不再报 `incomplete`。
-  - **代价如实写明：** 每次读队列，对每个目标都要算一遍。规模测试放 300 个目标（250 个已结束），**记下耗时，不设断言**。真慢了，另提“目标上记终态、只算未结束的”。那会改取消目标的历史，要先定语义，不在本片。
+  - 候选（`enumerateGoalCandidates`、`enumerateClosedGoalCandidates`）的 25 页上限在共用的 `readLookupKeys` 里，按 L10 改成读到底，不再报 `incomplete`。目标原因卡读任务事实也靠它（L10）。
+  - 规划问题（`planning-question-reader.ts:57–58、101–120`）自己的 25 页上限去掉，按页读到底，不再报 `incomplete`。
+  - **代价如实写明：** 每次读队列，对每个目标都要算一遍。
+    - **计时数据集**（lead 量）：300 个目标，250 个已结束。**记下耗时，不设断言。**
+    - 它和 QA-06 的**验收数据集**（201 个目标）是两套，不混用。
+    - 真慢了，另提“目标上记终态、只算未结束的”。那会改取消目标的历史，要先定语义，不在本片。
 - **L4 请知悉：每一类从已看位置往后读，读全，再按今天的比较规则排序和分页。**
   - **起点：**
     - 已看位置是提交位置 `c`：用按顺序查找、下界 `c`（含），读到底；再用今天的 `compareNoticePositions` 去掉不大于已看位置的。旧式组整个跳过，因为旧式位置都排在提交位置之前。
@@ -92,35 +125,102 @@
     | --- | --- | --- |
     | 成员请知悉（`member_notice`） | L2 读到的发给你的消息 | 照今天 |
     | 自动返工的重排 | 按顺序索引 `s2a-requeue-by-project`：等值 `ref.projectId`，按 `since`；旧式组用等值索引 `s2a-requeue-legacy`：`ref.projectId`、`since` | 去掉人发起的；**按重排所属目标的工作区归属**：用 `ref.goalId` 直接读那个目标，不论它现在是什么状态；不在本工作区的去掉。同一个项目的两个工作区互不串 |
-    | 自动返工的重新检查 | 按顺序索引 `s2a-round-reverify`：等值 `ref.projectId`、`ref.workspaceId`、`chain.reverify.actorClass`（`system`、`agent` 各一次），按 `since`；旧式组同理 | 每一轮照今天用 `roundChainHead` 核对链，链出错照今天报。不只看“不是第一轮” |
+    | 自动返工的重新检查 | 按顺序索引 `s2a-round-reverify`：等值 `ref.projectId`、`ref.workspaceId`、`chain.reverify.actorClass`（`system`、`agent` 各一次），按 `since`；旧式组用等值索引 `s2a-round-reverify-legacy`，同样三个路径再加 `since` 取 `null` | **索引只用来找出有新轮次的检查主体**（主体 = 轮次 ref 去掉 `roundId`，同 `roundChainHead` 的判断）。每个主体再经已有的主体索引 `VerificationRoundBySubject`（`persistence/evidence-record-codecs.ts:674–677`，同 `readRunRoundChain`）把整条链读一次，照今天用 `roundChainHead`（`state/verification-machine.ts:479–519`）核对，同 `automatic-rework-notices.ts:118–153`；链出错照今天报。链里更早的轮次、人发起的重新检查，只用来核对，**从不作为通知出现**；出通知的只有索引找出的、系统或成员发起的那些轮次（lead 2026-10-14，D2） |
 
   - 不再读所有已结束的 Run。决定 49 写的是“已结束执行按时间窗口读”，这里用提交位置作窗口：重排和检查轮次自己带 `since`，从已看位置往后读，只读新的，也不会漏掉迟写的记录。
-  - **代价如实写明：** 你一直不标“已看”，读的量就一直涨。这和今天一样，今天还要先读全部已结束的 Run。本片不加计数上限。
+  - **代价如实写明：**
+    - 你一直不标“已看”，读的量就一直涨。这和今天一样，今天还要先读全部已结束的 Run。本片不加计数上限。
+    - 每个有新轮次的主体，多读一次整条链。链长有合法上限（`ROUND_CHAIN_MAX`），这是领域上限，照旧。
+    - 一次稳定尝试里每个来源只拼一次（L11）。
 - **L5 修掉丢 `since` 的写入。** `writeArchiveWaitDisposal` 改成保留原来的提交位置，和其它更新一样经 `preservedNoticeOrigin`。再查一遍所有重新编码消息、重排、检查轮次、候选的写入，都要保留 `since`。
-- **L6 单张卡的读取（`readDecisionCard`）一并去掉上限。** 答复索引和注入来源都按页读到底，不再报 `capacity` 或因超量报 `unavailable`。
-- **L7 稳定窗口照旧。**
-  - 读取中途账本有新提交就整窗重读，最多 4 次，之后报 `unavailable`。
+- **L6 单张卡的读取（`readDecisionCard`）一并去掉上限。**
+  - 答复索引（`findAnswerMessage`，`decision-read-model.ts:1068–1094`）、请求的候选（`findCandidateProposal`，`:1117–1148`）按页读到底，不再报 `capacity`。
+  - 注入来源（规划问题等）按页读到底（`:823–843`）。读完了还找不到，才是没有这张卡；不再因超量报 `unavailable`。
+- **L7 稳定窗口照旧：一共读 4 次。**（lead 2026-10-14，D5）
+  - 读取中途账本有新提交，整窗重读。一共 4 次：第一次加最多 3 次重读，同今天（`decision-read-model.ts:111–112、244–251`）。
+  - 4 次都被打断：报 `unavailable`。不返回混在一起的计数，不发展示令牌。
+  - 2B 已按“一共 4 次”对齐（2B L17）。
   - 跨页没有快照：两页之间有人答了卡，卡可能换到别的节。这是今天就有的“边翻边变”，本片不改，也不承诺跨页一致。
-- **L8 队列里不再有 `capacity` 拒绝，也不再因超量报 `incomplete`。** 存储故障、窗口一直不稳、来源不可用，照今天报。计数的含义全照今天。
+- **L8 队列里不再有 `capacity` 拒绝，也不再因超量报 `incomplete`。**
+  - 包括接线包 2 的 `decision_index_page_limit`、`undelivered_reply_page_limit`。
+  - 存储故障、窗口一直不稳、来源不可用，照今天报。领域上限（检查链长度）造成的拒绝照旧。
+  - 计数的含义全照今天。
 - **L9 不改的：**
   - 卡片内容、合并、最终状态、分节、排序、游标（`v: 1`）；
   - 计数和 `countsComplete`；
   - 请知悉的已看位置和令牌；
   - 各来源的可用性报告；
   - 路由的形状。
+- **L10 队列读取依赖的共用读取也读到底；领域上限不动。**（lead 2026-10-14，D1）
+  - **总规矩：** 决定队列（含单张卡、请知悉、接线包 2 接的两处）的推导依赖哪个共用的读取，那个读取就按页读到底，没有页数、条数上限。真正的领域上限（检查链的合法长度、写入大小）留着。每页的大小也留着。
+  - **`readLookupKeys`**（`tasks/plan-readers.ts:96–97、481–510`）去掉 25 页的上限，读到底。
+    - 它是共用的。除了候选、目标原因卡，还被 `findPendingProposal`、`readRequestCandidateHead`、`readGoalRunsForCount`、`readCanonicalTaskFacts`、`readFutureChangeTaskFacts` 用。
+    - 行为只在今天超过 5,000 个键、报 `incomplete` 的读上变（改成成功）。其余读取的结果和今天相同。
+  - **`queryTaskGraph` 的其他调用方**，结果和今天相同；只有今天超上限而失败的目标，改成成功：
+    - `app/attention-observer.ts:674`、`app/startup-reconcile.ts:385`、`app/core-routes.ts` 的 `tasks/query` 路由（`:286`、`:734`）；
+    - `business/workflow/workflow.ts:1241、1265、1601、1663、1998`，`session-archive.ts:259、278`，`session-maintenance.ts:245`；
+    - `core/agent-runtime/whiteboard-tools.ts:300`；
+    - `views/graph-context-reader.ts:740、833`。
+    - `queryGoalDisplay`，以及直接调 `readCanonicalTaskFacts` 的读写路径（`claim-service.ts:974`、`completion.ts:341、558`、`context-input-service.ts:565`）同理。
+  - **`lookupAll`**（`views/goal-conflicts.ts:139–178`）去掉 5,000 的 `cap`，读到底，不再给 `truncated`；它的 4 次稳定窗口留着。它的调用方都在队列路径上（目标列表、答复索引、请求的候选；旧的消息和返工读取由 L2、L4 换掉）。
+  - **接线包 2 的两处临时防护撤掉**（§0.4）。
+  - 已有的 `capacity` 断言不成批翻转：写入大小的上限仍然有效（§5.3）。
+- **L11 一次稳定尝试里，每个来源只拼一次。**（lead 2026-10-14，D7）
+  - 今天有的来源每读一页，就把整个集合重拼一遍：
+    - 成员请知悉每页都把合格的消息逐条重读一遍（`decision-read-model.ts:998–1034`）；
+    - 规划问题每页都重开一遍答复（`planning-question-reader.ts:137–159、201–208`）。
+    - 上限去掉以后，内部翻 n 页就是 n 遍。
+  - 改成：一次稳定尝试里，每个来源的集合只拼一次，内部翻页复用它；整窗重读时重新拼。不跨尝试、不跨调用缓存。
+  - 无界的展开追加改成循环或 `concat`，免得条数大时撞上引擎的参数个数上限。例如 `messages.push(...loaded.messages)`（`:344`）、`allNotices.push(...)`（`:517`）、`orderedCards.push(...)`（`:527–529`）。
+  - 卡片、通知的内容、顺序、计数都不变。
+  - 外层每翻一页（下一页队列）仍要整窗重读一遍，这是今天就有的，本片不改（L7）。所以计时量的是完整翻页，不是一次请求（§5.2）。
+
+### 0.4 2A 去掉哪些上限（lead 2026-10-14，D1）
+
+**分法：** 超了就让整个队列（或整个请知悉来源、整次上下文准备）拒绝的上限，2A 去掉，改成按页读到底。单条记录的领域上限（检查链的合法长度、写入大小）和每页的大小留着。
+
+接线包 2 的代码还没合入。它那几行按它的规格行号写；合入以后、施工以前，在合入后的基线上重核文件和行号。下表 WorkGraph 路径省略 `src/core/work-graph/`，RecordStore 路径省略 `src/core/`。
+
+| 文件（位置） | 上限 | 留/去 | 理由 |
+| --- | --- | --- | --- |
+| 接线包 2：`views/context-extensions.ts` 的待答卡提醒（wiring-2-SPEC.md:55 L6；:235 §4.3 第 1 条） | 每页 100，最多 50 页/5,000 张；还有下一页报 `capacity/decision_index_page_limit:` | 去 | 超了整次上下文准备失败；接线包 2 自己写明第 2 片要撤 |
+| 接线包 2：`views/undelivered-reply-notices.ts` 的 Session 目录（wiring-2-SPEC.md:56 L7；:250 §4.4 第 7 条） | 每页 100，最多 50 页 | 去 | 超了整个来源报 `capacity/undelivered_reply_page_limit:`，队列跟着拒绝 |
+| 同上，每条不可用的线的回复来源 | 每页 100，最多 50 页 | 去 | 同上 |
+| 同上，去重后的输出 | 最多 5,000 条 | 去 | 同上 |
+| 同上，整窗尝试 | 最多 4 次 | 留 | 稳定窗口，不是量的上限（L7） |
+| 同上，来源请求的 `page.limit` | 1–200 | 留 | 每页大小，请求校验 |
+| `views/decision-read-model.ts:104–107`，用在 `:421–438`（卡来源）、`:495–513`（请知悉类别）、`:823–843`（单张卡的派生来源） | 每个来源 25 页/5,000 条 | 去 | 超了整个队列 `capacity`，单张卡 `unavailable`。`SOURCE_PAGE_LIMIT`（200）留作每页大小 |
+| `decision-read-model.ts:108–109、300–302` | 不筛目标时最多 200 个目标 | 去 | 整个队列 `capacity` |
+| `decision-read-model.ts:297–299` | 目标列表截断就 `capacity` | 去 | 同上；`listWorkspaceGoals` 读到底 |
+| `decision-read-model.ts:338–343` | 消息窗口截断就 `capacity` | 去 | 同上；L2 换掉 `loadWorkspaceMessages` |
+| `decision-read-model.ts:1087–1092` | 答复索引截断就 `capacity` | 去 | 单张卡整个拒绝（L6） |
+| `decision-read-model.ts:1143–1148` | 请求的候选索引截断就 `capacity` | 去 | 同上 |
+| `views/goal-conflicts.ts:139–178`（`lookupAll`） | `cap = 5000` | 去 | 共用，调用方都在队列路径上（L10）。它的 4 次稳定窗口留着 |
+| `tasks/plan-readers.ts:96–97、481–510`（`readLookupKeys`） | 25 页，超了 `incomplete` | 去 | 共用。候选、目标原因卡（经 `queryTaskGraph`、`queryGoalDisplay` → `readCanonicalTaskFacts`，`:1431–1434`）都靠它（L10） |
+| `tasks/planning-question-reader.ts:57–58、101–120` | 25 页，超了 `incomplete` | 去 | 整个来源失败，队列跟着失败 |
+| `views/automatic-rework-notices.ts:72–78、121–124` | 已结束 Run、检查轮次的窗口超了 `capacity` | 去 | 连宽读一起换掉（L4） |
+| `decision-read-model.ts:270–271` | 队列每页 1–100 | 留 | 每页大小 |
+| `record-store/lookup-index.ts:136–139`，以及 L1 的按顺序查找 | 每页 1–200 | 留 | 每页大小 |
+| `persistence/evidence-record-codecs.ts:656`；`tasks/plan-readers.ts:1164–1190` | 一条检查链最多 `ROUND_CHAIN_MAX` 轮 | 留 | 合法链长，领域上限 |
+| 写入大小，例如 `communication/mailbox-service.ts:474`、`communication/decision-service.ts:593–596、702` | 文本、注解的字节数 | 留 | 写入上限；已有的 `capacity` 断言照旧 |
+| `decision-read-model.ts:111–112、244–251`；`goal-conflicts.ts:70–71` | 稳定窗口 4 次 | 留 | L7 |
+
+不在队列读取路径上的上限，本片不动。例如 `tasks/goal-settings-service.ts:211–239`（排序写入时的目标列表）、`tasks/reconcile-reads.ts:43–70`、会话异常的读取（`tasks/session-anomaly-service.ts:80–85`、`tasks/run-state-service.ts:405–439`）。
 
 ## 1. 范围
 
 ### 1.1 交付
 
-1. RecordStore：按顺序查找（登记、请求校验、两个后端）。
+1. RecordStore：按顺序查找（登记含 `valueType`、请求校验、两个后端）。
 2. 新索引：
    - `s2a-user-messages`；
    - `s2a-requeue-by-project`（按顺序）、`s2a-requeue-legacy`；
-   - `s2a-round-reverify`（按顺序）和它的旧式组索引。
+   - `s2a-round-reverify`（按顺序）、`s2a-round-reverify-legacy`。
    - 各自登记在 codec 里。
-3. 决定队列：L2–L4、L6、L8，去掉所有上限。
-4. 修 `since` 丢失（L5）。
+3. 决定队列：L2–L4、L6、L8、L11，去掉 §0.4 表里标“去”的上限。
+4. 共用读取读到底（L10）：`readLookupKeys`、`lookupAll`。
+5. 撤掉接线包 2 的两处临时防护（§0.4）。
+6. 修 `since` 丢失（L5）。
 
 ### 1.2 不在本片
 
@@ -129,6 +229,7 @@
 - 执行计数、日历（2B）；工作线、状态词（2C）。
 - 未接上的来源：仍报不可用。
 - 跨页一致（L7）。
+- 领域上限，以及不在队列读取路径上的上限（§0.4 表下）。
 - 界面（E3）。
 
 ## 2. 接口
@@ -137,19 +238,20 @@
 // src/core/record-store/lookup-ports.ts
 export type RecordLookupIndex = {
   readonly name: string; readonly aggregateType: string; readonly paths: readonly string[];
-  readonly orderBy?: { readonly path: string };          // 排序值只用文字
+  readonly orderBy?: { readonly path: string; readonly valueType?: 'text' | 'integer' };   // 缺省 'text'（D8）
 };
+export type OrderedLookupValue = string | number;        // text 索引：非空文字；integer 索引：安全整数
 export type OrderedLookupRequest = {
   index: string;
-  values: readonly (string | number | boolean)[];        // 非空标量
+  values: readonly string[];                             // 等值部分：每个都是非空文字（D3）
   direction: 'asc' | 'desc';
-  bound?: { value: string; inclusive: boolean };
-  after?: { order: string; refKey: string };
-  limit: number;                                          // 1..200
+  bound?: { value: OrderedLookupValue; inclusive: boolean };
+  after?: { order: OrderedLookupValue; refKey: string };
+  limit: number;                                         // 1..200 的整数
 };
 export type RecordOrderedLookupPage = {
   records: EncodedRecord[];
-  next: { order: string; refKey: string } | null;
+  next: { order: OrderedLookupValue; refKey: string } | null;   // 后面再没有候选时为 null（L1）
   readThrough: CommitCursor | null;
 };
 export interface RecordLookupPort {
@@ -162,7 +264,13 @@ export interface RecordOrderedLookupPort {                // 单独一个端口�
 //   不加进 RecordLookupPort：测试里十几个夹具对象类型写成 `… & RecordLookupPort`、只实现了 `lookup`
 //   （例如 tests/helpers/graph-session-fixture.ts:80、tests/helpers/task-claim-fixture.ts:68），
 //   `npm run typecheck` 包括 tests，加进去它们全要改。2C 的计数端口同样处理（2C 规格 L3）。
+
+// src/core/record-store/lookup-index.ts
+//   RegisteredLookupIndex 加 orderBy?: { path: string; valueType: 'text' | 'integer' }，
+//   登记时校验并保留（L1）；请求的运行时校验和 decodeLookupRequest 放在一处，两个后端共用。
 ```
+
+运行时的类型不可信：上面的类型只是约定，`lookupOrdered` 收到什么都按 L1 的清单校验，不合法报 `invalid`，不抛异常。
 
 决定队列的公开契约不变。
 
@@ -171,15 +279,15 @@ export interface RecordOrderedLookupPort {                // 单独一个端口�
 | 行 | 读什么 | 结果 |
 | --- | --- | --- |
 | QA1 | 队列任意一页 | 发给你的消息、所有目标及其派生来源读全；请知悉从已看位置往后读全；拼卡、分节、分页同今天 |
-| QA2 | 读取中途有别的提交 | 整窗重读（L7） |
+| QA2 | 读取中途有别的提交 | 整窗重读；一共 4 次，都被打断报 `unavailable`（L7） |
 
 ## 4. 规则
 
 1. 待答、已答待落实的条目，不论多旧、多少，都在队列里，计数准确。
-2. 成员之间的消息、已看位置之前的返工和检查，不再进入每次读取。
-3. 队列里没有“容量不足”。真实的故障照实报。
+2. 成员之间的消息、已看位置之前的返工和检查，不再进入每次读取（检查链只作核对时例外，L4）。
+3. 队列里没有“容量不足”。真实的故障照实报；领域上限（检查链长度、写入大小）照旧。
 4. 卡片和历史的语义与今天逐条相同；只是不再因量大而拒绝。
-5. 两个后端对同一组数据、同一个按顺序查找，返回逐条相同的结果和游标。
+5. 两个后端对同一组数据、同一个按顺序查找，返回逐条相同的结果和游标（文字和整数排序都是）。
 6. 读取不写任何东西，不调用模型。
 
 ## 5. 测试（TDD，测试由 DSH 一条一条写）
@@ -187,43 +295,52 @@ export interface RecordOrderedLookupPort {                // 单独一个端口�
 做法同 K 片 §5：
 - 用 `.dsh-ref/tdd/` 的 TDD skill，在确认过的入口上一条一条先写失败测试，再写实现；
 - 不读数据库核对；
-- 期望值来自规格或手算例子；
+- 期望值来自规格或手算例子。**期望的标识、顺序、计数都在夹具或测试里写成字面值，不用产品的比较函数算**（包括 `compareNoticePositions` 和 L1 的排序）。“同今天”只是保留的指引，不当期望的来源；
 - 测试名以行号开头；
 - 服务层的例子在内存和 SQLite 两个后端各跑一次。
 - **跨过旧上限的例子**（5,001、201），两个后端都要真的跨过去。别的例子在 SQLite 上可以用小一点的量。
+- 替身只用在系统边界：QA-16 的存储端口替身。
 
-### 5.1 测试入口（**待用户确认**）
+### 5.1 测试入口（用户 2026-10-13 已同意，决定 51）
 
 | 入口 | 是什么 | 能抓到 | 抓不到 |
 | --- | --- | --- | --- |
-| QE1 | RecordStore 的公开 `lookupOrdered`，两个后端各一份 | 排序（含非 ASCII 和同值）、候选规则、上下界、续读游标、不合法请求、建在已有行上的新索引；两个后端逐条一致 | 决定队列的业务规则；SQLite 是否真走索引（lead 另查） |
-| QE2 | 业务流程：用真实的 WorkGraph 服务造数据，用公开的 `queryDecisionQueue` / `readDecisionCard` 读 | 不再拒绝；成员之间的消息不影响；翻页不重不漏；卡片和历史与今天相同 | 路由的序列化 |
-| QE3 | 请知悉流程：真实的自动返工、重新检查、成员请知悉、归档时的等待处置，加 `markNoticesSeen`，再读 | 每类从已看位置往后；旧式位置；两个工作区不串；`since` 不再丢 | 界面的“已看”交互 |
+| QE1 | RecordStore 的公开 `lookupOrdered`，两个后端各一份 | 文字排序（含非 ASCII 和同值）、整数排序、候选规则、上下界、续读游标、不合法请求、登记校验、建在已有行上的新索引；两个后端逐条一致 | 决定队列的业务规则；SQLite 是否真走索引、有没有另排序（lead 另查） |
+| QE2 | 业务流程：用真实的 WorkGraph 服务造数据，用公开的 `queryDecisionQueue` / `readDecisionCard` 读 | 不再拒绝；成员之间的消息不影响；翻页不重不漏；卡片和历史与今天相同；稳定窗口（存储边界的提交替身） | 路由的序列化 |
+| QE3 | 请知悉流程：真实的自动返工、重新检查、成员请知悉、归档时的等待处置、未送达回复（接线包 2），加 `markNoticesSeen`，再读 | 每类从已看位置往后；旧式位置；检查链的核对；两个工作区不串；`since` 不再丢 | 界面的“已看”交互 |
 | QE4 | HTTP 路由（`CORE_ROUTE_SPECS` 里的决定队列路由），背后是真实的读取，不打桩 | 跨过旧上限的结果原样传出；故障如实传出 | 浏览器 |
 
 ### 5.2 验收行为
 
 | 行 | 入口 | 行为 | 期望值来源 |
 | --- | --- | --- | --- |
-| QA-01 | QE1 | 手写数据集，含非 ASCII 的 refKey、同一排序值的多条、缺排序值的行、排序值不是文字的行。正序、倒序各读：顺序、每页边界、续读游标与手算的一致；不是候选的行不出现；两个后端相同 | L1 |
-| QA-02 | QE1 | 上下界含与不含；五种不合法请求各报 `invalid`；索引不存在报 `unsupported` | L1 |
+| QA-01 | QE1 | 手写数据集（`text` 索引）：<br>- 非 ASCII：排序值和 refKey 里有 `'\u{E000}'` 和 `'\u{10000}'`。JS 的 UTF-16 比较里后者在前（`D800` 小于 `E000`），UTF-8 字节序里前者在前（`EE` 小于 `F0`）；期望按字节序；<br>- 同值跨页：三条同一个排序值，`limit: 2`，第二页按 refKey 接着，不重不漏；<br>- 不是候选的行：缺排序值、`null`、数字、布尔、`""`。<br>正序、倒序各读到底：每页的标识序列和 `next` 写成字面值（手算）；不是候选的行不出现；最后一页（含正好 `limit` 条的那种）`next` 为 `null`；两个后端相同 | L1 |
+| QA-02 | QE1 | - 下界、上界的含与不含；<br>- `bound` 和 `after` 一起给（取交集，手算）：正序、下界 `"b"` 含、`after` 在 `"c"` 的那条上，结果从它之后开始；`after` 在下界之前，结果从下界开始；<br>- 不合法请求逐条报 `invalid`、不抛：`direction` 错；`limit` 为 `0`、`201`、`1.5`、`"10"`；`values` 个数不对或含 `null`、数字、布尔、`""`；`bound` 缺 `inclusive` 或值的类型不对；`after` 缺 `refKey`、refKey 是别的聚合类型或 `order` 的类型不对；索引没登记排序；<br>- 索引不存在报 `unsupported`；<br>- 登记时 `orderBy.path` 不是安全路径、`valueType` 不是两种之一，报登记错误 | L1 |
 | QA-03 | QE1 | 已有数据的 SQLite 库关掉、再用登记了新索引的定义打开，按顺序查找查得到旧行 | L1 |
 | QA-04 | QE2 | 工作区有 5,001 条以上成员之间的消息，加 3 张待答卡、2 张已答待落实：队列返回这 5 张，计数 3 和 2，不拒绝 | L2、规则 2、3 |
 | QA-05 | QE2 | 5,001 张待答卡，`limit: 50` 翻到底：张数 5,001，不重不漏；计数 5,001 | L2、L8 |
-| QA-06 | QE2 | 201 个目标、未按目标筛选：不拒绝；每个目标的原因卡和今天的规则算出的一致（用其中几个目标手算） | L3 |
-| QA-07 | QE2 | 规划问题：一个目标有超过 5,000 个查询任务（内存后端）时，规划问题卡照常出来，不报 `incomplete` | L3 |
+| QA-06 | QE2 | 201 个目标（验收数据集，不是 L3 的 300 个目标的计时数据集）、未按目标筛选：不拒绝；每个目标的原因卡和今天的规则算出的一致（用其中几个目标手算，写成字面值） | L3 |
+| QA-07 | QE2 | 规划问题：一个目标有 5,001 个查询任务，**两个后端都跑**：规划问题卡照常出来，张数是字面值，不报 `incomplete` | L3、L10 |
 | QA-08 | QE2 | 卡片语义回归：取消目标的待答卡、规划问题、冲突都进历史，只读（同 DQ07）；答过并落实的合成答复不再出现在待答 | L9、规则 4 |
-| QA-09 | QE2 | `readDecisionCard` 在 5,001 条以上发给你的消息中读一张卡：内容正确，不拒绝 | L6 |
-| QA-10 | QE3 | 自动返工 30 次、重新检查 10 次（真正由系统或成员发起的重新检查）、成员请知悉 20 条，标记已看到中间某处：再读只出现之后的，每类从自己的位置接着，顺序同今天的比较规则 | L4 |
-| QA-11 | QE3 | 已看位置是旧式的：先出旧式组（按今天的旧式比较规则），再接按提交位置的 | L4 |
+| QA-09 | QE2 | （一）派生的卡在旧来源窗口之外：一个目标的规划问题卡超过 5,000 张，`readDecisionCard` 读排在第 5,001 张之后的那一张（旧的 25 页×200 之外，`decision-read-model.ts:823–842`）：内容和夹具写的一样，不报 `unavailable`。<br>（二）请求的候选翻页：同一个请求有 5,001 个以上候选记录（旧的 `findCandidateProposal` 上限之外，`:1117–1148`）：`readDecisionCard` 读这个请求的卡，得到夹具里写明的那个候选；队列里同一张卡一样；都不报 `capacity`、`incomplete` | L6、L10 |
+| QA-10 | QE3 | （一）自动返工 30 次、重新检查 10 次（真正由系统或成员发起）、成员请知悉 20 条，标记已看到中间某处：再读只出现之后的，每类从自己的位置接着；期望的标识序列在夹具里写成字面值。不标已看、用小的 `limit` 翻完：每一页的 `counts.notices` 都等于夹具写的字面总数，翻页不改计数。<br>（二）超过 5,000：未看的成员请知悉 5,001 条；接线包 2 的未送达回复：工作区 5,001 个 Session，按目录顺序排在 5,000 个之后的那条不可用，上面有 5,001 条未送达回复（越过目录 50 页、每线 50 页、输出 5,000 三个旧上限）。队列翻到底：每类的条数和计数是字面值，不报 `capacity` | L4、L8、L10 |
+| QA-11 | QE3 | 已看位置是旧式的。Codex 夹具经存储边界提交合法的历史记录：没有 `since`，今天的编解码读得出；断言只经公开读取，不读数据库。三条旧式的自动返工，`occurredAt` 的先后和 refKey 的先后正好相反；已看位置在 `occurredAt` 最早的那条上。再读：先出另外两条旧式的（按 `occurredAt`，字面顺序），再接按提交位置的。没有已看位置时，三条旧式的都排在最前。不标已看翻页，计数不变 | L4 |
 | QA-12 | QE3 | 同一项目两个工作区，各有自动返工；其中一个目标在通知被看之前就取消、另一个已完成：每个工作区只看到自己的，取消和完成的目标的通知都还在 | L4 |
 | QA-13 | QE3 | 一条在等回复的消息经归档时的等待处置之后：提交位置不变，仍按提交位置出现在请知悉里，没有被已看位置挡掉 | L5 |
 | QA-14 | QE4 | 经路由读 QA-05 的数据：返回第一页和游标，翻到底与 QA-05 相同；把存储设成读失败，路由报故障，不报空队列 | L8 |
+| QA-15 | QE1 | 整数排序（`valueType: 'integer'`）：排序值有负数、`0`、大的安全整数（如 `9007199254740991`），还有文字序和数值序不同的 `2`、`10`；期望按数值（`2` 在 `10` 前）。同值按 refKey 的 UTF-8 字节序。`real` 的行（`2.5`）、数字样子的文字（`"10"`）不是候选。`integer` 索引上 `bound.value`、`after.order` 给文字，`text` 索引上给数字，都报 `invalid`。正序、倒序各读，期望写成字面值；两个后端逐条相同 | L1（D8） |
+| QA-16 | QE2 | 稳定窗口。Codex 写一个存储端口的测试替身：包住真实存储，在某次读的中途确定地提交一次（加一张待答卡）。<br>（一）只在第 1 次尝试中途提交：结果是第 2 次的，含这张新卡；卡片和计数按新数据手算，不混旧的；<br>（二）第 1–3 次尝试都被打断、第 4 次不打断：成功，卡片和计数手算；<br>（三）4 次都被打断：`unavailable`，没有卡片、计数、展示令牌 | L7（D5） |
+| QA-17 | QE2 | 一个目标有 5,001 个以上执行（越过 `readLookupKeys` 的旧上限 25 页×200）：目标原因卡照常算出，其中夹具点名的一张和手算的一致，不报 `incomplete`；两个后端 | L10（D1） |
+| QA-18 | QE3 | 一个检查主体：第 1 轮，第 2 轮由人发起重新检查；标记已看到第 2 轮之后的某条通知；再由系统发起第 3 轮。再读：自动返工这一类恰好多 1 条，就是第 3 轮；整条链照今天的规则核对通过；第 1、2 轮不出现 | L4（D2） |
 
 另由 lead 在验收时核对，不进测试：
-- 代码里不再有读所有已结束 Run 的路径；
-- SQLite 的 `EXPLAIN QUERY PLAN`；
-- QA-06 的规模用例的耗时，记进证据。
+- 代码里不再有读所有已结束 Run 的路径；§0.4 表里标“去”的每一行都核到（`SOURCE_MAX_PAGES`、`SOURCE_MAX_ITEMS`、`GOAL_LIMIT`、`lookupAll` 的 `cap`、`readLookupKeys` 和规划问题的 25 页都不在了）；
+- SQLite 的 `EXPLAIN QUERY PLAN`：2A 的每个按顺序查询走自己的索引、按前缀范围查找、没有 `USE TEMP B-TREE FOR ORDER BY`（L1）；
+- 计时，记进证据，不设断言（L3、L11）：
+  - 300 个目标（250 个已结束）的计时数据集，读一页；
+  - QA-05 的 5,001 张待答卡，`limit: 50` 翻完整个队列，记总耗时和页数；
+  - QA-10（二）的请知悉翻完，同样记；
+  - QA-07 的规划问题卡翻完，同样记。
 
 ### 5.3 要改断言的旧测试（lead 写出前后断言，DSH 不自行翻转）
 
@@ -233,6 +350,8 @@ export interface RecordOrderedLookupPort {                // 单独一个端口�
 | 同文件 R2A09 | 5,001 条待答请求不再拒绝；它用 `limit: 50`，改成翻页拿到全部 5,001 条 |
 | 同文件 R2A01–06、R2A08 | **不翻转** |
 | `tests/work-graph/S5-decision-queue.test.ts`、`S5-notices.test.ts`、`tests/app/S5-decision-routes.test.ts` | **不翻转**；DSH 跑一遍确认 |
+| 写入大小的 `capacity` 断言，例如 `tests/work-graph/S5-user-messages.test.ts` UM09 | **不翻转**：写入上限仍然有效。不成批翻转 `capacity` 断言 |
+| 接线包 2 合入的测试 | **占位：** 接线包 2 合入以后，lead 读它合入的测试，写出要改的断言的前后对照，主要是它临时上限的期望（例如 F07 里“容量不足的结果被拒”、M07 的 50 页/5,000 条边界）。M10 的四次整窗尝试不翻转。撤掉的 I-6 提醒上限由翻转后的 F07 覆盖 |
 
 ## 6. 文件（影响面；施工时以实际为准，超出要报）
 
@@ -240,19 +359,27 @@ export interface RecordOrderedLookupPort {                // 单独一个端口�
 - **索引登记：**
   - `src/core/work-graph/sessions/message-record-codecs.ts`；
   - `src/core/work-graph/tasks/claim-record-codecs.ts`（重排）；
-  - `src/core/work-graph/persistence/evidence-record-codecs.ts`（检查轮次）。
+  - `src/core/work-graph/persistence/evidence-record-codecs.ts`（检查轮次，两个索引）。
 - **决定队列：**
-  - `src/core/work-graph/views/decision-read-model.ts`（只改数据来源和上限）；
-  - `goal-conflicts.ts`、`automatic-rework-notices.ts`；
-  - `src/core/work-graph/tasks/plan-readers.ts`（候选读取的上限）；
+  - `src/core/work-graph/views/decision-read-model.ts`（只改数据来源、上限和 L11）；
+  - `goal-conflicts.ts`（`lookupAll`、`listWorkspaceGoals`）、`automatic-rework-notices.ts`；
+  - `src/core/work-graph/tasks/plan-readers.ts`（共用的 `readLookupKeys`）；
   - `planning-question-reader.ts`。
+- **接线包 2 的防护：** `src/core/work-graph/views/context-extensions.ts`、`views/undelivered-reply-notices.ts`（文件名和行号以合入后的为准）。
 - **`since` 修复：** `src/core/work-graph/communication/mailbox-service.ts`，以及审计中发现的其它写入。
-- **测试：** 新测试由 DSH 写；旧测试按 §5.3。
+- **测试：** 新测试由 DSH 写；夹具和替身由 Codex 写；旧测试按 §5.3。
 
 ## 7. 施工
 
 - 一个副本、一个新的 DSH Session。按 QE1 → QE2 → QE3 → QE4 分组。
-- **大数据集的夹具由 Codex 写**，用真实服务造：5,001 条成员消息、5,001 张待答卡、201 个目标、5,001 个查询任务。lead 核对后冻结。
+- 在接线包 2、K 片 B、K 片 A 合入以后的基线上施工；先重核 §0.4 表里接线包 2 的几行。
+- **大数据集的夹具由 Codex 写**，用真实服务造，lead 核对后冻结：
+  - 5,001 条成员之间的消息、5,001 张待答卡、201 个目标、300 个目标（计时，250 个已结束）；
+  - 5,001 个查询任务、5,000 张以上规划问题卡、一个请求 5,001 个候选、一个目标 5,001 个执行；
+  - 5,001 条成员请知悉、5,001 个 Session 加一条线上 5,001 条未送达回复。
+- 两个例外，也由 Codex 写、lead 核对：
+  - QA-11 的历史记录经存储边界提交（今天的写者都会写 `since`，造不出没有它的记录）；
+  - QA-16 的存储端口替身。
 - 其余同 K 片 §7：每组派一个只读复查子任务；之后 lead 核对、Codex 审；全量测试；合入。
 
 ## 8. 不做的事
@@ -260,6 +387,23 @@ export interface RecordOrderedLookupPort {                // 单独一个端口�
 - 不把 5,000 调大了事；
 - 不改卡片的拼法、合并、状态和顺序；
 - 不改已看位置的写入；
-- 不改稳定窗口；
+- 不改稳定窗口（一共 4 次）；
+- 不动领域上限（检查链长度、写入大小）；
 - 不接新的来源；
 - 不调用真实模型。
+
+## 9. 第二轮审查怎么处理的
+
+依据 `D:/cc-lead-notes/codex2/s2a-spec2.out.md`（结论“列出的问题改完后冻结”）和 lead 2026-10-14 的决定 D1–D8。第一轮审查已解决的各条保留不动。
+
+| 条 | 审查的问题 | 怎么改的 | 在哪 |
+| --- | --- | --- | --- |
+| 1 | 去上限的清单没覆盖实际的合入基线 | D1：列出接线包 2 的两处防护，以及共用的 `readLookupKeys`、`lookupAll`；逐条分“去/留”；写明总规矩；列出 `queryTaskGraph` 的其他调用方；新增 QA-17 | §0.2、L3、L8、L10、§0.4、§1.1、§5.2、§5.3、§6、§7 |
+| 2 | 筛出来的重新检查轮次自己过不了 `roundChainHead` | D2：新索引只找主体；每个主体经主体索引读整条链一次，用今天的规则核对；旧轮次和人发起的只作核对，不出通知；新增 QA-18 | L4 的表、规则 2、QA-18 |
+| 3 | 数字等值跨两段排好序的范围 | D3：等值只用非空文字，按 `json_type = 'text'` 比；普通 `lookup` 不变；核过 2A、2B、2C 的按顺序索引；验收看执行计划没有另排序 | L1、§2、§5.2 lead 核对 |
+| 4 | 可复用的契约没写完 | D4：运行时校验逐条写出；`orderBy.path` 登记时校验并保留；`""` 不是候选；`bound` 和 `after` 取交集；续读的要求；`next` 何时为 `null` | L1、§2、QA-01、QA-02 |
+| 5 | 稳定窗口的次数含糊，也没有验收 | D5：一共 4 次（第一次加 3 次重读），4 次都被打断报 `unavailable`；新增 QA-16（存储边界的提交替身）；2B 已对齐 | L7、§3、QA-16 |
+| 6 | 几行测试证明不了要保护的东西 | D6：QA-07 两个后端都跑；QA-09 换成旧窗口外的派生卡和请求候选翻页；QA-10 加超过 5,000 的来源（含接线包 2 的未送达回复）；QA-11 用经存储边界提交的历史记录；QA-01、02、10、11 给具体的期望；期望一律写成字面值；§5.3 加接线包 2 的占位和“写入上限不翻转” | §5、§5.2、§5.3、§7 |
+| 7 | 代价没算上反复整体物化 | D7：计时量完整翻页；一次稳定尝试里每个来源只拼一次；无界的展开追加改成循环或 `concat` | L11、§5.2 lead 核对 |
+| 附注 | 两处还写着入口“待确认”；两套目标数据集没分开 | 改成决定 51 已同意；分开写 300 个目标的计时数据集和 QA-06 的 201 个目标验收数据集 | §0.1、§5.1、L3、QA-06 |
+| D8（来自 2C 审查） | 2C 要按整数的 `generation` 取一个 Session 最近的领取 | 登记加 `valueType`（缺省 `'text'`）；整数的候选、顺序、请求里的类型；指纹带 `valueType`；新增 QA-15；2C 的 `s2c-work-claim-by-session-at` 改成整数索引 | L1、§2、QA-15 |
