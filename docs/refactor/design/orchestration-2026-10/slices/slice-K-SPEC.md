@@ -1,6 +1,6 @@
 # K 片规格：关闭悬空 Turn 后留在原 Session；只读命令
 
-> **状态：已冻结（lead，2026-10-13）。** 测试入口已确认（决定 50）；按 Codex 两轮审查改过（`D:/cc-lead-notes/codex2/kspecrev.out.md` 16 条、`kspecrev2.out.md` 9 条）；U1 用户选丙（决定 51）。2026-10-14 加 §9 冻结后的修正（写旧测试改动时核对出的 M1–M9），以 §9 为准。
+> **状态：已冻结（lead，2026-10-13）。** 测试入口已确认（决定 50）；按 Codex 两轮审查改过（`D:/cc-lead-notes/codex2/kspecrev.out.md` 16 条、`kspecrev2.out.md` 9 条）；U1 用户选丙（决定 51）。2026-10-14 加 §9 冻结后的修正（A 部分 M1–M9：写旧测试改动时核对出；B 部分 M10–M12：验收审查之后），以 §9 为准。
 > - 代码基线：6c63f069（第 0、1、3、5 片和接线包 1 已合入；接线包 2 在施工，不碰本片的文件，除了 §0.3 列的几处）。
 > - 依据：
 >   - DESIGN 分片表 K 行和 §4.3“Kernel 补丁（K 片）”、§5.3；
@@ -576,3 +576,20 @@ KE5 的行要真实的 bubblewrap。DSH 的沙箱里没有 bwrap，这些测试�
   - `R3c-R4b-platform.test.ts` 第 170 行；
   - `A4-duplicate-receipts.test.ts`、`C3-paused-continue-brief.test.ts`、`harness.test.ts`。
   - A7-G4 另拆出“关闭不支持”的一份，保留 GOAL-29 的退路覆盖。
+
+**B 部分**（Codex 验收审查 `D:/cc-lead-notes/codex2/kBimplrev.out.md` 之后，lead 2026-10-14 定；返工交新的 DSH 会话）
+
+- **M10 错误码。** 冻结的 Kernel 工具错误枚举里没有 `forbidden`，也没有 `workspace_changed_during_readonly_command`；写进去会被分派器当作 `invalid_result` 拒掉。所以：
+  - 执行中 Host 读权限变了：`code: 'permission_denied'`，消息以 `forbidden:` 开头；
+  - 命令期间工作区被别的写者改了：`code: 'execution_failed'`，`retryable: false`，消息固定为 `workspace_changed_during_readonly_command: the workspace was changed by another writer during the command; the changed paths are in the output`，输出里另有一个 JSON 项，`reason: 'workspace_changed_during_readonly_command'`，带 `externalChangedPaths`、`externalChangedPathsOmitted`。
+  - L16、L18、KB-08、KB-10、KB-11 里的这两个名字按此读。
+- **M11 结果上限按整个结果算。**
+  - 128 KiB 的上限管序列化后的整个结果，不只是 `output`；消息里不再列路径。
+  - 外部变化路径最多列 100 条，按字节序取最前面的；放不下 128 KiB 时少列几条，其余算进 `externalChangedPathsOmitted`。先截输出，再减路径。L15 的“100 条”按此读。
+- **M12 只读命令的几处加固**：
+  - 工作区里的 Unix socket 和 FIFO 在启动前用 `/dev/null` 盖住。命令运行期间新建的不在此列，和现有的 `shell` 一样，记作已知限制。
+  - 受保护路径只在祖先被盖空时才省略；`.git` 这类只读可见的祖先之下，各自的遮盖照留，Host 禁读的 `.git/...` 读不到。
+  - Host 开关 `allowReadonlyCommands: false` 在 Host 的统一解析处收窄每一个运行时绑定，启动和设置重建时都生效。
+  - 探测和金丝雀用实际的沙箱选项，并且总要实际做一次 `--ro-bind-fd` 和 `--remount-ro`。
+  - cwd 按沙箱实际用的路径校验；不是目录的在启动前拒绝。
+  - 工具说明写明：子进程超时保留已捕获的输出，取消或分派器的超时会替换它；`.git` 可读不可写。
