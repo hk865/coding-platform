@@ -47,6 +47,9 @@ import {
   attentionSignalToJson, createAttentionObserver, createAttentionScanner, type AttentionScopeV1, type AttentionSignal,
 } from './attention-observer.js';
 import { renderAttentionChanges } from '../core/agent-runtime/context-assembler.js';
+import { READONLY_COMMAND_TOOL_NAME } from '../core/agent-runtime/readonly-command-tool.js';
+import type { RuntimeHostBindings, ResolvedRuntimeConfiguration } from '../core/agent-runtime/execution-contracts.js';
+import type { ReadResult } from '../contracts/core/results.js';
 import type { BootstrapExecution, BootstrapResponse, BootstrapReviewMaterial, CoreScope, WorkbenchActor } from './core-http-types.js';
 import {
   createHostRuntimeResolverRegistry,
@@ -67,12 +70,14 @@ import {
   LOCAL_WORKBENCH_HOST_TEMPLATE,
   LOCAL_WORKBENCH_ROLE,
   LOCAL_WORKBENCH_ROLE_BINDING,
+  narrowResolvedReadonlyCommands,
   PLATFORM_SKILL_RESOURCE_ROOT,
   settingsModelSecretVariable,
   type WorkbenchModelConfiguration,
   type WorkbenchQueryProfile,
   type WorkbenchRuntimeBinding,
   type WorkbenchRuntimeConfiguration,
+  type WorkbenchRuntimeNarrowing,
   type WorkbenchRuntimeProviderDependencies,
 } from './runtime-configuration.js';
 import { createWorkbenchServer, type WorkbenchAddress, type WorkbenchServer } from './server.js';
@@ -93,6 +98,9 @@ export type WorkbenchWorkspaceConfig = {
   /** Explicit whole-workspace command authorization; absence authorizes NO
    * command and never falls back to a host shell. */
   allowCommands?: boolean;
+  /** L18: the read-only command tool is on by default when the whole workspace
+   * is readable. `false` removes it from this workspace's grant. */
+  allowReadonlyCommands?: boolean;
 };
 
 export type WorkbenchInputConsumer = {
@@ -175,9 +183,9 @@ function snapshotWorkspaces(source: readonly WorkbenchWorkspaceConfig[]): Workbe
     readPrefixes: [...workspace.readPrefixes],
     ...(workspace.writePrefixes === undefined ? {} : { writePrefixes: [...workspace.writePrefixes] }),
     ...(workspace.allowCommands === undefined ? {} : { allowCommands: workspace.allowCommands }),
+    ...(workspace.allowReadonlyCommands === undefined ? {} : { allowReadonlyCommands: workspace.allowReadonlyCommands }),
   }));
 }
-
 function validateWorkspaces(workspaces: WorkbenchWorkspaceConfig[], allowEmpty: boolean): void {
   if (workspaces.length === 0) {
     if (allowEmpty) return;
@@ -202,6 +210,8 @@ function validateWorkspaces(workspaces: WorkbenchWorkspaceConfig[], allowEmpty: 
       throw new Error('writePrefixes must be an array of strings when present');
     if (workspace.allowCommands !== undefined && typeof workspace.allowCommands !== 'boolean')
       throw new Error('allowCommands must be a boolean when present');
+    if (workspace.allowReadonlyCommands !== undefined && typeof workspace.allowReadonlyCommands !== 'boolean')
+      throw new Error('allowReadonlyCommands must be a boolean when present');
   }
 }
 
@@ -214,6 +224,59 @@ function permissionRevision(actor: WorkbenchActor, workspace: WorkbenchWorkspace
     readPrefixes: [...new Set(workspace.readPrefixes)].sort(),
   });
   return `host-permission-v1:${createHash('sha256').update(material).digest('hex')}`;
+}
+
+/** Trusted budget for one local-workbench binding; published DeepSeek model
+ * limits, checked 2026-09-29: https://api-docs.deepseek.com/quick_start/pricing/ */
+function localWorkbenchBudget(model: HostSettingsStoredModel): typeof LOCAL_WORKBENCH_BUDGET {
+  const contextWindowTokens = model.provider === 'deepseek'
+    && ['deepseek-flash', 'deepseek-v4-pro'].includes(model.model)
+    ? 1_000_000 : LOCAL_WORKBENCH_BUDGET.contextWindowTokens;
+  return { ...LOCAL_WORKBENCH_BUDGET, contextWindowTokens };
+}
+
+/**
+ * L18 layer 1 (exported so the Host grant is reachable at its own seam): the
+ * read-only process tool is granted only when the switch is on (default true)
+ * AND the workspace read is the whole workspace. The `shell` grant keeps its
+ * existing write-required rule and is never widened by this function.
+ */
+export function localWorkbenchGrant(workspace: WorkbenchWorkspaceConfig, model: HostSettingsStoredModel): WorkbenchRuntimeBinding['grant'] {
+  const writeAllowed = (workspace.writePrefixes?.length ?? 0) > 0;
+  const commandsAllowed = workspace.allowCommands === true && writeAllowed;
+  const readonlyCommandsAllowed = workspace.allowReadonlyCommands !== false && workspace.readPrefixes.includes('.');
+  return {
+    budget: localWorkbenchBudget(model),
+    hostTemplate: { ...LOCAL_WORKBENCH_HOST_TEMPLATE },
+    // Slice 3 (T5): the new grant lists the read-only graph tools `look_graph`
+    // and `find_graph` instead of the three old read names. The old adapters
+    // keep their exports and behavior for already-bound Runs and explicit
+    // callers; the read-only Query ceiling still strips every mailbox name.
+    tools: ['read', 'look_graph', 'find_graph',
+      ...(readonlyCommandsAllowed ? [READONLY_COMMAND_TOOL_NAME] : []),
+      ...(writeAllowed ? ['write', 'send_session_message',
+        'read_session_inbox', 'read_session_message', 'read_session_message_body'] : []),
+      ...(commandsAllowed ? ['shell'] : [])],
+    writeScope: writeAllowed ? ['.'] : [],
+    skills: { resourceRoot: PLATFORM_SKILL_RESOURCE_ROOT, enabledIds: ['platform-work'] },
+    systemInstruction: null,
+    deniedPrefixes: [],
+    processSandboxOptions: {},
+    materialBasis: null,
+    ...(commandsAllowed ? { shellWorkspaceAccess: 'all_except_denied' as const } : {}),
+    ...(readonlyCommandsAllowed ? { readonlyCommandAccess: 'all_except_denied' as const } : {}),
+  };
+}
+
+/**
+ * D-SWITCH (L18 layer 1): the `projectId\u0000workspaceId` keys whose Host
+ * `allowReadonlyCommands` switch is off. The common runtime-binding resolution
+ * boundary narrows every binding of these scopes, at startup and on every
+ * settings rebuild, so an explicit binding cannot re-enable the tool.
+ */
+export function readonlyCommandsDisabledScopes(workspaces: readonly WorkbenchWorkspaceConfig[]): Set<string> {
+  return new Set(workspaces.filter(workspace => workspace.allowReadonlyCommands === false)
+    .map(workspace => scopeKey(workspace.scope)));
 }
 
 export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOptions): Promise<LocalWorkbenchHost> {
@@ -254,6 +317,28 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   }
   const token = randomBytes(32).toString('hex');
   const byScope = new Map(workspaces.map(workspace => [scopeKey(workspace.scope), workspace] as const));
+  // D-SWITCH (L18 layer 1): the workspace switch narrows every runtime binding
+  // at the common resolution boundary, at startup and on every settings rebuild.
+  const runtimeNarrowing: WorkbenchRuntimeNarrowing = {
+    readonlyCommandsDisabledScopes: readonlyCommandsDisabledScopes(workspaces),
+  };
+  /** D-SWITCH: apply the same switch to a programmatic runtime, so an explicit
+   * runtime binding can never re-enable the tool for a switch-off workspace. */
+  const narrowProgrammaticRuntime = (bindings: RuntimeHostBindings): RuntimeHostBindings => {
+    const narrow = (resolved: ReadResult<ResolvedRuntimeConfiguration>, ctx: { projectId: string; workspaceId?: string }) => {
+      const scope = { projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? '' };
+      return narrowResolvedReadonlyCommands(resolved, scope,
+        runtimeNarrowing.readonlyCommandsDisabledScopes?.has(scopeKey(scope)) === true);
+    };
+    return {
+      async resolveConfiguration(ctx, input) { return narrow(await bindings.resolveConfiguration(ctx, input), ctx); },
+      ...(bindings.resolveQueryConfiguration === undefined ? {} : {
+        async resolveQueryConfiguration(ctx, input) {
+          return narrow(await bindings.resolveQueryConfiguration!(ctx, input), ctx);
+        },
+      }),
+    };
+  };
 
   // The ONE trusted runtime binding is the programmatic one or the trusted
   // factory over the serializable configuration, wrapped in a per-ref resolver
@@ -297,11 +382,12 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     ...(baseProvider.registry === undefined ? {} : { registry: baseProvider.registry }),
     secretSource,
   });
-  const initialBindings = options.runtime
-    ?? (seedConfiguration === undefined
+  const initialBindings = options.runtime !== undefined
+    ? narrowProgrammaticRuntime(options.runtime)
+    : (seedConfiguration === undefined
       ? undefined : createWorkbenchRuntimeHostBindings(seedConfiguration,
         versionProvider(versionSecretSource(seedConfiguration, { models: [], selection: {}, checks: [],
-          automation: { ...DEFAULT_TASK_AUTOMATION_POLICY } }))));
+          automation: { ...DEFAULT_TASK_AUTOMATION_POLICY } })), runtimeNarrowing));
   const resolverRegistry = initialBindings === undefined ? undefined : createHostRuntimeResolverRegistry(initialBindings);
   const runtime: TargetPlatformOptions['runtime'] = resolverRegistry ?? options.runtime;
   // Settings may rebuild the runtime only from the serializable configuration;
@@ -474,15 +560,6 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     });
   }
 
-  function localWorkbenchBudget(model: HostSettingsStoredModel): typeof LOCAL_WORKBENCH_BUDGET {
-    // Published DeepSeek model limits, checked 2026-09-29:
-    // https://api-docs.deepseek.com/quick_start/pricing/
-    const contextWindowTokens = model.provider === 'deepseek'
-      && ['deepseek-flash', 'deepseek-v4-pro'].includes(model.model)
-      ? 1_000_000 : LOCAL_WORKBENCH_BUDGET.contextWindowTokens;
-    return { ...LOCAL_WORKBENCH_BUDGET, contextWindowTokens };
-  }
-
   function localWorkbenchProfile(scope: CoreScope, bindingId: string, model: HostSettingsStoredModel): WorkbenchQueryProfile {
     const suffix = sha256Hex(scopeKey(scope)).slice(0, 16);
     return {
@@ -495,30 +572,6 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       runtimeBudget: localWorkbenchBudget(model),
       budget: { maxTokens: null, deadline: null },
       consumerId: workflowConsumerId,
-    };
-  }
-
-  function localWorkbenchGrant(workspace: WorkbenchWorkspaceConfig, model: HostSettingsStoredModel): WorkbenchRuntimeBinding['grant'] {
-    const writeAllowed = (workspace.writePrefixes?.length ?? 0) > 0;
-    const commandsAllowed = workspace.allowCommands === true && writeAllowed;
-    return {
-      budget: localWorkbenchBudget(model),
-      hostTemplate: { ...LOCAL_WORKBENCH_HOST_TEMPLATE },
-      // Slice 3 (T5): the new grant lists the read-only graph tools `look_graph`
-      // and `find_graph` instead of the three old read names. The old adapters
-      // keep their exports and behavior for already-bound Runs and explicit
-      // callers; the read-only Query ceiling still strips every mailbox name.
-      tools: ['read', 'look_graph', 'find_graph',
-        ...(writeAllowed ? ['write', 'send_session_message',
-          'read_session_inbox', 'read_session_message', 'read_session_message_body'] : []),
-        ...(commandsAllowed ? ['shell'] : [])],
-      writeScope: writeAllowed ? ['.'] : [],
-      skills: { resourceRoot: PLATFORM_SKILL_RESOURCE_ROOT, enabledIds: ['platform-work'] },
-      systemInstruction: null,
-      deniedPrefixes: [],
-      processSandboxOptions: {},
-      materialBasis: null,
-      ...(commandsAllowed ? { shellWorkspaceAccess: 'all_except_denied' as const } : {}),
     };
   }
 
@@ -626,7 +679,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     if (!rebuildRuntimeFromSettings || resolverRegistry === undefined) return;
     const configuration = buildRuntimeConfiguration(snapshot);
     resolverRegistry.install(createWorkbenchRuntimeHostBindings(configuration,
-      versionProvider(versionSecretSource(configuration, snapshot))));
+      versionProvider(versionSecretSource(configuration, snapshot)), runtimeNarrowing));
     // Only a SUCCESSFUL install publishes executable profiles: the live
     // bootstrap projection becomes exactly the installed configuration's
     // queryProfiles (every startup profile is preserved). A newly selected

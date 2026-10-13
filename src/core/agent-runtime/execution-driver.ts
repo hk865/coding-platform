@@ -33,6 +33,7 @@ import { createSessionHistoryCursorOwner } from './session-operations.js';
 import { loadPreparedManifest, snapshotRuntimeConfiguration } from './execution-preparation.js';
 import { createRuntimeSourceCaptureFactory } from './source-capture-access.js';
 import { createGraphTools, GRAPH_TOOL_NAMES } from './graph-tools.js';
+import { createReadonlyCommandTool, READONLY_COMMAND_TOOL_NAME } from './readonly-command-tool.js';
 import type { SessionMailboxPort, SessionMessage } from '../work-graph/model/communication-contracts.js';
 import type { SessionDirectoryPort } from '../work-graph/model/session-contracts.js';
 import type { GraphContextReadPort } from '../work-graph/model/graph-context-contracts.js';
@@ -201,8 +202,12 @@ function selectCoordinationTools(input: {
     graphHistory: GraphExecutionHistoryReadPort;
     hostContext: CoreCallContext;
   };
+  /** Names this Runtime handles outside the coordination factories (the
+   * read-only process tool). They are recognized but never built here. */
+  extensionNames?: ReadonlySet<string>;
 }): { ok: true; value: CoordinationTools | null } | { ok: false; rejection: CoreRejection } {
-  const unknown = input.selected.filter(name => !BUILTIN_TOOL_NAMES.has(name) && !PLATFORM_COORDINATION_TOOL_NAMES.has(name));
+  const unknown = input.selected.filter(name => !BUILTIN_TOOL_NAMES.has(name) && !PLATFORM_COORDINATION_TOOL_NAMES.has(name)
+    && !(input.extensionNames?.has(name) ?? false));
   if (unknown.length > 0) {
     return { ok: false, rejection: rejected('unsupported', `the Run selects tool names this Runtime does not know: ${[...new Set(unknown)].join(', ')}`) };
   }
@@ -496,6 +501,7 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
             hostContext: owned,
           },
         }),
+        extensionNames: new Set([READONLY_COMMAND_TOOL_NAME]),
       });
       if (!coordination.ok) return coordination.rejection;
       const coordinationTools = coordination.value;
@@ -799,14 +805,21 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
       // `assertCurrent`; platform-only work must not depend on a file read grant.
       let sourceTools: SourceToolOptions | undefined;
       let sourceFactory: RuntimeSourceCaptureFactory | undefined;
-      if (hasFileRead) {
-        let currentAuthorization;
+      // L18: only a Run with an empty write scope may see the read-only process
+      // tool. It is registered only when the Host selected it, the explicit
+      // `readonlyCommandAccess` grant is present and the current read is the
+      // whole workspace; a Run with writes keeps `shell` instead.
+      const readonlyRequested = readOnly && manifest.permissions.tools.includes(READONLY_COMMAND_TOOL_NAME);
+      let currentAuthorization: Awaited<ReturnType<typeof deps.workspaceHost.authorize>> | undefined;
+      if (hasFileRead || readonlyRequested) {
         try {
           currentAuthorization = await deps.workspaceHost.authorize(owned, workspace);
         } catch (error) {
           return rejected('unavailable', `the Host read policy could not be resolved: ${messageOf(error)}`);
         }
         if (currentAuthorization.status !== 'ready') return mapWorkspace(currentAuthorization);
+      }
+      if (hasFileRead && currentAuthorization !== undefined && currentAuthorization.status === 'ready') {
         const granted = currentAuthorization;
         const permissionRevision = granted.value.permissionRevision;
         sourceTools = {
@@ -823,6 +836,29 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
           { projectId: runRef.projectId, workspaceId: record.session.workspaceId, goalId: runRef.goalId, runId: runRef.runId, taskId: manifest.claim.task.taskId, root: rootResolved.value.root },
           prepared.envelope,
         );
+      }
+      let readonlyCommandTool: ((workspace: WorkspaceSandbox) => ToolDefinition) | undefined;
+      if (readonlyRequested && hostConfig.readonlyCommandAccess === 'all_except_denied'
+        && currentAuthorization !== undefined && currentAuthorization.status === 'ready'
+        && currentAuthorization.value.allowsRead('.')) {
+        const permissionRevision = currentAuthorization.value.permissionRevision;
+        readonlyCommandTool = (workspaceHandle: WorkspaceSandbox): ToolDefinition => createReadonlyCommandTool({
+          workspace: workspaceHandle,
+          workspaceRoot: rootResolved.value.root,
+          ...(hostConfig.processSandboxOptions.readOnlyPaths === undefined ? {} : { readOnlyPaths: hostConfig.processSandboxOptions.readOnlyPaths }),
+          ...(hostConfig.processSandboxOptions.executablePath === undefined ? {} : { executablePath: hostConfig.processSandboxOptions.executablePath }),
+          authorization: {
+            permissionRevision,
+            current: async () => {
+              let current;
+              try { current = await deps.workspaceHost.authorize(owned, workspace); }
+              catch { return { status: 'rejected' as const, reason: 'the Host read policy could not be verified' }; }
+              if (current.status !== 'ready') return { status: 'rejected' as const, reason: current.reason };
+              return { status: 'ready' as const, permissionRevision: current.value.permissionRevision,
+                wholeWorkspaceRead: current.value.allowsRead('.') };
+            },
+          },
+        });
       }
 
       // R4.3a real tool-group safe point: it reads the CURRENT canonical Run and
@@ -875,6 +911,7 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
             now: deps.now, signal: controller.signal, deniedPrefixes: hostConfig.deniedPrefixes, modelCalls, manifestDigest: bundleRef.digest,
             allowedTools: builtinTools,
             ...(coordinationTools === null ? {} : { coordinationTools }),
+            ...(readonlyCommandTool === undefined ? {} : { readonlyCommandTool }),
             // The file path check is only installed when `read` is actually
             // granted; an ungranted builtin read is rejected by the Kernel as an
             // unknown tool and must never open the source read policy.

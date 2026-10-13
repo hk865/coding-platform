@@ -9,6 +9,7 @@ import { kernelRunLimits } from './run-limits.js';
 import { createExplorationTools, type ExplorationToolsHandle, type SourceToolOptions } from './exploration-tools.js';
 import { readSourceIdentity } from '../../core/workspace/source-identity.js';
 import type { RuntimeSourceCaptureAccess, RuntimeSourceCaptureFactory } from './source-tool-ports.js';
+import { READONLY_COMMAND_TOOL_NAME } from './readonly-command-tool.js';
 
 /** The internal result of the ONE existing finally cleanup. It is a local
  * proof for the Trusted Host's live handle, never a public control ack. */
@@ -93,6 +94,13 @@ export type ObservedModelRunOptions = {
    * 就要定下来，因此由调用方显式给出，而不是在这里猜）。
    */
   coordinationTools?: { names: readonly string[]; create: (workspace: WorkspaceSandbox) => ToolDefinition[] };
+  /**
+   * L12/L18: one read-only process extension tool for this Run. When present its
+   * name joins the enabled set and the Host-authorized extension list (so the
+   * frozen permission policy admits the `process` effect) and its definition is
+   * registered through `additionalTools`; absent keeps the existing tool set.
+   */
+  readonlyCommandTool?: (workspace: WorkspaceSandbox) => ToolDefinition;
   processSandboxOptions: { readOnlyPaths?: string[]; executablePath?: string };
   publish: (event: { type: string; sequence: number; at: string; data: unknown }) => Promise<void>;
 };
@@ -239,9 +247,12 @@ export async function runObservedModel(o: ObservedModelRunOptions) {
     // 协调工具只有在宿主**确实**注入了访问面时才装配；注入时它们和内置工具一样出现在
     // 本次请求的工具清单里（模型只能看见被启用的工具名）。
     const coordinationNames = [...(o.coordinationTools?.names ?? [])];
+    // The single read-only process tool, if this Run's Host grant selected it.
+    const readonlyCommandTool = o.readonlyCommandTool;
+    const readonlyCommandNames = readonlyCommandTool === undefined ? [] : [READONLY_COMMAND_TOOL_NAME];
     const enabledNames = hasRead && reviewSource
-      ? ['read_source', ...(o.materialTools ? ['read_material'] : []), ...readTools, ...coordinationNames]
-      : [...allowed.map(tool => tool === 'write' ? 'edit' : tool), ...readTools, ...coordinationNames];
+      ? ['read_source', ...(o.materialTools ? ['read_material'] : []), ...readTools, ...coordinationNames, ...readonlyCommandNames]
+      : [...allowed.map(tool => tool === 'write' ? 'edit' : tool), ...readTools, ...coordinationNames, ...readonlyCommandNames];
     const needsExploration = hasRead;
     let result!: Awaited<ReturnType<typeof o.kernel.runCodingAgent>>;
     try {
@@ -254,7 +265,7 @@ export async function runObservedModel(o: ObservedModelRunOptions) {
         // 宿主对**非只读**扩展工具的显式授权：只有这里列出、且确实被 additionalTools 注册、
         // 且 effectClass 不是 read_only 的名字才会被内核的权限策略采纳（协议约束 2.3）。
         // 缺席时协调工具会被内核按"未授权的未知操作"拒绝——这是刻意的 fail-closed。
-        hostAuthorizedTools: coordinationNames,
+        hostAuthorizedTools: [...coordinationNames, ...readonlyCommandNames],
         additionalTools: workspace => {
           const tools: ToolDefinition[] = [];
           if (needsExploration) {
@@ -272,6 +283,7 @@ export async function runObservedModel(o: ObservedModelRunOptions) {
           }
           tools.push(...(o.materialTools?.(workspace) ?? []));
           tools.push(...(o.coordinationTools?.create(workspace) ?? []));
+          if (readonlyCommandTool !== undefined) tools.push(readonlyCommandTool(workspace));
           return tools;
         },
         workspaceRoot: o.root, input: o.input, sessionId: o.sessionId, signal: o.signal,

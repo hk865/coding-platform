@@ -37,6 +37,7 @@ import type {
   RuntimeConfigurationInput,
   RuntimeHostBindings,
 } from '../core/agent-runtime/execution-contracts.js';
+import { READONLY_COMMAND_TOOL_NAME } from '../core/agent-runtime/readonly-command-tool.js';
 
 /** One trusted model description. It carries the environment-variable NAME
  * only; the secret value never enters this value, a digest, a log or a body. */
@@ -154,6 +155,35 @@ export type WorkbenchRuntimeConfiguration = {
   bindings: WorkbenchRuntimeBinding[];
   queryProfiles: WorkbenchQueryProfile[];
 };
+
+/**
+ * D-SWITCH (L18 layer 1): narrowing the Host applies at the COMMON runtime
+ * binding resolution boundary. A workspace whose `allowReadonlyCommands` switch
+ * is off never resolves the read-only process tool or its explicit access
+ * field, whatever an explicit binding lists. The scopes are
+ * `projectId\u0000workspaceId` keys; the Host computes them from its trusted
+ * workspace configuration at startup and on every settings rebuild.
+ */
+export type WorkbenchRuntimeNarrowing = {
+  readonly readonlyCommandsDisabledScopes?: ReadonlySet<string>;
+};
+
+/**
+ * D-SWITCH: apply the workspace switch to ONE already-resolved Host
+ * configuration. The trusted factory uses it at its common resolution
+ * boundary, and the Host also applies it to a programmatic `runtime` so
+ * `allowReadonlyCommands:false` narrows EVERY runtime binding, not only the
+ * auto-generated ones.
+ */
+export function narrowResolvedReadonlyCommands(
+  result: ReadResult<ResolvedRuntimeConfiguration>,
+  scope: WorkspaceScope,
+  enabled: boolean,
+): ReadResult<ResolvedRuntimeConfiguration> {
+  if (!enabled || result.status !== 'ready') return result;
+  const { readonlyCommandAccess: _dropped, tools, ...rest } = result.value;
+  return { status: 'ready', value: { ...rest, tools: tools.filter(tool => tool !== READONLY_COMMAND_TOOL_NAME) } };
+}
 
 /** Narrow programmatic seam a controlled acceptance test may substitute for the
  * builtin registry / process environment. It is Host-internal only: it is never
@@ -321,6 +351,7 @@ export function validateWorkbenchRuntimeConfiguration(
 export function createWorkbenchRuntimeHostBindings(
   configuration: WorkbenchRuntimeConfiguration,
   dependencies: WorkbenchRuntimeProviderDependencies = {},
+  narrowing: WorkbenchRuntimeNarrowing = {},
 ): RuntimeHostBindings {
   const problem = validateWorkbenchRuntimeConfiguration(configuration);
   if (problem !== null) throw new Error(`workbench runtime configuration is ${problem.code}: ${problem.reason}`);
@@ -404,12 +435,19 @@ export function createWorkbenchRuntimeHostBindings(
     }
     const model = resolveModel(binding);
     if (model.status !== 'ready') return model;
-    return { status: 'ready', value: {
+    // D-SWITCH: the workspace switch is a narrowing constraint at this common
+    // boundary, so an explicit startup or rebuilt binding cannot re-enable the
+    // tool for a workspace whose Host turned it off.
+    const assembled: ResolvedRuntimeConfiguration = {
       configurationRevision: binding.configurationRevision,
       model: model.value,
       ...binding.grant,
       skills: resolveSkillSelection(binding.grant.skills),
-    } };
+    };
+    return narrowResolvedReadonlyCommands({ status: 'ready', value: assembled },
+      { projectId: ctx.projectId, workspaceId: ctx.workspaceId },
+      narrowing.readonlyCommandsDisabledScopes?.has(
+        scopeKey({ projectId: ctx.projectId, workspaceId: ctx.workspaceId })) === true);
   };
 
   return {

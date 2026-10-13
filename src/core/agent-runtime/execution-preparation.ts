@@ -345,6 +345,7 @@ export function snapshotRuntimeConfiguration(config: ResolvedRuntimeConfiguratio
     tools: [...config.tools],
     writeScope: [...config.writeScope],
     ...(config.shellWorkspaceAccess === undefined ? {} : { shellWorkspaceAccess: config.shellWorkspaceAccess }),
+    ...(config.readonlyCommandAccess === undefined ? {} : { readonlyCommandAccess: config.readonlyCommandAccess }),
     skills: { resourceRoot: config.skills.resourceRoot, enabledIds: [...config.skills.enabledIds] },
     systemInstruction: config.systemInstruction,
     deniedPrefixes: [...config.deniedPrefixes],

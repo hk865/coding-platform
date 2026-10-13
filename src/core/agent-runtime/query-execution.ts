@@ -23,6 +23,7 @@ import type { SourceToolOptions } from './exploration-tools.js';
 import { ModelBudget, type MeterEntry, type ModelTokenBudget } from './model-budget.js';
 import { RuntimeModelCallRejected } from './model-call-access.js';
 import { runObservedModel } from './observed-model-run.js';
+import { createReadonlyCommandTool, READONLY_COMMAND_TOOL_NAME } from './readonly-command-tool.js';
 import { createMailboxInputSupply } from './execution-inputs.js';
 import { projectQueryConfiguration } from './query-preparation.js';
 import { createQueryObservation } from './query-observation.js';
@@ -314,14 +315,17 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
 
       let sourceTools: SourceToolOptions | undefined;
       let sourceFactory: RuntimeSourceCaptureFactory | undefined;
-      if (hasFileRead) {
-        let currentAuthorization;
+      const readonlyRequested = manifest.permissions.tools.includes(READONLY_COMMAND_TOOL_NAME);
+      let currentAuthorization: Awaited<ReturnType<typeof deps.workspaceHost.authorize>> | undefined;
+      if (hasFileRead || readonlyRequested) {
         try {
           currentAuthorization = await deps.workspaceHost.authorize(owned, workspace);
         } catch (error) {
           return rejected('unavailable', `the Host read policy could not be resolved: ${messageOf(error)}`);
         }
         if (currentAuthorization.status !== 'ready') return mapWorkspace(currentAuthorization);
+      }
+      if (hasFileRead && currentAuthorization !== undefined && currentAuthorization.status === 'ready') {
         const permissionRevision = currentAuthorization.value.permissionRevision;
         const granted = currentAuthorization.value;
         sourceTools = {
@@ -349,6 +353,33 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
           executionRequest,
           rootResolved.value.root,
         );
+      }
+      // L18: the read-only command tool is injected only when the Host grant
+      // selected it, the explicit `readonlyCommandAccess` grant is present and
+      // the current workspace read is the whole workspace. The handler re-reads
+      // the same grant before every launch.
+      let readonlyCommandTool: ((workspace: WorkspaceSandbox) => ToolDefinition) | undefined;
+      if (readonlyRequested && hostConfig.readonlyCommandAccess === 'all_except_denied'
+        && currentAuthorization !== undefined && currentAuthorization.status === 'ready'
+        && currentAuthorization.value.allowsRead('.')) {
+        const permissionRevision = currentAuthorization.value.permissionRevision;
+        readonlyCommandTool = (workspaceHandle: WorkspaceSandbox): ToolDefinition => createReadonlyCommandTool({
+          workspace: workspaceHandle,
+          workspaceRoot: rootResolved.value.root,
+          ...(hostConfig.processSandboxOptions.readOnlyPaths === undefined ? {} : { readOnlyPaths: hostConfig.processSandboxOptions.readOnlyPaths }),
+          ...(hostConfig.processSandboxOptions.executablePath === undefined ? {} : { executablePath: hostConfig.processSandboxOptions.executablePath }),
+          authorization: {
+            permissionRevision,
+            current: async () => {
+              let current;
+              try { current = await deps.workspaceHost.authorize(owned, workspace); }
+              catch { return { status: 'rejected' as const, reason: 'the Host read policy could not be verified' }; }
+              if (current.status !== 'ready') return { status: 'rejected' as const, reason: current.reason };
+              return { status: 'ready' as const, permissionRevision: current.value.permissionRevision,
+                wholeWorkspaceRead: current.value.allowsRead('.') };
+            },
+          },
+        });
       }
 
       const taskBudget: ModelTokenBudget = { tokenBudget: record.job.job.intent.budget.maxTokens, deadline: record.job.job.intent.budget.deadline };
@@ -512,6 +543,7 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
           manifestDigest: prepared.bundleRef.digest,
           allowedTools: builtinTools,
           ...(coordinationTools === null ? {} : { coordinationTools }),
+          ...(readonlyCommandTool === undefined ? {} : { readonlyCommandTool }),
           controlHooks: hasFileRead ? [enteredHook, toolPathHook] : [enteredHook],
           skills: hostConfig.skills,
           ...(hostConfig.systemInstruction === null ? {} : { systemInstruction: hostConfig.systemInstruction }),
