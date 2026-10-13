@@ -1,6 +1,6 @@
 # K 片规格：关闭悬空 Turn 后留在原 Session；只读命令
 
-> **状态：已冻结（lead，2026-10-13）。** 测试入口已确认（决定 50）；按 Codex 两轮审查改过（`D:/cc-lead-notes/codex2/kspecrev.out.md` 16 条、`kspecrev2.out.md` 9 条）；U1 用户选丙（决定 51）。
+> **状态：已冻结（lead，2026-10-13）。** 测试入口已确认（决定 50）；按 Codex 两轮审查改过（`D:/cc-lead-notes/codex2/kspecrev.out.md` 16 条、`kspecrev2.out.md` 9 条）；U1 用户选丙（决定 51）。2026-10-14 加 §9 冻结后的修正（写旧测试改动时核对出的 M1–M9），以 §9 为准。
 > - 代码基线：6c63f069（第 0、1、3、5 片和接线包 1 已合入；接线包 2 在施工，不碰本片的文件，除了 §0.3 列的几处）。
 > - 依据：
 >   - DESIGN 分片表 K 行和 §4.3“Kernel 补丁（K 片）”、§5.3；
@@ -529,3 +529,50 @@ KE5 的行要真实的 bubblewrap。DSH 的沙箱里没有 bwrap，这些测试�
 - 不复活已归档的 Session；
 - 不手改 `dist`；
 - 不调用真实模型。
+
+## 9. 冻结后的修正（lead，2026-10-14）
+
+写 A 部分要改的旧测试时，核对出几处规格没写死的地方。下面这些修正和 §0–§8 同等有效；有冲突时以本节为准。旧测试改动的逐条处理见证据目录里的 `kA-flip-decisions.md`。
+
+**A 部分**
+
+- **M1 Runtime 没装关闭依赖时。**
+  - `createAgentRuntime` 只加一个可选依赖 `turnClosure`，字段由施工方定：健康 owner 的 `recordSessionHealth`，以及这个 Host 实例的租约。`create-platform.ts` 总是接上。
+  - 没有 `turnClosure` 时，Runtime 端口不装 `closeOpenTurn`（§2：“没装就是 unsupported”）。
+  - 这时 Workflow 的 `claimRequeued` 不返回 `close_open_turn` 这一步，直接走今天的退路（`create_session{requeue}` 和接线包 1 的交接）；维护按确定失败处理，照今天的逻辑走。
+  - 所以 `tests/business/S1-session-maintenance.test.ts`、`tests/business/WP1-continuation-handover.test.ts` 的夹具不接 `turnClosure`，它们就是 §6 说的“关闭不支持”的夹具，两份测试一字不改。关闭成功的情形由 KE3 的新测试覆盖（KA-07、KA-10、KA-14）。
+- **M2 Kernel 不支持关闭时（场景测试）。**
+  - Runtime 每次调用时，从注入的 `kernel` 依赖读 `closeOpenTurn` 和 `readTurnBounds`，不在构造时缓存。读不到就是 L4 第 5 条的 `unsupported`。
+  - 场景测试用 `vi.hoisted` 加 `vi.mock`，把 Kernel 公开接口里的 `closeOpenTurn` 换成可开关的 getter。先例是 `tests/composition/R4-control-runtime-platform.test.ts`。
+  - Workflow 遇到没有接续的 `kernel_turn_open` 线时，照样返回 `close_open_turn` 这一步，回执是 `{ status: 'unsupported' }`，下一步是今天的 `create_session{requeue}`。
+- **M3 健康这一步的调用身份。**
+  - `turnClosure` 调 `recordSessionHealth` 时，用 Host 自己的调用身份，也就是启动核对第 1 步用的那一种。
+  - 这样 SES-13 现有的守卫（调用方是核对，主体是 Host）照常成立，不改状态机。
+- **M4 Kernel 会话接口版本。** `src/core/agent-runtime/contracts.ts` 的 `kernelSessionApiVersion` 改为 `1 | 2 | 3`。这个文件不在 §6 的清单里，这次补上。
+- **M5 接续说明里的 Turn 状态。**
+  - `ContinuationBriefV1.stoppedAt.turnStatus` 加一个值 `'interrupted'`；`src/contracts/continuation-brief.ts` 和 `continuation-brief-assembly.ts` 的 `TURN_STATUSES` 都加上。§6 说 `continuation-brief.ts` 不改，只为这一个值破例。
+  - 已关闭的被中断 Turn 报 `'interrupted'`，不再落到兜底的 `'running'`。KA-09 断言这一点。
+- **M6 能力上报的原文**（L11 当时没写死措辞）。
+  - **`continueHistory.reason`**，全文：
+
+    ```
+    a continuation is a new Run, never a resume of the original Turn. A Run created by a requeue starts with a continuation brief of the previous Run's durable facts and is labelled a continuation, not a resumed execution. When the previous Turn has a Kernel terminal, a new Run in the same Session continues its history, including the successor Run after a yielded wait. When the previous Turn has no Kernel terminal (for example a Run interrupted by a Host restart, including one paused then, a Run stopped at restart by a queued cancel, or one a person attested while its Kernel Turn was still open), the Kernel refuses a new Turn in that Session and the original Session is unavailable (kernel_turn_open, its history stays readable) until the platform closes the dangling Turn. For a Work line the platform closes it as interrupted: the Session maintenance does so after a clean interruption, a stop by a queued cancel or a person's attestation, and the Workflow does so when a person, or the Goal, continues a paused-interrupted Run. The closure never resumes the interrupted Turn and never invents a result for an unfinished tool call; the Session becomes available again and the continuation is a new Run in the same Session, whose model history holds the completed Turns before the interrupted one, while what the interrupted Turn had accepted reaches it only through the continuation brief. When the closure is not possible (only the legacy Kernel reader, another Kernel adapter, a Kernel that cannot close a Turn, an unreadable Kernel store, or another Run at the Kernel head), and for a Query line, whose open Turn is not closed, the continuation is a new Run in a new Session that continues the original Session's last completed history (same Kernel adapter only; otherwise the brief alone). After a Host restart a waiting continuation is rebuilt only when its Turn has exactly one waiting message; otherwise its outcome is recorded as unknown (continuation_unrebuildable), keeping its Session and Lease until a person attests it
+    ```
+
+  - **`recoverRun.reason`**：只把 `The continuation of an interrupted Run is a new Run with a continuation brief, in a new Session that continues the original Session's last completed history.` 换成 `The continuation of an interrupted Run is a new Run with a continuation brief: for a Work line, after the platform closes its dangling Kernel Turn as interrupted, in the same Session; when that closure is not possible, in a new Session that continues the original Session's last completed history (see continueHistory).`
+  - **`safePointPause.reason`**：只把 `(a new continuation Run in a new Session)` 换成 `(a new continuation Run, in the same Session once the platform has closed the dangling Kernel Turn, otherwise in a new Session)`。
+  - 旧 A2 测试断言的 `continueHistory` 短语在新文字里都还在，所以那些断言不改；KA-17 断言新加的句子。
+- **M7 测试不读数据库（用户的规矩）。**
+  - 改过或新加的断言不读 `kernel.sqlite`、`ledger.sqlite`。
+  - 旧断言读 Kernel 数据库、在 K 之后不再成立的，删掉，或者换成公开读取。
+  - `run.interrupted` 这条记录本身只在 KA-01（KE1）断言。
+- **M8 被丢下的旧 Host 晚到的追加。** 关闭以后 Session 头的 revision 变了，崩溃的旧 Host 手上那次 Kernel 调用再追加终态时，会因 revision 冲突失败（`sqlite-stores.ts` 的 `Session revision 冲突`）。这是预期的，测试不断言。
+- **M9 §6 以外也要改的旧测试**（核对时发现，已列入冻结的改动）：
+  - `A7-control.test.ts` 的 G-04/GOAL-29 和 A7-G4b（G-05）；
+  - `A8-host-restart.test.ts` 的 A8-3d 计数、W-15 认定线、启动重新驱动的同一 Session；
+  - `A8-host-restart-entry.test.ts` 的 A8-2d 健康；
+  - `B2-history-public-export.test.ts` 的导出清单；
+  - `A2-runtime-capabilities.test.ts` 第 121、158 行；
+  - `R3c-R4b-platform.test.ts` 第 170 行；
+  - `A4-duplicate-receipts.test.ts`、`C3-paused-continue-brief.test.ts`、`harness.test.ts`。
+  - A7-G4 另拆出“关闭不支持”的一份，保留 GOAL-29 的退路覆盖。
