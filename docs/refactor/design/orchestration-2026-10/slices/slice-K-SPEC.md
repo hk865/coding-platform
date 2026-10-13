@@ -1,6 +1,6 @@
 # K 片规格：关闭悬空 Turn 后留在原 Session；只读命令
 
-> **状态：lead 起草，2026-10-13；测试入口已确认（决定 50）；按 Codex 审查（`D:/cc-lead-notes/codex2/kspecrev.out.md`，结论“不能冻结”，16 条）改过一轮，待复审后冻结。**
+> **状态：lead 起草，2026-10-13；测试入口已确认（决定 50）；按 Codex 两轮审查改过（第一轮 `D:/cc-lead-notes/codex2/kspecrev.out.md` 16 条，第二轮 `kspecrev2.out.md` 9 条）。§0.1 的 U1 等用户定，定了以后冻结。**
 > - 代码基线：6c63f069（第 0、1、3、5 片和接线包 1 已合入；接线包 2 在施工，不碰本片的文件，除了 §0.3 列的几处）。
 > - 依据：
 >   - DESIGN 分片表 K 行和 §4.3“Kernel 补丁（K 片）”、§5.3；
@@ -20,8 +20,12 @@
   - 第 26 项选 (a)：只读命令，所有获授权的只读角色都能用（DESIGN §5.3 表：独立审阅、秘书回合、问一问、规划）。
 - **测试入口用户 2026-10-13 已确认**（§5.1，决定 50）。
 - **审查后 lead 的两处取舍，都不改用户已定的事：**
-  1. **决定 45 和人的暂停照旧。** 经人认定结束的线（RUN-22）和人暂停后被中断的线（RUN-24），维护照今天一样不碰。只有人或目标发起“继续”（有覆盖这次 Run 的 TaskRequeue）时才关闭。维护里自动关闭的，只有平台自己证明的干净中断：RUN-19，以及带干净 Turn 的排队取消 RUN-23。
+  1. **维护不碰经人认定的线和人暂停的线。** 经人认定结束的线（RUN-22）和人暂停后被中断的线（RUN-24），维护的处理和今天的代码一样。只有人点“继续”或人恢复目标（L4 第 2 条核对请求者）时才关闭。维护里自动关闭的，只有平台自己证明的干净中断：RUN-19，以及带干净 Turn 的排队取消 RUN-23。
   2. **只读命令按“这次执行是只读的”来给，不按“是不是 Query”来给。** 包括 Query，和写范围为空的 Work（例如独立审阅）。第一稿写成“只给 Query”，和 DESIGN §5.3 的表不符，已改。
+- **审查中发现、本片不改、要用户定的一处（U1）：经人认定以后、Kernel Turn 还开着的线。**
+  - 决定 45 说：你认定以后，下一次维护马上把这条线归档，写异常锚点，放下任务。
+  - 今天的代码：认定以后 Kernel 读不到的线照此归档；Kernel Turn 还开着（结论 `kernel_turn_open`）的线，维护跳过，留给人“继续”或明确归档（`session-maintenance.ts` 的 `platformCleanInterruption`，A8 H-04/W-14/W-15 锁住）。两者在这一种线上不一致，是本片之前就有的。
+  - 本片照今天的代码做，不改维护对它的处理。用户定了以后另改；有了 K，也可以选“认定以后关闭悬空 Turn、线回到可用”。
 
 ### 0.2 lead 定的技术选择
 
@@ -56,6 +60,12 @@
   - 追加的事件：顺序号接上一条；`occurredAt = at`；`elapsedMs` 等于这个 Turn 最后的 elapsed（不倒退）；事件 ID 和记录 ID 由 `(sessionId, kernelRunId, 'platform_closed')` 决定。
   - 追加时版本被别人改了，返回 `conflict`。正常的终态投影会在同一次提交里清掉头上的两个活动 ID。
   - **重做靠第 3 行：** 关闭已提交、回复丢了，再调一次就命中第 3 行，拿到原来的位置。确定性的记录 ID 只是第二道防重复，不承诺“返回原记录”。
+  - 第 5 行是防御：合法的追加造不出“没结束的 Turn 不在头上”，正常的存储里遇不到。不要求测试，由代码审查核对。
+  - **另一个公开的只读函数** `readTurnBounds(store, { sessionId, kernelRunId })`，按身份找这个 Turn：
+    - 返回 `{ status: 'found', startPosition, endPosition, terminalStatus }`；
+    - 没结束时 `endPosition`、`terminalStatus` 为 `null`；
+    - 或 `not_found`、`unreadable`。
+    - `closeOpenTurn` 的第 2–5 行用它判断；接续说明用它定事实窗口（L9）。
 - **L3 历史还原跳过被中断那一步的内容，保留它的边界和身份。**
   - `restoreSessionHistory`：前缀里的 `interrupted` Turn，
     - 照常重放；重放失败、身份不符、最后一条不是它的 `run.interrupted`，都照常报错；
@@ -77,8 +87,11 @@
     1. **Run：** `afterRunRef` 是一次 Work Run，`status === 'ended'`，结果已知（不是 `outcome_unknown`），它的领取 Session 就是 `sessionRef`。
     2. **结束方式和授权：**
        - RUN-19（`interrupted_clean`，`pausedIntentRef === null`）或 RUN-23（`cancelled`，`interrupted_clean`）：不要 TaskRequeue；
-       - RUN-24（`isPausedInterrupted`）或 RUN-22（经人认定）：必须带 `requeueRef`，而且这条 TaskRequeue 覆盖的正是 `afterRunRef`（TASK-27/TASK-16 的守卫已经保证只有人或目标恢复能写它）；没带或不对，`refused('continuation_not_authorized')`；
+       - RUN-24（`isPausedInterrupted`）：必须带 `requeueRef`，这条 TaskRequeue 覆盖的正是 `afterRunRef`，而且请求者是人，或是带 `goal_resume` 触发的目标恢复（TASK-27 的两种合法请求者）；
+       - RUN-22（`outcome: 'crashed'`，核对观察是 `human_attested`）：必须带 `requeueRef`，覆盖 `afterRunRef`，而且请求者是人。系统或成员的自动重排对这种 Run 是允许的（它按普通失败处理），但不能拿来关闭：`refused('continuation_not_authorized')`；
+       - 上面两种没带、不覆盖或请求者不对：`refused('continuation_not_authorized')`；
        - 其它结束方式：`refused('not_closable_run')`。
+       - 各结束方式在平台 Run 记录上的区分：RUN-19 是 `crashed` + `interrupted_clean` + 暂停意图为空；RUN-23 是 `cancelled` + `interrupted_clean` + 暂停意图为空；RUN-24 是 `crashed` + `interrupted_clean` + 暂停意图不为空；RUN-22 是 `crashed` + `human_attested`（`run-machine.ts`）。
     3. **Session：** `lifecycle === 'active'`，没有归档请求，`occupancy === null`，没有记录在案的接续 Session（来历指向它的）。否则分别 `refused('archived' | 'archive_requested' | 'occupied' | 'handed_over')`。
     4. **健康：**
        - `unavailable` 且结论 `kernel_turn_open`：继续往下；
@@ -90,6 +103,7 @@
   - 然后探测读头，把头的 revision 和 Run 绑定的 Kernel runId 交给 L2。
   - Kernel 返回 `closed` 或 `already_closed` 后，再做一次真正的探测，交给健康的 owner `recordSessionHealth`。这和启动核对第 1 步用的是同一个方法：ready 且没有活动 Run 时，按 SES-13 回到 `available`。
   - 健康这一步由 Runtime 经新注入的依赖调用（组合里接到同一个 `sessionHealth`），Runtime 自己不写健康。
+  - Kernel 已关，但这次探测不是 ready、或健康没写成：返回 `closed`（或 `already_closed`）、健康 `unavailable`。这是可以重试的结果，见 L7 的两张表。
   - Kernel 的结果对应到 Runtime 的结果：
     - `not_found`、`already_terminal`、`mismatch` → `mismatch`；
     - `conflict` → `conflict`；
@@ -106,19 +120,39 @@
   | 健康已写，Workflow 的回执丢了 | 下一次推进重新选择：Session 已可用，直接复用领取，不再关、不建新 Session |
   | 退路已建新 Session，交接或领取没提交 | 原 Session 已有接续，L4 第 3 条拒绝关闭；照接线包 1 的 E15 从来历恢复交接，不复活前任 |
   | 归档请求已提交、回复丢了 | 维护先接着做归档（顺序第 1）；关闭被 L4 第 3 条拒绝 |
-  | 关闭前检查之后，归档、占用、负责关系又变了 | Kernel 的版本挡不住平台事实。健康写入照旧带 Session 版本，对不上就失败；之后 Workflow 按新事实重新选择 |
+  | 关闭前检查之后，归档、占用、负责关系又变了 | Kernel 的版本挡不住这些平台事实，本操作也不另加围栏。健康 owner 写入时自己重读 Session、按自己的守卫判断（SES-13 的守卫：Session 未归档、Host 持有实例租约、探测 ready；结论是 `kernel_turn_open` 时还要头上没有活动 Run。它不看占用）；之后 Workflow 按新事实重新选择 |
   | 任务已由另一个 Session 接着做 | 去向优先（E16）选那个 Session；原 Session 有接续时不关；只是负责关系转走、没有接续的，关了也只是变成一条空闲可用的线，不拿回任务 |
 - **L7 在哪里触发：维护和 Workflow 两处，同一个 Runtime 操作。**
-  - **维护（`session-maintenance.ts`），每个 Session 按这个顺序，只在第 6 步插入关闭：**
-    1. 有归档请求：接着做归档（不变）；
-    2. 退役且被结果未知的 Run 占着：`busy`，零写入（决定 45，IT34、HM03，不变）；
-    3. 正式结束的负责关系先关掉（不变）；
-    4. 退役且有占用：跳过；有接续：按 `handoff_complete` 归档或等交接做完（HM01、HM02、HM04，不变，永不关闭）；
-    5. 旧来历还没核清：`incomplete`（E14，不变，不关闭）；
-    6. **新：** 结论是 `kernel_turn_open`，最近一次工作执行是 Run，`platformCleanInterruption` 为真（RUN-19，或带干净 Turn 的 RUN-23；暂停意图为空），就调 `closeOpenTurn`（不带 `requeueRef`）。
-       - 返回 `closed` 或 `already_closed`，健康回到 `available`：这条线本次不归档。
-       - 其余任何结果：落到今天的规则（有负责关系或在等回复就归档，否则跳过）。
-    - 经人认定的线、人暂停的线、Query 线，维护的处理和今天一字不差。
+  - **结果分三类**，两处都按这三类走：
+    - **成功：** `closed` 或 `already_closed`，健康 `available`。
+    - **可以重试：**
+      - `closed` 或 `already_closed`，健康 `unavailable`（探测没 ready 或健康没写成）；
+      - `conflict`、`transient`；
+      - `refused('lease')`。
+    - **确定失败：**
+      - `unsupported`、`unreadable`、`mismatch`；
+      - `refused('not_closable_run' | 'continuation_not_authorized')`。
+    - 其余的 `refused`（`archived`、`archive_requested`、`occupied`、`handed_over`、`health`）说明平台事实已经变了：不推出任何结论，按新事实重新走。
+  - **维护（`session-maintenance.ts:maintainSessions`）。** 今天的先后一条不动，只在一处插入：
+    - 不动的部分：
+      - 归档请求先接着做；
+      - 结果未知的占用 `busy`、零写入（决定 45，IT34、HM03）；
+      - 正式结束的负责关系先关；
+      - 有占用跳过；
+      - 有接续的线：做完交接的按 `handoff_complete` 归档（HM01、HM04），还有没做完的负责关系就零写入等着（HM02）。永不关闭。
+    - **插入点：** 没有接续的退役线，在今天判断 `kernel_turn_open` 豁免的那一处（`platformCleanInterruption` 所在的条件）之前。下面四条都成立才调 `closeOpenTurn`（不带 `requeueRef`）：
+      1. 结论是 `kernel_turn_open`；
+      2. 最近一次工作执行是 Run；
+      3. `platformCleanInterruption` 为真，即 RUN-19，或带干净 Turn 的 RUN-23，暂停意图为空；
+      4. 来历已核清：`facts.legacyPending` 为假，这条线自己的来历不为空。否则“没有接续”没法证明，不关。
+    - 关闭的结果：
+      - 成功：这条线本次不归档，跳过。
+      - 可以重试：这条线本次也跳过，不落到归档。下一轮维护或 Workflow 再试。
+      - 确定失败，或没满足上面四条：一字不改地走今天的逻辑。今天的逻辑是：
+        - `kernel_turn_open` 豁免照旧；
+        - 然后来历核不清的报 `incomplete`；
+        - 然后按退役归档。
+    - 经人认定的线、人暂停的线、Query 线不满足第 3 条（或第 2 条），处理和今天一字不差。
   - **Workflow（`workflow.ts:claimRequeued`）：** 前面的顺序不变：转去的 Session 优先（E16）；被排除、已归档、职责不对、`missing/damaged` 的走普通选择。遇到 `occupancy === null`、`unavailable/kernel_turn_open` 时：
     - 原 Session 已有为这个任务建的接续 Session（退路已经开始）：照今天走 `create_session{requeue}` 的重放和 E15 交接恢复，不关；
     - 否则返回一步 `close_open_turn`，请求是 `{ sessionRef, afterRunRef, requeueRef }`。
@@ -126,14 +160,16 @@
 
     | 回执 | 下一步 |
     | --- | --- |
-    | `closed` / `already_closed`，健康 `available` | 按新事实重新选择；正常情况就是在原 Session 领取，开新 Run |
-    | `already_closed`，健康没回到 `available` | `waiting`，下次推进再来 |
-    | `conflict`、`transient` | `waiting`，下次推进再来；不走退路 |
-    | `refused` | 按新事实重新选择，不从这张回执推出“走退路”。`continuation_not_authorized` 在这条路上不该出现，出现就 `waiting` 并写明原因 |
-    | `unsupported`、`unreadable`、`mismatch` | 退路：`create_session{requeue}`，连同接线包 1 的交接 |
+    | 成功 | 按新事实重新选择；正常情况就是在原 Session 领取，开新 Run |
+    | 可以重试 | `waiting`，写明原因，下次推进再来；不走退路 |
+    | 确定失败 | 退路：`create_session{requeue}`，连同接线包 1 的交接 |
+    | 其余的 `refused` | 按新事实重新选择，不从这张回执推出“走退路” |
 
-  - `advanceWork` 在执行完一步以后会跑维护；关闭失败以后，维护可能先按今天的规则把线归档。这是今天就有的先后，接受；之后 `claimRequeued` 见到已归档，走普通选择。
-  - **WorkflowCalls 新成员** `close_open_turn: NonNullable<RuntimeExecutionPort['closeOpenTurn']>`，请求和回执沿用 `WorkflowOperation` / `WorkflowStepReceipt` 的推导，不另写影子类型；请求 ID 确定（`wf-auto:` 前缀），重放同一步得到同一结果。
+  - `advanceWork` 执行完一步以后会跑维护。按上面的维护规则，可以重试的线不会在这时被归档；同一次推进里维护也可能已经关成功。不管是哪一处关成功的，下一次选择都在原 Session 领取。
+  - **WorkflowCalls 新成员** `close_open_turn: NonNullable<RuntimeExecutionPort['closeOpenTurn']>`，请求和回执沿用 `WorkflowOperation` / `WorkflowStepReceipt` 的推导，不另写影子类型。
+    - 这个操作本身幂等，不存回执。同一请求再执行一次，按当时的事实重新算：已关的命中 L2 第 3 行，返回 `already_closed`。
+    - 所以“重放”就是再执行一次，不会把上一次的 `conflict` 或 `transient` 原样还回来。
+
 - **L8 退路不变。** 下列情况照今天的做法另建接续 Session，负责关系照常交接，前任按规则归档：
   - Kernel 读不到；
   - 两个 Session 不在同一个 Kernel 适配器上；
@@ -141,12 +177,21 @@
   - Kernel 头上是别的 Run（`mismatch`）。
 
   已归档的旧 Session（补丁之前的）不复活。发给退路前任的回复不自动转发（DESIGN §4.3）。
-- **L9 留在原 Session 接续时，接续说明用已有的 `same_session_without_previous_turn`，不新加接续方式。**
-  - 这几种结束（RUN-19/22/23/24）都没有 Kernel 终点位置（`executionHistory.endPosition === null`），所以 `assembleContinuationBrief` 已经会把它归为“在同一 Session 中继续，但上一次执行的 Turn 不在模型历史中”。
-  - 这时它已经会列出已接受的消息、已生效的插话和工具事实，正好是 L3 移出模型输入的那部分。
-  - 来源：`readPreviousTurn` 读那次 Run 自己的窗口，到 `observedThroughPosition` 为止。关闭事件在窗口之后，不读，也不需要。这是平台已存的事实，崩溃重启后照样算得出来。
-  - afterRun 没进入过 Kernel 的链，照现有的 `factsHop` 规则找事实来源。
-  - 不改 `src/contracts/continuation-brief.ts`。施工时如发现某种结束的 `endPosition` 不为空，停下报 lead。
+- **L9 留在原 Session 接续时，接续方式用已有的 `same_session_without_previous_turn`，不新加；但事实窗口按 Kernel 身份重新定。**
+  - **接续方式。** 这几种结束都没有 Kernel 终点位置：RUN-19/23/24 的 `executionHistory.endPosition` 为空；RUN-22 沿用之前的位置记录，可能整个都没有。所以 `assembleContinuationBrief` 已经会归为“在同一 Session 中继续，但上一次执行的 Turn 不在模型历史中”，并列出已接受的消息、已生效的插话和工具事实。`src/contracts/continuation-brief.ts` 不改。
+  - **为什么要改事实窗口。** 今天 `readPreviousTurn` 只读平台 Run 上记的窗口。有两种情况会漏：
+    - 从 Entering 进入结果未知、后来经人认定的 Run（RUN-20(ii) → RUN-22），可能根本没有位置记录，今天会被读成“没进入过”，哪怕 Kernel 里确有一个开着的 Turn；
+    - 正在跑的 Run 在核对时保留旧的位置记录，不往后推，之后才发现的记录不在窗口里。
+  - **新规则。** 同一 Session 接续，而且 afterRun 绑定的 Kernel Turn 已经是 `interrupted` 时：
+    - 接续说明用 L2 的 `readTurnBounds` 按 Kernel 身份找到这个 Turn；
+    - 从它的 `turn.started` 读到它的 `run.interrupted`；
+    - 平台 Run 上记的窗口不再决定事实范围。
+    - 这只是读，不改平台 Run 的任何记录。
+  - **读不全时如实标出**，用现有的 `omittedRecords`，或标成 `unavailable`：超出现有的条数上限、记录损坏、存储读不到。不能说“没进入过”。
+  - 其它情况（跨 Session 接续、没关闭过的 Turn）照今天的 `readPreviousTurn`。
+  - afterRun 没进入过 Kernel 的链，照现有的 `factsHop` 规则找事实来源；找到的那次 Run 如果符合上面的新规则，也按新规则读。
+  - 要改的只有 `continuation-brief-assembly.ts` 的读取部分。
+
 - **L10 只关 Work 的线。**
   - Query Session（秘书回合、只读副本）的 `kernel_turn_open`（SES-09、SES-10）本片不关，照今天的规则处理（A8 Q-01）。
   - 理由：DESIGN §4.3 说的是 Workflow 的接续；Query 的接续规则属于第 6 片。
@@ -170,8 +215,11 @@
   - `read_only` 时：
     - 工作区根用 `--ro-bind-fd 3 /workspace`。仍按 fd 挂载，保留“挂载后、exec 前关掉受信根 fd”的现有保护，不改成普通的 `/proc/self/fd/...` 绑定。
     - 受保护的目录（`.git` 以外）仍是空目录，但要只读：`--tmpfs` 之后 `--remount-ro`。受保护的文件照旧用只读的 `/dev/null` 盖住；`.git` 目录照旧只读绑定。
+    - 受保护路径有包含关系时（例如 `secret` 和 `secret/nested`），只挂最上层的那个：下层已经被盖住，而且只读以后建不了下层的挂载点。挂载按路径从上到下的顺序。
     - `/tmp` 和临时 HOME 仍在 tmpfs 根上，可写，命令结束就没了；网络、环境变量清空、PID 命名空间都照旧。
-  - 探测：只读模式第一次用之前，跑一次只读的金丝雀，确认 bwrap 支持 `--ro-bind-fd`，并确认写工作区会失败。不支持就当沙箱不可用，绝不退回读写挂载，也绝不退回主机命令行。
+  - 探测：只读模式第一次用之前，用**这次实际的受保护路径配置**跑一次只读的金丝雀。它确认 bwrap 支持 `--ro-bind-fd` 和 `--remount-ro`，并确认写工作区、写受保护目录都会失败。
+    - 结果按（沙箱配置、受保护路径集合）在 Host 进程里缓存，不每次调用都探测。
+    - 不支持就当沙箱不可用，绝不退回读写挂载，也绝不退回主机命令行。
   - `cwd`：先照现有的 `normalizeWorkspacePath` 做字面检查。再在主机侧对工作区根解析真实路径：解析后在工作区外、经过符号链接跳出、落在受保护路径里，都在启动前报 `invalid_arguments`。
 - **L14 模式按每次调用定，不存进 Run 的恢复约束。**
   - 工具每次调用自己用公开接口建一个 `read_only` 的 `ProcessSandbox`：同一个 `WorkspaceSandbox`，同样的 `deniedPrefixes` 和 `executablePath`。现有平台代码已这样建过（`workbench-tools.ts`、`check-execution.ts`）。
@@ -179,23 +227,33 @@
 - **L15 执行后用现有快照再核对一次；它是第二道检查，第一道是只读挂载。**
   - `read_only` 时 `execute` 照常在前后各拍一次快照，但**从不调用 `acceptAgentChanges`**，不推进 Kernel 认可的基线。
   - 现有快照比较看到了变化：路径放进结果的 `externalChangedPaths`，`sideEffect` 仍是 `none`。这些变化只可能来自同时在写的别的写者，不算这次命令的效果。
+    - 路径按字节序排序，最多给前 100 条，另给 `externalChangedPathsOmitted`（略去的条数）。
   - 没有变化：`sideEffect: 'none'`，不写 `possible`。
   - **快照看得到的范围如实写明：** git 忽略的文件、默认忽略的前缀（`node_modules`、`dist` 等）看不到。在 git 快照失败、退回目录遍历时，看的是元数据，跳过符号链接。所以这一条只承诺“现有快照比较能看到的变化”。
-- **L16 结果、限额和失败的先后。**
-  - 子进程超时从启动后算（和现有一样）；超时先给进程组发 SIGTERM，250 ms 后 SIGKILL。整个工具调用（含快照和建沙箱）另由分派器按 `defaultTimeoutMs` 的 130 秒兜底。
-  - 输出：标准输出、错误输出各保留前 32 KiB 文本，给出总字节数和是否截断。处理器保证结果序列化后不超过 `outputLimitBytes`（128 KiB）；超了就继续从尾部截，截过的标 `truncated`。
+- **L16 结果、限额和失败的先后。** 分两层：处理器自己返回的结果；冻结的分派器在外面盖上的结果（`tool-dispatcher.js:#executeHandler`，不改）。
+  - **限额：**
+    - 子进程超时从启动后算（和现有一样）；超时先给进程组发 SIGTERM，250 ms 后 SIGKILL。
+    - 分派器在 `defaultTimeoutMs`（130 秒）时发一个取消请求，这不是硬截止：快照等不能中断的步骤会做完才返回。
+  - **输出：**
+    - 标准输出、错误输出各保留前 32 KiB 文本，给出总字节数和是否截断。
+    - 处理器保证结果序列化后不超过 `outputLimitBytes`（128 KiB）。顺序：先按 L15 把路径限在 100 条；还超就从尾部继续截输出文本，截过的标 `truncated`。
     - 不照抄 `shell` 的每路 64 KiB：那样两路加上 JSON 转义可能超过分派器的上限。
-  - 给模型的结果和 `shell` 同形：一段文本是标准输出；一段 JSON 是 `{ exitCode, signal, stdout: {totalBytes, truncated}, stderr: {text, totalBytes, truncated}, timedOut, externalChangedPaths, timings }`。
-  - 状态按这个顺序取第一条命中的：
+  - **给模型的结果**和 `shell` 同形：一段文本是标准输出；一段 JSON 是 `{ exitCode, signal, stdout: {totalBytes, truncated}, stderr: {text, totalBytes, truncated}, timedOut, externalChangedPaths, externalChangedPathsOmitted, timings }`。
+  - **处理器自己返回时**，状态按这个顺序取第一条命中的：
     1. 入参不对、`cwd` 不合规：错误 `invalid_arguments`，不启动；
-    2. 沙箱不可用：错误 `sandbox_unavailable`，不启动；
+    2. 授权已不是当前的（L18 第 3 层）：错误 `forbidden`，不启动；
     3. 启动失败：错误 `execution_failed`；
     4. 有 `externalChangedPaths`：错误 `workspace_changed_during_readonly_command`，附路径和已捕获的输出；
-    5. 被取消：`cancelled`，附已捕获的输出；
-    6. 超时：错误 `timeout`，附已捕获的输出；
-    7. 退出码不为 0：错误 `execution_failed`（“命令退出码 N”），附输出；
-    8. 其余：成功。
+    5. 子进程超时：错误 `timeout`，附已捕获的输出；
+    6. 退出码不为 0：错误 `execution_failed`（“命令退出码 N”），附输出；
+    7. 其余：成功。
+  - **分派器盖在外面的，优先于上面所有各条：**
+    - 沙箱能力缺失：在调用处理器之前就是 `sandbox_unavailable`，不启动；
+    - 这次执行被取消（暂停、取消）：`cancelled`，输出是空的，这是冻结分派器的做法；
+    - 到 130 秒：`timeout`，输出是空的。
+    - 处理器的结果被盖掉时，捕获到的输出不保留。工具说明里如实写。
   - 每一种都是 `sideEffect: 'none'`。
+
 - **L17 边界如实写进工具说明。**
   - **git：**
     - 普通仓库（`.git` 是目录）能看记录、看差异；
@@ -275,6 +333,11 @@ export type CloseOpenTurnResult =
   | { status: 'conflict'; currentRevision: number }
   | { status: 'unreadable'; reason: string };
 export function closeOpenTurn(store: SqliteStores, input: CloseOpenTurnInput): Promise<CloseOpenTurnResult>;
+export type TurnBounds =
+  | { status: 'found'; startPosition: number; endPosition: number | null; terminalStatus: string | null }
+  | { status: 'not_found' }
+  | { status: 'unreadable'; reason: string };
+export function readTurnBounds(store: SqliteStores, input: { sessionId: string; kernelRunId: string }): Promise<TurnBounds>;
 
 // src/core/agent-runtime/ports.ts（RuntimeExecutionPort 新增，可选；没装就是 unsupported）
 closeOpenTurn?(ctx: CoreCallContext, input: { sessionRef: SessionRef; afterRunRef: RunRef; requeueRef: TaskRequeueRef | null }):
@@ -310,7 +373,7 @@ allowReadonlyCommands?: boolean;               // 默认 true，L18
 | KA1 | 维护第 6 步：退役的 Work 线，`kernel_turn_open`，RUN-19 或干净 Turn 的 RUN-23，前 5 步都没命中 | `closeOpenTurn`（不带 TaskRequeue） | 成功：SES-13 回到 available，本次不归档。否则落到今天的退役规则 |
 | KA2 | `claimRequeued` 遇到 `kernel_turn_open`，原 Session 还没有接续 | 返回步 `close_open_turn`（带 TaskRequeue） | 按 L7 的回执表：成功后在原 Session 领取、开新 Run；`unsupported/unreadable/mismatch` 走退路；`conflict/transient` 等下次 |
 | KA3 | 人点“继续”一条人暂停的线（TASK-27），或目标恢复带动（GOAL-29）；人对经人认定的线重新入队 | 走 KA2，TaskRequeue 就是授权 | 同上 |
-| KA4 | 关闭已提交、健康没写，Host 还在或已重启 | 再调一次，或启动核对第 1 步 | `already_closed`，探测，SES-13 |
+| KA4 | 关闭已提交、健康没写，Host 还在或已重启 | 可以重试：维护和 Workflow 都不归档、不走退路；再调一次，或启动核对第 1 步 | `already_closed`，探测，SES-13 |
 | KA5 | 关闭不支持、读不到、头上是别的 Run | 退路 | 新 Session 接续，交接照接线包 1 |
 | KB1 | 只读执行调用 `run_readonly_command` | 只读沙箱执行 | 见 B 部分 |
 
@@ -318,7 +381,7 @@ allowReadonlyCommands?: boolean;               // 默认 true，L18
 
 1. 关闭从不重跑、不续跑原 Turn，从不给未完成的工具调用编结果。
 2. 关闭只能作用在平台已证明结束、并且按 L4 有权关的那次 Run 的 Kernel Turn 上。其它情况什么也不写。
-3. 被中断 Turn 的内容永远不进模型输入；它的边界和身份照常参与校验；原记录永远可读。被移出的那部分由接续说明补上（L9）。
+3. 被中断 Turn 的原始过程（transcript）永远不进模型历史；它的边界和身份照常参与校验；原记录永远可读。其中已接受的输入和工具事实，经接续说明给出（L9）。
 4. 健康只经已有的探测和 SES-13 恢复（L5）；不新加状态行；`state/` 以外不写健康。
 5. 维护的先后顺序（L7）不变，关闭只插在第 6 步；人的暂停、经人认定、结果未知、已有接续、归档请求，都在关闭之前按今天的规则处理。
 6. 退路的行为、交接和异常锚点与今天完全一样（L8）；只有确定的失败（不支持、读不到、头上是别的 Run）才走退路。
@@ -353,20 +416,20 @@ allowReadonlyCommands?: boolean;               // 默认 true，L18
 | 行 | 入口 | 行为 | 期望值来源 |
 | --- | --- | --- | --- |
 | KA-01 | KE1 | 关闭一个开着的 Turn：在下一个位置追加一条 `run.interrupted`；头上两个活动 ID 清空；revision 加 1；之前的记录逐条不变（记录 ID、位置、校验和） | L2 第 7 行；手写的记录序列 |
-| KA-02 | KE1 | L2 表第 1–6 行各一个例子，返回对应结果，记录条数和 revision 都不变；关闭提交后再调一次，返回 `already_closed`，位置是原来那条 | L2 表 |
-| KA-03 | KE1 | 从 `created`、`running`（等模型；工具批里有待开始和已开始的调用）、`paused` 都能关；关后待开始的是 `abandoned`、已开始的是 `outcome_unknown`，没有编造的结果；已终态的 Turn 返回 `already_terminal` | L1 |
+| KA-02 | KE1 | L2 表第 1–4、6 行各一个例子，返回对应结果，记录条数和 revision 都不变（第 5 行是防御，不测）；关闭提交后再调一次，返回 `already_closed`，位置是原来那条；`readTurnBounds` 对开着的、已关的、别的终态的、不存在的 Turn 各返回对应结果 | L2 表 |
+| KA-03 | KE1 | 从 `created`、`running`（等模型；工具批里有待开始和已开始的调用）、`paused` 都能关；关后待开始的是 `abandoned`、已开始的是 `outcome_unknown`，没有编造的结果。再关一次已关的 Turn 返回 `already_closed`；别的终态（完成、失败、取消、超限、让出）返回 `already_terminal` | L1、L2 |
 | KA-04 | KE2 | 关之前开新 Turn 被拒；关之后同一 Session 开新 Turn 成功。第二轮（游标还在被中断那一步之前）和第三轮（前缀越过关闭事件）的模型输入：含之前已完成的 Turn，顺序和条数与手写的一致，不含被中断那一步的用户消息和过程 | L3；手写的 Turn 序列和期望输入 |
 | KA-05 | KE2 | 历史边界，每种一个例子：Session 第一个 Turn 就被中断（新 Turn 只有新内容）；连续两个被中断；完成→中断→完成→中断；边界正好在关闭事件上。另有三种照旧拒绝：不是被中断的终态里带未知工具结果；边界落在没结束的 Turn 里；当前 Turn 和一个被跳过的 Turn 身份重叠 | L3 |
 | KA-06 | KE2 | 被中断的身份再跑一次：直接是终态，零模型调用、零工具执行、不加记录；旧检查点比关闭早、之后已有新 Turn，两种都一样 | L1、规则 1 |
 | KA-07 | KE3 | 人暂停、Host 重启、人点“继续”（RUN-24 → TASK-27）：同一 Session、新 Run；步骤里没有 `create_session`、交接和归档；领取前 Session 已回到 available，领取后被新 Run 占用 | L4、L7、DESIGN §4.3 |
 | KA-08 | KE3 | 中断期间发给原 Session 的回复，在新 Run 的安全点作为新输入送达；被中断那一步已经接受的消息不重复送，只出现在接续说明里 | DESIGN §4.3、L9 |
-| KA-09 | KE3 | 接续说明：接续方式是 `same_session_without_previous_turn`，列出被中断那一步已接受的消息、已生效的插话和工具事实。关闭和领取之间 Host 重启一次，结果相同；afterRun 没进入过 Kernel 的链，事实来源照现有规则 | L9 |
-| KA-10 | KE3 | 维护，每种一个例子：RUN-19 的线关闭、回到 available、不归档；带干净 Turn 的 RUN-23 的线同上；人暂停的线（RUN-24）和经人认定的线（RUN-22）不关闭，处理和今天一样；已有接续的线照旧 `handoff_complete`，不关闭；有归档请求的线接着归档，不关闭 | L7 |
-| KA-11 | KE3 | 崩溃和回执丢失：(a) Kernel 已关、健康没写，Host 没重启，下一次推进完成恢复；(b) 同样情况下 Host 重启，启动核对第 1 步走 SES-13；(c) 健康已写、回执丢了，下一次推进直接复用，不再关、不建新 Session。三种都留在原 Session | L6 |
+| KA-09 | KE3 | 接续说明：接续方式是 `same_session_without_previous_turn`，按已知的消息 ID、工具调用 ID 列出被中断那一步已接受的消息、已生效的插话和工具事实。另有三种情况，每种一个例子：关闭和领取之间 Host 重启一次，结果相同；平台 Run 上的位置记录落后于 Kernel 里的记录，后面的事实也列出；从 Entering 进入结果未知、经人认定、没有位置记录的 Run，按 Kernel 身份读到它的 Turn，不说“没进入过”。afterRun 没进入过 Kernel 的链，事实来源照现有规则 | L9 |
+| KA-10 | KE3 | 维护，每种一个例子，结果逐条写明：RUN-19 的线关闭、回到 available、不归档；带干净 Turn 的 RUN-23 的线同上；人暂停的线（RUN-24）不关闭、不归档、零写入；经人认定、Turn 还开着的线（RUN-22）不关闭、不归档、零写入；有接续且交接做完的线按 `handoff_complete` 归档，不关闭；有接续、交接没做完的线零写入；有归档请求的线接着归档，不关闭；来历核不清的线不关闭，照今天报 `incomplete` | L7 |
+| KA-11 | KE3 | 崩溃和回执丢失，故障点逐条固定：(a) 关闭的追加提交后，紧接着的那次 Kernel 存储读取失败一次（探测不 ready），本次 `waiting`，这条线没被归档，下一次推进完成恢复；(b) 同 (a)，然后重建 Host 再推进，启动核对第 1 步走 SES-13；(c) 关闭步返回成功、健康已写之后重建 Host，下一次推进直接复用，不再关、不建新 Session。三种最后都在原 Session 领取 | L6、L7 |
 | KA-12 | KE4 | 只有 legacy 读取器、适配器不同、存储读不到、头上是别的 Run，四种都退回新 Session，交接和归档与今天一样。原历史：存储可读时照常读得到；读不到时如实报读不到，引用保留 | L8；现有 WP1 交接规则 |
 | KA-13 | KE4 | 退路的新 Session 已建、交接还没提交时 Host 重启：不关闭前任，照 E15 恢复交接，最后只有一个接续 Session | L6、L4 第 3 条 |
 | KA-14 | KE3 | 结果未知、仍占着 Session 的线：零写入（不关、不改健康、不建归档请求，决定 45）。经人认定、但没人“继续”的线：不关闭 | L4、决定 45 |
-| KA-15 | KE3 | 关闭时 Kernel 版本被别人改了（在 Kernel 存储边界注入一次并发追加）：本次 `waiting`，不走退路；下一次推进关闭成功，留在原 Session | L7 回执表 |
+| KA-15 | KE3 | 关闭时 Kernel 版本被别人改了（在 Kernel 存储边界注入一次并发追加）：本次 `waiting`，不走退路，线没被归档；之后关闭成功（可能在同一次推进的维护里，也可能在下一次推进），最后在原 Session 领取 | L7 |
 | KA-16 | KE3 | Query 线（SES-09、SES-10）：不关闭，和今天一样 | L10 |
 | KA-17 | 能力上报的公开读取（`A2-runtime-capabilities` 用的同一入口） | `continueHistory` 写明：Work 线关闭后在原 Session 接续；Query 线换新 Session；列出 L8 的退路；不出现“恢复原执行” | L11 |
 
@@ -378,12 +441,12 @@ allowReadonlyCommands?: boolean;               // 默认 true，L18
 | KB-02 | KE5 | `/tmp` 和 HOME 里写能成功；下一次调用看不到；主机工作区里也没有 | L13 |
 | KB-03 | KE5 | 连主机上一个确实能连通的本地端口失败（主机侧先证明能连）；普通仓库准备好身份和一处暂存改动，`git log`、`git diff --cached` 成功，`git commit` 因写不了而失败；链接式工作树里 git 失败 | L13、L17 |
 | KB-04 | KE5 | `cwd`：`..`、绝对路径、指向工作区外的相对符号链接、落在受保护路径里，都在启动前拒绝；父进程环境里的哨兵变量在命令里看不到；命令用不了继承的根 fd | L13 |
-| KB-05 | KE5 | 子进程超时、经 AbortSignal 取消、输出超过 32 KiB：按 L16 的字面值返回，已捕获的输出和总字节数都在 | L16 |
-| KB-06 | KE5 | bwrap 不在或不支持只读挂载时，探测为不可用，`execute` 抛 `sandbox_unavailable`，主机上没有启动任何进程 | L13 |
+| KB-05 | KE5 | 看 `ProcessSandbox.execute` 的原始结果：子进程超时（`timedOut`）、经 AbortSignal 取消（`cancelled`）、输出超过 32 KiB（`truncated`、总字节数），已捕获的输出都在 | L16 |
+| KB-06 | KE5 | bwrap 不在或不支持只读挂载时，探测为不可用，`execute` 抛 `sandbox_unavailable`；要跑的命令没有在任何地方启动（沙箱里、主机上都没有；探测本身启动 bwrap 不算） | L13 |
 | KB-07 | KE6 | 有授权的 Query 和写范围为空的 Work，各自能看到并调用工具、拿到输出，结果存进这次执行的历史 | L18 |
 | KB-08 | KE6 | 下列每一种都看不到这个工具：Host 开关关；只有部分前缀可读；RoleSpec 的上限没列它；写范围不为空的 Work。执行中 Host 读权限变了，下一次调用报 `forbidden`，不启动 | L18 |
 | KB-09 | KE6 | 加了新工具以后，Query 和只读 Work 照旧看不到 `shell`、`edit`、`write` | L18 |
-| KB-10 | KE6 | 结果映射，每种一个例子：退出码不为 0、超时、取消、沙箱不可用（能力探测替身说没有）、`timeoutMs` 超出范围；任何结果序列化后都不超过 128 KiB | L12、L16 |
+| KB-10 | KE6 | 结果映射，每种一个例子：退出码不为 0、子进程超时（附输出）、`timeoutMs` 超出范围、授权已变；分派器盖在外面的：沙箱不可用（能力探测替身说没有）、执行被取消（空输出）。外部变化路径超过 100 条时，结果里是 100 条加略去数；任何结果序列化后都不超过 128 KiB | L12、L15、L16 |
 | KB-11 | KE5、KE6 | 命令执行期间，别的写者改了一个快照看得到的文件：KE5 报出这条路径，Kernel 认可的基线不变；KE6 结果是 `workspace_changed_during_readonly_command`，不算这次命令的效果 | L15 |
 
 ### 5.3 bwrap 的限制
@@ -409,7 +472,7 @@ KE5 的行要真实的 bubblewrap。DSH 的沙箱里没有 bwrap，这些测试�
 - **Runtime：**
   - `ports.ts`、`runtime.ts`、`execution-contracts.ts`、`kernel-store-locator.ts`、`session-operations.ts`；
   - 终态消费者：`kernel-turn-facts.ts`、`run-reconcile.ts`、`execution-observation.ts`、`query-observation.ts`、`context-assembler.ts`。
-  - `continuation-brief-assembly.ts` 和 `src/contracts/continuation-brief.ts` 不改（L9）。
+  - `continuation-brief-assembly.ts` 只改读取事实窗口的部分；`src/contracts/continuation-brief.ts` 不改（L9）。
 - **Workflow：** `workflow.ts`、`session-maintenance.ts`、`contracts.ts`、`ports.ts`。
 - **其它：** `src/composition/create-platform.ts`（Runtime 的健康依赖；能力上报 `workspaceRuntimeCapabilities`）。
 - **要改断言的旧测试。** lead 写出逐条的前后断言并冻结，DSH 不自行翻转。
@@ -426,7 +489,8 @@ KE5 的行要真实的 bubblewrap。DSH 的沙箱里没有 bwrap，这些测试�
   | `tests/kernel/R4a-frozen-public.test.ts` 第 814 行 | `kernelSessionApiVersion` 2 → 3；关闭之前拒绝新 Turn 的断言保留 |
   | `tests/business/S1-session-maintenance.test.ts` IT10 | 保留“退役即归档”，改用关闭不支持的夹具；另加关闭成功的情形 |
   | `tests/business/WP1-continuation-handover.test.ts` HO01/HO02 及共用夹具的其它例子 | E15 断言放在关闭不支持或失败的夹具下；逐个检查共用夹具的例子 |
-  | 同文件 HM01、HM02、HM04 | **不翻转**：已交接的线照旧 `handoff_complete` |
+  | 同文件 HM01、HM04 | **不翻转**：交接做完的线照旧按 `handoff_complete` 归档 |
+  | 同文件 HM02 | **不翻转**：还有没做完的负责关系，零写入 |
   | HM03、IT34 等结果未知占用的例子 | **不翻转**：零提交，`busy` |
   | `tests/scenarios/A8-host-restart-lease.test.ts` Q-01/Q-04 等 Query 例子 | **不翻转**；另加“不关闭”的断言（KA-16） |
   | `tests/scenarios/WP1-wiring.test.ts` SC01 | 关闭成功的序列改变；原序列留作关闭不支持时的退路场景 |
