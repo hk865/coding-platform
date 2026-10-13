@@ -1,6 +1,6 @@
 # 架构与编排文档入口
 
-更新：2026-10-13。先读 [STATUS](STATUS.md)（当前状态、缺口、下一步）和 [HANDOFF 顶部](HANDOFF.md)（决定 1–49），再读[编排设计目录](design/orchestration-2026-10/README.md)。可靠性批次已完成；编排第 0、1、3、5 片和接线包 1 已合入，接线包 2 在准备，整个 MVP 没有完成。
+更新：2026-10-13。先读 [STATUS](STATUS.md)（当前状态、缺口、下一步）和 [HANDOFF 顶部](HANDOFF.md)（决定 1–50），再读[编排设计目录](design/orchestration-2026-10/README.md)。可靠性批次已完成；编排第 0、1、3、5 片和接线包 1 已合入，接线包 2 在准备，整个 MVP 没有完成。
 
 施工按决定 36、43、44、46 和 2026-10-13 的做法：lead 写规格、规则、冻结与验收，负责全部文档；Codex 写夹具、只读审查和推送；DSH 在用户确认的测试入口逐条按 TDD 写用例和实现。详见[根 AGENTS](../../AGENTS.md)第 5 条和[分片入口](design/orchestration-2026-10/slices/README.md)。
 
