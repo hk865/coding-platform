@@ -258,8 +258,11 @@ function answer(record: SessionMessageRecord, response: UserMessageResponseV1,
       revision: record.revision + 1 }, effects: answeredEffects(record.revision) });
   if (!result.ok) throw new Error('the user answer must be admitted');
   const next = nextSessionMessageRecord(record, { kind: 'decision_answered', response });
+  // Wiring 2 §2.3 P02 (L10/L11, §8.9): every caller passes pendingRecord(), whose sender is the work_run
+  // WORK_SENDER, so the first answer also writes the pending reply position (spec literal null).
   expect(next).toEqual({ ...before, revision: before.revision + 1, status: 'responded',
-    readAt: before.readAt ?? originalResponse.respondedAt, response: originalResponse, application: null });
+    readAt: before.readAt ?? originalResponse.respondedAt, response: originalResponse, application: null,
+    responseSince: null });
   expect(messageMachineStateOf(next)).toEqual(result.next);
   expect(record).toEqual(before);
   expect(response).toEqual(originalResponse);

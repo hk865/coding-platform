@@ -54,5 +54,13 @@ export type SessionRecord = {
   provenance?: SessionProvenanceV1 | null;
   /** Absent on records written before slice 1 and read as null; non-null only while an archive is pending. */
   archiveRequest?: SessionArchiveRequestV1 | null;
+  /**
+   * Wiring package 2 (spec §2.3, L10): the commit cursor of the most recent
+   * available→unavailable entry. `null` is the pending placeholder written in
+   * the same record and bound to that commit's cursor; recovery removes the
+   * field entirely; an already-unavailable Session keeps its existing value.
+   * Absent on records written before this package (legacy, reads as undefined).
+   */
+  unavailableSince?: CommitCursor | null;
 };
 export type SessionWorkLink = { ref: SessionWorkLinkRef; revision: number; since: CommitCursor; until: CommitCursor | null };

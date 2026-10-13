@@ -28,7 +28,7 @@ import type {
   DecodeResult, EncodedDomainEvent, EncodedRecord, RecordBackendSchemas,
 } from '../../record-store/ports.js';
 import { isJsonObject, isNonEmptyString, parseJsonObject } from '../../record-store/record-codec.js';
-import { checkArtifactRef, checkPlainSessionRef, checkSessionBody, isPlatformCursor } from './session-record-codecs.js';
+import { checkArtifactRef, checkPlainSessionRef, checkSessionBody, isNonZeroPlatformCursor, isPlatformCursor } from './session-record-codecs.js';
 import type { Slice1EventHeaderV1 } from './lifecycle-record-codecs.js';
 import type { SessionRecord } from '../../../contracts/core/session.js';
 import type { ArchiveStepRefV1 } from '../../../contracts/core/session-archive.js';
@@ -712,6 +712,8 @@ const MESSAGE_KEYS: readonly string[] = [
   'replyHandler', 'archiveWaitDisposition',
   // Slice 5 additive fields (SPEC §2.3, §2.5).
   'goalRef', 'decision', 'application', 'since', 'noticeAutomationCap',
+  // Wiring package 2 (spec §2.3 P02): the first-response commit position.
+  'responseSince',
 ];
 
 /** Slice 1 §2.5: the effective reply handler of a wait; absent reads as null. */
@@ -743,7 +745,7 @@ function checkArchiveWaitDisposition(value: unknown, path: string): Problem {
   return null;
 }
 
-export function checkSessionMessageBody(body: UnknownRecord): Problem {
+export function checkSessionMessageBody(body: UnknownRecord, requireBoundResponseSince = false): Problem {
   if (!hasOnlyKeys(body, MESSAGE_KEYS)) return 'SessionMessage record carries unknown fields';
   const ref = checkSessionMessageRef(body['ref']);
   if (ref !== null) return ref;
@@ -862,6 +864,22 @@ export function checkSessionMessageBody(body: UnknownRecord): Problem {
   const since = body['since'];
   if (since !== undefined && since !== null && !isPlatformCursor(since)) {
     return 'SessionMessage since must be null or a ledger commit cursor';
+  }
+  // Wiring package 2 (spec §2.3 P02): a saved reply position is either absent
+  // (other senders / legacy) or a real platform cursor; the explicit `null`
+  // placeholder is legal only in an EVENT body, bound by the same commit.
+  const responseSince = body['responseSince'];
+  if (responseSince !== undefined) {
+    if (responseSince === null) {
+      if (requireBoundResponseSince) return 'SessionMessage responseSince must be bound to a real commit cursor';
+    } else if (!isNonZeroPlatformCursor(responseSince)) {
+      return 'SessionMessage responseSince must be a nonzero ledger commit cursor';
+    }
+    const senderValue = body['sender'];
+    if (!isObject(senderValue) || senderValue['kind'] !== 'work_run') {
+      return 'SessionMessage responseSince requires a work_run sender';
+    }
+    if (body['response'] === null) return 'SessionMessage responseSince requires a saved response';
   }
   const noticeAutomationCap = body['noticeAutomationCap'];
   if (noticeAutomationCap !== undefined
@@ -1055,7 +1073,7 @@ function validateRecord(record: EncodedRecord): DecodeResult<EncodedRecord> {
   if (canonical === null || canonical !== record.refKey) {
     return invalid('SessionMessage refKey disagrees with the record body');
   }
-  const problem = checkSessionMessageBody(body);
+  const problem = checkSessionMessageBody(body, true);
   if (problem !== null) return invalid(`SessionMessage record payload is invalid: ${problem}`);
   return { status: 'decoded', value: record };
 }
@@ -1088,8 +1106,9 @@ export const SESSION_MESSAGE_RECORD_SCHEMAS: RecordBackendSchemas = {
       aggregateType: 'SessionMessage',
       schemaId: SESSION_MESSAGE_SCHEMA_ID,
       // Slice 5: the notification origin `since` is bound from the real commit
-      // cursor in the same transaction (SPEC §2.5 line 289).
-      commitCursorFields: ['since'],
+      // cursor in the same transaction (SPEC §2.5 line 289). Wiring package 2
+      // adds the first-response position (spec §2.3 P02).
+      commitCursorFields: ['since', 'responseSince'],
       validate: validateRecord,
     },
   ],

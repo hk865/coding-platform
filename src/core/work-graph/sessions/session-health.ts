@@ -25,7 +25,7 @@ import {
   decodeSessionRecord, encodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey,
 } from './session-record-codecs.js';
 import {
-  observeSessionHealthRecord, sessionMachineStateOf, transitionSession, type SessionProbeVerdict,
+  bindSessionUnavailableCursor, observeSessionHealthRecord, sessionMachineStateOf, transitionSession, type SessionProbeVerdict,
 } from '../state/session-availability.js';
 
 /** One probe of the Session's Kernel mapping; `activeRunId` is the Kernel session head a `ready` probe read. */
@@ -113,13 +113,19 @@ export function createSessionHealthService(deps: SessionHealthDependencies): Ses
           schemaVersion: 1, occurredAt: nowIso, projectId: session.ref.projectId, hostInstanceId: host.hostInstanceId,
           observed, probe: verdict === 'ready' ? 'ready' : verdict === 'missing' ? 'missing' : 'damaged',
           kernelHeader: header, session: next };
+        const sessionKey = sessionAggregateRefKey(plainSessionRefToAggregate(input.sessionRef));
         const receipt = await records.commit({ identityKey, fingerprint,
           guards: [{ refKey: sessionAggregateRefKey(plainSessionRefToAggregate(input.sessionRef)), expectedRevision: session.revision }],
           records: [encodeSessionRecord(next)], claims: [], indexGuards: [], indexChanges: [],
+          // Spec §2.3 P01: an available→unavailable observation writes the
+          // explicit pending entry placeholder; this same commit binds it.
+          ...(next.unavailableSince === null
+            ? { commitCursorBindings: [{ refKey: sessionKey, field: 'unavailableSince' as const }] }
+            : {}),
           events: [encodeSessionHealthObservedEvent(event)] });
         if (receipt.status !== 'committed') return storeFailure(receipt);
         if (receipt.replayed) return await replayed(receipt.cursor);
-        return { status: 'observed', session: next };
+        return { status: 'observed', session: bindSessionUnavailableCursor(next, receipt.cursor) };
       } catch (error) {
         return rejected('unavailable', `the health observation failed: ${error instanceof Error ? error.message : String(error)}`);
       }
@@ -131,6 +137,7 @@ export function createSessionHealthService(deps: SessionHealthDependencies): Ses
     if (at.status !== 'ready') return storeFailure(at);
     const decoded = sessionHealthObservedPayloadFromEvent(at.value.event);
     if (decoded.status !== 'decoded') return rejected('unavailable', `the recorded health observation is damaged: ${decoded.reason}`);
-    return { status: 'observed', session: decoded.value.session };
+    // Spec §2.3 L11-1: the replay returns the same bound field as the first result.
+    return { status: 'observed', session: bindSessionUnavailableCursor(decoded.value.session, cursor) };
   }
 }

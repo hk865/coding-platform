@@ -27,7 +27,9 @@ import { createExecutedFilesStub } from '../core/work-graph/tasks/executed-files
 import { createGoalDecisionCauseReader } from '../core/work-graph/tasks/goal-decision-reader.js';
 import { createPlanningQuestionReader } from '../core/work-graph/tasks/planning-question-reader.js';
 import { createDecisionSettingsService } from '../core/work-graph/configuration/decision-settings-service.js';
-import { createMessageDutiesFactsAdapter, type MessageDutiesMappingPort } from '../core/work-graph/configuration/message-duties-adapter.js';
+import { createMessageDutiesFactsAdapter } from '../core/work-graph/configuration/message-duties-adapter.js';
+import { createUndeliveredReplyNoticeSource } from '../core/work-graph/views/undelivered-reply-notices.js';
+import { platformRoleProfile } from '../core/agent-runtime/role-profiles.js';
 import {
   createDecisionReadModel, createGoalCauseCardSource, createPlanningQuestionCardSource,
 } from '../core/work-graph/views/decision-read-model.js';
@@ -100,6 +102,8 @@ import type { DecisionApplicationReceiptV1 } from '../contracts/core/session-mes
 import type { SessionRef } from '../contracts/core/identity.js';
 import type { CoreRejection, ReadResult } from '../contracts/core/results.js';
 import type { VersionPin } from '../contracts/core/identity.js';
+import type { RoleConfigurationRef } from '../contracts/core/identity.js';
+import type { PlatformDutyV1 } from '../contracts/platform-duty.js';
 import { canonicalJson, type JsonValue } from '../contracts/fingerprint.js';
 import type { RuntimeCapabilities } from '../core/agent-runtime/contracts.js';
 import type { RuntimeExecutionDependencies, RuntimeHostBindings } from '../core/agent-runtime/execution-contracts.js';
@@ -204,13 +208,6 @@ export type TargetPlatformOptions = {
    * the new user write entries answer `unsupported`.
    */
   operatorActor?: { kind: 'human' | 'system'; id: string };
-  /**
-   * Slice 5 §2.6: the transitional exact Role binding → duties map the message
-   * owner reads. An unmapped new user send is `unsupported` (this slice does not
-   * guess duties from a template name, Skill text or model JSON); slice 3
-   * replaces the seam. Absent maps nothing.
-   */
-  messageDutiesMapping?: MessageDutiesMappingPort;
 };
 
 /** The composition-owned service identity. It is used only to execute trusted
@@ -525,14 +522,6 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // harness builds one with only `checks`, so removing it would make the
     // frozen SC01/SC02 answer `unsupported`); see UNSPECIFIED.
     const operatorActor = options.operatorActor ?? options.checks?.executor;
-    // Slice 5 §2.6: the transitional duties adapter reads the existing Role
-    // binding facts and applies the composition-injected exact mapping. An
-    // unmapped new user send is `unsupported`; no template-name guess exists.
-    const messageDutiesMapping: MessageDutiesMappingPort = options.messageDutiesMapping ?? {
-      dutiesForRoleSpecPin: () => null,
-      dutiesForLegacyTemplate: () => null,
-    };
-    const messageDuties = createMessageDutiesFactsAdapter({ roles: roleService, mapping: messageDutiesMapping });
     const authorizeConfiguration = options.runtime === undefined
       ? undefined : createAuthorizeConfiguration(options.runtime);
     // Slice 1 (spec §0.2 L1, §3.3): the ONE `SessionFactsPort` instance. It is
@@ -553,6 +542,16 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     const legacyProvenance = createLegacySessionProvenanceReader(backend.records, sessionFacts, bodies);
     const sessionDirectory = createSessionDirectory({ records: backend.records, lookups: backend.records,
       legacyProvenance });
+    // Wiring 2 I-2 (§2.1, L1/L3): the formal duties adapter reads the Session's
+    // own fixed role. The legacy half is the exact five platform templates and
+    // their versions, injected here so `configuration/` never imports Runtime.
+    const platformDuties: readonly PlatformDutyV1[] = ['executor', 'secretary', 'adviser', 'scribe', 'reviewer'];
+    const legacyDuty = (role: Extract<RoleConfigurationRef, { kind: 'legacy_template' }>): PlatformDutyV1 | undefined =>
+      platformDuties.find(duty => {
+        const template = platformRoleProfile(duty).template;
+        return role.templateId === template.templateId && role.templateRevision === template.templateRevision;
+      });
+    const messageDuties = createMessageDutiesFactsAdapter({ roles: roleService, sessions: sessionDirectory, legacyDuty });
     // Slice 1 (spec §3.3): the Host-only legacy provenance backfill entry. Its
     // member is read here, in the assembly, so the public port member and the
     // directory's implementation are part of the production graph.
@@ -670,10 +669,14 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     const goalCauseCards = createGoalCauseCardSource(goalDecisionCauseReader);
     const planningQuestionCards = createPlanningQuestionCardSource(planningQuestionReader);
     const automaticReworkNotices = createAutomaticReworkNoticeSource({ records: backend.records });
+    // Wiring 2 I-5 (§2.3, L7): the ONE undelivered-reply projector. It reads the
+    // SAME directory and mailbox the rest of the platform owns and never commits.
+    const undeliveredReplyNotices = createUndeliveredReplyNoticeSource({
+      records: backend.records, sessions: sessionDirectory, messages: mailbox });
     const rawDecisionReads = createDecisionReadModel({
       records: backend.records,
       cardSources: [goalCauseCards, planningQuestionCards],
-      noticeSources: [automaticReworkNotices],
+      noticeSources: [automaticReworkNotices, undeliveredReplyNotices],
       conflicts: goalConflicts,
       positions: noticePositions,
       displayTokens,
@@ -770,7 +773,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       // on the graph-context reader. The provider rebinds the caller's ctx to
       // this same project/workspace as the Host actor; it is never exported to a
       // model, an HTTP route or another module.
-      extensions: createContextExtensionsReader({ anomalies: sessionAnomalies, hostActor: SYSTEM_ACTOR }),
+      extensions: createContextExtensionsReader({ anomalies: sessionAnomalies, hostActor: SYSTEM_ACTOR,
+        goalSettings: rawGoalSettings, decisions: rawDecisionReads }),
     });
     // A Session operation spans both stores. Drain the complete operation before
     // closing the platform Store, not merely its short Kernel callback.
@@ -958,6 +962,10 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       respondMessage: (...args) => trackedCall(() => mailbox.respondMessage(...args), unavailable),
       // Slice 1 (spec §4.4): the read-only undelivered-reply source page.
       readUndeliveredReplies: (...args) => trackedCall(() => mailbox.readUndeliveredReplies!(...args), unavailable),
+      // Wiring 2 I-5 (§2.3, L7, F13): the SAME mailbox owner records a real
+      // execution's acceptance of a saved reply, so an accepted reply leaves the
+      // notice set. No other mailbox method is published here.
+      recordInputAccepted: (...args) => trackedCall(() => mailbox.recordInputAccepted!(...args), unavailable),
     };
     // Slice 5 §4.5 platform ports: the same trackedCall drain convention as every
     // other owner, so an in-flight decision write is accounted for before close.

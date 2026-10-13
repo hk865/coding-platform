@@ -121,6 +121,10 @@ function isPositiveRevision(value: unknown): value is number {
 export function isPlatformCursor(value: unknown): value is string {
   return nonEmpty(value) && /^c\d{10}$/.test(value);
 }
+/** Spec §2.3: a stored notice position must be a NONZERO ledger commit cursor. */
+export function isNonZeroPlatformCursor(value: unknown): value is string {
+  return isPlatformCursor(value) && value !== 'c0000000000';
+}
 function isNullableCursor(value: unknown): boolean {
   return value === null || isPlatformCursor(value);
 }
@@ -383,7 +387,7 @@ const ACTION_KEYS: readonly string[] = ['kind', 'plannedSessionRef', 'workspace'
 const OPERATION_PHASES: readonly string[] = ['accepted', 'running', 'completed', 'failed', 'unknown'];
 const SESSION_BODY_KEYS: readonly string[] = [
   'ref', 'revision', 'kernel', 'lifecycle', 'health', 'healthConclusion', 'role', 'workspaceId', 'lastExecutionRef',
-  'occupancy', 'historyCursor', 'createdAt', 'archivedAt', 'provenance', 'archiveRequest',
+  'occupancy', 'historyCursor', 'createdAt', 'archivedAt', 'provenance', 'archiveRequest', 'unavailableSince',
 ];
 const WORK_LINK_BODY_KEYS: readonly string[] = ['ref', 'revision', 'since', 'until'];
 
@@ -709,7 +713,7 @@ function checkSessionOperationBody(body: UnknownRecord): Problem {
   return null;
 }
 
-export function checkSessionBody(body: UnknownRecord): Problem {
+export function checkSessionBody(body: UnknownRecord, requireBoundUnavailableSince = false): Problem {
   if (!hasOnlyKeys(body, SESSION_BODY_KEYS)) return 'session record carries unknown fields';
   const ref = checkSessionAggregateRef(body['ref']);
   if (ref !== null) return ref;
@@ -760,6 +764,19 @@ export function checkSessionBody(body: UnknownRecord): Problem {
   if (body['archiveRequest'] !== undefined && body['archiveRequest'] !== null) {
     const archiveRequest = checkSessionArchiveRequest(body['archiveRequest'], refValue['projectId'] as string);
     if (archiveRequest !== null) return `session archiveRequest: ${archiveRequest}`;
+  }
+  // Wiring package 2 (spec §2.3 P01): the entry position is either absent
+  // (legacy / available) or a real platform cursor; the explicit `null`
+  // placeholder is legal only in an EVENT body (the record-store binds it in
+  // the same commit and the persisted record is re-validated after binding).
+  const unavailableSince = body['unavailableSince'];
+  if (unavailableSince !== undefined) {
+    if (unavailableSince === null) {
+      if (requireBoundUnavailableSince) return 'session unavailableSince must be bound to a real commit cursor';
+    } else if (!isNonZeroPlatformCursor(unavailableSince)) {
+      return 'session unavailableSince must be a nonzero ledger commit cursor';
+    }
+    if (body['health'] !== 'unavailable') return 'session unavailableSince requires unavailable health';
   }
   return null;
 }
@@ -896,7 +913,12 @@ export const SESSION_RECORD_SCHEMAS: RecordBackendSchemas = {
     {
       aggregateType: 'Session',
       schemaId: SESSION_RECORD_SCHEMA_ID,
-      validate: (record) => validateRecord(record, 'Session', SESSION_RECORD_SCHEMA_ID, checkSessionBody),
+      // Wiring package 2 (spec §2.3): the entry position is the only bindable
+      // Session cursor field; the nullable event placeholder is bound by the
+      // store and the persisted record is re-validated in record mode below.
+      commitCursorFields: ['unavailableSince'],
+      validate: (record) => validateRecord(record, 'Session', SESSION_RECORD_SCHEMA_ID,
+        (body) => checkSessionBody(body, true)),
     },
     {
       aggregateType: 'SessionWorkLink',
@@ -1019,7 +1041,7 @@ export function decodeSessionOperationRecord(record: EncodedRecord): DecodeResul
 }
 
 export function decodeSessionRecord(record: EncodedRecord): DecodeResult<SessionRecord> {
-  const checked = validateRecord(record, 'Session', SESSION_RECORD_SCHEMA_ID, checkSessionBody);
+  const checked = validateRecord(record, 'Session', SESSION_RECORD_SCHEMA_ID, (body) => checkSessionBody(body, true));
   if (checked.status !== 'decoded') return checked;
   const body = parseObject(record.json);
   if (body === null) return invalid('Session record json is not an object');

@@ -88,7 +88,14 @@ export type UniqueClaimChange = {
   nextOwner: string | null;
 };
 
-export type CommitCursorBinding = { refKey: string; field: "since" | "until" };
+export type CommitCursorBinding = {
+  refKey: string;
+  /**
+   * The closed set of bindable top-level cursor fields (spec §2.3):
+   * the two notice positions extend the original `since`/`until` pair.
+   */
+  field: "since" | "until" | "unavailableSince" | "responseSince";
+};
 
 export type StoredVersion = { refKey: string; revision: number };
 
@@ -148,7 +155,7 @@ export type EncodedRecordSchema = {
   readonly schemaId: string;
   readonly aggregateType: string;
   /** Explicit top-level fields eligible for commit cursor binding. */
-  readonly commitCursorFields?: readonly ("since" | "until")[];
+  readonly commitCursorFields?: readonly ("since" | "until" | "unavailableSince" | "responseSince")[];
   validate(record: EncodedRecord): DecodeResult<EncodedRecord>;
 };
 

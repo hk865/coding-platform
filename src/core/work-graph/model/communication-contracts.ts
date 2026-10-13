@@ -107,6 +107,14 @@ export type SessionMessage = {
   status: SessionMessageStatus;
   readAt: string | null;
   response: MessageResponse | UserMessageResponseV1 | null;
+  /**
+   * Wiring package 2 (spec §2.3, L10): the commit cursor of the FIRST saved
+   * response. `null` is the pending placeholder written by
+   * `nextSessionMessageRecord` on a work_run message's first reply and bound in
+   * the same mailbox commit; it is absent on non-work_run senders and on
+   * messages written before this package.
+   */
+  responseSince?: CommitCursor | null;
   /** Slice 5: the owning Goal; absent/null keeps the historical message shape. */
   goalRef?: GoalRef | null;
   /** Slice 5: decision metadata, only on a user decision request or synthetic answer. */
@@ -176,6 +184,9 @@ export type UndeliveredReplyV1 = {
   kind: 'retired_reply'; messageRef: SessionMessageRef; sourceSessionRef: SessionRef;
   responseRef: ArtifactRef; respondedAt: string; hasContinuation: boolean;
   requiresUserRecipient: boolean; // 无 continuation 为 true。
+  /** Wiring package 2 (spec §2.3): the bound entry/reply commit cursors, or absent on legacy data. */
+  unavailableSince?: CommitCursor;
+  responseSince?: CommitCursor;
 };
 
 /**

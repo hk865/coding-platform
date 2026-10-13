@@ -451,6 +451,15 @@ DSH 做完后：检查冻结的测试侧文件的 sha256 和精确文件清单�
 
 不做：G扩容；I-1/I-3/E15重做；改变Goal说明；第6片初始化卡关闭/秘书请求处理；第7片自动感知、到期、转交新消息、待放行/独立审阅入口；补notes/footprint/note_review/message_release；通知UI/聚合文案/浏览器推送；全面修复旧卡关联或读模型规模（决定49第28项归第2片，L6只是暂时防护）；自动迁移历史库；真实模型E2E。I-5“发现未送达”不等于“转交交互已交付”，I-6“提醒有待决”不等于“决定自动落实”，本包不等于MVP完成。
 
+### 9.1 合入时的更正和限定（lead 2026-10-14）
+
+施工五轮、Codex 三次验收审查以后，lead 定的：
+1. **§4.4 第 5 条的拒绝码。** 回复 DTO 上的 `sourceSessionRef` 和目录推出的来源 Session 不一致，逐项校验时就拒，码是 `unavailable/undelivered_reply_source_mismatch:`，先于去重。`undelivered_reply_identity_conflict:` 只留给逐项校验都通过、同一个键内容却不一致的重复项。这是第 4 轮唯一的生产改动（`views/undelivered-reply-notices.ts`）。
+2. **F14 的 Query 回答。** 写入方 `respondFromQueryAnswer` 只接在 Workflow 内部的 `consultations.messages` 上；重试 `consumeConsultation` 在 `consultation.ts:152` 提前返回，公开入口走不到写入方的回执重放。测试照样核对第一次、重试、重开库后的完整值、游标、DTO 的 R/P、P 处的通知和回复正文；写入方自身的重放不另测，不为测试加入口。
+3. **F10 的 Query 恢复正例。** 先存回复、再跑 Query，Query 进入时会把这条回复当输入收下，通知是空的（这是对的）。正例因此是：先起 Query，执行中存下 Work 的回复，再让 Query 结果未知、经真实的 `resolveUnknownQueryRun` 恢复，在观察到的 R 处出通知；两个后端。
+4. **临时上限。** 待答卡提醒的 50 页/5,000 张、未送达回复来源的 50 页/5,000 条，是本包写明由第 2 片撤的临时防护；2A 规格 §0.4 撤掉它们，对应的测试边界由 2A 翻转。
+5. **测试文件。** `tests/runtime/WP2-context-assembly.test.ts` 删了（它的四个测试替换了成功的内部协作者）；Query 的模式和扩展的检查改在 E2 的 F08 里经真实路径做。
+
 ## 附录：多视角核对
 
 ### A. 数据流、权限和状态视角

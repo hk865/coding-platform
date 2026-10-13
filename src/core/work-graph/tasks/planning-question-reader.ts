@@ -155,6 +155,11 @@ export function createPlanningQuestionReader(
         }
         const job = decoded.value;
         if (job.job.status !== 'answered') continue;
+        // A planning-question read consumes only initial_coordination jobs. For
+        // any other intent `readInitialPlanAnswerFacts` answers `invalid` ("not
+        // an initial_coordination request"), which is a selection mismatch, not
+        // a read failure: skip the job instead of returning it as a rejection.
+        if (job.job.intent.execution?.kind !== 'initial_coordination') continue;
         for (const answerRef of job.job.answerRefs) {
           const facts = await reader.call(plans, ctx, answerRef);
           // §4.2 rule: a failed formal Answer read is RETURNED, never skipped

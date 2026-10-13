@@ -189,7 +189,10 @@ describe.each(['memory', 'sqlite'] as const)('S5 user messages %s', kind => {
     expect(afterFirst.claims).toEqual(before.claims);
     expect(afterFirst.lastCursor).toBe(first.cursor);
     expect(first.value).toMatchObject({ ref: h.message.ref, status: 'responded', revision: 2 });
-    await expectMessageEvent(h.f, first.cursor, 'SessionMessageResponded', first.value);
+    // Wiring 2 §2.3 P02/L11: the receipt carries the reply position bound to this commit's receipt cursor
+    // (already tied to the ledger head by afterFirst.lastCursor above); the recorded event keeps the pending null.
+    expect(first.value.responseSince).toBe(first.cursor);
+    await expectMessageEvent(h.f, first.cursor, 'SessionMessageResponded', { ...first.value, responseSince: null });
     const allocations = { ...h.f.allocationCounts };
     const secondOwner = h.build();
     const second = await secondOwner.decisions.answerDecision(h.f.ctx, h.request('um07', 'yes'));

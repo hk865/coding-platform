@@ -99,7 +99,7 @@ import {
   decodeQueryJobAnswerSnapshot, decodeQueryJobSnapshot, decodeQueryRunSnapshotRecord,
 } from '../queries/query-record-codecs.js';
 import {
-  createSessionMessageRecord, inputObserverProblem, messageMachineStateOf, messagePinProblem, messagePrincipalProblem,
+  bindMessageResponseCursor, createSessionMessageRecord, inputObserverProblem, messageMachineStateOf, messagePinProblem, messagePrincipalProblem,
   messageRecipientProjectProblem, messageSendFlagsProblem, nextSessionMessageRecord, transitionMessage,
   type MessageEffect, type MessageEvent, type MessageGuardContext, type MessageTransition, type QueryAnswerBinding,
   type SessionMessageEventType,
@@ -282,7 +282,8 @@ async function replaySessionMessageReceipt(
   if (version === undefined || version.revision !== message.revision) {
     return reject('unavailable', 'the recorded mailbox event disagrees with the receipt revision');
   }
-  return { status: 'committed', value: message, replayed: true, cursor: receipt.cursor };
+  // Spec §2.3 L11-1: the replay returns the first result's bound reply position.
+  return { status: 'committed', value: bindMessageResponseCursor(message, receipt.cursor), replayed: true, cursor: receipt.cursor };
 }
 
 /** Receipt-miss recovery uses only the same identity; it never re-runs business. */
@@ -331,6 +332,11 @@ async function commitPreparedSessionMessage(
     const preserved = await preservedNoticeOrigin(records, refKey);
     if (!preserved.ok) return preserved.rejection;
     origin = preserved.value;
+    // Spec §2.3 P02: the first response on a work_run message writes the
+    // explicit pending reply placeholder; this same commit binds it.
+    if (spec.message.responseSince === null) {
+      bindings = [...bindings, { refKey, field: 'responseSince' }];
+    }
   }
   const accepted: RecordGuard = { refKey, expectedRevision: spec.messageRevision };
   const prepared: PreparedCommit = {
@@ -357,7 +363,7 @@ async function commitPreparedSessionMessage(
     return restored ?? mapStoreFailure(receipt);
   }
   if (receipt.replayed) return replaySessionMessageReceipt(records, receipt);
-  return { status: 'committed', value: spec.message, replayed: false, cursor: receipt.cursor };
+  return { status: 'committed', value: bindMessageResponseCursor(spec.message, receipt.cursor), replayed: false, cursor: receipt.cursor };
 }
 
 // --------------------------------------------------------------------------
@@ -3304,10 +3310,17 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
       const response = message.response;
       // A reply already used by an execution is delivered, never undelivered.
       if ((message.acceptedInputs ?? []).some((entry) => entry.part === 'response')) continue;
+      const unavailableSince = sourceDecoded.value.unavailableSince;
+      const responseSince = message.responseSince;
+      // Spec §2.3/L7: forward each stored position for EVERY qualifying original
+      // work_run message, whatever the reply sender (Work reply, Query Answer,
+      // user answer); a legacy record that lacks one keeps the DTO without it.
       items.push({
         kind: 'retired_reply', messageRef: message.ref, sourceSessionRef: sessionRef,
         responseRef: response.bodyRef, respondedAt: response.respondedAt,
         hasContinuation, requiresUserRecipient: !hasContinuation,
+        ...(unavailableSince !== undefined && unavailableSince !== null ? { unavailableSince } : {}),
+        ...(responseSince !== undefined && responseSince !== null ? { responseSince } : {}),
       });
     }
     const nextCursor = pageResult.value.next === null ? null : encodeReplyCursor({

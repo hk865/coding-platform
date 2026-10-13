@@ -14,7 +14,7 @@ import { createArchitectureCatalogService } from '../../src/core/work-graph/arch
 import { createDecisionMessageService } from '../../src/core/work-graph/communication/decision-service.js';
 import { createDecisionSourceFacts } from '../../src/core/work-graph/communication/decision-source-facts.js';
 import { createMessageWriteOwner, createSessionMailbox } from '../../src/core/work-graph/communication/mailbox-service.js';
-import { createMessageDutiesFactsAdapter } from '../../src/core/work-graph/configuration/message-duties-adapter.js';
+import type { MessageDutiesFactsPort } from '../../src/core/work-graph/model/decision-contracts.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
 import { createEvidenceService } from '../../src/core/work-graph/evidence/evidence-service.js';
 import { createMaterialService } from '../../src/core/work-graph/materials/material-service.js';
@@ -59,12 +59,15 @@ export async function assembleB(f: S5DecisionFixture) {
   const mailboxDeps: SessionMailboxDependencies = {
     records, sessions, executions, roles, materials, systemActor: f.operatorActor,
     now: f.now, newId: f.newId,
-    duties: createMessageDutiesFactsAdapter({ roles, mapping: {
-      dutiesForRoleSpecPin: () => null,
-      dutiesForLegacyTemplate: input => input.templateId === f.runRA.roleBinding.templateId
-        && input.templateRevision === f.runRA.roleBinding.templateRevision
-        ? { duties: [...f.duties], readOnlyCopy: false, independentReview: false } : null,
-    } }),
+    duties: ({
+      async readMessageDutiesFacts(_ctx, input) {
+        if (input.roleBinding.templateId !== f.runRA.roleBinding.templateId
+          || input.roleBinding.templateRevision !== f.runRA.roleBinding.templateRevision) {
+          return { status: 'rejected', code: 'unsupported', reason: 'no exact duties mapping exists for this Role binding' };
+        }
+        return { status: 'ready', value: { duties: [...f.duties], readOnlyCopy: false, independentReview: false, guards: [] } };
+      },
+    } satisfies MessageDutiesFactsPort),
   };
   const mailbox = createSessionMailbox(mailboxDeps);
   const decisions = createDecisionMessageService({ records, now: f.now, newId: f.newId,

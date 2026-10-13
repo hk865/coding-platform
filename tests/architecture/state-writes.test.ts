@@ -72,11 +72,11 @@ const ATTEMPT_USE = 'state/attempt-machine.ts newTaskAttemptRecord or transition
 const OUTBOX_USE = 'state/attempt-machine.ts newDispatchOutboxRecord or transitionDispatchOutbox';
 const SESSION_USE = 'state/session-availability.ts createSessionRecord, occupySessionRecord, releaseSessionRecord, '
   + 'archiveSessionRecord, reactivateSessionRecord, observeSessionHealthRecord, requestSessionArchiveRecord, '
-  + 'releaseSessionArchiveRequestRecord or backfillSessionProvenanceRecord';
+  + 'releaseSessionArchiveRequestRecord, backfillSessionProvenanceRecord or bindSessionUnavailableCursor';
 const ROUND_USE = 'state/verification-machine.ts buildOpenedRound, withCheckPhase, buildFinalizedRound or buildSuccessorRound';
-const MESSAGE_USE = 'state/message-machine.ts createSessionMessageRecord or nextSessionMessageRecord';
+const MESSAGE_USE = 'state/message-machine.ts createSessionMessageRecord, nextSessionMessageRecord or bindMessageResponseCursor';
 const MESSAGE_FIELDS = ['status', 'readAt', 'response', 'acceptedInputs', 'consultationDerivation',
-  'replyHandler', 'archiveWaitDisposition', 'decision', 'application'] as const;
+  'replyHandler', 'archiveWaitDisposition', 'decision', 'application', 'responseSince'] as const;
 const WORKSPACE_USE = 'state/notice-settings-machine.ts buildWorkspaceDecisionSettingsRecord';
 const PROPOSAL_USE = 'state/plan-machine.ts newCandidateProposal or acceptProposalRecord';
 const QUERY_USE = 'state/query-run-recovery.ts newPendingQueryRecords, advanceQueryExecutionRecord, '
@@ -113,7 +113,7 @@ const PROTECTED_TYPES: readonly ProtectedType[] = [
     use: 'state/control-intent-machine.ts newQueuedControlIntentRecord or controlIntentRecordOf' },
   { file: 'src/contracts/core/session.ts', name: 'SessionRecord', kind: 'record',
     fields: ['lifecycle', 'health', 'occupancy', 'archivedAt', 'lastExecutionRef', 'historyCursor', 'healthConclusion',
-      'provenance', 'archiveRequest'],
+      'provenance', 'archiveRequest', 'unavailableSince'],
     use: SESSION_USE },
   { file: 'src/contracts/verification.ts', name: 'RoundSnapshot', kind: 'record',
     fields: ['status', 'outcome', 'gaps', 'evidenceRefs', 'checks', 'chain'], use: ROUND_USE },

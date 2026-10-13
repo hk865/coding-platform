@@ -9,21 +9,144 @@
 import type { ActorRef } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
-import type { ContextExtensionsV1, ContextIndexRowV1 } from '../../../contracts/graph-context.js';
+import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
+import type { DecisionSourceV1 } from '../../../contracts/goal-decisions.js';
+import type { ContextExtensionsV1, ContextIndexRowV1, ContextSourceV1 } from '../../../contracts/graph-context.js';
 import type { SessionAnomalyAnchorV1, SessionAnomalyViewV1 } from '../../../contracts/session-anomaly.js';
 import type { ContextReadRequestV1 } from '../model/graph-context-contracts.js';
+import type {
+  DecisionCardV1,
+  DecisionQueueReadV1,
+  DecisionReadPort,
+  GoalSettingsPort,
+} from '../model/decision-contracts.js';
 import type { SessionAnomalyPort } from '../tasks/session-anomaly-service.js';
 import { sessionAnomalyRefKey } from '../tasks/session-anomaly-codecs.js';
 
 export type ContextExtensionsDependencies = {
   anomalies: Pick<SessionAnomalyPort, 'listSessionAnomalies'>;
   hostActor: Extract<ActorRef, { kind: 'human' | 'system' }>;
+  goalSettings?: Pick<GoalSettingsPort, 'readGoalSettings'>;
+  decisions?: Pick<DecisionReadPort, 'queryDecisionQueue'>;
 };
 
 /** The anchor owner's own scan budget (spec §4.2, L8): 100 per page, at most 25
  * pages. The provider adds no failure boundary of its own. */
 const LOOKUP_PAGE_LIMIT = 100;
 const LOOKUP_MAX_PAGES = 25;
+
+/** §4.3.5: the seven formal card source kinds; notice categories never hint here. */
+const CARD_SOURCE_KINDS: readonly DecisionSourceV1['kind'][] = [
+  'message', 'goal_cause', 'candidate', 'note_review', 'planning_question', 'goal_conflict', 'message_release',
+];
+
+/** §4.3.1 / L6: 100 per page, at most 50 pages / 5,000 input cards for this package. */
+const DECISION_PAGE_LIMIT = 100;
+const DECISION_MAX_PAGES = 50;
+const DECISION_MAX_ITEMS = 5000;
+
+type TaskTriple = { aggregateType: 'Task'; projectId: string; goalId: string; taskId: string };
+
+function isRecordValue(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** The formal Task designation `{aggregateType:'Task',projectId,goalId,taskId}`, or null. */
+function taskTripleOf(ref: unknown): TaskTriple | null {
+  if (!isRecordValue(ref) || ref['aggregateType'] !== 'Task') return null;
+  const { projectId, goalId, taskId } = ref;
+  if (typeof projectId !== 'string' || typeof goalId !== 'string' || typeof taskId !== 'string') return null;
+  return { aggregateType: 'Task', projectId, goalId, taskId };
+}
+
+/** §4.3.3: the formal Task designations of one card, from source pins and objects. */
+function taskTriplesOf(card: DecisionCardV1): TaskTriple[] {
+  const byKey = new Map<string, TaskTriple>();
+  const consider = (ref: unknown): void => {
+    const triple = taskTripleOf(ref);
+    if (triple !== null) byKey.set(canonicalJson(triple as unknown as JsonValue), triple);
+  };
+  for (const pin of card.source.pins) consider(pin.ref);
+  for (const object of card.objects) {
+    if (object.kind === 'aggregate') consider(object.pin.ref);
+  }
+  return [...byKey.values()];
+}
+
+/**
+ * §4.3.4: only a pin that is a real `AggregateRef` at revision > 0 becomes a
+ * record source. `Task` is a designation, not an `AggregateRef` member
+ * (`contracts/ledger.ts`), and production only ever builds `Task@0`
+ * (`goal-decision-reader.ts:taskPin`); the `revision <= 0` guard already skips
+ * that form. The explicit Task check is therefore a defensive guard that never
+ * fires for any owner-produced pin, rather than a general Task@0 exception.
+ */
+function recordSourcesOf(pins: DecisionCardV1['source']['pins']): ContextSourceV1[] {
+  const byKey = new Map<string, ContextSourceV1>();
+  for (const pin of pins) {
+    if (pin.revision <= 0) continue;
+    if (!isRecordValue(pin.ref)) continue;
+    if (taskTripleOf(pin.ref) !== null) continue;
+    const source: ContextSourceV1 = { kind: 'record', ref: pin.ref, revision: pin.revision, digest: null };
+    byKey.set(canonicalJson(source as unknown as JsonValue), source);
+  }
+  return [...byKey.entries()]
+    .sort((left, right) => (left[0] < right[0] ? -1 : left[0] > right[0] ? 1 : 0))
+    .map((entry) => entry[1]);
+}
+
+/**
+ * §4.3.3-§4.3.5: the deterministic decision index. Focus filtering keeps
+ * Goal-level cards and cards whose same-Goal Task designation matches a focus
+ * task; absent card sources get their explicit hint line. A repeated key with
+ * different content is a conflict, never an arbitrary winner.
+ */
+function decisionRows(
+  cards: readonly DecisionCardV1[],
+  capabilities: DecisionQueueReadV1['capabilities'],
+  request: ContextReadRequestV1,
+): { rows: ContextIndexRowV1[] } | { conflict: string } {
+  const focus = new Set(request.focusTaskIds);
+  const rows: ContextIndexRowV1[] = [];
+  for (const card of cards) {
+    const tasks = taskTriplesOf(card);
+    if (focus.size > 0 && tasks.length > 0
+      && !tasks.some((task) => task.projectId === request.goalRef.projectId
+        && task.goalId === request.goalRef.goalId && focus.has(task.taskId))) {
+      continue;
+    }
+    rows.push({
+      key: `decision:${card.cardKey}`,
+      node: { kind: 'goal', ref: request.goalRef },
+      text: `待决定：${card.source.kind}；source=${card.source.key}`,
+      sources: recordSourcesOf(card.source.pins),
+    });
+  }
+  for (const capability of capabilities) {
+    if (!CARD_SOURCE_KINDS.includes(capability.source as DecisionSourceV1['kind'])) continue;
+    if (capability.availability !== 'not_available') continue;
+    rows.push({
+      key: `decision:not_available:${capability.source}`,
+      node: { kind: 'goal', ref: request.goalRef },
+      text: `待决来源尚未接入：${capability.source}`,
+      sources: [],
+    });
+  }
+  const byKey = new Map<string, ContextIndexRowV1>();
+  for (const row of rows) {
+    const existing = byKey.get(row.key);
+    if (existing === undefined) {
+      byKey.set(row.key, row);
+      continue;
+    }
+    if (canonicalJson(existing as unknown as JsonValue) !== canonicalJson(row as unknown as JsonValue)) {
+      return { conflict: row.key };
+    }
+  }
+  return {
+    rows: [...byKey.values()].sort((left, right) => (left.key < right.key ? -1 : left.key > right.key ? 1 : 0)),
+  };
+}
 
 /** A `not_implemented` extension with no rows, fresh for every result. */
 function notImplemented(): { availability: 'not_implemented'; rows: ContextIndexRowV1[] } {
@@ -117,14 +240,91 @@ export function createContextExtensionsReader(deps: ContextExtensionsDependencie
       .map(anchorRow)
       .sort((left, right) => (left.key < right.key ? -1 : left.key > right.key ? 1 : 0));
 
-    // Step 5: the wired anomalies index; the other four extensions stay
-    // explicitly unimplemented (I-4/I-6 wire goalSettings/decisions later).
+    // Step 5 (§4.2/I-4): the Goal's saved autonomy through the owner. A missing
+    // port is `not_implemented`; a real read failure fails the whole read.
+    let goalSettings: ContextExtensionsV1['goalSettings'];
+    if (deps.goalSettings === undefined) {
+      goalSettings = { availability: 'not_implemented', autonomy: null };
+    } else {
+      let settingsRead;
+      try {
+        settingsRead = await deps.goalSettings.readGoalSettings(hostCtx, { goalRef: request.goalRef });
+      } catch (error) {
+        return rejection('unavailable', `goal_settings_read_failed: ${messageOf(error)}`);
+      }
+      if (settingsRead.status === 'not_found') return { status: 'not_found' };
+      if (settingsRead.status === 'not_ready') {
+        return rejection('incomplete', 'goal_settings_not_ready: the Goal settings are not readable at the required watermark');
+      }
+      if (settingsRead.status !== 'ready') return settingsRead;
+      goalSettings = { availability: 'available', autonomy: settingsRead.value.settings.autonomy };
+    }
+
+    // Step 6 (§4.3/I-6): page the current Goal's waiting-answer cards. The
+    // provider reads only that section and never caches a partial queue.
+    let decisions: ContextExtensionsV1['decisions'];
+    if (deps.decisions === undefined) {
+      decisions = notImplemented();
+    } else {
+      const cards: DecisionCardV1[] = [];
+      let capabilities: DecisionQueueReadV1['capabilities'] = [];
+      let sourceCursor: DecisionQueueReadV1['sourceCursor'] | null = null;
+      let cursor: string | undefined;
+      let items = 0;
+      try {
+        for (let page = 0; ; page++) {
+          const read = await deps.decisions.queryDecisionQueue(hostCtx, {
+            workspace: { projectId, workspaceId },
+            goalRef: request.goalRef,
+            sections: ['waiting_answer'],
+            page: cursor === undefined
+              ? { limit: DECISION_PAGE_LIMIT }
+              : { limit: DECISION_PAGE_LIMIT, cursor },
+          });
+          if (read.status === 'not_found') return { status: 'not_found' };
+          if (read.status === 'not_ready') {
+            return rejection('incomplete', 'decision_queue_not_ready: the decision queue is not readable at the required watermark');
+          }
+          if (read.status !== 'ready') return read;
+          if (sourceCursor === null) {
+            sourceCursor = read.value.sourceCursor;
+            capabilities = read.value.capabilities;
+          } else if (read.value.sourceCursor !== sourceCursor) {
+            return rejection('unavailable', 'decision_queue_window_changed: the decision queue pages did not share one ledger window');
+          }
+          for (const card of read.value.waitingAnswer) {
+            items += 1;
+            if (card.state !== 'waiting_answer') continue;
+            cards.push(card);
+          }
+          const next = read.value.nextCursor;
+          const exhausted = next === null;
+          // L6: the 5,000 bound is on the input cards read, not on the rows
+          // after filtering. Exactly 5,000 with no further page is complete;
+          // more than 5,000, or either bound with a further page, overflows.
+          if (items > DECISION_MAX_ITEMS
+            || (!exhausted && (items >= DECISION_MAX_ITEMS || page + 1 >= DECISION_MAX_PAGES))) {
+            return rejection('capacity', 'decision_index_page_limit: the waiting-answer cards did not fit the bounded read window');
+          }
+          if (exhausted) break;
+          cursor = next;
+        }
+      } catch (error) {
+        return rejection('unavailable', `decision_queue_read_failed: ${messageOf(error)}`);
+      }
+      const projected = decisionRows(cards, capabilities, request);
+      if ('conflict' in projected) {
+        return rejection('unavailable', `decision_index_conflict: the decision index has conflicting rows for ${projected.conflict}`);
+      }
+      decisions = { availability: 'available', rows: projected.rows };
+    }
+    // Step 7: the wired anomalies, goal settings and decisions index.
     return { status: 'ready', value: {
       notes: notImplemented(),
       anomalies: { availability: 'available', rows },
       footprint: notImplemented(),
-      goalSettings: { availability: 'not_implemented', autonomy: null },
-      decisions: notImplemented(),
+      goalSettings,
+      decisions,
     } };
   };
 }

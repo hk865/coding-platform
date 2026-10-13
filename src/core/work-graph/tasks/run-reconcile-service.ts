@@ -30,7 +30,7 @@ import type { RunReconciliationBasisV1, RunSnapshot } from '../../../contracts/d
 import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import { isAutomationActor } from '../../../contracts/task-requeue.js';
-import type { EncodedRecord, PreparedCommit, RecordGuard, StoreCommitReceipt } from '../../record-store/ports.js';
+import type { EncodedRecord, CommitCursorBinding, PreparedCommit, RecordGuard, StoreCommitReceipt } from '../../record-store/ports.js';
 import {
   EXECUTION_ENTRY_EVENT_SCHEMA_VERSION, EXECUTION_RUN_RECONCILED_EVENT_TYPE, encodeExecutionRunReconciledEvent,
   executionRunReconciledEventFromEvent, isExecutionAuthorizationV2, type ExecutionRunReconciledEvent,
@@ -47,6 +47,7 @@ import {
   type ClaimSessionRelease,
 } from './execution-entry-service.js';
 import type { TaskExecutionRecord } from '../model/execution-read-contracts.js';
+import { SESSION_RECORD_SCHEMA_ID } from '../sessions/session-record-codecs.js';
 import { readGoalScope } from './plan-readers.js';
 import {
   outcomeUnknownIntentsOf, pointerIntentOf, queuedSteersOf, readRunIntents, reconciledIntentRecords,
@@ -60,6 +61,26 @@ import type {
 type HostActor = { kind: 'human' | 'system'; id: string };
 type Operation = ExecutionRunReconciledEvent['operation'];
 type Decided = Extract<RunTransition, { ok: true }>;
+
+/**
+ * Spec §2.3 P01: the Session record a reconcile decision wrote with an explicit
+ * `unavailableSince: null` (an available→unavailable release) is bound to this
+ * commit's cursor. The record comes from the shared `claimEffectRecords`, which
+ * this package does not change (W224 is out of scope), so the binding target is
+ * read from the encoded Session record itself.
+ */
+function sessionCursorBindings(records: readonly EncodedRecord[]): CommitCursorBinding[] {
+  const bindings: CommitCursorBinding[] = [];
+  for (const record of records) {
+    if (record.schemaId !== SESSION_RECORD_SCHEMA_ID) continue;
+    let parsed: unknown;
+    try { parsed = JSON.parse(record.json); } catch { continue; }
+    if (isRecord(parsed) && parsed['unavailableSince'] === null) {
+      bindings.push({ refKey: record.refKey, field: 'unavailableSince' });
+    }
+  }
+  return bindings;
+}
 type ClaimWrites = { pairing: AttemptGuardContext; attemptEvent: AttemptEvent; release: ClaimSessionRelease };
 type IntentFacts = Omit<ReconcileIntentFacts, 'runBefore' | 'runAfter' | 'observedAt'>;
 
@@ -391,8 +412,10 @@ export function createRunReconcileService(deps: RunReconcileDependencies): RunRe
     const event: ExecutionRunReconciledEvent = { eventId: input.eventId, eventType: EXECUTION_RUN_RECONCILED_EVENT_TYPE,
       schemaVersion: EXECUTION_ENTRY_EVENT_SCHEMA_VERSION, occurredAt: input.nowIso, identityKey: input.identity,
       actor: input.actor, fingerprint: input.fingerprint, operation: input.operation, run: nextRun };
+    const bindings = sessionCursorBindings(written);
     const prepared: PreparedCommit = { identityKey: input.identity, fingerprint: input.fingerprint, guards: merged.guards,
-      records: written, claims: [], indexGuards: [], indexChanges: [], events: [encodeExecutionRunReconciledEvent(event)] };
+      records: written, claims: [], indexGuards: [], indexChanges: [], events: [encodeExecutionRunReconciledEvent(event)],
+      ...(bindings.length === 0 ? {} : { commitCursorBindings: bindings }) };
     if (input.signal.aborted) return reject('cancelled', 'the reconcile was cancelled before commit');
     const receipt = await records.commit(prepared);
     if (receipt.status !== 'committed') return mapStoreFailure(receipt);

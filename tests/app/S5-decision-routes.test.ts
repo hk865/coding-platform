@@ -281,11 +281,13 @@ it('RT08 an unsupported-source queue returns capabilities, not a fake completion
   const scope = { projectId: caller.projectId, workspaceId: caller.workspaceId };
   const realBindings = createPlatformCoreRouteBindings(h.platform);
   const before = s5StoreSnapshot(join(h.database, 'ledger.sqlite'));
+  // Wiring 2 (§4.4.8) registered undelivered_reply; second_expiry still has no production notice source.
   const result = await dispatchCoreRoute(realBindings, 'decisions/queue', caller,
     parseCoreRouteRequest('decisions/queue', { scope, input: { workspace: scope,
-      sections: ['waiting_answer', 'notices'], categories: ['undelivered_reply'], page: { limit: 1 } } }));
+      sections: ['waiting_answer', 'notices'], categories: ['second_expiry'], page: { limit: 1 } } }));
   expect(result).toMatchObject({ status: 'ready', value: { countsComplete: false,
-    capabilities: expect.arrayContaining([{ source: 'undelivered_reply', availability: 'not_available' }]) } });
+    capabilities: expect.arrayContaining([{ source: 'second_expiry', availability: 'not_available' },
+      { source: 'undelivered_reply', availability: 'available' }]) } });
   expect(s5StoreSnapshot(join(h.database, 'ledger.sqlite'))).toEqual(before);
   expect(h.modelCalls(), 'the actual scripted provider received no request').toBe(0);
 });

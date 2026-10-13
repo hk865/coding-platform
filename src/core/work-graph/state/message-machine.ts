@@ -46,7 +46,7 @@
  * asserts the two types are identical.
  */
 import type { ArtifactRef } from '../../../contracts/artifact.js';
-import type { ActorRef } from '../../../contracts/command-event.js';
+import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js';
 import type { SessionRef } from '../../../contracts/core/identity.js';
 import type { CoreError, CoreRejection } from '../../../contracts/core/results.js';
 import type {
@@ -131,6 +131,12 @@ export type SessionMessageRecord = {
   status: SessionMessageStatus;
   readAt: string | null;
   response: MessageResponseRecord | UserMessageResponseV1 | null;
+  /**
+   * Wiring package 2 (spec §2.3, L10): the commit cursor of the first saved
+   * response on a work_run message; `null` is the pending placeholder bound in
+   * the same mailbox commit, absent on other senders and legacy messages.
+   */
+  responseSince?: CommitCursor | null;
   /** Slice 5: the owning Goal; absent/null keeps the historical message shape. */
   goalRef?: GoalRef | null;
   /** Slice 5: decision metadata, only on a user decision request or synthetic answer. */
@@ -1197,7 +1203,11 @@ export function nextSessionMessageRecord(message: SessionMessageRecord, change: 
         sourceRef: change.response.sourceRef,
         respondedAt: change.response.respondedAt,
       };
-      return { ...message, revision, status: 'responded', readAt: message.readAt ?? response.respondedAt, response };
+      const next: SessionMessageRecord = { ...message, revision, status: 'responded',
+        readAt: message.readAt ?? response.respondedAt, response };
+      // Spec §2.3 P02: the first reply on a work_run message marks the pending
+      // reply position; other senders never gain the field.
+      return message.sender.kind === 'work_run' ? { ...next, responseSince: null } : next;
     }
     case 'input_accepted': {
       // MSG-07/08 (pre-step-3 `:2045-2047`): append only; status and readAt are untouched.
@@ -1254,8 +1264,11 @@ export function nextSessionMessageRecord(message: SessionMessageRecord, change: 
       if (message.status === 'responded' || message.response !== null) {
         throw new Error('nextSessionMessageRecord: the response slot is already written');
       }
-      return { ...message, revision, status: 'responded',
+      const next: SessionMessageRecord = { ...message, revision, status: 'responded',
         readAt: message.readAt ?? change.response.respondedAt, response: change.response, application: null };
+      // Spec §2.3 P02: a user answer to a work_run message also marks the pending
+      // reply position; other senders never gain the field.
+      return message.sender.kind === 'work_run' ? { ...next, responseSince: null } : next;
     }
     case 'decision_applied': {
       // S5-MSG-04/05: the application proof is recorded once on an answered card.
@@ -1270,4 +1283,15 @@ export function nextSessionMessageRecord(message: SessionMessageRecord, change: 
     default:
       return unreachable(change, 'message change');
   }
+}
+
+/**
+ * Spec §2.3 P02: the record-store's mechanical commit tail replaces the explicit
+ * `null` reply placeholder with the cursor of the commit that saved the first
+ * response. It never fills an absent (non-work_run/legacy) or already-bound
+ * field, and never parses a cursor.
+ */
+export function bindMessageResponseCursor(message: SessionMessageRecord, cursor: CommitCursor): SessionMessageRecord {
+  if (message.responseSince !== null) return message;
+  return { ...message, responseSince: cursor };
 }

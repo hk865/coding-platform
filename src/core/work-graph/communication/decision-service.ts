@@ -32,7 +32,7 @@ import { decodeRun } from '../materials/run-snapshot-decoder.js';
 import { decodeQueryRunSnapshotRecord } from '../queries/query-record-codecs.js';
 import { decodeDispatchOutboxEntry, dispatchOutboxRefKey } from '../tasks/claim-record-codecs.js';
 import {
-  createSessionMessageRecord, createSyntheticDecisionAnswerRecord, messageMachineStateOf,
+  bindMessageResponseCursor, createSessionMessageRecord, createSyntheticDecisionAnswerRecord, messageMachineStateOf,
   nextSessionMessageRecord, transitionMessage, type MessageEvent, type MessageGuardContext,
   type MessageTransition, type SessionMessageEventType, type SessionMessageRecord,
 } from '../state/message-machine.js';
@@ -370,7 +370,10 @@ export function createDecisionMessageService(
     }
     const decoded = sessionMessageFromEvent(located.value.event);
     if (decoded.status !== 'decoded') return reject('unavailable', `the recorded event is not a SessionMessage event: ${decoded.reason}`);
-    return { status: 'committed', value: decoded.value, replayed: true, cursor: receipt.cursor };
+    // Spec §2.3 L11: replay restores the first result's bound reply position
+    // from the ORIGINAL receipt cursor; the recorded event still carries the
+    // explicit pending `null`, so a hit must bind it before returning.
+    return { status: 'committed', value: bindMessageResponseCursor(decoded.value, receipt.cursor), replayed: true, cursor: receipt.cursor };
   }
 
   async function recheckMiss(identityKey: string, fingerprint: string): Promise<WriteResult<SessionMessage> | null> {

@@ -52,6 +52,7 @@ import {
 import type { RoundSnapshot } from '../../../src/contracts/verification.js';
 import { VerificationWorkspaceReader } from '../../../src/core/workspace/verification-workspace-reader.js';
 import type { GoalDisplayV1 } from '../../../src/core/work-graph/state/goal-machine.js';
+import type { HostInstanceFacts } from '../../../src/core/work-graph/model/execution-entry-contracts.js';
 import type { TaskRow } from '../../../src/core/work-graph/model/plan-contracts.js';
 import type { ModelRequest } from '../../../vendor/coding-agent/dist/public-api.js';
 import { createScriptedModel, type ScriptedModel, type ScriptedReply } from '../../helpers/B2-runtime-fixture.js';
@@ -729,16 +730,32 @@ export class PlanBoard {
  * The caller closes it, before the next Host start, so the reconcile's "the old process is gone" holds (§12.1).
  */
 export async function openWorkRoot(h: HostScenario, model: ScriptedModel = createScriptedModel([]),
-  observer?: RecordCommitObserver, queryModel?: ScriptedModel): Promise<Platform> {
+  observer?: RecordCommitObserver, queryModel?: ScriptedModel, tools?: readonly string[],
+  hostInstance?: HostInstanceFacts): Promise<Platform> {
   return await createTargetPlatform({
     storage: { kind: 'sqlite', directory: h.database },
     workspace: ag2bWorkspaceBindings(h.root, { value: 1 }, permissionRevision(h.stepActor(), AG2B_SCOPE, ['.'])),
     now: () => AG2B_AT,
     kernelStores: { entries: [{ adapterId: 'ag2b-kernel', storeKey: 'ag2b-kernel-store', workspace: AG2B_SCOPE,
       databasePath: join(h.database, 'kernel.sqlite') }] },
-    runtime: ag2bWorkRuntime(() => model, queryModel === undefined ? {} : { queryModel }),
+    runtime: ag2bWorkRuntime(() => model, { ...(queryModel === undefined ? {} : { queryModel }),
+      ...(tools === undefined ? {} : { tools }) }),
     ...(observer === undefined ? {} : { commitObserver: observer }),
+    ...(hostInstance === undefined ? {} : { hostInstance }),
   });
+}
+
+/**
+ * Refreeze §5 (lead-approved): `openWorkRoot` with an owned Host instance lease,
+ * so the real start-up-reconcile health owner runs on the scenario files:
+ * `platform.reconcile.recordSessionHealth(ctx,{ sessionRef, probe:{ verdict:'missing' } })`
+ * writes SES-12 `unavailable`, and `{ verdict:'ready' }` writes SES-13 recovery.
+ * Additive only; `openWorkRoot`'s default behaviour is unchanged.
+ */
+export async function openOwnedWorkRoot(h: HostScenario, model: ScriptedModel = createScriptedModel([]),
+  observer?: RecordCommitObserver, tools?: readonly string[]): Promise<Platform> {
+  return await openWorkRoot(h, model, observer, undefined, tools,
+    { hostInstanceId: 'wp2-scenario-host', lease: 'owned' });
 }
 
 /**

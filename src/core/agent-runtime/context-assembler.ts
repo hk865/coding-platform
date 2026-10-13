@@ -538,10 +538,18 @@ function optionalRowsFromExtensions(extensions: ContextExtensionsV1): {
   return {
     footprint: extensions.footprint.rows.map((row) => ({ key: row.key, text: indexRowText(row) })),
     notes: extensions.notes.rows.map((row) => ({ key: row.key, text: indexRowText(row) })),
-    reminders: extensions.anomalies.rows.map((row) => ({
-      key: row.key.startsWith('anomaly:') ? row.key : `anomaly:${row.key}`,
-      text: indexRowText(row),
-    })),
+    reminders: [
+      ...extensions.anomalies.rows.map((row) => ({
+        key: row.key.startsWith('anomaly:') ? row.key : `anomaly:${row.key}`,
+        text: indexRowText(row),
+      })),
+      // §4.3.6/L9: the decision index shares the reminders budget and keeps
+      // exactly one `decision:` prefix; the renderer still orders and clips.
+      ...extensions.decisions.rows.map((row) => ({
+        key: row.key.startsWith('decision:') ? row.key : `decision:${row.key}`,
+        text: indexRowText(row),
+      })),
+    ],
   };
 }
 

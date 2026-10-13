@@ -17,7 +17,8 @@ import type { CommitCursorBinding, DecodeResult, EncodedRecord, StoreFailure, Un
 export type ClaimConflict = { claimKey: string; owner: string | null };
 
 /** The only top-level fields a commit cursor may ever be bound to. */
-export const COMMIT_CURSOR_FIELDS: readonly ("since" | "until")[] = Object.freeze(["since", "until"]);
+export const COMMIT_CURSOR_FIELDS: readonly ("since" | "until" | "unavailableSince" | "responseSince")[] =
+  Object.freeze(["since", "until", "unavailableSince", "responseSince"]);
 
 /**
  * Thrown by a backend INSIDE its write transaction when a mechanically valid
@@ -121,7 +122,7 @@ export function bindCommitCursor(
   records: readonly EncodedRecord[],
   bindings: readonly CommitCursorBinding[],
   cursor: CommitCursor,
-  allowedFields: (schemaId: string) => readonly ("since" | "until")[],
+  allowedFields: (schemaId: string) => readonly ("since" | "until" | "unavailableSince" | "responseSince")[],
 ): DecodeResult<readonly EncodedRecord[]> {
   if (!Array.isArray(records)) return { status: "invalid", reason: "records must be an array" };
   if (!Array.isArray(bindings)) return { status: "invalid", reason: "commitCursorBindings must be an array" };
@@ -140,7 +141,7 @@ export function bindCommitCursor(
   }
 
   const seen = new Set<string>();
-  const fieldsByRefKey = new Map<string, ("since" | "until")[]>();
+  const fieldsByRefKey = new Map<string, ("since" | "until" | "unavailableSince" | "responseSince")[]>();
   for (const raw of bindings) {
     if (!isObject(raw)) return { status: "invalid", reason: "every CommitCursorBinding must be an object" };
     const refKey = raw["refKey"];
@@ -148,12 +149,16 @@ export function bindCommitCursor(
     if (!isNonEmptyText(refKey)) {
       return { status: "invalid", reason: "CommitCursorBinding.refKey must be a non-empty string" };
     }
-    if (field !== "since" && field !== "until") {
-      return { status: "invalid", reason: "CommitCursorBinding.field must be 'since' or 'until'" };
+    if (!(COMMIT_CURSOR_FIELDS as readonly unknown[]).includes(field)) {
+      return {
+        status: "invalid",
+        reason: `CommitCursorBinding.field must be one of ${COMMIT_CURSOR_FIELDS.join(", ")}`,
+      };
     }
-    const bindingKey = `${refKey}\u0000${field}`;
+    const cursorField = field as (typeof COMMIT_CURSOR_FIELDS)[number];
+    const bindingKey = `${refKey}\u0000${cursorField}`;
     if (seen.has(bindingKey)) {
-      return { status: "invalid", reason: `duplicate commit cursor binding for ${refKey}.${field}` };
+      return { status: "invalid", reason: `duplicate commit cursor binding for ${refKey}.${cursorField}` };
     }
     seen.add(bindingKey);
     const record = recordByKey.get(refKey);
@@ -161,16 +166,16 @@ export function bindCommitCursor(
       return { status: "invalid", reason: `commit cursor binding target ${refKey} is not written by this commit` };
     }
     const allowed = allowedFields(record.schemaId);
-    if (!Array.isArray(allowed) || !allowed.includes(field)) {
-      return { status: "invalid", reason: `record schema ${record.schemaId} does not allow commit cursor field ${field}` };
+    if (!Array.isArray(allowed) || !allowed.includes(cursorField)) {
+      return { status: "invalid", reason: `record schema ${record.schemaId} does not allow commit cursor field ${cursorField}` };
     }
     const parsed = parseRecordObject(record.json);
     if (parsed.status === "invalid") return parsed;
-    if (parsed.value[field] !== null) {
-      return { status: "invalid", reason: `record ${refKey} commit cursor field ${field} is not a null placeholder` };
+    if (parsed.value[cursorField] !== null) {
+      return { status: "invalid", reason: `record ${refKey} commit cursor field ${cursorField} is not a null placeholder` };
     }
     const fields = fieldsByRefKey.get(refKey) ?? [];
-    fields.push(field);
+    fields.push(cursorField);
     fieldsByRefKey.set(refKey, fields);
   }
 

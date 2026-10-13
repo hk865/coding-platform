@@ -16,7 +16,7 @@
  * Job/Run/Session snapshot.
  */
 import type { ArtifactRef } from '../../../contracts/artifact.js';
-import type { ActorRef } from '../../../contracts/command-event.js';
+import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { SessionRef, VersionPin } from '../../../contracts/core/identity.js';
 import type { PreparedQueryExecution, PreparedQueryManifestV1 } from '../../../contracts/core/prepared-execution.js';
@@ -36,13 +36,13 @@ import type {
 } from '../../../contracts/query-job.js';
 import type { RawArtifactRecord } from '../../record-store/body-ports.js';
 import type {
-  EncodedRecord, GoalRecordTransactionPort, PreparedCommit, RecordGuard, StoreCommitReceipt,
+  EncodedRecord, CommitCursorBinding, GoalRecordTransactionPort, PreparedCommit, RecordGuard, StoreCommitReceipt,
 } from '../../record-store/ports.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import { canonicalRefKey, decodeGoalSnapshot, decodeWorkspaceSnapshot } from '../persistence/record-codecs.js';
 import { decodePlanRevisionSnapshot, planRevisionRefKey } from '../persistence/plan-record-codecs.js';
 import {
-  decodeSessionRecord, encodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey,
+  decodeSessionRecord, encodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey, SESSION_RECORD_SCHEMA_ID,
 } from '../sessions/session-record-codecs.js';
 import {
   advanceQueryExecutionRecord, markQueryRunUnknownRecord, queryRecoveryStateOf, settleQueryRunRecord,
@@ -51,7 +51,7 @@ import {
 } from '../state/query-run-recovery.js';
 import { contextAssemblyProblem } from '../state/context-input.js';
 import {
-  occupySessionRecord, ownsQuery, releaseSessionRecord, sessionDispatchAdmissionProblem, sessionMachineStateOf,
+  bindSessionUnavailableCursor, occupySessionRecord, ownsQuery, releaseSessionRecord, sessionDispatchAdmissionProblem, sessionMachineStateOf,
   transitionSession, type SessionGuardContext, type SessionRelease, type SessionReleaseCause,
 } from '../state/session-availability.js';
 import {
@@ -550,7 +550,40 @@ async function loadRecordedResult<T extends QueryEventResult>(
   if (event.identityKey !== identityKey || event.fingerprint !== fingerprint) return null;
   if (event.eventId !== receipt.eventIds[0]) return null;
   if (event.payload.operation !== operation) return null;
-  return { status: 'committed', value: event.payload.result as T, replayed: true, cursor: receipt.cursor };
+  return { status: 'committed', value: bindResultSession(event.payload.result as T, receipt.cursor),
+    replayed: true, cursor: receipt.cursor };
+}
+
+/**
+ * Spec §2.3 P01: a Query recovery commit that wrote a Session with the explicit
+ * `unavailableSince: null` entry placeholder binds it to this commit's cursor.
+ * `settleRecovery` builds the Session record through the state constructor, so
+ * the binding target is read from the encoded record.
+ */
+function sessionCursorBindings(records: readonly EncodedRecord[]): CommitCursorBinding[] {
+  const bindings: CommitCursorBinding[] = [];
+  for (const record of records) {
+    if (record.schemaId !== SESSION_RECORD_SCHEMA_ID) continue;
+    let parsed: unknown;
+    try { parsed = JSON.parse(record.json); } catch { continue; }
+    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+      && (parsed as Record<string, unknown>)['unavailableSince'] === null) {
+      bindings.push({ refKey: record.refKey, field: 'unavailableSince' });
+    }
+  }
+  return bindings;
+}
+
+/**
+ * Spec §2.3 P01/L11-1: a `QueryExecutionRecord` result carries the Session
+ * snapshot. The commit binds the record's explicit `null` entry placeholder to
+ * the commit cursor, so the first result and every replay must return the same
+ * bound Session instead of the pre-binding placeholder.
+ */
+function bindResultSession<T extends QueryEventResult>(value: T, cursor: CommitCursor): T {
+  const session = (value as { session?: SessionRecord }).session;
+  if (session === undefined) return value;
+  return { ...(value as object), session: bindSessionUnavailableCursor(session, cursor) } as T;
 }
 
 async function commitOperation<T extends QueryEventResult>(input: {
@@ -563,6 +596,7 @@ async function commitOperation<T extends QueryEventResult>(input: {
   value: T;
   operation: QueryExecutionOperation;
 }): Promise<WriteResult<T>> {
+  const bindings = sessionCursorBindings(input.records);
   const prepared: PreparedCommit = {
     identityKey: input.identityKey,
     fingerprint: input.fingerprint,
@@ -572,6 +606,7 @@ async function commitOperation<T extends QueryEventResult>(input: {
     indexGuards: [],
     indexChanges: [],
     events: input.events,
+    ...(bindings.length === 0 ? {} : { commitCursorBindings: bindings }),
   };
   let receipt: StoreCommitReceipt;
   try {
@@ -590,7 +625,7 @@ async function commitOperation<T extends QueryEventResult>(input: {
     if (replayed === null) return rejected('unavailable', `the replayed Query ${input.operation} receipt is not readable`);
     return replayed;
   }
-  return { status: 'committed', value: input.value, replayed: false, cursor: receipt.cursor };
+  return { status: 'committed', value: bindResultSession(input.value, receipt.cursor), replayed: false, cursor: receipt.cursor };
 }
 
 // --------------------------------------------------------------------------

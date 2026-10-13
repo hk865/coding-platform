@@ -46,7 +46,7 @@
  * background driver) running, wait for it to settle (`waitFor`) before
  * stepping, or its writes are judged as part of the step.
  */
-import { expect } from 'vitest';
+import { expect, vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
@@ -57,11 +57,14 @@ import { SETTINGS_API_PREFIX, type HostSettingsSnapshot, type SettingsResponse }
 import type { WorkflowAdvanceInput, WorkflowAdvanceResult, WorkflowStepReceipt } from '../../src/business/workflow/contracts.js';
 import type { WorkflowHostConfiguration } from '../../src/business/workflow/ports.js';
 import { createTargetPlatform } from '../../src/composition/create-platform.js';
-import type { ActorRef } from '../../src/contracts/command-event.js';
+import type { ActorRef, CommitCursor } from '../../src/contracts/command-event.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { ReadResult } from '../../src/contracts/core/results.js';
 import type { RoleBindingRefV1, RunRef } from '../../src/contracts/dispatch.js';
 import { sha256Hex } from '../../src/contracts/fingerprint.js';
+import type { PreparedCommit, StoreCommitReceipt } from '../../src/core/record-store/ports.js';
+import * as memoryBackend from '../../src/core/record-store/in-memory-record-store.js';
+import * as sqliteBackend from '../../src/core/record-store/sqlite-record-store.js';
 import {
   DEFAULT_TASK_AUTOMATION_POLICY, WORKFLOW_AUTOMATION_ACTOR, type TaskAutomationPolicyV1,
 } from '../../src/contracts/task-requeue.js';
@@ -84,6 +87,82 @@ import {
 } from '../state/invariants.js';
 
 export type Platform = Awaited<ReturnType<typeof createTargetPlatform>>;
+
+// ---------------------------------------------------------------------------
+// Scenario commit observation (lead refreeze §5)
+// ---------------------------------------------------------------------------
+
+/**
+ * One committed batch as a scenario's `commitObserver` sees it: the exact
+ * prepared commit (records and events) plus the receipt's commit cursor. The
+ * observation is additive and can never change, delay or throw into a write.
+ */
+export type ScenarioCommit = PreparedCommit & { readonly cursor: CommitCursor };
+
+const scenarioCommitObservers = new Set<(batch: ScenarioCommit) => void>();
+let scenarioCommitSpies: Array<{ mockRestore(): void }> | null = null;
+
+/** Wrap one record backend's `commit` with the scenario observers, preserving every other method. */
+function observeScenarioBackend<T extends { readonly records: { commit(batch: PreparedCommit): Promise<StoreCommitReceipt> } }>(
+  backend: T,
+): T {
+  return {
+    ...backend,
+    records: {
+      ...backend.records,
+      async commit(batch: PreparedCommit): Promise<StoreCommitReceipt> {
+        const receipt = await backend.records.commit(batch);
+        if (receipt.status === 'committed' && !receipt.replayed && scenarioCommitObservers.size > 0) {
+          for (const observer of scenarioCommitObservers) {
+            // Clone and dispatch inside the guard: neither an observer nor the
+            // clone itself can change, delay or throw into the write receipt.
+            try { observer({ ...structuredClone(batch), cursor: receipt.cursor }); }
+            catch { /* an observer never affects a commit */ }
+          }
+        }
+        return receipt;
+      },
+    },
+  } as T;
+}
+
+/**
+ * Install the one additive commit observation over both record backends while at
+ * least one scenario observer is registered: it sees every in-process writer
+ * (the Host, `direct()` and the scenario fixture backends) with the prepared
+ * batch and its cursor.
+ *
+ * Forced deviation (refreeze §5/§3): the production seam is only
+ * `createTargetPlatform({ commitObserver })`, whose `RecordCommitNotice` is
+ * `{ cursor, aggregates }` — it never carries the commit's records/events
+ * (src/composition/commit-observer.ts: "it never receives record bodies"), so it
+ * cannot name `SessionHealthObserved`/`SessionMessageResponded`, and it observes
+ * only that platform object's backend, never the separately-opened
+ * `retireS1Session` backend. The additive factory wrap is therefore the only way
+ * to observe the committed batches with their events. It is observation-only:
+ * with the option absent nothing is installed and both factories are untouched.
+ */
+function addScenarioCommitObserver(observer: (batch: ScenarioCommit) => void): void {
+  if (scenarioCommitSpies === null) {
+    const originalMemory = memoryBackend.createInMemoryRecordBackend;
+    const originalSqlite = sqliteBackend.createSqliteRecordBackend;
+    scenarioCommitSpies = [
+      vi.spyOn(memoryBackend, 'createInMemoryRecordBackend').mockImplementation(
+        options => observeScenarioBackend(originalMemory(options))),
+      vi.spyOn(sqliteBackend, 'createSqliteRecordBackend').mockImplementation(
+        options => observeScenarioBackend(originalSqlite(options))),
+    ];
+  }
+  scenarioCommitObservers.add(observer);
+}
+
+function removeScenarioCommitObserver(observer: (batch: ScenarioCommit) => void): void {
+  scenarioCommitObservers.delete(observer);
+  if (scenarioCommitObservers.size === 0 && scenarioCommitSpies !== null) {
+    for (const spy of scenarioCommitSpies) spy.mockRestore();
+    scenarioCommitSpies = null;
+  }
+}
 
 /** The default Host actor of the AG2b fixture: an operator (`human` class). */
 export const SCENARIO_OPERATOR: WorkbenchActor = { kind: 'human', id: 'ag2b-operator' };
@@ -649,7 +728,9 @@ export function ag2bWorkRuntime(model: () => ScriptedModel,
   };
 }
 
-type CompositionSettings = { actor: WorkbenchActor; check: CheckBehaviour; checkRevision: number; tokenBudget: number };
+type CompositionSettings = { actor: WorkbenchActor; check: CheckBehaviour; checkRevision: number; tokenBudget: number;
+  /** The work binding's tool grant (refreeze §5, Z02); absent keeps the fixture default. */
+  tools?: readonly string[] };
 
 function workflowBinding(tokenBudget: number): WorkflowHostConfiguration['bindings'][number] {
   return { workspace: AG2B_SCOPE, sessionRole: AG2B_WORK_ROLE, roleBinding: AG2B_WORK_ROLE_BINDING,
@@ -658,14 +739,14 @@ function workflowBinding(tokenBudget: number): WorkflowHostConfiguration['bindin
 
 /** The composition root on the scenario files, with the same checks configuration the Host registers and the policy in effect. */
 async function openComposition(root: string, database: string, settings: CompositionSettings, policy: TaskAutomationPolicyV1,
-  model: (() => ScriptedModel) | null): Promise<Platform> {
+  model: (() => ScriptedModel) | null, tools?: readonly string[]): Promise<Platform> {
   const platform = await createTargetPlatform({
     storage: { kind: 'sqlite', directory: database },
     workspace: ag2bWorkspaceBindings(root, { value: 1 }, permissionRevision(settings.actor, AG2B_SCOPE, ['.'])),
     now: () => '2026-10-06T00:00:00.000Z',
     kernelStores: { entries: [{ adapterId: 'ag2b-kernel', storeKey: 'ag2b-kernel-store', workspace: AG2B_SCOPE,
       databasePath: join(database, 'kernel.sqlite') }] },
-    ...(model === null ? {} : { runtime: ag2bWorkRuntime(model) }),
+    ...(model === null ? {} : { runtime: ag2bWorkRuntime(model, tools === undefined ? {} : { tools }) }),
     checks: checksConfiguration(settings.actor, settings.check, settings.checkRevision),
     workflow: { consumerId: AG2B_CONSUMER_ID, bindings: [workflowBinding(settings.tokenBudget)] },
   });
@@ -727,6 +808,12 @@ export type HostScenarioOptions = {
   actor?: WorkbenchActor;
   /** The seeded work Tasks (default the one AG2b work Task); `null` seeds nothing. */
   workIds?: readonly string[] | null;
+  /**
+   * Observe every committed batch (its records, events and receipt cursor) while
+   * this scenario is open (lead refreeze §5). Additive: with no option the
+   * backends are exactly as today.
+   */
+  commitObserver?: (batch: ScenarioCommit) => void;
 };
 
 export type HostRestartOptions = {
@@ -754,12 +841,15 @@ export class HostScenario extends ScenarioBase {
   private directPlatform: Promise<Platform> | null = null;
   private settings: HostSettings;
   private restarts = 0;
+  private readonly commitObserver: ((batch: ScenarioCommit) => void) | undefined;
 
   private constructor(root: string, database: string, readonly publicDir: string, models: ScriptState,
-    first: { host: AG2bHost; index: number }, settings: HostSettings, policy: TaskAutomationPolicyV1) {
+    first: { host: AG2bHost; index: number }, settings: HostSettings, policy: TaskAutomationPolicyV1,
+    commitObserver?: (batch: ScenarioCommit) => void) {
     super(root, database, models, policy);
     this.current = first;
     this.settings = settings;
+    this.commitObserver = commitObserver;
   }
 
   static async open(options: HostScenarioOptions = {}): Promise<HostScenario> {
@@ -770,9 +860,16 @@ export class HostScenario extends ScenarioBase {
     const models = new ScriptState(options.script ?? {});
     const settings: HostSettings = { check: options.check ?? 'result_file', checkRevision: 1, actor: options.actor ?? SCENARIO_OPERATOR,
       noKernelStores: false };
-    const first = await HostScenario.start(root, database, publicDir, models, settings, 'live');
+    if (options.commitObserver !== undefined) addScenarioCommitObserver(options.commitObserver);
+    let first: { host: AG2bHost; index: number };
+    try {
+      first = await HostScenario.start(root, database, publicDir, models, settings, 'live');
+    } catch (error) {
+      if (options.commitObserver !== undefined) removeScenarioCommitObserver(options.commitObserver);
+      throw error;
+    }
     const scenario = new HostScenario(root, database, publicDir, models, first, settings,
-      options.automation ?? DEFAULT_TASK_AUTOMATION_POLICY);
+      options.automation ?? DEFAULT_TASK_AUTOMATION_POLICY, options.commitObserver);
     opened.push(scenario);
     if (options.workIds !== null) await seedAG2bWorkGraph(first.host, options.workIds ?? [AG2B_WORK_TASK_ID]);
     return scenario;
@@ -917,6 +1014,7 @@ export class HostScenario extends ScenarioBase {
     for (const peer of this.peers.splice(0)) await peer.host.close().catch(() => undefined);
     await this.current.host.host.close().catch(() => undefined);
     await this.closeDirect().catch(() => undefined);
+    if (this.commitObserver !== undefined) removeScenarioCommitObserver(this.commitObserver);
   }
 }
 
@@ -943,6 +1041,8 @@ export type PlatformScenarioOptions = {
   /** The Workflow binding's `tokenBudget` (default 1 000 000, as the AG2b Host). */
   tokenBudget?: number;
   workIds?: readonly string[] | null;
+  /** The work binding's tool grant (refreeze §5, Z02); absent keeps `AG2B_WORK_TOOLS`. */
+  tools?: readonly string[];
 };
 
 export class PlatformScenario extends ScenarioBase {
@@ -965,7 +1065,8 @@ export class PlatformScenario extends ScenarioBase {
     await writeAG2bWorkspace(root);
     const models = new ScriptState(options.script ?? {});
     const settings: CompositionSettings = { actor: options.actor ?? SCENARIO_OPERATOR, check: options.check ?? 'result_file',
-      checkRevision: 1, tokenBudget: options.tokenBudget ?? 1_000_000 };
+      checkRevision: 1, tokenBudget: options.tokenBudget ?? 1_000_000,
+      ...(options.tools === undefined ? {} : { tools: options.tools }) };
     const policy = options.automation ?? DEFAULT_TASK_AUTOMATION_POLICY;
     const started = await PlatformScenario.start(root, database, models, settings, policy);
     const scenario = new PlatformScenario(root, database, models, started, settings, policy);
@@ -979,7 +1080,7 @@ export class PlatformScenario extends ScenarioBase {
     const hooks = models.hooks('live');
     const model = createScriptedModel(hooks.replies, hooks.beforeReply);
     models.register(hooks, 'live', model, null);
-    const platform = await openComposition(root, database, settings, policy, () => model);
+    const platform = await openComposition(root, database, settings, policy, () => model, settings.tools);
     return { platform, model, index: hooks.index };
   }
 

@@ -1052,7 +1052,7 @@ describe('releaseSessionRecord', () => {
   it('kernelTurnOpen writes unavailable/kernel_turn_open in the same record and keeps the cursor (SD-2, LA-1)', () => {
     const next = releaseSessionRecord(held, { holder: RUN_A, generation: GENERATION, historyCursor: { kind: 'keep' }, kernelTurnOpen: true });
     expect(next).toEqual({ ...held, revision: REVISION + 1, occupancy: null, lastExecutionRef: RUN_A, historyCursor: 'cursor-old',
-      health: 'unavailable', healthConclusion: 'kernel_turn_open' });
+      health: 'unavailable', healthConclusion: 'kernel_turn_open', unavailableSince: null });
     expect(deriveAvailability(next)).toBe('unavailable');
     // An unreadable Kernel (missing/damaged) is overwritten by kernel_turn_open (SES-07).
     const missing = { ...held, health: 'unavailable' as const, healthConclusion: 'missing' as const };
@@ -1106,7 +1106,7 @@ describe('observeSessionHealthRecord', () => {
     const held = recordOf({ occupancy: { kind: 'execution', executionRef: RUN_A, generation: GENERATION } });
     for (const conclusion of ['missing', 'damaged'] as const) {
       expect(observeSessionHealthRecord(held, { health: 'unavailable', conclusion })).toEqual({
-        ...held, revision: REVISION + 1, health: 'unavailable', healthConclusion: conclusion,
+        ...held, revision: REVISION + 1, health: 'unavailable', healthConclusion: conclusion, unavailableSince: null,
       });
     }
   });

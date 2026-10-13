@@ -21,6 +21,7 @@ import type { OperationRef } from '../../../contracts/core/operations.js';
 import type { SessionArchiveRequestV1 } from '../../../contracts/core/session-archive.js';
 import type { SessionHealthConclusion, SessionProvenanceV1, SessionRecord, SessionWorkLink } from '../../../contracts/core/session.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
+import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { RunRef, TaskTriple } from '../../../contracts/dispatch.js';
 import type { QueryExecutionStateV1, QueryRunRef } from '../../../contracts/query-job.js';
 import { accept, reject, unreachable, type Rejected, type Transition } from './transition.js';
@@ -376,7 +377,10 @@ export function releaseSessionRecord(record: SessionRecord, release: SessionRele
     historyCursor,
   };
   if (!release.kernelTurnOpen) return released;
-  return { ...released, health: 'unavailable', healthConclusion: 'kernel_turn_open' };
+  const entered: SessionRecord = { ...released, health: 'unavailable', healthConclusion: 'kernel_turn_open' };
+  // Spec §2.3 P01: this is the first available→unavailable entry, so mark the
+  // pending position; an already-unavailable Session keeps its cursor/absence.
+  return record.health === 'available' ? { ...entered, unavailableSince: null } : entered;
 }
 
 /** SES-11: lifecycle only; health, history and links are untouched. */
@@ -411,12 +415,28 @@ export function observeSessionHealthRecord(record: SessionRecord, observation: S
   }
   if (record.health === 'recoverable') throw new Error('observeSessionHealthRecord: recoverable has no writer (D-17)');
   if (observation.health === 'available') {
-    return { ...record, revision: record.revision + 1, health: 'available', healthConclusion: null };
+    // SES-13 recovery removes the entry position entirely (spec §2.3 P03), so
+    // the record no longer carries the field; it is not written back as null.
+    const { unavailableSince: _cleared, ...rest } = record;
+    return { ...rest, revision: record.revision + 1, health: 'available', healthConclusion: null };
   }
   if (observation.conclusion !== 'missing' && observation.conclusion !== 'damaged') {
     throw new Error('observeSessionHealthRecord: an unavailable observation needs a missing or damaged probe');
   }
-  return { ...record, revision: record.revision + 1, health: 'unavailable', healthConclusion: observation.conclusion };
+  // Every available→unavailable observation marks a fresh pending position.
+  return { ...record, revision: record.revision + 1, health: 'unavailable',
+    healthConclusion: observation.conclusion, unavailableSince: null };
+}
+
+/**
+ * Spec §2.3 P01: the record-store's mechanical commit tail replaces the explicit
+ * `null` entry placeholder with the cursor of the commit that carried it. It
+ * never fills an absent (legacy) or already-bound field, and never parses a
+ * cursor; it is the only writer besides the health constructors above.
+ */
+export function bindSessionUnavailableCursor(record: SessionRecord, cursor: CommitCursor): SessionRecord {
+  if (record.unavailableSince !== null) return record;
+  return { ...record, unavailableSince: cursor };
 }
 
 // --------------------------------------------------------------------------

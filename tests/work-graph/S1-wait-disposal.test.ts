@@ -46,6 +46,14 @@ async function acceptedByD(f: ArchiveServiceFixture, message: SessionMessage) {
   expect(ready(await f.mailbox.readMessage(f.ctx, message.ref)).acceptedInputs).toEqual(expected);
   return { result, write };
 }
+/** WP2 L12: the commit cursor of the one health commit that made S unavailable, taken from the commit log (not from the record). */
+async function retireAt(f: ArchiveServiceFixture): Promise<string> {
+  const from = f.batches.length;
+  await f.retire();
+  const health = f.batches.slice(from).filter(({ batch }) => batch.events.some(event => event.eventType === 'SessionHealthObserved'));
+  expect(health).toHaveLength(1);
+  return health[0]!.cursor;
+}
 const dispositions = (f: ArchiveServiceFixture, step: 'reply_handler' | 'wait_cancel') => f.batches.filter(({ batch }) => batch.events.some(event => {
   if (event.eventType !== 'ArchiveWaitDisposed') return false;
   const body = JSON.parse(event.json) as { archiveStep?: { step: string } };
@@ -138,7 +146,7 @@ describe.each(['memory', 'sqlite'] as const)('wait disposal (%s)', kind => {
 
   it('SV33 a late reply to an archived retired source with no continuation remains undelivered', async () => {
     const { f, message } = await open(kind);
-    await f.retire();
+    const retiredAt = await retireAt(f);
     const request = await f.register({ mode: 'retired' }); // Retired exception needs no wait choice.
     const archived = committed(await f.lifecycle.finishSessionArchive(f.archiveCtx(request), f.step(request, 'archive')));
     expect(archived.value.lifecycle).toBe('archived');
@@ -149,7 +157,8 @@ describe.each(['memory', 'sqlite'] as const)('wait disposal (%s)', kind => {
     const before = f.snapshot();
     const undelivered = ready(await f.mailbox.readUndeliveredReplies(f.ctx, { sessionRef: f.S, page: { limit: 20 } }));
     expect(undelivered.items).toEqual([{ kind: 'retired_reply', messageRef: message.ref, sourceSessionRef: f.S,
-      responseRef: response.bodyRef, respondedAt: response.respondedAt, hasContinuation: false, requiresUserRecipient: true }]);
+      responseRef: response.bodyRef, respondedAt: response.respondedAt, hasContinuation: false, requiresUserRecipient: true,
+      unavailableSince: retiredAt, responseSince: replied.cursor }]);
     const saved = ready(await f.mailbox.readMessage(f.ctx, message.ref));
     expect(saved.status).toBe('responded');
     expect(saved.replyHandler ?? null).toBeNull();
@@ -160,7 +169,7 @@ describe.each(['memory', 'sqlite'] as const)('wait disposal (%s)', kind => {
 
   it('SV34 a retired source with a continuation keeps the late response without pushing it into the successor Kernel', async () => {
     const { f, message } = await open(kind);
-    await f.retire();
+    const retiredAt = await retireAt(f);
     const successor = await f.continuation();
     const request = await f.register({ mode: 'retired' });
     committed(await f.lifecycle.finishSessionArchive(f.archiveCtx(request), f.step(request, 'archive')));
@@ -172,7 +181,8 @@ describe.each(['memory', 'sqlite'] as const)('wait disposal (%s)', kind => {
     const before = f.snapshot();
     expect(ready(await f.mailbox.readUndeliveredReplies(f.ctx, { sessionRef: f.S, page: { limit: 20 } })).items)
       .toEqual([{ kind: 'retired_reply', messageRef: message.ref, sourceSessionRef: f.S, responseRef: response.bodyRef,
-        respondedAt: response.respondedAt, hasContinuation: true, requiresUserRecipient: false }]);
+        respondedAt: response.respondedAt, hasContinuation: true, requiresUserRecipient: false,
+        unavailableSince: retiredAt, responseSince: replied.cursor }]);
     const saved = ready(await f.mailbox.readMessage(f.ctx, message.ref));
     expect(saved.response).toEqual(response);
     expect(saved.acceptedInputs ?? []).toEqual([]);

@@ -13,7 +13,7 @@ import {
 } from '../helpers/AG2b-collaboration-fixture.js';
 import { installS1ScenarioClock, ready, retireS1Session } from '../helpers/S1-runtime-scenario-fixture.js';
 import {
-  assertInvariants, cleanupScenarios, hostCtx, openHostScenario, performs, type HostScenario,
+  assertInvariants, cleanupScenarios, hostCtx, openHostScenario, performs, type HostScenario, type ScenarioCommit,
 } from './harness.js';
 import { acceptedMessageInputs, consult } from './support/brief.js';
 import { NO_REDRIVE, execution, selectedRun, stepOf, WORK_TARGET } from './support/common.js';
@@ -58,6 +58,7 @@ async function sourceExecutions(h: HostScenario, session: SessionRef) {
 }
 
 it('IT20 (wait transfer, answered copy, retired reply): the original question is unchanged and consumed once; the answered copy is archived; a different retired line with no continuation shows exactly one undelivered reply source and is never auto-forwarded; reads and refreshes add no model call', async () => {
+  const commits: ScenarioCommit[] = [];
   const sendLine1 = { callId: 'it20-line1-send', name: 'send_session_message',
     args: { recipient: {}, text: QUESTION, replyMode: 'wait' } as Record<string, unknown> };
   const sendLine3 = { callId: 'it20-line3-send', name: 'send_session_message',
@@ -67,7 +68,10 @@ it('IT20 (wait transfer, answered copy, retired reply): the original question is
       replies: [{ kind: 'calls', calls: [sendLine1] }, { kind: 'text', text: 'D used the transferred reply' },
         { kind: 'calls', calls: [sendLine3] }],
       queryReplies: Array.from({ length: 3 }, () => ({ kind: 'text' as const, text: REPLY })),
-    } });
+    },
+    // Refreeze §5: every committed batch with its cursor and events; R and P are
+    // the two commits named below, taken from this log, not from record fields.
+    commitObserver: batch => { commits.push(batch); } });
   const platform = await h.direct();
 
   // Line 1: E answers; D is a DIFFERENT, Work-capable handler and successor.
@@ -169,8 +173,27 @@ it('IT20 (wait transfer, answered copy, retired reply): the original question is
   if (readUndelivered === undefined) throw new Error('readUndeliveredReplies must be wired');
   const input = { sessionRef: line3.sessionRef, page: { limit: 20 } };
   const undelivered = ready(await readUndelivered(hostCtx(), input));
+  // Refreeze §5 item 3: R is the ONE observed commit carrying S3's
+  // SessionHealthObserved(observed='unavailable'); P is the ONE observed commit
+  // carrying the SessionMessageResponded event for line3's message. Both come
+  // from the scenario's commit observer, never from the records under test.
+  const healthCommits = commits.filter(batch => batch.events.some(event => {
+    if (event.eventType !== 'SessionHealthObserved') return false;
+    const body = JSON.parse(event.json) as { observed?: string; session?: { ref?: { sessionId?: string } } };
+    return body.observed === 'unavailable' && body.session?.ref?.sessionId === line3.sessionRef.sessionId;
+  }));
+  expect(healthCommits).toHaveLength(1);
+  const retiredAt = healthCommits[0]!.cursor;
+  const replyCommits = commits.filter(batch => batch.events.some(event => {
+    if (event.eventType !== 'SessionMessageResponded') return false;
+    const body = JSON.parse(event.json) as { message?: { ref?: { messageId?: string } } };
+    return body.message?.ref?.messageId === line3.messageRef.messageId;
+  }));
+  expect(replyCommits).toHaveLength(1);
+  const repliedAt = replyCommits[0]!.cursor;
   expect(undelivered.items).toEqual([{ kind: 'retired_reply', messageRef: line3.messageRef, sourceSessionRef: line3.sessionRef,
-    responseRef: late.response.bodyRef, respondedAt: late.response.respondedAt, hasContinuation: false, requiresUserRecipient: true }]);
+    responseRef: late.response.bodyRef, respondedAt: late.response.respondedAt, hasContinuation: false, requiresUserRecipient: true,
+    unavailableSince: retiredAt, responseSince: repliedAt }]);
   expect(undelivered.nextCursor).toBeNull();
   expect({ handler: late.replyHandler ?? null, disposition: late.archiveWaitDisposition ?? null,
     accepted: (late.acceptedInputs ?? []).filter(a => a.part === 'response') })
