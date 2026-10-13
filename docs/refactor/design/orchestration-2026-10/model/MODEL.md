@@ -918,6 +918,8 @@ type DispatchReceipt = { id:string; messageId:string; fingerprint:string };
 
 前置、效果与拒绝：退役且无接续，在下次 Workflow 事件立刻归档。执行者须无未完责任、无等待、无占用且最后任务结束满 archiveMs。否则 no_op。不创建定时器。
 
+〔2026-10-13 lead 补，决定 45〕例外：退役、没有接续的线，如果手上那次执行的结果未知（Run 为 outcome_unknown，Session 仍被占用），不自动归档，等人认定结果以后再归档（第 1 片 U1 选甲，已做）。R05 的“无接续退役直接放下并归档”同样受这个例外限制。
+
 拒绝码：`busy`。所有未列拒绝均保留输入状态。例子和精确正反断言见 SCENARIOS 的 S05。
 
 ### R07 reactivate
@@ -1273,6 +1275,8 @@ type DispatchReceipt = { id:string; messageId:string; fingerprint:string };
 ### R26 adoptCandidate
 
 依据：DESIGN §1.1 L113、119–121；§2.7 L435。状态：已定（Q16、决定 15）；提议 §9.1 #23。片：5。
+
+〔2026-10-13 lead 核，和代码不一致，待第 6、7 片定〕下面写“agent 不能采用”。但代码里 Runtime 有白板工具 `apply_future_plan`（`src/core/agent-runtime/whiteboard-tools.ts`）：获授权的 agent 可以采用自己为当前 Goal 提出的 W2 候选；用户答过这张候选的卡时带上那次答复，由计划 owner 重新读正式答复。状态机里记为 agent 发起（`state/plan-machine.ts` 的 `applyPlanChangeAsAgent`），第 5 片决定 48 那一轮补了“谁采纳的”记录。这条路早于本设计（9-28 的 W2），设计书没有写它。第 6 片（秘书、采用）或第 7 片（agent 动作的授权）冻结前要定：保留为受自治级别约束的 agent 采用，还是收回到用户或 Workflow。定之前不扩大它的用途。
 
 触发：收到 `adoptCandidate` 动作或该规则对应的正式观察。执行者：用户/Workflow。
 
@@ -1884,7 +1888,9 @@ type DispatchReceipt = { id:string; messageId:string; fingerprint:string };
 
 ### R59 resolveCandidate
 
-依据：DESIGN §1.1 L120–121。状态：提议 §9.1 #23。片：5。
+依据：DESIGN §1.1 L120–121、L129。状态：已定（决定 42 · 第 3 条丙 (a)）；原提议 §9.1 #23。片：5（已做，a7cafccc）。
+
+〔2026-10-13 lead 核〕下面“前置、效果与拒绝”里“abandon 以后存成什么，正文没定”是决定 42 之前的写法，已过时：DESIGN §1.1 L129 已定，你点“放弃”，候选记成“未采用”，原因写“放弃”，不另加“已放弃”状态；第 5 片按此实现。别的请求的候选仍只读作“已过期”、不写“未采用”（L127、L1131）。多视角图 CandidatePlan 已按此恢复“放弃 → 未采用”这条边。
 
 触发：收到 `resolveCandidate` 动作或该规则对应的正式观察。执行者：用户。
 
