@@ -1,6 +1,6 @@
 # K3 片规格（草稿第二版）：结果未知的工具调用，按种类核对；重启后自动收尾
 
-> **状态：lead 起草，2026-10-13；方向用户已同意（决定 52）。下一步：按决定 52 补全 §1，交 Codex 审查，确认测试入口，冻结。**
+> **状态：lead 起草，2026-10-13；方向用户已同意（决定 52）；§1 已按决定 52 补全（L4–L6），资源上限的可行性见 §5。下一步：用户确认 L6 的一处 lead 选择和 §5，交 Codex 审查，确认测试入口，冻结。**
 > - 依据：HANDOFF 决定 45、51，10-03 的 D-4（U-4）；STATE-MACHINES-SPEC 的 RUN-08、RUN-20、RUN-22、§12.8 HL-01..HL-07；K 片规格（已冻结）。
 > - 用户 2026-10-13 对第一版的意见（原话）：“所以你应该让模型再去检查，判断，一般来说对于文件仅仅类似gitdiff就差不多，但是对于环境相关，运行程序相关的就需要谨慎---对于不同的工具结果需要有不同的审查。”
 > - 施工要在 K 片 A、B 两部分合入以后。A 是关闭悬空 Turn；B 是只读命令，核对轮要用它。
@@ -24,9 +24,9 @@
 
 **核对轮。** 只要有“跑程序”类的结果未知，接着做的第一轮就是一次只读执行：
 - 能读文件、能跑只读命令（例如 `git status --ignored`、看生成的文件、看本地数据库），不能写，也不能再跑那条命令。
-- 它对每一条结果未知的命令写一条核对结论：已做 / 没做 / 做了一半 / 判断不了，附上依据。
-- 每一条都是“已做”或“没做”：自动接着做，结论放进下一轮的接续说明。
-- 有一条是“做了一半”或“判断不了”：发一张“请你决定”，附上依据。你选（决定 52）：
+- 它对每一条结果未知的命令写一条核对结论：已做 / 没做 / 做了一半 / 判断不了，附上依据；另外写一条崩溃自查：这条命令会不会就是 Host 崩溃的原因（不太可能 / 可能 / 判断不了）。
+- 每一条都是“已做”或“没做”、自查都是“不太可能”，并且不是下面要你确认的情况：自动接着做，结论放进下一轮的接续说明。
+- 要你确认的：有一条“做了一半”或“判断不了”；有一条自查是“可能”或“判断不了”（做完了的也算，因为下一轮可能再跑同样的命令）；同一任务连续第二次这样中断；目标是“每步确认”。这时发一张“请你决定”，附上依据。你选（决定 52）：
   - 照原样重跑；
   - 换个稳妥的跑法再跑（例如降低并行度、分批；agent 先提方案，你同意后再跑）；
   - 跳过，当作已做；
@@ -79,28 +79,78 @@
 
 **B. 核对轮**
 
-- **L4 核对记录。** 每次收尾（人认定或自动收尾）给这次 Run 建一份核对记录，逐条列出结果未知的调用：
-  - 种类；
-  - 参数摘要（命令、cwd、路径）；
-  - 结论（平台已定 / 待核对 / 已做 / 没做 / 做了一半 / 判断不了）；
-  - 依据；
-  - 谁定的。
+- **L4 核对记录。** 每次收尾（人认定或自动收尾）给这次 Run 建一份核对记录，一个 Run 一份，和原执行的事实分开存，写入经 `state/` 的构造器。形状（新名字以此为准）：
 
-  记录的写入经 `state/` 的构造器，和原执行的事实分开存。
+  ```ts
+  type UnknownCallReviewV1 = {
+    schemaVersion: 1;
+    runRef: RunRef;                       // 结果未知的那次 Run
+    origin: 'human_attested' | 'takeover_unresolved';
+    workspace: { status: 'captured'; baseCommit: string } | { status: 'unavailable'; reason: string };
+    items: UnknownCallReviewItemV1[];     // 每个结果未知的调用一条，按 Kernel 里的顺序
+    status: 'pending_review' | 'needs_decision' | 'resolved';
+    decisionReasons: Array<'partial' | 'undetermined' | 'crash_possible' | 'crash_undetermined'
+      | 'second_consecutive' | 'confirm_each_step'>;   // 为什么要你决定；不要时为空
+  };
+  type UnknownCallReviewItemV1 = {
+    callId: string; toolName: string;
+    kind: 'read_only' | 'platform' | 'file_edit' | 'process';         // L1
+    arguments: { command?: string; cwd?: string; paths?: string[] };  // 有界摘要，超长截断并标出
+    startedAt: string | null;
+    verdict: 'no_review_needed'           // 只读：可以直接重做
+      | 'done' | 'not_done'               // 平台工具由平台定（L2）；跑程序由核对轮定
+      | 'compare_in_continuation'         // 改文件：附 diff，由接续的那一轮对照（L3）
+      | 'pending'                         // 跑程序，核对轮还没给结论
+      | 'partial' | 'undetermined';       // 跑程序：做了一半 / 判断不了
+    evidence: string | null;              // 有界
+    decidedBy: 'platform' | 'review_run' | null;
+    crashSuspicion: null                  // 只有 kind 为 process 的条目有
+      | { verdict: 'unlikely' | 'possible' | 'undetermined'; evidence: string };
+  };
+  ```
+
+  - 建记录时：只读条目直接 `no_review_needed`；平台工具按 L2 定成 `done` 或 `not_done`；改文件条目 `compare_in_continuation`；跑程序条目 `pending`。
+  - 没有 `pending` 条目时，建记录的同一提交按 L6 算出 `status`。
+  - 记录建好以后只在两处改：核对轮写结论（L5），请你决定的答复落实（L6）。
 - **L5 有“跑程序”的待核对条目时，先跑核对轮。**
-  - 核对轮是同一个 Session 上的一次只读 Work（写范围为空）。工具只有只读工具和 `run_readonly_command`，外加一个新的平台工具 `record_unknown_call_review`，入参 `{ callId, verdict, evidence }`。
+  - 核对轮是同一个 Session 上的一次只读 Work（写范围为空）。工具只有只读工具和 `run_readonly_command`，外加一个新的平台工具 `record_unknown_call_review`：
+
+    ```ts
+    record_unknown_call_review: {
+      callId: string;
+      verdict: 'done' | 'not_done' | 'partial' | 'undetermined';
+      evidence: string;                                   // 至少 1 个字符，有界
+      crashSuspicion: { verdict: 'unlikely' | 'possible' | 'undetermined'; evidence: string };
+    }
+    ```
+
+    - 只收这份记录里 `pending` 的条目；别的 `callId` 报 `invalid_arguments`，不写。
+    - 同一条再写一次，按最后一次为准；核对轮结束后不能再写。
   - 它的输入是核对说明：每条待核对调用的完整参数、开始时间、当时的工作区事实，以及“不许重跑这条命令”。
-  - 核对轮结束时，每条待核对调用都要有结论；没有的记成“判断不了”。
+  - **崩溃自查（决定 52 第一层）。** 核对说明对每条跑程序的调用另问一句：“这条命令会不会就是 Host 崩溃的原因”。
+    - 结论三选一：不太可能 / 可能 / 判断不了。
+    - 依据写两类：命令本身（例如全量构建、并行度高的测试、可能吃满内存或起大量进程的程序）；留下的痕迹（输出文件停在哪里、日志断在哪里）。
+    - `crashSuspicion` 必填，所以没有自查就写不进结论。
+  - 核对轮结束时，还是 `pending` 的条目记成 `undetermined`，自查也记成 `undetermined`，依据写“核对轮没有给出结论”。
   - 核对轮本身不改工作区，不算一次返工。
-- **L6 核对之后。**
-  - 全部是“已做”或“没做”（含平台已定的）：照 K 片接着做，核对记录放进接续说明。
-  - 有“做了一半”或“判断不了”，或决定 52 的崩溃自查要你确认（自查“可能”或“判断不了”、连续第二次、“每步确认”）：发一张“请你决定”（新的来源种类 `unknown_call_review`），附核对记录和打开相关文件、diff、命令的入口。选项是：
+- **L6 核对之后。** 按下面的规则算出 `decisionReasons`；为空就 `resolved`，不为空就 `needs_decision`。
+  - **要你决定的六种原因（决定 52 第二层）：**
+    - `partial`、`undetermined`：有跑程序的条目做了一半或判断不了；
+    - `crash_possible`、`crash_undetermined`：有跑程序的条目自查是“可能”或“判断不了”。**不论这条命令做没做完都要你确认**（lead 的选择，待用户确认）：做完了的，下一轮也可能再跑同样的命令；
+    - `second_consecutive`：这个任务上一次接续的来源 Run 也有一份核对记录，而且里面有跑程序的条目（连续第二次在这种情况下中断）；
+    - `confirm_each_step`：目标的自治级别是“每步确认”，而且记录里有跑程序的条目。
+  - `resolved`：照 K 片接着做，核对记录放进接续说明。
+  - `needs_decision`：发一张“请你决定”（新的来源种类 `unknown_call_review`），一个 Run 一张。卡上：
+    - 核对记录：每一条的种类、参数、结论、依据、自查；
+    - 打开相关文件、diff、命令的入口。
+
+    选项是：
     - 照原样重跑：把这条调用当作“没做”，接着做；
     - 换个稳妥的跑法再跑：agent 先提方案，经你同意以后再跑；
     - 跳过，当作已做：接着做，不重做；
     - 我来处理：任务暂停，等你。
 
-    答复照第 5 片的决定卡流程落实。【待补：崩溃自查的结论字段和核对记录的形状，按决定 52 写进 L4、L5。】
+    答复照第 5 片的决定卡流程落实，一个答复管整张卡；要按条目分别处理时选“我来处理”。落实后记录变成 `resolved`，答复写进接续说明。
 - **L7 看不清改动时。** 有“改文件”或“跑程序”的待核对条目，而工作区采集不到（不是 git，或读取失败）：
   - 自动收尾不做，照今天等人认定；
   - 人认定之后的核对轮照做，只是接续说明标明“改动清单拿不到”。
@@ -136,7 +186,7 @@
 | 入口 | 是什么 |
 | --- | --- |
 | R1 | 业务流程：脚本模型的 Work 在工具调用中途，Host 被关掉（真实的 SQLite 和租约文件），新 Host 启动，再用 `workflow.advanceWork` 推进。每种工具各一个例子：平台工具（发消息）、改文件、跑程序 |
-| R2 | 核对轮：脚本模型的只读核对 Run 写下各种结论；“判断不了”时出现“请你决定”卡，三个选项各自的后续 |
+| R2 | 核对轮：脚本模型的只读核对 Run 写下各种结论和崩溃自查；L6 的六种原因各出现一次“请你决定”卡；四个选项各自的后续 |
 | R3 | 仍然等人的各种情况：Kernel 读不了、指针上有暂停、Host 没换、连续第二次、不是 git 的工作区 |
 | R4 | 人认定之后走同一套核对 |
 | R5 | 纯状态转换：RUN-25 的守卫、核对记录的状态、失败类别推导 |
@@ -152,3 +202,25 @@
 - 不改 Host 活着时的结果未知；
 - 不改 Query 的恢复；
 - 不调用真实模型。
+
+## 5. 资源上限的可行性（决定 52 第 5 条；lead 2026-10-13 在本机 WSL 实测）
+
+**要解决的事。** 一条命令吃满内存或起大量进程，可能把整个 Host 拖垮，事后就成了“结果未知”。给沙箱里的命令单独加内存和进程数上限，超限时被杀掉的只是这条命令，Host 照常，这条调用正常结束为一次失败，不再是“结果未知”。
+
+**实测环境。** WSL2（内核 6.18），`/etc/wsl.conf` 开了 systemd，cgroup v2，memory、pids 两个控制器已经下放给用户的 systemd；bubblewrap 0.9.0。探测脚本：`D:/cc-lead-notes/impl/rlimit-probe*.sh`（不入库）。
+
+| 试了什么 | 结果 |
+| --- | --- |
+| `systemd-run --user --scope -p MemoryMax=100M -p MemorySwapMax=0` 里跑 bwrap，命令要 400 MB 内存 | 命令被 OOM 杀掉（退出码 137 或 143），systemd 日志记 `oom-kill`；Host 和机器不受影响 |
+| 同样的方式，`-p TasksMax=20`，命令连开 60 个子进程 | 超过的 `fork` 直接失败（`Resource temporarily unavailable`），命令自己处理；没有拖垮机器 |
+| 同样的上限下跑普通命令（`git --version`、`node -e`） | 正常 |
+| 每次多一层 `systemd-run --scope` 的开销 | 约 7 毫秒 |
+| 另一条路：`prlimit --as` 限虚拟内存 | 不能用：node 启动就崩（V8 要预留很大的虚拟地址空间） |
+
+**结论：可行。** 做法是在 Kernel 的 `ProcessSandbox` 拼 bwrap 命令时，前面套一层 `systemd-run --user --scope -p MemoryMax=… -p MemorySwapMax=0 -p TasksMax=…`。`shell`、`run_readonly_command` 和登记的检查都走这里，改一处就都管住。
+
+**限制和要另定的：**
+- **只在 Linux／WSL 上有效。** 需要 systemd 的用户会话，并且 cgroup v2 把 memory、pids 下放给用户。沙箱本来就只在 Linux 上可用；没有这些条件时，探测报“资源上限不可用”。这时可以照常跑、只是不设上限，也可以不跑，要用户定。
+- **区分“被上限杀掉”和别的失败。** 实测里退出码有时是 137，有时是 143（systemd 在 OOM 后停掉整个 scope），systemd 的单元结果也不总是 `oom-kill`。可靠的办法是在 scope 里读这个 cgroup 的 `memory.events` 的 `oom_kill` 计数，再把结果交给工具；施工时定。
+- **默认值要用户定。** 例如内存上限取“本机内存的一半和 4 GB 中较小的”，进程数 512；放进 Host 设置，可以改。
+- **放在哪一片：** 改的是 Kernel 补丁源 `process-sandbox.ts`，和 K 片 B 部分改的是同一个文件。建议等 K 片 B 合入以后单独做一小片，或者并进 K3。要用户定。
