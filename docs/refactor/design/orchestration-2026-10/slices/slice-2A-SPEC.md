@@ -1,6 +1,6 @@
 # 2A 片规格：决定队列只读相关的条目，不再拒绝，完整分页
 
-> **状态：lead 起草，2026-10-13；按 Codex 审查（`D:/cc-lead-notes/codex2/s2arev.out.md`，结论“不能冻结”，15 条）重写一轮。测试入口待用户确认（§5.1），确认后再审一轮，冻结。**
+> **状态：lead 起草，2026-10-13；按 Codex 审查（`D:/cc-lead-notes/codex2/s2arev.out.md`，结论“不能冻结”，15 条）重写一轮。测试入口用户已同意（决定 51）。2026-10-14 lead 把按顺序查找挪到单独的端口（L1、§2），合入顺序改成接线包 2 → K 片 B → K 片 A → 2A；再审一轮后冻结。**
 > - 代码基线：ee9e7a33 的工作树，第 5 片已合入。
 > - 依据：
 >   - HANDOFF 决定 42、48、49（第 28 项选 (a)）、50（第 2 片拆成 2A/2B/2C）；
@@ -46,6 +46,7 @@
   - **哪些行是候选：**
     - 排序值必须是文字。缺失、为空或不是文字的行，不是这个按顺序索引的候选。
     - 这样排序时不出现空值，空值行另用普通等值查找读（L4 的旧式组）。
+  - 放在单独的端口 `RecordOrderedLookupPort` 上，`RecordLookupPort` 不变（§2，lead 2026-10-14）。
   - **请求** `lookupOrdered`：
     - `values`：等值部分，每个路径一个值，**必须是非空标量**；有空值报 `invalid`。这样索引前缀全部被等值约束，排序那一列才能连续扫。
     - `direction`：`'asc' | 'desc'`。
@@ -153,8 +154,14 @@ export type RecordOrderedLookupPage = {
 };
 export interface RecordLookupPort {
   lookup(request: RecordLookupRequest): Promise<StoreResult<RecordLookupPage>>;              // 不变
+}
+export interface RecordOrderedLookupPort {                // 单独一个端口（lead，2026-10-14）
   lookupOrdered(request: OrderedLookupRequest): Promise<StoreResult<RecordOrderedLookupPage>>;
 }
+//   两个后端都实现它；只有要按顺序读的地方拿 RecordLookupPort & RecordOrderedLookupPort。
+//   不加进 RecordLookupPort：测试里十几个夹具对象类型写成 `… & RecordLookupPort`、只实现了 `lookup`
+//   （例如 tests/helpers/graph-session-fixture.ts:80、tests/helpers/task-claim-fixture.ts:68），
+//   `npm run typecheck` 包括 tests，加进去它们全要改。2C 的计数端口同样处理（2C 规格 L3）。
 ```
 
 决定队列的公开契约不变。
