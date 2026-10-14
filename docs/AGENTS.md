@@ -2,7 +2,7 @@
 
 更新：2026-10-13。本文件只约束 `docs/` 的阅读和维护，不改变产品或源码架构。仓库根就是施工工程；旧证据里的绝对路径和 scope 按[根 AGENTS](../AGENTS.md)第 2 条映射。
 
-先读 [README](README.md) → [STATUS](refactor/STATUS.md)（当前状态）→ [HANDOFF 顶部](refactor/HANDOFF.md)（决定 1–55）→ [编排设计目录](refactor/design/orchestration-2026-10/README.md)。按任务读对应分片，界面工作读[冻结原型](ui-reference/workbench-2026-10/README.md)和 [UI-WORKBENCH §0](UI-WORKBENCH.md#ui-decisions-2026-10)。
+先读 [README](README.md) → [STATUS](refactor/STATUS.md)（当前状态）→ [HANDOFF 顶部](refactor/HANDOFF.md)（决定 1–56）→ [编排设计目录](refactor/design/orchestration-2026-10/README.md)。按任务读对应分片，界面工作读[冻结原型](ui-reference/workbench-2026-10/README.md)和 [UI-WORKBENCH §0](UI-WORKBENCH.md#ui-decisions-2026-10)。
 
 - 整套文档由 lead 长期负责并逐行审阅；Codex 起草后交 lead 核对。每批验收后，lead 更新 STATUS、受影响的能力条目、规格和证据；HANDOFF 的决定和历史保留原义，不为更新进度改写历史。
 - 用户后续明确决定优先；助手旧建议不是用户决定，旧实现限制不能覆盖产品目标。按任务共同核对 PRODUCT、MVP-BEHAVIOR、编排设计、架构、对应模块和相关用户原话。发现矛盾列出具体出处，已有决定能解决的按决定同步，新的产品取舍交用户定。

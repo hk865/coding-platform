@@ -6,7 +6,7 @@
 
 ## 入口
 
-- 当前状态、缺口和下一步：[STATUS](docs/refactor/STATUS.md)；用户决定 1–55：[HANDOFF 顶部](docs/refactor/HANDOFF.md)。
+- 当前状态、缺口和下一步：[STATUS](docs/refactor/STATUS.md)；用户决定 1–56：[HANDOFF 顶部](docs/refactor/HANDOFF.md)。
 - 编排、记忆和生命周期：[设计目录](docs/refactor/design/orchestration-2026-10/README.md)、[分片规格与任务书](docs/refactor/design/orchestration-2026-10/slices/README.md)。
 - 界面基线：[冻结原型](docs/ui-reference/workbench-2026-10/README.md)和 [UI-WORKBENCH §0](docs/UI-WORKBENCH.md#ui-decisions-2026-10)；新增界面随 E3 交付。
 - 产品与源码入口：[PRODUCT](docs/PRODUCT.md)、[MVP 行为](docs/MVP-BEHAVIOR.md)、[能力索引](docs/refactor/IMPLEMENTED-CAPABILITIES.md)、[架构](docs/refactor/ARCHITECTURE.md)。
