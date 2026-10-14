@@ -1,6 +1,6 @@
 # MVP 产品行为与端到端验收
 
-更新：2026-10-13。状态：当前产品目标的行为细化，依据 [HANDOFF 决定 1–54](refactor/HANDOFF.md)；**不是实现完成报告**。本仓库根就是施工工程，旧路径按[根 AGENTS](../AGENTS.md)第 2 条读取。
+更新：2026-10-13。状态：当前产品目标的行为细化，依据 [HANDOFF 决定 1–55](refactor/HANDOFF.md)；**不是实现完成报告**。本仓库根就是施工工程，旧路径按[根 AGENTS](../AGENTS.md)第 2 条读取。
 
 本文把 [PRODUCT](PRODUCT.md) 的承诺组织成可执行、可观察、可验收的用户路径。接口与状态字段仍归[模块文档](refactor/modules/README.md)、[共同契约](refactor/skeleton/CONTRACTS.md)及具体批次；本文不新建协议、调度器或业务状态库。当前状态、缺口和下一步看 [STATUS](refactor/STATUS.md)，源码和证据入口看[能力索引](refactor/IMPLEMENTED-CAPABILITIES.md)；[实施计划](refactor/IMPLEMENTATION-PLAN.md)是历史，不能从行为设计或旧计划推断已交付。
 
