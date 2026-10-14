@@ -99,12 +99,12 @@ type Actor = { kind: 'user'|'workflow'|'runtime'|'host'|'secretary'|'adviser'|'s
 标识：所属 Session id。
 
 ```typescript
-type Provenance = { kind: 'new'|'continuation'|'handoff'|'copy'; from: string|null; reason: 'interrupted'|'archived'|'damaged'|'role_mismatch'|null; messageId: string|null };
+type Provenance = { kind: 'new'|'continuation'|'handoff'|'copy'; from: string|null; reason: 'interrupted'|'damaged'|'role_mismatch'|null; messageId: string|null };
 ```
 
 写入者与时机：sessions 在创建时写一次。
 
-不变量：continuation 同线；handoff 新线；copy 不成线。以后不改。
+不变量：continuation 同线；handoff 新线；copy 不成线。以后不改。被归档的线不再被派活，接手它留下的任务是新的领取，不写 continuation（决定 43）。旧数据里可能还有 reason 为 `archived` 的 continuation，编解码照旧读得出，只读兼容（`session-record-codecs.ts:426`），新的写入不再用它。
 
 ### O06 ProjectSettings
 
@@ -857,14 +857,14 @@ type DispatchReceipt = { id:string; messageId:string; fingerprint:string };
 输入：
 
 ```typescript
-{from:string;to:string;reason:'interrupted'|'archived'|'damaged'|'role_mismatch';taskId:string;kEnabled:boolean;creationCompleted:boolean}
+{from:string;to:string;reason:'interrupted'|'damaged'|'role_mismatch';taskId:string;kEnabled:boolean;creationCompleted:boolean}
 ```
 
 前置、效果与拒绝：旧 Turn 有终态且原 Session 可用，发 continue_run。K 关成功也在原 Session 新 Run。K 无能力、读不到、跨适配器或失败，建 continuation 并转本任务责任。旧历史保留。不能恢复原 Run。退路creationCompleted是可信完成观察；false只提创建，不能登记Session或转责任。
 
 拒绝码：`busy, invalid, unavailable`。所有未列拒绝均保留输入状态。例子和精确正反断言见 SCENARIOS 的 S20、S42。
 
-【已定（决定 49）】 K 补丁不复活之前已退役 Session，执行结果未知仍先按正式规则核对。
+【已定（决定 49）】 K 补丁不复活之前已退役 Session，执行结果未知仍先按正式规则核对。例外（决定 38、51、54）：成功关闭悬空 Turn 的线回到可用、留在原 Session，不归档；Host 重启时暂停着的线点「继续」关 Turn 后在原线领取，不马上归档；只有 Kernel 读不到、关不掉或关闭不支持时才退新 Session 或归档。
 
 ### R04 finishResponsibilities
 

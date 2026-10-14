@@ -1,6 +1,6 @@
 # 文档入口
 
-更新：2026-10-13。本仓库根就是原 `coding-platform/next`，文档在 `docs/`。先读 [STATUS](refactor/STATUS.md) 和 [HANDOFF 顶部](refactor/HANDOFF.md)的决定 1–58，再按任务读[编排设计目录](refactor/design/orchestration-2026-10/README.md)。可靠性批次、编排第 0、1、3、5 片和接线包 1 已完成；接线包 2 在准备，整个 MVP 没有完成。
+更新：2026-10-14。本仓库根就是原 `coding-platform/next`，文档在 `docs/`。先读 [STATUS](refactor/STATUS.md) 和 [HANDOFF 顶部](refactor/HANDOFF.md)的决定 1–58，再按任务读[编排设计目录](refactor/design/orchestration-2026-10/README.md)。可靠性批次、编排第 0、1、3、5 片、接线包 1、接线包 2 和 K 片 A、B 已合入；2A 规格已冻结、正在施工，整个 MVP 没有完成。
 
 | 要回答的问题 | 当前入口 |
 | --- | --- |

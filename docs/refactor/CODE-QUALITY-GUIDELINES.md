@@ -15,12 +15,12 @@ enforcement: 本轮模块文档与后续实现审查的共同要求；自动化�
 ## 1. 适用方式与规则级别
 
 - **已有约束**：已确认的产品行为、状态权威、模块依赖、协议兼容性及当前编译配置继续适用。[R2 评估标准](../../my-coding-platform-docs/agent_platform/dev_docs/decision/01-evaluation-criteria.md) 维度 2 已有文件 >1000／>500、函数 ≥120／≥80 等不达标／警戒口径，继续按其原有范围用于评估，本稿不撤销它们。引用本文件不会改变既有权威关系。
-- **本轮共同要求**：CQ-01～CQ-12 约束实现与审查方式，RG-01～RG-06 约束重构结果；每个模块写清适用目标、改动边界、旧路径和验收要求，实际进展与证据集中到[实施方案](IMPLEMENTATION-PLAN.md)及其指向的验证记录。未逐项引用不免除适用的通用规则；新增模块说明从哪些旧实现承接能力，不编造自身旧副本。未列 RG-06 的模块不作独立性能收益承诺；若实际改动影响性能或提出收益声明，仍须按 CQ-09 验证。尚未配置自动阻断，不能据此宣称现有代码已合格。
+- **本轮共同要求**：CQ-01～CQ-12 约束实现与审查方式，RG-01～RG-06 约束重构结果；每个模块写清适用目标、改动边界、旧路径和验收要求，实际进展与证据以 [STATUS](STATUS.md) 为准，IMPLEMENTATION-PLAN 已标历史（决定 58）。未逐项引用不免除适用的通用规则；新增模块说明从哪些旧实现承接能力，不编造自身旧副本。未列 RG-06 的模块不作独立性能收益承诺；若实际改动影响性能或提出收益声明，仍须按 CQ-09 验证。尚未配置自动阻断，不能据此宣称现有代码已合格。
 - **新指标建议**：行数、嵌套、复杂度、重复率等可以辅助发现风险位置；本轮不依据外部默认值新增或替换全仓门禁。对既有指标的重新校准应保留原评估结果，并同步规则来源与测量口径。
 
 文档审查检查“职责和接口是否可实施”；源码审查检查“实现是否做到”。通过第一种不等于通过第二种。只审查文档时，源码质量与性能结果记为待验证。
 
-**依据顺序**：本轮用户确认的需求与[原作者意见](../history/before-2026-09-22/agent-platform-user-replies-numbered.md)确定意图，[当前意图与决定](intent/INTENT-AND-DECISIONS.md)确定本轮采用结论，[历史 PRODUCT](../history/before-2026-09-22/PRODUCT.md)保留功能承诺来源，[核心数据与操作](CORE-DATA-OPERATIONS.md)和[编排状态机](ORCHESTRATION-STATE-MACHINES.md)明确对象、操作及行为，[ARCHITECTURE](ARCHITECTURE.md)、[模块文档](modules/README.md)和[模块 DAG](module-dag.md)据此确定实现边界，[实施方案](IMPLEMENTATION-PLAN.md)承接迁移与验证。现有契约与当前源码分别用于核对约定和实现事实。外部实践提供方法，不覆盖这些依据。出现冲突须登记并回到对应正文解决，不能在模块质量章节内悄悄改权威归属或新增依赖。
+**依据顺序**：本轮用户确认的需求与[原作者意见](../history/before-2026-09-22/agent-platform-user-replies-numbered.md)确定意图，[当前意图与决定](intent/INTENT-AND-DECISIONS.md)确定本轮采用结论，[历史 PRODUCT](../history/before-2026-09-22/PRODUCT.md)保留功能承诺来源，[核心数据与操作](CORE-DATA-OPERATIONS.md)和[编排状态机](ORCHESTRATION-STATE-MACHINES.md)明确对象、操作及行为，[ARCHITECTURE](ARCHITECTURE.md)、[模块文档](modules/README.md)和[模块 DAG](module-dag.md)据此确定实现边界，迁移与验证的当前状态看 [STATUS](STATUS.md)（IMPLEMENTATION-PLAN 是历史，决定 58）。现有契约与当前源码分别用于核对约定和实现事实。外部实践提供方法，不覆盖这些依据。出现冲突须登记并回到对应正文解决，不能在模块质量章节内悄悄改权威归属或新增依赖。
 
 ## 2. 统一审查规则
 

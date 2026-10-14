@@ -4,7 +4,7 @@
 
 先读 [README](README.md) → [STATUS](refactor/STATUS.md)（当前状态）→ [HANDOFF 顶部](refactor/HANDOFF.md)（决定 1–58）→ [编排设计目录](refactor/design/orchestration-2026-10/README.md)。按任务读对应分片，界面工作读[冻结原型](ui-reference/workbench-2026-10/README.md)和 [UI-WORKBENCH §0](UI-WORKBENCH.md#ui-decisions-2026-10)。
 
-- 整套文档由 lead 长期负责并逐行审阅；Codex 起草后交 lead 核对。每批验收后，lead 更新 STATUS、受影响的能力条目、规格和证据；HANDOFF 的决定和历史保留原义，不为更新进度改写历史。
+- 整套文档由 lead 长期负责并逐行审阅；规格第一稿由 lead 起草，之后照决定改稿、起草文档交给便宜模型（DSH）的子任务，Codex 负责审查、写测试夹具并提修改意见，lead 逐行审（决定 56）。每批验收后，lead 更新 STATUS、受影响的能力条目、规格和证据；HANDOFF 的决定和历史保留原义，不为更新进度改写历史。
 - 用户后续明确决定优先；助手旧建议不是用户决定，旧实现限制不能覆盖产品目标。按任务共同核对 PRODUCT、MVP-BEHAVIOR、编排设计、架构、对应模块和相关用户原话。发现矛盾列出具体出处，已有决定能解决的按决定同步，新的产品取舍交用户定。
 - 施工与审查先核对相关分片规格、[能力索引](refactor/IMPLEMENTED-CAPABILITIES.md)及源码、真实消费者和测试。能力索引用来定位复用，不替代设计或 STATUS；不因单次 Run 接通就宣布完整生命周期或 MVP 完成。
 - 当前目标是 5 模块／8 边，依赖以 [module-target.json](refactor/module-target.json) 为准。旧模块导航页只解释旧方案去向，本仓库没有那些旧实现。

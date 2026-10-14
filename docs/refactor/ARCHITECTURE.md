@@ -7,7 +7,7 @@ basis: 用户要求先确定数据结构与行为，再设计编排状态机，�
 implementation: 在 coding-platform/next 独立目标工程分批实现；原 src 作为只读参考
 ```
 
-本稿是本轮重构的当前目标架构。共同产品依据为[当前PRODUCT](../PRODUCT.md)，修改时同时核对[原始对话](intent/ORIGINAL-DIALOGUE.md)、[2026-09-24 独立目标工程纠偏](intent/2026-09-24-TARGET-PROJECT.md)与相关模块。当前实现目录是 `coding-platform/next`，五模块目录已存在；Workspace、Goal 和材料/存储是已迁入子集，AgentRuntime 已补迁模型工具循环与 Work/Review/Query 来源绑定，正式 Runtime/Workflow 入口仍明确拒绝未实现操作，UI 未迁入。最新独立验收见[干净迁移记录](reviews/next-completed-migration-2026-09-24.md)。
+本稿是本轮重构的当前目标架构。共同产品依据为[当前PRODUCT](../PRODUCT.md)，修改时同时核对[原始对话](intent/ORIGINAL-DIALOGUE.md)、[2026-09-24 独立目标工程纠偏](intent/2026-09-24-TARGET-PROJECT.md)与相关模块。本仓库根就是施工工程，五模块目录已存在；Workspace、Goal 和材料/存储是已迁入子集，AgentRuntime 已补迁模型工具循环与 Work/Review/Query 来源绑定；编排各片、接线包 1/2 和 K 片 A/B 已合入，任务 E 的前端拆分/SSE 已做；旧目录说明（原 `coding-platform/next`）按[根 AGENTS](../../AGENTS.md)第 2 条映射（决定 1、43）。最新独立验收见[干净迁移记录](reviews/next-completed-migration-2026-09-24.md)。
 
 原 `coding-platform/src` 的 R3a/R3b 与 Kernel R4a 验收保留为旧工程历史与可复用证据，不代表新平台已支持连续 Session、范围并行或完整业务。旧源码归属仍由原 `scripts/module-map.mjs` 描述；新工程由 `next/scripts/check-boundaries.mjs` 检查。目标五模块八条允许依赖保持不变，不能把目录或边界检查通过当成功能完成。此前 13 Module／38 边[原稿已保留](archive/2026-09-23-before-core-design/ARCHITECTURE.md)。
 

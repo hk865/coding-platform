@@ -118,7 +118,7 @@ Astra 的当批 prompt 指明相关能力编号/路径和用途；DSH 在第一�
 `python3 tools/dsh-refactor/check.py next-catalog next-graph-agent` 现在合并 next 测试文件并去重，只启动一次 Vitest；`--show` 可先查看实际命令而不运行。保留已有单入口兼容，类型/架构和旧过滤命令仍单独运行；不能把类型检查从最终隔离验收去掉。主审按唯一风险判断测试是否必要，不以数量减少作为成功标准。
 
 - 明确“执行本批”，给任务书绝对路径；不让 dsh 自行重开模块设计。
-- 写明 W/C/N 与 `T=C/next`，默认实现和测试在 T；旧 C/src 与旧 PASS 仅为参考。五目录存在不等于完整目标契约已实现，AgentRuntime 已有工具循环与来源绑定组件，正式 Workflow/Runtime 入口仍 unsupported，UI 未迁。
+- 写明 W/C/N 与 `T=C/next`，默认实现和测试在 T；旧 C/src 与旧 PASS 仅为参考。五目录存在不等于完整目标契约已实现，AgentRuntime 已有工具循环与来源绑定组件，正式 Workflow/Runtime 入口（该句写于早期批次；编排各片、接线包 1/2 和 K 片 A/B 后来已合入，状态以 STATUS 为准）（决定 1、43）。
 - 列出保留行为、禁止顺带实现的后续能力、独立测试文件及只允许变动的测试清单。
 - 不 reset/restore/clean/stash、自动提交或 push；不读凭据/无关会话日志，不安装依赖。
 - 直接使用已有 Node24、Vitest、TypeScript；按批执行，不每次全仓重跑。

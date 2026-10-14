@@ -75,7 +75,7 @@
 - **I-2**（第 5 片合入后）：第 5 片 `configuration/message-duties-adapter.ts` 的过渡映射改为读第 3 片的职责。
 - **I-3**（第 3 片合入后）：第 3 片装配器的 `extensions.anomalies` 接第 1 片的 `listSessionAnomalies`（按目标、未被接手的锚点），提醒段用 `anomaly:<refkey>` 作行键。
 - **I-4**（第 5 片合入后）：第 3 片装配器的 `extensions.goalSettings` 接第 5 片的 `readGoalSettings`（自治级别）。两片的取值相同（`'every_step' | 'after_plan_confirmation'`），原样转交。
-- **I-5**（第 5 片合入后）：第 5 片“请知悉”的 `undelivered_reply` 类别接第 1 片的 `readUndeliveredReplies`（退役线上迟到、没送到的回复；DESIGN §1.4、§4.5，AMB-43），按 `messageRef + responseRef` 去重（第 1 片 §2.5）。接上之前，这一类如实读作 `not_available`。【已定（决定 49）】第 29 项选甲：早已保存的回复后来进入未送达也要新提醒，须保存进入未送达的持久位置；接线包 2 的 U1 已定，接口、状态行及数量先按 U1 改完再冻结。
+- **I-5**（第 5 片合入后）：第 5 片“请知悉”的 `undelivered_reply` 类别接第 1 片的 `readUndeliveredReplies`（退役线上迟到、没送到的回复；DESIGN §1.4、§4.5，AMB-43），按 `messageRef + responseRef` 去重（第 1 片 §2.5）。接上之前，这一类如实读作 `not_available`。【已定（决定 49）】第 29 项选甲：早已保存的回复后来进入未送达也要新提醒，须保存进入未送达的持久位置；接线包 2 的 U1 已定，接口、状态行及数量先按 U1 改完再冻结；接线包 2 已合入 bb924854（决定 50）。
 - **I-6**（第 5 片合入后）：第 3 片装配器的 `extensions.decisions` 接第 5 片的决定队列（这个目标、这个任务上还没答的卡；DESIGN §5.1 第 6 段“关于这个任务的待决事项”）。行的写法在接线任务书里由 lead 写定。
 
 ### 共用文件 `src/contracts/platform-duty.ts`
@@ -161,7 +161,7 @@ STATE-MACHINES-SPEC（新行和 §15 的行→文件→用例对照）、`module
 
 **接线包 1 的写范围比规格 §6 多出来的**（lead 定的，不改用户看到的行为）：测试辅助文件 4 个（规格允许最多 3 个；夹具按 4 组分，一组一个）；`tests/architecture/production-reach-allowlist.json` 删 2 条 `kept-for`（`RoleReadOptions`、`RoleConfigurationPort.readRoleSpec`，现在被 I-1 走到了；lead 决定 W-I1）。共 25 个路径。
 
-**现在的接线状态：** I-1、I-3 已接；I-2、I-4、I-5、I-6 等第 5 片合入。I-4 接自治级别时，要按接线包规格 L3 把它加进 Goal 内容摘要（`contentVersion` 升到 2），I-4、I-6 都在 `views/context-extensions.ts` 的提供方里接。第 5 片合入时要和接线包三方合并（两边都改了 Workflow 的 `workflow.ts`、`contracts.ts`、`ports.ts`，`create-platform.ts`、`context-assembler.ts`、`execution-entry-service.ts`、`context-input.ts`；接线包规格 §0.3）。
+**现在的接线状态：** I-1、I-3 已接；I-2、I-4、I-5、I-6 等第 5 片合入。I-4 接自治级别时不改 Goal 内容摘要 G；接线包 2 规格 §0.3 已撤回接线包 1 L3 的这条预告（决定 49、56）。I-4、I-6 都在 `views/context-extensions.ts` 的提供方里接。第 5 片合入时要和接线包三方合并（两边都改了 Workflow 的 `workflow.ts`、`contracts.ts`、`ports.ts`，`create-platform.ts`、`context-assembler.ts`、`execution-entry-service.ts`、`context-input.ts`；接线包规格 §0.3）。
 
 **第 5 片这一轮的情况：** 先换到合入第 0、1、3 片后的基线（18 个文件 53 处冲突，lead 按规则合并；合并后的 6 处问题 M1–M6 和两处第 5 片自己的回归 R1、R2 由 lead 修，R2 只有全量才跑出来），lead 改了决定 47 点名的 5 个小问题，再把大的分成四个区域（队列历史、决定来源和答复、排序的安全点、设置的重放）各交一个新的 DSH 会话，每个区域之后 Codex 复审、lead 修小的；B 区用了那一次破例多做一轮。合起来全量 266 个文件、5,850 项全过。剩下的 6 条（暂停后自动化确认卡消失、Agent 采纳计划记不下按谁的决定、重试读失败挡住重放、关闭历史没有先后、超量不报“容量不足”、初始化采纳后卡不关闭）和“这些地方都没有测试覆盖”见证据。
 
@@ -188,7 +188,7 @@ STATE-MACHINES-SPEC（新行和 §15 的行→文件→用例对照）、`module
 - 【已定（决定 49）】第 28 项把 5,000 条旧索引窗口的规模问题放进第 2 片：缩窄到相关决定、未解决来源并完整分页，旧执行按时间段读；待答、待落实不按年龄丢弃，局部结果和故障如实显示。
 - 小的几处见证据“留下的、没做的”（例如 `readLookupKeys` 超量仍回“不完整”；LR1 的正好 5,000 项边界、LR4、LR5 没有测试）。
 
-**现在的接线状态：** I-1、I-3 已接（接线包 1）；I-2、I-4、I-5、I-6 现在可以做，照决定 46 写说明书交 DSH。I-4 接自治级别时按接线包规格 L3 把它加进 Goal 内容摘要（`contentVersion` 升到 2）；I-4、I-6 在 `views/context-extensions.ts` 的提供方里接。
+**现在的接线状态：** I-1、I-3 已接（接线包 1）；I-2、I-4、I-5、I-6 现在可以做，照决定 46 写说明书交 DSH。I-4 接自治级别时不改 Goal 内容摘要 G；接线包 2 规格 §0.3 已撤回 L3 的这条预告（决定 49、56）。I-4、I-6 在 `views/context-extensions.ts` 的提供方里接。
 
 **核对的教训（补充）：**
 - **先补测试再修，这次一轮就收住了。** 补的测试把审查找出的问题变成冻结时就失败的用例，DSH 照着改，四个区域都没用跟进说明书；冻结测试过了以后，Codex 复审只剩窄的几处（一处窗口边界、一处抛异常的读、一处超量时的返回码），lead 自己改了。之前两轮“冻结测试全过、问题靠审查找”的情况没有再出现。
