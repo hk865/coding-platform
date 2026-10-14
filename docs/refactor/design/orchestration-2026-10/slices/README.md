@@ -1,6 +1,6 @@
 # 编排分片与接线：规格和任务书
 
-**当前状态（2026-10-13）。** 第 0、1、3、5 片和接线包 1 已合入，接线包 2 在准备。最新状态见 [STATUS](../../../STATUS.md)，决定 1–49 见 [HANDOFF 顶部](../../../HANDOFF.md)，分片依赖见 [设计目录](../README.md)和 [DESIGN §8.2](../DESIGN.md#82-分片表)。新界面在后端之后做，基线是[冻结原型](../../../../ui-reference/workbench-2026-10/README.md)和 [UI-WORKBENCH §0](../../../../UI-WORKBENCH.md#ui-decisions-2026-10)。
+**当前状态（2026-10-14）。** 第 0、1、3、5 片和接线包 1 已合入；接线包 2（bb924854）、K 片 B（9881a2ae）、K 片 A（cfe35550）刚合入，2A 规格已冻结（163ada27），正在施工。最新状态见 [STATUS](../../../STATUS.md)，决定 1–57见 [HANDOFF 顶部](../../../HANDOFF.md)，分片依赖见 [设计目录](../README.md)和 [DESIGN §8.2](../DESIGN.md#82-分片表)。新界面在后端之后做，基线是[冻结原型](../../../../ui-reference/workbench-2026-10/README.md)和 [UI-WORKBENCH §0](../../../../UI-WORKBENCH.md#ui-decisions-2026-10)。
 
 ## 2026-10-13 起怎样做
 
@@ -12,9 +12,11 @@
 
 ## 接下来做什么
 
-1. **接线包 2（I-2、I-4、I-5、I-6）。** [wiring-2-SPEC](wiring-2-SPEC.md)仍是草稿，待 lead 冻结。U1 已由决定 49 第 29 项选甲：旧回复后来变成未送达，也算一次新提醒。L10–L12 定不可用可以恢复；提醒位置取最近进入不可用、保存回复两次提交中较晚的一次，Session 和消息各加一个可选字段。
-2. 用户已确认接线包 2 的 6 个测试入口；原 76 个用例不冻结，lead 改写验收行为表，Codex 写夹具，DSH 按 TDD 逐条做。I-4 **不改 Goal 内容摘要 G**，不再执行旧说明里把自治级别加进去、`contentVersion` 升到 2 的预告（规格 §0.3）。
-3. lead 起草第 2 片和 K 片规格，Codex 审，测试入口先请用户确认；两片只依赖第 1 片，可以和接线包 2 并行。决定 49 后，第 2、4、6、7、K、K2 片原来的用户待定项已收口，规格和接口仍须逐片冻结。
+**已合入（2026-10-14）：** 接线包 2（I-2、I-4、I-5、I-6）bb924854；K 片 B（只读命令 `run_readonly_command`）9881a2ae；K 片 A（关闭悬空 Turn、留在原 Session）cfe35550。验收和限定见[接线包 2 证据](../../../reviews/evidence/orchestration-wiring-2-2026-10-13/README.md)、[K 片 B 验收](../../../reviews/evidence/orchestration-slice-K-2026-10-13/partB/lead-acceptance.md)、[K 片 A 验收](../../../reviews/evidence/orchestration-slice-K-2026-10-13/partA/lead-acceptance.md)。
+
+1. **2A 施工（决定 56 的下一步）。** [slice-2A-SPEC](slice-2A-SPEC.md) 2026-10-14 冻结（163ada27），任务书已由 lead 写好；DSH 先读任务书和规格、报看不懂的地方，再按 TDD 一条一条做。2A 撤掉接线包 2 的两处临时上限（规格 §0.4）。
+2. **接着按 2A → 2B → 2C → 资源上限。** 2B、2C 和资源上限的内容已定，冻结等 lead 的量测（2B §7 的读取开销和回填批量；2C 的每行读预算；资源上限：通知读 `cap_hit` 的地方）；测试入口用户 2026-10-14 已同意（2B 的 BE0–BE5 含 BE1s、BE1r、BE2c；2C 的 LE1–LE7；资源上限的 RE0–RE3）。实现追上之前不开新规格。
+3. **K3 等资源上限片做完再收尾**（决定 56）；B2 已由用户定（决定 57），机制等 K3 恢复时由 lead 写进规格。
 
 ## 这里有什么
 
@@ -25,7 +27,7 @@
 | 3 | [slice-3-SPEC.md](slice-3-SPEC.md) | [第一段](slice-3-book-part1.md)、[第二段](slice-3-book-part2.md) | 无 |
 | 5 | [slice-5-SPEC.md](slice-5-SPEC.md) | [第一段](slice-5-book-part1.md)、[第二段](slice-5-book-part2.md) | 无 |
 | 接线包 1（2026-10-09 补） | [wiring-1-SPEC.md](wiring-1-SPEC.md) | 发给 DSH 的说明书在[证据](../../../reviews/evidence/orchestration-wiring-1-2026-10-09/README.md)的 `books/` | 无（L13 由决定 48 确认） |
-| 接线包 2（准备中） | [wiring-2-SPEC.md](wiring-2-SPEC.md)（草稿，待 lead 冻结） | 按上面的 TDD 做法准备 | 无（U1 已由决定 49 第 29 项定为甲） |
+| 接线包 2（2026-10-14 合入 bb924854） | [wiring-2-SPEC.md](wiring-2-SPEC.md) | 验收和限定见[证据](../../../reviews/evidence/orchestration-wiring-2-2026-10-13/README.md) | 无（U1 已由决定 49 第 29 项定为甲） |
 
 ## 历史：第 0、1、3、5 片的冻结与施工（2026-10-08 至 10-09）
 

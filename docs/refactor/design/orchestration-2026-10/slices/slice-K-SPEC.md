@@ -593,3 +593,18 @@ KE5 的行要真实的 bubblewrap。DSH 的沙箱里没有 bwrap，这些测试�
   - 探测和金丝雀用实际的沙箱选项，并且总要实际做一次 `--ro-bind-fd` 和 `--remount-ro`。
   - cwd 按沙箱实际用的路径校验；不是目录的在启动前拒绝。
   - 工具说明写明：子进程超时保留已捕获的输出，取消或分派器的超时会替换它；`.git` 可读不可写。
+
+### 施工中的限定（K 片 A、B 合入时，lead 2026-10-14）
+
+A、B 施工中定下、规格原文没写到的读法和限定；证据文件是各部分的 `lead-acceptance.md`。
+
+- **D7（A）：** 接续说明读上一轮的身份读不出时回“重试”或“不可用”，从不退回更早的事实拼一份降级的说明；读不出就一直等，归档或人的认定把它了结。
+- **D8（A）：** 上一个执行已经有结束位置时，不再调 `readTurnBounds`。
+- **D11（A）：** 只有同一 Session 里的接续，才按 Kernel 身份把读取窗口扩到被中断那一轮；跨 Session 的接续读执行记下的窗口。
+- **D12（A）：** 事实来源从最近的祖先往外找，选第一个进入过 Kernel 的执行（没存位置、但经认定的也算进入过），不跳过近的去找远的。
+- **D15（A）：** 来历为 `null` 的那一种排除，今天的建法造不出（建 Session 时会把来历规范化，明写 `null` 直接拒绝，`session-directory.ts:789`），所以没有测试，只作规格限定。
+- **A 的另外几处：** Session 不见了算“读不出”；接续的 Session 用不了算暂时性的故障；保留 `lastToolGroup`。
+- **D-ONECHECK（B）：** 一次执行只判断一次 `.git` 和受保护路径，挂载和 IPC 扫描都用这一个快照；类型对不上的绑定都会失败，所以是失败即关闭。
+- **Codex 第四次审查第 1 条（B，lead 判定不返工）：** 快照时 `.git` 是目录、挂载前被别的写者换成普通文件时，bwrap 照路径把这个文件绑上；能读到的只是那个写者自己写进 `.git` 位置的内容，没有 Host 禁读的路径露出。
+
+两部分的验收结论、写进 STATUS“缺口”的已知限制见 [partA/lead-acceptance.md](../../../reviews/evidence/orchestration-slice-K-2026-10-13/partA/lead-acceptance.md) 和 [partB/lead-acceptance.md](../../../reviews/evidence/orchestration-slice-K-2026-10-13/partB/lead-acceptance.md)。
