@@ -35,7 +35,8 @@
  * 11. A7-G3 (G-03 as reachable): a fan-out pause whose outcome became unknown at the restart: the
  *     Goal resume submits no resume and continues nothing.
  * 12. A7-G4 (moved): fan-out pause → restart → 已暂停，可继续 → 继续 busy while the Goal is paused →
- *     the Goal resume continues the Task once (GOAL-29) in a new Session with a brief.
+ *     the Goal resume continues the Task once (GOAL-29) with a brief, in the same Session once the Workflow has
+ *     closed its dangling Kernel Turn (K slice).
  * 13. A7-G4b (G-05) and its G-01 contrast: a fan-out pause still queued at a crash ends the Run
  *     paused-interrupted; a fan-out pause never submitted ends it a plain interruption.
  * 14. A7-G5: a person's own pause stays through the Goal pause and resume; the Host stops while the
@@ -1123,8 +1124,9 @@ it('A7-G3 (G-03 as reachable, GOAL-15): a fan-out pause still queued when the Ho
   expect(scenario.abandonedCalls()).toEqual([]);
 }, 180_000);
 
-// A7-G4. Moved from tests/app/A2-host-restart.test.ts:162 at 05125db (assertions unchanged; invariant checks added).
-it('G-04 and GOAL-29: a Run the Goal fan-out paused ends paused-interrupted at the restart; resuming the Goal continues it under the fan-out actor in a new Session', async () => {
+// A7-G4. Moved from tests/app/A2-host-restart.test.ts:162 at 05125db (assertions unchanged; invariant checks added);
+// the K slice turned its new Session into the same Session after the closure of the dangling Kernel Turn.
+it('G-04 and GOAL-29: a Run the Goal fan-out paused ends paused-interrupted at the restart; resuming the Goal continues it under the fan-out actor in the same Session once the Workflow closes its dangling Kernel Turn', async () => {
   const root = await tempDir('a2-goal29-ws-');
   const database = await tempDir('a2-goal29-db-');
   const publicDir = await publicDirectory();
@@ -1172,16 +1174,25 @@ it('G-04 and GOAL-29: a Run the Goal fan-out paused ends paused-interrupted at t
       interruption: 'paused', trigger: { kind: 'goal_resume' } }]);
     expect((await assertInvariantsAt(inv, 'A7-G4 replayed resume')).requeues, 'exactly one TaskRequeue').toHaveLength(1);
 
+    // K (KA3, L7): the goal_resume TaskRequeue authorizes the closure (L4 item 2), so the Workflow closes the old
+    // Session's dangling Kernel Turn (`close_open_turn`; maintenance never closes this paused line) and claims there.
     const done = (await driveChecked(second, inv, selectWork('a2-goal29-continue', true))).steps;
     expect(done.at(-1), JSON.stringify(done.map(step => [step.state, step.reason, step.receipt?.kind]))).toMatchObject({ state: 'completed' });
+    const kinds = done.map(step => step.receipt?.kind);
+    expect(kinds).toContain('close_open_turn');
+    expect(kinds).not.toContain('create_session');
+    expect(done.find(step => step.receipt?.kind === 'close_open_turn')?.receipt)
+      .toMatchObject({ result: { status: 'closed', health: 'available' } });
     const finished = await workRow(second);
     expect(finished).toMatchObject({ effectivePhase: 'satisfied' });
     if (finished.execution === null || finished.execution.runId === runRef.runId) throw new Error('the continued Run must be selected');
     const continuedRun = await readExecution(second, finished.execution);
     expect(continuedRun.run).toMatchObject({ requeueRef: row['requeueRef'], outcome: 'completed' });
-    expect(continuedRun.session.ref.sessionId).not.toBe(oldSession.ref.sessionId);
+    expect(continuedRun.session.ref.sessionId).toBe(oldSession.ref.sessionId);
     expect(await post(second, 'executions/brief', plain(AG2B_SCOPE, { runRef: finished.execution }))).toMatchObject({ status: 'ready',
-      value: { brief: { mode: 'resume_after_interruption', previous: { runRef }, trigger: { actorClass: 'system', goalResume: true } } } });
+      value: { brief: { mode: 'resume_after_interruption', previous: { runRef }, trigger: { actorClass: 'system', goalResume: true },
+        session: { continuity: 'same_session_without_previous_turn', sessionRef: { sessionId: oldSession.ref.sessionId },
+          seededFrom: null, boundaryPosition: null } } } });
     expect(second.scripted.calls()).toBe(2);
     await assertInvariantsAt(inv, 'A7-G4 completed');
   } finally {
@@ -1227,29 +1238,31 @@ it('A7-G4b (G-05): a fan-out pause still queued when the Host crashed ends the R
   expect(resumed.fanOut).toMatchObject({ control: 'resume', runs: [],
     continuations: [{ taskId: AG2B_WORK_TASK_ID, afterRunRef: runRef, outcome: 'requeued' }] });
   await assertInvariants(scenario, 'G-05: GOAL-29', ownerStep('task_requeued', GOAL_FAN_OUT_ACTOR, scenario.automationPolicy(), 'G-05: GOAL-29'));
-  // The history source is the interrupted Run's own Session (`prepare` seeds its completed history, if any).
+  // The history source is the interrupted Run's own Session, where the continuation also runs (K L7).
   const oldSession = (await readExecution(scenario.host, runRef)).session.ref;
   expect(scenario.lastWorld?.requeues).toMatchObject([{ afterRunRef: runRef, requestedBy: GOAL_FAN_OUT_ACTOR,
     failureClass: 'interrupted', interruption: 'paused', stopRequester: 'goal_fan_out',
     trigger: { kind: 'goal_resume', resumedEpoch: resumed.goal.desiredStateRevision, pausedEpoch },
     historySource: { sessionRef: { projectId: oldSession.projectId, sessionId: oldSession.sessionId } } }]);
 
-  // GOAL-29, §12.10 A7-G4: the Workflow claims it through `create_session{requeue}` in a new Session with the
-  // brief; the Goal completes.
+  // GOAL-29, §12.10 A7-G4, K KA3: the goal_resume TaskRequeue authorizes the closure (L4 item 2), so the Workflow
+  // closes the old Session's dangling Kernel Turn (`close_open_turn`) and claims the Task there with the brief (L7);
+  // the Goal completes.
   const done = await scenario.advance(scenario.select('a7-g4b-continue'));
   expect(done.state).toBe('completed');
-  expect(done.receipts.map(receipt => receipt.kind)).toEqual(expect.arrayContaining(['create_session', 'claim_task']));
+  expect(done.receipts.map(receipt => receipt.kind)).toEqual(expect.arrayContaining(['close_open_turn', 'claim_task']));
+  expect(done.receipts.map(receipt => receipt.kind)).not.toContain('create_session');
   const continuedRef = await selectedRun(scenario);
   expect(continuedRef.runId).not.toBe(runRef.runId);
   const continued = await readExecution(scenario.host, continuedRef);
-  expect(continued.session.ref.sessionId).not.toBe(oldSession.sessionId);
-  // The interrupted Turn was the old Session's first, so it has no completed history: `prepare` resolves the
-  // historySource to the empty baseline and the brief says the new Session continues without seeded history
-  // (`other_session_seeded` needs a completed Turn before, as §12.10 A8-3l/3n/3r set up; NOTES, reading "seeded history").
+  expect(continued.session.ref.sessionId).toBe(oldSession.sessionId);
+  // The interrupted Turn has no Kernel end position (RUN-24), so the new Run continues the same Session without a
+  // previous Turn in its history and nothing is seeded (K L9).
   expect(await briefOf(scenario.host, continuedRef)).toMatchObject({ brief: { mode: 'resume_after_interruption',
     previous: { runRef, interruption: { kind: 'paused', kernelPaused: false, pausedBy: 'goal_fan_out' } },
     trigger: { actorClass: 'system', goalResume: true },
-    session: { continuity: 'other_session', sessionRef: { sessionId: continued.session.ref.sessionId }, seededFrom: null } } });
+    session: { continuity: 'same_session_without_previous_turn', sessionRef: { sessionId: continued.session.ref.sessionId },
+      seededFrom: null } } });
   expect(scenario.lastWorld?.requeues).toHaveLength(1);
   expect(scenario.modelCalls()).toBe(3);
   expect(scenario.abandonedCalls()).toEqual([]);
@@ -1293,7 +1306,8 @@ it('A7-G4b contrast (G-01 at a crash): a fan-out pause never submitted before th
   expect(resumed.fanOut).toMatchObject({ control: 'resume', runs: [], continuations: [] });
   await assertInvariants(scenario, 'G-01 contrast: the Goal is resumed');
   expect(scenario.lastWorld?.requeues).toEqual([]);
-  // C2: the automation requeues the interruption, uncounted, and the Task continues in a new Session.
+  // C2: the automation requeues the interruption, uncounted, and the Task continues in the same Session (K KA1: the
+  // start-up maintenance closed its dangling Kernel Turn).
   const done = await scenario.advance(scenario.select('a7-g4b-contrast-continue'));
   expect(done.state).toBe('completed');
   expect(done.receipts.map(receipt => receipt.kind)).toContain('requeue_task');
@@ -1362,7 +1376,8 @@ it('A7-G5 (§12.10 order): a person\'s own pause stays through the Goal pause an
   expect(await scenario.advance(scenario.select('a7-g5-wait', AG2B_WORK_TASK_ID))).toMatchObject({ state: 'waiting' });
   expect(scenario.counts()).toEqual(waiting);
 
-  // The person presses 继续 (TASK-27): one TaskRequeue by the person; the Task completes in a new Session.
+  // The person presses 继续 (TASK-27): one TaskRequeue by the person; the Workflow closes the dangling Kernel Turn
+  // (K L7) and the Task completes in the same Session.
   const continued = await operatorRequeue(scenario.host, runRef, 'a7-g5-continue', 'continue after the restart');
   expect(continued).toMatchObject({ status: 'committed', value: { kind: 'requeued', requeue: { requestedBy: SCENARIO_OPERATOR,
     failureClass: 'interrupted', interruption: 'paused', stopIntentRef: pause.intent.ref, stopRequester: 'human' } } });

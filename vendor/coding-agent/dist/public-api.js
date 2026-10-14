@@ -47,7 +47,7 @@ export { createShellToolDefinition, ShellToolHandler } from "./tools/builtin/she
 export { ToolDispatcher } from "./tools/dispatcher/tool-dispatcher.js";
 export { RegistryToolBatchPolicy, ToolRegistry, ToolRegistrySnapshot, } from "./tools/registry/tool-registry.js";
 export { InMemoryStores } from "./storage/adapters/in_memory/in-memory-stores.js";
-export { SqliteStores } from "./storage/adapters/sqlite/sqlite-stores.js";
+export { closeOpenTurn, readTurnBounds, SqliteStores, } from "./storage/adapters/sqlite/sqlite-stores.js";
 export { SessionEventSink } from "./storage/session_event_sink/session-event-sink.js";
 export * from "./m5-public-api.js";
 /** Tool schemas share the kernel registry schema version. */

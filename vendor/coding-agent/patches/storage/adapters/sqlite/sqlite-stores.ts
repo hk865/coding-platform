@@ -44,6 +44,8 @@ import {
   isActiveSessionState,
   replaySessionRecords,
 } from "../../../core/ports/session_store/session-projection.js";
+import { readAllSessionRecords } from "../../../core/ports/session_store/session-history.js";
+import { isTerminalRunStatus } from "../../../core/runtime/state/run-state.js";
 
 type SessionProjection = ReturnType<typeof replaySessionRecords>;
 
@@ -711,5 +713,225 @@ export class SqliteStores implements SessionStorePort, CheckpointStorePort {
 
   #assertOpen(): void {
     if (this.#closed) throw new StoreError("closed", "Storage 已关闭");
+  }
+}
+
+export interface CloseOpenTurnInput {
+  readonly sessionId: string;
+  readonly kernelRunId: string;
+  readonly expectedRevision: number;
+  readonly at: string;
+}
+
+export type CloseOpenTurnResult =
+  | { readonly status: "closed"; readonly revision: number; readonly position: number }
+  | { readonly status: "already_closed"; readonly revision: number; readonly position: number }
+  | { readonly status: "already_terminal"; readonly terminalStatus: string }
+  | { readonly status: "not_found" }
+  | { readonly status: "mismatch"; readonly activeRunId: string | null }
+  | { readonly status: "conflict"; readonly currentRevision: number }
+  | { readonly status: "unreadable"; readonly reason: string };
+
+export type TurnBounds =
+  | {
+      readonly status: "found";
+      readonly startPosition: number;
+      readonly endPosition: number | null;
+      readonly terminalStatus: string | null;
+    }
+  | { readonly status: "not_found" }
+  | { readonly status: "unreadable"; readonly reason: string };
+
+function describeStoreFailure(error: unknown): string {
+  if (error instanceof StoreError) return `${error.code}: ${error.message}`;
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** The isolated record range of one Turn identity: its turn.started through the record before the next turn.started. */
+function turnRecordRange(
+  records: readonly SessionRecord[],
+  kernelRunId: string,
+): SessionRecord[] | null {
+  const start = records.findIndex(
+    (record) => record.recordType === "turn.started" && record.payload.run.runId === kernelRunId,
+  );
+  if (start < 0) return null;
+  const next = records.findIndex(
+    (record, index) => index > start && record.recordType === "turn.started",
+  );
+  return next < 0 ? records.slice(start) : records.slice(start, next);
+}
+
+function closureIdentity(sessionId: string, kernelRunId: string): string {
+  // Deterministic per (sessionId, kernelRunId, platform_closed); the replay
+  // guarantee is row 3 of the close table, this only blocks a duplicate record.
+  return `platform-closed:${sessionId}:${kernelRunId}`;
+}
+
+export async function readTurnBounds(
+  store: SqliteStores,
+  input: { readonly sessionId: string; readonly kernelRunId: string },
+): Promise<TurnBounds> {
+  const signal = new AbortController().signal;
+  try {
+    const records = await readAllSessionRecords(store, input.sessionId, signal);
+    const slice = turnRecordRange(records, input.kernelRunId);
+    if (slice === null) return { status: "not_found" };
+    const state = replaySessionRecords(slice);
+    if (state === null) return { status: "not_found" };
+    const startPosition = slice[0]!.position;
+    if (!isTerminalRunStatus(state.status)) {
+      return { status: "found", startPosition, endPosition: null, terminalStatus: null };
+    }
+    return {
+      status: "found",
+      startPosition,
+      endPosition: slice.at(-1)!.position,
+      terminalStatus: state.status,
+    };
+  } catch (error) {
+    return { status: "unreadable", reason: describeStoreFailure(error) };
+  }
+}
+
+export async function closeOpenTurn(
+  store: SqliteStores,
+  input: CloseOpenTurnInput,
+): Promise<CloseOpenTurnResult> {
+  const signal = new AbortController().signal;
+  let header: SessionHeader;
+  try {
+    header = await store.get(input.sessionId, { signal });
+  } catch (error) {
+    return { status: "unreadable", reason: describeStoreFailure(error) };
+  }
+
+  // L2 rows 2-5 are decided by the public read-only identity lookup, so that
+  // `readTurnBounds` is the single production path for the Turn's bounds and
+  // terminal status. Only row 7 replays the slice again to build the closure.
+  const bounds = await readTurnBounds(store, {
+    sessionId: input.sessionId,
+    kernelRunId: input.kernelRunId,
+  });
+  if (bounds.status === "unreadable") return bounds;
+  if (bounds.status === "not_found") return { status: "not_found" };
+  if (bounds.terminalStatus === "interrupted") {
+    // Row 3: read the header AFTER the bounds. A closure that lands between the
+    // two reads must not pair the closed position with an older revision.
+    let current: SessionHeader;
+    try {
+      current = await store.get(input.sessionId, { signal });
+    } catch (error) {
+      return { status: "unreadable", reason: describeStoreFailure(error) };
+    }
+    return {
+      status: "already_closed",
+      revision: current.revision,
+      position: bounds.endPosition!,
+    };
+  }
+  if (bounds.terminalStatus !== null) {
+    return { status: "already_terminal", terminalStatus: bounds.terminalStatus };
+  }
+
+  if (header.activeRunId !== input.kernelRunId) {
+    return { status: "mismatch", activeRunId: header.activeRunId };
+  }
+  if (header.revision !== input.expectedRevision) {
+    return { status: "conflict", currentRevision: header.revision };
+  }
+
+  let state: ReturnType<typeof replaySessionRecords>;
+  try {
+    const records = await readAllSessionRecords(store, input.sessionId, signal);
+    const slice = turnRecordRange(records, input.kernelRunId);
+    if (slice === null) return { status: "not_found" };
+    state = replaySessionRecords(slice);
+  } catch (error) {
+    return { status: "unreadable", reason: describeStoreFailure(error) };
+  }
+  if (state === null) return { status: "not_found" };
+
+  const identity = closureIdentity(input.sessionId, input.kernelRunId);
+  const event = {
+    type: "run.interrupted" as const,
+    meta: {
+      schemaVersion: 1 as const,
+      eventId: identity,
+      runId: input.kernelRunId,
+      turnId: state.turn.turnId,
+      sequence: state.lastEventSequence + 1,
+      occurredAt: input.at,
+      elapsedMs: state.elapsedMs,
+    },
+    payload: { reason: "platform_closed" as const, requestedBy: "app" as const },
+  };
+  try {
+    const appended = await store.append(
+      input.sessionId,
+      input.expectedRevision,
+      [
+        {
+          recordId: `agent-event:${identity}`,
+          recordType: "agent.event",
+          schemaVersion: 1,
+          recordedAt: input.at,
+          payload: { event },
+        },
+      ],
+      { signal },
+    );
+    return {
+      status: "closed",
+      revision: appended.revision,
+      position: appended.positions[0]!,
+    };
+  } catch (error) {
+    // A concurrent caller can commit the same deterministic closure record, or
+    // move the revision, between this call's reads and its append. Reconcile
+    // against fresh Turn facts before deciding; a collision is never `unreadable`.
+    if (
+      error instanceof StoreError &&
+      (error.code === "conflict" || error.code === "idempotency_conflict")
+    ) {
+      return reconcileClosureCollision(store, input, signal, header.revision);
+    }
+    return { status: "unreadable", reason: describeStoreFailure(error) };
+  }
+}
+
+/**
+ * Re-read the Turn identity first and the header second, so a closure that lands
+ * between the reads cannot pair a closed position with a stale revision. If the
+ * same closure is now committed, row 3 wins; otherwise this is a retryable
+ * conflict. The refresh itself may fail; a collision never becomes `unreadable`.
+ */
+async function reconcileClosureCollision(
+  store: SqliteStores,
+  input: CloseOpenTurnInput,
+  signal: AbortSignal,
+  fallbackRevision: number,
+): Promise<CloseOpenTurnResult> {
+  const bounds = await readTurnBounds(store, {
+    sessionId: input.sessionId,
+    kernelRunId: input.kernelRunId,
+  });
+  if (bounds.status === "found" && bounds.terminalStatus === "interrupted") {
+    try {
+      const current = await store.get(input.sessionId, { signal });
+      return {
+        status: "already_closed",
+        revision: current.revision,
+        position: bounds.endPosition!,
+      };
+    } catch {
+      // Fall through to a retryable conflict; the closure still needs a retry.
+    }
+  }
+  try {
+    const current = await store.get(input.sessionId, { signal });
+    return { status: "conflict", currentRevision: current.revision };
+  } catch {
+    return { status: "conflict", currentRevision: fallbackRevision };
   }
 }

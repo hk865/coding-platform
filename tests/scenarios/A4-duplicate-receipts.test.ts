@@ -27,9 +27,10 @@
  *    Session, each re-sent, reach the Turn once (once in the model request, once in
  *    the Kernel); the copies after the Run entered and after the crashes replay
  *    them. The next Host's W-11 reconcile fails inside its commit and leaves
- *    nothing; the Host after it completes the reconcile once; the one after that
- *    writes nothing. The `start` whose answer the first crash lost starts no
- *    Kernel Turn and calls no model.
+ *    nothing; the Host after it completes the reconcile once and its start-up
+ *    maintenance closes the Run's open Kernel Turn (one Kernel record; slice K
+ *    KA1); the one after that writes nothing. The `start` whose answer the first
+ *    crash lost starts no Kernel Turn and calls no model.
  * 5. 发信 by an Agent: the running Run's `send_session_message` write (the owner call
  *    its tool makes, one requestId per tool call) fails inside its commit and leaves
  *    nothing; the same request commits once and every copy replays it.
@@ -397,14 +398,15 @@ it('A4 (控制、发信、核对): a steer and an operator message re-sent befor
   expect((await execution(h, runRef)).run).toMatchObject({ status: 'running' });
   expect(await h.post('controls/submit', steerBody), 'the steer replays on the next Host').toEqual({ ...steer, replayed: true });
   expect(await h.post('messages/send', messageBody), 'so does the message').toEqual({ ...message, replayed: true });
-  // That Host crashes too; the third Host completes the reconcile once, without a model call or a Kernel start.
+  // That Host crashes too; the third Host completes the reconcile once, without a model call or a Kernel start. Its
+  // start-up maintenance then closes the ended Run's open Kernel Turn (RUN-19; slice K KA1): one appended Kernel record.
   const completed = await h.restart({ crash: true });
   expect(completed.report).toMatchObject({ runs: [{ ref: JSON.stringify(runRef), row: 'W-11', status: 'reconciled', reason: 'interrupted_clean' }],
     checks: [], problems: [] });
   expect(eventCount(h, 'ExecutionRunReconciled')).toBe(1);
   const afterReconcile = h.counts();
   expect(afterReconcile).toMatchObject({ modelCalls: atCrash.modelCalls, kernelTurnsStarted: atCrash.kernelTurnsStarted,
-    kernelRecords: atCrash.kernelRecords, checksBegun: 0 });
+    kernelRecords: atCrash.kernelRecords + 1, checksBegun: 0 });
   // 核对 repeated: that Host crashes right after its reconcile; the fourth Host finds nothing left and writes nothing.
   const repeated = await h.restart({ crash: true });
   expect(repeated.report).toMatchObject({ runs: [], queries: [], checks: [], controls: [], problems: [] });

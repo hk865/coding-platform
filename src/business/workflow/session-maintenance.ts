@@ -20,7 +20,7 @@ import type { GraphWrite } from '../../core/work-graph/model/session-contracts.j
 import { executorArchiveDue } from '../../core/work-graph/state/session-availability.js';
 import { sessionResponsibilityChangedEventFromEvent } from '../../core/work-graph/sessions/lifecycle-record-codecs.js';
 import type { WorkflowDependencies } from './ports.js';
-import type { WorkflowCloseEventReader } from './contracts.js';
+import type { WorkflowCalls, WorkflowCloseEventReader } from './contracts.js';
 import type { ArchiveLineResultV1, SessionArchivePort } from './session-archive.js';
 
 export type SessionMaintenanceInput = { workspace: WorkspaceScope; after: string | null };
@@ -71,6 +71,13 @@ export type SessionMaintenanceDependencies = Pick<WorkflowDependencies,
     plans?: WorkflowDependencies['plans'];
     claims?: WorkflowDependencies['claims'];
     executions?: WorkflowDependencies['executions'];
+    /**
+     * K slice L7/KA1: the Runtime whose optional `closeOpenTurn` maintenance
+     * calls to close a retired `kernel_turn_open` Work line's dangling Turn.
+     * Optional like the other narrow seams: an old double without it keeps
+     * today's logic (the Runtime's port member is absent, M1).
+     */
+    runtime?: WorkflowDependencies['runtime'];
     archive?: SessionArchivePort;
     /**
      * §4.2: the trusted close-event reader that derives an executor's
@@ -109,6 +116,15 @@ function contextForActor(ctx: CoreCallContext, actor: { kind: 'human' | 'system'
 }
 function openResponsibleLinks(record: SessionRecord, links: readonly SessionWorkLink[]): SessionWorkLink[] {
   return links.filter((link) => link.ref.relation === 'responsible' && link.until === null);
+}
+/**
+ * K slice L7/M1: the Runtime's optional dangling-Turn closure, read from the
+ * port object each time. Absent means maintenance keeps today's logic (no
+ * closure was installed on the Runtime port).
+ */
+function turnClosureOf(runtime: WorkflowDependencies['runtime'] | undefined): WorkflowCalls['close_open_turn'] | undefined {
+  if (runtime === undefined) return undefined;
+  return runtime.closeOpenTurn;
 }
 /**
  * §3.4 S:618 / §3.2 refusal table: the current caller is validated before any
@@ -388,6 +404,69 @@ export function createSessionMaintenanceService(
     }
   }
 
+  /**
+   * K L7 condition 3 (decision 51): the latest Work Run's reconciliation
+   * observation proves the dangling Turn may be closed — RUN-19/RUN-23
+   * (`interrupted_clean` with no pause fence) or a RUN-22 a person attested
+   * (`human_attested`). Every other ending (a human pause fence) and a Query
+   * line (no Work Run) are not closable here.
+   */
+  async function closableWorkRun(ctx: CoreCallContext, latestWork: SessionFactsV1['latestWork']): Promise<boolean> {
+    if (latestWork === null || deps.executions === undefined) return false;
+    try {
+      const read = await deps.executions.readExecution(ctx, latestWork.runRef);
+      if (read.status !== 'ready') return false;
+      const observation = read.value.run.reconciliation?.observation;
+      if (observation === undefined) return false;
+      if (observation.kind === 'human_attested') return true;
+      return observation.kind === 'interrupted_clean' && (observation.pausedIntentRef ?? null) === null;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * K L7 maintenance insertion point (KA1): try to close a retired
+   * `kernel_turn_open` Work line's dangling Turn under the four L7 conditions.
+   * `true` means this line is skipped this round (success, a retryable result,
+   * or a `refused` reason that only means the platform facts changed); `false`
+   * means today's logic runs unchanged (the closure is not installed, a
+   * precondition is unmet, or the closure failed definitely).
+   */
+  async function tryCloseDanglingTurn(
+    ctx: CoreCallContext, sessionRef: SessionRef, facts: SessionFactsV1, record: SessionRecord,
+  ): Promise<boolean> {
+    const runtime = deps.runtime;
+    const close = turnClosureOf(runtime);
+    if (runtime === undefined || close === undefined) return false; // M1: no closure installed
+    if (facts.latestWork === null) return false; // condition 2: the latest Work execution is a Run
+    if (facts.legacyPending || (record.provenance ?? null) === null) return false; // condition 4
+    if (!(await closableWorkRun(ctx, facts.latestWork))) return false; // condition 3
+    let result;
+    try {
+      result = await close.call(runtime, ctx, { sessionRef, afterRunRef: facts.latestWork.runRef, requeueRef: null });
+    } catch {
+      return false; // an unexpected fault is not a closure; today's logic stands
+    }
+    switch (result.status) {
+      case 'closed':
+      case 'already_closed':
+      case 'conflict':
+      case 'transient':
+        return true; // success or can-retry: leave the line alone this round
+      case 'refused':
+        // `lease`, `archived`, `archive_requested`, `occupied`, `handed_over`
+        // and `health` mean the platform facts changed: draw no conclusion and
+        // let the next round re-read them. Only the definite failures fall
+        // through to today's logic.
+        return result.reason !== 'not_closable_run' && result.reason !== 'continuation_not_authorized';
+      case 'unsupported':
+      case 'unreadable':
+      case 'mismatch':
+        return false; // definite failure: today's logic
+    }
+  }
+
   async function dutyOf(ctx: CoreCallContext, record: SessionRecord): Promise<PlatformDutyV1 | 'unknown'> {
     if (deps.sessionDuty === undefined) return 'unknown';
     // L6: hand the already-checked caller ctx to the resolver so a `role_spec`
@@ -516,6 +595,14 @@ export function createSessionMaintenanceService(
               mode = 'handoff_complete';
               reason = 'the retired line was handed over to its continuation';
             } else {
+              // K (L7 insertion point, KA1): before today's `kernel_turn_open`
+              // exemption judgment, a retired Work line whose dangling Turn the
+              // platform may close (RUN-19/RUN-23, or a person-attested RUN-22,
+              // decision 51) is closed first. Success or a retryable result
+              // skips the line this round; a definite failure or an unmet
+              // precondition falls through to today's rules below, unchanged.
+              if (record.healthConclusion === 'kernel_turn_open'
+                && await tryCloseDanglingTurn(automation, sessionRef, facts, record)) continue;
               // A8 Q-01/H-04 (LA-1, SES-07) + §4.2 S:807: a `kernel_turn_open`
               // line is left for the explicit route when the platform has nothing
               // to dispose (no open responsibility: the retired Query Session of

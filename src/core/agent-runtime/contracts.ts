@@ -2,7 +2,7 @@
  * reported `supported` value is never fabricated by this N0 skeleton. */
 export type RuntimeCapability = { supported: boolean; reason: string };
 export type RuntimeCapabilities = {
-  adapterId: string; kernelSessionApiVersion: 1 | 2;
+  adapterId: string; kernelSessionApiVersion: 1 | 2 | 3;
   createSession: RuntimeCapability; readHistory: RuntimeCapability;
   continueHistory: RuntimeCapability; recoverRun: RuntimeCapability;
   safePointPause: RuntimeCapability; cancel: RuntimeCapability;

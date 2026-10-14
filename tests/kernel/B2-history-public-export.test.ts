@@ -236,13 +236,15 @@ describe("B2 transcript exchange integrity public export", () => {
     expect(storeError.message).toContain(reason);
   });
 
-  it("retains every frozen runtime export and adds no name other than the new seam", () => {
+  it("retains every frozen runtime export and adds no name other than the new seams (B2 transcript checks; slice K closeOpenTurn, readTurnBounds)", () => {
     const namespace = publicApi as unknown as Record<string, unknown>;
     const actual = Object.keys(namespace);
     const baseline = FROZEN_PUBLIC_RUNTIME_EXPORTS as readonly string[];
     expect(baseline.filter((name) => !actual.includes(name))).toEqual([]);
+    // Slice K L2 adds the Turn closure seam: closeOpenTurn and readTurnBounds (its types are erased).
     const unexpected = actual.filter(
-      (name) => !baseline.includes(name) && name !== "assertTranscriptExchangeIntegrity" && name !== "projectTerminalTranscript",
+      (name) => !baseline.includes(name) && name !== "assertTranscriptExchangeIntegrity" && name !== "projectTerminalTranscript"
+        && name !== "closeOpenTurn" && name !== "readTurnBounds",
     );
     expect(unexpected).toEqual([]);
     for (const name of baseline) {

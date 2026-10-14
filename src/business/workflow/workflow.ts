@@ -30,7 +30,7 @@ import {
   beginRefusalIsPermanent, displayRoundStatus, reverifyExemptionOfFacts, successorAutoCount,
 } from '../../core/work-graph/state/verification-machine.js';
 import type { ReverifyRoundInput } from '../../core/work-graph/model/evidence-contracts.js';
-import type { ConsultationInput, ConsultationResult, InitialPlanningGoalInput, InitialPlanningGoalInputResult, N0GoalInput, ResolveDecisionInputV1, ResolveDecisionReadV1, WorkflowAdvanceInput, WorkflowAdvanceResult, WorkflowOperation, WorkflowSessionRequeue, WorkflowStepReceipt } from './contracts.js';
+import type { ConsultationInput, ConsultationResult, InitialPlanningGoalInput, InitialPlanningGoalInputResult, N0GoalInput, ResolveDecisionInputV1, ResolveDecisionReadV1, WorkflowAdvanceInput, WorkflowAdvanceResult, WorkflowCalls, WorkflowOperation, WorkflowSessionRequeue, WorkflowStepReceipt } from './contracts.js';
 import type { WorkflowDependencies, WorkflowHostConfiguration, WorkflowPort } from './ports.js';
 import { createConsultationConsumer } from './consultation.js';
 import { orderTasksByDependency } from './task-order.js';
@@ -90,6 +90,16 @@ function sessionAggregateRef(projectId: string, sessionId: string): SessionRef &
   return { aggregateType: 'Session', projectId, sessionId };
 }
 
+/**
+ * K slice (L7, M1/M2): the Runtime's optional dangling-Turn closure, read from
+ * the port object each time. Absent means the Runtime never installed the
+ * operation (`turnClosure` missing), so `claimRequeued` takes today's fallback
+ * without a `close_open_turn` step.
+ */
+function turnClosureOf(runtime: WorkflowDependencies['runtime']): WorkflowCalls['close_open_turn'] | undefined {
+  return runtime.closeOpenTurn;
+}
+
 /** Deterministic `wf:` identity: version + flow + real actor + Goal + step kind
  * + the complete request without its not-yet-generated requestId. */
 function requestIdFor(base: Base, kind: WorkflowOperation['kind'] | 'adopt_initial_plan', requestWithoutRequestId: unknown): string {
@@ -144,6 +154,19 @@ function createSessionStep(
   const requestId = requestIdFor(base, 'create_session', requestWithoutRequestId);
   return { kind: 'create_session', request: { ...value, meta: { requestId, expected } }, taskRef, planRef,
     ...(requeue === undefined ? {} : { requeue }) };
+}
+/**
+ * K slice (L7, KA2/KA3): the one close step a `kernel_turn_open` Work line gets
+ * before its requeue claim. The request is exactly the Runtime's
+ * `{ sessionRef, afterRunRef, requeueRef }`; the continuation context the
+ * definite-failure fallback needs (`create_session{requeue}` + E15) is carried
+ * like `create_session`'s own.
+ */
+function closeOpenTurnStep(
+  sessionRef: SessionRef, afterRunRef: RunRef, requeueRef: TaskRequeueRef,
+  taskRef: TaskTriple, planRef: PlanRevisionRef, requeue: WorkflowSessionRequeue,
+): WorkflowOperation {
+  return { kind: 'close_open_turn', request: { sessionRef, afterRunRef, requeueRef }, taskRef, planRef, requeue };
 }
 /** VD-7: a work round opens under the Goal's CURRENT adopted Plan, not the Plan the Run was claimed under. */
 function openWorkChecksStep(base: Base, run: RunSnapshot, planRef: PlanRevisionRef): WorkflowOperation {
@@ -720,6 +743,23 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort
   }
 
   /**
+   * K slice L7: has this line already started its fallback? A continuation
+   * Session whose provenance names this Session and this exact Task means the
+   * `create_session{requeue}` fallback (or an earlier handover) already exists,
+   * so the Workflow replays that route instead of closing the Turn.
+   */
+  async function hasContinuationForTask(owned: Owned, sessionRef: SessionRef, task: TaskTriple): Promise<boolean> {
+    const facts = deps.sessionFacts;
+    if (facts?.findSessionSuccessors === undefined) return false;
+    try {
+      const page = await facts.findSessionSuccessors(owned.ctx, { sessionRef, page: { limit: 50 } });
+      if (page.status !== 'ready') return false;
+      return page.value.items.some((record) => record.provenance?.kind === 'continuation'
+        && sameCanonical(record.provenance.task, task));
+    } catch { return false; }
+  }
+
+  /**
    * E15 / §4.1 S:799 (T10): a replacement Session created to continue a Task a
    * LIVE Session already held is a `continuation` (C3 interruption, kernel
    * turn open or role mismatch). A predecessor that is already archived, of
@@ -1014,6 +1054,8 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort
     // request, a wait, a readonly copy) is never retried; it goes through the
     // ordinary selection instead.
     const transferred = await responsibleSessionFor(owned, goal, binding, row.ref);
+    const taskRef: TaskTriple = row.ref;
+    const requeue: WorkflowSessionRequeue = { requeueRef, budget: row.requeueBudget ?? null };
     let chosen: SessionChoice;
     if (transferred !== null) {
       chosen = { kind: 'reuse', card: transferred };
@@ -1028,10 +1070,18 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort
         || (record.health === 'unavailable' && (record.healthConclusion === 'missing' || record.healthConclusion === 'damaged'))) {
         chosen = await chooseSession(owned, goal, binding, null, row.ref);
       } else if (record.occupancy === null && record.health === 'unavailable' && record.healthConclusion === 'kernel_turn_open') {
-        // LA-1 (A.2 step 5.6): the Kernel refuses a new Turn in a Session whose last Turn has no Kernel
-        // terminal; the continuation gets a NEW linked Session (never another Task's), seeded by
-        // `prepare` from the TaskRequeue history source.
-        chosen = { kind: 'create' };
+        // K (L7, KA2/KA3, M1/M2): the Kernel refuses a new Turn in a Session whose last Turn has no Kernel
+        // terminal. With the Runtime's closure installed and no fallback already started for this Task, the
+        // Workflow first closes the dangling Turn (the Runtime answers `unsupported` when the Kernel cannot
+        // close, and the definite-failure fallback below then applies); otherwise today's route stands: a NEW
+        // linked Session (never another Task's), seeded by `prepare` from the TaskRequeue history source.
+        const claimSessionRef: SessionRef = { projectId: record.ref.projectId, sessionId: record.ref.sessionId };
+        if (turnClosureOf(deps.runtime) === undefined || await hasContinuationForTask(owned, claimSessionRef, taskRef)) {
+          chosen = { kind: 'create' };
+        } else {
+          return advancing(null, makePerform(base, closeOpenTurnStep(
+            claimSessionRef, afterRunRef, requeueRef, taskRef, planRef, requeue)));
+        }
       } else if (record.occupancy !== null) {
         return null;
       } else {
@@ -1047,8 +1097,6 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort
     }
     if (chosen.kind === 'rejection') return chosen.rejection;
     if (chosen.kind === 'waiting') return waiting(null, chosen.reason);
-    const taskRef: TaskTriple = row.ref;
-    const requeue: WorkflowSessionRequeue = { requeueRef, budget: row.requeueBudget ?? null };
     if (chosen.kind === 'create') {
       const provenance = continuationProvenanceFor(claimSession, workspaceId, binding, taskRef);
       return advancing(null, makePerform(base, createSessionStep(base, {
@@ -1629,6 +1677,42 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort
     return openResponsibleLink(card.value, task) !== null;
   }
 
+  /**
+   * K slice L7 receipt table: a definite close failure (`unsupported`,
+   * `unreadable`, `mismatch`, or `refused(not_closable_run |
+   * continuation_not_authorized)`) falls back to today's new-Session
+   * continuation: the same deterministic `create_session{requeue}` request and
+   * the E15 handover recovery that follows its receipt (L8).
+   */
+  async function fallbackAfterClose(
+    owned: Owned, base: Base, operation: Extract<WorkflowOperation, { kind: 'close_open_turn' }>,
+    receipt: WorkflowStepReceipt,
+  ): Promise<WorkflowAdvanceResult> {
+    const config = deps.configuration;
+    if (config === undefined) return waiting(receipt, 'no trusted Workflow configuration is registered for the close fallback');
+    const goalRead = await deps.plans.queryGoal(owned.ctx, base.goalRef);
+    if (goalRead.status !== 'ready') return waiting(receipt, receiptReason(goalRead, 'the Goal could not be read for the close fallback'));
+    const graphRead = await deps.plans.queryTaskGraph(owned.ctx, { goalRef: base.goalRef });
+    if (graphRead.status !== 'ready') return waiting(receipt, receiptReason(graphRead, 'the TaskGraph could not be read for the close fallback'));
+    const task = graphRead.value.plan.tasks.find((candidate) => candidate.taskId === operation.taskRef.taskId);
+    if (task === undefined) return waiting(receipt, 'the close fallback Task is not in the adopted Plan');
+    const assignment = revisionAssignments(graphRead.value.plan).find((candidate) => candidate.taskId === task.taskId);
+    if (assignment === undefined) return waiting(receipt, 'the close fallback Task has no assignment');
+    const workspaceId = goalRead.value.goal.workspaceRef.workspaceId;
+    const binding = bindingForRole(config, owned.projectId, workspaceId, assignment.role);
+    if (binding === null) {
+      return waiting(receipt, `no trusted Workflow binding matches workspace ${workspaceId} and role ${assignment.role}`);
+    }
+    const claimSession = await deps.sessions.readSession(owned.ctx, operation.request.sessionRef);
+    const provenance = continuationProvenanceFor(claimSession, workspaceId, binding, operation.taskRef);
+    return advancing(receipt, makePerform(base, createSessionStep(base, {
+      workspace: { projectId: owned.projectId, workspaceId },
+      role: binding.sessionRole, recommendedRefs: [],
+      initialLinks: [{ target: { kind: 'task', ref: operation.taskRef }, relation: 'responsible' }],
+      ...(provenance === null ? {} : { provenance }),
+    }, operation.taskRef, operation.planRef, operation.requeue)));
+  }
+
   async function performStep(owned: Owned, base: Base, operation: WorkflowOperation): Promise<WorkflowAdvanceResult> {
     // §4.5 (rule 16): `perform` shares the automation policy with `select_work`.
     // A gated automatic rework waits with its formal cause and performs nothing.
@@ -1647,6 +1731,38 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort
       return advancing(receipt, makePerform(base, openWorkChecksStep(base, run, planRef)));
     };
     switch (operation.kind) {
+      case 'close_open_turn': {
+        const closeTurn = turnClosureOf(deps.runtime);
+        const result = closeTurn === undefined
+          ? { status: 'unsupported' as const, reason: 'the Runtime does not publish closeOpenTurn' }
+          : await closeTurn.call(deps.runtime, owned.ctx, operation.request);
+        const receipt: WorkflowStepReceipt = { kind: 'close_open_turn', result };
+        // K L7 receipt table. Success and "can retry" both leave the line alone
+        // (the next advancement or maintenance re-runs it); only a definite
+        // failure takes today's new-Session fallback; the other `refused`
+        // reasons mean the platform facts changed, so re-select under them.
+        switch (result.status) {
+          case 'closed':
+          case 'already_closed':
+            if (result.health === 'available') return advancing(receipt, selectWorkStep(base));
+            return waiting(receipt, `close_open_turn: the Turn is ${result.status} but the Session health is unavailable`);
+          case 'conflict':
+          case 'transient':
+            return waiting(receipt, `close_open_turn: ${result.status}; retry on the next advancement`);
+          case 'refused':
+            if (result.reason === 'not_closable_run' || result.reason === 'continuation_not_authorized') {
+              return await fallbackAfterClose(owned, base, operation, receipt);
+            }
+            if (result.reason === 'lease') {
+              return waiting(receipt, 'close_open_turn refused: the Host does not hold the instance lease');
+            }
+            return advancing(receipt, selectWorkStep(base));
+          case 'unsupported':
+          case 'unreadable':
+          case 'mismatch':
+            return await fallbackAfterClose(owned, base, operation, receipt);
+        }
+      }
       case 'create_session': {
         const result = await deps.runtime.createSession(owned.ctx, operation.request);
         const receipt: WorkflowStepReceipt = { kind: 'create_session', result };

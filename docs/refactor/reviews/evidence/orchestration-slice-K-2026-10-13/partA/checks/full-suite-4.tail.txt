@@ -1,0 +1,12 @@
+     ✓ retries a changing reference within a bounded budget and ends busy  2727ms
+     ✓ reads the same execution facts after reopening the ledger  1354ms
+ ✓ tests/composition/R5b-query-job-platform.test.ts (3 tests) 7161ms
+   ✓ submits and reads a no-Plan pending pair on an empty SQLite database and survives reopen without touching any source  2237ms
+   ✓ anchors a semantic query to an accepted Plan focus node and leaves Task/Run state unchanged  3618ms
+   ✓ rejects untrusted principals and cross-scope writes, keeps ordinary reads model-free, and rejects new calls after close  1304ms
+
+ Test Files  291 passed (291)
+      Tests  6037 passed (6037)
+   Start at  13:13:13
+   Duration  272.05s (transform 59.73s, setup 0ms, import 353.64s, tests 5801.54s, environment 59ms)
+

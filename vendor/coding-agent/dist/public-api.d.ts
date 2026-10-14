@@ -56,11 +56,12 @@ export { createShellToolDefinition, ShellToolHandler } from "./tools/builtin/she
 export { ToolDispatcher } from "./tools/dispatcher/tool-dispatcher.js";
 export { RegistryToolBatchPolicy, ToolRegistry, ToolRegistrySnapshot, } from "./tools/registry/tool-registry.js";
 export { InMemoryStores } from "./storage/adapters/in_memory/in-memory-stores.js";
-export { SqliteStores } from "./storage/adapters/sqlite/sqlite-stores.js";
+export { closeOpenTurn, readTurnBounds, SqliteStores, } from "./storage/adapters/sqlite/sqlite-stores.js";
 export { SessionEventSink } from "./storage/session_event_sink/session-event-sink.js";
 export type { ToolBatchPolicy, ToolExecutionGroup, } from "./core/ports/tool_batch_policy/tool-batch-policy-port.js";
 export type { Checkpoint, CheckpointCandidate, CheckpointStorePort, } from "./core/ports/checkpoint_store/checkpoint-store-port.js";
 export type { SessionRecord, SessionRecordDraft, SessionStorePort, } from "./core/ports/session_store/session-store-port.js";
+export type { CloseOpenTurnInput, CloseOpenTurnResult, TurnBounds, } from "./storage/adapters/sqlite/sqlite-stores.js";
 export type { RecoveryAction, RecoveryEnvironment, RecoveryResult, } from "./core/runtime/recovery/recovery-coordinator.js";
 export type { RunLimits } from "./core/runtime/limits/limit-guard.js";
 export type { ToolDefinition, ToolEffectClass } from "./tools/schemas/tool-schemas.js";

@@ -83,7 +83,7 @@ function abandonUnsettledTools(batch: ToolBatchState | null): ToolBatchState | n
 function terminalState(
   state: RunState,
   event: AgentEvent,
-  status: "completed" | "cancelled" | "limit_exceeded" | "failed" | "yielded",
+  status: "completed" | "cancelled" | "limit_exceeded" | "failed" | "yielded" | "interrupted",
   outcome: RunOutcome,
 ): RunState {
   const toolBatch = abandonUnsettledTools(state.toolBatch);
@@ -100,6 +100,9 @@ function terminalState(
   return {
     ...state,
     status,
+    // A Turn closed while still `created` never committed run.started; the
+    // terminal state still needs a start fact, so the closure time is recorded.
+    startedAt: state.startedAt ?? event.meta.occurredAt,
     activeModelRequest: null,
     toolBatch,
     transcript:
@@ -284,6 +287,12 @@ function applyEvent(state: RunState, event: AgentEvent): RunState {
       next = terminalState(state, event, "failed", {
         kind: "failed",
         failure: event.payload.failure,
+      });
+      break;
+    case "run.interrupted":
+      next = terminalState(state, event, "interrupted", {
+        kind: "interrupted",
+        reason: "platform_closed",
       });
       break;
   }

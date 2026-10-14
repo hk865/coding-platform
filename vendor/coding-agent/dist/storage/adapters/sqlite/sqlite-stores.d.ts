@@ -22,4 +22,49 @@ export declare class SqliteStores implements SessionStorePort, CheckpointStorePo
     deleteInvalid(checkpointIds: readonly string[], options: Readonly<StoreCallOptions>): Promise<number>;
     close(): Promise<void>;
 }
+export interface CloseOpenTurnInput {
+    readonly sessionId: string;
+    readonly kernelRunId: string;
+    readonly expectedRevision: number;
+    readonly at: string;
+}
+export type CloseOpenTurnResult = {
+    readonly status: "closed";
+    readonly revision: number;
+    readonly position: number;
+} | {
+    readonly status: "already_closed";
+    readonly revision: number;
+    readonly position: number;
+} | {
+    readonly status: "already_terminal";
+    readonly terminalStatus: string;
+} | {
+    readonly status: "not_found";
+} | {
+    readonly status: "mismatch";
+    readonly activeRunId: string | null;
+} | {
+    readonly status: "conflict";
+    readonly currentRevision: number;
+} | {
+    readonly status: "unreadable";
+    readonly reason: string;
+};
+export type TurnBounds = {
+    readonly status: "found";
+    readonly startPosition: number;
+    readonly endPosition: number | null;
+    readonly terminalStatus: string | null;
+} | {
+    readonly status: "not_found";
+} | {
+    readonly status: "unreadable";
+    readonly reason: string;
+};
+export declare function readTurnBounds(store: SqliteStores, input: {
+    readonly sessionId: string;
+    readonly kernelRunId: string;
+}): Promise<TurnBounds>;
+export declare function closeOpenTurn(store: SqliteStores, input: CloseOpenTurnInput): Promise<CloseOpenTurnResult>;
 //# sourceMappingURL=sqlite-stores.d.ts.map

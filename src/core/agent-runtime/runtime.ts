@@ -13,22 +13,27 @@
  */
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { WorkspaceScope } from '../../contracts/core/identity.js';
+import type { SessionRef } from '../../contracts/core/identity.js';
 import type { OperationReceipt, Page, ReadResult } from '../../contracts/core/results.js';
 import type { SessionRecord } from '../../contracts/core/session.js';
 import type { RunRef } from '../../contracts/dispatch.js';
+import type { TaskRequeueRef } from '../../contracts/task-requeue.js';
+import { GOAL_FAN_OUT_ACTOR, reworkActorClassOf } from '../../contracts/task-requeue.js';
+import { StoreError } from '../../../vendor/coding-agent/dist/public-api.js';
 import { createExecutionDriver } from './execution-driver.js';
 import { createExecutionObservation } from './execution-observation.js';
 import { createRuntimeControlCoordinator } from './execution-control.js';
 import { createExecutionPreparation, loadPreparedManifest, rehydratePreparedExecution } from './execution-preparation.js';
 import { createContextAssembler } from './context-assembler.js';
 import { continuationBriefDigest } from '../../contracts/continuation-brief.js';
-import { createSessionHistoryCursorOwner } from './session-operations.js';
+import { createSessionHistoryCursorOwner, kernelDatabaseState, type SessionHistoryCursorOwner } from './session-operations.js';
 import { createArchiveChangedFilesReader } from './session-anomaly-facts.js';
 import { bookLateEvidenceInProcess, stopPausedRunInProcess } from './run-reconcile.js';
+import { isPausedInterrupted } from '../work-graph/state/run-machine.js';
 import { createQueryPreparation } from './query-preparation.js';
 import { createQueryExecutionDriver } from './query-execution.js';
 import { createQueryObservation } from './query-observation.js';
-import type { RuntimeExecutionDependencies } from './execution-contracts.js';
+import type { RuntimeExecutionDependencies, TurnClosureDependencies } from './execution-contracts.js';
 import type { AgentRuntimeService, RuntimeExecutionPort } from './ports.js';
 import type { RuntimeCapabilities } from './contracts.js';
 import type { CreateSessionRequest, SessionHistoryEntry, SessionHistoryRequest } from './session-operations.js';
@@ -83,6 +88,235 @@ function basePort(): RuntimeExecutionPort {
     async readAttentionGraph() {
       return unsupported('B2 skeleton: readAttentionGraph is not implemented');
     },
+  };
+}
+
+type TurnClosureOutcome =
+  | { status: 'closed' | 'already_closed'; health: 'available' | 'unavailable' }
+  | { status: 'refused'; reason: 'lease' | 'not_closable_run' | 'continuation_not_authorized' | 'archived'
+      | 'archive_requested' | 'occupied' | 'handed_over' | 'health' }
+  | { status: 'unsupported' | 'unreadable' | 'mismatch' | 'conflict' | 'transient'; reason: string };
+
+/** A read/probe failure of the closure; it never fabricates a success (rule 3). */
+function closureFailure(error: unknown, signal: AbortSignal): TurnClosureOutcome {
+  if (signal.aborted) return { status: 'transient', reason: 'the closure call was cancelled' };
+  const message = error instanceof Error ? error.message : String(error);
+  if (error instanceof StoreError
+    && (error.code === 'not_found' || error.code === 'corrupt' || error.code === 'invalid_record'
+      || error.code === 'version_unsupported')) {
+    return { status: 'unreadable', reason: message };
+  }
+  return { status: 'transient', reason: message };
+}
+
+/**
+ * L4 steps 1/3, L7 (D5): a returned platform-read rejection keeps its own
+ * retryability. A retryable code (`unavailable`, `cancelled`, `busy`) is the
+ * retryable `transient` the caller re-walks, never `unreadable` (a definite
+ * failure that would take the L8 new-Session fallback).
+ */
+const RETRYABLE_READ_CODES: ReadonlySet<string> = new Set(['unavailable', 'cancelled', 'busy']);
+
+function platformReadFailure(read: { code: string; reason: string }): TurnClosureOutcome {
+  return RETRYABLE_READ_CODES.has(read.code)
+    ? { status: 'transient', reason: read.reason }
+    : { status: 'unreadable', reason: read.reason };
+}
+
+/**
+ * K slice L4 (M1-M3): the Runtime `closeOpenTurn` operation. It first re-proves
+ * the platform Run and the authorization, then the Session facts, then the
+ * SES-13 health conclusion, and only then opens the registered Kernel store and
+ * asks the public `closeOpenTurn` seam (read from the injected Kernel dependency
+ * at call time, M2). A closed/already-closed Turn is re-probed and handed to the
+ * health owner under the incoming Host call identity (M3).
+ */
+function createCloseOpenTurn(
+  deps: RuntimeExecutionDependencies, owner: SessionHistoryCursorOwner,
+): NonNullable<RuntimeExecutionPort['closeOpenTurn']> {
+  type RefusalReason = Extract<TurnClosureOutcome, { status: 'refused' }>['reason'];
+  const refusal = (reason: RefusalReason): TurnClosureOutcome => ({ status: 'refused', reason });
+
+  /** RUN-24 authorization: the TaskRequeue covers the afterRun and its requester
+   * is a person or the Goal-resume fan-out. The plan is the only place the
+   * requester is recorded, so a read that proves nothing refuses (rule 3): it
+   * must never allow a closure it cannot authorize. */
+  async function requeueAuthorizes(
+    ctx: CoreCallContext, taskId: string, afterRunRef: RunRef, requeueRef: TaskRequeueRef,
+  ): Promise<boolean> {
+    if (requeueRef.projectId !== afterRunRef.projectId || requeueRef.goalId !== afterRunRef.goalId
+      || requeueRef.taskId !== taskId || requeueRef.afterRunId !== afterRunRef.runId) return false;
+    try {
+      const read = await deps.plans.queryTaskGraph(ctx, { goalRef: { aggregateType: 'Goal',
+        projectId: afterRunRef.projectId, goalId: afterRunRef.goalId } });
+      if (read.status !== 'ready') return false;
+      const row = read.value.tasks.find((candidate) => candidate.ref.taskId === taskId);
+      const entry = row?.rework?.entries.find((candidate) => candidate.ref.afterRunId === afterRunRef.runId);
+      if (entry === undefined) return false;
+      if (reworkActorClassOf(null, entry.requestedBy) === 'human') return true;
+      return entry.requestedBy.kind === 'system' && entry.requestedBy.id === GOAL_FAN_OUT_ACTOR.id;
+    } catch { return false; }
+  }
+
+  /**
+   * L4 step 3: a recorded successor Session whose provenance points at this one.
+   * `none` only when the enumeration completed; an unusable or partial
+   * enumeration is `unusable` so the caller fails closed and never closes a
+   * handed-over line (rule 3). Archived Sessions count, and both successor
+   * provenance kinds (`continuation` and `handoff`) count — the spec's
+   * "来历指向它的"; a `readonly_copy` is a read-only derivation, not a successor
+   * (`session-responsibility-service.ts`).
+   */
+  async function recordedSuccessor(ctx: CoreCallContext, session: SessionRecord): Promise<'found' | 'none' | 'unusable'> {
+    try {
+      let cursor: string | undefined;
+      for (let page = 0; page < 8; page += 1) {
+        const found = await deps.sessions.findSessions(ctx, {
+          workspace: { projectId: session.ref.projectId, workspaceId: session.workspaceId },
+          includeArchived: true, page: { limit: 100, ...(cursor === undefined ? {} : { cursor }) } });
+        if (found.status !== 'ready') return 'unusable';
+        for (const card of found.value.items) {
+          const provenance = card.record.provenance ?? null;
+          if (provenance !== null && (provenance.kind === 'continuation' || provenance.kind === 'handoff')
+            && provenance.from.projectId === session.ref.projectId
+            && provenance.from.sessionId === session.ref.sessionId) return 'found';
+        }
+        cursor = found.value.nextCursor ?? undefined;
+        if (cursor === undefined) return 'none';
+      }
+    } catch { return 'unusable'; }
+    // The page bound was hit with a cursor still to follow: the successor set is
+    // not proven complete, so it is not "no successor".
+    return 'unusable';
+  }
+
+  async function settleHealth(
+    ctx: CoreCallContext, session: SessionRecord, closure: TurnClosureDependencies,
+    status: 'closed' | 'already_closed',
+  ): Promise<TurnClosureOutcome> {
+    let probe;
+    try { probe = await owner.probe({ session, signal: ctx.signal }); }
+    catch { return { status, health: 'unavailable' }; }
+    if (probe.verdict !== 'ready' || probe.activeRunId !== null) return { status, health: 'unavailable' };
+    try {
+      const written = await closure.recordSessionHealth(ctx, {
+        sessionRef: { projectId: session.ref.projectId, sessionId: session.ref.sessionId },
+        probe: { verdict: 'ready', activeRunId: null } });
+      return { status, health: written.status === 'observed' || written.status === 'unchanged' ? 'available' : 'unavailable' };
+    } catch { return { status, health: 'unavailable' }; }
+  }
+
+  return async (ctx, input) => {
+    const closure = deps.turnClosure;
+    if (closure === undefined) return { status: 'unsupported', reason: 'the Runtime does not publish closeOpenTurn' };
+    if (closure.lease !== 'owned') return refusal('lease');
+    const { sessionRef, afterRunRef, requeueRef } = input;
+    // 1. Run
+    let read;
+    try { read = await deps.executions.readExecution(ctx, afterRunRef); }
+    catch (error) { return closureFailure(error, ctx.signal); }
+    if (read.status === 'not_found') return { status: 'unreadable', reason: 'the afterRun does not exist' };
+    if (read.status === 'rejected') return platformReadFailure(read);
+    if (read.status !== 'ready') return { status: 'unreadable', reason: 'the afterRun is not ready' };
+    const record = read.value;
+    const run = record.run;
+    if (run.status !== 'ended' || run.outcome === null || run.outcome === 'outcome_unknown') return refusal('not_closable_run');
+    const claim = record.outbox.claim.sessionRef;
+    if (claim.projectId !== sessionRef.projectId || claim.sessionId !== sessionRef.sessionId) return refusal('not_closable_run');
+    // 2. ending mode and authorization
+    const observation = run.reconciliation?.observation;
+    const pausedInterrupted = isPausedInterrupted(run);
+    const run19 = run.outcome === 'crashed' && observation !== undefined
+      && observation.kind === 'interrupted_clean' && observation.pausedIntentRef === null;
+    const run23 = run.outcome === 'cancelled' && observation !== undefined
+      && observation.kind === 'interrupted_clean' && observation.pausedIntentRef === null;
+    const run22 = run.outcome === 'crashed' && observation !== undefined && observation.kind === 'human_attested';
+    if (pausedInterrupted) {
+      if (requeueRef === null || !(await requeueAuthorizes(ctx, run.task.taskId, afterRunRef, requeueRef))) {
+        return refusal('continuation_not_authorized');
+      }
+    } else if (!(run19 || run23 || run22)) {
+      return refusal('not_closable_run');
+    }
+    // 3. Session facts
+    let card;
+    try { card = await deps.sessions.readSession(ctx, sessionRef); }
+    catch (error) { return closureFailure(error, ctx.signal); }
+    if (card.status === 'not_found') return { status: 'unreadable', reason: 'the Session does not exist' };
+    if (card.status === 'rejected') return platformReadFailure(card);
+    if (card.status !== 'ready') return { status: 'unreadable', reason: 'the Session is not ready' };
+    const session = card.value.record;
+    if (session.lifecycle !== 'active') return refusal('archived');
+    if (session.archiveRequest !== null && session.archiveRequest !== undefined) return refusal('archive_requested');
+    if (session.occupancy !== null) return refusal('occupied');
+    const successor = await recordedSuccessor(ctx, session);
+    if (successor === 'unusable') {
+      return { status: 'transient', reason: 'the successor Session enumeration is not usable' };
+    }
+    if (successor === 'found') return refusal('handed_over');
+    const authorization = run.executionAuthorization;
+    const runKernel = run.executionHistory?.kernel
+      ?? (authorization !== undefined && 'schemaVersion' in authorization && authorization.schemaVersion === 2
+        ? authorization.kernel : null);
+    if (runKernel !== null && (runKernel.adapterId !== session.kernel.adapterId
+      || runKernel.kernelSessionId !== session.kernel.kernelSessionId)) {
+      return { status: 'mismatch', reason: 'the afterRun Kernel binding disagrees with the Session mapping' };
+    }
+    // 4. health
+    if (session.health === 'available') {
+      const probe = await owner.probe({ session, signal: ctx.signal });
+      if (probe.verdict === 'ready' && probe.activeRunId === null) return { status: 'already_closed', health: 'available' };
+      // L4 step 4: only "ready with no active Run" is already_closed. An available
+      // Health whose Kernel head still names an active Run (or any other
+      // observation) is `refused('health')`: the platform facts changed, so the
+      // caller re-walks them; it is never the definite `mismatch` fallback.
+      if (probe.verdict === 'ready') return refusal('health');
+      if (probe.verdict === 'missing' || probe.verdict === 'damaged') return { status: 'unreadable', reason: probe.reason };
+      // L4: a host_config, transient or cancelled probe is retryable, never a
+      // definite failure (D6).
+      return { status: 'transient', reason: probe.reason };
+    }
+    if (!(session.health === 'unavailable' && (session.healthConclusion ?? null) === 'kernel_turn_open')) return refusal('health');
+    // 5. storage and the Kernel closure (M2, D5: read BOTH injected seams at call
+    // time; either one absent is `unsupported` and no write happens)
+    const closeFn = deps.kernel.closeOpenTurn;
+    const readBoundsFn = deps.kernel.readTurnBounds;
+    const location = deps.kernelStores.byAdapterId(session.kernel.adapterId);
+    if (location === null || 'expectedSessionId' in location || closeFn === undefined || readBoundsFn === undefined) {
+      return { status: 'unsupported', reason: 'the Session Kernel store is legacy, another adapter, or cannot close a Turn' };
+    }
+    try {
+      if (await kernelDatabaseState(location.databasePath) === 'missing') {
+        return { status: 'unreadable', reason: 'the mapped Kernel database file is missing' };
+      }
+    } catch (error) { return closureFailure(error, ctx.signal); }
+    const kernelRunId = runKernel?.runId ?? afterRunRef.runId;
+    let kernelResult;
+    try {
+      kernelResult = await deps.kernelStores.withStore(session.kernel.adapterId, async (store) => {
+        const header = await store.get(session.kernel.kernelSessionId, { signal: ctx.signal });
+        return closeFn(store, { sessionId: session.kernel.kernelSessionId, kernelRunId,
+          expectedRevision: header.revision, at: deps.now() });
+      });
+    } catch (error) { return closureFailure(error, ctx.signal); }
+    switch (kernelResult.status) {
+      case 'closed':
+      case 'already_closed':
+        return settleHealth(ctx, session, closure, kernelResult.status);
+      case 'not_found':
+      case 'already_terminal':
+      case 'mismatch':
+        return { status: 'mismatch', reason: `the Kernel answers ${kernelResult.status}` };
+      case 'conflict':
+        return { status: 'conflict', reason: `the Kernel Session revision changed (current ${String(kernelResult.currentRevision)})` };
+      case 'unreadable':
+        return { status: 'unreadable', reason: kernelResult.reason };
+      default: {
+        const exhaustive: never = kernelResult;
+        void exhaustive;
+        return { status: 'transient', reason: 'the Kernel returned an unknown closure result' };
+      }
+    }
   };
 }
 
@@ -211,20 +445,24 @@ export function createAgentRuntime(deps?: RuntimeExecutionDependencies): AgentRu
   const queryDriver = createQueryExecutionDriver(deps);
   const queryObservation = createQueryObservation(deps);
   const base = basePort();
-  return {
-    port: {
-      ...base,
-      readCompletedBoundary,
-      readContinuationBrief,
-      readArchiveChangedFiles: (ctx, request) => archiveChangedFiles.readArchiveChangedFiles(ctx, request),
-      prepareExecution: (ctx, request) => preparation.prepare(ctx, request),
-      startRun: (ctx, request) => driver.start(ctx, request),
-      observeRun: (ctx, request) => observeRun(ctx, request),
-      deliverControl: (ctx, request) => deliverControl(ctx, request),
-      prepareQuery: (ctx, request) => queryPreparation.prepare(ctx, request),
-      startQuery: (ctx, request) => queryDriver.start(ctx, request),
-      observeQuery: (ctx, request) => queryObservation.observe(ctx, request),
-      readAttentionGraph: (ctx, request) => contextAssembler.readAttentionGraph(ctx, request),
-    },
+  const port: RuntimeExecutionPort = {
+    ...base,
+    readCompletedBoundary,
+    readContinuationBrief,
+    readArchiveChangedFiles: (ctx, request) => archiveChangedFiles.readArchiveChangedFiles(ctx, request),
+    prepareExecution: (ctx, request) => preparation.prepare(ctx, request),
+    startRun: (ctx, request) => driver.start(ctx, request),
+    observeRun: (ctx, request) => observeRun(ctx, request),
+    deliverControl: (ctx, request) => deliverControl(ctx, request),
+    prepareQuery: (ctx, request) => queryPreparation.prepare(ctx, request),
+    startQuery: (ctx, request) => queryDriver.start(ctx, request),
+    observeQuery: (ctx, request) => queryObservation.observe(ctx, request),
+    readAttentionGraph: (ctx, request) => contextAssembler.readAttentionGraph(ctx, request),
   };
+  // M1: without the injected closure dependency the port does not publish the
+  // operation, and the Workflow's `close_open_turn` answers `unsupported`.
+  if (deps.turnClosure !== undefined) {
+    port.closeOpenTurn = createCloseOpenTurn(deps, historyCursorOwner);
+  }
+  return { port };
 }

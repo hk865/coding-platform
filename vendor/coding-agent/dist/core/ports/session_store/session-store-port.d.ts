@@ -743,6 +743,21 @@ export declare const sessionRecordSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
                     operationId: z.ZodNullable<z.ZodString>;
                 }, z.core.$strict>;
             }, z.core.$strict>;
+        }, z.core.$strict>, z.ZodObject<{
+            type: z.ZodLiteral<"run.interrupted">;
+            meta: z.ZodObject<{
+                schemaVersion: z.ZodLiteral<1>;
+                eventId: z.ZodString;
+                runId: z.ZodString;
+                turnId: z.ZodString;
+                sequence: z.ZodNumber;
+                occurredAt: z.ZodString;
+                elapsedMs: z.ZodNumber;
+            }, z.core.$strict>;
+            payload: z.ZodObject<{
+                reason: z.ZodLiteral<"platform_closed">;
+                requestedBy: z.ZodLiteral<"app">;
+            }, z.core.$strict>;
         }, z.core.$strict>], "type">;
     }, z.core.$strict>;
     recordId: z.ZodString;
@@ -1407,6 +1422,21 @@ export declare const sessionRecordDraftSchema: z.ZodDiscriminatedUnion<[z.ZodObj
                     retryable: z.ZodBoolean;
                     operationId: z.ZodNullable<z.ZodString>;
                 }, z.core.$strict>;
+            }, z.core.$strict>;
+        }, z.core.$strict>, z.ZodObject<{
+            type: z.ZodLiteral<"run.interrupted">;
+            meta: z.ZodObject<{
+                schemaVersion: z.ZodLiteral<1>;
+                eventId: z.ZodString;
+                runId: z.ZodString;
+                turnId: z.ZodString;
+                sequence: z.ZodNumber;
+                occurredAt: z.ZodString;
+                elapsedMs: z.ZodNumber;
+            }, z.core.$strict>;
+            payload: z.ZodObject<{
+                reason: z.ZodLiteral<"platform_closed">;
+                requestedBy: z.ZodLiteral<"app">;
             }, z.core.$strict>;
         }, z.core.$strict>], "type">;
     }, z.core.$strict>;

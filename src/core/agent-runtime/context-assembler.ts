@@ -38,7 +38,8 @@ import type { QueryPreparationFacts } from '../work-graph/queries/contracts.js';
 import type { TaskContextInputPort } from '../work-graph/model/context-input-contracts.js';
 import type { ContinuationBasis, TaskExecutionRecord } from '../work-graph/model/execution-read-contracts.js';
 import type { GraphContextFactsV1, GraphContextReadPort } from '../work-graph/model/graph-context-contracts.js';
-import { assembleAnomalySection, assembleContinuationBrief, readPreviousTurn, type BriefWorkspaceFacts } from './continuation-brief-assembly.js';
+import { assembleAnomalySection, assembleContinuationBrief, readPreviousTurn, type BriefWorkspaceFacts,
+  type PreviousTurnFacts, type PreviousTurnRetry } from './continuation-brief-assembly.js';
 import { platformRoleProfile } from './role-profiles.js';
 import { decodeKernelEntry } from './kernel-turn-facts.js';
 import { createSessionHistoryCursorOwner } from './session-operations.js';
@@ -71,7 +72,7 @@ export const QUERY_CONTEXT_PRELUDE = '# Verified read-only Query input\n\nThis i
 
 export type ContextAssemblerDependencies = Pick<RuntimeExecutionDependencies,
   'executions' | 'roles' | 'materials' | 'bodies'>
-  & Partial<Pick<RuntimeExecutionDependencies, 'plans' | 'sessions' | 'kernelStores' | 'workspaceHost' | 'workspaceSource'>>
+  & Partial<Pick<RuntimeExecutionDependencies, 'plans' | 'sessions' | 'kernelStores' | 'workspaceHost' | 'workspaceSource' | 'kernel'>>
   & { graphContext?: GraphContextReadPort; taskInputs?: TaskContextInputPort };
 
 export type AssembledContextV1 = {
@@ -620,7 +621,7 @@ function assembleSections(input: {
 // ------------------------------------------------------------------------ //
 
 /** The Kernel `agent.event` types that end a Turn: a completed history boundary (LA-1). */
-const KERNEL_TERMINAL_EVENTS: readonly string[] = ['run.completed', 'run.failed', 'run.cancelled', 'run.limit_exceeded', 'run.yielded'];
+const KERNEL_TERMINAL_EVENTS: readonly string[] = ['run.completed', 'run.failed', 'run.cancelled', 'run.limit_exceeded', 'run.yielded', 'run.interrupted'];
 
 export async function briefWorkspaceFactsFor(
   deps: Partial<Pick<RuntimeExecutionDependencies, 'workspaceHost' | 'workspaceSource'>>, now: () => string,
@@ -681,7 +682,8 @@ async function sessionBasisForContext(
   if (sourceSession.kernel.kernelSessionId !== source.kernelSessionId || sourceSession.kernel.adapterId !== source.adapterId) {
     return null;
   }
-  const owner = createSessionHistoryCursorOwner({ kernelStores: deps.kernelStores });
+  const owner = createSessionHistoryCursorOwner({ kernelStores: deps.kernelStores,
+    ...(deps.kernel === undefined ? {} : { kernel: deps.kernel }) });
   let boundary: number | null = null;
   let cursor = 0;
   for (let page = 0; page < 64 && cursor < source.throughPosition; page += 1) {
@@ -718,6 +720,20 @@ export function archiveOriginSkipsHistorySeed(
   return requeue.archiveOrigin !== undefined && requeue.archiveOrigin !== null;
 }
 
+/**
+ * D2 (L9 lines 185-195): whether a Run provably entered the Kernel even
+ * without an execution-history position record. An attested RUN-22 is the
+ * documented case; the V2 entry authorization's `entered` phase is the other
+ * stored proof. A genuinely never-entered Run has neither.
+ */
+export function runEnteredKernel(run: TaskExecutionRecord['run']): boolean {
+  if (run.executionHistory !== undefined) return true;
+  if (run.reconciliation?.observation?.kind === 'human_attested') return true;
+  const auth = run.executionAuthorization;
+  return auth !== undefined && 'schemaVersion' in auth && auth.schemaVersion === 2
+    && auth.kernel !== null && auth.phase === 'entered';
+}
+
 async function assembleBriefForContext(
   deps: ContextAssemblerDependencies, now: () => string, ctx: CoreCallContext, record: TaskExecutionRecord,
 ): Promise<{ ok: true; brief: ContinuationBriefV1; sessionBasis: PreparedTaskManifestV1['sessionBasis'] | null;
@@ -731,11 +747,37 @@ async function assembleBriefForContext(
   try { basis = await readBasis.call(deps.executions, ctx, { runRef: record.run.ref }); }
   catch (error) { return { ok: false, rejection: rejected('unavailable', `the continuation basis read failed: ${messageOf(error)}`) }; }
   if (basis.status !== 'ready') return { ok: false, rejection: mapRead(basis) };
-  const facts = basis.value.factsChain.at(-1)?.run ?? basis.value.previous;
-  const truncated = facts.run.executionHistory === undefined
+  const previous = basis.value.previous;
+  const fallbackFacts = basis.value.factsChain.at(-1)?.run ?? previous;
+  const owner = createSessionHistoryCursorOwner({ kernelStores: deps.kernelStores,
+    ...(deps.kernel === undefined ? {} : { kernel: deps.kernel }) });
+  const sameSessionFor = (candidate: TaskExecutionRecord): boolean =>
+    record.outbox.claim.sessionRef.projectId === candidate.outbox.claim.sessionRef.projectId
+    && record.outbox.claim.sessionRef.sessionId === candidate.outbox.claim.sessionRef.sessionId;
+  // D2/D12 (L9): walk the requeue chain nearest-first (`previous` then its ancestors) and pick the
+  // first Run that provably entered the Kernel, instead of jumping to the oldest locator-less
+  // ancestor. An entered Run whose read still says `not_entered` does not stop the walk; a `retry`
+  // does. `factsHops` is the selected candidate's index (previous → 0, factsChain[0] → 1, ...).
+  const candidates: TaskExecutionRecord[] = [previous, ...basis.value.factsChain.map((hop) => hop.run)];
+  let facts = fallbackFacts;
+  let factsHops = basis.value.factsChain.length;
+  let turn: PreviousTurnFacts | PreviousTurnRetry | undefined;
+  for (let index = 0; index < candidates.length; index += 1) {
+    const candidate = candidates[index]!;
+    if (!runEnteredKernel(candidate.run)) continue;
+    const read = await readPreviousTurn(owner, candidate, ctx.signal, { sameSession: sameSessionFor(candidate) });
+    if (read.kernel === 'not_entered') continue;
+    facts = candidate;
+    factsHops = index;
+    turn = read;
+    break;
+  }
+  if (turn === undefined) {
+    // No candidate proved entry: today's fallback source and hop count.
+    turn = await readPreviousTurn(owner, fallbackFacts, ctx.signal, { sameSession: sameSessionFor(fallbackFacts) });
+  }
+  const truncated = facts !== previous && facts.run.executionHistory === undefined
     && basis.value.factsChain.length >= CONTINUATION_BRIEF_LIMITS.factsFromHops && facts.run.requeueRef !== undefined;
-  const owner = createSessionHistoryCursorOwner({ kernelStores: deps.kernelStores });
-  const turn = await readPreviousTurn(owner, facts, ctx.signal);
   if (turn.kernel === 'retry') return { ok: false, rejection: rejected(turn.code, `the previous Turn is not readable now: ${turn.reason}`) };
   const workspace = await briefWorkspaceFactsFor(deps, now, record);
   // §4.1 T10 (slice 1): an archive-origin ordinary claim is a NEW pickup, never the old line's continuation.
@@ -749,7 +791,7 @@ async function assembleBriefForContext(
   // Slice 1 §2.7: this Task's not-yet-picked-up anchors, bounded to the earliest eight.
   const anomalies = assembleAnomalySection(basis.value.pendingAnomalies ?? []);
   const brief = assembleContinuationBrief({
-    basis: basis.value, factsRecord: facts, factsHops: basis.value.factsChain.length, factsTruncated: truncated,
+    basis: basis.value, factsRecord: facts, factsHops, factsTruncated: truncated,
     turn, workspace, claimSessionRef: record.outbox.claim.sessionRef, seededFrom, anomalies,
   });
   const problem = continuationBriefShapeProblem(brief);

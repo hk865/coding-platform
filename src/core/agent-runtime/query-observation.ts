@@ -126,6 +126,9 @@ function mapOutcome(status: string): 'answered' | 'failed' | 'cancelled' | 'time
     case 'failed': return 'failed';
     case 'cancelled': return 'cancelled';
     case 'limit_exceeded': return 'timeout';
+    // L1: a platform closure of a Work line's dangling Turn; a Query line is not
+    // closed by this slice, so encountering it reports and never counts as an answer.
+    case 'interrupted': return null;
     default: return null;
   }
 }
@@ -385,6 +388,13 @@ export function createQueryObservation(deps: RuntimeExecutionDependencies): Quer
     const collected = await collectTurn(session, entry.kernel, owned.signal);
     if (collected.status !== 'ready') return mapRead(collected);
     if (collected.value === null) return { status: 'ready', value: record.value };
+    // L1 (D4): a Query line is not closed by this slice, so a Kernel Turn that
+    // already ended `interrupted` while the QueryRun is live is an inconsistent
+    // state: write NOTHING (no input confirmation, no answer) and report it.
+    if (collected.value.state.status === 'interrupted') {
+      return rejected('unavailable',
+        'kernel_closed_without_platform_end: the QueryRun is not settled but its Kernel Turn is closed as interrupted; a person checks it');
+    }
     // An accepted input is an original Kernel fact. Confirm its source before
     // publishing an Answer or releasing the Session, so a retry cannot start a
     // successor that accepts the same source again after a lost acknowledgement.

@@ -14,6 +14,7 @@ import type {
   SessionRecord as KernelSessionRecord,
   SessionStorePort,
   SqliteStores,
+  TurnBounds,
 } from '../../../vendor/coding-agent/dist/public-api.js';
 
 export type CreateSessionRequest = {
@@ -244,7 +245,7 @@ function isOriginalSessionCreated(record: KernelSessionRecord, kernelSessionId: 
 
 /** Distinguishes a genuinely absent database from an unreadable one: only ENOENT
  * is not_found, every other stat failure must fail closed as unavailable. */
-async function kernelDatabaseState(databasePath: string): Promise<'present' | 'missing'> {
+export async function kernelDatabaseState(databasePath: string): Promise<'present' | 'missing'> {
   try {
     return (await stat(databasePath)).isFile() ? 'present' : 'missing';
   } catch (error) {
@@ -860,6 +861,13 @@ export type RuntimeHistoryWindow = {
   hasMore: boolean;
 };
 /**
+ * K slice L9/M2: one Turn identity's exact record range, read through the
+ * injected Kernel `readTurnBounds` seam. `unsupported` means this Host cannot
+ * locate the Turn by identity (no injected seam, or a legacy/foreign reader);
+ * `not_found`/`unreadable` are the Kernel's own answers.
+ */
+export type KernelTurnBoundsRead = TurnBounds | { status: 'unsupported'; reason: string };
+/**
  * The §8.2 probe verdict of one Session's Kernel mapping (A.2 step 5.6, §12.1
  * step 1): `ready` with the Kernel session head's `activeRunId`; `missing`
  * (no database file or no Kernel session) and `damaged` (an unreadable or
@@ -875,8 +883,18 @@ export interface SessionHistoryCursorOwner {
   completedBoundary(request: CompletedHistoryBoundaryRequest): Promise<CompletedHistoryBoundary>;
   readPositionWindow(request: RuntimeHistoryWindowRequest): Promise<ReadResult<RuntimeHistoryWindow>>;
   probe(request: { session: SessionRecord; signal: AbortSignal }): Promise<SessionMappingProbe>;
+  /**
+   * K slice L9 (M2): read one Turn's exact bounds by Kernel identity through
+   * the injected Kernel seam, resolved at call time. `unsupported` when the
+   * seam or a current store is not available.
+   */
+  readTurnBounds(request: { session: SessionRecord; kernelRunId: string; signal: AbortSignal }): Promise<KernelTurnBoundsRead>;
 }
-export function createSessionHistoryCursorOwner(deps: { kernelStores: KernelStoreRegistry }): SessionHistoryCursorOwner {
+export function createSessionHistoryCursorOwner(deps: {
+  kernelStores: KernelStoreRegistry;
+  /** The injected Kernel module; `readTurnBounds` is resolved at call time (M2). */
+  kernel?: Pick<typeof import('../../../vendor/coding-agent/dist/public-api.js'), 'readTurnBounds'>;
+}): SessionHistoryCursorOwner {
   const { kernelStores } = deps;
   const fixedPrincipal = principalBinding({ kind: 'host', actor: RUNTIME_HISTORY_PRINCIPAL_ACTOR });
   if (fixedPrincipal === null) throw new Error('the runtime history principal cannot be canonicalized');
@@ -992,6 +1010,29 @@ export function createSessionHistoryCursorOwner(deps: { kernelStores: KernelStor
       });
       if (!read.ok) return read.rejection;
       return { status: 'ready', value: read.value };
+    },
+
+    async readTurnBounds(request): Promise<KernelTurnBoundsRead> {
+      const { session, kernelRunId, signal } = request;
+      if (signalAborted(signal)) return { status: 'unreadable', reason: 'the Turn bounds read was cancelled' };
+      // M2: resolve the injected seam at call time; never cache it.
+      const readFn = deps.kernel?.readTurnBounds;
+      if (typeof readFn !== 'function') {
+        return { status: 'unsupported', reason: 'the injected Kernel does not publish readTurnBounds' };
+      }
+      const location = kernelStores.byAdapterId(session.kernel.adapterId);
+      if (location === null) {
+        return { status: 'unsupported', reason: 'the Session Kernel store is not registered by this Host' };
+      }
+      if ('expectedSessionId' in location) {
+        return { status: 'unsupported', reason: 'the Session Kernel store is legacy or another adapter' };
+      }
+      try {
+        return await kernelStores.withStore(session.kernel.adapterId, async (store) =>
+          await readFn(store, { sessionId: session.kernel.kernelSessionId, kernelRunId }));
+      } catch (error) {
+        return { status: 'unreadable', reason: mapHistoryFailure(error, signal).reason };
+      }
     },
 
     async probe(request): Promise<SessionMappingProbe> {

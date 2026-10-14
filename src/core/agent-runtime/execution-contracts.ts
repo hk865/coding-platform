@@ -58,6 +58,7 @@ import type { ExecutionHistoryPage, ExecutionHistoryPort, GraphExecutionHistoryR
 import type { KernelStoreRegistry } from './kernel-store-locator.js';
 import type { SourcePolicy } from './source-capture-access.js';
 import type { WorkspaceHostBindings } from '../workspace/access.js';
+import type { SessionHealthPort } from '../work-graph/sessions/session-health.js';
 
 // ------------------------------------------------------------------------ //
 // Requests / results                                                         //
@@ -257,8 +258,25 @@ export type RuntimeExecutionDependencies = {
    * the start-up reconcile.
    */
   runReconcile?: import('../work-graph/tasks/run-reconcile-contracts.js').RunReconcilePort;
+  /**
+   * K slice M1: the optional dangling-Turn closure dependency. It carries the
+   * SES-13 health owner and this Host instance's lease. Without it the Runtime
+   * does not publish `closeOpenTurn` (the Workflow takes today's fallback) and
+   * maintenance treats the close as a definite failure (M1).
+   */
+  turnClosure?: TurnClosureDependencies;
   now: () => string;
   newId: () => string;
+};
+
+/**
+ * K slice M1/L5: the closure's health owner, called with the Host's own call
+ * identity (the start-up reconcile's, M3). `lease` is this Host instance's
+ * lease; only `owned` may close a Turn (L4).
+ */
+export type TurnClosureDependencies = {
+  recordSessionHealth: SessionHealthPort['recordSessionHealth'];
+  lease: 'owned' | 'held_by_other' | null;
 };
 
 /** The two reads of the workspace source the continuation brief takes (digest-only and full, LA-5). */

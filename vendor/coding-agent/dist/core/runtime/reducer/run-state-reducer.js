@@ -74,6 +74,9 @@ function terminalState(state, event, status, outcome) {
     return {
         ...state,
         status,
+        // A Turn closed while still `created` never committed run.started; the
+        // terminal state still needs a start fact, so the closure time is recorded.
+        startedAt: state.startedAt ?? event.meta.occurredAt,
         activeModelRequest: null,
         toolBatch,
         transcript: pendingResults.length === 0 ? state.transcript : [...state.transcript, ...pendingResults],
@@ -251,6 +254,12 @@ function applyEvent(state, event) {
             next = terminalState(state, event, "failed", {
                 kind: "failed",
                 failure: event.payload.failure,
+            });
+            break;
+        case "run.interrupted":
+            next = terminalState(state, event, "interrupted", {
+                kind: "interrupted",
+                reason: "platform_closed",
             });
             break;
     }

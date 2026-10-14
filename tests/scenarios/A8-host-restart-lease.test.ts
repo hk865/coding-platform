@@ -7,6 +7,9 @@
  *   process (the test process itself) is held the same way. A8-L1 (HL-01) and A8-L3 (HL-03) are every scenario's
  *   first start and crash restart (the reports' `leaseRow`).
  * - A8-Q1/A8-Q4, A8-Q5/A8-Q6: moved cases; A8-Q7: an interrupted QueryRun under a `host_config` probe is left.
+ *   In A8-Q4 and at A8-Q7's last reconcile the retired Query line keeps its open Kernel Turn: the start-up
+ *   maintenance, which closes the dangling Turn of some retired Work lines, never closes a Query line's (slice K
+ *   L10, KA-16).
  * - A8-Q2 (Q-02): a QueryRun begun with no Kernel Turn (the Kernel store aside at its start, as A8-2's) is closed
  *   and never entered again. A8-Q3 (Q-03): the Kernel answered and the answer was never booked (a composition root
  *   runs the Query and the ledger is locked after its last usage write); the restart books it and writes the Answer.
@@ -113,6 +116,12 @@ it('A8-Q7 (Q-07, SD-2): a QueryRun interrupted mid-Turn under a host_config prob
         status: 'reconciled' }] } });
       expect((await readQuery(third, refs.queryJobRef)).run.run).toMatchObject({ status: 'closed', outcome: 'failed' });
       await assertInvariantsAt(inv, 'A8-Q7 closed');
+      // KA-16 (slice K L10, SES-09): as in A8-Q4, the open Kernel Turn retires the Query line and this start's
+      // maintenance does not close it.
+      const card = await post<{ status: string; value: { record: TaskExecutionRecord['session'] } }>(third, 'sessions/read',
+        plain(AG2B_SCOPE, session.sessionRef));
+      expect(card.value.record, 'KA-16: the Query line is not closed').toMatchObject({ lifecycle: 'active', occupancy: null,
+        health: 'unavailable', healthConclusion: 'kernel_turn_open' });
       // §12.10 step 4: the QueryRun's claim, sent again with the same identity, gets its original receipt and writes nothing.
       const beforeReplay = ledgerEvents(database);
       expect(await answer(third, 'queries/claim', graphWrite(AG2B_SCOPE, { queryRunRef: refs.queryRunRef,
@@ -384,6 +393,10 @@ it('Q-01 and Q-04: at the restart a claimed QueryRun is closed not_entered and o
     const startedCard = await post<{ status: string; value: { record: TaskExecutionRecord['session'] } }>(second, 'sessions/read',
       plain(AG2B_SCOPE, startedSession.sessionRef));
     expect(startedCard.value.record).toMatchObject({ occupancy: null, health: 'unavailable', healthConclusion: 'kernel_turn_open' });
+    // KA-16 (slice K L10): this start's maintenance (start-up step 6c) may close the dangling Kernel Turn of a retired
+    // Work line (KA1), never a Query line's: the Session stays active and retired, not available again through SES-13.
+    expect(startedCard.value.record, 'KA-16: the Query line is not closed').toMatchObject({ lifecycle: 'active',
+      health: 'unavailable', healthConclusion: 'kernel_turn_open' });
     expect(second.queryScripted.calls()).toBe(0);
     await assertInvariantsAt({ database }, 'A8-Q1/Q4 reconciled');   // A.2 step 6
     // A.2 step 6: §12.10 step 4, the claim of the QueryRun Q-01 closed, sent again with the same identity (its answer

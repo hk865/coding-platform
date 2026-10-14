@@ -14,6 +14,7 @@ export declare const runStatusSchema: z.ZodEnum<{
     cancelled: "cancelled";
     limit_exceeded: "limit_exceeded";
     failed: "failed";
+    interrupted: "interrupted";
 }>;
 export declare const runFailureSchema: z.ZodObject<{
     category: z.ZodEnum<{
@@ -107,6 +108,9 @@ export declare const runOutcomeSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
         yieldedAt: z.ZodString;
         pendingToolCallId: z.ZodNullable<z.ZodString>;
     }, z.core.$strict>;
+}, z.core.$strict>, z.ZodObject<{
+    kind: z.ZodLiteral<"interrupted">;
+    reason: z.ZodLiteral<"platform_closed">;
 }, z.core.$strict>], "kind">;
 export declare const pauseStateSchema: z.ZodObject<{
     reason: z.ZodEnum<{
@@ -560,6 +564,7 @@ export declare const runStateSchema: z.ZodObject<{
         cancelled: "cancelled";
         limit_exceeded: "limit_exceeded";
         failed: "failed";
+        interrupted: "interrupted";
     }>;
     transcript: z.ZodReadonly<z.ZodArray<z.ZodDiscriminatedUnion<[z.ZodObject<{
         kind: z.ZodLiteral<"user_message">;
@@ -879,6 +884,9 @@ export declare const runStateSchema: z.ZodObject<{
             yieldedAt: z.ZodString;
             pendingToolCallId: z.ZodNullable<z.ZodString>;
         }, z.core.$strict>;
+    }, z.core.$strict>, z.ZodObject<{
+        kind: z.ZodLiteral<"interrupted">;
+        reason: z.ZodLiteral<"platform_closed">;
     }, z.core.$strict>], "kind">>;
     usage: z.ZodObject<{
         modelRequestCount: z.ZodNumber;

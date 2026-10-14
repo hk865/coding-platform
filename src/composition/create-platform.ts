@@ -274,8 +274,17 @@ function workspaceRuntimeCapabilities(
       + 'including the successor Run after a yielded wait. When the previous Turn has no Kernel terminal (for '
       + 'example a Run interrupted by a Host restart, including one paused then, a Run stopped at restart by a '
       + 'queued cancel, or one a person attested while its Kernel Turn was still open), the Kernel refuses a new '
-      + 'Turn in that Session: the original Session becomes unavailable (kernel_turn_open, its history stays '
-      + 'readable) and the continuation is a new Run in a new Session that continues the original Session\'s last '
+      + 'Turn in that Session and the original Session is unavailable (kernel_turn_open, its history stays '
+      + 'readable) until the platform closes the dangling Turn. For a Work line the platform closes it as '
+      + 'interrupted: the Session maintenance does so after a clean interruption, a stop by a queued cancel or a '
+      + 'person\'s attestation, and the Workflow does so when a person, or the Goal, continues a '
+      + 'paused-interrupted Run. The closure never resumes the interrupted Turn and never invents a result for an '
+      + 'unfinished tool call; the Session becomes available again and the continuation is a new Run in the same '
+      + 'Session, whose model history holds the completed Turns before the interrupted one, while what the '
+      + 'interrupted Turn had accepted reaches it only through the continuation brief. When the closure is not '
+      + 'possible (only the legacy Kernel reader, another Kernel adapter, a Kernel that cannot close a Turn, an '
+      + 'unreadable Kernel store, or another Run at the Kernel head), and for a Query line, whose open Turn is not '
+      + 'closed, the continuation is a new Run in a new Session that continues the original Session\'s last '
       + 'completed history (same Kernel adapter only; otherwise the brief alone). After a Host restart a waiting '
       + 'continuation is rebuilt only when its Turn has exactly one waiting message; otherwise its outcome is '
       + 'recorded as unknown (continuation_unrebuildable), keeping its Session and Lease until a person attests it' },
@@ -291,8 +300,10 @@ function workspaceRuntimeCapabilities(
       + 'from the Goal, resuming the Goal continues it; an end it cannot prove is recorded as unknown, keeping its '
       + 'Session and Lease until a person attests it (an attestation also needs the instance lease), and a probe '
       + 'that proves nothing leaves the Run as recorded for the next start. The continuation of an interrupted Run '
-      + 'is a new Run with a continuation brief, in a new Session that continues the original Session\'s last '
-      + 'completed history. After the reconciliation the Host starts the existing collaboration driver for each '
+      + 'is a new Run with a continuation brief: for a Work line, after the platform closes its dangling Kernel '
+      + 'Turn as interrupted, in the same Session; when that closure is not possible, in a new Session that '
+      + 'continues the original Session\'s last completed history (see continueHistory). After the reconciliation '
+      + 'the Host starts the existing collaboration driver for each '
       + 'active Goal with work to advance automatically: a required active Task whose automation verdict is '
       + 'requeue, reverify or claim_requeued, or a Run that never entered and is not paused or cancelled, whose '
       + 'same claim is then driven again; this start-up re-drive follows the Host setting automation.resumeOnStartup (on by '
@@ -306,8 +317,9 @@ function workspaceRuntimeCapabilities(
       + 'safe point (before a model call or between tool groups), and a resume re-enters the original Turn only '
       + 'while this Host process still holds the live handle; a Run that has not entered the Kernel is paused and '
       + 'resumed by the platform at once. A Run paused when its Host stopped ends paused-interrupted after the '
-      + 'restart, which is not a failure: only a person continues it (a new continuation Run in a new '
-      + 'Session), never automatically, or, when the pause came from the Goal, resuming the Goal continues it. '
+      + 'restart, which is not a failure: only a person continues it (a new continuation Run, in the same '
+      + 'Session once the platform has closed the dangling Kernel Turn, otherwise in a new Session), never '
+      + 'automatically, or, when the pause came from the Goal, resuming the Goal continues it. '
       + 'A Query cannot be paused' },
     cancel: { supported: true, reason: 'an entered Run is cancelled through its live handle, and the cancel stays '
       + 'a pending stop request until the Run\'s stop is proved; a Run that has not entered the Kernel is '
@@ -839,6 +851,11 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         workspaceSource: verificationWorkspaceReader,
         // A.2 step 5.6: the in-process ends without a Kernel terminal (RUN-16, RUN-23).
         runReconcile,
+        // K slice M1/M3/L5: the dangling-Turn closure's health owner and this
+        // Host instance's lease. The Runtime calls the same SES-13 owner as
+        // start-up step 1, under the Host call identity, and never writes health itself.
+        turnClosure: { recordSessionHealth: (...args) => sessionHealth.recordSessionHealth(...args),
+          lease: hostInstance === undefined ? null : hostInstance.lease },
         graphContext, taskInputs,
         host, kernel, now, newId: randomUUID,
       };

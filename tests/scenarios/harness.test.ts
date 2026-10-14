@@ -7,8 +7,10 @@
  *    the next Host continues the script at the next reply, and the counters add both Hosts' calls.
  * 2. Host mode crash: the second model call of the Turn is held, the Host is abandoned with its lock
  *    naming an exited process; the next Host takes the lock over (HL-03), ends the Run interrupted
- *    (W-11) and calls no model while it reconciles; the second Host's own model call is held and
- *    released (the hold indexes are global); draining the abandoned Host keeps every invariant.
+ *    (W-11) and calls no model while it reconciles; its start-up maintenance closes the Run's open
+ *    Kernel Turn (slice K KA1), so the continuation claims in the same Session; the second Host's own
+ *    model call is held and released (the hold indexes are global); draining the abandoned Host keeps
+ *    every invariant.
  * 3. Platform mode: the same Task through the composition root in process; a reopen keeps every
  *    record and count, and the script continues.
  * 4. `stepOfReceipt`: the step kind, actor and policy `advance()` checks each receipt with.
@@ -26,7 +28,7 @@ import {
   assertInvariants, checkRevisionOf, cleanupScenarios, hostCtx, openHostScenario, openPlatformScenario, performs, SCENARIO_OPERATOR,
   stepOfReceipt, type Driven,
 } from './harness.js';
-import { committedOutcomesOf, editThenText } from './support/common.js';
+import { committedOutcomesOf, editThenText, execution } from './support/common.js';
 
 afterEach(cleanupScenarios);
 
@@ -118,7 +120,9 @@ it('host mode crash: a Host abandoned mid-Turn is taken over (HL-03); the Run en
   expect(h.lastWorld?.runs).toMatchObject([{ status: 'ended', outcome: 'crashed' }]);
   expect(await h.taskRow()).toMatchObject({ effectivePhase: 'failed', failure: { failureClass: 'interrupted' } });
 
-  // The second Host requeues (uncounted, W-11), claims in a new Session and calls the model: global index 2 is held.
+  // The second Host's start-up maintenance closed the Run's open Kernel Turn and made its Session available again (slice K
+  // KA1, also with resumeOnStartup off). The second Host requeues (uncounted, W-11), claims in Run 1's Session (no new
+  // Session, no close_open_turn step) and calls the model: global index 2 is held.
   const secondCall = h.holdReply(2);
   const drive = h.advance(h.select('smoke-crash-2', AG2B_WORK_TASK_ID));
   const request = await secondCall.reached;
@@ -127,7 +131,12 @@ it('host mode crash: a Host abandoned mid-Turn is taken over (HL-03); the Run en
   expect(h.modelCalls()).toBe(3);
   secondCall.release();
   const second = await drive;
-  expect(kinds(second)).toEqual(expect.arrayContaining(['requeue_task', 'create_session', 'claim_task', 'start', 'complete_task']));
+  expect(kinds(second)).toEqual(expect.arrayContaining(['requeue_task', 'claim_task', 'start', 'complete_task']));
+  expect(kinds(second)).not.toContain('create_session');
+  expect(kinds(second)).not.toContain('close_open_turn');
+  const run2Ref = (await h.taskRow()).execution;
+  expect(run2Ref === null ? null : (await execution(h, run2Ref)).session.ref.sessionId, 'Run 2 is claimed in Run 1\'s Session')
+    .toBe((await execution(h, runRef)).session.ref.sessionId);
   expect(committedOutcomesOf(second)).toEqual(['PASS']);
   expect(await h.taskRow()).toMatchObject({ effectivePhase: 'satisfied' });
   expect(h.lastWorld?.requeues).toMatchObject([{ failureClass: 'interrupted', automation: { automatic: true, counted: false, cap: 3 } }]);

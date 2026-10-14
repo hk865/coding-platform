@@ -164,7 +164,11 @@ export {
   ToolRegistrySnapshot,
 } from "./tools/registry/tool-registry.js";
 export { InMemoryStores } from "./storage/adapters/in_memory/in-memory-stores.js";
-export { SqliteStores } from "./storage/adapters/sqlite/sqlite-stores.js";
+export {
+  closeOpenTurn,
+  readTurnBounds,
+  SqliteStores,
+} from "./storage/adapters/sqlite/sqlite-stores.js";
 export { SessionEventSink } from "./storage/session_event_sink/session-event-sink.js";
 
 export type {
@@ -181,6 +185,11 @@ export type {
   SessionRecordDraft,
   SessionStorePort,
 } from "./core/ports/session_store/session-store-port.js";
+export type {
+  CloseOpenTurnInput,
+  CloseOpenTurnResult,
+  TurnBounds,
+} from "./storage/adapters/sqlite/sqlite-stores.js";
 export type {
   RecoveryAction,
   RecoveryEnvironment,

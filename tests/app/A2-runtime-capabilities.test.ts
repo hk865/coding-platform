@@ -21,7 +21,10 @@
  * restart stop; 5.8 the automatic requeue of a clean interruption (RUN-19) and the start-up re-drive
  * of a Goal whose required active Task has the automation verdict requeue or claim_requeued; 5.9 the
  * re-drive of a Goal whose required active Task has the verdict reverify (the last clause that was
- * listed as not built yet). Every item has its own reason
+ * listed as not built yet). Slice K (L1, L7, L8; lead decisions D9, D10) reports Kernel session API
+ * version 3, and the recoverRun reason puts the continuation of an interrupted Work line in the same
+ * Session once the platform has closed its dangling Kernel Turn, in a new Session only when that
+ * closure is not possible. Every item has its own reason
  * (no shared placeholder), and the report is the same after the Host reopens
  * the ledger with the same settings.
  *
@@ -117,8 +120,10 @@ const RECOVER_RUN_BOUNDARIES = [
   // RUN-20, RUN-22, L-1, W-07.
   'recorded as unknown, keeping its Session and Lease until a person attests it',
   'an attestation also needs the instance lease', 'a probe that proves nothing leaves the Run as recorded',
-  // LA-1, C3: the continuation.
-  'new Run with a continuation brief, in a new Session',
+  // LA-1, C3: the continuation; slice K (L7, L8, lead decision D9): in the same Session once the platform has
+  // closed the dangling Kernel Turn of a Work line, in a new Session only when that closure is not possible.
+  'new Run with a continuation brief: for a Work line, after the platform closes its dangling Kernel Turn as interrupted, in the same Session',
+  'when that closure is not possible, in a new Session that continues the original Session',
   // LA-6: the start-up re-drive, its switch, owner guards, no scheduler.
   'starts the existing collaboration driver for each active Goal',
   // 5.8, 5.9: re-drive condition (a) for the verdicts the Workflow acts on (reverify since 5.9).
@@ -155,7 +160,8 @@ it('reports continuation, safe-point pause, cancel and start-up reconciliation a
     recoverRun: { supported: true },
     nativeCompact: { supported: false }, scopedWorkspaceWrites: { supported: false },
   });
-  expect([1, 2]).toContain(report.kernelSessionApiVersion);
+  // Slice K L1 (lead decision D10): the Kernel with the interrupted terminal and the Turn closure.
+  expect(report.kernelSessionApiVersion).toBe(3);
 
   // LA-1: a continuation is a new Run, never the original Turn; with a Kernel
   // terminal it continues in the same Session (including the yielded successor),
@@ -168,7 +174,9 @@ it('reports continuation, safe-point pause, cancel and start-up reconciliation a
     'has a Kernel terminal, a new Run in the same Session continues its history',
     'the successor Run after a yielded wait',
     'has no Kernel terminal',
-    // 5.6 (LA-1, RD-3, RUN-20(iii)): the new Session after an open Kernel Turn and the restart rebuild.
+    // 5.6 (LA-1, RD-3, RUN-20(iii)): the new Session after an open Kernel Turn and the restart rebuild; since
+    // slice K (L11, lead decision D9) the new Session is the continuation of a Query line and the fallback when
+    // the platform cannot close the dangling Turn (KA-17 asserts the closure sentences).
     'the Kernel refuses a new Turn in that Session',
     'a Run interrupted by a Host restart, including one paused then',
     'a Run stopped at restart by a queued cancel',

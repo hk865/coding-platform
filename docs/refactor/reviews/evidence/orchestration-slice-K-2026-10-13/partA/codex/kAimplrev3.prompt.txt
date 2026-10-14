@@ -1,0 +1,16 @@
+Targeted read-only re-check of K slice part A, round 4. Do not edit files, do not run tests, do not call any model.
+
+Repository: the current directory. HEAD is a local commit holding the round-3 state; `git diff HEAD` (11 files) is round 4's change. The full round-4 tree is the working tree.
+
+Your previous re-review: D:/cc-lead-notes/codex2/kAimplrev2.out.md ("merge after listed fixes", problems 1-5).
+The lead's binding decisions for round 4: D:/cc-lead-notes/impl/kA/kA-impl-4.md section 2 (D11-D15).
+The implementer's report: D:/cc-lead-notes/impl/kA/final-4.md.
+Spec: docs/refactor/design/orchestration-2026-10/slices/slice-K-SPEC.md (L9 and section 9).
+
+Check only:
+1. Are problems 1-5 of your previous re-review fixed as D11-D15 require? Cite file:line for each.
+2. Does the round-4 diff introduce a regression in production code (continuation-brief-assembly.ts, context-assembler.ts)?
+3. Do the rewritten tests still use private assembly helpers or fabricated Session/Run/requeue records (D13), and does each new or rewritten Workflow-driving scenario assert where the drive stopped (D10)? Note the implementer's UNSPECIFIED items and say whether each is acceptable.
+Context: with real bubblewrap the lead's full suite of this tree is running separately; you do not need to run anything.
+
+Reply under 500 words: a table (problem, fixed / not fixed, evidence), then any must-fix items, then a verdict: "merge" or "merge after listed fixes".

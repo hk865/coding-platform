@@ -159,7 +159,8 @@ it('wires one durable Goal/Plan/Session graph and reopens the same Kernel Sessio
     // A.2 step 5.2 (spec §7.7, D-15, LA-1): continuation, safe-point pause
     // and cancel are reported supported, each with its own boundary; step 5.7
     // adds the start-up reconciliation, never a fresh resume (D-17), with the
-    // §7.7 boundaries LA-7, C4, LA-1 and LA-6 (§7.7 item 3).
+    // §7.7 boundaries LA-7, C4, LA-1 and LA-6 (§7.7 item 3). Slice K (lead decision D9): the continuation of
+    // a Work line is in the same Session once its dangling Kernel Turn is closed, otherwise in a new Session.
     expect(await first.runtime.capabilities(ctx, scope)).toMatchObject({ status: 'ready', value: {
       createSession: { supported: true }, readHistory: { supported: true },
       continueHistory: { supported: true, reason: expect.stringContaining('a continuation is a new Run') },
@@ -167,7 +168,8 @@ it('wires one durable Goal/Plan/Session graph and reopens the same Kernel Sessio
         'start-up reconciliation only, never a fresh resume of the original Turn',
         'a queued cancel with a clean Kernel Turn ends the Run cancelled',
         'ends paused-interrupted, which is not a failure', 'only a person continues it',
-        'new Run with a continuation brief, in a new Session',
+        'new Run with a continuation brief: for a Work line, after the platform closes its dangling Kernel Turn as interrupted, in the same Session',
+        'when that closure is not possible, in a new Session that continues the original Session',
         'follows the Host setting automation\\.resumeOnStartup \\(on by default\\)',
         'When that setting is off, the reconciliation still runs but no driver starts after it',
       ].join('[\\s\\S]*'))) },

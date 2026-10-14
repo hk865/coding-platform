@@ -24,6 +24,9 @@ const TERMINAL_EVENT_TYPES = new Set([
   "run.limit_exceeded",
   "run.failed",
   "run.yielded",
+  // Platform closure of a dangling Turn is a real boundary, but its content is
+  // never fed to the model (see restoreSessionHistory).
+  "run.interrupted",
 ]);
 
 export interface SessionHistoryTurnIdentity {
@@ -171,6 +174,12 @@ export function projectTerminalTranscript(state: Readonly<RunState>): Transcript
     throw new StoreError(
       "conflict",
       `projectTerminalTranscript：Turn 尚未终止（status=${state.status}）`,
+    );
+  }
+  if (state.status === "interrupted") {
+    throw new StoreError(
+      "conflict",
+      `projectTerminalTranscript：被中断的 Turn 不进模型输入（status=interrupted）`,
     );
   }
   if (state.activeModelRequest !== null) {
@@ -328,6 +337,19 @@ export function restoreSessionHistory(
         "conflict",
         `边界处的 Turn ${record.payload.run.turn.turnId} 尚未终止（status=${state?.status ?? "unknown"}）`,
       );
+    }
+    // L3: an interrupted Turn keeps its boundary and identity in `turns`, but its
+    // accepted user message, model replies and tool process never enter the model
+    // history. The unsettled-tool and outcome_unknown checks do not apply to it,
+    // because that unsettled state is exactly what the closure interrupted.
+    if (state.status === "interrupted") {
+      turns.push({
+        runId: state.runId,
+        turnId: state.turn.turnId,
+        startPosition: record.position,
+        endPosition: slice.at(-1)!.position,
+      });
+      continue;
     }
     if (
       state.activeModelRequest !== null ||

@@ -16,6 +16,9 @@ export const runStatusSchema = z.enum([
     "cancelled",
     "limit_exceeded",
     "failed",
+    // Platform closure of a dangling Turn: a real terminal, distinct from failed
+    // and cancelled, that never resumes the original Turn and invents no results.
+    "interrupted",
 ]);
 export const runFailureSchema = z
     .object({
@@ -81,6 +84,12 @@ export const runOutcomeSchema = z.discriminatedUnion("kind", [
         .strict(),
     z.object({ kind: z.literal("failed"), failure: runFailureSchema }).strict(),
     z.object({ kind: z.literal("yielded"), yield: yieldStateSchema }).strict(),
+    z
+        .object({
+        kind: z.literal("interrupted"),
+        reason: z.literal("platform_closed"),
+    })
+        .strict(),
 ]);
 export const pauseStateSchema = z
     .object({
@@ -222,7 +231,14 @@ export const runStateSchema = z
     acceptedInputs: z.array(acceptedInputSchema).readonly().default([]),
 })
     .strict();
-const terminalStatuses = new Set(["completed", "cancelled", "limit_exceeded", "failed", "yielded"]);
+const terminalStatuses = new Set([
+    "completed",
+    "cancelled",
+    "limit_exceeded",
+    "failed",
+    "yielded",
+    "interrupted",
+]);
 export function isTerminalRunStatus(status) {
     return terminalStatuses.has(status);
 }

@@ -3,8 +3,10 @@ import type { ContinuationBriefV1 } from '../../contracts/continuation-brief.js'
 import type { ControlIntentSnapshotV1 } from '../../contracts/control-intent.js';
 import type { RunRef } from '../../contracts/dispatch.js';
 import type { WorkspaceScope } from '../../contracts/core/identity.js';
+import type { SessionRef } from '../../contracts/core/identity.js';
 import type { OperationReceipt, Page, ReadResult } from '../../contracts/core/results.js';
 import type { SessionRecord } from '../../contracts/core/session.js';
+import type { TaskRequeueRef } from '../../contracts/task-requeue.js';
 import type { ArchiveChangedFilesV1 } from '../../contracts/session-anomaly.js';
 import type { PreparedQueryExecution, PreparedTaskExecution } from '../../contracts/core/prepared-execution.js';
 import type { RuntimeCapabilities } from './contracts.js';
@@ -87,6 +89,19 @@ export interface RuntimeExecutionPort {
    * `createAgentRuntime` always publishes it.
    */
   readAttentionGraph?: import('./context-assembler.js').ContextAssembler['readAttentionGraph'];
+  /**
+   * K slice (L4, M1): close the dangling Kernel Turn of a Run the platform has
+   * already proved ended, then hand the Session back to the SES-13 health owner.
+   * Optional: without the injected `turnClosure` dependency the Runtime does not
+   * install it, and the Workflow's `close_open_turn` is `unsupported`.
+   */
+  closeOpenTurn?(ctx: CoreCallContext, input: {
+    sessionRef: SessionRef; afterRunRef: RunRef; requeueRef: TaskRequeueRef | null;
+  }): Promise<
+    | { status: 'closed' | 'already_closed'; health: 'available' | 'unavailable' }
+    | { status: 'refused'; reason: 'lease' | 'not_closable_run' | 'continuation_not_authorized' | 'archived'
+        | 'archive_requested' | 'occupied' | 'handed_over' | 'health' }
+    | { status: 'unsupported' | 'unreadable' | 'mismatch' | 'conflict' | 'transient'; reason: string }>;
 }
 
 export type AgentRuntimeService = {

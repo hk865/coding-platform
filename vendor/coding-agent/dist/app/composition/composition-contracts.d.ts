@@ -30,8 +30,8 @@ export interface AppRuntimeConfiguration {
         readonly ignoredPrefixes: readonly string[];
     };
 }
-/** Kernel 会话公共扩展的契约版本；2 表示实现了 sessionContext/executionIdentity/controlHooks。 */
-export declare const kernelSessionApiVersion: 2;
+/** Kernel 会话公共扩展的契约版本；3 增加 `run.interrupted` 终态与关闭悬空 Turn 的公开收尾。 */
+export declare const kernelSessionApiVersion: 3;
 /**
  * 会话上下文模式：
  *  - `current_turn`（缺省）：只把当前 Turn 交给模型，旧 CLI 语义不变；

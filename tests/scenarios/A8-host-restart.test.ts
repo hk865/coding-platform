@@ -22,9 +22,12 @@
  *   as saved and its wait association is lost. A8-1d (W-04) and A8-3k (W-19) need states the Host cannot reach
  *   on demand (a pre-D-7 queued intent, a tool that ignores a cancel): tests/runtime/A2-reconcile-runtime.test.ts.
  * - A8-3d with the Kernel paused (W-12, CI-04): a cancel queued on a Run paused at a safe point (submitted on a
- *   Host without the lease, HL-07) stops it at the restart by the paused stop (RUN-23, CTL-10).
+ *   Host without the lease, HL-07) stops it at the restart by the paused stop (RUN-23, CTL-10); the start-up
+ *   maintenance then closes the paused Kernel Turn (K KA1) and the Session is available again, not archived.
  * - A8-3 (W-11, W-12, W-14, W-15, W-17; moved cases): crashes mid-Turn and the start-up re-drive of an
- *   interrupted Run (§13.4 #17), and the A8-2c/A8-3g Run left under a `host_config` probe.
+ *   interrupted Run (§13.4 #17), and the A8-2c/A8-3g Run left under a `host_config` probe. K (KA1): a start-up
+ *   maintenance closes the open Kernel Turn of a RUN-19, clean RUN-23 or attested RUN-22 line (decision 51) on a
+ *   readable Kernel store, also with the re-drive off; the Session is available again and the continuation runs in it.
  *
  * Every case checks the §11 invariants after each step that changes records (the harness does it in
  * `advance()` and after every restart; moved cases call `assertInvariantsAt`), counts model calls (and
@@ -323,9 +326,10 @@ it('A8-3d (W-12, RUN-23, CI-04, CTL-10, LA-1): a cancel queued on a Run paused a
     runs: [{ ref: JSON.stringify(runRef), row: 'W-12', status: 'reconciled', reason: 'paused_stop' }],
     // Hard limit 3: a person's cancel; nothing is re-driven.
     redriveGoals: [], problems: [] } });
+  // K (KA1, L2 row 7): the start-up maintenance appends exactly one Kernel record, the run.interrupted that closes the paused Turn.
   expect(h.counts(), 'no model request, Kernel Turn or check process during the reconcile').toMatchObject({
     modelCalls: atCrash.modelCalls, kernelTurnsStarted: atCrash.kernelTurnsStarted, checksBegun: atCrash.checksBegun,
-    kernelRecords: atCrash.kernelRecords });
+    kernelRecords: atCrash.kernelRecords + 1 });
   const ended = await execution(h, runRef);
   // RUN-23: the synthesized `run_cancelled` says `cancelled_while_paused` (the Kernel is paused; §6 RUN-23).
   expect(ended.run).toMatchObject({ status: 'ended', outcome: 'cancelled', terminalPayload: { kind: 'cancelled', reason: 'cancelled_while_paused' },
@@ -336,8 +340,9 @@ it('A8-3d (W-12, RUN-23, CI-04, CTL-10, LA-1): a cancel queued on a Run paused a
   expect(await readControl(h.host, cancelRef)).toMatchObject({ status: 'applied', observation: { origin: 'platform_paused_stop',
     kind: 'cancelled', detail: { basis: 'host_instance_takeover', pausedBy: null } } });
   expect(await readControl(h.host, pauseRef), 'the applied pause is not rewritten').toEqual(pauseIntent);
-  // LA-1: the Turn never ended in the Kernel, so the Session is released and retired.
-  expect(ended.session).toMatchObject({ occupancy: null, health: 'unavailable', healthConclusion: 'kernel_turn_open',
+  // LA-1: at the restart the Turn had no Kernel terminal, so RUN-23 released and retired the Session; K (KA1, L5): the start-up
+  // maintenance then closed the paused Turn and SES-13 made the Session available again, not archived; the cursor is kept (L3).
+  expect(ended.session).toMatchObject({ lifecycle: 'active', occupancy: null, health: 'available', healthConclusion: null,
     historyCursor: paused.session.historyCursor });
   expect(ended.attempt).toMatchObject({ status: 'ended', endOutcome: 'cancelled' });
   expect(await h.taskRow()).toMatchObject({ effectivePhase: 'failed', failure: { failureClass: 'cancelled',
@@ -407,7 +412,8 @@ it('A8-3h (W-16, CTL-08(e), CI-08, CD-4): the terminal was booked and the crash 
 }, 180_000);
 
 // ---------------------------------------------------------------------------
-// Moved cases (user decision 31): assertions unchanged; A.2 step 6 adds the invariant checks (and marks them).
+// Moved cases (user decision 31): assertions unchanged, except the K flips (KA1) in W-11, W-12, the W-15 attested line and the
+// re-drive's same Session; A.2 step 6 adds the invariant checks (and marks them).
 // ---------------------------------------------------------------------------
 
 // Moved from tests/app/A2-host-reconcile.test.ts:564 (05125db): A8-1a supplement (W-01) and the start-up re-drive on and off.
@@ -469,7 +475,7 @@ it('§12.1 step 6b (LA-6, W-01): a claimed Run left by a stopped Host is re-driv
 }, 240_000);
 
 // Moved from tests/app/A2-host-reconcile.test.ts:94 (05125db): A8-3c (W-11, CI-03).
-it('W-11 and CTL-08(b): a Run interrupted mid-Turn ends crashed at the restart; the steer the Kernel accepted is applied and the Session retired', async () => {
+it('W-11 and CTL-08(b), K KA1: a Run interrupted mid-Turn ends crashed at the restart; the steer the Kernel accepted is applied; the Session is retired and the start-up maintenance closes its open Kernel Turn, so it is available again', async () => {
   const root = await tempDir('a2-crash-steer-ws-');
   const database = await tempDir('a2-crash-steer-db-');
   const publicDir = await publicDirectory();
@@ -494,12 +500,14 @@ it('W-11 and CTL-08(b): a Run interrupted mid-Turn ends crashed at the restart; 
       runs: [{ ref: JSON.stringify(runRef), row: 'W-11', status: 'reconciled', reason: 'interrupted_clean' }], problems: [],
       // §12.1 step 6b (a) (5.8): the interrupted Task's verdict is requeue, so the Goal is selected either way.
       redriveGoals: [{ goalRef: { goalId: 'ag2b-goal' }, taskIds: ['ag2b-work'] }] } });
-    // RUN-19: crashed `host_interrupted` on the takeover basis; the Session is released with its cursor and retired (LA-1).
+    // RUN-19: crashed `host_interrupted` on the takeover basis; the Session is released with its cursor and retired (LA-1);
+    // K (KA1, L5): the start-up maintenance (step 6c, here with the re-drive off) then closes the open Kernel Turn and
+    // SES-13 makes the Session available again; it is not archived.
     const ended = await readExecution(second, runRef);
     expect(ended.run).toMatchObject({ status: 'ended', outcome: 'crashed', terminalPayload: { kind: 'crashed' },
       reconciliation: { status: 'done', basis: { kind: 'host_instance_takeover', hostInstanceId },
         observation: { kind: 'interrupted_clean', kernelPaused: false, pausedIntentRef: null } } });
-    expect(ended.session).toMatchObject({ occupancy: null, health: 'unavailable', healthConclusion: 'kernel_turn_open' });
+    expect(ended.session).toMatchObject({ lifecycle: 'active', occupancy: null, health: 'available', healthConclusion: null });
     // CTL-08(b): the steer the Kernel accepted (`control:<sha(intentRef)>`) is applied from that Kernel event.
     const steer = await readControl(second, steerRef);
     expect(steer).toMatchObject({ status: 'applied', observation: { kind: 'steered' } });
@@ -508,7 +516,8 @@ it('W-11 and CTL-08(b): a Run interrupted mid-Turn ends crashed at the restart; 
     expect(await workRow(second)).toMatchObject({ effectivePhase: 'failed', phaseCause: { code: 'run_failed' } });
     expect(second.scripted.calls(), 'the reconcile calls no model').toBe(0);
     await assertInvariantsAt({ database }, 'W-11 reconciled');   // A.2 step 6
-    // A.2 step 6: §12.10 step 4, while the crashed Host still holds its call (draining it lets its Kernel end the Turn).
+    // A.2 step 6: §12.10 step 4, while the crashed Host still holds its call (K: its Turn is closed, so a late Kernel append
+    // of that call fails on the revision).
     await second.host.close();
     await expectQuietRestart(database, publicDir, root, { label: 'W-11' });
   } finally {
@@ -532,19 +541,21 @@ it('W-12 (LA-7): a cancel queued while the Turn runs stops the Run at the restar
     const hostInstanceId = second.host.reconcile.hostInstanceId;
     expect(second.host.reconcile).toMatchObject({ report: {
       runs: [{ ref: JSON.stringify(crashed.runRef), row: 'W-12', status: 'reconciled', reason: 'paused_stop' }], problems: [] } });
-    // RUN-23 (restart, Kernel not paused): cancelled `cancelled_at_reconcile`; the Session retired (LA-1).
+    // RUN-23 (restart, Kernel not paused): cancelled `cancelled_at_reconcile`; the Session retired (LA-1); K (KA1, L5): the
+    // start-up maintenance then closes the clean Turn and SES-13 returns the Session available, not archived.
     const ended = await readExecution(second, crashed.runRef);
     expect(ended.run).toMatchObject({ status: 'ended', outcome: 'cancelled',
       terminalPayload: { kind: 'cancelled', reason: 'cancelled_at_reconcile' },
       reconciliation: { basis: { kind: 'host_instance_takeover', hostInstanceId },
         observation: { kind: 'interrupted_clean', kernelPaused: false, pausedIntentRef: null } } });
-    expect(ended.session).toMatchObject({ occupancy: null, health: 'unavailable', healthConclusion: 'kernel_turn_open' });
+    expect(ended.session).toMatchObject({ lifecycle: 'active', occupancy: null, health: 'available', healthConclusion: null });
     // CTL-10: the cancel is applied by the paused stop; no pause was in effect (LA-7), so `pausedBy` is null.
     expect(await readControl(second, cancelRef)).toMatchObject({ status: 'applied', observation: { origin: 'platform_paused_stop',
       kind: 'cancelled', detail: { basis: 'host_instance_takeover', pausedBy: null } } });
     await assertInvariantsAt({ database }, 'W-12 reconciled');   // A.2 step 6
     expect(second.scripted.calls(), 'the reconcile calls no model').toBe(0);   // A.2 step 6
-    // A.2 step 6: §12.10 step 4, while the crashed Host still holds its call (draining it lets its Kernel end the Turn).
+    // A.2 step 6: §12.10 step 4, while the crashed Host still holds its call (K: its Turn is closed, so a late Kernel append
+    // of that call fails on the revision).
     await second.host.close();
     await expectQuietRestart(database, publicDir, root, { label: 'W-12' });
   } finally {
@@ -663,7 +674,7 @@ it('W-14 and RUN-22: with the Kernel store gone at the restart the Run ends outc
 }, 180_000);
 
 // Moved from tests/app/A2-host-restart.test.ts:335 (05125db): A8-2c (W-07, CI-10), A8-3g (W-15) and RUN-22 (CI-07).
-it('W-14 then W-07, W-15 and RUN-22 on a readable Kernel: a probe that proves nothing refuses the attestation without a write; the attestation of the open Turn retires the Session', async () => {
+it('W-14 then W-07, W-15 and RUN-22 on a readable Kernel: a probe that proves nothing refuses the attestation without a write; the attestation of the open Turn retires the Session, and the next start\'s maintenance closes the Turn and returns the Session available (decision 51, KA-10)', async () => {
   const root = await tempDir('a2-attest2-ws-');
   const database = await tempDir('a2-attest2-db-');
   const publicDir = await publicDirectory();
@@ -704,6 +715,7 @@ it('W-14 then W-07, W-15 and RUN-22 on a readable Kernel: a probe that proves no
   // Host 4 with the Kernel readable again: the Turn is still paused, no new Kernel terminal (W-15 left);
   // the probe makes the Session available again while the unknown holder keeps it (SES-13).
   const fourth = await startAG2bHost(publicDir, { root, database });
+  let ended: TaskExecutionRecord;
   try {
     expect(fourth.host.reconcile).toMatchObject({ lease: 'owned', report: {
       sessions: [{ ref: sessionKey(oldSession), row: 'H-01', status: 'reconciled' }],
@@ -715,7 +727,7 @@ it('W-14 then W-07, W-15 and RUN-22 on a readable Kernel: a probe that proves no
       { runRef, reason: 'the paused Turn did nothing more' }, 'a2-attest2', [{ ref: runRef, revision: before.run.revision }]));
     expect(attested).toMatchObject({ status: 'committed' });
     await assertInvariantsAt(inv, 'W-15 attested', attestedStep);   // A.2 step 6
-    const ended = await readExecution(fourth, runRef);
+    ended = await readExecution(fourth, runRef);
     expect(ended.run).toMatchObject({ status: 'ended', outcome: 'crashed',
       reconciliation: { observation: { kind: 'human_attested', reason: 'the paused Turn did nothing more' } } });
     expect(ended.session).toMatchObject({ occupancy: null, health: 'unavailable', healthConclusion: 'kernel_turn_open',
@@ -724,12 +736,31 @@ it('W-14 then W-07, W-15 and RUN-22 on a readable Kernel: a probe that proves no
   } finally {
     await fourth.host.close();
   }
-  await expectQuietRestart(database, publicDir, root, { label: 'W-15 attested' });   // A.2 step 6
+
+  // K (decision 51, KA-10, KA-14): the next maintenance after the attestation, Host 5's start-up step 6c (the re-drive
+  // off, as in `expectQuietRestart`), closes the attested line's open Kernel Turn and SES-13 returns the Session
+  // available; the line is not archived and the platform Run is unchanged (L1).
+  await writeAutomationSettings(database, { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: false });
+  const fifth = await startAG2bHost(publicDir, { root, database });
+  try {
+    // Step 1 runs before the maintenance: the probe is ready and the Kernel head still names the paused Turn (H-01 left).
+    expect(fifth.host.reconcile).toMatchObject({ lease: 'owned', report: {
+      sessions: [{ ref: sessionKey(oldSession), row: 'H-01', status: 'left' }], runs: [], problems: [] } });
+    const closed = await readExecution(fifth, runRef);
+    expect(closed.run, 'the closure never rewrites the platform Run (L1)').toEqual(ended.run);
+    expect(closed.session).toMatchObject({ lifecycle: 'active', occupancy: null, health: 'available', healthConclusion: null,
+      historyCursor: oldSession.historyCursor });
+    expect(fifth.scripted.calls()).toBe(0);
+    await assertInvariantsAt(inv, 'W-15 attested, Turn closed');   // A.2 step 6
+  } finally {
+    await fifth.host.close();
+  }
+  await expectQuietRestart(database, publicDir, root, { label: 'W-15 attested, Turn closed' });   // A.2 step 6
 }, 240_000);
 
 // Moved from tests/app/A2-automation-rework.test.ts:246 (05125db): the start-up re-drive of an interrupted Run (A8-3n row W-11,
 // §13.4 #17) on and off; its W-23 half is cited by A4.
-it('§12.1 step 6b (a), W-11, RUN-19, §13.4 #17, LA-1: an interrupted Run is requeued by the start-up re-drive, uncounted, in a new Session; off, only a workflow/advance requeues it, with the same identity from any flow (W-23)', async () => {
+it('§12.1 step 6b (a), W-11, RUN-19, §13.4 #17, LA-1, K KA1: an interrupted Run is requeued by the start-up re-drive, uncounted, in the same Session once the start-up maintenance closed its open Kernel Turn; off, only a workflow/advance requeues it, with the same identity from any flow (W-23)', async () => {
   for (const resumeOnStartup of [true, false]) {
     const root = await tempDir('a2-redrive-ws-');
     const database = await tempDir('a2-redrive-db-');
@@ -759,12 +790,16 @@ it('§12.1 step 6b (a), W-11, RUN-19, §13.4 #17, LA-1: an interrupted Run is re
         const run1 = await readExecution(second, crashed.runRef);
         const run2 = await readExecution(second, run2Ref);
         expect(run1.run).toMatchObject({ status: 'ended', outcome: 'crashed', reconciliation: { observation: { kind: 'interrupted_clean' } } });
-        // LA-1: Run 1's Kernel Turn has no terminal, so its Session is retired and the continuation runs in a new one.
-        expect(run1.session).toMatchObject({ health: 'unavailable', healthConclusion: 'kernel_turn_open' });
+        // LA-1: Run 1's Kernel Turn had no terminal at the restart, so its Session was retired; K (KA1, L7): the start-up maintenance
+        // (step 6c, before the re-drive) closed that Turn and SES-13 made the Session available, so the continuation is a new Run in it.
+        expect(run1.session).toMatchObject({ lifecycle: 'active', health: 'available', healthConclusion: null });
         expect(run2.run).toMatchObject({ outcome: 'completed' });
-        expect(run2.session.ref.sessionId).not.toBe(run1.session.ref.sessionId);
+        expect(run2.session.ref.sessionId).toBe(run1.session.ref.sessionId);
+        // L9: Run 1's record has no Kernel end position (executionHistory.endPosition stays null; the closure never changes the
+        // platform Run, L1), so the brief says the same Session without the previous Turn, not seeded.
         expect(await readBrief(second, run2Ref)).toMatchObject({ mode: 'resume_after_interruption', failureClass: 'interrupted',
-          trigger: { actorClass: 'system', requeueNumber: 1 }, previous: { runRef: crashed.runRef } });
+          trigger: { actorClass: 'system', requeueNumber: 1 }, previous: { runRef: crashed.runRef },
+          session: { continuity: 'same_session_without_previous_turn', seededFrom: null } });
         expect(second.scripted.calls(), 'the continuation Run only').toBe(2);
         await assertInvariantsAt(inv, 'W-11 re-driven at the start');   // A.2 step 6
       } else {
@@ -801,7 +836,8 @@ it('§12.1 step 6b (a), W-11, RUN-19, §13.4 #17, LA-1: an interrupted Run is re
         await assertInvariantsAt(inv, 'W-11 requeued by workflow/advance', { kind: 'task_requeued',
           actor: { ...WORKFLOW_AUTOMATION_ACTOR }, automationPolicy: redrivePolicy(false) });   // A.2 step 6
       }
-      // A.2 step 6: §12.10 step 4, while the crashed Host still holds its call (draining it lets its Kernel end the Turn).
+      // A.2 step 6: §12.10 step 4, while the crashed Host still holds its call (K: its Turn is closed, so a late Kernel append
+      // of that call fails on the revision).
       await second.host.close();
       await expectQuietRestart(database, publicDir, root, { label: `W-11 re-drive ${String(resumeOnStartup)}` });
     } finally {

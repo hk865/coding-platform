@@ -63,7 +63,7 @@ export type RunReconcileReport = {
 
 const PAGE_LIMIT = 200;
 const MAX_PAGES = 64;
-const TERMINAL_STATUSES: readonly string[] = ['completed', 'failed', 'cancelled', 'limit_exceeded', 'yielded'];
+const TERMINAL_STATUSES: readonly string[] = ['completed', 'failed', 'cancelled', 'limit_exceeded', 'yielded', 'interrupted'];
 
 type TurnRead =
   | { ok: true; decoded: DecodedKernelRecord[]; entries: SessionHistoryEntry[]; through: number }
@@ -290,6 +290,12 @@ async function classifyRun(
     if (!invariants.ok) return failed('W-09..W-20', `the reduced Turn violates Kernel invariants: ${invariants.message}`);
   } catch (error) {
     return failed('W-09..W-20', `reducing the Turn failed: ${messageOf(error)}`);
+  }
+  // L1: `run.interrupted` is a Kernel closure the platform already did, never a
+  // platform Run terminal. A not-yet-ended platform Run that meets it is only
+  // reported (`left`), never booked; the L4 authorization makes this unreachable.
+  if (state.status === 'interrupted') {
+    return left('K', 'kernel_closed_without_platform_end: the platform Run is not ended but its Kernel Turn is closed as interrupted; a person checks it');
   }
   const inputsConfirmed = await confirmMailboxInputs(deps.messages, ctx, runRef, kernel, read.decoded);
   const lastPosition = read.decoded.at(-1)?.position ?? read.through;

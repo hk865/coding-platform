@@ -111,7 +111,7 @@ export type ContinuationBriefV1 = {
   stoppedAt: {
     kernel: 'read' | 'not_entered' | 'unavailable';
     reason: string | null;
-    turnStatus: 'completed' | 'failed' | 'cancelled' | 'limit_exceeded' | 'yielded' | 'paused' | 'running' | null;
+    turnStatus: 'completed' | 'failed' | 'cancelled' | 'limit_exceeded' | 'yielded' | 'paused' | 'running' | 'interrupted' | null;
     lastPosition: number | null;
     lastToolGroup: { sourceMessageId: string; calls: number } | null;
     lastAssistant: BoundedTextV1 | null;
@@ -619,7 +619,7 @@ const STOP_REQUESTERS: readonly StopRequester[] = ['human', 'goal_fan_out', 'sys
 const KNOWN_OUTCOMES: readonly string[] = ['completed', 'failed', 'cancelled', 'budget_exhausted', 'crashed', 'yielded'];
 const ORIGINS: readonly RunFailureOrigin[] = ['observed', 'host_interrupted', 'human_attested'];
 const MESSAGE_STATUSES: readonly string[] = ['pending', 'read', 'responded'];
-const TURN_STATUSES: readonly string[] = ['completed', 'failed', 'cancelled', 'limit_exceeded', 'yielded', 'paused', 'running'];
+const TURN_STATUSES: readonly string[] = ['completed', 'failed', 'cancelled', 'limit_exceeded', 'yielded', 'paused', 'running', 'interrupted'];
 const TOOL_RESULTS: readonly string[] = ['success', 'error', 'cancelled', 'not_started', 'outcome_unknown'];
 const SIDE_EFFECTS: readonly string[] = ['none', 'possible', 'confirmed'];
 const CHECK_PHASES: readonly string[] = ['pending', 'executing', 'finished', 'interrupted'];

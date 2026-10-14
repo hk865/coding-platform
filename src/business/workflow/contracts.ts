@@ -6,8 +6,8 @@ import type { SessionMessageRef } from '../../contracts/core/session-message.js'
 import type { GoalRef } from '../../contracts/ledger.js';
 import type { PlanRevisionRef, PlanRevisionSnapshot } from '../../contracts/plan.js';
 import type { QueryJobAnswerSnapshot, QueryJobIntentV1 } from '../../contracts/query-job.js';
-import type { RuntimeBudget } from '../../contracts/runtime-budget.js';
 import type { RoleBindingRefV1, TaskBudgetV1, TaskTriple } from '../../contracts/dispatch.js';
+import type { RuntimeBudget } from '../../contracts/runtime-budget.js';
 import type { TaskRequeueRef } from '../../contracts/task-requeue.js';
 import type { SessionMessage } from '../../core/work-graph/model/communication-contracts.js';
 import type { GoalDecisionCauseReadV1 } from '../../core/work-graph/model/decision-contracts.js';
@@ -59,6 +59,13 @@ export type WorkflowCalls = {
   finalize_checks: EvidencePort['finalizeChecks'];
   complete_task: GoalTaskPort['completeTask'];
   complete_goal: GoalTaskPort['completeGoal'];
+  /**
+   * K slice (L7, KA2/KA3): close the dangling Kernel Turn of a `kernel_turn_open`
+   * Work line before claiming its requeue in the same Session. The operation is
+   * idempotent (no receipt is stored); absence of the Runtime member is the
+   * `unsupported` route of M1.
+   */
+  close_open_turn: NonNullable<RuntimeExecutionPort['closeOpenTurn']>;
   /**
    * C8 automatic rework (spec §4.1, §9 VD-12), performed under
    * `WORKFLOW_AUTOMATION_ACTOR` (`automationContext`): `requeue_task` since
@@ -117,6 +124,8 @@ export type WorkflowOperation = {
   [K in WorkflowStepKind]: { kind: K; request: Parameters<WorkflowCalls[K]>[1] }
     & (K extends 'create_session'
       ? { taskRef: TaskTriple; planRef: PlanRevisionRef; requeue?: WorkflowSessionRequeue }
+      : K extends 'close_open_turn'
+        ? { taskRef: TaskTriple; planRef: PlanRevisionRef; requeue: WorkflowSessionRequeue }
       : K extends 'transfer_responsibility' | 'archive_predecessor'
         ? WorkflowHandoverContinuation : {})
 }[WorkflowStepKind];

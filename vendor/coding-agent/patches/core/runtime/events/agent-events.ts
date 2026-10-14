@@ -211,6 +211,21 @@ const limitExceededEventSchema = event(
     .strict(),
 );
 const runFailedEventSchema = event("run.failed", z.object({ failure: runFailureSchema }).strict());
+/**
+ * Platform closure of a dangling Turn. The platform has already proven the Run
+ * ended and is authorized to close it; this is a Kernel terminal boundary, not a
+ * platform Run outcome. It never resumes the original execution and never
+ * invents a result for an unfinished tool call.
+ */
+const runInterruptedEventSchema = event(
+  "run.interrupted",
+  z
+    .object({
+      reason: z.literal("platform_closed"),
+      requestedBy: z.literal("app"),
+    })
+    .strict(),
+);
 
 export const agentEventSchema = z.discriminatedUnion("type", [
   runStartedEventSchema,
@@ -231,6 +246,7 @@ export const agentEventSchema = z.discriminatedUnion("type", [
   runCancelledEventSchema,
   limitExceededEventSchema,
   runFailedEventSchema,
+  runInterruptedEventSchema,
 ]);
 
 export type EventMeta = z.infer<typeof eventMetaSchema>;
@@ -416,5 +432,12 @@ export function validateTransition(
       return state.status === "running" || state.status === "paused"
         ? { ok: true }
         : rejected("status_disallows_event", "当前 State 不能终止");
+    case "run.interrupted":
+      // A dangling Turn may be closed from created (turn.started committed but
+      // run.started not yet), any running phase, or paused. Terminal States are
+      // already rejected above.
+      return state.status === "created" || state.status === "running" || state.status === "paused"
+        ? { ok: true }
+        : rejected("status_disallows_event", "当前 State 不能关闭");
   }
 }

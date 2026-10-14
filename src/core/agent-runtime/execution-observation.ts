@@ -541,6 +541,14 @@ export function createExecutionObservation(deps: ExecutionObservationDependencie
       } catch (error) {
         return rejected('unavailable', `reducing the complete Turn failed: ${messageOf(error)}`);
       }
+      // L1 (D4): the platform Run is still live but its Kernel Turn already
+      // ended `interrupted`. Under L4 that cannot happen; when it does, write
+      // NOTHING (no locator advance, no unknown end, no mailbox confirmation)
+      // and report the inconsistent state for a person.
+      if (!alreadyEnded && state.status === 'interrupted') {
+        return rejected('unavailable',
+          'kernel_closed_without_platform_end: the platform Run is not ended but its Kernel Turn is closed as interrupted; a person checks it');
+      }
       // A committed run.input_accepted is the ONLY confirmation that an original
       // source part entered execution; the narrow owner write records it without
       // claiming any business processing.
@@ -565,7 +573,7 @@ export function createExecutionObservation(deps: ExecutionObservationDependencie
 
       const isTerminal = state.status === 'completed' || state.status === 'failed'
         || state.status === 'cancelled' || state.status === 'limit_exceeded'
-        || state.status === 'yielded';
+        || state.status === 'yielded' || state.status === 'interrupted';
       if (!isTerminal) {
         pendingTerminals.delete(cacheKey);
         // The observed window is persisted BEFORE any positive ack, so the Run

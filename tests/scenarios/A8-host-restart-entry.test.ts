@@ -22,7 +22,8 @@
  *   re-drive; its brief is assembled then, from the workspace as it is.
  * - A8-2d (W-08): the begin committed and the Kernel Turn started, the entered fact never booked (a composition
  *   root runs the start and the ledger is locked right after the begin, support/common.ts `lockLedgerAfter`);
- *   the restart classifies the Turn by the W-11 rule and records the entry facts in the same commit.
+ *   the restart classifies the Turn by the W-11 rule and records the entry facts in the same commit; its start-up
+ *   maintenance then closes the open Kernel Turn (K KA1) and the Session is available again, not archived.
  *
  * Every step that changes records is followed by the §11 invariant check (the harness does it in
  * `advance()` and after every restart); the reconcile's model calls, Kernel Turns and check starts are
@@ -497,9 +498,10 @@ it('A8-2d (W-08, W-11, RUN-19, ATT-31..34, LA-1): the begin committed and the Ke
     queries: [], checks: [], controls: [], problems: [],
     // §12.1 step 6b (a): the interrupted Task's verdict is requeue, so the Goal is selected (the re-drive is off here).
     redriveGoals: [{ goalRef: { goalId: AG2B_GOAL_REF.goalId }, taskIds: [AG2B_WORK_TASK_ID] }] } });
+  // K (KA1, L2 row 7): the start-up maintenance appends exactly one Kernel record, the run.interrupted that closes the Turn.
   expect(h.counts(), 'no model request, Kernel Turn or check process during the reconcile').toMatchObject({
     modelCalls: atCrash.modelCalls, kernelTurnsStarted: atCrash.kernelTurnsStarted, checksBegun: atCrash.checksBegun,
-    kernelRecords: atCrash.kernelRecords });
+    kernelRecords: atCrash.kernelRecords + 1 });
   const ended = await execution(h, runRef);
   expect(ended.run).toMatchObject({ status: 'ended', outcome: 'crashed', startedAt: turn.recordedAt,
     executionAuthorization: { phase: 'settled' }, executionHistory: { startPosition: turn.position },
@@ -508,8 +510,9 @@ it('A8-2d (W-08, W-11, RUN-19, ATT-31..34, LA-1): the begin committed and the Ke
       observation: { kind: 'interrupted_clean', pausedIntentRef: null } } });
   expect(ended.attempt).toMatchObject({ status: 'ended', endOutcome: 'crashed', startedAt: turn.recordedAt });
   expect(ended.outbox).toMatchObject({ status: 'settled' });
-  // LA-1: the Turn has no Kernel terminal, so the Session is released and retired.
-  expect(ended.session).toMatchObject({ occupancy: null, health: 'unavailable', healthConclusion: 'kernel_turn_open' });
+  // LA-1: at the restart the Turn had no Kernel terminal, so the Session was released and retired; K (KA1, L5): the start-up
+  // maintenance then closed the open Turn and SES-13 made the Session available again, not archived.
+  expect(ended.session).toMatchObject({ lifecycle: 'active', occupancy: null, health: 'available', healthConclusion: null });
   expect(await h.taskRow()).toMatchObject({ effectivePhase: 'failed', failure: { failureClass: 'interrupted',
     interruption: { kind: 'executing' } } });
   await expectQuietHarnessRestart(h, 'a8-2d');

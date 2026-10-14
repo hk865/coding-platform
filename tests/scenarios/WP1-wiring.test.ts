@@ -1,9 +1,13 @@
 /**
  * Wiring package 1, group W19 (spec §5.2 rows SC01-SC02; §0 L7-L9, L15, §5.1).
  *
- * SC01 (E15, ordinary continuation handover): a human pause + Host restart
- * leaves T paused-interrupted and P with `kernel_turn_open`; the human's continue
- * re-queues T; advancing to the end must build the new Session, transfer P's
+ * SC01 (E15, ordinary continuation handover; K slice KA-07 and L8): a human
+ * pause + Host restart leaves T paused-interrupted and P with `kernel_turn_open`;
+ * the human's continue re-queues T. With the Kernel closure available, advancing
+ * to the end closes P's dangling Kernel Turn (`close_open_turn`) and claims T in
+ * P again in a new Run: no new Session, no transfer, no archive, no anomaly
+ * anchor. With the closure unsupported (K L8), the `close_open_turn` step answers
+ * `unsupported` and advancing to the end must build the new Session, transfer P's
  * responsibility for T and then archive P as `handoff_complete` by maintenance,
  * with no anomaly anchor and no `archive_predecessor` step.
  *
@@ -18,27 +22,79 @@
  * plus its own explicit calls). These cases never build state by hand and never
  * call a real model.
  */
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { canonicalJson, type JsonValue } from '../../src/contracts/fingerprint.js';
 import { sessionAnomalyRefKey } from '../../src/core/work-graph/tasks/session-anomaly-codecs.js';
 import {
   cleanupWP1Scenarios, openArchivedLineScenario, openPausedInterruptedScenario,
 } from '../helpers/WP1-scenario-fixture.js';
 import { ready } from '../helpers/S1-runtime-scenario-fixture.js';
+import { execution } from './support/common.js';
 
 afterEach(cleanupWP1Scenarios);
 
-it('SC01 human pause + Host restart, continue: the continuation handover creates, transfers and then archives P, T completes satisfied, no anchor', async () => {
+// K slice: the fallback copy switches the Kernel's `closeOpenTurn` off, so the
+// Runtime's closure answers `unsupported` (K L4 step 5) and the Workflow takes
+// today's new-Session path (K L8).
+const kernelClosure = vi.hoisted(() => ({ supported: true }));
+vi.mock('../../vendor/coding-agent/dist/public-api.js', async importOriginal => {
+  const actual = await importOriginal<Record<string, unknown>>();
+  return Object.defineProperty({ ...actual }, 'closeOpenTurn', { enumerable: true,
+    get: () => (kernelClosure.supported ? actual['closeOpenTurn'] : undefined) });
+});
+afterEach(() => { kernelClosure.supported = true; });
+
+it('SC01 (closing supported; KA-07) human pause + Host restart, continue: the Workflow closes P\'s dangling Kernel Turn and T continues in P in a new Run with no new Session, transfer or archive; T completes satisfied, no anchor', async () => {
   const f = await openPausedInterruptedScenario();
   await f.clickContinue();
   const trace = await f.advanceToEnd();
 
+  // K L7 (KA2, KA3): the human's TaskRequeue authorizes closing the paused line
+  // (L4 item 2; maintenance never closes it), so the received steps contain
+  // close_open_turn, then claim_task in P, and no create_session, transfer or
+  // archive (KA-07).
+  const lineKinds = trace.performedKinds
+    .filter(kind => ['close_open_turn', 'create_session', 'transfer_responsibility', 'claim_task', 'archive_predecessor'].includes(kind));
+  expect(lineKinds).toEqual(['close_open_turn', 'claim_task']);
+  expect(trace.receipts.find(receipt => receipt.kind === 'close_open_turn'))
+    .toMatchObject({ result: { status: 'closed', health: 'available' } });
+
+  // T completes normally and the Goal-level drive reaches completion.
+  expect(trace.state).toBe('completed');
+  const task = await f.readTask();
+  expect(task.effectivePhase).toBe('satisfied');
+
+  // KA-07: the same Session, a new Run.
+  if (task.execution === null) throw new Error('SC01: T must select a Run');
+  expect(task.execution.runId).not.toBe(f.runRef.runId);
+  expect((await execution(f.harness, task.execution)).session.ref.sessionId).toBe(f.P.sessionId);
+
+  // P is available again (SES-13) and is not archived.
+  expect((await f.readSession()).record).toMatchObject({ lifecycle: 'active', health: 'available' });
+
+  // The whole scenario wrote no anomaly anchor (L14; read through the public anomalies route) and T carries no
+  // archive label.
+  expect(await f.readAnomalies()).toEqual([]);
+  expect(ready(await f.readArchiveState()).label).toBeNull();
+});
+
+it('SC01 (closing unsupported) human pause + Host restart, continue: the continuation handover creates, transfers and then archives P, T completes satisfied, no anchor', async () => {
+  // K L8: from the first start on (the builder restarts the Host inside) the Kernel has no `closeOpenTurn`.
+  kernelClosure.supported = false;
+  const f = await openPausedInterruptedScenario();
+  await f.clickContinue();
+  const trace = await f.advanceToEnd();
+
+  // K L7: the close_open_turn step comes first and answers `unsupported` (a
+  // definite failure), so today's continuation handover follows (K L8).
   // The received steps contain create_session, transfer_responsibility, claim_task
   // in this order and no archive_predecessor (L12: P retires, so maintenance
   // archives it in its own page rather than in a combined handover step).
   const handoverKinds = trace.performedKinds
-    .filter(kind => ['create_session', 'transfer_responsibility', 'claim_task', 'archive_predecessor'].includes(kind));
-  expect(handoverKinds).toEqual(['create_session', 'transfer_responsibility', 'claim_task']);
+    .filter(kind => ['close_open_turn', 'create_session', 'transfer_responsibility', 'claim_task', 'archive_predecessor'].includes(kind));
+  expect(handoverKinds).toEqual(['close_open_turn', 'create_session', 'transfer_responsibility', 'claim_task']);
+  expect(trace.receipts.find(receipt => receipt.kind === 'close_open_turn'))
+    .toMatchObject({ result: { status: 'unsupported' } });
   expect(trace.performedKinds).not.toContain('archive_predecessor');
 
   // T completes normally and the Goal-level drive reaches completion.

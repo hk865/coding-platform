@@ -151,50 +151,206 @@ export type PreviousTurnRetry = { kernel: 'retry'; code: 'cancelled' | 'unavaila
  * entered has no Turn; a missing, damaged or non-contiguous history is the
  * `unavailable` fact; a cancelled read or an unavailable store is `retry`.
  */
-export async function readPreviousTurn(
-  owner: SessionHistoryCursorOwner, record: TaskExecutionRecord, signal: AbortSignal,
-): Promise<PreviousTurnFacts | PreviousTurnRetry> {
-  const locator = record.run.executionHistory;
-  if (locator === undefined) return { kernel: 'not_entered' };
-  if (locator.kernel.adapterId !== record.session.kernel.adapterId
-    || locator.kernel.kernelSessionId !== record.session.kernel.kernelSessionId) {
-    return { kernel: 'unavailable', reason: 'the Run history locator disagrees with its claim Session mapping' };
-  }
-  const fromPosition = Math.max(0, locator.startPosition - 1);
-  const through = locator.endPosition ?? locator.observedThroughPosition;
+/**
+ * L9 (D1): a same-Session continuation locates the previous Turn by its exact
+ * Kernel identity through the injected `readTurnBounds` (resolved at call time,
+ * M2), not by scanning the Session from its start.
+ */
+export type PreviousTurnReadOptions = { sameSession?: boolean };
+
+type RunHistoryLocator = NonNullable<TaskExecutionRecord['run']['executionHistory']>;
+type KernelBinding = RunHistoryLocator['kernel'];
+
+type WindowRead =
+  | { ok: true; decoded: DecodedKernelRecord[]; frozenThrough: number }
+  | { ok: false; retry: PreviousTurnRetry }
+  | { ok: false; reason: string };
+
+/** One bounded page loop over `afterPosition` through `throughPosition` (null freezes the real tail). */
+async function readBoundedWindow(
+  owner: SessionHistoryCursorOwner, record: TaskExecutionRecord,
+  afterPosition: number, throughPosition: number | null, signal: AbortSignal,
+): Promise<WindowRead> {
   const decoded: DecodedKernelRecord[] = [];
-  let cursor = fromPosition;
-  let expected = fromPosition + 1;
-  while (cursor < through && decoded.length < CONTINUATION_BRIEF_LIMITS.kernelRecords) {
+  let frozenThrough: number | null = throughPosition;
+  let cursor = afterPosition;
+  let expected = afterPosition + 1;
+  while (decoded.length < CONTINUATION_BRIEF_LIMITS.kernelRecords) {
     let window;
     try {
-      window = await owner.readPositionWindow({ session: record.session, afterPosition: cursor, throughPosition: through,
+      window = await owner.readPositionWindow({ session: record.session, afterPosition: cursor, throughPosition: frozenThrough,
         limit: Math.min(PAGE_LIMIT, CONTINUATION_BRIEF_LIMITS.kernelRecords - decoded.length), signal });
     } catch (error) {
-      return { kernel: 'retry', code: 'unavailable',
-        reason: `the Turn history read failed: ${error instanceof Error ? error.message : String(error)}` };
+      return { ok: false, retry: { kernel: 'retry', code: 'unavailable',
+        reason: `the Turn history read failed: ${error instanceof Error ? error.message : String(error)}` } };
     }
     if (window.status !== 'ready') {
       const reason = window.status === 'rejected' ? window.reason : `the Turn history is ${window.status}`;
       if (window.status === 'rejected' && (window.code === 'cancelled' || window.code === 'unavailable')) {
-        return { kernel: 'retry', code: window.code, reason };
+        return { ok: false, retry: { kernel: 'retry', code: window.code, reason } };
       }
-      return { kernel: 'unavailable', reason };
+      return { ok: false, reason };
     }
+    frozenThrough = window.value.throughPosition;
     for (const entry of window.value.entries) {
       const item = decodeKernelEntry(entry);
-      if (item === null || item.position !== expected) return { kernel: 'unavailable', reason: 'the Turn history is damaged or not contiguous' };
+      if (item === null || item.position !== expected) return { ok: false, reason: 'the Turn history is damaged or not contiguous' };
       expected += 1;
       decoded.push(item);
     }
     cursor = window.value.nextPosition;
     if (!window.value.hasMore) break;
   }
-  const state = reduceTurnFromStart(decoded, locator.kernel);
+  return { ok: true, decoded, frozenThrough: frozenThrough ?? afterPosition };
+}
+
+/**
+ * L9 (D1): the exact `[turn.started, run.interrupted]` window the Kernel's
+ * `readTurnBounds` located. A window past the record limit, a damaged window or
+ * a reduction that disagrees with the recorded closure is `unavailable`, never
+ * `not_entered`/`running`/`paused`.
+ */
+async function readInterruptedTurnWindow(
+  owner: SessionHistoryCursorOwner, record: TaskExecutionRecord, kernel: KernelBinding,
+  startPosition: number, endPosition: number, signal: AbortSignal,
+): Promise<PreviousTurnFacts | PreviousTurnRetry> {
+  if (endPosition - startPosition + 1 > CONTINUATION_BRIEF_LIMITS.kernelRecords) {
+    return { kernel: 'unavailable', reason: 'the interrupted Turn window exceeds the recorded brief limit' };
+  }
+  const read = await readBoundedWindow(owner, record, startPosition - 1, endPosition, signal);
+  if (!read.ok) return 'retry' in read ? read.retry : { kernel: 'unavailable', reason: read.reason };
+  const state = reduceTurnFromStart(read.decoded, kernel);
   if (state === null) return { kernel: 'unavailable', reason: 'the Turn start record is not in the history window' };
-  const last = decoded.at(-1)?.position ?? fromPosition;
+  if (state.status !== 'interrupted') {
+    return { kernel: 'unavailable', reason: 'the Kernel Turn does not match its recorded interrupted closure' };
+  }
+  const last = read.decoded.at(-1)?.position ?? startPosition;
+  return { kernel: 'read', state, window: { fromPosition: startPosition, throughPosition: last, omittedRecords: 0 },
+    acceptedMessages: acceptedMessagesOf(read.decoded, kernel) };
+}
+
+/**
+ * The platform-window read kept for every non-D1 case (L9 "其它情况"): a
+ * recorded Kernel terminal, an open/paused Turn, or a locator-less attested Run
+ * whose exact identity located its Turn. The reduced state and the accepted
+ * messages always come from the same selected records.
+ */
+async function readPlatformTurnWindow(
+  owner: SessionHistoryCursorOwner, record: TaskExecutionRecord, kernel: KernelBinding,
+  locator: RunHistoryLocator | undefined, enteredStart: number | undefined, signal: AbortSignal,
+): Promise<PreviousTurnFacts | PreviousTurnRetry> {
+  const fromPosition = locator !== undefined ? Math.max(0, locator.startPosition - 1) : Math.max(0, (enteredStart ?? 1) - 1);
+  const recordedEnd = locator?.endPosition ?? null;
+  // L9 (D11): the ordinary platform-window read is always bounded by
+  // `endPosition ?? observedThroughPosition` (`observedThroughPosition` is a number
+  // whenever a locator exists). Only the identity-derived same-Session path
+  // (`locator === undefined`, entered through `readTurnBounds`) may read to the
+  // Session tail so the interrupted closure can be located there.
+  const recordedThrough = recordedEnd ?? locator?.observedThroughPosition ?? null;
+  const readToTail = locator === undefined;
+  const read = await readBoundedWindow(owner, record, fromPosition, readToTail ? null : recordedThrough, signal);
+  if (!read.ok) return 'retry' in read ? read.retry : { kernel: 'unavailable', reason: read.reason };
+  const decoded = read.decoded;
+  let state = reduceTurnFromStart(decoded, kernel);
+  if (state === null) {
+    // A genuinely never-entered Run (no locator and no located identity) keeps
+    // the old "not entered"; a located Run is damaged.
+    if (locator === undefined && enteredStart === undefined) return { kernel: 'not_entered' };
+    return { kernel: 'unavailable', reason: 'the Turn start record is not in the history window' };
+  }
+  let selected = decoded;
+  let effectiveThrough = read.frozenThrough;
+  let last = decoded.at(-1)?.position ?? fromPosition;
+  if (state.status === 'interrupted') {
+    // L9: from `turn.started` to `run.interrupted`; never past the close event.
+    const terminal = terminalPositionOf(decoded, kernel);
+    if (terminal !== null) {
+      selected = decoded.filter((item) => item.position <= terminal);
+      effectiveThrough = terminal;
+      last = terminal;
+    }
+  } else if (locator === undefined && enteredStart === undefined) {
+    return { kernel: 'not_entered' };
+  } else if (recordedEnd === null && locator !== undefined) {
+    // The old bounded window for a paused/running Turn that has no Kernel end.
+    const through = locator.observedThroughPosition;
+    const bounded = decoded.filter((item) => item.position <= through);
+    const boundedState = reduceTurnFromStart(bounded, kernel);
+    if (boundedState === null) return { kernel: 'unavailable', reason: 'the Turn start record is not in the history window' };
+    state = boundedState;
+    selected = bounded;
+    effectiveThrough = through;
+    last = bounded.at(-1)?.position ?? fromPosition;
+  }
   return { kernel: 'read', state, window: { fromPosition: fromPosition + 1, throughPosition: Math.max(fromPosition + 1, last),
-    omittedRecords: Math.max(0, through - last) }, acceptedMessages: acceptedMessagesOf(decoded, locator.kernel) };
+    omittedRecords: Math.max(0, effectiveThrough - last) }, acceptedMessages: acceptedMessagesOf(selected, kernel) };
+}
+
+export async function readPreviousTurn(
+  owner: SessionHistoryCursorOwner, record: TaskExecutionRecord, signal: AbortSignal,
+  options: PreviousTurnReadOptions = {},
+): Promise<PreviousTurnFacts | PreviousTurnRetry> {
+  const locator = record.run.executionHistory;
+  // L9: only an attested Run may have entered the Kernel without any execution
+  // history locator. Every other locator-less Run keeps the old "not entered".
+  const attested = record.run.reconciliation?.observation?.kind === 'human_attested';
+  if (locator === undefined && !attested) return { kernel: 'not_entered' };
+  const kernel = locator?.kernel ?? kernelBindingOf(record.run);
+  if (kernel === null) return { kernel: 'not_entered' };
+  if (kernel.adapterId !== record.session.kernel.adapterId
+    || kernel.kernelSessionId !== record.session.kernel.kernelSessionId) {
+    return { kernel: 'unavailable', reason: 'the Run history locator disagrees with its claim Session mapping' };
+  }
+  // L9 (D1/D2/D8): only a Run that can still be an interrupted Turn is looked
+  // up by its exact Kernel identity through the injected `readTurnBounds` (M2).
+  // A previous Run whose platform position record already holds an `endPosition`
+  // completed normally and cannot be an interrupted Turn, so it keeps today's
+  // platform-window read (`readPositionWindow`) and never consults the identity
+  // seam. The seam is needed only when the previous Run has no `endPosition`
+  // (the interrupted or unknown case).
+  const hasRecordedEnd = locator !== undefined && locator.endPosition !== null;
+  if (options.sameSession === true && !hasRecordedEnd) {
+    if (signal.aborted) return { kernel: 'retry', code: 'cancelled', reason: 'the Turn bounds read was cancelled' };
+    const bounds = await owner.readTurnBounds({ session: record.session, kernelRunId: kernel.runId, signal });
+    if (bounds.status === 'unsupported' || bounds.status === 'unreadable') {
+      return { kernel: 'retry', code: 'unavailable', reason: bounds.reason };
+    }
+    if (bounds.status === 'not_found') {
+      return locator === undefined ? { kernel: 'not_entered' }
+        : { kernel: 'unavailable', reason: 'the Turn start record is not in the Kernel history' };
+    }
+    if (bounds.terminalStatus === 'interrupted' && bounds.endPosition !== null) {
+      return readInterruptedTurnWindow(owner, record, kernel, bounds.startPosition, bounds.endPosition, signal);
+    }
+    return readPlatformTurnWindow(owner, record, kernel, locator, bounds.startPosition, signal);
+  }
+  return readPlatformTurnWindow(owner, record, kernel, locator, undefined, signal);
+}
+
+/** The begin authorization's fixed Kernel identity, or null for a legacy/unknown Run. */
+function kernelBindingOf(run: TaskExecutionRecord['run']): NonNullable<TaskExecutionRecord['run']['executionHistory']>['kernel'] | null {
+  const auth = run.executionAuthorization;
+  return auth !== undefined && 'schemaVersion' in auth && auth.schemaVersion === 2 ? auth.kernel : null;
+}
+
+/** The Kernel event types that end a Turn; `run.interrupted` is one (L1/L9). */
+const TERMINAL_KERNEL_EVENT_TYPES: ReadonlySet<string> = new Set([
+  'run.completed', 'run.failed', 'run.cancelled', 'run.limit_exceeded', 'run.yielded', 'run.interrupted',
+]);
+
+/** The fixed Turn's own last terminal `agent.event` position, or null. */
+function terminalPositionOf(
+  records: readonly DecodedKernelRecord[], kernel: NonNullable<TaskExecutionRecord['run']['executionHistory']>['kernel'],
+): number | null {
+  let position: number | null = null;
+  for (const item of records) {
+    if (item.record.recordType !== 'agent.event') continue;
+    const event = item.record.payload.event;
+    if (event.meta.runId !== kernel.runId || event.meta.turnId !== kernel.turnId) continue;
+    if (!TERMINAL_KERNEL_EVENT_TYPES.has(event.type)) continue;
+    position = item.position;
+  }
+  return position;
 }
 
 function bounded(text: string): BoundedTextV1 {
@@ -327,7 +483,7 @@ function toolFactsOf(state: RunState): ToolFacts {
     unobserved };
 }
 
-const TURN_STATUSES = ['completed', 'failed', 'cancelled', 'limit_exceeded', 'yielded', 'paused', 'running'] as const;
+const TURN_STATUSES = ['completed', 'failed', 'cancelled', 'limit_exceeded', 'yielded', 'paused', 'running', 'interrupted'] as const;
 
 function stoppedAtOf(turn: PreviousTurnFacts, reason: string | null): ContinuationBriefV1['stoppedAt'] {
   if (turn.kernel !== 'read') {
@@ -344,6 +500,10 @@ function stoppedAtOf(turn: PreviousTurnFacts, reason: string | null): Continuati
     if (entry.toolCalls.length > 0) lastToolGroup = { sourceMessageId: entry.message.messageId, calls: entry.toolCalls.length };
   }
   if (state.toolBatch !== null) lastToolGroup = { sourceMessageId: state.toolBatch.sourceMessageId, calls: state.toolBatch.calls.length };
+  // Rule 3 / L9: the interrupted Turn's raw process never reaches the model
+  // input. Its accepted inputs and tool facts are listed, but the last assistant
+  // text is transcript and is suppressed.
+  if (state.status === 'interrupted') lastAssistant = null;
   return { kernel: 'read', reason, turnStatus: status, lastPosition: turn.window.throughPosition, lastToolGroup, lastAssistant,
     window: turn.window };
 }

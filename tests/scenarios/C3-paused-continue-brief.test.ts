@@ -11,13 +11,15 @@
  *
  * - An Agent's 继续 (a second work Task's running Run asks `requeue_task` for the paused Task) is
  *   `forbidden`: no TaskRequeue, so no continuation brief and no Run.
- * - The person's 继续 (TASK-27) opens Run 2 in a new Session; its continuation brief says the
- *   previous Run was interrupted while paused by a person (`interruption.kind='paused'`,
- *   `pausedBy='human'`) and carries the never-accepted steer's text, which reaches Run 2's first
- *   model request.
+ * - The person's 继续 (TASK-27) lets the Workflow close Run 1's open Kernel Turn (`close_open_turn`,
+ *   slice K KA3) and opens Run 2 in the same Session; its continuation brief says the same Session
+ *   without the previous Turn, says the previous Run was interrupted while paused by a person
+ *   (`interruption.kind='paused'`, `pausedBy='human'`) and carries the never-accepted steer's text,
+ *   which reaches Run 2's first model request.
  *
- * The pause → restart → 继续 path itself (RUN-24, the retired Session, the new Session) is A8-3l's
- * (tests/scenarios/A8-host-restart-paused.test.ts); this scenario adds the brief and the Agent refusal.
+ * The pause → restart → 继续 path itself (RUN-24, the retired Session, the closed Turn, the same
+ * Session) is A8-3l's (tests/scenarios/A8-host-restart-paused.test.ts); this scenario adds the brief
+ * and the Agent refusal.
  * Every step that changes records is followed by the §11 invariant check. Scripted model replies
  * only; no real model is called.
  */
@@ -112,19 +114,23 @@ it('C3/C4: a Run a person paused, with a steer the Kernel never accepted, ends p
     failureClass: 'interrupted', interruption: 'paused', stopIntentRef: pause.intent.ref, stopRequester: 'human' } } });
   await assertInvariants(scenario, 'C3 继续', ownerStep('task_requeued', SCENARIO_OPERATOR, scenario.automationPolicy(), 'C3 继续'));
 
-  // Run 2 runs in a new Session with the brief; the Task is satisfied.
+  // The Workflow first closes Run 1's open Kernel Turn (the person's TaskRequeue authorizes it; slice K L4, L7), then
+  // Run 2 runs in Run 1's Session with the brief, no new Session; the Task is satisfied.
   const done = await scenario.advance(scenario.select('c3-run2', AG2B_WORK_TASK_ID));
   expect(done.state).toBe('completed');
+  expect(done.receipts.map(receipt => receipt.kind)).toContain('close_open_turn');
+  expect(done.receipts.map(receipt => receipt.kind)).not.toContain('create_session');
   const run2 = await selectedRun(scenario);
   expect(run2.runId).not.toBe(run1.runId);
   const record2 = await readExecution(scenario.host, run2);
-  expect(record2.session.ref.sessionId).not.toBe((await readExecution(scenario.host, run1)).session.ref.sessionId);
+  expect(record2.session.ref.sessionId).toBe((await readExecution(scenario.host, run1)).session.ref.sessionId);
   const bound = await briefOf(scenario.host, run2);
   if (bound === null) throw new Error('Run 2 must carry a continuation brief');
   expect(bound.digest).toBe(record2.run.inputBinding?.continuationBriefDigest);
   expect(bound.brief).toMatchObject({ mode: 'resume_after_interruption', failureClass: 'interrupted',
     trigger: { actorClass: 'human', goalResume: false },
-    previous: { runRef: run1, interruption: { kind: 'paused', kernelPaused: true, pausedBy: 'human' } } });
+    previous: { runRef: run1, interruption: { kind: 'paused', kernelPaused: true, pausedBy: 'human' } },
+    session: { continuity: 'same_session_without_previous_turn', seededFrom: null, boundaryPosition: null } });
   expect(bound.brief.previous.unacceptedSteers).toEqual([{ intentRef: steer.intent.ref, text: { text: STEER_TEXT, truncated: false } }]);
   // The rendered brief reached Run 2's first model request, the never-accepted steer's text with it.
   const run2First = JSON.stringify(scenario.modelRequests()[2]?.messages);
