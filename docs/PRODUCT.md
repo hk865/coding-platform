@@ -2,7 +2,7 @@
 
 2026-09-26 行为细化：[MVP 产品行为与端到端验收](MVP-BEHAVIOR.md)区分首条 E2E 贯通与产品 MVP，定义用户入口、推进/返工、并行、控制恢复及验收场景；不缩减本文既有首版承诺，不代表实现完成。
 
-更新：2026-10-13。状态：**当前产品目标**，不表示全部能力已实现。历史有效承诺继续保留；后续明确纠正以 [HANDOFF 顶部决定 1–57](refactor/HANDOFF.md)为准，早期承诺的处置见[产品意图审阅](refactor/reviews/product-intent-review.md)。
+更新：2026-10-13。状态：**当前产品目标**，不表示全部能力已实现。历史有效承诺继续保留；后续明确纠正以 [HANDOFF 顶部决定 1–58](refactor/HANDOFF.md)为准，早期承诺的处置见[产品意图审阅](refactor/reviews/product-intent-review.md)。
 
 **接手、设计、实现或审阅时须一起查看：**本产品文档、[STATUS](refactor/STATUS.md)、[HANDOFF 顶部](refactor/HANDOFF.md)、[编排设计目录](refactor/design/orchestration-2026-10/README.md)、[当前架构](refactor/ARCHITECTURE.md)及[模块索引](refactor/modules/README.md)。追溯早期要求时读[用户原始对话](refactor/intent/ORIGINAL-DIALOGUE.md)、[意图与决定](refactor/intent/INTENT-AND-DECISIONS.md)和[14 段用户原话](history/before-2026-09-22/agent-platform-user-replies-numbered.md)。原始对话同时包含用户发言和助手当时回答，不能把助手建议当作用户已确认要求。同工作区并行以本文 §4、§10 和[用户 9-23/9-24 的并行与白板原话](refactor/intent/2026-09-23-PARALLEL-AND-PRODUCT.md)为准；派工补充规则见[决定 49](refactor/HANDOFF.md)和[设计书](refactor/design/orchestration-2026-10/DESIGN.md) §2.11，冲突处理见设计书 §2.5（J14）；[并行协作设计](refactor/PARALLEL-COLLABORATION.md)已标历史，只作追溯。
 
