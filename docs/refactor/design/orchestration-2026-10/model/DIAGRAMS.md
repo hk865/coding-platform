@@ -136,7 +136,8 @@ stateDiagram-v2
   Archived --> Active: 能力核实 / R07
   ArchivedRetired --> ArchivedRetired: SES-14拒unavailable / 不探测已归档线
   Retired --> SameLineNewHead: R03建continuation并转本任务责任
-  ArchivedRetired --> SameLineNewHead: 用户继续旧任务，另Session新领取，非原线接续（决定43）
+  state "另一个 Session 新领取（另一条线）" as AnotherLineNewClaim
+  ArchivedRetired --> AnotherLineNewClaim: （决定 43）
   Active --> NewHandoffLine: R57 / handoff，接任另起线
   note right of Retired
     R = unavailableSince，接线包2待建。
@@ -550,10 +551,12 @@ sequenceDiagram
     G-->>W: busy / archive_unknown_confirmation_required，Session零写
     U->>G: 正式认定已停下
   end
-  alt Turn还开着且Kernel可读、支持关闭
+  alt Turn还开着，关闭成功且健康可用（只限符合条件、未归档的Work线）
     W->>S: 关闭悬空Turn，经SES-13回到可用
     Note over W,S: 线回可用、留在原Session；不写锚点、不放下、不归档（决定51）
-  else Kernel读不到、关闭失败或不支持
+  else 冲突、暂时故障或健康没写成
+    W->>W: 等待，下次推进重试；不走退路、不归档（K L7）
+  else 确定关不掉：关闭不支持、读不到、只有旧读取器、适配器不同、头上是别的Run
     W->>G: 未完Work写Task/Goal异常锚点，改动保留且未核对
     W->>G: 结束终结关系；未完任务drop
     W->>G: archive S
@@ -569,7 +572,7 @@ sequenceDiagram
   Note over W,S: Host重启时暂停着的线不进“马上归档”，显示“已暂停 · 主机重启时已暂停，可继续”，点“继续”后关Turn在原线领取（决定54）
 ```
 
-〔决定 51、54〕上图：经人正式认定、Kernel Turn 还开着的线，先关闭悬空 Turn、经 SES-13 回到可用，留在原 Session；不写异常锚点、不放下任务、不归档。只有 Kernel 读不到、关闭失败或关闭不支持，才落到写锚点、放下、归档这条退路。Host 重启时暂停着的线（RUN-24）不进“马上归档”，左栏显示“已暂停 · 主机重启时已暂停，可继续”，点“继续”后关 Turn 在原线领取。
+〔决定 51、54〕上图只对符合条件、未归档的 Work 线：经人正式认定、Kernel Turn 还开着时先关闭悬空 Turn。关闭成功且健康可用（SES-13 回到 available）就留在原 Session；不写异常锚点、不放下任务、不归档。冲突、暂时故障或健康没写成时等待、下次推进重试，不走退路、不归档。只有确定关不掉（关闭不支持、读不到、只有旧读取器、适配器不同、头上是别的 Run）才落到写锚点、放下、归档这条退路。Host 重启时暂停着的线（RUN-24）不进“马上归档”，左栏显示“已暂停 · 主机重启时已暂停，可继续”，点“继续”后关 Turn 在原线领取。
 
 ### 5. 别请求采用使候选过期（S08；决定 42 · 第 3 条、47、48）
 

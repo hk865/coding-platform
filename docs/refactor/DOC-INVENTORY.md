@@ -459,7 +459,7 @@
 ### 设计书与读法模型
 
 1. `design/orchestration-2026-10/DESIGN.md:253` — “为接着做同一个任务而新建的 Session 都算同一条线，不论为什么新建：中断、旧的已归档、坏了，或角色不对。” — **决定 43**（HANDOFF:175）：被归档的线不再被派活，接手的一定是别的 Session，是一次新的领取，不是那条线的接续。**已改（DESIGN.md）**。
-2. `design/orchestration-2026-10/model/DIAGRAMS.md:139` — `ArchivedRetired --> SameLineNewHead: 用户继续旧任务 / 另Session` — **决定 43、54**（HANDOFF:175、330–334）：归档退役线不再被派活；只有 Host 重启时暂停着、未归档的线才点“继续”在原线接着做。**保留本边、只改标签**；**撤回对同图 :175 的指控**：区分“健康恢复”与“已归档退役线重新启用”本身与决定 38 一致。**已改（DIAGRAMS.md）**。
+2. `design/orchestration-2026-10/model/DIAGRAMS.md:139` — `ArchivedRetired --> SameLineNewHead: 用户继续旧任务 / 另Session` — **决定 43、54**（HANDOFF:175、330–334）：归档退役线不再被派活；只有 Host 重启时暂停着、未归档的线才点“继续”在原线接着做。**按决定 43 重画这条边**：归档退役线指向新的“另一个 Session 新领取（另一条线）”状态（`AnotherLineNewClaim`），标签“（决定 43）”；**不再保留通向 `SameLineNewHead` 的边**（同图的 `Retired --> SameLineNewHead` 只留给 R03 的 continuation）。**撤回对同图 :175 的指控**：区分“健康恢复”与“已归档退役线重新启用”本身与决定 38 一致。**已改（DIAGRAMS.md）**。
 3. `design/orchestration-2026-10/model/AMBIGUITIES.md:1095` — “内存取本机一半和 4 GB 中较小的” — **决定 55**（HANDOFF:336）：默认内存上限改为本机内存的一半和 **6 GiB** 中较小的。该行自己写了“决定 55 把 4 GB 改为 6 GB”，仍留 4 GB。**已改（AMBIGUITIES.md）**。
 4. `design/orchestration-2026-10/README.md:5` — “当前状态（2026-10-13）……接线包 2（I-2、I-4、I-5、I-6）在准备” — **决定 58**（HANDOFF:358）点名要改掉这处过期状态；STATUS 2026-10-14：接线包 2、K 片 A/B 已合入，2A 已冻结施工。**已改（design/orchestration-2026-10/README.md）**。
 5. `design/orchestration-2026-10/E3-UI-ITEMS.md:11` — “I-2、I-4、I-5、I-6 是准备中的接线包 2；第 2、4、6、7、K 等片仍待施工” — **决定 58**；STATUS：接线包 2、K 片已合入，2A 施工中。**已改（E3-UI-ITEMS.md）**。
