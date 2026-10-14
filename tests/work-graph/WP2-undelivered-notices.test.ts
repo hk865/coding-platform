@@ -13,7 +13,7 @@ import type { SessionMailboxPort, SessionMessage } from '../../src/core/work-gra
 import type { NoticeItemV1 } from '../../src/core/work-graph/model/decision-contracts.js';
 import type { SessionDirectoryPort, SessionPageRequest } from '../../src/core/work-graph/model/session-contracts.js';
 import { encodeSessionMessageRecord, sessionMessageRefKey } from '../../src/core/work-graph/sessions/message-record-codecs.js';
-import { encodeSessionRecord, sessionAggregateRefKey } from '../../src/core/work-graph/sessions/session-record-codecs.js';
+import { encodeSessionRecord, sessionAggregateRefKey, SESSION_BY_WORKSPACE_LOOKUP } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import { createUndeliveredReplyNoticeSource } from '../../src/core/work-graph/views/undelivered-reply-notices.js';
 import {
   openWP2NoticesFixture, ready, type NoticeSourceFactory, type WP2NoticesFixture,
@@ -226,18 +226,20 @@ describe('WP2 undelivered-reply notices', () => {
     // Real pre-package records: the Session snapshot and the message carry no
     // position, and the mailbox DTO (which would project them) omits them too.
     const stripped = createUndeliveredReplyNoticeSource({
-      records: deps.records,
-      sessions: {
-        findSessions: async (ctx, input) => {
-          const result = await deps.sessions.findSessions(ctx, input);
-          if (result.status !== 'ready') return result;
+      records: {
+        readMany: keys => deps.records.readMany(keys),
+        lookup: async (request) => {
+          const result = await deps.records.lookup(request);
+          if (result.status !== 'ready' || request.index !== SESSION_BY_WORKSPACE_LOOKUP) return result;
           return { ...result, value: { ...result.value,
-            items: result.value.items.map((card) => {
-              const { unavailableSince: _dropped, ...record } = card.record;
-              return { ...card, record };
+            records: result.value.records.map((record) => {
+              const body = JSON.parse(record.json) as Record<string, unknown>;
+              delete body['unavailableSince'];
+              return { ...record, json: JSON.stringify(body) };
             }) } };
         },
       },
+      sessions: deps.sessions,
       messages: {
         readMessage: async (ctx, ref) => {
           const result = await deps.messages.readMessage(ctx, ref);
@@ -533,7 +535,9 @@ describe('WP2 undelivered-reply notices', () => {
     }
   });
 
-  it('M07 exactly 5000 real undelivered replies succeed and one more real page is a capacity rejection', async () => {
+  // Lead (2A §5.3, frozen): wiring 2's temporary 50-page/5,000-item bound is
+  // removed (2A §0.4); 5,001 real replies are all paged, nothing is refused.
+  it('M07 5000 real undelivered replies are all read and 5001 are all read too (no capacity bound)', async () => {
     // A real unavailable line with `count` saved replies: real messages, one
     // wait yield, the real health commit, then one real response per message.
     const replyLine = async (count: number) => {
@@ -573,15 +577,26 @@ describe('WP2 undelivered-reply notices', () => {
     expect(all.at(-1)!.objects[0]).toEqual({ kind: 'aggregate',
       pin: { ref: exact.messages.at(-1)!.ref, revision: exact.replies.at(-1)!.value.revision }, label: '原消息' });
 
-    // One more real reply forces a 51st reply page over the L7 50-page/5000-item
-    // bound: the whole read is refused, never a half page.
+    // One more real reply (5,001 on one line, past wiring 2's old bound): paging
+    // the public source still returns every item, in reply order, once each.
     const over = await replyLine(5_001);
-    const rejected = await over.fixture.notices().source.readPage(over.fixture.ctx,
-      { workspace: over.fixture.scope, page: { limit: 200 } });
-    expect(rejected.status).toBe('rejected');
-    if (rejected.status !== 'rejected') throw new Error('over the output cap must fail');
-    expect(rejected.code).toBe('capacity');
-    expect(rejected.reason.startsWith('undelivered_reply_page_limit:')).toBe(true);
+    const overSource = over.fixture.notices().source;
+    const overAll: NoticeItemV1[] = [];
+    let overCursor: string | undefined;
+    for (;;) {
+      const page = ready(await overSource.readPage(over.fixture.ctx, { workspace: over.fixture.scope,
+        page: overCursor === undefined ? { limit: 200 } : { limit: 200, cursor: overCursor } }));
+      overAll.push(...page.items);
+      if (page.nextCursor === null) break;
+      overCursor = page.nextCursor;
+    }
+    expect(overAll).toHaveLength(5_001);
+    expect(overAll.map(item => item.objects[0])).toEqual(over.messages.map((message, index) => ({
+      kind: 'aggregate', pin: { ref: message.ref, revision: over.replies[index]!.value.revision }, label: '原消息' })));
+    expect(overAll.map(item => {
+      if (item.position.kind !== 'commit') throw new Error('a commit position is required');
+      return String(item.position.cursor);
+    })).toEqual(over.replies.map(reply => String(reply.cursor)));
   }, 300_000);
 
   it('M09 a changed window is retried as a whole and recovers; a stable mismatch fails', async () => {
@@ -654,24 +669,28 @@ describe('WP2 undelivered-reply notices', () => {
     const deps: NoticeDeps = { records: f.records, sessions: f.f.sessions, messages: f.f.mailbox };
     let firstPages = 0;
     const source = createUndeliveredReplyNoticeSource({
-      records: deps.records,
-      sessions: {
-        findSessions: async (ctx, input) => {
-          if (input.page.cursor === 'later-directory-page') {
-            return { status: 'rejected', code: 'source_stale', reason: 'the directory water level moved' };
+      records: {
+        readMany: keys => deps.records.readMany(keys),
+        lookup: async (request) => {
+          if (request.index !== SESSION_BY_WORKSPACE_LOOKUP) return deps.records.lookup(request);
+          if (request.after === 'later-directory-page') {
+            // The later page was read at a moved ledger window. A retained
+            // accumulated window would still surface the attempt-1 line.
+            return { status: 'ready', value: { records: [], next: null, readThrough: makeCommitCursor(1) } };
           }
           firstPages += 1;
-          const real = await deps.sessions.findSessions(ctx, { ...input, page: firstPage(input.page) });
+          const real = await deps.records.lookup(request);
           if (real.status !== 'ready') return real;
           // Attempt 1: its FIRST page carries the real unavailable line and a
-          // next page; that next page goes source_stale. Attempt 2: an EMPTY
-          // directory. A retained accumulated window would still surface the
+          // next page; that next page reports the moved window. Attempt 2: an
+          // EMPTY directory. A retained accumulated window would still surface the
           // attempt-1 line; the empty result proves the whole window was dropped.
           return firstPages === 1
-            ? { ...real, value: { ...real.value, nextCursor: 'later-directory-page' } }
-            : { status: 'ready', value: { ...real.value, items: [], nextCursor: null } };
+            ? { ...real, value: { ...real.value, next: 'later-directory-page' } }
+            : { status: 'ready', value: { ...real.value, records: [], next: null } };
         },
       },
+      sessions: deps.sessions,
       messages: deps.messages,
     });
     const recovered = ready(await source.readPage(f.ctx, { workspace: f.scope, page: { limit: 100 } }));
@@ -683,24 +702,26 @@ describe('WP2 undelivered-reply notices', () => {
     await unavailableWithReply(f);
     const deps: NoticeDeps = { records: f.records, sessions: f.f.sessions, messages: f.f.mailbox };
     // Each window attempt starts on the first directory page; attempts before
-    // `stableOn` send the reader to a later page that goes source_stale.
+    // `stableOn` send the reader to a later page that reports the moved window.
     const scripted = (stableOn: number) => {
       let attempt = 0;
       return createUndeliveredReplyNoticeSource({
-        records: deps.records,
-        sessions: {
-          findSessions: async (ctx, input) => {
-            if (input.page.cursor === 'later-directory-page') {
-              return { status: 'rejected', code: 'source_stale', reason: 'the directory water level moved' };
+        records: {
+          readMany: keys => deps.records.readMany(keys),
+          lookup: async (request) => {
+            if (request.index !== SESSION_BY_WORKSPACE_LOOKUP) return deps.records.lookup(request);
+            if (request.after === 'later-directory-page') {
+              return { status: 'ready', value: { records: [], next: null, readThrough: makeCommitCursor(1) } };
             }
             attempt += 1;
-            const real = await deps.sessions.findSessions(ctx, { ...input, page: firstPage(input.page) });
+            const real = await deps.records.lookup(request);
             if (real.status !== 'ready') return real;
             return attempt < stableOn
-              ? { ...real, value: { ...real.value, nextCursor: 'later-directory-page' } }
+              ? { ...real, value: { ...real.value, next: 'later-directory-page' } }
               : real;
           },
         },
+        sessions: deps.sessions,
         messages: deps.messages,
       });
     };
@@ -723,19 +744,25 @@ describe('WP2 undelivered-reply notices', () => {
     const f = await open('memory', (deps) => {
       let calls = 0;
       return createUndeliveredReplyNoticeSource({
-        records: deps.records,
-        sessions: {
-          findSessions: async (ctx, input) => {
-            const real = await deps.sessions.findSessions(ctx, input);
-            if (real.status !== 'ready' || input.page.cursor !== undefined) return real;
-            const card = real.value.items.find((candidate) => candidate.record.health === 'unavailable');
-            if (card === undefined) return real;
+        records: {
+          readMany: keys => deps.records.readMany(keys),
+          lookup: async (request) => {
+            const real = await deps.records.lookup(request);
+            if (real.status !== 'ready' || request.index !== SESSION_BY_WORKSPACE_LOOKUP || request.after !== undefined) {
+              return real;
+            }
+            const target = real.value.records.find((record) =>
+              (JSON.parse(record.json) as { health?: unknown }).health === 'unavailable');
+            if (target === undefined) return real;
             // The same source Session appears once more with an EARLIER but
             // different valid entry position, so both project to the same later P.
-            const copy = { ...card, record: { ...card.record, unavailableSince: makeCommitCursor(1) } };
-            return { ...real, value: { ...real.value, items: [...real.value.items, copy] } };
+            const body = JSON.parse(target.json) as Record<string, unknown>;
+            body['unavailableSince'] = makeCommitCursor(1);
+            const copy = { ...target, json: JSON.stringify(body) };
+            return { ...real, value: { ...real.value, records: [...real.value.records, copy] } };
           },
         },
+        sessions: deps.sessions,
         messages: {
           readMessage: (ctx, ref) => deps.messages.readMessage(ctx, ref),
           readUndeliveredReplies: async (ctx, input) => {

@@ -65,6 +65,8 @@ export const SESSION_MESSAGE_BY_SENDER_SESSION_LOOKUP = 'session-message-by-send
 export const S5_USER_MESSAGE_BY_GOAL = 's5-user-message-by-goal';
 export const S5_MESSAGE_BY_WORKSPACE_STATUS = 's5-message-by-workspace-status';
 export const S5_DECISION_ANSWER_BY_SOURCE = 's5-decision-answer-by-source';
+/** Slice 2A L2: messages addressed to the user in one workspace. */
+export const S2A_USER_MESSAGES_LOOKUP = 's2a-user-messages';
 
 /**
  * Slice 5 notification origin wire (SPEC §2.5 line 289). The single
@@ -136,6 +138,18 @@ export const S5_SESSION_MESSAGE_LOOKUP_INDEXES: readonly RecordLookupIndex[] = [
     name: S5_DECISION_ANSWER_BY_SOURCE,
     aggregateType: 'SessionMessage',
     paths: ['ref.projectId', 'ref.workspaceId', 'decision.source.kind', 'decision.source.key'],
+  },
+];
+
+/**
+ * Slice 2A L2 additive index (SPEC §1.1): the messages addressed to a user in a
+ * workspace, registered on the SAME SessionMessage aggregate codec.
+ */
+export const S2A_SESSION_MESSAGE_LOOKUP_INDEXES: readonly RecordLookupIndex[] = [
+  {
+    name: S2A_USER_MESSAGES_LOOKUP,
+    aggregateType: 'SessionMessage',
+    paths: ['ref.projectId', 'ref.workspaceId', 'recipient.kind'],
   },
 ];
 
@@ -1130,7 +1144,7 @@ export const SESSION_MESSAGE_RECORD_SCHEMAS: RecordBackendSchemas = {
     { eventType: SESSION_MESSAGE_DECISION_APPLIED_EVENT_TYPE, schemaVersion: SESSION_MESSAGE_EVENT_SCHEMA_VERSION,
       validate: (event) => validateEvent(event, SESSION_MESSAGE_DECISION_APPLIED_EVENT_TYPE) },
   ],
-  lookups: [...SESSION_MESSAGE_LOOKUP_INDEXES, ...S5_SESSION_MESSAGE_LOOKUP_INDEXES],
+  lookups: [...SESSION_MESSAGE_LOOKUP_INDEXES, ...S5_SESSION_MESSAGE_LOOKUP_INDEXES, ...S2A_SESSION_MESSAGE_LOOKUP_INDEXES],
 };
 
 // --------------------------------------------------------------------------

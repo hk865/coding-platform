@@ -104,6 +104,7 @@ describe('RecordStore commit observer', () => {
         commit: async () => receipts.shift()!,
         eventAt: async () => { throw new Error('not used'); },
         lookup: async () => { throw new Error('not used'); },
+        lookupOrdered: async () => { throw new Error('not used'); },
       },
       close: async () => undefined,
     };

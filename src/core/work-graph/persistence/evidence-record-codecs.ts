@@ -21,6 +21,7 @@
 import type {
     DecodeResult, EncodedDomainEvent, EncodedRecord, RecordBackendSchemas,
 } from '../../record-store/ports.js';
+import type { RecordLookupIndex } from '../../record-store/lookup-ports.js';
 import type { EvidenceSnapshot, TaskEvidenceIndexSnapshot } from '../../../contracts/evidence.js';
 import type { ActorRef } from '../../../contracts/command-event.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
@@ -659,6 +660,27 @@ export const VERIFICATION_ROUND_BY_TASK_LOOKUP = 'VerificationRoundByTask' as co
 /** VR-04: Host-restart reconcile enumerates the open rounds of a workspace. */
 export const VERIFICATION_ROUND_BY_STATUS_LOOKUP = 'VerificationRoundByStatus' as const;
 
+/**
+ * Slice 2A L4: the ordered reverify index (system/member rechecks by commit
+ * position) and its plain-equality legacy group (`since` absent), both on the
+ * SAME `VerificationRound` aggregate codec.
+ */
+export const S2A_ROUND_REVERIFY_LOOKUP = 's2a-round-reverify';
+export const S2A_ROUND_REVERIFY_LEGACY_LOOKUP = 's2a-round-reverify-legacy';
+export const S2A_ROUND_REVERIFY_LOOKUP_INDEXES: readonly RecordLookupIndex[] = [
+    {
+        name: S2A_ROUND_REVERIFY_LOOKUP,
+        aggregateType: 'VerificationRound',
+        paths: ['ref.projectId', 'ref.workspaceId', 'chain.reverify.actorClass'],
+        orderBy: { path: 'since' },
+    },
+    {
+        name: S2A_ROUND_REVERIFY_LEGACY_LOOKUP,
+        aggregateType: 'VerificationRound',
+        paths: ['ref.projectId', 'ref.workspaceId', 'chain.reverify.actorClass', 'since'],
+    },
+];
+
 /** The ONE R3e registration. Run/Plan/policy/baseline schemas keep their owners. */
 export const EVIDENCE_RECORD_SCHEMAS: RecordBackendSchemas = {
     records: [
@@ -677,5 +699,6 @@ export const EVIDENCE_RECORD_SCHEMAS: RecordBackendSchemas = {
             paths: ['ref.projectId', 'ref.workspaceId', 'ref.goalId', 'ref.taskId'] },
         { name: VERIFICATION_ROUND_BY_STATUS_LOOKUP, aggregateType: 'VerificationRound',
             paths: ['ref.projectId', 'ref.workspaceId', 'status'] },
+        ...S2A_ROUND_REVERIFY_LOOKUP_INDEXES,
     ],
 };

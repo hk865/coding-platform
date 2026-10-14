@@ -5,6 +5,7 @@ import { decisionSourceKey } from '../../src/contracts/goal-decisions.js';
 import type { VersionPin } from '../../src/contracts/core/identity.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
 import type { DecisionCardV1, DecisionReadPort, S5RecordPort } from '../../src/core/work-graph/model/decision-contracts.js';
+import type { RecordOrderedLookupPort } from '../../src/core/record-store/lookup-ports.js';
 import type { PlanTaskPort } from '../../src/core/work-graph/model/plan-contracts.js';
 import { createDecisionReadModel, createGoalCauseCardSource, createPlanningQuestionCardSource } from '../../src/core/work-graph/views/decision-read-model.js';
 import { createGoalConflictAssembler } from '../../src/core/work-graph/views/goal-conflicts.js';
@@ -34,7 +35,7 @@ const ACCEPT: DecisionSelectionV1 = { kind: 'option', optionId: 'accept' };
 const closers: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const close of closers.splice(0)) await close(); });
 
-function readers(records: S5RecordPort, plans: PlanTaskPort) {
+function readers(records: S5RecordPort & RecordOrderedLookupPort, plans: PlanTaskPort) {
   return createDecisionReadModel({ records,
     cardSources: [createGoalCauseCardSource(createGoalDecisionCauseReader({ records, plans })),
       createPlanningQuestionCardSource(createPlanningQuestionReader({ records, plans }))],

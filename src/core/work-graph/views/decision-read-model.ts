@@ -31,6 +31,7 @@ import type {
   DecisionNoticeSourcePort,
   DecisionQueueReadV1,
   DecisionReadPort,
+  DecisionSourceAttempt,
   GoalConflictReadV1,
   GoalDecisionCauseReadV1,
   NoticeDisplayTokenPort,
@@ -53,8 +54,8 @@ import {
 } from '../persistence/record-codecs.js';
 import {
   decodeSessionMessageRecord,
+  S2A_USER_MESSAGES_LOOKUP,
   S5_DECISION_ANSWER_BY_SOURCE,
-  S5_MESSAGE_BY_WORKSPACE_STATUS,
   sessionMessageRefKey,
 } from '../sessions/message-record-codecs.js';
 import type { GoalDecisionCauseReader } from '../tasks/goal-decision-reader.js';
@@ -97,16 +98,11 @@ const CARD_KINDS: readonly DecisionSourceV1['kind'][] = [
 const NOTICE_CATEGORIES: readonly NoticeCategoryV1[] = [
   'member_notice', 'second_expiry', 'handoff', 'note_review', 'undelivered_reply', 'automatic_rework', 'continuation',
 ];
-const STATUSES = ['pending', 'read', 'responded'] as const;
 const CARD_ACTIONS: readonly CardAction[] = ['answer', 'ask_secretary', 'apply', 'record_application',
   'adopt', 'regenerate', 'abandon', 'adopt_architecture', 'adopt_completion_policy'];
 
-/** §4.1 line 772: one source window is <=25 pages of <=200 items (5000 total). */
+/** §4.1 line 772: one source page is at most 200 items (2A L10 keeps the page size). */
 const SOURCE_PAGE_LIMIT = 200;
-const SOURCE_MAX_PAGES = 25;
-const SOURCE_MAX_ITEMS = 5000;
-/** §4.1 line 772 / T-R2-3: an unfiltered queue read lists at most 200 Goals. */
-const GOAL_LIMIT = 200;
 
 /** §4.1 line 772 / §3.3: one read window that keeps moving is retried at most 4 times. */
 const WINDOW_MAX_ATTEMPTS = 4;
@@ -231,11 +227,6 @@ function goalCauseCard(cause: GoalDecisionCauseReadV1): DecisionCardV1 {
 
 type QueueInput = Parameters<DecisionReadPort['queryDecisionQueue']>[1];
 
-/** §4.1 line 772 / T-R2-3: an over-capacity window is `capacity`, never a fake `ready`. */
-function capacityRejection(reason: string): CoreRejection {
-  return { status: 'rejected', code: 'capacity', reason };
-}
-
 async function queryDecisionQueue(
   deps: DecisionReadModelDependencies,
   ctx: CoreCallContext,
@@ -272,6 +263,10 @@ async function readDecisionQueueWindow(
 
   const injectedCards = new Map(deps.cardSources.map((source) => [source.kind, source]));
   const injectedNotices = new Map(deps.noticeSources.map((source) => [source.category, source]));
+  // 2A L11/P1: one attempt-scoped cache, shared by every source this attempt
+  // reads. A source assembles its whole collection once and serves its pages
+  // from it; the object is dropped when this window attempt ends.
+  const attempt: DecisionSourceAttempt = { cache: new Map() };
   // §2.6/§4.2: the advertised capability starts from the wired adapter and is
   // then DOWNGRADED by what a real read reports. An injected adapter whose
   // provider answers `not_available` must never be advertised as available.
@@ -291,15 +286,8 @@ async function readDecisionQueueWindow(
   if (wantsGoals) {
     try {
       const listed = await listWorkspaceGoals(deps.records, workspace);
-      // §4.1 line 772 / T-R2-3: a Goal listing that hit the bounded window is
-      // over capacity, and an UNFILTERED read of a Workspace with more than
-      // `GOAL_LIMIT` Goals is over capacity too. Exactly the limit is inside.
-      if (listed.truncated) {
-        return capacityRejection('the workspace Goal listing exceeded its whole read window');
-      }
-      if (input.goalRef === undefined && listed.goals.length > GOAL_LIMIT) {
-        return capacityRejection(`the workspace has more than ${String(GOAL_LIMIT)} Goals`);
-      }
+      // 2A L3: the Goal listing is paged to the end; no Goal count and no
+      // truncation can reject the whole queue any more.
       goals = listed.goals;
       fixedWindow = later(fixedWindow, listed.watermark);
       watermark = later(watermark, listed.watermark);
@@ -332,16 +320,11 @@ async function readDecisionQueueWindow(
   }
 
   // ---- messages (source 1 and the built-in member notifications) ------------
-  const messages: SessionMessage[] = [];
+  let messages: SessionMessage[] = [];
   if (wantsCards || wantsNotices) {
     try {
       const loaded = await loadWorkspaceMessages(deps.records, workspace);
-      // §4.1 line 772 / T-R2-3: the workspace message window is one source
-      // window; overflowing its 25 pages / 5000 items is `capacity`.
-      if (loaded.truncated) {
-        return capacityRejection('the workspace message window exceeded its whole read window');
-      }
-      messages.push(...loaded.messages);
+      messages = loaded.messages;
       watermark = later(watermark, loaded.watermark);
     } catch (error) {
       return storeFailureToRejection(error as { code: string; reason: string });
@@ -414,28 +397,22 @@ async function readDecisionQueueWindow(
         : [input.goalRef];
       for (const goalRef of targets) {
         // §4.1 line 772 / §4.2 line 821: every adapter receives the same
-        // `atLeastCursor`, and a source is read to the end of its <=25-page
-        // window; a discarded `nextCursor` would silently drop real items.
+        // `atLeastCursor` and is paged to the end (2A L6/L8); a discarded
+        // `nextCursor` would silently drop real items.
         let cursor: string | undefined;
-        let read = 0;
-        for (let pageIndex = 0; pageIndex < SOURCE_MAX_PAGES; pageIndex += 1) {
+        for (;;) {
           const result = await source.readPage(ctx, { workspace,
             ...(goalRef === undefined ? {} : { goalRef }),
             page: { limit: SOURCE_PAGE_LIMIT, ...(cursor === undefined ? {} : { cursor }),
-              ...(input.page.atLeastCursor === undefined ? {} : { atLeastCursor: input.page.atLeastCursor }) } });
+              ...(input.page.atLeastCursor === undefined ? {} : { atLeastCursor: input.page.atLeastCursor }),
+              attempt } });
           if (result.status !== 'ready') return result;
           observeAvailability(capabilities, source.kind, result.value.availability);
           if (result.value.availability !== 'available') break;
           for (const card of result.value.items) add(card);
-          read += result.value.items.length;
           const next = result.value.nextCursor;
           if (next === null) break;
           cursor = next;
-          // §4.1 line 772 / T-R2-3: exactly 25 pages / 5000 items is inside the
-          // window; a page beyond either bound is `capacity`, never `truncated`.
-          if (read >= SOURCE_MAX_ITEMS || pageIndex === SOURCE_MAX_PAGES - 1) {
-            return capacityRejection(`decision source ${source.kind} exceeded its whole read window`);
-          }
         }
       }
     }
@@ -487,34 +464,30 @@ async function readDecisionQueueWindow(
         const provider = injectedNotices.get(category) ?? (category === 'member_notice'
           ? builtInMemberNoticeSource(deps.records, messages) : undefined);
         if (provider === undefined) continue;
-        // Same §4.1/§4.2 window as the card sources: continuous pages, the shared
-        // `atLeastCursor`, and no discarded `nextCursor`.
+        // Same §4.1/§4.2 read as the card sources: continuous pages to the end
+        // (2A L6/L8), the shared `atLeastCursor`, and no discarded `nextCursor`.
         let cursor: string | undefined;
-        let read = 0;
         let count = 0;
-        for (let pageIndex = 0; pageIndex < SOURCE_MAX_PAGES; pageIndex += 1) {
+        for (;;) {
           const result = await provider.readPage(ctx, { workspace,
             ...(input.goalRef === undefined ? {} : { goalRef: input.goalRef }),
             ...(savedSeen.value[category] === undefined ? {} : { after: savedSeen.value[category] }),
             page: { limit: SOURCE_PAGE_LIMIT, ...(cursor === undefined ? {} : { cursor }),
-              ...(input.page.atLeastCursor === undefined ? {} : { atLeastCursor: input.page.atLeastCursor }) } });
+              ...(input.page.atLeastCursor === undefined ? {} : { atLeastCursor: input.page.atLeastCursor }),
+              attempt } });
           if (result.status !== 'ready') return result;
           observeAvailability(capabilities, category, result.value.availability);
           if (result.value.availability !== 'available') break;
           pages.push({ category, items: result.value.items });
           count += result.value.items.length;
-          read += result.value.items.length;
           const next = result.value.nextCursor;
           if (next === null) break;
           cursor = next;
-          // §4.1 line 772 / T-R2-3: the same source window bound as the cards.
-          if (read >= SOURCE_MAX_ITEMS || pageIndex === SOURCE_MAX_PAGES - 1) {
-            return capacityRejection(`notice category ${category} exceeded its whole read window`);
-          }
         }
         noticeCounts[category] = (noticeCounts[category] ?? 0) + count;
       }
-      if (pages.length > 0) allNotices.push(...mergeNoticePages(pages, Number.MAX_SAFE_INTEGER).items);
+      // L11: append without an unbounded argument spread.
+      for (const item of mergeNoticePages(pages, Number.MAX_SAFE_INTEGER).items) allNotices.push(item);
     } catch (error) {
       return storeFailureToRejection(error as { code: string; reason: string });
     }
@@ -524,9 +497,10 @@ async function readDecisionQueueWindow(
   // §4.1: the requested sections are selected BEFORE paging; a page of 50
   // waiting cards must never hide the one requested pending application.
   const orderedCards: DecisionCardV1[] = [];
-  if (input.sections.includes('waiting_answer')) orderedCards.push(...waiting);
-  if (input.sections.includes('answered_pending_application')) orderedCards.push(...answered);
-  if (input.sections.includes('history')) orderedCards.push(...history);
+  // L11: append without an unbounded argument spread.
+  if (input.sections.includes('waiting_answer')) for (const card of waiting) orderedCards.push(card);
+  if (input.sections.includes('answered_pending_application')) for (const card of answered) orderedCards.push(card);
+  if (input.sections.includes('history')) for (const card of history) orderedCards.push(card);
 
   const cursor = parseQueueCursor(input.page.cursor);
   if (cursor === 'invalid') return { status: 'rejected', code: 'invalid', reason: 'the queue cursor is not a real page point' };
@@ -816,33 +790,28 @@ async function deriveOpenCard(
       reason: `decision source ${source.kind} is not connected on this Host` } as CoreRejection;
   }
   const workspace = { projectId: goal.workspaceRef.projectId, workspaceId: goal.workspaceRef.workspaceId };
-  // §4.1/§4.2: read the source's WHOLE window like the queue loop, following
-  // `nextCursor`. A card beyond the first page is NOT an absent card, and an
-  // unavailable source is a read failure, never "no such card"; only a source
-  // that really ends on `nextCursor: null` proves this card absent.
+  // §4.1/§4.2: read the source to its very end (2A L6), following `nextCursor`.
+  // A card beyond the first page is NOT an absent card, and an unavailable
+  // source is a read failure, never "no such card"; only a source that really
+  // ends on `nextCursor: null` proves this card absent. One attempt-scoped
+  // cache (L11) makes a multi-page source assemble its set only once.
+  const attempt: DecisionSourceAttempt = { cache: new Map() };
   let cursor: string | undefined;
-  let read = 0;
-  for (let pageIndex = 0; pageIndex < SOURCE_MAX_PAGES; pageIndex += 1) {
+  for (;;) {
     const result = await provider.readPage(ctx, { workspace, goalRef: goal.ref,
-      page: { limit: SOURCE_PAGE_LIMIT, ...(cursor === undefined ? {} : { cursor }) } });
+      page: { limit: SOURCE_PAGE_LIMIT, ...(cursor === undefined ? {} : { cursor }), attempt } });
     if (result.status === 'not_found') return null;
     if (result.status !== 'ready') throw result;
     if (result.value.availability !== 'available') {
       throw { status: 'rejected', code: 'unavailable',
         reason: `decision source ${source.kind} is not available` } as CoreRejection;
     }
-    read += result.value.items.length;
     const found = result.value.items.find((card) => card.source.key === source.key);
     if (found !== undefined) return found;
     const next = result.value.nextCursor;
     if (next === null) return null;
     cursor = next;
-    if (read >= SOURCE_MAX_ITEMS || pageIndex === SOURCE_MAX_PAGES - 1) {
-      throw { status: 'rejected', code: 'unavailable',
-        reason: `decision source ${source.kind} did not yield card ${source.key} within its whole read window` } as CoreRejection;
-    }
   }
-  return null;
 }
 
 // -------------------------------------------------------------------------- //
@@ -996,35 +965,43 @@ function sortCards(cards: readonly DecisionCardV1[]): DecisionCardV1[] {
 // -------------------------------------------------------------------------- //
 
 function builtInMemberNoticeSource(records: DecisionReadRecordsPort, messages: readonly SessionMessage[]): DecisionNoticeSourcePort {
+  // L11: this source object lives for exactly one window attempt, so the
+  // assembled set is built once and every internal page reuses it.
+  const assembled = new Map<string, NoticeItemV1[]>();
   return {
     category: 'member_notice',
     async readPage(_ctx, input) {
-      const items: NoticeItemV1[] = [];
-      for (const message of messages) {
-        if (!isUserMessageRecipient(message.recipient)) continue;
-        if (message.intent !== 'notify') continue;
-        if (message.decision?.syntheticAnswer === true) continue;
-        if (input.goalRef !== undefined
-          && (message.goalRef === null || message.goalRef === undefined || !sameGoal(message.goalRef, input.goalRef))) continue;
-        const record = await readOne(records, sessionMessageRefKey(message.ref));
-        if (record === null) continue;
-        const origin = decodeNoticeOrigin(record);
-        // §2.5 line 291: a persisted `since:null` (or any undecodable origin) is
-        // `unavailable`, never silently skipped into an "available empty" page.
-        if (origin.status !== 'decoded') {
-          return { status: 'rejected', code: 'unavailable', reason: `member notice origin: ${origin.reason}` };
+      const goalKey = input.goalRef === undefined ? '' : canonicalJson(input.goalRef as unknown as JsonValue);
+      let items = assembled.get(goalKey);
+      if (items === undefined) {
+        items = [];
+        for (const message of messages) {
+          if (!isUserMessageRecipient(message.recipient)) continue;
+          if (message.intent !== 'notify') continue;
+          if (message.decision?.syntheticAnswer === true) continue;
+          if (input.goalRef !== undefined
+            && (message.goalRef === null || message.goalRef === undefined || !sameGoal(message.goalRef, input.goalRef))) continue;
+          const record = await readOne(records, sessionMessageRefKey(message.ref));
+          if (record === null) continue;
+          const origin = decodeNoticeOrigin(record);
+          // §2.5 line 291: a persisted `since:null` (or any undecodable origin) is
+          // `unavailable`, never silently skipped into an "available empty" page.
+          if (origin.status !== 'decoded') {
+            return { status: 'rejected', code: 'unavailable', reason: `member notice origin: ${origin.reason}` };
+          }
+          const itemKey = `member_notice:${sessionMessageRefKey(message.ref)}`;
+          items.push({
+            itemKey, category: 'member_notice',
+            goalRef: message.goalRef ?? { aggregateType: 'Goal', projectId: message.ref.projectId, goalId: '' },
+            position: origin.value.since === undefined || origin.value.since === null
+              ? { kind: 'legacy', occurredAt: message.createdAt, itemKey }
+              : { kind: 'commit', cursor: origin.value.since, itemKey },
+            summary: '你有一条新通知', objects: [], rework: null,
+          });
         }
-        const itemKey = `member_notice:${sessionMessageRefKey(message.ref)}`;
-        items.push({
-          itemKey, category: 'member_notice',
-          goalRef: message.goalRef ?? { aggregateType: 'Goal', projectId: message.ref.projectId, goalId: '' },
-          position: origin.value.since === undefined || origin.value.since === null
-            ? { kind: 'legacy', occurredAt: message.createdAt, itemKey }
-            : { kind: 'commit', cursor: origin.value.since, itemKey },
-          summary: '你有一条新通知', objects: [], rework: null,
-        });
+        items.sort((left, right) => compareNoticePositions(left.position, right.position));
+        assembled.set(goalKey, items);
       }
-      items.sort((left, right) => compareNoticePositions(left.position, right.position));
       const after = input.after;
       const remaining = after === undefined ? items : items.filter((item) => compareNoticePositions(item.position, after) > 0);
       const offset = input.page.cursor === undefined ? 0 : Number(input.page.cursor);
@@ -1043,26 +1020,24 @@ function builtInMemberNoticeSource(records: DecisionReadRecordsPort, messages: r
 async function loadWorkspaceMessages(
   records: DecisionReadRecordsPort,
   workspace: WorkspaceScope,
-): Promise<{ messages: SessionMessage[]; watermark: CommitCursor | null; truncated: boolean }> {
+): Promise<{ messages: SessionMessage[]; watermark: CommitCursor | null }> {
+  // 2A L2: read only the messages addressed to the user through the dedicated
+  // index; member-to-member traffic is never read. The source is paged to the
+  // end (L10), so its whole user-message set is available with no cap.
   const messages: SessionMessage[] = [];
-  let watermark: CommitCursor | null = null;
-  let truncated = false;
-  for (const status of STATUSES) {
-    const batch = await lookupAll(records, S5_MESSAGE_BY_WORKSPACE_STATUS, [workspace.projectId, workspace.workspaceId, status]);
-    truncated = truncated || batch.truncated;
-    watermark = later(watermark, batch.watermark);
-    for (const record of batch.items) {
-      const decoded = decodeSessionMessageRecord(record);
-      if (decoded.status !== 'decoded') {
-        // §4.1/§4.2: a damaged stored message is a read failure, never a silent
-        // truncation that would hide a real decision card.
-        throw { status: 'rejected', code: 'unavailable',
-          reason: `workspace message ${record.refKey}: ${decoded.reason}` } as CoreRejection;
-      }
-      messages.push(decoded.value);
+  const batch = await lookupAll(records, S2A_USER_MESSAGES_LOOKUP,
+    [workspace.projectId, workspace.workspaceId, 'user']);
+  for (const record of batch.items) {
+    const decoded = decodeSessionMessageRecord(record);
+    if (decoded.status !== 'decoded') {
+      // §4.1/§4.2: a damaged stored message is a read failure, never a silent
+      // truncation that would hide a real decision card.
+      throw { status: 'rejected', code: 'unavailable',
+        reason: `workspace message ${record.refKey}: ${decoded.reason}` } as CoreRejection;
     }
+    messages.push(decoded.value);
   }
-  return { messages, watermark, truncated };
+  return { messages, watermark: batch.watermark };
 }
 
 async function findAnswerMessage(
@@ -1084,12 +1059,8 @@ async function findAnswerMessage(
     if (message.decision?.syntheticAnswer !== true || message.status !== 'responded') continue;
     if (isUserDecisionResponse(message.response)) return message;
   }
-  // §4.1: a truncated window cannot prove the answer absent.
-  if (batch.truncated) {
-    // T-R2-3 (lead LR5): an overflowing window is `capacity`.
-    throw { status: 'rejected', code: 'capacity',
-      reason: `the answer index for ${source.kind} ${source.key} was truncated before its whole window` } as CoreRejection;
-  }
+  // 2A L6/L10: the answer index is read to its end, so a full scan that found
+  // no answer really proves this source has none.
   return null;
 }
 
@@ -1140,12 +1111,8 @@ async function findCandidateProposal(
     positions.set(canonicalJson(candidate.ref as unknown as JsonValue), origin.value.since ?? null);
     candidates.push(candidate);
   }
-  // §4.1: a truncated request window cannot prove the head absent.
-  if (batch.truncated) {
-    // T-R2-3 (lead LR5): an overflowing window is `capacity`.
-    throw { status: 'rejected', code: 'capacity',
-      reason: `the request candidate index for ${identity.requestRef.queryJobId} was truncated before its whole window` } as CoreRejection;
-  }
+  // 2A L6/L10: the request candidate index is read to its end, so the head
+  // selection below sees the whole candidate set with no capacity refusal.
   // §4.2 source 3: the live head wins; otherwise the terminal of the LAST
   // created chain (its first candidate's creation commit), so the direct-card
   // entrance reads the same closed card as the queue. The comparison is the

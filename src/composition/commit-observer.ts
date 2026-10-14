@@ -30,8 +30,18 @@ export type RecordCommitObserver = {
   committed(notice: RecordCommitNotice): void;
 };
 
-type ObservedRecords = GoalRecordTransactionPort & RecordLookupPort;
-type ObservableBackend = { readonly records: ObservedRecords; close(): Promise<void> };
+// S2: the observer's minimum interface stays exactly the pre-2A
+// `GoalRecordTransactionPort & RecordLookupPort`; the generic preserves the
+// concrete records type a caller passed (including the separate ordered lookup
+// the real backends carry) without requiring it of every caller. The returned
+// records type keeps R and re-states the base `commit` signature, so a test
+// double with a narrower `commit` still gets the observed one.
+type ObservableRecords = GoalRecordTransactionPort & RecordLookupPort;
+type ObservableBackend<R extends ObservableRecords> = { readonly records: R; close(): Promise<void> };
+type ObservedBackend<R extends ObservableRecords> = {
+  readonly records: Omit<R, 'commit'> & { commit: ObservableRecords['commit'] };
+  close(): Promise<void>;
+};
 
 function aggregatesOf(input: PreparedCommit): RecordCommitAggregate[] {
   const records: readonly unknown[] = Array.isArray(input?.records) ? input.records : [];
@@ -55,9 +65,9 @@ function aggregatesOf(input: PreparedCommit): RecordCommitAggregate[] {
  * BEFORE the wrapper is published, while no writer exists yet, so no commit can
  * fall between the reported head and the first observed commit.
  */
-export async function observeRecordCommits(
-  backend: ObservableBackend, observer: RecordCommitObserver | undefined,
-): Promise<ObservableBackend> {
+export async function observeRecordCommits<R extends ObservableRecords>(
+  backend: ObservableBackend<R>, observer: RecordCommitObserver | undefined,
+): Promise<ObservedBackend<R>> {
   if (observer === undefined) return backend;
   let head: CommitCursor | null | 'unknown' = 'unknown';
   try {
@@ -75,6 +85,7 @@ export async function observeRecordCommits(
     return receipt;
   };
   // Both RecordStore backends build `records` from closures without `this`, so
-  // the spread keeps every other method exactly as it was.
-  return { records: { ...raw, commit }, close: () => backend.close() };
+  // the spread keeps every other method exactly as it was, including the
+  // concrete session/ordered-lookup surface.
+  return { records: { ...raw, commit } as ObservedBackend<R>['records'], close: () => backend.close() };
 }

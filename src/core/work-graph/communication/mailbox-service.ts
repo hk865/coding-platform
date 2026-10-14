@@ -2950,6 +2950,11 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
       throw new Error('the written SessionMessage is not the state the message machine accepted');
     }
     const source: SessionRecord = { ...args.source, revision: args.source.revision + 1 };
+    // Slice 2A L5: the disposal rewrites the message, so it copies the stored
+    // creation origin (`since`) exactly like every other update. Re-encoding
+    // without it silently re-sorted the message as a legacy notice.
+    const preserved = await preservedNoticeOrigin(records, sessionMessageRefKey(message.ref));
+    if (!preserved.ok) return preserved.rejection;
     const event = encodeArchiveWaitDisposalEvent(args.eventId, {
       schemaVersion: 1, occurredAt: args.now, projectId: args.owned.projectId,
       workspaceId: args.owned.workspaceId, requestId: '',
@@ -2962,7 +2967,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     ];
     const prepared: PreparedCommit = {
       identityKey: args.identityKey, fingerprint: args.fingerprint, guards: dedupeGuards(guards),
-      records: [encodeSessionMessageRecord(message), encodeSessionRecord(source)],
+      records: [encodeSessionMessageRecord(message, preserved.value), encodeSessionRecord(source)],
       claims: [], indexGuards: [], indexChanges: [], events: [event],
     };
     let receipt: Awaited<ReturnType<SessionMailboxDependencies['records']['commit']>>;

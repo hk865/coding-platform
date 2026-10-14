@@ -1,6 +1,6 @@
 # 编排分片与接线：规格和任务书
 
-**当前状态（2026-10-14）。** 第 0、1、3、5 片和接线包 1 已合入；接线包 2（bb924854）、K 片 B（9881a2ae）、K 片 A（cfe35550）刚合入，2A 规格已冻结（163ada27），正在施工。最新状态见 [STATUS](../../../STATUS.md)，决定 1–58见 [HANDOFF 顶部](../../../HANDOFF.md)，分片依赖见 [设计目录](../README.md)和 [DESIGN §8.2](../DESIGN.md#82-分片表)。新界面在后端之后做，基线是[冻结原型](../../../../ui-reference/workbench-2026-10/README.md)和 [UI-WORKBENCH §0](../../../../UI-WORKBENCH.md#ui-decisions-2026-10)。
+**当前状态（2026-10-15）。** 第 0、1、3、5 片、接线包 1、接线包 2（bb924854）、K 片 B（9881a2ae）、K 片 A（cfe35550）已合入；2A 刚合入；2B、2C 冻结后在两个副本里同时施工。最新状态见 [STATUS](../../../STATUS.md)，决定 1–58见 [HANDOFF 顶部](../../../HANDOFF.md)，分片依赖见 [设计目录](../README.md)和 [DESIGN §8.2](../DESIGN.md#82-分片表)。新界面在后端之后做，基线是[冻结原型](../../../../ui-reference/workbench-2026-10/README.md)和 [UI-WORKBENCH §0](../../../../UI-WORKBENCH.md#ui-decisions-2026-10)。
 
 ## 2026-10-13 起怎样做
 
@@ -12,10 +12,12 @@
 
 ## 接下来做什么
 
+**已合入（2026-10-15）：** 2A（决定队列只读要用的、不因数量多拒绝、能翻到底；RecordStore 加按顺序查找）。施工四轮，验收和限定见 [2A 证据](../../../reviews/evidence/orchestration-slice-2A-2026-10-14/README.md)和 [2A 规格 §10](slice-2A-SPEC.md#10-施工和验收中的限定lead2026-10-15)。
+
 **已合入（2026-10-14）：** 接线包 2（I-2、I-4、I-5、I-6）bb924854；K 片 B（只读命令 `run_readonly_command`）9881a2ae；K 片 A（关闭悬空 Turn、留在原 Session）cfe35550。验收和限定见[接线包 2 证据](../../../reviews/evidence/orchestration-wiring-2-2026-10-13/README.md)、[K 片 B 验收](../../../reviews/evidence/orchestration-slice-K-2026-10-13/partB/lead-acceptance.md)、[K 片 A 验收](../../../reviews/evidence/orchestration-slice-K-2026-10-13/partA/lead-acceptance.md)。
 
-1. **2A 施工（决定 56 的下一步）。** [slice-2A-SPEC](slice-2A-SPEC.md) 2026-10-14 冻结（163ada27），任务书已由 lead 写好；DSH 先读任务书和规格、报看不懂的地方，再按 TDD 一条一条做。2A 撤掉接线包 2 的两处临时上限（规格 §0.4）。
-2. **接着按 2A → 2B → 2C → 资源上限。** 2B、2C 和资源上限的内容已定，冻结等 lead 的量测（2B §7 的读取开销和回填批量；2C 的每行读预算；资源上限：通知读 `cap_hit` 的地方）；测试入口用户 2026-10-14 已同意（2B 的 BE0–BE5 含 BE1s、BE1r、BE2c；2C 的 LE1–LE7；资源上限的 RE0–RE3）。实现追上之前不开新规格。
+1. **2B、2C 同时施工。** 两片的规格 lead 量完冻结前要量的部分后冻结（2B §7 读取开销在 2A 合入后的代码上量；2C 的每行读预算要等读取写出来，改到施工以后、合入以前定数，2C 规格 §15）；测试入口用户 2026-10-14 已同意（2B 的 BE0–BE5 含 BE1s、BE1r、BE2c；2C 的 LE1–LE7）。两片改的文件只在几个登记文件上重叠，在两个副本里同时施工，合入先 2B 后 2C。
+2. **再做资源上限片**（测试入口 RE0–RE3 已同意，冻结等 lead 量通知读 `cap_hit` 的地方）。实现追上之前不开新规格。
 3. **K3 等资源上限片做完再收尾**（决定 56）；B2 已由用户定（决定 57），机制等 K3 恢复时由 lead 写进规格。
 
 ## 这里有什么

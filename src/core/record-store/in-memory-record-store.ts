@@ -31,8 +31,8 @@ import type { VersionedRef } from "../../contracts/ledger.js";
 import { applyEventSchema, applyRecordSchema, bindPreparedRecords, checkPersistedIdempotencyRecord, clonePersistedIdempotencyRecord, committedReceiptFromIdempotency, corruptFailure, createRecordSchemaRegistry, decodeRecordBody, decodeRefKey, decodeStoredEventBody, guardIsSatisfied, idempotencyConflictFailure, invalidFailure, isNonEmptyString, messageOf, notFoundFailure, planPreparedCommit, revisionConflictFailure, uniqueConflictFailure, unsupportedFailure, type PlannedCommit, type RecordSchemaRegistry } from "./record-codec.js";
 import { decodeGuardedRevision } from "./guarded-revision.js";
 import { findClaimConflicts, ledgerHorizonMatches, RejectedInsideTransaction } from "./commit-extensions.js";
-import { compareRefKeys, createRecordLookupRegistry, decodeLookupRequest, encodeLookupValues, lookupIndexKeyOf, type RecordLookupRegistry, type RegisteredLookupIndex } from "./lookup-index.js";
-import type { RecordLookupPage, RecordLookupPort, RecordLookupRequest } from "./lookup-ports.js";
+import { compareOrderedValues, compareRefKeys, createRecordLookupRegistry, decodeLookupRequest, decodeOrderedLookupRequest, encodeLookupValues, lookupIndexKeyOf, matchesOrderedRequest, orderedLookupCandidateOf, type RecordLookupRegistry, type RegisteredLookupIndex } from "./lookup-index.js";
+import type { OrderedLookupRequest, OrderedLookupValue, RecordOrderedLookupPage, RecordOrderedLookupPort, RecordLookupPage, RecordLookupPort, RecordLookupRequest } from "./lookup-ports.js";
 import type { DecodeResult, EncodedDomainEvent, EncodedRecord, GoalRecordTransactionPort, PersistedIdempotencyRecord, PreparedCommit, RecordBackendSchemas, RecordBatchRead, RecordGuard, StoreCommitReceipt, StoreResult, StoredVersion } from "./ports.js";
 
 export type InMemoryRecordBackendOptions = {
@@ -41,7 +41,7 @@ export type InMemoryRecordBackendOptions = {
 };
 
 export type InMemoryRecordBackend = {
-  readonly records: GoalRecordTransactionPort & RecordLookupPort;
+  readonly records: GoalRecordTransactionPort & RecordLookupPort & RecordOrderedLookupPort;
   close(): Promise<void>;
 };
 
@@ -483,7 +483,53 @@ export function createInMemoryRecordBackend(options: InMemoryRecordBackendOption
     };
   };
 
-  const records: GoalRecordTransactionPort & RecordLookupPort = {
+  /** Registered ordered lookup; the call sorts at read time (L1). */
+  const lookupOrdered = async (request: OrderedLookupRequest): Promise<StoreResult<RecordOrderedLookupPage>> => {
+    assertOpen();
+    const decoded = decodeOrderedLookupRequest(lookups, request);
+    if (decoded.status === "unsupported") return unsupportedFailure(decoded.reason);
+    if (decoded.status === "invalid") return invalidFailure(decoded.reason);
+    const definition = decoded.value.index;
+    const memoryIndex = lookupIndexByName.get(definition.name);
+    if (memoryIndex === undefined) return unsupportedFailure(`no lookup index registered as ${definition.name}`);
+    const valueType = definition.orderBy!.valueType;
+    const refs = memoryIndex.buckets.get(encodeLookupValues(decoded.value.values));
+    const candidates: { order: OrderedLookupValue; refKey: string }[] = [];
+    if (refs !== undefined) {
+      for (const refKey of refs) {
+        const body = state.snapshots.get(refKey);
+        if (body === undefined) return corruptFailure(`lookup candidate ${refKey} has no snapshot`);
+        const candidate = orderedLookupCandidateOf(definition, body);
+        if (!candidate.present) continue;
+        if (!matchesOrderedRequest(decoded.value, candidate.value, refKey)) continue;
+        candidates.push({ order: candidate.value, refKey });
+      }
+    }
+    const sign = decoded.value.direction === "asc" ? 1 : -1;
+    candidates.sort((left, right) => {
+      const compared = compareOrderedValues(valueType, left.order, right.order);
+      if (compared !== 0) return compared * sign;
+      return compareRefKeys(left.refKey, right.refKey) * sign;
+    });
+    const page = candidates.slice(0, decoded.value.limit);
+    const hasNext = candidates.length > decoded.value.limit;
+    const read = readManyKeys(page.map((candidate) => candidate.refKey));
+    if (read.status !== "ready") return corruptFailure(read.reason);
+    if (read.value.missing.length > 0) {
+      return corruptFailure(`lookup candidate ${read.value.missing[0]} has no snapshot`);
+    }
+    const last = page[page.length - 1];
+    return {
+      status: "ready",
+      value: {
+        records: read.value.records,
+        next: hasNext && last !== undefined ? { order: last.order, refKey: last.refKey } : null,
+        readThrough: read.value.readThrough,
+      },
+    };
+  };
+
+  const records: GoalRecordTransactionPort & RecordLookupPort & RecordOrderedLookupPort = {
     readMany: async (refKeys: readonly string[]): Promise<StoreResult<RecordBatchRead>> => {
       assertOpen();
       if (!Array.isArray(refKeys) || !refKeys.every((key) => isNonEmptyString(key))) {
@@ -497,6 +543,7 @@ export function createInMemoryRecordBackend(options: InMemoryRecordBackendOption
     commit,
     eventAt,
     lookup,
+    lookupOrdered,
   };
 
   const close = async (): Promise<void> => {

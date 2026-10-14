@@ -65,6 +65,7 @@ import { WORKFLOW_AUTOMATION_ACTOR } from '../../src/contracts/task-requeue.js';
 import { SESSION_MAILBOX_TOOL_NAMES, USER_DECISION_TOOL_NAMES } from '../../src/core/agent-runtime/communication-tools.js';
 import { canonicalJson, sha256Hex } from '../../src/contracts/fingerprint.js';
 import type { EncodedDomainEvent, EncodedRecord, RecordBackendSchemas, RecordGuard, StoreCommitReceipt, UniqueClaimChange } from '../../src/core/record-store/ports.js';
+import type { OrderedLookupRequest, RecordOrderedLookupPort } from '../../src/core/record-store/lookup-ports.js';
 import type { RawArtifactStorePort } from '../../src/core/record-store/body-ports.js';
 import { RawArtifactBodyStore } from '../../src/core/record-store/body-store.js';
 import { createSqliteRawArtifactStore } from '../../src/core/record-store/sqlite-body-store.js';
@@ -179,6 +180,17 @@ export { S5_QUERY_JOB_BY_GOAL } from '../../src/core/work-graph/queries/query-re
 // ---------------------------------------------------------------------------
 
 export type S5Records = B2Records;
+/** Slice 2A P8: the observed fixture port also carries the separate ordered lookup. */
+export type S5OrderedRecords = S5Records & RecordOrderedLookupPort;
+
+/**
+ * Slice 2A P8: the real backend implements the separate ordered port; these
+ * forwarding doubles only add the method the new notice sources read through.
+ * The delegate is the real store the fixture wraps.
+ */
+function orderedLookupOf(target: S5Records): RecordOrderedLookupPort {
+  return target as unknown as RecordOrderedLookupPort;
+}
 
 /** Physical call diagnostics; use storeSnapshot(), not these, for "0 writes". */
 export type S5RecordCounts = {
@@ -226,14 +238,16 @@ export type S5StoreSnapshot = {
 export function observeRecords(
   records: S5Records,
   counts: S5RecordCounts = { commits: 0, lookupCommits: 0, eventAt: 0, lookups: 0 },
-): { records: S5Records; counts: S5RecordCounts } {
-  const wrapped: S5Records = {
+): { records: S5OrderedRecords; counts: S5RecordCounts } {
+  // Slice 2A P8: the observed port forwards the ordered lookup too, unchanged.
+  const wrapped = {
     readMany: refKeys => records.readMany(refKeys),
     lookupCommit: input => { counts.lookupCommits += 1; return records.lookupCommit(input); },
     commit: input => { counts.commits += 1; return records.commit(input); },
     eventAt: cursor => { counts.eventAt += 1; return records.eventAt(cursor); },
     lookup: request => { counts.lookups += 1; return records.lookup(request); },
-  };
+    lookupOrdered: (request: OrderedLookupRequest) => orderedLookupOf(records).lookupOrdered(request),
+  } as S5Records & RecordOrderedLookupPort;
   return { records: wrapped, counts };
 }
 
@@ -262,7 +276,7 @@ export type S5GoalSeed = {
 export type S5QuerySeed = { ref: QueryJobRef; intent: QueryJobIntentV1 };
 
 export type S5ReopenedFixture = {
-  records: S5Records;
+  records: S5OrderedRecords;
   bodies: RawArtifactStorePort;
   counts: S5RecordCounts;
   allocationCounts: S5AllocationCounts;
@@ -278,7 +292,7 @@ export type S5DecisionFixture = {
   /** The real B2 execution fixture whose ledger this fixture seeds. */
   b2: B2ExecutionFixture;
   /** The shared real records port (the observed one; see `counts`). */
-  records: S5Records;
+  records: S5OrderedRecords;
   /** Physical calls seen through `records` (services under test are built over it). */
   counts: S5RecordCounts;
   allocationCounts: S5AllocationCounts;
@@ -465,16 +479,17 @@ export async function openS5DecisionFixture(kind: S5FixtureKind = 'memory',
   // port. The values are NOT inferred from successful calls: snapshot reads
   // their actual owners from the backend.
   const knownClaimKeys = new Set<string>();
-  const forwarded: S5Records = {
+  const forwarded = {
     readMany: keys => activeRecords.readMany(keys),
     lookupCommit: input => activeRecords.lookupCommit(input),
     eventAt: cursor => activeRecords.eventAt(cursor),
     lookup: request => activeRecords.lookup(request),
+    lookupOrdered: (request: OrderedLookupRequest) => orderedLookupOf(activeRecords).lookupOrdered(request),
     commit: input => {
       for (const claim of input.claims) knownClaimKeys.add(claim.claimKey);
       return activeRecords.commit(input);
     },
-  };
+  } as S5Records & RecordOrderedLookupPort;
   const observed = observeRecords(forwarded, counts);
   const records = observed.records;
   const allocations = createS5Allocations();

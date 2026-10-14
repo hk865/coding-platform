@@ -30,6 +30,7 @@ import {
 import type {
   DecodeResult, EncodedDomainEvent, EncodedRecord, RecordBackendSchemas,
 } from '../../record-store/ports.js';
+import type { RecordLookupIndex } from '../../record-store/lookup-ports.js';
 import type { TaskClaim, TaskClaimOutbox } from '../model/claim-contracts.js';
 import { WORK_EXECUTION_BY_SESSION_LOOKUP } from '../model/session-facts-contracts.js';
 import { taskDispatchStateProblem } from '../persistence/execution-entry-codecs.js';
@@ -52,6 +53,23 @@ export const TASK_REWORK_REFUSAL_SCHEMA_ID = 'TaskReworkRefusal@1';
 export const TASK_REQUEUED_EVENT_TYPE = 'TaskRequeued';
 export const TASK_REWORK_REFUSED_EVENT_TYPE = 'TaskReworkRefused';
 export const TASK_REWORK_EVENT_SCHEMA_VERSION = 1;
+
+/** Slice 2A L4: the ordered and legacy requeue indexes on `TaskRequeue`. */
+export const S2A_REQUEUE_BY_PROJECT_LOOKUP = 's2a-requeue-by-project';
+export const S2A_REQUEUE_LEGACY_LOOKUP = 's2a-requeue-legacy';
+export const S2A_REQUEUE_LOOKUP_INDEXES: readonly RecordLookupIndex[] = [
+  {
+    name: S2A_REQUEUE_BY_PROJECT_LOOKUP,
+    aggregateType: 'TaskRequeue',
+    paths: ['ref.projectId'],
+    orderBy: { path: 'since' },
+  },
+  {
+    name: S2A_REQUEUE_LEGACY_LOOKUP,
+    aggregateType: 'TaskRequeue',
+    paths: ['ref.projectId', 'since'],
+  },
+];
 
 /**
  * The `TaskClaimed` event is the immutable replay source. It carries the same
@@ -826,5 +844,6 @@ export const TASK_CLAIM_RECORD_SCHEMAS: RecordBackendSchemas = {
   lookups: [
     { name: WORK_EXECUTION_BY_SESSION_LOOKUP, aggregateType: 'DispatchOutboxEntry',
       paths: ['claim.task.projectId', 'claim.workspaceId', 'claim.sessionRef.sessionId'] },
+    ...S2A_REQUEUE_LOOKUP_INDEXES,
   ],
 };

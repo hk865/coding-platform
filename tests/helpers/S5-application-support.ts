@@ -32,7 +32,7 @@ import { createDecisionReadModel, createGoalCauseCardSource, createPlanningQuest
 import { createGoalConflictAssembler } from '../../src/core/work-graph/views/goal-conflicts.js';
 import { createNoticeDisplayToken } from '../../src/core/work-graph/views/notice-display-token.js';
 import { createNoticePositionComparator } from '../../src/core/work-graph/views/notice-position.js';
-import { GOAL_B, OPERATOR, WORKSPACE_SCOPE, type S5DecisionFixture, type S5Records } from './S5-decision-fixture.js';
+import { GOAL_B, OPERATOR, WORKSPACE_SCOPE, type S5DecisionFixture, type S5OrderedRecords, type S5Records } from './S5-decision-fixture.js';
 
 export const keyOf = (ref: object): string => canonicalJson(ref as JsonValue);
 export const pin = (ref: VersionPin['ref'], revision: number): VersionPin => ({ ref, revision });
@@ -103,7 +103,9 @@ export function owners(f: S5DecisionFixture, records: S5Records = f.records, bod
   // be implemented by the production reader; this helper never manufactures cards.
   const reads = createDecisionReadModel({ records,
     cardSources: [createGoalCauseCardSource(causes), createPlanningQuestionCardSource(createPlanningQuestionReader({ records, plans }))],
-    noticeSources: [createAutomaticReworkNoticeSource({ records })],
+    // Slice 2A P8: the runtime records port carries the ordered lookup; restore
+    // the type for the automatic-rework source.
+    noticeSources: [createAutomaticReworkNoticeSource({ records: records as S5OrderedRecords })],
     conflicts: createGoalConflictAssembler({ records, catalog: createArchitectureCatalogService({ records }), executedFiles: createExecutedFilesStub() }),
     positions: createNoticePositionComparator(), displayTokens: createNoticeDisplayToken(new Uint8Array(32)),
   });

@@ -33,8 +33,8 @@ import { initRecordStoreSchema } from "./migrations.js";
 import { applyEventSchema, applyRecordSchema, bindPreparedRecords, checkPersistedIdempotencyRecord, committedReceiptFromIdempotency, corruptFailure, createRecordSchemaRegistry, decodeRecordBody, decodeRefKey, decodeStoredEventBody, guardIsSatisfied, idempotencyConflictFailure, invalidFailure, isNonEmptyString, messageOf, notFoundFailure, planPreparedCommit, revisionConflictFailure, uniqueConflictFailure, unsupportedFailure, type PlannedCommit, type RecordSchemaRegistry } from "./record-codec.js";
 import { decodeGuardedRevision } from "./guarded-revision.js";
 import { findClaimConflicts, ledgerHorizonMatches, RejectedInsideTransaction, type ClaimConflict } from "./commit-extensions.js";
-import { createRecordLookupRegistry, decodeLookupRequest, lookupMatcherOf, type DecodedLookupRequest, type RecordLookupRegistry } from "./lookup-index.js";
-import type { LookupValue, RecordLookupPage, RecordLookupPort, RecordLookupRequest } from "./lookup-ports.js";
+import { createRecordLookupRegistry, decodeLookupRequest, decodeOrderedLookupRequest, lookupMatcherOf, orderedRangePlanOf, type DecodedLookupRequest, type DecodedOrderedLookupRequest, type RecordLookupRegistry } from "./lookup-index.js";
+import type { LookupValue, OrderedLookupRequest, RecordOrderedLookupPage, RecordOrderedLookupPort, RecordLookupPage, RecordLookupPort, RecordLookupRequest } from "./lookup-ports.js";
 import type { DecodeResult, GoalRecordTransactionPort, PersistedIdempotencyRecord, PreparedCommit, RecordBackendSchemas, RecordBatchRead, RecordGuard, StoreCommitReceipt, StoreResult, StoredVersion, UniqueClaimChange, EncodedDomainEvent, EncodedRecord } from "./ports.js";
 
 export type SqliteRecordBackendOptions = {
@@ -44,7 +44,7 @@ export type SqliteRecordBackendOptions = {
 };
 
 export type SqliteRecordBackend = {
-  readonly records: GoalRecordTransactionPort & RecordLookupPort;
+  readonly records: GoalRecordTransactionPort & RecordLookupPort & RecordOrderedLookupPort;
   close(): Promise<void>;
 };
 
@@ -91,8 +91,17 @@ function createLookupIndexes(db: DatabaseSync, lookups: RecordLookupRegistry): v
       columns.push(`json_type(snapshot_json, ${jsonPath})`);
       columns.push(`json_extract(snapshot_json, ${jsonPath})`);
     }
+    // Slice 2A L1: the ordered column follows the equality prefix, exactly the
+    // ORDER BY expression; the default `'text'` also enters the fingerprint.
+    if (index.orderBy !== undefined) columns.push(`json_extract(snapshot_json, ${lookupJsonPath(index.orderBy.path)})`);
     columns.push("ref_key");
-    const name = `next_lookup_${index.name.replace(/[^A-Za-z0-9_]/g, "_")}_${lookupIndexSuffix(`${index.aggregateType}\u0000${index.paths.join("\u0000")}`)}`;
+    // S1: an unordered index keeps exactly the pre-2A fingerprint so existing
+    // databases keep their index names; only an ordered index appends the
+    // ordering column and its value type.
+    const fingerprint = index.orderBy === undefined
+      ? `${index.aggregateType}\u0000${index.paths.join("\u0000")}`
+      : `${index.aggregateType}\u0000${index.paths.join("\u0000")}\u0000${index.orderBy.path}\u0000${index.orderBy.valueType}`;
+    const name = `next_lookup_${index.name.replace(/[^A-Za-z0-9_]/g, "_")}_${lookupIndexSuffix(fingerprint)}`;
     db.exec(`CREATE INDEX IF NOT EXISTS ${quoteIdentifier(name)} ON snapshots (${columns.join(", ")})`);
   }
 }
@@ -584,7 +593,107 @@ export function createSqliteRecordBackend(options: SqliteRecordBackendOptions): 
     return withReadTransaction(() => lookupInside(decoded.value));
   };
 
-  const records: GoalRecordTransactionPort & RecordLookupPort = {
+  /**
+   * Registered ordered keyset read (Slice 2A L1): equality prefix, candidate
+   * filter, and a continuation whose order column carries the one range term
+   * `orderedRangePlanOf` chooses (round 4), plus the `(order, ref_key)` row-value
+   * filter only where it is still needed, all ordered by the indexed order
+   * column so SQLite needs no temporary sort.
+   */
+  const lookupOrderedInside = (request: DecodedOrderedLookupRequest): StoreResult<RecordOrderedLookupPage> => {
+    const index = request.index;
+    const orderBy = index.orderBy!;
+    const orderPath = lookupJsonPath(orderBy.path);
+    const orderExpr = `json_extract(snapshot_json, ${orderPath})`;
+    const conditions: string[] = [`json_extract(ref_key, '$.aggregateType') = ?`];
+    const params: (string | number)[] = [index.aggregateType];
+    for (let position = 0; position < index.paths.length; position += 1) {
+      const jsonPath = lookupJsonPath(index.paths[position]!);
+      conditions.push(`json_type(snapshot_json, ${jsonPath}) = 'text'`);
+      conditions.push(`json_extract(snapshot_json, ${jsonPath}) = ?`);
+      params.push(request.values[position]!);
+    }
+    if (orderBy.valueType === 'integer') {
+      conditions.push(`json_type(snapshot_json, ${orderPath}) = 'integer'`);
+    } else {
+      conditions.push(`json_type(snapshot_json, ${orderPath}) = 'text'`);
+      conditions.push(`${orderExpr} <> ''`);
+    }
+    // Slice 2A L1 continuation (lead round 4): the order column carries exactly
+    // one range term, chosen in code, so SQLite seeks the ordered index instead
+    // of scanning the whole equality prefix. The row-value keyset stays only
+    // where that one term does not already imply it; the integer safe range
+    // supplies the other side (ascending: upper; descending: lower).
+    const plan = orderedRangePlanOf(request);
+    const safeIntegerMax = 9007199254740991;
+    const lowerBoundSql = plan.term === null ? null : `${orderExpr} ${plan.term.inclusive ? '>=' : '>'} ?`;
+    const upperBoundSql = plan.term === null ? null : `${orderExpr} ${plan.term.inclusive ? '<=' : '<'} ?`;
+    if (request.direction === 'asc') {
+      if (plan.term !== null) {
+        conditions.push(lowerBoundSql!);
+        params.push(plan.term.value);
+      } else if (orderBy.valueType === 'integer') {
+        conditions.push(`${orderExpr} >= ?`);
+        params.push(-safeIntegerMax);
+      }
+      if (orderBy.valueType === 'integer') {
+        conditions.push(`${orderExpr} <= ?`);
+        params.push(safeIntegerMax);
+      }
+    } else {
+      if (orderBy.valueType === 'integer') {
+        conditions.push(`${orderExpr} >= ?`);
+        params.push(-safeIntegerMax);
+      }
+      if (plan.term !== null) {
+        conditions.push(upperBoundSql!);
+        params.push(plan.term.value);
+      } else if (orderBy.valueType === 'integer') {
+        conditions.push(`${orderExpr} <= ?`);
+        params.push(safeIntegerMax);
+      }
+    }
+    if (plan.keyset && request.after !== null) {
+      const operator = request.direction === 'asc' ? '>' : '<';
+      conditions.push(`(${orderExpr}, ref_key COLLATE BINARY) ${operator} (?, ?)`);
+      params.push(request.after.order, request.after.refKey);
+    }
+    const direction = request.direction === 'asc' ? 'ASC' : 'DESC';
+    params.push(request.limit + 1);
+    let rows: { ref_key: string; order_value: string | number }[];
+    try {
+      rows = db
+        .prepare(`SELECT ref_key, ${orderExpr} AS order_value FROM snapshots WHERE ${conditions.join(' AND ')} ORDER BY ${orderExpr} ${direction}, ref_key COLLATE BINARY ${direction} LIMIT ?`)
+        .all(...params) as unknown as { ref_key: string; order_value: string | number }[];
+    } catch (error) {
+      return corruptFailure(`lookup index ${index.name} could not be read: ${messageOf(error)}`);
+    }
+    const hasNext = rows.length > request.limit;
+    const pageRows = rows.slice(0, request.limit);
+    const pageRefs = pageRows.map((row) => row.ref_key);
+    const read = readManyInside(pageRefs);
+    if (read.status !== 'ready') return corruptFailure(read.reason);
+    if (read.value.missing.length > 0) return corruptFailure(`lookup candidate ${read.value.missing[0]} has no snapshot`);
+    const last = pageRows[pageRows.length - 1];
+    return {
+      status: 'ready',
+      value: {
+        records: read.value.records,
+        next: hasNext && last !== undefined ? { order: last.order_value, refKey: last.ref_key } : null,
+        readThrough: read.value.readThrough,
+      },
+    };
+  };
+
+  const lookupOrdered = async (request: OrderedLookupRequest): Promise<StoreResult<RecordOrderedLookupPage>> => {
+    assertOpen();
+    const decoded = decodeOrderedLookupRequest(lookups, request);
+    if (decoded.status === "unsupported") return unsupportedFailure(decoded.reason);
+    if (decoded.status === "invalid") return invalidFailure(decoded.reason);
+    return withReadTransaction(() => lookupOrderedInside(decoded.value));
+  };
+
+  const records: GoalRecordTransactionPort & RecordLookupPort & RecordOrderedLookupPort = {
     readMany: async (refKeys: readonly string[]): Promise<StoreResult<RecordBatchRead>> => {
       assertOpen();
       if (!Array.isArray(refKeys) || !refKeys.every((key) => isNonEmptyString(key))) {
@@ -599,6 +708,7 @@ export function createSqliteRecordBackend(options: SqliteRecordBackendOptions): 
     commit,
     eventAt,
     lookup,
+    lookupOrdered,
   };
 
   const close = async (): Promise<void> => {

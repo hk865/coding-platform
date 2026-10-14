@@ -27,7 +27,7 @@ import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
 import { decodeGoalSnapshot } from '../persistence/record-codecs.js';
 import { S5_QUERY_JOB_BY_GOAL, decodeQueryJobSnapshot } from '../queries/query-record-codecs.js';
-import type { DecisionCardV1, DecisionSourcePageV1 } from '../model/decision-contracts.js';
+import type { DecisionCardV1, DecisionSourceAttempt, DecisionSourcePageV1 } from '../model/decision-contracts.js';
 import type { PlanTaskPort } from '../model/plan-contracts.js';
 import { parseInitialPlanningResponseV2 } from './initial-plan.js';
 
@@ -50,12 +50,12 @@ export type PlanningQuestionReaderDependencies = {
 export interface PlanningQuestionReader {
   readPlanningQuestions(
     ctx: CoreCallContext,
-    input: { goalRef: GoalRef; page: { limit: number; cursor?: string; atLeastCursor?: CommitCursor } },
+    input: { goalRef: GoalRef; page: { limit: number; cursor?: string; atLeastCursor?: CommitCursor;
+      attempt?: DecisionSourceAttempt } },
   ): Promise<ReadResult<DecisionSourcePageV1<DecisionCardV1>>>;
 }
 
 const LOOKUP_PAGE_LIMIT = 200;
-const LOOKUP_MAX_PAGES = 25;
 
 function basisOf(goal: GoalSnapshot): GoalDecisionBasisV1 {
   return {
@@ -98,7 +98,8 @@ export function createPlanningQuestionReader(
     return { ok: true, goal: decoded.value };
   }
 
-  /** Every matching refKey of one real lookup index, paged to the end. */
+  /** Every matching refKey of one real lookup index, paged to the very end
+   * (2A L10: no whole-window page cap; an over-capacity read no longer fails). */
   async function lookupKeys(
     index: string,
     values: readonly (string | number | boolean | null)[],
@@ -106,7 +107,7 @@ export function createPlanningQuestionReader(
     const refKeys: string[] = [];
     let after: string | undefined;
     let watermark: CommitCursor | null = null;
-    for (let page = 0; page < LOOKUP_MAX_PAGES; page += 1) {
+    for (;;) {
       const result = await records.lookup(after === undefined
         ? { index, values, limit: LOOKUP_PAGE_LIMIT }
         : { index, values, after, limit: LOOKUP_PAGE_LIMIT });
@@ -116,7 +117,6 @@ export function createPlanningQuestionReader(
       if (result.value.next === null) return { refKeys, readThrough: watermark };
       after = result.value.next;
     }
-    return null;
   }
 
   return {
@@ -134,75 +134,85 @@ export function createPlanningQuestionReader(
       if (reader === undefined) {
         return { status: 'ready', value: { availability: 'not_available', items: [], nextCursor: null, sourceCursor: null } };
       }
-      const found = await lookupKeys(S5_QUERY_JOB_BY_GOAL,
-        [input.goalRef.projectId, goal.workspaceRef.workspaceId, input.goalRef.goalId]);
-      if (found === null) {
-        return { status: 'rejected', code: 'incomplete', reason: 'the query-job-by-workspace-goal lookup is not available' };
-      }
-      const canonical = await records.readMany(found.refKeys);
-      if (canonical.status !== 'ready') {
-        return { status: 'rejected', code: 'unavailable', reason: `the planning jobs could not be read: ${canonical.code}` };
-      }
-      const cards: DecisionCardV1[] = [];
-      for (const refKey of found.refKeys) {
-        const record = canonical.value.records.find((candidate) => candidate.refKey === refKey);
-        if (record === undefined) {
-          return { status: 'rejected', code: 'unavailable', reason: 'a listed planning QueryJob is missing' };
+      // L11/P1: within one queue window attempt the whole question set is built
+      // once and every internal page is served from that one assembly.
+      const cacheKey = `s2a-planning:${canonicalJson(input.goalRef as unknown as JsonValue)}`;
+      type Built = { cards: DecisionCardV1[]; readThrough: CommitCursor | null };
+      let built = input.page.attempt?.cache.get(cacheKey) as Built | undefined;
+      if (built === undefined) {
+        const found = await lookupKeys(S5_QUERY_JOB_BY_GOAL,
+          [input.goalRef.projectId, goal.workspaceRef.workspaceId, input.goalRef.goalId]);
+        if (found === null) {
+          return { status: 'rejected', code: 'incomplete', reason: 'the query-job-by-workspace-goal lookup is not available' };
         }
-        const decoded = decodeQueryJobSnapshot(record);
-        if (decoded.status !== 'decoded') {
-          return { status: 'rejected', code: 'unavailable', reason: `a listed planning QueryJob is corrupt: ${decoded.reason}` };
+        const canonical = await records.readMany(found.refKeys);
+        if (canonical.status !== 'ready') {
+          return { status: 'rejected', code: 'unavailable', reason: `the planning jobs could not be read: ${canonical.code}` };
         }
-        const job = decoded.value;
-        if (job.job.status !== 'answered') continue;
-        // A planning-question read consumes only initial_coordination jobs. For
-        // any other intent `readInitialPlanAnswerFacts` answers `invalid` ("not
-        // an initial_coordination request"), which is a selection mismatch, not
-        // a read failure: skip the job instead of returning it as a rejection.
-        if (job.job.intent.execution?.kind !== 'initial_coordination') continue;
-        for (const answerRef of job.job.answerRefs) {
-          const facts = await reader.call(plans, ctx, answerRef);
-          // §4.2 rule: a failed formal Answer read is RETURNED, never skipped
-          // into an apparently complete (or empty) page.
-          if (facts.status !== 'ready') {
-            if (facts.status === 'rejected') {
-              return { status: 'rejected', code: facts.code, reason: facts.reason };
-            }
-            if (facts.status === 'not_found') {
-              return { status: 'rejected', code: 'unavailable', reason: 'the formal planning answer does not exist' };
-            }
-            return { status: 'rejected', code: 'incomplete', reason: 'the formal planning answer is not readable' };
+        const cards: DecisionCardV1[] = [];
+        for (const refKey of found.refKeys) {
+          const record = canonical.value.records.find((candidate) => candidate.refKey === refKey);
+          if (record === undefined) {
+            return { status: 'rejected', code: 'unavailable', reason: 'a listed planning QueryJob is missing' };
           }
-          const parsed = parseInitialPlanningResponseV2(facts.value.answerText);
-          if (parsed.status !== 'parsed' || parsed.response.kind !== 'needs_decision') continue;
-          for (const [questionIndex] of parsed.response.questions.entries()) {
-            const source = decisionSourceKey({ kind: 'planning_question', answerRef, questionIndex });
-            const pins: VersionPin[] = [
-              { ref: goal.ref, revision: goal.revision },
-              { ref: answerRef, revision: 1 },
-              { ref: job.ref, revision: job.revision },
-            ];
-            cards.push({
-              cardKey: source,
-              source: { kind: 'planning_question', key: source, goalRef: goal.ref, pins, goalBases: [basisOf(goal)] },
-              state: 'waiting_answer',
-              goalRef: goal.ref,
-              senderSessionRef: null,
-              requestRef: null,
-              objects: [],
-              options: [],
-              answerMessageRef: null,
-              answer: null,
-              application: null,
-              candidateStatus: null,
-              staleReason: null,
-              closedReason: null,
-              readOnly: false,
-              actions: ['answer'],
-            });
+          const decoded = decodeQueryJobSnapshot(record);
+          if (decoded.status !== 'decoded') {
+            return { status: 'rejected', code: 'unavailable', reason: `a listed planning QueryJob is corrupt: ${decoded.reason}` };
+          }
+          const job = decoded.value;
+          if (job.job.status !== 'answered') continue;
+          // A planning-question read consumes only initial_coordination jobs. For
+          // any other intent `readInitialPlanAnswerFacts` answers `invalid` ("not
+          // an initial_coordination request"), which is a selection mismatch, not
+          // a read failure: skip the job instead of returning it as a rejection.
+          if (job.job.intent.execution?.kind !== 'initial_coordination') continue;
+          for (const answerRef of job.job.answerRefs) {
+            const facts = await reader.call(plans, ctx, answerRef);
+            // §4.2 rule: a failed formal Answer read is RETURNED, never skipped
+            // into an apparently complete (or empty) page.
+            if (facts.status !== 'ready') {
+              if (facts.status === 'rejected') {
+                return { status: 'rejected', code: facts.code, reason: facts.reason };
+              }
+              if (facts.status === 'not_found') {
+                return { status: 'rejected', code: 'unavailable', reason: 'the formal planning answer does not exist' };
+              }
+              return { status: 'rejected', code: 'incomplete', reason: 'the formal planning answer is not readable' };
+            }
+            const parsed = parseInitialPlanningResponseV2(facts.value.answerText);
+            if (parsed.status !== 'parsed' || parsed.response.kind !== 'needs_decision') continue;
+            for (const [questionIndex] of parsed.response.questions.entries()) {
+              const source = decisionSourceKey({ kind: 'planning_question', answerRef, questionIndex });
+              const pins: VersionPin[] = [
+                { ref: goal.ref, revision: goal.revision },
+                { ref: answerRef, revision: 1 },
+                { ref: job.ref, revision: job.revision },
+              ];
+              cards.push({
+                cardKey: source,
+                source: { kind: 'planning_question', key: source, goalRef: goal.ref, pins, goalBases: [basisOf(goal)] },
+                state: 'waiting_answer',
+                goalRef: goal.ref,
+                senderSessionRef: null,
+                requestRef: null,
+                objects: [],
+                options: [],
+                answerMessageRef: null,
+                answer: null,
+                application: null,
+                candidateStatus: null,
+                staleReason: null,
+                closedReason: null,
+                readOnly: false,
+                actions: ['answer'],
+              });
+            }
           }
         }
+        built = { cards, readThrough: found.readThrough };
+        input.page.attempt?.cache.set(cacheKey, built);
       }
+      const cards = built.cards;
       const offset = input.page.cursor === undefined ? 0 : Number(input.page.cursor);
       const start = Number.isSafeInteger(offset) && offset >= 0 ? offset : 0;
       const end = Math.min(cards.length, start + input.page.limit);
@@ -210,7 +220,7 @@ export function createPlanningQuestionReader(
         availability: 'available',
         items: cards.slice(start, end),
         nextCursor: end < cards.length ? String(end) : null,
-        sourceCursor: found.readThrough,
+        sourceCursor: built.readThrough,
       } };
     },
   };

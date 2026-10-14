@@ -1,6 +1,6 @@
 # 独立仓库工作入口
 
-**当前状态（2026-10-14）。** 可靠性批次已完成；编排第 0、1、3、5 片、接线包 1、接线包 2（bb924854）、K 片 B（9881a2ae）、K 片 A（cfe35550）已合入；2A 规格已冻结（163ada27），正在由 DSH 施工。远端新分支 `feat/orchestration-slices` 已由用户推到 `cbe2be2d`（2026-10-14，含 K 片 A 和决定 55–57），远端 `next-main` 不动，本地主检出目录已快进。K 片 A 合入后的最后一次全量 300 个测试文件、6,190 项通过；这些批次之后还没有用真实模型重跑，整个 MVP 没有完成。当前状态和下一步见 [STATUS](docs/refactor/STATUS.md)，决定 1–58 见 [HANDOFF 顶部](docs/refactor/HANDOFF.md)，设计与分片见 [design/orchestration-2026-10](docs/refactor/design/orchestration-2026-10/README.md)。
+**当前状态（2026-10-15）。** 可靠性批次已完成；编排第 0、1、3、5 片、接线包 1、接线包 2（bb924854）、K 片 B（9881a2ae）、K 片 A（cfe35550）、2A 已合入；2B、2C 规格已冻结，正在由 DSH 在两个副本里同时施工。远端新分支 `feat/orchestration-slices` 已由用户推到 `cbe2be2d`（2026-10-14，含 K 片 A 和决定 55–57），远端 `next-main` 不动，本地主检出目录已快进。2A 合入后的最后一次全量 314 个测试文件、6,257 项通过；这些批次之后还没有用真实模型重跑，整个 MVP 没有完成。当前状态和下一步见 [STATUS](docs/refactor/STATUS.md)，决定 1–58 见 [HANDOFF 顶部](docs/refactor/HANDOFF.md)，设计与分片见 [design/orchestration-2026-10](docs/refactor/design/orchestration-2026-10/README.md)。
 
 *界面基线。* 新原型在 [Design 画布](https://claude.ai/artifact/3e5ynF3rwtMQfvJuim9mL2)上，只有用户本人能打开。
 - 用户 2026-10-05 批准了原型（画布第 9 版）。2026-10-06 按 HANDOFF 决定 25–30 改版，发布为画布第 14 版；2026-10-07 按决定 33 改了左栏工作线的点击，发布为画布第 16 版。用户确认后冻结（决定 35），画板文件和设计说明复制进 [docs/ui-reference/workbench-2026-10](docs/ui-reference/workbench-2026-10/README.md)。

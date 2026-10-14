@@ -128,50 +128,41 @@ export async function readWatermark(
   return { status: 'ready', value: read.value.readThrough };
 }
 
+/** §4.1 line 772: one §4.1 lookup page is at most 200 records. */
+const LOOKUP_PAGE_LIMIT = 200;
+
 /**
- * One registered index's complete candidate set, bounded and paged by `after`.
- * §4.1 line 772: a page that observed a later commit than the window's first
- * page makes the window inconsistent; the whole read is retried (<=4) and a
- * persistently changing index is reported `unavailable`, never stamped with a
- * mixed watermark. `truncated` is true when the safety cap was reached and the
- * caller must not report a complete count.
+ * One registered index's complete candidate set, paged by `after` to the very
+ * end (2A L10: the shared reads have no whole-window cap). §4.1 line 772: a page
+ * that observed a later commit than the window's first page makes the window
+ * inconsistent; the whole read is retried (<=4) and a persistently changing
+ * index is reported `unavailable`, never stamped with a mixed watermark.
+ * `truncated` stays in the type (P5) and is always `false`: the read reaches
+ * the end, so a complete count is always safe to report.
  */
 export async function lookupAll<T = EncodedRecord>(
   records: DecisionReadRecordsPort,
   index: string,
   values: readonly (string | number | boolean | null)[],
-  cap = 5000,
-  limit = 200,
 ): Promise<LookupBatch<T>> {
   for (let attempt = 0; attempt < WINDOW_MAX_ATTEMPTS; attempt += 1) {
     const items: T[] = [];
     let first: CommitCursor | null | undefined;
     let stable = true;
     let after: string | undefined;
-    let truncated = false;
-    let pages = 0;
     for (;;) {
-      const page = await records.lookup({ index, values, limit, ...(after === undefined ? {} : { after }) });
+      const page = await records.lookup({ index, values, limit: LOOKUP_PAGE_LIMIT,
+        ...(after === undefined ? {} : { after }) });
       if (page.status !== 'ready') throw page;
       const pageWatermark = page.value.readThrough;
       if (first === undefined) first = pageWatermark;
       else if (first !== pageWatermark) stable = false;
-      items.push(...(page.value.records as unknown as T[]));
-      pages += 1;
+      for (const record of page.value.records) items.push(record as unknown as T);
       const next = page.value.next;
-      const exhausted = next === null || next === undefined;
-      // §4.1 line 772 / T-R2-3 (lead LR1): exactly `cap` items (or exactly the
-      // page bound) with no further page is a complete window; only more items,
-      // or a further page at either bound, overflows.
-      if (items.length > cap || (!exhausted && (items.length >= cap || pages >= Math.ceil(cap / limit)))) {
-        truncated = true;
-        break;
-      }
-      if (exhausted) break;
+      if (next === null || next === undefined) break;
       after = next;
     }
-    if (items.length > cap) { items.length = cap; truncated = true; }
-    if (stable) return { items, watermark: first ?? null, truncated };
+    if (stable) return { items, watermark: first ?? null, truncated: false };
   }
   throw { status: 'rejected', code: 'unavailable',
     reason: `lookup index ${index} did not yield one stable read window within ${String(WINDOW_MAX_ATTEMPTS)} attempts` };

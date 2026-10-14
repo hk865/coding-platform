@@ -1,0 +1,10 @@
+Quick read-only check of the fixes to slice 2A. Do not edit files, do not run tests, do not call any model.
+
+Repository: the current directory. Your earlier implementation review is D:/cc-lead-notes/codex2/s2aimplrev.out.md (M1–M7, S1, S2). The lead's rulings on it are section 2 of D:/cc-lead-notes/impl/s2a/s2a-impl-3.md (some items deliberately not fixed; do not re-raise those). The lead then found that the SQLite continuation never seeks its index and ruled the fix in D:/cc-lead-notes/impl/s2a/s2a-impl-4.md section 2. The spec is docs/refactor/design/orchestration-2026-10/slices/slice-2A-SPEC.md (L1 for the ordered lookup).
+
+The fixes are `git diff 31611e09 7251a2c6` (round 2 state → round 4 state). Check, citing file:line:
+1. Are M1 (first half), M2, M3, M4, M5 (notice order only), M6, M7 (QA-18b removed), S1 and S2 fixed as the rulings say, and did the fixes break anything?
+2. Round 4: does `orderedRangePlanOf` (src/core/record-store/lookup-index.ts) plus the SQL in `lookupOrderedInside` (src/core/record-store/sqlite-record-store.ts) return exactly the same rows as the in-memory backend for every combination of direction, value type, bound (inclusive/exclusive) and after (before/equal/after the bound, or absent)? Is the integer safe range still enforced on both sides?
+3. Do the new tests have literal expected values that follow from the spec, not from the product output?
+
+Reply under 500 words: must-fix items with file:line and a concrete fix, then a one-line verdict ("ok" or "fix listed items").

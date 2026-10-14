@@ -1,0 +1,118 @@
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.10 [39m[90m/home/han001/dsh-work/verify-merge[39m
+
+[90mstdout[2m | tests/lead-plan-check.test.ts[2m > [22m[2mevery ordered lookup shape seeks its index and never sorts in a temp b-tree
+[22m[39ms2a-requeue-by-project asc plain: "ready"
+  SQL: SELECT ref_key, json_extract(snapshot_json, '$.since') AS order_value FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.since') = 'text' AND json_extract(snapshot_json, '$.since') <> '' ORDER BY json_extract(snapshot_json, '$.since') ASC, ref_key COLLATE BINARY ASC LIMIT ?
+  PLAN: SEARCH snapshots USING COVERING INDEX next_lookup_s2a_requeue_legacy_2f8c5c95 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)
+
+[90mstdout[2m | tests/lead-plan-check.test.ts[2m > [22m[2mevery ordered lookup shape seeks its index and never sorts in a temp b-tree
+[22m[39ms2a-requeue-by-project asc after: "ready"
+  SQL: SELECT ref_key, json_extract(snapshot_json, '$.since') AS order_value FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.since') = 'text' AND json_extract(snapshot_json, '$.since') <> '' AND json_extract(snapshot_json, '$.since') >= ? AND (json_extract(snapshot_json, '$.since'), ref_key COLLATE BINARY) > (?, ?) ORDER BY json_extract(snapshot_json, '$.since') ASC, ref_key COLLATE BINARY ASC LIMIT ?
+  PLAN: SEARCH snapshots USING COVERING INDEX next_lookup_s2a_requeue_legacy_2f8c5c95 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>>?)
+
+[90mstdout[2m | tests/lead-plan-check.test.ts[2m > [22m[2mevery ordered lookup shape seeks its index and never sorts in a temp b-tree
+[22m[39ms2a-requeue-by-project asc bound+after: "ready"
+  SQL: SELECT ref_key, json_extract(snapshot_json, '$.since') AS order_value FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.since') = 'text' AND json_extract(snapshot_json, '$.since') <> '' AND json_extract(snapshot_json, '$.since') >= ? AND (json_extract(snapshot_json, '$.since'), ref_key COLLATE BINARY) > (?, ?) ORDER BY json_extract(snapshot_json, '$.since') ASC, ref_key COLLATE BINARY ASC LIMIT ?
+  PLAN: SEARCH snapshots USING COVERING INDEX next_lookup_s2a_requeue_legacy_2f8c5c95 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>>?)
+
+[90mstdout[2m | tests/lead-plan-check.test.ts[2m > [22m[2mevery ordered lookup shape seeks its index and never sorts in a temp b-tree
+[22m[39ms2a-requeue-by-project desc plain: "ready"
+  SQL: SELECT ref_key, json_extract(snapshot_json, '$.since') AS order_value FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.since') = 'text' AND json_extract(snapshot_json, '$.since') <> '' ORDER BY json_extract(snapshot_json, '$.since') DESC, ref_key COLLATE BINARY DESC LIMIT ?
+  PLAN: SEARCH snapshots USING COVERING INDEX next_lookup_s2a_requeue_legacy_2f8c5c95 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)
+
+[90mstdout[2m | tests/lead-plan-check.test.ts[2m > [22m[2mevery ordered lookup shape seeks its index and never sorts in a temp b-tree
+[22m[39ms2a-requeue-by-project desc after: "ready"
+  SQL: SELECT ref_key, json_extract(snapshot_json, '$.since') AS order_value FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.since') = 'text' AND json_extract(snapshot_json, '$.since') <> '' AND json_extract(snapshot_json, '$.since') <= ? AND (json_extract(snapshot_json, '$.since'), ref_key COLLATE BINARY) < (?, ?) ORDER BY json_extract(snapshot_json, '$.since') DESC, ref_key COLLATE BINARY DESC LIMIT ?
+  PLAN: SEARCH snapshots USING COVERING INDEX next_lookup_s2a_requeue_legacy_2f8c5c95 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr><?)
+
+[90mstdout[2m | tests/lead-plan-check.test.ts[2m > [22m[2mevery ordered lookup shape seeks its index and never sorts in a temp b-tree
+[22m[39ms2a-requeue-by-project desc bound+after: "ready"
+  SQL: SELECT ref_key, json_extract(snapshot_json, '$.since') AS order_value FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.since') = 'text' AND json_extract(snapshot_json, '$.since') <> '' AND json_extract(snapshot_json, '$.since') <= ? AND (json_extract(snapshot_json, '$.since'), ref_key COLLATE BINARY) < (?, ?) ORDER BY json_extract(snapshot_json, '$.since') DESC, ref_key COLLATE BINARY DESC LIMIT ?
+  PLAN: SEARCH snapshots USING COVERING INDEX next_lookup_s2a_requeue_legacy_2f8c5c95 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr><?)
+
+[90mstdout[2m | tests/lead-plan-check.test.ts[2m > [22m[2mevery ordered lookup shape seeks its index and never sorts in a temp b-tree
+[22m[39ms2a-round-reverify asc plain: "ready"
+  SQL: SELECT ref_key, json_extract(snapshot_json, '$.since') AS order_value FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.ref.workspaceId') = 'text' AND json_extract(snapshot_json, '$.ref.workspaceId') = ? AND json_type(snapshot_json, '$.chain.reverify.actorClass') = 'text' AND json_extract(snapshot_json, '$.chain.reverify.actorClass') = ? AND json_type(snapshot_json, '$.since') = 'text' AND json_extract(snapshot_json, '$.since') <> '' ORDER BY json_extract(snapshot_json, '$.since') ASC, ref_key COLLATE BINARY ASC LIMIT ?
+  PLAN: SEARCH snapshots USING COVERING INDEX next_lookup_s2a_round_reverify_legacy_201a8e92 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)
+
+[90mstdout[2m | tests/lead-plan-check.test.ts[2m > [22m[2mevery ordered lookup shape seeks its index and never sorts in a temp b-tree
+[22m[39ms2a-round-reverify asc after: "ready"
+  SQL: SELECT ref_key, json_extract(snapshot_json, '$.since') AS order_value FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.ref.workspaceId') = 'text' AND json_extract(snapshot_json, '$.ref.workspaceId') = ? AND json_type(snapshot_json, '$.chain.reverify.actorClass') = 'text' AND json_extract(snapshot_json, '$.chain.reverify.actorClass') = ? AND json_type(snapshot_json, '$.since') = 'text' AND json_extract(snapshot_json, '$.since') <> '' AND json_extract(snapshot_json, '$.since') >= ? AND (json_extract(snapshot_json, '$.since'), ref_key COLLATE BINARY) > (?, ?) ORDER BY json_extract(snapshot_json, '$.since') ASC, ref_key COLLATE BINARY ASC LIMIT ?
+  PLAN: SEARCH snapshots USING COVERING INDEX next_lookup_s2a_round_reverify_legacy_201a8e92 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>>?)
+
+[90mstdout[2m | tests/lead-plan-check.test.ts[2m > [22m[2mevery ordered lookup shape seeks its index and never sorts in a temp b-tree
+[22m[39ms2a-round-reverify asc bound+after: "ready"
+  SQL: SELECT ref_key, json_extract(snapshot_json, '$.since') AS order_value FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.ref.workspaceId') = 'text' AND json_extract(snapshot_json, '$.ref.workspaceId') = ? AND json_type(snapshot_json, '$.chain.reverify.actorClass') = 'text' AND json_extract(snapshot_json, '$.chain.reverify.actorClass') = ? AND json_type(snapshot_json, '$.since') = 'text' AND json_extract(snapshot_json, '$.since') <> '' AND json_extract(snapshot_json, '$.since') >= ? AND (json_extract(snapshot_json, '$.since'), ref_key COLLATE BINARY) > (?, ?) ORDER BY json_extract(snapshot_json, '$.since') ASC, ref_key COLLATE BINARY ASC LIMIT ?
+  PLAN: SEARCH snapshots USING COVERING INDEX next_lookup_s2a_round_reverify_legacy_201a8e92 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>>?)
+
+[90mstdout[2m | tests/lead-plan-check.test.ts[2m > [22m[2mevery ordered lookup shape seeks its index and never sorts in a temp b-tree
+[22m[39ms2a-round-reverify desc plain: "ready"
+  SQL: SELECT ref_key, json_extract(snapshot_json, '$.since') AS order_value FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.ref.workspaceId') = 'text' AND json_extract(snapshot_json, '$.ref.workspaceId') = ? AND json_type(snapshot_json, '$.chain.reverify.actorClass') = 'text' AND json_extract(snapshot_json, '$.chain.reverify.actorClass') = ? AND json_type(snapshot_json, '$.since') = 'text' AND json_extract(snapshot_json, '$.since') <> '' ORDER BY json_extract(snapshot_json, '$.since') DESC, ref_key COLLATE BINARY DESC LIMIT ?
+  PLAN: SEARCH snapshots USING COVERING INDEX next_lookup_s2a_round_reverify_legacy_201a8e92 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)
+
+[90mstdout[2m | tests/lead-plan-check.test.ts[2m > [22m[2mevery ordered lookup shape seeks its index and never sorts in a temp b-tree
+[22m[39ms2a-round-reverify desc after: "ready"
+  SQL: SELECT ref_key, json_extract(snapshot_json, '$.since') AS order_value FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.ref.workspaceId') = 'text' AND json_extract(snapshot_json, '$.ref.workspaceId') = ? AND json_type(snapshot_json, '$.chain.reverify.actorClass') = 'text' AND json_extract(snapshot_json, '$.chain.reverify.actorClass') = ? AND json_type(snapshot_json, '$.since') = 'text' AND json_extract(snapshot_json, '$.since') <> '' AND json_extract(snapshot_json, '$.since') <= ? AND (json_extract(snapshot_json, '$.since'), ref_key COLLATE BINARY) < (?, ?) ORDER BY json_extract(snapshot_json, '$.since') DESC, ref_key COLLATE BINARY DESC LIMIT ?
+  PLAN: SEARCH snapshots USING COVERING INDEX next_lookup_s2a_round_reverify_legacy_201a8e92 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr><?)
+
+[90mstdout[2m | tests/lead-plan-check.test.ts[2m > [22m[2mevery ordered lookup shape seeks its index and never sorts in a temp b-tree
+[22m[39ms2a-round-reverify desc bound+after: "ready"
+  SQL: SELECT ref_key, json_extract(snapshot_json, '$.since') AS order_value FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.ref.workspaceId') = 'text' AND json_extract(snapshot_json, '$.ref.workspaceId') = ? AND json_type(snapshot_json, '$.chain.reverify.actorClass') = 'text' AND json_extract(snapshot_json, '$.chain.reverify.actorClass') = ? AND json_type(snapshot_json, '$.since') = 'text' AND json_extract(snapshot_json, '$.since') <> '' AND json_extract(snapshot_json, '$.since') <= ? AND (json_extract(snapshot_json, '$.since'), ref_key COLLATE BINARY) < (?, ?) ORDER BY json_extract(snapshot_json, '$.since') DESC, ref_key COLLATE BINARY DESC LIMIT ?
+  PLAN: SEARCH snapshots USING COVERING INDEX next_lookup_s2a_round_reverify_legacy_201a8e92 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr><?)
+
+[90mstdout[2m | tests/lead-plan-check.test.ts[2m > [22m[2mevery ordered lookup shape seeks its index and never sorts in a temp b-tree
+[22m[39mlead-integer-by-group asc plain: "ready"
+  SQL: SELECT ref_key, json_extract(snapshot_json, '$.rank') AS order_value FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.group') = 'text' AND json_extract(snapshot_json, '$.group') = ? AND json_type(snapshot_json, '$.rank') = 'integer' AND json_extract(snapshot_json, '$.rank') >= ? AND json_extract(snapshot_json, '$.rank') <= ? ORDER BY json_extract(snapshot_json, '$.rank') ASC, ref_key COLLATE BINARY ASC LIMIT ?
+  PLAN: SEARCH snapshots USING INDEX next_lookup_lead_integer_by_group_eddacfc6 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>>? AND <expr><?)
+
+[90mstdout[2m | tests/lead-plan-check.test.ts[2m > [22m[2mevery ordered lookup shape seeks its index and never sorts in a temp b-tree
+[22m[39mlead-integer-by-group asc after: "ready"
+  SQL: SELECT ref_key, json_extract(snapshot_json, '$.rank') AS order_value FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.group') = 'text' AND json_extract(snapshot_json, '$.group') = ? AND json_type(snapshot_json, '$.rank') = 'integer' AND json_extract(snapshot_json, '$.rank') >= ? AND json_extract(snapshot_json, '$.rank') <= ? AND (json_extract(snapshot_json, '$.rank'), ref_key COLLATE BINARY) > (?, ?) ORDER BY json_extract(snapshot_json, '$.rank') ASC, ref_key COLLATE BINARY ASC LIMIT ?
+  PLAN: SEARCH snapshots USING INDEX next_lookup_lead_integer_by_group_eddacfc6 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>>? AND <expr><?)
+
+[90mstdout[2m | tests/lead-plan-check.test.ts[2m > [22m[2mevery ordered lookup shape seeks its index and never sorts in a temp b-tree
+[22m[39mlead-integer-by-group asc bound+after: "ready"
+  SQL: SELECT ref_key, json_extract(snapshot_json, '$.rank') AS order_value FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.group') = 'text' AND json_extract(snapshot_json, '$.group') = ? AND json_type(snapshot_json, '$.rank') = 'integer' AND json_extract(snapshot_json, '$.rank') >= ? AND json_extract(snapshot_json, '$.rank') <= ? AND (json_extract(snapshot_json, '$.rank'), ref_key COLLATE BINARY) > (?, ?) ORDER BY json_extract(snapshot_json, '$.rank') ASC, ref_key COLLATE BINARY ASC LIMIT ?
+  PLAN: SEARCH snapshots USING INDEX next_lookup_lead_integer_by_group_eddacfc6 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>>? AND <expr><?)
+
+[90mstdout[2m | tests/lead-plan-check.test.ts[2m > [22m[2mevery ordered lookup shape seeks its index and never sorts in a temp b-tree
+[22m[39mlead-integer-by-group desc plain: "ready"
+  SQL: SELECT ref_key, json_extract(snapshot_json, '$.rank') AS order_value FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.group') = 'text' AND json_extract(snapshot_json, '$.group') = ? AND json_type(snapshot_json, '$.rank') = 'integer' AND json_extract(snapshot_json, '$.rank') >= ? AND json_extract(snapshot_json, '$.rank') <= ? ORDER BY json_extract(snapshot_json, '$.rank') DESC, ref_key COLLATE BINARY DESC LIMIT ?
+  PLAN: SEARCH snapshots USING INDEX next_lookup_lead_integer_by_group_eddacfc6 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>>? AND <expr><?)
+
+[90mstdout[2m | tests/lead-plan-check.test.ts[2m > [22m[2mevery ordered lookup shape seeks its index and never sorts in a temp b-tree
+[22m[39mlead-integer-by-group desc after: "ready"
+  SQL: SELECT ref_key, json_extract(snapshot_json, '$.rank') AS order_value FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.group') = 'text' AND json_extract(snapshot_json, '$.group') = ? AND json_type(snapshot_json, '$.rank') = 'integer' AND json_extract(snapshot_json, '$.rank') >= ? AND json_extract(snapshot_json, '$.rank') <= ? AND (json_extract(snapshot_json, '$.rank'), ref_key COLLATE BINARY) < (?, ?) ORDER BY json_extract(snapshot_json, '$.rank') DESC, ref_key COLLATE BINARY DESC LIMIT ?
+  PLAN: SEARCH snapshots USING INDEX next_lookup_lead_integer_by_group_eddacfc6 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>>? AND <expr><?)
+
+[90mstdout[2m | tests/lead-plan-check.test.ts[2m > [22m[2mevery ordered lookup shape seeks its index and never sorts in a temp b-tree
+[22m[39mlead-integer-by-group desc bound+after: "ready"
+  SQL: SELECT ref_key, json_extract(snapshot_json, '$.rank') AS order_value FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.group') = 'text' AND json_extract(snapshot_json, '$.group') = ? AND json_type(snapshot_json, '$.rank') = 'integer' AND json_extract(snapshot_json, '$.rank') >= ? AND json_extract(snapshot_json, '$.rank') <= ? AND (json_extract(snapshot_json, '$.rank'), ref_key COLLATE BINARY) < (?, ?) ORDER BY json_extract(snapshot_json, '$.rank') DESC, ref_key COLLATE BINARY DESC LIMIT ?
+  PLAN: SEARCH snapshots USING INDEX next_lookup_lead_integer_by_group_eddacfc6 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>>? AND <expr><?)
+
+
+ [32m✓[39m tests/lead-plan-check.test.ts[2m > [22mevery ordered lookup shape seeks its index and never sorts in a temp b-tree[32m 149[2mms[22m[39m
+[90mstdout[2m | tests/lead-plan-check.test.ts[2m > [22m[2ma deep continuation page costs about the same as the first page (the continuation seeks)
+[22m[39ms2a-requeue-by-project asc: first 0.11 ms (201 rows), deep after 0.11 ms (201), deep bound+after 0.10 ms (201)
+
+[90mstdout[2m | tests/lead-plan-check.test.ts[2m > [22m[2ma deep continuation page costs about the same as the first page (the continuation seeks)
+[22m[39ms2a-requeue-by-project desc: first 0.10 ms (201 rows), deep after 0.10 ms (201), deep bound+after 0.23 ms (201)
+
+[90mstdout[2m | tests/lead-plan-check.test.ts[2m > [22m[2ma deep continuation page costs about the same as the first page (the continuation seeks)
+[22m[39mlead-integer-by-group asc: first 0.16 ms (201 rows), deep after 0.15 ms (201), deep bound+after 0.17 ms (201)
+
+[90mstdout[2m | tests/lead-plan-check.test.ts[2m > [22m[2ma deep continuation page costs about the same as the first page (the continuation seeks)
+[22m[39mlead-integer-by-group desc: first 0.15 ms (201 rows), deep after 0.17 ms (201), deep bound+after 0.16 ms (201)
+s2a-requeue-by-project asc: first 0.11 ms (201 rows), deep after 0.11 ms (201), deep bound+after 0.10 ms (201)
+s2a-requeue-by-project desc: first 0.10 ms (201 rows), deep after 0.10 ms (201), deep bound+after 0.23 ms (201)
+lead-integer-by-group asc: first 0.16 ms (201 rows), deep after 0.15 ms (201), deep bound+after 0.17 ms (201)
+lead-integer-by-group desc: first 0.15 ms (201 rows), deep after 0.17 ms (201), deep bound+after 0.16 ms (201)
+
+ [32m✓[39m tests/lead-plan-check.test.ts[2m > [22ma deep continuation page costs about the same as the first page (the continuation seeks)[33m 2135[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m1 passed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[32m2 passed[39m[22m[90m (2)[39m
+[2m   Start at [22m 23:34:53
+[2m   Duration [22m 2.53s[2m (transform 134ms, setup 0ms, import 164ms, tests 2.30s, environment 0ms)[22m
+

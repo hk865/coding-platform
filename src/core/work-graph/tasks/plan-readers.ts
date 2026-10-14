@@ -94,7 +94,6 @@ export const GOAL_BY_WORKSPACE_INDEX = 'a2-goal-by-workspace';
 /** A.2 step 5.6: the Runs of one workspace by outcome; `outcome_unknown` for §12.1 step 2 (W-15) and step 5 (W-19). */
 export const RUN_BY_WORKSPACE_OUTCOME_INDEX = 'a2-run-by-workspace-outcome';
 const LOOKUP_PAGE_LIMIT = 200;
-const LOOKUP_MAX_PAGES = 25;
 /** Bounded retries when the candidate set and the canonical re-read do not
  * share one ledger watermark; never stamp a newer watermark onto an older set. */
 const WINDOW_MAX_ATTEMPTS = 4;
@@ -488,7 +487,9 @@ async function readLookupKeys(
   let watermark: CommitCursor | null = null;
   let first: CommitCursor | null | undefined;
   let stable = true;
-  for (let page = 0; page < LOOKUP_MAX_PAGES; page += 1) {
+  // 2A L10: the shared key read is paged to the very end; no 25-page /
+  // 5,000-key window rejects a caller any more.
+  for (;;) {
     const request: RecordLookupRequest = after === undefined
       ? { index, values, limit: LOOKUP_PAGE_LIMIT }
       : { index, values, after, limit: LOOKUP_PAGE_LIMIT };
@@ -506,7 +507,6 @@ async function readLookupKeys(
     if (result.value.next === null) return { status: 'ready', refKeys, readThrough: watermark, stable };
     after = result.value.next;
   }
-  return incomplete(`lookup index ${index} did not terminate within ${String(LOOKUP_MAX_PAGES)} pages`);
 }
 
 /** Candidate lookup only: the returned refKeys are re-read as canonical records. */
@@ -742,7 +742,8 @@ export async function enumerateClosedGoalCandidates(
       }
       if (terminal !== null) proposals.push(terminal);
     }
-    proposals.push(...independent);
+    // L11: append without an unbounded argument spread.
+    for (const proposal of independent) proposals.push(proposal);
     proposals.sort((left, right) => {
       const leftKey = planProposalRefKey(left.ref);
       const rightKey = planProposalRefKey(right.ref);
@@ -1725,7 +1726,7 @@ export async function readFutureChangeTaskFacts(
     const found = await readLookupKeys(records, RUN_BY_TASK_INDEX, [goalRef.projectId, goalRef.goalId, taskId]);
     if (found.status !== 'ready') return found;
     watermark = laterCursor(watermark, found.readThrough);
-    runKeys.push(...found.refKeys);
+    for (const refKey of found.refKeys) runKeys.push(refKey);
   }
   const leaseKeys = uniqueTaskIds.map((taskId) => taskRecordRefKey('TaskLease', goalRef, taskId));
   const reductionKeys = uniqueTaskIds.map((taskId) => taskRecordRefKey('TaskReduction', goalRef, taskId));

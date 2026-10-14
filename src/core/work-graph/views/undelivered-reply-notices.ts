@@ -23,7 +23,9 @@ import type {
   NoticeItemV1,
 } from '../model/decision-contracts.js';
 import type { SessionMailboxPort, SessionMessage, UndeliveredReplyV1 } from '../model/communication-contracts.js';
-import type { SessionCard, SessionDirectoryPort } from '../model/session-contracts.js';
+import type { SessionDirectoryPort } from '../model/session-contracts.js';
+import type { SessionRecord } from '../../../contracts/core/session.js';
+import { decodeSessionRecord, SESSION_BY_WORKSPACE_LOOKUP } from '../sessions/session-record-codecs.js';
 import type { DecisionReadRecordsPort } from './goal-conflicts.js';
 import { atLeastCursorResult, readWatermark, storeFailureToRejection, workspaceScopeProblem } from './goal-conflicts.js';
 import { decodeGoalSnapshot } from '../persistence/record-codecs.js';
@@ -31,14 +33,14 @@ import { compareNoticePositions } from './notice-position.js';
 
 export type UndeliveredReplyNoticeSourceDependencies = {
   records: DecisionReadRecordsPort;
+  // Kept declared for callers/the frozen M07/M11 wiring; the listing now reads
+  // the Session-by-workspace index through `records` and never reads it.
   sessions: Pick<SessionDirectoryPort, 'findSessions'>;
   messages: Pick<SessionMailboxPort, 'readUndeliveredReplies' | 'readMessage'>;
 };
 
 const PAGE_LIMIT = 100;
 const SOURCE_PAGE_LIMIT = 200;
-const MAX_SOURCE_PAGES = 50;
-const MAX_SOURCE_ITEMS = 5000;
 const MAX_WINDOW_ATTEMPTS = 4;
 
 /** The opaque continuation of one source page; it binds scope, filter and the last position. */
@@ -176,27 +178,74 @@ async function readAttempt(
   const fresh = atLeastCursorResult<DecisionSourcePageV1<NoticeItemV1>>(window, input.page.atLeastCursor);
   if (fresh !== null) return { status: 'result', result: fresh };
 
+  // L11/P1: one assembly per window attempt. The read model passes one attempt
+  // object to every source; this source walks the directory and every line's
+  // replies once and serves that attempt's internal pages from the assembled
+  // (after-filtered) collection. No cross-attempt or cross-call cache.
+  const cache = input.page.attempt?.cache;
+  const cacheKey = assembledCacheKey(input);
+  let assembled = cache?.get(cacheKey) as AssembledUndeliveredSource | undefined;
+  if (assembled === undefined) {
+    const read = await assembleAttempt(deps, ctx, input, window);
+    if (read.status === 'window_changed') return read;
+    if (read.status === 'result') return { status: 'result', result: read.result };
+    assembled = read.value;
+    cache?.set(cacheKey, assembled);
+  }
+
+  const filtered = assembled.items.filter((item) =>
+    continuation === null || compareNoticePositions(item.position, continuation.last) > 0);
+  const pageItems = filtered.slice(0, input.page.limit);
+  const more = filtered.length > input.page.limit;
+  const nextCursor = more && pageItems.length > 0
+    ? encodeSourceCursor(input, pageItems[pageItems.length - 1]!.position)
+    : null;
+  return { status: 'result', result: { status: 'ready', value: {
+    availability: 'available', items: pageItems, nextCursor, sourceCursor: assembled.watermark,
+  } } };
+}
+
+/** L11/P1: what one window attempt assembled, shared by its internal pages. */
+type AssembledUndeliveredSource = { watermark: CommitCursor | null; items: NoticeItemV1[] };
+
+/** L11/P1: attempt key — workspace + goal + after, so no request cross-talk. */
+function assembledCacheKey(input: ReadPageInput): string {
+  return canonicalJson({ category: 'undelivered_reply',
+    projectId: input.workspace.projectId, workspaceId: input.workspace.workspaceId,
+    goalRef: input.goalRef ?? null, after: input.after ?? null } as unknown as JsonValue);
+}
+
+/** One full walk of the directory and replies, before the continuation filter. */
+async function assembleAttempt(
+  deps: UndeliveredReplyNoticeSourceDependencies,
+  ctx: CoreCallContext,
+  input: ReadPageInput,
+  window: CommitCursor | null,
+): Promise<{ status: 'value'; value: AssembledUndeliveredSource } | { status: 'window_changed' }
+  | { status: 'result'; result: PageResult }> {
   // ---- directory: same-workspace unavailable lines, includeArchived -------
-  const sessions: SessionCard[] = [];
-  let directoryCursor: string | undefined;
-  let directoryPages = 0;
-  while (true) {
-    const read = await deps.sessions.findSessions(ctx, { workspace: input.workspace, includeArchived: true,
-      page: { limit: PAGE_LIMIT, ...(directoryCursor === undefined ? {} : { cursor: directoryCursor }),
-        ...(input.page.atLeastCursor === undefined ? {} : { atLeastCursor: input.page.atLeastCursor }) } });
-    if (read.status !== 'ready') {
-      if (read.status === 'rejected' && read.code === 'source_stale') return { status: 'window_changed' };
-      return { status: 'result', result: read };
+  // Slice 2A §0.4 row 5 / P3: list the workspace's Sessions through the
+  // Session-by-workspace index in its key order and read only the Session
+  // records' health; the responsibility links are never read and `findSessions`
+  // is no longer on this path. The page size stays; the old 50-page cap is gone.
+  const sessions: { record: SessionRecord }[] = [];
+  let directoryAfter: string | undefined;
+  for (;;) {
+    const read = await deps.records.lookup({ index: SESSION_BY_WORKSPACE_LOOKUP,
+      values: [input.workspace.projectId, input.workspace.workspaceId], limit: PAGE_LIMIT,
+      ...(directoryAfter === undefined ? {} : { after: directoryAfter }) });
+    if (read.status !== 'ready') return { status: 'result', result: storeFailureToRejection(read) };
+    if (!sameWindow(window, read.value.readThrough)) return { status: 'window_changed' };
+    for (const encoded of read.value.records) {
+      const decoded = decodeSessionRecord(encoded);
+      if (decoded.status !== 'decoded') {
+        return { status: 'result', result: { status: 'rejected', code: 'unavailable',
+          reason: `undelivered_reply_session_damaged: ${decoded.reason}` } };
+      }
+      if (decoded.value.health === 'unavailable') sessions.push({ record: decoded.value });
     }
-    if (!sameWindow(window, read.value.sourceCursor)) return { status: 'window_changed' };
-    for (const card of read.value.items) if (card.record.health === 'unavailable') sessions.push(card);
-    directoryPages += 1;
-    if (read.value.nextCursor === null) break;
-    if (directoryPages >= MAX_SOURCE_PAGES) {
-      return { status: 'result', result: capacityResult(
-        `the Session directory read more than ${MAX_SOURCE_PAGES} pages`) };
-    }
-    directoryCursor = read.value.nextCursor;
+    if (read.value.next === null) break;
+    directoryAfter = read.value.next;
   }
 
   // ---- per-line replies ----------------------------------------------------
@@ -205,7 +254,6 @@ async function readAttempt(
   for (const card of sessions) {
     const source = sourceRefOf(card);
     let replyCursor: string | undefined;
-    let replyPages = 0;
     while (true) {
       const read = await deps.messages.readUndeliveredReplies!(ctx, { sessionRef: source,
         page: { limit: PAGE_LIMIT, ...(replyCursor === undefined ? {} : { cursor: replyCursor }),
@@ -232,16 +280,8 @@ async function readAttempt(
         }
         seen.set(item.itemKey, signature);
         items.push(item);
-        if (items.length > MAX_SOURCE_ITEMS) {
-          return { status: 'result', result: capacityResult('the deduplicated notice output exceeded 5000 items') };
-        }
       }
-      replyPages += 1;
       if (read.value.nextCursor === null) break;
-      if (replyPages >= MAX_SOURCE_PAGES) {
-        return { status: 'result', result: capacityResult(
-          `Session ${source.sessionId} read more than ${MAX_SOURCE_PAGES} reply pages`) };
-      }
       replyCursor = read.value.nextCursor;
     }
   }
@@ -255,26 +295,16 @@ async function readAttempt(
     const byPosition = compareNoticePositions(left.position, right.position);
     return byPosition !== 0 ? byPosition : compareText(left.itemKey, right.itemKey);
   });
-  const filtered = items.filter((item) => {
-    if (input.after !== undefined && compareNoticePositions(item.position, input.after) <= 0) return false;
-    if (continuation !== null && compareNoticePositions(item.position, continuation.last) <= 0) return false;
-    return true;
-  });
-  const pageItems = filtered.slice(0, input.page.limit);
-  const more = filtered.length > input.page.limit;
-  const nextCursor = more && pageItems.length > 0
-    ? encodeSourceCursor(input, pageItems[pageItems.length - 1]!.position)
-    : null;
-  return { status: 'result', result: { status: 'ready', value: {
-    availability: 'available', items: pageItems, nextCursor, sourceCursor: window,
-  } } };
+  const after = input.after;
+  const remaining = after === undefined ? items : items.filter((item) => compareNoticePositions(item.position, after) > 0);
+  return { status: 'value', value: { watermark: window, items: remaining } };
 }
 
 async function projectReply(
   deps: UndeliveredReplyNoticeSourceDependencies,
   ctx: CoreCallContext,
   input: ReadPageInput,
-  card: SessionCard,
+  card: { record: SessionRecord },
   source: { projectId: string; sessionId: string },
   reply: UndeliveredReplyV1,
   window: CommitCursor | null,
@@ -379,10 +409,6 @@ async function stableDamage(
   return { status: 'result', result: build() };
 }
 
-function capacityResult(detail: string): PageResult {
-  return { status: 'rejected', code: 'capacity', reason: `undelivered_reply_page_limit: ${detail}` };
-}
-
 /** L8: the later of the entry commit R and the reply commit P, by the ONLY comparator. */
 function laterPosition(itemKey: string, unavailableSince: CommitCursor, responseSince: CommitCursor): NoticePositionV1 {
   const r: NoticePositionV1 = { kind: 'commit', cursor: unavailableSince, itemKey };
@@ -472,6 +498,6 @@ function sameRef(left: { projectId: string; sessionId: string }, right: { projec
   return left.projectId === right.projectId && left.sessionId === right.sessionId;
 }
 
-function sourceRefOf(card: SessionCard): { projectId: string; sessionId: string } {
+function sourceRefOf(card: { record: SessionRecord }): { projectId: string; sessionId: string } {
   return { projectId: card.record.ref.projectId, sessionId: card.record.ref.sessionId };
 }

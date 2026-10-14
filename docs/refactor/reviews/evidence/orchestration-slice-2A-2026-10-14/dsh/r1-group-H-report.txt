@@ -1,0 +1,34 @@
+All checks pass. Final state verified: 4 tests green on both backends, typecheck exit 0, frozen files' sha256 unchanged, `.dsh-scratch/` empty.
+
+## FILES
+- `tests/app/S2A-decision-routes.test.ts` (new) — Group H's QE4 test file, 4 tests (QA-14 a/b × memory/sqlite), through `dispatchCoreRoute` + `createPlatformCoreRouteBindings` + `parseCoreRouteRequest`.
+- `tests/helpers/S2A-route-storage-support.ts` (new) — L-fixtures exception 2: `failingReadRecords` wraps the real records port and rejects `readMany`/`lookup` as `unavailable` with literal reason `s2a-route-storage-read-failure`. No other doubles.
+
+No existing test/helper or frozen file touched (`git diff --stat -- tests` shows only the pre-existing lead P8 diffs in `S5-decision-fixture.ts`/`S5-notices.test.ts`; the 3 frozen sha256 values match the brief exactly).
+
+## ROWS
+- **QA-14** | `QA-14 (a) - the route returns the first page and a cursor, then pages to all 5,001 cards` and `QA-14 (b) - a storage read failure is carried out of the route, never an empty ready queue` | **no production change** — the existing route (`src/app/core-routes.ts` `CORE_ROUTE_SPECS['decisions/queue']` → `createPlatformCoreRouteBindings` → `bindings.queryDecisionQueue` → `decisions.queryDecisionQueue`, `dispatchCoreRoute` line 806) already forwards real reads and already returns a rejected `ReadResult` unchanged (`isRejection` re-raise applies only to `graph_write`). The test only points the platform's `decisions` binding at the real `createDecisionReadModel` over QA-05's data (`tests/helpers/S5-application-support.ts:79 owners`), same composition pattern as frozen RT06.
+
+## TEST NUMBERS
+`tests/app/S2A-decision-routes.test.ts`: 4 tests total (2 row cases × `describe.each(['memory','sqlite'])`); lines 78–112 (case a), 114–117 (case b). Helper: 1 exported function + 1 literal constant.
+
+## RED (first seen)
+Run with the route bound to the bare composed platform (not yet connected to QA-05's dataset), the first failure was:
+
+`AssertionError: expected 'not_found' to be 'ready'` at `tests/app/S2A-decision-routes.test.ts:80` for case (a), and for case (b) `expected { status: 'not_found' } to deeply equal { status: 'rejected', … }`. Root cause: the empty shell ledger has no Goal C, so the route answered `not_found`; wiring `decisions` to the fixture's real read model made both pass. No production was at fault.
+
+## WALL TIME
+Final run `npx vitest run --maxWorkers=1 tests/app/S2A-decision-routes.test.ts`: file `Tests 4 passed`, duration **130.38s** (slowest single test 52.99s, the SQLite QA-14 (a)). `npm run typecheck` exit 0 (~seconds). Dataset build: 5,001 real user-decision requests per backend, ~5–8s.
+
+## UNSPECIFIED
+- QA-14 names no backend. Because spec §5 requires 5,001-crossing examples to really cross on **both** backends, I ran both. The shell `createTargetPlatform` uses `{storage:{kind:'memory'}}` in both blocks because only the overridden `decisions` read model (over the fixture's real memory/sqlite records) is exercised; the composed shell ledger is never read.
+- The cursor is opaque: case (a) asserts the first page returns a `string` cursor and then pages to a literal `101` pages / `5,001` cards / unique keys, rather than asserting a literal cursor value (the row says "returns … cursor", not a fixed token).
+- `sentKeys` derives card identities with `decisionSourceKey` from the 5,001 messages actually sent (same construction QA-05 uses), not from a queue read; counts/page counts/ordering expectations are literal (`5_001`, `50`, `101`).
+- Group H owns no §0.4 row (QA-14 only invokes L8's no-`capacity` result through the route).
+- The route test's `decisions`-binding override is test composition (identical to frozen RT06); it is not a production change. If the coordinator expected the route exercised over a platform that itself built the data, that would need a new public composition seam — none exists and the block says none is expected.
+
+## BLOCKERS
+None.
+
+Usage note: total group wall time ≈ 4m for two RED/GREEN vitest cycles (failing 7.8s + green 121.6s/130.4s) plus typecheck; one vitest command run at a time; scratch empty.
+[status: completed]

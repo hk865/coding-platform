@@ -1,10 +1,22 @@
 /**
- * Slice 5 §4.4/F44: the automatic requeue/reverify "please be aware" projector.
+ * Slice 5 §4.4/F44 + slice 2A L4: the automatic requeue/reverify "please be
+ * aware" projector.
  *
- * One `DecisionNoticeSourcePort` for category `automatic_rework`. It reads the
- * real TaskRequeue records of the workspace's ended Runs and the WHOLE
- * verification round chain (not just the failure head), keeps only system/agent
- * rework, deduplicates by the exact `TaskRequeueRef`/`VerificationRoundRef`, and
+ * One `DecisionNoticeSourcePort` for category `automatic_rework`. Slice 2A L4
+ * replaces the old wide reads (every ended Run, every round of the workspace)
+ * with the ordered commit-position window:
+ *   - requeues come from `s2a-requeue-by-project` (bound at the saved seen
+ *     commit position) plus the `s2a-requeue-legacy` equality group (`since`
+ *     absent);
+ *   - reverify rounds come from `s2a-round-reverify` (equality on project,
+ *     workspace and the system/member actor class) plus its legacy group. The
+ *     ordered index only names the SUBJECT; every subject's whole chain is read
+ *     once through `VerificationRoundBySubject` and rechecked with
+ *     `roundChainHead`, exactly as before. Earlier rounds and human rechecks in
+ *     the chain are used for verification only and never become notices (D2).
+ *
+ * One `DecisionNoticeSourcePort` still deduplicates by the exact
+ * `TaskRequeueRef`/`VerificationRoundRef`, keeps only system/agent rework, and
  * projects the frozen `自动返工 · …` summary with the creation-time cap (`null`
  * when the old wire had no `noticeAutomationCap`). It never schedules work,
  * wakes an agent or writes a Notification.
@@ -17,24 +29,40 @@ import type { RoundSnapshot } from '../../../contracts/verification.js';
 import type { TaskTriple } from '../../../contracts/dispatch.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { EncodedRecord } from '../../record-store/ports.js';
+import type { OrderedLookupValue, RecordOrderedLookupPage, RecordOrderedLookupPort } from '../../record-store/lookup-ports.js';
 import type {
   DecisionNoticeSourcePort,
+  DecisionSourceAttempt,
   DecisionSourcePageV1,
   NoticeItemV1,
+  S5RecordPort,
 } from '../model/decision-contracts.js';
 import { decodeNoticeOrigin } from '../persistence/decision-record-codecs.js';
-import { decodeVerificationRoundSnapshot, VERIFICATION_ROUND_BY_STATUS_LOOKUP } from '../persistence/evidence-record-codecs.js';
-import { decodeRun } from '../materials/run-snapshot-decoder.js';
-import { decodeTaskRequeueSnapshot, taskRequeueRefKey } from '../tasks/claim-record-codecs.js';
-import { RUN_BY_WORKSPACE_STATUS_INDEX } from '../tasks/plan-readers.js';
+import {
+  decodeVerificationRoundSnapshot,
+  S2A_ROUND_REVERIFY_LEGACY_LOOKUP,
+  S2A_ROUND_REVERIFY_LOOKUP,
+  VERIFICATION_ROUND_CHAIN_LOOKUP_LIMIT,
+  VERIFICATION_ROUND_ORIGINAL_LOOKUP,
+} from '../persistence/evidence-record-codecs.js';
+import { decodeGoalSnapshot } from '../persistence/record-codecs.js';
+import {
+  decodeTaskRequeueSnapshot,
+  S2A_REQUEUE_BY_PROJECT_LOOKUP,
+  S2A_REQUEUE_LEGACY_LOOKUP,
+} from '../tasks/claim-record-codecs.js';
 import { roundChainHead } from '../state/verification-machine.js';
 import { compareNoticePositions } from './notice-position.js';
 import type { DecisionReadRecordsPort } from './goal-conflicts.js';
-import { lookupAll, readWatermark, storeFailureToRejection } from './goal-conflicts.js';
+import { readWatermark, storeFailureToRejection } from './goal-conflicts.js';
 
-/** The read-only RecordStore seam; the rework/round codecs decode the facts. */
+/**
+ * The read-only RecordStore seam. P7: the ordered port is part of the
+ * dependency TYPE, so the ordered read never probes or casts at runtime and no
+ * alias is added to `decision-contracts.ts`.
+ */
 export type AutomaticReworkNoticeSourceDependencies = {
-  records: DecisionReadRecordsPort;
+  records: Pick<S5RecordPort, 'readMany' | 'lookup'> & RecordOrderedLookupPort;
 };
 
 /** Builds the `automatic_rework` notice source; the factory itself never throws. */
@@ -53,48 +81,153 @@ type ReadPageInput = {
   workspace: { projectId: string; workspaceId: string };
   goalRef?: { aggregateType: 'Goal'; projectId: string; goalId: string };
   after?: NoticeItemV1['position'];
-  page: { limit: number; cursor?: string; atLeastCursor?: unknown };
+  page: { limit: number; cursor?: string; atLeastCursor?: unknown; attempt?: DecisionSourceAttempt };
 };
 
-async function readAutomaticReworkPage(
+/**
+ * One read of the ordered index to the end. The `values` equality prefix is
+ * always non-empty text (D3); `bound` is the saved commit position for `asc`.
+ */
+async function readOrderedToEnd(
+  records: AutomaticReworkNoticeSourceDependencies['records'],
+  index: string,
+  values: readonly string[],
+  bound: { value: OrderedLookupValue; inclusive: boolean } | null,
+): Promise<EncodedRecord[]> {
+  const all: EncodedRecord[] = [];
+  const lookupOrdered = records.lookupOrdered;
+  let after: { order: OrderedLookupValue; refKey: string } | undefined;
+  for (;;) {
+    const page = await lookupOrdered.call(records, {
+      index,
+      values,
+      direction: 'asc',
+      ...(bound === null ? {} : { bound }),
+      ...(after === undefined ? {} : { after }),
+      limit: 200,
+    });
+    if (page.status !== 'ready') throw page;
+    for (const record of page.value.records) all.push(record);
+    const next: RecordOrderedLookupPage['next'] = page.value.next;
+    if (next === null) break;
+    after = next;
+  }
+  return all;
+}
+
+/** One plain equality lookup to the end (the legacy `since`-absent group). */
+async function readEqualityToEnd(
   records: DecisionReadRecordsPort,
+  index: string,
+  values: readonly (string | number | boolean | null)[],
+): Promise<EncodedRecord[]> {
+  const all: EncodedRecord[] = [];
+  let after: string | undefined;
+  for (;;) {
+    const page = await records.lookup({ index, values, limit: 200, ...(after === undefined ? {} : { after }) });
+    if (page.status !== 'ready') throw page;
+    for (const record of page.value.records) all.push(record);
+    if (page.value.next === null) break;
+    after = page.value.next;
+  }
+  return all;
+}
+
+function unavailable(reason: string): { status: 'rejected'; code: 'unavailable'; reason: string } {
+  return { status: 'rejected', code: 'unavailable', reason };
+}
+
+/**
+ * P9: a row returned by an ordered index whose decoded order value is missing
+ * or outside the request is a read failure, never silently skipped. `bound` is
+ * the inclusive lower bound of the request (`null` = read from the start).
+ */
+function orderedSince(
+  record: EncodedRecord,
+  bound: CommitCursor | null,
+): { ok: true; since: CommitCursor } | { ok: false; rejection: { status: 'rejected'; code: 'unavailable'; reason: string } } {
+  const origin = decodeNoticeOrigin(record);
+  if (origin.status !== 'decoded') return { ok: false, rejection: unavailable(`automatic rework origin: ${origin.reason}`) };
+  const since = origin.value.since;
+  if (typeof since !== 'string' || since.length === 0) {
+    return { ok: false, rejection: unavailable(`automatic rework ordered record ${record.refKey} has no commit position`) };
+  }
+  // `since` is `c` + zero-padded digits, so text order is commit order.
+  if (bound !== null && since < bound) {
+    return { ok: false, rejection: unavailable(`automatic rework ordered record ${record.refKey} is outside the requested window`) };
+  }
+  return { ok: true, since };
+}
+
+/**
+ * M1: a record read from a legacy (since-null) equality group still decodes its
+ * notice origin. A decode failure — for example the persisted `since: null`
+ * PreparedCommit placeholder — is a read failure with the same reason style as
+ * `orderedSince`; only a genuinely absent `since` is a legacy position.
+ */
+function legacySince(
+  record: EncodedRecord,
+  label: string,
+): { ok: true; since: null } | { ok: false; rejection: { status: 'rejected'; code: 'unavailable'; reason: string } } {
+  const origin = decodeNoticeOrigin(record);
+  if (origin.status !== 'decoded') return { ok: false, rejection: unavailable(`${label}: ${origin.reason}`) };
+  if (origin.value.since !== undefined) {
+    return { ok: false, rejection: unavailable(`${label} record ${record.refKey} unexpectedly carries a commit position`) };
+  }
+  return { ok: true, since: null };
+}
+
+/** The `automatic_rework` page: the saved seen position decides the window. */
+async function readAutomaticReworkPage(
+  records: AutomaticReworkNoticeSourceDependencies['records'],
   _ctx: CoreCallContext,
   input: ReadPageInput,
 ): Promise<ReadResult<DecisionSourcePageV1<NoticeItemV1>>> {
+  // L11/P1: one assembly per window attempt. The read model passes one
+  // `DecisionSourceAttempt` to every source and drops it with the attempt; the
+  // whole collection is keyed by workspace + goal + category and served to the
+  // attempt's later internal pages. No cross-attempt or cross-call cache.
+  const cache = input.page.attempt?.cache;
+  const cacheKey = attemptCacheKey(input);
+  const cached = cache?.get(cacheKey) as AssembledReworkPage | undefined;
+  if (cached !== undefined) return paginateAssembled(cached, input);
   const watermarkRead = await readWatermark(records);
   if (watermarkRead.status !== 'ready') return watermarkRead;
   const watermark = watermarkRead.value;
   const { projectId, workspaceId } = input.workspace;
   const items: NoticeItemV1[] = [];
+  const after = input.after;
+  // L4: a saved commit position reads the ordered part with the inclusive lower
+  // bound and skips the legacy group (legacy positions always order before any
+  // commit position); no saved position — or a legacy one — reads the legacy
+  // group and the ordered part from its start.
+  const seenCursor: CommitCursor | null = after !== undefined && after.kind === 'commit' ? after.cursor : null;
 
   try {
-    // ---- requeues: every ended Run can own the one TaskRequeue of its Task ---
-    const runs = await lookupAll(records, RUN_BY_WORKSPACE_STATUS_INDEX, [projectId, workspaceId, 'ended']);
-    // §4.1 line 772 / T-R2-3 (lead LR4): an overflowing index window is `capacity`,
-    // never a silently shorter notice list.
-    if (runs.truncated) {
-      return { status: 'rejected', code: 'capacity', reason: 'the ended-Run window of the automatic rework notices exceeded its whole read window' };
-    }
-    const requeueKeys = new Set<string>();
-    for (const record of runs.items) {
-      const decoded = decodeRun(record);
-      if (!decoded.ok) return { status: 'rejected', code: 'unavailable', reason: `automatic rework Run: ${decoded.reason}` };
-      const run = decoded.value;
-      if (run.ref.projectId !== projectId || run.task.projectId !== projectId) continue;
-      if (input.goalRef !== undefined && run.ref.goalId !== input.goalRef.goalId) continue;
-      requeueKeys.add(taskRequeueRefKey({ aggregateType: 'TaskRequeue', projectId,
-        goalId: run.ref.goalId, taskId: run.task.taskId, afterRunId: run.ref.runId }));
-    }
-    for (const record of await readMany(records, [...requeueKeys])) {
-      const origin = decodeNoticeOrigin(record);
-      if (origin.status !== 'decoded') {
-        return { status: 'rejected', code: 'unavailable', reason: `automatic rework origin: ${origin.reason}` };
+    // ---- requeues: the ordered window plus the legacy group ----------------
+    const requeueRecords: { record: EncodedRecord; since: CommitCursor | null }[] = [];
+    if (seenCursor === null) {
+      for (const record of await readEqualityToEnd(records, S2A_REQUEUE_LEGACY_LOOKUP, [projectId, null])) {
+        const legacy = legacySince(record, 'automatic rework origin');
+        if (!legacy.ok) return legacy.rejection;
+        requeueRecords.push({ record, since: legacy.since });
       }
-      const decoded = decodeTaskRequeueSnapshot(record as EncodedRecord);
-      if (decoded.status !== 'decoded') {
-        return { status: 'rejected', code: 'unavailable', reason: `automatic rework requeue: ${decoded.reason}` };
-      }
+    }
+    for (const record of await readOrderedToEnd(records, S2A_REQUEUE_BY_PROJECT_LOOKUP, [projectId],
+      seenCursor === null ? null : { value: seenCursor, inclusive: true })) {
+      const since = orderedSince(record, seenCursor);
+      if (!since.ok) return since.rejection;
+      requeueRecords.push({ record, since: since.since });
+    }
+
+    const workspaceByGoal = await readGoalWorkspaces(records, requeueRecords.map(({ record }) => record));
+    for (const { record, since } of requeueRecords) {
+      const decoded = decodeTaskRequeueSnapshot(record);
+      if (decoded.status !== 'decoded') return unavailable(`automatic rework requeue: ${decoded.reason}`);
       const requeue = decoded.value;
+      if (requeue.ref.projectId !== projectId) continue;
+      if (workspaceByGoal.get(goalKeyOf(projectId, requeue.ref.goalId)) !== workspaceId) continue;
+      if (input.goalRef !== undefined && requeue.ref.goalId !== input.goalRef.goalId) continue;
       const actorClass = requeueActorClass(requeue);
       if (actorClass === 'human') continue;
       const itemKey = `automatic_rework:${canonicalJson(requeue.ref as unknown as JsonValue)}`;
@@ -105,7 +238,7 @@ async function readAutomaticReworkPage(
       items.push({
         itemKey, category: 'automatic_rework',
         goalRef: { aggregateType: 'Goal', projectId: requeue.ref.projectId, goalId: requeue.ref.goalId },
-        position: noticePositionOf(origin.value.since, itemKey, requeue.requestedAt),
+        position: noticePositionOf(since, itemKey, requeue.requestedAt),
         summary: exempt ? recoverySummary(requeue.task)
           : reworkSummary(requeue.task, requeue.automation.autoCount, requeue.automation.cap),
         objects: [],
@@ -115,54 +248,42 @@ async function readAutomaticReworkPage(
       });
     }
 
-    // ---- reverify: the WHOLE round chain of every subject (not just the head) -
-    const roundsBySubject = new Map<string, { rounds: RoundSnapshot[]; origins: Map<string, EncodedRecord> }>();
-    for (const status of ['open', 'finalized'] as const) {
-      const batch = await lookupAll(records, VERIFICATION_ROUND_BY_STATUS_LOOKUP, [projectId, workspaceId, status]);
-      if (batch.truncated) {
-        return { status: 'rejected', code: 'capacity', reason: `the ${status} verification-round window of the automatic rework notices exceeded its whole read window` };
+    // ---- reverify: the ordered index names the subject, the chain verifies -
+    const subjectCandidates = new Map<string, SubjectCandidate>();
+    for (const actorClass of ['system', 'agent'] as const) {
+      if (seenCursor === null) {
+        for (const record of await readEqualityToEnd(records, S2A_ROUND_REVERIFY_LEGACY_LOOKUP, [projectId, workspaceId, actorClass, null])) {
+          const legacy = legacySince(record, 'automatic rework round origin');
+          if (!legacy.ok) return legacy.rejection;
+          const added = await addRoundCandidate(subjectCandidates, record, legacy.since, input, projectId, workspaceId);
+          if (added !== null) return added;
+        }
       }
-      for (const record of batch.items) {
-        const origin = decodeNoticeOrigin(record);
-        if (origin.status !== 'decoded') {
-          return { status: 'rejected', code: 'unavailable', reason: `automatic rework round origin: ${origin.reason}` };
-        }
-        const decoded = decodeVerificationRoundSnapshot(record);
-        if (decoded.status !== 'decoded') {
-          return { status: 'rejected', code: 'unavailable', reason: `automatic rework round: ${decoded.reason}` };
-        }
-        const round = decoded.value;
-        if (round.ref.projectId !== projectId || round.ref.workspaceId !== workspaceId) continue;
-        if (input.goalRef !== undefined && round.ref.goalId !== input.goalRef.goalId) continue;
-        const subjectKey = canonicalJson({ projectId: round.ref.projectId, goalId: round.ref.goalId,
-          taskId: round.ref.taskId, runId: round.ref.runId });
-        const group: { rounds: RoundSnapshot[]; origins: Map<string, EncodedRecord> } =
-          roundsBySubject.get(subjectKey) ?? { rounds: [], origins: new Map() };
-        group.rounds.push(round);
-        group.origins.set(canonicalJson(round.ref as unknown as JsonValue), record);
-        roundsBySubject.set(subjectKey, group);
+      for (const record of await readOrderedToEnd(records, S2A_ROUND_REVERIFY_LOOKUP, [projectId, workspaceId, actorClass],
+        seenCursor === null ? null : { value: seenCursor, inclusive: true })) {
+        const since = orderedSince(record, seenCursor);
+        if (!since.ok) return since.rejection;
+        const added = await addRoundCandidate(subjectCandidates, record, since.since, input, projectId, workspaceId);
+        if (added !== null) return added;
       }
     }
-    for (const group of roundsBySubject.values()) {
-      const chain = roundChainHead(group.rounds);
+    for (const subject of subjectCandidates.values()) {
+      const chainRead = await readSubjectChain(records, projectId, workspaceId, subject);
+      if (chainRead.status !== 'ready') return chainRead;
+      const chain = roundChainHead(chainRead.rounds);
       if (chain.kind !== 'head') {
-        return { status: 'rejected', code: 'unavailable', reason: `automatic rework round chain: ${chain.kind === 'invalid' ? chain.reason : 'empty'}` };
+        return unavailable(`automatic rework round chain: ${chain.kind === 'invalid' ? chain.reason : 'empty'}`);
       }
-      for (const round of chain.chain.slice(1)) {
+      for (const [refKey, candidate] of subject.candidates) {
+        const round = chainRead.byRef.get(refKey);
+        if (round === undefined) {
+          return unavailable('automatic rework round record is missing from its chain');
+        }
         const reverify = round.chain?.reverify ?? null;
         if (reverify === null || (reverify.actorClass !== 'system' && reverify.actorClass !== 'agent')) continue;
-        const refKey = canonicalJson(round.ref as unknown as JsonValue);
-        const record = group.origins.get(refKey);
-        if (record === undefined) {
-          return { status: 'rejected', code: 'unavailable', reason: 'automatic rework round record is missing' };
-        }
-        const origin = decodeNoticeOrigin(record);
-        if (origin.status !== 'decoded') {
-          return { status: 'rejected', code: 'unavailable', reason: `automatic rework round origin: ${origin.reason}` };
-        }
         const ordinal = round.chain?.ordinal ?? 0;
         const itemKey = `automatic_rework:${String(ordinal).padStart(4, '0')}:${refKey}`;
-        const cap = origin.value.noticeAutomationCap ?? null;
+        const cap = candidate.cap ?? null;
         const count = round.chain?.autoCount ?? 0;
         const summary = reverify.exemption !== 'none'
           ? `自动恢复 · ${round.subject.taskId}（不计次）`
@@ -170,7 +291,7 @@ async function readAutomaticReworkPage(
         items.push({
           itemKey, category: 'automatic_rework',
           goalRef: { aggregateType: 'Goal', projectId: round.ref.projectId, goalId: round.ref.goalId },
-          position: noticePositionOf(origin.value.since, itemKey, reverify.requestedAt),
+          position: noticePositionOf(candidate.since, itemKey, reverify.requestedAt),
           summary, objects: [],
           rework: { operation: 'reverify', actorClass: reverify.actorClass, taskRef: round.subject,
             count, cap, reason: reverify.reason ?? '', sourceRef: round.ref },
@@ -185,18 +306,164 @@ async function readAutomaticReworkPage(
     const byPosition = compareNoticePositions(left.position, right.position);
     return byPosition !== 0 ? byPosition : (left.itemKey < right.itemKey ? -1 : left.itemKey > right.itemKey ? 1 : 0);
   });
-  const after = input.after;
   const remaining = after === undefined ? items : items.filter((item) => compareNoticePositions(item.position, after) > 0);
+  const assembled: AssembledReworkPage = { watermark, remaining };
+  cache?.set(cacheKey, assembled);
+  return paginateAssembled(assembled, input);
+}
+
+/** L11/P1: what one window attempt assembled, shared by its internal pages. */
+type AssembledReworkPage = { watermark: CommitCursor | null; remaining: NoticeItemV1[] };
+
+/** L11/P1: the attempt cache key — workspace + goal + category, no cross-talk. */
+function attemptCacheKey(input: ReadPageInput): string {
+  return canonicalJson({
+    category: 'automatic_rework',
+    projectId: input.workspace.projectId,
+    workspaceId: input.workspace.workspaceId,
+    goalId: input.goalRef?.goalId ?? null,
+  } as unknown as JsonValue);
+}
+
+/** Serves one page of an already-assembled (and `after`-filtered) collection. */
+function paginateAssembled(assembled: AssembledReworkPage, input: ReadPageInput): {
+  status: 'ready'; value: DecisionSourcePageV1<NoticeItemV1>;
+} {
   const offset = input.page.cursor === undefined ? 0 : Number(input.page.cursor);
   const start = Number.isSafeInteger(offset) && offset >= 0 ? offset : 0;
   const limit = Number.isSafeInteger(input.page.limit) && input.page.limit > 0 ? input.page.limit : 50;
-  const end = Math.min(remaining.length, start + limit);
+  const end = Math.min(assembled.remaining.length, start + limit);
   return { status: 'ready', value: {
     availability: 'available',
-    items: remaining.slice(start, end),
-    nextCursor: end < remaining.length ? String(end) : null,
-    sourceCursor: watermark,
+    items: assembled.remaining.slice(start, end),
+    nextCursor: end < assembled.remaining.length ? String(end) : null,
+    sourceCursor: assembled.watermark,
   } };
+}
+
+/** One subject's chain candidates, keyed by the exact round refKey. */
+type SubjectCandidate = {
+  projectId: string;
+  goalId: string;
+  taskId: string;
+  runId: string;
+  candidates: Map<string, { since: CommitCursor | null; cap: number | null }>;
+};
+
+function goalKeyOf(projectId: string, goalId: string): string {
+  return canonicalJson({ aggregateType: 'Goal', projectId, goalId } as unknown as JsonValue);
+}
+
+/**
+ * L4: read each requeue's Goal directly and map its refKey to the Goal's
+ * workspace, regardless of the Goal's current lifecycle state. `readMany`
+ * misses and damaged Goals are read failures.
+ */
+async function readGoalWorkspaces(
+  records: DecisionReadRecordsPort,
+  requeues: readonly EncodedRecord[],
+): Promise<Map<string, string>> {
+  const keys = new Set<string>();
+  for (const record of requeues) {
+    const decoded = decodeTaskRequeueSnapshot(record);
+    if (decoded.status !== 'decoded') continue;
+    keys.add(goalKeyOf(decoded.value.ref.projectId, decoded.value.ref.goalId));
+  }
+  const result = new Map<string, string>();
+  for (const key of keys) {
+    const read = await records.readMany([key]);
+    if (read.status !== 'ready') throw read;
+    const record = read.value.records.find((candidate) => candidate.refKey === key);
+    if (record === undefined) throw { code: 'unavailable', reason: `automatic rework Goal ${key} is missing` };
+    const decoded = decodeGoalSnapshot(record);
+    if (decoded.status !== 'decoded') throw { code: 'unavailable', reason: `automatic rework Goal ${key}: ${decoded.reason}` };
+    result.set(key, decoded.value.workspaceRef.workspaceId);
+  }
+  return result;
+}
+
+/** Decodes one ordered/legacy reverify candidate into its subject's candidate set. */
+async function addRoundCandidate(
+  subjects: Map<string, SubjectCandidate>,
+  record: EncodedRecord,
+  since: CommitCursor | null,
+  input: ReadPageInput,
+  projectId: string,
+  workspaceId: string,
+): Promise<{ status: 'rejected'; code: 'unavailable'; reason: string } | null> {
+  const decoded = decodeVerificationRoundSnapshot(record);
+  if (decoded.status !== 'decoded') return unavailable(`automatic rework round: ${decoded.reason}`);
+  const round = decoded.value;
+  if (round.ref.projectId !== projectId || round.ref.workspaceId !== workspaceId) return null;
+  if (input.goalRef !== undefined && round.ref.goalId !== input.goalRef.goalId) return null;
+  const subjectKey = canonicalJson({ projectId: round.ref.projectId, goalId: round.ref.goalId,
+    taskId: round.ref.taskId, runId: round.ref.runId } as unknown as JsonValue);
+  const subject: SubjectCandidate = subjects.get(subjectKey) ?? { projectId: round.ref.projectId,
+    goalId: round.ref.goalId, taskId: round.ref.taskId, runId: round.ref.runId, candidates: new Map() };
+  const refKey = canonicalJson(round.ref as unknown as JsonValue);
+  const capRead = decodeCapOf(record);
+  if (!capRead.ok) return capRead.rejection;
+  subject.candidates.set(refKey, { since, cap: capRead.cap });
+  subjects.set(subjectKey, subject);
+  return null;
+}
+
+/**
+ * The creation-time cap reads through `decodeNoticeOrigin`. A decoded origin
+ * without `noticeAutomationCap` is the legitimate legacy unknown cap (`null`,
+ * NR08); an origin that cannot be decoded (for example the persisted
+ * `since: null` PreparedCommit placeholder) is a read failure, never a silent
+ * `null` cap.
+ */
+function decodeCapOf(record: EncodedRecord):
+  { ok: true; cap: number | null } | { ok: false; rejection: { status: 'rejected'; code: 'unavailable'; reason: string } } {
+  const origin = decodeNoticeOrigin(record);
+  if (origin.status !== 'decoded') {
+    return { ok: false, rejection: unavailable(`automatic rework round origin: ${origin.reason}`) };
+  }
+  return { ok: true, cap: origin.value.noticeAutomationCap ?? null };
+}
+
+/** Reads and revalidates one subject's whole chain (domain limit stays, L10). */
+async function readSubjectChain(
+  records: DecisionReadRecordsPort,
+  projectId: string,
+  workspaceId: string,
+  subject: SubjectCandidate,
+): Promise<{ status: 'ready'; rounds: RoundSnapshot[]; byRef: Map<string, RoundSnapshot> }
+  | { status: 'rejected'; code: 'unavailable' | 'incomplete'; reason: string }> {
+  const result = await records.lookup({
+    index: VERIFICATION_ROUND_ORIGINAL_LOOKUP,
+    values: [projectId, workspaceId, subject.goalId, subject.taskId, subject.runId],
+    limit: VERIFICATION_ROUND_CHAIN_LOOKUP_LIMIT,
+  });
+  if (result.status !== 'ready') {
+    if (result.code === 'unsupported') return { status: 'rejected', code: 'unavailable', reason: 'the round chain index is not registered' };
+    return { status: 'rejected', code: 'unavailable', reason: `automatic rework round chain is not readable: ${result.code}: ${result.reason}` };
+  }
+  if (result.value.next !== null) {
+    return { status: 'rejected', code: 'incomplete', reason: 'automatic rework round chain is longer than the chain limit' };
+  }
+  const rounds: RoundSnapshot[] = [];
+  const byRef = new Map<string, RoundSnapshot>();
+  for (const record of result.value.records) {
+    const decoded = decodeVerificationRoundSnapshot(record);
+    if (decoded.status !== 'decoded') return { status: 'rejected', code: 'unavailable', reason: `automatic rework round: ${decoded.reason}` };
+    const round = decoded.value;
+    // The subject is the round ref minus `roundId`; `subjectRunRef` omits
+    // `taskId`, so compare the parts the round ref carries.
+    const subjectMatches = round.subjectRunRef.projectId === projectId
+      && round.subjectRunRef.goalId === subject.goalId
+      && round.subjectRunRef.runId === subject.runId
+      && round.subject.taskId === subject.taskId;
+    if (!subjectMatches) {
+      return { status: 'rejected', code: 'unavailable',
+        reason: `round ${round.ref.roundId} does not belong to Run ${subject.runId}` };
+    }
+    rounds.push(round);
+    byRef.set(canonicalJson(round.ref as unknown as JsonValue), round);
+  }
+  return { status: 'ready', rounds, byRef };
 }
 
 /** §4.4: system and agent requeues share one notice stream; human is never listed. */
@@ -218,11 +485,4 @@ function reworkSummary(task: TaskTriple, count: number, cap: number | null): str
 /** §4.4 line 840: the exempt automatic recovery label, without a count. */
 function recoverySummary(task: TaskTriple): string {
   return `自动恢复 · ${task.taskId}（不计次）`;
-}
-
-async function readMany(records: DecisionReadRecordsPort, keys: readonly string[]): Promise<EncodedRecord[]> {
-  if (keys.length === 0) return [];
-  const read = await records.readMany(keys);
-  if (read.status !== 'ready') throw read;
-  return read.value.records;
 }

@@ -9,7 +9,7 @@
  * This module performs no I/O and opens no database. It imports no WorkGraph
  * module and never exposes SQL, a connection or mutable state.
  */
-import type { LookupValue, RecordLookupIndex } from './lookup-ports.js';
+import type { LookupValue, OrderedLookupValue, RecordLookupIndex } from './lookup-ports.js';
 import { decodeRefKey, isJsonObject, isNonEmptyString } from './record-codec.js';
 import type { RecordSchemaRegistry } from './record-codec.js';
 
@@ -18,7 +18,12 @@ export type RegisteredLookupIndex = {
   readonly aggregateType: string;
   /** Validated dotted JSON key paths, one per requested scalar value. */
   readonly paths: readonly string[];
+  /** Validated ordering column; `valueType` is normalized to `'text'`. */
+  readonly orderBy?: { readonly path: string; readonly valueType: 'text' | 'integer' };
 };
+
+/** Order value types that a registered `orderBy.valueType` may name (L1, D8). */
+export type OrderedValueType = 'text' | 'integer';
 
 export type RecordLookupRegistry = {
   readonly indexes: readonly RegisteredLookupIndex[];
@@ -82,7 +87,20 @@ export function createRecordLookupRegistry(
     }
     if (!Array.isArray(paths) || paths.length === 0) registrationError(`lookup index ${name} paths must be a non-empty array`);
     const copied = (paths as readonly unknown[]).map((path) => validatePath(path, name));
-    const copy: RegisteredLookupIndex = Object.freeze({ name, aggregateType, paths: Object.freeze(copied) });
+    const rawOrderBy = entry['orderBy'];
+    let orderBy: { path: string; valueType: OrderedValueType } | undefined;
+    if (rawOrderBy !== undefined) {
+      if (!isJsonObject(rawOrderBy)) registrationError(`lookup index ${name} orderBy must be an object`);
+      const orderPath = validatePath(rawOrderBy['path'], name);
+      const rawValueType = rawOrderBy['valueType'];
+      if (rawValueType !== undefined && rawValueType !== 'text' && rawValueType !== 'integer') {
+        registrationError(`lookup index ${name} orderBy valueType must be 'text' or 'integer'`);
+      }
+      orderBy = Object.freeze({ path: orderPath, valueType: (rawValueType ?? 'text') as OrderedValueType });
+    }
+    const copy: RegisteredLookupIndex = Object.freeze(orderBy === undefined
+      ? { name, aggregateType, paths: Object.freeze(copied) }
+      : { name, aggregateType, paths: Object.freeze(copied), orderBy });
     indexes.push(copy);
     byName.set(name, copy);
   }
@@ -160,6 +178,166 @@ export function decodeLookupRequest(registry: RecordLookupRegistry, request: unk
 }
 
 // --------------------------------------------------------------------------
+// Ordered request criteria (Slice 2A L1)
+// --------------------------------------------------------------------------
+
+export type DecodedOrderedLookupRequest = {
+  readonly index: RegisteredLookupIndex;
+  readonly values: readonly string[];
+  readonly direction: 'asc' | 'desc';
+  readonly bound: { readonly value: OrderedLookupValue; readonly inclusive: boolean } | null;
+  readonly after: { readonly order: OrderedLookupValue; readonly refKey: string } | null;
+  readonly limit: number;
+};
+
+export type OrderedLookupRequestDecode =
+  | { readonly status: 'decoded'; readonly value: DecodedOrderedLookupRequest }
+  | { readonly status: 'unsupported'; readonly reason: string }
+  | { readonly status: 'invalid'; readonly reason: string };
+
+function orderedValueProblem(valueType: OrderedValueType, value: unknown, label: string): string | null {
+  if (valueType === 'integer') {
+    return typeof value === 'number' && Number.isSafeInteger(value)
+      ? null
+      : `${label} must be a safe integer for an integer index`;
+  }
+  return typeof value === 'string' && value.length > 0
+    ? null
+    : `${label} must be a non-empty string for a text index`;
+}
+
+/**
+ * The one ordered-request rule for both backends (Slice 2A L1). Everything the
+ * request itself can reveal is `invalid`; an unregistered index is
+ * `unsupported`; an index with no ordering column has no ordered read.
+ */
+export function decodeOrderedLookupRequest(
+  registry: RecordLookupRegistry,
+  request: unknown,
+): OrderedLookupRequestDecode {
+  if (!isJsonObject(request)) return { status: 'invalid', reason: 'ordered lookup request must be an object' };
+  const indexName = request['index'];
+  if (!isNonEmptyString(indexName)) return { status: 'invalid', reason: 'ordered lookup index must be a non-empty string' };
+  const index = registry.byName(indexName);
+  if (index === undefined) return { status: 'unsupported', reason: `no lookup index registered as ${indexName}` };
+  const orderBy = index.orderBy;
+  if (orderBy === undefined) {
+    return { status: 'invalid', reason: `lookup index ${index.name} is not registered with an orderBy column` };
+  }
+  const rawValues = request['values'];
+  if (!Array.isArray(rawValues)) return { status: 'invalid', reason: 'ordered lookup values must be an array' };
+  const values = rawValues as readonly unknown[];
+  if (values.length !== index.paths.length) {
+    return {
+      status: 'invalid',
+      reason: `ordered lookup index ${index.name} requires exactly ${String(index.paths.length)} values`,
+    };
+  }
+  for (const value of values) {
+    if (!isNonEmptyString(value)) {
+      return { status: 'invalid', reason: 'ordered lookup values must all be non-empty strings' };
+    }
+  }
+  const rawDirection = request['direction'];
+  if (rawDirection !== 'asc' && rawDirection !== 'desc') {
+    return { status: 'invalid', reason: "ordered lookup direction must be 'asc' or 'desc'" };
+  }
+  const limit = request['limit'];
+  if (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1 || limit > 200) {
+    return { status: 'invalid', reason: 'ordered lookup limit must be an integer between 1 and 200' };
+  }
+  const rawBound = request['bound'];
+  let bound: { value: OrderedLookupValue; inclusive: boolean } | null = null;
+  if (rawBound !== undefined) {
+    if (!isJsonObject(rawBound)) return { status: 'invalid', reason: 'ordered lookup bound must be an object' };
+    if (typeof rawBound['inclusive'] !== 'boolean') {
+      return { status: 'invalid', reason: 'ordered lookup bound.inclusive must be a boolean' };
+    }
+    const problem = orderedValueProblem(orderBy.valueType, rawBound['value'], 'ordered lookup bound.value');
+    if (problem !== null) return { status: 'invalid', reason: problem };
+    bound = Object.freeze({ value: rawBound['value'] as OrderedLookupValue, inclusive: rawBound['inclusive'] as boolean });
+  }
+  const rawAfter = request['after'];
+  let after: { order: OrderedLookupValue; refKey: string } | null = null;
+  if (rawAfter !== undefined) {
+    if (!isJsonObject(rawAfter)) return { status: 'invalid', reason: 'ordered lookup after must be an object' };
+    const orderProblem = orderedValueProblem(orderBy.valueType, rawAfter['order'], 'ordered lookup after.order');
+    if (orderProblem !== null) return { status: 'invalid', reason: orderProblem };
+    const refKey = rawAfter['refKey'];
+    if (typeof refKey !== 'string') {
+      return { status: 'invalid', reason: 'ordered lookup after.refKey must be a full canonical refKey' };
+    }
+    const decodedKey = decodeRefKey(refKey);
+    if (decodedKey.status === 'invalid') {
+      return { status: 'invalid', reason: `ordered lookup after.refKey is not a canonical refKey: ${decodedKey.reason}` };
+    }
+    if (decodedKey.value.aggregateType !== index.aggregateType) {
+      return {
+        status: 'invalid',
+        reason: `ordered lookup after.refKey aggregateType ${decodedKey.value.aggregateType} does not match ${index.aggregateType}`,
+      };
+    }
+    after = Object.freeze({ order: rawAfter['order'] as OrderedLookupValue, refKey });
+  }
+  return {
+    status: 'decoded',
+    value: Object.freeze({
+      index,
+      values: Object.freeze([...values]) as readonly string[],
+      direction: rawDirection,
+      bound,
+      after,
+      limit,
+    }),
+  };
+}
+
+/**
+ * Slice 2A L1 continuation range term. SQLite can seek only the first range
+ * term on the ordered expression, so `lookupOrdered` may write exactly one
+ * range term on the order column (a lower one for `asc`, an upper one for
+ * `desc`); every other order-column condition stays a residual filter. This
+ * computes that one term from `bound` and `after`, comparing them with the
+ * order the index uses, and says whether the `(order, ref_key)` row-value filter
+ * is still needed for the ties.
+ */
+export type OrderedRangePlan = {
+  /** `null` only when the request gives neither a bound nor an after. */
+  readonly term: { readonly value: OrderedLookupValue; readonly inclusive: boolean } | null;
+  /** Whether the `(order, ref_key)` row-value filter still excludes ties. */
+  readonly keyset: boolean;
+};
+
+export function orderedRangePlanOf(request: DecodedOrderedLookupRequest): OrderedRangePlan {
+  const valueType = request.index.orderBy?.valueType ?? 'text';
+  const bound = request.bound;
+  const after = request.after;
+  if (after === null) {
+    return bound === null
+      ? { term: null, keyset: false }
+      : { term: { value: bound.value, inclusive: bound.inclusive }, keyset: false };
+  }
+  if (bound === null) {
+    return { term: { value: after.order, inclusive: true }, keyset: true };
+  }
+  const compared = compareOrderedValues(valueType, after.order, bound.value);
+  // "after comes later in the index order": ascending is the natural order,
+  // descending its mirror.
+  const afterIsLater = request.direction === 'asc' ? compared > 0 : compared < 0;
+  if (afterIsLater) {
+    return { term: { value: after.order, inclusive: true }, keyset: true };
+  }
+  if (compared !== 0) {
+    // after is at or before the bound, so the bound alone already excludes it.
+    return { term: { value: bound.value, inclusive: bound.inclusive }, keyset: false };
+  }
+  // Equal order values: the bound's inclusivity decides whether ties remain.
+  return bound.inclusive
+    ? { term: { value: bound.value, inclusive: true }, keyset: true }
+    : { term: { value: bound.value, inclusive: false }, keyset: false };
+}
+
+// --------------------------------------------------------------------------
 // Dotted-path scalar extraction + candidate keys (in-memory candidate store)
 // --------------------------------------------------------------------------
 
@@ -209,6 +387,30 @@ export function lookupIndexKeyOf(index: RegisteredLookupIndex, body: Record<stri
   return encodeLookupValues(values);
 }
 
+/**
+ * Slice 2A L1 candidate rule for an ordered index: `text` sorts on non-empty
+ * text only; `integer` sorts on a safe JSON integer only. Missing, null,
+ * composite, boolean, non-integer number, or numeric-looking text are all
+ * non-candidates (and are read through the plain equality path instead).
+ */
+export function orderedLookupCandidateOf(
+  index: RegisteredLookupIndex,
+  body: Record<string, unknown>,
+): { readonly present: true; readonly value: OrderedLookupValue } | { readonly present: false } {
+  const orderBy = index.orderBy;
+  if (orderBy === undefined) return { present: false };
+  const resolved = resolvePath(body, orderBy.path);
+  if (resolved.kind !== 'value' || resolved.value === null) return { present: false };
+  if (orderBy.valueType === 'integer') {
+    return typeof resolved.value === 'number' && Number.isSafeInteger(resolved.value)
+      ? { present: true, value: resolved.value }
+      : { present: false };
+  }
+  return typeof resolved.value === 'string' && resolved.value.length > 0
+    ? { present: true, value: resolved.value }
+    : { present: false };
+}
+
 /** Backend-agnostic classification of a request scalar (booleans stay booleans). */
 export type LookupValueMatcher =
   | { readonly kind: 'null' }
@@ -231,4 +433,54 @@ export function lookupMatcherOf(value: LookupValue): LookupValueMatcher {
  */
 export function compareRefKeys(left: string, right: string): number {
   return Buffer.compare(Buffer.from(left, "utf8"), Buffer.from(right, "utf8"));
+}
+
+/**
+ * Slice 2A L1 order-value comparison shared by both backends: text by UTF-8
+ * byte order (SQLite BINARY), integer numerically.
+ */
+export function compareOrderedValues(
+  valueType: OrderedValueType,
+  left: OrderedLookupValue,
+  right: OrderedLookupValue,
+): number {
+  if (valueType === 'integer') {
+    const leftNumber = left as number;
+    const rightNumber = right as number;
+    if (leftNumber < rightNumber) return -1;
+    if (leftNumber > rightNumber) return 1;
+    return 0;
+  }
+  return compareRefKeys(left as string, right as string);
+}
+
+/**
+ * Whether one candidate satisfies BOTH the optional `bound` and the optional
+ * `after` keyset of a decoded ordered request (their intersection, L1).
+ */
+export function matchesOrderedRequest(
+  request: DecodedOrderedLookupRequest,
+  order: OrderedLookupValue,
+  refKey: string,
+): boolean {
+  const valueType = request.index.orderBy?.valueType ?? 'text';
+  if (request.bound !== null) {
+    const compared = compareOrderedValues(valueType, order, request.bound.value);
+    if (request.direction === 'asc') {
+      if (request.bound.inclusive ? compared < 0 : compared <= 0) return false;
+    } else if (request.bound.inclusive ? compared > 0 : compared >= 0) {
+      return false;
+    }
+  }
+  if (request.after !== null) {
+    const compared = compareOrderedValues(valueType, order, request.after.order);
+    if (request.direction === 'asc') {
+      if (compared < 0) return false;
+      if (compared === 0 && compareRefKeys(refKey, request.after.refKey) <= 0) return false;
+    } else {
+      if (compared > 0) return false;
+      if (compared === 0 && compareRefKeys(refKey, request.after.refKey) >= 0) return false;
+    }
+  }
+  return true;
 }

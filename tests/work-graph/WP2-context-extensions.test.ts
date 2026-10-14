@@ -451,7 +451,9 @@ describe('WP2 context extensions provider (module side; E2 evidence in WP2-wirin
       .toEqual(goalLevelRowKeys);
   });
 
-  it('F07 exactly 5,000 real waiting cards succeed and one more is a capacity rejection', async () => {
+  // Lead (2A §5.3, frozen): wiring 2's temporary 5,000-card bound is removed
+  // (2A §0.4); 5,001 real waiting cards are all read, nothing is refused.
+  it('F07 5,000 real waiting cards are all read and one more is read too (no capacity bound)', async () => {
     const h = await openDecisionHarness();
     const read = createContextExtensionsReader({ anomalies: anomalyDouble(), hostActor: HOST_ACTOR, decisions: h.queue });
     const request: ContextReadRequestV1 = { goalRef: GOAL_B, focusTaskIds: [] };
@@ -494,14 +496,16 @@ describe('WP2 context extensions provider (module side; E2 evidence in WP2-wirin
     // truncated, skipped or fabricated.
     expect(exact.decisions.rows).toHaveLength(5_004);
 
-    // One more real waiting card pushes the input window past the cap: the whole
-    // read is refused, never a half page.
-    await sendDecisionRequest(h, 'Real decision overflow');
-    const over = await read(h.f.ctx, request);
-    expect(over.status).toBe('rejected');
-    if (over.status !== 'rejected') throw new Error(`expected a capacity rejection: ${JSON.stringify(over)}`);
-    expect(over.code).toBe('capacity');
-    expect(over.reason.startsWith('decision_index_page_limit:')).toBe(true);
+    // One more real waiting card: the read still succeeds and carries it, with
+    // every earlier row kept (5,001 card rows plus the 4 hint rows).
+    const overflow = await sendDecisionRequest(h, 'Real decision overflow');
+    const overflowSource = overflow.decision?.source;
+    if (overflowSource === undefined) throw new Error('the sent decision request carries no decision source');
+    const over = readyExtensions(await read(h.f.ctx, request));
+    const overKeys = new Set(over.decisions.rows.map(row => row.key));
+    expect(overKeys.has(`decision:${overflowSource.key}`)).toBe(true);
+    for (const key of [...created, ...seedKeys, ...hintKeys]) expect(overKeys.has(key)).toBe(true);
+    expect(over.decisions.rows).toHaveLength(5_005);
   }, 240_000);
 
   it('SUP (fault injection) an installed Goal-settings read failure fails the whole context read', async () => {

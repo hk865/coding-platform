@@ -123,7 +123,8 @@ describe.each(['memory', 'sqlite'] as const)('S5R2 queue history (%s)', kind => 
     expect(proposalPins(card)).toEqual([{ ref: u.ref, revision: 2 }]);
   });
 
-  it('R2A07 - an unfiltered Workspace queue rejects 201 Goals with capacity', async () => {
+  // Lead (2A §5.3, frozen): 201 Goals are no longer refused; the queue answers.
+  it('R2A07 - an unfiltered Workspace queue over 201 Goals is read, not refused', async () => {
     const f = await open();
     await populateGoals(f, 201);
     expect(await modelRequestCounts(f)).toEqual({ workAttempts: 0, queryAdmissions: 0 });
@@ -134,7 +135,7 @@ describe.each(['memory', 'sqlite'] as const)('S5R2 queue history (%s)', kind => 
     expect(await f.storeSnapshot()).toEqual(before);
     expect(f.allocationCounts).toEqual(allocations);
     expect(await modelRequestCounts(f)).toEqual({ workAttempts: 0, queryAdmissions: 0 });
-    expect(result).toMatchObject({ status: 'rejected', code: 'capacity' });
+    expect(result).toMatchObject({ status: 'ready' });
   }, 300_000);
 
   it('R2A08 - exactly 200 Goals remain inside the Workspace queue limit', async () => {
@@ -187,7 +188,9 @@ describe('S5R2 message capacity (memory only)', () => {
   const opened: S5DecisionFixture[] = [];
   afterEach(async () => { for (const f of opened.splice(0)) await f.close(); });
 
-  it('R2A09 - 5001 real pending user requests reject the queue with capacity', async () => {
+  // Lead (2A §5.3, frozen): 5001 pending requests are no longer refused; paging
+  // with the same 50-card limit returns every one of them.
+  it('R2A09 - 5001 real pending user requests are all read by paging the queue', async () => {
     const f = await openS5DecisionFixture('memory', { duties: ['adviser'], operatorActor: { ...OPERATOR } });
     opened.push(f);
     const services = owners(f);
@@ -205,9 +208,11 @@ describe('S5R2 message capacity (memory only)', () => {
     expect(await allIndexRecords(f, S5_MESSAGE_BY_WORKSPACE_STATUS, ['P', 'W', 'pending'])).toEqual([]);
     const sender = realOwners(f, ['adviser']);
     const sentKeys: string[] = [];
+    const sentCardKeys: string[] = [];
     for (let index = 0; index < 5001; index += 1) {
       const sent = await sendDecision(f, sender, `s5r2-a09-send-${index}`);
       sentKeys.push(keyOf(sent.message.ref));
+      sentCardKeys.push(decisionSourceKey({ kind: 'message', messageRef: sent.message.ref }));
     }
     const stored = (await allIndexRecords(f, S5_MESSAGE_BY_WORKSPACE_STATUS, ['P', 'W', 'pending']))
       .map(record => decoded(decodeSessionMessageRecord(record)));
@@ -220,10 +225,23 @@ describe('S5R2 message capacity (memory only)', () => {
     }
     const before = await f.storeSnapshot();
     const allocations = { ...f.allocationCounts };
-    const result = await services.reads.queryDecisionQueue(f.ctx, { workspace: WORKSPACE_SCOPE, goalRef: GOAL_B,
-      sections: ['waiting_answer'], page: { limit: 50 } });
+    const messageCards: string[] = [];
+    const cursors = new Set<string>();
+    let cursor: string | undefined;
+    for (;;) {
+      const page = ready(await services.reads.queryDecisionQueue(f.ctx, { workspace: WORKSPACE_SCOPE, goalRef: GOAL_B,
+        sections: ['waiting_answer'], page: cursor === undefined ? { limit: 50 } : { limit: 50, cursor } }));
+      expect(page.waitingAnswer.length).toBeLessThanOrEqual(50);
+      messageCards.push(...page.waitingAnswer.filter(card => card.source.kind === 'message').map(card => card.cardKey));
+      if (page.nextCursor === null) break;
+      expect(cursors.has(page.nextCursor)).toBe(false);
+      cursors.add(page.nextCursor);
+      cursor = page.nextCursor;
+    }
     expect(await f.storeSnapshot()).toEqual(before);
     expect(f.allocationCounts).toEqual(allocations);
-    expect(result).toMatchObject({ status: 'rejected', code: 'capacity' });
+    // Every one of the 5001 pending requests, once each.
+    expect(messageCards).toHaveLength(5001);
+    expect([...messageCards].sort()).toEqual([...sentCardKeys].sort());
   }, 300_000);
 });

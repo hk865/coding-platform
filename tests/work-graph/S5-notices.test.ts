@@ -6,6 +6,7 @@ import type { SessionMessageRef } from '../../src/contracts/core/session-message
 import type { EncodedRecord } from '../../src/core/record-store/ports.js';
 import type { DecisionNoticeSourcePort, NoticeItemV1 } from '../../src/core/work-graph/model/decision-contracts.js';
 import type { DecisionReadRecordsPort } from '../../src/core/work-graph/views/goal-conflicts.js';
+import type { RecordOrderedLookupPort } from '../../src/core/record-store/lookup-ports.js';
 import { createDecisionSettingsService } from '../../src/core/work-graph/configuration/decision-settings-service.js';
 import { createDecisionReadModel } from '../../src/core/work-graph/views/decision-read-model.js';
 import { createGoalConflictAssembler } from '../../src/core/work-graph/views/goal-conflicts.js';
@@ -63,7 +64,7 @@ function harness(f: S5DecisionFixture, sources: readonly DecisionNoticeSourcePor
   };
   return { page, mark, displayTokens };
 }
-const readRework = async (f: S5DecisionFixture, records: DecisionReadRecordsPort = f.records) =>
+const readRework = async (f: S5DecisionFixture, records: DecisionReadRecordsPort & RecordOrderedLookupPort = f.records) =>
   createAutomaticReworkNoticeSource({ records }).readPage(f.ctx, { workspace: WORKSPACE_SCOPE, page: { limit: 50 } });
 
 async function messages(f: S5DecisionFixture, refs: readonly SessionMessageRef[]) {
@@ -75,15 +76,20 @@ async function messages(f: S5DecisionFixture, refs: readonly SessionMessageRef[]
 }
 
 /** Corruption stays at the read boundary, never a codec-rejected fixture write. */
-function corruptOrigin(records: DecisionReadRecordsPort, targetKey: string): DecisionReadRecordsPort {
+function corruptOrigin(records: DecisionReadRecordsPort, targetKey: string): DecisionReadRecordsPort & RecordOrderedLookupPort {
   const corrupt = (record: EncodedRecord): EncodedRecord => record.refKey !== targetKey ? record
     : { ...record, json: JSON.stringify({ ...JSON.parse(record.json) as Record<string, unknown>, since: null }) };
+  const ordered = records as DecisionReadRecordsPort & RecordOrderedLookupPort;
   return { async readMany(refs) {
     const result = await records.readMany(refs);
     if (result.status !== 'ready') return result;
     return { status: 'ready', value: { ...result.value, records: result.value.records.map(corrupt) } };
   }, async lookup(request) {
     const result = await records.lookup(request);
+    if (result.status !== 'ready') return result;
+    return { status: 'ready', value: { ...result.value, records: result.value.records.map(corrupt) } };
+  }, async lookupOrdered(request) {
+    const result = await ordered.lookupOrdered(request);
     if (result.status !== 'ready') return result;
     return { status: 'ready', value: { ...result.value, records: result.value.records.map(corrupt) } };
   } };

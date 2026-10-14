@@ -40,10 +40,9 @@ const CARD_SOURCE_KINDS: readonly DecisionSourceV1['kind'][] = [
   'message', 'goal_cause', 'candidate', 'note_review', 'planning_question', 'goal_conflict', 'message_release',
 ];
 
-/** §4.3.1 / L6: 100 per page, at most 50 pages / 5,000 input cards for this package. */
+/** §4.3.1: 100 per page. 2A §0.4 row 1 removes the 50-page / 5,000-card cap;
+ * only this page size stays (P6). */
 const DECISION_PAGE_LIMIT = 100;
-const DECISION_MAX_PAGES = 50;
-const DECISION_MAX_ITEMS = 5000;
 
 type TaskTriple = { aggregateType: 'Task'; projectId: string; goalId: string; taskId: string };
 
@@ -270,9 +269,8 @@ export function createContextExtensionsReader(deps: ContextExtensionsDependencie
       let capabilities: DecisionQueueReadV1['capabilities'] = [];
       let sourceCursor: DecisionQueueReadV1['sourceCursor'] | null = null;
       let cursor: string | undefined;
-      let items = 0;
       try {
-        for (let page = 0; ; page++) {
+        for (;;) {
           const read = await deps.decisions.queryDecisionQueue(hostCtx, {
             workspace: { projectId, workspaceId },
             goalRef: request.goalRef,
@@ -293,20 +291,11 @@ export function createContextExtensionsReader(deps: ContextExtensionsDependencie
             return rejection('unavailable', 'decision_queue_window_changed: the decision queue pages did not share one ledger window');
           }
           for (const card of read.value.waitingAnswer) {
-            items += 1;
             if (card.state !== 'waiting_answer') continue;
             cards.push(card);
           }
           const next = read.value.nextCursor;
-          const exhausted = next === null;
-          // L6: the 5,000 bound is on the input cards read, not on the rows
-          // after filtering. Exactly 5,000 with no further page is complete;
-          // more than 5,000, or either bound with a further page, overflows.
-          if (items > DECISION_MAX_ITEMS
-            || (!exhausted && (items >= DECISION_MAX_ITEMS || page + 1 >= DECISION_MAX_PAGES))) {
-            return rejection('capacity', 'decision_index_page_limit: the waiting-answer cards did not fit the bounded read window');
-          }
-          if (exhausted) break;
+          if (next === null) break;
           cursor = next;
         }
       } catch (error) {

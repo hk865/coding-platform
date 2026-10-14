@@ -17,6 +17,7 @@ import { completionPolicyContentDigest } from '../../src/contracts/governance.js
 import { DEFAULT_TASK_AUTOMATION_POLICY, WORKFLOW_AUTOMATION_ACTOR } from '../../src/contracts/task-requeue.js';
 import type { RoundSnapshot, TrustedCheckConfiguration } from '../../src/contracts/verification.js';
 import type { S5RecordPort } from '../../src/core/work-graph/model/decision-contracts.js';
+import type { RecordOrderedLookupPort } from '../../src/core/record-store/lookup-ports.js';
 import type { SessionMailboxDependencies } from '../../src/core/work-graph/model/communication-contracts.js';
 import type { AuthorizeConfiguration } from '../../src/core/work-graph/model/execution-entry-contracts.js';
 import { SESSION_MAILBOX_TOOL_NAMES, USER_DECISION_TOOL_NAMES } from '../../src/core/agent-runtime/communication-tools.js';
@@ -265,7 +266,9 @@ export async function openUninitializedQueue(kind: S5FixtureKind) {
     COMPLETION_RECORD_SCHEMAS, EVIDENCE_RECORD_SCHEMAS, ARCHITECTURE_CATALOG_SCHEMAS];
   const b2 = await createB2ExecutionFixture(kind, { records: bundles.flatMap(b => [...b.records]),
     events: bundles.flatMap(b => [...b.events]), lookups: bundles.flatMap(b => [...(b.lookups ?? [])]) });
-  const records = b2.base.records;
+  // Slice 2A P8: the uninitialized queue's real records port also carries the
+  // separate ordered lookup the notice sources read through.
+  const records = b2.base.records as S5RecordPort & RecordOrderedLookupPort;
   const ctx: CoreCallContext = { ...b2.base.ctx, ...WORKSPACE_SCOPE, principal: { kind: 'host', actor: OPERATOR },
     materialReader: { kind: 'host', ...WORKSPACE_SCOPE, actor: OPERATOR } };
   const seeded = await b2.base.commitRaw([encodeProjectSnapshot({ ref: PROJECT, revision: 1 }),

@@ -118,6 +118,14 @@ export type GoalDecisionCauseReadV1 = {
 
 export type S5RecordPort = GoalRecordTransactionPort & RecordLookupPort;
 
+/**
+ * 2A L11/P1: one queue window attempt's shared source cache. The read model
+ * creates one per attempt and passes it to every source; a source assembles its
+ * whole collection once per attempt and serves its pages from it. The object is
+ * dropped with the attempt, so nothing is cached across calls.
+ */
+export type DecisionSourceAttempt = { readonly cache: Map<string, unknown> };
+
 export type DecisionOwnerBaseDependencies = {
   records: S5RecordPort; now: () => string; newId: () => string;
   operatorActor?: Extract<ActorRef, { kind: 'human' | 'system' }>;
@@ -311,7 +319,7 @@ export interface DecisionCardSourcePort {
   kind: DecisionSourceV1['kind'];
   readPage(ctx: CoreCallContext, input: {
     workspace: WorkspaceScope; goalRef?: GoalRef;
-    page: { limit: number; cursor?: string; atLeastCursor?: CommitCursor };
+    page: { limit: number; cursor?: string; atLeastCursor?: CommitCursor; attempt?: DecisionSourceAttempt };
   }): Promise<ReadResult<DecisionSourcePageV1<DecisionCardV1>>>;
 }
 
@@ -320,7 +328,7 @@ export interface DecisionNoticeSourcePort {
   readPage(ctx: CoreCallContext, input: {
     workspace: WorkspaceScope; goalRef?: GoalRef;
     after?: NoticePositionV1;
-    page: { limit: number; cursor?: string; atLeastCursor?: CommitCursor };
+    page: { limit: number; cursor?: string; atLeastCursor?: CommitCursor; attempt?: DecisionSourceAttempt };
   }): Promise<ReadResult<DecisionSourcePageV1<NoticeItemV1>>>;
 }
 
