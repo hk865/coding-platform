@@ -9,7 +9,7 @@
 
 此文件是分析模型，不是生产实现、接口冻结或提议批准。基线 HEAD：`facbb61fd791361c943caaddcd1c3cd559be5842`。来源行号按本次读取的 DESIGN（1481 行）。优先第 1、3、5 片，再第 6、7 片。
 
-对象 54，规则 59，场景 80，歧义 40，选项值 80。对象数沿用初稿口径；O51、O53 的行为已由决定 49 选定，仍非新增生产记录，O52 沿原说明，O54 是外部回执。它们不是承诺新增四种生产记录。其余 50 个包括记录、外部快照、派生值和有名字的值类型。字段里的小元组不另计对象。
+对象 55，规则 60，场景 80，歧义 40，选项值 80。对象数沿用初稿口径；O51、O53 的行为已由决定 49 选定，仍非新增生产记录，O52 沿原说明，O54 是外部回执。它们不是承诺新增四种生产记录。其余 51 个包括记录、外部快照、派生值和有名字的值类型；O55 是决定 62 的规则记录，R60 是它的机械判断。字段里的小元组不另计对象。
 
 权威顺序：HANDOFF 决定（本次最新为 49）→ 已定产品行为/冻结原型 → DESIGN 正文 → 历史 QUESTIONS、D-PLACEMENT。决定 41 授权做模型，不批准 §9.1 的提议。§9.2 的技术提议没有 §9.1 编号，保留原标签，不能编造编号。
 
@@ -113,12 +113,13 @@ type Provenance = { kind: 'new'|'continuation'|'handoff'|'copy'; from: string|nu
 标识：id；派生值只在这次读取里确定，不额外持久化。
 
 ```typescript
-type ProjectSettings = { id: string; scope: Scope; version: number; replyMs: number; longTokens: number; compactTokens: number; archiveMs: number; autoCap: number; pageSize: number; lineLimit: number; contextBytes: number; noteReadFiles: number; compactKeep: number; wakeLimit: number };
+type ProjectSettings = { id: string; scope: Scope; version: number; replyMs: number; longTokens: number; compactTokens: number; archiveMs: number; autoCap: number; pageSize: number; lineLimit: number; contextBytes: number; noteReadFiles: number; compactKeep: number; wakeLimit: number; roleCaps: { secretary: {running:number; open:number}; adviser: {running:number; open:number}; scribe: {running:number; open:number}; executor: {running:number; open:number} } };
 ```
 
 写入者与时机：Host 设置入口。
 
 不变量：换手 longTokens 与压缩触发条件分开配置，先压缩，失败或不支持沿换手规则；本类型暂列数值表示，压缩条件与阈值在 K2 冻结前核定。数字初值及新记忆上限统一见 DESIGN §9.3，未实测。
+【已定（决定 62 · 62-2）】 roleCaps 每个角色两个上限：running（同一时刻在跑模型的线）和 open（没归档的线，含待命）。初值：秘书 4/8、参谋 4/8、书记 2/4、执行者 8/16（没实测，可改）；60-8 的单个上限由 62-2 改成这两个。只有你能改两个上限，记下谁、什么时候、从几改到几；调低到现有条数以下不强制归档，只是不再加；到 running 上限后来的线排队等，不拒绝、不出卡；到 open 上限你手动开时提示并给“调高上限并开线”，平台自动加时出一张卡（同角色、同上限值只一张）。
 
 ### O07 WorkspaceSettings
 
@@ -155,12 +156,13 @@ type SessionOperation = { id: string; scope: Scope; version: number; plannedSess
 标识：id；派生值只在这次读取里确定，不额外持久化。
 
 ```typescript
-type Session = { id: string; scope: Scope; version: number; role: Role; lifecycle: 'active'|'archived'; health: 'available'|'recoverable'|'unavailable'; healthReason: 'missing'|'damaged'|'kernel_turn_open'|null; occupancy: string|null; origin: Provenance|null; createdAt: number; archivedAt: number|null; lastActiveAt: number; historyEnd: number|null; kernelId: string|null };
+type Session = { id: string; scope: Scope; version: number; role: Role; lifecycle: 'active'|'archived'; health: 'available'|'recoverable'|'unavailable'; healthReason: 'missing'|'damaged'|'kernel_turn_open'|null; occupancy: string|null; origin: Provenance|null; createdAt: number; archivedAt: number|null; lastActiveAt: number; historyEnd: number|null; kernelId: string|null; createdBy: string|null };
 ```
 
 写入者与时机：sessions 保存来历、健康、归档；Runtime 提交已观察事实。
 
 不变量：归档和退役是两个维度。来历 null 是旧数据问题 AMB-1。退役不能重新启用。
+【已定（决定 60 · 60-6）】 createdBy 是“建它的是谁”的正式关系，不只是历史：成员可以直接给建它的人发消息；成员的上报，建它的人另收一份“请知悉”（和负责人是同一个时不重复）；图上一时找不到负责人时，上报先交给建它的人；建它的那条线换手了，跟到接任者；归档了，这条联系失效，只留在历史里。
 
 ### O10 Responsibility
 
@@ -175,6 +177,7 @@ type Responsibility = { id: string; scope: Scope; version: number; sessionId: st
 写入者与时机：sessions 按 Workflow 的处置提交。
 
 不变量：同次转移关闭旧关系、打开新关系。任务终结后结束关系，不删除事实。
+【已定（决定 60 · 60-5）】 target 除任务、工作上下文、模块外，新增“负责目标”（可指向 goal，Ref.kind 已含 goal）；目标参谋默认负责一个或几个目标，区域参谋负责一块模块区域，每个范围只有一个负责人，重叠只提示。
 
 ### O11 RunFact
 
@@ -437,7 +440,7 @@ type Card = { id: string; scope: Scope; goalId: string|null; source: 'message'|'
 标识：id；派生值只在这次读取里确定，不额外持久化。
 
 ```typescript
-type Queue = { id: string; scope: Scope; decision: Card[]; notice: Card[]; cursor: string|null; watermark: number; counts: {decision:number;notice:number} };
+type Queue = { id: string; scope: Scope; decision: Card[]; notice: Card[]; cursor: string|null; watermark: number; counts: {decision:number;notice:number}; goalAdviserQueue: {id:string;goalId:string;position:number;screening:string|null;adviserId:string|null}[] };
 ```
 
 写入者与时机：views 按索引分页。
@@ -445,6 +448,7 @@ type Queue = { id: string; scope: Scope; decision: Card[]; notice: Card[]; curso
 不变量：读队列不调用模型。不把通知当行动授权。
 
 【已定（决定 49）】 相关决定和未解决来源用窄索引完整分页，待答和待落实不按年龄丢弃；请知悉按类别已见位置推进，后来未送达用进入该状态的新位置。局部结果、错误都不能当完整空结果。
+【已定（决定 62 · 62-1）】 保留上限已满、每个参谋都已负责 3 个目标时，新目标进“等参谋”队列（goalAdviserQueue），目标栏显示“排队等参谋 · 第 n 位”；目标照建，不拦。秘书起草目标卡时顺带写初筛（涉及哪块、大概多大、和哪些目标冲突或依赖、急不急、建议排位）；没有初筛按时间先后。你能看队列、拖动改顺序、提到队首，也可以直接把排队目标指给某个参谋（你的动作，直接生效，可超过 3 个）。有参谋空出来时平台按 60-3 把队首目标分过去。60-8 原文“先交给最闲的参谋兼管”由 62-1 改成排队。goalAdviserQueue 是项目级记录，显示在目标栏；放在这里只为和队列一起读，不是“需要你决定”里的一项。
 
 ### O30 MainSurface
 
@@ -467,7 +471,7 @@ type MainSurface = { id: string; scope: Scope; selectedGoalId: string|null; requ
 标识：id；派生值只在这次读取里确定，不额外持久化。
 
 ```typescript
-type Line = { id: string; scope: Scope; headId: string; sessionIds: string[]; copyIds: string[]; handoffFrom: string|null; omitted: number; name: string; role: Role; status: LineStatus; taskIds: string[]; moduleIds: string[] };
+type Line = { id: string; scope: Scope; headId: string; sessionIds: string[]; copyIds: string[]; handoffFrom: string|null; omitted: number; name: string; role: Role; status: LineStatus; taskIds: string[]; moduleIds: string[]; scopes: { kind: 'project'|'goal'|'region'; ref: Ref|null }[] };
 ```
 
 写入者与时机：views 沿 continuation 算。
@@ -475,6 +479,7 @@ type Line = { id: string; scope: Scope; headId: string; sessionIds: string[]; co
 不变量：id 是线头 Session 引用，不存稳定成员编号。handoff 新线；copy 画在原线。
 
 【已定（决定 49）】 执行者用当前/最近任务，多项显示首项等 n 项，悬停列全；秘书用最近请求的目标或短话题。成员查找沿图锚点和参与、负责事实，不凭名字猜身份。
+【已定（决定 60 · 60-5）】 角色线带范围：整个项目 / 某个目标 / 某块模块区域（scopes；参谋可以同时负责几个目标；scopes 为空就是“待命”）。目标参谋默认按目标，区域参谋按模块区域，书记按目标或模块区域；每个范围只有一个负责人，重叠只提示。
 
 ### O32 LineStatus
 
@@ -506,12 +511,12 @@ type LineCounts = { id: string; working: number; standby: number; archived: numb
 
 ### O34 Note
 
-类型：record。片：4。依据：DESIGN §3.3–3.7 / L555–631。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。
+类型：record。片：4。依据：DESIGN §3.3–3.7 / L555–631。状态：【已定（决定 49）】（行为）；接口表示见第 4 片规格 §2（2026-10-15）。
 
 标识：id；派生值只在这次读取里确定，不额外持久化。
 
 ```typescript
-type Note = { id: string; scope: Scope; version: number; anchor: Anchor; extraAnchors: Anchor[]; kind: 'note'|'understanding'|'repair'; topic: string; conclusion: string; body: string; facts: Source[]; basis: {plan:number;catalog:number;files:{path:string;digest:string}[]}; source: Actor; goalId: string|null; runId: string|null; state: 'staged'|'accepted'|'reviewed'|'pending_review'|'rejected'|'superseded'|'withdrawn'; structural: boolean; contradicts: string[]; replaces: string[]; createdAt: number };
+type Note = { id: string; scope: Scope; version: number; anchor: Anchor; extraAnchors: Anchor[]; kind: 'convention'|'pitfall'|'tradeoff'|'open_question'|'preference'|'decision'|'understanding'|'repair'; topic: string; topicKey: string; conclusion: string; body: string; sections?: {status:string;decided:string;open:string;next:string;risks:string}; facts: Source[]; basis: {plan:number;catalog:number;files:{path:string;digest:string}[]}; source: Actor; goalId: string|null; runId: string|null; state: 'staged'|'accepted'|'reviewed'|'pending_review'|'rejected'|'superseded'|'withdrawn'; structural: boolean; contradicts: string[]; replaces: string[]; coexistWith: string[]; createdAt: number };
 ```
 
 写入者与时机：notes 唯一写入口；agent 顺手写；书记审；用户编辑撤下。
@@ -520,11 +525,13 @@ type Note = { id: string; scope: Scope; version: number; anchor: Anchor; extraAn
 
 【已定（决定 49）】 不加字段：A 沿用现有 anchor/extraAnchors、facts、replaces、contradicts，像 AST 一样严格定型、校验，工具在读时可无损推导关系视图。B（独立关系记录）是实测证明 A 不够后的升级路径；有实测需要可先加可重建反向索引，本次不加关系记录或邻接索引。
 
+【已定（决定 59）】 kind 是一个字段八个值：六个一般注记（convention、pitfall、tradeoff、open_question、preference、decision）加 understanding、repair；当前理解用固定的五段 sections（平台渲染成 body）；话题按 topicKey 比较。coexistWith 是写入证据，存在头上和每个版本，不是独立的关系记录，也不是 O34 的关系字段；O34 的关系字段仍只有 replaces、contradicts。
+
 【已定（决定 49）】 结论最多 200 Unicode 码点，不另限更窄字节数；正文 3072、当前理解正文 6144 UTF-8 字节，事实 16、依据文件 32 分开计。一个主锚点、附加最多 4；每锚点暂用 5 条收下项，目标/阶段各 1 条理解，每目标 200 条活动注记，未实测初值见 DESIGN §9.3。
 
 ### O35 CurrentPointer
 
-类型：record。片：4。依据：DESIGN §3.3 / L571；§3.6 / L618。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。
+类型：record。片：4。依据：DESIGN §3.3 / L571；§3.6 / L618。状态：【已定（决定 49）】（行为）；接口表示见第 4 片规格 §2（2026-10-15）。
 
 标识：id；派生值只在这次读取里确定，不额外持久化。
 
@@ -538,7 +545,7 @@ type CurrentPointer = { id: string; scope: Scope; version: number; anchor: Ancho
 
 ### O36 NoteView
 
-类型：derived。片：4。依据：DESIGN §3.3、3.5、3.7 / L566–570、591、628–631。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。
+类型：derived。片：4。依据：DESIGN §3.3、3.5、3.7 / L566–570、591、628–631。状态：【已定（决定 49）】（行为）；接口表示见第 4 片规格 §2（2026-10-15）。
 
 标识：id；派生值只在这次读取里确定，不额外持久化。
 
@@ -552,17 +559,17 @@ type NoteView = { id: string; stored: Note; usable: boolean; reviewNeeded: boole
 
 ### O37 Anchor
 
-类型：value。片：4。依据：DESIGN §3.4 / L578–587。状态：【已定（决定 49）】（行为）；具体接口表示仍待冻结。
+类型：value。片：4。依据：DESIGN §3.4 / L578–587。状态：【已定（决定 49）】（行为）；接口表示见第 4 片规格 §2（2026-10-15）。
 
 标识：kind/id。
 
 ```typescript
-type Anchor = { kind: 'module'|'interface'|'file'|'goal'|'stage'|'task'|'project'; id: string };
+type Anchor = { kind: 'module'|'interface'|'file'|'goal'|'stage'|'task'|'project'; id: string; deleted?: true };
 ```
 
 写入者与时机：平台由节点位置补齐。
 
-不变量：理解挂 goal/stage；文件用规范路径及模块归属，符号用文件下带语言、限定名、签名摘要、捕获位置和来源版本的定位，改名须明确映射，不新增 symbol 锚点或永久身份。主、附加锚点都进入原锚点索引。
+不变量：理解挂 goal/stage；文件用规范路径及模块归属，文件必须存在，除非带 deleted: true（这时路径必须不存在）；符号用文件下带语言、限定名、签名摘要、捕获位置和来源版本的定位，改名须明确映射，不新增 symbol 锚点或永久身份。主、附加锚点都进入原锚点索引。
 
 ### O38 InputRequirement
 
@@ -803,6 +810,20 @@ type DispatchReceipt = { id:string; messageId:string; fingerprint:string };
 写入者与时机：可信记录存储回执。
 
 不变量：同内容成功重试先回既有回执，再谈新请求版本核对，不能重复发消息或增加序号。
+
+### O55 Rule
+
+类型：record。片：7。依据：DESIGN §1.3；决定 62 · 62-4。状态：【已定（决定 62 · 62-4）】。
+
+标识：id；派生值只在这次读取里确定，不额外持久化。
+
+```typescript
+type Rule = { id: string; scope: Scope; version: number; actions: GateAction[]; scopeGoals: string[]; scopeModules: string[]; limit: number|null; expiresAt: number|null; approvedBy: string; createdAt: number; revokedAt: number|null };
+```
+
+写入者与时机：用户答完一张卡后确认存下，或用户在设置页改；平台不自己发明规则。
+
+不变量：规则是固定格式（动作类型、范围、额度、有效期、谁批的），不收一句话的规则；子 agent 只能用到它上级拿到的一部分。只有你能看全部规则、撤销、改有效期；撤销对已经做了的事不追溯。复用自治表、决定卡、答复和落实、请知悉、唯一占位；要扩的两处是没有目标的卡和请知悉（今天两者都必须带目标），以及规则本身的记录。
 
 ## 行为总约定
 
@@ -1758,7 +1779,7 @@ type DispatchReceipt = { id:string; messageId:string; fingerprint:string };
 {mode:'look'|'find';needle:string;nodes:{id:string;name:string;path:string;summary:string;noteBody:string}[];historyRequested:boolean;scope:Scope}
 ```
 
-前置、效果与拒绝：图分支保留原 look/find 行为；第 4 片 look.memory 含 lookup/neighbors/history/conflicts，find.memory 含 find/stale，不增六个公开工具。无模型、确定过滤分页；RecordStore 文本窄端口两后端一致，内存子串扫描、SQLite FTS5 中文预切 2 字片段，回正式注记复核状态/权限/来源，跨页依据变更重读。
+前置、效果与拒绝：图分支保留原 look/find 的形状与分派，但“找”的匹配两边不分大小写、模块路径按最长前缀归属（改第 3 片的行为，决定 59）；第 4 片 look.memory 含 lookup/neighbors/history/conflicts，find.memory 含 find/stale，不增六个公开工具。无模型、确定过滤分页；RecordStore 文本窄端口两后端一致，内存子串扫描、SQLite FTS5 中文预切 2 字片段，回正式注记复核状态/权限/来源，跨页依据变更重读；`match` 默认 `'any'`，按确定打分排序（决定 59）。
 
 拒绝码：`not_found, forbidden`。所有未列拒绝均保留输入状态。例子和精确正反断言见 SCENARIOS 的 S14。
 
@@ -1912,6 +1933,26 @@ type DispatchReceipt = { id:string; messageId:string; fingerprint:string };
 
 拒绝码：`forbidden, invalid, revision_conflict`。所有未列拒绝均保留输入状态。例子和精确正反断言见 SCENARIOS 的 S08。
 
+### R60 gateRule
+
+依据：DESIGN §1.3；决定 62 · 62-4、62-5、62-6。状态：【已定（决定 62 · 62-4）】。片：7。
+
+触发：收到 `gateRule` 动作或该规则对应的正式观察。执行者：Workflow/工具。
+
+读取：O55、O15、O50。写入：无；只返回派生值或外部动作请求。
+
+输入：
+
+```typescript
+{goalId:string|null;action:GateAction;sessionId:string;commitScope?:{ruleId:string;count?:number}}
+```
+
+前置、效果与拒绝：机械判断，不调模型：在处理这个动作的入口查（今天查自治表的地方，R16）；写入时在同一次提交里再核条数和唯一性。没有规则就照 §1.3 的出厂默认两档。拒绝码：`forbidden, invalid, revision_conflict`。
+
+【已定（决定 62 · 62-6）】 没人答就不做，没有“超时自动放行”；只有你事先存的规则能放行；新存的规则不放行已经在等的卡（照决定 42：旧答复不批变化后的对象）。
+【已定（决定 62 · 62-5）】 等待只挡那一支：工具调用不挂起等你，范围内当场做完；越界当场写卡并返回“已出卡，等你答”，agent 接着做别的；只有这个动作和依赖它的事等着（例如要开的线不开、要派给它的任务留在队列里），同目标里别的任务、别的目标照常推进。
+【已定（决定 62 · 62-7）】 暂不做每天花费额度（`exceed_budget` 只是动作名，先用 62-2 的两个上限当边界）；暂不加审查模型，留位置，只用在规则判不了的灰色地带，永远不替你答“永远找你”那些。
+
 ## 跨对象不变量
 
 I01。每个正式引用含 projectId、workspaceId 和固定版本；跨 scope 动作拒绝。
@@ -1953,6 +1994,8 @@ I18。【已定（决定 49）】记忆不授权、不改执行状态；撤下�
 I19。所有只读规则返回不变状态；拒绝也不写，唯明确的 staged归档 partial 分支例外。
 
 I20。K/K2不能声称恢复原Run；K2不删原历史、不换Session、不算MVP门槛。
+
+I21。【已定（决定 60 · 60-7）】删、拆、合、改名模块要求该模块上每条开着的负责关系写明去向（新模块或待命）；平台从不猜接替；没写去向的修订被退回，原因“负责关系没有去向”；同一种职责在一个模块上至多一个负责人（模块维护者和区域参谋、区域书记分开算）；去向模块必须在新架构里存在。
 
 ## 技术推断与边界
 

@@ -3,6 +3,7 @@
 **方案已定（决定 49）；第 4 片的规格输入，接口待 lead 冻结。**
 2026-10-10 按审阅修订：标明现状 / 待实现，与设计书的一致或冲突
 2026-10-10 晚：用户已定 Q1、Q2、Q7、Q8、Q9 都选 A，见 [HANDOFF 决定 49](../../HANDOFF.md)；有出入以决定 49 为准。
+2026-10-15：决定 59 定了注记格式、查找和校验；新线标【已定（决定 59）】，接口表示见第 4 片规格 §2。
 
 源码基线 13d5616a（起草时是 11b3f3f2；两次提交之间 src/ 没有变化，只改了文档）。已核对 `git diff --stat 11b3f3f2 13d5616a -- src` 为空。
 决定 49 已定 Q1、Q2、Q7、Q8、Q9 都选 A，相关规则标【已定（决定 49）】；仍标【提议】的是待 lead 核定的接口细节或可选补充，不重新打开已定选择。【待实现（第 N 片）】只说明施工归属，不表示已冻结或完成。本文由 lead 审核。下文 DESIGN.md、model/MODEL.md 均相对本目录；其他路径相对仓库根，冒号后为起草时的行号或源码符号。旧行号只作追溯；现行设计读 [DESIGN](DESIGN.md)，实施状态读 [STATUS](../../STATUS.md)。
@@ -31,7 +32,7 @@
 | 请求 | 【提议】【没实测的数字】暖缓存 p95 | 【提议】【没实测的数字】工作量 |
 | --- | --- | --- |
 | 按锚点、路径、状态查第一页 | ≤50 ms | 默认 20、最多 100 条，不读原历史正文 |
-| 注记全文查找 | ≤150 ms | 最多 8 个词、100 条，不调相关性排名 |
+| 注记全文查找 | ≤150 ms | 最多 8 个词、100 条，默认 `match: 'any'`、按 L10 的确定打分粗排，不调模型（决定 59） |
 | 关系引用、历史、冲突第一页 | ≤100 ms | 每次最多检查 1,000 个候选引用 |
 | 当前性核对 | ≤250 ms | 每项最多 32 个文件，每次 256 个不同文件、合计 8 MiB |
 
@@ -74,7 +75,7 @@
 | loadUniverse、findGraph | 先读该 Goal 的当前图及相关事实，再过滤；不搜注记正文、消息正文、原历史或符号。没有全文、分词、相关性排名。 |
 | parsePage、basisKeyOf | 有分页和依据检查；现有依据没有纳入未接线的注记版本，不能直接当作记忆分页契约。 |
 
-【已定（决定 49 · Q2）】【待实现（第 4 片）】保留这些 v1 行为，在“看/找”中加明确的 memory 分支。全文是第 4 片新增的检索能力；现有“找”不搜注记文字是实际缺口，不能把名称查找写成全文已做。
+【已定（决定 49 · Q2）】【待实现（第 4 片）】保留这些 v1 行为，在“看/找”中加明确的 memory 分支。全文是第 4 片新增的检索能力；现有“找”不搜注记文字是实际缺口，不能把名称查找写成全文已做。全文默认 `match: 'any'`，按 L10 的确定打分排序，匹配集合超过核对上限时只报部分排序；写入时给最多 3 条相近注记的提示（只提示不拦）；图分支的名字、路径、说明匹配改成两边不分大小写，模块路径按最长前缀归属（改第 3 片的行为）。【已定（决定 59）】
 
 ### 2.2 上下文与尚缺的部分
 
@@ -104,7 +105,7 @@
 
 ### 3.2 注记、状态与谁能改
 
-【已定（决定 49）】【待实现（第 4 片）】数据以 O34 为准：anchor/extraAnchors、kind/topic、conclusion/body、facts/basis/source、goalId/runId、state、replaces/contradicts，不再加 tags、关系记录或平行 topicId（model/MODEL.md:499–511）。正文解释适用条件和理由，指针保留依据；版本保留方式还须在第 4 片落实为 notes 契约，不能把 RecordStore 的 revision 数字当作已有的通用历史查询。
+【已定（决定 49）】【待实现（第 4 片）】数据以 O34 为准：anchor/extraAnchors、kind/topic、conclusion/body、facts/basis/source、goalId/runId、state、replaces/contradicts，不再加 tags、关系记录或平行 topicId（model/MODEL.md:499–511）。正文解释适用条件和理由，指针保留依据；版本保留方式还须在第 4 片落实为 notes 契约，不能把 RecordStore 的 revision 数字当作已有的通用历史查询。【已定（决定 59）】kind 一个字段八个值（六个一般注记加当前理解、修补）；话题另存 topicKey；当前理解用固定五段 sections；文件锚点可带 `deleted: true`；coexistWith 是头和版本的写入证据，不是独立关系记录。
 
 | O34 存储状态 | 含义与处理（决定 49；具体状态行待冻结） |
 | --- | --- |
@@ -120,7 +121,7 @@
 
 【已定（决定 49）】【待实现（第 4 片）】CurrentPointer 与新理解同次提交，写入带读过的指针版本；竞写失败重读合并。读取不等写者，只返回已提交版；撤下后显示“当前理解不可用”，不自动回退。前两项与 DESIGN.md:632、679、model/MODEL.md:520–525 一致；撤下不回退已按决定 49 第 05 项写入 DESIGN §3.6。
 
-【提议】【待实现（第 4 片）】读取派生 freshness=fresh/stale/unchecked/source_unavailable、conflicting、invalid、updateDue，不存成 note.state。这里的 **invalid 是 O36 的“作废”**：暂存修补所属执行的任务已取消或被替代（DESIGN.md:630；model/MODEL.md:534），不是第八种存储状态。接口另有 code=invalid 的输入拒绝，含义是返回拒绝、不写 note；两者不可混用。
+【提议】【待实现（第 4 片）】读取派生 freshness=fresh/stale/unchecked/source_unavailable、conflicting、invalid、updateDue，不存成 note.state。这里的 **invalid 是 O36 的“作废”**：暂存修补所属执行的任务已取消或被替代（DESIGN.md:630；model/MODEL.md:534），不是第八种存储状态。接口另有 code=invalid 的输入拒绝，含义是返回拒绝、不写 note；两者不可混用。【已定（决定 59）】读时另算 anchorStatus=live/retired、anchorRetiredReasons（module_removed、interface_removed、file_deleted、task_ended、stage_not_in_current_plan、symbol_missing）；主锚点 retired 时 currentEligible 为 false，历史照读。
 
 【已定（决定 49）】【待实现（第 4 片）】currentEligible 仅取 accepted/reviewed，范围可见、选择有效、fresh，且非 conflicting/invalid。accepted 限本目标，跨目标仅 reviewed；updateDue 提醒补理解，stale 则不能当现行结论。范围和失效与 DESIGN.md:625、652、682、686–692 一致；过滤规则已写入 DESIGN §3.6，具体 notes/views 接口在第 4 片冻结。
 
@@ -152,11 +153,11 @@
 
 | 项目 | 已定规则与待冻结细节（均待第 4 片实现） |
 | --- | --- |
-| 词表与别名 | 继续用 kind/topic，不加多值 tags。受控别名和版本化词表只是可选补充，不自动引入登记服务；超出 DESIGN.md:619–620、model/MODEL.md:506，采用前要定配置归属和维护者，未采用就只查原词。 |
+| 词表与别名 | 继续用 kind/topic，不加多值 tags。受控别名和版本化词表仍只是可选补充、未采用，不自动引入登记服务；采用前要定配置归属和维护者，未采用就只查原词。词语共现统计（把常一起出现的词联系起来）等真实注记量过以后再做，本片只做字面子串和排序；话题按 topicKey 比较（NFC、ASCII 小写、空白折一个）。【已定（决定 59）】超出 DESIGN.md:619–620、model/MODEL.md:506。 |
 | 路径与符号 | 工作区相对路径，拒绝越界；大小写按工作区规则。同名符号列候选，解析失败退到文件并标未知。文件下的版本化定位已由决定 49 的 Q7(A) 定下，具体定位契约待第 4 片冻结。 |
 | 结论 | 【没实测的数字】结论 ≤200 个字符（按 Unicode 码点算；200 个码点在 UTF-8 下最多 800 字节，所以不另设字节上限）。把 DESIGN.md:621 的“约 200 字”明确为统一校验规则，与答复页 06 一致。 |
 | 正文和数量 | 【没实测的数字】正文 ≤3,072 字节、当前理解 ≤6,144 字节；16 个事实指针、32 个依据文件、1+4 个归属。决定 49 已采用这些初值，并写入 DESIGN §3.3、§9.3，仍待实测。 |
-| 活跃额度 | 【没实测的数字】每锚点 5 条收下的注记，目标、阶段各另有 1 条当前理解；每目标 200 条活跃注记。历史、拒绝、撤下不占；超额交书记，不静默淘汰。这些初值已按决定 49 进入 DESIGN §9.3“没实测的数字”表。 |
+| 活跃额度 | 【没实测的数字】每锚点 5 条收下的注记，目标、阶段各另有 1 条当前理解；每目标 200 条活跃注记。历史、拒绝、撤下不占；超额交书记，不静默淘汰。这些初值已按决定 49 进入 DESIGN §9.3“没实测的数字”表。额度是软上限（第 4 片规格 L7，lead 定）：写入用投影计数核对，满了不拒绝、进待审（你写的不进，直接收下并报 overQuota），读时如实报超额度。 |
 | 写入拒绝 | 不存在/越权锚点、假身份、无固定来源、超长、错误版本、未共享锚点的取代/冲突均返回拒绝，保留草稿，不截断保存。前几项沿 DESIGN.md:671–679，共享锚点规则已由决定 49 采用；第 4 片落实 notes 校验。 |
 
 ## 4. 索引与查找工具
@@ -172,9 +173,9 @@
 | 分类/多值标签 | 删除；O34 只有 kind/topic（model/MODEL.md:506），不加 tags 或数组展开索引。 |
 | 时间/版本 | 删除；按锚点所得条目按版本和提交序号整理，详情历史按第 4 片的 note 固定版本读。 |
 | 关系邻接/失效依赖 | 删除；取代与冲突用共享锚点规则反查；需复查按读时核对（DESIGN.md:689），该更新了同样不存（L652）。 |
-| 全文 | 唯一保留的新增类：已列为附录 C **第 15 个索引**，第 4 片做；索引注记 conclusion/body/topic，端口和两个后端一起改。 |
+| 全文 | 唯一保留的新增类：已列为附录 C **第 15 个索引**，第 4 片做；索引注记 conclusion/body/topic，默认 `match: 'any'`、按 L10 的确定打分排序，端口和两个后端一起改（决定 59）。 |
 
-【现状】src/core/record-store/lookup-ports.ts:RecordLookupPort 没有文本搜索；两个后端见 §2。【已定（决定 49 · Q1、Q9）】【待实现（第 4 片）】给 RecordStore 窄端口加**一个文本查找操作**：内存后端按相同规范做子串扫描；SQLite 后端用 FTS5 加 2-gram 预处理及命中校验。两个后端给出相同文本候选语义和顺序；WorkGraph 统一复核权限、正式状态和可用性，RecordStore 不承担业务授权。这确实改动共享基础层，不是填 notes 的预留数组；需要后端一致性验证，内存扫描也不承诺索引性能。
+【现状】src/core/record-store/lookup-ports.ts:RecordLookupPort 没有文本搜索；两个后端见 §2。【已定（决定 49 · Q1、Q9）】【待实现（第 4 片）】给 RecordStore 窄端口加**一个文本查找操作**：内存后端按相同规范做子串扫描；SQLite 后端用 FTS5 加 2-gram 预处理及命中校验。两个后端给出相同文本候选语义和顺序；WorkGraph 统一复核权限、正式状态和可用性，RecordStore 不承担业务授权。这确实改动共享基础层，不是填 notes 的预留数组；需要后端一致性验证，内存扫描也不承诺索引性能。全文默认 `match: 'any'`，按 L10 的确定打分排序，匹配集合超过核对上限时只报部分排序。【已定（决定 59）】
 
 **lead 提供的环境实测（本次没有复测）：**
 lead 2026-10-10 在 WSL（Node v24.18.0）的 node:sqlite 实测：FTS5 可用；trigram 分词能查到 ≥3 个字的中文（如“架构图”）和代码路径（如“graph-context”）；2 个字的中文（如“锚点”）用 trigram 和 unicode61 都查不到，LIKE 能查到。所以中文要先切成 2 字片段再建索引。
@@ -191,14 +192,16 @@ lead 2026-10-10 在 WSL（Node v24.18.0）的 node:sqlite 实测：FTS5 可用�
 
 | 操作 | 【提议】输入、结果及边界 |
 | --- | --- |
-| memory_lookup | anchor、kind/topic、current/history → 当前指针和直挂注记；主、附加锚点合并去重。 |
-| memory_find | keywords、anchor/path、kind/topic、state → 命中项、片段、matchedBy。全文已由决定 49 的 Q1(A) 定为第 4 片做；不提供 tags/recent 排序选项。 |
+| memory_lookup | anchor、kind/topic（按 topicKey）、current/history → 当前指针（understanding）和直挂注记，加这个锚点的话题清单；主、附加锚点合并去重。 |
+| memory_find | terms、match（默认 'any'，'all' 照旧）、anchor/path、kind（可给 'general'）、topic（按 topicKey）、state → 命中项、matchedTerms、score、ranking；`match:'any'` 按 L10 的确定打分排序，匹配集合超过核对上限时只报部分排序、complete=false。全文已由决定 49 的 Q1(A) 定为第 4 片做；不提供 tags/recent 排序选项。写入时给最多 3 条相近注记的提示。【已定（决定 59）】 |
 | memory_neighbors | note/anchor、关系字段、方向 → 从 O34 引用和同锚点候选读邻项，不做全项目任意多跳遍历，不建邻接索引。 |
 | memory_history | noteId、可选 version → 正文版本、审查、取代、撤下经过；读取第 4 片保存的 note 版本及处置依据，不新建时间/版本索引。 |
 | memory_conflicts | noteId/anchor → contradicts 双方、版本、状态、来源及取代/决定引用；无结果只表示没有已登记冲突。 |
 | memory_stale | goal/anchor 范围 → 分批核对候选的需复查、未核对、来源不可用项及原因；不依赖持久 stale 表。 |
 
-【提议】【待实现（第 4 片）】共同返回 readBasis、items、warnings、nextCursor、complete、coverage；每项带 id/version、锚点、kind/topic、结论、storedState、freshness、currentEligible、来源和关系字段。current 默认只给有效结论，同时给失效提示入口；历史和核对视图可返回不可用项，但不得去掉状态。采用后补 DESIGN.md:665、689–692 对应读取规格。
+【提议】【待实现（第 4 片）】共同返回 readBasis、items、warnings、nextCursor、complete、coverage；每项带 id/version、锚点、kind/topic/topicKey、结论、storedState、freshness、currentEligible、来源和关系字段；`find` 另带 matchedTerms、score，每项带 anchorStatus/anchorRetiredReasons（决定 59）。current 默认只给有效结论，同时给失效提示入口；历史和核对视图可返回不可用项，但不得去掉状态。采用后补 DESIGN.md:665、689–692 对应读取规格。
+
+【已定（决定 59）】`lookup`、`conflicts`、`find` 带锚点时，“锚点不存在”回 `not_found`（带 anchorCandidates）、“锚点存在但没有注记”回空 `items` 且 `complete: true`，两者分开报。六种读和写入提交后的核对走同一个 `NoteCheckPort.checkNotes` 实现：读时每条都核，写后核新的一条（事实指针、依据文件、锚点状态、可疑提示、相近注记）；只读，不写不存。
 
 【提议】【待实现（第 4 片）】【没实测的数字】默认 20 条、最多 100 条，完整 JSON ≤48 KiB；正文默认 2 KiB、最多 4 KiB，按 UTF-8 字符边界分页；当前性扫描默认 200、最多 1,000 个候选；词最短 2 个汉字或字母/数字。数字已登记在 DESIGN §9.3，仍须验证，不把测试上限当作已满足的容量。
 
@@ -212,9 +215,9 @@ lead 2026-10-10 在 WSL（Node v24.18.0）的 node:sqlite 实测：FTS5 可用�
 
 ## 5. 规范与工具选取
 
-【提议】【待实现（第 4 片）】优先复用现有源码定位工具，记忆工具负责有效性、来源和固定引用；全文只补文字命中。现有语言查询及覆盖说明在 src/core/workspace/ports.ts:SourceQuery、SourceCoverage；不为记忆再造永久符号系统。它延续 DESIGN.md:643、689 的文件定位，符号扩展见 Q7。
+【提议】【待实现（第 4 片）】优先复用现有源码定位工具，记忆工具负责有效性、来源和固定引用；全文只补文字命中，默认 `match: 'any'`、按 L10 的确定打分排序（决定 59）。现有语言查询及覆盖说明在 src/core/workspace/ports.ts:SourceQuery、SourceCoverage；不为记忆再造永久符号系统。它延续 DESIGN.md:643、689 的文件定位，符号扩展见 Q7。
 
-【已定（决定 49）】【待实现（第 4 片）】核心检索不使用模型、embedding 或查询改写器，接受近义词、跨语言问法的召回损失。受控别名只有明确采用、定好维护规则后才加入；不声称确定规则能识别所有语义冲突。它细化 DESIGN.md:592 的工具分工，超出原书的别名部分仍需定范围。
+【已定（决定 49）】【待实现（第 4 片）】核心检索不使用模型、embedding 或查询改写器，接受近义词、跨语言问法的召回损失。受控别名只有明确采用、定好维护规则后才加入；不声称确定规则能识别所有语义冲突。它细化 DESIGN.md:592 的工具分工，超出原书的别名部分仍需定范围。决定 59 只加字面子串和确定打分排序，不改这一点。
 
 ### 5.1 和设计书的关系、采用要改什么
 
@@ -226,7 +229,7 @@ lead 2026-10-10 在 WSL（Node v24.18.0）的 node:sqlite 实测：FTS5 可用�
 | 分类/多值标签索引 | DESIGN.md:633；model/MODEL.md:506 | 初稿超出，删除后一致 | 【待实现（第 4 片）】既定注记索引 | 不做 tags，只用 kind/topic |
 | 时间/版本索引 | DESIGN.md:633、1538–1552 | 初稿超出，删除后一致 | 【待实现（第 4 片）】 | 锚点结果排序；notes 落实固定版本保存/读取 |
 | 关系邻接/失效依赖索引 | DESIGN.md:652、689、1538–1552 | 初稿超出，删除后一致 | 【待实现（第 4 片）】 | 同锚点反查，失效读时算 |
-| 全文索引 | DESIGN.md:1034、1538–1552 | 【已定（决定 49 · Q1、Q9）】提前到第 4 片，设计已同步 | 【现状】src/core/work-graph/views/graph-context-reader.ts:findGraph 不搜注记；【待实现（第 4 片）】 | 附录 C 已加第 15 索引；第 4 片改 RecordStore 及两个后端 |
+| 全文索引 | DESIGN.md:1034、1538–1552 | 【已定（决定 49 · Q1、Q9）】提前到第 4 片，设计已同步；【已定（决定 59）】默认 `match: 'any'`、按确定打分排序 | 【现状】src/core/work-graph/views/graph-context-reader.ts:findGraph 不搜注记；【待实现（第 4 片）】 | 附录 C 已加第 15 索引；第 4 片改 RecordStore 及两个后端，两后端排序一致 |
 | views→notes，evidence→notes | DESIGN.md:1153–1154；docs/refactor/reviews/evidence/workgraph-split-2026-10-07/target.json:19 | 一致，不是新取舍 | 【待实现（第 4 片）】 | 首个 notes 文件落地时登记模块和依赖 |
 | readBasis/sourceObservation | DESIGN.md:689–692；model/MODEL.md:534–539 | 超出：观测契约和跨页一致性更具体 | 【现状】src/core/work-graph/views/graph-context-reader.ts:basisKeyOf 只有图依据；【待实现（第 4 片）】 | 扩读取及装配依据，不新增正式观测记录 |
 | 词表/别名 | DESIGN.md:619–620；model/MODEL.md:506 | 超出，仍可选 | 【待实现（第 4 片）】采用后才纳入 | 先定配置归属和维护规则，不顺带加登记服务 |
@@ -243,6 +246,7 @@ lead 2026-10-10 在 WSL（Node v24.18.0）的 node:sqlite 实测：FTS5 可用�
 
 - 【已定（决定 49）】DESIGN 附录 C、§3.3、§3.7 等已同步全文第 15 索引、共享锚点、文字限额和读取规则；第 4 片按这些范围冻结规格。
 - 【已定（决定 49）】MODEL O34 已补 replaces/contradicts 共享锚点规则，不加字段；读取契约另写第 4 片规格。
+- 【已定（决定 59）】DESIGN §3.3、§3.6、§3.7、附录 C 与 MODEL O34–O37 已同步八种种类、topicKey、sections、deleted 和 `find` 排序（决定 59），以及头和版本的存法、软额度（第 4 片规格 L1、L7）；接口表示见第 4 片规格 §2。
 - 【提议】【待实现（第 4 片）】docs/refactor/module-target.json、docs/refactor/module-dag.md：声明 notes、views/evidence 依赖。
 - 【提议】【待实现（第 4 片）】src/core/record-store/lookup-ports.ts（并接到 ports.ts）、in-memory-record-store.ts、sqlite-record-store.ts：一个文本查找操作和两个后端；notes 接可重建全文投影。
 - 【提议】【待实现（第 4 片）】src/core/agent-runtime/context-assembler.ts、graph-tools.ts，src/contracts/graph-context.ts 及 WorkGraph 的 notes、state、views：存取、过滤、memory 分支、装配拆分；词表/符号只做已选范围。
