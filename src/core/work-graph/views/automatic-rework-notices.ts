@@ -25,7 +25,7 @@ import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { ReadResult } from '../../../contracts/core/results.js';
 import type { TaskRequeueSnapshotV1 } from '../../../contracts/task-requeue.js';
-import type { RoundSnapshot } from '../../../contracts/verification.js';
+import type { RoundSnapshot, VerificationRoundRef } from '../../../contracts/verification.js';
 import type { TaskTriple } from '../../../contracts/dispatch.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { EncodedRecord } from '../../record-store/ports.js';
@@ -235,7 +235,12 @@ async function readAutomaticReworkPage(
       // RECOVERY, summarized with the saved exemption fact, never as a counted
       // "第 0 次" rework.
       const exempt = requeue.automation.automatic && !requeue.automation.counted;
-      items.push({
+      // L16（决定 55）：触发这次返工的那一轮 = 这条重新入队覆盖的轮次（没有就不加这一句）。
+      const triggerCap = requeue.afterRoundRef === null
+        ? { ok: true as const, hit: null }
+        : await triggerRoundCapHit(records, requeue.afterRoundRef);
+      if (!triggerCap.ok) return triggerCap.rejection;
+      items.push(withResourceCapHit({
         itemKey, category: 'automatic_rework',
         goalRef: { aggregateType: 'Goal', projectId: requeue.ref.projectId, goalId: requeue.ref.goalId },
         position: noticePositionOf(since, itemKey, requeue.requestedAt),
@@ -245,7 +250,7 @@ async function readAutomaticReworkPage(
         rework: { operation: 'requeue', actorClass, taskRef: requeue.task,
           count: requeue.automation.autoCount, cap: requeue.automation.cap, reason: requeue.reason,
           sourceRef: requeue.ref },
-      });
+      }, triggerCap.hit));
     }
 
     // ---- reverify: the ordered index names the subject, the chain verifies -
@@ -281,6 +286,15 @@ async function readAutomaticReworkPage(
         }
         const reverify = round.chain?.reverify ?? null;
         if (reverify === null || (reverify.actorClass !== 'system' && reverify.actorClass !== 'agent')) continue;
+        // L16（决定 55）：重新检查那条用轮次链里它接着的那一轮（链读里已有，不再多读）。
+        const predecessorRef = round.chain?.predecessorRoundRef ?? null;
+        if (predecessorRef === null) {
+          return unavailable(`automatic rework reverify ${refKey} has no predecessor round`);
+        }
+        const predecessor = chainRead.byRef.get(canonicalJson(predecessorRef as unknown as JsonValue));
+        if (predecessor === undefined) {
+          return unavailable(`automatic rework predecessor round for ${refKey} is missing from its chain`);
+        }
         const ordinal = round.chain?.ordinal ?? 0;
         const itemKey = `automatic_rework:${String(ordinal).padStart(4, '0')}:${refKey}`;
         const cap = candidate.cap ?? null;
@@ -288,14 +302,14 @@ async function readAutomaticReworkPage(
         const summary = reverify.exemption !== 'none'
           ? `自动恢复 · ${round.subject.taskId}（不计次）`
           : reworkSummary(round.subject, count, cap);
-        items.push({
+        items.push(withResourceCapHit({
           itemKey, category: 'automatic_rework',
           goalRef: { aggregateType: 'Goal', projectId: round.ref.projectId, goalId: round.ref.goalId },
           position: noticePositionOf(candidate.since, itemKey, reverify.requestedAt),
           summary, objects: [],
           rework: { operation: 'reverify', actorClass: reverify.actorClass, taskRef: round.subject,
             count, cap, reason: reverify.reason ?? '', sourceRef: round.ref },
-        });
+        }, firstResourceCapHitOf(predecessor)));
       }
     }
   } catch (error) {
@@ -470,6 +484,47 @@ async function readSubjectChain(
 function requeueActorClass(requeue: TaskRequeueSnapshotV1): 'human' | 'system' | 'agent' {
   if (requeue.requestedBy.kind === 'agent') return 'agent';
   return requeue.automation.automatic ? 'system' : 'human';
+}
+
+/** L16：这一轮里第一项（按 `checkId` 排）带 `resourceCapHit` 的检查；没有就是 `null`。 */
+function firstResourceCapHitOf(round: RoundSnapshot): { memory: 'cap_hit'; memoryCapMiB: number } | null {
+  const hits = round.checks.filter((check) => check.resourceCapHit !== undefined);
+  if (hits.length === 0) return null;
+  hits.sort((left, right) => left.checkId < right.checkId ? -1 : left.checkId > right.checkId ? 1 : 0);
+  return hits[0]!.resourceCapHit!;
+}
+
+/**
+ * L16：重新入队那条按 `TaskRequeue.afterRoundRef` 按键读一次轮次。读失败、记录缺失和
+ * 解码失败都按请知悉现有的读失败处理（`unavailable`），不当成“没有”。
+ */
+async function triggerRoundCapHit(
+  records: DecisionReadRecordsPort,
+  ref: VerificationRoundRef,
+): Promise<{ ok: true; hit: { memory: 'cap_hit'; memoryCapMiB: number } | null }
+  | { ok: false; rejection: { status: 'rejected'; code: 'unavailable'; reason: string } }> {
+  const key = canonicalJson(ref as unknown as JsonValue);
+  const read = await records.readMany([key]);
+  if (read.status !== 'ready') throw read;
+  const record = read.value.records.find((candidate) => candidate.refKey === key);
+  if (record === undefined) {
+    return { ok: false, rejection: unavailable(`automatic rework trigger round ${key} is missing`) };
+  }
+  const decoded = decodeVerificationRoundSnapshot(record);
+  if (decoded.status !== 'decoded') {
+    return { ok: false, rejection: unavailable(`automatic rework trigger round: ${decoded.reason}`) };
+  }
+  return { ok: true, hit: firstResourceCapHitOf(decoded.value) };
+}
+
+/** L16：有命中就在今天那一句后加“检查超出内存上限（当时上限 N MiB）”，并加操作。 */
+function withResourceCapHit(
+  item: NoticeItemV1,
+  hit: { memory: 'cap_hit'; memoryCapMiB: number } | null,
+): NoticeItemV1 {
+  if (hit === null) return item;
+  return { ...item, summary: `${item.summary} · 检查超出内存上限（当时上限 ${String(hit.memoryCapMiB)} MiB）`,
+    actions: [{ kind: 'raise_memory_cap' }] };
 }
 
 function noticePositionOf(since: CommitCursor | null | undefined, itemKey: string, occurredAt: string): NoticeItemV1['position'] {

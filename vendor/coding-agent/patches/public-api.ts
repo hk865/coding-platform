@@ -152,7 +152,13 @@ export {
   DefaultPermissionPolicy,
   normalizeWorkspacePath,
 } from "./policy/permissions/permission-policy.js";
-export { ProcessSandbox, ProcessSandboxError } from "./sandbox/process/process-sandbox.js";
+export {
+  ProcessSandbox,
+  ProcessSandboxError,
+  RESOURCE_CAP_NONE_TEXT,
+  probeResourceCaps,
+  resourceCapStatus,
+} from "./sandbox/process/process-sandbox.js";
 export { WorkspaceSandbox, WorkspaceSandboxError } from "./sandbox/workspace/workspace-sandbox.js";
 export { createEditToolDefinition, EditToolHandler } from "./tools/builtin/edit/edit-tool.js";
 export { createReadToolDefinition, ReadToolHandler } from "./tools/builtin/read/read-tool.js";
@@ -196,6 +202,13 @@ export type {
   RecoveryResult,
 } from "./core/runtime/recovery/recovery-coordinator.js";
 export type { RunLimits } from "./core/runtime/limits/limit-guard.js";
+export type {
+  ResourceCapCapability,
+  ResourceCapRequest,
+  ResourceCapSource,
+  ResourceCapsReport,
+  ResourceCapUnavailableReason,
+} from "./sandbox/process/process-sandbox.js";
 export type { ToolDefinition, ToolEffectClass } from "./tools/schemas/tool-schemas.js";
 
 export * from "./m5-public-api.js";

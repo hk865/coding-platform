@@ -26,6 +26,7 @@
 import type { CoreError, CoreRejection, ReadResult, WriteResult } from '../../contracts/core/results.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { CheckProcessObservation, RoundSnapshot, VerificationRoundRef } from '../../contracts/verification.js';
+import type { ResourceCapSource, ResourceCapsReport } from '../../../vendor/coding-agent/dist/public-api.js';
 import type { WorkspaceHostBindings } from '../workspace/access.js';
 import type { AbandonCheckInput, EvidencePort } from '../work-graph/model/evidence-contracts.js';
 import type { GraphWrite } from '../work-graph/model/task-contracts.js';
@@ -50,6 +51,8 @@ export type RegisteredCheckRunnerDependencies = {
     evidence: EvidencePort;
     workspaceHost: WorkspaceHostBindings;
     kernel: RegisteredCheckKernel;
+    /** L13: the Host's live resource-cap source, read once per check execute. */
+    resourceCaps?: ResourceCapSource;
     now(): string;
 };
 
@@ -226,12 +229,15 @@ export function createRegisteredCheckRunner(deps: RegisteredCheckRunnerDependenc
             const startedAt = deps.now();
             let observation: CheckProcessObservation;
             try {
-                const sandbox = new deps.kernel.ProcessSandbox(profile, root, workspace);
+                const sandbox = new deps.kernel.ProcessSandbox(profile, root, workspace,
+                    deps.resourceCaps === undefined ? undefined : { resourceCaps: deps.resourceCaps });
                 const result = await sandbox.execute({
                     command: ticket.definition.command, cwd: ticket.definition.cwd,
                     timeoutMs: ticket.definition.timeoutMs, outputLimitBytes: OUTPUT_LIMIT_BYTES,
                     signal: ctx.signal,
                 });
+                // L10: the Kernel report is copied verbatim when the sandbox produced one.
+                const resourceCaps = (result as { resourceCaps?: ResourceCapsReport }).resourceCaps;
                 observation = {
                     kind: 'executed', startedAt, finishedAt: deps.now(),
                     exitCode: result.exitCode, signal: result.signal, timedOut: result.timedOut, cancelled: result.cancelled,
@@ -239,6 +245,7 @@ export function createRegisteredCheckRunner(deps: RegisteredCheckRunnerDependenc
                     stderr: { text: result.stderr.text, totalBytes: result.stderr.totalBytes, truncated: result.stderr.truncated },
                     effects: { workspaceRevision: result.effects.workspaceRevision, changedPaths: [...result.effects.changedPaths] },
                     sandboxProfileVersion: result.sandboxProfileVersion,
+                    ...(resourceCaps === undefined ? {} : { resourceCaps }),
                 };
             } catch (error) {
                 if (error instanceof deps.kernel.ProcessSandboxError

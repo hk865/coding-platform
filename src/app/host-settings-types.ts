@@ -3,6 +3,7 @@ import type { CoreScope, BootstrapResponse } from './core-http-types.js';
 import type { QueryJobAnswerRef } from '../contracts/query-job.js';
 import type { RegisteredCommandCheck } from '../contracts/verification.js';
 import type { TaskAutomationPolicyV1 } from '../contracts/task-requeue.js';
+import type { ResourceCapUnavailableReasonV1 } from '../contracts/resource-caps.js';
 
 export const SETTINGS_API_PREFIX = '/api/real/settings/';
 export type SettingsProvider = 'deepseek' | 'openai';
@@ -32,7 +33,30 @@ export type HostSettingsSnapshot = {
    * the backend publishes it since A.2 step 5.8 (`automation/save`).
    */
   automation?: TaskAutomationPolicyV1;
+  /**
+   * L13/决定 55: the Host resource-cap setting as stored, its machine-computed
+   * defaults, the effective values and this machine's Kernel capability status.
+   * Optional so older snapshots and test literals stay valid; the backend
+   * publishes it since `resource-caps/save`.
+   */
+  resourceCaps?: SettingsResourceCaps;
 };
+/**
+ * L13: the resource-cap setting projection. `memoryMaxMiB`/`tasksMax` are the
+ * STORED values (`null` means the default); `defaults` is the L13 formula over
+ * `os.totalmem()`; `effective` is stored-or-default; `machine` is read from the
+ * Kernel cache through the optional assembly member, never by probing.
+ */
+export type SettingsResourceCaps = {
+  memoryMaxMiB: number | null;
+  tasksMax: number | null;
+  defaults: { memoryMaxMiB: number; tasksMax: number };
+  effective: { memoryMaxMiB: number; tasksMax: number };
+  machine: { status: 'unknown' } | { status: 'available' }
+    | { status: 'unavailable'; reason: ResourceCapUnavailableReasonV1; text: string };
+};
+/** L13: the whole `resourceCaps` setting; both fields are required, `null` is the default. */
+export type SaveResourceCapSettings = { memoryMaxMiB: number | null; tasksMax: number | null };
 /**
  * C8 / LA-6 Host setting `automation` (route `automation/save`): the whole
  * policy, `autoReworkLimit` an integer 0..10 (`MAX_AUTO_REWORK_LIMIT`; 0 allows
@@ -79,6 +103,7 @@ export type SettingsRoutes = {
   'workspaces/open': { input: OpenSettingsWorkspace; value: { settings: HostSettingsSnapshot; bootstrap: BootstrapResponse; scope: CoreScope } };
   'checks/approve': { input: ApproveWorkspaceChecks; value: HostSettingsSnapshot };
   'automation/save': { input: SaveAutomationSettings; value: HostSettingsSnapshot };
+  'resource-caps/save': { input: SaveResourceCapSettings; value: HostSettingsSnapshot };
 };
 export type SettingsRoute = keyof SettingsRoutes;
 export type SettingsResponse<T> = { status: 'ready'; value: T }

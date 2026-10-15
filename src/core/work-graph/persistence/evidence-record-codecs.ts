@@ -29,6 +29,7 @@ import {
     ROUND_CHAIN_MAX,
     type CheckExecutionTicket, type CheckProcessObservation, type RoundSnapshot, type VerificationRoundRef,
 } from '../../../contracts/verification.js';
+import { MIB, type ResourceCapUnavailableReasonV1 } from '../../../contracts/resource-caps.js';
 import type { FinalizedChecks } from '../model/evidence-contracts.js';
 import {
     actorRefProblem, incompleteCauseProblem, isSha256Hex, newBasisInputRefsProblem, reverifyBasisProblem,
@@ -205,6 +206,18 @@ function checkSnapshotProblem(value: unknown): string | null {
     if (value['incompleteCause'] !== undefined) {
         const cause = incompleteCauseProblem(value['incompleteCause'], 'a round check incompleteCause');
         if (cause !== null) return cause;
+    }
+    // L16（决定 55）：检查撞上内存上限时 `recordCheckResult` 在这一次提交里写下的小字段；
+    // 旧记录没有它（读作没有）。形状照 §2 `RoundCheckSnapshot.resourceCapHit`。
+    if (value['resourceCapHit'] !== undefined) {
+        const hit = value['resourceCapHit'];
+        if (!isRecord(hit) || !hasOnlyKeys(hit, ['memory', 'memoryCapMiB'])) {
+            return 'a round check resourceCapHit must be { memory: cap_hit, memoryCapMiB }';
+        }
+        if (hit['memory'] !== 'cap_hit') return 'a round check resourceCapHit memory must be cap_hit';
+        if (!isSafeInteger(hit['memoryCapMiB'], 1)) {
+            return 'a round check resourceCapHit memoryCapMiB must be a positive integer';
+        }
     }
     return null;
 }
@@ -576,6 +589,58 @@ function capturedOutputProblem(value: unknown, what: string): string | null {
     return null;
 }
 
+const RESOURCE_CAP_UNAVAILABLE_REASONS = [
+    'not_linux', 'no_cgroup_v2', 'no_systemd_run', 'no_user_session',
+    'controllers_not_delegated', 'literal_arguments_not_preserved', 'sandbox_unavailable',
+    'probe_failed', 'not_configured',
+] as const satisfies readonly ResourceCapUnavailableReasonV1[];
+
+/**
+ * MF-6: the optional executed `resourceCaps` is `ResourceCapsReportV1`, a closed
+ * union (spec §2, L10/L13). Legacy observations without it stay valid; this is
+ * only called when the field is present.
+ */
+function resourceCapsReportProblem(value: unknown): string | null {
+    if (!isRecord(value)) return 'an observation resourceCaps report must be an object';
+    const status = value['status'];
+    if (status === 'not_started') {
+        return hasOnlyKeys(value, ['status']) ? null : 'a not_started resourceCaps report carries only status';
+    }
+    if (status === 'none') {
+        if (!hasOnlyKeys(value, ['status', 'reason', 'text'])) {
+            return 'a none resourceCaps report carries only status, reason and text';
+        }
+        if (!(RESOURCE_CAP_UNAVAILABLE_REASONS as readonly unknown[]).includes(value['reason'])) {
+            return 'a none resourceCaps report must name a known unavailability reason';
+        }
+        return nonEmpty(value['text']) ? null : 'a none resourceCaps report requires a non-empty text';
+    }
+    if (status !== 'applied') return 'a resourceCaps report status must be applied, none or not_started';
+    const appliedKeys = ['status', 'memoryMaxBytes', 'tasksMax', 'memory', 'processes', 'observationComplete'];
+    if (!hasOnlyKeys(value, appliedKeys)) {
+        return 'an applied resourceCaps report carries only status, memoryMaxBytes, tasksMax, memory, processes and observationComplete';
+    }
+    const memoryMaxBytes = value['memoryMaxBytes'];
+    if (typeof memoryMaxBytes !== 'number' || !Number.isSafeInteger(memoryMaxBytes)
+        || memoryMaxBytes < 16 * MIB || memoryMaxBytes % MIB !== 0) {
+        return 'an applied resourceCaps memoryMaxBytes must be a whole number of MiB, at least 16 MiB';
+    }
+    const tasksMax = value['tasksMax'];
+    if (typeof tasksMax !== 'number' || !Number.isSafeInteger(tasksMax) || tasksMax < 8 || tasksMax > 4_194_304) {
+        return 'an applied resourceCaps tasksMax must be an integer from 8 to 4194304';
+    }
+    if (!['cap_hit', 'none_observed', 'uncertain'].includes(value['memory'] as string)) {
+        return 'an applied resourceCaps memory must be cap_hit, none_observed or uncertain';
+    }
+    if (!['cap_hit', 'none_observed', 'unknown'].includes(value['processes'] as string)) {
+        return 'an applied resourceCaps processes must be cap_hit, none_observed or unknown';
+    }
+    if (typeof value['observationComplete'] !== 'boolean') {
+        return 'an applied resourceCaps observationComplete must be a boolean';
+    }
+    return null;
+}
+
 /** Used by callers that only need to prove an observation shape before write. */
 export function checkObservationProblem(observation: CheckProcessObservation): string | null {
     if (!isRecord(observation)) return 'a check observation must be an object';
@@ -604,6 +669,10 @@ export function checkObservationProblem(observation: CheckProcessObservation): s
         return 'an executed observation requires real effects';
     }
     if (!nonEmpty(observation['sandboxProfileVersion'])) return 'an executed observation requires a sandboxProfileVersion';
+    if (observation['resourceCaps'] !== undefined) {
+        const resourceCaps = resourceCapsReportProblem(observation['resourceCaps']);
+        if (resourceCaps !== null) return resourceCaps;
+    }
     return null;
 }
 

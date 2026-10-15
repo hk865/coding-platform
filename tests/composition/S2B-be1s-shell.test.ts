@@ -19,7 +19,7 @@
  * cases assert the recorded activity, not a follow-up tool message.
  */
 import { execFileSync } from 'node:child_process';
-import { writeFileSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 import type { RunRef } from '../../src/contracts/dispatch.js';
@@ -41,14 +41,25 @@ function toolResult(record: S2BBe1PlatformFixture, callId: string): unknown {
 }
 
 /** Start the Run at `runs[index]`, cancel it while the command runs, then observe. */
-async function cancelAt(f: S2BBe1PlatformFixture, index: number, requestId: string): Promise<TaskExecutionRecord> {
+async function cancelAt(f: S2BBe1PlatformFixture, index: number, requestId: string,
+  writtenFile?: string): Promise<TaskExecutionRecord> {
   const ref: RunRef = f.runs[index]!.ref;
   const prepared = await f.platform.runtime.prepareExecution(f.ctx, { runRef: ref, requestId: `${requestId}-prepare` });
   if (prepared.status !== 'ready') throw new Error(`2B-09 cancel prepare failed: ${JSON.stringify(prepared)}`);
   const running = f.platform.runtime.startRun(f.ctx, { prepared: prepared.value,
     consumerId: `${requestId}-driver`, requestId: `${requestId}-start` });
-  // Give the real command time to start before the cancel signal.
-  await new Promise(resolve => { setTimeout(resolve, 400); });
+  // Give the real command time to start before the cancel signal. A command that writes a file is cancelled only
+  // after the file exists: with resource caps (RL) the command runs only after the gate releases it, and the first
+  // capped command of a process waits for the capability probe, so a fixed delay can cancel it before it started
+  // (then it never runs: RL L4/L10 not_started), which is not the case this test is about.
+  if (writtenFile === undefined) {
+    await new Promise(resolve => { setTimeout(resolve, 400); });
+  } else {
+    const deadline = performance.now() + 15_000;
+    while (!existsSync(join(f.directory, writtenFile)) && performance.now() < deadline) {
+      await new Promise(resolve => { setTimeout(resolve, 50); });
+    }
+  }
   try {
     const read = await f.platform.executions.readExecution(f.ctx, ref);
     if (read.status === 'ready') {
@@ -130,7 +141,7 @@ it('2B-09 a cancelled command that wrote a file is one step and one edit', async
   });
   opened.push(f);
 
-  const record = await cancelAt(f, 0, '2b09-cancel-write');
+  const record = await cancelAt(f, 0, '2b09-cancel-write', 'g.ts');
   expect(record.run.status).toBe('ended');
   const views = await f.readRuns();
   expect(views[0]).toMatchObject({ status: 'counted', totals: { steps: 1, edits: 1, editsUnknown: 0 },

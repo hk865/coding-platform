@@ -22,7 +22,10 @@ const relativeSources = ['storage/adapters/sqlite/sqlite-stores.ts', 'public-api
   'core/ports/session_store/session-store-port.ts',
   // The Host workbench tool adapter needs the minimal legal empty-file replace;
   // the restored source is managed here so dist is only produced by this script.
-  'sandbox/workspace/workspace-sandbox.ts', 'sandbox/process/process-sandbox.ts'];
+  'sandbox/workspace/workspace-sandbox.ts', 'sandbox/process/process-sandbox.ts',
+  // The workbench shell tool carries the resource-cap tail notes; its source is
+  // restored from the frozen map so dist is only produced by this script.
+  'tools/builtin/shell/shell-tool.ts'];
 const artifacts = relativeSources.flatMap(source => ['.js', '.js.map', '.d.ts', '.d.ts.map']
   .map(suffix => ({ path: source.slice(0, -3) + suffix, source })));
 const args = process.argv.slice(2);

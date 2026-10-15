@@ -22,7 +22,10 @@
  * come only from `options`.
  */
 import { createHash, randomBytes } from 'node:crypto';
-import { createBuiltinProviderRegistry } from '../../vendor/coding-agent/dist/public-api.js';
+import { createBuiltinProviderRegistry, resourceCapStatus } from '../../vendor/coding-agent/dist/public-api.js';
+import type { ResourceCapSource } from '../../vendor/coding-agent/dist/public-api.js';
+import { totalmem } from 'node:os';
+import { MIB, defaultResourceCapSettings } from '../contracts/resource-caps.js';
 import { mkdirSync } from 'node:fs';
 import { realpath, stat } from 'node:fs/promises';
 import { basename, join } from 'node:path';
@@ -356,6 +359,17 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   const startupBindingsByScope = new Map(startupBindings.map(binding => [scopeKey(binding.scope), binding] as const));
   const seedConfiguration: WorkbenchRuntimeConfiguration | undefined = runtimeConfiguration
     ?? (settingsEnabled ? { schemaVersion: 1, bindings: [], queryProfiles: [] } : undefined);
+  // L13: the ONE Host resource-cap holder, built BEFORE the platform. The initial
+  // value is the machine-memory default; the settings restore/reload replaces it
+  // with the effective stored values. The platform, the Runtime and the workbench
+  // command page all read `current()` live, so a settings change reaches the next
+  // command of an already-running execution.
+  const capDefaults = defaultResourceCapSettings(totalmem());
+  let resourceCapsRequest: { memoryMaxBytes: number; tasksMax: number } = {
+    memoryMaxBytes: capDefaults.memoryMaxMiB * MIB,
+    tasksMax: capDefaults.tasksMax,
+  };
+  const resourceCaps: ResourceCapSource = { current: () => ({ ...resourceCapsRequest }) };
   /** Each immutable runtime version captures its OWN fixed secret map: the saved
    * settings keys plus a snapshot of the env values its bindings reference. A
    * later settings change never re-keys an older version that has not yet built
@@ -387,7 +401,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     : (seedConfiguration === undefined
       ? undefined : createWorkbenchRuntimeHostBindings(seedConfiguration,
         versionProvider(versionSecretSource(seedConfiguration, { models: [], selection: {}, checks: [],
-          automation: { ...DEFAULT_TASK_AUTOMATION_POLICY } })), runtimeNarrowing));
+          automation: { ...DEFAULT_TASK_AUTOMATION_POLICY }, resourceCaps: resourceCaps.current() })), runtimeNarrowing));
   const resolverRegistry = initialBindings === undefined ? undefined : createHostRuntimeResolverRegistry(initialBindings);
   const runtime: TargetPlatformOptions['runtime'] = resolverRegistry ?? options.runtime;
   // Settings may rebuild the runtime only from the serializable configuration;
@@ -461,6 +475,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       ...(checks === undefined ? {} : { checks }),
       ...(workflow === undefined ? {} : { workflow }),
       sourcePolicyFor,
+      resourceCaps,
       operatorActor: actor,
     });
   } catch (error) {
@@ -479,6 +494,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       ...(workspace.allowCommands === undefined ? {} : { allowCommands: workspace.allowCommands }),
     })),
     onCommandChange: changes.commandChanged,
+    resourceCaps,
   });
   const collaborationDriver = createCollaborationDriver({
     workflow: platform.workflow,
@@ -652,6 +668,10 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     // C8 (A.2 step 5.6): the Host setting `automation` (defaults 3 / true) governs the
     // requeue owner, the read model and the start-up re-drive (`resumeOnStartup`).
     platform.registerAutomationPolicy(snapshot.automation);
+    // L13: install the effective resource-cap values into the ONE holder. The
+    // already-built platform, Runtime and workbench page read `current()` live,
+    // so the next command of an already-running execution uses the new values.
+    resourceCapsRequest = { memoryMaxBytes: snapshot.resourceCaps.memoryMaxBytes, tasksMax: snapshot.resourceCaps.tasksMax };
     // R6 cold-start: restore/refresh the trusted check configuration for every
     // scope whose saved checks were explicitly approved. It replaces only the
     // per-scope registration; an already-open round keeps its frozen config.
@@ -908,6 +928,9 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         return typeof value === 'string' && value.length > 0;
       } catch { return false; }
     },
+    // L13: the settings page's machine status reads the Kernel cache directly;
+    // it never starts a probe. `main.ts` warms the cache in the background.
+    resourceCapStatus: () => resourceCapStatus(),
   };
 
   // The awaited startup restore of every persisted directory registration

@@ -1,0 +1,73 @@
+{
+ "when": "2026-10-15T18:15:40.098Z",
+ "node": "v24.18.0",
+ "capability": {
+  "status": "available"
+ },
+ "cost": {
+  "capped": {
+   "n": 20,
+   "median": 14.9,
+   "min": 14.3,
+   "max": 16.6
+  },
+  "uncapped": {
+   "n": 20,
+   "median": 5.4,
+   "min": 5.2,
+   "max": 6.2
+  },
+  "medianExtraMs": 9.5
+ },
+ "observationComplete": {
+  "true": {
+   "complete": 50,
+   "of": 50,
+   "ms": {
+    "n": 50,
+    "median": 18.1,
+    "min": 14.7,
+    "max": 40.8
+   },
+   "memory": {
+    "none_observed": 50
+   },
+   "processes": {
+    "none_observed": 50
+   }
+  },
+  "git --version": {
+   "complete": 50,
+   "of": 50,
+   "ms": {
+    "n": 50,
+    "median": 20.4,
+    "min": 16.3,
+    "max": 62.1
+   },
+   "memory": {
+    "none_observed": 50
+   },
+   "processes": {
+    "none_observed": 50
+   }
+  },
+  "node -e \"console.log(1)\"": {
+   "complete": 50,
+   "of": 50,
+   "ms": {
+    "n": 50,
+    "median": 43.7,
+    "min": 35.9,
+    "max": 93.4
+   },
+   "memory": {
+    "none_observed": 50
+   },
+   "processes": {
+    "none_observed": 50
+   }
+  }
+ },
+ "note": "Times from performance.now() (this WSL steps its wall clock); the quiescence wait is not exposed by the public result, so it is included in the capped end-to-end time."
+}

@@ -46,6 +46,7 @@ import {
     DEFAULT_TASK_AUTOMATION_POLICY, GOAL_FAN_OUT_ACTOR, MAX_AUTO_REWORK_LIMIT, TASK_REWORK_REASON_MAX_CHARS, reworkActorClassOf,
     type ReworkActorClass, type TaskAutomationPolicyV1, type TaskReworkRefusalRef, type TaskReworkRefusalSnapshotV1,
 } from '../../../contracts/task-requeue.js';
+import { MIB } from '../../../contracts/resource-caps.js';
 import type {
     CheckCapabilityV1, CheckExecutionTicket, CheckProcessObservation, RoundCheckSnapshot, RoundSnapshot,
     TrustedCheckConfiguration, VerificationRoundRef,
@@ -210,6 +211,17 @@ function boundedSummary(text: string): string {
     let end = Math.min(text.length, EVIDENCE_SUMMARY_MAX_BYTES);
     while (end > 0 && Buffer.byteLength(text.slice(0, end), 'utf8') > EVIDENCE_SUMMARY_MAX_BYTES) end -= 1;
     return text.slice(0, end);
+}
+/**
+ * L16（决定 55）：`recordCheckResult` 收到的观察里，`executed` 且报告 `memory: 'cap_hit'`
+ * 时把那次的上限（MiB）读出来，随同一次提交写进检查快照；别的观察不写这个字段。
+ * 上限值是 1 MiB 的整数倍（Kernel L13），所以这里是精确的商。
+ */
+function resourceCapHitOf(observation: CheckProcessObservation): NonNullable<RoundCheckSnapshot['resourceCapHit']> | undefined {
+    if (observation.kind !== 'executed') return undefined;
+    const report = observation.resourceCaps;
+    if (report === undefined || report.status !== 'applied' || report.memory !== 'cap_hit') return undefined;
+    return { memory: 'cap_hit', memoryCapMiB: report.memoryMaxBytes / MIB };
 }
 function anchorOf(round: RoundSnapshot): EffectivityAnchorV1 {
     return { schemaVersion: 1, planRef: round.adoptedPlanRef, planRevision: round.verificationPlan.planRevision,
@@ -1344,8 +1356,11 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         const report = await storeReport(finishingCtx, round, input, owned.requestId, sourceStatus,
             outcomeFor(input.observation, sourceStatus).outcome);
         if (!report.ok) return report.rejection;
+        // L16（决定 55）：同一次提交写下这次检查的内存上限命中。
+        const resourceCapHit = resourceCapHitOf(input.observation);
         const decided = transitionCheck(round, { kind: 'check_result_recorded', checkId: input.checkId,
-            invocationId: input.invocationId, observation: input.observation, sourceStatus, reportRef: report.ref }, guardCtx);
+            invocationId: input.invocationId, observation: input.observation, sourceStatus, reportRef: report.ref,
+            ...(resourceCapHit === undefined ? {} : { resourceCapHit }) }, guardCtx);
         if (!decided.ok) return refusalOf(decided, round);
         const occurredAt = deps.now();
         return await commitRoundWrite(records, signal, { identity, fingerprint, effects: decided.effects, round: decided.next,

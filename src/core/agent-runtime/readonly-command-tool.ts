@@ -14,7 +14,9 @@
  * cancellation/timeout/sandbox overlays are outside this handler.
  */
 import { ProcessSandbox, ProcessSandboxError, normalizeWorkspacePath, toolSchema as z } from '../../../vendor/coding-agent/dist/public-api.js';
-import type { ToolDefinition, ToolResult, WorkspaceSandbox } from '../../../vendor/coding-agent/dist/public-api.js';
+import type {
+  ResourceCapSource, ResourceCapsReport, ToolDefinition, ToolResult, WorkspaceSandbox,
+} from '../../../vendor/coding-agent/dist/public-api.js';
 
 export const READONLY_COMMAND_TOOL_NAME = 'run_readonly_command';
 
@@ -77,10 +79,19 @@ export type ReadonlyCommandToolInput = {
   workspaceRoot: string;
   readOnlyPaths?: readonly string[];
   executablePath?: string;
+  /** L13: the Host's live resource-cap source; read once per `execute`. */
+  resourceCaps?: ResourceCapSource;
   authorization: ReadonlyCommandAuthorization;
 };
 
 type ReadonlyToolErrorCode = Extract<ToolResult, { status: 'error' }>['error']['code'];
+
+/** L10：非 0 退出和自己超时的消息末尾按上限事件加尾注；成功、取消和 M10 固定消息不加。 */
+function resourceCapTail(report: ResourceCapsReport | undefined): string {
+  if (report === undefined || report.status !== 'applied') return '';
+  return `${report.memory === 'cap_hit' ? '（超出内存上限）' : ''}${
+    report.processes === 'cap_hit' ? '（有新进程或线程被任务数上限拒绝）' : ''}`;
+}
 
 function toolError(callId: string, code: ReadonlyToolErrorCode, message: string, output: ToolResult['output'] = [{ kind: 'text', text: message }]): ToolResult {
   return {
@@ -239,6 +250,7 @@ export function createReadonlyCommandTool(input: ReadonlyCommandToolInput): Tool
           workspaceMode: 'read_only' as const,
           ...(input.readOnlyPaths === undefined ? {} : { readOnlyPaths: [...input.readOnlyPaths] }),
           ...(input.executablePath === undefined ? {} : { executablePath: input.executablePath }),
+          ...(input.resourceCaps === undefined ? {} : { resourceCaps: input.resourceCaps }),
         };
         const profile = await ProcessSandbox.probe(input.workspaceRoot, input.workspace, sandboxOptions);
         const process = new ProcessSandbox(profile, input.workspaceRoot, input.workspace, sandboxOptions);
@@ -267,6 +279,9 @@ export function createReadonlyCommandTool(input: ReadonlyCommandToolInput): Tool
         .sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right)));
       const named = external.slice(0, READONLY_MAX_EXTERNAL_PATHS);
       const omitted = Math.max(result.effects.externalChangedPathsOmitted ?? 0, external.length - named.length);
+      // 旧替身的结果没有这一项；原样抄进 JSON（L10）。
+      const resourceCaps = (result as { resourceCaps?: ResourceCapsReport }).resourceCaps;
+      const tail = resourceCapTail(resourceCaps);
       const stdout = { totalBytes: result.stdout.totalBytes, truncated: result.stdout.truncated };
       const stderr = { text: result.stderr.text, totalBytes: result.stderr.totalBytes, truncated: result.stderr.truncated };
       const baseValue = {
@@ -278,6 +293,7 @@ export function createReadonlyCommandTool(input: ReadonlyCommandToolInput): Tool
         externalChangedPaths: named,
         externalChangedPathsOmitted: omitted,
         timings: result.timings,
+        ...(resourceCaps === undefined ? {} : { resourceCaps }),
       };
       const outputWith = (value: unknown): ToolResult['output'] =>
         [{ kind: 'text', text: result.stdout.text }, { kind: 'json', value: value as never }];
@@ -302,10 +318,10 @@ export function createReadonlyCommandTool(input: ReadonlyCommandToolInput): Tool
         return boundResult(cancelled);
       }
       if (result.timedOut) {
-        return boundResult(toolError(call.callId, 'timeout', 'run_readonly_command 执行超时', outputWith({ ...baseValue })));
+        return boundResult(toolError(call.callId, 'timeout', `run_readonly_command 执行超时${tail}`, outputWith({ ...baseValue })));
       }
       if (result.exitCode !== 0) {
-        return boundResult(toolError(call.callId, 'execution_failed', `命令退出码 ${String(result.exitCode)}`, outputWith({ ...baseValue })));
+        return boundResult(toolError(call.callId, 'execution_failed', `命令退出码 ${String(result.exitCode)}${tail}`, outputWith({ ...baseValue })));
       }
       const succeeded: ToolResult = { schemaVersion: 1, callId: call.callId, status: 'success', output: outputWith({ ...baseValue }), effects: NONE_EFFECTS };
       return boundResult(succeeded);

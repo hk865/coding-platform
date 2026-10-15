@@ -258,6 +258,8 @@ export type DecisionCardV1 = {
 export type NoticeItemV1 = {
   itemKey: string; category: NoticeCategoryV1; goalRef: GoalRef;
   position: NoticePositionV1; summary: string; objects: DecisionObjectV1[];
+  /** L16（决定 55）：只加在触发返工的那一轮有 `resourceCapHit` 的条目上；别的条目不带这个字段。 */
+  actions?: readonly { kind: 'raise_memory_cap' }[];
   rework: null | {
     operation: 'requeue' | 'reverify'; actorClass: 'system' | 'agent';
     taskRef: TaskTriple; count: number; cap: number | null; reason: string;

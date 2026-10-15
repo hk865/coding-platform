@@ -32,6 +32,7 @@ import type {
     VerificationRoundSourceProof,
 } from "./verification-context.js";
 import type { NewBasisInputRefV1, NoProgressCheckFactV1, SourceStampV1 } from "./no-progress.js";
+import type { ResourceCapsReportV1 } from "./resource-caps.js";
 import type { ReworkActorClass, ReworkFailureClass } from "./task-requeue.js";
 
 /** Trusted Host actor for a check: a real human/system application host. */
@@ -91,6 +92,8 @@ export type CheckProcessObservation =
         stderr: { text: string; totalBytes: number; truncated: boolean };
         effects: { workspaceRevision: string | null; changedPaths: string[] };
         sandboxProfileVersion: string;
+        /** L10/L16：登记的检查原样抄下上限报告；旧记录没有这一项。 */
+        resourceCaps?: ResourceCapsReportV1;
     };
 
 /**
@@ -143,6 +146,11 @@ export type RoundCheckSnapshot = {
     sourceStatus: "matched" | "changed" | "unavailable" | "permission_changed" | null;
     /** Absent on legacy checks and read as null; null for pending/executing and PASS/FAIL. */
     incompleteCause?: RoundCheckIncompleteCause | null;
+    /**
+     * L16（决定 55）：检查结果那一步写下的“这次检查超出了内存上限”。旧轮次没有它，
+     * 读作没有；`memoryCapMiB` 是那次观察记下的上限。
+     */
+    resourceCapHit?: { memory: "cap_hit"; memoryCapMiB: number };
 };
 
 /** Gap code of a check left `interrupted` by a Host restart (VR-04). */

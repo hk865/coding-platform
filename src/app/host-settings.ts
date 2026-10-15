@@ -21,9 +21,15 @@ import {
   DEFAULT_TASK_AUTOMATION_POLICY, MAX_AUTO_REWORK_LIMIT, type TaskAutomationPolicyV1,
 } from '../contracts/task-requeue.js';
 import { mkdir, readFile, readdir, realpath, rename, stat, writeFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
+import { homedir, totalmem } from 'node:os';
 import { dirname, join } from 'node:path';
 import { canonicalJson, type JsonValue } from '../contracts/fingerprint.js';
+import {
+  MIB, RESOURCE_CAP_MAX_TASKS, RESOURCE_CAP_MIN_MEMORY_MIB, RESOURCE_CAP_MIN_TASKS,
+  defaultResourceCapSettings, type ResourceCapSettingsV1, type ResourceCapUnavailableReasonV1,
+} from '../contracts/resource-caps.js';
+import { RESOURCE_CAP_NONE_TEXT } from '../../vendor/coding-agent/dist/public-api.js';
+import type { ResourceCapCapability } from '../../vendor/coding-agent/dist/public-api.js';
 import type { BootstrapResponse, CoreScope } from './core-http-types.js';
 import type { CoreCallContext } from '../contracts/core/call-context.js';
 import type { ReadResult } from '../contracts/core/results.js';
@@ -39,8 +45,10 @@ import type {
   HostSettingsPort,
   HostSettingsSnapshot,
   OpenSettingsWorkspace,
+  SaveResourceCapSettings,
   SettingsModel,
   SettingsProvider,
+  SettingsResourceCaps,
   SettingsResponse,
   SettingsRoute,
   SettingsRoutes,
@@ -49,6 +57,7 @@ import type {
 /** The published settings route set. `SettingsRoutes` stays the type truth. */
 export const SETTINGS_ROUTE_SUFFIXES = [
   'snapshot', 'directories', 'models/save', 'models/select', 'workspaces/open', 'checks/approve', 'automation/save',
+  'resource-caps/save',
 ] as const satisfies readonly SettingsRoute[];
 
 export function isSettingsRoute(value: string): value is SettingsRoute {
@@ -129,6 +138,10 @@ export type HostSettingsPrivateSnapshot = {
    * file has none. The Host installs it from A.2 step 5.6 on; `automation/save`
    * (5.8) changes it at runtime. */
   automation: TaskAutomationPolicyV1;
+  /** L13: the effective resource-cap values in bytes and task count. The Host
+   * installs them into its holder from `resourceCaps/save`; they never enter the
+   * runtime configuration version. */
+  resourceCaps: { memoryMaxBytes: number; tasksMax: number };
 };
 
 /** Trusted facts about one Host-registered workspace, read from the Host. */
@@ -164,6 +177,9 @@ export interface HostSettingsAssembly {
   /** Boolean-only probe: whether the trusted Host can resolve the named secret.
    * The value itself never crosses this seam and never enters a response. */
   secretConfigured(name: string): boolean;
+  /** L13: the machine's current Kernel resource-cap status, read from the cache
+   * WITHOUT probing. Absence is reported as `unknown`. */
+  resourceCapStatus?(): ResourceCapCapability | { status: 'unknown' };
 }
 
 /** The one Host callback. It receives a validated private snapshot (key only
@@ -271,6 +287,9 @@ type PersistedSettingsV1 = {
    * absent on the next save of another setting and reads as
    * `DEFAULT_TASK_AUTOMATION_POLICY` until `automation/save` stores one. */
   automation?: TaskAutomationPolicyV1;
+  /** L13 Host setting `resourceCaps`. Absent in files written before RL and
+   * stays absent on the next save of another setting. */
+  resourceCaps?: ResourceCapSettingsV1;
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -325,6 +344,30 @@ function parseStoredAutomation(value: unknown): TaskAutomationPolicyV1 {
   return { schemaVersion: 1, autoReworkLimit: limit, resumeOnStartup: value['resumeOnStartup'] };
 }
 
+/** SF-2 / L13: a stored `resourceCaps` must be a schema-1 object with `null` or a
+ * value in the valid range in each field (`memoryMaxMiB` a whole MiB floor of the
+ * safe-integer space at least `RESOURCE_CAP_MIN_MEMORY_MIB`, `tasksMax` in
+ * `RESOURCE_CAP_MIN_TASKS..RESOURCE_CAP_MAX_TASKS`). A stored value above this
+ * machine's memory is kept as stored (a machine change is not an error); an
+ * out-of-range value fails Host start-up instead of silently reading defaults. */
+function parseStoredResourceCaps(value: unknown): ResourceCapSettingsV1 {
+  if (!isRecord(value) || value['schemaVersion'] !== 1) {
+    throw new Error('the private host settings file is invalid');
+  }
+  const memoryMaxMiB = value['memoryMaxMiB'];
+  const tasksMax = value['tasksMax'];
+  const memoryCeilingMiB = Math.floor(Number.MAX_SAFE_INTEGER / MIB);
+  if (memoryMaxMiB !== null && (typeof memoryMaxMiB !== 'number' || !Number.isSafeInteger(memoryMaxMiB)
+    || memoryMaxMiB < RESOURCE_CAP_MIN_MEMORY_MIB || memoryMaxMiB > memoryCeilingMiB)) {
+    throw new Error('the private host settings file is invalid');
+  }
+  if (tasksMax !== null && (typeof tasksMax !== 'number' || !Number.isSafeInteger(tasksMax)
+    || tasksMax < RESOURCE_CAP_MIN_TASKS || tasksMax > RESOURCE_CAP_MAX_TASKS)) {
+    throw new Error('the private host settings file is invalid');
+  }
+  return { schemaVersion: 1, memoryMaxMiB, tasksMax };
+}
+
 const invalid = (reason: string): SettingsResponse<never> => ({ status: 'rejected', code: 'invalid', reason });
 const notFound = (reason: string): SettingsResponse<never> => ({ status: 'rejected', code: 'not_found', reason });
 const unavailable = (reason: string): SettingsResponse<never> => ({ status: 'rejected', code: 'unavailable', reason });
@@ -374,7 +417,8 @@ function parsePersisted(text: string): PersistedSettingsV1 {
     };
   });
   return { schemaVersion: 1, models, selection, workspaces,
-    ...(raw['automation'] === undefined ? {} : { automation: parseStoredAutomation(raw['automation']) }) };
+    ...(raw['automation'] === undefined ? {} : { automation: parseStoredAutomation(raw['automation']) }),
+    ...(raw['resourceCaps'] === undefined ? {} : { resourceCaps: parseStoredResourceCaps(raw['resourceCaps']) }) };
 }
 
 function toStoredModel(model: HostSettingsModelDefinition): HostSettingsStoredModel {
@@ -421,6 +465,26 @@ export async function createHostSettings(
   const workspaces: PersistedWorkspaceV1[] = persisted.workspaces;
   /** Kept exactly as stored (absent stays absent) until `automation/save` writes it. */
   let automation: TaskAutomationPolicyV1 | undefined = persisted.automation;
+  /** L13: kept exactly as stored (absent stays absent) until `resource-caps/save`. */
+  let resourceCapSetting: ResourceCapSettingsV1 | undefined = persisted.resourceCaps;
+  const totalMemoryBytes = totalmem();
+  const capDefaults = defaultResourceCapSettings(totalMemoryBytes);
+  const memoryUpperMiB = Math.floor(totalMemoryBytes / MIB);
+  const effectiveResourceCaps = (): { memoryMaxMiB: number; tasksMax: number } => ({
+    memoryMaxMiB: resourceCapSetting?.memoryMaxMiB ?? capDefaults.memoryMaxMiB,
+    tasksMax: resourceCapSetting?.tasksMax ?? capDefaults.tasksMax,
+  });
+  const resourceCapStatusOf = (): SettingsResourceCaps['machine'] => {
+    let status: ResourceCapCapability | { status: 'unknown' };
+    try { status = assembly.resourceCapStatus?.() ?? { status: 'unknown' }; }
+    catch { return { status: 'unknown' }; }
+    if (status.status === 'available') return { status: 'available' };
+    if (status.status === 'unavailable') {
+      const reason = status.reason as ResourceCapUnavailableReasonV1;
+      return { status: 'unavailable', reason, text: RESOURCE_CAP_NONE_TEXT[reason] };
+    }
+    return { status: 'unknown' };
+  };
 
   const privateSnapshot = (): HostSettingsPrivateSnapshot => ({
     models: structuredClone(models),
@@ -432,11 +496,16 @@ export async function createHostSettings(
       .map(workspace => ({ scope: { ...workspace.scope }, checks: structuredClone(workspace.checks),
         answerRef: structuredClone(workspace.checksSource.answerRef), answerDigest: workspace.checksSource.answerDigest })),
     automation: { ...(automation ?? DEFAULT_TASK_AUTOMATION_POLICY) },
+    resourceCaps: {
+      memoryMaxBytes: effectiveResourceCaps().memoryMaxMiB * MIB,
+      tasksMax: effectiveResourceCaps().tasksMax,
+    },
   });
 
   const persist = async (): Promise<void> => {
     const payload: PersistedSettingsV1 = { schemaVersion: 1, models, selection, workspaces,
-      ...(automation === undefined ? {} : { automation }) };
+      ...(automation === undefined ? {} : { automation }),
+      ...(resourceCapSetting === undefined ? {} : { resourceCaps: resourceCapSetting }) };
     await mkdir(settingsDirectory, { recursive: true, mode: 0o700 });
     const temporaryPath = join(settingsDirectory, `.host-settings.${randomUUID()}.tmp`);
     await writeFile(temporaryPath, JSON.stringify(payload), { mode: 0o600 });
@@ -488,6 +557,13 @@ export async function createHostSettings(
     // C8 (A.2 step 5.8): the stored policy, the defaults when none was saved (after an
     // unconfirmed `automation/save` the Host may still apply the previous one until a retry).
     automation: { ...(automation ?? DEFAULT_TASK_AUTOMATION_POLICY) },
+    resourceCaps: {
+      memoryMaxMiB: resourceCapSetting?.memoryMaxMiB ?? null,
+      tasksMax: resourceCapSetting?.tasksMax ?? null,
+      defaults: { ...capDefaults },
+      effective: effectiveResourceCaps(),
+      machine: resourceCapStatusOf(),
+    },
   });
 
   // Restore every persisted directory registration through the real owners
@@ -768,6 +844,42 @@ export async function createHostSettings(
     return { status: 'ready', value: snapshotOf() };
   }
 
+  /**
+   * L13: the whole `resourceCaps` setting. `null` in a field means the default.
+   * The write is validated, persisted and pushed exactly like `automation/save`;
+   * the effective byte/count values go to the Host holder, never into a runtime
+   * configuration version.
+   */
+  async function saveResourceCapsRoute(input: unknown): Promise<SettingsResponse<HostSettingsSnapshot>> {
+    if (!isRecord(input)) return invalid('resource-caps/save requires an object body');
+    if (!('memoryMaxMiB' in input) || !('tasksMax' in input)) {
+      return invalid('resource-caps/save requires both memoryMaxMiB and tasksMax');
+    }
+    const memoryMaxMiB = input['memoryMaxMiB'];
+    if (memoryMaxMiB !== null && (typeof memoryMaxMiB !== 'number' || !Number.isSafeInteger(memoryMaxMiB)
+      || memoryMaxMiB < RESOURCE_CAP_MIN_MEMORY_MIB || memoryMaxMiB > memoryUpperMiB)) {
+      return invalid(`memoryMaxMiB must be null or an integer from ${String(RESOURCE_CAP_MIN_MEMORY_MIB)} to ${String(memoryUpperMiB)}`);
+    }
+    const tasksMax = input['tasksMax'];
+    if (tasksMax !== null && (typeof tasksMax !== 'number' || !Number.isSafeInteger(tasksMax)
+      || tasksMax < RESOURCE_CAP_MIN_TASKS || tasksMax > RESOURCE_CAP_MAX_TASKS)) {
+      return invalid(`tasksMax must be null or an integer from ${String(RESOURCE_CAP_MIN_TASKS)} to ${String(RESOURCE_CAP_MAX_TASKS)}`);
+    }
+    const previous = resourceCapSetting;
+    const next: SaveResourceCapSettings = { memoryMaxMiB, tasksMax };
+    resourceCapSetting = { schemaVersion: 1, ...next };
+    try { await persist(); }
+    catch {
+      resourceCapSetting = previous;
+      return unavailable('the settings file could not be written');
+    }
+    try { await notify(); }
+    catch {
+      return unavailable('the resource caps were saved but the Host configuration was not confirmed; retry the same save');
+    }
+    return { status: 'ready', value: snapshotOf() };
+  }
+
   const dispatch = async (route: SettingsRoute, input: unknown): Promise<SettingsResponse<unknown>> => {
     switch (route) {
       case 'snapshot': return { status: 'ready', value: snapshotOf() };
@@ -777,6 +889,7 @@ export async function createHostSettings(
       case 'workspaces/open': return await openWorkspaceRoute(input);
       case 'checks/approve': return await approveChecksRoute(input);
       case 'automation/save': return await saveAutomationRoute(input);
+      case 'resource-caps/save': return await saveResourceCapsRoute(input);
     }
   };
 

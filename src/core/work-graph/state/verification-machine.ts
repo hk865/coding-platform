@@ -342,6 +342,8 @@ export type CheckEvent =
   | {
     kind: 'check_result_recorded'; checkId: string; invocationId: string;
     observation: CheckProcessObservation; sourceStatus: Exclude<CheckSourceStatus, null>; reportRef: ArtifactRef;
+    /** L16（决定 55）：owner 从观察里读出的内存上限命中，随本次提交写进检查快照；没有就不带。 */
+    resourceCapHit?: NonNullable<RoundCheckSnapshot['resourceCapHit']>;
   }
   /** VR-04 (R): start-up reconcile under the instance lease. */
   | { kind: 'check_interrupted'; checkId: string; invocationId: string; cause: 'host_restart'; hostInstanceId: string }
@@ -933,6 +935,8 @@ export type CheckPhaseChange =
   | {
     phase: 'finished'; outcome: EvidenceOutcome; reportRef: ArtifactRef; sourceStatus: Exclude<CheckSourceStatus, null>;
     incompleteCause?: RoundCheckIncompleteCause | null;
+    /** L16（决定 55）：VR-03 写下的内存上限命中，只有检查结果那一步带它。 */
+    resourceCapHit?: NonNullable<RoundCheckSnapshot['resourceCapHit']>;
   }
   /** VR-04, VR-13: the invocation is kept, the result fields stay null. */
   | { phase: 'interrupted'; incompleteCause: CheckInterruptionCause }
@@ -986,7 +990,8 @@ function changedCheck(check: RoundCheckSnapshot, change: CheckPhaseChange): Roun
       }
       const finished: RoundCheckSnapshot = { ...check, phase: 'finished', outcome: change.outcome,
         reportRef: change.reportRef, sourceStatus: change.sourceStatus };
-      return change.incompleteCause === undefined ? finished : { ...finished, incompleteCause: change.incompleteCause };
+      const withCause = change.incompleteCause === undefined ? finished : { ...finished, incompleteCause: change.incompleteCause };
+      return change.resourceCapHit === undefined ? withCause : { ...withCause, resourceCapHit: change.resourceCapHit };
     }
     case 'interrupted':
       return { ...check, phase: 'interrupted', outcome: null, reportRef: null, sourceStatus: null,
@@ -1615,7 +1620,9 @@ export function transitionCheck(state: RoundSnapshot, event: CheckEvent, ctx: Ro
       const verdict = outcomeFor(event.observation, event.sourceStatus);
       return checkWritten(state, event.checkId, { phase: 'finished', outcome: verdict.outcome,
         reportRef: event.reportRef, sourceStatus: event.sourceStatus,
-        ...(verdict.incompleteCause === null ? {} : { incompleteCause: verdict.incompleteCause }) },
+        ...(verdict.incompleteCause === null ? {} : { incompleteCause: verdict.incompleteCause }),
+        // L16（决定 55）：owner 从这次观察读出的内存上限命中，随检查结果一起写下。
+        ...(event.resourceCapHit === undefined ? {} : { resourceCapHit: event.resourceCapHit }) },
       'VerificationCheckResultRecorded');
     }
     case 'check_interrupted':

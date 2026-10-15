@@ -53,7 +53,7 @@ import type {
 
 export type ExecutionDriverDependencies = Pick<RuntimeExecutionDependencies,
   | 'entry' | 'historyWriter' | 'executions' | 'sessionOperations' | 'kernelStores' | 'workspaceHost'
-  | 'sourceAuthority' | 'sourcePolicyFor' | 'host' | 'kernel' | 'now' | 'newId'
+  | 'sourceAuthority' | 'sourcePolicyFor' | 'host' | 'kernel' | 'resourceCaps' | 'now' | 'newId'
   | 'modelRequests' | 'roles' | 'materials' | 'bodies' | 'plans' | 'messages' | 'decisionMessages' | 'applicationReceipt'
   | 'sessions' | 'runReconcile'
   | 'graphHistory' | 'graphContext' | 'taskInputs'> & {
@@ -847,6 +847,7 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
           workspaceRoot: rootResolved.value.root,
           ...(hostConfig.processSandboxOptions.readOnlyPaths === undefined ? {} : { readOnlyPaths: hostConfig.processSandboxOptions.readOnlyPaths }),
           ...(hostConfig.processSandboxOptions.executablePath === undefined ? {} : { executablePath: hostConfig.processSandboxOptions.executablePath }),
+          ...(deps.resourceCaps === undefined ? {} : { resourceCaps: deps.resourceCaps }),
           authorization: {
             permissionRevision,
             current: async () => {
@@ -919,6 +920,7 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
             skills: hostConfig.skills,
             ...(hostConfig.systemInstruction === null ? {} : { systemInstruction: hostConfig.systemInstruction }),
             processSandboxOptions: hostConfig.processSandboxOptions,
+            ...(deps.resourceCaps === undefined ? {} : { resourceCaps: deps.resourceCaps }),
             ...(sourceTools === undefined ? {} : { sourceTools }),
             ...(sourceFactory === undefined ? {} : { projectSource: { mode: 'frozen' as const, open: sourceFactory, openOn: 'first_use' as const } }),
             ...(toolGroupBarrier === undefined ? {} : { toolGroupBarrier }),

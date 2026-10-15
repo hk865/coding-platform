@@ -22,6 +22,8 @@
  * after it is accepted; the stop is observed as `settled`/`cancelled`.
  */
 import { ProcessSandbox, ProcessSandboxError, WorkspaceSandbox, WorkspaceSandboxError } from '../../vendor/coding-agent/dist/public-api.js';
+import type { ResourceCapSource, ResourceCapsReport } from '../../vendor/coding-agent/dist/public-api.js';
+import type { ResourceCapsReportV1 } from '../contracts/resource-caps.js';
 import { canonicalJson, type JsonValue } from '../contracts/fingerprint.js';
 import type { CoreCallContext } from '../contracts/core/call-context.js';
 import type { MaterialSourceScope } from '../contracts/material-access.js';
@@ -53,6 +55,9 @@ export type WorkbenchToolsOptions = {
   /** Optional Host change feed (task E): called when a handle starts stopping
    * and when it settles. A notification never changes the command. */
   onCommandChange?: (change: WorkbenchCommandChange) => void;
+  /** L13: the Host's live resource-cap source, passed to the cached sandbox and
+   * read once per command. Absence keeps today's uncapped path. */
+  resourceCaps?: ResourceCapSource;
 };
 
 export type SaveWorkbenchFileRequest = {
@@ -118,6 +123,9 @@ export type WorkbenchCommandSnapshot = {
   signal: string | null;
   timedOut: boolean;
   cancelled: boolean;
+  /** L10: the Kernel report once the command produced one (including
+   * `not_started`), `null` before a result and on a saved launch error. */
+  resourceCaps: ResourceCapsReportV1 | null;
 };
 
 export interface WorkbenchToolsPort {
@@ -349,7 +357,8 @@ export function createWorkbenchTools(options: WorkbenchToolsOptions): WorkbenchT
       const sandbox = await workspaceSandbox(runtime);
       const profile = await ProcessSandbox.probe(runtime.config.root, sandbox);
       if (!profile.available) return null;
-      return new ProcessSandbox(profile, runtime.config.root, sandbox);
+      return new ProcessSandbox(profile, runtime.config.root, sandbox,
+        options.resourceCaps === undefined ? undefined : { resourceCaps: options.resourceCaps });
     })();
     return runtime.process;
   }
@@ -482,6 +491,7 @@ export function createWorkbenchTools(options: WorkbenchToolsOptions): WorkbenchT
         snapshot: {
           error: null, commandId: '', state: 'running', stdout: '', stderr: '',
           outputTruncated: false, exitCode: null, signal: null, timedOut: false, cancelled: false,
+          resourceCaps: null,
         },
         execution: Promise.resolve(),
       };
@@ -510,11 +520,12 @@ export function createWorkbenchTools(options: WorkbenchToolsOptions): WorkbenchT
             signal: result.signal,
             timedOut: result.timedOut,
             cancelled: result.cancelled,
+            resourceCaps: (result as { resourceCaps?: ResourceCapsReport }).resourceCaps ?? null,
             error: null,
           };
         } catch (error) {
           // A post-acceptance failure is a structured saved error, never fake stderr.
-          handle.snapshot = { ...handle.snapshot, state: 'settled', error: commandErrorOf(error) };
+          handle.snapshot = { ...handle.snapshot, state: 'settled', resourceCaps: null, error: commandErrorOf(error) };
         } finally {
           announce(handle);
         }

@@ -1,7 +1,10 @@
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomBytes, randomUUID } from 'node:crypto';
+import { totalmem } from 'node:os';
 import * as kernel from '../../vendor/coding-agent/dist/public-api.js';
+import type { ResourceCapSource } from '../../vendor/coding-agent/dist/public-api.js';
+import { MIB, defaultResourceCapSettings } from '../contracts/resource-caps.js';
 import { createInMemoryRecordBackend } from '../core/record-store/in-memory-record-store.js';
 import { createSqliteRecordBackend } from '../core/record-store/sqlite-record-store.js';
 import { RawArtifactBodyStore } from '../core/record-store/body-store.js';
@@ -183,6 +186,12 @@ export type TargetPlatformOptions = {
    * permission or database here. When absent, execution stays explicitly
    * unsupported while Session creation/history keep their accepted behavior. */
   runtime?: RuntimeHostBindings;
+  /**
+   * L13: the Host's live resource-cap source handed to the Runtime and the
+   * registered-check runner. Absent uses the machine-memory default (a test
+   * that builds the platform directly). It adds no platform member.
+   */
+  resourceCaps?: ResourceCapSource;
   /** Trusted per-workspace source policy, consumed by the existing source factories. */
   sourcePolicyFor?: RuntimeExecutionDependencies['sourcePolicyFor'];
   /** Optional frozen trusted checks configuration. Without it the platform has
@@ -473,6 +482,14 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
   // Host installs its settings (`registerAutomationPolicy`). Read live by the requeue owner and the read model.
   let automationPolicy: TaskAutomationPolicyV1 = { ...DEFAULT_TASK_AUTOMATION_POLICY };
   const currentAutomationPolicy = (): TaskAutomationPolicyV1 => ({ ...automationPolicy });
+  // L13: the ONE platform-root resource-cap source. A directly built platform
+  // with no Host source uses the machine-memory default; the Host's holder is
+  // passed through unchanged and read live by the Kernel on every command.
+  const resourceCaps: ResourceCapSource = options.resourceCaps ?? (() => {
+    const defaults = defaultResourceCapSettings(totalmem());
+    const fixed = { memoryMaxBytes: defaults.memoryMaxMiB * MIB, tasksMax: defaults.tasksMax };
+    return { current: () => fixed };
+  })();
   const materialsSchema = materialRecordSchemas();
   const schemas = {
     records: [...materialsSchema.records, ...PLAN_RECORD_SCHEMAS.records, ...PLAN_STATE_RECORD_SCHEMAS.records,
@@ -776,7 +793,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       now, newId: randomUUID,
     });
     const rawCheckRunner = createRegisteredCheckRunner({ evidence: rawEvidence,
-      workspaceHost: options.workspace, kernel, now });
+      workspaceHost: options.workspace, kernel, resourceCaps, now });
     // A.2 step 5.6 (S8, A8): the reconcile owners share the ONE records/reader pair; the Runtime
     // classifier reads the Kernel through the same history owner the observer uses.
     const runReconcile: RunReconcileService = createRunReconcileService({ records: backend.records, reads: executionReader,
@@ -894,7 +911,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         turnClosure: { recordSessionHealth: (...args) => sessionHealth.recordSessionHealth(...args),
           lease: hostInstance === undefined ? null : hostInstance.lease },
         graphContext, taskInputs,
-        host, kernel, now, newId: randomUUID,
+        host, kernel, resourceCaps, now, newId: randomUUID,
       };
       runtime = createAgentRuntime(dependencies);
     }

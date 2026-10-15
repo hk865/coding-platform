@@ -10,6 +10,7 @@ import { readFile } from 'node:fs/promises';
 import { dirname, isAbsolute, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createLocalWorkbenchHost, type LocalWorkbenchHost, type LocalWorkbenchHostOptions } from './host.js';
+import { probeResourceCaps } from '../../vendor/coding-agent/dist/public-api.js';
 import type { TargetPlatformOptions } from '../composition/create-platform.js';
 import type { WorkbenchRuntimeConfiguration } from './runtime-configuration.js';
 import type { HostSettingsModelDefinition } from './host-settings.js';
@@ -221,6 +222,10 @@ export async function runWorkbenchCli(argv: string[]): Promise<number> {
   process.once('SIGTERM', () => { void shutdown().then(() => process.exit(0)); });
   const address = await host.listen();
   process.stdout.write(`workbench listening at ${address.url}\n`);
+  // L5: one background capability probe after `listen`; its result only warms
+  // the Kernel cache for the settings page and never affects startup. A test
+  // Host built through `createLocalWorkbenchHost` does not run it.
+  void probeResourceCaps().catch(() => undefined);
   return 0;
 }
 

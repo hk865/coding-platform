@@ -368,6 +368,7 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
           workspaceRoot: rootResolved.value.root,
           ...(hostConfig.processSandboxOptions.readOnlyPaths === undefined ? {} : { readOnlyPaths: hostConfig.processSandboxOptions.readOnlyPaths }),
           ...(hostConfig.processSandboxOptions.executablePath === undefined ? {} : { executablePath: hostConfig.processSandboxOptions.executablePath }),
+          ...(deps.resourceCaps === undefined ? {} : { resourceCaps: deps.resourceCaps }),
           authorization: {
             permissionRevision,
             current: async () => {
@@ -548,6 +549,7 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
           skills: hostConfig.skills,
           ...(hostConfig.systemInstruction === null ? {} : { systemInstruction: hostConfig.systemInstruction }),
           processSandboxOptions: hostConfig.processSandboxOptions,
+          ...(deps.resourceCaps === undefined ? {} : { resourceCaps: deps.resourceCaps }),
           ...(sourceTools === undefined ? {} : { sourceTools }),
           ...(sourceFactory === undefined ? {} : { projectSource: { mode: 'frozen' as const, open: sourceFactory, openOn: 'first_use' as const } }),
           publish: async () => { /* best-effort live events are never terminal evidence */ },

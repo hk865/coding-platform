@@ -225,6 +225,13 @@ export type RuntimeExecutionDependencies = {
   host: RuntimeHostBindings;
   kernel: typeof import('../../../vendor/coding-agent/dist/public-api.js');
   /**
+   * L13: the Host's live resource-cap source. The Runtime passes it to every
+   * readonly-command tool it builds and merges it into the Kernel input at the
+   * last hop (`runObservedModel`); it enters no configuration/authorization/
+   * prepared execution/digest. Absent keeps today's uncapped path.
+   */
+  resourceCaps?: import('../../../vendor/coding-agent/dist/public-api.js').ResourceCapSource;
+  /**
    * R4.3a: the SAME raw control service the composition root owns. It is the
    * `RunControlPort` intersection with the internal `ControlObservationPort`,
    * so Runtime can read the accepted intent and persist the real observation

@@ -39,7 +39,7 @@ export { sessionRecordSchema, StoreError } from "./core/ports/session_store/sess
 export { StructuredEventLogger } from "./observability/logging/structured-event-logger.js";
 export { ApprovalCoordinator, StaticApprovalRequester, } from "./policy/approval/approval-coordinator.js";
 export { DefaultPermissionPolicy, normalizeWorkspacePath, } from "./policy/permissions/permission-policy.js";
-export { ProcessSandbox, ProcessSandboxError } from "./sandbox/process/process-sandbox.js";
+export { ProcessSandbox, ProcessSandboxError, RESOURCE_CAP_NONE_TEXT, probeResourceCaps, resourceCapStatus, } from "./sandbox/process/process-sandbox.js";
 export { WorkspaceSandbox, WorkspaceSandboxError } from "./sandbox/workspace/workspace-sandbox.js";
 export { createEditToolDefinition, EditToolHandler } from "./tools/builtin/edit/edit-tool.js";
 export { createReadToolDefinition, ReadToolHandler } from "./tools/builtin/read/read-tool.js";

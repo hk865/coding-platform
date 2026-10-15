@@ -27,6 +27,12 @@ const NONE = {
     workspaceRevision: null,
     artifactRefs: [],
 };
+/** L10：非 0 退出和自己超时的消息末尾按上限事件加尾注；成功和取消不加。 */
+function resourceCapTail(report) {
+    if (report === undefined || report.status !== "applied")
+        return "";
+    return `${report.memory === "cap_hit" ? "（超出内存上限）" : ""}${report.processes === "cap_hit" ? "（有新进程或线程被任务数上限拒绝）" : ""}`;
+}
 export class ShellToolHandler {
     sandbox;
     #defaultTimeoutMs;
@@ -53,6 +59,9 @@ export class ShellToolHandler {
                 outputLimitBytes: this.#outputLimitBytes,
                 signal: options.signal,
             });
+            // 旧替身的结果没有这一项；原样抄进 JSON（L10）。
+            const resourceCaps = result.resourceCaps;
+            const tail = resourceCapTail(resourceCaps);
             const output = [
                 { kind: "text", text: result.stdout.text },
                 {
@@ -71,6 +80,7 @@ export class ShellToolHandler {
                         },
                         sandboxProfileVersion: result.sandboxProfileVersion,
                         timings: result.timings,
+                        ...(resourceCaps === undefined ? {} : { resourceCaps }),
                     },
                 },
             ];
@@ -85,10 +95,10 @@ export class ShellToolHandler {
                 };
             }
             if (result.timedOut) {
-                return this.#error(call.callId, "timeout", "shell 执行超时", result.effects, output);
+                return this.#error(call.callId, "timeout", `shell 执行超时${tail}`, result.effects, output);
             }
             if (result.exitCode !== 0) {
-                return this.#error(call.callId, "execution_failed", `shell 退出码 ${String(result.exitCode)}`, result.effects, output);
+                return this.#error(call.callId, "execution_failed", `shell 退出码 ${String(result.exitCode)}${tail}`, result.effects, output);
             }
             return {
                 schemaVersion: 1,

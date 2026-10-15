@@ -102,6 +102,9 @@ export type ObservedModelRunOptions = {
    */
   readonlyCommandTool?: (workspace: WorkspaceSandbox) => ToolDefinition;
   processSandboxOptions: { readOnlyPaths?: string[]; executablePath?: string };
+  /** L13: merged into the Kernel input at this last hop only; never into any
+   * authorization, configuration version, prepared execution or digest. */
+  resourceCaps?: import('../../../vendor/coding-agent/dist/public-api.js').ResourceCapSource;
   publish: (event: { type: string; sequence: number; at: string; data: unknown }) => Promise<void>;
 };
 
@@ -296,7 +299,13 @@ export async function runObservedModel(o: ObservedModelRunOptions) {
         // R4.3a 可选工具组安全点：缺省不调用任何新逻辑。
         ...(toolGroupBarrier !== undefined ? { toolGroupBarrier } : {}),
         secretSource: { get: () => 'platform-bound-client' }, providerRegistry,
-        workspaceOptions: { deniedPrefixes: o.deniedPrefixes }, processSandboxOptions: o.processSandboxOptions,
+        workspaceOptions: { deniedPrefixes: o.deniedPrefixes },
+        // L13: the resource-cap source is merged in at this last hop only; the
+        // Kernel reads `current()` once per command, so a settings change reached
+        // the holder is used by the next command of this same Run.
+        processSandboxOptions: o.resourceCaps === undefined
+          ? o.processSandboxOptions
+          : { ...o.processSandboxOptions, resourceCaps: o.resourceCaps },
         limits: kernelRunLimits(o.budget, o.taskBudget, o.now),
         approvalRequester: new o.kernel.StaticApprovalRequester({ decision: 'allow_once', reason: o.readOnly ? 'explicit_read_only_role_work' : 'explicit_gui_task_in_isolated_workspace' }),
         observerEventSinks: [{ sinkId: 'platform-live-events', delivery: 'best_effort', publish: async (event: AgentEvent) => {
