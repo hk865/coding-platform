@@ -1,12 +1,12 @@
 import type { ArtifactRef } from '../../contracts/artifact.js';
 import type { CommitCursor } from '../../contracts/command-event.js';
-import type { CommandMeta, SessionRef } from '../../contracts/core/identity.js';
+import type { CommandMeta, SessionRef, WorkspaceScope } from '../../contracts/core/identity.js';
 import type { CoreRejection, ReadResult, WriteResult } from '../../contracts/core/results.js';
 import type { SessionMessageRef } from '../../contracts/core/session-message.js';
 import type { GoalRef } from '../../contracts/ledger.js';
 import type { PlanRevisionRef, PlanRevisionSnapshot } from '../../contracts/plan.js';
 import type { QueryJobAnswerSnapshot, QueryJobIntentV1 } from '../../contracts/query-job.js';
-import type { RoleBindingRefV1, TaskBudgetV1, TaskTriple } from '../../contracts/dispatch.js';
+import type { RoleBindingRefV1, RunRef, TaskBudgetV1, TaskTriple } from '../../contracts/dispatch.js';
 import type { RuntimeBudget } from '../../contracts/runtime-budget.js';
 import type { TaskRequeueRef } from '../../contracts/task-requeue.js';
 import type { SessionMessage } from '../../core/work-graph/model/communication-contracts.js';
@@ -255,6 +255,23 @@ export type ConsultationResult = ReadResult<{
   answer: QueryJobAnswerSnapshot | null;
   reason: string | null;
 }>;
+
+/**
+ * Slice 2B §2/L8: one backfill batch. `processed` lists the Runs this batch
+ * inspected (in scan order); `next` is the opaque cursor for the following
+ * batch (`null` = done). A `retry_later` entry points `next` at that Run and
+ * writes nothing; `skipped`/`record_changed` is a version conflict with a
+ * concurrent end commit (RUN-21).
+ */
+export type ActivityBackfillBatchV1 = {
+  processed: { runRef: RunRef; outcome: 'counted' | 'unknown' | 'unchanged' | 'skipped' | 'not_entered' | 'retry_later';
+    reason: string | null }[];
+  next: string | null;
+  done: boolean;
+};
+/** The two Workflow backfill operations (P12; the route binds `backfillActivityRange`). */
+export type ActivityBackfillInput = { workspace: WorkspaceScope; cursor: string | null };
+export type ActivityBackfillRangeInput = { workspace: WorkspaceScope; from: string; to: string; cursor: string | null };
 
 /**
  * Slice 1 §4.1/§4.2: the Workflow archive and maintenance public result types,

@@ -45,6 +45,9 @@ import type { WorkspaceCapturePort, WorkspaceToolsPort } from '../core/workspace
 import type { MaterialSourceScope } from '../contracts/material-access.js';
 import type { PlanRevisionDraft } from '../contracts/plan.js';
 import type { RoleBindingRefV1 } from '../contracts/dispatch.js';
+import type { ActivityReadPort } from '../core/work-graph/views/activity-read-model.js';
+import type { TrackReadPort } from '../core/work-graph/views/track-read-model.js';
+import type { TaskTimelineReadPort } from '../core/work-graph/views/task-state-timeline.js';
 import type { QueryJobAnswerSnapshot, QueryJobIntentV1, QueryJobRef, QueryRunRef } from '../contracts/query-job.js';
 import type { RuntimeBudget } from '../contracts/runtime-budget.js';
 import type { QueryJobPort, QueryExecutionRecord } from '../core/work-graph/queries/contracts.js';
@@ -228,7 +231,14 @@ export type CoreRouteSuffix =
   | 'decisions/answer'
   | 'decisions/application'
   | 'decisions/notices/seen'
-  | 'messages/user-send';
+  | 'messages/user-send'
+  // Slice 2B L15: the five activity/timeline routes. All are `plain`; only the
+  // human-only range backfill performs a write (the Workflow operation).
+  | 'activity/calendar'
+  | 'activity/runs'
+  | 'activity/track'
+  | 'tasks/timeline'
+  | 'activity/backfill';
 
 type SecondArgument<M> = M extends (ctx: CoreCallContext, argument: infer A) => unknown ? A : never;
 type MethodResult<M> = M extends (ctx: CoreCallContext, argument: never) => infer R ? Awaited<R> : never;
@@ -350,6 +360,24 @@ export type DecisionsNoticesSeenBody = GraphWriteBody<WorkspaceDecisionSettingsP
 export type DecisionsNoticesSeenResponse = RouteResponse<WorkspaceDecisionSettingsPort['markNoticesSeen']>;
 export type MessagesUserSendBody = GraphWriteBody<DecisionMessagePort['sendUserMessage']>;
 export type MessagesUserSendResponse = RouteResponse<DecisionMessagePort['sendUserMessage']>;
+
+// ---------------------------------------------------------------------------
+// Slice 2B L15: the five activity/timeline route DTOs. Each alias derives from
+// the exact public owner method the frozen route table names; the human-only
+// range backfill derives from the optional Workflow operation the real
+// composition always installs. Nothing in `src/` names these aliases at
+// runtime, so they are allowlisted as `wire-format` (F34/P9).
+// ---------------------------------------------------------------------------
+export type ActivityCalendarBody = PlainBody<ActivityReadPort['readActivityCalendar']>;
+export type ActivityCalendarResponse = RouteResponse<ActivityReadPort['readActivityCalendar']>;
+export type ActivityRunsBody = PlainBody<ActivityReadPort['readRunActivities']>;
+export type ActivityRunsResponse = RouteResponse<ActivityReadPort['readRunActivities']>;
+export type ActivityTrackBody = PlainBody<TrackReadPort['readTrackBars']>;
+export type ActivityTrackResponse = RouteResponse<TrackReadPort['readTrackBars']>;
+export type TasksTimelineBody = PlainBody<TaskTimelineReadPort['readTaskStateTimeline']>;
+export type TasksTimelineResponse = RouteResponse<TaskTimelineReadPort['readTaskStateTimeline']>;
+export type ActivityBackfillBody = PlainBody<NonNullable<WorkflowPort['backfillActivityRange']>>;
+export type ActivityBackfillResponse = RouteResponse<NonNullable<WorkflowPort['backfillActivityRange']>>;
 
 // ---------------------------------------------------------------------------
 // R6 execution-entry routes: each alias is derived from the exact public owner

@@ -100,6 +100,7 @@ import {
 } from './reconcile-intents.js';
 import type { TaskExecutionRecord } from '../model/execution-read-contracts.js';
 import { readEntryPlanVerdict } from './entry-plan-reader.js';
+import { planRunActivityForCommit } from './run-activity-service.js';
 import { readGoal, readGoalPhase, readGoalScope, sameCursor } from './plan-readers.js';
 import { goalStartPolicy } from '../state/goal-settings-machine.js';
 import { planRevisionRefKey } from '../persistence/plan-record-codecs.js';
@@ -1846,7 +1847,10 @@ export function createExecutionEntryService(deps: ExecutionEntryGoalSettingsDepe
         ...(unresolvedToolCallIds.length === 0 ? {} : { unresolvedToolCallIds }),
         ...(enteredAt === null ? {} : { enteredAt }),
         ...(acceptedSteers.length === 0 ? {} : { acceptedSteers }),
-        ...(inputsConfirmed === null ? {} : { inputsConfirmed }) });
+        ...(inputsConfirmed === null ? {} : { inputsConfirmed }),
+        // Slice 2B L5: an ending commit that carries activity covers it in its
+        // fingerprint; an old caller without it keeps today's identity.
+        ...(observation.activity === undefined ? {} : { activity: observation.activity }) });
     } catch { return invalid('the result request is not canonicalizable JSON'); }
 
     try {
@@ -1941,17 +1945,34 @@ export function createExecutionEntryService(deps: ExecutionEntryGoalSettingsDepe
         nodeBefore: state.node, hostInstanceId: deps.hostInstance?.hostInstanceId ?? null, acceptedSteers,
         cancelRef: null, pausedStop: null, kernelPaused: false, observedAt: nowIso });
       if (!intentWrites.ok) return intentWrites.rejection;
+      // Slice 2B L5: the tally joins the SAME end commit as a RunActivity
+      // record (no event of its own). An unchanged record writes nothing.
+      let activityRecord: EncodedRecord | null = null;
+      let activityGuard: RecordGuard | null = null;
+      if (observation.activity !== undefined) {
+        const planned = await planRunActivityForCommit(records, { activity: observation.activity, run: nextRun,
+          // R10 (review item 10): RUN-21 preserves the Run's ORIGINAL `endedAt`;
+          // the activity snapshot must keep it, and `recordedAt` alone carries
+          // the replacement time. The fallback is defensive only (the Run is
+          // ending in this commit).
+          runEndedAt: nextRun.endedAt ?? nowIso, sessionRef: nextRun.executionHistory?.sessionRef ?? claim.sessionRef,
+          recordedBy: 'run_end', recordedAt: nowIso, endCommit: true });
+        if (!planned.ok) return planned.rejection;
+        activityRecord = planned.record;
+        if (activityRecord !== null) activityGuard = { refKey: planned.refKey, expectedRevision: planned.existingRevision };
+      }
       const event = {
         eventId, eventType: EXECUTION_RUN_RESULT_RECORDED_EVENT_TYPE,
         schemaVersion: EXECUTION_ENTRY_EVENT_SCHEMA_VERSION, occurredAt: nowIso,
         identityKey: identity, actor, fingerprint, claim, entry, run: nextRun,
       };
       const mergedGuards = mergeGuards([...executionReadGuards(facts, runRecord.refKey, runPin), ...intentWrites.guards,
-        ...continuationGuards]);
+        ...continuationGuards, ...(activityGuard === null ? [] : [activityGuard])]);
       if (!mergedGuards.ok) return mergedGuards.rejection;
       const preparedCommit: PreparedCommit = {
         identityKey: identity, fingerprint, guards: mergedGuards.guards,
-        records: [runRecord, ...written.records, ...intentWrites.records], claims: [],
+        records: [runRecord, ...written.records, ...intentWrites.records,
+          ...(activityRecord === null ? [] : [activityRecord])], claims: [],
         indexGuards: [], indexChanges: [], events: [encodeExecutionRunResultRecordedEvent(event)],
       };
       if (signal.aborted) return reject('cancelled', 'the result write was cancelled before commit');

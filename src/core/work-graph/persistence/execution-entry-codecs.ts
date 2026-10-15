@@ -35,6 +35,7 @@ import { isArtifactRef } from '../../record-store/body-codec.js';
 import type { TaskDispatchStateV1 } from '../model/claim-contracts.js';
 import type { RuntimeEntryRecord, TaskEntryPermit } from '../model/execution-entry-contracts.js';
 import { controlIntentRefProblem } from './rework-codecs.js';
+import { RUN_ACTIVITY_RECORD_SCHEMAS } from './run-activity-codecs.js';
 
 export type { ExecutionAuthorizationV2, TaskDispatchStateV1, TaskDispatchStateV2, TaskLeaseReleaseV1 };
 
@@ -834,18 +835,27 @@ function validateResultEvent(event: EncodedDomainEvent): DecodeResult<EncodedDom
 }
 
 /**
- * Registration for the four entry/result replay events only. `records` is
- * EMPTY on purpose: Run/Attempt/outbox/Lease/Session are registered by their
- * owning modules and a duplicate aggregateType registration is a real conflict.
+ * Registration for the four entry/result replay events plus the Slice 2B
+ * `RunActivity`/`ActivityRecording` records, their two replay events and the
+ * `s2b-run-activity-by-goal-last` index (§5.3 last row). Run/Attempt/outbox/
+ * Lease/Session are registered by their owning modules and are NOT re-registered
+ * here; `RunActivity`/`ActivityRecording` have no other owner, so this group is
+ * their single registration (a duplicate aggregateType registration is a real
+ * conflict).
  */
 export const EXECUTION_ENTRY_RECORD_SCHEMAS: RecordBackendSchemas = {
-  records: [],
+  records: [
+    ...RUN_ACTIVITY_RECORD_SCHEMAS.records,
+  ],
   events: [
     { eventType: EXECUTION_ENTRY_AUTHORIZED_EVENT_TYPE, schemaVersion: EXECUTION_ENTRY_EVENT_SCHEMA_VERSION, validate: validateAuthorizedEvent },
     { eventType: EXECUTION_ENTRY_BEGUN_EVENT_TYPE, schemaVersion: EXECUTION_ENTRY_EVENT_SCHEMA_VERSION, validate: validateBegunEvent },
     { eventType: EXECUTION_ENTRY_ENTERED_EVENT_TYPE, schemaVersion: EXECUTION_ENTRY_EVENT_SCHEMA_VERSION, validate: validateEnteredEvent },
     { eventType: EXECUTION_RUN_RESULT_RECORDED_EVENT_TYPE, schemaVersion: EXECUTION_ENTRY_EVENT_SCHEMA_VERSION, validate: validateResultEvent },
     { eventType: EXECUTION_RUN_RECONCILED_EVENT_TYPE, schemaVersion: EXECUTION_ENTRY_EVENT_SCHEMA_VERSION, validate: validateReconciledEvent },
+    ...RUN_ACTIVITY_RECORD_SCHEMAS.events,
   ],
-  lookups: [],
+  lookups: [
+    ...RUN_ACTIVITY_RECORD_SCHEMAS.lookups ?? [],
+  ],
 };

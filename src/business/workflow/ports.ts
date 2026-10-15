@@ -31,7 +31,9 @@ import type { ProjectRegistrationPort } from '../../core/work-graph/configuratio
 import type { QueryExecutionRecord, QueryJobPort } from '../../core/work-graph/queries/contracts.js';
 import type { SessionArchivePort } from './session-archive.js';
 import type { SessionMaintenancePort } from './session-maintenance.js';
-import type { ConsultationInput, ConsultationResult, InitialPlanningGoalInput, InitialPlanningGoalInputResult,
+import type { RunActivityPort } from '../../core/work-graph/tasks/run-activity-service.js';
+import type { ActivityBackfillBatchV1, ActivityBackfillInput, ActivityBackfillRangeInput,
+  ConsultationInput, ConsultationResult, InitialPlanningGoalInput, InitialPlanningGoalInputResult,
   N0GoalInput, ResolveDecisionInputV1, ResolveDecisionReadV1, WorkflowAdvanceInput, WorkflowAdvanceResult, WorkflowCloseEventReader } from './contracts.js';
 
 /**
@@ -174,6 +176,13 @@ export type WorkflowDependencies = {
    * `application_not_recorded`.
    */
   applicationReceipt?: (ctx: CoreCallContext, cursor: CommitCursor) => Promise<DecisionApplicationReceiptV1 | null>;
+  /**
+   * Slice 2B L8/P12: the WorkGraph `RunActivity` owner the Workflow backfill
+   * uses for its candidate scan and record write. Optional so every existing
+   * composition and fixture keeps starting; without it the two backfill
+   * operations stay explicitly unsupported.
+   */
+  runActivity?: RunActivityPort;
 };
 
 /**
@@ -227,4 +236,12 @@ export interface WorkflowPort {
    * compositions; `createWorkflow` implements it as a stub in part 1.
    */
   orderGoalAdvances?(ctx: CoreCallContext, input: { advances: WorkflowAdvanceInput[] }): Promise<ReadResult<{ advances: WorkflowAdvanceInput[] }>>;
+  /**
+   * Slice 2B L8/P12: the automatic Host-start batch over `[now − 14 days, now)`
+   * and the human range batch behind `activity/backfill`. Optional for old
+   * compositions; `createWorkflow` publishes them when the `runActivity` owner
+   * is installed and answers `unsupported` otherwise.
+   */
+  backfillRecentActivity?(ctx: CoreCallContext, input: ActivityBackfillInput): Promise<ReadResult<ActivityBackfillBatchV1>>;
+  backfillActivityRange?(ctx: CoreCallContext, input: ActivityBackfillRangeInput): Promise<ReadResult<ActivityBackfillBatchV1>>;
 }

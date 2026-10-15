@@ -1151,6 +1151,15 @@ const PLAN_PROPOSAL_REQUEST_LOOKUP: RecordLookupIndex = {
   paths: ['ref.projectId', 'ref.workspaceId', 'goalRef.goalId', 'requestRef.queryJobId'],
 };
 
+/** Slice 2B L14: one Goal's PlanRevisions, ordered by `acceptedAt` (task timeline). */
+export const S2B_PLAN_REVISION_BY_GOAL_LOOKUP = 's2b-plan-revision-by-goal';
+const PLAN_REVISION_BY_GOAL_LOOKUP: RecordLookupIndex = {
+  name: S2B_PLAN_REVISION_BY_GOAL_LOOKUP,
+  aggregateType: 'PlanRevision',
+  paths: ['goalRef.projectId', 'goalRef.goalId'],
+  orderBy: { path: 'acceptedAt' },
+};
+
 export const PLAN_RECORD_SCHEMAS: {
   records: readonly EncodedRecordSchema[];
   events: readonly EncodedEventSchema[];
@@ -1163,5 +1172,5 @@ export const PLAN_RECORD_SCHEMAS: {
     { eventType: PLAN_REVISION_ACCEPTED_EVENT, schemaVersion: PLAN_REVISION_ACCEPTED_SCHEMA_VERSION,
       validate: validatePlanRevisionAcceptedEvent },
   ],
-  lookups: [PLAN_PROPOSAL_GOAL_LOOKUP, PLAN_PROPOSAL_REQUEST_LOOKUP],
+  lookups: [PLAN_PROPOSAL_GOAL_LOOKUP, PLAN_PROPOSAL_REQUEST_LOOKUP, PLAN_REVISION_BY_GOAL_LOOKUP],
 };

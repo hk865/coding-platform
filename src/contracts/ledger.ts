@@ -21,6 +21,7 @@ import type { ActorRef } from "./command-event.js";
 import type { GoalSettingsV1, WorkspaceDecisionSettingsV1 } from "./goal-decisions.js";
 import type { TaskRequeueRef, TaskReworkRefusalRef } from "./task-requeue.js";
 import type { SessionAnomalyAnchorRef } from "./session-anomaly.js";
+import type { ActivityRecordingRef, RunActivityRef } from "./run-activity.js";
 // 协作通信：只剩 Agent 归因（AgentPrincipalRefV1）引用的参与关系 ref。
 import type { WorkParticipationRef } from "./coordination.js";
 export type ProjectRef = {
@@ -37,7 +38,7 @@ export type GoalRef = {
     projectId: string;
     goalId: string;
 };
-export type AggregateRef = import('./core/identity.js').SessionAggregateRef | import('./core/identity.js').SessionWorkLinkRef | import('./core/operations.js').OperationRef | import('./reviewer-work.js').TaskReviewProtocolRef | import('./reviewer-work.js').ReviewWorkRef | import('./reviewer-work.js').ReviewResultRef | ProjectRef | WorkspaceRef | GoalRef | CompletionPolicyRevisionRef | ArchitectureBaselineRevisionRef | ProjectCompletionPolicyActiveRef | ProjectArchitectureBaselineActiveRef | PlanRevisionRef | TaskLeaseRef | TaskAttemptRef | RunRef | DispatchOutboxRef | EvidenceRef | TaskEvidenceIndexRef | VerificationRoundRef | TaskReductionRef | GoalPhaseRef | WorkContextRef | ControlIntentRef | QueryJobRef | QueryRunRef | QueryJobAnswerRef | PlanProposalSnapshot["ref"] | UserDecisionSnapshot["ref"] | CoordinationPolicyRevisionRef | ProjectCoordinationPolicyActiveRef | RoleSpecRevisionRef | ProjectRoleSpecActiveRef | MaterialAccessGrantRef | WorkParticipationRef | import('./dispatch.js').ModelRequestPermitRef | SessionMessageRef | TaskRequeueRef | TaskReworkRefusalRef | SessionAnomalyAnchorRef;
+export type AggregateRef = import('./core/identity.js').SessionAggregateRef | import('./core/identity.js').SessionWorkLinkRef | import('./core/operations.js').OperationRef | import('./reviewer-work.js').TaskReviewProtocolRef | import('./reviewer-work.js').ReviewWorkRef | import('./reviewer-work.js').ReviewResultRef | ProjectRef | WorkspaceRef | GoalRef | CompletionPolicyRevisionRef | ArchitectureBaselineRevisionRef | ProjectCompletionPolicyActiveRef | ProjectArchitectureBaselineActiveRef | PlanRevisionRef | TaskLeaseRef | TaskAttemptRef | RunRef | DispatchOutboxRef | EvidenceRef | TaskEvidenceIndexRef | VerificationRoundRef | TaskReductionRef | GoalPhaseRef | WorkContextRef | ControlIntentRef | QueryJobRef | QueryRunRef | QueryJobAnswerRef | PlanProposalSnapshot["ref"] | UserDecisionSnapshot["ref"] | CoordinationPolicyRevisionRef | ProjectCoordinationPolicyActiveRef | RoleSpecRevisionRef | ProjectRoleSpecActiveRef | MaterialAccessGrantRef | WorkParticipationRef | import('./dispatch.js').ModelRequestPermitRef | SessionMessageRef | TaskRequeueRef | TaskReworkRefusalRef | SessionAnomalyAnchorRef | RunActivityRef | ActivityRecordingRef;
 export type ProjectSnapshot = {
     ref: ProjectRef;
     revision: number;

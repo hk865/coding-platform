@@ -939,6 +939,21 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     signal: new AbortController().signal,
   });
   const reconcileContext = (scope: CoreScope): CoreCallContext => hostScopeContext(scope, HOST_RECONCILE_ACTOR);
+  // Slice 2B L7: with the instance lease, every served workspace records its
+  // start-of-recording epoch BEFORE the start-up reconcile, so a Run that ends
+  // after this instant and has no tally reads `not_recorded` (an error) rather
+  // than an old `not_backfilled` one. A Host without the lease writes nothing.
+  if (leaseOwned) {
+    for (const workspace of workspaces) {
+      const recorded = await platform.runActivity.ensureActivityRecording(hostScopeContext(workspace.scope, actor), {
+        input: { workspace: { projectId: workspace.scope.projectId, workspaceId: workspace.scope.workspaceId } },
+        meta: { requestId: `host-activity-recording:${scopeKey(workspace.scope)}`, expected: [] },
+      });
+      if (recorded.status !== 'committed') {
+        throw new Error(`the start-of-recording write failed: ${JSON.stringify(recorded)}`);
+      }
+    }
+  }
   const reconcileScopes = (scopes: readonly CoreScope[]) => runStartupReconcile({
     platform: { sessions: platform.sessions, executions: platform.executions, controls: platform.controls,
       plans: platform.plans, reconcile: platform.reconcile },
@@ -969,11 +984,39 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     }
   };
   if (reconcileReport !== null) await startRedrive(reconcileReport.redriveGoals);
+  // Slice 2B L8/B2: after the start-up reconcile, the leased Host backfills the
+  // last 14 days in the background, one batch at a time, until done, a
+  // `retry_later` or close. The cursor is memory-only: the records are the
+  // progress, so nothing is written when nothing needs doing.
+  const backfillAbort = new AbortController();
+  const backfillDone: Promise<void> = !leaseOwned ? Promise.resolve() : (async () => {
+    for (const workspace of workspaces) {
+      if (backfillAbort.signal.aborted) return;
+      const scope = { projectId: workspace.scope.projectId, workspaceId: workspace.scope.workspaceId };
+      const ctx: CoreCallContext = { ...hostScopeContext(scope, actor), signal: backfillAbort.signal };
+      let cursor: string | null = null;
+      try {
+        for (;;) {
+          if (backfillAbort.signal.aborted) return;
+          const batch: ReadResult<import('../business/workflow/contracts.js').ActivityBackfillBatchV1> | undefined =
+            await platform.workflow.backfillRecentActivity?.(ctx, { workspace: scope, cursor });
+          if (batch === undefined || batch.status !== 'ready') return;
+          if (batch.value.done || batch.value.next === null) break;
+          cursor = batch.value.next;
+        }
+      } catch { /* a failed batch leaves the missing tallies for the next Host start */ }
+    }
+  })();
   // A workspace this Host opens after its start is reconciled the same way before it serves an execution
   // (§12.1): its lines join the report, and its re-drive follows the same switch.
   reconcileAddedScope = async (scope: CoreScope): Promise<void> => {
     const report = hostReconcile.report;
     if (!leaseOwned || report === null) return;
+    const recorded = await platform.runActivity.ensureActivityRecording(hostScopeContext(scope, actor), {
+      input: { workspace: { projectId: scope.projectId, workspaceId: scope.workspaceId } },
+      meta: { requestId: `host-activity-recording:${scopeKey(scope)}`, expected: [] },
+    });
+    if (recorded.status !== 'committed') return;
     const added = await reconcileScopes([scope]);
     report.sessions.push(...added.sessions);
     report.runs.push(...added.runs);
@@ -1185,7 +1228,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     if (leaseOwned) return bindings;
     const busy = (what: string) => async () => ({ status: 'rejected' as const, code: 'busy' as const,
       reason: `another Host holds the instance lease of this store; ${what} runs only there (${instanceLease.reason})` });
-    return { ...bindings,
+    const gated: CoreRouteBindings = { ...bindings,
       startRun: busy('executions/start') as unknown as CoreRouteBindings['startRun'],
       startQuery: busy('queries/start') as unknown as CoreRouteBindings['startQuery'],
       advanceWork: busy('workflow/advance') as unknown as CoreRouteBindings['advanceWork'],
@@ -1193,6 +1236,11 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       driverStart: busy('workflow/driver-start') as unknown as CoreRouteBindings['driverStart'],
       resolveUnknownRun: busy('the unknown-outcome attestation') as unknown as CoreRouteBindings['resolveUnknownRun'],
       resolveUnknownQueryRun: busy('the unknown-outcome attestation') as unknown as CoreRouteBindings['resolveUnknownQueryRun'] };
+    // Slice 2B L8/L15: the human backfill reads the Kernel, so only the leased
+    // Host runs it. The route binding may not exist yet in an older route table;
+    // installing it by name keeps the gate exact either way.
+    (gated as unknown as Record<string, unknown>)['backfillActivityRange'] = busy('activity/backfill');
+    return gated;
   }
 
   // The real route bindings share the ONE platform instance assembled above.
@@ -1225,6 +1273,8 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         await server.close();
         const workbenchToolsClosed = workbenchTools.close();
         attentionAbort.abort('host_closing');
+        backfillAbort.abort('host_closing');
+        await backfillDone.catch(() => { /* the loop records its own state */ });
         await attentionDone.catch(() => { /* the loop records its own state */ });
         await Promise.all([...inputJobs.values()]);
         await collaborationDriver.close();

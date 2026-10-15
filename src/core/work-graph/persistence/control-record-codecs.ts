@@ -562,6 +562,8 @@ function validateControlIntentObservedEvent(event: EncodedDomainEvent): DecodeRe
  * start-up reconcile's step 5 candidate set (CTL-08), bounded by open intents.
  */
 export const CONTROL_BY_WORKSPACE_STATUS_INDEX = 'a2-control-by-workspace-status';
+/** Slice 2B L14: one Run's control intents (pause/resume timeline), a plain equality group. */
+export const S2B_CONTROL_BY_RUN_LOOKUP = 's2b-control-by-run';
 
 /**
  * The ONE control schema registration. The Run `controlState` inside
@@ -580,5 +582,7 @@ export const CONTROL_RECORD_SCHEMAS: RecordBackendSchemas = {
   ],
   lookups: [
     { name: CONTROL_BY_WORKSPACE_STATUS_INDEX, aggregateType: 'ControlIntent', paths: ['ref.projectId', 'ref.workspaceId', 'status'] },
+    { name: S2B_CONTROL_BY_RUN_LOOKUP, aggregateType: 'ControlIntent',
+      paths: ['ref.projectId', 'ref.workspaceId', 'runRef.goalId', 'runRef.runId'] },
   ],
 };

@@ -1,0 +1,192 @@
+/**
+ * Lead pre-freeze measurement for slice 2B §7 (DESIGN §9.3 "measure before
+ * freezing"). Not part of the suite; copied in, run once, removed.
+ *
+ * The reads of 2B do not exist yet, so this times the STORE READS that spec
+ * F37 counts, on the real SQLite RecordStore (2A ordered lookup merged), at
+ * the benchmark scale: 50,000 Runs, one Goal with 2,000 Runs over 600 Tasks
+ * and 1,000 check rounds; one RunActivity per Run, 10 % of them carrying
+ * 1,000 paths. Records are inserted raw with pass-through schemas (shape-alike
+ * bodies, not the real codecs); every returned body is JSON-parsed once to
+ * stand in for decoding. Timings are the median of 3 warm runs.
+ */
+import { afterAll, it } from 'vitest';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
+import { canonicalJson } from '../src/contracts/fingerprint.js';
+import { makeCommitCursor } from '../src/contracts/ledger.js';
+import { createSqliteRecordBackend } from '../src/core/record-store/sqlite-record-store.js';
+import type { RecordBackendSchemas } from '../src/core/record-store/ports.js';
+import { mapExecutedFilesToModules } from '../src/core/work-graph/views/goal-conflicts.js';
+
+const pass = (aggregateType: string, schemaId: string) => ({
+  schemaId, aggregateType, validate: (record: never) => ({ status: 'decoded' as const, value: record }),
+});
+const IDX = {
+  activityByGoal: { name: 'b-activity-by-goal-last', aggregateType: 'RunActivity', paths: ['ref.goalId'], orderBy: { path: 'lastAt', valueType: 'text' as const } },
+  runByGoalEnded: { name: 'b-run-by-goal-ended', aggregateType: 'Run', paths: ['ref.goalId'], orderBy: { path: 'endedAt', valueType: 'text' as const } },
+  roundByGoal: { name: 'b-round-by-goal-since', aggregateType: 'VerificationRound', paths: ['ref.goalId'], orderBy: { path: 'since', valueType: 'text' as const } },
+  runByTask: { name: 'b-run-by-task', aggregateType: 'Run', paths: ['ref.goalId', 'ref.taskId'] },
+  controlByRun: { name: 'b-control-by-run', aggregateType: 'ControlIntent', paths: ['runId'] },
+};
+const schemas = {
+  records: [pass('Run', 'Run@1'), pass('RunActivity', 'RunActivity@1'), pass('VerificationRound', 'Round@1'), pass('ControlIntent', 'Control@1')],
+  events: [{ eventType: 'Bench', schemaVersion: 1, validate: (event: never) => ({ status: 'decoded' as const, value: event }) }],
+  lookups: Object.values(IDX),
+} as unknown as RecordBackendSchemas;
+
+const dirs: string[] = [];
+afterAll(async () => { for (const dir of dirs) await rm(dir, { recursive: true, force: true }); });
+
+const pad = (n: number, w: number) => String(n).padStart(w, '0');
+const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)]!;
+
+it('2B §7 store-read costs at the benchmark scale', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'lead-2b-'));
+  dirs.push(dir);
+  const path = join(dir, 'bench.sqlite');
+  const backend = createSqliteRecordBackend({ path, schemas });
+  const records = backend.records as any;
+  await records.lookupOrdered({ index: IDX.activityByGoal.name, values: ['G0000'], direction: 'asc', limit: 1 });
+
+  // ---- data -------------------------------------------------------------
+  const db = new DatabaseSync(path);
+  const insert = db.prepare('INSERT INTO snapshots (ref_key, snapshot_json) VALUES (?, ?)');
+  const insertEvent = db.prepare('INSERT INTO events (id, event_json) VALUES (?, ?)');
+  const t0 = Date.now();
+  const goalOf = (i: number) => {
+    if (i < 2000) return 0;                       // the benchmark Goal
+    if (i < 12000) return 1 + Math.floor((i - 2000) / 500); // 20 queue Goals x 500 Runs
+    return 21 + ((i - 12000) % 30);               // the rest
+  };
+  const runRef = (i: number) => ({ aggregateType: 'Run', projectId: 'P', goalId: `G${pad(goalOf(i), 4)}`, taskId: `T${pad(i < 2000 ? i % 600 : i % 997, 4)}`, runId: `R${pad(i, 6)}` });
+  const activityRef = (i: number) => ({ aggregateType: 'RunActivity', projectId: 'P', goalId: `G${pad(goalOf(i), 4)}`, runId: `R${pad(i, 6)}` });
+  const ended = (i: number) => new Date(Date.UTC(2026, 0, 1) + i * 60_000).toISOString();
+  const filler = 'x'.repeat(1200);
+  let heavy = 0;
+  db.exec('BEGIN');
+  for (let i = 0; i < 50_000; i += 1) {
+    insert.run(canonicalJson(runRef(i)), JSON.stringify({ revision: 1, ref: runRef(i), endedAt: ended(i), state: 'ended', filler }));
+    const files = i % 10 === 3
+      ? Array.from({ length: 1000 }, (_, k) => ({ path: `src/mod-${pad((i + k) % 60, 2)}/part-${k % 7}/file-${pad(k, 4)}.ts`, certainty: k % 5 === 0 ? 'possible' : 'definite' }))
+      : [{ path: `src/mod-${pad(i % 60, 2)}/main.ts`, certainty: 'definite' }];
+    if (files.length === 1000) heavy += 1;
+    insert.run(canonicalJson(activityRef(i)), JSON.stringify({
+      revision: 1, ref: activityRef(i), runRef: runRef(i), lastAt: ended(i), status: 'counted',
+      hours: [{ hour: ended(i).slice(0, 13), steps: 12, edits: 3, unknownEdits: 0 }], files,
+      usage: { inputTokens: 1000, outputTokens: 200 },
+    }));
+  }
+  for (let r = 0; r < 1000; r += 1) {
+    const ref = { aggregateType: 'VerificationRound', projectId: 'P', goalId: 'G0000', roundId: `V${pad(r, 5)}` };
+    insert.run(canonicalJson(ref), JSON.stringify({ revision: 1, ref, since: makeCommitCursor(1 + r * 40), status: 'finalized', filler: filler.slice(0, 800) }));
+  }
+  for (let i = 0; i < 2000; i += 2) {
+    const ref = { aggregateType: 'ControlIntent', projectId: 'P', intentId: `C${pad(i, 6)}` };
+    insert.run(canonicalJson(ref), JSON.stringify({ revision: 1, ref, runId: `R${pad(i, 6)}`, kind: 'pause' }));
+  }
+  for (let e = 1; e <= 60_000; e += 1) {
+    insertEvent.run(e, JSON.stringify({ eventId: `E${e}`, eventType: 'Bench', schemaVersion: 1, occurredAt: ended(e), payload: filler.slice(0, 300) }));
+  }
+  db.exec('COMMIT');
+  db.close();
+  const sizeMb = (await import('node:fs')).statSync(path).size / 1e6;
+  console.log(`data: 50,000 Runs + 50,000 RunActivity (${heavy} with 1,000 paths), 1,000 rounds, 1,000 control intents, 60,000 events; ${sizeMb.toFixed(0)} MB; built in ${Date.now() - t0} ms`);
+
+  // ---- primitives -------------------------------------------------------
+  const scanOrdered = async (index: string, values: string[]) => {
+    let after: unknown = undefined; let rows = 0; const keys: string[] = []; const bodies: string[] = [];
+    for (;;) {
+      const page = await records.lookupOrdered({ index, values, direction: 'asc', limit: 200, ...(after ? { after } : {}) });
+      if (page.status !== 'ready') throw new Error(JSON.stringify(page));
+      for (const record of page.value.records) { rows += 1; keys.push(record.refKey); bodies.push(record.json); JSON.parse(record.json); }
+      if (page.value.next === null) break;
+      after = page.value.next;
+    }
+    return { rows, keys, bodies };
+  };
+  const readManyAll = async (keys: string[]) => {
+    for (let k = 0; k < keys.length; k += 200) {
+      const result = await records.readMany(keys.slice(k, k + 200));
+      if (result.status !== 'ready') throw new Error(JSON.stringify(result));
+      for (const item of result.value.records ?? result.value.items ?? []) if (item?.json) JSON.parse(item.json);
+    }
+  };
+  const eventAtAll = async (cursors: string[]) => {
+    for (const cursor of cursors) {
+      const result = await records.eventAt(cursor);
+      if (result.status !== 'ready') throw new Error(JSON.stringify(result));
+      JSON.parse(result.value.event.json);
+    }
+  };
+  const lookupEqAll = async (index: string, valueSets: string[][]) => {
+    let rows = 0;
+    for (const values of valueSets) {
+      let after: string | undefined;
+      for (;;) {
+        const page = await records.lookup({ index, values, limit: 200, ...(after ? { after } : {}) });
+        if (page.status !== 'ready') throw new Error(JSON.stringify(page));
+        rows += (page.value.records ?? page.value.refKeys ?? []).length;
+        if (!page.value.next) break;
+        after = page.value.next;
+      }
+    }
+    return rows;
+  };
+  const time = async (label: string, fn: () => Promise<unknown>) => {
+    const runs: number[] = []; let out: unknown;
+    for (let k = 0; k < 3; k += 1) { const s = process.hrtime.bigint(); out = await fn(); runs.push(Number(process.hrtime.bigint() - s) / 1e6); }
+    const ms = median(runs);
+    console.log(`${label}: ${ms.toFixed(1)} ms (runs ${runs.map(x => x.toFixed(0)).join('/')})`);
+    return { ms, out };
+  };
+
+  // ---- F37 rows -----------------------------------------------------------
+  const act = await time('A  RunActivity by Goal, ordered, 2,000 rows (10 % heavy)', () => scanOrdered(IDX.activityByGoal.name, ['G0000']));
+  const run = await time('B  Runs by Goal ended, ordered, 2,000 rows', () => scanOrdered(IDX.runByGoalEnded.name, ['G0000']));
+  const actKeys = (act.out as { keys: string[] }).keys;
+  const rm2k = await time('C  readMany RunActivity by key, 2,000 records (batches of 200)', () => readManyAll(actKeys));
+  const rounds = await time('D1 rounds by Goal, ordered, 1,000 rows', () => scanOrdered(IDX.roundByGoal.name, ['G0000']));
+  const cursors = (rounds.out as { bodies: string[] }).bodies.map(b => JSON.parse(b).since as string);
+  const ev = await time('D2 eventAt x 1,000', () => eventAtAll(cursors));
+  const tasks = await time('E  Runs by Task (equality), 600 Tasks', () => lookupEqAll(IDX.runByTask.name, Array.from({ length: 600 }, (_, t) => ['G0000', `T${pad(t, 4)}`])));
+  const ctl = await time('F  control intents by Run (equality), 2,000 Runs', () => lookupEqAll(IDX.controlByRun.name, Array.from({ length: 2000 }, (_, i) => [`R${pad(i, 6)}`])));
+  const calendarAll = act.ms + run.ms + rm2k.ms + rounds.ms + ev.ms;
+  const barsAll = calendarAll + rounds.ms + ev.ms + tasks.ms + ctl.ms;
+  console.log(`=> calendar "all" (A+B+C+D1+D2, ~8,000 reads): ${calendarAll.toFixed(0)} ms`);
+  console.log(`=> bars "all" (+ D1+D2 again, E, F; ~12,000 reads): ${barsAll.toFixed(0)} ms`);
+  console.log(`=> per read: ordered row ${(run.ms / 2000).toFixed(3)} ms (light) / ${(act.ms / 2000).toFixed(3)} ms (activity mix); readMany ${(rm2k.ms / 2000).toFixed(3)} ms; eventAt ${(ev.ms / 1000).toFixed(3)} ms`);
+
+  // ---- growth case 3: the workspace decision queue -------------------------
+  const queueGoals = Array.from({ length: 20 }, (_, g) => `G${pad(g + 1, 4)}`);
+  let allFiles: { path: string; certainty: 'definite' | 'possible' }[] = [];
+  const qStore = await time('Q1 queue: 20 Goals x (500 Run rows + 500 RunActivity rows)', async () => {
+    allFiles = [];
+    for (const goal of queueGoals) {
+      await scanOrdered(IDX.runByGoalEnded.name, [goal]);
+      const a = await scanOrdered(IDX.activityByGoal.name, [goal]);
+      for (const body of a.bodies) allFiles.push(...(JSON.parse(body).files as typeof allFiles));
+    }
+  });
+  const catalog = { modules: Array.from({ length: 60 }, (_, m) => ({ ref: { moduleId: `mod-${pad(m, 2)}` }, paths: [`src/mod-${pad(m, 2)}`] })), dependencies: [], requireDag: false } as never;
+  const qMap = await time(`Q2 queue: map ${allFiles.length.toLocaleString('en')} paths to 60 modules`, async () => mapExecutedFilesToModules(catalog, allFiles));
+  console.log(`=> queue: store ${qStore.ms.toFixed(0)} ms, path mapping ${qMap.ms.toFixed(0)} ms`);
+
+  // ---- growth case 1: an early narrow window reads everything after it -----
+  const late = await time('N  early window: Runs+RunActivity after row 200 (1,800 each) + 900 rounds + 900 eventAt', async () => {
+    await records.lookupOrdered({ index: IDX.runByGoalEnded.name, values: ['G0000'], direction: 'asc', limit: 200, bound: { value: ended(200), inclusive: true } });
+    let after: unknown; let n = 0;
+    for (;;) {
+      const page = await records.lookupOrdered({ index: IDX.runByGoalEnded.name, values: ['G0000'], direction: 'asc', limit: 200, bound: { value: ended(200), inclusive: true }, ...(after ? { after } : {}) });
+      for (const record of page.value.records) { JSON.parse(record.json); n += 1; }
+      if (page.value.next === null) break; after = page.value.next;
+    }
+    await readManyAll(actKeys.slice(200));
+    await eventAtAll(cursors.slice(100));
+    return n;
+  });
+  console.log(`=> early narrow window: ${late.ms.toFixed(0)} ms for ~${(1800 * 2 + 900 * 2).toLocaleString('en')} reads`);
+  await backend.close();
+}, 1_800_000);

@@ -62,6 +62,12 @@ export function sameJson(left: unknown, right: unknown): boolean {
 export type NoticeOriginWireV1 = {
   since?: CommitCursor | null;
   noticeAutomationCap?: number;
+  /**
+   * Slice 2B L14 end: the VR-07 finalization instant at the top level of a
+   * `VerificationRound` record. Only that aggregate may carry it; it is not part
+   * of the public `RoundSnapshot`.
+   */
+  finalizedAt?: string;
 };
 
 /** The only top-level fields the RecordStore may bind a commit cursor to. */
@@ -70,7 +76,11 @@ export const NOTICE_ORIGIN_COMMIT_CURSOR_FIELDS: readonly ('since')[] = ['since'
 const COMMIT_CURSOR_PATTERN = /^c\d{10}$/;
 
 /** Pure check of the optional origin fields; the old body keeps every other key. */
-export function noticeOriginFieldsProblem(value: UnknownRecord, label: string): Problem {
+export function noticeOriginFieldsProblem(
+  value: UnknownRecord,
+  label: string,
+  options?: { readonly allowFinalizedAt?: boolean },
+): Problem {
   const since = value['since'];
   // `null` is the PreparedCommit placeholder the Store fills with the commit
   // cursor; the record shape check accepts it, and `decodeNoticeOrigin` maps a
@@ -82,6 +92,17 @@ export function noticeOriginFieldsProblem(value: UnknownRecord, label: string): 
   const cap = value['noticeAutomationCap'];
   if (cap !== undefined && (!isNonNegativeSafeInteger(cap) || cap > MAX_AUTO_REWORK_LIMIT)) {
     return `${label}.noticeAutomationCap must be an integer between 0 and ${String(MAX_AUTO_REWORK_LIMIT)}`;
+  }
+  // Slice 2B L14 end: only a VerificationRound may carry the finalization time,
+  // and only as a legal ISO UTC instant ending in `Z`.
+  const finalizedAt = value['finalizedAt'];
+  if (finalizedAt !== undefined) {
+    if (options?.allowFinalizedAt !== true) {
+      return `${label}.finalizedAt is only allowed on a VerificationRound`;
+    }
+    if (typeof finalizedAt !== 'string' || !finalizedAt.endsWith('Z') || !Number.isFinite(Date.parse(finalizedAt))) {
+      return `${label}.finalizedAt must be an ISO UTC time ending in Z`;
+    }
   }
   return null;
 }

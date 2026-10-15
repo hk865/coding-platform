@@ -26,6 +26,7 @@ import type { RoleBindingFactsPort } from './configuration-contracts.js';
 import type { GraphWrite } from './task-contracts.js';
 import type { ExecutionReadPort } from './execution-read-contracts.js';
 import type { RecordExecutionHistoryInput } from './execution-history-contracts.js';
+import type { RunActivityFactsV1 } from '../../../contracts/run-activity.js';
 
 /** Existing shared Kernel identity shape; no second declaration. */
 export type KernelExecutionBinding = RunExecutionHistoryV1['kernel'];
@@ -74,13 +75,18 @@ export type TaskResultObservation = {
   enteredAt?: string;
   /** CTL-08(b) / CTL-07: the queued steers the Kernel accepted, settled `steered` in the same commit. */
   acceptedSteers?: AcceptedSteerV1[];
-  /**
-   * §10.3, RUN-17/18/21: the Runtime confirmed every `run.input_accepted` of
+  /** RUN-17/18/21: the Runtime confirmed every `run.input_accepted` of
    * the Turn against its source. Required (`true`) for a reconciled terminal
    * and late evidence; absent is the in-process observer, which confirms them
    * before it submits (RUN-07/08).
    */
   inputsConfirmed?: boolean;
+  /**
+   * Slice 2B L5: the tally the Runtime read for this ending, written in the
+   * SAME commit as the Run transition. Absent means no record is written and
+   * the read path applies L7. RUN-16 (not entered) must not carry it.
+   */
+  activity?: RunActivityFactsV1;
 };
 
 /** A queued steer whose `control:<sha(intentRef)>` input the Kernel accepted (CTL-08(b)). */

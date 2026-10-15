@@ -20,6 +20,7 @@ import type {
   AcceptedSteerV1, HostInstanceFacts, KernelExecutionBinding, KernelObservationSource, ObservedExecutionHistory,
 } from '../model/execution-entry-contracts.js';
 import type { ExecutionReadPort } from '../model/execution-read-contracts.js';
+import type { RunActivityFactsV1 } from '../../../contracts/run-activity.js';
 
 /** The Kernel Turn a reconcile read (§6.2 `reconcile_interrupted_clean`, `stop_paused`, `reconcile_unknown`). */
 export type ReconcileTurnV1 = {
@@ -61,6 +62,12 @@ export type ReconcileRunInput = {
      * and the Kernel `run.paused` names no intent, CD-1).
      */
     | { kind: 'paused_stop'; cancelIntentRef: ControlIntentRef; pausedBy: ControlIntentRef | null; turn: ReconcileTurnV1 };
+  /**
+   * Slice 2B L5: the tally read alongside the reconcile window, written in the
+   * SAME commit as the Run end. Absent means no record is written (L7). A
+   * `not_entered` result must not carry it.
+   */
+  activity?: RunActivityFactsV1;
 };
 
 /** §6.1 contract (d): the operator's attestation of an unknown Run end (RUN-22). */

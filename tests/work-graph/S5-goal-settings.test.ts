@@ -35,7 +35,7 @@ import { createSessionDirectory } from '../../src/core/work-graph/sessions/sessi
 import { plainSessionRefToAggregate } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import { decodeSessionMessageRecord } from '../../src/core/work-graph/sessions/message-record-codecs.js';
 import { createTaskClaimService } from '../../src/core/work-graph/tasks/claim-service.js';
-import { createExecutedFilesStub } from '../../src/core/work-graph/tasks/executed-files-stub.js';
+import { createExecutedFilesStub } from '../helpers/executed-files-stub.js';
 import { createExecutionEntryService, MANIFEST_CONTENT_TYPE } from '../../src/core/work-graph/tasks/execution-entry-service.js';
 import { setGoalControlFromHost } from '../../src/core/work-graph/tasks/goal-control.js';
 import { createGoalSettingsService } from '../../src/core/work-graph/tasks/goal-settings-service.js';

@@ -252,6 +252,12 @@ type RoundWrite<T> = {
     effects: readonly VerificationEffect[];
     /** The machine's next round, written under its CAS when the effects carry `guard_round`. */
     round: RoundSnapshot;
+    /**
+     * L14 end: VR-07 only. The finalization instant written at the round record
+     * top level (`finalizedAt`), the same `deps.now()` as the event's
+     * `occurredAt`; every other write leaves it to `preservedRoundNoticeOrigin`.
+     */
+    finalizedAt?: string;
     /** `guard_open_read_set` / `guard_finalize_read_set` / `guard_begin_read_set`: the CAS of every record the operation read. */
     readSet?: readonly RecordGuard[];
     /** `admit_verdict_evidence`: the Evidence@1 rows built from the effect. */
@@ -295,6 +301,9 @@ async function preservedRoundNoticeOrigin(records: Records, ref: VerificationRou
     const origin: NoticeOriginWireV1 = {};
     if (decoded.value.since !== undefined) origin.since = decoded.value.since;
     if (decoded.value.noticeAutomationCap !== undefined) origin.noticeAutomationCap = decoded.value.noticeAutomationCap;
+    // L14 end: a later rewrite of a finalized round keeps its VR-07
+    // `finalizedAt` exactly like `since` (never re-binds it).
+    if (decoded.value.finalizedAt !== undefined) origin.finalizedAt = decoded.value.finalizedAt;
     return { ok: true, value: origin };
 }
 
@@ -313,19 +322,32 @@ async function commitRoundWrite<T>(records: Records, signal: AbortSignal, write:
     let index: Guarded[] = [];
     let claims: UniqueClaimChange[] = [];
     let events: EncodedDomainEvent[] = [];
+    // Slice 2B F20/L9/L14: a round's CREATING commit binds its cursor to the
+    // record top-level `since`, exactly as `commitReverify` already does for an
+    // automatic successor. Without this a freshly opened round reads as a
+    // legacy no-`since` round and never enters the activity calendar.
+    let roundOriginBinding: PreparedCommit['commitCursorBindings'] = undefined;
     for (const effect of write.effects) {
         switch (effect.kind) {
             case 'guard_round': {
                 // §2.5: an update copies the round's stored creation origin
                 // (`since`/`noticeAutomationCap`) instead of dropping it; the
-                // creating commit keeps the current behaviour (the automatic
-                // successor's own origin is written by `commitReverify`).
-                let record = encodeVerificationRoundSnapshot(write.round);
+                // creating commit writes the null `since` placeholder the Store
+                // binds to this commit's cursor.
+                // L14 end: VR-07 adds the finalization instant on top.
+                let origin: NoticeOriginWireV1;
                 if (effect.expectedRevision !== null) {
                     const preserved = await preservedRoundNoticeOrigin(records, write.round.ref);
                     if (!preserved.ok) return preserved.rejection;
-                    record = encodeVerificationRoundSnapshot(write.round, preserved.value);
+                    origin = preserved.value;
+                } else {
+                    origin = { since: null };
                 }
+                if (write.finalizedAt !== undefined) {
+                    origin = { ...origin, finalizedAt: write.finalizedAt };
+                }
+                const record = encodeVerificationRoundSnapshot(write.round, origin);
+                if (effect.expectedRevision === null) roundOriginBinding = [{ refKey: record.refKey, field: 'since' }];
                 round = [guarded(record, effect.expectedRevision)];
                 break;
             }
@@ -360,7 +382,8 @@ async function commitRoundWrite<T>(records: Records, signal: AbortSignal, write:
         ...[...index, ...evidence].map(entry => entry.guard)]);
     if (!merged.ok) return merged.rejection;
     const prepared: PreparedCommit = { identityKey: write.identity, fingerprint: write.fingerprint, guards: merged.guards,
-        records: [...round, ...evidence, ...index].map(entry => entry.record), claims, indexGuards: [], indexChanges: [], events };
+        records: [...round, ...evidence, ...index].map(entry => entry.record), claims, indexGuards: [], indexChanges: [], events,
+        ...(roundOriginBinding === undefined ? {} : { commitCursorBindings: roundOriginBinding }) };
     const eventType = write.event.eventType;
     try {
         if (write.cancelled !== null && signal.aborted) return cancelled(write.cancelled);
@@ -1568,6 +1591,7 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
             applicable: finalizedRound.outcome === 'PASS', gaps: finalizedRound.gaps };
         return await commitRoundWrite(records, signal, { identity, fingerprint, effects: decided.effects, round: finalizedRound,
             readSet, evidence: snapshots, index: nextTaskEvidenceIndex(indexRead.index, snapshots.map(snapshot => snapshot.ref.evidenceId)),
+            finalizedAt: admittedAt,
             event: { eventId: deps.newId(), eventType: VERIFICATION_ROUND_FINALIZED_EVENT_TYPE, schemaVersion: 1,
                 occurredAt: admittedAt, identityKey: identity, roundRef: round.ref, actor, fingerprint, result: finalized },
             value: finalized, cancelled: 'the round finalize was cancelled before commit' });

@@ -11,7 +11,7 @@ import { createDecisionSettingsService } from '../../src/core/work-graph/configu
 import { createDecisionReadModel } from '../../src/core/work-graph/views/decision-read-model.js';
 import { createGoalConflictAssembler } from '../../src/core/work-graph/views/goal-conflicts.js';
 import { createArchitectureCatalogService } from '../../src/core/work-graph/architecture/catalog-service.js';
-import { createExecutedFilesStub } from '../../src/core/work-graph/tasks/executed-files-stub.js';
+import { createExecutedFilesStub } from '../helpers/executed-files-stub.js';
 import { createAutomaticReworkNoticeSource } from '../../src/core/work-graph/views/automatic-rework-notices.js';
 import { createNoticeDisplayToken } from '../../src/core/work-graph/views/notice-display-token.js';
 import { createNoticePositionComparator } from '../../src/core/work-graph/views/notice-position.js';

@@ -57,6 +57,8 @@ import type {
   AttestationRequest, ReconcileRunControlsInput, ReconcileRunInput, ReconcileTurnV1, ResolveUnknownRunInput,
   RunReconcileDependencies, RunReconcileService,
 } from './run-reconcile-contracts.js';
+import { planRunActivityForCommit } from './run-activity-service.js';
+import type { RunActivityFactsV1 } from '../../../contracts/run-activity.js';
 
 type HostActor = { kind: 'human' | 'system'; id: string };
 type Operation = ExecutionRunReconciledEvent['operation'];
@@ -169,6 +171,11 @@ function turnProblem(value: unknown): string | null {
 }
 function reconcileInputProblem(input: ReconcileRunInput): string | null {
   if (!isRunRef(input.runRef)) return 'reconcileRun requires a complete RunRef';
+  // L5/§2: a not_entered end (RUN-16, RUN-09 (R)) writes no activity; carrying
+  // one is an invalid input, never silently dropped.
+  if (input.activity !== undefined && (input.result as { kind?: unknown } | null | undefined)?.kind === 'not_entered') {
+    return 'a not_entered reconcile must not carry activity';
+  }
   const basis = basisProblem(input.basis);
   if (basis !== null) return basis;
   if (!PROBE_VERDICTS.includes(input.probe)) return 'reconcileRun requires the claim Session probe verdict';
@@ -389,6 +396,8 @@ export function createRunReconcileService(deps: RunReconcileDependencies): RunRe
     claim: ClaimWrites | null; intentFacts: IntentFacts; signal: AbortSignal;
     /** Further records the decision read (the Goal of CTL-08(a)), guarded at the revision read. */
     readGuards?: readonly RecordGuard[];
+    /** Slice 2B L5: the tally written in this SAME commit (no extra event). */
+    activity?: RunActivityFactsV1;
   }): Promise<WriteResult<RunSnapshot>> {
     const { facts, decided } = input;
     const nextRun = decided.next.record ?? facts.run;
@@ -404,10 +413,27 @@ export function createRunReconcileService(deps: RunReconcileDependencies): RunRe
       runBefore: facts.run, runAfter: nextRun, observedAt: input.nowIso });
     if (!intentWrites.ok) return intentWrites.rejection;
     written.push(...intentWrites.records);
+    // Slice 2B L5: the RunActivity joins the SAME commit. The `unavailableSince`
+    // Session cursor bindings are derived from `written` below; the RunActivity
+    // has no bindable cursor field and must not drop them (§0.4).
+    let activityGuard: RecordGuard | null = null;
+    if (input.activity !== undefined) {
+      const planned = await planRunActivityForCommit(records, { activity: input.activity, run: nextRun,
+        // R10 (review item 10): a reconcile that books an already-ended Run
+        // (RUN-21) keeps the Run's ORIGINAL `endedAt`; `input.nowIso` is only
+        // the replacement time (`recordedAt`).
+        runEndedAt: nextRun.endedAt ?? input.nowIso, sessionRef: nextRun.executionHistory?.sessionRef ?? facts.outbox.claim.sessionRef,
+        recordedBy: 'run_end', recordedAt: input.nowIso, endCommit: true });
+      if (!planned.ok) return planned.rejection;
+      if (planned.record !== null) {
+        written.push(planned.record);
+        activityGuard = { refKey: planned.refKey, expectedRevision: planned.existingRevision };
+      }
+    }
     if (written.length === 0) return invalid('the Run has nothing for the reconcile to write');
     const intentGuards: RecordGuard[] = input.intents.map(intent => ({ refKey: refKeyOf(intent.ref), expectedRevision: intent.revision }));
     const merged = mergeGuards([...executionReadGuards(facts, refKeyOf(facts.run.ref), input.runPin), ...intentGuards,
-      ...intentWrites.guards, ...(input.readGuards ?? [])]);
+      ...intentWrites.guards, ...(input.readGuards ?? []), ...(activityGuard === null ? [] : [activityGuard])]);
     if (!merged.ok) return merged.rejection;
     const event: ExecutionRunReconciledEvent = { eventId: input.eventId, eventType: EXECUTION_RUN_RECONCILED_EVENT_TYPE,
       schemaVersion: EXECUTION_ENTRY_EVENT_SCHEMA_VERSION, occurredAt: input.nowIso, identityKey: input.identity,
@@ -527,7 +553,8 @@ export function createRunReconcileService(deps: RunReconcileDependencies): RunRe
           // CTL-10: the pause in effect before the cancel (null when the Kernel was not paused, LA-7).
           pausedStop: result.kind === 'paused_stop'
             ? { basis: input.basis.kind, pausedBy: result.turn.kernelPaused ? result.pausedBy : null } : null,
-          kernelPaused: turn?.kernelPaused ?? false, readThroughPosition: turn?.lastPosition ?? null } });
+          kernelPaused: turn?.kernelPaused ?? false, readThroughPosition: turn?.lastPosition ?? null },
+        ...(input.activity === undefined ? {} : { activity: input.activity }) });
     } catch (error) {
       return unavailable(`the reconcile write failed: ${messageOf(error)}`);
     }

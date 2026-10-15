@@ -1,6 +1,6 @@
 # 编排分片与接线：规格和任务书
 
-**当前状态（2026-10-15）。** 第 0、1、3、5 片、接线包 1、接线包 2（bb924854）、K 片 B（9881a2ae）、K 片 A（cfe35550）已合入；2A 刚合入；2B、2C 规格已冻结，在两个副本里同时施工。最新状态见 [STATUS](../../../STATUS.md)，决定 1–58见 [HANDOFF 顶部](../../../HANDOFF.md)，分片依赖见 [设计目录](../README.md)和 [DESIGN §8.2](../DESIGN.md#82-分片表)。新界面在后端之后做，基线是[冻结原型](../../../../ui-reference/workbench-2026-10/README.md)和 [UI-WORKBENCH §0](../../../../UI-WORKBENCH.md#ui-decisions-2026-10)。
+**当前状态（2026-10-15）。** 第 0、1、3、5 片、接线包 1、接线包 2（bb924854）、K 片 B（9881a2ae）、K 片 A（cfe35550）已合入；2A、2B 已合入；2C 施工完、在返工。最新状态见 [STATUS](../../../STATUS.md)，决定 1–58见 [HANDOFF 顶部](../../../HANDOFF.md)，分片依赖见 [设计目录](../README.md)和 [DESIGN §8.2](../DESIGN.md#82-分片表)。新界面在后端之后做，基线是[冻结原型](../../../../ui-reference/workbench-2026-10/README.md)和 [UI-WORKBENCH §0](../../../../UI-WORKBENCH.md#ui-decisions-2026-10)。
 
 ## 2026-10-13 起怎样做
 
@@ -12,11 +12,11 @@
 
 ## 接下来做什么
 
-**已合入（2026-10-15）：** 2A（决定队列只读要用的、不因数量多拒绝、能翻到底；RecordStore 加按顺序查找）。施工四轮，验收和限定见 [2A 证据](../../../reviews/evidence/orchestration-slice-2A-2026-10-14/README.md)和 [2A 规格 §10](slice-2A-SPEC.md#10-施工和验收中的限定lead2026-10-15)。
+**已合入（2026-10-15）：** 2A（决定队列只读要用的、不因数量多拒绝、能翻到底；RecordStore 加按顺序查找）。施工四轮，验收和限定见 [2A 证据](../../../reviews/evidence/orchestration-slice-2A-2026-10-14/README.md)和 [2A 规格 §10](slice-2A-SPEC.md#10-施工和验收中的限定lead2026-10-15)。 2B（执行计数、补算、活动日历、按时间读任务状态）同日合入，施工三轮，验收和限定见 [2B 证据](../../../reviews/evidence/orchestration-slice-2B-2026-10-15/README.md)和 [2B 规格 §11](slice-2B-SPEC.md#11-施工和验收中的限定lead2026-10-15)。
 
 **已合入（2026-10-14）：** 接线包 2（I-2、I-4、I-5、I-6）bb924854；K 片 B（只读命令 `run_readonly_command`）9881a2ae；K 片 A（关闭悬空 Turn、留在原 Session）cfe35550。验收和限定见[接线包 2 证据](../../../reviews/evidence/orchestration-wiring-2-2026-10-13/README.md)、[K 片 B 验收](../../../reviews/evidence/orchestration-slice-K-2026-10-13/partB/lead-acceptance.md)、[K 片 A 验收](../../../reviews/evidence/orchestration-slice-K-2026-10-13/partA/lead-acceptance.md)。
 
-1. **2B、2C 同时施工。** 两片的规格已冻结（2B §7 的读取开销 lead 在 2A 合入后的代码上量过，见 2B 规格 §10；2C 的每行读预算要等读取写出来，改到施工以后、合入以前定数，2C 规格 §15）；测试入口用户 2026-10-14 已同意（2B 的 BE0–BE5 含 BE1s、BE1r、BE2c；2C 的 LE1–LE7）。两片改的文件只在几个登记文件上重叠，在两个副本里同时施工，合入先 2B 后 2C。
+1. **2C 返工后合入。** Codex 实现审查 15 条必须改，lead 裁定后在 12–14 点的 DSH 时段返工（读预算定为 100，2C-22(2) 和 2C-32 扩大范围修；合入时写进 2C 规格）。
 2. **再做资源上限片**（测试入口 RE0–RE3 已同意，冻结等 lead 量通知读 `cap_hit` 的地方）。实现追上之前不开新规格。
 3. **K3 等资源上限片做完再收尾**（决定 56）；B2 已由用户定（决定 57），机制等 K3 恢复时由 lead 写进规格。
 
@@ -31,7 +31,7 @@
 | 接线包 1（2026-10-09 补） | [wiring-1-SPEC.md](wiring-1-SPEC.md) | 发给 DSH 的说明书在[证据](../../../reviews/evidence/orchestration-wiring-1-2026-10-09/README.md)的 `books/` | 无（L13 由决定 48 确认） |
 | 接线包 2（2026-10-14 合入 bb924854） | [wiring-2-SPEC.md](wiring-2-SPEC.md) | 验收和限定见[证据](../../../reviews/evidence/orchestration-wiring-2-2026-10-13/README.md) | 无（U1 已由决定 49 第 29 项定为甲） |
 | 2A（2026-10-15 合入） | [slice-2A-SPEC.md](slice-2A-SPEC.md)（§10 是施工和验收中的限定） | 说明书和验收见[证据](../../../reviews/evidence/orchestration-slice-2A-2026-10-14/README.md) | 无 |
-| 2B（2026-10-15 冻结，施工中） | [slice-2B-SPEC.md](slice-2B-SPEC.md)（§10 是冻结时的限定和实测） | 合入时随证据入库 | 无 |
+| 2B（2026-10-15 合入） | [slice-2B-SPEC.md](slice-2B-SPEC.md)（§10 冻结时的限定和实测，§11 施工和验收中的限定） | 说明书和验收见[证据](../../../reviews/evidence/orchestration-slice-2B-2026-10-15/README.md) | 无 |
 | 2C（2026-10-14 夜冻结，施工中） | [slice-2C-SPEC.md](slice-2C-SPEC.md)（§15 是冻结时的限定） | 合入时随证据入库 | 无 |
 
 ## 历史：第 0、1、3、5 片的冻结与施工（2026-10-08 至 10-09）

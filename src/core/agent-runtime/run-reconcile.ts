@@ -40,6 +40,9 @@ import type { ReconcileRunInput, ReconcileTurnV1, RunReconcilePort } from '../wo
 import { terminalEventOf, transcriptHasOutcomeUnknown, turnIsComplete } from './execution-observation.js';
 import { confirmMailboxInputs } from './execution-inputs.js';
 import { decodeKernelEntry, reduceTurnFromStart, unresolvedToolCallIds, type DecodedKernelRecord } from './kernel-turn-facts.js';
+import { tallyTurnActivity } from './run-activity-tally.js';
+import { unknownFacts } from './run-activity-reader.js';
+import type { RunActivityFactsV1 } from '../../contracts/run-activity.js';
 import type { SessionHistoryCursorOwner, SessionHistoryEntry, SessionMappingProbe } from './session-operations.js';
 
 export type RunReconcileClassifierDependencies = {
@@ -253,8 +256,9 @@ async function classifyRun(
     return left('W-07', `a ${probe.verdict} probe proves nothing: ${probe.reason}`);
   }
   const expected = [{ ref: runRef, revision: run.revision }];
-  const submit = async (row: string, result: ReconcileRunInput['result']): Promise<RunReconcileReport> => {
-    const written = await deps.reconcile.reconcileRun(ctx, { input: { runRef, basis, probe: probe.verdict, result },
+  const submit = async (row: string, result: ReconcileRunInput['result'], activity?: RunActivityFactsV1): Promise<RunReconcileReport> => {
+    const written = await deps.reconcile.reconcileRun(ctx, { input: { runRef, basis, probe: probe.verdict, result,
+      ...(activity === undefined ? {} : { activity }) },
       meta: { requestId, expected } });
     return written.status === 'committed' ? { runRef, row, status: 'reconciled', reason: result.kind } : failed(row, written);
   };
@@ -262,7 +266,7 @@ async function classifyRun(
     // W-06, W-14: an unreadable Kernel is not proof of not entering (SD-3).
     if (unknownOutcome) return left('W-15', 'the Kernel is unreadable; the unknown end waits for an attestation');
     return submit(entering ? 'W-06' : 'W-14', { kind: 'unknown', cause: 'kernel_unreadable', unresolvedToolCallIds: [],
-      observedThroughPosition: null, turn: null });
+      observedThroughPosition: null, turn: null }, unknownFacts('kernel_unreadable', probe.reason));
   }
   // The Turn starts after the Run's locator start, or for an Entering Run after the last completed boundary.
   const locator = run.executionHistory;
@@ -315,6 +319,11 @@ async function classifyRun(
   };
   const unresolved = (!turnIsComplete(state) && !(state.toolBatch?.calls.some(call => call.status === 'abandoned') ?? false))
     || transcriptHasOutcomeUnknown(state.transcript) || turn.inFlightToolCallIds.length > 0;
+  // L6: the reconcile already read the window, so the tally uses the decoded
+  // records directly; a terminal booked through `recordRunResult` is
+  // `end_position`, a `reconcileRun` result is `reconcile_observation`.
+  const activityFor = (bound: 'end_position' | 'reconcile_observation'): RunActivityFactsV1 =>
+    tallyTurnActivity(read.decoded, kernel, { fromPosition: start.position, throughPosition: turnLast, bound });
   if (turn.terminal) {
     if (unresolved) {
       if (unknownOutcome) return left('W-15', 'the Kernel terminal still has a tool call without a determined result');
@@ -324,7 +333,7 @@ async function classifyRun(
         return left('W-13', 'the Kernel terminal Turn is incomplete without a tool call to name; a person checks it');
       }
       return submit('W-13', { kind: 'unknown', cause: 'tool_calls_unresolved', unresolvedToolCallIds: turn.inFlightToolCallIds,
-        observedThroughPosition: turnLast, turn });
+        observedThroughPosition: turnLast, turn }, activityFor('reconcile_observation'));
     }
     // §10.3: a Kernel terminal is booked only after every accepted input is confirmed against its source.
     if (!inputsConfirmed) {
@@ -336,7 +345,7 @@ async function classifyRun(
       if (continuation === null) {
         if (unknownOutcome) return left('W-15', 'the yielded continuation cannot be rebuilt');
         return submit('W-10', { kind: 'unknown', cause: 'continuation_unrebuildable', unresolvedToolCallIds: [],
-          observedThroughPosition: turnLast, turn });
+          observedThroughPosition: turnLast, turn }, activityFor('reconcile_observation'));
       }
     }
     // RUN-17/18 (or RUN-21 for an unknown end): the Kernel terminal is booked as the observer books it.
@@ -353,7 +362,7 @@ async function classifyRun(
         completedHistoryBoundary: { source: { ...kernel, position: endPosition }, cursor: boundary.cursor },
         history, ...(continuation === null ? {} : { continuation }), basis, unresolvedToolCallIds: [],
         ...(run.startedAt === null ? { enteredAt: start.record.recordedAt } : {}), acceptedSteers: turn.acceptedSteers,
-        inputsConfirmed },
+        inputsConfirmed, activity: activityFor('end_position') },
       meta: { requestId, expected },
     });
     const row = unknownOutcome ? 'W-15' : state.status === 'yielded' ? 'W-10' : 'W-09';
@@ -363,7 +372,7 @@ async function classifyRun(
   if (unknownOutcome) return left('W-15', 'no new Kernel terminal; the unknown end waits for new evidence or an attestation');
   if (turn.inFlightToolCallIds.length > 0) {
     return submit('W-13', { kind: 'unknown', cause: 'tool_calls_unresolved', unresolvedToolCallIds: turn.inFlightToolCallIds,
-      observedThroughPosition: turnLast, turn });
+      observedThroughPosition: turnLast, turn }, activityFor('reconcile_observation'));
   }
   // A queued cancel with a clean Turn is RUN-23 (W-12); every other clean Turn is RUN-19/24 by the pointer (W-11, W-20).
   const control = run.controlState;
@@ -373,10 +382,12 @@ async function classifyRun(
     if (intent.value.status === 'queued') {
       // CTL-10: at a restart the pause in effect before the cancel is not a persisted fact (the Run points
       // to the cancel, and the Kernel `run.paused` names no intent), so `pausedBy` is null.
-      return submit('W-12', { kind: 'paused_stop', cancelIntentRef: { ...control.intentRef }, pausedBy: null, turn });
+      return submit('W-12', { kind: 'paused_stop', cancelIntentRef: { ...control.intentRef }, pausedBy: null, turn },
+        activityFor('reconcile_observation'));
     }
   }
-  return submit(control?.desiredState === 'paused' ? 'W-20' : 'W-11', { kind: 'interrupted_clean', turn });
+  return submit(control?.desiredState === 'paused' ? 'W-20' : 'W-11', { kind: 'interrupted_clean', turn },
+    activityFor('reconcile_observation'));
 }
 
 // -------------------------------------------------------------------------- //
@@ -579,8 +590,10 @@ export async function stopPausedRunInProcess(
   if (!inputsConfirmed) return false;
   const turn: ReconcileTurnV1 = { terminal: false, inFlightToolCallIds: [], lastPosition: read.decoded.at(-1)?.position ?? null,
     kernelPaused: true, entered: null, acceptedSteers: acceptedSteersOf(read.decoded, kernel, run), inputsConfirmed };
+  const activity = tallyTurnActivity(read.decoded, kernel, { fromPosition: locator.startPosition,
+    throughPosition: read.decoded.at(-1)?.position ?? locator.startPosition, bound: 'reconcile_observation' });
   const written = await deps.reconcile.reconcileRun(ctx, { input: { runRef: run.ref, basis: { kind: 'live_clean' }, probe: 'ready',
-    result: { kind: 'paused_stop', cancelIntentRef: { ...input.cancelIntentRef }, pausedBy: input.pausedBy, turn } },
+    result: { kind: 'paused_stop', cancelIntentRef: { ...input.cancelIntentRef }, pausedBy: input.pausedBy, turn }, activity },
   meta: { requestId: `a2-run23:${run.ref.runId}:${input.cancelIntentRef.intentId}`, expected: [{ ref: run.ref, revision: run.revision }] } });
   return written.status === 'committed';
 }

@@ -93,6 +93,10 @@ export const RUN_BY_WORKSPACE_STATUS_INDEX = 'a2-run-by-workspace-status';
 export const GOAL_BY_WORKSPACE_INDEX = 'a2-goal-by-workspace';
 /** A.2 step 5.6: the Runs of one workspace by outcome; `outcome_unknown` for §12.1 step 2 (W-15) and step 5 (W-19). */
 export const RUN_BY_WORKSPACE_OUTCOME_INDEX = 'a2-run-by-workspace-outcome';
+/** Slice 2B L14: one Goal's ended Runs, ordered by `endedAt` (calendar/track windows). */
+export const S2B_RUN_BY_GOAL_ENDED_LOOKUP = 's2b-run-by-goal-ended';
+/** Slice 2B L14/L8: one workspace's ended Runs, ordered by `endedAt` (backfill candidates). */
+export const S2B_RUN_BY_WORKSPACE_ENDED_LOOKUP = 's2b-run-by-workspace-ended';
 const LOOKUP_PAGE_LIMIT = 200;
 /** Bounded retries when the candidate set and the canonical re-read do not
  * share one ledger watermark; never stamp a newer watermark onto an older set. */
@@ -312,6 +316,10 @@ export const PLAN_STATE_RECORD_SCHEMAS: RecordBackendSchemas = {
     { name: RUN_BY_WORKSPACE_OUTCOME_INDEX, aggregateType: 'Run',
       paths: ['ref.projectId', 'workspaceSnapshot.workspaceId', 'outcome'] },
     { name: GOAL_BY_WORKSPACE_INDEX, aggregateType: 'Goal', paths: ['ref.projectId', 'workspaceRef.workspaceId'] },
+    { name: S2B_RUN_BY_GOAL_ENDED_LOOKUP, aggregateType: 'Run',
+      paths: ['ref.projectId', 'ref.goalId'], orderBy: { path: 'endedAt' } },
+    { name: S2B_RUN_BY_WORKSPACE_ENDED_LOOKUP, aggregateType: 'Run',
+      paths: ['ref.projectId', 'workspaceSnapshot.workspaceId'], orderBy: { path: 'endedAt' } },
   ],
 };
 

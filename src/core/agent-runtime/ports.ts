@@ -20,6 +20,7 @@ import type {
 } from './execution-contracts.js';
 import type { QueryExecutionRecord } from '../work-graph/queries/contracts.js';
 import type { CreateSessionRequest, SessionHistoryEntry, SessionHistoryRequest } from './session-operations.js';
+import type { RunActivityRead } from './run-activity-reader.js';
 
 /**
  * Formal AgentRuntime execution port (B2).
@@ -102,6 +103,14 @@ export interface RuntimeExecutionPort {
     | { status: 'refused'; reason: 'lease' | 'not_closable_run' | 'continuation_not_authorized' | 'archived'
         | 'archive_requested' | 'occupied' | 'handed_over' | 'health' }
     | { status: 'unsupported' | 'unreadable' | 'mismatch' | 'conflict' | 'transient'; reason: string }>;
+  /**
+   * Slice 2B L6/L8: the read-only backfill window tally for one ended Run.
+   * Optional (like the members above); `createAgentRuntime` publishes it with
+   * the trusted bundle. `{kind:'not_entered'}` is the L7 proof that the Run
+   * never entered the Kernel. `maxPages` is the L17 test injection point.
+   */
+  countRunActivity?(ctx: CoreCallContext, input: { runRef: RunRef; maxPages?: number }):
+    Promise<ReadResult<RunActivityRead | { kind: 'not_entered' }>>;
 }
 
 export type AgentRuntimeService = {

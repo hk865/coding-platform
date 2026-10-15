@@ -1,0 +1,21 @@
+Must-fix:
+
+1. **R3 remains incomplete for consultations.** [track-read-model.ts:997](D:/cxt/s2b-review/src/core/work-graph/views/track-read-model.ts:997) loads **all** readonly-copy Sessions before emitting consultation bars. Thousands of later copies can still exhaust the cap for `limit: 2`. Page the provenance lookup, retain its position in the cursor, and stop when the requested bars are filled. Add the bounded-page case for consultations.
+
+2. **R4 checks returned Sessions’ projects, not workspaces.** [activity-read-model.ts:486](D:/cxt/s2b-review/src/core/work-graph/views/activity-read-model.ts:486) explicitly substitutes a project check; [track-read-model.ts:1180](D:/cxt/s2b-review/src/core/work-graph/views/track-read-model.ts:1180) does likewise. Resolve referenced Session records and validate `workspaceId` against the bound context, caching and charging those reads. Add same-project, foreign-workspace Session cases.
+
+3. **R5 omits the binding “no Kernel identity” condition.** [run-activity.ts:85](D:/cxt/s2b-review/src/contracts/run-activity.ts:85) accepts V2 `authorized`/`revoked` regardless of `authorization.kernel`. Add that condition. Also align the duplicated predicates in [runtime.ts:453](D:/cxt/s2b-review/src/core/agent-runtime/runtime.ts:453) and [run-activity-service.ts:588](D:/cxt/s2b-review/src/core/work-graph/tasks/run-activity-service.ts:588).
+
+4. **R6 still mishandles cancellation during bounds resolution.** [runtime.ts:489](D:/cxt/s2b-review/src/core/agent-runtime/runtime.ts:489) returns unknown facts for `unreadable`/`not_found` before reaching the cancellation check at line 514. The real bounds owner returns `unreadable` on cancellation ([session-operations.ts:1017](D:/cxt/s2b-review/src/core/agent-runtime/session-operations.ts:1017)). Check cancellation immediately after awaiting bounds, before interpreting any result. Extend the test beyond its current cancelled-but-`found` response.
+
+5. **R8 still drops a closed interval’s endpoint at the window start.** [activity-read-model.ts:405](D:/cxt/s2b-review/src/core/work-graph/views/activity-read-model.ts:405) ignores `[09:00,10:00]` when `from=10:00`, because clamping produces `hi===lo` but the original span was nonzero. Mark that first cell for an inclusive endpoint within `[from,to)`; add this exact case.
+
+The remaining fixes look implemented: **R1/R9** ([backfill:125](D:/cxt/s2b-review/src/business/workflow/activity-backfill.ts:125), [205](D:/cxt/s2b-review/src/business/workflow/activity-backfill.ts:205)); **R2** ([observer:680](D:/cxt/s2b-review/src/core/agent-runtime/execution-observation.ts:680)); **R7** ([calendar:236](D:/cxt/s2b-review/src/core/work-graph/views/activity-read-model.ts:236), [track:212](D:/cxt/s2b-review/src/core/work-graph/views/track-read-model.ts:212)); **R10** ([entry:1958](D:/cxt/s2b-review/src/core/work-graph/tasks/execution-entry-service.ts:1958), [reconcile:425](D:/cxt/s2b-review/src/core/work-graph/tasks/run-reconcile-service.ts:425)); **R13** ([service:376](D:/cxt/s2b-review/src/core/work-graph/tasks/run-activity-service.ts:376)). R11 adds the requested public-service, real-Runtime and real-Kernel flows. R12 adds same-task rechecking and literal four-attempt assertions. I found no additional shared-registration regression.
+
+**2B-34’s explanation is correct:** [goal-settings-machine.ts:276](D:/cxt/s2b-review/src/core/work-graph/state/goal-settings-machine.ts:276) computes executed-file intersection. The round-1 substitute still tests 2B’s reader feeding the public conflict read: [S2B-34-executed-files.test.ts:236](D:/cxt/s2b-review/tests/work-graph/S2B-34-executed-files.test.ts:236) checks the card and literal file paths in footprint completeness. It does not prove planned-versus-executed file listing.
+
+I found no new database-read verification oracle or substantive tautological/product-derived expectation. The conflict-rule calls are subjects under test with literal expectations, not oracle calculations; R10 captures write-boundary output rather than reading the database.
+
+Read-only inspection only; no edits, tests, or model calls.
+
+merge after listed fixes

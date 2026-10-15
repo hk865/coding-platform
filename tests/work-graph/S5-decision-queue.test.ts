@@ -15,7 +15,7 @@ import { createNoticeDisplayToken } from '../../src/core/work-graph/views/notice
 import { createArchitectureCatalogService } from '../../src/core/work-graph/architecture/catalog-service.js';
 import { createGoalDecisionCauseReader } from '../../src/core/work-graph/tasks/goal-decision-reader.js';
 import { createPlanningQuestionReader } from '../../src/core/work-graph/tasks/planning-question-reader.js';
-import { createExecutedFilesStub } from '../../src/core/work-graph/tasks/executed-files-stub.js';
+import { createExecutedFilesStub } from '../helpers/executed-files-stub.js';
 import { createPlanService, createRequestCandidateService } from '../../src/core/work-graph/tasks/plan-service.js';
 import { setGoalControlFromHost } from '../../src/core/work-graph/tasks/goal-control.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';

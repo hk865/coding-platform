@@ -118,6 +118,13 @@ const ROUTE_LABELS: Record<CoreRouteSuffix, string> = {
   'decisions/application': '记录决定落实',
   'decisions/notices/seen': '标记通知已读',
   'messages/user-send': '向用户发送消息',
+  // Slice 2B L15 suffixes: display labels only (this table is total over
+  // CoreRouteSuffix); the actions are the new UI's.
+  'activity/calendar': '查看活动日历',
+  'activity/runs': '查看执行活动',
+  'activity/track': '查看轨道',
+  'tasks/timeline': '查看任务时间线',
+  'activity/backfill': '补算活动',
 };
 
 export const routeLabel = (route: CoreRouteSuffix): string => ROUTE_LABELS[route];

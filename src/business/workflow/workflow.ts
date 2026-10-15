@@ -39,6 +39,8 @@ import type { InternalSessionArchivePort, SessionArchivePort } from './session-a
 import type { RequestSessionArchiveInput } from '../../contracts/core/session-archive.js';
 import { createSessionMaintenanceService } from './session-maintenance.js';
 import { createDecisionActions, type DecisionActionsPort } from './decision-actions.js';
+import { createActivityBackfill } from './activity-backfill.js';
+import type { ActivityBackfillBatchV1 } from './contracts.js';
 
 /**
  * R5c.1 stage-two adoption-first advancement loop.
@@ -2138,8 +2140,29 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort
     return decisionActions.orderGoalAdvances(ctx, input);
   };
 
+  // Slice 2B L8/P12: the two backfill operations. They are published only when
+  // the WorkGraph `RunActivity` owner is installed; without it (or without the
+  // Runtime read side) each stays explicitly unsupported, so every existing
+  // Workflow double keeps starting.
+  const activityBackfill = deps.runActivity === undefined ? null : createActivityBackfill({
+    runtime: deps.runtime,
+    activity: deps.runActivity,
+    now: deps.now ?? (() => new Date().toISOString()),
+  });
+  const backfillRecentActivity = async (ctx: CoreCallContext,
+    input: Parameters<NonNullable<WorkflowPort['backfillRecentActivity']>>[1]): Promise<ReadResult<ActivityBackfillBatchV1>> => {
+    if (activityBackfill === null) return rejection('unsupported', 'the Workflow has no RunActivity owner dependency');
+    return activityBackfill.backfillRecentActivity(ctx, input);
+  };
+  const backfillActivityRange = async (ctx: CoreCallContext,
+    input: Parameters<NonNullable<WorkflowPort['backfillActivityRange']>>[1]): Promise<ReadResult<ActivityBackfillBatchV1>> => {
+    if (activityBackfill === null) return rejection('unsupported', 'the Workflow has no RunActivity owner dependency');
+    return activityBackfill.backfillActivityRange(ctx, input);
+  };
+
   return {
     handleGoalInput, advanceWork, consumeConsultation, resolveDecision, orderGoalAdvances,
+    backfillRecentActivity, backfillActivityRange,
     // Slice 1 §4.1/§4.2: the real archive/maintenance services are published
     // on the port; an outer `ready` never implies archived.
     archiveLine: archiveService.archiveLine,

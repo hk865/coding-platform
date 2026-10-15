@@ -13,6 +13,7 @@
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { VersionPin } from '../../contracts/core/identity.js';
 import type { CoreRejection, ReadResult } from '../../contracts/core/results.js';
+import type { SessionRecord } from '../../contracts/core/session.js';
 import type { ControlIntentRef, ControlObservationV1 } from '../../contracts/control-intent.js';
 import type { RunExecutionHistoryV1 } from '../../contracts/core/execution-history.js';
 import type { ExecutionAuthorizationV2, RunRef, RunSnapshot, RuntimeEventV1 } from '../../contracts/dispatch.js';
@@ -27,6 +28,9 @@ import type { SessionHistoryEntry } from './session-operations.js';
 import {
   applyTurnEvents, decodeKernelEntry, reduceTurnFromStart, unresolvedToolCallIds, type DecodedKernelRecord,
 } from './kernel-turn-facts.js';
+import { tallyTurnActivity } from './run-activity-tally.js';
+import { readRunActivityFacts, unknownFacts } from './run-activity-reader.js';
+import type { RunActivityFactsV1 } from '../../contracts/run-activity.js';
 import type {
   KernelExecutionBinding, ObservedExecutionHistory, TaskResultObservation,
 } from '../work-graph/model/execution-entry-contracts.js';
@@ -68,6 +72,16 @@ type CachedTurn = {
  * lost response) reuses the same idempotency fingerprint instead of inventing a
  * second terminal event. */
 type PendingTerminal = { endPosition: number; requestId: string; observation: TaskResultObservation };
+/**
+ * L6 (RUN-08): the pending unknown end. The event id/time and input are created
+ * once and kept, so every retry (including after a lost response) submits the
+ * SAME event and the SAME input; `activity` is attached at most once and never
+ * changed. The expected Run revision is deliberately NOT stored here: the
+ * submit site re-reads the Run so a control write while the counting is
+ * suspended cannot pin an obsolete revision (R2).
+ */
+type PendingUnknownEnd = { endPosition: number; requestId: string;
+  input: TaskResultObservation & { unresolvedToolCallIds: string[] } };
 /** One control-ack attempt whose commit result is unknown. The exact original
  * observation, requestId and pinned revisions are kept so a later observe reuses
  * the SAME idempotency fingerprint and recovers the original receipt. */
@@ -235,6 +249,7 @@ function controlSourceRecord(
 export function createExecutionObservation(deps: ExecutionObservationDependencies): ExecutionObservationService {
   const cache = new Map<string, CachedTurn>();
   const pendingTerminals = new Map<string, PendingTerminal>();
+  const pendingUnknownEnds = new Map<string, PendingUnknownEnd>();
   const pendingAcks = new Map<string, PendingControlAck>();
   const owner = createSessionHistoryCursorOwner({ kernelStores: deps.kernelStores });
 
@@ -435,6 +450,36 @@ export function createExecutionObservation(deps: ExecutionObservationDependencie
     }
   }
 
+  /**
+   * L6 step 3: the activity facts for one end. When THIS observation already
+   * read from the Turn's start (`readFromStart`) the already-read decoded
+   * records are tallied directly and there is no cancellable read; otherwise
+   * the whole Turn is re-read through the explicit window. A read failure (or
+   * a `retry_later` code) becomes `unknown('history_read_failed')`; an aborted
+   * signal returns `null`, so the caller reports `cancelled` and writes nothing.
+   */
+  async function submissionActivity(input: {
+    ctx: CoreCallContext; locator: RunExecutionHistoryV1; decoded: readonly DecodedKernelRecord[];
+    readFromStart: boolean; endPosition: number; session: SessionRecord;
+  }): Promise<RunActivityFactsV1 | null> {
+    const { ctx, locator, decoded, readFromStart, endPosition, session } = input;
+    if (readFromStart) {
+      return tallyTurnActivity(decoded, locator.kernel,
+        { fromPosition: locator.startPosition, throughPosition: endPosition, bound: 'end_position' });
+    }
+    if (ctx.signal.aborted) return null;
+    try {
+      const read = await readRunActivityFacts(owner, { session, kernel: locator.kernel,
+        fromPosition: locator.startPosition, through: { position: endPosition, bound: 'end_position' },
+        probeFirst: false, signal: ctx.signal });
+      if (ctx.signal.aborted) return null;
+      return read.kind === 'facts' ? read.facts : unknownFacts('history_read_failed', read.reason);
+    } catch (error) {
+      if (ctx.signal.aborted) return null;
+      return unknownFacts('history_read_failed', error instanceof Error ? error.message : String(error));
+    }
+  }
+
   return {
     async observe(ctx: CoreCallContext, request: ObserveTaskRunRequest): Promise<ReadResult<TaskExecutionRecord>> {
       const owned = ownContext(ctx);
@@ -470,6 +515,7 @@ export function createExecutionObservation(deps: ExecutionObservationDependencie
       if (alreadyEnded) {
         cache.delete(cacheKey);
         pendingTerminals.delete(cacheKey);
+        pendingUnknownEnds.delete(cacheKey);
       }
       const locator: RunExecutionHistoryV1 | undefined = record.run.executionHistory;
       if (locator === undefined) return { status: 'ready', value: record };
@@ -494,6 +540,7 @@ export function createExecutionObservation(deps: ExecutionObservationDependencie
       if (signal.aborted) return rejected('cancelled', 'the observation was cancelled before reading the history window');
 
       const cached = cache.get(cacheKey);
+      const readFromStart = cached === undefined;
       const from = cached === undefined ? Math.max(0, locator.startPosition - 1) : cached.reducedThrough;
       // Read the frozen tail page by page; each page keeps the first page's
       // throughPosition so observed growth never widens this reconciliation.
@@ -576,6 +623,7 @@ export function createExecutionObservation(deps: ExecutionObservationDependencie
         || state.status === 'yielded' || state.status === 'interrupted';
       if (!isTerminal) {
         pendingTerminals.delete(cacheKey);
+        pendingUnknownEnds.delete(cacheKey);
         // The observed window is persisted BEFORE any positive ack, so the Run
         // locator is the durable authority the ack is checked against. A paused
         // Turn may still hold a not-yet-started next group, so it never requires
@@ -611,7 +659,34 @@ export function createExecutionObservation(deps: ExecutionObservationDependencie
         // Lease stay held until new Kernel evidence (RUN-21) or an attestation (RUN-22).
         const unresolved = unresolvedToolCallIds(state);
         if (!alreadyEnded && unresolved.length > 0 && (deps.controls === undefined || cleanProof)) {
-          await recordUnknownEnd(owned, runRef, v2Auth, locator, decoded.at(-1)?.position ?? reducedThrough, state, unresolved);
+          const unknownEnd = await prepareUnknownEnd(owned, runRef, v2Auth, locator,
+            decoded.at(-1)?.position ?? reducedThrough, state, unresolved, cacheKey);
+          if (unknownEnd !== null) {
+            if (unknownEnd.input.activity === undefined) {
+              if (signal.aborted) return rejected('cancelled', 'the observation was cancelled before reading the activity window');
+              const activity = await submissionActivity({ ctx: owned, locator, decoded, readFromStart,
+                endPosition: unknownEnd.endPosition, session: record.session });
+              if (activity === null) {
+                return rejected('cancelled', 'the observation was cancelled while reading the activity window');
+              }
+              unknownEnd.input.activity = activity;
+            }
+            try {
+              // R2 (review item 2): a control write while the counting is
+              // suspended advances the Run revision, so the expected pin is
+              // re-read here and never reused from `prepareUnknownEnd`. The
+              // pending input (event id/time, claim, entry, activity) is kept
+              // byte-for-byte, so every retry submits the same request content.
+              const current = await deps.executions.readExecution(owned, runRef);
+              if (current.status === 'ready') {
+                const submitted = await deps.entry.recordRunResult(owned, { input: unknownEnd.input,
+                  meta: { requestId: unknownEnd.requestId, expected: [{ ref: runRef, revision: current.value.run.revision }] } });
+                if (submitted.status === 'committed') pendingUnknownEnds.delete(cacheKey);
+              }
+              // A failed re-read keeps the pending item; the next observation
+              // retries the SAME input once the Run is readable again.
+            } catch { /* the pending entry keeps the exact input for the next observation */ }
+          }
         }
         if (consumedIntentRef !== undefined && cleanProof) {
           const sourceItem = controlSourceRecord(decoded, cached?.controlSources, locator.kernel, 'outcome_unknown', state);
@@ -646,6 +721,9 @@ export function createExecutionObservation(deps: ExecutionObservationDependencie
         }
         return { status: 'ready', value: record };
       }
+      // A known terminal is RUN-07, never RUN-08: the pending unknown end is
+      // dropped before the RUN-07 submission is built (L6 step 2).
+      pendingUnknownEnds.delete(cacheKey);
       // The terminal source is the last genuine record; when a prior submission
       // is still unconfirmed and no new record arrived, its exact boundary and
       // content are reused, so the same request fingerprint is retried.
@@ -694,6 +772,16 @@ export function createExecutionObservation(deps: ExecutionObservationDependencie
       if (deps.controls !== undefined && !cleanProof) {
         return { status: 'ready', value: record };
       }
+      // L6 step 3: attach the tally to the SAVED pending item, at most once.
+      if (submission.observation.activity === undefined) {
+        if (signal.aborted) return rejected('cancelled', 'the observation was cancelled before reading the activity window');
+        const activity = await submissionActivity({ ctx: owned, locator, decoded, readFromStart,
+          endPosition: submission.endPosition, session: record.session });
+        if (activity === null) {
+          return rejected('cancelled', 'the observation was cancelled while reading the activity window');
+        }
+        submission.observation.activity = activity;
+      }
       let written;
       try {
         written = await deps.entry.recordRunResult(owned, {
@@ -721,29 +809,38 @@ export function createExecutionObservation(deps: ExecutionObservationDependencie
   };
 
   /**
-   * RUN-08: book the unknown end of a Kernel terminal whose Turn still has a call
-   * without a determined result. The history end stays open; the requestId names
-   * the terminal position, so a repeated observation replays or finds the Run ended.
+   * RUN-08 (L6 step 2): prepare (or reuse) the pending unknown end. The exact
+   * event id/time and input are created once and kept, so every retry submits
+   * the same event and the same request input; `activity` is attached by the
+   * caller at most once and never changed. The working Run revision is NOT
+   * stored: the caller re-reads it right before the submit (R2), so a control
+   * write while the counting is suspended cannot pin an obsolete revision. The
+   * one execution read before storing the item is an explicit exception (a
+   * cancellation can recover from the reduction cache, F17). Returns `null`
+   * when the Run has ended meanwhile or the read proves nothing.
    */
-  async function recordUnknownEnd(
+  async function prepareUnknownEnd(
     ctx: CoreCallContext, runRef: RunRef, auth: ExecutionAuthorizationV2, locator: RunExecutionHistoryV1,
-    endPosition: number, state: RunState, unresolved: string[],
-  ): Promise<void> {
+    endPosition: number, state: RunState, unresolved: string[], cacheKey: string,
+  ): Promise<PendingUnknownEnd | null> {
+    const existing = pendingUnknownEnds.get(cacheKey);
+    if (existing !== undefined && existing.endPosition === endPosition) return existing;
     let read;
-    try { read = await deps.executions.readExecution(ctx, runRef); } catch { return; }
-    if (read.status !== 'ready' || read.value.run.status === 'ended') return;
+    try { read = await deps.executions.readExecution(ctx, runRef); } catch { return null; }
+    if (read.status !== 'ready' || read.value.run.status === 'ended') return null;
     const event = terminalEventOf(state, runRef, read.value.run.lastEventSeq + 1, deps.newId(), deps.now());
-    if (event === null) return;
-    try {
-      await deps.entry.recordRunResult(ctx, {
-        input: { claim: read.value.outbox.claim, entry: { consumerId: auth.consumerId, entryGeneration: auth.generation }, event,
-          kernelSource: { ...locator.kernel, position: endPosition }, completedHistoryBoundary: null,
-          history: { kernel: { ...locator.kernel }, startPosition: locator.startPosition, observedThroughPosition: endPosition, endPosition: null },
-          unresolvedToolCallIds: unresolved },
-        meta: { requestId: `b2-result-unknown:${runRef.runId}:${String(endPosition)}`,
-          expected: [{ ref: runRef, revision: read.value.run.revision }] },
-      });
-    } catch { /* the Run stays running; the start-up reconcile books it (RUN-20(i)) */ }
+    if (event === null) return null;
+    const pending: PendingUnknownEnd = {
+      endPosition,
+      requestId: `b2-result-unknown:${runRef.runId}:${String(endPosition)}`,
+      input: { claim: read.value.outbox.claim, entry: { consumerId: auth.consumerId, entryGeneration: auth.generation }, event,
+        kernelSource: { ...locator.kernel, position: endPosition }, completedHistoryBoundary: null,
+        history: { kernel: { ...locator.kernel }, startPosition: locator.startPosition,
+          observedThroughPosition: endPosition, endPosition: null },
+        unresolvedToolCallIds: unresolved },
+    };
+    pendingUnknownEnds.set(cacheKey, pending);
+    return pending;
   }
 
   /** A live observation may only persist a monotone nonterminal window; the

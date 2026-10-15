@@ -288,7 +288,7 @@ function roundSnapshotProblem(value: unknown): string | null {
     if (!hasOnlyKeys(value, ['ref', 'revision', 'schemaVersion', 'subject', 'subjectRunRef', 'adoptedPlanRef',
         'taskBasisRef', 'executor', 'configuration', 'configurationDigest', 'identity', 'sourceProof',
         'verificationPlan', 'checks', 'status', 'outcome', 'gaps', 'evidenceRefs', 'chain',
-        'since', 'noticeAutomationCap'])) {
+        'since', 'noticeAutomationCap', 'finalizedAt'])) {
         return 'VerificationRoundSnapshot carries unknown fields';
     }
     const ref = roundRefProblem(value['ref']);
@@ -320,8 +320,14 @@ function roundSnapshotProblem(value: unknown): string | null {
     if (!Array.isArray(value['evidenceRefs'])) return 'VerificationRoundSnapshot evidenceRefs must be an array';
     // Slice 5 §2.5 wire-only notice origin (absent on old rounds): the creating
     // commit cursor and, for an automatic reverify, the cap at write time.
-    const originProblem = noticeOriginFieldsProblem(value, 'VerificationRoundSnapshot');
+    // Slice 2B L14 end adds the round-only VR-07 `finalizedAt` top-level field.
+    const originProblem = noticeOriginFieldsProblem(value, 'VerificationRoundSnapshot', { allowFinalizedAt: true });
     if (originProblem !== null) return originProblem;
+    // `finalizedAt` is written only by the VR-07 finalize commit: an open round
+    // that carries it is invalid (L14 end).
+    if (value['finalizedAt'] !== undefined && value['status'] !== 'finalized') {
+        return 'VerificationRoundSnapshot.finalizedAt is only allowed on a finalized round';
+    }
     // Absent = legacy slot-less chain root (ordinal 1); every A.2 round carries it.
     if (value['chain'] !== undefined) return roundChainProblem(value['chain'], value['ref'] as UnknownRecord);
     return null;
@@ -345,6 +351,7 @@ function withoutNoticeOrigin<T extends Record<string, unknown>>(value: T): T {
     const copy = { ...value };
     delete copy['since'];
     delete copy['noticeAutomationCap'];
+    delete copy['finalizedAt'];
     return copy;
 }
 
@@ -681,6 +688,41 @@ export const S2A_ROUND_REVERIFY_LOOKUP_INDEXES: readonly RecordLookupIndex[] = [
     },
 ];
 
+/**
+ * Slice 2B L14: the four round indexes by Goal. `since` orders the calendar's
+ * round starts; `finalizedAt` (L14 end) orders the finalized rounds; the two
+ * legacy groups read a field the record never carried as `null`, exactly like
+ * the 2A L4 old-style groups.
+ */
+export const S2B_ROUND_BY_GOAL_LOOKUP = 's2b-round-by-goal';
+export const S2B_ROUND_BY_GOAL_LEGACY_LOOKUP = 's2b-round-by-goal-legacy';
+export const S2B_ROUND_BY_GOAL_FINALIZED_LOOKUP = 's2b-round-by-goal-finalized';
+export const S2B_ROUND_BY_GOAL_UNFINALIZED_LOOKUP = 's2b-round-by-goal-unfinalized';
+export const S2B_ROUND_BY_GOAL_LOOKUP_INDEXES: readonly RecordLookupIndex[] = [
+    {
+        name: S2B_ROUND_BY_GOAL_LOOKUP,
+        aggregateType: 'VerificationRound',
+        paths: ['ref.projectId', 'ref.workspaceId', 'ref.goalId'],
+        orderBy: { path: 'since' },
+    },
+    {
+        name: S2B_ROUND_BY_GOAL_LEGACY_LOOKUP,
+        aggregateType: 'VerificationRound',
+        paths: ['ref.projectId', 'ref.workspaceId', 'ref.goalId', 'since'],
+    },
+    {
+        name: S2B_ROUND_BY_GOAL_FINALIZED_LOOKUP,
+        aggregateType: 'VerificationRound',
+        paths: ['ref.projectId', 'ref.workspaceId', 'ref.goalId'],
+        orderBy: { path: 'finalizedAt' },
+    },
+    {
+        name: S2B_ROUND_BY_GOAL_UNFINALIZED_LOOKUP,
+        aggregateType: 'VerificationRound',
+        paths: ['ref.projectId', 'ref.workspaceId', 'ref.goalId', 'finalizedAt'],
+    },
+];
+
 /** The ONE R3e registration. Run/Plan/policy/baseline schemas keep their owners. */
 export const EVIDENCE_RECORD_SCHEMAS: RecordBackendSchemas = {
     records: [
@@ -700,5 +742,6 @@ export const EVIDENCE_RECORD_SCHEMAS: RecordBackendSchemas = {
         { name: VERIFICATION_ROUND_BY_STATUS_LOOKUP, aggregateType: 'VerificationRound',
             paths: ['ref.projectId', 'ref.workspaceId', 'status'] },
         ...S2A_ROUND_REVERIFY_LOOKUP_INDEXES,
+        ...S2B_ROUND_BY_GOAL_LOOKUP_INDEXES,
     ],
 };

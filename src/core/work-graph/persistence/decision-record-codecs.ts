@@ -471,7 +471,12 @@ export function workspaceNoticeSeenChangedEventProblem(value: unknown): string |
 export function decodeNoticeOrigin(record: EncodedRecord): DecodeResult<NoticeOriginWireV1> {
   const parsed = parseJsonObject(record.json, 'notice origin record');
   if (typeof parsed === 'string') return invalid(parsed);
-  const problem = noticeOriginFieldsProblem(parsed, 'notice origin');
+  // Slice 2B L14 end: `finalizedAt` is a round-only top-level field, so the
+  // shared reader accepts it exactly when the record is a VerificationRound.
+  const ref = parsed['ref'];
+  const isRound = typeof ref === 'object' && ref !== null && !Array.isArray(ref)
+    && (ref as Record<string, unknown>)['aggregateType'] === 'VerificationRound';
+  const problem = noticeOriginFieldsProblem(parsed, 'notice origin', { allowFinalizedAt: isRound });
   if (problem !== null) return invalid(problem);
   // A persisted `null` is never a real creation position: `null` is the
   // PreparedCommit placeholder the Store fills with the commit cursor. A
@@ -482,6 +487,7 @@ export function decodeNoticeOrigin(record: EncodedRecord): DecodeResult<NoticeOr
   if (parsed['noticeAutomationCap'] !== undefined) {
     origin.noticeAutomationCap = parsed['noticeAutomationCap'] as number;
   }
+  if (parsed['finalizedAt'] !== undefined) origin.finalizedAt = parsed['finalizedAt'] as string;
   return { status: 'decoded', value: origin };
 }
 

@@ -106,7 +106,7 @@ import { createMaterialService } from '../../src/core/work-graph/materials/mater
 import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
 import { decodeGoalSettingsChangedEvent } from '../../src/core/work-graph/persistence/decision-record-codecs.js';
 import { createSourceAuthorityReader } from '../../src/core/work-graph/source-authority-reader.js';
-import { createExecutedFilesStub } from '../../src/core/work-graph/tasks/executed-files-stub.js';
+import { createExecutedFilesStub } from './executed-files-stub.js';
 import { readGoalPhase } from '../../src/core/work-graph/tasks/plan-readers.js';
 import { createGoalService } from '../../src/core/work-graph/tasks/task-service.js';
 import { createWorkflow } from '../../src/business/workflow/workflow.js';

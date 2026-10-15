@@ -870,6 +870,66 @@
       "name": "UserDecisionBodyEnvelopeV1",
       "reason": "wire-format",
       "note": "the persisted user-decision answer body envelope; its reader is decodeStoredUserDecisionBody in the same file"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "ActivityCalendarBody",
+      "reason": "wire-format",
+      "note": "the frozen §2B L15 activity/calendar route DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the new workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "ActivityCalendarResponse",
+      "reason": "wire-format",
+      "note": "the frozen §2B L15 activity/calendar route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the new workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "ActivityRunsBody",
+      "reason": "wire-format",
+      "note": "the frozen §2B L15 activity/runs route DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the new workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "ActivityRunsResponse",
+      "reason": "wire-format",
+      "note": "the frozen §2B L15 activity/runs route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the new workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "ActivityTrackBody",
+      "reason": "wire-format",
+      "note": "the frozen §2B L15 activity/track route DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the new workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "ActivityTrackResponse",
+      "reason": "wire-format",
+      "note": "the frozen §2B L15 activity/track route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the new workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "TasksTimelineBody",
+      "reason": "wire-format",
+      "note": "the frozen §2B L15 tasks/timeline route DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the new workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "TasksTimelineResponse",
+      "reason": "wire-format",
+      "note": "the frozen §2B L15 tasks/timeline route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the new workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "ActivityBackfillBody",
+      "reason": "wire-format",
+      "note": "the frozen §2B L15 activity/backfill route DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the new workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "ActivityBackfillResponse",
+      "reason": "wire-format",
+      "note": "the frozen §2B L15 activity/backfill route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the new workbench UI; nothing in src/ names the alias at runtime"
     }
   ]
 }

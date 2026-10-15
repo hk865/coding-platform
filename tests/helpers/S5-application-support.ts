@@ -19,7 +19,7 @@ import type { SessionMailboxDependencies } from '../../src/core/work-graph/model
 import { decodeGoalSnapshot } from '../../src/core/work-graph/persistence/record-codecs.js';
 import { decodeSessionMessageRecord } from '../../src/core/work-graph/sessions/message-record-codecs.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
-import { createExecutedFilesStub } from '../../src/core/work-graph/tasks/executed-files-stub.js';
+import { createExecutedFilesStub } from './executed-files-stub.js';
 import { setGoalControlFromHost } from '../../src/core/work-graph/tasks/goal-control.js';
 import { createGoalDecisionCauseReader } from '../../src/core/work-graph/tasks/goal-decision-reader.js';
 import { createGoalSettingsService } from '../../src/core/work-graph/tasks/goal-settings-service.js';

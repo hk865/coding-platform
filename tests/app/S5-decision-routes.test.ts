@@ -22,7 +22,7 @@ import { createSqliteRecordBackend } from '../../src/core/record-store/sqlite-re
 import { decodeWorkspaceSnapshot } from '../../src/core/work-graph/persistence/record-codecs.js';
 import { createDecisionSettingsService } from '../../src/core/work-graph/configuration/decision-settings-service.js';
 import { createArchitectureCatalogService } from '../../src/core/work-graph/architecture/catalog-service.js';
-import { createExecutedFilesStub } from '../../src/core/work-graph/tasks/executed-files-stub.js';
+import { createExecutedFilesStub } from '../helpers/executed-files-stub.js';
 import { createGoalConflictAssembler } from '../../src/core/work-graph/views/goal-conflicts.js';
 import { createAutomaticReworkNoticeSource } from '../../src/core/work-graph/views/automatic-rework-notices.js';
 import { createDecisionReadModel } from '../../src/core/work-graph/views/decision-read-model.js';

@@ -23,7 +23,12 @@ import { createDecisionSourceFacts } from '../core/work-graph/communication/deci
 import { createGoalSettingsService } from '../core/work-graph/tasks/goal-settings-service.js';
 import { decisionActionPolicy } from '../core/work-graph/state/decision-policy.js';
 import { readGoalSettings as readEffectiveGoalSettings } from '../core/work-graph/persistence/record-codecs.js';
-import { createExecutedFilesStub } from '../core/work-graph/tasks/executed-files-stub.js';
+import { createGoalExecutedFilesReader } from '../core/work-graph/tasks/goal-executed-files-reader.js';
+import {
+  createActivityReadModel, type ActivityReadPort,
+} from '../core/work-graph/views/activity-read-model.js';
+import { createTrackReadModel, type TrackReadPort } from '../core/work-graph/views/track-read-model.js';
+import { createTaskStateTimeline, type TaskTimelineReadPort } from '../core/work-graph/views/task-state-timeline.js';
 import { createGoalDecisionCauseReader } from '../core/work-graph/tasks/goal-decision-reader.js';
 import { createPlanningQuestionReader } from '../core/work-graph/tasks/planning-question-reader.js';
 import { createDecisionSettingsService } from '../core/work-graph/configuration/decision-settings-service.js';
@@ -137,6 +142,7 @@ import { observeRecordCommits, type RecordCommitObserver } from './commit-observ
 import type { HostInstanceFacts } from '../core/work-graph/model/execution-entry-contracts.js';
 import { createRunReconcileService } from '../core/work-graph/tasks/run-reconcile-service.js';
 import type { RunReconcileService } from '../core/work-graph/tasks/run-reconcile-contracts.js';
+import { createRunActivityService } from '../core/work-graph/tasks/run-activity-service.js';
 import { createReconcileCandidateReader } from '../core/work-graph/tasks/reconcile-reads.js';
 import { createSessionHealthService } from '../core/work-graph/sessions/session-health.js';
 import {
@@ -668,7 +674,10 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     const noticePositions = createNoticePositionComparator();
     const rawWorkspaceDecisionSettings = createDecisionSettingsService({ records: backend.records, now, newId: randomUUID,
       displayTokens, positions: noticePositions, ...(operatorActor === undefined ? {} : { operatorActor }) });
-    const goalExecutedFiles = createExecutedFilesStub();
+    // Slice 2B L13: the production composition uses the REAL executed-files
+    // reader (the same `backend.records` the rest of the platform owns); the
+    // moved test-only stub is injected only by the slice-5 tests.
+    const goalExecutedFiles = createGoalExecutedFilesReader({ records: backend.records });
     const goalConflicts = createGoalConflictAssembler({ records: backend.records, catalog, executedFiles: goalExecutedFiles });
     // §4.2: the card sources available in this slice. Both readers are built
     // once from the SAME records/Plan-service dependency bag the Plan owner
@@ -759,6 +768,21 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // classifier reads the Kernel through the same history owner the observer uses.
     const runReconcile: RunReconcileService = createRunReconcileService({ records: backend.records, reads: executionReader,
       ...(hostInstance === undefined ? {} : { hostInstance }), now, eventId: randomUUID });
+    // Slice 2B §2/P1: the WorkGraph RunActivity write and backfill candidate
+    // reader. The end commits write the record through their own `records`
+    // dependency; this owner is what the Workflow backfill and the activity
+    // reads share (a single writer/reader pair, §0.4).
+    const runActivity = createRunActivityService({ records: backend.records, now, eventId: randomUUID });
+    // Slice 2B §2/L9–L12/L15: the ONE activity owner (calendar + per-Run views +
+    // track bars) and the task-state timeline owner. Both read the SAME store the
+    // end commits and the backfill write through, and reach the route layer as
+    // the non-enumerable `activity`/`timeline` groups.
+    const activityReads: ActivityReadPort = createActivityReadModel({ records: backend.records, now });
+    const activity: ActivityReadPort & Pick<TrackReadPort, 'readTrackBars'> = {
+      ...activityReads,
+      ...createTrackReadModel({ records: backend.records, now }),
+    };
+    const timeline: TaskTimelineReadPort = createTaskStateTimeline({ records: backend.records });
     const sessionHealth = createSessionHealthService({ records: backend.records,
       ...(hostInstance === undefined ? {} : { hostInstance }), now, eventId: randomUUID });
     const reconcileCandidates = createReconcileCandidateReader({ records: backend.records });
@@ -1216,6 +1240,10 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       decisionDuties: messageDuties,
       goalExecutedFiles,
       applicationReceipt,
+      // Slice 2B P12: the WorkGraph RunActivity owner the Workflow backfill scans
+      // and writes through (the SAME instance the activity reads and the end
+      // commits use, §0.4).
+      runActivity,
     };
     const rawWorkflow = createWorkflow(workflowDependencies);
     /**
@@ -1251,6 +1279,11 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       // ordering safe point are drained like every other Workflow call.
       resolveDecision: (...args) => trackedCall(() => rawWorkflow.resolveDecision(...args), unavailable),
       orderGoalAdvances: (...args) => trackedCall(() => rawWorkflow.orderGoalAdvances(...args), unavailable),
+      // Slice 2B L8/P12: the two backfill operations are drained like every other
+      // Workflow call. `createWorkflow` always publishes them (the composition
+      // installs `runActivity`), so the non-null assertion is sound here.
+      backfillRecentActivity: (...args) => trackedCall(() => rawWorkflow.backfillRecentActivity!(...args), unavailable),
+      backfillActivityRange: (...args) => trackedCall(() => rawWorkflow.backfillActivityRange!(...args), unavailable),
     };
     // A.2 step 5.6 (§12.1): the start-up reconcile's internal seam. Only the Host
     // that holds the instance lease calls it, before any execution driver starts;
@@ -1397,6 +1430,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       // Slice 1 (spec §4.4): the new owner groups the route layer binds. They are
       // the same instances injected into `sessions`, `queries` and the Workflow.
       sessionFacts, responsibilities, sessionAnomalies,
+      runActivity, activity, timeline,
       workspace: workspace.tools, runtime: runtimePort, workflow, kernelStores,
       // Slice 3: the same owner instances the Runtime received; the graph routes
       // read through `graphContext` and a caller could reuse `taskInputs`.
@@ -1474,7 +1508,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // Slice 5 (rebase, lead): the five decision ports the route table reads are
     // internal owners by the same rule; the frozen public key list stays exact.
     for (const key of ['sessionFacts', 'responsibilities', 'sessionAnomalies', 'graphContext', 'taskInputs',
-      'goalSettings', 'workspaceDecisionSettings', 'decisionMessages', 'decisions', 'requestCandidates'] as const) {
+      'goalSettings', 'workspaceDecisionSettings', 'decisionMessages', 'decisions', 'requestCandidates',
+      'runActivity', 'activity', 'timeline'] as const) {
       Object.defineProperty(platform, key, { enumerable: false });
     }
     return platform;

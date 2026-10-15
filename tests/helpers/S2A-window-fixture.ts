@@ -16,7 +16,7 @@ import { createMaterialRecordReaders } from '../../src/core/work-graph/materials
 import { createPlanningQuestionReader } from '../../src/core/work-graph/tasks/planning-question-reader.js';
 import { createGoalDecisionCauseReader } from '../../src/core/work-graph/tasks/goal-decision-reader.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
-import { createExecutedFilesStub } from '../../src/core/work-graph/tasks/executed-files-stub.js';
+import { createExecutedFilesStub } from './executed-files-stub.js';
 import { createAutomaticReworkNoticeSource } from '../../src/core/work-graph/views/automatic-rework-notices.js';
 import {
   createDecisionReadModel, createGoalCauseCardSource, createPlanningQuestionCardSource,

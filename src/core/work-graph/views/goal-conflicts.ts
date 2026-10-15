@@ -30,9 +30,17 @@ import type {
 } from '../model/decision-contracts.js';
 import { decodeGoalSnapshot, readGoalSettings } from '../persistence/record-codecs.js';
 import { decodePlanRevisionSnapshot } from '../persistence/plan-record-codecs.js';
+import {
+  atLeastCursorResult, storeFailureToRejection,
+} from '../persistence/read-result-failures.js';
 import { GOAL_BY_WORKSPACE_INDEX } from '../tasks/plan-readers.js';
 import { decodeGoalPhaseSnapshot } from '../tasks/completion-record-codecs.js';
 import { goalConflictFacts } from '../state/goal-settings-machine.js';
+
+// The two shared RecordStore failure helpers live in `persistence` (the
+// `tasks -> views` edge is forbidden); re-exported here for the existing
+// `views/` readers and the slice-5 tests that import them from this module.
+export { atLeastCursorResult, storeFailureToRejection };
 
 /**
  * The read-only slice of the shared RecordStore seam every `views/` reader uses.
@@ -83,31 +91,6 @@ export function workspaceScopeProblem(ctx: CoreCallContext, workspace: Workspace
       reason: 'the requested workspace is outside the bound call scope' };
   }
   return null;
-}
-
-/**
- * §4.1 line 772: the whole read must have observed at least the caller's
- * `atLeastCursor`, else the real `not_ready` stamp is published instead of an
- * older page masquerading as fresh.
- */
-export function atLeastCursorResult<T>(
-  observed: CommitCursor | null,
-  required: CommitCursor | undefined,
-): ReadResult<T> | null {
-  if (required === undefined) return null;
-  if (observed !== null && String(observed) >= String(required)) return null;
-  return { status: 'not_ready', observed: observed === null ? null : { kind: 'platform', cursor: observed },
-    required: { kind: 'platform', cursor: required } };
-}
-
-/** A Store failure mapped to the domain vocabulary; `views/` never writes. */
-export function storeFailureToRejection(failure: { code: string; reason: string }, current?: unknown): CoreRejection {
-  const allowed = new Set(['invalid', 'forbidden', 'revision_conflict', 'idempotency_conflict', 'not_found',
-    'dependency_blocked', 'cycle', 'busy', 'source_stale', 'incomplete', 'capacity', 'unsupported', 'unavailable', 'cancelled']);
-  const code = allowed.has(failure.code) ? failure.code as CoreRejection['code'] : 'unavailable';
-  const rejection: CoreRejection = { status: 'rejected', code, reason: failure.reason };
-  if (Array.isArray(current)) rejection.current = current as NonNullable<CoreRejection['current']>;
-  return rejection;
 }
 
 /** §8.2 data row: extract a reason from a thrown/undecodable read failure. */

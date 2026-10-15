@@ -4,8 +4,9 @@
  * the scripted model.
  *
  * Two real Goals A/B get active Plans whose work Task is scoped to module M
- * (executed files come only from `tasks/executed-files-stub.ts`, read as
- * `not_available`; the "planned module vs executed file" case is GS11). The
+ * (executed files come only from the real
+ * `tasks/goal-executed-files-reader.ts`; the "planned module vs executed file"
+ * case is GS11). The
  * scenario then reads the conflict card (no labels before the risk is accepted),
  * accepts the parallel risk, reorders while a Run is occupied, drives one real
  * system requeue, one real agent requeue and one real automatic reverify, reads
@@ -50,8 +51,8 @@ it('SC02 two Goals conflicting on module M: no labels before the accepted risk, 
   const first = conflicts.value;
   expect(first.footprintCompleteness).toHaveLength(2);
   expect(first.footprintCompleteness).toEqual(expect.arrayContaining([
-    expect.objectContaining({ goalRef: S5_GOAL_A, executedFiles: 'not_available', possiblyIncomplete: true }),
-    expect.objectContaining({ goalRef: S5_GOAL_B, executedFiles: 'not_available', possiblyIncomplete: true })]));
+    expect.objectContaining({ goalRef: S5_GOAL_A, executedFiles: 'available', possiblyIncomplete: false }),
+    expect.objectContaining({ goalRef: S5_GOAL_B, executedFiles: 'available', possiblyIncomplete: false })]));
   expect(first.cards).toHaveLength(1);
   expect(first.labels, 'no risk label is shown before the risk is accepted').toHaveLength(0);
   const conflictCard = first.cards[0];

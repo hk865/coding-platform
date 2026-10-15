@@ -24,7 +24,7 @@ import type { DecisionCardV1, DecisionQueueReadV1 } from '../../src/core/work-gr
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
 import { createSourceAuthorityReader } from '../../src/core/work-graph/source-authority-reader.js';
 import { createTaskClaimService } from '../../src/core/work-graph/tasks/claim-service.js';
-import { createExecutedFilesStub } from '../../src/core/work-graph/tasks/executed-files-stub.js';
+import { createExecutedFilesStub } from './executed-files-stub.js';
 import { createExecutionEntryService } from '../../src/core/work-graph/tasks/execution-entry-service.js';
 import { createGoalDecisionCauseReader } from '../../src/core/work-graph/tasks/goal-decision-reader.js';
 import { createGoalSettingsService } from '../../src/core/work-graph/tasks/goal-settings-service.js';

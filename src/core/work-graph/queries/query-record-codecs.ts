@@ -770,6 +770,19 @@ const QUERY_JOB_BY_WORKSPACE_GOAL_LOOKUP: RecordLookupIndex = {
   paths: ['ref.projectId', 'ref.workspaceId', 'job.goalId'],
 };
 
+/**
+ * Slice 2B L14: one Session's QueryRuns ordered by their end instant (track
+ * bars). A `null` `executionState` row is not an ordered candidate (2A L1), so
+ * a still-open query is read from the Session's current occupant instead.
+ */
+export const S2B_QUERY_RUN_BY_SESSION_ENDED_LOOKUP = 's2b-query-run-by-session-ended';
+const QUERY_RUN_BY_SESSION_ENDED_LOOKUP: RecordLookupIndex = {
+  name: S2B_QUERY_RUN_BY_SESSION_ENDED_LOOKUP,
+  aggregateType: 'QueryRun',
+  paths: ['ref.projectId', 'ref.workspaceId', 'run.executionState.sessionRef.sessionId'],
+  orderBy: { path: 'run.endedAt' },
+};
+
 export const QUERY_JOB_RECORD_SCHEMAS: RecordBackendSchemas = {
   records: [QUERY_JOB_SNAPSHOT_SCHEMA, QUERY_JOB_ANSWER_SNAPSHOT_SCHEMA],
   events: [QUERY_JOB_SUBMITTED_SCHEMA, QUERY_EXECUTION_RECORDED_SCHEMA, QUERY_JOB_ANSWERED_SCHEMA],
@@ -777,5 +790,6 @@ export const QUERY_JOB_RECORD_SCHEMAS: RecordBackendSchemas = {
     { name: QUERY_RUN_BY_SESSION_LOOKUP, aggregateType: 'QueryRun',
       paths: ['ref.projectId', 'ref.workspaceId', 'run.executionState.sessionRef.sessionId'] },
     QUERY_JOB_BY_WORKSPACE_GOAL_LOOKUP,
+    QUERY_RUN_BY_SESSION_ENDED_LOOKUP,
   ],
 };

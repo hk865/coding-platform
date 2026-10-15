@@ -52,6 +52,9 @@ import type { WorkflowPort } from '../business/workflow/ports.js';
 import type { CollaborationDriverPort } from './collaboration-driver.js';
 import type { GoalControlPort } from './goal-fan-out-driver.js';
 import type { WorkbenchToolsPort } from './workbench-tools.js';
+import type { ActivityReadPort } from '../core/work-graph/views/activity-read-model.js';
+import type { TrackReadPort } from '../core/work-graph/views/track-read-model.js';
+import type { TaskTimelineReadPort } from '../core/work-graph/views/task-state-timeline.js';
 import {
   type CoreRouteKind,
   type CoreRouteSuffix,
@@ -178,6 +181,13 @@ export type CoreRouteBindings = {
   recordDecisionApplication: DecisionMessagePort['recordDecisionApplication'];
   markNoticesSeen: WorkspaceDecisionSettingsPort['markNoticesSeen'];
   sendUserMessage: DecisionMessagePort['sendUserMessage'];
+  // Slice 2B L9–L12/L15: the ONE activity owner (calendar + per-Run views +
+  // track bars) and the task-state timeline owner, plus the human range backfill.
+  readActivityCalendar: ActivityReadPort['readActivityCalendar'];
+  readRunActivities: ActivityReadPort['readRunActivities'];
+  readTrackBars: TrackReadPort['readTrackBars'];
+  readTaskStateTimeline: TaskTimelineReadPort['readTaskStateTimeline'];
+  backfillActivityRange: NonNullable<WorkflowPort['backfillActivityRange']>;
 };
 
 /** A.2 step 5.6 (§12.1 step 7, §12.8): this Host's instance lease and its start-up reconcile report. */
@@ -237,6 +247,9 @@ export type CoreRoutePlatform = {
     Promise<WriteResult<QueryExecutionRecord>>;
   /** Slice 3 read model; a narrow platform without it answers `unsupported`. */
   graphContext: GraphContextReadPort;
+  /** Slice 2B L9–L12: the non-enumerable activity and timeline owners (L15). */
+  activity?: ActivityReadPort & Pick<TrackReadPort, 'readTrackBars'>;
+  timeline?: TaskTimelineReadPort;
 };
 
 /** `executions/resolve-unknown` input (RUN-22): the unknown Run and the operator's reason. */
@@ -370,6 +383,12 @@ export const CORE_ROUTE_SPECS: Record<CoreRouteSuffix, CoreRouteSpec> = {
   'decisions/application': { kind: 'graph_write', binding: 'recordDecisionApplication', owner: 'decisionMessages.recordDecisionApplication' },
   'decisions/notices/seen': { kind: 'graph_write', binding: 'markNoticesSeen', owner: 'workspaceDecisionSettings.markNoticesSeen' },
   'messages/user-send': { kind: 'graph_write', binding: 'sendUserMessage', owner: 'decisionMessages.sendUserMessage' },
+  // Slice 2B L9–L12/L15: the five activity/timeline reads and the human backfill.
+  'activity/calendar': { kind: 'plain', binding: 'readActivityCalendar', owner: 'activity.readActivityCalendar' },
+  'activity/runs': { kind: 'plain', binding: 'readRunActivities', owner: 'activity.readRunActivities' },
+  'activity/track': { kind: 'plain', binding: 'readTrackBars', owner: 'activity.readTrackBars' },
+  'tasks/timeline': { kind: 'plain', binding: 'readTaskStateTimeline', owner: 'timeline.readTaskStateTimeline' },
+  'activity/backfill': { kind: 'plain', binding: 'backfillActivityRange', owner: 'workflow.backfillActivityRange' },
 };
 
 export type ParsedCoreRequest =
@@ -665,6 +684,20 @@ export function createPlatformCoreRouteBindings(
       : platform.workspaceDecisionSettings.markNoticesSeen.bind(platform.workspaceDecisionSettings),
     sendUserMessage: platform.decisionMessages === undefined ? unsupported('the platform does not publish decisionMessages.sendUserMessage')
       : platform.decisionMessages.sendUserMessage.bind(platform.decisionMessages),
+    // Slice 2B L9–L12/L15: the non-enumerable activity/timeline owners; a narrow
+    // platform without them keeps an explicit unsupported gap. The human range
+    // backfill is the optional Workflow operation the real composition installs.
+    readActivityCalendar: platform.activity === undefined ? unsupported('the platform does not publish activity.readActivityCalendar')
+      : platform.activity.readActivityCalendar.bind(platform.activity),
+    readRunActivities: platform.activity === undefined ? unsupported('the platform does not publish activity.readRunActivities')
+      : platform.activity.readRunActivities.bind(platform.activity),
+    readTrackBars: platform.activity === undefined ? unsupported('the platform does not publish activity.readTrackBars')
+      : platform.activity.readTrackBars.bind(platform.activity),
+    readTaskStateTimeline: platform.timeline === undefined ? unsupported('the platform does not publish timeline.readTaskStateTimeline')
+      : platform.timeline.readTaskStateTimeline.bind(platform.timeline),
+    backfillActivityRange: platform.workflow.backfillActivityRange === undefined
+      ? unsupported('the Workflow does not publish the human activity backfill (backfillActivityRange)')
+      : platform.workflow.backfillActivityRange.bind(platform.workflow),
   };
 }
 
@@ -809,6 +842,12 @@ export async function dispatchCoreRoute(
       case 'decisions/application': return bindings.recordDecisionApplication(ctx, graphWrite.request as never);
       case 'decisions/notices/seen': return bindings.markNoticesSeen(ctx, graphWrite.request as never);
       case 'messages/user-send': return bindings.sendUserMessage(ctx, graphWrite.request as never);
+      // Slice 2B L9–L12/L15: the five activity/timeline routes are all plain.
+      case 'activity/calendar': return bindings.readActivityCalendar(ctx, plain.input as never);
+      case 'activity/runs': return bindings.readRunActivities(ctx, plain.input as never);
+      case 'activity/track': return bindings.readTrackBars(ctx, plain.input as never);
+      case 'tasks/timeline': return bindings.readTaskStateTimeline(ctx, plain.input as never);
+      case 'activity/backfill': return bindings.backfillActivityRange(ctx, plain.input as never);
     }
   })();
   // A GraphWrite rejection is a failed command: preserve its exact body but let

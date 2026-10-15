@@ -37,6 +37,9 @@ import type { RuntimeExecutionDependencies, TurnClosureDependencies } from './ex
 import type { AgentRuntimeService, RuntimeExecutionPort } from './ports.js';
 import type { RuntimeCapabilities } from './contracts.js';
 import type { CreateSessionRequest, SessionHistoryEntry, SessionHistoryRequest } from './session-operations.js';
+import { readRunActivityFacts, unknownFacts } from './run-activity-reader.js';
+import { provenNotEnteredKernel } from '../../contracts/run-activity.js';
+import { isRunExecutionHistoryV1 } from '../work-graph/persistence/execution-history-codecs.js';
 import type {
   ExecutionHistoryPage, ExecutionHistoryRequest, TaskExecutionHistoryRequest,
 } from './execution-history-contracts.js';
@@ -333,7 +336,9 @@ export function createAgentRuntime(deps?: RuntimeExecutionDependencies): AgentRu
     ...(deps.controls === undefined ? {} : { controls: deps.controls }),
     sourceAuthority: deps.sourceAuthority,
   });
-  const historyCursorOwner = createSessionHistoryCursorOwner({ kernelStores: deps.kernelStores });
+  // K part A M2: the owner also resolves the injected Kernel `readTurnBounds`
+  // seam at call time, so `countRunActivity` (L6) can bound the backfill window.
+  const historyCursorOwner = createSessionHistoryCursorOwner({ kernelStores: deps.kernelStores, kernel: deps.kernel });
   /**
    * Slice 1 §3.3/§2.6: the changed-files reader the runtime publishes for the
    * archive anchor. Part 1 wires the factory (whose method is a stub), so the
@@ -416,6 +421,108 @@ export function createAgentRuntime(deps?: RuntimeExecutionDependencies): AgentRu
     const after = await deps.controls.readControl(ctx, intent.ref);
     return after.status === 'ready' ? after : delivered;
   };
+  /**
+   * Slice 2B L6 (backfill): read one ended Run's activity window and tally it.
+   * A Run with no position record is `not_entered` only when the platform can
+   * prove it never entered the Kernel (L7); otherwise it is an explicit
+   * `unknown('no_history_locator')`. The window's upper bound follows L6
+   * exactly: the recorded `endPosition` first, then K part A's
+   * `readTurnBounds`, then the reconcile observation, else `kernel_tail`.
+   */
+  const countRunActivity: NonNullable<RuntimeExecutionPort['countRunActivity']> = async (ctx, input) => {
+    if (ctx.principal.kind !== 'host') {
+      return { status: 'rejected', code: 'forbidden', reason: 'the activity read requires the Host principal' };
+    }
+    const raw = input as unknown as { runRef?: unknown; maxPages?: unknown } | null | undefined;
+    const runRefRaw = raw?.runRef;
+    if (typeof runRefRaw !== 'object' || runRefRaw === null || (runRefRaw as { aggregateType?: unknown }).aggregateType !== 'Run'
+      || !['projectId', 'goalId', 'runId'].every((field) => typeof (runRefRaw as Record<string, unknown>)[field] === 'string'
+        && ((runRefRaw as Record<string, unknown>)[field] as string).length > 0)) {
+      return { status: 'rejected', code: 'invalid', reason: 'countRunActivity requires a complete RunRef' };
+    }
+    const runRef = runRefRaw as RunRef;
+    if (runRef.projectId !== ctx.projectId) {
+      return { status: 'rejected', code: 'forbidden', reason: 'the Run belongs to another project' };
+    }
+    const maxPages = typeof raw?.maxPages === 'number' && Number.isSafeInteger(raw.maxPages) && raw.maxPages >= 1
+      ? raw.maxPages : undefined;
+    const read = await deps.executions.readExecution(ctx, runRef);
+    if (read.status !== 'ready') return read;
+    const record = read.value;
+    const run = record.run;
+    const locator = run.executionHistory;
+    if (locator === undefined || !isRunExecutionHistoryV1(locator)) {
+      // R5: the ONE shared L7 predicate (V2 authorization without a Kernel
+      // identity, or no authorization on/after the recording epoch).
+      if (provenNotEnteredKernel(run, null)) {
+        return { status: 'ready', value: { kind: 'not_entered' } };
+      }
+      // L7/2B-42: a Run with no locator, no authorization and no `startedAt`
+      // (claimed then cancelled before it entered, ended before the recording
+      // epoch) is NOT proved not-entered here. Only the V2 authorized/revoked
+      // binding proves non-entry; this one is a backfill candidate and must
+      // produce an explicit `unknown('no_history_locator')`, never 0/empty.
+      return { status: 'ready', value: { kind: 'facts',
+        facts: unknownFacts('no_history_locator', 'the Run has no position record; its Kernel history is not indexed (F11)') } };
+    }
+    if (locator.sessionRef.projectId !== ctx.projectId
+      || locator.kernel.kernelSessionId !== record.session.kernel.kernelSessionId) {
+      return { status: 'ready', value: { kind: 'facts',
+        facts: unknownFacts('history_read_failed', 'the persisted locator disagrees with the claim Session mapping') } };
+    }
+    // L6/R6: the mandatory probe runs BEFORE any bound is resolved. A missing or
+    // damaged mapping is a definite `kernel_unreadable`; a transient, Host
+    // configuration or cancellation outcome proves nothing, so it is
+    // `retry_later` and nothing is written. Doing this first keeps a probe
+    // failure from surfacing as a bounds-read failure (`history_read_failed` /
+    // `kernel_unreadable`) and keeps a cancellation around the bounds read.
+    const probe = await historyCursorOwner.probe({ session: record.session, signal: ctx.signal });
+    if (probe.verdict === 'missing' || probe.verdict === 'damaged') {
+      return { status: 'ready', value: { kind: 'facts', facts: unknownFacts('kernel_unreadable', probe.reason) } };
+    }
+    if (probe.verdict !== 'ready') {
+      return { status: 'ready', value: { kind: 'retry_later', reason: probe.reason } };
+    }
+    let through: { position: number; bound: 'end_position' | 'turn_bounds' | 'reconcile_observation' } | 'kernel_tail';
+    if (locator.endPosition !== null) {
+      through = { position: locator.endPosition, bound: 'end_position' };
+    } else {
+      const bounds = await historyCursorOwner.readTurnBounds({ session: record.session,
+        kernelRunId: locator.kernel.runId, signal: ctx.signal });
+      // R6: the real bounds owner answers `unreadable` on cancellation
+      // (`session-operations.ts`), so check the caller's signal immediately
+      // after the await, before interpreting `unreadable`/`not_found`. A
+      // cancelled read proves nothing and writes nothing (`retry_later`).
+      if (ctx.signal.aborted) {
+        return { status: 'ready', value: { kind: 'retry_later', reason: 'the activity window read was cancelled' } };
+      }
+      if (bounds.status === 'not_found') {
+        return { status: 'ready', value: { kind: 'facts', facts: unknownFacts('turn_not_found', 'the Kernel has no Turn of this identity') } };
+      }
+      if (bounds.status === 'unreadable') {
+        return { status: 'ready', value: { kind: 'facts', facts: unknownFacts('kernel_unreadable', bounds.reason) } };
+      }
+      if (bounds.status === 'found' && bounds.endPosition !== null) {
+        through = { position: bounds.endPosition, bound: 'turn_bounds' };
+      } else {
+        const observation = run.reconciliation?.observation;
+        const reconciled = observation?.kind === 'interrupted_clean' ? observation.lastPosition
+          : observation?.kind === 'unresolved' ? observation.observedThroughPosition : null;
+        if (reconciled !== null && reconciled !== undefined) {
+          through = { position: reconciled, bound: 'reconcile_observation' };
+        } else if (bounds.status === 'found') {
+          through = 'kernel_tail';
+        } else {
+          return { status: 'ready', value: { kind: 'facts',
+            facts: unknownFacts('history_read_failed', bounds.reason) } };
+        }
+      }
+    }
+    const result = await readRunActivityFacts(historyCursorOwner, { session: record.session, kernel: locator.kernel,
+      fromPosition: locator.startPosition, through, probeFirst: false, signal: ctx.signal,
+      ...(maxPages === undefined ? {} : { maxPages }) });
+    return { status: 'ready', value: result };
+  };
   const observation = createExecutionObservation({ ...deps, control });
   /**
    * The observer, plus RUN-21 in process (A.2 step 5.6, §12.2 "进程内的同类收尾",
@@ -458,6 +565,7 @@ export function createAgentRuntime(deps?: RuntimeExecutionDependencies): AgentRu
     startQuery: (ctx, request) => queryDriver.start(ctx, request),
     observeQuery: (ctx, request) => queryObservation.observe(ctx, request),
     readAttentionGraph: (ctx, request) => contextAssembler.readAttentionGraph(ctx, request),
+    countRunActivity: (ctx, input) => countRunActivity(ctx, input),
   };
   // M1: without the injected closure dependency the port does not publish the
   // operation, and the Workflow's `close_open_turn` answers `unsupported`.
