@@ -1,8 +1,9 @@
 # 第 1 片冻结规格：Session 事实、纠错与归档
 
-**后注（决定 43、51、54）：** 后来的决定改写了本规格的这几处：
+**后注（决定 43、51、54、60）：** 后来的决定改写了本规格的这几处：
 - §0.1（约 14 行）与 §4 第 4、5 点（约 88、89 行）：决定 51 改写了「认定后马上归档」这一支——经人认定、Kernel Turn 还开着的线，改为关闭悬空 Turn、回可用、留在原 Session，不归档、不写异常锚点、不放下任务；决定 54 改写了退役无接续线——Host 重启时暂停着的不马上归档，显示「已暂停 · 主机重启时已暂停，可继续」，点继续后关 Turn 在原线领取。
 - 约 163 行（`SessionProvenanceV1` 的 continuation `reason`，即 `createContinuation` 输入）`reason: 'interrupted' | 'archived' | ...`：按决定 43 去掉 `'archived'`；被归档线的接手是别的 Session 的新领取，不是那条线的接续。
+- L4（约 41 行）、§2.8（约 377 行）、S1-LINK-01/02（约 477、478 行）：决定 60-5、60-6、60-7、60-8 在 `WorkLinkTarget` 加 `goal`、`project` 两种负责目标，加角色范围、唯一占位、`reanchorSessionResponsibility`/`planReanchor` 和待命 `unassigned`，并把参谋、书记按闲满 `ROLE_LINE_IDLE_ARCHIVE_MS` 归档；这些由第 7 片 7D 改，本规格正文原样保留。
 - 原文照留，只加此注。
 
 > **状态：** lead 冻结，2026-10-08。代码基线 9b94fc55（src 与 676a7a7b 相同；收尾的全量测试在 676a7a7b 上是 215 个测试文件、5234 项全部通过）。§0 是 lead 的冻结说明；§1–§8 是 Codex（推理强度 xhigh）按 585f1ac0 写的草稿正文，lead 按 §0 改过：改过的地方标【lead 改】，lead 定的技术选择标【lead 定】。585f1ac0 到 9b94fc55 之间的 src 改动（7e0b7f56、60d946ff 等收尾小改）不碰本片用到的符号，lead 抽查过（§0.5）。**§0 与正文不一致时以 §0 为准。** 依据：[DESIGN §8.2](../DESIGN.md#82-分片表) 第 1 行、§4.2–4.9、附录 C；HANDOFF 决定 38、42、43；[分片总说明](README.md)。
