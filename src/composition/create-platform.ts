@@ -157,6 +157,18 @@ import type { WriteResult } from '../contracts/core/results.js';
 import {
   DEFAULT_TASK_AUTOMATION_POLICY, MAX_AUTO_REWORK_LIMIT, type TaskAutomationPolicyV1,
 } from '../contracts/task-requeue.js';
+// Slice 2C (spec §6): the line/detail read owners, the pin write owner and the
+// Host-assembled conversation, plus the persisted line-pin event schema.
+import {
+  createWorkLineReader, type WorkLineReaderDeps,
+} from '../core/work-graph/views/work-line-reader.js';
+import { createNodeDetailReader } from '../core/work-graph/views/node-detail-reader.js';
+import { createLineSettingsService } from '../core/work-graph/configuration/line-settings-service.js';
+import { LINE_SETTINGS_RECORD_SCHEMAS } from '../core/work-graph/persistence/line-settings-codecs.js';
+import type {
+  NodeDetailReadPort, WorkLineReadPort, WorkLineSettingsPort,
+} from '../core/work-graph/model/work-line-contracts.js';
+import { createWorkLineConversation } from './work-line-conversation.js';
 
 export type TargetPlatformOptions = {
   storage: { kind: 'memory' } | { kind: 'sqlite'; directory: string };
@@ -471,7 +483,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       ...SESSION_MESSAGE_RECORD_SCHEMAS.records, ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.records,
       ...CONTROL_RECORD_SCHEMAS.records, ...EVIDENCE_RECORD_SCHEMAS.records, ...QUERY_JOB_RECORD_SCHEMAS.records,
       ...SESSION_ANOMALY_RECORD_SCHEMAS.records,
-      ...COMPLETION_RECORD_SCHEMAS.records, ...DECISION_RECORD_SCHEMAS.records],
+      ...COMPLETION_RECORD_SCHEMAS.records, ...DECISION_RECORD_SCHEMAS.records, ...LINE_SETTINGS_RECORD_SCHEMAS.records],
     events: [...materialsSchema.events, ...PLAN_RECORD_SCHEMAS.events, ...PLAN_STATE_RECORD_SCHEMAS.events,
       ...PLAN_GOVERNANCE_RECORD_SCHEMAS.events, ...SESSION_RECORD_SCHEMAS.events, ...SESSION_LIFECYCLE_RECORD_SCHEMAS.events,
       ...ROLE_RECORD_SCHEMAS.events, ...OBSERVED_ARCHITECTURE_RECORD_SCHEMAS.events, ...ARCHITECTURE_CATALOG_SCHEMAS.events,
@@ -480,7 +492,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       ...SESSION_MESSAGE_RECORD_SCHEMAS.events,
       ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.events, ...CONTROL_RECORD_SCHEMAS.events, ...EVIDENCE_RECORD_SCHEMAS.events, ...QUERY_JOB_RECORD_SCHEMAS.events,
       ...SESSION_ANOMALY_RECORD_SCHEMAS.events,
-      ...COMPLETION_RECORD_SCHEMAS.events, ...DECISION_RECORD_SCHEMAS.events],
+      ...COMPLETION_RECORD_SCHEMAS.events, ...DECISION_RECORD_SCHEMAS.events, ...LINE_SETTINGS_RECORD_SCHEMAS.events],
     lookups: [...materialsSchema.lookups ?? [], ...PLAN_RECORD_SCHEMAS.lookups ?? [], ...PLAN_STATE_RECORD_SCHEMAS.lookups ?? [],
       ...PLAN_GOVERNANCE_RECORD_SCHEMAS.lookups ?? [], ...SESSION_RECORD_SCHEMAS.lookups ?? [],
       ...SESSION_LIFECYCLE_RECORD_SCHEMAS.lookups ?? [], ...ROLE_RECORD_SCHEMAS.lookups ?? [],
@@ -489,7 +501,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       ...MODEL_REQUEST_RECORD_SCHEMAS.lookups ?? [], ...SESSION_MESSAGE_RECORD_SCHEMAS.lookups ?? [],
       ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.lookups ?? [], ...CONTROL_RECORD_SCHEMAS.lookups ?? [], ...EVIDENCE_RECORD_SCHEMAS.lookups ?? [], ...QUERY_JOB_RECORD_SCHEMAS.lookups ?? [],
       ...SESSION_ANOMALY_RECORD_SCHEMAS.lookups ?? [],
-      ...COMPLETION_RECORD_SCHEMAS.lookups ?? [], ...DECISION_RECORD_SCHEMAS.lookups ?? []],
+      ...COMPLETION_RECORD_SCHEMAS.lookups ?? [], ...DECISION_RECORD_SCHEMAS.lookups ?? [],
+      ...LINE_SETTINGS_RECORD_SCHEMAS.lookups ?? []],
   };
   // Slice 1 (spec §2.8): every one of the six new indexes must be part of the
   // real record-store schema set this Host opens. The declared
@@ -1157,6 +1170,13 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     };
     const workflowConfiguration = options.workflow === undefined
       ? undefined : structuredClone(options.workflow);
+    // Slice 2C L7: the WorkGraph line read resolves a Session's duty through
+    // this narrow port, and the Workflow uses the SAME resolver instance (the
+    // composition root injects one result, never a second resolver).
+    const sessionDutyResolver: SessionDutyResolver = options.sessionDutyResolver ?? createSessionDutyResolver({
+      readRoleSpec: roleService.readRoleSpec.bind(roleService),
+      configuration: workflowConfiguration,
+    });
     // Slice 1 (spec §3.3): the responsibility port's three public writes. Every
     // member is read here so the public `closeTerminalResponsibility` write (a
     // task's terminal relationship close) is part of the production assembly.
@@ -1197,11 +1217,9 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       // The trusted Host callback, when installed, always wins. Otherwise the
       // resolver reads the Session's own fixed role facts and, only when neither
       // the pinned RoleSpec nor the legacy platform template names a duty, falls
-      // back to the ordinary Work bindings' `sessionRole` (I-1, L5).
-      sessionDuty: options.sessionDutyResolver ?? createSessionDutyResolver({
-        readRoleSpec: roleService.readRoleSpec.bind(roleService),
-        configuration: workflowConfiguration,
-      }),
+      // back to the ordinary Work bindings' `sessionRole` (I-1, L5). Slice 2C
+      // L7: the hoisted instance is the SAME one the line read receives.
+      sessionDuty: sessionDutyResolver,
       ...(workflowConfiguration === undefined ? {} : { configuration: workflowConfiguration }),
       // Slice 1 (spec §4.1): the full mailbox owns `disposeArchiveWait`; without
       // it an ordinary transferred-wait archive answers unsupported. It is the
@@ -1423,6 +1441,48 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       return queryExecution.resolveUnknownQueryRun(ctx, { input: { queryRunRef, reason: input.reason,
         kernelTurnOpen: facts.kernelTurnOpen, inputsConfirmed: facts.inputsConfirmed }, meta: request.meta });
     }
+    // Slice 2C (spec §2, L1b, L13, L15): the ONE line read model, the ONE
+    // node-detail read model, the pin write owner and the Host conversation
+    // composition. The two `*For` factories build the nested anchor/undelivered
+    // readers from the per-line counting wrapper the reader passes in (P12), so
+    // their inner reads are counted by the line's history budget. The
+    // executed-files port stays today's stub until 2B replaces it (L15); it is
+    // the SAME instance the Goal-conflict assembler reads.
+    const workLineDeps: WorkLineReaderDeps = {
+      records: backend.records,
+      dutyFor: (role, callCtx) => sessionDutyResolver(role, callCtx),
+      undeliveredRepliesFor: (lineRecords) => {
+        const lineMailbox = createSessionMailbox({ ...mailboxDependencies, records: lineRecords });
+        return lineMailbox.readUndeliveredReplies?.bind(lineMailbox);
+      },
+      sessionAnomaliesFor: (lineRecords) => createSessionAnomalyService({
+        records: lineRecords, lookups: lineRecords, sessionFacts, now,
+      }),
+      plans: planService,
+      // L8/§3.4: the SAME decision read model the public `decisions` port and
+      // the Workflow's `decisionReads` use, so a `waiting_answer` card lands on
+      // its line. No second queue implementation exists.
+      decisions: rawDecisionReads,
+    };
+    const workLines: WorkLineReadPort = createWorkLineReader(workLineDeps);
+    const nodeDetail: NodeDetailReadPort = createNodeDetailReader({
+      records: backend.records,
+      plans: planService,
+      catalog,
+      anomalies: sessionAnomalies,
+      executedFiles: goalExecutedFiles,
+      line: workLineDeps,
+    });
+    const lineSettings: WorkLineSettingsPort = createLineSettingsService({
+      records: backend.records,
+      sessionRead: sessionDirectory.readSession.bind(sessionDirectory),
+      now,
+      ...(operatorActor === undefined ? {} : { operatorActor }),
+    });
+    const workLineConversation = createWorkLineConversation({
+      lines: workLines,
+      readSessionHistory: (...args) => runtimePort.readSessionHistory(...args),
+    });
     let closing: Promise<void> | undefined;
     const platform = {
       goals, plans, claims, executions, sessions, materials, messages, controls, evidence, checks, roles, architecture, projects, completionPolicies,
@@ -1437,6 +1497,9 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       graphContext, taskInputs,
       // Slice 5 §4.5 platform ports consumed by the frozen route table.
       goalSettings, workspaceDecisionSettings, decisionMessages, decisions, requestCandidates: requestCandidatePort,
+      // Slice 2C (spec §2, L13): the line/detail read owners, the pin write
+      // owner and the Host conversation. They are internal (non-enumerable).
+      workLines, nodeDetail, lineSettings, workLineConversation,
       reconcile,
       /** RUN-22 (U): the operator's attestation through the Host entry; drained like every write. */
       resolveUnknownRun: (...args: Parameters<typeof resolveUnknownRun>) => trackedCall(() => resolveUnknownRun(...args), unavailable),
@@ -1509,7 +1572,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // internal owners by the same rule; the frozen public key list stays exact.
     for (const key of ['sessionFacts', 'responsibilities', 'sessionAnomalies', 'graphContext', 'taskInputs',
       'goalSettings', 'workspaceDecisionSettings', 'decisionMessages', 'decisions', 'requestCandidates',
-      'runActivity', 'activity', 'timeline'] as const) {
+      'runActivity', 'activity', 'timeline',
+      'workLines', 'workLineConversation', 'nodeDetail', 'lineSettings'] as const) {
       Object.defineProperty(platform, key, { enumerable: false });
     }
     return platform;

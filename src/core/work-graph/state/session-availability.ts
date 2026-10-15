@@ -76,8 +76,12 @@ export type SessionHolderContext = {
 };
 
 export type SessionGuardContext = {
-  /** `reconcile` = Host start reconcile; `health_observed` and restart releases accept only it. */
-  caller: 'service' | 'reconcile';
+  /**
+   * `reconcile` = Host start reconcile; `health_observed` and restart releases accept only it.
+   * `turn_closure` = the Runtime `closeOpenTurn` closure: SES-19a lets its fresh
+   * `missing`/`damaged` probe replace a `kernel_turn_open` conclusion (2C-22(2)).
+   */
+  caller: 'service' | 'reconcile' | 'turn_closure';
   /** D-18; required for reconcile and human attestation (L-1). An unreadable lock file is `held_by_other` (L-10). */
   hostLease: 'owned' | 'held_by_other' | null;
   /** The caller's Session version pin (occupancy, lifecycle and link events); null = no pin to compare. */
@@ -155,7 +159,16 @@ export type SessionReleaseCause =
  */
 export type SessionEvent =
   | { kind: 'session_created' }
-  | { kind: 'occupancy_acquired'; holder: SessionHolderRef }
+  /**
+   * 2C item 10 (lead ruling): when the claim of a reused Session finds no OPEN
+   * `responsible` link to the claimed Task, the claim commit also opens one
+   * (SES-15 `work_linked(open)`). The occupancy's own revision bump covers both
+   * writes, so the generation invariant (`revision == occupancy.generation`)
+   * still holds and the owner writes no second revision bump. The owner
+   * materializes the link record in the same commit; the flag is set only after
+   * it has read the exact link.
+   */
+  | { kind: 'occupancy_acquired'; holder: SessionHolderRef; openWorkLink?: boolean }
   | { kind: 'occupancy_released'; cause: SessionReleaseCause }
   | { kind: 'session_archived' }
   | { kind: 'session_reactivated' }
@@ -401,16 +414,27 @@ export function reactivateSessionRecord(record: SessionRecord): SessionRecord {
 }
 
 /**
- * SES-12/13: writes or clears the conclusion with the health; occupancy and
+ * SES-12/13/19: writes or clears the conclusion with the health; occupancy and
  * lifecycle are untouched. `kernel_turn_open` is never written here (only
  * by `releaseSessionRecord`); clearing it here is SES-13's job. SES-12 starts
  * from `available` and SES-13 from `unavailable`: a same-value observation is
  * SES-19 and writes nothing (so a `missing`/`damaged` probe never replaces
  * `kernel_turn_open`), and `recoverable` has no writer (D-17).
+ *
+ * SES-19a (2C-22(2), lead 2026-10-15): the Turn closure's fresh missing/damaged
+ * probe is the one exception. `options.replacesKernelTurnOpen` lets it write the
+ * new conclusion on an already-unavailable `kernel_turn_open` record; the
+ * Session was already unavailable, so its entry cursor is kept (it is not a
+ * fresh available→unavailable position).
  */
-export function observeSessionHealthRecord(record: SessionRecord, observation: SessionHealthObservation): SessionRecord {
+export function observeSessionHealthRecord(
+  record: SessionRecord, observation: SessionHealthObservation, options?: { replacesKernelTurnOpen?: boolean },
+): SessionRecord {
   if (record.lifecycle !== 'active') throw new Error('observeSessionHealthRecord: an archived Session is not probed');
-  if (record.health === observation.health) {
+  const replacesKernelTurnOpen = options?.replacesKernelTurnOpen === true
+    && record.health === 'unavailable' && record.healthConclusion === 'kernel_turn_open'
+    && observation.health === 'unavailable';
+  if (record.health === observation.health && !replacesKernelTurnOpen) {
     throw new Error(`observeSessionHealthRecord: a same-value ${observation.health} observation is SES-19 and writes nothing`);
   }
   if (record.health === 'recoverable') throw new Error('observeSessionHealthRecord: recoverable has no writer (D-17)');
@@ -422,6 +446,10 @@ export function observeSessionHealthRecord(record: SessionRecord, observation: S
   }
   if (observation.conclusion !== 'missing' && observation.conclusion !== 'damaged') {
     throw new Error('observeSessionHealthRecord: an unavailable observation needs a missing or damaged probe');
+  }
+  if (replacesKernelTurnOpen) {
+    return { ...record, revision: record.revision + 1, health: 'unavailable',
+      healthConclusion: observation.conclusion };
   }
   // Every available→unavailable observation marks a fresh pending position.
   return { ...record, revision: record.revision + 1, health: 'unavailable',
@@ -566,7 +594,7 @@ export function transitionSession(state: SessionMachineState, event: SessionEven
     case 'session_created':
       return reject('stale', 'revision_conflict', 'the planned Session reference is already registered');
     case 'occupancy_acquired':
-      return acquired(state, event.holder, ctx);
+      return acquired(state, event, ctx);
     case 'occupancy_released':
       return released(state, event.cause, ctx);
     case 'session_archived':
@@ -634,15 +662,27 @@ export function occupancyAdmissionProblem(state: SessionMachineState, pin: numbe
 }
 
 /** SES-02/SES-03: `occupancyAdmissionProblem`, then the generation `revision + 1` it admitted. */
-function acquired(state: ActiveState, holder: SessionHolderRef, ctx: SessionGuardContext): SessionTransition {
+function acquired(
+  state: ActiveState, event: Extract<SessionEvent, { kind: 'occupancy_acquired' }>, ctx: SessionGuardContext,
+): SessionTransition {
+  const holder = event.holder;
   if (holder.aggregateType === 'CoreOperation') {
     return reject('illegal', 'unsupported', 'a maintenance occupancy has no writer');
   }
   const problem = occupancyAdmissionProblem(state, ctx.pin);
   if (problem !== null) return problem;
   const generation = state.revision + 1;
-  return done({ ...state, occupancy: { kind: 'execution', holder, generation }, revision: generation },
-    [{ kind: 'occupy_session', holder, generation }]);
+  // 2C item 10: SES-02 + SES-15 in ONE commit for a reused Session's first
+  // claim. The occupancy bump is the commit's only revision change; the owner
+  // writes the `SessionWorkLink@k` record (open interval, `since` bound to the
+  // commit cursor) beside the occupied Session. The commit's event stays the
+  // claim's own (as for `session_created`'s initial links, no link event).
+  // `openWorkLink` is true only after the owner read no open link.
+  const effects: SessionEffect[] = [{ kind: 'occupy_session', holder, generation }];
+  if (event.openWorkLink === true) {
+    effects.push({ kind: 'write_work_link', bound: 'since' });
+  }
+  return done({ ...state, occupancy: { kind: 'execution', holder, generation }, revision: generation }, effects);
 }
 
 /**
@@ -825,17 +865,21 @@ function reactivated(state: ActiveState, ctx: SessionGuardContext): SessionTrans
 }
 
 /**
- * SES-12 / SES-13 / SES-19 (S8, SD-2, LA-1): the start-up reconcile writes the
- * probe of a Session it may hold or recover. `missing`/`damaged` makes an
- * available Session `unavailable` with that conclusion; `ready` makes an
- * unavailable one `available` again, except a `kernel_turn_open` Session whose
- * Kernel session head still names an active run; the same value writes
- * nothing (a `missing`/`damaged` probe never replaces `kernel_turn_open`).
- * `kernel_turn_open` cannot be observed: it is not a probe verdict.
+ * SES-12 / SES-13 / SES-19 / SES-19a (S8, SD-2, LA-1; 2C-22(2) lead 2026-10-15):
+ * the start-up reconcile writes the probe of a Session it may hold or recover.
+ * `missing`/`damaged` makes an available Session `unavailable` with that
+ * conclusion; `ready` makes an unavailable one `available` again, except a
+ * `kernel_turn_open` Session whose Kernel session head still names an active
+ * run; the same value writes nothing (SES-19), except that the Turn closure
+ * (`caller='turn_closure'`) may replace a `kernel_turn_open` conclusion with its
+ * fresh `missing`/`damaged` probe (SES-19a). `kernel_turn_open` cannot be
+ * observed: it is not a probe verdict.
  */
 function healthObserved(state: ActiveState, observed: SessionHealth, ctx: SessionGuardContext): SessionTransition {
   if (observed === 'recoverable') return reject('illegal', 'unsupported', 'recoverable has no writer (D-17)');
-  if (ctx.caller !== 'reconcile') return reject('illegal', 'forbidden', 'only the Host start reconcile observes Session health');
+  if (ctx.caller !== 'reconcile' && ctx.caller !== 'turn_closure') {
+    return reject('illegal', 'forbidden', 'only the Host start reconcile or the Turn closure observes Session health');
+  }
   if (state.lifecycle === 'archived') return reject('illegal', 'invalid', 'reconcile does not probe an archived Session');
   if (ctx.hostLease !== 'owned') {
     return reject('guard_failed', 'busy', 'the Host instance lease is held by another Host or unreadable');
@@ -853,7 +897,20 @@ function healthObserved(state: ActiveState, observed: SessionHealth, ctx: Sessio
     // A readable Kernel does not prove the last Turn ended (LA-1).
     return reject('guard_failed', 'unavailable', 'the Kernel session still has an open Turn; kernel_turn_open stays');
   }
-  if (state.health === observed) return done(state);                     // SES-19
+  if (state.health === observed) {
+    // SES-19a (2C-22(2), lead 2026-10-15): only the Turn closure's fresh
+    // missing/damaged probe may replace a kernel_turn_open conclusion; the
+    // reconcile caller keeps SES-19 exactly (a probe never replaces it).
+    if (ctx.caller === 'turn_closure' && state.healthConclusion === 'kernel_turn_open'
+      && (ctx.probe === 'missing' || ctx.probe === 'damaged')) {
+      const conclusion = ctx.probe;
+      return done({ ...state, health: 'unavailable', healthConclusion: conclusion, revision: state.revision + 1 }, [
+        { kind: 'observe_health', health: 'unavailable', conclusion },
+        { kind: 'emit_event', eventType: 'SessionHealthObserved' },
+      ]);
+    }
+    return done(state);                                                  // SES-19
+  }
   if (observed === 'available') {
     return done({ ...state, health: 'available', healthConclusion: null, revision: state.revision + 1 }, [   // SES-13
       { kind: 'observe_health', health: 'available', conclusion: null },

@@ -33,8 +33,8 @@ import { initRecordStoreSchema } from "./migrations.js";
 import { applyEventSchema, applyRecordSchema, bindPreparedRecords, checkPersistedIdempotencyRecord, committedReceiptFromIdempotency, corruptFailure, createRecordSchemaRegistry, decodeRecordBody, decodeRefKey, decodeStoredEventBody, guardIsSatisfied, idempotencyConflictFailure, invalidFailure, isNonEmptyString, messageOf, notFoundFailure, planPreparedCommit, revisionConflictFailure, uniqueConflictFailure, unsupportedFailure, type PlannedCommit, type RecordSchemaRegistry } from "./record-codec.js";
 import { decodeGuardedRevision } from "./guarded-revision.js";
 import { findClaimConflicts, ledgerHorizonMatches, RejectedInsideTransaction, type ClaimConflict } from "./commit-extensions.js";
-import { createRecordLookupRegistry, decodeLookupRequest, decodeOrderedLookupRequest, lookupMatcherOf, orderedRangePlanOf, type DecodedLookupRequest, type DecodedOrderedLookupRequest, type RecordLookupRegistry } from "./lookup-index.js";
-import type { LookupValue, OrderedLookupRequest, RecordOrderedLookupPage, RecordOrderedLookupPort, RecordLookupPage, RecordLookupPort, RecordLookupRequest } from "./lookup-ports.js";
+import { createRecordLookupRegistry, decodeCountRequest, decodeLookupRequest, decodeOrderedLookupRequest, lookupMatcherOf, orderedRangePlanOf, type DecodedCountRequest, type DecodedLookupRequest, type DecodedOrderedLookupRequest, type RecordLookupRegistry } from "./lookup-index.js";
+import type { LookupValue, OrderedLookupRequest, RecordCountPort, RecordCountRequest, RecordCountResult, RecordOrderedLookupPage, RecordOrderedLookupPort, RecordLookupPage, RecordLookupPort, RecordLookupRequest } from "./lookup-ports.js";
 import type { DecodeResult, GoalRecordTransactionPort, PersistedIdempotencyRecord, PreparedCommit, RecordBackendSchemas, RecordBatchRead, RecordGuard, StoreCommitReceipt, StoreResult, StoredVersion, UniqueClaimChange, EncodedDomainEvent, EncodedRecord } from "./ports.js";
 
 export type SqliteRecordBackendOptions = {
@@ -44,7 +44,7 @@ export type SqliteRecordBackendOptions = {
 };
 
 export type SqliteRecordBackend = {
-  readonly records: GoalRecordTransactionPort & RecordLookupPort & RecordOrderedLookupPort;
+  readonly records: GoalRecordTransactionPort & RecordLookupPort & RecordOrderedLookupPort & RecordCountPort;
   close(): Promise<void>;
 };
 
@@ -693,7 +693,77 @@ export function createSqliteRecordBackend(options: SqliteRecordBackendOptions): 
     return withReadTransaction(() => lookupOrderedInside(decoded.value));
   };
 
-  const records: GoalRecordTransactionPort & RecordLookupPort & RecordOrderedLookupPort = {
+  /**
+   * Registered candidate count (Slice 2C L3): the same equality predicates and
+   * expression index as `lookup`, with no snapshot read. A distinct count
+   * de-duplicates by (type class, value) because SQLite's own DISTINCT treats
+   * true/1 and false/0 as equal and separates integer/real that JS normalizes.
+   */
+  const countInside = (request: DecodedCountRequest): StoreResult<RecordCountResult> => {
+    const index = request.index;
+    const conditions: string[] = [`json_extract(ref_key, '$.aggregateType') = ?`];
+    const params: (string | number)[] = [index.aggregateType];
+    if (index.orderBy !== undefined) {
+      for (let position = 0; position < request.values.length; position += 1) {
+        const jsonPath = lookupJsonPath(index.paths[position]!);
+        conditions.push(`json_type(snapshot_json, ${jsonPath}) = 'text'`);
+        conditions.push(`json_extract(snapshot_json, ${jsonPath}) = ?`);
+        // decodeCountRequest guarantees non-empty text for an ordered index.
+        params.push(request.values[position] as string);
+      }
+      const orderPath = lookupJsonPath(index.orderBy.path);
+      const orderExpr = `json_extract(snapshot_json, ${orderPath})`;
+      if (index.orderBy.valueType === 'integer') {
+        conditions.push(`json_type(snapshot_json, ${orderPath}) = 'integer'`);
+        conditions.push(`${orderExpr} >= ?`);
+        params.push(-9007199254740991);
+        conditions.push(`${orderExpr} <= ?`);
+        params.push(9007199254740991);
+      } else {
+        conditions.push(`json_type(snapshot_json, ${orderPath}) = 'text'`);
+        conditions.push(`${orderExpr} <> ''`);
+      }
+    } else {
+      for (let position = 0; position < request.values.length; position += 1) {
+        const predicate = lookupPredicate(index.paths[position]!, request.values[position]!);
+        conditions.push(predicate.sql);
+        params.push(...predicate.params);
+      }
+    }
+    let count: number;
+    try {
+      if (request.distinctPath === null) {
+        const row = db
+          .prepare(`SELECT COUNT(*) AS total FROM snapshots WHERE ${conditions.join(' AND ')}`)
+          .get(...params) as { total: number | bigint } | undefined;
+        count = Number(row?.total ?? 0);
+      } else {
+        const distinctPath = lookupJsonPath(request.distinctPath);
+        const typeClass = `CASE WHEN json_type(snapshot_json, ${distinctPath}) IN ('integer', 'real') THEN 'number' ELSE json_type(snapshot_json, ${distinctPath}) END`;
+        const distinctConditions = [
+          ...conditions,
+          `json_type(snapshot_json, ${distinctPath}) IN ('text', 'integer', 'real', 'true', 'false')`,
+        ];
+        const row = db
+          .prepare(`SELECT COUNT(*) AS total FROM (SELECT DISTINCT ${typeClass} AS value_type, json_extract(snapshot_json, ${distinctPath}) AS value FROM snapshots WHERE ${distinctConditions.join(' AND ')})`)
+          .get(...params) as { total: number | bigint } | undefined;
+        count = Number(row?.total ?? 0);
+      }
+    } catch (error) {
+      return corruptFailure(`lookup index ${index.name} could not be counted: ${messageOf(error)}`);
+    }
+    return { status: 'ready', value: { count, readThrough: readThrough() } };
+  };
+
+  const countLookup = async (request: RecordCountRequest): Promise<StoreResult<RecordCountResult>> => {
+    assertOpen();
+    const decoded = decodeCountRequest(lookups, request);
+    if (decoded.status === "unsupported") return unsupportedFailure(decoded.reason);
+    if (decoded.status === "invalid") return invalidFailure(decoded.reason);
+    return withReadTransaction(() => countInside(decoded.value));
+  };
+
+  const records: GoalRecordTransactionPort & RecordLookupPort & RecordOrderedLookupPort & RecordCountPort = {
     readMany: async (refKeys: readonly string[]): Promise<StoreResult<RecordBatchRead>> => {
       assertOpen();
       if (!Array.isArray(refKeys) || !refKeys.every((key) => isNonEmptyString(key))) {
@@ -709,6 +779,7 @@ export function createSqliteRecordBackend(options: SqliteRecordBackendOptions): 
     eventAt,
     lookup,
     lookupOrdered,
+    countLookup,
   };
 
   const close = async (): Promise<void> => {

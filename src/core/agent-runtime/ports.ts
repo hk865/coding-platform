@@ -98,6 +98,13 @@ export interface RuntimeExecutionPort {
    */
   closeOpenTurn?(ctx: CoreCallContext, input: {
     sessionRef: SessionRef; afterRunRef: RunRef; requeueRef: TaskRequeueRef | null;
+    /**
+     * SES-19a (2C-22(2)): only the Workflow maintenance's dangling-Turn close
+     * carries this, so an unreadable answer may replace `kernel_turn_open` with
+     * the fresh probe. The Workflow's own `close_open_turn` selection and the
+     * start-up reconcile leave it absent (SES-19 stays).
+     */
+    turnClosureCaller?: 'turn_closure';
   }): Promise<
     | { status: 'closed' | 'already_closed'; health: 'available' | 'unavailable' }
     | { status: 'refused'; reason: 'lease' | 'not_closable_run' | 'continuation_not_authorized' | 'archived'

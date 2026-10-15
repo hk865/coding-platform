@@ -242,6 +242,10 @@ function validateWorkspaceSnapshot(record: EncodedRecord): DecodeResult<EncodedR
     const settingsProblem = workspaceDecisionSettingsProblem(parsed["decisionSettings"]);
     if (settingsProblem !== null) return invalid(settingsProblem);
   }
+  if (parsed["lineSettings"] !== undefined) {
+    const lineProblem = workspaceLineSettingsProblem(parsed["lineSettings"]);
+    if (lineProblem !== null) return invalid(lineProblem);
+  }
   return { status: "decoded", value: copyRecord(record) };
 }
 
@@ -292,6 +296,43 @@ export function workspaceDecisionSettingsProblem(value: unknown): string | null 
     }
     const positionProblem = noticePositionProblem(noticeSeen[key]);
     if (positionProblem !== null) return positionProblem;
+  }
+  return null;
+}
+
+/**
+ * Pure `WorkspaceLineSettingsV1` shape check (spec §2, L9). `schemaVersion` is
+ * 1, each pin carries exactly a complete `sessionRef` and a non-empty
+ * `pinnedAt`, a Session is pinned at most once, and the table holds at most 100
+ * entries. A missing field is handled by the caller.
+ */
+export function workspaceLineSettingsProblem(value: unknown): string | null {
+  if (!hasExactKeys(value, ["schemaVersion", "pinned"])) {
+    return "Workspace lineSettings must carry exactly schemaVersion and pinned";
+  }
+  const parsed = value as UnknownRecord;
+  if (parsed["schemaVersion"] !== 1) return "Workspace lineSettings schemaVersion must be 1";
+  const pinned = parsed["pinned"];
+  if (!Array.isArray(pinned)) return "Workspace lineSettings pinned must be an array";
+  if (pinned.length > 100) return "Workspace lineSettings pinned must hold at most 100 items";
+  const seen = new Set<string>();
+  for (const item of pinned) {
+    if (!hasExactKeys(item, ["sessionRef", "pinnedAt"])) {
+      return "a pinned line must carry exactly sessionRef and pinnedAt";
+    }
+    const entry = item as UnknownRecord;
+    const sessionRef = entry["sessionRef"];
+    if (!hasExactKeys(sessionRef, ["projectId", "sessionId"])) {
+      return "a pinned line sessionRef must be a complete SessionRef";
+    }
+    const ref = sessionRef as UnknownRecord;
+    if (!nonEmptyString(ref["projectId"]) || !nonEmptyString(ref["sessionId"])) {
+      return "a pinned line sessionRef must be a complete SessionRef";
+    }
+    if (!nonEmptyString(entry["pinnedAt"])) return "a pinned line pinnedAt must be a non-empty string";
+    const canonical = canonicalJson(sessionRef as JsonValue);
+    if (seen.has(canonical)) return "Workspace lineSettings pins a Session more than once";
+    seen.add(canonical);
   }
   return null;
 }
@@ -515,18 +556,21 @@ export function goalSnapshotValueProblem(value: unknown): string | null {
   return writtenGoalHasExactShape(value) ? null : "Goal value must carry exactly the Goal snapshot fields";
 }
 
-const WORKSPACE_VALUE_KEYS: readonly string[] = ["ref", "revision", "decisionSettings"];
-
 /**
- * Full `WorkspaceSnapshot` value check for the slice-5 write events: the exact
- * `ref`/`revision` (and an optional, validated `decisionSettings`), never a
- * defaulted field.
+ * Full `WorkspaceSnapshot` value check for the slice-5 and slice-2C write
+ * events: the exact `ref`/`revision` plus an optional, validated
+ * `decisionSettings` and an optional, validated `lineSettings`; a field that is
+ * absent stays absent (never defaulted in).
  */
 export function workspaceSnapshotValueProblem(value: unknown): string | null {
   if (!isRecord(value)) return "Workspace value must be an object";
   const hasSettings = Object.prototype.hasOwnProperty.call(value, "decisionSettings");
-  if (!hasExactKeys(value, hasSettings ? WORKSPACE_VALUE_KEYS : ["ref", "revision"])) {
-    return "Workspace value must carry exactly its ref, revision and optional decisionSettings";
+  const hasLineSettings = Object.prototype.hasOwnProperty.call(value, "lineSettings");
+  const keys = ["ref", "revision"];
+  if (hasSettings) keys.push("decisionSettings");
+  if (hasLineSettings) keys.push("lineSettings");
+  if (!hasExactKeys(value, keys)) {
+    return "Workspace value must carry exactly its ref, revision and the optional decisionSettings/lineSettings";
   }
   const ref = workspaceRefFromValue(value["ref"]);
   if (ref === null) return "Workspace value has no valid WorkspaceRef";
@@ -534,6 +578,10 @@ export function workspaceSnapshotValueProblem(value: unknown): string | null {
   if (hasSettings) {
     const settingsProblem = workspaceDecisionSettingsProblem(value["decisionSettings"]);
     if (settingsProblem !== null) return settingsProblem;
+  }
+  if (hasLineSettings) {
+    const lineProblem = workspaceLineSettingsProblem(value["lineSettings"]);
+    if (lineProblem !== null) return lineProblem;
   }
   return null;
 }
@@ -727,6 +775,7 @@ export function decodeWorkspaceSnapshot(record: EncodedRecord): DecodeResult<Wor
   const parsed = JSON.parse(record.json) as WorkspaceSnapshot;
   const ref = workspaceRefFromValue(parsed.ref)!;
   const decisionSettings = parsed.decisionSettings;
+  const lineSettings = parsed.lineSettings;
   return {
     status: "decoded",
     value: {
@@ -734,6 +783,7 @@ export function decodeWorkspaceSnapshot(record: EncodedRecord): DecodeResult<Wor
       revision: record.revision,
       // Present stays byte-identical; absent stays absent (no default is stored).
       ...(decisionSettings === undefined ? {} : { decisionSettings }),
+      ...(lineSettings === undefined ? {} : { lineSettings }),
     },
   };
 }

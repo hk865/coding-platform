@@ -8,6 +8,7 @@ export const GRAPH_WRITE_ROUTES = new Set<CoreRouteSuffix>([
   'completion-policies/activate', 'goals/create', 'architecture/adopt-initial',
   'architecture/capture', 'plans/propose', 'plans/apply', 'messages/send',
   'queries/submit', 'queries/claim',
+  'lines/pin',
 ]);
 
 const ROUTE_LABELS: Record<CoreRouteSuffix, string> = {
@@ -125,6 +126,15 @@ const ROUTE_LABELS: Record<CoreRouteSuffix, string> = {
   'activity/track': '查看轨道',
   'tasks/timeline': '查看任务时间线',
   'activity/backfill': '补算活动',
+  // Slice 2C (spec §2, L13): the seven work-line and node-detail routes. Display
+  // labels only (this table is total over CoreRouteSuffix); the actions are E3's.
+  'lines/list': '查看工作线',
+  'lines/archived': '查看已归档工作线',
+  'lines/read': '查看工作线详情',
+  'lines/page': '查看工作线分页',
+  'lines/pin': '置顶工作线',
+  'graph/hover': '悬停信息',
+  'graph/detail': '查看节点详情',
 };
 
 export const routeLabel = (route: CoreRouteSuffix): string => ROUTE_LABELS[route];

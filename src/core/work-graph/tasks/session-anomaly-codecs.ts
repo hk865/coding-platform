@@ -21,6 +21,8 @@ import {
 export const SESSION_ANOMALY_SCHEMA_ID = 'SessionAnomalyAnchor@1';
 export const SESSION_ANOMALY_RECORDED_EVENT_TYPE = 'SessionAnomalyRecorded';
 export const SESSION_ANOMALY_EVENT_SCHEMA_VERSION = 1;
+/** Slice 2C L4 index 8: the anchors one Session wrote. */
+export const S2C_ANOMALY_BY_SESSION_LOOKUP = 's2c-anomaly-by-session';
 
 export type Slice1EventHeaderV1 = {
   eventId: string; schemaVersion: 1; occurredAt: string;
@@ -391,5 +393,7 @@ export const SESSION_ANOMALY_RECORD_SCHEMAS: RecordBackendSchemas = {
       paths: ['ref.projectId', 'workspaceId', 'task.goalId', 'task.taskId'] },
     { name: SESSION_ANOMALY_BY_GOAL_LOOKUP, aggregateType: 'SessionAnomalyAnchor',
       paths: ['ref.projectId', 'workspaceId', 'task.goalId'] },
+    { name: S2C_ANOMALY_BY_SESSION_LOOKUP, aggregateType: 'SessionAnomalyAnchor',
+      paths: ['ref.projectId', 'workspaceId', 'sessionRef.sessionId'] },
   ],
 };

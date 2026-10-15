@@ -292,6 +292,102 @@ export function decodeOrderedLookupRequest(
   };
 }
 
+// --------------------------------------------------------------------------
+// Count request criteria (Slice 2C L3)
+// --------------------------------------------------------------------------
+
+export type DecodedCountRequest = {
+  readonly index: RegisteredLookupIndex;
+  /** Equality values; with `distinctPath` set these are only the prefixes. */
+  readonly values: readonly LookupValue[];
+  /** Last registered path to count distinct values of, or null for a row count. */
+  readonly distinctPath: string | null;
+};
+
+export type CountRequestDecode =
+  | { readonly status: 'decoded'; readonly value: DecodedCountRequest }
+  | { readonly status: 'unsupported'; readonly reason: string }
+  | { readonly status: 'invalid'; readonly reason: string };
+
+/**
+ * The one count-request rule for both backends (Slice 2C L3). Without
+ * `distinctPath`, validation is exactly `decodeLookupRequest` without
+ * limit/after. With `distinctPath`, it must be the index's LAST path, `values`
+ * names only the preceding paths, and an ordered index is rejected.
+ */
+export function decodeCountRequest(registry: RecordLookupRegistry, request: unknown): CountRequestDecode {
+  if (!isJsonObject(request)) return { status: 'invalid', reason: 'count request must be an object' };
+  const indexName = request['index'];
+  if (!isNonEmptyString(indexName)) return { status: 'invalid', reason: 'count index must be a non-empty string' };
+  const index = registry.byName(indexName);
+  if (index === undefined) return { status: 'unsupported', reason: `no lookup index registered as ${indexName}` };
+  const rawValues = request['values'];
+  if (!Array.isArray(rawValues)) return { status: 'invalid', reason: 'count values must be an array' };
+  const values = rawValues as readonly unknown[];
+  const rawDistinctPath = request['distinctPath'];
+  if (rawDistinctPath !== undefined) {
+    if (!isNonEmptyString(rawDistinctPath)) {
+      return { status: 'invalid', reason: 'count distinctPath must be a non-empty string' };
+    }
+    if (index.orderBy !== undefined) {
+      return {
+        status: 'invalid',
+        reason: `lookup index ${index.name} is ordered and does not support distinctPath`,
+      };
+    }
+    if (index.paths[index.paths.length - 1] !== rawDistinctPath) {
+      return { status: 'invalid', reason: `count distinctPath must be the last path of lookup index ${index.name}` };
+    }
+    const expected = index.paths.length - 1;
+    if (values.length !== expected) {
+      return {
+        status: 'invalid',
+        reason: `lookup index ${index.name} requires exactly ${String(expected)} values before distinctPath`,
+      };
+    }
+    for (const value of values) {
+      if (!isLookupValue(value)) {
+        return { status: 'invalid', reason: 'count values must be a string, finite number, boolean or null' };
+      }
+    }
+    return {
+      status: 'decoded',
+      value: Object.freeze({
+        index,
+        values: Object.freeze([...values]) as readonly LookupValue[],
+        distinctPath: rawDistinctPath,
+      }),
+    };
+  }
+  if (values.length !== index.paths.length) {
+    return {
+      status: 'invalid',
+      reason: `lookup index ${index.name} requires exactly ${String(index.paths.length)} values`,
+    };
+  }
+  if (index.orderBy !== undefined) {
+    for (const value of values) {
+      if (!isNonEmptyString(value)) {
+        return { status: 'invalid', reason: 'count values for an ordered index must all be non-empty strings' };
+      }
+    }
+  } else {
+    for (const value of values) {
+      if (!isLookupValue(value)) {
+        return { status: 'invalid', reason: 'count values must be a string, finite number, boolean or null' };
+      }
+    }
+  }
+  return {
+    status: 'decoded',
+    value: Object.freeze({
+      index,
+      values: Object.freeze([...values]) as readonly LookupValue[],
+      distinctPath: null,
+    }),
+  };
+}
+
 /**
  * Slice 2A L1 continuation range term. SQLite can seek only the first range
  * term on the ordered expression, so `lookupOrdered` may write exactly one
@@ -385,6 +481,18 @@ export function lookupIndexKeyOf(index: RegisteredLookupIndex, body: Record<stri
     values.push(resolved.kind === 'missing' ? null : resolved.value);
   }
   return encodeLookupValues(values);
+}
+
+/**
+ * Slice 2C L3 distinct key for one scalar path value: the same four type
+ * classes (text / number / true / false) with numbers normalized exactly like
+ * equality encoding. `null` when the value is null, missing or composite, so
+ * those rows are never a distinct value.
+ */
+export function distinctLookupValueKeyOf(body: Record<string, unknown>, path: string): string | null {
+  const resolved = resolvePath(body, path);
+  if (resolved.kind !== 'value' || resolved.value === null) return null;
+  return encodeLookupValues([resolved.value]);
 }
 
 /**

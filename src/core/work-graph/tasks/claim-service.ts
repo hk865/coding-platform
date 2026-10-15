@@ -29,8 +29,8 @@
  */
 import type { ActorRef } from '../../../contracts/command-event.js';
 import type { CoreCallContext, MaterialReader } from '../../../contracts/core/call-context.js';
-import type { RoleConfigurationRef, SessionRef, VersionPin, WorkspaceScope } from '../../../contracts/core/identity.js';
-import type { SessionRecord } from '../../../contracts/core/session.js';
+import type { RoleConfigurationRef, SessionRef, SessionWorkLinkRef, VersionPin, WorkspaceScope } from '../../../contracts/core/identity.js';
+import type { SessionRecord, SessionWorkLink } from '../../../contracts/core/session.js';
 import type { CoreError, CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import type {
   ConsumedWaitV1, DispatchOutboxRef, RoleBindingRefV1, RunContinuationV1, RunRef, RunSnapshot, TaskAttemptRef,
@@ -44,11 +44,12 @@ import type { RoleSpecResolutionV1 } from '../../../contracts/role-spec-material
 import { roleSpecContentDigest } from '../../../contracts/role-spec.js';
 import { isAutomationActor, type TaskRequeueRef, type TaskRequeueSnapshotV1 } from '../../../contracts/task-requeue.js';
 import type {
-  EncodedRecord, GoalRecordTransactionPort, PreparedCommit, RecordGuard, StoreFailure,
+  CommitCursorBinding, EncodedRecord, GoalRecordTransactionPort, PreparedCommit, RecordGuard, StoreFailure,
 } from '../../record-store/ports.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import {
-  decodeSessionRecord, encodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey,
+  decodeSessionRecord, decodeSessionWorkLink, encodePendingSessionWorkLink, encodeSessionRecord,
+  plainSessionRefToAggregate, sessionAggregateRefKey, sessionWorkLinkRefKey, type PendingSessionWorkLink,
 } from '../sessions/session-record-codecs.js';
 import {
   taskLeaseNodeOf, transitionAttempt, transitionDispatchOutbox, transitionTaskLease,
@@ -60,7 +61,7 @@ import {
 } from '../state/run-machine.js';
 import {
   occupancyAdmissionProblem, occupySessionRecord, sessionDispatchAdmissionProblem, sessionMachineStateOf,
-  transitionSession, type SessionOccupation,
+  transitionSession, type SessionEffect, type SessionOccupation,
 } from '../state/session-availability.js';
 import {
   taskClaimProblem, taskMachineStateOf, transitionTask,
@@ -942,7 +943,15 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
 
     const workspaceKey = refKeyOf(goal.workspaceRef);
     const sessionKey = sessionAggregateRefKey(plainSessionRefToAggregate(input.sessionRef));
-    const stateRead = await records.readMany([workspaceKey, sessionKey]);
+    // 2C item 10: the deterministic `responsible` link ref for this claim, read
+    // by key beside the Session so its guard joins the claim commit.
+    const responsibleLinkRef: SessionWorkLinkRef = {
+      aggregateType: 'SessionWorkLink', projectId: scope.projectId, sessionId: input.sessionRef.sessionId,
+      target: { kind: 'task', ref: { projectId: scope.projectId, goalId: input.goalRef.goalId, taskId: input.taskId } },
+      relation: 'responsible',
+    };
+    const responsibleLinkKey = sessionWorkLinkRefKey(responsibleLinkRef);
+    const stateRead = await records.readMany([workspaceKey, sessionKey, responsibleLinkKey]);
     if (stateRead.status !== 'ready') return mapStoreFailure(stateRead);
     if (scopeCtx.signal.aborted) return reject('cancelled', 'the Task claim was cancelled during the Session read');
     const workspaceRecord = stateRead.value.records.find(record => record.refKey === workspaceKey);
@@ -953,6 +962,22 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
     const target = decodedSession === null ? null : decodedSession.value;
     if (target !== null && target.ref.projectId !== scope.projectId) return forbidden('the target Session belongs to another project');
     if (target !== null && target.workspaceId !== scope.workspaceId) return forbidden('the target Session belongs to another workspace');
+    // The link read is judged beside the Session: a damaged row is unreadable,
+    // never "no link" (rule 5), and an OPEN link means this claim opens nothing.
+    const responsibleLinkRecord = stateRead.value.records.find(record => record.refKey === responsibleLinkKey);
+    let currentResponsibleLink: SessionWorkLink | null = null;
+    if (responsibleLinkRecord !== undefined) {
+      const decodedLink = decodeSessionWorkLink(responsibleLinkRecord);
+      if (decodedLink.status !== 'decoded') return unavailable(`the target Session work link is damaged: ${decodedLink.reason}`);
+      currentResponsibleLink = decodedLink.value;
+    }
+    // 2C item 10 (lead ruling): a REUSED Session's claim also opens the claimed
+    // Task's `responsible` link (SES-15) when it has no OPEN one to it. The
+    // Workflow sets `openResponsibleLink`; the created path's initial link is
+    // already open and is left alone. The exact link ref is deterministic, so
+    // its record is read by key here and guarded in the same commit.
+    const openWorkLink = input.openResponsibleLink === true
+      && (currentResponsibleLink === null || currentResponsibleLink.until !== null);
     // SES-02: absent, lifecycle, health, occupancy, revision and generation; the pin comes after the Goal/Workspace pins.
     const sessionState = sessionMachineStateOf(target);
     refused = judge({ sessionProblem: rejectionOf(occupancyAdmissionProblem(sessionState, null)) });
@@ -1078,12 +1103,18 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
     const outboxRef: DispatchOutboxRef = { aggregateType: 'DispatchOutboxEntry', projectId: scope.projectId,
       goalId: taskTriple.goalId, taskId: input.taskId, attemptId };
     // SES-02 occupies the pinned Session for this Run; its generation (revision + 1) is the claim's.
-    const occupied = transitionSession(sessionState, { kind: 'occupancy_acquired', holder: runRef }, { caller: 'service',
+    // 2C item 10: SES-15's link open rides the SAME commit/revision bump when the
+    // Session has no open responsible link to this Task (a reused Session).
+    const occupied = transitionSession(sessionState, { kind: 'occupancy_acquired', holder: runRef, openWorkLink }, { caller: 'service',
       hostLease: null, pin: checkedExpected.pins.session.revision, holder: null, probe: null, kernelHeader: null,
       openResponsibleLink: null, creation: null, link: null });
     if (!occupied.ok) return reject(occupied.code, occupied.detail);
-    const [occupation] = occupied.effects;
-    if (occupied.effects.length !== 1 || occupation?.kind !== 'occupy_session') throw new Error('occupancy_acquired must occupy the Session');
+    const occupation = occupied.effects.find(
+      (effect): effect is Extract<SessionEffect, { kind: 'occupy_session' }> => effect.kind === 'occupy_session');
+    if (occupation === undefined) throw new Error('occupancy_acquired must occupy the Session');
+    const nextResponsibleLink: PendingSessionWorkLink | null = openWorkLink
+      ? { ref: responsibleLinkRef, revision: (currentResponsibleLink?.revision ?? 0) + 1, since: null, until: null }
+      : null;
     const claim: TaskClaim = {
       task: taskTriple, planRef: input.planRef, workspaceId: scope.workspaceId, sessionRef: input.sessionRef,
       sessionRevision: occupation.generation, generation: occupation.generation, runRef, attemptRef, outboxRef, claimedAt,
@@ -1121,11 +1152,19 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
     for (const guard of roleFacts.guards) addGuard(guard.refKey, guard.expectedRevision);
     if (continuationMessageGuard !== null) addGuard(continuationMessageGuard.refKey, continuationMessageGuard.expectedRevision);
     for (const record of [written.lease, written.attempt, written.run, written.outbox]) addGuard(record.refKey, null);
+    // 2C item 10: the link row's own CAS (null when the Session never held one).
+    if (nextResponsibleLink !== null) addGuard(responsibleLinkKey, currentResponsibleLink?.revision ?? null);
     const guards: RecordGuard[] = [...guardMap].map(([refKey, expectedRevision]) => ({ refKey, expectedRevision }));
 
+    const linkRecords: EncodedRecord[] = nextResponsibleLink === null ? [] : [encodePendingSessionWorkLink(nextResponsibleLink)];
+    const linkBindings: CommitCursorBinding[] = nextResponsibleLink === null ? [] : [{ refKey: responsibleLinkKey, field: 'since' }];
     const prepared: PreparedCommit = { identityKey, fingerprint, guards,
-      records: [written.lease, written.attempt, written.run, written.outbox, written.session],
-      claims: [], indexGuards: [], indexChanges: [], events: [encodeTaskClaimedEvent(event)] };
+      records: [written.lease, written.attempt, written.run, written.outbox, written.session, ...linkRecords],
+      claims: [], indexGuards: [], indexChanges: [],
+      // The link record rides the claim commit (SES-15 interval, `since` bound
+      // to the commit cursor); the commit's one event stays TaskClaimed.
+      events: [encodeTaskClaimedEvent(event)],
+      ...(linkBindings.length === 0 ? {} : { commitCursorBindings: linkBindings }) };
 
     if (scopeCtx.signal.aborted) return reject('cancelled', 'the Task claim was cancelled before commit');
     const receipt = await records.commit(prepared);

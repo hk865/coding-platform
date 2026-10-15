@@ -56,3 +56,24 @@ export type RecordOrderedLookupPage = {
 export interface RecordOrderedLookupPort {
   lookupOrdered(request: OrderedLookupRequest): Promise<StoreResult<RecordOrderedLookupPage>>;
 }
+
+/**
+ * Slice 2C L3 count port (separate, so doubles that implement only `lookup` keep
+ * type-checking). Without `distinctPath`, validation is exactly `lookup` without
+ * `limit`/`after` and the matching row count is returned. With `distinctPath`
+ * (which must be the index's last path, and is not supported on an ordered
+ * index) `values` names only the preceding paths and the number of distinct
+ * scalar values is returned (text / number / true / false are four classes,
+ * numbers compare by value, null/missing/composite are not candidates).
+ * An ordered index requires non-empty text equality values and counts only rows
+ * whose order value is a candidate (non-empty text, or a safe JSON integer).
+ */
+export type RecordCountRequest = {
+  index: string;
+  values: readonly LookupValue[];
+  distinctPath?: string;
+};
+export type RecordCountResult = { count: number; readThrough: CommitCursor | null };
+export interface RecordCountPort {
+  countLookup(request: RecordCountRequest): Promise<StoreResult<RecordCountResult>>;
+}

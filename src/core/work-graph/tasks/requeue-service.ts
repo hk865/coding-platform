@@ -375,7 +375,7 @@ function sortedPins(expected: readonly VersionPin[]): { ref: VersionPin['ref']; 
 // The read window (§4.3 step 3)
 // --------------------------------------------------------------------------
 
-type RequeueWindow = {
+export type RequeueWindow = {
   goal: GoalSnapshot;
   plan: PlanRevisionSnapshot;
   definition: RuntimeTask;
@@ -391,8 +391,11 @@ type RequeueWindow = {
  * ended Run's TaskRequeue and requeue refusal) and the selected Run's round
  * chain whatever its outcome (I-12 clause 2). A watermark that moved between
  * the reads reads the whole window again.
+ *
+ * Exported (L16, spec §2) so the read-only views share this canonical window
+ * instead of duplicating a reduced copy.
  */
-async function readRequeueWindow(
+export async function readRequeueWindow(
   records: GoalRecordTransactionPort & RecordLookupPort, goalRef: GoalRef, taskId: string, afterRunRef: RunRef,
 ): Promise<{ ok: true; value: RequeueWindow } | Rejected> {
   for (let attempt = 0; attempt < WINDOW_MAX_ATTEMPTS; attempt += 1) {

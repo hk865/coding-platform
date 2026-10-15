@@ -55,6 +55,12 @@ import type { WorkbenchToolsPort } from './workbench-tools.js';
 import type { ActivityReadPort } from '../core/work-graph/views/activity-read-model.js';
 import type { TrackReadPort } from '../core/work-graph/views/track-read-model.js';
 import type { TaskTimelineReadPort } from '../core/work-graph/views/task-state-timeline.js';
+// Slice 2C (spec §2, L13): the line/node-detail owner ports and the Host
+// conversation composition the seven new routes bind.
+import type {
+  NodeDetailReadPort, WorkLineReadPort, WorkLineSettingsPort,
+} from '../core/work-graph/model/work-line-contracts.js';
+import type { WorkLineConversationPort } from '../composition/work-line-conversation.js';
 import {
   type CoreRouteKind,
   type CoreRouteSuffix,
@@ -62,6 +68,8 @@ import {
   // Slice 1 (spec §4.4, "typed assembly"): the compile-time DTO pairing of the
   // eleven new suffixes with their body/result aliases.
   type Slice1CoreRouteDto,
+  // Slice 2C (spec §2): the same typed assembly for the seven line/detail routes.
+  type Slice2CCoreRouteDto,
 } from './core-http-types.js';
 
 /** One named binding per route. The types are the exact public port methods;
@@ -188,6 +196,16 @@ export type CoreRouteBindings = {
   readTrackBars: TrackReadPort['readTrackBars'];
   readTaskStateTimeline: TaskTimelineReadPort['readTaskStateTimeline'];
   backfillActivityRange: NonNullable<WorkflowPort['backfillActivityRange']>;
+  // Slice 2C (spec §2): the line reads, the Host conversation page, the pin
+  // write and the two node-detail reads. `readWorkLinePage` is the Host port
+  // because the `conversation` section is assembled outside WorkGraph.
+  listWorkLines: WorkLineReadPort['listWorkLines'];
+  listArchivedLines: WorkLineReadPort['listArchivedLines'];
+  readWorkLine: WorkLineReadPort['readWorkLine'];
+  readWorkLinePage: WorkLineConversationPort['readWorkLinePage'];
+  readGraphHover: NodeDetailReadPort['readGraphHover'];
+  readNodeDetail: NodeDetailReadPort['readNodeDetail'];
+  setLinePins: WorkLineSettingsPort['setLinePins'];
 };
 
 /** A.2 step 5.6 (§12.1 step 7, §12.8): this Host's instance lease and its start-up reconcile report. */
@@ -250,6 +268,13 @@ export type CoreRoutePlatform = {
   /** Slice 2B L9–L12: the non-enumerable activity and timeline owners (L15). */
   activity?: ActivityReadPort & Pick<TrackReadPort, 'readTrackBars'>;
   timeline?: TaskTimelineReadPort;
+  /** Slice 2C (spec §2, L13): the internal line/detail owners. They are
+   * non-enumerable on the composed platform (not public keys), so a full
+   * `{ ...platform }` copy lacks them; such a binding answers `unsupported`. */
+  workLines?: WorkLineReadPort;
+  workLineConversation?: WorkLineConversationPort;
+  nodeDetail?: NodeDetailReadPort;
+  lineSettings?: WorkLineSettingsPort;
 };
 
 /** `executions/resolve-unknown` input (RUN-22): the unknown Run and the operator's reason. */
@@ -389,6 +414,14 @@ export const CORE_ROUTE_SPECS: Record<CoreRouteSuffix, CoreRouteSpec> = {
   'activity/track': { kind: 'plain', binding: 'readTrackBars', owner: 'activity.readTrackBars' },
   'tasks/timeline': { kind: 'plain', binding: 'readTaskStateTimeline', owner: 'timeline.readTaskStateTimeline' },
   'activity/backfill': { kind: 'plain', binding: 'backfillActivityRange', owner: 'workflow.backfillActivityRange' },
+  // Slice 2C (spec §2, L13): the seven line/detail routes. Only `lines/pin` writes.
+  'lines/list': { kind: 'plain', binding: 'listWorkLines', owner: 'workLines.listWorkLines' },
+  'lines/archived': { kind: 'plain', binding: 'listArchivedLines', owner: 'workLines.listArchivedLines' },
+  'lines/read': { kind: 'plain', binding: 'readWorkLine', owner: 'workLines.readWorkLine' },
+  'lines/page': { kind: 'plain', binding: 'readWorkLinePage', owner: 'workLineConversation.readWorkLinePage' },
+  'lines/pin': { kind: 'graph_write', binding: 'setLinePins', owner: 'lineSettings.setLinePins' },
+  'graph/hover': { kind: 'plain', binding: 'readGraphHover', owner: 'nodeDetail.readGraphHover' },
+  'graph/detail': { kind: 'plain', binding: 'readNodeDetail', owner: 'nodeDetail.readNodeDetail' },
 };
 
 export type ParsedCoreRequest =
@@ -698,6 +731,24 @@ export function createPlatformCoreRouteBindings(
     backfillActivityRange: platform.workflow.backfillActivityRange === undefined
       ? unsupported('the Workflow does not publish the human activity backfill (backfillActivityRange)')
       : platform.workflow.backfillActivityRange.bind(platform.workflow),
+    // Slice 2C (spec §2, L13): the seven named owner methods. The line groups
+    // are non-enumerable internal owners, so a spread copy lacks them and the
+    // binding answers an explicit `unsupported` instead of a fake empty read.
+    listWorkLines: platform.workLines === undefined ? unsupported('the platform does not publish workLines.listWorkLines')
+      : platform.workLines.listWorkLines.bind(platform.workLines),
+    listArchivedLines: platform.workLines === undefined ? unsupported('the platform does not publish workLines.listArchivedLines')
+      : platform.workLines.listArchivedLines.bind(platform.workLines),
+    readWorkLine: platform.workLines === undefined ? unsupported('the platform does not publish workLines.readWorkLine')
+      : platform.workLines.readWorkLine.bind(platform.workLines),
+    readWorkLinePage: platform.workLineConversation === undefined
+      ? unsupported('the platform does not publish workLineConversation.readWorkLinePage')
+      : platform.workLineConversation.readWorkLinePage.bind(platform.workLineConversation),
+    readGraphHover: platform.nodeDetail === undefined ? unsupported('the platform does not publish nodeDetail.readGraphHover')
+      : platform.nodeDetail.readGraphHover.bind(platform.nodeDetail),
+    readNodeDetail: platform.nodeDetail === undefined ? unsupported('the platform does not publish nodeDetail.readNodeDetail')
+      : platform.nodeDetail.readNodeDetail.bind(platform.nodeDetail),
+    setLinePins: platform.lineSettings === undefined ? unsupported('the platform does not publish lineSettings.setLinePins')
+      : platform.lineSettings.setLinePins.bind(platform.lineSettings),
   };
 }
 
@@ -728,6 +779,9 @@ export async function dispatchCoreRoute(
   // alias reachable from production (spec §4.4 "typed assembly", K6). Nothing
   // at runtime reads this alias.
   type Slice1Dto = Slice1CoreRouteDto;
+  // Slice 2C (spec §2): the same reachability anchor for the seven line/detail
+  // DTO aliases; nothing at runtime reads this alias.
+  type Slice2CDto = Slice2CCoreRouteDto;
   if (parsed.kind !== spec.kind) {
     throw new CoreRouteRejectionError({
       status: 'rejected', code: 'invalid',
@@ -848,6 +902,14 @@ export async function dispatchCoreRoute(
       case 'activity/track': return bindings.readTrackBars(ctx, plain.input as never);
       case 'tasks/timeline': return bindings.readTaskStateTimeline(ctx, plain.input as never);
       case 'activity/backfill': return bindings.backfillActivityRange(ctx, plain.input as never);
+      // Slice 2C (spec §2, L13): the seven line/detail routes.
+      case 'lines/list': return bindings.listWorkLines(ctx, plain.input as never);
+      case 'lines/archived': return bindings.listArchivedLines(ctx, plain.input as never);
+      case 'lines/read': return bindings.readWorkLine(ctx, plain.input as never);
+      case 'lines/page': return bindings.readWorkLinePage(ctx, plain.input as never);
+      case 'lines/pin': return bindings.setLinePins(ctx, graphWrite.request as never);
+      case 'graph/hover': return bindings.readGraphHover(ctx, plain.input as never);
+      case 'graph/detail': return bindings.readNodeDetail(ctx, plain.input as never);
     }
   })();
   // A GraphWrite rejection is a failed command: preserve its exact body but let

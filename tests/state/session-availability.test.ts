@@ -851,6 +851,34 @@ describe('SES-12/SES-13/SES-19 health_observed (A.2 step 5.6)', () => {
     // A missing/damaged probe never replaces kernel_turn_open: the same health is SES-19.
     expect(run(TURN_OPEN, observe('unavailable'), missing)).toEqual(legal(TURN_OPEN));
   });
+
+  it('SES-19a: the Turn closure replaces kernel_turn_open with its fresh missing/damaged probe under the SES-12 lease guard', () => {
+    for (const probe of ['missing', 'damaged'] as const) {
+      const closure = reconcile({ caller: 'turn_closure', probe });
+      expect(run(TURN_OPEN, observe('unavailable'), closure)).toEqual(legal(
+        { ...(TURN_OPEN as Exclude<SessionMachineState, 'absent'>), health: 'unavailable', healthConclusion: probe,
+          revision: REVISION + 1 },
+        [{ kind: 'observe_health', health: 'unavailable', conclusion: probe },
+          { kind: 'emit_event', eventType: 'SessionHealthObserved' }]));
+    }
+    // The reconcile caller keeps SES-19 exactly: its missing/damaged probe never replaces kernel_turn_open.
+    expect(run(TURN_OPEN, observe('unavailable'), reconcile({ probe: 'missing' }))).toEqual(legal(TURN_OPEN));
+    expect(run(TURN_OPEN, observe('unavailable'), reconcile({ probe: 'damaged' }))).toEqual(legal(TURN_OPEN));
+    // A caller that is neither the reconcile nor the Turn closure stays forbidden.
+    expect(run(TURN_OPEN, observe('unavailable'), ctxOf({ probe: 'missing' }))).toEqual(refused('illegal', 'forbidden'));
+    // The same Host-lease guard as SES-12.
+    for (const hostLease of ['held_by_other', null] as const) {
+      expect(run(TURN_OPEN, observe('unavailable'), reconcile({ caller: 'turn_closure', probe: 'missing', hostLease })))
+        .toEqual(refused('guard_failed', 'busy'));
+    }
+    // The Kernel head rule is SES-13's and does not apply to a missing/damaged probe.
+    expect(run(TURN_OPEN, observe('unavailable'), reconcile({ caller: 'turn_closure', probe: 'missing',
+      kernelHeader: { activeRunId: 'kernel-run-1' } }))).toEqual(legal(
+      { ...(TURN_OPEN as Exclude<SessionMachineState, 'absent'>), health: 'unavailable', healthConclusion: 'missing',
+        revision: REVISION + 1 },
+      [{ kind: 'observe_health', health: 'unavailable', conclusion: 'missing' },
+        { kind: 'emit_event', eventType: 'SessionHealthObserved' }]));
+  });
 });
 
 describe('SES-15/SES-16 work_linked', () => {
@@ -1135,6 +1163,19 @@ describe('observeSessionHealthRecord', () => {
         expect(() => observeSessionHealthRecord(record, { health: 'unavailable', conclusion })).toThrow(/SES-19/);
       }
     }
+  });
+
+  it('SES-19a: the constructor replaces kernel_turn_open only when the owner allows it and keeps the entry cursor', () => {
+    const record = recordOf({ health: 'unavailable', healthConclusion: 'kernel_turn_open', unavailableSince: makeCommitCursor(3) });
+    for (const conclusion of ['missing', 'damaged'] as const) {
+      expect(observeSessionHealthRecord(record, { health: 'unavailable', conclusion }, { replacesKernelTurnOpen: true }))
+        .toEqual({ ...record, revision: REVISION + 1, health: 'unavailable', healthConclusion: conclusion });
+    }
+    // Without the option the same observation stays SES-19 (the reconcile callers).
+    expect(() => observeSessionHealthRecord(record, { health: 'unavailable', conclusion: 'missing' })).toThrow(/SES-19/);
+    // The option only covers kernel_turn_open: an ordinary unavailable record still refuses.
+    expect(() => observeSessionHealthRecord(recordOf({ health: 'unavailable', healthConclusion: 'missing' }),
+      { health: 'unavailable', conclusion: 'missing' }, { replacesKernelTurnOpen: true })).toThrow(/SES-19/);
   });
 
   it('refuses a recoverable record (D-17: no writer)', () => {

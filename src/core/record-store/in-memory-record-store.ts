@@ -31,8 +31,8 @@ import type { VersionedRef } from "../../contracts/ledger.js";
 import { applyEventSchema, applyRecordSchema, bindPreparedRecords, checkPersistedIdempotencyRecord, clonePersistedIdempotencyRecord, committedReceiptFromIdempotency, corruptFailure, createRecordSchemaRegistry, decodeRecordBody, decodeRefKey, decodeStoredEventBody, guardIsSatisfied, idempotencyConflictFailure, invalidFailure, isNonEmptyString, messageOf, notFoundFailure, planPreparedCommit, revisionConflictFailure, uniqueConflictFailure, unsupportedFailure, type PlannedCommit, type RecordSchemaRegistry } from "./record-codec.js";
 import { decodeGuardedRevision } from "./guarded-revision.js";
 import { findClaimConflicts, ledgerHorizonMatches, RejectedInsideTransaction } from "./commit-extensions.js";
-import { compareOrderedValues, compareRefKeys, createRecordLookupRegistry, decodeLookupRequest, decodeOrderedLookupRequest, encodeLookupValues, lookupIndexKeyOf, matchesOrderedRequest, orderedLookupCandidateOf, type RecordLookupRegistry, type RegisteredLookupIndex } from "./lookup-index.js";
-import type { OrderedLookupRequest, OrderedLookupValue, RecordOrderedLookupPage, RecordOrderedLookupPort, RecordLookupPage, RecordLookupPort, RecordLookupRequest } from "./lookup-ports.js";
+import { compareOrderedValues, compareRefKeys, createRecordLookupRegistry, decodeCountRequest, decodeLookupRequest, decodeOrderedLookupRequest, distinctLookupValueKeyOf, encodeLookupValues, lookupIndexKeyOf, matchesOrderedRequest, orderedLookupCandidateOf, type RecordLookupRegistry, type RegisteredLookupIndex } from "./lookup-index.js";
+import type { OrderedLookupRequest, OrderedLookupValue, RecordCountPort, RecordCountRequest, RecordCountResult, RecordOrderedLookupPage, RecordOrderedLookupPort, RecordLookupPage, RecordLookupPort, RecordLookupRequest } from "./lookup-ports.js";
 import type { DecodeResult, EncodedDomainEvent, EncodedRecord, GoalRecordTransactionPort, PersistedIdempotencyRecord, PreparedCommit, RecordBackendSchemas, RecordBatchRead, RecordGuard, StoreCommitReceipt, StoreResult, StoredVersion } from "./ports.js";
 
 export type InMemoryRecordBackendOptions = {
@@ -41,7 +41,7 @@ export type InMemoryRecordBackendOptions = {
 };
 
 export type InMemoryRecordBackend = {
-  readonly records: GoalRecordTransactionPort & RecordLookupPort & RecordOrderedLookupPort;
+  readonly records: GoalRecordTransactionPort & RecordLookupPort & RecordOrderedLookupPort & RecordCountPort;
   close(): Promise<void>;
 };
 
@@ -529,7 +529,51 @@ export function createInMemoryRecordBackend(options: InMemoryRecordBackendOption
     };
   };
 
-  const records: GoalRecordTransactionPort & RecordLookupPort & RecordOrderedLookupPort = {
+  /**
+   * Registered candidate count (Slice 2C L3). A row count never materializes a
+   * record; a distinct count resolves the last path from the same candidate
+   * buckets; an ordered index additionally keeps only candidate order values.
+   */
+  const countLookup = async (request: RecordCountRequest): Promise<StoreResult<RecordCountResult>> => {
+    assertOpen();
+    const decoded = decodeCountRequest(lookups, request);
+    if (decoded.status === "unsupported") return unsupportedFailure(decoded.reason);
+    if (decoded.status === "invalid") return invalidFailure(decoded.reason);
+    const definition = decoded.value.index;
+    const memoryIndex = lookupIndexByName.get(definition.name);
+    if (memoryIndex === undefined) return unsupportedFailure(`no lookup index registered as ${definition.name}`);
+    // The equality values name a prefix of every full bucket key.
+    const prefix = encodeLookupValues(decoded.value.values);
+    const distinctPath = decoded.value.distinctPath;
+    let count = 0;
+    if (distinctPath !== null) {
+      const distinct = new Set<string>();
+      for (const [bucketKey, refs] of memoryIndex.buckets) {
+        if (!bucketKey.startsWith(prefix)) continue;
+        for (const refKey of refs) {
+          const body = state.snapshots.get(refKey);
+          if (body === undefined) return corruptFailure(`lookup candidate ${refKey} has no snapshot`);
+          const valueKey = distinctLookupValueKeyOf(body, distinctPath);
+          if (valueKey !== null) distinct.add(valueKey);
+        }
+      }
+      count = distinct.size;
+    } else if (definition.orderBy !== undefined) {
+      const refs = memoryIndex.buckets.get(prefix);
+      if (refs !== undefined) {
+        for (const refKey of refs) {
+          const body = state.snapshots.get(refKey);
+          if (body === undefined) return corruptFailure(`lookup candidate ${refKey} has no snapshot`);
+          if (orderedLookupCandidateOf(definition, body).present) count += 1;
+        }
+      }
+    } else {
+      count = memoryIndex.buckets.get(prefix)?.size ?? 0;
+    }
+    return { status: "ready", value: { count, readThrough: observedLedgerHorizon() } };
+  };
+
+  const records: GoalRecordTransactionPort & RecordLookupPort & RecordOrderedLookupPort & RecordCountPort = {
     readMany: async (refKeys: readonly string[]): Promise<StoreResult<RecordBatchRead>> => {
       assertOpen();
       if (!Array.isArray(refKeys) || !refKeys.every((key) => isNonEmptyString(key))) {
@@ -544,6 +588,7 @@ export function createInMemoryRecordBackend(options: InMemoryRecordBackendOption
     eventAt,
     lookup,
     lookupOrdered,
+    countLookup,
   };
 
   const close = async (): Promise<void> => {

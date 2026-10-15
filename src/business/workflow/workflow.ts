@@ -839,7 +839,7 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort
   async function buildClaimOperation(
     owned: Owned, base: Base, goal: GoalSnapshot, planRef: PlanRevisionRef,
     task: RuntimeTask, binding: Binding, sessionId: string, sessionRevision: number,
-    consumedWait?: ConsumedWaitV1, requeue?: WorkflowSessionRequeue,
+    reusedSession: boolean, consumedWait?: ConsumedWaitV1, requeue?: WorkflowSessionRequeue,
   ): Promise<{ operation: WorkflowOperation } | { rejection: CoreRejection }> {
     const workspacePin = await loadWorkspacePin(owned, goal.workspaceRef);
     if ('rejection' in workspacePin) return workspacePin;
@@ -856,6 +856,10 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort
       ...(consumedWait === undefined ? {} : { consumedWait }),
       // TASK-03 (D-3): a requeued Task is claimed only with the TaskRequeue covering its selected Run.
       ...(requeue === undefined ? {} : { requeueRef: requeue.requeueRef }),
+      // 2C item 10 (lead ruling): a claim in a REUSED Session also opens the
+      // claimed Task's responsible link in the same commit (the create path
+      // already wrote its `initialLinks`; the claim checks for an open link).
+      ...(reusedSession ? { openResponsibleLink: true } : {}),
     };
     return { operation: { kind: 'claim_task', request: graphWrite(base, 'claim_task', input, expected) } };
   }
@@ -1117,7 +1121,7 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort
     if (recovered !== null) return advancing(null, makePerform(base, recovered));
     const sessionRef: SessionRef = { projectId: owned.projectId, sessionId: chosen.card.record.ref.sessionId };
     const built = await buildClaimOperation(owned, base, goal, planRef, task, binding,
-      sessionRef.sessionId, chosen.card.record.revision, undefined, requeue);
+      sessionRef.sessionId, chosen.card.record.revision, true, undefined, requeue);
     if ('rejection' in built) return built.rejection;
     return advancing(null, makePerform({ ...base, sessionHint: sessionRef }, built.operation));
   }
@@ -1451,7 +1455,7 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort
       }
       const sessionRef: SessionRef = { projectId: owned.projectId, sessionId: chosen.card.record.ref.sessionId };
       const built = await buildClaimOperation(owned, base, goal, graph.plan.ref, task, binding,
-        sessionRef.sessionId, chosen.card.record.revision, consumedWait);
+        sessionRef.sessionId, chosen.card.record.revision, true, consumedWait);
       if ('rejection' in built) return built.rejection;
       return advancing(null, makePerform({ ...base, sessionHint: sessionRef }, built.operation));
     }
@@ -1666,7 +1670,7 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort
       return waiting(receipt, receiptReason(card, 'the handover successor Session is not readable'));
     }
     const built = await buildClaimOperation(owned, base, goal, graphRead.value.plan.ref, task, binding,
-      operation.successor.sessionId, card.value.record.revision, undefined, operation.requeue);
+      operation.successor.sessionId, card.value.record.revision, false, undefined, operation.requeue);
     if ('rejection' in built) return waiting(receipt, built.rejection.reason);
     const nextBase: Base = { ...base, sessionHint: operation.successor };
     return advancing(receipt, makePerform(nextBase, built.operation));
@@ -1820,7 +1824,7 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort
           if (card.status === 'ready') claimRevision = card.value.record.revision;
         }
         const built = await buildClaimOperation(owned, base, goal, graphRead.value.plan.ref, task, binding,
-          session.ref.sessionId, claimRevision, undefined, operation.requeue);
+          session.ref.sessionId, claimRevision, false, undefined, operation.requeue);
         if ('rejection' in built) return waiting(receipt, built.rejection.reason);
         const nextBase: Base = { ...base, sessionHint: { projectId: owned.projectId, sessionId: session.ref.sessionId } };
         return advancing(receipt, makePerform(nextBase, built.operation));
@@ -2019,7 +2023,10 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort
     if (!canMaintain) return [];
     try {
       const result = await maintenanceService.maintainSessions(owned.ctx,
-        { workspace: { projectId: owned.projectId, workspaceId: owned.workspaceId }, after: null });
+        { workspace: { projectId: owned.projectId, workspaceId: owned.workspaceId }, after: null,
+          // SES-19a: the Workflow's own maintenance close may replace a
+          // kernel_turn_open conclusion with its fresh unreadable probe.
+          turnClosureCaller: 'turn_closure' });
       return result.status === 'ready' ? result.value.failures : [];
     } catch { /* a platform fault never blocks the selected work */ return []; }
   };

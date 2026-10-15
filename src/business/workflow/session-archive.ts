@@ -458,7 +458,14 @@ export function createSessionArchiveService(
         anchorRunRef = run.ref;
         anchorTask = run.task;
       }
-    } else if (R.mode === 'retired' && facts.latestWork !== null) {
+    } else if ((R.mode === 'retired' || (R.mode === 'operator' && facts.session.health === 'unavailable'))
+      && facts.latestWork !== null) {
+      // 2C-32 (lead 2026-10-15): the person's operator archive of a retired
+      // RUN-24 line captures no execution (`execution.kind === 'none'`) and
+      // fixes `mode === 'operator'`, so the Work branch above never selects an
+      // anchor. A retired Session's latest Work Run is the interrupted one that
+      // still holds the unfinished Task, so it anchors through the same
+      // run-ended + `taskTerminal` guard as the maintenance retired path.
       // S1-ANCHOR-02 judges the TASK (still unfinished), not the Run outcome: a
       // Run that ended `completed` (or otherwise) still anchors while its Task
       // is unfinished. The anchor owner re-checks the Task projection.

@@ -23,7 +23,15 @@ import type { WorkflowDependencies } from './ports.js';
 import type { WorkflowCalls, WorkflowCloseEventReader } from './contracts.js';
 import type { ArchiveLineResultV1, SessionArchivePort } from './session-archive.js';
 
-export type SessionMaintenanceInput = { workspace: WorkspaceScope; after: string | null };
+/**
+ * `turnClosureCaller` is SES-19a (2C-22(2)): the Workflow's own maintenance
+ * advance passes `turn_closure`, so its KA1 dangling-Turn close may replace a
+ * `kernel_turn_open` health conclusion with the fresh unreadable probe. The
+ * start-up reconcile's maintenance call leaves it absent (SES-19 stays).
+ */
+export type SessionMaintenanceInput = {
+  workspace: WorkspaceScope; after: string | null; turnClosureCaller?: 'turn_closure';
+};
 
 export type SessionMaintenanceResultV1 = {
   processed: number; nextCursor: string | null;
@@ -435,6 +443,7 @@ export function createSessionMaintenanceService(
    */
   async function tryCloseDanglingTurn(
     ctx: CoreCallContext, sessionRef: SessionRef, facts: SessionFactsV1, record: SessionRecord,
+    turnClosureCaller: 'turn_closure' | null,
   ): Promise<boolean> {
     const runtime = deps.runtime;
     const close = turnClosureOf(runtime);
@@ -444,7 +453,8 @@ export function createSessionMaintenanceService(
     if (!(await closableWorkRun(ctx, facts.latestWork))) return false; // condition 3
     let result;
     try {
-      result = await close.call(runtime, ctx, { sessionRef, afterRunRef: facts.latestWork.runRef, requeueRef: null });
+      result = await close.call(runtime, ctx, { sessionRef, afterRunRef: facts.latestWork.runRef, requeueRef: null,
+        ...(turnClosureCaller === null ? {} : { turnClosureCaller }) });
     } catch {
       return false; // an unexpected fault is not a closure; today's logic stands
     }
@@ -497,6 +507,7 @@ export function createSessionMaintenanceService(
       if (after !== null && after !== undefined && typeof after !== 'string') {
         return reject('invalid', 'maintainSessions requires a string or null cursor');
       }
+      const turnClosureCaller = isolated['turnClosureCaller'] === 'turn_closure' ? 'turn_closure' as const : null;
       if (deps.sessions === undefined) return reject('unsupported', 'the Session directory is not installed');
       const sessions = deps.sessions;
       const policy = deps.archivePolicy;
@@ -602,7 +613,7 @@ export function createSessionMaintenanceService(
               // skips the line this round; a definite failure or an unmet
               // precondition falls through to today's rules below, unchanged.
               if (record.healthConclusion === 'kernel_turn_open'
-                && await tryCloseDanglingTurn(automation, sessionRef, facts, record)) continue;
+                && await tryCloseDanglingTurn(automation, sessionRef, facts, record, turnClosureCaller)) continue;
               // A8 Q-01/H-04 (LA-1, SES-07) + §4.2 S:807: a `kernel_turn_open`
               // line is left for the explicit route when the platform has nothing
               // to dispose (no open responsibility: the retired Query Session of

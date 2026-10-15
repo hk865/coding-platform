@@ -77,7 +77,8 @@ const ROUND_USE = 'state/verification-machine.ts buildOpenedRound, withCheckPhas
 const MESSAGE_USE = 'state/message-machine.ts createSessionMessageRecord, nextSessionMessageRecord or bindMessageResponseCursor';
 const MESSAGE_FIELDS = ['status', 'readAt', 'response', 'acceptedInputs', 'consultationDerivation',
   'replyHandler', 'archiveWaitDisposition', 'decision', 'application', 'responseSince'] as const;
-const WORKSPACE_USE = 'state/notice-settings-machine.ts buildWorkspaceDecisionSettingsRecord';
+const WORKSPACE_USE = 'state/notice-settings-machine.ts buildWorkspaceDecisionSettingsRecord or '
+  + 'state/line-pin-machine.ts buildWorkspaceLineSettingsRecord';
 const PROPOSAL_USE = 'state/plan-machine.ts newCandidateProposal or acceptProposalRecord';
 const QUERY_USE = 'state/query-run-recovery.ts newPendingQueryRecords, advanceQueryExecutionRecord, '
   + 'markQueryRunUnknownRecord or settleQueryRunRecord';
@@ -130,7 +131,7 @@ const PROTECTED_TYPES: readonly ProtectedType[] = [
     fields: ['desiredState', 'desiredStateRevision', 'activePlanRevision', 'desiredStateRequestedBy', 'settings'],
     use: 'state/goal-machine.ts newGoalSnapshot, nextGoalPointer or nextGoalDesiredState' },
   { file: 'src/contracts/ledger.ts', name: 'WorkspaceSnapshot', kind: 'record',
-    fields: ['decisionSettings'], use: WORKSPACE_USE },
+    fields: ['decisionSettings', 'lineSettings'], use: WORKSPACE_USE },
   { file: 'src/contracts/goal-phase.ts', name: 'GoalPhaseSnapshot', kind: 'record',
     fields: ['phase', 'planRef', 'adoptedTaskReductions'], use: 'state/goal-machine.ts buildGoalPhaseSnapshot' },
   { file: 'src/core/work-graph/model/plan-contracts.ts', name: 'PlanProposal', kind: 'record',
@@ -166,6 +167,7 @@ const ALLOWED_DECODERS: readonly { file: string; functions: readonly string[] }[
     'goalSnapshotFromCreatedEvent', 'decodeWorkspaceSnapshot'] },
   { file: 'persistence/decision-record-codecs.ts', functions: ['decodeGoalSettingsChangedEvent',
     'decodeWorkspaceNoticeSeenChangedEvent'] },
+  { file: 'persistence/line-settings-codecs.ts', functions: ['decodeWorkspaceLinePinsChangedEvent'] },
   { file: 'configuration/project-bootstrap-record-codecs.ts', functions: ['workspaceSnapshotFromValue'] },
   { file: 'persistence/control-record-codecs.ts', functions: ['decodeControlIntentSnapshot',
     'controlIntentSubmittedEventFromEvent', 'controlIntentObservedEventFromEvent'] },

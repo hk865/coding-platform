@@ -1,0 +1,24 @@
+
+ RUN  v4.1.10 /home/han001/dsh-work/verify-merge
+
+ ✓ tests/scenarios/S2C-K-archive-tags-checks.test.ts (5 tests) 73814ms
+   ✓ 2C-05 (1) a finished executor line past the threshold is archived by maintenance as archived·done (DE2) with reactivate available  5142ms
+   ✓ 2C-05 (3) dropping an unfinished X while the same archive closes an already-terminal Y reads only "archived" (DE3), not done  5810ms
+   ✓ 2C-05 (3') the 22-Task variant reads only "archived" with doneEvidence incomplete and reason done_unproven (DE5)  52769ms
+   ✓ 2C-05 (4) archive(drop) → reactivate → complete and close a Task → archive again still reads only "archived" (the known mislabel)  5846ms
+   ✓ 2C-05 (5) a handoff predecessor is archived and writes the handed_to reason  4245ms
+ ✓ tests/scenarios/A8-host-restart-paused.test.ts (8 tests) 74263ms
+   ✓ A8-3l, A8-3p (W-20, RUN-24, LA-1, C3, C4, §13.4 #23/#24; K KA-07, KA-04): a Run paused by a person ends paused-interrupted at the crash; the Kernel refuses the old Session until its dangling Turn is closed; only a person continues it: the Workflow closes the Turn and the continuation runs in the same Session; the next Run sees the earlier completed Turns, never the paused one  13014ms
+   ✓ A8-3n (closing supported; KA-10, W-11, RUN-19, LA-7, §13.4 #17, LA-6): the Kernel paused, a resume queued, the crash before the re-entry: an ordinary interruption with the resume superseded; the start-up maintenance closes the dangling Kernel Turn although the re-drive is off and keeps the Session; the start-up re-drive requeues it uncounted into the same Session, and a later check failure counts as usual  10450ms
+   ✓ A8-3n (closing unsupported; W-11, RUN-19, LA-7, §13.4 #17, LA-6, K L7, decisions 42 item 2 and 43): the Kernel paused, a resume queued, the crash before the re-entry: an ordinary interruption with the resume superseded; the start-up maintenance archives the retired line with an anomaly anchor, the start-up re-drive requeues it uncounted and the ordinary selection gives it to the idle Session seeded with the old history, and a later check failure counts as usual  10361ms
+   ✓ A8-3q, A8-3o (W-21, W-20, HL-06, HL-01, LA-1, SES-02): a Run paused by a person ends paused-interrupted after a normal close as after a crash; another Task of the same role is never claimed into its retired Session; it runs in another Session with no Entering→Revoked loop  6449ms
+   ✓ a Run paused at a safe point when its Host stopped ends paused-interrupted at the restart; a second start keeps its Session retired and writes nothing; 继续 closes the dangling Kernel Turn and continues the Task in the same Session (K KA-07)  8151ms
+   ✓ G-05, W-20 and CTL-08(f): a pause queued before the safe point ends the Run paused-interrupted at the restart (kernelPaused false); the pause is applied by the platform  4171ms
+   ✓ LA-1 and contract (e) (closing supported; KA-07, KA-09, A8-3l step 5, A8-3r): a person's 继续 closes the dangling Kernel Turn and the continuation runs in the original Session with its completed history; a later requeue after a never-entered continuation keeps that source and stays in that Session  10714ms
+   ✓ LA-1 and contract (e) (closing unsupported; A8-3l step 5, A8-3r, K L8): the continuation in a new Session is seeded with the original Session's completed history and says so; a later requeue after a never-entered continuation keeps that source  10952ms
+
+ Test Files  2 passed (2)
+      Tests  13 passed (13)
+   Start at  00:11:27
+   Duration  78.88s (transform 6.55s, setup 0ms, import 8.89s, tests 148.08s, environment 0ms)
+

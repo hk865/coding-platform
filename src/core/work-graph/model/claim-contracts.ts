@@ -44,6 +44,15 @@ export type ClaimTaskInput = {
    * Attempt and Run record the same ref.
    */
   requeueRef?: TaskRequeueRef;
+  /**
+   * 2C item 10 (lead ruling): set by the Workflow when it claims in a REUSED
+   * Session (the create path already writes the Session's initial responsible
+   * link). The claim commit then also opens the Task's `responsible` link when
+   * the Session has no open one to it. Part of the graph write's input, so its
+   * requestId differs from a created-Session claim's; a replay restores the
+   * original commit and writes no second link.
+   */
+  openResponsibleLink?: boolean;
 };
 /**
  * Owner request of `requeueTask` (spec §4.1). `reason` is non-empty and

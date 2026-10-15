@@ -56,6 +56,8 @@ export const QUERY_JOB_SUBMITTED_EVENT = 'QueryJobSubmitted';
 export const QUERY_JOB_EVENT_SCHEMA_VERSION = 1;
 export const QUERY_JOB_SNAPSHOT_SCHEMA_ID = 'QueryJobSnapshot@1';
 export const QUERY_JOB_ANSWER_SNAPSHOT_SCHEMA_ID = 'QueryJobAnswerSnapshot@1';
+/** Slice 2C L4 index 7: the latest (or paged) Query of a Session by sessionGeneration. */
+export const S2C_QUERY_RUN_BY_SESSION_GENERATION_LOOKUP = 's2c-query-run-by-session-generation';
 /**
  * Slice 5 §4.2 source-5 index: the formal questions of one Goal's workspace.
  * The name/paths are frozen for later slices; a missing `job.goalId` is null.
@@ -789,6 +791,9 @@ export const QUERY_JOB_RECORD_SCHEMAS: RecordBackendSchemas = {
   lookups: [
     { name: QUERY_RUN_BY_SESSION_LOOKUP, aggregateType: 'QueryRun',
       paths: ['ref.projectId', 'ref.workspaceId', 'run.executionState.sessionRef.sessionId'] },
+    { name: S2C_QUERY_RUN_BY_SESSION_GENERATION_LOOKUP, aggregateType: 'QueryRun',
+      paths: ['ref.projectId', 'ref.workspaceId', 'run.executionState.sessionRef.sessionId'],
+      orderBy: { path: 'run.executionState.sessionGeneration', valueType: 'integer' } },
     QUERY_JOB_BY_WORKSPACE_GOAL_LOOKUP,
     QUERY_RUN_BY_SESSION_ENDED_LOOKUP,
   ],

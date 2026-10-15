@@ -48,6 +48,13 @@ export const SESSION_LINKS_BY_MODULE_LOOKUP = 'session-links-by-module';
 export const SESSION_LINKS_BY_TASK_LOOKUP = 'session-links-by-task';
 export const SESSION_LINKS_BY_WORK_LOOKUP = 'session-links-by-work';
 
+// Slice 2C L4 indexes 1–5 (spec §2).
+export const S2C_SESSION_BY_KIND_FROM_LOOKUP = 's2c-session-by-kind-from';
+export const S2C_SESSION_BY_LIFECYCLE_KIND_LOOKUP = 's2c-session-by-lifecycle-kind';
+export const S2C_SESSION_ARCHIVED_AT_LOOKUP = 's2c-session-archived-at';
+export const S2C_OPEN_LINKS_BY_SESSION_LOOKUP = 's2c-open-links-by-session';
+export const S2C_CLOSED_TASK_LINKS_LOOKUP = 's2c-closed-task-links';
+
 /** The only three accepted work-link relations, in the fixed order the target
  * discovery streams consume. The refKey orders relation before sessionId, so one
  * exact (target,relation) index per relation gives three ordered streams that
@@ -961,6 +968,19 @@ export const SESSION_RECORD_SCHEMAS: RecordBackendSchemas = {
       paths: ['ref.projectId', 'ref.target.ref.workspaceId', 'ref.target.kind', 'ref.target.ref.workId', 'ref.relation'] },
     { name: SESSION_BY_PROVENANCE_LOOKUP, aggregateType: 'Session',
       paths: ['ref.projectId', 'workspaceId', 'provenance.from.sessionId'] },
+    // Slice 2C L4: line identification, count-by-kind, archived paging and links.
+    { name: S2C_SESSION_BY_KIND_FROM_LOOKUP, aggregateType: 'Session',
+      paths: ['ref.projectId', 'workspaceId', 'provenance.kind', 'provenance.from.sessionId'] },
+    { name: S2C_SESSION_BY_LIFECYCLE_KIND_LOOKUP, aggregateType: 'Session',
+      paths: ['ref.projectId', 'workspaceId', 'lifecycle', 'provenance.kind'] },
+    { name: S2C_SESSION_ARCHIVED_AT_LOOKUP, aggregateType: 'Session',
+      paths: ['ref.projectId', 'workspaceId', 'lifecycle'],
+      orderBy: { path: 'archivedAt', valueType: 'text' } },
+    { name: S2C_OPEN_LINKS_BY_SESSION_LOOKUP, aggregateType: 'SessionWorkLink',
+      paths: ['ref.projectId', 'ref.sessionId', 'ref.relation', 'until'] },
+    { name: S2C_CLOSED_TASK_LINKS_LOOKUP, aggregateType: 'SessionWorkLink',
+      paths: ['ref.projectId', 'ref.sessionId', 'ref.relation', 'ref.target.kind'],
+      orderBy: { path: 'until', valueType: 'text' } },
   ],
 };
 

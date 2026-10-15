@@ -12,8 +12,9 @@
  *   - `AbortSignal` and every internal handle stay out of the JSON DTO.
  */
 import type { ActorRef } from '../contracts/command-event.js';
+import type { CommitCursor } from '../contracts/command-event.js';
 import type { CoreCallContext } from '../contracts/core/call-context.js';
-import type { RoleConfigurationRef } from '../contracts/core/identity.js';
+import type { RoleConfigurationRef, SessionRef } from '../contracts/core/identity.js';
 import type { RuntimeExecutionPort } from '../core/agent-runtime/ports.js';
 import type { ExecutionHistoryPage } from '../core/agent-runtime/execution-history-contracts.js';
 import type { ExecutionReadPort, TaskExecutionRecord } from '../core/work-graph/model/execution-read-contracts.js';
@@ -56,6 +57,15 @@ import type { WorkflowPort } from '../business/workflow/ports.js';
 import type { CollaborationDriverPort } from './collaboration-driver.js';
 import type { WorkbenchCommandState, WorkbenchToolsPort } from './workbench-tools.js';
 import type { InitialPlanningGoalInputResult, WorkflowAdvanceResult, WorkflowStepReceipt } from '../business/workflow/contracts.js';
+// Slice 2C (spec §2): the line/node-detail owner ports and the Host-assembled
+// conversation page. The page DTO is defined HERE (the fixed HTTP JSON contract)
+// and the composition module imports it, so the browser and tests read one type.
+import type { WorkLineConversationPort } from '../composition/work-line-conversation.js';
+import type {
+  NodeDetailReadPort, WorkLineReadPort, WorkLineSettingsPort,
+} from '../core/work-graph/model/work-line-contracts.js';
+import type { LineSegmentV1 } from '../contracts/work-line.js';
+import type { SessionHistoryEntry } from '../core/agent-runtime/session-operations.js';
 
 /** The project/workspace navigation scope. It is a real domain scope, not a
  * second source of Project/Workspace registration truth. */
@@ -238,7 +248,16 @@ export type CoreRouteSuffix =
   | 'activity/runs'
   | 'activity/track'
   | 'tasks/timeline'
-  | 'activity/backfill';
+  | 'activity/backfill'
+  // Slice 2C (spec §2, L13): the line reads, the Host conversation page and the
+  // two node-detail reads, plus the one graph_write pin route.
+  | 'lines/list'
+  | 'lines/archived'
+  | 'lines/read'
+  | 'lines/page'
+  | 'lines/pin'
+  | 'graph/hover'
+  | 'graph/detail';
 
 type SecondArgument<M> = M extends (ctx: CoreCallContext, argument: infer A) => unknown ? A : never;
 type MethodResult<M> = M extends (ctx: CoreCallContext, argument: never) => infer R ? Awaited<R> : never;
@@ -378,6 +397,48 @@ export type TasksTimelineBody = PlainBody<TaskTimelineReadPort['readTaskStateTim
 export type TasksTimelineResponse = RouteResponse<TaskTimelineReadPort['readTaskStateTimeline']>;
 export type ActivityBackfillBody = PlainBody<NonNullable<WorkflowPort['backfillActivityRange']>>;
 export type ActivityBackfillResponse = RouteResponse<NonNullable<WorkflowPort['backfillActivityRange']>>;
+
+// ---------------------------------------------------------------------------
+// Slice 2C (spec §2, L13): the seven work-line / node-detail routes. Each alias
+// derives from the exact public owner method named by the frozen route table.
+// `lines/page` is the Host-assembled `conversation` page for the conversation
+// section and forwards every other section to `WorkLineReadPort`, so its
+// response is the union of the two section pages.
+// ---------------------------------------------------------------------------
+/** The page `lines/page` returns for the Host-assembled `conversation` section (L12).
+ *  Defined in the Host composition that builds it; re-exported here as the Host
+ *  HTTP DTO (the architecture check forbids composition→Host, spec §2 item 15). */
+export type { WorkLineConversationPageV1 } from '../composition/work-line-conversation.js';
+export type LinesListBody = PlainBody<WorkLineReadPort['listWorkLines']>;
+export type LinesListResponse = RouteResponse<WorkLineReadPort['listWorkLines']>;
+export type LinesArchivedBody = PlainBody<WorkLineReadPort['listArchivedLines']>;
+export type LinesArchivedResponse = RouteResponse<WorkLineReadPort['listArchivedLines']>;
+export type LinesReadBody = PlainBody<WorkLineReadPort['readWorkLine']>;
+export type LinesReadResponse = RouteResponse<WorkLineReadPort['readWorkLine']>;
+export type LinesPageBody = PlainBody<WorkLineConversationPort['readWorkLinePage']>;
+export type LinesPageResponse = RouteResponse<WorkLineConversationPort['readWorkLinePage']>;
+export type LinesPinBody = GraphWriteBody<WorkLineSettingsPort['setLinePins']>;
+export type LinesPinResponse = RouteResponse<WorkLineSettingsPort['setLinePins']>;
+export type GraphHoverBody = PlainBody<NodeDetailReadPort['readGraphHover']>;
+export type GraphHoverResponse = RouteResponse<NodeDetailReadPort['readGraphHover']>;
+export type GraphDetailBody = PlainBody<NodeDetailReadPort['readNodeDetail']>;
+export type GraphDetailResponse = RouteResponse<NodeDetailReadPort['readNodeDetail']>;
+
+/**
+ * The compile-time typed assembly of the seven slice-2C suffixes (spec §2):
+ * each suffix paired with the exact body and exact public result its owner
+ * method produces. Like `Slice1CoreRouteDto` it is a type only, and
+ * `dispatchCoreRoute` names it so every alias stays reachable from production.
+ */
+export type Slice2CCoreRouteDto = {
+  'lines/list': { body: LinesListBody; response: LinesListResponse };
+  'lines/archived': { body: LinesArchivedBody; response: LinesArchivedResponse };
+  'lines/read': { body: LinesReadBody; response: LinesReadResponse };
+  'lines/page': { body: LinesPageBody; response: LinesPageResponse };
+  'lines/pin': { body: LinesPinBody; response: LinesPinResponse };
+  'graph/hover': { body: GraphHoverBody; response: GraphHoverResponse };
+  'graph/detail': { body: GraphDetailBody; response: GraphDetailResponse };
+};
 
 // ---------------------------------------------------------------------------
 // R6 execution-entry routes: each alias is derived from the exact public owner

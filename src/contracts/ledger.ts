@@ -17,6 +17,7 @@ import type { QueryJobAnswerRef, QueryJobRef, QueryRunRef } from "./query-job.js
 import type { PlanProposalSnapshot, UserDecisionSnapshot } from "./goal-change.js";
 import type { MaterialAccessGrantRef } from "./material-access.js";
 import type { SessionMessageRef } from "./core/session-message.js";
+import type { SessionRef } from "./core/identity.js";
 import type { ActorRef } from "./command-event.js";
 import type { GoalSettingsV1, WorkspaceDecisionSettingsV1 } from "./goal-decisions.js";
 import type { TaskRequeueRef, TaskReworkRefusalRef } from "./task-requeue.js";
@@ -43,11 +44,22 @@ export type ProjectSnapshot = {
     ref: ProjectRef;
     revision: number;
 };
+/**
+ * Slice 2C L9: pinned work lines. Each item names a Session in the line's chain
+ * and the instant the pin was added; absent `WorkspaceSnapshot.lineSettings`
+ * reads as `{ schemaVersion: 1, pinned: [] }` and is never backfilled on read.
+ */
+export type WorkspaceLineSettingsV1 = {
+    schemaVersion: 1;
+    pinned: { sessionRef: SessionRef; pinnedAt: string }[];
+};
 export type WorkspaceSnapshot = {
     ref: WorkspaceRef;
     revision: number;
     /** Slice 5 optional per-category notice positions; absent reads as the default. */
     decisionSettings?: WorkspaceDecisionSettingsV1;
+    /** Slice 2C optional pinned work lines; absent reads as the empty pin table. */
+    lineSettings?: WorkspaceLineSettingsV1;
 };
 /** D-9 durable desired state; `GoalCreated` still writes only "active". */
 export type GoalDesiredState = "active" | "paused" | "cancelled";

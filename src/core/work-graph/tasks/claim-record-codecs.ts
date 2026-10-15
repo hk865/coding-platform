@@ -57,6 +57,8 @@ export const TASK_REWORK_EVENT_SCHEMA_VERSION = 1;
 /** Slice 2A L4: the ordered and legacy requeue indexes on `TaskRequeue`. */
 export const S2A_REQUEUE_BY_PROJECT_LOOKUP = 's2a-requeue-by-project';
 export const S2A_REQUEUE_LEGACY_LOOKUP = 's2a-requeue-legacy';
+/** Slice 2C L4 index 6: the latest (or paged) Work claim of a Session by generation. */
+export const S2C_WORK_CLAIM_BY_SESSION_GENERATION_LOOKUP = 's2c-work-claim-by-session-generation';
 export const S2A_REQUEUE_LOOKUP_INDEXES: readonly RecordLookupIndex[] = [
   {
     name: S2A_REQUEUE_BY_PROJECT_LOOKUP,
@@ -844,6 +846,9 @@ export const TASK_CLAIM_RECORD_SCHEMAS: RecordBackendSchemas = {
   lookups: [
     { name: WORK_EXECUTION_BY_SESSION_LOOKUP, aggregateType: 'DispatchOutboxEntry',
       paths: ['claim.task.projectId', 'claim.workspaceId', 'claim.sessionRef.sessionId'] },
+    { name: S2C_WORK_CLAIM_BY_SESSION_GENERATION_LOOKUP, aggregateType: 'DispatchOutboxEntry',
+      paths: ['claim.task.projectId', 'claim.workspaceId', 'claim.sessionRef.sessionId'],
+      orderBy: { path: 'claim.generation', valueType: 'integer' } },
     ...S2A_REQUEUE_LOOKUP_INDEXES,
   ],
 };

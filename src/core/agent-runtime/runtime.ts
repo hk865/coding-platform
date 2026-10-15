@@ -209,11 +209,42 @@ function createCloseOpenTurn(
     } catch { return { status, health: 'unavailable' }; }
   }
 
+  /**
+   * 2C-22(2) (lead 2026-10-15): when the Kernel store stays missing/damaged,
+   * KA1's closure returns `unreadable` and the retired line would otherwise sit
+   * at `unavailable/kernel_turn_open` forever (maintenance leaves
+   * `kernel_turn_open` lines alone). Re-probe the Session through the same owner
+   * `settleHealth` uses and, only for a `missing`/`damaged` verdict, hand the
+   * probe to the health owner; the health owner applies its own guards (SES-19a
+   * replaces `kernel_turn_open` when the caller is the maintenance's Turn
+   * closure, everything else still refuses). Any other verdict, or a
+   * refused/failed health write, changes nothing. The closure still reports
+   * `unreadable` either way.
+   */
+  async function recordUnreadableProbe(
+    ctx: CoreCallContext, session: SessionRecord, closure: TurnClosureDependencies, caller: 'turn_closure' | null,
+  ): Promise<void> {
+    try {
+      const probe = await owner.probe({ session, signal: ctx.signal });
+      if (probe.verdict !== 'missing' && probe.verdict !== 'damaged') return;
+      await closure.recordSessionHealth(ctx, {
+        sessionRef: { projectId: session.ref.projectId, sessionId: session.ref.sessionId },
+        probe: { verdict: probe.verdict, activeRunId: probe.activeRunId },
+        // SES-19a: only the maintenance's Turn closure may replace
+        // `kernel_turn_open`; the other close callers keep SES-19.
+        ...(caller === null ? {} : { caller }),
+      });
+    } catch {
+      // The unreadable closure is the answer regardless of the health write.
+    }
+  }
+
   return async (ctx, input) => {
     const closure = deps.turnClosure;
     if (closure === undefined) return { status: 'unsupported', reason: 'the Runtime does not publish closeOpenTurn' };
     if (closure.lease !== 'owned') return refusal('lease');
     const { sessionRef, afterRunRef, requeueRef } = input;
+    const turnClosureCaller = input.turnClosureCaller ?? null;
     // 1. Run
     let read;
     try { read = await deps.executions.readExecution(ctx, afterRunRef); }
@@ -290,6 +321,7 @@ function createCloseOpenTurn(
     }
     try {
       if (await kernelDatabaseState(location.databasePath) === 'missing') {
+        await recordUnreadableProbe(ctx, session, closure, turnClosureCaller);
         return { status: 'unreadable', reason: 'the mapped Kernel database file is missing' };
       }
     } catch (error) { return closureFailure(error, ctx.signal); }
@@ -301,7 +333,16 @@ function createCloseOpenTurn(
         return closeFn(store, { sessionId: session.kernel.kernelSessionId, kernelRunId,
           expectedRevision: header.revision, at: deps.now() });
       });
-    } catch (error) { return closureFailure(error, ctx.signal); }
+    } catch (error) {
+      const failure = closureFailure(error, ctx.signal);
+      // 2C-22(2): a Kernel store whose records cannot be read (a fresh empty
+      // file after the old one was removed, or damaged rows) throws out of the
+      // read instead of answering a Kernel result. That is still an `unreadable`
+      // closure answer, so re-probe and hand the verdict to the health owner
+      // (SES-19a) exactly as the `kernelResult.status === 'unreadable'` case does.
+      if (failure.status === 'unreadable') await recordUnreadableProbe(ctx, session, closure, turnClosureCaller);
+      return failure;
+    }
     switch (kernelResult.status) {
       case 'closed':
       case 'already_closed':
@@ -313,6 +354,7 @@ function createCloseOpenTurn(
       case 'conflict':
         return { status: 'conflict', reason: `the Kernel Session revision changed (current ${String(kernelResult.currentRevision)})` };
       case 'unreadable':
+        await recordUnreadableProbe(ctx, session, closure, turnClosureCaller);
         return { status: 'unreadable', reason: kernelResult.reason };
       default: {
         const exhaustive: never = kernelResult;

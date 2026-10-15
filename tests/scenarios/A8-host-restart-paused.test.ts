@@ -17,7 +17,9 @@
  * - A8-3n: the Kernel paused, a resume queued, the crash before the re-entry: RUN-19 (not paused), the
  *   resume superseded; the start-up maintenance closes the dangling Kernel Turn (K KA1, also with the
  *   re-drive off) and the start-up re-drive requeues it uncounted into the same Session (§13.4 #17); with
- *   closing unsupported, into a new Session (K L8).
+ *   closing unsupported, the start-up maintenance archives the retired line at once (K L7: a definite
+ *   failure keeps today's logic; decision 42 item 2) and the ordinary selection gives the dropped Task to
+ *   the idle Session of the role, seeded with the old history (decision 43, LA-1 (c); 2C spec §16).
  * - A8-3o: the close variant (HL-06, next start HL-01) in A8-3q, the moved case with a stale lock (HL-03).
  * - A8-3r (moved), A8-3q: another Task of the same role never takes the retired Session.
  *
@@ -62,7 +64,8 @@ import {
 afterEach(cleanupScenarios);
 
 // Slice K (L4 step 5, L8): the "closing unsupported" case. A Kernel without `closeOpenTurn` makes the Runtime answer
-// `unsupported`, a definite failure: the maintenance keeps today's logic and the Workflow falls back to a new Session.
+// `unsupported`, a definite failure: the maintenance keeps today's logic (a retired line that still holds its Task is
+// archived with a drop, A8-3n) and otherwise the Workflow falls back to a new Session (LA-1 contract (e)).
 const kernelClosure = vi.hoisted(() => ({ supported: true }));
 vi.mock('../../vendor/coding-agent/dist/public-api.js', async importOriginal => {
   const actual = await importOriginal<Record<string, unknown>>();
@@ -387,8 +390,10 @@ it('A8-3n (closing supported; KA-10, W-11, RUN-19, LA-7, §13.4 #17, LA-6): the 
   await expectQuietHarnessRestart(h, 'a8-3n');
 }, 240_000);
 
-// Slice K §6: the A8-3n case kept as the fallback with closing unsupported (L4 step 5, L8): a new Session, as before.
-it('A8-3n (closing unsupported; W-11, RUN-19, LA-7, §13.4 #17, LA-6, K L8): the Kernel paused, a resume queued, the crash before the re-entry: an ordinary interruption with the resume superseded; the start-up re-drive requeues it uncounted into a new Session seeded with the old history, and a later check failure counts as usual', async () => {
+// Slice K §6: the A8-3n case with closing unsupported (L4 step 5). Since 2C (round-6 item 10, 2C spec §16) the reused S1
+// holds the open responsibility for its Task, so the start-up maintenance archives it before the re-drive (K L7: a
+// definite failure keeps today's logic; decision 42 item 2); the K L8 fallback (a new Session) is not reached.
+it('A8-3n (closing unsupported; W-11, RUN-19, LA-7, §13.4 #17, LA-6, K L7, decisions 42 item 2 and 43): the Kernel paused, a resume queued, the crash before the re-entry: an ordinary interruption with the resume superseded; the start-up maintenance archives the retired line with an anomaly anchor, the start-up re-drive requeues it uncounted and the ordinary selection gives it to the idle Session seeded with the old history, and a later check failure counts as usual', async () => {
   let scenario: HostScenario | undefined;
   let pauseRef: ControlIntentSnapshotV1['ref'] | undefined;
   const replies: ScriptedReply[] = [
@@ -397,7 +402,7 @@ it('A8-3n (closing unsupported; W-11, RUN-19, LA-7, §13.4 #17, LA-6, K L8): the
     // Run1 in S1: one edit (group 1); the Kernel pauses before group 2 (declared while the pause was submitted).
     { kind: 'calls', calls: [{ callId: 'a8-3n-group1-edit', name: 'edit', args: { mode: 'create', path: 'src/a8-3n-step.txt', newText: 'step 1\n' } }] },
     { kind: 'calls', calls: [{ callId: 'a8-3n-group2-read', name: 'read', args: { path: 'src/module.ts' } }] },
-    // Run2 (the automatic continuation, in S2) answers without the result file; Run3 (the counted rework) writes it.
+    // Run2 (the automatic continuation, in the idle Session) answers without the result file; Run3 (the counted rework) writes it.
     { kind: 'text', text: 'restart scenario A8-3n: Run2 continued without the result file' },
     ...editThenText('a8-3n-run3')];
   const h = await openHostScenario({ workIds: [RUN0_TASK, AG2B_WORK_TASK_ID], check: 'pass',
@@ -427,8 +432,9 @@ it('A8-3n (closing unsupported; W-11, RUN-19, LA-7, §13.4 #17, LA-6, K L8): the
   expect((await execution(h, run1Ref)).run).toMatchObject({ status: 'running', controlState: { intentRef: resumeRef, desiredState: 'running' } });
   await assertInvariants(h, 'a8-3n resume queued', stepOf(h, 'other', 'a8-3n resume queued'));
 
-  // K (L4 step 5, L8): from this start on the Kernel cannot close a Turn, so the closure is unsupported: the start-up
-  // maintenance keeps today's logic and the continuation goes to a new Session.
+  // K (L4 step 5, L7): from this start on the Kernel cannot close a Turn, so the closure is unsupported: the start-up
+  // maintenance keeps today's logic; S1 still holds its Task, so it is archived with a drop and an anomaly anchor, and
+  // the ordinary selection gives the Task to another Session.
   kernelClosure.supported = false;
   // The crash (re-drive off for the reconcile's own assertions). W-11: the pointer is not paused, the Turn is clean.
   const atCrash = h.counts();
@@ -442,7 +448,11 @@ it('A8-3n (closing unsupported; W-11, RUN-19, LA-7, §13.4 #17, LA-6, K L8): the
   expect(reconciled.run).toMatchObject({ status: 'ended', outcome: 'crashed', reconciliation: { status: 'done',
     observation: { kind: 'interrupted_clean', kernelPaused: true, pausedIntentRef: null } } });
   expect(await readControl(h.host, resumeRef)).toMatchObject({ status: 'superseded', observation: { kind: 'terminal_without_cancel' } });
-  expect(reconciled.session).toMatchObject({ occupancy: null, health: 'unavailable', healthConclusion: 'kernel_turn_open' });
+  // Decisions 42 item 2/43/54, S1-AUTO-02 (IT10), K L7 (a definite closure failure keeps today's logic): S1 is retired
+  // with no continuation and holds the open responsibility its Run1 claim opened (2C item 10), the interruption is
+  // the platform's clean one, so the start-up maintenance archives it at once, drops the Task and anchors the anomaly.
+  expect(reconciled.session).toMatchObject({ lifecycle: 'archived', occupancy: null, health: 'unavailable',
+    healthConclusion: 'kernel_turn_open' });
   expect(await h.taskRow()).toMatchObject({ effectivePhase: 'failed', phaseCause: { code: 'run_failed' },
     failure: { failureClass: 'interrupted', interruption: { kind: 'executing' } } });
   // §12.10 step 4: the resume, sent again with the same identity on the new Host (its answer lost), gets its original
@@ -454,12 +464,12 @@ it('A8-3n (closing unsupported; W-11, RUN-19, LA-7, §13.4 #17, LA-6, K L8): the
   expect(await readControl(h.host, resumeRef)).toMatchObject({ status: 'superseded' });
   // Off: no TaskRequeue until a 推进 (or a start with the re-drive on).
   expect(h.lastWorld?.requeues).toEqual([]);
-  // An idle Session of the work role is available from now on: the continuation must still not reuse it (LA-1).
+  // An idle Session of the work role is available from now on; S1 is archived, so the ordinary selection takes it (decision 43).
   const idle = (await createAG2bSession(h.host, 'a8-3n-idle', AG2B_WORK_ROLE)).sessionRef;
   await assertInvariants(h, 'a8-3n idle Session', stepOf(h, 'other', 'a8-3n idle Session'));
 
-  // A start with the re-drive on: no workflow/advance; the automation requeues (uncounted, keys not compared), opens a
-  // new Session for the requeue (create_session{requeue}) and continues; Run2 FAILs, the counted rework passes.
+  // A start with the re-drive on: no workflow/advance; the automation requeues (uncounted, keys not compared) and the
+  // ordinary selection claims it in the idle Session; Run2 FAILs, the counted rework passes.
   await h.restart({ automation: { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: true } });
   await waitFor(() => h.goalDisplay(), display => display.phase === 'COMPLETED', 'the start-up re-drive to complete the Goal');
   await assertInvariants(h, 'a8-3n re-driven');
@@ -473,12 +483,20 @@ it('A8-3n (closing unsupported; W-11, RUN-19, LA-7, §13.4 #17, LA-6, K L8): the
   const run2 = h.lastWorld?.runs.find(run => run.requeueRef !== undefined && JSON.stringify(run.requeueRef) === JSON.stringify(continuation?.ref));
   if (run2 === undefined) throw new Error('the continuation Run must exist');
   const run2Record = await execution(h, run2.ref);
-  expect(run2Record.session.ref.sessionId, 'LA-1: a new Session').not.toBe(s1.sessionId);
-  expect(run2Record.session.ref.sessionId, 'LA-1: not another available Session').not.toBe(idle.sessionId);
+  expect(run2Record.session.ref.sessionId, 'not the archived S1').not.toBe(s1.sessionId);
+  // Decision 43: the dropped Task is claimed by the ordinary selection; the idle Session of the role is reused.
+  expect(run2Record.session.ref.sessionId, 'decision 43: the ordinary selection takes the idle Session').toBe(idle.sessionId);
   const { brief, digest } = await requiredBriefOf(h.host, run2.ref);
+  // The idle Session's cursor is empty and on the same Kernel adapter, so `prepare` still seeds it with S1's
+  // completed history (LA-1 (c)); the brief carries the retired_archive anchor (decision 42 item 2).
   expect(brief).toMatchObject({ mode: 'resume_after_interruption', trigger: { actorClass: 'system', autoRework: { count: 0, cap: 3 } },
     previous: { runRef: run1Ref, interruption: { kind: 'executing', kernelPaused: true } },
-    session: { continuity: 'other_session_seeded', seededFrom: { sessionRef: { sessionId: s1.sessionId } } } });
+    session: { continuity: 'other_session_seeded', seededFrom: { sessionRef: { sessionId: s1.sessionId } } },
+    anomalies: { anchors: [{ cause: 'retired_archive', runRef: run1Ref, sessionRef: { sessionId: s1.sessionId },
+      task: { taskId: AG2B_WORK_TASK_ID }, changedFiles: { status: 'known', confirmed: ['src/a8-3n-step.txt'] } }] } });
+  const anchors = await h.post<ReadResult<{ items: unknown[] }>>('anomalies/list', plain(AG2B_SCOPE, { goalRef: AG2B_GOAL_REF, page: { limit: 20 } }));
+  expect(anchors).toMatchObject({ status: 'ready', value: { items: [{ anchor: { cause: 'retired_archive', runRef: run1Ref },
+    pickedUpBy: run2.ref }] } });
   expect(brief.toolCalls.confirmed.map(call => call.callId)).toEqual(['a8-3n-group1-edit']);
   expect(brief.toolCalls.notExecuted.map(call => call.callId)).toEqual(['a8-3n-group2-read']);
   // Run2's first request: the brief (which says the history ends before the interrupted Turn) and Run0's Turn only.
@@ -489,7 +507,7 @@ it('A8-3n (closing unsupported; W-11, RUN-19, LA-7, §13.4 #17, LA-6, K L8): the
   expect(text).toContain(`带有 Session ${s1.sessionId} 到位置 ${String(brief.session.seededFrom?.throughPosition)} 的历史`);
   expect(text).toContain(RUN0_TEXT);
   expect(toolCallIds(run2First?.messages ?? [])).toEqual(['a8-3n-run0-read']);
-  // Run2 reached turn.started in S2: the Kernel did not refuse it (仍有活动 Run) — the old Session is never used.
+  // Run2 reached turn.started in the idle Session: the Kernel did not refuse it (仍有活动 Run) — the old Session is never used.
   expect(run2Record.run).toMatchObject({ status: 'ended', outcome: 'completed' });
   expect(run2Record.run.startedAt).not.toBeNull();
   expect(h.modelCalls()).toBe(7);

@@ -1,6 +1,6 @@
 /**
  * Session health observation (STATE-MACHINES-SPEC §8 SES-12, SES-13, SES-19,
- * §12.1 step 1, §12.6; A.2 step 5.6).
+ * SES-19a; §12.1 step 1, §12.6; A.2 step 5.6).
  *
  * Only the Host start reconcile observes Session health, under this Host's
  * instance lease (D-18, L-10): the Runtime probes the Session's Kernel mapping
@@ -10,6 +10,11 @@
  * inconclusive probe (`host_config`, `transient`, `cancelled`) write nothing;
  * a `ready` probe never clears `kernel_turn_open` while the Kernel session
  * head still names an active Run (LA-1).
+ *
+ * SES-19a (2C-22(2), lead 2026-10-15): the Runtime Turn closure's own unreadable
+ * probe carries `caller: 'turn_closure'` and may replace a `kernel_turn_open`
+ * conclusion with the fresh `missing`/`damaged` verdict under the same lease
+ * guard; every other caller (crucially the start reconcile) keeps SES-19.
  */
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { SessionRef } from '../../../contracts/core/identity.js';
@@ -31,15 +36,29 @@ import {
 /** One probe of the Session's Kernel mapping; `activeRunId` is the Kernel session head a `ready` probe read. */
 export type SessionHealthProbe = { verdict: SessionProbeVerdict; activeRunId: string | null };
 
+/** The write's caller: the Host start reconcile (default) or the Runtime Turn closure (SES-19a, 2C-22(2)). */
+export type SessionHealthCaller = 'reconcile' | 'turn_closure';
+
+export type SessionHealthInput = {
+  sessionRef: SessionRef;
+  probe: SessionHealthProbe;
+  /**
+   * Absent = the Host start reconcile (SES-12/13/19). `turn_closure` is the
+   * Runtime `closeOpenTurn` closure: its fresh `missing`/`damaged` probe may
+   * replace a `kernel_turn_open` conclusion (SES-19a).
+   */
+  caller?: SessionHealthCaller;
+};
+
 export type SessionHealthResult =
-  /** SES-12/13 committed (or replayed). */
+  /** SES-12/13/19a committed (or replayed). */
   | { status: 'observed'; session: SessionRecord }
   /** SES-19, or an inconclusive probe, or a kept `kernel_turn_open`: nothing written. */
   | { status: 'unchanged'; session: SessionRecord; reason: string }
   | CoreRejection;
 
 export interface SessionHealthPort {
-  recordSessionHealth(ctx: CoreCallContext, input: { sessionRef: SessionRef; probe: SessionHealthProbe }): Promise<SessionHealthResult>;
+  recordSessionHealth(ctx: CoreCallContext, input: SessionHealthInput): Promise<SessionHealthResult>;
 }
 
 export type SessionHealthDependencies = {
@@ -86,8 +105,9 @@ export function createSessionHealthService(deps: SessionHealthDependencies): Ses
         const verdict = input.probe.verdict;
         const observed = verdict === 'ready' ? 'available' : 'unavailable';
         const header = verdict === 'ready' ? { activeRunId: input.probe.activeRunId } : null;
+        const caller: SessionHealthCaller = input.caller === 'turn_closure' ? 'turn_closure' : 'reconcile';
         const decided = transitionSession(sessionMachineStateOf(session), { kind: 'health_observed', observed }, {
-          caller: 'reconcile', hostLease: host === undefined ? null : host.lease, pin: null, holder: null,
+          caller, hostLease: host === undefined ? null : host.lease, pin: null, holder: null,
           probe: verdict, kernelHeader: header, openResponsibleLink: null, creation: null, link: null,
         });
         if (!decided.ok) {
@@ -101,7 +121,10 @@ export function createSessionHealthService(deps: SessionHealthDependencies): Ses
         }
         if (host === undefined) throw new Error('an accepted health observation names this Host instance');
         const next = observeSessionHealthRecord(session, effect.health === 'available'
-          ? { health: 'available', conclusion: null } : { health: 'unavailable', conclusion: effect.conclusion });
+          ? { health: 'available', conclusion: null } : { health: 'unavailable', conclusion: effect.conclusion },
+          // SES-19a: the Turn closure's unreadable probe replaces kernel_turn_open.
+          { replacesKernelTurnOpen: effect.health === 'unavailable'
+            && session.health === 'unavailable' && session.healthConclusion === 'kernel_turn_open' });
         const identityKey = 'a2-session-health:' + sha256Hex(canonicalJson({ sessionRef: input.sessionRef,
           hostInstanceId: host.hostInstanceId, revision: session.revision } as unknown as JsonValue));
         const fingerprint = sha256Hex(canonicalJson({ probe: verdict, header, observed } as unknown as JsonValue));

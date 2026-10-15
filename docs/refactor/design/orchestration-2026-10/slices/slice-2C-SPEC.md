@@ -109,6 +109,7 @@
 - `RecordLookupPort` 只有等值查找、按 refKey 续页（`src/core/record-store/lookup-ports.ts:5-26`），没有计数；2A 另起 `RecordOrderedLookupPort` 加“按顺序查找”（2A 规格 §2）。缺字段按 null 进索引，复合值不是候选（`lookup-index.ts` 的 `resolvePath`，`:171-183`），所以可以用 `provenance.kind = null` 找出没核对来历的旧 Session。
   - 等值的编码分类型：null、`true`/`false`、数字、文字各不相同，数字按 `String(值)` 编（`1` 和 `1.0` 是同一个值）（`lookup-index.ts:185-193`）。
   - SQLite 每个登记的索引是一个表达式索引，每个路径存一对 `json_type`、`json_extract`，类型那一列让布尔和 1、0 分开（`sqlite-record-store.ts:81-99`）；数字的谓词是 `json_type IN ('integer','real')` 加值相等（`:111-116`）。
+- **读预算的实测（lead 2026-10-15，L1b 第 2–4 步；替换“暂定 2,000”）。** 在 2C-25 的数据上，两个后端各用不设上限的预算跑一次 `lines/list`。受预算管的几部分的读次数：普通的行最多 m = 4，R 是 r = 78，W 是 w = 73（Z 是 1）。1,100 行受预算管的读合计 3,491 次；共享代价 10,699 次读，耗时内存 1.4 秒、SQLite 4.9 秒；不受预算管的读（含开着的工作）7,208 次。按第 3 步定 `LINE_HISTORY_READ_BUDGET = 100`：它是不小于 2 × m 的整百数，并且 ≥ max(r, w)，R、W 在这个预算下都读全。施工第 3、4 轮各量了一次，数相同。证据在 `reviews/evidence/orchestration-slice-2C-2026-10-15/`。
 - 测试里有十几个夹具对象类型写成 `GoalRecordTransactionPort & RecordLookupPort`、只实现了 `lookup`（例如 `tests/helpers/graph-session-fixture.ts:80`、`:186`，`tests/helpers/S1-runtime-scenario-fixture.ts:101-103`，`tests/helpers/task-claim-fixture.ts:68`，`tests/runtime/S3-graph-tools.test.ts:664`）；`npm run typecheck` 包括 `tests/**/*.ts`。
 
 **任务、关注、锚点、卡**
@@ -212,7 +213,7 @@
       - 线上 Session 写下的锚点：要读这些 Session 写过的全部锚点，每条再读它那个任务的全部 Run 才知道接手没有（§0.2）；
       - 未送达的回复：`readUndeliveredReplies` 要翻完发信 Session 发过的全部消息（§0.2）；本片按每页 100 条读（读口的上限，`mailbox-service.ts:3090`）；
       - 做过的任务：21 条（`lookupOrdered` 一页）加总数（`countLookup`）加 21 次 `eventAt`，再读这些任务的标题。
-    - 这几部分合起来，每一行最多读 `LINE_HISTORY_READ_BUDGET` 次（**暂定 2,000 次**；这是冻结的前提：冻结前 lead 按下面的做法量，数和证据写进 §0.2，lead 2026-10-14 第五轮第 6 条）。读模型的工厂可以注入别的数，测试用小的数造“超了”。
+    - 这几部分合起来，每一行最多读 `LINE_HISTORY_READ_BUDGET` 次（**100 次**，lead 2026-10-15 照下面的做法量定，见 §0.2“读预算的实测”和 §16；原写“暂定 2,000 次”；这是冻结的前提：冻结前 lead 按下面的做法量，数和证据写进 §0.2，lead 2026-10-14 第五轮第 6 条）。读模型的工厂可以注入别的数，测试用小的数造“超了”。
     - **数的是真读了多少（lead 2026-10-14 第三轮第 1 条）。** 每一行的这几部分，都经这一行自己的一个**计数包装**读存储；它们调用的已有读口（未送达用的邮箱读、锚点用的锚点读）也用这个包装造出来，所以读口里面嵌套的读一样被数到。数法：
       - 每一页 `lookup` 算 1；每一页 `lookupOrdered` 也算 1（做过的任务就用它，lead 2026-10-14 第四轮第 5 条）；
       - 一次 `readMany` 里每要一条记录算 1（批量读 50 条算 50）；发出去之前，先拿整个请求的条数和剩下的额度比，不够就整个拒绝，不读一半；
@@ -579,7 +580,7 @@ export const LINE_SETTINGS_RECORD_SCHEMAS: RecordBackendSchemas;   // records: [
 //   重放读回的是这条事件里的值（当时写入后的整份工作区），不是现在的工作区。
 
 // src/core/work-graph/views/work-line-reader.ts（L1b）
-export const LINE_HISTORY_READ_BUDGET = 2_000;   // 暂定；冻结前 lead 量，数和证据写进 §0.2（L1b）
+export const LINE_HISTORY_READ_BUDGET = 100;     // lead 2026-10-15 量定（L1b、§0.2“读预算的实测”、§16）；原暂定 2_000
 export function createWorkLineReader(deps: {
   records: GoalRecordTransactionPort & RecordLookupPort & RecordOrderedLookupPort & RecordCountPort;
   /* 其余端口：决定队列、任务图、目标锚点、执行读、职责……施工时按 L1 的表定 */
@@ -1588,3 +1589,32 @@ Codex 快速核对（`D:/cc-lead-notes/codex2/s2c-spec.review6.md`，对的是 b
 - **和 2B 同时施工（§0.4“2B（可以并行）”）。** 两个副本，同一个基线：79032271 加 lead 验过的 2A。合入先 2B 后 2C。两片都改的只有登记一类的文件（`create-platform.ts`、`core-routes.ts`、`core-http-types.ts`、`src/ui/api/routes.ts`、`src/contracts/ledger.ts`、`queries/query-record-codecs.ts`、生产可达允许表），各加各的，lead 合入时手工合。2C 的测试自己注入执行改过的文件端口（L15），2B 换掉桩不改 2C 的断言。
 - **§0.2 的行号**按 a7cafccc、bb924854 记；K 片 A、2A 合入后有的已移动。施工时按符号找，DSH 施工前通读时报出不再成立的事实。
 - **§14 末尾“子任务的读法”两条，lead 认可：** 再核只看有没有更大的 generation（状态变了、generation 没变，不报 `source_stale`）；再核的查找和这一页别的读用同一个时刻，不另算尝试次数。
+
+## 16. 施工和验收中的限定（lead，2026-10-15）
+
+施工六轮（第 1 轮被机器故障打断后接着做；第 4 轮一次服务出错后重开；第 6 轮上下文用满后接着做）、Codex 一次实现审查加一次快速核对、合入前测试失败的排查（lead 委托的子 agent 查、Codex 只读复核）和 lead 的验收里定下的读法，和 §0–§15 同等有效；有冲突时以本节为准。经过见证据目录 `reviews/evidence/orchestration-slice-2C-2026-10-15/`。
+
+- **读预算定为 100**（§15 第 1 条要求合入以前定数）：数和定法见 §0.2“读预算的实测”。可注入，测试用小的数造“超了”。
+- **2C-22 第 (2) 种：Kernel 存储删掉、弄坏的线怎么退役（新行 SES-19a，扩大范围，lead 2026-10-15）。** 人认定结果未知时，照 SES-07 写 `kernel_turn_open`（Kernel 读不了也一样，决定 51 和 K 片 KA-14 要求读得到时 KA1 能关）。之后 Workflow 的维护推进去关悬空 Turn：Runtime 的 `closeOpenTurn` 读不了 Kernel 时，用这次新的探针把结论码换成 `missing`/`damaged`（`caller='turn_closure'`，只有这一处能换；Host 启动的 reconcile 仍照 SES-19 不换）；下一次维护照今天按退役归档 → 已归档 · 已退役。2C-22 那一行“认定以后不满足 KA1，照今天的逻辑维护按退役归档”就是经这条路到的。第 3 轮试过在认定时保留 `missing`/`damaged`，会让存储重新读得到时 KA1 关不了，违反决定 51，已撤回。状态机的行见 STATE-MACHINES-SPEC §8（SES-19a）和 §17.5。
+- **2C-32：人归档 RUN-24 退役的线时写异常锚点（扩大范围）。** `business/workflow/session-archive.ts` 照归档持有者原有的守卫（执行已结束、任务没终结）选锚点，补上“人归档、没有捕获的 Work 执行、也不是 `retired` 方式”的这一种；不这样做，归档的线和任务都少了 `anomaly_pending`。
+- **复用的 Session 领取任务时开负责关系（lead 2026-10-15，第 6 轮第 10 项）。** lead 在 bwrap 下跑 2C-05 时查出：Workflow 让已有的 Session 领取新任务，只有新建 Session 时才开 `responsible` 链接（初始链接），复用的 Session 领了任务却不负责它，归档标签和线的状态跟着错。改成领取提交里开（STATE-MACHINES-SPEC SES-02 的表外说明）。第 6 轮为此改了 `tests/scenarios/S2C-K-archive-tags-checks.test.ts` 的 2C-05 (3)、(3′)：原来无条件提交 `sessions/transfer-responsibility` 并断言 `committed`；复用时 X 就是 S，同一来源的转移是被拒的空操作，所以改成只在 X ≠ S 时提交和断言。合入前的全量又查出 A8-3n 和这个文件的四例要跟着改，见下面两条。一条线对同一个任务只有一条负责链接记录（Session、目标、关系三者定一条，`claim-service.ts` 里确定的键）：同一条线再领同一个任务时重开这条记录，前一段的起止被新的一段换掉，L1a 读到的是新的一段。
+- **A8-3n 跟着改：关不了悬空 Turn 的退役线照今天的维护马上归档（lead 2026-10-16，按决定 42 第 2 条、43 和 K 片 L7）。** `tests/scenarios/A8-host-restart-paused.test.ts` 的 A8-3n（关闭不支持）里，S1 是复用的线，上一条以后它负责被中断的任务。崩溃重启时，启动核对第 6c 步的维护去关悬空 Turn，得到 `unsupported`（确定失败），照 K L7“一字不改地走今天的逻辑”：S1 手上有开着的负责关系，中断是平台干净的那种，`kernel_turn_open` 的豁免不成立，于是按退役马上归档、放下任务、写异常锚点（决定 42 第 2 条）。之后的重新领取走普通选择（决定 43 的补充：“不是那条线的接续，而是一次新的领取”），复用了同职责的空闲 Session。它的游标为空、和 S1 在同一个 Kernel 适配器上，所以照 LA-1 (c) 仍用 S1 已完成的历史播种（`other_session_seeded`），接续说明带上 `retired_archive` 锚点。
+  - 原来断言“新建 Session、不用空闲的”，只在第 10 项以前成立：那时复用的线不负责它领的任务，豁免成立，Workflow 走 K L8 的退路。Workflow 新建的线本来就带初始负责关系，一直走归档这条路。
+  - 改的断言：S1 已归档；Run2 在那个空闲 Session；接续说明和 `anomalies/list` 都有这条锚点，`pickedUpBy` 是 Run2。
+  - 所以 K L8 的退路（另建接续 Session）对仍负责被中断任务的 RUN-19、RUN-23 Work 线走不到，维护先归档了。暂停中重启、由人点继续的线照旧走 L8（同文件“LA-1 and contract (e)（closing unsupported）”一例）。
+  - 没有采用的做法：维护对“关闭确定失败、仍负责被中断任务”的线零写入，等 Workflow 的退路接着做。它改 K L7 的“一字不改”，也改决定 54 的“马上归档”；用户可以改定。
+- **2C-05 (3)–(5) 的造法改了（lead 2026-10-16，只改测试，期望值不变或照真值表）。** 这四例在 DSH 的沙箱里跑不了，lead 在 bwrap 下跑时失败，查下来都是测试的造法不对，产品代码不改：
+  - (3)：后台的推进还在结束 X 的执行时就读 X 的卡，归档请求带的版本旧了（`revision_conflict`）。改成等那次推进结束再读。另外原来的造法测不到它要测的先后：每次推进提交一步以后都跑一页维护，Y 做完的那次推进里 Y 的负责链接就按终结关了，归档时线上已经没有开着的 Y。Codex 复核以后改成：X 停下以后，经公开路由 `sessions/link`（`active: true`，钉住当时的 Session 和链接版本）重开 Y 的负责链接，紧接着一次 `sessions/archive-line` 只选 X 放下；从回执断言先关 X（带 `archiveStep`）、再关 Y（`terminal`，更新），期望值照原样：plain、standby、`complete`，只写“已归档”（DE3）。
+  - (3′)：§5 写的“归档组合先处置 X、再关那 21 条”经真实的 Workflow 造不出来：每次 `select_work` 先跑一页维护（`workflow.ts` 的维护调用、`session-maintenance.ts` 的终结关闭），做完的任务的负责链接在下一次领取时就关了，X 带 `archiveStep` 的关闭反而是 22 条里最新的，按真值表读成 DE3。改成：先归档放下 X、由维护做完，重新启用，再在 S 上做 21 个别的任务，两次维护再归档 S。最新的 21 条都是 `terminal`、X 的是第 22 条，期望值照原样：plain、standby、`incomplete`、`done_unproven`。
+  - (4)：目标级的推进在 S 已归档时把放下的任务（决定 43）派给了另一条线并做完，后面归档的是那条线，显式归档被拒。另外，在 S 上做完**同一个**任务会重开同一条链接记录（上一条），`terminal` 的关闭换掉了放下的关闭，读成 DE2，这是对的。所以 §10 末尾已知错标 (1) 的“做完一个任务”指**另一个**任务。改成两个任务：第一个放下以后只由维护做完归档，第二个（`ag2b-work-2`）用 `sessionHint` 在 S 上做完，两次维护 → plain、standby、`doneEvidence: 'complete'`（DE3），另有 `attention` 为 `anomaly_pending`（AT4：放下留下的锚点还没人接，任务等派工）。
+  - (5)：原来用崩溃造前任，但崩溃的前任一定是不可用，A1 只会读成 `retired`，`handed_to`（A3）走不到。改成真的换手：前任健康时停下，用 `sessions/create` 建带换手来历的后继，再经 `sessions/archive-line` 以 `transfer` 交出 → plain、standby、`handed_to`，`doneEvidence` 由交出的 `archiveStep` 读成 DE3。
+- **§6 以外多出的文件**（上面三条和模块边界要求）：`src/core/agent-runtime/runtime.ts`、`agent-runtime/ports.ts`（Turn 关闭的调用方）、`sessions/session-health.ts`、`business/workflow/session-maintenance.ts`、`business/workflow/workflow.ts`（SES-19a 的调用方、复用领取）、`business/workflow/session-archive.ts`（2C-32）、`state/session-availability.ts`、`tasks/claim-service.ts`、`model/claim-contracts.ts`（复用领取）、`tasks/requeue-service.ts`（只转出重新入队窗口的读，暂停中断的任务行和它共用）。`WorkLineConversationPageV1` 定义在 `src/composition/work-line-conversation.ts`，`core-http-types.ts` 转出。
+- **`NotYetV1` 用上了**：线详情消息一节的“处置”列（第 7 片的事），写 `{ availability: 'not_available', reason: 'slice_7' }`。
+- **测试的例外**（§5 开头和 §7 以外，验收时接受）：
+  - 2C-25 的规模夹具：5,000 个 Session 和 X、R、W 几条线经公开服务造；Z 线的 3,000 个 Run 和挑选器的记录在存储边界写（公开路径是平方级，同 2A 例外 3–4 的理由），写成今天的编解码认的形状，夹具里注明。
+  - 2C-26：旧 Session 照 §5 开头在存储边界造。造数据时的领取和重新入队，用单独组装的真实服务写进 Host 的记录、用受控的时钟（Host 组合的时钟固定，而 `recordSessionCreated` 用墙上时钟，来历推导要的 `createdAt ≤ requeueAt ≤ claimedAt` 经 `platform.claims` 造不出）；被测的维护完全是 Host 的。Host 只有 SQLite，这一行不再分内存、SQLite 两遍。
+  - 2C-28：各种归档状态都经真实服务造（领取、进入、暂停、中断、完成、崩溃、真实的锚点、目标控制、重新入队）；帮助函数里把节点夹具部分当作领取夹具用，重新入队的帮助函数带一个材料和消息的替身。
+  - 节点详情的执行一节：结束的 Run 用真实的取消控制结束（没进入就取消），不进入 Kernel（这个夹具里重新入队的 Run 没有接续说明，进不了 Kernel）。
+- **L2 跨页的环**只有代码，没有测试（L2 本身说不测）；`cycleRepresentativesByWalk` 从候选往回走 `continuation.from`，最多 32 步，读页外的记录。
+- **2C-20 读不写**：经 Host 的脚本模型看到 `lines/*`、`graph/*` 的读一次模型调用都没有，Runtime 读原历史 0 次。
+- **只能在 bwrap 下跑的**：`S2C-K-archive-tags-checks.test.ts`（真实检查）由 lead 合入前在 bwrap 下跑；DSH 的沙箱里它们照基线失败。
