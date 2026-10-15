@@ -706,3 +706,23 @@ export const SCRIBE_PENDING_THRESHOLD = 10, SCRIBE_UPDATE_DUE_THRESHOLD = 5;
 - 不做真删；不导出到仓库。
 - 不在本片注册秘书的“记”、不做“记下你的话”的界面流程（第 6 片）；不做修补生效（第 8 片）。
 - 不在本片接多书记的线：书记范围、按 `resolveResponsibleLine` 找书记、按范围计数、区域祖先的约定注记只把事实和读取写出来，实际行为今天只有开局书记、范围整个项目，多书记的范围和拆分在 7D/8B 跑通（决定 60-5、60-9）。
+
+## 9. 4A 施工和验收中的限定（lead，2026-10-16）
+
+4A 施工两轮、Codex 一次实现审查加一次快速核对、审查意见的逐条核实（lead 委托的子 agent，决定 65）和 lead 的验收里定下的读法，对 4A 和以后的 4B、4C 同等有效；有冲突时以本节为准。逐条的原文在证据目录 `reviews/evidence/orchestration-slice-4A-2026-10-16/` 的说明书里（第 1 轮的 P1–P14、第 2 轮的 R1–R13）。
+
+- **按范围计数（L7）有自己的读口：** `NoteScopeV1 = { kind: 'project' } | { kind: 'region'; moduleId } | { kind: 'goal'; goalId }`，`NoteScopeReadPort.countCurrentNotes(ctx, { scope }) → ReadResult<{ scope; current }>`，数管辖范围正好是它的、`accepted`/`reviewed` 的注记（一条注记只数一次）。没有书记的范围数 0，它的注记归上一级；Session、职责、目录或查找读失败回 `unavailable`，不回 0。这里的“现行”按存下的状态数，不按 L9 的 `currentEligible` 收窄：这个数用来定书记管多少，需复查的注记照样是书记的事，按新鲜度收窄又要为一个计数读文件、没有上界（lead 2026-10-16 在 4B 通读后改定）。
+- **组合：** 平台上加不可枚举的 `notes` 持有者（`writeNote`、`reviewNote`、`withdrawNote`、`readNote`、`listByAnchor`、`countCurrentNotes`），4C 的路由接它；Workflow、2C 的线读和注记服务共用同一个职责解析器实例。
+- **调用方（L5）**只从可信的调用上下文来：人（host、人的动作）是用户来源；`work_run` 是 agent 来源，目标是这次执行的目标，职责 `reviewer`/`unknown` 拒绝；4A 里 `query_run` 拒绝（秘书和角色探索的来源第 6 片加）。人写“修补”拒绝。注记的作者是来源里的 Session：同一个 Session 的后来的执行可以撤回它；换手的后继不是作者（第 7 片）。
+- **收下和取代：** 收下待审的注记要写原因（L6 的“要原因”，收和拒都要；审成已审和撤回不要）。收下那一次提交按 L6 取代 `replaces` 里现行的项；同时出现在 `replaces` 和 `coexistWith` 里的，按 S4-NOTE-08 不取代。只有收下“当前理解”才挪指针，收下一般注记不碰指针；提交时指针版本对不上，回执带回现在的指针 `{ noteId, revision }`（§2 的类型为准，L8 正文说的“结论”不带）。
+- **配额（L7）各数各的：** 锚点配额只管一般注记、只数 `accepted`/`reviewed`；目标配额管所有种类、数四种计数状态。准入（哪个配额拦、`reasons`）照 L7 先减掉被替换的现行项来估算；写入回执的 `overQuota`（和重放存下的那份）按这次提交以后的实际情况算：算上新项，只减这次提交真的取代了的项（进待审或暂存的还没取代任何项），所以总和刚写完的 `readNote` 一致。
+- **L2a 的先后：** 第一类查整个输入的形状（含重复的锚点），第二类查每个锚点存不存在，第三类才查当前理解能不能挂、是不是自己的目标、书记范围。锚点形状不对：`{ code: 'invalid', reason: 'anchor_invalid: <字段路径>' }`（例如 `anchor_invalid: extraAnchors[1].path`），和第二类的 `anchor_not_found` 分开。
+- **读失败：** 查找、指针、范围、职责和目录的读失败一律回 `unavailable`（职责解析被拒或抛错时整个范围计算回 `unavailable`；解析成功、结果是 `unknown` 的照接线包 1 的规则），从不当成空、0 或“没有”，也不据此放行写入。文件锚点读到 `forbidden`：`{ code: 'invalid', reason: 'anchor_forbidden' }`。4A 内部不设读的上限，计数和列表读到底；读不全回 `unavailable`。
+- **重放：** 命令身份是（操作、项目、工作区、可信的调用者、commandId）；先查重放、再读会变的状态，原样返回第一次的结果。写入提交里 `NoteWritten` 是最后一个事件并带上成功回执（`overQuota`、`warnings`、`existingTopics`）；读不回这个事件时回 `unavailable`。同一个 commandId 不同请求：`{ code: 'invalid', reason: 'idempotency_conflict' }`。每个事件各有自己的 `eventId`；不是 `staged` 的注记没有 `stagedRunKey`。
+- **依据的版本（L14）：** agent 的依据用执行绑定的计划（`RunSnapshot.planRef`）和那份计划的架构基线版本；人用目标现在采用的计划和现在的目录版本；阶段锚点要在绑定的计划和现在的计划里都有，否则 `anchor_not_found`。项目书记写别的目标的锚点，经注记自己的窄读口（`notes/note-anchor-facts.ts`）读那个目标的事实，不放宽计划服务的限制。
+- **事实指针：** 写入只查形状（种类、字段类型）；SHA 长度、摘要格式、路径在不在工作区、注记存不存在是 4B 的检查。
+- **符号（L14 写入这一半，4A 做）：** 语言只认 `typescript`、`python`、`cpp`，别的当不支持，警告 `symbol_unresolved`；扫到 `NOTE_SYMBOL_HITS_MAX` 还有下一页时不存定位（0 或 1 个命中 → `symbol_unresolved`，2 个以上 → `symbol_ambiguous`）；捕获或查询失败（`unavailable`、`capacity`、`cancelled`、`capture_expired`、`source_stale`）整个写入回 `unavailable`；`unsupported` 只是警告。定位的范围是源码查询给的名字所在的行（冻结的 `typescript-source-query.ts` 给的是 `nameSpan`）；4B 读侧按这个比。测试在 NE1 的 `S4A-note-symbol.test.ts`（`G-01(4A)`），4C 的 G-01 经 `record_note` 再跑一遍。
+- **审阅的项目级槽位**存成 `goalId: null`，读时用 null 查（4C 的待审计数也是）；不加字段。
+- **允许表**只有一组 `kept-for` 第 4 片的条目：`renderNoteHeader`（N-16 测它，读者是 4B 的 `NoteSimilarV1.header` 和 4C）。`MEMORY_PAGE_DEFAULT` 等 4B 有读者时再加。
+- **测试的例外**（§7 以外，验收时接受）：存储边界的提交闸门（N-07、N-14，另用于 N-08 的提交时指针冲突和重放的并发情形），只排先后、不造执行、职责、计划或 Session 的事实；一个只让读失败的替身（存储的 `lookup`、`readMany`，范围事实的 `findSessions`、`readArchitectureRevision`）。书记和执行者都按生产的职责解析器认得出的方式建，不注入职责。
+- **留给后面的：** 根目录前缀 `"."` 的书记范围留给 8A（`notes/scribe-scope.ts` 的 `matchingPrefixLength`）；RoleSpec 读失败时职责解析器回 `unknown`（接线包 1 冻结的行为）记为 7D1 的一项；矛盾卡的 `supersede` 一半在 4C；N-13 按暂存的执行列出在第 8 片。

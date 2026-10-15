@@ -123,6 +123,19 @@
           ]
         },
         {
+          "id": "notes",
+          "path": "notes/",
+          "dependencies": [
+            "model",
+            "state",
+            "persistence",
+            "architecture",
+            "sessions",
+            "tasks"
+          ],
+          "note": "注记（L5.5，DESIGN §7.2，编排第 4 片）：4A 建注记的写入、处置、现行指针、书记范围和按范围计数；4B 加读法和全文查找，4C 接工具和路由。evidence 和 views 可以读它（注记的依据、节点详情和“看”的注记一栏）。"
+        },
+        {
           "id": "evidence",
           "path": "evidence/",
           "dependencies": [
@@ -130,7 +143,8 @@
             "state",
             "persistence",
             "architecture",
-            "tasks"
+            "tasks",
+            "notes"
           ]
         },
         {
@@ -160,7 +174,8 @@
             "queries",
             "tasks",
             "evidence",
-            "communication"
+            "communication",
+            "notes"
           ],
           "note": "读模型（L7，DESIGN §7.2）：只读，不写记录。编排第 3 片（上下文与图读取）和第 5 片（决定队列、冲突提示、请知悉）在这里建文件。"
         }

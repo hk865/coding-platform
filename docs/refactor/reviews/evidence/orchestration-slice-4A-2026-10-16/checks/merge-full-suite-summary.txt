@@ -1,0 +1,15 @@
+4A merge candidate: lead branch b6087b7a + 4A rounds 1-3 (checks/merge-patch.sha256), copy ~/dsh-work/verify-4a2
+Environment: WSL, bubblewrap (CODING_AGENT_BWRAP_PATH), systemd user session; vitest run --maxWorkers=8 inside systemd-run --user --scope
+Files: 439 total, 434 passed, 5 failed
+Tests: 7327 total, 7321 passed, 4 failed, 2 skipped
+
+Failed files (first failure line):
+- tests/runtime/S1-routed-replies.test.ts > IT30 idle unrelated D retains the reply without new work until its next legal execution safe point: Test timed out in 30000ms
+- tests/work-graph/S1-requeue.test.ts > SV35 human archive cancellation with prior=cap=3 is an uncounted interruption: Test timed out in 30000ms; then Hook timed out in 10000ms
+- tests/work-graph/S2A-notices-overbound.test.ts > QA-10 (二) a 5,001-Session directory, 5,001 undelivered replies and 5,001 member notices page to the end without capacity: Test timed out in 1800000ms
+- tests/work-graph/S2A-queue-derived-cards.test.ts > S2A queue derived cards (sqlite) (suite hook): Hook timed out in 1800000ms
+- tests/work-graph/S4A-note-write.test.ts > N-05 sqlite a relation needs a shared anchor key: Test timed out in 30000ms
+
+All five are time limits under 8 workers. Earlier full runs of the same files (RL merge, 4A round 1): S2A-notices-overbound 1,610 s and 1,735 s, S2A-queue-derived-cards 1,366 s and 1,514 s, against the 1,800 s limit.
+
+Rerun of the five files alone (vitest run --maxWorkers=5, same copy, 2026-10-16): 5 files, 95 tests, all passed. S1-routed-replies 67 s, S1-requeue 135 s, S4A-note-write 142 s, S2A-queue-derived-cards 1,613 s, S2A-notices-overbound 1,704 s (alone, still close to its 1,800 s limit). Log: merge-rerun-five-files.log.

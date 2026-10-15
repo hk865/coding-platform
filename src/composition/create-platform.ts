@@ -62,6 +62,14 @@ import type {
 import { createEvidenceService } from '../core/work-graph/evidence/evidence-service.js';
 import type { AutomaticReverifyPolicyV1 } from '../core/work-graph/evidence/evidence-service.js';
 import { EVIDENCE_RECORD_SCHEMAS } from '../core/work-graph/persistence/evidence-record-codecs.js';
+import { NOTE_RECORD_SCHEMAS } from '../core/work-graph/persistence/note-record-codecs.js';
+import { createNoteService } from '../core/work-graph/notes/note-service.js';
+import type { NoteRunFactResolver } from '../core/work-graph/notes/note-service.js';
+import { createNoteReadModel } from '../core/work-graph/notes/note-read-model.js';
+import { createScribeScope } from '../core/work-graph/notes/scribe-scope.js';
+import type { NoteReadPort, NoteScopeReadPort, NoteWritePort } from '../core/work-graph/model/note-contracts.js';
+import type { SourceProvider } from '../core/workspace/ports.js';
+import { decodeRun } from '../core/work-graph/materials/run-snapshot-decoder.js';
 import type { EvidencePort } from '../core/work-graph/model/evidence-contracts.js';
 import { VerificationWorkspaceReader } from '../core/workspace/verification-workspace-reader.js';
 import { createRegisteredCheckRunner, type RegisteredCheckRunner } from '../core/agent-runtime/check-execution.js';
@@ -81,7 +89,7 @@ import type { ExecutionReadPort } from '../core/work-graph/model/execution-read-
 import { createExecutionHistoryReader } from '../core/agent-runtime/observation-recovery.js';
 import { createTaskClaimService } from '../core/work-graph/tasks/claim-service.js';
 import { createTaskRequeueService } from '../core/work-graph/tasks/requeue-service.js';
-import { TASK_CLAIM_RECORD_SCHEMAS } from '../core/work-graph/tasks/claim-record-codecs.js';
+import { TASK_CLAIM_RECORD_SCHEMAS, decodeDispatchOutboxEntry, dispatchOutboxRefKey } from '../core/work-graph/tasks/claim-record-codecs.js';
 import type { TaskClaimPort } from '../core/work-graph/model/claim-contracts.js';
 import type { RoleConfigurationPort } from '../core/work-graph/model/configuration-contracts.js';
 import { createPlanService, createRequestCandidateService } from '../core/work-graph/tasks/plan-service.js';
@@ -91,7 +99,7 @@ import { DECISION_RECORD_SCHEMAS } from '../core/work-graph/persistence/decision
 import { PLAN_STATE_RECORD_SCHEMAS, PLAN_GOVERNANCE_RECORD_SCHEMAS, createSessionResponsibilityBasisReader } from '../core/work-graph/tasks/plan-readers.js';
 import { createSessionDirectory } from '../core/work-graph/sessions/session-directory.js';
 import type { SessionDirectoryPort } from '../core/work-graph/model/session-contracts.js';
-import { SESSION_RECORD_SCHEMAS } from '../core/work-graph/sessions/session-record-codecs.js';
+import { SESSION_RECORD_SCHEMAS, decodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey } from '../core/work-graph/sessions/session-record-codecs.js';
 import { createSessionLifecycleService } from '../core/work-graph/sessions/session-lifecycle.js';
 import type { SessionLifecyclePort } from '../core/work-graph/sessions/lifecycle-contracts.js';
 import { SESSION_LIFECYCLE_RECORD_SCHEMAS } from '../core/work-graph/sessions/lifecycle-record-codecs.js';
@@ -235,6 +243,12 @@ export type TargetPlatformOptions = {
    * the new user write entries answer `unsupported`.
    */
   operatorActor?: { kind: 'human' | 'system'; id: string };
+  /**
+   * Slice 4A: the soft note limits are injectable constants (spec §2, DESIGN
+   * §9.3). Production never passes this; a test shrinks them to exercise the
+   * quota path without writing hundreds of notes.
+   */
+  noteLimits?: { anchorQuota?: number; goalQuota?: number; symbolHitsMax?: number };
 };
 
 /** The composition-owned service identity. It is used only to execute trusted
@@ -500,7 +514,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       ...SESSION_MESSAGE_RECORD_SCHEMAS.records, ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.records,
       ...CONTROL_RECORD_SCHEMAS.records, ...EVIDENCE_RECORD_SCHEMAS.records, ...QUERY_JOB_RECORD_SCHEMAS.records,
       ...SESSION_ANOMALY_RECORD_SCHEMAS.records,
-      ...COMPLETION_RECORD_SCHEMAS.records, ...DECISION_RECORD_SCHEMAS.records, ...LINE_SETTINGS_RECORD_SCHEMAS.records],
+      ...COMPLETION_RECORD_SCHEMAS.records, ...DECISION_RECORD_SCHEMAS.records, ...LINE_SETTINGS_RECORD_SCHEMAS.records,
+      ...NOTE_RECORD_SCHEMAS.records],
     events: [...materialsSchema.events, ...PLAN_RECORD_SCHEMAS.events, ...PLAN_STATE_RECORD_SCHEMAS.events,
       ...PLAN_GOVERNANCE_RECORD_SCHEMAS.events, ...SESSION_RECORD_SCHEMAS.events, ...SESSION_LIFECYCLE_RECORD_SCHEMAS.events,
       ...ROLE_RECORD_SCHEMAS.events, ...OBSERVED_ARCHITECTURE_RECORD_SCHEMAS.events, ...ARCHITECTURE_CATALOG_SCHEMAS.events,
@@ -509,7 +524,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       ...SESSION_MESSAGE_RECORD_SCHEMAS.events,
       ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.events, ...CONTROL_RECORD_SCHEMAS.events, ...EVIDENCE_RECORD_SCHEMAS.events, ...QUERY_JOB_RECORD_SCHEMAS.events,
       ...SESSION_ANOMALY_RECORD_SCHEMAS.events,
-      ...COMPLETION_RECORD_SCHEMAS.events, ...DECISION_RECORD_SCHEMAS.events, ...LINE_SETTINGS_RECORD_SCHEMAS.events],
+      ...COMPLETION_RECORD_SCHEMAS.events, ...DECISION_RECORD_SCHEMAS.events, ...LINE_SETTINGS_RECORD_SCHEMAS.events,
+      ...NOTE_RECORD_SCHEMAS.events],
     lookups: [...materialsSchema.lookups ?? [], ...PLAN_RECORD_SCHEMAS.lookups ?? [], ...PLAN_STATE_RECORD_SCHEMAS.lookups ?? [],
       ...PLAN_GOVERNANCE_RECORD_SCHEMAS.lookups ?? [], ...SESSION_RECORD_SCHEMAS.lookups ?? [],
       ...SESSION_LIFECYCLE_RECORD_SCHEMAS.lookups ?? [], ...ROLE_RECORD_SCHEMAS.lookups ?? [],
@@ -519,7 +535,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.lookups ?? [], ...CONTROL_RECORD_SCHEMAS.lookups ?? [], ...EVIDENCE_RECORD_SCHEMAS.lookups ?? [], ...QUERY_JOB_RECORD_SCHEMAS.lookups ?? [],
       ...SESSION_ANOMALY_RECORD_SCHEMAS.lookups ?? [],
       ...COMPLETION_RECORD_SCHEMAS.lookups ?? [], ...DECISION_RECORD_SCHEMAS.lookups ?? [],
-      ...LINE_SETTINGS_RECORD_SCHEMAS.lookups ?? []],
+      ...LINE_SETTINGS_RECORD_SCHEMAS.lookups ?? [], ...NOTE_RECORD_SCHEMAS.lookups ?? []],
   };
   // Slice 1 (spec §2.8): every one of the six new indexes must be part of the
   // real record-store schema set this Host opens. The declared
@@ -1189,11 +1205,100 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       ? undefined : structuredClone(options.workflow);
     // Slice 2C L7: the WorkGraph line read resolves a Session's duty through
     // this narrow port, and the Workflow uses the SAME resolver instance (the
-    // composition root injects one result, never a second resolver).
+    // composition root injects one result, never a second resolver). Slice 4A P5:
+    // the notes service shares this instance too.
     const sessionDutyResolver: SessionDutyResolver = options.sessionDutyResolver ?? createSessionDutyResolver({
       readRoleSpec: roleService.readRoleSpec.bind(roleService),
       configuration: workflowConfiguration,
     });
+    // Slice 4A P2: the ONE note writer and the minimal read model, over the same
+    // records/plan/workspace/execution ports the rest of WorkGraph uses.
+    // Slice 4A: a work_run caller's Run→Session facts. `notes` may not import
+    // `materials`, so the composition root resolves the Run, its claim outbox and
+    // the Session with the WorkGraph decoders (no Host capability is granted).
+    const noteRunFacts: NoteRunFactResolver = async (_ctx, runRef) => {
+      const runKey = canonicalJson(runRef as unknown as JsonValue);
+      const runRead = await backend.records.readMany([runKey]);
+      if (runRead.status !== 'ready') return { status: 'rejected', code: 'unavailable', reason: runRead.reason };
+      const runRecord = runRead.value.records.find(record => record.refKey === runKey);
+      if (runRecord === undefined) return { status: 'not_found' };
+      const decodedRun = decodeRun(runRecord);
+      if (!decodedRun.ok) return { status: 'rejected', code: 'unavailable', reason: 'the caller Run is damaged' };
+      const run = decodedRun.value;
+      const outboxKey = dispatchOutboxRefKey({ aggregateType: 'DispatchOutboxEntry', projectId: run.task.projectId,
+        goalId: run.task.goalId, taskId: run.task.taskId, attemptId: run.attemptId });
+      const outboxRead = await backend.records.readMany([outboxKey]);
+      if (outboxRead.status !== 'ready') return { status: 'rejected', code: 'unavailable', reason: outboxRead.reason };
+      const outboxRecord = outboxRead.value.records.find(record => record.refKey === outboxKey);
+      if (outboxRecord === undefined) return { status: 'rejected', code: 'unavailable', reason: 'the caller Run has no claim-linked Session' };
+      const decodedOutbox = decodeDispatchOutboxEntry(outboxRecord);
+      if (decodedOutbox.status !== 'decoded') {
+        return { status: 'rejected', code: 'unavailable', reason: `the claim outbox is damaged: ${decodedOutbox.reason}` };
+      }
+      const claimSession = decodedOutbox.value.claim.sessionRef;
+      const sessionRef = { projectId: claimSession.projectId, sessionId: claimSession.sessionId };
+      const sessionKey = sessionAggregateRefKey(plainSessionRefToAggregate(sessionRef));
+      const sessionRead = await backend.records.readMany([sessionKey]);
+      if (sessionRead.status !== 'ready') return { status: 'rejected', code: 'unavailable', reason: sessionRead.reason };
+      const sessionRecord = sessionRead.value.records.find(record => record.refKey === sessionKey);
+      if (sessionRecord === undefined) return { status: 'rejected', code: 'unavailable', reason: 'the caller Session is missing' };
+      const decodedSession = decodeSessionRecord(sessionRecord);
+      if (decodedSession.status !== 'decoded') {
+        return { status: 'rejected', code: 'unavailable', reason: `the caller Session is damaged: ${decodedSession.reason}` };
+      }
+      return { status: 'ready', value: { goalId: run.task.goalId, sessionRef, role: decodedSession.value.role,
+        planRef: run.planRef } };
+    };
+    // Slice 4A P1/P6: the derived scribe-scope facts (open responsible module
+    // links, the SAME duty resolver the Workflow gets, and the active catalog's
+    // containment) and the L7 per-scope current count.
+    const scribeScope = createScribeScope({ records: backend.records, sessions: sessionDirectory,
+      architecture: catalog, duties: sessionDutyResolver });
+    // Slice 4A P10: the note module never sees a trusted workspace revision; this
+    // wrapper resolves it through the same access factory the workspace tools use.
+    const noteWorkspace = {
+      readWorkspace: workspace.tools.readWorkspace,
+      querySource: workspace.tools.querySource,
+      // Item 14/L14: the symbol capture is best-effort released after use; the
+      // note module never sees the trusted workspace revision.
+      releaseCapture: workspace.tools.releaseCapture,
+      capture: async (callCtx: CoreCallContext, request: { provider: SourceProvider }) => {
+        const workspaceRef = { aggregateType: 'Workspace' as const, projectId: callCtx.projectId,
+          workspaceId: callCtx.workspaceId ?? '' };
+        const opened = await access.open(callCtx, workspaceRef);
+        if (opened.status !== 'ready') return opened;
+        const revision = opened.value.workspaceRevision;
+        await opened.value.release().catch(() => undefined);
+        return workspace.tools.captureSourceChanges(callCtx, { workspace: workspaceRef,
+          workspaceRevision: revision, provider: request.provider });
+      },
+    };
+    const noteWrite: NoteWritePort = createNoteService({
+      records: backend.records,
+      plans: planService,
+      runFacts: noteRunFacts,
+      duties: sessionDutyResolver,
+      workspace: noteWorkspace,
+      workspaceMaxFileBytes: DEFAULT_WORKSPACE_LIMITS.maxFileBytes,
+      architecture: catalog,
+      scopes: scribeScope,
+      now, eventId: randomUUID, newId: randomUUID,
+      ...(options.noteLimits === undefined ? {} : options.noteLimits),
+    });
+    const noteReads: NoteReadPort = createNoteReadModel({ records: backend.records, plans: planService,
+      architecture: catalog, workspace: noteWorkspace,
+      ...(options.noteLimits === undefined ? {} : options.noteLimits) });
+    // The ONE owner group 4C's routes bind. Each operation is selected through
+    // the port (a real production read of the surface) before the group is built.
+    const writeNote = noteWrite.writeNote;
+    const reviewNote = noteWrite.reviewNote;
+    const withdrawNote = noteWrite.withdrawNote;
+    const readNote = noteReads.readNote;
+    const listByAnchor = noteReads.listByAnchor;
+    const countCurrentNotes = scribeScope.countCurrentNotes;
+    const notes: NoteWritePort & NoteReadPort & NoteScopeReadPort = {
+      writeNote, reviewNote, withdrawNote, readNote, listByAnchor, countCurrentNotes,
+    };
     // Slice 1 (spec §3.3): the responsibility port's three public writes. Every
     // member is read here so the public `closeTerminalResponsibility` write (a
     // task's terminal relationship close) is part of the production assembly.
@@ -1508,6 +1613,9 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       // the same instances injected into `sessions`, `queries` and the Workflow.
       sessionFacts, responsibilities, sessionAnomalies,
       runActivity, activity, timeline,
+      // Slice 4A P2: the note write/read owner; 4C's routes bind to it. It stays
+      // non-enumerable like the other internal owner groups.
+      notes,
       workspace: workspace.tools, runtime: runtimePort, workflow, kernelStores,
       // Slice 3: the same owner instances the Runtime received; the graph routes
       // read through `graphContext` and a caller could reuse `taskInputs`.
@@ -1590,7 +1698,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     for (const key of ['sessionFacts', 'responsibilities', 'sessionAnomalies', 'graphContext', 'taskInputs',
       'goalSettings', 'workspaceDecisionSettings', 'decisionMessages', 'decisions', 'requestCandidates',
       'runActivity', 'activity', 'timeline',
-      'workLines', 'workLineConversation', 'nodeDetail', 'lineSettings'] as const) {
+      'workLines', 'workLineConversation', 'nodeDetail', 'lineSettings', 'notes'] as const) {
       Object.defineProperty(platform, key, { enumerable: false });
     }
     return platform;

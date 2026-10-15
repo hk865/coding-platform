@@ -1,0 +1,72 @@
+
+ RUN  v4.1.10 /home/han001/dsh-work/verify-4a2
+
+ ✓ tests/runtime/S1-routed-replies.test.ts (3 tests) 66981ms
+     ✓ IT28 the running handler accepts exactly one original response and the source gets none  18344ms
+     ✓ IT29 overlapping persisted pages supply once and formal acceptance suppresses every later supply  21757ms
+     ✓ IT30 idle unrelated D retains the reply without new work until its next legal execution safe point  26879ms
+ ✓ tests/work-graph/S1-requeue.test.ts (18 tests) 134952ms
+     ✓ SV35 human archive cancellation with prior=cap=3 is an uncounted interruption  387ms
+     ✓ SV49 a genuine r0 anchor cannot authorize an origin for afterRun r2  342ms
+     ✓ SV50 ordinary automatic failure after three reworks retains the original cap refusal  312ms
+     ✓ SV59 failure before retirement still counts against cap despite the real retired_archive anchor  309ms
+     ✓ SV35 human archive cancellation with prior=cap=3 is an uncounted interruption  21426ms
+     ✓ SV36 an origin naming a nonexistent archive request is forbidden without writes  10493ms
+     ✓ SV37 a retired paused_interrupted Task archives with one anchor and a closed responsibility  11279ms
+     ✓ SV38 recovery replays the complete existing requeue and cursor without another Attempt or Run  10977ms
+     ✓ SV48 an absent anchor with a real archive request is forbidden without writes  9739ms
+     ✓ SV49 a genuine r0 anchor cannot authorize an origin for afterRun r2  17496ms
+     ✓ SV50 ordinary automatic failure after three reworks retains the original cap refusal  19548ms
+     ✓ SV57 an archive-cancelled yielded wait requeues without an anchor or a fabricated ConsumedWait  9593ms
+     ✓ SV59 failure before retirement still counts against cap despite the real retired_archive anchor  21673ms
+ ✓ tests/work-graph/S4A-note-write.test.ts (68 tests) 142105ms
+     ✓ N-01 sqlite accepts the boundary and refuses one past it with the draft  3518ms
+     ✓ N-01 sqlite understanding body 6,144 accepted / 6,145 refused  3194ms
+     ✓ N-02 sqlite accepts each anchor kind and refuses missing or out-of-bounds ones  3508ms
+     ✓ N-03 sqlite the platform fixes the source from the trusted context  3633ms
+     ✓ N-04 sqlite contradiction, replacement, coexistence and the plain conflict  3783ms
+     ✓ N-05 sqlite a relation needs a shared anchor key  3446ms
+     ✓ N-06 sqlite a contradiction stays pending and the old note stays current  3876ms
+     ✓ N-07 sqlite the sixth current item on an anchor enters review with quota_full  4280ms
+     ✓ N-07 sqlite an understanding is not held by the anchor quota  4102ms
+     ✓ N-07 sqlite an understanding counts toward the goal activity  3992ms
+     ✓ N-07 memory a repair reports overQuota from the goal quota  351ms
+     ✓ N-07 sqlite a repair reports overQuota from the goal quota  8009ms
+     ✓ N-07 sqlite a structural replacement at a full anchor has no quota_full  3954ms
+     ✓ N-07 sqlite a reviewed item still counts toward the goal activity  4152ms
+     ✓ N-07 memory a committed overQuota equals the read after the commit  517ms
+     ✓ N-07 sqlite a committed overQuota equals the read after the commit  11674ms
+     ✓ N-14 sqlite a withdrawn note is not in a same-topic conflict  3269ms
+     ✓ N-08 sqlite the second writer conflicts and succeeds after re-reading  3809ms
+     ✓ N-08 sqlite accepting a pending understanding checks the pointer revision  3655ms
+     ✓ N-08 sqlite accepting a pending general note on a goal anchor leaves the pointer  3765ms
+     ✓ N-08 sqlite a new understanding that replaces the current one supersedes it once  3916ms
+     ✓ N-08 sqlite a structural understanding that replaces the current one supersedes it only on accept  3807ms
+     ✓ N-09 sqlite withdrawal keeps the pointer on the withdrawn note  3891ms
+     ✓ N-10 sqlite a project scribe reviews accepted to reviewed unchanged  3741ms
+     ✓ N-10 sqlite a scribe may only disposition a quota_full pending note  4167ms
+     ✓ N-10 sqlite a scribe cannot accept a structural pending note  3769ms
+     ✓ N-10 sqlite the user accepts a quota_full structural note and it stays accepted overQuota  3839ms
+     ✓ N-10 accepting a pending note supersedes its current replaces targets  3637ms
+     ✓ N-01 sqlite malformed shapes are refused invalid with the draft, never thrown  3393ms
+     ✓ N-20 sqlite a human goalId null refuses goal, stage and task anchors  3169ms
+     ✓ N-20 sqlite a non-null human goalId must name a goal in the project  3275ms
+     ✓ N-13 sqlite a human repair is refused forbidden with the draft and writes nothing  3164ms
+     ✓ N-09 sqlite a later Run of the same Session is the author and may withdraw  3700ms
+     ✓ N-10 sqlite accepting or rejecting a pending note requires a reason  3951ms
+     ✓ N-01 sqlite a commit fact is stored as a pointer without format checks  2856ms
+     ✓ N-01 sqlite a commit fact whose sha is not a string is refused  2753ms
+ ✓ tests/work-graph/S2A-queue-derived-cards.test.ts (4 tests) 1613071ms
+     ✓ QA-07 - 5001 planning jobs on one Goal still yield the question cards, count literal, no incomplete  2962ms
+     ✓ QA-09 (一) - a derived planning card past the old 25x200 window is read by readDecisionCard  1402ms
+     ✓ QA-07 - 5001 planning jobs on one Goal still yield the question cards, count literal, no incomplete  3840ms
+     ✓ QA-09 (一) - a derived planning card past the old 25x200 window is read by readDecisionCard  1824ms
+ ✓ tests/work-graph/S2A-notices-overbound.test.ts (2 tests) 1703938ms
+     ✓ QA-10 (二) a 5,001-Session directory, 5,001 undelivered replies and 5,001 member notices page to the end without capacity  193628ms
+     ✓ QA-10 (二) a 5,001-Session directory, 5,001 undelivered replies and 5,001 member notices page to the end without capacity  1510309ms
+
+ Test Files  5 passed (5)
+      Tests  95 passed (95)
+   Start at  04:01:37
+   Duration  1705.83s (transform 6.02s, setup 0ms, import 10.16s, tests 3661.05s, environment 0ms)
+

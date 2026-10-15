@@ -155,6 +155,17 @@ const PROTECTED_TYPES: readonly ProtectedType[] = [
   { file: 'src/contracts/task-failure.ts', name: 'TaskFailureFactsV1', kind: 'read_model',
     fields: ['failureClass', 'automation', 'requeueActors', 'reverifyActors', 'notReworkableCause'],
     use: 'state/task-failure.ts buildTaskFailureFacts' },
+  // Slice 4 (spec §6, A2): the note head's lifecycle fields and the immutable
+  // version and current-pointer records are written only by the note machine.
+  { file: 'src/contracts/note.ts', name: 'NoteHeadSnapshot', kind: 'record',
+    fields: ['version', 'state', 'reviewReasons', 'confirmedByUser', 'stagedRunKey'],
+    use: 'state/note-machine.ts newNoteHeadRecord or transitionNote' },
+  { file: 'src/contracts/note.ts', name: 'NoteVersionSnapshot', kind: 'record',
+    fields: ['version', 'state', 'reviewReasons', 'change'],
+    use: 'state/note-machine.ts newNoteVersionRecord' },
+  { file: 'src/contracts/note.ts', name: 'CurrentPointerSnapshot', kind: 'record',
+    fields: ['noteId', 'revision'],
+    use: 'state/note-machine.ts newCurrentPointerRecord or moveCurrentPointerRecord' },
 ];
 
 // -------------------------------------------------------------------------- //
@@ -189,6 +200,9 @@ const ALLOWED_DECODERS: readonly { file: string; functions: readonly string[] }[
     'decodeEvidenceSnapshot', 'decodeTaskEvidenceIndexSnapshot', 'verificationRoundEventFromEvent'] },
   { file: 'queries/query-record-codecs.ts', functions: ['decodeQueryJobSnapshot', 'decodeQueryRunSnapshotRecord',
     'decode*Event'] },
+  { file: 'persistence/note-record-codecs.ts', functions: ['decodeNoteHeadSnapshot', 'decodeNoteVersionSnapshot',
+    'decodeCurrentPointerSnapshot', 'noteWrittenEventFromEvent', 'noteDispositionChangedEventFromEvent',
+    'currentPointerMovedEventFromEvent'] },
   { file: 'materials/record-readers.ts', functions: ['validateRunSnapshot', 'validateQueryRunSnapshot'] },
 ];
 

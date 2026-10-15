@@ -930,6 +930,12 @@
       "name": "ActivityBackfillResponse",
       "reason": "wire-format",
       "note": "the frozen §2B L15 activity/backfill route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the new workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/contracts/note.ts",
+      "name": "renderNoteHeader",
+      "reason": "kept-for",
+      "note": "kept for slice 4 of the orchestration design (4A §2 declares it; 4B NoteSimilarV1.header, 4C notes/list NoteIndexRowV1.label and the decision card summary render it). 4A N-16 tests it directly; no 4A production path renders a header"
     }
   ]
 }

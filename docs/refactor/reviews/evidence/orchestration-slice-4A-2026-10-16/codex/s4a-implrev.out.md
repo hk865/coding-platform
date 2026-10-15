@@ -1,0 +1,51 @@
+Static review of the staged tree only; no edits, tests, or model calls. The shared resolver and composition unions look consistent, and lifecycle mutations go through `state/`. The following correctness issues block merge.
+
+**Must-fix**
+
+1. **Accepting a general note can overwrite the understanding pointer.** `dispose` tests only the anchor kind, so accepting a pending goal/stage pitfall can supersede the current understanding and point at the pitfall. Require `head.kind === 'understanding'`. Also return the current pointer when a commit-time pointer CAS fails, not only when the preliminary comparison fails. `src/core/work-graph/notes/note-service.ts:672`
+
+2. **Replacement is incomplete on acceptance and duplicated on direct understanding writes.** `dispose` never supersedes `head.replaces`; conversely, direct writes process explicit replacements and the previous pointer target separately, producing duplicate records/guards when they identify the same note. Build one deduplicated set of affected heads and apply replacements, versions, events and pointer movement atomically on acceptance. `src/core/work-graph/notes/note-service.ts:546`, `src/core/work-graph/notes/note-service.ts:656`
+
+3. **Read failures become definite answers and can authorize writes.** Failed lookups become empty collections; failed pointer reads become “absent”; failed scope/catalog reads produce partial ownership facts. An unreadable previous pointer target can be skipped while advancing the pointer. `forbidden` file reads even count as missing, allowing a deleted-file claim. Propagate unavailable/forbidden distinctly through these helpers; abort dependent writes and never return definite counts, absence, or scope authorization from incomplete facts. `src/core/work-graph/notes/note-service.ts:213`, `src/core/work-graph/notes/note-read-model.ts:169`, `src/core/work-graph/notes/scribe-scope.ts:144`, `src/core/work-graph/notes/note-anchors.ts:454`
+
+4. **Lookup helpers silently stop at 200 records.** Historical heads can conceal current same-topic notes; 201 accepted notes can read as exactly 200 and therefore not over quota. `listByAnchor` also cannot expose everything beyond that internal cutoff. Follow lookup cursors to completion, or return an explicit incomplete/unavailable result. `src/core/work-graph/notes/note-service.ts:216`, `src/core/work-graph/notes/note-read-model.ts:62`
+
+5. **Replay is neither isolated nor faithful.** Identity uses only operation and `commandId`; fingerprints omit trusted project/caller identity. Matching commands from different callers/projects can collide. Disposition replay checks the already-changed head version before looking up the receipt, so even immediate replay fails. Write replay loses warnings/topics and changes `overQuota`; failed concurrent-replay recovery can return a newly minted, uncommitted ID. Scope identities appropriately, recover the complete original outcome before mutable-state checks, and fail explicitly when recovery fails. `src/core/work-graph/notes/note-service.ts:298`, `src/core/work-graph/notes/note-service.ts:606`, `src/core/work-graph/notes/note-service.ts:649`
+
+6. **Stored basis versions are wrong or missing.** Agent stage anchors use the current accepted plan; `catalogRevision` is always null. Multiple-goal anchors can reuse the first goal’s stage revision. Extend trusted Run facts to carry binding provenance, resolve each goal separately, and store execution-bound plan/catalog versions for agents and current versions for humans. `RunSnapshot.planRef` already exists; inspecting only `RunRef` misses it. `src/core/work-graph/notes/note-anchors.ts:295`, `src/contracts/dispatch.ts:222`
+
+7. **Project scribes cannot actually write against another goal.** Anchor resolution calls Plan services with the original work-run context, which rejects cross-goal reads. Introduce a narrowly authorized anchor-facts reader after scribe-scope authorization; retain the general Plan service restriction. `src/core/work-graph/notes/note-anchors.ts:299`, `src/core/work-graph/tasks/plan-service.ts:639`
+
+8. **Quota projection does not match the affected population.** An understanding can become quota-pending because five general notes occupy its anchor, although understandings are excluded from that quota. Replacement subtraction also happens before knowing whether this write actually supersedes anything. Apply each quota to its specified population and subtract only targets superseded in this commit; reconcile repair reporting at the exact-full boundary. `src/core/work-graph/notes/note-service.ts:468`, `src/core/work-graph/notes/note-read-model.ts:121`
+
+9. **Authority checks need three corrections.** Reject human repair writes; use Session-based authorship consistently so an author’s later Run can withdraw their note; require the prescribed reason for pending acceptance/rejection. Currently repairs are admitted before the human branch, withdrawal initially compares Run IDs, and null reasons pass through. `src/core/work-graph/state/note-machine.ts:45`, `src/core/work-graph/notes/note-service.ts:633`
+
+10. **P1/P6 scope behavior has gaps.** Project counts are returned even when no project scribe exists, contrary to P1’s zero rule. File ownership excludes the valid root prefix `"."`. Check that the requested managing scope actually has a scribe and recognize root paths while preserving longest-prefix selection. `src/core/work-graph/notes/scribe-scope.ts:75`, `src/core/work-graph/notes/scribe-scope.ts:309`
+
+11. **Fix record/event invariants before downstream consumers attach.** Withdrawal retains a repair’s `stagedRunKey`; clear it outside `staged`. Every event in a multi-event commit shares one `eventId`; mint one per event. Event decoders also promise committed snapshots while accepting `since:null`; make that contract truthful or supply the committed cursor. `src/core/work-graph/state/note-machine.ts:219`, `src/core/work-graph/notes/note-service.ts:543`, `src/core/work-graph/persistence/note-record-codecs.ts:495`
+
+12. **Complete validation before dereferencing inputs.** Missing/mistyped anchors and relation arrays can throw instead of returning `invalid` with the draft. Validate the complete discriminated input shape first, then existence and authorization; enforce the human `goalId:null` anchor restrictions and validate non-null goal references. `src/core/work-graph/notes/note-service.ts:246`, `src/core/work-graph/notes/note-anchors.ts:351`
+
+13. **Preserve fact pointers for 4B checking.** The codec rejects malformed commit SHAs during writing, preventing M-14’s successful write followed by `invalid_commit_format`. Validate pointer shape here and defer semantic resolution to checking. Also populate P8’s `uncheckedFacts` with every supplied fact index instead of `[]`. `src/core/work-graph/persistence/note-record-codecs.ts:236`, `src/core/work-graph/notes/note-read-model.ts:149`
+
+14. **Implement write-side `symbolRequest` resolution.** Requests currently disappear when file anchors are constructed. Implement capture/query pagination, disambiguation, locator/digests and specified warnings now; otherwise 4B has nothing to locate. `src/core/work-graph/notes/note-anchors.ts:402`
+
+15. **Repair the tests that mask these failures.** N-20’s “cross-goal” scribe already belongs to the target goal; its stage test never advances the plan beyond revision 1. W1 injects scribe duties, while the interleave fixture also fabricates Run/duty facts beyond the storage-boundary exception. Use real public setup, retain only the permitted commit gate, and add full replay/acceptance assertions. Assertions otherwise generally use public interfaces and literal expectations; I found no database-read verification or product-function oracle. `tests/work-graph/S4A-note-scope.test.ts:59`, `tests/helpers/S4A-note-fixture.ts:111`, `tests/helpers/S4A-note-interleave-fixture.ts:66`
+
+**Should-fix**
+
+- `existingTopics` should follow the new-topic condition and choose the latest original spelling for each normalized topic, rather than the first encountered spelling. `src/core/work-graph/notes/note-service.ts:309`
+- Require both notes to be current for the inferred same-topic conflict branch; withdrawn/superseded notes currently qualify as its subject. `src/core/work-graph/notes/note-read-model.ts:98`
+- Avoid blanket historical `confirmedByUser:false`; preserve or derive what the historical version actually establishes. `src/core/work-graph/notes/note-read-model.ts:154`
+
+**Answers to 4(a)–(d)**
+
+**(a)** Do not accept all five allowlist additions under the builder’s interpretation. L-reach explicitly forbids them. Implementing symbols consumes `NOTE_SYMBOL_HITS_MAX`; defer unused `MEMORY_PAGE_DEFAULT` to 4B. For the required N-16 renderer and its two dependencies, have the lead record a narrow exception or formally adjust the slice boundary. Artificial production calls or accepting a failing check are inappropriate. `tests/architecture/production-reach-allowlist.json:935`
+
+**(b)** Required in 4A. The explicit §6 allocation outweighs the absence of an N-row; G-01 can later test integration. See must-fix 14.
+
+**(c)** It is buildable through public services. Cancel SA1’s claimed-but-unentered Run through Controls, refresh Session/revision facts, then call Workflow `archiveLine`, supplying dispositions for any task responsibilities. Existing coverage demonstrates public cancellation ending precisely this kind of Run without Runtime Host. Then assert n1 falls back to SA. `tests/composition/R4-control-platform.test.ts:73`
+
+**(d)** UNSPECIFIED **7:** reject lossy replay and the disposition exemption. **8:** `noteLimits` is reasonable; pagination truncation and universal quota application are not. **9:** Goal-index enumeration is reasonable provided it is complete, failure-aware and cannot omit notes through invalid goal IDs. **10:** reject current-plan substitution and the weakened cross-goal test. **11:** index IDs are implementation choices; head envelope revision=version and immutable-version envelope revision=1 are reasonable. However, align the project review-index sentinel with specified `'project'`, or obtain an explicit contract amendment before 4B; fix staged keys and event contracts as above. I found no additional blocking public-name rename.
+
+**not ready**
