@@ -1,11 +1,11 @@
 # 文档入口
 
-更新：2026-10-14。本仓库根就是原 `coding-platform/next`，文档在 `docs/`。先读 [STATUS](refactor/STATUS.md) 和 [HANDOFF 顶部](refactor/HANDOFF.md)的决定 1–69，再按任务读[编排设计目录](refactor/design/orchestration-2026-10/README.md)。可靠性批次、编排第 0、1、3、5 片、接线包 1、接线包 2 和 K 片 A、B 已合入；2A 规格已冻结、正在施工，整个 MVP 没有完成。
+更新：2026-10-14。本仓库根就是原 `coding-platform/next`，文档在 `docs/`。先读 [STATUS](refactor/STATUS.md) 和 [HANDOFF 顶部](refactor/HANDOFF.md)的决定 1–71，再按任务读[编排设计目录](refactor/design/orchestration-2026-10/README.md)。可靠性批次、编排第 0、1、3、5 片、接线包 1、接线包 2 和 K 片 A、B 已合入；2A 规格已冻结、正在施工，整个 MVP 没有完成。
 
 | 要回答的问题 | 当前入口 |
 | --- | --- |
 | 做到哪里、缺什么、下一步是什么 | [STATUS](refactor/STATUS.md) |
-| 用户已定了什么 | [HANDOFF 顶部：决定 1–69](refactor/HANDOFF.md) |
+| 用户已定了什么 | [HANDOFF 顶部：决定 1–71](refactor/HANDOFF.md) |
 | 编排、记忆和生命周期怎样设计 | [设计目录](refactor/design/orchestration-2026-10/README.md)、[DESIGN](refactor/design/orchestration-2026-10/DESIGN.md)、[读法模型](refactor/design/orchestration-2026-10/model/README.md)、[记忆查找](refactor/design/orchestration-2026-10/MEMORY-LOOKUP.md) |
 | 接下来如何施工、怎样分工和测试 | [分片规格与任务书](refactor/design/orchestration-2026-10/slices/README.md)、[DSH-WORKFLOW §6.10](refactor/DSH-WORKFLOW.md#610-大片怎么交给-dsh决定-46)、[根 AGENTS](../AGENTS.md)的 2026-10-13 做法 |
 | 界面以什么为准 | [冻结原型](ui-reference/workbench-2026-10/README.md)、[UI-WORKBENCH §0](UI-WORKBENCH.md#ui-decisions-2026-10)、[E3 待办](refactor/design/orchestration-2026-10/E3-UI-ITEMS.md) |
