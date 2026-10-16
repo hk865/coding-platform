@@ -121,8 +121,6 @@ export function change(
 export type OpenOptions = {
   schemas?: RecordBackendSchemas;
   path?: string;
-  fullTextProbe?: () => boolean;
-  textSearchCandidateMax?: number;
 };
 
 export async function open(
@@ -133,9 +131,6 @@ export async function open(
     return {
       backend: createInMemoryRecordBackend({
         schemas: options.schemas ?? widgetSchemas,
-        ...(options.textSearchCandidateMax === undefined
-          ? {}
-          : { textSearchCandidateMax: options.textSearchCandidateMax }),
       }) as unknown as TextBackend,
     };
   }
@@ -145,10 +140,6 @@ export async function open(
     backend: createSqliteRecordBackend({
       path,
       schemas: options.schemas ?? widgetSchemas,
-      ...(options.fullTextProbe === undefined ? {} : { fullTextProbe: options.fullTextProbe }),
-      ...(options.textSearchCandidateMax === undefined
-        ? {}
-        : { textSearchCandidateMax: options.textSearchCandidateMax }),
     }) as unknown as TextBackend,
     path,
   };
@@ -193,6 +184,8 @@ export type SearchRequest = {
   index: string;
   values: readonly string[];
   terms: readonly string[];
+  /** S1.9: absent means `'all'`; `'any'` matches at least one term. */
+  match?: 'all' | 'any';
   limit: number;
   after?: string;
 };

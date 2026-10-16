@@ -1,0 +1,15 @@
+Speed round 1 merge candidate: lead branch 6f900eaa (LF archive, commit 2395205 in the copy) + s4f-code-3.patch
+(rounds 1-3, 27 files, sha256 d5b11ab69222380a336883df5d84bd20d480de3671cd8d8732ea36ab03cbad8c), copy ~/dsh-work/slices/verify-s4f
+Environment: WSL, bubblewrap (CODING_AGENT_BWRAP_PATH=~/.local/opt/bubblewrap/usr/bin/bwrap), systemd user session;
+vitest run --maxWorkers=6 inside systemd-run --user --scope (MemoryMax 8G); a DSH round (K3 group 2, tests with 2-3 workers)
+ran during all of it. 19:47-20:39.
+Files: 478 total, 475 passed
+Tests: 7741 total, 7732 passed, 2 failed, 7 skipped
+
+Failed (all timeouts, the same kind as at the 4B merge):
+- tests/work-graph/S1-requeue.test.ts > SV35 human archive cancellation with prior=cap=3 is an uncounted interruption (32,046 ms, over the 30 s test limit)
+- tests/work-graph/S2A-notices-overbound.test.ts > QA-10 (二) a 5,001-Session directory ... (1,898,997 ms)
+- tests/work-graph/S2A-queue-derived-cards.test.ts (suite hook)
+
+An earlier full run on the round-2 tree (19:01-19:44) is not counted: it was started without CODING_AGENT_BWRAP_PATH,
+so every sandbox test failed (bwrap ENOENT) and the Workflow tests that need checks waited (58 files).

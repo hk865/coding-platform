@@ -73,7 +73,7 @@ it.each(['memory', 'sqlite'] as const)(
 );
 
 it.each(['memory', 'sqlite'] as const)(
-  'T-01 %s: window candidates whose substring is absent are checked out',
+  'T-01 %s: substring rule candidates whose substring is absent are checked out',
   async (kind) => {
     const backend = await store(kind);
     try {
@@ -435,7 +435,7 @@ it.each(['memory', 'sqlite'] as const)(
 
 // --------------------------------------------------------------------------
 // T-06: closing and reopening; a missing table and a changed registration both
-// rebuild from the head records; an unavailable FTS5 probe answers unsupported.
+// rebuild from the head records.
 // --------------------------------------------------------------------------
 
 it('T-06 sqlite: reopening the same registration returns the same results', async () => {
@@ -486,23 +486,6 @@ it('T-06 sqlite: a write made while the index was unregistered is rebuilt from t
   }
 });
 
-it('T-06 sqlite: a write made while FTS5 was unavailable is rebuilt when it returns', async () => {
-  const first = await open('sqlite');
-  if (first.dir !== undefined) dirs.push(first.dir);
-  await seed(first.backend, [widget('p1', 'n1', { topic: '架构图需要重画' })], 't06g');
-  await first.backend.close();
-  const second = await open('sqlite', { path: first.path!, fullTextProbe: () => false });
-  await seed(second.backend, [widget('p1', 'n2', { topic: '架构说明' })], 't06h');
-  await second.backend.close();
-  const third = await open('sqlite', { path: first.path! });
-  try {
-    expect(refs(await search(third.backend, { index: 's4b-text', values: ['p1'], terms: ['架构'], limit: 20 })))
-      .toEqual([keyOf('p1', 'n1'), keyOf('p1', 'n2')]);
-  } finally {
-    await third.backend.close();
-  }
-});
-
 it('T-06 sqlite: an index that falls behind an open store answers unavailable index_not_ready', async () => {
   const first = await open('sqlite');
   if (first.dir !== undefined) dirs.push(first.dir);
@@ -532,16 +515,6 @@ it('T-06 sqlite: a changed text registration rebuilds the index', async () => {
       .toEqual([keyOf('p1', 'n1')]);
   } finally {
     await second.backend.close();
-  }
-});
-
-it('T-06 sqlite: an unavailable FTS5 probe answers unsupported', async () => {
-  const backend = await storeWith('sqlite', { fullTextProbe: () => false });
-  try {
-    expect(await backend.records.searchText({ index: 's4b-text', values: ['p1'], terms: ['架构'], limit: 20 }))
-      .toMatchObject({ status: 'rejected', code: 'unsupported' });
-  } finally {
-    await backend.close();
   }
 });
 
@@ -690,8 +663,7 @@ it.each(['memory', 'sqlite'] as const)(
 );
 
 // --------------------------------------------------------------------------
-// T-05 cap: >1000 window candidates (the two backends must agree), and an
-// injected small cap that pages to the same set as an uncapped call.
+// T-05: more than 1000 prefix records yield the same page on both backends.
 // --------------------------------------------------------------------------
 
 const capRows = [
@@ -751,50 +723,3 @@ it('T-05 both: more than 1000 prefix records yield the same complete on both bac
   }
 });
 
-const smallCapRows = ['n1', 'n2', 'n3', 'n4', 'n5'].map((id) => widget('p1', id, { topic: 'shared' }));
-
-it.each(['memory', 'sqlite'] as const)(
-  'T-05 %s: an injected small candidate cap reports complete:false',
-  async (kind) => {
-    const backend = await storeWith(kind, { textSearchCandidateMax: 2 });
-    try {
-      await seedBatch(backend, smallCapRows, 't05small1');
-      const page = await search(backend, { index: 's4b-text', values: ['p1'], terms: ['shared'], limit: 20 });
-      expect(page.complete).toBe(false);
-    } finally {
-      await backend.close();
-    }
-  },
-);
-
-it.each(['memory', 'sqlite'] as const)(
-  'T-05 %s: an injected small candidate cap returns a usable next',
-  async (kind) => {
-    const backend = await storeWith(kind, { textSearchCandidateMax: 2 });
-    try {
-      await seedBatch(backend, smallCapRows, 't05small2');
-      const page = await search(backend, { index: 's4b-text', values: ['p1'], terms: ['shared'], limit: 20 });
-      expect(page.next).toBe(keyOf('p1', 'n2'));
-    } finally {
-      await backend.close();
-    }
-  },
-);
-
-it.each(['memory', 'sqlite'] as const)(
-  'T-05 %s: an injected small candidate cap pages to the uncapped set',
-  async (kind) => {
-    const capped = await storeWith(kind, { textSearchCandidateMax: 2 });
-    const uncapped = await storeWith(kind);
-    try {
-      await seedBatch(capped, smallCapRows, 't05small3a');
-      await seedBatch(uncapped, smallCapRows, 't05small3b');
-      const cappedSet = (await pageThrough(capped, 20)).pages.flat();
-      const uncappedSet = (await pageThrough(uncapped, 20)).pages.flat();
-      expect(cappedSet).toEqual(uncappedSet);
-    } finally {
-      await capped.close();
-      await uncapped.close();
-    }
-  },
-);

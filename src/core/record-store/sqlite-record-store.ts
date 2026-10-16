@@ -33,24 +33,16 @@ import { initRecordStoreSchema } from "./migrations.js";
 import { applyEventSchema, applyRecordSchema, bindPreparedRecords, checkPersistedIdempotencyRecord, committedReceiptFromIdempotency, corruptFailure, createRecordSchemaRegistry, decodeRecordBody, decodeRefKey, decodeStoredEventBody, guardIsSatisfied, idempotencyConflictFailure, invalidFailure, isNonEmptyString, messageOf, notFoundFailure, planPreparedCommit, revisionConflictFailure, uniqueConflictFailure, unsupportedFailure, type PlannedCommit, type RecordSchemaRegistry } from "./record-codec.js";
 import { decodeGuardedRevision } from "./guarded-revision.js";
 import { findClaimConflicts, ledgerHorizonMatches, RejectedInsideTransaction, type ClaimConflict } from "./commit-extensions.js";
-import { createRecordLookupRegistry, decodeCountRequest, decodeLookupRequest, decodeOrderedLookupRequest, decodeTextSearchRequest, lookupMatcherOf, orderedRangePlanOf, searchTextFrom, textSearchMatches, type DecodedCountRequest, type DecodedLookupRequest, type DecodedOrderedLookupRequest, type RecordLookupRegistry } from "./lookup-index.js";
-import { TEXT_SEARCH_CANDIDATE_MAX } from "./lookup-ports.js";
+import { createRecordLookupRegistry, decodeCountRequest, decodeLookupRequest, decodeOrderedLookupRequest, decodeTextSearchRequest, lookupMatcherOf, orderedRangePlanOf, type DecodedCountRequest, type DecodedLookupRequest, type DecodedOrderedLookupRequest, type RecordLookupRegistry } from "./lookup-index.js";
 import type { LookupValue, OrderedLookupRequest, RecordCountPort, RecordCountRequest, RecordCountResult, RecordOrderedLookupPage, RecordOrderedLookupPort, RecordLookupPage, RecordLookupPort, RecordLookupRequest, RecordTextSearchPort, TextSearchPage, TextSearchRequest } from "./lookup-ports.js";
-import { createSqliteTextSearch } from "./sqlite-text-search.js";
+import { createSqliteTextScan } from "./sqlite-text-scan.js";
+import { aggregateTypeTerm, literalLimit } from "./sqlite-sql-literals.js";
 import type { DecodeResult, GoalRecordTransactionPort, PersistedIdempotencyRecord, PreparedCommit, RecordBackendSchemas, RecordBatchRead, RecordGuard, StoreCommitReceipt, StoreResult, StoredVersion, UniqueClaimChange, EncodedDomainEvent, EncodedRecord } from "./ports.js";
 
 export type SqliteRecordBackendOptions = {
   path: string;
   schemas: RecordBackendSchemas;
   beforeWrite?: () => void;
-  /**
-   * Slice 4B L10 (lead P5): the FTS5 availability probe, injectable so a test
-   * can force the `unsupported` path. The default is the real temporary-table
-   * probe. It is the only double the spec allows here (spec §7).
-   */
-  fullTextProbe?: () => boolean;
-  /** Slice 4B L10 checked-candidate cap; defaults to the port constant. */
-  textSearchCandidateMax?: number;
 };
 
 export type SqliteRecordBackend = {
@@ -141,6 +133,21 @@ function lookupPredicate(path: string, value: LookupValue): { sql: string; param
 
 const CLOSED_MESSAGE = "SqliteRecordStore: backend is closed";
 
+/**
+ * F7 (review item 12b): the fixed SQL of this store is module-level, prepared
+ * through the backend's statement cache on every call (never held outside it).
+ */
+const READ_IDEMPOTENCY_SQL = "SELECT fingerprint, event_ids_json, aggregate_revisions_json, commit_cursor FROM idempotency WHERE identity_key = ?";
+const INSERT_EVENT_SQL = "INSERT INTO events (event_json) VALUES (?)";
+const UPSERT_SNAPSHOT_SQL = "INSERT INTO snapshots (ref_key, snapshot_json) VALUES (?, ?) ON CONFLICT(ref_key) DO UPDATE SET snapshot_json = excluded.snapshot_json";
+const INSERT_IDEMPOTENCY_SQL = "INSERT INTO idempotency (identity_key, fingerprint, event_ids_json, aggregate_revisions_json, commit_cursor) VALUES (?, ?, ?, ?, ?)";
+const READ_CLAIM_OWNER_SQL = "SELECT owner_key FROM identity_claims WHERE claim_key = ?";
+const DELETE_CLAIM_SQL = "DELETE FROM identity_claims WHERE claim_key = ?";
+const UPSERT_CLAIM_SQL = "INSERT INTO identity_claims (claim_key, owner_key) VALUES (?, ?) ON CONFLICT(claim_key) DO UPDATE SET owner_key = excluded.owner_key";
+const READ_MAX_EVENT_ID_SQL = "SELECT MAX(id) AS max_id FROM events";
+const READ_SNAPSHOT_SQL = "SELECT snapshot_json FROM snapshots WHERE ref_key = ?";
+const READ_EVENT_SQL = "SELECT event_json FROM events WHERE id = ?";
+
 export function createSqliteRecordBackend(options: SqliteRecordBackendOptions): SqliteRecordBackend {
   if (typeof options !== "object" || options === null) {
     throw new Error("SqliteRecordBackend: options must be an object");
@@ -153,14 +160,6 @@ export function createSqliteRecordBackend(options: SqliteRecordBackendOptions): 
   if (beforeWrite !== undefined && typeof beforeWrite !== "function") {
     throw new Error("SqliteRecordBackend: beforeWrite must be a function");
   }
-  const fullTextProbe = options.fullTextProbe;
-  if (fullTextProbe !== undefined && typeof fullTextProbe !== "function") {
-    throw new Error("SqliteRecordBackend: fullTextProbe must be a function");
-  }
-  const textSearchCandidateMax = options.textSearchCandidateMax ?? TEXT_SEARCH_CANDIDATE_MAX;
-  if (!Number.isSafeInteger(textSearchCandidateMax) || textSearchCandidateMax < 1) {
-    throw new Error("SqliteRecordBackend: textSearchCandidateMax must be a positive safe integer");
-  }
 
   // 1. Registration is verified BEFORE the database is touched: a bad registry
   //    must not create/open a file or run any DDL.
@@ -171,14 +170,40 @@ export function createSqliteRecordBackend(options: SqliteRecordBackendOptions): 
   //    compatibility or lookup index creation) closes it and rethrows the
   //    ORIGINAL error synchronously.
   const db = new DatabaseSync(path);
-  let textSearch!: ReturnType<typeof createSqliteTextSearch>;
+  /**
+   * S3.1: one statement cache per backend, keyed by the exact SQL text, LRU
+   * with at most 1,024 entries. It is used only through `get`/`all`/`run`,
+   * never `.iterate()` and never for per-statement setters.
+   */
+  const statements = new Map<string, ReturnType<DatabaseSync["prepare"]>>();
+  const getStatement = (sql: string): ReturnType<DatabaseSync["prepare"]> => {
+    const cached = statements.get(sql);
+    if (cached !== undefined) {
+      // Re-insert so the Map's insertion order stays the LRU order.
+      statements.delete(sql);
+      statements.set(sql, cached);
+      return cached;
+    }
+    const prepared = db.prepare(sql);
+    statements.set(sql, prepared);
+    if (statements.size > 1024) {
+      const oldest = statements.keys().next().value;
+      if (oldest !== undefined) statements.delete(oldest);
+    }
+    return prepared;
+  };
+  let textScan!: ReturnType<typeof createSqliteTextScan>;
   try {
     db.exec("PRAGMA busy_timeout = 5000");
     initRecordStoreSchema(db);
     createLookupIndexes(db, lookups);
-    // Slice 4B L10 (P5): the FTS5 candidate tables, created or rebuilt here and
-    // kept current inside the one snapshot write transaction below.
-    textSearch = createSqliteTextSearch(db, lookups, fullTextProbe);
+    // Slice 4 speed round 1 (S1.2/S1.5): the compact per-index text tables,
+    // created or rebuilt here and kept current inside the one snapshot write
+    // transaction below.
+    textScan = createSqliteTextScan(db, lookups, getStatement);
+    // S3.1: any DDL just run by the open (index creation, rebuild, legacy
+    // drop) may have invalidated schema-cached statements; start clean.
+    statements.clear();
   } catch (error) {
     try {
       db.close();
@@ -199,10 +224,7 @@ export function createSqliteRecordBackend(options: SqliteRecordBackendOptions): 
 
   /** Read + validate the stored idempotency row; `undefined` = identity unused. */
   const readIdempotency = (identityKey: string): DecodeResult<PersistedIdempotencyRecord | undefined> => {
-    const row = db
-      .prepare(
-        "SELECT fingerprint, event_ids_json, aggregate_revisions_json, commit_cursor FROM idempotency WHERE identity_key = ?",
-      )
+    const row = getStatement(READ_IDEMPOTENCY_SQL)
       .get(identityKey) as IdempotencyRow | undefined;
     if (row === undefined) return { status: "decoded", value: undefined };
     const parsed = parseIdempotencyRow(row);
@@ -231,7 +253,7 @@ export function createSqliteRecordBackend(options: SqliteRecordBackendOptions): 
     eventIds: string[];
     commitCursor: CommitCursor;
   } => {
-    const statement = db.prepare("INSERT INTO events (event_json) VALUES (?)");
+    const statement = getStatement(INSERT_EVENT_SQL);
     const eventIds: string[] = [];
     let lastSeq = 0;
     for (const event of events) {
@@ -243,15 +265,11 @@ export function createSqliteRecordBackend(options: SqliteRecordBackendOptions): 
   };
 
   const upsertSnapshot = (refKey: string, json: string): void => {
-    db.prepare(
-      "INSERT INTO snapshots (ref_key, snapshot_json) VALUES (?, ?) ON CONFLICT(ref_key) DO UPDATE SET snapshot_json = excluded.snapshot_json",
-    ).run(refKey, json);
+    getStatement(UPSERT_SNAPSHOT_SQL).run(refKey, json);
   };
 
   const persistIdempotency = (identityKey: string, value: PersistedIdempotencyRecord): void => {
-    db.prepare(
-      "INSERT INTO idempotency (identity_key, fingerprint, event_ids_json, aggregate_revisions_json, commit_cursor) VALUES (?, ?, ?, ?, ?)",
-    ).run(
+    getStatement(INSERT_IDEMPOTENCY_SQL).run(
       identityKey,
       String(value.fingerprint),
       JSON.stringify(value.eventIds),
@@ -262,8 +280,7 @@ export function createSqliteRecordBackend(options: SqliteRecordBackendOptions): 
 
   /** Owner observed in the current transaction on the shared identity_claims table. */
   const readClaimOwner = (claimKey: string): string | null => {
-    const row = db
-      .prepare("SELECT owner_key FROM identity_claims WHERE claim_key = ?")
+    const row = getStatement(READ_CLAIM_OWNER_SQL)
       .get(claimKey) as { owner_key: unknown } | undefined;
     if (row === undefined) return null;
     if (!isNonEmptyString(row.owner_key)) {
@@ -275,12 +292,10 @@ export function createSqliteRecordBackend(options: SqliteRecordBackendOptions): 
   /** Apply one already-CAS-verified claim; null removes the slot row. */
   const applyClaim = (change: UniqueClaimChange): void => {
     if (change.nextOwner === null) {
-      db.prepare("DELETE FROM identity_claims WHERE claim_key = ?").run(change.claimKey);
+      getStatement(DELETE_CLAIM_SQL).run(change.claimKey);
       return;
     }
-    db.prepare(
-      "INSERT INTO identity_claims (claim_key, owner_key) VALUES (?, ?) ON CONFLICT(claim_key) DO UPDATE SET owner_key = excluded.owner_key",
-    ).run(change.claimKey, change.nextOwner);
+    getStatement(UPSERT_CLAIM_SQL).run(change.claimKey, change.nextOwner);
   };
 
   // -------------------------------------------------------------------------
@@ -330,7 +345,7 @@ export function createSqliteRecordBackend(options: SqliteRecordBackendOptions): 
   // -------------------------------------------------------------------------
 
   const readThrough = (): CommitCursor | null => {
-    const row = db.prepare("SELECT MAX(id) AS max_id FROM events").get() as { max_id: number | bigint | null } | undefined;
+    const row = getStatement(READ_MAX_EVENT_ID_SQL).get() as { max_id: number | bigint | null } | undefined;
     const max = row?.max_id;
     if (max === null || max === undefined) return null;
     return makeCommitCursor(Number(max));
@@ -344,7 +359,7 @@ export function createSqliteRecordBackend(options: SqliteRecordBackendOptions): 
    * never a revision conflict. `null` means the row genuinely does not exist.
    */
   const currentRevisionOf = (refKey: string): DecodeResult<number | null> => {
-    const row = db.prepare("SELECT snapshot_json FROM snapshots WHERE ref_key = ?").get(refKey) as SnapshotRow | undefined;
+    const row = getStatement(READ_SNAPSHOT_SQL).get(refKey) as SnapshotRow | undefined;
     if (row === undefined) return decodeGuardedRevision(registry, refKey, null);
     if (typeof row.snapshot_json !== "string") {
       return { status: "invalid", reason: `snapshot ${refKey} is not stored as text` };
@@ -384,7 +399,7 @@ export function createSqliteRecordBackend(options: SqliteRecordBackendOptions): 
         // missing row.
         return unsupportedFailure(`no record schema registered for aggregateType ${decodedKey.value.aggregateType}`);
       }
-      const row = db.prepare("SELECT snapshot_json FROM snapshots WHERE ref_key = ?").get(refKey) as
+      const row = getStatement(READ_SNAPSHOT_SQL).get(refKey) as
         | SnapshotRow
         | undefined;
       if (row === undefined) {
@@ -480,18 +495,19 @@ export function createSqliteRecordBackend(options: SqliteRecordBackendOptions): 
     }
     const versions: StoredVersion[] = [];
     const aggregateRevisions: VersionedRef[] = [];
+    const lastEventId = seqOfCommitCursor(written.commitCursor);
     for (const record of boundRecords.value) {
       // Persist the decoded JSON value, not the raw artifact: the expression
       // index is computed from this text, so it must encode the same value the
       // JS candidate extraction uses (duplicate keys last-wins, JS numbers).
       upsertSnapshot(record.record.refKey, JSON.stringify(record.parsed));
-      textSearch.indexRecord(record.record.refKey, record.aggregateType, record.parsed);
+      textScan.indexRecord(record.record.refKey, record.aggregateType, record.parsed, lastEventId);
       versions.push({ refKey: record.record.refKey, revision: record.record.revision });
       aggregateRevisions.push({ ref: record.ref, revision: record.record.revision });
     }
-    textSearch.advanceThrough(
+    textScan.advanceThrough(
       previousMax === null ? null : seqOfCommitCursor(previousMax),
-      seqOfCommitCursor(written.commitCursor),
+      lastEventId,
     );
     for (const claim of planned.claims) applyClaim(claim);
     persistIdempotency(planned.identityKey, {
@@ -560,7 +576,7 @@ export function createSqliteRecordBackend(options: SqliteRecordBackendOptions): 
     } catch (error) {
       return invalidFailure(`not a ledger cursor: ${messageOf(error)}`);
     }
-    const row = db.prepare("SELECT event_json FROM events WHERE id = ?").get(seq) as EventRow | undefined;
+    const row = getStatement(READ_EVENT_SQL).get(seq) as EventRow | undefined;
     if (row === undefined) return notFoundFailure(`no event at cursor ${String(cursor)}`);
     if (typeof row.event_json !== "string") return corruptFailure(`event ${String(cursor)} is not stored as text`);
     const decoded = decodeStoredEventBody(row.event_json);
@@ -579,8 +595,9 @@ export function createSqliteRecordBackend(options: SqliteRecordBackendOptions): 
   /** Registered candidate lookup: expression-index keyset then exact readMany. */
   const lookupInside = (request: DecodedLookupRequest): StoreResult<RecordLookupPage> => {
     const index = request.index;
-    const conditions: string[] = [`json_extract(ref_key, '$.aggregateType') = ?`];
-    const params: (string | number)[] = [index.aggregateType];
+    // S3.3: the aggregateType is a validated literal, never a bound parameter.
+    const conditions: string[] = [aggregateTypeTerm(index.aggregateType)];
+    const params: (string | number)[] = [];
     for (let position = 0; position < index.paths.length; position += 1) {
       const predicate = lookupPredicate(index.paths[position]!, request.values[position]!);
       conditions.push(predicate.sql);
@@ -590,11 +607,9 @@ export function createSqliteRecordBackend(options: SqliteRecordBackendOptions): 
       conditions.push("ref_key COLLATE BINARY > ?");
       params.push(request.after);
     }
-    params.push(request.limit + 1);
     let rows: { ref_key: string }[];
     try {
-      rows = db
-        .prepare(`SELECT ref_key FROM snapshots WHERE ${conditions.join(" AND ")} ORDER BY ref_key COLLATE BINARY ASC LIMIT ?`)
+      rows = getStatement(`SELECT ref_key FROM snapshots WHERE ${conditions.join(" AND ")} ORDER BY ref_key COLLATE BINARY ASC LIMIT ${literalLimit(request.limit)}`)
         .all(...params) as unknown as { ref_key: string }[];
     } catch (error) {
       return corruptFailure(`lookup index ${index.name} could not be read: ${messageOf(error)}`);
@@ -636,8 +651,9 @@ export function createSqliteRecordBackend(options: SqliteRecordBackendOptions): 
     const orderBy = index.orderBy!;
     const orderPath = lookupJsonPath(orderBy.path);
     const orderExpr = `json_extract(snapshot_json, ${orderPath})`;
-    const conditions: string[] = [`json_extract(ref_key, '$.aggregateType') = ?`];
-    const params: (string | number)[] = [index.aggregateType];
+    // S3.3: literal aggregateType; S3.2: literal LIMIT.
+    const conditions: string[] = [aggregateTypeTerm(index.aggregateType)];
+    const params: (string | number)[] = [];
     for (let position = 0; position < index.paths.length; position += 1) {
       const jsonPath = lookupJsonPath(index.paths[position]!);
       conditions.push(`json_type(snapshot_json, ${jsonPath}) = 'text'`);
@@ -690,11 +706,9 @@ export function createSqliteRecordBackend(options: SqliteRecordBackendOptions): 
       params.push(request.after.order, request.after.refKey);
     }
     const direction = request.direction === 'asc' ? 'ASC' : 'DESC';
-    params.push(request.limit + 1);
     let rows: { ref_key: string; order_value: string | number }[];
     try {
-      rows = db
-        .prepare(`SELECT ref_key, ${orderExpr} AS order_value FROM snapshots WHERE ${conditions.join(' AND ')} ORDER BY ${orderExpr} ${direction}, ref_key COLLATE BINARY ${direction} LIMIT ?`)
+      rows = getStatement(`SELECT ref_key, ${orderExpr} AS order_value FROM snapshots WHERE ${conditions.join(' AND ')} ORDER BY ${orderExpr} ${direction}, ref_key COLLATE BINARY ${direction} LIMIT ${literalLimit(request.limit)}`)
         .all(...params) as unknown as { ref_key: string; order_value: string | number }[];
     } catch (error) {
       return corruptFailure(`lookup index ${index.name} could not be read: ${messageOf(error)}`);
@@ -732,8 +746,9 @@ export function createSqliteRecordBackend(options: SqliteRecordBackendOptions): 
    */
   const countInside = (request: DecodedCountRequest): StoreResult<RecordCountResult> => {
     const index = request.index;
-    const conditions: string[] = [`json_extract(ref_key, '$.aggregateType') = ?`];
-    const params: (string | number)[] = [index.aggregateType];
+    // S3.3: literal aggregateType on both count forms.
+    const conditions: string[] = [aggregateTypeTerm(index.aggregateType)];
+    const params: (string | number)[] = [];
     if (index.orderBy !== undefined) {
       for (let position = 0; position < request.values.length; position += 1) {
         const jsonPath = lookupJsonPath(index.paths[position]!);
@@ -764,8 +779,7 @@ export function createSqliteRecordBackend(options: SqliteRecordBackendOptions): 
     let count: number;
     try {
       if (request.distinctPath === null) {
-        const row = db
-          .prepare(`SELECT COUNT(*) AS total FROM snapshots WHERE ${conditions.join(' AND ')}`)
+        const row = getStatement(`SELECT COUNT(*) AS total FROM snapshots WHERE ${conditions.join(' AND ')}`)
           .get(...params) as { total: number | bigint } | undefined;
         count = Number(row?.total ?? 0);
       } else {
@@ -775,8 +789,7 @@ export function createSqliteRecordBackend(options: SqliteRecordBackendOptions): 
           ...conditions,
           `json_type(snapshot_json, ${distinctPath}) IN ('text', 'integer', 'real', 'true', 'false')`,
         ];
-        const row = db
-          .prepare(`SELECT COUNT(*) AS total FROM (SELECT DISTINCT ${typeClass} AS value_type, json_extract(snapshot_json, ${distinctPath}) AS value FROM snapshots WHERE ${distinctConditions.join(' AND ')})`)
+        const row = getStatement(`SELECT COUNT(*) AS total FROM (SELECT DISTINCT ${typeClass} AS value_type, json_extract(snapshot_json, ${distinctPath}) AS value FROM snapshots WHERE ${distinctConditions.join(' AND ')})`)
           .get(...params) as { total: number | bigint } | undefined;
         count = Number(row?.total ?? 0);
       }
@@ -795,62 +808,37 @@ export function createSqliteRecordBackend(options: SqliteRecordBackendOptions): 
   };
 
   /**
-   * Slice 4B L10 full-text read: the FTS5 window query is only a candidate
-   * superset; every candidate is rechecked against the substring rule.
+   * Slice 4 speed round 1 (S1.6/S1.8): the compact text table is the substring
+   * source. Consistency is checked and the cache caught up inside this read
+   * transaction; the matched records are then read once with `readManyInside`.
+   * SQL errors are `corrupt`, exactly like `lookupInside`.
    */
   const searchText = async (request: TextSearchRequest): Promise<StoreResult<TextSearchPage>> => {
     assertOpen();
-    if (!textSearch.available) {
-      return unsupportedFailure("SQLite FTS5 is not available for full-text search");
-    }
     const decoded = decodeTextSearchRequest(lookups, request);
     if (decoded.status === "unsupported") return unsupportedFailure(decoded.reason);
     if (decoded.status === "invalid") return invalidFailure(decoded.reason);
     return withReadTransaction(() => {
-      const definition = decoded.value.index;
-      // R8: the candidate table must be maintained through the ledger's current
-      // maximum. A gap (an unregistered open, an unavailable probe, another
-      // writer) is `unavailable` / `index_not_ready`, never a silently partial
-      // answer.
-      if (!textSearch.isCurrent(definition.name)) {
+      let page;
+      try {
+        page = textScan.searchText(decoded.value);
+      } catch (error) {
+        return corruptFailure(`text search failed: ${messageOf(error)}`);
+      }
+      // S1.6: a missing table, a different code or a `through` behind the
+      // ledger's maximum is `unavailable` / `index_not_ready`, never a silently
+      // partial answer.
+      if (page.status === "not_ready") {
         return { status: "rejected", code: "unavailable", reason: "index_not_ready" };
       }
-      const textPaths = definition.text!.paths;
-      const page = textSearch.candidates(
-        definition,
-        decoded.value.values,
-        decoded.value.windows,
-        decoded.value.after,
-        textSearchCandidateMax,
-      );
-      const matched: string[] = [];
-      let position = 0;
-      for (; position < page.refKeys.length; position += 1) {
-        if (matched.length >= decoded.value.limit) break;
-        const refKey = page.refKeys[position]!;
-        const row = db.prepare("SELECT snapshot_json FROM snapshots WHERE ref_key = ?").get(refKey) as
-          | SnapshotRow
-          | undefined;
-        if (row === undefined) return corruptFailure(`text search candidate ${refKey} has no snapshot`);
-        if (typeof row.snapshot_json !== "string") return corruptFailure(`snapshot ${refKey} is not stored as text`);
-        let body: Record<string, unknown>;
-        try {
-          body = JSON.parse(row.snapshot_json) as Record<string, unknown>;
-        } catch (error) {
-          return corruptFailure(`snapshot ${refKey} is damaged: ${messageOf(error)}`);
-        }
-        if (textSearchMatches(searchTextFrom(body, textPaths), decoded.value.terms)) matched.push(refKey);
-      }
-      const exhausted = !page.hasMore && position >= page.refKeys.length;
-      const next = exhausted ? null : (page.refKeys[position - 1] ?? null);
-      const read = readManyInside(matched);
+      const read = readManyInside(page.refKeys);
       if (read.status !== "ready") return corruptFailure(read.reason);
       if (read.value.missing.length > 0) {
         return corruptFailure(`text search candidate ${read.value.missing[0]} has no snapshot`);
       }
       return {
         status: "ready",
-        value: { records: read.value.records, next, complete: exhausted, readThrough: read.value.readThrough },
+        value: { records: read.value.records, next: page.next, complete: page.complete, readThrough: read.value.readThrough },
       };
     });
   };
@@ -878,6 +866,9 @@ export function createSqliteRecordBackend(options: SqliteRecordBackendOptions): 
   const close = async (): Promise<void> => {
     if (closed) return;
     closed = true;
+    // S3.1: closed, then the cache, then the database.
+    statements.clear();
+    textScan.close();
     try {
       db.close();
     } catch {

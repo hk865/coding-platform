@@ -19,11 +19,12 @@ import type { NoteAnchorV1, NoteDraftAnchorV1, NoteHeadSnapshot, NoteState, Note
 import { NOTE_GENERAL_KINDS } from '../../../contracts/note.js';
 import type { GoalRecordTransactionPort, EncodedRecord } from '../../record-store/ports.js';
 import type { RecordLookupPort, RecordOrderedLookupPort, RecordTextSearchPort } from '../../record-store/lookup-ports.js';
-import { normalizeSearchText } from '../../record-store/lookup-index.js';
+import { decodeTextSearchAfter, normalizeSearchText, searchTextFrom } from '../../record-store/lookup-index.js';
+import { compareRefKeysFast, decodeTextTerms, textMatches } from '../../record-store/text-scan.js';
 import type { PlanTaskPort } from '../model/plan-contracts.js';
 import type {
   MemoryConflictsRequest, MemoryFindRequest, MemoryHistoryRequest, MemoryHistoryResultV1, MemoryLookupRequest,
-  MemoryLookupResultV1, MemoryNeighborsRequest, MemoryReadBasis, MemoryResultV1, MemoryStaleRequest, NoteCheckPort,
+  MemoryLookupResultV1, MemoryNeighborsRequest, MemoryReadBasis, MemoryResultV1, MemoryStaleRequest, NoteHeadCheckPort,
   NoteHistoryItemV1, NoteItemV1, NoteMemoryReadPort, NotePageV1, NoteReadPort, NoteFileObservationV1,
   NoteAnchorNotFoundV1, NoteAnchorCandidateV1,
   UnderstandingStatusV1,
@@ -31,12 +32,12 @@ import type {
 import { MEMORY_PAGE_MAX, MEMORY_PAGE_DEFAULT, MEMORY_RESULT_MAX_BYTES, MEMORY_TOPICS_MAX, NOTE_ANCHOR_QUOTA,
   NOTE_BODY_PAGE_BYTES, NOTE_GOAL_QUOTA, NOTE_RANK_WEIGHT_BODY,
   NOTE_RANK_WEIGHT_CONCLUSION, NOTE_RANK_WEIGHT_TOPIC, NOTE_SIMILAR_MAX,
-  NOTE_SIMILAR_MIN, TEXT_SEARCH_CANDIDATE_MAX, TEXT_SEARCH_MAX_TERMS, NOTE_TEXT_TERM_MAX,
-  NOTE_TEXT_TERM_MIN } from '../model/note-contracts.js';
+  NOTE_SIMILAR_MIN, TEXT_SEARCH_CANDIDATE_MAX, TEXT_SEARCH_MAX_TERMS } from '../model/note-contracts.js';
 import type { ArchitectureCatalogPort } from '../architecture/catalog-contracts.js';
 import type { NoteAnchorWorkspace } from './note-anchors.js';
 import {
   S4_NOTE_BY_ANCHOR_LOOKUPS, S4_NOTE_BY_REVIEW_STATUS_LOOKUP, S4B_NOTE_BY_PATH_LOOKUPS, S4_NOTE_TEXT_LOOKUP,
+  NOTE_TEXT_PATHS,
   currentPointerRefKey, decodeCurrentPointerSnapshot, decodeNoteHeadSnapshot, decodeNoteVersionSnapshot,
   noteHeadRefKey, noteVersionRefKey,
 } from '../persistence/note-record-codecs.js';
@@ -49,8 +50,8 @@ export type NoteReadDependencies = {
   plans: Pick<PlanTaskPort, 'queryGoal' | 'queryTaskGraph'>;
   architecture?: Pick<ArchitectureCatalogPort, 'readArchitectureRevision'>;
   workspace?: NoteAnchorWorkspace;
-  /** Slice 4B L22: the injected derived-field implementation (`views` owns it). */
-  check?: NoteCheckPort;
+  /** Slice 4B L22 / S2.5: the injected derived-field implementation. */
+  check?: NoteHeadCheckPort;
   anchorQuota?: number;
   goalQuota?: number;
   /** Slice 4B P14/T-09: bounds the match set the read model ranks (injectable). */
@@ -327,18 +328,27 @@ export function createNoteReadModel(deps: NoteReadDependencies): NoteReadPort & 
   function itemOfHead(head: NoteHeadSnapshot, projectId: string,
     cache: HeadCache): Promise<ReadOutcome<NoteItemV1>> {
     return (async () => {
-      const conflicting = await conflictingOf(projectId, head, cache);
-      if (!conflicting.ok) return conflicting;
-      const overQuota = await overQuotaOf(projectId, head, cache);
-      if (!overQuota.ok) return overQuota;
+      // S2.4: when the read model has a check (always, in production) the
+      // check supplies `conflicting`/`overQuota`; computing them here too would
+      // double every derivation read. The no-check construction keeps them.
+      let conflicting = false;
+      let overQuota = false;
+      if (deps.check === undefined) {
+        const derivedConflicting = await conflictingOf(projectId, head, cache);
+        if (!derivedConflicting.ok) return derivedConflicting;
+        const derivedOverQuota = await overQuotaOf(projectId, head, cache);
+        if (!derivedOverQuota.ok) return derivedOverQuota;
+        conflicting = derivedConflicting.value;
+        overQuota = derivedOverQuota.value;
+      }
       return { ok: true, value: {
         noteId: head.noteId, version: head.version, storedState: head.state, kind: head.kind, topic: head.topic,
         topicKey: head.topicKey, conclusion: head.conclusion, anchor: head.anchor, extraAnchors: head.extraAnchors,
         source: head.source, goalId: head.goalId, replaces: [...head.replaces], contradicts: [...head.contradicts],
         coexistWith: [...head.coexistWith], confirmedByUser: head.confirmedByUser,
         freshness: 'unchecked', changedFiles: [], observedFiles: [], staleReasons: [],
-        sourceUnavailable: false, invalid: false, conflicting: conflicting.value,
-        overQuota: overQuota.value, updateDue: null, currentEligible: false, crossGoal: false,
+        sourceUnavailable: false, invalid: false, conflicting,
+        overQuota, updateDue: null, currentEligible: false, crossGoal: false,
         anchorStatus: 'live', anchorRetiredReasons: [], retiredExtraAnchors: [],
         unresolvedFacts: [], uncheckedFacts: head.facts.map((_, index) => index), hints: [], matchedTerms: [], score: 0,
         ...(head.sections === undefined ? {} : { sections: head.sections }),
@@ -371,10 +381,23 @@ export function createNoteReadModel(deps: NoteReadDependencies): NoteReadPort & 
    * head version can be `currentEligible`).
    */
   async function withCheck<T extends NoteItemV1>(ctx: CoreCallContext, items: T[],
-    headVersions?: ReadonlyMap<string, number>): Promise<ReadOutcome<T[]>> {
+    headVersions?: ReadonlyMap<string, number>, headSnapshots?: ReadonlyMap<string, NoteHeadSnapshot>,
+    anchorSets?: ReadonlyMap<string, NoteHeadSnapshot[]>,
+    versionSnapshots?: ReadonlyMap<number, NoteVersionSnapshot>): Promise<ReadOutcome<T[]>> {
     if (deps.check === undefined || items.length === 0) return { ok: true, value: items };
-    const result = await deps.check.checkNotes(ctx,
-      { items: items.map(item => ({ noteId: item.noteId, version: item.version })) });
+    const result = headSnapshots === undefined
+      ? await deps.check.checkNotes(ctx,
+        { items: items.map(item => ({ noteId: item.noteId, version: item.version })) })
+      : await deps.check.checkHeads(ctx, {
+        // F4 (review item 4): the heads (and non-head version snapshots) already
+        // read in this call go straight to the check; it never reads them again.
+        items: items.map(item => {
+          const snapshot = versionSnapshots?.get(item.version);
+          return { head: headSnapshots.get(item.noteId)!, version: item.version,
+            ...(snapshot === undefined ? {} : { snapshot }) };
+        }),
+        ...(anchorSets === undefined ? {} : { anchorSets }),
+      });
     if (result.status !== 'ready') {
       if (result.status === 'rejected') {
         const mapped = mapStoreFailure(result);
@@ -590,15 +613,17 @@ export function createNoteReadModel(deps: NoteReadDependencies): NoteReadPort & 
   }
 
   async function checkedPage(ctx: CoreCallContext, heads: readonly NoteHeadSnapshot[],
-    currentGoalId: string | null): Promise<ReadOutcome<NoteItemV1[]>> {
+    currentGoalId: string | null, anchorSets?: ReadonlyMap<string, NoteHeadSnapshot[]>): Promise<ReadOutcome<NoteItemV1[]>> {
     const cache = newHeadCache();
     const built: NoteItemV1[] = [];
+    const headSnapshots = new Map<string, NoteHeadSnapshot>();
     for (const head of heads) {
       const item = await itemOfHead(head, ctx.projectId, cache);
       if (!item.ok) return item;
       built.push(item.value);
+      headSnapshots.set(head.noteId, head);
     }
-    const checked = await withCheck(ctx, built);
+    const checked = await withCheck(ctx, built, undefined, headSnapshots, anchorSets);
     if (!checked.ok) return checked;
     return { ok: true, value: checked.value.map(item => ({ ...item,
       crossGoal: currentGoalId !== null && item.goalId !== currentGoalId })) };
@@ -702,22 +727,37 @@ export function createNoteReadModel(deps: NoteReadDependencies): NoteReadPort & 
     return 0;
   }
 
+  /**
+   * S1.10/S2.1/F2 (review item 2): the shared per-term rule is the one
+   * implementation on both the scoped and the port path. Per term, in order:
+   * today's type and well-formed checks, the first `decodeTextTerms` pass (the
+   * read model's own normalization) and then the second pass (the port's second
+   * normalization, S1.10). The first error in term order is the result.
+   *
+   * The two passes are returned separately: `match` is the second-pass (port)
+   * form, so a scoped match equals the port match; `rank` is the first-pass
+   * form, so `rankAll`/`rankMatches` scores and `matchedTerms` stay exactly as
+   * 4B computed them (which used the read model's one normalization). The read
+   * model keeps its own term-count reason (injectable `textSearchMaxTerms`).
+   */
   function normalizeTerms(terms: readonly string[]):
-  { ok: true; value: string[] } | { ok: false; reason: string } {
+  { ok: true; rank: string[]; match: string[] } | { ok: false; reason: string } {
     if (terms.length < 1 || terms.length > textSearchMaxTerms) {
       return { ok: false, reason: `terms must be 1–${String(textSearchMaxTerms)}` };
     }
-    const out: string[] = [];
+    const rank: string[] = [];
+    const match: string[] = [];
     for (const raw of terms) {
-      if (typeof raw !== 'string') return { ok: false, reason: 'each term must be a string' };
-      const normalized = normalizeSearchText(raw);
-      const length = [...normalized].length;
-      if (length < NOTE_TEXT_TERM_MIN || length > NOTE_TEXT_TERM_MAX || /\s/.test(normalized)) {
-        return { ok: false, reason: `each term must be ${String(NOTE_TEXT_TERM_MIN)}–${String(NOTE_TEXT_TERM_MAX)} code points without whitespace` };
-      }
-      out.push(normalized);
+      if (typeof raw !== 'string') return { ok: false, reason: 'text search terms must be strings' };
+      if (!raw.isWellFormed()) return { ok: false, reason: 'a text search term must be well-formed UTF-16' };
+      const first = decodeTextTerms([raw]);
+      if (!first.ok) return { ok: false, reason: first.reason };
+      const second = decodeTextTerms(first.terms);
+      if (!second.ok) return { ok: false, reason: second.reason };
+      rank.push(first.terms[0]!);
+      match.push(second.terms[0]!);
     }
-    return { ok: true, value: out };
+    return { ok: true, rank, match };
   }
 
   function kindMatches(kind: string, filter: NoteItemV1['kind'] | 'general' | undefined): boolean {
@@ -806,10 +846,14 @@ export function createNoteReadModel(deps: NoteReadDependencies): NoteReadPort & 
   type SearchPageOutcome = { ok: true; records: EncodedRecord[]; next: string | null; complete: boolean }
     | { ok: false; code: ReadFailureCode | 'unsupported'; reason: string };
 
-  /** MF7b: an FTS5 `unsupported` page stays `unsupported`, never `unavailable`. */
+  /**
+   * MF7b, amended by decision 66: `unsupported` stays only for an unregistered
+   * or non-text index; "FTS5 unavailable" no longer exists, so it can no longer
+   * surface here.
+   */
   async function searchPage(projectId: string, terms: readonly string[], limit: number,
-    after: string | undefined): Promise<SearchPageOutcome> {
-    const page = await deps.records.searchText({ index: S4_NOTE_TEXT_LOOKUP, values: [projectId], terms,
+    after: string | undefined, match: 'all' | 'any' = 'all'): Promise<SearchPageOutcome> {
+    const page = await deps.records.searchText({ index: S4_NOTE_TEXT_LOOKUP, values: [projectId], terms, match,
       limit, ...(after === undefined ? {} : { after }) });
     if (page.status !== 'ready') {
       if (page.code === 'unsupported') return { ok: false, code: 'unsupported', reason: page.reason };
@@ -846,64 +890,58 @@ export function createNoteReadModel(deps: NoteReadDependencies): NoteReadPort & 
     return { ok: true, value: { items: collected, next: page.complete ? null : page.next } };
   }
 
-  type TermStream = { term: string; buffer: EncodedRecord[]; after: string | undefined; done: boolean };
-
-  async function fillStream(projectId: string, stream: TermStream):
-  Promise<{ ok: false; code: ReadFailureCode | 'unsupported'; reason: string } | null> {
-    while (stream.buffer.length === 0 && !stream.done) {
-      const page = await searchPage(projectId, [stream.term], 100, stream.after);
-      if (!page.ok) return page;
-      stream.buffer.push(...page.records);
-      if (page.complete || page.next === null || page.next === stream.after) stream.done = true;
-      else stream.after = page.next;
-    }
-    return null;
-  }
-
   /**
-   * R7/should-fix: `'any'` opens one port stream per term, merges them by
-   * `compareText` (refKey order), dedupes, applies the non-text filters and stops
-   * at the first `cap` in-scope matches (`cap+1` seen -> `partial`). The result
-   * is identical to sorting the whole filtered set by noteId and taking `cap`.
+   * S2.2 (decision 66): unscoped `'any'` is ONE port stream with `match:'any'`,
+   * limit 100, looping on `next` until it has `cap+1` in-scope matches or the
+   * scan completes (the `next === after` guard stays). This replaces the
+   * per-term streams and their UTF-16 merge. The candidate set before ranking
+   * is now the first `cap` in refKey byte order, as P1 states: for note ids
+   * that are not UUIDs a partial set can differ from 4B's merge, but the
+   * production ids are UUIDs so production results do not change.
    */
   async function anyTermHeads(ctx: CoreCallContext, input: MemoryFindRequest, terms: readonly string[]):
   Promise<{ ok: true; value: { items: NoteHeadSnapshot[]; partial: boolean } }
     | { ok: false; code: ReadFailureCode | 'unsupported'; reason: string }> {
-    const streams: TermStream[] = terms.map(term => ({ term, buffer: [], after: undefined, done: false }));
     const collected: NoteHeadSnapshot[] = [];
     const seen = new Set<string>();
-    let partial = false;
+    let after: string | undefined;
     for (;;) {
-      for (const stream of streams) {
-        if (stream.buffer.length === 0 && !stream.done) {
-          const failure = await fillStream(ctx.projectId, stream);
-          if (failure !== null) return failure;
+      const page = await searchPage(ctx.projectId, terms, 100, after, 'any');
+      if (!page.ok) return page;
+      for (const record of page.records) {
+        const decoded = decodeNoteHeadSnapshot(record);
+        if (decoded.status !== 'decoded') return { ok: false, code: 'unavailable', reason: 'damaged note head' };
+        const head = decoded.value;
+        if (seen.has(head.noteId)) continue;
+        seen.add(head.noteId);
+        if (!headInScope(head, input)) continue;
+        if (collected.length >= textSearchCandidateMax) {
+          return { ok: true, value: { items: collected, partial: true } };
         }
+        collected.push(head);
       }
-      let minKey: string | null = null;
-      for (const stream of streams) {
-        const key = stream.buffer[0]?.refKey;
-        if (key !== undefined && (minKey === null || compareText(key, minKey) < 0)) minKey = key;
-      }
-      if (minKey === null) break;
-      let head: NoteHeadSnapshot | null = null;
-      for (const stream of streams) {
-        while (stream.buffer[0]?.refKey === minKey) {
-          const record = stream.buffer.shift()!;
-          if (head === null) {
-            const decoded = decodeNoteHeadSnapshot(record);
-            if (decoded.status !== 'decoded') return { ok: false, code: 'unavailable', reason: 'damaged note head' };
-            head = decoded.value;
-          }
-        }
-      }
-      if (head === null || seen.has(head.noteId)) continue;
-      seen.add(head.noteId);
-      if (!headInScope(head, input)) continue;
-      if (collected.length >= textSearchCandidateMax) { partial = true; break; }
-      collected.push(head);
+      if (page.complete || page.next === null || page.next === after) break;
+      after = page.next;
     }
-    return { ok: true, value: { items: collected, partial } };
+    return { ok: true, value: { items: collected, partial: false } };
+  }
+
+  /**
+   * S2.1 (decision 66): with terms and an anchor or a path prefix the
+   * candidates are exactly the in-scope heads on that anchor / under that
+   * prefix, matched on the shared comparison text and ordered by the NoteHead
+   * refKey byte order (precomputed once per head). No port call happens.
+   */
+  function scopedMatches(projectId: string, input: MemoryFindRequest, source: readonly NoteHeadSnapshot[],
+    terms: readonly string[], match: 'all' | 'any'): { head: NoteHeadSnapshot; refKey: string }[] {
+    const matched: { head: NoteHeadSnapshot; refKey: string }[] = [];
+    for (const head of source) {
+      if (!headInScope(head, input)) continue;
+      if (!textMatches(searchTextFrom(head, NOTE_TEXT_PATHS), terms, match)) continue;
+      matched.push({ head, refKey: noteHeadRefKey({ aggregateType: 'NoteHead', projectId, noteId: head.noteId }) });
+    }
+    matched.sort((left, right) => compareRefKeysFast(left.refKey, right.refKey));
+    return matched;
   }
 
   // --- body paging (L12) --------------------------------------------------
@@ -1052,8 +1090,14 @@ export function createNoteReadModel(deps: NoteReadDependencies): NoteReadPort & 
           headRead.value);
         if (!confirmed.ok) return rejected(confirmed.code, confirmed.reason);
         // R11: only the note's head version can be a current conclusion.
-        const checked = await withCheck(ctx, [itemOfVersion(version.value, confirmed.value)],
-          new Map([[input.noteId, headRead.value === null ? -1 : headRead.value.version]]));
+        // F4: when the head exists, hand it and the version snapshot over; the
+        // check re-reads neither. Without a head, keep the checkNotes fallback.
+        const item = itemOfVersion(version.value, confirmed.value);
+        const headVersion = headRead.value === null ? -1 : headRead.value.version;
+        const checked = headRead.value === null
+          ? await withCheck(ctx, [item], new Map([[input.noteId, headVersion]]))
+          : await withCheck(ctx, [item], new Map([[input.noteId, headVersion]]),
+            new Map([[input.noteId, headRead.value]]), undefined, new Map([[input.version, version.value]]));
         if (!checked.ok) return rejected(checked.code, checked.reason);
         return { status: 'ready', value: checked.value[0]! };
       }
@@ -1062,7 +1106,8 @@ export function createNoteReadModel(deps: NoteReadDependencies): NoteReadPort & 
       if (head.value === null) return { status: 'not_found' };
       const item = await itemOfHead(head.value, ctx.projectId, newHeadCache());
       if (!item.ok) return rejected(item.code, item.reason);
-      const checked = await withCheck(ctx, [item.value]);
+      // F4: the head just read goes straight into the check.
+      const checked = await withCheck(ctx, [item.value], undefined, new Map([[input.noteId, head.value]]));
       if (!checked.ok) return rejected(checked.code, checked.reason);
       return { status: 'ready', value: checked.value[0]! };
     },
@@ -1107,12 +1152,18 @@ export function createNoteReadModel(deps: NoteReadDependencies): NoteReadPort & 
       const page = all.slice(start, start + input.limit);
       const items: NoteItemV1[] = [];
       const cache = newHeadCache();
+      const headSnapshots = new Map<string, NoteHeadSnapshot>();
       for (const head of page) {
         const item = await itemOfHead(head, ctx.projectId, cache);
         if (!item.ok) return rejected(item.code, item.reason);
         items.push(item.value);
+        headSnapshots.set(head.noteId, head);
       }
-      const checked = await withCheck(ctx, items);
+      // F4: the anchor set and the page's heads already read in this call are
+      // handed to the check (the raw `headsByAnchorKey` value, never a filter).
+      const anchorSets = new Map<string, NoteHeadSnapshot[]>();
+      anchorSets.set(`${ctx.projectId}\u0000${anchorKey}`, headSet.value);
+      const checked = await withCheck(ctx, items, undefined, headSnapshots, anchorSets);
       if (!checked.ok) return rejected(checked.code, checked.reason);
       const next = start + input.limit < all.length
         ? JSON.stringify({ v: 1, anchorKey, limit: input.limit, after: page[page.length - 1]!.noteId })
@@ -1139,6 +1190,9 @@ export function createNoteReadModel(deps: NoteReadDependencies): NoteReadPort & 
       const anchorKey = anchorKeyOf(input.anchor);
       const headSet = await headsByAnchorKey(deps.records, ctx.projectId, anchorKey);
       if (!headSet.ok) return rejected(headSet.code, headSet.reason);
+      // F4: seed the check's anchor cache with the raw set this read just loaded.
+      const anchorSets = new Map<string, NoteHeadSnapshot[]>();
+      anchorSets.set(`${ctx.projectId}\u0000${anchorKey}`, headSet.value);
       const onAnchor = headSet.value.filter(head => anchorKeysOf(head).includes(anchorKey));
       if (onAnchor.length === 0) {
         const exists = await anchorExistsNow(ctx, input.anchor);
@@ -1152,7 +1206,7 @@ export function createNoteReadModel(deps: NoteReadDependencies): NoteReadPort & 
       });
       const slice = sliceByCursor(ordered, cursor.value.after, limit);
       if (!slice.ok) return rejected(slice.code, slice.reason);
-      const pageBuilt = await checkedPage(ctx, slice.page, currentGoalId);
+      const pageBuilt = await checkedPage(ctx, slice.page, currentGoalId, anchorSets);
       if (!pageBuilt.ok) return rejected(pageBuilt.code, pageBuilt.reason);
       // R9: list the anchor's heads by stored state, never filter by
       // `currentEligible` (a stale or retired head is still listed). Cross-goal
@@ -1226,16 +1280,48 @@ export function createNoteReadModel(deps: NoteReadDependencies): NoteReadPort & 
       const pageVersions = versions.slice(start, start + limit);
       const complete = start + limit >= versions.length;
       const base: NoteHistoryItemV1[] = [];
+      // F4: every version this history read is kept so the check never reads it
+      // again (non-head page versions use the snapshot directly).
+      const versionSnapshots = new Map<number, NoteVersionSnapshot>();
+      // S2.8: compute the first confirming version ONCE, lazily, at the first
+      // version that needs it, scanning ascending up to the largest version
+      // listed on this page. `confirmed(v)` is then a comparison, not a fresh
+      // 1..v scan per listed version.
+      let firstConfirming: number | null | undefined;
+      const confirmedFor = async (version: number): Promise<ReadOutcome<boolean>> => {
+        if (version === headVersion) return { ok: true, value: head.value!.confirmedByUser };
+        if (firstConfirming === undefined) {
+          let found: number | null = null;
+          const maxListed = pageVersions[0]!;
+          for (let u = 1; u <= maxListed; u += 1) {
+            const read = await readVersionRecord(deps.records, ctx.projectId, input.noteId, u);
+            if (!read.ok) return read;
+            if (read.value === null) {
+              return { ok: false, code: 'unavailable', reason: 'a note version needed to confirm the note cannot be read' };
+            }
+            versionSnapshots.set(u, read.value);
+            if (read.value.change.by.kind === 'user' && CONFIRMING_CHANGE_KINDS.includes(read.value.change.kind)) {
+              found = u;
+              break;
+            }
+          }
+          firstConfirming = found;
+        }
+        return { ok: true, value: firstConfirming !== null && firstConfirming <= version };
+      };
       for (const version of pageVersions) {
         const read = await readVersionRecord(deps.records, ctx.projectId, input.noteId, version);
         if (!read.ok) return rejected(read.code, read.reason);
         if (read.value === null) return rejected('unavailable', 'a note version is missing');
-        const confirmed = await confirmedByUserOfVersion(deps.records, ctx.projectId, input.noteId, version, head.value);
+        versionSnapshots.set(version, read.value);
+        const confirmed = await confirmedFor(version);
         if (!confirmed.ok) return rejected(confirmed.code, confirmed.reason);
         base.push({ ...itemOfVersion(read.value, confirmed.value),
           change: read.value.change, since: read.value.since });
       }
-      const checked = await withCheck(ctx, base, new Map([[input.noteId, headVersion]]));
+      // F4: hand the head and every version snapshot this read holds to the check.
+      const checked = await withCheck(ctx, base, new Map([[input.noteId, headVersion]]),
+        new Map([[input.noteId, head.value]]), undefined, versionSnapshots);
       if (!checked.ok) return rejected(checked.code, checked.reason);
       const historyGoalId = currentGoalIdOf(ctx);
       let items = checked.value.map(item => ({ ...item,
@@ -1281,6 +1367,8 @@ export function createNoteReadModel(deps: NoteReadDependencies): NoteReadPort & 
         return rejected('revision_conflict', 'the record cursor moved since the first page');
       }
       const seen = new Map<string, NoteHeadSnapshot>();
+      // F4: every anchor read below is also seeded into the check's cache.
+      const anchorSets = new Map<string, NoteHeadSnapshot[]>();
       if (input.noteId !== undefined) {
         const head = await readHeadRecord(deps.records, ctx.projectId, input.noteId);
         if (!head.ok) return rejected(head.code, head.reason);
@@ -1289,12 +1377,14 @@ export function createNoteReadModel(deps: NoteReadDependencies): NoteReadPort & 
         for (const key of anchorKeysOf(head.value)) {
           const heads = await headsByAnchorKey(deps.records, ctx.projectId, key);
           if (!heads.ok) return rejected(heads.code, heads.reason);
+          anchorSets.set(`${ctx.projectId}\u0000${key}`, heads.value);
           for (const candidate of heads.value) seen.set(candidate.noteId, candidate);
         }
       } else {
         const anchorKey = anchorKeyOf(input.anchor!);
         const heads = await headsByAnchorKey(deps.records, ctx.projectId, anchorKey);
         if (!heads.ok) return rejected(heads.code, heads.reason);
+        anchorSets.set(`${ctx.projectId}\u0000${anchorKey}`, heads.value);
         for (const candidate of heads.value) {
           if (anchorKeysOf(candidate).includes(anchorKey)) seen.set(candidate.noteId, candidate);
         }
@@ -1308,7 +1398,7 @@ export function createNoteReadModel(deps: NoteReadDependencies): NoteReadPort & 
       const ordered = [...seen.values()].sort((left, right) => compareText(left.noteId, right.noteId));
       const slice = sliceByCursor(ordered, cursor.value.after, limit);
       if (!slice.ok) return rejected(slice.code, slice.reason);
-      const pageBuilt = await checkedPage(ctx, slice.page, currentGoalIdOf(ctx));
+      const pageBuilt = await checkedPage(ctx, slice.page, currentGoalIdOf(ctx), anchorSets);
       if (!pageBuilt.ok) return rejected(pageBuilt.code, pageBuilt.reason);
       const items = pageBuilt.value.filter(item => item.conflicting);
       const next = slice.complete ? null : encodeMemoryCursor(ctx, 'conflicts', request,
@@ -1348,6 +1438,8 @@ export function createNoteReadModel(deps: NoteReadDependencies): NoteReadPort & 
         anchorsOfSubject = anchorKeysOf(head.value);
       }
       const seen = new Map<string, NoteHeadSnapshot>();
+      // F4: seed every anchor read below into the check's cache.
+      const anchorSets = new Map<string, NoteHeadSnapshot[]>();
       for (const reference of references) {
         if (reference === input.noteId) continue;
         const target = await readHeadRecord(deps.records, ctx.projectId, reference);
@@ -1357,6 +1449,7 @@ export function createNoteReadModel(deps: NoteReadDependencies): NoteReadPort & 
       for (const key of anchorsOfSubject) {
         const heads = await headsByAnchorKey(deps.records, ctx.projectId, key);
         if (!heads.ok) return rejected(heads.code, heads.reason);
+        anchorSets.set(`${ctx.projectId}\u0000${key}`, heads.value);
         for (const other of heads.value) {
           if (other.noteId === input.noteId) continue;
           if (other.replaces.includes(input.noteId) || other.contradicts.includes(input.noteId)) {
@@ -1367,7 +1460,7 @@ export function createNoteReadModel(deps: NoteReadDependencies): NoteReadPort & 
       const ordered = [...seen.values()].sort((left, right) => compareText(left.noteId, right.noteId));
       const slice = sliceByCursor(ordered, cursor.value.after, limit);
       if (!slice.ok) return rejected(slice.code, slice.reason);
-      const pageBuilt = await checkedPage(ctx, slice.page, currentGoalIdOf(ctx));
+      const pageBuilt = await checkedPage(ctx, slice.page, currentGoalIdOf(ctx), anchorSets);
       if (!pageBuilt.ok) return rejected(pageBuilt.code, pageBuilt.reason);
       const next = slice.complete ? null : encodeMemoryCursor(ctx, 'neighbors', request,
         { after: slice.last, recordCursor: current.value });
@@ -1394,12 +1487,16 @@ export function createNoteReadModel(deps: NoteReadDependencies): NoteReadPort & 
         return rejected('revision_conflict', 'the record cursor moved since the first page');
       }
       let candidates: NoteHeadSnapshot[];
+      // F4: only the anchor routes seed the check's cache; the goal route reads
+      // a narrower status set and must not seed the all-states goal map.
+      const anchorSets = new Map<string, NoteHeadSnapshot[]>();
       if (input.goalId !== undefined && input.anchor !== undefined) {
         // R6/MF6b: both fields apply (AND). Candidates come from the anchor
         // indexes, then the goal and the accepted/reviewed state are required.
         const anchorKey = anchorKeyOf(input.anchor);
         const heads = await headsByAnchorKey(deps.records, ctx.projectId, anchorKey);
         if (!heads.ok) return rejected(heads.code, heads.reason);
+        anchorSets.set(`${ctx.projectId}\u0000${anchorKey}`, heads.value);
         candidates = heads.value.filter(head => anchorKeysOf(head).includes(anchorKey)
           && head.goalId === input.goalId && (head.state === 'accepted' || head.state === 'reviewed'));
       } else if (input.goalId !== undefined) {
@@ -1410,6 +1507,7 @@ export function createNoteReadModel(deps: NoteReadDependencies): NoteReadPort & 
         const anchorKey = anchorKeyOf(input.anchor!);
         const heads = await headsByAnchorKey(deps.records, ctx.projectId, anchorKey);
         if (!heads.ok) return rejected(heads.code, heads.reason);
+        anchorSets.set(`${ctx.projectId}\u0000${anchorKey}`, heads.value);
         // R6: anchor-scoped stale covers accepted and reviewed, like the goal route.
         candidates = heads.value.filter(head => anchorKeysOf(head).includes(anchorKey)
           && (head.state === 'accepted' || head.state === 'reviewed'));
@@ -1417,7 +1515,7 @@ export function createNoteReadModel(deps: NoteReadDependencies): NoteReadPort & 
       const ordered = [...candidates].sort((left, right) => compareText(left.noteId, right.noteId));
       const slice = sliceByCursor(ordered, cursor.value.after, limit);
       if (!slice.ok) return rejected(slice.code, slice.reason);
-      const pageBuilt = await checkedPage(ctx, slice.page, currentGoalIdOf(ctx));
+      const pageBuilt = await checkedPage(ctx, slice.page, currentGoalIdOf(ctx), anchorSets);
       if (!pageBuilt.ok) return rejected(pageBuilt.code, pageBuilt.reason);
       const items = pageBuilt.value.filter(item => item.freshness !== 'fresh' || item.sourceUnavailable
         || item.unresolvedFacts.length > 0 || item.anchorStatus === 'retired' || item.invalid);
@@ -1473,10 +1571,14 @@ export function createNoteReadModel(deps: NoteReadDependencies): NoteReadPort & 
       // anchor-index read serves both the existence answer and the anchor-only
       // candidate source.
       let anchorOnAnchor: NoteHeadSnapshot[] | null = null;
+      // S2.3: the exact anchor set this read already loaded, handed to the check
+      // so it never re-reads it (keyed exactly as the check's head cache keys).
+      const anchorSets = new Map<string, NoteHeadSnapshot[]>();
       if (input.anchor !== undefined) {
         const key = anchorKeyOf(input.anchor);
         const heads = await headsByAnchorKey(deps.records, ctx.projectId, key);
         if (!heads.ok) return rejected(heads.code, heads.reason);
+        anchorSets.set(`${ctx.projectId}\u0000${key}`, heads.value);
         anchorOnAnchor = heads.value.filter(head => anchorKeysOf(head).includes(key));
         if (anchorOnAnchor.length === 0) {
           const exists = await anchorExistsNow(ctx, input.anchor);
@@ -1485,35 +1587,102 @@ export function createNoteReadModel(deps: NoteReadDependencies): NoteReadPort & 
         }
       }
 
+      // S2.1: validate every term once, after the anchor existence check, with
+      // the one shared per-term rule (S1.10).
+      let terms: string[] | null = null;
+      // F2: matching uses `terms` (the second-pass port form); ranking and
+      // `matchedTerms` use `rankTerms` (the first-pass 4B form).
+      let rankTerms: string[] = [];
+      if (rawTerms !== null) {
+        const decoded = normalizeTerms(rawTerms);
+        if (!decoded.ok) return rejected('invalid', decoded.reason);
+        terms = decoded.match;
+        rankTerms = decoded.rank;
+      }
+      const scoped = terms !== null && (input.anchor !== undefined || pathPrefix !== null);
+      // The scoped candidate source, reused by both match modes.
+      const scopedSource = async (): Promise<ReadOutcome<NoteHeadSnapshot[]>> => {
+        if (input.anchor !== undefined) return { ok: true, value: anchorOnAnchor! };
+        const heads = await headsOnPathPrefix(ctx.projectId, pathPrefix!);
+        return heads;
+      };
+
       let pageHeads: NoteHeadSnapshot[];
       let next: string | null;
-      if (rawTerms !== null && match === 'all') {
-        const terms = normalizeTerms(rawTerms);
-        if (!terms.ok) return rejected('invalid', terms.reason);
-        const heads = await allTermHeads(ctx, scopeInput, terms.value, limit, cursor.value.after);
-        if (!heads.ok) return rejected(heads.code, heads.reason);
-        pageHeads = heads.value.items;
-        scores = rankAll(pageHeads, terms.value);
-        // The port's `after` is a raw refKey, so a trimmed page must resume from
-        // the kept note's canonical NoteHead refKey.
+      if (terms !== null && match === 'all') {
+        // The `'all'` cursor carries the last matched NoteHead refKey on both the
+        // scoped and the port path, so a byte trim re-encodes a refKey.
         afterOf = kept => noteHeadRefKey({ aggregateType: 'NoteHead', projectId: ctx.projectId,
           noteId: kept[kept.length - 1]!.noteId });
-        next = heads.value.next === null ? null
-          : encodeMemoryCursor(ctx, 'find', request, { after: heads.value.next, recordCursor: current.value });
+        if (scoped) {
+          // S2.1: no port call; filter the anchor/prefix heads, order by refKey
+          // and take the first `limit` after the cursor's refKey.
+          // Accepted change (decision 66): on this path `index_not_ready` and
+          // text-port store failures cannot surface; a damaged head under the
+          // prefix, or a failing `lookupOrdered`, is `unavailable`.
+          // F3 (review item 3): the scoped `'all'` path bypasses the port, so
+          // the port's continuation-key rule is applied here, after the term
+          // validation and before the prefix heads are read. A canonical key
+          // that names no record is still a valid position.
+          if (cursor.value.after !== null) {
+            const decodedAfter = decodeTextSearchAfter(cursor.value.after, 'NoteHead');
+            if (decodedAfter.status === 'invalid') return rejected('invalid', decodedAfter.reason);
+          }
+          const source = await scopedSource();
+          if (!source.ok) return rejected(source.code, source.reason);
+          const matched = scopedMatches(ctx.projectId, scopeInput, source.value, terms, 'all');
+          const after = cursor.value.after;
+          let start = 0;
+          if (after !== null) {
+            start = matched.length;
+            for (let position = 0; position < matched.length; position += 1) {
+              if (compareRefKeysFast(matched[position]!.refKey, after) > 0) { start = position; break; }
+            }
+          }
+          const page = matched.slice(start, start + limit);
+          pageHeads = page.map(entry => entry.head);
+          next = start + limit < matched.length
+            ? encodeMemoryCursor(ctx, 'find', request,
+              { after: page[page.length - 1]!.refKey, recordCursor: current.value })
+            : null;
+          scores = rankAll(pageHeads, rankTerms);
+        } else {
+          const heads = await allTermHeads(ctx, scopeInput, terms, limit, cursor.value.after);
+          if (!heads.ok) return rejected(heads.code, heads.reason);
+          pageHeads = heads.value.items;
+          scores = rankAll(pageHeads, rankTerms);
+          next = heads.value.next === null ? null
+            : encodeMemoryCursor(ctx, 'find', request, { after: heads.value.next, recordCursor: current.value });
+        }
       } else {
         let ordered: NoteHeadSnapshot[];
-        if (rawTerms !== null) {
-          const terms = normalizeTerms(rawTerms);
-          if (!terms.ok) return rejected('invalid', terms.reason);
-          const heads = await anyTermHeads(ctx, scopeInput, terms.value);
-          if (!heads.ok) return rejected(heads.code, heads.reason);
-          const ranked = rankMatches(heads.value.items, terms.value);
-          ranking = heads.value.partial ? 'partial' : 'full';
-          if (heads.value.partial) warnings.push('匹配集合超过候选上限；请按锚点、路径前缀、种类或加词缩小范围');
-          for (const entry of ranked.ranked) {
-            scores.set(entry.head.noteId, { matchedTerms: entry.matchedTerms, score: entry.score });
+        if (terms !== null) {
+          if (scoped) {
+            // S2.1 `'any'`: the first `cap` in refKey byte order, then today's
+            // ranking; `cap+1` in-scope matches is `partial`.
+            const source = await scopedSource();
+            if (!source.ok) return rejected(source.code, source.reason);
+            const matched = scopedMatches(ctx.projectId, scopeInput, source.value, terms, 'any');
+            const partial = matched.length > textSearchCandidateMax;
+            const candidateHeads = (partial ? matched.slice(0, textSearchCandidateMax) : matched).map(entry => entry.head);
+            const ranked = rankMatches(candidateHeads, rankTerms);
+            ranking = partial ? 'partial' : 'full';
+            if (partial) warnings.push('匹配集合超过候选上限；请按锚点、路径前缀、种类或加词缩小范围');
+            for (const entry of ranked.ranked) {
+              scores.set(entry.head.noteId, { matchedTerms: entry.matchedTerms, score: entry.score });
+            }
+            ordered = ranked.ranked.map(entry => entry.head);
+          } else {
+            const heads = await anyTermHeads(ctx, scopeInput, terms);
+            if (!heads.ok) return rejected(heads.code, heads.reason);
+            const ranked = rankMatches(heads.value.items, rankTerms);
+            ranking = heads.value.partial ? 'partial' : 'full';
+            if (heads.value.partial) warnings.push('匹配集合超过候选上限；请按锚点、路径前缀、种类或加词缩小范围');
+            for (const entry of ranked.ranked) {
+              scores.set(entry.head.noteId, { matchedTerms: entry.matchedTerms, score: entry.score });
+            }
+            ordered = ranked.ranked.map(entry => entry.head);
           }
-          ordered = ranked.ranked.map(entry => entry.head);
         } else if (input.anchor !== undefined) {
           ordered = anchorOnAnchor!.filter(head => headInScope(head, scopeInput));
         } else if (pathPrefix !== null) {
@@ -1542,7 +1711,7 @@ export function createNoteReadModel(deps: NoteReadDependencies): NoteReadPort & 
         next = slice.complete ? null : encodeMemoryCursor(ctx, 'find', request,
           { after: slice.last, recordCursor: current.value });
       }
-      const pageBuilt = await checkedPage(ctx, pageHeads, currentGoalIdOf(ctx));
+      const pageBuilt = await checkedPage(ctx, pageHeads, currentGoalIdOf(ctx), anchorSets);
       if (!pageBuilt.ok) return rejected(pageBuilt.code, pageBuilt.reason);
       const items = pageBuilt.value.map(item => {
         const rank = scores.get(item.noteId);

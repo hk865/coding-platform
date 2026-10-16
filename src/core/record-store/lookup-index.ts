@@ -30,6 +30,12 @@ export type RegisteredLookupIndex = {
 /** Order value types that a registered `orderBy.valueType` may name (L1, D8). */
 export type OrderedValueType = 'text' | 'integer';
 
+/**
+ * S3.3: the one aggregateType shape that may be written into SQL as a literal.
+ * It allows no quote, NUL or non-ASCII character.
+ */
+export const AGGREGATE_TYPE_PATTERN = /^[A-Za-z][A-Za-z0-9_]*$/;
+
 export type RecordLookupRegistry = {
   readonly indexes: readonly RegisteredLookupIndex[];
   byName(name: string): RegisteredLookupIndex | undefined;
@@ -87,6 +93,11 @@ export function createRecordLookupRegistry(
     if (!isNonEmptyString(name)) registrationError('lookup index name must be a non-empty string');
     if (byName.has(name)) registrationError(`duplicate lookup index name ${name}`);
     if (!isNonEmptyString(aggregateType)) registrationError(`lookup index ${name} aggregateType must be a non-empty string`);
+    // S3.3: the aggregateType reaches SQL as a validated literal, so a value
+    // that cannot be one is rejected at registration on BOTH backends.
+    if (!AGGREGATE_TYPE_PATTERN.test(aggregateType)) {
+      registrationError(`lookup index ${name} aggregateType ${JSON.stringify(aggregateType)} is not a safe SQL literal`);
+    }
     if (records.recordByAggregateType(aggregateType) === undefined) {
       registrationError(`lookup index ${name} aggregateType ${aggregateType} has no registered record schema`);
     }
@@ -655,21 +666,42 @@ export function searchTextFrom(body: Record<string, unknown>, paths: readonly st
   return normalizeSearchText(parts.join('\n'));
 }
 
-/** The union of every term's window set, used as the SQLite candidate query. */
-function windowsForTerms(terms: readonly string[]): readonly string[] {
-  const windows = new Set<string>();
-  for (const term of terms) {
-    for (const window of bigramWindows(term)) windows.add(window);
-  }
-  return Object.freeze([...windows]);
-}
+/** A decoded term list or the port's `invalid` reason (S1.10). */
+export type TextTermDecode =
+  | { readonly ok: true; readonly terms: readonly string[] }
+  | { readonly ok: false; readonly reason: string };
 
 /**
- * L10 substring rule for one candidate's comparison text: every term must be a
- * substring (the `'all'` rule). This is the one place the backends call it.
+ * S1.10, the one per-term rule for every path: a string of 2..64 code points
+ * after the shared normalization, containing no `\p{White_Space}` and
+ * well-formed UTF-16. Reasons match the port's 4B text verbatim; the
+ * well-formed rule is the one addition this round.
  */
-export function textSearchMatches(comparisonText: string, terms: readonly string[]): boolean {
-  return terms.every((term) => comparisonText.includes(term));
+export function decodeTextTerms(terms: readonly unknown[]): TextTermDecode {
+  if (!Array.isArray(terms)) return { ok: false, reason: 'text search terms must be an array' };
+  if (terms.length < 1 || terms.length > TEXT_SEARCH_MAX_TERMS) {
+    return { ok: false, reason: `text search requires 1 to ${String(TEXT_SEARCH_MAX_TERMS)} terms` };
+  }
+  const decoded: string[] = [];
+  for (const rawTerm of terms) {
+    if (typeof rawTerm !== 'string') return { ok: false, reason: 'text search terms must be strings' };
+    if (!rawTerm.isWellFormed()) {
+      return { ok: false, reason: 'a text search term must be well-formed UTF-16' };
+    }
+    const term = normalizeSearchText(rawTerm);
+    const length = [...term].length;
+    if (length < TEXT_SEARCH_TERM_MIN || length > TEXT_SEARCH_TERM_MAX) {
+      return {
+        ok: false,
+        reason: `a text search term must be ${String(TEXT_SEARCH_TERM_MIN)} to ${String(TEXT_SEARCH_TERM_MAX)} code points`,
+      };
+    }
+    if (WHITE_SPACE.test(term)) {
+      return { ok: false, reason: 'a text search term must not contain whitespace' };
+    }
+    decoded.push(term);
+  }
+  return { ok: true, terms: Object.freeze(decoded) };
 }
 
 // --------------------------------------------------------------------------
@@ -680,7 +712,8 @@ export type DecodedTextSearchRequest = {
   readonly index: RegisteredLookupIndex;
   readonly values: readonly string[];
   readonly terms: readonly string[];
-  readonly windows: readonly string[];
+  /** S1.9: absent means `'all'`; `'any'` matches at least one term. */
+  readonly match: 'all' | 'any';
   readonly after: string | null;
   readonly limit: number;
 };
@@ -689,6 +722,32 @@ export type TextSearchRequestDecode =
   | { readonly status: 'decoded'; readonly value: DecodedTextSearchRequest }
   | { readonly status: 'unsupported'; readonly reason: string }
   | { readonly status: 'invalid'; readonly reason: string };
+
+/**
+ * F3 (review item 3): the one continuation-key rule shared by the port request
+ * and the read model's scoped `'all'` path. An absent key is no position; a
+ * present key must be a full canonical refKey of the index's aggregateType. A
+ * canonical key that names no record is still a valid position.
+ */
+export function decodeTextSearchAfter(rawAfter: unknown, aggregateType: string):
+| { readonly status: 'ok'; readonly value: string | null }
+| { readonly status: 'invalid'; readonly reason: string } {
+  if (rawAfter === undefined) return { status: 'ok', value: null };
+  if (typeof rawAfter !== 'string') {
+    return { status: 'invalid', reason: 'text search after must be a full canonical refKey' };
+  }
+  const decodedKey = decodeRefKey(rawAfter);
+  if (decodedKey.status === 'invalid') {
+    return { status: 'invalid', reason: `text search after is not a canonical refKey: ${decodedKey.reason}` };
+  }
+  if (decodedKey.value.aggregateType !== aggregateType) {
+    return {
+      status: 'invalid',
+      reason: `text search after aggregateType ${decodedKey.value.aggregateType} does not match ${aggregateType}`,
+    };
+  }
+  return { status: 'ok', value: rawAfter };
+}
 
 /**
  * The one full-text request rule for both backends. Shape and bound checks live
@@ -718,30 +777,14 @@ export function decodeTextSearchRequest(registry: RecordLookupRegistry, request:
     }
   }
   const rawTerms = request['terms'];
-  if (!Array.isArray(rawTerms)) return { status: 'invalid', reason: 'text search terms must be an array' };
-  const rawTermList = rawTerms as readonly unknown[];
-  if (rawTermList.length < 1 || rawTermList.length > TEXT_SEARCH_MAX_TERMS) {
-    return {
-      status: 'invalid',
-      reason: `text search requires 1 to ${String(TEXT_SEARCH_MAX_TERMS)} terms`,
-    };
+  const termDecode = decodeTextTerms(rawTerms as readonly unknown[]);
+  if (!termDecode.ok) return { status: 'invalid', reason: termDecode.reason };
+  const terms = [...termDecode.terms];
+  const rawMatch = request['match'];
+  if (rawMatch !== undefined && rawMatch !== 'all' && rawMatch !== 'any') {
+    return { status: 'invalid', reason: "text search match must be 'all' or 'any'" };
   }
-  const terms: string[] = [];
-  for (const rawTerm of rawTermList) {
-    if (typeof rawTerm !== 'string') return { status: 'invalid', reason: 'text search terms must be strings' };
-    const term = normalizeSearchText(rawTerm);
-    const length = [...term].length;
-    if (length < TEXT_SEARCH_TERM_MIN || length > TEXT_SEARCH_TERM_MAX) {
-      return {
-        status: 'invalid',
-        reason: `a text search term must be ${String(TEXT_SEARCH_TERM_MIN)} to ${String(TEXT_SEARCH_TERM_MAX)} code points`,
-      };
-    }
-    if (WHITE_SPACE.test(term)) {
-      return { status: 'invalid', reason: 'a text search term must not contain whitespace' };
-    }
-    terms.push(term);
-  }
+  const match: 'all' | 'any' = rawMatch === 'any' ? 'any' : 'all';
   const limit = request['limit'];
   if (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1 || limit > TEXT_SEARCH_PAGE_MAX) {
     return {
@@ -749,31 +792,16 @@ export function decodeTextSearchRequest(registry: RecordLookupRegistry, request:
       reason: `text search limit must be an integer between 1 and ${String(TEXT_SEARCH_PAGE_MAX)}`,
     };
   }
-  const rawAfter = request['after'];
-  let after: string | null = null;
-  if (rawAfter !== undefined) {
-    if (typeof rawAfter !== 'string') {
-      return { status: 'invalid', reason: 'text search after must be a full canonical refKey' };
-    }
-    const decodedKey = decodeRefKey(rawAfter);
-    if (decodedKey.status === 'invalid') {
-      return { status: 'invalid', reason: `text search after is not a canonical refKey: ${decodedKey.reason}` };
-    }
-    if (decodedKey.value.aggregateType !== index.aggregateType) {
-      return {
-        status: 'invalid',
-        reason: `text search after aggregateType ${decodedKey.value.aggregateType} does not match ${index.aggregateType}`,
-      };
-    }
-    after = rawAfter;
-  }
+  const afterDecode = decodeTextSearchAfter(request['after'], index.aggregateType);
+  if (afterDecode.status === 'invalid') return { status: 'invalid', reason: afterDecode.reason };
+  const after = afterDecode.value;
   return {
     status: 'decoded',
     value: Object.freeze({
       index,
       values: Object.freeze([...values]) as readonly string[],
       terms: Object.freeze(terms),
-      windows: windowsForTerms(terms),
+      match,
       after,
       limit,
     }),

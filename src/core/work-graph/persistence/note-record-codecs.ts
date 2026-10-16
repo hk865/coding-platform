@@ -649,6 +649,12 @@ export function currentPointerMovedEventFromEvent(event: EncodedDomainEvent): De
 // The single registration group (L3)
 // --------------------------------------------------------------------------
 
+/**
+ * S2.4/S2.1: the one NoteHead comparison-text path list, shared by the
+ * full-text registration and the read model's scoped candidates.
+ */
+export const NOTE_TEXT_PATHS = ['topic', 'conclusion', 'body'] as const;
+
 const NOTE_LOOKUP_INDEXES: readonly RecordLookupIndex[] = [
   ...S4_NOTE_BY_ANCHOR_LOOKUPS.map((name, ordinal) => ({
     name, aggregateType: 'NoteHead', paths: ['ref.projectId', `anchorKey${String(ordinal)}`],
@@ -664,7 +670,7 @@ const NOTE_LOOKUP_INDEXES: readonly RecordLookupIndex[] = [
   })),
   // Slice 4B L10: the one full-text registration (`topic`/`conclusion`/`body`).
   { name: S4_NOTE_TEXT_LOOKUP, aggregateType: 'NoteHead', paths: ['ref.projectId'],
-    text: { paths: ['topic', 'conclusion', 'body'] } },
+    text: { paths: NOTE_TEXT_PATHS } },
 ];
 
 export const NOTE_RECORD_SCHEMAS: RecordBackendSchemas = {

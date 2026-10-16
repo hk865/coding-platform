@@ -69,7 +69,7 @@ import { createNoteReadModel } from '../core/work-graph/notes/note-read-model.js
 import { createVersionLists } from '../core/work-graph/notes/note-version-lists.js';
 import { createScribeScope } from '../core/work-graph/notes/scribe-scope.js';
 import { createNoteCheck } from '../core/work-graph/views/note-views.js';
-import type { NoteCheckPort, NoteMemoryReadPort, NoteReadPort, NoteScopeReadPort,
+import type { NoteCheckPort, NoteHeadCheckPort, NoteMemoryReadPort, NoteReadPort, NoteScopeReadPort,
   NoteWritePort } from '../core/work-graph/model/note-contracts.js';
 import type { SourceProvider } from '../core/workspace/ports.js';
 import { decodeRun } from '../core/work-graph/materials/run-snapshot-decoder.js';
@@ -1300,7 +1300,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // Slice 4B L22/P8: `views` owns the one derivation implementation and the
     // composition root injects it into the read model (`notes` never imports
     // `views`). The version lists live in `notes/note-version-lists.ts`.
-    const noteCheck: NoteCheckPort = createNoteCheck({ records: backend.records, plans: planService,
+    const noteCheck: NoteHeadCheckPort = createNoteCheck({ records: backend.records, plans: planService,
       architecture: catalog, workspace: noteWorkspace, artifacts: bodies,
       ...(options.noteLimits === undefined ? {} : { limits: options.noteLimits }) });
     const noteReads: NoteReadPort & NoteMemoryReadPort = createNoteReadModel({ records: backend.records,

@@ -94,21 +94,22 @@ export interface RecordCountPort {
  * read model's own ranking constants live in WorkGraph's `note-contracts.ts`.
  */
 export const TEXT_SEARCH_PAGE_MAX = 100;
-export const TEXT_SEARCH_CANDIDATE_MAX = 1000;
 export const TEXT_SEARCH_MAX_TERMS = 8;
 export const TEXT_SEARCH_TERM_MIN = 2;
 export const TEXT_SEARCH_TERM_MAX = 64;
 
 /**
- * Slice 4B L10. `values` are the registered equality prefix values (the project
- * id); `terms` are 1..8 normalized terms of 2..64 code points without
- * whitespace. The port answers the records whose comparison text contains every
- * term as a substring (the AND rule), in refKey byte order.
+ * Slice 4B L10, amended by the speed round (S1.9, decision 66). `values` are
+ * the registered equality prefix values (the project id); `terms` are 1..8
+ * normalized terms of 2..64 code points without whitespace. `match` absent
+ * means `'all'`: every term is a substring of the comparison text; `'any'`
+ * matches at least one. One scan answers a whole query.
  */
 export type TextSearchRequest = {
   index: string;
   values: readonly string[];
   terms: readonly string[];
+  match?: 'all' | 'any';
   limit: number;
   after?: string;
 };

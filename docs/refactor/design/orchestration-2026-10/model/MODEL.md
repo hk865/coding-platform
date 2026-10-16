@@ -1779,7 +1779,7 @@ type Rule = { id: string; scope: Scope; version: number; actions: GateAction[]; 
 {mode:'look'|'find';needle:string;nodes:{id:string;name:string;path:string;summary:string;noteBody:string}[];historyRequested:boolean;scope:Scope}
 ```
 
-前置、效果与拒绝：图分支保留原 look/find 的形状与分派，但“找”的匹配两边不分大小写、模块路径按最长前缀归属（改第 3 片的行为，决定 59）；第 4 片 look.memory 含 lookup/neighbors/history/conflicts，find.memory 含 find/stale，不增六个公开工具。无模型、确定过滤分页；RecordStore 文本窄端口两后端一致，内存子串扫描、SQLite FTS5 中文预切 2 字片段，回正式注记复核状态/权限/来源，跨页依据变更重读；`match` 默认 `'any'`，按确定打分排序（决定 59）。
+前置、效果与拒绝：图分支保留原 look/find 的形状与分派，但“找”的匹配两边不分大小写、模块路径按最长前缀归属（改第 3 片的行为，决定 59）；第 4 片 look.memory 含 lookup/neighbors/history/conflicts，find.memory 含 find/stale，不增六个公开工具。无模型、确定过滤分页；RecordStore 文本窄端口两后端一致，内存子串扫描、SQLite FTS5 中文预切 2 字片段，回正式注记复核状态/权限/来源，跨页依据变更重读；`match` 默认 `'any'`，按确定打分排序（决定 59）。（决定 66 改，2026-10-16：SQLite 后端不再用 FTS5，改成写入时在同一事务里存规范化比较文字的紧凑表、进程内按注记键顺序扫描，两个后端用同一套扫描，比较规则和结果顺序不变；提速第一轮已合入，见 [MEMORY-LOOKUP](../MEMORY-LOOKUP.md) 的决定 66 一段。）
 
 拒绝码：`not_found, forbidden`。所有未列拒绝均保留输入状态。例子和精确正反断言见 SCENARIOS 的 S14。
 

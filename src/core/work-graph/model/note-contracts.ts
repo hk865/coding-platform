@@ -6,7 +6,8 @@ import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { RoleConfigurationRef } from '../../../contracts/core/identity.js';
 import type { ReadResult } from '../../../contracts/core/results.js';
 import type {
-  NoteAnchorV1, NoteDraftV1, NoteKind, NoteReviewReason, NoteSectionsV1, NoteSourceV1, NoteState, NoteVersionSnapshot,
+  NoteAnchorV1, NoteDraftV1, NoteHeadSnapshot, NoteKind, NoteReviewReason, NoteSectionsV1, NoteSourceV1, NoteState,
+  NoteVersionSnapshot,
 } from '../../../contracts/note.js';
 import type { PlatformDutyV1 } from '../../../contracts/platform-duty.js';
 
@@ -41,8 +42,6 @@ export const MEMORY_TOPICS_MAX = 50;
 // P14: the read model's own full-text bounds (distinct from the RecordStore port's).
 export const TEXT_SEARCH_MAX_TERMS = 8;
 export const TEXT_SEARCH_CANDIDATE_MAX = 1000;
-export const NOTE_TEXT_TERM_MIN = 2;
-export const NOTE_TEXT_TERM_MAX = 64;
 export const NOTE_RANK_WEIGHT_TOPIC = 3;
 export const NOTE_RANK_WEIGHT_CONCLUSION = 2;
 export const NOTE_RANK_WEIGHT_BODY = 1;
@@ -103,6 +102,26 @@ export type NoteHintV1 = 'basis_outside_anchor' | 'file_module_mismatch' | 'dele
 export interface NoteCheckPort {
   checkNotes(ctx: CoreCallContext, input: { items: { noteId: string; version: number }[]; withSimilar?: boolean }):
     Promise<ReadResult<NoteCheckV1[]>>;
+}
+
+/**
+ * S2.5 (decision 66): the internal extension the read model injects. It hands
+ * over heads and versions the read model already read in the current call, so
+ * the check does not re-read them. Supplied heads never come from outside the
+ * process; `platform.notes` exposes only `checkNotes`.
+ */
+export type NoteHeadCheckItemV1 = {
+  head: NoteHeadSnapshot;
+  version: number;
+  snapshot?: NoteVersionSnapshot;
+};
+
+export interface NoteHeadCheckPort extends NoteCheckPort {
+  checkHeads(ctx: CoreCallContext, input: {
+    items: NoteHeadCheckItemV1[];
+    /** Seeded caches, keyed `${projectId}\0${anchorKey}` exactly as read. */
+    anchorSets?: ReadonlyMap<string, NoteHeadSnapshot[]>;
+  }): Promise<ReadResult<NoteCheckV1[]>>;
 }
 
 export type NoteFileOutcome = 'same' | 'changed' | 'deleted' | 'forbidden' | 'capacity' | 'unavailable' | 'unchecked';

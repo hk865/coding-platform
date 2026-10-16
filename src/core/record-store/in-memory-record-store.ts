@@ -31,16 +31,14 @@ import type { VersionedRef } from "../../contracts/ledger.js";
 import { applyEventSchema, applyRecordSchema, bindPreparedRecords, checkPersistedIdempotencyRecord, clonePersistedIdempotencyRecord, committedReceiptFromIdempotency, corruptFailure, createRecordSchemaRegistry, decodeRecordBody, decodeRefKey, decodeStoredEventBody, guardIsSatisfied, idempotencyConflictFailure, invalidFailure, isNonEmptyString, messageOf, notFoundFailure, planPreparedCommit, revisionConflictFailure, uniqueConflictFailure, unsupportedFailure, type PlannedCommit, type RecordSchemaRegistry } from "./record-codec.js";
 import { decodeGuardedRevision } from "./guarded-revision.js";
 import { findClaimConflicts, ledgerHorizonMatches, RejectedInsideTransaction } from "./commit-extensions.js";
-import { bigramWindows, compareOrderedValues, compareRefKeys, createRecordLookupRegistry, decodeCountRequest, decodeLookupRequest, decodeOrderedLookupRequest, decodeTextSearchRequest, distinctLookupValueKeyOf, encodeLookupValues, lookupIndexKeyOf, matchesOrderedRequest, orderedLookupCandidateOf, searchTextFrom, textSearchMatches, type RecordLookupRegistry, type RegisteredLookupIndex } from "./lookup-index.js";
-import { TEXT_SEARCH_CANDIDATE_MAX } from "./lookup-ports.js";
+import { compareOrderedValues, compareRefKeys, createRecordLookupRegistry, decodeCountRequest, decodeLookupRequest, decodeOrderedLookupRequest, decodeTextSearchRequest, distinctLookupValueKeyOf, encodeLookupValues, lookupIndexKeyOf, matchesOrderedRequest, orderedLookupCandidateOf, type RecordLookupRegistry, type RegisteredLookupIndex } from "./lookup-index.js";
 import type { OrderedLookupRequest, OrderedLookupValue, RecordCountPort, RecordCountRequest, RecordCountResult, RecordOrderedLookupPage, RecordOrderedLookupPort, RecordLookupPage, RecordLookupPort, RecordLookupRequest, RecordTextSearchPort, TextSearchPage, TextSearchRequest } from "./lookup-ports.js";
+import { captureTextScanRow, createTextScanIndex, mergePending, putIndexRow, removeTextScanRow, restoreTextScanRow, scanEntries, textScanRowOf, type TextScanIndex, type TextScanUndo } from "./text-scan.js";
 import type { DecodeResult, EncodedDomainEvent, EncodedRecord, GoalRecordTransactionPort, PersistedIdempotencyRecord, PreparedCommit, RecordBackendSchemas, RecordBatchRead, RecordGuard, StoreCommitReceipt, StoreResult, StoredVersion } from "./ports.js";
 
 export type InMemoryRecordBackendOptions = {
   schemas: RecordBackendSchemas;
   beforeWrite?: () => void;
-  /** Slice 4B L10 checked-candidate cap; defaults to the port constant. */
-  textSearchCandidateMax?: number;
 };
 
 export type InMemoryRecordBackend = {
@@ -78,10 +76,6 @@ export function createInMemoryRecordBackend(options: InMemoryRecordBackendOption
   if (beforeWrite !== undefined && typeof beforeWrite !== "function") {
     throw new Error("InMemoryRecordBackend: beforeWrite must be a function");
   }
-  const textSearchCandidateMax = options.textSearchCandidateMax ?? TEXT_SEARCH_CANDIDATE_MAX;
-  if (!Number.isSafeInteger(textSearchCandidateMax) || textSearchCandidateMax < 1) {
-    throw new Error("InMemoryRecordBackend: textSearchCandidateMax must be a positive safe integer");
-  }
   // Registration is verified before any state exists, exactly like the SQLite
   // factory verifies it before opening the database.
   const registry: RecordSchemaRegistry = createRecordSchemaRegistry(options.schemas);
@@ -114,6 +108,19 @@ export function createInMemoryRecordBackend(options: InMemoryRecordBackendOption
   }));
   const lookupIndexByName = new Map<string, MemoryLookupIndex>(
     lookupIndexes.map((index) => [index.definition.name, index]),
+  );
+
+  /**
+   * S1.7: one shared substring-scan index per registered full-text lookup. It
+   * is maintained in the same commit as the lookup buckets and undone in place
+   * on a failed commit, so no query ever rebuilds windows.
+   */
+  type MemoryTextIndex = { readonly definition: RegisteredLookupIndex; readonly index: TextScanIndex };
+  const textIndexes: MemoryTextIndex[] = lookups.indexes
+    .filter((definition) => definition.text !== undefined)
+    .map((definition) => ({ definition, index: createTextScanIndex() }));
+  const textIndexByName = new Map<string, MemoryTextIndex>(
+    textIndexes.map((entry) => [entry.definition.name, entry]),
   );
 
   /** Replace one ref's candidate entry (key === null removes it). */
@@ -305,6 +312,7 @@ export function createInMemoryRecordBackend(options: InMemoryRecordBackendOption
     const previousCursorSeq = state.cursorSeq;
     const previousSnapshots = new Map<string, { present: boolean; value: Record<string, unknown> | undefined }>();
     const previousLookupEntries: { index: MemoryLookupIndex; refKey: string; key: string | undefined }[] = [];
+    const previousTextEntries: { index: TextScanIndex; undo: TextScanUndo }[] = [];
     const previousClaims = new Map<string, string | undefined>();
     const hadIdempotency = state.idempotency.has(planned.identityKey);
     const previousIdempotency = state.idempotency.get(planned.identityKey);
@@ -339,6 +347,13 @@ export function createInMemoryRecordBackend(options: InMemoryRecordBackendOption
           if (index.definition.aggregateType !== record.aggregateType) continue;
           previousLookupEntries.push({ index, refKey, key: index.keyByRef.get(refKey) });
           setLookupEntry(index, refKey, lookupIndexKeyOf(index.definition, record.parsed));
+        }
+        for (const textIndex of textIndexes) {
+          if (textIndex.definition.aggregateType !== record.aggregateType) continue;
+          previousTextEntries.push({ index: textIndex.index, undo: captureTextScanRow(textIndex.index, refKey) });
+          const derived = textScanRowOf(textIndex.definition, record.parsed);
+          if (derived === null) removeTextScanRow(textIndex.index, refKey);
+          else putIndexRow(textIndex.index, refKey, derived.prefixKey, derived.text);
         }
         versions.push({ refKey, revision: record.record.revision });
         aggregateRevisions.push({ ref: record.ref, revision: record.record.revision });
@@ -380,6 +395,10 @@ export function createInMemoryRecordBackend(options: InMemoryRecordBackendOption
       for (let entry = previousLookupEntries.length - 1; entry >= 0; entry -= 1) {
         const undo = previousLookupEntries[entry]!;
         setLookupEntry(undo.index, undo.refKey, undo.key ?? null);
+      }
+      for (let entry = previousTextEntries.length - 1; entry >= 0; entry -= 1) {
+        const undo = previousTextEntries[entry]!;
+        restoreTextScanRow(undo.index, undo.undo);
       }
       throw error;
     }
@@ -581,9 +600,9 @@ export function createInMemoryRecordBackend(options: InMemoryRecordBackendOption
   };
 
   /**
-   * Slice 4B L10 full-text read. The memory backend has no window table: it
-   * takes the registered equality-prefix bucket as candidates (L10's memory
-   * backend rule) and checks the substring rule on each current body.
+   * Slice 4 speed round 1 (S1.7/S1.8): the memory backend keeps the same
+   * per-prefix index the SQLite backend caches, maintained at commit time, and
+   * runs the same substring scan. No window table, no recheck pass.
    */
   const searchText = async (request: TextSearchRequest): Promise<StoreResult<TextSearchPage>> => {
     assertOpen();
@@ -591,47 +610,25 @@ export function createInMemoryRecordBackend(options: InMemoryRecordBackendOption
     if (decoded.status === "unsupported") return unsupportedFailure(decoded.reason);
     if (decoded.status === "invalid") return invalidFailure(decoded.reason);
     const definition = decoded.value.index;
-    const memoryIndex = lookupIndexByName.get(definition.name);
-    if (memoryIndex === undefined) return unsupportedFailure(`no lookup index registered as ${definition.name}`);
-    const refs = memoryIndex.buckets.get(encodeLookupValues(decoded.value.values));
-    const after = decoded.value.after;
-    const textPaths = definition.text!.paths;
-    // The candidate basis is the SAME window superset SQLite's FTS rows yield:
-    // a record is a candidate only when its comparison text contains every
-    // query window. The equality-prefix bucket only narrows the scan.
-    const candidates: string[] = [];
-    if (refs !== undefined) {
-      for (const refKey of refs) {
-        if (after !== null && compareRefKeys(refKey, after) <= 0) continue;
-        const body = state.snapshots.get(refKey);
-        if (body === undefined) return corruptFailure(`text search candidate ${refKey} has no snapshot`);
-        const windows = new Set(bigramWindows(searchTextFrom(body, textPaths)));
-        if (!decoded.value.windows.every((window) => windows.has(window))) continue;
-        candidates.push(refKey);
-      }
-      candidates.sort(compareRefKeys);
-    }
-    const matched: string[] = [];
-    let position = 0;
-    for (; position < candidates.length; position += 1) {
-      if (matched.length >= decoded.value.limit || position >= textSearchCandidateMax) break;
-      const refKey = candidates[position]!;
-      const body = state.snapshots.get(refKey);
-      if (body === undefined) return corruptFailure(`text search candidate ${refKey} has no snapshot`);
-      if (textSearchMatches(searchTextFrom(body, textPaths), decoded.value.terms)) matched.push(refKey);
-    }
-    const exhausted = position >= candidates.length;
-    // `!exhausted` means the loop stopped on `limit`/the cap after examining at
-    // least one candidate (both are >= 1), so the previous index always exists.
-    const next = exhausted ? null : candidates[position - 1]!;
-    const read = readManyKeys(matched);
+    const textIndex = textIndexByName.get(definition.name);
+    if (textIndex === undefined) return unsupportedFailure(`no lookup index registered as ${definition.name}`);
+    const prefixKey = encodeLookupValues(decoded.value.values);
+    const bucket = mergePending(textIndex.index, prefixKey);
+    const page = scanEntries(
+      bucket?.entries ?? [],
+      decoded.value.terms,
+      decoded.value.match,
+      decoded.value.after,
+      decoded.value.limit,
+    );
+    const read = readManyKeys([...page.refKeys]);
     if (read.status !== "ready") return corruptFailure(read.reason);
     if (read.value.missing.length > 0) {
       return corruptFailure(`text search candidate ${read.value.missing[0]} has no snapshot`);
     }
     return {
       status: "ready",
-      value: { records: read.value.records, next, complete: exhausted, readThrough: read.value.readThrough },
+      value: { records: read.value.records, next: page.next, complete: page.complete, readThrough: read.value.readThrough },
     };
   };
 

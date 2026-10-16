@@ -75,7 +75,7 @@ export async function fileDigestOf(path: string): Promise<string> {
 export async function createS4BNoteCheckFixture(kind: S4ANoteFixtureKind = 'memory',
   options: { anchorQuota?: number; goalQuota?: number; check?: NoteCheckLimits;
     textSearchCandidateMax?: number; textSearchMaxTerms?: number; resultMaxBytes?: number;
-    symbolHitsMax?: number; fullTextUnavailable?: boolean } = {}): Promise<S4BNoteCheckFixture> {
+    symbolHitsMax?: number } = {}): Promise<S4BNoteCheckFixture> {
   let faultNeedle: string | null = null;
   let architectureFault = false;
   let workspaceFault = false;
@@ -101,9 +101,7 @@ export async function createS4BNoteCheckFixture(kind: S4ANoteFixtureKind = 'memo
   const memorySpy = vi.spyOn(memoryBackend, 'createInMemoryRecordBackend')
     .mockImplementation(memoryOptions => observe(originalMemory(memoryOptions)));
   const sqliteSpy = vi.spyOn(sqliteBackend, 'createSqliteRecordBackend')
-    .mockImplementation(sqliteOptions => observe(originalSqlite(options.fullTextUnavailable === true
-      ? { ...sqliteOptions, fullTextProbe: () => false }
-      : sqliteOptions)));
+    .mockImplementation(sqliteOptions => observe(originalSqlite(sqliteOptions)));
   const catalogSpy = vi.spyOn(catalogServiceModule, 'createArchitectureCatalogService').mockImplementation(stores => {
     const catalog = originalCatalog(stores);
     const wrapped: ArchitectureCatalogPort = { ...catalog,
