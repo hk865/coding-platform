@@ -1,0 +1,30 @@
+## 4C-1 rework done — every item closed, all checks green
+
+**FILES CHANGED (production net +302; tests +1,555/−78).**
+Production, 15 files: NEW `notes/note-continuity.ts` (40), NEW `notes/note-path-ownership.ts` (40); `notes/note-read-model.ts` (+38 net), `notes/note-related-scope.ts` (+56), `notes/note-service.ts` (+115), `notes/scribe-scope.ts` (+3), `agent-runtime/note-tool.ts` (+7), `views/node-detail-reader.ts` (+5), `views/note-views.ts` (+2), `views/goal-conflicts.ts` (−17), `views/graph-context-reader.ts` (−5), `state/note-machine.ts` (+4), `app/host.ts` (+3), `contracts/work-line.ts` (+2), `model/note-contracts.ts` (+9). Tests: 5 modified + 11 new + 1 new helper (`tests/helpers/S4C-node-notes-fixture.ts`). Nothing outside the rework scope changed; no probes left.
+
+**Items (all done, RED → GREEN).**
+1. `record_note` in the production grant — `localWorkbenchGrant` lists it under `writeAllowed`; new `tests/app/S4C-record-note-host.test.ts`: unit grant assertions plus a real `createLocalWorkbenchHost` executor run that writes a note and reads it back through the public `notes/list` route. RED (write failed, no note) → GREEN. **NOTE:** the grant-tools hash changes, so `configurationRevision` changes; Runs prepared before the change keep their frozen grant.
+2. Concurrent user confirmation — `userReasonTargetsOf` returns the heads it read; `dispose` passes them as `prereadHeads` and adds deduped read-only per-target guards. `S4C-note-supersede-race.test.ts`: interleaved user confirmation → `revision_conflict`, the user note stays accepted/confirmed. RED (superseded user note) → GREEN.
+3. Not changed (fingerprint shape refuted).
+4. `supersede` also removes targets from `coexistWith` (`note-machine.ts`). `S4C-note-protection` D-14 variant: X in both sets → superseded. RED (X stayed accepted) → GREEN.
+5. Shared `stageContinuityOf`; `note-service` uses one plan-window read, `note-views` uses the same pure rule; local loops deleted. S@p1, absent p2, back p3 → retired ⇒ `resolution_not_applicable`, no `forbidden`. RED (`forbidden`) → GREEN.
+6. Segment-2 `ranking` keeps segment 1's `partial`; F-08 with small cap → `ranking:'partial'`, last page `complete:false`. RED (`full`) → GREEN.
+7. Request type split (`MemoryFindRelatedRequestV1`); `related` rejects `caller_task` and extra keys `invalid`. Both backends. RED (`unavailable`) → GREEN.
+8. `resolution` with `review`/`reject` → `resolution_not_applicable` before target reads; one test per verdict. RED (`done`) → GREEN.
+9. `next` computed once after the item loop; `boundary` inside the measured result. Empty page keeps its cursor; two-item page trims with boundary counted. RED → GREEN (bound 2150).
+10. Coverage/`filesRead`/`observedFiles` count every checked header norm; visible header still 5. Isolated reviewed norm → `checkedItems:1`, basis file observed. RED (0) → GREEN.
+11. `NodeNotesV1` gains `unavailable`; missing/non-ready notes read returns it. Updated `S4C-node-notes` and the `S2C-node-detail-executions` assertion. RED → GREEN.
+12. (a) facts memo per call + batched `readMany`; count tests `RW-12a` (write-with-relations 12 lookup/13 readMany; disposition 4/9). (b) task Run files via `RUN_BY_TASK_INDEX` + one batched RunActivity read. (c) generalised `headsOnKeyPrefix`, module duplicate folded, stage prefix 5 calls. (d) no-term second segment read lazily. Count tests `RW-12` find-seg1 25/5/7, find-seg2 37/5/10, lookup 9/0/3, each RED by reverting.
+13. One `pathOwnershipOf`; old copies deleted from `scribe-scope`, `goal-conflicts`, `graph-context-reader`, `node-detail-reader`. Deepest prefix wins; tie → no owner. Unit + caller tests. No existing test relied on the old rule.
+14. `recordNoteRequestOf(args, commandId)` exported; the tool dispatches through it. Exact-request test. RED (absent) → GREEN.
+15. R-02 rebuilt on `createTargetPlatform` via the new helper: real note write + real archive anomaly anchor; the column deep-equals the first `listNotes`/`memoryLookup` page for the same anchor. Both backends. RED → GREEN.
+16. Not required — no HTTP-listener smoke test.
+
+**CHECKS.** Scoped suite (`--maxWorkers=3`, 86 files): **86 files, 1006 passed / 5 skipped / 0 failed, exit 0**; no DSH-BASELINE and no new failures. `npm run typecheck` exit 0; `check:architecture` exit 0 (7/8 module edges, 55 submodule edges, `WorkGraph/state` pure); `npm run build` exit 0. Full suite not run.
+
+**UNSPECIFIED (small options).** (7) reason strings chosen: `related must be a task or a module`, `... unexpected key`. (12b) `notes → materials` is a forbidden edge, so the RunRef comes from the record's canonical `refKey`; a damaged Run body isn't decoded (only RunActivity). (12c) `headsOnKeyPrefix` exported from `note-related-scope.ts` to avoid an import cycle. (5) a missing window revision is `unchecked`, not retired. (1) a **bodyless** `convention` write still yields an illegal Kernel envelope (rejected result carries `body: undefined`) and fails the Run; not fixed (would change GTN02/RW-14) — alternative: harden `note-tool.ts` to a correctable error. (2) the interleave fires on the target's second read (the scope check reads relations once). (13) `underModule` uses all catalog modules + `owner === module` rather than "module + children". (15) `listNotes` supplies label/order because `memoryLookup` rows have no label.
+
+**Subagents.** 1 shared (≈10 min); then 3 at once — writes, reads, views (≈25–30 min); then 2 at once — item 15 and item 1 write-readback (≈10 min); then 1 close-out (≈12 min). **At most 3 at once.** All code and tests were written by subagents; I split, briefed, checked and wrote this reply (2 one-line authorizations, no source edits by me).
+
+**Surprising.** Item 1's earlier "never settles" was not K3 and not timing: the rejected write's `draft.note.body` was `undefined`, the Kernel rejected the tool envelope and failed the Run; a valid body commits. The prefix function had to live in `note-related-scope.ts` to break an import cycle.

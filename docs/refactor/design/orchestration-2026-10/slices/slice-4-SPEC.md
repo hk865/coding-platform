@@ -4,6 +4,8 @@
 
 **后注（注记查找提速第一轮合入，lead 2026-10-16）：** 决定 66 的第一轮已合入。L9 的全文端口不再用 FTS5 和两个码点的窗口：两个后端在内存里按注记键顺序扫，SQLite 写入时存规范化的比较文字，打开时换掉 4B 的表；端口加了 `match`（缺省 `'all'`），去掉了每次调用的候选上限；全文扫描最后一个非空页报 `complete: true`；不再有“FTS5 不可用 → `unsupported`”；不是合法 UTF-16 的词报 `invalid`。读模型带锚点或路径前缀的查找只在那些注记里找。排序和分数不变。§10 里讲 FTS5 和窗口的句子按这条读。见[证据](../../../reviews/evidence/orchestration-note-speed-1-2026-10-16/lead-acceptance.md)。
 
+**后注（4C-1 合入，lead 2026-10-17）：** 4C-1 施工、审查和返工中定下的读法在 §12（Host 授权、模型写错不让 Run 失败、保护规则的守卫和先后、分段和覆盖计数、`NodeNotesV1` 的 `unavailable`、全仓库一个 `pathOwnershipOf`、每次调用一份缓存、查询类调用挪到 6A/7D2、行数），对 4C-2 同样有效；和前面各节冲突时以 §12 为准。
+
 > **2026-10-15 晚：按决定 60、61、62 和 7D 第二稿改了书记范围、提醒身份、按范围计数和 61-5 指引；冻结前 lead 逐行审；又按 7D 勘误 E1–E11 和决定 63 改；又按审查二（19 条）的 lead 裁定改；lead 逐行审过这一稿，补的地方标“审查二 lead 补”；Codex 最后一次快速核对的必改由 lead 改完（标“审查二快速核对第 n 条”）；经你同意又加了一次只看改动的额外核对，它的必改由 lead 改完（标“审查二额外核对 Dn”）。**已冻结（2026-10-15 晚，你确认了测试入口）；2C 合入后 lead 只重核 §0.2、§6 的行号和事实，不改规则。**
 > **2C 合入后的重核（lead，2026-10-15 夜）：** §0.2 各条照旧成立，只是行号移动。4A 施工前的 DSH 通读在 e8b3edae 上逐条核过：F3 的文件在 `src/core/agent-runtime/`，F13 的 `note_review` 在 `src/contracts/goal-decisions.ts`（不在 `decision-contracts.ts:318`），这两处 4C 用时按符号找。lead 在合入 2C 的树上补核了 2C 碰过的：F5 `resolvePath` 在 `lookup-index.ts:445`、`lookupIndexKeyOf` 在 `:476`；F6 `upsertSnapshot` 仍在；F7 `indexGuards`、`indexChanges` 在 `record-store/ports.ts:117`、`:119`；F1 `AggregateRef` 仍没有注记的引用；F13 组合根注入决定来源在 `create-platform.ts:658`。L21 的前提成立：2C 的节点详情里 `notes` 是 `not_available`、原因 `slice_4`（`views/node-detail-reader.ts:1142-1178`）。§6 的文件归属不变：2C 的计数端口已合入，4B 的 RecordStore 改动可以开始排。
 > **状态（2026-10-15 下午）：你已定 §0.1，并对注记格式、查找和校验提了意见（标“用户 2026-10-15 第 n 条”，第 1–12 条，含决定 59）。DSH 照改（`D:/cc-lead-notes/specs/s4/s4-spec-edit-3.md`），lead 逐行审过、改了交叉引用和几处接口（写入结果带 `existingTopics`、核对带 `withSimilar`、`NoteDraftV1` 按种类严格分型、事实解析的每页上限 `NOTE_READ_FACTS_MAX`、`deleted` 字段），并通读了全稿。剩下：2C 合入后重核 §0.2 和 §6，然后冻结。**
@@ -934,3 +936,55 @@ export const SCRIBE_PENDING_THRESHOLD = 10, SCRIBE_UPDATE_DUE_THRESHOLD = 5;
 ### 11.10 本节改了前面哪些地方
 
 O34、O35、L2a 第 3 类、L4 第 2 步、L8（项目的当前理解）；L5、L6、L14 和 §3 的 S4-NOTE-05、08、10（书记处理矛盾、`resolution`、并存放开给书记、守卫看 `userReasonsOf`）；L9（该更新的触发和基线）；L12 和 §10 R3、R9、R12（默认状态、先筛再核对、`coverage`、带项目部分的 48 KiB 裁剪）；L16（提醒的收件人、只数待审不数超配额、待办身份、立即发的条件、发送失败重试）；L17（卡的出和关、矛盾、你的注记、结构性、不挂目标的待审）；L20（Goal 卡三行和项目规范、查询 Run）；决定 35 · Q23 甲（请知悉的范围，待用户定）；§1.2（推到第 7 片 D2 的两项）。
+
+## 12. 4C-1 施工和验收中的限定（lead，2026-10-17）
+
+本节记下 4C-1 施工、审查和返工中定下的读法，对 4C-2 同样有效；和前面各节冲突时以本节为准。经过和证据见[证据](../../../reviews/evidence/orchestration-slice-4C1-2026-10-17/README.md)。
+
+1. **`record_note` 进 Host 的默认授权（L14）。**
+   - 只在执行驱动里登记不够，Host 的本地授权（`host.ts` 的 `localWorkbenchGrant`）也要列出它。条件和邮箱工具相同：两者都是写 WorkGraph 记录的协作工具，不写工作区。
+   - 授权变了，`configurationRevision` 跟着变。改动之前准备好的 Run 保留冻结的授权，看不到这个工具。
+2. **模型写错不让 Run 失败。**
+   - 服务拒绝 `record_note` 的写、审、撤时，工具把拒绝的状态和原因写成文字返回，模型能改正后重试。工具输出里不留 `undefined`，冻结的 Kernel 会拒绝带 `undefined` 的结果、让 Run 失败。
+   - 按种类能判断的错（一般种类缺正文、当前理解带分节），在调服务之前就答。
+3. **§11.6 的保护规则：**
+   - 判定时读到的目标都按读到的版本加只读守卫，包括人的理由、取代的目标和并存的目标。判定和提交之间人又确认了 → `revision_conflict`，人确认的那条保持现行。
+   - `supersede` 同时把被取代的目标从 `coexistWith` 里拿掉。
+   - 阶段的连续性按 L23 判断，服务和视图共用一个纯函数（`notes/note-continuity.ts` 的 `stageContinuityOf`）。
+   - `resolution` 和 `review` 或 `reject` 一起给，结果是 `resolution_not_applicable`。这一项在读任何关系和目标之前就判，所以也排在 `revision_conflict` 之前。
+4. **§11.2 的分段和裁剪：**
+   - 第一段只给了部分排序（`partial`）时，翻到第二段的页也是 `partial`。
+   - 一页的 `next` 在逐项放入之后算一次，裁剪规范时沿用。
+   - `boundary` 算在 48 KiB 里面。
+5. **§11.3、§11.4 的覆盖计数：**
+   - 头部核对过的规范最多 10 条，全部计入 `checkedItems`、`filesRead`、`observedFiles`，不只算显示出来的 5 条。
+   - 按字节裁剪时，只要头部还在，这些计数就不变；头部本身被裁掉，它们才跟着去掉。
+6. **节点详情（L21、NE7）：** `NodeNotesV1` 加 `{ status: 'unavailable'; reason }`。缺依赖或读失败时返回它，不能返回一个空的完整结果。
+7. **§11.7 的复用和读取次数：**
+   - **文件属于哪个模块（决定 72 的 U2）：** 全仓库只用一个函数，`notes/note-path-ownership.ts` 的 `pathOwnershipOf`。规则：
+     - 以 `/` 为目录边界，去掉一个结尾的 `/`；
+     - 最深的前缀胜出，并列算没有归属。
+
+     用它的地方：书记范围、目标冲突、图上下文的路径搜索、节点详情。§11.7 列的 `moduleOfAnchor` 导出和各处的旧副本都删了。8A 在这个函数上加根路径 `.`（第 8 片规格 L7）。
+   - **节点详情的模块文件：** 文件唯一的归属是这个模块本身，或者是它声明的子模块（`childrenOf`，containment）之一。
+   - **图上下文按路径搜索：**
+     - 同一个模块的几种写法（如 `src` 和 `src/`）算一个候选；
+     - 两个模块在最长前缀上并列时，两个都返回，读的人看得出有两个模块声明了同一路径（`pathOwnershipOf` 的并列结果带上 `owners`；其他调用方照旧“并列不归任何模块”）；
+     - “路径就是查询词”的分支服从同一个结果。
+   - **键前缀扫描：** `headsOnPathPrefix` 推广为任意键前缀的 `headsOnKeyPrefix`（`note-related-scope.ts`）。
+   - **缓存只活在一次调用里：** 每次公开调用（写、审、撤，以及用到它们的读）在入口建自己的缓存对象，向下传递，包括书记范围的事实和计划的阶段。不按调用者的 `ctx` 存，也不放在模块级。
+   - **读取次数：**
+     - 一次调用里，一个目标的计划窗口只读一次；
+     - 写入的关系目标一次批量读；
+     - 任务的 Run 走 `RUN_BY_TASK_INDEX`，再批量读一次 RunActivity；
+     - 第二段只在页真的翻到时才读。
+   - **次数测试（`RW-12`、`RW-12a`、`RW-12b`）：** 按本节的行手算。`lookup` 一页里的 4 次按目标状态桶的查找，是 4B 已有的 `overQuota` 推导，按“没改的读法照第一轮实测”算，不算新增。
+8. **`memoryFind` 的 `related`：** 请求只收 `task`、`module` 或 `null`；`caller_task` 和多余的键报 `invalid`。请求类型和解析后的类型分开。
+9. **请求构造（决定 72 的 U1）：** 工具的纯请求构造器 `recordNoteRequestOf(args, commandId)`，写、审、撤共用。K3 规格里按工具提交查找的那一步，在 K3 和 4C 会合时再接上。
+10. **审阅和撤回的指纹形状：** 4C-1 改成带 `resolution: null`。4C-1 之前没有这类调用方，不影响重放。
+11. **查询类调用：** `role_exploration` 和查询 Run 的记忆分支等 6A、7D2 加了这种调用以后再接。G-01、G-03 的相应部分跟着挪过去；查询 Run 现在读记忆会被拒绝。
+12. **实测：** §11.7 要的 2 万条注记实测，放在 4C-2 合入前做，用两轮之后的代码，因为 Goal 卡装配和心跳检查在 4C-2。
+13. **行数：** 4C-1 生产代码净增约 2,710 行，超过估的 1,400 行。原因：
+    - lead 扩大了 C1.4（六个路由和 `notes/list`）和 C1.5（完整的注记一栏和悬停计数）；
+    - 有联系的范围新加了一个模块；
+    - 四轮返工约增加 480 行。
