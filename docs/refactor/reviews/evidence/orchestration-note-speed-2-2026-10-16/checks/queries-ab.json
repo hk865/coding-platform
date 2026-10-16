@@ -1,0 +1,4490 @@
+{
+  "label": "r1-vs-r2",
+  "dbFull": "/home/han001/dsh-work/r2-measure/real/r1-before/storage/ledger.sqlite",
+  "dbPartial": "/home/han001/dsh-work/r2-measure/real/r2-after/storage/ledger.sqlite",
+  "unit": "microseconds per execution (median of 3 rounds); fresh = db.prepare(sql) + execute each time; reused = one statement executed repeatedly",
+  "node": "v24.18.0",
+  "elapsedMs": 142116,
+  "results": [
+    {
+      "name": "lookup_note_anchor_small",
+      "shape": "lookupInside",
+      "type": "NoteHead",
+      "variant": "bound",
+      "sameResult": true,
+      "full": {
+        "name": "lookup_note_anchor_small",
+        "shape": "lookupInside",
+        "sql": "SELECT ref_key FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.anchorKey0') = 'text' AND json_extract(snapshot_json, '$.anchorKey0') = ? ORDER BY ref_key COLLATE BINARY ASC LIMIT 256",
+        "eqp": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_s4_note_by_anchor_0_ee717b20 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "eqpBeforeBind": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_s4_note_by_anchor_0_ee717b20 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "rows": 6,
+        "authCallsAtPrepare": 13,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 191.3,
+          "rounds": [
+            191.3,
+            191.5,
+            190.4
+          ],
+          "iterations": 3142
+        },
+        "reused": {
+          "us": 7.2,
+          "rounds": [
+            6.6,
+            7.2,
+            7.3
+          ],
+          "iterations": 85605
+        }
+      },
+      "partial": {
+        "name": "lookup_note_anchor_small",
+        "shape": "lookupInside",
+        "sql": "SELECT ref_key FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.anchorKey0') = 'text' AND json_extract(snapshot_json, '$.anchorKey0') = ? ORDER BY ref_key COLLATE BINARY ASC LIMIT 256",
+        "eqp": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_s4_note_by_anchor_0_617cb974 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "eqpBeforeBind": [
+          "SCAN snapshots USING INDEX sqlite_autoindex_snapshots_1"
+        ],
+        "rows": 6,
+        "authCallsAtPrepare": 13,
+        "authCallsPerExecution": [
+          13,
+          13,
+          13,
+          13,
+          13
+        ],
+        "reprepareEveryExecution": true,
+        "fresh": {
+          "us": 114.6,
+          "rounds": [
+            114.6,
+            116.8,
+            111
+          ],
+          "iterations": 5261
+        },
+        "reused": {
+          "us": 70,
+          "rounds": [
+            70,
+            70.7,
+            69.7
+          ],
+          "iterations": 8560
+        }
+      }
+    },
+    {
+      "name": "lookup_note_anchor_small",
+      "shape": "lookupInside",
+      "type": "NoteHead",
+      "variant": "literal",
+      "sameResult": true,
+      "full": {
+        "name": "lookup_note_anchor_small",
+        "shape": "lookupInside",
+        "sql": "SELECT ref_key FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = 'NoteHead' AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.anchorKey0') = 'text' AND json_extract(snapshot_json, '$.anchorKey0') = ? ORDER BY ref_key COLLATE BINARY ASC LIMIT 256",
+        "eqp": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_s4_note_by_anchor_0_ee717b20 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "rows": 6,
+        "authCallsAtPrepare": 13,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 239,
+          "rounds": [
+            239,
+            233.2,
+            240.3
+          ],
+          "iterations": 2528
+        },
+        "reused": {
+          "us": 7.3,
+          "rounds": [
+            7.4,
+            7.1,
+            7.3
+          ],
+          "iterations": 82742
+        }
+      },
+      "partial": {
+        "name": "lookup_note_anchor_small",
+        "shape": "lookupInside",
+        "sql": "SELECT ref_key FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = 'NoteHead' AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.anchorKey0') = 'text' AND json_extract(snapshot_json, '$.anchorKey0') = ? ORDER BY ref_key COLLATE BINARY ASC LIMIT 256",
+        "eqp": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_s4_note_by_anchor_0_617cb974 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "rows": 6,
+        "authCallsAtPrepare": 13,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 68.1,
+          "rounds": [
+            62.2,
+            68.6,
+            68.1
+          ],
+          "iterations": 9066
+        },
+        "reused": {
+          "us": 7.5,
+          "rounds": [
+            7.3,
+            7.5,
+            7.5
+          ],
+          "iterations": 80443
+        }
+      }
+    },
+    {
+      "name": "lookup_note_anchor_small_after",
+      "shape": "lookupInside+after",
+      "type": "NoteHead",
+      "variant": "bound",
+      "sameResult": true,
+      "full": {
+        "name": "lookup_note_anchor_small_after",
+        "shape": "lookupInside+after",
+        "sql": "SELECT ref_key FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.anchorKey0') = 'text' AND json_extract(snapshot_json, '$.anchorKey0') = ? AND ref_key COLLATE BINARY > ? ORDER BY ref_key COLLATE BINARY ASC LIMIT 256",
+        "eqp": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_s4_note_by_anchor_0_ee717b20 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND ref_key>?)"
+        ],
+        "eqpBeforeBind": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_s4_note_by_anchor_0_ee717b20 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND ref_key>?)"
+        ],
+        "rows": 5,
+        "authCallsAtPrepare": 14,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 233.5,
+          "rounds": [
+            233.5,
+            233.2,
+            242.2
+          ],
+          "iterations": 2541
+        },
+        "reused": {
+          "us": 6.9,
+          "rounds": [
+            7.2,
+            6.7,
+            6.9
+          ],
+          "iterations": 86718
+        }
+      },
+      "partial": {
+        "name": "lookup_note_anchor_small_after",
+        "shape": "lookupInside+after",
+        "sql": "SELECT ref_key FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.anchorKey0') = 'text' AND json_extract(snapshot_json, '$.anchorKey0') = ? AND ref_key COLLATE BINARY > ? ORDER BY ref_key COLLATE BINARY ASC LIMIT 256",
+        "eqp": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_s4_note_by_anchor_0_617cb974 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND ref_key>?)"
+        ],
+        "eqpBeforeBind": [
+          "SEARCH snapshots USING INDEX sqlite_autoindex_snapshots_1 (ref_key>?)"
+        ],
+        "rows": 5,
+        "authCallsAtPrepare": 14,
+        "authCallsPerExecution": [
+          14,
+          14,
+          14,
+          14,
+          14
+        ],
+        "reprepareEveryExecution": true,
+        "fresh": {
+          "us": 180.1,
+          "rounds": [
+            164.3,
+            201.4,
+            180.1
+          ],
+          "iterations": 3321
+        },
+        "reused": {
+          "us": 105.8,
+          "rounds": [
+            105.8,
+            105.2,
+            108
+          ],
+          "iterations": 5645
+        }
+      }
+    },
+    {
+      "name": "lookup_note_anchor_small_after",
+      "shape": "lookupInside+after",
+      "type": "NoteHead",
+      "variant": "literal",
+      "sameResult": true,
+      "full": {
+        "name": "lookup_note_anchor_small_after",
+        "shape": "lookupInside+after",
+        "sql": "SELECT ref_key FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = 'NoteHead' AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.anchorKey0') = 'text' AND json_extract(snapshot_json, '$.anchorKey0') = ? AND ref_key COLLATE BINARY > ? ORDER BY ref_key COLLATE BINARY ASC LIMIT 256",
+        "eqp": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_s4_note_by_anchor_0_ee717b20 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND ref_key>?)"
+        ],
+        "rows": 5,
+        "authCallsAtPrepare": 14,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 203.7,
+          "rounds": [
+            217.2,
+            203.7,
+            195.3
+          ],
+          "iterations": 2928
+        },
+        "reused": {
+          "us": 5.8,
+          "rounds": [
+            5.8,
+            5.8,
+            5.7
+          ],
+          "iterations": 104125
+        }
+      },
+      "partial": {
+        "name": "lookup_note_anchor_small_after",
+        "shape": "lookupInside+after",
+        "sql": "SELECT ref_key FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = 'NoteHead' AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.anchorKey0') = 'text' AND json_extract(snapshot_json, '$.anchorKey0') = ? AND ref_key COLLATE BINARY > ? ORDER BY ref_key COLLATE BINARY ASC LIMIT 256",
+        "eqp": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_s4_note_by_anchor_0_617cb974 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND ref_key>?)"
+        ],
+        "rows": 5,
+        "authCallsAtPrepare": 14,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 91.6,
+          "rounds": [
+            91.6,
+            97.1,
+            84.8
+          ],
+          "iterations": 6603
+        },
+        "reused": {
+          "us": 7.1,
+          "rounds": [
+            7.8,
+            7.1,
+            6.8
+          ],
+          "iterations": 83089
+        }
+      }
+    },
+    {
+      "name": "lookup_note_anchor_empty",
+      "shape": "lookupInside",
+      "type": "NoteHead",
+      "variant": "bound",
+      "sameResult": true,
+      "full": {
+        "name": "lookup_note_anchor_empty",
+        "shape": "lookupInside",
+        "sql": "SELECT ref_key FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.anchorKey3') = 'text' AND json_extract(snapshot_json, '$.anchorKey3') = ? ORDER BY ref_key COLLATE BINARY ASC LIMIT 256",
+        "eqp": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_s4_note_by_anchor_3_f1717fd9 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "eqpBeforeBind": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_s4_note_by_anchor_3_f1717fd9 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "rows": 0,
+        "authCallsAtPrepare": 13,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 185.3,
+          "rounds": [
+            185.3,
+            184.4,
+            187.5
+          ],
+          "iterations": 3232
+        },
+        "reused": {
+          "us": 3.6,
+          "rounds": [
+            3.8,
+            3.6,
+            3.6
+          ],
+          "iterations": 150000
+        }
+      },
+      "partial": {
+        "name": "lookup_note_anchor_empty",
+        "shape": "lookupInside",
+        "sql": "SELECT ref_key FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.anchorKey3') = 'text' AND json_extract(snapshot_json, '$.anchorKey3') = ? ORDER BY ref_key COLLATE BINARY ASC LIMIT 256",
+        "eqp": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_s4_note_by_anchor_3_b95f2711 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "eqpBeforeBind": [
+          "SCAN snapshots USING INDEX sqlite_autoindex_snapshots_1"
+        ],
+        "rows": 0,
+        "authCallsAtPrepare": 13,
+        "authCallsPerExecution": [
+          13,
+          13,
+          13,
+          13,
+          13
+        ],
+        "reprepareEveryExecution": true,
+        "fresh": {
+          "us": 103.5,
+          "rounds": [
+            103.5,
+            102.4,
+            104.8
+          ],
+          "iterations": 5797
+        },
+        "reused": {
+          "us": 64.6,
+          "rounds": [
+            64.6,
+            63.8,
+            64.7
+          ],
+          "iterations": 9322
+        }
+      }
+    },
+    {
+      "name": "lookup_note_anchor_empty",
+      "shape": "lookupInside",
+      "type": "NoteHead",
+      "variant": "literal",
+      "sameResult": true,
+      "full": {
+        "name": "lookup_note_anchor_empty",
+        "shape": "lookupInside",
+        "sql": "SELECT ref_key FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = 'NoteHead' AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.anchorKey3') = 'text' AND json_extract(snapshot_json, '$.anchorKey3') = ? ORDER BY ref_key COLLATE BINARY ASC LIMIT 256",
+        "eqp": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_s4_note_by_anchor_3_f1717fd9 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "rows": 0,
+        "authCallsAtPrepare": 13,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 188,
+          "rounds": [
+            191.2,
+            188,
+            187
+          ],
+          "iterations": 3181
+        },
+        "reused": {
+          "us": 3.5,
+          "rounds": [
+            3.5,
+            3.5,
+            3.6
+          ],
+          "iterations": 150000
+        }
+      },
+      "partial": {
+        "name": "lookup_note_anchor_empty",
+        "shape": "lookupInside",
+        "sql": "SELECT ref_key FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = 'NoteHead' AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.anchorKey3') = 'text' AND json_extract(snapshot_json, '$.anchorKey3') = ? ORDER BY ref_key COLLATE BINARY ASC LIMIT 256",
+        "eqp": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_s4_note_by_anchor_3_b95f2711 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "rows": 0,
+        "authCallsAtPrepare": 13,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 58.5,
+          "rounds": [
+            56.1,
+            58.5,
+            58.9
+          ],
+          "iterations": 10380
+        },
+        "reused": {
+          "us": 3.6,
+          "rounds": [
+            3.7,
+            3.6,
+            3.6
+          ],
+          "iterations": 150000
+        }
+      }
+    },
+    {
+      "name": "lookup_note_anchor_page456",
+      "shape": "lookupInside",
+      "type": "NoteHead",
+      "variant": "bound",
+      "sameResult": true,
+      "full": {
+        "name": "lookup_note_anchor_page456",
+        "shape": "lookupInside",
+        "sql": "SELECT ref_key FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.anchorKey0') = 'text' AND json_extract(snapshot_json, '$.anchorKey0') = ? ORDER BY ref_key COLLATE BINARY ASC LIMIT 256",
+        "eqp": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_s4_note_by_anchor_0_ee717b20 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "eqpBeforeBind": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_s4_note_by_anchor_0_ee717b20 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "rows": 256,
+        "authCallsAtPrepare": 13,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 301.1,
+          "rounds": [
+            314,
+            294.1,
+            301.1
+          ],
+          "iterations": 1983
+        },
+        "reused": {
+          "us": 86.7,
+          "rounds": [
+            86.5,
+            87.6,
+            86.7
+          ],
+          "iterations": 6903
+        }
+      },
+      "partial": {
+        "name": "lookup_note_anchor_page456",
+        "shape": "lookupInside",
+        "sql": "SELECT ref_key FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.anchorKey0') = 'text' AND json_extract(snapshot_json, '$.anchorKey0') = ? ORDER BY ref_key COLLATE BINARY ASC LIMIT 256",
+        "eqp": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_s4_note_by_anchor_0_617cb974 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "eqpBeforeBind": [
+          "SCAN snapshots USING INDEX sqlite_autoindex_snapshots_1"
+        ],
+        "rows": 256,
+        "authCallsAtPrepare": 13,
+        "authCallsPerExecution": [
+          13,
+          13,
+          13,
+          13,
+          13
+        ],
+        "reprepareEveryExecution": true,
+        "fresh": {
+          "us": 210.2,
+          "rounds": [
+            219.3,
+            210.2,
+            200.7
+          ],
+          "iterations": 2861
+        },
+        "reused": {
+          "us": 160.3,
+          "rounds": [
+            164.9,
+            160.3,
+            152.9
+          ],
+          "iterations": 3771
+        }
+      }
+    },
+    {
+      "name": "lookup_note_anchor_page456",
+      "shape": "lookupInside",
+      "type": "NoteHead",
+      "variant": "literal",
+      "sameResult": true,
+      "full": {
+        "name": "lookup_note_anchor_page456",
+        "shape": "lookupInside",
+        "sql": "SELECT ref_key FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = 'NoteHead' AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.anchorKey0') = 'text' AND json_extract(snapshot_json, '$.anchorKey0') = ? ORDER BY ref_key COLLATE BINARY ASC LIMIT 256",
+        "eqp": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_s4_note_by_anchor_0_ee717b20 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "rows": 256,
+        "authCallsAtPrepare": 13,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 300.7,
+          "rounds": [
+            300.7,
+            305.8,
+            294.5
+          ],
+          "iterations": 2000
+        },
+        "reused": {
+          "us": 86.8,
+          "rounds": [
+            85,
+            86.8,
+            91
+          ],
+          "iterations": 6859
+        }
+      },
+      "partial": {
+        "name": "lookup_note_anchor_page456",
+        "shape": "lookupInside",
+        "sql": "SELECT ref_key FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = 'NoteHead' AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.anchorKey0') = 'text' AND json_extract(snapshot_json, '$.anchorKey0') = ? ORDER BY ref_key COLLATE BINARY ASC LIMIT 256",
+        "eqp": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_s4_note_by_anchor_0_617cb974 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "rows": 256,
+        "authCallsAtPrepare": 13,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 158.5,
+          "rounds": [
+            154,
+            160.7,
+            158.5
+          ],
+          "iterations": 3807
+        },
+        "reused": {
+          "us": 89.9,
+          "rounds": [
+            89.9,
+            90.9,
+            88.7
+          ],
+          "iterations": 6679
+        }
+      }
+    },
+    {
+      "name": "lookup_note_staged_null",
+      "shape": "lookupInside(null matcher)",
+      "type": "NoteHead",
+      "variant": "bound",
+      "sameResult": true,
+      "full": {
+        "name": "lookup_note_staged_null",
+        "shape": "lookupInside(null matcher)",
+        "sql": "SELECT ref_key FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_extract(snapshot_json, '$.stagedRunKey') IS NULL ORDER BY ref_key COLLATE BINARY ASC LIMIT 32",
+        "eqp": [
+          "SEARCH snapshots USING INDEX next_lookup_s4_note_text_96e9b0a8 (<expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "eqpBeforeBind": [
+          "SEARCH snapshots USING INDEX next_lookup_s4_note_text_96e9b0a8 (<expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "rows": 32,
+        "authCallsAtPrepare": 11,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 284.1,
+          "rounds": [
+            306.8,
+            284.1,
+            278
+          ],
+          "iterations": 2076
+        },
+        "reused": {
+          "us": 78.7,
+          "rounds": [
+            78.3,
+            78.7,
+            80
+          ],
+          "iterations": 7598
+        }
+      },
+      "partial": {
+        "name": "lookup_note_staged_null",
+        "shape": "lookupInside(null matcher)",
+        "sql": "SELECT ref_key FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_extract(snapshot_json, '$.stagedRunKey') IS NULL ORDER BY ref_key COLLATE BINARY ASC LIMIT 32",
+        "eqp": [
+          "SEARCH snapshots USING INDEX next_lookup_s4_note_text_95c151a4 (<expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "eqpBeforeBind": [
+          "SCAN snapshots USING INDEX sqlite_autoindex_snapshots_1"
+        ],
+        "rows": 32,
+        "authCallsAtPrepare": 11,
+        "authCallsPerExecution": [
+          11,
+          11,
+          11,
+          11,
+          11
+        ],
+        "reprepareEveryExecution": true,
+        "fresh": {
+          "us": 182.5,
+          "rounds": [
+            182.5,
+            182.7,
+            182.2
+          ],
+          "iterations": 3290
+        },
+        "reused": {
+          "us": 139.1,
+          "rounds": [
+            147.7,
+            134.3,
+            139.1
+          ],
+          "iterations": 4283
+        }
+      }
+    },
+    {
+      "name": "lookup_note_staged_null",
+      "shape": "lookupInside(null matcher)",
+      "type": "NoteHead",
+      "variant": "literal",
+      "sameResult": true,
+      "full": {
+        "name": "lookup_note_staged_null",
+        "shape": "lookupInside(null matcher)",
+        "sql": "SELECT ref_key FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = 'NoteHead' AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_extract(snapshot_json, '$.stagedRunKey') IS NULL ORDER BY ref_key COLLATE BINARY ASC LIMIT 32",
+        "eqp": [
+          "SEARCH snapshots USING INDEX next_lookup_s4_note_text_96e9b0a8 (<expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "rows": 32,
+        "authCallsAtPrepare": 11,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 290.4,
+          "rounds": [
+            306,
+            290.4,
+            269.9
+          ],
+          "iterations": 2084
+        },
+        "reused": {
+          "us": 74.6,
+          "rounds": [
+            74.6,
+            73.3,
+            75.3
+          ],
+          "iterations": 8067
+        }
+      },
+      "partial": {
+        "name": "lookup_note_staged_null",
+        "shape": "lookupInside(null matcher)",
+        "sql": "SELECT ref_key FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = 'NoteHead' AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_extract(snapshot_json, '$.stagedRunKey') IS NULL ORDER BY ref_key COLLATE BINARY ASC LIMIT 32",
+        "eqp": [
+          "SEARCH snapshots USING INDEX next_lookup_s4_note_text_95c151a4 (<expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "rows": 32,
+        "authCallsAtPrepare": 11,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 138.4,
+          "rounds": [
+            138.4,
+            133.1,
+            147.6
+          ],
+          "iterations": 4305
+        },
+        "reused": {
+          "us": 135.5,
+          "rounds": [
+            137.4,
+            135.5,
+            105.1
+          ],
+          "iterations": 4838
+        }
+      }
+    },
+    {
+      "name": "lookup_run_by_goal_small",
+      "shape": "lookupInside",
+      "type": "Run",
+      "variant": "bound",
+      "sameResult": true,
+      "full": {
+        "name": "lookup_run_by_goal_small",
+        "shape": "lookupInside",
+        "sql": "SELECT ref_key FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.ref.goalId') = 'text' AND json_extract(snapshot_json, '$.ref.goalId') = ? ORDER BY ref_key COLLATE BINARY ASC LIMIT 256",
+        "eqp": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_r3c_run_by_goal_7f6ffd08 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "eqpBeforeBind": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_r3c_run_by_goal_7f6ffd08 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "rows": 2,
+        "authCallsAtPrepare": 13,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 206.7,
+          "rounds": [
+            209.6,
+            206.7,
+            199.9
+          ],
+          "iterations": 2924
+        },
+        "reused": {
+          "us": 5.4,
+          "rounds": [
+            5,
+            5.4,
+            5.4
+          ],
+          "iterations": 114339
+        }
+      },
+      "partial": {
+        "name": "lookup_run_by_goal_small",
+        "shape": "lookupInside",
+        "sql": "SELECT ref_key FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.ref.goalId') = 'text' AND json_extract(snapshot_json, '$.ref.goalId') = ? ORDER BY ref_key COLLATE BINARY ASC LIMIT 256",
+        "eqp": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_r3c_run_by_goal_29976958 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "eqpBeforeBind": [
+          "SCAN snapshots USING INDEX sqlite_autoindex_snapshots_1"
+        ],
+        "rows": 2,
+        "authCallsAtPrepare": 13,
+        "authCallsPerExecution": [
+          13,
+          13,
+          13,
+          13,
+          13
+        ],
+        "reprepareEveryExecution": true,
+        "fresh": {
+          "us": 125.3,
+          "rounds": [
+            125.6,
+            125.3,
+            119.8
+          ],
+          "iterations": 4859
+        },
+        "reused": {
+          "us": 71.5,
+          "rounds": [
+            72.3,
+            69.3,
+            71.5
+          ],
+          "iterations": 8450
+        }
+      }
+    },
+    {
+      "name": "lookup_run_by_goal_small",
+      "shape": "lookupInside",
+      "type": "Run",
+      "variant": "literal",
+      "sameResult": true,
+      "full": {
+        "name": "lookup_run_by_goal_small",
+        "shape": "lookupInside",
+        "sql": "SELECT ref_key FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = 'Run' AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.ref.goalId') = 'text' AND json_extract(snapshot_json, '$.ref.goalId') = ? ORDER BY ref_key COLLATE BINARY ASC LIMIT 256",
+        "eqp": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_r3c_run_by_goal_7f6ffd08 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "rows": 2,
+        "authCallsAtPrepare": 13,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 233.9,
+          "rounds": [
+            256.4,
+            233.9,
+            231.2
+          ],
+          "iterations": 2500
+        },
+        "reused": {
+          "us": 5.4,
+          "rounds": [
+            5.5,
+            5.4,
+            5.1
+          ],
+          "iterations": 112981
+        }
+      },
+      "partial": {
+        "name": "lookup_run_by_goal_small",
+        "shape": "lookupInside",
+        "sql": "SELECT ref_key FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = 'Run' AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.ref.goalId') = 'text' AND json_extract(snapshot_json, '$.ref.goalId') = ? ORDER BY ref_key COLLATE BINARY ASC LIMIT 256",
+        "eqp": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_r3c_run_by_goal_29976958 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "rows": 2,
+        "authCallsAtPrepare": 13,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 63.3,
+          "rounds": [
+            61.1,
+            63.7,
+            63.3
+          ],
+          "iterations": 9575
+        },
+        "reused": {
+          "us": 8,
+          "rounds": [
+            8.4,
+            8,
+            6.8
+          ],
+          "iterations": 78263
+        }
+      }
+    },
+    {
+      "name": "lookup_session_by_workspace_page",
+      "shape": "lookupInside",
+      "type": "Session",
+      "variant": "bound",
+      "sameResult": true,
+      "full": {
+        "name": "lookup_session_by_workspace_page",
+        "shape": "lookupInside",
+        "sql": "SELECT ref_key FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.workspaceId') = 'text' AND json_extract(snapshot_json, '$.workspaceId') = ? ORDER BY ref_key COLLATE BINARY ASC LIMIT 256",
+        "eqp": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_session_by_workspace_d0aeda94 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "eqpBeforeBind": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_session_by_workspace_d0aeda94 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "rows": 202,
+        "authCallsAtPrepare": 13,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 300,
+          "rounds": [
+            303.5,
+            300,
+            297.5
+          ],
+          "iterations": 2000
+        },
+        "reused": {
+          "us": 65.5,
+          "rounds": [
+            67.6,
+            65.5,
+            65.3
+          ],
+          "iterations": 9075
+        }
+      },
+      "partial": {
+        "name": "lookup_session_by_workspace_page",
+        "shape": "lookupInside",
+        "sql": "SELECT ref_key FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.workspaceId') = 'text' AND json_extract(snapshot_json, '$.workspaceId') = ? ORDER BY ref_key COLLATE BINARY ASC LIMIT 256",
+        "eqp": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_session_by_workspace_13c74c23 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "eqpBeforeBind": [
+          "SCAN snapshots USING INDEX sqlite_autoindex_snapshots_1"
+        ],
+        "rows": 202,
+        "authCallsAtPrepare": 13,
+        "authCallsPerExecution": [
+          13,
+          13,
+          13,
+          13,
+          13
+        ],
+        "reprepareEveryExecution": true,
+        "fresh": {
+          "us": 190.4,
+          "rounds": [
+            184,
+            190.4,
+            191
+          ],
+          "iterations": 3187
+        },
+        "reused": {
+          "us": 124.7,
+          "rounds": [
+            133.3,
+            122,
+            124.7
+          ],
+          "iterations": 4744
+        }
+      }
+    },
+    {
+      "name": "lookup_session_by_workspace_page",
+      "shape": "lookupInside",
+      "type": "Session",
+      "variant": "literal",
+      "sameResult": true,
+      "full": {
+        "name": "lookup_session_by_workspace_page",
+        "shape": "lookupInside",
+        "sql": "SELECT ref_key FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = 'Session' AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.workspaceId') = 'text' AND json_extract(snapshot_json, '$.workspaceId') = ? ORDER BY ref_key COLLATE BINARY ASC LIMIT 256",
+        "eqp": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_session_by_workspace_d0aeda94 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "rows": 202,
+        "authCallsAtPrepare": 13,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 370.5,
+          "rounds": [
+            367.5,
+            370.5,
+            404.8
+          ],
+          "iterations": 1581
+        },
+        "reused": {
+          "us": 91.3,
+          "rounds": [
+            111,
+            91.3,
+            90.2
+          ],
+          "iterations": 6213
+        }
+      },
+      "partial": {
+        "name": "lookup_session_by_workspace_page",
+        "shape": "lookupInside",
+        "sql": "SELECT ref_key FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = 'Session' AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.workspaceId') = 'text' AND json_extract(snapshot_json, '$.workspaceId') = ? ORDER BY ref_key COLLATE BINARY ASC LIMIT 256",
+        "eqp": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_session_by_workspace_13c74c23 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "rows": 202,
+        "authCallsAtPrepare": 13,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 136.3,
+          "rounds": [
+            125.8,
+            136.3,
+            142.9
+          ],
+          "iterations": 4458
+        },
+        "reused": {
+          "us": 80.2,
+          "rounds": [
+            75.9,
+            80.2,
+            81.9
+          ],
+          "iterations": 7572
+        }
+      }
+    },
+    {
+      "name": "lookup_message_empty_type",
+      "shape": "lookupInside",
+      "type": "SessionMessage",
+      "variant": "bound",
+      "sameResult": true,
+      "full": {
+        "name": "lookup_message_empty_type",
+        "shape": "lookupInside",
+        "sql": "SELECT ref_key FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.ref.workspaceId') = 'text' AND json_extract(snapshot_json, '$.ref.workspaceId') = ? AND json_type(snapshot_json, '$.recipient.sessionId') = 'text' AND json_extract(snapshot_json, '$.recipient.sessionId') = ? ORDER BY ref_key COLLATE BINARY ASC LIMIT 256",
+        "eqp": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_session_message_by_recipient_32b1d1f6 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "eqpBeforeBind": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_session_message_by_recipient_32b1d1f6 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "rows": 0,
+        "authCallsAtPrepare": 17,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 329.2,
+          "rounds": [
+            342.1,
+            326.1,
+            329.2
+          ],
+          "iterations": 1807
+        },
+        "reused": {
+          "us": 4.7,
+          "rounds": [
+            4.7,
+            4.5,
+            4.7
+          ],
+          "iterations": 128565
+        }
+      },
+      "partial": {
+        "name": "lookup_message_empty_type",
+        "shape": "lookupInside",
+        "sql": "SELECT ref_key FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.ref.workspaceId') = 'text' AND json_extract(snapshot_json, '$.ref.workspaceId') = ? AND json_type(snapshot_json, '$.recipient.sessionId') = 'text' AND json_extract(snapshot_json, '$.recipient.sessionId') = ? ORDER BY ref_key COLLATE BINARY ASC LIMIT 256",
+        "eqp": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_session_message_by_recipient_40377575 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "eqpBeforeBind": [
+          "SCAN snapshots USING INDEX sqlite_autoindex_snapshots_1"
+        ],
+        "rows": 0,
+        "authCallsAtPrepare": 17,
+        "authCallsPerExecution": [
+          17,
+          17,
+          17,
+          17,
+          17
+        ],
+        "reprepareEveryExecution": true,
+        "fresh": {
+          "us": 226.6,
+          "rounds": [
+            208.3,
+            226.6,
+            245.2
+          ],
+          "iterations": 2664
+        },
+        "reused": {
+          "us": 135.7,
+          "rounds": [
+            135.7,
+            138.8,
+            130.9
+          ],
+          "iterations": 4445
+        }
+      }
+    },
+    {
+      "name": "lookup_message_empty_type",
+      "shape": "lookupInside",
+      "type": "SessionMessage",
+      "variant": "literal",
+      "sameResult": true,
+      "full": {
+        "name": "lookup_message_empty_type",
+        "shape": "lookupInside",
+        "sql": "SELECT ref_key FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = 'SessionMessage' AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.ref.workspaceId') = 'text' AND json_extract(snapshot_json, '$.ref.workspaceId') = ? AND json_type(snapshot_json, '$.recipient.sessionId') = 'text' AND json_extract(snapshot_json, '$.recipient.sessionId') = ? ORDER BY ref_key COLLATE BINARY ASC LIMIT 256",
+        "eqp": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_session_message_by_recipient_32b1d1f6 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "rows": 0,
+        "authCallsAtPrepare": 17,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 309,
+          "rounds": [
+            309,
+            300.2,
+            317.6
+          ],
+          "iterations": 1945
+        },
+        "reused": {
+          "us": 4,
+          "rounds": [
+            4,
+            3.9,
+            4.2
+          ],
+          "iterations": 147014
+        }
+      },
+      "partial": {
+        "name": "lookup_message_empty_type",
+        "shape": "lookupInside",
+        "sql": "SELECT ref_key FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = 'SessionMessage' AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.ref.workspaceId') = 'text' AND json_extract(snapshot_json, '$.ref.workspaceId') = ? AND json_type(snapshot_json, '$.recipient.sessionId') = 'text' AND json_extract(snapshot_json, '$.recipient.sessionId') = ? ORDER BY ref_key COLLATE BINARY ASC LIMIT 256",
+        "eqp": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_session_message_by_recipient_40377575 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "rows": 0,
+        "authCallsAtPrepare": 17,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 108.9,
+          "rounds": [
+            112.1,
+            108.9,
+            108.9
+          ],
+          "iterations": 5459
+        },
+        "reused": {
+          "us": 4.2,
+          "rounds": [
+            4.2,
+            4.2,
+            4.2
+          ],
+          "iterations": 143493
+        }
+      }
+    },
+    {
+      "name": "lookup_worklink_null_empty_type",
+      "shape": "lookupInside(null matcher)",
+      "type": "SessionWorkLink",
+      "variant": "bound",
+      "sameResult": true,
+      "full": {
+        "name": "lookup_worklink_null_empty_type",
+        "shape": "lookupInside(null matcher)",
+        "sql": "SELECT ref_key FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.ref.sessionId') = 'text' AND json_extract(snapshot_json, '$.ref.sessionId') = ? AND json_type(snapshot_json, '$.ref.relation') = 'text' AND json_extract(snapshot_json, '$.ref.relation') = ? AND json_extract(snapshot_json, '$.until') IS NULL ORDER BY ref_key COLLATE BINARY ASC LIMIT 256",
+        "eqp": [
+          "SEARCH snapshots USING INDEX next_lookup_session_work_links_90d5424b (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "eqpBeforeBind": [
+          "SEARCH snapshots USING INDEX next_lookup_session_work_links_90d5424b (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "rows": 0,
+        "authCallsAtPrepare": 19,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 318.6,
+          "rounds": [
+            329.9,
+            318.6,
+            315.1
+          ],
+          "iterations": 1870
+        },
+        "reused": {
+          "us": 4.2,
+          "rounds": [
+            4.2,
+            4.2,
+            4.3
+          ],
+          "iterations": 141906
+        }
+      },
+      "partial": {
+        "name": "lookup_worklink_null_empty_type",
+        "shape": "lookupInside(null matcher)",
+        "sql": "SELECT ref_key FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.ref.sessionId') = 'text' AND json_extract(snapshot_json, '$.ref.sessionId') = ? AND json_type(snapshot_json, '$.ref.relation') = 'text' AND json_extract(snapshot_json, '$.ref.relation') = ? AND json_extract(snapshot_json, '$.until') IS NULL ORDER BY ref_key COLLATE BINARY ASC LIMIT 256",
+        "eqp": [
+          "SEARCH snapshots USING INDEX next_lookup_session_work_links_1c5b88ac (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "eqpBeforeBind": [
+          "SCAN snapshots USING INDEX sqlite_autoindex_snapshots_1"
+        ],
+        "rows": 0,
+        "authCallsAtPrepare": 19,
+        "authCallsPerExecution": [
+          19,
+          19,
+          19,
+          19,
+          19
+        ],
+        "reprepareEveryExecution": true,
+        "fresh": {
+          "us": 249.8,
+          "rounds": [
+            225.8,
+            249.8,
+            298.3
+          ],
+          "iterations": 2358
+        },
+        "reused": {
+          "us": 116.8,
+          "rounds": [
+            131.6,
+            116.8,
+            109.3
+          ],
+          "iterations": 5064
+        }
+      }
+    },
+    {
+      "name": "lookup_worklink_null_empty_type",
+      "shape": "lookupInside(null matcher)",
+      "type": "SessionWorkLink",
+      "variant": "literal",
+      "sameResult": true,
+      "full": {
+        "name": "lookup_worklink_null_empty_type",
+        "shape": "lookupInside(null matcher)",
+        "sql": "SELECT ref_key FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = 'SessionWorkLink' AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.ref.sessionId') = 'text' AND json_extract(snapshot_json, '$.ref.sessionId') = ? AND json_type(snapshot_json, '$.ref.relation') = 'text' AND json_extract(snapshot_json, '$.ref.relation') = ? AND json_extract(snapshot_json, '$.until') IS NULL ORDER BY ref_key COLLATE BINARY ASC LIMIT 256",
+        "eqp": [
+          "SEARCH snapshots USING INDEX next_lookup_session_work_links_90d5424b (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "rows": 0,
+        "authCallsAtPrepare": 19,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 271.7,
+          "rounds": [
+            276.9,
+            271.7,
+            261.1
+          ],
+          "iterations": 2226
+        },
+        "reused": {
+          "us": 3.6,
+          "rounds": [
+            3.5,
+            3.6,
+            4.2
+          ],
+          "iterations": 147480
+        }
+      },
+      "partial": {
+        "name": "lookup_worklink_null_empty_type",
+        "shape": "lookupInside(null matcher)",
+        "sql": "SELECT ref_key FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = 'SessionWorkLink' AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.ref.sessionId') = 'text' AND json_extract(snapshot_json, '$.ref.sessionId') = ? AND json_type(snapshot_json, '$.ref.relation') = 'text' AND json_extract(snapshot_json, '$.ref.relation') = ? AND json_extract(snapshot_json, '$.until') IS NULL ORDER BY ref_key COLLATE BINARY ASC LIMIT 256",
+        "eqp": [
+          "SEARCH snapshots USING INDEX next_lookup_session_work_links_1c5b88ac (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "rows": 0,
+        "authCallsAtPrepare": 19,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 101.7,
+          "rounds": [
+            102.7,
+            101.7,
+            101.4
+          ],
+          "iterations": 5890
+        },
+        "reused": {
+          "us": 3.4,
+          "rounds": [
+            3.4,
+            3.4,
+            3.4
+          ],
+          "iterations": 150000
+        }
+      }
+    },
+    {
+      "name": "ordered_note_path_asc_bound",
+      "shape": "lookupOrderedInside asc, bound",
+      "type": "NoteHead",
+      "variant": "bound",
+      "sameResult": true,
+      "full": {
+        "name": "ordered_note_path_asc_bound",
+        "shape": "lookupOrderedInside asc, bound",
+        "sql": "SELECT ref_key, json_extract(snapshot_json, '$.anchorKey0') AS order_value FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.anchorKey0') = 'text' AND json_extract(snapshot_json, '$.anchorKey0') <> '' AND json_extract(snapshot_json, '$.anchorKey0') >= ? ORDER BY json_extract(snapshot_json, '$.anchorKey0') ASC, ref_key COLLATE BINARY ASC LIMIT 256",
+        "eqp": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_s4_note_by_anchor_0_ee717b20 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>>?)"
+        ],
+        "eqpBeforeBind": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_s4_note_by_anchor_0_ee717b20 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>>?)"
+        ],
+        "rows": 256,
+        "authCallsAtPrepare": 19,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 357,
+          "rounds": [
+            486.4,
+            357,
+            319.6
+          ],
+          "iterations": 1599
+        },
+        "reused": {
+          "us": 106.4,
+          "rounds": [
+            106.4,
+            106.9,
+            100.9
+          ],
+          "iterations": 5734
+        }
+      },
+      "partial": {
+        "name": "ordered_note_path_asc_bound",
+        "shape": "lookupOrderedInside asc, bound",
+        "sql": "SELECT ref_key, json_extract(snapshot_json, '$.anchorKey0') AS order_value FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.anchorKey0') = 'text' AND json_extract(snapshot_json, '$.anchorKey0') <> '' AND json_extract(snapshot_json, '$.anchorKey0') >= ? ORDER BY json_extract(snapshot_json, '$.anchorKey0') ASC, ref_key COLLATE BINARY ASC LIMIT 256",
+        "eqp": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_s4_note_by_anchor_0_617cb974 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>>?)"
+        ],
+        "eqpBeforeBind": [
+          "SCAN snapshots",
+          "USE TEMP B-TREE FOR ORDER BY"
+        ],
+        "rows": 256,
+        "authCallsAtPrepare": 19,
+        "authCallsPerExecution": [
+          19,
+          19,
+          19,
+          19,
+          19
+        ],
+        "reprepareEveryExecution": true,
+        "fresh": {
+          "us": 215.6,
+          "rounds": [
+            215.4,
+            218.5,
+            215.6
+          ],
+          "iterations": 2773
+        },
+        "reused": {
+          "us": 166.9,
+          "rounds": [
+            166.4,
+            166.9,
+            167.5
+          ],
+          "iterations": 3594
+        }
+      }
+    },
+    {
+      "name": "ordered_note_path_asc_bound",
+      "shape": "lookupOrderedInside asc, bound",
+      "type": "NoteHead",
+      "variant": "literal",
+      "sameResult": true,
+      "full": {
+        "name": "ordered_note_path_asc_bound",
+        "shape": "lookupOrderedInside asc, bound",
+        "sql": "SELECT ref_key, json_extract(snapshot_json, '$.anchorKey0') AS order_value FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = 'NoteHead' AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.anchorKey0') = 'text' AND json_extract(snapshot_json, '$.anchorKey0') <> '' AND json_extract(snapshot_json, '$.anchorKey0') >= ? ORDER BY json_extract(snapshot_json, '$.anchorKey0') ASC, ref_key COLLATE BINARY ASC LIMIT 256",
+        "eqp": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_s4_note_by_anchor_0_ee717b20 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>>?)"
+        ],
+        "rows": 256,
+        "authCallsAtPrepare": 19,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 306.9,
+          "rounds": [
+            306.9,
+            306.7,
+            310.3
+          ],
+          "iterations": 1950
+        },
+        "reused": {
+          "us": 107.5,
+          "rounds": [
+            106.5,
+            111.8,
+            107.5
+          ],
+          "iterations": 5530
+        }
+      },
+      "partial": {
+        "name": "ordered_note_path_asc_bound",
+        "shape": "lookupOrderedInside asc, bound",
+        "sql": "SELECT ref_key, json_extract(snapshot_json, '$.anchorKey0') AS order_value FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = 'NoteHead' AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.anchorKey0') = 'text' AND json_extract(snapshot_json, '$.anchorKey0') <> '' AND json_extract(snapshot_json, '$.anchorKey0') >= ? ORDER BY json_extract(snapshot_json, '$.anchorKey0') ASC, ref_key COLLATE BINARY ASC LIMIT 256",
+        "eqp": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_s4_note_by_anchor_0_617cb974 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>>?)"
+        ],
+        "rows": 256,
+        "authCallsAtPrepare": 19,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 165,
+          "rounds": [
+            164.8,
+            169.9,
+            165
+          ],
+          "iterations": 3604
+        },
+        "reused": {
+          "us": 104.8,
+          "rounds": [
+            104.8,
+            103.4,
+            105.7
+          ],
+          "iterations": 5736
+        }
+      }
+    },
+    {
+      "name": "ordered_note_path_asc_after",
+      "shape": "lookupOrderedInside asc, after (keyset)",
+      "type": "NoteHead",
+      "variant": "bound",
+      "sameResult": true,
+      "full": {
+        "name": "ordered_note_path_asc_after",
+        "shape": "lookupOrderedInside asc, after (keyset)",
+        "sql": "SELECT ref_key, json_extract(snapshot_json, '$.anchorKey0') AS order_value FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.anchorKey0') = 'text' AND json_extract(snapshot_json, '$.anchorKey0') <> '' AND json_extract(snapshot_json, '$.anchorKey0') >= ? AND (json_extract(snapshot_json, '$.anchorKey0'), ref_key COLLATE BINARY) > (?, ?) ORDER BY json_extract(snapshot_json, '$.anchorKey0') ASC, ref_key COLLATE BINARY ASC LIMIT 256",
+        "eqp": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_s4_note_by_anchor_0_ee717b20 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>>?)"
+        ],
+        "eqpBeforeBind": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_s4_note_by_anchor_0_ee717b20 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>>?)"
+        ],
+        "rows": 256,
+        "authCallsAtPrepare": 22,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 312.6,
+          "rounds": [
+            327.5,
+            304.6,
+            312.6
+          ],
+          "iterations": 1908
+        },
+        "reused": {
+          "us": 107.4,
+          "rounds": [
+            111.8,
+            105.4,
+            107.4
+          ],
+          "iterations": 5549
+        }
+      },
+      "partial": {
+        "name": "ordered_note_path_asc_after",
+        "shape": "lookupOrderedInside asc, after (keyset)",
+        "sql": "SELECT ref_key, json_extract(snapshot_json, '$.anchorKey0') AS order_value FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.anchorKey0') = 'text' AND json_extract(snapshot_json, '$.anchorKey0') <> '' AND json_extract(snapshot_json, '$.anchorKey0') >= ? AND (json_extract(snapshot_json, '$.anchorKey0'), ref_key COLLATE BINARY) > (?, ?) ORDER BY json_extract(snapshot_json, '$.anchorKey0') ASC, ref_key COLLATE BINARY ASC LIMIT 256",
+        "eqp": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_s4_note_by_anchor_0_617cb974 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>>?)"
+        ],
+        "eqpBeforeBind": [
+          "SCAN snapshots",
+          "USE TEMP B-TREE FOR ORDER BY"
+        ],
+        "rows": 256,
+        "authCallsAtPrepare": 22,
+        "authCallsPerExecution": [
+          22,
+          22,
+          22,
+          22,
+          22
+        ],
+        "reprepareEveryExecution": true,
+        "fresh": {
+          "us": 231.9,
+          "rounds": [
+            232.8,
+            231.9,
+            226.3
+          ],
+          "iterations": 2607
+        },
+        "reused": {
+          "us": 177.6,
+          "rounds": [
+            188.8,
+            175.9,
+            177.6
+          ],
+          "iterations": 3325
+        }
+      }
+    },
+    {
+      "name": "ordered_note_path_asc_after",
+      "shape": "lookupOrderedInside asc, after (keyset)",
+      "type": "NoteHead",
+      "variant": "literal",
+      "sameResult": true,
+      "full": {
+        "name": "ordered_note_path_asc_after",
+        "shape": "lookupOrderedInside asc, after (keyset)",
+        "sql": "SELECT ref_key, json_extract(snapshot_json, '$.anchorKey0') AS order_value FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = 'NoteHead' AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.anchorKey0') = 'text' AND json_extract(snapshot_json, '$.anchorKey0') <> '' AND json_extract(snapshot_json, '$.anchorKey0') >= ? AND (json_extract(snapshot_json, '$.anchorKey0'), ref_key COLLATE BINARY) > (?, ?) ORDER BY json_extract(snapshot_json, '$.anchorKey0') ASC, ref_key COLLATE BINARY ASC LIMIT 256",
+        "eqp": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_s4_note_by_anchor_0_ee717b20 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>>?)"
+        ],
+        "rows": 256,
+        "authCallsAtPrepare": 22,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 353.1,
+          "rounds": [
+            345.3,
+            353.1,
+            357.6
+          ],
+          "iterations": 1707
+        },
+        "reused": {
+          "us": 126.9,
+          "rounds": [
+            133.9,
+            126.9,
+            122.5
+          ],
+          "iterations": 4703
+        }
+      },
+      "partial": {
+        "name": "ordered_note_path_asc_after",
+        "shape": "lookupOrderedInside asc, after (keyset)",
+        "sql": "SELECT ref_key, json_extract(snapshot_json, '$.anchorKey0') AS order_value FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = 'NoteHead' AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.anchorKey0') = 'text' AND json_extract(snapshot_json, '$.anchorKey0') <> '' AND json_extract(snapshot_json, '$.anchorKey0') >= ? AND (json_extract(snapshot_json, '$.anchorKey0'), ref_key COLLATE BINARY) > (?, ?) ORDER BY json_extract(snapshot_json, '$.anchorKey0') ASC, ref_key COLLATE BINARY ASC LIMIT 256",
+        "eqp": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_s4_note_by_anchor_0_617cb974 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>>?)"
+        ],
+        "rows": 256,
+        "authCallsAtPrepare": 22,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 179.6,
+          "rounds": [
+            179.5,
+            179.6,
+            195.2
+          ],
+          "iterations": 3254
+        },
+        "reused": {
+          "us": 118.4,
+          "rounds": [
+            116.2,
+            118.4,
+            122.9
+          ],
+          "iterations": 5041
+        }
+      }
+    },
+    {
+      "name": "ordered_note_path_desc_bound",
+      "shape": "lookupOrderedInside desc, bound",
+      "type": "NoteHead",
+      "variant": "bound",
+      "sameResult": true,
+      "full": {
+        "name": "ordered_note_path_desc_bound",
+        "shape": "lookupOrderedInside desc, bound",
+        "sql": "SELECT ref_key, json_extract(snapshot_json, '$.anchorKey0') AS order_value FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.anchorKey0') = 'text' AND json_extract(snapshot_json, '$.anchorKey0') <> '' AND json_extract(snapshot_json, '$.anchorKey0') <= ? ORDER BY json_extract(snapshot_json, '$.anchorKey0') DESC, ref_key COLLATE BINARY DESC LIMIT 256",
+        "eqp": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_s4_note_by_anchor_0_ee717b20 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr><?)"
+        ],
+        "eqpBeforeBind": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_s4_note_by_anchor_0_ee717b20 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr><?)"
+        ],
+        "rows": 256,
+        "authCallsAtPrepare": 19,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 330.2,
+          "rounds": [
+            330.2,
+            324.6,
+            335.6
+          ],
+          "iterations": 1820
+        },
+        "reused": {
+          "us": 142.4,
+          "rounds": [
+            152.1,
+            142.4,
+            136.9
+          ],
+          "iterations": 4181
+        }
+      },
+      "partial": {
+        "name": "ordered_note_path_desc_bound",
+        "shape": "lookupOrderedInside desc, bound",
+        "sql": "SELECT ref_key, json_extract(snapshot_json, '$.anchorKey0') AS order_value FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.anchorKey0') = 'text' AND json_extract(snapshot_json, '$.anchorKey0') <> '' AND json_extract(snapshot_json, '$.anchorKey0') <= ? ORDER BY json_extract(snapshot_json, '$.anchorKey0') DESC, ref_key COLLATE BINARY DESC LIMIT 256",
+        "eqp": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_s4_note_by_anchor_0_617cb974 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr><?)"
+        ],
+        "eqpBeforeBind": [
+          "SCAN snapshots",
+          "USE TEMP B-TREE FOR ORDER BY"
+        ],
+        "rows": 256,
+        "authCallsAtPrepare": 19,
+        "authCallsPerExecution": [
+          19,
+          19,
+          19,
+          19,
+          19
+        ],
+        "reprepareEveryExecution": true,
+        "fresh": {
+          "us": 254.2,
+          "rounds": [
+            265.5,
+            254.2,
+            246.2
+          ],
+          "iterations": 2354
+        },
+        "reused": {
+          "us": 197.3,
+          "rounds": [
+            197.3,
+            198.9,
+            193.1
+          ],
+          "iterations": 3056
+        }
+      }
+    },
+    {
+      "name": "ordered_note_path_desc_bound",
+      "shape": "lookupOrderedInside desc, bound",
+      "type": "NoteHead",
+      "variant": "literal",
+      "sameResult": true,
+      "full": {
+        "name": "ordered_note_path_desc_bound",
+        "shape": "lookupOrderedInside desc, bound",
+        "sql": "SELECT ref_key, json_extract(snapshot_json, '$.anchorKey0') AS order_value FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = 'NoteHead' AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.anchorKey0') = 'text' AND json_extract(snapshot_json, '$.anchorKey0') <> '' AND json_extract(snapshot_json, '$.anchorKey0') <= ? ORDER BY json_extract(snapshot_json, '$.anchorKey0') DESC, ref_key COLLATE BINARY DESC LIMIT 256",
+        "eqp": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_s4_note_by_anchor_0_ee717b20 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr><?)"
+        ],
+        "rows": 256,
+        "authCallsAtPrepare": 19,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 284.1,
+          "rounds": [
+            284.1,
+            288.6,
+            283
+          ],
+          "iterations": 2106
+        },
+        "reused": {
+          "us": 101.8,
+          "rounds": [
+            100.7,
+            102.2,
+            101.8
+          ],
+          "iterations": 5907
+        }
+      },
+      "partial": {
+        "name": "ordered_note_path_desc_bound",
+        "shape": "lookupOrderedInside desc, bound",
+        "sql": "SELECT ref_key, json_extract(snapshot_json, '$.anchorKey0') AS order_value FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = 'NoteHead' AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.anchorKey0') = 'text' AND json_extract(snapshot_json, '$.anchorKey0') <> '' AND json_extract(snapshot_json, '$.anchorKey0') <= ? ORDER BY json_extract(snapshot_json, '$.anchorKey0') DESC, ref_key COLLATE BINARY DESC LIMIT 256",
+        "eqp": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_s4_note_by_anchor_0_617cb974 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr><?)"
+        ],
+        "rows": 256,
+        "authCallsAtPrepare": 19,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 190.2,
+          "rounds": [
+            190.2,
+            189.7,
+            196.8
+          ],
+          "iterations": 3124
+        },
+        "reused": {
+          "us": 114.6,
+          "rounds": [
+            127.3,
+            114.6,
+            109.4
+          ],
+          "iterations": 5147
+        }
+      }
+    },
+    {
+      "name": "ordered_planrev_desc_small",
+      "shape": "lookupOrderedInside desc",
+      "type": "PlanRevision",
+      "variant": "bound",
+      "sameResult": true,
+      "full": {
+        "name": "ordered_planrev_desc_small",
+        "shape": "lookupOrderedInside desc",
+        "sql": "SELECT ref_key, json_extract(snapshot_json, '$.acceptedAt') AS order_value FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.goalRef.projectId') = 'text' AND json_extract(snapshot_json, '$.goalRef.projectId') = ? AND json_type(snapshot_json, '$.goalRef.goalId') = 'text' AND json_extract(snapshot_json, '$.goalRef.goalId') = ? AND json_type(snapshot_json, '$.acceptedAt') = 'text' AND json_extract(snapshot_json, '$.acceptedAt') <> '' ORDER BY json_extract(snapshot_json, '$.acceptedAt') DESC, ref_key COLLATE BINARY DESC LIMIT 64",
+        "eqp": [
+          "SEARCH snapshots USING INDEX next_lookup_s2b_plan_revision_by_goal_2ee1691c (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "eqpBeforeBind": [
+          "SEARCH snapshots USING INDEX next_lookup_s2b_plan_revision_by_goal_2ee1691c (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "rows": 1,
+        "authCallsAtPrepare": 21,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 171.2,
+          "rounds": [
+            173.4,
+            171.2,
+            169.9
+          ],
+          "iterations": 3501
+        },
+        "reused": {
+          "us": 7.8,
+          "rounds": [
+            8.1,
+            7.8,
+            7.8
+          ],
+          "iterations": 76244
+        }
+      },
+      "partial": {
+        "name": "ordered_planrev_desc_small",
+        "shape": "lookupOrderedInside desc",
+        "sql": "SELECT ref_key, json_extract(snapshot_json, '$.acceptedAt') AS order_value FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.goalRef.projectId') = 'text' AND json_extract(snapshot_json, '$.goalRef.projectId') = ? AND json_type(snapshot_json, '$.goalRef.goalId') = 'text' AND json_extract(snapshot_json, '$.goalRef.goalId') = ? AND json_type(snapshot_json, '$.acceptedAt') = 'text' AND json_extract(snapshot_json, '$.acceptedAt') <> '' ORDER BY json_extract(snapshot_json, '$.acceptedAt') DESC, ref_key COLLATE BINARY DESC LIMIT 64",
+        "eqp": [
+          "SEARCH snapshots USING INDEX next_lookup_s2b_plan_revision_by_goal_bbeaf1ee (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "eqpBeforeBind": [
+          "SCAN snapshots",
+          "USE TEMP B-TREE FOR ORDER BY"
+        ],
+        "rows": 1,
+        "authCallsAtPrepare": 21,
+        "authCallsPerExecution": [
+          21,
+          21,
+          21,
+          21,
+          21
+        ],
+        "reprepareEveryExecution": true,
+        "fresh": {
+          "us": 176,
+          "rounds": [
+            175.1,
+            176,
+            183.2
+          ],
+          "iterations": 3372
+        },
+        "reused": {
+          "us": 95.4,
+          "rounds": [
+            95.9,
+            94.5,
+            95.4
+          ],
+          "iterations": 6299
+        }
+      }
+    },
+    {
+      "name": "ordered_planrev_desc_small",
+      "shape": "lookupOrderedInside desc",
+      "type": "PlanRevision",
+      "variant": "literal",
+      "sameResult": true,
+      "full": {
+        "name": "ordered_planrev_desc_small",
+        "shape": "lookupOrderedInside desc",
+        "sql": "SELECT ref_key, json_extract(snapshot_json, '$.acceptedAt') AS order_value FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = 'PlanRevision' AND json_type(snapshot_json, '$.goalRef.projectId') = 'text' AND json_extract(snapshot_json, '$.goalRef.projectId') = ? AND json_type(snapshot_json, '$.goalRef.goalId') = 'text' AND json_extract(snapshot_json, '$.goalRef.goalId') = ? AND json_type(snapshot_json, '$.acceptedAt') = 'text' AND json_extract(snapshot_json, '$.acceptedAt') <> '' ORDER BY json_extract(snapshot_json, '$.acceptedAt') DESC, ref_key COLLATE BINARY DESC LIMIT 64",
+        "eqp": [
+          "SEARCH snapshots USING INDEX next_lookup_s2b_plan_revision_by_goal_2ee1691c (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "rows": 1,
+        "authCallsAtPrepare": 21,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 168.4,
+          "rounds": [
+            168.4,
+            169.8,
+            168.4
+          ],
+          "iterations": 3556
+        },
+        "reused": {
+          "us": 8.2,
+          "rounds": [
+            7.8,
+            8.2,
+            8.7
+          ],
+          "iterations": 73418
+        }
+      },
+      "partial": {
+        "name": "ordered_planrev_desc_small",
+        "shape": "lookupOrderedInside desc",
+        "sql": "SELECT ref_key, json_extract(snapshot_json, '$.acceptedAt') AS order_value FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = 'PlanRevision' AND json_type(snapshot_json, '$.goalRef.projectId') = 'text' AND json_extract(snapshot_json, '$.goalRef.projectId') = ? AND json_type(snapshot_json, '$.goalRef.goalId') = 'text' AND json_extract(snapshot_json, '$.goalRef.goalId') = ? AND json_type(snapshot_json, '$.acceptedAt') = 'text' AND json_extract(snapshot_json, '$.acceptedAt') <> '' ORDER BY json_extract(snapshot_json, '$.acceptedAt') DESC, ref_key COLLATE BINARY DESC LIMIT 64",
+        "eqp": [
+          "SEARCH snapshots USING INDEX next_lookup_s2b_plan_revision_by_goal_bbeaf1ee (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "rows": 1,
+        "authCallsAtPrepare": 21,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 85.6,
+          "rounds": [
+            85.6,
+            86.6,
+            84.4
+          ],
+          "iterations": 7016
+        },
+        "reused": {
+          "us": 8,
+          "rounds": [
+            8,
+            8.7,
+            7.5
+          ],
+          "iterations": 74511
+        }
+      }
+    },
+    {
+      "name": "ordered_planrev_desc_after_empty",
+      "shape": "lookupOrderedInside desc, after (keyset)",
+      "type": "PlanRevision",
+      "variant": "bound",
+      "sameResult": true,
+      "full": {
+        "name": "ordered_planrev_desc_after_empty",
+        "shape": "lookupOrderedInside desc, after (keyset)",
+        "sql": "SELECT ref_key, json_extract(snapshot_json, '$.acceptedAt') AS order_value FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.goalRef.projectId') = 'text' AND json_extract(snapshot_json, '$.goalRef.projectId') = ? AND json_type(snapshot_json, '$.goalRef.goalId') = 'text' AND json_extract(snapshot_json, '$.goalRef.goalId') = ? AND json_type(snapshot_json, '$.acceptedAt') = 'text' AND json_extract(snapshot_json, '$.acceptedAt') <> '' AND json_extract(snapshot_json, '$.acceptedAt') <= ? AND (json_extract(snapshot_json, '$.acceptedAt'), ref_key COLLATE BINARY) < (?, ?) ORDER BY json_extract(snapshot_json, '$.acceptedAt') DESC, ref_key COLLATE BINARY DESC LIMIT 64",
+        "eqp": [
+          "SEARCH snapshots USING INDEX next_lookup_s2b_plan_revision_by_goal_2ee1691c (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr><?)"
+        ],
+        "eqpBeforeBind": [
+          "SEARCH snapshots USING INDEX next_lookup_s2b_plan_revision_by_goal_2ee1691c (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr><?)"
+        ],
+        "rows": 0,
+        "authCallsAtPrepare": 26,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 230.5,
+          "rounds": [
+            234.2,
+            230.5,
+            210.1
+          ],
+          "iterations": 2675
+        },
+        "reused": {
+          "us": 7.7,
+          "rounds": [
+            7.8,
+            7.7,
+            7.6
+          ],
+          "iterations": 77828
+        }
+      },
+      "partial": {
+        "name": "ordered_planrev_desc_after_empty",
+        "shape": "lookupOrderedInside desc, after (keyset)",
+        "sql": "SELECT ref_key, json_extract(snapshot_json, '$.acceptedAt') AS order_value FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.goalRef.projectId') = 'text' AND json_extract(snapshot_json, '$.goalRef.projectId') = ? AND json_type(snapshot_json, '$.goalRef.goalId') = 'text' AND json_extract(snapshot_json, '$.goalRef.goalId') = ? AND json_type(snapshot_json, '$.acceptedAt') = 'text' AND json_extract(snapshot_json, '$.acceptedAt') <> '' AND json_extract(snapshot_json, '$.acceptedAt') <= ? AND (json_extract(snapshot_json, '$.acceptedAt'), ref_key COLLATE BINARY) < (?, ?) ORDER BY json_extract(snapshot_json, '$.acceptedAt') DESC, ref_key COLLATE BINARY DESC LIMIT 64",
+        "eqp": [
+          "SEARCH snapshots USING INDEX next_lookup_s2b_plan_revision_by_goal_bbeaf1ee (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr><?)"
+        ],
+        "eqpBeforeBind": [
+          "SCAN snapshots",
+          "USE TEMP B-TREE FOR ORDER BY"
+        ],
+        "rows": 0,
+        "authCallsAtPrepare": 26,
+        "authCallsPerExecution": [
+          26,
+          26,
+          26,
+          26,
+          26
+        ],
+        "reprepareEveryExecution": true,
+        "fresh": {
+          "us": 243.7,
+          "rounds": [
+            244.2,
+            243.7,
+            241.8
+          ],
+          "iterations": 2468
+        },
+        "reused": {
+          "us": 128.6,
+          "rounds": [
+            125.7,
+            128.6,
+            132
+          ],
+          "iterations": 4663
+        }
+      }
+    },
+    {
+      "name": "ordered_planrev_desc_after_empty",
+      "shape": "lookupOrderedInside desc, after (keyset)",
+      "type": "PlanRevision",
+      "variant": "literal",
+      "sameResult": true,
+      "full": {
+        "name": "ordered_planrev_desc_after_empty",
+        "shape": "lookupOrderedInside desc, after (keyset)",
+        "sql": "SELECT ref_key, json_extract(snapshot_json, '$.acceptedAt') AS order_value FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = 'PlanRevision' AND json_type(snapshot_json, '$.goalRef.projectId') = 'text' AND json_extract(snapshot_json, '$.goalRef.projectId') = ? AND json_type(snapshot_json, '$.goalRef.goalId') = 'text' AND json_extract(snapshot_json, '$.goalRef.goalId') = ? AND json_type(snapshot_json, '$.acceptedAt') = 'text' AND json_extract(snapshot_json, '$.acceptedAt') <> '' AND json_extract(snapshot_json, '$.acceptedAt') <= ? AND (json_extract(snapshot_json, '$.acceptedAt'), ref_key COLLATE BINARY) < (?, ?) ORDER BY json_extract(snapshot_json, '$.acceptedAt') DESC, ref_key COLLATE BINARY DESC LIMIT 64",
+        "eqp": [
+          "SEARCH snapshots USING INDEX next_lookup_s2b_plan_revision_by_goal_2ee1691c (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr><?)"
+        ],
+        "rows": 0,
+        "authCallsAtPrepare": 26,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 207.4,
+          "rounds": [
+            207.4,
+            207,
+            212.4
+          ],
+          "iterations": 2874
+        },
+        "reused": {
+          "us": 7.7,
+          "rounds": [
+            7.9,
+            7.7,
+            7.7
+          ],
+          "iterations": 77162
+        }
+      },
+      "partial": {
+        "name": "ordered_planrev_desc_after_empty",
+        "shape": "lookupOrderedInside desc, after (keyset)",
+        "sql": "SELECT ref_key, json_extract(snapshot_json, '$.acceptedAt') AS order_value FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = 'PlanRevision' AND json_type(snapshot_json, '$.goalRef.projectId') = 'text' AND json_extract(snapshot_json, '$.goalRef.projectId') = ? AND json_type(snapshot_json, '$.goalRef.goalId') = 'text' AND json_extract(snapshot_json, '$.goalRef.goalId') = ? AND json_type(snapshot_json, '$.acceptedAt') = 'text' AND json_extract(snapshot_json, '$.acceptedAt') <> '' AND json_extract(snapshot_json, '$.acceptedAt') <= ? AND (json_extract(snapshot_json, '$.acceptedAt'), ref_key COLLATE BINARY) < (?, ?) ORDER BY json_extract(snapshot_json, '$.acceptedAt') DESC, ref_key COLLATE BINARY DESC LIMIT 64",
+        "eqp": [
+          "SEARCH snapshots USING INDEX next_lookup_s2b_plan_revision_by_goal_bbeaf1ee (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr><?)"
+        ],
+        "rows": 0,
+        "authCallsAtPrepare": 26,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 118,
+          "rounds": [
+            116.7,
+            119.2,
+            118
+          ],
+          "iterations": 5089
+        },
+        "reused": {
+          "us": 7.7,
+          "rounds": [
+            7.5,
+            7.7,
+            7.8
+          ],
+          "iterations": 78595
+        }
+      }
+    },
+    {
+      "name": "ordered_catalog_int_desc_small",
+      "shape": "lookupOrderedInside desc, integer",
+      "type": "ArchitectureCatalog",
+      "variant": "bound",
+      "sameResult": true,
+      "full": {
+        "name": "ordered_catalog_int_desc_small",
+        "shape": "lookupOrderedInside desc, integer",
+        "sql": "SELECT ref_key, json_extract(snapshot_json, '$.ref.revision') AS order_value FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.ref.revision') = 'integer' AND json_extract(snapshot_json, '$.ref.revision') >= ? AND json_extract(snapshot_json, '$.ref.revision') <= ? ORDER BY json_extract(snapshot_json, '$.ref.revision') DESC, ref_key COLLATE BINARY DESC LIMIT 64",
+        "eqp": [
+          "SEARCH snapshots USING INDEX next_lookup_s4b_catalog_revision_by_project_90fa8730 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>>? AND <expr><?)"
+        ],
+        "eqpBeforeBind": [
+          "SEARCH snapshots USING INDEX next_lookup_s4b_catalog_revision_by_project_90fa8730 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>>? AND <expr><?)"
+        ],
+        "rows": 1,
+        "authCallsAtPrepare": 19,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 212.2,
+          "rounds": [
+            211.2,
+            212.2,
+            216.2
+          ],
+          "iterations": 2816
+        },
+        "reused": {
+          "us": 16.5,
+          "rounds": [
+            16.5,
+            16.3,
+            19.5
+          ],
+          "iterations": 34863
+        }
+      },
+      "partial": {
+        "name": "ordered_catalog_int_desc_small",
+        "shape": "lookupOrderedInside desc, integer",
+        "sql": "SELECT ref_key, json_extract(snapshot_json, '$.ref.revision') AS order_value FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.ref.revision') = 'integer' AND json_extract(snapshot_json, '$.ref.revision') >= ? AND json_extract(snapshot_json, '$.ref.revision') <= ? ORDER BY json_extract(snapshot_json, '$.ref.revision') DESC, ref_key COLLATE BINARY DESC LIMIT 64",
+        "eqp": [
+          "SEARCH snapshots USING INDEX next_lookup_s4b_catalog_revision_by_project_c5ae911f (<expr>=? AND <expr>=? AND <expr>=? AND <expr>>? AND <expr><?)"
+        ],
+        "eqpBeforeBind": [
+          "SCAN snapshots",
+          "USE TEMP B-TREE FOR ORDER BY"
+        ],
+        "rows": 1,
+        "authCallsAtPrepare": 19,
+        "authCallsPerExecution": [
+          19,
+          19,
+          19,
+          19,
+          19
+        ],
+        "reprepareEveryExecution": true,
+        "fresh": {
+          "us": 155.1,
+          "rounds": [
+            155.1,
+            155.7,
+            155
+          ],
+          "iterations": 3868
+        },
+        "reused": {
+          "us": 84.8,
+          "rounds": [
+            85.5,
+            84.8,
+            83.5
+          ],
+          "iterations": 7096
+        }
+      }
+    },
+    {
+      "name": "ordered_catalog_int_desc_small",
+      "shape": "lookupOrderedInside desc, integer",
+      "type": "ArchitectureCatalog",
+      "variant": "literal",
+      "sameResult": true,
+      "full": {
+        "name": "ordered_catalog_int_desc_small",
+        "shape": "lookupOrderedInside desc, integer",
+        "sql": "SELECT ref_key, json_extract(snapshot_json, '$.ref.revision') AS order_value FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = 'ArchitectureCatalog' AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.ref.revision') = 'integer' AND json_extract(snapshot_json, '$.ref.revision') >= ? AND json_extract(snapshot_json, '$.ref.revision') <= ? ORDER BY json_extract(snapshot_json, '$.ref.revision') DESC, ref_key COLLATE BINARY DESC LIMIT 64",
+        "eqp": [
+          "SEARCH snapshots USING INDEX next_lookup_s4b_catalog_revision_by_project_90fa8730 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>>? AND <expr><?)"
+        ],
+        "rows": 1,
+        "authCallsAtPrepare": 19,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 209.5,
+          "rounds": [
+            200.9,
+            209.5,
+            218.8
+          ],
+          "iterations": 2866
+        },
+        "reused": {
+          "us": 16.8,
+          "rounds": [
+            17.1,
+            16.8,
+            16.4
+          ],
+          "iterations": 35731
+        }
+      },
+      "partial": {
+        "name": "ordered_catalog_int_desc_small",
+        "shape": "lookupOrderedInside desc, integer",
+        "sql": "SELECT ref_key, json_extract(snapshot_json, '$.ref.revision') AS order_value FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = 'ArchitectureCatalog' AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.ref.revision') = 'integer' AND json_extract(snapshot_json, '$.ref.revision') >= ? AND json_extract(snapshot_json, '$.ref.revision') <= ? ORDER BY json_extract(snapshot_json, '$.ref.revision') DESC, ref_key COLLATE BINARY DESC LIMIT 64",
+        "eqp": [
+          "SEARCH snapshots USING INDEX next_lookup_s4b_catalog_revision_by_project_c5ae911f (<expr>=? AND <expr>=? AND <expr>=? AND <expr>>? AND <expr><?)"
+        ],
+        "rows": 1,
+        "authCallsAtPrepare": 19,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 75.7,
+          "rounds": [
+            75.5,
+            76.8,
+            75.7
+          ],
+          "iterations": 7896
+        },
+        "reused": {
+          "us": 16.1,
+          "rounds": [
+            16.4,
+            16.1,
+            16.1
+          ],
+          "iterations": 37026
+        }
+      }
+    },
+    {
+      "name": "ordered_catalog_int_desc_after_empty",
+      "shape": "lookupOrderedInside desc, integer, after",
+      "type": "ArchitectureCatalog",
+      "variant": "bound",
+      "sameResult": true,
+      "full": {
+        "name": "ordered_catalog_int_desc_after_empty",
+        "shape": "lookupOrderedInside desc, integer, after",
+        "sql": "SELECT ref_key, json_extract(snapshot_json, '$.ref.revision') AS order_value FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.ref.revision') = 'integer' AND json_extract(snapshot_json, '$.ref.revision') >= ? AND json_extract(snapshot_json, '$.ref.revision') <= ? AND (json_extract(snapshot_json, '$.ref.revision'), ref_key COLLATE BINARY) < (?, ?) ORDER BY json_extract(snapshot_json, '$.ref.revision') DESC, ref_key COLLATE BINARY DESC LIMIT 64",
+        "eqp": [
+          "SEARCH snapshots USING INDEX next_lookup_s4b_catalog_revision_by_project_90fa8730 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>>? AND <expr><?)"
+        ],
+        "eqpBeforeBind": [
+          "SEARCH snapshots USING INDEX next_lookup_s4b_catalog_revision_by_project_90fa8730 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>>? AND <expr><?)"
+        ],
+        "rows": 0,
+        "authCallsAtPrepare": 22,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 228.5,
+          "rounds": [
+            225.2,
+            228.8,
+            228.5
+          ],
+          "iterations": 2640
+        },
+        "reused": {
+          "us": 16,
+          "rounds": [
+            16.1,
+            16,
+            15.9
+          ],
+          "iterations": 37457
+        }
+      },
+      "partial": {
+        "name": "ordered_catalog_int_desc_after_empty",
+        "shape": "lookupOrderedInside desc, integer, after",
+        "sql": "SELECT ref_key, json_extract(snapshot_json, '$.ref.revision') AS order_value FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.ref.revision') = 'integer' AND json_extract(snapshot_json, '$.ref.revision') >= ? AND json_extract(snapshot_json, '$.ref.revision') <= ? AND (json_extract(snapshot_json, '$.ref.revision'), ref_key COLLATE BINARY) < (?, ?) ORDER BY json_extract(snapshot_json, '$.ref.revision') DESC, ref_key COLLATE BINARY DESC LIMIT 64",
+        "eqp": [
+          "SEARCH snapshots USING INDEX next_lookup_s4b_catalog_revision_by_project_c5ae911f (<expr>=? AND <expr>=? AND <expr>=? AND <expr>>? AND <expr><?)"
+        ],
+        "eqpBeforeBind": [
+          "SCAN snapshots",
+          "USE TEMP B-TREE FOR ORDER BY"
+        ],
+        "rows": 0,
+        "authCallsAtPrepare": 22,
+        "authCallsPerExecution": [
+          22,
+          22,
+          22,
+          22,
+          22
+        ],
+        "reprepareEveryExecution": true,
+        "fresh": {
+          "us": 174.2,
+          "rounds": [
+            174.8,
+            174.2,
+            171.6
+          ],
+          "iterations": 3459
+        },
+        "reused": {
+          "us": 95.7,
+          "rounds": [
+            95.7,
+            95.4,
+            96.9
+          ],
+          "iterations": 6252
+        }
+      }
+    },
+    {
+      "name": "ordered_catalog_int_desc_after_empty",
+      "shape": "lookupOrderedInside desc, integer, after",
+      "type": "ArchitectureCatalog",
+      "variant": "literal",
+      "sameResult": true,
+      "full": {
+        "name": "ordered_catalog_int_desc_after_empty",
+        "shape": "lookupOrderedInside desc, integer, after",
+        "sql": "SELECT ref_key, json_extract(snapshot_json, '$.ref.revision') AS order_value FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = 'ArchitectureCatalog' AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.ref.revision') = 'integer' AND json_extract(snapshot_json, '$.ref.revision') >= ? AND json_extract(snapshot_json, '$.ref.revision') <= ? AND (json_extract(snapshot_json, '$.ref.revision'), ref_key COLLATE BINARY) < (?, ?) ORDER BY json_extract(snapshot_json, '$.ref.revision') DESC, ref_key COLLATE BINARY DESC LIMIT 64",
+        "eqp": [
+          "SEARCH snapshots USING INDEX next_lookup_s4b_catalog_revision_by_project_90fa8730 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>>? AND <expr><?)"
+        ],
+        "rows": 0,
+        "authCallsAtPrepare": 22,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 214.8,
+          "rounds": [
+            209.9,
+            214.8,
+            216.6
+          ],
+          "iterations": 2810
+        },
+        "reused": {
+          "us": 15.2,
+          "rounds": [
+            15.2,
+            15.2,
+            15.3
+          ],
+          "iterations": 39374
+        }
+      },
+      "partial": {
+        "name": "ordered_catalog_int_desc_after_empty",
+        "shape": "lookupOrderedInside desc, integer, after",
+        "sql": "SELECT ref_key, json_extract(snapshot_json, '$.ref.revision') AS order_value FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = 'ArchitectureCatalog' AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.ref.revision') = 'integer' AND json_extract(snapshot_json, '$.ref.revision') >= ? AND json_extract(snapshot_json, '$.ref.revision') <= ? AND (json_extract(snapshot_json, '$.ref.revision'), ref_key COLLATE BINARY) < (?, ?) ORDER BY json_extract(snapshot_json, '$.ref.revision') DESC, ref_key COLLATE BINARY DESC LIMIT 64",
+        "eqp": [
+          "SEARCH snapshots USING INDEX next_lookup_s4b_catalog_revision_by_project_c5ae911f (<expr>=? AND <expr>=? AND <expr>=? AND <expr>>? AND <expr><?)"
+        ],
+        "rows": 0,
+        "authCallsAtPrepare": 22,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 89.5,
+          "rounds": [
+            85.8,
+            89.5,
+            91.4
+          ],
+          "iterations": 6755
+        },
+        "reused": {
+          "us": 15.5,
+          "rounds": [
+            15.7,
+            15.5,
+            15.4
+          ],
+          "iterations": 38595
+        }
+      }
+    },
+    {
+      "name": "ordered_queryrun_int_asc_empty_type",
+      "shape": "lookupOrderedInside asc, integer",
+      "type": "QueryRun",
+      "variant": "bound",
+      "sameResult": true,
+      "full": {
+        "name": "ordered_queryrun_int_asc_empty_type",
+        "shape": "lookupOrderedInside asc, integer",
+        "sql": "SELECT ref_key, json_extract(snapshot_json, '$.run.executionState.sessionGeneration') AS order_value FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.ref.workspaceId') = 'text' AND json_extract(snapshot_json, '$.ref.workspaceId') = ? AND json_type(snapshot_json, '$.run.executionState.sessionRef.sessionId') = 'text' AND json_extract(snapshot_json, '$.run.executionState.sessionRef.sessionId') = ? AND json_type(snapshot_json, '$.run.executionState.sessionGeneration') = 'integer' AND json_extract(snapshot_json, '$.run.executionState.sessionGeneration') >= ? AND json_extract(snapshot_json, '$.run.executionState.sessionGeneration') <= ? ORDER BY json_extract(snapshot_json, '$.run.executionState.sessionGeneration') ASC, ref_key COLLATE BINARY ASC LIMIT 64",
+        "eqp": [
+          "SEARCH snapshots USING INDEX next_lookup_s2c_query_run_by_session_generation_a7967872 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>>? AND <expr><?)"
+        ],
+        "eqpBeforeBind": [
+          "SEARCH snapshots USING INDEX next_lookup_s2c_query_run_by_session_generation_a7967872 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>>? AND <expr><?)"
+        ],
+        "rows": 0,
+        "authCallsAtPrepare": 27,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 287.8,
+          "rounds": [
+            261.8,
+            287.8,
+            302.8
+          ],
+          "iterations": 2121
+        },
+        "reused": {
+          "us": 3.8,
+          "rounds": [
+            3.9,
+            3.8,
+            3.7
+          ],
+          "iterations": 150000
+        }
+      },
+      "partial": {
+        "name": "ordered_queryrun_int_asc_empty_type",
+        "shape": "lookupOrderedInside asc, integer",
+        "sql": "SELECT ref_key, json_extract(snapshot_json, '$.run.executionState.sessionGeneration') AS order_value FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.ref.workspaceId') = 'text' AND json_extract(snapshot_json, '$.ref.workspaceId') = ? AND json_type(snapshot_json, '$.run.executionState.sessionRef.sessionId') = 'text' AND json_extract(snapshot_json, '$.run.executionState.sessionRef.sessionId') = ? AND json_type(snapshot_json, '$.run.executionState.sessionGeneration') = 'integer' AND json_extract(snapshot_json, '$.run.executionState.sessionGeneration') >= ? AND json_extract(snapshot_json, '$.run.executionState.sessionGeneration') <= ? ORDER BY json_extract(snapshot_json, '$.run.executionState.sessionGeneration') ASC, ref_key COLLATE BINARY ASC LIMIT 64",
+        "eqp": [
+          "SEARCH snapshots USING INDEX next_lookup_s2c_query_run_by_session_generation_1d2a76bc (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>>? AND <expr><?)"
+        ],
+        "eqpBeforeBind": [
+          "SCAN snapshots",
+          "USE TEMP B-TREE FOR ORDER BY"
+        ],
+        "rows": 0,
+        "authCallsAtPrepare": 27,
+        "authCallsPerExecution": [
+          27,
+          27,
+          27,
+          27,
+          27
+        ],
+        "reprepareEveryExecution": true,
+        "fresh": {
+          "us": 187.3,
+          "rounds": [
+            191.5,
+            187.3,
+            183.2
+          ],
+          "iterations": 3206
+        },
+        "reused": {
+          "us": 98,
+          "rounds": [
+            99.4,
+            98,
+            97.8
+          ],
+          "iterations": 6099
+        }
+      }
+    },
+    {
+      "name": "ordered_queryrun_int_asc_empty_type",
+      "shape": "lookupOrderedInside asc, integer",
+      "type": "QueryRun",
+      "variant": "literal",
+      "sameResult": true,
+      "full": {
+        "name": "ordered_queryrun_int_asc_empty_type",
+        "shape": "lookupOrderedInside asc, integer",
+        "sql": "SELECT ref_key, json_extract(snapshot_json, '$.run.executionState.sessionGeneration') AS order_value FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = 'QueryRun' AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.ref.workspaceId') = 'text' AND json_extract(snapshot_json, '$.ref.workspaceId') = ? AND json_type(snapshot_json, '$.run.executionState.sessionRef.sessionId') = 'text' AND json_extract(snapshot_json, '$.run.executionState.sessionRef.sessionId') = ? AND json_type(snapshot_json, '$.run.executionState.sessionGeneration') = 'integer' AND json_extract(snapshot_json, '$.run.executionState.sessionGeneration') >= ? AND json_extract(snapshot_json, '$.run.executionState.sessionGeneration') <= ? ORDER BY json_extract(snapshot_json, '$.run.executionState.sessionGeneration') ASC, ref_key COLLATE BINARY ASC LIMIT 64",
+        "eqp": [
+          "SEARCH snapshots USING INDEX next_lookup_s2c_query_run_by_session_generation_a7967872 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>>? AND <expr><?)"
+        ],
+        "rows": 0,
+        "authCallsAtPrepare": 27,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 270.2,
+          "rounds": [
+            271.1,
+            270.2,
+            264.6
+          ],
+          "iterations": 2235
+        },
+        "reused": {
+          "us": 3.6,
+          "rounds": [
+            3.6,
+            3.6,
+            3.6
+          ],
+          "iterations": 150000
+        }
+      },
+      "partial": {
+        "name": "ordered_queryrun_int_asc_empty_type",
+        "shape": "lookupOrderedInside asc, integer",
+        "sql": "SELECT ref_key, json_extract(snapshot_json, '$.run.executionState.sessionGeneration') AS order_value FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = 'QueryRun' AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.ref.workspaceId') = 'text' AND json_extract(snapshot_json, '$.ref.workspaceId') = ? AND json_type(snapshot_json, '$.run.executionState.sessionRef.sessionId') = 'text' AND json_extract(snapshot_json, '$.run.executionState.sessionRef.sessionId') = ? AND json_type(snapshot_json, '$.run.executionState.sessionGeneration') = 'integer' AND json_extract(snapshot_json, '$.run.executionState.sessionGeneration') >= ? AND json_extract(snapshot_json, '$.run.executionState.sessionGeneration') <= ? ORDER BY json_extract(snapshot_json, '$.run.executionState.sessionGeneration') ASC, ref_key COLLATE BINARY ASC LIMIT 64",
+        "eqp": [
+          "SEARCH snapshots USING INDEX next_lookup_s2c_query_run_by_session_generation_1d2a76bc (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>>? AND <expr><?)"
+        ],
+        "rows": 0,
+        "authCallsAtPrepare": 27,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 90.2,
+          "rounds": [
+            90.2,
+            90.2,
+            90.1
+          ],
+          "iterations": 6656
+        },
+        "reused": {
+          "us": 3.5,
+          "rounds": [
+            3.5,
+            3.4,
+            3.5
+          ],
+          "iterations": 150000
+        }
+      }
+    },
+    {
+      "name": "count_note_review_141",
+      "shape": "countInside",
+      "type": "NoteHead",
+      "variant": "bound",
+      "sameResult": true,
+      "full": {
+        "name": "count_note_review_141",
+        "shape": "countInside",
+        "sql": "SELECT COUNT(*) AS total FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.goalId') = 'text' AND json_extract(snapshot_json, '$.goalId') = ? AND json_type(snapshot_json, '$.state') = 'text' AND json_extract(snapshot_json, '$.state') = ?",
+        "eqp": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_s4_note_by_review_status_a8094c37 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "eqpBeforeBind": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_s4_note_by_review_status_a8094c37 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "rows": 1,
+        "total": 141,
+        "authCallsAtPrepare": 16,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 148.6,
+          "rounds": [
+            147.8,
+            151.3,
+            148.6
+          ],
+          "iterations": 4023
+        },
+        "reused": {
+          "us": 16.1,
+          "rounds": [
+            14.1,
+            16.1,
+            19
+          ],
+          "iterations": 37078
+        }
+      },
+      "partial": {
+        "name": "count_note_review_141",
+        "shape": "countInside",
+        "sql": "SELECT COUNT(*) AS total FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.goalId') = 'text' AND json_extract(snapshot_json, '$.goalId') = ? AND json_type(snapshot_json, '$.state') = 'text' AND json_extract(snapshot_json, '$.state') = ?",
+        "eqp": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_s4_note_by_review_status_fb1b1830 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "eqpBeforeBind": [
+          "SCAN snapshots"
+        ],
+        "rows": 1,
+        "total": 141,
+        "authCallsAtPrepare": 16,
+        "authCallsPerExecution": [
+          16,
+          16,
+          16,
+          16,
+          16
+        ],
+        "reprepareEveryExecution": true,
+        "fresh": {
+          "us": 148.6,
+          "rounds": [
+            167.4,
+            148.6,
+            143.6
+          ],
+          "iterations": 3934
+        },
+        "reused": {
+          "us": 88,
+          "rounds": [
+            88,
+            86.4,
+            92.7
+          ],
+          "iterations": 6747
+        }
+      }
+    },
+    {
+      "name": "count_note_review_141",
+      "shape": "countInside",
+      "type": "NoteHead",
+      "variant": "literal",
+      "sameResult": true,
+      "full": {
+        "name": "count_note_review_141",
+        "shape": "countInside",
+        "sql": "SELECT COUNT(*) AS total FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = 'NoteHead' AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.goalId') = 'text' AND json_extract(snapshot_json, '$.goalId') = ? AND json_type(snapshot_json, '$.state') = 'text' AND json_extract(snapshot_json, '$.state') = ?",
+        "eqp": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_s4_note_by_review_status_a8094c37 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "rows": 1,
+        "total": 141,
+        "authCallsAtPrepare": 16,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 149.4,
+          "rounds": [
+            149.4,
+            152.5,
+            148.5
+          ],
+          "iterations": 3998
+        },
+        "reused": {
+          "us": 13.9,
+          "rounds": [
+            14,
+            13.9,
+            13.9
+          ],
+          "iterations": 43122
+        }
+      },
+      "partial": {
+        "name": "count_note_review_141",
+        "shape": "countInside",
+        "sql": "SELECT COUNT(*) AS total FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = 'NoteHead' AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.goalId') = 'text' AND json_extract(snapshot_json, '$.goalId') = ? AND json_type(snapshot_json, '$.state') = 'text' AND json_extract(snapshot_json, '$.state') = ?",
+        "eqp": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_s4_note_by_review_status_fb1b1830 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "rows": 1,
+        "total": 141,
+        "authCallsAtPrepare": 16,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 81.7,
+          "rounds": [
+            81.7,
+            144,
+            78.4
+          ],
+          "iterations": 6389
+        },
+        "reused": {
+          "us": 14,
+          "rounds": [
+            13.8,
+            14,
+            14
+          ],
+          "iterations": 43065
+        }
+      }
+    },
+    {
+      "name": "count_note_review_empty",
+      "shape": "countInside",
+      "type": "NoteHead",
+      "variant": "bound",
+      "sameResult": true,
+      "full": {
+        "name": "count_note_review_empty",
+        "shape": "countInside",
+        "sql": "SELECT COUNT(*) AS total FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.goalId') = 'text' AND json_extract(snapshot_json, '$.goalId') = ? AND json_type(snapshot_json, '$.state') = 'text' AND json_extract(snapshot_json, '$.state') = ?",
+        "eqp": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_s4_note_by_review_status_a8094c37 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "eqpBeforeBind": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_s4_note_by_review_status_a8094c37 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "rows": 1,
+        "total": 0,
+        "authCallsAtPrepare": 16,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 147,
+          "rounds": [
+            146.8,
+            147,
+            158.3
+          ],
+          "iterations": 3988
+        },
+        "reused": {
+          "us": 5,
+          "rounds": [
+            5,
+            5.3,
+            5
+          ],
+          "iterations": 118095
+        }
+      },
+      "partial": {
+        "name": "count_note_review_empty",
+        "shape": "countInside",
+        "sql": "SELECT COUNT(*) AS total FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.goalId') = 'text' AND json_extract(snapshot_json, '$.goalId') = ? AND json_type(snapshot_json, '$.state') = 'text' AND json_extract(snapshot_json, '$.state') = ?",
+        "eqp": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_s4_note_by_review_status_fb1b1830 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "eqpBeforeBind": [
+          "SCAN snapshots"
+        ],
+        "rows": 1,
+        "total": 0,
+        "authCallsAtPrepare": 16,
+        "authCallsPerExecution": [
+          16,
+          16,
+          16,
+          16,
+          16
+        ],
+        "reprepareEveryExecution": true,
+        "fresh": {
+          "us": 126.3,
+          "rounds": [
+            131,
+            126.3,
+            126.2
+          ],
+          "iterations": 4696
+        },
+        "reused": {
+          "us": 76.6,
+          "rounds": [
+            77.3,
+            76.4,
+            76.6
+          ],
+          "iterations": 7817
+        }
+      }
+    },
+    {
+      "name": "count_note_review_empty",
+      "shape": "countInside",
+      "type": "NoteHead",
+      "variant": "literal",
+      "sameResult": true,
+      "full": {
+        "name": "count_note_review_empty",
+        "shape": "countInside",
+        "sql": "SELECT COUNT(*) AS total FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = 'NoteHead' AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.goalId') = 'text' AND json_extract(snapshot_json, '$.goalId') = ? AND json_type(snapshot_json, '$.state') = 'text' AND json_extract(snapshot_json, '$.state') = ?",
+        "eqp": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_s4_note_by_review_status_a8094c37 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "rows": 1,
+        "total": 0,
+        "authCallsAtPrepare": 16,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 142.4,
+          "rounds": [
+            136.8,
+            142.4,
+            166.1
+          ],
+          "iterations": 4072
+        },
+        "reused": {
+          "us": 5.4,
+          "rounds": [
+            5.4,
+            5.5,
+            5.1
+          ],
+          "iterations": 112564
+        }
+      },
+      "partial": {
+        "name": "count_note_review_empty",
+        "shape": "countInside",
+        "sql": "SELECT COUNT(*) AS total FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = 'NoteHead' AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.goalId') = 'text' AND json_extract(snapshot_json, '$.goalId') = ? AND json_type(snapshot_json, '$.state') = 'text' AND json_extract(snapshot_json, '$.state') = ?",
+        "eqp": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_s4_note_by_review_status_fb1b1830 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "rows": 1,
+        "total": 0,
+        "authCallsAtPrepare": 16,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 66.3,
+          "rounds": [
+            66.4,
+            66.3,
+            65.7
+          ],
+          "iterations": 9074
+        },
+        "reused": {
+          "us": 4.4,
+          "rounds": [
+            4.4,
+            4.4,
+            4.8
+          ],
+          "iterations": 132501
+        }
+      }
+    },
+    {
+      "name": "count_session_lifecycle_202",
+      "shape": "countInside",
+      "type": "Session",
+      "variant": "bound",
+      "sameResult": true,
+      "full": {
+        "name": "count_session_lifecycle_202",
+        "shape": "countInside",
+        "sql": "SELECT COUNT(*) AS total FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.workspaceId') = 'text' AND json_extract(snapshot_json, '$.workspaceId') = ? AND json_type(snapshot_json, '$.lifecycle') = 'text' AND json_extract(snapshot_json, '$.lifecycle') = ?",
+        "eqp": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_s2c_session_archived_at_1c8df22a (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "eqpBeforeBind": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_s2c_session_archived_at_1c8df22a (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "rows": 1,
+        "total": 202,
+        "authCallsAtPrepare": 16,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 194.6,
+          "rounds": [
+            206.4,
+            194.6,
+            189.4
+          ],
+          "iterations": 3054
+        },
+        "reused": {
+          "us": 20.5,
+          "rounds": [
+            20.9,
+            20.5,
+            19.7
+          ],
+          "iterations": 29451
+        }
+      },
+      "partial": {
+        "name": "count_session_lifecycle_202",
+        "shape": "countInside",
+        "sql": "SELECT COUNT(*) AS total FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.workspaceId') = 'text' AND json_extract(snapshot_json, '$.workspaceId') = ? AND json_type(snapshot_json, '$.lifecycle') = 'text' AND json_extract(snapshot_json, '$.lifecycle') = ?",
+        "eqp": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_s2c_session_archived_at_28f05cb9 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "eqpBeforeBind": [
+          "SCAN snapshots"
+        ],
+        "rows": 1,
+        "total": 202,
+        "authCallsAtPrepare": 16,
+        "authCallsPerExecution": [
+          16,
+          16,
+          16,
+          16,
+          16
+        ],
+        "reprepareEveryExecution": true,
+        "fresh": {
+          "us": 181.9,
+          "rounds": [
+            181.9,
+            180.2,
+            190.6
+          ],
+          "iterations": 3260
+        },
+        "reused": {
+          "us": 117.2,
+          "rounds": [
+            121.8,
+            117.1,
+            117.2
+          ],
+          "iterations": 5058
+        }
+      }
+    },
+    {
+      "name": "count_session_lifecycle_202",
+      "shape": "countInside",
+      "type": "Session",
+      "variant": "literal",
+      "sameResult": true,
+      "full": {
+        "name": "count_session_lifecycle_202",
+        "shape": "countInside",
+        "sql": "SELECT COUNT(*) AS total FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = 'Session' AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.workspaceId') = 'text' AND json_extract(snapshot_json, '$.workspaceId') = ? AND json_type(snapshot_json, '$.lifecycle') = 'text' AND json_extract(snapshot_json, '$.lifecycle') = ?",
+        "eqp": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_s2c_session_archived_at_1c8df22a (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "rows": 1,
+        "total": 202,
+        "authCallsAtPrepare": 16,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 205.9,
+          "rounds": [
+            216.2,
+            205.9,
+            202.1
+          ],
+          "iterations": 2887
+        },
+        "reused": {
+          "us": 20,
+          "rounds": [
+            20.3,
+            20,
+            19.4
+          ],
+          "iterations": 30167
+        }
+      },
+      "partial": {
+        "name": "count_session_lifecycle_202",
+        "shape": "countInside",
+        "sql": "SELECT COUNT(*) AS total FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = 'Session' AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.workspaceId') = 'text' AND json_extract(snapshot_json, '$.workspaceId') = ? AND json_type(snapshot_json, '$.lifecycle') = 'text' AND json_extract(snapshot_json, '$.lifecycle') = ?",
+        "eqp": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_s2c_session_archived_at_28f05cb9 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "rows": 1,
+        "total": 202,
+        "authCallsAtPrepare": 16,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 121.8,
+          "rounds": [
+            104.2,
+            121.8,
+            132.3
+          ],
+          "iterations": 5074
+        },
+        "reused": {
+          "us": 24.3,
+          "rounds": [
+            23.2,
+            24.8,
+            24.3
+          ],
+          "iterations": 24899
+        }
+      }
+    },
+    {
+      "name": "count_ordered_session_archived_empty",
+      "shape": "countInside (ordered index)",
+      "type": "Session",
+      "variant": "bound",
+      "sameResult": true,
+      "full": {
+        "name": "count_ordered_session_archived_empty",
+        "shape": "countInside (ordered index)",
+        "sql": "SELECT COUNT(*) AS total FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.workspaceId') = 'text' AND json_extract(snapshot_json, '$.workspaceId') = ? AND json_type(snapshot_json, '$.lifecycle') = 'text' AND json_extract(snapshot_json, '$.lifecycle') = ? AND json_type(snapshot_json, '$.archivedAt') = 'text' AND json_extract(snapshot_json, '$.archivedAt') <> ''",
+        "eqp": [
+          "SEARCH snapshots USING INDEX next_lookup_s2c_session_archived_at_1c8df22a (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "eqpBeforeBind": [
+          "SEARCH snapshots USING INDEX next_lookup_s2c_session_archived_at_1c8df22a (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "rows": 1,
+        "total": 0,
+        "authCallsAtPrepare": 20,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 191.8,
+          "rounds": [
+            191.4,
+            192.9,
+            191.8
+          ],
+          "iterations": 3125
+        },
+        "reused": {
+          "us": 4,
+          "rounds": [
+            4,
+            4.6,
+            4
+          ],
+          "iterations": 143433
+        }
+      },
+      "partial": {
+        "name": "count_ordered_session_archived_empty",
+        "shape": "countInside (ordered index)",
+        "sql": "SELECT COUNT(*) AS total FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.workspaceId') = 'text' AND json_extract(snapshot_json, '$.workspaceId') = ? AND json_type(snapshot_json, '$.lifecycle') = 'text' AND json_extract(snapshot_json, '$.lifecycle') = ? AND json_type(snapshot_json, '$.archivedAt') = 'text' AND json_extract(snapshot_json, '$.archivedAt') <> ''",
+        "eqp": [
+          "SEARCH snapshots USING INDEX next_lookup_s2c_session_archived_at_28f05cb9 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "eqpBeforeBind": [
+          "SCAN snapshots"
+        ],
+        "rows": 1,
+        "total": 0,
+        "authCallsAtPrepare": 20,
+        "authCallsPerExecution": [
+          20,
+          20,
+          20,
+          20,
+          20
+        ],
+        "reprepareEveryExecution": true,
+        "fresh": {
+          "us": 190,
+          "rounds": [
+            190,
+            189,
+            217.1
+          ],
+          "iterations": 3034
+        },
+        "reused": {
+          "us": 130.3,
+          "rounds": [
+            130.3,
+            130.8,
+            128.3
+          ],
+          "iterations": 4627
+        }
+      }
+    },
+    {
+      "name": "count_ordered_session_archived_empty",
+      "shape": "countInside (ordered index)",
+      "type": "Session",
+      "variant": "literal",
+      "sameResult": true,
+      "full": {
+        "name": "count_ordered_session_archived_empty",
+        "shape": "countInside (ordered index)",
+        "sql": "SELECT COUNT(*) AS total FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = 'Session' AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.workspaceId') = 'text' AND json_extract(snapshot_json, '$.workspaceId') = ? AND json_type(snapshot_json, '$.lifecycle') = 'text' AND json_extract(snapshot_json, '$.lifecycle') = ? AND json_type(snapshot_json, '$.archivedAt') = 'text' AND json_extract(snapshot_json, '$.archivedAt') <> ''",
+        "eqp": [
+          "SEARCH snapshots USING INDEX next_lookup_s2c_session_archived_at_1c8df22a (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "rows": 1,
+        "total": 0,
+        "authCallsAtPrepare": 20,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 182.5,
+          "rounds": [
+            182.5,
+            180.8,
+            184
+          ],
+          "iterations": 3290
+        },
+        "reused": {
+          "us": 4.1,
+          "rounds": [
+            4,
+            4.1,
+            4.4
+          ],
+          "iterations": 144840
+        }
+      },
+      "partial": {
+        "name": "count_ordered_session_archived_empty",
+        "shape": "countInside (ordered index)",
+        "sql": "SELECT COUNT(*) AS total FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = 'Session' AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.workspaceId') = 'text' AND json_extract(snapshot_json, '$.workspaceId') = ? AND json_type(snapshot_json, '$.lifecycle') = 'text' AND json_extract(snapshot_json, '$.lifecycle') = ? AND json_type(snapshot_json, '$.archivedAt') = 'text' AND json_extract(snapshot_json, '$.archivedAt') <> ''",
+        "eqp": [
+          "SEARCH snapshots USING INDEX next_lookup_s2c_session_archived_at_28f05cb9 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "rows": 1,
+        "total": 0,
+        "authCallsAtPrepare": 20,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 103.5,
+          "rounds": [
+            106.3,
+            103.1,
+            103.5
+          ],
+          "iterations": 5756
+        },
+        "reused": {
+          "us": 4,
+          "rounds": [
+            4,
+            4.1,
+            4
+          ],
+          "iterations": 148403
+        }
+      }
+    },
+    {
+      "name": "count_distinct_session_from_202",
+      "shape": "countInside distinct",
+      "type": "Session",
+      "variant": "bound",
+      "sameResult": true,
+      "full": {
+        "name": "count_distinct_session_from_202",
+        "shape": "countInside distinct",
+        "sql": "SELECT COUNT(*) AS total FROM (SELECT DISTINCT CASE WHEN json_type(snapshot_json, '$.provenance.from.sessionId') IN ('integer', 'real') THEN 'number' ELSE json_type(snapshot_json, '$.provenance.from.sessionId') END AS value_type, json_extract(snapshot_json, '$.provenance.from.sessionId') AS value FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.workspaceId') = 'text' AND json_extract(snapshot_json, '$.workspaceId') = ? AND json_type(snapshot_json, '$.provenance.kind') = 'text' AND json_extract(snapshot_json, '$.provenance.kind') = ? AND json_type(snapshot_json, '$.provenance.from.sessionId') IN ('text', 'integer', 'real', 'true', 'false'))",
+        "eqp": [
+          "CO-ROUTINE (subquery-1)",
+          "SEARCH snapshots USING COVERING INDEX next_lookup_s2c_session_by_kind_from_1ebef809 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)",
+          "USE TEMP B-TREE FOR DISTINCT",
+          "SCAN (subquery-1)"
+        ],
+        "eqpBeforeBind": [
+          "CO-ROUTINE (subquery-1)",
+          "SEARCH snapshots USING COVERING INDEX next_lookup_s2c_session_by_kind_from_1ebef809 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)",
+          "USE TEMP B-TREE FOR DISTINCT",
+          "SCAN (subquery-1)"
+        ],
+        "rows": 1,
+        "total": 0,
+        "authCallsAtPrepare": 25,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 177.2,
+          "rounds": [
+            176.7,
+            178.4,
+            177.2
+          ],
+          "iterations": 3383
+        },
+        "reused": {
+          "us": 9,
+          "rounds": [
+            9,
+            9,
+            9.2
+          ],
+          "iterations": 66175
+        }
+      },
+      "partial": {
+        "name": "count_distinct_session_from_202",
+        "shape": "countInside distinct",
+        "sql": "SELECT COUNT(*) AS total FROM (SELECT DISTINCT CASE WHEN json_type(snapshot_json, '$.provenance.from.sessionId') IN ('integer', 'real') THEN 'number' ELSE json_type(snapshot_json, '$.provenance.from.sessionId') END AS value_type, json_extract(snapshot_json, '$.provenance.from.sessionId') AS value FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.workspaceId') = 'text' AND json_extract(snapshot_json, '$.workspaceId') = ? AND json_type(snapshot_json, '$.provenance.kind') = 'text' AND json_extract(snapshot_json, '$.provenance.kind') = ? AND json_type(snapshot_json, '$.provenance.from.sessionId') IN ('text', 'integer', 'real', 'true', 'false'))",
+        "eqp": [
+          "CO-ROUTINE (subquery-1)",
+          "SEARCH snapshots USING COVERING INDEX next_lookup_s2c_session_by_kind_from_08cc6778 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)",
+          "USE TEMP B-TREE FOR DISTINCT",
+          "SCAN (subquery-1)"
+        ],
+        "eqpBeforeBind": [
+          "CO-ROUTINE (subquery-1)",
+          "SCAN snapshots",
+          "USE TEMP B-TREE FOR DISTINCT",
+          "SCAN (subquery-1)"
+        ],
+        "rows": 1,
+        "total": 0,
+        "authCallsAtPrepare": 25,
+        "authCallsPerExecution": [
+          25,
+          25,
+          25,
+          25,
+          25
+        ],
+        "reprepareEveryExecution": true,
+        "fresh": {
+          "us": 200,
+          "rounds": [
+            200,
+            205.9,
+            196.8
+          ],
+          "iterations": 2989
+        },
+        "reused": {
+          "us": 114.9,
+          "rounds": [
+            112,
+            114.9,
+            116.7
+          ],
+          "iterations": 5244
+        }
+      }
+    },
+    {
+      "name": "count_distinct_session_from_202",
+      "shape": "countInside distinct",
+      "type": "Session",
+      "variant": "literal",
+      "sameResult": true,
+      "full": {
+        "name": "count_distinct_session_from_202",
+        "shape": "countInside distinct",
+        "sql": "SELECT COUNT(*) AS total FROM (SELECT DISTINCT CASE WHEN json_type(snapshot_json, '$.provenance.from.sessionId') IN ('integer', 'real') THEN 'number' ELSE json_type(snapshot_json, '$.provenance.from.sessionId') END AS value_type, json_extract(snapshot_json, '$.provenance.from.sessionId') AS value FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = 'Session' AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.workspaceId') = 'text' AND json_extract(snapshot_json, '$.workspaceId') = ? AND json_type(snapshot_json, '$.provenance.kind') = 'text' AND json_extract(snapshot_json, '$.provenance.kind') = ? AND json_type(snapshot_json, '$.provenance.from.sessionId') IN ('text', 'integer', 'real', 'true', 'false'))",
+        "eqp": [
+          "CO-ROUTINE (subquery-1)",
+          "SEARCH snapshots USING COVERING INDEX next_lookup_s2c_session_by_kind_from_1ebef809 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)",
+          "USE TEMP B-TREE FOR DISTINCT",
+          "SCAN (subquery-1)"
+        ],
+        "rows": 1,
+        "total": 0,
+        "authCallsAtPrepare": 25,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 174.9,
+          "rounds": [
+            174.9,
+            176.2,
+            174.3
+          ],
+          "iterations": 3428
+        },
+        "reused": {
+          "us": 8.6,
+          "rounds": [
+            9.1,
+            8.5,
+            8.6
+          ],
+          "iterations": 68696
+        }
+      },
+      "partial": {
+        "name": "count_distinct_session_from_202",
+        "shape": "countInside distinct",
+        "sql": "SELECT COUNT(*) AS total FROM (SELECT DISTINCT CASE WHEN json_type(snapshot_json, '$.provenance.from.sessionId') IN ('integer', 'real') THEN 'number' ELSE json_type(snapshot_json, '$.provenance.from.sessionId') END AS value_type, json_extract(snapshot_json, '$.provenance.from.sessionId') AS value FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = 'Session' AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.workspaceId') = 'text' AND json_extract(snapshot_json, '$.workspaceId') = ? AND json_type(snapshot_json, '$.provenance.kind') = 'text' AND json_extract(snapshot_json, '$.provenance.kind') = ? AND json_type(snapshot_json, '$.provenance.from.sessionId') IN ('text', 'integer', 'real', 'true', 'false'))",
+        "eqp": [
+          "CO-ROUTINE (subquery-1)",
+          "SEARCH snapshots USING COVERING INDEX next_lookup_s2c_session_by_kind_from_08cc6778 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)",
+          "USE TEMP B-TREE FOR DISTINCT",
+          "SCAN (subquery-1)"
+        ],
+        "rows": 1,
+        "total": 0,
+        "authCallsAtPrepare": 25,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 106.5,
+          "rounds": [
+            109,
+            106.5,
+            105.5
+          ],
+          "iterations": 5610
+        },
+        "reused": {
+          "us": 7.1,
+          "rounds": [
+            7.1,
+            7.1,
+            7.2
+          ],
+          "iterations": 84616
+        }
+      }
+    },
+    {
+      "name": "count_distinct_session_from_empty",
+      "shape": "countInside distinct",
+      "type": "Session",
+      "variant": "bound",
+      "sameResult": true,
+      "full": {
+        "name": "count_distinct_session_from_empty",
+        "shape": "countInside distinct",
+        "sql": "SELECT COUNT(*) AS total FROM (SELECT DISTINCT CASE WHEN json_type(snapshot_json, '$.provenance.from.sessionId') IN ('integer', 'real') THEN 'number' ELSE json_type(snapshot_json, '$.provenance.from.sessionId') END AS value_type, json_extract(snapshot_json, '$.provenance.from.sessionId') AS value FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.workspaceId') = 'text' AND json_extract(snapshot_json, '$.workspaceId') = ? AND json_type(snapshot_json, '$.provenance.kind') = 'text' AND json_extract(snapshot_json, '$.provenance.kind') = ? AND json_type(snapshot_json, '$.provenance.from.sessionId') IN ('text', 'integer', 'real', 'true', 'false'))",
+        "eqp": [
+          "CO-ROUTINE (subquery-1)",
+          "SEARCH snapshots USING COVERING INDEX next_lookup_s2c_session_by_kind_from_1ebef809 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)",
+          "USE TEMP B-TREE FOR DISTINCT",
+          "SCAN (subquery-1)"
+        ],
+        "eqpBeforeBind": [
+          "CO-ROUTINE (subquery-1)",
+          "SEARCH snapshots USING COVERING INDEX next_lookup_s2c_session_by_kind_from_1ebef809 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)",
+          "USE TEMP B-TREE FOR DISTINCT",
+          "SCAN (subquery-1)"
+        ],
+        "rows": 1,
+        "total": 0,
+        "authCallsAtPrepare": 25,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 178.9,
+          "rounds": [
+            176.1,
+            179.8,
+            178.9
+          ],
+          "iterations": 3367
+        },
+        "reused": {
+          "us": 7,
+          "rounds": [
+            7.1,
+            7,
+            6.9
+          ],
+          "iterations": 85381
+        }
+      },
+      "partial": {
+        "name": "count_distinct_session_from_empty",
+        "shape": "countInside distinct",
+        "sql": "SELECT COUNT(*) AS total FROM (SELECT DISTINCT CASE WHEN json_type(snapshot_json, '$.provenance.from.sessionId') IN ('integer', 'real') THEN 'number' ELSE json_type(snapshot_json, '$.provenance.from.sessionId') END AS value_type, json_extract(snapshot_json, '$.provenance.from.sessionId') AS value FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ? AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.workspaceId') = 'text' AND json_extract(snapshot_json, '$.workspaceId') = ? AND json_type(snapshot_json, '$.provenance.kind') = 'text' AND json_extract(snapshot_json, '$.provenance.kind') = ? AND json_type(snapshot_json, '$.provenance.from.sessionId') IN ('text', 'integer', 'real', 'true', 'false'))",
+        "eqp": [
+          "CO-ROUTINE (subquery-1)",
+          "SEARCH snapshots USING COVERING INDEX next_lookup_s2c_session_by_kind_from_08cc6778 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)",
+          "USE TEMP B-TREE FOR DISTINCT",
+          "SCAN (subquery-1)"
+        ],
+        "eqpBeforeBind": [
+          "CO-ROUTINE (subquery-1)",
+          "SCAN snapshots",
+          "USE TEMP B-TREE FOR DISTINCT",
+          "SCAN (subquery-1)"
+        ],
+        "rows": 1,
+        "total": 0,
+        "authCallsAtPrepare": 25,
+        "authCallsPerExecution": [
+          25,
+          25,
+          25,
+          25,
+          25
+        ],
+        "reprepareEveryExecution": true,
+        "fresh": {
+          "us": 191.1,
+          "rounds": [
+            197.9,
+            191.1,
+            190.1
+          ],
+          "iterations": 3111
+        },
+        "reused": {
+          "us": 113.3,
+          "rounds": [
+            111.2,
+            113.3,
+            132.1
+          ],
+          "iterations": 5079
+        }
+      }
+    },
+    {
+      "name": "count_distinct_session_from_empty",
+      "shape": "countInside distinct",
+      "type": "Session",
+      "variant": "literal",
+      "sameResult": true,
+      "full": {
+        "name": "count_distinct_session_from_empty",
+        "shape": "countInside distinct",
+        "sql": "SELECT COUNT(*) AS total FROM (SELECT DISTINCT CASE WHEN json_type(snapshot_json, '$.provenance.from.sessionId') IN ('integer', 'real') THEN 'number' ELSE json_type(snapshot_json, '$.provenance.from.sessionId') END AS value_type, json_extract(snapshot_json, '$.provenance.from.sessionId') AS value FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = 'Session' AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.workspaceId') = 'text' AND json_extract(snapshot_json, '$.workspaceId') = ? AND json_type(snapshot_json, '$.provenance.kind') = 'text' AND json_extract(snapshot_json, '$.provenance.kind') = ? AND json_type(snapshot_json, '$.provenance.from.sessionId') IN ('text', 'integer', 'real', 'true', 'false'))",
+        "eqp": [
+          "CO-ROUTINE (subquery-1)",
+          "SEARCH snapshots USING COVERING INDEX next_lookup_s2c_session_by_kind_from_1ebef809 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)",
+          "USE TEMP B-TREE FOR DISTINCT",
+          "SCAN (subquery-1)"
+        ],
+        "rows": 1,
+        "total": 0,
+        "authCallsAtPrepare": 25,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 171,
+          "rounds": [
+            171,
+            173,
+            170.1
+          ],
+          "iterations": 3503
+        },
+        "reused": {
+          "us": 6.8,
+          "rounds": [
+            6.8,
+            6.9,
+            6.8
+          ],
+          "iterations": 87347
+        }
+      },
+      "partial": {
+        "name": "count_distinct_session_from_empty",
+        "shape": "countInside distinct",
+        "sql": "SELECT COUNT(*) AS total FROM (SELECT DISTINCT CASE WHEN json_type(snapshot_json, '$.provenance.from.sessionId') IN ('integer', 'real') THEN 'number' ELSE json_type(snapshot_json, '$.provenance.from.sessionId') END AS value_type, json_extract(snapshot_json, '$.provenance.from.sessionId') AS value FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = 'Session' AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.workspaceId') = 'text' AND json_extract(snapshot_json, '$.workspaceId') = ? AND json_type(snapshot_json, '$.provenance.kind') = 'text' AND json_extract(snapshot_json, '$.provenance.kind') = ? AND json_type(snapshot_json, '$.provenance.from.sessionId') IN ('text', 'integer', 'real', 'true', 'false'))",
+        "eqp": [
+          "CO-ROUTINE (subquery-1)",
+          "SEARCH snapshots USING COVERING INDEX next_lookup_s2c_session_by_kind_from_08cc6778 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)",
+          "USE TEMP B-TREE FOR DISTINCT",
+          "SCAN (subquery-1)"
+        ],
+        "rows": 1,
+        "total": 0,
+        "authCallsAtPrepare": 25,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 120,
+          "rounds": [
+            119,
+            120,
+            125.6
+          ],
+          "iterations": 4942
+        },
+        "reused": {
+          "us": 8.1,
+          "rounds": [
+            10.6,
+            8.1,
+            7.7
+          ],
+          "iterations": 69515
+        }
+      }
+    },
+    {
+      "name": "typescan_catalog_1",
+      "shape": "type scan (text rebuild)",
+      "type": "ArchitectureCatalog",
+      "variant": "bound",
+      "sameResult": true,
+      "full": {
+        "name": "typescan_catalog_1",
+        "shape": "type scan (text rebuild)",
+        "sql": "SELECT ref_key, snapshot_json FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ?",
+        "eqp": [
+          "SEARCH snapshots USING INDEX next_lookup_s4_note_text_96e9b0a8 (<expr>=?)"
+        ],
+        "eqpBeforeBind": [
+          "SEARCH snapshots USING INDEX next_lookup_s4_note_text_96e9b0a8 (<expr>=?)"
+        ],
+        "rows": 1,
+        "authCallsAtPrepare": 5,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 25.2,
+          "rounds": [
+            25.2,
+            25.1,
+            28.9
+          ],
+          "iterations": 22854
+        },
+        "reused": {
+          "us": 7.8,
+          "rounds": [
+            8,
+            7.8,
+            7.5
+          ],
+          "iterations": 77691
+        }
+      },
+      "partial": {
+        "name": "typescan_catalog_1",
+        "shape": "type scan (text rebuild)",
+        "sql": "SELECT ref_key, snapshot_json FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ?",
+        "eqp": [
+          "SEARCH snapshots USING INDEX next_lookup_s4b_catalog_revision_by_project_c5ae911f (<expr>=?)"
+        ],
+        "eqpBeforeBind": [
+          "SCAN snapshots"
+        ],
+        "rows": 1,
+        "authCallsAtPrepare": 5,
+        "authCallsPerExecution": [
+          5,
+          5,
+          5,
+          5,
+          5
+        ],
+        "reprepareEveryExecution": true,
+        "fresh": {
+          "us": 47.2,
+          "rounds": [
+            50.6,
+            47.2,
+            46
+          ],
+          "iterations": 12539
+        },
+        "reused": {
+          "us": 21.9,
+          "rounds": [
+            26.4,
+            21.9,
+            21.7
+          ],
+          "iterations": 25947
+        }
+      }
+    },
+    {
+      "name": "typescan_catalog_1",
+      "shape": "type scan (text rebuild)",
+      "type": "ArchitectureCatalog",
+      "variant": "literal",
+      "sameResult": true,
+      "full": {
+        "name": "typescan_catalog_1",
+        "shape": "type scan (text rebuild)",
+        "sql": "SELECT ref_key, snapshot_json FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = 'ArchitectureCatalog'",
+        "eqp": [
+          "SEARCH snapshots USING INDEX next_lookup_s4_note_text_96e9b0a8 (<expr>=?)"
+        ],
+        "rows": 1,
+        "authCallsAtPrepare": 5,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 25.4,
+          "rounds": [
+            25.4,
+            25.8,
+            25.1
+          ],
+          "iterations": 23581
+        },
+        "reused": {
+          "us": 5.9,
+          "rounds": [
+            6.1,
+            5.9,
+            5.9
+          ],
+          "iterations": 100253
+        }
+      },
+      "partial": {
+        "name": "typescan_catalog_1",
+        "shape": "type scan (text rebuild)",
+        "sql": "SELECT ref_key, snapshot_json FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = 'ArchitectureCatalog'",
+        "eqp": [
+          "SEARCH snapshots USING INDEX next_lookup_s4b_catalog_revision_by_project_c5ae911f (<expr>=?)"
+        ],
+        "rows": 1,
+        "authCallsAtPrepare": 5,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 18.9,
+          "rounds": [
+            18.6,
+            18.9,
+            19.2
+          ],
+          "iterations": 31748
+        },
+        "reused": {
+          "us": 5.8,
+          "rounds": [
+            5.8,
+            5.7,
+            5.9
+          ],
+          "iterations": 103477
+        }
+      }
+    },
+    {
+      "name": "typescan_notehead_20034",
+      "shape": "type scan (text rebuild)",
+      "type": "NoteHead",
+      "variant": "bound",
+      "sameResult": true,
+      "full": {
+        "name": "typescan_notehead_20034",
+        "shape": "type scan (text rebuild)",
+        "sql": "SELECT ref_key, snapshot_json FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ?",
+        "eqp": [
+          "SEARCH snapshots USING INDEX next_lookup_s4_note_text_96e9b0a8 (<expr>=?)"
+        ],
+        "eqpBeforeBind": [
+          "SEARCH snapshots USING INDEX next_lookup_s4_note_text_96e9b0a8 (<expr>=?)"
+        ],
+        "rows": 20034,
+        "authCallsAtPrepare": 5,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 182589.6,
+          "rounds": [
+            182589.6,
+            227908.6,
+            172274.9
+          ],
+          "iterations": 9
+        },
+        "reused": {
+          "us": 140569.1,
+          "rounds": [
+            150213,
+            140569.1,
+            140272.1
+          ],
+          "iterations": 9
+        }
+      },
+      "partial": {
+        "name": "typescan_notehead_20034",
+        "shape": "type scan (text rebuild)",
+        "sql": "SELECT ref_key, snapshot_json FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = ?",
+        "eqp": [
+          "SEARCH snapshots USING INDEX next_lookup_s4_note_text_95c151a4 (<expr>=?)"
+        ],
+        "eqpBeforeBind": [
+          "SCAN snapshots"
+        ],
+        "rows": 20034,
+        "authCallsAtPrepare": 5,
+        "authCallsPerExecution": [
+          5,
+          5,
+          5,
+          5,
+          5
+        ],
+        "reprepareEveryExecution": true,
+        "fresh": {
+          "us": 139058.9,
+          "rounds": [
+            138100.8,
+            139058.9,
+            154308.9
+          ],
+          "iterations": 9
+        },
+        "reused": {
+          "us": 141488.4,
+          "rounds": [
+            174938.2,
+            141488.4,
+            138049.9
+          ],
+          "iterations": 9
+        }
+      }
+    },
+    {
+      "name": "typescan_notehead_20034",
+      "shape": "type scan (text rebuild)",
+      "type": "NoteHead",
+      "variant": "literal",
+      "sameResult": true,
+      "full": {
+        "name": "typescan_notehead_20034",
+        "shape": "type scan (text rebuild)",
+        "sql": "SELECT ref_key, snapshot_json FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = 'NoteHead'",
+        "eqp": [
+          "SEARCH snapshots USING INDEX next_lookup_s4_note_text_96e9b0a8 (<expr>=?)"
+        ],
+        "rows": 20034,
+        "authCallsAtPrepare": 5,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 138949.6,
+          "rounds": [
+            136323.2,
+            138949.6,
+            139372.2
+          ],
+          "iterations": 9
+        },
+        "reused": {
+          "us": 142170.5,
+          "rounds": [
+            142170.5,
+            141430.5,
+            206009.1
+          ],
+          "iterations": 9
+        }
+      },
+      "partial": {
+        "name": "typescan_notehead_20034",
+        "shape": "type scan (text rebuild)",
+        "sql": "SELECT ref_key, snapshot_json FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = 'NoteHead'",
+        "eqp": [
+          "SEARCH snapshots USING INDEX next_lookup_s4_note_text_95c151a4 (<expr>=?)"
+        ],
+        "rows": 20034,
+        "authCallsAtPrepare": 5,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 158459.9,
+          "rounds": [
+            148186.7,
+            160229.7,
+            158459.9
+          ],
+          "iterations": 9
+        },
+        "reused": {
+          "us": 144279.7,
+          "rounds": [
+            153074.8,
+            144279.7,
+            136357.1
+          ],
+          "iterations": 9
+        }
+      }
+    },
+    {
+      "name": "pk_read_hit",
+      "shape": "readManyInside :387",
+      "variant": "n/a",
+      "sameResult": true,
+      "full": {
+        "name": "pk_read_hit",
+        "shape": "readManyInside :387",
+        "sql": "SELECT snapshot_json FROM snapshots WHERE ref_key = ?",
+        "eqp": [
+          "SEARCH snapshots USING INDEX sqlite_autoindex_snapshots_1 (ref_key=?)"
+        ],
+        "rows": 1,
+        "authCallsAtPrepare": 3,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 14.1,
+          "rounds": [
+            14.1,
+            15.2,
+            13.4
+          ],
+          "iterations": 42207
+        },
+        "reused": {
+          "us": 8.3,
+          "rounds": [
+            8.3,
+            8.3,
+            9.2
+          ],
+          "iterations": 70022
+        }
+      },
+      "partial": {
+        "name": "pk_read_hit",
+        "shape": "readManyInside :387",
+        "sql": "SELECT snapshot_json FROM snapshots WHERE ref_key = ?",
+        "eqp": [
+          "SEARCH snapshots USING INDEX sqlite_autoindex_snapshots_1 (ref_key=?)"
+        ],
+        "rows": 1,
+        "authCallsAtPrepare": 3,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 15.6,
+          "rounds": [
+            15.6,
+            15.9,
+            15.2
+          ],
+          "iterations": 38566
+        },
+        "reused": {
+          "us": 8,
+          "rounds": [
+            7.9,
+            8,
+            8
+          ],
+          "iterations": 75130
+        }
+      }
+    },
+    {
+      "name": "pk_read_miss",
+      "shape": "readManyInside :387",
+      "variant": "n/a",
+      "sameResult": true,
+      "full": {
+        "name": "pk_read_miss",
+        "shape": "readManyInside :387",
+        "sql": "SELECT snapshot_json FROM snapshots WHERE ref_key = ?",
+        "eqp": [
+          "SEARCH snapshots USING INDEX sqlite_autoindex_snapshots_1 (ref_key=?)"
+        ],
+        "rows": 0,
+        "authCallsAtPrepare": 3,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 9.8,
+          "rounds": [
+            8.8,
+            9.8,
+            22.1
+          ],
+          "iterations": 52333
+        },
+        "reused": {
+          "us": 3.2,
+          "rounds": [
+            3.3,
+            3.2,
+            3.2
+          ],
+          "iterations": 150000
+        }
+      },
+      "partial": {
+        "name": "pk_read_miss",
+        "shape": "readManyInside :387",
+        "sql": "SELECT snapshot_json FROM snapshots WHERE ref_key = ?",
+        "eqp": [
+          "SEARCH snapshots USING INDEX sqlite_autoindex_snapshots_1 (ref_key=?)"
+        ],
+        "rows": 0,
+        "authCallsAtPrepare": 3,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 9.4,
+          "rounds": [
+            8.7,
+            9.7,
+            9.4
+          ],
+          "iterations": 64912
+        },
+        "reused": {
+          "us": 3.5,
+          "rounds": [
+            3.5,
+            3.5,
+            3.4
+          ],
+          "iterations": 150000
+        }
+      }
+    },
+    {
+      "name": "max_events_id",
+      "shape": "readThrough :333",
+      "variant": "n/a",
+      "sameResult": true,
+      "full": {
+        "name": "max_events_id",
+        "shape": "readThrough :333",
+        "sql": "SELECT MAX(id) AS max_id FROM events",
+        "eqp": [
+          "SEARCH events"
+        ],
+        "rows": 1,
+        "authCallsAtPrepare": 4,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 20,
+          "rounds": [
+            20,
+            67,
+            7
+          ],
+          "iterations": 44634
+        },
+        "reused": {
+          "us": 3.6,
+          "rounds": [
+            3.6,
+            3.6,
+            3.5
+          ],
+          "iterations": 150000
+        }
+      },
+      "partial": {
+        "name": "max_events_id",
+        "shape": "readThrough :333",
+        "sql": "SELECT MAX(id) AS max_id FROM events",
+        "eqp": [
+          "SEARCH events"
+        ],
+        "rows": 1,
+        "authCallsAtPrepare": 4,
+        "authCallsPerExecution": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "reprepareEveryExecution": false,
+        "fresh": {
+          "us": 6.8,
+          "rounds": [
+            6.8,
+            6.8,
+            6.8
+          ],
+          "iterations": 88681
+        },
+        "reused": {
+          "us": 3.9,
+          "rounds": [
+            3.9,
+            7.4,
+            3.8
+          ],
+          "iterations": 127096
+        }
+      }
+    },
+    {
+      "name": "control_bound_limit",
+      "shape": "lookupInside, LIMIT ?",
+      "variant": "n/a",
+      "sameResult": true,
+      "full": {
+        "name": "control_bound_limit",
+        "shape": "lookupInside, LIMIT ?",
+        "sql": "SELECT ref_key FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = 'NoteHead' AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.anchorKey0') = 'text' AND json_extract(snapshot_json, '$.anchorKey0') = ? ORDER BY ref_key COLLATE BINARY ASC LIMIT ?",
+        "eqp": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_s4_note_by_anchor_0_ee717b20 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "rows": 6,
+        "authCallsAtPrepare": 13,
+        "authCallsPerExecution": [
+          13,
+          13,
+          13,
+          13,
+          13
+        ],
+        "reprepareEveryExecution": true,
+        "fresh": {
+          "us": 377.6,
+          "rounds": [
+            372.1,
+            377.6,
+            421.3
+          ],
+          "iterations": 1544
+        },
+        "reused": {
+          "us": 190.6,
+          "rounds": [
+            199.7,
+            190.5,
+            190.6
+          ],
+          "iterations": 3103
+        }
+      },
+      "partial": {
+        "name": "control_bound_limit",
+        "shape": "lookupInside, LIMIT ?",
+        "sql": "SELECT ref_key FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = 'NoteHead' AND json_type(snapshot_json, '$.ref.projectId') = 'text' AND json_extract(snapshot_json, '$.ref.projectId') = ? AND json_type(snapshot_json, '$.anchorKey0') = 'text' AND json_extract(snapshot_json, '$.anchorKey0') = ? ORDER BY ref_key COLLATE BINARY ASC LIMIT ?",
+        "eqp": [
+          "SEARCH snapshots USING COVERING INDEX next_lookup_s4_note_by_anchor_0_617cb974 (<expr>=? AND <expr>=? AND <expr>=? AND <expr>=? AND <expr>=?)"
+        ],
+        "rows": 6,
+        "authCallsAtPrepare": 13,
+        "authCallsPerExecution": [
+          13,
+          13,
+          13,
+          13,
+          13
+        ],
+        "reprepareEveryExecution": true,
+        "fresh": {
+          "us": 116.6,
+          "rounds": [
+            117.8,
+            116.6,
+            115.3
+          ],
+          "iterations": 5148
+        },
+        "reused": {
+          "us": 62.9,
+          "rounds": [
+            62.9,
+            63.4,
+            62.8
+          ],
+          "iterations": 9525
+        }
+      }
+    }
+  ]
+}

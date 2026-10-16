@@ -1,0 +1,6 @@
+Speed round 2 merge candidate: lead branch 269a9748 (LF archive) + s4g-code-2.patch, copy ~/dsh-work/slices/s4g
+Environment: WSL, bubblewrap (CODING_AGENT_BWRAP_PATH=~/.local/opt/bubblewrap/usr/bin/bwrap), systemd user session;
+vitest run --maxWorkers=5 inside systemd-run --user --scope (MemoryMax 8G); a DSH round (K3 group 2 part 3) ran during it. 21:23-21:53.
+Files: 479 total, 479 passed
+Tests: 7745 total, 7740 passed, 0 failed, 5 skipped
+Note: the lead's comment-only fix in sqlite-lookup-indexes.ts was applied while the suite ran.

@@ -1,5 +1,7 @@
 # 当前已实现能力与复用入口
 
+**2026-10-16 注记查找提速第二轮（已合入，决定 66）：** SQLite 的每个查找索引只收自己那种记录，打开时迁移（[sqlite-lookup-indexes.ts](../../src/core/record-store/sqlite-lookup-indexes.ts)）；接口和结果不变，索引小 28 倍、写入快约 45%。没有新路由，没有调用真实模型。证据：[提速第二轮](reviews/evidence/orchestration-note-speed-2-2026-10-16/README.md)。
+
 **2026-10-16 注记查找提速第一轮（已合入，决定 66）：** 全文端口改成两个后端共用的内存扫描（SQLite 存紧凑表、打开时换掉 4B 的 FTS5 表），读模型带范围的查找只在范围内找、已读的头交给核对，SQLite 的语句缓存和字面量 LIMIT、记录类型。接口不变，WG53 的文件随之更新。没有新路由，没有调用真实模型。证据：[提速第一轮](reviews/evidence/orchestration-note-speed-1-2026-10-16/README.md)。
 
 **2026-10-16 4B（已合入）：** 注记的查找和新鲜度：全文端口（两个后端）、核对端口、六种读法、两个版本列表，挂在平台的 `notes` 上。新能力列在 §3 的 WG53。只有后端，没有新路由，没有调用真实模型。证据：[4B](reviews/evidence/orchestration-slice-4B-2026-10-16/README.md)。

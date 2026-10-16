@@ -3,9 +3,11 @@
  *
  * One synchronous factory owns exactly one `DatabaseSync`, the closed flag, the
  * original 4-core-table initialisation/compatibility check, `busy_timeout` and
- * the safe expression indexes for every registered lookup. The Goal transaction
- * and the candidate lookup share that ONE connection and ONE set of tables, so
- * neither wraps the other and no second connection or snapshot reader exists.
+ * the per-type partial expression indexes for every registered lookup (speed
+ * round 2 migrates a ledger's old full indexes to them in one transaction). The
+ * Goal transaction and the candidate lookup share that ONE connection and ONE
+ * set of tables, so neither wraps the other and no second connection or
+ * snapshot reader exists.
  *
  * Guarantees implemented here:
  *  - `commit` is one `BEGIN IMMEDIATE` -> identity lookup -> all record guards ->
@@ -19,8 +21,9 @@
  *    write, inside the transaction; replay/conflict/schema init never call it;
  *  - `eventAt` is an exact `events.id` primary-key read; unknown/corrupt event
  *    schema is never disguised as `not_found`;
- *  - `lookup` uses the registered expression index as a keyset and then reuses
- *    the exact `readMany` snapshot reader, so a damaged candidate is `corrupt`.
+ *  - `lookup` uses the registered per-type partial expression index as a keyset
+ *    and then reuses the exact `readMany` snapshot reader, so a damaged
+ *    candidate is `corrupt`.
  *
  * This file imports no WorkGraph module, never calls `StateLedger.commit`, runs
  * no Goal validator and performs no fingerprint computation.
@@ -36,6 +39,7 @@ import { findClaimConflicts, ledgerHorizonMatches, RejectedInsideTransaction, ty
 import { createRecordLookupRegistry, decodeCountRequest, decodeLookupRequest, decodeOrderedLookupRequest, decodeTextSearchRequest, lookupMatcherOf, orderedRangePlanOf, type DecodedCountRequest, type DecodedLookupRequest, type DecodedOrderedLookupRequest, type RecordLookupRegistry } from "./lookup-index.js";
 import type { LookupValue, OrderedLookupRequest, RecordCountPort, RecordCountRequest, RecordCountResult, RecordOrderedLookupPage, RecordOrderedLookupPort, RecordLookupPage, RecordLookupPort, RecordLookupRequest, RecordTextSearchPort, TextSearchPage, TextSearchRequest } from "./lookup-ports.js";
 import { createSqliteTextScan } from "./sqlite-text-scan.js";
+import { migrateLookupIndexes } from "./sqlite-lookup-indexes.js";
 import { aggregateTypeTerm, literalLimit } from "./sqlite-sql-literals.js";
 import type { DecodeResult, GoalRecordTransactionPort, PersistedIdempotencyRecord, PreparedCommit, RecordBackendSchemas, RecordBatchRead, RecordGuard, StoreCommitReceipt, StoreResult, StoredVersion, UniqueClaimChange, EncodedDomainEvent, EncodedRecord } from "./ports.js";
 
@@ -59,53 +63,9 @@ type IdempotencyRow = {
 };
 type EventRow = { event_json: string };
 
-/** Quote one SQL identifier; registered lookup names are logical, never SQL. */
-function quoteIdentifier(name: string): string {
-  return `"${name.replace(/"/g, '""')}"`;
-}
-
-/** Deterministic short suffix so a changed path set becomes a distinct index. */
-function lookupIndexSuffix(value: string): string {
-  let hash = 0x811c9dc5;
-  for (let position = 0; position < value.length; position += 1) {
-    hash ^= value.charCodeAt(position);
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return (hash >>> 0).toString(16).padStart(8, "0");
-}
-
 /** Validated paths are plain member names; quote is belt-and-braces only. */
 function lookupJsonPath(path: string): string {
   return `'$.${path.replace(/'/g, "''")}'`;
-}
-
-/**
- * One safe expression index per registered lookup over the unique `snapshots`
- * table: aggregate type, each (json_type, json_extract) scalar and the full
- * ref_key. The type column keeps booleans distinct from 1/0, and SQLite keeps
- * the index current inside the same snapshot write transaction.
- */
-function createLookupIndexes(db: DatabaseSync, lookups: RecordLookupRegistry): void {
-  for (const index of lookups.indexes) {
-    const columns: string[] = [`json_extract(ref_key, '$.aggregateType')`];
-    for (const path of index.paths) {
-      const jsonPath = lookupJsonPath(path);
-      columns.push(`json_type(snapshot_json, ${jsonPath})`);
-      columns.push(`json_extract(snapshot_json, ${jsonPath})`);
-    }
-    // Slice 2A L1: the ordered column follows the equality prefix, exactly the
-    // ORDER BY expression; the default `'text'` also enters the fingerprint.
-    if (index.orderBy !== undefined) columns.push(`json_extract(snapshot_json, ${lookupJsonPath(index.orderBy.path)})`);
-    columns.push("ref_key");
-    // S1: an unordered index keeps exactly the pre-2A fingerprint so existing
-    // databases keep their index names; only an ordered index appends the
-    // ordering column and its value type.
-    const fingerprint = index.orderBy === undefined
-      ? `${index.aggregateType}\u0000${index.paths.join("\u0000")}`
-      : `${index.aggregateType}\u0000${index.paths.join("\u0000")}\u0000${index.orderBy.path}\u0000${index.orderBy.valueType}`;
-    const name = `next_lookup_${index.name.replace(/[^A-Za-z0-9_]/g, "_")}_${lookupIndexSuffix(fingerprint)}`;
-    db.exec(`CREATE INDEX IF NOT EXISTS ${quoteIdentifier(name)} ON snapshots (${columns.join(", ")})`);
-  }
 }
 
 /** Parameterised predicate for one request scalar (never a raw SQL request). */
@@ -196,7 +156,10 @@ export function createSqliteRecordBackend(options: SqliteRecordBackendOptions): 
   try {
     db.exec("PRAGMA busy_timeout = 5000");
     initRecordStoreSchema(db);
-    createLookupIndexes(db, lookups);
+    // Speed round 2 (R2-2): per-type partial lookup indexes; one transaction
+    // drops the stale ones and creates the missing ones, and a no-op open runs
+    // no transaction. It must run before the text module and the cache below.
+    migrateLookupIndexes(db, lookups);
     // Slice 4 speed round 1 (S1.2/S1.5): the compact per-index text tables,
     // created or rebuilt here and kept current inside the one snapshot write
     // transaction below.

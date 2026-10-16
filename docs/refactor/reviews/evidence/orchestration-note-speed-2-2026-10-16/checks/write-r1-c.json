@@ -1,0 +1,17 @@
+{
+ "tag": "c",
+ "repo": "/home/han001/dsh-work/slices/s4f2",
+ "data": "/home/han001/dsh-work/r2-measure/real/r1-before",
+ "n": 200,
+ "statuses": {
+  "accepted": 200
+ },
+ "stats": {
+  "count": 200,
+  "p50": 43.84,
+  "p95": 49.04,
+  "max": 60.83,
+  "min": 27.3,
+  "mean": 42.7
+ }
+}
