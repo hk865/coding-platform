@@ -30,10 +30,13 @@ import type { GraphNodeRefV1 } from '../../../contracts/graph-context.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import type {
   ExecutedFileV1, FromExecutedFilesV1, GraphHoverReadV1, GroupHoverV1, LineBriefV1, LineCountV1,
-  LineParticipationV1, ModuleHoverV1, NodeDetailRequestV1, NodeDetailV1, NodeRiskV1, TaskDisplayFactsV1,
+  LineParticipationV1, ModuleHoverV1, NodeDetailRequestV1, NodeDetailV1, NodeNoteRowV1, NodeNotesV1, NodeRiskV1,
+  TaskDisplayFactsV1,
   TaskHoverV1,
 } from '../../../contracts/work-line.js';
 import type { CoreError, CoreRejection, ReadResult } from '../../../contracts/core/results.js';
+import type { NoteAnchorV1 } from '../../../contracts/note.js';
+import type { NoteListRequestV1, NoteListResultV1, NoteMemoryReadResult } from '../model/note-contracts.js';
 import type { GoalExecutedFilesPort } from '../model/decision-contracts.js';
 import type { PlanTaskPort, TaskRow } from '../model/plan-contracts.js';
 import type { NodeDetailReadPort } from '../model/work-line-contracts.js';
@@ -47,9 +50,18 @@ import { laterCursor, readCanonicalTaskFacts, RUN_BY_TASK_INDEX } from '../tasks
 import { decodeDispatchOutboxEntry, dispatchOutboxRefKey } from '../tasks/claim-record-codecs.js';
 import { decodeRun } from '../materials/run-snapshot-decoder.js';
 import { deriveTaskDisplayFacts, type LineTaskArchiveNextV1, type LineTaskFactV1 } from '../state/line-status.js';
+import { pathOwnershipOf } from '../notes/note-path-ownership.js';
 import {
   assembleLineBriefs, resolveContinuationLine, type StoreRead, type WorkLineReaderDeps, type WorkLineStore,
 } from './work-line-reader.js';
+
+/**
+ * Slice 4C C1.5: the notes read the node-detail column and the hover counts
+ * call. The composition root wires the real `platform.notes.listNotes` (a model
+ * contract read); `views` never imports the notes implementation.
+ */
+export type NodeNotesLookup = (ctx: CoreCallContext, request: NoteListRequestV1) =>
+  Promise<NoteMemoryReadResult<NoteListResultV1>>;
 
 export type NodeDetailReaderDeps = {
   records: WorkLineStore;
@@ -59,6 +71,8 @@ export type NodeDetailReaderDeps = {
   executedFiles: GoalExecutedFilesPort;
   /** P4: the line assembly deps; the hover's owners go through the same function as lines/list. */
   line: WorkLineReaderDeps;
+  /** Slice 4C C1.5: the `notes/list` read (the same `platform.notes` surface). */
+  notes?: NodeNotesLookup;
 };
 
 const PAGE = 200;
@@ -723,9 +737,22 @@ async function readCatalog(deps: NodeDetailReaderDeps, ctx: CoreCallContext): Pr
   return { modules: adopted.modules, containment: adopted.containment ?? { parentOf: [] } };
 }
 
-function underModule(path: string, module: ModuleDefinition, catalog: ModuleCatalog): boolean {
-  const prefixes = [module, ...childrenOf(module, catalog)].flatMap((candidate) => candidate.paths);
-  return prefixes.some((prefix) => path === prefix || path.startsWith(`${prefix}/`) || path.startsWith(`${prefix}\\`));
+// RW-13/RW-16: the same all-module longest-prefix rule as `mapExecutedFilesToModules`
+// and `moduleOfAnchor`, plus the module's declared containment children. A file is
+// under the module when its single path owner is the module itself or one of
+// `childrenOf(module, catalog)`; an equal-longest tie (or no owner) owns nothing.
+type OwnershipScope = { candidates: { value: ModuleRef; paths: readonly string[] }[]; childKeys: ReadonlySet<string> };
+
+function ownershipScopeOf(module: ModuleDefinition, catalog: ModuleCatalog): OwnershipScope {
+  return { candidates: catalog.modules.map((candidate) => ({ value: candidate.ref, paths: candidate.paths })),
+    childKeys: new Set(childrenOf(module, catalog).map((child) => keyOf(child.ref))) };
+}
+
+function underModule(path: string, module: ModuleDefinition, ownership: OwnershipScope): boolean {
+  const result = pathOwnershipOf(path, ownership.candidates);
+  if (result.status !== 'owner') return false;
+  const ownerKey = keyOf(result.owner);
+  return ownerKey === keyOf(module.ref) || ownership.childKeys.has(ownerKey);
 }
 
 /** §3.12: the declared children of a module (containment, never path inference). */
@@ -747,11 +774,11 @@ function distinctRuns(runs: RunRef[]): RunRef[] {
   return [...seen.values()];
 }
 
-function moduleFiles(module: ModuleDefinition, catalog: ModuleCatalog, facts: ExecutedFilesFacts): ModuleHoverV1['files'] {
+function moduleFiles(module: ModuleDefinition, ownership: OwnershipScope, facts: ExecutedFilesFacts): ModuleHoverV1['files'] {
   if (facts.availability === 'unavailable') return facts;
   const byPath = new Map<string, { certainty: 'definite' | 'possible'; runs: RunRef[] }>();
   for (const file of facts.files) {
-    if (!underModule(file.path, module, catalog)) continue;
+    if (!underModule(file.path, module, ownership)) continue;
     const current = byPath.get(file.path);
     if (current === undefined) byPath.set(file.path, { certainty: file.certainty, runs: [file.runRef] });
     else { if (file.certainty === 'definite') current.certainty = 'definite'; current.runs.push(file.runRef); }
@@ -766,6 +793,7 @@ async function moduleHover(
   catalog: ModuleCatalog, graph: Graph, runs: TaskRuns, facts: ExecutedFilesFacts,
   ownerIndex: Map<string, LineBriefV1[]>, sessionBriefs: Map<string, LineBriefV1[]>, runClaimer: Map<string, SessionRef>,
 ): Promise<ModuleHoverV1> {
+  const ownership = ownershipScopeOf(module, catalog);
   const inScope = [module, ...childrenOf(module, catalog)];
   const selected = graph.rows.filter((row) => moduleOf(row) !== null
     && inScope.some((candidate) => keyOf(candidate.ref) === keyOf(moduleOf(row))));
@@ -781,7 +809,7 @@ async function moduleHover(
   else {
     const changed = new Map<string, LineBriefV1>();
     for (const file of facts.files) {
-      if (!underModule(file.path, module, catalog)) continue;
+      if (!underModule(file.path, module, ownership)) continue;
       const claimer = runClaimer.get(keyOf(file.runRef));
       if (claimer === undefined) continue;
       for (const brief of sessionBriefs.get(keyOf(claimer)) ?? []) changed.set(keyOf(brief.key), brief);
@@ -796,7 +824,7 @@ async function moduleHover(
     paths: module.paths, responsibility: module.responsibility, maintainer: { status: 'none' },
     unfinishedTasks: { status: 'exact', value: unfinished.length },
     workingLines: { status: 'exact', value: working }, lines: { status: 'exact', value: lines.size },
-    changedByLines, files: moduleFiles(module, catalog, facts) };
+    changedByLines, files: moduleFiles(module, ownership, facts) };
 }
 
 function taskOfRun(run: RunRef, rows: readonly TaskRow[], runs: TaskRuns): TaskTriple | null {
@@ -897,7 +925,9 @@ async function assembleHover(deps: NodeDetailReaderDeps, ctx: CoreCallContext, g
   });
 
   const groups = buildGroups(goalRef, graph.plan.ref, graph.rows, runs, participationIndex, goalOwners);
-  return { status: 'ready', value: { goalRef, groups, tasks, modules: moduleHovers, files, problems, sourceCursor: ZERO_CURSOR } };
+  // Slice 4C L21: the hover card only shows a note count per hovered node.
+  const noteCounts = await collectHoverNoteCounts(deps, ctx, goalRef, graph.plan, graph.rows, catalog.modules);
+  return { status: 'ready', value: { goalRef, groups, tasks, modules: moduleHovers, files, noteCounts, problems, sourceCursor: ZERO_CURSOR } };
 }
 
 // -------------------------------------------------------------------------- //
@@ -910,6 +940,71 @@ function pinOf(ref: unknown): { ref: AggregateRef; revision: number } {
 
 function taskRefOf(node: GraphNodeRefV1): { task: TaskTriple; planRef: PlanRevisionRef } | null {
   return node.kind === 'task' ? { task: node.ref, planRef: node.planRef } : null;
+}
+
+// -------------------------------------------------------------------------- //
+// Slice 4C C1.5: the node notes column and the hover note counts             //
+// -------------------------------------------------------------------------- //
+
+/** The note anchor a node maps to, or null for Session, Run and round nodes. */
+function noteAnchorOf(node: GraphNodeRefV1, goalRef: GoalRef, planRevision: number): NoteAnchorV1 | null {
+  if (node.kind === 'goal') return { kind: 'goal', goalId: goalRef.goalId };
+  if (node.kind === 'stage') {
+    // The stage anchor takes the goal's CURRENT plan revision (C1.5 answer 6).
+    return { kind: 'stage', goalId: goalRef.goalId, planRevision, stageId: node.stageId };
+  }
+  if (node.kind === 'task') return { kind: 'task', goalId: node.ref.goalId, taskId: node.ref.taskId };
+  if (node.kind === 'module') return { kind: 'module', moduleId: node.ref.moduleId };
+  return null;
+}
+
+function nodeNoteRow(row: NoteListResultV1['items'][number]): NodeNoteRowV1 {
+  return row;
+}
+
+/**
+ * The node's notes column (L21): the anchor's current understanding (goal/stage
+ * only, `null` otherwise) plus the first `lookup` page. Session/Run/round nodes
+ * have no anchor. A missing or non-ready notes read is `unavailable`, never an
+ * empty `available` page (RW-11), matching `hoverNoteCount`.
+ */
+async function nodeNotesOf(deps: NodeDetailReaderDeps, ctx: CoreCallContext, node: GraphNodeRefV1,
+  goalRef: GoalRef, planRevision: number, limit: number): Promise<NodeNotesV1> {
+  const anchor = noteAnchorOf(node, goalRef, planRevision);
+  if (anchor === null) return { status: 'not_available', reason: 'no_note_anchor' };
+  if (deps.notes === undefined) return { status: 'unavailable', reason: 'the notes read is not wired' };
+  const read = await deps.notes(ctx, { anchor, limit, cursor: null });
+  if (read.status !== 'ready') return { status: 'unavailable', reason: 'the notes read failed' };
+  return { status: 'available', understanding: read.value.understanding ?? null,
+    items: read.value.items.map(nodeNoteRow), next: read.value.next, complete: read.value.complete };
+}
+
+/** The hover card's per-node note count (决定 35 · Q23); full rows are never read. */
+async function hoverNoteCount(deps: NodeDetailReaderDeps, ctx: CoreCallContext, node: GraphNodeRefV1,
+  goalRef: GoalRef, planRevision: number): Promise<LineCountV1> {
+  const anchor = noteAnchorOf(node, goalRef, planRevision);
+  if (anchor === null) return { status: 'unavailable', reason: 'no_note_anchor' };
+  if (deps.notes === undefined) return { status: 'unavailable', reason: 'the notes read is not wired' };
+  const read = await deps.notes(ctx, { anchor, limit: 1, cursor: null });
+  if (read.status !== 'ready') return { status: 'unavailable', reason: 'the notes read failed' };
+  return read.value.complete
+    ? { status: 'exact', value: read.value.items.length }
+    : { status: 'partial', atLeast: read.value.items.length, reason: 'notes continue past this page' };
+}
+
+async function collectHoverNoteCounts(deps: NodeDetailReaderDeps, ctx: CoreCallContext, goalRef: GoalRef,
+  plan: PlanRevisionSnapshot, rows: readonly TaskRow[], modules: readonly ModuleDefinition[]):
+Promise<{ node: GraphNodeRefV1; count: LineCountV1 }[]> {
+  const nodes: GraphNodeRefV1[] = [];
+  nodes.push({ kind: 'goal', ref: goalRef });
+  for (const stage of plan.stages) nodes.push({ kind: 'stage', planRef: plan.ref, stageId: stage.stageId });
+  for (const row of rows) nodes.push({ kind: 'task', ref: row.ref, planRef: plan.ref });
+  for (const module of modules) nodes.push({ kind: 'module', ref: module.ref });
+  const out: { node: GraphNodeRefV1; count: LineCountV1 }[] = [];
+  for (const node of nodes) {
+    out.push({ node, count: await hoverNoteCount(deps, ctx, node, goalRef, plan.planRevision) });
+  }
+  return out;
 }
 
 /**
@@ -1139,7 +1234,8 @@ async function readSummary(deps: NodeDetailReaderDeps, ctx: CoreCallContext, inp
         actualFiles, responsibleNow: owners, responsibility: owners.length === 0 ? 'none' : 'has_responsibility',
       },
       group: null, goal: null, module: null, line: null,
-      notes: { availability: 'not_available', reason: 'slice_4' }, fileRisks: risks, sourceCursor: ZERO_CURSOR,
+      notes: await nodeNotesOf(deps, ctx, input.node, goalRef, graph.plan.planRevision, input.page.limit),
+      fileRisks: risks, sourceCursor: ZERO_CURSOR,
     } };
   }
 
@@ -1152,7 +1248,7 @@ async function readSummary(deps: NodeDetailReaderDeps, ctx: CoreCallContext, inp
     return { status: 'ready', value: {
       section: 'summary', node: input.node, pin: pinOf(goalRef), task: null, group,
       goal: { anomalyCount: count, workingLines: group.workingLines }, module: null, line: null,
-      notes: { availability: 'not_available', reason: 'slice_4' },
+      notes: await nodeNotesOf(deps, ctx, input.node, goalRef, graph.plan.planRevision, input.page.limit),
       fileRisks: filesView(facts, () => ({ riskCount: { status: 'exact', value: 0 } })), sourceCursor: ZERO_CURSOR,
     } };
   }
@@ -1165,7 +1261,8 @@ async function readSummary(deps: NodeDetailReaderDeps, ctx: CoreCallContext, inp
     return { status: 'ready', value: {
       section: 'summary', node: input.node, pin: pinOf(module.ref), task: null, group: null, goal: null,
       module: await moduleHover(deps, ctx, scope, module, catalog, graph, runs, facts, ownerIndex, sessionBriefs, runClaimer),
-      line: null, notes: { availability: 'not_available', reason: 'slice_4' },
+      line: null,
+      notes: await nodeNotesOf(deps, ctx, input.node, goalRef, graph.plan.planRevision, input.page.limit),
       fileRisks: filesView(facts, () => ({ riskCount: { status: 'exact', value: 0 } })), sourceCursor: ZERO_CURSOR,
     } };
   }
@@ -1175,7 +1272,8 @@ async function readSummary(deps: NodeDetailReaderDeps, ctx: CoreCallContext, inp
     const brief = (sessionBriefs.get(keyOf(input.node.ref)) ?? [])[0] ?? null;
     return { status: 'ready', value: {
       section: 'summary', node: input.node, pin: pinOf(input.node.ref), task: null, group: null, goal: null,
-      module: null, line: brief, notes: { availability: 'not_available', reason: 'slice_4' },
+      module: null, line: brief,
+      notes: await nodeNotesOf(deps, ctx, input.node, goalRef, graph.plan.planRevision, input.page.limit),
       fileRisks: filesView(facts, () => ({ riskCount: { status: 'exact', value: 0 } })), sourceCursor: ZERO_CURSOR,
     } };
   }

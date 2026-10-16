@@ -71,7 +71,7 @@ export type NoteFactV1 =
   | { kind: 'file'; path: string; digest: string }
   | { kind: 'commit'; sha: string };
 
-export type NoteReviewReason = 'structural' | 'contradiction' | 'quota_full';
+export type NoteReviewReason = 'structural' | 'contradiction' | 'quota_full' | 'user_note_replaced';
 
 export type NoteBodyV1 = { kind: NoteKind; topic: string; topicKey: string; conclusion: string; body: string;
   sections?: NoteSectionsV1; anchor: NoteAnchorV1; extraAnchors: NoteAnchorV1[]; facts: NoteFactV1[];

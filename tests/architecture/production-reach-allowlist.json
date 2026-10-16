@@ -936,6 +936,78 @@
       "name": "NOTE_BODY_PAGE_MAX_BYTES",
       "reason": "kept-for",
       "note": "kept for slice 4 of the orchestration design; the body-page reader is the 4C notes/* body route, which bounds a requested body page by NOTE_BODY_PAGE_MAX_BYTES (4 KiB); 4B's own body paging slices at NOTE_BODY_PAGE_BYTES (2 KiB) and never needs the max"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "NotesListBody",
+      "reason": "wire-format",
+      "note": "the frozen slice-4C L15 notes/list route DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the new workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "NotesListResponse",
+      "reason": "wire-format",
+      "note": "the frozen slice-4C L15 notes/list route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the new workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "NotesWriteBody",
+      "reason": "wire-format",
+      "note": "the frozen slice-4C L15 notes/write route DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the new workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "NotesWriteResponse",
+      "reason": "wire-format",
+      "note": "the frozen slice-4C L15 notes/write route response DTO (WriteNoteEnvelopeV1); its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the new workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "NotesWithdrawBody",
+      "reason": "wire-format",
+      "note": "the frozen slice-4C L15 notes/withdraw route DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the new workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "NotesWithdrawResponse",
+      "reason": "wire-format",
+      "note": "the frozen slice-4C L15 notes/withdraw route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the new workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "NotesReviewBody",
+      "reason": "wire-format",
+      "note": "the frozen slice-4C L15 notes/review route DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the new workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "NotesReviewResponse",
+      "reason": "wire-format",
+      "note": "the frozen slice-4C L15 notes/review route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the new workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "PlansVersionsBody",
+      "reason": "wire-format",
+      "note": "the frozen slice-4C L19 plans/versions route DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the new workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "PlansVersionsResponse",
+      "reason": "wire-format",
+      "note": "the frozen slice-4C L19 plans/versions route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the new workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "ArchitectureVersionsBody",
+      "reason": "wire-format",
+      "note": "the frozen slice-4C L19 architecture/versions route DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the new workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "ArchitectureVersionsResponse",
+      "reason": "wire-format",
+      "note": "the frozen slice-4C L19 architecture/versions route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the new workbench UI; nothing in src/ names the alias at runtime"
     }
   ]
 }

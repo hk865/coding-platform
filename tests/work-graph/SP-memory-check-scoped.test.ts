@@ -65,7 +65,11 @@ describe('SP-1 scoped anchor derivations (one anchor, anchorQuota 2)', () => {
       const f = await createS4BNoteCheckFixture(kind, { anchorQuota: 2 });
       try {
         const run = await f.inner.claimRun('sp1');
-        const a = await writeAgent(f, run, draft({ topic: 'shared-topic', structural: true }));
+        // C3.4: a general structural note is accepted directly now. The pending
+        // agent note `a` is made by replacing the user's own (seed) note (C3.3);
+        // `a` is accepted later, so `b`'s write guard sees it as not current.
+        const seedA = await write(f, draft({ topic: 'seed-a' }));
+        const a = await writeAgent(f, run, draft({ topic: 'shared-topic', replaces: [seedA] }));
         const b = await write(f, draft({ topic: 'shared-topic' }));
         const c = await write(f, draft({ topic: 'contra-a' }));
         const d = await write(f, draft({ topic: 'contra-b', contradicts: [c] }));

@@ -255,9 +255,12 @@ export function localWorkbenchGrant(workspace: WorkbenchWorkspaceConfig, model: 
     // and `find_graph` instead of the three old read names. The old adapters
     // keep their exports and behavior for already-bound Runs and explicit
     // callers; the read-only Query ceiling still strips every mailbox name.
+    // RW-1 (4C): `record_note` is a coordination tool that writes WorkGraph
+    // records, so it follows the same `writeAllowed` condition as the mailbox
+    // tools; a read-only or Query ceiling still strips it.
     tools: ['read', 'look_graph', 'find_graph',
       ...(readonlyCommandsAllowed ? [READONLY_COMMAND_TOOL_NAME] : []),
-      ...(writeAllowed ? ['write', 'send_session_message',
+      ...(writeAllowed ? ['write', 'record_note', 'send_session_message',
         'read_session_inbox', 'read_session_message', 'read_session_message_body'] : []),
       ...(commandsAllowed ? ['shell'] : [])],
     writeScope: writeAllowed ? ['.'] : [],

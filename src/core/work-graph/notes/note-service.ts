@@ -8,11 +8,12 @@
  */
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type {
-  CurrentPointerRef, CurrentPointerSnapshot, NoteDraftV1, NoteHeadSnapshot, NoteReviewReason,
-  NoteSourceV1, NoteState, NoteVersionSnapshot,
+  CurrentPointerRef, CurrentPointerSnapshot, NoteAnchorV1, NoteDraftAnchorV1, NoteDraftV1, NoteHeadSnapshot,
+  NoteReviewReason, NoteSourceV1, NoteState, NoteVersionSnapshot,
 } from '../../../contracts/note.js';
 import { NOTE_GENERAL_KINDS } from '../../../contracts/note.js';
 import type { PlanRevisionRef } from '../../../contracts/plan.js';
+import type { GoalRef } from '../../../contracts/ledger.js';
 import type { PlanTaskPort } from '../model/plan-contracts.js';
 import type { ReadResult } from '../../../contracts/core/results.js';
 import type { RoleConfigurationRef, SessionRef } from '../../../contracts/core/identity.js';
@@ -21,8 +22,11 @@ import type {
   NoteAnchorFactsDeps, NoteAnchorWorkspace, ResolvedNoteAnchors,
 } from './note-anchors.js';
 import { anchorFormatProblem, anchorKeyOf, conclusionProblem, isSafeRelativePath, normalizePath, resolveNoteAnchors, topicKeyOf, topicProblem } from './note-anchors.js';
-import type { ScribeScope } from './scribe-scope.js';
-import { sourceIsAuthorOf } from './scribe-scope.js';
+import type { ScribeScope, ScribeScopeCall } from './scribe-scope.js';
+import { newScribeScopeCall, sourceIsAuthorOf } from './scribe-scope.js';
+import { stageContinuityOf } from './note-continuity.js';
+import { readGoalPlanWindow, type GoalPlanWindow } from '../tasks/plan-readers.js';
+import { S2B_PLAN_REVISION_BY_GOAL_LOOKUP, decodePlanRevisionSnapshot } from '../persistence/plan-record-codecs.js';
 import { mapStoreFailure, readAllHeads, type ReadFailureCode } from './note-read-model.js';
 import type { ArchitectureCatalogPort } from '../architecture/catalog-contracts.js';
 import type {
@@ -31,10 +35,11 @@ import type {
 } from '../model/note-contracts.js';
 import {
   NOTE_ANCHOR_QUOTA, NOTE_BASIS_FILES_MAX, NOTE_BASIS_FILE_MAX_BYTES, NOTE_BODY_MAX_BYTES, NOTE_EXISTING_TOPICS_MAX,
-  NOTE_EXTRA_ANCHORS_MAX, NOTE_FACTS_MAX, NOTE_GOAL_QUOTA, NOTE_SYMBOL_HITS_MAX, UNDERSTANDING_BODY_MAX_BYTES,
+  NOTE_EXTRA_ANCHORS_MAX, NOTE_FACTS_MAX, NOTE_GOAL_QUOTA, NOTE_SYMBOL_HITS_MAX, PROJECT_UNDERSTANDING_BODY_MAX_BYTES,
+  UNDERSTANDING_BODY_MAX_BYTES,
 } from '../model/note-contracts.js';
 import type { GoalRecordTransactionPort, EncodedRecord, EncodedDomainEvent, PreparedCommit, RecordGuard, StoreCommitReceipt } from '../../record-store/ports.js';
-import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
+import type { RecordLookupPort, RecordOrderedLookupPort } from '../../record-store/lookup-ports.js';
 import {
   CURRENT_POINTER_MOVED_EVENT_TYPE, CURRENT_POINTER_SCHEMA_ID, NOTE_DISPOSITION_CHANGED_EVENT_TYPE,
   NOTE_EVENT_SCHEMA_VERSION, NOTE_WRITTEN_EVENT_TYPE, S4_NOTE_BY_ANCHOR_LOOKUPS,
@@ -45,7 +50,7 @@ import {
 } from '../persistence/note-record-codecs.js';
 import {
   admitNoteWrite, moveCurrentPointerRecord, newCurrentPointerRecord, newNoteHeadRecord, newNoteVersionRecord,
-  noteWriteAuthority, transitionNote, type NoteDispositionEventV1,
+  noteWriteAuthority, transitionNote, userReasonsOf, type NoteDispositionEventV1, type NoteUserReasonTargetV1,
 } from '../state/note-machine.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import { reworkActorClassOf } from '../../../contracts/task-requeue.js';
@@ -60,7 +65,7 @@ export type NoteRunFactResolver = (ctx: CoreCallContext, runRef: RunRef) =>
   Promise<ReadResult<{ goalId: string; sessionRef: SessionRef; role: RoleConfigurationRef; planRef: PlanRevisionRef }>>;
 
 export type NoteServiceDependencies = {
-  records: GoalRecordTransactionPort & RecordLookupPort;
+  records: GoalRecordTransactionPort & RecordLookupPort & RecordOrderedLookupPort;
   plans: Pick<PlanTaskPort, 'queryGoal' | 'queryTaskGraph'>;
   duties: NoteDutyResolver;
   runFacts: NoteRunFactResolver;
@@ -85,6 +90,11 @@ const forbidden = (reason: string): Rejected => rejected('forbidden', reason);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** C3.1: a raw draft anchor that names the project (shape only; class 1/2 follow). */
+function isProjectAnchorDraft(anchor: unknown): boolean {
+  return isRecord(anchor) && anchor['kind'] === 'project';
 }
 
 /** Narrow a core error to the note port's closed code set (unknown → unavailable). */
@@ -330,7 +340,10 @@ function writeInputProblem(input: unknown): string | null {
       }
     }
     const body = renderUnderstandingBody(sections as never);
-    if (Buffer.byteLength(body, 'utf8') > UNDERSTANDING_BODY_MAX_BYTES) return 'the understanding body exceeds its byte limit';
+    // C3.1/§11.4: the project understanding has its own, smaller cap because the
+    // whole body goes into every context.
+    const cap = isProjectAnchorDraft(draft['anchor']) ? PROJECT_UNDERSTANDING_BODY_MAX_BYTES : UNDERSTANDING_BODY_MAX_BYTES;
+    if (Buffer.byteLength(body, 'utf8') > cap) return 'the understanding body exceeds its byte limit';
   } else {
     if ('sections' in draft) return 'only an understanding note carries sections';
     const body = draft['body'];
@@ -343,6 +356,11 @@ function writeInputProblem(input: unknown): string | null {
   const extraAnchors = draft['extraAnchors'];
   if (!Array.isArray(extraAnchors)) return 'extraAnchors must be an array';
   if (extraAnchors.length > NOTE_EXTRA_ANCHORS_MAX) return 'too many extra anchors';
+  // C3.1/§11.4: a project understanding carries no extra anchors, so it never
+  // shows up in a module lookup.
+  if (kind === 'understanding' && isProjectAnchorDraft(draft['anchor']) && extraAnchors.length > 0) {
+    return 'project_understanding_extra_anchors';
+  }
   for (const [index, extra] of extraAnchors.entries()) {
     const problem = anchorFormatProblem(extra, `extraAnchors[${String(index)}]`);
     if (problem !== null) return problem.reason;
@@ -567,14 +585,32 @@ export function createNoteService(deps: NoteServiceDependencies): NoteWritePort 
     const events: EncodedDomainEvent[] = [];
     const base = eventBase(ctx.projectId, ctx.workspaceId ?? '', now);
     const targets = supersessionTargetsOf(subject, pointer?.noteId ?? null);
-    for (const target of targets) {
-      let head: NoteHeadSnapshot | null | undefined;
-      if (prereadHeads !== null) head = prereadHeads.get(target);
-      if (head === undefined) {
-        const read = await readHead(deps, ctx.projectId, target);
-        if (!read.ok) return { ok: false, rejection: read.rejection };
-        head = read.head;
+    // RW-12a: every target not already preread by the decision is read in ONE
+    // batched `readMany`; a missing or damaged head still aborts the command.
+    const heads = new Map<string, NoteHeadSnapshot | null>();
+    if (prereadHeads !== null) {
+      for (const target of targets) {
+        if (prereadHeads.has(target)) heads.set(target, prereadHeads.get(target) ?? null);
       }
+    }
+    const missing = targets.filter(target => !heads.has(target));
+    if (missing.length > 0) {
+      const refKeys = missing.map(noteId => noteHeadRefKey({ aggregateType: 'NoteHead', projectId: ctx.projectId, noteId }));
+      const read = await deps.records.readMany(refKeys);
+      if (read.status !== 'ready') return { ok: false, rejection: mapStoreFailure(read) };
+      const byKey = new Map(read.value.records.map(record => [record.refKey, record]));
+      for (const [index, target] of missing.entries()) {
+        const record = byKey.get(refKeys[index]!);
+        if (record === undefined) { heads.set(target, null); continue; }
+        const decoded = decodeNoteHeadSnapshot(record);
+        if (decoded.status !== 'decoded') {
+          return { ok: false, rejection: rejected('unavailable', `a replaced note is damaged: ${decoded.reason}`) };
+        }
+        heads.set(target, decoded.value);
+      }
+    }
+    for (const target of targets) {
+      const head = heads.get(target)!;
       if (head === null) return { ok: false, rejection: rejected('unavailable', 'a replaced note cannot be read') };
       if (head.state !== 'accepted' && head.state !== 'reviewed') continue;
       const transition = transitionNote(head, { kind: 'supersede' });
@@ -604,7 +640,150 @@ export function createNoteService(deps: NoteServiceDependencies): NoteWritePort 
     return { ok: true, records, guards, events };
   }
 
+  /**
+   * C3.2/§11.6 (lead ruling 9.2): read the live facts of every ACTUAL disposition
+   * target (`replaces` minus `coexistWith`, plus `contradicts`) in ONE batched
+   * read (RW-12a). A target that cannot be read makes the whole call
+   * `unavailable`.
+   */
+  async function userReasonTargetsOf(call: NoteCall, ctx: CoreCallContext, head: NoteHeadSnapshot):
+  Promise<{ ok: true; targets: Map<string, NoteUserReasonTargetV1>; heads: Map<string, NoteHeadSnapshot> }
+  | { ok: false; rejection: Rejected }> {
+    const coexisting = new Set(head.coexistWith);
+    const idSet = new Set<string>();
+    for (const noteId of head.replaces) if (!coexisting.has(noteId)) idSet.add(noteId);
+    for (const noteId of head.contradicts) idSet.add(noteId);
+    const ids = [...idSet];
+    const targets = new Map<string, NoteUserReasonTargetV1>();
+    // RW-2: the heads are returned too, so `supersessionOf` guards the version
+    // the decision actually read instead of re-reading a newer one.
+    const heads = new Map<string, NoteHeadSnapshot>();
+    if (ids.length > 0) {
+      const refKeys = ids.map(noteId => noteHeadRefKey({ aggregateType: 'NoteHead', projectId: ctx.projectId, noteId }));
+      const read = await deps.records.readMany(refKeys);
+      if (read.status !== 'ready') return { ok: false, rejection: mapStoreFailure(read) };
+      const byKey = new Map(read.value.records.map(record => [record.refKey, record]));
+      for (const [index, noteId] of ids.entries()) {
+        const record = byKey.get(refKeys[index]!);
+        if (record === undefined) {
+          return { ok: false, rejection: rejected('unavailable', 'a disposition target cannot be read') };
+        }
+        const decoded = decodeNoteHeadSnapshot(record);
+        if (decoded.status !== 'decoded') {
+          return { ok: false, rejection: rejected('unavailable', `a disposition target is damaged: ${decoded.reason}`) };
+        }
+        const targetHead = decoded.value;
+        heads.set(noteId, targetHead);
+        const retired = await primaryAnchorRetiredNonFile(call, ctx, targetHead.anchor);
+        if (!retired.ok) return { ok: false, rejection: retired.rejection };
+        targets.set(noteId, { noteId, version: targetHead.version, state: targetHead.state,
+          userConfirmed: targetHead.confirmedByUser, userWritten: targetHead.source.kind === 'user',
+          primaryAnchorRetiredNonFile: retired.value });
+      }
+    }
+    return { ok: true, targets, heads };
+  }
+
+  /**
+   * Item 1: the per-CALL caches. Every public entry (`writeNote`, `dispose`)
+   * creates one object and threads it down; there is no module-level or
+   * `ctx`-keyed cache, so a reused Run context cannot leak plan stages or scope
+   * facts from an earlier call.
+   */
+  type PlanStagesOutcome = { ok: true; value: Map<number, readonly string[]> } | { ok: false; rejection: Rejected };
+  type NoteCall = { planStages: Map<string, Promise<PlanStagesOutcome>>;
+    planWindows: Map<string, Promise<GoalPlanWindow>>; scope: ScribeScopeCall };
+  function newNoteCall(): NoteCall {
+    return { planStages: new Map(), planWindows: new Map(), scope: newScribeScopeCall() };
+  }
+
+  /**
+   * Item 1: the Goal→active-Plan window of one Goal, memoized per CALL like
+   * `planStages`, so several stage targets of one disposition read the window
+   * once instead of once per target.
+   */
+  function planWindowOf(call: NoteCall, ctx: CoreCallContext, goalId: string): Promise<GoalPlanWindow> {
+    const byGoal = call.planWindows;
+    const key = `${ctx.projectId}\u0000${goalId}`;
+    const hit = byGoal.get(key);
+    if (hit !== undefined) return hit;
+    const goalRef: GoalRef = { aggregateType: 'Goal', projectId: ctx.projectId, goalId };
+    const pending = readGoalPlanWindow(deps.records, goalRef);
+    byGoal.set(key, pending);
+    return pending;
+  }
+
+  /**
+   * RW-5/§11.6 R4: the stage sets of one Goal's adopted PlanRevisions, read in
+   * one window (the plan-revision index) and memoized per CALL, so several stage
+   * targets of one disposition read the window once.
+   */
+  function planStagesByRevisionOf(call: NoteCall, ctx: CoreCallContext, goalId: string): Promise<PlanStagesOutcome> {
+    const byGoal = call.planStages;
+    const key = `${ctx.projectId}\u0000${goalId}`;
+    const hit = byGoal.get(key);
+    if (hit !== undefined) return hit;
+    const pending = (async (): Promise<PlanStagesOutcome> => {
+      const revisions = new Map<number, readonly string[]>();
+      let after: { order: string | number; refKey: string } | undefined;
+      for (;;) {
+        const page = await deps.records.lookupOrdered({ index: S2B_PLAN_REVISION_BY_GOAL_LOOKUP,
+          values: [ctx.projectId, goalId], direction: 'asc', ...(after === undefined ? {} : { after }), limit: 200 });
+        if (page.status !== 'ready') {
+          return { ok: false, rejection: rejected('unavailable', page.reason || 'the plan revisions cannot be read') };
+        }
+        for (const record of page.value.records) {
+          const decoded = decodePlanRevisionSnapshot(record);
+          if (decoded.status === 'decoded') {
+            revisions.set(decoded.value.planRevision, decoded.value.stages.map(stage => stage.stageId));
+          }
+        }
+        if (page.value.next === null) break;
+        after = page.value.next;
+      }
+      return { ok: true, value: revisions };
+    })();
+    byGoal.set(key, pending);
+    return pending;
+  }
+
+  /**
+   * L23 (§11.6 R4): is the target's MAIN anchor retired for a NON-file reason?
+   * File retirement (deleted path, missing symbol) is a file reason and does not
+   * drop a user card; goal and project anchors never retire. RW-5: a stage is
+   * retired by the ONE shared `stageContinuityOf` over its own `planRevision`
+   * through the current revision; a task keeps the narrow anchor reader.
+   */
+  async function primaryAnchorRetiredNonFile(call: NoteCall, ctx: CoreCallContext, anchor: NoteAnchorV1):
+  Promise<{ ok: true; value: boolean } | { ok: false; rejection: Rejected }> {
+    if (anchor.kind === 'file' || anchor.kind === 'goal' || anchor.kind === 'project') {
+      return { ok: true, value: false };
+    }
+    if (anchor.kind === 'stage') {
+      const window = await planWindowOf(call, ctx, anchor.goalId);
+      if (window.status === 'rejected') {
+        if (window.code === 'not_found') return { ok: true, value: true };
+        return { ok: false,
+          rejection: rejected(window.code === 'forbidden' ? 'forbidden' : 'unavailable', window.reason) };
+      }
+      const currentRevision = window.plan === null ? null : window.plan.planRevision;
+      const stages = await planStagesByRevisionOf(call, ctx, anchor.goalId);
+      if (!stages.ok) return { ok: false, rejection: stages.rejection };
+      const continuity = stageContinuityOf({ stageId: anchor.stageId, anchorRevision: anchor.planRevision,
+        currentRevision, stagesByRevision: stages.value });
+      return { ok: true, value: continuity.status === 'retired' };
+    }
+    const goalId = 'goalId' in anchor ? anchor.goalId : null;
+    const resolved = await resolveNoteAnchors(ctx,
+      { main: anchor, extraAnchors: [], goalId, includeBasis: false }, anchorFacts);
+    if (resolved.status === 'ok') return { ok: true, value: resolved.value.anchorEnded };
+    if (resolved.code === 'invalid' && resolved.reason === 'anchor_not_found') return { ok: true, value: true };
+    return { ok: false, rejection: rejected(resolved.code === 'forbidden' ? 'forbidden' : 'unavailable', resolved.reason) };
+  }
+
   async function writeNote(ctx: CoreCallContext, input: WriteNoteInput): Promise<WriteNoteResult> {
+    // Item 1: this call owns its caches; nothing survives the return.
+    const call = newNoteCall();
     // L4 step 1 / L2a class 1: the whole input shape is checked before the
     // trusted caller read (item 12a), so a malformed input never reaches a read.
     const shapeProblem = writeInputProblem(input);
@@ -627,6 +806,10 @@ export function createNoteService(deps: NoteServiceDependencies): NoteWritePort 
     if (!callerRead.ok) return rejectedInput(input, callerRead.rejection.code, callerRead.rejection.reason);
     const caller = callerRead.value;
     const draft = input.note;
+    // C3.1/§11.4: the project understanding is always goal-less, has no extra
+    // anchors and is written by the project scribe or the user.
+    const isProjectUnderstanding = draft.kind === 'understanding' && draft.anchor.kind === 'project';
+    const storedGoalId = isProjectUnderstanding ? null : caller.goalId;
     // L4 step 2 / L5 authority: only an agent or a scribe stages a repair (item 9a).
     const authority = noteWriteAuthority({ kind: draft.kind, isUser: caller.isUser, duty: caller.duty });
     if (authority !== null) return rejectedInput(input, noteCodeOf(authority.code), authority.detail);
@@ -634,7 +817,7 @@ export function createNoteService(deps: NoteServiceDependencies): NoteWritePort 
     // L2a classes 1–2 and 4, through item 7's narrow reader (item 6 passes the
     // Run-bound plan so an agent's stage key keeps its bound revision).
     const anchorRead = await resolveNoteAnchors(ctx, { main: draft.anchor, extraAnchors: draft.extraAnchors,
-      goalId: caller.goalId, facts: draft.facts, boundPlanRef: caller.planRef, symbolHitsMax }, anchorFacts);
+      goalId: storedGoalId, facts: draft.facts, boundPlanRef: caller.planRef, symbolHitsMax }, anchorFacts);
     if (anchorRead.status === 'rejected') {
       return rejectedInput(input, anchorRead.code, anchorRead.reason, {
         ...(anchorRead.anchorCandidates === undefined ? {} : { anchorCandidates: anchorRead.anchorCandidates }),
@@ -647,13 +830,27 @@ export function createNoteService(deps: NoteServiceDependencies): NoteWritePort 
     // existence check of every anchor. Scribes use their scope instead; the user
     // may use any goal.
     if (draft.kind === 'understanding') {
-      if (draft.anchor.kind !== 'goal' && draft.anchor.kind !== 'stage') {
-        return rejectedInput(input, 'invalid', 'an understanding may only hang on a goal or a stage');
+      // C3.1/§11.4: an understanding may now hang on a goal, a stage or the project.
+      if (draft.anchor.kind !== 'goal' && draft.anchor.kind !== 'stage' && draft.anchor.kind !== 'project') {
+        return rejectedInput(input, 'invalid', 'an understanding may only hang on a goal, a stage or the project');
       }
     }
-    if (!caller.isUser && caller.duty !== 'scribe' && caller.goalId !== null) {
+    // C3.1/§11.4: the project understanding's writers are the project scribe
+    // (manages the project scope) and the user; everyone else is refused.
+    if (isProjectUnderstanding && !caller.isUser) {
+      if (caller.duty !== 'scribe' || caller.sessionRef === null || deps.scopes === undefined) {
+        return rejectedInput(input, 'forbidden', 'project_understanding_scribe_only');
+      }
+      const managesProject = await deps.scopes.manages(ctx, caller.sessionRef, { kind: 'project' }, call.scope);
+      if (managesProject.status !== 'ready') {
+        return rejectedInput(input, 'unavailable', managesProject.status === 'rejected'
+          ? managesProject.reason : 'the project scope cannot be read');
+      }
+      if (!managesProject.value) return rejectedInput(input, 'forbidden', 'project_understanding_scribe_only');
+    }
+    if (!caller.isUser && caller.duty !== 'scribe' && storedGoalId !== null) {
       for (const draftAnchor of [draft.anchor, ...draft.extraAnchors]) {
-        if ('goalId' in draftAnchor && draftAnchor.goalId !== caller.goalId) {
+        if ('goalId' in draftAnchor && draftAnchor.goalId !== storedGoalId) {
           return rejectedInput(input, 'forbidden', 'anchor_out_of_goal');
         }
       }
@@ -661,13 +858,13 @@ export function createNoteService(deps: NoteServiceDependencies): NoteWritePort 
     // L5/L2a class 3 (item 12b): a human with goalId null may use only project,
     // module, interface and file anchors; a non-null human goalId must exist.
     if (caller.isUser) {
-      if (caller.goalId === null && resolved.anchors.some(anchor => anchor.kind === 'goal'
+      if (storedGoalId === null && resolved.anchors.some(anchor => anchor.kind === 'goal'
         || anchor.kind === 'stage' || anchor.kind === 'task')) {
         return rejectedInput(input, 'forbidden', 'anchor_out_of_goal');
       }
-      if (caller.goalId !== null) {
+      if (storedGoalId !== null) {
         const goalRead = await deps.plans.queryGoal(ctx, { aggregateType: 'Goal', projectId: ctx.projectId,
-          goalId: caller.goalId });
+          goalId: storedGoalId });
         if (goalRead.status === 'not_found') {
           return rejectedInput(input, 'invalid', 'the goalId names no goal in this project');
         }
@@ -680,7 +877,7 @@ export function createNoteService(deps: NoteServiceDependencies): NoteWritePort 
     // L2a class 3 (scribe scope): a region scribe may only use module-class
     // anchors inside its region; a project scribe may use every anchor.
     if (caller.duty === 'scribe' && caller.sessionRef !== null && deps.scopes !== undefined) {
-      const refusal = await deps.scopes.writeAdmission(ctx, caller.sessionRef, resolved.anchors);
+      const refusal = await deps.scopes.writeAdmission(ctx, caller.sessionRef, resolved.anchors, call.scope);
       if (refusal !== null) return rejectedInput(input, refusal.code, refusal.reason);
     }
     const warnings: ('symbol_unresolved' | 'anchor_ended')[] = [];
@@ -710,14 +907,34 @@ export function createNoteService(deps: NoteServiceDependencies): NoteWritePort 
     }
 
     // L4.3: relations must exist, share an anchor and match the kind family.
+    // RW-12a/§11.7: every unique relation id is read in ONE batched `readMany`;
+    // a missing or damaged head keeps the old `not_found` / `unavailable` result.
     const relations = new Map<string, NoteHeadSnapshot | null>();
+    const relationIds: string[] = [];
     for (const noteId of [...draft.replaces, ...draft.contradicts, ...draft.coexistWith]) {
       if (noteId === '') return rejectedInput(input, 'invalid', 'a relation names an empty noteId');
       if (!relations.has(noteId)) {
-        const read = await readHead(deps, ctx.projectId, noteId);
-        if (!read.ok) return rejectedInput(input, read.rejection.code, read.rejection.reason);
-        if (read.head === null) return rejectedInput(input, 'invalid', 'not_found');
-        relations.set(noteId, read.head);
+        relations.set(noteId, null);
+        relationIds.push(noteId);
+      }
+    }
+    if (relationIds.length > 0) {
+      const refKeys = relationIds.map(noteId => noteHeadRefKey({ aggregateType: 'NoteHead',
+        projectId: ctx.projectId, noteId }));
+      const read = await deps.records.readMany(refKeys);
+      if (read.status !== 'ready') {
+        const mapped = mapStoreFailure(read);
+        return rejectedInput(input, mapped.code, mapped.reason);
+      }
+      const byKey = new Map(read.value.records.map(record => [record.refKey, record]));
+      for (const [index, noteId] of relationIds.entries()) {
+        const record = byKey.get(refKeys[index]!);
+        if (record === undefined) return rejectedInput(input, 'invalid', 'not_found');
+        const decoded = decodeNoteHeadSnapshot(record);
+        if (decoded.status !== 'decoded') {
+          return rejectedInput(input, 'unavailable', `the note head is damaged: ${decoded.reason}`);
+        }
+        relations.set(noteId, decoded.value);
       }
     }
     for (const noteId of [...draft.replaces, ...draft.contradicts, ...draft.coexistWith]) {
@@ -739,12 +956,12 @@ export function createNoteService(deps: NoteServiceDependencies): NoteWritePort 
         const head = relations.get(noteId);
         if (head === undefined || head === null) continue;
         if (sourceIsAuthorOf(head.source, caller.source)) continue;
-        const targetScope = await deps.scopes.managingScopeOf(ctx, head);
+        const targetScope = await deps.scopes.managingScopeOf(ctx, head, call.scope);
         if (targetScope.status !== 'ready') {
           return rejectedInput(input, 'unavailable',
             targetScope.status === 'rejected' ? targetScope.reason : 'the target scope cannot be read');
         }
-        const manages = await deps.scopes.manages(ctx, caller.sessionRef, targetScope.value);
+        const manages = await deps.scopes.manages(ctx, caller.sessionRef, targetScope.value, call.scope);
         if (manages.status !== 'ready') {
           return rejectedInput(input, 'unavailable',
             manages.status === 'rejected' ? manages.reason : 'the managed scope cannot be read');
@@ -820,6 +1037,16 @@ export function createNoteService(deps: NoteServiceDependencies): NoteWritePort 
         replacedCurrent.set(noteId, head);
       }
     }
+    // C3.3/§11.6: a `replaces` target that is the same author's own pending note
+    // is withdrawn in the SAME commit (`revised_while_pending`), so only one
+    // pending note is left. It is subtracted from the projections below because
+    // the goal quota counts pending notes.
+    const revisedPending = new Map<string, NoteHeadSnapshot>();
+    for (const noteId of draft.replaces) {
+      const target = relations.get(noteId);
+      if (target !== undefined && target !== null && target.state === 'pending_review'
+        && sourceIsAuthorOf(target.source, caller.source)) revisedPending.set(noteId, target);
+    }
     // L7/R6: the anchor quota gates only general-kind items, so it is projected
     // only for a general kind; the goal quota counts every kind.
     const anchorFull = isGeneral(draft.kind) && [...resolved.keys].some(key => {
@@ -832,10 +1059,10 @@ export function createNoteService(deps: NoteServiceDependencies): NoteWritePort 
     // once: `goalFull` is the admission projection; the committed count below
     // subtracts only what this commit actually supersedes.
     const goalHeads: NoteHeadSnapshot[] = [];
-    if (caller.goalId !== null) {
+    if (storedGoalId !== null) {
       const seen = new Set<string>();
       for (const state of ['accepted', 'reviewed', 'pending_review', 'staged'] as const) {
-        const page = await headsByGoalState(deps, ctx.projectId, caller.goalId, state);
+        const page = await headsByGoalState(deps, ctx.projectId, storedGoalId, state);
         if (!page.ok) return rejectedInput(input, page.code, page.reason);
         for (const head of page.heads) {
           if (seen.has(head.noteId)) continue;
@@ -844,10 +1071,21 @@ export function createNoteService(deps: NoteServiceDependencies): NoteWritePort 
         }
       }
     }
-    const goalFull = goalHeads.filter(head => !replacedCurrent.has(head.noteId)).length >= goalQuota;
+    const goalFull = goalHeads.filter(head => !replacedCurrent.has(head.noteId)
+      && !revisedPending.has(head.noteId)).length >= goalQuota;
 
+    // C3.3: `contradiction` is recorded only when a contradicted target is
+    // accepted/reviewed at write (D-04); `user_note_replaced` only when the
+    // superseded set holds a current user-confirmed note (understandings excepted, D-06/D-16).
+    const liveContradicts = draft.contradicts.filter(noteId => {
+      const target = relations.get(noteId);
+      return target !== undefined && target !== null
+        && (target.state === 'accepted' || target.state === 'reviewed');
+    });
+    const userNoteReplaced = draft.kind !== 'understanding'
+      && [...replacedCurrent.values()].some(target => target.confirmedByUser);
     const admission = admitNoteWrite({ kind: draft.kind, structural: draft.structural,
-      contradicts: draft.contradicts, anchorFull, goalFull, isUser: caller.isUser });
+      contradicts: liveContradicts, userNoteReplaced, anchorFull, goalFull, isUser: caller.isUser });
 
     // Fix 1 (L7/R6): the returned and replay-stored `overQuota` is the COMMITTED
     // population, so it always equals `readNote(noteId).overQuota` right after the
@@ -864,8 +1102,9 @@ export function createNoteService(deps: NoteServiceDependencies): NoteWritePort 
         return count + 1 > anchorQuota;
       });
     }
-    if (caller.goalId !== null) {
-      const committedGoal = goalHeads.filter(head => !(supersedesNow && replacedCurrent.has(head.noteId))).length + 1;
+    if (storedGoalId !== null) {
+      const committedGoal = goalHeads.filter(head => !(supersedesNow && replacedCurrent.has(head.noteId))
+        && !revisedPending.has(head.noteId)).length + 1;
       if (committedGoal > goalQuota) committedOverQuota = true;
     }
 
@@ -884,7 +1123,7 @@ export function createNoteService(deps: NoteServiceDependencies): NoteWritePort 
         structural: draft.structural, replaces: [...draft.replaces], contradicts: [...draft.contradicts],
         coexistWith: [...draft.coexistWith],
       },
-      state: admission.state, goalId: caller.goalId, source: caller.source,
+      state: admission.state, goalId: storedGoalId, source: caller.source,
       stagedRunKey: caller.source.kind === 'agent' && draft.kind === 'repair' && caller.source.runRef !== null
         ? `${caller.source.runRef.goalId}/${caller.source.runRef.runId}` : null,
       reviewReasons: admission.reviewReasons, confirmedByUser: admission.confirmedByUser,
@@ -918,6 +1157,22 @@ export function createNoteService(deps: NoteServiceDependencies): NoteWritePort 
       records.push(...supersession.records);
       for (const [refKey, revision] of supersession.guards) guards.set(refKey, revision);
       events.push(...supersession.events);
+    }
+
+    // C3.3/D-08/§11.6: withdraw the same author's pending `replaces` target(s)
+    // in this SAME commit, reason `revised_while_pending`; one pending note is left.
+    for (const pendingHead of revisedPending.values()) {
+      const withdrawal = transitionNote(pendingHead, { kind: 'withdraw' });
+      if (!withdrawal.ok) return rejectedInput(input, noteCodeOf(withdrawal.code), withdrawal.detail);
+      const withdrawnHead = withdrawal.next;
+      const withdrawnVersion = newNoteVersionRecord(withdrawnHead, { kind: 'withdraw', by: caller.source,
+        reason: 'revised_while_pending', decisionMessageRef: null }, now);
+      records.push(encodeNoteHeadSnapshot(withdrawnHead), encodeNoteVersionSnapshot(withdrawnVersion));
+      guards.set(encodeNoteHeadSnapshot(withdrawnHead).refKey, pendingHead.version);
+      guards.set(encodeNoteVersionSnapshot(withdrawnVersion).refKey, null);
+      events.push(encodeNoteDispositionChangedEvent({ ...base, eventId: deps.eventId(),
+        eventType: NOTE_DISPOSITION_CHANGED_EVENT_TYPE, head: withdrawnHead, version: withdrawnVersion,
+        acknowledgementRef: null }));
     }
 
     // P9/R4: the new note's NoteWritten is the LAST event of a write commit and
@@ -970,14 +1225,18 @@ export function createNoteService(deps: NoteServiceDependencies): NoteWritePort 
 
   async function dispose(ctx: CoreCallContext, commandId: string, noteId: string, expectedVersion: number,
     eventKind: 'review' | 'accept' | 'reject' | 'withdraw', reason: string | null,
-    expectedPointerRevision?: number | null): Promise<NoteDispositionResult> {
+    expectedPointerRevision?: number | null,
+    resolution?: 'supersede' | 'coexist'): Promise<NoteDispositionResult> {
+    // Item 1: this call owns its caches; nothing survives the return.
+    const call = newNoteCall();
     // R4/d7: the disposition replay is resolved BEFORE `resolveCaller`, the head
     // read, the scope check, the version check and the transition, and returns
     // the ORIGINAL receipt from the recorded event.
     const op: 'review' | 'withdraw' = eventKind === 'withdraw' ? 'withdraw' : 'review';
     const identityKey = noteCommandIdentity(op, ctx, commandId);
     const fingerprint = fingerprintOf({ kind: 's4-note-disposition', projectId: ctx.projectId, principal: principalOf(ctx),
-      commandId, noteId, expectedVersion, eventKind, reason, expectedPointerRevision: expectedPointerRevision ?? null });
+      commandId, noteId, expectedVersion, eventKind, reason, expectedPointerRevision: expectedPointerRevision ?? null,
+      resolution: resolution ?? null });
     const prior = await deps.records.lookupCommit({ identityKey, fingerprint });
     if (prior.status === 'ready') return replayDisposition(prior.value, identityKey, fingerprint, noteId);
     if (prior.code === 'idempotency_conflict') {
@@ -1002,14 +1261,27 @@ export function createNoteService(deps: NoteServiceDependencies): NoteWritePort 
     // Withdrawing one's own note stays exempt (the other dispositions do not).
     // Item 3 fix 7: a failed scope read is `unavailable`, never `forbidden`.
     const authorWithdraw = eventKind === 'withdraw' && sameAuthor;
+    // C3.5/D-07 (§11.1 item 6): a scribe cannot withdraw a user-confirmed note
+    // unless the scribe is its author; the author and the user keep that right.
+    if (eventKind === 'withdraw' && !caller.isUser && caller.duty === 'scribe' && !authorWithdraw
+      && head.confirmedByUser) {
+      return { status: 'rejected', code: 'forbidden', reason: 'user_confirmed', noteId };
+    }
+    // RW-8/§11.6: `resolution` is only applicable to `verdict: 'accept'`. A
+    // review or reject carrying one is refused BEFORE the scribe's scope check
+    // (`managingScopeOf` reads the relation targets) and before any other
+    // relation/target read, so no relation read can decide this error.
+    if ((eventKind === 'review' || eventKind === 'reject') && resolution !== undefined) {
+      return { status: 'rejected', code: 'invalid', reason: 'resolution_not_applicable', noteId };
+    }
     if (!caller.isUser && caller.duty === 'scribe' && caller.sessionRef !== null && deps.scopes !== undefined
       && !authorWithdraw) {
-      const targetScope = await deps.scopes.managingScopeOf(ctx, head);
+      const targetScope = await deps.scopes.managingScopeOf(ctx, head, call.scope);
       if (targetScope.status !== 'ready') {
         return { status: 'rejected', code: 'unavailable',
           reason: targetScope.status === 'rejected' ? targetScope.reason : 'the target scope cannot be read', noteId };
       }
-      const manages = await deps.scopes.manages(ctx, caller.sessionRef, targetScope.value);
+      const manages = await deps.scopes.manages(ctx, caller.sessionRef, targetScope.value, call.scope);
       if (manages.status !== 'ready') {
         return { status: 'rejected', code: 'unavailable',
           reason: manages.status === 'rejected' ? manages.reason : 'the managed scope cannot be read', noteId };
@@ -1020,9 +1292,44 @@ export function createNoteService(deps: NoteServiceDependencies): NoteWritePort 
       return { status: 'rejected', code: 'revision_conflict', reason: 'the note head moved', noteId };
     }
     const by: 'scribe' | 'user' = caller.isUser ? 'user' : 'scribe';
+    // C3.2/§11.6: the machine guard reads the LIVE user-reason set, computed from
+    // the ACTUAL disposition targets (`replaces` minus `coexistWith`, plus
+    // `contradicts`) and their live facts — never the stored `reviewReasons`.
+    let userReasons: NoteReviewReason[] = [];
+    let contradictedTargets: string[] = [];
+    // RW-2: the exact heads the decision read, so the commit guards the version
+    // the decision was made on.
+    let decisionHeads = new Map<string, NoteHeadSnapshot>();
+    if (eventKind === 'accept' || eventKind === 'reject') {
+      const factsRead = await userReasonTargetsOf(call, ctx, head);
+      if (!factsRead.ok) {
+        return { status: 'rejected', code: factsRead.rejection.code, reason: factsRead.rejection.reason, noteId };
+      }
+      decisionHeads = factsRead.heads;
+      userReasons = userReasonsOf(head, [...factsRead.targets.values()]);
+      const liveTarget = (targetNoteId: string): boolean => {
+        const target = factsRead.targets.get(targetNoteId);
+        return target !== undefined && (target.state === 'accepted' || target.state === 'reviewed')
+          && !target.primaryAnchorRetiredNonFile;
+      };
+      contradictedTargets = head.contradicts.filter(liveTarget);
+    }
+    // C3.5/§11.6: a live contradiction with no user reason forces the scribe to
+    // give a resolution; giving one in any other case is not applicable.
+    if (eventKind === 'accept') {
+      const resolutionRequired = contradictedTargets.length > 0 && userReasons.length === 0;
+      if (resolutionRequired && resolution === undefined) {
+        return { status: 'rejected', code: 'invalid', reason: 'resolution_required', noteId };
+      }
+      if (!resolutionRequired && resolution !== undefined) {
+        return { status: 'rejected', code: 'invalid', reason: 'resolution_not_applicable', noteId };
+      }
+    }
     const event: NoteDispositionEventV1 = eventKind === 'review' ? { kind: 'review', by }
       : eventKind === 'withdraw' ? { kind: 'withdraw' }
-        : { kind: eventKind, by, reasons: head.reviewReasons, reason };
+        : { kind: eventKind, by, reasons: userReasons, reason,
+            ...(eventKind === 'accept' && resolution !== undefined
+              ? { resolution, targets: contradictedTargets } : {}) };
     const transition = transitionNote(head, event);
     if (!transition.ok) return { status: 'rejected', code: noteCodeOf(transition.code), reason: transition.detail, noteId };
 
@@ -1053,8 +1360,21 @@ export function createNoteService(deps: NoteServiceDependencies): NoteWritePort 
           return { status: 'rejected', code: 'revision_conflict', reason: 'the current-understanding pointer moved', noteId,
             pointer: pointerPayload(pointer)! };
         }
+        // C3.5/D-15 (§11.6): a newer current understanding makes this pending one
+        // outdated; it can no longer be accepted (the scribe rejects it or merges
+        // it into a fresh version).
+        if (pointer.noteId !== null) {
+          const pointedRead = await readHead(deps, ctx.projectId, pointer.noteId);
+          if (!pointedRead.ok) {
+            return { status: 'rejected', code: pointedRead.rejection.code, reason: pointedRead.rejection.reason, noteId };
+          }
+          if (pointedRead.head !== null && pointedRead.head.createdAt > head.createdAt) {
+            return { status: 'rejected', code: 'invalid', reason: 'understanding_outdated', noteId };
+          }
+        }
       }
-      const supersession = await supersessionOf(ctx, transition.next, caller.source, null, pointerKey, pointer, now);
+      const supersession = await supersessionOf(ctx, transition.next, caller.source, decisionHeads,
+        pointerKey, pointer, now);
       if (!supersession.ok) {
         return { status: 'rejected', code: supersession.rejection.code, reason: supersession.rejection.reason, noteId };
       }
@@ -1068,6 +1388,18 @@ export function createNoteService(deps: NoteServiceDependencies): NoteWritePort 
 
     const realGuards: RecordGuard[] = records.map(record => ({ refKey: record.refKey,
       expectedRevision: guards.get(record.refKey) ?? null }));
+    // RW-2: a READ-ONLY guard at the read version for every decision target the
+    // commit does not otherwise write (`replaces` targets kept out of the commit,
+    // contradicted targets kept by `coexist`, the no-resolution path). Extra
+    // guards are normal; they never duplicate a written record's guard and get no
+    // commit-cursor binding.
+    const extraGuardKeys = new Set<string>();
+    for (const targetHead of decisionHeads.values()) {
+      const refKey = noteHeadRefKey(targetHead.ref);
+      if (guards.has(refKey) || extraGuardKeys.has(refKey)) continue;
+      extraGuardKeys.add(refKey);
+      realGuards.push({ refKey, expectedRevision: targetHead.version });
+    }
     const commitCursorBindings = records
       .filter(record => record.schemaId === 'NoteHead@1' || record.schemaId === 'NoteVersion@1')
       .map(record => ({ refKey: record.refKey, field: 'since' as const }));
@@ -1103,7 +1435,7 @@ export function createNoteService(deps: NoteServiceDependencies): NoteWritePort 
     writeNote,
     async reviewNote(ctx, input) {
       return dispose(ctx, input.commandId, input.noteId, input.expectedVersion, input.verdict, input.reason,
-        input.expectedPointerRevision);
+        input.expectedPointerRevision, input.resolution);
     },
     async withdrawNote(ctx, input) {
       return dispose(ctx, input.commandId, input.noteId, input.expectedVersion, 'withdraw', input.reason);

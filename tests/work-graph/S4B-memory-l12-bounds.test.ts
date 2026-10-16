@@ -170,7 +170,7 @@ describe('S4B MF12 byte-bound trimming recomputes the basis', () => {
 });
 
 describe('S4B L9 own-goal currentEligible', () => {
-  it.each(['memory', 'sqlite'] as const)('L9 %s: memoryFind marks a cross-goal agent-accepted note ineligible and a confirmed one eligible', async kind => {
+  it.each(['memory', 'sqlite'] as const)('L9 %s: memoryFind hides a cross-goal agent-accepted note and lists a confirmed one', async kind => {
     const f = await createS4BNoteCheckFixture(kind);
     try {
       const extra = await createS4BExtraGoal(f, 's4b-own-goal-2');
@@ -181,8 +181,14 @@ describe('S4B L9 own-goal currentEligible', () => {
         anchor: { kind: 'project' }, limit: 20, cursor: null });
       expect(read.status).toBe('ready');
       if (read.status !== 'ready') return;
-      const accepted = read.value.items.find(item => item.noteId === crossAccepted);
-      expect(accepted?.currentEligible).toBe(false);
+      // §11.3: another goal's agent-accepted note is not visible to g1's find.
+      expect(read.value.items.some(item => item.noteId === crossAccepted)).toBe(false);
+      // Its "not current" derivation is checked directly instead.
+      const checked = await f.check.checkNotes(f.inner.workCtx(goal1Run),
+        { items: [{ noteId: crossAccepted, version: 1 }] });
+      expect(checked.status).toBe('ready');
+      if (checked.status !== 'ready') return;
+      expect(checked.value[0]!.currentEligible).toBe(false);
     } finally { await f.close(); }
   });
 

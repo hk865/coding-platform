@@ -36,6 +36,7 @@ import {
 import { GOAL_BY_WORKSPACE_INDEX } from '../tasks/plan-readers.js';
 import { decodeGoalPhaseSnapshot } from '../tasks/completion-record-codecs.js';
 import { goalConflictFacts } from '../state/goal-settings-machine.js';
+import { pathOwnershipOf } from '../notes/note-path-ownership.js';
 
 // The two shared RecordStore failure helpers live in `persistence` (the
 // `tasks -> views` edge is forbidden); re-exported here for the existing
@@ -464,35 +465,17 @@ export async function readGoalFootprint(
 }
 
 /**
- * §4.3: project-relative, segmented, longest legal catalog path match; files
- * with no single longest owner stay `moduleRef: null` (unmapped), never guessed.
+ * §4.3: project-relative, segmented, longest legal catalog path match (RW-13:
+ * the ONE `pathOwnershipOf`); files with no single longest owner stay
+ * `moduleRef: null` (unmapped), never guessed.
  */
 export function mapExecutedFilesToModules(
   catalog: AdoptedArchitecture,
   files: readonly { path: string; certainty: 'definite' | 'possible' }[],
 ): GoalFootprintV1['executedFiles'] {
-  const definitions = catalog.modules.flatMap((definition) => definition.paths.map((prefix) => ({ definition, prefix })));
+  const candidates = catalog.modules.map((definition) => ({ value: definition.ref, paths: definition.paths }));
   return files.map((file) => {
-    let bestLength = -1;
-    let winners: ModuleRef[] = [];
-    for (const { definition, prefix } of definitions) {
-      const length = matchingPrefixLength(file.path, prefix);
-      if (length < 0) continue;
-      if (length > bestLength) { bestLength = length; winners = [definition.ref]; continue; }
-      if (length === bestLength) {
-        const key = canonicalJson(definition.ref as unknown as JsonValue);
-        if (!winners.some((winner) => canonicalJson(winner as unknown as JsonValue) === key)) winners.push(definition.ref);
-      }
-    }
-    return { path: file.path, moduleRef: winners.length === 1 ? winners[0]! : null, certainty: file.certainty };
+    const ownership = pathOwnershipOf(file.path, candidates);
+    return { path: file.path, moduleRef: ownership.status === 'owner' ? ownership.owner : null, certainty: file.certainty };
   });
-}
-
-/** `-1` when the path is not under the prefix; otherwise the matched prefix length. */
-function matchingPrefixLength(filePath: string, prefix: string): number {
-  const normalized = prefix.endsWith('/') ? prefix.slice(0, -1) : prefix;
-  if (normalized.length === 0) return -1;
-  if (filePath === normalized) return normalized.length;
-  if (filePath.startsWith(`${normalized}/`)) return normalized.length;
-  return -1;
 }

@@ -61,6 +61,11 @@ import type {
   NodeDetailReadPort, WorkLineReadPort, WorkLineSettingsPort,
 } from '../core/work-graph/model/work-line-contracts.js';
 import type { WorkLineConversationPort } from '../composition/work-line-conversation.js';
+// Slice 4C C1.4 (spec §2/L15/L19): the notes owner port and its wire shapes.
+import type {
+  NoteCheckPort, NoteCheckV1, NoteDispositionResult, NoteListRequestV1, NoteListResultV1, NoteMemoryReadResult,
+  WriteNoteEnvelopeV1, NoteWritePort, VersionListPageV1,
+} from '../core/work-graph/model/note-contracts.js';
 import {
   type CoreRouteKind,
   type CoreRouteSuffix,
@@ -206,6 +211,20 @@ export type CoreRouteBindings = {
   readGraphHover: NodeDetailReadPort['readGraphHover'];
   readNodeDetail: NodeDetailReadPort['readNodeDetail'];
   setLinePins: WorkLineSettingsPort['setLinePins'];
+  // Slice 4C C1.4 (spec §2): the six notes/version-list routes. `notes/write`
+  // returns the write envelope (write + the after-write check); the three writes
+  // are person-only, so their binding can answer a `forbidden` rejection.
+  listNotes: (ctx: CoreCallContext, request: NoteListRequestV1) => Promise<NoteMemoryReadResult<NoteListResultV1>>;
+  writeNote: (ctx: CoreCallContext, request: Parameters<NoteWritePort['writeNote']>[1]) =>
+    Promise<WriteNoteEnvelopeV1 | CoreRejection>;
+  withdrawNote: (ctx: CoreCallContext, request: Parameters<NoteWritePort['withdrawNote']>[1]) =>
+    Promise<NoteDispositionResult | CoreRejection>;
+  reviewNote: (ctx: CoreCallContext, request: Parameters<NoteWritePort['reviewNote']>[1]) =>
+    Promise<NoteDispositionResult | CoreRejection>;
+  listPlanVersions: (ctx: CoreCallContext, input: { goalId: string; limit: number; cursor: string | null }) =>
+    Promise<ReadResult<VersionListPageV1>>;
+  listCatalogVersions: (ctx: CoreCallContext, input: { limit: number; cursor: string | null }) =>
+    Promise<ReadResult<VersionListPageV1>>;
 };
 
 /** A.2 step 5.6 (§12.1 step 7, §12.8): this Host's instance lease and its start-up reconcile report. */
@@ -275,6 +294,16 @@ export type CoreRoutePlatform = {
   workLineConversation?: WorkLineConversationPort;
   nodeDetail?: NodeDetailReadPort;
   lineSettings?: WorkLineSettingsPort;
+  /** Slice 4C (spec §2/L15/L19): the non-enumerable `notes` owner group the six
+   * notes/version-list routes bind. A narrow platform without it answers
+   * `unsupported`. */
+  notes?: NoteWritePort & NoteCheckPort & {
+    listNotes: (ctx: CoreCallContext, request: NoteListRequestV1) => Promise<NoteMemoryReadResult<NoteListResultV1>>;
+    listPlanVersions: (ctx: CoreCallContext, input: { goalId: string; limit: number; cursor: string | null }) =>
+      Promise<ReadResult<VersionListPageV1>>;
+    listCatalogVersions: (ctx: CoreCallContext, input: { limit: number; cursor: string | null }) =>
+      Promise<ReadResult<VersionListPageV1>>;
+  };
 };
 
 /** `executions/resolve-unknown` input (RUN-22): the unknown Run and the operator's reason. */
@@ -422,6 +451,15 @@ export const CORE_ROUTE_SPECS: Record<CoreRouteSuffix, CoreRouteSpec> = {
   'lines/pin': { kind: 'graph_write', binding: 'setLinePins', owner: 'lineSettings.setLinePins' },
   'graph/hover': { kind: 'plain', binding: 'readGraphHover', owner: 'nodeDetail.readGraphHover' },
   'graph/detail': { kind: 'plain', binding: 'readNodeDetail', owner: 'nodeDetail.readNodeDetail' },
+  // Slice 4C C1.4 (spec §2/L15/L19): the person's notes and the two version
+  // lists, owner `notes` non-enumerable in the composition root. The three
+  // writes are person-only.
+  'notes/list': { kind: 'plain', binding: 'listNotes', owner: 'notes.listNotes' },
+  'notes/write': { kind: 'plain', binding: 'writeNote', owner: 'notes.writeNote' },
+  'notes/withdraw': { kind: 'plain', binding: 'withdrawNote', owner: 'notes.withdrawNote' },
+  'notes/review': { kind: 'plain', binding: 'reviewNote', owner: 'notes.reviewNote' },
+  'plans/versions': { kind: 'plain', binding: 'listPlanVersions', owner: 'notes.listPlanVersions' },
+  'architecture/versions': { kind: 'plain', binding: 'listCatalogVersions', owner: 'notes.listCatalogVersions' },
 };
 
 export type ParsedCoreRequest =
@@ -555,6 +593,39 @@ export function createPlatformCoreRouteBindings(
   const unsupported = <T>(reason: string): T => (async () => ({
     status: 'rejected', code: 'unsupported', reason,
   })) as unknown as T;
+  // Slice 4C C1.4 (L15): the three notes writes are person-only. The note
+  // service itself also admits an agent writer (the `record_note` tool); the
+  // person's HTTP routes accept only the Host's human actor, so a member
+  // identity is `forbidden` before the write is attempted.
+  const personOnly = (ctx: CoreCallContext): boolean =>
+    ctx.principal.kind === 'host' && ctx.principal.actor.kind === 'human';
+  const forbiddenPerson = (): CoreRejection =>
+    ({ status: 'rejected', code: 'forbidden', reason: 'only the person may call this notes route' });
+  /** R-03: write, then on success `checkNotes({ withSimilar: true })`; a failed
+   *  check is `{ status: 'unavailable', reason }` and never undoes the write. */
+  const writeNoteEnvelope = async (ctx: CoreCallContext,
+    input: Parameters<NoteWritePort['writeNote']>[1]): Promise<WriteNoteEnvelopeV1 | CoreRejection> => {
+    if (platform.notes === undefined || !personOnly(ctx)) return forbiddenPerson();
+    const owner = platform.notes;
+    const write = await owner.writeNote(ctx, input);
+    if (write.status === 'rejected') {
+      return { write, check: { status: 'unavailable', reason: write.reason } };
+    }
+    let check: NoteCheckV1 | { status: 'unavailable'; reason: string };
+    try {
+      const checked = await owner.checkNotes(ctx,
+        { items: [{ noteId: write.noteId, version: write.version }], withSimilar: true });
+      if (checked.status === 'ready') check = checked.value[0] ?? { status: 'unavailable', reason: 'the note check returned no item' };
+      else if (checked.status === 'rejected') check = { status: 'unavailable', reason: checked.reason };
+      else check = { status: 'unavailable', reason: `the note check is not ready (${checked.status})` };
+    } catch (error) {
+      check = { status: 'unavailable', reason: error instanceof Error ? error.message : 'the note check failed' };
+    }
+    return { write, check };
+  };
+  const personDisposition = <A>(method: (ctx: CoreCallContext, input: A) => Promise<NoteDispositionResult>) =>
+    async (ctx: CoreCallContext, input: A): Promise<NoteDispositionResult | CoreRejection> =>
+      personOnly(ctx) ? method(ctx, input) : forbiddenPerson();
   return {
     submitControl: platform.controls.submitControl.bind(platform.controls),
     readControl: platform.controls.readControl.bind(platform.controls),
@@ -749,6 +820,21 @@ export function createPlatformCoreRouteBindings(
       : platform.nodeDetail.readNodeDetail.bind(platform.nodeDetail),
     setLinePins: platform.lineSettings === undefined ? unsupported('the platform does not publish lineSettings.setLinePins')
       : platform.lineSettings.setLinePins.bind(platform.lineSettings),
+    // Slice 4C C1.4: the six named notes owner methods. The group is
+    // non-enumerable, so a spread copy lacks it and the binding answers an
+    // explicit `unsupported`.
+    listNotes: platform.notes === undefined ? unsupported('the platform does not publish notes.listNotes')
+      : platform.notes.listNotes.bind(platform.notes),
+    writeNote: platform.notes === undefined ? unsupported('the platform does not publish notes.writeNote')
+      : writeNoteEnvelope,
+    withdrawNote: platform.notes === undefined ? unsupported('the platform does not publish notes.withdrawNote')
+      : personDisposition(platform.notes.withdrawNote.bind(platform.notes)),
+    reviewNote: platform.notes === undefined ? unsupported('the platform does not publish notes.reviewNote')
+      : personDisposition(platform.notes.reviewNote.bind(platform.notes)),
+    listPlanVersions: platform.notes === undefined ? unsupported('the platform does not publish notes.listPlanVersions')
+      : platform.notes.listPlanVersions.bind(platform.notes),
+    listCatalogVersions: platform.notes === undefined ? unsupported('the platform does not publish notes.listCatalogVersions')
+      : platform.notes.listCatalogVersions.bind(platform.notes),
   };
 }
 
@@ -910,6 +996,13 @@ export async function dispatchCoreRoute(
       case 'lines/pin': return bindings.setLinePins(ctx, graphWrite.request as never);
       case 'graph/hover': return bindings.readGraphHover(ctx, plain.input as never);
       case 'graph/detail': return bindings.readNodeDetail(ctx, plain.input as never);
+      // Slice 4C C1.4: the six notes/version-list routes.
+      case 'notes/list': return bindings.listNotes(ctx, plain.input as never);
+      case 'notes/write': return bindings.writeNote(ctx, plain.input as never);
+      case 'notes/withdraw': return bindings.withdrawNote(ctx, plain.input as never);
+      case 'notes/review': return bindings.reviewNote(ctx, plain.input as never);
+      case 'plans/versions': return bindings.listPlanVersions(ctx, plain.input as never);
+      case 'architecture/versions': return bindings.listCatalogVersions(ctx, plain.input as never);
     }
   })();
   // A GraphWrite rejection is a failed command: preserve its exact body but let

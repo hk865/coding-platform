@@ -135,6 +135,14 @@ const ROUTE_LABELS: Record<CoreRouteSuffix, string> = {
   'lines/pin': '置顶工作线',
   'graph/hover': '悬停信息',
   'graph/detail': '查看节点详情',
+  // Slice 4C C1.4 (spec §2, L15, L19): the person's notes routes and the two
+  // version lists. Display labels only (this table is total over CoreRouteSuffix).
+  'notes/list': '查看注记',
+  'notes/write': '写注记',
+  'notes/withdraw': '撤下注记',
+  'notes/review': '审注记',
+  'plans/versions': '查看计划版本',
+  'architecture/versions': '查看架构版本',
 };
 
 export const routeLabel = (route: CoreRouteSuffix): string => ROUTE_LABELS[route];

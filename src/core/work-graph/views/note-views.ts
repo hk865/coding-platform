@@ -43,6 +43,7 @@ import {
   S4_NOTE_BY_ANCHOR_LOOKUPS, decodeNoteHeadSnapshot, decodeNoteVersionSnapshot, noteHeadRefKey, noteVersionRefKey,
 } from '../persistence/note-record-codecs.js';
 import { S2B_PLAN_REVISION_BY_GOAL_LOOKUP, decodePlanRevisionSnapshot, planRevisionRefKey } from '../persistence/plan-record-codecs.js';
+import { stageContinuityOf } from '../notes/note-continuity.js';
 import { readGoalPlanWindow } from '../tasks/plan-readers.js';
 import { decodeSessionMessageRecord } from '../sessions/message-record-codecs.js';
 import { decodeRun } from '../materials/run-snapshot-decoder.js';
@@ -558,14 +559,15 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
           if (anchor.planRevision > current.planRevision) { unchecked = true; return { ok: true, value: [] }; }
           const revisions = await planRevisionsOfGoal(ctx, anchor.goalId, caches);
           if (!revisions.ok) return revisions;
-          // Continuity: the stage must be present in EVERY adopted revision from
-          // the anchor's own revision through the current one.
-          for (let revision = anchor.planRevision; revision <= current.planRevision; revision += 1) {
-            const plan = revisions.value.get(revision);
-            if (plan === undefined) { unchecked = true; return { ok: true, value: [] }; }
-            if (!plan.stages.some(stage => stage.stageId === anchor.stageId)) {
-              return { ok: true, value: ['stage_not_in_current_plan'] };
-            }
+          // RW-5/§11.6 R4: the ONE shared continuity decision over the closed
+          // revision window; a missing revision read makes it `unchecked`.
+          const continuity = stageContinuityOf({ stageId: anchor.stageId,
+            anchorRevision: anchor.planRevision, currentRevision: current.planRevision,
+            stagesByRevision: new Map([...revisions.value].map(([revision, plan]) =>
+              [revision, plan.stages.map(stage => stage.stageId)] as const)) });
+          if (continuity.status === 'unchecked') { unchecked = true; return { ok: true, value: [] }; }
+          if (continuity.status === 'retired') {
+            return { ok: true, value: ['stage_not_in_current_plan'] };
           }
           return { ok: true, value: [] };
         }
@@ -975,9 +977,15 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
     const cache = caches.heads;
     // S2.6 (b4): `conflicting`/`overQuota` are memoized per noteId@head.version.
     const derivationKey = `${head.noteId}@${String(head.version)}`;
+    // §11.3 (b11): a derivation the read model already made (conflicts) is handed
+    // over per item and used instead of being recomputed here.
+    const suppliedConflicting = item.version === head.version
+      ? (item as NoteHeadCheckItemV1 & { conflicting?: boolean }).conflicting : undefined;
     let derived = caches.derivations.get(derivationKey);
     if (derived === undefined) {
-      const conflicting = await derivations.conflictingOf(ctx.projectId, head as NoteHeadLike, cache);
+      const conflicting = suppliedConflicting === undefined
+        ? await derivations.conflictingOf(ctx.projectId, head as NoteHeadLike, cache)
+        : { ok: true as const, value: suppliedConflicting };
       if (!conflicting.ok) return conflicting;
       const overQuota = await derivations.overQuotaOf(ctx.projectId, head, cache);
       if (!overQuota.ok) return overQuota;
@@ -1067,10 +1075,12 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
     // caller reaches `checkNotes` directly (the read model's own mask is not
     // the only boundary).
     const isHeadVersion = item.version === head.version;
-    // L9: an `accepted` note is a current conclusion only in the caller's own
-    // goal or when the user confirmed it; `reviewed` carries no goal condition.
+    // L9/§11.4: an `accepted` note is a current conclusion only in the caller's
+    // own goal or when the user confirmed it; `reviewed` carries no goal
+    // condition, and the project understanding is current for every goal.
     const callerGoalId = ctx.principal.kind === 'work_run' ? ctx.principal.runRef.goalId : null;
-    const ownGoalEligible = body.state !== 'accepted' || callerGoalId === null
+    const isProjectUnderstanding = body.kind === 'understanding' && body.anchor.kind === 'project';
+    const ownGoalEligible = isProjectUnderstanding || body.state !== 'accepted' || callerGoalId === null
       || head.goalId === callerGoalId || head.confirmedByUser;
     const currentEligible = stateEligible && ownGoalEligible && isHeadVersion && freshness === 'fresh'
       && !derived.conflicting && !invalid && !sourceUnavailable && !anchor.value.retired && unresolvedFacts.length === 0;
@@ -1132,6 +1142,12 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
         // S2.3: seed exactly the sets the read model already read, keyed as its
         // own anchor cache keys them (never from a filtered set).
         for (const [key, heads] of input.anchorSets) caches.heads.anchors.set(key, { ok: true, value: heads });
+      }
+      if (input.planWindows !== undefined) {
+        // Rework item 5(b): the read model's related-scope resolution already
+        // read these goals' active plan windows; seed the check's own per-call
+        // cache so `currentPlan` does not read the same window twice.
+        for (const [key, plan] of input.planWindows) caches.plans.set(key, { ok: true, value: plan });
       }
       const budget = newCheckBudget(limits);
       const results: NoteCheckV1[] = [];

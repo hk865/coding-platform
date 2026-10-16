@@ -15,9 +15,15 @@ function draft(overrides: Partial<NoteDraftV1> = {}): NoteDraftV1 {
     replaces: [], contradicts: [], coexistWith: [], ...overrides } as NoteDraftV1;
 }
 
+// C3.4: a general structural note is accepted directly now, so a pending
+// candidate is an agent note that replaces the user's own (seed) note — C3.3's
+// `user_note_replaced` path. The seed text stays dissimilar to the subject.
+let seedCounter = 0;
 async function pendingCandidate(f: Awaited<ReturnType<typeof createS4BNoteCheckFixture>>, runCtx: CoreCallContext,
   topic: string, conclusion: string): Promise<string> {
-  const result = await f.inner.write(runCtx, draft({ topic, conclusion, structural: true }), null);
+  const seed = await f.inner.write(f.ctx(), draft({ topic: `seed-${++seedCounter}`, conclusion: 'q' }), null);
+  if (seed.status === 'rejected') throw new Error(`seed rejected: ${JSON.stringify(seed)}`);
+  const result = await f.inner.write(runCtx, draft({ topic, conclusion, replaces: [seed.noteId] }), null);
   if (result.status === 'rejected') throw new Error(`candidate rejected: ${JSON.stringify(result)}`);
   if (result.status !== 'pending_review') throw new Error(`candidate not pending: ${JSON.stringify(result)}`);
   return result.noteId;

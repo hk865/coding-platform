@@ -15,6 +15,7 @@ import type { RunOutcome, RunRef, TaskTriple } from './dispatch.js';
 import type { DecisionSourceV1 } from './goal-decisions.js';
 import type { GraphNodeRefV1 } from './graph-context.js';
 import type { GoalRef } from './ledger.js';
+import type { NoteAnchorV1, NoteKind, NoteSectionsV1, NoteSourceV1, NoteState } from './note.js';
 import type { Disposition, Phase, PlanRevisionRef } from './plan.js';
 import type { PlatformDutyV1 } from './platform-duty.js';
 import type { QueryExecutionStateV1, QueryRunRef, QueryRunV1 } from './query-job.js';
@@ -236,7 +237,10 @@ export type ModuleFileV1 = {
 };
 export type GraphHoverReadV1 = {
   goalRef: GoalRef; groups: GroupHoverV1[]; tasks: TaskHoverV1[]; modules: ModuleHoverV1[];
-  files: FromExecutedFilesV1<{ path: string; tasks: TaskTriple[] }[]>;     // 文件“涉及它的任务”（L15）
+  files: FromExecutedFilesV1<{ path: string; tasks: TaskTriple[] }[]>;    // 文件“涉及它的任务”（L15）
+  // Slice 4C L21/决定 35 · Q23: the hover card only shows a note COUNT per
+  // hovered node (goal, stage, task, module), never full note rows.
+  noteCounts: { node: GraphNodeRefV1; count: LineCountV1 }[];
   problems: { node: GraphNodeRefV1; code: CoreError; reason: string }[];
   sourceCursor: CommitCursor;
 };
@@ -249,6 +253,39 @@ export type NodeRiskV1 = {
   task: TaskTriple; title: string; phase: Phase;
   shared: { kind: 'module'; module: ModuleRef } | { kind: 'file'; path: string; certainty: 'definite' | 'possible' };
 };
+
+/**
+ * Slice 4C L21/C1.5: the node-detail notes column. Goal, stage, task and module
+ * nodes map to the note anchors of the same kind and carry that node's current
+ * understanding (goal/stage only) plus the first `lookup` page, each row
+ * labelled with `renderNoteHeader`. Session, Run and round nodes have no note
+ * anchor. The understanding shape is inlined because `model/note-contracts.ts`
+ * is not importable from `contracts`. When the notes column itself cannot be
+ * read the member is `unavailable` with the reason.
+ */
+export type NodeNoteUnderstandingV1 = { anchorKey: string;
+  pointer: { noteId: string | null; revision: number | null };
+  updateDue: boolean | null; latestTriggerCursor: string | null };
+/** The L9 fields the notes column shows, plus `label` from `renderNoteHeader`. */
+export type NodeNoteRowV1 = {
+  noteId: string; version: number; storedState: NoteState; kind: NoteKind; label: string;
+  topic: string; topicKey: string; conclusion: string; anchor: NoteAnchorV1; extraAnchors: NoteAnchorV1[];
+  source: NoteSourceV1; goalId: string | null; confirmedByUser: boolean;
+  freshness: 'fresh' | 'stale' | 'unchecked'; changedFiles: { path: string; deleted: boolean }[];
+  staleReasons: string[]; sourceUnavailable: boolean; invalid: boolean; conflicting: boolean;
+  overQuota: boolean; currentEligible: boolean; crossGoal: boolean;
+  anchorStatus: 'live' | 'retired';
+  anchorRetiredReasons: ('module_removed' | 'interface_removed' | 'file_deleted' | 'task_ended'
+    | 'stage_not_in_current_plan' | 'symbol_missing')[];
+  retiredExtraAnchors: string[];
+  sections?: NoteSectionsV1;
+};
+export type NodeNotesV1 =
+  | { status: 'not_available'; reason: 'no_note_anchor' }
+  | { status: 'unavailable'; reason: string }
+  | { status: 'available'; understanding: NodeNoteUnderstandingV1 | null;
+      items: NodeNoteRowV1[]; next: string | null; complete: boolean };
+
 export type NodeDetailV1 =
   | { section: 'summary'; node: GraphNodeRefV1; pin: VersionPin;
       task: (TaskHoverV1 & { plannedModules: ModuleRef[]; actualFiles: ExecutedFilesViewV1;
@@ -257,7 +294,7 @@ export type NodeDetailV1 =
       goal: { anomalyCount: LineCountV1; workingLines: LineCountV1 } | null;
       module: ModuleHoverV1 | null;
       line: LineBriefV1 | null;                                              // Session 节点 → 它所在的线
-      notes: NotYetV1;                                                       // 注记一栏（第 4 片）
+      notes: NodeNotesV1;                                                     // 注记一栏（第 4 片；4C 接上）
       fileRisks: FromExecutedFilesV1<{ riskCount: LineCountV1 }>;         // 按共用文件算的风险；来源可能不全时 partial（L15、§3.12）
       sourceCursor: CommitCursor }
   | { section: 'participants'; items: (LineBriefV1 & { via: LineParticipationV1['relation'] })[];

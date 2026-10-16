@@ -45,6 +45,7 @@ import type { ExecutionEntryPort } from '../work-graph/model/execution-entry-con
 import type { ExecutionReadPort, TaskExecutionRecord } from '../work-graph/model/execution-read-contracts.js';
 import type { GraphContextReadPort } from '../work-graph/model/graph-context-contracts.js';
 import type { TaskContextInputPort } from '../work-graph/model/context-input-contracts.js';
+import type { NoteCheckPort, NoteMemoryReadPort, NoteWritePort } from '../work-graph/model/note-contracts.js';
 import type { ModelRequestPort } from '../work-graph/tasks/model-call-contracts.js';
 import type { PlanTaskPort } from '../work-graph/model/plan-contracts.js';
 import type { ControlObservationPort, RunControlPort } from '../work-graph/tasks/control-contracts.js';
@@ -250,6 +251,18 @@ export type RuntimeExecutionDependencies = {
   graphContext?: GraphContextReadPort;
   /** Slice 3 exact task-input owner (the same instance the routes use). */
   taskInputs?: TaskContextInputPort;
+  /**
+   * Slice 4C L13/L14: the SAME `platform.notes` ports the graph tools' memory
+   * branch and `record_note` call. The composition root fills a stable holder
+   * after the notes are built and the tools read it at start time. Optional so
+   * an old direct caller keeps compiling; a selected tool whose field is still
+   * absent fails closed before the model.
+   */
+  notes?: {
+    memory?: NoteMemoryReadPort;
+    write?: NoteWritePort;
+    check?: Pick<NoteCheckPort, 'checkNotes'>;
+  };
   /**
    * C3 (spec §6.1 (e)): the verification workspace reader (the same instance
    * the evidence owner captures with) the continuation brief takes its own

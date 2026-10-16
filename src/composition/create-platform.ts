@@ -65,7 +65,7 @@ import { EVIDENCE_RECORD_SCHEMAS } from '../core/work-graph/persistence/evidence
 import { NOTE_RECORD_SCHEMAS } from '../core/work-graph/persistence/note-record-codecs.js';
 import { createNoteService } from '../core/work-graph/notes/note-service.js';
 import type { NoteRunFactResolver } from '../core/work-graph/notes/note-service.js';
-import { createNoteReadModel } from '../core/work-graph/notes/note-read-model.js';
+import { createNoteReadModel, type NoteListReadPort } from '../core/work-graph/notes/note-read-model.js';
 import { createVersionLists } from '../core/work-graph/notes/note-version-lists.js';
 import { createScribeScope } from '../core/work-graph/notes/scribe-scope.js';
 import { createNoteCheck } from '../core/work-graph/views/note-views.js';
@@ -99,7 +99,7 @@ import { createPlanService, createRequestCandidateService } from '../core/work-g
 import type { PlanServiceDependencies } from '../core/work-graph/tasks/plan-service.js';
 import { PLAN_RECORD_SCHEMAS } from '../core/work-graph/persistence/plan-record-codecs.js';
 import { DECISION_RECORD_SCHEMAS } from '../core/work-graph/persistence/decision-record-codecs.js';
-import { PLAN_STATE_RECORD_SCHEMAS, PLAN_GOVERNANCE_RECORD_SCHEMAS, createSessionResponsibilityBasisReader } from '../core/work-graph/tasks/plan-readers.js';
+import { PLAN_STATE_RECORD_SCHEMAS, PLAN_GOVERNANCE_RECORD_SCHEMAS, createSessionResponsibilityBasisReader, createNoteRunTaskResolver } from '../core/work-graph/tasks/plan-readers.js';
 import { createSessionDirectory } from '../core/work-graph/sessions/session-directory.js';
 import type { SessionDirectoryPort } from '../core/work-graph/model/session-contracts.js';
 import { SESSION_RECORD_SCHEMAS, decodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey } from '../core/work-graph/sessions/session-record-codecs.js';
@@ -897,6 +897,10 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       readTaskInputPage: (...args) => trackedCall(() => taskInputsOwner.readTaskInputPage(...args), unavailable),
     };
     let resultWriter: Pick<ExecutionEntryPort, 'recordRunResult'> | undefined;
+    // Slice 4C: the notes are built AFTER the runtime dependencies object, so
+    // the Runtime receives this stable holder and the note tools read its
+    // fields at Run start time. No notes block is moved.
+    const noteToolDeps: NonNullable<RuntimeExecutionDependencies['notes']> = {};
     let runtime = createAgentRuntime();
     if (options.runtime !== undefined) {
       const host = options.runtime;
@@ -939,6 +943,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         turnClosure: { recordSessionHealth: (...args) => sessionHealth.recordSessionHealth(...args),
           lease: hostInstance === undefined ? null : hostInstance.lease },
         graphContext, taskInputs,
+        notes: noteToolDeps,
         host, kernel, resourceCaps, now, newId: randomUUID,
       };
       runtime = createAgentRuntime(dependencies);
@@ -1303,9 +1308,17 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     const noteCheck: NoteHeadCheckPort = createNoteCheck({ records: backend.records, plans: planService,
       architecture: catalog, workspace: noteWorkspace, artifacts: bodies,
       ...(options.noteLimits === undefined ? {} : { limits: options.noteLimits }) });
-    const noteReads: NoteReadPort & NoteMemoryReadPort = createNoteReadModel({ records: backend.records,
+    const noteReads: NoteReadPort & NoteMemoryReadPort & NoteListReadPort = createNoteReadModel({ records: backend.records,
       plans: planService, architecture: catalog, workspace: noteWorkspace, check: noteCheck,
+      // Slice 4C C2.2: the concrete narrow Run resolver (one readMany) resolves a
+      // work Run's own task and bound plan from the trusted principal.
+      runTask: createNoteRunTaskResolver(backend.records),
       ...(options.noteLimits === undefined ? {} : options.noteLimits) });
+    // Slice 4C L13/L14: fill the stable holder the Runtime already received. The
+    // tools read these fields at Run start time, after this point.
+    noteToolDeps.memory = noteReads;
+    noteToolDeps.write = noteWrite;
+    noteToolDeps.check = noteCheck;
     const noteVersions = createVersionLists({ records: backend.records });
     // The ONE owner group 4C's routes bind. Each operation is selected through
     // the port (a real production read of the surface) before the group is built.
@@ -1320,15 +1333,17 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     const memoryConflicts = noteReads.memoryConflicts;
     const memoryFind = noteReads.memoryFind;
     const memoryStale = noteReads.memoryStale;
+    // Slice 4C C1.4: the route-facing `notes/list` read (the same read model).
+    const listNotes = noteReads.listNotes;
     const { listPlanVersions, listCatalogVersions } = noteVersions;
     const countCurrentNotes = scribeScope.countCurrentNotes;
     // Slice 4B R16/L22: the second `checkNotes` call site (the write envelope and
     // 4C's routes bind it). Exposed now so NE3 tests run through the real holder.
     const checkNotes = noteCheck.checkNotes;
     const notes: NoteWritePort & NoteReadPort & NoteMemoryReadPort & NoteScopeReadPort & NoteCheckPort
-      & typeof noteVersions = {
+      & NoteListReadPort & typeof noteVersions = {
         writeNote, reviewNote, withdrawNote, readNote, listByAnchor, countCurrentNotes, checkNotes,
-        memoryLookup, memoryNeighbors, memoryHistory, memoryConflicts, memoryFind, memoryStale,
+        memoryLookup, memoryNeighbors, memoryHistory, memoryConflicts, memoryFind, memoryStale, listNotes,
         listPlanVersions, listCatalogVersions,
       };
     // Slice 1 (spec §3.3): the responsibility port's three public writes. Every
@@ -1626,6 +1641,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       anomalies: sessionAnomalies,
       executedFiles: goalExecutedFiles,
       line: workLineDeps,
+      notes: listNotes,
     });
     const lineSettings: WorkLineSettingsPort = createLineSettingsService({
       records: backend.records,

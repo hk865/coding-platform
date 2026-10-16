@@ -333,7 +333,9 @@ describe('S4A N-07 quota and overQuota', () => {
       const run = await f.claimRun('n07-structural-replace');
       const structural = await f.write(f.workCtx(run),
         general({ topic: 'q-structural', anchor: FILE_A, structural: true, replaces: [ids[0]!] }), 's4a-goal');
-      expect(structural).toMatchObject({ status: 'pending_review', reasons: ['structural'] });
+      // C3.3/C3.4: the target is the user's, so the reason is `user_note_replaced`
+      // (a general structural note no longer adds `structural`).
+      expect(structural).toMatchObject({ status: 'pending_review', reasons: ['user_note_replaced'] });
       expect((structural as unknown as { reasons: string[] }).reasons).not.toContain('quota_full');
     });
   });
@@ -367,7 +369,7 @@ describe('S4A N-07 quota and overQuota', () => {
       const run = f.workCtx(await f.claimRun('n07-committed-a'));
       const structural = await f.write(run, general({ topic: 'full-a-3', anchor: FILE_A,
         structural: true, replaces: [idOf(first)] }), 's4a-goal');
-      expect(structural).toMatchObject({ status: 'pending_review', reasons: ['structural'], overQuota: true });
+      expect(structural).toMatchObject({ status: 'pending_review', reasons: ['user_note_replaced'], overQuota: true });
       const item = await f.platform.notes.readNote(ctx, { noteId: idOf(structural) });
       if (item.status !== 'ready') throw Error('unreachable');
       expect(item.value.overQuota).toBe(true);
@@ -394,10 +396,13 @@ describe('S4A N-07 quota and overQuota', () => {
     // the result and the read agree the goal is exactly full, not over.
     await withFixture(kind, { goalQuota: 2 }, async f => {
       const ctx = f.ctx();
-      const first = await f.write(ctx, general({ topic: 'full-c-1', anchor: FILE_A }), 's4a-goal');
+      // The superseded item is agent-written, so the user-protection reason does
+      // not apply and the replacement is accepted directly (C3.3).
+      const firstRun = f.workCtx(await f.claimRun('n07-committed-c-first'));
+      const first = await f.write(firstRun, general({ topic: 'full-c-1', anchor: FILE_A }), 's4a-goal');
       expect(first.status).toBe('accepted');
       expect((await f.write(ctx, general({ topic: 'full-c-2', anchor: FILE_A }), 's4a-goal')).status).toBe('accepted');
-      const run = f.workCtx(await f.claimRun('n07-committed-c'));
+      const run = f.workCtx(await f.claimRun('n07-committed-c', 't2'));
       const replacement = await f.write(run, general({ topic: 'full-c-3', anchor: FILE_A,
         replaces: [idOf(first)] }), 's4a-goal');
       expect(replacement).toMatchObject({ status: 'accepted', overQuota: false });
@@ -478,12 +483,15 @@ describe('S4A N-08 current-understanding pointer race', () => {
       const ctx = f.ctx();
       const goalAnchor: NoteDraftAnchorV1 = { kind: 'goal', goalId: 's4a-goal' };
       const agent = await f.claimRun('n08-pointer-general');
-      // Case A: no understanding yet. Accepting a structural pitfall on the goal
+      // Case A: no understanding yet. Accepting a pending general note on the goal
       // anchor must not create a current-understanding pointer (L8: only goal and
       // stage anchors HAVE a pointer; that is not the same as the pointer moving).
+      // C3.4: a general structural note is accepted directly now, so the pending
+      // note is made by replacing the user's note (C3.3 `user_note_replaced`).
+      const seedA = await f.write(ctx, general({ topic: 'seed-a', anchor: goalAnchor }), 's4a-goal');
       const pitfallA = await f.write(f.workCtx(agent), general({ topic: 'p-a', anchor: goalAnchor,
-        structural: true }), 's4a-goal');
-      expect(pitfallA).toMatchObject({ status: 'pending_review', reasons: ['structural'] });
+        replaces: [idOf(seedA)] }), 's4a-goal');
+      expect(pitfallA).toMatchObject({ status: 'pending_review', reasons: ['user_note_replaced'] });
       const acceptedA = await f.platform.notes.reviewNote(ctx, { commandId: 's4a-n08-pa', noteId: idOf(pitfallA),
         expectedVersion: 1, expectedPointerRevision: null, verdict: 'accept', reason: '收下结构性坑' });
       expect(acceptedA).toMatchObject({ status: 'done', state: 'accepted' });
@@ -491,15 +499,16 @@ describe('S4A N-08 current-understanding pointer race', () => {
       if (pageA.status !== 'ready') throw Error('unreachable');
       expect(pageA.value.pointer).toEqual({ noteId: null, revision: null });
 
-      // Case B: U1 is the current understanding. Accepting a structural pitfall
+      // Case B: U1 is the current understanding. Accepting a pending general note
       // must leave the pointer and U1 alone (L6/S4-NOTE-05: only an understanding moves it).
       const u1 = await f.write(f.workCtx(agent), understanding(goalAnchor, { topic: 'u-b' }), 's4a-goal',
         { expectedPointerRevision: null });
       expect(u1.status).toBe('accepted');
       const u1Id = idOf(u1);
+      const seedB = await f.write(ctx, general({ topic: 'seed-b', anchor: goalAnchor }), 's4a-goal');
       const pitfallB = await f.write(f.workCtx(agent), general({ topic: 'p-b', anchor: goalAnchor,
-        structural: true }), 's4a-goal');
-      expect(pitfallB).toMatchObject({ status: 'pending_review', reasons: ['structural'] });
+        replaces: [idOf(seedB)] }), 's4a-goal');
+      expect(pitfallB).toMatchObject({ status: 'pending_review', reasons: ['user_note_replaced'] });
       const acceptedB = await f.platform.notes.reviewNote(ctx, { commandId: 's4a-n08-pb', noteId: idOf(pitfallB),
         expectedVersion: 1, expectedPointerRevision: null, verdict: 'accept', reason: '收下结构性坑' });
       expect(acceptedB).toMatchObject({ status: 'done', state: 'accepted' });
@@ -649,7 +658,10 @@ describe('S4A N-10 review rules (non-scope cases)', () => {
   it.each(KINDS)('N-10 %s a scribe cannot accept a structural pending note', async kind => {
     await withFixture(kind, {}, async f => {
       const agent = await f.claimRun('n10-structural-writer');
-      const pending = await f.write(f.workCtx(agent), general({ topic: 's1', structural: true }), 's4a-goal');
+      // C3.4: a general structural note is accepted directly, so the structural
+      // pending note is an understanding (which keeps today's behaviour).
+      const pending = await f.write(f.workCtx(agent), understanding({ kind: 'goal', goalId: 's4a-goal' },
+        { topic: 's1', structural: true }), 's4a-goal', { expectedPointerRevision: null });
       expect(pending).toMatchObject({ status: 'pending_review', reasons: ['structural'] });
       const scribe = await f.claimRun('n10-scribe3', 't3', 'scribe');
       const refused = await f.platform.notes.reviewNote(f.workCtx(scribe), { commandId: 's4a-review-structural',
@@ -673,7 +685,7 @@ describe('S4A N-10 review rules (non-scope cases)', () => {
       }
       const agent = await f.claimRun('n10-user-accept-writer');
       const pending = await f.write(f.workCtx(agent), general({ topic: 'u-6', anchor: FILE_A, structural: true }), 's4a-goal');
-      expect(pending).toMatchObject({ status: 'pending_review', reasons: ['structural', 'quota_full'] });
+      expect(pending).toMatchObject({ status: 'pending_review', reasons: ['quota_full'] });
       const accepted = await f.platform.notes.reviewNote(ctx, { commandId: 's4a-user-accept',
         noteId: idOf(pending), expectedVersion: 1, expectedPointerRevision: null, verdict: 'accept', reason: '合并后收下' });
       expect(accepted).toMatchObject({ status: 'done', state: 'accepted' });
@@ -699,7 +711,7 @@ describe('S4A N-10 review rules (non-scope cases)', () => {
       const agent = await f.claimRun('n10-replaces-agent');
       const g2 = await f.write(f.workCtx(agent), general({ topic: 'r', anchor: FILE_A, structural: true,
         replaces: [g1Id, g0Id] }), 's4a-goal');
-      expect(g2).toMatchObject({ status: 'pending_review', reasons: ['structural'] });
+      expect(g2).toMatchObject({ status: 'pending_review', reasons: ['user_note_replaced'] });
       const beforeAccept = await f.platform.notes.readNote(ctx, { noteId: g1Id });
       if (beforeAccept.status !== 'ready') throw Error('unreachable');
       expect(beforeAccept.value.storedState).toBe('accepted');
@@ -885,9 +897,12 @@ describe('S4A N-10 accept and reject reason', () => {
         expectedVersion: 1, expectedPointerRevision: null, verdict: 'accept', reason: '合并后收下' });
       expect(accepted).toMatchObject({ status: 'done', state: 'accepted', version: 2 });
 
+      // C3.4: a general structural note is accepted directly now; the user's
+      // reject-reason path is exercised through a `user_note_replaced` pending note.
+      const seed = await f.write(ctx, general({ topic: 'rr-seed', anchor: FILE_B }), null);
       const structural = await f.write(f.workCtx(agent), general({ topic: 'rr-structural', anchor: FILE_B,
-        structural: true }), 's4a-goal');
-      expect(structural).toMatchObject({ status: 'pending_review', reasons: ['structural'] });
+        replaces: [idOf(seed)] }), 's4a-goal');
+      expect(structural).toMatchObject({ status: 'pending_review', reasons: ['user_note_replaced'] });
       const userNoReason = await f.platform.notes.reviewNote(ctx, { commandId: 's4a-rr-user-null',
         noteId: idOf(structural), expectedVersion: 1, expectedPointerRevision: null, verdict: 'reject', reason: null });
       expect(userNoReason).toMatchObject({ status: 'rejected', code: 'invalid' });

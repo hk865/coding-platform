@@ -33,6 +33,7 @@ import { createSessionHistoryCursorOwner } from './session-operations.js';
 import { loadPreparedManifest, snapshotRuntimeConfiguration } from './execution-preparation.js';
 import { createRuntimeSourceCaptureFactory } from './source-capture-access.js';
 import { createGraphTools, GRAPH_TOOL_NAMES } from './graph-tools.js';
+import { createNoteTools, NOTE_TOOL_NAMES } from './note-tool.js';
 import { createReadonlyCommandTool, READONLY_COMMAND_TOOL_NAME } from './readonly-command-tool.js';
 import type { SessionMailboxPort, SessionMessage } from '../work-graph/model/communication-contracts.js';
 import type { SessionDirectoryPort } from '../work-graph/model/session-contracts.js';
@@ -57,6 +58,8 @@ export type ExecutionDriverDependencies = Pick<RuntimeExecutionDependencies,
   | 'modelRequests' | 'roles' | 'materials' | 'bodies' | 'plans' | 'messages' | 'decisionMessages' | 'applicationReceipt'
   | 'sessions' | 'runReconcile'
   | 'graphHistory' | 'graphContext' | 'taskInputs'> & {
+  /** Slice 4C: the SAME `platform.notes` ports the note tools call. */
+  notes?: RuntimeExecutionDependencies['notes'];
   /** The same observer instance backs start and explicit observe calls. */
   observation: ExecutionObservationService;
   /**
@@ -79,7 +82,7 @@ type KernelSessionReader = Pick<SqliteStores, 'get' | 'read'>;
  * re-checked above. */
 const PLATFORM_COORDINATION_TOOL_NAMES = new Set<string>([
   ...SESSION_MAILBOX_TOOL_NAMES, ...USER_DECISION_TOOL_NAMES, ...WHITEBOARD_TOOL_NAMES, ...SESSION_DISCOVERY_TOOL_NAMES,
-  ...GRAPH_TOOL_NAMES,
+  ...GRAPH_TOOL_NAMES, ...NOTE_TOOL_NAMES,
 ]);
 
 function rejected(code: CoreRejection['code'], reason: string): CoreRejection {
@@ -202,6 +205,10 @@ function selectCoordinationTools(input: {
     graphHistory: GraphExecutionHistoryReadPort;
     hostContext: CoreCallContext;
   };
+  /** Slice 4C L13/L14: `platform.notes`' reads, write and check ports. A
+   * selection of look/find memory or `record_note` without the needed port
+   * fails closed before the model. */
+  notes?: RuntimeExecutionDependencies['notes'];
   /** Names this Runtime handles outside the coordination factories (the
    * read-only process tool). They are recognized but never built here. */
   extensionNames?: ReadonlySet<string>;
@@ -217,7 +224,9 @@ function selectCoordinationTools(input: {
   const whiteboardNames = WHITEBOARD_TOOL_NAMES.filter(name => wanted.has(name));
   const discoveryNames = SESSION_DISCOVERY_TOOL_NAMES.filter(name => wanted.has(name));
   const graphNames = GRAPH_TOOL_NAMES.filter(name => wanted.has(name));
-  if (mailboxNames.length === 0 && decisionNames.length === 0 && whiteboardNames.length === 0 && discoveryNames.length === 0 && graphNames.length === 0) {
+  const noteNames = NOTE_TOOL_NAMES.filter(name => wanted.has(name));
+  if (mailboxNames.length === 0 && decisionNames.length === 0 && whiteboardNames.length === 0 && discoveryNames.length === 0
+    && graphNames.length === 0 && noteNames.length === 0) {
     return { ok: true, value: null };
   }
   if ((mailboxNames.length > 0 || decisionNames.length > 0) && input.mailbox === undefined) {
@@ -228,6 +237,9 @@ function selectCoordinationTools(input: {
   }
   if (graphNames.length > 0 && input.graph === undefined) {
     return { ok: false, rejection: rejected('unsupported', `the Run selects graph read tools but no graph read dependency is bound: ${graphNames.join(', ')}`) };
+  }
+  if (noteNames.length > 0 && (input.notes?.write === undefined || input.notes.check === undefined)) {
+    return { ok: false, rejection: rejected('unsupported', `the Run selects note tools but no note write/check dependency is bound: ${noteNames.join(', ')}`) };
   }
   const handles: Array<{ names: readonly string[]; create: (workspace: WorkspaceSandbox) => ToolDefinition[] }> = [];
   if (mailboxNames.length > 0 || decisionNames.length > 0) {
@@ -265,9 +277,22 @@ function selectCoordinationTools(input: {
         goalRef: input.goalRef,
         hostContext: graphDeps.hostContext,
       }),
+      ...(input.notes?.memory === undefined ? {} : { notes: input.notes.memory }),
     }));
   }
-  const names = [...mailboxNames, ...decisionNames, ...whiteboardNames, ...discoveryNames, ...graphNames];
+  if (noteNames.length > 0) {
+    const noteDeps = input.notes;
+    if (noteDeps?.write === undefined || noteDeps.check === undefined) {
+      return { ok: false, rejection: rejected('unsupported', `the Run selects note tools but no note write/check dependency is bound: ${noteNames.join(', ')}`) };
+    }
+    handles.push(createNoteTools({
+      context: input.context,
+      notes: noteDeps.write,
+      check: noteDeps.check,
+      requestIdForCall: input.requestIdForCall,
+    }));
+  }
+  const names = [...mailboxNames, ...decisionNames, ...whiteboardNames, ...discoveryNames, ...graphNames, ...noteNames];
   if (new Set(names).size !== names.length) {
     return { ok: false, rejection: rejected('unsupported', 'the selected coordination tool names are duplicated') };
   }
@@ -501,6 +526,7 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
             hostContext: owned,
           },
         }),
+        ...(deps.notes === undefined ? {} : { notes: deps.notes }),
         extensionNames: new Set([READONLY_COMMAND_TOOL_NAME]),
       });
       if (!coordination.ok) return coordination.rejection;

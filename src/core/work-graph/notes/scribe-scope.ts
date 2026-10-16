@@ -35,6 +35,7 @@ import {
 } from '../persistence/note-record-codecs.js';
 import { decodeGoalSnapshot } from '../persistence/record-codecs.js';
 import { readAllHeads, readAllRecords, mapStoreFailure, type ReadFailureCode } from './note-read-model.js';
+import { pathOwnershipOf } from './note-path-ownership.js';
 import { GOAL_BY_WORKSPACE_INDEX } from '../tasks/plan-readers.js';
 
 export type ScribeScopeDependencies = {
@@ -46,13 +47,25 @@ export type ScribeScopeDependencies = {
 
 export type ScribeScopeRefusal = { code: 'forbidden' | 'unavailable'; reason: string };
 
+/**
+ * Item 1: the per-CALL cache the service creates at every public entry
+ * (`writeNote`, `reviewNote`, `withdrawNote`, `countCurrentNotes`) and passes
+ * down. It never outlives the call; there is no module-level or `ctx`-keyed
+ * cache, so a reused Run context cannot leak an earlier call's facts.
+ */
+export type ScribeScopeCall = { facts?: Promise<FactsOutcome> };
+export function newScribeScopeCall(): ScribeScopeCall { return {}; }
+
 export interface ScribeScope extends NoteScopeReadPort {
   /** L2a class 3 for a scribe caller: `null` admits; otherwise the refusal. */
-  writeAdmission(ctx: CoreCallContext, sessionRef: SessionRef, anchors: readonly NoteAnchorV1[]): Promise<ScribeScopeRefusal | null>;
+  writeAdmission(ctx: CoreCallContext, sessionRef: SessionRef, anchors: readonly NoteAnchorV1[],
+    call: ScribeScopeCall): Promise<ScribeScopeRefusal | null>;
   /** L5 managing scope of a stored note, including its replaces/contradicts anchors. */
-  managingScopeOf(ctx: CoreCallContext, head: NoteHeadSnapshot): Promise<ReadResult<NoteScopeV1>>;
+  managingScopeOf(ctx: CoreCallContext, head: NoteHeadSnapshot, call: ScribeScopeCall):
+    Promise<ReadResult<NoteScopeV1>>;
   /** Whether the caller Session is a scribe whose scope is exactly `scope`. */
-  manages(ctx: CoreCallContext, sessionRef: SessionRef, scope: NoteScopeV1): Promise<ReadResult<boolean>>;
+  manages(ctx: CoreCallContext, sessionRef: SessionRef, scope: NoteScopeV1, call: ScribeScopeCall):
+    Promise<ReadResult<boolean>>;
 }
 
 type AnchorClass = 'module' | 'goal' | 'project';
@@ -76,29 +89,13 @@ function sameScope(left: NoteScopeV1, right: NoteScopeV1): boolean {
   return true;
 }
 
-function matchingPrefixLength(path: string, prefix: string): number {
-  const normalized = prefix.endsWith('/') ? prefix.slice(0, -1) : prefix;
-  if (normalized.length === 0 || normalized === '.') return -1;
-  if (path === normalized) return normalized.length;
-  if (path.startsWith(`${normalized}/`)) return normalized.length;
-  return -1;
-}
-
-/** L5/P6: file anchors map to a module by the longest legal catalog path prefix (same rule as mapExecutedFilesToModules). */
-function moduleOfAnchor(catalog: AdoptedArchitecture | null, anchor: NoteAnchorV1): string | null {
+/** L5/P6: file anchors map to a module by the shared longest-legal-prefix ownership rule (RW-13). */
+export function moduleOfAnchor(catalog: AdoptedArchitecture | null, anchor: NoteAnchorV1): string | null {
   if (anchor.kind === 'module' || anchor.kind === 'interface') return anchor.moduleId;
   if (anchor.kind !== 'file' || catalog === null) return null;
-  let bestLength = -1;
-  let winners: string[] = [];
-  for (const definition of catalog.modules) {
-    for (const prefix of definition.paths) {
-      const length = matchingPrefixLength(anchor.path, prefix);
-      if (length < 0) continue;
-      if (length > bestLength) { bestLength = length; winners = [definition.ref.moduleId]; continue; }
-      if (length === bestLength && !winners.includes(definition.ref.moduleId)) winners.push(definition.ref.moduleId);
-    }
-  }
-  return winners.length === 1 ? winners[0]! : null;
+  const ownership = pathOwnershipOf(anchor.path,
+    catalog.modules.map(definition => ({ value: definition.ref.moduleId, paths: definition.paths })));
+  return ownership.status === 'owner' ? ownership.owner : null;
 }
 
 /** P6(b): the region of `root` is the containment subtree (or the module alone when no containment is declared). */
@@ -265,6 +262,19 @@ type HeadsOutcome = { ok: true; heads: NoteHeadSnapshot[] } | { ok: false; code:
 export function createScribeScope(deps: ScribeScopeDependencies): ScribeScope {
   function result<T>(value: T): ReadResult<T> { return { status: 'ready', value }; }
 
+  // Item 1/§11.7: the scope facts are derived ONCE per CALL. The call object is
+  // created by the public entry and passed in, so one `writeNote`/`dispose` that
+  // asks several times (write admission, the subject scope, the manages checks)
+  // reads Sessions and the catalog once, while a reused `ctx` never leaks facts.
+  function factsFor(call: ScribeScopeCall, ctx: CoreCallContext): Promise<FactsOutcome> {
+    let cached = call.facts;
+    if (cached === undefined) {
+      cached = deriveFacts(ctx, deps);
+      call.facts = cached;
+    }
+    return cached;
+  }
+
   async function goalIdsOf(ctx: CoreCallContext): Promise<{ ok: true; goalIds: string[] } | { ok: false; code: ReadFailureCode; reason: string }> {
     if (ctx.workspaceId === undefined) return { ok: false, code: 'invalid', reason: 'a workspace is required to read the goals' };
     const page = await readAllRecords(deps.records, GOAL_BY_WORKSPACE_INDEX, [ctx.projectId, ctx.workspaceId]);
@@ -300,16 +310,20 @@ export function createScribeScope(deps: ScribeScopeDependencies): ScribeScope {
 
   async function relationAnchorsOf(head: NoteHeadSnapshot):
   Promise<{ ok: true; anchors: NoteAnchorV1[] } | { ok: false; code: ReadFailureCode; reason: string }> {
+    const relations = [...new Set([...head.replaces, ...head.contradicts])];
+    if (relations.length === 0) return { ok: true, anchors: [] };
+    // RW-12a: every relation head in ONE batched read.
+    const refKeys = relations.map(noteId => noteHeadRefKey({ aggregateType: 'NoteHead',
+      projectId: head.ref.projectId, noteId }));
+    const read = await deps.records.readMany(refKeys);
+    if (read.status !== 'ready') {
+      const mapped = mapStoreFailure(read);
+      return { ok: false, code: mapped.code, reason: mapped.reason };
+    }
+    const byKey = new Map(read.value.records.map(record => [record.refKey, record]));
     const anchors: NoteAnchorV1[] = [];
-    const relations = new Set([...head.replaces, ...head.contradicts]);
-    for (const noteId of relations) {
-      const refKey = noteHeadRefKey({ aggregateType: 'NoteHead', projectId: head.ref.projectId, noteId });
-      const read = await deps.records.readMany([refKey]);
-      if (read.status !== 'ready') {
-        const mapped = mapStoreFailure(read);
-        return { ok: false, code: mapped.code, reason: mapped.reason };
-      }
-      const record = read.value.records.find(candidate => candidate.refKey === refKey);
+    for (const refKey of refKeys) {
+      const record = byKey.get(refKey);
       if (record === undefined) return { ok: false, code: 'unavailable', reason: 'a relation head is missing' };
       const decoded = decodeNoteHeadSnapshot(record);
       if (decoded.status !== 'decoded') return { ok: false, code: 'unavailable', reason: 'a relation head is damaged' };
@@ -318,8 +332,9 @@ export function createScribeScope(deps: ScribeScopeDependencies): ScribeScope {
     return { ok: true, anchors };
   }
 
-  async function managingScopeOf(ctx: CoreCallContext, head: NoteHeadSnapshot): Promise<ReadResult<NoteScopeV1>> {
-    const factsRead = await deriveFacts(ctx, deps);
+  async function managingScopeOf(call: ScribeScopeCall, ctx: CoreCallContext,
+    head: NoteHeadSnapshot): Promise<ReadResult<NoteScopeV1>> {
+    const factsRead = await factsFor(call, ctx);
     if (!factsRead.ok) return { status: 'rejected', code: factsRead.code, reason: factsRead.reason };
     const relationRead = await relationAnchorsOf(head);
     if (!relationRead.ok) return { status: 'rejected', code: relationRead.code, reason: relationRead.reason };
@@ -329,7 +344,9 @@ export function createScribeScope(deps: ScribeScopeDependencies): ScribeScope {
 
   return {
     async countCurrentNotes(ctx, input) {
-      const factsRead = await deriveFacts(ctx, deps);
+      // This is itself a public read: it owns its own per-call cache.
+      const call = newScribeScopeCall();
+      const factsRead = await factsFor(call, ctx);
       if (!factsRead.ok) return { status: 'rejected', code: factsRead.code, reason: factsRead.reason };
       // P1/item 10a: a scope with no scribe manages nothing (count 0). Its notes
       // count for the scope they go up to. A failed read is still unavailable.
@@ -348,8 +365,8 @@ export function createScribeScope(deps: ScribeScopeDependencies): ScribeScope {
       return result({ scope: input.scope, current });
     },
 
-    async writeAdmission(ctx, sessionRef, anchors) {
-      const factsRead = await deriveFacts(ctx, deps);
+    async writeAdmission(ctx, sessionRef, anchors, call) {
+      const factsRead = await factsFor(call, ctx);
       // Item 3 fix 7: a failed scope-fact read refuses with `unavailable`.
       if (!factsRead.ok) return { code: 'unavailable', reason: factsRead.reason };
       const facts = factsRead.facts;
@@ -366,15 +383,15 @@ export function createScribeScope(deps: ScribeScopeDependencies): ScribeScope {
       return null;
     },
 
-    async manages(ctx, sessionRef, scope) {
-      const factsRead = await deriveFacts(ctx, deps);
+    async manages(ctx, sessionRef, scope, call) {
+      const factsRead = await factsFor(call, ctx);
       if (!factsRead.ok) return { status: 'rejected', code: factsRead.code, reason: factsRead.reason };
       const scopes = factsRead.facts.scopesBySession.get(sessionRef.sessionId) ?? [];
       return result(scopes.some(candidate => sameScope(candidate, scope)));
     },
 
-    async managingScopeOf(ctx, head) {
-      return managingScopeOf(ctx, head);
+    async managingScopeOf(ctx, head, call) {
+      return managingScopeOf(call, ctx, head);
     },
   };
 }

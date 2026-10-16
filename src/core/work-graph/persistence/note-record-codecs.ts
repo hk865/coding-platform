@@ -89,7 +89,7 @@ type UnknownRecord = Record<string, unknown>;
 const NOTE_KINDS: readonly NoteKind[] = [...NOTE_GENERAL_KINDS, 'understanding', 'repair'];
 const NOTE_STATES: readonly NoteState[] = ['staged', 'accepted', 'reviewed', 'pending_review', 'rejected', 'superseded',
   'withdrawn'];
-const REVIEW_REASONS: readonly NoteReviewReason[] = ['structural', 'contradiction', 'quota_full'];
+const REVIEW_REASONS: readonly NoteReviewReason[] = ['structural', 'contradiction', 'quota_full', 'user_note_replaced'];
 const DUTIES: readonly PlatformDutyV1[] = ['executor', 'secretary', 'adviser', 'scribe', 'reviewer'];
 const CHANGE_KINDS: readonly NoteVersionSnapshot['change']['kind'][] = ['write', 'review', 'accept', 'reject',
   'withdraw', 'supersede', 'coexist', 'merge'];

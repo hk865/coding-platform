@@ -105,7 +105,7 @@ describe('S4B M-09 paging and cursors', () => {
     } finally { await f.close(); }
   });
 
-  it.each(['memory', 'sqlite'] as const)('M-09 %s: a page whose candidates are all filtered out is empty and still complete:false', async kind => {
+  it.each(['memory', 'sqlite'] as const)('M-09 %s: a page whose candidates are all filtered out is empty and complete:true', async kind => {
     const f = await createS4BNoteCheckFixture(kind);
     try {
       const extra = await createS4BExtraGoal(f, 's4b-goal-2');
@@ -120,8 +120,8 @@ describe('S4B M-09 paging and cursors', () => {
       expect(read.status).toBe('ready');
       if (read.status !== 'ready') return;
       expect(read.value.items).toEqual([]);
-      expect(read.value.complete).toBe(false);
-      expect(read.value.next).not.toBe(null);
+      expect(read.value.complete).toBe(true);
+      expect(read.value.next).toBe(null);
     } finally { await f.close(); }
   });
 });

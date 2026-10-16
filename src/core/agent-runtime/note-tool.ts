@@ -1,0 +1,364 @@
+/**
+ * Slice 4C L14: the `record_note` platform tool.
+ *
+ * One new coordination tool with three strictly separated `op` branches:
+ *  - `write` maps the model's draft to `NoteDraftV1`, calls the SAME
+ *    `NoteWritePort.writeNote` the person's route uses, and on a successful
+ *    commit calls `NoteCheckPort.checkNotes({ withSimilar: true })`. A failed
+ *    check is reported as `{ status: 'unavailable', reason }` and NEVER undoes
+ *    the write; a rejected write commits nothing and returns `{ write, check }`
+ *    with the write's reason (never a fabricated successful check).
+ *  - `review` / `withdraw` call `reviewNote` / `withdrawNote` and return the
+ *    real `NoteDispositionResult` verbatim, including its receipt.
+ *
+ * The tool is a thin adapter. The trusted context is snapshotted from the
+ * factory config (never model JSON); the bound Run, plan and catalog revisions
+ * are resolved by the note service from that context, never by the model. The
+ * note service remains the one owner of authority: a non-scribe `review` gets
+ * the service's `forbidden`, not a second tool-level check.
+ */
+import type { CoreCallContext } from '../../contracts/core/call-context.js';
+import type { NoteDraftAnchorV1, NoteDraftV1, NoteFactV1, NoteKind, NoteSectionsV1 } from '../../contracts/note.js';
+import type {
+  NoteCheckPort, NoteCheckV1, NoteDispositionResult, NoteWritePort, WriteNoteInput,
+} from '../work-graph/model/note-contracts.js';
+import {
+  toolSchema as z,
+  type ToolCall,
+  type ToolDefinition,
+  type ToolResult,
+  type WorkspaceSandbox,
+} from '../../../vendor/coding-agent/dist/public-api.js';
+
+export const NOTE_TOOL_NAMES = ['record_note'] as const;
+
+export type NoteToolsConfig = {
+  /** Trusted, already-bound context. Snapshotted at factory creation. */
+  context: CoreCallContext;
+  /** The SAME write service the `notes/*` routes bind. */
+  notes: NoteWritePort;
+  /** The SAME derivation owner `notes.checkNotes` exposes (L22). */
+  check: Pick<NoteCheckPort, 'checkNotes'>;
+  /** Trusted command identity: Kernel `ToolCall.callId` + bound Run/operation. */
+  requestIdForCall: (call: Readonly<ToolCall>) => string;
+};
+
+export type NoteToolsHandle = {
+  names: readonly string[];
+  create: (workspace: WorkspaceSandbox) => ToolDefinition[];
+};
+
+function noneEffects(): ToolResult['effects'] {
+  return { sideEffect: 'none', changedPaths: [], workspaceRevision: null, artifactRefs: [] };
+}
+
+/**
+ * RW-15: the note service echoes the accepted model draft in a rejection
+ * (`draft.note`), and a bodyless general-kind draft leaves `note.body`
+ * `undefined`. `jsonValueSchema` (the frozen Kernel's output validator) rejects
+ * a nested `undefined`, which would fail the Run after a correctable model
+ * mistake. This returns a value the Kernel accepts: `undefined` object
+ * properties and array entries are dropped recursively, `null`/`false`/`0`/`''`
+ * are kept, and every value without `undefined` is structurally unchanged.
+ */
+function jsonSafe(value: unknown): unknown {
+  if (Array.isArray(value)) return value.filter(entry => entry !== undefined).map(entry => jsonSafe(entry));
+  if (value !== null && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(value)) {
+      if (entry !== undefined) out[key] = jsonSafe(entry);
+    }
+    return out;
+  }
+  return value;
+}
+
+function outputValue(value: unknown): ToolResult['output'] {
+  return [{ kind: 'json', value: jsonSafe(value) as never }];
+}
+
+function success(callId: string, value: unknown): ToolResult {
+  return { schemaVersion: 1, callId, status: 'success', output: outputValue(value), effects: noneEffects() };
+}
+
+/**
+ * RW-15: a per-kind field mismatch the strict input schema can express is
+ * answered before the service call, in the SAME `{ write, check }` shape the
+ * tool uses for a rejected write, with the service's own reason text. The
+ * service still owns body/sections PRESENCE (GTN02/RW-14 pin the bodyless
+ * pass-through); this only catches a body on an understanding or sections on a
+ * general kind.
+ */
+function rejectedWrite(callId: string, reason: string): ToolResult {
+  return success(callId, {
+    write: { status: 'rejected', code: 'invalid', reason },
+    check: { status: 'unavailable', reason },
+  });
+}
+
+function failure(callId: string, code: 'invalid_arguments' | 'execution_failed', message: string): ToolResult {
+  return {
+    schemaVersion: 1, callId, status: 'error',
+    error: { code, message, retryable: false }, output: [], effects: noneEffects(),
+  };
+}
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+// --------------------------------------------------------------------------
+// Strict model-facing schemas. The trusted Goal, Run, plan/catalog revisions
+// and authority are bound by config, so a model-supplied identity/scope key is
+// an unknown key and fails before the write owner is reached. `write` carries
+// the draft; the service validates the kind/body/sections split.
+// --------------------------------------------------------------------------
+
+const symbolRequestSchema = z.object({
+  language: z.string().min(1),
+  name: z.string().min(1),
+  range: z.object({ startLine: z.number().int().min(0), endLine: z.number().int().min(0) }).strict().optional(),
+}).strict();
+
+const draftAnchorSchema: z.ZodType = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('module'), moduleId: z.string().min(1) }).strict(),
+  z.object({ kind: z.literal('interface'), moduleId: z.string().min(1), interfaceId: z.string().min(1) }).strict(),
+  z.object({ kind: z.literal('file'), path: z.string().min(1), symbolRequest: symbolRequestSchema.optional(),
+    deleted: z.literal(true).optional() }).strict(),
+  z.object({ kind: z.literal('goal'), goalId: z.string().min(1) }).strict(),
+  z.object({ kind: z.literal('stage'), goalId: z.string().min(1), stageId: z.string().min(1) }).strict(),
+  z.object({ kind: z.literal('task'), goalId: z.string().min(1), taskId: z.string().min(1) }).strict(),
+  z.object({ kind: z.literal('project') }).strict(),
+]);
+
+const sectionsSchema = z.object({
+  status: z.string().min(1), decided: z.string().min(1), open: z.string().min(1),
+  next: z.string().min(1), risks: z.string().min(1),
+}).strict();
+
+const writeSchema = z.object({
+  op: z.literal('write'),
+  kind: z.enum(['convention', 'pitfall', 'tradeoff', 'open_question', 'preference', 'decision', 'understanding', 'repair']),
+  topic: z.string().min(1),
+  conclusion: z.string().min(1),
+  anchor: draftAnchorSchema,
+  extraAnchors: z.array(draftAnchorSchema).max(4).optional(),
+  facts: z.array(z.record(z.string(), z.unknown())).optional(),
+  basisFiles: z.array(z.string().min(1)).optional(),
+  replaces: z.array(z.string().min(1)).optional(),
+  contradicts: z.array(z.string().min(1)).optional(),
+  coexistWith: z.array(z.string().min(1)).optional(),
+  structural: z.boolean().optional(),
+  body: z.string().optional(),
+  sections: sectionsSchema.optional(),
+  expectedPointerRevision: z.number().int().min(0).nullable().optional(),
+}).strict();
+
+const reviewSchema = z.object({
+  op: z.literal('review'),
+  noteId: z.string().min(1),
+  expectedVersion: z.number().int().min(1),
+  verdict: z.enum(['review', 'accept', 'reject']),
+  resolution: z.enum(['supersede', 'coexist']).optional(),
+  reason: z.string().min(1).nullable().optional(),
+  expectedPointerRevision: z.number().int().min(0).nullable().optional(),
+}).strict();
+
+const withdrawSchema = z.object({
+  op: z.literal('withdraw'),
+  noteId: z.string().min(1),
+  expectedVersion: z.number().int().min(1),
+  reason: z.string().min(1).nullable().optional(),
+}).strict();
+
+const recordNoteSchema: z.ZodType = z.discriminatedUnion('op', [writeSchema, reviewSchema, withdrawSchema]);
+
+type WriteArgs = z.infer<typeof writeSchema>;
+type ReviewArgs = z.infer<typeof reviewSchema>;
+type WithdrawArgs = z.infer<typeof withdrawSchema>;
+
+/**
+ * RW-14 (U1): the ONE pure builder from the accepted model args to the
+ * `writeNote` / `reviewNote` / `withdrawNote` request objects. It is the only
+ * place the model JSON becomes a request: the trusted `commandId` is injected,
+ * absent lists/bodies/pointers take their defaults, and no model-supplied
+ * identity (principal, goalId, plan/catalog revision) can enter.
+ */
+export type RecordNoteRequestV1 =
+  | { op: 'write'; request: WriteNoteInput }
+  | { op: 'review'; request: Parameters<NoteWritePort['reviewNote']>[1] }
+  | { op: 'withdraw'; request: Parameters<NoteWritePort['withdrawNote']>[1] };
+
+export function recordNoteRequestOf(args: WriteArgs | ReviewArgs | WithdrawArgs,
+  commandId: string): RecordNoteRequestV1 {
+  if (args.op === 'write') {
+    const common = {
+      topic: args.topic,
+      conclusion: args.conclusion,
+      anchor: args.anchor as NoteDraftAnchorV1,
+      extraAnchors: (args.extraAnchors ?? []) as NoteDraftAnchorV1[],
+      facts: (args.facts ?? []) as NoteFactV1[],
+      basisFiles: args.basisFiles ?? [],
+      structural: args.structural ?? false,
+      replaces: args.replaces ?? [],
+      contradicts: args.contradicts ?? [],
+      coexistWith: args.coexistWith ?? [],
+    };
+    const note: NoteDraftV1 = args.kind === 'understanding'
+      ? { ...common, kind: 'understanding', sections: args.sections as NoteSectionsV1 }
+      : { ...common, kind: args.kind as Exclude<NoteKind, 'understanding'>, body: args.body as string };
+    return { op: 'write', request: { commandId, note,
+      expectedPointerRevision: args.expectedPointerRevision ?? null, goalId: null } };
+  }
+  if (args.op === 'review') {
+    return { op: 'review', request: { commandId, noteId: args.noteId, expectedVersion: args.expectedVersion,
+      expectedPointerRevision: args.expectedPointerRevision ?? null, verdict: args.verdict,
+      ...(args.resolution === undefined ? {} : { resolution: args.resolution }),
+      reason: args.reason ?? null } };
+  }
+  return { op: 'withdraw', request: { commandId, noteId: args.noteId, expectedVersion: args.expectedVersion,
+    reason: args.reason ?? null } };
+}
+
+const description = 'Record a note: `{ op: "write" | "review" | "withdraw", ... }`. '
+  + 'Write at task end, rework, plan adoption or archive (MVP B09). Before writing, look first: use the memory `lookup` '
+  + 'branch for the existing `topics` of the anchor and the `find` branch, and reuse an existing topic. Anchor so the note '
+  + 'still holds if this task is cancelled tomorrow (otherwise anchor on architecture). Pick one of the eight kinds: '
+  + '`convention`, `pitfall`, `tradeoff`, `open_question`, `preference`, `decision`, `understanding`, `repair`. Keep the '
+  + 'conclusion to one line; facts are pointers only, never copied text. Close an `open_question` with the `decision` that '
+  + 'points at it via `replaces`. '
+  + '`write` stores your draft (the platform resolves plan/catalog revisions, the stage anchor plan revision, '
+  + 'file symbol locators and basis-file digests from this execution; never send them) and returns `{ write, check }`; '
+  + 'read the `check` result and fix what it reports. '
+  + '`review` (the scribe) reviews/accepts/rejects, with an optional `resolution: "supersede" | "coexist"` when resolving '
+  + 'live contradictions; `withdraw` withdraws a note you may withdraw. '
+  + 'Only items with `currentEligible: true` are current conclusions. Authority is enforced by the note service.';
+
+export function createNoteTools(config: NoteToolsConfig): NoteToolsHandle {
+  // Freeze the trusted scope/identity before returning the factory.
+  const fixedProjectId = config.context.projectId;
+  const fixedWorkspaceId = config.context.workspaceId;
+  const fixedPrincipal = structuredClone(config.context.principal);
+  const fixedMaterialReader = structuredClone(config.context.materialReader);
+  const fixedNotes = config.notes;
+  const fixedCheck = config.check;
+
+  function snapshotContext(signal: AbortSignal): CoreCallContext {
+    return {
+      projectId: fixedProjectId,
+      ...(fixedWorkspaceId === undefined ? {} : { workspaceId: fixedWorkspaceId }),
+      principal: structuredClone(fixedPrincipal),
+      materialReader: structuredClone(fixedMaterialReader),
+      signal,
+    };
+  }
+
+  async function write(callId: string, request: WriteNoteInput, context: CoreCallContext): Promise<ToolResult> {
+    const result = await fixedNotes.writeNote(context, request);
+    if (result.status === 'rejected') {
+      // A rejected write commits nothing; the check reports the write's own
+      // reason instead of pretending the write succeeded.
+      return success(callId, {
+        write: result,
+        check: { status: 'unavailable', reason: result.reason || 'write_rejected' },
+      });
+    }
+    let check: NoteCheckV1 | { status: 'unavailable'; reason: string };
+    try {
+      const checked = await fixedCheck.checkNotes(context, { items: [{ noteId: result.noteId, version: result.version }], withSimilar: true });
+      if (checked.status === 'ready') {
+        check = checked.value[0] ?? { status: 'unavailable', reason: 'the note check returned no item' };
+      } else if (checked.status === 'rejected') {
+        check = { status: 'unavailable', reason: checked.reason };
+      } else {
+        check = { status: 'unavailable', reason: `the note check is not ready (${checked.status})` };
+      }
+    } catch (error) {
+      // A failed check never undoes the committed write.
+      check = { status: 'unavailable', reason: messageOf(error) };
+    }
+    return success(callId, { write: result, check });
+  }
+
+  async function execute(call: Readonly<ToolCall>, signal: AbortSignal, schema: z.ZodType): Promise<ToolResult> {
+    const callId = call.callId;
+    if (typeof callId !== 'string' || callId.length === 0) {
+      return failure('', 'invalid_arguments', 'the Kernel tool call has no callId');
+    }
+    const parsed = schema.safeParse(call.arguments);
+    if (!parsed.success) return failure(callId, 'invalid_arguments', 'the tool arguments do not match the strict schema');
+    let accepted: unknown;
+    try {
+      accepted = structuredClone(parsed.data);
+    } catch {
+      return failure(callId, 'invalid_arguments', 'the tool arguments cannot be isolated');
+    }
+    // RW-15: the strict schema cannot refine a discriminated union per `kind`,
+    // so the one schema-expressible per-kind mismatch is answered here, before
+    // the write owner is reached, as a correctable `{ write, check }` result.
+    const args = accepted as WriteArgs | ReviewArgs | WithdrawArgs;
+    if (args.op === 'write') {
+      if (args.kind !== 'understanding' && args.sections !== undefined) {
+        return rejectedWrite(callId, 'only an understanding note carries sections');
+      }
+      if (args.kind === 'understanding' && args.body !== undefined) {
+        return rejectedWrite(callId, 'an understanding note gives sections, not a body');
+      }
+    }
+    let commandId: string;
+    try {
+      commandId = config.requestIdForCall(call);
+    } catch {
+      return failure(callId, 'execution_failed', 'no trusted command identity is bound for this call');
+    }
+    if (typeof commandId !== 'string' || commandId.length === 0) {
+      return failure(callId, 'execution_failed', 'the trusted command identity is empty');
+    }
+    const context = snapshotContext(signal);
+    if (context.signal.aborted) {
+      return { schemaVersion: 1, callId, status: 'cancelled', reason: 'the note call was cancelled before the write',
+        output: outputValue({ status: 'rejected', code: 'cancelled', reason: 'the note call was cancelled before the write' }),
+        effects: noneEffects() };
+    }
+    try {
+      // RW-14: the accepted args become a request in ONE place; the tool only
+      // dispatches on the op.
+      const built = recordNoteRequestOf(accepted as WriteArgs | ReviewArgs | WithdrawArgs, commandId);
+      if (built.op === 'write') return await write(callId, built.request, context);
+      if (built.op === 'review') {
+        const result: NoteDispositionResult = await fixedNotes.reviewNote(context, built.request);
+        return success(callId, result);
+      }
+      const result: NoteDispositionResult = await fixedNotes.withdrawNote(context, built.request);
+      return success(callId, result);
+    } catch {
+      return failure(callId, 'execution_failed',
+        'the note call did not return a result; its outcome is unconfirmed and it may already be committed. '
+        + 'Do not report it as not committed and do not retry under a new callId.');
+    }
+  }
+
+  function definitionFor(): ToolDefinition {
+    return {
+      name: 'record_note',
+      description,
+      inputSchema: recordNoteSchema,
+      effectClass: 'workspace_write',
+      requiredCapabilities: [],
+      defaultTimeoutMs: 10000,
+      outputLimitBytes: 64 * 1024,
+      independentReadOnly: false,
+      summarize: () => ({ paths: [], cwd: null, commandPreview: null }),
+      handler: {
+        async execute(call: Readonly<ToolCall>, options: Readonly<{ signal: AbortSignal }>): Promise<ToolResult> {
+          return execute(call, options.signal, recordNoteSchema);
+        },
+      },
+    };
+  }
+
+  return {
+    names: NOTE_TOOL_NAMES,
+    create: () => [definitionFor()],
+  };
+}

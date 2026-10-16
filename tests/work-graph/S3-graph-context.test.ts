@@ -122,6 +122,11 @@ const moduleM2: ModuleDefinition = {
   ref: { projectId: 'p', moduleId: 'M2' }, name: 'Utility', responsibility: 'Utilities',
   paths: ['src/shared'], interfaces: [],
 };
+/** RW-13 item 4c: the optional third module, present only when `moduleThreePaths` is set. */
+const moduleM3: ModuleDefinition = {
+  ref: { projectId: 'p', moduleId: 'M3' }, name: 'Extra', responsibility: 'Extra',
+  paths: ['lib'], interfaces: [],
+};
 
 const queryRunRef: QueryRunRef = {
   aggregateType: 'QueryRun', projectId: 'p', workspaceId: 'w', queryJobId: 'qj', runId: 'qr',
@@ -154,6 +159,14 @@ type RecordSpy = {
 
 type FixtureOptions = {
   sharedModulePaths?: boolean;
+  /** RW-13: M1 maps the ancestor `src`, M2 the deeper `src/shared`. */
+  nestedModulePaths?: boolean;
+  /** RW-13 item 4a: M1 declares several paths of one module, e.g. `['src','src/']`. */
+  moduleOnePaths?: string[];
+  /** RW-13 item 4b: M2's paths, to build a real two-module tie (both `['src']`). */
+  moduleTwoPaths?: string[];
+  /** RW-13 item 4c: an optional third module M3 (e.g. `['lib']`), omitted when unset. */
+  moduleThreePaths?: string[];
   corruptCatalog?: boolean;
   withExtensions?: boolean;
   /** GR07: flip every searched lowercase `b` to `B`, so a case-sensitive `find b` is provably empty. */
@@ -164,6 +177,7 @@ type FixtureOptions = {
 type FixtureVariant = {
   roleTemplateId: string;
   modulePaths: string[];
+  moduleTwoPaths: string[];
   sessionB: SessionRef;
   roundB: VerificationRoundRef;
 };
@@ -357,13 +371,16 @@ function scopeRecords(): EncodedRecord[] {
 function variantOf(options: FixtureOptions): FixtureVariant {
   if (options.uppercaseB === true) {
     return {
-      roleTemplateId: 'Builder', modulePaths: ['src/B'],
+      roleTemplateId: 'Builder', modulePaths: ['src/B'], moduleTwoPaths: ['src/shared'],
       sessionB: { ...sessionB, sessionId: 'sB' }, roundB: { ...roundB, roundId: 'rB' },
     };
   }
   return {
     roleTemplateId: 'builder',
-    modulePaths: options.sharedModulePaths === true ? ['src/shared'] : ['src/b'],
+    modulePaths: options.moduleOnePaths
+      ?? (options.nestedModulePaths === true ? ['src']
+        : options.sharedModulePaths === true ? ['src/shared'] : ['src/b']),
+    moduleTwoPaths: options.moduleTwoPaths ?? ['src/shared'],
     sessionB, roundB,
   };
 }
@@ -485,7 +502,10 @@ async function createFixture(kind: 'memory' | 'sqlite', options: FixtureOptions 
   };
 
   const moduleOne: ModuleDefinition = { ...moduleM1, paths: variant.modulePaths };
-  const chosenCatalog: AdoptedArchitecture = { modules: [moduleOne, { ...moduleM2 }], dependencies: [], requireDag: true };
+  const moduleTwo: ModuleDefinition = { ...moduleM2, paths: variant.moduleTwoPaths };
+  const modules: ModuleDefinition[] = [moduleOne, moduleTwo];
+  if (options.moduleThreePaths !== undefined) modules.push({ ...moduleM3, paths: options.moduleThreePaths });
+  const chosenCatalog: AdoptedArchitecture = { modules, dependencies: [], requireDag: true };
   const seedEvent = (id: string) => ({
     eventId: id, eventType: 'S3GraphSeeded', schemaVersion: 1, occurredAt: AT,
     json: JSON.stringify({ eventId: id, eventType: 'S3GraphSeeded', schemaVersion: 1, occurredAt: AT }),
@@ -854,19 +874,138 @@ describe.each(['memory', 'sqlite'] as const)('S3 graph context reader (%s)', kin
     expect(result).toMatchObject({ status: 'ready' });
     if (result.status !== 'ready') return;
     expect(result.value.items.map(item => item.node)).toEqual([
-      { kind: 'task', ref: taskB, planRef }, { kind: 'module', ref: moduleM1.ref }, { kind: 'run', ref: runB },
+      { kind: 'task', ref: taskB, planRef }, { kind: 'module', ref: moduleM1.ref },
+      { kind: 'session', ref: { projectId: 'p', sessionId: 'sa' } },
+      { kind: 'session', ref: { projectId: 'p', sessionId: 'sb' } },
+      { kind: 'session', ref: { projectId: 'p', sessionId: 'sq' } },
+      { kind: 'run', ref: runB },
+      { kind: 'round', ref: roundB },
     ]);
     expect(result.value.items.map(item => item.node)).not.toContainEqual({ kind: 'module', ref: moduleM2.ref });
   });
 
-  it('GR07 find b is empty because matching is case-sensitive', async () => {
-    // Uppercase-B-only fixture: no searched field (module path, Session name,
-    // role JSON, Round name) carries a lowercase `b`.
+  it('GR07 find b matches the same B/b nodes now that matching is NFC + ASCII-lowercased', async () => {
+    // Uppercase-B-only fixture: every searched `b`/`B` (module path, Session
+    // name, role JSON, Round name) is case-folded, so `b` is no longer empty.
     const fixture = await createFixture(kind, { uppercaseB: true });
     const result = await fixture.graph.findGraph(fixture.ctx, findRequest(fixture.goalRef, 'b'));
     expect(result).toMatchObject({ status: 'ready' });
     if (result.status !== 'ready') return;
-    expect(result.value.items).toEqual([]);
+    expect(result.value.items.map(item => item.node)).toEqual([
+      { kind: 'task', ref: taskB, planRef }, { kind: 'module', ref: moduleM1.ref },
+      { kind: 'session', ref: { projectId: 'p', sessionId: 'sB' } },
+      { kind: 'session', ref: { projectId: 'p', sessionId: 'sa' } },
+      { kind: 'session', ref: { projectId: 'p', sessionId: 'sq' } },
+      { kind: 'run', ref: runB },
+      { kind: 'round', ref: fixture.rounds.b },
+    ]);
+  });
+
+  it('RW-13 find a nested path returns only its deepest owner, not the ancestor module', async () => {
+    // M1 maps the ancestor `src`, M2 the deeper `src/shared`. A path query for
+    // the deeper path must hit M2 alone; the old per-path longest match could
+    // still let the shorter `src` claim it through `pathMatches`.
+    const fixture = await createFixture(kind, { nestedModulePaths: true });
+    const result = await fixture.graph.findGraph(fixture.ctx, findRequest(fixture.goalRef, 'src/shared'));
+    expect(result).toMatchObject({ status: 'ready' });
+    if (result.status !== 'ready') return;
+    const nodes = result.value.items.map(item => item.node);
+    expect(nodes).toContainEqual({ kind: 'module', ref: moduleM2.ref });
+    expect(nodes).not.toContainEqual({ kind: 'module', ref: moduleM1.ref });
+  });
+
+  it('RW-13 find under an equal-prefix tie returns both tied modules', async () => {
+    // M1 and M2 both declare `src/shared`; a deeper query has no single longest
+    // owner. Rework 4 item 2(c) (lead ruling): both tied modules are hits, so
+    // the reader sees that two modules claim the path.
+    const fixture = await createFixture(kind, { sharedModulePaths: true });
+    const result = await fixture.graph.findGraph(fixture.ctx, findRequest(fixture.goalRef, 'src/shared/x'));
+    expect(result).toMatchObject({ status: 'ready' });
+    if (result.status !== 'ready') return;
+    const nodes = result.value.items.map(item => item.node);
+    expect(nodes).toContainEqual({ kind: 'module', ref: moduleM1.ref });
+    expect(nodes).toContainEqual({ kind: 'module', ref: moduleM2.ref });
+  });
+
+  it('RW-13 find keeps module identity when one module lists src and src/', async () => {
+    // Item 4a: M1 is ONE module with two raw paths `src` and `src/`. The old
+    // per-path candidates made those two equal-length candidates and reported a
+    // tie, so a query under `src` (the owner's own directory) found nothing.
+    const fixture = await createFixture(kind, { moduleOnePaths: ['src', 'src/'], moduleTwoPaths: ['lib'] });
+    expect(fixture.catalog.modules.map(module => module.paths)).toEqual([['src', 'src/'], ['lib']]);
+    for (const needle of ['src', 'src/a.ts']) {
+      const result = await fixture.graph.findGraph(fixture.ctx, findRequest(fixture.goalRef, needle));
+      expect(result).toMatchObject({ status: 'ready' });
+      if (result.status !== 'ready') return;
+      // Exactly the one owning module; not a tie, and no duplicate hit.
+      expect(result.value.items.map(item => item.node)).toEqual([{ kind: 'module', ref: moduleM1.ref }]);
+    }
+  });
+
+  it('RW-13 find on a real src/src tie returns both tied module hits', async () => {
+    // Item 4c ruling: two DIFFERENT modules both list `src`, so the query equals
+    // both paths. A tie at the longest prefix owns the query for BOTH modules:
+    // the reader sees two claims, and neither is suppressed.
+    const fixture = await createFixture(kind, { moduleOnePaths: ['src'], moduleTwoPaths: ['src'] });
+    expect(fixture.catalog.modules.map(module => module.paths)).toEqual([['src'], ['src']]);
+    const result = await fixture.graph.findGraph(fixture.ctx, findRequest(fixture.goalRef, 'src'));
+    expect(result).toMatchObject({ status: 'ready' });
+    if (result.status !== 'ready') return;
+    expect(result.value.items.map(item => item.node)).toEqual([
+      { kind: 'module', ref: moduleM1.ref },
+      { kind: 'module', ref: moduleM2.ref },
+    ]);
+  });
+
+  it('RW-13 find normalises a Src module path so src/a.ts still finds it', async () => {
+    // Item 4a: ownership is decided on normalised paths, so the owner path must
+    // be taken from them too. The old raw-path lookup left `Src` ownerless and
+    // the query matched nothing.
+    const fixture = await createFixture(kind, { moduleOnePaths: ['Src'], moduleTwoPaths: ['lib'] });
+    const result = await fixture.graph.findGraph(fixture.ctx, findRequest(fixture.goalRef, 'src/a.ts'));
+    expect(result).toMatchObject({ status: 'ready' });
+    if (result.status !== 'ready') return;
+    expect(result.value.items.map(item => item.node)).toEqual([{ kind: 'module', ref: moduleM1.ref }]);
+  });
+
+  it('RW-13 find on two modules that both declare src/ returns both hits for src', async () => {
+    // Item 4b: the stripped `src/` is the query `src` itself, not a directory
+    // under it; both equal longest owners are returned.
+    const fixture = await createFixture(kind, { moduleOnePaths: ['src/'], moduleTwoPaths: ['src/'] });
+    expect(fixture.catalog.modules.map(module => module.paths)).toEqual([['src/'], ['src/']]);
+    const result = await fixture.graph.findGraph(fixture.ctx, findRequest(fixture.goalRef, 'src'));
+    expect(result).toMatchObject({ status: 'ready' });
+    if (result.status !== 'ready') return;
+    expect(result.value.items.map(item => item.node)).toEqual([
+      { kind: 'module', ref: moduleM1.ref },
+      { kind: 'module', ref: moduleM2.ref },
+    ]);
+  });
+
+  it('RW-13 find returns both tied src modules and never the shorter lib module', async () => {
+    // Item 4c: M1 and M2 tie at the longest prefix `src`; M3 maps `lib` and
+    // owns nothing near `src/a.ts`, so it stays out.
+    const fixture = await createFixture(kind, {
+      moduleOnePaths: ['src'], moduleTwoPaths: ['src'], moduleThreePaths: ['lib'],
+    });
+    expect(fixture.catalog.modules.map(module => module.paths)).toEqual([['src'], ['src'], ['lib']]);
+    const result = await fixture.graph.findGraph(fixture.ctx, findRequest(fixture.goalRef, 'src/a.ts'));
+    expect(result).toMatchObject({ status: 'ready' });
+    if (result.status !== 'ready') return;
+    const nodes = result.value.items.map(item => item.node);
+    expect(nodes).toContainEqual({ kind: 'module', ref: moduleM1.ref });
+    expect(nodes).toContainEqual({ kind: 'module', ref: moduleM2.ref });
+    expect(nodes).not.toContainEqual({ kind: 'module', ref: moduleM3.ref });
+  });
+
+  it('RW-13 find still finds a module src/sub under the query src', async () => {
+    // The stripped directory-under branch keeps a deeper path reachable when
+    // the query is its ancestor directory.
+    const fixture = await createFixture(kind, { moduleOnePaths: ['src/sub'] });
+    const result = await fixture.graph.findGraph(fixture.ctx, findRequest(fixture.goalRef, 'src'));
+    expect(result).toMatchObject({ status: 'ready' });
+    if (result.status !== 'ready') return;
+    expect(result.value.items.map(item => item.node)).toContainEqual({ kind: 'module', ref: moduleM1.ref });
   });
 
   it('GR08 find limit 0 is invalid before any record read', async () => {

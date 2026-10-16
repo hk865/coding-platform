@@ -38,6 +38,8 @@ import type { RoundSnapshot, VerificationRoundRef } from '../../../contracts/ver
 import type { AdoptedArchitecture, ModuleDefinition } from '../../../contracts/architecture-catalog.js';
 import type { EncodedRecord, StoreFailure } from '../../record-store/ports.js';
 import type { LookupValue } from '../../record-store/lookup-ports.js';
+import { normalizeSearchText } from '../../record-store/lookup-index.js';
+import { pathOwnershipOf } from '../notes/note-path-ownership.js';
 import type { ArchitectureCatalogPort } from '../architecture/catalog-contracts.js';
 import type { ExecutionReadPort, TaskExecutionRecord } from '../model/execution-read-contracts.js';
 import type { TaskContextInputPort } from '../model/context-input-contracts.js';
@@ -197,6 +199,58 @@ function dedupeSort(nodes: readonly GraphNodeRefV1[]): GraphNodeRefV1[] {
   }
   out.sort(compareNodes);
   return out;
+}
+/** G-04/RW-13: the query's owner among the modules. Module identity is decided
+ * by ONE `pathOwnershipOf` candidate per module carrying all of its paths, so
+ * `src` and `src/` of one module are not a tie; two different modules sharing
+ * the longest path are a `tie`, and both are returned with that shared path. */
+type PathSearchOwnership =
+  | { status: 'owner'; path: string }
+  | { status: 'none' }
+  | { status: 'tie'; path: string };
+
+/** The longest (already normalised, trailing-`/`-stripped) path of one module
+ * that owns `query`; `''` when none does. */
+function owningPath(paths: readonly string[], query: string): string {
+  let ownerPath = '';
+  for (const path of paths) {
+    if ((query === path || query.startsWith(`${path}/`)) && path.length > ownerPath.length) ownerPath = path;
+  }
+  return ownerPath;
+}
+
+function longestPathOwner(modules: readonly { paths: readonly string[] }[], query: string): PathSearchOwnership {
+  const normalized = normalizeSearchText(query);
+  // Item 4a: ownership is decided on the normalised, stripped paths, so the
+  // candidate's value carries exactly those paths and the owner path is taken
+  // from them too (a raw `Src` must not lose the `src/a.ts` query).
+  const candidates = modules.map((module) => {
+    const paths = module.paths
+      .map((raw) => normalizeSearchText(raw))
+      .map((raw) => (raw.endsWith('/') ? raw.slice(0, -1) : raw))
+      .filter((path) => path.length > 0 && path !== '.');
+    return { value: paths, paths };
+  });
+  const ownership = pathOwnershipOf(normalized, candidates);
+  if (ownership.status === 'none') return { status: 'none' };
+  if (ownership.status === 'tie') {
+    // The tied candidates share one winning prefix string; any yields it.
+    return { status: 'tie', path: owningPath(ownership.owners[0] ?? [], normalized) };
+  }
+  return { status: 'owner', path: owningPath(ownership.owner, normalized) };
+}
+/** G-04: equality, directory-boundary ownership or a directory under the query.
+ * A `tie` is treated like an owner carrying the shared winning path, so every
+ * tied module matches; `none` still matches any path under the query. The
+ * directory-under branch uses the stripped path (`src/` is the query `src`'s own
+ * directory, not one under it). */
+function pathMatches(value: string, needle: string, ownership: PathSearchOwnership): boolean {
+  const normalized = normalizeSearchText(value);
+  const path = normalized.endsWith('/') ? normalized.slice(0, -1) : normalized;
+  if (ownership.status === 'none') return path.startsWith(`${needle}/`);
+  if (path === needle) return true;
+  if (path === ownership.path) return true;
+  return path.startsWith(`${needle}/`);
 }
 function sameActor(left: ActorRef, right: ActorRef): boolean {
   if (left.kind !== right.kind || left.id !== right.id) return false;
@@ -1543,13 +1597,14 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
     if (indexes.status !== 'ready') return propagate(indexes);
     const basisKey = basisKeyOf(universe);
     if (cursorBasis !== null && cursorBasis !== basisKey) return revisionConflict(universe, ctx, goalRef);
-    const needle = request.needle;
+    const needle = normalizeSearchText(request.needle);
+    const ownership = longestPathOwner(universe.architecture?.modules ?? [], needle);
     const matched: GraphNodeRefV1[] = [];
     for (const node of dedupeSort(candidates)) {
       const presentation = presentationOf(node, universe);
-      if (presentation.name.includes(needle)) { matched.push(node); continue; }
-      if (presentation.paths.some(path => path.includes(needle))) { matched.push(node); continue; }
-      if (presentation.summary.includes(needle)) { matched.push(node); }
+      if (normalizeSearchText(presentation.name).includes(needle)) { matched.push(node); continue; }
+      if (presentation.paths.some(path => pathMatches(path, needle, ownership))) { matched.push(node); continue; }
+      if (normalizeSearchText(presentation.summary).includes(needle)) { matched.push(node); }
     }
     const sorted = dedupeSort(matched);
     const pageItems = sorted.slice(afterOffset, afterOffset + page.limit);

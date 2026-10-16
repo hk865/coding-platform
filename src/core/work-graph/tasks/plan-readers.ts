@@ -1,7 +1,8 @@
 /** Canonical task facts for R3c graph/ready reads and future R4c claim checks.
  * A missing schema/index/provider is incomplete, never an empty set of facts. */
 import type { CommitCursor } from '../../../contracts/command-event.js';
-import type { CoreError, CoreRejection } from '../../../contracts/core/results.js';
+import type { CoreCallContext } from '../../../contracts/core/call-context.js';
+import type { CoreError, CoreRejection, ReadResult } from '../../../contracts/core/results.js';
 import type {
   RunSnapshot,
   TaskAttemptRef,
@@ -53,6 +54,7 @@ import {
 } from '../persistence/evidence-record-codecs.js';
 import type { VerifiedGovernance } from './plan-commit-compiler.js';
 import type { PlanProposal, PlanProposalRef } from '../model/plan-contracts.js';
+import type { NoteRunTaskResolver } from '../model/note-contracts.js';
 import type { SessionResponsibilityBasisPort } from '../model/session-facts-contracts.js';
 import {
   isBasisUnsupported, planTaskFacts, taskOriginVerdict, verifyBasisDelegation,
@@ -1256,6 +1258,35 @@ export async function readGoalRunsForCount(
     if (run.ref.projectId === goalRef.projectId && run.ref.goalId === goalRef.goalId) runs.push(run);
   }
   return { status: 'ready', runs };
+}
+
+/**
+ * Slice 4C §11.2/C2.2: the concrete `NoteRunTaskResolver`. One `readMany` of the
+ * caller's Run snapshot, resolved ONLY from the trusted `ctx.principal.runRef`,
+ * returning `{ goalId, taskId, planRef }`. A non-work principal, a missing Run
+ * or an undecodable record is `unavailable`; no other route is read.
+ */
+export function createNoteRunTaskResolver(records: GoalRecordTransactionPort): NoteRunTaskResolver {
+  return async (ctx: CoreCallContext) => {
+    const principal = ctx.principal;
+    if (principal.kind !== 'work_run') {
+      return { status: 'rejected', code: 'unavailable', reason: 'the caller is not a work Run' };
+    }
+    const runKey = canonicalJson(principal.runRef as unknown as JsonValue);
+    const read = await records.readMany([runKey]);
+    if (read.status !== 'ready') {
+      return { status: 'rejected', code: 'unavailable', reason: 'the caller Run is not readable' };
+    }
+    const record = read.value.records.find(candidate => candidate.refKey === runKey);
+    if (record === undefined) {
+      return { status: 'rejected', code: 'unavailable', reason: 'the caller Run is missing' };
+    }
+    const run = parseRun(record.json);
+    if (run === null) {
+      return { status: 'rejected', code: 'unavailable', reason: 'the caller Run is not decodable' };
+    }
+    return { status: 'ready', value: { goalId: run.task.goalId, taskId: run.task.taskId, planRef: run.planRef } };
+  };
 }
 
 /**

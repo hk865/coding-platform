@@ -32,6 +32,10 @@ import type { TaskContextInputPort } from '../../src/core/work-graph/model/conte
 import type {
   ExecutionHistoryPage, GraphExecutionHistoryReadPort, TaskExecutionHistoryRequest,
 } from '../../src/core/agent-runtime/execution-history-contracts.js';
+import type {
+  MemoryConflictsRequest, MemoryFindRequest, MemoryHistoryRequest, MemoryHistoryResultV1, MemoryLookupRequest,
+  MemoryLookupResultV1, MemoryNeighborsRequest, MemoryResultV1, MemoryStaleRequest, NoteMemoryReadPort,
+} from '../../src/core/work-graph/model/note-contracts.js';
 import type { ToolCall, ToolDefinition, ToolResult, WorkspaceSandbox, ModelRequest } from '../../vendor/coding-agent/dist/public-api.js';
 // Real exact-input owner fixture (§5.1 / §5.3 pattern): the graph tools' input
 // row must forward into the REAL `createTaskContextInputService`, not into a
@@ -266,10 +270,45 @@ function recordingPorts(overrides: PortOverrides = {}) {
   return { graph, inputs, history, calls };
 }
 
+/** L13: the memory branch's notes-read recording port. */
+type NoteRecordedCalls = {
+  lookup: { ctx: CoreCallContext; request: MemoryLookupRequest }[];
+  neighbors: { ctx: CoreCallContext; request: MemoryNeighborsRequest }[];
+  history: { ctx: CoreCallContext; request: MemoryHistoryRequest }[];
+  conflicts: { ctx: CoreCallContext; request: MemoryConflictsRequest }[];
+  find: { ctx: CoreCallContext; request: MemoryFindRequest }[];
+  stale: { ctx: CoreCallContext; request: MemoryStaleRequest }[];
+};
+
+function memoryResult(): MemoryResultV1 {
+  return { readBasis: { recordCursor: null, ruleVersion: 2, observedFiles: [] }, items: [], warnings: [],
+    next: null, complete: true, coverage: { checkedItems: 0, uncheckedItems: 0, filesRead: 0 } };
+}
+
+function recordingNotes() {
+  const calls: NoteRecordedCalls = { lookup: [], neighbors: [], history: [], conflicts: [], find: [], stale: [] };
+  const memory: NoteMemoryReadPort = {
+    async memoryLookup(ctx, request): Promise<{ status: 'ready'; value: MemoryLookupResultV1 }> {
+      calls.lookup.push({ ctx, request });
+      return { status: 'ready', value: { ...memoryResult(), understanding: null, topics: [], topicsComplete: true } };
+    },
+    async memoryNeighbors(ctx, request) { calls.neighbors.push({ ctx, request }); return { status: 'ready', value: memoryResult() }; },
+    async memoryHistory(ctx, request): Promise<{ status: 'ready'; value: MemoryHistoryResultV1 }> {
+      calls.history.push({ ctx, request });
+      return { status: 'ready', value: { ...memoryResult(), items: [] } };
+    },
+    async memoryConflicts(ctx, request) { calls.conflicts.push({ ctx, request }); return { status: 'ready', value: memoryResult() }; },
+    async memoryFind(ctx, request) { calls.find.push({ ctx, request }); return { status: 'ready', value: memoryResult() }; },
+    async memoryStale(ctx, request) { calls.stale.push({ ctx, request }); return { status: 'ready', value: memoryResult() }; },
+  };
+  return { memory, calls };
+}
+
 type BuildOptions = {
   context?: CoreCallContext;
   goalRef?: GoalRef;
   ports?: ReturnType<typeof recordingPorts>;
+  notes?: NoteMemoryReadPort;
   mutate?: (config: GraphToolsConfig) => void;
 };
 
@@ -280,6 +319,7 @@ function buildTools(options: BuildOptions = {}) {
   const config: GraphToolsConfig = {
     context, goalRef: options.goalRef ?? GOAL_REF,
     graph: ports.graph, inputs: ports.inputs, history: ports.history,
+    ...(options.notes === undefined ? {} : { notes: options.notes }),
   };
   const handle = createGraphTools(config);
   options.mutate?.(config);
@@ -607,6 +647,122 @@ describe('S3 graph tools', () => {
     expect(outputValue(result)).toMatchObject({ status: 'rejected', code: 'capacity' });
     expect(JSON.stringify(outputValue(result))).not.toContain('xxxx');
   });
+
+  it('GT15 G-02 rejects a memory op mixed with old graph parameters and a model-supplied goalId before any read', async () => {
+    const notes = recordingNotes();
+    const { byName, calls } = buildTools({ notes: notes.memory });
+    // `memory` together with the old look/find fields is not the strict union.
+    const mixedLook = await byName('look_graph').handler.execute(toolCall('look_graph', 'gt15-look', {
+      memory: { v: 1, op: 'lookup', anchor: { kind: 'project' } },
+      mode: 'node', target: { kind: 'task', ref: { ...T_B }, planRef: { ...PLAN_REF } },
+    }), { signal: signal() });
+    expect(mixedLook).toMatchObject({ status: 'error', error: { code: 'invalid_arguments' } });
+    const mixedFind = await byName('find_graph').handler.execute(toolCall('find_graph', 'gt15-find', {
+      memory: { v: 1, op: 'find' }, needle: 'B',
+    }), { signal: signal() });
+    expect(mixedFind).toMatchObject({ status: 'error', error: { code: 'invalid_arguments' } });
+    // A model-supplied identity/scope key is an unknown strict key, inside the
+    // memory object and at the top level.
+    for (const args of [
+      { memory: { v: 1, op: 'find', terms: ['jwt'], goalId: G } },
+      { memory: { v: 1, op: 'find', terms: ['jwt'], goalRef: GOAL_REF } },
+      { memory: { v: 1, op: 'find', terms: ['jwt'], principal: { kind: 'host', actor: HUMAN } } },
+      { memory: { v: 1, op: 'lookup', anchor: { kind: 'project' } }, projectId: P },
+    ]) {
+      const result = await byName('find_graph').handler.execute(toolCall('find_graph', 'gt15-forged', args), { signal: signal() });
+      // `lookup` is not a find_graph op; the shape is rejected either way.
+      expect(result).toMatchObject({ status: 'error', error: { code: 'invalid_arguments' } });
+    }
+    for (const recorded of Object.values(notes.calls)) expect(recorded).toHaveLength(0);
+    for (const [port, recorded] of Object.entries(calls)) expect(recorded, `${port} must stay unread`).toHaveLength(0);
+  });
+
+  it('GT16 look_graph memory forwards the trusted frozen context, defaults limit 20/cursor null and keeps the original signal', async () => {
+    const original = new AbortController();
+    const notes = recordingNotes();
+    const context = workContext(original.signal);
+    const { byName } = buildTools({ context, notes: notes.memory });
+    const lookup = await byName('look_graph').handler.execute(toolCall('look_graph', 'gt16-lookup', {
+      memory: { v: 1, op: 'lookup', anchor: { kind: 'task', goalId: G, taskId: 'tB' },
+        body: { noteId: 'n1', version: 2 } },
+    }), { signal: original.signal });
+    expect(lookup).toMatchObject({ status: 'success' });
+    expect(outputValue(lookup)).toMatchObject({ status: 'ready' });
+    expect(notes.calls.lookup[0]?.ctx.projectId).toBe(P);
+    expect(notes.calls.lookup[0]?.ctx.workspaceId).toBe(W);
+    expect(notes.calls.lookup[0]?.ctx.principal).toEqual(context.principal);
+    expect(notes.calls.lookup[0]?.ctx.signal).toBe(original.signal);
+    expect(notes.calls.lookup[0]?.request).toEqual({ v: 1, op: 'lookup',
+      anchor: { kind: 'task', goalId: G, taskId: 'tB' }, body: { noteId: 'n1', version: 2, cursor: null },
+      limit: 20, cursor: null });
+    await byName('look_graph').handler.execute(toolCall('look_graph', 'gt16-neighbors', {
+      memory: { v: 1, op: 'neighbors', noteId: 'n1' } }), { signal: signal() });
+    expect(notes.calls.neighbors[0]?.request).toEqual({ v: 1, op: 'neighbors', noteId: 'n1', limit: 20, cursor: null });
+    await byName('look_graph').handler.execute(toolCall('look_graph', 'gt16-history', {
+      memory: { v: 1, op: 'history', noteId: 'n1', limit: 5, cursor: 'c1' } }), { signal: signal() });
+    expect(notes.calls.history[0]?.request).toEqual({ v: 1, op: 'history', noteId: 'n1', limit: 5, cursor: 'c1' });
+    await byName('look_graph').handler.execute(toolCall('look_graph', 'gt16-conflicts', {
+      memory: { v: 1, op: 'conflicts', anchor: { kind: 'module', moduleId: 'M1' } } }), { signal: signal() });
+    expect(notes.calls.conflicts[0]?.request).toEqual({ v: 1, op: 'conflicts',
+      anchor: { kind: 'module', moduleId: 'M1' }, limit: 20, cursor: null });
+  });
+
+  it('GT17 find_graph memory forwards related (including null) and stale requests', async () => {
+    const notes = recordingNotes();
+    const { byName } = buildTools({ notes: notes.memory });
+    await byName('find_graph').handler.execute(toolCall('find_graph', 'gt17-null', {
+      memory: { v: 1, op: 'find', terms: ['jwt', 'token'], match: 'any', related: null } }), { signal: signal() });
+    expect(notes.calls.find[0]?.request).toEqual({ v: 1, op: 'find', terms: ['jwt', 'token'], match: 'any',
+      related: null, limit: 20, cursor: null });
+    await byName('find_graph').handler.execute(toolCall('find_graph', 'gt17-task', {
+      memory: { v: 1, op: 'find', related: { kind: 'task', goalId: G, taskId: 't1' }, limit: 4, cursor: 'c0' } }), { signal: signal() });
+    expect(notes.calls.find[1]?.request).toMatchObject({ related: { kind: 'task', goalId: G, taskId: 't1' }, limit: 4, cursor: 'c0' });
+    await byName('find_graph').handler.execute(toolCall('find_graph', 'gt17-stale', {
+      memory: { v: 1, op: 'stale', goalId: G, limit: 3, cursor: 'c1' } }), { signal: signal() });
+    expect(notes.calls.stale[0]?.request).toEqual({ v: 1, op: 'stale', goalId: G, limit: 3, cursor: 'c1' });
+  });
+
+  it('GT18 a memory call with no notes port fails closed and reaches no note owner', async () => {
+    const { byName, calls } = buildTools();
+    const result = await byName('look_graph').handler.execute(toolCall('look_graph', 'gt18', {
+      memory: { v: 1, op: 'lookup', anchor: { kind: 'project' } } }), { signal: signal() });
+    expect(result).toMatchObject({ status: 'error', error: { code: 'execution_failed' } });
+    for (const [port, recorded] of Object.entries(calls)) expect(recorded, `${port} must stay unread`).toHaveLength(0);
+  });
+
+  it('GT19 C1.3 a real work Run is granted the registered record_note tool', async () => {
+    const p = await openGtPlatform({
+      workTools: [...GT_WORK_TOOLS, 'record_note'],
+      workReplies: [
+        { kind: 'calls', calls: [{ callId: 'gt19-write', name: 'record_note', args: {
+          op: 'write', kind: 'convention', topic: 'naming', conclusion: 'use kebab-case',
+          anchor: { kind: 'goal', goalId: AG2B_GOAL_REF.goalId },
+        } }] },
+        { kind: 'text', text: 'gt19 wrote the note' },
+      ],
+    });
+    try {
+      const prepared = await p.advanceToPrepare('gt19');
+      const started = await p.advanceStart(prepared.next);
+      // The driver accepted the selected name (a missing note port would have
+      // failed closed with `unsupported`) and the Kernel provider request carries
+      // the real registration.
+      expect(started.status).toBe('ready');
+      expect(requestToolNames(p.workModel.requests[0])).toContain('record_note');
+    } finally { await p.close(); }
+  }, 120_000);
+
+  it('GT20 G-03 a read-only Query granted record_note never receives it', async () => {
+    const p = await openGtPlatform({
+      queryTools: [...GT_QUERY_TOOLS, 'record_note'],
+      queryReplies: [{ kind: 'text', text: 'gt20 answered' }],
+    });
+    try {
+      const run = await startGtQuery(p, 'gt20');
+      const names = requestToolNames(run.requests[0]);
+      expect(names).not.toContain('record_note');
+    } finally { await p.close(); }
+  }, 120_000);
 });
 
 /** Small accessor so GT03 can read the recording port's calls by name. */

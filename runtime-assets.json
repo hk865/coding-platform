@@ -13,7 +13,7 @@
   },
   {
     "path": "resources/skills/platform-adviser/content.md",
-    "sha256": "401be4a3026de4cac3f0535b513f28d0509994349b490d277f49112e61f907d7"
+    "sha256": "3e9bf8beaed4064e7c992fefba9729d57a5317a01227976926029915dad3dc85"
   },
   {
     "path": "resources/skills/platform-adviser/skill.json",
@@ -29,7 +29,7 @@
   },
   {
     "path": "resources/skills/platform-scribe/content.md",
-    "sha256": "8e492c1d34fe7cc07cf67629c617e277b253c6b3c1952bf1a28f17aafa3a8b13"
+    "sha256": "e2384821311341bfd440a50cd4b68bc818126d3b8d0792f23e9357c619bae043"
   },
   {
     "path": "resources/skills/platform-scribe/skill.json",
@@ -37,7 +37,7 @@
   },
   {
     "path": "resources/skills/platform-secretary/content.md",
-    "sha256": "7f1f78bd5160c48f16fdf57f6b6932c2b25ab690875fce09a833536fa0f15380"
+    "sha256": "a8644c9adebb22df4e920fc823ede079fc7caee44d959f84394546b63dffc8ee"
   },
   {
     "path": "resources/skills/platform-secretary/skill.json",
@@ -45,7 +45,7 @@
   },
   {
     "path": "resources/skills/platform-work/content.md",
-    "sha256": "292a4beed9cd5ae9a1c2f8e802b3b45b59df383ac583c275c80e663a2f4bf552"
+    "sha256": "74f70976dbec12082f7e30ac753e7d1a800217cb10bce893362cad988216d942"
   },
   {
     "path": "resources/skills/platform-work/skill.json",

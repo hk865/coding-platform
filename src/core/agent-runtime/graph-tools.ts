@@ -23,6 +23,12 @@ import type { RunRef, TaskTriple } from '../../contracts/dispatch.js';
 import type { GraphNodeRefV1, TaskInputPageRequestV1 } from '../../contracts/graph-context.js';
 import type { GoalRef } from '../../contracts/ledger.js';
 import type { PlanRevisionRef } from '../../contracts/plan.js';
+import { MEMORY_PAGE_DEFAULT, TEXT_SEARCH_MAX_TERMS } from '../work-graph/model/note-contracts.js';
+import type {
+  MemoryConflictsRequest, MemoryFindRequest, MemoryHistoryRequest, MemoryLookupRequest,
+  MemoryNeighborsRequest, MemoryStaleRequest, NoteMemoryReadPort,
+} from '../work-graph/model/note-contracts.js';
+import type { NoteAnchorV1, NoteKind, NoteState } from '../../contracts/note.js';
 import {
   toolSchema as z,
   type ToolCall,
@@ -42,6 +48,9 @@ export type GraphToolsConfig = {
   context: CoreCallContext; goalRef: GoalRef;
   graph: GraphContextReadPort; inputs: TaskContextInputPort;
   history: GraphExecutionHistoryReadPort;
+  /** Slice 4C L13: `platform.notes`' six reads for the `{ memory: ... }` branch.
+   * Absent, a memory call fails closed before any note owner is reached. */
+  notes?: NoteMemoryReadPort;
 };
 
 type LookArgs =
@@ -53,6 +62,19 @@ type LookArgs =
   | { mode: 'input'; consumer: TaskTriple; planRef: PlanRevisionRef;
       declarationId: string; candidateKey?: string;
       afterCursor?: string | null; maxBytes?: number };
+
+type MemoryBodyArgs = { noteId: string; version?: number; cursor?: string | null };
+type MemoryLookArgs =
+  | { v: 1; op: 'lookup'; anchor: NoteAnchorV1; body?: MemoryBodyArgs; limit?: number; cursor?: string | null }
+  | { v: 1; op: 'neighbors'; noteId: string; version?: number; limit?: number; cursor?: string | null }
+  | { v: 1; op: 'history'; noteId: string; body?: MemoryBodyArgs; limit?: number; cursor?: string | null }
+  | { v: 1; op: 'conflicts'; noteId?: string; anchor?: NoteAnchorV1; limit?: number; cursor?: string | null };
+type MemoryFindArgs =
+  | { v: 1; op: 'find'; terms?: string[]; match?: 'any' | 'all'; anchor?: NoteAnchorV1; pathPrefix?: string;
+      kind?: NoteKind | 'general'; topic?: string; state?: NoteState;
+      related?: { kind: 'task'; goalId: string; taskId: string } | { kind: 'module'; moduleId: string } | null;
+      limit?: number; cursor?: string | null }
+  | { v: 1; op: 'stale'; goalId?: string; anchor?: NoteAnchorV1; limit?: number; cursor?: string | null };
 
 /** The Kernel output limit is 64 KiB; the adapter stops at 48 KiB so the
  * complete `ToolResult` envelope and the Kernel summary still fit. */
@@ -193,12 +215,12 @@ const pageSchema = z.object({
   limit: z.number().int().min(1).max(100).optional(),
 }).strict();
 
-const findSchema = z.object({
+const findGraphSchema = z.object({
   needle: z.string().min(1),
   page: pageSchema.optional(),
 }).strict();
 
-const lookSchema: z.ZodType = z.discriminatedUnion('mode', [
+const lookGraphSchema: z.ZodType = z.discriminatedUnion('mode', [
   z.object({
     mode: z.literal('node'),
     target: nodeRefSchema,
@@ -228,9 +250,82 @@ const lookSchema: z.ZodType = z.discriminatedUnion('mode', [
   }).strict(),
 ]);
 
+// --------------------------------------------------------------------------
+// L13 memory branch schemas. `look_graph`/`find_graph` are the STRICT UNION of
+// the old graph arguments above and exactly one `{ memory: { v: 1, ... } }`
+// object. The union rejects both branches mixed together, and every branch is
+// strict, so a model-supplied principal/scope/goalRef/workspace is an unknown
+// key and fails before any note owner is reached.
+// --------------------------------------------------------------------------
+
+const memoryLimitSchema = z.number().int().min(1).max(100).optional();
+const memoryCursorSchema = z.string().min(1).nullable().optional();
+const symbolLocatorSchema = z.object({
+  language: z.string().min(1),
+  qualifiedName: z.string().min(1),
+  signatureDigest: z.string().min(1),
+  range: z.object({ startLine: z.number().int().min(0), endLine: z.number().int().min(0) }).strict(),
+  fileDigest: z.string().min(1),
+}).strict();
+const noteAnchorSchema: z.ZodType = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('module'), moduleId: z.string().min(1) }).strict(),
+  z.object({ kind: z.literal('interface'), moduleId: z.string().min(1), interfaceId: z.string().min(1) }).strict(),
+  z.object({ kind: z.literal('file'), path: z.string().min(1), symbol: symbolLocatorSchema.optional(),
+    deleted: z.literal(true).optional() }).strict(),
+  z.object({ kind: z.literal('goal'), goalId: z.string().min(1) }).strict(),
+  z.object({ kind: z.literal('stage'), goalId: z.string().min(1), planRevision: z.number().int(),
+    stageId: z.string().min(1) }).strict(),
+  z.object({ kind: z.literal('task'), goalId: z.string().min(1), taskId: z.string().min(1) }).strict(),
+  z.object({ kind: z.literal('project') }).strict(),
+]);
+const noteKindSchema = z.enum(['convention', 'pitfall', 'tradeoff', 'open_question', 'preference', 'decision',
+  'understanding', 'repair', 'general']);
+const noteStateSchema = z.enum(['staged', 'accepted', 'reviewed', 'pending_review', 'rejected', 'superseded', 'withdrawn']);
+const memoryBodySchema = z.object({
+  noteId: z.string().min(1),
+  version: z.number().int().min(1).optional(),
+  cursor: z.string().min(1).nullable().optional(),
+}).strict();
+const memoryLookSchema: z.ZodType = z.discriminatedUnion('op', [
+  z.object({ v: z.literal(1), op: z.literal('lookup'), anchor: noteAnchorSchema,
+    body: memoryBodySchema.optional(), limit: memoryLimitSchema, cursor: memoryCursorSchema }).strict(),
+  z.object({ v: z.literal(1), op: z.literal('neighbors'), noteId: z.string().min(1),
+    version: z.number().int().min(1).optional(), limit: memoryLimitSchema, cursor: memoryCursorSchema }).strict(),
+  z.object({ v: z.literal(1), op: z.literal('history'), noteId: z.string().min(1),
+    body: memoryBodySchema.optional(), limit: memoryLimitSchema, cursor: memoryCursorSchema }).strict(),
+  z.object({ v: z.literal(1), op: z.literal('conflicts'), noteId: z.string().min(1).optional(),
+    anchor: noteAnchorSchema.optional(), limit: memoryLimitSchema, cursor: memoryCursorSchema }).strict(),
+]);
+const lookMemorySchema = z.object({ memory: memoryLookSchema }).strict();
+const memoryRelatedSchema = z.union([
+  z.object({ kind: z.literal('task'), goalId: z.string().min(1), taskId: z.string().min(1) }).strict(),
+  z.object({ kind: z.literal('module'), moduleId: z.string().min(1) }).strict(),
+]).nullable();
+const memoryFindSchema = z.object({
+  v: z.literal(1), op: z.literal('find'),
+  terms: z.array(z.string().min(1)).max(TEXT_SEARCH_MAX_TERMS).optional(),
+  match: z.enum(['any', 'all']).optional(),
+  anchor: noteAnchorSchema.optional(),
+  pathPrefix: z.string().min(1).optional(),
+  kind: noteKindSchema.optional(),
+  topic: z.string().min(1).optional(),
+  state: noteStateSchema.optional(),
+  related: memoryRelatedSchema.optional(),
+  limit: memoryLimitSchema, cursor: memoryCursorSchema,
+}).strict();
+const memoryStaleSchema = z.object({
+  v: z.literal(1), op: z.literal('stale'),
+  goalId: z.string().min(1).optional(),
+  anchor: noteAnchorSchema.optional(),
+  limit: memoryLimitSchema, cursor: memoryCursorSchema,
+}).strict();
+const findMemorySchema = z.object({ memory: z.discriminatedUnion('op', [memoryFindSchema, memoryStaleSchema]) }).strict();
+const findSchema: z.ZodType = z.union([findGraphSchema, findMemorySchema]);
+const lookSchema: z.ZodType = z.union([lookGraphSchema, lookMemorySchema]);
+
 const descriptions = {
-  look_graph: 'Read one graph node/path card or page (relation card/children/neighbours/executions/checks), the original execution history of one Run, or the exact declared task input body by page. The Goal and scope are bound by the platform; do not send them.',
-  find_graph: 'Search the bound Goal graph by a case-sensitive substring over node names, paths and summaries. The Goal and scope are bound by the platform; do not send them.',
+  look_graph: 'Read one graph node/path card or page (relation card/children/neighbours/executions/checks), the original execution history of one Run, or the exact declared task input body by page. Or read notes: `{ memory: { v: 1, op: lookup|neighbors|history|conflicts, ... } }`. The Goal, scope and identity are bound by the platform; do not send them.',
+  find_graph: 'Search the bound Goal graph case-insensitively (NFC + ASCII-lowercased): node names and summaries by substring; module paths when the path equals the query, is the query\'s longest directory-boundary owner, or lies under `query + \'/\'`. Or search notes: `{ memory: { v: 1, op: find|stale, ... } }`. The Goal, scope and identity are bound by the platform; do not send them.',
 } as const;
 
 export function createGraphTools(config: GraphToolsConfig): {
@@ -291,6 +386,70 @@ export function createGraphTools(config: GraphToolsConfig): {
     return mapRead(callId, result, 'the graph look could not be read');
   }
 
+  /**
+   * L13 memory branch. The six note reads all receive the SAME snapshotted
+   * trusted context as the old graph reads (never a model-supplied identity or
+   * scope). `config.notes` absent fails closed before the note owner is reached.
+   */
+  async function dispatchLookMemory(callId: string, memory: MemoryLookArgs, context: CoreCallContext): Promise<ToolResult> {
+    const notes = config.notes;
+    if (notes === undefined) return failure(callId, 'execution_failed', 'the note memory read port is not bound for this Run');
+    const limit = memory.limit ?? MEMORY_PAGE_DEFAULT;
+    const cursor = memory.cursor ?? null;
+    if (memory.op === 'lookup') {
+      const request: MemoryLookupRequest = { v: 1, op: 'lookup', anchor: memory.anchor, limit, cursor,
+        ...(memory.body === undefined ? {} : { body: { noteId: memory.body.noteId,
+          ...(memory.body.version === undefined ? {} : { version: memory.body.version }),
+          cursor: memory.body.cursor ?? null } }) };
+      const result = await notes.memoryLookup(context, request);
+      return finalize(callId, mapRead(callId, result, 'the note lookup could not be read'));
+    }
+    if (memory.op === 'neighbors') {
+      const request: MemoryNeighborsRequest = { v: 1, op: 'neighbors', noteId: memory.noteId, limit, cursor,
+        ...(memory.version === undefined ? {} : { version: memory.version }) };
+      const result = await notes.memoryNeighbors(context, request);
+      return finalize(callId, mapRead(callId, result, 'the note neighbors could not be read'));
+    }
+    if (memory.op === 'history') {
+      const request: MemoryHistoryRequest = { v: 1, op: 'history', noteId: memory.noteId, limit, cursor,
+        ...(memory.body === undefined ? {} : { body: { noteId: memory.body.noteId,
+          ...(memory.body.version === undefined ? {} : { version: memory.body.version }),
+          cursor: memory.body.cursor ?? null } }) };
+      const result = await notes.memoryHistory(context, request);
+      return finalize(callId, mapRead(callId, result, 'the note history could not be read'));
+    }
+    const request: MemoryConflictsRequest = { v: 1, op: 'conflicts', limit, cursor,
+      ...(memory.noteId === undefined ? {} : { noteId: memory.noteId }),
+      ...(memory.anchor === undefined ? {} : { anchor: memory.anchor }) };
+    const result = await notes.memoryConflicts(context, request);
+    return finalize(callId, mapRead(callId, result, 'the note conflicts could not be read'));
+  }
+
+  async function dispatchFindMemory(callId: string, memory: MemoryFindArgs, context: CoreCallContext): Promise<ToolResult> {
+    const notes = config.notes;
+    if (notes === undefined) return failure(callId, 'execution_failed', 'the note memory read port is not bound for this Run');
+    const limit = memory.limit ?? MEMORY_PAGE_DEFAULT;
+    const cursor = memory.cursor ?? null;
+    if (memory.op === 'stale') {
+      const request: MemoryStaleRequest = { v: 1, op: 'stale', limit, cursor,
+        ...(memory.goalId === undefined ? {} : { goalId: memory.goalId }),
+        ...(memory.anchor === undefined ? {} : { anchor: memory.anchor }) };
+      const result = await notes.memoryStale(context, request);
+      return finalize(callId, mapRead(callId, result, 'the note stale read could not be read'));
+    }
+    const request: MemoryFindRequest = { v: 1, op: 'find', limit, cursor,
+      ...(memory.terms === undefined ? {} : { terms: [...memory.terms] }),
+      ...(memory.match === undefined ? {} : { match: memory.match }),
+      ...(memory.anchor === undefined ? {} : { anchor: memory.anchor }),
+      ...(memory.pathPrefix === undefined ? {} : { pathPrefix: memory.pathPrefix }),
+      ...(memory.kind === undefined ? {} : { kind: memory.kind }),
+      ...(memory.topic === undefined ? {} : { topic: memory.topic }),
+      ...(memory.state === undefined ? {} : { state: memory.state }),
+      ...(memory.related === undefined ? {} : { related: memory.related }) };
+    const result = await notes.memoryFind(context, request);
+    return finalize(callId, mapRead(callId, result, 'the note find could not be read'));
+  }
+
   async function execute(
     name: (typeof GRAPH_TOOL_NAMES)[number],
     call: Readonly<ToolCall>,
@@ -317,7 +476,9 @@ export function createGraphTools(config: GraphToolsConfig): {
         { status: 'rejected', code: 'cancelled', reason: 'the graph call was cancelled before the read' });
     }
     try {
+      const hasMemory = (accepted as { memory?: unknown }).memory !== undefined;
       if (name === 'find_graph') {
+        if (hasMemory) return dispatchFindMemory(callId, (accepted as { memory: MemoryFindArgs }).memory, context);
         const input = accepted as { needle: string; page?: { afterCursor?: string | null; limit?: number } };
         const request: GraphFindRequestV1 = {
           goalRef: fixedGoalRef,
@@ -327,6 +488,7 @@ export function createGraphTools(config: GraphToolsConfig): {
         const result = await config.graph.findGraph(context, request);
         return finalize(callId, mapRead(callId, result, 'the graph search could not be read'));
       }
+      if (hasMemory) return dispatchLookMemory(callId, (accepted as { memory: MemoryLookArgs }).memory, context);
       const result = await dispatchLook(callId, accepted as LookArgs, context);
       return finalize(callId, result);
     } catch {

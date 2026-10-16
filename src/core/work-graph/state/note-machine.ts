@@ -21,7 +21,14 @@ import { accept, reject, type Rejected, type Transition } from './transition.js'
 export type NoteWriteFactsV1 = {
   kind: NoteKind;
   structural: boolean;
+  /**
+   * C3.3 (§11.6): only the `contradicts` targets that are accepted or reviewed at
+   * write time count. A note that only contradicts a no-longer-current target is
+   * admitted like any other (D-04).
+   */
   contradicts: readonly string[];
+  /** C3.3 (§11.1 item 6): the superseded set holds a current user-confirmed note. */
+  userNoteReplaced: boolean;
   /** The projected anchor quota is full (general kinds only, L7/R6). */
   anchorFull: boolean;
   /** The projected goal activity quota is full (every kind, L7/R6). */
@@ -59,8 +66,11 @@ export function admitNoteWrite(facts: NoteWriteFactsV1): NoteWriteAdmissionV1 {
       overQuota: facts.anchorFull || facts.goalFull, confirmedByUser: true };
   }
   const reviewReasons: NoteReviewReason[] = [];
-  if (facts.structural) reviewReasons.push('structural');
+  // C3.4 (§11.1 item 7): only an `understanding` keeps the structural reason. An
+  // agent's structural GENERAL note is admitted like any other (header keeps `!`).
+  if (facts.structural && facts.kind === 'understanding') reviewReasons.push('structural');
   if (facts.contradicts.length > 0) reviewReasons.push('contradiction');
+  if (facts.userNoteReplaced) reviewReasons.push('user_note_replaced');
   if (quotaFull) reviewReasons.push('quota_full');
   if (reviewReasons.length > 0) {
     return { status: 'pending_review', state: 'pending_review', reviewReasons,
@@ -82,6 +92,59 @@ Extract<Rejected, { ok: false }> | null {
       'only an agent or a scribe stages a repair') as Extract<Rejected, { ok: false }>;
   }
   return null;
+}
+
+// --------------------------------------------------------------------------
+// C3.2 (§11.6): the live user-reason set, per actual disposition target
+// --------------------------------------------------------------------------
+
+/** One actual disposition target's live facts (read at read/commit time). */
+export type NoteUserReasonTargetV1 = {
+  noteId: string;
+  version: number;
+  state: NoteState;
+  userConfirmed: boolean;
+  userWritten: boolean;
+  primaryAnchorRetiredNonFile: boolean;
+};
+
+/**
+ * §11.6/decision 68: the ONE pure function that decides whether a pending note
+ * still concerns the user. It is computed from the ACTUAL disposition targets
+ * (`replaces` minus `coexistWith`, plus `contradicts`) and their live facts —
+ * never from the stored `reviewReasons` (those stay as history). A result that
+ * is not empty means only the user may accept or reject it; the scribe's
+ * reminders count only the notes with an empty result.
+ *
+ * - `structural`: only an `understanding` can carry it (C3.4).
+ * - `contradiction`: a contradicted target is accepted/reviewed, its primary
+ *   anchor is not retired for a non-file reason, and it is user-confirmed or
+ *   user-written.
+ * - `user_note_replaced`: the superseded set (replaces minus coexistWith) holds a
+ *   current user-confirmed note; an understanding is excepted (§11.1 item 6).
+ */
+export function userReasonsOf(head: Pick<NoteHeadSnapshot,
+  'kind' | 'structural' | 'replaces' | 'contradicts' | 'coexistWith'>,
+  targets: readonly NoteUserReasonTargetV1[]): NoteReviewReason[] {
+  const reasons: NoteReviewReason[] = [];
+  if (head.structural && head.kind === 'understanding') reasons.push('structural');
+  const byId = new Map(targets.map(target => [target.noteId, target]));
+  const current = (target: NoteUserReasonTargetV1 | undefined): boolean =>
+    target !== undefined && (target.state === 'accepted' || target.state === 'reviewed')
+    && !target.primaryAnchorRetiredNonFile;
+  if (head.contradicts.some(noteId => {
+    const target = byId.get(noteId);
+    return current(target) && (target!.userConfirmed || target!.userWritten);
+  })) reasons.push('contradiction');
+  if (head.kind !== 'understanding') {
+    const coexisting = new Set(head.coexistWith);
+    if (head.replaces.some(noteId => {
+      if (coexisting.has(noteId)) return false;
+      const target = byId.get(noteId);
+      return current(target) && target!.userConfirmed;
+    })) reasons.push('user_note_replaced');
+  }
+  return reasons;
 }
 
 // --------------------------------------------------------------------------
@@ -174,11 +237,12 @@ export function noteBodyOf(head: PendingNoteHeadSnapshot): NoteBodyV1 {
 
 export type NoteDispositionEventV1 =
   | { kind: 'review'; by: 'scribe' | 'user' }                                  // S4-NOTE-04
-  | { kind: 'accept'; by: 'scribe' | 'user'; reasons: readonly NoteReviewReason[]; reason: string | null }   // S4-NOTE-05
+  | { kind: 'accept'; by: 'scribe' | 'user'; reasons: readonly NoteReviewReason[]; reason: string | null;
+      resolution?: 'supersede' | 'coexist'; targets?: readonly string[] }        // S4-NOTE-05
   | { kind: 'reject'; by: 'scribe' | 'user'; reasons: readonly NoteReviewReason[]; reason: string | null }   // S4-NOTE-06
   | { kind: 'withdraw' }                                                        // S4-NOTE-07
   | { kind: 'supersede' }                                                       // S4-NOTE-08
-  | { kind: 'coexist'; by: 'user' };                                            // S4-NOTE-10
+  | { kind: 'coexist'; by: 'scribe' | 'user' };                                 // S4-NOTE-10
 
 const OPEN_STATES: readonly NoteState[] = ['staged', 'accepted', 'reviewed', 'pending_review'];
 
@@ -195,7 +259,8 @@ Transition<PendingNoteHeadSnapshot, NoteDispositionEventV1, never> {
     case 'review':
       return accept(bumped(head, 'reviewed', [], event.by === 'user' ? true : head.confirmedByUser));
     case 'accept':
-      return accept(bumped(head, 'accepted', [], event.by === 'user' ? true : head.confirmedByUser));
+      return accept(applyAcceptResolution(bumped(head, 'accepted', [],
+        event.by === 'user' ? true : head.confirmedByUser), event));
     case 'reject':
       return accept(bumped(head, 'rejected', [], event.by === 'user' ? true : head.confirmedByUser));
     case 'withdraw':
@@ -203,8 +268,40 @@ Transition<PendingNoteHeadSnapshot, NoteDispositionEventV1, never> {
     case 'supersede':
       return accept(bumped(head, 'superseded', [], head.confirmedByUser));
     case 'coexist':
-      return accept(bumped(head, 'accepted', [], true));
+      return accept(bumped(head, 'accepted', [], event.by === 'user' ? true : head.confirmedByUser));
   }
+}
+
+/**
+ * S4-NOTE-05/08/10: an accept with a `resolution` rewrites the accepted head's
+ * relations in the SAME commit — `supersede` moves the live contradicted targets
+ * into `replaces`, `coexist` into `coexistWith`, and in both cases removes them
+ * from `contradicts`; the supersession builder then acts on the rewritten head.
+ */
+function applyAcceptResolution(head: PendingNoteHeadSnapshot,
+  event: Extract<NoteDispositionEventV1, { kind: 'accept' }>): PendingNoteHeadSnapshot {
+  if (event.resolution === undefined) return head;
+  const targets = event.targets ?? [];
+  const contradicts = head.contradicts.filter(noteId => !targets.includes(noteId));
+  if (event.resolution === 'supersede') {
+    // RW-4: a target that was also listed in `coexistWith` moves to `replaces`
+    // and is removed from `coexistWith`, so `supersessionTargetsOf` supersedes it
+    // instead of skipping it.
+    const coexistWith = head.coexistWith.filter(noteId => !targets.includes(noteId));
+    return { ...head, contradicts, coexistWith, replaces: dedupe([...head.replaces, ...targets]) };
+  }
+  return { ...head, contradicts, coexistWith: dedupe([...head.coexistWith, ...targets]) };
+}
+
+function dedupe(values: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const value of values) {
+    if (seen.has(value)) continue;
+    seen.add(value);
+    out.push(value);
+  }
+  return out;
 }
 
 /** Row/authority guards, in the order of §3. */
@@ -216,10 +313,11 @@ function sharedProblem(head: NoteHeadSnapshot, event: NoteDispositionEventV1): R
     case 'accept':
     case 'reject': {
       if (head.state !== 'pending_review') return illegal(head, event.kind, 'pending_review');
-      const userOnly = event.reasons.some(reason => reason === 'structural' || reason === 'contradiction');
-      if (userOnly && event.by !== 'user') {
+      // C3.2/§11.6: `event.reasons` is now the LIVE `userReasonsOf` set, never the
+      // stored `reviewReasons`. Any user reason means only the user may decide.
+      if (event.reasons.length > 0 && event.by !== 'user') {
         return reject('guard_failed', 'forbidden',
-          'a structural/contradiction note is accepted or rejected only by the user');
+          'a note with a user reason is accepted or rejected only by the user');
       }
       if (event.reason === null || event.reason.trim().length === 0) {
         return reject('guard_failed', 'invalid', 'accepting or rejecting a pending note requires a reason');

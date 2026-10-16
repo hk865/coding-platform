@@ -66,6 +66,11 @@ import type {
 } from '../core/work-graph/model/work-line-contracts.js';
 import type { LineSegmentV1 } from '../contracts/work-line.js';
 import type { SessionHistoryEntry } from '../core/agent-runtime/session-operations.js';
+// Slice 4C C1.4 (spec §2/L15/L19): the notes and version-list route contracts.
+import type { ReadResult } from '../contracts/core/results.js';
+import type {
+  NoteListRequestV1, NoteListResultV1, NoteMemoryReadResult, WriteNoteEnvelopeV1, NoteWritePort, VersionListPageV1,
+} from '../core/work-graph/model/note-contracts.js';
 
 /** The project/workspace navigation scope. It is a real domain scope, not a
  * second source of Project/Workspace registration truth. */
@@ -257,7 +262,14 @@ export type CoreRouteSuffix =
   | 'lines/page'
   | 'lines/pin'
   | 'graph/hover'
-  | 'graph/detail';
+  | 'graph/detail'
+  // Slice 4C C1.4 (spec §2/L15/L19): the person's notes and the two version lists.
+  | 'notes/list'
+  | 'notes/write'
+  | 'notes/withdraw'
+  | 'notes/review'
+  | 'plans/versions'
+  | 'architecture/versions';
 
 type SecondArgument<M> = M extends (ctx: CoreCallContext, argument: infer A) => unknown ? A : never;
 type MethodResult<M> = M extends (ctx: CoreCallContext, argument: never) => infer R ? Awaited<R> : never;
@@ -439,6 +451,25 @@ export type Slice2CCoreRouteDto = {
   'graph/hover': { body: GraphHoverBody; response: GraphHoverResponse };
   'graph/detail': { body: GraphDetailBody; response: GraphDetailResponse };
 };
+
+// ---------------------------------------------------------------------------
+// Slice 4C C1.4 (spec §2, L15, L19): the six notes and version-list routes. All
+// are `plain`; `notes/write`, `notes/withdraw` and `notes/review` are person-only
+// (the Host layer guards identity). The notes aliases derive from the note
+// contracts; the two version lists read `VersionListPageV1`.
+// ---------------------------------------------------------------------------
+export type NotesListBody = { scope: CoreScope; input: NoteListRequestV1 };
+export type NotesListResponse = NoteMemoryReadResult<NoteListResultV1>;
+export type NotesWriteBody = PlainBody<NoteWritePort['writeNote']>;
+export type NotesWriteResponse = WriteNoteEnvelopeV1;
+export type NotesWithdrawBody = PlainBody<NoteWritePort['withdrawNote']>;
+export type NotesWithdrawResponse = RouteResponse<NoteWritePort['withdrawNote']>;
+export type NotesReviewBody = PlainBody<NoteWritePort['reviewNote']>;
+export type NotesReviewResponse = RouteResponse<NoteWritePort['reviewNote']>;
+export type PlansVersionsBody = { scope: CoreScope; input: { goalId: string; limit: number; cursor: string | null } };
+export type PlansVersionsResponse = ReadResult<VersionListPageV1>;
+export type ArchitectureVersionsBody = { scope: CoreScope; input: { limit: number; cursor: string | null } };
+export type ArchitectureVersionsResponse = ReadResult<VersionListPageV1>;
 
 // ---------------------------------------------------------------------------
 // R6 execution-entry routes: each alias is derived from the exact public owner
