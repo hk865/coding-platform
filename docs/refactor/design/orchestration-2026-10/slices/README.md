@@ -1,6 +1,6 @@
 # 编排分片与接线：规格和任务书
 
-**当前状态（2026-10-16）。** 第 0、1、3、5 片、接线包 1、接线包 2（bb924854）、K 片 B（9881a2ae）、K 片 A（cfe35550）已合入；2A、2B、2C、资源上限片、4A、4B、注记查找提速两轮已合入；4C 在施工。最新状态见 [STATUS](../../../STATUS.md)，决定 1–72 见 [HANDOFF 顶部](../../../HANDOFF.md)，分片依赖见 [设计目录](../README.md)和 [DESIGN §8.2](../DESIGN.md#82-分片表)。新界面在后端之后做，基线是[冻结原型](../../../../ui-reference/workbench-2026-10/README.md)和 [UI-WORKBENCH §0](../../../../UI-WORKBENCH.md#ui-decisions-2026-10)。
+**当前状态（2026-10-16）。** 第 0、1、3、5 片、接线包 1、接线包 2（bb924854）、K 片 B（9881a2ae）、K 片 A（cfe35550）已合入；2A、2B、2C、资源上限片、4A、4B、注记查找提速两轮已合入；4C 在施工。最新状态见 [STATUS](../../../STATUS.md)，决定 1–73 见 [HANDOFF 顶部](../../../HANDOFF.md)，分片依赖见 [设计目录](../README.md)和 [DESIGN §8.2](../DESIGN.md#82-分片表)。新界面在后端之后做，基线是[冻结原型](../../../../ui-reference/workbench-2026-10/README.md)和 [UI-WORKBENCH §0](../../../../UI-WORKBENCH.md#ui-decisions-2026-10)。
 
 ## 2026-10-13 起怎样做
 
