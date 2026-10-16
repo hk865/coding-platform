@@ -1,13 +1,12 @@
 // Slice 4 §2 (L1–L8, L18): the notes ports and value shapes delivered by 4A.
-// The 4B/4C additions (six memory reads, NoteCheckPort, the tool envelope, the
-// decision source) are not declared here yet: 4A delivers the write port, the
-// minimal read port and the per-scope count (P1, P5, P9).
+// Slice 4B declares the check port here (`NoteCheckPort`, L22) and its own
+// constants; the six memory reads are still declared by the owning package.
 import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { RoleConfigurationRef } from '../../../contracts/core/identity.js';
 import type { ReadResult } from '../../../contracts/core/results.js';
 import type {
-  NoteAnchorV1, NoteDraftV1, NoteKind, NoteReviewReason, NoteSectionsV1, NoteSourceV1, NoteState,
+  NoteAnchorV1, NoteDraftV1, NoteKind, NoteReviewReason, NoteSectionsV1, NoteSourceV1, NoteState, NoteVersionSnapshot,
 } from '../../../contracts/note.js';
 import type { PlatformDutyV1 } from '../../../contracts/platform-duty.js';
 
@@ -29,6 +28,26 @@ export const MEMORY_PAGE_MAX = 100;
 export const NOTE_EXISTING_TOPICS_MAX = 20;
 export const NOTE_ANCHOR_CANDIDATES_MAX = 5;
 export const NOTE_ANCHOR_CANDIDATE_SCAN = 2000;
+// Slice 4B §2 constants (L11/L22/L23). All injectable, unmeasured initial values.
+export const NOTE_READ_FILES_MAX = 256;
+export const NOTE_READ_FACTS_MAX = 256;
+export const NOTE_SYMBOL_RECHECK_MAX = 20;
+// Slice 4B §2 constants of the memory reads (L10/L12). All injectable.
+export const MEMORY_PAGE_DEFAULT = 20;
+export const MEMORY_RESULT_MAX_BYTES = 48 * 1024;
+export const NOTE_BODY_PAGE_BYTES = 2048;
+export const NOTE_BODY_PAGE_MAX_BYTES = 4096;
+export const MEMORY_TOPICS_MAX = 50;
+// P14: the read model's own full-text bounds (distinct from the RecordStore port's).
+export const TEXT_SEARCH_MAX_TERMS = 8;
+export const TEXT_SEARCH_CANDIDATE_MAX = 1000;
+export const NOTE_TEXT_TERM_MIN = 2;
+export const NOTE_TEXT_TERM_MAX = 64;
+export const NOTE_RANK_WEIGHT_TOPIC = 3;
+export const NOTE_RANK_WEIGHT_CONCLUSION = 2;
+export const NOTE_RANK_WEIGHT_BODY = 1;
+export const NOTE_SIMILAR_MAX = 3;
+export const NOTE_SIMILAR_MIN = 0.3;
 
 // --------------------------------------------------------------------------
 // Write side (L4–L8)
@@ -75,10 +94,23 @@ export interface NoteWritePort {
 
 export type NoteHintV1 = 'basis_outside_anchor' | 'file_module_mismatch' | 'deleted_path_unverified';
 
+/**
+ * Slice 4B L22: the one derived-field implementation, injected into the note
+ * read model (L18: `notes` never imports `views`). Only reads; it never writes
+ * or stores anything. Both the six memory reads and the write-after check call
+ * this same function.
+ */
+export interface NoteCheckPort {
+  checkNotes(ctx: CoreCallContext, input: { items: { noteId: string; version: number }[]; withSimilar?: boolean }):
+    Promise<ReadResult<NoteCheckV1[]>>;
+}
+
 export type NoteFileOutcome = 'same' | 'changed' | 'deleted' | 'forbidden' | 'capacity' | 'unavailable' | 'unchecked';
 export type NoteFileObservationV1 = { path: string; digest: string | null; outcome: NoteFileOutcome };
 
 export type NoteCheckV1 = { noteId: string; version: number;
+  // R3: every file the check read for this item, with its outcome.
+  observedFiles: NoteFileObservationV1[];
   freshness: 'fresh' | 'stale' | 'unchecked'; changedFiles: { path: string; deleted: boolean }[]; staleReasons: string[];
   sourceUnavailable: boolean; invalid: boolean; conflicting: boolean; overQuota: boolean; updateDue: boolean | null;
   currentEligible: boolean;
@@ -86,8 +118,10 @@ export type NoteCheckV1 = { noteId: string; version: number;
   anchorRetiredReasons: ('module_removed' | 'interface_removed' | 'file_deleted' | 'task_ended'
     | 'stage_not_in_current_plan' | 'symbol_missing')[];
   retiredExtraAnchors: string[];
+  // R1: `invalid_file_digest` mirrors `invalid_commit_format` for a file fact
+  // whose digest is not 64 lowercase hex (lead amends §2's reason list).
   unresolvedFacts: { index: number; reason: 'not_found' | 'version_ahead' | 'kind_mismatch'
-    | 'invalid_commit_format' | 'forbidden' | 'unavailable' }[];
+    | 'invalid_commit_format' | 'invalid_file_digest' | 'forbidden' | 'unavailable' }[];
   uncheckedFacts: number[];
   hints: NoteHintV1[];
   similar?: NoteSimilarV1[] };
@@ -117,6 +151,61 @@ export interface NoteReadPort {
   listByAnchor(ctx: CoreCallContext, input: { anchor: NoteAnchorV1; limit: number; cursor: string | null }):
     Promise<ReadResult<NotePageV1>>;
 }
+
+// --------------------------------------------------------------------------
+// Slice 4B L12: the six memory reads (G3)
+// --------------------------------------------------------------------------
+
+/** P3: `updateDue` moves to 4C; 4B answers `null` with no trigger cursor. */
+export type UnderstandingStatusV1 = { anchorKey: string;
+  pointer: { noteId: string | null; revision: number | null };
+  updateDue: boolean | null; latestTriggerCursor: string | null };
+
+export type MemoryLookupRequest = { v: 1; op: 'lookup'; anchor: NoteAnchorV1;
+  body?: { noteId: string; version?: number; cursor: string | null }; limit: number; cursor: string | null };
+export type MemoryNeighborsRequest = { v: 1; op: 'neighbors'; noteId: string; version?: number; limit: number; cursor: string | null };
+export type MemoryHistoryRequest = { v: 1; op: 'history'; noteId: string;
+  body?: { noteId: string; version?: number; cursor: string | null }; limit: number; cursor: string | null };
+export type MemoryConflictsRequest = { v: 1; op: 'conflicts'; noteId?: string; anchor?: NoteAnchorV1; limit: number; cursor: string | null };
+export type MemoryFindRequest = { v: 1; op: 'find'; terms?: string[]; match?: 'any' | 'all'; anchor?: NoteAnchorV1; pathPrefix?: string;
+  kind?: NoteKind | 'general'; topic?: string; state?: NoteState; limit: number; cursor: string | null };
+export type MemoryStaleRequest = { v: 1; op: 'stale'; goalId?: string; anchor?: NoteAnchorV1; limit: number; cursor: string | null };
+
+export type MemoryReadBasis = { recordCursor: string | null; ruleVersion: number;
+  observedFiles: NoteFileObservationV1[] };
+export type MemoryResultV1 = { readBasis: MemoryReadBasis; items: NoteItemV1[]; warnings: string[];
+  next: string | null; complete: boolean; ranking?: 'full' | 'partial';
+  coverage: { checkedItems: number; uncheckedItems: number; filesRead: number } };
+export type MemoryLookupResultV1 = MemoryResultV1 & { understanding: UnderstandingStatusV1 | null;
+  topics: { topic: string; count: number }[]; topicsComplete: boolean };
+export type NoteHistoryItemV1 = NoteItemV1 & { change: NoteVersionSnapshot['change']; since: CommitCursor };
+export type MemoryHistoryResultV1 = Omit<MemoryResultV1, 'items'> & { items: NoteHistoryItemV1[] };
+
+/**
+ * R9/MF9: the three anchor-scoped reads (`lookup`, `conflicts`, `find`) answer
+ * `not_found`/`anchor_not_found` with the resolver's bounded candidates when the
+ * anchor itself does not exist now. It is a subtype of `CoreRejection`, so
+ * `results.ts` and `ReadResult` consumers are unchanged.
+ */
+export type NoteAnchorNotFoundV1 = { status: 'rejected'; code: 'not_found'; reason: 'anchor_not_found';
+  anchorCandidates?: NoteAnchorCandidateV1[]; candidatesUnavailable?: boolean };
+export type NoteMemoryReadResult<T> = ReadResult<T> | NoteAnchorNotFoundV1;
+
+export interface NoteMemoryReadPort {
+  memoryLookup(ctx: CoreCallContext, input: MemoryLookupRequest): Promise<NoteMemoryReadResult<MemoryLookupResultV1>>;
+  memoryNeighbors(ctx: CoreCallContext, input: MemoryNeighborsRequest): Promise<ReadResult<MemoryResultV1>>;
+  memoryHistory(ctx: CoreCallContext, input: MemoryHistoryRequest): Promise<ReadResult<MemoryHistoryResultV1>>;
+  memoryConflicts(ctx: CoreCallContext, input: MemoryConflictsRequest): Promise<NoteMemoryReadResult<MemoryResultV1>>;
+  memoryFind(ctx: CoreCallContext, input: MemoryFindRequest): Promise<NoteMemoryReadResult<MemoryResultV1>>;
+  memoryStale(ctx: CoreCallContext, input: MemoryStaleRequest): Promise<ReadResult<MemoryResultV1>>;
+}
+
+/** Slice 4B L19: the two version lists (P8; R14 amends `at` to `string | null`). */
+export type VersionListPageV1 = {
+  items: { revision: number; at: string | null; reason: string | null; reasonLabel: string }[];
+  next: string | null;
+  complete: boolean;
+};
 
 // --------------------------------------------------------------------------
 // Scribe scope and duty (P1, P5, P6)

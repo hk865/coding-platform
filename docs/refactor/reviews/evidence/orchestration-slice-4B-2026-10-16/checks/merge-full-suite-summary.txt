@@ -1,0 +1,15 @@
+4B merge candidate (rounds 1-2): lead branch 753bf5ab + impl/s4b/s4b-code-2.patch (50 files, sha c4d78bc3), copy ~/dsh-work/verify-4a2
+Environment: WSL, bubblewrap, systemd user session; vitest run --maxWorkers=8 inside systemd-run --user --scope; a DSH round (tests with 2 workers) ran during part of it
+Files: 469 total, 463 passed
+Tests: 7603 total, 7591 passed, 6 failed, 6 skipped
+
+Failed:
+- tests/runtime/RL-30-shell-resource-caps.test.ts > RL-30 (g) the dispatcher timer past the shell default timeout becomes the timeout overlay
+- tests/runtime/RL-30-shell-resource-caps.test.ts > RL-30 (h) the handler own subprocess timeout is kept verbatim with its JSON
+- tests/runtime/S1-archive-files-brief.test.ts > IT05 nine distinct stopped Runs assemble the earliest eight anchors and leave the ninth unpicked
+- tests/runtime/S1-routed-replies.test.ts > IT30 idle unrelated D retains the reply without new work until its next legal execution safe point
+- tests/work-graph/S1-requeue.test.ts > SV59 failure before retirement still counts against cap despite the real retired_archive anchor
+- tests/work-graph/S2A-notices-overbound.test.ts > QA-10 (二) a 5,001-Session directory, 5,001 undelivered replies and 5,001 member notices page to the end without capacity
+- tests/work-graph/S2A-queue-derived-cards.test.ts (suite hook)
+
+After round 3 (s4b-code-3.patch, sha e91830c1) on 753bf5ab: the six files above together with tests/record-store, the S4A and S4B note tests, tests/architecture and tests/composition/platform.test.ts, vitest --maxWorkers=5: 55 files, 709 passed, 4 skipped. S2A-notices-overbound 1,734 s (4A rerun alone: 1,704 s), S2A-queue-derived-cards 1,562 s. Log: merge-final-targeted.log.

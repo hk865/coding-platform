@@ -35,6 +35,12 @@ export const S4_NOTE_BY_ANCHOR_LOOKUPS: readonly string[] = [
 ];
 export const S4_NOTE_BY_REVIEW_STATUS_LOOKUP = 's4-note-by-review-status';
 export const S4_NOTE_BY_STAGED_RUN_LOOKUP = 's4-note-by-staged-run';
+/** Slice 4B P7: five ordered path indexes (one per anchor slot), by `ref.projectId`. */
+export const S4B_NOTE_BY_PATH_LOOKUPS: readonly string[] = [
+  's4b-note-by-path-0', 's4b-note-by-path-1', 's4b-note-by-path-2', 's4b-note-by-path-3', 's4b-note-by-path-4',
+];
+/** Slice 4B L10: the one full-text index, on the `NoteHead` comparison text. */
+export const S4_NOTE_TEXT_LOOKUP = 's4-note-text';
 
 /** Event header copied from the Slice 2B run-activity codec. */
 export type NoteEventHeaderV1 = {
@@ -651,6 +657,14 @@ const NOTE_LOOKUP_INDEXES: readonly RecordLookupIndex[] = [
     paths: ['ref.projectId', 'goalId', 'state'] },
   { name: S4_NOTE_BY_STAGED_RUN_LOOKUP, aggregateType: 'NoteHead',
     paths: ['ref.projectId', 'stagedRunKey'] },
+  // Slice 4B P7: the five ordered path indexes, one per anchor slot. Range-read
+  // from a file anchor key and stopped at the directory boundary in code.
+  ...S4B_NOTE_BY_PATH_LOOKUPS.map((name, ordinal) => ({
+    name, aggregateType: 'NoteHead', paths: ['ref.projectId'], orderBy: { path: `anchorKey${String(ordinal)}` },
+  })),
+  // Slice 4B L10: the one full-text registration (`topic`/`conclusion`/`body`).
+  { name: S4_NOTE_TEXT_LOOKUP, aggregateType: 'NoteHead', paths: ['ref.projectId'],
+    text: { paths: ['topic', 'conclusion', 'body'] } },
 ];
 
 export const NOTE_RECORD_SCHEMAS: RecordBackendSchemas = {

@@ -1,5 +1,7 @@
 # 第 4 片规格：记忆核心（注记、当前理解、确定的查找、接进工作）
 
+**后注（4B 合入，lead 2026-10-16）：** 4A、4B 施工和验收中定下的读法在 §9、§10，对 4C 同样有效；和前面各节冲突时以它们为准。
+
 > **2026-10-15 晚：按决定 60、61、62 和 7D 第二稿改了书记范围、提醒身份、按范围计数和 61-5 指引；冻结前 lead 逐行审；又按 7D 勘误 E1–E11 和决定 63 改；又按审查二（19 条）的 lead 裁定改；lead 逐行审过这一稿，补的地方标“审查二 lead 补”；Codex 最后一次快速核对的必改由 lead 改完（标“审查二快速核对第 n 条”）；经你同意又加了一次只看改动的额外核对，它的必改由 lead 改完（标“审查二额外核对 Dn”）。**已冻结（2026-10-15 晚，你确认了测试入口）；2C 合入后 lead 只重核 §0.2、§6 的行号和事实，不改规则。**
 > **2C 合入后的重核（lead，2026-10-15 夜）：** §0.2 各条照旧成立，只是行号移动。4A 施工前的 DSH 通读在 e8b3edae 上逐条核过：F3 的文件在 `src/core/agent-runtime/`，F13 的 `note_review` 在 `src/contracts/goal-decisions.ts`（不在 `decision-contracts.ts:318`），这两处 4C 用时按符号找。lead 在合入 2C 的树上补核了 2C 碰过的：F5 `resolvePath` 在 `lookup-index.ts:445`、`lookupIndexKeyOf` 在 `:476`；F6 `upsertSnapshot` 仍在；F7 `indexGuards`、`indexChanges` 在 `record-store/ports.ts:117`、`:119`；F1 `AggregateRef` 仍没有注记的引用；F13 组合根注入决定来源在 `create-platform.ts:658`。L21 的前提成立：2C 的节点详情里 `notes` 是 `not_available`、原因 `slice_4`（`views/node-detail-reader.ts:1142-1178`）。§6 的文件归属不变：2C 的计数端口已合入，4B 的 RecordStore 改动可以开始排。
 > **状态（2026-10-15 下午）：你已定 §0.1，并对注记格式、查找和校验提了意见（标“用户 2026-10-15 第 n 条”，第 1–12 条，含决定 59）。DSH 照改（`D:/cc-lead-notes/specs/s4/s4-spec-edit-3.md`），lead 逐行审过、改了交叉引用和几处接口（写入结果带 `existingTopics`、核对带 `withSimilar`、`NoteDraftV1` 按种类严格分型、事实解析的每页上限 `NOTE_READ_FACTS_MAX`、`deleted` 字段），并通读了全稿。剩下：2C 合入后重核 §0.2 和 §6，然后冻结。**
@@ -726,3 +728,25 @@ export const SCRIBE_PENDING_THRESHOLD = 10, SCRIBE_UPDATE_DUE_THRESHOLD = 5;
 - **允许表**只有一组 `kept-for` 第 4 片的条目：`renderNoteHeader`（N-16 测它，读者是 4B 的 `NoteSimilarV1.header` 和 4C）。`MEMORY_PAGE_DEFAULT` 等 4B 有读者时再加。
 - **测试的例外**（§7 以外，验收时接受）：存储边界的提交闸门（N-07、N-14，另用于 N-08 的提交时指针冲突和重放的并发情形），只排先后、不造执行、职责、计划或 Session 的事实；一个只让读失败的替身（存储的 `lookup`、`readMany`，范围事实的 `findSessions`、`readArchitectureRevision`）。书记和执行者都按生产的职责解析器认得出的方式建，不注入职责。
 - **留给后面的：** 根目录前缀 `"."` 的书记范围留给 8A（`notes/scribe-scope.ts` 的 `matchingPrefixLength`）；RoleSpec 读失败时职责解析器回 `unknown`（接线包 1 冻结的行为）记为 7D1 的一项；矛盾卡的 `supersede` 一半在 4C；N-13 按暂存的执行列出在第 8 片。
+
+## 10. 4B 施工和验收中的限定（lead，2026-10-16）
+
+4B 施工三轮：DSH 通读后 lead 答复 P1–P14；Codex 一次实现审查、一次快速核对，审查意见由 lead 委托的子 agent 逐条核实（决定 65），lead 裁定 R1–R16 和第 3 轮的两条。下面是定下的读法，对 4B 和以后的 4C 同等有效；和前面各节冲突时以本节为准。原文在证据目录 `reviews/evidence/orchestration-slice-4B-2026-10-16/` 的 `books/`。
+
+- **全文端口只做“与”（P1）：** `searchText` 的结果是每个词都是子串的记录，按 refKey 字节序；`TextSearchRequest`/`TextSearchPage` 照 §2 不加字段。`'any'`、分、`matchedTerms`、`ranking` 都在 `memoryFind` 里算：每个词各查一次端口再合并。T-07、T-09 因此是 NE3 的行。`'all'` 的每一页只调一次端口（从游标里记的最后一个 refKey 往后），返回这一页里筛出来的，不足 `limit` 也行，端口没读完就 `complete: false` 带游标；`'all'` 的结果没有 `ranking` 字段。`'any'` 读到 `TEXT_SEARCH_CANDIDATE_MAX` 条已核对的匹配就停，部分集合是按 refKey 序的前 `cap` 条，两个后端一样。`terms: []` 是 `invalid`。
+- **FTS 表（P5、R8）：** 建表、代号、重建放在 `record-store/sqlite-text-search.ts`，`migrations.ts` 不动。代号存在 `next_fts_meta` 表里：登记的摘要、规则版本，以及这张表维护到的账本游标（每次写索引时在同一个事务里更新）。打开时代号或游标不对 → 在一个事务里从头记录重建；读的时候发现落后 → `unavailable`、原因 `index_not_ready`。FTS5 不可用 → `unsupported`；SQLite 后端多一个可选的 `fullTextProbe`，只有 T-06 和 `memoryFind` 的 `unsupported` 一行用它。
+- **候选从哪来（P7）：** 有锚点读五个锚点索引；有 `pathPrefix` 读 `NoteHead` 上新加的五个有序索引（`anchorKey0`…`anchorKey4`），按目录边界核对；只有种类、话题、状态时读审查状态索引，范围是项目的各目标加项目级槽位。给了几个条件就都要满足。`pathPrefix` 去掉一个结尾的 `/`；空的 → `invalid`、原因 `path_prefix_empty`。
+- **`lookup` 列哪些（R9）：** 这个锚点上 `accepted`、`reviewed`、`pending_review`、`staged` 的头，跨目标的只列 `reviewed` 或你确认过的；不按 `currentEligible` 筛（需复查的照列，`currentEligible: false`），已退役的照列、标 `retired`。`lookup`、`conflicts`、`find` 带锚点时先查锚点在不在。锚点不存在：`NoteMemoryReadResult<T>` 的拒绝带 `anchorCandidates`（最多 `NOTE_ANCHOR_CANDIDATES_MAX` 个），类型在 `model/note-contracts.ts`，`results.ts` 不改。
+- **事实（R1）：** 记录指针在记录存在、当前版本 ≥ 指针版本时算解析得了（旧版本读不到，F6），指针版本更大 → `version_ahead`，`SessionMessage` 也一样；不比摘要。`file` 事实的摘要不是 64 位小写十六进制 → 新原因 `invalid_file_digest`；路径在工作区外 → `forbidden`。`artifact` 事实查原始产物存储里有没有（不读正文、不按授权）：没有 → `not_found`。`kernel_history` 事实查 Run 和它的执行历史定位：没有 Run 或没有定位 → `not_found`，位置超出已观察的范围 → `version_ahead`。读失败一律 `unavailable`。只有格式对的 `commit` 留在 `uncheckedFacts` 而不影响现行结论（P6）。
+- **一次观察、一份预算（R3）：** `NoteCheckV1` 加 `observedFiles`：这一项读过的每个文件（依据文件、文件锚点含符号重解、`file` 事实）和结果。所有这些共用每页 `NOTE_READ_FILES_MAX` 个不同路径的预算，读口传给核对；读口自己不读文件。`coverage` 数这一页看过的全部候选（含被筛掉的），`filesRead` 数尝试过的不同路径（含 `forbidden`、`capacity`、`unavailable`）。
+- **符号（R4）：** 按 `qualifiedName` 重解；存下的范围只用来在同名的几个命中里挑一个，挑不出 → `unchecked`。扫到上限、语言不支持、分析失败或捕获里读不到这个文件 → `unchecked`，不是 `symbol_missing`。`symbol_signature_changed` 照 §9 的名字范围比，公开输入走不到（4A 的已知限制）。
+- **任务和阶段锚点（R5）：** 每个锚点按它自己目标的计划判断。阶段锚点从它的 `planRevision` 到当前的每一个已采用的计划版本里都有这个 `stageId` 才算 live；中间删过、后来同名再加的不算。
+- **游标（R10）：** 普通游标绑完整的调用身份、整份请求（不含游标）、规则版本常量和记录游标；正文游标绑调用身份、`{ noteId, version }`、规则版本和这条注记的头版本，头变了 → `revision_conflict`（钉了版本的也一样），别的对不上 → `cursor_mismatch`，偏移不在 UTF-8 边界 → `cursor_mismatch`。外层游标只绑正文目标 `{ noteId, version }`，不绑正文游标。
+- **历史版本（R11）：** 只有头版本能 `currentEligible: true`（`checkNotes` 本身就这样判）；历史项的存下状态、关系、`confirmedByUser` 取那一版，`conflicting`、`overQuota`、新鲜度和锚点状态按现在算。`history` 先分页再核对。正文挂在 `noteId` 和版本都对的那一项上；正文目标不在这一页（包括被字节上限裁掉）→ 警告 `body_target_not_on_page`。
+- **48 KiB（R12）：** 裁到放得下为止，`readBasis.observedFiles` 和 `coverage` 只按返回的项重算；一项单独就超过 → 只返回它，带警告 `result_over_byte_bound`。
+- **第 5 类提示（R13）：** 文件归哪个模块照 `mapExecutedFilesToModules` 的最长前缀；根目录 `"."` 在 8A 以前不认领任何文件。`file_module_mismatch` 只看 agent 写的注记，比的是写它的 Run 在它绑定的计划里的任务范围。删除的证明是同路径的 `file` 事实，或 `counted` 的执行活动里列了这个路径（`possible` 不算）；证明用的 `file` 事实结果是“已删”时不算需复查；读失败 → `unavailable`。
+- **版本列表（P8、R14、P2）：** `notes.listPlanVersions(ctx, { goalId, limit, cursor })`、`notes.listCatalogVersions(ctx, { limit, cursor })`，每页最多 50（超过 → `invalid`），新的在前。`VersionListPageV1.items[].at` 是 `string | null`：计划给收下时间，目录给 `null`；计划的原因取收下的候选里记的，最初采用的有原因就显示；目录的原因和时间都等 8A 把修订提交和它的事件连上（第 8 片规格后注），现在显示“原因记在目录修订里，第 8 片接上后显示”。
+- **挪到 4C 的（P3）：** `updateDue` 和 `latestTriggerCursor`（M-12）：4B 里 `NoteItemV1.updateDue` 一律 `null`，`UnderstandingStatusV1.updateDue` 是 `boolean | null`、4B 给 `null`。触发的来源由 lead 在 4C 的说明书里定（代码里只有返工带提交游标，任务结束、采用计划、Session 归档只有时间，“重新分组”还没有）。
+- **平台上的 `notes`（R16）：** 持有者多了六种读、`checkNotes`（L22 的第二个调用点，4C 接 `record_note` 和 `notes/write`）和两个版本列表；`noteLimits` 放宽到核对和读法的常量。写入时依据路径带 `../` → `invalid`、原因 `basis_file_forbidden`（R15，改了 4A 的 `note-service.ts`）。
+- **测不到的（验收时接受）：** 删模块（M-15 的 `module_removed`、M-16 的“模块没了但有头”、M-02 的删除一半）：今天的目录修订不让删模块（`catalog-service.ts:671–673`），第 8 片接上以后补测，不放松这道守卫；`counted` 执行活动作删除证明的一例：没有公开的入口造它；消息事实的 `version_ahead`：公开的夹具造不出一条已有的消息，改法 lead 看过代码；M-10“旧版本没有原因”的一半：公开服务造不出来。
+- **测试的例外：** §7 的几个替身照旧；T-06 和 `memoryFind` 的 `unsupported` 用 `fullTextProbe`；M-07 的并发一半复用 4A 的交错提交夹具（没改它）；4A 的 `tests/helpers/S4A-note-fixture.ts` 加了一处只转发选项的改动，4A 的测试照过。

@@ -20,7 +20,7 @@ import type { RunRef } from '../../../contracts/dispatch.js';
 import type {
   NoteAnchorFactsDeps, NoteAnchorWorkspace, ResolvedNoteAnchors,
 } from './note-anchors.js';
-import { anchorFormatProblem, anchorKeyOf, conclusionProblem, normalizePath, resolveNoteAnchors, topicKeyOf, topicProblem } from './note-anchors.js';
+import { anchorFormatProblem, anchorKeyOf, conclusionProblem, isSafeRelativePath, normalizePath, resolveNoteAnchors, topicKeyOf, topicProblem } from './note-anchors.js';
 import type { ScribeScope } from './scribe-scope.js';
 import { sourceIsAuthorOf } from './scribe-scope.js';
 import { mapStoreFailure, readAllHeads, type ReadFailureCode } from './note-read-model.js';
@@ -694,6 +694,9 @@ export function createNoteService(deps: NoteServiceDependencies): NoteWritePort 
     for (const rawPath of draft.basisFiles) {
       const path = typeof rawPath === 'string' ? normalizePath(rawPath) : rawPath;
       if (typeof path !== 'string') return rejectedInput(input, 'invalid', 'basis_file_missing');
+      // R15/L11: a path that escapes the workspace (`../…`) is a class-1 shape
+      // problem, not a transient read failure.
+      if (!isSafeRelativePath(path)) return rejectedInput(input, 'invalid', 'basis_file_forbidden');
       const read = await deps.workspace.readWorkspace(ctx, { workspace: { aggregateType: 'Workspace',
         projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? '' }, path, maxBytes: basisFileMaxBytes,
         version: { kind: 'working_tree' } });

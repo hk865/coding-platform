@@ -66,8 +66,11 @@ import { NOTE_RECORD_SCHEMAS } from '../core/work-graph/persistence/note-record-
 import { createNoteService } from '../core/work-graph/notes/note-service.js';
 import type { NoteRunFactResolver } from '../core/work-graph/notes/note-service.js';
 import { createNoteReadModel } from '../core/work-graph/notes/note-read-model.js';
+import { createVersionLists } from '../core/work-graph/notes/note-version-lists.js';
 import { createScribeScope } from '../core/work-graph/notes/scribe-scope.js';
-import type { NoteReadPort, NoteScopeReadPort, NoteWritePort } from '../core/work-graph/model/note-contracts.js';
+import { createNoteCheck } from '../core/work-graph/views/note-views.js';
+import type { NoteCheckPort, NoteMemoryReadPort, NoteReadPort, NoteScopeReadPort,
+  NoteWritePort } from '../core/work-graph/model/note-contracts.js';
 import type { SourceProvider } from '../core/workspace/ports.js';
 import { decodeRun } from '../core/work-graph/materials/run-snapshot-decoder.js';
 import type { EvidencePort } from '../core/work-graph/model/evidence-contracts.js';
@@ -247,8 +250,17 @@ export type TargetPlatformOptions = {
    * Slice 4A: the soft note limits are injectable constants (spec §2, DESIGN
    * §9.3). Production never passes this; a test shrinks them to exercise the
    * quota path without writing hundreds of notes.
+   *
+   * Slice 4B round 2 (R16): the same option also carries the check and
+   * read-model limits, because one call spreads it into the note service, the
+   * note check and the read model. It is the only way a test can reach the
+   * limits of the production `platform.notes` holder.
    */
-  noteLimits?: { anchorQuota?: number; goalQuota?: number; symbolHitsMax?: number };
+  noteLimits?: {
+    anchorQuota?: number; goalQuota?: number; symbolHitsMax?: number; basisFileMaxBytes?: number;
+    readFilesMax?: number; readFactsMax?: number; symbolRecheckMax?: number;
+    textSearchCandidateMax?: number; textSearchMaxTerms?: number; resultMaxBytes?: number;
+  };
 };
 
 /** The composition-owned service identity. It is used only to execute trusted
@@ -1285,9 +1297,16 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       now, eventId: randomUUID, newId: randomUUID,
       ...(options.noteLimits === undefined ? {} : options.noteLimits),
     });
-    const noteReads: NoteReadPort = createNoteReadModel({ records: backend.records, plans: planService,
-      architecture: catalog, workspace: noteWorkspace,
+    // Slice 4B L22/P8: `views` owns the one derivation implementation and the
+    // composition root injects it into the read model (`notes` never imports
+    // `views`). The version lists live in `notes/note-version-lists.ts`.
+    const noteCheck: NoteCheckPort = createNoteCheck({ records: backend.records, plans: planService,
+      architecture: catalog, workspace: noteWorkspace, artifacts: bodies,
+      ...(options.noteLimits === undefined ? {} : { limits: options.noteLimits }) });
+    const noteReads: NoteReadPort & NoteMemoryReadPort = createNoteReadModel({ records: backend.records,
+      plans: planService, architecture: catalog, workspace: noteWorkspace, check: noteCheck,
       ...(options.noteLimits === undefined ? {} : options.noteLimits) });
+    const noteVersions = createVersionLists({ records: backend.records });
     // The ONE owner group 4C's routes bind. Each operation is selected through
     // the port (a real production read of the surface) before the group is built.
     const writeNote = noteWrite.writeNote;
@@ -1295,10 +1314,23 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     const withdrawNote = noteWrite.withdrawNote;
     const readNote = noteReads.readNote;
     const listByAnchor = noteReads.listByAnchor;
+    const memoryLookup = noteReads.memoryLookup;
+    const memoryNeighbors = noteReads.memoryNeighbors;
+    const memoryHistory = noteReads.memoryHistory;
+    const memoryConflicts = noteReads.memoryConflicts;
+    const memoryFind = noteReads.memoryFind;
+    const memoryStale = noteReads.memoryStale;
+    const { listPlanVersions, listCatalogVersions } = noteVersions;
     const countCurrentNotes = scribeScope.countCurrentNotes;
-    const notes: NoteWritePort & NoteReadPort & NoteScopeReadPort = {
-      writeNote, reviewNote, withdrawNote, readNote, listByAnchor, countCurrentNotes,
-    };
+    // Slice 4B R16/L22: the second `checkNotes` call site (the write envelope and
+    // 4C's routes bind it). Exposed now so NE3 tests run through the real holder.
+    const checkNotes = noteCheck.checkNotes;
+    const notes: NoteWritePort & NoteReadPort & NoteMemoryReadPort & NoteScopeReadPort & NoteCheckPort
+      & typeof noteVersions = {
+        writeNote, reviewNote, withdrawNote, readNote, listByAnchor, countCurrentNotes, checkNotes,
+        memoryLookup, memoryNeighbors, memoryHistory, memoryConflicts, memoryFind, memoryStale,
+        listPlanVersions, listCatalogVersions,
+      };
     // Slice 1 (spec §3.3): the responsibility port's three public writes. Every
     // member is read here so the public `closeTerminalResponsibility` write (a
     // task's terminal relationship close) is part of the production assembly.

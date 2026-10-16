@@ -11,6 +11,12 @@ export type RecordLookupIndex = {
    * an `'integer'` index orders by the numeric JSON integer value.
    */
   readonly orderBy?: { readonly path: string; readonly valueType?: 'text' | 'integer' };
+  /**
+   * Slice 4B L10: present only on a full-text index. `paths` are the record
+   * fields whose comparison text is searched (`topic`, `conclusion`, `body`).
+   * The index's own `paths` remain the equality prefix (the project id).
+   */
+  readonly text?: { readonly paths: readonly string[] };
 };
 export type LookupValue = string | number | boolean | null;
 export type RecordLookupRequest = {
@@ -76,4 +82,44 @@ export type RecordCountRequest = {
 export type RecordCountResult = { count: number; readThrough: CommitCursor | null };
 export interface RecordCountPort {
   countLookup(request: RecordCountRequest): Promise<StoreResult<RecordCountResult>>;
+}
+
+// --------------------------------------------------------------------------
+// Full-text port (Slice 4B L10)
+// --------------------------------------------------------------------------
+
+/**
+ * Slice 4B L10 full-text port bounds. RecordStore owns these because the port
+ * lives here and RecordStore imports nothing from WorkGraph (lead P14); the
+ * read model's own ranking constants live in WorkGraph's `note-contracts.ts`.
+ */
+export const TEXT_SEARCH_PAGE_MAX = 100;
+export const TEXT_SEARCH_CANDIDATE_MAX = 1000;
+export const TEXT_SEARCH_MAX_TERMS = 8;
+export const TEXT_SEARCH_TERM_MIN = 2;
+export const TEXT_SEARCH_TERM_MAX = 64;
+
+/**
+ * Slice 4B L10. `values` are the registered equality prefix values (the project
+ * id); `terms` are 1..8 normalized terms of 2..64 code points without
+ * whitespace. The port answers the records whose comparison text contains every
+ * term as a substring (the AND rule), in refKey byte order.
+ */
+export type TextSearchRequest = {
+  index: string;
+  values: readonly string[];
+  terms: readonly string[];
+  limit: number;
+  after?: string;
+};
+
+export type TextSearchPage = {
+  records: EncodedRecord[];
+  next: string | null;
+  complete: boolean;
+  readThrough: CommitCursor | null;
+};
+
+export interface RecordTextSearchPort {
+  searchText(request: TextSearchRequest): Promise<StoreResult<TextSearchPage>>;
 }

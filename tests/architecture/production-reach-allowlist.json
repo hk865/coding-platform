@@ -932,10 +932,10 @@
       "note": "the frozen §2B L15 activity/backfill route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the new workbench UI; nothing in src/ names the alias at runtime"
     },
     {
-      "file": "src/contracts/note.ts",
-      "name": "renderNoteHeader",
+      "file": "src/core/work-graph/model/note-contracts.ts",
+      "name": "NOTE_BODY_PAGE_MAX_BYTES",
       "reason": "kept-for",
-      "note": "kept for slice 4 of the orchestration design (4A §2 declares it; 4B NoteSimilarV1.header, 4C notes/list NoteIndexRowV1.label and the decision card summary render it). 4A N-16 tests it directly; no 4A production path renders a header"
+      "note": "kept for slice 4 of the orchestration design; the body-page reader is the 4C notes/* body route, which bounds a requested body page by NOTE_BODY_PAGE_MAX_BYTES (4 KiB); 4B's own body paging slices at NOTE_BODY_PAGE_BYTES (2 KiB) and never needs the max"
     }
   ]
 }

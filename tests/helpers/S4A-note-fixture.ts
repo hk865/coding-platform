@@ -37,6 +37,19 @@ import { createTargetPlatform } from '../../src/composition/create-platform.js';
 
 export type S4ANoteFixtureKind = 'memory' | 'sqlite';
 
+/**
+ * Slice 4B round 2 (R16): the injectable note limits the composition root
+ * forwards. This is the one additive change to this 4A fixture: the existing
+ * top-level `anchorQuota`/`goalQuota`/`symbolHitsMax` options keep working, and
+ * a caller may also pass any of these through `noteLimits` (the read-model
+ * limits reach `platform.notes`' own read model).
+ */
+export type S4ANoteLimits = {
+  anchorQuota?: number; goalQuota?: number; symbolHitsMax?: number; basisFileMaxBytes?: number;
+  readFilesMax?: number; readFactsMax?: number; symbolRecheckMax?: number;
+  textSearchCandidateMax?: number; textSearchMaxTerms?: number; resultMaxBytes?: number;
+};
+
 let suffixCounter = 0;
 
 export const S4A_AT = '2026-10-15T00:00:00.000Z';
@@ -82,7 +95,7 @@ function bindingFor(role: S4ARole, id: string): RoleBindingRefV1 {
 }
 
 export async function createS4ANoteFixture(kind: S4ANoteFixtureKind,
-  options: { anchorQuota?: number; goalQuota?: number; symbolHitsMax?: number } = {}): Promise<S4ANoteFixture> {
+  options: { anchorQuota?: number; goalQuota?: number; symbolHitsMax?: number; noteLimits?: S4ANoteLimits } = {}): Promise<S4ANoteFixture> {
   const directory = await mkdtemp(join(tmpdir(), `s4a-note-${kind}-`));
   const root = join(directory, 'workspace');
   await mkdir(join(root, 'src/a/one'), { recursive: true });
@@ -113,16 +126,19 @@ export async function createS4ANoteFixture(kind: S4ANoteFixtureKind,
       return { status: 'ready', value: { subjectKey: 's4a-host', permissionRevision: 's4a-grant-1', allowsRead: () => true } };
     },
   };
+  const noteLimits: S4ANoteLimits = {
+    ...(options.noteLimits ?? {}),
+    ...(options.anchorQuota === undefined ? {} : { anchorQuota: options.anchorQuota }),
+    ...(options.goalQuota === undefined ? {} : { goalQuota: options.goalQuota }),
+    ...(options.symbolHitsMax === undefined ? {} : { symbolHitsMax: options.symbolHitsMax }),
+  };
   const platform = await createTargetPlatform({
     storage: kind === 'memory' ? { kind: 'memory' } : { kind: 'sqlite', directory: join(directory, 'storage') },
     workspace: bindings,
     now,
     kernelStores: { entries: [{ adapterId: 's4a-kernel', storeKey: 's4a-kernel-store', workspace: scope,
       databasePath: join(directory, 'kernel.sqlite') }] },
-    ...(options.anchorQuota === undefined && options.goalQuota === undefined && options.symbolHitsMax === undefined ? {}
-      : { noteLimits: { ...(options.anchorQuota === undefined ? {} : { anchorQuota: options.anchorQuota }),
-        ...(options.goalQuota === undefined ? {} : { goalQuota: options.goalQuota }),
-        ...(options.symbolHitsMax === undefined ? {} : { symbolHitsMax: options.symbolHitsMax }) } }),
+    ...(Object.keys(noteLimits).length === 0 ? {} : { noteLimits }),
   });
 
   const hostCtx = (): CoreCallContext => ({ projectId: PROJECT, workspaceId: WORKSPACE,

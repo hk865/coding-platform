@@ -33,18 +33,28 @@ import { initRecordStoreSchema } from "./migrations.js";
 import { applyEventSchema, applyRecordSchema, bindPreparedRecords, checkPersistedIdempotencyRecord, committedReceiptFromIdempotency, corruptFailure, createRecordSchemaRegistry, decodeRecordBody, decodeRefKey, decodeStoredEventBody, guardIsSatisfied, idempotencyConflictFailure, invalidFailure, isNonEmptyString, messageOf, notFoundFailure, planPreparedCommit, revisionConflictFailure, uniqueConflictFailure, unsupportedFailure, type PlannedCommit, type RecordSchemaRegistry } from "./record-codec.js";
 import { decodeGuardedRevision } from "./guarded-revision.js";
 import { findClaimConflicts, ledgerHorizonMatches, RejectedInsideTransaction, type ClaimConflict } from "./commit-extensions.js";
-import { createRecordLookupRegistry, decodeCountRequest, decodeLookupRequest, decodeOrderedLookupRequest, lookupMatcherOf, orderedRangePlanOf, type DecodedCountRequest, type DecodedLookupRequest, type DecodedOrderedLookupRequest, type RecordLookupRegistry } from "./lookup-index.js";
-import type { LookupValue, OrderedLookupRequest, RecordCountPort, RecordCountRequest, RecordCountResult, RecordOrderedLookupPage, RecordOrderedLookupPort, RecordLookupPage, RecordLookupPort, RecordLookupRequest } from "./lookup-ports.js";
+import { createRecordLookupRegistry, decodeCountRequest, decodeLookupRequest, decodeOrderedLookupRequest, decodeTextSearchRequest, lookupMatcherOf, orderedRangePlanOf, searchTextFrom, textSearchMatches, type DecodedCountRequest, type DecodedLookupRequest, type DecodedOrderedLookupRequest, type RecordLookupRegistry } from "./lookup-index.js";
+import { TEXT_SEARCH_CANDIDATE_MAX } from "./lookup-ports.js";
+import type { LookupValue, OrderedLookupRequest, RecordCountPort, RecordCountRequest, RecordCountResult, RecordOrderedLookupPage, RecordOrderedLookupPort, RecordLookupPage, RecordLookupPort, RecordLookupRequest, RecordTextSearchPort, TextSearchPage, TextSearchRequest } from "./lookup-ports.js";
+import { createSqliteTextSearch } from "./sqlite-text-search.js";
 import type { DecodeResult, GoalRecordTransactionPort, PersistedIdempotencyRecord, PreparedCommit, RecordBackendSchemas, RecordBatchRead, RecordGuard, StoreCommitReceipt, StoreResult, StoredVersion, UniqueClaimChange, EncodedDomainEvent, EncodedRecord } from "./ports.js";
 
 export type SqliteRecordBackendOptions = {
   path: string;
   schemas: RecordBackendSchemas;
   beforeWrite?: () => void;
+  /**
+   * Slice 4B L10 (lead P5): the FTS5 availability probe, injectable so a test
+   * can force the `unsupported` path. The default is the real temporary-table
+   * probe. It is the only double the spec allows here (spec §7).
+   */
+  fullTextProbe?: () => boolean;
+  /** Slice 4B L10 checked-candidate cap; defaults to the port constant. */
+  textSearchCandidateMax?: number;
 };
 
 export type SqliteRecordBackend = {
-  readonly records: GoalRecordTransactionPort & RecordLookupPort & RecordOrderedLookupPort & RecordCountPort;
+  readonly records: GoalRecordTransactionPort & RecordLookupPort & RecordOrderedLookupPort & RecordCountPort & RecordTextSearchPort;
   close(): Promise<void>;
 };
 
@@ -143,6 +153,14 @@ export function createSqliteRecordBackend(options: SqliteRecordBackendOptions): 
   if (beforeWrite !== undefined && typeof beforeWrite !== "function") {
     throw new Error("SqliteRecordBackend: beforeWrite must be a function");
   }
+  const fullTextProbe = options.fullTextProbe;
+  if (fullTextProbe !== undefined && typeof fullTextProbe !== "function") {
+    throw new Error("SqliteRecordBackend: fullTextProbe must be a function");
+  }
+  const textSearchCandidateMax = options.textSearchCandidateMax ?? TEXT_SEARCH_CANDIDATE_MAX;
+  if (!Number.isSafeInteger(textSearchCandidateMax) || textSearchCandidateMax < 1) {
+    throw new Error("SqliteRecordBackend: textSearchCandidateMax must be a positive safe integer");
+  }
 
   // 1. Registration is verified BEFORE the database is touched: a bad registry
   //    must not create/open a file or run any DDL.
@@ -153,10 +171,14 @@ export function createSqliteRecordBackend(options: SqliteRecordBackendOptions): 
   //    compatibility or lookup index creation) closes it and rethrows the
   //    ORIGINAL error synchronously.
   const db = new DatabaseSync(path);
+  let textSearch!: ReturnType<typeof createSqliteTextSearch>;
   try {
     db.exec("PRAGMA busy_timeout = 5000");
     initRecordStoreSchema(db);
     createLookupIndexes(db, lookups);
+    // Slice 4B L10 (P5): the FTS5 candidate tables, created or rebuilt here and
+    // kept current inside the one snapshot write transaction below.
+    textSearch = createSqliteTextSearch(db, lookups, fullTextProbe);
   } catch (error) {
     try {
       db.close();
@@ -447,6 +469,10 @@ export function createSqliteRecordBackend(options: SqliteRecordBackendOptions): 
     // 6. Writes, all inside this one transaction. The real last-event cursor is
     //    bound (and the final schema re-validated) before any snapshot or claim
     //    is written; a rejection throws so the transaction fully rolls back.
+    //    The ledger's pre-commit maximum is read before the append so the
+    //    full-text maintained-through cursor advances only over this commit's
+    //    events, never over a gap another writer left (R8).
+    const previousMax = readThrough();
     const written = appendEvents(planned.events.map((decoded) => ({ eventId: decoded.event.eventId, json: decoded.event.json })));
     const boundRecords = bindPreparedRecords(planned.records, planned.commitCursorBindings, written.commitCursor, registry);
     if (boundRecords.status === "invalid") {
@@ -459,9 +485,14 @@ export function createSqliteRecordBackend(options: SqliteRecordBackendOptions): 
       // index is computed from this text, so it must encode the same value the
       // JS candidate extraction uses (duplicate keys last-wins, JS numbers).
       upsertSnapshot(record.record.refKey, JSON.stringify(record.parsed));
+      textSearch.indexRecord(record.record.refKey, record.aggregateType, record.parsed);
       versions.push({ refKey: record.record.refKey, revision: record.record.revision });
       aggregateRevisions.push({ ref: record.ref, revision: record.record.revision });
     }
+    textSearch.advanceThrough(
+      previousMax === null ? null : seqOfCommitCursor(previousMax),
+      seqOfCommitCursor(written.commitCursor),
+    );
     for (const claim of planned.claims) applyClaim(claim);
     persistIdempotency(planned.identityKey, {
       fingerprint: planned.fingerprint as CommandFingerprint,
@@ -763,7 +794,68 @@ export function createSqliteRecordBackend(options: SqliteRecordBackendOptions): 
     return withReadTransaction(() => countInside(decoded.value));
   };
 
-  const records: GoalRecordTransactionPort & RecordLookupPort & RecordOrderedLookupPort & RecordCountPort = {
+  /**
+   * Slice 4B L10 full-text read: the FTS5 window query is only a candidate
+   * superset; every candidate is rechecked against the substring rule.
+   */
+  const searchText = async (request: TextSearchRequest): Promise<StoreResult<TextSearchPage>> => {
+    assertOpen();
+    if (!textSearch.available) {
+      return unsupportedFailure("SQLite FTS5 is not available for full-text search");
+    }
+    const decoded = decodeTextSearchRequest(lookups, request);
+    if (decoded.status === "unsupported") return unsupportedFailure(decoded.reason);
+    if (decoded.status === "invalid") return invalidFailure(decoded.reason);
+    return withReadTransaction(() => {
+      const definition = decoded.value.index;
+      // R8: the candidate table must be maintained through the ledger's current
+      // maximum. A gap (an unregistered open, an unavailable probe, another
+      // writer) is `unavailable` / `index_not_ready`, never a silently partial
+      // answer.
+      if (!textSearch.isCurrent(definition.name)) {
+        return { status: "rejected", code: "unavailable", reason: "index_not_ready" };
+      }
+      const textPaths = definition.text!.paths;
+      const page = textSearch.candidates(
+        definition,
+        decoded.value.values,
+        decoded.value.windows,
+        decoded.value.after,
+        textSearchCandidateMax,
+      );
+      const matched: string[] = [];
+      let position = 0;
+      for (; position < page.refKeys.length; position += 1) {
+        if (matched.length >= decoded.value.limit) break;
+        const refKey = page.refKeys[position]!;
+        const row = db.prepare("SELECT snapshot_json FROM snapshots WHERE ref_key = ?").get(refKey) as
+          | SnapshotRow
+          | undefined;
+        if (row === undefined) return corruptFailure(`text search candidate ${refKey} has no snapshot`);
+        if (typeof row.snapshot_json !== "string") return corruptFailure(`snapshot ${refKey} is not stored as text`);
+        let body: Record<string, unknown>;
+        try {
+          body = JSON.parse(row.snapshot_json) as Record<string, unknown>;
+        } catch (error) {
+          return corruptFailure(`snapshot ${refKey} is damaged: ${messageOf(error)}`);
+        }
+        if (textSearchMatches(searchTextFrom(body, textPaths), decoded.value.terms)) matched.push(refKey);
+      }
+      const exhausted = !page.hasMore && position >= page.refKeys.length;
+      const next = exhausted ? null : (page.refKeys[position - 1] ?? null);
+      const read = readManyInside(matched);
+      if (read.status !== "ready") return corruptFailure(read.reason);
+      if (read.value.missing.length > 0) {
+        return corruptFailure(`text search candidate ${read.value.missing[0]} has no snapshot`);
+      }
+      return {
+        status: "ready",
+        value: { records: read.value.records, next, complete: exhausted, readThrough: read.value.readThrough },
+      };
+    });
+  };
+
+  const records: GoalRecordTransactionPort & RecordLookupPort & RecordOrderedLookupPort & RecordCountPort & RecordTextSearchPort = {
     readMany: async (refKeys: readonly string[]): Promise<StoreResult<RecordBatchRead>> => {
       assertOpen();
       if (!Array.isArray(refKeys) || !refKeys.every((key) => isNonEmptyString(key))) {
@@ -780,6 +872,7 @@ export function createSqliteRecordBackend(options: SqliteRecordBackendOptions): 
     lookup,
     lookupOrdered,
     countLookup,
+    searchText,
   };
 
   const close = async (): Promise<void> => {

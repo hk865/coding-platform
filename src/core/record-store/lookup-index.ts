@@ -9,7 +9,7 @@
  * This module performs no I/O and opens no database. It imports no WorkGraph
  * module and never exposes SQL, a connection or mutable state.
  */
-import type { LookupValue, OrderedLookupValue, RecordLookupIndex } from './lookup-ports.js';
+import { TEXT_SEARCH_MAX_TERMS, TEXT_SEARCH_PAGE_MAX, TEXT_SEARCH_TERM_MAX, TEXT_SEARCH_TERM_MIN, type LookupValue, type OrderedLookupValue, type RecordLookupIndex } from './lookup-ports.js';
 import { decodeRefKey, isJsonObject, isNonEmptyString } from './record-codec.js';
 import type { RecordSchemaRegistry } from './record-codec.js';
 
@@ -20,6 +20,11 @@ export type RegisteredLookupIndex = {
   readonly paths: readonly string[];
   /** Validated ordering column; `valueType` is normalized to `'text'`. */
   readonly orderBy?: { readonly path: string; readonly valueType: 'text' | 'integer' };
+  /**
+   * Slice 4B L10: the validated text paths of a full-text index. Present only
+   * when the registration carried `text`.
+   */
+  readonly text?: { readonly paths: readonly string[] };
 };
 
 /** Order value types that a registered `orderBy.valueType` may name (L1, D8). */
@@ -98,9 +103,24 @@ export function createRecordLookupRegistry(
       }
       orderBy = Object.freeze({ path: orderPath, valueType: (rawValueType ?? 'text') as OrderedValueType });
     }
-    const copy: RegisteredLookupIndex = Object.freeze(orderBy === undefined
-      ? { name, aggregateType, paths: Object.freeze(copied) }
-      : { name, aggregateType, paths: Object.freeze(copied), orderBy });
+    const rawText = entry['text'];
+    let text: { paths: readonly string[] } | undefined;
+    if (rawText !== undefined) {
+      if (!isJsonObject(rawText)) registrationError(`lookup index ${name} text must be an object`);
+      const textPaths = rawText['paths'];
+      if (!Array.isArray(textPaths) || textPaths.length === 0) {
+        registrationError(`lookup index ${name} text.paths must be a non-empty array`);
+      }
+      const copiedText = (textPaths as readonly unknown[]).map((textPath) => validatePath(textPath, name));
+      text = Object.freeze({ paths: Object.freeze(copiedText) });
+    }
+    const copy: RegisteredLookupIndex = Object.freeze({
+      name,
+      aggregateType,
+      paths: Object.freeze(copied),
+      ...(orderBy === undefined ? {} : { orderBy }),
+      ...(text === undefined ? {} : { text }),
+    });
     indexes.push(copy);
     byName.set(name, copy);
   }
@@ -591,4 +611,171 @@ export function matchesOrderedRequest(
     }
   }
   return true;
+}
+
+// --------------------------------------------------------------------------
+// Full-text comparison text and term windows (Slice 4B L10)
+// --------------------------------------------------------------------------
+
+const WHITE_SPACE = /\p{White_Space}/u;
+
+/** L10: NFC, then ASCII letters lowercased, iterated by code point. */
+export function normalizeSearchText(text: string): string {
+  return text.normalize('NFC').replace(/[A-Z]/g, (letter) => letter.toLowerCase());
+}
+
+/**
+ * L10: every overlapping two-code-point window of `text` that contains no
+ * whitespace, encoded as one ASCII token `b<hex1>_<hex2>` (lowercase code
+ * point hex). Duplicates are removed so the result is the window set.
+ */
+export function bigramWindows(text: string): readonly string[] {
+  const points = [...text];
+  const windows = new Set<string>();
+  for (let position = 0; position + 1 < points.length; position += 1) {
+    const left = points[position]!;
+    const right = points[position + 1]!;
+    if (WHITE_SPACE.test(left) || WHITE_SPACE.test(right)) continue;
+    windows.add(`b${left.codePointAt(0)!.toString(16)}_${right.codePointAt(0)!.toString(16)}`);
+  }
+  return Object.freeze([...windows]);
+}
+
+/**
+ * L10 comparison text: the registered text paths joined with `"\n"` and then
+ * normalized once. A missing, null, composite or non-text value contributes the
+ * empty string (the schemas store these fields as text).
+ */
+export function searchTextFrom(body: Record<string, unknown>, paths: readonly string[]): string {
+  const parts: string[] = [];
+  for (const path of paths) {
+    const resolved = resolvePath(body, path);
+    parts.push(resolved.kind === 'value' && typeof resolved.value === 'string' ? resolved.value : '');
+  }
+  return normalizeSearchText(parts.join('\n'));
+}
+
+/** The union of every term's window set, used as the SQLite candidate query. */
+function windowsForTerms(terms: readonly string[]): readonly string[] {
+  const windows = new Set<string>();
+  for (const term of terms) {
+    for (const window of bigramWindows(term)) windows.add(window);
+  }
+  return Object.freeze([...windows]);
+}
+
+/**
+ * L10 substring rule for one candidate's comparison text: every term must be a
+ * substring (the `'all'` rule). This is the one place the backends call it.
+ */
+export function textSearchMatches(comparisonText: string, terms: readonly string[]): boolean {
+  return terms.every((term) => comparisonText.includes(term));
+}
+
+// --------------------------------------------------------------------------
+// Full-text request criteria (Slice 4B L10)
+// --------------------------------------------------------------------------
+
+export type DecodedTextSearchRequest = {
+  readonly index: RegisteredLookupIndex;
+  readonly values: readonly string[];
+  readonly terms: readonly string[];
+  readonly windows: readonly string[];
+  readonly after: string | null;
+  readonly limit: number;
+};
+
+export type TextSearchRequestDecode =
+  | { readonly status: 'decoded'; readonly value: DecodedTextSearchRequest }
+  | { readonly status: 'unsupported'; readonly reason: string }
+  | { readonly status: 'invalid'; readonly reason: string };
+
+/**
+ * The one full-text request rule for both backends. Shape and bound checks live
+ * here so the two backends cannot disagree.
+ */
+export function decodeTextSearchRequest(registry: RecordLookupRegistry, request: unknown): TextSearchRequestDecode {
+  if (!isJsonObject(request)) return { status: 'invalid', reason: 'text search request must be an object' };
+  const indexName = request['index'];
+  if (!isNonEmptyString(indexName)) return { status: 'invalid', reason: 'text search index must be a non-empty string' };
+  const index = registry.byName(indexName);
+  if (index === undefined) return { status: 'unsupported', reason: `no lookup index registered as ${indexName}` };
+  if (index.text === undefined) {
+    return { status: 'unsupported', reason: `lookup index ${index.name} is not registered as a full-text index` };
+  }
+  const rawValues = request['values'];
+  if (!Array.isArray(rawValues)) return { status: 'invalid', reason: 'text search values must be an array' };
+  const values = rawValues as readonly unknown[];
+  if (values.length !== index.paths.length) {
+    return {
+      status: 'invalid',
+      reason: `text search index ${index.name} requires exactly ${String(index.paths.length)} values`,
+    };
+  }
+  for (const value of values) {
+    if (!isNonEmptyString(value)) {
+      return { status: 'invalid', reason: 'text search values must all be non-empty strings' };
+    }
+  }
+  const rawTerms = request['terms'];
+  if (!Array.isArray(rawTerms)) return { status: 'invalid', reason: 'text search terms must be an array' };
+  const rawTermList = rawTerms as readonly unknown[];
+  if (rawTermList.length < 1 || rawTermList.length > TEXT_SEARCH_MAX_TERMS) {
+    return {
+      status: 'invalid',
+      reason: `text search requires 1 to ${String(TEXT_SEARCH_MAX_TERMS)} terms`,
+    };
+  }
+  const terms: string[] = [];
+  for (const rawTerm of rawTermList) {
+    if (typeof rawTerm !== 'string') return { status: 'invalid', reason: 'text search terms must be strings' };
+    const term = normalizeSearchText(rawTerm);
+    const length = [...term].length;
+    if (length < TEXT_SEARCH_TERM_MIN || length > TEXT_SEARCH_TERM_MAX) {
+      return {
+        status: 'invalid',
+        reason: `a text search term must be ${String(TEXT_SEARCH_TERM_MIN)} to ${String(TEXT_SEARCH_TERM_MAX)} code points`,
+      };
+    }
+    if (WHITE_SPACE.test(term)) {
+      return { status: 'invalid', reason: 'a text search term must not contain whitespace' };
+    }
+    terms.push(term);
+  }
+  const limit = request['limit'];
+  if (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1 || limit > TEXT_SEARCH_PAGE_MAX) {
+    return {
+      status: 'invalid',
+      reason: `text search limit must be an integer between 1 and ${String(TEXT_SEARCH_PAGE_MAX)}`,
+    };
+  }
+  const rawAfter = request['after'];
+  let after: string | null = null;
+  if (rawAfter !== undefined) {
+    if (typeof rawAfter !== 'string') {
+      return { status: 'invalid', reason: 'text search after must be a full canonical refKey' };
+    }
+    const decodedKey = decodeRefKey(rawAfter);
+    if (decodedKey.status === 'invalid') {
+      return { status: 'invalid', reason: `text search after is not a canonical refKey: ${decodedKey.reason}` };
+    }
+    if (decodedKey.value.aggregateType !== index.aggregateType) {
+      return {
+        status: 'invalid',
+        reason: `text search after aggregateType ${decodedKey.value.aggregateType} does not match ${index.aggregateType}`,
+      };
+    }
+    after = rawAfter;
+  }
+  return {
+    status: 'decoded',
+    value: Object.freeze({
+      index,
+      values: Object.freeze([...values]) as readonly string[],
+      terms: Object.freeze(terms),
+      windows: windowsForTerms(terms),
+      after,
+      limit,
+    }),
+  };
 }

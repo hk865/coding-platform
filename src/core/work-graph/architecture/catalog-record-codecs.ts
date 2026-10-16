@@ -22,6 +22,7 @@ import type { ModuleRef } from '../../../contracts/core/identity.js';
 import type {
   DecodeResult, EncodedDomainEvent, EncodedRecord, EncodedRecordSchema, RecordBackendSchemas,
 } from '../../record-store/ports.js';
+import type { RecordLookupIndex } from '../../record-store/lookup-ports.js';
 import { hasCycleInEdges } from '../model/task-index.js';
 import type {
   AdoptedArchitecture, ArchitectureBaselineContentV1, ArchitectureBaselineRevisionSnapshot,
@@ -32,6 +33,8 @@ import type {
 export const ARCHITECTURE_CATALOG_SCHEMA_ID = 'ArchitectureCatalog@1';
 export const ARCHITECTURE_CATALOG_ADOPTED_EVENT = 'ArchitectureCatalogAdopted';
 export const ARCHITECTURE_CATALOG_EVENT_VERSION = 1;
+/** Slice 4B L19/P8: catalog revisions ordered by revision number, per project. */
+export const S4B_CATALOG_REVISION_BY_PROJECT_LOOKUP = 's4b-catalog-revision-by-project';
 
 /** Replay payload of one ArchitectureCatalogAdopted event. */
 export type ArchitectureCatalogAdoptedEventV1 = {
@@ -506,6 +509,14 @@ const ARCHITECTURE_CATALOG_RECORD_SCHEMA: EncodedRecordSchema = {
   schemaId: ARCHITECTURE_CATALOG_SCHEMA_ID, aggregateType: 'ArchitectureCatalog', validate: validateArchitectureCatalog,
 };
 
+/** Slice 4B L19: one project's `ArchitectureCatalog` rows, ascending by content revision. */
+const CATALOG_REVISION_BY_PROJECT_LOOKUP: RecordLookupIndex = {
+  name: S4B_CATALOG_REVISION_BY_PROJECT_LOOKUP,
+  aggregateType: 'ArchitectureCatalog',
+  paths: ['ref.projectId'],
+  orderBy: { path: 'ref.revision', valueType: 'integer' },
+};
+
 export const ARCHITECTURE_CATALOG_SCHEMAS: RecordBackendSchemas = {
   records: [ARCHITECTURE_CATALOG_RECORD_SCHEMA],
   events: [{
@@ -517,7 +528,7 @@ export const ARCHITECTURE_CATALOG_SCHEMAS: RecordBackendSchemas = {
     schemaVersion: ARCHITECTURE_CATALOG_EVENT_VERSION,
     validate: validateArchitectureCatalogRevisedEvent,
   }],
-  lookups: [],
+  lookups: [CATALOG_REVISION_BY_PROJECT_LOOKUP],
 };
 
 // --------------------------------------------------------------------------
