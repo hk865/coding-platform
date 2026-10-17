@@ -1,0 +1,10 @@
+8D and section-10 merge full suite (lead, 2026-10-18) - the tree that merged
+Tree: lead 20982af3 (decision 79-4; docs only after 13551ac9) + s8d-merge.patch (s8a-scale-r2 against slice-setup = lead 13551ac9; src, tests, scripts, runtime-assets.json, vitest.config.ts; sha256 in merge-patch.sha256).
+Environment: WSL, bubblewrap (CODING_AGENT_BWRAP_PATH), systemd user session, scope MemoryMax=6G, vitest --maxWorkers=5; a DSH build (K3 B3 rework 4), a DSH docs run and the s8a-scale-r2 check running at the same time.
+Start 03:50, end 04:31.
+Test Files  575 passed (575)
+     Tests  8547 passed | 5 skipped (8552)
+  Duration  2454.96 s
+Memory peak of the test scope: 4,665,733,120 bytes (4.67 GB).
+typecheck 0, check:architecture 0, build 0.
+Lead branch: the patch applied on 20982af3 with `git apply --index`; `git ls-files -s` sha256 b9913a2d9989d88a913713652af5ec74856c930f90d8a86eb75669819c0012aa on both the merge tree and the lead branch; code commit 4041c305.

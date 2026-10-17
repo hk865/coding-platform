@@ -1,0 +1,19 @@
+{
+ "other_files": 331,
+ "include_only": 11,
+ "claimed": 355,
+ "claimed_lines": 107015,
+ "git_not_ignored_files": 697,
+ "claimed_by_top_dir": {
+  "build": 1,
+  "docs": 34,
+  "include": 14,
+  "src": 104,
+  "test": 202
+ },
+ "claimed_by_ext": {
+  ".c": 317,
+  ".h": 38
+ },
+ "skipped_claimed": []
+}

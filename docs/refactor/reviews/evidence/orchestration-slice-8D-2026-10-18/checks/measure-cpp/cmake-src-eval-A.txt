@@ -1,0 +1,49 @@
+== mode light: TUs {'outside_root': 11, 'ok': 1053}; claimed files 5059
+   timing {"tus": 1064, "ok": 1053, "elapsed_ms_sum": 68520.6, "elapsed_ms_p50": 42.7, "elapsed_ms_p90": 148.6, "elapsed_ms_p99": 217.1, "elapsed_ms_max": 286.4, "parse_ms_sum": 41550.7, "visit_ms_sum": 1919.4, "peak_rss_kb_p50": 102144, "peak_rss_kb_p90": 118284, "peak_rss_kb_max": 119100, "entered_external_mean": 0}
+   rule   parsed  failed  skipped  edges(from non-failed)
+   R0       1969       0     3108  8309/8309
+   R1        519    1450     3108  1306/8309
+   R2       1957      12     3108  8192/8309
+   R2lex    1969       0     3108  8309/8309
+   R3       1969       0     3108  8309/8309
+   unresolved 4625 (top: <string> x521, <vector> x458, "cmConfigure.h" x407, <utility> x321, <map> x158, <memory> x152, <sstream> x147, <algorithm> x132); resolved outside root 0
+   error categories in project files: {'Semantic Issue': 930143, 'Parse Issue': 49990, 'User-Defined Issue': 1145}; include-resolution diagnostics: {'missing': 82403, 'angled_recovered': 3859}
+== mode light-bodies: TUs {'outside_root': 11, 'ok': 1053}; claimed files 5059
+   timing {"tus": 1064, "ok": 1053, "elapsed_ms_sum": 65577.4, "elapsed_ms_p50": 41.7, "elapsed_ms_p90": 145.1, "elapsed_ms_p99": 210.6, "elapsed_ms_max": 279.6, "parse_ms_sum": 38148.7, "visit_ms_sum": 4429.4, "peak_rss_kb_p50": 104460, "peak_rss_kb_p90": 122400, "peak_rss_kb_max": 123344, "entered_external_mean": 0}
+   rule   parsed  failed  skipped  edges(from non-failed)
+   R0       1969       0     3108  8309/8309
+   R1        342    1627     3108  524/8309
+   R2       1957      12     3108  8192/8309
+   R2lex    1969       0     3108  8309/8309
+   R3       1969       0     3108  8309/8309
+   unresolved 4625 (top: <string> x521, <vector> x458, "cmConfigure.h" x407, <utility> x321, <map> x158, <memory> x152, <sstream> x147, <algorithm> x132); resolved outside root 0
+   error categories in project files: {'Semantic Issue': 1084114, 'Parse Issue': 54089, 'Lambda Issue': 1, 'Value Conversion Issue': 818, 'User-Defined Issue': 1145, '': 1}; include-resolution diagnostics: {'missing': 82403, 'angled_recovered': 3859}
+== mode reference: TUs {'ok': 1064}; claimed files 5059
+   timing {"tus": 1064, "ok": 1064, "elapsed_ms_sum": 351221.1, "elapsed_ms_p50": 86.0, "elapsed_ms_p90": 951.0, "elapsed_ms_p99": 1583.5, "elapsed_ms_max": 1917.3, "parse_ms_sum": 316868.1, "visit_ms_sum": 13734.0, "peak_rss_kb_p50": 120700, "peak_rss_kb_p90": 251928, "peak_rss_kb_max": 272484, "entered_external_mean": 210.7}
+   rule   parsed  failed  skipped  edges(from non-failed)
+   R0       1984       0     3093  8241/8241
+   R1       1984       0     3093  8241/8241
+   R2       1984       0     3093  8241/8241
+   R2lex    1984       0     3093  8241/8241
+   R3       1984       0     3093  8241/8241
+   unresolved 0 (top: ); resolved outside root 5187
+   error categories in project files: {}; include-resolution diagnostics: {}
+== diff light vs reference: edges 8309 vs 8241; directive-level only-in-light {'conditional branch': 280, 'resolved outside the project in other mode': 20}; only-in-reference {'conditional branch': 209, 'includer not reached in other mode': 20}
+== diff light-bodies vs reference: edges 8309 vs 8241; directive-level only-in-light-bodies {'conditional branch': 280, 'resolved outside the project in other mode': 20}; only-in-reference {'conditional branch': 209, 'includer not reached in other mode': 20}
+== diff light vs light-bodies: edges 8309 vs 8309; directive-level only-in-light {}; only-in-light-bodies {}
+== against truth reference:R1 (failed=0): mode:rule agree / false-failed / missed
+   light:R0              0 /    0 /    0
+   light:R1              0 / 1450 /    0
+   light:R2              0 /   12 /    0
+   light:R2lex           0 /    0 /    0
+   light:R3              0 /    0 /    0
+   light-bodies:R0       0 /    0 /    0
+   light-bodies:R1       0 / 1627 /    0
+   light-bodies:R2       0 /   12 /    0
+   light-bodies:R2lex    0 /    0 /    0
+   light-bodies:R3       0 /    0 /    0
+   reference:R0          0 /    0 /    0
+   reference:R1          0 /    0 /    0
+   reference:R2          0 /    0 /    0
+   reference:R2lex       0 /    0 /    0
+   reference:R3          0 /    0 /    0

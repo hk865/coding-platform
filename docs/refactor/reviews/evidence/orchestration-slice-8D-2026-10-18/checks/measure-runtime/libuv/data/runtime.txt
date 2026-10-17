@@ -1,0 +1,60 @@
+dl_load    {'sites': 15, 'literal': 11, 'target_in_project': 1, 'file_pair_already_edge': 0, 'dir_pair_already_edge': 0, 'site_file_scanned_on_linux': 4}
+     {'site': 'docs/code/plugin/main.c:24', 'text': 'if (uv_dlopen(argv[argc], lib)) {', 'target': 'argv[argc]', 'target_in_project': False, 'file_pair': None, 'dir_pair': None}
+     {'site': 'src/unix/darwin-proctitle.c:81', 'text': 'application_services_handle = dlopen("/System/Library/Frameworks/"', 'target': '/System/Library/Frameworks/ApplicationServices.framework/Versions/A/ApplicationServices', 'target_in_project': False, 'file_pair': None, 'dir_pair': None}
+     {'site': 'src/unix/darwin-proctitle.c:85', 'text': 'core_foundation_handle = dlopen("/System/Library/Frameworks/"', 'target': '/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation', 'target_in_project': False, 'file_pair': None, 'dir_pair': None}
+     {'site': 'src/unix/dl.c:36', 'text': 'lib->handle = dlopen(filename, RTLD_LAZY);', 'target': 'filename', 'target_in_project': False, 'file_pair': None, 'dir_pair': None}
+     {'site': 'src/unix/fsevents.c:524', 'text': 'core_foundation_handle = dlopen("/System/Library/Frameworks/"', 'target': '/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation', 'target_in_project': False, 'file_pair': None, 'dir_pair': None}
+     {'site': 'src/unix/fsevents.c:531', 'text': 'core_services_handle = dlopen("/System/Library/Frameworks/"', 'target': '/System/Library/Frameworks/CoreServices.framework/Versions/A/CoreServices', 'target_in_project': False, 'file_pair': None, 'dir_pair': None}
+dl_sym     {'sites': 30, 'literal': 28, 'target_in_project': 1, 'file_pair_already_edge': 0, 'dir_pair_already_edge': 0, 'site_file_scanned_on_linux': 6}
+     {'site': 'docs/code/plugin/main.c:30', 'text': 'if (uv_dlsym(lib, "initialize", (void **) &init_plugin)) {', 'target': 'initialize', 'target_in_project': True, 'file_pair': False, 'dir_pair': False, 'defined_in': ['docs/code/plugin/hello.c']}
+     {'site': 'src/unix/darwin-proctitle.c:94', 'text': 'dlsym(core_foundation_handle, "CFStringCreateWithCString");', 'target': 'CFStringCreateWithCString', 'target_in_project': False, 'file_pair': None, 'dir_pair': None, 'defined_in': []}
+     {'site': 'src/unix/darwin-proctitle.c:96', 'text': 'dlsym(core_foundation_handle, "CFBundleGetBundleWithIdentifier");', 'target': 'CFBundleGetBundleWithIdentifier', 'target_in_project': False, 'file_pair': None, 'dir_pair': None, 'defined_in': []}
+     {'site': 'src/unix/darwin-proctitle.c:98', 'text': 'dlsym(core_foundation_handle, "CFBundleGetDataPointerForName");', 'target': 'CFBundleGetDataPointerForName', 'target_in_project': False, 'file_pair': None, 'dir_pair': None, 'defined_in': []}
+     {'site': 'src/unix/darwin-proctitle.c:100', 'text': 'dlsym(core_foundation_handle, "CFBundleGetFunctionPointerForName");', 'target': 'CFBundleGetFunctionPointerForName', 'target_in_project': False, 'file_pair': None, 'dir_pair': None, 'defined_in': []}
+     {'site': 'src/unix/darwin-proctitle.c:137', 'text': '*(void **)(&pCFBundleGetInfoDictionary) = dlsym(core_foundation_handle,', 'target': 'CFBundleGetInfoDictionary', 'target_in_project': False, 'file_pair': None, 'dir_pair': None, 'defined_in': []}
+registry   {'sites': 576, 'literal': 576, 'target_in_project': 553, 'file_pair_already_edge': 0, 'dir_pair_already_edge': 553, 'site_file_scanned_on_linux': 576}
+     {'site': 'test/test-list.h:578', 'text': 'TEST_ENTRY_CUSTOM (platform_output, 0, 1, 5000)', 'target': 'test/test-platform-output.c', 'target_in_project': True, 'file_pair': False, 'dir_pair': True, 'name': 'platform_output'}
+     {'site': 'test/test-list.h:580', 'text': 'TEST_ENTRY  (test_macros)', 'target': 'test/test-test-macros.c', 'target_in_project': True, 'file_pair': False, 'dir_pair': True, 'name': 'test_macros'}
+     {'site': 'test/test-list.h:581', 'text': 'TEST_ENTRY  (close_order)', 'target': 'test/test-close-order.c', 'target_in_project': True, 'file_pair': False, 'dir_pair': True, 'name': 'close_order'}
+     {'site': 'test/test-list.h:582', 'text': 'TEST_ENTRY  (run_once)', 'target': 'test/test-run-once.c', 'target_in_project': True, 'file_pair': False, 'dir_pair': True, 'name': 'run_once'}
+     {'site': 'test/test-list.h:583', 'text': 'TEST_ENTRY  (run_nowait)', 'target': 'test/test-run-nowait.c', 'target_in_project': True, 'file_pair': False, 'dir_pair': True, 'name': 'run_nowait'}
+     {'site': 'test/test-list.h:584', 'text': 'TEST_ENTRY  (loop_alive)', 'target': 'test/test-loop-alive.c', 'target_in_project': True, 'file_pair': False, 'dir_pair': True, 'name': 'loop_alive'}
+self_spawn {'sites': 46, 'literal': 46, 'target_in_project': 46, 'file_pair_already_edge': 0, 'dir_pair_already_edge': 46, 'site_file_scanned_on_linux': 46}
+     {'site': 'test/benchmark-spawn.c:111', 'text': 'args[1] = "spawn_helper";', 'target': 'test/run-benchmarks.c', 'target_in_project': True, 'file_pair': False, 'dir_pair': True, 'name': 'spawn_helper'}
+     {'site': 'test/test-ipc-heavy-traffic-deadlock-bug.c:137', 'text': 'spawn_helper(&pipe, &process, "ipc_helper_heavy_traffic_deadlock_bug");', 'target': 'test/run-tests.c', 'target_in_project': True, 'file_pair': False, 'dir_pair': True, 'name': 'ipc_helper_heavy_traffic_deadlock_bug'}
+     {'site': 'test/test-ipc-send-recv.c:188', 'text': 'spawn_helper(&ctx.channel, &process, "ipc_send_recv_helper");', 'target': 'test/run-tests.c', 'target_in_project': True, 'file_pair': False, 'dir_pair': True, 'name': 'ipc_send_recv_helper'}
+     {'site': 'test/test-ipc.c:436', 'text': 'int r = run_ipc_test("ipc_helper_listen_before_write", on_read);', 'target': 'test/run-tests.c', 'target_in_project': True, 'file_pair': False, 'dir_pair': True, 'name': 'ipc_helper_listen_before_write'}
+     {'site': 'test/test-ipc.c:449', 'text': 'int r = run_ipc_test("ipc_helper_listen_after_write", on_read);', 'target': 'test/run-tests.c', 'target_in_project': True, 'file_pair': False, 'dir_pair': True, 'name': 'ipc_helper_listen_after_write'}
+     {'site': 'test/test-ipc.c:462', 'text': 'int r = run_ipc_test("ipc_helper_tcp_connection", on_read_connection);', 'target': 'test/run-tests.c', 'target_in_project': True, 'file_pair': False, 'dir_pair': True, 'name': 'ipc_helper_tcp_connection'}
+fixture    {'sites': 10, 'literal': 10, 'target_in_project': 10, 'file_pair_already_edge': 0, 'dir_pair_already_edge': 0, 'site_file_scanned_on_linux': 10}
+     {'site': 'test/test-dlerror.c:28', 'text': 'const char* path = "test/fixtures/load_error.node";', 'target': 'test/fixtures/load_error.node', 'target_in_project': True, 'file_pair': False, 'dir_pair': False}
+     {'site': 'test/test-fs-copyfile.c:36', 'text': 'static const char fixture[] = "test/fixtures/load_error.node";', 'target': 'test/fixtures/load_error.node', 'target_in_project': True, 'file_pair': False, 'dir_pair': False}
+     {'site': 'test/test-fs-event.c:662', 'text': 'const char path[] = "test/fixtures/empty_file";', 'target': 'test/fixtures/empty_file', 'target_in_project': True, 'file_pair': False, 'dir_pair': False}
+     {'site': 'test/test-fs-readdir.c:236', 'text': 'path = "test/fixtures/empty_file";', 'target': 'test/fixtures/empty_file', 'target_in_project': True, 'file_pair': False, 'dir_pair': False}
+     {'site': 'test/test-fs.c:2972', 'text': 'path = "test/fixtures/empty_file";', 'target': 'test/fixtures/empty_file', 'target_in_project': True, 'file_pair': False, 'dir_pair': False}
+     {'site': 'test/test-fs.c:2996', 'text': 'ASSERT_LT(0, uv_fs_scandir(NULL, &req, "test/fixtures/one_file", 0, NULL));', 'target': 'test/fixtures/one_file', 'target_in_project': True, 'file_pair': False, 'dir_pair': False}
+link       {'sites': 4, 'literal': 4, 'target_in_project': 0, 'file_pair_already_edge': 0, 'dir_pair_already_edge': 0, 'site_file_scanned_on_linux': 4}
+     {'site': 'CMakeLists.txt:519', 'text': 'target_link_libraries(uv_run_benchmarks_a uv_a ${uv_test_libraries})'}
+     {'site': 'CMakeLists.txt:702', 'text': 'target_link_libraries(uv_run_tests uv ${uv_test_libraries})'}
+     {'site': 'CMakeLists.txt:720', 'text': 'target_link_libraries(uv_run_tests_a uv_a ${uv_test_libraries} -static)'}
+     {'site': 'CMakeLists.txt:722', 'text': 'target_link_libraries(uv_run_tests_a uv_a ${uv_test_libraries})'}
+callbacks  {'sites': 18, 'literal': 0, 'target_in_project': 0, 'file_pair_already_edge': 0, 'dir_pair_already_edge': 0, 'site_file_scanned_on_linux': 18}
+     {'site': 'src/random.c:116', 'text': 'uv__work_submit(loop,'}
+     {'site': 'src/threadpool.c:379', 'text': 'uv__work_submit(loop,'}
+     {'site': 'src/unix/aix.c:831', 'text': 'uv__io_init(&handle->event_watcher, uv__ahafs_event, fd);'}
+     {'site': 'src/unix/async.c:235', 'text': 'uv__io_init(&loop->async_io_watcher, uv__async_io, pipefd[0]);'}
+     {'site': 'src/unix/fs.c:153', 'text': 'uv__work_submit(loop,                                                   \\'}
+     {'site': 'src/unix/fs.c:1635', 'text': 'uv__work_submit(loop,'}
+env        {'sites': 5, 'literal': 5, 'target_in_project': 0, 'file_pair_already_edge': 0, 'dir_pair_already_edge': 0, 'site_file_scanned_on_linux': 5}
+     {'site': 'src/threadpool.c:200', 'name': 'UV_THREADPOOL_SIZE', 'text': 'val = getenv("UV_THREADPOOL_SIZE");'}
+     {'site': 'src/unix/core.c:1124', 'name': 'HOME', 'text': 'r = uv_os_getenv("HOME", buffer, size);'}
+     {'site': 'src/unix/core.c:1831', 'name': 'PATH', 'text': 'path_env = getenv("PATH");'}
+     {'site': 'src/unix/linux.c:490', 'name': 'UV_USE_IO_URING', 'text': 'val = getenv("UV_USE_IO_URING");'}
+     {'site': 'src/win/util.c:942', 'name': 'USERPROFILE', 'text': 'r = uv_os_getenv("USERPROFILE", buffer, size);'}
+python     {'sites': 2, 'literal': 2, 'target_in_project': 1, 'file_pair_already_edge': 0, 'dir_pair_already_edge': 0, 'site_file_scanned_on_linux': 2}
+     {'site': 'docs/src/conf.py:51', 'text': "extensions = ['manpage']", 'name': 'manpage', 'target': 'docs/src/sphinx-plugins/manpage.py', 'target_in_project': True, 'file_pair': False, 'dir_pair': False, 'note': 'found through sys.path.insert(0, abspath("sphinx-plugins")) at conf.py:41'}
+     {'site': 'tools/make_dist_html.py:115', 'text': "tags = subprocess.check_output(['git', 'tag'], text=True)", 'name': 'git (external program)', 'target': None, 'target_in_project': False}
+registry distinct file pairs 189; unmatched names ['ping_udp1', 'ping_udp10', 'ping_udp100', 'udp_pummel_1v1', 'udp_pummel_1v10', 'udp_pummel_1v100', 'udp_pummel_1v1000', 'udp_pummel_10v10', 'udp_pummel_10v100', 'udp_pummel_10v1000', 'udp_pummel_100v100', 'udp_pummel_100v1000', 'udp_pummel_1000v1000', 'udp_timed_pummel_1v1', 'udp_timed_pummel_1v10', 'udp_timed_pummel_1v100', 'udp_timed_pummel_1v1000', 'udp_timed_pummel_10v10', 'udp_timed_pummel_10v100', 'udp_timed_pummel_10v1000']
+self_spawn distinct names 21, file pairs 8 [('test/benchmark-spawn.c', 'test/run-benchmarks.c'), ('test/test-ipc-heavy-traffic-deadlock-bug.c', 'test/run-tests.c'), ('test/test-ipc-send-recv.c', 'test/run-tests.c'), ('test/test-ipc.c', 'test/run-tests.c'), ('test/test-process-title.c', 'test/run-tests.c'), ('test/test-ref.c', 'test/run-tests.c'), ('test/test-spawn.c', 'test/run-tests.c'), ('test/test-stdio-over-pipes.c', 'test/run-tests.c')]
+link: {'test_units_scanned': 195, 'test_files_with_an_include_edge_into_src': ['test/test-idna.c', 'test/test-strscpy.c', 'test/test-strtok.c'], 'test_to_src_edges': [('test/test-idna.c', 'src/idna.c'), ('test/test-strscpy.c', 'src/strscpy.c'), ('test/test-strscpy.c', 'src/strscpy.h'), ('test/test-strtok.c', 'src/strtok.c'), ('test/test-strtok.c', 'src/strtok.h')], 'dir_pairs_test_to_src_in_light': [('test', 'src')], 'dir_pairs_test_to_include_in_light': [('test', 'include')]}
+generated (configure_file): [{'site': 'CMakeLists.txt:753', 'text': 'configure_file(libuv-static.pc.in libuv-static.pc @ONLY)'}, {'site': 'CMakeLists.txt:771', 'text': 'configure_file(libuv.pc.in libuv.pc @ONLY)'}]

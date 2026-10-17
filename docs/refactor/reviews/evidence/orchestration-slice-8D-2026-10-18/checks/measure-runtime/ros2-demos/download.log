@@ -1,0 +1,28 @@
+Cloning into '/home/han001/dsh-work/measure-runtime/src/ros2-demos'...
+clone_wall_s=1.32
+commit=37e25e0dece32f972b3cc8677b6aab3e891a9365
+commit_date=2026-06-02T05:06:35+00:00
+subject=0.33.11
+tracked_files=361
+worktree_bytes_excluding_git=2740311
+git_dir_bytes=2073844
+     79 cpp
+     69 py
+     36 txt
+     26 xml
+     24 png
+     23 rst
+     22 hpp
+     21 md
+     13 in
+     11 regex
+      7 h
+      6 yaml
+      5 cfg
+      3 msg
+      2 gitignore
+      1 urdf
+      1 srv
+      1 rviz
+      1 ini
+      1 action

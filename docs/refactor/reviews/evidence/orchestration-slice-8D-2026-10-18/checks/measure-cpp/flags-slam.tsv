@@ -1,0 +1,29 @@
+flag	form	occurrences	distinct_values	tus	tus_of_total	path_values_in_workspace	path_values_external	adapter	adapter_detail	value_examples
+(argv0) compiler	no value	23	1	23	23/23	0	0	kept		/usr/bin/c++
+(entry) directory	no value	23	4	23	23/23	0	4	refused	directory outside the mapped workspace (Compilation directory is outside mapped workspace)	/home/han001/dsh-work/measure-cpp/build/slam-ros2-ws/vikit_common | /home/han001/dsh-work/measure-cpp/build/slam-ros2-ws/fast_livo2_core | /home/han001/dsh-work/measure-cpp/build/slam-ros2-ws/vikit_ros | /home/han001/dsh-work/measure-cpp/build/slam-ros2-ws/fast_livo2_ros
+(positional) source file	no value	23	0	23	23/23	0	0	skipped (the source itself)		
+-D	joined:313	313	33	23	23/23	0	0	kept		_LINUX | _REENTRANT | FMT_SHARED | vikit_common_EXPORTS
+-I	joined:56	56	9	23	23/23	5	1	kept+refused	external absolute path value (External compilation paths require an explicitly readable in-workspace dependency)	/home/han001/dsh-work/measure-cpp/copies/slam-ros2-ws/ros2_ws/src/vikit_common/include | /home/han001/dsh-work/measure-cpp/copies/slam-ros2-ws/ros2_ws/src/fast_livo2_core/include/fast_livo2_core | /home/han001/dsh-work/measure-cpp/copies/slam-ros2-ws/ros2_ws/src/fast_livo2_core/include/fast_livo2...
+-c	no value	23	0	23	23/23	0	0	dropped		
+-fPIC	no value	55	0	23	23/23	0	0	kept		
+-isystem	separate:696	696	66	23	23/23	2	64	kept+refused	external absolute path value (External compilation paths require an explicitly readable in-workspace dependency)	/home/han001/projects/third_party/sophus/include | /usr/include/eigen3 | /usr/include/opencv4 | /opt/ros/jazzy/include/rclcpp
+-o	separate:23	23	23	23	23/23	0	0	dropped		CMakeFiles/vikit_common.dir/src/atan_camera.cpp.o | CMakeFiles/vikit_common.dir/src/omni_camera.cpp.o | CMakeFiles/vikit_common.dir/src/math_utils.cpp.o | CMakeFiles/vikit_common.dir/src/vision.cpp.o
+-O3	no value	32	0	22	22/23	0	0	kept		
+-std=gnu++17	no value	21	0	21	21/23	0	0	kept		
+-funroll-loops	no value	20	0	20	20/23	0	0	refused	option not in the filter (Unsupported compiler option; configuration was not silently discarded)	
+-march=native	no value	32	0	20	20/23	0	0	refused	option not in the filter (Unsupported compiler option; configuration was not silently discarded)	
+-std=c++17	no value	32	0	14	14/23	0	0	kept		
+-Wno-unknown-pragmas	no value	24	0	12	12/23	0	0	kept		
+-Wno-unused-but-set-variable	no value	24	0	12	12/23	0	0	kept		
+-Wno-unused-variable	no value	24	0	12	12/23	0	0	kept		
+-fno-math-errno	no value	12	0	12	12/23	0	0	refused	option not in the filter (Unsupported compiler option; configuration was not silently discarded)	
+-fno-signed-zeros	no value	12	0	12	12/23	0	0	refused	option not in the filter (Unsupported compiler option; configuration was not silently discarded)	
+-fomit-frame-pointer	no value	12	0	12	12/23	0	0	refused	option not in the filter (Unsupported compiler option; configuration was not silently discarded)	
+-mmmx	no value	48	0	12	12/23	0	0	refused	option not in the filter (Unsupported compiler option; configuration was not silently discarded)	
+-msse	no value	96	0	12	12/23	0	0	refused	option not in the filter (Unsupported compiler option; configuration was not silently discarded)	
+-msse2	no value	48	0	12	12/23	0	0	refused	option not in the filter (Unsupported compiler option; configuration was not silently discarded)	
+-msse3	no value	48	0	12	12/23	0	0	refused	option not in the filter (Unsupported compiler option; configuration was not silently discarded)	
+-mssse3	no value	48	0	12	12/23	0	0	refused	option not in the filter (Unsupported compiler option; configuration was not silently discarded)	
+-fexceptions	no value	11	0	11	11/23	0	0	kept		
+-fopenmp	no value	11	0	11	11/23	0	0	refused	option not in the filter (Unsupported compiler option; configuration was not silently discarded)	
+-pthread	no value	11	0	11	11/23	0	0	kept		

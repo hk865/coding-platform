@@ -1,0 +1,35 @@
+# CPython importlib.util.find_spec on the prototype own fixtures (sys.path = roots + stdlib); python Python 3.12.3
+## A-20 roots .,lib
+{
+ "a.b.c": "a/b/c.py",
+ "a.b.c.d": "ModuleNotFoundError: __path__ attribute not found on 'a.b.c' while trying to find 'a.b.c.d'",
+ "mod.x": "ModuleNotFoundError: __path__ attribute not found on 'mod' while trying to find 'mod.x'",
+ "email": "outside: /usr/lib/python3.12/email/__init__.py",
+ "ns": "namespace ns",
+ "ns.mod": "ns/mod.py",
+ "fast": "fast.py",
+ "native": "not found",
+ "plug": "lib/plug/__init__.py",
+ "shared.util": "not found",
+ "shared": "shared/__init__.py",
+ "pkg": "pkg/__init__.py"
+}
+## X6 roots .,lib
+{
+ "nsx.a": "nsx/a.py",
+ "nsx.b": "lib/nsx/b.py",
+ "nsx": "namespace nsx,lib/nsx",
+ "Upper": "not found",
+ "mixed": "lib/mixed.py"
+}
+## A-21-6 roots .,a,b
+{
+ "m": "a/m.py"
+}
+## X2 roots .,typings (pyi-only names differ by design)
+{
+ "stubpkg": "namespace stubpkg",
+ "tp": "not found",
+ "libmod": "not found",
+ "rel": "rel/__init__.py"
+}

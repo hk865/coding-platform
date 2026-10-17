@@ -1,0 +1,104 @@
+== mode light: TUs {'ok': 18}; claimed files 30
+   timing {"tus": 18, "ok": 18, "elapsed_ms_sum": 37.4, "elapsed_ms_p50": 1.9, "elapsed_ms_p90": 2.1, "elapsed_ms_p99": 3.7, "elapsed_ms_max": 3.7, "parse_ms_sum": 25.4, "visit_ms_sum": 3.6, "peak_rss_kb_p50": 85588, "peak_rss_kb_p90": 85652, "peak_rss_kb_max": 86380, "entered_external_mean": 0}
+   rule   parsed  failed  skipped  edges(from non-failed)
+   R0         22       5        3  16/18
+   R1         17      10        3  12/18
+   R2         26       1        3  18/18
+   R2lex      26       1        3  18/18
+   R3         27       0        3  18/18
+   unresolved 9 (top: <stddef.h> x1, "nope.h" x1, <stdlib.h> x1, "nope2.h" x1, string.h (macro) x1, (line 5: macro not expanded) (macro) x1, "proj/does_not_exist.h" x1, <stdio.h> x1); resolved outside root 0
+   error categories in project files: {'Semantic Issue': 7, 'Parse Issue': 4, 'User-Defined Issue': 1, 'Lexical or Preprocessor Issue': 1}; include-resolution diagnostics: {'angled_recovered': 1, 'missing': 9, 'macro_unexpanded': 1}
+   unknown args (TUs): {'-fplugin=/tmp/nothing.so (rejected: loads code, reads a config or alters the VFS)': 1, '-fsomething-unknown (not in any table)': 1}
+   R0 position-vs-emission disagreements: 1 (first: {'tu': 'src/lookahead.c', 'error': "src/lookahead.c:1 expected ';' after top level declarator [Parse Issue]", 'by_position': False, 'by_emission': True})
+== mode light-bodies: TUs {'ok': 18}; claimed files 30
+   timing {"tus": 18, "ok": 18, "elapsed_ms_sum": 47.0, "elapsed_ms_p50": 2.1, "elapsed_ms_p90": 4.0, "elapsed_ms_p99": 5.3, "elapsed_ms_max": 5.3, "parse_ms_sum": 34.5, "visit_ms_sum": 3.6, "peak_rss_kb_p50": 87996, "peak_rss_kb_p90": 88068, "peak_rss_kb_max": 88796, "entered_external_mean": 0}
+   rule   parsed  failed  skipped  edges(from non-failed)
+   R0         21       6        3  15/18
+   R1         16      11        3  11/18
+   R2         26       1        3  18/18
+   R2lex      26       1        3  18/18
+   R3         27       0        3  18/18
+   unresolved 9 (top: <stddef.h> x1, "nope.h" x1, <stdlib.h> x1, "nope2.h" x1, string.h (macro) x1, (line 5: macro not expanded) (macro) x1, "proj/does_not_exist.h" x1, <stdio.h> x1); resolved outside root 0
+   error categories in project files: {'Semantic Issue': 8, 'Parse Issue': 5, 'User-Defined Issue': 1, 'Lexical or Preprocessor Issue': 1}; include-resolution diagnostics: {'angled_recovered': 1, 'missing': 9, 'macro_unexpanded': 1}
+   unknown args (TUs): {'-fplugin=/tmp/nothing.so (rejected: loads code, reads a config or alters the VFS)': 1, '-fsomething-unknown (not in any table)': 1}
+   R0 position-vs-emission disagreements: 1 (first: {'tu': 'src/lookahead.c', 'error': "src/lookahead.c:1 expected ';' after top level declarator [Parse Issue]", 'by_position': False, 'by_emission': True})
+== mode reference: TUs {'ok': 18}; claimed files 30
+   timing {"tus": 18, "ok": 18, "elapsed_ms_sum": 125.7, "elapsed_ms_p50": 2.2, "elapsed_ms_p90": 7.0, "elapsed_ms_p99": 76.0, "elapsed_ms_max": 76.0, "parse_ms_sum": 100.1, "visit_ms_sum": 8.2, "peak_rss_kb_p50": 89816, "peak_rss_kb_p90": 89816, "peak_rss_kb_max": 100196, "entered_external_mean": 8.3}
+   rule   parsed  failed  skipped  edges(from non-failed)
+   R0         22       6        2  16/19
+   R1         21       7        2  15/19
+   R2         27       1        2  19/19
+   R2lex      27       1        2  19/19
+   R3         28       0        2  19/19
+   unresolved 4 (top: "nope.h" x1, "nope2.h" x1, (line 5: macro not expanded) (macro) x1, "proj/does_not_exist.h" x1); resolved outside root 5
+   error categories in project files: {'Parse Issue': 5, 'Semantic Issue': 2, 'User-Defined Issue': 1, 'Lexical or Preprocessor Issue': 1}; include-resolution diagnostics: {'angled_recovered': 1, 'missing': 3, 'macro_unexpanded': 1}
+   unknown args (TUs): {'-fplugin=/tmp/nothing.so (rejected: loads code, reads a config or alters the VFS)': 1, '-fsomething-unknown (not in any table)': 1}
+   R0 position-vs-emission disagreements: 1 (first: {'tu': 'src/lookahead.c', 'error': "src/lookahead.c:1 expected ';' after top level declarator [Parse Issue]", 'by_position': False, 'by_emission': True})
+== diff light vs reference: edges 18 vs 19; directive-level only-in-light {'__has_include': 1}; only-in-reference {'conditional branch': 1, '__has_include': 1}
+== diff light-bodies vs reference: edges 18 vs 19; directive-level only-in-light-bodies {'__has_include': 1}; only-in-reference {'conditional branch': 1, '__has_include': 1}
+== diff light vs light-bodies: edges 18 vs 18; directive-level only-in-light {}; only-in-light-bodies {}
+== against truth reference:R1 (failed=7): mode:rule agree / false-failed / missed
+   light:R0              5 /    0 /    2
+   light:R1              6 /    4 /    1
+   light:R2              1 /    0 /    6
+   light:R2lex           1 /    0 /    6
+   light:R3              0 /    0 /    7
+   light-bodies:R0       6 /    0 /    1
+   light-bodies:R1       7 /    4 /    0
+   light-bodies:R2       1 /    0 /    6
+   light-bodies:R2lex    1 /    0 /    6
+   light-bodies:R3       0 /    0 /    7
+   reference:R0          6 /    0 /    1
+   reference:R1          7 /    0 /    0
+   reference:R2          1 /    0 /    6
+   reference:R2lex       1 /    0 /    6
+   reference:R3          0 /    0 /    7
+== expected vs got (cell = R0/R1/R2/R2lex/R3; "X!exp-Y" = got X, expected Y): 0 mismatches
+| file | light R0/R1/R2/R2lex/R3 | light-bodies R0/R1/R2/R2lex/R3 | reference R0/R1/R2/R2lex/R3 |
+|---|---|---|---|
+| include/body.inc | p p p p p | p p p p p | p p p p p |
+| include/errhdr.h | p p p p p | p p p p p | p p p p p |
+| include/glibc_only.h | s s s s s | s s s s s | p p p p p |
+| include/has_pthread.h | s s s s s | s s s s s | p p p p p |
+| include/macro_target.h | p p p p p | p p p p p | p p p p p |
+| include/needs_sys.h | p F p p p | p F p p p | p p p p p |
+| include/no_pthread.h | p p p p p | p p p p p | s s s s s |
+| include/orphan.h | s s s s s | s s s s s | s s s s s |
+| include/proj/api.h | p p p p p | p p p p p | p p p p p |
+| include/proj/types.h | p p p p p | p p p p p | p p p p p |
+| include/unterminated.h | F F F F p | F F F F p | F F F F p |
+| src/angled.c | p p p p p | p p p p p | p p p p p |
+| src/body_include.c | p p p p p | p p p p p | p p p p p |
+| src/cross_order.c | p F p p p | p F p p p | p p p p p |
+| src/cross_order_late.c | F F p p p | F F p p p | F F p p p |
+| src/error_before_missing.c | F F p p p | F F p p p | F F p p p |
+| src/flags.c | p p p p p | p p p p p | p p p p p |
+| src/glibc_branch.c | p p p p p | p p p p p | p p p p p |
+| src/healthy.c | p p p p p | p p p p p | p p p p p |
+| src/local_only.h | p p p p p | p p p p p | p p p p p |
+| src/lookahead.c | F F p p p | F F p p p | F F p p p |
+| src/macro_include.c | p p p p p | p p p p p | p p p p p |
+| src/projmissing.c | p F p p p | p F p p p | p F p p p |
+| src/syntax_body.c | p p p p p | F F p p p | F F p p p |
+| src/syntax_filescope.c | F F p p p | F F p p p | F F p p p |
+| src/sysmissing.c | p F p p p | p F p p p | p p p p p |
+| src/uses_error_header.c | p p p p p | p p p p p | p p p p p |
+| src/uses_error_header_ok.c | p p p p p | p p p p p | p p p p p |
+| src/uses_unterminated.c | p p p p p | p p p p p | p p p p p |
+| src/vec.cpp | p F p p p | p F p p p | p p p p p |
+
+| where | check | expected | got | ok |
+|---|---|---|---|---|
+| light | edges | 18 | 18 | yes |
+| light | unresolved | 9 | 9 | yes |
+| light | in_function_body src/body_include.c:3 | "unknown" | "unknown" | yes |
+| light-bodies | edges | 18 | 18 | yes |
+| light-bodies | unresolved | 9 | 9 | yes |
+| light-bodies | in_function_body src/body_include.c:3 | true | true | yes |
+| reference | edges | 19 | 19 | yes |
+| reference | unresolved | 4 | 4 | yes |
+| reference | in_function_body src/body_include.c:3 | true | true | yes |
+| diff | light|reference A_only | {"src/glibc_branch.c:8 -> include/no_pthread.h": "__has_include"} | {"src/glibc_branch.c:8 -> include/no_pthread.h": "__has_include"} | yes |
+| diff | light|reference B_only | {"src/glibc_branch.c:3 -> include/glibc_only.h": "conditional branch", "src/glibc_branch.c:6 -> include/has_pthread.h": "__has_include"} | {"src/glibc_branch.c:3 -> include/glibc_only.h": "conditional branch", "src/glibc_branch.c:6 -> include/has_pthread.h": "__has_include"} | yes |
+| diff | light|light-bodies A_only | {} | {} | yes |
+| diff | light|light-bodies B_only | {} | {} | yes |

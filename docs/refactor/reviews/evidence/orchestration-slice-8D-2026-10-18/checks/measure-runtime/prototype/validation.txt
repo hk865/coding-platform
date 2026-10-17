@@ -1,0 +1,50 @@
+PASS A-20 [draft 4 line 197-200]
+     files=22 parsed=22 status=supported reason=None edges=12 unresolved=8 notes=[]
+PASS A-21-1 pythonVersion noted [draft 4 line 202]
+     files=5 parsed=4 status=supported reason=None edges=2 unresolved=0 notes=['pyproject.toml 里观测不用的字段：pythonVersion']
+PASS A-21-2 extraPaths not a list [draft 4 line 203]
+     files=5 parsed=0 status=failed reason=配置错误：pyproject.toml 的 extraPaths 不是字符串列表 edges=0 unresolved=0 notes=[]
+PASS A-21-3 unusable root [draft 4 line 204]
+     files=5 parsed=4 status=supported reason=None edges=1 unresolved=1 notes=['pyproject.toml 里用不了的查找根：vendor']
+PASS A-21-4 selected config skipped (NUL) [draft 4 line 205]
+     files=5 parsed=0 status=failed reason=pyrightconfig.json 读不了：binary source edges=0 unresolved=0 notes=[]
+PASS A-21-5 extends [draft 4 line 206]
+     files=5 parsed=0 status=failed reason=配置错误：pyrightconfig.json 的 extends 观测还不跟进 edges=0 unresolved=0 notes=[]
+PASS A-21-6 root order [draft 4 line 207]
+     files=3 parsed=3 status=supported reason=None edges=1 unresolved=0 notes=[]
+PASS X1 setup.cfg roots and a named package_dir
+     files=4 parsed=4 status=supported reason=None edges=3 unresolved=0 notes=['setup.cfg 里观测不用的字段：package_dir']
+PASS X2 pyright roots/notes, __init__.pyi package, relative namespace, dotted reason
+     files=8 parsed=8 status=supported reason=None edges=3 unresolved=6 notes=['pyrightconfig.json 里用不了的查找根：/abs、lib/、vendor', 'pyrightconfig.json 里观测不用的字段：include、pythonPlatform、venv']
+PASS X3 capture skips, BOM, CRLF, parse failures, literal dynamic
+     files=9 parsed=5 status=supported reason=None edges=1 unresolved=2 notes=[]
+PASS X4a pyproject tool not a table
+     files=1 parsed=0 status=failed reason=配置错误：pyproject.toml 的 tool 不是表 edges=0 unresolved=0 notes=[]
+PASS X4b tool.setuptools not a table
+     files=1 parsed=0 status=failed reason=配置错误：pyproject.toml 的 tool.setuptools 不是表 edges=0 unresolved=0 notes=[]
+PASS X4c package-dir not a table
+     files=1 parsed=0 status=failed reason=配置错误：pyproject.toml 的 tool.setuptools.package-dir 不是表 edges=0 unresolved=0 notes=[]
+PASS X4d where not a list
+     files=1 parsed=0 status=failed reason=配置错误：pyproject.toml 的 packages.find.where 不是字符串列表 edges=0 unresolved=0 notes=[]
+PASS X4e tool.pyright not an object
+     files=1 parsed=0 status=failed reason=配置错误：pyproject.toml 的 tool.pyright 不是对象 edges=0 unresolved=0 notes=[]
+PASS X4f pyrightconfig not an object
+     files=1 parsed=0 status=failed reason=配置错误：pyrightconfig.json 不是对象 edges=0 unresolved=0 notes=[]
+PASS X4g stubPath empty
+     files=1 parsed=0 status=failed reason=配置错误：pyrightconfig.json 的 stubPath 不是非空字符串 edges=0 unresolved=0 notes=[]
+PASS X4h pyrightconfig with a comment (JSONC) does not fall back
+     files=1 parsed=0 status=failed reason=配置错误：pyrightconfig.json 解析不了 edges=0 unresolved=0 notes=[]
+PASS X4i pyproject parse error
+     files=1 parsed=0 status=failed reason=配置错误：pyproject.toml 解析不了 edges=0 unresolved=0 notes=[]
+PASS X4j setup.cfg parse error
+     files=1 parsed=0 status=failed reason=配置错误：setup.cfg 解析不了 edges=0 unresolved=0 notes=[]
+PASS X4k pyproject extends
+     files=1 parsed=0 status=failed reason=配置错误：pyproject.toml 的 extends 观测还不跟进 edges=0 unresolved=0 notes=[]
+PASS X5a autoSearchPaths false drops src
+     files=2 parsed=2 status=supported reason=None edges=0 unresolved=1 notes=[]
+PASS X5b no configuration adds src
+     files=2 parsed=2 status=supported reason=None edges=1 unresolved=0 notes=[]
+PASS X6 namespace across roots, module beats later namespace, exact case
+     files=6 parsed=6 status=supported reason=None edges=3 unresolved=2 notes=[]
+
+24 cases, 0 failed (python 3.12.3)

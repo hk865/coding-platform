@@ -1,0 +1,141 @@
+{
+ "topic": {
+  "distinct_file_pairs_undirected": 13,
+  "with_direct_light_edge": 0,
+  "cross_package": 10,
+  "cross_package_with_light_edge_between_the_packages": 2
+ },
+ "launch": {
+  "distinct_file_pairs_undirected": 16,
+  "with_direct_light_edge": 0,
+  "cross_package": 3,
+  "cross_package_with_light_edge_between_the_packages": 0
+ },
+ "parameter": {
+  "distinct_file_pairs_undirected": 6,
+  "with_direct_light_edge": 0,
+  "cross_package": 6,
+  "cross_package_with_light_edge_between_the_packages": 2
+ },
+ "tf": {
+  "distinct_file_pairs_undirected": 1,
+  "with_direct_light_edge": 0,
+  "cross_package": 1,
+  "cross_package_with_light_edge_between_the_packages": 0
+ },
+ "all": {
+  "distinct_file_pairs_undirected": 35,
+  "with_direct_light_edge": 0,
+  "files_involved": 23
+ },
+ "package_pairs": [
+  {
+   "packages": "fast_livo2_core <-> fast_livo2_nav",
+   "light_scan_edges": 0,
+   "relations": [
+    "runtime file pair",
+    "topic"
+   ]
+  },
+  {
+   "packages": "fast_livo2_core <-> fast_livo2_ros",
+   "light_scan_edges": 1,
+   "relations": [
+    "ament_target_dependencies",
+    "cmake-link",
+    "include-dir",
+    "package.xml depend",
+    "runtime file pair",
+    "topic"
+   ]
+  },
+  {
+   "packages": "fast_livo2_core <-> tb3_fastlivo",
+   "light_scan_edges": 0,
+   "relations": [
+    "runtime file pair",
+    "topic"
+   ]
+  },
+  {
+   "packages": "fast_livo2_core <-> vikit_common",
+   "light_scan_edges": 9,
+   "relations": [
+    "ament_target_dependencies",
+    "cmake-link",
+    "package.xml depend"
+   ]
+  },
+  {
+   "packages": "fast_livo2_core <-> vikit_ros",
+   "light_scan_edges": 1,
+   "relations": [
+    "cmake-link",
+    "include-dir",
+    "package.xml depend"
+   ]
+  },
+  {
+   "packages": "fast_livo2_nav <-> fast_livo2_ros",
+   "light_scan_edges": 0,
+   "relations": [
+    "package.xml exec_depend"
+   ]
+  },
+  {
+   "packages": "fast_livo2_nav <-> tb3_fastlivo",
+   "light_scan_edges": 0,
+   "relations": [
+    "launch include-launch",
+    "package.xml exec_depend",
+    "runtime file pair"
+   ]
+  },
+  {
+   "packages": "fast_livo2_ros <-> tb3_fastlivo",
+   "light_scan_edges": 0,
+   "relations": [
+    "launch argument-file",
+    "launch path-assignment",
+    "launch run-executable",
+    "runtime file pair"
+   ]
+  },
+  {
+   "packages": "fast_livo2_ros <-> vikit_common",
+   "light_scan_edges": 0,
+   "relations": [
+    "ament_target_dependencies",
+    "package.xml depend"
+   ]
+  },
+  {
+   "packages": "fast_livo2_ros <-> vikit_ros",
+   "light_scan_edges": 0,
+   "relations": [
+    "ament_target_dependencies",
+    "package.xml depend",
+    "runtime file pair"
+   ]
+  },
+  {
+   "packages": "tb3_fastlivo <-> vikit_ros",
+   "light_scan_edges": 0,
+   "relations": [
+    "package.xml depend",
+    "runtime file pair"
+   ]
+  },
+  {
+   "packages": "vikit_common <-> vikit_ros",
+   "light_scan_edges": 6,
+   "relations": [
+    "ament_target_dependencies",
+    "include-dir",
+    "package.xml depend"
+   ]
+  }
+ ],
+ "package_pairs_total": 12,
+ "package_pairs_with_light_edge": 4
+}

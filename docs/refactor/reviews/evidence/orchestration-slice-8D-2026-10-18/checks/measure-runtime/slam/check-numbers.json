@@ -1,0 +1,367 @@
+{
+ "files": 130,
+ "cpp_files": 67,
+ "tus": 23,
+ "cpp_own_text_resolver": {
+  "edges": 86,
+  "unresolved": 181,
+  "unresolved_ros_interface": 14,
+  "cross_package": {
+   "fast_livo2_core->vikit_common": 9,
+   "vikit_ros->vikit_common": 6,
+   "fast_livo2_ros->fast_livo2_core": 1,
+   "fast_livo2_core->vikit_ros": 1
+  },
+  "cpp_files_with_edge": 55,
+  "cpp_files_reached": 56
+ },
+ "cpp_light_prototype": {
+  "status": {
+   "ok": 23
+  },
+  "edges": 86,
+  "unresolved": 179,
+  "unresolved_ros_interface": 14,
+  "cpp_files_with_edge": 55,
+  "failure_rule_diagnostics": []
+ },
+ "cpp_diff": {
+  "edges_only_own": [],
+  "edges_only_light": [],
+  "unres_only_own": [
+   [
+    "ros2_ws/src/fast_livo2_core/include/fast_livo2_core/core/LIVMapper.h",
+    "<cv_bridge/cv_bridge.hpp>"
+   ],
+   [
+    "ros2_ws/src/vikit_common/src/vision.cpp",
+    "<arm_neon.h>"
+   ]
+  ],
+  "unres_only_light": []
+ },
+ "python_whole": {
+  "py_files": 10,
+  "import_statements": 73,
+  "raw_refs_names": 89,
+  "nested_imports": 0,
+  "dynamic_import_calls": [],
+  "unresolved_count": 73,
+  "unresolved_reasons": {
+   "None": 73
+  },
+  "unresolved_stdlib": 18,
+  "unresolved_other": 55
+ },
+ "python_whole_edges": 0,
+ "python_vs_prototype": {
+  "theirs": {
+   "files": 10,
+   "parsed": 10,
+   "roots": [
+    "."
+   ],
+   "edges": 0,
+   "unresolved": 73,
+   "reasons": {
+    "None": 73
+   }
+  },
+  "only_mine": [],
+  "only_theirs": []
+ },
+ "python_per_package_root": {
+  "pkg-fast_livo2_nav": {
+   "py_files": 4,
+   "unresolved_count": 23,
+   "unresolved_reasons": {
+    "None": 22,
+    "命名空间包，没有文件": 1
+   },
+   "unresolved_non_null": [
+    "launch/slam_nav_bringup.launch.py | launch | 命名空间包，没有文件"
+   ]
+  },
+  "pkg-fast_livo2_ros": {
+   "py_files": 2,
+   "unresolved_count": 12,
+   "unresolved_reasons": {
+    "None": 11,
+    "命名空间包，没有文件": 1
+   },
+   "unresolved_non_null": [
+    "launch/mapping_aviz.launch.py | launch | 命名空间包，没有文件"
+   ]
+  },
+  "pkg-tb3_fastlivo": {
+   "py_files": 4,
+   "unresolved_count": 38,
+   "unresolved_reasons": {
+    "None": 37,
+    "命名空间包，没有文件": 1
+   },
+   "unresolved_non_null": [
+    "launch/mapping.launch.py | launch | 命名空间包，没有文件"
+   ]
+  }
+ },
+ "runtime_site_counts": {
+  "cpp": {
+   "root_dir_lines": 19,
+   "create_publisher": 16,
+   "create_subscription": 5,
+   "timer": 1,
+   "sendTransform": 3,
+   "system": 2,
+   "std_bind": 6,
+   "declare_parameter": 72,
+   "param_client": 1,
+   "popen": 1,
+   "getParam": 70,
+   "getRemoteParam": 13
+  },
+  "py": {
+   "TransformBroadcaster": 1,
+   "create_subscription": 7,
+   "sendTransform": 1,
+   "create_client": 1,
+   "create_publisher": 4,
+   "ActionClient": 1,
+   "create_timer": 1,
+   "open": 1
+  },
+  "launch": {
+   "Node": 18,
+   "Node_to_project_file": 4,
+   "Node_project_files_distinct": 3,
+   "IncludeLaunchDescription": 2,
+   "include_to_project": 1,
+   "param_file_refs": 13,
+   "param_yaml_distinct": 7,
+   "ExecuteProcess": 1,
+   "remaps": 3
+  },
+  "bridge_entries": 7,
+  "ext_cfg_topic_keys": 3,
+  "gz_plugins": 10
+ },
+ "topic_site_pairs": 20,
+ "topic_code_code_file_pairs": [
+  [
+   "ros2_ws/src/fast_livo2_core/src/LIVMapper.cpp",
+   "ros2_ws/src/fast_livo2_nav/scripts/pointcloud_to_octomap.py"
+  ],
+  [
+   "ros2_ws/src/fast_livo2_core/src/LIVMapper.cpp",
+   "ros2_ws/src/fast_livo2_ros/scripts/decompress_images.py"
+  ],
+  [
+   "ros2_ws/src/fast_livo2_core/src/LIVMapper.cpp",
+   "ros2_ws/src/tb3_fastlivo/scripts/auto_mapping_route.py"
+  ],
+  [
+   "ros2_ws/src/fast_livo2_core/src/LIVMapper.cpp",
+   "ros2_ws/src/tb3_fastlivo/scripts/lidar_converter.py"
+  ]
+ ],
+ "runtime_pair_summary": {
+  "topic": {
+   "pairs": 13,
+   "direct_light_edge": 0,
+   "connected_in_light_graph": 0,
+   "both_sides_cpp": 0,
+   "one_side_has_any_light_edge": 7,
+   "cross_package": 10,
+   "cross_package_with_light_edge_between_packages": 2
+  },
+  "launch": {
+   "pairs": 16,
+   "direct_light_edge": 0,
+   "connected_in_light_graph": 0,
+   "both_sides_cpp": 0,
+   "one_side_has_any_light_edge": 2,
+   "cross_package": 3,
+   "cross_package_with_light_edge_between_packages": 0
+  },
+  "parameter": {
+   "pairs": 6,
+   "direct_light_edge": 0,
+   "connected_in_light_graph": 0,
+   "both_sides_cpp": 0,
+   "one_side_has_any_light_edge": 6,
+   "cross_package": 6,
+   "cross_package_with_light_edge_between_packages": 2
+  },
+  "tf": {
+   "pairs": 1,
+   "direct_light_edge": 0,
+   "connected_in_light_graph": 0,
+   "both_sides_cpp": 0,
+   "one_side_has_any_light_edge": 1,
+   "cross_package": 1,
+   "cross_package_with_light_edge_between_packages": 0
+  },
+  "all": {
+   "pairs": 35,
+   "direct_light_edge": 0,
+   "connected_in_light_graph": 0,
+   "both_sides_cpp": 0,
+   "one_side_has_any_light_edge": 16,
+   "cross_package": 20,
+   "cross_package_with_light_edge_between_packages": 4
+  },
+  "sum_of_kinds": 36,
+  "files_involved": 23,
+  "overlaps": [
+   [
+    "ros2_ws/src/fast_livo2_nav/launch/slam_nav_bringup.launch.py",
+    "ros2_ws/src/fast_livo2_nav/scripts/pointcloud_to_octomap.py"
+   ]
+  ]
+ },
+ "extra_pairs_not_in_the_35": {
+  "shell->script": [
+   [
+    "ros2_ws/src/tb3_fastlivo/scripts/auto_mapping_route.py",
+    "ros2_ws/src/tb3_fastlivo/scripts/auto_test.sh"
+   ],
+   [
+    "ros2_ws/src/tb3_fastlivo/scripts/auto_test.sh",
+    "ros2_ws/src/tb3_fastlivo/scripts/mapping_controller.py"
+   ]
+  ],
+  "shell->launch": [
+   [
+    "ros2_ws/src/fast_livo2_nav/launch/slam_nav_bringup.launch.py",
+    "ros2_ws/src/tb3_fastlivo/scripts/auto_test.sh"
+   ]
+  ],
+  "rviz->publisher": [
+   [
+    "ros2_ws/src/fast_livo2_core/src/LIVMapper.cpp",
+    "ros2_ws/src/fast_livo2_ros/rviz/fast_livo2.rviz"
+   ],
+   [
+    "ros2_ws/src/fast_livo2_core/src/LIVMapper.cpp",
+    "ros2_ws/src/fast_livo2_ros/rviz/octomap_only.rviz"
+   ]
+  ],
+  "model gz topic->bridge": [
+   [
+    "ros2_ws/src/tb3_fastlivo/config/gz_bridge.yaml",
+    "ros2_ws/src/tb3_fastlivo/urdf/rover_4wd_gz.urdf.xacro"
+   ],
+   [
+    "ros2_ws/src/tb3_fastlivo/config/gz_bridge.yaml",
+    "ros2_ws/src/tb3_fastlivo/urdf/tb3_waffle_gz.urdf.xacro"
+   ]
+  ]
+ },
+ "extra_new_vs_35": 7,
+ "package_relations": {
+  "fast_livo2_core <-> fast_livo2_nav": [
+   "runtime file pair"
+  ],
+  "fast_livo2_core <-> fast_livo2_ros": [
+   "cmake find_package",
+   "cmake set",
+   "cmake target_include_directories",
+   "cmake target_link_libraries",
+   "light-scan edge x1",
+   "package.xml depend",
+   "runtime file pair"
+  ],
+  "fast_livo2_core <-> tb3_fastlivo": [
+   "runtime file pair"
+  ],
+  "fast_livo2_core <-> vikit_common": [
+   "cmake find_package",
+   "cmake set",
+   "cmake target_link_libraries",
+   "light-scan edge x9",
+   "package.xml depend"
+  ],
+  "fast_livo2_core <-> vikit_ros": [
+   "cmake find_package",
+   "cmake target_include_directories",
+   "cmake target_link_libraries",
+   "light-scan edge x1",
+   "package.xml depend"
+  ],
+  "fast_livo2_nav <-> fast_livo2_ros": [
+   "package.xml exec_depend"
+  ],
+  "fast_livo2_nav <-> tb3_fastlivo": [
+   "package.xml exec_depend",
+   "runtime file pair"
+  ],
+  "fast_livo2_ros <-> tb3_fastlivo": [
+   "runtime file pair"
+  ],
+  "fast_livo2_ros <-> vikit_common": [
+   "cmake find_package",
+   "cmake set",
+   "package.xml depend"
+  ],
+  "fast_livo2_ros <-> vikit_ros": [
+   "cmake find_package",
+   "cmake set",
+   "package.xml depend",
+   "runtime file pair"
+  ],
+  "tb3_fastlivo <-> vikit_ros": [
+   "package.xml depend",
+   "runtime file pair"
+  ],
+  "vikit_common <-> vikit_ros": [
+   "cmake find_package",
+   "cmake set",
+   "cmake target_include_directories",
+   "light-scan edge x6",
+   "package.xml depend"
+  ]
+ },
+ "missing_own_deps": [
+  {
+   "package": "tb3_fastlivo",
+   "dep": "fast_livo",
+   "line": 17
+  }
+ ],
+ "param_yaml_detail_project": {
+  "ros2_ws/src/fast_livo2_ros/config/avia.yaml": {
+   "keys": 61,
+   "read_by_some_code": 58,
+   "not_read": [
+    "imu.b_acc_cov",
+    "imu.b_gyr_cov",
+    "lio.max_iterations"
+   ]
+  },
+  "ros2_ws/src/fast_livo2_ros/config/camera_pinhole.yaml": {
+   "keys": 12,
+   "read_by_some_code": 12,
+   "not_read": []
+  },
+  "ros2_ws/src/tb3_fastlivo/config/camera_tb3.yaml": {
+   "keys": 12,
+   "read_by_some_code": 12,
+   "not_read": []
+  },
+  "ros2_ws/src/tb3_fastlivo/config/rover.yaml": {
+   "keys": 61,
+   "read_by_some_code": 58,
+   "not_read": [
+    "imu.b_acc_cov",
+    "imu.b_gyr_cov",
+    "lio.max_iterations"
+   ]
+  }
+ },
+ "zero_checks": {
+  "project .msg/.srv/.action/.idl files": [],
+  "setup.py/setup.cfg/pyproject.toml": [],
+  "configure_file in CMake": [],
+  "plugin XML (pluginlib export)": []
+ }
+}

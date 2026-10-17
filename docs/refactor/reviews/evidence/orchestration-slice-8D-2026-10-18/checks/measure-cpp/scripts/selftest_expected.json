@@ -1,0 +1,52 @@
+{
+  "_note": "Hand-computed before the first run (2026-10-17). Files not listed under failed/skipped are expected parsed. R2 = Lexical-or-Preprocessor or User-Defined (#error) category; R2lex = Lexical-or-Preprocessor only.",
+  "modes": {
+    "light": {
+      "R0": {"failed": ["src/error_before_missing.c", "src/lookahead.c", "src/syntax_filescope.c", "src/cross_order_late.c", "include/unterminated.h"],
+             "skipped": ["include/glibc_only.h", "include/has_pthread.h", "include/orphan.h"]},
+      "R1": {"failed": ["src/sysmissing.c", "src/vec.cpp", "src/projmissing.c", "src/error_before_missing.c", "src/lookahead.c", "src/syntax_filescope.c",
+                        "src/cross_order.c", "src/cross_order_late.c", "include/needs_sys.h", "include/unterminated.h"],
+             "skipped": ["include/glibc_only.h", "include/has_pthread.h", "include/orphan.h"]},
+      "R2": {"failed": ["include/unterminated.h"], "skipped": ["include/glibc_only.h", "include/has_pthread.h", "include/orphan.h"]},
+      "R2lex": {"failed": ["include/unterminated.h"], "skipped": ["include/glibc_only.h", "include/has_pthread.h", "include/orphan.h"]},
+      "R3": {"failed": [], "skipped": ["include/glibc_only.h", "include/has_pthread.h", "include/orphan.h"]},
+      "edges": 18,
+      "unresolved": 9,
+      "in_function_body": {"src/body_include.c:3": "unknown"}
+    },
+    "light-bodies": {
+      "R0": {"failed": ["src/error_before_missing.c", "src/lookahead.c", "src/syntax_filescope.c", "src/syntax_body.c", "src/cross_order_late.c", "include/unterminated.h"],
+             "skipped": ["include/glibc_only.h", "include/has_pthread.h", "include/orphan.h"]},
+      "R1": {"failed": ["src/sysmissing.c", "src/vec.cpp", "src/projmissing.c", "src/error_before_missing.c", "src/lookahead.c", "src/syntax_filescope.c",
+                        "src/syntax_body.c", "src/cross_order.c", "src/cross_order_late.c", "include/needs_sys.h", "include/unterminated.h"],
+             "skipped": ["include/glibc_only.h", "include/has_pthread.h", "include/orphan.h"]},
+      "R2": {"failed": ["include/unterminated.h"], "skipped": ["include/glibc_only.h", "include/has_pthread.h", "include/orphan.h"]},
+      "R2lex": {"failed": ["include/unterminated.h"], "skipped": ["include/glibc_only.h", "include/has_pthread.h", "include/orphan.h"]},
+      "R3": {"failed": [], "skipped": ["include/glibc_only.h", "include/has_pthread.h", "include/orphan.h"]},
+      "edges": 18,
+      "unresolved": 9,
+      "in_function_body": {"src/body_include.c:3": true}
+    },
+    "reference": {
+      "R0": {"failed": ["src/error_before_missing.c", "src/lookahead.c", "src/syntax_filescope.c", "src/syntax_body.c", "src/cross_order_late.c", "include/unterminated.h"],
+             "skipped": ["include/no_pthread.h", "include/orphan.h"]},
+      "R1": {"failed": ["src/projmissing.c", "src/error_before_missing.c", "src/lookahead.c", "src/syntax_filescope.c", "src/syntax_body.c",
+                        "src/cross_order_late.c", "include/unterminated.h"],
+             "skipped": ["include/no_pthread.h", "include/orphan.h"]},
+      "R2": {"failed": ["include/unterminated.h"], "skipped": ["include/no_pthread.h", "include/orphan.h"]},
+      "R2lex": {"failed": ["include/unterminated.h"], "skipped": ["include/no_pthread.h", "include/orphan.h"]},
+      "R3": {"failed": [], "skipped": ["include/no_pthread.h", "include/orphan.h"]},
+      "edges": 19,
+      "unresolved": 4,
+      "in_function_body": {"src/body_include.c:3": true}
+    }
+  },
+  "diff": {
+    "light|reference": {
+      "A_only": {"src/glibc_branch.c:8 -> include/no_pthread.h": "__has_include"},
+      "B_only": {"src/glibc_branch.c:3 -> include/glibc_only.h": "conditional branch",
+                 "src/glibc_branch.c:6 -> include/has_pthread.h": "__has_include"}
+    },
+    "light|light-bodies": {"A_only": {}, "B_only": {}}
+  }
+}

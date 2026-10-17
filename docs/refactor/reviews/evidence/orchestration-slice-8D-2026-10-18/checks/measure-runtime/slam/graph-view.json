@@ -1,0 +1,100 @@
+{
+ "old_light_edges": 86,
+ "new_light_edges": 86,
+ "identical": true,
+ "only_old": [],
+ "only_new": [],
+ "python_edges": 0,
+ "files": 130,
+ "files_with_edge": 55,
+ "by_kind": {
+  "c/c++": {
+   "files": 67,
+   "with_edge": 55
+  },
+  "cmake": {
+   "files": 8,
+   "with_edge": 0
+  },
+  "launch.py": {
+   "files": 3,
+   "with_edge": 0
+  },
+  "markdown": {
+   "files": 15,
+   "with_edge": 0
+  },
+  "other": {
+   "files": 5,
+   "with_edge": 0
+  },
+  "package.xml": {
+   "files": 6,
+   "with_edge": 0
+  },
+  "python": {
+   "files": 7,
+   "with_edge": 0
+  },
+  "rviz": {
+   "files": 2,
+   "with_edge": 0
+  },
+  "shell": {
+   "files": 4,
+   "with_edge": 0
+  },
+  "urdf/sdf": {
+   "files": 4,
+   "with_edge": 0
+  },
+  "yaml": {
+   "files": 9,
+   "with_edge": 0
+  }
+ },
+ "by_package": {
+  "(root)": {
+   "files": 19,
+   "with_edge": 0
+  },
+  "fast_livo2_core": {
+   "files": 26,
+   "with_edge": 20
+  },
+  "fast_livo2_nav": {
+   "files": 8,
+   "with_edge": 0
+  },
+  "fast_livo2_ros": {
+   "files": 10,
+   "with_edge": 1
+  },
+  "tb3_fastlivo": {
+   "files": 16,
+   "with_edge": 0
+  },
+  "vikit_common": {
+   "files": 44,
+   "with_edge": 29
+  },
+  "vikit_ros": {
+   "files": 7,
+   "with_edge": 5
+  }
+ },
+ "claimed_cpp_without_edge": [
+  "ros2_ws/src/fast_livo2_core/include/fast_livo2_core/livox_ros_driver/CustomMsg.h",
+  "ros2_ws/src/fast_livo2_core/include/fast_livo2_core/livox_ros_driver/CustomPoint.h",
+  "ros2_ws/src/fast_livo2_core/src/utils.cpp",
+  "ros2_ws/src/vikit_common/include/vikit/blender_utils.h",
+  "ros2_ws/src/vikit_common/include/vikit/file_reader.h",
+  "ros2_ws/src/vikit_common/include/vikit/file_reader_types.h",
+  "ros2_ws/src/vikit_common/include/vikit/patch_score.h",
+  "ros2_ws/src/vikit_common/include/vikit/ringbuffer.h",
+  "ros2_ws/src/vikit_common/include/vikit/sample.h",
+  "ros2_ws/src/vikit_common/test/test_camera.cpp",
+  "ros2_ws/src/vikit_common/test/test_patch_score.cpp",
+  "ros2_ws/src/vikit_common/test/test_triangulation.cpp"
+ ]
+}

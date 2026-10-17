@@ -1,0 +1,1197 @@
+{
+ "workspace": "/home/han001/dsh-work/measure-runtime/src/django/tree/django-5.1.15",
+ "pythonFilesParsed": 2787,
+ "dottedPathStrings": {
+  "note": "string literals that look like dotted Python paths and resolve (module, module.attr or module.Class.attr) with the light-scan rules; unresolved ones kept only when they start with django or a tests/ package",
+  "allSites": 2499,
+  "byKind": {
+   "URLconf (include / ROOT_URLCONF / urlconf)": {
+    "sites": 306,
+    "byScope": {
+     "tests": 306
+    },
+    "resolved": 302,
+    "resolvedViaTestsRoot": 293,
+    "unresolved": 4,
+    "how": {
+     "module": 300,
+     "attr": 2
+    },
+    "uniquePairs": 162,
+    "byConnection": {
+     "same-dir": 97,
+     "dir-edge": 16,
+     "edge": 8,
+     "self": 5,
+     "reverse": 1,
+     "new": 33,
+     "dir-edge-reverse-only": 2
+    },
+    "djangoOnly": {
+     "sites": 0,
+     "uniquePairs": 0,
+     "byConnection": {}
+    },
+    "topContexts": {
+     "kw:ROOT_URLCONF": 267,
+     "call:include:arg": 34,
+     "call:get_callable:arg": 5
+    },
+    "examplesNew": [
+     "tests/admin_views/test_password_form.py:7 'auth_tests.urls_admin' [kw:ROOT_URLCONF] -> tests/auth_tests/urls_admin.py",
+     "tests/admin_views/urls.py:13 'django.contrib.admindocs.urls' [call:include:arg] -> django/contrib/admindocs/urls.py",
+     "tests/check_framework/test_urls.py:16 'check_framework.urls.no_warnings' [kw:ROOT_URLCONF] -> tests/check_framework/urls/no_warnings.py"
+    ],
+    "examplesUnresolved": [
+     "tests/gis_tests/geoadmin/tests.py:7 'django.contrib.gis.tests.geoadmin.urls' [kw:ROOT_URLCONF]",
+     "tests/urlpatterns_reverse/tests.py:1628 'urlpatterns_reverse.views.i_should_not_exist' [call:get_callable:arg]",
+     "tests/urlpatterns_reverse/tests.py:1633 'urlpatterns_reverse.views_broken.i_am_broken' [call:get_callable:arg]",
+     "tests/urlpatterns_reverse/tests.py:1652 'urlpatterns_reverse.foo.bar' [call:get_callable:arg]"
+    ]
+   },
+   "class attribute (AppConfig.name, compiler_module, ...)": {
+    "sites": 135,
+    "byScope": {
+     "django": 39,
+     "tests": 96
+    },
+    "resolved": 115,
+    "resolvedViaTestsRoot": 28,
+    "unresolved": 20,
+    "how": {
+     "attr-star": 13,
+     "attr": 22,
+     "module": 80
+    },
+    "uniquePairs": 99,
+    "byConnection": {
+     "dir-edge": 31,
+     "same-dir": 35,
+     "new": 15,
+     "dir-edge-reverse-only": 1,
+     "edge": 12,
+     "self": 4,
+     "reverse": 1
+    },
+    "djangoOnly": {
+     "sites": 39,
+     "uniquePairs": 39,
+     "byConnection": {
+      "dir-edge": 10,
+      "same-dir": 21,
+      "new": 4,
+      "dir-edge-reverse-only": 1,
+      "edge": 2,
+      "self": 1
+     }
+    },
+    "topContexts": {
+     "assign:classattr:available_apps": 39,
+     "assign:classattr:name": 29,
+     "assign:classattr:default_auto_field": 13,
+     "assign:classattr:permission_required": 11,
+     "assign:classattr:backend": 9,
+     "assign:classattr:dependencies": 8,
+     "assign:classattr:email_backend": 4,
+     "assign:classattr:compiler_module": 3
+    },
+    "examplesNew": [
+     "django/contrib/admin/tests.py:24 'django.contrib.sessions' [assign:classattr:available_apps] -> django/contrib/sessions/__init__.py",
+     "django/contrib/gis/apps.py:7 'django.db.models.AutoField' [assign:classattr:default_auto_field] -> django/db/models/__init__.py",
+     "django/contrib/gis/management/commands/inspectdb.py:5 'django.contrib.gis.db' [assign:classattr:db_module] -> django/contrib/gis/db/__init__.py",
+     "django/contrib/sitemaps/apps.py:6 'django.db.models.AutoField' [assign:classattr:default_auto_field] -> django/db/models/__init__.py",
+     "tests/admin_scripts/tests.py:2423 'django.contrib.auth' [assign:classattr:available_apps] -> django/contrib/auth/__init__.py",
+     "tests/admin_scripts/tests.py:2424 'django.contrib.contenttypes' [assign:classattr:available_apps] -> django/contrib/contenttypes/__init__.py",
+     "tests/admin_scripts/tests.py:2425 'django.contrib.sessions' [assign:classattr:available_apps] -> django/contrib/sessions/__init__.py"
+    ],
+    "examplesUnresolved": [
+     "tests/auth_tests/test_mixins.py:42 'auth_tests.add_customuser' [assign:classattr:permission_required]",
+     "tests/auth_tests/test_mixins.py:42 'auth_tests.change_customuser' [assign:classattr:permission_required]",
+     "tests/auth_tests/test_mixins.py:49 'auth_tests.add_customuser' [assign:classattr:permission_required]",
+     "tests/auth_tests/test_mixins.py:49 'auth_tests.change_customuser' [assign:classattr:permission_required]",
+     "tests/auth_tests/test_mixins.py:267 'auth_tests.add_customuser' [assign:classattr:permission_required]"
+    ]
+   },
+   "dict value (BACKEND/ENGINE/class/registry...)": {
+    "sites": 291,
+    "byScope": {
+     "django": 19,
+     "tests": 272
+    },
+    "resolved": 277,
+    "resolvedViaTestsRoot": 139,
+    "unresolved": 14,
+    "how": {
+     "attr": 79,
+     "attr-star": 5,
+     "module": 193
+    },
+    "uniquePairs": 181,
+    "byConnection": {
+     "self": 9,
+     "dir-edge": 55,
+     "same-dir": 8,
+     "new": 101,
+     "edge": 8
+    },
+    "djangoOnly": {
+     "sites": 19,
+     "uniquePairs": 10,
+     "byConnection": {
+      "self": 2,
+      "dir-edge": 1,
+      "same-dir": 5,
+      "new": 2
+     }
+    },
+    "topContexts": {
+     "dictval:migrations": 73,
+     "dictval:append": 58,
+     "dictval:context_processors": 43,
+     "dictval:i18n": 13,
+     "dictval:remove": 12,
+     "dictval:custom": 12,
+     "dictval:loaders": 10,
+     "dictval:migrations2": 5
+    },
+    "examplesNew": [
+     "django/views/debug.py:29 'django.templatetags.i18n' [dictval:i18n] -> django/templatetags/i18n.py",
+     "django/views/static.py:81 'django.templatetags.i18n' [dictval:i18n] -> django/templatetags/i18n.py",
+     "tests/admin_checks/tests.py:169 'django.template.context_processors.request' [dictval:context_processors] -> django/template/context_processors.py",
+     "tests/admin_checks/tests.py:202 'django.template.context_processors.request' [dictval:context_processors] -> django/template/context_processors.py",
+     "tests/admin_scripts/tests.py:1471 'django.template.context_processors.request' [dictval:context_processors] -> django/template/context_processors.py"
+    ],
+    "examplesUnresolved": [
+     "django/utils/log.py:45 'django.server' [dictval:formatter]",
+     "django/utils/log.py:59 'django.server' [dictval:handlers]",
+     "tests/field_deconstruction/tests.py:580 'field_deconstruction.mymodel' [dictval:to]",
+     "tests/field_deconstruction/tests.py:588 'field_deconstruction.mymodel' [dictval:to]",
+     "tests/fixtures_regress/tests.py:392 'fixtures_regress.animal' [dictval:model]"
+    ]
+   },
+   "import_string/import_module call": {
+    "sites": 18,
+    "byScope": {
+     "tests": 18
+    },
+    "resolved": 14,
+    "resolvedViaTestsRoot": 9,
+    "unresolved": 4,
+    "how": {
+     "module": 13,
+     "attr": 1
+    },
+    "uniquePairs": 13,
+    "byConnection": {
+     "edge": 3,
+     "new": 7,
+     "same-dir": 1,
+     "dir-edge": 2
+    },
+    "djangoOnly": {
+     "sites": 0,
+     "uniquePairs": 0,
+     "byConnection": {}
+    },
+    "topContexts": {
+     "call:import_module:arg": 16,
+     "call:import_string:arg": 2
+    },
+    "examplesNew": [
+     "tests/i18n/tests.py:1277 'django.conf.locale.de.formats' [call:import_module:arg] -> django/conf/locale/de/formats.py",
+     "tests/i18n/tests.py:1278 'i18n.other.locale.de.formats' [call:import_module:arg] -> tests/i18n/other/locale/de/formats.py",
+     "tests/i18n/tests.py:1279 'i18n.other2.locale.de.formats' [call:import_module:arg] -> tests/i18n/other2/locale/de/formats.py"
+    ],
+    "examplesUnresolved": [
+     "tests/utils_tests/test_module_loading.py:35 'utils_tests.test_module.no_such_module' [call:import_module:arg]",
+     "tests/utils_tests/test_module_loading.py:40 'utils_tests.test_module.django' [call:import_module:arg]",
+     "tests/utils_tests/test_module_loading.py:50 'utils_tests.test_no_submodule.anything' [call:import_module:arg]",
+     "tests/utils_tests/test_module_loading.py:141 'utils_tests.unexistent' [call:import_string:arg]"
+    ]
+   },
+   "logger name (not a dependency)": {
+    "sites": 23,
+    "byScope": {
+     "django": 22,
+     "tests": 1
+    },
+    "resolved": 14,
+    "resolvedViaTestsRoot": 0,
+    "unresolved": 9,
+    "how": {
+     "module": 14
+    },
+    "uniquePairs": 14,
+    "byConnection": {
+     "edge": 2,
+     "dir-edge": 5,
+     "same-dir": 2,
+     "reverse": 3,
+     "new": 1,
+     "self": 1
+    },
+    "djangoOnly": {
+     "sites": 22,
+     "uniquePairs": 14,
+     "byConnection": {
+      "edge": 2,
+      "dir-edge": 5,
+      "same-dir": 2,
+      "reverse": 3,
+      "new": 1,
+      "self": 1
+     }
+    },
+    "topContexts": {
+     "call:getLogger:arg": 23
+    },
+    "examplesNew": [
+     "django/test/runner.py:47 'django.db.backends' [call:getLogger:arg] -> django/db/backends/__init__.py"
+    ],
+    "examplesUnresolved": [
+     "django/contrib/sessions/backends/base.py:137 'django.security.SuspiciousSession' [call:getLogger:arg]",
+     "django/core/handlers/asgi.py:26 'django.request' [call:getLogger:arg]",
+     "django/core/handlers/base.py:17 'django.request' [call:getLogger:arg]",
+     "django/core/servers/basehttp.py:25 'django.server' [call:getLogger:arg]",
+     "django/db/backends/base/schema.py:21 'django.db.backends.schema' [call:getLogger:arg]"
+    ]
+   },
+   "mock.patch target (imported by string)": {
+    "sites": 216,
+    "byScope": {
+     "tests": 216
+    },
+    "resolved": 209,
+    "resolvedViaTestsRoot": 1,
+    "unresolved": 7,
+    "how": {
+     "attr2": 114,
+     "attr": 95
+    },
+    "uniquePairs": 81,
+    "byConnection": {
+     "edge": 41,
+     "dir-edge": 24,
+     "new": 15,
+     "self": 1
+    },
+    "djangoOnly": {
+     "sites": 0,
+     "uniquePairs": 0,
+     "byConnection": {}
+    },
+    "topContexts": {
+     "call:patch:arg": 216
+    },
+    "examplesNew": [
+     "tests/backends/base/test_creation.py:63 'django.db.migrations.recorder.MigrationRecorder.has_table' [call:patch:arg] -> django/db/migrations/recorder.py",
+     "tests/backends/base/test_creation.py:65 'django.core.management.commands.migrate.Command.sync_apps' [call:patch:arg] -> django/core/management/commands/migrate.py",
+     "tests/backends/base/test_creation.py:69 'django.db.migrations.executor.MigrationExecutor.migrate' [call:patch:arg] -> django/db/migrations/executor.py"
+    ],
+    "examplesUnresolved": [
+     "tests/admin_scripts/tests.py:1776 'django.db.connection.creation.create_test_db' [call:patch:arg]",
+     "tests/aggregation_regress/tests.py:1564 'django.db.connection.features.allows_group_by_selected_pks_on_model' [call:patch:arg]",
+     "tests/backends/mysql/test_features.py:16 'django.db.connection.features._mysql_storage_engine' [call:patch:arg]",
+     "tests/backends/mysql/test_features.py:21 'django.db.connection.features._mysql_storage_engine' [call:patch:arg]",
+     "tests/inspectdb/tests.py:452 'django.db.connection.introspection.data_types_reverse.base_data_types_reverse' [call:patch:arg]"
+    ]
+   },
+   "other (assertions, messages, comparisons...)": {
+    "sites": 425,
+    "byScope": {
+     "django": 55,
+     "other": 1,
+     "tests": 369
+    },
+    "resolved": 307,
+    "resolvedViaTestsRoot": 139,
+    "unresolved": 118,
+    "how": {
+     "module": 175,
+     "attr": 126,
+     "attr2": 4,
+     "attr-star": 2
+    },
+    "uniquePairs": 152,
+    "byConnection": {
+     "dir-edge": 21,
+     "edge": 17,
+     "reverse": 6,
+     "same-dir": 15,
+     "new": 78,
+     "self": 10,
+     "dir-edge-reverse-only": 5
+    },
+    "djangoOnly": {
+     "sites": 55,
+     "uniquePairs": 39,
+     "byConnection": {
+      "dir-edge": 9,
+      "edge": 6,
+      "reverse": 5,
+      "same-dir": 3,
+      "new": 7,
+      "self": 4,
+      "dir-edge-reverse-only": 5
+     }
+    },
+    "topContexts": {
+     "dictkey": 95,
+     "kw:module": 74,
+     "kw:name": 30,
+     "kw:apps": 29,
+     "kw:loaders": 22,
+     "other:Compare": 21,
+     "assign:local:urlconf": 15,
+     "kw:path": 13
+    },
+    "examplesNew": [
+     "django/contrib/flatpages/forms.py:40 'django.middleware.common.CommonMiddleware' [other:Compare] -> django/middleware/common.py",
+     "django/core/checks/model_checks.py:204 'django.dispatch.dispatcher' [dictkey] -> django/dispatch/dispatcher.py",
+     "django/core/checks/security/sessions.py:95 'django.contrib.sessions.middleware.SessionMiddleware' [other:Compare] -> django/contrib/sessions/middleware.py",
+     "django/core/checks/security/sessions.py:99 'django.contrib.sessions' [other:Compare] -> django/contrib/sessions/__init__.py",
+     "django/core/management/commands/makemigrations.py:149 'django.db.backends.dummy' [other:Compare] -> django/db/backends/dummy/__init__.py",
+     "django/db/utils.py:164 'django.db.backends.dummy' [assign:local:?] -> django/db/backends/dummy/__init__.py",
+     "tests/admin_docs/test_views.py:103 'urlpatterns_reverse.nonimported_module.view' [kw:args] -> tests/urlpatterns_reverse/nonimported_module.py",
+     "tests/admin_scripts/tests.py:87 'django.contrib.auth' [assign:local:apps] -> django/contrib/auth/__init__.py",
+     "tests/admin_scripts/tests.py:88 'django.contrib.contenttypes' [assign:local:apps] -> django/contrib/contenttypes/__init__.py"
+    ],
+    "examplesUnresolved": [
+     "django/db/utils.py:109 'django.db.backends.postgresql_psycopg2' [other:Compare]",
+     "django/utils/log.py:30 'django.server' [dictkey]",
+     "django/utils/log.py:42 'django.server' [dictkey]",
+     "django/utils/log.py:58 'django.server' [dictkey]",
+     "docs/conf.py:314 'django.tex' [assign:module:latex_documents]"
+    ]
+   },
+   "other call argument": {
+    "sites": 498,
+    "byScope": {
+     "django": 40,
+     "tests": 458
+    },
+    "resolved": 350,
+    "resolvedViaTestsRoot": 110,
+    "unresolved": 148,
+    "how": {
+     "module": 143,
+     "attr": 146,
+     "attr-star": 55,
+     "attr2": 6
+    },
+    "uniquePairs": 149,
+    "byConnection": {
+     "edge": 33,
+     "dir-edge": 36,
+     "new": 44,
+     "same-dir": 19,
+     "self": 8,
+     "reverse": 9
+    },
+    "djangoOnly": {
+     "sites": 40,
+     "uniquePairs": 27,
+     "byConnection": {
+      "edge": 2,
+      "dir-edge": 8,
+      "new": 3,
+      "same-dir": 2,
+      "self": 4,
+      "reverse": 8
+     }
+    },
+    "topContexts": {
+     "call:assertEqual:arg": 164,
+     "call:assertLogs:arg": 90,
+     "call:build_suite:arg": 28,
+     "call:replace:arg": 18,
+     "call:permission_required:arg": 18,
+     "call:assertNoLogs:arg": 16,
+     "call:isolate_apps:arg": 15,
+     "call:get_connection:arg": 13
+    },
+    "examplesNew": [
+     "django/contrib/admin/checks.py:159 'django.contrib.sessions.middleware.SessionMiddleware' [call:_contains_subclass:arg] -> django/contrib/sessions/middleware.py",
+     "django/contrib/gis/apps.py:13 'django.contrib.gis.serializers.geojson' [call:setdefault:arg] -> django/contrib/gis/serializers/geojson.py",
+     "django/db/utils.py:162 'django.db.backends.dummy' [call:setdefault:arg] -> django/db/backends/dummy/__init__.py",
+     "tests/admin_docs/test_views.py:107 'urlpatterns_reverse.nonimported_module' [call:assertNotIn:arg] -> tests/urlpatterns_reverse/nonimported_module.py",
+     "tests/admin_scripts/tests.py:349 'django.contrib.auth' [call:write_settings:arg] -> django/contrib/auth/__init__.py",
+     "tests/admin_scripts/tests.py:350 'django.contrib.contenttypes' [call:write_settings:arg] -> django/contrib/contenttypes/__init__.py"
+    ],
+    "examplesUnresolved": [
+     "tests/admin_scripts/tests.py:2580 'project_template.tgz' [call:join:arg]",
+     "tests/admin_scripts/tests.py:2594 'project_template.tgz' [call:join:arg]",
+     "tests/admin_scripts/tests.py:734 'apps.py' [call:join:arg]",
+     "tests/admin_scripts/tests.py:759 'apps.py' [call:join:arg]",
+     "tests/admin_scripts/tests.py:2959 'apps.py' [call:join:arg]"
+    ]
+   },
+   "setting value (UPPER_CASE name)": {
+    "sites": 587,
+    "byScope": {
+     "django": 30,
+     "tests": 557
+    },
+    "resolved": 573,
+    "resolvedViaTestsRoot": 193,
+    "unresolved": 14,
+    "how": {
+     "attr": 426,
+     "attr-star": 12,
+     "module": 135
+    },
+    "uniquePairs": 273,
+    "byConnection": {
+     "dir-edge-reverse-only": 16,
+     "dir-edge": 51,
+     "new": 145,
+     "edge": 31,
+     "self": 19,
+     "same-dir": 11
+    },
+    "djangoOnly": {
+     "sites": 30,
+     "uniquePairs": 21,
+     "byConnection": {
+      "dir-edge-reverse-only": 16,
+      "dir-edge": 1,
+      "new": 4
+     }
+    },
+    "topContexts": {
+     "kw:MIDDLEWARE": 145,
+     "dictval:BACKEND": 119,
+     "kw:INSTALLED_APPS": 109,
+     "kw:AUTHENTICATION_BACKENDS": 37,
+     "dictval:NAME": 24,
+     "kw:PASSWORD_HASHERS": 17,
+     "dictval:ENGINE": 15,
+     "kw:DATABASE_ROUTERS": 12
+    },
+    "examplesNew": [
+     "django/db/utils.py:150 'django.db.backends.dummy' [dictval:ENGINE] -> django/db/backends/dummy/__init__.py",
+     "django/test/utils.py:147 'django.core.mail.backends.locmem.EmailBackend' [assign:local:EMAIL_BACKEND] -> django/core/mail/backends/locmem.py",
+     "django/test/utils.py:858 'django.template.backends.django.DjangoTemplates' [dictval:BACKEND] -> django/template/backends/django.py",
+     "django/test/utils.py:862 'django.template.backends.jinja2.Jinja2' [dictval:BACKEND] -> django/template/backends/jinja2.py",
+     "tests/admin_checks/tests.py:123 'django.template.backends.django.DjangoTemplates' [dictval:BACKEND] -> django/template/backends/django.py",
+     "tests/admin_checks/tests.py:164 'django.template.backends.django.DjangoTemplates' [dictval:BACKEND] -> django/template/backends/django.py",
+     "tests/admin_checks/tests.py:192 'django.template.backends.dummy.TemplateStrings' [dictval:BACKEND] -> django/template/backends/dummy.py"
+    ],
+    "examplesUnresolved": [
+     "django/contrib/sessions/backends/cache.py:5 'django.contrib.sessions.cache' [assign:module:KEY_PREFIX]",
+     "django/contrib/sessions/backends/cached_db.py:11 'django.contrib.sessions.cached_db' [assign:module:KEY_PREFIX]",
+     "tests/admin_checks/tests.py:253 'django.contrib.does.not.Exist' [kw:MIDDLEWARE]",
+     "tests/apps/tests.py:109 'apps.apps.NoSuchConfig' [kw:INSTALLED_APPS]",
+     "tests/auth_tests/test_checks.py:387 'auth_tests.test_checks.NotExist' [kw:MIDDLEWARE]"
+    ]
+   }
+  },
+  "wiringKinds": [
+   "URLconf (include / ROOT_URLCONF / urlconf)",
+   "class attribute (AppConfig.name, compiler_module, ...)",
+   "dict value (BACKEND/ENGINE/class/registry...)",
+   "import_string/import_module call",
+   "setting value (UPPER_CASE name)"
+  ],
+  "wiringTotal": {
+   "sites": 1337,
+   "resolved": 1281,
+   "django": 88,
+   "uniquePairs": 715,
+   "byConnection": {
+    "dir-edge-reverse-only": 19,
+    "dir-edge": 154,
+    "same-dir": 152,
+    "new": 296,
+    "self": 34,
+    "edge": 58,
+    "reverse": 2
+   }
+  },
+  "wiringDjangoOnly": {
+   "uniquePairs": 70,
+   "byConnection": {
+    "dir-edge-reverse-only": 17,
+    "dir-edge": 12,
+    "same-dir": 26,
+    "new": 10,
+    "self": 3,
+    "edge": 2
+   }
+  },
+  "globalSettings": [
+   {
+    "line": 191,
+    "value": "django.core.mail.backends.smtp.EmailBackend",
+    "to": "django/core/mail/backends/smtp.py",
+    "connection": "dir-edge-reverse-only"
+   },
+   {
+    "line": 217,
+    "value": "django.forms.renderers.DjangoTemplates",
+    "to": "django/forms/renderers.py",
+    "connection": "dir-edge-reverse-only"
+   },
+   {
+    "line": 442,
+    "value": "django.db.models.AutoField",
+    "to": "django/db/models/__init__.py",
+    "connection": "dir-edge-reverse-only"
+   },
+   {
+    "line": 501,
+    "value": "django.contrib.sessions.backends.db",
+    "to": "django/contrib/sessions/backends/db.py",
+    "connection": "dir-edge-reverse-only"
+   },
+   {
+    "line": 506,
+    "value": "django.contrib.sessions.serializers.JSONSerializer",
+    "to": "django/contrib/sessions/serializers.py",
+    "connection": "dir-edge-reverse-only"
+   },
+   {
+    "line": 556,
+    "value": "django.core.signing.TimestampSigner",
+    "to": "django/core/signing.py",
+    "connection": "dir-edge"
+   },
+   {
+    "line": 564,
+    "value": "django.views.csrf.csrf_failure",
+    "to": "django/views/csrf.py",
+    "connection": "dir-edge-reverse-only"
+   },
+   {
+    "line": 583,
+    "value": "django.contrib.messages.storage.fallback.FallbackStorage",
+    "to": "django/contrib/messages/storage/fallback.py",
+    "connection": "dir-edge-reverse-only"
+   },
+   {
+    "line": 600,
+    "value": "django.views.debug.ExceptionReporter",
+    "to": "django/views/debug.py",
+    "connection": "dir-edge-reverse-only"
+   },
+   {
+    "line": 604,
+    "value": "django.views.debug.SafeExceptionReporterFilter",
+    "to": "django/views/debug.py",
+    "connection": "dir-edge-reverse-only"
+   },
+   {
+    "line": 611,
+    "value": "django.test.runner.DiscoverRunner",
+    "to": "django/test/runner.py",
+    "connection": "dir-edge-reverse-only"
+   },
+   {
+    "line": 303,
+    "value": "django.core.files.uploadhandler.MemoryFileUploadHandler",
+    "to": "django/core/files/uploadhandler.py",
+    "connection": "dir-edge-reverse-only"
+   },
+   {
+    "line": 304,
+    "value": "django.core.files.uploadhandler.TemporaryFileUploadHandler",
+    "to": "django/core/files/uploadhandler.py",
+    "connection": "dir-edge-reverse-only"
+   },
+   {
+    "line": 528,
+    "value": "django.contrib.auth.backends.ModelBackend",
+    "to": "django/contrib/auth/backends.py",
+    "connection": "dir-edge-reverse-only"
+   },
+   {
+    "line": 543,
+    "value": "django.contrib.auth.hashers.PBKDF2PasswordHasher",
+    "to": "django/contrib/auth/hashers.py",
+    "connection": "dir-edge-reverse-only"
+   },
+   {
+    "line": 544,
+    "value": "django.contrib.auth.hashers.PBKDF2SHA1PasswordHasher",
+    "to": "django/contrib/auth/hashers.py",
+    "connection": "dir-edge-reverse-only"
+   },
+   {
+    "line": 545,
+    "value": "django.contrib.auth.hashers.Argon2PasswordHasher",
+    "to": "django/contrib/auth/hashers.py",
+    "connection": "dir-edge-reverse-only"
+   },
+   {
+    "line": 546,
+    "value": "django.contrib.auth.hashers.BCryptSHA256PasswordHasher",
+    "to": "django/contrib/auth/hashers.py",
+    "connection": "dir-edge-reverse-only"
+   },
+   {
+    "line": 547,
+    "value": "django.contrib.auth.hashers.ScryptPasswordHasher",
+    "to": "django/contrib/auth/hashers.py",
+    "connection": "dir-edge-reverse-only"
+   },
+   {
+    "line": 634,
+    "value": "django.contrib.staticfiles.finders.FileSystemFinder",
+    "to": "django/contrib/staticfiles/finders.py",
+    "connection": "dir-edge-reverse-only"
+   },
+   {
+    "line": 635,
+    "value": "django.contrib.staticfiles.finders.AppDirectoriesFinder",
+    "to": "django/contrib/staticfiles/finders.py",
+    "connection": "dir-edge-reverse-only"
+   },
+   {
+    "line": 278,
+    "value": "django.core.files.storage.FileSystemStorage",
+    "to": "django/core/files/storage/__init__.py",
+    "connection": "dir-edge-reverse-only"
+   },
+   {
+    "line": 281,
+    "value": "django.contrib.staticfiles.storage.StaticFilesStorage",
+    "to": "django/contrib/staticfiles/storage.py",
+    "connection": "dir-edge-reverse-only"
+   },
+   {
+    "line": 515,
+    "value": "django.core.cache.backends.locmem.LocMemCache",
+    "to": "django/core/cache/backends/locmem.py",
+    "connection": "dir-edge-reverse-only"
+   }
+  ]
+ },
+ "importString": {
+  "literal": 3,
+  "nonLiteral": 41,
+  "examplesNonLiteral": [
+   "django/apps/config.py:162 entry",
+   "django/contrib/admin/checks.py:35 class_path",
+   "django/contrib/admin/checks.py:38 path",
+   "django/contrib/admin/sites.py:605 apps.get_app_config('admin').default_site",
+   "django/contrib/auth/__init__.py:23 path",
+   "django/contrib/auth/checks.py:17 class_path",
+   "django/contrib/auth/checks.py:20 path",
+   "django/contrib/auth/hashers.py:120 hasher_path",
+   "django/contrib/auth/password_validation.py:29 validator['NAME']",
+   "django/contrib/messages/storage/__init__.py:12 settings.MESSAGE_STORAGE",
+   "django/contrib/sessions/backends/base.py:49 settings.SESSION_SERIALIZER",
+   "django/contrib/staticfiles/finders.py:321 import_path"
+  ]
+ },
+ "modelReferences": {
+  "sites": 395,
+  "resolved": 203,
+  "ambiguousLabel": 5,
+  "byScope": {
+   "django": 21,
+   "tests": 374
+  },
+  "contexts": {
+   "call:ForeignKey": 144,
+   "call:get_model(label, model)": 111,
+   "kw:AUTH_USER_MODEL": 57,
+   "call:ManyToManyField": 29,
+   "call:get_model": 13,
+   "call:OneToOneField": 13,
+   "kw:to": 9,
+   "kw:through": 8,
+   "call:apps.get_model": 5,
+   "call:ForeignObject": 5,
+   "assign:module": 1
+  },
+  "uniquePairs": 81,
+  "byConnection": {
+   "dir-edge-reverse-only": 2,
+   "new": 35,
+   "same-dir": 3,
+   "edge": 28,
+   "dir-edge": 10,
+   "self": 2,
+   "reverse": 1
+  },
+  "examplesNew": [
+   "django/contrib/admin/migrations/0001_initial.py:51 'contenttypes.ContentType' -> django/contrib/contenttypes/models.py",
+   "django/contrib/auth/management/__init__.py:71 'contenttypes.ContentType' -> django/contrib/contenttypes/models.py",
+   "django/contrib/auth/migrations/0001_initial.py:29 'contenttypes.ContentType' -> django/contrib/contenttypes/models.py",
+   "django/contrib/auth/migrations/0011_update_proxy_permissions.py:24 'contenttypes.ContentType' -> django/contrib/contenttypes/models.py",
+   "django/contrib/flatpages/migrations/0001_initial.py:57 'sites.Site' -> django/contrib/sites/models.py",
+   "django/contrib/redirects/migrations/0001_initial.py:25 'sites.Site' -> django/contrib/sites/models.py",
+   "tests/contenttypes_tests/operations_migrations/0002_rename_foo.py:5 'contenttypes.ContentType' -> django/contrib/contenttypes/models.py",
+   "tests/db_functions/migrations/0002_create_test_models.py:25 'db_functions.Author' -> tests/db_functions/models.py"
+  ],
+  "examplesUnresolved": [
+   "tests/apps/tests.py:198 'Admin.LogEntry'",
+   "tests/field_deconstruction/tests.py:25 'some_fake.ModelName'",
+   "tests/field_deconstruction/tests.py:253 'something.Else'",
+   "tests/field_deconstruction/tests.py:378 'something.Else'",
+   "tests/gis_tests/gis_migrations/migrations/0002_create_models.py:72 'gis_migrations.Family'",
+   "tests/gis_tests/gis_migrations/migrations/0002_create_models.py:38 'gis_migrations.Neighborhood'"
+  ]
+ },
+ "migrations": {
+  "files": 160,
+  "depSites": 135,
+  "literal": 133,
+  "swappable": 2,
+  "special": 4,
+  "resolvedSameDir": 105,
+  "resolvedOtherApp": 10,
+  "unresolved": 14,
+  "examplesUnresolved": [
+   "tests/migrations/migrations_test_apps/alter_fk/author_app/migrations/0002_alter_id.py:7 ('book_app', '0001_initial')",
+   "tests/migrations/migrations_test_apps/alter_fk/book_app/migrations/0001_initial.py:6 ('author_app', '0001_initial')",
+   "tests/migrations/migrations_test_apps/mutate_state_a/migrations/0001_initial.py:6 ('mutate_state_b', '0001_initial')",
+   "tests/migrations/test_migrations_first/second.py:7 ('migrations2', '0002_second')",
+   "tests/migrations/test_migrations_squashed_complex_multi_apps/app2/1_auto.py:5 ('app1', '1_auto')",
+   "tests/migrations/test_migrations_squashed_erroneous/3_squashed_5.py:6 ('migrations', '3_auto')"
+  ],
+  "examplesOther": [
+   "django/contrib/auth/migrations/0006_require_contenttypes_0002.py:7 ('contenttypes', '0002_remove_content_type_name') -> django/contrib/contenttypes/migrations/0002_remove_content_type_name.py [new]",
+   "django/contrib/auth/migrations/0011_update_proxy_permissions.py:70 ('contenttypes', '0002_remove_content_type_name') -> django/contrib/contenttypes/migrations/0002_remove_content_type_name.py [new]",
+   "django/contrib/flatpages/migrations/0001_initial.py:6 ('sites', '0001_initial') -> django/contrib/sites/migrations/0001_initial.py [new]",
+   "django/contrib/redirects/migrations/0001_initial.py:6 ('sites', '0001_initial') -> django/contrib/sites/migrations/0001_initial.py [new]",
+   "tests/migrations/migrations_test_apps/conflicting_app_with_dependencies/migrations/0002_second.py:7 ('migrated_app', '0001_initial') -> tests/migrations/migrations_test_apps/migrated_app/migrations/0001_initial.py [new]",
+   "tests/migrations/migrations_test_apps/lookuperror_a/migrations/0003_a3.py:6 ('lookuperror_c', '0002_c2') -> tests/migrations/migrations_test_apps/lookuperror_c/migrations/0002_c2.py [new]"
+  ],
+  "uniquePairs": 110,
+  "byConnection": {
+   "same-dir": 100,
+   "new": 10
+  },
+  "djangoFiles": 40
+ },
+ "conventionModules": {
+  "management commands (*/management/commands/*.py; load_command_class)": {
+   "files": 62,
+   "django": 34,
+   "noIncomingEdge": 50,
+   "djangoNoIncomingEdge": 23,
+   "examplesNoIncoming": [
+    "django/contrib/contenttypes/management/commands/remove_stale_contenttypes.py",
+    "django/contrib/gis/management/commands/inspectdb.py",
+    "django/contrib/gis/management/commands/ogrinspect.py",
+    "django/contrib/sessions/management/commands/clearsessions.py",
+    "django/contrib/staticfiles/management/commands/findstatic.py",
+    "django/core/management/commands/check.py"
+   ]
+  },
+  "template tag libraries (*/templatetags/*.py; get_installed_libraries)": {
+   "files": 28,
+   "django": 12,
+   "noIncomingEdge": 18,
+   "djangoNoIncomingEdge": 4,
+   "examplesNoIncoming": [
+    "django/contrib/admin/templatetags/log.py",
+    "django/contrib/flatpages/templatetags/flatpages.py",
+    "django/templatetags/cache.py",
+    "django/templatetags/tz.py"
+   ]
+  },
+  "migrations (*/migrations/*.py; MigrationLoader; not django/db/migrations, not the tests/migrations app itself)": {
+   "files": 163,
+   "django": 23,
+   "noIncomingEdge": 163,
+   "djangoNoIncomingEdge": 23,
+   "examplesNoIncoming": [
+    "django/contrib/admin/migrations/0001_initial.py",
+    "django/contrib/admin/migrations/0002_logentry_remove_auto_add.py",
+    "django/contrib/admin/migrations/0003_logentry_add_action_flag_choices.py",
+    "django/contrib/auth/migrations/0001_initial.py",
+    "django/contrib/auth/migrations/0002_alter_permission_name_max_length.py",
+    "django/contrib/auth/migrations/0003_alter_user_email_max_length.py"
+   ]
+  },
+  "apps.py (AppConfig discovery)": {
+   "files": 29,
+   "django": 15,
+   "noIncomingEdge": 25,
+   "djangoNoIncomingEdge": 13,
+   "examplesNoIncoming": [
+    "django/contrib/admindocs/apps.py",
+    "django/contrib/auth/apps.py",
+    "django/contrib/contenttypes/apps.py",
+    "django/contrib/flatpages/apps.py",
+    "django/contrib/gis/apps.py",
+    "django/contrib/humanize/apps.py"
+   ]
+  },
+  "admin.py (admin.autodiscover)": {
+   "files": 14,
+   "django": 5,
+   "noIncomingEdge": 4,
+   "djangoNoIncomingEdge": 3,
+   "examplesNoIncoming": [
+    "django/contrib/flatpages/admin.py",
+    "django/contrib/redirects/admin.py",
+    "django/contrib/sites/admin.py"
+   ]
+  },
+  "db backends base.py (load_backend \"<ENGINE>.base\")": {
+   "files": 6,
+   "django": 6,
+   "noIncomingEdge": 1,
+   "djangoNoIncomingEdge": 1,
+   "examplesNoIncoming": [
+    "django/db/backends/dummy/base.py"
+   ]
+  },
+  "locale formats (django/conf/locale/*/formats.py; get_format_modules)": {
+   "files": 84,
+   "django": 84,
+   "noIncomingEdge": 84,
+   "djangoNoIncomingEdge": 84,
+   "examplesNoIncoming": [
+    "django/conf/locale/ar/formats.py",
+    "django/conf/locale/ar_DZ/formats.py",
+    "django/conf/locale/az/formats.py",
+    "django/conf/locale/bg/formats.py",
+    "django/conf/locale/bn/formats.py",
+    "django/conf/locale/bs/formats.py"
+   ]
+  }
+ },
+ "templates": {
+  "templateRoots": 37,
+  "textFilesRead": 637,
+  "templateTagLibraries": {
+   "admin_list": [
+    "django/contrib/admin/templatetags/admin_list.py"
+   ],
+   "admin_modify": [
+    "django/contrib/admin/templatetags/admin_modify.py"
+   ],
+   "admin_urls": [
+    "django/contrib/admin/templatetags/admin_urls.py"
+   ],
+   "base": [
+    "django/contrib/admin/templatetags/base.py"
+   ],
+   "cache": [
+    "django/templatetags/cache.py"
+   ],
+   "flatpages": [
+    "django/contrib/flatpages/templatetags/flatpages.py"
+   ],
+   "humanize": [
+    "django/contrib/humanize/templatetags/humanize.py"
+   ],
+   "i18n": [
+    "django/templatetags/i18n.py"
+   ],
+   "l10n": [
+    "django/templatetags/l10n.py"
+   ],
+   "log": [
+    "django/contrib/admin/templatetags/log.py"
+   ],
+   "static": [
+    "django/templatetags/static.py"
+   ],
+   "tz": [
+    "django/templatetags/tz.py"
+   ]
+  },
+  "loadTag": {
+   "sites": 80,
+   "libraryNames": 117,
+   "resolved": 117,
+   "ambiguous": 1,
+   "unresolved": 0,
+   "unresolvedNames": {},
+   "examples": [
+    "django/contrib/admin/templates/admin/404.html:2 load i18n -> django/templatetags/i18n.py",
+    "django/contrib/admin/templates/admin/500.html:2 load i18n -> django/templatetags/i18n.py",
+    "django/contrib/admin/templates/admin/actions.html:1 load i18n -> django/templatetags/i18n.py",
+    "django/contrib/admin/templates/admin/app_index.html:2 load i18n -> django/templatetags/i18n.py",
+    "django/contrib/admin/templates/admin/app_list.html:1 load i18n -> django/templatetags/i18n.py"
+   ],
+   "uniqueTemplateToPythonPairs": 117,
+   "djangoTemplateToPythonPairs": 88,
+   "djangoTargets": [
+    "django/contrib/admin/templatetags/admin_list.py",
+    "django/contrib/admin/templatetags/admin_modify.py",
+    "django/contrib/admin/templatetags/admin_urls.py",
+    "django/contrib/admin/templatetags/log.py",
+    "django/templatetags/i18n.py",
+    "django/templatetags/l10n.py",
+    "django/templatetags/static.py"
+   ],
+   "djangoTargetsWithoutIncomingEdge": [
+    "django/contrib/admin/templatetags/log.py"
+   ]
+  },
+  "extendsInclude": {
+   "sites": 178,
+   "literal": 166,
+   "resolved": 142,
+   "ambiguous": 96,
+   "nonLiteral": 12,
+   "unresolvedExamples": [
+    "tests/template_tests/recursive_templates/fs/extend-missing.html:1 extends \"missing.html\"",
+    "tests/template_tests/recursive_templates/fs/one.html:1 extends \"two.html\"",
+    "tests/template_tests/recursive_templates/fs/other-recursive.html:1 extends \"recursive.html\"",
+    "tests/template_tests/recursive_templates/fs/recursive.html:1 extends \"recursive.html\"",
+    "tests/template_tests/recursive_templates/fs/self.html:1 extends \"self.html\""
+   ],
+   "examples": [
+    "django/contrib/admin/templates/admin/404.html:1 extends \"admin/base_site.html\" -> django/contrib/admin/templates/admin/base_site.html",
+    "django/contrib/admin/templates/admin/500.html:1 extends \"admin/base_site.html\" -> django/contrib/admin/templates/admin/base_site.html",
+    "django/contrib/admin/templates/admin/app_index.html:1 extends \"admin/index.html\" -> django/contrib/admin/templates/admin/index.html",
+    "django/contrib/admin/templates/admin/auth/user/add_form.html:1 extends \"admin/change_form.html\" -> django/contrib/admin/templates/admin/change_form.html",
+    "django/contrib/admin/templates/admin/auth/user/change_password.html:1 extends \"admin/base_site.html\" -> django/contrib/admin/templates/admin/base_site.html"
+   ]
+  },
+  "pythonToTemplateStrings": {
+   "sites": 598,
+   "resolved": 420,
+   "django": 104,
+   "djangoResolved": 99,
+   "examples": [
+    "django/contrib/admin/actions.py:91 'admin/delete_selected_confirmation.html' -> django/contrib/admin/templates/admin/delete_selected_confirmation.html",
+    "django/contrib/admin/filters.py:28 'admin/filter.html' -> django/contrib/admin/templates/admin/filter.html",
+    "django/contrib/admin/options.py:2570 'admin/edit_inline/stacked.html' -> django/contrib/admin/templates/admin/edit_inline/stacked.html",
+    "django/contrib/admin/options.py:2574 'admin/edit_inline/tabular.html' -> django/contrib/admin/templates/admin/edit_inline/tabular.html",
+    "django/contrib/admin/options.py:1383 'admin/change_form.html' -> django/contrib/admin/templates/admin/change_form.html",
+    "django/contrib/admin/options.py:1746 'admin/delete_confirmation.html' -> django/contrib/admin/templates/admin/delete_confirmation.html"
+   ],
+   "contexts": {
+    "assign:classattr": 142,
+    "call:assertTemplateUsed": 109,
+    "call:render_to_string": 42,
+    "call:get_template": 42,
+    "call:assertEqual": 40,
+    "call:path": 37,
+    "call:render": 20,
+    "kw:template_name": 18,
+    "call:TemplateResponse": 16,
+    "call:save": 13
+   },
+   "djangoUniquePairs": 97,
+   "djangoTemplatesReferencedFromPython": 91,
+   "djangoTemplateFiles": 167
+  },
+  "builtinTagModulesAlwaysLoaded": [
+   "django/template/defaultfilters.py",
+   "django/template/defaulttags.py",
+   "django/template/loader_tags.py"
+  ]
+ },
+ "projectTemplateSettings": {
+  "django/conf/project_template/project_name/settings.py-tpl": {
+   "dottedStrings": 27,
+   "resolved": 24,
+   "distinctTargets": 20,
+   "items": [
+    "52 'proj.urls' [assign:module:ROOT_URLCONF] -> None",
+    "70 'proj.wsgi.application' [assign:module:WSGI_APPLICATION] -> None",
+    "123 'django.db.models.BigAutoField' [assign:module:DEFAULT_AUTO_FIELD] -> django/db/models/__init__.py",
+    "34 'django.contrib.admin' [assign:module:INSTALLED_APPS] -> django/contrib/admin/__init__.py",
+    "35 'django.contrib.auth' [assign:module:INSTALLED_APPS] -> django/contrib/auth/__init__.py",
+    "36 'django.contrib.contenttypes' [assign:module:INSTALLED_APPS] -> django/contrib/contenttypes/__init__.py",
+    "37 'django.contrib.sessions' [assign:module:INSTALLED_APPS] -> django/contrib/sessions/__init__.py",
+    "38 'django.contrib.messages' [assign:module:INSTALLED_APPS] -> django/contrib/messages/__init__.py",
+    "39 'django.contrib.staticfiles' [assign:module:INSTALLED_APPS] -> django/contrib/staticfiles/__init__.py",
+    "43 'django.middleware.security.SecurityMiddleware' [assign:module:MIDDLEWARE] -> django/middleware/security.py",
+    "44 'django.contrib.sessions.middleware.SessionMiddleware' [assign:module:MIDDLEWARE] -> django/contrib/sessions/middleware.py",
+    "45 'django.middleware.common.CommonMiddleware' [assign:module:MIDDLEWARE] -> django/middleware/common.py",
+    "46 'django.middleware.csrf.CsrfViewMiddleware' [assign:module:MIDDLEWARE] -> django/middleware/csrf.py",
+    "47 'django.contrib.auth.middleware.AuthenticationMiddleware' [assign:module:MIDDLEWARE] -> django/contrib/auth/middleware.py",
+    "48 'django.contrib.messages.middleware.MessageMiddleware' [assign:module:MIDDLEWARE] -> django/contrib/messages/middleware.py",
+    "49 'django.middleware.clickjacking.XFrameOptionsMiddleware' [assign:module:MIDDLEWARE] -> django/middleware/clickjacking.py",
+    "56 'django.template.backends.django.DjangoTemplates' [dictval:BACKEND] -> django/template/backends/django.py",
+    "78 'django.db.backends.sqlite3' [dictval:ENGINE] -> django/db/backends/sqlite3/__init__.py",
+    "89 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator' [dictval:NAME] -> django/contrib/auth/password_validation.py",
+    "92 'django.contrib.auth.password_validation.MinimumLengthValidator' [dictval:NAME] -> django/contrib/auth/password_validation.py",
+    "95 'django.contrib.auth.password_validation.CommonPasswordValidator' [dictval:NAME] -> django/contrib/auth/password_validation.py",
+    "98 'django.contrib.auth.password_validation.NumericPasswordValidator' [dictval:NAME] -> django/contrib/auth/password_validation.py",
+    "79 'db.sqlite3' [other:BinOp] -> None",
+    "61 'django.template.context_processors.debug' [dictval:context_processors] -> django/template/context_processors.py",
+    "62 'django.template.context_processors.request' [dictval:context_processors] -> django/template/context_processors.py",
+    "63 'django.contrib.auth.context_processors.auth' [dictval:context_processors] -> django/contrib/auth/context_processors.py",
+    "64 'django.contrib.messages.context_processors.messages' [dictval:context_processors] -> django/contrib/messages/context_processors.py"
+   ]
+  }
+ },
+ "lazyImports": {
+  "importStatementsByPlace": {
+   "module": 10371,
+   "function": 482,
+   "try": 120
+  },
+  "note": "function-level, try and TYPE_CHECKING imports are all collected by the light scan",
+  "functionLevelResolvedPairs": 216
+ },
+ "moduleGetattr": [
+  "django/db/models/enums.py:115"
+ ],
+ "registries": {
+  "counts": {
+   "register(...)": 346,
+   "connect": 187,
+   "receiver": 33
+  },
+  "examples": {
+   "register(...)": [
+    "django/contrib/admin/apps.py:16",
+    "django/contrib/admin/apps.py:17",
+    "django/contrib/admin/decorators.py:107",
+    "django/contrib/admin/filters.py:325",
+    "django/contrib/admin/filters.py:394"
+   ],
+   "connect": [
+    "django/contrib/auth/apps.py:19",
+    "django/contrib/auth/apps.py:28",
+    "django/contrib/contenttypes/apps.py:19",
+    "django/contrib/contenttypes/apps.py:20",
+    "django/contrib/messages/apps.py:19"
+   ],
+   "receiver": [
+    "django/contrib/auth/hashers.py:135",
+    "django/dispatch/dispatcher.py:189",
+    "django/dispatch/dispatcher.py:306",
+    "django/dispatch/dispatcher.py:449",
+    "django/dispatch/dispatcher.py:242"
+   ]
+  }
+ },
+ "discoveryCalls": {
+  "module_has_submodule": {
+   "count": 21,
+   "examples": [
+    "django/apps/config.py:267",
+    "django/apps/config.py:121",
+    "django/core/management/commands/migrate.py:109",
+    "django/urls/utils.py:35",
+    "django/utils/module_loading.py:70",
+    "tests/utils_tests/test_module_loading.py:23"
+   ]
+  },
+  "autodiscover_modules": {
+   "count": 10,
+   "examples": [
+    "django/contrib/admin/__init__.py:52",
+    "tests/utils_tests/test_module_loading.py:156",
+    "tests/utils_tests/test_module_loading.py:159",
+    "tests/utils_tests/test_module_loading.py:174",
+    "tests/utils_tests/test_module_loading.py:179",
+    "tests/utils_tests/test_module_loading.py:201"
+   ]
+  },
+  "pkgutil.iter_modules": {
+   "count": 3,
+   "examples": [
+    "django/core/management/__init__.py:37",
+    "django/db/migrations/loader.py:113",
+    "django/db/utils.py:121"
+   ]
+  },
+  "find_spec": {
+   "count": 2,
+   "examples": [
+    "django/core/management/templates.py:279",
+    "tests/utils_tests/test_module_loading.py:212"
+   ]
+  },
+  "walk_packages": {
+   "count": 1,
+   "examples": [
+    "django/template/backends/django.py:172"
+   ]
+  }
+ },
+ "sysPathChanges": {
+  "count": 33,
+  "sites": [
+   "django/core/management/base.py:95",
+   "django/test/utils.py:767",
+   "docs/conf.py:27",
+   "docs/conf.py:32",
+   "tests/app_loading/tests.py:16 (extend_sys_path)",
+   "tests/app_loading/tests.py:28 (extend_sys_path)",
+   "tests/app_loading/tests.py:40 (extend_sys_path)",
+   "tests/app_loading/tests.py:52 (extend_sys_path)",
+   "tests/app_loading/tests.py:64 (extend_sys_path)",
+   "tests/apps/tests.py:520 (extend_sys_path)",
+   "tests/apps/tests.py:534 (extend_sys_path)",
+   "tests/apps/tests.py:545 (extend_sys_path)",
+   "tests/i18n/sampleproject/manage.py:5",
+   "tests/i18n/sampleproject/update_catalogs.py:34",
+   "tests/migrations/test_base.py:203 (extend_sys_path)",
+   "tests/project_template/test_settings.py:29 (extend_sys_path)",
+   "tests/proxy_model_inheritance/tests.py:25 (extend_sys_path)",
+   "tests/sphinx/test_github_links.py:24",
+   "tests/staticfiles_tests/test_management.py:474 (extend_sys_path)",
+   "tests/template_tests/test_custom.py:552 (extend_sys_path)",
+   "tests/template_tests/test_custom.py:559 (extend_sys_path)",
+   "tests/user_commands/tests.py:107 (extend_sys_path)",
+   "tests/utils_tests/test_autoreload.py:83 (extend_sys_path)",
+   "tests/utils_tests/test_autoreload.py:96 (extend_sys_path)",
+   "tests/utils_tests/test_autoreload.py:111 (extend_sys_path)",
+   "tests/utils_tests/test_autoreload.py:128 (extend_sys_path)",
+   "tests/utils_tests/test_autoreload.py:140 (extend_sys_path)",
+   "tests/utils_tests/test_autoreload.py:325 (extend_sys_path)",
+   "tests/utils_tests/test_autoreload.py:331 (extend_sys_path)",
+   "tests/utils_tests/test_autoreload.py:341 (extend_sys_path)",
+   "tests/utils_tests/test_autoreload.py:786 (extend_sys_path)",
+   "tests/utils_tests/test_module_loading.py:91 (extend_sys_path)",
+   "tests/utils_tests/test_module_loading.py:112 (extend_sys_path)"
+  ]
+ },
+ "ctypes": [
+  {
+   "at": "django/contrib/gis/db/backends/spatialite/base.py:34",
+   "func": "find_library",
+   "arg": "'spatialite'",
+   "literal": true
+  },
+  {
+   "at": "django/contrib/gis/gdal/libgdal.py:69",
+   "func": "CDLL",
+   "arg": "lib_path",
+   "literal": false
+  },
+  {
+   "at": "django/contrib/gis/gdal/libgdal.py:78",
+   "func": "WinDLL",
+   "arg": "lib_path",
+   "literal": false
+  },
+  {
+   "at": "django/contrib/gis/gdal/libgdal.py:57",
+   "func": "find_library",
+   "arg": "lib_name",
+   "literal": false
+  },
+  {
+   "at": "django/contrib/gis/geos/libgeos.py:62",
+   "func": "CDLL",
+   "arg": "lib_path",
+   "literal": false
+  },
+  {
+   "at": "django/contrib/gis/geos/libgeos.py:48",
+   "func": "find_library",
+   "arg": "lib_name",
+   "literal": false
+  },
+  {
+   "at": "django/core/files/locks.py:77",
+   "func": "WinDLL",
+   "arg": "'kernel32'",
+   "literal": true
+  },
+  {
+   "at": "django/db/backends/oracle/base.py:37",
+   "func": "ctypes.CDLL",
+   "arg": "'kernel32'",
+   "literal": true
+  }
+ ],
+ "nonLiteralImportlib": 46
+}

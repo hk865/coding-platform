@@ -1,0 +1,139 @@
+light edges: C/C++ 90, Python (whole repo) 0, Python (per package) 4; package pairs with an edge (excluding same package): 0
+packages: 21 ({'ament_cmake': 16, 'ament_python': 5})
+interface files: {'action_tutorials_interfaces': 1, 'logging_demo': 1, 'pendulum_msgs': 3}
+
+== runtime sites by kind (count; examples)
+  ParameterEventHandler                                                     1  demo_nodes_cpp/src/parameters/parameter_event_handler.cpp:81 auto param_subscriber = std::make_shared<rclcpp::ParameterEventHandler
+  RCLCPP_COMPONENTS_REGISTER_NODE                                          36  action_tutorials/action_tutorials_cpp/src/fibonacci_action_client.cpp:127 RCLCPP_COMPONENTS_REGISTER_NODE(action_tutorials_cpp::FibonacciActionC; action_tutorials/action_tutorials_cpp/src/fibonacci_action_server.cpp:122 RCLCPP_COMPONENTS_REGISTER_NODE(action_tutorials_cpp::FibonacciActionS; composition/src/client_component.cpp:81 RCLCPP_COMPONENTS_REGISTER_NODE(composition::Client); composition/src/listener_component.cpp:55 RCLCPP_COMPONENTS_REGISTER_NODE(composition::Listener)
+  class_loader                                                              8  composition/src/dlopen_composition.cpp:39 std::vector<std::unique_ptr<class_loader::ClassLoader>> loaders;; composition/src/dlopen_composition.cpp:48 auto loader = std::make_unique<class_loader::ClassLoader>(library);; composition/src/dlopen_composition.cpp:49 auto classes = loader->getAvailableClasses<rclcpp_components::NodeFact; composition/src/dlopen_composition.cpp:52 auto node_factory = loader->createInstance<rclcpp_components::NodeFact
+  cmake configure_file                                                      9  composition/CMakeLists.txt:174 configure_file( test/${test_name}.py.in ${test_name}${target_suffix}.p; demo_nodes_cpp/CMakeLists.txt:241 configure_file( test/test_executables_tutorial.py.in test_${exe_list_u; demo_nodes_cpp_native/CMakeLists.txt:65 configure_file( test/test_executables_tutorial.py.in test_${exe_list_u; image_tools/CMakeLists.txt:73 configure_file( test/test_executables_demo.py.in test_showimage_cam2im
+  cmake rclcpp_components_register_node                                    10  action_tutorials/action_tutorials_cpp/CMakeLists.txt:31 rclcpp_components_register_node(action_tutorials PLUGIN "action_tutori; action_tutorials/action_tutorials_cpp/CMakeLists.txt:32 rclcpp_components_register_node(action_tutorials PLUGIN "action_tutori; demo_nodes_cpp/CMakeLists.txt:97 rclcpp_components_register_node(${library} PLUGIN ${plugin} EXECUTABLE; demo_nodes_cpp_native/CMakeLists.txt:38 rclcpp_components_register_node(talker_native PLUGIN "demo_nodes_cpp_n
+  cmake rclcpp_components_register_nodes                                    7  composition/CMakeLists.txt:35 rclcpp_components_register_nodes(talker_component "composition::Talker; composition/CMakeLists.txt:46 rclcpp_components_register_nodes(listener_component "composition::List; composition/CMakeLists.txt:57 rclcpp_components_register_nodes(node_like_listener_component "composi; composition/CMakeLists.txt:68 rclcpp_components_register_nodes(server_component "composition::Server
+  cmake rosidl_generate_interfaces                                          3  action_tutorials/action_tutorials_interfaces/CMakeLists.txt:23 rosidl_generate_interfaces(${PROJECT_NAME} "action/Fibonacci.action"); logging_demo/CMakeLists.txt:22 rosidl_generate_interfaces(${PROJECT_NAME} "srv/ConfigLogger.srv" ); pendulum_msgs/CMakeLists.txt:19 rosidl_generate_interfaces(pendulum_msgs "msg/JointState.msg" "msg/Joi
+  generated rclcpp_components main (build dir, dlopen + class name)        29  build/action_tutorials_cpp/rclcpp_components/node_main_fibonacci_action_client.cpp:None action_tutorials_cpp::FibonacciActionClient in libaction_tutorials.so; build/action_tutorials_cpp/rclcpp_components/node_main_fibonacci_action_server.cpp:None action_tutorials_cpp::FibonacciActionServer in libaction_tutorials.so; build/demo_nodes_cpp/rclcpp_components/node_main_add_two_ints_client_async.cpp:None demo_nodes_cpp::ClientNode in libadd_two_ints_client_async_library.so; build/demo_nodes_cpp/rclcpp_components/node_main_add_two_ints_server.cpp:None demo_nodes_cpp::ServerNode in libadd_two_ints_server_library.so
+  parameter callback registry                                              11  demo_nodes_cpp/src/parameters/even_parameters_node.cpp:84 callback_handler = this->add_on_set_parameters_callback(param_change_c; demo_nodes_cpp/src/parameters/parameter_event_handler.cpp:93 auto handle1 = param_subscriber->add_parameter_callback(param_name, cb; demo_nodes_cpp/src/parameters/parameter_event_handler.cpp:105 auto handle2 = param_subscriber->add_parameter_callback(; demo_nodes_cpp/src/parameters/parameter_event_handler.cpp:141 auto handle3 = param_subscriber->add_parameter_event_callback(cb3);
+  parameters client                                                         6  demo_nodes_cpp/src/parameters/list_parameters.cpp:44 auto parameters_client = std::make_shared<rclcpp::SyncParametersClient; demo_nodes_cpp/src/parameters/list_parameters_async.cpp:40 auto parameters_client = std::make_shared<rclcpp::AsyncParametersClien; demo_nodes_cpp/src/parameters/parameter_events.cpp:75 auto parameters_client = std::make_shared<rclcpp::SyncParametersClient; demo_nodes_cpp/src/parameters/parameter_events_async.cpp:43 parameters_client_ = std::make_shared<rclcpp::AsyncParametersClient>(t
+  py ament index / package share lookup                                     2  demo_nodes_py/demo_nodes_py/parameters/async_param_client.py:70 get_package_share_directory('demo_nodes_py'); dummy_robot/dummy_robot_bringup/launch/dummy_robot_bringup_launch.py:24 FindPackageShare('dummy_robot_bringup')
+  py import inside a function (light scan collects it)                      1  topic_monitor/topic_monitor/scripts/topic_monitor.py:395 import matplotlib.pyplot as plt
+  timer callback                                                           34  action_tutorials/action_tutorials_cpp/src/fibonacci_action_client.cpp:46 this->timer_ = this->create_wall_timer(; composition/src/client_component.cpp:36 timer_ = create_wall_timer(2s, [this]() {return this->on_timer();});; composition/src/talker_component.cpp:40 timer_ = create_wall_timer(1s, [this]() {return this->on_timer();});; demo_nodes_cpp/src/parameters/parameter_events_async.cpp:106 timer_ = create_wall_timer(
+
+== communication sites (explicit): 103
+  by lang/kind/role: {('cpp', 'action', 'client'): 1, ('cpp', 'action', 'server'): 1, ('cpp', 'service', 'client'): 8, ('cpp', 'service', 'server'): 4, ('cpp', 'topic', 'pub'): 31, ('cpp', 'topic', 'sub'): 29, ('py', 'action', 'client'): 1, ('py', 'action', 'server'): 1, ('py', 'service', 'client'): 5, ('py', 'service', 'server'): 2, ('py', 'topic', 'pub'): 10, ('py', 'topic', 'sub'): 10}
+  name status: {'literal': 68, 'same-file constructor argument': 10, 'same-file constructor argument + literal': 4, 'same-file constant': 5, 'non-literal': 16}
+    literal: action_tutorials/action_tutorials_cpp/src/fibonacci_action_client.cpp:39 rclcpp_action::create_client(fibonacci); action_tutorials/action_tutorials_cpp/src/fibonacci_action_server.cpp:71 rclcpp_action::create_server(fibonacci); action_tutorials/action_tutorials_py/action_tutorials_py/fibonacci_action_client.py:27 ActionClient(fibonacci); action_tutorials/action_tutorials_py/action_tutorials_py/fibonacci_action_server.py:29 ActionServer(fibonacci); composition/src/client_component.cpp:32 create_client(add_two_ints)
+    same-file constructor argument: demo_nodes_cpp/src/events/matched_event_detect.cpp:63 create_publisher(pub_topic_matched_event_detect); demo_nodes_cpp/src/events/matched_event_detect.cpp:87 create_subscription(sub_topic_matched_event_detect); demo_nodes_cpp/src/events/matched_event_detect.cpp:119 create_subscription(pub_topic_matched_event_detect); demo_nodes_cpp/src/events/matched_event_detect.cpp:160 create_publisher(sub_topic_matched_event_detect); demo_nodes_py/demo_nodes_py/events/matched_event_detect.py:47 create_publisher(pub_topic_matched_event_detect)
+    same-file constructor argument + literal: demo_nodes_cpp/src/logging/use_logger_service.cpp:61 create_client(LoggerServiceNode/set_logger_levels); demo_nodes_cpp/src/logging/use_logger_service.cpp:63 create_client(LoggerServiceNode/get_logger_levels); demo_nodes_py/demo_nodes_py/logging/use_logger_service.py:53 create_client(LoggerServiceNode/get_logger_levels); demo_nodes_py/demo_nodes_py/logging/use_logger_service.py:55 create_client(LoggerServiceNode/set_logger_levels)
+    same-file constant: demo_nodes_py/demo_nodes_py/events/matched_event_detect.py:102 create_subscription(pub_topic_matched_event_detect); demo_nodes_py/demo_nodes_py/events/matched_event_detect.py:123 create_publisher(sub_topic_matched_event_detect); image_tools/src/showimage.cpp:85 create_subscription(image); lifecycle/src/lifecycle_service_client.cpp:75 create_client(lc_talker/get_state); lifecycle/src/lifecycle_service_client.cpp:77 create_client(lc_talker/change_state)
+    non-literal: intra_process_demo/include/image_pipeline/camera_node.hpp:56 create_publisher(output); intra_process_demo/include/image_pipeline/image_view_node.hpp:41 create_subscription(input); intra_process_demo/include/image_pipeline/watermark_node.hpp:45 create_publisher(output); intra_process_demo/include/image_pipeline/watermark_node.hpp:48 create_subscription(input); quality_of_service_demo/rclcpp/src/common_nodes.cpp:42 create_publisher(topic_name_)
+  implicit endpoints (lifecycle/logger services from node names): 16 from 100 node-name sites ({'literal': 86, 'same-file constant': 6, 'same-file constructor argument': 7, 'non-literal': 1})
+
+== communication graph
+  endpoint names: 34; provider->consumer pairs (site level): 142
+  pairs by kind: {'action': 4, 'service': 47, 'topic': 91}
+  type mismatch (same name, different literal types, not communicating): 2
+  same-file pairs: 18
+  type-mismatch pairs: ['quality_of_service_demo/rclcpp/src/qos_overrides_talker.cpp:98 -> quality_of_service_demo/rclpy/quality_of_service_demo_py/qos_overrides_listener.py:30 qos_overrides_chatter (sensor_msgs/msg/Image vs std_msgs/msg/String)', 'quality_of_service_demo/rclpy/quality_of_service_demo_py/qos_overrides_talker.py:31 -> quality_of_service_demo/rclcpp/src/qos_overrides_listener.cpp:82 qos_overrides_chatter (std_msgs/msg/String vs sensor_msgs/msg/Image)']
+  distinct communicating FILE pairs (different files, types not known to differ): 109
+    cross-language (C++ <-> Python): 49
+    same package: 41; different packages: 68
+    with a direct light edge: 0
+    with a directed include/import path (either way): 0
+    ... counting per-package Python roots too: 0
+    sharing a reachable project header: 21 (excluding visibility_control.h: 1)
+    included (directly or not) by one common file: 0 []
+    different packages with any light edge between the packages: 0
+    NO include/import path at all (no direct, no directed path, no shared header excl. visibility): 108
+  examples of pairs with no path:
+    action_tutorials/action_tutorials_cpp/src/fibonacci_action_server.cpp:71 -> action_tutorials/action_tutorials_cpp/src/fibonacci_action_client.cpp:39  [action fibonacci]
+    action_tutorials/action_tutorials_cpp/src/fibonacci_action_server.cpp:71 -> action_tutorials/action_tutorials_py/action_tutorials_py/fibonacci_action_client.py:27  [action fibonacci]
+    action_tutorials/action_tutorials_py/action_tutorials_py/fibonacci_action_server.py:29 -> action_tutorials/action_tutorials_cpp/src/fibonacci_action_client.cpp:39  [action fibonacci]
+    action_tutorials/action_tutorials_py/action_tutorials_py/fibonacci_action_server.py:29 -> action_tutorials/action_tutorials_py/action_tutorials_py/fibonacci_action_client.py:27  [action fibonacci]
+    demo_nodes_cpp/src/logging/use_logger_service.cpp:37 -> demo_nodes_py/demo_nodes_py/logging/use_logger_service.py:53  [service LoggerServiceNode/get_logger_levels]
+    composition/src/server_component.cpp:43 -> composition/src/client_component.cpp:32  [service add_two_ints]
+    composition/src/server_component.cpp:43 -> demo_nodes_cpp/src/services/add_two_ints_client.cpp:50  [service add_two_ints]
+    composition/src/server_component.cpp:43 -> demo_nodes_cpp/src/services/add_two_ints_client_async.cpp:38  [service add_two_ints]
+    composition/src/server_component.cpp:43 -> demo_nodes_cpp/src/services/introspection_client.cpp:70  [service add_two_ints]
+    composition/src/server_component.cpp:43 -> demo_nodes_py/demo_nodes_py/services/add_two_ints_client.py:25  [service add_two_ints]
+    composition/src/server_component.cpp:43 -> demo_nodes_py/demo_nodes_py/services/add_two_ints_client_async.py:26  [service add_two_ints]
+    composition/src/server_component.cpp:43 -> demo_nodes_py/demo_nodes_py/services/introspection.py:117  [service add_two_ints]
+  launch-confirmed file pairs (both started by one launch file): 9; with a directed path 0; sharing a header excl. visibility 0; ['composition/src/listener_component.cpp <-> composition/src/talker_component.cpp via composition/launch/composition_demo_launch.py', 'demo_nodes_cpp/src/services/add_two_ints_client.cpp <-> demo_nodes_cpp/src/services/add_two_ints_server.cpp via demo_nodes_cpp/launch/services/add_two_ints_launch.py', 'demo_nodes_cpp/src/services/add_two_ints_client_async.cpp <-> demo_nodes_cpp/src/services/add_two_ints_server.cpp via demo_nodes_cpp/launch/services/add_two_ints_async_launch.py', 'demo_nodes_cpp/src/services/introspection_client.cpp <-> demo_nodes_cpp/src/services/introspection_service.cpp via demo_nodes_cpp/launch/services/introspect_services_launch.py', 'demo_nodes_cpp/src/topics/listener.cpp <-> demo_nodes_cpp/src/topics/talker.cpp via demo_nodes_cpp/launch/topics/talker_listener_launch.py', 'demo_nodes_cpp/src/topics/listener_best_effort.cpp <-> demo_nodes_cpp/src/topics/talker.cpp via demo_nodes_cpp/launch/topics/talker_listener_best_effort_launch.py', 'lifecycle/src/lifecycle_listener.cpp <-> lifecycle/src/lifecycle_talker.cpp via lifecycle/launch/lifecycle_demo_launch.py', 'lifecycle/src/lifecycle_listener.cpp <-> lifecycle_py/lifecycle_py/talker.py via lifecycle_py/test/test_lifecycle.py', 'lifecycle/src/lifecycle_service_client.cpp <-> lifecycle/src/lifecycle_talker.cpp via lifecycle/launch/lifecycle_demo_launch.py']
+  hand-resolved sites applied: 0 (missing []); by category {}
+  topics/services/actions by name (provider count / consumer count):
+    action   fibonacci                                      2 /  2  files ['action_tutorials']
+    service  LoggerServiceNode/get_logger_levels            2 /  2  files ['demo_nodes_cpp', 'demo_nodes_py']
+    service  LoggerServiceNode/set_logger_levels            2 /  2  files ['demo_nodes_cpp', 'demo_nodes_py']
+    service  add_two_ints                                   5 /  7  files ['composition', 'demo_nodes_cpp', 'demo_nodes_py']
+    service  config_logger                                  1 /  0  files ['logging_demo']
+    service  lc_talker/change_state                         2 /  1  files ['lifecycle', 'lifecycle_py']
+    service  lc_talker/get_available_states                 2 /  0  files ['lifecycle', 'lifecycle_py']
+    service  lc_talker/get_available_transitions            2 /  0  files ['lifecycle', 'lifecycle_py']
+    service  lc_talker/get_state                            2 /  1  files ['lifecycle', 'lifecycle_py']
+    service  lc_talker/get_transition_graph                 2 /  0  files ['lifecycle', 'lifecycle_py']
+    topic    allocator_tutorial                             2 /  2  files ['demo_nodes_cpp']
+    topic    chatter                                        7 /  8  files ['composition', 'demo_nodes_cpp', 'demo_nodes_cpp_native', 'demo_nodes_py']
+    topic    chatter_pod                                    1 /  0  files ['demo_nodes_cpp']
+    topic    flip_image                                     0 /  1  files ['image_tools']
+    topic    image                                          1 /  1  files ['image_tools']
+    topic    joint_states                                   1 /  0  files ['dummy_robot']
+    topic    lc_talker/transition_event                     2 /  1  files ['lifecycle', 'lifecycle_py']
+    topic    lifecycle_chatter                              2 /  1  files ['lifecycle', 'lifecycle_py']
+    topic    logging_demo_count                             1 /  0  files ['logging_demo']
+    topic    map                                            1 /  0  files ['dummy_robot']
+    topic    message_lost_chatter                           1 /  2  files ['quality_of_service_demo']
+    topic    number                                         1 /  1  files ['intra_process_demo']
+    topic    output                                         2 /  2  files ['demo_nodes_cpp', 'demo_nodes_py']
+    topic    pendulum_command                               1 /  1  files ['pendulum_control']
+    topic    pendulum_sensor                                1 /  1  files ['pendulum_control']
+    topic    pendulum_setpoint                              1 /  1  files ['pendulum_control']
+    topic    pendulum_statistics                            1 /  1  files ['pendulum_control']
+    topic    pub_topic_matched_event_detect                 2 /  2  files ['demo_nodes_cpp', 'demo_nodes_py']
+    topic    qos_overrides_chatter                          2 /  2  files ['quality_of_service_demo']
+    topic    scan                                           1 /  0  files ['dummy_robot']
+    topic    sub_topic_matched_event_detect                 2 /  2  files ['demo_nodes_cpp', 'demo_nodes_py']
+    topic    temperature                                    1 /  1  files ['demo_nodes_cpp']
+    topic    topic1                                         1 /  1  files ['intra_process_demo']
+    topic    topic2                                         1 /  1  files ['intra_process_demo']
+  examples of pairs WITH a path:
+    image_tools/src/cam2image.cpp -> image_tools/src/showimage.cpp [topic image] direct=False via=['image_tools/include/image_tools/cv_mat_sensor_msgs_image_type_adapter.hpp', 'image_tools/src/policy_maps.hpp']
+
+== launch files
+  launch actions: 54 (node-like 46) in 22 files; formats {'py': 34, 'xml': 12, 'yaml': 8}
+  node-like: literal 46; resolved to a workspace file 43; external package 3; how {'component plugin class': 2, 'generated component main': 20, 'CMake executable target sources': 20, 'external package': 3, 'ament_python console_scripts entry point': 1}
+  of those resolved: with a light edge launch->target 0; any undirected path 0; same package 30
+    composition/launch/composition_demo_launch.py:30 ComposableNode(composition, composition::Talker) -> ['composition/src/talker_component.cpp']
+    composition/launch/composition_demo_launch.py:34 ComposableNode(composition, composition::Listener) -> ['composition/src/listener_component.cpp']
+    demo_nodes_cpp/launch/services/add_two_ints_async_launch.py:22 Node(demo_nodes_cpp, add_two_ints_server) -> ['demo_nodes_cpp/src/services/add_two_ints_server.cpp']
+    demo_nodes_cpp/launch/services/add_two_ints_async_launch.py:24 Node(demo_nodes_cpp, add_two_ints_client_async) -> ['demo_nodes_cpp/src/services/add_two_ints_client_async.cpp']
+    demo_nodes_cpp/launch/services/add_two_ints_async_launch.xml:2 node(demo_nodes_cpp, add_two_ints_server) -> ['demo_nodes_cpp/src/services/add_two_ints_server.cpp']
+    demo_nodes_cpp/launch/services/add_two_ints_async_launch.xml:3 node(demo_nodes_cpp, add_two_ints_client_async) -> ['demo_nodes_cpp/src/services/add_two_ints_client_async.cpp']
+    demo_nodes_cpp/launch/services/add_two_ints_launch.py:22 Node(demo_nodes_cpp, add_two_ints_server) -> ['demo_nodes_cpp/src/services/add_two_ints_server.cpp']
+    demo_nodes_cpp/launch/services/add_two_ints_launch.py:24 Node(demo_nodes_cpp, add_two_ints_client) -> ['demo_nodes_cpp/src/services/add_two_ints_client.cpp']
+  remappings in launch: []
+
+== python entry points: 25, resolved 25, with a light edge from setup.py 0; e.g. action_tutorials/action_tutorials_py/setup.py:35 fibonacci_action_server=action_tutorials_py.fibonacci_action_server -> action_tutorials/action_tutorials_py/action_tutorials_py/fibonacci_action_server.py; action_tutorials/action_tutorials_py/setup.py:36 fibonacci_action_client=action_tutorials_py.fibonacci_action_client -> action_tutorials/action_tutorials_py/action_tutorials_py/fibonacci_action_client.py; demo_nodes_py/setup.py:38 listener=demo_nodes_py.topics.listener -> demo_nodes_py/demo_nodes_py/topics/listener.py; demo_nodes_py/setup.py:39 talker=demo_nodes_py.topics.talker -> demo_nodes_py/demo_nodes_py/topics/talker.py
+
+== CMake link dependencies between own targets
+  own-source targets (both sides have workspace sources): 10; include-connected 6; not connected 4: ['linktime_composition -> talker_component', 'linktime_composition -> listener_component', 'linktime_composition -> server_component', 'linktime_composition -> client_component']
+  links involving generated-only targets (rosidl): 61; from own-source targets to generated targets: ['logger_config_component -> logging_demo__rosidl_generator_c', 'logger_config_component -> logging_demo__rosidl_typesupport_cpp', 'logging_demo_main -> logging_demo__rosidl_generator_c', 'logging_demo_main -> logging_demo__rosidl_typesupport_cpp']
+  same-package link deps: 10; include-connected 6; only via visibility_control.h 0; none 4
+    composition: linktime_composition -> talker_component connected=False via=[]
+    composition: linktime_composition -> listener_component connected=False via=[]
+    composition: linktime_composition -> server_component connected=False via=[]
+    composition: linktime_composition -> client_component connected=False via=[]
+    composition: manual_composition -> talker_component connected=True via=['composition/include/composition/talker_component.hpp']
+    composition: manual_composition -> listener_component connected=True via=['composition/include/composition/listener_component.hpp']
+    composition: manual_composition -> server_component connected=True via=['composition/include/composition/server_component.hpp']
+    composition: manual_composition -> client_component connected=True via=['composition/include/composition/client_component.hpp']
+    logging_demo: logging_demo_main -> logger_config_component connected=True via=['logging_demo/include/logging_demo/logger_config_component.hpp']
+    logging_demo: logging_demo_main -> logger_usage_component connected=True via=['logging_demo/include/logging_demo/logger_usage_component.hpp']
+  cross-package link lines to workspace packages (served by the underlay here): 4 [('action_tutorials_cpp', 'action_tutorials_interfaces'), ('pendulum_control', 'pendulum_msgs')]
+  declared package.xml deps between workspace packages: 6; with a light edge between the packages: 0; [('action_tutorials_cpp', 'action_tutorials_interfaces'), ('action_tutorials_py', 'action_tutorials_interfaces'), ('dummy_robot_bringup', 'dummy_map_server'), ('dummy_robot_bringup', 'dummy_sensors'), ('lifecycle_py', 'lifecycle'), ('pendulum_control', 'pendulum_msgs')]
+
+== unresolved C/C++ includes (unique (file, specifier)) by what the true compile found: {'workspace interface (rosidl generated)': 15, 'ROS (opt/ros/jazzy)': 262, 'C/C++ standard library': 294, 'third-party system library (opencv4)': 19, 'system / libc': 5}
+    workspace interface (rosidl generated): action_tutorials/action_tutorials_cpp/src/fibonacci_action_client.cpp:19 "action_tutorials_interfaces/action/fibonacci.hpp"; action_tutorials/action_tutorials_cpp/src/fibonacci_action_server.cpp:17 "action_tutorials_interfaces/action/fibonacci.hpp"; logging_demo/include/logging_demo/logger_config_component.hpp:20 "logging_demo/srv/config_logger.hpp"; logging_demo/src/logger_config_component.cpp:21 "logging_demo/srv/config_logger.hpp"
+    ROS (opt/ros/jazzy): action_tutorials/action_tutorials_cpp/src/fibonacci_action_client.cpp:20 "rclcpp/rclcpp.hpp"; action_tutorials/action_tutorials_cpp/src/fibonacci_action_client.cpp:22 "rclcpp_action/rclcpp_action.hpp"; action_tutorials/action_tutorials_cpp/src/fibonacci_action_client.cpp:23 "rclcpp_components/register_node_macro.hpp"; action_tutorials/action_tutorials_cpp/src/fibonacci_action_server.cpp:18 "rclcpp/rclcpp.hpp"
+    C/C++ standard library: action_tutorials/action_tutorials_cpp/src/fibonacci_action_client.cpp:15 <memory>; action_tutorials/action_tutorials_cpp/src/fibonacci_action_client.cpp:17 <sstream>; action_tutorials/action_tutorials_cpp/src/fibonacci_action_client.cpp:16 <string>; action_tutorials/action_tutorials_cpp/src/fibonacci_action_server.cpp:15 <memory>
+    third-party system library (opencv4): image_tools/include/image_tools/cv_mat_sensor_msgs_image_type_adapter.hpp:22 "opencv2/core/mat.hpp"; image_tools/src/burger.cpp:26 "opencv2/core.hpp"; image_tools/src/burger.cpp:27 "opencv2/core/mat.hpp"; image_tools/src/burger.cpp:28 "opencv2/core/types.hpp"
+    system / libc: intra_process_demo/include/image_pipeline/common.hpp:22 <unistd.h>; pendulum_control/src/pendulum_demo.cpp:15 <unistd.h>; quality_of_service_demo/rclcpp/src/utils.cpp:26 <signal.h>; quality_of_service_demo/rclcpp/src/utils.cpp:27 <termios.h>
+  workspace interface includes: 15; mapped to an interface file 15; from packages {('action_tutorials_cpp', 'action_tutorials_interfaces'): 2, ('logging_demo', 'logging_demo'): 2, ('pendulum_control', 'pendulum_msgs'): 11}
+  python unresolved by class: {'workspace interface package (generated Python)': 2, 'ROS (opt/ros/jazzy Python)': 188, 'standard library': 39, 'other third-party (pytest, matplotlib, setuptools...)': 19, 'workspace Python package under a package directory (not an import root)': 4}; generated interface imports 2 [{'from': 'action_tutorials/action_tutorials_py/action_tutorials_py/fibonacci_action_client.py', 'spec': 'action_tutorials_interfaces.action'}, {'from': 'action_tutorials/action_tutorials_py/action_tutorials_py/fibonacci_action_server.py', 'spec': 'action_tutorials_interfaces.action'}]

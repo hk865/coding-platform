@@ -1,0 +1,20 @@
+{
+ "roots": [
+  "."
+ ],
+ "filesParsedByCrosscheck": 2787,
+ "edges": {
+  "scan": 8369,
+  "cpython": 8369,
+  "both": 8369,
+  "onlyScan": [],
+  "onlyCpython": []
+ },
+ "unresolved": {
+  "scan": 2500,
+  "cpython": 2500,
+  "both": 2500,
+  "onlyScan": [],
+  "onlyCpython": []
+ }
+}

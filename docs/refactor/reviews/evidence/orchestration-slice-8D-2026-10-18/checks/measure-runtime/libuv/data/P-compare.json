@@ -1,0 +1,524 @@
+{
+ "linux": {
+  "edges": 209,
+  "new_edges": 196,
+  "new_dir_pairs": [
+   [
+    "docs/code/cgi",
+    "include"
+   ],
+   [
+    "docs/code/default-loop",
+    "include"
+   ],
+   [
+    "docs/code/detach",
+    "include"
+   ],
+   [
+    "docs/code/dns",
+    "include"
+   ],
+   [
+    "docs/code/helloworld",
+    "include"
+   ],
+   [
+    "docs/code/idle-basic",
+    "include"
+   ],
+   [
+    "docs/code/idle-compute",
+    "include"
+   ],
+   [
+    "docs/code/interfaces",
+    "include"
+   ],
+   [
+    "docs/code/locks",
+    "include"
+   ],
+   [
+    "docs/code/multi-echo-server",
+    "include"
+   ],
+   [
+    "docs/code/onchange",
+    "include"
+   ],
+   [
+    "docs/code/pipe-echo-server",
+    "include"
+   ],
+   [
+    "docs/code/plugin",
+    "docs/code/plugin"
+   ],
+   [
+    "docs/code/plugin",
+    "include"
+   ],
+   [
+    "docs/code/proc-streams",
+    "include"
+   ],
+   [
+    "docs/code/progress",
+    "include"
+   ],
+   [
+    "docs/code/queue-cancel",
+    "include"
+   ],
+   [
+    "docs/code/queue-work",
+    "include"
+   ],
+   [
+    "docs/code/ref-timer",
+    "include"
+   ],
+   [
+    "docs/code/signal",
+    "include"
+   ],
+   [
+    "docs/code/spawn",
+    "include"
+   ],
+   [
+    "docs/code/tcp-echo-server",
+    "include"
+   ],
+   [
+    "docs/code/thread-create",
+    "include"
+   ],
+   [
+    "docs/code/tty",
+    "include"
+   ],
+   [
+    "docs/code/tty-gravity",
+    "include"
+   ],
+   [
+    "docs/code/udp-dhcp",
+    "include"
+   ],
+   [
+    "docs/code/uvcat",
+    "include"
+   ],
+   [
+    "docs/code/uvstop",
+    "include"
+   ],
+   [
+    "docs/code/uvtee",
+    "include"
+   ],
+   [
+    "docs/code/uvwget",
+    "include"
+   ],
+   [
+    "src/win",
+    "include"
+   ],
+   [
+    "src/win",
+    "include/uv"
+   ],
+   [
+    "src/win",
+    "src"
+   ],
+   [
+    "src/win",
+    "src/win"
+   ]
+  ],
+  "skipped_files_now_read": 97,
+  "skipped_files_still_unread": [
+   "include/uv/aix.h",
+   "include/uv/bsd.h",
+   "include/uv/darwin.h",
+   "include/uv/os390.h",
+   "include/uv/posix.h",
+   "include/uv/sunos.h",
+   "include/uv/win.h",
+   "test/runner-win.h"
+  ],
+  "failed": {}
+ },
+ "win": {
+  "edges": 209,
+  "new_edges": 200,
+  "new_dir_pairs": [
+   [
+    "docs/code/cgi",
+    "include"
+   ],
+   [
+    "docs/code/default-loop",
+    "include"
+   ],
+   [
+    "docs/code/detach",
+    "include"
+   ],
+   [
+    "docs/code/dns",
+    "include"
+   ],
+   [
+    "docs/code/helloworld",
+    "include"
+   ],
+   [
+    "docs/code/idle-basic",
+    "include"
+   ],
+   [
+    "docs/code/idle-compute",
+    "include"
+   ],
+   [
+    "docs/code/interfaces",
+    "include"
+   ],
+   [
+    "docs/code/locks",
+    "include"
+   ],
+   [
+    "docs/code/multi-echo-server",
+    "include"
+   ],
+   [
+    "docs/code/onchange",
+    "include"
+   ],
+   [
+    "docs/code/pipe-echo-server",
+    "include"
+   ],
+   [
+    "docs/code/plugin",
+    "docs/code/plugin"
+   ],
+   [
+    "docs/code/plugin",
+    "include"
+   ],
+   [
+    "docs/code/proc-streams",
+    "include"
+   ],
+   [
+    "docs/code/progress",
+    "include"
+   ],
+   [
+    "docs/code/queue-cancel",
+    "include"
+   ],
+   [
+    "docs/code/queue-work",
+    "include"
+   ],
+   [
+    "docs/code/ref-timer",
+    "include"
+   ],
+   [
+    "docs/code/signal",
+    "include"
+   ],
+   [
+    "docs/code/spawn",
+    "include"
+   ],
+   [
+    "docs/code/tcp-echo-server",
+    "include"
+   ],
+   [
+    "docs/code/thread-create",
+    "include"
+   ],
+   [
+    "docs/code/tty",
+    "include"
+   ],
+   [
+    "docs/code/tty-gravity",
+    "include"
+   ],
+   [
+    "docs/code/udp-dhcp",
+    "include"
+   ],
+   [
+    "docs/code/uvcat",
+    "include"
+   ],
+   [
+    "docs/code/uvstop",
+    "include"
+   ],
+   [
+    "docs/code/uvtee",
+    "include"
+   ],
+   [
+    "docs/code/uvwget",
+    "include"
+   ],
+   [
+    "src/win",
+    "include"
+   ],
+   [
+    "src/win",
+    "include/uv"
+   ],
+   [
+    "src/win",
+    "src"
+   ],
+   [
+    "src/win",
+    "src/win"
+   ]
+  ],
+  "skipped_files_now_read": 99,
+  "skipped_files_still_unread": [
+   "include/uv/aix.h",
+   "include/uv/bsd.h",
+   "include/uv/darwin.h",
+   "include/uv/os390.h",
+   "include/uv/posix.h",
+   "include/uv/sunos.h"
+  ],
+  "failed": {}
+ },
+ "darwin": {
+  "edges": 209,
+  "new_edges": 197,
+  "new_dir_pairs": [
+   [
+    "docs/code/cgi",
+    "include"
+   ],
+   [
+    "docs/code/default-loop",
+    "include"
+   ],
+   [
+    "docs/code/detach",
+    "include"
+   ],
+   [
+    "docs/code/dns",
+    "include"
+   ],
+   [
+    "docs/code/helloworld",
+    "include"
+   ],
+   [
+    "docs/code/idle-basic",
+    "include"
+   ],
+   [
+    "docs/code/idle-compute",
+    "include"
+   ],
+   [
+    "docs/code/interfaces",
+    "include"
+   ],
+   [
+    "docs/code/locks",
+    "include"
+   ],
+   [
+    "docs/code/multi-echo-server",
+    "include"
+   ],
+   [
+    "docs/code/onchange",
+    "include"
+   ],
+   [
+    "docs/code/pipe-echo-server",
+    "include"
+   ],
+   [
+    "docs/code/plugin",
+    "docs/code/plugin"
+   ],
+   [
+    "docs/code/plugin",
+    "include"
+   ],
+   [
+    "docs/code/proc-streams",
+    "include"
+   ],
+   [
+    "docs/code/progress",
+    "include"
+   ],
+   [
+    "docs/code/queue-cancel",
+    "include"
+   ],
+   [
+    "docs/code/queue-work",
+    "include"
+   ],
+   [
+    "docs/code/ref-timer",
+    "include"
+   ],
+   [
+    "docs/code/signal",
+    "include"
+   ],
+   [
+    "docs/code/spawn",
+    "include"
+   ],
+   [
+    "docs/code/tcp-echo-server",
+    "include"
+   ],
+   [
+    "docs/code/thread-create",
+    "include"
+   ],
+   [
+    "docs/code/tty",
+    "include"
+   ],
+   [
+    "docs/code/tty-gravity",
+    "include"
+   ],
+   [
+    "docs/code/udp-dhcp",
+    "include"
+   ],
+   [
+    "docs/code/uvcat",
+    "include"
+   ],
+   [
+    "docs/code/uvstop",
+    "include"
+   ],
+   [
+    "docs/code/uvtee",
+    "include"
+   ],
+   [
+    "docs/code/uvwget",
+    "include"
+   ],
+   [
+    "src/win",
+    "include"
+   ],
+   [
+    "src/win",
+    "include/uv"
+   ],
+   [
+    "src/win",
+    "src"
+   ],
+   [
+    "src/win",
+    "src/win"
+   ]
+  ],
+  "skipped_files_now_read": 98,
+  "skipped_files_still_unread": [
+   "include/uv/aix.h",
+   "include/uv/bsd.h",
+   "include/uv/os390.h",
+   "include/uv/posix.h",
+   "include/uv/sunos.h",
+   "include/uv/win.h",
+   "test/runner-win.h"
+  ],
+  "failed": {}
+ },
+ "union_new_edges": 201,
+ "only_win": [
+  [
+   "include/uv.h",
+   "include/uv/win.h"
+  ],
+  [
+   "include/uv/win.h",
+   "include/uv/threadpool.h"
+  ],
+  [
+   "include/uv/win.h",
+   "include/uv/tree.h"
+  ],
+  [
+   "test/runner.h",
+   "test/runner-win.h"
+  ]
+ ],
+ "only_darwin": [
+  [
+   "include/uv/unix.h",
+   "include/uv/darwin.h"
+  ]
+ ],
+ "only_linux": [],
+ "textual_estimate_pairs": 199,
+ "union_new_edges_by_from_dir": {
+  "docs/code/cgi": 1,
+  "docs/code/default-loop": 1,
+  "docs/code/detach": 1,
+  "docs/code/dns": 1,
+  "docs/code/helloworld": 1,
+  "docs/code/idle-basic": 1,
+  "docs/code/idle-compute": 1,
+  "docs/code/interfaces": 1,
+  "docs/code/locks": 1,
+  "docs/code/multi-echo-server": 2,
+  "docs/code/onchange": 1,
+  "docs/code/pipe-echo-server": 1,
+  "docs/code/plugin": 3,
+  "docs/code/proc-streams": 1,
+  "docs/code/progress": 1,
+  "docs/code/queue-cancel": 1,
+  "docs/code/queue-work": 1,
+  "docs/code/ref-timer": 1,
+  "docs/code/signal": 1,
+  "docs/code/spawn": 1,
+  "docs/code/tcp-echo-server": 1,
+  "docs/code/thread-create": 1,
+  "docs/code/tty": 1,
+  "docs/code/tty-gravity": 1,
+  "docs/code/udp-dhcp": 1,
+  "docs/code/uvcat": 1,
+  "docs/code/uvstop": 1,
+  "docs/code/uvtee": 1,
+  "docs/code/uvwget": 1,
+  "include": 1,
+  "include/uv": 3,
+  "src/unix": 56,
+  "src/win": 106,
+  "test": 3
+ }
+}

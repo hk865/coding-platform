@@ -1,0 +1,16 @@
+== P-darwin: database entries 86; units after dedupe 86; duplicates dropped 0; main not observed 0
+   notes: ['近似：只读工作区里 git 不忽略的头文件']
+   units: {'ok': 86}
+   claimed 354: {'parsed': 113, 'skipped': 241}; non-parsed by reason: {('skipped', '没有编译单元包含它'): 241}
+   edges 209 (directive triples 209); unresolved 462 by reason {None: 461, '尖括号引用只能按引号规则找到': 1}
+   failed files (every one inspected below): []
+   failure diagnostics (unit, file:line message): []
+   fallback directives: 82 (distinct 1) [('include/uv/errno.h', 25, '<errno.h>', 'include/uv/errno.h')]
+   files entered only through a fallback in some unit: {}
+   macro-unexpanded sites: []
+   per-unit elapsed ms (units kept): n=86 sum=1122 p50=12.4 p95=19.4 max=20.3
+   unresolved specifiers top: [('<stdio.h>', 50), ('<stdlib.h>', 42), ('<assert.h>', 38), ('<string.h>', 32), ('<unistd.h>', 22), ('<errno.h>', 20), ('<stdint.h>', 15), ('<fcntl.h>', 13), ('<sys/types.h>', 11), ('<stddef.h>', 10), ('<limits.h>', 10), ('<io.h>', 9), ('<sys/time.h>', 7), ('<inttypes.h>', 6), ('<sys/resource.h>', 6), ('<net/if.h>', 5), ('<sys/sysctl.h>', 5), ('<time.h>', 5), ('<sys/socket.h>', 4), ('<arpa/inet.h>', 3), ('<netinet/in.h>', 3), ('<sys/stat.h>', 3), ('<pthread.h>', 3), ('<termios.h>', 3), ('<signal.h>', 3)]
+   unresolved quoted specifiers (project-looking): 4 [('src/unix/os390-syscalls.h', '"zos-base.h"'), ('src/unix/os390.c', '"csrsic.h"'), ('src/unix/os390.c', '"zos-base.h"'), ('src/unix/os390.c', '"zos-sys-info.h"')]
+== never compiled here (skipped 没有编译单元包含它): 241 files by dir {'include/uv': 7, 'src': 13, 'src/unix': 23, 'test': 198}
+   their own #include lines resolving (textually, no conditionals) to material files: 477 pairs; to files parsed elsewhere: 471; unresolved quoted 4
+   directory pairs these would add that light does not already have: [('src', 'src/unix'), ('src', 'src/win'), ('src/unix', 'include/uv'), ('test', 'src'), ('test', 'src/win')]

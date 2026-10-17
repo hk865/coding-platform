@@ -1,0 +1,3462 @@
+{
+ "sites_only_light": [],
+ "sites_only_reference": [
+  "src/unix/thread.c:41 ['EXT'] | #include <gnu/libc-version.h>  /* gnu_get_libc_version() */"
+ ],
+ "distinct_ranges_differing": 270,
+ "files_with_differing_ranges": [
+  "include/uv.h",
+  "include/uv/errno.h",
+  "include/uv/unix.h",
+  "src/thread-common.c",
+  "src/unix/core.c",
+  "src/unix/fs.c",
+  "src/unix/getaddrinfo.c",
+  "src/unix/internal.h",
+  "src/unix/linux.c",
+  "src/unix/process.c",
+  "src/unix/random-sysctl-linux.c",
+  "src/unix/signal.c",
+  "src/unix/tcp.c",
+  "src/unix/thread.c",
+  "src/unix/udp.c",
+  "src/uv-common.c",
+  "src/uv-common.h",
+  "test/test-fs-event.c",
+  "test/test-fs-readdir.c",
+  "test/test-fs.c",
+  "test/test-poll-oob.c",
+  "test/test-poll.c",
+  "test/test-thread.c"
+ ],
+ "skipped_range_differences": [
+  {
+   "file": "include/uv.h",
+   "start": 1326,
+   "end": 1328,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#ifdef MAXHOSTNAMELEN",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv.h",
+   "start": 1328,
+   "end": 1335,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 22,
+   "end": 477,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#ifndef UV_ERRNO_H_",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 26,
+   "end": 28,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if EDOM > 0",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 28,
+   "end": 30,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 53,
+   "end": 55,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(E2BIG) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 55,
+   "end": 57,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 59,
+   "end": 61,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(EACCES) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 61,
+   "end": 63,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 65,
+   "end": 67,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(EADDRINUSE) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 67,
+   "end": 69,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 71,
+   "end": 73,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(EADDRNOTAVAIL) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 73,
+   "end": 75,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 77,
+   "end": 79,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(EAFNOSUPPORT) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 79,
+   "end": 81,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 83,
+   "end": 85,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(EAGAIN) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 85,
+   "end": 87,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 89,
+   "end": 91,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(EALREADY) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 91,
+   "end": 93,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 95,
+   "end": 97,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(EBADF) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 97,
+   "end": 99,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 101,
+   "end": 103,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(EBUSY) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 103,
+   "end": 105,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 107,
+   "end": 109,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(ECANCELED) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 109,
+   "end": 111,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 119,
+   "end": 121,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(ECONNABORTED) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 121,
+   "end": 123,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 125,
+   "end": 127,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(ECONNREFUSED) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 127,
+   "end": 129,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 131,
+   "end": 133,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(ECONNRESET) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 133,
+   "end": 135,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 137,
+   "end": 139,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(EDESTADDRREQ) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 139,
+   "end": 141,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 143,
+   "end": 145,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(EEXIST) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 145,
+   "end": 147,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 149,
+   "end": 151,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(EFAULT) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 151,
+   "end": 153,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 155,
+   "end": 157,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(EHOSTUNREACH) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 157,
+   "end": 159,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 161,
+   "end": 163,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(EINTR) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 163,
+   "end": 165,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 167,
+   "end": 169,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(EINVAL) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 169,
+   "end": 171,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 173,
+   "end": 175,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(EIO) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 175,
+   "end": 177,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 179,
+   "end": 181,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(EISCONN) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 181,
+   "end": 183,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 185,
+   "end": 187,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(EISDIR) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 187,
+   "end": 189,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 191,
+   "end": 193,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(ELOOP) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 193,
+   "end": 195,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 197,
+   "end": 199,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(EMFILE) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 199,
+   "end": 201,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 203,
+   "end": 205,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(EMSGSIZE) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 205,
+   "end": 207,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 209,
+   "end": 211,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(ENAMETOOLONG) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 211,
+   "end": 213,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 215,
+   "end": 217,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(ENETDOWN) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 217,
+   "end": 219,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 221,
+   "end": 223,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(ENETUNREACH) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 223,
+   "end": 225,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 227,
+   "end": 229,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(ENFILE) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 229,
+   "end": 231,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 233,
+   "end": 235,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(ENOBUFS) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 235,
+   "end": 237,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 239,
+   "end": 241,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(ENODEV) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 241,
+   "end": 243,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 245,
+   "end": 247,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(ENOENT) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 247,
+   "end": 249,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 251,
+   "end": 253,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(ENOMEM) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 253,
+   "end": 255,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 257,
+   "end": 259,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(ENONET) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 259,
+   "end": 261,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 263,
+   "end": 265,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(ENOSPC) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 265,
+   "end": 267,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 269,
+   "end": 271,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(ENOSYS) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 271,
+   "end": 273,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 275,
+   "end": 277,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(ENOTCONN) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 277,
+   "end": 279,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 281,
+   "end": 283,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(ENOTDIR) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 283,
+   "end": 285,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 287,
+   "end": 289,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(ENOTEMPTY) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 289,
+   "end": 291,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 293,
+   "end": 295,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(ENOTSOCK) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 295,
+   "end": 297,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 299,
+   "end": 301,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(ENOTSUP) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 301,
+   "end": 303,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 305,
+   "end": 307,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(EPERM) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 307,
+   "end": 309,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 311,
+   "end": 313,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(EPIPE) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 313,
+   "end": 315,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 317,
+   "end": 319,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(EPROTO) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 319,
+   "end": 321,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 323,
+   "end": 325,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(EPROTONOSUPPORT) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 325,
+   "end": 327,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 329,
+   "end": 331,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(EPROTOTYPE) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 331,
+   "end": 333,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 335,
+   "end": 337,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(EROFS) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 337,
+   "end": 339,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 341,
+   "end": 343,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(ESHUTDOWN) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 343,
+   "end": 345,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 347,
+   "end": 349,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(ESPIPE) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 349,
+   "end": 351,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 353,
+   "end": 355,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(ESRCH) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 355,
+   "end": 357,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 359,
+   "end": 361,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(ETIMEDOUT) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 361,
+   "end": 363,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 365,
+   "end": 367,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(ETXTBSY) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 367,
+   "end": 369,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 371,
+   "end": 373,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(EXDEV) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 373,
+   "end": 375,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 377,
+   "end": 379,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(EFBIG) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 379,
+   "end": 381,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 383,
+   "end": 385,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(ENOPROTOOPT) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 385,
+   "end": 387,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 389,
+   "end": 391,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(ERANGE) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 391,
+   "end": 393,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 395,
+   "end": 397,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(ENXIO) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 397,
+   "end": 399,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 401,
+   "end": 403,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(EMLINK) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 403,
+   "end": 405,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 411,
+   "end": 419,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(EHOSTDOWN) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 413,
+   "end": 421,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#elif defined(__APPLE__) || \\",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 423,
+   "end": 425,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(EREMOTEIO) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 425,
+   "end": 427,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 429,
+   "end": 431,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(ENOTTY) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 431,
+   "end": 433,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 441,
+   "end": 443,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(EILSEQ) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 443,
+   "end": 445,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 447,
+   "end": 449,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(EOVERFLOW) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 449,
+   "end": 451,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 453,
+   "end": 455,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(ESOCKTNOSUPPORT) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 455,
+   "end": 457,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 463,
+   "end": 467,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(ENODATA) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 465,
+   "end": 469,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#elif defined(__FreeBSD__)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 471,
+   "end": 473,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(EUNATCH) && !defined(_WIN32)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/errno.h",
+   "start": 473,
+   "end": 475,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/unix.h",
+   "start": 73,
+   "end": 75,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#ifndef NI_MAXHOST",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/unix.h",
+   "start": 77,
+   "end": 79,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#ifndef NI_MAXSERV",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/unix.h",
+   "start": 141,
+   "end": 160,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(_AIX) || \\",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/unix.h",
+   "start": 155,
+   "end": 158,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "# if defined(PTHREAD_BARRIER_SERIAL_THREAD)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/unix.h",
+   "start": 160,
+   "end": 162,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/unix.h",
+   "start": 173,
+   "end": 210,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(DT_UNKNOWN)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/unix.h",
+   "start": 177,
+   "end": 179,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "# else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/unix.h",
+   "start": 182,
+   "end": 184,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "# else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/unix.h",
+   "start": 187,
+   "end": 189,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "# else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/unix.h",
+   "start": 192,
+   "end": 194,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "# else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/unix.h",
+   "start": 197,
+   "end": 199,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "# else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/unix.h",
+   "start": 202,
+   "end": 204,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "# else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/unix.h",
+   "start": 207,
+   "end": 209,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "# else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/unix.h",
+   "start": 400,
+   "end": 402,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(O_APPEND)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/unix.h",
+   "start": 402,
+   "end": 404,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/unix.h",
+   "start": 405,
+   "end": 407,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(O_CREAT)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/unix.h",
+   "start": 407,
+   "end": 409,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/unix.h",
+   "start": 431,
+   "end": 433,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(O_DIRECTORY)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/unix.h",
+   "start": 433,
+   "end": 435,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/unix.h",
+   "start": 436,
+   "end": 438,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(O_DSYNC)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/unix.h",
+   "start": 438,
+   "end": 440,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/unix.h",
+   "start": 441,
+   "end": 443,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(O_EXCL)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/unix.h",
+   "start": 443,
+   "end": 445,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/unix.h",
+   "start": 451,
+   "end": 453,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(O_NOATIME)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/unix.h",
+   "start": 453,
+   "end": 455,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/unix.h",
+   "start": 456,
+   "end": 458,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(O_NOCTTY)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/unix.h",
+   "start": 458,
+   "end": 460,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/unix.h",
+   "start": 461,
+   "end": 463,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(O_NOFOLLOW)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/unix.h",
+   "start": 463,
+   "end": 465,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/unix.h",
+   "start": 466,
+   "end": 468,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(O_NONBLOCK)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/unix.h",
+   "start": 468,
+   "end": 470,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/unix.h",
+   "start": 471,
+   "end": 473,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(O_RDONLY)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/unix.h",
+   "start": 473,
+   "end": 475,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/unix.h",
+   "start": 476,
+   "end": 478,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(O_RDWR)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/unix.h",
+   "start": 478,
+   "end": 480,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/unix.h",
+   "start": 486,
+   "end": 488,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(O_SYNC)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/unix.h",
+   "start": 488,
+   "end": 490,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/unix.h",
+   "start": 491,
+   "end": 493,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(O_TRUNC)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/unix.h",
+   "start": 493,
+   "end": 495,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/unix.h",
+   "start": 496,
+   "end": 498,
+   "kind": "light-only-skipped",
+   "units": 432,
+   "first_line": "#if defined(O_WRONLY)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "include/uv/unix.h",
+   "start": 498,
+   "end": 500,
+   "kind": "reference-only-skipped",
+   "units": 432,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "src/thread-common.c",
+   "start": 30,
+   "end": 32,
+   "kind": "light-only-skipped",
+   "units": 2,
+   "first_line": "#if defined(PTHREAD_BARRIER_SERIAL_THREAD)",
+   "example_units": [
+    "src/thread-common.c",
+    "src/thread-common.c"
+   ]
+  },
+  {
+   "file": "src/thread-common.c",
+   "start": 35,
+   "end": 151,
+   "kind": "reference-only-skipped",
+   "units": 2,
+   "first_line": "#if defined(_AIX) || \\",
+   "example_units": [
+    "src/thread-common.c",
+    "src/thread-common.c"
+   ]
+  },
+  {
+   "file": "src/thread-common.c",
+   "start": 40,
+   "end": 46,
+   "kind": "light-only-skipped",
+   "units": 2,
+   "first_line": "#ifdef _WIN32",
+   "example_units": [
+    "src/thread-common.c",
+    "src/thread-common.c"
+   ]
+  },
+  {
+   "file": "src/thread-common.c",
+   "start": 87,
+   "end": 90,
+   "kind": "light-only-skipped",
+   "units": 2,
+   "first_line": "#ifdef _WIN32",
+   "example_units": [
+    "src/thread-common.c",
+    "src/thread-common.c"
+   ]
+  },
+  {
+   "file": "src/thread-common.c",
+   "start": 124,
+   "end": 127,
+   "kind": "light-only-skipped",
+   "units": 2,
+   "first_line": "#ifdef _WIN32",
+   "example_units": [
+    "src/thread-common.c",
+    "src/thread-common.c"
+   ]
+  },
+  {
+   "file": "src/thread-common.c",
+   "start": 151,
+   "end": 175,
+   "kind": "light-only-skipped",
+   "units": 2,
+   "first_line": "#else",
+   "example_units": [
+    "src/thread-common.c",
+    "src/thread-common.c"
+   ]
+  },
+  {
+   "file": "src/unix/core.c",
+   "start": 264,
+   "end": 285,
+   "kind": "light-only-skipped",
+   "units": 2,
+   "first_line": "#if defined(IOV_MAX)",
+   "example_units": [
+    "src/unix/core.c",
+    "src/unix/core.c"
+   ]
+  },
+  {
+   "file": "src/unix/core.c",
+   "start": 266,
+   "end": 287,
+   "kind": "reference-only-skipped",
+   "units": 2,
+   "first_line": "#elif defined(_SC_IOV_MAX)",
+   "example_units": [
+    "src/unix/core.c",
+    "src/unix/core.c"
+   ]
+  },
+  {
+   "file": "src/unix/core.c",
+   "start": 498,
+   "end": 505,
+   "kind": "light-only-skipped",
+   "units": 2,
+   "first_line": "#if defined(SOCK_NONBLOCK) && defined(SOCK_CLOEXEC)",
+   "example_units": [
+    "src/unix/core.c",
+    "src/unix/core.c"
+   ]
+  },
+  {
+   "file": "src/unix/core.c",
+   "start": 1035,
+   "end": 1043,
+   "kind": "light-only-skipped",
+   "units": 2,
+   "first_line": "#if defined(O_CLOEXEC)",
+   "example_units": [
+    "src/unix/core.c",
+    "src/unix/core.c"
+   ]
+  },
+  {
+   "file": "src/unix/core.c",
+   "start": 1043,
+   "end": 1058,
+   "kind": "reference-only-skipped",
+   "units": 2,
+   "first_line": "#else  /* O_CLOEXEC */",
+   "example_units": [
+    "src/unix/core.c",
+    "src/unix/core.c"
+   ]
+  },
+  {
+   "file": "src/unix/fs.c",
+   "start": 296,
+   "end": 304,
+   "kind": "light-only-skipped",
+   "units": 2,
+   "first_line": "#ifdef RTLD_DEFAULT",
+   "example_units": [
+    "src/unix/fs.c",
+    "src/unix/fs.c"
+   ]
+  },
+  {
+   "file": "src/unix/fs.c",
+   "start": 311,
+   "end": 313,
+   "kind": "light-only-skipped",
+   "units": 2,
+   "first_line": "#ifdef O_CLOEXEC",
+   "example_units": [
+    "src/unix/fs.c",
+    "src/unix/fs.c"
+   ]
+  },
+  {
+   "file": "src/unix/fs.c",
+   "start": 336,
+   "end": 353,
+   "kind": "light-only-skipped",
+   "units": 2,
+   "first_line": "#ifdef O_CLOEXEC",
+   "example_units": [
+    "src/unix/fs.c",
+    "src/unix/fs.c"
+   ]
+  },
+  {
+   "file": "src/unix/fs.c",
+   "start": 381,
+   "end": 383,
+   "kind": "light-only-skipped",
+   "units": 2,
+   "first_line": "#ifdef O_CLOEXEC",
+   "example_units": [
+    "src/unix/fs.c",
+    "src/unix/fs.c"
+   ]
+  },
+  {
+   "file": "src/unix/fs.c",
+   "start": 383,
+   "end": 405,
+   "kind": "reference-only-skipped",
+   "units": 2,
+   "first_line": "#else  /* O_CLOEXEC */",
+   "example_units": [
+    "src/unix/fs.c",
+    "src/unix/fs.c"
+   ]
+  },
+  {
+   "file": "src/unix/fs.c",
+   "start": 638,
+   "end": 640,
+   "kind": "light-only-skipped",
+   "units": 2,
+   "first_line": "#if defined(_POSIX_PATH_MAX) || defined(PATH_MAX)",
+   "example_units": [
+    "src/unix/fs.c",
+    "src/unix/fs.c"
+   ]
+  },
+  {
+   "file": "src/unix/fs.c",
+   "start": 640,
+   "end": 658,
+   "kind": "reference-only-skipped",
+   "units": 2,
+   "first_line": "#else",
+   "example_units": [
+    "src/unix/fs.c",
+    "src/unix/fs.c"
+   ]
+  },
+  {
+   "file": "src/unix/fs.c",
+   "start": 695,
+   "end": 699,
+   "kind": "light-only-skipped",
+   "units": 2,
+   "first_line": "#if defined(_POSIX_VERSION) && _POSIX_VERSION >= 200809L",
+   "example_units": [
+    "src/unix/fs.c",
+    "src/unix/fs.c"
+   ]
+  },
+  {
+   "file": "src/unix/fs.c",
+   "start": 699,
+   "end": 714,
+   "kind": "reference-only-skipped",
+   "units": 2,
+   "first_line": "#else",
+   "example_units": [
+    "src/unix/fs.c",
+    "src/unix/fs.c"
+   ]
+  },
+  {
+   "file": "src/unix/getaddrinfo.c",
+   "start": 42,
+   "end": 44,
+   "kind": "light-only-skipped",
+   "units": 2,
+   "first_line": "#if defined(EAI_ADDRFAMILY)",
+   "example_units": [
+    "src/unix/getaddrinfo.c",
+    "src/unix/getaddrinfo.c"
+   ]
+  },
+  {
+   "file": "src/unix/getaddrinfo.c",
+   "start": 45,
+   "end": 47,
+   "kind": "light-only-skipped",
+   "units": 2,
+   "first_line": "#if defined(EAI_AGAIN)",
+   "example_units": [
+    "src/unix/getaddrinfo.c",
+    "src/unix/getaddrinfo.c"
+   ]
+  },
+  {
+   "file": "src/unix/getaddrinfo.c",
+   "start": 48,
+   "end": 50,
+   "kind": "light-only-skipped",
+   "units": 2,
+   "first_line": "#if defined(EAI_BADFLAGS)",
+   "example_units": [
+    "src/unix/getaddrinfo.c",
+    "src/unix/getaddrinfo.c"
+   ]
+  },
+  {
+   "file": "src/unix/getaddrinfo.c",
+   "start": 54,
+   "end": 56,
+   "kind": "light-only-skipped",
+   "units": 2,
+   "first_line": "#if defined(EAI_CANCELED)",
+   "example_units": [
+    "src/unix/getaddrinfo.c",
+    "src/unix/getaddrinfo.c"
+   ]
+  },
+  {
+   "file": "src/unix/getaddrinfo.c",
+   "start": 57,
+   "end": 59,
+   "kind": "light-only-skipped",
+   "units": 2,
+   "first_line": "#if defined(EAI_FAIL)",
+   "example_units": [
+    "src/unix/getaddrinfo.c",
+    "src/unix/getaddrinfo.c"
+   ]
+  },
+  {
+   "file": "src/unix/getaddrinfo.c",
+   "start": 60,
+   "end": 62,
+   "kind": "light-only-skipped",
+   "units": 2,
+   "first_line": "#if defined(EAI_FAMILY)",
+   "example_units": [
+    "src/unix/getaddrinfo.c",
+    "src/unix/getaddrinfo.c"
+   ]
+  },
+  {
+   "file": "src/unix/getaddrinfo.c",
+   "start": 63,
+   "end": 65,
+   "kind": "light-only-skipped",
+   "units": 2,
+   "first_line": "#if defined(EAI_MEMORY)",
+   "example_units": [
+    "src/unix/getaddrinfo.c",
+    "src/unix/getaddrinfo.c"
+   ]
+  },
+  {
+   "file": "src/unix/getaddrinfo.c",
+   "start": 66,
+   "end": 68,
+   "kind": "light-only-skipped",
+   "units": 2,
+   "first_line": "#if defined(EAI_NODATA)",
+   "example_units": [
+    "src/unix/getaddrinfo.c",
+    "src/unix/getaddrinfo.c"
+   ]
+  },
+  {
+   "file": "src/unix/getaddrinfo.c",
+   "start": 69,
+   "end": 73,
+   "kind": "light-only-skipped",
+   "units": 2,
+   "first_line": "#if defined(EAI_NONAME)",
+   "example_units": [
+    "src/unix/getaddrinfo.c",
+    "src/unix/getaddrinfo.c"
+   ]
+  },
+  {
+   "file": "src/unix/getaddrinfo.c",
+   "start": 74,
+   "end": 76,
+   "kind": "light-only-skipped",
+   "units": 2,
+   "first_line": "#if defined(EAI_OVERFLOW)",
+   "example_units": [
+    "src/unix/getaddrinfo.c",
+    "src/unix/getaddrinfo.c"
+   ]
+  },
+  {
+   "file": "src/unix/getaddrinfo.c",
+   "start": 80,
+   "end": 82,
+   "kind": "light-only-skipped",
+   "units": 2,
+   "first_line": "#if defined(EAI_SERVICE)",
+   "example_units": [
+    "src/unix/getaddrinfo.c",
+    "src/unix/getaddrinfo.c"
+   ]
+  },
+  {
+   "file": "src/unix/getaddrinfo.c",
+   "start": 83,
+   "end": 85,
+   "kind": "light-only-skipped",
+   "units": 2,
+   "first_line": "#if defined(EAI_SOCKTYPE)",
+   "example_units": [
+    "src/unix/getaddrinfo.c",
+    "src/unix/getaddrinfo.c"
+   ]
+  },
+  {
+   "file": "src/unix/getaddrinfo.c",
+   "start": 86,
+   "end": 88,
+   "kind": "light-only-skipped",
+   "units": 2,
+   "first_line": "#if defined(EAI_SYSTEM)",
+   "example_units": [
+    "src/unix/getaddrinfo.c",
+    "src/unix/getaddrinfo.c"
+   ]
+  },
+  {
+   "file": "src/unix/internal.h",
+   "start": 89,
+   "end": 91,
+   "kind": "light-only-skipped",
+   "units": 52,
+   "first_line": "#if defined(PATH_MAX)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/random.c",
+    "src/threadpool.c"
+   ]
+  },
+  {
+   "file": "src/unix/internal.h",
+   "start": 91,
+   "end": 93,
+   "kind": "reference-only-skipped",
+   "units": 52,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/random.c",
+    "src/threadpool.c"
+   ]
+  },
+  {
+   "file": "src/unix/internal.h",
+   "start": 135,
+   "end": 137,
+   "kind": "light-only-skipped",
+   "units": 52,
+   "first_line": "#ifdef POLLRDHUP",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/random.c",
+    "src/threadpool.c"
+   ]
+  },
+  {
+   "file": "src/unix/internal.h",
+   "start": 137,
+   "end": 139,
+   "kind": "reference-only-skipped",
+   "units": 52,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/random.c",
+    "src/threadpool.c"
+   ]
+  },
+  {
+   "file": "src/unix/internal.h",
+   "start": 141,
+   "end": 143,
+   "kind": "light-only-skipped",
+   "units": 52,
+   "first_line": "#ifdef POLLPRI",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/random.c",
+    "src/threadpool.c"
+   ]
+  },
+  {
+   "file": "src/unix/internal.h",
+   "start": 143,
+   "end": 145,
+   "kind": "reference-only-skipped",
+   "units": 52,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/random.c",
+    "src/threadpool.c"
+   ]
+  },
+  {
+   "file": "src/unix/linux.c",
+   "start": 59,
+   "end": 61,
+   "kind": "reference-only-skipped",
+   "units": 2,
+   "first_line": "#ifndef __NR_io_uring_setup",
+   "example_units": [
+    "src/unix/linux.c",
+    "src/unix/linux.c"
+   ]
+  },
+  {
+   "file": "src/unix/linux.c",
+   "start": 63,
+   "end": 65,
+   "kind": "reference-only-skipped",
+   "units": 2,
+   "first_line": "#ifndef __NR_io_uring_enter",
+   "example_units": [
+    "src/unix/linux.c",
+    "src/unix/linux.c"
+   ]
+  },
+  {
+   "file": "src/unix/linux.c",
+   "start": 67,
+   "end": 69,
+   "kind": "reference-only-skipped",
+   "units": 2,
+   "first_line": "#ifndef __NR_io_uring_register",
+   "example_units": [
+    "src/unix/linux.c",
+    "src/unix/linux.c"
+   ]
+  },
+  {
+   "file": "src/unix/linux.c",
+   "start": 71,
+   "end": 89,
+   "kind": "reference-only-skipped",
+   "units": 2,
+   "first_line": "#ifndef __NR_copy_file_range",
+   "example_units": [
+    "src/unix/linux.c",
+    "src/unix/linux.c"
+   ]
+  },
+  {
+   "file": "src/unix/linux.c",
+   "start": 74,
+   "end": 88,
+   "kind": "light-only-skipped",
+   "units": 2,
+   "first_line": "# elif defined(__i386__)",
+   "example_units": [
+    "src/unix/linux.c",
+    "src/unix/linux.c"
+   ]
+  },
+  {
+   "file": "src/unix/linux.c",
+   "start": 91,
+   "end": 107,
+   "kind": "reference-only-skipped",
+   "units": 2,
+   "first_line": "#ifndef __NR_statx",
+   "example_units": [
+    "src/unix/linux.c",
+    "src/unix/linux.c"
+   ]
+  },
+  {
+   "file": "src/unix/linux.c",
+   "start": 94,
+   "end": 106,
+   "kind": "light-only-skipped",
+   "units": 2,
+   "first_line": "# elif defined(__i386__)",
+   "example_units": [
+    "src/unix/linux.c",
+    "src/unix/linux.c"
+   ]
+  },
+  {
+   "file": "src/unix/linux.c",
+   "start": 109,
+   "end": 125,
+   "kind": "reference-only-skipped",
+   "units": 2,
+   "first_line": "#ifndef __NR_getrandom",
+   "example_units": [
+    "src/unix/linux.c",
+    "src/unix/linux.c"
+   ]
+  },
+  {
+   "file": "src/unix/linux.c",
+   "start": 112,
+   "end": 124,
+   "kind": "light-only-skipped",
+   "units": 2,
+   "first_line": "# elif defined(__i386__)",
+   "example_units": [
+    "src/unix/linux.c",
+    "src/unix/linux.c"
+   ]
+  },
+  {
+   "file": "src/unix/linux.c",
+   "start": 2022,
+   "end": 2024,
+   "kind": "light-only-skipped",
+   "units": 2,
+   "first_line": "#if defined(PR_SET_NAME)",
+   "example_units": [
+    "src/unix/linux.c",
+    "src/unix/linux.c"
+   ]
+  },
+  {
+   "file": "src/unix/process.c",
+   "start": 318,
+   "end": 320,
+   "kind": "light-only-skipped",
+   "units": 2,
+   "first_line": "#ifdef F_DUPFD_CLOEXEC /* POSIX 2008 */",
+   "example_units": [
+    "src/unix/process.c",
+    "src/unix/process.c"
+   ]
+  },
+  {
+   "file": "src/unix/process.c",
+   "start": 320,
+   "end": 322,
+   "kind": "reference-only-skipped",
+   "units": 2,
+   "first_line": "#else",
+   "example_units": [
+    "src/unix/process.c",
+    "src/unix/process.c"
+   ]
+  },
+  {
+   "file": "src/unix/process.c",
+   "start": 325,
+   "end": 329,
+   "kind": "reference-only-skipped",
+   "units": 2,
+   "first_line": "#ifndef F_DUPFD_CLOEXEC /* POSIX 2008 */",
+   "example_units": [
+    "src/unix/process.c",
+    "src/unix/process.c"
+   ]
+  },
+  {
+   "file": "src/unix/random-sysctl-linux.c",
+   "start": 70,
+   "end": 73,
+   "kind": "light-only-skipped",
+   "units": 2,
+   "first_line": "#ifdef SYS__sysctl",
+   "example_units": [
+    "src/unix/random-sysctl-linux.c",
+    "src/unix/random-sysctl-linux.c"
+   ]
+  },
+  {
+   "file": "src/unix/random-sysctl-linux.c",
+   "start": 73,
+   "end": 78,
+   "kind": "reference-only-skipped",
+   "units": 2,
+   "first_line": "#else",
+   "example_units": [
+    "src/unix/random-sysctl-linux.c",
+    "src/unix/random-sysctl-linux.c"
+   ]
+  },
+  {
+   "file": "src/unix/signal.c",
+   "start": 31,
+   "end": 33,
+   "kind": "reference-only-skipped",
+   "units": 2,
+   "first_line": "#ifndef SA_RESTART",
+   "example_units": [
+    "src/unix/signal.c",
+    "src/unix/signal.c"
+   ]
+  },
+  {
+   "file": "src/unix/tcp.c",
+   "start": 171,
+   "end": 186,
+   "kind": "light-only-skipped",
+   "units": 2,
+   "first_line": "#ifdef IPV6_V6ONLY",
+   "example_units": [
+    "src/unix/tcp.c",
+    "src/unix/tcp.c"
+   ]
+  },
+  {
+   "file": "src/unix/tcp.c",
+   "start": 179,
+   "end": 182,
+   "kind": "reference-only-skipped",
+   "units": 2,
+   "first_line": "#if defined(__MVS__)",
+   "example_units": [
+    "src/unix/tcp.c",
+    "src/unix/tcp.c"
+   ]
+  },
+  {
+   "file": "src/unix/tcp.c",
+   "start": 536,
+   "end": 543,
+   "kind": "light-only-skipped",
+   "units": 2,
+   "first_line": "#ifdef TCP_KEEPIDLE",
+   "example_units": [
+    "src/unix/tcp.c",
+    "src/unix/tcp.c"
+   ]
+  },
+  {
+   "file": "src/unix/tcp.c",
+   "start": 539,
+   "end": 543,
+   "kind": "reference-only-skipped",
+   "units": 2,
+   "first_line": "#elif defined(TCP_KEEPALIVE)",
+   "example_units": [
+    "src/unix/tcp.c",
+    "src/unix/tcp.c"
+   ]
+  },
+  {
+   "file": "src/unix/tcp.c",
+   "start": 545,
+   "end": 549,
+   "kind": "light-only-skipped",
+   "units": 2,
+   "first_line": "#ifdef TCP_KEEPINTVL",
+   "example_units": [
+    "src/unix/tcp.c",
+    "src/unix/tcp.c"
+   ]
+  },
+  {
+   "file": "src/unix/tcp.c",
+   "start": 551,
+   "end": 555,
+   "kind": "light-only-skipped",
+   "units": 2,
+   "first_line": "#ifdef TCP_KEEPCNT",
+   "example_units": [
+    "src/unix/tcp.c",
+    "src/unix/tcp.c"
+   ]
+  },
+  {
+   "file": "src/unix/thread.c",
+   "start": 40,
+   "end": 42,
+   "kind": "light-only-skipped",
+   "units": 2,
+   "first_line": "#if defined(__GLIBC__) && !defined(__UCLIBC__)",
+   "example_units": [
+    "src/unix/thread.c",
+    "src/unix/thread.c"
+   ]
+  },
+  {
+   "file": "src/unix/thread.c",
+   "start": 72,
+   "end": 75,
+   "kind": "light-only-skipped",
+   "units": 2,
+   "first_line": "#ifdef PTHREAD_STACK_MIN  /* Not defined on NetBSD. */",
+   "example_units": [
+    "src/unix/thread.c",
+    "src/unix/thread.c"
+   ]
+  },
+  {
+   "file": "src/unix/thread.c",
+   "start": 498,
+   "end": 522,
+   "kind": "light-only-skipped",
+   "units": 2,
+   "first_line": "#if defined(__GLIBC__) && !defined(__UCLIBC__)",
+   "example_units": [
+    "src/unix/thread.c",
+    "src/unix/thread.c"
+   ]
+  },
+  {
+   "file": "src/unix/thread.c",
+   "start": 518,
+   "end": 526,
+   "kind": "reference-only-skipped",
+   "units": 2,
+   "first_line": "#elif defined(__MVS__)",
+   "example_units": [
+    "src/unix/thread.c",
+    "src/unix/thread.c"
+   ]
+  },
+  {
+   "file": "src/unix/thread.c",
+   "start": 534,
+   "end": 537,
+   "kind": "light-only-skipped",
+   "units": 2,
+   "first_line": "#if (defined(__GLIBC__) && !defined(__UCLIBC__)) || \\",
+   "example_units": [
+    "src/unix/thread.c",
+    "src/unix/thread.c"
+   ]
+  },
+  {
+   "file": "src/unix/thread.c",
+   "start": 664,
+   "end": 666,
+   "kind": "light-only-skipped",
+   "units": 2,
+   "first_line": "#if defined(__GLIBC__) && !defined(__UCLIBC__)",
+   "example_units": [
+    "src/unix/thread.c",
+    "src/unix/thread.c"
+   ]
+  },
+  {
+   "file": "src/unix/udp.c",
+   "start": 524,
+   "end": 530,
+   "kind": "light-only-skipped",
+   "units": 2,
+   "first_line": "#ifdef IPV6_V6ONLY",
+   "example_units": [
+    "src/unix/udp.c",
+    "src/unix/udp.c"
+   ]
+  },
+  {
+   "file": "src/unix/udp.c",
+   "start": 530,
+   "end": 533,
+   "kind": "reference-only-skipped",
+   "units": 2,
+   "first_line": "#else",
+   "example_units": [
+    "src/unix/udp.c",
+    "src/unix/udp.c"
+   ]
+  },
+  {
+   "file": "src/uv-common.c",
+   "start": 473,
+   "end": 476,
+   "kind": "light-only-skipped",
+   "units": 2,
+   "first_line": "#if defined(AF_UNIX) && !defined(_WIN32)",
+   "example_units": [
+    "src/uv-common.c",
+    "src/uv-common.c"
+   ]
+  },
+  {
+   "file": "src/uv-common.c",
+   "start": 751,
+   "end": 777,
+   "kind": "light-only-skipped",
+   "units": 2,
+   "first_line": "#ifdef HAVE_DIRENT_TYPES",
+   "example_units": [
+    "src/uv-common.c",
+    "src/uv-common.c"
+   ]
+  },
+  {
+   "file": "src/uv-common.c",
+   "start": 777,
+   "end": 779,
+   "kind": "reference-only-skipped",
+   "units": 2,
+   "first_line": "#else",
+   "example_units": [
+    "src/uv-common.c",
+    "src/uv-common.c"
+   ]
+  },
+  {
+   "file": "src/uv-common.h",
+   "start": 44,
+   "end": 46,
+   "kind": "light-only-skipped",
+   "units": 64,
+   "first_line": "#if EDOM > 0",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "src/uv-common.h",
+   "start": 46,
+   "end": 48,
+   "kind": "reference-only-skipped",
+   "units": 64,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "src/uv-common.h",
+   "start": 61,
+   "end": 63,
+   "kind": "light-only-skipped",
+   "units": 64,
+   "first_line": "#if defined(static_assert)",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "src/uv-common.h",
+   "start": 63,
+   "end": 66,
+   "kind": "reference-only-skipped",
+   "units": 64,
+   "first_line": "#else",
+   "example_units": [
+    "src/fs-poll.c",
+    "src/idna.c",
+    "src/inet.c"
+   ]
+  },
+  {
+   "file": "test/test-fs-event.c",
+   "start": 55,
+   "end": 57,
+   "kind": "light-only-skipped",
+   "units": 2,
+   "first_line": "#if defined(PATH_MAX)",
+   "example_units": [
+    "test/test-fs-event.c",
+    "test/test-fs-event.c"
+   ]
+  },
+  {
+   "file": "test/test-fs-event.c",
+   "start": 57,
+   "end": 59,
+   "kind": "reference-only-skipped",
+   "units": 2,
+   "first_line": "#else",
+   "example_units": [
+    "test/test-fs-event.c",
+    "test/test-fs-event.c"
+   ]
+  },
+  {
+   "file": "test/test-fs-readdir.c",
+   "start": 302,
+   "end": 307,
+   "kind": "light-only-skipped",
+   "units": 2,
+   "first_line": "#ifdef HAVE_DIRENT_TYPES",
+   "example_units": [
+    "test/test-fs-readdir.c",
+    "test/test-fs-readdir.c"
+   ]
+  },
+  {
+   "file": "test/test-fs-readdir.c",
+   "start": 307,
+   "end": 309,
+   "kind": "reference-only-skipped",
+   "units": 2,
+   "first_line": "#else",
+   "example_units": [
+    "test/test-fs-readdir.c",
+    "test/test-fs-readdir.c"
+   ]
+  },
+  {
+   "file": "test/test-fs-readdir.c",
+   "start": 418,
+   "end": 423,
+   "kind": "light-only-skipped",
+   "units": 2,
+   "first_line": "#ifdef HAVE_DIRENT_TYPES",
+   "example_units": [
+    "test/test-fs-readdir.c",
+    "test/test-fs-readdir.c"
+   ]
+  },
+  {
+   "file": "test/test-fs-readdir.c",
+   "start": 423,
+   "end": 425,
+   "kind": "reference-only-skipped",
+   "units": 2,
+   "first_line": "#else",
+   "example_units": [
+    "test/test-fs-readdir.c",
+    "test/test-fs-readdir.c"
+   ]
+  },
+  {
+   "file": "test/test-fs.c",
+   "start": 140,
+   "end": 153,
+   "kind": "light-only-skipped",
+   "units": 2,
+   "first_line": "#if defined(IOV_MAX)",
+   "example_units": [
+    "test/test-fs.c",
+    "test/test-fs.c"
+   ]
+  },
+  {
+   "file": "test/test-fs.c",
+   "start": 142,
+   "end": 155,
+   "kind": "reference-only-skipped",
+   "units": 2,
+   "first_line": "#elif defined(_SC_IOV_MAX)",
+   "example_units": [
+    "test/test-fs.c",
+    "test/test-fs.c"
+   ]
+  },
+  {
+   "file": "test/test-fs.c",
+   "start": 583,
+   "end": 598,
+   "kind": "light-only-skipped",
+   "units": 2,
+   "first_line": "#ifdef HAVE_DIRENT_TYPES",
+   "example_units": [
+    "test/test-fs.c",
+    "test/test-fs.c"
+   ]
+  },
+  {
+   "file": "test/test-fs.c",
+   "start": 593,
+   "end": 595,
+   "kind": "reference-only-skipped",
+   "units": 2,
+   "first_line": "#if defined(__APPLE__) || defined(_WIN32)",
+   "example_units": [
+    "test/test-fs.c",
+    "test/test-fs.c"
+   ]
+  },
+  {
+   "file": "test/test-fs.c",
+   "start": 598,
+   "end": 600,
+   "kind": "reference-only-skipped",
+   "units": 2,
+   "first_line": "#else",
+   "example_units": [
+    "test/test-fs.c",
+    "test/test-fs.c"
+   ]
+  },
+  {
+   "file": "test/test-poll-oob.c",
+   "start": 49,
+   "end": 51,
+   "kind": "light-only-skipped",
+   "units": 2,
+   "first_line": "#ifdef EWOULDBLOCK",
+   "example_units": [
+    "test/test-poll-oob.c",
+    "test/test-poll-oob.c"
+   ]
+  },
+  {
+   "file": "test/test-poll.c",
+   "start": 96,
+   "end": 98,
+   "kind": "light-only-skipped",
+   "units": 2,
+   "first_line": "#ifdef EWOULDBLOCK",
+   "example_units": [
+    "test/test-poll.c",
+    "test/test-poll.c"
+   ]
+  },
+  {
+   "file": "test/test-thread.c",
+   "start": 218,
+   "end": 226,
+   "kind": "reference-only-skipped",
+   "units": 2,
+   "first_line": "#if defined(__APPLE__)",
+   "example_units": [
+    "test/test-thread.c",
+    "test/test-thread.c"
+   ]
+  },
+  {
+   "file": "test/test-thread.c",
+   "start": 218,
+   "end": 241,
+   "kind": "light-only-skipped",
+   "units": 2,
+   "first_line": "#if defined(__APPLE__)",
+   "example_units": [
+    "test/test-thread.c",
+    "test/test-thread.c"
+   ]
+  },
+  {
+   "file": "test/test-thread.c",
+   "start": 277,
+   "end": 287,
+   "kind": "light-only-skipped",
+   "units": 2,
+   "first_line": "#ifdef PTHREAD_STACK_MIN",
+   "example_units": [
+    "test/test-thread.c",
+    "test/test-thread.c"
+   ]
+  }
+ ]
+}

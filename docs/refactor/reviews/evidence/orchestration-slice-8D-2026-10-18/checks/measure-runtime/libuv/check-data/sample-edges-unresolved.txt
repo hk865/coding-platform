@@ -1,0 +1,49 @@
+E01 include/uv.h:56                          -> include/uv/errno.h           | #include "uv/errno.h"
+E02 include/uv.h:57                          -> include/uv/version.h         | #include "uv/version.h"
+E03 include/uv.h:71                          -> include/uv/unix.h            | # include "uv/unix.h"
+E04 include/uv/unix.h:46                     -> include/uv/threadpool.h      | #include "uv/threadpool.h"
+E05 src/fs-poll.c:22                         -> include/uv.h                 | #include "uv.h"
+E06 src/random.c:22                          -> include/uv.h                 | #include "uv.h"
+E07 src/uv-common.c:22                       -> include/uv.h                 | #include "uv.h"
+E08 src/uv-common.h:36                       -> include/uv/tree.h            | #include "uv/tree.h"
+E09 src/fs-poll.c:23                         -> src/uv-common.h              | #include "uv-common.h"
+E10 src/random.c:23                          -> src/uv-common.h              | #include "uv-common.h"
+E11 src/timer.c:22                           -> src/uv-common.h              | #include "uv-common.h"
+E12 src/fs-poll.c:30                         -> src/unix/internal.h          | #include "unix/internal.h"
+E13 src/random.c:28                          -> src/unix/internal.h          | #  include "unix/internal.h"
+E14 src/threadpool.c:25                      -> src/unix/internal.h          | # include "unix/internal.h"
+E15 src/unix/async.c:25                      -> include/uv.h                 | #include "uv.h"
+E16 src/unix/loop-watcher.c:22               -> include/uv.h                 | #include "uv.h"
+E17 src/unix/random-getrandom.c:22           -> include/uv.h                 | #include "uv.h"
+E18 src/unix/loop.c:23                       -> include/uv/tree.h            | #include "uv/tree.h"
+E19 src/unix/core.c:23                       -> src/strtok.h                 | #include "strtok.h"
+E20 src/unix/getaddrinfo.c:27                -> src/idna.h                   | #include "idna.h"
+E21 src/unix/internal.h:25                   -> src/uv-common.h              | #include "uv-common.h"
+E22 src/unix/async.c:26                      -> src/unix/internal.h          | #include "internal.h"
+E23 src/unix/loop-watcher.c:23               -> src/unix/internal.h          | #include "internal.h"
+E24 src/unix/random-getrandom.c:23           -> src/unix/internal.h          | #include "internal.h"
+E25 test/benchmark-async-pummel.c:23         -> include/uv.h                 | #include "uv.h"
+E26 test/test-ip-name.c:22                   -> include/uv.h                 | #include "uv.h"
+E27 test/test-tcp-bind6-error.c:22           -> include/uv.h                 | #include "uv.h"
+E28 test/test-idna.c:24                      -> src/idna.c                   | #include "../src/idna.c"
+E29 test/test-strscpy.c:26                   -> src/strscpy.h                | #include "../src/strscpy.h"
+E30 test/test-strtok.c:26                    -> src/strtok.h                 | #include "../src/strtok.h"
+E31 test/benchmark-async-pummel.c:22         -> test/task.h                  | #include "task.h"
+E32 test/test-gettimeofday.c:23              -> test/task.h                  | #include "task.h"
+E33 test/test-tcp-alloc-cb-fail.c:27         -> test/task.h                  | #include "task.h"
+U01 include/uv.h                       <stddef.h>               reason=None lines=[58] tree-files-with-that-basename=[]
+U02 include/uv.h                       <stdint.h>               reason=None lines=[60] tree-files-with-that-basename=[]
+U03 include/uv.h                       <stdio.h>                reason=None lines=[59] tree-files-with-that-basename=[]
+U04 include/uv/errno.h                 <errno.h>                reason=angled-fallback lines=[25] tree-files-with-that-basename=['include/uv/errno.h']
+U05 include/uv/unix.h                  <pwd.h>                  reason=None lines=[37] tree-files-with-that-basename=[]
+U06 include/uv/unix.h                  <termios.h>              reason=None lines=[36] tree-files-with-that-basename=[]
+U07 src/fs-poll.c                      <assert.h>               reason=None lines=[33] tree-files-with-that-basename=[]
+U08 src/timer.c                        <assert.h>               reason=None lines=[25] tree-files-with-that-basename=[]
+U09 src/uv-common.h                    <stdint.h>               reason=None lines=[33] tree-files-with-that-basename=[]
+U10 src/unix/async.c                   <assert.h>               reason=None lines=[31] tree-files-with-that-basename=[]
+U11 src/unix/linux.c                   <sys/inotify.h>          reason=None lines=[45] tree-files-with-that-basename=[]
+U12 src/unix/udp.c                     <unistd.h>               reason=None lines=[29] tree-files-with-that-basename=[]
+U13 test/benchmark-async-pummel.c      <stdio.h>                reason=None lines=[25] tree-files-with-that-basename=[]
+U14 test/test-poll-oob.c               <string.h>               reason=None lines=[31] tree-files-with-that-basename=[]
+U15 test/test-watcher-cross-stop.c     <string.h>               reason=None lines=[25] tree-files-with-that-basename=[]
+edges sampled 33 unresolved sampled 15

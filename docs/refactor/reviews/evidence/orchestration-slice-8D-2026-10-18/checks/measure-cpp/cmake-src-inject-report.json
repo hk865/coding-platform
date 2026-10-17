@@ -1,0 +1,4852 @@
+{
+ "cases": [
+  {
+   "id": "00-main-brace",
+   "file": "Source/CTest/cmCTestHandlerCommand.cxx",
+   "group": "main",
+   "kind": "brace",
+   "fan_in": 1,
+   "inj_line": 22,
+   "modes": {
+    "light": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "no",
+      "R2lex": "no",
+      "R3": "no",
+      "R0file": "no"
+     },
+     "tus_reaching": 1,
+     "tus_with_new_error": 1,
+     "tus_new_error_excused_by_R0": 1,
+     "first_new_error": {
+      "line": 22,
+      "spelling": "extraneous closing brace ('}')",
+      "category": "Parse Issue",
+      "pos": [
+       569
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Source/CTest/cmCTestHandlerCommand.cxx:22 extraneous closing brace ('}') [Parse Issue]"
+     }
+    },
+    "light-bodies": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "no",
+      "R2lex": "no",
+      "R3": "no",
+      "R0file": "no"
+     },
+     "tus_reaching": 1,
+     "tus_with_new_error": 1,
+     "tus_new_error_excused_by_R0": 1,
+     "first_new_error": {
+      "line": 22,
+      "spelling": "extraneous closing brace ('}')",
+      "category": "Parse Issue",
+      "pos": [
+       569
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Source/CTest/cmCTestHandlerCommand.cxx:22 extraneous closing brace ('}') [Parse Issue]"
+     }
+    }
+   }
+  },
+  {
+   "id": "00-main-brace-top",
+   "file": "Source/CTest/cmCTestHandlerCommand.cxx",
+   "group": "main",
+   "kind": "brace-top",
+   "fan_in": 1,
+   "inj_line": 1,
+   "modes": {
+    "light": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "failed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "yes",
+      "R1": "already-failed",
+      "R2": "no",
+      "R2lex": "no",
+      "R3": "no",
+      "R0file": "yes"
+     },
+     "tus_reaching": 1,
+     "tus_with_new_error": 1,
+     "tus_new_error_excused_by_R0": 0,
+     "first_new_error": {
+      "line": 1,
+      "spelling": "extraneous closing brace ('}')",
+      "category": "Parse Issue",
+      "pos": [
+       0
+      ]
+     },
+     "injected_fail_reasons": {
+      "R0": "Source/CTest/cmCTestHandlerCommand.cxx:1 extraneous closing brace ('}') [Parse Issue]",
+      "R1": "Source/CTest/cmCTestHandlerCommand.cxx:1 extraneous closing brace ('}') [Parse Issue]"
+     }
+    },
+    "light-bodies": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "failed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "yes",
+      "R1": "already-failed",
+      "R2": "no",
+      "R2lex": "no",
+      "R3": "no",
+      "R0file": "yes"
+     },
+     "tus_reaching": 1,
+     "tus_with_new_error": 1,
+     "tus_new_error_excused_by_R0": 0,
+     "first_new_error": {
+      "line": 1,
+      "spelling": "extraneous closing brace ('}')",
+      "category": "Parse Issue",
+      "pos": [
+       0
+      ]
+     },
+     "injected_fail_reasons": {
+      "R0": "Source/CTest/cmCTestHandlerCommand.cxx:1 extraneous closing brace ('}') [Parse Issue]",
+      "R1": "Source/CTest/cmCTestHandlerCommand.cxx:1 extraneous closing brace ('}') [Parse Issue]"
+     }
+    }
+   }
+  },
+  {
+   "id": "01-main-body",
+   "file": "Source/cmBinUtilsMacOSMachOGetRuntimeDependenciesTool.cxx",
+   "group": "main",
+   "kind": "body",
+   "fan_in": 1,
+   "inj_line": 13,
+   "modes": {
+    "light": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "no",
+      "R2lex": "no",
+      "R3": "no",
+      "R0file": "already-failed"
+     },
+     "tus_reaching": 1,
+     "tus_with_new_error": 0,
+     "tus_new_error_excused_by_R0": 0,
+     "first_new_error": null,
+     "injected_fail_reasons": {
+      "R1": "Source/cmBinUtilsMacOSMachOGetRuntimeDependenciesTool.cxx:17 use of undeclared identifier 'std' [Semantic Issue]"
+     }
+    },
+    "light-bodies": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "no",
+      "R2lex": "no",
+      "R3": "no",
+      "R0file": "already-failed"
+     },
+     "tus_reaching": 1,
+     "tus_with_new_error": 1,
+     "tus_new_error_excused_by_R0": 1,
+     "first_new_error": {
+      "line": 13,
+      "spelling": "expected expression",
+      "category": "Parse Issue",
+      "pos": [
+       414
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Source/cmBinUtilsMacOSMachOGetRuntimeDependenciesTool.cxx:13 expected expression [Parse Issue]"
+     }
+    }
+   }
+  },
+  {
+   "id": "02-main-if",
+   "file": "Source/cmDependsJava.cxx",
+   "group": "main",
+   "kind": "if",
+   "fan_in": 1,
+   "inj_line": 6,
+   "modes": {
+    "light": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "failed",
+      "R2lex": "failed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "yes",
+      "R2lex": "yes",
+      "R3": "no",
+      "R0file": "already-failed"
+     },
+     "tus_reaching": 1,
+     "tus_with_new_error": 1,
+     "tus_new_error_excused_by_R0": 1,
+     "first_new_error": {
+      "line": 6,
+      "spelling": "unterminated conditional directive",
+      "category": "Lexical or Preprocessor Issue",
+      "pos": [
+       204
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Source/cmDependsJava.cxx:8 constructor for 'cmDependsJava' must explicitly initialize the base class 'cmDepends' which does not have a default cons [Semantic Is",
+      "R2": "Source/cmDependsJava.cxx:6 unterminated conditional directive [Lexical or Preprocessor Issue]",
+      "R2lex": "Source/cmDependsJava.cxx:6 unterminated conditional directive [Lexical or Preprocessor Issue]"
+     }
+    },
+    "light-bodies": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "failed",
+      "R2lex": "failed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "yes",
+      "R2lex": "yes",
+      "R3": "no",
+      "R0file": "already-failed"
+     },
+     "tus_reaching": 1,
+     "tus_with_new_error": 1,
+     "tus_new_error_excused_by_R0": 1,
+     "first_new_error": {
+      "line": 6,
+      "spelling": "unterminated conditional directive",
+      "category": "Lexical or Preprocessor Issue",
+      "pos": [
+       204
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Source/cmDependsJava.cxx:8 constructor for 'cmDependsJava' must explicitly initialize the base class 'cmDepends' which does not have a default cons [Semantic Is",
+      "R2": "Source/cmDependsJava.cxx:6 unterminated conditional directive [Lexical or Preprocessor Issue]",
+      "R2lex": "Source/cmDependsJava.cxx:6 unterminated conditional directive [Lexical or Preprocessor Issue]"
+     }
+    }
+   }
+  },
+  {
+   "id": "02-main-if-top",
+   "file": "Source/cmDependsJava.cxx",
+   "group": "main",
+   "kind": "if-top",
+   "fan_in": 1,
+   "inj_line": 1,
+   "modes": {
+    "light": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "injected": {
+      "R0": "failed",
+      "R1": "failed",
+      "R2": "failed",
+      "R2lex": "failed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "yes",
+      "R1": "already-failed",
+      "R2": "yes",
+      "R2lex": "yes",
+      "R3": "no",
+      "R0file": "already-failed"
+     },
+     "tus_reaching": 1,
+     "tus_with_new_error": 1,
+     "tus_new_error_excused_by_R0": 0,
+     "first_new_error": {
+      "line": 1,
+      "spelling": "unterminated conditional directive",
+      "category": "Lexical or Preprocessor Issue",
+      "pos": [
+       1
+      ]
+     },
+     "injected_fail_reasons": {
+      "R0": "Source/cmDependsJava.cxx:1 unterminated conditional directive [Lexical or Preprocessor Issue]",
+      "R1": "Source/cmDependsJava.cxx:8 constructor for 'cmDependsJava' must explicitly initialize the base class 'cmDepends' which does not have a default cons [Semantic Is",
+      "R2": "Source/cmDependsJava.cxx:1 unterminated conditional directive [Lexical or Preprocessor Issue]",
+      "R2lex": "Source/cmDependsJava.cxx:1 unterminated conditional directive [Lexical or Preprocessor Issue]"
+     }
+    },
+    "light-bodies": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "injected": {
+      "R0": "failed",
+      "R1": "failed",
+      "R2": "failed",
+      "R2lex": "failed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "yes",
+      "R1": "already-failed",
+      "R2": "yes",
+      "R2lex": "yes",
+      "R3": "no",
+      "R0file": "already-failed"
+     },
+     "tus_reaching": 1,
+     "tus_with_new_error": 1,
+     "tus_new_error_excused_by_R0": 0,
+     "first_new_error": {
+      "line": 1,
+      "spelling": "unterminated conditional directive",
+      "category": "Lexical or Preprocessor Issue",
+      "pos": [
+       1
+      ]
+     },
+     "injected_fail_reasons": {
+      "R0": "Source/cmDependsJava.cxx:1 unterminated conditional directive [Lexical or Preprocessor Issue]",
+      "R1": "Source/cmDependsJava.cxx:8 constructor for 'cmDependsJava' must explicitly initialize the base class 'cmDepends' which does not have a default cons [Semantic Is",
+      "R2": "Source/cmDependsJava.cxx:1 unterminated conditional directive [Lexical or Preprocessor Issue]",
+      "R2lex": "Source/cmDependsJava.cxx:1 unterminated conditional directive [Lexical or Preprocessor Issue]"
+     }
+    }
+   }
+  },
+  {
+   "id": "03-main-brace",
+   "file": "Source/cmGeneratorExpressionDAGChecker.cxx",
+   "group": "main",
+   "kind": "brace",
+   "fan_in": 1,
+   "inj_line": 19,
+   "modes": {
+    "light": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "no",
+      "R2lex": "no",
+      "R3": "no",
+      "R0file": "no"
+     },
+     "tus_reaching": 1,
+     "tus_with_new_error": 1,
+     "tus_new_error_excused_by_R0": 1,
+     "first_new_error": {
+      "line": 19,
+      "spelling": "extraneous closing brace ('}')",
+      "category": "Parse Issue",
+      "pos": [
+       537
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Source/cmGeneratorExpressionDAGChecker.cxx:19 extraneous closing brace ('}') [Parse Issue]"
+     }
+    },
+    "light-bodies": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "no",
+      "R2lex": "no",
+      "R3": "no",
+      "R0file": "no"
+     },
+     "tus_reaching": 1,
+     "tus_with_new_error": 1,
+     "tus_new_error_excused_by_R0": 1,
+     "first_new_error": {
+      "line": 19,
+      "spelling": "extraneous closing brace ('}')",
+      "category": "Parse Issue",
+      "pos": [
+       537
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Source/cmGeneratorExpressionDAGChecker.cxx:19 extraneous closing brace ('}') [Parse Issue]"
+     }
+    }
+   }
+  },
+  {
+   "id": "03-main-brace-top",
+   "file": "Source/cmGeneratorExpressionDAGChecker.cxx",
+   "group": "main",
+   "kind": "brace-top",
+   "fan_in": 1,
+   "inj_line": 1,
+   "modes": {
+    "light": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "failed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "yes",
+      "R1": "already-failed",
+      "R2": "no",
+      "R2lex": "no",
+      "R3": "no",
+      "R0file": "yes"
+     },
+     "tus_reaching": 1,
+     "tus_with_new_error": 1,
+     "tus_new_error_excused_by_R0": 0,
+     "first_new_error": {
+      "line": 1,
+      "spelling": "extraneous closing brace ('}')",
+      "category": "Parse Issue",
+      "pos": [
+       0
+      ]
+     },
+     "injected_fail_reasons": {
+      "R0": "Source/cmGeneratorExpressionDAGChecker.cxx:1 extraneous closing brace ('}') [Parse Issue]",
+      "R1": "Source/cmGeneratorExpressionDAGChecker.cxx:1 extraneous closing brace ('}') [Parse Issue]"
+     }
+    },
+    "light-bodies": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "failed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "yes",
+      "R1": "already-failed",
+      "R2": "no",
+      "R2lex": "no",
+      "R3": "no",
+      "R0file": "yes"
+     },
+     "tus_reaching": 1,
+     "tus_with_new_error": 1,
+     "tus_new_error_excused_by_R0": 0,
+     "first_new_error": {
+      "line": 1,
+      "spelling": "extraneous closing brace ('}')",
+      "category": "Parse Issue",
+      "pos": [
+       0
+      ]
+     },
+     "injected_fail_reasons": {
+      "R0": "Source/cmGeneratorExpressionDAGChecker.cxx:1 extraneous closing brace ('}') [Parse Issue]",
+      "R1": "Source/cmGeneratorExpressionDAGChecker.cxx:1 extraneous closing brace ('}') [Parse Issue]"
+     }
+    }
+   }
+  },
+  {
+   "id": "04-main-body",
+   "file": "Source/cmLinkLineDeviceComputer.cxx",
+   "group": "main",
+   "kind": "body",
+   "fan_in": 1,
+   "inj_line": 31,
+   "modes": {
+    "light": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "no",
+      "R2lex": "no",
+      "R3": "no",
+      "R0file": "no"
+     },
+     "tus_reaching": 1,
+     "tus_with_new_error": 0,
+     "tus_new_error_excused_by_R0": 0,
+     "first_new_error": null,
+     "injected_fail_reasons": {
+      "R1": "Source/cmLinkLineDeviceComputer.cxx:36 no type named 'string' in namespace 'std' [Semantic Issue]"
+     }
+    },
+    "light-bodies": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "no",
+      "R2lex": "no",
+      "R3": "no",
+      "R0file": "no"
+     },
+     "tus_reaching": 1,
+     "tus_with_new_error": 1,
+     "tus_new_error_excused_by_R0": 1,
+     "first_new_error": {
+      "line": 31,
+      "spelling": "expected expression",
+      "category": "Parse Issue",
+      "pos": [
+       820
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Source/cmLinkLineDeviceComputer.cxx:31 expected expression [Parse Issue]"
+     }
+    }
+   }
+  },
+  {
+   "id": "05-main-if",
+   "file": "Source/cmSiteNameCommand.cxx",
+   "group": "main",
+   "kind": "if",
+   "fan_in": 1,
+   "inj_line": 12,
+   "modes": {
+    "light": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "failed",
+      "R2lex": "failed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "yes",
+      "R2lex": "yes",
+      "R3": "no",
+      "R0file": "no"
+     },
+     "tus_reaching": 1,
+     "tus_with_new_error": 1,
+     "tus_new_error_excused_by_R0": 1,
+     "first_new_error": {
+      "line": 12,
+      "spelling": "unterminated conditional directive",
+      "category": "Lexical or Preprocessor Issue",
+      "pos": [
+       350
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Source/cmSiteNameCommand.cxx:15 redefinition of 'cmSiteNameCommand' [Semantic Issue]",
+      "R2": "Source/cmSiteNameCommand.cxx:12 unterminated conditional directive [Lexical or Preprocessor Issue]",
+      "R2lex": "Source/cmSiteNameCommand.cxx:12 unterminated conditional directive [Lexical or Preprocessor Issue]"
+     }
+    },
+    "light-bodies": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "failed",
+      "R2lex": "failed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "yes",
+      "R2lex": "yes",
+      "R3": "no",
+      "R0file": "no"
+     },
+     "tus_reaching": 1,
+     "tus_with_new_error": 1,
+     "tus_new_error_excused_by_R0": 1,
+     "first_new_error": {
+      "line": 12,
+      "spelling": "unterminated conditional directive",
+      "category": "Lexical or Preprocessor Issue",
+      "pos": [
+       350
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Source/cmSiteNameCommand.cxx:15 redefinition of 'cmSiteNameCommand' [Semantic Issue]",
+      "R2": "Source/cmSiteNameCommand.cxx:12 unterminated conditional directive [Lexical or Preprocessor Issue]",
+      "R2lex": "Source/cmSiteNameCommand.cxx:12 unterminated conditional directive [Lexical or Preprocessor Issue]"
+     }
+    }
+   }
+  },
+  {
+   "id": "05-main-if-top",
+   "file": "Source/cmSiteNameCommand.cxx",
+   "group": "main",
+   "kind": "if-top",
+   "fan_in": 1,
+   "inj_line": 1,
+   "modes": {
+    "light": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "failed",
+      "R1": "failed",
+      "R2": "failed",
+      "R2lex": "failed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "yes",
+      "R1": "already-failed",
+      "R2": "yes",
+      "R2lex": "yes",
+      "R3": "no",
+      "R0file": "yes"
+     },
+     "tus_reaching": 1,
+     "tus_with_new_error": 1,
+     "tus_new_error_excused_by_R0": 0,
+     "first_new_error": {
+      "line": 1,
+      "spelling": "unterminated conditional directive",
+      "category": "Lexical or Preprocessor Issue",
+      "pos": [
+       1
+      ]
+     },
+     "injected_fail_reasons": {
+      "R0": "Source/cmSiteNameCommand.cxx:1 unterminated conditional directive [Lexical or Preprocessor Issue]",
+      "R1": "Source/cmSiteNameCommand.cxx:15 redefinition of 'cmSiteNameCommand' [Semantic Issue]",
+      "R2": "Source/cmSiteNameCommand.cxx:1 unterminated conditional directive [Lexical or Preprocessor Issue]",
+      "R2lex": "Source/cmSiteNameCommand.cxx:1 unterminated conditional directive [Lexical or Preprocessor Issue]"
+     }
+    },
+    "light-bodies": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "failed",
+      "R1": "failed",
+      "R2": "failed",
+      "R2lex": "failed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "yes",
+      "R1": "already-failed",
+      "R2": "yes",
+      "R2lex": "yes",
+      "R3": "no",
+      "R0file": "yes"
+     },
+     "tus_reaching": 1,
+     "tus_with_new_error": 1,
+     "tus_new_error_excused_by_R0": 0,
+     "first_new_error": {
+      "line": 1,
+      "spelling": "unterminated conditional directive",
+      "category": "Lexical or Preprocessor Issue",
+      "pos": [
+       1
+      ]
+     },
+     "injected_fail_reasons": {
+      "R0": "Source/cmSiteNameCommand.cxx:1 unterminated conditional directive [Lexical or Preprocessor Issue]",
+      "R1": "Source/cmSiteNameCommand.cxx:15 redefinition of 'cmSiteNameCommand' [Semantic Issue]",
+      "R2": "Source/cmSiteNameCommand.cxx:1 unterminated conditional directive [Lexical or Preprocessor Issue]",
+      "R2lex": "Source/cmSiteNameCommand.cxx:1 unterminated conditional directive [Lexical or Preprocessor Issue]"
+     }
+    }
+   }
+  },
+  {
+   "id": "06-main-brace",
+   "file": "Source/kwsys/EncodingCXX.cxx",
+   "group": "main",
+   "kind": "brace",
+   "fan_in": 1,
+   "inj_line": 23,
+   "modes": {
+    "light": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "no",
+      "R2lex": "no",
+      "R3": "no",
+      "R0file": "no"
+     },
+     "tus_reaching": 1,
+     "tus_with_new_error": 1,
+     "tus_new_error_excused_by_R0": 1,
+     "first_new_error": {
+      "line": 23,
+      "spelling": "extraneous closing brace ('}')",
+      "category": "Parse Issue",
+      "pos": [
+       593
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Source/kwsys/EncodingCXX.cxx:23 extraneous closing brace ('}') [Parse Issue]"
+     }
+    },
+    "light-bodies": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "no",
+      "R2lex": "no",
+      "R3": "no",
+      "R0file": "no"
+     },
+     "tus_reaching": 1,
+     "tus_with_new_error": 1,
+     "tus_new_error_excused_by_R0": 1,
+     "first_new_error": {
+      "line": 23,
+      "spelling": "extraneous closing brace ('}')",
+      "category": "Parse Issue",
+      "pos": [
+       593
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Source/kwsys/EncodingCXX.cxx:23 extraneous closing brace ('}') [Parse Issue]"
+     }
+    }
+   }
+  },
+  {
+   "id": "06-main-brace-top",
+   "file": "Source/kwsys/EncodingCXX.cxx",
+   "group": "main",
+   "kind": "brace-top",
+   "fan_in": 1,
+   "inj_line": 1,
+   "modes": {
+    "light": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "failed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "yes",
+      "R1": "already-failed",
+      "R2": "no",
+      "R2lex": "no",
+      "R3": "no",
+      "R0file": "yes"
+     },
+     "tus_reaching": 1,
+     "tus_with_new_error": 1,
+     "tus_new_error_excused_by_R0": 0,
+     "first_new_error": {
+      "line": 1,
+      "spelling": "extraneous closing brace ('}')",
+      "category": "Parse Issue",
+      "pos": [
+       0
+      ]
+     },
+     "injected_fail_reasons": {
+      "R0": "Source/kwsys/EncodingCXX.cxx:1 extraneous closing brace ('}') [Parse Issue]",
+      "R1": "Source/kwsys/EncodingCXX.cxx:1 extraneous closing brace ('}') [Parse Issue]"
+     }
+    },
+    "light-bodies": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "failed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "yes",
+      "R1": "already-failed",
+      "R2": "no",
+      "R2lex": "no",
+      "R3": "no",
+      "R0file": "yes"
+     },
+     "tus_reaching": 1,
+     "tus_with_new_error": 1,
+     "tus_new_error_excused_by_R0": 0,
+     "first_new_error": {
+      "line": 1,
+      "spelling": "extraneous closing brace ('}')",
+      "category": "Parse Issue",
+      "pos": [
+       0
+      ]
+     },
+     "injected_fail_reasons": {
+      "R0": "Source/kwsys/EncodingCXX.cxx:1 extraneous closing brace ('}') [Parse Issue]",
+      "R1": "Source/kwsys/EncodingCXX.cxx:1 extraneous closing brace ('}') [Parse Issue]"
+     }
+    }
+   }
+  },
+  {
+   "id": "07-main-body",
+   "file": "Tests/FindPackageModeMakefileTest/foo.cpp",
+   "group": "main",
+   "kind": "body",
+   "fan_in": 1,
+   "inj_line": 5,
+   "modes": {
+    "light": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "parsed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "parsed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "no",
+      "R2": "no",
+      "R2lex": "no",
+      "R3": "no",
+      "R0file": "no"
+     },
+     "tus_reaching": 1,
+     "tus_with_new_error": 0,
+     "tus_new_error_excused_by_R0": 0,
+     "first_new_error": null,
+     "injected_fail_reasons": {}
+    },
+    "light-bodies": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "parsed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "failed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "yes",
+      "R1": "yes",
+      "R2": "no",
+      "R2lex": "no",
+      "R3": "no",
+      "R0file": "yes"
+     },
+     "tus_reaching": 1,
+     "tus_with_new_error": 1,
+     "tus_new_error_excused_by_R0": 0,
+     "first_new_error": {
+      "line": 5,
+      "spelling": "expected expression",
+      "category": "Parse Issue",
+      "pos": [
+       30
+      ]
+     },
+     "injected_fail_reasons": {
+      "R0": "Tests/FindPackageModeMakefileTest/foo.cpp:5 expected expression [Parse Issue]",
+      "R1": "Tests/FindPackageModeMakefileTest/foo.cpp:5 expected expression [Parse Issue]"
+     }
+    }
+   }
+  },
+  {
+   "id": "08-main-if",
+   "file": "Utilities/cmcurl/lib/curl_memrchr.c",
+   "group": "main",
+   "kind": "if",
+   "fan_in": 1,
+   "inj_line": 34,
+   "modes": {
+    "light": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "parsed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "failed",
+      "R2lex": "failed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "yes",
+      "R2": "yes",
+      "R2lex": "yes",
+      "R3": "no",
+      "R0file": "yes"
+     },
+     "tus_reaching": 1,
+     "tus_with_new_error": 1,
+     "tus_new_error_excused_by_R0": 1,
+     "first_new_error": {
+      "line": 34,
+      "spelling": "unterminated conditional directive",
+      "category": "Lexical or Preprocessor Issue",
+      "pos": [
+       1209
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Utilities/cmcurl/lib/curl_memrchr.c:34 unterminated conditional directive [Lexical or Preprocessor Issue]",
+      "R2": "Utilities/cmcurl/lib/curl_memrchr.c:34 unterminated conditional directive [Lexical or Preprocessor Issue]",
+      "R2lex": "Utilities/cmcurl/lib/curl_memrchr.c:34 unterminated conditional directive [Lexical or Preprocessor Issue]"
+     }
+    },
+    "light-bodies": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "failed",
+      "R2lex": "failed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "yes",
+      "R2lex": "yes",
+      "R3": "no",
+      "R0file": "already-failed"
+     },
+     "tus_reaching": 1,
+     "tus_with_new_error": 1,
+     "tus_new_error_excused_by_R0": 1,
+     "first_new_error": {
+      "line": 34,
+      "spelling": "unterminated conditional directive",
+      "category": "Lexical or Preprocessor Issue",
+      "pos": [
+       1209
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Utilities/cmcurl/lib/curl_memrchr.c:54 invalid operands to binary expression ('const unsigned char *' and 'size_t *' (aka 'int (*)(int *)')) [Semantic Issue]",
+      "R2": "Utilities/cmcurl/lib/curl_memrchr.c:34 unterminated conditional directive [Lexical or Preprocessor Issue]",
+      "R2lex": "Utilities/cmcurl/lib/curl_memrchr.c:34 unterminated conditional directive [Lexical or Preprocessor Issue]"
+     }
+    }
+   }
+  },
+  {
+   "id": "08-main-if-top",
+   "file": "Utilities/cmcurl/lib/curl_memrchr.c",
+   "group": "main",
+   "kind": "if-top",
+   "fan_in": 1,
+   "inj_line": 1,
+   "modes": {
+    "light": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "parsed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "failed",
+      "R1": "failed",
+      "R2": "failed",
+      "R2lex": "failed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "yes",
+      "R1": "yes",
+      "R2": "yes",
+      "R2lex": "yes",
+      "R3": "no",
+      "R0file": "yes"
+     },
+     "tus_reaching": 1,
+     "tus_with_new_error": 1,
+     "tus_new_error_excused_by_R0": 0,
+     "first_new_error": {
+      "line": 1,
+      "spelling": "unterminated conditional directive",
+      "category": "Lexical or Preprocessor Issue",
+      "pos": [
+       1
+      ]
+     },
+     "injected_fail_reasons": {
+      "R0": "Utilities/cmcurl/lib/curl_memrchr.c:1 unterminated conditional directive [Lexical or Preprocessor Issue]",
+      "R1": "Utilities/cmcurl/lib/curl_memrchr.c:1 unterminated conditional directive [Lexical or Preprocessor Issue]",
+      "R2": "Utilities/cmcurl/lib/curl_memrchr.c:1 unterminated conditional directive [Lexical or Preprocessor Issue]",
+      "R2lex": "Utilities/cmcurl/lib/curl_memrchr.c:1 unterminated conditional directive [Lexical or Preprocessor Issue]"
+     }
+    },
+    "light-bodies": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "injected": {
+      "R0": "failed",
+      "R1": "failed",
+      "R2": "failed",
+      "R2lex": "failed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "yes",
+      "R1": "already-failed",
+      "R2": "yes",
+      "R2lex": "yes",
+      "R3": "no",
+      "R0file": "already-failed"
+     },
+     "tus_reaching": 1,
+     "tus_with_new_error": 1,
+     "tus_new_error_excused_by_R0": 0,
+     "first_new_error": {
+      "line": 1,
+      "spelling": "unterminated conditional directive",
+      "category": "Lexical or Preprocessor Issue",
+      "pos": [
+       1
+      ]
+     },
+     "injected_fail_reasons": {
+      "R0": "Utilities/cmcurl/lib/curl_memrchr.c:1 unterminated conditional directive [Lexical or Preprocessor Issue]",
+      "R1": "Utilities/cmcurl/lib/curl_memrchr.c:54 invalid operands to binary expression ('const unsigned char *' and 'size_t *' (aka 'int (*)(int *)')) [Semantic Issue]",
+      "R2": "Utilities/cmcurl/lib/curl_memrchr.c:1 unterminated conditional directive [Lexical or Preprocessor Issue]",
+      "R2lex": "Utilities/cmcurl/lib/curl_memrchr.c:1 unterminated conditional directive [Lexical or Preprocessor Issue]"
+     }
+    }
+   }
+  },
+  {
+   "id": "09-main-brace",
+   "file": "Utilities/cmcurl/lib/pop3.c",
+   "group": "main",
+   "kind": "brace",
+   "fan_in": 1,
+   "inj_line": 85,
+   "modes": {
+    "light": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "parsed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "yes",
+      "R2": "no",
+      "R2lex": "no",
+      "R3": "no",
+      "R0file": "yes"
+     },
+     "tus_reaching": 1,
+     "tus_with_new_error": 1,
+     "tus_new_error_excused_by_R0": 1,
+     "first_new_error": {
+      "line": 85,
+      "spelling": "extraneous closing brace ('}')",
+      "category": "Parse Issue",
+      "pos": [
+       2543
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Utilities/cmcurl/lib/pop3.c:85 extraneous closing brace ('}') [Parse Issue]"
+     }
+    },
+    "light-bodies": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "no",
+      "R2lex": "no",
+      "R3": "no",
+      "R0file": "already-failed"
+     },
+     "tus_reaching": 1,
+     "tus_with_new_error": 1,
+     "tus_new_error_excused_by_R0": 1,
+     "first_new_error": {
+      "line": 85,
+      "spelling": "extraneous closing brace ('}')",
+      "category": "Parse Issue",
+      "pos": [
+       2543
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Utilities/cmcurl/lib/pop3.c:85 extraneous closing brace ('}') [Parse Issue]"
+     }
+    }
+   }
+  },
+  {
+   "id": "09-main-brace-top",
+   "file": "Utilities/cmcurl/lib/pop3.c",
+   "group": "main",
+   "kind": "brace-top",
+   "fan_in": 1,
+   "inj_line": 1,
+   "modes": {
+    "light": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "parsed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "failed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "yes",
+      "R1": "yes",
+      "R2": "no",
+      "R2lex": "no",
+      "R3": "no",
+      "R0file": "yes"
+     },
+     "tus_reaching": 1,
+     "tus_with_new_error": 1,
+     "tus_new_error_excused_by_R0": 0,
+     "first_new_error": {
+      "line": 1,
+      "spelling": "extraneous closing brace ('}')",
+      "category": "Parse Issue",
+      "pos": [
+       0
+      ]
+     },
+     "injected_fail_reasons": {
+      "R0": "Utilities/cmcurl/lib/pop3.c:1 extraneous closing brace ('}') [Parse Issue]",
+      "R1": "Utilities/cmcurl/lib/pop3.c:1 extraneous closing brace ('}') [Parse Issue]"
+     }
+    },
+    "light-bodies": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "injected": {
+      "R0": "failed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "yes",
+      "R1": "already-failed",
+      "R2": "no",
+      "R2lex": "no",
+      "R3": "no",
+      "R0file": "already-failed"
+     },
+     "tus_reaching": 1,
+     "tus_with_new_error": 1,
+     "tus_new_error_excused_by_R0": 0,
+     "first_new_error": {
+      "line": 1,
+      "spelling": "extraneous closing brace ('}')",
+      "category": "Parse Issue",
+      "pos": [
+       0
+      ]
+     },
+     "injected_fail_reasons": {
+      "R0": "Utilities/cmcurl/lib/pop3.c:1 extraneous closing brace ('}') [Parse Issue]",
+      "R1": "Utilities/cmcurl/lib/pop3.c:1 extraneous closing brace ('}') [Parse Issue]"
+     }
+    }
+   }
+  },
+  {
+   "id": "10-main-body",
+   "file": "Utilities/cmcurl/lib/vtls/vtls.c",
+   "group": "main",
+   "kind": "body",
+   "fan_in": 1,
+   "inj_line": 103,
+   "modes": {
+    "light": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "parsed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "parsed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "no",
+      "R2": "no",
+      "R2lex": "no",
+      "R3": "no",
+      "R0file": "no"
+     },
+     "tus_reaching": 1,
+     "tus_with_new_error": 0,
+     "tus_new_error_excused_by_R0": 0,
+     "first_new_error": null,
+     "injected_fail_reasons": {}
+    },
+    "light-bodies": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "no",
+      "R2lex": "no",
+      "R3": "no",
+      "R0file": "already-failed"
+     },
+     "tus_reaching": 1,
+     "tus_with_new_error": 1,
+     "tus_new_error_excused_by_R0": 1,
+     "first_new_error": {
+      "line": 103,
+      "spelling": "expected expression",
+      "category": "Parse Issue",
+      "pos": [
+       3309
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Utilities/cmcurl/lib/vtls/vtls.c:103 expected expression [Parse Issue]"
+     }
+    }
+   }
+  },
+  {
+   "id": "11-main-if",
+   "file": "Utilities/cmlibarchive/libarchive/archive_read_support_format_all.c",
+   "group": "main",
+   "kind": "if",
+   "fan_in": 1,
+   "inj_line": 31,
+   "modes": {
+    "light": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "parsed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "failed",
+      "R2lex": "failed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "yes",
+      "R2": "yes",
+      "R2lex": "yes",
+      "R3": "no",
+      "R0file": "yes"
+     },
+     "tus_reaching": 1,
+     "tus_with_new_error": 1,
+     "tus_new_error_excused_by_R0": 1,
+     "first_new_error": {
+      "line": 31,
+      "spelling": "unterminated conditional directive",
+      "category": "Lexical or Preprocessor Issue",
+      "pos": [
+       1527
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Utilities/cmlibarchive/libarchive/archive_read_support_format_all.c:31 unterminated conditional directive [Lexical or Preprocessor Issue]",
+      "R2": "Utilities/cmlibarchive/libarchive/archive_read_support_format_all.c:31 unterminated conditional directive [Lexical or Preprocessor Issue]",
+      "R2lex": "Utilities/cmlibarchive/libarchive/archive_read_support_format_all.c:31 unterminated conditional directive [Lexical or Preprocessor Issue]"
+     }
+    },
+    "light-bodies": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "parsed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "failed",
+      "R2lex": "failed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "yes",
+      "R2": "yes",
+      "R2lex": "yes",
+      "R3": "no",
+      "R0file": "yes"
+     },
+     "tus_reaching": 1,
+     "tus_with_new_error": 1,
+     "tus_new_error_excused_by_R0": 1,
+     "first_new_error": {
+      "line": 31,
+      "spelling": "unterminated conditional directive",
+      "category": "Lexical or Preprocessor Issue",
+      "pos": [
+       1527
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Utilities/cmlibarchive/libarchive/archive_read_support_format_all.c:31 unterminated conditional directive [Lexical or Preprocessor Issue]",
+      "R2": "Utilities/cmlibarchive/libarchive/archive_read_support_format_all.c:31 unterminated conditional directive [Lexical or Preprocessor Issue]",
+      "R2lex": "Utilities/cmlibarchive/libarchive/archive_read_support_format_all.c:31 unterminated conditional directive [Lexical or Preprocessor Issue]"
+     }
+    }
+   }
+  },
+  {
+   "id": "11-main-if-top",
+   "file": "Utilities/cmlibarchive/libarchive/archive_read_support_format_all.c",
+   "group": "main",
+   "kind": "if-top",
+   "fan_in": 1,
+   "inj_line": 1,
+   "modes": {
+    "light": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "parsed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "failed",
+      "R1": "failed",
+      "R2": "failed",
+      "R2lex": "failed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "yes",
+      "R1": "yes",
+      "R2": "yes",
+      "R2lex": "yes",
+      "R3": "no",
+      "R0file": "yes"
+     },
+     "tus_reaching": 1,
+     "tus_with_new_error": 1,
+     "tus_new_error_excused_by_R0": 0,
+     "first_new_error": {
+      "line": 1,
+      "spelling": "unterminated conditional directive",
+      "category": "Lexical or Preprocessor Issue",
+      "pos": [
+       1
+      ]
+     },
+     "injected_fail_reasons": {
+      "R0": "Utilities/cmlibarchive/libarchive/archive_read_support_format_all.c:1 unterminated conditional directive [Lexical or Preprocessor Issue]",
+      "R1": "Utilities/cmlibarchive/libarchive/archive_read_support_format_all.c:1 unterminated conditional directive [Lexical or Preprocessor Issue]",
+      "R2": "Utilities/cmlibarchive/libarchive/archive_read_support_format_all.c:1 unterminated conditional directive [Lexical or Preprocessor Issue]",
+      "R2lex": "Utilities/cmlibarchive/libarchive/archive_read_support_format_all.c:1 unterminated conditional directive [Lexical or Preprocessor Issue]"
+     }
+    },
+    "light-bodies": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "parsed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "failed",
+      "R1": "failed",
+      "R2": "failed",
+      "R2lex": "failed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "yes",
+      "R1": "yes",
+      "R2": "yes",
+      "R2lex": "yes",
+      "R3": "no",
+      "R0file": "yes"
+     },
+     "tus_reaching": 1,
+     "tus_with_new_error": 1,
+     "tus_new_error_excused_by_R0": 0,
+     "first_new_error": {
+      "line": 1,
+      "spelling": "unterminated conditional directive",
+      "category": "Lexical or Preprocessor Issue",
+      "pos": [
+       1
+      ]
+     },
+     "injected_fail_reasons": {
+      "R0": "Utilities/cmlibarchive/libarchive/archive_read_support_format_all.c:1 unterminated conditional directive [Lexical or Preprocessor Issue]",
+      "R1": "Utilities/cmlibarchive/libarchive/archive_read_support_format_all.c:1 unterminated conditional directive [Lexical or Preprocessor Issue]",
+      "R2": "Utilities/cmlibarchive/libarchive/archive_read_support_format_all.c:1 unterminated conditional directive [Lexical or Preprocessor Issue]",
+      "R2lex": "Utilities/cmlibarchive/libarchive/archive_read_support_format_all.c:1 unterminated conditional directive [Lexical or Preprocessor Issue]"
+     }
+    }
+   }
+  },
+  {
+   "id": "12-main-brace",
+   "file": "Utilities/cmliblzma/liblzma/check/crc32_fast.c",
+   "group": "main",
+   "kind": "brace",
+   "fan_in": 1,
+   "inj_line": 21,
+   "modes": {
+    "light": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "no",
+      "R2lex": "no",
+      "R3": "no",
+      "R0file": "already-failed"
+     },
+     "tus_reaching": 1,
+     "tus_with_new_error": 1,
+     "tus_new_error_excused_by_R0": 1,
+     "first_new_error": {
+      "line": 21,
+      "spelling": "extraneous closing brace ('}')",
+      "category": "Parse Issue",
+      "pos": [
+       688
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Utilities/cmliblzma/liblzma/check/crc32_fast.c:21 extraneous closing brace ('}') [Parse Issue]"
+     }
+    },
+    "light-bodies": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "no",
+      "R2lex": "no",
+      "R3": "no",
+      "R0file": "already-failed"
+     },
+     "tus_reaching": 1,
+     "tus_with_new_error": 1,
+     "tus_new_error_excused_by_R0": 1,
+     "first_new_error": {
+      "line": 21,
+      "spelling": "extraneous closing brace ('}')",
+      "category": "Parse Issue",
+      "pos": [
+       688
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Utilities/cmliblzma/liblzma/check/crc32_fast.c:21 extraneous closing brace ('}') [Parse Issue]"
+     }
+    }
+   }
+  },
+  {
+   "id": "12-main-brace-top",
+   "file": "Utilities/cmliblzma/liblzma/check/crc32_fast.c",
+   "group": "main",
+   "kind": "brace-top",
+   "fan_in": 1,
+   "inj_line": 1,
+   "modes": {
+    "light": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "injected": {
+      "R0": "failed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "yes",
+      "R1": "already-failed",
+      "R2": "no",
+      "R2lex": "no",
+      "R3": "no",
+      "R0file": "already-failed"
+     },
+     "tus_reaching": 1,
+     "tus_with_new_error": 1,
+     "tus_new_error_excused_by_R0": 0,
+     "first_new_error": {
+      "line": 1,
+      "spelling": "extraneous closing brace ('}')",
+      "category": "Parse Issue",
+      "pos": [
+       0
+      ]
+     },
+     "injected_fail_reasons": {
+      "R0": "Utilities/cmliblzma/liblzma/check/crc32_fast.c:1 extraneous closing brace ('}') [Parse Issue]",
+      "R1": "Utilities/cmliblzma/liblzma/check/crc32_fast.c:1 extraneous closing brace ('}') [Parse Issue]"
+     }
+    },
+    "light-bodies": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "injected": {
+      "R0": "failed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "yes",
+      "R1": "already-failed",
+      "R2": "no",
+      "R2lex": "no",
+      "R3": "no",
+      "R0file": "already-failed"
+     },
+     "tus_reaching": 1,
+     "tus_with_new_error": 1,
+     "tus_new_error_excused_by_R0": 0,
+     "first_new_error": {
+      "line": 1,
+      "spelling": "extraneous closing brace ('}')",
+      "category": "Parse Issue",
+      "pos": [
+       0
+      ]
+     },
+     "injected_fail_reasons": {
+      "R0": "Utilities/cmliblzma/liblzma/check/crc32_fast.c:1 extraneous closing brace ('}') [Parse Issue]",
+      "R1": "Utilities/cmliblzma/liblzma/check/crc32_fast.c:1 extraneous closing brace ('}') [Parse Issue]"
+     }
+    }
+   }
+  },
+  {
+   "id": "13-main-body",
+   "file": "Utilities/cmlibrhash/librhash/algorithms.c",
+   "group": "main",
+   "kind": "body",
+   "fan_in": 1,
+   "inj_line": 181,
+   "modes": {
+    "light": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "no",
+      "R2lex": "no",
+      "R3": "no",
+      "R0file": "no"
+     },
+     "tus_reaching": 1,
+     "tus_with_new_error": 0,
+     "tus_new_error_excused_by_R0": 0,
+     "first_new_error": null,
+     "injected_fail_reasons": {
+      "R1": "Utilities/cmlibrhash/librhash/algorithms.c:138 use of undeclared identifier 'uintptr_t' [Semantic Issue]"
+     }
+    },
+    "light-bodies": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "no",
+      "R2lex": "no",
+      "R3": "no",
+      "R0file": "no"
+     },
+     "tus_reaching": 1,
+     "tus_with_new_error": 1,
+     "tus_new_error_excused_by_R0": 1,
+     "first_new_error": {
+      "line": 181,
+      "spelling": "expected expression",
+      "category": "Parse Issue",
+      "pos": [
+       8889
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Utilities/cmlibrhash/librhash/algorithms.c:138 use of undeclared identifier 'uintptr_t' [Semantic Issue]"
+     }
+    }
+   }
+  },
+  {
+   "id": "14-main-if",
+   "file": "Utilities/cmzlib/compress.c",
+   "group": "main",
+   "kind": "if",
+   "fan_in": 1,
+   "inj_line": 10,
+   "modes": {
+    "light": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "parsed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "failed",
+      "R2lex": "failed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "yes",
+      "R2": "yes",
+      "R2lex": "yes",
+      "R3": "no",
+      "R0file": "yes"
+     },
+     "tus_reaching": 1,
+     "tus_with_new_error": 1,
+     "tus_new_error_excused_by_R0": 1,
+     "first_new_error": {
+      "line": 10,
+      "spelling": "unterminated conditional directive",
+      "category": "Lexical or Preprocessor Issue",
+      "pos": [
+       247
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Utilities/cmzlib/compress.c:10 unterminated conditional directive [Lexical or Preprocessor Issue]",
+      "R2": "Utilities/cmzlib/compress.c:10 unterminated conditional directive [Lexical or Preprocessor Issue]",
+      "R2lex": "Utilities/cmzlib/compress.c:10 unterminated conditional directive [Lexical or Preprocessor Issue]"
+     }
+    },
+    "light-bodies": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "parsed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "failed",
+      "R2lex": "failed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "yes",
+      "R2": "yes",
+      "R2lex": "yes",
+      "R3": "no",
+      "R0file": "yes"
+     },
+     "tus_reaching": 1,
+     "tus_with_new_error": 1,
+     "tus_new_error_excused_by_R0": 1,
+     "first_new_error": {
+      "line": 10,
+      "spelling": "unterminated conditional directive",
+      "category": "Lexical or Preprocessor Issue",
+      "pos": [
+       247
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Utilities/cmzlib/compress.c:10 unterminated conditional directive [Lexical or Preprocessor Issue]",
+      "R2": "Utilities/cmzlib/compress.c:10 unterminated conditional directive [Lexical or Preprocessor Issue]",
+      "R2lex": "Utilities/cmzlib/compress.c:10 unterminated conditional directive [Lexical or Preprocessor Issue]"
+     }
+    }
+   }
+  },
+  {
+   "id": "14-main-if-top",
+   "file": "Utilities/cmzlib/compress.c",
+   "group": "main",
+   "kind": "if-top",
+   "fan_in": 1,
+   "inj_line": 1,
+   "modes": {
+    "light": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "parsed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "failed",
+      "R1": "failed",
+      "R2": "failed",
+      "R2lex": "failed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "yes",
+      "R1": "yes",
+      "R2": "yes",
+      "R2lex": "yes",
+      "R3": "no",
+      "R0file": "yes"
+     },
+     "tus_reaching": 1,
+     "tus_with_new_error": 1,
+     "tus_new_error_excused_by_R0": 0,
+     "first_new_error": {
+      "line": 1,
+      "spelling": "unterminated conditional directive",
+      "category": "Lexical or Preprocessor Issue",
+      "pos": [
+       1
+      ]
+     },
+     "injected_fail_reasons": {
+      "R0": "Utilities/cmzlib/compress.c:1 unterminated conditional directive [Lexical or Preprocessor Issue]",
+      "R1": "Utilities/cmzlib/compress.c:1 unterminated conditional directive [Lexical or Preprocessor Issue]",
+      "R2": "Utilities/cmzlib/compress.c:1 unterminated conditional directive [Lexical or Preprocessor Issue]",
+      "R2lex": "Utilities/cmzlib/compress.c:1 unterminated conditional directive [Lexical or Preprocessor Issue]"
+     }
+    },
+    "light-bodies": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "parsed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "failed",
+      "R1": "failed",
+      "R2": "failed",
+      "R2lex": "failed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "yes",
+      "R1": "yes",
+      "R2": "yes",
+      "R2lex": "yes",
+      "R3": "no",
+      "R0file": "yes"
+     },
+     "tus_reaching": 1,
+     "tus_with_new_error": 1,
+     "tus_new_error_excused_by_R0": 0,
+     "first_new_error": {
+      "line": 1,
+      "spelling": "unterminated conditional directive",
+      "category": "Lexical or Preprocessor Issue",
+      "pos": [
+       1
+      ]
+     },
+     "injected_fail_reasons": {
+      "R0": "Utilities/cmzlib/compress.c:1 unterminated conditional directive [Lexical or Preprocessor Issue]",
+      "R1": "Utilities/cmzlib/compress.c:1 unterminated conditional directive [Lexical or Preprocessor Issue]",
+      "R2": "Utilities/cmzlib/compress.c:1 unterminated conditional directive [Lexical or Preprocessor Issue]",
+      "R2lex": "Utilities/cmzlib/compress.c:1 unterminated conditional directive [Lexical or Preprocessor Issue]"
+     }
+    }
+   }
+  },
+  {
+   "id": "15-header-brace",
+   "file": "Source/CTest/cmCTestGIT.h",
+   "group": "header",
+   "kind": "brace",
+   "fan_in": 2,
+   "inj_line": 11,
+   "modes": {
+    "light": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "no",
+      "R2lex": "no",
+      "R3": "no",
+      "R0file": "no"
+     },
+     "tus_reaching": 2,
+     "tus_with_new_error": 2,
+     "tus_new_error_excused_by_R0": 2,
+     "first_new_error": {
+      "line": 11,
+      "spelling": "extraneous closing brace ('}')",
+      "category": "Parse Issue",
+      "pos": [
+       360,
+       275
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Source/CTest/cmCTestGIT.h:11 extraneous closing brace ('}') [Parse Issue]"
+     }
+    },
+    "light-bodies": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "no",
+      "R2lex": "no",
+      "R3": "no",
+      "R0file": "no"
+     },
+     "tus_reaching": 2,
+     "tus_with_new_error": 2,
+     "tus_new_error_excused_by_R0": 2,
+     "first_new_error": {
+      "line": 11,
+      "spelling": "extraneous closing brace ('}')",
+      "category": "Parse Issue",
+      "pos": [
+       360,
+       275
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Source/CTest/cmCTestGIT.h:11 extraneous closing brace ('}') [Parse Issue]"
+     }
+    }
+   }
+  },
+  {
+   "id": "15-header-brace-top",
+   "file": "Source/CTest/cmCTestGIT.h",
+   "group": "header",
+   "kind": "brace-top",
+   "fan_in": 2,
+   "inj_line": 1,
+   "modes": {
+    "light": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "no",
+      "R2lex": "no",
+      "R3": "no",
+      "R0file": "yes"
+     },
+     "tus_reaching": 2,
+     "tus_with_new_error": 2,
+     "tus_new_error_excused_by_R0": 1,
+     "first_new_error": {
+      "line": 1,
+      "spelling": "extraneous closing brace ('}')",
+      "category": "Parse Issue",
+      "pos": [
+       360,
+       0
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Source/CTest/cmCTestGIT.h:1 extraneous closing brace ('}') [Parse Issue]"
+     }
+    },
+    "light-bodies": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "no",
+      "R2lex": "no",
+      "R3": "no",
+      "R0file": "yes"
+     },
+     "tus_reaching": 2,
+     "tus_with_new_error": 2,
+     "tus_new_error_excused_by_R0": 1,
+     "first_new_error": {
+      "line": 1,
+      "spelling": "extraneous closing brace ('}')",
+      "category": "Parse Issue",
+      "pos": [
+       360,
+       0
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Source/CTest/cmCTestGIT.h:1 extraneous closing brace ('}') [Parse Issue]"
+     }
+    }
+   }
+  },
+  {
+   "id": "16-header-body",
+   "file": "Source/cmAlgorithms.h",
+   "group": "header",
+   "kind": "body",
+   "fan_in": 258,
+   "inj_line": 22,
+   "modes": {
+    "light": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "no",
+      "R2lex": "no",
+      "R3": "no",
+      "R0file": "no"
+     },
+     "tus_reaching": 258,
+     "tus_with_new_error": 0,
+     "tus_new_error_excused_by_R0": 0,
+     "first_new_error": null,
+     "injected_fail_reasons": {
+      "R1": "Source/cmAlgorithms.h:33 unknown type name 'size_t' [Semantic Issue]"
+     }
+    },
+    "light-bodies": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "no",
+      "R2lex": "no",
+      "R3": "no",
+      "R0file": "no"
+     },
+     "tus_reaching": 258,
+     "tus_with_new_error": 258,
+     "tus_new_error_excused_by_R0": 258,
+     "first_new_error": {
+      "line": 22,
+      "spelling": "expected expression",
+      "category": "Parse Issue",
+      "pos": [
+       245,
+       538,
+       485
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Source/cmAlgorithms.h:22 expected expression [Parse Issue]"
+     }
+    }
+   }
+  },
+  {
+   "id": "17-header-if",
+   "file": "Source/cmCurl.h",
+   "group": "header",
+   "kind": "if",
+   "fan_in": 4,
+   "inj_line": 13,
+   "modes": {
+    "light": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "failed",
+      "R2lex": "failed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "yes",
+      "R2lex": "yes",
+      "R3": "no",
+      "R0file": "no"
+     },
+     "tus_reaching": 4,
+     "tus_with_new_error": 4,
+     "tus_new_error_excused_by_R0": 4,
+     "first_new_error": {
+      "line": 13,
+      "spelling": "unterminated conditional directive",
+      "category": "Lexical or Preprocessor Issue",
+      "pos": [
+       157,
+       307
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Source/cmCurl.h:16 no template named 'optional' in namespace 'cm' [Semantic Issue]",
+      "R2": "Source/cmCurl.h:13 unterminated conditional directive [Lexical or Preprocessor Issue]",
+      "R2lex": "Source/cmCurl.h:13 unterminated conditional directive [Lexical or Preprocessor Issue]"
+     }
+    },
+    "light-bodies": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "failed",
+      "R2lex": "failed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "yes",
+      "R2lex": "yes",
+      "R3": "no",
+      "R0file": "no"
+     },
+     "tus_reaching": 4,
+     "tus_with_new_error": 4,
+     "tus_new_error_excused_by_R0": 4,
+     "first_new_error": {
+      "line": 13,
+      "spelling": "unterminated conditional directive",
+      "category": "Lexical or Preprocessor Issue",
+      "pos": [
+       157,
+       307
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Source/cmCurl.h:16 no template named 'optional' in namespace 'cm' [Semantic Issue]",
+      "R2": "Source/cmCurl.h:13 unterminated conditional directive [Lexical or Preprocessor Issue]",
+      "R2lex": "Source/cmCurl.h:13 unterminated conditional directive [Lexical or Preprocessor Issue]"
+     }
+    }
+   }
+  },
+  {
+   "id": "17-header-if-top",
+   "file": "Source/cmCurl.h",
+   "group": "header",
+   "kind": "if-top",
+   "fan_in": 4,
+   "inj_line": 1,
+   "modes": {
+    "light": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "failed",
+      "R2lex": "failed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "yes",
+      "R2lex": "yes",
+      "R3": "no",
+      "R0file": "yes"
+     },
+     "tus_reaching": 4,
+     "tus_with_new_error": 4,
+     "tus_new_error_excused_by_R0": 3,
+     "first_new_error": {
+      "line": 1,
+      "spelling": "unterminated conditional directive",
+      "category": "Lexical or Preprocessor Issue",
+      "pos": [
+       157,
+       1
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Source/cmCurl.h:16 no template named 'optional' in namespace 'cm' [Semantic Issue]",
+      "R2": "Source/cmCurl.h:1 unterminated conditional directive [Lexical or Preprocessor Issue]",
+      "R2lex": "Source/cmCurl.h:1 unterminated conditional directive [Lexical or Preprocessor Issue]"
+     }
+    },
+    "light-bodies": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "failed",
+      "R2lex": "failed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "yes",
+      "R2lex": "yes",
+      "R3": "no",
+      "R0file": "yes"
+     },
+     "tus_reaching": 4,
+     "tus_with_new_error": 4,
+     "tus_new_error_excused_by_R0": 3,
+     "first_new_error": {
+      "line": 1,
+      "spelling": "unterminated conditional directive",
+      "category": "Lexical or Preprocessor Issue",
+      "pos": [
+       157,
+       1
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Source/cmCurl.h:16 no template named 'optional' in namespace 'cm' [Semantic Issue]",
+      "R2": "Source/cmCurl.h:1 unterminated conditional directive [Lexical or Preprocessor Issue]",
+      "R2lex": "Source/cmCurl.h:1 unterminated conditional directive [Lexical or Preprocessor Issue]"
+     }
+    }
+   }
+  },
+  {
+   "id": "18-header-brace",
+   "file": "Source/cmExtraSublimeTextGenerator.h",
+   "group": "header",
+   "kind": "brace",
+   "fan_in": 2,
+   "inj_line": 12,
+   "modes": {
+    "light": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "no",
+      "R2lex": "no",
+      "R3": "no",
+      "R0file": "no"
+     },
+     "tus_reaching": 2,
+     "tus_with_new_error": 2,
+     "tus_new_error_excused_by_R0": 2,
+     "first_new_error": {
+      "line": 12,
+      "spelling": "extraneous closing brace ('}')",
+      "category": "Parse Issue",
+      "pos": [
+       157,
+       309
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Source/cmExtraSublimeTextGenerator.h:12 extraneous closing brace ('}') [Parse Issue]"
+     }
+    },
+    "light-bodies": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "no",
+      "R2lex": "no",
+      "R3": "no",
+      "R0file": "no"
+     },
+     "tus_reaching": 2,
+     "tus_with_new_error": 2,
+     "tus_new_error_excused_by_R0": 2,
+     "first_new_error": {
+      "line": 12,
+      "spelling": "extraneous closing brace ('}')",
+      "category": "Parse Issue",
+      "pos": [
+       157,
+       309
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Source/cmExtraSublimeTextGenerator.h:12 extraneous closing brace ('}') [Parse Issue]"
+     }
+    }
+   }
+  },
+  {
+   "id": "18-header-brace-top",
+   "file": "Source/cmExtraSublimeTextGenerator.h",
+   "group": "header",
+   "kind": "brace-top",
+   "fan_in": 2,
+   "inj_line": 1,
+   "modes": {
+    "light": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "no",
+      "R2lex": "no",
+      "R3": "no",
+      "R0file": "yes"
+     },
+     "tus_reaching": 2,
+     "tus_with_new_error": 2,
+     "tus_new_error_excused_by_R0": 1,
+     "first_new_error": {
+      "line": 1,
+      "spelling": "extraneous closing brace ('}')",
+      "category": "Parse Issue",
+      "pos": [
+       157,
+       0
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Source/cmExtraSublimeTextGenerator.h:1 extraneous closing brace ('}') [Parse Issue]"
+     }
+    },
+    "light-bodies": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "no",
+      "R2lex": "no",
+      "R3": "no",
+      "R0file": "yes"
+     },
+     "tus_reaching": 2,
+     "tus_with_new_error": 2,
+     "tus_new_error_excused_by_R0": 1,
+     "first_new_error": {
+      "line": 1,
+      "spelling": "extraneous closing brace ('}')",
+      "category": "Parse Issue",
+      "pos": [
+       157,
+       0
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Source/cmExtraSublimeTextGenerator.h:1 extraneous closing brace ('}') [Parse Issue]"
+     }
+    }
+   }
+  },
+  {
+   "id": "19-header-body",
+   "file": "Source/cmGlobalGenerator.h",
+   "group": "header",
+   "kind": "body",
+   "fan_in": 131,
+   "inj_line": 76,
+   "modes": {
+    "light": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "no",
+      "R2lex": "no",
+      "R3": "no",
+      "R0file": "no"
+     },
+     "tus_reaching": 131,
+     "tus_with_new_error": 0,
+     "tus_new_error_excused_by_R0": 0,
+     "first_new_error": null,
+     "injected_fail_reasons": {
+      "R1": "Source/cmGlobalGenerator.h:60 variable has incomplete type 'void' [Semantic Issue]"
+     }
+    },
+    "light-bodies": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "no",
+      "R2lex": "no",
+      "R3": "no",
+      "R0file": "no"
+     },
+     "tus_reaching": 131,
+     "tus_with_new_error": 131,
+     "tus_new_error_excused_by_R0": 131,
+     "first_new_error": {
+      "line": 76,
+      "spelling": "expected expression",
+      "category": "Parse Issue",
+      "pos": [
+       483,
+       285,
+       1743
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Source/cmGlobalGenerator.h:60 variable has incomplete type 'void' [Semantic Issue]"
+     }
+    }
+   }
+  },
+  {
+   "id": "20-header-if",
+   "file": "Source/cmMSVC60LinkLineComputer.h",
+   "group": "header",
+   "kind": "if",
+   "fan_in": 2,
+   "inj_line": 11,
+   "modes": {
+    "light": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "failed",
+      "R2lex": "failed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "yes",
+      "R2lex": "yes",
+      "R3": "no",
+      "R0file": "no"
+     },
+     "tus_reaching": 2,
+     "tus_with_new_error": 2,
+     "tus_new_error_excused_by_R0": 2,
+     "first_new_error": {
+      "line": 11,
+      "spelling": "unterminated conditional directive",
+      "category": "Lexical or Preprocessor Issue",
+      "pos": [
+       158,
+       262
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Source/cmMSVC60LinkLineComputer.h:26 no type named 'string' in namespace 'std' [Semantic Issue]",
+      "R2": "Source/cmMSVC60LinkLineComputer.h:11 unterminated conditional directive [Lexical or Preprocessor Issue]",
+      "R2lex": "Source/cmMSVC60LinkLineComputer.h:11 unterminated conditional directive [Lexical or Preprocessor Issue]"
+     }
+    },
+    "light-bodies": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "failed",
+      "R2lex": "failed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "yes",
+      "R2lex": "yes",
+      "R3": "no",
+      "R0file": "no"
+     },
+     "tus_reaching": 2,
+     "tus_with_new_error": 2,
+     "tus_new_error_excused_by_R0": 2,
+     "first_new_error": {
+      "line": 11,
+      "spelling": "unterminated conditional directive",
+      "category": "Lexical or Preprocessor Issue",
+      "pos": [
+       158,
+       262
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Source/cmMSVC60LinkLineComputer.h:26 no type named 'string' in namespace 'std' [Semantic Issue]",
+      "R2": "Source/cmMSVC60LinkLineComputer.h:11 unterminated conditional directive [Lexical or Preprocessor Issue]",
+      "R2lex": "Source/cmMSVC60LinkLineComputer.h:11 unterminated conditional directive [Lexical or Preprocessor Issue]"
+     }
+    }
+   }
+  },
+  {
+   "id": "20-header-if-top",
+   "file": "Source/cmMSVC60LinkLineComputer.h",
+   "group": "header",
+   "kind": "if-top",
+   "fan_in": 2,
+   "inj_line": 1,
+   "modes": {
+    "light": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "failed",
+      "R2lex": "failed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "yes",
+      "R2lex": "yes",
+      "R3": "no",
+      "R0file": "yes"
+     },
+     "tus_reaching": 2,
+     "tus_with_new_error": 2,
+     "tus_new_error_excused_by_R0": 1,
+     "first_new_error": {
+      "line": 1,
+      "spelling": "unterminated conditional directive",
+      "category": "Lexical or Preprocessor Issue",
+      "pos": [
+       158,
+       1
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Source/cmMSVC60LinkLineComputer.h:26 no type named 'string' in namespace 'std' [Semantic Issue]",
+      "R2": "Source/cmMSVC60LinkLineComputer.h:1 unterminated conditional directive [Lexical or Preprocessor Issue]",
+      "R2lex": "Source/cmMSVC60LinkLineComputer.h:1 unterminated conditional directive [Lexical or Preprocessor Issue]"
+     }
+    },
+    "light-bodies": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "failed",
+      "R2lex": "failed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "yes",
+      "R2lex": "yes",
+      "R3": "no",
+      "R0file": "yes"
+     },
+     "tus_reaching": 2,
+     "tus_with_new_error": 2,
+     "tus_new_error_excused_by_R0": 1,
+     "first_new_error": {
+      "line": 1,
+      "spelling": "unterminated conditional directive",
+      "category": "Lexical or Preprocessor Issue",
+      "pos": [
+       158,
+       1
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Source/cmMSVC60LinkLineComputer.h:26 no type named 'string' in namespace 'std' [Semantic Issue]",
+      "R2": "Source/cmMSVC60LinkLineComputer.h:1 unterminated conditional directive [Lexical or Preprocessor Issue]",
+      "R2lex": "Source/cmMSVC60LinkLineComputer.h:1 unterminated conditional directive [Lexical or Preprocessor Issue]"
+     }
+    }
+   }
+  },
+  {
+   "id": "21-header-brace",
+   "file": "Source/cmSetSourceFilesPropertiesCommand.h",
+   "group": "header",
+   "kind": "brace",
+   "fan_in": 2,
+   "inj_line": 9,
+   "modes": {
+    "light": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "no",
+      "R2lex": "no",
+      "R3": "no",
+      "R0file": "no"
+     },
+     "tus_reaching": 2,
+     "tus_with_new_error": 2,
+     "tus_new_error_excused_by_R0": 2,
+     "first_new_error": {
+      "line": 9,
+      "spelling": "extraneous closing brace ('}')",
+      "category": "Parse Issue",
+      "pos": [
+       2372,
+       245
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Source/cmSetSourceFilesPropertiesCommand.h:9 extraneous closing brace ('}') [Parse Issue]"
+     }
+    },
+    "light-bodies": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "no",
+      "R2lex": "no",
+      "R3": "no",
+      "R0file": "no"
+     },
+     "tus_reaching": 2,
+     "tus_with_new_error": 2,
+     "tus_new_error_excused_by_R0": 2,
+     "first_new_error": {
+      "line": 9,
+      "spelling": "extraneous closing brace ('}')",
+      "category": "Parse Issue",
+      "pos": [
+       2372,
+       245
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Source/cmSetSourceFilesPropertiesCommand.h:9 extraneous closing brace ('}') [Parse Issue]"
+     }
+    }
+   }
+  },
+  {
+   "id": "21-header-brace-top",
+   "file": "Source/cmSetSourceFilesPropertiesCommand.h",
+   "group": "header",
+   "kind": "brace-top",
+   "fan_in": 2,
+   "inj_line": 1,
+   "modes": {
+    "light": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "no",
+      "R2lex": "no",
+      "R3": "no",
+      "R0file": "yes"
+     },
+     "tus_reaching": 2,
+     "tus_with_new_error": 2,
+     "tus_new_error_excused_by_R0": 1,
+     "first_new_error": {
+      "line": 1,
+      "spelling": "extraneous closing brace ('}')",
+      "category": "Parse Issue",
+      "pos": [
+       2372,
+       0
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Source/cmSetSourceFilesPropertiesCommand.h:1 extraneous closing brace ('}') [Parse Issue]"
+     }
+    },
+    "light-bodies": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "no",
+      "R2lex": "no",
+      "R3": "no",
+      "R0file": "yes"
+     },
+     "tus_reaching": 2,
+     "tus_with_new_error": 2,
+     "tus_new_error_excused_by_R0": 1,
+     "first_new_error": {
+      "line": 1,
+      "spelling": "extraneous closing brace ('}')",
+      "category": "Parse Issue",
+      "pos": [
+       2372,
+       0
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Source/cmSetSourceFilesPropertiesCommand.h:1 extraneous closing brace ('}') [Parse Issue]"
+     }
+    }
+   }
+  },
+  {
+   "id": "22-header-body",
+   "file": "Source/cmWindowsRegistry.h",
+   "group": "header",
+   "kind": "body",
+   "fan_in": 12,
+   "inj_line": 61,
+   "modes": {
+    "light": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "no",
+      "R2lex": "no",
+      "R3": "no",
+      "R0file": "no"
+     },
+     "tus_reaching": 12,
+     "tus_with_new_error": 0,
+     "tus_new_error_excused_by_R0": 0,
+     "first_new_error": null,
+     "injected_fail_reasons": {
+      "R1": "Source/cmWindowsRegistry.h:34 no type named 'uint8_t' in namespace 'std' [Semantic Issue]"
+     }
+    },
+    "light-bodies": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "no",
+      "R2lex": "no",
+      "R3": "no",
+      "R0file": "no"
+     },
+     "tus_reaching": 12,
+     "tus_with_new_error": 12,
+     "tus_new_error_excused_by_R0": 12,
+     "first_new_error": {
+      "line": 61,
+      "spelling": "expected expression",
+      "category": "Parse Issue",
+      "pos": [
+       204,
+       1465
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Source/cmWindowsRegistry.h:34 no type named 'uint8_t' in namespace 'std' [Semantic Issue]"
+     }
+    }
+   }
+  },
+  {
+   "id": "23-header-if",
+   "file": "Utilities/cmcppdap/include/dap/traits.h",
+   "group": "header",
+   "kind": "if",
+   "fan_in": 10,
+   "inj_line": 20,
+   "modes": {
+    "light": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "failed",
+      "R2lex": "failed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "yes",
+      "R2lex": "yes",
+      "R3": "no",
+      "R0file": "yes"
+     },
+     "tus_reaching": 10,
+     "tus_with_new_error": 10,
+     "tus_new_error_excused_by_R0": 10,
+     "first_new_error": {
+      "line": 15,
+      "spelling": "unterminated conditional directive",
+      "category": "Lexical or Preprocessor Issue",
+      "pos": [
+       598,
+       732,
+       679,
+       590
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Utilities/cmcppdap/include/dap/traits.h:27 use of undeclared identifier 'std' [Semantic Issue]",
+      "R2": "Utilities/cmcppdap/include/dap/traits.h:15 unterminated conditional directive [Lexical or Preprocessor Issue]",
+      "R2lex": "Utilities/cmcppdap/include/dap/traits.h:15 unterminated conditional directive [Lexical or Preprocessor Issue]"
+     }
+    },
+    "light-bodies": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "failed",
+      "R2lex": "failed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "yes",
+      "R2lex": "yes",
+      "R3": "no",
+      "R0file": "yes"
+     },
+     "tus_reaching": 10,
+     "tus_with_new_error": 10,
+     "tus_new_error_excused_by_R0": 10,
+     "first_new_error": {
+      "line": 15,
+      "spelling": "unterminated conditional directive",
+      "category": "Lexical or Preprocessor Issue",
+      "pos": [
+       598,
+       732,
+       679,
+       590
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Utilities/cmcppdap/include/dap/traits.h:27 use of undeclared identifier 'std' [Semantic Issue]",
+      "R2": "Utilities/cmcppdap/include/dap/traits.h:15 unterminated conditional directive [Lexical or Preprocessor Issue]",
+      "R2lex": "Utilities/cmcppdap/include/dap/traits.h:15 unterminated conditional directive [Lexical or Preprocessor Issue]"
+     }
+    }
+   }
+  },
+  {
+   "id": "23-header-if-top",
+   "file": "Utilities/cmcppdap/include/dap/traits.h",
+   "group": "header",
+   "kind": "if-top",
+   "fan_in": 10,
+   "inj_line": 1,
+   "modes": {
+    "light": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "failed",
+      "R2lex": "failed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "yes",
+      "R2lex": "yes",
+      "R3": "no",
+      "R0file": "yes"
+     },
+     "tus_reaching": 10,
+     "tus_with_new_error": 10,
+     "tus_new_error_excused_by_R0": 10,
+     "first_new_error": {
+      "line": 1,
+      "spelling": "unterminated conditional directive",
+      "category": "Lexical or Preprocessor Issue",
+      "pos": [
+       598,
+       732,
+       679,
+       1
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Utilities/cmcppdap/include/dap/traits.h:27 use of undeclared identifier 'std' [Semantic Issue]",
+      "R2": "Utilities/cmcppdap/include/dap/traits.h:1 unterminated conditional directive [Lexical or Preprocessor Issue]",
+      "R2lex": "Utilities/cmcppdap/include/dap/traits.h:1 unterminated conditional directive [Lexical or Preprocessor Issue]"
+     }
+    },
+    "light-bodies": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "failed",
+      "R2lex": "failed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "yes",
+      "R2lex": "yes",
+      "R3": "no",
+      "R0file": "yes"
+     },
+     "tus_reaching": 10,
+     "tus_with_new_error": 10,
+     "tus_new_error_excused_by_R0": 10,
+     "first_new_error": {
+      "line": 1,
+      "spelling": "unterminated conditional directive",
+      "category": "Lexical or Preprocessor Issue",
+      "pos": [
+       598,
+       732,
+       679,
+       1
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Utilities/cmcppdap/include/dap/traits.h:27 use of undeclared identifier 'std' [Semantic Issue]",
+      "R2": "Utilities/cmcppdap/include/dap/traits.h:1 unterminated conditional directive [Lexical or Preprocessor Issue]",
+      "R2lex": "Utilities/cmcppdap/include/dap/traits.h:1 unterminated conditional directive [Lexical or Preprocessor Issue]"
+     }
+    }
+   }
+  },
+  {
+   "id": "24-header-brace",
+   "file": "Utilities/cmcurl/lib/curl_sha256.h",
+   "group": "header",
+   "kind": "brace",
+   "fan_in": 3,
+   "inj_line": 33,
+   "modes": {
+    "light": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "parsed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "yes",
+      "R2": "no",
+      "R2lex": "no",
+      "R3": "no",
+      "R0file": "yes"
+     },
+     "tus_reaching": 3,
+     "tus_with_new_error": 3,
+     "tus_new_error_excused_by_R0": 3,
+     "first_new_error": {
+      "line": 33,
+      "spelling": "extraneous closing brace ('}')",
+      "category": "Parse Issue",
+      "pos": [
+       1261,
+       1309
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Utilities/cmcurl/lib/curl_sha256.h:33 extraneous closing brace ('}') [Parse Issue]"
+     }
+    },
+    "light-bodies": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "parsed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "yes",
+      "R2": "no",
+      "R2lex": "no",
+      "R3": "no",
+      "R0file": "yes"
+     },
+     "tus_reaching": 3,
+     "tus_with_new_error": 3,
+     "tus_new_error_excused_by_R0": 3,
+     "first_new_error": {
+      "line": 33,
+      "spelling": "extraneous closing brace ('}')",
+      "category": "Parse Issue",
+      "pos": [
+       1261,
+       1309
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Utilities/cmcurl/lib/curl_sha256.h:33 extraneous closing brace ('}') [Parse Issue]"
+     }
+    }
+   }
+  },
+  {
+   "id": "24-header-brace-top",
+   "file": "Utilities/cmcurl/lib/curl_sha256.h",
+   "group": "header",
+   "kind": "brace-top",
+   "fan_in": 3,
+   "inj_line": 1,
+   "modes": {
+    "light": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "parsed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "yes",
+      "R2": "no",
+      "R2lex": "no",
+      "R3": "no",
+      "R0file": "yes"
+     },
+     "tus_reaching": 3,
+     "tus_with_new_error": 3,
+     "tus_new_error_excused_by_R0": 3,
+     "first_new_error": {
+      "line": 1,
+      "spelling": "extraneous closing brace ('}')",
+      "category": "Parse Issue",
+      "pos": [
+       1261,
+       0
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Utilities/cmcurl/lib/curl_sha256.h:1 extraneous closing brace ('}') [Parse Issue]"
+     }
+    },
+    "light-bodies": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "parsed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "yes",
+      "R2": "no",
+      "R2lex": "no",
+      "R3": "no",
+      "R0file": "yes"
+     },
+     "tus_reaching": 3,
+     "tus_with_new_error": 3,
+     "tus_new_error_excused_by_R0": 3,
+     "first_new_error": {
+      "line": 1,
+      "spelling": "extraneous closing brace ('}')",
+      "category": "Parse Issue",
+      "pos": [
+       1261,
+       0
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Utilities/cmcurl/lib/curl_sha256.h:1 extraneous closing brace ('}') [Parse Issue]"
+     }
+    }
+   }
+  },
+  {
+   "id": "25-header-body",
+   "file": "Utilities/cmexpat/lib/siphash.h",
+   "group": "header",
+   "kind": "body",
+   "fan_in": 1,
+   "inj_line": 160,
+   "modes": {
+    "light": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "no",
+      "R2lex": "no",
+      "R3": "no",
+      "R0file": "no"
+     },
+     "tus_reaching": 1,
+     "tus_with_new_error": 0,
+     "tus_new_error_excused_by_R0": 0,
+     "first_new_error": null,
+     "injected_fail_reasons": {
+      "R1": "Utilities/cmexpat/lib/siphash.h:144 unknown type name 'uint64_t' [Semantic Issue]"
+     }
+    },
+    "light-bodies": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "no",
+      "R2lex": "no",
+      "R3": "no",
+      "R0file": "no"
+     },
+     "tus_reaching": 1,
+     "tus_with_new_error": 1,
+     "tus_new_error_excused_by_R0": 1,
+     "first_new_error": {
+      "line": 160,
+      "spelling": "expected expression",
+      "category": "Parse Issue",
+      "pos": [
+       4199,
+       5915
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Utilities/cmexpat/lib/siphash.h:144 unknown type name 'uint64_t' [Semantic Issue]"
+     }
+    }
+   }
+  },
+  {
+   "id": "26-header-if",
+   "file": "Utilities/cmjsoncpp/include/json/config.h",
+   "group": "header",
+   "kind": "if",
+   "fan_in": 157,
+   "inj_line": 110,
+   "modes": {
+    "light": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "failed",
+      "R2lex": "failed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "yes",
+      "R2lex": "yes",
+      "R3": "no",
+      "R0file": "yes"
+     },
+     "tus_reaching": 157,
+     "tus_with_new_error": 157,
+     "tus_new_error_excused_by_R0": 154,
+     "first_new_error": {
+      "line": 6,
+      "spelling": "unterminated conditional directive",
+      "category": "Lexical or Preprocessor Issue",
+      "pos": [
+       351,
+       377,
+       251
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Utilities/cmjsoncpp/include/json/config.h:127 unknown type name 'int64_t' [Semantic Issue]",
+      "R2": "Utilities/cmjsoncpp/include/json/config.h:6 unterminated conditional directive [Lexical or Preprocessor Issue]",
+      "R2lex": "Utilities/cmjsoncpp/include/json/config.h:6 unterminated conditional directive [Lexical or Preprocessor Issue]"
+     }
+    },
+    "light-bodies": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "failed",
+      "R2lex": "failed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "yes",
+      "R2lex": "yes",
+      "R3": "no",
+      "R0file": "yes"
+     },
+     "tus_reaching": 157,
+     "tus_with_new_error": 157,
+     "tus_new_error_excused_by_R0": 154,
+     "first_new_error": {
+      "line": 6,
+      "spelling": "unterminated conditional directive",
+      "category": "Lexical or Preprocessor Issue",
+      "pos": [
+       351,
+       377,
+       251
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Utilities/cmjsoncpp/include/json/config.h:127 unknown type name 'int64_t' [Semantic Issue]",
+      "R2": "Utilities/cmjsoncpp/include/json/config.h:6 unterminated conditional directive [Lexical or Preprocessor Issue]",
+      "R2lex": "Utilities/cmjsoncpp/include/json/config.h:6 unterminated conditional directive [Lexical or Preprocessor Issue]"
+     }
+    }
+   }
+  },
+  {
+   "id": "26-header-if-top",
+   "file": "Utilities/cmjsoncpp/include/json/config.h",
+   "group": "header",
+   "kind": "if-top",
+   "fan_in": 157,
+   "inj_line": 1,
+   "modes": {
+    "light": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "failed",
+      "R2lex": "failed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "yes",
+      "R2lex": "yes",
+      "R3": "no",
+      "R0file": "yes"
+     },
+     "tus_reaching": 157,
+     "tus_with_new_error": 157,
+     "tus_new_error_excused_by_R0": 154,
+     "first_new_error": {
+      "line": 1,
+      "spelling": "unterminated conditional directive",
+      "category": "Lexical or Preprocessor Issue",
+      "pos": [
+       351,
+       377,
+       1
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Utilities/cmjsoncpp/include/json/config.h:127 unknown type name 'int64_t' [Semantic Issue]",
+      "R2": "Utilities/cmjsoncpp/include/json/config.h:1 unterminated conditional directive [Lexical or Preprocessor Issue]",
+      "R2lex": "Utilities/cmjsoncpp/include/json/config.h:1 unterminated conditional directive [Lexical or Preprocessor Issue]"
+     }
+    },
+    "light-bodies": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "failed",
+      "R2lex": "failed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "yes",
+      "R2lex": "yes",
+      "R3": "no",
+      "R0file": "yes"
+     },
+     "tus_reaching": 157,
+     "tus_with_new_error": 157,
+     "tus_new_error_excused_by_R0": 154,
+     "first_new_error": {
+      "line": 1,
+      "spelling": "unterminated conditional directive",
+      "category": "Lexical or Preprocessor Issue",
+      "pos": [
+       351,
+       377,
+       1
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Utilities/cmjsoncpp/include/json/config.h:127 unknown type name 'int64_t' [Semantic Issue]",
+      "R2": "Utilities/cmjsoncpp/include/json/config.h:1 unterminated conditional directive [Lexical or Preprocessor Issue]",
+      "R2lex": "Utilities/cmjsoncpp/include/json/config.h:1 unterminated conditional directive [Lexical or Preprocessor Issue]"
+     }
+    }
+   }
+  },
+  {
+   "id": "27-header-brace",
+   "file": "Utilities/cmliblzma/liblzma/api/lzma/index_hash.h",
+   "group": "header",
+   "kind": "brace",
+   "fan_in": 70,
+   "inj_line": 1,
+   "modes": {
+    "light": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "no",
+      "R2lex": "no",
+      "R3": "no",
+      "R0file": "already-failed"
+     },
+     "tus_reaching": 70,
+     "tus_with_new_error": 70,
+     "tus_new_error_excused_by_R0": 70,
+     "first_new_error": {
+      "line": 1,
+      "spelling": "extraneous closing brace ('}')",
+      "category": "Parse Issue",
+      "pos": [
+       399,
+       446,
+       895,
+       9594,
+       0
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Utilities/cmliblzma/liblzma/api/lzma/index_hash.h:1 extraneous closing brace ('}') [Parse Issue]"
+     }
+    },
+    "light-bodies": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "no",
+      "R2lex": "no",
+      "R3": "no",
+      "R0file": "already-failed"
+     },
+     "tus_reaching": 70,
+     "tus_with_new_error": 70,
+     "tus_new_error_excused_by_R0": 70,
+     "first_new_error": {
+      "line": 1,
+      "spelling": "extraneous closing brace ('}')",
+      "category": "Parse Issue",
+      "pos": [
+       399,
+       446,
+       895,
+       9594,
+       0
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Utilities/cmliblzma/liblzma/api/lzma/index_hash.h:1 extraneous closing brace ('}') [Parse Issue]"
+     }
+    }
+   }
+  },
+  {
+   "id": "27-header-brace-top",
+   "file": "Utilities/cmliblzma/liblzma/api/lzma/index_hash.h",
+   "group": "header",
+   "kind": "brace-top",
+   "fan_in": 70,
+   "inj_line": 1,
+   "modes": {
+    "light": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "no",
+      "R2lex": "no",
+      "R3": "no",
+      "R0file": "already-failed"
+     },
+     "tus_reaching": 70,
+     "tus_with_new_error": 70,
+     "tus_new_error_excused_by_R0": 70,
+     "first_new_error": {
+      "line": 1,
+      "spelling": "extraneous closing brace ('}')",
+      "category": "Parse Issue",
+      "pos": [
+       399,
+       446,
+       895,
+       9594,
+       0
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Utilities/cmliblzma/liblzma/api/lzma/index_hash.h:1 extraneous closing brace ('}') [Parse Issue]"
+     }
+    },
+    "light-bodies": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "no",
+      "R2lex": "no",
+      "R3": "no",
+      "R0file": "already-failed"
+     },
+     "tus_reaching": 70,
+     "tus_with_new_error": 70,
+     "tus_new_error_excused_by_R0": 70,
+     "first_new_error": {
+      "line": 1,
+      "spelling": "extraneous closing brace ('}')",
+      "category": "Parse Issue",
+      "pos": [
+       399,
+       446,
+       895,
+       9594,
+       0
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Utilities/cmliblzma/liblzma/api/lzma/index_hash.h:1 extraneous closing brace ('}') [Parse Issue]"
+     }
+    }
+   }
+  },
+  {
+   "id": "28-header-body",
+   "file": "Utilities/cmlibuv/src/heap-inl.h",
+   "group": "header",
+   "kind": "body",
+   "fan_in": 2,
+   "inj_line": 63,
+   "modes": {
+    "light": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "parsed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "parsed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "no",
+      "R2": "no",
+      "R2lex": "no",
+      "R3": "no",
+      "R0file": "no"
+     },
+     "tus_reaching": 2,
+     "tus_with_new_error": 0,
+     "tus_new_error_excused_by_R0": 0,
+     "first_new_error": null,
+     "injected_fail_reasons": {}
+    },
+    "light-bodies": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "no",
+      "R2lex": "no",
+      "R3": "no",
+      "R0file": "no"
+     },
+     "tus_reaching": 2,
+     "tus_with_new_error": 2,
+     "tus_new_error_excused_by_R0": 2,
+     "first_new_error": {
+      "line": 63,
+      "spelling": "expected expression",
+      "category": "Parse Issue",
+      "pos": [
+       1201,
+       2318
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Utilities/cmlibuv/src/heap-inl.h:63 expected expression [Parse Issue]"
+     }
+    }
+   }
+  },
+  {
+   "id": "29-header-if",
+   "file": "Utilities/cmzstd/lib/common/mem.h",
+   "group": "header",
+   "kind": "if",
+   "fan_in": 24,
+   "inj_line": 52,
+   "modes": {
+    "light": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "failed",
+      "R2lex": "failed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "yes",
+      "R2lex": "yes",
+      "R3": "no",
+      "R0file": "yes"
+     },
+     "tus_reaching": 24,
+     "tus_with_new_error": 24,
+     "tus_new_error_excused_by_R0": 22,
+     "first_new_error": {
+      "line": 11,
+      "spelling": "unterminated conditional directive",
+      "category": "Lexical or Preprocessor Issue",
+      "pos": [
+       840,
+       385
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Utilities/cmzstd/lib/common/mem.h:54 unknown type name 'uint8_t' [Semantic Issue]",
+      "R2": "Utilities/cmzstd/lib/common/mem.h:63 #else after #else [Lexical or Preprocessor Issue]",
+      "R2lex": "Utilities/cmzstd/lib/common/mem.h:63 #else after #else [Lexical or Preprocessor Issue]"
+     }
+    },
+    "light-bodies": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "failed",
+      "R2lex": "failed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "yes",
+      "R2lex": "yes",
+      "R3": "no",
+      "R0file": "yes"
+     },
+     "tus_reaching": 24,
+     "tus_with_new_error": 24,
+     "tus_new_error_excused_by_R0": 22,
+     "first_new_error": {
+      "line": 11,
+      "spelling": "unterminated conditional directive",
+      "category": "Lexical or Preprocessor Issue",
+      "pos": [
+       840,
+       385
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Utilities/cmzstd/lib/common/mem.h:54 unknown type name 'uint8_t' [Semantic Issue]",
+      "R2": "Utilities/cmzstd/lib/common/mem.h:63 #else after #else [Lexical or Preprocessor Issue]",
+      "R2lex": "Utilities/cmzstd/lib/common/mem.h:63 #else after #else [Lexical or Preprocessor Issue]"
+     }
+    }
+   }
+  },
+  {
+   "id": "29-header-if-top",
+   "file": "Utilities/cmzstd/lib/common/mem.h",
+   "group": "header",
+   "kind": "if-top",
+   "fan_in": 24,
+   "inj_line": 1,
+   "modes": {
+    "light": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "failed",
+      "R2lex": "failed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "yes",
+      "R2lex": "yes",
+      "R3": "no",
+      "R0file": "yes"
+     },
+     "tus_reaching": 24,
+     "tus_with_new_error": 24,
+     "tus_new_error_excused_by_R0": 22,
+     "first_new_error": {
+      "line": 1,
+      "spelling": "unterminated conditional directive",
+      "category": "Lexical or Preprocessor Issue",
+      "pos": [
+       840,
+       1
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Utilities/cmzstd/lib/common/mem.h:54 unknown type name 'uint8_t' [Semantic Issue]",
+      "R2": "Utilities/cmzstd/lib/common/mem.h:1 unterminated conditional directive [Lexical or Preprocessor Issue]",
+      "R2lex": "Utilities/cmzstd/lib/common/mem.h:1 unterminated conditional directive [Lexical or Preprocessor Issue]"
+     }
+    },
+    "light-bodies": {
+     "baseline": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "parsed",
+      "R2lex": "parsed",
+      "R3": "parsed",
+      "R0file": "parsed"
+     },
+     "injected": {
+      "R0": "parsed",
+      "R1": "failed",
+      "R2": "failed",
+      "R2lex": "failed",
+      "R3": "parsed",
+      "R0file": "failed"
+     },
+     "detected": {
+      "R0": "no",
+      "R1": "already-failed",
+      "R2": "yes",
+      "R2lex": "yes",
+      "R3": "no",
+      "R0file": "yes"
+     },
+     "tus_reaching": 24,
+     "tus_with_new_error": 24,
+     "tus_new_error_excused_by_R0": 22,
+     "first_new_error": {
+      "line": 1,
+      "spelling": "unterminated conditional directive",
+      "category": "Lexical or Preprocessor Issue",
+      "pos": [
+       840,
+       1
+      ]
+     },
+     "injected_fail_reasons": {
+      "R1": "Utilities/cmzstd/lib/common/mem.h:54 unknown type name 'uint8_t' [Semantic Issue]",
+      "R2": "Utilities/cmzstd/lib/common/mem.h:1 unterminated conditional directive [Lexical or Preprocessor Issue]",
+      "R2lex": "Utilities/cmzstd/lib/common/mem.h:1 unterminated conditional directive [Lexical or Preprocessor Issue]"
+     }
+    }
+   }
+  }
+ ],
+ "tally": {
+  "light|brace|main": {
+   "R0:no": 5,
+   "R1:already-failed": 4,
+   "R2:no": 5,
+   "R2lex:no": 5,
+   "R3:no": 5,
+   "R0file:no": 3,
+   "R1:yes": 1,
+   "R0file:yes": 1,
+   "R0file:already-failed": 1
+  },
+  "light|ALL-30|all": {
+   "R0:no": 30,
+   "R1:already-failed": 22,
+   "R2:no": 20,
+   "R2lex:no": 20,
+   "R3:no": 30,
+   "R0file:no": 18,
+   "R0file:already-failed": 4,
+   "R2:yes": 10,
+   "R2lex:yes": 10,
+   "R1:no": 3,
+   "R1:yes": 5,
+   "R0file:yes": 8
+  },
+  "light-bodies|brace|main": {
+   "R0:no": 5,
+   "R1:already-failed": 5,
+   "R2:no": 5,
+   "R2lex:no": 5,
+   "R3:no": 5,
+   "R0file:no": 3,
+   "R0file:already-failed": 2
+  },
+  "light-bodies|ALL-30|all": {
+   "R0:no": 29,
+   "R1:already-failed": 26,
+   "R2:no": 20,
+   "R2lex:no": 20,
+   "R3:no": 30,
+   "R0file:no": 16,
+   "R0file:already-failed": 7,
+   "R2:yes": 10,
+   "R2lex:yes": 10,
+   "R0:yes": 1,
+   "R1:yes": 4,
+   "R0file:yes": 7
+  },
+  "light|brace-top|main": {
+   "R0:yes": 5,
+   "R1:already-failed": 4,
+   "R2:no": 5,
+   "R2lex:no": 5,
+   "R3:no": 5,
+   "R0file:yes": 4,
+   "R1:yes": 1,
+   "R0file:already-failed": 1
+  },
+  "light|ALL-top|all": {
+   "R0:yes": 10,
+   "R1:already-failed": 15,
+   "R2:no": 10,
+   "R2lex:no": 10,
+   "R3:no": 20,
+   "R0file:yes": 17,
+   "R2:yes": 10,
+   "R2lex:yes": 10,
+   "R0file:already-failed": 3,
+   "R1:yes": 5,
+   "R0:no": 10
+  },
+  "light-bodies|brace-top|main": {
+   "R0:yes": 5,
+   "R1:already-failed": 5,
+   "R2:no": 5,
+   "R2lex:no": 5,
+   "R3:no": 5,
+   "R0file:yes": 3,
+   "R0file:already-failed": 2
+  },
+  "light-bodies|ALL-top|all": {
+   "R0:yes": 10,
+   "R1:already-failed": 17,
+   "R2:no": 10,
+   "R2lex:no": 10,
+   "R3:no": 20,
+   "R0file:yes": 15,
+   "R2:yes": 10,
+   "R2lex:yes": 10,
+   "R0file:already-failed": 5,
+   "R1:yes": 3,
+   "R0:no": 10
+  },
+  "light|body|main": {
+   "R0:no": 5,
+   "R1:already-failed": 3,
+   "R2:no": 5,
+   "R2lex:no": 5,
+   "R3:no": 5,
+   "R0file:already-failed": 1,
+   "R0file:no": 4,
+   "R1:no": 2
+  },
+  "light-bodies|body|main": {
+   "R0:no": 4,
+   "R1:already-failed": 4,
+   "R2:no": 5,
+   "R2lex:no": 5,
+   "R3:no": 5,
+   "R0file:already-failed": 2,
+   "R0file:no": 2,
+   "R0:yes": 1,
+   "R1:yes": 1,
+   "R0file:yes": 1
+  },
+  "light|if|main": {
+   "R0:no": 5,
+   "R1:already-failed": 2,
+   "R2:yes": 5,
+   "R2lex:yes": 5,
+   "R3:no": 5,
+   "R0file:already-failed": 1,
+   "R0file:no": 1,
+   "R1:yes": 3,
+   "R0file:yes": 3
+  },
+  "light-bodies|if|main": {
+   "R0:no": 5,
+   "R1:already-failed": 3,
+   "R2:yes": 5,
+   "R2lex:yes": 5,
+   "R3:no": 5,
+   "R0file:already-failed": 2,
+   "R0file:no": 1,
+   "R1:yes": 2,
+   "R0file:yes": 2
+  },
+  "light|if-top|main": {
+   "R0:yes": 5,
+   "R1:already-failed": 2,
+   "R2:yes": 5,
+   "R2lex:yes": 5,
+   "R3:no": 5,
+   "R0file:already-failed": 1,
+   "R0file:yes": 4,
+   "R1:yes": 3
+  },
+  "light-bodies|if-top|main": {
+   "R0:yes": 5,
+   "R1:already-failed": 3,
+   "R2:yes": 5,
+   "R2lex:yes": 5,
+   "R3:no": 5,
+   "R0file:already-failed": 2,
+   "R0file:yes": 3,
+   "R1:yes": 2
+  },
+  "light|brace|header": {
+   "R0:no": 5,
+   "R1:already-failed": 4,
+   "R2:no": 5,
+   "R2lex:no": 5,
+   "R3:no": 5,
+   "R0file:no": 3,
+   "R1:yes": 1,
+   "R0file:yes": 1,
+   "R0file:already-failed": 1
+  },
+  "light-bodies|brace|header": {
+   "R0:no": 5,
+   "R1:already-failed": 4,
+   "R2:no": 5,
+   "R2lex:no": 5,
+   "R3:no": 5,
+   "R0file:no": 3,
+   "R1:yes": 1,
+   "R0file:yes": 1,
+   "R0file:already-failed": 1
+  },
+  "light|brace-top|header": {
+   "R0:no": 5,
+   "R1:already-failed": 4,
+   "R2:no": 5,
+   "R2lex:no": 5,
+   "R3:no": 5,
+   "R0file:yes": 4,
+   "R1:yes": 1,
+   "R0file:already-failed": 1
+  },
+  "light-bodies|brace-top|header": {
+   "R0:no": 5,
+   "R1:already-failed": 4,
+   "R2:no": 5,
+   "R2lex:no": 5,
+   "R3:no": 5,
+   "R0file:yes": 4,
+   "R1:yes": 1,
+   "R0file:already-failed": 1
+  },
+  "light|body|header": {
+   "R0:no": 5,
+   "R1:already-failed": 4,
+   "R2:no": 5,
+   "R2lex:no": 5,
+   "R3:no": 5,
+   "R0file:no": 5,
+   "R1:no": 1
+  },
+  "light-bodies|body|header": {
+   "R0:no": 5,
+   "R1:already-failed": 5,
+   "R2:no": 5,
+   "R2lex:no": 5,
+   "R3:no": 5,
+   "R0file:no": 5
+  },
+  "light|if|header": {
+   "R0:no": 5,
+   "R1:already-failed": 5,
+   "R2:yes": 5,
+   "R2lex:yes": 5,
+   "R3:no": 5,
+   "R0file:no": 2,
+   "R0file:yes": 3
+  },
+  "light-bodies|if|header": {
+   "R0:no": 5,
+   "R1:already-failed": 5,
+   "R2:yes": 5,
+   "R2lex:yes": 5,
+   "R3:no": 5,
+   "R0file:no": 2,
+   "R0file:yes": 3
+  },
+  "light|if-top|header": {
+   "R0:no": 5,
+   "R1:already-failed": 5,
+   "R2:yes": 5,
+   "R2lex:yes": 5,
+   "R3:no": 5,
+   "R0file:yes": 5
+  },
+  "light-bodies|if-top|header": {
+   "R0:no": 5,
+   "R1:already-failed": 5,
+   "R2:yes": 5,
+   "R2lex:yes": 5,
+   "R3:no": 5,
+   "R0file:yes": 5
+  }
+ }
+}

@@ -27,6 +27,8 @@
 
 和正文冲突时以本后注为准。
 
+**后注（8D 和 §10 段合入，lead 2026-10-18）：** 8D 和 §10 段已一起合入（4041c305）。施工、审查和返工中定下的读法写在 [§12](#12-8d-和-10-段施工和验收中的限定lead2026-10-18)，和前面各节冲突时以 §12 为准：严格捕获照旧（导出上限、完整快照），只有观测模式精简，映射器的模式必填；模块层由语言状态和走到的来源决定，不按解析成功数；`noResolve` 照 TS 程序的规则，类型引用的行号取类型节点的开始；块的写和读共用一个校验器，空说明符合法、超过 4,096 字符的说明符让捕获 `invalid`、单项超过块大小是 `capacity`；观测的清单分 git 和跳过名单两种，git 的“不是 git 仓库”和“git 不能用”分开，截断时报“至少 n”；决定 79 删掉只读旧格式的路径，包括整项 `null` 的 `inventory`；规定的平台验收行经公开入口、双后端；A-24 仅内存，A-27 的类型引用行号保留扫描层测试。经过见[证据](../../../reviews/evidence/orchestration-slice-8D-2026-10-18/README.md)。
+
 > **2026-10-15 晚：按决定 60、61、62 和 7D 第二稿改了文件级观测、自动抓、根路径、区域和修订负责去向、结构修订提议；冻结前 lead 逐行审；又按 7D 勘误 E1–E11 和决定 63 改；又按审查二（19 条）的 lead 裁定改；lead 逐行审过这一稿，补的地方标“审查二 lead 补”；Codex 最后一次快速核对的必改由 lead 改完（标“审查二快速核对第 n 条”）；经你同意又加了一次只看改动的额外核对，它的必改由 lead 改完（标“审查二额外核对 Dn”）。**已冻结（2026-10-15 晚，你确认了测试入口）。**
 > **状态（2026-10-15 凌晨）：内容定稿，等你定 §0.1 后冻结。** Codex 两次完整审查加一次快速核对都用完了（决定 56 的上限），最后一次结论“改完后冻结”，那几处已照改（标“最后核对第 n 条”）。冻结前 lead 还要通读全稿一遍。下面原来的状态说明保留作记录。
 
@@ -816,3 +818,123 @@ listFiles(ctx, input: { captureRef: ObservedCaptureRef; cursor: string | null })
   - 字符串路径引用（Django 的设置、`INSTALLED_APPS`、`include()`、字面量的 `import_string`、迁移的 `dependencies`）：价值在用 Django 写的应用项目，这次没量；中等偏小。
   - 第二遍扫没被读到的源文件（借邻近单元的参数、换平台目标，边标成近似）：libuv +196～201 条；中等。
   - 不建议：字面量的 `importlib` 边（Django 库里 0 处）；框架约定加载和 Django 模板（只按框架开关做）；`pluginlib`（四个项目都是 0 处，量不出价值）。
+
+## 12. 8D 和 §10 段施工和验收中的限定（lead，2026-10-18）
+
+本节记下 8D 和 §10 段施工、审查和返工中定下的读法；和前面各节冲突时以本节为准。经过和证据见[证据](../../../reviews/evidence/orchestration-slice-8D-2026-10-18/README.md)；合入提交 4041c305。
+
+### 12.1 清单和 git
+
+- **观测有自己的文件枚举**，在 `access.ts` 的观测读取上做；核对读取器和 `listFiles` 不动。git 只复用进程层和环境，绕开“工作区必须是仓库根”的检查；工作区可以是仓库的子目录，路径相对工作区根。（§10 第 1 条；`books/s8a-scale-impl.md` 第 8 节第 1、2 条；`codex/scale-spec-review.out.md` 第 1 条）
+- **列出的路径逐个走今天观测的读取**：磁盘上已删的丢掉，目录（子模块的 gitlink）丢掉，符号链接照旧跳过；不另用 `-s` 或 `--deleted`。（`dsh/scale-preread-final.md` 第 3 条；`books/s8a-scale-impl.md` 第 8 节第 3 条）
+- **不在 git 工作树或 git 不能用时用固定跳过名单**：`.git`、`node_modules`、`.venv`、`venv`、`__pycache__`、`.mypy_cache`、`.pytest_cache`、`.tox`，递归时就不进；`dist`、`build`、`out`、`target` 不在名单里。它只替换观测自己的硬跳过；`WORKSPACE_DENIED_PREFIXES` 是访问控制，两条路都保留。（§10 第 1 条；`dsh/scale-preread-final.md` 第 6 条；`books/s8a-scale-impl.md` 第 8 节第 6 条）
+- **git 的两种失败分开**：观测的枚举返回 `{ kind: 'listed' | 'not_repository' | 'unusable' }`，取消和容量是另外的结果。正常结束的非零 `rev-parse` 里，不是仓库写“不是 git 仓库”，别的写“git 不能用：<原因>”（退出码加 stderr 的有限片段）。输出被上限截断时报实际数到的完整记录数，写“至少 n”，不编造 60,001。（`books/s8a-scale-impl.md` 第 8 节第 2、4 条；`codex/scale-review.out.md` 第 5 条；`books/s8a-scale-rework-1.md` 第 5 条；`dsh/scale-rework-1-final.md` A-26）
+- **取消和上限不回退**：取消照旧 `cancelled`；60,000 项上限或输出截断整次 `capacity`，给出数到多少；都不换用跳过名单。（§10 第 1 条；`dsh/scale-preread-final.md` 第 4 条）
+- **被忽略的编译数据库另跑一次 git**：`git ls-files --others --ignored --exclude-standard -z -- ':(glob)**/compile_commands.json'`，不加 `--directory`；路径在跳过名单目录里的不算；不在 git 里时 `build/` 本来就在清单里，不用另找。找到的只当配置冻结：读前查 Host 授权，读内容和摘要或记跳过原因；名为 `compile_commands.json` 的文件读上限 32 MiB，单独算进整次 128 MiB；被忽略的那份不进文件层、不算任何语言、不进 `other` 的 issues。（§11.4 的〔§10 段〕条；`dsh/scale-preread-final.md` 第 5 条；`dsh/scale-final.md` UNSPECIFIED 第 2–4 条）
+- **摘要只在有被忽略的数据库时变**：在今天的摘要输入后面追加 `[path, 'config', digest]` 或 `[path, 'config-skipped', reason]`，按路径排；没有时和以前逐字节相同。两次核对重找重读，变了 `source_stale`。（§11.4；`books/s8a-scale-impl.md` 第 8 节第 5 条）
+- **记录里的清单**是 `inventory: { source: 'git' | 'skip_list', reason }`；`skip_list` 的原因是“不是 git 仓库”或“git 不能用：<原因>”。三个文件页把它和 `languages` 一起返回；整项 `null` 不接受（决定 79）。（§10 第 1 条；`books/s8a-scale-rework-2.md` 第 3 条；`codex/scale-review2.out.md` 第 6 条）
+
+### 12.2 模块快照和分块的文件层
+
+- **逐文件的数据只在文件层存一份**；模块快照去掉 `indexedSources`，保留 `architecture.unresolved`（带行号，模块查询要用），契约上限仍是 2,048 条；观测先去重排序，保留不超过 500 行且累计不超过 64 KiB 的内容，再加省略说明。（§10 第 2 条；`codex/scale-spec-review.out.md` 第 3、8 条）
+- **快照先变紧凑，再查 240 KiB**，在 `mapArchitectureSource` 里做；只有观测模式精简，严格捕获保留完整快照和导出上限。映射器的 `mode: 'strict' | 'observation'` 必填，没有默认值；生产调用显式传，纯函数测试补参。（`codex/scale-review.out.md` 第 1 条；`books/s8a-scale-rework-1.md` 第 1 条；`books/s8a-scale-rework-2.md` 第 1 条）
+- **模块正文 v2** 不含 `files`、`changes` 的路径列表和 `summary.coverage.unresolved`；放捕获身份、`observedAt`、汇总（文件数、各语言的数、改动的三个数）、映射、紧凑快照。256 KiB 和 240 KiB 两个上限照旧；改动仍只算捕获导出的文件（TS/JS/JSON），只存三个数。（§10 第 2 条；`dsh/scale-preread-final.md` 第 7 条；`codex/scale-spec-review2.out.md` 第 ⑥ 条）
+- **上一次的导出集合从块节点算**：按 `isProjectInputPath` 加摘要，不新增字段。（`dsh/scale-preread-final.md` 第 10 条；`books/s8a-scale-impl.md` 第 8 节第 10 条）
+- **块和清单都带 `schemaVersion: 2`**；节点按路径排序，边存 `[i, j]`，序号指整张排好序的节点表，可以跨块；解码核对序号范围、节点数、成员摘要。（§10 第 6 条；`codex/scale-spec-review.out.md` 第 2 条）
+- **每个块节点、每种语言都带路径、摘要、字节数、语言、`nonBlankLines` 和 `indexed`**；`indexed` 在 TS/JS 是“被扫描走到”（走到的 `.json` 也算），在 C/C++、Python 是“`parsed`”，别的都是 false。（`books/s8a-scale-impl.md` 第 8 节第 8 条）
+- **一个读块助手**：Host 授权的逐路径核对、读上一次观测、三个文件页都用它；`loadObservation` 已读到的记录和 access 交给它，页面入口做第一次读。（§10 第 2 条；`codex/scale-review.out.md` 第 8 条；`books/s8a-scale-rework-1.md` 第 8 条）
+- **没解析的引用搬进块**，记录只留条数；按 `(from, specifier)` 去重，同一对原因不同时留按字符串排在前面的非 null 原因；正式比较从块里读，`detail` 在原因 null 时是说明符，否则是 `<说明符>（<原因>）`。（§10 第 6 条、§11.5；`books/s8a-scale-impl.md` 第 8 节第 9 条）
+- **写和读共用一个块校验函数**：空说明符合法（真实语法会写出 `import "";`），说明符超过 4,096 字符让捕获 `invalid`，单项加外壳超过块大小是 `capacity`。A-12 用能装下一个节点的块大小，手算 65 块。（`codex/scale-review.out.md` 第 4 条；`books/s8a-scale-rework-1.md` 第 4 条；`dsh/scale-rework-2-final.md` 第 6 条）
+- **三个文件页显式投影**：只取路径、`nonBlankLines`、`language` 和边，加上 `inventory`；摘要、字节数、`indexed` 不出现。（§10 第 6 条；`codex/scale-spec-review.out.md` 第 2 条）
+
+### 12.3 TS 的轻型扫描
+
+- **配置读取抽成一个导出函数**，`TypeScriptSourceAnalyzer.configure` 和扫描都调；没给路径时根上 `tsconfig.json` → `jsconfig.json` → 默认选项，`extends`、`paths`、`baseUrl`、`rootDir`、`outDir` 照 `ts.parseJsonConfigFileContent`。（§11.2）
+- **选配置看存在**：根上的 `tsconfig.json` 被跳过时不退 `jsconfig.json`、也不退默认选项；配置错（含 `extends` 指向材料里没有的包）→ 这门语言 `failed`、`配置错误：<消息的前 200 个字符>`，路径先换成文件名，不换配置。（§11.2、§11.5）
+- **带 `references` 的配置** → `unsupported`、`parsed: 0`、原因字面量，模块层是空的；严格捕获和 `project_index` 照旧。（§11.2）
+- **从根文件出发，显式队列沿引用走，不递归**；走到而且能装进的文件才入队；归 TS 但没走到的文件记 `skipped`、`不在 TS 分析的范围里`；`.json` 走到了只记下不扫。（§11.2）
+- **能不能装进照 TS 程序的规则**，用 `ts.getResolutionDiagnostic` 和 `ts.getAllowJSCompilerOption`，不自己重写默认值；`noResolve` 也照 TS 程序的规则：根集合里的引用照常解析，只有新目标不入队（A-27 一例 `a.ts` 引用 `b.ts` 有边，引用根外的文件没解析且不分析）。（§11.2；`codex/scale-review.out.md` 第 3 条；`books/s8a-scale-rework-1.md` 第 3 条）
+- **每个文件**先取格式，再 `createSourceFile`（第四个参数必须是 `true`），用显式栈遍历；收的引用形式照 §11.2；JS 文件里的 `require` 和 TS 的 `import x = require` 算边，TS 文件里单独的 `require` 不算；JSDoc 的 `@import` 和 JSDoc 里的 `import("…")` 不收（已知的差别）。（§11.2）
+- **解析**用 `getModeForUsageLocation` 加 `resolveModuleName`，方式不能省；整门语言一个 `createModuleResolutionCache`；宿主读冻结材料，`directoryExists` 查预先算好的目录集合，大小写敏感，当前目录 `/workspace/`，不给 `realpath`。（§11.2）
+- **三斜线**：`path` 用 `resolveTripleslashReference`，`types` 用 `resolveTypeReferenceDirective` 和类型缓存，方式用 `getModeForFileReference`。（§11.2）
+- **行号取节点开始处 `getStart`**；类型里的 `import("…")` 取类型节点自己的开始；三斜线取写的路径或名字所在的行。A-27 的 `type T = import(\n"./missing"\n).T` 记第 1 行。（§11.2；`codex/scale-review.out.md` 第 3 条；`books/s8a-scale-rework-1.md` 第 3 条）
+- **每个文件一个 try/catch**；取消原样抛出；别的异常让这个文件 `failed`、`<异常类型>: <消息的前 200 个字符>`；原始引用计数在 try 外面，超过 `lightScan.maxRawReferences`（默认 100,000）就停，整门语言 `failed`；配置、队列这些文件以外的异常让整门语言 `failed`；显式配置失败时另记一条 `failed`。（§11.2）
+- **约每 50 毫秒 `await` 让出再 `throwIfAborted`**；让出和取消检查放在所有循环分支都会经过的位置，包括失败和 JSON 的 `continue`。（§11.2；`codex/scale-review.out.md` 第 3 条；`books/s8a-scale-rework-1.md` 第 3 条）
+- **扫描结果两层共用**：模块层取走到的文件（含失败的和走到的 `.json`）作 `sources`，文件层取去重后的边、去重后的没解析引用和每个文件的状态；引擎身份、`projectConfiguration`、`indexedSourceCount`、`complete` 照 §11.2。（§11.2、§10 第 3 条）
+- **故障钩子** `lightScan.fault`（`phase: 'language'` 或 `{ phase: 'file', path }`）和 `maxRawReferences` 经 `workspace-tools` 进捕获；钩子只能抛出，不能改结果，正常的文件照样真解析。（§11.2）
+
+### 12.4 Python
+
+- **新操作 `import_graph`** 放在 `scripts/python-source-query.py`，按命令行参数分路，在解分析器包之前分出，只用标准库；`tomllib` 挪到版本检查之后；低于 3.11 报 `unavailable`；一个单元是一个文件。（§11.3；`books/s8d-rework-impl.md` 第 8 节第 7 条）
+- **每个文件 `ast.parse` 一次**；`SyntaxError`、`RecursionError`、`MemoryError`、`ValueError` 让这个文件 `failed`，原因 `<异常类型>: <消息>`（`SyntaxError` 取 `msg`），截前 200；收语法树里所有 `Import`、`ImportFrom`（含函数里、`try` 里、`if TYPE_CHECKING` 下）；不收 `importlib.import_module` 和 `__import__`。（§11.3）
+- **查找根按配置分开，顺序照今天的代码**；观测模式照 pyright 读 JSONC（去字符串外的注释和多余逗号）；不用、写进 `notes` 的字段照 §11.3；用不了的根去掉、写进 `notes`；仍让这门语言 `failed` 的原因只用 §11.3 列的字面量；`extends` 观测还不跟进。（§11.3）
+- **对到文件照 CPython 一级一级**：正规包、模块、命名空间包；`import a.b.c` 每段只在上一段的目录里找；命名空间和标准库重名；`from X import n`、`from X import *`；相对导入照 PEP 328；原因照 §11.3 的列表。（§11.3）
+- **第一段只找到命名空间包、名字不在 `sys.stdlib_module_names` 里**时，没解析的原因换成 `命名空间目录，可能是同名的外部包`；`标准库` 和外部包这两条只用于绝对导入。（§11.3）
+- **同一 `(文件, 说明符)` 既有边又有没解析时两样都记**；边指向被导入模块的文件；`from` 记模块部分，带前面的点。（§11.3）
+- **限时**每个文件 20 秒、整门语言 120 秒；解释器找不到或不能执行、或脚本报 `unavailable` → 这门语言 `failed`、`分析器不可用`；观测不再需要分析器包。（§11.3）
+- **注入的接缝**：可选 `sourceAnalyzers?: { directory?, pythonPath?, cppLibraryPath?, unitTimeoutMs?, languageTimeoutMs? }` 加在 `TargetPlatformOptions` 和 `WorkspaceToolsDependencies` 上；生产什么都不传，两个限时只给观测（查源码忽略）；`sourceAnalyzers.directory` 只给查源码，不再进观测的 Python 提供者；捕获的非 TS 提供者经构造函数由装配填，不用裸 registry 驱动 A-06。（`books/s8d-impl.md` 第 8 节第 2 条；`books/s8d-rework-impl.md` 第 8 节第 5 条）
+- **工作区的根**：`WorkspaceReadAccess` 加两个可选字段（`hostRoot`、`hostRealRoot`），由解析工作区根的地方填；C/C++ 提供者把它们当 `workspaceRoot`、`workspaceRealRoot` 传下去。测试替身没有这两个字段时，绝对路径都算工作区外，相对路径照旧；不新增方法。（`books/s8d-rework-impl.md` 第 8 节第 3 条）
+- **`python_index` 只改三处**：分析器目录作为第一个命令行参数传进去，解释器加 `-S`，导入不了 Jedi 的消息照 §11.1；旧配置的严格行为不变（A-21 的 `python_index` 断言照旧）。（§11.1；`codex/review.out.md` 第 3 条；`books/s8d-rework2.md` 第 10 条）
+
+### 12.5 C/C++ 和执行器
+
+- **编译数据库的选择只由 TS 提供者做**（它有存在和跳过信息）：根上的优先；否则用唯一的；`B/compile_commands.json` 加全是 `B/<子目录>/…` 时只用汇总那一份；全在同一个非根 `B` 下各占一个子目录时全选、合并；别的多个才 `有多个编译数据库`；选中的一份读不了就失败，不换、不少合；一份都没有时按 `package.xml`、`CMakeLists.txt` 给 colcon、CMake 的提示。脚本不再做第二次选择，只读选中的数据库并算合并说明。（§11.4；`codex/review2.out.md` 第 2 条；`books/s8d-rework2.md` 第 2 条）
+- **合并**按路径排序拼接，条目的相对 `directory` 仍相对它自己那份数据库；编号在拼起来的列表上做；`notes` 记 `合并了 <n> 个编译数据库`。（§11.4）
+- **主文件不在观测文件里的编译单元不解析、不算没做完**，`notes` 记个数；编号去重、连续、从 0；单元个数不设上限；没写目标时加 `-target x86_64-pc-linux-gnu`。（§11.4）
+- **参数表照原型整体搬**，分照用、忽略记下、拒绝三类；失败原因写第一个失败的参数，`=` 后面的不写；两个实测项目里不认识的参数都是 0 个。（§11.4；`checks/measure-cpp/report.md`）
+- **libclang 的选项和遍历照 §11.4**；说明符照源码带定界符；宏有定义时照常展开，没定义时记 `include 后面跟宏`；尖括号和拼写纠正两种退路不连边；尖括号退路找到写这条指令的文件自己时原因记 null；只有预处理类错误让文件失败（R2lex），`#error`、语法和语义错误都不算。（§11.4；`checks/measure-cpp/report.md`）
+- **头文件和不在数据库里的源文件的结果**照 §11.4 合并；没被任何解析单元读到的文件记 `没有编译单元包含它`（用 §2 的短语，不用书里原来的英文）；源文件不在数据库里记 `源文件不在编译数据库里`；有编译单元没做完时记 `有编译单元没有做完`。已完成单元里的预处理失败只让那个文件 `failed`，不算单元没完成。（§11.4；`books/s8d-impl.md` 第 8 节第 1、5 条；`books/s8d-rework2.md` 第 4 条）
+- **C/C++、Python 共用一个 TS 侧的 NDJSON 执行器**：起进程、stdin 的 header 和文件行、stdout 的 `ready`/`start`/`done`/`end`、合并、限时、重启、错误分类、输出上限、去重、取消，都照 §11.5。（§11.5）
+- **输出上限按整门语言跨重启累计**；协议 `end`、stdout 结束和进程退出分开记录，在一个仍受取消和整门语言限时约束的循环里收尾；`end` 后的输出仍读，读不了优先。（`codex/review2.out.md` 第 5、6 条；`books/s8d-rework2.md` 第 5、6 条）
+- **只有 `ENOENT`、`EACCES` 或 `unavailable` 映射 `分析器不可用`**，别的 spawn 错误保留自己的类别；Python 语言入口的普通异常（例如深嵌套 JSON 的 `RecursionError`）输出成 `failed`；捕获边界统一记 `<异常类型>: <消息的前 200 个字符>`。（`codex/review2.out.md` 第 7 条；`books/s8d-rework2.md` 第 7 条）
+- **脚本逐行读 stdin**（`readline` 读 header，然后迭代），不保存整份输入列表；一个说明符提取器处理展开、未展开和普通形式，注释、续行、定界符只在一处处理；完整逻辑指令按文件缓存行首索引，不每条引用重拆整个文件。（`codex/review2.out.md` 第 3、9 条；`codex/review4.out.md` 第 1 条；`books/s8d-rework3.md` 第 1 条；`books/s8a-scale-impl.md` 第 2 节第 0 条）
+- **A-11(2) 的包装器前台转发真实解释器、保留原 stdin**，打印 `garbage` 后挂住、不退出；平台结束时记 `分析运行失败：输出读不了`。（`codex/review4.out.md` 第 2 条；`books/s8d-rework3.md` 第 2 条；`books/s8a-scale-impl.md` 第 2 节第 0 条）
+
+### 12.6 覆盖和原因
+
+- **`LanguageCoverageV1` 加 `edges` 和 `notes`**：`notes` 最多 10 条、每条最多 200 个字符，去重后按字符串排；`notes` 必须存在；缺失则解码拒绝，空列表必须明确写成 `[]`，别的键照旧封闭；不升 `schemaVersion`；三个文件页原样返回；正式比较不读 `reason`、`notes`、`complete`。（§11.5）
+- **`notes` 在捕获 owner 归一化**：先每条截到 200，再去重、排序、取前 10；编解码只检查，不排序、不去重。（`books/s8d-rework-impl.md` 第 8 节第 1 条；`books/s8d-rework2.md` 第 12 条）
+- **整门语言的原因只用 §11.5 的字面量**；表里没有的异常写 `<异常类型>: <消息的前 200 个字符>`；原因和说明只写文件名、不写路径；脚本的 stderr 不进原因。（§11.5）
+- **单个文件的原因**照 §11.5 的列表；`语法错误`、`二进制` 是种类名，实际文本是 `invalid syntax`、`binary source`（A-06 的字面断言）。（`books/s8d-impl.md` 第 8 节第 1 条；`dsh/final-1.md` UNSPECIFIED）
+- **没解析的引用带原因**，照 §11.5；同一对原因不同留字符串序在前面的非 null 原因；正式比较的 `detail` 规则见 §12.2。（§11.5）
+- **自己到自己的边文件层不记边、也不记没解析**（C/C++ 故意包含自己的 X 宏文件也一样）；模块层照旧拿这条引用；尖括号退路找到自己不是边，是一条原因为 null 的没解析。（§11.5）
+- **没有读到的认领文件不起分析**：材料里有这门语言的文件、但全被捕获跳过时，不读配置、不找数据库、不起进程；`edges: 'supported'`、`parsed: 0`、`reason: null`、`notes: []`，`issues` 只有捕获自己跳过的；材料里没有这门语言的文件时 `languages` 里没有这一项。（§11.5；`books/s8d-rework-impl.md` 第 8 节第 6 条）
+- **认领的每个文件都有 `parsed`、`failed` 或 `skipped`**；整门语言 `failed` 或 `unsupported` 时不补，`parsed` 是 0，`issues` 只有捕获自己跳过的，`notes` 是 `[]`。逐文件失败保留来源并记 issues；只有语言级失败才让 TS 的模块层为空。语言级失败仍保留捕获跳过项；TS 显式配置失败另记一项。（§11.5；`books/s8d-impl.md` 第 8 节第 4 条；`codex/review.out.md` 第 5 条）
+- **选配置看存在**：捕获把整份跳过清单（所有语言，`{ path, reason }`）交给每个提供者，提供者只用它选配置；`configOnly` 携带可读的被忽略编译数据库；不可读者通过 `skipped` 参与配置选择。选中的被跳过 → 这门语言 `failed`、`<文件名> 读不了：<跳过原因>`，不换下一个、不退到没有配置；符号链接按“没有”算。（§11.5；`books/s8d-rework-impl.md` 第 8 节第 2 条；`codex/review.out.md` 第 1 条）
+- **覆盖照抄提供者的 `edges`**，`files` 和 `complete` 由捕获 owner 算；没有提供者的语言照旧 `unsupported`、`引用关系未支持`；提供者抛出的异常照旧 `failed`。（§11.5）
+- **整门语言 `failed` 或 `unsupported` 时 `notes` 是 `[]`**；C/C++ 的近似说明在 `supported`、而且读到的认领文件不是 0 个时都写，不管 `parsed` 是多少。（§11.5；`books/s8d-rework-impl.md` 第 8 节第 8 条）
+- **A-06 的 `os` 期望是 `os（标准库）`**：本段开始存没解析引用的原因，非 null 原因给 `detail` `<说明符>（<原因>）`；这是 lead 的裁定。（§11.5；`books/s8a-scale-impl-resume.md`）
+
+### 12.7 严格捕获和观测
+
+- **严格捕获不变**：导出和关系上限恢复，完整快照 `indexedSources`、未截短的 unresolved 列表都保留；只有观测模式精简。映射器的模式必填（§12.2）。（`codex/scale-review.out.md` 第 1 条；`books/s8a-scale-rework-1.md` 第 1 条；`codex/scale-review2.out.md` 第 1 条）
+- **观测的捕获不带分析器**：不建 TS 程序；扫描结果存成自己的类型，不拼 `SourceRelation`；对它做语义查询（含 `imports`）回 `unsupported`。§10 第 3 条改成扫描一次、两层共用；第 4 条的 2,000 个文件、40 MiB 预检删掉；观测里的三处 10,000 条上限去掉，只留两个 100,000（原始引用、三种语言去重后的边合起来）。（§11.1 的〔§10 段〕条）
+- **模块层由语言状态和走到的来源决定**，不用 `parsed > 0`。唯一的 TS 文件在故障钩子里失败时，模块层保留来源，覆盖是 `complete: false` 加失败原因，不是空的模块层。（`codex/scale-review.out.md` 第 2 条；`books/s8a-scale-rework-1.md` 第 2 条）
+- **分析出错不能记成成功**：整门语言的分析异常或被拒（配置、队列、运行器）→ 这门语言 `failed`、`<异常类型>: <前 200 个字符>`、`complete: false`，别的语言不受影响；逐文件异常只让那个文件 `failed`，来源保留、记 issues。语言级失败仍保留捕获跳过项，TS 显式配置失败另记一项；TS 语言级失败时模块层空、文件层照样有文件和行数；不能提交“0 条边、模块层空、覆盖说成功”的观测。（§10 第 5 条照 §11 改）
+- **取消和容量不算出错**：逐文件、逐编译单元的捕错不接取消和容量；取消让整次请求 `cancelled`，边超过 100,000 让整次 `capacity`。（§11.5）
+
+### 12.8 决定 79
+
+- **发布前不兼容旧数据**：代码只读当前格式；开发时旧版本写的库重建，不写迁移，不留旧版本的解码分支。（`checks/decision-79.md`；头部后注“决定 79”）
+- **§10 段返工时删掉**：v1 正文和它当 `previous` 的读法，以及服务里只为它存在的分支；8A 之前的成员规则、没有文件层的记录、空图的特殊处理和 `notCaptured`；旧 manifest 和旧块（补空摘要、路径形状的边、版本合并）；缺 `notes`、`reason`、`inventory` 的默认值；A-16 和整个 `tests/fixtures/s8-observation-v1/`，连同 `.gitignore`、`tsconfig.json`、`vitest.config.ts` 的专用安排。（`checks/decision-79.md`；`codex/scale-review.out.md` 第 6 条；`books/s8a-scale-rework-1.md` 第 6 条）
+- **整项 `null` 的 `inventory` 也删**：当前生产者总写对象；这同时去掉 §10 第 1 条最后一句“没有这个字段的旧观测读作 `null`”。`inventory.reason: null`（git）保留，当前格式明确写的 `reason: null` 也保留。（`books/s8a-scale-rework-2.md` 第 3 条；`codex/scale-review2.out.md` 第 6 条）
+- **旧形状的记录解码直接拒绝**，按今天读不了的记录处理：不迁移、不返回空的成功页、不当 `previous`。不要误删今天还在写的外层记录版本和严格捕获的契约。（§12.7；`books/s8a-scale-rework-1.md` 第 6 条）
+- **版本的位置**：模块正文带 `schemaVersion: 2`；记录的 file-graph 清单和每块带 `schemaVersion: 2`；观测记录自己的版本不变。解码按这些字段分派，没有就是旧格式（旧格式现在拒绝）。（`dsh/scale-preread-final.md` 第 11 条；`books/s8a-scale-impl.md` 第 8 节第 11 条）
+
+### 12.9 测试
+
+- **A-06 四情形经公开入口、内存和 SQLite 各跑一遍**：`os（标准库）`；`f.py` 是 `SyntaxError: invalid syntax`；`logo.png` 是 `binary source`；三条覆盖都加 `notes`；`other` 照 8A 留着，按语言找三条，不整体断言四个元素。（`books/s8d-impl.md` 第 8 节第 3 条；`books/s8a-scale-impl-resume.md`）
+- **A-17–A-19、A-27 经共享平台夹具、双后端，读文件页**；A-20、A-22 的说明符经 `compareFormalObserved` 的 `unresolved` 发现；字面期望照规格，不因实现改。A-24 只跑内存。（`codex/review2.out.md` 第 8 条；`books/s8d-rework2.md` 第 8 条；`codex/scale-review2.out.md` 第 7 条）
+- **A-18 的 300 条边两层都查**：模块层 300 条；文件层经公开的 `neighbors`（`direction: 'out'`）逐个核对每个文件恰好一个后继，就是环里的下一个文件。页面只带页内节点之间的边、不带被查文件自己的边，所以断言的是精确的唯一目标节点；双后端，循环约 1.2 秒。（`books/s8a-scale-rework-2.md` 第 4 条；`codex/scale-review3.out.md` 第 4 条）
+- **A-27 的取消在失败分支上证明**：连续几个文件都在故障钩子里失败，钩子让第一个失败文件忙过让出的间隔，abort 用 `setImmediate` 排队，只能在 `finally` 的让出点跑；断言钩子只见过前面的文件、整次 `cancelled`。一个扫描层的例子保留：类型引用的行号，因为公开结果里没有未解析的行号。（`books/s8a-scale-rework-2.md` 第 2 条；`codex/scale-review3.out.md` 第 2 条）
+- **手算的字面量**：A-12 的节点按 164/165 字节算，65 块的结论不变；A-15 补不变的文件；A-09 限无未解析引用的项目；A-10 删掉。（`books/s8a-scale-rework-2.md` 第 6 条；`codex/scale-spec-review2.out.md` 第 ⑦ 条；§11.6）
+- **不写事实**：runner 的测试只用转发真实解释器的包装器注入故障（garbage、挂住、退出码、杀进程、关 stdout）；造边、造单元状态的测试删掉，换成真实源码夹具；纯编解码输入可以手工构造；旧格式反例是允许的纯解码测试。（`codex/review2.out.md` 第 8 条；`books/s8d-rework2.md` 第 8 条）
+- **8D 的测试去留**：S8D-CPP-01、02 改写进 A-22 的 (k)、(l)；S8D-CPP-03、S8D-PY-01 删掉；S8D-PY-03、S8D-PROV-06 改成目录回归行；S8D-CPP-04、S8D-PY-02、S8D-PY-04、S8D-PROV-01、02、04 留着；S8D-PROV-05 改写；整对象断言的旧测试加 `notes`。（§11.6）
+- **接受的 UNSPECIFIED**（按轮）：
+  - 8D 施工：`unresolved` 没有公开页字段，经 `compareFormalObserved` 断言；C++ 解析缓存和后页 `stale` 是首轮实现，返工后缓存、翻页路径和该字段都不再适用；`语法错误`、`二进制` 是种类名。（`dsh/final-1.md`；`codex/review.out.md`）
+  - 8D 返工 1：`ready.engine`／`engineVersion` 不写死断言（后来 `engine` 断言成 `libclang`）；嵌套 `B` 的选择改成提供者独占（审查 2 第 2 条；原 UNSPECIFIED 2 的“收紧提供者”不采用）；非 `ENOENT`／`EACCES` 的 spawn 错误映射 分析器不可用（返工 2 改回自己的类别）；末行没有换行、重复的 `ready` 接受；`notes` 的归一化顺序（返工 2 由 lead 定为截 200 → 去重 → 排序 → 取 10）；AE6 的措辞。（`dsh/rework-1-final.md`；`codex/review2.out.md`；`dsh/rework-2-final.md`；`codex/review3.out.md`）
+  - 8D 返工 2：不是 `Error` 的抛出按 `typeof` 记；`RecursionError` 夹具用 10,000 层嵌套（2,000 层在 3.12.3 不抛）；`ready` 之后中途 `failed` 当作整门语言失败；自己到自己的边没有协议夹具（真脚本在发出前就丢掉 `from == to`，A-22(m) 覆盖退路找到自己）；末行和重复 `ready` 照旧接受；`engine` 断言成 `libclang`（回复更正）。（`dsh/rework-2-final.md`；`codex/review3.out.md`）
+  - 8D 返工 3：没有 UNSPECIFIED；RUN-16、RUN-17 的编号由这一轮定，指令元组没用到的 `column`、`offset` 留着。（`dsh/rework-3-final.md`）
+  - §10 施工：容量文字 `… (reached n)`；git 不能用的原因字面量；被忽略数据库的 `:(glob)` 清单加 `--no-literal-pathspecs`；沙箱每次读的上限 32 MiB；严格读取保留旧跳过表，只有观测用 8 个名字的名单；节点、边、没解析的引用分块装；64 KiB 只算保留的行（用 `\n` 连，摘要不算）；`summary.files` 是导出的项目输入数；A-16 断言正文 v2（清单不公开）、夹具 `remove` 保留 Host 授权、`tests/fixtures` 不进类型检查和 vitest——这些随决定 79 撤回，相关测试、夹具及配置均删除；`FileGraphPageNodeV1` 的投影放在 `loadFileGraph`（页面那条路在 production-reach 允许清单里）。（`dsh/scale-final.md`；`codex/scale-review.out.md` 第 9 条）
+  - §10 返工 1：`mapArchitectureSource` 的模式默认 `'observation'`（返工 2 不接受，改成必填）；超过 4,096 字符的说明符让捕获 `invalid`；单项超块的容量文字；A-18 的 300 条边在模块层断言（返工 2 要求文件层也查）；共享文件的行数按驱动项归因，只有总数是精确的。（`dsh/scale-rework-1-final.md`；`codex/scale-review2.out.md` 第 1、4、7、8 条）
+  - §10 返工 2：abort 用 `setImmediate` 排队（`setTimeout(0)` 会输给扫描器自己的 `setImmediate` 让出）；`neighbors` 页不带被查文件自己的边，断言精确的唯一目标节点；拒绝文字 `ObservedArchitecture inventory must be an object`。（`dsh/scale-rework-2-final.md`；`codex/scale-review3.out.md`）
