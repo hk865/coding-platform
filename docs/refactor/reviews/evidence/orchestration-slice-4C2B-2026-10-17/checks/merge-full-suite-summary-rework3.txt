@@ -1,0 +1,10 @@
+4C-2 session B merge full suite, after rework 3 (lead, 2026-10-17) - before the 20,000-note measurement fixes
+Tree: lead 247fcd57 (8A and 4C-2 session A merged) + s4c2b-merge.patch (s4c2-b4, src and tests only).
+Environment: WSL, bubblewrap, systemd user session, scope MemoryMax=6G, vitest --maxWorkers=5.
+Start 11:16, end 11:49.
+Test Files  535 passed (535)
+     Tests  8211 passed | 5 skipped (8216)
+  Duration  2080.31 s
+Memory peak of the test scope: 4,703,449,088 bytes (4.70 GB).
+check:architecture 0, build 0 (typecheck log empty = exit 0).
+2C-26 (S2C-K-legacy-provenance) passes with the fixed Date per test (rework 1 item 11).

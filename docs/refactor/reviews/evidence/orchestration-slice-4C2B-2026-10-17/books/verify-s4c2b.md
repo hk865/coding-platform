@@ -1,0 +1,80 @@
+# Verification of Codex's review of 4C-2 session B (Claude subagent, read-only, 2026-10-17)
+
+Codex's review: `s4c2b-review.out.md`. Line numbers refer to the reviewed copy (session B on its old base); `notes/`, `views/`, `state/`, `communication/`, `persistence/`, `model/` are under `src/core/work-graph/`.
+
+| # | Verdict | Rule broken |
+|---|---|---|
+| 1 | CONFIRMED | book §7.1 (`change.reason` = the answer's text); L17 (the coexist condition goes into `change.reason`); book §2.2 (a retry replays) |
+| 2 | CONFIRMED | book §7.2 (`readSource` and the adapter return the CoreRejection `source_stale`); book §2.4 readSource bullet (pointer moved → `source_stale`, nothing recorded); L17 |
+| 3 | CONFIRMED | book §2.4 (one disposition core; the guard is the card's pins); spec §11.6 (同一组状态迁移); §12.3 (read-only guards on everything the decision read) |
+| 4 | CONFIRMED | book §2.1 (one {before, after} per changed head); the slice-5 proof convention |
+| 5 | CONFIRMED | book §2.3 / ruling U7 |
+| 5 (U6 suggestion) | PARTLY | book §2.2 wording; does not block K3 |
+| 6 | CONFIRMED | spec §11.7 (注记卡源一次读); §12.7 (one plan read per goal per call); §11.6 (card and guard read the same facts) |
+| 7 | CONFIRMED | slice-2A §0.3 (`slice-2A-SPEC.md:182`) |
+| 8 | CONFIRMED | book §3 (public entries only); book §2.6 and spec §11.8 (memory and SQLite; D-01 needs a contradiction fixture); spec §13.4 (fault injection allowed, fact injection not) |
+| 9 | CONFIRMED (2 is right) | nothing in the code; the premise of book §7.14 is wrong |
+
+## 1. A failed answer-text read is treated as "no condition written"
+- Evidence: `src/composition/create-platform.ts:1403-1405` turns any non-ready read, or a null body, into `''`; `readDecisionAnswer` returns `unavailable` when the body cannot be opened or is missing (`communication/decision-service.ts:883-890`); the card command's fingerprint includes `conditions` (`notes/note-service.ts` ~1481-1485).
+- Example: the user picks coexist and writes "仅适用于旧接口"; opening the body fails once → `conditions` null → v2 commits with `change.reason = '决定卡：coexist'`, recorded as applied, the condition lost; a retry with a successful read uses the same `commandId` with another fingerprint → `idempotency_conflict`, reported `application_not_recorded` although applied.
+- Fix (≈4 lines): keep the body read (8C's start-up re-apply only has the saved answer). In the adapter: `answerRead.status !== 'ready'` or `body === null` → `{ action: rejected 'unavailable', receipt: null }`; the card stays "answered, pending application".
+- Test (memory and SQLite, through `resolveDecision`): after step ①, a one-shot failure of the saved-body read → `{ state: 'application_not_recorded', action: { status: 'rejected', code: 'unavailable' }, application: null }`, the note still `pending_review` v1; the same request again → `state: 'applied'`, history v2 `change.reason === '仅适用于旧接口'`. A null body after a committed answer only comes from tampering: not tested.
+
+## 2. Wrong code for a stale card; a moved pointer not caught by `readSource`
+- The book requires `code: 'source_stale'` (a `CoreError` member, `src/contracts/core/results.ts:17`); the code returns `code: 'revision_conflict', reason: 'source_stale'` (`communication/decision-source-facts.ts:658`, `create-platform.ts:1421`), copying slice 5's convention for other sources (`verifyPins` ~285-297, `goal_cause` :445, `goal_conflict` :592); the book departs from it for notes (L17 "落实报 source_stale").
+- `readSource` reads by the identity pin, then replaces the pins with the fresh card's (`pins = clonePins(card.pins)`, ~662); the request's `source.pins` is never compared.
+- Example: card for u2 (pending structural understanding) pins [NoteHead u2@1, CurrentPointer goal:g1@3]; the user accepts the older pending u1 through its card → pointer @4; u2 newer, not overridden, its card stays open now with @4; answering the old u2 card: `readSource` accepts; `answerDecision`'s `exactPinSet` refuses `invalid` (`decision-service.ts:546-563`) — wrong code, caught only by accident.
+- Fix (≈8 lines), both places: `readSource`: `card === null && closedReason === null` → `source_stale`; `card !== null && !samePinSet(source.pins, card.pins)` → `source_stale` (one comparison covers a moved head, a moved pointer, a new pointer). `applyNoteDecision` already compares `expectedPointerRevision`; it lacks only the reject commit guard (item 3); the adapter maps its `revision_conflict` to `code: 'source_stale'`.
+- Tests: `tests/work-graph/S4C2-U3.test.ts:142-147` and `tests/scenarios/S4C2-U6-note-card-e2e.test.ts:177` → `code: 'source_stale'` (the U3 test also uses a fake port, item 8). New (memory and SQLite): the pointer example through `decisions/answer` → `{ status: 'rejected', code: 'source_stale' }`, no answered card, re-reading the card shows the pointer pin @4. D-02 through `resolveDecision` → `action.code === 'source_stale'`, `state: 'application_not_recorded'`.
+
+## 3. Two disposition cores; a reject card has no pointer guard
+- `dispose` (`notes/note-service.ts:1231-1460`) and `applyNoteDecision` (:1478-~1680) each own replay, caller, head/version check, target facts, transition, pointer read, supersession, records, events, guards, commit/recheck/mapping. The card path reads the pointer (:1540-1550); it is written, and so guarded, only through `supersessionOf` when not reject (:1578); the extra read-only guards (:1635) cover `decisionHeads` only. The card path also lacks `understanding_outdated` (unreachable today; drift).
+- Example: reject card on u2 with pointer @3; after the pointer read another public write moves it to @4; the reject still commits.
+- Design: split at `transitionNote`. Front per mode: `dispose` keeps its front unchanged (identity/fingerprint, replay, caller, authority, `user_confirmed`, `resolution_not_applicable` before the scope check, scope, version, facts, contradicted-only targets, `resolution_required`); the card front: identity/fingerprint, replay, `caller.isUser`, head and version, facts, `mayResolve`, an event with `actualDispositionTargets`, the reason text. One shared `finishDisposition(ctx, { identityKey, fingerprint, noteId, head, caller, transition, decisionHeads, readPointer: 'accept' | 'always', expectedPointerRevision, change, cardProof: null | { acknowledgementRef, actor } })`: pointer read and compare (+ `understanding_outdated` on accept); supersession; notice class, head and version records; the subject event (actor and proof only in card mode) and the proof's `changes`; guards: written records, read-only guards for `decisionHeads`, and a read-only pointer guard whenever the pointer was read but not written; commit, recheck, mapping, `done`. The scribe path is unchanged (reads the pointer only on accept and then writes it). `applyNoteDecision` ~200 → ~45 lines, net ≈ −120; the replay prologue can be shared.
+- Test (memory and SQLite): the `RaceSeam` of `S4C-note-supersede-race.test.ts` armed on u2's pointer read; the action a real public pointer move (the user accepts u1's card); `resolveDecision(reject)` → `action.code === 'source_stale'`, `state: 'application_not_recorded'`, u2 still `pending_review` v1, pointer still u1. `S4C-note-protection` and the D17 tests stay green unchanged.
+
+## 4. The proof's before/after point at different aggregates
+- `note-service.ts:1613-1620` writes `NoteHead@v → NoteVersion(v+1)@1`; elsewhere `changes` is the same aggregate's before/after (goal settings `tasks/goal-settings-service.ts:509-510`; plan adoption `tasks/plan-service.ts:456-476`). The reader accepts today's shape only because the commit writes a NoteVersion@1 (`decision-application.ts:146-151`).
+- Fix (≈2 lines): `after = { same NoteHead ref, revision v+1 }` for the card's note and each superseded target; drop the `NoteVersion` row added to `AGGREGATE_REF_RULES` (`persistence/decision-record-codecs.ts` ~240) if nothing else uses it. The CurrentPointer change stays out (book: per changed head).
+- Test (memory and SQLite): after a supersede through `resolveDecision`, `readDecisionCard(...).application.changes` = `[{ before: NoteHead(<agent>)@1, after: NoteHead(<agent>)@2 }, { before: NoteHead(<user>)@1, after: NoteHead(<user>)@2 }]`; after a reject only the first.
+
+## 5. U7: no generic card-source adapter
+- `views/decision-read-model.ts:215-262` hand-codes the cache key, the `readNoteDecisions` call, offset paging, key parsing and projection; K3 would copy it.
+- Smallest adapter (≈50 new lines, net ≈ −20):
+  ```ts
+  type CardCollectionSourceSpec<T> = {
+    kind; needsGoal: boolean;
+    readCollection(ctx, { workspace, goalRef }): Promise<ReadResult<readonly T[]>>;
+    keyOf(item: T): string;                       // decisionSourceKey(identity)
+    project(item: T, goalRef, goal: GoalSnapshot | null): DecisionCardV1;
+    closedReasonOf(item: T): DecisionCardV1['closedReason'];   // null = open
+    readByKey(ctx, { workspace, source }): Promise<ReadResult<{ item: T } | { closed: … } | null>>;
+  };
+  createCollectionCardSource<T>(spec): DecisionCardSourcePort
+  ```
+  `readPage`: no goal → empty; look up `{ kind, project, workspace, goal }` in `attempt.cache`; on a miss read the collection and the goal once, project each item, close it when `closedReasonOf` is not null; page by numeric offset. `readByKey`: null → null; closed → a generic closed card; otherwise `project`. The note source becomes a ~20-line spec (`keyOf = cardId`; `project` = today's `noteReviewCard`; `closedReasonOf = () => null`; `readByKey` wraps `readNoteDecision`). K3 adds `createCollectionCardSource(ucrSpec)` to the composition root's `cardSources`.
+- U6 (PARTLY): today a built-in branch at `business/workflow/decision-actions.ts:418`, the composition registers only `note_review` (`create-platform.ts:1600`). Do now (≈10 lines): inside `createDecisionActions`, `applications = { goal_conflict: { apply: … applyGoalConflict(…) }, ...deps.decisionApplications }`, one lookup, no adapter → `answered`; an optional `state` on the adapter's value; the default registration stays inside the Workflow so existing tests building the Workflow without the field stay green unedited.
+- Tests: replace the fake-port U7 test: one real pending card and a call-counting wrapper on the note port; `readDecisionCard` reads by key with zero collection reads; a missing key → `not_found`. U6: the existing decision and conflict suites stay green unchanged.
+
+## 6. Card source exceeds the read bound, quadratic work
+- `notes/note-decision-source.ts:169` batch-reads the target heads; then :171 → `targetFactsOf` → `check.checkNotes` (:78), which builds fresh caches, re-reads every head (`views/note-views.ts:1261-1272`) and runs the full item check; the plan window read at :157 is not shared; :181 passes all the goal's targets to `userReasonsOf` for every head, which rebuilds a Map each time (`state/note-machine.ts:155`): O(heads × targets).
+- Example: 2 goals; p1, p2 pending in g1, p3 in g2; p1→t1, p2→t2, p3→t1; t1, t2 user-confirmed on the goal; no pointers; W = plan-window reads (2–3). Today ≈ 2W+21 reads; the §11.7 bound 3 bucket scans + 1 target batch + 2W plans + 2 catalog, plus the 2 pointer batches the D-12 gate needs = 2W+8.
+- Fix (≈25 lines; deletes `targetFactsOf`): `note-service` already computes these facts with per-call plan caches (`userReasonTargetsOf` → `primaryAnchorRetiredNonFile`, :653-690, :757-782). Factor its per-head loop into `reasonFactsOf(call, ctx, heads)`, expose a batched `userReasonFacts(ctx, heads)` (one NoteCall per call), inject it into `createNoteDecisionSource` in place of `check`; per head pass only its own targets: `userReasonsOf(head, actualDispositionTargets(head).flatMap(id => facts.get(id) ?? []))`; reuse `window.goal` instead of `readGoalForBasis`. The target batch stays per goal.
+- Aside (session A): `notes/note-scribe-todos.ts:147` has the same O(H×T) pattern.
+- Test (memory and SQLite): a call-counting wrapper at the record-store seam on the example: note-index lookups and NoteHead / CurrentPointer `readMany` calls in one queue call: 3 per goal, 6 in total; plan reads counted separately as RW-12 does.
+
+## 7. Unbounded argument spread in the notice grouping
+- `views/notice-grouping.ts:98` `list.push(...membersOf(item))`; a folded line holds every unseen scribe result for its goal; around 10⁵ members it throws `RangeError` and the queue read fails. Fix: `for (const m of membersOf(item)) list.push(m);`, same at :56. No test required.
+
+## 8. Acceptance rows replaced by fact injection or narrower tests
+- N1/N2/N3 commit hand-built NoteVersion records with a hand-filled `noticeClass` (`tests/work-graph/S4C2-N1.test.ts:42-75`, `S4C2-N2.test.ts:74-81`, `S4C2-N3.test.ts:77-82`); data the real writer cannot produce (N1: versions under the executor duty marked `scribe_result`; N2: a `supersede` side-effect version marked `user_affected`, the writer gives those `null`). U7 and the U3 `readSource` tests use fake ports (U7's identity on `NoteVersion`, which a real card never uses). The card fixture is memory only (`tests/helpers/S4C2-note-decision-fixture.ts:65`) and uses `vi.spyOn`. No contradiction card: every D-01/D-17 seed uses `replaces`; §11.8 requires D-01's fixture to contradict a current, user-confirmed note. Missing queue-level card assertions: D-04, D-05, D-08, D-09, D-11, D-12; D-13 only through the internal port.
+- Fix: one fixture `createS4ANoteFixture(kind)` over `['memory', 'sqlite']`, no spies; assert only through `queryDecisionQueue`, `readDecisionCard`, `resolveDecision` and the note routes; deterministic note ids so `itemKey`s are literals. Seeds: N1 a real scribe withdraws two notes and accepts one in g1, rejects one in g2; N2 an agent understanding accepted over a user-confirmed one, plus an agent structural ordinary note; N3 scribe withdraw, then agent `user_affected`, then scribe accept, in that commit order; one test per D row as §11.8 describes. Keep the U3 forged proof (fault injection).
+
+## 9. F06's 2 is right
+- `views/context-extensions.ts:129-136` adds a hint row only for card sources `not_available`; B registers `note_review`, so its capability is available; reminders = anomalies + decision rows + update-due rows (`src/core/agent-runtime/context-assembler.ts:671-689`); with a zero budget the omission line prints the actual row count (:278-285). After A: note_review hint 1 + message_release hint 1 + goal-understanding update-due 1 = 3; after B: 0 + 1 + 1 = 2. Fix: `tests/composition/WP2-wiring.test.ts:539` → `另有 2 条` with the hand count in a comment. The three `toContain → not.toContain` edits are correct.
+
+## What Codex missed
+- **M1. The card's goal is not tied to the note's goal** (L17, §11.6 gate (1)). In the `note_review` case `readSource` reads the goal named by `source.goalRef` and never compares it with the note's `goalId`; `readByKey` projects with the request's `goalRef` (`decision-read-model.ts:243-261`). Example: n1 pending in g1; a `decisions/answer` request carries n1's key with goalRef g2 (same workspace) → the answer is stored under g2 (`answerSyntheticCard` uses `facts.goal.ref`), the answered card appears in g2's queue and g2 runs' context and closes when g2 is cancelled. Fix (≈6 lines): `readNoteDecision` returns the head's `goalId`; on a mismatch `readSource` → `invalid`, `readByKey` → null. Test (memory and SQLite): that request → `invalid`; the card still waiting in g1; nothing answered.
+- **M2. Target events in a card commit carry an actor** (book ruling 3: `actor` and `proof` null on every NoteDispositionChanged except the card application's own event). `supersessionOf` gets `callerActor` (`note-service.ts` ~1580). Fix (1 line, in the item-3 refactor): the actor on the subject event only.
+- **M3. `seenThrough` also counts earlier pages** (`previousLines`, `decision-read-model.ts:629-633`; ruling 8 says "the set of lines this page shows"). The book's own N3 can only pass with this reading (strict reading: page 2 gives `seenThrough` = member 1 and items 2–3 come back). Lead post-note needed; no code change.

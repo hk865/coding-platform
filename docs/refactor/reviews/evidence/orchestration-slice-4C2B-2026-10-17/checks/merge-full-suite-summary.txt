@@ -1,0 +1,10 @@
+4C-2 session B merge full suite, after rework 4 (lead, 2026-10-17) - the tree that merged
+Tree: lead e919304b (decision 76; 8A and 4C-2 session A merged) + s4c2b-merge-2.patch (s4c2-b5, src and tests only).
+Environment: WSL, bubblewrap (CODING_AGENT_BWRAP_PATH), systemd user session, scope MemoryMax=6G, vitest --maxWorkers=5; DSH builds, a docs run and K3 checks running at the same time (load 8-10).
+Start 12:34, end 13:09.
+Test Files  538 passed (538)
+     Tests  8235 passed | 5 skipped (8240)
+  Duration  2206.63 s
+Memory peak of the test scope: 4,720,480,256 bytes (4.72 GB).
+typecheck 0, check:architecture 0, build 0.
+Lead branch: the patch applied on bcbab28d (decision 77, docs only on top of e919304b); `git ls-files -s -- src tests` sha256 08da897b71c97337927db3f7242e030b5500053d21c01f8ebbe015cc152ea4bf on both the merge tree and the lead branch; code commit f4171d51.

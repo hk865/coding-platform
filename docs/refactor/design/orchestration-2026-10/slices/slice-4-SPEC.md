@@ -8,6 +8,8 @@
 
 **后注（4C-2 A 段验收，lead 2026-10-17）：** 4C-2 分 A、B 两段。A 段（装配、“该更新”、书记提醒）施工、审查和返工中定下的读法在 §13：`notes` 的形状和理解行、每行带注记号和版本、一般注记只收本次的来源、查询类装配不读一般注记、`NoteUpdateDuePort` 删掉、共用的批读、立即发要晚于基线、提醒检查的先后和三种答案、输入消费者的节流仍用墙上时钟、测试只注入故障。对 B 段同样有效；和前面各节冲突时以 §13 为准。
 
+**后注（4C-2 B 段验收，lead 2026-10-17）：** B 段（注记卡和它的落实、证明事件、“请知悉”，以及和 K3 第 4 组共用的 U3、U6、U7）施工、审查、返工和 2 万条注记实测中定下的读法在 §14：卡的关卡和形状、一个处置核心、`source_stale` 的 pin 集比较、证明按被改的头记 `NoteHead@v → @v+1`、通用卡源 `createCollectionCardSource`、U6 默认的 `goal_conflict` 适配器、`noticeClass` 和 `seenThrough` 算上前面页、书记待办改用 `userReasonFacts`、§11.7 第 910/912 行的措辞和实测。对 K3 第 4 组同样有效；和前面各节冲突时以 §14 为准。
+
 > **2026-10-15 晚：按决定 60、61、62 和 7D 第二稿改了书记范围、提醒身份、按范围计数和 61-5 指引；冻结前 lead 逐行审；又按 7D 勘误 E1–E11 和决定 63 改；又按审查二（19 条）的 lead 裁定改；lead 逐行审过这一稿，补的地方标“审查二 lead 补”；Codex 最后一次快速核对的必改由 lead 改完（标“审查二快速核对第 n 条”）；经你同意又加了一次只看改动的额外核对，它的必改由 lead 改完（标“审查二额外核对 Dn”）。**已冻结（2026-10-15 晚，你确认了测试入口）；2C 合入后 lead 只重核 §0.2、§6 的行号和事实，不改规则。**
 > **2C 合入后的重核（lead，2026-10-15 夜）：** §0.2 各条照旧成立，只是行号移动。4A 施工前的 DSH 通读在 e8b3edae 上逐条核过：F3 的文件在 `src/core/agent-runtime/`，F13 的 `note_review` 在 `src/contracts/goal-decisions.ts`（不在 `decision-contracts.ts:318`），这两处 4C 用时按符号找。lead 在合入 2C 的树上补核了 2C 碰过的：F5 `resolvePath` 在 `lookup-index.ts:445`、`lookupIndexKeyOf` 在 `:476`；F6 `upsertSnapshot` 仍在；F7 `indexGuards`、`indexChanges` 在 `record-store/ports.ts:117`、`:119`；F1 `AggregateRef` 仍没有注记的引用；F13 组合根注入决定来源在 `create-platform.ts:658`。L21 的前提成立：2C 的节点详情里 `notes` 是 `not_available`、原因 `slice_4`（`views/node-detail-reader.ts:1142-1178`）。§6 的文件归属不变：2C 的计数端口已合入，4B 的 RecordStore 改动可以开始排。
 > **状态（2026-10-15 下午）：你已定 §0.1，并对注记格式、查找和校验提了意见（标“用户 2026-10-15 第 n 条”，第 1–12 条，含决定 59）。DSH 照改（`D:/cc-lead-notes/specs/s4/s4-spec-edit-3.md`），lead 逐行审过、改了交叉引用和几处接口（写入结果带 `existingTopics`、核对带 `withSimilar`、`NoteDraftV1` 按种类严格分型、事实解析的每页上限 `NOTE_READ_FACTS_MAX`、`deleted` 字段），并通读了全稿。剩下：2C 合入后重核 §0.2 和 §6，然后冻结。**
@@ -907,9 +909,9 @@ export const SCRIBE_PENDING_THRESHOLD = 10, SCRIBE_UPDATE_DUE_THRESHOLD = 5;
   - 记号：一次“索引扫描”读一个桶，花 ⌈n/200⌉ 次调用（n 是桶里的条数，空桶也算 1 次）；“锚点集合”= 5 个锚点槽各扫一次；`C(k)` = 一次核对 k 项的读：1 次批量读这些项的头和版本、1 次批量读它们引用的事实、文件读至多 `min(Σ 依据文件 + Σ 文件事实 + 文件锚点, NOTE_READ_FILES_MAX = 256)` 次（§10 的每页文件预算，`note-views.ts:727`、`:733`），符号复查至多 `NOTE_SYMBOL_RECHECK_MAX = 20` 次，每个涉及的不同目标的计划窗口 2–3 次（冷缓存，`plan-readers.ts:971-981`；单次调用里每个目标只读一次），目录 1 次。
   - 验收时按测试数据的实际桶大小算出数字，经公开端口外面套一层只数调用、不看内容的计数包装来量（§7 的夹具例外，lead 同意）。“每条记录只解码一次”数调用量不出来，不当验收行，放进 Codex 实现审查的成本项。
   - **建有联系的集合（工作 Run）**：Run 解析 1 + 计划 1–3 + 目录 1 + 任务的 Run 索引扫描 + 1 次批量读 RunActivity + 每个锚点键一组锚点集合 + 阶段前缀扫描 5 次 + 每条模块路径的前缀扫描 5 次。
-  - **“找”一页**：上面一项（分段时）+ 1 次账本 + 第一段的注记头已在锚点集合里 + 到第二段时原来不分段读法的读 + 第一页的项目部分（见下）+ `C(本页项数 + 项目部分项数)`。页停在第一段时，文本端口一次都不调。按状态读：工作 Run 读 2(G+1)+1 个状态桶，主机或查询 Run 读 3(G+1) 个，指明 `state` 时 G+1 个（今天 7(G+1) 个）。
+  - **“找”一页**：上面一项（分段时）+ 1 次账本 + 第一段的注记头已在锚点集合里 + 到第二段时原来不分段读法的读 + 第一页的项目部分（项目锚点集合一次：5 个槽，和核对、有联系的集合共用）+ `C(本页项数 + 项目部分项数)`。页停在第一段时，文本端口一次都不调。按状态读：工作 Run 读 2(G+1)+1 个状态桶，主机或查询 Run 读 3(G+1) 个，指明 `state` 时 G+1 个（今天 7(G+1) 个）。
   - **`lookup` 一页**：1 次账本 + 1 组锚点集合 + 1 次指针 + `C(本页项数)` + 该更新（目标或阶段锚点）：计划窗口不在缓存时 2–3 + Run 索引扫描 + 2 次批量读（§11.5 的三步）。
-  - **Goal 卡的项目部分**：1 次批量读三个指针、1 次批量读指向的注记头、项目锚点一次扫描、`C(1 + 10)`。
+  - **Goal 卡的项目部分**：1 次批量读三个指针、1 次批量读指向的注记头、项目锚点集合一次（5 个槽，和核对共用；扫描 `Σ max(1, ⌈n_s/200⌉)` 次）、`C(1 + 10)`。
   - **心跳一次检查**：账本游标没动 → 1 次读（加上次没发成功的重发）。动了 → 目标索引一次扫描；每个目标：计划窗口 2–3 + §11.5 的三步；1 次批量读所有指针、1 次批量读它们指向的注记头；待审状态桶 G+1 个扫描；每个待审 1 次批量读它的关系目标（算 `userReasonsOf`，所有待审合成一次）；书记范围的事实一次（Session 翻页 + 目录 1，这次检查里共用，不是每条注记一次）。
   - **注记卡源一次读**：待审状态桶 G+1 个扫描 + 1 次批量读所有关系目标 + 每个目标的计划和目录各 1 次（单次调用缓存）。
   - **写**：`record_note` 和 `notes/write` = 4A 的写入路径 + 写后 `checkNotes` 的 `C(1)`；写项目理解多一次书记范围的事实。书记的收下、撤下、并存 = 4A 的处置路径 + 书记范围的事实一次 + 被取代目标 1 次批量读。
@@ -1048,3 +1050,71 @@ O34、O35、L2a 第 3 类、L4 第 2 步、L8（项目的当前理解）；L5、
    - 2 万条注记的实测，在 B 段之后、4C-2 合入前；
    - B 段的卡、处置、“请知悉”和证明事件；
    - 查询类调用的记忆分支，等 6A、7D2（§12 第 11 条）。
+
+## 14. 4C-2 B 段施工和验收中的限定（lead，2026-10-17）
+
+4C 的第二轮（§11.9）分两段：B 段是注记卡和它的落实、证明事件、“请知悉”，以及和 K3 第 4 组共用的 U3、U6、U7。本节记下 B 段施工、审查、返工和 2 万条注记实测中定下的读法；§13 照旧有效；和前面各节冲突时以本节为准。经过见[证据](../../../reviews/evidence/orchestration-slice-4C2B-2026-10-17/README.md)。下面引的 `books/…`、`codex/…`、`checks/…` 都在那个证据目录里。
+
+1. **注记卡（L17、§11.6；书 §2.4，返工 1 第 9 项（M1），施工回复的 UNSPECIFIED）：**
+   - **哪些注记有卡：** 目标的 `pending_review` 头里 `userReasonsOf` 不为空的那一些；`goalId` 为 null 的永不出卡（D-09）。开卡列表只列还开着的卡；关掉的（包括没答复就关掉的）不列，答复过的按第 5 片的答复区列（答复第 5 条）。
+   - **关卡的顺序（注记卡自己的，不照搬 `finalizeCard`）：** (1) 目标已取消 → `goal_cancelled`；(2) 已答复 → 照第 5 片的答复和落实状态；(3) `userReasonsOf` 为空，或 `pendingUnderstandingOverridden(head, current)` → `source_resolved`；(4) 否则 `waiting_answer`。
+   - **形状：** 身份 `{ kind: 'note_review', note: <头 pin> }`；`pins` 是头 pin，当前理解再加现行指针的 pin；`objects` 是这条注记和每个实际处置目标的聚合 pin（`replaces` 减 `coexistWith`，加 `contradicts`），标签用 `renderNoteHeader`；`NoteDecisionCardV1` 保持 §2 的形状，卡要用的 pins、objects、options 放在 `NoteDecisionCardFactsV1` 里。
+   - **选项：** 有 `contradiction` 或 `user_note_replaced` → 取代、并存、拒绝；只有 `structural` → 收下、拒绝。**所有选项 `effect: 'apply'`**，拒绝也要落实状态并记回执（实现审查末段）。
+   - **卡的目标要对上（M1）：** `readNoteDecision` 返回头里的 `goalId`；请求的目标和它不一致时 `readSource` 回 `invalid`，`readByKey` 回 null，不在别的目标里存答复、出卡。
+
+2. **卡的落实和证明（U6、§11.6、§12.3；答复第 1、2、3、11 条，返工 1 第 1–4、9 项）：**
+   - **一个处置核心：** `note-service.ts` 在 `transitionNote` 处拆出 `finishDisposition`，书记的 `dispose` 和卡的 `applyNoteDecision` 共用。书记那一侧的行为不变：目标集只取被矛盾的，指针只在收下时读。卡这一侧只多：权限是答复的用户（从可信的调用上下文来，不是参数）；守卫是卡的全部 pins（头的版本、指针的修订号）；拒绝也要有只读的指针守卫（实现审查第 3 条）。
+   - **目标集：** 卡用实际处置目标（`replaces` 减 `coexistWith`，加 `contradicts`）；书记的 `resolution` 仍只用被矛盾的目标（答复第 11 条）。
+   - **`change.reason`：** 答复的 `text` 去掉首尾空白；为空时用字面量 `决定卡：<optionId>`（四个选项同一规则，答复第 1 条）。
+   - **答复和回执：** `change.decisionMessageRef` 和最后事件的 `acknowledgementRef` 都是这次答复；回执是这次提交的正式回执，同一个 `commandId` 原样重放（书 §2 第 4 项）。
+   - **答复正文读失败不算“没写条件”：** 适配器先读答复正文，读失败就回 `rejected` `unavailable`，不调用处置；卡停在“已答、待落实”，重试仍用同一份保存的答复（实现审查第 1 条，返工 1 第 1 项）。
+   - **`source_stale` 是一个错误码：** `readSource` 把请求的 pin 集和新卡的 pin 集整体比较（头挪了、指针挪了、新出现指针都算），返回 `CoreRejection` 的 `code: 'source_stale'`；适配器把 owner 的 pin 移动 `revision_conflict` 映射成同一个码。`NoteErrorCode` 不改，`applyNoteDecision` 仍回 `NoteDispositionResult`（答复第 2 条，实现审查第 2 条，返工 1 第 2 项）。
+   - **目标事件的 actor：** 只有卡落实自己的那条 `NoteDispositionChanged` 带 `actor` 和 `proof`；被取代目标的同一次提交里 `actor: null`、`proof: null`（M2，返工 1 第 3 项）。
+
+3. **证明事件（U3；答复第 3 条，实现审查第 4 条，返工 1 第 4 项，返工 3 第 2 项）：**
+   - **解码表：** `decodeProofEvent` 按事件类型查表；行是 `GoalSettingsChanged`、`PlanRevisionAccepted`、`NoteDispositionChanged`；`ArchitectureCatalogAdopted`、`ProjectCompletionPolicyActivated` 仍是回 `unsupported` 的行；不认识的类型仍是 `incomplete`。
+   - **字段：** `NoteDispositionChanged` 多 `proof: DecisionChangeProofV1 | null` 和 `actor: ActorRef | null`；不是卡落实的处置两者都是 null，旧事件缺字段解码为 null。`acknowledgementRef` 保留，有 proof 时等于 `proof.acknowledgementRef`；`appliedAt` 用事件头的 `occurredAt`。
+   - **`changes` 按被改的头：** 每条 `{ before: NoteHead@v, after: NoteHead@v+1 }`，主体和每个被取代目标各一条；`CurrentPointer` 的移动不列。`capturedPins` 是卡的 pins，`basisRebases: []`。
+   - **`AGGREGATE_REF_RULES`：** B 段加了 `NoteHead`、`NoteVersion`、`CurrentPointer` 三行，证明事件才能提交；返工 1 把 `NoteVersion` 行删掉了（没有别的用处），最后留 `NoteHead`、`CurrentPointer` 两行（实现审查第 4 条，返工 1 第 4 项）。
+   - **伪造和普通处置：** 伪造的证明指向另一条答复 → `invalid`；普通处置（proof 为 null）→ `incomplete`。后者要有注记自己的公开行：真卡先答复，再经公开注记服务做一次普通处置，然后落实入口回 `incomplete`、卡仍“已答、待落实”（返工 3 第 2 项）。
+
+4. **卡源和派发（U7、U6；答复第 4、5、9 条，实现审查第 5、6 条，返工 1 第 5、6 项，返工 2 第 1 项，返工 3 第 1 项）：**
+   - **通用卡源：** `views/decision-read-model.ts` 的 `createCollectionCardSource<T>(spec)` 负责组装一次、按 attempt 缓存、按数字偏移分页、按键读和关闭判断；spec 是 `kind`、`needsGoal`、`readCollection`、`keyOf`、`project`、`closedReasonOf`、`readByKey`。注记源只是其中一份登记；K3 加第二个来源是登记，不改协调器和队列。可选第二参数 `readGoal?` 保留（返工 1 的 UNSPECIFIED，复审接受）。
+   - **端口：** `DecisionCardSourcePort` 的 `needsGoal` 是必填，`readByKey` 可选；`sourceNeedsGoal` 删掉，队列读 `source.needsGoal`。真实登记都写 `needsGoal: true`。`message_release` 今天没有卡源，所以没有登记；它仍在卡的种类表里（`decision-read-model.ts` 的 `CARD_KINDS`），F06 的缺源提示里也仍有它这一条（第 8 条）。
+   - **U6 派发：** `resolveDecision` 的第 ② 步按 `input.source.kind` 查注入的适配器表。`goal_conflict` 是 `createDecisionActions` 里的默认登记（`{ goal_conflict: …, ...deps.decisionApplications }`），只查一次；没有适配器的 kind 回 `answered`。今天的冲突代码原样搬进 `goal_conflict` 适配器，现有的决定和冲突测试不改。`action` 的类型是 `WriteResult<{goals: GoalSnapshot[]}> | NoteDispositionResult | CoreRejection | null`，HTTP 响应按别名跟随（实现审查末段）。
+   - **读取上界：** 一次队列调用里，每个目标的计划窗口只读一次，目录最多读一次（放在这次读取 attempt 的 `attempt.cache` 里，新的 attempt 空）；关系目标每个目标批读一次；注记索引加头、指针的批读是每目标 3 次、两个目标 6 次。`userReasonFacts` 用和守卫同一份事实，每个头只取自己的目标；`skipCandidates` 时不再建候选。写、书记处置、卡落实各自新建缓存（返工 3 第 1 项，复审第 6 项，快速核对第 1 项）。
+
+5. **“请知悉”（U9、§11.1 第 8 条；答复第 6、7、8 条，实现审查第 7 条，M3）：**
+   - **哪些版本是通知：** `NoteVersion` 多 `noticeClass: 'user_affected' | 'structural' | 'scribe_result' | null`；旧版本缺字段是 null。写的人写版本时定：用户写的或确认过的注记被改写、取代或撤下，做的人不是用户 → `user_affected`；agent 的结构性普通注记被收下 → `structural`（普通接受也算，N2 的读法）；书记的其他处置（收下、拒绝、撤下、取代、并存、合并）→ `scribe_result`。只有 agent 做的改动才可能是通知。`review` 不是通知；`write` 只有一种是：agent 写的结构性普通注记直接写成 `accepted` 时算 `structural`（`note-machine.ts` 的 `noticeClassOf`）。几个都适用时 `user_affected` > `structural` > `scribe_result`。
+   - **读：** `NoteVersion` 上一条按 `since` 排的顺序查找，路径 `['ref.projectId', 'noticeClass']`；每个类别从保存的已读位置读；只读本工作区的目标，不挂目标的版本到 7D2 才发。类别 `note_review`，位置 `{ kind: 'commit', cursor: since, itemKey: <版本 ref 键> }`，`itemKey` 前缀 `note_review:`。
+   - **文字：** `注记 · <动作> · <renderNoteHeader(version)>`，动作按 `change.kind` 是写入、收下、拒绝、撤下、取代、并存、合并（`review` 写审阅）；折叠行是 `书记整理 · <n> 条注记`。`NoticeItemV1` 多 `noteClass`，折叠行多可选的 `members`。
+   - **分组：** 一个纯函数 `views/notice-grouping.ts`，原始项加策略 → 显示项，每项带成员身份和位置。4C 的策略：`user_affected`、`structural` 各自一行；`scribe_result` 按目标折成一行，位置取最新成员；别的类别原样过。
+   - **`seenThrough` 算上前面页（M3）：** 一个类别的 `seenThrough` 是“到这个位置为止的每个成员都显示过”的最高成员位置；显示过的是这次读取里已经翻过的页（`previousLines`）加这一页显示的行，不是只看这一页。折叠行显示它的全部成员；没折叠的类别和以前一样。N3 只有按这个读法才成立，没有代码改动（答复第 8 条，返工 1 第 12 项，M3）。
+   - **没有展开：** 折叠成员逐个 push，不用 `list.push(...members)`（实现审查第 7 条，返工 1 第 7 项）。
+
+6. **书记待办和原因（§11.6、§11.7；返工 4 第 1、2 项，裁定 A、B；测量核对第 1、2 项）：**
+   - **书记待办改用 `userReasonFacts`：** `note-scribe-todos.ts` 不再经 `deps.check.checkHeads` 读关系目标，改调注记服务里和卡源、守卫同一个 `userReasonFacts`，把共用读者已经读过的计划窗口传进去，`readThrough` 原样带上；关系目标只为要计数的待审桶读（已取消的目标不贡献）。`check` 依赖、`targetAnchorKeys`、没有别的调用方的 `understandingTriggers` 都删掉。§13 第 2 条的“书记待办的读”一项由这条替换：关系目标里的理解锚点不再并进“该更新”那一次读，读到的也不交给核对；“该更新”的触发仍照 §13 第 2 条其余各项，每个目标读一次。
+   - **裁定 A（`symbol_missing` 是文件原因）：** 主锚点的非文件退役原因是 `task_ended`、`module_removed`、`interface_removed`、`stage_not_in_current_plan`；`file_deleted` 和 `symbol_missing` 是文件原因。旧的待办把除 `file_deleted` 以外的原因都当非文件，B 段统一到这条。
+   - **裁定 B（同一项目的另一个工作区）：** 在原因事实这条路径上，目标在同一个项目的另一个工作区时，按那个目标的计划窗口算，不直接 `forbidden`；目标在另一个项目仍 `forbidden`。写路径的工作区校验不变。
+
+7. **读取上界和 2 万条注记的实测（§11.7；返工 4 第 3、4 项，测量核实 Item 4）：**
+   - **第 910、912 行改措辞（本稿 912、914 行）：** “找”第一页和 Goal 卡的项目部分是**项目锚点集合一次**（5 个槽，和核对、有联系的集合共用），不是“项目锚点一次扫描”。扫描次数是 `Σ max(1, ⌈n_s/200⌉)`，`n_s` 是第 s 个槽里的头数；这份数据是 456、0、0、0、0，所以 3+1+1+1+1 = 7 次。`selectProjectHeader` 收下调用方的 `anchorSets`，有就用，没有才读并存入；`buildFindPage` 和 `readMemoryMaterial` 都传自己的那一份。
+   - **任务目标的计划窗口：** 原因事实这条路加 `goalPlanWindow` 钩子（只在这条路上设），`readAnchorGoalFacts` 用它，不再逐目标读 Goal、Goal、PlanRevision；窗口 `not_found` 时读一次 Goal，分清目标不存在和计划悬空。写路径不变（返工 4 第 2 项）。
+   - **心跳：** `readScribeTodos` 在 101 个目标上 2,254 次调用 → 627 次（预算 610 + 15 次阶段计划查找 + 2 次目录），约 0.85 秒 → 0.19 秒。
+   - **Goal 卡：** 记忆材料 43 → 36 次调用。
+   - **“找”第一页：** 不分段 209 → 202 次，分段 222 → 215 次；约 126–200 毫秒，仍在 100 毫秒的尺子之上。`lookup`、`stale` 在尺子内。
+   - **为什么“找”第一页还超（尺子）：** §11.7 第 918 行（本稿 920 行）的尺子是**分段**的“找”第一页。215 次里只有 46 次是本节新加的读法；169 次是 4A/4B 原有的核对推导，§11.7 算“没改的读法”：每项算 `conflicting` 要读它每个锚点的整组注记（21 个锚点 × 5 个槽 = 105 次），每个涉及的目标读 4 个状态桶只为数个数（11 个目标 44 次），第 5 类提示每个 Run 读 Run 和计划（10 个 Run 20 次）。这些是 L22 要求每项都有的字段，不是重复读。共用项目集合以后，同一次调用里每组锚点、每个桶、每个计划窗口、每个 Run 都只读一次；决定 70 第二轮只能把写后提示并成 2 次，省 3–5 毫秒。要降到 100 毫秒以下得改读法的形状（数配额不解码、只含现行注记的锚点索引、文件观察并行），要改 4A/4B 的读法和存储接口，不在 4C-2 做，4C 合入后补审注记部分时一起定（决定 70“定的”第 4 条说的那次补审；测量核实 Item 4）。
+
+8. **测试（§11.8、§13 第 4 条；实现审查第 8、9 条，返工 1 第 8、10、11 项，返工 2 第 2、3 项，返工 3 第 3 项）：**
+   - **2C-26 的墙上时钟：** `tests/scenarios/S2C-K-legacy-provenance.test.ts` 每个用例开头把 `Date` 固定到 `HOST_NOW`（`vi.useFakeTimers({ toFake: ['Date'] })`、`vi.setSystemTime`），结束时恢复；三个用例都过；把时钟在“重排”和“建 C”之间往回拨 1.7 秒的探针也过，不改产品代码（返工 1 第 11 项）。
+   - **经所有者测：** N1–N3、D 行用真实写入、书记处置和答复造数据，从 `queryDecisionQueue`、`readDecisionCard`、`resolveDecision` 和注记路由断言；一个夹具跑内存和 SQLite，不用 `vi.spyOn`，注记号确定。读失败这类故障注入照 §13 第 4 条允许；伪造的记录只有 U3 的伪造证明一处，它测的就是解码器拒绝伪造。
+   - **期望值是字面量：** 卡键、卡头标签用手写的 JCS 字面量，不调生产的 `decisionSourceKey`、`renderNoteHeader`（返工 2 第 3 项，返工 3 第 3 项）。
+   - **F06 是 2：** B 段注册 `note_review` 后，缺源提示 0 + `message_release` 1 + 目标理解该更新 1 = 2；三处 `toContain` → `not.toContain` 是对的（实现审查第 9 条，返工 1 第 10 项）。
+   - **接受的测试取舍：** U7 迁到共享夹具、没有生产 RED，接受；删掉的 `S4C2-note-decision-source.test.ts` 的每个案例都有公开行覆盖；`createCollectionCardSource` 的可选 `readGoal?` 接受；D-09 的合法无目标种子只有项目理解，接受。
+
+9. **行数：** B 段生产代码对 lead 分支 24 个文件，+1,946/−357（净增约 1,589 行）；各轮是施工 +1,462/−119，返工 1 +502/−389，返工 2 +93/−21，返工 3 +56/−14，返工 4 +137/−118（逐轮相加多出的是前一轮加、后一轮又删的行）。§11.9 估 4C-2 约 1,400 行；A、B 两段合计 +3,890/−472，也超过 §13 第 5 条记的 Codex 估计（整个 4C-2 1,750–2,550 行）。多出来的是卡、处置核心、通用卡源和按键读、通知和分组、2 万条注记的读取修复。测试 30 个文件 +4,132/−31。
+
+10. **还没做的：**
+   - K3 第 4 组的 session B1：加它的第二行解码、落实适配器和卡源登记；B 段只留出登记位，没有加 K3 的行。
+   - 启动时补落实答过的卡（书 §2 第 7 项）；三个手写的卡源迁到通用卡源（清理 C1）；不挂目标的通知（7D2）；查询类调用的记忆分支（6A、7D2）。
+   - 用真实模型重跑。
