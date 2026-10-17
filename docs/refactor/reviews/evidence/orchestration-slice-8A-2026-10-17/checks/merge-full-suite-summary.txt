@@ -1,0 +1,16 @@
+8A merge full suite (WSL, bwrap via CODING_AGENT_BWRAP_PATH, systemd user session, vitest --maxWorkers=5, scope MemoryMax 6G)
+
+Run 1 — merged tree d3ab439d + base..s8a-d (after rework 3), 2026-10-17 06:51
+  Test Files  1 failed | 509 passed (510)
+  Tests       1 failed | 8021 passed | 5 skipped (8027)
+  Duration    2348.45 s (a DSH build ran at the same time)
+  Failed: tests/composition/A1-graph-session-platform.test.ts ~289 — the catalog revision's write result had since: null, the read had the bound cursor → rework 4
+  typecheck 0, check:architecture 0, build 0
+
+Run 2 — merged tree d3ab439d + base..s8a-e (after rework 4; this patch was merged), 2026-10-17 07:33
+  Test Files  510 passed (510)
+  Tests       8024 passed | 5 skipped (8029)
+  Duration    2297.90 s
+  Memory peak 5,025,787,904 bytes (scope limit 6 GB)
+  typecheck 0, check:architecture 0, build 0
+  Worktree check: the 51 changed files hash-identical to the tested tree.
