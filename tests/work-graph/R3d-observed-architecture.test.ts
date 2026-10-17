@@ -47,13 +47,18 @@ describe.each(['memory', 'sqlite'] as const)('R3d observed architecture %s', kin
         await fx.workspaceTools.releaseCapture(context, live.value.ref);
         expect(fileGraph.status).toBe('ready');
         if (fileGraph.status !== 'ready') return;
-        // Every readable file is one node with its counted nonBlankLines and
-        // language, and only resolved imports become edges (the `./missing`
-        // import stays unresolved, never an edge).
+        // Every readable file is one full §10 item 2 node: path, content digest,
+        // UTF-8 byte size, language, counted nonBlankLines and whether the scan
+        // walked it; only resolved imports become edges (the `./missing` import
+        // stays unresolved, never an edge). Public pages project this down to
+        // path/language/nonBlankLines.
         expect(fileGraph.value.nodes).toEqual([
-          { path: 'src/alpha.ts', nonBlankLines: 3, language: 'typescript' },
-          { path: 'src/beta.ts', nonBlankLines: 2, language: 'typescript' },
-          { path: 'tsconfig.json', nonBlankLines: 1, language: 'other' },
+          { path: 'src/alpha.ts', digest: 'b9e500f5e43470bca852fdb68c0b8b61cec658bc376cdea1c419d29de3b83931',
+            byteSize: 119, language: 'typescript', nonBlankLines: 3, indexed: true },
+          { path: 'src/beta.ts', digest: 'bf4c77857da21e01bb5a8dcff386c6bf309e0894a0494a5b82a85605f7c1cf1d',
+            byteSize: 76, language: 'typescript', nonBlankLines: 2, indexed: true },
+          { path: 'tsconfig.json', digest: '4d69d4d80d35624a03432cdc06637c701e03ab0ee5f251cb7441e1b1c45bab55',
+            byteSize: 107, language: 'other', nonBlankLines: 1, indexed: false },
         ]);
         expect(fileGraph.value.edges).toEqual([
           { from: 'src/alpha.ts', to: 'src/beta.ts' },

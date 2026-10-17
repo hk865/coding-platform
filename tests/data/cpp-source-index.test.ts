@@ -28,6 +28,27 @@ async function fixture() {
   return { root, ws, config, index: new CppSourceIndex(sourceAccess), sourceAccess, setCommit: (value: string) => { commit = value; } };
 }
 
+it('S8D-CPP-04 refuses an old import page under changed material and returns the new snapshot fresh', async () => {
+  const { root, index } = await fixture();
+  const first = await index.query({ operation: 'imports', limit: 1 });
+  expect(first, JSON.stringify(first)).toMatchObject({ status: 'sourced', totalResults: 2, nextOffset: 1 });
+  if (first.status !== 'sourced') throw Error(JSON.stringify(first));
+  await writeFile(join(root, 'include/added.hpp'), '#pragma once\nint added();\n');
+  await writeFile(join(root, 'src/main.cpp'), '#include "math.hpp"\n#include "added.hpp"\nint main() { return pick(1); }\n');
+  const stale = await index.query({ operation: 'imports', offset: 1, limit: 1, expectedSnapshot: first.snapshot });
+  expect(stale, JSON.stringify(stale)).toMatchObject({ status: 'stale', snapshot: expect.any(String), message: expect.stringContaining('changed') });
+  if (stale.status !== 'stale') throw Error(JSON.stringify(stale));
+  expect(stale.snapshot).not.toBe(first.snapshot);
+  const fresh = await index.query({ operation: 'imports' });
+  expect(fresh, JSON.stringify(fresh)).toMatchObject({
+    status: 'sourced',
+    snapshot: stale.snapshot,
+    results: expect.arrayContaining([expect.objectContaining({ path: 'src/main.cpp', targets: expect.arrayContaining([expect.objectContaining({ path: 'include/added.hpp' })]) })]),
+  });
+  if (fresh.status !== 'sourced') throw Error(JSON.stringify(fresh));
+  expect(fresh.snapshot).not.toBe(first.snapshot);
+}, 60000);
+
 it('uses actual libclang and compile configuration to resolve headers, overloads and project references', async () => {
   const { index } = await fixture();
   const result = await index.query({ operation: 'definitions', path: 'src/main.cpp', line: 2, column: 22 });

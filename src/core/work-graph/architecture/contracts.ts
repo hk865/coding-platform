@@ -2,8 +2,8 @@
 import type { ArtifactRef } from '../../../contracts/artifact.js';
 import type { ArchitectureCatalogPinV1 } from '../../../contracts/architecture-catalog.js';
 import type { ArchitectureSourceMapping } from '../../../contracts/architecture-source.js';
-import type { CodeGraphEdge, CodeGraphNode, FileGraphPageV1, FormalObservedComparisonV1,
-  LanguageCoverageV1, ObservedCaptureRef } from '../../../contracts/architecture-inspection.js';
+import type { CodeGraphEdge, CodeGraphNode, FileGraphNodeV1, FileGraphPageV1, FormalObservedComparisonV1,
+  LanguageCoverageV1, ObservedCaptureRef, ObservationInventoryV1 } from '../../../contracts/architecture-inspection.js';
 import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { CommandMeta, WorkspaceScope } from '../../../contracts/core/identity.js';
@@ -20,23 +20,52 @@ export type WorkspaceArchitectureObservationCurrentRef = {
   aggregateType: 'WorkspaceArchitectureObservationCurrent'; projectId: string; workspaceId: string;
 };
 /**
- * 8A file-level chunk manifest (spec L12; lead answer 1). One chunk per artifact;
- * `nodeCount`/`edgeCount` are the totals across the chunks. `unresolved` is stored
- * here because the chunk body carries only nodes and edges, and the formal-vs-
- * observed comparison still needs the provider's unresolved imports.
+ * §10 item 6 manifest: the record keeps only the counts; the unresolved entries
+ * themselves live in the chunks. `schemaVersion: 2` is the only current shape
+ * (decision 79: a manifest without the key is an earlier format and is rejected).
  */
-export type ObservedFileGraphManifestV1 = {
+export type ObservedFileGraphManifestV2 = {
+  schemaVersion: 2;
   chunks: ArtifactRef[];
   nodeCount: number;
   edgeCount: number;
-  unresolved: { from: string; specifier: string }[];
+  unresolvedCount: number;
+};
+export type ObservedFileGraphManifest = ObservedFileGraphManifestV2;
+/** One unresolved file-layer reference, with its provider reason (spec §11.5). */
+export type ObservedFileGraphUnresolvedV1 = {
+  from: string;
+  specifier: string;
+  reason: string | null;
+};
+/**
+ * §10 item 6 v2 chunk body. Node order is the one global path-sorted table; an
+ * edge `[i, j]` indexes that table and may point across chunks.
+ */
+export type ObservedFileGraphChunkV2 = {
+  schemaVersion: 2;
+  nodes: FileGraphNodeV1[];
+  edges: [number, number][];
+  unresolved: ObservedFileGraphUnresolvedV1[];
+};
+/**
+ * §10 item 2 v2 body summary: counts only. `files` is the capture's exported
+ * project-input count (not the all-language node count); `languages` carries the
+ * per-language file counts and `changes` the three change counts.
+ */
+export type ObservedSummaryV2 = {
+  files: number;
+  languages: { language: string; files: number }[];
+  changes: { added: number; modified: number; deleted: number };
 };
 export type ObservedArchitectureRecord = {
   ref: ObservedArchitectureRef; revision: 1; schemaVersion: 1;
   source: PersistedSourceCaptureRef; observedAt: string;
-  /** Absent/null on a record written before 8A; such a read reports `not_captured`. */
-  fileGraph?: ObservedFileGraphManifestV1 | null;
-  languages?: LanguageCoverageV1[];
+  /** The file layer and coverage are part of the current format: a record that
+   * lacks any of them is unreadable, never a migrated/empty observation. */
+  fileGraph: ObservedFileGraphManifest;
+  languages: LanguageCoverageV1[];
+  inventory: ObservationInventoryV1;
 };
 export type WorkspaceArchitectureObservationCurrentRecord = {
   ref: WorkspaceArchitectureObservationCurrentRef; revision: number; schemaVersion: 1;

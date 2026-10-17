@@ -12,19 +12,20 @@
  * - `nextCursor` binds the capture ref AND the query identity; a cursor used with
  *   another capture or query is `cursor_mismatch`.
  */
-import type { FileGraphNodeV1, ObservedCaptureRef } from '../../../contracts/architecture-inspection.js';
+import type { FileGraphPageNodeV1, ObservedCaptureRef } from '../../../contracts/architecture-inspection.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 
-/** One page of the file graph (the service adds the capture ref and notCaptured flag). */
+/** One page of the file graph (the service adds the capture ref and inventory). */
 export type FileGraphPageData = {
-  nodes: FileGraphNodeV1[];
+  nodes: FileGraphPageNodeV1[];
   edges: { from: string; to: string }[];
   nextCursor: string | null;
   complete: boolean;
 };
 
+/** The explicit page projection; the full node table never reaches a page. */
 export type FileGraphData = {
-  nodes: FileGraphNodeV1[];
+  nodes: FileGraphPageNodeV1[];
   edges: { from: string; to: string }[];
 };
 
@@ -69,8 +70,8 @@ function readOffset(captureRef: ObservedCaptureRef, query: unknown, cursor: stri
 }
 
 /** Nodes sorted by workspace-relative path, de-duplicated by path. */
-function orderedNodes(graph: FileGraphData): FileGraphNodeV1[] {
-  const byPath = new Map<string, FileGraphNodeV1>();
+function orderedNodes(graph: FileGraphData): FileGraphPageNodeV1[] {
+  const byPath = new Map<string, FileGraphPageNodeV1>();
   for (const node of graph.nodes) if (!byPath.has(node.path)) byPath.set(node.path, node);
   return [...byPath.values()].sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
 }
@@ -86,7 +87,7 @@ function orderedEdges(graph: FileGraphData): { from: string; to: string }[] {
   }
   return edges.sort((a, b) => a.from < b.from ? -1 : a.from > b.from ? 1 : a.to < b.to ? -1 : a.to > b.to ? 1 : 0);
 }
-function buildPage(graph: FileGraphData, visible: readonly FileGraphNodeV1[], offset: number, pageSize: number,
+function buildPage(graph: FileGraphData, visible: readonly FileGraphPageNodeV1[], offset: number, pageSize: number,
   captureRef: ObservedCaptureRef, query: unknown): FileGraphPageData {
   const nodes = visible.slice(offset, offset + pageSize);
   const onPage = new Set(nodes.map(node => node.path));

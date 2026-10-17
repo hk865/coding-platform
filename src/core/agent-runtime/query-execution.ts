@@ -336,6 +336,7 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
               throw new Error('the Host read policy is no longer current for this QueryRun');
             }
           },
+          ...(deps.sourceAnalyzers === undefined ? {} : { sourceAnalyzers: deps.sourceAnalyzers }),
         };
         const executionRequest = {
           runRef: { ...queryRunRef },

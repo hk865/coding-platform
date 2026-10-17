@@ -53,11 +53,11 @@
   },
   {
     "path": "scripts/cpp-source-query.py",
-    "sha256": "0e5223dc58137d14986ad1ded39c57bc90a69aa9b5640b41453de9dbac925839"
+    "sha256": "bd4b3a4ebd42a02381d737d9f981f421ab7a98dbb5bea4060fe2244b84736936"
   },
   {
     "path": "scripts/python-source-query.py",
-    "sha256": "aff8108c82c3c99359e78187cfdbb90e54143491566d68144fab0b3413f0936b"
+    "sha256": "3a3491a59d93404dbd7d471110a4a1eeaaa93014833b59c3221765e72e42d8e1"
   },
   {
     "path": "vendor/coding-agent/resources/README.md",

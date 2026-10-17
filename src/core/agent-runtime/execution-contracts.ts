@@ -223,6 +223,14 @@ export type RuntimeExecutionDependencies = {
   sourceAuthority: () => SourceSnapshotReads;
   /** Trusted workspace mount policy; absence keeps the frozen source unopened. */
   sourcePolicyFor?: (projectId: string, workspaceId: string) => Promise<SourcePolicy | null>;
+  /**
+   * L13/8D trusted analyzer resources forwarded, when a Run has a file read,
+   * to the exploration tools' Python/C++ indexes. The two timeouts are the
+   * §11.5 observation-runner limits and are ignored by the exploration tools.
+   * Absent keeps the indexes' defaults; this never comes from model arguments.
+   */
+  sourceAnalyzers?: { directory?: string; pythonPath?: string; cppLibraryPath?: string;
+    unitTimeoutMs?: number; languageTimeoutMs?: number };
   host: RuntimeHostBindings;
   kernel: typeof import('../../../vendor/coding-agent/dist/public-api.js');
   /**

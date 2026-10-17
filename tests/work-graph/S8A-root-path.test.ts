@@ -72,7 +72,7 @@ describe('S8A-02 mapArchitectureSource root ownership', () => {
       { id: 'Root', kind: 'module', paths: ['.'] },
       { id: 'A', kind: 'module', paths: ['src/a'] },
     ];
-    const graph = mapArchitectureSource(material(), SCOPE, mappings);
+    const graph = mapArchitectureSource(material(), SCOPE, mappings, 'observation');
     expect(graph.nodes.map(node => node.nodeId)).toEqual(['module:A', 'module:Root']);
     expect(graph.nodes.map(node => node.path)).toEqual(['src/a', '.']);
     const root = graph.nodes.find(node => node.nodeId === 'module:Root')!;
@@ -91,7 +91,7 @@ describe('S8A-02 mapArchitectureSource root ownership', () => {
       { id: 'R1', kind: 'module', paths: ['.'] },
       { id: 'R2', kind: 'module', paths: ['.'] },
     ];
-    const graph = mapArchitectureSource(material(), SCOPE, mappings);
+    const graph = mapArchitectureSource(material(), SCOPE, mappings, 'observation');
     expect(graph.nodes).toEqual([]);
     expect(graph.unresolved).toEqual([
       'mapping has no indexed TS/JS source: module:R1',
@@ -118,7 +118,7 @@ describe('S8A-04 graph-index resolves a file anchor through `.`', () => {
   it('S8A-04a a `.` mapping resolves src/loose.ts to the root module node', () => {
     const graph = mapArchitectureSource(
       material({ sources: [{ path: 'src/loose.ts', digest: hex('3') }] }), SCOPE,
-      [{ id: 'Root', kind: 'module', paths: ['.'] }]);
+      [{ id: 'Root', kind: 'module', paths: ['.'] }], 'observation');
     const page = buildObservedNeighborhood(graph, selection, {
       anchor: { kind: 'file', workspace: { projectId: 'p', workspaceId: 'w' }, path: 'src/loose.ts' },
       depth: 0, relations: ['dependency'], page: { limit: 10 }, sourceCursor: 'c1' as CommitCursor,
@@ -165,7 +165,7 @@ describe('S8A-04b graph-index decides ownership before dropping node-less mappin
       material({ sources: [{ path: 'src/a/a.ts', digest: hex('1') }, { path: 'src/b/x.ts', digest: hex('2') }] }),
       SCOPE,
       [{ id: 'A', kind: 'module', paths: ['src'] }, { id: 'B', kind: 'module', paths: ['src/b'] },
-        { id: 'C', kind: 'module', paths: ['src/b'] }]);
+        { id: 'C', kind: 'module', paths: ['src/b'] }], 'observation');
     expect(graph.nodes.map(n => n.nodeId)).toEqual(['module:A']);
     const page = buildObservedNeighborhood(graph, selection, {
       anchor: { kind: 'file', workspace: { projectId: 'p', workspaceId: 'w' }, path: 'src/b/x.ts' },

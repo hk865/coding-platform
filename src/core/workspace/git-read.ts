@@ -4,7 +4,7 @@ import { realpath, stat, type FileHandle } from 'node:fs/promises';
 import type { GitFileIdentity, GitWorkspaceChange, GitWorkspaceComparison, GitWorkingTreeChange, GitWorkingTreeComparison, GitWorkingTreePair, WorkspaceCaptureLimits, WorkspaceContentModeIdentity, WorkspaceError, WorkspaceFile, WorkspaceResult } from './ports.js';
 import type { WorkspaceGitReadAccess, WorkspaceReadAccess } from './access.js';
 import { MAX_COMPARISON_BYTES } from './workspace-read.js';
-import { isSafeSourcePath, ProjectSourceFailure } from './project-source-snapshot.js';
+import { OBSERVATION_INVENTORY_CAPACITY, isSafeSourcePath, ProjectSourceFailure } from './project-source-snapshot.js';
 import { captureTextSource, type TextSourceSnapshot } from './text-source-snapshot.js';
 
 /**
@@ -30,10 +30,21 @@ export const isCompleteCommitOid = (value: unknown): value is string =>
 /** Fixed bound for one NUL-separated tree listing; a tree never returns more than this. */
 export const GIT_TREE_OUTPUT_LIMIT_BYTES = 8 * 1024 * 1024;
 
+/** §10 item 1: the observation inventory enumerates at most 60,000 NUL-separated records. */
+export const GIT_PROJECT_LISTING_MAX_RECORDS = 60_000;
+/** One bounded observation listing; past this many bytes the pass is capacity, never a partial list. */
+export const GIT_PROJECT_LISTING_MAX_BYTES = 64 * 1024 * 1024;
+
 /** One Git subprocess may not outlive this; a killed child is awaited before the handle closes. */
 const GIT_PROCESS_TIMEOUT_MS = 5_000;
-/** stderr is diagnostic only and never parsed, so it is drained under a small bound. */
+/** stderr is diagnostic only; it is drained under a small bound and only a fixed prefix is kept. */
 const GIT_STDERR_LIMIT_BYTES = 64 * 1024;
+/** The retained diagnostic prefix is bounded; it never grows past this even when stderr does. */
+const GIT_STDERR_PREFIX_LIMIT_BYTES = 4096;
+/** One unusable reason is a single short line: exit status plus at most this much stderr. */
+const GIT_DIAGNOSTIC_MAX_CHARS = 200;
+/** Git's own answer for "this is not a repository"; the exit code alone is never trusted. */
+const GIT_NOT_A_REPOSITORY_DIAGNOSTIC = 'fatal: not a git repository';
 /** A repository path must stay inside the same normalized-relative representation as model paths. */
 const MAX_TREE_PATH_LENGTH = 4096;
 
@@ -79,6 +90,8 @@ const handleCwd = (handle: FileHandle): string => `/proc/${String(process.pid)}/
 type ProcessResult = {
   code: number | null;
   stdout: Buffer;
+  /** Bounded prefix of stderr, never more than GIT_STDERR_PREFIX_LIMIT_BYTES: diagnostics only. */
+  stderr: Buffer;
   stdoutOverflow: boolean;
   stderrOverflow: boolean;
   timedOut: boolean;
@@ -97,13 +110,13 @@ type ProcessRequest = {
 /**
  * Run one fixed `git` subprocess. stdout is bounded while it streams; abort, timeout or an
  * output bound kills the real child and still waits for its `close`, so the caller can release
- * the root handle only after the process actually exited. No shell, argv is never model text
- * and the classification never guesses from exit code 128 or stderr text.
+ * the root handle only after the process actually exited. No shell, argv is never model text,
+ * and stderr is only retained as a fixed-prefix diagnostic (never a whole unbounded log).
  */
 function runGitProcess(request: ProcessRequest): Promise<ProcessResult> {
   return new Promise((resolve, reject) => {
     if (request.signal.aborted) {
-      resolve({ code: null, stdout: Buffer.alloc(0), stdoutOverflow: false, stderrOverflow: false, timedOut: false, aborted: true });
+      resolve({ code: null, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0), stdoutOverflow: false, stderrOverflow: false, timedOut: false, aborted: true });
       return;
     }
     let child: ChildProcess;
@@ -114,7 +127,8 @@ function runGitProcess(request: ProcessRequest): Promise<ProcessResult> {
       });
     } catch (error) { reject(error); return; }
     const stdout: Buffer[] = [];
-    let stdoutBytes = 0, stderrBytes = 0;
+    const stderr: Buffer[] = [];
+    let stdoutBytes = 0, stderrBytes = 0, stderrRetained = 0;
     let stdoutOverflow = false, stderrOverflow = false, timedOut = false, settled = false;
     const kill = () => { try { child.kill('SIGKILL'); } catch { /* the child already exited */ } };
     const timer = setTimeout(() => { timedOut = true; kill(); }, GIT_PROCESS_TIMEOUT_MS);
@@ -136,11 +150,18 @@ function runGitProcess(request: ProcessRequest): Promise<ProcessResult> {
     });
     child.stderr?.on('data', (chunk: Buffer) => {
       stderrBytes += chunk.byteLength;
+      // Keep only the first fixed prefix; the rest is drained and discarded, so the retained
+      // diagnostic is bounded even when Git writes an unbounded amount of stderr.
+      if (stderrRetained < GIT_STDERR_PREFIX_LIMIT_BYTES) {
+        const take = Math.min(chunk.byteLength, GIT_STDERR_PREFIX_LIMIT_BYTES - stderrRetained);
+        stderr.push(chunk.subarray(0, take));
+        stderrRetained += take;
+      }
       if (stderrBytes > GIT_STDERR_LIMIT_BYTES) { stderrOverflow = true; kill(); }
     });
     child.once('error', error => finish(() => reject(error)));
     child.once('close', code => finish(() => resolve({
-      code, stdout: Buffer.concat(stdout), stdoutOverflow, stderrOverflow, timedOut, aborted: request.signal.aborted,
+      code, stdout: Buffer.concat(stdout), stderr: Buffer.concat(stderr), stdoutOverflow, stderrOverflow, timedOut, aborted: request.signal.aborted,
     })));
     if (request.stdin) {
       const stdin = child.stdin;
@@ -151,6 +172,115 @@ function runGitProcess(request: ProcessRequest): Promise<ProcessResult> {
       }
     }
   });
+}
+
+/**
+ * §10 item 1 result: expected Git conditions are values, never exceptions. `capacity` and
+ * cancellation still throw (the caller's pass must fail as a whole).
+ */
+export type GitProjectFileListing =
+  | { kind: 'listed'; paths: string[] }
+  | { kind: 'not_repository' }
+  | { kind: 'unusable'; reason: string };
+
+type WorkTreeProbe =
+  | { kind: 'work_tree' }
+  | { kind: 'not_repository' }
+  | { kind: 'unusable'; reason: string };
+
+/** Short reasons for a Git that could not even start; they surface as `git 不能用：<reason>`. */
+const gitUnusableReason = (error: unknown): string => {
+  const code = error && typeof error === 'object' && typeof (error as { code?: unknown }).code === 'string'
+    ? (error as { code: string }).code : null;
+  if (code === 'ENOENT') return '找不到 git';
+  if (code === 'EACCES') return 'git 不能执行';
+  return 'git 启动失败';
+};
+
+/** Collapse the retained stderr prefix into one short line: exit status plus a cut of stderr. */
+const gitExitReason = (result: ProcessResult): string => {
+  const detail = result.stderr.toString('utf8').replace(/\s+/g, ' ').trim();
+  const reason = '退出码 ' + String(result.code) + (detail === '' ? '' : '：' + detail);
+  return reason.length <= GIT_DIAGNOSTIC_MAX_CHARS ? reason : reason.slice(0, GIT_DIAGNOSTIC_MAX_CHARS);
+};
+
+/** The only non-zero answer that means "not a repository": Git's own documented diagnostic. */
+const isNotRepository = (result: ProcessResult): boolean =>
+  result.stderr.toString('utf8').replace(/\s+/g, ' ').includes(GIT_NOT_A_REPOSITORY_DIAGNOSTIC);
+
+/**
+ * Distinguish a clean "not a repository" from a Git we cannot use with the bounded diagnostic:
+ * a non-zero exit is `not_repository` only when Git itself says so; any other failure (for
+ * example a corrupt `.git/config`) is unusable with its exit status and a cut of stderr.
+ */
+async function probeWorkTree(cwd: string, signal: AbortSignal): Promise<WorkTreeProbe> {
+  let result: ProcessResult;
+  try { result = await runGitProcess({ cwd, args: ['rev-parse', '--is-inside-work-tree'], maxStdout: 8192, signal }); }
+  catch (error) { return { kind: 'unusable', reason: gitUnusableReason(error) }; }
+  if (result.aborted) { signal.throwIfAborted(); return { kind: 'unusable', reason: '操作已取消' }; }
+  if (result.timedOut || result.stdoutOverflow || result.stderrOverflow)
+    return { kind: 'unusable', reason: 'git 命令超时或输出过大' };
+  if (result.code === 0) {
+    const text = result.stdout.toString('utf8').trim();
+    if (text === 'true') return { kind: 'work_tree' };
+    if (text === 'false') return { kind: 'not_repository' };
+    return { kind: 'unusable', reason: 'git 返回了意外的结果' };
+  }
+  if (isNotRepository(result)) return { kind: 'not_repository' };
+  return { kind: 'unusable', reason: gitExitReason(result) };
+}
+
+/** Count complete NUL-terminated records; a record cut by the byte bound is not counted. */
+const countNulRecords = (buffer: Buffer): number => {
+  let count = 0;
+  for (const byte of buffer) if (byte === 0) count += 1;
+  return count;
+};
+
+/**
+ * §10 item 1 capacity wording: a complete listing reports the count actually reached, while a
+ * byte-cut listing reports only the complete NUL records read so far as `at least n`.
+ */
+export function formatProjectListingCapacity(count: number, truncated: boolean): string {
+  return OBSERVATION_INVENTORY_CAPACITY + (truncated ? ' (at least ' : ' (reached ') + String(count) + ')';
+}
+
+const capacityListing = (count: number, truncated: boolean): never => {
+  throw new ProjectSourceFailure('capacity', formatProjectListingCapacity(count, truncated));
+};
+
+/** Decode one bounded NUL list, applying the record cap before the caller's own path filters. */
+function decodeProjectListing(buffer: Buffer, signal: AbortSignal): string[] {
+  const count = countNulRecords(buffer);
+  if (count > GIT_PROJECT_LISTING_MAX_RECORDS) capacityListing(count, false);
+  signal.throwIfAborted();
+  let text: string;
+  try { text = new TextDecoder('utf-8', { fatal: true }).decode(buffer); }
+  catch { throw new ProjectSourceFailure('unsupported', 'the repository contains a path that is not valid UTF-8'); }
+  return text.split('\0').filter(record => record.length > 0);
+}
+
+/** Run one fixed inventory command at the trusted root handle and classify Git conditions. */
+async function runProjectListing(
+  handle: FileHandle, args: readonly string[], signal: AbortSignal,
+): Promise<GitProjectFileListing> {
+  const cwd = handleCwd(handle);
+  const probe = await probeWorkTree(cwd, signal);
+  if (probe.kind !== 'work_tree') return probe;
+  let result: ProcessResult;
+  try {
+    result = await runGitProcess({ cwd, args, maxStdout: GIT_PROJECT_LISTING_MAX_BYTES, signal });
+  } catch (error) { return { kind: 'unusable', reason: gitUnusableReason(error) }; }
+  if (result.aborted) { signal.throwIfAborted(); return { kind: 'not_repository' }; }
+  if (result.timedOut || result.stderrOverflow) return { kind: 'unusable', reason: 'git 命令超时或输出过大' };
+  // A byte-cut listing reports the complete records actually read; only a listing that ended
+  // normally reports the true count (the record cap is applied in decodeProjectListing).
+  if (result.stdoutOverflow) capacityListing(countNulRecords(result.stdout), true);
+  if (result.code !== 0) {
+    if (isNotRepository(result)) return { kind: 'not_repository' };
+    return { kind: 'unusable', reason: gitExitReason(result) };
+  }
+  return { kind: 'listed', paths: decodeProjectListing(result.stdout, signal) };
 }
 
 type RepositoryContext = { cwd: string; objectFormat: 'sha1' | 'sha256' };
@@ -341,6 +471,28 @@ export function createWorkspaceGitReadAccess(binding: WorkspaceGitReadBinding): 
           files.push({ path: entry.path, objectId: entry.objectId, mode: entry.mode });
         }
         return { status: 'ready', value: { commit: input.commit, files } };
+      } finally { await closeHandle(handle); }
+    },
+    async listProjectFiles() {
+      binding.live();
+      const handle = await binding.acquireRootHandle();
+      try {
+        binding.signal.throwIfAborted();
+        // Deliberately no openRepository: the workspace root may be a subdirectory of the
+        // repository, and paths must stay relative to this authorized root.
+        return await runProjectListing(handle, ['ls-files', '--cached', '--others', '--exclude-standard', '-z'], binding.signal);
+      } finally { await closeHandle(handle); }
+    },
+    async listIgnoredCompileDatabases() {
+      binding.live();
+      const handle = await binding.acquireRootHandle();
+      try {
+        binding.signal.throwIfAborted();
+        // The fixed global `--literal-pathspecs` would disable the `:(glob)` magic, so this one
+        // invocation re-enables pathspec semantics; no `--directory`, a directory would hide
+        // the database files under it.
+        return await runProjectListing(handle, ['--no-literal-pathspecs', 'ls-files', '--others', '--ignored',
+          '--exclude-standard', '-z', '--', ':(glob)**/compile_commands.json'], binding.signal);
       } finally { await closeHandle(handle); }
     },
   };

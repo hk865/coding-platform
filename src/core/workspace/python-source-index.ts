@@ -12,23 +12,27 @@ const dependency = (p: string) => /^(?:requirements[^/]*\.txt|(?:poetry|uv|Pipfi
 const ignored = (p: string) => p.split('/').some(s => ['.git', '.evaluator', '.oracle', 'hidden-tests', '.platform-runtime', '.venv', '__pycache__', 'node_modules'].includes(s));
 type Material = { path: string; content: string; digest: string; kind: 'source' | 'configuration' | 'dependency_manifest' };
 type PythonResult = { status: 'sourced'; engine: string; engineVersion: string; results: Array<Record<string, unknown>>; diagnostics: Array<Record<string, unknown>>; coverage: Record<string, unknown> } | { status: 'unsupported' | 'rejected'; message: string };
+export type PythonSourceIndexOptions = { pythonPath?: string; analyzersDirectory?: string };
 
 export class PythonSourceIndex {
   private previous = new Map<string, Material>();
   private snapshot: string | undefined;
   private generation = 0;
   private readonly responses = new Map<string, PythonResult>();
-  constructor(private readonly access: ProjectSourceAccess) {}
+  private readonly analyzersDirectory: string;
+  private readonly pythonPath: string;
+  constructor(private readonly access: ProjectSourceAccess, options: PythonSourceIndexOptions = {}) {
+    this.pythonPath = options.pythonPath ?? '/usr/bin/python3';
+    this.analyzersDirectory = options.analyzersDirectory ?? resolve(import.meta.dirname, '../../../.local/source-analyzers');
+  }
   dispose() { this.responses.clear(); this.previous.clear(); this.snapshot = undefined; }
   private async capture(signal: AbortSignal) {
     const identity = await this.access.sourceIdentity(), inventory = await this.access.inventory(signal);
     if (inventory.truncated) throw Error('project inventory incomplete');
-    const [script, archive, expectedArchive, manifest] = await Promise.all([
-      readFile(resolve(import.meta.dirname, '../../../scripts/python-source-query.py')),
-      readFile(resolve(import.meta.dirname, '../../../.local/source-analyzers/analyzers.zip')),
-      readFile(resolve(import.meta.dirname, '../../../.local/source-analyzers/analyzers.sha256'), 'utf8'),
-      readFile(resolve(import.meta.dirname, '../../../.local/source-analyzers/manifest.json')),
-    ]);
+    const script = await readFile(resolve(import.meta.dirname, '../../../scripts/python-source-query.py'));
+    const archive = await readFile(resolve(this.analyzersDirectory, 'analyzers.zip'));
+    const expectedArchive = (await readFile(resolve(this.analyzersDirectory, 'analyzers.sha256'))).toString('utf8');
+    const manifest = await readFile(resolve(this.analyzersDirectory, 'manifest.json'));
     const toolchain = { scriptDigest: hash(script), dependencyArchiveDigest: hash(archive), dependencyManifestDigest: hash(manifest) };
     if (toolchain.dependencyArchiveDigest !== expectedArchive.trim()) throw Error('Python analyzer dependency archive integrity mismatch');
     const files: Material[] = [];
@@ -72,7 +76,7 @@ export class PythonSourceIndex {
       const semanticQuery = { operation: query.operation, path: query.path, prefix: query.prefix, configPath: query.configPath, line: query.line, column: query.column };
       const key = JSON.stringify([captured.snapshot, semanticQuery]), cached = structuredClone(this.responses.get(key));
       const response = cached ?? await new Promise<PythonResult>((resolveResult, reject) => {
-        const child = execFile('/usr/bin/python3', ['-I', resolve(import.meta.dirname, '../../../scripts/python-source-query.py')], { timeout: 60000, maxBuffer: 4 * 1024 * 1024, signal, windowsHide: true }, (error, stdout) => {
+        const child = execFile(this.pythonPath, ['-I', '-S', resolve(import.meta.dirname, '../../../scripts/python-source-query.py'), this.analyzersDirectory], { timeout: 60000, maxBuffer: 4 * 1024 * 1024, signal, windowsHide: true }, (error, stdout) => {
           if (error) reject(Error('Python analyzer failed or exceeded capacity: ' + error.message));
           else { try { resolveResult(JSON.parse(stdout) as PythonResult); } catch { reject(Error('invalid Python analyzer response')); } }
         });
@@ -85,12 +89,14 @@ export class PythonSourceIndex {
         this.responses.set(key, structuredClone(response));
       }
       const { results, diagnostics, ...metadata } = response;
+      delete (metadata as { importCoverage?: unknown }).importCoverage;
       return { ...metadata, snapshot: captured.snapshot, provenance: { ...captured.identity, source: 'working_tree', engine: response.engine, engineVersion: response.engineVersion, toolchain: captured.toolchain },
         index: { generation: this.generation, reusedResult: !!cached, changed: changed.slice(0, 200), removed: removed.slice(0, 200), changesTruncated: changed.length > 200 || removed.length > 200 },
         results: results.slice(offset, offset + limit), nextOffset: offset + limit < results.length ? offset + limit : null, totalResults: results.length,
         diagnostics: diagnostics.slice(0, 30), diagnosticsTruncated: diagnostics.length > 30, sources: captured.files.slice(0, 200).map(({ path, digest, kind }) => ({ path, digest, kind })), sourceCount: captured.files.length, sourcesTruncated: captured.files.length > 200 };
     } catch (error) {
-      return signal.aborted ? { status: 'cancelled' as const } : { status: 'rejected' as const, message: error instanceof Error ? error.message : 'Python analysis failed' };
+      if (signal.aborted) return { status: 'cancelled' as const };
+      return { status: 'rejected' as const, message: error instanceof Error ? error.message : 'Python analysis failed' };
     }
   }
 }

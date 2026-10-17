@@ -75,10 +75,12 @@ export function compareFormalObservedGraphs(input: CompareFormalObservedGraphsIn
   }
 
   // Unresolved imports: one finding each; moduleRef is null when the file is
-  // unowned or ambiguous.
+  // unowned or ambiguous. §11.5: `reason: null` keeps the bare specifier, a
+  // provider reason appends `（<reason>）` (full-width parentheses).
   for (const entry of fileGraph.unresolved) {
     const owner = ownerOf(entry.from);
-    push({ kind: 'unresolved', moduleRef: owner ? owner.ref : null, path: entry.from, detail: entry.specifier, certainty: 'unknown' });
+    const detail = entry.reason === null ? entry.specifier : entry.specifier + '（' + entry.reason + '）';
+    push({ kind: 'unresolved', moduleRef: owner ? owner.ref : null, path: entry.from, detail, certainty: 'unknown' });
   }
 
   const dependencyPairKey = (from: ModuleRef, to: ModuleRef): string => `${refKey(from)}\u0001${refKey(to)}`;

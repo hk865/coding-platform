@@ -10,7 +10,7 @@ import { describe, expect, it } from 'vitest';
 import type { AdoptedArchitecture, ModuleDefinition } from '../../src/contracts/architecture-catalog.js';
 import type { LanguageCoverageV1 } from '../../src/contracts/architecture-inspection.js';
 import type { ModuleRef } from '../../src/contracts/core/identity.js';
-import type { ProjectFileGraphV1 } from '../../src/core/workspace/architecture-language-provider.js';
+import type { ProjectFileGraphNodeV1, ProjectFileGraphV1 } from '../../src/core/workspace/architecture-language-provider.js';
 import { compareFormalObservedGraphs } from '../../src/core/work-graph/architecture/formal-comparison.js';
 import { stronglyConnectedCycles } from '../../src/core/work-graph/architecture/architecture-delta.js';
 
@@ -24,12 +24,12 @@ const moduleDef = (moduleId: string, paths: string[]): ModuleDefinition => ({
   interfaces: [],
 });
 
-const node = (path: string, language = 'typescript'): { path: string; nonBlankLines: number; language: string } =>
-  ({ path, nonBlankLines: 1, language });
+const node = (path: string, language = 'typescript'): ProjectFileGraphNodeV1 =>
+  ({ path, digest: 'a'.repeat(64), byteSize: 1, language, nonBlankLines: 1, indexed: true });
 
 /** One coverage entry; every omitted field has the "complete and supported" default. */
 const coverage = (overrides: Partial<LanguageCoverageV1> & { language: string }): LanguageCoverageV1 => ({
-  files: 0, parsed: 0, edges: 'supported', reason: null, issues: [], issueCount: 0, complete: true, ...overrides,
+  files: 0, parsed: 0, edges: 'supported', reason: null, notes: [], issues: [], issueCount: 0, complete: true, ...overrides,
 });
 
 /** The A-02/A-02b coverage: every file of the language parsed, edges supported. */
@@ -39,6 +39,7 @@ const supportedCoverage = (files: number): LanguageCoverageV1 => ({
   parsed: files,
   edges: 'supported',
   reason: null,
+  notes: [],
   issues: [],
   issueCount: 0,
   complete: true,
@@ -50,6 +51,7 @@ const graph = (overrides: Partial<ProjectFileGraphV1> = {}): ProjectFileGraphV1 
   unresolved: [],
   languages: [supportedCoverage(overrides.nodes?.length ?? 0)],
   complete: true,
+  inventory: { source: 'skip_list', reason: '不是 git 仓库' },
   ...overrides,
 });
 
@@ -82,7 +84,7 @@ describe('S8A-formal-comparison A-02', () => {
         node('src/dup/one.ts'),
       ],
       edges: [{ from: 'src/c/one.ts', to: 'src/d/one.ts' }],
-      unresolved: [{ from: 'src/a/broken.ts', specifier: 'src/nowhere.ts' }],
+      unresolved: [{ from: 'src/a/broken.ts', specifier: 'src/nowhere.ts', reason: null }],
     });
 
     expect(compareFormalObservedGraphs({ architecture, fileGraph })).toEqual([
@@ -314,7 +316,7 @@ describe('S8A-formal-comparison unknown reach', () => {
       dependencies: [{ from: ref('X'), to: ref('Z'), reason: 'x' }],
       requireDag: true,
     };
-    const readings = (tiedFile: { path: string; nonBlankLines: number; language: string }) => graph({
+    const readings = (tiedFile: ProjectFileGraphNodeV1) => graph({
       nodes: [tiedFile, node('src/z/lib.ts')],
       edges: [],
       languages: [

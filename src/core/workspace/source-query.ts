@@ -105,6 +105,11 @@ async function completeHits(registry: CaptureRegistry, entry: CaptureEntry, quer
   } else {
     if (entry.material.provider !== 'typescript') return rejected('unsupported', 'the text provider has no semantic analyzer; use paths or text queries');
     const material = entry.material;
+    // §11.1: an observation capture has a light scan only; semantic queries (imports
+    // included) are unsupported rather than silently empty.
+    if (material.observed !== undefined || material.analyzer === null)
+      return rejected('unsupported', 'the observation capture has no semantic analyzer; use paths or text queries');
+    const analyzer = material.analyzer;
     if (query.kind === 'imports') {
       // The capture already analysed every import once; pages only filter that frozen result.
       hits = entry.relations.filter(relation => inScope(relation.from.path, query.path, query.prefix)).map(relation => ({ kind: 'relation', relation }));
@@ -129,7 +134,7 @@ async function completeHits(registry: CaptureRegistry, entry: CaptureEntry, quer
         return rejected('unsupported', query.kind + ' queries are not implemented in this batch');
     }
     try {
-      hits = material.analyzer.analyze(material.snapshot, analysisQuery, signal,
+      hits = analyzer.analyze(material.snapshot, analysisQuery, signal,
         { maxResults: limits.maxQueryResults, maxDiagnostics: 30 }).results.map(toHit);
     } catch (error) {
       if (signal.aborted) return rejected('cancelled', 'query cancelled');

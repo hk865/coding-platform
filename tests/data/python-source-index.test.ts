@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from 'vitest';
-import { mkdtemp, writeFile, mkdir, rm, access, readFile } from 'node:fs/promises';
+import { mkdtemp, writeFile, mkdir, rm, access, readFile, chmod, symlink } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -14,7 +14,8 @@ async function fixture() {
   await writeFile(join(root, 'pkg/b.py'), 'from .a import chosen as local\nlocal()\n');
   const ws = await WorkspaceSandbox.create(root, { deniedPrefixes: ['private'] });
   let commit = 'a'.repeat(40);
-  return { root, setCommit: (value: string) => { commit = value; }, index: new PythonSourceIndex({ read: (p, n) => ws.read(p, n), allowed: p => !p.startsWith('private'), inventory: signal => ws.listFiles(10000, { signal }), sourceIdentity: async () => ({ workspace: ws.identity, commit }) }) };
+  const access = { read: (p: string, n: number) => ws.read(p, n), allowed: (p: string) => !p.startsWith('private'), inventory: (signal: AbortSignal) => ws.listFiles(10000, { signal }), sourceIdentity: async () => ({ workspace: ws.identity, commit }) };
+  return { root, setCommit: (value: string) => { commit = value; }, access, index: new PythonSourceIndex(access) };
 }
 it('resolves Python aliases across project files without executing source and invalidates dirty code', async () => {
   const { root, index } = await fixture();
@@ -172,6 +173,66 @@ it('keeps module file anchors distinct from declarations and isolates cached res
   expect(await index.query({ operation: 'definitions', path: 'nested/client.py', line: 2, column: 2, configPath: 'nested/pyrightconfig.json' })).toMatchObject({
     status: 'sourced', coverage: { importRoots: ['nested', 'nested/src'] }, results: [expect.objectContaining({ path: 'nested/src/inner/api.py' })],
   });
+}, 60000);
+
+it('S8D-PY-02 pages imports across expectedSnapshot and reuses the parsed result', async () => {
+  const { root, index } = await fixture();
+  await rm(join(root, 'pkg'), { recursive: true, force: true });
+  await writeFile(join(root, 'many.py'), Array.from({ length: 201 }, () => 'import g').join('\n') + '\n');
+  await writeFile(join(root, 'g.py'), 'x = 1\n');
+  const first = await index.query({ operation: 'imports', offset: 0, limit: 100 });
+  expect(first, JSON.stringify(first)).toMatchObject({ status: 'sourced', totalResults: 201, nextOffset: 100, index: { reusedResult: false } });
+  if (first.status !== 'sourced') throw Error(JSON.stringify(first));
+  expect(first.results).toHaveLength(100);
+  const snapshot = first.snapshot;
+  const second = await index.query({ operation: 'imports', offset: 100, limit: 100, expectedSnapshot: snapshot });
+  expect(second, JSON.stringify(second)).toMatchObject({ status: 'sourced', snapshot, totalResults: 201, nextOffset: 200, index: { reusedResult: true } });
+  if (second.status !== 'sourced') throw Error(JSON.stringify(second));
+  expect(second.results).toHaveLength(100);
+  const third = await index.query({ operation: 'imports', offset: 200, limit: 100, expectedSnapshot: snapshot });
+  expect(third, JSON.stringify(third)).toMatchObject({ status: 'sourced', snapshot, totalResults: 201, nextOffset: null });
+  if (third.status !== 'sourced') throw Error(JSON.stringify(third));
+  expect(third.results).toHaveLength(1);
+  await writeFile(join(root, 'g.py'), 'x = 2\n');
+  expect(await index.query({ operation: 'imports', offset: 100, limit: 100, expectedSnapshot: snapshot })).toMatchObject({ status: 'stale' });
+}, 60000);
+
+it('rejects a missing analyzers directory instead of reporting unsupported', async () => {
+  const { root, access } = await fixture();
+  const directory = join(root, 'analyzers-missing');
+  await mkdir(directory);
+  const missing = new PythonSourceIndex(access, { analyzersDirectory: directory });
+  const result = await missing.query({ operation: 'imports' });
+  expect(result, JSON.stringify(result)).toMatchObject({ status: 'rejected' });
+  if (result.status !== 'rejected') throw Error(JSON.stringify(result));
+  expect(result.message).toContain(directory);
+  expect(result.message).toContain(join(directory, 'analyzers.zip'));
+}, 60000);
+
+it('S8D-PY-04 injects the python path into the analyzer process', async () => {
+  const { access } = await fixture();
+  const index = new PythonSourceIndex(access, { pythonPath: '/no-such-python3' });
+  const result = await index.query({ operation: 'imports' });
+  expect(result, JSON.stringify(result)).toMatchObject({ status: 'rejected' });
+  if (result.status !== 'rejected') throw Error(JSON.stringify(result));
+  expect(result.message).toContain('/no-such-python3');
+}, 60000);
+
+it('passes -S and the analyzers directory as the first script argument', async () => {
+  const { root, access } = await fixture();
+  const analyzers = join(root, 'analyzers');
+  await mkdir(analyzers);
+  const source = new URL('../../.local/source-analyzers/', import.meta.url);
+  for (const name of ['analyzers.zip', 'analyzers.sha256', 'manifest.json']) await symlink(new URL(name, source), join(analyzers, name));
+  const recorded = join(root, 'argv.txt');
+  const wrapper = join(root, 'python-wrapper');
+  await writeFile(wrapper, `#!/bin/sh\nprintf '%s\\n' "$@" >> '${recorded}'\nexec /usr/bin/python3 "$@"\n`);
+  await chmod(wrapper, 0o755);
+  const index = new PythonSourceIndex(access, { pythonPath: wrapper, analyzersDirectory: analyzers });
+  expect(await index.query({ operation: 'symbols', path: 'pkg/a.py' })).toMatchObject({ status: 'sourced' });
+  const argv = (await readFile(recorded, 'utf8')).trim().split('\n');
+  expect(argv).toContain('-S');
+  expect(argv).toContain(analyzers);
 }, 60000);
 
 it('enforces the per-file byte bound even when a source adapter ignores its requested maximum', async () => {

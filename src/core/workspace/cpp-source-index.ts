@@ -68,11 +68,13 @@ export class CppSourceIndex {
       if (response.status !== 'sourced') return response;
       const snapshot = hash(JSON.stringify({ sources: captured.snapshot, configPath, engineVersion: response.engineVersion, engineDigest: response.engineDigest, adapterDigest: response.adapterDigest, scope: query.prefix ?? null }));
       if (query.expectedSnapshot && query.expectedSnapshot !== snapshot) return { status: 'stale' as const, snapshot, message: 'C/C++ sources, configuration, scope, analyzer or commit changed' };
+      // A fresh analysis verifies that the sources did not change while the script ran.
       if ((await this.capture(signal)).snapshot !== captured.snapshot) return { status: 'stale' as const, message: 'C/C++ sources changed during analysis' };
       const current = new Map(captured.files.map(f => [f.path, f.digest]));
       const changes = { added: [...current.keys()].filter(p => !this.previous.has(p)), modified: [...current.keys()].filter(p => this.previous.has(p) && this.previous.get(p) !== current.get(p)), deleted: [...this.previous.keys()].filter(p => !current.has(p)) };
       this.previous = current;
       const { results, diagnostics, ...metadata } = response;
+      delete (metadata as { importCoverage?: unknown }).importCoverage;
       return { ...metadata, snapshot, provenance: { ...captured.identity, source: 'working_tree', engine: response.engine, engineVersion: response.engineVersion, engineDigest: response.engineDigest, adapterDigest: response.adapterDigest }, changes,
         excludedFiles: captured.excludedFiles.slice(0, 100), excludedFileCount: captured.excludedFiles.length, excludedFilesTruncated: captured.excludedFiles.length > 100,
         results: results.slice(offset, offset + limit), nextOffset: offset + limit < results.length ? offset + limit : null, totalResults: results.length,

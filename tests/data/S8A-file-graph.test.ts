@@ -102,7 +102,12 @@ it('A-01 builds one node per readable file and only resolved import edges over t
   const graph = ready(await f.graph());
 
   expect(graph.nodes).toHaveLength(205);
-  expect(graph.nodes.find(node => node.path === 'src/a.ts')).toEqual({ path: 'src/a.ts', nonBlankLines: 2, language: 'typescript' });
+  // §10 item 2: the file layer also stores the digest, byte size and whether the
+  // scan walked the file; the three file pages keep only path/lines/language.
+  expect(graph.nodes.find(node => node.path === 'src/a.ts')).toEqual({
+    path: 'src/a.ts', digest: 'a021c796ff5b0d4497e3cb8e06f7dc3ff98836ba2f3657c71b828271f03dc416',
+    byteSize: 46, language: 'typescript', nonBlankLines: 2, indexed: true,
+  });
   expect(graph.nodes.some(node => node.path === 'src/denied.ts')).toBe(false);
   expect(graph.edges).toEqual([
     { from: 'src/a.ts', to: 'src/b.ts' },
@@ -110,9 +115,10 @@ it('A-01 builds one node per readable file and only resolved import edges over t
   ]);
   expect(graph.unresolved).toEqual([]);
   expect(graph.languages).toEqual([
-    { language: 'typescript', files: 205, parsed: 205, edges: 'supported', reason: null, issues: [], issueCount: 0, complete: true },
+    { language: 'typescript', files: 205, parsed: 205, edges: 'supported', reason: null, notes: [], issues: [], issueCount: 0, complete: true },
   ]);
   expect(graph.complete).toBe(true);
+  expect(graph.inventory).toEqual({ source: 'skip_list', reason: '不是 git 仓库' });
 });
 
 it('S8A-01 records a binary file as a skipped issue of its language instead of a node', async () => {
@@ -125,7 +131,7 @@ it('S8A-01 records a binary file as a skipped issue of its language instead of a
   expect(graph.nodes.map(node => node.path)).toEqual(['src/a.ts']);
   const other = graph.languages.find(language => language.language === 'other');
   expect(other).toEqual({
-    language: 'other', files: 1, parsed: 0, edges: 'unsupported', reason: '引用关系未支持',
+    language: 'other', files: 1, parsed: 0, edges: 'unsupported', reason: '引用关系未支持', notes: [],
     issues: [{ path: 'docs/logo.png', kind: 'skipped', reason: 'binary source' }], issueCount: 1, complete: false,
   });
   expect(graph.languages.find(language => language.language === 'typescript')).toMatchObject({
@@ -140,7 +146,10 @@ it('S8A-02 keeps nonBlankLines when the parser cannot make sense of the source',
   ]);
   const graph = ready(await f.graph());
 
-  expect(graph.nodes).toEqual([{ path: 'src/f.ts', nonBlankLines: 2, language: 'typescript' }]);
+  expect(graph.nodes).toEqual([{
+    path: 'src/f.ts', digest: 'dfd1e9aa338dc839ea5f14c8ebcc5d224fce07bcf4af0db90c0d996f67f87b86',
+    byteSize: 39, language: 'typescript', nonBlankLines: 2, indexed: true,
+  }]);
 });
 
 it('S8A-03 captures a project with no TS files: nodes survive and other languages read unsupported', async () => {
@@ -153,13 +162,15 @@ it('S8A-03 captures a project with no TS files: nodes survive and other language
   const graph = ready(await f.graph());
 
   expect(graph.nodes).toEqual([
-    { path: 'e.py', nonBlankLines: 2, language: 'python' },
-    { path: 'g.py', nonBlankLines: 1, language: 'python' },
+    { path: 'e.py', digest: '14bf2775fb8a0a7e078dc0b38ccda0d22fe4c500ebe24811b8447cb5492704f0',
+      byteSize: 19, language: 'python', nonBlankLines: 2, indexed: true },
+    { path: 'g.py', digest: '9e26bf369911c45c243c684147b23fc9e1dcfcf257d299a1c632016a6fcd33f4',
+      byteSize: 6, language: 'python', nonBlankLines: 1, indexed: true },
   ]);
   expect(graph.languages).toEqual([
-    { language: 'python', files: 2, parsed: 0, edges: 'unsupported', reason: '引用关系未支持', issues: [], issueCount: 0, complete: false },
+    { language: 'python', files: 2, parsed: 2, edges: 'supported', reason: null, notes: [], issues: [], issueCount: 0, complete: true },
   ]);
-  expect(graph.edges).toEqual([]);
+  expect(graph.edges).toEqual([{ from: 'e.py', to: 'g.py' }]);
   expect(graph.unresolved).toEqual([]);
 });
 
@@ -185,8 +196,8 @@ it('S8A-05 reports the supported typescript coverage entry alongside an unsuppor
   const graph: ProjectFileGraphV1 = ready(await f.graph());
 
   expect(graph.languages).toEqual([
-    { language: 'cpp', files: 1, parsed: 0, edges: 'unsupported', reason: '引用关系未支持', issues: [], issueCount: 0, complete: false },
-    { language: 'typescript', files: 2, parsed: 2, edges: 'supported', reason: null, issues: [], issueCount: 0, complete: true },
+    { language: 'cpp', files: 1, parsed: 0, edges: 'failed', reason: '没有 compile_commands.json', notes: [], issues: [], issueCount: 0, complete: false },
+    { language: 'typescript', files: 2, parsed: 2, edges: 'supported', reason: null, notes: [], issues: [], issueCount: 0, complete: true },
   ]);
 });
 
@@ -197,9 +208,12 @@ it('S8A-09 keeps the surviving TS nodes and records a binary TS file as a skippe
   ]);
   const graph = ready(await f.graph());
 
-  expect(graph.nodes).toEqual([{ path: 'src/good.ts', nonBlankLines: 1, language: 'typescript' }]);
+  expect(graph.nodes).toEqual([{
+    path: 'src/good.ts', digest: '69e6ea1e2f4725eab818e2815f2e083544136eb8b2c267afbc0b0b804c91af52',
+    byteSize: 23, language: 'typescript', nonBlankLines: 1, indexed: true,
+  }]);
   expect(graph.languages).toEqual([
-    { language: 'typescript', files: 2, parsed: 1, edges: 'supported', reason: null,
+    { language: 'typescript', files: 2, parsed: 1, edges: 'supported', reason: null, notes: [],
       issues: [{ path: 'src/bad.ts', kind: 'skipped', reason: 'binary source' }], issueCount: 1, complete: false },
   ]);
   expect(graph.complete).toBe(false);
@@ -216,8 +230,10 @@ it('S8A-10 consumes the frozen observation material and verify detects a later n
 
   // The file graph never re-reads the worktree: the edited Python file stays as captured.
   expect(graph.nodes).toEqual([
-    { path: 'script.py', nonBlankLines: 1, language: 'python' },
-    { path: 'src/good.ts', nonBlankLines: 1, language: 'typescript' },
+    { path: 'script.py', digest: '9e26bf369911c45c243c684147b23fc9e1dcfcf257d299a1c632016a6fcd33f4',
+      byteSize: 6, language: 'python', nonBlankLines: 1, indexed: true },
+    { path: 'src/good.ts', digest: '69e6ea1e2f4725eab818e2815f2e083544136eb8b2c267afbc0b0b804c91af52',
+      byteSize: 23, language: 'typescript', nonBlankLines: 1, indexed: true },
   ]);
   // The tolerant digest covers every observed file, so verify reports the Python edit as stale.
   expect(await f.handle.tools.verifyCapture(f.context, capture.ref))

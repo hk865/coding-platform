@@ -16,7 +16,8 @@
  */
 import { randomUUID } from 'node:crypto';
 import type { ArchitectureCatalogPinV1 } from '../../../contracts/architecture-catalog.js';
-import type { FileGraphNodeV1, FileGraphPageV1, FormalObservedComparisonV1, LanguageCoverageV1, ObservedCaptureRef } from '../../../contracts/architecture-inspection.js';
+import type { FileGraphNodeV1, FileGraphPageNodeV1, FileGraphPageV1, FormalObservedComparisonV1,
+  LanguageCoverageV1, ObservedCaptureRef, ObservationInventoryV1 } from '../../../contracts/architecture-inspection.js';
 import type { ArchitectureSourceMapping, ArchitectureSourceSnapshotV1 } from '../../../contracts/architecture-source.js';
 import { ARTIFACT_MAX_SIZE_BYTES, artifactBodyDigest, artifactBodySize } from '../../../contracts/artifact.js';
 import { commandIdentityKey } from '../../../contracts/command-event.js';
@@ -40,18 +41,22 @@ import {
   ARCHITECTURE_SOURCE_OBSERVED_EVENT, FILE_GRAPH_CHUNK_CONTENT_TYPE, OBSERVED_ARCHITECTURE_BODY_CONTENT_TYPE,
   decodeArchitectureSourceObservedEvent, decodeObservedArchitectureBody, decodeObservedFileGraphChunk,
   decodeObservationCurrent, decodeObservedArchitectureRecord, encodeArchitectureSourceObservedEvent,
-  encodeObservationCurrent, encodeObservedArchitecture, readPersistedSourceCaptureRef,
-  type ArchitectureSourceObservedEventV1, type ObservedArchitectureBodyV1,
+  encodeObservationCurrent, encodeObservedArchitecture, mergeObservedFileGraphChunks, readPersistedSourceCaptureRef,
+  validateObservedFileGraphChunkV2,
+  type ArchitectureSourceObservedEventV1, type ObservedArchitectureBody, type ObservedArchitectureBodyV2,
+  type ObservedFileGraphChunk,
 } from './architecture-record-codecs.js';
 import { readRevisionByRef } from './catalog-service.js';
 import { compareFormalObservedGraphs } from './formal-comparison.js';
 import { FileGraphCursorError, FILE_GRAPH_MAX_IMPACT_DEPTH, FILE_GRAPH_PAGE_SIZE, impactPage,
-  listFilesPage, neighborsPage, type FileGraphPageData } from './file-graph-index.js';
+  listFilesPage, neighborsPage, type FileGraphData, type FileGraphPageData } from './file-graph-index.js';
 import type { ObservedArchitectureComparison, ObservedArchitectureImpact, ObservedArchitectureNeighborhood,
   ObservedArchitecturePort, ObservedArchitectureRecord, ObservedArchitectureRef, ObservedArchitectureSelection,
-  ObservedFileGraphManifestV1, ObservedGraphAnchor, ObservedGraphPageRequest, WorkspaceArchitectureObservationCurrentRecord,
+  ObservedFileGraphManifestV2, ObservedGraphAnchor, ObservedGraphPageRequest,
+  ObservedSummaryV2, WorkspaceArchitectureObservationCurrentRecord,
   WorkspaceArchitectureObservationCurrentRef } from './contracts.js';
 import { ObservedGraphCursorError, buildObservedImpact, buildObservedNeighborhood } from './graph-index.js';
+import { isProjectInputPath } from '../../workspace/project-source-snapshot.js';
 import { canonicalRefKey, decodeProjectSnapshot, decodeWorkspaceSnapshot } from '../persistence/record-codecs.js';
 import { projectRefFor, workspaceRefFor } from '../persistence/commit-compiler.js';
 
@@ -248,54 +253,112 @@ function emptyArchitectureSnapshot(input: { scope: WorkspaceScope; capture: Sour
     schemaVersion: 1, projectId: input.scope.projectId, workspaceId: input.scope.workspaceId,
     workspaceRevision: input.capture.workspaceRevision, sourceDigest: input.capture.sourceDigest,
     commitHash: input.commitHash, indexVersion: input.capture.indexVersion, configPath: input.configPath,
-    mappings: input.mappings, indexedSources: [], nodes: [], edges: [], unresolved: [],
+    mappings: input.mappings, nodes: [], edges: [], unresolved: [],
   };
 }
 
 /** Packs pre-serialized items into chunk bodies with a fixed prefix/suffix.
  * Each item is serialized once and only the running byte size is tracked, so the
  * whole builder is linear in the graph size (the previous version re-serialized
- * the growing array for every element, which is O(n^2) near the caps). */
+ * the growing array for every element, which is O(n^2) near the caps).
+ * An item that does not fit alone WITH its envelope is recorded as `overflow`
+ * (the caller can still count chunks first and report the 64-chunk limit); the
+ * pure writer raises `FileGraphChunkCapacityError` unless that limit already wins. */
+class FileGraphChunkCapacityError extends Error {
+  constructor(readonly itemBytes: number, readonly cap: number) {
+    super('a file graph item needs ' + itemBytes + ' bytes with its chunk envelope; the chunk capacity is ' + cap);
+    this.name = 'FileGraphChunkCapacityError';
+  }
+}
+type PackedFileGraphChunks = { chunks: string[]; overflow: { itemBytes: number; cap: number } | null };
 function packFileGraphChunks<T>(prefix: string, suffix: string, serialized: readonly string[],
-  cap: number, alwaysFlush: boolean): string[] {
+  cap: number, alwaysFlush: boolean): PackedFileGraphChunks {
   const chunks: string[] = [];
   const overhead = Buffer.byteLength(prefix, 'utf8') + Buffer.byteLength(suffix, 'utf8');
+  let overflow: PackedFileGraphChunks['overflow'] = null;
   let start = 0;
   let size = 0;
   for (let index = 0; index < serialized.length; index += 1) {
     const itemBytes = Buffer.byteLength(serialized[index]!, 'utf8');
-    const addition = index === start ? itemBytes : 1 + itemBytes;
-    if (index > start && overhead + size + addition > cap) {
+    if (index === start) {
+      // An item that starts a chunk (the first one, or the first after a flush)
+      // must fit WITH the envelope on its own; otherwise no chunk size can hold it.
+      if (overhead + itemBytes > cap) overflow ??= { itemBytes: overhead + itemBytes, cap };
+      size += itemBytes;
+    } else if (overhead + size + 1 + itemBytes > cap) {
+      if (overhead + itemBytes > cap) overflow ??= { itemBytes: overhead + itemBytes, cap };
       chunks.push(prefix + serialized.slice(start, index).join(',') + suffix);
       start = index;
       size = itemBytes;
     } else {
-      size += addition;
+      size += 1 + itemBytes;
     }
   }
   if (alwaysFlush || serialized.length > 0) {
     chunks.push(prefix + serialized.slice(start).join(',') + suffix);
   }
-  return chunks;
+  return { chunks, overflow };
 }
 
-/** One artifact per chunk: node chunks first (in path order) then edge chunks. */
-function buildFileGraphChunks(graph: ProjectFileGraphV1, cap: number): string[] {
-  const empty = JSON.stringify({ schemaVersion: 1, nodes: [] as unknown[], edges: [] as unknown[] });
+/** The pure input of the v2 chunk writer; the capture's `ProjectFileGraphV1` is
+ * structurally compatible once it carries the full §10 nodes. */
+export type FileGraphChunkInput = {
+  nodes: readonly FileGraphNodeV1[];
+  edges: readonly { from: string; to: string }[];
+  unresolved: readonly { from: string; specifier: string; reason: string | null }[];
+};
+export type NormalizedFileGraph = {
+  nodes: FileGraphNodeV1[];
+  edges: [number, number][];
+  unresolved: { from: string; specifier: string; reason: string | null }[];
+};
+
+/** §10 item 6 store step: build the ONE global path-sorted node table and map
+ * each edge to `[i, j]` over that table. This is NOT a second normalizer: the
+ * capture already deduped/sorted edges and grouped/picked/sorted unresolved
+ * references, so the store keeps both lists in the order it is given.
+ * An edge whose endpoint is not a node cannot be encoded and is dropped. */
+export function normalizeFileGraph(graph: FileGraphChunkInput): NormalizedFileGraph {
+  const byPath = new Map<string, FileGraphNodeV1>();
+  for (const node of graph.nodes) if (!byPath.has(node.path)) byPath.set(node.path, node);
+  const nodes = [...byPath.values()].sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
+  const indexByPath = new Map(nodes.map((node, index) => [node.path, index]));
+  const edges: [number, number][] = [];
+  for (const edge of graph.edges) {
+    const from = indexByPath.get(edge.from), to = indexByPath.get(edge.to);
+    if (from === undefined || to === undefined) continue;
+    edges.push([from, to]);
+  }
+  return { nodes, edges, unresolved: [...graph.unresolved] };
+}
+
+/** Packs already-normalized v2 items into chunk bodies. Nodes come first (each
+ * chunk is a contiguous run of the global table), then edge pairs, then
+ * unresolved entries; every chunk body is at most `cap` bytes and all three
+ * kinds count toward the 64-chunk budget. The empty graph still writes one
+ * empty v2 chunk. */
+export function serializeFileGraphChunks(graph: NormalizedFileGraph, cap: number): string[] {
+  const empty = JSON.stringify({ schemaVersion: 2, nodes: [] as unknown[], edges: [] as unknown[], unresolved: [] as unknown[] });
   const nodesOpen = empty.indexOf('[]', empty.indexOf('"nodes"'));
-  const edgeOpen = empty.indexOf('[]', empty.indexOf('"edges"'));
+  const edgesOpen = empty.indexOf('[]', empty.indexOf('"edges"'));
+  const unresolvedOpen = empty.indexOf('[]', empty.indexOf('"unresolved"'));
   const nodePrefix = empty.slice(0, nodesOpen + 1);
   const nodeSuffix = empty.slice(nodesOpen + 1);
-  const edgePrefix = empty.slice(0, edgeOpen + 1);
-  const edgeSuffix = empty.slice(edgeOpen + 1);
-  return [
-    ...packFileGraphChunks(nodePrefix, nodeSuffix, graph.nodes.map(node => JSON.stringify(node)), cap, true),
-    ...packFileGraphChunks(edgePrefix, edgeSuffix, graph.edges.map(edge => JSON.stringify(edge)), cap, false),
+  const edgePrefix = empty.slice(0, edgesOpen + 1);
+  const edgeSuffix = empty.slice(edgesOpen + 1);
+  const unresolvedPrefix = empty.slice(0, unresolvedOpen + 1);
+  const unresolvedSuffix = empty.slice(unresolvedOpen + 1);
+  const packed = [
+    packFileGraphChunks(nodePrefix, nodeSuffix, graph.nodes.map(node => JSON.stringify(node)), cap, true),
+    packFileGraphChunks(edgePrefix, edgeSuffix, graph.edges.map(edge => JSON.stringify(edge)), cap, false),
+    packFileGraphChunks(unresolvedPrefix, unresolvedSuffix, graph.unresolved.map(entry => JSON.stringify(entry)), cap, false),
   ];
-}
-
-function notCapturedPage(captureRef: ObservedCaptureRef): FileGraphPageV1 {
-  return { captureRef, nodes: [], edges: [], nextCursor: null, complete: true, notCaptured: true, languages: [] };
+  const chunks = packed.flatMap(piece => piece.chunks);
+  const overflow = packed.map(piece => piece.overflow).find(entry => entry !== null) ?? null;
+  // When the 64-chunk limit ALSO wins, let the service report that limit with the
+  // real count (A-01h); otherwise an item that cannot fit alone is capacity here.
+  if (overflow !== null && chunks.length <= 64) throw new FileGraphChunkCapacityError(overflow.itemBytes, overflow.cap);
+  return chunks;
 }
 
 // --------------------------------------------------------------------------
@@ -467,7 +530,14 @@ function changeSet(before: readonly { path: string; digest: string }[], after: r
 // Historical load
 // --------------------------------------------------------------------------
 
-type LoadedObservation = { body: ObservedArchitectureBodyV1; sourceCursor: CommitCursor };
+type ExportedFile = { path: string; digest: string };
+type LoadedObservation = {
+  body: ObservedArchitectureBody;
+  sourceCursor: CommitCursor;
+  /** The capture's exported project inputs for change counting: v1 `body.files`,
+   * v2 `isProjectInputPath(node.path)` over the chunk nodes (lead answer 10). */
+  exportedFiles: ExportedFile[];
+};
 
 async function loadObservation(deps: {
   access: WorkspaceAccessFactory; bodies: RawArtifactStorePort; records: GoalRecordTransactionPort;
@@ -507,26 +577,34 @@ async function loadObservation(deps: {
     if (artifactBodyDigest(stored.body) !== capture.material.digest || artifactBodySize(stored.body) !== capture.material.sizeBytes) {
       return unavailable('the stored body digest does not match the persisted material ref');
     }
-    // A record without `fileGraph` was written before 8A: its module membership
-    // follows the legacy any-prefix rule, not the 8A longest-prefix rule.
-    const ownership = decodedRecord.value.fileGraph === null ? 'legacy_any_prefix' : 'longest';
-    const decodedBody = decodeObservedArchitectureBody(stored.body, ownership);
+    // Decision 79: only the current v2 body is readable. Its membership recheck
+    // needs the chunk node table, and the change counts always come from those
+    // v2 nodes (the capture's TS/JS/JSON export set, lead answer 10).
+    // The record and access above are the ones this operation already read and
+    // opened; the chunk helper must NOT read or open them a second time.
+    const graph = await readFileGraphChunks(deps, access, decodedRecord.value, captureRefOf(capture.capture));
+    if (graph.status !== 'ready') return graph;
+    const decodedBody = decodeObservedArchitectureBody(stored.body, graph.value.nodes);
     if (decodedBody.status !== 'decoded') return unavailable('the stored observation body is damaged: ' + decodedBody.reason);
     const body = decodedBody.value;
+    const exportedFiles: ExportedFile[] = graph.value.nodes.filter(node => isProjectInputPath(node.path))
+      .map(node => ({ path: node.path, digest: node.digest }));
     if (canonicalOf(body.capture) !== canonicalOf(capture.capture)) return unavailable('the stored body capture does not match the persisted reference');
     // Current path authorization is re-checked over the FROZEN paths before any graph is returned.
-    // Current Host grants are re-checked over the REAL frozen files and the actual configuration
-    // inputs only. A mapping's representative path may be a directory or a path that does not exist;
-    // it is a display/grouping path, never an additional file permission.
-    const paths = new Set<string>();
-    for (const file of body.files) paths.add(file.path);
-    if (body.architecture.configPath !== null) paths.add(body.architecture.configPath);
-    if (body.summary.coverage.projectConfiguration !== null) paths.add(body.summary.coverage.projectConfiguration);
-    for (const path of paths) if (!access.authorization.allowsRead(path)) return forbidden('the current Host grant does not cover the frozen source path ' + path);
-    return { status: 'ready', value: { body, sourceCursor } };
+    // The chunk-reading helper already authorized every node path; only the
+    // configuration path is added here (spec §10 item 2).
+    if (body.architecture.configPath !== null && !access.authorization.allowsRead(body.architecture.configPath)) {
+      return forbidden('the current Host grant does not cover the frozen source path ' + body.architecture.configPath);
+    }
+    return { status: 'ready', value: { body, sourceCursor, exportedFiles } };
   } finally {
     await access.release();
   }
+}
+
+function captureRefOf(capture: SourceCaptureRef): ObservedCaptureRef {
+  return { aggregateType: 'ObservedArchitecture', projectId: capture.projectId,
+    workspaceId: capture.workspaceId, captureId: capture.captureId };
 }
 
 // --------------------------------------------------------------------------
@@ -536,16 +614,75 @@ async function loadObservation(deps: {
 type LoadedFileGraph = {
   nodes: FileGraphNodeV1[];
   edges: { from: string; to: string }[];
-  unresolved: { from: string; specifier: string }[];
+  unresolved: { from: string; specifier: string; reason: string | null }[];
   languages: LanguageCoverageV1[];
   complete: boolean;
+  inventory: ObservationInventoryV1;
+  /** The explicit page projection (§10 item 6: no digest, byte size or
+   * `indexed`), derived on demand so a comparison never duplicates the table. */
+  pageNodes: () => FileGraphPageNodeV1[];
 };
 
-/** Loads the chunked file graph behind one observation record. A record with no
- * chunk list is `not_captured` (value null), never an empty captured graph. */
+/** THE one chunk-reading helper (§10 item 2): it receives the record its caller
+ * has ALREADY read and decoded plus the already-open Host access, loads every
+ * chunk with the existing origin/digest checks, validates the indices and the
+ * exact counts, authorizes every frozen node/issue path, and returns the
+ * concatenated graph. It never opens the workspace, re-reads the record or
+ * releases the access: the page entry and `loadObservation` each do exactly one
+ * of each and hand them here. The record decoder guarantees a current v2
+ * manifest, so this never returns an absent graph (decision 79). */
+async function readFileGraphChunks(deps: { bodies: RawArtifactStorePort }, access: WorkspaceReadAccess,
+  record: ObservedArchitectureRecord, captureRef: ObservedCaptureRef): Promise<{ status: 'ready'; value: LoadedFileGraph } | Rejection> {
+  if (record.ref.projectId !== captureRef.projectId || record.ref.workspaceId !== captureRef.workspaceId
+    || record.ref.captureId !== captureRef.captureId) {
+    return invalid('the persisted reference does not match the canonical observation record');
+  }
+  const manifest = record.fileGraph;
+  const chunks: ObservedFileGraphChunk[] = [];
+  for (const chunkRef of manifest.chunks) {
+    const raw = await deps.bodies.read(chunkRef);
+    if (raw.status !== 'ready') return raw.code === 'not_found' ? rejected('not_found', raw.reason) : unavailable(raw.reason);
+    const stored = raw.value;
+    if (canonicalOf(stored.ref) !== canonicalOf(chunkRef)) return unavailable('the stored chunk ref does not match the persisted chunk ref');
+    if (stored.origin.kind !== 'platform_operation' || stored.origin.projectId !== captureRef.projectId
+      || (stored.origin.workspaceId !== undefined && stored.origin.workspaceId !== captureRef.workspaceId)) {
+      return unavailable('the stored chunk origin is not this workspace platform observation');
+    }
+    if (artifactBodyDigest(stored.body) !== chunkRef.digest || artifactBodySize(stored.body) !== chunkRef.sizeBytes) {
+      return unavailable('the stored chunk digest does not match the persisted chunk ref');
+    }
+    // Index pairs are validated against the manifest's global node count.
+    const chunk = decodeObservedFileGraphChunk(stored.body, manifest.nodeCount);
+    if (chunk.status !== 'decoded') return unavailable('the stored file graph chunk is damaged: ' + chunk.reason);
+    chunks.push(chunk.value);
+  }
+  const merged = mergeObservedFileGraphChunks(manifest, chunks);
+  if (merged.status !== 'decoded') return unavailable('the stored file graph is damaged: ' + merged.reason);
+  const nodes = merged.value.nodes;
+  const languages = record.languages;
+  for (const node of nodes) if (!access.authorization.allowsRead(node.path)) {
+    return forbidden('the current Host grant does not cover every frozen path of this observation');
+  }
+  // 8A rework 2 item 5: language coverage carries issue paths that are not node
+  // paths (for example a skipped configuration or source file). The current
+  // grant must cover them too, or the whole file page leaks them.
+  for (const language of languages) for (const issue of language.issues) {
+    if (!access.authorization.allowsRead(issue.path)) {
+      return forbidden('the current Host grant does not cover every frozen path of this observation');
+    }
+  }
+  return { status: 'ready', value: { nodes, edges: merged.value.edges, unresolved: merged.value.unresolved,
+    languages, complete: languages.every(language => language.complete),
+    inventory: record.inventory,
+    pageNodes: (): FileGraphPageNodeV1[] => nodes.map(node => ({ path: node.path,
+      nonBlankLines: node.nonBlankLines, language: node.language })) } };
+}
+
+/** The page entry (§10 item 2): open the Host access once, read and decode the
+ * record once, then hand both to `readFileGraphChunks`. */
 async function loadFileGraph(deps: {
   access: WorkspaceAccessFactory; bodies: RawArtifactStorePort; records: GoalRecordTransactionPort;
-}, ctx: CoreCallContext, captureRef: ObservedCaptureRef): Promise<{ status: 'ready'; value: LoadedFileGraph | null } | Rejection> {
+}, ctx: CoreCallContext, captureRef: ObservedCaptureRef): Promise<{ status: 'ready'; value: LoadedFileGraph } | Rejection> {
   if (ctx.projectId !== captureRef.projectId || ctx.workspaceId !== captureRef.workspaceId) {
     return forbidden('the call context is outside the persisted observation workspace');
   }
@@ -561,49 +698,7 @@ async function loadFileGraph(deps: {
     if (encoded === undefined) return rejected('not_found', 'the persisted observation record does not exist');
     const decoded = decodeObservedArchitectureRecord(encoded);
     if (decoded.status !== 'decoded') return unavailable('the canonical observation record is damaged');
-    const record = decoded.value;
-    if (record.ref.projectId !== captureRef.projectId || record.ref.workspaceId !== captureRef.workspaceId
-      || record.ref.captureId !== captureRef.captureId) {
-      return invalid('the persisted reference does not match the canonical observation record');
-    }
-    const manifest = record.fileGraph ?? null;
-    if (manifest === null) return { status: 'ready', value: null };
-    const nodes: FileGraphNodeV1[] = [];
-    const edges: { from: string; to: string }[] = [];
-    for (const chunkRef of manifest.chunks) {
-      const raw = await deps.bodies.read(chunkRef);
-      if (raw.status !== 'ready') return raw.code === 'not_found' ? rejected('not_found', raw.reason) : unavailable(raw.reason);
-      const stored = raw.value;
-      if (canonicalOf(stored.ref) !== canonicalOf(chunkRef)) return unavailable('the stored chunk ref does not match the persisted chunk ref');
-      if (stored.origin.kind !== 'platform_operation' || stored.origin.projectId !== captureRef.projectId
-        || (stored.origin.workspaceId !== undefined && stored.origin.workspaceId !== captureRef.workspaceId)) {
-        return unavailable('the stored chunk origin is not this workspace platform observation');
-      }
-      if (artifactBodyDigest(stored.body) !== chunkRef.digest || artifactBodySize(stored.body) !== chunkRef.sizeBytes) {
-        return unavailable('the stored chunk digest does not match the persisted chunk ref');
-      }
-      const chunk = decodeObservedFileGraphChunk(stored.body);
-      if (chunk.status !== 'decoded') return unavailable('the stored file graph chunk is damaged: ' + chunk.reason);
-      nodes.push(...chunk.value.nodes);
-      edges.push(...chunk.value.edges);
-    }
-    if (nodes.length !== manifest.nodeCount || edges.length !== manifest.edgeCount) {
-      return unavailable('the stored file graph chunk counts disagree with the observation record');
-    }
-    const languages = record.languages ?? [];
-    for (const node of nodes) if (!access.authorization.allowsRead(node.path)) {
-      return forbidden('the current Host grant does not cover every frozen path of this observation');
-    }
-    // 8A rework 2 item 5: language coverage carries issue paths that are not node
-    // paths (for example a skipped configuration or source file). The current
-    // grant must cover them too, or the whole file page leaks them.
-    for (const language of languages) for (const issue of language.issues) {
-      if (!access.authorization.allowsRead(issue.path)) {
-        return forbidden('the current Host grant does not cover every frozen path of this observation');
-      }
-    }
-    return { status: 'ready', value: { nodes, edges, unresolved: manifest.unresolved,
-      languages, complete: languages.every(language => language.complete) } };
+    return await readFileGraphChunks(deps, access, decoded.value, captureRef);
   } finally {
     await access.release();
   }
@@ -638,21 +733,24 @@ export function createObservedArchitecture(deps: ObservedArchitectureDependencie
   const { workspace, access, bodies, records, source } = deps;
 
   /** 8A rework 2 item 6: the one file-page sequence. It loads the frozen graph,
-   * maps an old observation (no graph) to `not_captured` or a cursor mismatch,
    * runs the caller's paging function, attaches the whole-capture language
    * coverage, and maps a bad cursor to `invalid`. Each public entry keeps its
-   * own argument checks and passes only its own paging function. */
+   * own argument checks and passes only its own paging function. Decision 79:
+   * an observation without a current file layer is rejected by the record
+   * decoder, so there is no `not_captured` page. */
   async function readFilePage(ctx: CoreCallContext, captureRef: ObservedCaptureRef, cursor: string | null,
-    page: (loaded: LoadedFileGraph) => FileGraphPageData): Promise<ReadResult<FileGraphPageV1>> {
+    page: (graph: FileGraphData) => FileGraphPageData): Promise<ReadResult<FileGraphPageV1>> {
     const loaded = await loadFileGraph(deps, ctx, captureRef);
     if (loaded.status !== 'ready') return asReadResult(loaded);
-    if (loaded.value === null) {
-      // Item 7: an old capture never issued a cursor, so a cursor here is a mismatch.
-      if (cursor !== null) return invalid('cursor_mismatch');
-      return { status: 'ready', value: notCapturedPage(captureRef) };
-    }
     try {
-      return { status: 'ready', value: { captureRef, ...page(loaded.value), languages: loaded.value.languages } };
+      // §10 item 6: pages project nodes explicitly; digest, byte size and
+      // `indexed` never leave the record, and the page adds only `inventory`.
+      const projected: FileGraphData = {
+        nodes: loaded.value.pageNodes(),
+        edges: loaded.value.edges,
+      };
+      return { status: 'ready', value: { captureRef, ...page(projected), languages: loaded.value.languages,
+        inventory: loaded.value.inventory } };
     } catch (error) {
       if (error instanceof FileGraphCursorError) return invalid(error.message);
       throw error;
@@ -708,14 +806,14 @@ export function createObservedArchitecture(deps: ObservedArchitectureDependencie
     if (canonical.status !== 'ready') return canonical;
     const pinConflict = compareExpectedPins(scope, pins.pins, canonical.projectRevision, canonical.workspaceRevision);
     if (pinConflict !== null) return pinConflict;
-    let priorFiles: ObservedArchitectureBodyV1['files'] | null = null;
+    let priorFiles: ExportedFile[] | null = null;
     if (previous !== null) {
       // The previous observation is a historical persisted read: it reuses the same Host-authorized
       // loader (current scope authorization, canonical ref/body digest/origin and per-path grants)
-      // before any body is opened.
+      // before any body is opened. It need not still be retained in this process.
       const prior = await loadObservation(deps, ctx, { kind: 'observed', capture: previous });
       if (prior.status !== 'ready') return prior;
-      priorFiles = prior.value.body.files;
+      priorFiles = prior.value.exportedFiles;
     }
 
     const captureRequest: CaptureSourceRequest = {
@@ -740,30 +838,66 @@ export function createObservedArchitecture(deps: ObservedArchitectureDependencie
       if (fileGraphResult.status !== 'ready') return mapWorkspaceFailure(fileGraphResult);
       const fileGraph = fileGraphResult.value;
       const tsCoverage = fileGraph.languages.find(language => language.language === 'typescript');
-      // Item 8: no mappings (or no parsed TS sources) means the module layer is
-      // explicitly empty; the file layer is still captured.
-      const mapped = mappings.length > 0 && (tsCoverage?.parsed ?? 0) > 0
+      // §10 item 2 rework: decide by the language status AND the sources the scan
+      // actually walked (the capture's `indexedSourceCount`), never by the parsed
+      // count. A walked file whose per-file parse failed is still a module source;
+      // a failed/unsupported TS language or a zero-walked project keeps the
+      // explicit empty module snapshot.
+      const walkedSourceCount = exported.value.summary.coverage.indexedSourceCount;
+      const mapped = mappings.length > 0 && tsCoverage?.edges === 'supported' && walkedSourceCount > 0
         ? await workspace.captureArchitectureSource(ctx, { capture: captureRef, mappings })
         : { status: 'ready' as const, value: emptyArchitectureSnapshot({ scope, capture: captureRef, mappings,
             configPath: exported.value.summary.coverage.projectConfiguration, commitHash: exported.value.summary.commitHash }) };
       if (mapped.status !== 'ready') return mapWorkspaceFailure(mapped);
 
       // Body first: a failure after this point leaves an unreachable body, never a half-published observation.
+      const exportedInputs = exported.value.files.filter(file => isProjectInputPath(file.path));
       let changes: CaptureSummary['changes'] = {
-        added: [...exported.value.files.map(file => file.path)].sort((a, b) => a.localeCompare(b)), modified: [], deleted: [],
+        added: [...exportedInputs.map(file => file.path)].sort((a, b) => a.localeCompare(b)), modified: [], deleted: [],
       };
-      if (priorFiles !== null) changes = changeSet(priorFiles, exported.value.files);
-      const summary: CaptureSummary = { ...exported.value.summary, changes };
+      if (priorFiles !== null) changes = changeSet(priorFiles, exportedInputs);
+      // §10 item 2: the v2 body carries only counts; per-file data lives in the
+      // file layer and the module snapshot drops `indexedSources` and truncates
+      // its unresolved lines.
+      const summary: ObservedSummaryV2 = {
+        // The capture's file count (every frozen file); the change counts below
+        // stay the TS/JS/JSON export set, as before.
+        files: exported.value.files.length,
+        languages: fileGraph.languages.map(language => ({ language: language.language, files: language.files })),
+        changes: { added: changes.added.length, modified: changes.modified.length, deleted: changes.deleted.length },
+      };
       const observedAt = new Date().toISOString();
-      const observedBody: ObservedArchitectureBodyV1 = {
-        schemaVersion: 1, capture: captureRef, observedAt, summary, files: exported.value.files, architecture: mapped.value,
+      const observedBody: ObservedArchitectureBodyV2 = {
+        schemaVersion: 2, capture: captureRef, observedAt, summary,
+        // §10 item 1: the observation mapper compacts before validation, so the
+        // service stores exactly its result; there is no second compaction here.
+        architecture: mapped.value,
       };
       const bodyJson = JSON.stringify(observedBody);
+      const normalizedFileGraph = normalizeFileGraph(fileGraph);
       // Publish only a body the strict reader would accept: a mapping/config that the frozen files
-      // do not cover must fail here, not become an unreadable observation.
-      const bodyCheck = decodeObservedArchitectureBody(bodyJson);
+      // do not cover must fail here, not become an unreadable observation. The v2 member check reads
+      // the same node table the chunks will carry.
+      const bodyCheck = decodeObservedArchitectureBody(bodyJson, normalizedFileGraph.nodes);
       if (bodyCheck.status !== 'decoded') return invalid('the assembled observation body is not self-consistent: ' + bodyCheck.reason);
       if (artifactBodySize(bodyJson) > ARTIFACT_MAX_SIZE_BYTES) return rejected('capacity', 'the observed architecture body exceeds the artifact capacity');
+      // Build and check every chunk BEFORE the first put: one item that cannot fit
+      // alone with its envelope is capacity, and any chunk the decoder would
+      // reject fails the whole capture here instead of being committed unreadable.
+      let chunkBodies: string[];
+      try {
+        chunkBodies = serializeFileGraphChunks(normalizedFileGraph, deps.fileGraph?.chunkBytes ?? ARTIFACT_MAX_SIZE_BYTES);
+      } catch (error) {
+        if (error instanceof FileGraphChunkCapacityError) return rejected('capacity', error.message);
+        throw error;
+      }
+      if (chunkBodies.length > 64) return rejected('capacity', 'the file graph needs ' + chunkBodies.length + ' chunks; the limit is 64');
+      for (const chunkBody of chunkBodies) {
+        const chunkCheck = validateObservedFileGraphChunkV2(JSON.parse(chunkBody), normalizedFileGraph.nodes.length);
+        if (chunkCheck.status !== 'decoded') {
+          return invalid('the assembled file graph chunk is not self-consistent: ' + chunkCheck.reason);
+        }
+      }
       const sourceRef: SourceRefV1 = { kind: 'workspace', refId: scope.workspaceId, revision: String(canonical.workspaceRevision), digest: captureRef.sourceDigest };
       const put = await bodies.put({ body: bodyJson, contentType: OBSERVED_ARCHITECTURE_BODY_CONTENT_TYPE,
         sourceRefs: [sourceRef], origin: { kind: 'platform_operation', projectId: scope.projectId, workspaceId: scope.workspaceId, requestId, actor: bound.actor }, requestedAt: observedAt });
@@ -773,18 +907,16 @@ export function createObservedArchitecture(deps: ObservedArchitectureDependencie
       // 8A file layer: one artifact per chunk, same sourceRefs/origin/requestedAt as
       // the module body. All chunks are published before the second verification so
       // a moved source leaves only unreachable bodies, never a published pointer.
-      const chunkBodies = buildFileGraphChunks(fileGraph, deps.fileGraph?.chunkBytes ?? ARTIFACT_MAX_SIZE_BYTES);
-      if (chunkBodies.length > 64) return rejected('capacity', 'the file graph needs ' + chunkBodies.length + ' chunks; the limit is 64');
-      const chunkRefs: ObservedFileGraphManifestV1['chunks'] = [];
+      const chunkRefs: ObservedFileGraphManifestV2['chunks'] = [];
       for (const chunkBody of chunkBodies) {
         const chunkPut = await bodies.put({ body: chunkBody, contentType: FILE_GRAPH_CHUNK_CONTENT_TYPE,
           sourceRefs: [sourceRef], origin: { kind: 'platform_operation', projectId: scope.projectId, workspaceId: scope.workspaceId, requestId, actor: bound.actor }, requestedAt: observedAt });
         if (chunkPut.status !== 'ready') return mapBodyPutFailure(chunkPut);
         chunkRefs.push(chunkPut.value.ref);
       }
-      const fileGraphManifest: ObservedFileGraphManifestV1 = {
-        chunks: chunkRefs, nodeCount: fileGraph.nodes.length, edgeCount: fileGraph.edges.length,
-        unresolved: fileGraph.unresolved,
+      const fileGraphManifest: ObservedFileGraphManifestV2 = {
+        schemaVersion: 2, chunks: chunkRefs, nodeCount: normalizedFileGraph.nodes.length,
+        edgeCount: normalizedFileGraph.edges.length, unresolvedCount: normalizedFileGraph.unresolved.length,
       };
 
       // A second live verification: if the source moved after the immutable body was saved, do not publish the pointer.
@@ -794,7 +926,8 @@ export function createObservedArchitecture(deps: ObservedArchitectureDependencie
       const observedRef: ObservedArchitectureRef = { aggregateType: 'ObservedArchitecture', projectId: scope.projectId,
         workspaceId: scope.workspaceId, captureId: captureRef.captureId };
       const observedRecord: ObservedArchitectureRecord = { ref: observedRef, revision: 1, schemaVersion: 1, source: persistedRef,
-        observedAt, fileGraph: fileGraphManifest, languages: fileGraph.languages };
+        observedAt, fileGraph: fileGraphManifest, languages: fileGraph.languages,
+        inventory: fileGraph.inventory };
       const currentRef: WorkspaceArchitectureObservationCurrentRef = { aggregateType: 'WorkspaceArchitectureObservationCurrent',
         projectId: scope.projectId, workspaceId: scope.workspaceId };
       const currentRead = await records.readMany([canonicalOf(currentRef)]);
@@ -1014,11 +1147,9 @@ export function createObservedArchitecture(deps: ObservedArchitectureDependencie
     }
     const loaded = await loadFileGraph(deps, ctx, captureRef);
     if (loaded.status !== 'ready') return asReadResult(loaded);
-    // UNSPECIFIED choice: an old observation with no file graph cannot be compared
-    // (empty findings would read as "no differences"), so it is `unsupported`.
-    if (loaded.value === null) return rejected('unsupported', 'not_captured: the observation has no file-level graph');
     const fileGraph: ProjectFileGraphV1 = { nodes: loaded.value.nodes, edges: loaded.value.edges,
-      unresolved: loaded.value.unresolved, languages: loaded.value.languages, complete: loaded.value.complete };
+      unresolved: loaded.value.unresolved, languages: loaded.value.languages, complete: loaded.value.complete,
+      inventory: loaded.value.inventory };
     const findings = compareFormalObservedGraphs({ architecture: revision.value.catalog.catalog, fileGraph });
     return { status: 'ready', value: { catalog, captureRef, findings, noVerdict: true } };
   }

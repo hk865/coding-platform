@@ -27,6 +27,32 @@ export type ArchitectureSourceSnapshotV1 = {
     /** Unknown imports/unmapped sources are evidence gaps, never absent dependencies. */
     unresolved: string[];
 };
+/** §11.2 compact module snapshot caps: at most this many `unresolved` lines
+ * AND at most this many UTF-8 bytes of the kept lines joined by `\n` (the
+ * appended summary line is not counted). */
+export const SNAPSHOT_UNRESOLVED_MAX_LINES = 500;
+export const SNAPSHOT_UNRESOLVED_MAX_BYTES = 64 * 1024;
+/** §11.2 "模块快照的没解析": de-duplicate, sort by string, keep at most
+ * `SNAPSHOT_UNRESOLVED_MAX_LINES` lines and at most
+ * `SNAPSHOT_UNRESOLVED_MAX_BYTES` UTF-8 bytes of their `\n`-joined text.
+ * When anything is removed, append exactly one line
+ * `另有 <n> 条没列出，逐条见文件层` with `n = removed count`. Deterministic,
+ * pure, and shared by the snapshot builder and the observed-architecture service. */
+export function compactUnresolvedLines(lines: readonly string[]): string[] {
+    const sorted = [...new Set(lines)].sort();
+    const kept: string[] = [];
+    let bytes = 0;
+    for (const line of sorted) {
+        if (kept.length >= SNAPSHOT_UNRESOLVED_MAX_LINES) break;
+        const addition = (kept.length === 0 ? 0 : 1) + Buffer.byteLength(line, 'utf8');
+        if (bytes + addition > SNAPSHOT_UNRESOLVED_MAX_BYTES) break;
+        kept.push(line);
+        bytes += addition;
+    }
+    const removed = sorted.length - kept.length;
+    if (removed > 0) kept.push('另有 ' + removed + ' 条没列出，逐条见文件层');
+    return kept;
+}
 export function architectureSourceIssues(value: unknown): string[] {
     if (!value || typeof value !== 'object' || Array.isArray(value))
         return ['source binding must be an object'];

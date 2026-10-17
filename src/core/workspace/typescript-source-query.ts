@@ -86,6 +86,50 @@ type ResolutionInvalidatingHost = ts.LanguageServiceHost & {
   hasInvalidatedResolutions?(filePath: ts.Path): boolean;
 };
 
+/** One project configuration resolved against frozen material; paths keyed by `SOURCE_ROOT`. */
+export type TypeScriptProjectConfiguration = {
+  options: ts.CompilerOptions;
+  rootNames: string[];
+  resolvedConfigPath: string | null;
+};
+
+/**
+ * Resolve the explicit/default configuration against one frozen capture and return the
+ * compiler options plus root files. This is the one configuration decision shared by the
+ * query language service and the observation light scan; it reads no host state.
+ */
+export function configureTypeScriptProject(installed: ReadonlyMap<string, CapturedProjectFile>, configPath?: string | null): TypeScriptProjectConfiguration {
+  const path = configPath ?? (installed.has(SOURCE_ROOT + 'tsconfig.json') ? 'tsconfig.json' : installed.has(SOURCE_ROOT + 'jsconfig.json') ? 'jsconfig.json' : undefined);
+  const readFile = (name: string) => installed.get(posix.normalize(name))?.content;
+  const matches = (name: string, base: string, pattern: string) => {
+    const full = posix.resolve(base, pattern);
+    return posix.matchesGlob(name, full) || (!/[?*]/.test(pattern) && name.startsWith(full.replace(/\/$/, '') + '/'));
+  };
+  const readDirectory: ts.ParseConfigHost['readDirectory'] = (base, extensions, excludes, includes, depth) => [...installed.keys()].filter(name =>
+    name.startsWith(base.replace(/\/$/, '') + '/') && (!extensions || extensions.some(extension => name.endsWith(extension))) &&
+    (!depth || posix.relative(base, name).split('/').length <= depth + 1) &&
+    (includes ?? ['**/*']).some(pattern => matches(name, base, pattern)) && !(excludes ?? []).some(pattern => matches(name, base, pattern)));
+  let errors: readonly ts.Diagnostic[] = [];
+  let options: ts.CompilerOptions = { target: ts.ScriptTarget.ESNext, module: ts.ModuleKind.NodeNext, moduleResolution: ts.ModuleResolutionKind.NodeNext, allowJs: true, checkJs: true, noLib: true, types: [] };
+  let roots = [...installed.keys()].filter(name => isSourcePath(name) && !name.includes('/node_modules/') && !name.includes('/dist/') && !name.includes('/build/'));
+  if (path) {
+    if (!isSafeSourcePath(path)) throw new ProjectSourceFailure('rejected', 'config outside readable scope');
+    const text = readFile(SOURCE_ROOT + path);
+    if (text === undefined) throw new ProjectSourceFailure('rejected', 'config unavailable');
+    const config = ts.parseConfigFileTextToJson(SOURCE_ROOT + path, text);
+    if (config.error) errors = [config.error];
+    else {
+      const parsed = ts.parseJsonConfigFileContent(config.config, { useCaseSensitiveFileNames: true, readFile, fileExists: name => installed.has(posix.normalize(name)), readDirectory }, posix.dirname(SOURCE_ROOT + path), undefined, SOURCE_ROOT + path);
+      options = { ...parsed.options, noEmit: true, plugins: [] };
+      roots = parsed.fileNames.filter(name => installed.has(name));
+      errors = parsed.errors;
+      if (parsed.projectReferences?.length) throw new ProjectSourceFailure('unsupported', 'solution project references require querying each referenced config explicitly');
+    }
+  }
+  if (errors.length) throw new ProjectSourceFailure('rejected', 'invalid or inaccessible project configuration: ' + errors.map(error => ts.flattenDiagnosticMessageText(error.messageText, ' ')).join('; '));
+  return { options, rootNames: roots, resolvedConfigPath: path ?? null };
+}
+
 /** Incremental language service over frozen captures. Configs are data;
  * no plugins, project scripts, resolvers or package lifecycle hooks are executed. */
 export class TypeScriptSourceAnalyzer {
@@ -235,7 +279,7 @@ export class TypeScriptSourceAnalyzer {
 
   /** Resolve default/explicit config against the installed capture; rebuild only on a real config/root change. */
   private configure(configPath?: string): string | null {
-    const path = configPath ?? (this.installed.has(SOURCE_ROOT + 'tsconfig.json') ? 'tsconfig.json' : this.installed.has(SOURCE_ROOT + 'jsconfig.json') ? 'jsconfig.json' : undefined);
+    const { options, rootNames: roots, resolvedConfigPath } = configureTypeScriptProject(this.installed, configPath);
     const readFile = (name: string) => this.installed.get(posix.normalize(name))?.content;
     const matches = (name: string, base: string, pattern: string) => {
       const full = posix.resolve(base, pattern);
@@ -245,24 +289,6 @@ export class TypeScriptSourceAnalyzer {
       name.startsWith(base.replace(/\/$/, '') + '/') && (!extensions || extensions.some(extension => name.endsWith(extension))) &&
       (!depth || posix.relative(base, name).split('/').length <= depth + 1) &&
       (includes ?? ['**/*']).some(pattern => matches(name, base, pattern)) && !(excludes ?? []).some(pattern => matches(name, base, pattern)));
-    let errors: readonly ts.Diagnostic[] = [];
-    let options: ts.CompilerOptions = { target: ts.ScriptTarget.ESNext, module: ts.ModuleKind.NodeNext, moduleResolution: ts.ModuleResolutionKind.NodeNext, allowJs: true, checkJs: true, noLib: true, types: [] };
-    let roots = [...this.installed.keys()].filter(name => isSourcePath(name) && !name.includes('/node_modules/') && !name.includes('/dist/') && !name.includes('/build/'));
-    if (path) {
-      if (!isSafeSourcePath(path)) throw new ProjectSourceFailure('rejected', 'config outside readable scope');
-      const text = readFile(SOURCE_ROOT + path);
-      if (text === undefined) throw new ProjectSourceFailure('rejected', 'config unavailable');
-      const config = ts.parseConfigFileTextToJson(SOURCE_ROOT + path, text);
-      if (config.error) errors = [config.error];
-      else {
-        const parsed = ts.parseJsonConfigFileContent(config.config, { useCaseSensitiveFileNames: true, readFile, fileExists: name => this.installed.has(posix.normalize(name)), readDirectory }, posix.dirname(SOURCE_ROOT + path), undefined, SOURCE_ROOT + path);
-        options = { ...parsed.options, noEmit: true, plugins: [] };
-        roots = parsed.fileNames.filter(name => this.installed.has(name));
-        errors = parsed.errors;
-        if (parsed.projectReferences?.length) throw new ProjectSourceFailure('unsupported', 'solution project references require querying each referenced config explicitly');
-      }
-    }
-    if (errors.length) throw new ProjectSourceFailure('rejected', 'invalid or inaccessible project configuration: ' + errors.map(error => ts.flattenDiagnosticMessageText(error.messageText, ' ')).join('; '));
     const key = JSON.stringify({ options, roots });
     this.options = options; this.rootNames = roots;
     if (!this.service || key !== this.configKey) {
@@ -283,6 +309,6 @@ export class TypeScriptSourceAnalyzer {
       this.service = ts.createLanguageService(host);
       this.configKey = key;
     }
-    return path ?? null;
+    return resolvedConfigPath;
   }
 }

@@ -956,12 +956,6 @@
       "note": "kept for slice 8 of the orchestration design (L12 file-level observation reads); 8A wires the capture and stores the chunked file graph, but §1 8A routes only architecture/compare, architecture/compare-formal and architecture/impact, so the file-level public reads (listFiles/neighbors/impact) and their chunk decoder/index are reached only by the architecture page later; decision 6: wired with the new UI, backend first"
     },
     {
-      "file": "src/core/work-graph/architecture/architecture-service.ts",
-      "name": "notCapturedPage",
-      "reason": "kept-for",
-      "note": "kept for slice 8 of the orchestration design (L12 file-level observation reads); 8A wires the capture and stores the chunked file graph, but §1 8A routes only architecture/compare, architecture/compare-formal and architecture/impact, so the file-level public reads (listFiles/neighbors/impact) and their chunk decoder/index are reached only by the architecture page later; decision 6: wired with the new UI, backend first"
-    },
-    {
       "file": "src/core/work-graph/architecture/contracts.ts",
       "name": "ObservedArchitecturePort.listFiles",
       "reason": "kept-for",

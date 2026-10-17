@@ -54,7 +54,7 @@ import type {
 
 export type ExecutionDriverDependencies = Pick<RuntimeExecutionDependencies,
   | 'entry' | 'historyWriter' | 'executions' | 'sessionOperations' | 'kernelStores' | 'workspaceHost'
-  | 'sourceAuthority' | 'sourcePolicyFor' | 'host' | 'kernel' | 'resourceCaps' | 'now' | 'newId'
+  | 'sourceAuthority' | 'sourcePolicyFor' | 'sourceAnalyzers' | 'host' | 'kernel' | 'resourceCaps' | 'now' | 'newId'
   | 'modelRequests' | 'roles' | 'materials' | 'bodies' | 'plans' | 'messages' | 'decisionMessages' | 'applicationReceipt'
   | 'sessions' | 'runReconcile'
   | 'graphHistory' | 'graphContext' | 'taskInputs'> & {
@@ -856,6 +856,7 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
               throw new Error('the Host read policy is no longer current for this Run');
             }
           },
+          ...(deps.sourceAnalyzers === undefined ? {} : { sourceAnalyzers: deps.sourceAnalyzers }),
         };
         sourceFactory = createRuntimeSourceCaptureFactory(
           { authority: deps.sourceAuthority, ...(deps.sourcePolicyFor === undefined ? {} : { sourcePolicyFor: deps.sourcePolicyFor }), hostSignal: signal, now: deps.now },

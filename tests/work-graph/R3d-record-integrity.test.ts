@@ -7,7 +7,8 @@ import { canonicalJson, type JsonValue } from '../../src/contracts/fingerprint.j
 import type { EncodedRecord } from '../../src/core/record-store/ports.js';
 import { OBSERVED_ARCHITECTURE_RECORD_SCHEMAS,
   decodeObservedArchitectureBody } from '../../src/core/work-graph/architecture/architecture-record-codecs.js';
-import { actor, context, fixture, mappings, projectId, workspace, workspaceId } from './R3d-fixture.js';
+import { createObservedArchitecture } from '../../src/core/work-graph/architecture/architecture-service.js';
+import { actor, capture, context, fixture, mappings, projectId, workspace, workspaceId } from './R3d-fixture.js';
 
 it('rejects observed records whose persisted source identity disagrees with their full ref', async () => {
   const fx = await fixture('memory');
@@ -35,7 +36,9 @@ it('rejects observed records whose persisted source identity disagrees with thei
     const record = (capture: typeof captured.value.ref): EncodedRecord => ({
       refKey: canonicalJson(ref as JsonValue), schemaId: 'ObservedArchitecture@1', revision: 1,
       json: JSON.stringify({ ref, revision: 1, schemaVersion: 1, source: { ...source, capture },
-        observedAt: '2026-09-24T00:00:00.000Z' }),
+        observedAt: '2026-09-24T00:00:00.000Z',
+        fileGraph: { schemaVersion: 2, chunks: [], nodeCount: 0, edgeCount: 0, unresolvedCount: 0 },
+        languages: [], inventory: { source: 'skip_list', reason: '不是 git 仓库' } }),
     });
     const codec = OBSERVED_ARCHITECTURE_RECORD_SCHEMAS.records.find(entry => entry.aggregateType === 'ObservedArchitecture');
     expect(codec).toBeDefined();
@@ -49,10 +52,10 @@ it('rejects observed records whose persisted source identity disagrees with thei
   } finally { await fx.close(); }
 });
 
-it('rejects a frozen body whose scope, engine, Git basis or permission file manifest differs from its real capture', async () => {
+it('rejects a v2 frozen body whose scope, engine, config or indexed member manifest differs from its real capture', async () => {
   const fx = await fixture('memory');
   try {
-    const captured = await fx.workspaceTools.captureSourceChanges(context, {
+    const captured = await fx.workspaceTools.captureObservation(context, {
       workspace: { aggregateType: 'Workspace', ...workspace }, workspaceRevision: 1,
       provider: 'typescript', configPath: 'tsconfig.json',
     });
@@ -62,32 +65,42 @@ it('rejects a frozen body whose scope, engine, Git basis or permission file mani
     const mapped = await fx.workspaceTools.captureArchitectureSource(context, {
       capture: captured.value.ref, mappings,
     });
+    const fileGraph = await fx.workspaceTools.captureFileGraph(context, { capture: captured.value.ref });
     expect(exported.status).toBe('ready');
     expect(mapped.status).toBe('ready');
-    if (exported.status !== 'ready' || mapped.status !== 'ready') return;
-    const body = { schemaVersion: 1, capture: captured.value.ref,
-      observedAt: '2026-09-24T00:00:00.000Z', summary: exported.value.summary,
-      files: exported.value.files, architecture: mapped.value };
-    expect(mapped.value.indexedSources).toEqual(expect.arrayContaining([
-      expect.objectContaining({ path: 'src/alpha.ts' }),
-    ]));
+    expect(fileGraph.status).toBe('ready');
+    if (exported.status !== 'ready' || mapped.status !== 'ready' || fileGraph.status !== 'ready') return;
+    // §10 item 2: a new capture's body is v2 (counts-only summary, no `files`,
+    // no `indexedSources`); membership is checked against the path-sorted chunk
+    // node table, which carries path + digest per file.
+    const summary = {
+      files: exported.value.files.length,
+      languages: fileGraph.value.languages.map(language => ({ language: language.language, files: language.files })),
+      changes: {
+        added: exported.value.summary.changes.added.length,
+        modified: exported.value.summary.changes.modified.length,
+        deleted: exported.value.summary.changes.deleted.length,
+      },
+    };
+    const body = { schemaVersion: 2, capture: captured.value.ref,
+      observedAt: '2026-09-24T00:00:00.000Z', summary,
+      architecture: mapped.value };
+    const nodes = fileGraph.value.nodes;
     expect(architectureSourceIssues(mapped.value)).toEqual([]);
-    expect(decodeObservedArchitectureBody(JSON.stringify(body)).status).toBe('decoded');
+    expect(decodeObservedArchitectureBody(JSON.stringify(body), nodes).status).toBe('decoded');
     const variants = [
-      { ...body, architecture: { ...body.architecture, workspaceRevision: 2 } },
-      { ...body, architecture: { ...body.architecture, indexVersion: 'other-engine@1' } },
-      { ...body, architecture: { ...body.architecture, commitHash: 'a'.repeat(40) } },
-      { ...body, architecture: { ...body.architecture, configPath: 'other.json' } },
-      { ...body, files: body.files.filter(file => file.path !== 'src/alpha.ts') },
-      { ...body, architecture: { ...body.architecture, indexedSources: undefined } },
-      { ...body, architecture: { ...body.architecture, indexedSources: body.architecture.indexedSources?.filter(file => file.path !== 'src/alpha.ts') } },
-      { ...body, architecture: { ...body.architecture, indexedSources: body.architecture.indexedSources?.map(file =>
-        file.path === 'src/alpha.ts' ? { ...file, digest: '0'.repeat(64) } : file) } },
-      { ...body, architecture: { ...body.architecture, nodes: body.architecture.nodes.map(node =>
-        node.nodeId === 'module:Alpha' ? { ...node, contentDigest: '0'.repeat(64) } : node) } },
+      { body: { ...body, architecture: { ...body.architecture, workspaceRevision: 2 } }, nodes },
+      { body: { ...body, architecture: { ...body.architecture, indexVersion: 'other-engine@1' } }, nodes },
+      { body: { ...body, architecture: { ...body.architecture, sourceDigest: '0'.repeat(64) } }, nodes },
+      { body: { ...body, architecture: { ...body.architecture, projectId: 'other-project' } }, nodes },
+      { body: { ...body, architecture: { ...body.architecture, configPath: 'other.json' } }, nodes },
+      { body, nodes: nodes.filter(node => node.path !== 'src/alpha.ts') },
+      { body, nodes: nodes.map(node => node.path === 'src/alpha.ts' ? { ...node, digest: '0'.repeat(64) } : node) },
+      { body: { ...body, architecture: { ...body.architecture, nodes: body.architecture.nodes.map(node =>
+        node.nodeId === 'module:Alpha' ? { ...node, contentDigest: '0'.repeat(64) } : node) } }, nodes },
     ];
     for (const changed of variants) {
-      expect(decodeObservedArchitectureBody(JSON.stringify(changed)).status).toBe('invalid');
+      expect(decodeObservedArchitectureBody(JSON.stringify(changed.body), changed.nodes).status).toBe('invalid');
     }
   } finally { await fx.close(); }
 });
@@ -100,7 +113,7 @@ it('requires a real indexed JSON member for a JSON-only mapped node', async () =
     }, include: ['src/**/*.ts'] }));
     await fx.edit('src/data.json', JSON.stringify({ value: 1 }));
     await fx.edit('src/alpha.ts', 'import * as data from "./data.json";\nexport const alpha = data.value;\n');
-    const captured = await fx.workspaceTools.captureSourceChanges(context, {
+    const captured = await fx.workspaceTools.captureObservation(context, {
       workspace: { aggregateType: 'Workspace', ...workspace }, workspaceRevision: 1,
       provider: 'typescript', configPath: 'tsconfig.json',
     });
@@ -110,29 +123,75 @@ it('requires a real indexed JSON member for a JSON-only mapped node', async () =
     const mapped = await fx.workspaceTools.captureArchitectureSource(context, {
       capture: captured.value.ref, mappings: [{ id: 'Data', kind: 'module', paths: ['src/data.json'] }],
     });
+    const fileGraph = await fx.workspaceTools.captureFileGraph(context, { capture: captured.value.ref });
     expect(exported.status).toBe('ready');
     expect(mapped.status).toBe('ready');
-    if (exported.status !== 'ready' || mapped.status !== 'ready') return;
-    const indexed = mapped.value.indexedSources ?? [];
+    expect(fileGraph.status).toBe('ready');
+    if (exported.status !== 'ready' || mapped.status !== 'ready' || fileGraph.status !== 'ready') return;
+    // The compact module snapshot no longer carries `indexedSources`; the file
+    // graph nodes are the same frozen path+digest manifest (spec §10 item 2).
+    const indexed = fileGraph.value.nodes.map(node => ({ path: node.path, digest: node.digest }));
     expect(indexed).toEqual(expect.arrayContaining([expect.objectContaining({ path: 'src/data.json' })]));
-    const body = { schemaVersion: 1, capture: captured.value.ref,
-      observedAt: '2026-09-24T00:00:00.000Z', summary: exported.value.summary,
-      files: exported.value.files, architecture: mapped.value };
-    expect(decodeObservedArchitectureBody(JSON.stringify(body)).status).toBe('decoded');
+    const summary = {
+      files: exported.value.files.length,
+      languages: fileGraph.value.languages.map(language => ({ language: language.language, files: language.files })),
+      changes: { added: exported.value.summary.changes.added.length,
+        modified: exported.value.summary.changes.modified.length,
+        deleted: exported.value.summary.changes.deleted.length },
+    };
+    const body = { schemaVersion: 2, capture: captured.value.ref,
+      observedAt: '2026-09-24T00:00:00.000Z', summary,
+      architecture: mapped.value };
+    const nodes = fileGraph.value.nodes;
+    expect(decodeObservedArchitectureBody(JSON.stringify(body), nodes).status).toBe('decoded');
+    expect(decodeObservedArchitectureBody(JSON.stringify(body),
+      nodes.filter(node => node.path !== 'src/data.json')).status).toBe('invalid');
+    expect(decodeObservedArchitectureBody(JSON.stringify(body),
+      nodes.map(node => node.path === 'src/data.json' ? { ...node, digest: '0'.repeat(64) } : node)).status).toBe('invalid');
     expect(decodeObservedArchitectureBody(JSON.stringify({ ...body,
-      architecture: { ...mapped.value, indexedSources: indexed.filter(file => file.path !== 'src/data.json') },
-    })).status).toBe('invalid');
-    expect(decodeObservedArchitectureBody(JSON.stringify({ ...body,
-      architecture: { ...mapped.value, indexedSources: indexed.map(file =>
-        file.path === 'src/data.json' ? { ...file, digest: '0'.repeat(64) } : file) },
-    })).status).toBe('invalid');
-    expect(decodeObservedArchitectureBody(JSON.stringify({ ...body,
-      architecture: { ...mapped.value, nodes: mapped.value.nodes.map(node =>
+      architecture: { ...body.architecture, nodes: body.architecture.nodes.map(node =>
         node.nodeId === 'module:Data' ? { ...node, contentDigest: '0'.repeat(64) } : node) },
-    })).status).toBe('invalid');
-    expect(decodeObservedArchitectureBody(JSON.stringify({ ...body,
-      files: exported.value.files.filter(file => file.path !== 'src/data.json'),
-    })).status).toBe('invalid');
+    }), nodes).status).toBe('invalid');
     expect(architectureSourceIssues({ ...mapped.value, indexedSources: [...indexed, indexed[0]] })).toContain('duplicate indexed source');
+  } finally { await fx.close(); }
+});
+
+it('opens one Host access and reads the observation record once per public read', async () => {
+  const fx = await fixture('memory');
+  try {
+    // Reach the committed observation through the public capture, never by
+    // encoding a record: only the platform writes the record and its chunks.
+    const writer = createObservedArchitecture(fx.deps());
+    const captured = await writer.captureSourceChanges(context, capture('one-access-one-read'));
+    expect(captured.status).toBe('committed');
+    if (captured.status !== 'committed') return;
+    const captureRef = { aggregateType: 'ObservedArchitecture' as const, projectId, workspaceId,
+      captureId: captured.value.capture.captureId };
+    const deps = fx.deps();
+    let opens = 0;
+    let recordReads = 0;
+    const counted = {
+      ...deps,
+      access: { open: async (...args: Parameters<typeof deps.access.open>) => {
+        opens += 1; return deps.access.open(...args);
+      } },
+      records: { ...deps.records, readMany: async (...args: Parameters<typeof deps.records.readMany>) => {
+        recordReads += 1; return deps.records.readMany(...args);
+      } },
+    };
+    const reader = createObservedArchitecture(counted);
+    // The page entry does the one record read and one access open; the chunk
+    // helper it calls must not repeat either.
+    const page = await reader.listFiles(context, { captureRef, cursor: null });
+    expect(page.status).toBe('ready');
+    expect({ opens, recordReads }).toEqual({ opens: 1, recordReads: 1 });
+    // `queryArchitecture` goes through loadObservation, which already has the
+    // record and the access before it hands them to the same chunk helper.
+    opens = 0; recordReads = 0;
+    const selection = { kind: 'observed' as const, capture: captured.value };
+    const neighborhood = await reader.queryArchitecture(context,
+      { selection, depth: 0, relations: ['dependency'], page: { limit: 10 } });
+    expect(neighborhood.status).toBe('ready');
+    expect({ opens, recordReads }).toEqual({ opens: 1, recordReads: 1 });
   } finally { await fx.close(); }
 });

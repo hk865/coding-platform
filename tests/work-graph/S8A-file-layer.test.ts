@@ -12,11 +12,11 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { ArchitectureCatalogPinV1 } from '../../src/contracts/architecture-catalog.js';
-import type { FileGraphNodeV1, LanguageCoverageV1 } from '../../src/contracts/architecture-inspection.js';
+import type { FileGraphPageNodeV1, LanguageCoverageV1 } from '../../src/contracts/architecture-inspection.js';
 import type { ArchitectureSourceMapping } from '../../src/contracts/architecture-source.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { WorkspaceScope } from '../../src/contracts/core/identity.js';
-import { canonicalJson, sha256Hex, type JsonValue } from '../../src/contracts/fingerprint.js';
+import { canonicalJson, type JsonValue } from '../../src/contracts/fingerprint.js';
 import type { ProjectSnapshot, WorkspaceSnapshot } from '../../src/contracts/ledger.js';
 import { RawArtifactBodyStore } from '../../src/core/record-store/body-store.js';
 import { createInMemoryRecordBackend } from '../../src/core/record-store/in-memory-record-store.js';
@@ -27,7 +27,7 @@ import { createObservedArchitecture } from '../../src/core/work-graph/architectu
 import { createArchitectureCatalogService } from '../../src/core/work-graph/architecture/catalog-service.js';
 import { ARCHITECTURE_CATALOG_SCHEMAS } from '../../src/core/work-graph/architecture/catalog-record-codecs.js';
 import {
-  OBSERVED_ARCHITECTURE_RECORD_SCHEMAS, encodeObservedArchitecture,
+  OBSERVED_ARCHITECTURE_RECORD_SCHEMAS,
 } from '../../src/core/work-graph/architecture/architecture-record-codecs.js';
 import {
   GOAL_RECORD_SCHEMAS, canonicalRefKey, encodeProjectSnapshot, encodeWorkspaceSnapshot,
@@ -60,7 +60,8 @@ afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) awai
 
 async function fixture(
   files: Record<string, string>,
-  options: { fileGraph?: { maxNodes: number; maxEdges: number }; limits?: Partial<WorkspaceCaptureLimits> } = {},
+  options: { fileGraph?: { maxNodes: number; maxEdges: number }; limits?: Partial<WorkspaceCaptureLimits>;
+    lightScan?: { maxRawReferences?: number } } = {},
 ) {
   const root = await mkdtemp(join(tmpdir(), 's8a-file-layer-'));
   cleanups.push(() => rm(root, { recursive: true, force: true }));
@@ -82,6 +83,7 @@ async function fixture(
   });
   const handle = createWorkspaceTools({ access, now: () => '2026-10-17T00:00:00.000Z',
     limits: { ...DEFAULT_WORKSPACE_LIMITS, ...(options.limits ?? {}) },
+    ...(options.lightScan ? { lightScan: options.lightScan } : {}),
     ...(options.fileGraph ? { fileGraph: options.fileGraph } : {}) });
   cleanups.push(() => handle.close());
   const schemas: RecordBackendSchemas = {
@@ -151,7 +153,7 @@ const A_01_FILES = (): Record<string, string> => {
 };
 
 const A_01_LANGUAGES: LanguageCoverageV1[] = [
-  { language: 'typescript', files: 205, parsed: 205, edges: 'supported', reason: null,
+  { language: 'typescript', files: 205, parsed: 205, edges: 'supported', reason: null, notes: [],
     issues: [], issueCount: 0, complete: true },
 ];
 
@@ -165,7 +167,7 @@ describe('A-01 file-level observation layer', () => {
       if (captured.status !== 'committed') return;
       const captureRef = { aggregateType: 'ObservedArchitecture' as const, projectId, workspaceId,
         captureId: captured.value.capture.captureId };
-      const nodes: FileGraphNodeV1[] = [];
+      const nodes: FileGraphPageNodeV1[] = [];
       const edges: { from: string; to: string }[] = [];
       let languages: LanguageCoverageV1[] = [];
       let cursor: string | null = null;
@@ -299,34 +301,6 @@ describe('A-01 file-level observation layer', () => {
     } finally { await fx.close(); }
   });
 
-  it('A-01g reads an observation without the chunk list as not_captured', async () => {
-    const fx = await fixture(A_01_FILES());
-    try {
-      const service = createObservedArchitecture(fx.deps());
-      const captureId = 'legacy-capture';
-      const sourceCapture = { projectId, workspaceId, captureId, workspaceRevision: 1,
-        sourceDigest: hex('a'), configDigest: hex('b'), indexVersion: 'typescript@1' };
-      const record = {
-        ref: { aggregateType: 'ObservedArchitecture' as const, projectId, workspaceId, captureId },
-        revision: 1 as const, schemaVersion: 1 as const,
-        source: { capture: sourceCapture, material: { kind: 'artifact' as const, contentType: 'application/json',
-          digest: hex('c'), sizeBytes: 0, source: { kind: 'workspace' as const, refId: workspaceId, revision: '1', digest: hex('a') } } },
-        observedAt: '2026-10-17T00:00:00.000Z',
-      };
-      const committed = await fx.commit([encodeObservedArchitecture(record)]);
-      expect(committed.status).toBe('committed');
-      const captureRef = { aggregateType: 'ObservedArchitecture' as const, projectId, workspaceId, captureId };
-      const page = await service.listFiles(context, { captureRef, cursor: null });
-      expect(page.status).toBe('ready');
-      if (page.status === 'ready') {
-        expect(page.value).toMatchObject({ notCaptured: true, nodes: [], edges: [], nextCursor: null, complete: true, languages: [] });
-      }
-      // Item 7: a cursor sent to an old capture (which never issued one) is a mismatch, not a blank page.
-      expect(await service.listFiles(context, { captureRef, cursor: 'legacy-cursor' }))
-        .toMatchObject({ status: 'rejected', code: 'invalid', reason: 'cursor_mismatch' });
-    } finally { await fx.close(); }
-  });
-
   it('A-01h reassembles a split file graph through listFiles and rejects a graph over the 64-chunk cap', async () => {
     const fx = await fixture(A_01_FILES());
     try {
@@ -336,7 +310,7 @@ describe('A-01 file-level observation layer', () => {
       if (captured.status !== 'committed') return;
       const captureRef = { aggregateType: 'ObservedArchitecture' as const, projectId, workspaceId,
         captureId: captured.value.capture.captureId };
-      const nodes: FileGraphNodeV1[] = [];
+      const nodes: FileGraphPageNodeV1[] = [];
       const edges: { from: string; to: string }[] = [];
       let cursor: string | null = null;
       do {
@@ -494,67 +468,6 @@ describe('A-01 file-level observation layer', () => {
     } finally { await fx.close(); }
   });
 
-  it('S8A-08 decodes a pre-8A observation with the legacy any-prefix rule and uses it as previous', async () => {
-    const fx = await fixture({ 'src/a.ts': 'export const a = 1;\n', 'src/b/x.ts': 'export const x = 1;\n' });
-    try {
-      const tools = fx.handle.tools;
-      const legacyMappings: ArchitectureSourceMapping[] = [
-        { id: 'A', kind: 'module', paths: ['src'] },
-        { id: 'B', kind: 'module', paths: ['src/b'] },
-      ];
-      const live = await tools.captureObservation(context, { workspace: { aggregateType: 'Workspace', ...workspace },
-        workspaceRevision: 1, provider: 'typescript' });
-      expect(live.status).toBe('ready');
-      if (live.status !== 'ready') return;
-      const capture = live.value.ref;
-      expect((await tools.verifyCapture(context, capture)).status).toBe('ready');
-      const exported = await tools.exportCapture(context, capture);
-      expect(exported.status).toBe('ready');
-      if (exported.status !== 'ready') return;
-      const mapped = await tools.captureArchitectureSource(context, { capture, mappings: legacyMappings });
-      expect(mapped.status).toBe('ready');
-      if (mapped.status !== 'ready') return;
-      // The 8A builder uses the longest-prefix rule; a pre-8A record's digests
-      // cover every mapping whose path is ANY prefix (the old writer's rule).
-      const indexedSources = mapped.value.indexedSources ?? [];
-      const legacyMembers = (paths: readonly string[], path: string): boolean => paths.some(raw => {
-        const prefix = raw.endsWith('/') ? raw.slice(0, -1) : raw;
-        return prefix.length > 0 && (path === prefix || path.startsWith(prefix + '/'));
-      });
-      const legacyNodes = mapped.value.nodes.map(node => {
-        const mapping = mapped.value.mappings.find(entry => entry.kind + ':' + entry.id === node.structuralKey);
-        const members = indexedSources.filter(source => mapping !== undefined && legacyMembers(mapping.paths, source.path))
-          .map(source => ({ path: source.path, digest: source.digest }));
-        return { ...node, contentDigest: sha256Hex(canonicalJson(members as unknown as JsonValue)) };
-      });
-      const body = JSON.stringify({ schemaVersion: 1, capture, observedAt: '2026-10-17T00:00:00.000Z',
-        summary: exported.value.summary, files: exported.value.files,
-        architecture: { ...mapped.value, nodes: legacyNodes } });
-      const put = await fx.deps().bodies.put({ body, contentType: 'application/json',
-        sourceRefs: [{ kind: 'workspace', refId: workspaceId, revision: '1', digest: capture.sourceDigest }],
-        origin: { kind: 'platform_operation', projectId, workspaceId, requestId: 's8a-legacy', actor },
-        requestedAt: '2026-10-17T00:00:00.000Z' });
-      expect(put.status).toBe('ready');
-      if (put.status !== 'ready') return;
-      await tools.releaseCapture(context, capture);
-      const observedRef = { aggregateType: 'ObservedArchitecture' as const, projectId, workspaceId, captureId: capture.captureId };
-      const committed = await fx.commit([encodeObservedArchitecture({ ref: observedRef, revision: 1, schemaVersion: 1,
-        source: { capture, material: put.value.ref }, observedAt: '2026-10-17T00:00:00.000Z' })]);
-      expect(committed.status).toBe('committed');
-
-      const service = createObservedArchitecture(fx.deps());
-      const selection = { kind: 'observed' as const, capture: { capture, material: put.value.ref } };
-      const page = await service.queryArchitecture(context, { selection, depth: 1, relations: ['dependency'], page: { limit: 20 } });
-      expect(page.status).toBe('ready');
-      if (page.status === 'ready') expect(page.value.nodes.map(node => node.nodeId).sort()).toEqual(['module:A', 'module:B']);
-
-      const again = await service.captureSourceChanges(context, {
-        input: { workspace, mappings: legacyMappings, previous: { capture, material: put.value.ref } },
-        meta: { requestId: 's8a-legacy-previous', expected: [] } });
-      expect(again.status).toBe('committed');
-    } finally { await fx.close(); }
-  });
-
   it('S8A-14 keeps an observation whose explicit config was skipped and reports the config as a failed issue', async () => {
     const fx = await fixture({
       'src/good.ts': 'export const good = 1;\n',
@@ -591,10 +504,13 @@ describe('A-01 file-level observation layer', () => {
   });
 
   it('S8A-21 keeps the one failed analysis outcome with the frozen observation instead of re-analysing', async () => {
+    // §11.6 A-18 covers the scan-level raw-reference cap; this is the observation
+    // path: one failed scan result is frozen, files and line counts survive, the
+    // module layer is empty, and the page never re-analyses with another cap.
     const fx = await fixture({
       'src/a.ts': 'import { b } from "./b";\nimport { c } from "./c";\nexport const a = b + c;\n',
       'src/b.ts': 'import { c } from "./c";\nexport const b = c;\n',
-    }, { limits: { maxQueryResults: 2 } });
+    }, { lightScan: { maxRawReferences: 2 } });
     try {
       const service = createObservedArchitecture(fx.deps());
       const captured = await service.captureSourceChanges(context, {
@@ -613,8 +529,7 @@ describe('A-01 file-level observation layer', () => {
       ]);
       const coverage = page.value.languages.find(language => language.language === 'typescript');
       expect(coverage).toMatchObject({ files: 2, parsed: 0, edges: 'failed', complete: false });
-      expect(typeof coverage?.reason).toBe('string');
-      expect(coverage?.reason).not.toBe('');
+      expect(coverage?.reason).toBe('原始引用超过 2 条');
       const module = await service.queryArchitecture(context, { selection: { kind: 'observed', capture: captured.value },
         depth: 1, relations: ['dependency'], page: { limit: 10 } });
       expect(module.status).toBe('ready');

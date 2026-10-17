@@ -200,8 +200,12 @@ export type TargetPlatformOptions = {
   architectureSource?: { provider: 'typescript'; configPath: string | null };
   /** 8A file-graph caps. Test injection only, like `resultMaxBytes`; production
    * leaves this absent and `createWorkspaceTools` uses its own defaults
-   * (20,000 files / 100,000 edges). */
-  fileGraph?: { maxNodes: number; maxEdges: number };
+   * (20,000 files / 100,000 edges). `chunkBytes` is passed through to the
+   * observed-architecture chunk writer (A-12's small chunk size). */
+  fileGraph?: { maxNodes: number; maxEdges: number; chunkBytes?: number };
+  /** §11.2 trusted test injection for the one observation light scan: a fault hook
+   * and the raw-reference cap. Passed through; never model input. */
+  lightScan?: { fault?: (event: { phase: 'language' } | { phase: 'file'; path: string }) => void; maxRawReferences?: number };
   /** Trusted startup configuration; never taken from a model tool request. */
   kernelStores?: Parameters<typeof createKernelStoreRegistry>[0];
   /** Trusted Host execution binding. Its model/tool/template grant is the only
@@ -217,6 +221,13 @@ export type TargetPlatformOptions = {
   resourceCaps?: ResourceCapSource;
   /** Trusted per-workspace source policy, consumed by the existing source factories. */
   sourcePolicyFor?: RuntimeExecutionDependencies['sourcePolicyFor'];
+  /**
+   * L13/8D trusted analyzer resources: the Python analyzers archive directory, the
+   * system interpreter for both analyzers and the installed libclang. Production
+   * passes nothing and keeps the indexes' defaults; it is forwarded to the capture
+   * providers and the exploration tools and adds no public platform member.
+   */
+  sourceAnalyzers?: RuntimeExecutionDependencies['sourceAnalyzers'];
   /** Optional frozen trusted checks configuration. Without it the platform has
    * no registered check and the fresh evidence/check entry stays unsupported;
    * existing history reads keep working. Never defaulted to full access. */
@@ -633,7 +644,9 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     const rawGoals = createGoalService({ records: backend.records, now, eventId: randomUUID }).tasks;
     const workspace = createWorkspaceTools({ access,
       now, limits: DEFAULT_WORKSPACE_LIMITS,
-      ...(options.fileGraph === undefined ? {} : { fileGraph: options.fileGraph }) });
+      ...(options.fileGraph === undefined ? {} : { fileGraph: options.fileGraph }),
+      ...(options.lightScan === undefined ? {} : { lightScan: options.lightScan }),
+      ...(options.sourceAnalyzers === undefined ? {} : { sourceAnalyzers: options.sourceAnalyzers }) });
     const roleService = createRoleConfigurationService({ records: backend.records, now, eventId: randomUUID });
     const bootstrap = createProjectBootstrapServices({ records: backend.records, now, eventId: randomUUID });
     // Slice 5 §3.2: the configured operator is the Host's real start actor. The
@@ -711,7 +724,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       consultations: { readMessage: mailbox.readMessage.bind(mailbox), readMessageBody: mailbox.readMessageBody.bind(mailbox) },
     });
     const observed = createObservedArchitecture({ records: backend.records, bodies, access, workspace: workspace.tools,
-      source: options.architectureSource ?? { provider: 'typescript', configPath: 'tsconfig.json' } });
+      source: options.architectureSource ?? { provider: 'typescript', configPath: 'tsconfig.json' },
+      ...(options.fileGraph?.chunkBytes === undefined ? {} : { fileGraph: { chunkBytes: options.fileGraph.chunkBytes } }) });
     const catalog = createArchitectureCatalogService({ records: backend.records });
     // R6 cold-start: the live per-workspace trusted checks configuration the
     // Host registers after an explicit user approval. It is read by a FRESH
@@ -1008,6 +1022,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         controls: rawControls,
         kernelStores, workspaceHost: options.workspace, sourceAuthority: () => sourceAuthority,
         ...(options.sourcePolicyFor === undefined ? {} : { sourcePolicyFor: options.sourcePolicyFor }),
+        ...(options.sourceAnalyzers === undefined ? {} : { sourceAnalyzers: options.sourceAnalyzers }),
         ...(queryExecution === undefined ? {} : { queryExecution }),
         // C3: the continuation brief's checkpoint uses the SAME workspace reader as the evidence owner.
         workspaceSource: verificationWorkspaceReader,
