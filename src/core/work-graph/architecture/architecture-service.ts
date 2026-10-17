@@ -15,7 +15,9 @@
  * exist or keep their content.
  */
 import { randomUUID } from 'node:crypto';
-import type { ArchitectureSourceMapping } from '../../../contracts/architecture-source.js';
+import type { ArchitectureCatalogPinV1 } from '../../../contracts/architecture-catalog.js';
+import type { FileGraphNodeV1, FileGraphPageV1, FormalObservedComparisonV1, LanguageCoverageV1, ObservedCaptureRef } from '../../../contracts/architecture-inspection.js';
+import type { ArchitectureSourceMapping, ArchitectureSourceSnapshotV1 } from '../../../contracts/architecture-source.js';
 import { ARTIFACT_MAX_SIZE_BYTES, artifactBodyDigest, artifactBodySize } from '../../../contracts/artifact.js';
 import { commandIdentityKey } from '../../../contracts/command-event.js';
 import type { CommitCursor } from '../../../contracts/command-event.js';
@@ -32,17 +34,22 @@ import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type { GoalRecordTransactionPort, RecordGuard, StoreFailure } from '../../record-store/ports.js';
 import type { WorkspaceAccessFactory, WorkspaceReadAccess } from '../../workspace/access.js';
 import type { CaptureSourceRequest, CaptureSummary, WorkspaceError, WorkspaceResult, WorkspaceToolsPort } from '../../workspace/ports.js';
+import type { ProjectFileGraphV1 } from '../../workspace/architecture-language-provider.js';
 import { compareObservedGraphs } from './architecture-delta.js';
 import {
-  ARCHITECTURE_SOURCE_OBSERVED_EVENT, OBSERVED_ARCHITECTURE_BODY_CONTENT_TYPE,
-  decodeArchitectureSourceObservedEvent, decodeObservedArchitectureBody, decodeObservationCurrent,
-  decodeObservedArchitectureRecord, encodeArchitectureSourceObservedEvent, encodeObservationCurrent,
-  encodeObservedArchitecture, readPersistedSourceCaptureRef,
+  ARCHITECTURE_SOURCE_OBSERVED_EVENT, FILE_GRAPH_CHUNK_CONTENT_TYPE, OBSERVED_ARCHITECTURE_BODY_CONTENT_TYPE,
+  decodeArchitectureSourceObservedEvent, decodeObservedArchitectureBody, decodeObservedFileGraphChunk,
+  decodeObservationCurrent, decodeObservedArchitectureRecord, encodeArchitectureSourceObservedEvent,
+  encodeObservationCurrent, encodeObservedArchitecture, readPersistedSourceCaptureRef,
   type ArchitectureSourceObservedEventV1, type ObservedArchitectureBodyV1,
 } from './architecture-record-codecs.js';
+import { readRevisionByRef } from './catalog-service.js';
+import { compareFormalObservedGraphs } from './formal-comparison.js';
+import { FileGraphCursorError, FILE_GRAPH_MAX_IMPACT_DEPTH, FILE_GRAPH_PAGE_SIZE, impactPage,
+  listFilesPage, neighborsPage, type FileGraphPageData } from './file-graph-index.js';
 import type { ObservedArchitectureComparison, ObservedArchitectureImpact, ObservedArchitectureNeighborhood,
   ObservedArchitecturePort, ObservedArchitectureRecord, ObservedArchitectureRef, ObservedArchitectureSelection,
-  ObservedGraphAnchor, ObservedGraphPageRequest, WorkspaceArchitectureObservationCurrentRecord,
+  ObservedFileGraphManifestV1, ObservedGraphAnchor, ObservedGraphPageRequest, WorkspaceArchitectureObservationCurrentRecord,
   WorkspaceArchitectureObservationCurrentRef } from './contracts.js';
 import { ObservedGraphCursorError, buildObservedImpact, buildObservedNeighborhood } from './graph-index.js';
 import { canonicalRefKey, decodeProjectSnapshot, decodeWorkspaceSnapshot } from '../persistence/record-codecs.js';
@@ -55,8 +62,13 @@ export type ObservedArchitectureDependencies = {
   access: WorkspaceAccessFactory;
   bodies: RawArtifactStorePort;
   records: GoalRecordTransactionPort & RecordLookupPort;
-  /** Trusted Host configuration, selected before any model or caller request. */
-  source: { provider: 'typescript'; configPath: string };
+  /** Trusted Host configuration, selected before any model or caller request.
+   * 8A: `configPath: null` captures with no project configuration (a project with
+   * no TS files, or a caller that wants the provider's default roots). */
+  source: { provider: 'typescript'; configPath: string | null };
+  /** Test injection for the file-graph chunk size; production uses
+   * `ARTIFACT_MAX_SIZE_BYTES`. */
+  fileGraph?: { chunkBytes?: number };
 };
 
 const MAX_PAGE = 2048;
@@ -99,6 +111,11 @@ function safeRelativePath(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0 && value.length <= 4096
     && !/[\\:\0]/.test(value) && value.split('/').every(segment => !!segment && segment !== '.' && segment !== '..');
 }
+/** A mapping/module path additionally accepts exactly `.` (the root); a file
+ * anchor and the configuration path keep the strict `safeRelativePath` check. */
+function safeMappingPath(value: unknown): value is string {
+  return value === '.' || safeRelativePath(value);
+}
 function ownJsonInput<T>(value: T, what: string): Owned<T> {
   try {
     const cloned = structuredClone(value);
@@ -124,7 +141,9 @@ function readWorkspaceScope(value: unknown): WorkspaceScope | null {
   return { projectId: value['projectId'], workspaceId: value['workspaceId'] };
 }
 function readMappings(value: unknown): ArchitectureSourceMapping[] | null {
-  if (!Array.isArray(value) || value.length === 0 || value.length > 512) return null;
+  // An empty list is legal (task book item 8): a TS project without an adopted
+  // catalog is captured with the file layer and an empty module layer.
+  if (!Array.isArray(value) || value.length > 512) return null;
   const mappings: ArchitectureSourceMapping[] = [];
   const seen = new Set<string>();
   for (const entry of value) {
@@ -132,7 +151,7 @@ function readMappings(value: unknown): ArchitectureSourceMapping[] | null {
     const kind = entry['kind'];
     if (kind !== 'module' && kind !== 'interface') return null;
     const paths = entry['paths'];
-    if (!Array.isArray(paths) || paths.length === 0 || paths.some(path => !safeRelativePath(path))) return null;
+    if (!Array.isArray(paths) || paths.length === 0 || paths.some(path => !safeMappingPath(path))) return null;
     const key = kind + ':' + entry['id'];
     if (seen.has(key)) return null;
     seen.add(key);
@@ -185,6 +204,98 @@ function readRelations(value: unknown): ('dependency' | 'interface')[] | null {
     relations.push(entry);
   }
   return relations;
+}
+
+// --------------------------------------------------------------------------
+// 8A file-level helpers (pure)
+// --------------------------------------------------------------------------
+
+function readFileGraphCaptureRef(value: unknown): ObservedCaptureRef | null {
+  if (!isRecord(value) || value['aggregateType'] !== 'ObservedArchitecture') return null;
+  if (!nonEmpty(value['projectId']) || !nonEmpty(value['workspaceId']) || !nonEmpty(value['captureId'])) return null;
+  return { aggregateType: 'ObservedArchitecture', projectId: value['projectId'],
+    workspaceId: value['workspaceId'], captureId: value['captureId'] };
+}
+/** `null` is a valid absent cursor; `undefined` marks a malformed one. */
+function readFileGraphCursor(value: unknown): string | null | undefined {
+  if (value === null || value === undefined) return null;
+  return nonEmpty(value) ? value : undefined;
+}
+function readCatalogPin(value: unknown): ArchitectureCatalogPinV1 | null {
+  if (!isRecord(value)) return null;
+  const ref = value['catalogRef'];
+  if (!isRecord(ref) || ref['aggregateType'] !== 'ArchitectureCatalog') return null;
+  if (!nonEmpty(ref['projectId']) || !nonEmpty(ref['baselineId']) || !safeInteger(ref['revision']) || ref['revision'] < 1) return null;
+  const baseline = value['baseline'];
+  if (!isRecord(baseline)) return null;
+  const baselineRef = baseline['ref'];
+  if (!isRecord(baselineRef) || baselineRef['aggregateType'] !== 'ArchitectureBaselineRevision') return null;
+  if (!nonEmpty(baselineRef['projectId']) || !nonEmpty(baselineRef['baselineId']) || !safeInteger(baselineRef['revision']) || baselineRef['revision'] < 1) return null;
+  if (typeof baseline['digest'] !== 'string' || !/^[a-f0-9]{64}$/.test(baseline['digest'])) return null;
+  return {
+    catalogRef: { aggregateType: 'ArchitectureCatalog', projectId: ref['projectId'],
+      baselineId: ref['baselineId'], revision: ref['revision'] },
+    baseline: { ref: { aggregateType: 'ArchitectureBaselineRevision', projectId: baselineRef['projectId'],
+      baselineId: baselineRef['baselineId'], revision: baselineRef['revision'] }, digest: baseline['digest'] },
+  };
+}
+
+/** The empty module-level snapshot for a project with no TS/JS sources (task book item 8).
+ * `configPath` mirrors the capture's resolved configuration so the strict body reader accepts it. */
+function emptyArchitectureSnapshot(input: { scope: WorkspaceScope; capture: SourceCaptureRef;
+  mappings: ArchitectureSourceMapping[]; configPath: string | null; commitHash: string | null }): ArchitectureSourceSnapshotV1 {
+  return {
+    schemaVersion: 1, projectId: input.scope.projectId, workspaceId: input.scope.workspaceId,
+    workspaceRevision: input.capture.workspaceRevision, sourceDigest: input.capture.sourceDigest,
+    commitHash: input.commitHash, indexVersion: input.capture.indexVersion, configPath: input.configPath,
+    mappings: input.mappings, indexedSources: [], nodes: [], edges: [], unresolved: [],
+  };
+}
+
+/** Packs pre-serialized items into chunk bodies with a fixed prefix/suffix.
+ * Each item is serialized once and only the running byte size is tracked, so the
+ * whole builder is linear in the graph size (the previous version re-serialized
+ * the growing array for every element, which is O(n^2) near the caps). */
+function packFileGraphChunks<T>(prefix: string, suffix: string, serialized: readonly string[],
+  cap: number, alwaysFlush: boolean): string[] {
+  const chunks: string[] = [];
+  const overhead = Buffer.byteLength(prefix, 'utf8') + Buffer.byteLength(suffix, 'utf8');
+  let start = 0;
+  let size = 0;
+  for (let index = 0; index < serialized.length; index += 1) {
+    const itemBytes = Buffer.byteLength(serialized[index]!, 'utf8');
+    const addition = index === start ? itemBytes : 1 + itemBytes;
+    if (index > start && overhead + size + addition > cap) {
+      chunks.push(prefix + serialized.slice(start, index).join(',') + suffix);
+      start = index;
+      size = itemBytes;
+    } else {
+      size += addition;
+    }
+  }
+  if (alwaysFlush || serialized.length > 0) {
+    chunks.push(prefix + serialized.slice(start).join(',') + suffix);
+  }
+  return chunks;
+}
+
+/** One artifact per chunk: node chunks first (in path order) then edge chunks. */
+function buildFileGraphChunks(graph: ProjectFileGraphV1, cap: number): string[] {
+  const empty = JSON.stringify({ schemaVersion: 1, nodes: [] as unknown[], edges: [] as unknown[] });
+  const nodesOpen = empty.indexOf('[]', empty.indexOf('"nodes"'));
+  const edgeOpen = empty.indexOf('[]', empty.indexOf('"edges"'));
+  const nodePrefix = empty.slice(0, nodesOpen + 1);
+  const nodeSuffix = empty.slice(nodesOpen + 1);
+  const edgePrefix = empty.slice(0, edgeOpen + 1);
+  const edgeSuffix = empty.slice(edgeOpen + 1);
+  return [
+    ...packFileGraphChunks(nodePrefix, nodeSuffix, graph.nodes.map(node => JSON.stringify(node)), cap, true),
+    ...packFileGraphChunks(edgePrefix, edgeSuffix, graph.edges.map(edge => JSON.stringify(edge)), cap, false),
+  ];
+}
+
+function notCapturedPage(captureRef: ObservedCaptureRef): FileGraphPageV1 {
+  return { captureRef, nodes: [], edges: [], nextCursor: null, complete: true, notCaptured: true, languages: [] };
 }
 
 // --------------------------------------------------------------------------
@@ -396,7 +507,10 @@ async function loadObservation(deps: {
     if (artifactBodyDigest(stored.body) !== capture.material.digest || artifactBodySize(stored.body) !== capture.material.sizeBytes) {
       return unavailable('the stored body digest does not match the persisted material ref');
     }
-    const decodedBody = decodeObservedArchitectureBody(stored.body);
+    // A record without `fileGraph` was written before 8A: its module membership
+    // follows the legacy any-prefix rule, not the 8A longest-prefix rule.
+    const ownership = decodedRecord.value.fileGraph === null ? 'legacy_any_prefix' : 'longest';
+    const decodedBody = decodeObservedArchitectureBody(stored.body, ownership);
     if (decodedBody.status !== 'decoded') return unavailable('the stored observation body is damaged: ' + decodedBody.reason);
     const body = decodedBody.value;
     if (canonicalOf(body.capture) !== canonicalOf(capture.capture)) return unavailable('the stored body capture does not match the persisted reference');
@@ -410,6 +524,86 @@ async function loadObservation(deps: {
     if (body.summary.coverage.projectConfiguration !== null) paths.add(body.summary.coverage.projectConfiguration);
     for (const path of paths) if (!access.authorization.allowsRead(path)) return forbidden('the current Host grant does not cover the frozen source path ' + path);
     return { status: 'ready', value: { body, sourceCursor } };
+  } finally {
+    await access.release();
+  }
+}
+
+// --------------------------------------------------------------------------
+// 8A file-level load (record + chunk artifacts)
+// --------------------------------------------------------------------------
+
+type LoadedFileGraph = {
+  nodes: FileGraphNodeV1[];
+  edges: { from: string; to: string }[];
+  unresolved: { from: string; specifier: string }[];
+  languages: LanguageCoverageV1[];
+  complete: boolean;
+};
+
+/** Loads the chunked file graph behind one observation record. A record with no
+ * chunk list is `not_captured` (value null), never an empty captured graph. */
+async function loadFileGraph(deps: {
+  access: WorkspaceAccessFactory; bodies: RawArtifactStorePort; records: GoalRecordTransactionPort;
+}, ctx: CoreCallContext, captureRef: ObservedCaptureRef): Promise<{ status: 'ready'; value: LoadedFileGraph | null } | Rejection> {
+  if (ctx.projectId !== captureRef.projectId || ctx.workspaceId !== captureRef.workspaceId) {
+    return forbidden('the call context is outside the persisted observation workspace');
+  }
+  const workspaceRef: WorkspaceRef = { aggregateType: 'Workspace', projectId: captureRef.projectId, workspaceId: captureRef.workspaceId };
+  const opened = await deps.access.open(ctx, workspaceRef);
+  if (opened.status !== 'ready') return mapWorkspaceFailure(opened);
+  const access: WorkspaceReadAccess = opened.value;
+  try {
+    const refKey = canonicalOf(captureRef);
+    const read = await deps.records.readMany([refKey]);
+    if (read.status !== 'ready') return mapStoreFailure(read);
+    const encoded = read.value.records.find(record => record.refKey === refKey);
+    if (encoded === undefined) return rejected('not_found', 'the persisted observation record does not exist');
+    const decoded = decodeObservedArchitectureRecord(encoded);
+    if (decoded.status !== 'decoded') return unavailable('the canonical observation record is damaged');
+    const record = decoded.value;
+    if (record.ref.projectId !== captureRef.projectId || record.ref.workspaceId !== captureRef.workspaceId
+      || record.ref.captureId !== captureRef.captureId) {
+      return invalid('the persisted reference does not match the canonical observation record');
+    }
+    const manifest = record.fileGraph ?? null;
+    if (manifest === null) return { status: 'ready', value: null };
+    const nodes: FileGraphNodeV1[] = [];
+    const edges: { from: string; to: string }[] = [];
+    for (const chunkRef of manifest.chunks) {
+      const raw = await deps.bodies.read(chunkRef);
+      if (raw.status !== 'ready') return raw.code === 'not_found' ? rejected('not_found', raw.reason) : unavailable(raw.reason);
+      const stored = raw.value;
+      if (canonicalOf(stored.ref) !== canonicalOf(chunkRef)) return unavailable('the stored chunk ref does not match the persisted chunk ref');
+      if (stored.origin.kind !== 'platform_operation' || stored.origin.projectId !== captureRef.projectId
+        || (stored.origin.workspaceId !== undefined && stored.origin.workspaceId !== captureRef.workspaceId)) {
+        return unavailable('the stored chunk origin is not this workspace platform observation');
+      }
+      if (artifactBodyDigest(stored.body) !== chunkRef.digest || artifactBodySize(stored.body) !== chunkRef.sizeBytes) {
+        return unavailable('the stored chunk digest does not match the persisted chunk ref');
+      }
+      const chunk = decodeObservedFileGraphChunk(stored.body);
+      if (chunk.status !== 'decoded') return unavailable('the stored file graph chunk is damaged: ' + chunk.reason);
+      nodes.push(...chunk.value.nodes);
+      edges.push(...chunk.value.edges);
+    }
+    if (nodes.length !== manifest.nodeCount || edges.length !== manifest.edgeCount) {
+      return unavailable('the stored file graph chunk counts disagree with the observation record');
+    }
+    const languages = record.languages ?? [];
+    for (const node of nodes) if (!access.authorization.allowsRead(node.path)) {
+      return forbidden('the current Host grant does not cover every frozen path of this observation');
+    }
+    // 8A rework 2 item 5: language coverage carries issue paths that are not node
+    // paths (for example a skipped configuration or source file). The current
+    // grant must cover them too, or the whole file page leaks them.
+    for (const language of languages) for (const issue of language.issues) {
+      if (!access.authorization.allowsRead(issue.path)) {
+        return forbidden('the current Host grant does not cover every frozen path of this observation');
+      }
+    }
+    return { status: 'ready', value: { nodes, edges, unresolved: manifest.unresolved,
+      languages, complete: languages.every(language => language.complete) } };
   } finally {
     await access.release();
   }
@@ -442,6 +636,28 @@ async function restoreObservedCapture(records: GoalRecordTransactionPort, receip
 
 export function createObservedArchitecture(deps: ObservedArchitectureDependencies): ObservedArchitecturePort {
   const { workspace, access, bodies, records, source } = deps;
+
+  /** 8A rework 2 item 6: the one file-page sequence. It loads the frozen graph,
+   * maps an old observation (no graph) to `not_captured` or a cursor mismatch,
+   * runs the caller's paging function, attaches the whole-capture language
+   * coverage, and maps a bad cursor to `invalid`. Each public entry keeps its
+   * own argument checks and passes only its own paging function. */
+  async function readFilePage(ctx: CoreCallContext, captureRef: ObservedCaptureRef, cursor: string | null,
+    page: (loaded: LoadedFileGraph) => FileGraphPageData): Promise<ReadResult<FileGraphPageV1>> {
+    const loaded = await loadFileGraph(deps, ctx, captureRef);
+    if (loaded.status !== 'ready') return asReadResult(loaded);
+    if (loaded.value === null) {
+      // Item 7: an old capture never issued a cursor, so a cursor here is a mismatch.
+      if (cursor !== null) return invalid('cursor_mismatch');
+      return { status: 'ready', value: notCapturedPage(captureRef) };
+    }
+    try {
+      return { status: 'ready', value: { captureRef, ...page(loaded.value), languages: loaded.value.languages } };
+    } catch (error) {
+      if (error instanceof FileGraphCursorError) return invalid(error.message);
+      throw error;
+    }
+  }
 
   async function captureSourceChanges(ctx: CoreCallContext, request: { input: { workspace: WorkspaceScope; mappings: ArchitectureSourceMapping[]; previous: PersistedSourceCaptureRef | null }; meta: { requestId: string; expected: readonly VersionPin[] } }): Promise<WriteResult<PersistedSourceCaptureRef>> {
     // Synchronous input isolation: a caller mutating the request after this call cannot change the capture.
@@ -485,7 +701,7 @@ export function createObservedArchitecture(deps: ObservedArchitectureDependencie
     }
     if (early.code === 'idempotency_conflict') return rejected('idempotency_conflict', early.reason);
     if (early.code !== 'not_found') return unavailable(early.code + ': ' + early.reason);
-    if (source.provider !== 'typescript' || typeof source.configPath !== 'string') return rejected('unsupported', 'the configured architecture source provider is not installed');
+    if (source.provider !== 'typescript' || (source.configPath !== null && typeof source.configPath !== 'string')) return rejected('unsupported', 'the configured architecture source provider is not installed');
     if (ctx.signal.aborted) return rejected('cancelled', 'the observation was cancelled before capture');
 
     const canonical = await readCanonicalScope(records, scope);
@@ -506,9 +722,9 @@ export function createObservedArchitecture(deps: ObservedArchitectureDependencie
       workspace: { aggregateType: 'Workspace', projectId: scope.projectId, workspaceId: scope.workspaceId },
       workspaceRevision: canonical.workspaceRevision,
       provider: source.provider,
-      configPath: source.configPath,
+      ...(source.configPath === null ? {} : { configPath: source.configPath }),
     };
-    const captured = await workspace.captureSourceChanges(ctx, captureRequest);
+    const captured = await workspace.captureObservation(ctx, captureRequest);
     if (captured.status !== 'ready') return mapWorkspaceFailure(captured);
     const captureRef = captured.value.ref;
     try {
@@ -517,7 +733,19 @@ export function createObservedArchitecture(deps: ObservedArchitectureDependencie
       if (verified.status !== 'ready') return mapWorkspaceFailure(verified);
       const exported = await workspace.exportCapture(ctx, captureRef);
       if (exported.status !== 'ready') return mapWorkspaceFailure(exported);
-      const mapped = await workspace.captureArchitectureSource(ctx, { capture: captureRef, mappings });
+      // 8A file layer: capture it before the module mapping so a project with no
+      // TS/JS sources never calls `mapArchitectureSource` with an empty source set
+      // (task book item 8). The persisted module-level body is still written first.
+      const fileGraphResult = await workspace.captureFileGraph(ctx, { capture: captureRef });
+      if (fileGraphResult.status !== 'ready') return mapWorkspaceFailure(fileGraphResult);
+      const fileGraph = fileGraphResult.value;
+      const tsCoverage = fileGraph.languages.find(language => language.language === 'typescript');
+      // Item 8: no mappings (or no parsed TS sources) means the module layer is
+      // explicitly empty; the file layer is still captured.
+      const mapped = mappings.length > 0 && (tsCoverage?.parsed ?? 0) > 0
+        ? await workspace.captureArchitectureSource(ctx, { capture: captureRef, mappings })
+        : { status: 'ready' as const, value: emptyArchitectureSnapshot({ scope, capture: captureRef, mappings,
+            configPath: exported.value.summary.coverage.projectConfiguration, commitHash: exported.value.summary.commitHash }) };
       if (mapped.status !== 'ready') return mapWorkspaceFailure(mapped);
 
       // Body first: a failure after this point leaves an unreachable body, never a half-published observation.
@@ -542,13 +770,31 @@ export function createObservedArchitecture(deps: ObservedArchitectureDependencie
       if (put.status !== 'ready') return mapBodyPutFailure(put);
       const persistedRef: PersistedSourceCaptureRef = { capture: captureRef, material: put.value.ref };
 
+      // 8A file layer: one artifact per chunk, same sourceRefs/origin/requestedAt as
+      // the module body. All chunks are published before the second verification so
+      // a moved source leaves only unreachable bodies, never a published pointer.
+      const chunkBodies = buildFileGraphChunks(fileGraph, deps.fileGraph?.chunkBytes ?? ARTIFACT_MAX_SIZE_BYTES);
+      if (chunkBodies.length > 64) return rejected('capacity', 'the file graph needs ' + chunkBodies.length + ' chunks; the limit is 64');
+      const chunkRefs: ObservedFileGraphManifestV1['chunks'] = [];
+      for (const chunkBody of chunkBodies) {
+        const chunkPut = await bodies.put({ body: chunkBody, contentType: FILE_GRAPH_CHUNK_CONTENT_TYPE,
+          sourceRefs: [sourceRef], origin: { kind: 'platform_operation', projectId: scope.projectId, workspaceId: scope.workspaceId, requestId, actor: bound.actor }, requestedAt: observedAt });
+        if (chunkPut.status !== 'ready') return mapBodyPutFailure(chunkPut);
+        chunkRefs.push(chunkPut.value.ref);
+      }
+      const fileGraphManifest: ObservedFileGraphManifestV1 = {
+        chunks: chunkRefs, nodeCount: fileGraph.nodes.length, edgeCount: fileGraph.edges.length,
+        unresolved: fileGraph.unresolved,
+      };
+
       // A second live verification: if the source moved after the immutable body was saved, do not publish the pointer.
       const recheck = await workspace.verifyCapture(ctx, captureRef);
       if (recheck.status !== 'ready') return mapWorkspaceFailure(recheck);
 
       const observedRef: ObservedArchitectureRef = { aggregateType: 'ObservedArchitecture', projectId: scope.projectId,
         workspaceId: scope.workspaceId, captureId: captureRef.captureId };
-      const observedRecord: ObservedArchitectureRecord = { ref: observedRef, revision: 1, schemaVersion: 1, source: persistedRef, observedAt };
+      const observedRecord: ObservedArchitectureRecord = { ref: observedRef, revision: 1, schemaVersion: 1, source: persistedRef,
+        observedAt, fileGraph: fileGraphManifest, languages: fileGraph.languages };
       const currentRef: WorkspaceArchitectureObservationCurrentRef = { aggregateType: 'WorkspaceArchitectureObservationCurrent',
         projectId: scope.projectId, workspaceId: scope.workspaceId };
       const currentRead = await records.readMany([canonicalOf(currentRef)]);
@@ -682,5 +928,101 @@ export function createObservedArchitecture(deps: ObservedArchitectureDependencie
     }
   }
 
-  return { captureSourceChanges, queryArchitecture, compareArchitecture, queryImpact };
+  async function listFiles(ctx: CoreCallContext, input: { captureRef: ObservedCaptureRef; cursor: string | null }): Promise<ReadResult<FileGraphPageV1>> {
+    if (ctx?.signal?.aborted) return rejected('cancelled', 'the file graph read was cancelled');
+    const owned = ownJsonInput(input, 'listFiles input');
+    if (owned.status === 'invalid') return invalid(owned.reason);
+    const raw = owned.value as unknown as Record<string, unknown>;
+    const captureRef = readFileGraphCaptureRef(raw['captureRef']);
+    if (captureRef === null) return invalid('listFiles requires an observed capture ref');
+    const cursor = readFileGraphCursor(raw['cursor']);
+    if (cursor === undefined) return invalid('listFiles cursor must be null or a non-empty string');
+    return readFilePage(ctx, captureRef, cursor, loaded => listFilesPage(loaded, captureRef, cursor));
+  }
+
+  async function neighbors(ctx: CoreCallContext, input: {
+    captureRef: ObservedCaptureRef; file: string; direction: 'out' | 'in'; limit: number; cursor: string | null;
+  }): Promise<ReadResult<FileGraphPageV1>> {
+    if (ctx?.signal?.aborted) return rejected('cancelled', 'the file graph read was cancelled');
+    const owned = ownJsonInput(input, 'neighbors input');
+    if (owned.status === 'invalid') return invalid(owned.reason);
+    const raw = owned.value as unknown as Record<string, unknown>;
+    const captureRef = readFileGraphCaptureRef(raw['captureRef']);
+    if (captureRef === null) return invalid('neighbors requires an observed capture ref');
+    const file = raw['file'];
+    if (!nonEmpty(file) || !safeRelativePath(file)) return invalid('neighbors requires a normalized workspace-relative file path');
+    const direction = raw['direction'];
+    if (direction !== 'out' && direction !== 'in') return invalid('neighbors direction must be out or in');
+    const limit = raw['limit'];
+    if (!safeInteger(limit) || limit < 1) return invalid('neighbors limit must be a positive integer');
+    const cursor = readFileGraphCursor(raw['cursor']);
+    if (cursor === undefined) return invalid('neighbors cursor must be null or a non-empty string');
+    return readFilePage(ctx, captureRef, cursor,
+      loaded => neighborsPage(loaded, captureRef, file, direction, Math.min(limit, FILE_GRAPH_PAGE_SIZE), cursor));
+  }
+
+  async function impact(ctx: CoreCallContext, input: {
+    captureRef: ObservedCaptureRef; file: string; depth: number; limit: number; cursor: string | null;
+  }): Promise<ReadResult<FileGraphPageV1>> {
+    if (ctx?.signal?.aborted) return rejected('cancelled', 'the file graph read was cancelled');
+    const owned = ownJsonInput(input, 'impact input');
+    if (owned.status === 'invalid') return invalid(owned.reason);
+    const raw = owned.value as unknown as Record<string, unknown>;
+    const captureRef = readFileGraphCaptureRef(raw['captureRef']);
+    if (captureRef === null) return invalid('impact requires an observed capture ref');
+    const file = raw['file'];
+    if (!nonEmpty(file) || !safeRelativePath(file)) return invalid('impact requires a normalized workspace-relative file path');
+    const depth = raw['depth'];
+    if (!safeInteger(depth)) return invalid('impact depth must be a non-negative integer');
+    if (depth > FILE_GRAPH_MAX_IMPACT_DEPTH) return invalid('impact depth must be at most ' + FILE_GRAPH_MAX_IMPACT_DEPTH);
+    const limit = raw['limit'];
+    if (!safeInteger(limit) || limit < 1) return invalid('impact limit must be a positive integer');
+    const cursor = readFileGraphCursor(raw['cursor']);
+    if (cursor === undefined) return invalid('impact cursor must be null or a non-empty string');
+    return readFilePage(ctx, captureRef, cursor,
+      loaded => impactPage(loaded, captureRef, file, depth, Math.min(limit, FILE_GRAPH_PAGE_SIZE), cursor));
+  }
+
+  async function compareFormalObserved(ctx: CoreCallContext, input: {
+    catalog: ArchitectureCatalogPinV1; captureRef: ObservedCaptureRef;
+  }): Promise<ReadResult<FormalObservedComparisonV1>> {
+    if (ctx?.signal?.aborted) return rejected('cancelled', 'the formal-observed comparison was cancelled');
+    const owned = ownJsonInput(input, 'compareFormalObserved input');
+    if (owned.status === 'invalid') return invalid(owned.reason);
+    const raw = owned.value as unknown as Record<string, unknown>;
+    const catalog = readCatalogPin(raw['catalog']);
+    if (catalog === null) return invalid('compareFormalObserved requires a complete catalog pin');
+    const captureRef = readFileGraphCaptureRef(raw['captureRef']);
+    if (captureRef === null) return invalid('compareFormalObserved requires an observed capture ref');
+    // Item 4: the pin and the call context must name the same project, and the
+    // pin's catalog ref must link to its baseline ref, BEFORE any catalog read.
+    if (ctx.projectId !== catalog.catalogRef.projectId) {
+      return forbidden('the catalog pin is outside the call context project');
+    }
+    if (catalog.catalogRef.projectId !== catalog.baseline.ref.projectId
+      || catalog.catalogRef.baselineId !== catalog.baseline.ref.baselineId
+      || catalog.catalogRef.revision !== catalog.baseline.ref.revision) {
+      return invalid('the catalog pin does not link its catalog ref to its baseline ref');
+    }
+    // Resolve the pin through the recorded baseline revision, never the raw ref:
+    // a baseline with no record (or with no catalog row) is `not_found`.
+    const revision = await readRevisionByRef(records, catalog.baseline.ref);
+    if (revision.status !== 'ready') return revision;
+    if (revision.value.catalog === null) return { status: 'not_found' };
+    if (revision.value.baseline.contentDigest !== catalog.baseline.digest) {
+      return invalid('the catalog pin baseline digest does not match the recorded baseline revision');
+    }
+    const loaded = await loadFileGraph(deps, ctx, captureRef);
+    if (loaded.status !== 'ready') return asReadResult(loaded);
+    // UNSPECIFIED choice: an old observation with no file graph cannot be compared
+    // (empty findings would read as "no differences"), so it is `unsupported`.
+    if (loaded.value === null) return rejected('unsupported', 'not_captured: the observation has no file-level graph');
+    const fileGraph: ProjectFileGraphV1 = { nodes: loaded.value.nodes, edges: loaded.value.edges,
+      unresolved: loaded.value.unresolved, languages: loaded.value.languages, complete: loaded.value.complete };
+    const findings = compareFormalObservedGraphs({ architecture: revision.value.catalog.catalog, fileGraph });
+    return { status: 'ready', value: { catalog, captureRef, findings, noVerdict: true } };
+  }
+
+  return { captureSourceChanges, queryArchitecture, compareArchitecture, queryImpact,
+    listFiles, neighbors, impact, compareFormalObserved };
 }

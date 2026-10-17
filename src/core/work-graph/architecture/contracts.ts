@@ -1,6 +1,9 @@
 /** R3d observed-source slice. These records are evidence of a capture, never an adopted architecture. */
+import type { ArtifactRef } from '../../../contracts/artifact.js';
+import type { ArchitectureCatalogPinV1 } from '../../../contracts/architecture-catalog.js';
 import type { ArchitectureSourceMapping } from '../../../contracts/architecture-source.js';
-import type { CodeGraphEdge, CodeGraphNode } from '../../../contracts/architecture-inspection.js';
+import type { CodeGraphEdge, CodeGraphNode, FileGraphPageV1, FormalObservedComparisonV1,
+  LanguageCoverageV1, ObservedCaptureRef } from '../../../contracts/architecture-inspection.js';
 import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { CommandMeta, WorkspaceScope } from '../../../contracts/core/identity.js';
@@ -16,9 +19,24 @@ export type ObservedArchitectureRef = {
 export type WorkspaceArchitectureObservationCurrentRef = {
   aggregateType: 'WorkspaceArchitectureObservationCurrent'; projectId: string; workspaceId: string;
 };
+/**
+ * 8A file-level chunk manifest (spec L12; lead answer 1). One chunk per artifact;
+ * `nodeCount`/`edgeCount` are the totals across the chunks. `unresolved` is stored
+ * here because the chunk body carries only nodes and edges, and the formal-vs-
+ * observed comparison still needs the provider's unresolved imports.
+ */
+export type ObservedFileGraphManifestV1 = {
+  chunks: ArtifactRef[];
+  nodeCount: number;
+  edgeCount: number;
+  unresolved: { from: string; specifier: string }[];
+};
 export type ObservedArchitectureRecord = {
   ref: ObservedArchitectureRef; revision: 1; schemaVersion: 1;
   source: PersistedSourceCaptureRef; observedAt: string;
+  /** Absent/null on a record written before 8A; such a read reports `not_captured`. */
+  fileGraph?: ObservedFileGraphManifestV1 | null;
+  languages?: LanguageCoverageV1[];
 };
 export type WorkspaceArchitectureObservationCurrentRecord = {
   ref: WorkspaceArchitectureObservationCurrentRef; revision: number; schemaVersion: 1;
@@ -69,4 +87,18 @@ export interface ObservedArchitecturePort {
     selection: ObservedArchitectureSelection; changed: ObservedGraphAnchor[];
     page: ObservedGraphPageRequest;
   }): Promise<ReadResult<ObservedArchitectureImpact>>;
+  /** 8A file-level public reads over the chunked observation (spec L12; lead answer 1). */
+  listFiles(ctx: CoreCallContext, input: {
+    captureRef: ObservedCaptureRef; cursor: string | null;
+  }): Promise<ReadResult<FileGraphPageV1>>;
+  neighbors(ctx: CoreCallContext, input: {
+    captureRef: ObservedCaptureRef; file: string; direction: 'out' | 'in'; limit: number; cursor: string | null;
+  }): Promise<ReadResult<FileGraphPageV1>>;
+  impact(ctx: CoreCallContext, input: {
+    captureRef: ObservedCaptureRef; file: string; depth: number; limit: number; cursor: string | null;
+  }): Promise<ReadResult<FileGraphPageV1>>;
+  /** Read-only formal-catalog vs observed file graph comparison (spec L7). */
+  compareFormalObserved(ctx: CoreCallContext, input: {
+    catalog: ArchitectureCatalogPinV1; captureRef: ObservedCaptureRef;
+  }): Promise<ReadResult<FormalObservedComparisonV1>>;
 }

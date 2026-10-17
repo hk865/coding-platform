@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 import type { ProjectSourceAccess } from '../../src/core/workspace/project-source-index.js';
-import { captureProjectSource } from '../../src/core/workspace/project-source-snapshot.js';
+import { captureObservationSource, captureProjectSource } from '../../src/core/workspace/project-source-snapshot.js';
 
 const signal = () => new AbortController().signal;
 
@@ -80,6 +80,32 @@ it.each(['incomplete_inventory', 'binary_source', 'read_failure'] as const)(
     if (failure === 'incomplete_inventory') expect(project.reads).toEqual([]);
   },
 );
+
+it('S8A-08 skips binary, over-cap and unreadable files instead of failing the observation', async () => {
+  const project = memorySource({
+    'bad.ts': 'export const bad = "\0";',
+    'big.js': 'x'.repeat(64),
+    'good.ts': 'export const good = 1;',
+    'unreadable.json': '{"a":1}',
+  });
+  const read = project.access.read;
+  project.access.read = async (path, maxBytes) => {
+    if (path === 'unreadable.json') throw Object.assign(Error('read denied'), { code: 'permission_denied' });
+    return read(path, maxBytes);
+  };
+  // The reader (not the host) enforces the per-file cap, so an over-cap file is one skip among others.
+  const observed = await captureObservationSource(project.access, signal(), { maxFileBytes: 32 });
+  expect([...observed.files.values()].map(file => file.path)).toEqual(['good.ts']);
+  expect(observed.skipped).toEqual([
+    { path: 'bad.ts', reason: 'binary source' },
+    { path: 'big.js', reason: 'source exceeds file capacity' },
+    { path: 'unreadable.json', reason: 'source unavailable, denied or exceeds file capacity' },
+  ]);
+  // The skip list is part of the tolerant digest: turning a skipped file into text changes it.
+  project.files.set('bad.ts', 'export const bad = 1;');
+  const after = await captureObservationSource(project.access, signal(), { maxFileBytes: 32 });
+  expect(after.snapshot).not.toBe(observed.snapshot);
+});
 
 it('does not publish a capture cancelled before entry or during its final file read', async () => {
   const project = memorySource();

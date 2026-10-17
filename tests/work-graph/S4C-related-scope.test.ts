@@ -322,6 +322,26 @@ describe('S4C F-02 related-first module segment', () => {
         .toEqual([n01, n02, n03, n04, n05, n06, n08, n09, n10, n11]);
     } finally { await f.close(); }
   });
+
+  it.each(KINDS)('F-02 %s: the root `.` module relates a file note no concrete prefix owns', async kind => {
+    const { f } = await buildBase(kind);
+    try {
+      const goal = await createScopedGoal(f, GOAL);
+      const scribe = await goal.claimRun('s4c-scope-root-scribe', 't3', 'scribe');
+      const ctx = goal.workCtx(scribe, 'scribe');
+      await writeFile(join(f.root, 'src/loose.ts'), 'export const loose = 1;\n');
+      const ids = await writeCoreNotes(f, ctx);
+      const n07 = ids[6]!;
+      const loose = await writeNote(f, ctx, draft({ topic: 'loose', anchor: { kind: 'file', path: 'src/loose.ts' } }));
+      const root = await f.platform.notes.memoryFind(f.ctx(), { v: 1, op: 'find',
+        related: { kind: 'module', moduleId: 'R' }, limit: 20, cursor: null });
+      expect(root.status).toBe('ready');
+      if (root.status !== 'ready') return;
+      const related = root.value.items.filter(item => item.segment === 'related').map(item => item.noteId);
+      expect(related).toContain(loose);
+      expect(related).toContain(n07);
+    } finally { await f.close(); }
+  });
 });
 
 describe('S4C F-03 any-term ranking per segment', () => {

@@ -8,20 +8,31 @@
  * formal `ProjectArchitectureBaselineActive`.
  */
 import type { ArtifactRef } from '../../../contracts/artifact.js';
+import { COVERAGE_ISSUES_MAX, type FileGraphNodeV1, type LanguageCoverageV1 } from '../../../contracts/architecture-inspection.js';
 import type { ArchitectureSourceSnapshotV1 } from '../../../contracts/architecture-source.js';
-import { architectureSourceIssues } from '../../../contracts/architecture-source.js';
+import { architectureSourceIssues, pathOwnershipOf } from '../../../contracts/architecture-source.js';
 import type { ActorRef } from '../../../contracts/command-event.js';
 import type { PersistedSourceCaptureRef, SourceCaptureRef } from '../../../contracts/core/source.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { DecodeResult, EncodedDomainEvent, EncodedRecord, EncodedRecordSchema, RecordBackendSchemas } from '../../record-store/ports.js';
 import type { CaptureSummary, SourceCoverage, SourceFileEntry } from '../../workspace/ports.js';
-import type { ObservedArchitectureRecord, ObservedArchitectureRef, WorkspaceArchitectureObservationCurrentRecord, WorkspaceArchitectureObservationCurrentRef } from './contracts.js';
+import type { ObservedArchitectureRecord, ObservedArchitectureRef, ObservedFileGraphManifestV1, WorkspaceArchitectureObservationCurrentRecord, WorkspaceArchitectureObservationCurrentRef } from './contracts.js';
 
 export const OBSERVED_ARCHITECTURE_SCHEMA_ID = 'ObservedArchitecture@1';
 export const OBSERVATION_CURRENT_SCHEMA_ID = 'WorkspaceArchitectureObservationCurrent@1';
 export const ARCHITECTURE_SOURCE_OBSERVED_EVENT = 'ArchitectureSourceObserved';
 export const ARCHITECTURE_SOURCE_OBSERVED_EVENT_VERSION = 1;
 export const OBSERVED_ARCHITECTURE_BODY_CONTENT_TYPE = 'application/vnd.coding-platform.observed-architecture+json';
+/** 8A file-level chunk body (spec L12; lead answer 1). One artifact per chunk. */
+export const FILE_GRAPH_CHUNK_SCHEMA_ID = 'ObservedFileGraphChunk@1';
+export const FILE_GRAPH_CHUNK_CONTENT_TYPE = 'application/vnd.coding-platform.observed-file-graph-chunk+json';
+
+/** One stored file-level graph chunk; nodes and edges are concatenated in chunk order. */
+export type ObservedFileGraphChunkV1 = {
+  schemaVersion: 1;
+  nodes: FileGraphNodeV1[];
+  edges: { from: string; to: string }[];
+};
 
 /** Immutable body stored in the RawArtifactStore and referenced by the record. */
 export type ObservedArchitectureBodyV1 = {
@@ -90,6 +101,18 @@ function copyRecord(record: EncodedRecord): EncodedRecord {
 }
 function copyEvent(event: EncodedDomainEvent): EncodedDomainEvent {
   return { eventId: event.eventId, eventType: event.eventType, schemaVersion: event.schemaVersion, occurredAt: event.occurredAt, json: event.json };
+}
+/** The PRE-8A writer's membership rule: a file belongs to a mapping when ANY of
+ * the mapping's paths is a prefix (one trailing `/` stripped, directory
+ * boundary). It is never the longest-prefix rule, so a nested mapping keeps the
+ * parent's copy of its files too. */
+function legacyAnyPrefixMember(path: string, paths: readonly string[]): boolean {
+  for (const raw of paths) {
+    const prefix = raw.endsWith('/') ? raw.slice(0, -1) : raw;
+    if (prefix.length === 0) continue;
+    if (path === prefix || path.startsWith(prefix + '/')) return true;
+  }
+  return false;
 }
 
 // --------------------------------------------------------------------------
@@ -201,12 +224,113 @@ function readFileEntries(value: unknown): SourceFileEntry[] | null {
 }
 
 // --------------------------------------------------------------------------
+// 8A file-level graph (chunk body + record manifest)
+// --------------------------------------------------------------------------
+
+function readFileGraphNode(value: unknown): FileGraphNodeV1 | null {
+  if (!isRecord(value) || !exactKeys(value, ['path', 'nonBlankLines', 'language'])) return null;
+  if (!safeRelativePath(value['path'])) return null;
+  if (!isSafeRevision(value['nonBlankLines'])) return null;
+  if (!nonEmpty(value['language'])) return null;
+  return { path: value['path'], nonBlankLines: value['nonBlankLines'], language: value['language'] };
+}
+
+function readFileGraphEdges(value: unknown): { from: string; to: string }[] | null {
+  if (!Array.isArray(value)) return null;
+  const edges: { from: string; to: string }[] = [];
+  for (const entry of value) {
+    if (!isRecord(entry) || !exactKeys(entry, ['from', 'to'])) return null;
+    if (!safeRelativePath(entry['from']) || !safeRelativePath(entry['to'])) return null;
+    edges.push({ from: entry['from'], to: entry['to'] });
+  }
+  return edges;
+}
+
+function readLanguageCoverage(value: unknown): LanguageCoverageV1 | null {
+  if (!isRecord(value) || !exactKeys(value, ['language', 'files', 'parsed', 'edges', 'reason', 'issues', 'issueCount', 'complete'])) return null;
+  if (!nonEmpty(value['language'])) return null;
+  if (!isSafeRevision(value['files']) || !isSafeRevision(value['parsed'])) return null;
+  if (value['edges'] !== 'supported' && value['edges'] !== 'unsupported' && value['edges'] !== 'failed') return null;
+  if (value['reason'] !== null && !nonEmpty(value['reason'])) return null;
+  if (!Array.isArray(value['issues']) || value['issues'].length > COVERAGE_ISSUES_MAX) return null;
+  const issues: LanguageCoverageV1['issues'] = [];
+  for (const entry of value['issues']) {
+    if (!isRecord(entry) || !exactKeys(entry, ['path', 'kind', 'reason'])) return null;
+    if (!safeRelativePath(entry['path'])) return null;
+    if (entry['kind'] !== 'skipped' && entry['kind'] !== 'failed') return null;
+    if (!nonEmpty(entry['reason'])) return null;
+    issues.push({ path: entry['path'], kind: entry['kind'], reason: entry['reason'] });
+  }
+  if (!isSafeRevision(value['issueCount']) || value['issueCount'] < issues.length) return null;
+  if (typeof value['complete'] !== 'boolean') return null;
+  return { language: value['language'], files: value['files'], parsed: value['parsed'],
+    edges: value['edges'], reason: value['reason'], issues, issueCount: value['issueCount'], complete: value['complete'] };
+}
+
+function readFileGraphManifest(value: unknown):
+  { status: 'ok'; value: ObservedFileGraphManifestV1 | null } | { status: 'invalid'; reason: string } {
+  if (value === undefined || value === null) return { status: 'ok', value: null };
+  if (!isRecord(value) || !exactKeys(value, ['chunks', 'nodeCount', 'edgeCount', 'unresolved'])) {
+    return { status: 'invalid', reason: 'ObservedArchitecture fileGraph manifest has unknown or missing keys' };
+  }
+  if (!Array.isArray(value['chunks']) || value['chunks'].length > 64) {
+    return { status: 'invalid', reason: 'ObservedArchitecture fileGraph must carry at most 64 chunk refs' };
+  }
+  const chunks: ArtifactRef[] = [];
+  for (const rawRef of value['chunks']) {
+    const ref = readArtifactRef(rawRef);
+    if (ref === null || ref.contentType !== FILE_GRAPH_CHUNK_CONTENT_TYPE) {
+      return { status: 'invalid', reason: 'ObservedArchitecture fileGraph chunk ref is not a file graph chunk artifact' };
+    }
+    chunks.push(ref);
+  }
+  if (!isSafeRevision(value['nodeCount']) || !isSafeRevision(value['edgeCount'])) {
+    return { status: 'invalid', reason: 'ObservedArchitecture fileGraph counts must be safe non-negative integers' };
+  }
+  const rawUnresolved = value['unresolved'];
+  if (!Array.isArray(rawUnresolved)) {
+    return { status: 'invalid', reason: 'ObservedArchitecture fileGraph unresolved must be an array' };
+  }
+  const unresolved: { from: string; specifier: string }[] = [];
+  for (const entry of rawUnresolved) {
+    if (!isRecord(entry) || !exactKeys(entry, ['from', 'specifier'])) {
+      return { status: 'invalid', reason: 'ObservedArchitecture fileGraph unresolved entry is malformed' };
+    }
+    if (!safeRelativePath(entry['from']) || !nonEmpty(entry['specifier'])) {
+      return { status: 'invalid', reason: 'ObservedArchitecture fileGraph unresolved entry is malformed' };
+    }
+    unresolved.push({ from: entry['from'], specifier: entry['specifier'] });
+  }
+  return { status: 'ok', value: { chunks, nodeCount: value['nodeCount'], edgeCount: value['edgeCount'], unresolved } };
+}
+
+/** 8A chunk decoder: one chunk body, validated as a closed shape. */
+export function decodeObservedFileGraphChunk(json: string): DecodeResult<ObservedFileGraphChunkV1> {
+  const parsed = parseObject(json, 'Observed file graph chunk');
+  if (typeof parsed === 'string') return invalid(parsed);
+  if (!exactKeys(parsed, ['schemaVersion', 'nodes', 'edges'])) return invalid('observed file graph chunk has unknown or missing top-level keys');
+  if (parsed['schemaVersion'] !== 1) return invalid('observed file graph chunk schemaVersion must be 1');
+  if (!Array.isArray(parsed['nodes'])) return invalid('observed file graph chunk nodes must be an array');
+  const nodes: FileGraphNodeV1[] = [];
+  for (const raw of parsed['nodes']) {
+    const node = readFileGraphNode(raw);
+    if (node === null) return invalid('observed file graph chunk has an invalid file node');
+    nodes.push(node);
+  }
+  if (new Set(nodes.map(node => node.path)).size !== nodes.length) return invalid('observed file graph chunk has a duplicate file node');
+  const edges = readFileGraphEdges(parsed['edges']);
+  if (edges === null) return invalid('observed file graph chunk has an invalid edge list');
+  return { status: 'decoded', value: { schemaVersion: 1, nodes, edges } };
+}
+
+// --------------------------------------------------------------------------
 // Persisted body
 // --------------------------------------------------------------------------
 
 const BODY_KEYS: readonly string[] = ['schemaVersion', 'capture', 'observedAt', 'summary', 'files', 'architecture'];
 
-export function decodeObservedArchitectureBody(json: string): DecodeResult<ObservedArchitectureBodyV1> {
+export function decodeObservedArchitectureBody(json: string,
+  ownership: 'longest' | 'legacy_any_prefix' = 'longest'): DecodeResult<ObservedArchitectureBodyV1> {
   const parsed = parseObject(json, 'Observed architecture body');
   if (typeof parsed === 'string') return invalid(parsed);
   if (!exactKeys(parsed, BODY_KEYS)) return invalid('observed architecture body has unknown or missing top-level keys');
@@ -255,14 +379,33 @@ export function decodeObservedArchitectureBody(json: string): DecodeResult<Obser
   // equal sha256 of canonically-serialized indexed members in the manifest order: no re-sorting, so
   // the recorded provenance summary is reproduced exactly.
   const mappingByStructuralKey = new Map(architecture.mappings.map(mapping => [mapping.kind + ':' + mapping.id, mapping]));
+  const mappingIndexByStructuralKey = new Map(architecture.mappings.map((mapping, index) => [mapping.kind + ':' + mapping.id, index]));
+  // The membership recomputation reproduces the rule that wrote the body. A
+  // post-8A body carries `fileGraph` and was written with the SAME longest-prefix
+  // ownership decision as capture (`mapArchitectureSource`): `.` is the root at
+  // match length 0 and a concrete prefix wins; an equal-longest tie means the
+  // file belongs to NO mapping. A pre-8A body has no `fileGraph`; its writer put
+  // a file in EVERY mapping whose path is any prefix of it, so `loadObservation`
+  // passes `legacy_any_prefix` in that case.
+  const ownerIndexBySource = new Map<string, number | null>();
+  if (ownership === 'longest') {
+    const ownershipCandidates = architecture.mappings.map((mapping, index) => ({ value: index, paths: mapping.paths }));
+    for (const source of indexedSources) {
+      const result = pathOwnershipOf(source.path, ownershipCandidates);
+      ownerIndexBySource.set(source.path, result.status === 'owner' ? result.owner : null);
+    }
+  }
   for (const node of architecture.nodes) {
     const mapping = mappingByStructuralKey.get(node.structuralKey);
     if (mapping === undefined) return invalid('observed architecture node has no explicit mapping ' + node.structuralKey);
     if (node.nodeId !== node.structuralKey || node.kind !== mapping.kind || node.name !== mapping.id || node.path !== mapping.paths[0]) {
       return invalid('observed architecture node identity or representative path disagrees with its mapping');
     }
+    const mappingIndex = mappingIndexByStructuralKey.get(node.structuralKey)!;
     const members = indexedSources
-      .filter(source => mapping.paths.some(path => source.path === path || source.path.startsWith(path + '/')))
+      .filter(source => ownership === 'legacy_any_prefix'
+        ? legacyAnyPrefixMember(source.path, mapping.paths)
+        : ownerIndexBySource.get(source.path) === mappingIndex)
       .map(source => ({ path: source.path, digest: source.digest }));
     if (members.length === 0) return invalid('observed architecture node has no indexed source member for mapping ' + node.structuralKey);
     if (node.contentDigest !== sha256Hex(canonicalJson(members as unknown as JsonValue))) {
@@ -283,6 +426,14 @@ function validateObservedArchitecture(record: EncodedRecord): DecodeResult<Encod
   if (record.schemaId !== OBSERVED_ARCHITECTURE_SCHEMA_ID) return invalid('expected schemaId ' + OBSERVED_ARCHITECTURE_SCHEMA_ID + ', got ' + record.schemaId);
   const parsed = parseObject(record.json, 'ObservedArchitecture record');
   if (typeof parsed === 'string') return invalid(parsed);
+  // 8A adds two OPTIONAL fields; every other key stays closed so a drifted body
+  // cannot hide behind an unread field. Old rows omit both and still decode.
+  const requiredKeys = ['ref', 'revision', 'schemaVersion', 'source', 'observedAt'];
+  const allowedKeys = [...requiredKeys, 'fileGraph', 'languages'];
+  if (!requiredKeys.every(key => Object.prototype.hasOwnProperty.call(parsed, key))
+    || Object.keys(parsed).some(key => !allowedKeys.includes(key))) {
+    return invalid('ObservedArchitecture record has unknown or missing top-level keys');
+  }
   const ref = readObservedArchitectureRef(parsed['ref']);
   if (ref === null) return invalid('ObservedArchitecture record has no complete ref');
   if (canonicalJson(ref as unknown as JsonValue) !== record.refKey) return invalid('ObservedArchitecture ref is not the outer canonical ref_key');
@@ -294,6 +445,12 @@ function validateObservedArchitecture(record: EncodedRecord): DecodeResult<Encod
     return invalid('ObservedArchitecture persisted source identity disagrees with its full ref');
   }
   if (!nonEmpty(parsed['observedAt'])) return invalid('ObservedArchitecture observedAt must be a non-empty string');
+  const manifest = readFileGraphManifest(parsed['fileGraph']);
+  if (manifest.status !== 'ok') return invalid(manifest.reason);
+  if (parsed['languages'] !== undefined) {
+    if (!Array.isArray(parsed['languages'])) return invalid('ObservedArchitecture languages must be an array');
+    for (const coverage of parsed['languages']) if (readLanguageCoverage(coverage) === null) return invalid('ObservedArchitecture has an invalid language coverage entry');
+  }
   return { status: 'decoded', value: copyRecord(record) };
 }
 
@@ -371,7 +528,12 @@ export function encodeArchitectureSourceObservedEvent(event: ArchitectureSourceO
 export function decodeObservedArchitectureRecord(record: EncodedRecord): DecodeResult<ObservedArchitectureRecord> {
   const checked = validateObservedArchitecture(record);
   if (checked.status !== 'decoded') return checked;
-  return { status: 'decoded', value: JSON.parse(record.json) as ObservedArchitectureRecord };
+  const parsed = JSON.parse(record.json) as Omit<ObservedArchitectureRecord, 'fileGraph' | 'languages'>
+    & { fileGraph?: ObservedFileGraphManifestV1 | null; languages?: LanguageCoverageV1[] };
+  // 8A: a row written before the file layer has neither key; it reads as null/[].
+  const manifest = readFileGraphManifest(parsed.fileGraph);
+  if (manifest.status !== 'ok') return invalid(manifest.reason);
+  return { status: 'decoded', value: { ...parsed, fileGraph: manifest.value, languages: parsed.languages ?? [] } };
 }
 export function decodeObservationCurrent(record: EncodedRecord): DecodeResult<WorkspaceArchitectureObservationCurrentRecord> {
   const checked = validateObservationCurrent(record);

@@ -115,10 +115,17 @@ describe('S4B M-10 version lists', () => {
       expect(page.status).toBe('ready');
       if (page.status !== 'ready') return;
       expect(page.value.items.map(item => item.revision)).toEqual([2, 1]);
-      // R14: no record links a catalog revision to its event yet (P2), so `at`
-      // is null until 8A; the literal label says so.
-      expect(page.value.items.map(item => [item.revision, item.at, item.reason])).toEqual([[2, null, null], [1, null, null]]);
-      expect(page.value.items.every(item => item.reasonLabel === '原因记在目录修订里，第 8 片接上后显示')).toBe(true);
+      // 8A (post-note 4B ①): the revision record binds its commit cursor, so the
+      // new revision shows the real occurredAt and reason; the initial adoption
+      // has no binding and keeps the nulls with the literal label.
+      const newest = page.value.items[0]!;
+      expect(newest.revision).toBe(2);
+      expect(typeof newest.at).toBe('string');
+      expect(newest.reason).toBe('s4b M-10 catalog revision');
+      expect(newest.reasonLabel).toBe('s4b M-10 catalog revision');
+      const legacy = page.value.items[1]!;
+      expect([legacy.revision, legacy.at, legacy.reason]).toEqual([1, null, null]);
+      expect(legacy.reasonLabel).toBe('原因记在目录修订里，第 8 片接上后显示');
       expect(page.value.complete).toBe(true);
     } finally { await f.close(); }
   });

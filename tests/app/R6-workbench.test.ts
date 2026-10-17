@@ -124,7 +124,7 @@ describe('pure DTO presentation', () => {
       baseline: { ref: { aggregateType: 'ArchitectureBaselineRevision', projectId: 'p', baselineId: 'baseline-1', revision: 1 } as never,
         revision: 1, schemaVersion: 1, baselineId: 'baseline-1', contentRevision: 1, contentDigest: 'a'.repeat(64),
         content: { schemaVersion: 1, description: 'adopted', constraints: [] } },
-      catalog: { ref: {} as never, revision: 1, baselineRef: {} as never, schemaVersion: 1, catalog: {
+      catalog: { ref: {} as never, revision: 1, baselineRef: {} as never, schemaVersion: 1, since: null, catalog: {
         requireDag: true,
         modules: [{ ref: { projectId: 'p', moduleId: 'm1' }, name: 'Module one', responsibility: 'owns one thing', paths: ['src/m1'], interfaces: [] }],
         dependencies: [],

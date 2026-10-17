@@ -2,6 +2,7 @@ import type { WorkspaceRef } from '../../contracts/ledger.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { SourceCaptureRef } from '../../contracts/core/source.js';
 import type { ArchitectureSourceMapping, ArchitectureSourceSnapshotV1 } from '../../contracts/architecture-source.js';
+import type { ProjectFileGraphV1 } from './architecture-language-provider.js';
 
 /**
  * WorkspaceTools wire contract. `WorkspaceCapturePort` is the R2c capture subset; the full
@@ -168,6 +169,13 @@ export type WorkspaceComparison = CapturedWorkspaceComparison | GitWorkspaceComp
 export interface WorkspaceCapturePort {
   captureSourceChanges(ctx: CoreCallContext, input: CaptureSourceRequest):
     Promise<WorkspaceResult<CaptureSummary>>;
+  /**
+   * 8A tolerant observation capture: per-file binary/over-cap/unreadable skips are recorded
+   * as language issues instead of rejecting the whole observation. The strict
+   * `captureSourceChanges` path is unchanged.
+   */
+  captureObservation(ctx: CoreCallContext, input: CaptureSourceRequest):
+    Promise<WorkspaceResult<CaptureSummary>>;
   querySource(ctx: CoreCallContext, input: SourcePageRequest):
     Promise<WorkspaceResult<SourcePage>>;
   exportCapture(ctx: CoreCallContext, capture: SourceCaptureRef):
@@ -179,6 +187,9 @@ export interface WorkspaceCapturePort {
   captureArchitectureSource(ctx: CoreCallContext, input: {
     capture: SourceCaptureRef; mappings: ArchitectureSourceMapping[];
   }): Promise<WorkspaceResult<ArchitectureSourceSnapshotV1>>;
+  /** 8A file-level observation graph over the same frozen capture. */
+  captureFileGraph(ctx: CoreCallContext, input: { capture: SourceCaptureRef }):
+    Promise<WorkspaceResult<ProjectFileGraphV1>>;
 }
 
 export interface WorkspaceToolsPort extends WorkspaceCapturePort {

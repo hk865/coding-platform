@@ -34,6 +34,31 @@ describe.each(['memory', 'sqlite'] as const)('R3d observed architecture %s', kin
         expect([...page.value.edges, ...second.value.edges].map(edge => [edge.fromNode, edge.toNode])).toEqual(
           expect.arrayContaining([['module:Alpha', 'module:Beta'], ['module:Beta', 'module:Alpha']]));
         expect([...page.value.unresolved, ...second.value.unresolved]).toContain('unresolved import: src/alpha.ts:2 -> ./missing');
+        // 8A file layer over the same fixture. The architecture service releases
+        // its temporary capture, and no persisted file-graph read exists yet, so
+        // take one live WorkspaceTools capture and read its file graph publicly.
+        const live = await fx.workspaceTools.captureObservation(context, {
+          workspace: { aggregateType: 'Workspace', ...workspace },
+          workspaceRevision: 1, provider: 'typescript', configPath: 'tsconfig.json',
+        });
+        expect(live.status).toBe('ready');
+        if (live.status !== 'ready') return;
+        const fileGraph = await fx.workspaceTools.captureFileGraph(context, { capture: live.value.ref });
+        await fx.workspaceTools.releaseCapture(context, live.value.ref);
+        expect(fileGraph.status).toBe('ready');
+        if (fileGraph.status !== 'ready') return;
+        // Every readable file is one node with its counted nonBlankLines and
+        // language, and only resolved imports become edges (the `./missing`
+        // import stays unresolved, never an edge).
+        expect(fileGraph.value.nodes).toEqual([
+          { path: 'src/alpha.ts', nonBlankLines: 3, language: 'typescript' },
+          { path: 'src/beta.ts', nonBlankLines: 2, language: 'typescript' },
+          { path: 'tsconfig.json', nonBlankLines: 1, language: 'other' },
+        ]);
+        expect(fileGraph.value.edges).toEqual([
+          { from: 'src/alpha.ts', to: 'src/beta.ts' },
+          { from: 'src/beta.ts', to: 'src/alpha.ts' },
+        ]);
       }
       const formal = await fx.readRecord({ aggregateType: 'ProjectArchitectureBaselineActive', projectId });
       expect(formal.status).toBe('ready');
@@ -143,6 +168,36 @@ describe.each(['memory', 'sqlite'] as const)('R3d observed architecture %s', kin
       const result = await reader.queryArchitecture(context, { selection: { kind: 'observed', capture: created.value },
         depth: 1, relations: ['dependency'], page: { limit: 10 } });
       expect(result).toMatchObject({ status: 'rejected', code: 'unavailable' });
+    } finally { await fx.close(); }
+  });
+
+  // 8A file-layer extension (spec L12; lead answer 1): the module-node assertions
+  // above stay unchanged, and the SAME persisted observation now also serves the
+  // file-level public reads.
+  it('serves the persisted file-level layer beside the unchanged module nodes', async () => {
+    const fx = await fixture(kind);
+    try {
+      const service = createObservedArchitecture(fx.deps());
+      const captured = await service.captureSourceChanges(context, capture('file-layer-reads'));
+      expect(captured.status).toBe('committed');
+      if (captured.status !== 'committed') return;
+      const selection = { kind: 'observed' as const, capture: captured.value };
+      const module = await service.queryArchitecture(context, { selection, depth: 2,
+        relations: ['dependency'], page: { limit: 20 } });
+      expect(module.status).toBe('ready');
+      if (module.status === 'ready') {
+        expect(module.value.nodes.map(node => node.nodeId).sort()).toEqual(['module:Alpha', 'module:Beta']);
+      }
+      const captureRef = { aggregateType: 'ObservedArchitecture' as const, projectId,
+        workspaceId: workspace.workspaceId, captureId: captured.value.capture.captureId };
+      const files = await service.listFiles(context, { captureRef, cursor: null });
+      expect(files.status).toBe('ready');
+      if (files.status === 'ready') {
+        expect(files.value.nodes.map(node => node.path)).toEqual(['src/alpha.ts', 'src/beta.ts', 'tsconfig.json']);
+        expect(files.value.nodes.find(node => node.path === 'src/alpha.ts'))
+          .toEqual({ path: 'src/alpha.ts', nonBlankLines: 3, language: 'typescript' });
+        expect(files.value.complete).toBe(true);
+      }
     } finally { await fx.close(); }
   });
 });

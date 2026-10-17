@@ -1,0 +1,267 @@
+import { afterEach, expect, it } from 'vitest';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
+import type { SourceCaptureRef } from '../../src/contracts/core/source.js';
+import type { WorkspaceRef } from '../../src/contracts/ledger.js';
+import { canonicalJson } from '../../src/contracts/fingerprint.js';
+import { createWorkspaceAccessFactory, type WorkspaceAccessFactory } from '../../src/core/workspace/access.js';
+import type { WorkspaceResult } from '../../src/core/workspace/ports.js';
+import type { ProjectFileGraphV1 } from '../../src/core/workspace/architecture-language-provider.js';
+import { createWorkspaceTools, DEFAULT_WORKSPACE_LIMITS } from '../../src/core/workspace/workspace-tools.js';
+
+const cleanups: Array<() => Promise<void>> = [];
+afterEach(async () => {
+  for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
+});
+
+function ready<T>(result: WorkspaceResult<T>): T {
+  expect(result.status).toBe('ready');
+  if (result.status !== 'ready') throw Error(`${result.code}: ${result.reason}`);
+  return result.value;
+}
+
+type Entry = [path: string, content: string | Uint8Array];
+type FileGraphLimits = { maxNodes: number; maxEdges: number };
+
+/**
+ * A real temporary workspace behind the real permission-filtered sandbox. The unique
+ * grant is explicit (no production Host policy is implied); every read is filtered by
+ * `allowsRead`, so a denied path is invisible to both capture and the file graph.
+ */
+async function fixture(entries: Entry[], options: { denied?: string[]; fileGraph?: FileGraphLimits } = {}) {
+  const root = await mkdtemp(join(tmpdir(), 's8a-file-graph-'));
+  cleanups.push(() => rm(root, { recursive: true, force: true }));
+  const files = new Map<string, string | Uint8Array>(entries);
+  for (const [path, content] of entries) {
+    await mkdir(dirname(join(root, path)), { recursive: true });
+    await writeFile(join(root, path), content);
+  }
+  const denied = new Set(options.denied ?? []);
+  const workspace: WorkspaceRef = { aggregateType: 'Workspace', projectId: 's8a-file-graph', workspaceId: 'main' };
+  const workspaceRevision = 1;
+  const actor = { kind: 'human' as const, id: 's8a-file-graph-reader' };
+  const access: WorkspaceAccessFactory = createWorkspaceAccessFactory({
+    resolveRoot: async requested => requested.projectId === workspace.projectId && requested.workspaceId === workspace.workspaceId
+      ? { status: 'ready', value: { root, workspaceRevision } }
+      : { status: 'rejected', code: 'not_found', reason: 'unknown test workspace' },
+    authorize: async (ctx, requested) => {
+      if (requested.projectId !== workspace.projectId || requested.workspaceId !== workspace.workspaceId ||
+          ctx.projectId !== workspace.projectId || ctx.workspaceId !== workspace.workspaceId ||
+          ctx.principal.kind !== 'host' || ctx.principal.actor.id !== actor.id ||
+          ctx.materialReader.kind !== 'host' || ctx.materialReader.projectId !== workspace.projectId ||
+          ctx.materialReader.workspaceId !== workspace.workspaceId || ctx.materialReader.actor.id !== actor.id)
+        return { status: 'rejected', code: 'forbidden', reason: 'no matching explicit test grant' };
+      return { status: 'ready', value: {
+        subjectKey: canonicalJson(['host', actor]), permissionRevision: 's8a-file-graph-policy-v1',
+        allowsRead: path => files.has(path) && !denied.has(path),
+      } };
+    },
+  });
+  const handle = createWorkspaceTools({
+    access, now: () => '2026-10-17T00:00:00.000Z', limits: DEFAULT_WORKSPACE_LIMITS,
+    ...(options.fileGraph ? { fileGraph: options.fileGraph } : {}),
+  });
+  cleanups.push(() => handle.close());
+  const context: CoreCallContext = {
+    projectId: workspace.projectId, workspaceId: workspace.workspaceId,
+    principal: { kind: 'host', actor },
+    materialReader: { kind: 'host', projectId: workspace.projectId, workspaceId: workspace.workspaceId, actor },
+    signal: new AbortController().signal,
+  };
+  const capture = async (configPath?: string) => ready(await handle.tools.captureObservation(context, {
+    workspace, workspaceRevision, provider: 'typescript', ...(configPath === undefined ? {} : { configPath }),
+  }));
+  const strictCapture = async () => ready(await handle.tools.captureSourceChanges(context, {
+    workspace, workspaceRevision, provider: 'typescript',
+  }));
+  const graphOf = (capture: SourceCaptureRef) => handle.tools.captureFileGraph(context, { capture });
+  const graph = async () => graphOf((await capture()).ref);
+  const edit = async (path: string, content: string | Uint8Array) => {
+    files.set(path, content);
+    await writeFile(join(root, path), content);
+  };
+  return { root, workspace, files, denied, handle, context, capture, strictCapture, graph, graphOf, edit };
+}
+
+it('A-01 builds one node per readable file and only resolved import edges over the frozen capture', async () => {
+  const entries: Entry[] = [
+    ['src/a.ts', 'import { b } from "./b";\n\nexport const a = b;\n'],
+    ['src/b.ts', 'export const b = 1;\n'],
+    ['src/c.ts', 'import { d } from "./d";\n'],
+    ['src/d.ts', 'export const d = 1;\n'],
+    ...Array.from({ length: 201 }, (_, index): Entry => {
+      const id = String(index + 1).padStart(3, '0');
+      return [`src/f${id}.ts`, `export const f${id} = 1;\n`];
+    }),
+    // Present on disk but outside the reader's grant: must never become a node.
+    ['src/denied.ts', 'export const denied = 1;\n'],
+  ];
+  const f = await fixture(entries, { denied: ['src/denied.ts'] });
+  const graph = ready(await f.graph());
+
+  expect(graph.nodes).toHaveLength(205);
+  expect(graph.nodes.find(node => node.path === 'src/a.ts')).toEqual({ path: 'src/a.ts', nonBlankLines: 2, language: 'typescript' });
+  expect(graph.nodes.some(node => node.path === 'src/denied.ts')).toBe(false);
+  expect(graph.edges).toEqual([
+    { from: 'src/a.ts', to: 'src/b.ts' },
+    { from: 'src/c.ts', to: 'src/d.ts' },
+  ]);
+  expect(graph.unresolved).toEqual([]);
+  expect(graph.languages).toEqual([
+    { language: 'typescript', files: 205, parsed: 205, edges: 'supported', reason: null, issues: [], issueCount: 0, complete: true },
+  ]);
+  expect(graph.complete).toBe(true);
+});
+
+it('S8A-01 records a binary file as a skipped issue of its language instead of a node', async () => {
+  const f = await fixture([
+    ['src/a.ts', 'export const a = 1;\n'],
+    ['docs/logo.png', Buffer.from([0, 1, 2, 3, 4])],
+  ]);
+  const graph = ready(await f.graph());
+
+  expect(graph.nodes.map(node => node.path)).toEqual(['src/a.ts']);
+  const other = graph.languages.find(language => language.language === 'other');
+  expect(other).toEqual({
+    language: 'other', files: 1, parsed: 0, edges: 'unsupported', reason: '引用关系未支持',
+    issues: [{ path: 'docs/logo.png', kind: 'skipped', reason: 'binary source' }], issueCount: 1, complete: false,
+  });
+  expect(graph.languages.find(language => language.language === 'typescript')).toMatchObject({
+    files: 1, parsed: 1, edges: 'supported', reason: null, issues: [], issueCount: 0, complete: true,
+  });
+  expect(graph.complete).toBe(false);
+});
+
+it('S8A-02 keeps nonBlankLines when the parser cannot make sense of the source', async () => {
+  const f = await fixture([
+    ['src/f.ts', 'const broken = ;\n\nexport const ok = 1;\n'],
+  ]);
+  const graph = ready(await f.graph());
+
+  expect(graph.nodes).toEqual([{ path: 'src/f.ts', nonBlankLines: 2, language: 'typescript' }]);
+});
+
+it('S8A-03 captures a project with no TS files: nodes survive and other languages read unsupported', async () => {
+  const f = await fixture([
+    ['e.py', 'import g\n\nprint(g)\n'],
+    ['g.py', 'x = 1\n'],
+  ]);
+  const capture = await f.capture();
+  expect(capture.ref.indexVersion).toContain('typescript');
+  const graph = ready(await f.graph());
+
+  expect(graph.nodes).toEqual([
+    { path: 'e.py', nonBlankLines: 2, language: 'python' },
+    { path: 'g.py', nonBlankLines: 1, language: 'python' },
+  ]);
+  expect(graph.languages).toEqual([
+    { language: 'python', files: 2, parsed: 0, edges: 'unsupported', reason: '引用关系未支持', issues: [], issueCount: 0, complete: false },
+  ]);
+  expect(graph.edges).toEqual([]);
+  expect(graph.unresolved).toEqual([]);
+});
+
+it('S8A-04 rejects with capacity and the count reached when the injected file cap is exceeded', async () => {
+  const f = await fixture([
+    ['src/a.ts', 'export const a = 1;\n'],
+    ['src/b.ts', 'export const b = 1;\n'],
+    ['src/c.ts', 'export const c = 1;\n'],
+  ], { fileGraph: { maxNodes: 2, maxEdges: 100000 } });
+  const result = await f.graph();
+  expect(result.status).toBe('rejected');
+  if (result.status !== 'rejected') throw Error('unreachable');
+  expect(result.code).toBe('capacity');
+  expect(result.reason).toMatch(/\b2\b/);
+});
+
+it('S8A-05 reports the supported typescript coverage entry alongside an unsupported language', async () => {
+  const f = await fixture([
+    ['src/a.ts', 'export const a = 1;\n'],
+    ['src/b.ts', 'export const b = 1;\n'],
+    ['native/c.cpp', 'int f() { return 0; }\n'],
+  ]);
+  const graph: ProjectFileGraphV1 = ready(await f.graph());
+
+  expect(graph.languages).toEqual([
+    { language: 'cpp', files: 1, parsed: 0, edges: 'unsupported', reason: '引用关系未支持', issues: [], issueCount: 0, complete: false },
+    { language: 'typescript', files: 2, parsed: 2, edges: 'supported', reason: null, issues: [], issueCount: 0, complete: true },
+  ]);
+});
+
+it('S8A-09 keeps the surviving TS nodes and records a binary TS file as a skipped issue', async () => {
+  const f = await fixture([
+    ['src/good.ts', 'export const good = 1;\n'],
+    ['src/bad.ts', 'export const bad = "\0";\n'],
+  ]);
+  const graph = ready(await f.graph());
+
+  expect(graph.nodes).toEqual([{ path: 'src/good.ts', nonBlankLines: 1, language: 'typescript' }]);
+  expect(graph.languages).toEqual([
+    { language: 'typescript', files: 2, parsed: 1, edges: 'supported', reason: null,
+      issues: [{ path: 'src/bad.ts', kind: 'skipped', reason: 'binary source' }], issueCount: 1, complete: false },
+  ]);
+  expect(graph.complete).toBe(false);
+});
+
+it('S8A-10 consumes the frozen observation material and verify detects a later non-TS change', async () => {
+  const f = await fixture([
+    ['script.py', 'x = 1\n'],
+    ['src/good.ts', 'export const good = 1;\n'],
+  ]);
+  const capture = await f.capture();
+  await f.edit('script.py', 'x = 1\ny = 2\nz = 3\n');
+  const graph = ready(await f.graphOf(capture.ref));
+
+  // The file graph never re-reads the worktree: the edited Python file stays as captured.
+  expect(graph.nodes).toEqual([
+    { path: 'script.py', nonBlankLines: 1, language: 'python' },
+    { path: 'src/good.ts', nonBlankLines: 1, language: 'typescript' },
+  ]);
+  // The tolerant digest covers every observed file, so verify reports the Python edit as stale.
+  expect(await f.handle.tools.verifyCapture(f.context, capture.ref))
+    .toMatchObject({ status: 'rejected', code: 'source_stale' });
+});
+
+it('S8A-11 resolves the capture config alias in the file layer and counts only TS indexed sources', async () => {
+  const f = await fixture([
+    ['tsconfig.app.json', JSON.stringify({
+      compilerOptions: { module: 'esnext', moduleResolution: 'bundler', noLib: true, paths: { '@lib/*': ['src/lib/*'] } },
+      include: ['src/**/*.ts'],
+    })],
+    ['src/a.ts', 'import { b } from "@lib/b";\nexport const a = b;\n'],
+    ['src/lib/b.ts', 'export const b = 1;\n'],
+  ]);
+  const capture = await f.capture('tsconfig.app.json');
+  const graph = ready(await f.graphOf(capture.ref));
+
+  expect(graph.edges).toEqual([{ from: 'src/a.ts', to: 'src/lib/b.ts' }]);
+  expect(graph.languages.find(language => language.language === 'typescript'))
+    .toMatchObject({ files: 2, parsed: 2, edges: 'supported', reason: null, complete: true });
+});
+
+it('S8A-12 never counts JSON modules as parsed TS sources', async () => {
+  const f = await fixture([
+    ['tsconfig.json', JSON.stringify({
+      compilerOptions: { module: 'esnext', moduleResolution: 'bundler', noLib: true, resolveJsonModule: true },
+      include: ['src/**/*.ts'],
+    })],
+    ['src/a.ts', 'import data from "./data.json";\nexport const a = data;\n'],
+    ['src/data.json', '{"value":1}\n'],
+  ]);
+  const capture = await f.capture('tsconfig.json');
+  const graph = ready(await f.graphOf(capture.ref));
+
+  const typescript = graph.languages.find(language => language.language === 'typescript')!;
+  expect(typescript.files).toBe(1);
+  expect(typescript.parsed).toBe(1);
+  expect(typescript.parsed).toBeLessThanOrEqual(typescript.files);
+});
+
+it('S8A-13 rejects a file graph over a strict capture as unsupported', async () => {
+  const f = await fixture([['src/a.ts', 'export const a = 1;\n']]);
+  const strict = await f.strictCapture();
+
+  expect(await f.graphOf(strict.ref)).toMatchObject({ status: 'rejected', code: 'unsupported' });
+});

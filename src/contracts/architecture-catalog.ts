@@ -13,6 +13,7 @@
  * WorkGraph call/write/guard types.
  */
 import type { ModuleRef } from './core/identity.js';
+import type { ArchitectureBaselinePin, ArchitectureBaselineRevisionRef } from './governance.js';
 
 /** One formal module with its responsibility, path mapping and interfaces. */
 export type ModuleDefinition = {
@@ -53,4 +54,20 @@ export type AdoptInitialArchitectureInput = {
    * baseline body. It is the same `{ name, scope }[]` array type.
    */
   constraints: { name: string; scope: string }[];
+};
+
+/**
+ * Slice 8A (decision 72 post-note, spec §2/L7): the pure catalog identity.
+ * Lifted here as the ONE definition because the formal-vs-observed comparison
+ * and the repair pins both live in Contracts; the WorkGraph
+ * `catalog-contracts.ts` module imports and re-exports it.
+ */
+export type ArchitectureCatalogRef = Omit<ArchitectureBaselineRevisionRef, 'aggregateType'> & {
+  aggregateType: 'ArchitectureCatalog';
+};
+
+/** Complete immutable catalog identity: catalog ref plus baseline pin. */
+export type ArchitectureCatalogPinV1 = {
+  catalogRef: ArchitectureCatalogRef;
+  baseline: ArchitectureBaselinePin;
 };

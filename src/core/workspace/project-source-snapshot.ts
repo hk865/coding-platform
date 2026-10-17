@@ -44,6 +44,21 @@ export class ProjectSourceFailure extends Error {
   constructor(readonly status: 'rejected' | 'unsupported' | 'stale' | 'capacity', message: string) { super(message); }
 }
 
+/** One tolerated per-file read failure of a tolerant observation pass. */
+export type ProjectSourceSkip = Readonly<{ path: string; reason: string }>;
+
+/**
+ * One tolerant observation pass: every readable text file plus the skipped paths (binary,
+ * over-cap or unreadable). The digest covers the text files and the skip list, so a later
+ * change to either side makes a verification `stale`.
+ */
+export type ObservedProjectSource = Readonly<{
+  files: ReadonlyMap<string, CapturedProjectFile>;
+  skipped: readonly ProjectSourceSkip[];
+  identity: Readonly<{ workspace: string; commit: string | null }>;
+  snapshot: string;
+}>;
+
 export const sha256Text = (text: string) => createHash('sha256').update(text).digest('hex');
 export const isSourcePath = (path: string) => /\.(?:[cm]?[jt]sx?)$/.test(path);
 export const isIgnoredSourcePath = (path: string) => path.split('/').some(segment =>
@@ -86,4 +101,63 @@ export async function captureProjectSource(access: ProjectSourceAccess, signal: 
   // Manifest identity covers engine, HEAD/workspace identity and the sorted path+content digests.
   const snapshot = sha256Text(JSON.stringify({ engine: ts.version, identity, sources: [...files.values()].map(file => [file.path, file.digest]) }));
   return { files, identity, snapshot };
+}
+
+const kernelCode = (error: unknown): string | null =>
+  error && typeof error === 'object' && typeof (error as { code?: unknown }).code === 'string' ? (error as { code: string }).code : null;
+
+/** One skip reason shared by the tolerant reader and the file graph; never a whole-capture failure. */
+export function observationSkipReason(error: unknown): string {
+  const code = kernelCode(error);
+  if (code === 'too_large') return 'source exceeds file capacity';
+  if (code === 'binary_file' || code === 'invalid_encoding' || code === 'not_file') return 'binary source';
+  return 'source unavailable, denied or exceeds file capacity';
+}
+
+/**
+ * Capture every readable input exactly once, tolerating per-file failures. Unlike the strict
+ * `captureProjectSource`, a binary/over-cap/unreadable file becomes a `skipped` entry instead of
+ * rejecting the whole observation; `projectSnapshotOf` then narrows the text to the TS/JSON subset.
+ */
+export async function captureObservationSource(access: ProjectSourceAccess, signal: AbortSignal, limits: ProjectCaptureLimits = {}): Promise<ObservedProjectSource> {
+  const fileBytes = limits.maxFileBytes ?? FILE_BYTES, captureBytes = limits.maxCaptureBytes ?? CAPTURE_BYTES;
+  signal.throwIfAborted();
+  const source = await access.sourceIdentity();
+  signal.throwIfAborted();
+  const identity: Readonly<{ workspace: string; commit: string | null }> = Object.freeze({ workspace: source.workspace, commit: source.commit });
+  const inventory = await access.inventory(signal);
+  signal.throwIfAborted();
+  if (inventory.truncated) throw new ProjectSourceFailure('rejected', 'project inventory incomplete; choose a narrower workspace');
+  const paths = [...new Set(inventory.paths)]
+    .filter(path => isSafeSourcePath(path) && !isIgnoredSourcePath(path) && access.allowed(path))
+    .sort();
+  const files = new Map<string, CapturedProjectFile>();
+  const skipped: ProjectSourceSkip[] = [];
+  let bytes = 0;
+  for (const path of paths) {
+    signal.throwIfAborted();
+    let content: string;
+    try { content = (await access.read(path, fileBytes)).content; }
+    catch (error) { skipped.push({ path, reason: observationSkipReason(error) }); continue; }
+    signal.throwIfAborted();
+    if (content.includes('\0')) { skipped.push({ path, reason: 'binary source' }); continue; }
+    if (Buffer.byteLength(content) > fileBytes) { skipped.push({ path, reason: 'source exceeds file capacity' }); continue; }
+    bytes += Buffer.byteLength(content);
+    if (bytes > captureBytes) throw new ProjectSourceFailure('rejected', 'project observation exceeds capacity; narrow workspace scope');
+    files.set(SOURCE_ROOT + path, { path, content, digest: sha256Text(content) });
+  }
+  // Manifest identity covers engine, HEAD/workspace identity, the text digests and the skip list.
+  const snapshot = sha256Text(JSON.stringify({ engine: ts.version, identity,
+    sources: [...files.values()].map(file => [file.path, file.digest]),
+    skipped: skipped.map(skip => [skip.path, skip.reason]) }));
+  return { files, skipped, identity, snapshot };
+}
+
+/** The TS/JSON subset of one observation pass, with the strict `captureProjectSource` digest formula. */
+export function projectSnapshotOf(observed: ObservedProjectSource): ProjectSourceSnapshot {
+  const files = new Map<string, CapturedProjectFile>();
+  for (const [key, file] of observed.files) if (isProjectInputPath(file.path)) files.set(key, file);
+  const snapshot = sha256Text(JSON.stringify({ engine: ts.version, identity: observed.identity,
+    sources: [...files.values()].map(file => [file.path, file.digest]) }));
+  return { files, identity: observed.identity, snapshot };
 }

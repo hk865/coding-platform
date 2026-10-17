@@ -8,6 +8,7 @@
  * selection, and returns a bounded, deterministically ordered page.
  */
 import type { ArchitectureSourceSnapshotV1 } from '../../../contracts/architecture-source.js';
+import { pathOwnershipOf } from '../../../contracts/architecture-source.js';
 import type { CodeGraphEdge, CodeGraphNode } from '../../../contracts/architecture-inspection.js';
 import type { CommitCursor } from '../../../contracts/command-event.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
@@ -91,13 +92,22 @@ function mappingPathsByStructuralKey(graph: ArchitectureSourceSnapshotV1): Map<s
 function resolveAnchorNodes(graph: ArchitectureSourceSnapshotV1, anchor: ObservedGraphAnchor | undefined): string[] | null {
   if (anchor === undefined) return null;
   if (anchor.kind === 'node') return graph.nodes.some(node => node.nodeId === anchor.nodeId) ? [anchor.nodeId] : [];
-  const matches: string[] = [];
-  for (const mapping of graph.mappings) {
-    if (!mapping.paths.some(path => anchor.path === path || anchor.path.startsWith(path + '/'))) continue;
-    const nodeId = mapping.kind + ':' + mapping.id;
-    if (graph.nodes.some(node => node.nodeId === nodeId)) matches.push(nodeId);
+  // File anchors use the SAME `pathOwnershipOf` longest-prefix decision: a `.`
+  // mapping is the root (match length 0), a concrete prefix wins, and an
+  // equal-longest tie behaves like the graph-context reader — every tied module
+  // node is returned (a tie is not silently collapsed to one owner). Ownership
+  // is decided over ALL mappings, exactly as at write time
+  // (`workspace/architecture-source.ts`); a winner that has no observed node is
+  // dropped only afterwards, so it cannot hand the file to a shorter owner.
+  const nodeIds = new Set(graph.nodes.map(node => node.nodeId));
+  const candidates = graph.mappings
+    .map(mapping => ({ value: mapping.kind + ':' + mapping.id, paths: mapping.paths }));
+  const ownership = pathOwnershipOf(anchor.path, candidates);
+  if (ownership.status === 'none') return [];
+  if (ownership.status === 'tie') {
+    return [...new Set(ownership.owners)].filter(nodeId => nodeIds.has(nodeId)).sort();
   }
-  return [...new Set(matches)].sort();
+  return nodeIds.has(ownership.owner) ? [ownership.owner] : [];
 }
 
 /** Undirected bounded walk over the requested edge kinds; visited stops real cycles. */

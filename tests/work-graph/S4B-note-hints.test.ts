@@ -1,7 +1,8 @@
 /**
  * Slice 4B G2 round 2 — MF13 / R13 (L2a class 5 / §4 rule 23 hints). Files are
  * attributed with the existing longest-prefix rule (`mapExecutedFilesToModules`;
- * the root `"."` owns nothing); `file_module_mismatch` only applies to
+ * the root `"."` owns every path no concrete prefix claims, match length 0);
+ * `file_module_mismatch` only applies to
  * agent-written notes and compares the authoring Run's task scope in the Run's
  * bound plan; `deleted_path_unverified` needs a proving `file` fact or a
  * `counted` RunActivity. Datasets come from the real 4A writer, the real plan
@@ -66,14 +67,14 @@ describe('S4B MF13 class-5 hints', () => {
     } finally { await f.close(); }
   });
 
-  it.each(['memory', 'sqlite'] as const)('MF13 %s: the root "." owns nothing', async kind => {
+  it.each(['memory', 'sqlite'] as const)('MF13 %s: the root "." owns every path no concrete prefix claims', async kind => {
     const f = await createS4BNoteCheckFixture(kind);
     try {
-      // A root-level file no module path claims: only a regression where `"."`
-      // starts owning files could attribute it to module R.
+      // A root-level file no concrete module path claims is owned by module R
+      // (`"."`, match length 0, lowest priority), so its own basis file gives no hint.
       await writeFile(join(f.root, 'root-orphan.ts'), 'export const orphan = 1;\n');
       const noteId = await writeNote(f, draft({ anchor: { kind: 'module', moduleId: 'R' }, basisFiles: ['root-orphan.ts'] }));
-      expect(await hintsOf(f, noteId)).toEqual(['basis_outside_anchor']);
+      expect(await hintsOf(f, noteId)).toEqual([]);
     } finally { await f.close(); }
   });
 

@@ -24,6 +24,10 @@ const ROUTE_LABELS: Record<CoreRouteSuffix, string> = {
   'architecture/read': '查看采用架构',
   'architecture/capture': '捕获观察结构',
   'architecture/query': '查看观察结构',
+  // Slice 8A §2 labels (UNSPECIFIED wording; matching the architecture/* style).
+  'architecture/compare': '比较观察结构',
+  'architecture/compare-formal': '对比正式与观察结构',
+  'architecture/impact': '查看结构影响',
   'plans/propose': '提交计划草案',
   'plans/apply': '采用计划',
   'plans/proposal': '查看计划草案',

@@ -14,6 +14,7 @@ import { createSqliteRecordBackend } from '../../src/core/record-store/sqlite-re
 import type { GoalRecordTransactionPort, RecordBackendSchemas } from '../../src/core/record-store/ports.js';
 import type { RecordLookupPort } from '../../src/core/record-store/lookup-ports.js';
 import { OBSERVED_ARCHITECTURE_RECORD_SCHEMAS } from '../../src/core/work-graph/architecture/architecture-record-codecs.js';
+import { ARCHITECTURE_CATALOG_SCHEMAS } from '../../src/core/work-graph/architecture/catalog-record-codecs.js';
 import { GOAL_RECORD_SCHEMAS, canonicalRefKey, encodeProjectSnapshot, encodeWorkspaceSnapshot } from '../../src/core/work-graph/persistence/record-codecs.js';
 import { PLAN_GOVERNANCE_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/plan-readers.js';
 import { createWorkspaceAccessFactory } from '../../src/core/workspace/access.js';
@@ -33,12 +34,13 @@ export const mappings = [
 ];
 const schemas: RecordBackendSchemas = {
   records: [...GOAL_RECORD_SCHEMAS.records, ...PLAN_GOVERNANCE_RECORD_SCHEMAS.records,
-    ...OBSERVED_ARCHITECTURE_RECORD_SCHEMAS.records],
+    ...OBSERVED_ARCHITECTURE_RECORD_SCHEMAS.records, ...ARCHITECTURE_CATALOG_SCHEMAS.records],
   events: [...GOAL_RECORD_SCHEMAS.events, ...PLAN_GOVERNANCE_RECORD_SCHEMAS.events,
-    ...OBSERVED_ARCHITECTURE_RECORD_SCHEMAS.events,
+    ...OBSERVED_ARCHITECTURE_RECORD_SCHEMAS.events, ...ARCHITECTURE_CATALOG_SCHEMAS.events,
     { eventType: 'TrustedArchitectureScopeSeeded', schemaVersion: 1,
       validate: event => ({ status: 'decoded', value: event }) }],
-  lookups: OBSERVED_ARCHITECTURE_RECORD_SCHEMAS.lookups ?? [],
+  lookups: [...(OBSERVED_ARCHITECTURE_RECORD_SCHEMAS.lookups ?? []),
+    ...(ARCHITECTURE_CATALOG_SCHEMAS.lookups ?? [])],
 };
 
 export async function fixture(kind: 'memory' | 'sqlite') {

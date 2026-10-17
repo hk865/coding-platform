@@ -181,6 +181,7 @@ describe('MVP UI containment without a declared tree', () => {
       revision: 1,
       baselineRef: { aggregateType: 'ArchitectureBaselineRevision', projectId: scope.projectId, baselineId: 'mvp-ui-baseline', revision: 1 },
       schemaVersion: 1,
+      since: null,
       catalog: {
         requireDag: true,
         modules: [

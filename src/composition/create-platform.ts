@@ -188,8 +188,13 @@ export type TargetPlatformOptions = {
   storage: { kind: 'memory' } | { kind: 'sqlite'; directory: string };
   workspace: WorkspaceHostBindings;
   now?: () => string;
-  /** Trusted source route; defaults to TypeScript at tsconfig.json. No language inference. */
-  architectureSource?: { provider: 'typescript'; configPath: string };
+  /** Trusted source route; defaults to TypeScript at tsconfig.json. No language inference.
+   * `configPath: null` captures with no project configuration. */
+  architectureSource?: { provider: 'typescript'; configPath: string | null };
+  /** 8A file-graph caps. Test injection only, like `resultMaxBytes`; production
+   * leaves this absent and `createWorkspaceTools` uses its own defaults
+   * (20,000 files / 100,000 edges). */
+  fileGraph?: { maxNodes: number; maxEdges: number };
   /** Trusted startup configuration; never taken from a model tool request. */
   kernelStores?: Parameters<typeof createKernelStoreRegistry>[0];
   /** Trusted Host execution binding. Its model/tool/template grant is the only
@@ -588,7 +593,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     const rawMaterials = createMaterialService({ bodies, authority: reads.authority, now });
     const rawGoals = createGoalService({ records: backend.records, now, eventId: randomUUID }).tasks;
     const workspace = createWorkspaceTools({ access,
-      now, limits: DEFAULT_WORKSPACE_LIMITS });
+      now, limits: DEFAULT_WORKSPACE_LIMITS,
+      ...(options.fileGraph === undefined ? {} : { fileGraph: options.fileGraph }) });
     const roleService = createRoleConfigurationService({ records: backend.records, now, eventId: randomUUID });
     const bootstrap = createProjectBootstrapServices({ records: backend.records, now, eventId: randomUUID });
     // Slice 5 §3.2: the configured operator is the Host's real start actor. The
@@ -1036,6 +1042,10 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       queryArchitecture: (...args) => trackedCall(() => observed.queryArchitecture(...args), unavailable),
       compareArchitecture: (...args) => trackedCall(() => observed.compareArchitecture(...args), unavailable),
       queryImpact: (...args) => trackedCall(() => observed.queryImpact(...args), unavailable),
+      listFiles: (...args) => trackedCall(() => observed.listFiles(...args), unavailable),
+      neighbors: (...args) => trackedCall(() => observed.neighbors(...args), unavailable),
+      impact: (...args) => trackedCall(() => observed.impact(...args), unavailable),
+      compareFormalObserved: (...args) => trackedCall(() => observed.compareFormalObserved(...args), unavailable),
       adoptInitialArchitecture: (...args) => trackedCall(() => catalog.adoptInitialArchitecture(...args), unavailable),
       reviseArchitectureCatalog: (...args) => trackedCall(() => catalog.reviseArchitectureCatalog(...args), unavailable),
       readArchitectureRevision: (...args) => trackedCall(() => catalog.readArchitectureRevision(...args), unavailable),

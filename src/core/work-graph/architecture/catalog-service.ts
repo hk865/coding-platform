@@ -300,7 +300,7 @@ async function restoreAdopted(records: GoalRecordTransactionPort,
     return unavailable('the original adoption event is outside the recovered scope');
   }
   const catalogRecord: ArchitectureCatalogRecord = {
-    ref: event.catalogRef, revision: 1, baselineRef: event.baselineRef, schemaVersion: 1, catalog: event.catalog,
+    ref: event.catalogRef, revision: 1, baselineRef: event.baselineRef, schemaVersion: 1, catalog: event.catalog, since: null,
   };
   return { status: 'restored', value: { baseline: event.baseline, catalog: catalogRecord } };
 }
@@ -326,7 +326,13 @@ async function restoreRevised(records: GoalRecordTransactionPort, receipt: Commi
   if (canonicalJson(event.fromPin as unknown as JsonValue) !== canonicalJson(expected.basedOn as unknown as JsonValue)) {
     return unavailable('the original revision event does not match the requested baseline pin');
   }
-  return { status: 'restored', value: event.revision };
+  // The event embeds the pre-bind revision (the `since` placeholder is null);
+  // the store bound this commit's cursor into the written catalog row. Returning
+  // that same cursor keeps a replay result equal to the original write result.
+  const restored = event.revision.catalog === null
+    ? event.revision
+    : { ...event.revision, catalog: { ...event.revision.catalog, since: receipt.cursor } };
+  return { status: 'restored', value: restored };
 }
 
 /**
@@ -427,7 +433,10 @@ function readCatalogBesideBaseline(baselineRef: ArchitectureBaselineRevisionRef,
   return { status: 'ok', value: decoded.value };
 }
 
-async function readRevisionByRef(records: GoalRecordTransactionPort, ref: ArchitectureBaselineRevisionRef): Promise<ReadResult<ArchitectureRevision>> {
+/** Reads one immutable baseline revision and the catalog row beside it. Exported
+ * for the 8A formal-vs-observed comparison, which must resolve the pin through
+ * the recorded baseline rather than trusting the caller's raw catalog ref. */
+export async function readRevisionByRef(records: GoalRecordTransactionPort, ref: ArchitectureBaselineRevisionRef): Promise<ReadResult<ArchitectureRevision>> {
   const baselineKey = canonicalJson(ref as unknown as JsonValue);
   const catalogKey = canonicalJson(catalogRefFor(ref.projectId, ref.baselineId, ref.revision) as unknown as JsonValue);
   const read = await records.readMany([baselineKey, catalogKey]);
@@ -520,7 +529,7 @@ export function createArchitectureCatalogService(stores: ArchitectureCatalogStor
       ref: baselineRef, revision: 1, schemaVersion: 1, baselineId, contentRevision: 1, contentDigest, content,
     };
     const catalogRef = catalogRefFor(projectId, baselineId, 1);
-    const catalogRecord: ArchitectureCatalogRecord = { ref: catalogRef, revision: 1, baselineRef, schemaVersion: 1, catalog };
+    const catalogRecord: ArchitectureCatalogRecord = { ref: catalogRef, revision: 1, baselineRef, schemaVersion: 1, catalog, since: null };
     const activeRecord = {
       ref: { aggregateType: 'ProjectArchitectureBaselineActive' as const, projectId },
       projectId, revision: 1, activeRevision: baselineRef,
@@ -702,7 +711,7 @@ export function createArchitectureCatalogService(stores: ArchitectureCatalogStor
       ref: baselineRef, revision: 1, schemaVersion: 1, baselineId, contentRevision: nextRevision, contentDigest, content,
     };
     const catalogRef = catalogRefFor(projectId, baselineId, nextRevision);
-    const catalogRecord: ArchitectureCatalogRecord = { ref: catalogRef, revision: 1, baselineRef, schemaVersion: 1, catalog };
+    const catalogRecord: ArchitectureCatalogRecord = { ref: catalogRef, revision: 1, baselineRef, schemaVersion: 1, catalog, since: null };
     const activeRecord = {
       ref: { aggregateType: 'ProjectArchitectureBaselineActive' as const, projectId },
       projectId, revision: current.activeRevision + 1, activeRevision: baselineRef,
@@ -733,6 +742,10 @@ export function createArchitectureCatalogService(stores: ArchitectureCatalogStor
           { refKey: activeKey, schemaId: BASELINE_ACTIVE_SCHEMA_ID, revision: activeRecord.revision, json: JSON.stringify(activeRecord) },
         ],
         claims: [], indexGuards: [], indexChanges: [],
+        // 8A (decision 72 post-note 4B ①): the revision row records the cursor of
+        // this commit's last event (`ArchitectureCatalogRevised`), so
+        // `listCatalogVersions` can read that event's real occurredAt and reason.
+        commitCursorBindings: [{ refKey: catalogKey, field: 'since' }],
         events: [encodeArchitectureCatalogRevisedEvent(event)],
       });
     } catch (error) {
@@ -747,7 +760,11 @@ export function createArchitectureCatalogService(stores: ArchitectureCatalogStor
       return failure;
     }
     if (!committed.replayed) {
-      return { status: 'committed', value: { baseline, catalog: catalogRecord }, replayed: false, cursor: committed.cursor };
+      // The commit bound the `since` placeholder to this commit's cursor; the
+      // in-memory `catalogRecord` still carries the pre-bind null, so return the
+      // committed row (the same value the store read returns).
+      return { status: 'committed',
+        value: { baseline, catalog: { ...catalogRecord, since: committed.cursor } }, replayed: false, cursor: committed.cursor };
     }
     const restored = await restoreRevised(records, committed, expectedIdentity);
     if (restored.status !== 'restored') return restored;

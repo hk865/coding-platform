@@ -332,14 +332,18 @@ Promise<{ ok: true; value: string[] } | { ok: false; code: RelatedReadCode; reas
   const paths = new Set<string>();
   for (const prefix of module.paths) {
     const stripped = prefix.endsWith('/') ? prefix.slice(0, -1) : prefix;
-    if (stripped.length === 0 || stripped === '.') continue;
+    if (stripped.length === 0) continue;
+    // The root `.` owns every file no concrete prefix claims, so it scans the
+    // whole `file:` range and lets `moduleOfAnchor` decide each candidate.
+    const isRoot = stripped === '.';
     // RW-12(c): the one generalised five-slot prefix scan; the directory
     // boundary filter is the same one the old duplicate applied per slot.
-    const scanned = await headsOnKeyPrefix(deps.records, ctx.projectId, `file:${stripped}`);
+    const scanned = await headsOnKeyPrefix(deps.records, ctx.projectId, isRoot ? 'file:' : `file:${stripped}`);
     if (!scanned.ok) return scanned;
     for (const head of scanned.value) {
-      if (!anchorSlots(head).some(slot => matchesPathPrefix(slot, stripped))) continue;
-      for (const candidate of anchorSlots(head)) {
+      const slots = anchorSlots(head);
+      if (!slots.some(slot => (isRoot ? slot.startsWith('file:') : matchesPathPrefix(slot, stripped)))) continue;
+      for (const candidate of slots) {
         if (!candidate.startsWith('file:')) continue;
         const path = candidate.slice('file:'.length);
         if (moduleOfAnchor(catalog, { kind: 'file', path } as NoteAnchorV1) === module.ref.moduleId) paths.add(path);

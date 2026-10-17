@@ -6,6 +6,10 @@ export type ArchitectureSourceMapping = {
     kind: 'module' | 'interface';
     paths: string[];
 };
+// The one pure longest-prefix path-ownership decision lives in the Contracts
+// layer; re-exported here so this module's callers are unchanged.
+export { pathOwnershipOf, type PathOwnershipV1 } from './path-ownership.js';
+
 export type ArchitectureSourceSnapshotV1 = {
     schemaVersion: 1;
     projectId: string;
@@ -31,20 +35,23 @@ export function architectureSourceIssues(value: unknown): string[] {
         errors.push('invalid source scope/revision');
     if (typeof v.sourceDigest !== 'string' || !/^[a-f0-9]{64}$/.test(v.sourceDigest) || typeof v.indexVersion !== 'string' || !v.indexVersion || (v.commitHash !== null && (typeof v.commitHash !== 'string' || !/^[a-f0-9]{40,64}$/.test(v.commitHash))))
         errors.push('invalid source identity');
-    const path = (p: unknown) => typeof p === 'string' && p.length > 0 && !/[\\:\0]/.test(p) && p.split('/').every(s => s && s !== '.' && s !== '..');
-    if (v.configPath !== null && !path(v.configPath))
+    // `filePath` is the strict check for real files and the configuration path.
+    // `modulePath` additionally accepts exactly `.`, the root module/mapping path.
+    const filePath = (p: unknown) => typeof p === 'string' && p.length > 0 && !/[\\:\0]/.test(p) && p.split('/').every(s => s && s !== '.' && s !== '..');
+    const modulePath = (p: unknown) => p === '.' || filePath(p);
+    if (v.configPath !== null && !filePath(v.configPath))
         errors.push('invalid configuration path');
-    if (!Array.isArray(v.mappings) || v.mappings.length > 512 || v.mappings.some(m => !m || !m.id || !['module', 'interface'].includes(m.kind) || !Array.isArray(m.paths) || !m.paths.length || m.paths.some(p => !path(p))))
+    if (!Array.isArray(v.mappings) || v.mappings.length > 512 || v.mappings.some(m => !m || !m.id || !['module', 'interface'].includes(m.kind) || !Array.isArray(m.paths) || !m.paths.length || m.paths.some(p => !modulePath(p))))
         errors.push('invalid mappings');
     else if (new Set(v.mappings.map(m => m.kind + ':' + m.id)).size !== v.mappings.length)
         errors.push('duplicate mapping');
     if (v.indexedSources !== undefined) {
-        if (!Array.isArray(v.indexedSources) || v.indexedSources.some(source => !source || !path(source.path) || typeof source.digest !== 'string' || !/^[a-f0-9]{64}$/.test(source.digest)))
+        if (!Array.isArray(v.indexedSources) || v.indexedSources.some(source => !source || !filePath(source.path) || typeof source.digest !== 'string' || !/^[a-f0-9]{64}$/.test(source.digest)))
             errors.push('invalid indexed sources');
         else if (new Set(v.indexedSources.map(source => source.path)).size !== v.indexedSources.length)
             errors.push('duplicate indexed source');
     }
-    if (!Array.isArray(v.nodes) || v.nodes.length > 512 || v.nodes.some(n => !n || !n.nodeId || !n.structuralKey || !['module', 'interface'].includes(n.kind) || !path(n.path) || !/^[a-f0-9]{64}$/.test(n.contentDigest)))
+    if (!Array.isArray(v.nodes) || v.nodes.length > 512 || v.nodes.some(n => !n || !n.nodeId || !n.structuralKey || !['module', 'interface'].includes(n.kind) || !modulePath(n.path) || !/^[a-f0-9]{64}$/.test(n.contentDigest)))
         errors.push('invalid mapped nodes');
     else if (new Set(v.nodes.map(n => n.nodeId)).size !== v.nodes.length || new Set(v.nodes.map(n => n.structuralKey)).size !== v.nodes.length)
         errors.push('duplicate node');

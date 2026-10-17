@@ -488,24 +488,6 @@
       "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; only reached from RoleConfigurationPort.activateRoleSpec"
     },
     {
-      "file": "src/core/work-graph/architecture/architecture-delta.ts",
-      "name": "changeId",
-      "reason": "kept-for",
-      "note": "kept for slice 8 of the orchestration design (decision 34: formal-vs-observed comparison and the impact read); decision 6: wired with the new UI, backend first; unreached at 790d970; only reached from ObservedArchitecturePort.compareArchitecture"
-    },
-    {
-      "file": "src/core/work-graph/architecture/architecture-delta.ts",
-      "name": "deterministicCycles",
-      "reason": "kept-for",
-      "note": "kept for slice 8 of the orchestration design (decision 34: formal-vs-observed comparison and the impact read); decision 6: wired with the new UI, backend first; unreached at 790d970; only reached from ObservedArchitecturePort.compareArchitecture"
-    },
-    {
-      "file": "src/core/work-graph/architecture/architecture-delta.ts",
-      "name": "compareObservedGraphs",
-      "reason": "kept-for",
-      "note": "kept for slice 8 of the orchestration design (decision 34: formal-vs-observed comparison and the impact read); decision 6: wired with the new UI, backend first; unreached at 790d970; only reached from ObservedArchitecturePort.compareArchitecture"
-    },
-    {
       "file": "src/core/work-graph/architecture/catalog-contracts.ts",
       "name": "ReviseArchitectureCatalogInput",
       "reason": "kept-for",
@@ -519,19 +501,7 @@
     },
     {
       "file": "src/core/work-graph/architecture/catalog-record-codecs.ts",
-      "name": "ArchitectureCatalogRevisedEventV1",
-      "reason": "kept-for",
-      "note": "kept for slice 8 of the orchestration design (decision 34: the architecture revision interface); decisions 6 and 21: catalog revision is wired after A.2, entered from a work result; unreached at 790d970; only reached from ArchitectureCatalogPort.reviseArchitectureCatalog"
-    },
-    {
-      "file": "src/core/work-graph/architecture/catalog-record-codecs.ts",
       "name": "encodeArchitectureCatalogRevisedEvent",
-      "reason": "kept-for",
-      "note": "kept for slice 8 of the orchestration design (decision 34: the architecture revision interface); decisions 6 and 21: catalog revision is wired after A.2, entered from a work result; unreached at 790d970; only reached from ArchitectureCatalogPort.reviseArchitectureCatalog"
-    },
-    {
-      "file": "src/core/work-graph/architecture/catalog-record-codecs.ts",
-      "name": "decodeArchitectureCatalogRevisedEvent",
       "reason": "kept-for",
       "note": "kept for slice 8 of the orchestration design (decision 34: the architecture revision interface); decisions 6 and 21: catalog revision is wired after A.2, entered from a work result; unreached at 790d970; only reached from ArchitectureCatalogPort.reviseArchitectureCatalog"
     },
@@ -570,48 +540,6 @@
       "name": "restoreRevised",
       "reason": "kept-for",
       "note": "kept for slice 8 of the orchestration design (decision 34: the architecture revision interface); decisions 6 and 21: catalog revision is wired after A.2, entered from a work result; unreached at 790d970; only reached from ArchitectureCatalogPort.reviseArchitectureCatalog"
-    },
-    {
-      "file": "src/core/work-graph/architecture/contracts.ts",
-      "name": "ObservedArchitectureDeltaChange",
-      "reason": "kept-for",
-      "note": "kept for slice 8 of the orchestration design (decision 34: formal-vs-observed comparison and the impact read); decision 6: wired with the new UI, backend first; unreached at 790d970; only reached from ObservedArchitecturePort.compareArchitecture"
-    },
-    {
-      "file": "src/core/work-graph/architecture/contracts.ts",
-      "name": "ObservedArchitectureComparison",
-      "reason": "kept-for",
-      "note": "kept for slice 8 of the orchestration design (decision 34: formal-vs-observed comparison and the impact read); decision 6: wired with the new UI, backend first; unreached at 790d970; only reached from ObservedArchitecturePort.compareArchitecture"
-    },
-    {
-      "file": "src/core/work-graph/architecture/contracts.ts",
-      "name": "ObservedArchitectureImpact",
-      "reason": "kept-for",
-      "note": "kept for slice 8 of the orchestration design (decision 34: formal-vs-observed comparison and the impact read); decision 6: wired with the new UI, backend first; unreached at 790d970; only reached from ObservedArchitecturePort.queryImpact"
-    },
-    {
-      "file": "src/core/work-graph/architecture/contracts.ts",
-      "name": "ObservedArchitecturePort.compareArchitecture",
-      "reason": "kept-for",
-      "note": "kept for slice 8 of the orchestration design (decision 34: formal-vs-observed comparison and the impact read); decision 6: wired with the new UI, backend first; unreached at 790d970; a port operation create-platform.ts publishes, but no route (core-routes.ts), Workflow or script reads it; used only by tests: tests/composition/R3d-R3g-platform.test.ts, tests/work-graph/R3d-observed-architecture.test.ts"
-    },
-    {
-      "file": "src/core/work-graph/architecture/contracts.ts",
-      "name": "ObservedArchitecturePort.queryImpact",
-      "reason": "kept-for",
-      "note": "kept for slice 8 of the orchestration design (decision 34: formal-vs-observed comparison and the impact read); decision 6: wired with the new UI, backend first; unreached at 790d970; a port operation create-platform.ts publishes, but no route (core-routes.ts), Workflow or script reads it; used only by tests: tests/work-graph/R3d-observed-architecture.test.ts, tests/work-graph/R3d-observed-boundaries.test.ts"
-    },
-    {
-      "file": "src/core/work-graph/architecture/graph-index.ts",
-      "name": "reverseAdjacency",
-      "reason": "kept-for",
-      "note": "kept for slice 8 of the orchestration design (decision 34: formal-vs-observed comparison and the impact read); decision 6: wired with the new UI, backend first; unreached at 790d970; only reached from ObservedArchitecturePort.queryImpact"
-    },
-    {
-      "file": "src/core/work-graph/architecture/graph-index.ts",
-      "name": "buildObservedImpact",
-      "reason": "kept-for",
-      "note": "kept for slice 8 of the orchestration design (decision 34: formal-vs-observed comparison and the impact read); decision 6: wired with the new UI, backend first; unreached at 790d970; only reached from ObservedArchitecturePort.queryImpact"
     },
     {
       "file": "src/core/work-graph/model/configuration-contracts.ts",
@@ -1008,6 +936,150 @@
       "name": "ArchitectureVersionsResponse",
       "reason": "wire-format",
       "note": "the frozen slice-4C L19 architecture/versions route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the new workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/contracts/architecture-inspection.ts",
+      "name": "FileGraphPageV1",
+      "reason": "kept-for",
+      "note": "kept for slice 8 of the orchestration design (L12 file-level observation reads); 8A wires the capture and stores the chunked file graph, but §1 8A routes only architecture/compare, architecture/compare-formal and architecture/impact, so the file-level public reads (listFiles/neighbors/impact) and their chunk decoder/index are reached only by the architecture page later; decision 6: wired with the new UI, backend first"
+    },
+    {
+      "file": "src/core/work-graph/architecture/architecture-record-codecs.ts",
+      "name": "FILE_GRAPH_CHUNK_SCHEMA_ID",
+      "reason": "kept-for",
+      "note": "kept for slice 8 of the orchestration design (L12 file-level observation reads); 8A wires the capture and stores the chunked file graph, but §1 8A routes only architecture/compare, architecture/compare-formal and architecture/impact, so the file-level public reads (listFiles/neighbors/impact) and their chunk decoder/index are reached only by the architecture page later; decision 6: wired with the new UI, backend first"
+    },
+    {
+      "file": "src/core/work-graph/architecture/architecture-service.ts",
+      "name": "readFileGraphCursor",
+      "reason": "kept-for",
+      "note": "kept for slice 8 of the orchestration design (L12 file-level observation reads); 8A wires the capture and stores the chunked file graph, but §1 8A routes only architecture/compare, architecture/compare-formal and architecture/impact, so the file-level public reads (listFiles/neighbors/impact) and their chunk decoder/index are reached only by the architecture page later; decision 6: wired with the new UI, backend first"
+    },
+    {
+      "file": "src/core/work-graph/architecture/architecture-service.ts",
+      "name": "notCapturedPage",
+      "reason": "kept-for",
+      "note": "kept for slice 8 of the orchestration design (L12 file-level observation reads); 8A wires the capture and stores the chunked file graph, but §1 8A routes only architecture/compare, architecture/compare-formal and architecture/impact, so the file-level public reads (listFiles/neighbors/impact) and their chunk decoder/index are reached only by the architecture page later; decision 6: wired with the new UI, backend first"
+    },
+    {
+      "file": "src/core/work-graph/architecture/contracts.ts",
+      "name": "ObservedArchitecturePort.listFiles",
+      "reason": "kept-for",
+      "note": "kept for slice 8 of the orchestration design (L12 file-level observation reads); 8A wires the capture and stores the chunked file graph, but §1 8A routes only architecture/compare, architecture/compare-formal and architecture/impact, so the file-level public reads (listFiles/neighbors/impact) and their chunk decoder/index are reached only by the architecture page later; decision 6: wired with the new UI, backend first"
+    },
+    {
+      "file": "src/core/work-graph/architecture/contracts.ts",
+      "name": "ObservedArchitecturePort.neighbors",
+      "reason": "kept-for",
+      "note": "kept for slice 8 of the orchestration design (L12 file-level observation reads); 8A wires the capture and stores the chunked file graph, but §1 8A routes only architecture/compare, architecture/compare-formal and architecture/impact, so the file-level public reads (listFiles/neighbors/impact) and their chunk decoder/index are reached only by the architecture page later; decision 6: wired with the new UI, backend first"
+    },
+    {
+      "file": "src/core/work-graph/architecture/contracts.ts",
+      "name": "ObservedArchitecturePort.impact",
+      "reason": "kept-for",
+      "note": "kept for slice 8 of the orchestration design (L12 file-level observation reads); 8A wires the capture and stores the chunked file graph, but §1 8A routes only architecture/compare, architecture/compare-formal and architecture/impact, so the file-level public reads (listFiles/neighbors/impact) and their chunk decoder/index are reached only by the architecture page later; decision 6: wired with the new UI, backend first"
+    },
+    {
+      "file": "src/core/work-graph/architecture/file-graph-index.ts",
+      "name": "FileGraphPageData",
+      "reason": "kept-for",
+      "note": "kept for slice 8 of the orchestration design (L12 file-level observation reads); 8A wires the capture and stores the chunked file graph, but §1 8A routes only architecture/compare, architecture/compare-formal and architecture/impact, so the file-level public reads (listFiles/neighbors/impact) and their chunk decoder/index are reached only by the architecture page later; decision 6: wired with the new UI, backend first"
+    },
+    {
+      "file": "src/core/work-graph/architecture/file-graph-index.ts",
+      "name": "FileGraphData",
+      "reason": "kept-for",
+      "note": "kept for slice 8 of the orchestration design (L12 file-level observation reads); 8A wires the capture and stores the chunked file graph, but §1 8A routes only architecture/compare, architecture/compare-formal and architecture/impact, so the file-level public reads (listFiles/neighbors/impact) and their chunk decoder/index are reached only by the architecture page later; decision 6: wired with the new UI, backend first"
+    },
+    {
+      "file": "src/core/work-graph/architecture/file-graph-index.ts",
+      "name": "FILE_GRAPH_PAGE_SIZE",
+      "reason": "kept-for",
+      "note": "kept for slice 8 of the orchestration design (L12 file-level observation reads); 8A wires the capture and stores the chunked file graph, but §1 8A routes only architecture/compare, architecture/compare-formal and architecture/impact, so the file-level public reads (listFiles/neighbors/impact) and their chunk decoder/index are reached only by the architecture page later; decision 6: wired with the new UI, backend first"
+    },
+    {
+      "file": "src/core/work-graph/architecture/file-graph-index.ts",
+      "name": "FILE_GRAPH_MAX_IMPACT_DEPTH",
+      "reason": "kept-for",
+      "note": "kept for slice 8 of the orchestration design (L12 file-level observation reads); 8A wires the capture and stores the chunked file graph, but §1 8A routes only architecture/compare, architecture/compare-formal and architecture/impact, so the file-level public reads (listFiles/neighbors/impact) and their chunk decoder/index are reached only by the architecture page later; decision 6: wired with the new UI, backend first"
+    },
+    {
+      "file": "src/core/work-graph/architecture/file-graph-index.ts",
+      "name": "FileGraphCursorError",
+      "reason": "kept-for",
+      "note": "kept for slice 8 of the orchestration design (L12 file-level observation reads); 8A wires the capture and stores the chunked file graph, but §1 8A routes only architecture/compare, architecture/compare-formal and architecture/impact, so the file-level public reads (listFiles/neighbors/impact) and their chunk decoder/index are reached only by the architecture page later; decision 6: wired with the new UI, backend first"
+    },
+    {
+      "file": "src/core/work-graph/architecture/file-graph-index.ts",
+      "name": "CursorV1",
+      "reason": "kept-for",
+      "note": "kept for slice 8 of the orchestration design (L12 file-level observation reads); 8A wires the capture and stores the chunked file graph, but §1 8A routes only architecture/compare, architecture/compare-formal and architecture/impact, so the file-level public reads (listFiles/neighbors/impact) and their chunk decoder/index are reached only by the architecture page later; decision 6: wired with the new UI, backend first"
+    },
+    {
+      "file": "src/core/work-graph/architecture/file-graph-index.ts",
+      "name": "isRecord",
+      "reason": "kept-for",
+      "note": "kept for slice 8 of the orchestration design (L12 file-level observation reads); 8A wires the capture and stores the chunked file graph, but §1 8A routes only architecture/compare, architecture/compare-formal and architecture/impact, so the file-level public reads (listFiles/neighbors/impact) and their chunk decoder/index are reached only by the architecture page later; decision 6: wired with the new UI, backend first"
+    },
+    {
+      "file": "src/core/work-graph/architecture/file-graph-index.ts",
+      "name": "captureKeyOf",
+      "reason": "kept-for",
+      "note": "kept for slice 8 of the orchestration design (L12 file-level observation reads); 8A wires the capture and stores the chunked file graph, but §1 8A routes only architecture/compare, architecture/compare-formal and architecture/impact, so the file-level public reads (listFiles/neighbors/impact) and their chunk decoder/index are reached only by the architecture page later; decision 6: wired with the new UI, backend first"
+    },
+    {
+      "file": "src/core/work-graph/architecture/file-graph-index.ts",
+      "name": "queryKeyOf",
+      "reason": "kept-for",
+      "note": "kept for slice 8 of the orchestration design (L12 file-level observation reads); 8A wires the capture and stores the chunked file graph, but §1 8A routes only architecture/compare, architecture/compare-formal and architecture/impact, so the file-level public reads (listFiles/neighbors/impact) and their chunk decoder/index are reached only by the architecture page later; decision 6: wired with the new UI, backend first"
+    },
+    {
+      "file": "src/core/work-graph/architecture/file-graph-index.ts",
+      "name": "encodeCursor",
+      "reason": "kept-for",
+      "note": "kept for slice 8 of the orchestration design (L12 file-level observation reads); 8A wires the capture and stores the chunked file graph, but §1 8A routes only architecture/compare, architecture/compare-formal and architecture/impact, so the file-level public reads (listFiles/neighbors/impact) and their chunk decoder/index are reached only by the architecture page later; decision 6: wired with the new UI, backend first"
+    },
+    {
+      "file": "src/core/work-graph/architecture/file-graph-index.ts",
+      "name": "readOffset",
+      "reason": "kept-for",
+      "note": "kept for slice 8 of the orchestration design (L12 file-level observation reads); 8A wires the capture and stores the chunked file graph, but §1 8A routes only architecture/compare, architecture/compare-formal and architecture/impact, so the file-level public reads (listFiles/neighbors/impact) and their chunk decoder/index are reached only by the architecture page later; decision 6: wired with the new UI, backend first"
+    },
+    {
+      "file": "src/core/work-graph/architecture/file-graph-index.ts",
+      "name": "orderedNodes",
+      "reason": "kept-for",
+      "note": "kept for slice 8 of the orchestration design (L12 file-level observation reads); 8A wires the capture and stores the chunked file graph, but §1 8A routes only architecture/compare, architecture/compare-formal and architecture/impact, so the file-level public reads (listFiles/neighbors/impact) and their chunk decoder/index are reached only by the architecture page later; decision 6: wired with the new UI, backend first"
+    },
+    {
+      "file": "src/core/work-graph/architecture/file-graph-index.ts",
+      "name": "orderedEdges",
+      "reason": "kept-for",
+      "note": "kept for slice 8 of the orchestration design (L12 file-level observation reads); 8A wires the capture and stores the chunked file graph, but §1 8A routes only architecture/compare, architecture/compare-formal and architecture/impact, so the file-level public reads (listFiles/neighbors/impact) and their chunk decoder/index are reached only by the architecture page later; decision 6: wired with the new UI, backend first"
+    },
+    {
+      "file": "src/core/work-graph/architecture/file-graph-index.ts",
+      "name": "buildPage",
+      "reason": "kept-for",
+      "note": "kept for slice 8 of the orchestration design (L12 file-level observation reads); 8A wires the capture and stores the chunked file graph, but §1 8A routes only architecture/compare, architecture/compare-formal and architecture/impact, so the file-level public reads (listFiles/neighbors/impact) and their chunk decoder/index are reached only by the architecture page later; decision 6: wired with the new UI, backend first"
+    },
+    {
+      "file": "src/core/work-graph/architecture/file-graph-index.ts",
+      "name": "listFilesPage",
+      "reason": "kept-for",
+      "note": "kept for slice 8 of the orchestration design (L12 file-level observation reads); 8A wires the capture and stores the chunked file graph, but §1 8A routes only architecture/compare, architecture/compare-formal and architecture/impact, so the file-level public reads (listFiles/neighbors/impact) and their chunk decoder/index are reached only by the architecture page later; decision 6: wired with the new UI, backend first"
+    },
+    {
+      "file": "src/core/work-graph/architecture/file-graph-index.ts",
+      "name": "neighborsPage",
+      "reason": "kept-for",
+      "note": "kept for slice 8 of the orchestration design (L12 file-level observation reads); 8A wires the capture and stores the chunked file graph, but §1 8A routes only architecture/compare, architecture/compare-formal and architecture/impact, so the file-level public reads (listFiles/neighbors/impact) and their chunk decoder/index are reached only by the architecture page later; decision 6: wired with the new UI, backend first"
+    },
+    {
+      "file": "src/core/work-graph/architecture/file-graph-index.ts",
+      "name": "impactPage",
+      "reason": "kept-for",
+      "note": "kept for slice 8 of the orchestration design (L12 file-level observation reads); 8A wires the capture and stores the chunked file graph, but §1 8A routes only architecture/compare, architecture/compare-formal and architecture/impact, so the file-level public reads (listFiles/neighbors/impact) and their chunk decoder/index are reached only by the architecture page later; decision 6: wired with the new UI, backend first"
     }
   ]
 }

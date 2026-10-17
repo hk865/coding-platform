@@ -13,6 +13,7 @@
  * behavior remain outside this initial-adoption port.
  */
 import type { ArchitectureSourceSnapshotV1 } from '../../../contracts/architecture-source.js';
+import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { ArchitectureBaselinePin, ArchitectureBaselineRevisionRef } from '../../../contracts/governance.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { ModuleRef } from '../../../contracts/core/identity.js';
@@ -23,11 +24,13 @@ import type { GraphWrite } from './contracts.js';
 import type {
   AdoptInitialArchitectureInput,
   AdoptedArchitecture,
+  ArchitectureCatalogRef,
   ModuleDefinition,
 } from '../../../contracts/architecture-catalog.js';
 export type {
   AdoptInitialArchitectureInput,
   AdoptedArchitecture,
+  ArchitectureCatalogRef,
   ModuleContainment,
   ModuleDefinition,
 } from '../../../contracts/architecture-catalog.js';
@@ -62,12 +65,9 @@ export type ArchitectureBaselineRevisionSnapshot = {
 /* The pure ModuleDefinition/ModuleContainment/AdoptedArchitecture/
  * AdoptInitialArchitectureInput DTOs are lifted to the shared Contracts layer
  * (`src/contracts/architecture-catalog.ts`) as the ONE definition; this module
- * imports and re-exports them so every existing caller stays compatible. */
-
-/** Same local identity as the baseline revision, different aggregate type. */
-export type ArchitectureCatalogRef = Omit<ArchitectureBaselineRevisionRef, 'aggregateType'> & {
-  aggregateType: 'ArchitectureCatalog';
-};
+ * imports and re-exports them so every existing caller stays compatible. The
+ * same now holds for the catalog identity `ArchitectureCatalogRef` (8A,
+ * decision 72 post-note): no second copy lives here. */
 
 /** Immutable catalog row committed with its baseline and active pointer. */
 export type ArchitectureCatalogRecord = {
@@ -76,6 +76,14 @@ export type ArchitectureCatalogRecord = {
   baselineRef: ArchitectureBaselineRevisionRef;
   schemaVersion: 1;
   catalog: AdoptedArchitecture;
+  /**
+   * 8A (decision 72 post-note 4B ①): the commit cursor of the
+   * `ArchitectureCatalogRevised` event that wrote this row. The revision commit
+   * binds it through `commitCursorBindings`, so `listCatalogVersions` can read
+   * the real `occurredAt` and reason. The initial adoption and every row written
+   * before 8A carry `null`.
+   */
+  since: CommitCursor | null;
 };
 
 export type ArchitectureRevision = {

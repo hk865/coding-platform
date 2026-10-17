@@ -60,9 +60,9 @@ function sourceCapability() {
   const workspace = { aggregateType: 'Workspace' as const, projectId: 'lifecycle-project', workspaceId: 'lifecycle-workspace' };
   const unavailable = async () => ({ status: 'rejected' as const, code: 'unsupported' as const, reason: 'this lifecycle fixture has no source provider' });
   const port: WorkspaceToolsPort = {
-    captureSourceChanges: unavailable, querySource: unavailable, exportCapture: unavailable,
+    captureSourceChanges: unavailable, captureObservation: unavailable, querySource: unavailable, exportCapture: unavailable,
     verifyCapture: unavailable, releaseCapture: unavailable, captureArchitectureSource: unavailable,
-    readWorkspace: unavailable, compareWorkspace: unavailable,
+    captureFileGraph: unavailable, readWorkspace: unavailable, compareWorkspace: unavailable,
   };
   const state = { closeFailure: undefined as Error | undefined };
   // This is an explicitly granted test Host capability, not a fabricated production Run.

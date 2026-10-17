@@ -1008,6 +1008,25 @@ describe.each(['memory', 'sqlite'] as const)('S3 graph context reader (%s)', kin
     expect(result.value.items.map(item => item.node)).toContainEqual({ kind: 'module', ref: moduleM1.ref });
   });
 
+  it('S8A-16 find on a root-only `.` module returns it for any non-empty path', async () => {
+    const fixture = await createFixture(kind, { moduleOnePaths: ['.'], moduleTwoPaths: ['lib'] });
+    const result = await fixture.graph.findGraph(fixture.ctx, findRequest(fixture.goalRef, 'src/loose.ts'));
+    expect(result).toMatchObject({ status: 'ready' });
+    if (result.status !== 'ready') return;
+    expect(result.value.items.map(item => item.node)).toEqual([{ kind: 'module', ref: moduleM1.ref }]);
+  });
+
+  it('S8A-17 find on two root `.` modules returns both tied modules', async () => {
+    const fixture = await createFixture(kind, { moduleOnePaths: ['.'], moduleTwoPaths: ['.'] });
+    const result = await fixture.graph.findGraph(fixture.ctx, findRequest(fixture.goalRef, 'src/loose.ts'));
+    expect(result).toMatchObject({ status: 'ready' });
+    if (result.status !== 'ready') return;
+    expect(result.value.items.map(item => item.node)).toEqual([
+      { kind: 'module', ref: moduleM1.ref },
+      { kind: 'module', ref: moduleM2.ref },
+    ]);
+  });
+
   it('GR08 find limit 0 is invalid before any record read', async () => {
     const fixture = await createFixture(kind);
     const before = recordReads(fixture.spy);
@@ -1190,5 +1209,16 @@ describe.each(['memory', 'sqlite'] as const)('S3 graph context reader (%s)', kin
       await revisionOf(fixture.records, leaseKey),
     ]).toEqual(revisionsBefore);
     expect(fixture.spy.commits).toBe(commitsBefore);
+  });
+
+  it('S8A-18 find on `.` returns every module', async () => {
+    const fx = await createFixture(kind, { moduleOnePaths: ['.'], moduleTwoPaths: ['src/a'] });
+    const result = await fx.graph.findGraph(fx.ctx, findRequest(fx.goalRef, '.'));
+    expect(result).toMatchObject({ status: 'ready' });
+    if (result.status !== 'ready') return;
+    expect(result.value.items.map(item => item.node)).toEqual([
+      { kind: 'module', ref: moduleM1.ref },
+      { kind: 'module', ref: moduleM2.ref },
+    ]);
   });
 });

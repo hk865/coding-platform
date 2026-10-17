@@ -19,6 +19,8 @@ export type WorkspaceToolsDependencies = {
   access: WorkspaceAccessFactory;
   now: () => string;
   limits: WorkspaceCaptureLimits;
+  /** 8A file-graph caps; defaults are 20,000 files / 100,000 edges. Injectable for capacity tests. */
+  fileGraph?: { maxNodes: number; maxEdges: number };
 };
 export type WorkspaceToolsHandle = {
   tools: WorkspaceToolsPort;
@@ -42,14 +44,16 @@ function validateLimits(limits: WorkspaceCaptureLimits): WorkspaceCaptureLimits 
 
 /** Assemble the implemented WorkspaceTools surface over one registry and Host-configured limits. */
 export function createWorkspaceTools(deps: WorkspaceToolsDependencies): WorkspaceToolsHandle {
-  const registry = new CaptureRegistry({ access: deps.access, now: deps.now, limits: validateLimits(deps.limits) });
+  const registry = new CaptureRegistry({ access: deps.access, now: deps.now, limits: validateLimits(deps.limits), ...(deps.fileGraph ? { fileGraph: deps.fileGraph } : {}) });
   const tools: WorkspaceToolsPort = {
     captureSourceChanges: (ctx, input) => registry.capture(ctx, input),
+    captureObservation: (ctx, input) => registry.captureObservation(ctx, input),
     querySource: (ctx, input) => registry.query(ctx, input),
     exportCapture: (ctx, ref) => registry.exportMaterial(ctx, ref),
     verifyCapture: (ctx, ref) => registry.verify(ctx, ref),
     releaseCapture: (ctx, ref) => registry.release(ctx, ref),
     captureArchitectureSource: (ctx, input) => registry.architectureSource(ctx, input),
+    captureFileGraph: (ctx, input) => registry.captureFileGraph(ctx, input),
     readWorkspace: (ctx, input) => registry.read(ctx, input),
     compareWorkspace: (ctx, input) => registry.compare(ctx, input),
   };

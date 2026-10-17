@@ -14,13 +14,21 @@ function changeId(level: 'node' | 'edge', kind: ObservedArchitectureDeltaChange[
   return sha256Hex(canonicalJson({ level, kind, structuralKey, beforeDigest, afterDigest } as unknown as JsonValue)).slice(0, 32);
 }
 
-function deterministicCycles(graph: ArchitectureSourceSnapshotV1): string[][] {
-  const nodeIds = [...new Set(graph.nodes.map(node => node.nodeId))].sort((a, b) => a.localeCompare(b));
+/**
+ * The ONE strongly-connected-component detector shared by the observed-vs-observed
+ * diff and the formal-vs-observed comparison (task book item 10; book §3 "reuse").
+ * Components have size > 1, or a single node with a self-loop; members and the
+ * component list are sorted deterministically. Edges to/from nodes outside
+ * `nodeIds` are ignored.
+ */
+export function stronglyConnectedCycles(nodeIds: readonly string[],
+  edges: readonly { from: string; to: string }[]): string[][] {
+  const ids = [...new Set(nodeIds)].sort((a, b) => a.localeCompare(b));
   const adjacency = new Map<string, Set<string>>();
-  for (const nodeId of nodeIds) adjacency.set(nodeId, new Set());
-  for (const edge of graph.edges) {
-    if (!adjacency.has(edge.fromNode) || !adjacency.has(edge.toNode)) continue;
-    adjacency.get(edge.fromNode)!.add(edge.toNode);
+  for (const id of ids) adjacency.set(id, new Set());
+  for (const edge of edges) {
+    if (!adjacency.has(edge.from) || !adjacency.has(edge.to)) continue;
+    adjacency.get(edge.from)!.add(edge.to);
   }
   let index = 0;
   const indices = new Map<string, number>();
@@ -67,8 +75,15 @@ function deterministicCycles(graph: ArchitectureSourceSnapshotV1): string[][] {
       }
     }
   };
-  for (const nodeId of nodeIds) if (!indices.has(nodeId)) strongConnect(nodeId);
+  for (const id of ids) if (!indices.has(id)) strongConnect(id);
   return components.sort((a, b) => a.join('\u0000').localeCompare(b.join('\u0000')));
+}
+
+function deterministicCycles(graph: ArchitectureSourceSnapshotV1): string[][] {
+  return stronglyConnectedCycles(
+    graph.nodes.map(node => node.nodeId),
+    graph.edges.map(edge => ({ from: edge.fromNode, to: edge.toNode })),
+  );
 }
 
 export function compareObservedGraphs(before: ArchitectureSourceSnapshotV1, after: ArchitectureSourceSnapshotV1,

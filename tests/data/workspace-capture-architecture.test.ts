@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import type { ArchitectureSourceMapping } from '../../src/contracts/architecture-source.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { WorkspaceRef } from '../../src/contracts/ledger.js';
-import { canonicalJson } from '../../src/contracts/fingerprint.js';
+import { canonicalJson, sha256Hex, type JsonValue } from '../../src/contracts/fingerprint.js';
 import { createWorkspaceAccessFactory, type WorkspaceAccessFactory } from '../../src/core/workspace/access.js';
 import type { WorkspaceResult } from '../../src/core/workspace/ports.js';
 import { TypeScriptSourceAnalyzer } from '../../src/core/workspace/typescript-source-query.js';
@@ -123,4 +123,58 @@ it('maps the entire graph, including cycles and unresolved imports, with only tw
   expect(count.bytes).toBe(2 * [...files.values()].reduce((sum, content) => sum + Buffer.byteLength(content), 0));
   expect(count.releases).toBe(count.opens);
   expect(analyses.mock.calls.map(([, query]) => query.operation)).toEqual(['imports']);
+});
+
+it('accepts a root `.` mapping that a concrete prefix beats, through the whole capture chain', async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), 'capture-architecture-root-'));
+  cleanups.push(() => rm(rootDir, { recursive: true, force: true }));
+  await mkdir(join(rootDir, 'src', 'a'), { recursive: true });
+  const files = new Map([
+    ['tsconfig.json', JSON.stringify({
+      compilerOptions: { module: 'esnext', moduleResolution: 'bundler', noLib: true },
+      include: ['src/**/*.ts'],
+    })],
+    ['src/a/one.ts', 'export const one = 1;\n'],
+    ['src/loose.ts', 'export const loose = 1;\n'],
+  ]);
+  await Promise.all([...files].map(([path, content]) => writeFile(join(rootDir, path), content)));
+  const workspace: WorkspaceRef = { aggregateType: 'Workspace', projectId: 'root-path', workspaceId: 'main' };
+  const scope = { projectId: workspace.projectId, workspaceId: workspace.workspaceId, workspaceRevision: 1 };
+  const actor = { kind: 'human' as const, id: 'root-path-test-reader' };
+  const context: CoreCallContext = {
+    projectId: workspace.projectId, workspaceId: workspace.workspaceId,
+    principal: { kind: 'host', actor },
+    materialReader: { kind: 'host', projectId: workspace.projectId, workspaceId: workspace.workspaceId, actor },
+    signal: new AbortController().signal,
+  };
+  const access = createWorkspaceAccessFactory({
+    resolveRoot: async requested => requested.projectId === workspace.projectId && requested.workspaceId === workspace.workspaceId
+      ? { status: 'ready', value: { root: rootDir, workspaceRevision: scope.workspaceRevision } }
+      : { status: 'rejected', code: 'not_found', reason: 'Unknown test workspace' },
+    authorize: async () => ({ status: 'ready', value: { subjectKey: 'root-path', permissionRevision: 'root-path-v1',
+      allowsRead: path => files.has(path) } }),
+  });
+  const handle = createWorkspaceTools({ access, now: () => '2026-09-23T00:00:00.000Z', limits: DEFAULT_WORKSPACE_LIMITS });
+  cleanups.push(() => handle.close());
+  const captured = ready(await handle.tools.captureSourceChanges(context, {
+    workspace, workspaceRevision: scope.workspaceRevision, provider: 'typescript', configPath: 'tsconfig.json',
+  }));
+  const mappings: ArchitectureSourceMapping[] = [
+    { id: 'Root', kind: 'module', paths: ['.'] },
+    { id: 'A', kind: 'module', paths: ['src/a'] },
+  ];
+  const graph = ready(await handle.tools.captureArchitectureSource(context, { capture: captured.ref, mappings }));
+  ready(await handle.tools.releaseCapture(context, captured.ref));
+
+  expect(graph.nodes.map(node => node.nodeId)).toEqual(['module:A', 'module:Root']);
+  expect(graph.nodes.map(node => node.nodeId + '@' + node.path)).toEqual(['module:A@src/a', 'module:Root@.']);
+  expect(graph.unresolved).toEqual([]);
+  // The root node owns exactly the files no concrete prefix claims: src/loose.ts
+  // is in and src/a/one.ts (owned by A) is out of its member digest.
+  const root = graph.nodes.find(node => node.nodeId === 'module:Root')!;
+  const nonA = graph.indexedSources!.filter(source => !source.path.startsWith('src/a/'));
+  expect(nonA.map(source => source.path)).toContain('src/loose.ts');
+  expect(nonA.map(source => source.path)).not.toContain('src/a/one.ts');
+  expect(root.contentDigest).toBe(sha256Hex(canonicalJson(
+    nonA.map(source => ({ path: source.path, digest: source.digest })) as unknown as JsonValue)));
 });

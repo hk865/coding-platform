@@ -95,6 +95,10 @@ export type CoreRouteBindings = {
   readArchitectureRevision: ArchitectureCatalogPort['readArchitectureRevision'];
   captureArchitectureSource: ObservedArchitecturePort['captureSourceChanges'];
   queryArchitecture: ObservedArchitecturePort['queryArchitecture'];
+  // Slice 8A §2: the two observed-domain comparisons and the impact read.
+  compareArchitecture: ObservedArchitecturePort['compareArchitecture'];
+  compareFormalObserved: ObservedArchitecturePort['compareFormalObserved'];
+  queryImpact: ObservedArchitecturePort['queryImpact'];
   proposePlan: PlanTaskPort['proposePlan'];
   applyPlanChange: PlanTaskPort['applyPlanChange'];
   readPlanProposal: PlanTaskPort['readPlanProposal'];
@@ -347,6 +351,9 @@ export const CORE_ROUTE_SPECS: Record<CoreRouteSuffix, CoreRouteSpec> = {
   'architecture/read': { kind: 'plain', binding: 'readArchitectureRevision', owner: 'architecture.readArchitectureRevision' },
   'architecture/capture': { kind: 'graph_write', binding: 'captureArchitectureSource', owner: 'architecture.captureSourceChanges' },
   'architecture/query': { kind: 'plain', binding: 'queryArchitecture', owner: 'architecture.queryArchitecture' },
+  'architecture/compare': { kind: 'plain', binding: 'compareArchitecture', owner: 'architecture.compareArchitecture' },
+  'architecture/compare-formal': { kind: 'plain', binding: 'compareFormalObserved', owner: 'architecture.compareFormalObserved' },
+  'architecture/impact': { kind: 'plain', binding: 'queryImpact', owner: 'architecture.queryImpact' },
   'plans/propose': { kind: 'graph_write', binding: 'proposePlan', owner: 'plans.proposePlan' },
   'plans/apply': { kind: 'graph_write', binding: 'applyPlanChange', owner: 'plans.applyPlanChange' },
   'plans/proposal': { kind: 'plain', binding: 'readPlanProposal', owner: 'plans.readPlanProposal' },
@@ -644,6 +651,9 @@ export function createPlatformCoreRouteBindings(
     readArchitectureRevision: platform.architecture.readArchitectureRevision.bind(platform.architecture),
     captureArchitectureSource: platform.architecture.captureSourceChanges.bind(platform.architecture),
     queryArchitecture: platform.architecture.queryArchitecture.bind(platform.architecture),
+    compareArchitecture: platform.architecture.compareArchitecture.bind(platform.architecture),
+    compareFormalObserved: platform.architecture.compareFormalObserved.bind(platform.architecture),
+    queryImpact: platform.architecture.queryImpact.bind(platform.architecture),
     proposePlan: platform.plans.proposePlan.bind(platform.plans),
     applyPlanChange: platform.plans.applyPlanChange.bind(platform.plans),
     readPlanProposal: platform.plans.readPlanProposal.bind(platform.plans),
@@ -901,6 +911,9 @@ export async function dispatchCoreRoute(
       case 'architecture/read': return bindings.readArchitectureRevision(ctx, plain.input as never);
       case 'architecture/capture': return bindings.captureArchitectureSource(ctx, graphWrite.request as never);
       case 'architecture/query': return bindings.queryArchitecture(ctx, plain.input as never);
+      case 'architecture/compare': return bindings.compareArchitecture(ctx, plain.input as never);
+      case 'architecture/compare-formal': return bindings.compareFormalObserved(ctx, plain.input as never);
+      case 'architecture/impact': return bindings.queryImpact(ctx, plain.input as never);
       case 'plans/propose': return bindings.proposePlan(ctx, graphWrite.request as never);
       case 'plans/apply': return bindings.applyPlanChange(ctx, graphWrite.request as never);
       case 'plans/proposal': return bindings.readPlanProposal(ctx, plain.input as never);

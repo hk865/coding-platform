@@ -107,9 +107,9 @@ function sourceCapability(capture?: WorkspaceToolsPort['captureSourceChanges']) 
   const captureSourceChanges = vi.fn(capture ?? unavailable);
   const close = vi.fn(async () => {});
   const port: WorkspaceToolsPort = {
-    captureSourceChanges, querySource: unavailable, exportCapture: unavailable,
+    captureSourceChanges, captureObservation: unavailable, querySource: unavailable, exportCapture: unavailable,
     verifyCapture: unavailable, releaseCapture: unavailable, captureArchitectureSource: unavailable,
-    readWorkspace: unavailable, compareWorkspace: unavailable,
+    captureFileGraph: unavailable, readWorkspace: unavailable, compareWorkspace: unavailable,
   };
   const access: RuntimeSourceCaptureAccess = {
     port, workspace,

@@ -203,41 +203,31 @@ function dedupeSort(nodes: readonly GraphNodeRefV1[]): GraphNodeRefV1[] {
 /** G-04/RW-13: the query's owner among the modules. Module identity is decided
  * by ONE `pathOwnershipOf` candidate per module carrying all of its paths, so
  * `src` and `src/` of one module are not a tie; two different modules sharing
- * the longest path are a `tie`, and both are returned with that shared path. */
+ * the longest path are a `tie`, and both are returned with that shared path.
+ * The winning stripped prefix (`.` for the root) comes straight from the shared
+ * decision, so no private prefix matcher is needed. */
 type PathSearchOwnership =
   | { status: 'owner'; path: string }
   | { status: 'none' }
   | { status: 'tie'; path: string };
 
-/** The longest (already normalised, trailing-`/`-stripped) path of one module
- * that owns `query`; `''` when none does. */
-function owningPath(paths: readonly string[], query: string): string {
-  let ownerPath = '';
-  for (const path of paths) {
-    if ((query === path || query.startsWith(`${path}/`)) && path.length > ownerPath.length) ownerPath = path;
-  }
-  return ownerPath;
-}
-
 function longestPathOwner(modules: readonly { paths: readonly string[] }[], query: string): PathSearchOwnership {
   const normalized = normalizeSearchText(query);
   // Item 4a: ownership is decided on the normalised, stripped paths, so the
-  // candidate's value carries exactly those paths and the owner path is taken
-  // from them too (a raw `Src` must not lose the `src/a.ts` query).
+  // candidate's value carries exactly those paths and the owner path is the
+  // shared decision's winning prefix (a raw `Src` must not lose the `src/a.ts`
+  // query).
   const candidates = modules.map((module) => {
     const paths = module.paths
       .map((raw) => normalizeSearchText(raw))
       .map((raw) => (raw.endsWith('/') ? raw.slice(0, -1) : raw))
-      .filter((path) => path.length > 0 && path !== '.');
+      .filter((path) => path.length > 0);
     return { value: paths, paths };
   });
   const ownership = pathOwnershipOf(normalized, candidates);
   if (ownership.status === 'none') return { status: 'none' };
-  if (ownership.status === 'tie') {
-    // The tied candidates share one winning prefix string; any yields it.
-    return { status: 'tie', path: owningPath(ownership.owners[0] ?? [], normalized) };
-  }
-  return { status: 'owner', path: owningPath(ownership.owner, normalized) };
+  // The tied candidates share one winning prefix string; `prefix` is it.
+  return { status: ownership.status, path: ownership.prefix };
 }
 /** G-04: equality, directory-boundary ownership or a directory under the query.
  * A `tie` is treated like an owner carrying the shared winning path, so every
@@ -1599,7 +1589,10 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
     if (cursorBasis !== null && cursorBasis !== basisKey) return revisionConflict(universe, ctx, goalRef);
     const needle = normalizeSearchText(request.needle);
     const ownership = longestPathOwner(universe.architecture?.modules ?? [], needle);
-    const matched: GraphNodeRefV1[] = [];
+    // A `.` query is the root directory: it owns every module by the same
+    // all-modules semantics as `lookGraph`'s path target (`modulesMatchingPath`).
+    // The loop below still applies the usual name/path/summary matching.
+    const matched: GraphNodeRefV1[] = needle === '.' ? modulesMatchingPath(universe, '.') : [];
     for (const node of dedupeSort(candidates)) {
       const presentation = presentationOf(node, universe);
       if (normalizeSearchText(presentation.name).includes(needle)) { matched.push(node); continue; }

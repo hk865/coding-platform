@@ -6,9 +6,10 @@
  * inventing one). `listCatalogVersions` reads the project's
  * `ArchitectureCatalog` rows through the new revision-ordered index.
  *
- * P2/R14: no record links a catalog revision to its `ArchitectureCatalogRevised`
- * event, so every catalog item carries `at: null`, `reason: null` and the
- * post-note label; 8A links the revision to its event (time and reason).
+ * P2/R14, 8A: a catalog revision row binds the commit cursor of its
+ * `ArchitectureCatalogRevised` event, so it carries the real `occurredAt` and
+ * reason. A row written before 8A (and the initial adoption) has no binding and
+ * keeps `at: null`, `reason: null` and the post-note label.
  * The list is newest first (revision descending), at most 50 per page, and a
  * cursor binds the request so a changed request is `cursor_mismatch`.
  */
@@ -20,7 +21,8 @@ import type { OrderedLookupValue, RecordLookupPort, RecordOrderedLookupPort } fr
 import {
   PLAN_PROPOSAL_LOOKUP_INDEX, S2B_PLAN_REVISION_BY_GOAL_LOOKUP, decodePlanProposalRecord, decodePlanRevisionSnapshot,
 } from '../persistence/plan-record-codecs.js';
-import { S4B_CATALOG_REVISION_BY_PROJECT_LOOKUP, decodeArchitectureCatalogRecord } from '../architecture/catalog-record-codecs.js';
+import { S4B_CATALOG_REVISION_BY_PROJECT_LOOKUP, decodeArchitectureCatalogRecord,
+  decodeArchitectureCatalogRevisedEvent } from '../architecture/catalog-record-codecs.js';
 
 export const VERSION_LIST_PAGE_MAX = 50;
 export const CATALOG_REASON_LABEL = '原因记在目录修订里，第 8 片接上后显示';
@@ -135,11 +137,23 @@ export function createVersionLists(deps: VersionListDependencies): {
       for (const record of page.value.records) {
         const decoded = decodeArchitectureCatalogRecord(record);
         if (decoded.status !== 'decoded') return rejected('unavailable', 'a catalog revision record is damaged');
-        // R14/P2: no record links a catalog revision to its
-        // `ArchitectureCatalogRevised` event, so there is no time until 8A; a
-        // catalog item carries `at: null` and the post-note label.
-        items.push({ revision: decoded.value.ref.revision, at: null, reason: null,
-          reasonLabel: CATALOG_REASON_LABEL });
+        const since = decoded.value.since;
+        // R14/P2: a row written before 8A (and the initial adoption) has no
+        // binding, so there is no time to show; keep the post-note label.
+        if (since === null) {
+          items.push({ revision: decoded.value.ref.revision, at: null, reason: null,
+            reasonLabel: CATALOG_REASON_LABEL });
+          continue;
+        }
+        // 8A (decision 72 post-note 4B ①): the row binds the cursor of the commit
+        // that wrote it; read that one event for the real time and reason. A
+        // failed or damaged read is `unavailable`, never a silent null.
+        const located = await deps.records.eventAt(since);
+        if (located.status !== 'ready') return rejected('unavailable', located.reason);
+        const revised = decodeArchitectureCatalogRevisedEvent(located.value.event);
+        if (revised.status !== 'decoded') return rejected('unavailable', 'the catalog revised event is damaged');
+        items.push({ revision: decoded.value.ref.revision, at: revised.value.occurredAt,
+          reason: revised.value.reason, reasonLabel: revised.value.reason });
       }
       const next = page.value.next === null ? null : cursorOf(bind, page.value.next);
       return { status: 'ready', value: { items, next, complete: next === null } };

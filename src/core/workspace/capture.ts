@@ -4,8 +4,10 @@ import type { WorkspaceRef } from '../../contracts/ledger.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { SourceCaptureRef } from '../../contracts/core/source.js';
 import type { ArchitectureSourceMapping, ArchitectureSourceSnapshotV1 } from '../../contracts/architecture-source.js';
-import { captureProjectSource, ProjectSourceFailure, SOURCE_ENGINE, type ProjectSourceSnapshot } from './project-source-snapshot.js';
+import { captureObservationSource, captureProjectSource, projectSnapshotOf, ProjectSourceFailure, SOURCE_ENGINE, type ObservedProjectSource, type ProjectSourceAccess, type ProjectSourceSnapshot } from './project-source-snapshot.js';
 import { TypeScriptSourceAnalyzer } from './typescript-source-query.js';
+import { createTypeScriptLanguageProvider, languageOfPath, type ArchitectureLanguageProviderV1, type ProjectFileGraphNodeV1, type ProjectFileGraphV1 } from './architecture-language-provider.js';
+import { COVERAGE_ISSUES_MAX, type LanguageCoverageV1 } from '../../contracts/architecture-inspection.js';
 import { captureTextSource, TEXT_ENGINE, type TextSourceFile } from './text-source-snapshot.js';
 import { mapArchitectureSource, type ArchitectureSourceMaterial } from './architecture-source.js';
 import { compareCapturedFiles, diffContent, manifestOf, readCapturedFile, readWorkingTreeFile, summaryChanges } from './workspace-read.js';
@@ -23,7 +25,7 @@ export type CursorRecord = {
 
 /** Provider-specific frozen material; everything else on an entry is shared metadata. */
 export type CaptureMaterial =
-  | { provider: 'typescript'; analyzer: TypeScriptSourceAnalyzer; snapshot: ProjectSourceSnapshot }
+  | { provider: 'typescript'; analyzer: TypeScriptSourceAnalyzer; snapshot: ProjectSourceSnapshot; observed?: ObservedProjectSource; analysisFailure?: string | null }
   | { provider: 'text'; analyzer: null; text: ReadonlyMap<string, TextSourceFile>;
       identity: Readonly<{ workspace: string; commit: string | null }>; snapshot: string };
 
@@ -64,6 +66,12 @@ const sameRef = (a: SourceCaptureRef, b: SourceCaptureRef) =>
   a.configDigest === b.configDigest && a.indexVersion === b.indexVersion;
 const workspaceOf = (ref: SourceCaptureRef): WorkspaceRef => ({ aggregateType: 'Workspace', projectId: ref.projectId, workspaceId: ref.workspaceId });
 
+/** L12 file-level observation: the one injectable 20,000/100,000 seam. */
+const DEFAULT_FILE_GRAPH_LIMITS = { maxNodes: 20000, maxEdges: 100000 };
+export type WorkspaceFileGraphLimits = { maxNodes: number; maxEdges: number };
+const nonBlankLineCount = (content: string) => content.split('\n').filter(line => /\S/.test(line)).length;
+const byPath = <T extends { path: string }>(left: T, right: T) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0;
+
 /** The TS provider's declared scope is constant; its query prefix never changes the captured set. */
 const TS_SCOPE: CaptureContentScope = deepFreeze({ kind: 'typescript_project_inputs', selectionVersion: 'ts-js-json-v1', prefix: null, digestBasis: 'decoded_utf8' });
 
@@ -91,13 +99,26 @@ export class CaptureRegistry {
   private pendingCaptures = 0;
   private stopping = false;
   private closing: Promise<void> | undefined;
+  /** 8A file-graph caps; injectable so a test can force the capacity path. */
+  readonly fileGraph: WorkspaceFileGraphLimits;
+  /** Non-TS providers (8D) would register here; the TS provider is built per call with the capture config. */
+  private readonly providers: ArchitectureLanguageProviderV1[] = [];
 
-  constructor(private readonly deps: { access: WorkspaceAccessFactory; now: () => string; limits: WorkspaceCaptureLimits }) {
+  constructor(private readonly deps: { access: WorkspaceAccessFactory; now: () => string; limits: WorkspaceCaptureLimits; fileGraph?: WorkspaceFileGraphLimits }) {
     this.limits = deps.limits;
+    this.fileGraph = deps.fileGraph ?? DEFAULT_FILE_GRAPH_LIMITS;
   }
 
   capture(ctx: CoreCallContext, input: CaptureSourceRequest): Promise<WorkspaceResult<CaptureSummary>> {
-    return this.track(ctx, signal => this.captureOp(ctx, input, signal));
+    return this.track(ctx, signal => this.captureOp(ctx, input, signal, 'strict'));
+  }
+  /**
+   * 8A tolerant observation capture: one pass reads every readable input and records per-file
+   * failures as skips instead of rejecting the whole observation; the same frozen material
+   * serves the module layer and the file graph.
+   */
+  captureObservation(ctx: CoreCallContext, input: CaptureSourceRequest): Promise<WorkspaceResult<CaptureSummary>> {
+    return this.track(ctx, signal => this.captureOp(ctx, input, signal, 'observation'));
   }
   query(ctx: CoreCallContext, input: SourcePageRequest): Promise<WorkspaceResult<SourcePage>> {
     return this.track(ctx, signal => querySource(this, ctx, input, signal));
@@ -193,6 +214,10 @@ export class CaptureRegistry {
       if (entry.material.provider === 'text') {
         const observed = await captureTextSource(access, { prefix: entry.scope.prefix }, signal, this.captureLimits());
         if (observed.snapshot !== entry.material.snapshot) return rejected('source_stale', 'text sources changed since capture');
+      } else if (entry.material.observed !== undefined) {
+        // The tolerant digest covers every observed file plus the skip list, so a non-TS edit is stale too.
+        const observed = await captureObservationSource(projectAccess(access, this.limits), signal, this.captureLimits());
+        if (observed.snapshot !== entry.material.observed.snapshot) return rejected('source_stale', 'project sources changed since capture');
       } else {
         const observed = await captureProjectSource(projectAccess(access, this.limits), signal, this.captureLimits());
         if (observed.snapshot !== entry.material.snapshot.snapshot) return rejected('source_stale', 'project sources changed since capture');
@@ -218,6 +243,125 @@ export class CaptureRegistry {
       };
       try { return { status: 'ready', value: deepFreeze(mapArchitectureSource(material, { projectId: entry.ref.projectId, workspaceId: entry.ref.workspaceId, workspaceRevision: entry.ref.workspaceRevision }, input.mappings)) }; }
       catch (error) { return /capacity/.test(message(error)) ? rejected('capacity', message(error)) : rejected('invalid', message(error)); }
+    }));
+  }
+
+  /**
+   * 8A file-level observation graph over the capture's frozen observation material. Nodes and
+   * issues come from `entry.material.observed`, so no inventory or read reaches the live
+   * worktree; a later edit cannot change an already-observed graph. A strict capture (which
+   * never observed) has no file graph and is rejected as `unsupported`.
+   */
+  captureFileGraph(ctx: CoreCallContext, input: { capture: SourceCaptureRef }): Promise<WorkspaceResult<ProjectFileGraphV1>> {
+    if (!input || typeof input !== 'object' || !input.capture) return Promise.resolve(rejected('invalid', 'capture reference required'));
+    return this.track(ctx, signal => this.withEntry(ctx, input.capture, signal, async (entry, access) => {
+      if (entry.material.provider !== 'typescript' || entry.material.observed === undefined)
+        return rejected('unsupported', 'the file graph requires an observation capture');
+      if (access.workspaceRevision !== entry.ref.workspaceRevision)
+        return rejected('source_stale', 'workspace revision changed since capture');
+      signal.throwIfAborted();
+      const observed = entry.material.observed;
+      const paths = [...new Set([...observed.files.values()].map(file => file.path).concat(observed.skipped.map(skip => skip.path)))].sort();
+      if (paths.length > this.fileGraph.maxNodes)
+        return rejected('capacity', `file graph exceeds the ${this.fileGraph.maxNodes} file capacity (reached ${this.fileGraph.maxNodes})`);
+      const nodes: ProjectFileGraphNodeV1[] = [];
+      const text = new Map<string, string>();
+      const skips = new Map<string, { path: string; kind: 'skipped' | 'failed'; reason: string }[]>();
+      const recognized = new Map<string, number>();
+      for (const path of paths) {
+        const language = languageOfPath(path);
+        recognized.set(language, (recognized.get(language) ?? 0) + 1);
+      }
+      for (const file of observed.files.values()) {
+        nodes.push({ path: file.path, nonBlankLines: nonBlankLineCount(file.content), language: languageOfPath(file.path) });
+        text.set(file.path, file.content);
+      }
+      for (const skip of observed.skipped) {
+        const language = languageOfPath(skip.path);
+        const issues = skips.get(language) ?? [];
+        issues.push({ path: skip.path, kind: 'skipped', reason: skip.reason });
+        skips.set(language, issues);
+      }
+      signal.throwIfAborted();
+      // The one frozen material every provider consumes; it cannot read anything the owner skipped.
+      const frozen: ProjectSourceAccess = {
+        allowed: path => text.has(path),
+        inventory: async () => ({ paths: [...text.keys()].sort(), truncated: false }),
+        sourceIdentity: async () => ({ workspace: entry.workspaceIdentity, commit: entry.commitHash }),
+        read: async path => {
+          const content = text.get(path);
+          if (content === undefined) throw Error('path outside the frozen file material');
+          return { content };
+        },
+      };
+      const edges: { from: string; to: string }[] = [];
+      const edgeKeys = new Set<string>();
+      const unresolved: { from: string; specifier: string }[] = [];
+      const unresolvedKeys = new Set<string>();
+      const languages: LanguageCoverageV1[] = [];
+      for (const language of [...recognized.keys()].sort()) {
+        const files = recognized.get(language)!;
+        const issues = [...(skips.get(language) ?? [])];
+        // Item 1 (rework 3): one analysis outcome per observation. When the capture's first
+        // analysis of the frozen material failed, the file layer reuses that recorded failure
+        // instead of re-analysing the same material with different limits.
+        const analysisFailure = language === 'typescript' ? entry.material.analysisFailure ?? null : null;
+        const provider = analysisFailure !== null
+          ? undefined
+          : language === 'typescript'
+            ? createTypeScriptLanguageProvider({ configPath: entry.requestedConfigPath })
+            : this.providers.find(candidate => candidate.language === language);
+        let parsed = 0;
+        let coverage: LanguageCoverageV1['edges'] = 'unsupported';
+        let reason: string | null = '引用关系未支持';
+        if (analysisFailure !== null) {
+          coverage = 'failed';
+          reason = analysisFailure;
+        } else if (provider) {
+          try {
+            const result = await provider.extractImports({ source: frozen, signal });
+            parsed = result.coverage.parsed;
+            reason = result.coverage.reason;
+            coverage = reason === null ? 'supported' : 'failed';
+            issues.push(...result.coverage.issues);
+            for (const edge of result.edges) {
+              const key = edge.from + '\0' + edge.to;
+              if (edgeKeys.has(key)) continue;
+              if (edges.length >= this.fileGraph.maxEdges)
+                return rejected('capacity', `file graph exceeds the ${this.fileGraph.maxEdges} edge capacity (reached ${this.fileGraph.maxEdges})`);
+              edgeKeys.add(key);
+              edges.push({ from: edge.from, to: edge.to });
+            }
+            for (const item of result.unresolved) {
+              const key = item.from + '\0' + item.specifier;
+              if (unresolvedKeys.has(key)) continue;
+              unresolvedKeys.add(key);
+              unresolved.push({ from: item.from, specifier: item.specifier });
+            }
+          } catch (error) {
+            if (signal.aborted) return rejected('cancelled', 'file graph cancelled');
+            coverage = 'failed';
+            reason = message(error);
+          }
+        }
+        // A failed TS provider that was given an explicit configuration reports that config as a
+        // failed issue; the observation never silently substitutes a different configuration.
+        if (language === 'typescript' && coverage === 'failed' && reason !== null && entry.requestedConfigPath !== null &&
+            !issues.some(issue => issue.path === entry.requestedConfigPath && issue.kind === 'failed')) {
+          issues.push({ path: entry.requestedConfigPath, kind: 'failed', reason });
+        }
+        issues.sort(byPath);
+        const issueCount = issues.length;
+        languages.push({ language, files, parsed, edges: coverage, reason, issues: issues.slice(0, COVERAGE_ISSUES_MAX), issueCount,
+          complete: coverage === 'supported' && parsed === files && issueCount === 0 });
+      }
+      const byEdge = (left: { from: string; to: string }, right: { from: string; to: string }) =>
+        left.from === right.from ? (left.to < right.to ? -1 : left.to > right.to ? 1 : 0) : (left.from < right.from ? -1 : 1);
+      edges.sort(byEdge);
+      unresolved.sort((left, right) => left.from === right.from
+        ? (left.specifier < right.specifier ? -1 : left.specifier > right.specifier ? 1 : 0) : (left.from < right.from ? -1 : 1));
+      nodes.sort(byPath);
+      return { status: 'ready', value: deepFreeze({ nodes, edges, unresolved, languages, complete: languages.every(language => language.complete) }) };
     }));
   }
 
@@ -356,7 +500,7 @@ export class CaptureRegistry {
     try { return await work(access); } finally { await access.release(); }
   }
 
-  private async captureOp(ctx: CoreCallContext, input: CaptureSourceRequest, signal: AbortSignal): Promise<WorkspaceResult<CaptureSummary>> {
+  private async captureOp(ctx: CoreCallContext, input: CaptureSourceRequest, signal: AbortSignal, mode: 'strict' | 'observation'): Promise<WorkspaceResult<CaptureSummary>> {
     const limits = this.limits;
     if (!input || typeof input !== 'object') return rejected('invalid', 'capture request required');
     const workspace = input.workspace;
@@ -400,25 +544,58 @@ export class CaptureRegistry {
           scope, complete: true, unresolved: [], filesystemAtomic: false, fullRuntimeCallGraph: false });
         orderVersion = sha256Hex(JSON.stringify(files.map(file => [file.path, file.digest])));
       } else {
-        const snapshot = await captureProjectSource(projectAccess(access1, limits), signal, this.captureLimits());
+        // One tolerant pass in observation mode feeds both the module analysis (the TS/JSON
+        // subset) and the file graph (every text file plus the skip list); the strict pass is
+        // unchanged for the other `capture()` callers.
+        const observed = mode === 'observation'
+          ? await captureObservationSource(projectAccess(access1, limits), signal, this.captureLimits())
+          : undefined;
+        const snapshot = observed === undefined
+          ? await captureProjectSource(projectAccess(access1, limits), signal, this.captureLimits())
+          : projectSnapshotOf(observed);
         analyzer = new TypeScriptSourceAnalyzer();
         // The complete configured relation set is analysed once without the result hint: a capture
         // prefix only scopes explicitly prefixed queries, never the full export/graph material.
-        const analysis = analyzer.analyze(snapshot, { operation: 'imports',
-          ...(input.configPath !== undefined ? { configPath: input.configPath } : {}) }, signal, { maxResults: limits.maxQueryResults });
-        relations = deepFreeze(analysis.results.filter(result => 'module' in result).map(toSourceRelation));
+        let analysis: ReturnType<TypeScriptSourceAnalyzer['analyze']> | null = null;
+        let analysisFailure: string | null = null;
+        try {
+          analysis = analyzer.analyze(snapshot, { operation: 'imports',
+            ...(input.configPath !== undefined ? { configPath: input.configPath } : {}) }, signal, { maxResults: limits.maxQueryResults });
+        } catch (error) {
+          // Observation mode tolerates an analysis failure (e.g. an explicitly requested
+          // configuration the tolerant pass skipped as binary): the frozen files and their
+          // line counts survive, the coverage records the failure and the module layer is
+          // empty. A strict capture still propagates the failure; the explicitly requested
+          // configuration is never silently replaced by a default one.
+          if (mode !== 'observation' || signal.aborted) throw error;
+          analysisFailure = message(error);
+        }
+        const requestedConfig = input.configPath ?? null;
+        relations = analysis === null ? deepFreeze([] as SourceRelation[])
+          : deepFreeze(analysis.results.filter(result => 'module' in result).map(toSourceRelation));
         files = deepFreeze([...snapshot.files.values()].map(toSourceFileEntry));
         // Graph sources keep exactly the original {path,digest} shape; the export manifest is richer.
-        sources = deepFreeze(analysis.indexedSources.map(({ path, digest }) => ({ path, digest })));
-        diagnostics = deepFreeze(analysis.diagnostics.map(toSourceDiagnostic));
-        diagnosticsTruncated = analysis.diagnosticsTruncated;
-        scope = TS_SCOPE; commitHash = snapshot.identity.commit; resolvedConfigPath = analysis.coverage.projectConfiguration;
+        sources = analysis === null ? deepFreeze([] as { path: string; digest: string }[])
+          : deepFreeze(analysis.indexedSources.map(({ path, digest }) => ({ path, digest })));
+        diagnostics = analysis === null ? deepFreeze([] as SourceDiagnostic[])
+          : deepFreeze(analysis.diagnostics.map(toSourceDiagnostic));
+        diagnosticsTruncated = analysis === null ? false : analysis.diagnosticsTruncated;
+        scope = TS_SCOPE; commitHash = snapshot.identity.commit;
+        resolvedConfigPath = analysis === null ? requestedConfig : analysis.coverage.projectConfiguration;
         indexVersion = SOURCE_ENGINE.name + '@' + SOURCE_ENGINE.version;
-        sourceDigest = snapshot.snapshot;
-        material = { provider: 'typescript', analyzer, snapshot };
+        // An observation capture's source identity is the tolerant digest over every observed
+        // file and the skip list; a strict capture keeps the TS/JSON-only manifest digest.
+        sourceDigest = observed === undefined ? snapshot.snapshot : observed.snapshot;
+        material = observed === undefined
+          ? { provider: 'typescript', analyzer, snapshot }
+          : { provider: 'typescript', analyzer, snapshot, observed, analysisFailure };
         coverage = deepFreeze({ provider: 'typescript', engine: SOURCE_ENGINE.name, engineVersion: SOURCE_ENGINE.version,
-          projectConfiguration: analysis.coverage.projectConfiguration, sourceCount: files.length, indexedSourceCount: sources.length,
-          permissionFiltered: true, scope, complete: true,
+          // A failed observation has no resolved configuration: `null` keeps the module-layer
+          // snapshot's configPath out of the frozen-file consistency check, while the requested
+          // path stays in `resolvedConfigPath` and as the file-graph language issue.
+          projectConfiguration: analysis === null ? null : analysis.coverage.projectConfiguration,
+          sourceCount: files.length, indexedSourceCount: sources.length,
+          permissionFiltered: true, scope, complete: analysis !== null,
           unresolved: relations.filter(relation => relation.resolution === 'unknown').map(relation => 'unresolved import: ' + relation.from.path + ':' + relation.from.start.line + ' -> ' + relation.expression),
           filesystemAtomic: false, fullRuntimeCallGraph: false });
         configDigest = sha256Hex(canonicalJson({ requestedConfigPath: input.configPath ?? null, resolvedConfigPath,
@@ -441,7 +618,9 @@ export class CaptureRegistry {
           if (verified.snapshot !== sourceDigest || canonicalJson(verified.scope) !== canonicalJson(scope))
             return rejected('source_stale', 'text sources changed during capture');
         } else {
-          const verified = await captureProjectSource(projectAccess(access2, limits), signal, this.captureLimits());
+          const verified = material.observed !== undefined
+            ? await captureObservationSource(projectAccess(access2, limits), signal, this.captureLimits())
+            : await captureProjectSource(projectAccess(access2, limits), signal, this.captureLimits());
           if (verified.snapshot !== sourceDigest) return rejected('source_stale', 'project sources changed during capture');
         }
       } finally { await access2.release(); }
@@ -543,9 +722,11 @@ export class CaptureRegistry {
   private activeCount() { const now = this.nowMs(); return [...this.entries.values()].filter(entry => !entry.released && (entry.expiresAt > now || entry.activeReaders > 0)).length; }
   private retainedBytes() { return [...this.entries.values()].reduce((sum, entry) => sum + entry.bytes, 0) + [...this.tombstones.values()].reduce((sum, tombstone) => sum + tombstone.bytes, 0); }
   private logicalBytes(entry: CaptureEntry): number {
+    // An observation capture retains every observed text file, not only the TS/JSON analysis subset.
+    const observed = entry.material.provider === 'typescript' ? entry.material.observed : undefined;
     const content = entry.material.provider === 'text'
       ? [...entry.material.text.values()].reduce((sum, file) => sum + file.byteLength, 0)
-      : [...entry.material.snapshot.files.values()].reduce((sum, file) => sum + Buffer.byteLength(file.content), 0);
+      : [...(observed?.files ?? entry.material.snapshot.files).values()].reduce((sum, file) => sum + Buffer.byteLength(file.content), 0);
     const material = Buffer.byteLength(JSON.stringify({ files: entry.files, sources: entry.sources, relations: entry.relations, diagnostics: entry.diagnostics, scope: entry.scope }));
     // Ref/scope/authorization/config/delta metadata is retained too; its byte length is not constant.
     const metadata = Buffer.byteLength(JSON.stringify({ ref: entry.ref, subjectKey: entry.subjectKey, permissionRevision: entry.permissionRevision,
