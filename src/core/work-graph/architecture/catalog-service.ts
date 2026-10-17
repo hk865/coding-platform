@@ -361,7 +361,7 @@ async function recoverConflictByIdentity<T>(records: GoalRecordTransactionPort, 
 // Reads
 // --------------------------------------------------------------------------
 
-type CurrentCatalogWindow =
+export type CurrentCatalogWindow =
   | { status: 'ready'; baseline: ArchitectureBaselineRevisionSnapshot; catalog: ArchitectureCatalogRecord | null;
       guards: RecordGuard[]; activeRevision: number }
   | { status: 'not_found' }
@@ -374,7 +374,7 @@ type CurrentCatalogWindow =
  * versions) and returns both the decoded revision and the exact guards a CAS
  * caller must join. `readCurrentRevision` and `readCatalogModuleFacts` share it.
  */
-async function readCurrentCatalogWindow(records: GoalRecordTransactionPort, projectId: string): Promise<CurrentCatalogWindow> {
+export async function readCurrentCatalogWindow(records: GoalRecordTransactionPort, projectId: string): Promise<CurrentCatalogWindow> {
   const activeKey = activeRefKey(projectId);
   const pointerRead = await records.readMany([activeKey]);
   if (pointerRead.status !== 'ready') return mapStoreFailure(pointerRead);
@@ -814,8 +814,18 @@ export async function readCatalogModuleFacts(records: GoalRecordTransactionPort,
   if (moduleRef.projectId !== ctx.projectId) return forbidden('the module is outside the call context project');
   const current = await readCurrentCatalogWindow(records, moduleRef.projectId);
   if (current.status !== 'ready') return current;
-  if (current.catalog === null) return { status: 'not_found' };
-  const module = current.catalog.catalog.modules.find(entry => entry.ref.moduleId === moduleRef.moduleId);
+  return catalogModuleFactsOf(current, moduleRef.moduleId);
+}
+
+/**
+ * The module-facts projection of one already-read current catalog window. The
+ * note anchor gate uses it through its per-call seam, so several module or
+ * interface targets of one note call share ONE `readCurrentCatalogWindow`.
+ */
+export function catalogModuleFactsOf(window: CurrentCatalogWindow, moduleId: string): ReadResult<CatalogModuleFacts> {
+  if (window.status !== 'ready') return window;
+  if (window.catalog === null) return { status: 'not_found' };
+  const module = window.catalog.catalog.modules.find(entry => entry.ref.moduleId === moduleId);
   if (module === undefined) return { status: 'not_found' };
-  return { status: 'ready', value: { module, guards: current.guards } };
+  return { status: 'ready', value: { module, guards: window.guards } };
 }

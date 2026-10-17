@@ -46,7 +46,9 @@ async function requestFor(x: S5R2C, requestId: string, selection: DecisionSelect
 function appliedReceipts(result: ResolveDecisionReadV1) {
   expect(result.state).toBe('applied');
   const answer = committed(result.answer);
-  if (result.action === null || result.application === null) throw new Error('applied requires all three receipts');
+  if (result.action === null || result.action.status !== 'committed' || result.application === null) {
+    throw new Error('applied requires all three receipts');
+  }
   return { answer, action: committed(result.action), application: committed(result.application) };
 }
 

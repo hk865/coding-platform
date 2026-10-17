@@ -26,6 +26,7 @@ import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js
 import type { EncodedDomainEvent, StoreFailure } from '../../record-store/ports.js';
 import type { DecisionSourceFactsPort, S5RecordPort } from '../model/decision-contracts.js';
 import { decodeGoalSettingsChangedEvent, decisionChangeProofProblem } from '../persistence/decision-record-codecs.js';
+import { noteDispositionChangedEventFromEvent } from '../persistence/note-record-codecs.js';
 import { decodePlanRevisionAcceptedEvent } from '../persistence/plan-record-codecs.js';
 
 function canonicalOf(value: unknown): string | null {
@@ -56,23 +57,44 @@ type ProofEvent = {
   proof: DecisionChangeProofV1 | null;
 };
 
-function decodeProofEvent(event: EncodedDomainEvent): ProofEvent | ReadResult<never> {
-  if (event.eventType === 'GoalSettingsChanged') {
+/**
+ * §3.3/4C-2: the whitelisted proof-event decoder table, keyed by event type.
+ * `ArchitectureCatalogAdopted`/`ProjectCompletionPolicyActivated` stay explicit
+ * `unsupported` rows (slice 6); an unknown type stays `incomplete`.
+ */
+type ProofEventDecoder = (event: EncodedDomainEvent) => ProofEvent | ReadResult<never>;
+
+const PROOF_EVENT_DECODERS: Readonly<Record<string, ProofEventDecoder>> = {
+  GoalSettingsChanged: (event) => {
     const decoded = decodeGoalSettingsChangedEvent(event);
     if (decoded.status !== 'decoded') return reject('unavailable', `the GoalSettingsChanged event is damaged: ${decoded.reason}`);
     return { actor: decoded.value.actor, appliedAt: decoded.value.occurredAt, proof: decoded.value.payload.proof };
-  }
-  if (event.eventType === 'PlanRevisionAccepted') {
+  },
+  PlanRevisionAccepted: (event) => {
     const decoded = decodePlanRevisionAcceptedEvent(event);
     if (decoded.status !== 'decoded') return reject('unavailable', `the PlanRevisionAccepted event is damaged: ${decoded.reason}`);
     return { actor: decoded.value.actor, appliedAt: decoded.value.occurredAt,
       proof: decoded.value.payload.decisionApplication ?? null };
-  }
+  },
+  // 4C-2: an ordinary disposition carries no proof (stays `incomplete` below); a
+  // formal disposition proof is validated exactly like the other rows.
+  NoteDispositionChanged: (event) => {
+    const decoded = noteDispositionChangedEventFromEvent(event);
+    if (decoded.status !== 'decoded') return reject('unavailable', `the NoteDispositionChanged event is damaged: ${decoded.reason}`);
+    return { actor: decoded.value.actor as DecisionApplicationV1['actor'],
+      appliedAt: decoded.value.occurredAt, proof: decoded.value.proof };
+  },
   // [lead L1] The initial architecture/completion-policy proof is slice 6.
-  if (event.eventType === 'ArchitectureCatalogAdopted' || event.eventType === 'ProjectCompletionPolicyActivated') {
-    return reject('unsupported', 'only GoalSettingsChanged and PlanRevisionAccepted applications are provable in this slice');
-  }
-  return reject('incomplete', 'the receipt is not a formal decision-application event');
+  ArchitectureCatalogAdopted: () => reject('unsupported',
+    'only GoalSettingsChanged, PlanRevisionAccepted and NoteDispositionChanged applications are provable in this slice'),
+  ProjectCompletionPolicyActivated: () => reject('unsupported',
+    'only GoalSettingsChanged, PlanRevisionAccepted and NoteDispositionChanged applications are provable in this slice'),
+};
+
+function decodeProofEvent(event: EncodedDomainEvent): ProofEvent | ReadResult<never> {
+  const decode = PROOF_EVENT_DECODERS[event.eventType];
+  if (decode === undefined) return reject('incomplete', 'the receipt is not a formal decision-application event');
+  return decode(event);
 }
 
 /** §3.3: the reader proving one recorded decision application from its receipt. */

@@ -77,7 +77,9 @@ it('Z02 automatic advancement: a secretary member asks the user to decide, the c
   // Z02 audit fix: check the real PREPARED reminder input (the model request
   // text), not only graph facts. The decision extension's L5 rows reach the
   // assembled context the member actually received.
-  expect(requestText(f.scripted)).toContain('待决来源尚未接入：note_review');
+  // 4C-2 wiring: the note_review source is registered, so it is available and
+  // emits no "尚未接入" hint row (message_release still would).
+  expect(requestText(f.scripted)).not.toContain('待决来源尚未接入：note_review');
   // §5.2 line 308/§8.5: a queue read makes no new commit and calls neither model.
   const queueCommitsBefore = f.commits().length;
   const queueCallsBefore = f.scripted.calls();

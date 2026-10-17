@@ -32,6 +32,7 @@ import type {
   GoalExecutedFilesPort,
   GoalSettingsPort,
   MessageDutiesFactsPort,
+  ResolveDecisionActionV1,
 } from '../../core/work-graph/model/decision-contracts.js';
 import type { GraphWrite } from '../../core/work-graph/model/task-contracts.js';
 import type {
@@ -39,6 +40,28 @@ import type {
   ResolveDecisionReadV1,
   WorkflowAdvanceInput,
 } from './contracts.js';
+
+/** The narrow, internal result of one dispatched application step (U6). */
+type DecisionApplicationOutcome = {
+  action: ResolveDecisionActionV1;
+  receipt: DecisionApplicationReceiptV1 | null;
+  /** Present when the step reports a coordination state (the conflict path). */
+  state?: ResolveDecisionReadV1['state'];
+};
+
+/**
+ * 4C-2 U6: one source kind's application step. The coordinator commits the
+ * answer first, then dispatches step ② through ONE adapter table: the default
+ * `goal_conflict` registration merged with `deps.decisionApplications`. A kind
+ * with no adapter answers the card only. `receipt` is the formal receipt to
+ * record in step ③; a `NoteDispositionResult` may instead carry its own.
+ */
+export type DecisionApplicationAdapter = {
+  apply(ctx: CoreCallContext, input: {
+    answer: SessionMessage; answerRef: SessionMessageRef;
+    source: DecisionSourceV1; selection: DecisionSelectionV1; requestId: string; expected: VersionPin[];
+  }): Promise<ReadResult<DecisionApplicationOutcome>>;
+};
 
 /**
  * The exact owners the finite decision coordinator composes. The settings owner
@@ -58,6 +81,13 @@ export type DecisionActionDependencies = {
   decisionSources?: DecisionSourceFactsPort;
   decisionDuties?: MessageDutiesFactsPort;
   goalExecutedFiles?: GoalExecutedFilesPort;
+  /**
+   * 4C-2 U6: the per-source-kind application adapters. A provided adapter is
+   * dispatched after the answer commit and may return the formal receipt to
+   * record. `goal_conflict` has a default registration inside the coordinator;
+   * an entry here replaces it.
+   */
+  decisionApplications?: Partial<Record<DecisionSourceV1['kind'], DecisionApplicationAdapter>>;
   /**
    * §3.3 line 625: the earlier Goal's GoalPhase pin a `conflict_wait` settings
    * command must carry (absent phase = revision 0). Read-only; the settings owner
@@ -222,6 +252,132 @@ export function createDecisionActions(deps: DecisionActionDependencies): Decisio
     return { pins };
   }
 
+  /**
+   * ② The built-in `goal_conflict` adapter: the pre-4C-2 conflict chain moved
+   * unchanged. It returns the structured settings action (and, on the compat
+   * path, the exact historical state); step ③ records its receipt from the
+   * committed cursor.
+   */
+  async function applyGoalConflict(
+    ctx: CoreCallContext, answer: SessionMessage, answerRef: SessionMessageRef,
+    source: DecisionSourceV1, selection: DecisionSelectionV1, requestId: string,
+    goalSettings: GoalSettingsPort,
+  ): Promise<ReadResult<DecisionApplicationOutcome>> {
+    // Free text / option / non-conflict answers only answer the card in this
+    // slice; adopting a candidate still goes through the original plans/apply.
+    if (!isConflictSelection(selection)) {
+      return { status: 'ready', value: { action: null, receipt: null } };
+    }
+
+    // The command carries the answer's captured source pins; the supplementary
+    // pins (the earlier GoalPhase of a wait, the uncaptured Goals of an order)
+    // are read current and guard a first execution. §8.2 line 1366 / §4.5 line
+    // 884: the ORIGINAL receipt is asked for FIRST, before any current-fact
+    // read, because the owner's fingerprint keeps the captured pins alone.
+    let action: WriteResult<{ goals: GoalSnapshot[] }> | CoreRejection;
+    const captured = capturedAnswerSource(answer);
+    if (captured !== null) {
+      const replayPort = goalSettings as GoalSettingsPort & GoalConflictReplayPort;
+      const replay = replayPort.readGoalConflictReplay === undefined
+        ? { status: 'absent' as const }
+        : await replayPort.readGoalConflictReplay(ctx, {
+          input: { source: captured, selection, decisionMessageRef: answerRef },
+          meta: { requestId: `${requestId}:settings`, expected: replayExpectedPins(captured, selection) },
+        });
+      if (replay.status === 'found') {
+        action = { status: 'committed', value: replay.value, replayed: true, cursor: replay.cursor };
+      } else if (replay.status === 'absent') {
+        const derived = await settingsExpectedPins(goalSettings, ctx, selection, captured);
+        if ('status' in derived) {
+          return { status: 'ready', value: { action: derived, receipt: null, state: 'application_not_recorded' } };
+        }
+        action = await goalSettings.resolveGoalConflict(ctx, {
+          input: { source: captured, selection, decisionMessageRef: answerRef },
+          meta: { requestId: `${requestId}:settings`, expected: derived.pins },
+        });
+      } else {
+        action = replay;
+      }
+    } else {
+      // Compatibility path for an answer response without the slice-5 captured
+      // source shape: the original current-fact read decides.
+      if (deps.decisionSources === undefined) {
+        return { status: 'ready', value: { action: null, receipt: null, state: 'application_not_recorded' } };
+      }
+      const sourceRead = await deps.decisionSources.readSource(ctx, source);
+      if (sourceRead.status !== 'ready') {
+        const sourceFailure: CoreRejection = sourceRead.status === 'rejected' ? sourceRead
+          : { status: 'rejected', code: sourceRead.status === 'not_found' ? 'not_found' : 'unavailable',
+            reason: 'the decision source of the answer is not readable' };
+        return { status: 'ready', value: {
+          action: sourceFailure, receipt: null, state: 'application_not_recorded' } };
+      }
+      const facts = sourceRead.value;
+      if (facts.goal.desiredState !== 'active') {
+        return { status: 'ready', value: { action: null, receipt: null, state: 'awaiting_resume' } };
+      }
+      const derived = await settingsExpectedPins(goalSettings, ctx, selection, facts.source);
+      if ('status' in derived) {
+        return { status: 'ready', value: { action: derived, receipt: null, state: 'application_not_recorded' } };
+      }
+      action = await goalSettings.resolveGoalConflict(ctx, {
+        input: { source: facts.source, selection, decisionMessageRef: answerRef },
+        meta: { requestId: `${requestId}:settings`, expected: derived.pins },
+      });
+    }
+    return { status: 'ready', value: { action, receipt: null } };
+  }
+
+  /** A dispatched adapter's non-ready ReadResult, kept visible as the action. */
+  function applicationRejection(read: ReadResult<unknown>): CoreRejection {
+    if (read.status === 'rejected') return read;
+    if (read.status === 'not_found') {
+      return { status: 'rejected', code: 'not_found', reason: 'the decision application action was not found' };
+    }
+    return { status: 'rejected', code: 'incomplete', reason: 'the decision application action is not ready' };
+  }
+
+  /**
+   * ③ Record the dispatched action's formal receipt (U6). The adapter may hand
+   * one over directly; a committed WriteResult is proved from its cursor via
+   * `applicationReceipt`; a done `NoteDispositionResult` carries its own. Rule
+   * 19: after the answer commit every later failure is a `ready` result.
+   */
+  async function recordApplicationOutcome(
+    ctx: CoreCallContext, decisionMessages: NonNullable<DecisionActionDependencies['decisionMessages']>,
+    answer: Extract<WriteResult<SessionMessage>, { status: 'committed' }>, answerRef: SessionMessageRef,
+    requestId: string, outcome: DecisionApplicationOutcome,
+  ): Promise<ReadResult<ResolveDecisionReadV1>> {
+    const action = outcome.action;
+    if (outcome.state !== undefined) {
+      return ready({ answer, action, application: null, state: outcome.state });
+    }
+    if (action !== null && action.status === 'rejected') {
+      return ready({ answer, action, application: null,
+        state: action.code === 'busy' ? 'awaiting_resume' : 'application_not_recorded' });
+    }
+    let receipt = outcome.receipt;
+    if (receipt === null && action !== null) {
+      if (action.status === 'committed') {
+        receipt = deps.applicationReceipt === undefined ? null : await deps.applicationReceipt(ctx, action.cursor);
+      } else if (action.status === 'done') {
+        receipt = action.receipt;
+      }
+    }
+    if (receipt === null) {
+      return ready({ answer, action, application: null,
+        state: action === null ? 'answered' : 'application_not_recorded' });
+    }
+    const application: ResolveDecisionReadV1['application'] = await decisionMessages.recordDecisionApplication(ctx, {
+      input: { messageRef: answerRef, receipt },
+      meta: { requestId: `${requestId}:application`, expected: [{ ref: answerRef, revision: answer.value.revision }] },
+    });
+    return ready({
+      answer, action, application,
+      state: application.status === 'committed' ? 'applied' : 'application_not_recorded',
+    });
+  }
+
   async function resolveDecision(
     ctx: CoreCallContext,
     request: GraphWrite<ResolveDecisionInputV1>,
@@ -249,90 +405,31 @@ export function createDecisionActions(deps: DecisionActionDependencies): Decisio
     if (answer.status !== 'committed') return answer;
     const answerRef = answer.value.ref;
 
-    // Free text / option / non-conflict answers only answer the card in this
-    // slice; adopting a candidate still goes through the original plans/apply.
-    if (!isConflictSelection(input.selection)) {
+    // ② Dispatch the application step on the source kind through ONE adapter
+    // table: today's conflict chain is the DEFAULT `goal_conflict` registration,
+    // and the composition's adapters are merged over it. A kind with no adapter
+    // answers the card only, exactly as before.
+    const applications: Partial<Record<DecisionSourceV1['kind'], DecisionApplicationAdapter>> = {
+      goal_conflict: {
+        apply: (adapterCtx, adapterInput) => applyGoalConflict(adapterCtx, adapterInput.answer,
+          adapterInput.answerRef, adapterInput.source, adapterInput.selection, adapterInput.requestId,
+          goalSettings),
+      },
+      ...deps.decisionApplications,
+    };
+    const adapter = applications[input.source.kind];
+    if (adapter === undefined) {
       return ready({ answer, action: null, application: null, state: 'answered' });
     }
-
-    // ② The structured conflict action. The command carries the answer's captured
-    // source pins; the supplementary pins (the earlier GoalPhase of a wait, the
-    // uncaptured Goals of an order) are read current and guard a first execution.
-    // §8.2 line 1366 / §4.5 line 884: the ORIGINAL receipt is asked for FIRST,
-    // before any current-fact read, because the owner's fingerprint keeps the
-    // captured pins alone. Only when there is no original receipt does the
-    // coordinator read the supplementary pins for the first execution's CAS.
-    let action: WriteResult<{ goals: GoalSnapshot[] }> | CoreRejection;
-    const captured = capturedAnswerSource(answer.value);
-    if (captured !== null) {
-      const replayPort = goalSettings as GoalSettingsPort & GoalConflictReplayPort;
-      const replay = replayPort.readGoalConflictReplay === undefined
-        ? { status: 'absent' as const }
-        : await replayPort.readGoalConflictReplay(ctx, {
-          input: { source: captured, selection: input.selection, decisionMessageRef: answerRef },
-          meta: { requestId: `${requestId}:settings`, expected: replayExpectedPins(captured, input.selection) },
-        });
-      if (replay.status === 'found') {
-        action = { status: 'committed', value: replay.value, replayed: true, cursor: replay.cursor };
-      } else if (replay.status === 'absent') {
-        const derived = await settingsExpectedPins(goalSettings, ctx, input.selection, captured);
-        if ('status' in derived) {
-          return ready({ answer, action: derived, application: null, state: 'application_not_recorded' });
-        }
-        action = await goalSettings.resolveGoalConflict(ctx, {
-          input: { source: captured, selection: input.selection, decisionMessageRef: answerRef },
-          meta: { requestId: `${requestId}:settings`, expected: derived.pins },
-        });
-      } else {
-        action = replay;
-      }
-    } else {
-      // Compatibility path for an answer response without the slice-5 captured
-      // source shape: the original current-fact read decides.
-      if (deps.decisionSources === undefined) {
-        return ready({ answer, action: null, application: null, state: 'application_not_recorded' });
-      }
-      const sourceRead = await deps.decisionSources.readSource(ctx, input.source);
-      if (sourceRead.status !== 'ready') {
-        const sourceFailure: CoreRejection = sourceRead.status === 'rejected' ? sourceRead
-          : { status: 'rejected', code: sourceRead.status === 'not_found' ? 'not_found' : 'unavailable',
-            reason: 'the decision source of the answer is not readable' };
-        return ready({ answer, action: sourceFailure, application: null, state: 'application_not_recorded' });
-      }
-      const facts = sourceRead.value;
-      if (facts.goal.desiredState !== 'active') {
-        return ready({ answer, action: null, application: null, state: 'awaiting_resume' });
-      }
-      const derived = await settingsExpectedPins(goalSettings, ctx, input.selection, facts.source);
-      if ('status' in derived) {
-        return ready({ answer, action: derived, application: null, state: 'application_not_recorded' });
-      }
-      action = await goalSettings.resolveGoalConflict(ctx, {
-        input: { source: facts.source, selection: input.selection, decisionMessageRef: answerRef },
-        meta: { requestId: `${requestId}:settings`, expected: derived.pins },
-      });
-    }
-
-    if (action.status !== 'committed') {
-      return ready({ answer, action, application: null,
-        state: action.code === 'busy' ? 'awaiting_resume' : 'application_not_recorded' });
-    }
-
-    // ③ Record the application of the change the settings owner just committed,
-    // proved from that commit's own formal receipt. Missing receipt leaves the
-    // card answered and pending application; it never hides the committed step.
-    const receipt = deps.applicationReceipt === undefined ? null : await deps.applicationReceipt(ctx, action.cursor);
-    if (receipt === null) {
-      return ready({ answer, action, application: null, state: 'application_not_recorded' });
-    }
-    const application: ResolveDecisionReadV1['application'] = await decisionMessages.recordDecisionApplication(ctx, {
-      input: { messageRef: answerRef, receipt },
-      meta: { requestId: `${requestId}:application`, expected: [{ ref: answerRef, revision: answer.value.revision }] },
+    const applied = await adapter.apply(ctx, {
+      answer: answer.value, answerRef, source: input.source, selection: input.selection, requestId, expected,
     });
-    return ready({
-      answer, action, application,
-      state: application.status === 'committed' ? 'applied' : 'application_not_recorded',
-    });
+    const outcome: DecisionApplicationOutcome = applied.status === 'ready'
+      ? applied.value
+      : { action: applicationRejection(applied), receipt: null };
+
+    // ③ Record the application of the change the dispatched step produced.
+    return recordApplicationOutcome(ctx, decisionMessages, answer, answerRef, requestId, outcome);
   }
 
   async function orderGoalAdvances(

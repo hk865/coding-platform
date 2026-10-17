@@ -16,7 +16,6 @@ import { describe, expect, it, vi } from 'vitest';
 import { createS4BNoteCheckFixture, type S4BNoteCheckFixture } from '../helpers/S4B-note-check-fixture.js';
 import * as readModelModule from '../../src/core/work-graph/notes/note-read-model.js';
 import { createNoteMemoryMaterial } from '../../src/core/work-graph/notes/note-memory-material.js';
-import { renderNoteHeader } from '../../src/contracts/note.js';
 
 const GOAL = 's4a-goal';
 const TASK_KEY = `task:${GOAL}/t1`;
@@ -149,8 +148,8 @@ describe('S4C2 PU-03 memory material (spec §11.4/L20)', () => {
       expect(row).toBeDefined();
       expect(row!.freshness).toBe('stale');
       expect(row!.label).toBe(`需复查：${staleNote} a conclusion，不能当现行结论`);
-      expect(row!.label).not.toBe(renderNoteHeader({ kind: 'pitfall', anchor: { kind: 'task', goalId: GOAL, taskId: 't1' },
-        structural: false, conclusion: 'a conclusion' }));
+      // Hand-computed header of a pitfall note on task t1: `坑(任务 t1)：a conclusion`.
+      expect(row!.label).not.toBe('坑(任务 t1)：a conclusion');
     });
   });
 

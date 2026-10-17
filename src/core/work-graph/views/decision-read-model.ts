@@ -37,6 +37,8 @@ import type {
   NoticeDisplayTokenPort,
   NoticeItemV1,
   NoticePositionComparatorPort,
+  NoteDecisionCardFactsV1,
+  NoteDecisionSourcePort,
 } from '../model/decision-contracts.js';
 import type { SessionMessage } from '../model/communication-contracts.js';
 import type { PlanProposal } from '../model/plan-contracts.js';
@@ -75,6 +77,7 @@ import {
   type GoalTerminalState,
 } from './goal-conflicts.js';
 import { compareNoticePositions, mergeNoticePages, type NoticeSourceItemsV1 } from './notice-position.js';
+import { groupNotices, seenThroughOfNotices } from './notice-grouping.js';
 
 /**
  * The narrow readers, the shared Store seam and the two injected helpers. A
@@ -169,6 +172,7 @@ export function createDecisionReadModel(
 export function createGoalCauseCardSource(reader: GoalDecisionCauseReader): DecisionCardSourcePort {
   return {
     kind: 'goal_cause',
+    needsGoal: true,
     async readPage(ctx, input) {
       if (input.goalRef === undefined) {
         return { status: 'ready', value: { availability: 'available', items: [], nextCursor: null, sourceCursor: null } };
@@ -186,6 +190,7 @@ export function createGoalCauseCardSource(reader: GoalDecisionCauseReader): Deci
 export function createPlanningQuestionCardSource(reader: PlanningQuestionReader): DecisionCardSourcePort {
   return {
     kind: 'planning_question',
+    needsGoal: true,
     async readPage(ctx, input) {
       if (input.goalRef === undefined) {
         return { status: 'ready', value: { availability: 'available', items: [], nextCursor: null, sourceCursor: null } };
@@ -193,6 +198,173 @@ export function createPlanningQuestionCardSource(reader: PlanningQuestionReader)
       return reader.readPlanningQuestions(ctx, { goalRef: input.goalRef, page: input.page });
     },
   };
+}
+
+/**
+ * §4.2 U7: the generic adapter for a collection-backed card source. A source
+ * registers its collection read, its stable key, its projection, its close
+ * check and its direct by-key read; this adapter owns the once-per-attempt
+ * assembly (`attempt.cache`), the offset paging and the closed-card shape, so
+ * adding the next source is a registration, not a copy of the note source.
+ */
+export type CardCollectionSourceSpec<T> = {
+  kind: DecisionSourceV1['kind'];
+  needsGoal: boolean;
+  readCollection(ctx: CoreCallContext, input: { workspace: WorkspaceScope; goalRef: GoalRef;
+    attempt?: DecisionSourceAttempt }): Promise<ReadResult<readonly T[]>>;
+  /** The item's canonical `decisionSourceKey(identity)`. */
+  keyOf(item: T): string;
+  project(item: T, goalRef: GoalRef, goal: GoalSnapshot | null): DecisionCardV1;
+  /** `null` = the item is still open; a reason closes it. */
+  closedReasonOf(item: T): DecisionCardV1['closedReason'];
+  readByKey(ctx: CoreCallContext, input: { workspace: WorkspaceScope; source: DecisionSourceV1 }):
+    Promise<ReadResult<{ item: T } | { closed: DecisionCardV1['closedReason'] } | null>>;
+};
+
+/**
+ * The Goal content basis is optional card content (a missing/damaged Goal has
+ * no basis). The adapter takes the read as its own seam so its spec shape stays
+ * the verifier's: the note registration passes `readGoalForBasis`, the generic
+ * unit needs none.
+ */
+export type CardCollectionGoalReader = (goalRef: GoalRef) => Promise<GoalSnapshot | null>;
+
+/**
+ * §4.2 U7: build a `DecisionCardSourcePort` from a collection spec. `readPage`
+ * answers an empty page without a Goal, assembles the collection and the Goal
+ * ONCE per window attempt, applies `closedReasonOf` to every item, and serves
+ * numeric-offset pages (SOURCE_PAGE_LIMIT fallback). `readByKey` never pages: it
+ * delegates one item read, then projects it with one Goal read.
+ */
+export function createCollectionCardSource<T>(
+  spec: CardCollectionSourceSpec<T>,
+  readGoal: CardCollectionGoalReader = async () => null,
+): DecisionCardSourcePort {
+  const emptyPage = () => ({
+    status: 'ready' as const,
+    value: { availability: 'available' as const, items: [] as DecisionCardV1[], nextCursor: null, sourceCursor: null },
+  });
+  return {
+    kind: spec.kind,
+    needsGoal: spec.needsGoal,
+    async readPage(ctx, input) {
+      if (input.goalRef === undefined) return emptyPage();
+      const goalRef = input.goalRef;
+      // L11: assemble the Goal's whole card set once per window attempt.
+      const cache = input.page.attempt?.cache;
+      const cacheKey = canonicalJson({ kind: spec.kind, projectId: input.workspace.projectId,
+        workspaceId: input.workspace.workspaceId, goalId: goalRef.goalId } as unknown as JsonValue);
+      let assembled = cache?.get(cacheKey) as DecisionCardV1[] | undefined;
+      if (assembled === undefined) {
+        const listed = await spec.readCollection(ctx, { workspace: input.workspace, goalRef,
+          ...(input.page.attempt === undefined ? {} : { attempt: input.page.attempt }) });
+        if (listed.status !== 'ready') return listed;
+        const goal = await readGoal(goalRef);
+        assembled = listed.value.map((item) => {
+          const closedReason = spec.closedReasonOf(item);
+          if (closedReason === null) return spec.project(item, goalRef, goal);
+          const card = spec.project(item, goalRef, goal);
+          return closedCollectionCard({ ...card.source, key: spec.keyOf(item) }, closedReason);
+        });
+        cache?.set(cacheKey, assembled);
+      }
+      const offset = input.page.cursor === undefined ? 0 : Number(input.page.cursor);
+      const start = Number.isSafeInteger(offset) && offset >= 0 ? offset : 0;
+      const limit = Number.isSafeInteger(input.page.limit) && input.page.limit > 0 ? input.page.limit : SOURCE_PAGE_LIMIT;
+      const end = Math.min(assembled.length, start + limit);
+      return { status: 'ready', value: { availability: 'available', items: assembled.slice(start, end),
+        nextCursor: end < assembled.length ? String(end) : null, sourceCursor: null } };
+    },
+    async readByKey(ctx, input) {
+      const read = await spec.readByKey(ctx, { workspace: input.workspace, source: input.source });
+      if (read.status !== 'ready') return read;
+      if (read.value === null) return { status: 'ready', value: null };
+      if ('closed' in read.value) {
+        return { status: 'ready', value: closedCollectionCard(input.source, read.value.closed) };
+      }
+      const goal = await readGoal(input.source.goalRef);
+      return { status: 'ready', value: spec.project(read.value.item, input.source.goalRef, goal) };
+    },
+  };
+}
+
+/**
+ * §4.2 source 4 adapter: the note-review cards, registered on the generic
+ * collection adapter (U7). The injected notes owner returns the
+ * already-authorized `NoteDecisionCardFactsV1` set; `project` is the note card
+ * and `readNoteDecision` is the direct by-key read, so a card beyond the first
+ * source page is never lost and `readDecisionCard` never pages.
+ */
+export type NoteReviewCardSourceDependencies = {
+  records: DecisionReadRecordsPort;
+  noteDecisions: NoteDecisionSourcePort;
+};
+
+export function createNoteReviewCardSource(deps: NoteReviewCardSourceDependencies): DecisionCardSourcePort {
+  return createCollectionCardSource<NoteDecisionCardFactsV1>({
+    kind: 'note_review',
+    needsGoal: true,
+    readCollection: (ctx, { goalRef, attempt }) => deps.noteDecisions.readNoteDecisions(ctx, { goalRef,
+      ...(attempt === undefined ? {} : { attempt }) }),
+    keyOf: (card) => card.cardId,
+    project: noteReviewCard,
+    closedReasonOf: () => null,
+    async readByKey(ctx, { source }) {
+      const identity = parseIdentity(source.key);
+      if (identity === null || identity.kind !== 'note_review') {
+        return { status: 'rejected', code: 'invalid', reason: 'a note_review source key is not a NoteHead pin' };
+      }
+      const ref = identity.note.ref as { noteId?: string };
+      if (typeof ref.noteId !== 'string') {
+        return { status: 'rejected', code: 'invalid', reason: 'a note_review source key carries no NoteHead ref' };
+      }
+      const read = await deps.noteDecisions.readNoteDecision(ctx, { pin: { noteId: ref.noteId, version: identity.note.revision } });
+      if (read.status !== 'ready') return read;
+      if (read.value.card === null) {
+        return read.value.closedReason === null ? { status: 'ready', value: null }
+          : { status: 'ready', value: { closed: read.value.closedReason } };
+      }
+      // M1: the card's note must belong to the Goal the request names; a note of
+      // another Goal in the same Workspace is never that Goal's card.
+      if (read.value.card.goalId !== source.goalRef.goalId) return { status: 'ready', value: null };
+      return { status: 'ready', value: { item: read.value.card } };
+    },
+  }, (goalRef) => readGoalForBasis(deps.records, goalRef));
+}
+
+function noteReviewCard(card: NoteDecisionCardFactsV1, goalRef: GoalRef, goal: GoalSnapshot | null): DecisionCardV1 {
+  return {
+    cardKey: card.cardId,
+    source: { kind: 'note_review', key: card.cardId, goalRef: { ...goalRef },
+      pins: card.pins.map((pin) => structuredClone(pin)),
+      goalBases: goal === null ? [] : [goalDecisionBasis(goal)] },
+    state: 'waiting_answer', goalRef: { ...goalRef }, senderSessionRef: null, requestRef: null,
+    objects: card.objects, options: card.options, answerMessageRef: null, answer: null, application: null,
+    candidateStatus: null, staleReason: null, closedReason: null, readOnly: false, actions: ['answer'],
+  };
+}
+
+/** The one closed-card shape of a collection source (no live options/actions). */
+function closedCollectionCard(source: DecisionSourceV1, closedReason: DecisionCardV1['closedReason']): DecisionCardV1 {
+  return {
+    cardKey: source.key,
+    source: { ...source, pins: source.pins.map((pin) => structuredClone(pin)) },
+    state: 'closed', goalRef: { ...source.goalRef }, senderSessionRef: null, requestRef: null,
+    objects: [], options: [], answerMessageRef: null, answer: null, application: null,
+    candidateStatus: null, staleReason: null, closedReason, readOnly: true, actions: [],
+  };
+}
+
+/** The Goal basis is optional content; a missing/damaged Goal simply has no basis. */
+async function readGoalForBasis(records: DecisionReadRecordsPort, goalRef: GoalRef): Promise<GoalSnapshot | null> {
+  try {
+    const record = await readOne(records, canonicalJson(goalRef as unknown as JsonValue));
+    if (record === null) return null;
+    const decoded = decodeGoalSnapshot(record);
+    return decoded.status === 'decoded' ? decoded.value : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -392,7 +564,7 @@ async function readDecisionQueueWindow(
   if (wantsCards) {
     for (const source of deps.cardSources) {
       if (source.kind === 'message' || source.kind === 'candidate' || source.kind === 'goal_conflict') continue;
-      const targets: (GoalRef | undefined)[] = sourceNeedsGoal(source.kind)
+      const targets: (GoalRef | undefined)[] = source.needsGoal
         ? (scopedGoals.length > 0 ? scopedGoals.map((goal) => goal.ref) : (input.goalRef === undefined ? [] : [input.goalRef]))
         : [input.goalRef];
       for (const goalRef of targets) {
@@ -492,6 +664,9 @@ async function readDecisionQueueWindow(
       return storeFailureToRejection(error as { code: string; reason: string });
     }
   }
+  // U9: the ONE grouping. Only `note_review` scribe results fold (per Goal);
+  // every other category and own-line note passes through unchanged.
+  const groupedAll = groupNotices(allNotices, 'user_affected_per_goal');
 
   // ---- one stable global page ----------------------------------------------
   // §4.1: the requested sections are selected BEFORE paging; a page of 50
@@ -512,7 +687,7 @@ async function readDecisionQueueWindow(
     : cursor === null || cursor.card === undefined ? orderedCards
       : orderedCards.filter((card) => compareCardSeek(cardSeek(card), cursor.card!) > 0);
   const noticeAfter = cursor?.notices ?? {};
-  const remainingNotices = allNotices.filter((item) => {
+  const remainingNotices = groupedAll.filter((item) => {
     const after = noticeAfter[item.category];
     return after === undefined || compareNoticePositions(item.position, after) > 0;
   });
@@ -520,7 +695,14 @@ async function readDecisionQueueWindow(
   const pageItems = combined.slice(0, limit);
   const displayedCards = pageItems.filter((item): item is DecisionCardV1 => 'cardKey' in item);
   const displayedNotices = pageItems.filter((item): item is NoticeItemV1 => 'itemKey' in item);
-  const seenThrough = seenThroughOf(displayedNotices);
+  // Lead ruling 8: advance `seenThrough` only over the lines this query already
+  // delivered. A folded line shows all its members, and the previous pages of
+  // this same query (at or below the cursor's position) count as delivered.
+  const previousLines = groupedAll.filter((item) => {
+    const after = noticeAfter[item.category];
+    return after !== undefined && compareNoticePositions(item.position, after) <= 0;
+  });
+  const seenThrough = seenThroughOfNotices(groupedAll, [...displayedNotices, ...previousLines]);
   const nextCursor = nextQueueCursor(combined.slice(limit), displayedCards, displayedNotices, cursor);
 
   let displayToken: string | null = null;
@@ -790,6 +972,15 @@ async function deriveOpenCard(
       reason: `decision source ${source.kind} is not connected on this Host` } as CoreRejection;
   }
   const workspace = { projectId: goal.workspaceRef.projectId, workspaceId: goal.workspaceRef.workspaceId };
+  // §4.2: a source with a real by-key read is resolved directly — no paging, so
+  // a card beyond the first page is never missed. `not_found` is an absent card;
+  // any other non-`ready` answer is a read failure, never "no such card".
+  if (provider.readByKey !== undefined) {
+    const result = await provider.readByKey(ctx, { workspace, source });
+    if (result.status === 'not_found') return null;
+    if (result.status !== 'ready') throw result;
+    return result.value;
+  }
   // §4.1/§4.2: read the source to its very end (2A L6), following `nextCursor`.
   // A card beyond the first page is NOT an absent card, and an unavailable
   // source is a read failure, never "no such card"; only a source that really
@@ -1215,12 +1406,6 @@ function isUserDecisionResponse(response: SessionMessage['response']): response 
   return response !== null && typeof response === 'object' && 'decision' in response;
 }
 
-function seenThroughOf(notices: readonly NoticeItemV1[]): Partial<Record<NoticeCategoryV1, NoticePositionV1>> {
-  const seen: Partial<Record<NoticeCategoryV1, NoticePositionV1>> = {};
-  for (const notice of notices) seen[notice.category] = notice.position;
-  return seen;
-}
-
 /**
  * §2.6/§4.2: fold a real source read back into the advertised capability. A
  * `not_available` answer is sticky for the whole query; an adapter presence
@@ -1243,10 +1428,6 @@ function cardSourceAvailability(kind: DecisionSourceV1['kind'], injected: Readon
 function noticeSourceAvailability(category: NoticeCategoryV1, injected: ReadonlyMap<string, DecisionNoticeSourcePort>): 'available' | 'not_available' {
   if (category === 'member_notice') return 'available';
   return injected.has(category) ? 'available' : 'not_available';
-}
-
-function sourceNeedsGoal(kind: DecisionSourceV1['kind']): boolean {
-  return kind === 'goal_cause' || kind === 'planning_question' || kind === 'note_review' || kind === 'message_release';
 }
 
 function operatorOf(ctx: CoreCallContext): ActorRef {

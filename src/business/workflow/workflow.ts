@@ -2115,6 +2115,7 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort
     ...(deps.decisionSources === undefined ? {} : { decisionSources: deps.decisionSources }),
     ...(deps.decisionDuties === undefined ? {} : { decisionDuties: deps.decisionDuties }),
     ...(deps.goalExecutedFiles === undefined ? {} : { goalExecutedFiles: deps.goalExecutedFiles }),
+    ...(deps.decisionApplications === undefined ? {} : { decisionApplications: deps.decisionApplications }),
     ...(deps.applicationReceipt === undefined ? {} : { applicationReceipt: deps.applicationReceipt }),
     // §3.3 line 625: a `conflict_wait` settings command pins the earlier Goal's
     // current GoalPhase (absent = revision 0), read from the formal completion

@@ -12,6 +12,8 @@ import type {
 } from '../../../contracts/note.js';
 import { NOTE_GENERAL_KINDS } from '../../../contracts/note.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
+import type { ActorRef } from '../../../contracts/command-event.js';
+import type { DecisionChangeProofV1 } from '../../../contracts/goal-decisions.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { PlatformDutyV1 } from '../../../contracts/platform-duty.js';
 import type { WriteNoteResult } from '../model/note-contracts.js';
@@ -20,6 +22,8 @@ import type {
   DecodeResult, EncodedDomainEvent, EncodedRecord, RecordBackendSchemas,
 } from '../../record-store/ports.js';
 import type { RecordLookupIndex } from '../../record-store/lookup-ports.js';
+import { decisionChangeProofProblem } from './decision-record-codecs.js';
+import { actorRefProblem } from './rework-codecs.js';
 
 export const NOTE_HEAD_SCHEMA_ID = 'NoteHead@1' as const;
 export const NOTE_VERSION_SCHEMA_ID = 'NoteVersion@1' as const;
@@ -41,6 +45,11 @@ export const S4B_NOTE_BY_PATH_LOOKUPS: readonly string[] = [
 ];
 /** Slice 4B L10: the one full-text index, on the `NoteHead` comparison text. */
 export const S4_NOTE_TEXT_LOOKUP = 's4-note-text';
+/**
+ * Slice 4C-2: the ordered `NoteVersion` notice index. One commit-ordered stream
+ * per (project, noticeClass), read from the saved seen position (inclusive).
+ */
+export const S4C2_NOTE_VERSION_NOTICE_LOOKUP = 's4c2-note-version-notice';
 
 /** Event header copied from the Slice 2B run-activity codec. */
 export type NoteEventHeaderV1 = {
@@ -73,6 +82,9 @@ export type NoteWriteSuccessV1 = Extract<WriteNoteResult, { status: 'accepted' |
 export type NoteDispositionChangedEventV1 = NoteEventHeaderV1 & {
   eventType: 'NoteDispositionChanged'; head: PendingNoteHeadSnapshot; version: PendingNoteVersionSnapshot;
   acknowledgementRef: SessionMessageRef | null;
+  /** 4C-2: the disposition's actor and change proof; old events decode as null. */
+  actor: ActorRef | null;
+  proof: DecisionChangeProofV1 | null;
 };
 
 /** P9: `CurrentPointerMoved { pointer }`. */
@@ -99,7 +111,9 @@ const HEAD_KEYS: readonly string[] = [...BODY_KEYS, 'ref', 'noteId', 'version', 
   'stagedRunKey', 'reviewReasons', 'confirmedByUser', 'anchorKey0', 'anchorKey1', 'anchorKey2', 'anchorKey3',
   'anchorKey4', 'createdAt', 'since', 'revision'];
 const VERSION_KEYS: readonly string[] = [...BODY_KEYS, 'ref', 'noteId', 'version', 'state', 'goalId', 'source',
-  'reviewReasons', 'change', 'at', 'since', 'revision'];
+  'reviewReasons', 'change', 'at', 'since', 'revision', 'noticeClass'];
+/** 4C-2: the note classes a `NoteVersion` may carry; absent decodes as null. */
+const NOTICE_CLASSES: readonly string[] = ['user_affected', 'structural', 'scribe_result'];
 
 function isObject(value: unknown): value is UnknownRecord {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -130,6 +144,10 @@ function canonicalOf(value: unknown): string | null {
 }
 function invalid<T>(reason: string): DecodeResult<T> {
   return { status: 'invalid', reason };
+}
+/** 4C-2: an absent `noticeClass` decodes as the explicit null of an old NoteVersion. */
+function withNoticeClass(body: UnknownRecord): UnknownRecord {
+  return body['noticeClass'] === undefined ? { ...body, noticeClass: null } : body;
 }
 function isCursorOrNull(value: unknown): boolean {
   return value === null || (typeof value === 'string' && /^c\d{10}$/.test(value));
@@ -401,6 +419,12 @@ function noteVersionBodyProblem(body: UnknownRecord, sinceMode: 'bound' | 'null'
   if (source !== null) return source;
   const reasons = reviewReasonsProblem(body['reviewReasons'], 'NoteVersion reviewReasons');
   if (reasons !== null) return reasons;
+  // 4C-2: absent on old versions (decoded as null); a present value must be one
+  // of the three classes, `null` is also accepted as the explicit absence.
+  const noticeClass = body['noticeClass'];
+  if (noticeClass !== undefined && noticeClass !== null && !NOTICE_CLASSES.includes(noticeClass as string)) {
+    return 'NoteVersion noticeClass is not recognized';
+  }
   const change = body['change'];
   if (!isObject(change) || !hasOnlyKeys(change, ['kind', 'by', 'reason', 'decisionMessageRef'])
     || !CHANGE_KINDS.includes(change['kind'] as NoteVersionSnapshot['change']['kind'])) return 'NoteVersion change is invalid';
@@ -480,7 +504,7 @@ export function decodeNoteVersionSnapshot(record: EncodedRecord): DecodeResult<N
   if (body['revision'] !== record.revision) return invalid('NoteVersion record revision disagrees with its revision');
   const problem = noteVersionBodyProblem(body, 'bound', true);
   if (problem !== null) return invalid(`NoteVersion record payload is invalid: ${problem}`);
-  return { status: 'decoded', value: body as unknown as NoteVersionSnapshot };
+  return { status: 'decoded', value: withNoticeClass(body) as unknown as NoteVersionSnapshot };
 }
 
 export function encodeCurrentPointerSnapshot(snapshot: CurrentPointerSnapshot): EncodedRecord {
@@ -593,6 +617,7 @@ export function noteWrittenEventFromEvent(event: EncodedDomainEvent): DecodeResu
   if (headProblem !== null) return invalid(`NoteWritten head is invalid: ${headProblem}`);
   const versionProblem = noteVersionBodyProblem(version, 'null', false);
   if (versionProblem !== null) return invalid(`NoteWritten version is invalid: ${versionProblem}`);
+  body['version'] = withNoticeClass(version);
   if ((head['ref'] as UnknownRecord)['projectId'] !== body['projectId']) {
     return invalid('NoteWritten head scope disagrees with the event');
   }
@@ -611,7 +636,8 @@ DecodeResult<NoteDispositionChangedEventV1> {
   const body = parseObject(event.json);
   if (body === null) return invalid('NoteDispositionChanged event json is not an object');
   const envelope = eventEnvelopeProblem(event, body, NOTE_DISPOSITION_CHANGED_EVENT_TYPE, ['eventId', 'eventType',
-    'schemaVersion', 'occurredAt', 'projectId', 'workspaceId', 'head', 'version', 'acknowledgementRef']);
+    'schemaVersion', 'occurredAt', 'projectId', 'workspaceId', 'head', 'version', 'acknowledgementRef',
+    'actor', 'proof']);
   if (envelope !== null) return invalid(envelope);
   const head = body['head'];
   const version = body['version'];
@@ -620,10 +646,28 @@ DecodeResult<NoteDispositionChangedEventV1> {
   if (headProblem !== null) return invalid(`NoteDispositionChanged head is invalid: ${headProblem}`);
   const versionProblem = noteVersionBodyProblem(version, 'null', false);
   if (versionProblem !== null) return invalid(`NoteDispositionChanged version is invalid: ${versionProblem}`);
+  body['version'] = withNoticeClass(version);
   if (body['acknowledgementRef'] !== null) {
     const acknowledgement = sessionMessageRefProblem(body['acknowledgementRef']);
     if (acknowledgement !== null) return invalid(`NoteDispositionChanged ${acknowledgement}`);
   }
+  const actor = body['actor'];
+  if (actor !== undefined && actor !== null) {
+    const actorIssue = actorRefProblem(actor, 'actor');
+    if (actorIssue !== null) return invalid(`NoteDispositionChanged ${actorIssue}`);
+  }
+  const proof = body['proof'];
+  if (proof !== undefined && proof !== null) {
+    const proofIssue = decisionChangeProofProblem(proof);
+    if (proofIssue !== null) return invalid(`NoteDispositionChanged ${proofIssue}`);
+    // The book: acknowledgementRef equals proof.acknowledgementRef when the proof is present.
+    if (!isObject(proof)
+      || canonicalOf(body['acknowledgementRef']) !== canonicalOf(proof['acknowledgementRef'])) {
+      return invalid('NoteDispositionChanged acknowledgementRef disagrees with proof.acknowledgementRef');
+    }
+  }
+  body['actor'] = actor ?? null;
+  body['proof'] = proof ?? null;
   return { status: 'decoded', value: body as unknown as NoteDispositionChangedEventV1 };
 }
 
@@ -671,6 +715,9 @@ const NOTE_LOOKUP_INDEXES: readonly RecordLookupIndex[] = [
   // Slice 4B L10: the one full-text registration (`topic`/`conclusion`/`body`).
   { name: S4_NOTE_TEXT_LOOKUP, aggregateType: 'NoteHead', paths: ['ref.projectId'],
     text: { paths: NOTE_TEXT_PATHS } },
+  // Slice 4C-2: one ordered notice stream per (project, noticeClass), by `since`.
+  { name: S4C2_NOTE_VERSION_NOTICE_LOOKUP, aggregateType: 'NoteVersion',
+    paths: ['ref.projectId', 'noticeClass'], orderBy: { path: 'since' } },
 ];
 
 export const NOTE_RECORD_SCHEMAS: RecordBackendSchemas = {

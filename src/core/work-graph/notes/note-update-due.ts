@@ -21,6 +21,7 @@
  * the scribe to-dos and the view. `createNoteUpdateDue`/`NoteUpdateDuePort` are
  * gone — they had no production caller.
  */
+import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { ReadResult } from '../../../contracts/core/results.js';
 import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
@@ -104,6 +105,8 @@ export type GoalUnderstandingAnchorsV1 = {
   goalId: string;
   goal: GoalSnapshot;
   plan: PlanRevisionSnapshot | null;
+  /** The plan window's ledger watermark, carried so callers can seed the SAME window. */
+  readThrough: CommitCursor | null;
   triggers: NoteUpdateDueTriggerV1[];
   claimedArchiveKeys: ReadonlySet<string>;
   anchors: {
@@ -147,6 +150,7 @@ export async function readGoalUnderstandingAnchors(
     goalId: string;
     goal: GoalSnapshot;
     plan: PlanRevisionSnapshot | null;
+    readThrough: CommitCursor | null;
     anchorKeys: string[];
     stageIds: Map<string, string>;
   };
@@ -165,7 +169,7 @@ export async function readGoalUnderstandingAnchors(
         stageIds.set(key, stage.stageId);
       }
     }
-    windows.push({ goalId, goal: window.goal, plan, anchorKeys, stageIds });
+    windows.push({ goalId, goal: window.goal, plan, readThrough: window.readThrough, anchorKeys, stageIds });
   }
 
   // ONE batched pointer read and ONE batched pointed-head read for every goal's
@@ -198,7 +202,8 @@ export async function readGoalUnderstandingAnchors(
     });
     const folded = foldUpdateDue({ triggers, plan: window.plan, anchors: foldAnchors });
     const byAnchor = new Map(folded.map(row => [row.anchorKey, row]));
-    goals.push({ goalId: window.goalId, goal: window.goal, plan: window.plan, triggers, claimedArchiveKeys,
+    goals.push({ goalId: window.goalId, goal: window.goal, plan: window.plan, readThrough: window.readThrough,
+      triggers, claimedArchiveKeys,
       anchors: window.anchorKeys.map(anchorKey => {
         const pointer = pointers.get(anchorKey) ?? { noteId: null, revision: null };
         const head = pointer.noteId === null ? null : (heads.get(pointer.noteId) ?? null);

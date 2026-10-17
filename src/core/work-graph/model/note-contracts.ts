@@ -4,6 +4,7 @@
 import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { RoleConfigurationRef } from '../../../contracts/core/identity.js';
+import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { ReadResult } from '../../../contracts/core/results.js';
 import type { NoteIndexRowV1, NotesUnderstandingRowV1, UnderstandingStatusV1 } from '../../../contracts/graph-context.js';
 import type { PlanRevisionRef, PlanRevisionSnapshot } from '../../../contracts/plan.js';
@@ -95,6 +96,26 @@ export interface NoteWritePort {
     reason: string | null }): Promise<NoteDispositionResult>;
 }
 
+/**
+ * 4C-2 §2 item 4: the note card's application entry, exposed on the note
+ * service so the composition root can pass it to `createNoteDecisionSource`.
+ * It is shape-identical to `NoteDecisionSourcePort.applyNoteDecision`; the
+ * local declaration avoids a `model/note-contracts` ← `model/decision-contracts`
+ * type cycle.
+ */
+export type NoteDecisionApplicationInputV1 = {
+  commandId: string; cardId: string;
+  optionId: 'accept' | 'reject' | 'supersede' | 'coexist';
+  pin: { noteId: string; version: number };
+  expectedPointerRevision: number | null;
+  answerMessageRef: SessionMessageRef;
+  conditions: string | null;
+};
+
+export interface NoteDecisionApplyPort {
+  applyNoteDecision(ctx: CoreCallContext, input: NoteDecisionApplicationInputV1): Promise<NoteDispositionResult>;
+}
+
 // --------------------------------------------------------------------------
 // Read side (4A minimal face; P1, P8, P9)
 // --------------------------------------------------------------------------
@@ -154,14 +175,6 @@ export interface NoteHeadCheckPort extends NoteCheckPort {
       pointer: { noteId: string | null; revision: number | null };
       head: NoteHeadSnapshot | null;
     }>;
-    /**
-     * Rework item 1: the trigger reads (`currentTriggers`) the caller already
-     * performed while reading the shared anchors, keyed
-     * `${projectId}\u0000${goalId}` exactly as the check's per-call
-     * `caches.triggers`. A seeded goal skips its own `readGoalTriggerRecords`.
-     */
-    understandingTriggers?: ReadonlyMap<string, { triggers: NoteUpdateDueTriggerV1[];
-      claimedArchiveKeys: ReadonlySet<string> }>;
   }): Promise<ReadResult<{ items: NoteCheckV1[]; understanding: UnderstandingStatusV1[] }>>;
 }
 

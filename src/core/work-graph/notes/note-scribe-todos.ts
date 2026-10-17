@@ -17,24 +17,28 @@
  *   anchor's baseline (`baseline === null` means negative infinity), so an
  *   archive already covered by a goal understanding is not immediate
  *   (rework missed 2 / ruling 8);
- * - rework items 4 and 1: the pending buckets AND the pending notes' relation
- *   targets are read FIRST, so every anchor they need joins the ONE shared
- *   reader; the shared reader performs exactly one pointer batch and one
- *   pointed-head batch, the relation targets' head read is the only other batch,
- *   and the check reuses those read results plus the reader's triggers.
+ * - rework items 4 and 1: the pending buckets are read FIRST, so the pending
+ *   notes' own anchors join the ONE shared reader; the reader performs exactly
+ *   one pointer batch and one pointed-head batch. Only the pending buckets that
+ *   count (a cancelled Goal or a Goal with no active Plan is dropped, the
+ *   goal-less bucket always counts) contribute relation-target ids, and those
+ *   targets are read in ONE head batch. Their live user-reason facts come from
+ *   the note service's `userReasonFacts` — the SAME function the note card
+ *   source and the disposition guard use (§11.6/L23) — seeded with the reader's
+ *   plan windows. Read-era "is it retired for a non-file reason" is never
+ *   re-derived here.
  * Any read failure (including `unsupported`) is `unavailable`, never a silently
  * shorter list.
  */
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { ReadResult } from '../../../contracts/core/results.js';
 import type { NoteHeadSnapshot } from '../../../contracts/note.js';
-import type { PlanRevisionSnapshot } from '../../../contracts/plan.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
-import type {
-  NoteHeadCheckPort, NoteScribeTodoPort, NoteScribeTodoV1, NoteScribeTodosV1, NoteUpdateDueTriggerV1,
-} from '../model/note-contracts.js';
-import { pendingUnderstandingOverridden, userReasonsOf, type NoteUserReasonTargetV1 } from '../state/note-machine.js';
+import type { NoteScribeTodoPort, NoteScribeTodoV1, NoteScribeTodosV1 } from '../model/note-contracts.js';
+import type { NotePlanWindowFactsV1, NoteUserReasonFactsPort } from './note-service.js';
+import { actualDispositionTargets, pendingUnderstandingOverridden, userReasonsOf,
+  type NoteUserReasonTargetV1 } from '../state/note-machine.js';
 import { S4_NOTE_BY_REVIEW_STATUS_LOOKUP } from '../persistence/note-record-codecs.js';
 import { foldInputOf, readGoalUnderstandingAnchors,
   type GoalUnderstandingAnchorsReadV1 } from './note-update-due.js';
@@ -43,7 +47,7 @@ import { readAllHeads } from './note-read-model.js';
 
 export type NoteScribeTodosDeps = {
   records: GoalRecordTransactionPort & RecordLookupPort;
-  check: NoteHeadCheckPort;
+  userReasonFacts: NoteUserReasonFactsPort['userReasonFacts'];
 };
 
 function unavailable<T>(reason: string): ReadResult<T> {
@@ -58,8 +62,9 @@ type PendingBucket = string | null;
 type PendingEntry = { bucket: PendingBucket; head: NoteHeadSnapshot };
 
 /**
- * Rework item 1: the relation-target rule of §11.5/§11.6, shared so the same
- * ids are read BEFORE the shared anchor reader and reused by the check.
+ * Rework item 1: the relation-target rule of §11.5/§11.6. Only pending notes in
+ * the buckets that COUNT contribute targets, so a cancelled Goal's notes (and
+ * their relations) are neither read nor able to fail the call.
  */
 function relationTargetIds(entries: readonly PendingEntry[]): Set<string> {
   const targetIds = new Set<string>();
@@ -91,60 +96,27 @@ export function createNoteScribeTodos(deps: NoteScribeTodosDeps): NoteScribeTodo
 
   /**
    * §11.5/§11.6: the `pending_review` scribe to-dos of every bucket in ONE pass.
-   * The pre-read pending heads, the relation-target heads (read in
-   * `readScribeTodos` before the shared reader), the shared reader's
-   * pointer/head snapshots and the check are each used once for all buckets
+   * The pre-read pending heads, the shared reader's pointer/head snapshots and
+   * the service's batched user-reason facts are each used once for all buckets
    * together (§11.7 heartbeat row).
    */
-  async function pendingTodosBatch(ctx: CoreCallContext, buckets: readonly PendingBucket[],
+  async function pendingTodosBatch(buckets: readonly PendingBucket[],
     allHeads: readonly PendingEntry[], anchors: GoalUnderstandingAnchorsReadV1,
-    targetHeads: ReadonlyMap<string, NoteHeadSnapshot>):
+    targets: ReadonlyMap<string, NoteUserReasonTargetV1>):
   Promise<Outcome<Map<PendingBucket, NoteScribeTodoV1[]>>> {
     const result = new Map<PendingBucket, NoteScribeTodoV1[]>();
     for (const bucket of buckets) result.set(bucket, []);
     const relevant = allHeads.filter(entry => result.has(entry.bucket));
     if (relevant.length === 0) return { ok: true, value: result };
 
-    // Rework item 1: the ONE relation-target head read already happened before the
-    // shared reader; here only the ONE check gives their live status.
-    const targets = new Map<string, NoteUserReasonTargetV1>();
-    if (targetHeads.size > 0) {
-      const items = [...targetHeads.values()].map(head => ({ head, version: head.version }));
-      const planWindows = new Map<string, PlanRevisionSnapshot | null>();
-      for (const row of anchors) planWindows.set(`${ctx.projectId}\u0000${row.goalId}`, row.plan);
-      const understandingPointers = new Map<string, { pointer: { noteId: string | null; revision: number | null };
-        head: NoteHeadSnapshot | null }>();
-      for (const [anchorKey, pointer] of anchors.pointers) {
-        understandingPointers.set(`${ctx.projectId}\u0000${anchorKey}`,
-          { pointer, head: pointer.noteId === null ? null : anchors.heads.get(pointer.noteId) ?? null });
-      }
-      const understandingTriggers = new Map<string, { triggers: NoteUpdateDueTriggerV1[];
-        claimedArchiveKeys: ReadonlySet<string> }>();
-      for (const row of anchors) understandingTriggers.set(`${ctx.projectId}\u0000${row.goalId}`,
-        { triggers: row.triggers, claimedArchiveKeys: row.claimedArchiveKeys });
-      // Rework items 4 and 1: the check shares the plans, pointers/heads and
-      // triggers the shared reader already read, so it reads none of them again.
-      const checked = await deps.check.checkHeads(ctx,
-        { items, planWindows, understandingPointers, understandingTriggers });
-      if (checked.status !== 'ready') {
-        const reason = checked.status === 'not_found' ? 'the note check target was not found'
-          : checked.status === 'not_ready' ? 'the note check was not ready' : checked.reason;
-        return { ok: false, reason };
-      }
-      const byId = new Map(checked.value.items.map(item => [item.noteId, item]));
-      for (const [noteId, head] of targetHeads) {
-        const item = byId.get(noteId);
-        const retiredNonFile = item !== undefined && item.anchorStatus === 'retired'
-          && item.anchorRetiredReasons.some(reason => reason !== 'file_deleted');
-        targets.set(noteId, { noteId, version: head.version, state: head.state,
-          userConfirmed: head.confirmedByUser, userWritten: head.source.kind === 'user',
-          primaryAnchorRetiredNonFile: retiredNonFile });
-      }
-    }
-
-    const targetList = [...targets.values()];
     for (const { bucket, head } of relevant) {
-      let counts = userReasonsOf(head, targetList).length === 0;
+      // 4C-2 rework item 6 (verify §6 aside): pass ONLY this head's own targets;
+      // handing it the whole bucket's target map rebuilds it per head (O(H×T)).
+      let counts = userReasonsOf(head, actualDispositionTargets(head)
+        .flatMap(noteId => {
+          const target = targets.get(noteId);
+          return target === undefined ? [] : [target];
+        })).length === 0;
       if (!counts) {
         const pointer = anchors.pointers.get(head.anchorKey0) ?? { noteId: null, revision: null };
         // This caller requires the pointed current head: a pointer that names a
@@ -164,33 +136,20 @@ export function createNoteScribeTodos(deps: NoteScribeTodosDeps): NoteScribeTodo
 
   return {
     async readScribeTodos(ctx, input): Promise<ReadResult<NoteScribeTodosV1[]>> {
-      // Rework item 4: read every pending bucket first, so the anchors the
-      // pending notes need join the ONE shared reader below.
+      // Rework item 4: read every pending bucket first, so the pending notes'
+      // OWN anchors join the ONE shared reader below.
       const allBuckets: PendingBucket[] = [...new Set(input.goalIds)];
       allBuckets.push(null); // EXACTLY ONE goal-less bucket.
       const pendingHeads = await readPendingHeads(ctx, allBuckets);
       if (!pendingHeads.ok) return unavailable(pendingHeads.reason);
       const pendingAnchorKeys = [...new Set(pendingHeads.value.map(entry => entry.head.anchorKey0))];
 
-      // Rework item 1: the relation targets' heads are read FIRST, so any
-      // understanding among them can add its anchor to the ONE shared reader
-      // below instead of the check reading that old-stage pointer/head again.
-      const targetIds = relationTargetIds(pendingHeads.value);
-      const targetHeadsRead = await readHeadBatch(deps.records, ctx.projectId, [...targetIds], { requireAll: true });
-      if (!targetHeadsRead.ok) return unavailable(targetHeadsRead.reason);
-      const targetAnchorKeys: string[] = [];
-      for (const head of targetHeadsRead.value.values()) {
-        if (head.kind !== 'understanding') continue;
-        if (!head.anchorKey0.startsWith('goal:') && !head.anchorKey0.startsWith('stage:')) continue;
-        targetAnchorKeys.push(head.anchorKey0);
-      }
-      const extraAnchorKeys = [...new Set([...pendingAnchorKeys, ...targetAnchorKeys])];
-
       // ONE shared reader for the whole call: one plan window per goal, ONE
       // batched pointer read and ONE batched head read across all goals plus the
-      // pending and relation-target anchors, and one trigger read per goal with a
-      // plan (§11.7).
-      const anchorsResult = await readGoalUnderstandingAnchors(deps.records, ctx, input.goalIds, extraAnchorKeys);
+      // pending notes' own anchors, and one trigger read per goal with a plan
+      // (§11.7). Relation targets do NOT join it: they are read only for the
+      // buckets that count, in the one batch below.
+      const anchorsResult = await readGoalUnderstandingAnchors(deps.records, ctx, input.goalIds, pendingAnchorKeys);
       if (anchorsResult.status !== 'ready') {
         return unavailable(anchorsResult.status === 'rejected' ? anchorsResult.reason
           : 'the goal understanding anchors are not available');
@@ -204,8 +163,30 @@ export function createNoteScribeTodos(deps: NoteScribeTodosDeps): NoteScribeTodo
         if (row.goal.desiredState !== 'cancelled' && row.plan !== null) pendingBuckets.push(goalId);
       }
       pendingBuckets.push(null); // EXACTLY ONE goal-less bucket.
-      const pending = await pendingTodosBatch(ctx, pendingBuckets, pendingHeads.value, anchorsResult.value,
-        targetHeadsRead.value);
+
+      // Rework item 1: only the pending entries in a bucket that counts can
+      // contribute relation targets; they are read in ONE batch, and their LIVE
+      // user-reason facts come from the service's `userReasonFacts` (the same
+      // function the card source and the guard use), seeded with the shared
+      // reader's plan windows. A target understanding therefore needs no anchor
+      // in the shared reader.
+      const relevantHeads = pendingHeads.value.filter(entry => pendingBuckets.includes(entry.bucket));
+      const targetIds = relationTargetIds(relevantHeads);
+      const targetHeadsRead = await readHeadBatch(deps.records, ctx.projectId, [...targetIds], { requireAll: true });
+      if (!targetHeadsRead.ok) return unavailable(targetHeadsRead.reason);
+      const targets = new Map<string, NoteUserReasonTargetV1>();
+      if (targetHeadsRead.value.size > 0) {
+        const planWindows: NotePlanWindowFactsV1[] = anchorsResult.value.map(row => ({ goalId: row.goalId,
+          window: { status: 'ready', goal: row.goal, plan: row.plan, readThrough: row.readThrough } }));
+        const facts = await deps.userReasonFacts(ctx, [...targetHeadsRead.value.values()], planWindows);
+        if (facts.status !== 'ready') {
+          return unavailable(facts.status === 'rejected' ? facts.reason
+            : 'the user reason facts are not available');
+        }
+        for (const [noteId, target] of facts.value) targets.set(noteId, target);
+      }
+
+      const pending = await pendingTodosBatch(pendingBuckets, pendingHeads.value, anchorsResult.value, targets);
       if (!pending.ok) return unavailable(pending.reason);
 
       const results: NoteScribeTodosV1[] = [];

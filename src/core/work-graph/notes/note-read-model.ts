@@ -1324,8 +1324,13 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
   /**
    * Rework item 8/§11.7: the project pointer and pointed head
    * `readMemoryMaterial` already read in its one batched pair of reads. Passing
-   * them here keeps `selectProjectHeader` from reading the pointer again (the
-   * project anchor set is still read, because the norms need it).
+   * them here keeps `selectProjectHeader` from reading the pointer again.
+   *
+   * Rework 4 item 3/§11.7: the project anchor set is read once per call and
+   * shared with the check. If a caller already read it (the related read of a
+   * segmented find, the unscoped anchor find, or this material's own call), it
+   * is taken from `anchorSets`; otherwise the unfiltered 5-slot set (never
+   * `main`) is stored there for the check's `conflictingOf` to reuse.
    */
   type ProjectHeaderPreRead = {
     pointer: { noteId: string | null; revision: number | null };
@@ -1334,10 +1339,18 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
 
   /** §11.4: the project understanding (pointer's head) and the eligible norms. */
   async function selectProjectHeader(ctx: CoreCallContext, projectId: string,
+    anchorSets: Map<string, NoteHeadSnapshot[]>,
     preRead?: ProjectHeaderPreRead): Promise<ReadOutcome<HeaderSelection>> {
-    const projectHeads = await headsByAnchorKey(deps.records, projectId, 'project');
-    if (!projectHeads.ok) return projectHeads;
-    const main = projectHeads.value.filter(head => head.anchorKey0 === 'project');
+    const setKey = `${projectId}\u0000project`;
+    let projectSet = anchorSets.get(setKey);
+    if (projectSet === undefined) {
+      const read = await headsByAnchorKey(deps.records, projectId, 'project');
+      if (!read.ok) return read;
+      projectSet = read.value;
+      // The S2.3 pattern: store the unfiltered 5-slot set, and only on success.
+      anchorSets.set(setKey, projectSet);
+    }
+    const main = projectSet.filter(head => head.anchorKey0 === 'project');
     const pointer = preRead === undefined
       ? await pointerOf(projectId, { kind: 'project' })
       : { ok: true as const, value: preRead.pointer };
@@ -1396,7 +1409,7 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
     planWindows?: ReadonlyMap<string, PlanRevisionSnapshot | null>): Promise<ReadOutcome<BuiltFindPage>> {
     let selection: HeaderSelection | null = null;
     if (firstPage) {
-      const selected = await selectProjectHeader(ctx, ctx.projectId);
+      const selected = await selectProjectHeader(ctx, ctx.projectId, anchorSets);
       if (!selected.ok) return selected;
       selection = selected.value;
     }
@@ -1918,8 +1931,11 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
    * window this call already read), ONE batched pointer read, ONE batched head
    * read, `readHeadsForKeys` and ONE `checkedPage` call, so project header,
    * local understandings, general rows and reminders come from the same check
-   * caches. A null goal is 6A's branch (`unsupported`, reason `6A`); any read
-   * failure is `unavailable`.
+   * caches. The project anchor set is read once per call and shared with the
+   * check (rework 4 item 3); an includeInputs Query's general keys never hold
+   * `project`, so that one header read is the only project-key scan. A null
+   * goal is 6A's branch (`unsupported`, reason `6A`); any read failure is
+   * `unavailable`.
    */
   async function readMemoryMaterial(ctx: CoreCallContext, input: NoteMemoryMaterialInputV1):
   Promise<ReadResult<NoteMemoryMaterialV1>> {
@@ -1963,7 +1979,11 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
     const goalHead = seedOf(goalAnchorKey).head;
     const stageHead = stageAnchorKey === null ? null : seedOf(stageAnchorKey).head;
 
-    const selected = await selectProjectHeader(ctx, ctx.projectId,
+    // Rework 4 item 3/§11.7: the per-call anchor-set map exists BEFORE the
+    // header selection, so the one project set it reads is stored here and the
+    // check below reuses it instead of scanning the five slots a second time.
+    const anchorSets = new Map<string, NoteHeadSnapshot[]>();
+    const selected = await selectProjectHeader(ctx, ctx.projectId, anchorSets,
       { pointer: projectPreRead.pointer, head: projectPreRead.head });
     if (!selected.ok) return rejected(selected.code, selected.reason);
 
@@ -1972,7 +1992,6 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
     const generalKeys: string[] = [];
     const generalKeySet = new Set<string>();
     let generalHeads: NoteHeadSnapshot[] = [];
-    const anchorSets = new Map<string, NoteHeadSnapshot[]>();
     if (input.includeInputs !== false) {
       if (input.taskId !== undefined && input.taskId !== null) {
         if (plan === null || window.goal.workspaceRef.workspaceId !== ctx.workspaceId) {

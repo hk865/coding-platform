@@ -104,7 +104,11 @@ export async function createS4ANoteFixture(kind: S4ANoteFixtureKind,
     runtime?: RuntimeHostBindings;
     /** Slice 4C-2 D-03: the deterministic note id generator passed to the note
      * service; absent keeps the production `randomUUID`. */
-    noteNewId?: () => string } = {}): Promise<S4ANoteFixture> {
+    noteNewId?: () => string;
+    /** Slice 4C-2 U6: the trusted configured operator, so a test can drive the
+     * real finite decision coordinator's answer step (`answerDecision` refuses
+     * with `unsupported` when no operator is installed). */
+    operatorActor?: { kind: 'human' | 'system'; id: string } } = {}): Promise<S4ANoteFixture> {
   const directory = await mkdtemp(join(tmpdir(), `s4a-note-${kind}-`));
   const root = join(directory, 'workspace');
   await mkdir(join(root, 'src/a/one'), { recursive: true });
@@ -150,6 +154,7 @@ export async function createS4ANoteFixture(kind: S4ANoteFixtureKind,
     ...(Object.keys(noteLimits).length === 0 ? {} : { noteLimits }),
     ...(options.runtime === undefined ? {} : { runtime: options.runtime }),
     ...(options.noteNewId === undefined ? {} : { noteNewId: options.noteNewId }),
+    ...(options.operatorActor === undefined ? {} : { operatorActor: options.operatorActor }),
   });
 
   const hostCtx = (): CoreCallContext => ({ projectId: PROJECT, workspaceId: WORKSPACE,

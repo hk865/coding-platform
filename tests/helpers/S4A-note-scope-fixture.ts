@@ -87,7 +87,11 @@ function bindingFor(role: S4ARole, id: string): RoleBindingRefV1 {
 }
 
 export async function createS4ANoteScopeFixture(kind: S4ANoteScopeFixtureKind,
-  options: { containment?: boolean; skipProjectScribe?: boolean } = {}): Promise<S4ANoteScopeFixture> {
+  options: { containment?: boolean; skipProjectScribe?: boolean;
+    /** Slice 4C-2 acceptance: deterministic note ids, so an `itemKey` is a literal. */
+    noteNewId?: () => string;
+    /** Slice 4C-2 acceptance: the configured operator `markNoticesSeen` trusts. */
+    operatorActor?: { kind: 'human' | 'system'; id: string } } = {}): Promise<S4ANoteScopeFixture> {
   const withContainment = options.containment ?? true;
   // Item 10a: when `skipProjectScribe` is set, S0 is made the region scribe of
   // the unused module M1 instead of the project scribe, so NO Session holds the
@@ -131,6 +135,8 @@ export async function createS4ANoteScopeFixture(kind: S4ANoteScopeFixtureKind,
     now,
     kernelStores: { entries: [{ adapterId: 's4a-kernel', storeKey: 's4a-kernel-store', workspace: scope,
       databasePath: join(directory, 'kernel.sqlite') }] },
+    ...(options.noteNewId === undefined ? {} : { noteNewId: options.noteNewId }),
+    ...(options.operatorActor === undefined ? {} : { operatorActor: options.operatorActor }),
     // No `sessionDutyResolver`: the production resolver reads the Session role.
   });
 

@@ -142,6 +142,44 @@ describe('RW-12a write and disposition read bounds', () => {
     } finally { await f.close(); }
   });
 
+  it.each(KINDS)('RW-12c %s: a scribe disposition of three targets (one stage, two tasks) reads the plan window once', async kind => {
+    const { f, counter } = await buildCounting(kind);
+    try {
+      const author = f.workCtx(await f.claimRun('rw12c2-author'));
+      const stageAnchor = { kind: 'stage', goalId: 's4a-goal', stageId: 's1' } as const;
+      const t1Anchor = { kind: 'task', goalId: 's4a-goal', taskId: 't1' } as const;
+      const t2Anchor = { kind: 'task', goalId: 's4a-goal', taskId: 't2' } as const;
+      const u1 = await f.write(author, general({ topic: 'u1', anchor: stageAnchor }), 's4a-goal');
+      const u2 = await f.write(author, general({ topic: 'u2', anchor: t1Anchor }), 's4a-goal');
+      const u3 = await f.write(author, general({ topic: 'u3', anchor: t2Anchor }), 's4a-goal');
+      expect([u1.status, u2.status, u3.status]).toEqual(['accepted', 'accepted', 'accepted']);
+      // The pending note carries all three anchors (one shared key with every
+      // relation target) and contradicts all three accepted agent notes.
+      const y = await f.write(f.workCtx(await f.claimRun('rw12c2-dy', 't2')), general({ topic: 'y',
+        anchor: stageAnchor, extraAnchors: [t1Anchor, t2Anchor],
+        contradicts: [idOf(u1), idOf(u2), idOf(u3)] }), 's4a-goal');
+      expect(y).toMatchObject({ status: 'pending_review' });
+      const scribe = f.workCtx(await f.claimRun('rw12c2-scribe', 't3', 'scribe'));
+      reset(counter);
+      const result = await f.platform.notes.reviewNote(scribe, { commandId: 'rw12c2-accept', noteId: idOf(y),
+        expectedVersion: 1, expectedPointerRevision: null, verdict: 'accept', resolution: 'supersede', reason: '收下' });
+      expect(result).toMatchObject({ status: 'done' });
+      // §11.7 disposition row, hand-derived for this fixture (one stage target
+      // and two task targets of the one goal s4a-goal):
+      //  readMany 11 = runFacts 3 + subject head 1 + scope facts ONCE 3
+      //              + relationAnchorsOf 1 batched read of the three targets
+      //              + userReasonTargetsOf 1 batched read of the same three
+      //              + the goal plan window ONCE 2 (readGoal + readPlan), shared
+      //                by the stage branch and BOTH task targets
+      //  lookup             4 = the scope-facts session scan (one page + three links)
+      //  lookupOrdered      1 = planStagesByRevisionOf reads the plan-revision index
+      //  RED on the old code: readMany 17; each task target re-read the Goal and
+      //  then readGoalPlanWindow (Goal + PlanRevision), so the one window's 2+2+2
+      //  extra reads replace the shared 2: the old-new difference is exactly 6.
+      expect(counter).toEqual({ searchText: 0, lookup: 4, lookupOrdered: 1, readMany: 11 });
+    } finally { await f.close(); }
+  });
+
   it.each(KINDS)('RW-12b %s: the real record_note write with two relations plus its post-write check', async kind => {
     const { f, counter } = await buildCounting(kind);
     try {

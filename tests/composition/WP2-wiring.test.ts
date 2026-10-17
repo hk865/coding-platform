@@ -462,7 +462,9 @@ it('F06 a waiting decision card becomes a decision reminder row, disappears afte
   const cardRowText = JSON.stringify(`待决定：message；source=${card.source.key}`).slice(1, -1);
   const beforeAnswer = await preparedInput('f06-next-before');
   expect(beforeAnswer).toContain(cardRowText);
-  expect(beforeAnswer).toContain(JSON.stringify('待决来源尚未接入：note_review').slice(1, -1));
+  // 4C-2 wiring: the note_review card source is registered, so its capability is
+  // available and the "尚未接入" hint row is gone; message_release keeps its row.
+  expect(beforeAnswer).not.toContain(JSON.stringify('待决来源尚未接入：note_review').slice(1, -1));
 
   const answered = await f.platform.decisionMessages.answerDecision(f.ctx, {
     input: { source: card.source, selection: { kind: 'option', optionId: 'continue' }, text: '继续', annotations: [] },
@@ -533,8 +535,12 @@ it('F06 [budget] a real continuation is kept whole while reminder rows that do n
   const omissionHeader = '## Context omissions\n';
   const omissionEnd = input.indexOf('\n\n## 接续说明');
   expect(omissionEnd).toBeGreaterThan(input.indexOf(omissionHeader));
+  // HAND COUNT after 4C-2 B: the note_review missing-source hint no longer exists
+  // (its source is registered/available), the message_release missing-source hint
+  // still counts 1, and the goal-understanding update-due reminder still counts 1:
+  // 0 + 1 + 1 = 2 omitted reminder rows.
   expect(input.slice(input.indexOf(omissionHeader) + omissionHeader.length, omissionEnd))
-    .toBe('reminders: 另有 3 条，用‘看’读');
+    .toBe('reminders: 另有 2 条，用‘看’读');
   expect(input).not.toContain('待决来源尚未接入：note_review');
 });
 
@@ -620,7 +626,9 @@ it('F08 real Work preparation carries the installed extensions in the bound scop
   expect(workInput).toContain('## Goal');
   expect(workInput).toContain('## Accepted task');
   // The installed decisions extension really reached the prepared input.
-  expect(workInput).toContain('待决来源尚未接入：note_review');
+  // 4C-2 wiring: the note_review source is now registered, so it is available
+  // and no "尚未接入" hint row is emitted for it.
+  expect(workInput).not.toContain('待决来源尚未接入：note_review');
 
   // Real Query preparation through the public consultation: the Query host's
   // assembled context stays copy/planning and never adds the decision rows.

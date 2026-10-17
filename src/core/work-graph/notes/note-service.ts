@@ -7,16 +7,19 @@
  * `notes/note-read-model.ts`; this file never reads the database to answer a test.
  */
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
+import type { ActorRef } from '../../../contracts/command-event.js';
 import type {
   CurrentPointerRef, CurrentPointerSnapshot, NoteAnchorV1, NoteDraftAnchorV1, NoteDraftV1, NoteHeadSnapshot,
-  NoteReviewReason, NoteSourceV1, NoteState, NoteVersionSnapshot,
+  NoteReviewReason, NoteSourceV1, NoteState, NoteVersionSnapshot, PendingNoteHeadSnapshot,
 } from '../../../contracts/note.js';
 import { NOTE_GENERAL_KINDS } from '../../../contracts/note.js';
+import type { DecisionChangeProofV1 } from '../../../contracts/goal-decisions.js';
 import type { PlanRevisionRef } from '../../../contracts/plan.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
 import type { PlanTaskPort } from '../model/plan-contracts.js';
 import type { ReadResult } from '../../../contracts/core/results.js';
-import type { RoleConfigurationRef, SessionRef } from '../../../contracts/core/identity.js';
+import type { RoleConfigurationRef, SessionRef, VersionPin } from '../../../contracts/core/identity.js';
+import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { RunRef } from '../../../contracts/dispatch.js';
 import type {
   NoteAnchorFactsDeps, NoteAnchorWorkspace, ResolvedNoteAnchors,
@@ -29,10 +32,13 @@ import { readGoalPlanWindow, type GoalPlanWindow } from '../tasks/plan-readers.j
 import { S2B_PLAN_REVISION_BY_GOAL_LOOKUP, decodePlanRevisionSnapshot } from '../persistence/plan-record-codecs.js';
 import { mapStoreFailure, readAllHeads, type ReadFailureCode } from './note-read-model.js';
 import type { ArchitectureCatalogPort } from '../architecture/catalog-contracts.js';
+import type { CurrentCatalogWindow } from '../architecture/catalog-service.js';
+import { catalogModuleFactsOf, readCurrentCatalogWindow } from '../architecture/catalog-service.js';
 import type {
-  NoteDispositionResult, NoteDutyResolver, NoteErrorCode, NoteExistingTopicV1, NoteWritePort, WriteNoteInput,
-  WriteNoteResult,
+  NoteDecisionApplicationInputV1, NoteDecisionApplyPort, NoteDispositionResult, NoteDutyResolver, NoteErrorCode,
+  NoteExistingTopicV1, NoteWritePort, WriteNoteInput, WriteNoteResult,
 } from '../model/note-contracts.js';
+import type { DecisionSourceAttempt } from '../model/decision-contracts.js';
 import {
   NOTE_ANCHOR_QUOTA, NOTE_BASIS_FILES_MAX, NOTE_BASIS_FILE_MAX_BYTES, NOTE_BODY_MAX_BYTES, NOTE_EXISTING_TOPICS_MAX,
   NOTE_EXTRA_ANCHORS_MAX, NOTE_FACTS_MAX, NOTE_GOAL_QUOTA, NOTE_SYMBOL_HITS_MAX, PROJECT_UNDERSTANDING_BODY_MAX_BYTES,
@@ -49,8 +55,9 @@ import {
   factProblem, noteDispositionChangedEventFromEvent, noteHeadRefKey, noteVersionRefKey, noteWrittenEventFromEvent,
 } from '../persistence/note-record-codecs.js';
 import {
-  admitNoteWrite, moveCurrentPointerRecord, newCurrentPointerRecord, newNoteHeadRecord, newNoteVersionRecord,
-  noteWriteAuthority, transitionNote, userReasonsOf, type NoteDispositionEventV1, type NoteUserReasonTargetV1,
+  actualDispositionTargets, admitNoteWrite, moveCurrentPointerRecord, newCurrentPointerRecord, newNoteHeadRecord,
+  newNoteVersionRecord, noticeClassOf, noteWriteAuthority, transitionNote, userReasonsOf,
+  type NoteDispositionEventV1, type NoteUserReasonTargetV1,
 } from '../state/note-machine.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import { reworkActorClassOf } from '../../../contracts/task-requeue.js';
@@ -392,7 +399,23 @@ function writeInputProblem(input: unknown): string | null {
 // The service
 // --------------------------------------------------------------------------
 
-export function createNoteService(deps: NoteServiceDependencies): NoteWritePort {
+/**
+ * 4C-2 rework 2 item 1: one plan window the card source has already read for a
+ * Goal. `userReasonFacts` seeds its per-call cache with it, so a stage target
+ * never reads the same window again.
+ */
+export type NotePlanWindowFactsV1 = { goalId: string; window: GoalPlanWindow };
+
+/** 4C-2 rework item 6: the batched user-reason facts the card source reuses. */
+export type NoteUserReasonFactsPort = {
+  userReasonFacts(ctx: CoreCallContext, heads: readonly NoteHeadSnapshot[],
+    planWindows: readonly NotePlanWindowFactsV1[],
+    attempt?: DecisionSourceAttempt): Promise<ReadResult<Map<string, NoteUserReasonTargetV1>>>;
+};
+
+export type NoteService = NoteWritePort & NoteDecisionApplyPort & NoteUserReasonFactsPort;
+
+export function createNoteService(deps: NoteServiceDependencies): NoteService {
   const anchorQuota = deps.anchorQuota ?? NOTE_ANCHOR_QUOTA;
   const goalQuota = deps.goalQuota ?? NOTE_GOAL_QUOTA;
   const symbolHitsMax = deps.symbolHitsMax ?? NOTE_SYMBOL_HITS_MAX;
@@ -617,12 +640,13 @@ export function createNoteService(deps: NoteServiceDependencies): NoteWritePort 
       if (!transition.ok) continue;
       const bumped = transition.next;
       const version = newNoteVersionRecord(bumped, { kind: 'supersede', by, reason: null,
-        decisionMessageRef: null }, now);
+        decisionMessageRef: null }, now, null);
       records.push(encodeNoteHeadSnapshot(bumped), encodeNoteVersionSnapshot(version));
       guards.set(encodeNoteHeadSnapshot(bumped).refKey, head.version);
       guards.set(encodeNoteVersionSnapshot(version).refKey, null);
       events.push(encodeNoteDispositionChangedEvent({ ...base, eventId: deps.eventId(),
-        eventType: NOTE_DISPOSITION_CHANGED_EVENT_TYPE, head: bumped, version, acknowledgementRef: null }));
+        eventType: NOTE_DISPOSITION_CHANGED_EVENT_TYPE, head: bumped, version, acknowledgementRef: null,
+        actor: null, proof: null }));
     }
     if (subject.kind === 'understanding') {
       if (pointerKey === null || pointer === null) {
@@ -640,6 +664,218 @@ export function createNoteService(deps: NoteServiceDependencies): NoteWritePort 
     return { ok: true, records, guards, events };
   }
 
+  /** The card-mode proof input (the answering user; no proof on the scribe path). */
+  type CardProofInput = { acknowledgementRef: SessionMessageRef; actor: ActorRef | null };
+
+  type FinishDispositionInput = {
+    identityKey: string;
+    fingerprint: string;
+    noteId: string;
+    head: NoteHeadSnapshot;
+    caller: Caller;
+    transition: { ok: true; next: PendingNoteHeadSnapshot };
+    decisionHeads: ReadonlyMap<string, NoteHeadSnapshot>;
+    /**
+     * `accept`: read the pointer only for an accepting disposition (the scribe
+     * path); `always`: every card option reads it, so a reject is guarded too.
+     */
+    readPointer: 'accept' | 'always';
+    expectedPointerRevision: number | null;
+    change: NoteVersionSnapshot['change'];
+    cardProof: CardProofInput | null;
+  };
+
+  /**
+   * 4C-2 rework item 3 (verify §3): the ONE shared tail of `dispose` and
+   * `applyNoteDecision`, split at `transitionNote`. The fronts own their own
+   * replay/caller/authority/facts/transition rules; from here on the pointer
+   * CAS (+ `understanding_outdated` on accept), the supersession, the notice
+   * class, the head and version records, the subject event (with the card
+   * proof when `cardProof` is set), the read-only guards and the commit are
+   * identical. A pointer that was READ but not written (a card reject) gets a
+   * READ-ONLY pointer guard at the read revision.
+   */
+  async function finishDisposition(ctx: CoreCallContext, input: FinishDispositionInput):
+  Promise<NoteDispositionResult> {
+    const { identityKey, fingerprint, noteId, head, caller, transition, decisionHeads, change, cardProof } = input;
+    const acceptance = change.kind === 'accept';
+    const now = deps.now();
+    const records: EncodedRecord[] = [];
+    const guards = new Map<string, number | null>();
+    const events: EncodedDomainEvent[] = [];
+    const base = eventBase(ctx.projectId, ctx.workspaceId ?? '', now);
+
+    // Guard: the understanding pointer pin (and, on accept, the outdated case).
+    const pointerKey = head.kind === 'understanding' ? anchorKeyOf(head.anchor) : null;
+    let pointer: PointerRead | null = null;
+    let pointedHead: NoteHeadSnapshot | null = null;
+    if (pointerKey !== null && (input.readPointer === 'always' || acceptance)) {
+      pointer = await currentPointerRead(deps, ctx.projectId, pointerKey);
+      if (pointer === null) {
+        return { status: 'rejected', code: 'unavailable', reason: 'the current pointer cannot be read', noteId };
+      }
+      if (input.expectedPointerRevision !== pointer.revision) {
+        return { status: 'rejected', code: 'revision_conflict', reason: 'the current-understanding pointer moved', noteId,
+          pointer: pointerPayload(pointer)! };
+      }
+      // C3.5/D-15 (§11.6): a newer current understanding makes this pending one
+      // outdated; it can no longer be accepted (the scribe rejects it or merges
+      // it into a fresh version).
+      if (acceptance && pointer.noteId !== null) {
+        const pointedRead = await readHead(deps, ctx.projectId, pointer.noteId);
+        if (!pointedRead.ok) {
+          return { status: 'rejected', code: pointedRead.rejection.code, reason: pointedRead.rejection.reason, noteId };
+        }
+        pointedHead = pointedRead.head;
+        if (pointedHead !== null && pointedHead.createdAt > head.createdAt) {
+          return { status: 'rejected', code: 'invalid', reason: 'understanding_outdated', noteId };
+        }
+      }
+    }
+
+    // Supersession: only an accepting disposition supersedes (and moves the pointer).
+    const bumped: { noteId: string; head: NoteHeadSnapshot }[] = [];
+    if (acceptance) {
+      const supersession = await supersessionOf(ctx, transition.next, caller.source, decisionHeads,
+        pointerKey, pointer, now);
+      if (!supersession.ok) {
+        return { status: 'rejected', code: supersession.rejection.code, reason: supersession.rejection.reason, noteId };
+      }
+      for (const targetId of supersessionTargetsOf(transition.next, pointer?.noteId ?? null)) {
+        const targetHead = decisionHeads.get(targetId) ?? (targetId === pointer?.noteId ? pointedHead : null);
+        if (targetHead === null || targetHead === undefined) continue;
+        if (targetHead.state !== 'accepted' && targetHead.state !== 'reviewed') continue;
+        bumped.push({ noteId: targetId, head: targetHead });
+      }
+      records.push(...supersession.records);
+      for (const [refKey, revision] of supersession.guards) guards.set(refKey, revision);
+      events.push(...supersession.events);
+    }
+
+    // 4C-2 item 5 (§2): the writer decides the notice class from the ACTUAL
+    // targets this commit superseded/withdrew (never the stored reasons).
+    const supersededForNotice = supersessionTargetsOf(transition.next, pointer?.noteId ?? null);
+    const userAffected = change.kind === 'withdraw'
+      ? (change.by.kind !== 'user' && (head.confirmedByUser || head.source.kind === 'user'))
+      : acceptance
+        ? (change.by.kind !== 'user' && supersededForNotice.some(targetId => {
+            const target = decisionHeads.get(targetId) ?? (targetId === pointer?.noteId ? pointedHead : null);
+            return target !== null && target !== undefined
+              && (target.state === 'accepted' || target.state === 'reviewed')
+              && (target.confirmedByUser || target.source.kind === 'user');
+          }))
+        : false;
+    records.push(encodeNoteHeadSnapshot(transition.next));
+    guards.set(encodeNoteHeadSnapshot(transition.next).refKey, head.version);
+    const version = newNoteVersionRecord(transition.next, change, now,
+      noticeClassOf({ change, state: transition.next.state, kind: transition.next.kind,
+        structural: transition.next.structural, userAffected }));
+    records.push(encodeNoteVersionSnapshot(version));
+    guards.set(encodeNoteVersionSnapshot(version).refKey, null);
+
+    // The subject event: the card application's own event carries the actor and
+    // the standard proof; every other disposition carries neither (M2: the
+    // superseded targets' events stay actor:null/proof:null).
+    const headPin: VersionPin = { ref: { aggregateType: 'NoteHead', projectId: ctx.projectId, noteId },
+      revision: head.version };
+    let proof: DecisionChangeProofV1 | null = null;
+    let acknowledgementRef: SessionMessageRef | null = null;
+    let actor: ActorRef | null = null;
+    if (cardProof !== null) {
+      const capturedPins: VersionPin[] = [headPin];
+      if (pointerKey !== null && pointer !== null && pointer.revision !== null) {
+        capturedPins.push({ ref: { aggregateType: 'CurrentPointer', projectId: ctx.projectId, anchorKey: pointerKey },
+          revision: pointer.revision });
+      }
+      // ONE {before, after} row per changed HEAD, both sides the same NoteHead
+      // aggregate (`@v -> @v+1`); no CurrentPointer row.
+      const changes: DecisionChangeProofV1['changes'] = [
+        { before: headPin,
+          after: { ref: { aggregateType: 'NoteHead', projectId: ctx.projectId, noteId },
+            revision: transition.next.version } },
+        ...bumped.map((target): DecisionChangeProofV1['changes'][number] => ({
+          before: { ref: { aggregateType: 'NoteHead', projectId: ctx.projectId, noteId: target.noteId },
+            revision: target.head.version },
+          after: { ref: { aggregateType: 'NoteHead', projectId: ctx.projectId, noteId: target.noteId },
+            revision: target.head.version + 1 },
+        })),
+      ];
+      proof = { acknowledgementRef: cardProof.acknowledgementRef, capturedPins, changes, basisRebases: [] };
+      acknowledgementRef = cardProof.acknowledgementRef;
+      actor = cardProof.actor;
+    }
+    events.push(encodeNoteDispositionChangedEvent({ ...base, eventId: deps.eventId(),
+      eventType: NOTE_DISPOSITION_CHANGED_EVENT_TYPE, head: transition.next, version, acknowledgementRef, actor, proof }));
+
+    const realGuards: RecordGuard[] = records.map(record => ({ refKey: record.refKey,
+      expectedRevision: guards.get(record.refKey) ?? null }));
+    // RW-2: a READ-ONLY guard at the read version for every decision target the
+    // commit does not otherwise write. Extra guards are normal; they never
+    // duplicate a written record's guard and get no commit-cursor binding.
+    const extraGuardKeys = new Set<string>();
+    for (const targetHead of decisionHeads.values()) {
+      const refKey = noteHeadRefKey(targetHead.ref);
+      if (guards.has(refKey) || extraGuardKeys.has(refKey)) continue;
+      extraGuardKeys.add(refKey);
+      realGuards.push({ refKey, expectedRevision: targetHead.version });
+    }
+    // A pointer that was read but not written (the card REJECT) must still be
+    // guarded: a move between the read and the commit is `revision_conflict`.
+    if (pointerKey !== null && pointer !== null) {
+      const refKey = currentPointerRefKey({ aggregateType: 'CurrentPointer', projectId: ctx.projectId,
+        anchorKey: pointerKey });
+      if (!guards.has(refKey)) realGuards.push({ refKey, expectedRevision: pointer.revision });
+    }
+    const commitCursorBindings = records
+      .filter(record => record.schemaId === 'NoteHead@1' || record.schemaId === 'NoteVersion@1')
+      .map(record => ({ refKey: record.refKey, field: 'since' as const }));
+    const prepared: PreparedCommit = { identityKey, fingerprint, guards: realGuards, records, claims: [],
+      indexGuards: [], indexChanges: [], events, commitCursorBindings };
+    let receipt: StoreCommitReceipt;
+    try {
+      receipt = await deps.records.commit(prepared);
+    } catch {
+      const restored = await recheckDisposition(identityKey, fingerprint, noteId);
+      return restored ?? { status: 'rejected', code: 'unavailable',
+        reason: 'the disposition commit could not be re-checked', noteId };
+    }
+    if (receipt.status !== 'committed') {
+      const restored = await recheckDisposition(identityKey, fingerprint, noteId);
+      if (restored !== null) return restored;
+      const mapped = mapStoreFailure(receipt);
+      // L8: a lost pointer CAS returns the current pointer; a failed re-read does
+      // not fabricate one.
+      if (mapped.code === 'revision_conflict' && pointerKey !== null && pointer !== null) {
+        const current = await currentPointerRead(deps, ctx.projectId, pointerKey);
+        if (current !== null) {
+          return { status: 'rejected', code: mapped.code, reason: mapped.reason, noteId, pointer: pointerPayload(current)! };
+        }
+      }
+      return { status: 'rejected', code: mapped.code, reason: mapped.reason, noteId };
+    }
+    if (receipt.replayed) return replayDisposition(receipt, identityKey, fingerprint, noteId);
+    return { status: 'done', noteId, version: transition.next.version, state: transition.next.state,
+      receipt: { identityKey, fingerprint, cursor: receipt.cursor } };
+  }
+
+  /**
+   * 4C-2 rework item 6 (verify §6): the live user-reason facts of the given
+   * heads, computed with the ONE per-call plan cache. This is the per-head loop
+   * the guard uses, exposed batched so the card source reads no head twice.
+   */
+  async function reasonFactsOf(call: NoteCall, ctx: CoreCallContext, heads: Iterable<NoteHeadSnapshot>):
+  Promise<{ ok: true; value: Map<string, NoteUserReasonTargetV1> } | { ok: false; rejection: Rejected }> {
+    const facts = new Map<string, NoteUserReasonTargetV1>();
+    for (const head of heads) {
+      const retired = await primaryAnchorRetiredNonFile(call, ctx, head.anchor);
+      if (!retired.ok) return { ok: false, rejection: retired.rejection };
+      facts.set(head.noteId, { noteId: head.noteId, version: head.version, state: head.state,
+        userConfirmed: head.confirmedByUser, userWritten: head.source.kind === 'user',
+        primaryAnchorRetiredNonFile: retired.value });
+    }
+    return { ok: true, value: facts };
+  }
+
   /**
    * C3.2/§11.6 (lead ruling 9.2): read the live facts of every ACTUAL disposition
    * target (`replaces` minus `coexistWith`, plus `contradicts`) in ONE batched
@@ -649,39 +885,49 @@ export function createNoteService(deps: NoteServiceDependencies): NoteWritePort 
   async function userReasonTargetsOf(call: NoteCall, ctx: CoreCallContext, head: NoteHeadSnapshot):
   Promise<{ ok: true; targets: Map<string, NoteUserReasonTargetV1>; heads: Map<string, NoteHeadSnapshot> }
   | { ok: false; rejection: Rejected }> {
-    const coexisting = new Set(head.coexistWith);
-    const idSet = new Set<string>();
-    for (const noteId of head.replaces) if (!coexisting.has(noteId)) idSet.add(noteId);
-    for (const noteId of head.contradicts) idSet.add(noteId);
-    const ids = [...idSet];
-    const targets = new Map<string, NoteUserReasonTargetV1>();
+    const ids = actualDispositionTargets(head);
     // RW-2: the heads are returned too, so `supersessionOf` guards the version
     // the decision actually read instead of re-reading a newer one.
     const heads = new Map<string, NoteHeadSnapshot>();
-    if (ids.length > 0) {
-      const refKeys = ids.map(noteId => noteHeadRefKey({ aggregateType: 'NoteHead', projectId: ctx.projectId, noteId }));
-      const read = await deps.records.readMany(refKeys);
-      if (read.status !== 'ready') return { ok: false, rejection: mapStoreFailure(read) };
-      const byKey = new Map(read.value.records.map(record => [record.refKey, record]));
-      for (const [index, noteId] of ids.entries()) {
-        const record = byKey.get(refKeys[index]!);
-        if (record === undefined) {
-          return { ok: false, rejection: rejected('unavailable', 'a disposition target cannot be read') };
-        }
-        const decoded = decodeNoteHeadSnapshot(record);
-        if (decoded.status !== 'decoded') {
-          return { ok: false, rejection: rejected('unavailable', `a disposition target is damaged: ${decoded.reason}`) };
-        }
-        const targetHead = decoded.value;
-        heads.set(noteId, targetHead);
-        const retired = await primaryAnchorRetiredNonFile(call, ctx, targetHead.anchor);
-        if (!retired.ok) return { ok: false, rejection: retired.rejection };
-        targets.set(noteId, { noteId, version: targetHead.version, state: targetHead.state,
-          userConfirmed: targetHead.confirmedByUser, userWritten: targetHead.source.kind === 'user',
-          primaryAnchorRetiredNonFile: retired.value });
+    if (ids.length === 0) return { ok: true, targets: new Map(), heads };
+    const refKeys = ids.map(noteId => noteHeadRefKey({ aggregateType: 'NoteHead', projectId: ctx.projectId, noteId }));
+    const read = await deps.records.readMany(refKeys);
+    if (read.status !== 'ready') return { ok: false, rejection: mapStoreFailure(read) };
+    const byKey = new Map(read.value.records.map(record => [record.refKey, record]));
+    for (const [index, noteId] of ids.entries()) {
+      const record = byKey.get(refKeys[index]!);
+      if (record === undefined) {
+        return { ok: false, rejection: rejected('unavailable', 'a disposition target cannot be read') };
       }
+      const decoded = decodeNoteHeadSnapshot(record);
+      if (decoded.status !== 'decoded') {
+        return { ok: false, rejection: rejected('unavailable', `a disposition target is damaged: ${decoded.reason}`) };
+      }
+      heads.set(noteId, decoded.value);
     }
-    return { ok: true, targets, heads };
+    const facts = await reasonFactsOf(call, ctx, heads.values());
+    if (!facts.ok) return { ok: false, rejection: facts.rejection };
+    return { ok: true, targets: facts.value, heads };
+  }
+
+  /**
+   * 4C-2 rework item 6: the batched, public-to-the-source form of
+   * `reasonFactsOf` — ONE `NoteCall` (one plan cache) per call, no head read.
+   */
+  async function userReasonFacts(ctx: CoreCallContext, heads: readonly NoteHeadSnapshot[],
+    planWindows: readonly NotePlanWindowFactsV1[], attempt?: DecisionSourceAttempt):
+  Promise<ReadResult<Map<string, NoteUserReasonTargetV1>>> {
+    // Rework 3 item 1: every Goal's card source of one queue attempt shares the
+    // attempt's catalog-window map; a new attempt starts empty.
+    const call = newNoteCall(attempt);
+    // Rework 2 item 1: seed the per-call cache with the window the card source
+    // already read, using the same key `planWindowOf` uses.
+    for (const { goalId, window } of planWindows) {
+      call.planWindows.set(`${ctx.projectId}\u0000${goalId}`, Promise.resolve(window));
+    }
+    const facts = await reasonFactsOf(call, ctx, heads);
+    if (!facts.ok) return { status: 'rejected', code: facts.rejection.code, reason: facts.rejection.reason };
+    return { status: 'ready', value: facts.value };
   }
 
   /**
@@ -692,9 +938,62 @@ export function createNoteService(deps: NoteServiceDependencies): NoteWritePort 
    */
   type PlanStagesOutcome = { ok: true; value: Map<number, readonly string[]> } | { ok: false; rejection: Rejected };
   type NoteCall = { planStages: Map<string, Promise<PlanStagesOutcome>>;
-    planWindows: Map<string, Promise<GoalPlanWindow>>; scope: ScribeScopeCall };
-  function newNoteCall(): NoteCall {
-    return { planStages: new Map(), planWindows: new Map(), scope: newScribeScopeCall() };
+    planWindows: Map<string, Promise<GoalPlanWindow>>;
+    catalogWindows: Map<string, Promise<CurrentCatalogWindow>>;
+    anchorFacts?: NoteAnchorFactsDeps; scope: ScribeScopeCall };
+  type AttemptCatalogWindows = Map<string, Promise<CurrentCatalogWindow>>;
+  /**
+   * Rework 3 item 1: the ONE private attempt-cache key. The map lives in the
+   * queue window attempt's cache, so every Goal's card source shares the same
+   * per-project catalog window, and a new attempt (new `attempt.cache`) starts
+   * empty. Nothing is module-level or keyed by `ctx`.
+   */
+  const ATTEMPT_CATALOG_WINDOWS_KEY = 'notes.catalogWindows';
+  function attemptCatalogWindowsOf(attempt: DecisionSourceAttempt): AttemptCatalogWindows {
+    const cached = attempt.cache.get(ATTEMPT_CATALOG_WINDOWS_KEY);
+    if (cached !== undefined) return cached as AttemptCatalogWindows;
+    const created: AttemptCatalogWindows = new Map();
+    attempt.cache.set(ATTEMPT_CATALOG_WINDOWS_KEY, created);
+    return created;
+  }
+  /**
+   * `attempt` is passed ONLY by `userReasonFacts` (the card-source read); every
+   * write/dispose/scribe call omits it and keeps its own empty per-call caches.
+   * Only the catalog map is shared — never `planWindows` or `planStages`.
+   */
+  function newNoteCall(attempt?: DecisionSourceAttempt): NoteCall {
+    return { planStages: new Map(), planWindows: new Map(),
+      catalogWindows: attempt === undefined ? new Map() : attemptCatalogWindowsOf(attempt),
+      scope: newScribeScopeCall() };
+  }
+
+  /**
+   * Rework 2 item 1: the current catalog window of one project, memoized per
+   * call like `planWindowOf`, so several module/interface anchors of one note
+   * call share ONE catalog read.
+   */
+  function catalogWindowOf(call: NoteCall, ctx: CoreCallContext): Promise<CurrentCatalogWindow> {
+    const byProject = call.catalogWindows;
+    const hit = byProject.get(ctx.projectId);
+    if (hit !== undefined) return hit;
+    const pending = readCurrentCatalogWindow(deps.records, ctx.projectId);
+    byProject.set(ctx.projectId, pending);
+    return pending;
+  }
+
+  /**
+   * Rework 2 item 1 requirement 3: the write path and the scribe/disposition
+   * path use THIS per-call facts object, so anchor reads stay cached per call
+   * and the visible behaviour (and error codes) never changes.
+   */
+  function anchorFactsOf(call: NoteCall): NoteAnchorFactsDeps {
+    const cached = call.anchorFacts;
+    if (cached !== undefined) return cached;
+    const facts: NoteAnchorFactsDeps = { ...anchorFacts,
+      catalogModuleFacts: async (ctx, moduleId) =>
+        catalogModuleFactsOf(await catalogWindowOf(call, ctx), moduleId) };
+    call.anchorFacts = facts;
+    return facts;
   }
 
   /**
@@ -752,7 +1051,8 @@ export function createNoteService(deps: NoteServiceDependencies): NoteWritePort 
    * File retirement (deleted path, missing symbol) is a file reason and does not
    * drop a user card; goal and project anchors never retire. RW-5: a stage is
    * retired by the ONE shared `stageContinuityOf` over its own `planRevision`
-   * through the current revision; a task keeps the narrow anchor reader.
+   * through the current revision. A task still uses the narrow anchor reader,
+   * now over the call's ONE plan window (rework 4 item 2).
    */
   async function primaryAnchorRetiredNonFile(call: NoteCall, ctx: CoreCallContext, anchor: NoteAnchorV1):
   Promise<{ ok: true; value: boolean } | { ok: false; rejection: Rejected }> {
@@ -774,8 +1074,15 @@ export function createNoteService(deps: NoteServiceDependencies): NoteWritePort 
       return { ok: true, value: continuity.status === 'retired' };
     }
     const goalId = 'goalId' in anchor ? anchor.goalId : null;
+    // Rework 3 item 1: this read path only needs the retired verdict, so the
+    // candidate list (and its second catalog read) is not built here. This is
+    // NOT the write/dispose path.
+    // Rework 4 item 2: the task branch shares the call's ONE Goal→Plan window,
+    // like the stage branch above; the hook is set ONLY here.
     const resolved = await resolveNoteAnchors(ctx,
-      { main: anchor, extraAnchors: [], goalId, includeBasis: false }, anchorFacts);
+      { main: anchor, extraAnchors: [], goalId, includeBasis: false },
+      { ...anchorFactsOf(call), skipCandidates: true,
+        goalPlanWindow: (windowCtx, windowGoalId) => planWindowOf(call, windowCtx, windowGoalId) });
     if (resolved.status === 'ok') return { ok: true, value: resolved.value.anchorEnded };
     if (resolved.code === 'invalid' && resolved.reason === 'anchor_not_found') return { ok: true, value: true };
     return { ok: false, rejection: rejected(resolved.code === 'forbidden' ? 'forbidden' : 'unavailable', resolved.reason) };
@@ -817,7 +1124,7 @@ export function createNoteService(deps: NoteServiceDependencies): NoteWritePort 
     // L2a classes 1–2 and 4, through item 7's narrow reader (item 6 passes the
     // Run-bound plan so an agent's stage key keeps its bound revision).
     const anchorRead = await resolveNoteAnchors(ctx, { main: draft.anchor, extraAnchors: draft.extraAnchors,
-      goalId: storedGoalId, facts: draft.facts, boundPlanRef: caller.planRef, symbolHitsMax }, anchorFacts);
+      goalId: storedGoalId, facts: draft.facts, boundPlanRef: caller.planRef, symbolHitsMax }, anchorFactsOf(call));
     if (anchorRead.status === 'rejected') {
       return rejectedInput(input, anchorRead.code, anchorRead.reason, {
         ...(anchorRead.anchorCandidates === undefined ? {} : { anchorCandidates: anchorRead.anchorCandidates }),
@@ -1130,7 +1437,12 @@ export function createNoteService(deps: NoteServiceDependencies): NoteWritePort 
       anchorKeys: resolved.keys, createdAt: now, since: null,
     });
     const version1 = newNoteVersionRecord(head, { kind: 'write', by: caller.source, reason: null,
-      decisionMessageRef: null }, now);
+      decisionMessageRef: null }, now, noticeClassOf({
+      change: { kind: 'write', by: caller.source, reason: null, decisionMessageRef: null },
+      state: head.state, kind: head.kind, structural: head.structural,
+      userAffected: admission.state === 'accepted'
+        && [...replacedCurrent.values()].some(target => target.confirmedByUser || target.source.kind === 'user'),
+    }));
 
     const records: EncodedRecord[] = [encodeNoteHeadSnapshot(head), encodeNoteVersionSnapshot(version1)];
     const guards = new Map<string, number | null>([[encodeNoteHeadSnapshot(head).refKey, null],
@@ -1166,13 +1478,13 @@ export function createNoteService(deps: NoteServiceDependencies): NoteWritePort 
       if (!withdrawal.ok) return rejectedInput(input, noteCodeOf(withdrawal.code), withdrawal.detail);
       const withdrawnHead = withdrawal.next;
       const withdrawnVersion = newNoteVersionRecord(withdrawnHead, { kind: 'withdraw', by: caller.source,
-        reason: 'revised_while_pending', decisionMessageRef: null }, now);
+        reason: 'revised_while_pending', decisionMessageRef: null }, now, null);
       records.push(encodeNoteHeadSnapshot(withdrawnHead), encodeNoteVersionSnapshot(withdrawnVersion));
       guards.set(encodeNoteHeadSnapshot(withdrawnHead).refKey, pendingHead.version);
       guards.set(encodeNoteVersionSnapshot(withdrawnVersion).refKey, null);
       events.push(encodeNoteDispositionChangedEvent({ ...base, eventId: deps.eventId(),
         eventType: NOTE_DISPOSITION_CHANGED_EVENT_TYPE, head: withdrawnHead, version: withdrawnVersion,
-        acknowledgementRef: null }));
+        acknowledgementRef: null, actor: null, proof: null }));
     }
 
     // P9/R4: the new note's NoteWritten is the LAST event of a write commit and
@@ -1333,102 +1645,96 @@ export function createNoteService(deps: NoteServiceDependencies): NoteWritePort 
     const transition = transitionNote(head, event);
     if (!transition.ok) return { status: 'rejected', code: noteCodeOf(transition.code), reason: transition.detail, noteId };
 
-    const now = deps.now();
-    const records: EncodedRecord[] = [encodeNoteHeadSnapshot(transition.next)];
-    const guards = new Map<string, number | null>([[encodeNoteHeadSnapshot(transition.next).refKey, head.version]]);
-    const events: EncodedDomainEvent[] = [];
-    const base = eventBase(ctx.projectId, ctx.workspaceId ?? '', now);
-    const changeKind: NoteVersionSnapshot['change']['kind'] = eventKind;
-    const version = newNoteVersionRecord(transition.next, { kind: changeKind, by: caller.source, reason,
-      decisionMessageRef: null }, now);
-    records.push(encodeNoteVersionSnapshot(version));
-    guards.set(encodeNoteVersionSnapshot(version).refKey, null);
+    return finishDisposition(ctx, {
+      identityKey, fingerprint, noteId, head, caller, transition, decisionHeads,
+      readPointer: 'accept', expectedPointerRevision: expectedPointerRevision ?? null,
+      change: { kind: eventKind, by: caller.source, reason, decisionMessageRef: null },
+      cardProof: null,
+    });
+  }
 
-    // L6/S4-NOTE-05/08: the accepting commit supersedes its current `replaces`
-    // targets and, for an understanding, the note the pointer leaves; the
-    // subject's own NoteDispositionChanged is pushed LAST (P9). The pointer CAS
-    // reads the accept-time revision (L8).
-    if (eventKind === 'accept') {
-      const pointerKey = head.kind === 'understanding' ? anchorKeyOf(head.anchor) : null;
-      let pointer: PointerRead | null = null;
-      if (pointerKey !== null) {
-        pointer = await currentPointerRead(deps, ctx.projectId, pointerKey);
-        if (pointer === null) {
-          return { status: 'rejected', code: 'unavailable', reason: 'the current pointer cannot be read', noteId };
-        }
-        if ((expectedPointerRevision ?? null) !== pointer.revision) {
-          return { status: 'rejected', code: 'revision_conflict', reason: 'the current-understanding pointer moved', noteId,
-            pointer: pointerPayload(pointer)! };
-        }
-        // C3.5/D-15 (§11.6): a newer current understanding makes this pending one
-        // outdated; it can no longer be accepted (the scribe rejects it or merges
-        // it into a fresh version).
-        if (pointer.noteId !== null) {
-          const pointedRead = await readHead(deps, ctx.projectId, pointer.noteId);
-          if (!pointedRead.ok) {
-            return { status: 'rejected', code: pointedRead.rejection.code, reason: pointedRead.rejection.reason, noteId };
-          }
-          if (pointedRead.head !== null && pointedRead.head.createdAt > head.createdAt) {
-            return { status: 'rejected', code: 'invalid', reason: 'understanding_outdated', noteId };
-          }
-        }
-      }
-      const supersession = await supersessionOf(ctx, transition.next, caller.source, decisionHeads,
-        pointerKey, pointer, now);
-      if (!supersession.ok) {
-        return { status: 'rejected', code: supersession.rejection.code, reason: supersession.rejection.reason, noteId };
-      }
-      records.push(...supersession.records);
-      for (const [refKey, revision] of supersession.guards) guards.set(refKey, revision);
-      events.push(...supersession.events);
-    }
+  // ------------------------------------------------------------------------
+  // 4C-2 §2 item 4: the note card's application (the answering user)
+  // ------------------------------------------------------------------------
 
-    events.push(encodeNoteDispositionChangedEvent({ ...base, eventId: deps.eventId(),
-      eventType: NOTE_DISPOSITION_CHANGED_EVENT_TYPE, head: transition.next, version, acknowledgementRef: null }));
+  /**
+   * The card-mode disposition entry. It shares the ONE disposition core with
+   * `dispose` (`transitionNote`, `supersessionOf`, the pointer CAS and the
+   * commit/replay path) but differs exactly as the book says: the authority is
+   * the answering user from the trusted `ctx` (`by: 'user'`), the guard is the
+   * card's pins, the target set is the ACTUAL `(replaces − coexistWith) ∪
+   * contradicts`, `change.decisionMessageRef`/`acknowledgementRef` are the
+   * answer, and the LAST event carries the standard change proof.
+   */
+  async function applyNoteDecision(ctx: CoreCallContext, input: NoteDecisionApplicationInputV1):
+  Promise<NoteDispositionResult> {
+    const noteId = input.pin.noteId;
+    const identityKey = noteCommandIdentity('review', ctx, input.commandId);
+    const fingerprint = fingerprintOf({ kind: 's4-note-card-decision', projectId: ctx.projectId,
+      workspaceId: ctx.workspaceId ?? null, principal: principalOf(ctx), commandId: input.commandId,
+      cardId: input.cardId, optionId: input.optionId, pin: input.pin,
+      expectedPointerRevision: input.expectedPointerRevision, answerMessageRef: input.answerMessageRef,
+      conditions: input.conditions });
+    const prior = await deps.records.lookupCommit({ identityKey, fingerprint });
+    if (prior.status === 'ready') return replayDisposition(prior.value, identityKey, fingerprint, noteId);
+    if (prior.code === 'idempotency_conflict') {
+      return { status: 'rejected', code: 'invalid', reason: 'idempotency_conflict', noteId };
+    }
+    if (prior.code !== 'not_found') return { status: 'rejected', code: 'unavailable', reason: prior.reason, noteId };
 
-    const realGuards: RecordGuard[] = records.map(record => ({ refKey: record.refKey,
-      expectedRevision: guards.get(record.refKey) ?? null }));
-    // RW-2: a READ-ONLY guard at the read version for every decision target the
-    // commit does not otherwise write (`replaces` targets kept out of the commit,
-    // contradicted targets kept by `coexist`, the no-resolution path). Extra
-    // guards are normal; they never duplicate a written record's guard and get no
-    // commit-cursor binding.
-    const extraGuardKeys = new Set<string>();
-    for (const targetHead of decisionHeads.values()) {
-      const refKey = noteHeadRefKey(targetHead.ref);
-      if (guards.has(refKey) || extraGuardKeys.has(refKey)) continue;
-      extraGuardKeys.add(refKey);
-      realGuards.push({ refKey, expectedRevision: targetHead.version });
+    // The authority is the trusted host human, never a parameter.
+    const callerRead = await resolveCaller(ctx,
+      { commandId: input.commandId, note: {} as never, expectedPointerRevision: null, goalId: null }, deps);
+    if (!callerRead.ok) {
+      return { status: 'rejected', code: callerRead.rejection.code, reason: callerRead.rejection.reason, noteId };
     }
-    const commitCursorBindings = records
-      .filter(record => record.schemaId === 'NoteHead@1' || record.schemaId === 'NoteVersion@1')
-      .map(record => ({ refKey: record.refKey, field: 'since' as const }));
-    const prepared: PreparedCommit = { identityKey, fingerprint, guards: realGuards, records, claims: [],
-      indexGuards: [], indexChanges: [], events, commitCursorBindings };
-    let receipt: StoreCommitReceipt;
-    try {
-      receipt = await deps.records.commit(prepared);
-    } catch {
-      const restored = await recheckDisposition(identityKey, fingerprint, noteId);
-      return restored ?? { status: 'rejected', code: 'unavailable', reason: 'the disposition commit could not be re-checked', noteId };
+    const caller = callerRead.value;
+    if (!caller.isUser) {
+      return { status: 'rejected', code: 'forbidden',
+        reason: 'only the answering user may apply a note decision', noteId };
     }
-    if (receipt.status !== 'committed') {
-      const restored = await recheckDisposition(identityKey, fingerprint, noteId);
-      if (restored !== null) return restored;
-      const mapped = mapStoreFailure(receipt);
-      // L8: a lost pointer CAS returns the current pointer; a failed re-read does
-      // not fabricate one.
-      if (mapped.code === 'revision_conflict' && eventKind === 'accept' && head.kind === 'understanding') {
-        const current = await currentPointerRead(deps, ctx.projectId, anchorKeyOf(head.anchor));
-        if (current !== null) {
-          return { status: 'rejected', code: mapped.code, reason: mapped.reason, noteId, pointer: pointerPayload(current)! };
-        }
-      }
-      return { status: 'rejected', code: mapped.code, reason: mapped.reason, noteId };
+    const callerActor: ActorRef | null = ctx.principal.kind === 'host' ? ctx.principal.actor : null;
+
+    const read = await readHead(deps, ctx.projectId, noteId);
+    if (!read.ok) return { status: 'rejected', code: read.rejection.code, reason: read.rejection.reason, noteId };
+    if (read.head === null) return { status: 'rejected', code: 'not_found', reason: 'the note does not exist', noteId };
+    const head = read.head;
+    // Guard 1: the card's head pin (moved -> the existing revision_conflict).
+    if (head.version !== input.pin.version) {
+      return { status: 'rejected', code: 'revision_conflict', reason: 'the note head moved', noteId };
     }
-    if (receipt.replayed) return replayDisposition(receipt, identityKey, fingerprint, noteId);
-    return { status: 'done', noteId, version: transition.next.version, state: transition.next.state,
-      receipt: { identityKey, fingerprint, cursor: receipt.cursor } };
+    const call = newNoteCall();
+    // The live user-reason set and the ACTUAL target heads (one batched read).
+    const factsRead = await userReasonTargetsOf(call, ctx, head);
+    if (!factsRead.ok) {
+      return { status: 'rejected', code: factsRead.rejection.code, reason: factsRead.rejection.reason, noteId };
+    }
+    const decisionHeads = factsRead.heads;
+    const userReasons = userReasonsOf(head, [...factsRead.targets.values()]);
+    const mayResolve = userReasons.includes('contradiction') || userReasons.includes('user_note_replaced');
+    if ((input.optionId === 'supersede' || input.optionId === 'coexist') && !mayResolve) {
+      return { status: 'rejected', code: 'invalid', reason: 'resolution_not_applicable', noteId };
+    }
+    const actualTargets = actualDispositionTargets(head);
+    const trimmed = (input.conditions ?? '').trim();
+    const resolvedReason = trimmed.length > 0 ? trimmed : `决定卡：${input.optionId}`;
+
+    const event: NoteDispositionEventV1 = input.optionId === 'reject'
+      ? { kind: 'reject', by: 'user', reasons: userReasons, reason: resolvedReason }
+      : input.optionId === 'accept'
+        ? { kind: 'accept', by: 'user', reasons: userReasons, reason: resolvedReason }
+        : { kind: 'accept', by: 'user', reasons: userReasons, reason: resolvedReason,
+            resolution: input.optionId, targets: actualTargets };
+    const transition = transitionNote(head, event);
+    if (!transition.ok) return { status: 'rejected', code: noteCodeOf(transition.code), reason: transition.detail, noteId };
+
+    return finishDisposition(ctx, {
+      identityKey, fingerprint, noteId, head, caller, transition, decisionHeads,
+      readPointer: 'always', expectedPointerRevision: input.expectedPointerRevision,
+      change: { kind: input.optionId === 'reject' ? 'reject' : 'accept', by: caller.source,
+        reason: resolvedReason, decisionMessageRef: input.answerMessageRef },
+      cardProof: { acknowledgementRef: input.answerMessageRef, actor: callerActor },
+    });
   }
 
   return {
@@ -1440,5 +1746,7 @@ export function createNoteService(deps: NoteServiceDependencies): NoteWritePort 
     async withdrawNote(ctx, input) {
       return dispose(ctx, input.commandId, input.noteId, input.expectedVersion, 'withdraw', input.reason);
     },
+    applyNoteDecision,
+    userReasonFacts,
   };
 }

@@ -4,6 +4,7 @@ import type { DecisionApplicationReceiptV1 } from '../../contracts/core/session-
 import type { RoleConfigurationRef, SessionRef, WorkspaceScope } from '../../contracts/core/identity.js';
 import type { CoreRejection, ReadResult, WriteResult } from '../../contracts/core/results.js';
 import type { RoleBindingRefV1, RunRef, RunSnapshot, TaskBudgetV1 } from '../../contracts/dispatch.js';
+import type { DecisionSourceV1 } from '../../contracts/goal-decisions.js';
 import type { QueryRunRef } from '../../contracts/query-job.js';
 import type { PlatformDutyV1 } from '../../contracts/platform-duty.js';
 import type { GoalTaskPort } from '../../core/work-graph/model/task-contracts.js';
@@ -31,6 +32,7 @@ import type { ProjectRegistrationPort } from '../../core/work-graph/configuratio
 import type { QueryExecutionRecord, QueryJobPort } from '../../core/work-graph/queries/contracts.js';
 import type { SessionArchivePort } from './session-archive.js';
 import type { SessionMaintenancePort } from './session-maintenance.js';
+import type { DecisionApplicationAdapter } from './decision-actions.js';
 import type { RunActivityPort } from '../../core/work-graph/tasks/run-activity-service.js';
 import type { ActivityBackfillBatchV1, ActivityBackfillInput, ActivityBackfillRangeInput,
   ConsultationInput, ConsultationResult, InitialPlanningGoalInput, InitialPlanningGoalInputResult,
@@ -168,6 +170,12 @@ export type WorkflowDependencies = {
   decisionSources?: DecisionSourceFactsPort;
   decisionDuties?: MessageDutiesFactsPort;
   goalExecutedFiles?: GoalExecutedFilesPort;
+  /**
+   * 4C-2 U6: optional per-source-kind decision application adapters. The
+   * `note_review` adapter is installed by the composition; absent adapters (and
+   * every non-goal_conflict kind) leave `resolveDecision` answering only.
+   */
+  decisionApplications?: Partial<Record<DecisionSourceV1['kind'], DecisionApplicationAdapter>>;
   /**
    * Slice 5 §4.5: read the formal identity/fingerprint of a settings commit at
    * its returned cursor, so the finite `resolveDecision` coordinator can hand

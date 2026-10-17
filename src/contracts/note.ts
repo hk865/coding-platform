@@ -87,6 +87,7 @@ export type NoteHeadSnapshot = NoteBodyV1 & { ref: NoteHeadRef; noteId: string; 
 
 export type NoteVersionSnapshot = NoteBodyV1 & { ref: NoteVersionRef; noteId: string; version: number; state: NoteState;
   goalId: string | null; source: NoteSourceV1; reviewReasons: NoteReviewReason[];
+  noticeClass: 'user_affected' | 'structural' | 'scribe_result' | null;
   change: { kind: 'write' | 'review' | 'accept' | 'reject' | 'withdraw' | 'supersede' | 'coexist' | 'merge';
             by: NoteSourceV1; reason: string | null; decisionMessageRef: SessionMessageRef | null };
   at: string; since: CommitCursor };

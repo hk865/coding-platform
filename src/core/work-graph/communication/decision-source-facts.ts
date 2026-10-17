@@ -24,7 +24,7 @@ import { DEFAULT_GOAL_SETTINGS_V1, decisionSourceKey } from '../../../contracts/
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
 import type { DecodeResult, EncodedRecord, StoreFailure } from '../../record-store/ports.js';
-import type { DecisionSourceFactsPort, S5RecordPort } from '../model/decision-contracts.js';
+import type { DecisionSourceFactsPort, NoteDecisionSourcePort, S5RecordPort } from '../model/decision-contracts.js';
 import type { PlanProposal, PlanProposalRef, PlanTaskPort } from '../model/plan-contracts.js';
 import { decodeQueryJobAnswerSnapshot, decodeQueryJobSnapshot, decodeQueryRunSnapshotRecord } from '../queries/query-record-codecs.js';
 import { decodeGoalPhaseSnapshot } from '../tasks/completion-record-codecs.js';
@@ -50,6 +50,11 @@ export type DecisionSourceFactsDependencies = {
    * 'queryGoalDisplay' | 'readInitialPlanAnswerFacts'>`.
    */
   plans?: Pick<PlanTaskPort, 'queryGoalDisplay' | 'readInitialPlanAnswerFacts'>;
+  /**
+   * 4C-2 U6: the notes owner's note-review decision port. Optional; without it a
+   * `note_review` source is explicitly `unavailable`, never an empty source.
+   */
+  noteDecisions?: NoteDecisionSourcePort;
 };
 
 /**
@@ -101,6 +106,22 @@ function sameJson(left: unknown, right: unknown): boolean {
 
 function clonePins(pins: readonly VersionPin[]): VersionPin[] {
   return pins.map((pin) => structuredClone(pin));
+}
+
+/** Verifier §2: one order-insensitive set comparison over complete pins. */
+function samePinSet(left: readonly VersionPin[], right: readonly VersionPin[]): boolean {
+  if (left.length !== right.length) return false;
+  const remaining = new Set<string>();
+  for (const pin of left) {
+    const key = canonicalOf(pin);
+    if (key === null) return false;
+    remaining.add(key);
+  }
+  for (const pin of right) {
+    const key = canonicalOf(pin);
+    if (key === null || !remaining.delete(key)) return false;
+  }
+  return remaining.size === 0;
 }
 
 function goalBasis(goal: GoalSnapshot): GoalDecisionBasisV1 {
@@ -617,7 +638,65 @@ export function createDecisionSourceFacts(
           closed = terminals.some((terminal) => !('status' in terminal) && (terminal.cancelled || terminal.completed));
           break;
         }
-        case 'note_review':
+        case 'note_review': {
+          // 4C-2: the source key pins the note head; the card facts come from the
+          // notes owner's port. An absent port/stale read is never an empty source.
+          const rawNoteRef: unknown = identity.note.ref;
+          const noteProblem = scopeProblem(rawNoteRef, scope);
+          if (noteProblem !== null) return noteProblem;
+          if (!isObject(rawNoteRef)) return reject('invalid', 'the note_review source pin names no note');
+          const noteId = rawNoteRef['noteId'];
+          if (typeof noteId !== 'string' || noteId.length === 0) {
+            return reject('invalid', 'the note_review source pin names no note');
+          }
+          const goalProblem = scopeProblem(source.goalRef, scope);
+          if (goalProblem !== null) return goalProblem;
+          const goalRead = await readGoal(source.goalRef);
+          if (goalRead.status !== 'ready') return goalRead;
+          goal = goalRead.value;
+          if (goal.workspaceRef.projectId !== scope.projectId || goal.workspaceRef.workspaceId !== scope.workspaceId) {
+            return reject('forbidden', 'the note_review source Goal is outside the bound scope');
+          }
+          if (deps.noteDecisions === undefined) {
+            return reject('unavailable', 'no note-decision reader is bound for a note_review source');
+          }
+          const noteRead = await deps.noteDecisions.readNoteDecision(ctx, {
+            pin: { noteId, version: identity.note.revision },
+          });
+          if (noteRead.status !== 'ready') {
+            return reject('unavailable', noteRead.status === 'rejected'
+              ? noteRead.reason : 'the note decision is not readable');
+          }
+          const card = noteRead.value.card;
+          const closedReason = noteRead.value.closedReason;
+          if (card === null && closedReason === null) {
+            // §slice-4/L17: the note moved after the card was read; nothing
+            // recorded. The code is the CoreRejection `source_stale`.
+            return reject('source_stale', 'source_stale');
+          }
+          if (card !== null) {
+            // M1: the card's Goal is the note's Goal; a request that names
+            // another Goal of the same workspace must not answer it there.
+            if (card.goalId !== source.goalRef.goalId) {
+              return reject('invalid', 'the note decision card belongs to another Goal');
+            }
+            // Verifier §2: compare the REQUEST's captured pins (the head and,
+            // for an understanding, the CurrentPointer) with the fresh card;
+            // one set comparison catches a moved head, a moved pointer and a
+            // new pointer. A mismatch is `source_stale`, never a silent
+            // replacement of the request pins.
+            if (!samePinSet(source.pins, card.pins)) {
+              return reject('source_stale', 'source_stale');
+            }
+          }
+          closed = closedReason !== null;
+          if (card !== null) {
+            pins = clonePins(card.pins);
+            objects = card.objects.map((object) => structuredClone(object));
+            options = card.options.map((option) => structuredClone(option));
+          }
+          break;
+        }
         case 'message_release':
           return reject('unsupported', 'this decision source is not available in this slice');
         default:

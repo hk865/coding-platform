@@ -9,9 +9,11 @@
  *
  * This reader goes straight to the tasks-side records readers
  * (`readGoalPlanWindow`, `readPlan`), mirroring `readCatalogModuleFacts`. It
- * requires the Goal to be in the call-context project and — when the context is
- * workspace-bound — its workspace (forbidden otherwise), and it propagates
- * `not_found` and read failures distinctly, never as absence.
+ * requires the Goal to be in the call-context project and, on the write path,
+ * its workspace (forbidden otherwise). The reason-facts path passes the call's
+ * one already-read window and (lead ruling B) accepts another workspace of the
+ * same project. It propagates `not_found` and read failures distinctly, never as
+ * absence.
  */
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { ReadResult } from '../../../contracts/core/results.js';
@@ -19,7 +21,7 @@ import type { ArchitectureBaselinePin } from '../../../contracts/governance.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
 import type { PlanRevisionRef, PlanRevisionSnapshot } from '../../../contracts/plan.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
-import { readGoal, readGoalPlanWindow, readPlan } from '../tasks/plan-readers.js';
+import { readGoal, readGoalPlanWindow, readPlan, type GoalPlanWindow } from '../tasks/plan-readers.js';
 
 /** The facts of one plan revision the anchor gate needs. */
 export type AnchorGoalPlanFacts = {
@@ -55,16 +57,31 @@ export async function readAnchorGoalFacts(
   ctx: CoreCallContext,
   goalId: string,
   boundPlanRef?: PlanRevisionRef | null,
+  windowOf?: () => Promise<GoalPlanWindow>,
 ): Promise<ReadResult<AnchorGoalFacts>> {
   const goalRef: GoalRef = { aggregateType: 'Goal', projectId: ctx.projectId, goalId };
-  // Distinguish a missing Goal from a missing active PlanRevision: the window
-  // returns the plan read's rejection unchanged, so a `not_found` window is not
-  // evidence that the Goal itself is absent.
-  const goalRead = await readGoal(records, goalRef);
-  if (goalRead.status !== 'ready') {
-    return goalRead.code === 'not_found' ? { status: 'not_found' } : goalRead;
+  let window: GoalPlanWindow;
+  if (windowOf === undefined) {
+    // Distinguish a missing Goal from a missing active PlanRevision: the window
+    // returns the plan read's rejection unchanged, so a `not_found` window is not
+    // evidence that the Goal itself is absent.
+    const goalRead = await readGoal(records, goalRef);
+    if (goalRead.status !== 'ready') {
+      return goalRead.code === 'not_found' ? { status: 'not_found' } : goalRead;
+    }
+    window = await readGoalPlanWindow(records, goalRef);
+  } else {
+    // Rework 4 item 2: the reason-facts path brings the call's ONE Goal→Plan
+    // window. A window `not_found` is still ambiguous (a dangling or foreign
+    // plan reads the same), so read the Goal once to tell absence from failure.
+    window = await windowOf();
+    if (window.status !== 'ready' && window.code === 'not_found') {
+      const goalRead = await readGoal(records, goalRef);
+      if (goalRead.status !== 'ready') {
+        return goalRead.code === 'not_found' ? { status: 'not_found' } : goalRead;
+      }
+    }
   }
-  const window = await readGoalPlanWindow(records, goalRef);
   if (window.status !== 'ready') {
     // The Goal exists, so a failed window read (e.g. a dangling active plan) is
     // an availability failure, never absence.
@@ -73,7 +90,11 @@ export async function readAnchorGoalFacts(
   if (window.goal.ref.projectId !== ctx.projectId) {
     return { status: 'rejected', code: 'forbidden', reason: 'the goal is outside the call context project' };
   }
-  if (ctx.workspaceId !== undefined && window.goal.workspaceRef.workspaceId !== ctx.workspaceId) {
+  // Ruling B: only the reason-facts path (which supplies `windowOf`) evaluates a
+  // task target anchored to another Workspace of the SAME project from that
+  // goal's window. The write path keeps its Workspace gate byte-identically.
+  if (windowOf === undefined && ctx.workspaceId !== undefined
+    && window.goal.workspaceRef.workspaceId !== ctx.workspaceId) {
     return { status: 'rejected', code: 'forbidden', reason: 'the goal is outside the call context workspace' };
   }
   let bound: AnchorGoalPlanFacts | undefined;

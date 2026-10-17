@@ -109,6 +109,30 @@ export type NoteUserReasonTargetV1 = {
 };
 
 /**
+ * §11.6: the ACTUAL disposition target set of a pending note, in order:
+ * `(replaces − coexistWith) ∪ contradicts`, deduplicated, never the note
+ * itself. The scribe's resolution path narrows this to the live contradicted
+ * targets; the user's card application uses the whole set (4C-2 item 4).
+ */
+export function actualDispositionTargets(head: Pick<NoteHeadSnapshot,
+  'replaces' | 'contradicts' | 'coexistWith'>): string[] {
+  const coexisting = new Set(head.coexistWith);
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  for (const noteId of head.replaces) {
+    if (coexisting.has(noteId) || seen.has(noteId)) continue;
+    seen.add(noteId);
+    ids.push(noteId);
+  }
+  for (const noteId of head.contradicts) {
+    if (seen.has(noteId)) continue;
+    seen.add(noteId);
+    ids.push(noteId);
+  }
+  return ids;
+}
+
+/**
  * §11.6/decision 68: the ONE pure function that decides whether a pending note
  * still concerns the user. It is computed from the ACTUAL disposition targets
  * (`replaces` minus `coexistWith`, plus `contradicts`) and their live facts —
@@ -217,9 +241,59 @@ export function newNoteHeadRecord(input: NewNoteHeadInputV1): PendingNoteHeadSna
 
 export type NoteVersionChangeV1 = NoteVersionSnapshot['change'];
 
+/**
+ * 4C-2 §2/§11.6 item 5: the facts the ONE pure notice classifier reads. The
+ * writer computes `userAffected`/`sideEffect` from the facts of ITS OWN commit
+ * (the current targets it actually supersedes/withdraws); the classifier itself
+ * reads no storage.
+ */
+export type NoteNoticeClassFactsV1 = {
+  change: NoteVersionChangeV1;
+  /** The version's resulting head state. */
+  state: NoteState;
+  kind: NoteKind;
+  structural: boolean;
+  /** This version superseded, withdrew or rewrote a note the user wrote or confirmed. */
+  userAffected?: boolean;
+  /** A side-effect version written for a superseded/withdrawn TARGET (never the acting version). */
+  sideEffect?: boolean;
+};
+
+/**
+ * 4C-2 U9 (task book §2 item 5, lead ruling 7): the ONE pure notice classifier,
+ * precedence `user_affected` > `structural` > `scribe_result`:
+ * - `user_affected`: any agent version that superseded, withdrew or rewrote a
+ *   note the user wrote or confirmed (today: an agent's understanding replacing
+ *   the user-confirmed current understanding);
+ * - `structural`: an agent's structural ordinary note accepted (either the
+ *   accepted write itself or its accept disposition); an understanding/repair is
+ *   never "ordinary";
+ * - `scribe_result`: any other disposition by a scribe (`accept`, `reject`,
+ *   `withdraw`, `supersede`, `coexist`, `merge`; never `write`, never `review`);
+ * - `null`: the user's own versions, reviews, the platform, and every side-effect
+ *   version written for a superseded target.
+ */
+export function noticeClassOf(facts: NoteNoticeClassFactsV1): NoteVersionSnapshot['noticeClass'] {
+  const by = facts.change.by;
+  if (by.kind !== 'agent') return null;
+  if (facts.sideEffect === true) return null;
+  if (facts.userAffected === true) return 'user_affected';
+  const ordinary = facts.kind !== 'understanding' && facts.kind !== 'repair';
+  if (facts.structural && ordinary
+    && (facts.change.kind === 'accept' || (facts.change.kind === 'write' && facts.state === 'accepted'))) {
+    return 'structural';
+  }
+  const disposition = facts.change.kind === 'accept' || facts.change.kind === 'reject'
+    || facts.change.kind === 'withdraw' || facts.change.kind === 'supersede'
+    || facts.change.kind === 'coexist' || facts.change.kind === 'merge';
+  if (by.duty === 'scribe' && disposition) return 'scribe_result';
+  return null;
+}
+
 /** Constructor of the immutable per-version row for one change of the head. */
 export function newNoteVersionRecord(head: PendingNoteHeadSnapshot,
-  change: NoteVersionChangeV1, at: string): PendingNoteVersionSnapshot {
+  change: NoteVersionChangeV1, at: string,
+  noticeClass: NoteVersionSnapshot['noticeClass'] = null): PendingNoteVersionSnapshot {
   return {
     ...noteBodyOf(head),
     ref: { aggregateType: 'NoteVersion', projectId: head.ref.projectId, noteId: head.noteId, version: head.version },
@@ -229,6 +303,7 @@ export function newNoteVersionRecord(head: PendingNoteHeadSnapshot,
     goalId: head.goalId,
     source: head.source,
     reviewReasons: [...head.reviewReasons],
+    noticeClass,
     change,
     at,
     since: null,

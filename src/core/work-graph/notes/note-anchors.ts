@@ -8,6 +8,7 @@
  * stored.
  */
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
+import type { ReadResult } from '../../../contracts/core/results.js';
 import type { ModuleRef } from '../../../contracts/core/identity.js';
 import type { AdoptedArchitecture, ModuleDefinition } from '../../../contracts/architecture-catalog.js';
 import type { ArchitectureBaselinePin } from '../../../contracts/governance.js';
@@ -18,9 +19,10 @@ import type { NoteAnchorCandidateV1 } from '../model/note-contracts.js';
 import type {
   CaptureSummary, SourceHit, SourceProvider, WorkspaceResult, WorkspaceToolsPort,
 } from '../../workspace/ports.js';
-import type { ArchitectureCatalogPort } from '../architecture/catalog-contracts.js';
+import type { ArchitectureCatalogPort, CatalogModuleFacts } from '../architecture/catalog-contracts.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
 import { readCatalogModuleFacts } from '../architecture/catalog-service.js';
+import type { GoalPlanWindow } from '../tasks/plan-readers.js';
 import type { AnchorGoalPlanFacts } from './note-anchor-facts.js';
 import { readAnchorGoalFacts } from './note-anchor-facts.js';
 import {
@@ -45,6 +47,26 @@ export type NoteAnchorFactsDeps = {
   records: GoalRecordTransactionPort;
   /** Candidate/containment catalog read; absent in narrow doubles keeps class 1–2 shape checks working. */
   architecture?: Pick<ArchitectureCatalogPort, 'readArchitectureRevision'>;
+  /**
+   * Rework 2 item 1: the per-call module-facts reader over an already-read
+   * current catalog window. Absent in narrow doubles keeps the fresh read, so
+   * several module/interface targets of one note call share ONE window.
+   */
+  catalogModuleFacts?: (ctx: CoreCallContext, moduleId: string) => Promise<ReadResult<CatalogModuleFacts>>;
+  /**
+   * Rework 3 item 1: the reason-facts path only needs "retired", not the
+   * candidate list, so it turns this on and `candidatesFor` answers plain
+   * `notFound()` without a second candidate-catalog read. The write/dispose
+   * path never sets it.
+   */
+  skipCandidates?: boolean;
+  /**
+   * Rework 4 item 2: set ONLY on the reason-facts path (like `skipCandidates`).
+   * It feeds the call's ONE memoized Goal→Plan window into the task-target
+   * decision, so several task targets share it instead of re-reading the Goal.
+   * Absent keeps the fresh reads and the write path's Workspace gate.
+   */
+  goalPlanWindow?: (ctx: CoreCallContext, goalId: string) => Promise<GoalPlanWindow>;
   /** File existence + missing-file candidates; absent keeps the narrow doubles compiling. */
   workspace?: NoteAnchorWorkspace;
 };
@@ -484,7 +506,8 @@ export async function resolveNoteAnchors(ctx: CoreCallContext, input: {
     const cached = goalPlans.get(goalId);
     if (cached !== undefined) return cached;
     const bound = isAgent && goalId === input.goalId ? boundPlanRef : null;
-    const read = await readAnchorGoalFacts(deps.records, ctx, goalId, bound);
+    const read = await readAnchorGoalFacts(deps.records, ctx, goalId, bound,
+      deps.goalPlanWindow === undefined ? undefined : () => deps.goalPlanWindow!(ctx, goalId));
     if (read.status === 'not_found') {
       return { status: 'rejected', code: 'invalid', reason: 'anchor_not_found', field };
     }
@@ -662,20 +685,29 @@ Promise<{ status: 'ok'; value: NoteAnchorV1; ended: boolean; symbolUnresolved?: 
     status: 'rejected', code: 'unavailable', reason: 'the anchor facts are not readable', field,
   });
   const candidatesFor = async (given: string): Promise<NoteAnchorFailure> => {
+    // Rework 3 item 1: the reason facts only need the retired verdict, so the
+    // card-source path builds no candidate list and reads no catalog here.
+    if (deps.skipCandidates === true) return notFound();
     const catalogRead = await readCandidateCatalog(ctx, deps);
     if (!catalogRead.ok) return notFound(undefined, true);
     return notFound(catalogRead.catalog === null ? undefined : rankCandidates(moduleSeeds(catalogRead.catalog), given));
   };
+  // Rework 2 item 1: one catalog read per note call; the seam carries the
+  // caller's per-call window cache, the fallback keeps narrow doubles working.
+  const moduleFactsOf = (moduleId: string): Promise<ReadResult<CatalogModuleFacts>> =>
+    deps.catalogModuleFacts === undefined
+      ? readCatalogModuleFacts(deps.records, ctx, moduleRefOf(ctx.projectId, moduleId))
+      : deps.catalogModuleFacts(ctx, moduleId);
   switch (draft.kind) {
     case 'module': {
-      const facts = await readCatalogModuleFacts(deps.records, ctx, moduleRefOf(ctx.projectId, draft.moduleId));
+      const facts = await moduleFactsOf(draft.moduleId);
       if (facts.status === 'rejected') return passThrough(facts.code, facts.reason);
       if (facts.status === 'not_found') return candidatesFor(draft.moduleId);
       if (facts.status !== 'ready') return unavailableFacts();
       return { status: 'ok', value: { kind: 'module', moduleId: draft.moduleId }, ended: false };
     }
     case 'interface': {
-      const facts = await readCatalogModuleFacts(deps.records, ctx, moduleRefOf(ctx.projectId, draft.moduleId));
+      const facts = await moduleFactsOf(draft.moduleId);
       if (facts.status === 'rejected') return passThrough(facts.code, facts.reason);
       if (facts.status === 'not_found') return candidatesFor(`${draft.moduleId}/${draft.interfaceId}`);
       if (facts.status !== 'ready') return unavailableFacts();

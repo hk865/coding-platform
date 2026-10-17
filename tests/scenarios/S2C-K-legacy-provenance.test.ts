@@ -19,7 +19,7 @@
  * reliable predecessor evidence. One raw old QueryRun is likewise seeded at the
  * storage boundary.
  */
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { join } from 'node:path';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { SessionRef, WorkLinkRelation, WorkLinkTarget } from '../../src/contracts/core/identity.js';
@@ -186,9 +186,9 @@ async function openHostSeed(h: HostScenario): Promise<HostSeed> {
 
 /**
  * The real `TaskClaimPort.claimTask` over the Host's records with a chosen
- * clock. The setup clock is chosen (never the Host's fixed `2026-10-06` clock)
- * because `recordSessionCreated` stamps C's SessionCreated payload with the wall
- * clock: the derivation's ordering proof needs `creation <= claim`.
+ * clock. The claim instant is chosen explicitly because the derivation's
+ * ordering proof needs `creation <= claim`; under the frozen `Date` the claim
+ * is a minute after the fixed HOST_NOW creation/requeue stamps.
  */
 async function claimTask(seed: HostSeed, sessionRef: SessionRef, requestId: string, claimAt: string,
   requeueRef?: TaskRequeueSnapshotV1['ref']): Promise<TaskClaim> {
@@ -216,9 +216,9 @@ async function claimTask(seed: HostSeed, sessionRef: SessionRef, requestId: stri
 }
 
 /**
- * The real `TaskRequeuePort.requeueTask` over the Host's records with the wall
- * clock the current test used: the requeue must be stamped after P's run (the
- * Host clock) and at or before C's SessionCreated wall-clock stamp.
+ * The real `TaskRequeuePort.requeueTask` over the Host's records with the same
+ * frozen `Date` the case installs: the requeue must be stamped after P's run
+ * (the Host clock) and at or before C's SessionCreated stamp.
  */
 async function requeueTask(seed: HostSeed, afterRunRef: RunRef, requestId: string): Promise<TaskRequeueSnapshotV1> {
   const goal = await seed.platform.plans.queryGoal(seed.ctx, AG2B_GOAL_REF);
@@ -394,8 +394,8 @@ async function openCase(): Promise<LegacyCase> {
 
   // C: the legacy continuation Session, created with its initial responsible
   // link, then claimed from the requeue. The claim instant must be at or after
-  // C's creation wall-clock stamp (the derivation's creation/requeue/claim
-  // ordering proof).
+  // C's creation stamp (the derivation's creation/requeue/claim ordering proof);
+  // both creation and requeue read the case's frozen HOST_NOW via `Date`.
   const C = await seed.createLegacySession('s2c26-c', [{ target: taskTarget, relation: 'responsible' }]);
   const cClaimAt = new Date(Date.now() + 60_000).toISOString();
   await claimTask(seed, C, 's2c26-c-claim', cClaimAt, requeue.ref);
@@ -413,9 +413,25 @@ async function openCase(): Promise<LegacyCase> {
 }
 
 describe('2C-26 legacy provenance set (LE4)', () => {
+  // Both provenance writers read the wall clock: the requeue service's
+  // `now = () => new Date().toISOString()` here, and `recordSessionCreated`'s
+  // `new Date()` inside `session-directory.ts` (no injectable clock). Freeze only
+  // `Date` at the Host's own HOST_NOW for every case, so both stamps are fixed
+  // and the derivation's ordering proof (`requeue <= creation <= claim`) cannot
+  // be reordered by a backward wall-clock step. The claim stays at
+  // `new Date(Date.now() + 60_000)`, now relative to the fixed time. No other
+  // timer is faked. Restore even when a case fails.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(HOST_NOW));
+  });
   afterEach(async () => {
-    for (const seed of openSeeds.splice(0)) await seed.close();
-    await cleanupScenarios();
+    try {
+      for (const seed of openSeeds.splice(0)) await seed.close();
+      await cleanupScenarios();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('2C-26 before maintenance: seven unchecked, P and C are separate checked-when-read lines, three archived rows; reading again backfills nothing', async () => {

@@ -39,20 +39,23 @@ import { createMessageDutiesFactsAdapter } from '../core/work-graph/configuratio
 import { createUndeliveredReplyNoticeSource } from '../core/work-graph/views/undelivered-reply-notices.js';
 import { platformRoleProfile } from '../core/agent-runtime/role-profiles.js';
 import {
-  createDecisionReadModel, createGoalCauseCardSource, createPlanningQuestionCardSource,
+  createDecisionReadModel, createGoalCauseCardSource, createNoteReviewCardSource,
+  createPlanningQuestionCardSource,
 } from '../core/work-graph/views/decision-read-model.js';
 import { createGoalConflictAssembler } from '../core/work-graph/views/goal-conflicts.js';
 import { createAutomaticReworkNoticeSource } from '../core/work-graph/views/automatic-rework-notices.js';
+import { createNoteReviewNoticeSource } from '../core/work-graph/views/note-review-notices.js';
 import { createNoticePositionComparator } from '../core/work-graph/views/notice-position.js';
 import { createNoticeDisplayToken } from '../core/work-graph/views/notice-display-token.js';
 import type {
-  DecisionMessagePort, DecisionReadPort, GoalSettingsPort,
+  DecisionMessagePort, DecisionReadPort, GoalSettingsPort, NoteDecisionSourcePort,
   RequestCandidatePort, WorkspaceDecisionSettingsPort,
 } from '../core/work-graph/model/decision-contracts.js';
 import type { SessionMailboxPort } from '../core/work-graph/model/communication-contracts.js';
 import { SESSION_MESSAGE_RECORD_SCHEMAS } from '../core/work-graph/sessions/message-record-codecs.js';
 import { createSourceAuthorityReader } from '../core/work-graph/source-authority-reader.js';
 import { createWorkflow } from '../business/workflow/workflow.js';
+import type { DecisionApplicationAdapter } from '../business/workflow/decision-actions.js';
 import { createSessionDutyResolver } from './session-duty.js';
 import { DEFAULT_SESSION_ARCHIVE_POLICY } from '../business/workflow/ports.js';
 import type {
@@ -64,16 +67,17 @@ import type { AutomaticReverifyPolicyV1 } from '../core/work-graph/evidence/evid
 import { EVIDENCE_RECORD_SCHEMAS } from '../core/work-graph/persistence/evidence-record-codecs.js';
 import { NOTE_RECORD_SCHEMAS } from '../core/work-graph/persistence/note-record-codecs.js';
 import { createNoteService } from '../core/work-graph/notes/note-service.js';
-import type { NoteRunFactResolver } from '../core/work-graph/notes/note-service.js';
+import type { NoteRunFactResolver, NoteService } from '../core/work-graph/notes/note-service.js';
 import { createNoteReadModel, readAllRecords, type NoteListReadPort, type NoteMemoryMaterialReadPort } from '../core/work-graph/notes/note-read-model.js';
 import { createVersionLists } from '../core/work-graph/notes/note-version-lists.js';
 import { createScribeScope } from '../core/work-graph/notes/scribe-scope.js';
 import { createNoteCheck } from '../core/work-graph/views/note-views.js';
 import { createNoteMemoryMaterial } from '../core/work-graph/notes/note-memory-material.js';
 import { createNoteScribeTodos } from '../core/work-graph/notes/note-scribe-todos.js';
+import { createNoteDecisionSource } from '../core/work-graph/notes/note-decision-source.js';
 import type { ContextExtensionsDependencies } from '../core/work-graph/views/context-extensions.js';
-import type { NoteCheckPort, NoteHeadCheckPort, NoteMemoryReadPort, NoteReadPort, NoteScopeReadPort,
-  NoteScribeTodoPort, NoteWritePort } from '../core/work-graph/model/note-contracts.js';
+import type { NoteCheckPort, NoteDecisionApplyPort, NoteHeadCheckPort, NoteMemoryReadPort, NoteReadPort,
+  NoteScopeReadPort, NoteScribeTodoPort, NoteWritePort } from '../core/work-graph/model/note-contracts.js';
 import type { SourceProvider } from '../core/workspace/ports.js';
 import { decodeRun } from '../core/work-graph/materials/run-snapshot-decoder.js';
 import type { EvidencePort } from '../core/work-graph/model/evidence-contracts.js';
@@ -285,6 +289,31 @@ const SYSTEM_ACTOR = Object.freeze({ kind: 'system' as const, id: 'platform-comp
 
 function sameJson(left: unknown, right: unknown): boolean {
   try { return canonicalJson(left as JsonValue) === canonicalJson(right as JsonValue); } catch { return false; }
+}
+
+/** Slice 4C-2 U6: the four note-card options the notes owner accepts. */
+type NoteOptionId = 'accept' | 'reject' | 'supersede' | 'coexist';
+const NOTE_OPTION_IDS: readonly NoteOptionId[] = ['accept', 'reject', 'supersede', 'coexist'];
+function isNoteOptionId(value: string): value is NoteOptionId {
+  return (NOTE_OPTION_IDS as readonly string[]).includes(value);
+}
+
+/**
+ * Slice 4C-2 U6: parse the note pin back out of a `note_review` source key. The
+ * card source key is the canonical `{kind:'note_review', note: VersionPin}`; a
+ * key that names no NoteHead is not an applicable card.
+ */
+function parseNoteReviewKey(key: string): { noteId: string; revision: number } | null {
+  let parsed: unknown;
+  try { parsed = JSON.parse(key); } catch { return null; }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
+  const identity = parsed as { kind?: unknown; note?: unknown };
+  if (identity.kind !== 'note_review' || typeof identity.note !== 'object' || identity.note === null) return null;
+  const pin = identity.note as { ref?: { aggregateType?: unknown; noteId?: unknown }; revision?: unknown };
+  if (typeof pin.ref !== 'object' || pin.ref === null || pin.ref.aggregateType !== 'NoteHead'
+    || typeof pin.ref.noteId !== 'string' || pin.ref.noteId.length === 0
+    || typeof pin.revision !== 'number' || !Number.isSafeInteger(pin.revision)) return null;
+  return { noteId: pin.ref.noteId, revision: pin.revision };
 }
 
 /**
@@ -716,7 +745,29 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // Slice 5 §3.3/§4: the ONE settings/decision-message/read owner set. Each
     // uses the SAME records/materials/mailbox instances as every other owner;
     // the message body/persist facade is the mailbox's single write owner.
-    const decisionSources = createDecisionSourceFacts({ records: backend.records, plans: planService });
+    // Slice 4C-2 U6: the note-card decision port is built only after the note
+    // service (whose `applyNoteDecision` it delegates to), but the early message
+    // sources and the Workflow's `decisionSources` must already carry the SAME
+    // port. This holder forwards to the later-bound implementation, so neither
+    // the message service nor the Workflow needs a second source-facts owner and
+    // the file order is unchanged.
+    let boundNoteDecisionSource: NoteDecisionSourcePort | null = null;
+    const noteDecisionSourcePort: NoteDecisionSourcePort = {
+      readNoteDecisions: (ctx, input) => boundNoteDecisionSource === null
+        ? Promise.resolve({ status: 'rejected' as const, code: 'unavailable' as const,
+          reason: 'the note-decision source is not bound yet' })
+        : boundNoteDecisionSource.readNoteDecisions(ctx, input),
+      readNoteDecision: (ctx, input) => boundNoteDecisionSource === null
+        ? Promise.resolve({ status: 'rejected' as const, code: 'unavailable' as const,
+          reason: 'the note-decision source is not bound yet' })
+        : boundNoteDecisionSource.readNoteDecision(ctx, input),
+      applyNoteDecision: (ctx, input) => boundNoteDecisionSource === null
+        ? Promise.resolve({ status: 'rejected' as const, code: 'unsupported' as const,
+          reason: 'the note-decision source is not bound yet', noteId: input.pin.noteId })
+        : boundNoteDecisionSource.applyNoteDecision(ctx, input),
+    };
+    const decisionSources = createDecisionSourceFacts({ records: backend.records, plans: planService,
+      noteDecisions: noteDecisionSourcePort });
     // §4.5: the formal identity/fingerprint of a settings commit are persisted
     // verbatim in its event body, so the finite coordinator can hand the real
     // `DecisionApplicationReceiptV1` to `recordDecisionApplication` from the
@@ -768,10 +819,15 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // SAME directory and mailbox the rest of the platform owns and never commits.
     const undeliveredReplyNotices = createUndeliveredReplyNoticeSource({
       records: backend.records, sessions: sessionDirectory, messages: mailbox });
+    // Slice 4C-2 U7/U9: the note_review card and notice sources. Both are built
+    // over the SAME records/note-decision holder the rest of the platform owns.
+    const noteReviewCards = createNoteReviewCardSource({ records: backend.records,
+      noteDecisions: noteDecisionSourcePort });
+    const noteReviewNotices = createNoteReviewNoticeSource({ records: backend.records });
     const rawDecisionReads = createDecisionReadModel({
       records: backend.records,
-      cardSources: [goalCauseCards, planningQuestionCards],
-      noticeSources: [automaticReworkNotices, undeliveredReplyNotices],
+      cardSources: [goalCauseCards, planningQuestionCards, noteReviewCards],
+      noticeSources: [automaticReworkNotices, undeliveredReplyNotices, noteReviewNotices],
       conflicts: goalConflicts,
       positions: noticePositions,
       displayTokens,
@@ -1314,7 +1370,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
           workspaceRevision: revision, provider: request.provider });
       },
     };
-    const noteWrite: NoteWritePort = createNoteService({
+    const noteWrite: NoteService = createNoteService({
       records: backend.records,
       plans: planService,
       runFacts: noteRunFacts,
@@ -1332,6 +1388,66 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     const noteCheck: NoteHeadCheckPort = createNoteCheck({ records: backend.records, plans: planService,
       architecture: catalog, workspace: noteWorkspace, artifacts: bodies,
       ...(options.noteLimits === undefined ? {} : { limits: options.noteLimits }) });
+    // Slice 4C-2 U6: bind the holder created beside the early message sources.
+    // Rework item 6: the source now takes the note service's batched
+    // `userReasonFacts` (ONE per-call fact read shared with the disposition
+    // guard) instead of re-running the full `checkNotes`.
+    const noteDecisionSource = createNoteDecisionSource({ records: backend.records,
+      userReasonFacts: noteWrite.userReasonFacts, apply: noteWrite.applyNoteDecision });
+    boundNoteDecisionSource = noteDecisionSource;
+    /**
+     * Slice 4C-2 U6: the `note_review` application adapter. The answer commit is
+     * step ①; this adapter turns it into the notes owner's card-mode command.
+     * `commandId` is derived from the answer message ref alone, so a retried
+     * `resolveDecision` reaches the SAME owner identity and replays the original
+     * `NoteDispositionChanged` receipt instead of writing a second disposition.
+     */
+    const noteApplication: DecisionApplicationAdapter = {
+      async apply(ctx, { answerRef, source, selection }) {
+        if (selection.kind !== 'option' || !isNoteOptionId(selection.optionId)) {
+          return { status: 'ready', value: { action: { status: 'rejected', code: 'invalid',
+            reason: 'a note_review decision requires one of the card options' }, receipt: null } };
+        }
+        const identity = parseNoteReviewKey(source.key);
+        if (identity === null) {
+          return { status: 'ready', value: { action: { status: 'rejected', code: 'invalid',
+            reason: 'the note_review source key is not a NoteHead pin' }, receipt: null } };
+        }
+        // Verifier §1: the answer commit (step ①) has happened, so the saved
+        // body is the ONLY source of the condition text (8C's re-apply reads
+        // only the saved answer). A failed body read must leave the card
+        // "answered, pending application": it is NEVER "no condition written".
+        const answerRead = await rawDecisionMessages.readDecisionAnswer(ctx, { source });
+        if (answerRead.status !== 'ready' || answerRead.value.body === null) {
+          return { status: 'ready', value: { action: { status: 'rejected', code: 'unavailable',
+            reason: answerRead.status === 'rejected'
+              ? answerRead.reason : 'the saved answer body is not readable' }, receipt: null } };
+        }
+        const text = answerRead.value.body.text;
+        const pointerPin = source.pins.find(pin =>
+          (pin.ref as { aggregateType?: unknown }).aggregateType === 'CurrentPointer');
+        const result = await noteDecisionSource.applyNoteDecision(ctx, {
+          commandId: `note-review:${canonicalJson(answerRef as unknown as JsonValue)}`,
+          cardId: source.key,
+          optionId: selection.optionId,
+          pin: { noteId: identity.noteId, version: identity.revision },
+          expectedPointerRevision: pointerPin === undefined ? null : pointerPin.revision,
+          answerMessageRef: answerRef,
+          conditions: text.length === 0 ? null : text,
+        });
+        if (result.status === 'done') {
+          return { status: 'ready', value: { action: result, receipt: result.receipt } };
+        }
+        if (result.code === 'revision_conflict') {
+          // Verifier §2 / lead ruling 2: the owner's pin-move result is the
+          // CoreRejection `source_stale` at this boundary (its `NoteErrorCode`
+          // does not change).
+          return { status: 'ready', value: { action: { status: 'rejected', code: 'source_stale',
+            reason: 'source_stale' }, receipt: null } };
+        }
+        return { status: 'ready', value: { action: result, receipt: null } };
+      },
+    };
     const noteReads: NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPort = createNoteReadModel({ records: backend.records,
       plans: planService, architecture: catalog, workspace: noteWorkspace, check: noteCheck,
       // Slice 4C C2.2: the concrete narrow Run resolver (one readMany) resolves a
@@ -1344,7 +1460,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // ports read over the SAME record store and the SAME check.
     const noteMemoryMaterial = createNoteMemoryMaterial(noteReads);
     contextExtensionsDeps.memoryMaterial = noteMemoryMaterial;
-    const noteScribeTodos = createNoteScribeTodos({ records: backend.records, check: noteCheck });
+    const noteScribeTodos = createNoteScribeTodos({ records: backend.records,
+      userReasonFacts: noteWrite.userReasonFacts });
     // Slice 4C L13/L14: fill the stable holder the Runtime already received. The
     // tools read these fields at Run start time, after this point.
     noteToolDeps.memory = noteReads;
@@ -1503,6 +1620,9 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       decisionDuties: messageDuties,
       goalExecutedFiles,
       applicationReceipt,
+      // Slice 4C-2 U6: the note_review step ② adapter for the finite decision
+      // coordinator; `goal_conflict` keeps its built-in chain.
+      decisionApplications: { note_review: noteApplication },
       // Slice 2B P12: the WorkGraph RunActivity owner the Workflow backfill scans
       // and writes through (the SAME instance the activity reads and the end
       // commits use, §0.4).

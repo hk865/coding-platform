@@ -9,7 +9,7 @@
 import type { ArtifactRef } from '../../../contracts/artifact.js';
 import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
-import type { SessionRef, WorkspaceScope } from '../../../contracts/core/identity.js';
+import type { SessionRef, VersionPin, WorkspaceScope } from '../../../contracts/core/identity.js';
 import type { CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import type {
   DecisionApplicationReceiptV1,
@@ -35,6 +35,7 @@ import type {
   WorkspaceDecisionSettingsV1,
 } from '../../../contracts/goal-decisions.js';
 import type { GoalRef, GoalSnapshot, WorkspaceSnapshot } from '../../../contracts/ledger.js';
+import type { NoteKind } from '../../../contracts/note.js';
 import type { PlatformDutyV1 } from '../../../contracts/platform-duty.js';
 import type { PlanRevisionRef } from '../../../contracts/plan.js';
 import type { QueryJobRef } from '../../../contracts/query-job.js';
@@ -45,6 +46,7 @@ import type { GoalRecordTransactionPort, RecordGuard, UniqueClaimChange } from '
 import type { MessageQueryAnswerSender, MessageSender, SessionMailboxPort, SessionMessage,
   SessionMessageEventV1 } from './communication-contracts.js';
 import type { MaterialPort } from './material-contracts.js';
+import type { NoteDispositionResult } from './note-contracts.js';
 import type { PlanProposal, PlanProposalRef } from './plan-contracts.js';
 import type { GraphWrite } from './task-contracts.js';
 
@@ -171,6 +173,38 @@ export interface DecisionSourceFactsPort {
 }
 
 // ------------------------------------------------------------------------ //
+// Note-card decision port (spec §2; lead ruling: port in the model)         //
+// ------------------------------------------------------------------------ //
+//
+// The notes owner implements this port; communication may consume it but must
+// never import `notes/`. §2's `NoteDecisionCardV1` cannot carry the card's
+// pins/objects/options, so `NoteDecisionCardFactsV1` augments it (see report:
+// UNSPECIFIED).
+
+export type NoteDecisionCardV1 = { cardId: string; source: 'note_review'; noteId: string; version: number; kind: NoteKind;
+  optionIds: ('accept' | 'reject' | 'supersede' | 'coexist')[]; summary: string;
+  pointer: { noteId: string | null; revision: number | null } | null };
+export type NoteDecisionCardFactsV1 = NoteDecisionCardV1 & {
+  /**
+   * 4C-2 rework M1: the note head's own goal. A goal-less note never gets a
+   * card (D-09), so a returned card normally carries a string; the null member
+   * keeps the head fact exact for the reader's goal-linking gate.
+   */
+  goalId: string | null;
+  pins: VersionPin[]; objects: DecisionObjectV1[]; options: DecisionOptionV1[] };
+export type NoteDecisionClosedReasonV1 = 'goal_cancelled' | 'source_resolved';
+export interface NoteDecisionSourcePort {
+  readNoteDecisions(ctx: CoreCallContext, input: { goalRef: GoalRef; attempt?: DecisionSourceAttempt }):
+    Promise<ReadResult<NoteDecisionCardFactsV1[]>>;
+  readNoteDecision(ctx: CoreCallContext, input: { pin: { noteId: string; version: number } }):
+    Promise<ReadResult<{ card: NoteDecisionCardFactsV1 | null; closedReason: NoteDecisionClosedReasonV1 | null }>>;
+  applyNoteDecision(ctx: CoreCallContext, input: { commandId: string; cardId: string;
+    optionId: 'accept' | 'reject' | 'supersede' | 'coexist';
+    pin: { noteId: string; version: number }; expectedPointerRevision: number | null;
+    answerMessageRef: SessionMessageRef; conditions: string | null }): Promise<NoteDispositionResult>;
+}
+
+// ------------------------------------------------------------------------ //
 // Owner ports (spec §3.3, §4.1)                                             //
 // ------------------------------------------------------------------------ //
 
@@ -265,6 +299,14 @@ export type NoticeItemV1 = {
     taskRef: TaskTriple; count: number; cap: number | null; reason: string;
     sourceRef: TaskRequeueRef | VerificationRoundRef;
   };
+  /**
+   * 4C-2 U9: a folded line's member set. Present only on a grouped line that
+   * folded more than one source item; an own-line item carries no `members`
+   * (a line's members are the item itself).
+   */
+  members?: { itemKey: string; position: NoticePositionV1 }[];
+  /** 4C-2 U9: the note class the pure grouping reads; absent means own-line. */
+  noteClass?: 'user_affected' | 'structural' | 'scribe_result';
 };
 
 export type DecisionSourcePageV1<T> = {
@@ -319,10 +361,15 @@ export interface DecisionReadPort {
 
 export interface DecisionCardSourcePort {
   kind: DecisionSourceV1['kind'];
+  /** True when the queue lists this source only inside one Goal's scope. */
+  needsGoal: boolean;
   readPage(ctx: CoreCallContext, input: {
     workspace: WorkspaceScope; goalRef?: GoalRef;
     page: { limit: number; cursor?: string; atLeastCursor?: CommitCursor; attempt?: DecisionSourceAttempt };
   }): Promise<ReadResult<DecisionSourcePageV1<DecisionCardV1>>>;
+  /** Optional direct read of one source key (spec §4.2). */
+  readByKey?(ctx: CoreCallContext, input: { workspace: WorkspaceScope; source: DecisionSourceV1 }):
+    Promise<ReadResult<DecisionCardV1 | null>>;
 }
 
 export interface DecisionNoticeSourcePort {
@@ -348,9 +395,12 @@ export type ResolveDecisionInputV1 = {
   text: string; annotations: DecisionAnnotationV1[];
 };
 
+export type ResolveDecisionActionV1 =
+  | WriteResult<{ goals: GoalSnapshot[] }> | NoteDispositionResult | CoreRejection | null;
+
 export type ResolveDecisionReadV1 = {
   answer: WriteResult<SessionMessage>;
-  action: WriteResult<{ goals: GoalSnapshot[] }> | CoreRejection | null;
+  action: ResolveDecisionActionV1;
   application: WriteResult<SessionMessage> | CoreRejection | null;
   state: 'answered' | 'applied' | 'awaiting_resume' | 'application_not_recorded';
 };

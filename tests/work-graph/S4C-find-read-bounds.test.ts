@@ -124,14 +124,14 @@ describe('S4C find/lookup read bounds (RW-12)', () => {
       expect(read.value.items).toHaveLength(1);
       expect(read.value.items[0]!.segment).toBe('related');
       expect(read.value.next).not.toBe(null);
-      // 25 lookups = 15 + 1 + 5 + 4:
+      // 20 lookups = 15 + 1 + 4:
       //   15: the three exact related anchor keys — task:s4a-goal/t1,
       //       goal:s4a-goal, project — each read over the five
       //       s4-note-by-anchor-{0..4} equality indexes (`headsByAnchorKey`);
+      //       the project set is already in those 15 and the first-page header
+      //       shares it (rework 4 item 3), so it adds no lookup;
       //    1: the RUN_BY_TASK_INDEX scan for t1 (`readTaskChangedFiles`; empty,
       //       because the seed binds its Run to t3, not t1);
-      //    5: the first-page project-anchor set (`selectProjectHeader`'s own
-      //       `headsByAnchorKey('project')`, separate from the related read);
       //    4: the accepted/reviewed/pending_review/staged goal buckets
       //       `overQuotaOf` reads for r1 (`currentHeadsForGoal`).
       // lookupOrdered = 5: the one `stage:s4a-goal/` prefix scan over the five
@@ -142,7 +142,7 @@ describe('S4C find/lookup read bounds (RW-12)', () => {
       // check reuses the plan window the related-scope resolution already read
       // (rework item 5(b)), so it does not re-read goal+plan. No `searchText`:
       // segment 1 is scanned in memory and the page never reaches segment 2.
-      expect(deltaOf(before, counter)).toEqual({ searchText: 0, lookup: 25, lookupOrdered: 5, readMany: 5 });
+      expect(deltaOf(before, counter)).toEqual({ searchText: 0, lookup: 20, lookupOrdered: 5, readMany: 5 });
     } finally { await f.close(); }
   });
 
@@ -156,7 +156,7 @@ describe('S4C find/lookup read bounds (RW-12)', () => {
       expect(read.status).toBe('ready');
       if (read.status !== 'ready') return;
       expect(read.value.items.map(item => item.segment)).toEqual(['related', 'related', 'project']);
-      // The spill adds 12 lookups (25 -> 37):
+      // The spill adds 12 lookups (20 -> 32):
       //   1: the a2-goal-by-workspace goal index (`projectGoalIds`);
       //   6: the visible-state buckets over the two slots — the project slot
       //      (null) and s4a-goal, three states each (accepted, reviewed,
@@ -171,7 +171,7 @@ describe('S4C find/lookup read bounds (RW-12)', () => {
       // the basis catalog revision's baseline+catalog read. The scoped plan
       // window is still shared with the check, so the extra checked item adds no
       // plan read.
-      expect(deltaOf(before, counter)).toEqual({ searchText: 0, lookup: 37, lookupOrdered: 5, readMany: 8 });
+      expect(deltaOf(before, counter)).toEqual({ searchText: 0, lookup: 32, lookupOrdered: 5, readMany: 8 });
     } finally { await f.close(); }
   });
 

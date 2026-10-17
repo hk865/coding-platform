@@ -1299,13 +1299,6 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
         // per-anchor pointer and head reads for the whole call.
         for (const [key, seed] of input.understandingPointers) caches.understandingSeed.set(key, seed);
       }
-      if (input.understandingTriggers !== undefined) {
-        // Rework item 1: the caller's shared reader already read these goals'
-        // triggers; seed them so `currentTriggers` skips its own trigger read.
-        for (const [key, triggers] of input.understandingTriggers) {
-          caches.triggers.set(key, { ok: true, value: triggers });
-        }
-      }
       const budget = newCheckBudget(limits);
       const results: NoteCheckV1[] = [];
       for (const item of input.items) {
