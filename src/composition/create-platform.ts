@@ -25,7 +25,7 @@ import { createDecisionMessageService } from '../core/work-graph/communication/d
 import { createDecisionSourceFacts } from '../core/work-graph/communication/decision-source-facts.js';
 import { createGoalSettingsService } from '../core/work-graph/tasks/goal-settings-service.js';
 import { decisionActionPolicy } from '../core/work-graph/state/decision-policy.js';
-import { readGoalSettings as readEffectiveGoalSettings } from '../core/work-graph/persistence/record-codecs.js';
+import { readGoalSettings as readEffectiveGoalSettings, decodeGoalSnapshot } from '../core/work-graph/persistence/record-codecs.js';
 import { createGoalExecutedFilesReader } from '../core/work-graph/tasks/goal-executed-files-reader.js';
 import {
   createActivityReadModel, type ActivityReadPort,
@@ -65,12 +65,15 @@ import { EVIDENCE_RECORD_SCHEMAS } from '../core/work-graph/persistence/evidence
 import { NOTE_RECORD_SCHEMAS } from '../core/work-graph/persistence/note-record-codecs.js';
 import { createNoteService } from '../core/work-graph/notes/note-service.js';
 import type { NoteRunFactResolver } from '../core/work-graph/notes/note-service.js';
-import { createNoteReadModel, type NoteListReadPort } from '../core/work-graph/notes/note-read-model.js';
+import { createNoteReadModel, readAllRecords, type NoteListReadPort, type NoteMemoryMaterialReadPort } from '../core/work-graph/notes/note-read-model.js';
 import { createVersionLists } from '../core/work-graph/notes/note-version-lists.js';
 import { createScribeScope } from '../core/work-graph/notes/scribe-scope.js';
 import { createNoteCheck } from '../core/work-graph/views/note-views.js';
+import { createNoteMemoryMaterial } from '../core/work-graph/notes/note-memory-material.js';
+import { createNoteScribeTodos } from '../core/work-graph/notes/note-scribe-todos.js';
+import type { ContextExtensionsDependencies } from '../core/work-graph/views/context-extensions.js';
 import type { NoteCheckPort, NoteHeadCheckPort, NoteMemoryReadPort, NoteReadPort, NoteScopeReadPort,
-  NoteWritePort } from '../core/work-graph/model/note-contracts.js';
+  NoteScribeTodoPort, NoteWritePort } from '../core/work-graph/model/note-contracts.js';
 import type { SourceProvider } from '../core/workspace/ports.js';
 import { decodeRun } from '../core/work-graph/materials/run-snapshot-decoder.js';
 import type { EvidencePort } from '../core/work-graph/model/evidence-contracts.js';
@@ -99,7 +102,7 @@ import { createPlanService, createRequestCandidateService } from '../core/work-g
 import type { PlanServiceDependencies } from '../core/work-graph/tasks/plan-service.js';
 import { PLAN_RECORD_SCHEMAS } from '../core/work-graph/persistence/plan-record-codecs.js';
 import { DECISION_RECORD_SCHEMAS } from '../core/work-graph/persistence/decision-record-codecs.js';
-import { PLAN_STATE_RECORD_SCHEMAS, PLAN_GOVERNANCE_RECORD_SCHEMAS, createSessionResponsibilityBasisReader, createNoteRunTaskResolver } from '../core/work-graph/tasks/plan-readers.js';
+import { PLAN_STATE_RECORD_SCHEMAS, PLAN_GOVERNANCE_RECORD_SCHEMAS, GOAL_BY_WORKSPACE_INDEX, createSessionResponsibilityBasisReader, createNoteRunTaskResolver } from '../core/work-graph/tasks/plan-readers.js';
 import { createSessionDirectory } from '../core/work-graph/sessions/session-directory.js';
 import type { SessionDirectoryPort } from '../core/work-graph/model/session-contracts.js';
 import { SESSION_RECORD_SCHEMAS, decodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey } from '../core/work-graph/sessions/session-record-codecs.js';
@@ -266,6 +269,13 @@ export type TargetPlatformOptions = {
     readFilesMax?: number; readFactsMax?: number; symbolRecheckMax?: number;
     textSearchCandidateMax?: number; textSearchMaxTerms?: number; resultMaxBytes?: number;
   };
+  /**
+   * Slice 4C-2 D-03: the injectable note id generator (`createNoteService`'s
+   * `newId`). Production never passes it (the default is `randomUUID`); a test
+   * pins literal note identities so a reminder request id is a fixed expected
+   * value instead of being recomputed from write results.
+   */
+  noteNewId?: () => string;
 };
 
 /** The composition-owned service identity. It is used only to execute trusted
@@ -860,6 +870,11 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       bodies,
       hostActor: SYSTEM_ACTOR,
     });
+    // Slice 4C-2 U8: the memory-material seam is filled after the note read
+    // model is built below; the extensions reader keeps this ONE deps object and
+    // reads `memoryMaterial` live, so there is still exactly one assembly owner.
+    const contextExtensionsDeps: ContextExtensionsDependencies = { anomalies: sessionAnomalies,
+      hostActor: SYSTEM_ACTOR, goalSettings: rawGoalSettings, decisions: rawDecisionReads };
     const graphContextOwner = createGraphContextReader({
       records: backend.records,
       goals: planService,
@@ -873,8 +888,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       // on the graph-context reader. The provider rebinds the caller's ctx to
       // this same project/workspace as the Host actor; it is never exported to a
       // model, an HTTP route or another module.
-      extensions: createContextExtensionsReader({ anomalies: sessionAnomalies, hostActor: SYSTEM_ACTOR,
-        goalSettings: rawGoalSettings, decisions: rawDecisionReads }),
+      extensions: createContextExtensionsReader(contextExtensionsDeps),
     });
     // A Session operation spans both stores. Drain the complete operation before
     // closing the platform Store, not merely its short Kernel callback.
@@ -1309,7 +1323,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       workspaceMaxFileBytes: DEFAULT_WORKSPACE_LIMITS.maxFileBytes,
       architecture: catalog,
       scopes: scribeScope,
-      now, eventId: randomUUID, newId: randomUUID,
+      now, eventId: randomUUID, newId: options.noteNewId ?? randomUUID,
       ...(options.noteLimits === undefined ? {} : options.noteLimits),
     });
     // Slice 4B L22/P8: `views` owns the one derivation implementation and the
@@ -1318,12 +1332,19 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     const noteCheck: NoteHeadCheckPort = createNoteCheck({ records: backend.records, plans: planService,
       architecture: catalog, workspace: noteWorkspace, artifacts: bodies,
       ...(options.noteLimits === undefined ? {} : { limits: options.noteLimits }) });
-    const noteReads: NoteReadPort & NoteMemoryReadPort & NoteListReadPort = createNoteReadModel({ records: backend.records,
+    const noteReads: NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPort = createNoteReadModel({ records: backend.records,
       plans: planService, architecture: catalog, workspace: noteWorkspace, check: noteCheck,
       // Slice 4C C2.2: the concrete narrow Run resolver (one readMany) resolves a
       // work Run's own task and bound plan from the trusted principal.
       runTask: createNoteRunTaskResolver(backend.records),
       ...(options.noteLimits === undefined ? {} : options.noteLimits) });
+    // Slice 4C-2 U8 (§11.4/L20): the ONE memory-material read reaches the
+    // extensions reader through the SAME deps object created above; the caller
+    // still picks the parts. §11.5: the narrow update-due and scribe to-do
+    // ports read over the SAME record store and the SAME check.
+    const noteMemoryMaterial = createNoteMemoryMaterial(noteReads);
+    contextExtensionsDeps.memoryMaterial = noteMemoryMaterial;
+    const noteScribeTodos = createNoteScribeTodos({ records: backend.records, check: noteCheck });
     // Slice 4C L13/L14: fill the stable holder the Runtime already received. The
     // tools read these fields at Run start time, after this point.
     noteToolDeps.memory = noteReads;
@@ -1350,11 +1371,56 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // Slice 4B R16/L22: the second `checkNotes` call site (the write envelope and
     // 4C's routes bind it). Exposed now so NE3 tests run through the real holder.
     const checkNotes = noteCheck.checkNotes;
+    // Slice 4C-2 §11.5: the scribe reminder's two narrow Host reads. The goal
+    // ids are one paged walk of the Goal-by-workspace index; the recipient is
+    // the smallest-sessionId active scribe (the 7D resolver replaces this).
+    const goalIdsForWorkspace = async (ctx: CoreCallContext): Promise<ReadResult<string[]>> => {
+      const page = await readAllRecords(backend.records, GOAL_BY_WORKSPACE_INDEX, [ctx.projectId, ctx.workspaceId ?? '']);
+      if (!page.ok) return { status: 'rejected', code: page.code, reason: page.reason };
+      const goalIds: string[] = [];
+      for (const record of page.value) {
+        const decoded = decodeGoalSnapshot(record);
+        if (decoded.status !== 'decoded') {
+          return { status: 'rejected', code: 'unavailable', reason: 'a goal record is damaged' };
+        }
+        goalIds.push(decoded.value.ref.goalId);
+      }
+      return { status: 'ready', value: goalIds };
+    };
+    const resolveScribeRecipient = async (ctx: CoreCallContext): Promise<ReadResult<SessionRef | null>> => {
+      const workspace = { projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? '' };
+      const scribes: SessionRef[] = [];
+      let cursor: string | undefined;
+      for (;;) {
+        const page = await sessionDirectory.findSessions(ctx, { workspace, includeArchived: false,
+          page: { limit: 200, ...(cursor === undefined ? {} : { cursor }) } });
+        if (page.status !== 'ready') return page;
+        for (const card of page.value.items) {
+          if (card.record.lifecycle !== 'active') continue;
+          const duty = await sessionDutyResolver(card.record.role, ctx);
+          if (duty.status === 'ready' && duty.value === 'scribe') scribes.push(card.record.ref);
+        }
+        if (page.value.nextCursor === null) break;
+        cursor = page.value.nextCursor;
+      }
+      if (scribes.length === 0) return { status: 'ready', value: null };
+      scribes.sort((left, right) => left.sessionId < right.sessionId ? -1 : left.sessionId > right.sessionId ? 1 : 0);
+      return { status: 'ready', value: scribes[0]! };
+    };
     const notes: NoteWritePort & NoteReadPort & NoteMemoryReadPort & NoteScopeReadPort & NoteCheckPort
-      & NoteListReadPort & typeof noteVersions = {
+      & NoteListReadPort & typeof noteVersions & {
+        readScribeTodos: NoteScribeTodoPort['readScribeTodos'];
+        readLedgerCursor: NoteScribeTodoPort['readLedgerCursor'];
+        goalIdsForWorkspace: (ctx: CoreCallContext) => Promise<ReadResult<string[]>>;
+        resolveScribeRecipient: (ctx: CoreCallContext) => Promise<ReadResult<SessionRef | null>>;
+      } = {
         writeNote, reviewNote, withdrawNote, readNote, listByAnchor, countCurrentNotes, checkNotes,
         memoryLookup, memoryNeighbors, memoryHistory, memoryConflicts, memoryFind, memoryStale, listNotes,
         listPlanVersions, listCatalogVersions,
+        readScribeTodos: noteScribeTodos.readScribeTodos,
+        readLedgerCursor: noteScribeTodos.readLedgerCursor,
+        goalIdsForWorkspace,
+        resolveScribeRecipient,
       };
     // Slice 1 (spec §3.3): the responsibility port's three public writes. Every
     // member is read here so the public `closeTerminalResponsibility` write (a

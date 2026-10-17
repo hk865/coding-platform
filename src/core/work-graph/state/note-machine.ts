@@ -148,6 +148,31 @@ export function userReasonsOf(head: Pick<NoteHeadSnapshot,
 }
 
 // --------------------------------------------------------------------------
+// C3.3/D-15 (§11.4, §11.6, U-8): the overridden pending understanding
+// --------------------------------------------------------------------------
+
+/**
+ * §11.4/§11.5/D-15, ruling U-8: a pending understanding is overridden by a
+ * NEWER current version of the same primary anchor. `userReasonsOf` returns
+ * `structural` for a structural understanding unconditionally, so the reminder
+ * count (and session B's card gate) must use this predicate, not "no user
+ * reasons" alone: such a pending note stays a scribe to-do but produces no card.
+ *
+ * True iff `pending` is an `understanding` in `pending_review`, `current` is
+ * non-null, is `accepted` or `reviewed`, has the same `anchorKey0`, and was
+ * created strictly after the pending one. Otherwise false (including
+ * `current === null`).
+ */
+export function pendingUnderstandingOverridden(pending: NoteHeadSnapshot, current: NoteHeadSnapshot | null): boolean {
+  return pending.kind === 'understanding'
+    && pending.state === 'pending_review'
+    && current !== null
+    && (current.state === 'accepted' || current.state === 'reviewed')
+    && current.anchorKey0 === pending.anchorKey0
+    && current.createdAt > pending.createdAt;
+}
+
+// --------------------------------------------------------------------------
 // Record constructors (the only writers of the protected lifecycle fields)
 // --------------------------------------------------------------------------
 

@@ -39,7 +39,8 @@ function hostContext(): CoreCallContext {
 }
 
 function emptyIndexes(): ContextExtensionsV1 {
-  return { notes: { availability: 'not_implemented', rows: [] }, anomalies: { availability: 'not_implemented', rows: [] },
+  return { notes: { availability: 'not_implemented', understanding: { rows: [], norms: [], normsOmitted: 0 }, general: [] },
+    anomalies: { availability: 'not_implemented', rows: [] },
     footprint: { availability: 'not_implemented', rows: [] },
     goalSettings: { availability: 'not_implemented', autonomy: null },
     decisions: { availability: 'not_implemented', rows: [] } };

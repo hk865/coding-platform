@@ -11,7 +11,9 @@ import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { DecisionSourceV1 } from '../../../contracts/goal-decisions.js';
-import type { ContextExtensionsV1, ContextIndexRowV1, ContextSourceV1 } from '../../../contracts/graph-context.js';
+import type {
+  ContextExtensionsV1, ContextIndexRowV1, ContextSourceV1, NotesUnderstandingRowV1,
+} from '../../../contracts/graph-context.js';
 import type { SessionAnomalyAnchorV1, SessionAnomalyViewV1 } from '../../../contracts/session-anomaly.js';
 import type { ContextReadRequestV1 } from '../model/graph-context-contracts.js';
 import type {
@@ -22,12 +24,15 @@ import type {
 } from '../model/decision-contracts.js';
 import type { SessionAnomalyPort } from '../tasks/session-anomaly-service.js';
 import { sessionAnomalyRefKey } from '../tasks/session-anomaly-codecs.js';
+import type { NoteMemoryMaterialPort, NoteMemoryMaterialV1 } from '../model/note-contracts.js';
 
 export type ContextExtensionsDependencies = {
   anomalies: Pick<SessionAnomalyPort, 'listSessionAnomalies'>;
   hostActor: Extract<ActorRef, { kind: 'human' | 'system' }>;
   goalSettings?: Pick<GoalSettingsPort, 'readGoalSettings'>;
   decisions?: Pick<DecisionReadPort, 'queryDecisionQueue'>;
+  /** Slice 4C-2/U8: the one memory-material read per assembly, when wired. */
+  memoryMaterial?: NoteMemoryMaterialPort;
 };
 
 /** The anchor owner's own scan budget (spec §4.2, L8): 100 per page, at most 25
@@ -152,6 +157,15 @@ function notImplemented(): { availability: 'not_implemented'; rows: ContextIndex
   return { availability: 'not_implemented', rows: [] };
 }
 
+/** §11.4/U-1: the `notes` member's empty `not_implemented` value (CA14). */
+function emptyNotes(): ContextExtensionsV1['notes'] {
+  return {
+    availability: 'not_implemented',
+    understanding: { rows: [], norms: [], normsOmitted: 0 },
+    general: [],
+  };
+}
+
 function rejection(code: CoreRejection['code'], reason: string): CoreRejection {
   return { status: 'rejected', code, reason };
 }
@@ -229,6 +243,44 @@ export function createContextExtensionsReader(deps: ContextExtensionsDependencie
     }
     if (cursor !== null) {
       return rejection('incomplete', 'anomaly_index_page_limit: the Goal anomaly anchors did not fit the 25-page read budget');
+    }
+
+    // Step 4b (§11.4/U8): one memory-material read per assembly, when the port
+    // is wired. Only the context-assembly path passes `includeInputs` (work
+    // true, query false); `lookGraph`/`findGraph` leave it undefined and must
+    // never pay for the material (§11.7). A missing port or a look/find request
+    // stays `not_implemented` (CA14); a real failure is the port's own
+    // rejection, never a fabricated empty row.
+    let notes: ContextExtensionsV1['notes'];
+    if (deps.memoryMaterial === undefined || request.includeInputs === undefined) {
+      notes = emptyNotes();
+    } else {
+      let materialRead: ReadResult<NoteMemoryMaterialV1>;
+      try {
+        materialRead = await deps.memoryMaterial.readMemoryMaterial(hostCtx, {
+          goalId: request.goalRef.goalId,
+          taskId: request.focusTaskIds[0] ?? null,
+          // Ruling 9 (verifier "missed 3"): a Query (`includeInputs === false`)
+          // wants understanding + norms only. The read model then skips the
+          // related scope and the general part entirely.
+          includeInputs: request.includeInputs === true,
+        });
+      } catch (error) {
+        return rejection('unavailable', `memory_material_read_failed: ${messageOf(error)}`);
+      }
+      if (materialRead.status !== 'ready') {
+        return materialRead.status === 'rejected' && materialRead.code === 'unsupported'
+          ? rejection('unavailable', materialRead.reason)
+          : materialRead;
+      }
+      const material = materialRead.value;
+      const rows = [material.projectUnderstanding, ...material.localUnderstanding]
+        .filter((row): row is NotesUnderstandingRowV1 => row !== null);
+      notes = {
+        availability: 'available',
+        understanding: { rows, norms: material.norms, normsOmitted: material.normsOmitted },
+        general: material.general,
+      };
     }
 
     // Step 4: only anchors nobody has picked up become a row; rows are ordered
@@ -309,7 +361,7 @@ export function createContextExtensionsReader(deps: ContextExtensionsDependencie
     }
     // Step 7: the wired anomalies, goal settings and decisions index.
     return { status: 'ready', value: {
-      notes: notImplemented(),
+      notes,
       anomalies: { availability: 'available', rows },
       footprint: notImplemented(),
       goalSettings,

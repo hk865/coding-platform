@@ -404,7 +404,11 @@ type Batch = { present: Map<string, EncodedRecord>; missing: Set<string>; readTh
 
 function emptyExtensions(): ContextExtensionsV1 {
   return {
-    notes: { availability: 'not_implemented', rows: [] },
+    notes: {
+      availability: 'not_implemented',
+      understanding: { rows: [], norms: [], normsOmitted: 0 },
+      general: [],
+    },
     anomalies: { availability: 'not_implemented', rows: [] },
     footprint: { availability: 'not_implemented', rows: [] },
     goalSettings: { availability: 'not_implemented', autonomy: null },

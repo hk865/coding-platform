@@ -34,6 +34,10 @@ import { createTargetPlatform, type TargetPlatformOptions } from '../composition
 import type { RecordCommitNotice, RecordCommitObserver } from '../composition/commit-observer.js';
 import type { WorkspaceHostBindings } from '../core/workspace/access.js';
 import type { CoreCallContext } from '../contracts/core/call-context.js';
+import type { SessionRef } from '../contracts/core/identity.js';
+import type { NoteScribeTodoPort } from '../core/work-graph/model/note-contracts.js';
+import type { SessionMailboxPort, SessionMessage } from '../core/work-graph/model/communication-contracts.js';
+import type { SessionMessageRef } from '../contracts/core/session-message.js';
 import type { WorkspaceRef } from '../contracts/ledger.js';
 import type { WorkspaceResult } from '../core/workspace/ports.js';
 import { createPlatformCoreRouteBindings, type CoreRouteBindings, type HostReconcileReportV1 } from './core-routes.js';
@@ -148,6 +152,16 @@ export type LocalWorkbenchHostOptions = {
    * store without one stays unsupported. */
   settings?: { settingsDirectory?: string; models?: HostSettingsModelDefinition[] };
   now?: () => string;
+  /** Slice 4C-2 §11.5/U-4: the narrow scribe to-do read the reminder check
+   * uses; absent falls back to the platform's `notes.readScribeTodos`. */
+  noteScribeTodos?: NoteScribeTodoPort;
+  /** Slice 4C-2 §11.5: the one scribe-recipient resolver (7D replaces it);
+   * absent falls back to the platform's project-scribe resolver. */
+  resolveScribeRecipient?: (ctx: CoreCallContext) => Promise<ReadResult<SessionRef | null>>;
+  /** Slice 4C-2 §11.5: the scribe reminder heartbeat period; default 60_000 ms. */
+  scribeReminderPeriodMs?: number;
+  /** Test seam over the EXISTING platform message sender; never a new sender. */
+  sendScribeReminder?: SessionMailboxPort['sendMessage'];
   publicDir?: string;
   maxBodyBytes?: number;
 };
@@ -163,6 +177,14 @@ export type LocalWorkbenchHost = {
 };
 
 const scopeKey = (scope: CoreScope): string => `${scope.projectId}\u0000${scope.workspaceId}`;
+
+// Slice 4C-2 §11.5: the scribe reminder thresholds, default period and the body
+// marker the unhandled check recognizes (the SessionMessage record carries no
+// send requestId, so the reminder's own leading text is the durable marker).
+const SCRIBE_PENDING_THRESHOLD = 10;
+const SCRIBE_UPDATE_DUE_THRESHOLD = 5;
+const SCRIBE_REMINDER_PERIOD_MS = 60_000;
+const SCRIBE_REMINDER_MARKER = '书记提醒：';
 
 /** Segment-aware prefix match for trusted read prefixes; `'.'` means the whole
  * readable workspace. An empty prefix never matches. */
@@ -1077,22 +1099,34 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     ...scope, principal: { kind: 'host', actor: { ...actor } },
     materialReader: { kind: 'host', ...scope, actor: { ...actor } }, signal: attentionAbort.signal,
   });
-  async function inputCompleted(ctx: CoreCallContext, message: import('../core/work-graph/model/communication-contracts.js').SessionMessage): Promise<boolean> {
+  /** Rework 2 item 2: "handled?" keeps THREE answers, never a silent `false`.
+   * A failed Run or Query read is `unknown`; only a real not-completed fact is
+   * `not_completed`. */
+  type InputCompletion = 'completed' | 'not_completed' | 'unknown';
+  async function inputCompletion(ctx: CoreCallContext, message: import('../core/work-graph/model/communication-contracts.js').SessionMessage): Promise<InputCompletion> {
+    let sawUnknown = false;
     for (const accepted of message.acceptedInputs ?? []) {
       if (accepted.part !== 'message') continue;
       const ref = accepted.executionRef;
       if (ref.aggregateType === 'Run') {
         const read = await platform.executions.readExecution(ctx, ref);
-        if (read.status === 'ready' && read.value.run.status === 'ended' && read.value.run.outcome === 'completed') return true;
+        if (read.status !== 'ready') { sawUnknown = true; continue; }
+        if (read.value.run.status === 'ended' && read.value.run.outcome === 'completed') return 'completed';
       } else {
         const read = await platform.queries.readQueryJob(ctx, { aggregateType: 'QueryJob', projectId: ref.projectId, workspaceId: ref.workspaceId, queryJobId: ref.queryJobId });
-        if (read.status === 'ready' && read.value.run.ref.runId === ref.runId && read.value.job.job.answerRefs.length > 0) {
+        if (read.status !== 'ready') { sawUnknown = true; continue; }
+        if (read.value.run.ref.runId === ref.runId && read.value.job.job.answerRefs.length > 0) {
           const answer = await platform.queries.readQueryAnswer(ctx, read.value.job.job.answerRefs.at(-1)!);
-          if (answer.status === 'ready') return true;
+          if (answer.status !== 'ready') { sawUnknown = true; continue; }
+          return 'completed';
         }
       }
     }
-    return false;
+    return sawUnknown ? 'unknown' : 'not_completed';
+  }
+  /** The narrowed boolean the other callers keep (`consumeIdle`, attention). */
+  async function inputCompleted(ctx: CoreCallContext, message: import('../core/work-graph/model/communication-contracts.js').SessionMessage): Promise<boolean> {
+    return (await inputCompletion(ctx, message)) === 'completed';
   }
   async function consumeIdle(entry: WorkbenchInputConsumer): Promise<void> {
     const ctx = hostContext(entry.scope);
@@ -1148,8 +1182,195 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       cursor = outbox.value.nextCursor ?? undefined;
     } while (cursor !== undefined && !attentionAbort.signal.aborted);
   }
+  // Slice 4C-2 §11.5/U-10: the scribe reminder shell. One check per configured
+  // workspace per heartbeat; the to-do port and the recipient resolver are the
+  // narrow seams (the platform's by default), and the send reuses the EXISTING
+  // platform sender, never a second one.
+  const noteScribeTodos: NoteScribeTodoPort | undefined = options.noteScribeTodos
+    ?? { readScribeTodos: platform.notes.readScribeTodos, readLedgerCursor: platform.notes.readLedgerCursor };
+  const resolveScribeRecipient = options.resolveScribeRecipient ?? platform.notes.resolveScribeRecipient;
+  const sendScribeReminder = options.sendScribeReminder ?? platform.messages.sendMessage.bind(platform.messages);
+  const scribeReminderPeriodMs = options.scribeReminderPeriodMs ?? SCRIBE_REMINDER_PERIOD_MS;
+  const nowIso = options.now ?? (() => new Date().toISOString());
+  const clockMs = (): number => Date.parse(nowIso());
+
+  /**
+   * §11.5/§11.7: the per-workspace reminder memory. It lasts for the life of
+   * this Host only; after a restart the first check rebuilds the unhandled
+   * state by paging each recipient's whole inbox once.
+   *
+   * Rework 2 item 2: the memory is PER RECIPIENT (a single `sentReminder` lost
+   * the recipient change). Each entry keeps the last sent ref and whether that
+   * recipient's inbox was RECOVERED (the whole inbox paged once; an EMPTY inbox
+   * also counts as recovered).
+   */
+  type ScribeRecipientMemory = {
+    /** U-7: the last reminder actually sent to this recipient, checked with `readMessage`. */
+    ref: SessionMessageRef | null;
+    /** True once this recipient's whole inbox has been paged once since start. */
+    recovered: boolean;
+  };
+  type ScribeReminderState = {
+    lastCheckAtMs: number;
+    /** `undefined` = no check computed yet; otherwise the cursor of the last check. */
+    computedAtCursor: string | null | undefined;
+    pendingSend: { requestId: string; input: { recipient: SessionRef; text: string; intent: 'notify' } } | null;
+    sentRequestId: string | null;
+    recipients: Map<string, ScribeRecipientMemory>;
+  };
+  const scribeReminderStates = new Map<string, ScribeReminderState>();
+  function scribeReminderState(key: string): ScribeReminderState {
+    const existing = scribeReminderStates.get(key);
+    if (existing !== undefined) return existing;
+    const created: ScribeReminderState = { lastCheckAtMs: Number.NEGATIVE_INFINITY,
+      computedAtCursor: undefined, pendingSend: null, sentRequestId: null, recipients: new Map() };
+    scribeReminderStates.set(key, created);
+    return created;
+  }
+  function recipientMemory(state: ScribeReminderState, recipient: SessionRef): ScribeRecipientMemory {
+    const existing = state.recipients.get(recipient.sessionId);
+    if (existing !== undefined) return existing;
+    const created: ScribeRecipientMemory = { ref: null, recovered: false };
+    state.recipients.set(recipient.sessionId, created);
+    return created;
+  }
+
+  /**
+   * U-7: whether this recipient has an unhandled scribe reminder. When the
+   * in-memory ref is present it is checked first (`readMessage` + the
+   * three-state completion): `unknown` sends nothing and leaves
+   * `computedAtCursor` unset, `not_completed` stays unhandled, `completed`
+   * clears the ref and continues. If no ref and the inbox has not been
+   * recovered, the WHOLE inbox is paged once (following `nextCursor` to the
+   * end) for a not-completed Host `notify` message whose body starts with the
+   * marker. ANY page/body/message read failure is `unknown`: nothing is sent
+   * and the caller leaves `computedAtCursor` unset.
+   */
+  type ReminderDisposition = 'clear' | 'unhandled' | 'unknown';
+  async function scribeReminderDisposition(ctx: CoreCallContext, recipient: SessionRef,
+    state: ScribeReminderState): Promise<ReminderDisposition> {
+    const memory = recipientMemory(state, recipient);
+    if (memory.ref !== null) {
+      const read = await platform.messages.readMessage(ctx, memory.ref);
+      if (read.status !== 'ready') return 'unknown';
+      const completion = await inputCompletion(ctx, read.value);
+      if (completion === 'unknown') return 'unknown';
+      if (completion === 'not_completed') return 'unhandled';
+      memory.ref = null; // handled: fall through to a fresh inbox page
+    }
+    if (!memory.recovered) {
+      let cursor: string | undefined;
+      do {
+        const inbox = await platform.messages.readInbox(ctx, { recipient,
+          page: { limit: 100, ...(cursor === undefined ? {} : { cursor }) } });
+        if (inbox.status !== 'ready') return 'unknown';
+        for (const message of inbox.value.items) {
+          if (message.sender.kind !== 'host' || message.intent !== 'notify') continue;
+          const completion = await inputCompletion(ctx, message);
+          if (completion === 'unknown') return 'unknown';
+          if (completion === 'completed') continue;
+          const body = await platform.messages.readMessageBody(ctx, { messageRef: message.ref, part: 'message' });
+          if (body.status !== 'ready') return 'unknown';
+          if (body.value.text.startsWith(SCRIBE_REMINDER_MARKER)) {
+            memory.ref = message.ref;
+            return 'unhandled';
+          }
+        }
+        cursor = inbox.value.nextCursor ?? undefined;
+      } while (cursor !== undefined && !attentionAbort.signal.aborted);
+      // Only a COMPLETE page counts as recovered; an early `unhandled` return
+      // above keeps the flag false so a later handled ref resumes the scan.
+      memory.recovered = true;
+    }
+    return 'clear';
+  }
+
+  /** §11.5 step 5: send the pending request; on `committed` record it so the
+   * next period does not send it again. A thrown/failed send keeps `pendingSend`,
+   * so the next period retries the SAME requestId. */
+  async function sendPendingScribeReminder(ctx: CoreCallContext, state: ScribeReminderState): Promise<void> {
+    const pending = state.pendingSend;
+    if (pending === null) return;
+    try {
+      const sent = await sendScribeReminder(ctx, {
+        input: { ...pending.input }, meta: { requestId: pending.requestId, expected: [] },
+      });
+      if (sent.status === 'committed') {
+        state.pendingSend = null;
+        state.sentRequestId = pending.requestId;
+        recipientMemory(state, pending.input.recipient).ref = sent.value.ref;
+      }
+    } catch { /* a failed send stays pending for the next period */ }
+  }
+
+  async function runScribeReminderCheck(scope: CoreScope): Promise<void> {
+    if (noteScribeTodos === undefined) return;
+    const state = scribeReminderState(scopeKey(scope));
+    // 1. the reminder's OWN period, on the INJECTED clock.
+    const atMs = clockMs();
+    if (atMs - state.lastCheckAtMs < scribeReminderPeriodMs) return;
+    state.lastCheckAtMs = atMs;
+    const ctx = hostContext(scope);
+
+    // 2. the ledger cursor. A failed read does nothing this pass and leaves
+    // `computedAtCursor` unset, so the next period retries.
+    const cursorRead = await noteScribeTodos.readLedgerCursor(ctx);
+    if (cursorRead.status !== 'ready') return;
+    const cursor = cursorRead.value;
+
+    // Rework 2 item 3: retry ONLY when the cursor did not move. A pending send
+    // belongs to a specific computed cursor; once the cursor moves it is stale.
+    if (state.computedAtCursor !== undefined && cursor === state.computedAtCursor) {
+      if (state.pendingSend !== null) await sendPendingScribeReminder(ctx, state);
+      return;
+    }
+    // The cursor moved (or this is the first check): drop any stale pending
+    // request so it can never be resent to a recipient the ledger has left.
+    state.pendingSend = null;
+
+    const recipient = await resolveScribeRecipient(ctx);
+    if (recipient.status !== 'ready' || recipient.value === null) return;
+    // The resolver may hand back the Session AGGREGATE ref; the mailbox address
+    // is the plain `{ projectId, sessionId }` (a bare SessionRef).
+    const recipientRef: SessionRef = { projectId: recipient.value.projectId, sessionId: recipient.value.sessionId };
+
+    // 4. the unhandled check. `unknown` sends nothing and leaves the cursor
+    // unset; an unhandled reminder sends nothing but records the cursor.
+    const disposition = await scribeReminderDisposition(ctx, recipientRef, state);
+    if (disposition === 'unknown') return;
+    if (disposition === 'unhandled') { state.computedAtCursor = cursor; return; }
+
+    const goalIds = await platform.notes.goalIdsForWorkspace(ctx);
+    if (goalIds.status !== 'ready') return;
+    const todos = await noteScribeTodos.readScribeTodos(ctx, { goalIds: goalIds.value });
+    if (todos.status !== 'ready') return;
+    let pendingCount = 0;
+    let updateDueCount = 0;
+    let immediate = false;
+    const identities = new Set<string>();
+    const anchorNames = new Set<string>();
+    for (const goal of todos.value) {
+      pendingCount += goal.pending.length;
+      updateDueCount += goal.updateDueTodos.length;
+      if (goal.immediate) immediate = true;
+      for (const todo of [...goal.pending, ...goal.updateDueTodos]) {
+        identities.add(todo.identity);
+        anchorNames.add(todo.anchorKey);
+      }
+    }
+    state.computedAtCursor = cursor;
+    if (!immediate && pendingCount < SCRIBE_PENDING_THRESHOLD && updateDueCount < SCRIBE_UPDATE_DUE_THRESHOLD) return;
+    const requestId = 'scribe-reminder:' + scope.workspaceId + ':' + recipientRef.sessionId + ':'
+      + sha256Hex(canonicalJson([...identities].sort() as never));
+    if (state.sentRequestId === requestId) return;
+    const text = `${SCRIBE_REMINDER_MARKER}待审 ${String(pendingCount)} 条，该更新 ${String(updateDueCount)} 条。`
+      + `锚点：${[...anchorNames].slice(0, 20).join('、')}`;
+    state.pendingSend = { requestId, input: { recipient: recipientRef, text, intent: 'notify' } };
+    await sendPendingScribeReminder(ctx, state);
+  }
+
   // L-10: without the instance lease this Host delivers no attention and wakes no consumer (no execution driver).
-  const attentionDone: Promise<void> = (attentionScopes.length === 0 && inputConsumers.length === 0) || !leaseOwned ? Promise.resolve() : (async () => {
+  const attentionDone: Promise<void> = (attentionScopes.length === 0 && inputConsumers.length === 0 && noteScribeTodos === undefined) || !leaseOwned ? Promise.resolve() : (async () => {
     const scanner = createAttentionScanner({ workspace: platform.workspace, plans: platform.plans, messages: platform.messages, architecture: platform.architecture,
       ...(platform.runtime.readAttentionGraph === undefined ? {} : {
         readAttentionGraph: platform.runtime.readAttentionGraph.bind(platform.runtime),
@@ -1159,11 +1380,16 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       confirmedSequences: new Map<string, number>(), nextSequence: 0,
       pending: [] as { signals: readonly import('./attention-observer.js').AttentionSignal[]; sequence: number; messageRef: import('../contracts/core/session-message.js').SessionMessageRef; snapshot: Awaited<ReturnType<typeof scanner.scan>> }[],
     }));
-    const period = Math.max(1, Math.min(...attentionScopes.map(scope => scope.config.heartbeatMs), ...inputConsumers.map(entry => entry.heartbeatMs)));
+    const period = Math.max(1, Math.min(...attentionScopes.map(scope => scope.config.heartbeatMs),
+      ...inputConsumers.map(entry => entry.heartbeatMs), scribeReminderPeriodMs));
     const lastInputScan = new Map<string, number>();
     while (!attentionAbort.signal.aborted) {
       for (const entry of inputConsumers) {
         const key = canonicalJson({ scope: entry.scope, sessionRef: entry.sessionRef } as never);
+        // The input-consumer throttle stays on the wall clock: the existing Host
+        // fixtures inject a FIXED `now`, and gating these scans on it would stop
+        // an idle Session from ever re-scanning. Only the attention observer's
+        // timestamp below uses the injected clock (NE6).
         if (!inputJobs.has(key) && Date.now() - (lastInputScan.get(key) ?? 0) >= entry.heartbeatMs) {
           lastInputScan.set(key, Date.now());
           const job = consumeIdle(entry).catch(() => { /* original facts remain retryable */ }).finally(() => inputJobs.delete(key));
@@ -1201,7 +1427,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         catch { continue; }
         if (attentionAbort.signal.aborted) break;
         if (entry.observer.processed === null) entry.observer.prime(snapshot);
-        const delivery = entry.observer.observe(snapshot, Date.now());
+        const delivery = entry.observer.observe(snapshot, clockMs());
         if (delivery === null || entry.scope.targetSession === null) continue;
         // Slice 3 C8 (§4.5): the notification text carries only the CHANGES of
         // this delivery, never the full snapshot or every file. The same
@@ -1239,6 +1465,13 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
             entry.pending.push({ signals: delivery.signals, sequence: ++entry.nextSequence, messageRef: sent.value.ref, snapshot });
           }
         } catch { /* a failed delivery leaves the input unprocessed and is retried */ }
+      }
+      // Slice 4C-2 §11.5: every configured workspace, whether or not attention
+      // or input consumers are configured. A failed check records nothing and
+      // is retried on the next heartbeat.
+      for (const workspace of workspaces) {
+        if (attentionAbort.signal.aborted) break;
+        try { await runScribeReminderCheck(workspace.scope); } catch { /* retried next heartbeat */ }
       }
       await sleepUntilAbort(period, attentionAbort.signal);
     }

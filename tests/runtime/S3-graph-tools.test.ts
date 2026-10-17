@@ -172,7 +172,8 @@ function outputValue(result: ToolResult): unknown {
 function emptyIndexes(): ContextExtensionsV1 {
   const empty = { availability: 'not_implemented' as const, rows: [] };
   return {
-    notes: { ...empty }, anomalies: { ...empty }, footprint: { ...empty },
+    notes: { availability: 'not_implemented', understanding: { rows: [], norms: [], normsOmitted: 0 }, general: [] },
+    anomalies: { ...empty }, footprint: { ...empty },
     goalSettings: { availability: 'not_implemented', autonomy: null }, decisions: { ...empty },
   };
 }

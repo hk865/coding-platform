@@ -24,7 +24,7 @@ import type { CoreRejection, ReadResult } from '../../src/contracts/core/results
 import type { GoalRef } from '../../src/contracts/ledger.js';
 import type { NoteDraftV1 } from '../../src/contracts/note.js';
 import type {
-  NoteReadPort, NoteScopeReadPort, NoteWritePort, WriteNoteResult,
+  NoteMemoryReadPort, NoteReadPort, NoteScopeReadPort, NoteWritePort, WriteNoteResult,
 } from '../../src/core/work-graph/model/note-contracts.js';
 import type { RecordLookupPage, RecordLookupRequest } from '../../src/core/record-store/lookup-ports.js';
 import type { RecordBatchRead, StoreFailure, StoreResult } from '../../src/core/record-store/ports.js';
@@ -37,14 +37,14 @@ import { createS4ANoteScopeFixture, type S4ANoteScopeFixture } from './S4A-note-
 
 /** The read the switch injects a failure into. */
 export type S4ANoteFaultTarget =
-  | { readonly kind: 'lookup'; readonly index: string }
+  | { readonly kind: 'lookup'; readonly index: string; readonly code?: 'unavailable' | 'unsupported' }
   | { readonly kind: 'readMany'; readonly refKeyIncludes?: string }
   | { readonly kind: 'findSessions' }
   | { readonly kind: 'readArchitectureRevision' };
 
 export type S4ANoteFaultFixture = {
   platform: S4ANoteScopeFixture['platform'];
-  notes: NoteWritePort & NoteReadPort & NoteScopeReadPort;
+  notes: NoteWritePort & NoteReadPort & NoteScopeReadPort & NoteMemoryReadPort;
   root: string;
   goalRef: GoalRef;
   ctx(): CoreCallContext;
@@ -68,6 +68,11 @@ export async function createS4ANoteFaultFixture(): Promise<S4ANoteFaultFixture> 
 
   const injected: StoreFailure = { status: 'rejected', code: 'unavailable', reason: 'injected' };
   const injectedRead: CoreRejection = { status: 'rejected', code: 'unavailable', reason: 'injected' };
+  // The lookup fault defaults to `unavailable`; `code` can ask for `unsupported`
+  // (M-12h: the Run-index lookup answering unsupported must make the whole
+  // update-due read unavailable, never an empty trigger set).
+  const lookupInjected = (): StoreFailure => ({ status: 'rejected',
+    code: target !== null && target.kind === 'lookup' ? target.code ?? 'unavailable' : 'unavailable', reason: 'injected' });
 
   const originalMemory = memoryBackend.createInMemoryRecordBackend;
   const memorySpy = vi.spyOn(memoryBackend, 'createInMemoryRecordBackend').mockImplementation(options => {
@@ -76,7 +81,7 @@ export async function createS4ANoteFaultFixture(): Promise<S4ANoteFaultFixture> 
     const wrapped = {
       ...records,
       async lookup(request: RecordLookupRequest): Promise<StoreResult<RecordLookupPage>> {
-        if (lookupArmed(request.index)) return injected;
+        if (lookupArmed(request.index)) return lookupInjected();
         return records.lookup(request);
       },
       async readMany(refKeys: readonly string[]): Promise<StoreResult<RecordBatchRead>> {
@@ -124,7 +129,7 @@ export async function createS4ANoteFaultFixture(): Promise<S4ANoteFaultFixture> 
 
   return {
     platform: scope.platform,
-    notes: scope.notes,
+    notes: scope.platform.notes,
     root: scope.root,
     goalRef: scope.goalRef,
     ctx: scope.ctx,

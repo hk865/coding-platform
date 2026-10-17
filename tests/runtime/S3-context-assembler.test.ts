@@ -265,7 +265,7 @@ const CA_ASSEMBLER_INPUT = assemblerInput(workRecord());
 /** The five extension seams are unassembled by default (CA14). */
 function notImplementedExtensions(): ContextExtensionsV1 {
   return {
-    notes: { availability: 'not_implemented', rows: [] },
+    notes: { availability: 'not_implemented', understanding: { rows: [], norms: [], normsOmitted: 0 }, general: [] },
     anomalies: { availability: 'not_implemented', rows: [] },
     footprint: { availability: 'not_implemented', rows: [] },
     goalSettings: { availability: 'not_implemented', autonomy: null },
@@ -432,11 +432,13 @@ const MULTI_ROWS = {
   reminders: [{ key: 'M1', text: 'M1' }, { key: 'M2', text: 'M2' }],
   inputs: [{ key: 'I1', text: 'I1' }, { key: 'I2', text: 'I2' }],
 };
-/** The same rows, with the per-section item order and the section insertion order scrambled. */
+/** The same rows, with the per-section item order and the section insertion order scrambled.
+ * §11.4/L20: the `notes` rows keep their source order now, so only the other
+ * three optional sections are scrambled here. */
 const MULTI_ROWS_SCRAMBLED = {
   inputs: [{ key: 'I2', text: 'I2' }, { key: 'I1', text: 'I1' }],
   reminders: [{ key: 'M2', text: 'M2' }, { key: 'M1', text: 'M1' }],
-  notes: [{ key: 'N2', text: 'N2' }, { key: 'N1', text: 'N1' }],
+  notes: [{ key: 'N1', text: 'N1' }, { key: 'N2', text: 'N2' }],
   footprint: [{ key: 'F2', text: 'F2' }, { key: 'F1', text: 'F1' }],
 };
 
@@ -629,7 +631,12 @@ describe('S3 context assembler CA01-CA15', () => {
     harness.facts.current.goal = { ...harness.facts.current.goal, objective: 'Changed objective after bind' };
     harness.facts.current.extensions = {
       ...harness.facts.current.extensions,
-      notes: { availability: 'available', rows: [{ key: 'n1', node: { kind: 'task', ref: TASK_B, planRef: PLAN_REF }, text: 'changed note', sources: [] }] },
+      notes: {
+        availability: 'available',
+        understanding: { rows: [], norms: [], normsOmitted: 0 },
+        general: [{ anchorKey: 'task:tB', noteId: 'n1', version: 1, kind: 'convention',
+          conclusion: 'changed note', freshness: 'fresh', label: 'changed note' }],
+      },
     };
     harness.counts.graph = 0;
     harness.counts.inputs = 0;

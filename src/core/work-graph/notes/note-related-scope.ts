@@ -294,7 +294,7 @@ function runRefOfKey(refKey: string): RunRef | null {
   }
 }
 
-function stageIdOf(task: RuntimeTask): string | null {
+export function stageIdOf(task: RuntimeTask): string | null {
   if (task.stageId !== undefined) return task.stageId;
   if (task.scope.kind === 'stage' || task.scope.kind === 'module') return task.scope.stageId;
   return null;
@@ -381,6 +381,16 @@ Promise<RelatedScopeOutcome> {
   const selected = selectRelatedFiles(files.value, deps.relatedFilesMax);
   return { ok: true, value: buildTaskScope(goalId, task, plan.planRevision, interfaces, selected.files,
     selected.omitted, selected.unknownRuns) };
+}
+
+/**
+ * Rework item 8: the same task-scope resolution as `resolveRelatedScope`'s
+ * explicit-task branch, but with the goal's plan window already read by the
+ * caller. `readMemoryMaterial` uses this so one call reads one plan window.
+ */
+export async function resolveTaskScopeWithPlan(ctx: CoreCallContext, deps: RelatedScopeDeps,
+  goalId: string, taskId: string, plan: PlanRevisionSnapshot): Promise<RelatedScopeOutcome> {
+  return resolvedTaskScope(deps, ctx, goalId, taskId, plan);
 }
 
 async function explicitTaskScope(deps: RelatedScopeDeps, ctx: CoreCallContext,

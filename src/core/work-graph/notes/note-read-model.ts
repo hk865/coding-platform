@@ -14,7 +14,9 @@
  * miss apart from a failure, and `readNote`/`listByAnchor` return the failure.
  */
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
-import type { CoreRejection } from '../../../contracts/core/results.js';
+import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
+import type { NoteIndexRowV1, NotesUnderstandingRowV1 } from '../../../contracts/graph-context.js';
+import type { GoalRef } from '../../../contracts/ledger.js';
 import type { NoteAnchorV1, NoteDraftAnchorV1, NoteHeadSnapshot, NoteState, NoteVersionSnapshot } from '../../../contracts/note.js';
 import { NOTE_GENERAL_KINDS, renderNoteHeader } from '../../../contracts/note.js';
 import type { PlanRevisionSnapshot } from '../../../contracts/plan.js';
@@ -30,6 +32,7 @@ import type {
   MemoryResultV1, MemoryStaleRequest, NoteHeadCheckItemV1,
   NoteHeadCheckPort, NoteRunTaskResolver,
   NoteHistoryItemV1, NoteItemV1, NoteListRequestV1, NoteListResultV1, NoteMemoryReadPort, NoteMemoryReadResult,
+  NoteMemoryMaterialInputV1, NoteMemoryMaterialV1, NoteCheckV1,
   NotePageV1, NoteReadPort,
   NoteFileObservationV1,
   NoteAnchorNotFoundV1, NoteAnchorCandidateV1,
@@ -48,10 +51,13 @@ import {
   currentPointerRefKey, decodeCurrentPointerSnapshot, decodeNoteHeadSnapshot, decodeNoteVersionSnapshot,
   noteHeadRefKey, noteVersionRefKey,
 } from '../persistence/note-record-codecs.js';
-import { GOAL_BY_WORKSPACE_INDEX } from '../tasks/plan-readers.js';
+import { GOAL_BY_WORKSPACE_INDEX, readGoalPlanWindow } from '../tasks/plan-readers.js';
 import { decodeGoalSnapshot } from '../persistence/record-codecs.js';
 import { anchorKeyOf, resolveNoteAnchors, topicKeyOf, type NoteAnchorFactsDeps } from './note-anchors.js';
-import { headsOnKeyPrefix, isRelatedHead, resolveRelatedScope, type RelatedScope, type RelatedScopeDeps } from './note-related-scope.js';
+import { renderUnderstandingBody } from './note-service.js';
+import { headsOnKeyPrefix, isRelatedHead, resolveRelatedScope, resolveTaskScopeWithPlan, stageIdOf,
+  type RelatedScope, type RelatedScopeDeps } from './note-related-scope.js';
+import { readPointerAndHeadBatch } from './note-batch-reader.js';
 
 export type NoteReadDependencies = {
   records: GoalRecordTransactionPort & RecordLookupPort & RecordOrderedLookupPort & RecordTextSearchPort;
@@ -345,7 +351,13 @@ export function createNoteHeadDerivations(records: GoalRecordTransactionPort & R
   return { conflictingOf, overQuotaOf };
 }
 
-export function createNoteReadModel(deps: NoteReadDependencies): NoteReadPort & NoteMemoryReadPort & NoteListReadPort {
+export type NoteMemoryMaterialReadPort = {
+  readMemoryMaterial(ctx: CoreCallContext, input: NoteMemoryMaterialInputV1):
+    Promise<ReadResult<NoteMemoryMaterialV1>>;
+};
+
+export function createNoteReadModel(deps: NoteReadDependencies):
+NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPort {
   const anchorQuota = deps.anchorQuota ?? NOTE_ANCHOR_QUOTA;
   const goalQuota = deps.goalQuota ?? NOTE_GOAL_QUOTA;
   const anchorFacts: NoteAnchorFactsDeps = { records: deps.records,
@@ -417,21 +429,42 @@ export function createNoteReadModel(deps: NoteReadDependencies): NoteReadPort & 
    * of each item's note; any other version is a historical item (R11: only the
    * head version can be `currentEligible`).
    */
+  /**
+   * Rework item 8: the pointers and pointed heads `readMemoryMaterial` already
+   * read, keyed `${projectId}\u0000${anchorKey}` exactly as the check's
+   * `understandingSeed`. Handing them over lets `computeUnderstandingOfAnchorKey`
+   * skip its own per-anchor pointer and head reads.
+   */
+  type UnderstandingPointerSeed = ReadonlyMap<string, {
+    pointer: { noteId: string | null; revision: number | null };
+    head: NoteHeadSnapshot | null;
+  }>;
+
   async function withCheck<T extends NoteItemV1>(ctx: CoreCallContext, items: T[],
     headVersions?: ReadonlyMap<string, number>, headSnapshots?: ReadonlyMap<string, NoteHeadSnapshot>,
     anchorSets?: ReadonlyMap<string, NoteHeadSnapshot[]>,
     versionSnapshots?: ReadonlyMap<number, NoteVersionSnapshot>,
     conflictingByNote?: ReadonlyMap<string, boolean>,
-    planWindows?: ReadonlyMap<string, PlanRevisionSnapshot | null>): Promise<ReadOutcome<T[]>> {
-    if (deps.check === undefined || items.length === 0) return { ok: true, value: items };
-    const result = headSnapshots === undefined
-      ? await deps.check.checkNotes(ctx,
-        { items: items.map(item => ({ noteId: item.noteId, version: item.version })) })
-      : await deps.check.checkHeads(ctx, {
+    planWindows?: ReadonlyMap<string, PlanRevisionSnapshot | null>,
+    understandingAnchors?: string[],
+    understandingPointers?: UnderstandingPointerSeed): Promise<ReadOutcome<{ items: T[]; understanding: UnderstandingStatusV1[] }>> {
+    if (deps.check === undefined) return { ok: true, value: { items, understanding: [] } };
+    const wantsUnderstanding = understandingAnchors !== undefined && understandingAnchors.length > 0;
+    if (items.length === 0 && !wantsUnderstanding) return { ok: true, value: { items, understanding: [] } };
+    let checked: NoteCheckV1[];
+    let understanding: UnderstandingStatusV1[] = [];
+    if (headSnapshots === undefined) {
+      const result = await deps.check.checkNotes(ctx,
+        { items: items.map(item => ({ noteId: item.noteId, version: item.version })) });
+      if (result.status !== 'ready') return checkFailure(result);
+      checked = result.value;
+    } else {
+      const result = await deps.check.checkHeads(ctx, {
         // F4 (review item 4): the heads (and non-head version snapshots) already
         // read in this call go straight to the check; it never reads them again.
         // §11.3 (b11): a derivation the read model already made (conflicts) is
-        // handed over so the check does not recompute it.
+        // handed over so the check does not recompute it. U-3: understanding
+        // anchors ride the same call/caches.
         items: items.map(item => {
           const snapshot = versionSnapshots?.get(item.version);
           const conflicting = conflictingByNote?.get(item.noteId);
@@ -443,17 +476,15 @@ export function createNoteReadModel(deps: NoteReadDependencies): NoteReadPort & 
         }),
         ...(anchorSets === undefined ? {} : { anchorSets }),
         ...(planWindows === undefined ? {} : { planWindows }),
+        ...(understandingAnchors === undefined ? {} : { understandingAnchors }),
+        ...(understandingPointers === undefined ? {} : { understandingPointers }),
       });
-    if (result.status !== 'ready') {
-      if (result.status === 'rejected') {
-        const mapped = mapStoreFailure(result);
-        return { ok: false, code: mapped.code, reason: mapped.reason };
-      }
-      if (result.status === 'not_found') return { ok: false, code: 'not_found', reason: 'the check target does not exist' };
-      return { ok: false, code: 'unavailable', reason: 'the note check is not ready' };
+      if (result.status !== 'ready') return checkFailure(result);
+      checked = result.value.items;
+      understanding = result.value.understanding;
     }
     const out = items.map((item, index) => {
-      const check = result.value[index]!;
+      const check = checked[index]!;
       const headVersion = headVersions?.get(item.noteId);
       const currentEligible = headVersion === undefined || headVersion === item.version
         ? check.currentEligible : false;
@@ -465,7 +496,17 @@ export function createNoteReadModel(deps: NoteReadDependencies): NoteReadPort & 
         retiredExtraAnchors: check.retiredExtraAnchors, unresolvedFacts: check.unresolvedFacts,
         uncheckedFacts: check.uncheckedFacts, hints: check.hints };
     });
-    return { ok: true, value: out as T[] };
+    return { ok: true, value: { items: out as T[], understanding } };
+  }
+
+  /** The one mapping from a non-ready check result to the read model's outcome. */
+  function checkFailure(result: { status: string; code?: string; reason?: string }): ReadOutcome<never> {
+    if (result.status === 'rejected') {
+      const mapped = mapStoreFailure(result as { code: string; reason: string });
+      return { ok: false, code: mapped.code, reason: mapped.reason };
+    }
+    if (result.status === 'not_found') return { ok: false, code: 'not_found', reason: 'the check target does not exist' };
+    return { ok: false, code: 'unavailable', reason: 'the note check is not ready' };
   }
 
   async function pointerOf(projectId: string, anchor: NoteAnchorV1):
@@ -483,6 +524,24 @@ export function createNoteReadModel(deps: NoteReadDependencies): NoteReadPort & 
     const decoded = decodeCurrentPointerSnapshot(record);
     if (decoded.status !== 'decoded') return { ok: false, code: 'unavailable', reason: 'damaged current pointer' };
     return { ok: true, value: { noteId: decoded.value.noteId, revision: decoded.value.revision } };
+  }
+
+  /**
+   * Rework item 8/§11.7: the ONE batched pointer read of several understanding
+   * anchors (project/goal/stage). Every anchor gets an entry; a missing pointer
+   * is `{ noteId: null, revision: null }` exactly as `pointerOf`.
+   */
+  // Rework item 4: the batched pointer/head read/decode lives in the shared
+  // leaf `note-batch-reader.ts`; this call site keeps its failure mapping.
+  async function pointersAndHeadsOf(projectId: string, anchorKeys: readonly string[]):
+  Promise<ReadOutcome<{ pointers: Map<string, { noteId: string | null; revision: number | null }>;
+    heads: Map<string, NoteHeadSnapshot> }>> {
+    const batch = await readPointerAndHeadBatch(deps.records, projectId, anchorKeys);
+    if (!batch.ok) {
+      const failure = mapStoreFailure({ code: batch.code, reason: batch.reason });
+      return { ok: false, code: failure.code, reason: failure.reason };
+    }
+    return { ok: true, value: batch.value };
   }
 
   /** L2a class 2/R9: is this anchor key backed by a real object now? Failed reads carry no candidates. */
@@ -719,7 +778,9 @@ export function createNoteReadModel(deps: NoteReadDependencies): NoteReadPort & 
   async function checkedPage(ctx: CoreCallContext, heads: readonly NoteHeadSnapshot[],
     currentGoalId: string | null, anchorSets?: ReadonlyMap<string, NoteHeadSnapshot[]>,
     conflictingByNote?: ReadonlyMap<string, boolean>,
-    planWindows?: ReadonlyMap<string, PlanRevisionSnapshot | null>): Promise<ReadOutcome<NoteItemV1[]>> {
+    planWindows?: ReadonlyMap<string, PlanRevisionSnapshot | null>,
+    understandingAnchors?: string[],
+    understandingPointers?: UnderstandingPointerSeed): Promise<ReadOutcome<{ items: NoteItemV1[]; understanding: UnderstandingStatusV1[] }>> {
     const cache = newHeadCache();
     const built: NoteItemV1[] = [];
     const headSnapshots = new Map<string, NoteHeadSnapshot>();
@@ -730,9 +791,11 @@ export function createNoteReadModel(deps: NoteReadDependencies): NoteReadPort & 
       headSnapshots.set(head.noteId, head);
     }
     const checked = await withCheck(ctx, built, undefined, headSnapshots, anchorSets, undefined, conflictingByNote,
-      planWindows);
+      planWindows, understandingAnchors, understandingPointers);
     if (!checked.ok) return checked;
-    return { ok: true, value: checked.value.map(item => ({ ...item, crossGoal: crossGoalOf(item, currentGoalId) })) };
+    return { ok: true, value: {
+      items: checked.value.items.map(item => ({ ...item, crossGoal: crossGoalOf(item, currentGoalId) })),
+      understanding: checked.value.understanding } };
   }
 
   function observedFilesOf(items: readonly NoteItemV1[]): NoteFileObservationV1[] {
@@ -1174,18 +1237,6 @@ export function createNoteReadModel(deps: NoteReadDependencies): NoteReadPort & 
       complete: ordered.length <= MEMORY_TOPICS_MAX };
   }
 
-  async function understandingOf(ctx: CoreCallContext, anchor: NoteAnchorV1):
-  Promise<ReadOutcome<UnderstandingStatusV1 | null>> {
-    // §11.4: `updateDue` stays `null` for every anchor in 4C-1 (4C-2 wires it).
-    if (anchor.kind !== 'goal' && anchor.kind !== 'stage' && anchor.kind !== 'project') {
-      return { ok: true, value: null };
-    }
-    const pointer = await pointerOf(ctx.projectId, anchor);
-    if (!pointer.ok) return pointer;
-    return { ok: true, value: { anchorKey: anchorKeyOf(anchor),
-      pointer: pointer.value ?? { noteId: null, revision: null }, updateDue: null, latestTriggerCursor: null } };
-  }
-
   /** L12: a page defaults to 20 and is capped at 100. */
   function resolveMemoryLimit(limit: number | undefined): number {
     if (limit === undefined || !Number.isSafeInteger(limit) || limit < 1) return MEMORY_PAGE_DEFAULT;
@@ -1270,18 +1321,34 @@ export function createNoteReadModel(deps: NoteReadDependencies): NoteReadPort & 
     eligibleTotal: number;
   };
 
+  /**
+   * Rework item 8/§11.7: the project pointer and pointed head
+   * `readMemoryMaterial` already read in its one batched pair of reads. Passing
+   * them here keeps `selectProjectHeader` from reading the pointer again (the
+   * project anchor set is still read, because the norms need it).
+   */
+  type ProjectHeaderPreRead = {
+    pointer: { noteId: string | null; revision: number | null };
+    head: NoteHeadSnapshot | null;
+  };
+
   /** §11.4: the project understanding (pointer's head) and the eligible norms. */
-  async function selectProjectHeader(ctx: CoreCallContext, projectId: string): Promise<ReadOutcome<HeaderSelection>> {
+  async function selectProjectHeader(ctx: CoreCallContext, projectId: string,
+    preRead?: ProjectHeaderPreRead): Promise<ReadOutcome<HeaderSelection>> {
     const projectHeads = await headsByAnchorKey(deps.records, projectId, 'project');
     if (!projectHeads.ok) return projectHeads;
     const main = projectHeads.value.filter(head => head.anchorKey0 === 'project');
-    const pointer = await pointerOf(projectId, { kind: 'project' });
+    const pointer = preRead === undefined
+      ? await pointerOf(projectId, { kind: 'project' })
+      : { ok: true as const, value: preRead.pointer };
     if (!pointer.ok) return pointer;
     let understanding: { head: NoteHeadSnapshot; pointerRevision: number } | null = null;
     if (pointer.value !== null && pointer.value.noteId !== null) {
-      const head = main.find(candidate => candidate.noteId === pointer.value!.noteId);
-      if (head !== undefined && head.kind === 'understanding'
-        && (head.state === 'accepted' || head.state === 'reviewed')) {
+      const head = preRead !== undefined && preRead.head !== null && preRead.head.noteId === pointer.value.noteId
+        ? preRead.head
+        : main.find(candidate => candidate.noteId === pointer.value!.noteId);
+      if (head !== undefined && head !== null && head.anchorKey0 === 'project'
+        && head.kind === 'understanding' && (head.state === 'accepted' || head.state === 'reviewed')) {
         understanding = { head, pointerRevision: pointer.value.revision ?? 0 };
       }
     }
@@ -1292,6 +1359,26 @@ export function createNoteReadModel(deps: NoteReadDependencies): NoteReadPort & 
       ? compareText(left.noteId, right.noteId) : compareText(right.createdAt, left.createdAt));
     return { ok: true, value: { understanding, norms: eligible.slice(0, PROJECT_NORMS_CHECK_MAX),
       eligibleTotal: eligible.length } };
+  }
+
+  /**
+   * Rework item 6: the ONE norm projection shared by `buildFindPage` and
+   * `readMemoryMaterial`. Keep the `currentEligible` heads up to
+   * `PROJECT_NORMS_MAX`; `omitted` counts the eligible remainder.
+   */
+  function eligibleNorms(norms: readonly NoteHeadSnapshot[], itemByKey: ReadonlyMap<string, NoteItemV1>,
+    eligibleTotal: number): { rows: NoteIndexRowV1[]; items: NoteItemV1[]; omitted: number } {
+    const rows: NoteIndexRowV1[] = [];
+    const items: NoteItemV1[] = [];
+    for (const head of norms) {
+      if (rows.length >= PROJECT_NORMS_MAX) break;
+      const item = itemByKey.get(`${head.noteId}@${String(head.version)}`);
+      if (item === undefined || !item.currentEligible) continue;
+      rows.push({ anchorKey: head.anchorKey0, noteId: head.noteId, version: head.version, kind: head.kind,
+        conclusion: head.conclusion, freshness: item.freshness, label: renderNoteHeader(head) });
+      items.push(item);
+    }
+    return { rows, items, omitted: eligibleTotal - rows.length };
   }
 
   type BuiltFindPage = { items: NoteItemV1[]; header: MemoryProjectHeaderV1 | null;
@@ -1326,7 +1413,7 @@ export function createNoteReadModel(deps: NoteReadDependencies): NoteReadPort & 
     const checked = await checkedPage(ctx, combined, currentGoalId, anchorSets, undefined, planWindows);
     if (!checked.ok) return checked;
     const itemByKey = new Map<string, NoteItemV1>();
-    for (const item of checked.value) itemByKey.set(`${item.noteId}@${String(item.version)}`, item);
+    for (const item of checked.value.items) itemByKey.set(`${item.noteId}@${String(item.version)}`, item);
     const items = entries.map(entry => {
       const item = itemByKey.get(`${entry.head.noteId}@${String(entry.head.version)}`)!;
       return entry.segment === null ? item : { ...item, segment: entry.segment };
@@ -1335,25 +1422,20 @@ export function createNoteReadModel(deps: NoteReadDependencies): NoteReadPort & 
     const understandingHead = selection.understanding === null ? null : selection.understanding.head;
     const understandingItem = understandingHead === null ? null
       : itemByKey.get(`${understandingHead.noteId}@${String(understandingHead.version)}`)!;
-    const norms: MemoryProjectHeaderV1['norms'] = [];
-    const normItems: NoteItemV1[] = [];
     // RW-10/§11.3: every norm actually checked counts for coverage/observedFiles,
     // even the ones `currentEligible` keeps out of the displayed header.
     const checkedNormItems: NoteItemV1[] = selection.norms.map(head =>
       itemByKey.get(`${head.noteId}@${String(head.version)}`)!);
-    for (const head of selection.norms) {
-      if (norms.length >= PROJECT_NORMS_MAX) break;
-      const item = itemByKey.get(`${head.noteId}@${String(head.version)}`)!;
-      if (!item.currentEligible) continue;
-      norms.push({ noteId: head.noteId, version: head.version, header: renderNoteHeader(head) });
-      normItems.push(item);
-    }
+    const eligible = eligibleNorms(selection.norms, itemByKey, selection.eligibleTotal);
+    const normItems = eligible.items;
+    const norms: MemoryProjectHeaderV1['norms'] = eligible.rows.map(row =>
+      ({ noteId: row.noteId, version: row.version, header: row.label }));
     const header: MemoryProjectHeaderV1 = {
       understanding: selection.understanding === null || understandingItem === null ? null : {
         noteId: selection.understanding.head.noteId, version: selection.understanding.head.version,
         pointerRevision: selection.understanding.pointerRevision,
         conclusion: selection.understanding.head.conclusion, currentEligible: understandingItem.currentEligible },
-      norms, omitted: selection.eligibleTotal - norms.length };
+      norms, omitted: eligible.omitted };
     return { ok: true, value: { items, header, understandingItem, normItems, checkedNormItems } };
   }
 
@@ -1732,13 +1814,19 @@ export function createNoteReadModel(deps: NoteReadDependencies): NoteReadPort & 
     });
     const slice = sliceByCursor(ordered, cursor.value.after, limit);
     if (!slice.ok) return rejected(slice.code, slice.reason);
-    const pageBuilt = await checkedPage(ctx, slice.page, currentGoalId, anchorSets);
+    // U-3: the understanding status comes from the SAME check call/caches now
+    // (goal/stage/project anchors only); `understandingOf` no longer reads its
+    // own pointer.
+    const understandingAnchors = input.anchor.kind === 'goal' || input.anchor.kind === 'stage'
+      || input.anchor.kind === 'project' ? [anchorKey] : undefined;
+    const pageBuilt = await checkedPage(ctx, slice.page, currentGoalId, anchorSets, undefined, undefined,
+      understandingAnchors);
     if (!pageBuilt.ok) return rejected(pageBuilt.code, pageBuilt.reason);
-    let items = pageBuilt.value;
+    let items = pageBuilt.value.items;
     const next = slice.complete ? null : encodeMemoryCursor(ctx, 'lookup', request,
       { after: slice.last, recordCursor: current.value });
-    const understanding = await understandingOf(ctx, input.anchor);
-    if (!understanding.ok) return rejected(understanding.code, understanding.reason);
+    const understanding = understandingAnchors === undefined ? null
+      : pageBuilt.value.understanding.find(status => status.anchorKey === anchorKey) ?? null;
     const groups = topicGroups(onAnchor, currentGoalId);
     const warnings: string[] = [];
     let bodyTarget: { noteId: string; version: number } | null = null;
@@ -1752,8 +1840,8 @@ export function createNoteReadModel(deps: NoteReadDependencies): NoteReadPort & 
       });
     }
     const result: MemoryLookupResultV1 = { readBasis: basisOf(current.value, items), items,
-      warnings, next, complete: next === null, coverage: coverageOf(pageBuilt.value),
-      understanding: understanding.value, topics: groups.topics, topicsComplete: groups.complete };
+      warnings, next, complete: next === null, coverage: coverageOf(pageBuilt.value.items),
+      understanding, topics: groups.topics, topicsComplete: groups.complete };
     const fitted = fitToByteBound(result, resultMaxBytes,
       kept => kept[kept.length - 1]!.noteId,
       after => encodeMemoryCursor(ctx, 'lookup', request, { after, recordCursor: current.value }));
@@ -1793,10 +1881,242 @@ export function createNoteReadModel(deps: NoteReadDependencies): NoteReadPort & 
     const next = slice.complete ? null : encodeMemoryCursor(ctx, 'notes_list', request,
       { after: slice.last, recordCursor: current.value });
     const result: NoteListResultV1 = {
-      items: pageBuilt.value.map((item, index) => ({ ...item, label: renderNoteHeader(slice.page[index]!) })),
-      next, complete: next === null, readBasis: basisOf(current.value, pageBuilt.value), warnings: [],
-      coverage: coverageOf(pageBuilt.value) };
+      items: pageBuilt.value.items.map((item, index) => ({ ...item, label: renderNoteHeader(slice.page[index]!) })),
+      next, complete: next === null, readBasis: basisOf(current.value, pageBuilt.value.items), warnings: [],
+      coverage: coverageOf(pageBuilt.value.items) };
     return { status: 'ready', value: result };
+  }
+
+  // ========================================================================
+  // U8/§11.4/§11.5/L20: the memory material (one read window, caller picks)
+  // ========================================================================
+
+  function isCurrentUnderstanding(head: NoteHeadSnapshot): boolean {
+    return head.kind === 'understanding' && (head.state === 'accepted' || head.state === 'reviewed');
+  }
+
+  /** L20 source order: own task, stage, goal, then module/interface/file. */
+  function generalKeyRank(key: string): number {
+    if (key.startsWith('task:')) return 0;
+    if (key.startsWith('stage:')) return 1;
+    if (key.startsWith('goal:')) return 2;
+    if (key.startsWith('module:') || key.startsWith('interface:') || key.startsWith('file:')) return 3;
+    return 4;
+  }
+
+  /** L20: one warning line or none; the conclusion and its warning never split. */
+  function generalWarningLabel(item: NoteItemV1, head: NoteHeadSnapshot): string | null {
+    const word = item.freshness === 'stale' ? '需复查'
+      : item.conflicting ? '冲突'
+      : item.sourceUnavailable ? '来源不可用' : null;
+    return word === null ? null : `${word}：${head.noteId} ${head.conclusion}，不能当现行结论`;
+  }
+
+  /**
+   * U8: one read window per assembly. It reuses `selectProjectHeader`, the
+   * shared related-scope key builder (`resolveTaskScopeWithPlan` over the plan
+   * window this call already read), ONE batched pointer read, ONE batched head
+   * read, `readHeadsForKeys` and ONE `checkedPage` call, so project header,
+   * local understandings, general rows and reminders come from the same check
+   * caches. A null goal is 6A's branch (`unsupported`, reason `6A`); any read
+   * failure is `unavailable`.
+   */
+  async function readMemoryMaterial(ctx: CoreCallContext, input: NoteMemoryMaterialInputV1):
+  Promise<ReadResult<NoteMemoryMaterialV1>> {
+    if (input.goalId === null) return rejected('unsupported', '6A');
+    const goalId = input.goalId;
+
+    const goalRef: GoalRef = { aggregateType: 'Goal', projectId: ctx.projectId, goalId };
+    const window = await readGoalPlanWindow(deps.records, goalRef);
+    if (window.status !== 'ready') return rejected('unavailable', window.reason);
+    const plan = window.plan;
+    const planWindows = new Map<string, PlanRevisionSnapshot | null>();
+    planWindows.set(`${ctx.projectId}\u0000${goalId}`, plan);
+
+    // Item 1: an explicit stage wins; otherwise the task's stage comes from the
+    // plan window this call already read, through the shared `stageIdOf`.
+    const goalAnchorKey = `goal:${goalId}`;
+    let stageId = input.stageId ?? null;
+    if (stageId === null && input.taskId !== undefined && input.taskId !== null && plan !== null) {
+      const task = plan.tasks.find(candidate => candidate.taskId === input.taskId);
+      stageId = task === undefined ? null : stageIdOf(task);
+    }
+    const stageAnchorKey = stageId !== null && plan !== null
+      && plan.stages.some(stage => stage.stageId === stageId)
+      ? `stage:${goalId}/${String(plan.planRevision)}/${stageId}` : null;
+
+    // Item 5/§11.7 + rework item 4: ONE batched pointer read for the project,
+    // goal and stage anchors plus ONE batched head read of their pointed notes,
+    // through the shared leaf reader.
+    const anchorKeys = ['project', goalAnchorKey, ...(stageAnchorKey === null ? [] : [stageAnchorKey])];
+    const preRead = await pointersAndHeadsOf(ctx.projectId, anchorKeys);
+    if (!preRead.ok) return rejected(preRead.code, preRead.reason);
+    const pointerOfAnchor = (anchorKey: string): { noteId: string | null; revision: number | null } =>
+      preRead.value.pointers.get(anchorKey) ?? { noteId: null, revision: null };
+    const seed: UnderstandingPointerSeed = new Map(anchorKeys.map(anchorKey => {
+      const pointer = pointerOfAnchor(anchorKey);
+      return [`${ctx.projectId}\u0000${anchorKey}`,
+        { pointer, head: pointer.noteId === null ? null : preRead.value.heads.get(pointer.noteId) ?? null }];
+    }));
+    const seedOf = (anchorKey: string) => seed.get(`${ctx.projectId}\u0000${anchorKey}`)!;
+    const projectPreRead = seedOf('project');
+    const goalHead = seedOf(goalAnchorKey).head;
+    const stageHead = stageAnchorKey === null ? null : seedOf(stageAnchorKey).head;
+
+    const selected = await selectProjectHeader(ctx, ctx.projectId,
+      { pointer: projectPreRead.pointer, head: projectPreRead.head });
+    if (!selected.ok) return rejected(selected.code, selected.reason);
+
+    // Item 7 (ruling 9): a Query assembly (`includeInputs === false`) skips the
+    // related scope and the whole general part; understanding + norms remain.
+    const generalKeys: string[] = [];
+    const generalKeySet = new Set<string>();
+    let generalHeads: NoteHeadSnapshot[] = [];
+    const anchorSets = new Map<string, NoteHeadSnapshot[]>();
+    if (input.includeInputs !== false) {
+      if (input.taskId !== undefined && input.taskId !== null) {
+        if (plan === null || window.goal.workspaceRef.workspaceId !== ctx.workspaceId) {
+          return rejected('not_found', 'related_not_found');
+        }
+        const scope = await resolveTaskScopeWithPlan(ctx, relatedDeps, goalId, input.taskId, plan);
+        if (!scope.ok) return rejected(scope.code, scope.reason);
+        if (scope.value !== null) {
+          for (const key of scope.value.keys) if (key !== 'project') generalKeys.push(key);
+        }
+      }
+      if (stageAnchorKey !== null && !generalKeys.includes(stageAnchorKey)) generalKeys.push(stageAnchorKey);
+      if (!generalKeys.includes(goalAnchorKey)) generalKeys.push(goalAnchorKey);
+      // L20 source order: own task, stage(s), goal, module/interface/file.
+      generalKeys.sort((left, right) => generalKeyRank(left) - generalKeyRank(right));
+      for (const key of generalKeys) generalKeySet.add(key);
+      const generalRead = await readHeadsForKeys(ctx, generalKeys, anchorSets);
+      if (!generalRead.ok) return rejected(generalRead.code, generalRead.reason);
+      // Item 1: the stage-prefix scan collects every stage AND revision of the
+      // goal; keep only the heads whose anchors intersect THIS call's keys.
+      generalHeads = generalRead.value.filter(head => isRelatedHead(head, generalKeySet));
+    }
+
+    const understandingAnchors = stageAnchorKey === null ? [goalAnchorKey] : [goalAnchorKey, stageAnchorKey];
+    // ONE check call for the project header, both local understandings, every
+    // general head and the understanding anchors (deduplicated by note).
+    const combined = new Map<string, NoteHeadSnapshot>();
+    const addHead = (head: NoteHeadSnapshot): void => { if (!combined.has(head.noteId)) combined.set(head.noteId, head); };
+    if (selected.value.understanding !== null) addHead(selected.value.understanding.head);
+    for (const head of selected.value.norms) addHead(head);
+    if (goalHead !== null) addHead(goalHead);
+    if (stageHead !== null) addHead(stageHead);
+    for (const head of generalHeads) addHead(head);
+    const pageBuilt = await checkedPage(ctx, [...combined.values()], goalId, anchorSets, undefined, planWindows,
+      understandingAnchors, seed);
+    if (!pageBuilt.ok) return rejected(pageBuilt.code, pageBuilt.reason);
+    const itemByKey = new Map<string, NoteItemV1>();
+    for (const item of pageBuilt.value.items) itemByKey.set(`${item.noteId}@${String(item.version)}`, item);
+    const understandingByAnchor = new Map(pageBuilt.value.understanding.map(status => [status.anchorKey, status]));
+    const itemOfHead = (head: NoteHeadSnapshot | null): NoteItemV1 | undefined =>
+      head === null ? undefined : itemByKey.get(`${head.noteId}@${String(head.version)}`);
+
+    // Items 2/4: the project row carries the real note version and the check's
+    // `currentEligible`; an ineligible row renders no body.
+    let projectUnderstanding: NotesUnderstandingRowV1 | null = null;
+    if (selected.value.understanding !== null) {
+      const head = selected.value.understanding.head;
+      const currentEligible = itemOfHead(head)?.currentEligible ?? false;
+      projectUnderstanding = { scope: 'project',
+        status: { anchorKey: 'project',
+          pointer: { noteId: head.noteId, revision: selected.value.understanding.pointerRevision },
+          updateDue: null, latestTriggerCursor: null },
+        version: head.version, currentEligible, conclusion: head.conclusion,
+        body: currentEligible
+          ? (head.sections === undefined ? head.body : renderUnderstandingBody(head.sections)) : null };
+    }
+
+    const normsResult = eligibleNorms(selected.value.norms, itemByKey, selected.value.eligibleTotal);
+    const norms = normsResult.rows;
+    const normsOmitted = normsResult.omitted;
+
+    // Item 1: the goal row is ALWAYS present and the stage row whenever the
+    // task's stage is in the plan; each carries its real status even without a
+    // current understanding (version/conclusion/body null, currentEligible false).
+    const localUnderstanding: NotesUnderstandingRowV1[] = [];
+    const localRow = (scope: 'goal' | 'stage', anchorKey: string, head: NoteHeadSnapshot | null):
+    NotesUnderstandingRowV1 | null => {
+      const status = understandingByAnchor.get(anchorKey);
+      if (status === undefined) return null;
+      if (head === null || !isCurrentUnderstanding(head)) {
+        return { scope, status, version: null, currentEligible: false, conclusion: null, body: null };
+      }
+      return { scope, status, version: head.version,
+        currentEligible: itemOfHead(head)?.currentEligible ?? false, conclusion: head.conclusion, body: null };
+    };
+    const goalRow = localRow('goal', goalAnchorKey, goalHead);
+    if (goalRow !== null) localUnderstanding.push(goalRow);
+    const stageRow = stageAnchorKey === null ? null : localRow('stage', stageAnchorKey, stageHead);
+    if (stageRow !== null) localUnderstanding.push(stageRow);
+
+    const excluded = new Set<string>();
+    if (selected.value.understanding !== null) excluded.add(selected.value.understanding.head.noteId);
+    for (const row of norms) excluded.add(row.noteId);
+
+    // Item 3: the source rank is the CLASS of the matched key (L20 order), not
+    // the key's array position; the array order of `generalKeys` only picks the
+    // display anchor within the same class. The tier is the L20 tier
+    // (confirmed -> own-goal -> cross).
+    const classRankOf = (head: NoteHeadSnapshot): number => {
+      let rank = Number.MAX_SAFE_INTEGER;
+      for (const key of anchorKeysOf(head)) {
+        if (!generalKeySet.has(key)) continue;
+        const candidate = generalKeyRank(key);
+        if (candidate < rank) rank = candidate;
+      }
+      return rank;
+    };
+    const displayAnchorOf = (head: NoteHeadSnapshot): string => {
+      const keys = anchorKeysOf(head);
+      for (const key of generalKeys) {
+        if (generalKeySet.has(key) && keys.includes(key)) return key;
+      }
+      return head.anchorKey0;
+    };
+    const tierOf = (head: NoteHeadSnapshot): number =>
+      head.confirmedByUser ? 0 : head.goalId === goalId ? 1 : 2;
+    const general: NoteIndexRowV1[] = [];
+    for (const head of generalHeads
+      .filter(candidate => isGeneral(candidate.kind) && visibleByDefault(candidate, goalId)
+        && !excluded.has(candidate.noteId))
+      .sort((left, right) => {
+        const leftRank = classRankOf(left);
+        const rightRank = classRankOf(right);
+        if (leftRank !== rightRank) return leftRank - rightRank;
+        const leftTier = tierOf(left);
+        const rightTier = tierOf(right);
+        if (leftTier !== rightTier) return leftTier - rightTier;
+        const byTopic = compareText(left.topic, right.topic);
+        return byTopic !== 0 ? byTopic : compareText(left.noteId, right.noteId);
+      })) {
+      const item = itemOfHead(head);
+      if (item === undefined) continue;
+      // Item 2: only a current conclusion, or one warning row for an
+      // accepted/reviewed stale/conflicting/source-unavailable head; every
+      // other ineligible head contributes no row at all.
+      if (item.currentEligible) {
+        general.push({ anchorKey: displayAnchorOf(head), noteId: head.noteId, version: head.version, kind: head.kind,
+          conclusion: head.conclusion, freshness: item.freshness, label: renderNoteHeader(head) });
+        continue;
+      }
+      const warningState = head.state === 'accepted' || head.state === 'reviewed';
+      const warningWord = item.freshness === 'stale' || item.conflicting || item.sourceUnavailable;
+      if (!warningState || !warningWord) continue;
+      const label = generalWarningLabel(item, head);
+      if (label === null) continue;
+      general.push({ anchorKey: displayAnchorOf(head), noteId: head.noteId, version: head.version, kind: head.kind,
+        conclusion: head.conclusion, freshness: item.freshness, label });
+    }
+
+    const reminders = pageBuilt.value.understanding.map(status => ({ anchorKey: status.anchorKey,
+      updateDue: status.updateDue, latestTriggerCursor: status.latestTriggerCursor }));
+
+    return { status: 'ready', value: { projectUnderstanding, norms, normsOmitted, localUnderstanding, general,
+      reminders } };
   }
 
   return {
@@ -1823,7 +2143,7 @@ export function createNoteReadModel(deps: NoteReadDependencies): NoteReadPort & 
           : await withCheck(ctx, [item], new Map([[input.noteId, headVersion]]),
             new Map([[input.noteId, headRead.value]]), undefined, new Map([[input.version, version.value]]));
         if (!checked.ok) return rejected(checked.code, checked.reason);
-        return { status: 'ready', value: checked.value[0]! };
+        return { status: 'ready', value: checked.value.items[0]! };
       }
       const head = await readHeadRecord(deps.records, ctx.projectId, input.noteId);
       if (!head.ok) return rejected(head.code, head.reason);
@@ -1833,7 +2153,7 @@ export function createNoteReadModel(deps: NoteReadDependencies): NoteReadPort & 
       // F4: the head just read goes straight into the check.
       const checked = await withCheck(ctx, [item.value], undefined, new Map([[input.noteId, head.value]]));
       if (!checked.ok) return rejected(checked.code, checked.reason);
-      return { status: 'ready', value: checked.value[0]! };
+      return { status: 'ready', value: checked.value.items[0]! };
     },
     async listByAnchor(ctx, input) {
       if (!Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > MEMORY_PAGE_MAX) {
@@ -1894,7 +2214,7 @@ export function createNoteReadModel(deps: NoteReadDependencies): NoteReadPort & 
         : null;
       const pointer = await pointerOf(ctx.projectId, input.anchor);
       if (!pointer.ok) return rejected(pointer.code, pointer.reason);
-      const result: NotePageV1 = { items: checked.value, next, complete: next === null, pointer: pointer.value };
+      const result: NotePageV1 = { items: checked.value.items, next, complete: next === null, pointer: pointer.value };
       return { status: 'ready', value: result };
     },
 
@@ -2000,7 +2320,7 @@ export function createNoteReadModel(deps: NoteReadDependencies): NoteReadPort & 
         new Map([[input.noteId, head.value]]), undefined, versionSnapshots);
       if (!checked.ok) return rejected(checked.code, checked.reason);
       const historyGoalId = currentGoalIdOf(ctx);
-      let items = checked.value.map(item => ({ ...item, crossGoal: crossGoalOf(item, historyGoalId) }));
+      let items = checked.value.items.map(item => ({ ...item, crossGoal: crossGoalOf(item, historyGoalId) }));
       const next = complete ? null : encodeMemoryCursor(ctx, 'history', request,
         { after: String(pageVersions[pageVersions.length - 1]!), recordCursor: current.value });
       const warnings: string[] = [];
@@ -2101,11 +2421,11 @@ export function createNoteReadModel(deps: NoteReadDependencies): NoteReadPort & 
       }
       const pageBuilt = await checkedPage(ctx, conflictingHeads, currentGoalId, anchorSets, conflictingByNote);
       if (!pageBuilt.ok) return rejected(pageBuilt.code, pageBuilt.reason);
-      const items = pageBuilt.value;
+      const items = pageBuilt.value.items;
       const next = slice.complete ? null : encodeMemoryCursor(ctx, 'conflicts', request,
         { after: slice.last, recordCursor: current.value });
       const result: MemoryResultV1 = { readBasis: basisOf(current.value, items), items, warnings: [],
-        next, complete: next === null, coverage: coverageOf(pageBuilt.value) };
+        next, complete: next === null, coverage: coverageOf(pageBuilt.value.items) };
       const fitted = fitToByteBound(result, resultMaxBytes,
         kept => kept[kept.length - 1]!.noteId,
         after => encodeMemoryCursor(ctx, 'conflicts', request, { after, recordCursor: current.value }));
@@ -2165,9 +2485,9 @@ export function createNoteReadModel(deps: NoteReadDependencies): NoteReadPort & 
       if (!pageBuilt.ok) return rejected(pageBuilt.code, pageBuilt.reason);
       const next = slice.complete ? null : encodeMemoryCursor(ctx, 'neighbors', request,
         { after: slice.last, recordCursor: current.value });
-      const result: MemoryResultV1 = { readBasis: basisOf(current.value, pageBuilt.value),
-        items: pageBuilt.value, warnings: [], next, complete: next === null,
-        coverage: coverageOf(pageBuilt.value) };
+      const result: MemoryResultV1 = { readBasis: basisOf(current.value, pageBuilt.value.items),
+        items: pageBuilt.value.items, warnings: [], next, complete: next === null,
+        coverage: coverageOf(pageBuilt.value.items) };
       const fitted = fitToByteBound(result, resultMaxBytes,
         kept => kept[kept.length - 1]!.noteId,
         after => encodeMemoryCursor(ctx, 'neighbors', request, { after, recordCursor: current.value }));
@@ -2220,12 +2540,12 @@ export function createNoteReadModel(deps: NoteReadDependencies): NoteReadPort & 
       if (!pageBuilt.ok) return rejected(pageBuilt.code, pageBuilt.reason);
       // §11.3: the unreachable `item.invalid` test is gone — only a staged
       // repair can be invalid, and `stale` never reads staged candidates.
-      const items = pageBuilt.value.filter(item => item.freshness !== 'fresh' || item.sourceUnavailable
+      const items = pageBuilt.value.items.filter(item => item.freshness !== 'fresh' || item.sourceUnavailable
         || item.unresolvedFacts.length > 0 || item.anchorStatus === 'retired');
       const next = slice.complete ? null : encodeMemoryCursor(ctx, 'stale', request,
         { after: slice.last, recordCursor: current.value });
       const result: MemoryResultV1 = { readBasis: basisOf(current.value, items), items, warnings: [],
-        next, complete: next === null, coverage: coverageOf(pageBuilt.value) };
+        next, complete: next === null, coverage: coverageOf(pageBuilt.value.items) };
       const fitted = fitToByteBound(result, resultMaxBytes,
         kept => kept[kept.length - 1]!.noteId,
         after => encodeMemoryCursor(ctx, 'stale', request, { after, recordCursor: current.value }));
@@ -2468,5 +2788,7 @@ export function createNoteReadModel(deps: NoteReadDependencies): NoteReadPort & 
       if (!finished.ok) return rejected(finished.code, finished.reason);
       return { status: 'ready', value: finished.value };
     },
+
+    readMemoryMaterial,
   };
 }

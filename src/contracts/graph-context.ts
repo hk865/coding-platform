@@ -10,6 +10,7 @@ import type { CoreError } from './core/results.js';
 import type { SessionMessageRef } from './core/session-message.js';
 import type { RunRef, TaskTriple } from './dispatch.js';
 import type { AggregateRef, GoalRef, GoalSnapshot, WorkspaceRef } from './ledger.js';
+import type { NoteKind } from './note.js';
 import type { PlanRevisionRef } from './plan.js';
 import type { PlatformDutyV1 } from './platform-duty.js';
 import type { DependencyRequirement } from './plan.js';
@@ -39,7 +40,7 @@ export type ContextSourceV1 =
   | { kind: 'kernel_history'; runRef: RunRef; sessionRef: SessionRef;
       adapterId: string; kernelSessionId: string; kernelRunId: string; turnId: string;
       fromPosition: number; throughPosition: number }
-  | { kind: 'note'; node: GraphNodeRefV1; noteId: string; revision: number; digest: string };
+  | { kind: 'note'; anchorKey: string; noteId: string; version: number; digest: string };
 export type InputDeclarationV1 = {
   declarationId: string;
   consumer: TaskTriple;
@@ -65,11 +66,35 @@ export type InputSelectionV1 = {
   errorCode: CoreError | null;
 };
 export type ExtensionAvailabilityV1 = 'available' | 'not_implemented' | 'unavailable';
+/**
+ * Slice 4B L12/P3: the lookup's understanding status. 4C moved the declaration
+ * here (it is a pure contracts DTO); `model/note-contracts.ts` re-exports it so
+ * every existing import site keeps compiling. `updateDue` is `null` for the
+ * project anchor (L20/§11.4), a boolean for goal/stage anchors.
+ */
+export type UnderstandingStatusV1 = { anchorKey: string;
+  pointer: { noteId: string | null; revision: number | null };
+  updateDue: boolean | null; latestTriggerCursor: string | null };
+/** L20/U-10: one note index row the assembly renders; `label` is `renderNoteHeader`. */
+export type NoteIndexRowV1 = { anchorKey: string; noteId: string; version: number; kind: NoteKind;
+  conclusion: string; freshness: 'fresh' | 'stale' | 'unchecked'; label: string };
+/**
+ * §11.4: one understanding row (project, goal or stage); the project row carries
+ * the whole body. `version` is the real NOTE version of the current
+ * understanding (`null` when there is none — never the pointer revision);
+ * `currentEligible` drives the conclusion/warning rule (L20). A row with no
+ * current understanding has `version: null`, `currentEligible: false`,
+ * `conclusion: null`, `body: null`.
+ */
+export type NotesUnderstandingRowV1 = { scope: 'project' | 'goal' | 'stage'; status: UnderstandingStatusV1;
+  version: number | null; currentEligible: boolean; conclusion: string | null; body: string | null };
 export type ContextIndexRowV1 = {
   key: string; node: GraphNodeRefV1; text: string; sources: ContextSourceV1[];
 };
 export type ContextExtensionsV1 = {
-  notes: { availability: ExtensionAvailabilityV1; rows: ContextIndexRowV1[] };
+  notes: { availability: ExtensionAvailabilityV1;
+    understanding: { rows: NotesUnderstandingRowV1[]; norms: NoteIndexRowV1[]; normsOmitted: number };
+    general: NoteIndexRowV1[] };
   anomalies: { availability: ExtensionAvailabilityV1; rows: ContextIndexRowV1[] };
   footprint: { availability: ExtensionAvailabilityV1; rows: ContextIndexRowV1[] };
   goalSettings: { availability: ExtensionAvailabilityV1;

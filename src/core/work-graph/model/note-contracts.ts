@@ -5,6 +5,7 @@ import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { RoleConfigurationRef } from '../../../contracts/core/identity.js';
 import type { ReadResult } from '../../../contracts/core/results.js';
+import type { NoteIndexRowV1, NotesUnderstandingRowV1, UnderstandingStatusV1 } from '../../../contracts/graph-context.js';
 import type { PlanRevisionRef, PlanRevisionSnapshot } from '../../../contracts/plan.js';
 import type {
   NoteAnchorV1, NoteDraftV1, NoteHeadSnapshot, NoteKind, NoteReviewReason, NoteSectionsV1, NoteSourceV1, NoteState,
@@ -126,6 +127,13 @@ export type NoteHeadCheckItemV1 = {
 export interface NoteHeadCheckPort extends NoteCheckPort {
   checkHeads(ctx: CoreCallContext, input: {
     items: NoteHeadCheckItemV1[];
+    /**
+     * U-3 (spec §11.4/§11.5): goal/stage/project anchor keys whose
+     * `UnderstandingStatusV1` the same check computes from the same per-call
+     * caches (pointer, triggers, plan). `lookup` asks for its anchor here and
+     * `understandingOf` no longer reads the pointer itself.
+     */
+    understandingAnchors?: string[];
     /** Seeded caches, keyed `${projectId}\0${anchorKey}` exactly as read. */
     anchorSets?: ReadonlyMap<string, NoteHeadSnapshot[]>;
     /**
@@ -136,7 +144,25 @@ export interface NoteHeadCheckPort extends NoteCheckPort {
      * `null` is a ready "the goal has no active plan", not a failure.
      */
     planWindows?: ReadonlyMap<string, PlanRevisionSnapshot | null>;
-  }): Promise<ReadResult<NoteCheckV1[]>>;
+    /**
+     * Rework item 8 (spec §11.7): the pointers and pointed heads the caller
+     * already read, keyed `${projectId}\u0000${anchorKey}` exactly as the
+     * understanding caches. When an anchor is present here the check uses them
+     * and skips its own pointer and head reads for that anchor.
+     */
+    understandingPointers?: ReadonlyMap<string, {
+      pointer: { noteId: string | null; revision: number | null };
+      head: NoteHeadSnapshot | null;
+    }>;
+    /**
+     * Rework item 1: the trigger reads (`currentTriggers`) the caller already
+     * performed while reading the shared anchors, keyed
+     * `${projectId}\u0000${goalId}` exactly as the check's per-call
+     * `caches.triggers`. A seeded goal skips its own `readGoalTriggerRecords`.
+     */
+    understandingTriggers?: ReadonlyMap<string, { triggers: NoteUpdateDueTriggerV1[];
+      claimedArchiveKeys: ReadonlySet<string> }>;
+  }): Promise<ReadResult<{ items: NoteCheckV1[]; understanding: UnderstandingStatusV1[] }>>;
 }
 
 export type NoteFileOutcome = 'same' | 'changed' | 'deleted' | 'forbidden' | 'capacity' | 'unavailable' | 'unchecked';
@@ -195,10 +221,14 @@ export interface NoteReadPort {
 // Slice 4B L12: the six memory reads (G3)
 // --------------------------------------------------------------------------
 
-/** P3: `updateDue` moves to 4C; 4B answers `null` with no trigger cursor. */
-export type UnderstandingStatusV1 = { anchorKey: string;
-  pointer: { noteId: string | null; revision: number | null };
-  updateDue: boolean | null; latestTriggerCursor: string | null };
+/**
+ * P3: `updateDue` moves to 4C; 4B answers `null` with no trigger cursor. The
+ * declaration now lives in `contracts/graph-context.ts` (a pure DTO, so it may
+ * be imported by `contracts/`); re-exported here so every existing import site
+ * keeps compiling. The `import type` above brings the name into this module's
+ * own scope for the read results below.
+ */
+export type { UnderstandingStatusV1 } from '../../../contracts/graph-context.js';
 
 export type MemoryLookupRequest = { v: 1; op: 'lookup'; anchor: NoteAnchorV1;
   body?: { noteId: string; version?: number; cursor: string | null }; limit: number; cursor: string | null };
@@ -308,3 +338,46 @@ export interface NoteScopeReadPort {
 /** P5: the composition root passes the SAME resolver the Workflow gets. */
 export type NoteDutyResolver = (role: RoleConfigurationRef, ctx: CoreCallContext) =>
   Promise<ReadResult<PlatformDutyV1 | 'unknown'>>;
+
+// --------------------------------------------------------------------------
+// Slice 4C §11.5: "update due" triggers, the memory material and the scribe
+// to-dos. All ports are narrow and read-only; the pure fold lives in
+// `notes/note-update-due.ts`.
+// --------------------------------------------------------------------------
+
+export type NoteUpdateDueTriggerKind = 'task_end' | 'rework' | 'archive' | 'plan';
+export type NoteUpdateDueTriggerV1 = { key: string; at: string; kind: NoteUpdateDueTriggerKind; taskId: string | null };
+
+export type NoteMemoryMaterialInputV1 = { goalId: string | null; stageId?: string | null; taskId?: string | null;
+  /**
+   * Rework ruling 9 (verifier "missed 3"): `includeInputs === false` means the
+   * caller (a Query assembly) wants understanding + norms only; the read model
+   * skips the related scope and the general part. Absent means `true`.
+   */
+  includeInputs?: boolean };
+export type NoteMemoryMaterialV1 = {
+  projectUnderstanding: NotesUnderstandingRowV1 | null;
+  norms: NoteIndexRowV1[];
+  normsOmitted: number;
+  localUnderstanding: NotesUnderstandingRowV1[];   // goal row then stage row, at most 2
+  general: NoteIndexRowV1[];
+  reminders: { anchorKey: string; updateDue: boolean | null; latestTriggerCursor: string | null }[];
+};
+/** U8: one memory-material read per assembly; the caller picks the parts. A null goal -> `unsupported`, reason "6A". */
+export interface NoteMemoryMaterialPort {
+  readMemoryMaterial(ctx: CoreCallContext, input: NoteMemoryMaterialInputV1): Promise<ReadResult<NoteMemoryMaterialV1>>;
+}
+
+export type NoteScribeTodoV1 = { identity: string; anchorKey: string; noteId: string | null; version: number | null;
+  latestTriggerCursor: string | null; updateDue: boolean };
+export type NoteScribeTodosV1 = { goalId: string | null; pending: NoteScribeTodoV1[]; updateDueTodos: NoteScribeTodoV1[];
+  immediate: boolean };
+/** §11.5/U-4: the narrow port the Host reminder check uses. */
+export interface NoteScribeTodoPort {
+  readScribeTodos(ctx: CoreCallContext, input: { goalIds: string[] }): Promise<ReadResult<NoteScribeTodosV1[]>>;
+  /**
+   * Rework item 6/§11.7: the ledger cursor the reminder gate compares. It is a
+   * record-store commit cursor, `null` before any commit (an empty read).
+   */
+  readLedgerCursor(ctx: CoreCallContext): Promise<ReadResult<string | null>>;
+}

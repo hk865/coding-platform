@@ -709,7 +709,12 @@ async function createFixture(kind: 'memory' | 'sqlite', options: FixtureOptions 
       ? async () => ({
           status: 'ready',
           value: {
-            notes: { availability: 'available', rows: [{ key: 'note:module:M2', node: { kind: 'module', ref: moduleM2.ref }, text: 'B', sources: [] }] },
+            notes: {
+              availability: 'available',
+              understanding: { rows: [], norms: [], normsOmitted: 0 },
+              general: [{ anchorKey: 'module:M2', noteId: 'note-m2', version: 1, kind: 'convention',
+                conclusion: 'B', freshness: 'fresh', label: 'B' }],
+            },
             anomalies: { availability: 'not_implemented', rows: [] },
             footprint: { availability: 'not_implemented', rows: [] },
             goalSettings: { availability: 'not_implemented', autonomy: null },

@@ -121,7 +121,8 @@ function anomalyDouble(
 function expectedExtensions(rows: ContextIndexRowV1[]): ContextExtensionsV1 {
   const ni = { availability: 'not_implemented' as const, rows: [] as ContextIndexRowV1[] };
   return {
-    notes: ni, anomalies: { availability: 'available', rows }, footprint: ni,
+    notes: { availability: 'not_implemented', understanding: { rows: [], norms: [], normsOmitted: 0 }, general: [] },
+    anomalies: { availability: 'available', rows }, footprint: ni,
     goalSettings: { availability: 'not_implemented', autonomy: null }, decisions: ni,
   };
 }

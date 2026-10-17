@@ -112,6 +112,19 @@ export type WP2PlatformOptions = {
   failGoalSettingsRead?: boolean;
   /** F08 fault injection: the installed decision-queue extension source throws on read. */
   failDecisionsRead?: boolean;
+  /**
+   * OPT-IN advancing clock (default fixed at `B2_AT`, so no existing test
+   * changes): each `now()` call returns the previous timestamp + 1 s. A test
+   * that needs a real write to happen strictly after an earlier one (e.g. a
+   * requeue trigger after the understanding it makes due) turns this on.
+   */
+  advancingClock?: boolean;
+  /**
+   * Observe the real commit log live. C-03 uses it to abort a `runtime.startRun`
+   * right after the Run entry-authorization commit (W-02), leaving the Run
+   * `starting` with a persisted `inputBinding` so a later prepare replays it.
+   */
+  onCommit?: (notice: RecordCommitNotice) => void;
 };
 
 export type WP2PlatformFixture = {
@@ -185,6 +198,12 @@ function mustCommit<T>(result: { status: string }): T {
 function mustComplete<T>(result: { status: string }): T {
   if (result.status !== 'completed') throw new Error(`WP2 memory seed operation did not complete: ${JSON.stringify(result)}`);
   return (result as unknown as { value: T }).value;
+}
+/** The platform clock: fixed at `B2_AT` unless the caller opts into an advancing clock. */
+function platformClock(options: WP2PlatformOptions): () => string {
+  if (options.advancingClock !== true) return () => B2_AT;
+  let ticks = 0;
+  return () => new Date(Date.parse(B2_AT) + (++ticks) * 1000).toISOString();
 }
 
 /**
@@ -387,10 +406,10 @@ async function createWP2MemoryPlatform(options: WP2PlatformOptions): Promise<WP2
       roleBinding: memBinding, budget: { tokenBudget: 1_000_000, deadline: null } }] }
     : options.workflow;
   const platformOptions: Parameters<typeof createTargetPlatform>[0] = {
-    storage: { kind: 'memory' }, workspace: workspaceHost, now: () => B2_AT,
+    storage: { kind: 'memory' }, workspace: workspaceHost, now: platformClock(options),
     operatorActor: { kind: 'human', id: 'r4c-claim-operator' },
     ...(options.ownedHost === true ? { hostInstance: { hostInstanceId: 'wp2-host', lease: 'owned' as const } } : {}),
-    commitObserver: { started: () => undefined, committed: notice => { notices.push(notice); } },
+    commitObserver: { started: () => undefined, committed: notice => { notices.push(notice); options.onCommit?.(notice); } },
     ...(options.check === true ? { checks: wp2ChecksConfiguration(f) } : {}),
     ...(memWorkflow === undefined ? {} : { workflow: memWorkflow }),
     kernelStores: { entries: [{ adapterId: 'r4c-claim-kernel', storeKey: 'r4c-claim-kernel-store',
@@ -754,10 +773,10 @@ export async function createWP2Platform(options: WP2PlatformOptions = {}): Promi
   await f.closeBackend();
   const notices: RecordCommitNotice[] = [];
   const platformOptions: Parameters<typeof createTargetPlatform>[0] = {
-    storage: { kind: 'sqlite', directory }, workspace: workspaceHost, now: () => B2_AT,
+    storage: { kind: 'sqlite', directory }, workspace: workspaceHost, now: platformClock(options),
     operatorActor: { kind: 'human', id: 'r4c-claim-operator' },
     ...(options.ownedHost === true ? { hostInstance: { hostInstanceId: 'wp2-host', lease: 'owned' as const } } : {}),
-    commitObserver: { started: () => undefined, committed: notice => { notices.push(notice); } },
+    commitObserver: { started: () => undefined, committed: notice => { notices.push(notice); options.onCommit?.(notice); } },
     ...(options.check === true ? { checks: wp2ChecksConfiguration(f) } : {}),
     ...(boundWorkflow === undefined ? {} : { workflow: boundWorkflow }),
     kernelStores: { entries: [{ adapterId: 'r4c-claim-kernel', storeKey: 'r4c-claim-kernel-store',

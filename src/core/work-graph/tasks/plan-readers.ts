@@ -54,7 +54,7 @@ import {
 } from '../persistence/evidence-record-codecs.js';
 import type { VerifiedGovernance } from './plan-commit-compiler.js';
 import type { PlanProposal, PlanProposalRef } from '../model/plan-contracts.js';
-import type { NoteRunTaskResolver } from '../model/note-contracts.js';
+import type { NoteRunTaskResolver, NoteUpdateDueTriggerV1 } from '../model/note-contracts.js';
 import type { SessionResponsibilityBasisPort } from '../model/session-facts-contracts.js';
 import {
   isBasisUnsupported, planTaskFacts, taskOriginVerdict, verifyBasisDelegation,
@@ -1258,6 +1258,128 @@ export async function readGoalRunsForCount(
     if (run.ref.projectId === goalRef.projectId && run.ref.goalId === goalRef.goalId) runs.push(run);
   }
   return { status: 'ready', runs };
+}
+
+/**
+ * Slice 4C §11.5/U-9: the three-step "update due" trigger read for one Goal and
+ * its current plan M.
+ *
+ * Step 1+2 page the Goal's Runs through `readGoalRunsForCount`; step 3 is ONE
+ * `readMany` of the plan's TaskReductions, the ended Runs' TaskRequeues and the
+ * T2 source Plans. A missing record is a confirmed absence, but a damaged one,
+ * or ANY store failure (including `unsupported`), is `unavailable` — never an
+ * empty trigger set (unlike `readReworkRecords`). `claimedArchiveKeys` names the
+ * archive triggers some Run of the Goal has already claimed (`Run.requeueRef`).
+ */
+export async function readGoalTriggerRecords(
+  records: GoalRecordTransactionPort & RecordLookupPort,
+  goalRef: GoalRef,
+  plan: PlanRevisionSnapshot | null,
+): Promise<{ status: 'ready'; triggers: NoteUpdateDueTriggerV1[]; claimedArchiveKeys: ReadonlySet<string> } | Rejected> {
+  const runsRead = await readGoalRunsForCount(records, goalRef);
+  // `readGoalRunsForCount` maps an unsupported index to `incomplete`; §11.5
+  // requires ANY store failure here to be `unavailable`.
+  if (runsRead.status !== 'ready') return unavailable(runsRead.reason);
+  const runs = runsRead.runs;
+  const tasks = plan?.tasks ?? [];
+  const endedRuns = runs.filter((run) => run.status === 'ended');
+
+  // T2 needs the FIRST terminal disposition Plan of each cancelled/superseded
+  // Task; the active M may only inherit the change (`dispositionRecord.setIn`).
+  const sourcePlanRefs = new Map<string, PlanRevisionRef>();
+  const terminalSourceKeys = new Map<string, string>();
+  if (plan !== null) {
+    const activeKey = planRevisionRefKey(plan.ref);
+    for (const task of tasks) {
+      if (task.disposition !== 'cancelled' && task.disposition !== 'superseded') continue;
+      const change = plan.schemaVersion === 2
+        ? plan.dispositionRecord?.entries.find((entry) => entry.taskId === task.taskId
+          && (entry.to === 'cancelled' || entry.to === 'superseded'))
+        : undefined;
+      if (change !== undefined && !samePlanRevisionPointer(change.setIn, plan.ref)) {
+        const key = planRevisionRefKey(change.setIn);
+        sourcePlanRefs.set(key, change.setIn);
+        terminalSourceKeys.set(task.taskId, key);
+      } else {
+        terminalSourceKeys.set(task.taskId, activeKey);
+      }
+    }
+  }
+
+  const reductionKeys = tasks.map((task) => taskRecordRefKey('TaskReduction', goalRef, task.taskId));
+  const requeueRefOf = (run: RunSnapshot) => ({ aggregateType: 'TaskRequeue' as const, projectId: run.ref.projectId,
+    goalId: run.ref.goalId, taskId: run.task.taskId, afterRunId: run.ref.runId });
+  const requeueKeys = endedRuns.map((run) => taskRequeueRefKey(requeueRefOf(run)));
+  const refKeys = uniqueKeys([...reductionKeys, ...requeueKeys, ...sourcePlanRefs.keys()]);
+  const present = new Map<string, EncodedRecord>();
+  if (refKeys.length > 0) {
+    const read = await records.readMany(refKeys);
+    if (read.status !== 'ready') {
+      return unavailable(`the update-due records are not readable: ${read.code}: ${read.reason}`);
+    }
+    for (const record of read.value.records) present.set(record.refKey, record);
+  }
+
+  const sourcePlans = new Map<string, PlanRevisionSnapshot>();
+  for (const key of sourcePlanRefs.keys()) {
+    const record = present.get(key);
+    if (record === undefined) return unavailable(`the terminal source plan ${key} is missing`);
+    const decoded = decodePlanRevisionSnapshot(record);
+    if (decoded.status !== 'decoded') return unavailable(`the terminal source plan ${key} is damaged: ${decoded.reason}`);
+    sourcePlans.set(key, decoded.value);
+  }
+
+  const triggers: NoteUpdateDueTriggerV1[] = [];
+  // T1: a satisfied reduction, keyed by its revision.
+  for (const task of tasks) {
+    const key = taskRecordRefKey('TaskReduction', goalRef, task.taskId);
+    const record = present.get(key);
+    if (record === undefined) continue;
+    const reduction = parseReduction(record.json);
+    if (reduction === null) return unavailable(`TaskReduction ${key} is not decodable`);
+    if (reduction.phase !== 'satisfied') continue;
+    triggers.push({ key: `task_end:${task.taskId}#r${reduction.revision}`, at: reduction.reducedAt,
+      kind: 'task_end', taskId: task.taskId });
+  }
+  if (plan !== null) {
+    // T2: the cancellation/supersession instant of the FIRST terminal Plan.
+    for (const task of tasks) {
+      if (task.disposition !== 'cancelled' && task.disposition !== 'superseded') continue;
+      const sourceKey = terminalSourceKeys.get(task.taskId);
+      if (sourceKey === undefined) return unavailable(`the terminal source plan of ${task.taskId} was not resolved`);
+      const source = sourceKey === planRevisionRefKey(plan.ref) ? plan : sourcePlans.get(sourceKey);
+      if (source === undefined) return unavailable(`the terminal source plan ${sourceKey} is not readable`);
+      triggers.push({ key: `task_end:${task.taskId}@p${source.planRevision}`, at: source.acceptedAt,
+        kind: 'task_end', taskId: task.taskId });
+    }
+    // T4: adopting the active plan, goal anchor only.
+    triggers.push({ key: `plan:p${plan.planRevision}`, at: plan.acceptedAt, kind: 'plan', taskId: null });
+  }
+  // T3: one trigger per ended Run's TaskRequeue; archiveOrigin replaces rework.
+  for (const run of endedRuns) {
+    const key = taskRequeueRefKey(requeueRefOf(run));
+    const record = present.get(key);
+    if (record === undefined) continue;
+    const decoded = decodeTaskRequeueSnapshot(record);
+    if (decoded.status !== 'decoded') return unavailable(`TaskRequeue ${key} is damaged: ${decoded.reason}`);
+    const archived = decoded.value.archiveOrigin !== undefined && decoded.value.archiveOrigin !== null;
+    triggers.push({ key: `${archived ? 'archive' : 'rework'}:${run.task.taskId}/${run.ref.runId}`,
+      at: decoded.value.requestedAt, kind: archived ? 'archive' : 'rework', taskId: run.task.taskId });
+  }
+
+  const seen = new Set<string>();
+  const unique: NoteUpdateDueTriggerV1[] = [];
+  for (const trigger of triggers) {
+    if (seen.has(trigger.key)) continue;
+    seen.add(trigger.key);
+    unique.push(trigger);
+  }
+  const claimedArchiveKeys = new Set<string>();
+  for (const run of runs) {
+    if (run.requeueRef === undefined) continue;
+    claimedArchiveKeys.add(`archive:${run.requeueRef.taskId}/${run.requeueRef.afterRunId}`);
+  }
+  return { status: 'ready', triggers: unique, claimedArchiveKeys };
 }
 
 /**

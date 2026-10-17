@@ -24,7 +24,7 @@ import { canonicalJson, sha256Hex, type JsonValue } from '../../contracts/finger
 import type {
   AttentionChangesV1, AttentionGraphReadRequestV1, ContextAssemblyBindingV1,
   ContextExtensionsV1, ContextIndexRowV1, ContextSectionNameV1, ContextSourceV1, GraphAttentionFactsV1,
-  InputDeclarationV1, InputSelectionV1, PlatformDutyV1, TaskInputPageV1,
+  InputDeclarationV1, InputSelectionV1, NoteIndexRowV1, NotesUnderstandingRowV1, PlatformDutyV1, TaskInputPageV1,
 } from '../../contracts/graph-context.js';
 import { goalContextDigestV1 } from '../../contracts/graph-context.js';
 import type { GoalSnapshot } from '../../contracts/ledger.js';
@@ -133,10 +133,17 @@ function mapRead(result: ReadResult<unknown>): CoreRejection {
 function requirementIdOf(declarationId: string): string {
   return declarationId.startsWith('legacy:') ? declarationId.slice('legacy:'.length) : declarationId;
 }
+function emptyNotes(): ContextExtensionsV1['notes'] {
+  return {
+    availability: 'not_implemented',
+    understanding: { rows: [], norms: [], normsOmitted: 0 },
+    general: [],
+  };
+}
 function notImplementedExtensions(): ContextExtensionsV1 {
   const empty = (): { availability: 'not_implemented'; rows: ContextIndexRowV1[] } => ({ availability: 'not_implemented', rows: [] });
   return {
-    notes: empty(), anomalies: empty(), footprint: empty(),
+    notes: emptyNotes(), anomalies: empty(), footprint: empty(),
     goalSettings: { availability: 'not_implemented', autonomy: null },
     decisions: empty(),
   };
@@ -158,6 +165,42 @@ function sortedSources(sources: readonly ContextSourceV1[]): ContextSourceV1[] {
     .map((entry) => entry[1]);
 }
 
+/**
+ * §11.4/L20 (ruling 3/item 4): binding note sources for Work and Query. It
+ * records every rendered understanding row that carries a note (the real note
+ * version, never the pointer revision), every rendered norm, and only the kept
+ * general rows. Dedup identity is `anchorKey` + `noteId` + `version`; the
+ * digest formula is unchanged (`{anchorKey,noteId,version,label}`).
+ */
+function noteSourcesOf(
+  notes: ContextExtensionsV1['notes'],
+  keptGeneral: readonly NoteIndexRowV1[],
+): ContextSourceV1[] {
+  const sources: ContextSourceV1[] = [];
+  const seen = new Set<string>();
+  const add = (anchorKey: string, noteId: string, version: number, label: string): void => {
+    const identity = `${anchorKey}\u0000${noteId}@${String(version)}`;
+    if (seen.has(identity)) return;
+    seen.add(identity);
+    sources.push({
+      kind: 'note', anchorKey, noteId, version,
+      digest: sha256Hex(canonicalJson({ anchorKey, noteId, version, label } as unknown as JsonValue)),
+    });
+  };
+  for (const row of notes.understanding.rows.slice(0, 3)) {
+    const noteId = row.status.pointer.noteId;
+    if (noteId === null || row.version === null) continue;
+    add(row.status.anchorKey, noteId, row.version, understandingSourceLabel(row));
+  }
+  for (const norm of notes.understanding.norms) {
+    add(norm.anchorKey, norm.noteId, norm.version, norm.label);
+  }
+  for (const row of keptGeneral) {
+    add(row.anchorKey, row.noteId, row.version, row.label);
+  }
+  return sources;
+}
+
 // ------------------------------------------------------------------------ //
 // renderContext (§4.3)                                                      //
 // ------------------------------------------------------------------------ //
@@ -170,7 +213,14 @@ export function renderContext(input: {
   residentBudgetBytes: number;
 }): { input: string; sections: ContextAssemblyBindingV1['sections']; residentBytes: number; totalBytes: number } {
   const present = OPTIONAL_SECTIONS
-    .map((name) => ({ name, rows: [...(input.optional[name] ?? [])].sort(byKey) }))
+    // §11.4/L20: the `notes` rows already arrive in the memory material's source
+    // order; every other optional section keeps its deterministic key sort.
+    .map((name) => ({
+      name,
+      rows: name === 'notes'
+        ? [...(input.optional[name] ?? [])]
+        : [...(input.optional[name] ?? [])].sort(byKey),
+    }))
     .filter((section) => section.rows.length > 0);
   const totalRows = present.reduce((sum, section) => sum + section.rows.length, 0);
 
@@ -414,17 +464,86 @@ function rolePayload(
   return [binding, specification, `duty: ${duty}`, `contextResidentBytes: ${String(residentBudgetBytes)}`].join('\n\n');
 }
 
+/** The bare goal id of a `goal:<goalId>` anchor key (never the pointer revision). */
+function goalIdOfAnchor(anchorKey: string): string {
+  return anchorKey.startsWith('goal:') ? anchorKey.slice('goal:'.length) : anchorKey;
+}
+
+/** The bare stage id of a `stage:<goalId>/<planRevision>/<stageId>` anchor key. */
+function stageIdOfAnchor(anchorKey: string): string {
+  const rest = anchorKey.startsWith('stage:') ? anchorKey.slice('stage:'.length) : anchorKey;
+  const parts = rest.split('/');
+  return parts.length === 0 ? anchorKey : (parts[parts.length - 1] ?? anchorKey);
+}
+
+/** Ruling 3: every rendered note line carries `（<noteId> v<version>）`. */
+function withNoteVersion(label: string, noteId: string, version: number): string {
+  return `${label}（${noteId} v${String(version)}）`;
+}
+
+/**
+ * Ruling 3: the base label of one understanding row, used both for the rendered
+ * line and (unchanged) as the digest label of its note source. A row that
+ * cannot be the current conclusion is one warning line.
+ */
+function understandingSourceLabel(row: NotesUnderstandingRowV1): string {
+  if (!row.currentEligible) return '需复查';
+  if (row.scope === 'project') return '项目 当前理解';
+  if (row.scope === 'goal') return `目标 ${goalIdOfAnchor(row.status.anchorKey)} 当前理解`;
+  return `阶段 ${stageIdOfAnchor(row.status.anchorKey)} 当前理解`;
+}
+
+/**
+ * §11.4/L20 (rulings 2 and 3): one Goal-card understanding line. The project row
+ * carries its whole body; a goal/stage row carries its conclusion. A row with no
+ * current understanding names only its anchor; an ineligible understanding is
+ * exactly ONE warning line with the existing general warning wording and no
+ * body. Every rendered note line carries the note id and version.
+ */
+function understandingLine(row: NotesUnderstandingRowV1): string {
+  const noteId = row.status.pointer.noteId;
+  const version = row.version;
+  if (!row.currentEligible) {
+    if (noteId !== null && version !== null) {
+      return withNoteVersion(`需复查：${noteId} ${row.conclusion ?? ''}，不能当现行结论`, noteId, version);
+    }
+    if (row.scope === 'goal') return `目标 ${goalIdOfAnchor(row.status.anchorKey)}：还没有当前理解`;
+    if (row.scope === 'stage') return `阶段 ${stageIdOfAnchor(row.status.anchorKey)}：还没有当前理解`;
+    return '项目：还没有当前理解';
+  }
+  if (noteId === null || version === null) {
+    if (row.scope === 'goal') return `目标 ${goalIdOfAnchor(row.status.anchorKey)}：还没有当前理解`;
+    if (row.scope === 'stage') return `阶段 ${stageIdOfAnchor(row.status.anchorKey)}：还没有当前理解`;
+    return '项目：还没有当前理解';
+  }
+  const label = understandingSourceLabel(row);
+  const content = row.scope === 'project' ? (row.body ?? row.conclusion ?? '') : (row.conclusion ?? '');
+  return `${withNoteVersion(label, noteId, version)}：${content}`;
+}
+
+/** §11.4: the Goal card's `current understanding` block (rows then project norms). */
+function notesGoalText(notes: ContextExtensionsV1['notes']): string {
+  if (notes.availability === 'not_implemented') return '(not_implemented)';
+  const lines: string[] = [];
+  for (const row of notes.understanding.rows.slice(0, 3)) lines.push(understandingLine(row));
+  for (const norm of notes.understanding.norms) {
+    lines.push(withNoteVersion(norm.label, norm.noteId, norm.version));
+  }
+  if (notes.understanding.normsOmitted > 0) {
+    lines.push(`另有 ${String(notes.understanding.normsOmitted)} 条，用‘看’读项目`);
+  }
+  return lines.length === 0 ? '(none)' : lines.join('\n');
+}
+
 function goalPayload(goal: GoalSnapshot, workspaceRevision: number, extensions: ContextExtensionsV1): string {
   const autonomy = extensions.goalSettings.availability === 'available' && extensions.goalSettings.autonomy !== null
     ? extensions.goalSettings.autonomy : '(not_implemented)';
-  const understanding = extensions.notes.availability === 'not_implemented' ? '(not_implemented)'
-    : extensions.notes.rows.length === 0 ? '(none)' : extensions.notes.rows.map(indexRowText).join('\n');
   return [
     `goal: ${goal.ref.goalId}`,
     `objective: ${goal.objective}`,
     `workspace: ${goal.workspaceRef.workspaceId}@${String(workspaceRevision)}`,
     `autonomy: ${autonomy}`,
-    `current understanding: ${understanding}`,
+    `current understanding: ${notesGoalText(extensions.notes)}`,
   ].join('\n');
 }
 
@@ -532,13 +651,23 @@ function missingInputReminder(selection: InputSelectionV1, executions: readonly 
   };
 }
 
+function noteRowKey(row: NoteIndexRowV1): string {
+  return `note:${row.anchorKey}\u0000${row.noteId}@${String(row.version)}`;
+}
+
 function optionalRowsFromExtensions(extensions: ContextExtensionsV1): {
   footprint: OptionalRow[]; notes: OptionalRow[];
   reminders: OptionalRow[];
 } {
+  // Ruling 3: every rendered note line carries the note id and version. The
+  // row key keeps its own identity so the budget dedup/sort is unchanged.
+  const notes = extensions.notes.general.map((row) => ({
+    key: noteRowKey(row),
+    text: withNoteVersion(row.label, row.noteId, row.version),
+  }));
   return {
     footprint: extensions.footprint.rows.map((row) => ({ key: row.key, text: indexRowText(row) })),
-    notes: extensions.notes.rows.map((row) => ({ key: row.key, text: indexRowText(row) })),
+    notes,
     reminders: [
       ...extensions.anomalies.rows.map((row) => ({
         key: row.key.startsWith('anomaly:') ? row.key : `anomaly:${row.key}`,
@@ -550,6 +679,14 @@ function optionalRowsFromExtensions(extensions: ContextExtensionsV1): {
         key: row.key.startsWith('decision:') ? row.key : `decision:${row.key}`,
         text: indexRowText(row),
       })),
+      // §11.5/L20: a goal/stage understanding whose `updateDue` is true. The
+      // index prefix keeps the understanding rows' own order under the key sort.
+      ...extensions.notes.understanding.rows
+        .filter((row) => row.status.updateDue === true)
+        .map((row, index) => ({
+          key: `understanding:${String(index)}:${row.status.anchorKey}`,
+          text: `当前理解该更新了：${row.status.anchorKey}`,
+        })),
     ],
   };
 }
@@ -979,6 +1116,12 @@ export function createContextAssembler(deps: ContextAssemblerDependencies): Cont
       if (source.ref.projectId !== claim.task.projectId || source.ref.goalId !== claim.task.goalId) return source;
       return { ...source, digest: goalContextDigestV1(facts.goal) };
     });
+    // §11.4/L20: only the general rows that actually fit the notes budget are
+    // rendered, so they are the only general note sources recorded.
+    const generalOmitted = rendered.sections.find((section) => section.name === 'notes')?.omitted ?? 0;
+    const keptGeneral = extensions.notes.general
+      .slice(0, Math.max(0, extensions.notes.general.length - generalOmitted));
+    const noteSources = noteSourcesOf(extensions.notes, keptGeneral);
 
     const binding: ContextAssemblyBindingV1 = {
       schemaVersion: 1,
@@ -989,7 +1132,7 @@ export function createContextAssembler(deps: ContextAssemblerDependencies): Cont
       residentBytes: rendered.residentBytes,
       totalBytes: rendered.totalBytes,
       sections: rendered.sections,
-      sources: sortedSources(bindingSources),
+      sources: sortedSources([...bindingSources, ...noteSources]),
       inputSelections: [...inputSelections],
       extensions: annotations(extensions),
     };
@@ -1065,7 +1208,9 @@ export function createContextAssembler(deps: ContextAssemblerDependencies): Cont
       residentBytes: rendered.residentBytes,
       totalBytes: rendered.totalBytes,
       sections: rendered.sections,
-      sources: sortedSources(facts?.sources ?? []),
+      // §11.4/L20 (C-04): a Query renders understanding + norms only, so
+      // `keptGeneral` is empty and no general note source is recorded.
+      sources: sortedSources([...(facts?.sources ?? []), ...noteSourcesOf(extensions.notes, [])]),
       inputSelections: [],
       extensions: annotations(extensions),
     };

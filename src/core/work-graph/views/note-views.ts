@@ -29,10 +29,12 @@ import { decodeRefKey } from '../../record-store/record-codec.js';
 import type { PlanTaskPort } from '../model/plan-contracts.js';
 import type { AdoptedArchitecture, ArchitectureCatalogPort, ArchitectureRevision, ModuleDefinition } from '../architecture/catalog-contracts.js';
 import type { RunRef } from '../../../contracts/dispatch.js';
-import type { NoteCheckPort, NoteCheckV1, NoteFileObservationV1, NoteHeadCheckItemV1, NoteHeadCheckPort, NoteHintV1, NoteSimilarV1 } from '../model/note-contracts.js';
+import type { NoteCheckPort, NoteCheckV1, NoteFileObservationV1, NoteHeadCheckItemV1, NoteHeadCheckPort, NoteHintV1, NoteSimilarV1,
+  NoteUpdateDueTriggerV1, UnderstandingStatusV1 } from '../model/note-contracts.js';
 import { NOTE_ANCHOR_QUOTA, NOTE_BASIS_FILE_MAX_BYTES, NOTE_GOAL_QUOTA, NOTE_READ_FACTS_MAX, NOTE_READ_FILES_MAX,
   NOTE_SIMILAR_MAX, NOTE_SIMILAR_MIN, NOTE_SYMBOL_HITS_MAX, NOTE_SYMBOL_RECHECK_MAX } from '../model/note-contracts.js';
 import { anchorKeyOf, isSafeRelativePath, signatureDigestOf, type NoteAnchorWorkspace } from '../notes/note-anchors.js';
+import { foldInputOf, foldUpdateDue } from '../notes/note-update-due.js';
 import type { RawArtifactStorePort } from '../../record-store/body-ports.js';
 import type { CaptureSummary, SourceHit, SourceProvider } from '../../workspace/ports.js';
 import {
@@ -41,10 +43,11 @@ import {
 } from '../notes/note-read-model.js';
 import {
   S4_NOTE_BY_ANCHOR_LOOKUPS, decodeNoteHeadSnapshot, decodeNoteVersionSnapshot, noteHeadRefKey, noteVersionRefKey,
+  currentPointerRefKey, decodeCurrentPointerSnapshot,
 } from '../persistence/note-record-codecs.js';
 import { S2B_PLAN_REVISION_BY_GOAL_LOOKUP, decodePlanRevisionSnapshot, planRevisionRefKey } from '../persistence/plan-record-codecs.js';
 import { stageContinuityOf } from '../notes/note-continuity.js';
-import { readGoalPlanWindow } from '../tasks/plan-readers.js';
+import { readGoalPlanWindow, readGoalTriggerRecords } from '../tasks/plan-readers.js';
 import { decodeSessionMessageRecord } from '../sessions/message-record-codecs.js';
 import { decodeRun } from '../materials/run-snapshot-decoder.js';
 import { decodeRunActivitySnapshot } from '../persistence/run-activity-codecs.js';
@@ -142,6 +145,22 @@ type ItemObservations = Map<string, NoteFileObservationV1>;
  */
 type CheckCaches = {
   plans: Map<string, Outcome<PlanRevisionSnapshot | null>>;
+  /**
+   * U-3 (§11.5): per goal, the trigger read, keyed `${projectId}\0${goalId}`
+   * exactly as `plans`. Read once per call and reused by every item and by
+   * `understandingAnchors`; a goal with no current plan caches the empty read.
+   */
+  triggers: Map<string, Outcome<{ triggers: NoteUpdateDueTriggerV1[];
+    claimedArchiveKeys: ReadonlySet<string> }>>;
+  /** U-3: the per-anchor understanding status, so a goal/stage pointer is read once. */
+  understandings: Map<string, Outcome<UnderstandingStatusV1>>;
+  /**
+   * Rework item 8: pointers and pointed heads the caller already read, keyed
+   * `${projectId}\0${anchorKey}` exactly as `understandings`. A seeded anchor
+   * skips its own pointer and head reads.
+   */
+  understandingSeed: Map<string, { pointer: { noteId: string | null; revision: number | null };
+    head: NoteHeadSnapshot | null }>;
   architecture: {
     current?: Outcome<ArchitectureRevision | null>;
     byRevision: Map<number, Outcome<ArchitectureRevision | null>>;
@@ -161,7 +180,8 @@ type CheckCaches = {
 };
 
 function newCheckCaches(): CheckCaches {
-  return { plans: new Map(), architecture: { byRevision: new Map() }, heads: newHeadCache(),
+  return { plans: new Map(), triggers: new Map(), understandings: new Map(), understandingSeed: new Map(),
+    architecture: { byRevision: new Map() }, heads: newHeadCache(),
     derivations: new Map(), runTaskScope: new Map(), planRevisions: new Map(), basisPlans: new Map(),
     stagedRepair: new Map(), noteHeads: new Map() };
 }
@@ -396,6 +416,118 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
       : reject('unavailable', readFailureReason(window, 'the goal plan cannot be read'));
     caches.plans.set(key, outcome);
     return outcome;
+  }
+
+  /**
+   * §11.5/U-3: the goal's trigger read, cached per goal for the call exactly as
+   * `plans`. A goal with no current plan has no triggers (a legal empty read);
+   * any failure (including `unsupported`) rejects the whole check.
+   */
+  async function currentTriggers(ctx: CoreCallContext, goalId: string, caches: CheckCaches):
+  Promise<Outcome<{ triggers: NoteUpdateDueTriggerV1[]; claimedArchiveKeys: ReadonlySet<string> }>> {
+    const key = `${ctx.projectId}\u0000${goalId}`;
+    const hit = caches.triggers.get(key);
+    if (hit !== undefined) return hit;
+    const plan = await currentPlan(ctx, goalId, caches);
+    let outcome: Outcome<{ triggers: NoteUpdateDueTriggerV1[]; claimedArchiveKeys: ReadonlySet<string> }>;
+    if (!plan.ok) outcome = plan;
+    else if (plan.value === null) outcome = { ok: true, value: { triggers: [], claimedArchiveKeys: new Set() } };
+    else {
+      const ref: GoalRef = { aggregateType: 'Goal', projectId: ctx.projectId, goalId };
+      const read = await readGoalTriggerRecords(deps.records, ref, plan.value);
+      outcome = read.status === 'ready'
+        ? { ok: true, value: { triggers: read.triggers, claimedArchiveKeys: read.claimedArchiveKeys } }
+        : reject('unavailable', readFailureReason(read, 'the goal triggers cannot be read'));
+    }
+    caches.triggers.set(key, outcome);
+    return outcome;
+  }
+
+  type ParsedUnderstandingAnchor =
+    | { kind: 'project' }
+    | { kind: 'goal'; goalId: string }
+    | { kind: 'stage'; goalId: string; stageId: string };
+
+  /**
+   * §11.5: `understandingAnchors` are the anchor keys `checkHeads` was asked
+   * for. The project anchor is `project`; the others are `goal:<id>` and
+   * `stage:<goalId>/<planRevision>/<stageId>`. A key that is none of these is
+   * not an understanding anchor.
+   */
+  function parseUnderstandingAnchorKey(anchorKey: string): ParsedUnderstandingAnchor | null {
+    if (anchorKey === 'project') return { kind: 'project' };
+    if (anchorKey.startsWith('goal:')) {
+      const goalId = anchorKey.slice('goal:'.length);
+      return goalId.length === 0 ? null : { kind: 'goal', goalId };
+    }
+    if (!anchorKey.startsWith('stage:')) return null;
+    const rest = anchorKey.slice('stage:'.length);
+    const first = rest.indexOf('/');
+    const second = first < 0 ? -1 : rest.indexOf('/', first + 1);
+    if (first <= 0 || second <= first + 1 || second === rest.length - 1) return null;
+    return { kind: 'stage', goalId: rest.slice(0, first), stageId: rest.slice(second + 1) };
+  }
+
+  /**
+   * §11.4/§11.5/U-3: one anchor's `UnderstandingStatusV1` from the same caches
+   * the item check uses. The project anchor stays `updateDue: null` (M-12g); a
+   * goal/stage anchor folds the trigger read. Memoized per anchor, so a lookup
+   * reads its pointer once and a goal's triggers once.
+   */
+  async function understandingOfAnchorKey(ctx: CoreCallContext, anchorKey: string, caches: CheckCaches):
+  Promise<Outcome<UnderstandingStatusV1>> {
+    const cacheKey = `${ctx.projectId}\u0000${anchorKey}`;
+    const hit = caches.understandings.get(cacheKey);
+    if (hit !== undefined) return hit;
+    const outcome = await computeUnderstandingOfAnchorKey(ctx, anchorKey, caches);
+    caches.understandings.set(cacheKey, outcome);
+    return outcome;
+  }
+
+  async function computeUnderstandingOfAnchorKey(ctx: CoreCallContext, anchorKey: string, caches: CheckCaches):
+  Promise<Outcome<UnderstandingStatusV1>> {
+    const parsed = parseUnderstandingAnchorKey(anchorKey);
+    if (parsed === null) return reject('invalid', `not an understanding anchor: ${anchorKey}`);
+    // Rework item 8: when the caller already read this anchor's pointer and
+    // pointed head, use them and skip both reads (the project branch too).
+    const seed = caches.understandingSeed.get(`${ctx.projectId}\u0000${anchorKey}`);
+    let pointer: { noteId: string | null; revision: number | null } = { noteId: null, revision: null };
+    if (seed !== undefined) {
+      pointer = seed.pointer;
+    } else {
+      // §11.4: the same pointer key the write side uses.
+      const pointerKey = currentPointerRefKey({ aggregateType: 'CurrentPointer', projectId: ctx.projectId, anchorKey });
+      const pointerRead = await deps.records.readMany([pointerKey]);
+      if (pointerRead.status !== 'ready') {
+        return reject('unavailable', readFailureReason(pointerRead, 'the current pointer cannot be read'));
+      }
+      const pointerRecord = pointerRead.value.records.find(candidate => candidate.refKey === pointerKey);
+      if (pointerRecord !== undefined) {
+        const decoded = decodeCurrentPointerSnapshot(pointerRecord);
+        if (decoded.status !== 'decoded') return reject('unavailable', 'damaged current pointer');
+        pointer = { noteId: decoded.value.noteId, revision: decoded.value.revision };
+      }
+    }
+    if (parsed.kind === 'project') {
+      return { ok: true, value: { anchorKey, pointer, updateDue: null, latestTriggerCursor: null } };
+    }
+
+    const plan = await currentPlan(ctx, parsed.goalId, caches);
+    if (!plan.ok) return plan;
+    const triggers = await currentTriggers(ctx, parsed.goalId, caches);
+    if (!triggers.ok) return triggers;
+
+    let head: NoteHeadSnapshot | null = seed === undefined ? null : seed.head;
+    if (seed === undefined && pointer.noteId !== null) {
+      const read = await readHeadCached(ctx, pointer.noteId, caches);
+      if (!read.ok) return read;
+      head = read.value;
+    }
+    // Rework item 5: the one baseline rule, shared with the to-dos and the reader.
+    const anchor = foldInputOf(anchorKey, head, plan.value, parsed.kind === 'stage' ? parsed.stageId : null);
+    const folded = foldUpdateDue({ triggers: triggers.value.triggers, plan: plan.value, anchors: [anchor] })[0]!;
+    return { ok: true, value: { anchorKey, pointer, updateDue: folded.updateDue,
+      latestTriggerCursor: folded.latestTriggerCursor } };
   }
 
   /** §9: a failed catalog read is `unavailable`, never an empty module list. */
@@ -1092,11 +1224,23 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
       similar = computed.value;
     }
 
+    // §11.5/M-12: only an accepted/reviewed HEAD understanding on a goal or
+    // stage anchor carries `updateDue`; the project anchor and every other item
+    // stay `null` (M-12g).
+    let updateDue: boolean | null = null;
+    if (isHeadVersion && body.kind === 'understanding'
+      && (body.anchor.kind === 'goal' || body.anchor.kind === 'stage')
+      && (body.state === 'accepted' || body.state === 'reviewed')) {
+      const status = await understandingOfAnchorKey(ctx, anchorKeyOf(body.anchor), caches);
+      if (!status.ok) return status;
+      updateDue = status.value.updateDue;
+    }
+
     return { ok: true, value: {
       noteId: body.noteId, version: body.version,
       observedFiles: [...itemObs.values()],
       freshness, changedFiles, staleReasons,
-      sourceUnavailable, invalid, conflicting: derived.conflicting, overQuota: derived.overQuota, updateDue: null,
+      sourceUnavailable, invalid, conflicting: derived.conflicting, overQuota: derived.overQuota, updateDue,
       currentEligible,
       anchorStatus: anchor.value.retired ? 'retired' : 'live',
       anchorRetiredReasons: anchor.value.reasons,
@@ -1135,7 +1279,7 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
      * S2.5: the internal entry the read model uses. The heads arrive from
      * records read in the same call; the check never re-reads them.
      */
-    async checkHeads(ctx, input): Promise<ReadResult<NoteCheckV1[]>> {
+    async checkHeads(ctx, input): Promise<ReadResult<{ items: NoteCheckV1[]; understanding: UnderstandingStatusV1[] }>> {
       if (!Array.isArray(input.items)) return { status: 'rejected', code: 'invalid', reason: 'items must be an array' };
       const caches = newCheckCaches();
       if (input.anchorSets !== undefined) {
@@ -1149,6 +1293,19 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
         // cache so `currentPlan` does not read the same window twice.
         for (const [key, plan] of input.planWindows) caches.plans.set(key, { ok: true, value: plan });
       }
+      if (input.understandingPointers !== undefined) {
+        // Rework item 8: the caller already read these pointers and pointed
+        // heads; seed them so `computeUnderstandingOfAnchorKey` skips its own
+        // per-anchor pointer and head reads for the whole call.
+        for (const [key, seed] of input.understandingPointers) caches.understandingSeed.set(key, seed);
+      }
+      if (input.understandingTriggers !== undefined) {
+        // Rework item 1: the caller's shared reader already read these goals'
+        // triggers; seed them so `currentTriggers` skips its own trigger read.
+        for (const [key, triggers] of input.understandingTriggers) {
+          caches.triggers.set(key, { ok: true, value: triggers });
+        }
+      }
       const budget = newCheckBudget(limits);
       const results: NoteCheckV1[] = [];
       for (const item of input.items) {
@@ -1160,7 +1317,15 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
         if (!outcome.ok) return mapStoreFailure(outcome);
         results.push(outcome.value);
       }
-      return { status: 'ready', value: results };
+      // U-3: the same caches answer the requested understanding anchors
+      // (pointers, triggers and the plan), so `lookup` no longer reads its own.
+      const understanding: UnderstandingStatusV1[] = [];
+      for (const anchorKey of input.understandingAnchors ?? []) {
+        const status = await understandingOfAnchorKey(ctx, anchorKey, caches);
+        if (!status.ok) return mapStoreFailure(status);
+        understanding.push(status.value);
+      }
+      return { status: 'ready', value: { items: results, understanding } };
     },
   };
 }

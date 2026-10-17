@@ -33,6 +33,8 @@ import type { RoleBindingRefV1, TaskBudgetV1 } from '../../src/contracts/dispatc
 import type { WorkspaceHostBindings } from '../../src/core/workspace/access.js';
 import type { NoteDraftV1 } from '../../src/contracts/note.js';
 import type { NoteWritePort, WriteNoteResult } from '../../src/core/work-graph/model/note-contracts.js';
+import type { TaskRequeueRef } from '../../src/contracts/task-requeue.js';
+import type { RuntimeHostBindings } from '../../src/core/agent-runtime/execution-contracts.js';
 import { createTargetPlatform } from '../../src/composition/create-platform.js';
 
 export type S4ANoteFixtureKind = 'memory' | 'sqlite';
@@ -76,9 +78,10 @@ export type S4ANoteFixture = {
   queryCtx(): CoreCallContext;
   createSession(requestId: string, role: S4ARole): Promise<{ sessionRef: { projectId: string; sessionId: string } }>;
   claimRun(suffix: string, taskId?: string, role?: S4ARole): Promise<RunRef>;
-  /** Claim another task with an EXISTING Session (item 9b: a later Run of the same Session). */
+  /** Claim another task with an EXISTING Session (item 9b: a later Run of the same Session).
+   * Slice 4C-2 item 2: an optional real `requeueRef` makes this a TASK-03 continuation claim. */
   claimInSession(suffix: string, sessionRef: { projectId: string; sessionId: string }, taskId: string,
-    role: S4ARole): Promise<RunRef>;
+    role: S4ARole, requeueRef?: TaskRequeueRef): Promise<RunRef>;
   write(ctx: CoreCallContext, draft: NoteDraftV1, goalId: string | null,
     options?: { commandId?: string; expectedPointerRevision?: number | null }): Promise<WriteNoteResult>;
   close(): Promise<void>;
@@ -95,7 +98,13 @@ function bindingFor(role: S4ARole, id: string): RoleBindingRefV1 {
 }
 
 export async function createS4ANoteFixture(kind: S4ANoteFixtureKind,
-  options: { anchorQuota?: number; goalQuota?: number; symbolHitsMax?: number; noteLimits?: S4ANoteLimits } = {}): Promise<S4ANoteFixture> {
+  options: { anchorQuota?: number; goalQuota?: number; symbolHitsMax?: number; noteLimits?: S4ANoteLimits;
+    /** Slice 4C-2 item 2: the trusted Host runtime binding, so a test can drive
+     * the public `prepareExecution`/`startRun` over a real claim in this fixture. */
+    runtime?: RuntimeHostBindings;
+    /** Slice 4C-2 D-03: the deterministic note id generator passed to the note
+     * service; absent keeps the production `randomUUID`. */
+    noteNewId?: () => string } = {}): Promise<S4ANoteFixture> {
   const directory = await mkdtemp(join(tmpdir(), `s4a-note-${kind}-`));
   const root = join(directory, 'workspace');
   await mkdir(join(root, 'src/a/one'), { recursive: true });
@@ -139,6 +148,8 @@ export async function createS4ANoteFixture(kind: S4ANoteFixtureKind,
     kernelStores: { entries: [{ adapterId: 's4a-kernel', storeKey: 's4a-kernel-store', workspace: scope,
       databasePath: join(directory, 'kernel.sqlite') }] },
     ...(Object.keys(noteLimits).length === 0 ? {} : { noteLimits }),
+    ...(options.runtime === undefined ? {} : { runtime: options.runtime }),
+    ...(options.noteNewId === undefined ? {} : { noteNewId: options.noteNewId }),
   });
 
   const hostCtx = (): CoreCallContext => ({ projectId: PROJECT, workspaceId: WORKSPACE,
@@ -231,14 +242,15 @@ export async function createS4ANoteFixture(kind: S4ANoteFixtureKind,
   }
 
   async function claimInSession(suffix: string, sessionRef: { projectId: string; sessionId: string },
-    taskId: string, role: S4ARole): Promise<RunRef> {
+    taskId: string, role: S4ARole, requeueRef?: TaskRequeueRef): Promise<RunRef> {
     const roleBinding = bindingFor(role, suffix);
     const goalRead = await platform.plans.queryGoal(ctx, goalRef);
     if (goalRead.status !== 'ready') throw new Error('S4A fixture goal read failed');
     const card = await platform.sessions.readSession(ctx, sessionRef);
     if (card.status !== 'ready') throw new Error('S4A fixture session read failed');
     const claimed = await committed(`claim-${suffix}`, await platform.claims.claimTask(ctx, {
-      input: { goalRef, planRef, taskId, sessionRef, roleBinding, budget },
+      input: { goalRef, planRef, taskId, sessionRef, roleBinding, budget,
+        ...(requeueRef === undefined ? {} : { requeueRef }) },
       meta: { requestId: `s4a-claim-${suffix}`, expected: [
         { ref: goalRef, revision: goalRead.value.goal.revision },
         { ref: workspaceRef, revision: 1 },
