@@ -1,0 +1,14 @@
+All five items landed; close-out found no integration break and edited nothing.
+
+**FILES (production net +81/−31, 4 files)**: `note-scribe-todos.ts` +58/−30 (relation targets read first; their understanding anchors join the shared read; triggers passed to the check); `create-platform.ts` +8/−1 (injectable `noteNewId`); `note-contracts.ts` +8 (`understandingTriggers` input); `note-views.ts` +7 (seed `caches.triggers`). Tests: scribe 264/289, read-counts +60/−18, update-due +16/−90, fixture +10/−1.
+
+**ITEMS RED → GREEN**
+1. `item 4 … one trigger read per goal` (memory+sqlite): RED `{pointer:2,pointedHead:2,targetHead:1,otherHead:0,trigger:4}` → GREEN `{1,1,1,0,2}`. A pending note's old-stage understanding target is now read first and its anchor joins the one `readGoalUnderstandingAnchors`; the reader's triggers seed the check.
+2. `item 2: a public completion + one new pending note, one failed Run read blocks a period`: real scribe Run prepared+`startRun` by a scripted runtime to ended/completed; acceptance is the Runtime's own `confirmMailboxInputs` (replayed through the public owner, `replayed:true`); one real Run read fails once. Failed read → 0 sends/0 to-do reads/inbox 1; next period → 1 new request (`待审 11 条`), inbox 2.
+3. `missed 2: a public archive … sends once` / `… understanding after the archive … sends nothing`: `workflow.archiveLine` on a live claimed-unstarted Run yields the unclaimed requeue (`archive:t1/<run>`); real Host + production to-do port. Positive immediate → text `待审 0 条`/`该更新 2 条`, inbox 1; negative (public understanding after) → 0 sends, inbox 0. RED: pre-cancelling the Run removes the requeue.
+4. D-03 literals pinned: `s4c2-note-02@1…s4c2-note-11@1`, digest `52fb73e4…`, lowest `session-0a4e04…`, remaining `session-1d7140…`; request ids literal; write-result `identities` deleted.
+5. Deleted M-12e-2 (planless; S4C2-1i/S4C2-3e), item-8 batching (read-counts item 4), M-12h-2 (S4C2-3f); kept M-12h (damaged pointer → unavailable; no public owner can corrupt a pointer).
+
+**CHECKS** (`--maxWorkers=2`): runtime S3+S4C2 28; S4C2 work-graph 69; S4C2-platform 1; app S4C2-scribe+orchestration 26 pass/1 baseline (bwrap); composition platform+WP2-wiring 38; WP2-* 36; architecture 53; AG2b 1 pass/2 baseline timeouts; S4* 673 pass/4 skip; SP-* 36/1 skip; S3-graph-context 54; runtime S4C* 34. `typecheck`/`check:architecture`/`build` exit 0. No non-baseline failure; my own spot-check 16/16.
+
+**UNSPECIFIED**: (a) target ids are read for all pending heads before the cancelled/planless filter, so a missing target in a filtered bucket now makes the call `unavailable`; (b) item 2 replays the real Kernel identity (a synthetic one is refused `accepted by another execution event`); (c) item 3 uses `workflow.archiveLine` because raw `archiveSession` writes no TaskRequeue; (d) the old "claimed" variant was dropped (book needs only the pair).

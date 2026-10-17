@@ -1,6 +1,6 @@
 # 编排分片与接线：规格和任务书
 
-**当前状态（2026-10-17）。** 第 0、1、3、5 片、接线包 1、接线包 2（bb924854）、K 片 B（9881a2ae）、K 片 A（cfe35550）已合入；2A、2B、2C、资源上限片、4A、4B、注记查找提速两轮、4C-1、8A 已合入；4C-2（A 段已验收、B 段在施工）和 K3 第 4 组是下一步。最新状态见 [STATUS](../../../STATUS.md)，决定 1–75 见 [HANDOFF 顶部](../../../HANDOFF.md)，分片依赖见 [设计目录](../README.md)和 [DESIGN §8.2](../DESIGN.md#82-分片表)。新界面在后端之后做，基线是[冻结原型](../../../../ui-reference/workbench-2026-10/README.md)和 [UI-WORKBENCH §0](../../../../UI-WORKBENCH.md#ui-decisions-2026-10)。
+**当前状态（2026-10-17）。** 第 0、1、3、5 片、接线包 1、接线包 2（bb924854）、K 片 B（9881a2ae）、K 片 A（cfe35550）已合入；2A、2B、2C、资源上限片、4A、4B、注记查找提速两轮、4C-1、8A、4C-2 A 段已合入；4C-2 B 段和 K3 第 4 组在施工。最新状态见 [STATUS](../../../STATUS.md)，决定 1–75 见 [HANDOFF 顶部](../../../HANDOFF.md)，分片依赖见 [设计目录](../README.md)和 [DESIGN §8.2](../DESIGN.md#82-分片表)。新界面在后端之后做，基线是[冻结原型](../../../../ui-reference/workbench-2026-10/README.md)和 [UI-WORKBENCH §0](../../../../UI-WORKBENCH.md#ui-decisions-2026-10)。
 
 ## 2026-10-13 起怎样做
 
@@ -16,10 +16,10 @@
 
 **已合入（2026-10-14）：** 接线包 2（I-2、I-4、I-5、I-6）bb924854；K 片 B（只读命令 `run_readonly_command`）9881a2ae；K 片 A（关闭悬空 Turn、留在原 Session）cfe35550。验收和限定见[接线包 2 证据](../../../reviews/evidence/orchestration-wiring-2-2026-10-13/README.md)、[K 片 B 验收](../../../reviews/evidence/orchestration-slice-K-2026-10-13/partB/lead-acceptance.md)、[K 片 A 验收](../../../reviews/evidence/orchestration-slice-K-2026-10-13/partA/lead-acceptance.md)。
 
-1. **2C、4A、4B 已合入（2026-10-16），4C-1 已合入（2026-10-17）。** 施工和验收中的限定在 2C 规格 §16、第 4 片规格 §9、§10、§12（对 4C-2 同样有效）。注记查找提速两轮（决定 66）也已合入，见[第一轮](../../../reviews/evidence/orchestration-note-speed-1-2026-10-16/README.md)和[第二轮](../../../reviews/evidence/orchestration-note-speed-2-2026-10-16/README.md)的证据。
+1. **2C、4A、4B 已合入（2026-10-16），4C-1 已合入（2026-10-17）。** 施工和验收中的限定在 2C 规格 §16、第 4 片规格 §9、§10、§12（对 4C-2 同样有效）、§13（4C-2 A 段，对 B 段同样有效）。注记查找提速两轮（决定 66）也已合入，见[第一轮](../../../reviews/evidence/orchestration-note-speed-1-2026-10-16/README.md)和[第二轮](../../../reviews/evidence/orchestration-note-speed-2-2026-10-16/README.md)的证据。
 2. **资源上限片已合入（2026-10-16）。** 施工和验收中的限定在 RL 规格 §9。实现追上之前不开新规格。
 3. **K3 收尾**：[K3 规格](slice-K3-SPEC.md)第八稿 2026-10-16 冻结（决定 57、68：拦下的原命令用确定的解析认出常见改写，认不出的由 agent 注明，允许只放行卡上那一种写法；lead 的 K8-1–K8-7，Codex 一次只看改动的核对），下一步施工。
-4. **第 4、6、7、8 片已冻结（2026-10-15 晚，决定 64）。** 施工顺序 4A → 4B → 4C → 6A → 6B → 7A → 7B → 7C → 7D1 → 8A → 8B → 8C → 8D → 7D2 → 6C；**决定 74 改为：** 4C-1 合入后 8A（不含 L8）→ 8D 另走一条线，和 4C-2、清理、6A 并行，其余照旧；2C、4A、4B、4C-1、8A 已合入（8A 的施工和验收中的限定在第 8 片规格 §9）；4C-2 在施工。
+4. **第 4、6、7、8 片已冻结（2026-10-15 晚，决定 64）。** 施工顺序 4A → 4B → 4C → 6A → 6B → 7A → 7B → 7C → 7D1 → 8A → 8B → 8C → 8D → 7D2 → 6C；**决定 74 改为：** 4C-1 合入后 8A（不含 L8）→ 8D 另走一条线，和 4C-2、清理、6A 并行，其余照旧；2C、4A、4B、4C-1、8A、4C-2 A 段已合入（8A 的施工和验收中的限定在第 8 片规格 §9）；4C-2 B 段在施工。
 
 ## 这里有什么
 
@@ -35,7 +35,7 @@
 | 2B（2026-10-15 合入） | [slice-2B-SPEC.md](slice-2B-SPEC.md)（§10 冻结时的限定和实测，§11 施工和验收中的限定） | 说明书和验收见[证据](../../../reviews/evidence/orchestration-slice-2B-2026-10-15/README.md) | 无 |
 | 2C（2026-10-14 夜冻结，2026-10-16 合入） | [slice-2C-SPEC.md](slice-2C-SPEC.md)（§15 是冻结时的限定，§16 是施工和验收中的限定） | [证据](../../../reviews/evidence/orchestration-slice-2C-2026-10-15/README.md)的 `books/` | 无 |
 | 资源上限（RL，2026-10-15 夜冻结，2026-10-16 合入） | [slice-RL-SPEC.md](slice-RL-SPEC.md)（L16 是冻结时 lead 定的读法，§9 是施工和验收中的限定） | [证据](../../../reviews/evidence/orchestration-slice-RL-2026-10-16/README.md)的 `books/` | 无（Q1 已由决定 55 定） |
-| 4（2026-10-15 晚冻结；4A、4B、4C；4A、4B 2026-10-16 合入，4C-1 2026-10-17 合入） | [slice-4-SPEC.md](slice-4-SPEC.md)（§9、§10、§12 是 4A、4B、4C-1 施工和验收中的限定） | 4A：[证据](../../../reviews/evidence/orchestration-slice-4A-2026-10-16/README.md)的 `books/`；4B：[证据](../../../reviews/evidence/orchestration-slice-4B-2026-10-16/README.md)的 `books/`；4C-1：[证据](../../../reviews/evidence/orchestration-slice-4C1-2026-10-17/README.md)的 `books/` | 无（§0.1 用户已定；2C 合入后 lead 重核过 §0.2、§6） |
+| 4（2026-10-15 晚冻结；4A、4B、4C；4A、4B 2026-10-16 合入，4C-1、4C-2 A 段 2026-10-17 合入） | [slice-4-SPEC.md](slice-4-SPEC.md)（§9、§10、§12、§13 是 4A、4B、4C-1、4C-2 A 段施工和验收中的限定） | 4A：[证据](../../../reviews/evidence/orchestration-slice-4A-2026-10-16/README.md)的 `books/`；4B：[证据](../../../reviews/evidence/orchestration-slice-4B-2026-10-16/README.md)的 `books/`；4C-1：[证据](../../../reviews/evidence/orchestration-slice-4C1-2026-10-17/README.md)的 `books/`；4C-2 A 段：[证据](../../../reviews/evidence/orchestration-slice-4C2A-2026-10-17/README.md)的 `books/` | 无（§0.1 用户已定；2C 合入后 lead 重核过 §0.2、§6） |
 | 6（2026-10-15 晚冻结；6A、6B、6C） | [slice-6-SPEC.md](slice-6-SPEC.md) | 施工时写 | 无（§0.1 用户已定，决定 64） |
 | 7（2026-10-15 晚冻结；7A、7B、7C、7D1、7D2） | [slice-7-SPEC.md](slice-7-SPEC.md) | 施工时写 | 无（§0.1 用户已定，决定 64） |
 | 8（2026-10-15 晚冻结；8A、8B、8C、8D；8A 2026-10-17 合入） | [slice-8-SPEC.md](slice-8-SPEC.md)（§9 是 8A 施工和验收中的限定） | 8A：[证据](../../../reviews/evidence/orchestration-slice-8A-2026-10-17/README.md)的 `books/` | 无（§0.1 用户已定，决定 64） |

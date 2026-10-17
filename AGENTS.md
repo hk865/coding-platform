@@ -1,6 +1,6 @@
 # 独立仓库工作入口
 
-**当前状态（2026-10-17）。** 可靠性批次已完成；编排第 0、1、3、5 片、接线包 1、接线包 2（bb924854）、K 片 B（9881a2ae）、K 片 A（cfe35550）、2A、2B、2C、资源上限片、4A、4B、注记查找提速两轮、4C-1（36602e53）、8A（ce4369b1）已合入；4C-2（A 段已验收、B 段在施工）和 K3 第 4 组是下一步。远端新分支 `feat/orchestration-slices` 已由用户推到 `1e0b1383`（2026-10-16，之后的本地提交等用户推送），远端 `next-main` 不动，本地主检出目录已快进。8A 合入时的最后一次全量（5 个并行）510 个测试文件全过；这些批次之后还没有用真实模型重跑，整个 MVP 没有完成。当前状态和下一步见 [STATUS](docs/refactor/STATUS.md)，决定 1–75 见 [HANDOFF 顶部](docs/refactor/HANDOFF.md)，设计与分片见 [design/orchestration-2026-10](docs/refactor/design/orchestration-2026-10/README.md)。
+**当前状态（2026-10-17）。** 可靠性批次已完成；编排第 0、1、3、5 片、接线包 1、接线包 2（bb924854）、K 片 B（9881a2ae）、K 片 A（cfe35550）、2A、2B、2C、资源上限片、4A、4B、注记查找提速两轮、4C-1（36602e53）、8A（ce4369b1）、4C-2 A 段（e15ba172）已合入；4C-2 B 段和 K3 第 4 组在施工。远端新分支 `feat/orchestration-slices` 已由用户推到 `1e0b1383`（2026-10-16，之后的本地提交等用户推送），远端 `next-main` 不动，本地主检出目录已快进。4C-2 A 段合入时的最后一次全量（5 个并行）520 个测试文件里 519 个过，没过的一项是测试依赖墙上时钟、和 A 段无关；这些批次之后还没有用真实模型重跑，整个 MVP 没有完成。当前状态和下一步见 [STATUS](docs/refactor/STATUS.md)，决定 1–75 见 [HANDOFF 顶部](docs/refactor/HANDOFF.md)，设计与分片见 [design/orchestration-2026-10](docs/refactor/design/orchestration-2026-10/README.md)。
 
 *界面基线。* 新原型在 [Design 画布](https://claude.ai/artifact/3e5ynF3rwtMQfvJuim9mL2)上，只有用户本人能打开。
 - 用户 2026-10-05 批准了原型（画布第 9 版）。2026-10-06 按 HANDOFF 决定 25–30 改版，发布为画布第 14 版；2026-10-07 按决定 33 改了左栏工作线的点击，发布为画布第 16 版。用户确认后冻结（决定 35），画板文件和设计说明复制进 [docs/ui-reference/workbench-2026-10](docs/ui-reference/workbench-2026-10/README.md)。

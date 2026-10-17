@@ -1,0 +1,12 @@
+4C-2 session A merge full suite (lead, 2026-10-17)
+Tree: lead 4ee696a8 (8A merged) + s4c2a-merge.patch (slice-base..s4c2-a5, base 5b445650), cherry-picked 3-way, no conflicts (auto-merged note-related-scope.ts, graph-context-reader.ts, S3-graph-context.test.ts).
+Environment: WSL, bubblewrap (CODING_AGENT_BWRAP_PATH), systemd user session, scope MemoryMax=6G, vitest --maxWorkers=5; one DSH build running at the same time.
+Start 08:16, end 08:54.
+Test Files  1 failed | 519 passed (520)
+     Tests  1 failed | 8117 passed | 5 skipped (8123)
+  Duration  2385.78 s
+Memory peak of the test scope: 4,874,952,704 bytes (4.87 GB).
+Failed: tests/scenarios/S2C-K-legacy-provenance.test.ts > 2C-26 the executions section stays indexed (:496, expected [implement-a, implement-a], received [implement-a]).
+  The file alone: 3/3 passed twice on this tree, and on the 8A tree. Cause: the test stamps the requeue and C's creation with the wall clock; the WSL clock steps back ~1.5-1.9 s every ~31 s; reproduced on trees with and without session A (checks/2c26-investigation.md; Codex recheck codex/2c26-recheck.out.md). Not caused by session A; the test fix (fixed Date per test) goes with 4C-2 session B's rework.
+typecheck 0, check:architecture 0, build 0.
+Worktree: the 35 changed files hash-identical to the merged tree (git hash-object with the repository's filters vs git rev-parse HEAD:path).
